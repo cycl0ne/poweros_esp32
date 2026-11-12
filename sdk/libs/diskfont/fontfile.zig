@@ -48,8 +48,9 @@ pub const FontContents = extern struct {
     pad: [3]u8 = .{ 0, 0, 0 },
     /// The nominal width.
     x_size: u16 = 0,
-    /// 1: `path` is a TrueType file, rendered at whatever height is asked
-    /// (truetype.library), and `y_size` is 0. 0: a size file.
+    /// 1: `path` is a TrueType or OpenType file, rendered at whatever
+    /// height is asked (truetype.library), and `y_size` is 0. 0: a size
+    /// file.
     outline: u8 = 0,
     /// Nothing yet; zero.
     reserved: [5]u8 = @splat(0),
@@ -118,7 +119,7 @@ pub fn seal(block: [*]u8, size: u32) void {
     header.checksum = 0 -% graphics.fontimage.sumOf(block, size);
 }
 
-/// The entry of an outline font, whose TrueType file is `path`.
+/// The entry of an outline font, whose font file is `path`.
 ///
 /// INPUTS:
 /// - `path` - the file, from `FONTS:`; at most `MAXFONTPATH - 1` bytes.

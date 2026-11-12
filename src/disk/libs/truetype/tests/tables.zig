@@ -573,9 +573,9 @@ test "truetype: a collection, each of its fonts by its number" {
     const before = openFont(tb, damaged.written(), 0) orelse return error.NotRead;
     tb.CloseOutline(before);
 
-    // A font of other outlines than TrueType's.
+    // A font that starts as none this library reads.
     damaged = file;
-    @memcpy(damaged.bytes[second..][0..4], "OTTO");
+    @memcpy(damaged.bytes[second..][0..4], "typ1");
     try testing.expectEqual(@as(u32, 2), truetype.fontCount(damaged.written()));
     try testing.expect(openFont(tb, damaged.written(), 1) == null);
 

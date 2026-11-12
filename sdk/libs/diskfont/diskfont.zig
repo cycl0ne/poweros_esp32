@@ -9,7 +9,7 @@
 //! drawn from where it lies. The contents file is `fontfile`.
 //!
 //! Since 1.4 a family with an outline is opened as the outline itself
-//! (`OpenOutlineFont`): its TrueType file read, for a program that draws
+//! (`OpenOutlineFont`): its font file read, for a program that draws
 //! its glyphs at any size and angle with truetype.library's calls. A
 //! program that needs this looks for revision 4 or later in the library
 //! it opened.
@@ -66,7 +66,7 @@ pub fn availEntries(header: *const AvailFontsHeader) []const AvailFonts {
 }
 
 /// A family's outline, opened by `OpenOutlineFont` (since 1.4): the face
-/// of the styles asked, its TrueType file read and opened. The library's,
+/// of the styles asked, its font file read and opened. The library's,
 /// shared by everyone who opened it, until `CloseOutlineFont`.
 pub const OutlineFont = extern struct {
     /// For truetype.library's calls: `GlyphIndex`, `GlyphSegments`,

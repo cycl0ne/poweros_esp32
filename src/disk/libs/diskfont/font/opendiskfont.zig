@@ -49,8 +49,9 @@ const Contents = _font.Contents;
 /// Otherwise the family's contents file is read - `FONTS:<name>`, or the
 /// name as given when it has a ':' - and:
 ///
-/// - **A family with an outline** (a TrueType file) takes a size drawn
-///   at exactly the height and style asked when it has one, then a size
+/// - **A family with an outline** (a TrueType or OpenType file) takes a
+///   size drawn at exactly the height and style asked when it has one,
+///   then a size
 ///   of the outline already in memory at that height, and otherwise has
 ///   truetype.library render the outline at that height - at any height,
 ///   and with `FPF_DESIGNED` too, since it is drawn and not scaled. A
@@ -97,7 +98,7 @@ const Contents = _font.Contents;
 /// `CloseFont`. Once nobody holds it, it stays loaded for the next caller
 /// until memory runs short. A font another one falls back to stays
 /// loaded for as long as that one, opened by anybody or not. A size
-/// rendered from an outline keeps the outline open - its TrueType file
+/// rendered from an outline keeps the outline open - its font file
 /// in memory, one for all the sizes made from it - for as long as the
 /// size is loaded.
 ///

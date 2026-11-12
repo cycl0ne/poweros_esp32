@@ -6,8 +6,9 @@
 //! Each source is one size of the family: a BDF file, an Amiga size load
 //! file, or an Amiga contents file, which brings every size it lists. Each
 //! becomes `<out dir>/<family>/<rows>`, a font image byte for byte, and
-//! `<out dir>/<family>.font` lists them all. A TrueType file is the
-//! family's outline: copied to `<out dir>/<family>/<its name>` and listed
+//! `<out dir>/<family>.font` lists them all. A TrueType or OpenType
+//! file is the family's outline: copied to
+//! `<out dir>/<family>/<its name>` and listed
 //! as the entry diskfont renders any height from, in the styles the file
 //! says it is drawn in.
 //!
@@ -107,7 +108,7 @@ pub fn main(init: std.process.Init) !void {
     try cwd.writeFile(io, .{ .sub_path = contents_path, .data = contents });
 }
 
-/// A family's outline: its TrueType file's name in the family's
+/// A family's outline: its font file's name in the family's
 /// directory, and the styles the file says it is drawn in.
 const Outline = struct { name: []const u8, style: sdk.graphics.FontStyle };
 

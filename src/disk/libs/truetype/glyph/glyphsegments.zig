@@ -15,7 +15,7 @@ const _segments = @import("_segments.zig");
 /// fn GlyphSegments(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, segments: *truetype.Segments) i32
 /// ```
 ///
-/// SINCE: 1.2. LVO -40.
+/// SINCE: 1.2, `SEG_CUBIC` of a font of cubic curves since 1.6. LVO -40.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -33,17 +33,25 @@ const _segments = @import("_segments.zig");
 /// - `TRUETYPEERR_NOMEM` - no memory to read it in.
 ///
 /// BEHAVIOR:
-/// The verbs are vector.library's - `SEG_MOVE`, `SEG_LINE`, `SEG_QUAD`,
-/// `SEG_CLOSE` - and the points `vector.Point`s, so the arrays go to
-/// `AddSegments` as they are. They are in the font's units, y up, from
+/// The verbs are vector.library's - `SEG_MOVE`, `SEG_LINE`, `SEG_QUAD`
+/// or, in a font of cubic curves, `SEG_CUBIC`, and `SEG_CLOSE` - and the
+/// points `vector.Point`s, so the arrays go to `AddSegments` as they are. They are in the font's units, y up, from
 /// the glyph's origin on the baseline: a program drawing them scales by
 /// its size over `FontMetrics`' units per em and turns y over. Each
 /// contour is closed, and filled by the non-zero rule its contours are
 /// drawn for. A composite glyph is its parts, each moved and scaled as
 /// the font says, in one outline.
 ///
+/// A glyph of cubic curves comes out as its program draws it: a move
+/// to where a contour begins, a line or a curve for each one drawn - a
+/// line drawn back to the beginning among them - and the close. A
+/// contour of nothing but its first point is left out. The subroutines
+/// a program calls are run, its hints passed over.
+///
 /// `FontMetrics`' `most_verbs` and `most_points` are long enough for any
-/// glyph of the font.
+/// glyph of a font of quadratic curves. A font of cubic curves does not
+/// say how large its glyphs are: one larger than that answers
+/// `TRUETYPEERR_ROOM` and is read into arrays of the counts it gives.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -58,7 +66,8 @@ const _segments = @import("_segments.zig");
 /// BUGS:
 /// No hinting: the outline is as it was drawn, for any size. A part of a
 /// composite placed by matching its points to another's is left where it
-/// was drawn.
+/// was drawn. A glyph of cubic curves made of two others (an `endchar`
+/// with four numbers) has no outline.
 ///
 /// SEE ALSO:
 /// `GlyphIndex`, `GlyphMetrics`, `FontMetrics`,

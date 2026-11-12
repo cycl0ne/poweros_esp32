@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! OpenOutline: a font of a TrueType file, opened for rendering.
+//! OpenOutline: a font of a TrueType or OpenType file, opened for
+//! rendering.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -9,14 +10,15 @@ const _base = @import("../truetype_base.zig");
 const TrueTypeBase = _base.TrueTypeBase;
 const _outline = @import("_outline.zig");
 
-/// A font of a TrueType file, opened for rendering.
+/// A font of a TrueType or OpenType file, opened for rendering.
 ///
 /// SYNOPSIS:
 /// ```zig
 /// fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) ?*truetype.Outline
 /// ```
 ///
-/// SINCE: 1.0, the tags and collections since 1.4. LVO -20.
+/// SINCE: 1.0, the tags and collections since 1.4, fonts of cubic curves
+/// since 1.6. LVO -20.
 ///
 /// INPUTS:
 /// - `file` - the whole file, as read.
@@ -27,9 +29,9 @@ const _outline = @import("_outline.zig");
 ///
 /// RESULT:
 /// The outline, or null if the file has no font of that number, the
-/// bytes are not a TrueType font this library reads - a table it needs
-/// missing or outside the file, no character map it reads - or there is
-/// no memory.
+/// bytes are not a font this library reads - a table it needs missing,
+/// outside the file or not sound, no character map it reads - or there
+/// is no memory.
 ///
 /// BEHAVIOR:
 /// The font's tables are found and checked once, and what the other
@@ -42,6 +44,15 @@ const _outline = @import("_outline.zig");
 /// reaches furthest: formats 12, 13, 10, 4, 6 and 0, in that order. A
 /// symbol font, which has none, is read by its own map, with its
 /// characters where the font puts them (U+F020 to U+F0FF mostly).
+///
+/// A font's glyphs are of lines and quadratic curves (`glyf` and
+/// `loca`), or of lines and cubic curves (`CFF `, in a file that starts
+/// 'OTTO'), a font keyed by character collection among those. A font
+/// with both is read by `glyf`. Of a `CFF ` table the lists, the
+/// dictionaries and where they put the glyphs' programs, the subroutines
+/// and each glyph's font dictionary are checked here, and a table that
+/// is not sound opens no font; a glyph's program is run when the glyph
+/// is asked for.
 ///
 /// A font need not have outlines: one whose glyphs are pictures opens,
 /// maps, measures and names, and every glyph of it is one of no outline.
@@ -61,9 +72,11 @@ const _outline = @import("_outline.zig");
 /// outline reads them in place. The tags are read during the call only.
 ///
 /// BUGS:
-/// Hinting instructions are passed over, and fonts of CFF outlines
-/// (OpenType 'OTTO') are not read. A font whose only character map is in
-/// a Macintosh encoding is not opened.
+/// Hinting instructions are passed over, and so are a `CFF ` table's
+/// hints and its font matrix: its glyphs are taken as drawn in the
+/// font's units. A font whose outlines are a `CFF2` table's is not
+/// opened. A font whose only character map is in a Macintosh encoding
+/// is not opened.
 ///
 /// SEE ALSO:
 /// `RenderFontImage`, `GlyphIndex`, `FontName`, `FontTable`, `CloseOutline`

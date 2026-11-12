@@ -8,6 +8,10 @@
 //! curve the control point of a quadratic curve to the next on it, or to
 //! halfway to the next off it, which is on the curve though not in the
 //! file. The line back to the start is the close's.
+//!
+//! Since 1.6 a contour of cubic curves comes out as it was drawn: from
+//! its first point, a line to each point on the curve and a cubic curve
+//! through each two control points to the point after them.
 
 const sdk = @import("sdk");
 const vector = sdk.vector;
@@ -72,12 +76,18 @@ fn contour(w: *Writer, ps: []const Point) void {
     const from: usize = if (first_on) |f| f + 1 else 0;
     w.verb(vector.SEG_MOVE, &.{origin});
     var control: ?vector.Point = null;
-    for (0..n) |k| {
+    var k: usize = 0;
+    while (k < n) : (k += 1) {
         const p = ps[(from + k) % n];
         // The last of the round is the start again, on the curve.
         const last = k == n - 1 and first_on != null;
         const q = at(p);
-        if (p.on) {
+        if (p.cubic) {
+            // Two control points and the point the curve ends at.
+            if (k + 2 >= n) break;
+            w.verb(vector.SEG_CUBIC, &.{ q, at(ps[(from + k + 1) % n]), at(ps[(from + k + 2) % n]) });
+            k += 2;
+        } else if (p.on) {
             if (control) |cp| {
                 w.verb(vector.SEG_QUAD, &.{ cp, q });
                 control = null;
@@ -96,18 +106,26 @@ pub fn glyphSegments(sys: *ExecBase, font: *const Font, glyph: u32, out: *truety
     out.verb_count = 0;
     out.point_count = 0;
     if (glyph >= font.glyph_count) return truetype.TRUETYPEERR_GLYPH;
-    const points, const contours = roomOf(font);
-    const bytes = points * @sizeOf(Point) + contours * 4 + points;
-    const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return truetype.TRUETYPEERR_NOMEM;
-    defer sys.FreeVec(memory);
-    const base: [*]u8 = @ptrCast(memory);
-    const point_area: [*]Point = @ptrCast(@alignCast(base));
-    const ends: [*]u32 = @ptrCast(@alignCast(base + points * @sizeOf(Point)));
-    const flags = base + points * @sizeOf(Point) + contours * 4;
-    var c = _outline.Contours{ .points = point_area[0..points], .ends = ends[0..contours], .flags = flags[0..points] };
-    const identity = [6]f32{ 1, 0, 0, 1, 0, 0 };
-    if (!_outline.contours(font, glyph, &c, identity, 0)) return truetype.TRUETYPEERR_GLYPH;
-    return write(&c, out);
+    var points, var contours = roomOf(font);
+    // A glyph of cubic curves may have more than the font is read with:
+    // it says how much, and is read once more into that.
+    var again = false;
+    while (true) {
+        const bytes = points * @sizeOf(Point) + contours * 4 + points;
+        const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return truetype.TRUETYPEERR_NOMEM;
+        defer sys.FreeVec(memory);
+        const base: [*]u8 = @ptrCast(memory);
+        const point_area: [*]Point = @ptrCast(@alignCast(base));
+        const ends: [*]u32 = @ptrCast(@alignCast(base + points * @sizeOf(Point)));
+        const flags = base + points * @sizeOf(Point) + contours * 4;
+        var c = _outline.Contours{ .points = point_area[0..points], .ends = ends[0..contours], .flags = flags[0..points] };
+        const identity = [6]f32{ 1, 0, 0, 1, 0, 0 };
+        if (_outline.contours(font, glyph, &c, identity, 0)) return write(&c, out);
+        if (!c.short or again) return truetype.TRUETYPEERR_GLYPH;
+        points = c.needed_points + 1;
+        contours = c.needed_ends + 1;
+        again = true;
+    }
 }
 
 /// The points and the contours a glyph of `font` is read with: one more
@@ -118,7 +136,9 @@ fn roomOf(font: *const Font) [2]u32 {
 
 /// The most verbs and points a glyph of `font` takes as segments: a move
 /// and a close a contour, and a segment a point of it, of two points at
-/// most - of as many points and contours as a glyph is read with.
+/// most - of as many points and contours as a glyph is read with. A font
+/// of cubic curves does not say how large its glyphs are, and one of its
+/// glyphs may take more.
 pub fn mostOf(font: *const Font) [2]u32 {
     const points, const contours = roomOf(font);
     return .{ points + 2 * contours, 2 * points + contours };

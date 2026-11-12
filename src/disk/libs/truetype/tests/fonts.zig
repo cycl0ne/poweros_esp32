@@ -13,6 +13,13 @@
 //! A test is skipped when its font is not fetched, and fails by the
 //! font's name when the file is not the one the values were read from.
 //!
+//! A font of cubic curves is compared further: its glyphs' outlines verb
+//! by verb and point by point with fontTools' drawing of them, and its
+//! glyphs rendered with libfreetype's rendering of the same outlines -
+//! the ink of many glyphs, and a few pixel by pixel. The two renderers
+//! measure the same area and round it differently, the library to 16
+//! levels: `ink_apart` and `pixel_apart` say how far apart they may be.
+//!
 //! The library reads characters by one of a font's maps. To compare the
 //! others too, the test takes the opened font's state, puts each subtable
 //! in the place of the one picked, and asks the library's own reader
@@ -57,6 +64,45 @@ fn expectMap(what: []const u8, want_count: u32, want: []const u8, font: *const _
         count += 1;
     }
     try expectDigest(what, want_count, want, count, &digest);
+}
+
+/// How far the library's ink of a glyph may be from libfreetype's: so
+/// many thousandths of the larger and so many whole pixels' worth more;
+/// and how far one pixel may be, in levels of 15. Of the 3619 glyphs
+/// compared the furthest is 1.7 pixels' worth past the thousandths, and
+/// no pixel is more than a level off.
+const ink_apart = 20;
+const ink_least = 2;
+const pixel_apart = 1;
+
+/// A verb of a cubic outline: its number in a hashed outline, its letter
+/// in one written out, and how many points it has.
+const Verb = struct { number: u32, letter: u8, points: u32 };
+
+fn verbOf(verb: u8) ?Verb {
+    return switch (verb) {
+        sdk.vector.SEG_MOVE => .{ .number = 0, .letter = 'M', .points = 1 },
+        sdk.vector.SEG_LINE => .{ .number = 1, .letter = 'L', .points = 1 },
+        sdk.vector.SEG_CUBIC => .{ .number = 2, .letter = 'C', .points = 3 },
+        sdk.vector.SEG_CLOSE => .{ .number = 3, .letter = 'Z', .points = 0 },
+        else => null,
+    };
+}
+
+/// A coordinate of a glyph of cubic curves: a whole number of units.
+fn whole(value: f32) !i32 {
+    if (@round(value) != value) return error.ReadDiffers;
+    return @intFromFloat(value);
+}
+
+/// The coverage of pixel (`x`, `y`) of the line in levels of 15, of a
+/// glyph rendered into `pixels`; 0 outside its box.
+fn levelAt(box: *const fontimage.Glyph, pixels: []const u8, x: i32, y: i32) u8 {
+    const column = x - box.left;
+    const row = y - box.top;
+    if (column < 0 or row < 0 or column >= box.width or row >= box.rows) return 0;
+    const byte = pixels[@as(usize, @intCast(row)) * box.pitch + @as(usize, @intCast(column)) / 2];
+    return if (column & 1 == 0) byte >> 4 else byte & 0x0F;
 }
 
 /// The room a glyph is rendered into, the bytes after a glyph's that are
@@ -146,10 +192,13 @@ fn expectFont(expected: *const reference.Font) !void {
     const sys = rig.sys;
     const tb = rig.tb;
 
-    try testing.expect(truetype.isTrueType(bytes));
-    try testing.expectEqual(@as(u32, 1), truetype.fontCount(bytes));
-    try testing.expectEqual(@as(?u32, 0), truetype.fontDirectory(bytes, 0));
-    const outline = tb.OpenOutline(bytes.ptr, size, null) orelse return error.NotRead;
+    try testing.expectEqual(expected.font_count == 1, truetype.isTrueType(bytes));
+    try testing.expectEqual(expected.font_count, truetype.fontCount(bytes));
+    try testing.expectEqual(@as(?u32, expected.directory), truetype.fontDirectory(bytes, expected.index));
+    try testing.expectEqual(@as(?u32, null), truetype.fontDirectory(bytes, expected.font_count));
+    const which = [_]sdk.utility.TagItem{ .{ .tag = truetype.TTA_FontIndex, .data = expected.index }, .{} };
+    const outline = tb.OpenOutline(bytes.ptr, size, &which) orelse return error.NotRead;
+    const curves = expected.outlines or expected.cubic;
 
     // The font's measures.
     var metrics: truetype.FontMetrics = .{};
@@ -169,10 +218,11 @@ fn expectFont(expected: *const reference.Font) !void {
     if (expected.bold) style |= graphics.FSF_BOLD;
     if (expected.italic) style |= graphics.FSF_ITALIC;
     try testing.expectEqual(style, metrics.style);
-    try testing.expectEqual(style, truetype.styleOf(bytes));
+    // A file's style is its first font's.
+    if (expected.index == 0) try testing.expectEqual(style, truetype.styleOf(bytes));
 
     // Every table of the directory, where the file has it.
-    try testing.expectEqual(expected.tables.len, std.mem.readInt(u16, bytes[4..6], .big));
+    try testing.expectEqual(expected.tables.len, std.mem.readInt(u16, bytes[expected.directory + 4 ..][0..2], .big));
     var length: u32 = 0;
     for (expected.tables) |entry| {
         const table = tb.FontTable(outline, truetype.tableTag(entry.tag), &length);
@@ -289,16 +339,21 @@ fn expectFont(expected: *const reference.Font) !void {
         try testing.expectEqual(@as(u8, 0), text_buffer[0]);
     }
 
-    // Every glyph: its measures, and its outline read into the room the
-    // font says the largest takes, each contour closed.
+    // Every glyph, or every `glyph_step`th: its measures, and its outline
+    // read into the room the font says the largest takes, each contour
+    // closed. Of a font of cubic curves the outline itself: the verbs and
+    // the points counted, then each verb and its points.
     const verbs = try testing.allocator.alloc(u8, @max(metrics.most_verbs, 1));
     defer testing.allocator.free(verbs);
     const points = try testing.allocator.alloc(sdk.vector.Point, @max(metrics.most_points, 1));
     defer testing.allocator.free(points);
     var measures: truetype.GlyphMetrics = .{};
     digest = .{};
+    var drawing: reference.Digest = .{};
+    count = 0;
     var glyph: u32 = 0;
-    while (glyph < expected.glyph_count) : (glyph += 1) {
+    while (glyph < expected.glyph_count) : (glyph += expected.glyph_step) {
+        count += 1;
         try testing.expect(tb.GlyphMetrics(outline, glyph, &measures));
         digest.addSigned(measures.advance);
         digest.addSigned(measures.left_bearing);
@@ -321,12 +376,44 @@ fn expectFont(expected: *const reference.Font) !void {
             if (verb == sdk.vector.SEG_CLOSE) closes += 1;
         }
         const drawn = measures.x_max > measures.x_min and measures.y_max > measures.y_min;
-        if (result != truetype.TRUETYPE_OK or moves != closes or (drawn and moves == 0) or (!expected.outlines and moves != 0)) {
+        if (result != truetype.TRUETYPE_OK or moves != closes or (drawn and moves == 0) or (!curves and moves != 0)) {
             std.debug.print("glyph {d}: its outline answers {d}, {d} contours begun and {d} closed\n", .{ glyph, result, moves, closes });
             return error.ReadDiffers;
         }
+        if (!expected.cubic) continue;
+        errdefer std.debug.print("glyph {d}: its outline is not of whole units, or has a verb no cubic outline has\n", .{glyph});
+        drawing.add(segments.verb_count);
+        drawing.add(segments.point_count);
+        var next: usize = 0;
+        for (verbs[0..segments.verb_count]) |verb| {
+            const kind = verbOf(verb) orelse return error.ReadDiffers;
+            drawing.add(kind.number);
+            for (points[next..][0..kind.points]) |point| {
+                drawing.addSigned(try whole(point.x));
+                drawing.addSigned(try whole(point.y));
+            }
+            next += kind.points;
+        }
     }
-    try expectDigest("the glyphs' measures", expected.glyph_count, expected.metrics_sha256, glyph, &digest);
+    const measured = (expected.glyph_count + expected.glyph_step - 1) / expected.glyph_step;
+    try expectDigest("the glyphs' measures", measured, expected.metrics_sha256, count, &digest);
+    if (expected.cubic) try expectDigest("the glyphs' outlines", measured, expected.outlines_sha256, count, &drawing);
+    // The few outlines written out.
+    for (expected.shapes) |shape| {
+        var segments = truetype.Segments{ .verbs = verbs.ptr, .points = points.ptr, .verb_room = metrics.most_verbs, .point_room = metrics.most_points };
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, shape.glyph, &segments));
+        errdefer std.debug.print("glyph {d}: {d} verbs and {d} points, not {s}\n", .{ shape.glyph, segments.verb_count, segments.point_count, shape.verbs });
+        try testing.expectEqual(shape.verbs.len, segments.verb_count);
+        try testing.expectEqual(shape.points.len, segments.point_count);
+        for (shape.verbs, verbs[0..shape.verbs.len]) |letter, verb| {
+            const kind = verbOf(verb) orelse return error.ReadDiffers;
+            try testing.expectEqual(letter, kind.letter);
+        }
+        for (shape.points, points[0..shape.points.len]) |want, point| {
+            try testing.expectEqual(@as(f32, @floatFromInt(want[0])), point.x);
+            try testing.expectEqual(@as(f32, @floatFromInt(want[1])), point.y);
+        }
+    }
     // One past the last.
     try testing.expect(!tb.GlyphMetrics(outline, expected.glyph_count, &measures));
     try testing.expectEqual(truetype.GlyphMetrics{}, measures);
@@ -343,7 +430,7 @@ fn expectFont(expected: *const reference.Font) !void {
         .{ .first = 0x1F600, .last = 0x1F64F },
     };
     const rendered = tb.RenderFontImage(outline, 16, &ranges, ranges.len);
-    if (expected.outlines) {
+    if (curves) {
         const image = rendered orelse return error.NoImage;
         const block: [*]const u8 = @ptrCast(image);
         try testing.expect(fontimage.check(block, image.size));
@@ -394,6 +481,42 @@ fn expectFont(expected: *const reference.Font) !void {
         const tall = try expectGlyphsRendered(tb, outline, &metrics, 64, pixels);
         try testing.expectEqual(tall.drawn, tall.inked);
         try testing.expect(tall.inked > expected.glyph_count / 2);
+
+        // Against libfreetype: the ink of every `ink_step`th glyph, the
+        // coverage of all its pixels summed.
+        for (expected.inks, 0..) |theirs, i| {
+            const number: u32 = @intCast(i * expected.ink_step);
+            var one = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room };
+            try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, number, expected.ink_rows, &one));
+            var ours: u32 = 0;
+            for (pixels[0..one.size]) |byte| ours += @as(u32, (byte >> 4) + (byte & 0x0F)) * 17;
+            @memset(pixels[0..one.size], untouched);
+            const apart = @max(ours, theirs) - @min(ours, theirs);
+            if (apart <= ink_least * 255 + @max(ours, theirs) * ink_apart / 1000) continue;
+            std.debug.print("glyph {d} at {d} rows: ink {d}, libfreetype's {d}\n", .{ number, expected.ink_rows, ours, theirs });
+            return error.ReadDiffers;
+        }
+        // A few pixel by pixel, over both boxes.
+        for (expected.pictures) |picture| {
+            var one = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room };
+            try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, picture.glyph, expected.picture_rows, &one));
+            const box = one.glyph;
+            const height: i32 = @intCast(picture.rows.len);
+            const width: i32 = @intCast(picture.width);
+            var y = @min(picture.top, box.top);
+            while (y < @max(picture.top + height, @as(i32, box.top) + box.rows)) : (y += 1) {
+                var x = @min(picture.left, box.left);
+                while (x < @max(picture.left + width, @as(i32, box.left) + box.width)) : (x += 1) {
+                    const inside = y >= picture.top and y < picture.top + height and x >= picture.left and x < picture.left + width;
+                    const theirs: i32 = if (inside) try std.fmt.charToDigit(picture.rows[@intCast(y - picture.top)][@intCast(x - picture.left)], 16) else 0;
+                    const ours: i32 = levelAt(&box, pixels, x, y);
+                    if (@abs(ours - theirs) <= pixel_apart) continue;
+                    std.debug.print("glyph {d} at {d} rows: pixel {d}, {d} is {d}, libfreetype's {d}\n", .{ picture.glyph, expected.picture_rows, x, y, ours, theirs });
+                    return error.ReadDiffers;
+                }
+            }
+            @memset(pixels[0..one.size], untouched);
+        }
         // One past the last.
         var past = truetype.GlyphImage{ .pixels = pixels.ptr, .room = glyph_room, .size = 1 };
         try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, tb.RenderGlyph(outline, expected.glyph_count, 16, &past));
@@ -433,9 +556,26 @@ test "truetype: noto/NotoColorEmoji.ttf as fontTools reads it" {
     try expectFont(reference.noto_color_emoji);
 }
 
+test "truetype: source-sans/SourceSans3-Regular.otf as fontTools reads it" {
+    try expectFont(reference.source_sans_3_regular);
+}
+
+test "truetype: noto/NotoSansCJK-Regular.ttc, its first font, as fontTools reads it" {
+    try expectFont(reference.noto_sans_cjk_jp_regular);
+}
+
+test "truetype: noto/NotoSansCJK-Regular.ttc, its third font, as fontTools reads it" {
+    try expectFont(reference.noto_sans_cjk_sc_regular);
+}
+
 test "truetype: there is a test for every font with values" {
-    // The four above, each named with its file.
-    try testing.expectEqual(@as(usize, 4), reference.fonts.len);
+    // The seven above, each named with its file.
+    try testing.expectEqual(@as(usize, 7), reference.fonts.len);
+    try testing.expectEqualStrings("source-sans/SourceSans3-Regular.otf", reference.source_sans_3_regular.file);
+    try testing.expectEqualStrings("noto/NotoSansCJK-Regular.ttc", reference.noto_sans_cjk_jp_regular.file);
+    try testing.expectEqual(@as(u32, 0), reference.noto_sans_cjk_jp_regular.index);
+    try testing.expectEqualStrings("noto/NotoSansCJK-Regular.ttc", reference.noto_sans_cjk_sc_regular.file);
+    try testing.expectEqual(@as(u32, 2), reference.noto_sans_cjk_sc_regular.index);
     try testing.expectEqualStrings("go/Go-Regular.ttf", reference.go_regular.file);
     try testing.expectEqualStrings("liberation-fonts-ttf-2.1.5/LiberationSans-Regular.ttf", reference.liberation_sans_regular.file);
     try testing.expectEqualStrings("noto/NotoSansDevanagari-Regular.ttf", reference.noto_sans_devanagari_regular.file);

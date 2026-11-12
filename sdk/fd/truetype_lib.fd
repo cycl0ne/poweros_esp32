@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! truetype.library's functions: a TrueType file rendered into font
 //! images, one size at a time, since 1.2 its glyphs as outlines, since
-//! 1.4 a font of a collection, its names and its tables, and since 1.5
-//! one glyph rendered by its number.
+//! 1.4 a font of a collection, its names and its tables, since 1.5 one
+//! glyph rendered by its number, and since 1.6 an OpenType file whose
+//! glyphs are of cubic curves (a CFF table's).
 //! Open it with OpenLibrary("truetype.library", 1).
 ##include libs/utility/utility as utility
 ##include libs/graphics/graphics as graphics
@@ -12,7 +13,7 @@
 ##bias 4
 ##public
 /// The font in `size` bytes at `file`, its tables found and checked; null
-/// if it is not a TrueType font this library reads. `tags` say which font
+/// if it is not a font this library reads. `tags` say which font
 /// of a collection (TTA_FontIndex); null for the first. The bytes must
 /// stay until CloseOutline. Tags since 1.4.
 ?*truetype.Outline OpenOutline([*]const u8 file, u32 size, ?[*]const utility.TagItem tags)

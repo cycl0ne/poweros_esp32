@@ -29,8 +29,17 @@
 //! format is read, the variation sequences beside it are kept, and a font
 //! need not have outlines: one whose glyphs are pictures has neither
 //! `glyf` nor `loca`, and every glyph of it reads as one of no outline.
+//!
+//! Since 1.6 a font's outlines may be a `CFF ` table's in place of
+//! `glyf` and `loca`: lines and cubic curves, read by `_cff.zig` into the
+//! same list of contours, a curve as two control points (`Point.cubic`)
+//! and the point it ends at. Such a font says nothing of its largest
+//! glyph, and a glyph that does not fit the room it is read into says
+//! what it needs (`Contours.short`). A font whose only outlines are a
+//! `CFF2` table's is not opened.
 
 const sdk = @import("sdk");
+const _cff = @import("_cff.zig");
 
 /// A font file, opened: where its tables are and the measures rendering
 /// needs. What `OpenOutline` answers, behind `truetype.Outline`.
@@ -76,6 +85,9 @@ pub const Font = struct {
     max_contours: u32,
     /// The `kern` table; of no length when the font has none.
     kern: Table,
+    /// The `CFF ` table (since 1.6), read when the font has no `glyf`;
+    /// its `table` of no length otherwise.
+    cff: _cff.Cff,
 };
 
 /// What a glyph is read with when `maxp` does not say how large one is.
@@ -89,11 +101,14 @@ pub const Table = struct {
     len: u32 = 0,
 };
 
-/// One point of a glyph, in font units.
+/// One point of a glyph, in font units: on the curve, or off it - the
+/// control point of a quadratic curve, or with `cubic` one of the two a
+/// cubic curve has, which stand in a row before the point it ends at.
 pub const Point = struct {
     x: f32,
     y: f32,
     on: bool,
+    cubic: bool = false,
 };
 
 /// A glyph's contours: `points`, and the index after each contour's last
@@ -107,6 +122,11 @@ pub const Contours = struct {
     end_count: u32 = 0,
     /// The parts of composite glyphs read so far, of `max_parts`.
     part_count: u32 = 0,
+    /// Set by `contours` when a glyph of cubic curves did not fit, with
+    /// the points and contours it has: one more of each is room enough.
+    short: bool = false,
+    needed_points: u32 = 0,
+    needed_ends: u32 = 0,
 };
 
 /// The two bytes at `at` in the file, 0 where it ends before them.
@@ -198,6 +218,14 @@ pub fn open(font: *Font, data: [*]const u8, size: u32, index: u32) bool {
     if ((loca == null) != (glyf == null)) return false;
     font.loca = loca orelse .{};
     font.glyf = glyf orelse .{};
+    // Without them, the outlines a `CFF ` table has; one that cannot be
+    // read, or a `CFF2` table alone, is a font not read.
+    font.cff = .{};
+    if (glyf == null) {
+        if (findTable(font, "CFF ")) |table| {
+            font.cff = _cff.open(font, table) orelse return false;
+        } else if (findTable(font, "CFF2") != null) return false;
+    }
     if (head.len < 54 or hhea.len < 36 or maxp.len < 6) return false;
     font.units_per_em = wordIn(font, head, 18);
     font.loca_long = signedIn(font, head, 50) != 0;
@@ -474,9 +502,21 @@ pub fn leftBearingOf(font: *const Font, glyph: u32) i32 {
     return signedIn(font, font.hmtx, font.hmetric_count * 4 + (glyph - font.hmetric_count) * 2);
 }
 
-/// A glyph's box, as its data's header gives it: x min, y min, x max, y
-/// max; all 0 for a glyph of no outline.
+/// Whether the font has outlines at all: `glyf`, or a `CFF ` table.
+pub fn hasOutlines(font: *const Font) bool {
+    return font.glyf.len != 0 or font.cff.table.len != 0;
+}
+
+/// Whether the font's outlines are a `CFF ` table's.
+pub fn isCubic(font: *const Font) bool {
+    return font.glyf.len == 0 and font.cff.table.len != 0;
+}
+
+/// A glyph's box: x min, y min, x max, y max; all 0 for a glyph of no
+/// outline. As its data's header gives it, and for a `CFF ` table's
+/// glyph, which has none, the box of its points.
 pub fn boxOf(font: *const Font, glyph: u32) [4]i32 {
+    if (isCubic(font)) return _cff.boxOf(font, glyph);
     const data = glyphData(font, glyph) orelse return .{ 0, 0, 0, 0 };
     if (data.len < 10) return .{ 0, 0, 0, 0 };
     return .{ signedIn(font, data, 2), signedIn(font, data, 4), signedIn(font, data, 6), signedIn(font, data, 8) };
@@ -551,8 +591,11 @@ const max_parts = 256;
 
 /// A glyph's contours added to `into`, transformed by `m` (a, b, c, d,
 /// dx, dy: x' = a x + c y + dx, y' = b x + d y + dy). False when they do
-/// not fit or the data is damaged.
+/// not fit or the data is damaged; for a glyph of cubic curves that does
+/// not fit, `into.short` says so and how much it needs.
 pub fn contours(font: *const Font, glyph: u32, into: *Contours, m: [6]f32, depth: u32) bool {
+    into.short = false;
+    if (isCubic(font)) return _cff.contours(font, glyph, into, m);
     const data = glyphData(font, glyph) orelse return true;
     const count = signedIn(font, data, 0);
     if (count >= 0) return simple(font, data, @intCast(count), into, m);
@@ -620,6 +663,7 @@ fn simple(font: *const Font, data: Table, contour_count: u32, into: *Contours, m
         }
         points[p].x = @floatFromInt(x);
         points[p].on = flag & 1 != 0;
+        points[p].cubic = false;
     }
     var y: i32 = 0;
     for (0..point_count) |p| {

@@ -7,7 +7,14 @@
 //! a Zig file under `reference/`, headed by the font's file name and its
 //! SHA-256. A test reads the same file with truetype.library and compares
 //! (`fonts.zig`). The files are committed: the tests need the fonts, and
-//! neither Python nor fontTools.
+//! neither Python nor fontTools. A font of a collection has a file of its
+//! own, which says the font's place in the collection.
+//!
+//! What a font's table says is fontTools' reading. How a glyph of cubic
+//! curves looks rendered is libfreetype's: the glyph's outline in the
+//! font's units, without hints, scaled to a line of so many rows from
+//! the ascender to the descender and put where the library puts it, the
+//! point at a pixel's left edge and the ascender at a row's top.
 //!
 //! A list too long to write out - every character of a map, every glyph's
 //! measures - is written as how many entries it has and the SHA-256 of
@@ -24,8 +31,14 @@
 //!   glyph is the sequence's own, or the character's where the font says
 //!   the sequence looks as the character does.
 //! - The glyphs' measures: (advance, left side bearing, x min, y min,
-//!   x max, y max) for every glyph, by its number; a glyph of no outline
-//!   has a box of 0.
+//!   x max, y max) for every glyph, by its number - or for every
+//!   `glyph_step`th, from glyph 0; a glyph of no outline has a box of 0,
+//!   and one of cubic curves the box of its points, the control points
+//!   among them.
+//! - The outlines of a font of cubic curves: for each of the same glyphs
+//!   how many verbs and how many points it has, then each verb's number -
+//!   a move 0, a line 1, a curve 2, a close 3 - and its points' x and y.
+//!   A contour of one point is none.
 
 const std = @import("std");
 const test_options = @import("test_options");
@@ -76,6 +89,29 @@ pub const Entry = struct {
     len: u32,
 };
 
+/// One glyph of cubic curves written out.
+pub const Shape = struct {
+    glyph: u32,
+    /// A letter a verb: M a move, L a line, C a curve, Z a close.
+    verbs: []const u8,
+    /// The verbs' points in their order, x and y in the font's units: one
+    /// of a move or a line, three of a curve.
+    points: []const [2]i32,
+};
+
+/// One glyph as libfreetype renders it for a line `picture_rows` tall.
+pub const Picture = struct {
+    glyph: u32,
+    /// Where its box of ink is: pixels right of the point, and rows below
+    /// the line's top.
+    left: i32,
+    top: i32,
+    width: u32,
+    /// The box row by row from the top, a hex digit a pixel: its coverage
+    /// in fifteenths, rounded.
+    rows: []const []const u8,
+};
+
 /// One font, as fontTools reads it.
 pub const Font = struct {
     /// The file, under the directory the fonts are fetched into, and what
@@ -83,8 +119,17 @@ pub const Font = struct {
     file: []const u8,
     sha256: []const u8,
     size: u32,
+    /// Which font of the file it is, how many the file holds, and where
+    /// in the file this one's table directory is.
+    index: u32,
+    font_count: u32,
+    directory: u32,
     /// Whether it has `glyf` and `loca`: glyphs of lines and curves.
     outlines: bool,
+    /// Whether it has `CFF ` instead: glyphs of lines and cubic curves.
+    cubic: bool,
+    /// Every which glyph's measures and outline are hashed: 1 for all.
+    glyph_step: u32,
     /// `maxp`, `head` and `hhea`.
     glyph_count: u32,
     units_per_em: u32,
@@ -103,8 +148,21 @@ pub const Font = struct {
     /// `head`'s style bits.
     bold: bool,
     italic: bool,
-    /// Every glyph's measures, hashed; there are `glyph_count` of them.
+    /// The glyphs' measures, hashed: of every `glyph_step`th glyph.
     metrics_sha256: []const u8,
+    /// The same glyphs' outlines, hashed, and a few written out; empty
+    /// for a font that is not of cubic curves.
+    outlines_sha256: []const u8,
+    shapes: []const Shape,
+    /// libfreetype's rendering for a line `ink_rows` tall: the sum of the
+    /// coverage of all pixels, each 0 to 255, of glyph 0, `ink_step`,
+    /// twice that and so on. Empty for a font not rendered.
+    ink_rows: u32,
+    ink_step: u32,
+    inks: []const u32,
+    /// A few glyphs pixel by pixel, for a line `picture_rows` tall.
+    picture_rows: u32,
+    pictures: []const Picture,
     /// The table directory, in the file's order.
     tables: []const Entry,
     /// The character map's subtables, in the table's order.
@@ -128,6 +186,9 @@ pub const go_regular = &@import("reference/go_regular.zig").font;
 pub const liberation_sans_regular = &@import("reference/liberation_sans_regular.zig").font;
 pub const noto_sans_devanagari_regular = &@import("reference/noto_sans_devanagari_regular.zig").font;
 pub const noto_color_emoji = &@import("reference/noto_color_emoji.zig").font;
+pub const source_sans_3_regular = &@import("reference/source_sans_3_regular.zig").font;
+pub const noto_sans_cjk_jp_regular = &@import("reference/noto_sans_cjk_jp_regular.zig").font;
+pub const noto_sans_cjk_sc_regular = &@import("reference/noto_sans_cjk_sc_regular.zig").font;
 
 /// Every font there are values for.
 pub const fonts = [_]*const Font{
@@ -135,6 +196,9 @@ pub const fonts = [_]*const Font{
     liberation_sans_regular,
     noto_sans_devanagari_regular,
     noto_color_emoji,
+    source_sans_3_regular,
+    noto_sans_cjk_jp_regular,
+    noto_sans_cjk_sc_regular,
 };
 
 /// Numbers being hashed as the script hashes them.

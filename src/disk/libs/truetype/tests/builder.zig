@@ -99,8 +99,15 @@ pub const Parts = struct {
     advance: u16 = 600,
     /// `head`'s style bits: 1 bold, 2 italic.
     style_bits: u16 = 0,
-    /// Tables beside the ones every font here has: `name`, `kern`, `OS/2`.
+    /// Tables beside the ones every font here has: `name`, `kern`, `OS/2`,
+    /// `CFF `.
     more: []const Table = &.{},
+    /// What the font starts with: version 1.0, or 'OTTO'.
+    tag: u32 = 0x0001_0000,
+    /// Whether `maxp` names the largest glyph - version 1.0, the
+    /// square's four points in one contour - or only counts the glyphs,
+    /// version 0.5, as a font of cubic curves has it.
+    largest: bool = true,
 };
 
 /// The measures every built font has.
@@ -117,7 +124,7 @@ pub fn font(file: *File, parts: Parts) u32 {
     const own: u32 = if (parts.outlines) 7 else 5;
     const count: u32 = own + @as(u32, @intCast(parts.more.len));
     const directory = file.len;
-    file.long(0x0001_0000);
+    file.long(parts.tag);
     file.word(@intCast(count));
     file.skip(6);
     file.skip(count * 16);
@@ -152,12 +159,17 @@ pub fn font(file: *File, parts: Parts) u32 {
     end(file, record);
 
     begin(file, &record, "maxp");
-    file.long(0x0001_0000);
-    file.word(parts.glyphs);
-    // The most points and contours of a glyph: the square's.
-    file.word(4);
-    file.word(1);
-    file.skip(22);
+    if (parts.largest) {
+        file.long(0x0001_0000);
+        file.word(parts.glyphs);
+        // The most points and contours of a glyph: the square's.
+        file.word(4);
+        file.word(1);
+        file.skip(22);
+    } else {
+        file.long(0x0000_5000);
+        file.word(parts.glyphs);
+    }
     end(file, record);
 
     if (parts.outlines) {
@@ -545,4 +557,236 @@ pub fn whole(file: *File) void {
             .{ .tag = "post", .bytes = post.written() },
         },
     });
+}
+
+// --- a table of cubic outlines -------------------------------------------------
+
+/// What a built `CFF ` table is made of.
+pub const CffParts = struct {
+    /// A program a glyph.
+    glyphs: []const []const u8,
+    /// The global subroutines, and the local ones of a font that is not
+    /// CID-keyed.
+    globals: []const []const u8 = &.{},
+    locals: []const []const u8 = &.{},
+    /// A CID-keyed font's font dictionaries, the local subroutines of
+    /// each; with none the font is not CID-keyed.
+    fonts: []const []const []const u8 = &.{},
+    /// Its `FDSelect`, whole.
+    select: []const u8 = &.{},
+    /// The size of an offset in every list, 1 to 4.
+    off_size: u8 = 2,
+    /// The table's version.
+    major: u8 = 1,
+    /// What kind its programs are, when the top dictionary says so.
+    charstring_type: ?u8 = null,
+};
+
+/// An offset of a list, in `size` bytes.
+fn listOffset(file: *File, size: u8, value: u32) void {
+    switch (size) {
+        1 => file.byte(@intCast(value)),
+        2 => file.word(@intCast(value)),
+        3 => file.triple(value),
+        else => file.long(value),
+    }
+}
+
+/// A list of `entries`: their count, the size of an offset, where each
+/// starts and the last ends, counted from the byte before the first,
+/// and their bytes.
+fn listOf(file: *File, entries: []const []const u8, off_size: u8) void {
+    file.word(@intCast(entries.len));
+    if (entries.len == 0) return;
+    file.byte(off_size);
+    var offset: u32 = 1;
+    listOffset(file, off_size, offset);
+    for (entries) |entry| {
+        offset += @intCast(entry.len);
+        listOffset(file, off_size, offset);
+    }
+    for (entries) |entry| file.text(entry);
+}
+
+/// A number of a dictionary in five bytes, whatever it is, so that it
+/// can be set once it is known: answers where its four bytes are.
+fn dictNumber(file: *File) u32 {
+    file.byte(29);
+    file.skip(4);
+    return file.len - 4;
+}
+
+/// A private dictionary and, when it has any, its subroutines after it;
+/// its length and where it starts in the table set at `size` and
+/// `where`.
+fn private(file: *File, table: u32, subrs: []const []const u8, off_size: u8, size: u32, where: u32) void {
+    const start = file.len;
+    file.setLong(where, start - table);
+    if (subrs.len == 0) {
+        // Only a default width, of 0.
+        file.byte(139);
+        file.byte(20);
+        file.setLong(size, 2);
+        return;
+    }
+    // The subroutines, counted from the dictionary's start: right after
+    // its six bytes.
+    const subrs_at = dictNumber(file);
+    file.byte(19);
+    file.setLong(subrs_at, file.len - start);
+    file.setLong(size, file.len - start);
+    listOf(file, subrs, off_size);
+}
+
+/// A `CFF ` table of `parts` written at the end of `file`: the header,
+/// the name, the top dictionary, no strings, the global subroutines,
+/// the programs, and the private dictionary with its subroutines - or,
+/// CID-keyed, `FDSelect`, the font dictionaries and each one's private
+/// dictionary.
+pub fn cff(file: *File, parts: CffParts) void {
+    const table = file.len;
+    const cid = parts.fonts.len != 0;
+    file.byte(parts.major);
+    file.byte(0);
+    file.byte(4);
+    file.byte(parts.off_size);
+    listOf(file, &.{"Built"}, parts.off_size);
+
+    // The top dictionary, the one entry of its list.
+    const kind: u32 = if (parts.charstring_type != null) 3 else 0;
+    const length: u32 = kind + @as(u32, if (cid) 5 + 7 + 7 + 6 else 6 + 11);
+    file.word(1);
+    file.byte(parts.off_size);
+    listOffset(file, parts.off_size, 1);
+    listOffset(file, parts.off_size, 1 + length);
+    var fonts_at: u32 = 0;
+    var select_at: u32 = 0;
+    var private_size: u32 = 0;
+    var private_at: u32 = 0;
+    if (cid) {
+        // Registry, ordering and supplement.
+        file.text(&.{ 139, 139, 139, 12, 30 });
+        fonts_at = dictNumber(file);
+        file.text(&.{ 12, 36 });
+        select_at = dictNumber(file);
+        file.text(&.{ 12, 37 });
+    }
+    if (parts.charstring_type) |value| file.text(&.{ value + 139, 12, 6 });
+    const programs_at = dictNumber(file);
+    file.byte(17);
+    if (!cid) {
+        private_size = dictNumber(file);
+        private_at = dictNumber(file);
+        file.byte(18);
+    }
+
+    // No strings.
+    file.word(0);
+    listOf(file, parts.globals, parts.off_size);
+
+    file.setLong(programs_at, file.len - table);
+    listOf(file, parts.glyphs, parts.off_size);
+
+    if (!cid) {
+        private(file, table, parts.locals, parts.off_size, private_size, private_at);
+        return;
+    }
+    file.setLong(select_at, file.len - table);
+    file.text(parts.select);
+    // The font dictionaries, eleven bytes each: a private dictionary's
+    // length and place.
+    file.setLong(fonts_at, file.len - table);
+    file.word(@intCast(parts.fonts.len));
+    file.byte(parts.off_size);
+    for (0..parts.fonts.len + 1) |i| listOffset(file, parts.off_size, @intCast(1 + i * 11));
+    const dicts = file.len;
+    for (parts.fonts) |_| {
+        _ = dictNumber(file);
+        _ = dictNumber(file);
+        file.byte(18);
+    }
+    for (parts.fonts, 0..) |subrs, i| {
+        const dict = dicts + @as(u32, @intCast(i)) * 11;
+        private(file, table, subrs, parts.off_size, dict + 1, dict + 6);
+    }
+}
+
+/// The operators of a glyph's program by name; one of two bytes is 12
+/// and its second.
+const Operator = struct { name: []const u8, code: u16 };
+const operators = [_]Operator{
+    .{ .name = "hstem", .code = 1 },       .{ .name = "vstem", .code = 3 },
+    .{ .name = "vmoveto", .code = 4 },     .{ .name = "rlineto", .code = 5 },
+    .{ .name = "hlineto", .code = 6 },     .{ .name = "vlineto", .code = 7 },
+    .{ .name = "rrcurveto", .code = 8 },   .{ .name = "callsubr", .code = 10 },
+    .{ .name = "return", .code = 11 },     .{ .name = "endchar", .code = 14 },
+    .{ .name = "hstemhm", .code = 18 },    .{ .name = "hintmask", .code = 19 },
+    .{ .name = "cntrmask", .code = 20 },   .{ .name = "rmoveto", .code = 21 },
+    .{ .name = "hmoveto", .code = 22 },    .{ .name = "vstemhm", .code = 23 },
+    .{ .name = "rcurveline", .code = 24 }, .{ .name = "rlinecurve", .code = 25 },
+    .{ .name = "vvcurveto", .code = 26 },  .{ .name = "hhcurveto", .code = 27 },
+    .{ .name = "callgsubr", .code = 29 },  .{ .name = "vhcurveto", .code = 30 },
+    .{ .name = "hvcurveto", .code = 31 },  .{ .name = "and", .code = 0x0C03 },
+    .{ .name = "or", .code = 0x0C04 },     .{ .name = "not", .code = 0x0C05 },
+    .{ .name = "abs", .code = 0x0C09 },    .{ .name = "add", .code = 0x0C0A },
+    .{ .name = "sub", .code = 0x0C0B },    .{ .name = "div", .code = 0x0C0C },
+    .{ .name = "neg", .code = 0x0C0E },    .{ .name = "eq", .code = 0x0C0F },
+    .{ .name = "drop", .code = 0x0C12 },   .{ .name = "put", .code = 0x0C14 },
+    .{ .name = "get", .code = 0x0C15 },    .{ .name = "ifelse", .code = 0x0C16 },
+    .{ .name = "random", .code = 0x0C17 }, .{ .name = "mul", .code = 0x0C18 },
+    .{ .name = "sqrt", .code = 0x0C1A },   .{ .name = "dup", .code = 0x0C1B },
+    .{ .name = "exch", .code = 0x0C1C },   .{ .name = "index", .code = 0x0C1D },
+    .{ .name = "roll", .code = 0x0C1E },   .{ .name = "hflex", .code = 0x0C22 },
+    .{ .name = "flex", .code = 0x0C23 },   .{ .name = "hflex1", .code = 0x0C24 },
+    .{ .name = "flex1", .code = 0x0C25 },
+};
+
+/// A glyph's program, or a subroutine, from its text: numbers and
+/// operators by their names, a space between each two. A number is
+/// written the shortest way; `s:` before it writes it in three bytes,
+/// and `f:` as sixteen bits of whole number and sixteen of fraction, the
+/// way one with a fraction is written anyway. `#` and two hex digits
+/// are a byte as it stands: a hint mask's, or one that is no operator.
+pub fn program(comptime text: []const u8) []const u8 {
+    const stored = comptime stored: {
+        @setEvalBranchQuota(400_000);
+        var out: [text.len * 5]u8 = undefined;
+        var len: usize = 0;
+        var words = std.mem.tokenizeScalar(u8, text, ' ');
+        while (words.next()) |word| {
+            const bytes = wordOf(word);
+            @memcpy(out[len..][0..bytes.len], bytes);
+            len += bytes.len;
+        }
+        const exact: [len]u8 = out[0..len].*;
+        break :stored exact;
+    };
+    return &stored;
+}
+
+/// One word of a program's text as its bytes.
+fn wordOf(comptime word: []const u8) []const u8 {
+    if (word[0] == '#') return &.{std.fmt.parseInt(u8, word[1..], 16) catch @compileError("not a byte: " ++ word)};
+    for (operators) |operator| {
+        if (!std.mem.eql(u8, operator.name, word)) continue;
+        if (operator.code < 0x100) return &.{@intCast(operator.code)};
+        return &.{ 12, @intCast(operator.code & 0xFF) };
+    }
+    const short = std.mem.startsWith(u8, word, "s:");
+    const fixed = std.mem.startsWith(u8, word, "f:") or std.mem.indexOfScalar(u8, word, '.') != null;
+    const digits = if (word.len > 2 and word[1] == ':') word[2..] else word;
+    if (fixed) {
+        const value = std.fmt.parseFloat(f64, digits) catch @compileError("not a number: " ++ word);
+        const bits: u32 = @bitCast(@as(i32, @intFromFloat(value * 65536.0)));
+        return &.{ 255, @intCast(bits >> 24), @intCast(bits >> 16 & 0xFF), @intCast(bits >> 8 & 0xFF), @intCast(bits & 0xFF) };
+    }
+    const value = std.fmt.parseInt(i32, digits, 10) catch @compileError("neither a number nor an operator: " ++ word);
+    if (!short and value >= -107 and value <= 107) return &.{@intCast(value + 139)};
+    const size: u32 = @abs(value);
+    if (!short and size >= 108 and size <= 1131) {
+        const lead: u32 = if (value > 0) 247 else 251;
+        return &.{ @intCast(lead + (size - 108) / 256), @intCast((size - 108) % 256) };
+    }
+    const bits: u16 = @bitCast(@as(i16, @intCast(value)));
+    return &.{ 28, @intCast(bits >> 8), @intCast(bits & 0xFF) };
 }

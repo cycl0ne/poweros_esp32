@@ -345,7 +345,7 @@ const outline_ranges = [_]truetype.CodeRange{
 };
 
 /// A size made from a family's outline, `rows` tall: the outline taken
-/// from the library's open ones (its TrueType file read and opened by
+/// from the library's open ones (its font file read and opened by
 /// truetype.library the first time), the characters of `outline_ranges`
 /// rendered into the image, the outline kept with the record for the
 /// glyphs the image lacks and - where it has layout tables and

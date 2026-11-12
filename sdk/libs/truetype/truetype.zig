@@ -29,6 +29,11 @@
 //! with, since a glyph a font's lookups put in has no character to be
 //! found by.
 //!
+//! Since 1.6 a font's outlines may be of cubic curves, in a `CFF ` table,
+//! one font or many under one set of glyphs: such a file starts 'OTTO'.
+//! It renders, maps and measures as any other, and `GlyphSegments` gives
+//! its curves as `SEG_CUBIC`. Its hints are passed over.
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
@@ -91,7 +96,10 @@ pub const FontMetrics = extern struct {
     strikeout_position: i32 = 0,
     strikeout_thickness: i32 = 0,
     /// The most verbs and points `GlyphSegments` gives for any glyph of
-    /// the font: arrays this long hold every one.
+    /// the font: arrays this long hold every one. A font of cubic curves
+    /// does not say how large its glyphs are: these hold one of 1024
+    /// points in 128 contours, and a larger glyph answers
+    /// `TRUETYPEERR_ROOM` with what it needs.
     most_verbs: u32 = 0,
     most_points: u32 = 0,
     /// The styles the file says it is drawn in, as `styleOf`.
@@ -102,7 +110,8 @@ pub const FontMetrics = extern struct {
 /// arrays, and how much of them it took.
 pub const Segments = extern struct {
     /// The verbs, a byte each: vector.library's `SEG_MOVE`, `SEG_LINE`,
-    /// `SEG_QUAD` and `SEG_CLOSE`.
+    /// `SEG_QUAD` and `SEG_CLOSE`, and since 1.6 `SEG_CUBIC` from a font
+    /// of cubic curves.
     verbs: [*]u8,
     /// Their points, in the font's units, y up from the glyph's origin
     /// on the baseline.
@@ -198,14 +207,15 @@ fn long(bytes: []const u8, at: usize) u32 {
     return @as(u32, bytes[at]) << 24 | @as(u32, bytes[at + 1]) << 16 | @as(u32, bytes[at + 2]) << 8 | bytes[at + 3];
 }
 
-/// Whether `bytes` start as a TrueType file: version 1.0 or 'true'.
+/// Whether `bytes` start as a font file of one font: version 1.0 or
+/// 'true', or 'OTTO', which a font of cubic curves starts with.
 ///
 /// INPUTS:
 /// - `bytes` - the file's first four bytes at least.
 pub fn isTrueType(bytes: []const u8) bool {
     if (bytes.len < 4) return false;
     const tag = long(bytes, 0);
-    return tag == 0x0001_0000 or tag == 0x7472_7565;
+    return tag == 0x0001_0000 or tag == 0x7472_7565 or tag == 0x4F54_544F;
 }
 
 /// How many fonts a file holds: 1 for a TrueType file, what its header

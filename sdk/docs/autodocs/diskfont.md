@@ -226,10 +226,11 @@ directory cannot be read, it holds no font, or there is no memory.
 Every file in the family's directory that is a whole font - its image
 checks and its sum is sound - becomes an entry: its path from `lock`
 ("spleen/16"), height, drawn styles, flags, kind and width, as its own
-header says. A TrueType file becomes the family's outline entry, of
-height 0, in the styles the file says it is drawn in - bold for a
-bold face. Anything else there is passed over. The entries are in
-order of height. At most 64 sizes are listed.
+header says. A TrueType or OpenType file of one font becomes the
+family's outline entry, of height 0, in the styles the file says it
+is drawn in - bold for a bold face. Anything else there is passed
+over. The entries are in order of height. At most 64 sizes are
+listed.
 
 **CONTEXT**
 
@@ -369,8 +370,9 @@ face, leaned.
 Otherwise the family's contents file is read - `FONTS:<name>`, or the
 name as given when it has a ':' - and:
 
-- **A family with an outline** (a TrueType file) takes a size drawn
-  at exactly the height and style asked when it has one, then a size
+- **A family with an outline** (a TrueType or OpenType file) takes a
+  size drawn at exactly the height and style asked when it has one,
+  then a size
   of the outline already in memory at that height, and otherwise has
   truetype.library render the outline at that height - at any height,
   and with `FPF_DESIGNED` too, since it is drawn and not scaled. A
@@ -419,7 +421,7 @@ The font is the library's; the caller holds it open until
 `CloseFont`. Once nobody holds it, it stays loaded for the next caller
 until memory runs short. A font another one falls back to stays
 loaded for as long as that one, opened by anybody or not. A size
-rendered from an outline keeps the outline open - its TrueType file
+rendered from an outline keeps the outline open - its font file
 in memory, one for all the sizes made from it - for as long as the
 size is loaded.
 
@@ -466,7 +468,7 @@ fn OpenOutlineFont(dfb: *DiskfontBase, name: [*:0]const u8, style: graphics.Font
 The outline, open: its `outline` for truetype.library's calls, and the
 styles its face is drawn in. Null if the family is not there, has no
 outline (a family of bitmap sizes only), or its file cannot be read
-or is no TrueType font truetype.library reads, or there is no memory.
+or is no font truetype.library reads, or there is no memory.
 
 **BEHAVIOR**
 
@@ -478,7 +480,7 @@ own outline otherwise. `style` in the result says which styles the
 face is drawn in, so a program can draw the rest - lean it for an
 italic the family has no face of.
 
-The face's TrueType file is read whole and opened once: everyone who
+The face's font file is read whole and opened once: everyone who
 asks for it is given the same, until the last has closed it. It then
 stays, for the next to ask, until memory runs short. truetype.library
 is opened the first time an outline is.

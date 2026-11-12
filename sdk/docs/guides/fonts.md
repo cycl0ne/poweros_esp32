@@ -328,7 +328,7 @@ extensions, Greek, Cyrillic, box drawing, blocks and Braille, close to
 a thousand characters, its 8 and 12 rows a few hundred; the Go faces
 Latin-1 and Latin Extended-A, Greek and Cyrillic, about 600 characters;
 Liberation's nearly three times that. A size rendered from an outline
-has every character of its TrueType file: most of them in its image
+has every character of its font file: most of them in its image
 from the start, the others rendered when they are first drawn (see
 [Outline fonts](#outline-fonts)). A character a font lacks is drawn
 from its [fallback fonts](#fallback-fonts); where they lack it too, a
@@ -343,8 +343,8 @@ it lies; nothing in it is fixed up.
 `ContentsHeader` - magic `PFCT`, version, count, checksum - and one
 80-byte `FontContents` per size: the file's path from `FONTS:`, its
 height, drawn styles, flags, kind of pixels, nominal width, and `outline`
-set for an entry that is a TrueType file (whose height is then 0, and its
-styles the ones the file says it is drawn in). Its
+set for an entry that is a TrueType or OpenType file (whose height is
+then 0, and its styles the ones the file says it is drawn in). Its
 longwords add up to zero too. `fontfile.sound` checks one, `seal` sets
 its checksum, `entryFor` and `outlineEntry` make entries.
 
@@ -378,7 +378,7 @@ name as given when it holds a `:` - and:
 - for a family with an outline, loads a size drawn at exactly that height
   and style if there is one, then takes a size of the outline already in
   memory at that height, and otherwise renders the outline at that
-  height - in the styles the TrueType file says it is drawn in, so a bold
+  height - in the styles the font file says it is drawn in, so a bold
   face renders as bold;
 - without `FPF_DESIGNED`, looks for a source at the height asked, then at
   twice it, then at half it, in memory first and then on the disk,
@@ -430,8 +430,8 @@ the family's directory; `DisposeFontContents` frees it.
 
 ## Outline fonts
 
-`truetype.library` reads a TrueType file and renders a size of it into a
-FontImage of coverage: `OpenOutline(bytes, size, tags)` checks the file
+`truetype.library` reads a TrueType or OpenType file and renders a size
+of it into a FontImage of coverage: `OpenOutline(bytes, size, tags)` checks the file
 and keeps what rendering needs, `RenderFontImage(outline, rows, ranges,
 count)` makes a size of the characters it has in the ranges asked for,
 `CloseOutline` gives the outline back. The file's bytes stay
@@ -459,7 +459,7 @@ drawn** (diskfont.library 1.9): arrows, mathematical signs, another
 script. The size has a `render` hook that has truetype.library render
 the one glyph (`RenderGlyph`) at the size's height, and graphics keeps
 it with the size until the size leaves memory. For that the size keeps
-its outline open: the TrueType file stays in memory, once for all the
+its outline open: the font file stays in memory, once for all the
 sizes made from it, for as long as one of them is loaded - a few
 hundred KiB for a face of Liberation. A character the outline has no
 glyph for goes on to the fallbacks as before.
@@ -489,6 +489,29 @@ scales them and turns them over; `FontMetrics` the font's units per em,
 ascender, descender, line gap, x and cap height, underline and strikeout
 lines, and the most verbs and points one glyph takes; `Kerning(outline,
 left, right)` what the `kern` table says of a pair.
+
+**Fonts of cubic curves** (truetype.library 1.6). A font file keeps its
+glyphs in one of two ways: as contours of quadratic curves (its `glyf`
+table), or as programs that draw lines and cubic curves (its `CFF `
+table; such a file starts with `OTTO` and is usually named `.otf`).
+Both open, map, measure and render alike, a family's outline may be
+either, and so may the fonts of a collection - Noto Sans CJK is ten
+fonts of cubic curves over one table of 65535 glyphs. A font with both
+tables is read by its `glyf`. `GlyphSegments` gives a glyph of cubic
+curves as its program draws it: `SEG_MOVE`, then `SEG_LINE` and
+`SEG_CUBIC` (two control points and the point the curve ends at), and
+`SEG_CLOSE`. Its box in `GlyphMetrics` is that of its points, the
+control points among them. Such a font does not say how large its
+largest glyph is: `FontMetrics` gives `most_verbs` and `most_points` as
+1283 and 2179 for it, and a glyph that takes more answers
+`TRUETYPEERR_ROOM` with what it needs in `verb_count` and `point_count`,
+to be asked for again with that room. `RenderGlyph` and
+`RenderFontImage` take a glyph of any size. A program that cannot be
+run - a number missing, an operator the format does not have, a
+subroutine that is not there - is a glyph without ink that keeps its
+advance. The programs' hints and the table's font matrix are passed
+over, and a file with a `CFF2` table alone (a variable font of cubic
+curves) does not open.
 
 **The file** (truetype.library 1.4). A file is one font or a collection
 of several (`ttcf`): `truetype.fontCount(bytes)` says how many, and
@@ -1013,9 +1036,9 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 
 | | |
 |---|---|
-| `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them two fonts only the host tests read, which go on no disk: Noto Sans Devanagari and Noto Color Emoji |
-| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
+| `tools/fontconv` | on the host: BDF, Amiga font files (colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces and Liberation's (TrueType), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation only onto the 64-bit machines' disks. With them four fonts only the host tests read, which go on no disk: Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK (a collection) and Source Sans 3 |
+| `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, and of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari by its plain features, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |
 | `C:ListFonts` | every font by family, size and where it is; `SAMPLE` draws them |

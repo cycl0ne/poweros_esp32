@@ -17,7 +17,8 @@
 //! - What it answers is sound. A glyph is one the font has; a table
 //!   handed out lies in the file; a name is whole characters of UTF-8 and
 //!   ended; a glyph's verbs and points are counted right and fit the room
-//!   the font's measures promise; an image rendered is a sound font
+//!   the font's measures promise, or for a glyph of cubic curves the room
+//!   it says it takes; an image rendered is a sound font
 //!   image; a glyph rendered by its number has a box no further out than
 //!   a glyph reaches, and as many bytes as its box says.
 //! - It ends. A table that sends a reader round in circles would keep the
@@ -51,6 +52,7 @@ const vector = sdk.vector;
 const builder = @import("builder.zig");
 const reference = @import("reference.zig");
 const built = @import("truetype.zig");
+const cubic = @import("cff.zig");
 
 const testing = std.testing;
 const linux = std.os.linux;
@@ -139,7 +141,7 @@ const Seed = struct {
     }
 };
 
-const seed_count = 9;
+const seed_count = 11;
 
 /// The fonts the tests build: between them every table the library reads
 /// and every form of them it tells apart.
@@ -197,6 +199,50 @@ fn buildSeeds(seeds: *[seed_count]Seed) void {
     // A font of no outlines.
     file = .{};
     _ = builder.font(&file, .{ .cmap = letters.written(), .glyphs = 9, .outlines = false });
+    seeds[next].set(file.written());
+    next += 1;
+
+    // Cubic outlines: lines, curves of every form, hints and masks,
+    // numbers of every form and the operators that calculate, with
+    // subroutines local and global, one in another. Its `maxp` names a
+    // largest glyph smaller than its glyphs are.
+    const nothing = builder.program("endchar");
+    file = .{};
+    cubic.build(&file, .{
+        .glyphs = &.{
+            nothing,
+            builder.program("50 0 0 rmoveto 500 hlineto 700 vlineto -500 hlineto endchar"),
+            builder.program("10 20 hstemhm 30 40 vstemhm hintmask #C0 100 100 rmoveto -107 callsubr -107 callgsubr cntrmask #40 -106 callsubr endchar"),
+            builder.program("0 0 rmoveto 10 20 30 40 50 60 70 80 -90 -100 -110 -120 12 flex 10 20 30 40 50 60 70 80 90 100 110 flex1 30 40 50 60 70 80 90 hflex 5 6 7 8 9 10 11 12 13 hflex1 endchar"),
+            builder.program("s:1000 f:2.5 rmoveto 3 4 add 5 mul 2 div 9 sqrt sub 1 put 1 get dup exch 2 1 roll 0 index 1 2 3 4 ifelse neg abs not and or eq random drop 7 8 rlineto endchar"),
+            builder.program("100 hmoveto 100 vmoveto 10 20 30 40 50 60 70 80 rcurveline 10 20 30 40 50 60 rlinecurve 10 20 30 40 50 vvcurveto 10 20 30 40 50 hhcurveto 10 20 30 40 hvcurveto 10 20 30 40 vhcurveto endchar"),
+        },
+        .locals = &.{
+            builder.program("10 20 30 40 50 60 rrcurveto -106 callgsubr return"),
+            builder.program("-30 hlineto 40 vlineto return"),
+        },
+        .globals = &.{
+            builder.program("100 0 rlineto return"),
+            builder.program("0 100 rlineto -106 callsubr return"),
+        },
+    }, true);
+    seeds[next].set(file.written());
+    next += 1;
+
+    // Many fonts under one set of glyphs, by ranges, each with
+    // subroutines of its own; offsets of three bytes.
+    const calls = builder.program("0 0 rmoveto -107 callsubr 0 500 rlineto endchar");
+    file = .{};
+    cubic.build(&file, .{
+        .glyphs = &.{ nothing, calls, calls, calls, calls, builder.program("0 0 rmoveto 300 300 rlineto -300 hlineto endchar") },
+        .fonts = &.{
+            &.{builder.program("400 0 rlineto return")},
+            &.{builder.program("0 400 -200 200 400 0 rrcurveto return")},
+            &.{},
+        },
+        .select = &.{ 3, 0, 3, 0, 0, 0, 0, 2, 1, 0, 4, 2, 0, 6 },
+        .off_size = 3,
+    }, false);
     seeds[next].set(file.written());
     next += 1;
 
@@ -383,10 +429,15 @@ const Harness = struct {
         var first = truetype.GlyphImage{ .pixels = harness.pixels.ptr, .room = 0 };
         const drawable = tb.RenderGlyph(outline, 0, 1, &first) != truetype.TRUETYPEERR_GLYPH;
 
+        // Whether its outlines are of cubic curves: such a font does not
+        // say how large its glyphs are.
+        var length: u32 = 0;
+        const curved = tb.FontTable(outline, 0x676C_7966, &length) == null and tb.FontTable(outline, 0x4346_4620, &length) != null;
+
         try harness.readNames(outline);
         try harness.readTables(outline, file, directory);
         for (glyphs[0..known], 0..) |glyph, nth| {
-            try harness.readGlyph(outline, &metrics, glyph);
+            try harness.readGlyph(outline, &metrics, glyph, curved);
             try harness.renderGlyph(outline, glyph, glyph < glyph_count and drawable);
             _ = tb.Kerning(outline, glyph, glyphs[(nth + 1) % known]);
         }
@@ -449,8 +500,9 @@ const Harness = struct {
     }
 
     /// One glyph's measures and its outline, into the room the font's
-    /// measures promise and into less.
-    fn readGlyph(harness: *Harness, outline: *truetype.Outline, metrics: *const truetype.FontMetrics, glyph: u32) !void {
+    /// measures promise and into less. `curved` says that the font's
+    /// outlines are of cubic curves.
+    fn readGlyph(harness: *Harness, outline: *truetype.Outline, metrics: *const truetype.FontMetrics, glyph: u32, curved: bool) !void {
         const tb = harness.rig.tb;
         const has = glyph < metrics.glyph_count;
 
@@ -458,8 +510,18 @@ const Harness = struct {
         try testing.expectEqual(has, tb.GlyphMetrics(outline, glyph, &measures));
         if (!has) try testing.expectEqual(truetype.GlyphMetrics{}, measures);
 
-        // The room the font's measures promise is enough for any glyph.
-        const whole = try harness.segments(outline, glyph, metrics.most_verbs, metrics.most_points);
+        // The room the font's measures promise is enough for any glyph;
+        // one of cubic curves may take more, says how much, and is read
+        // into that.
+        var whole = try harness.segments(outline, glyph, metrics.most_verbs, metrics.most_points);
+        if (curved and whole.answer == truetype.TRUETYPEERR_ROOM) {
+            try testing.expect(whole.verb_count <= most_segments and whole.point_count <= most_segments);
+            const again = try harness.segments(outline, glyph, whole.verb_count, whole.point_count);
+            try testing.expectEqual(truetype.TRUETYPE_OK, again.answer);
+            try testing.expectEqual(whole.verb_count, again.verb_count);
+            try testing.expectEqual(whole.point_count, again.point_count);
+            whole = again;
+        }
         try testing.expect(whole.answer != truetype.TRUETYPEERR_ROOM);
         if (!has) try testing.expectEqual(truetype.TRUETYPEERR_GLYPH, whole.answer);
         if (whole.answer == truetype.TRUETYPE_OK and whole.verb_count != 0) harness.outlines += 1;
@@ -519,6 +581,10 @@ const Harness = struct {
                     vector.SEG_QUAD => {
                         try testing.expectEqual(moves, closes + 1);
                         taken += 2;
+                    },
+                    vector.SEG_CUBIC => {
+                        try testing.expectEqual(moves, closes + 1);
+                        taken += 3;
                     },
                     vector.SEG_CLOSE => {
                         try testing.expectEqual(moves, closes + 1);
@@ -672,7 +738,7 @@ const Targets = struct {
     };
 
     /// The tables the library reads.
-    const read = [_]*const [4]u8{ "cmap", "glyf", "head", "hhea", "hmtx", "kern", "loca", "maxp", "name", "OS/2", "post" };
+    const read = [_]*const [4]u8{ "cmap", "CFF ", "glyf", "head", "hhea", "hmtx", "kern", "loca", "maxp", "name", "OS/2", "post" };
 
     /// The targets of `source`, a sound font or collection.
     fn of(source: []const u8) Targets {
@@ -809,7 +875,10 @@ test "truetype: fetched fonts with bytes changed and cut short" {
     var harness = try Harness.up();
     var numbers = std.Random.DefaultPrng.init(0x4F54_544F);
     var fetched: u32 = 0;
-    for (reference.fonts) |font| {
+    for (reference.fonts, 0..) |font, nth| {
+        // A collection is listed once for each of its fonts there are
+        // values for, and read once.
+        if (nth != 0 and std.mem.eql(u8, font.file, reference.fonts[nth - 1].file)) continue;
         const bytes = reference.read(font) catch |err| switch (err) {
             error.SkipZigTest => continue,
             else => return err,

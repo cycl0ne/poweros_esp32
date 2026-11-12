@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! The outlines diskfont.library has opened (since 1.4): a face's
-//! TrueType file read whole and opened by truetype.library, shared by
+//! font file read whole and opened by truetype.library, shared by
 //! everyone who asks for it.
 //!
 //! **A record is one allocation**, the `OutlineFont` the caller is given
@@ -27,7 +27,7 @@ pub const OutlineRecord = extern struct {
     link: exec.Node = .{},
     /// How many have it open.
     holders: u32 = 0,
-    /// The TrueType file; the outline reads it in place.
+    /// The font file; the outline reads it in place.
     file: ?*anyopaque = null,
     /// The family's contents file it came from: "FONTS:sans-bold.font".
     key: [256:0]u8 = @splat(0),

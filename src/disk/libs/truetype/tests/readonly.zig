@@ -31,6 +31,7 @@ const vector = sdk.vector;
 const builder = @import("builder.zig");
 const reference = @import("reference.zig");
 const built = @import("truetype.zig");
+const cubic = @import("cff.zig");
 const _outline = @import("../outline/_outline.zig");
 const LibraryBase = @import("../truetype_base.zig").TrueTypeBase;
 
@@ -245,9 +246,74 @@ test "truetype: no call writes to an outline, to its font or to the base" {
     try rig.down();
 }
 
-test "truetype: no call writes to a fetched font or its outline" {
+test "truetype: no call writes to a font of cubic outlines or its outline" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    const expected = reference.liberation_sans_regular;
+    var rig = try Rig.up();
+    const sys = rig.sys;
+    const tb = rig.tb;
+    var before: [@sizeOf(LibraryBase)]u8 = undefined;
+    @memcpy(&before, baseOf(&rig));
+
+    // A square, and a glyph of a line and a curve drawn by subroutines,
+    // a local one that calls a global one; the font names a largest
+    // glyph smaller than the second, which is so read twice.
+    var file: builder.File = .{};
+    cubic.build(&file, .{
+        .glyphs = &.{
+            builder.program("endchar"),
+            builder.program("0 0 rmoveto 500 hlineto 700 vlineto -500 hlineto endchar"),
+            builder.program("10 20 hstemhm 30 40 vstemhm hintmask #C0 100 100 rmoveto -107 callsubr 0 300 rlineto endchar"),
+        },
+        .locals = &.{builder.program("300 0 rlineto -107 callgsubr return")},
+        .globals = &.{builder.program("100 50 50 100 0 150 rrcurveto return")},
+    }, true);
+    const closed = try Closed.of(file.written());
+    const outline = closed.outline;
+    const M = vector.SEG_MOVE;
+    const L = vector.SEG_LINE;
+    const C = vector.SEG_CUBIC;
+    const Z = vector.SEG_CLOSE;
+    var verbs: [16]u8 = undefined;
+    var points: [16]vector.Point = undefined;
+    var metrics: truetype.FontMetrics = .{};
+    var glyph: truetype.GlyphMetrics = .{};
+    const letters = [_]truetype.CodeRange{.{ .first = 'A', .last = 'Z' }};
+    // Twice over: what one use left behind, the next would meet.
+    for (0..2) |_| {
+        tb.FontMetrics(outline, &metrics);
+        try testing.expectEqual(@as(u32, 3), metrics.glyph_count);
+        try testing.expectEqual(@as(u32, 1), tb.GlyphIndex(outline, 'A'));
+        var segments = truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = verbs.len, .point_room = points.len };
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 1, &segments));
+        try testing.expectEqualSlices(u8, &.{ M, L, L, L, Z }, verbs[0..segments.verb_count]);
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 2, &segments));
+        try testing.expectEqualSlices(u8, &.{ M, L, C, L, Z }, verbs[0..segments.verb_count]);
+        try testing.expectEqual(vector.Point{ .x = 550, .y = 400 }, points[4]);
+        try testing.expectEqual(vector.Point{ .x = 550, .y = 700 }, points[5]);
+        try testing.expect(tb.GlyphMetrics(outline, 2, &glyph));
+        try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .left_bearing = 0, .x_min = 100, .y_min = 100, .x_max = 550, .y_max = 700 }, glyph);
+        var pixels: [256]u8 = undefined;
+        var by_number = truetype.GlyphImage{ .pixels = &pixels, .room = pixels.len };
+        try testing.expectEqual(truetype.TRUETYPE_OK, tb.RenderGlyph(outline, 2, 20, &by_number));
+        try testing.expectEqual(@as(u16, 9), by_number.glyph.width);
+        try testing.expectEqual(@as(u16, 12), by_number.glyph.rows);
+        const image = tb.RenderFontImage(outline, 20, &letters, letters.len) orelse return error.NoImage;
+        try testing.expect(fontimage.sound(@ptrCast(image), image.size));
+        const a = fontimage.find(image, 'A') orelse return error.NoGlyph;
+        try testing.expectEqual(@as(u16, 10), a.width);
+        try testing.expectEqual(@as(u16, 14), a.rows);
+        sys.FreeVec(image);
+    }
+    closed.free();
+
+    try testing.expectEqualSlices(u8, &before, baseOf(&rig));
+    try rig.down();
+}
+
+/// Every call made on the fetched font `expected` is of, which is held
+/// in memory that may only be read.
+fn expectFetchedUntouched(expected: *const reference.Font) !void {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
     const bytes = try reference.read(expected);
     defer testing.allocator.free(bytes);
 
@@ -314,4 +380,12 @@ test "truetype: no call writes to a fetched font or its outline" {
 
     try testing.expectEqualSlices(u8, &before, baseOf(&rig));
     try rig.down();
+}
+
+test "truetype: no call writes to a fetched font or its outline" {
+    try expectFetchedUntouched(reference.liberation_sans_regular);
+}
+
+test "truetype: no call writes to a fetched font of cubic outlines or its outline" {
+    try expectFetchedUntouched(reference.source_sans_3_regular);
 }

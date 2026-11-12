@@ -214,7 +214,7 @@ from `LIBS:` when first opened. Every module, with its reference, is in
 | Displays | **`rtg`**; `graphics` drawing, text in UTF-8 set as its font shapes it, and where in a drawn text a cursor goes; `layers`; `intuition` screens, windows, gadgets, styles; `keymap` keys into UTF-8; `motion` animations and timers |
 | Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
 | Video | `videocodec` films - their pictures, sound and subtitles; `media` MP4, MOV and Matroska; `videoparse` H.264, H.265, VP9 and AV1 streams read for a decoder |
-| Desktop | `anvil` the desktop; `asl` requesters; `commodities` hotkeys and filters on the input stream; `icon`; `datatypes` pictures, text (plain, Markdown, HTML), animations and sounds by what is in them, from a file or from memory; `iffparse`; `diskfont` and `truetype` fonts, an outline's characters rendered as they are first drawn, and fallback fonts for the characters one lacks, `truetypeshaping` a text's glyphs with a font's ligatures, kerning and marks, which every text drawn in such a font is set with; `facet` 3D in Vulkan's model, on the cores or a GPU - on every disk but the ESP32-S3's, whose 14 MB of flash the rest of the system has |
+| Desktop | `anvil` the desktop; `asl` requesters; `commodities` hotkeys and filters on the input stream; `icon`; `datatypes` pictures, text (plain, Markdown, HTML), animations and sounds by what is in them, from a file or from memory; `iffparse`; `diskfont` and `truetype` fonts, their outlines TrueType and OpenType files of quadratic or cubic curves, an outline's characters rendered as they are first drawn, and fallback fonts for the characters one lacks, `truetypeshaping` a text's glyphs with a font's ligatures, kerning and marks, which every text drawn in such a font is set with; `facet` 3D in Vulkan's model, on the cores or a GPU - on every disk but the ESP32-S3's, whose 14 MB of flash the rest of the system has |
 | Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `http` HTTP/1.1 requests, connections kept, a failure said in the user's language; `crypto`; `wpa` WPA2; `filter` a packet filter |
 | Buses | `usb` the USB host stack; `pci` PCI Express; `modbus` RTU and TCP |
 
@@ -373,7 +373,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard, mouse and wheel, and the USB controller, at 240 MHz (an older QEMU runs too, without what it lacks - run the script again for the wheel and USB) |
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/esp32s3wifi.device` |
 | `scripts/fetch-aic8800.sh` | the AIC8800 USB Wi-Fi stick's firmware, which `DEVS:usb/aic8800.device` loads into it (the ESP32-P4's disk) |
-| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go, and Liberation on the 64-bit machines' disks), and two fonts only the host tests read (Noto Sans Devanagari, Noto Color Emoji) |
+| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go, and Liberation on the 64-bit machines' disks), and four fonts only the host tests read (Noto Sans Devanagari, Noto Color Emoji, Noto Sans CJK, Source Sans 3) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |

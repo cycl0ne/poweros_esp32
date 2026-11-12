@@ -16,6 +16,10 @@
 //! its measures and the font's, and the `kern` table's pairs - for a
 //! program that draws text at any size and angle itself.
 //!
+//! Since 1.6 a font's glyphs may be a `CFF ` table's, of lines and cubic
+//! curves (`outline/_cff.zig`): each glyph a program that draws it, run
+//! when the glyph is asked for, into the same contours the rest reads.
+//!
 //! The jump table is truetype_lvo.zig, the ROM tag, init and expunge
 //! truetype_init.zig, the base truetype_base.zig.
 

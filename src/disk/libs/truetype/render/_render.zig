@@ -7,9 +7,9 @@
 //! it passes that lies to its right, positive going down and negative
 //! going up; summing a row from its left edge then gives, at every pixel,
 //! how much of it the outline covers - exactly, for any shape, with
-//! nothing to sort and no edge list. A curve is lines enough that none
-//! strays from it by more than a third of a pixel. The coverage is kept in
-//! four bits (0 to 15).
+//! nothing to sort and no edge list. A curve, quadratic or cubic, is
+//! lines enough that none strays from it by more than a third of a
+//! pixel. The coverage is kept in four bits (0 to 15).
 //!
 //! What a font says is not taken on trust: a glyph whose outline lies
 //! further from its origin than `Scale.reach` is rendered as one of no
@@ -50,6 +50,11 @@ pub const Work = struct {
     pub fn init(sys: *ExecBase, font: *const Font) ?Work {
         const points: u32 = @max(font.max_points + 1, _outline.default_points);
         const contours: u32 = @max(font.max_contours + 1, _outline.default_contours);
+        return of(sys, points, contours);
+    }
+
+    /// Room for `points` points and `contours` contours.
+    fn of(sys: *ExecBase, points: u32, contours: u32) ?Work {
         const bytes = points * @sizeOf(Point) + contours * 4 + points;
         const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return null;
         const base: [*]u8 = @ptrCast(memory);
@@ -60,6 +65,15 @@ pub const Work = struct {
             .contours = .{ .points = point_area[0..points], .ends = ends[0..contours], .flags = flags[0..points] },
             .memory = memory,
         };
+    }
+
+    /// The room made as large as a glyph that did not fit says it needs;
+    /// false without memory, the room then as it was.
+    fn grow(work: *Work, sys: *ExecBase) bool {
+        const larger = of(sys, work.contours.needed_points + 1, work.contours.needed_ends + 1) orelse return false;
+        sys.FreeVec(work.memory);
+        work.* = larger;
+        return true;
     }
 
     pub fn deinit(work: *Work, sys: *ExecBase) void {
@@ -131,7 +145,14 @@ pub fn renderGlyph(sys: *ExecBase, font: *const Font, glyph: u32, scale: Scale, 
     c.end_count = 0;
     c.part_count = 0;
     const identity = [6]f32{ 1, 0, 0, 1, 0, 0 };
-    if (!_outline.contours(font, glyph, c, identity, 0) or c.point_count == 0) return out;
+    if (!_outline.contours(font, glyph, c, identity, 0)) {
+        // A glyph of cubic curves larger than the room: read once more
+        // into as much as it says it has.
+        if (!c.short) return out;
+        if (!work.grow(sys)) return null;
+        if (!_outline.contours(font, glyph, c, identity, 0)) return out;
+    }
+    if (c.point_count == 0) return out;
 
     var min_x: f32 = 1e30;
     var min_y: f32 = 1e30;
@@ -213,7 +234,8 @@ fn roundOf(value: f32) i32 {
 
 /// One closed contour: lines between points on the curve, a quadratic
 /// curve round each point off it, and between two off it the point on
-/// the curve halfway, which the format leaves out.
+/// the curve halfway, which the format leaves out; a cubic curve through
+/// two control points to the point after them.
 fn contour(area: *Area, points: []const Point, scale: Scale, origin: P) void {
     const n = points.len;
     if (n < 2) return;
@@ -243,10 +265,18 @@ fn contour(area: *Area, points: []const Point, scale: Scale, origin: P) void {
     }
     var current = begin;
     var control: ?P = null;
-    for (0..count) |k| {
+    var k: usize = 0;
+    while (k < count) : (k += 1) {
         const p = points[from + k];
         const q = at(scale, origin, p);
-        if (p.on) {
+        if (p.cubic) {
+            if (k + 2 >= count) break;
+            const second = at(scale, origin, points[from + k + 1]);
+            const last = at(scale, origin, points[from + k + 2]);
+            area.cubic(current, q, second, last);
+            current = last;
+            k += 2;
+        } else if (p.on) {
             if (control) |ctl| area.quad(current, ctl, q) else area.line(current, q);
             current = q;
             control = null;
@@ -290,6 +320,35 @@ const Area = struct {
             const next = P{
                 .x = u * u * p0.x + 2 * t * u * p1.x + t * t * p2.x,
                 .y = u * u * p0.y + 2 * t * u * p1.y + t * t * p2.y,
+            };
+            area.line(last, next);
+            last = next;
+        }
+    }
+
+    /// A cubic curve as lines, held as close to it as a quadratic's: its
+    /// bend is no more than the larger of its two halves' control
+    /// points say.
+    fn cubic(area: *Area, p0: P, p1: P, p2: P, p3: P) void {
+        const ax = p0.x - 2 * p1.x + p2.x;
+        const ay = p0.y - 2 * p1.y + p2.y;
+        const bx = p1.x - 2 * p2.x + p3.x;
+        const by = p1.y - 2 * p2.y + p3.y;
+        const dev = @max(ax * ax + ay * ay, bx * bx + by * by);
+        if (dev < 0.037) return area.line(p0, p3);
+        const steps: u32 = @min(1 + @as(u32, @intFromFloat(@floor(@sqrt(@sqrt(27.0 * dev))))), 64);
+        var last = p0;
+        var i: u32 = 1;
+        while (i <= steps) : (i += 1) {
+            const t = @as(f32, @floatFromInt(i)) / @as(f32, @floatFromInt(steps));
+            const u = 1 - t;
+            const b0 = u * u * u;
+            const b1 = 3 * u * u * t;
+            const b2 = 3 * u * t * t;
+            const b3 = t * t * t;
+            const next = P{
+                .x = b0 * p0.x + b1 * p1.x + b2 * p2.x + b3 * p3.x,
+                .y = b0 * p0.y + b1 * p1.y + b2 * p2.y + b3 * p3.y,
             };
             area.line(last, next);
             last = next;

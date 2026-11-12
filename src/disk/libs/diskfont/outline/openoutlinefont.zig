@@ -29,7 +29,7 @@ const _outline = @import("_outline.zig");
 /// The outline, open: its `outline` for truetype.library's calls, and the
 /// styles its face is drawn in. Null if the family is not there, has no
 /// outline (a family of bitmap sizes only), or its file cannot be read
-/// or is no TrueType font truetype.library reads, or there is no memory.
+/// or is no font truetype.library reads, or there is no memory.
 ///
 /// BEHAVIOR:
 /// **The family's own face for the styles asked**, where one is
@@ -40,7 +40,7 @@ const _outline = @import("_outline.zig");
 /// face is drawn in, so a program can draw the rest - lean it for an
 /// italic the family has no face of.
 ///
-/// The face's TrueType file is read whole and opened once: everyone who
+/// The face's font file is read whole and opened once: everyone who
 /// asks for it is given the same, until the last has closed it. It then
 /// stays, for the next to ask, until memory runs short. truetype.library
 /// is opened the first time an outline is.

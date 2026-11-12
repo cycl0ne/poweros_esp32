@@ -19,7 +19,8 @@ const _render = @import("_render.zig");
 /// fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*FontImage
 /// ```
 ///
-/// SINCE: 1.0, ranges since 1.3, the limits since 1.4. LVO -24.
+/// SINCE: 1.0, ranges since 1.3, the limits since 1.4, fonts of cubic
+/// curves since 1.6. LVO -24.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -44,8 +45,8 @@ const _render = @import("_render.zig");
 /// ranges are the runs of characters it has.
 ///
 /// Every glyph is its outline scaled so that the line is `rows` tall and
-/// the baseline sits the ascender's share of it down, the curves made
-/// lines within a third of a pixel, and each pixel given how much of it
+/// the baseline sits the ascender's share of it down, the curves -
+/// quadratic or cubic - made lines within a third of a pixel, and each pixel given how much of it
 /// the outline covers, in fifteenths. The advances are rounded to whole
 /// pixels. The font is `FPF_DESIGNED` - drawn at its size from the
 /// outline, not scaled from another size - and `FPF_PROPORTIONAL` when
@@ -53,9 +54,10 @@ const _render = @import("_render.zig");
 /// in (`FontMetrics`): a bold face renders as `FSF_BOLD`, so graphics
 /// draws no bold over it.
 ///
-/// A glyph the file is damaged in - its data cut short, its outline
-/// further than sixteen lines from where it is drawn - is rendered as one
-/// of no outline, with its advance; an advance is 32767 pixels at most.
+/// A glyph the file is damaged in - its data cut short, a program of
+/// cubic curves that cannot be run, its outline further than sixteen
+/// lines from where it is drawn - is rendered as one of no outline, with
+/// its advance; an advance is 32767 pixels at most.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -83,7 +85,7 @@ const _render = @import("_render.zig");
 pub fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ranges: [*]const truetype.CodeRange, count: u32) ?*FontImage {
     const sys = tb.sys_base;
     const font: *const _outline.Font = @ptrCast(@alignCast(outline));
-    if (rows == 0 or rows > _render.most_rows or font.glyf.len == 0) return null;
+    if (rows == 0 or rows > _render.most_rows or !_outline.hasOutlines(font)) return null;
     const asked = ranges[0..count];
 
     // What the font has of the ranges, and in how many runs.

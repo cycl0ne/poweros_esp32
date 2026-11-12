@@ -35,10 +35,11 @@ const _font = @import("../font/_font.zig");
 /// Every file in the family's directory that is a whole font - its image
 /// checks and its sum is sound - becomes an entry: its path from `lock`
 /// ("spleen/16"), height, drawn styles, flags, kind and width, as its own
-/// header says. A TrueType file becomes the family's outline entry, of
-/// height 0, in the styles the file says it is drawn in - bold for a
-/// bold face. Anything else there is passed over. The entries are in
-/// order of height. At most 64 sizes are listed.
+/// header says. A TrueType or OpenType file of one font becomes the
+/// family's outline entry, of height 0, in the styles the file says it
+/// is drawn in - bold for a bold face. Anything else there is passed
+/// over. The entries are in order of height. At most 64 sizes are
+/// listed.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the disk.
@@ -119,10 +120,11 @@ pub fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]cons
 /// How many sizes one family lists.
 const max_sizes = 64;
 
-/// A file's entry: a TrueType file is the family's outline, in the styles
-/// it says it is drawn in; a size file is listed as its image header
-/// says, if the file is a whole font. The file is read whole - a size
-/// file's sum covers every byte - into memory that goes again at once.
+/// A file's entry: a font file of outlines is the family's outline, in
+/// the styles it says it is drawn in; a size file is listed as its image
+/// header says, if the file is a whole font. The file is read whole - a
+/// size file's sum covers every byte - into memory that goes again at
+/// once.
 fn readEntry(dfb: *DiskfontBase, file: [*:0]const u8, path: []const u8) ?fontfile.FontContents {
     const dl = dfb.dos_base;
     const fh = dl.Open(file, dos.MODE_OLDFILE) orelse return null;

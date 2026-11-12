@@ -2,8 +2,9 @@
 
 truetype.library's functions: a TrueType file rendered into font
 images, one size at a time, since 1.2 its glyphs as outlines, since
-1.4 a font of a collection, its names and its tables, and since 1.5
-one glyph rendered by its number.
+1.4 a font of a collection, its names and its tables, since 1.5 one
+glyph rendered by its number, and since 1.6 an OpenType file whose
+glyphs are of cubic curves (a CFF table's).
 Open it with OpenLibrary("truetype.library", 1).
 
 Generated from the source by `./zig build autodoc`.
@@ -19,7 +20,7 @@ Generated from the source by `./zig build autodoc`.
 - [GlyphSegments](#glyphsegments) - A glyph's outline as lines and curves.
 - [GlyphVariant](#glyphvariant) - The glyph a character and a variation selector are.
 - [Kerning](#kerning) - How much further apart two glyphs are drawn side by side.
-- [OpenOutline](#openoutline) - A font of a TrueType file, opened for rendering.
+- [OpenOutline](#openoutline) - A font of a TrueType or OpenType file, opened for rendering.
 - [RenderFontImage](#renderfontimage) - One size of an outline, as a font image.
 - [RenderGlyph](#renderglyph) - One glyph of an outline, by its number, as a font image has a glyph.
 
@@ -87,7 +88,7 @@ fn FontMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *truetype
 
 **SINCE**
 
-1.2. LVO -44.
+1.2, fonts of cubic curves since 1.6. LVO -44.
 
 **INPUTS**
 
@@ -108,6 +109,11 @@ font does not give it; the most verbs and points `GlyphSegments`
 gives for a glyph of the font, from what `maxp` says the largest
 glyph is (or as for 1024 points and 128 contours, when it does not
 say); and the styles the file says it is drawn in.
+
+A font of cubic curves does not say how large its largest glyph is:
+`most_verbs` and `most_points` are 1283 and 2179 for it, as for 1024
+points and 128 contours, and a glyph may take more. `GlyphSegments`
+then answers `TRUETYPEERR_ROOM` with what the glyph needs.
 
 **CONTEXT**
 
@@ -344,7 +350,7 @@ fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metri
 
 **SINCE**
 
-1.2. LVO -36.
+1.2, fonts of cubic curves since 1.6. LVO -36.
 
 **INPUTS**
 
@@ -363,6 +369,11 @@ The advance and the left side bearing are the font's horizontal
 metrics (`hmtx`); the box is the one the glyph's data gives, which
 holds its points on the curve and off it. A glyph of no outline, a
 space, has a box of 0s and its advance.
+
+A glyph of cubic curves has no box in its data: its program is run
+and the box is the one of its points, the curves' control points
+among them, widened to whole units. A glyph whose program is damaged
+has a box of 0s and its advance.
 
 **CONTEXT**
 
@@ -402,7 +413,7 @@ fn GlyphSegments(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, segm
 
 **SINCE**
 
-1.2. LVO -40.
+1.2, `SEG_CUBIC` of a font of cubic curves since 1.6. LVO -40.
 
 **INPUTS**
 
@@ -423,17 +434,25 @@ fn GlyphSegments(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, segm
 
 **BEHAVIOR**
 
-The verbs are vector.library's - `SEG_MOVE`, `SEG_LINE`, `SEG_QUAD`,
-`SEG_CLOSE` - and the points `vector.Point`s, so the arrays go to
-`AddSegments` as they are. They are in the font's units, y up, from
+The verbs are vector.library's - `SEG_MOVE`, `SEG_LINE`, `SEG_QUAD`
+or, in a font of cubic curves, `SEG_CUBIC`, and `SEG_CLOSE` - and the
+points `vector.Point`s, so the arrays go to `AddSegments` as they are. They are in the font's units, y up, from
 the glyph's origin on the baseline: a program drawing them scales by
 its size over `FontMetrics`' units per em and turns y over. Each
 contour is closed, and filled by the non-zero rule its contours are
 drawn for. A composite glyph is its parts, each moved and scaled as
 the font says, in one outline.
 
+A glyph of cubic curves comes out as its program draws it: a move
+to where a contour begins, a line or a curve for each one drawn - a
+line drawn back to the beginning among them - and the close. A
+contour of nothing but its first point is left out. The subroutines
+a program calls are run, its hints passed over.
+
 `FontMetrics`' `most_verbs` and `most_points` are long enough for any
-glyph of the font.
+glyph of a font of quadratic curves. A font of cubic curves does not
+say how large its glyphs are: one larger than that answers
+`TRUETYPEERR_ROOM` and is read into arrays of the counts it gives.
 
 **CONTEXT**
 
@@ -451,7 +470,8 @@ glyph in, and gives it back before it returns.
 
 No hinting: the outline is as it was drawn, for any size. A part of a
 composite placed by matching its points to another's is left where it
-was drawn.
+was drawn. A glyph of cubic curves made of two others (an `endchar`
+with four numbers) has no outline.
 
 **SEE ALSO**
 
@@ -591,7 +611,7 @@ x += m.advance + tb.Kerning(outline, glyph, next);
 
 ## OpenOutline
 
-A font of a TrueType file, opened for rendering.
+A font of a TrueType or OpenType file, opened for rendering.
 
 **SYNOPSIS**
 
@@ -601,7 +621,8 @@ fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const 
 
 **SINCE**
 
-1.0, the tags and collections since 1.4. LVO -20.
+1.0, the tags and collections since 1.4, fonts of cubic curves
+since 1.6. LVO -20.
 
 **INPUTS**
 
@@ -614,9 +635,9 @@ fn OpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const 
 **RESULT**
 
 The outline, or null if the file has no font of that number, the
-bytes are not a TrueType font this library reads - a table it needs
-missing or outside the file, no character map it reads - or there is
-no memory.
+bytes are not a font this library reads - a table it needs missing,
+outside the file or not sound, no character map it reads - or there
+is no memory.
 
 **BEHAVIOR**
 
@@ -630,6 +651,15 @@ Of a font's character maps a Unicode one is read, the one that
 reaches furthest: formats 12, 13, 10, 4, 6 and 0, in that order. A
 symbol font, which has none, is read by its own map, with its
 characters where the font puts them (U+F020 to U+F0FF mostly).
+
+A font's glyphs are of lines and quadratic curves (`glyf` and
+`loca`), or of lines and cubic curves (`CFF `, in a file that starts
+'OTTO'), a font keyed by character collection among those. A font
+with both is read by `glyf`. Of a `CFF ` table the lists, the
+dictionaries and where they put the glyphs' programs, the subroutines
+and each glyph's font dictionary are checked here, and a table that
+is not sound opens no font; a glyph's program is run when the glyph
+is asked for.
 
 A font need not have outlines: one whose glyphs are pictures opens,
 maps, measures and names, and every glyph of it is one of no outline.
@@ -652,9 +682,11 @@ outline reads them in place. The tags are read during the call only.
 
 **BUGS**
 
-Hinting instructions are passed over, and fonts of CFF outlines
-(OpenType 'OTTO') are not read. A font whose only character map is in
-a Macintosh encoding is not opened.
+Hinting instructions are passed over, and so are a `CFF ` table's
+hints and its font matrix: its glyphs are taken as drawn in the
+font's units. A font whose outlines are a `CFF2` table's is not
+opened. A font whose only character map is in a Macintosh encoding
+is not opened.
 
 **SEE ALSO**
 
@@ -690,7 +722,8 @@ fn RenderFontImage(tb: *TrueTypeBase, outline: *truetype.Outline, rows: u32, ran
 
 **SINCE**
 
-1.0, ranges since 1.3, the limits since 1.4. LVO -24.
+1.0, ranges since 1.3, the limits since 1.4, fonts of cubic
+curves since 1.6. LVO -24.
 
 **INPUTS**
 
@@ -718,8 +751,8 @@ that graphics draws it as its base letter where the image has that
 ranges are the runs of characters it has.
 
 Every glyph is its outline scaled so that the line is `rows` tall and
-the baseline sits the ascender's share of it down, the curves made
-lines within a third of a pixel, and each pixel given how much of it
+the baseline sits the ascender's share of it down, the curves -
+quadratic or cubic - made lines within a third of a pixel, and each pixel given how much of it
 the outline covers, in fifteenths. The advances are rounded to whole
 pixels. The font is `FPF_DESIGNED` - drawn at its size from the
 outline, not scaled from another size - and `FPF_PROPORTIONAL` when
@@ -727,9 +760,10 @@ its advances differ. Its styles are the ones the font says it is drawn
 in (`FontMetrics`): a bold face renders as `FSF_BOLD`, so graphics
 draws no bold over it.
 
-A glyph the file is damaged in - its data cut short, its outline
-further than sixteen lines from where it is drawn - is rendered as one
-of no outline, with its advance; an advance is 32767 pixels at most.
+A glyph the file is damaged in - its data cut short, a program of
+cubic curves that cannot be run, its outline further than sixteen
+lines from where it is drawn - is rendered as one of no outline, with
+its advance; an advance is 32767 pixels at most.
 
 **CONTEXT**
 
@@ -772,7 +806,7 @@ fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: 
 
 **SINCE**
 
-1.5. LVO -64.
+1.5, fonts of cubic curves since 1.6. LVO -64.
 
 **INPUTS**
 
@@ -811,9 +845,13 @@ ink, `left` columns from the point and `top` rows down from the top
 of the line, the bytes from one row to the next, and the advance in
 whole pixels. Its `data` is 0.
 
-A glyph the file is damaged in - its data cut short, its outline
-further than sixteen lines from where it is drawn - is one of no ink,
-with its advance; an advance is 32767 pixels at most.
+A glyph the file is damaged in - its data cut short, a program of
+cubic curves that cannot be run, its outline further than sixteen
+lines from where it is drawn - is one of no ink, with its advance; an
+advance is 32767 pixels at most.
+
+A glyph of cubic curves is rendered whatever its size: one of more
+points than `FontMetrics` counts on is read into the room it needs.
 
 The outline is only read, and what the call works in is its own: any
 number of tasks render from one outline at once.

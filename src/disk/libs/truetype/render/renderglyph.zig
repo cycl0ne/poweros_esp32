@@ -17,7 +17,7 @@ const _render = @import("_render.zig");
 /// fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, rows: u32, image: *truetype.GlyphImage) i32
 /// ```
 ///
-/// SINCE: 1.5. LVO -64.
+/// SINCE: 1.5, fonts of cubic curves since 1.6. LVO -64.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -53,9 +53,13 @@ const _render = @import("_render.zig");
 /// of the line, the bytes from one row to the next, and the advance in
 /// whole pixels. Its `data` is 0.
 ///
-/// A glyph the file is damaged in - its data cut short, its outline
-/// further than sixteen lines from where it is drawn - is one of no ink,
-/// with its advance; an advance is 32767 pixels at most.
+/// A glyph the file is damaged in - its data cut short, a program of
+/// cubic curves that cannot be run, its outline further than sixteen
+/// lines from where it is drawn - is one of no ink, with its advance; an
+/// advance is 32767 pixels at most.
+///
+/// A glyph of cubic curves is rendered whatever its size: one of more
+/// points than `FontMetrics` counts on is read into the room it needs.
 ///
 /// The outline is only read, and what the call works in is its own: any
 /// number of tasks render from one outline at once.
@@ -98,7 +102,7 @@ pub fn RenderGlyph(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, ro
     image.kind = .alpha4;
     image.glyph = .{};
     if (rows == 0 or rows > _render.most_rows) return truetype.TRUETYPEERR_ROWS;
-    if (glyph >= font.glyph_count or font.glyf.len == 0) return truetype.TRUETYPEERR_GLYPH;
+    if (glyph >= font.glyph_count or !_outline.hasOutlines(font)) return truetype.TRUETYPEERR_GLYPH;
 
     var work = _render.Work.init(sys, font) orelse return truetype.TRUETYPEERR_NOMEM;
     defer work.deinit(sys);

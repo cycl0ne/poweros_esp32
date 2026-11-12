@@ -15,7 +15,7 @@ const _segments = @import("../glyph/_segments.zig");
 /// fn FontMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void
 /// ```
 ///
-/// SINCE: 1.2. LVO -44.
+/// SINCE: 1.2, fonts of cubic curves since 1.6. LVO -44.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -33,6 +33,11 @@ const _segments = @import("../glyph/_segments.zig");
 /// gives for a glyph of the font, from what `maxp` says the largest
 /// glyph is (or as for 1024 points and 128 contours, when it does not
 /// say); and the styles the file says it is drawn in.
+///
+/// A font of cubic curves does not say how large its largest glyph is:
+/// `most_verbs` and `most_points` are 1283 and 2179 for it, as for 1024
+/// points and 128 contours, and a glyph may take more. `GlyphSegments`
+/// then answers `TRUETYPEERR_ROOM` with what the glyph needs.
 ///
 /// CONTEXT:
 /// - Waits: no.

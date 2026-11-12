@@ -14,7 +14,7 @@ const _outline = @import("../outline/_outline.zig");
 /// fn GlyphMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool
 /// ```
 ///
-/// SINCE: 1.2. LVO -36.
+/// SINCE: 1.2, fonts of cubic curves since 1.6. LVO -36.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -30,6 +30,11 @@ const _outline = @import("../outline/_outline.zig");
 /// metrics (`hmtx`); the box is the one the glyph's data gives, which
 /// holds its points on the curve and off it. A glyph of no outline, a
 /// space, has a box of 0s and its advance.
+///
+/// A glyph of cubic curves has no box in its data: its program is run
+/// and the box is the one of its points, the curves' control points
+/// among them, widened to whole units. A glyph whose program is damaged
+/// has a box of 0s and its advance.
 ///
 /// CONTEXT:
 /// - Waits: no.

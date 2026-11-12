@@ -397,7 +397,47 @@ test "an outline family: any height rendered, listed as scalable, found by NewFo
     // the leak check says whether all of it went.
 }
 
-/// An outline family `name` whose TrueType file says it is drawn in
+test "an outline family of cubic curves: found by NewFontContents, a size rendered" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const builder = @import("../../truetype/tests/builder.zig");
+    const cff = @import("../../truetype/tests/cff.zig");
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+
+    // 'A' is a square 500 units wide and 700 tall, a program of lines.
+    var file: builder.File = .{};
+    const nothing = builder.program("endchar");
+    const square = builder.program("0 0 rmoveto 500 hlineto 700 vlineto -500 hlineto endchar");
+    cff.build(&file, .{ .glyphs = &.{ nothing, square } }, false);
+    const made = rig.dosLib().CreateDir("FONTS:cubic") orelse return error.NoDir;
+    rig.dosLib().UnLock(made);
+    try rig.write("FONTS:cubic/cubic.otf", file.bytes[0..file.len]);
+    const fonts = rig.dosLib().Lock("FONTS:", dos.SHARED_LOCK).?;
+    defer rig.dosLib().UnLock(fonts);
+    const contents = rig.dfb.NewFontContents(fonts, "cubic.font") orelse return error.NoContents;
+    const block: [*]align(4) u8 = @ptrCast(contents);
+    const entries = fontfile.entriesOf(block);
+    try testing.expectEqual(@as(usize, 1), entries.len);
+    try testing.expectEqual(@as(u8, 1), entries[0].outline);
+    try testing.expectEqualStrings("cubic/cubic.otf", fontfile.pathOf(&entries[0]));
+    try rig.write("FONTS:cubic.font", block[0..fontfile.contentsSize(contents.count)]);
+    rig.dfb.DisposeFontContents(contents);
+
+    // 20 rows of coverage, the square 10 wide, as the same square of a
+    // font of quadratic curves is.
+    const gb = rig.graphicsLib();
+    const font = rig.dfb.OpenDiskFont(&.{ .name = "cubic.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expectEqual(@as(u16, 20), font.image.height);
+    try testing.expectEqual(fontimage.Kind.alpha4, font.image.kind);
+    try testing.expectEqual(@as(u16, 10), fontimage.find(font.image, 'A').?.width);
+    gb.CloseFont(font);
+}
+
+/// An outline family `name` whose font file says it is drawn in
 /// `style_bits` (1 bold, 2 italic), its contents file made by
 /// NewFontContents.
 fn writeOutlineFamily(rig: *Rig, comptime name: []const u8, style_bits: u8) !void {

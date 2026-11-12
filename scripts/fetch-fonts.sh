@@ -13,7 +13,10 @@
 # Devanagari Regular and Noto Color Emoji, by Google, under the SIL Open
 # Font Licence 1.1, at pinned releases - a script whose text is reordered
 # and joined, and a font of colour glyphs with variation sequences and no
-# outlines.
+# outlines; Noto Sans CJK Regular, by Google and Adobe, and Source Sans 3
+# Regular, by Adobe, both under the SIL Open Font Licence 1.1, at pinned
+# releases - a collection of ten fonts over one set of outlines of cubic
+# curves, and a Latin font of such outlines.
 #
 # Each is checked against its sha256. Nothing of it is committed: it lands
 # in toolchain/fonts, which the build looks for; without it the disk has
@@ -69,6 +72,9 @@ echo "fonts in $out/liberation-fonts-ttf-$liberation"
 devanagari=2.007
 devanagari_sha256=820c7da45b1e63562cb41c0a8cac5d9a4202312043a3a040ed1325857ef469b1
 emoji=v2026-09-24-unicode18_0 # googlefonts/noto-emoji
+cjk=Sans2.004 # notofonts/noto-cjk
+source_sans=3.052R
+source_sans_sha256=a4ebbdea20b08ccbd7bf3665a9462454eefdd01d9a6307129d3b3d4672981074
 mkdir -p noto
 archive="NotoSansDevanagari-v$devanagari.zip"
 curl -sSfL -o "$archive" "https://github.com/notofonts/devanagari/releases/download/NotoSansDevanagari-v$devanagari/$archive"
@@ -76,9 +82,24 @@ echo "$devanagari_sha256  $archive" | sha256sum -c --quiet
 unzip -q -o -j "$archive" NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Regular.ttf -d noto
 rm "$archive"
 curl -sSfL -o noto/NotoColorEmoji.ttf "https://raw.githubusercontent.com/googlefonts/noto-emoji/$emoji/2D/fonts/NotoColorEmoji.ttf"
+curl -sSfL -o noto/NotoSansCJK-Regular.ttc "https://raw.githubusercontent.com/notofonts/noto-cjk/$cjk/Sans/OTC/NotoSansCJK-Regular.ttc"
 cd noto
 sha256sum -c --quiet <<EOF
 4e3c66638958c3e2ab5d37f47a8deb89fffeb7be9985c665a519bbc7ba762313  NotoSansDevanagari-Regular.ttf
 15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44  NotoColorEmoji.ttf
+b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a  NotoSansCJK-Regular.ttc
 EOF
 echo "fonts in $out/noto"
+
+cd "$out"
+mkdir -p source-sans
+archive="OTF-source-sans-$source_sans.zip"
+curl -sSfL -o "$archive" "https://github.com/adobe-fonts/source-sans/releases/download/$source_sans/$archive"
+echo "$source_sans_sha256  $archive" | sha256sum -c --quiet
+unzip -q -o -j "$archive" OTF/SourceSans3-Regular.otf -d source-sans
+rm "$archive"
+cd source-sans
+sha256sum -c --quiet <<EOF
+08df266400933d3178d081a45f94a08814c3e55b4b7dd2e0ff69cb1329f13ab6  SourceSans3-Regular.otf
+EOF
+echo "fonts in $out/source-sans"
