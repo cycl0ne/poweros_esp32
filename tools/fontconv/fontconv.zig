@@ -3,9 +3,9 @@
 //!
 //!   fontconv <out dir> <family> [--alpha N] [--shadow] [--rgba] <source>...
 //!
-//! Each source is one size of the family: a BDF file, an Amiga size load
-//! file, or an Amiga contents file, which brings every size it lists. Each
-//! becomes `<out dir>/<family>/<rows>`, a font image byte for byte, and
+//! Each source is one size of the family: a BDF file, the load file of
+//! one size of a bitmap font kept as load files, or such a font's
+//! contents file, which brings every size it lists. Each becomes `<out dir>/<family>/<rows>`, a font image byte for byte, and
 //! `<out dir>/<family>.font` lists them all. A TrueType or OpenType
 //! file is the family's outline: copied to
 //! `<out dir>/<family>/<its name>` and listed
@@ -30,7 +30,7 @@ const fontimage = sdk.graphics.fontimage;
 const fontfile = sdk.diskfont.fontfile;
 const font_mod = @import("font.zig");
 const bdf = @import("bdf.zig");
-const amiga = @import("amiga.zig");
+const loadfont = @import("loadfont.zig");
 const Font = font_mod.Font;
 const Allocator = std.mem.Allocator;
 
@@ -84,9 +84,9 @@ pub fn main(init: std.process.Init) !void {
             const path = try std.fs.path.join(arena, &.{ family_dir, name });
             try cwd.writeFile(io, .{ .sub_path = path, .data = bytes });
             try outlines.append(arena, .{ .name = name, .style = sdk.truetype.styleOf(bytes) });
-        } else if (amiga.isContents(bytes)) {
+        } else if (loadfont.isContents(bytes)) {
             const dir = std.fs.path.dirname(source) orelse ".";
-            for (try amiga.listed(arena, bytes)) |size| {
+            for (try loadfont.listed(arena, bytes)) |size| {
                 const path = try std.fs.path.join(arena, &.{ dir, size });
                 const size_bytes = cwd.readFileAlloc(io, path, arena, .unlimited) catch |e| fatal("{s}: {t}", .{ path, e });
                 try fonts.append(arena, convert(arena, size_bytes, options) catch |e| fatal("{s}: {t}", .{ path, e }));
@@ -114,8 +114,8 @@ const Outline = struct { name: []const u8, style: sdk.graphics.FontStyle };
 
 /// One size from its file's bytes, with the options applied.
 fn convert(gpa: Allocator, bytes: []const u8, options: Options) !Font {
-    var font = if (amiga.isHunk(bytes))
-        try amiga.read(gpa, bytes)
+    var font = if (loadfont.isHunk(bytes))
+        try loadfont.read(gpa, bytes)
     else
         try bdf.read(gpa, bytes);
     if (options.alpha != 0) {
@@ -375,16 +375,17 @@ test "a family: the contents file lists every size, sorted, and is sound" {
 }
 
 /// A load file of a font at 2 rows with two characters, 'a' and 'b', and
-/// the stand-in, as an Amiga size file is laid out; `colour` makes it a
-/// two-plane colour font whose second colour is the pen's.
-fn amigaFont(colour: bool) [32 + 256 + 4]u8 {
+/// the stand-in, as a bitmap font's file of one size is laid out;
+/// `colour` makes it a two-plane colour font whose second colour is the
+/// pen's.
+fn sizeFile(colour: bool) [32 + 256 + 4]u8 {
     {
         var hunk: [256]u8 = @splat(0);
         const tf = 4 + 54;
         // The return instruction, then the DiskFontHeader's id.
         put16(&hunk, 0, 0x7000);
         put16(&hunk, 2, 0x4E75);
-        put16(&hunk, 4 + 14, amiga.DFH_ID);
+        put16(&hunk, 4 + 14, loadfont.DFH_ID);
         put16(&hunk, tf + 20, 2); // YSize
         hunk[tf + 22] = if (colour) 0x40 | 2 else 2; // bold (and colour)
         hunk[tf + 23] = 0x20; // proportional
@@ -427,9 +428,9 @@ fn amigaFont(colour: bool) [32 + 256 + 4]u8 {
             for ([_]u16{ 0, 0xF00, 0x0F0, 0x00F }, 0..) |c, i| put16(&hunk, 230 + i * 2, c);
         }
         var file: [32 + 256 + 4]u8 = undefined;
-        for ([_]u32{ amiga.HUNK_HEADER, 0, 1, 0, 0, 64, amiga.HUNK_CODE, 64 }, 0..) |v, i| put32(&file, i * 4, v);
+        for ([_]u32{ loadfont.HUNK_HEADER, 0, 1, 0, 0, 64, loadfont.HUNK_CODE, 64 }, 0..) |v, i| put32(&file, i * 4, v);
         for (hunk, 0..) |b, i| file[32 + i] = b;
-        put32(&file, 32 + 256, amiga.HUNK_END);
+        put32(&file, 32 + 256, loadfont.HUNK_END);
         return file;
     }
 }
@@ -444,11 +445,11 @@ fn put32(out: []u8, at: usize, v: u32) void {
     put16(out, at + 2, @truncate(v));
 }
 
-test "an Amiga size file: the strike, kerning, spacing and the stand-in" {
+test "a load file of one size: the strike, kerning, spacing and the stand-in" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const gpa = arena.allocator();
-    const font = try amiga.read(gpa, &amigaFont(false));
+    const font = try loadfont.read(gpa, &sizeFile(false));
     try testing.expectEqual(@as(u32, 2), font.height);
     try testing.expectEqual(sdk.graphics.FSF_BOLD, font.style);
     try testing.expectEqual(fontimage.MISSING, font.default_char);
@@ -468,11 +469,11 @@ test "an Amiga size file: the strike, kerning, spacing and the stand-in" {
     try testing.expectEqual(fontimage.find(header, fontimage.MISSING).?, fontimage.glyphFor(header, 'z'));
 }
 
-test "an Amiga colour font: planes into indices, the table into the palette" {
+test "a colour font's load file: planes into indices, the table into the palette" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const gpa = arena.allocator();
-    const font = try amiga.read(gpa, &amigaFont(true));
+    const font = try loadfont.read(gpa, &sizeFile(true));
     try testing.expectEqual(fontimage.Kind.indexed8, font.kind);
     try testing.expectEqual(@as(u32, 2), font.pen_index);
     try testing.expectEqual(@as(u32, 0xFFFF_0000), font.palette[1]);

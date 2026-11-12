@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Reading an Amiga font: a family's contents file and its sizes' load
-//! files.
+//! Reading a bitmap font kept as load files: a family's contents file
+//! and one file a size.
 //!
 //! A contents file (`<family>.font`) is a big-endian word 0x0F00 or
 //! 0x0F02, a count, and that many 260-byte entries, each a path from the
@@ -32,7 +32,7 @@ const Font = font_mod.Font;
 const Glyph = font_mod.Glyph;
 const Allocator = std.mem.Allocator;
 
-pub const Error = error{ NotAmiga, BadHunk, BadFont } || Allocator.Error;
+pub const Error = error{ NotLoadFont, BadHunk, BadFont } || Allocator.Error;
 
 pub const HUNK_HEADER: u32 = 0x3F3;
 pub const HUNK_CODE: u32 = 0x3E9;
@@ -47,7 +47,7 @@ pub const TFCH_ID: u16 = 0x0F02;
 /// return instruction (4), then node 14, id 2, revision 2, segment 4,
 /// name 32.
 const text_font_at = 4 + 54;
-/// The Amiga's style bit for a colour font.
+/// The format's style bit for a colour font.
 const FSF_COLORFONT = 0x40;
 /// A ColorTextFont's flag: `ctf_FgColor` is drawn in the pen.
 const CTF_MAPCOLOR = 0x0001;
@@ -70,7 +70,7 @@ pub fn isContents(bytes: []const u8) bool {
 /// - `gpa` - where the list is allocated.
 /// - `bytes` - the contents file.
 pub fn listed(gpa: Allocator, bytes: []const u8) Error![]const []const u8 {
-    if (!isContents(bytes)) return error.NotAmiga;
+    if (!isContents(bytes)) return error.NotLoadFont;
     const count = be16(bytes, 2);
     const paths = try gpa.alloc([]const u8, count);
     for (paths, 0..) |*path, i| {
@@ -172,9 +172,9 @@ pub fn read(gpa: Allocator, bytes: []const u8) Error!Font {
         .height = y_size,
         .baseline = baseline,
         .x_size = x_size,
-        // The Amiga's style bits in this system's order; colour is the
+        // The file's style bits in this system's order; colour is the
         // image's kind, not a style.
-        .style = amigaStyle(style),
+        .style = fileStyle(style),
         .flags = graphics.FPF_DESIGNED | (flags & graphics.FPF_PROPORTIONAL),
         .kind = if (colour) .indexed8 else .mono1,
         .bold_smear = @intCast(@max(bold_smear, 1)),
@@ -187,9 +187,9 @@ pub fn read(gpa: Allocator, bytes: []const u8) Error!Font {
     return font;
 }
 
-/// The Amiga's FSF_UNDERLINED 1, BOLD 2, ITALIC 4, EXTENDED 8 as this
+/// The file's FSF_UNDERLINED 1, BOLD 2, ITALIC 4, EXTENDED 8 as this
 /// system's bits.
-fn amigaStyle(style: u8) graphics.FontStyle {
+fn fileStyle(style: u8) graphics.FontStyle {
     var out: graphics.FontStyle = 0;
     if (style & 1 != 0) out |= graphics.FSF_UNDERLINED;
     if (style & 2 != 0) out |= graphics.FSF_BOLD;
@@ -223,7 +223,7 @@ fn readColours(gpa: Allocator, hunk: []const u8, table_at: u32, depth: u32) Erro
 
 /// The data of the first code or data hunk of a load file.
 fn firstHunk(bytes: []const u8) Error![]const u8 {
-    if (!isHunk(bytes)) return error.NotAmiga;
+    if (!isHunk(bytes)) return error.NotLoadFont;
     var at: u32 = 4;
     // Resident library names: longword counts and names, ended by 0.
     while (true) {

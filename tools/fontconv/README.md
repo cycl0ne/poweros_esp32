@@ -13,10 +13,12 @@ Writes `<out dir>/<family>/<rows>` for each source and
 
 - a **BDF** file - one size, the characters 32 to 255 and the default
   character;
-- an **Amiga size file** - the hunk load file of one size, colour fonts
-  included, which become palette fonts with the pen's colour marked;
-- an **Amiga contents file** (`<family>.font`) - every size it lists,
-  read from beside it.
+- a **load file of one size** - a bitmap font kept as load files (a
+  contents file and one file a size): the hunk load file of one size,
+  colour fonts included, which become palette fonts with the pen's
+  colour marked;
+- such a font's **contents file** (`<family>.font`) - every size it
+  lists, read from beside it.
 
 `--alpha N` reads sources drawn 2 or 4 times too large and writes fonts
 of coverage (four bits a pixel) at their size divided by N. `--shadow`
