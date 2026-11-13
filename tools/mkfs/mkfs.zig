@@ -34,13 +34,13 @@
 //! system's - and stops there; the rest of the disk area is left as it is,
 //! which on flash means erased.
 //!
-//! **The same disk as the medium a machine is started from**
+//! **The same disk as the image a machine is started from out of RAM**
 //! (`--medium`): a second image, the same blocks but for the partition's
 //! boot priority, which stands above the one `C:Install` gives a system
-//! partition (`medium_boot_pri`). A machine started from a stick then runs
-//! the stick's system, whatever a disk of its own holds; the disk image
-//! an installed machine's loader brings along stays below its system
-//! partition.
+//! partition (`medium_boot_pri`). A machine whose loader read this image
+//! from a stick (`./zig build stick -Dstick-ram`) then runs the image's
+//! system, whatever a disk of its own holds; the disk image an installed
+//! machine's loader brings along stays below its system partition.
 //!
 //! **The same volume on a disk with a GPT** (`--gpt`): an image of
 //! `--gpt-bytes` for a disk of 512-byte blocks - an SSD - with what

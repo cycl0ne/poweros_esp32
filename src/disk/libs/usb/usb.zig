@@ -30,7 +30,7 @@ comptime {
 pub const usb_library_tag = usb_init.usb_library_tag;
 
 /// A library is not a command.
-export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
     _ = len;
     sdk.exec.kprintf(sys, "%s is a library, not a command\n", .{usb_init.LIBRARY_NAME});
@@ -38,4 +38,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 }
 
 /// The "$VER:" string, which `Version <file>` looks for.
-export const version_tag: [usb_init.LIBRARY_VERSION_STRING.len:0]u8 linksection(".version") = usb_init.LIBRARY_VERSION_STRING.*;
+const version_tag: [usb_init.LIBRARY_VERSION_STRING.len:0]u8 linksection(".version") = usb_init.LIBRARY_VERSION_STRING.*;
+
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+// The file's entry and its version string, which only the file has: in
+// the ROM there is no file, and every module the ROM takes from the disk
+// would bring its own by the same names.
+comptime {
+    if (!in_rom) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}

@@ -33,6 +33,12 @@
 //!    It carries no geometry, so its handler asks the device how large
 //!    each medium is.
 //!
+//! A medium whose GPT holds the partition the firmware started this
+//! system from (expansion.library's IsBootPartition) is the system's
+//! disk: each bootable partition of its table that got a drive has the
+//! drive named to expansion.library (NoteBootDrive), which is what
+//! dos.library waits for on a machine started from a stick.
+//!
 //! Then each drive's handler is started (`startDrives`), which reads the
 //! medium and puts its volume on the list, and the device tells input a
 //! disk came (`Input`), so a window showing the device list looks again.
@@ -56,6 +62,8 @@ const input_device = @import("input.zig");
 const ExecBase = @import("../interface/exec.zig").ExecBase;
 const DosBase = @import("../interface/dos.zig").DosBase;
 const RDBBase = @import("../interface/rdb.zig").RDBBase;
+const ExpansionBase = @import("../interface/expansion.zig").ExpansionBase;
+const EXPANSIONNAME = @import("../libs/expansion/expansion.zig").EXPANSIONNAME;
 
 /// What a unit's own drive's handler is started with.
 const handler_stack: u32 = 16384;
@@ -191,19 +199,49 @@ fn mountTable(sys: *ExecBase, unit: Unit, drives: *Drives, with_table: bool) boo
     const reads_gpt = lib.version > rdb_version or lib.revision >= gpt_revision;
     const has_gpt = reads_gpt and handle.flags & (rdb.RDBF_GPT | rdb.RDBF_GPTDAMAGED) == rdb.RDBF_GPT;
     if (handle.flags & rdb.RDBF_FOUND == 0 and !has_gpt) return false;
-    if (with_table and handle.flags & rdb.RDBF_FOUND != 0) mountPartitions(rb, handle, drives);
+    // The disk the firmware started this system from says so by one of
+    // its GPT's partitions; its bootable drives are the system's.
+    const expansion_lib = sys.OpenLibrary(EXPANSIONNAME, boot_drive_version);
+    defer if (expansion_lib) |opened| sys.CloseLibrary(opened);
+    const eb: ?*ExpansionBase = if (expansion_lib) |opened| (if (opened.revision >= boot_drive_revision) @ptrCast(opened) else null) else null;
+    const boot_disk = if (eb) |expansion| has_gpt and holdsBoot(rb, handle, expansion) else false;
+    if (with_table and handle.flags & rdb.RDBF_FOUND != 0) mountPartitions(rb, handle, drives, if (boot_disk) eb else null);
     if (has_gpt) mountGpt(rb, handle, unit, drives);
     return true;
 }
 
-/// The table's partitions mounted, but those marked PBFF_NOMOUNT.
-fn mountPartitions(rb: *RDBBase, handle: *rdb.RDBHandle, drives: *Drives) void {
+/// The expansion.library that has IsBootPartition and NoteBootDrive.
+const boot_drive_version = 1;
+const boot_drive_revision = 5;
+
+/// Whether one of the GPT's partitions is the one the firmware started
+/// this system from.
+fn holdsBoot(rb: *RDBBase, handle: *rdb.RDBHandle, eb: *ExpansionBase) bool {
+    if (!eb.IsBootPartition(null)) return false;
+    var part = rb.NextGPTPartition(handle, null);
+    while (part) |partition| : (part = rb.NextGPTPartition(handle, partition)) {
+        if (eb.IsBootPartition(&partition.entry.unique_partition_guid)) return true;
+    }
+    return false;
+}
+
+/// The table's partitions mounted, but those marked PBFF_NOMOUNT. With
+/// `boot` - the disk is the one the firmware started from - each
+/// bootable one's drive is named to expansion.library as the system's.
+fn mountPartitions(rb: *RDBBase, handle: *rdb.RDBHandle, drives: *Drives, boot: ?*ExpansionBase) void {
     var part = rb.NextPartition(handle, null);
     while (part) |partition| : (part = rb.NextPartition(handle, partition)) {
         if (partition.block.flags & dos.hardblocks.PBFF_NOMOUNT != 0) continue;
         var name: rdb.MountName = undefined;
         if (rb.MountPartition(handle, partition, &name, 0) != rdb.RDBERR_OK) continue;
         drives.add(nameOf(&name));
+        if (boot) |eb| {
+            if (partition.block.flags & dos.hardblocks.PBFF_BOOTABLE == 0) continue;
+            var drive: [name.len + 1:0]u8 = @splat(0);
+            const length = lengthOf(&name);
+            @memcpy(drive[0..length], name[0..length]);
+            eb.NoteBootDrive(&drive, partition.block.environment.boot_pri);
+        }
     }
 }
 

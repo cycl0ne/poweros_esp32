@@ -162,6 +162,12 @@ pub const BootStart = extern struct {
     /// flag for one start on the other partition set (`C:Reboot
     /// TRYBOOT`).
     tried: u32 = 0,
+    /// The identifier that partition has in its disk's table, the
+    /// sixteen bytes as they stand there, where the firmware named it so
+    /// (a UEFI firmware's path to the loader); all zeroes where it did
+    /// not. The system is started from the disk that holds a partition
+    /// with this identifier (expansion.library's `NoteBootDrive`).
+    guid: [16]u8 = @splat(0),
 };
 
 pub const PSRAM_NONE: usize = 0;

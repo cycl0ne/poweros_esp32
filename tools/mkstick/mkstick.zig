@@ -5,17 +5,31 @@
 //!
 //! usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>]
 //!                [--label=<name>] [--name=<partition>]
+//!                [--system=<disk image>]
 //!                <path on the stick>=<file> ...
 //!
-//! What it writes: a protective MBR, a GPT whose one partition is an EFI
-//! System partition over the medium from the first mebibyte on, and a
-//! FAT32 volume on that partition holding the files it was given.
+//! What it writes: a protective MBR, a GPT whose first partition is an
+//! EFI System partition of `--size` mebibytes from the first mebibyte
+//! on, and a FAT32 volume on that partition holding the files it was
+//! given.
 //!
 //! A UEFI firmware reads one name off such a partition and no other,
 //! `EFI/BOOT/BOOTX64.EFI`, so that is where the loader goes; the loader
-//! then reads `kernel.bin` and `disk-x64.bin` from beside itself, and
-//! the machine comes up on the disk image in RAM - from where
-//! `C:Install` puts a system on a disk of the machine's own.
+//! then reads `kernel.bin` from beside itself.
+//!
+//! **The system is the second partition** (`--system`): the PowerOS
+//! container of a disk image `mkfs --gpt` made - a table in its first
+//! block and a posfs partition with the system's files - copied as it
+//! stands behind the EFI System partition, under an entry of its own in
+//! the stick's table. A container counts its blocks from its own first
+//! one, so it is the same container wherever on a medium it lies. The
+//! loader hands the kernel the identifier of the partition it was read
+//! from, and the kernel starts the system on that partition's disk: the
+//! stick's. So the stick is a disk with a system on it, as an installed
+//! one is - what is written on it stays - and `C:Install` on the machine
+//! started from it puts a system on a disk of the machine's own. Without
+//! `--system` the medium holds the EFI System partition alone, and the
+//! loader reads a disk image from beside itself when one is there.
 //!
 //! **The volume is the file system's own format.** `format.write`
 //! (`src/disk/devs/handlers/fat/fat32/format.zig`, through that
@@ -109,6 +123,7 @@ pub fn main(init: std.process.Init) !void {
     var size_mib: u64 = default_size_mib;
     var label_text: []const u8 = default_label;
     var name_text: []const u8 = default_name;
+    var system_path: ?[]const u8 = null;
     var given: std.ArrayList(Give) = .empty;
     for (args, 0..) |arg, index| {
         if (index == 0) continue;
@@ -123,6 +138,8 @@ pub fn main(init: std.process.Init) !void {
             label_text = arg["--label=".len..];
         } else if (mem.startsWith(u8, arg, "--name=")) {
             name_text = arg["--name=".len..];
+        } else if (mem.startsWith(u8, arg, "--system=")) {
+            system_path = arg["--system=".len..];
         } else if (mem.startsWith(u8, arg, "--")) {
             fatal("{s}: no such option", .{arg});
         } else {
@@ -137,7 +154,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     const path = into orelse fatal(
-        "usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>] [--label=<name>] [--name=<partition>] <path on the stick>=<file> ...",
+        "usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>] [--label=<name>] [--name=<partition>] [--system=<disk image>] <path on the stick>=<file> ...",
         .{},
     );
     if (given.items.len == 0) fatal("nothing to put on it: give at least the loader the firmware reads", .{});
@@ -153,7 +170,10 @@ pub fn main(init: std.process.Init) !void {
         "--size={d}: a volume that small cannot hold the files, or cannot be FAT32 at all",
         .{size_mib},
     );
-    const blocks = made.plan.first + made.plan.total + backBlocks();
+    // The system's container, behind the volume on a mebibyte of its own.
+    const system: ?System = if (system_path) |from| takeSystem(io, arena, from, gpt.alignUp(made.plan.first + made.plan.total, block_bytes)) else null;
+    const body = if (system) |container| container.first + container.blocks else made.plan.first + made.plan.total;
+    const blocks = body + backBlocks();
 
     // The image: as long as the medium, holding what was written.
     const file = cwd.createFile(io, path, .{ .read = true }) catch |e| fatal("{s}: {t}", .{ path, e });
@@ -162,7 +182,8 @@ pub fn main(init: std.process.Init) !void {
     image.end(blocks);
 
     const seed = seedOf(label_text, name_text, blocks);
-    writeTable(&image, blocks, made.plan, name_text, &seed);
+    writeTable(&image, blocks, made.plan, name_text, &seed, system);
+    if (system) |container| writeSystem(&image, container);
     format.write(&image, made.plan, label, serialOf(&seed), made_stamp) catch |e|
         fatal("{s}: the volume could not be laid down: {t}", .{ path, e });
     writeFiles(&image, made.plan, root, made.clusters_used);
@@ -182,9 +203,6 @@ pub fn main(init: std.process.Init) !void {
         \\  volume        FAT32 "{s}", clusters of {d} bytes, {d} of them
         \\  on it         {d} bytes in {d} files and {d} drawers
         \\
-        \\Write it to a stick with:
-        \\  sudo dd if={s} of=/dev/sdX bs=4M conv=fsync status=progress
-        \\
     , .{
         shown,
         blocks * block_bytes / (1024 * 1024),
@@ -198,9 +216,74 @@ pub fn main(init: std.process.Init) !void {
         used,
         count(root, false),
         count(root, true),
-        shown,
     }) catch |e| fatal("the report could not be written: {t}", .{e});
+    if (system) |container| out.interface.print(
+        \\  partition     PowerOS container, blocks {d} to {d}, "{s}": the system,
+        \\                {d} MiB, as {s} holds it
+        \\
+    , .{
+        container.first,
+        container.first + container.blocks - 1,
+        system_name,
+        container.blocks * block_bytes / (1024 * 1024),
+        system_path.?,
+    }) catch |e| fatal("the report could not be written: {t}", .{e});
+    out.interface.print(
+        \\
+        \\Write it to a stick with:
+        \\  sudo dd if={s} of=/dev/sdX bs=4M conv=fsync status=progress
+        \\
+    , .{shown}) catch |e| fatal("the report could not be written: {t}", .{e});
     out.flush() catch |e| fatal("the report could not be written: {t}", .{e});
+}
+
+/// What the system's partition is called in the GPT.
+const system_name = "PowerOS";
+
+/// The system's container: where it goes on the medium, how many blocks
+/// it is, and the blocks themselves as the disk image holds them.
+const System = struct {
+    first: u64,
+    blocks: u64,
+    bytes: []const u8,
+};
+
+/// The PowerOS container of the disk image at `path`, to go on the
+/// medium from block `first` on. The image is one `mkfs --gpt` made: a
+/// GPT in its block 1, whose container's blocks are taken as they are.
+fn takeSystem(io: std.Io, arena: Allocator, path: []const u8, first: u64) System {
+    const disk = std.Io.Dir.cwd().readFileAlloc(io, path, arena, .unlimited) catch |e| fatal("{s}: {t}", .{ path, e });
+    if (disk.len < 3 * block_bytes) fatal("{s}: too short to be a disk image", .{path});
+    const disk_blocks = disk.len / block_bytes;
+    const header = gpt.readHeader(disk[gpt.header_block * block_bytes ..][0..block_bytes], gpt.header_block, disk_blocks) orelse
+        fatal("{s}: no partition table in its second block: it is not a disk image `mkfs --gpt` made", .{path});
+    const entries_at: usize = @intCast(header.partition_entry_lba * block_bytes);
+    const entries_bytes: usize = @intCast(gpt.entriesLength(&header));
+    if (entries_at + entries_bytes > disk.len) fatal("{s}: its partition table reaches past its end", .{path});
+    const entries = disk[entries_at..][0..entries_bytes];
+    var index: u32 = 0;
+    while (index < header.number_of_partition_entries) : (index += 1) {
+        const entry = gpt.entryAt(&header, entries, index);
+        if (!gpt.used(&entry) or !gpt.isContainer(&entry)) continue;
+        if (entry.starting_lba > entry.ending_lba or entry.ending_lba >= disk_blocks) fatal("{s}: its container reaches past its end", .{path});
+        const from: usize = @intCast(entry.starting_lba * block_bytes);
+        const length: usize = @intCast((entry.ending_lba - entry.starting_lba + 1) * block_bytes);
+        return .{ .first = first, .blocks = length / block_bytes, .bytes = disk[from..][0..length] };
+    }
+    fatal("{s}: no PowerOS container in its partition table", .{path});
+}
+
+/// The container's blocks written where it goes, but those that are all
+/// zeroes: the image is as long as the medium and holds only what was
+/// written.
+fn writeSystem(image: *Image, system: System) void {
+    const step = 256 * block_bytes;
+    var at: usize = 0;
+    while (at < system.bytes.len) : (at += step) {
+        const piece = system.bytes[at..@min(at + step, system.bytes.len)];
+        if (mem.allEqual(u8, piece, 0)) continue;
+        image.putBytes(system.first + at / block_bytes, piece);
+    }
 }
 
 /// `one` put in the tree under `root`, the drawers on the way to it made
@@ -352,9 +435,9 @@ fn backBlocks() u64 {
     return gpt.entriesBlocks(&header, block_bytes) + 1;
 }
 
-/// The protective MBR and both copies of the GPT, with the one partition
-/// the volume is on.
-fn writeTable(image: *Image, blocks: u64, plan: format.Plan, name: []const u8, seed: *const [32]u8) void {
+/// The protective MBR and both copies of the GPT, with the partition
+/// the volume is on and, with `system`, the system's container after it.
+fn writeTable(image: *Image, blocks: u64, plan: format.Plan, name: []const u8, seed: *const [32]u8, system: ?System) void {
     const arena = image.arena;
     var disk_guid = drawn(seed, 0)[0..16].*;
     var part_guid = drawn(seed, 1)[0..16].*;
@@ -375,6 +458,18 @@ fn writeTable(image: *Image, blocks: u64, plan: format.Plan, name: []const u8, s
     const entries = arena.alloc(u8, entries_bytes) catch @panic("out of memory");
     @memset(entries, 0);
     gpt.putEntry(&header, entries, 0, &entry);
+    if (system) |container| {
+        var container_guid = drawn(seed, 2)[0..16].*;
+        gpt.markRandom(&container_guid);
+        var second: gpt.Entry = .{
+            .partition_type_guid = gpt.TYPE_CONTAINER,
+            .unique_partition_guid = container_guid,
+            .starting_lba = container.first,
+            .ending_lba = container.first + container.blocks - 1,
+        };
+        gpt.setName(&second, system_name);
+        gpt.putEntry(&header, entries, 1, &second);
+    }
     const entries_crc = gpt.entriesCrc(&header, entries);
 
     const block = arena.alloc(u8, block_bytes) catch @panic("out of memory");

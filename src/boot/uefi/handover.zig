@@ -25,7 +25,7 @@
 /// The bytes `POSX64` and the version, as one word: what the kernel checks
 /// before it believes anything else here. A stub and a kernel from
 /// different builds is the one mistake this structure can catch for itself.
-pub const MAGIC: u64 = @bitCast(@as([8]u8, "POSX64\x00\x02".*));
+pub const MAGIC: u64 = @bitCast(@as([8]u8, "POSX64\x00\x03".*));
 
 /// The same for the other direction: what the stub reads out of the kernel
 /// image before it asks the firmware for anything.
@@ -58,7 +58,7 @@ pub const KernelHeader = extern struct {
 /// know: a stub is on the boot partition beside the kernel and the two are
 /// written together, so a mismatch is a half-written update, and saying so
 /// on the console beats running on fields that have moved.
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// A range of memory, start inclusive and end exclusive, as the other two
 /// 64-bit chips' tree readers give them.
@@ -174,6 +174,15 @@ pub const Handover = extern struct {
     /// above leaves the whole first mebibyte out of. 0 where the firmware
     /// called none of it free, and then the machine runs on one core.
     low_page: u64 = 0,
+
+    /// The partition the firmware read the stub from, by the identifier
+    /// its disk's table gives it - the sixteen bytes as they stand in the
+    /// table - so that the kernel starts the system on that same disk:
+    /// the one that holds a partition with this identifier. All zeroes
+    /// where the firmware did not say, where the disk has no such table,
+    /// and where the stub read a disk image from beside itself - the
+    /// machine then runs on that image.
+    boot_partition: [16]u8 = @splat(0),
 
     /// The memory the kernel may hand out, as a slice.
     pub fn memoryRanges(machine: *const Handover) []const Range {

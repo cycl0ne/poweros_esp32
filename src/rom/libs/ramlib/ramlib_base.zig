@@ -15,9 +15,13 @@ pub const RamLibBase = extern struct {
     /// file.
     dos_base: *DosBase,
     /// The process that does the loading, and the port it waits on. The
-    /// port is null until the process has made it.
+    /// port is null until the process has made it, which the library's
+    /// init waits for: who started the process, and the signal it is told
+    /// by.
     process: ?*anyopaque = null,
     port: ?*exec.MsgPort = null,
+    starter: ?*exec.Task = null,
+    start_signal: u32 = 0,
     /// The vectors that were replaced, called first on every open.
     old_open_library: ?*const anyopaque = null,
     old_open_device: ?*const anyopaque = null,

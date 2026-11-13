@@ -772,8 +772,11 @@ usb.library/StopUSB
 	hub; this returns once the controller is open, without waiting for
 	what is plugged in to be set up - a device found later is set up as
 	it comes either way, and a program that waits for one uses
-	AddUSBNotify. A bus that runs is left as it is. The library stays
-	open while a bus runs.
+	AddUSBNotify. A bus that runs is left running, and offers every
+	interface no driver has to the class drivers again (since 1.19): a
+	bus the machine started from, before `DEVS:usb/` could be read, had
+	only the ROM's drivers to offer them to. The library stays open while
+	a bus runs.
 
    CONTEXT
 	- Waits: yes, until the bus's process has opened the controller.

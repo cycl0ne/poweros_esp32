@@ -15,9 +15,12 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [AddBootNode](#addbootnode) - Puts a disk's device node into the system.
+- [BootDrive](#bootdrive) - Says which drive holds the system on the disk the firmware started from.
 - [EnterBootNodes](#enterbootnodes) - Hands dos.library the disks' device nodes kept for it, and says which one to boot from.
 - [FindBoardPart](#findboardpart) - The next part of the board after `old` whose kind and chip match.
+- [IsBootPartition](#isbootpartition) - Says whether a partition is the one the firmware read the kernel from.
 - [MakeDosNode](#makedosnode) - Makes a device node for a disk's partition, with what its handler is started with.
+- [NoteBootDrive](#notebootdrive) - Names the drive the system is to start from.
 - [ObtainDeviceUnits](#obtaindeviceunits) - Every unit of every device that speaks `speaks`, on this board.
 - [ReleaseDeviceUnits](#releasedeviceunits) - The list ObtainDeviceUnits answered, and every node on it, freed.
 - [SystemTags](#systemtags) - The root of the system tag list.
@@ -94,6 +97,67 @@ None known.
 ```zig
 const pri = if (pb.flags & hardblocks.PBFF_BOOTABLE != 0) pb.environment.boot_pri else -128;
 if (!eb.AddBootNode(pri, node)) sys.FreeVec(node);
+```
+
+## BootDrive
+
+Says which drive holds the system on the disk the firmware started from.
+
+**SYNOPSIS**
+
+```zig
+fn BootDrive(eb: *ExpansionBase) ?[*:0]const u8
+```
+
+**SINCE**
+
+1.5. LVO -56.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+The drive's name, without the colon, or null when none was noted.
+
+**BEHAVIOR**
+
+dos.library's, as it chooses the system's disk: where the firmware
+named the partition it started from (IsBootPartition with null) the
+system is on that disk and nowhere else, so dos takes the drive
+answered here over the boot nodes' priorities, and waits for one
+while there is none.
+
+**CONTEXT**
+
+- Waits: for the boot nodes' semaphore.
+- Interrupts: no.
+- Locks: takes the boot nodes' semaphore; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The name is the library's and stays where it is; a drive noted later
+with a higher boot priority is written over it, so a caller that
+keeps it copies it.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NoteBootDrive`, `IsBootPartition`, `EnterBootNodes`
+
+**EXAMPLES**
+
+```zig
+if (eb.BootDrive()) |name| assignSystem(name);
 ```
 
 ## EnterBootNodes
@@ -221,6 +285,71 @@ const slot = eb.FindBoardPart(null, st.PARTKIND_SDSLOT, st.CHIP_ANY) orelse retu
 const clock = BoardPin.of(ub.GetTagData(st.PART_PinClock, 0, slot.tags));
 ```
 
+## IsBootPartition
+
+Says whether a partition is the one the firmware read the kernel from.
+
+**SYNOPSIS**
+
+```zig
+fn IsBootPartition(eb: *ExpansionBase, guid: ?*const [16]u8) bool
+```
+
+**SINCE**
+
+1.5. LVO -48.
+
+**INPUTS**
+
+- `guid` - a partition's identifier, the sixteen bytes as they stand
+  in its disk's table (a GPT entry's unique identifier); null asks
+  whether the firmware named a partition at all.
+
+**RESULT**
+
+True when the firmware named the partition it started this system
+from (`SYSTAG_BootStart`'s `guid`) and `guid` is that one - or, for
+null, when it named one.
+
+**BEHAVIOR**
+
+A disk's driver asks this of each partition in the disk's table: the
+disk that holds this partition is the one the system belongs on, and
+the driver then names the system's drive on it with NoteBootDrive.
+An identifier of all zeroes names no partition, so a machine whose
+firmware says nothing answers false to everything.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NoteBootDrive`, `BootDrive`, `SystemTags`
+
+**EXAMPLES**
+
+```zig
+for (entries) |entry| {
+    if (eb.IsBootPartition(&entry.unique_guid)) boot_disk = true;
+}
+```
+
 ## MakeDosNode
 
 Makes a device node for a disk's partition, with what its handler is started with.
@@ -293,6 +422,70 @@ None known.
 const node = eb.MakeDosNode("DH0", "flash.device", 0, 0, &pb.environment) orelse return;
 node.misc.handler.handler = "flashfs-handler";
 if (!eb.AddBootNode(pb.environment.boot_pri, node)) sys.FreeVec(node);
+```
+
+## NoteBootDrive
+
+Names the drive the system is to start from.
+
+**SYNOPSIS**
+
+```zig
+fn NoteBootDrive(eb: *ExpansionBase, name: [*:0]const u8, boot_pri: i32) void
+```
+
+**SINCE**
+
+1.5. LVO -52.
+
+**INPUTS**
+
+- `name` - the drive's name, as its device node has it, without the
+  colon.
+- `boot_pri` - the partition's boot priority (de_BootPri).
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Called by a disk's driver for each bootable partition it has given a
+device node, on the disk that holds the partition the firmware
+started from (IsBootPartition). The name is copied; of several, the
+one with the highest boot priority is kept, and the first of equals.
+dos.library asks for it with BootDrive when it chooses the system's
+disk, and waits for it where the firmware named a partition and no
+drive is noted yet - a disk on a bus that is found only after
+dos.library is up.
+
+**CONTEXT**
+
+- Waits: for the boot nodes' semaphore.
+- Interrupts: no.
+- Locks: takes the boot nodes' semaphore; no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`name` stays the caller's.
+
+**NOTES**
+
+A name longer than a drive's may be is not kept.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`IsBootPartition`, `BootDrive`, `AddBootNode`
+
+**EXAMPLES**
+
+```zig
+if (boot_disk and bootable) eb.NoteBootDrive(node.name, pb.environment.boot_pri);
 ```
 
 ## ObtainDeviceUnits

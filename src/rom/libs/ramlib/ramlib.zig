@@ -128,9 +128,8 @@ fn fetch(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32) bool {
     const task = sys.FindTask(null) orelse return false;
     if (task.node.type == .process) return loader.load(rlb, name, kind, version, true);
 
-    // Before the process has made its port there is nobody to ask, which
-    // is only ever true of the residents that start between this one and
-    // the process's first breath.
+    // Without the process's port there is nobody to ask: the process
+    // could not make one.
     const port = rlb.port orelse return false;
     const reply = sys.CreateMsgPort() orelse return false;
     defer sys.DeleteMsgPort(reply);
@@ -151,8 +150,14 @@ fn fetch(rlb: *RamLibBase, name: [*:0]const u8, kind: u32, version: u32) bool {
 /// base came with it, as its tc_UserData.
 pub fn server(sys: *ExecBase) callconv(.c) void {
     const rlb: *RamLibBase = @ptrCast(@alignCast(sys.FindTask(null).?.user_data orelse return));
-    const port = sys.CreateMsgPort() orelse return;
-    rlb.port = port;
+    const made = sys.CreateMsgPort();
+    rlb.port = made;
+    // The library's init waits for the port, made or not.
+    if (rlb.starter) |starter| {
+        rlb.starter = null;
+        sys.Signal(starter, rlb.start_signal);
+    }
+    const port = made orelse return;
     while (true) {
         _ = sys.WaitPort(port);
         while (sys.GetMsg(port)) |message| {

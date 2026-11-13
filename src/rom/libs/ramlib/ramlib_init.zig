@@ -17,8 +17,8 @@ const openDevice = ramlib.openDevice;
 
 pub const LIBRARY_NAME = "ramlib.library";
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "31.10.2026";
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "13.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -57,10 +57,23 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         .{ .tag = dos.NP_UserData, .data = @intFromPtr(rlb) },
         .{},
     };
+    // The process makes its port before this returns: a resident that
+    // starts after this one, on a task, asks the process for a module at
+    // once.
+    const signal = sys_base.AllocSignal(-1);
+    if (signal >= 0) {
+        rlb.starter = sys_base.FindTask(null);
+        rlb.start_signal = @as(u32, 1) << @intCast(signal);
+    }
     rlb.process = rlb.dos_base.CreateNewProc(&tag_list);
     if (rlb.process == null) {
+        if (signal >= 0) sys_base.FreeSignal(signal);
         sys_base.CloseLibrary(&rlb.dos_base.lib().*);
         return null;
+    }
+    if (signal >= 0) {
+        _ = sys_base.Wait(rlb.start_signal);
+        sys_base.FreeSignal(signal);
     }
 
     patch(rlb);

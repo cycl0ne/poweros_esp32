@@ -27,6 +27,12 @@ pub const ExpansionBase = extern struct {
     /// who holds it opens dos.library and adds to its list.
     boot_nodes: exec.List = .{},
     boot_lock: exec.SignalSemaphore = .{},
+    /// The drive NoteBootDrive kept - the system's, on the disk the
+    /// firmware started from - its boot priority, and whether there is
+    /// one. Under `boot_lock`.
+    boot_drive: [32:0]u8 = @splat(0),
+    boot_drive_pri: i32 = 0,
+    boot_drive_known: bool = false,
 };
 
 /// What SystemTags answers on a machine whose ROM carries no system tag

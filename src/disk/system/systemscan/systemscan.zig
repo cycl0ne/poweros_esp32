@@ -26,6 +26,13 @@
 //! and the PCI functions' configuration space. A command that is not on
 //! the disk leaves the shell's own line under its heading.
 //!
+//! **Every drive is started first** (`startDrives`): a drive's handler is
+//! started when the drive is first used, so one nothing has asked for
+//! yet - the boot partition of the stick the machine was started from,
+//! whose handler was not to be had when the stick was found - has no
+//! volume to show. Asking each for its handler starts it, so the report
+//! lists every volume there is, and the field can start on the stick.
+//!
 //! It is written to `T:SystemScan.txt` and read back into the window,
 //! which shows it in a field that can be read, selected and copied but
 //! not changed.
@@ -66,7 +73,7 @@ const tx = sdk.gadgets.text;
 const te = sdk.gadgets.textedit;
 
 pub const COMMAND_NAME = "SystemScan";
-const VERSION = "1.0";
+const VERSION = "1.1";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (13.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -225,6 +232,7 @@ const App = struct {
         const sys = app.sys;
         app.status.say(sys, "Looking at the machine ...", .{});
         app.showStatus();
+        startDrives(sys, app.dl);
         if (app.report) |old| sys.FreeVec(old);
         app.report = null;
         app.report_length = 0;
@@ -485,6 +493,40 @@ fn fontHeight(app: *App) usize {
     return font.image.height;
 }
 
+/// The most drives started in one go.
+const drives_most = 32;
+
+/// Every drive whose handler has not been started asked for it, which
+/// starts it: its volume is on the list afterwards, where its medium has
+/// one. Asked without a requester for a medium that is not there.
+fn startDrives(sys: *ExecBase, dl: *DosBase) void {
+    var names: [drives_most][dos.MAX_DEVICE_NAME + 2:0]u8 = undefined;
+    var count: usize = 0;
+    {
+        const flags = dos.LDF_DEVICES | dos.LDF_READ;
+        const list = dl.LockDosList(flags) orelse return;
+        defer dl.UnLockDosList(flags);
+        var entry = dl.NextDosEntry(list, dos.LDF_DEVICES);
+        while (entry) |node| : (entry = dl.NextDosEntry(node, dos.LDF_DEVICES)) {
+            if (node.task != null or count == drives_most) continue;
+            var length: usize = 0;
+            while (node.name[length] != 0 and length < dos.MAX_DEVICE_NAME) length += 1;
+            names[count] = @splat(0);
+            @memcpy(names[count][0..length], node.name[0..length]);
+            names[count][length] = ':';
+            count += 1;
+        }
+    }
+    const process: *dos.Process = @ptrCast(@alignCast(sys.FindTask(null).?));
+    const asked = process.window_ptr;
+    process.window_ptr = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+    defer process.window_ptr = asked;
+    for (names[0..count]) |*name| {
+        const proc = dl.GetDeviceProc(name, null) orelse continue;
+        dl.FreeDeviceProc(proc);
+    }
+}
+
 /// Whether a volume named as `medium_volume` is in, asked without a
 /// requester for it.
 fn mediumIn(sys: *ExecBase, dl: *DosBase) bool {
@@ -540,6 +582,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.* = .{ .sys = sys, .dl = dl, .ib = ib, .ub = ub };
     defer if (app.report) |report| sys.FreeVec(report);
 
+    startDrives(sys, dl);
     if (rdargs.string(argv[arg_to])) |to| {
         copyText(&app.drawer, to);
     } else {

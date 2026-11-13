@@ -58,5 +58,10 @@ names the command:
 | The system log | `Log LINES 400` |
 | PCI functions, in full | `PCIInfo FULL`, `PCIInfo HEX` |
 
+Before it looks, SystemScan starts every drive nothing has used yet, so
+that each one's volume is there to be listed - the boot partition of the
+stick a machine was started from among them, which is where the report
+is then saved.
+
 A command that is not on the disk leaves the shell's own line under its
 heading. The report is also left in `T:SystemScan.txt`.

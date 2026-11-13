@@ -80,6 +80,20 @@ socket that is also the console's - the ESP32-S3 boards', whose one USB
 port is the serial console and the JTAG as the chip starts - is left to
 `USB START` by hand.
 
+**A machine started from a USB stick** has its buses running before
+there is a `DEVS:` to read: the kernel of a machine whose firmware is
+UEFI carries usb.library, xhci.device and usb/disk.device, and where the
+disk the firmware started from is not found at cold start, `usbstart`
+starts every bus so that the stick is ([the install
+guide](install.md#the-medium-a-machine-is-first-reached-with)). The class
+drivers the kernel carries are in usb.library's table from the start,
+ahead of a file of the same name; those in `DEVS:usb/` join it once the
+drawer can be read. `StartUSB` on a bus that runs - which is what
+`USB AUTO` then does - has the bus offer every interface no driver took
+to the drivers there are by then, so a keyboard that was plugged in as
+the machine started gets its driver when `S:Startup-Sequence` reaches
+that line.
+
 **The ESP32-S3's port.** The chip has one USB port, GPIO19 and GPIO20,
 and two controllers that can have it: USB-Serial-JTAG - the console and
 the JTAG, whose it is as the chip starts - and the OTG controller.

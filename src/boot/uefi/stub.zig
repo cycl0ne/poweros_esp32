@@ -308,6 +308,36 @@ fn ownVolume(boot: *uefi.tables.BootServices) !*uefi.protocol.File {
     return try file_system.openVolume();
 }
 
+/// The identifier of the partition the stub was started from, as its
+/// disk's table has it: the firmware names the device it read an image
+/// from as a path of nodes, and the node for a partition of a disk
+/// carries the partition's signature - with a table of the newer kind,
+/// the sixteen bytes that name it there. Left as zeroes where the path
+/// has no such node, as on a medium without that table.
+///
+/// The path is read as bytes: a node is its kind, its sub-kind and its
+/// length, and the one looked for is a medium's (4) hard drive (1), whose
+/// signature is at 24 with what kind of signature it is at 41 - 2 for a
+/// table's identifier. A node of kind 0x7F ends the path.
+fn takeBootPartition(boot: *uefi.tables.BootServices) void {
+    const image = (boot.handleProtocol(uefi.protocol.LoadedImage, uefi.handle) catch return) orelse return;
+    const device = image.device_handle orelse return;
+    const path = (boot.handleProtocol(uefi.protocol.DevicePath, device) catch return) orelse return;
+    var node: [*]const u8 = @ptrCast(path);
+    var nodes: u32 = 0;
+    while (nodes < 64) : (nodes += 1) {
+        const kind = node[0];
+        const sub_kind = node[1];
+        const length = @as(usize, node[2]) | @as(usize, node[3]) << 8;
+        if (kind == 0x7F or length < 4) return;
+        if (kind == 4 and sub_kind == 1 and length >= 42 and node[41] == 2) {
+            @memcpy(&machine.boot_partition, node[24..40]);
+            return;
+        }
+        node += length;
+    }
+}
+
 /// A file read into pages of its own, and the range it is in. The pages are
 /// asked for as loader data, which the kernel is told it owns - the kernel
 /// keeps what it wants where it is and hands the rest out.
@@ -528,6 +558,9 @@ pub fn main() uefi.Status {
             put("\n");
         }
         machine.disk = readFile(boot, volume, disk_name) catch .{ .start = 0, .end = 0 };
+        // With no disk image beside it, the system is on the disk the
+        // stub came from: the kernel is told which partition that was.
+        if (machine.disk.end == 0) takeBootPartition(boot);
     } else |_| {
         line("the partition the stub was started from cannot be read");
     }

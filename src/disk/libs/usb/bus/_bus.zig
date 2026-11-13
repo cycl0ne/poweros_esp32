@@ -177,6 +177,9 @@ pub const Bus = struct {
     /// The process's port: control transfers' replies, and the hubs'.
     port: ?*exec.MsgPort = null,
     delay_io: timer.TimeRequest = .{},
+    /// The signal that has the bus offer the interfaces without a driver
+    /// again (`lookAgain`); 0 without one.
+    look_signal: u32 = 0,
     /// The stop, and who waits for it to be done.
     stop_signal: u32 = 0,
     waiter: ?*exec.Task = null,
@@ -214,6 +217,8 @@ pub fn busProcess(sys: *ExecBase) callconv(.c) void {
         return finishStart(bus, stop_bit);
     }
     bus.stop_signal = @as(u32, 1) << @intCast(stop_bit);
+    const look_bit = sys.AllocSignal(-1);
+    if (look_bit >= 0) bus.look_signal = @as(u32, 1) << @intCast(look_bit);
     bus.hc_io = .{};
     bus.hc_io.std.req.message.reply_port = bus.port;
     bus.hc_io.std.req.message.length = @sizeOf(usbhc.IOUsbHC);
@@ -231,8 +236,11 @@ pub fn busProcess(sys: *ExecBase) callconv(.c) void {
 
     const port_mask = bus.port.?.sigMask();
     while (true) {
-        const got = sys.Wait(port_mask | bus.stop_signal);
+        const got = sys.Wait(port_mask | bus.stop_signal | bus.look_signal);
         if (got & bus.stop_signal != 0) break;
+        if (got & bus.look_signal != 0) {
+            if (bus.root) |root| offerAgain(bus, root);
+        }
         hubsChanged(bus);
         recover(bus);
     }
@@ -758,6 +766,24 @@ fn bindAll(bus: *Bus, device: *Device) void {
             device.public.drivers[number] = @ptrCast(&driver.name);
             _notify.changed(base);
         }
+    }
+}
+
+/// The bus told to offer every interface no driver has to the class
+/// drivers again: there may be more of them now than when the device
+/// came - a bus started before `DEVS:usb/` could be read. From any task.
+pub fn lookAgain(bus: *Bus) void {
+    const process = bus.process orelse return;
+    if (bus.look_signal != 0) bus.usb_base.sys_base.Signal(process, bus.look_signal);
+}
+
+/// `device`'s interfaces without a driver offered again, and those of
+/// everything behind it. On the bus's process.
+fn offerAgain(bus: *Bus, device: *Device) void {
+    bindAll(bus, device);
+    const hub = device.hub orelse return;
+    for (hub.children) |child| {
+        if (child) |behind| offerAgain(bus, behind);
     }
 }
 

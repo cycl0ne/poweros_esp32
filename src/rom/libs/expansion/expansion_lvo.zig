@@ -20,6 +20,9 @@ const AddBootNode = @import("boot/addbootnode.zig").AddBootNode;
 const EnterBootNodes = @import("boot/enterbootnodes.zig").EnterBootNodes;
 const ObtainDeviceUnits = @import("device/obtaindeviceunits.zig").ObtainDeviceUnits;
 const ReleaseDeviceUnits = @import("device/releasedeviceunits.zig").ReleaseDeviceUnits;
+const IsBootPartition = @import("boot/isbootpartition.zig").IsBootPartition;
+const NoteBootDrive = @import("boot/notebootdrive.zig").NoteBootDrive;
+const BootDrive = @import("boot/bootdrive.zig").BootDrive;
 
 /// expansion.library's interface, as the SDK generates it from
 /// sdk/fd/expansion_lib.fd.
@@ -52,6 +55,9 @@ const contract_files = [_][]const u8{
     @embedFile("boot/enterbootnodes.zig"),
     @embedFile("device/obtaindeviceunits.zig"),
     @embedFile("device/releasedeviceunits.zig"),
+    @embedFile("boot/isbootpartition.zig"),
+    @embedFile("boot/notebootdrive.zig"),
+    @embedFile("boot/bootdrive.zig"),
 };
 
 fn lvoFindBoardPart(eb: *ExpansionBase, old: ?*const BoardPart, kind: u32, chip: u32) callconv(.c) ?*const BoardPart {
@@ -75,6 +81,15 @@ fn lvoObtainDeviceUnits(eb: *ExpansionBase, speaks: u32, tags: ?[*]const utility
 fn lvoReleaseDeviceUnits(eb: *ExpansionBase, list: ?*exec.List) callconv(.c) void {
     ReleaseDeviceUnits(eb, list);
 }
+fn lvoIsBootPartition(eb: *ExpansionBase, guid: ?*const [16]u8) callconv(.c) bool {
+    return IsBootPartition(eb, guid);
+}
+fn lvoNoteBootDrive(eb: *ExpansionBase, name: [*:0]const u8, boot_pri: i32) callconv(.c) void {
+    NoteBootDrive(eb, name, boot_pri);
+}
+fn lvoBootDrive(eb: *ExpansionBase) callconv(.c) ?[*:0]const u8 {
+    return BootDrive(eb);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -90,6 +105,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoEnterBootNodes),
     vec(lvoObtainDeviceUnits),
     vec(lvoReleaseDeviceUnits),
+    vec(lvoIsBootPartition),
+    vec(lvoNoteBootDrive),
+    vec(lvoBootDrive),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

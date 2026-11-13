@@ -30,6 +30,9 @@ pub const LVO = struct {
     pub const EnterBootNodes = libraries.lvo(8);
     pub const ObtainDeviceUnits = libraries.lvo(9);
     pub const ReleaseDeviceUnits = libraries.lvo(10);
+    pub const IsBootPartition = libraries.lvo(11);
+    pub const NoteBootDrive = libraries.lvo(12);
+    pub const BootDrive = libraries.lvo(13);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -42,6 +45,9 @@ pub const Fn = struct {
     pub const EnterBootNodes = *const fn (*ExpansionBase) callconv(.c) ?*dos.DosList;
     pub const ObtainDeviceUnits = *const fn (*ExpansionBase, u32, ?[*]const utility.TagItem) callconv(.c) ?*exec.List;
     pub const ReleaseDeviceUnits = *const fn (*ExpansionBase, ?*exec.List) callconv(.c) void;
+    pub const IsBootPartition = *const fn (*ExpansionBase, ?*const [16]u8) callconv(.c) bool;
+    pub const NoteBootDrive = *const fn (*ExpansionBase, [*:0]const u8, i32) callconv(.c) void;
+    pub const BootDrive = *const fn (*ExpansionBase) callconv(.c) ?[*:0]const u8;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -99,5 +105,25 @@ pub const ExpansionBase = opaque {
     /// The list ObtainDeviceUnits answered, and its nodes, freed.
     pub fn ReleaseDeviceUnits(self: *ExpansionBase, list: ?*exec.List) void {
         return libraries.call(self, LVO.ReleaseDeviceUnits, Fn.ReleaseDeviceUnits, .{list});
+    }
+
+    /// Whether `guid` - a partition's identifier, the sixteen bytes as its
+    /// disk's table has them - is the partition the firmware started this
+    /// system from; with null, whether the firmware named one at all.
+    pub fn IsBootPartition(self: *ExpansionBase, guid: ?*const [16]u8) bool {
+        return libraries.call(self, LVO.IsBootPartition, Fn.IsBootPartition, .{guid});
+    }
+
+    /// A disk's driver's: the drive `name` is a bootable partition, of boot
+    /// priority `boot_pri`, on the disk that holds the partition the firmware
+    /// started from. The highest priority's is kept.
+    pub fn NoteBootDrive(self: *ExpansionBase, name: [*:0]const u8, boot_pri: i32) void {
+        return libraries.call(self, LVO.NoteBootDrive, Fn.NoteBootDrive, .{ name, boot_pri });
+    }
+
+    /// dos.library's: the drive NoteBootDrive kept, without the colon, or
+    /// null while there is none.
+    pub fn BootDrive(self: *ExpansionBase) ?[*:0]const u8 {
+        return libraries.call(self, LVO.BootDrive, Fn.BootDrive, .{});
     }
 };

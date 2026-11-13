@@ -324,6 +324,7 @@ fn takeBoard(machine: *const handover.Handover) void {
         hardware.ramdisk.base = @intCast(machine.disk.start);
         hardware.ramdisk.size = @intCast(machine.disk.end - machine.disk.start);
     }
+    if (@hasDecl(boards.system, "boot_start")) boards.system.boot_start.guid = machine.boot_partition;
     x64_stack_low = ram.ramBase() + trap.frame_offset;
     x64_stack_high = ram.ramEnd();
     // The page the other cores start on, which only the stub could have

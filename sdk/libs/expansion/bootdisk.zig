@@ -20,7 +20,11 @@
 //! of its own - or that there is no handler for is passed over.
 //! AddBootNode keeps the nodes until dos takes them in. A bootable
 //! partition stands at its de_BootPri, the others at -128, which is never
-//! booted from; dos starts from the highest.
+//! booted from; dos starts from the highest. Where the firmware named
+//! the partition it started this system from and the disk's GPT holds
+//! that partition (expansion.library's IsBootPartition), each bootable
+//! partition's drive is named as the system's (NoteBootDrive), which dos
+//! takes before any priority.
 //!
 //! **A disk with a GPT** and no RigidDiskBlock of its own has its
 //! partitions in the GPT's PowerOS container (`dos.gpt`): the
@@ -137,6 +141,35 @@ pub fn Partitions(comptime Disk: type) type {
             return @intCast(container.starting_lba);
         }
 
+        /// Whether one of the GPT's partitions is the one the firmware
+        /// started this system from (`eb.IsBootPartition`): the table in
+        /// block 1 walked once more, unchecked - `of` found it sound.
+        pub fn holdsBoot(disk: Disk, block_bytes: u32, scratch: []u8, eb: *ExpansionBase) bool {
+            if (!eb.IsBootPartition(null)) return false;
+            const block = scratch[0..block_bytes];
+            if (!disk.readBlock(@intCast(gpt.header_block), block)) return false;
+            const header = gpt.readHeader(block, gpt.header_block, 0xFFFF_FFFF_FFFF_FFFF) orelse return false;
+            const count = gpt.entriesBlocks(&header, block_bytes);
+            if (header.partition_entry_lba + count > 0xFFFF_FFFF) return false;
+            const first: u32 = @intCast(header.partition_entry_lba);
+            const per = gpt.entriesPerBlock(&header, block_bytes);
+            var number: u32 = 0;
+            var index: u32 = 0;
+            while (index < count) : (index += 1) {
+                if (!disk.readBlock(first + index, block)) return false;
+                var slot: u32 = 0;
+                while (slot < per and number < header.number_of_partition_entries) : ({
+                    slot += 1;
+                    number += 1;
+                }) {
+                    const entry = gpt.entryAt(&header, block, slot);
+                    if (!gpt.used(&entry)) continue;
+                    if (eb.IsBootPartition(&entry.unique_partition_guid)) return true;
+                }
+            }
+            return false;
+        }
+
         /// An entry and its place among the entries.
         const Found = struct { entry: gpt.Entry, number: u32 };
 
@@ -224,10 +257,14 @@ fn onDisk(env: *dos.DosEnvec, offset: u32) bool {
 pub fn mountPartitions(sys: *ExecBase, device: [*:0]const u8, unit: u32, disk: anytype, block_bytes: u32, erase_size: u32) void {
     const scratch = sys.AllocVec(block_bytes, exec.MEMF_ANY) orelse return;
     defer sys.FreeVec(scratch);
-    var partitions = Partitions(@TypeOf(disk)).of(disk, block_bytes, @as([*]u8, @ptrCast(scratch))[0..block_bytes]) orelse return;
+    const room = @as([*]u8, @ptrCast(scratch))[0..block_bytes];
+    var partitions = Partitions(@TypeOf(disk)).of(disk, block_bytes, room) orelse return;
     const expansion_lib = sys.OpenLibrary(EXPANSIONNAME, 1) orelse return;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
+    // The disk the firmware started this system from says so by one of
+    // its GPT's partitions; its bootable drives are the system's.
+    const boot_disk = partitions.offset != 0 and Partitions(@TypeOf(disk)).holdsBoot(disk, block_bytes, room, eb);
     var pb: hardblocks.PartitionBlock = undefined;
     while (partitions.nextPartition(&pb)) {
         const handler = handlerFor(pb.environment.dos_type, erase_size) orelse continue;
@@ -242,6 +279,10 @@ pub fn mountPartitions(sys: *ExecBase, device: [*:0]const u8, unit: u32, disk: a
         node.misc.handler.handler = handler;
         node.misc.handler.entry = filesystems.romEntry(sys, handler);
         const boot_pri: i32 = if (pb.flags & hardblocks.PBFF_BOOTABLE != 0) pb.environment.boot_pri else -128;
-        if (!eb.AddBootNode(boot_pri, node)) sys.FreeVec(node);
+        if (!eb.AddBootNode(boot_pri, node)) {
+            sys.FreeVec(node);
+            continue;
+        }
+        if (boot_disk and boot_pri > -128) eb.NoteBootDrive(&name, boot_pri);
     }
 }

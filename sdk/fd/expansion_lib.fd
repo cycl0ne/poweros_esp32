@@ -44,4 +44,15 @@ bool AddBootNode(i32 boot_pri, *dos.DosList node)
 ?*exec.List ObtainDeviceUnits(u32 speaks, ?[*]const utility.TagItem tags)
 /// The list ObtainDeviceUnits answered, and its nodes, freed.
 void ReleaseDeviceUnits(?*exec.List list)
+/// Whether `guid` - a partition's identifier, the sixteen bytes as its
+/// disk's table has them - is the partition the firmware started this
+/// system from; with null, whether the firmware named one at all.
+bool IsBootPartition(?*const [16]u8 guid)
+/// A disk's driver's: the drive `name` is a bootable partition, of boot
+/// priority `boot_pri`, on the disk that holds the partition the firmware
+/// started from. The highest priority's is kept.
+void NoteBootDrive([*:0]const u8 name, i32 boot_pri)
+/// dos.library's: the drive NoteBootDrive kept, without the colon, or
+/// null while there is none.
+?[*:0]const u8 BootDrive()
 ##end

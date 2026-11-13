@@ -42,6 +42,15 @@
 //! so a machine with one has sound of its own and a machine with none
 //! falls through to the file sink and the null one, and a program that
 //! plays runs either way.
+//!
+//! And what starting from a USB stick takes: rdb.library, which reads a
+//! stick's table and gives its partitions their drives; usb.library,
+//! xhci.device for the controllers and usb/disk.device for the stick, none
+//! of them started at cold start - ramlib makes each from its tag when it
+//! is first opened; and usbstart, which opens them where the disk the
+//! firmware started this system from has not been found by then. A system
+//! on an SSD starts none of them here, and finds them in the ROM when
+//! `S:Startup-Sequence` starts the buses.
 
 pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
@@ -59,4 +68,9 @@ pub const modules = .{
     @import("../../rom/libs/rta_driver/null/null.zig"),
     @import("../../rom/libs/rta_driver/file/file.zig"),
     @import("../../rom/devs/audio/audio.zig"),
+    @import("../../disk/libs/rdb/rdb.zig"),
+    @import("../../disk/libs/usb/usb.zig"),
+    @import("../../disk/devs/xhci/xhci.zig"),
+    @import("../../disk/devs/usb/disk/disk.zig"),
+    @import("../../rom/boot/usbstart.zig"),
 };

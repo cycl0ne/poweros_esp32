@@ -19,8 +19,8 @@ const ExpansionBase = expansion_base.ExpansionBase;
 /// The name it is opened by. The SDK's.
 pub const LIBRARY_NAME = expansion.EXPANSIONNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "18.10.2026";
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "13.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -91,6 +91,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     eb.system = findSystem(sys_base) orelse &expansion_base.empty_list;
     eb.parts = null;
     eb.part_count = 0;
+    eb.boot_drive = @splat(0);
+    eb.boot_drive_pri = 0;
+    eb.boot_drive_known = false;
     eb.boot_nodes.init(.unknown);
     sys_base.InitSemaphore(&eb.boot_lock);
     const ub = eb.utility_base;

@@ -76,6 +76,11 @@ const gpu = [_]Tag{
     .done,
 };
 
+/// Where the firmware started this system from: the kernel copies the
+/// identifier of the partition the loader was read from in before
+/// anything runs, and the system is started from that partition's disk.
+pub var boot_start: st.BootStart = .{};
+
 /// The root list: the board's own facts, which the kernel reads at compile
 /// time (`boards.fact`). The parts come from the firmware, through
 /// `addPart` into `list`.
@@ -107,6 +112,7 @@ pub const root = [_]Tag{
     // for itself. The kernel runs on the boot core alone until it can
     // start the others.
     .value(st.SYSTAG_Cores, 0),
+    .pointer(st.SYSTAG_BootStart, &boot_start),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
     .pointer(st.SYSTAG_Part, &gpu),

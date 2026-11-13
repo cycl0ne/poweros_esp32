@@ -8,6 +8,15 @@
 //! driver is a few hundred bytes read once, until something it drives is
 //! plugged in.
 //!
+//! The class drivers the ROM carries are taken first, from its own tags
+//! (`fromRom`): a machine that starts from a USB disk has that disk's
+//! driver in its ROM, and its bus runs before there is a `DEVS:` to read.
+//! A file of a name the ROM has is passed over. While `DEVS:usb/` cannot
+//! be read, the table is the ROM's alone and the drawer is looked for
+//! again each time the table is asked for (`readDisk`); a bus told to
+//! look again (`StartUSB` on one that runs) offers every interface no
+//! driver has to the drivers there are then.
+//!
 //! **Offering an interface.** Every driver whose table has an entry the
 //! interface matches is a candidate, the most specific entry first (a
 //! vendor and product above a class), the higher priority among equals.
@@ -50,6 +59,8 @@ pub const Driver = struct {
 
 /// The table of drivers, in the base's `drivers`.
 pub const Drivers = struct {
+    /// `DEVS:usb/` was read: the table is whole.
+    disk_read: bool = false,
     count: u32 = 0,
     list: [max_drivers]Driver = @splat(.{}),
 };
@@ -70,7 +81,11 @@ const DosFile = struct {
 /// The table, read from DEVS:usb/ if it has not been. Under
 /// `drivers_lock`. On a process: it reads files.
 pub fn table(base: *UsbBase) ?*Drivers {
-    if (base.drivers) |found| return @ptrCast(@alignCast(found));
+    if (base.drivers) |found| {
+        const drivers: *Drivers = @ptrCast(@alignCast(found));
+        readDisk(base, drivers);
+        return drivers;
+    }
     const sys = base.sys_base;
     const dl = base.dos orelse return null;
     // Kept in the library's base: the system's.
@@ -78,18 +93,88 @@ pub fn table(base: *UsbBase) ?*Drivers {
     const drivers: *Drivers = @ptrCast(@alignCast(memory));
     drivers.* = .{};
     base.drivers = drivers;
+    fromRom(sys, drivers);
+    readDisk(base, drivers);
+    _ = dl;
+    return drivers;
+}
 
-    const dir = dl.Lock(DRIVERS_DIR, dos.ACCESS_READ) orelse return drivers;
+/// The ROM's class drivers into the table: every tag of a device that
+/// speaks `DEVIF_USBCLASS`, under the name it is opened by.
+fn fromRom(sys: *ExecBase, drivers: *Drivers) void {
+    const tags = sys.ResModules() orelse return;
+    var index: usize = 0;
+    while (tags[index]) |tag| : (index += 1) {
+        if (tag.flags & exec.RTF_DEVICEINFO == 0 or tag.type != .device) continue;
+        const device: *const exec.ResidentDevice = @ptrCast(tag);
+        var is_class = false;
+        var at: usize = 0;
+        while (at < 16 and device.speaks[at] != 0) : (at += 1) {
+            if (device.speaks[at] == devices.DEVIF_USBCLASS) is_class = true;
+        }
+        if (!is_class or drivers.count >= max_drivers) continue;
+        const class: *const usbclass.ResidentUSBClass = @ptrCast(tag);
+        const driver = &drivers.list[drivers.count];
+        driver.* = .{};
+        var length: usize = 0;
+        while (tag.name[length] != 0) length += 1;
+        if (driver_prefix.len + length + 1 > driver.name.len) continue;
+        @memcpy(driver.name[0..driver_prefix.len], driver_prefix);
+        @memcpy(driver.name[driver_prefix.len..][0..length], tag.name[0..length]);
+        var count: u32 = 0;
+        while (count < max_matches and class.matches[count].fields != 0) : (count += 1) driver.matches[count] = class.matches[count];
+        driver.match_count = count;
+        if (count != 0) drivers.count += 1;
+    }
+}
+
+/// What a driver is opened by: its file's name after this.
+const driver_prefix = "usb/";
+
+/// The drivers in `DEVS:usb/` added to the table, once the drawer can be
+/// read - which it cannot before the system's disk is known. Asked
+/// without a requester for a volume that is not there. Under
+/// `drivers_lock`, on a process.
+pub fn readDisk(base: *UsbBase, drivers: *Drivers) void {
+    if (drivers.disk_read) return;
+    const sys = base.sys_base;
+    const dl = base.dos orelse return;
+    const me = sys.FindTask(null).?;
+    const process: ?*dos.Process = if (me.node.type == .process) @ptrCast(@alignCast(me)) else null;
+    const asked = if (process) |own| own.window_ptr else null;
+    if (process) |own| own.window_ptr = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+    defer if (process) |own| {
+        own.window_ptr = asked;
+    };
+    const dir = dl.Lock(DRIVERS_DIR, dos.ACCESS_READ) orelse return;
     defer dl.UnLock(dir);
+    drivers.disk_read = true;
     var fib: dos.FileInfoBlock = .{};
-    if (!dl.Examine(dir, &fib)) return drivers;
+    if (!dl.Examine(dir, &fib)) return;
     while (dl.ExNext(dir, &fib)) {
         if (dos.isDirectory(fib.dir_entry_type)) continue;
         if (drivers.count >= max_drivers) break;
+        if (known(drivers, fileName(&fib))) continue;
         readDriver(base, &drivers.list[drivers.count], fileName(&fib)) catch continue;
         drivers.count += 1;
     }
-    return drivers;
+}
+
+/// Whether the table has a driver of this file's name already: the
+/// ROM's.
+fn known(drivers: *const Drivers, file_name: []const u8) bool {
+    for (drivers.list[0..drivers.count]) |*driver| {
+        const name = driver.name[driver_prefix.len..];
+        var length: usize = 0;
+        while (length < name.len and name[length] != 0) length += 1;
+        if (length != file_name.len) continue;
+        var same = true;
+        for (name[0..length], file_name) |have, want| {
+            if (have != want) same = false;
+        }
+        if (same) return true;
+    }
+    return false;
 }
 
 fn fileName(fib: *const dos.FileInfoBlock) []const u8 {
@@ -102,7 +187,7 @@ fn fileName(fib: *const dos.FileInfoBlock) []const u8 {
 fn readDriver(base: *UsbBase, driver: *Driver, file_name: []const u8) !void {
     const dl = base.dos.?;
     driver.* = .{};
-    const prefix = "usb/";
+    const prefix = driver_prefix;
     if (prefix.len + file_name.len + 1 > driver.name.len) return error.Name;
     @memcpy(driver.name[0..prefix.len], prefix);
     @memcpy(driver.name[prefix.len..][0..file_name.len], file_name);

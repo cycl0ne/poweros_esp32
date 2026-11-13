@@ -43,17 +43,39 @@ the size of the stick. Everything on it is written over, so look at what
 is there first, and unmount the volume the desktop mounted before writing
 (`udisksctl unmount -b /dev/sdX1`).
 
-The image holds a protective MBR, a GPT whose one partition is an EFI
-System partition over the medium from the first mebibyte, and a FAT32
-volume on it with three files: `EFI/BOOT/BOOTX64.EFI`, which is the one
-name such a firmware reads off a boot partition; `kernel.bin`, which that
-loader reads from beside itself; and `disk-x64.bin`, the disk image the
-machine runs on. So the stick carries a whole machine - it comes up to a
-console and a desktop with `SYS:` in RAM, and nothing has to be installed
-to try one. Its disk image boots above any system partition `C:Install`
-makes, so a machine started from the stick runs the stick's system even
-where a disk of its own holds one: that is how a machine whose own system
-no longer starts is installed afresh.
+The image holds a protective MBR and a GPT with two partitions:
+
+| Partition | What |
+|---|---|
+| EFI System | FAT32 `POWEROS`, 320 MiB: `EFI/BOOT/BOOTX64.EFI`, the one name such a firmware reads off a boot partition, and `kernel.bin`, which that loader reads from beside itself |
+| PowerOS container | a table in its first block and `DH0`, posfs, `System`: the whole system, every program and tool a 64-bit machine's disk has |
+
+So the stick is a disk with a system on it, as an installed one is. The
+loader tells the kernel which partition the firmware read it from - the
+identifier that partition has in its disk's table - and the kernel starts
+the system on the disk that holds that partition: the stick. A machine
+started from the stick therefore runs the stick's system even where a
+disk of its own holds one, which is how a machine whose own system no
+longer starts is installed afresh; and what is written on the stick
+stays, since `SYS:` is a partition of it and not a copy in RAM.
+
+A stick is found only once its bus runs, so the kernel of such a machine
+carries what that takes - usb.library, xhci.device for the controllers,
+usb/disk.device for the stick and rdb.library for its table - and
+dos.library waits for the stick before it says where `SYS:` is: up to
+twenty seconds, half a second on a machine that finds it at once. The
+console says which disk it took:
+
+```
+dos.library: the disk the firmware started from is not found yet: starting the after-DOS residents and waiting for it
+usbstart: 1 USB buses started, to find the disk the firmware started from
+dos.library: the system is on DH0:
+```
+
+The EFI System partition is a drive as well - `DU0:`, the volume
+`POWEROS` - so a file saved there is read by any other system the stick
+is put into: `SYS:System/SystemScan` saves its report of what a machine
+is made of in `POWEROS:Scans` when it is started from the stick.
 
 From there the machine installs itself onto a disk of its own with no
 network and no second machine, because the running system is a source
@@ -63,19 +85,27 @@ network and no second machine, because the running system is a source
 3.System:> C:Install nvme.device FORCE
 Installing onto nvme.device unit 0, 2.0G:
 ...
-576 files, 18.9M: the system on DH0.:, the boot files on BOOT:.
+726 files, 57.8M: the system on DH0.:, the boot files on BOOT:.
 The disk starts the machine at its next cold start.
 ```
 
 Pull the stick out, start the machine again, and its firmware finds the
 EFI System partition the install wrote and starts the kernel from there.
-The loader on it is beside no disk image, so the machine comes up with
-nothing in RAM to boot from and dos takes the system partition instead -
-which is why nothing has to be said to make the disk the system.
+That loader names the partition on the machine's own disk, whose driver
+read its table at cold start, so the system is found without a wait and
+nothing has to be said to make the disk the system.
 
-The medium is 320 MiB unless `-Dstick-size=` says otherwise - the least a
-FAT32 volume of 4 KiB clusters can be, with room over - and the image
-holds only the blocks that were written, so it takes some 35 MiB on the
+**A machine whose USB controller the system does not drive** cannot find
+the stick. `-Dstick-ram` puts the system on the stick a second time, as
+the disk image `disk-x64.bin` beside the kernel: the loader reads it into
+RAM, names no partition, and the machine runs on that image as it would
+with no disk at all - nothing written to that system stays, but it comes
+up, and `C:Install` works from it the same way.
+
+The medium is 575 MiB: the EFI System partition's 320 MiB - `-Dstick-size=`
+says otherwise; it is the least a FAT32 volume of 4 KiB clusters can be,
+with room over - and the 254 MiB the system's container takes. The image
+holds only the blocks that were written, so it takes some 100 MiB on the
 host until it is written out. Two builds of the same files give the same
 image, byte for byte: the identifiers and the one date everything on it
 carries are drawn from what the medium is, not from the clock.

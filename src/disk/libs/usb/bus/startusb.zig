@@ -44,8 +44,11 @@ const process_pri = 5;
 /// hub; this returns once the controller is open, without waiting for
 /// what is plugged in to be set up - a device found later is set up as
 /// it comes either way, and a program that waits for one uses
-/// AddUSBNotify. A bus that runs is left as it is. The library stays
-/// open while a bus runs.
+/// AddUSBNotify. A bus that runs is left running, and offers every
+/// interface no driver has to the class drivers again (since 1.19): a
+/// bus the machine started from, before `DEVS:usb/` could be read, had
+/// only the ROM's drivers to offer them to. The library stays open while
+/// a bus runs.
 ///
 /// CONTEXT:
 /// - Waits: yes, until the bus's process has opened the controller.
@@ -83,7 +86,10 @@ pub fn StartUSB(base: *UsbBase, bus: u32) i32 {
     const sys = base.sys_base;
     sys.ObtainSemaphore(&base.bus_lock);
     defer sys.ReleaseSemaphore(&base.bus_lock);
-    if (_bus.busOf(base, bus) != null) return 0;
+    if (_bus.busOf(base, bus)) |running| {
+        _bus.lookAgain(running);
+        return 0;
+    }
     if (!openHelpers(base)) return usb.USBERR_NOMEM;
     const controller = findController(base, bus) orelse return usb.USBERR_NOBUS;
 

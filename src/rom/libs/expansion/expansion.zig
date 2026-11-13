@@ -379,6 +379,38 @@ test "AddBootNode before dos.library: the nodes are kept, highest boot priority 
     try tearDown(eb);
 }
 
+test "the partition the firmware started from, and the drive noted on its disk" {
+    const eb = try setUp(null);
+    defer kexec.deinit();
+    const IsBootPartition = @import("boot/isbootpartition.zig").IsBootPartition;
+    const NoteBootDrive = @import("boot/notebootdrive.zig").NoteBootDrive;
+    const BootDrive = @import("boot/bootdrive.zig").BootDrive;
+    // A firmware that named nothing: no partition is the one.
+    const named: [16]u8 = @splat(7);
+    const other: [16]u8 = @splat(8);
+    try testing.expect(!IsBootPartition(eb, null));
+    try testing.expect(!IsBootPartition(eb, &named));
+    // One that named a partition: that one, and no other.
+    var start = st.BootStart{ .guid = named };
+    const list = [_]sdk.utility.TagItem{
+        .{ .tag = st.SYSTAG_BootStart, .data = @intFromPtr(&start) },
+        .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+    };
+    const was = eb.system;
+    eb.system = &list;
+    try testing.expect(IsBootPartition(eb, null));
+    try testing.expect(IsBootPartition(eb, &named));
+    try testing.expect(!IsBootPartition(eb, &other));
+    // The drive kept is the highest boot priority's, the first of equals.
+    try testing.expectEqual(@as(?[*:0]const u8, null), BootDrive(eb));
+    NoteBootDrive(eb, "DH1", 0);
+    NoteBootDrive(eb, "DH0", 5);
+    NoteBootDrive(eb, "DH2", 5);
+    try testing.expectEqualStrings("DH0", std.mem.span(BootDrive(eb).?));
+    eb.system = was;
+    try tearDown(eb);
+}
+
 test "dos.library takes the kept nodes in at its start, and boots from the highest bootable" {
     const eb = try setUp(null);
     defer kexec.deinit();

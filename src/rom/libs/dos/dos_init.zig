@@ -24,7 +24,7 @@ const segment = @import("program/_program.zig");
 /// What the library is on exec's list as, and its version.
 pub const LIBRARY_NAME = sdk.dos.DOSNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 26;
+pub const LIBRARY_REVISION = 27;
 const BUILD_DATE = "13.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -225,16 +225,54 @@ fn startBootShell(db: *DosBase, sys_base: *ExecBase) void {
 /// looked at when something is wanted from it: an empty or unformatted
 /// one costs nothing and the shell still runs.
 ///
+/// **Where the firmware named the partition it started from**
+/// (expansion.library's IsBootPartition), the system is on that
+/// partition's disk and nowhere else: the drive its driver noted
+/// (BootDrive) is taken, whatever the boot priorities of other disks
+/// say. A disk no driver has found yet - one on a bus that is only
+/// looked at with dos.library up, a USB stick - is waited for: the
+/// after-DOS residents are started here, ahead of the assigns, since
+/// they are what brings such a bus up, and the drive is asked for until
+/// it is there or `boot_wait_ticks` are over. Without it the machine
+/// starts from the boot nodes' highest priority, as where the firmware
+/// names nothing.
+///
 /// INPUTS:
 /// - `db` - the library's base, on the library list.
 /// - `sys_base` - exec, to open expansion.library.
-fn takeBootDisks(db: *DosBase, sys_base: *ExecBase) void {
-    const expansion_lib = sys_base.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return;
+///
+/// RESULT:
+/// Whether the after-DOS residents were started here.
+fn takeBootDisks(db: *DosBase, sys_base: *ExecBase) bool {
+    const expansion_lib = sys_base.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
     defer sys_base.CloseLibrary(expansion_lib);
     const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
-    const boot = eb.EnterBootNodes() orelse return;
-    const name = boot.name[0..db.utility_base.Strlen(boot.name)];
-    if (name.len > dos.MAX_DEVICE_NAME) return;
+    const by_priority = eb.EnterBootNodes();
+    var early = false;
+    var boot_name: ?[*:0]const u8 = if (by_priority) |node| node.name else null;
+    if (eb.IsBootPartition(null)) {
+        if (eb.BootDrive() == null) {
+            sdk.exec.kprintf(sys_base, "dos.library: the disk the firmware started from is not found yet: starting the after-DOS residents and waiting for it\n", .{});
+            early = true;
+            _ = sys_base.InitCode(exec.RTF_AFTERDOS, 0);
+            var waited: u32 = 0;
+            while (eb.BootDrive() == null and waited < boot_wait_ticks) : (waited += boot_look_ticks) {
+                db.iface().Delay(boot_look_ticks);
+            }
+        }
+        if (eb.BootDrive()) |drive| {
+            boot_name = drive;
+        } else {
+            sdk.exec.kprintf(sys_base, "dos.library: no drive on the disk the firmware started from\n", .{});
+        }
+    }
+    const from = boot_name orelse return early;
+    var kept: [dos.MAX_DEVICE_NAME + 1:0]u8 = @splat(0);
+    const length = db.utility_base.Strlen(from);
+    if (length > dos.MAX_DEVICE_NAME) return early;
+    @memcpy(kept[0..length], from[0..length]);
+    const name = kept[0..length];
+    sdk.exec.kprintf(sys_base, "dos.library: the system is on %s:\n", .{@as([*:0]const u8, &kept)});
     var path: [dos.MAX_DEVICE_NAME + 2:0]u8 = @splat(0);
     @memcpy(path[0..name.len], name);
     path[name.len] = ':';
@@ -248,7 +286,14 @@ fn takeBootDisks(db: *DosBase, sys_base: *ExecBase) void {
         // The handlers that are not in the ROM, which dos loads.
         .{ "HANDLERS", "SYS:devs/handlers" },
     }) |pair| _ = dos_lib.AssignLate(pair[0], pair[1]);
+    return early;
 }
+
+/// How long the disk the firmware started from is waited for, in dos's
+/// ticks - a USB stick's bus has to come up, find the stick and read its
+/// table - and how often it is looked for meanwhile.
+const boot_wait_ticks: u32 = 20 * 50;
+const boot_look_ticks: u32 = 5;
 
 /// The resident's init: the library on the list, the disks expansion.library
 /// kept for it, the after-DOS residents, then the machine's own shell.
@@ -262,9 +307,10 @@ fn takeBootDisks(db: *DosBase, sys_base: *ExecBase) void {
 fn init(seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*anyopaque {
     const lib = sys_base.MakeLibrary(&dos_lvo.vectors, dos_lvo.vectors.len, @sizeOf(DosBase), &initBase, seg_list) orelse return null;
     sys_base.AddLibrary(lib);
-    takeBootDisks(@fieldParentPtr("lib", lib), sys_base);
-    sdk.exec.kprintf(sys_base, "%s %d.%d: starting the after-DOS residents\n", .{ lib.name(), lib.version, lib.revision });
-    _ = sys_base.InitCode(exec.RTF_AFTERDOS, 0);
+    if (!takeBootDisks(@fieldParentPtr("lib", lib), sys_base)) {
+        sdk.exec.kprintf(sys_base, "%s %d.%d: starting the after-DOS residents\n", .{ lib.name(), lib.version, lib.revision });
+        _ = sys_base.InitCode(exec.RTF_AFTERDOS, 0);
+    }
     if (startupHeld(sys_base)) {
         sdk.exec.kprintf(sys_base, "dos.library: held with Ctrl-D, so %s is not run and no shell is started: s3> is the shell (newshell starts one, reboot tryboot the other boot partition)\n", .{boot_script});
     } else startBootShell(@fieldParentPtr("lib", lib), sys_base);

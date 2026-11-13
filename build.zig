@@ -1517,17 +1517,18 @@ pub fn build(b: *std.Build) void {
 
     // `stick` - the medium a machine whose firmware is UEFI starts from,
     // into release/stick-<board>.img, to be written to a USB stick with
-    // one `dd`. It holds what the firmware reads and what the loader
-    // reads beside it: the loader under the one name a firmware looks
-    // for, the kernel, and the disk image the machine runs on until
-    // `C:Install` puts a system on a disk of its own. So one stick
-    // carries a whole machine, and nothing has to be installed to try
-    // one. Its disk image boots above an installed system partition
-    // (mkfs `--medium`): a machine started from the stick runs the
-    // stick's system, which is how one whose own system no longer starts
-    // is installed afresh.
+    // one `dd`. Two partitions: the EFI System partition with what the
+    // firmware and the loader read - the loader under the one name a
+    // firmware looks for, and the kernel beside it - and a PowerOS
+    // container with the system on a posfs partition. The kernel starts
+    // the system on the disk its loader was read from, so a machine
+    // started from the stick runs the stick's system, whatever a disk of
+    // its own holds: one stick carries a whole machine, what is written
+    // on it stays, and `C:Install` puts a system on a disk of the
+    // machine's own from it.
     const stick_step = b.step("stick", "Make the boot medium for -Dboard= (UEFI machines): release/stick-<board>.img");
     const stick_size = b.option(u64, "stick-size", "How many mebibytes the `stick` step's medium is (default: 320, the least a FAT32 volume of 4 KiB clusters can be with room over)");
+    const stick_ram = b.option(bool, "stick-ram", "The `stick` step's medium carries the system as a disk image beside the kernel too, which the loader reads into RAM: for a machine whose USB controller the system does not drive (default: false)") orelse false;
     if (chipOf(board) != .x64uefi) {
         stick_step.dependOn(&b.addFail(
             "stick: this board's firmware does not read a partition. It is for a machine started by UEFI: -Dboard=qemu_q35.",
@@ -1545,7 +1546,16 @@ pub fn build(b: *std.Build) void {
         // the two the loader then reads from beside itself.
         make_stick.addPrefixedFileArg("EFI/BOOT/BOOTX64.EFI=", uefi_stub.getEmittedBin());
         make_stick.addPrefixedFileArg("kernel.bin=", built.image);
-        make_stick.addPrefixedFileArg(b.fmt("{s}=", .{ramDiskName(.x64uefi)}), x64_medium_bin);
+        // The system, as the second partition: the container of the
+        // disk the virt machine runs on, with every file a 64-bit
+        // machine's system has.
+        make_stick.addPrefixedFileArg("--system=", x64_system_disk);
+        // With -Dstick-ram the system's disk image goes beside the
+        // kernel as well: the loader reads it into RAM and the machine
+        // runs on that, without a USB driver of this system's having to
+        // find the stick - for a machine whose USB controller it does
+        // not drive. Nothing written to that system stays.
+        if (stick_ram) make_stick.addPrefixedFileArg(b.fmt("{s}=", .{ramDiskName(.x64uefi)}), x64_medium_bin);
         // What the tool says of the medium it made. A run the build
         // caches has its standard output sent nowhere, so the report is
         // captured and read back out by a step of its own, after the
