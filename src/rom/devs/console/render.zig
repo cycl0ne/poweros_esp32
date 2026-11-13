@@ -26,6 +26,11 @@
 //! puts them on that character. A font that does not shape draws them as
 //! it draws any character, behind the one they belong to.
 //!
+//! A flag is two letters, a cell each (U+1F1E6 to U+1F1FF): the two are
+//! written as one text over their two cells, which the font draws as
+//! the flag (`isFlag`, `drawFlag`) - a letter by itself, or the third
+//! of three, is drawn as any cell.
+//!
 //! A cell one wide has no room for an emoji's picture. Where its marks
 //! ask for one (U+FE0F) the character is drawn in its text form
 //! (`narrowText`): U+FE0E goes to `Text` in the selector's place and a
@@ -284,6 +289,37 @@ fn isWide(t: *const Term, x: u32, y: u32) bool {
     return x + 1 < t.cols and t.at(x, y).ch != term.WIDE_TAIL and t.at(x + 1, y).ch == term.WIDE_TAIL;
 }
 
+/// Whether a cell holds one of the letters a flag is written with: two
+/// of them, a cell each, are one flag.
+fn isFlagLetter(cell: Cell) bool {
+    return cell.ch >= 0x1F1E6 and cell.ch <= 0x1F1FF and cell.marks[0] == 0;
+}
+
+/// Whether the cell at `x` is the first of a flag's two letters: a flag
+/// letter with an even number of them before it in the row, and one
+/// behind it.
+fn isFlag(t: *const Term, x: u32, y: u32) bool {
+    if (x + 1 >= t.cols or !isFlagLetter(t.at(x, y).*) or !isFlagLetter(t.at(x + 1, y).*)) return false;
+    var before: u32 = 0;
+    while (before < x and isFlagLetter(t.at(x - 1 - before, y).*)) before += 1;
+    return before % 2 == 0;
+}
+
+/// A flag over the two cells of its letters, from the cell at `x`: both
+/// cells' background, and the two letters written as one text, which the
+/// font draws as the flag, in the middle of them.
+fn drawFlag(gb: *GraphicsBase, l: Layout, t: *const Term, x: u32, y: u32, fg: graphics.Pen, bg: graphics.Pen) void {
+    fillCells(gb, l, @intCast(x), @intCast(y), 2, bg);
+    var bytes: [8]u8 = undefined;
+    var length: u32 = @intCast(utf8.encode(t.at(x, y).ch, bytes[0..4]));
+    length += @intCast(utf8.encode(t.at(x + 1, y).ch, bytes[length..][0..4]));
+    setPens(gb, l, fg, bg, t.at(x, y).*);
+    const drawn: i32 = @intCast(gb.TextLength(l.rp, &bytes, length));
+    const left = l.origin_x + @as(i32, @intCast(x)) * l.cell_width + @divTrunc(@max(2 * l.cell_width - drawn, 0), 2);
+    gb.Move(l.rp, left, l.origin_y + @as(i32, @intCast(y)) * l.cell_height + l.baseline);
+    gb.Text(l.rp, &bytes, length);
+}
+
 /// What a cell's character is written as: a control or nothing as a
 /// blank.
 fn shownChar(cell: Cell) u32 {
@@ -399,6 +435,20 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
             x += 2;
             continue;
         }
+        // A flag's two letters are drawn as the one flag, from either
+        // of its cells.
+        if (isFlag(t, x, y)) {
+            const fg, const bg = pensAt(t, x, y, l);
+            drawFlag(gb, l, t, x, y, fg, bg);
+            x += 2;
+            continue;
+        }
+        if (x > 0 and isFlag(t, x - 1, y)) {
+            const fg, const bg = pensAt(t, x - 1, y, l);
+            drawFlag(gb, l, t, x - 1, y, fg, bg);
+            x += 1;
+            continue;
+        }
         if (!fitsCell(gb, l, first)) {
             // Its cell now, the character once the runs are down.
             _, const bg = pensAt(t, x, y, l);
@@ -443,6 +493,7 @@ pub fn drawRow(gb: *GraphicsBase, l: Layout, t: *const Term, y: u32, from: u32, 
     while (off_width and x < to) : (x += 1) {
         const cell = t.at(x, y).*;
         if (cell.flags & term.CELL_GRAPHIC != 0 or cell.ch == term.WIDE_TAIL or isWide(t, x, y)) continue;
+        if (isFlag(t, x, y) or (x > 0 and isFlag(t, x - 1, y))) continue;
         if (fitsCell(gb, l, cell)) continue;
         const fg, const bg = pensAt(t, x, y, l);
         drawOffWidth(gb, l, @intCast(x), @intCast(y), cell, fg, bg, t.cols);
@@ -462,9 +513,12 @@ pub const CursorLook = enum { off, solid, ghost };
 pub fn drawCursor(gb: *GraphicsBase, l: Layout, t: *const Term, look: CursorLook) void {
     const c = t.cursor();
     if (c.x >= t.cols or c.y >= t.rows) return;
-    // On either half of a wide character the cursor is the whole of it.
-    const x = if (c.x > 0 and t.at(c.x, c.y).ch == term.WIDE_TAIL and isWide(t, c.x - 1, c.y)) c.x - 1 else c.x;
-    const wide = isWide(t, x, c.y);
+    // On either half of a wide character, or of a flag, the cursor is
+    // the whole of it.
+    const second = c.x > 0 and ((t.at(c.x, c.y).ch == term.WIDE_TAIL and isWide(t, c.x - 1, c.y)) or isFlag(t, c.x - 1, c.y));
+    const x = if (second) c.x - 1 else c.x;
+    const flag = isFlag(t, x, c.y);
+    const wide = isWide(t, x, c.y) or flag;
     const cell = t.at(x, c.y).*;
     const plain_fg, const plain_bg = pensAt(t, x, c.y, l);
     const fg = if (look == .solid) complement(plain_fg, l) else plain_fg;
@@ -473,6 +527,8 @@ pub fn drawCursor(gb: *GraphicsBase, l: Layout, t: *const Term, look: CursorLook
     const py = l.origin_y + @as(i32, @intCast(c.y)) * l.cell_height;
     if (cell.flags & term.CELL_GRAPHIC != 0) {
         drawGraphic(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
+    } else if (flag) {
+        drawFlag(gb, l, t, x, c.y, fg, bg);
     } else if (wide) {
         drawWide(gb, l, @intCast(x), @intCast(c.y), cell, fg, bg);
     } else if (cell.ch == term.WIDE_TAIL) {
@@ -929,6 +985,26 @@ test "a cell one wide draws its character's text form: no picture's selector, no
     try testing.expectEqual(@as(u32, 8), countIn(&surface, 0, 8, 40, white));
 
     gb.FreeRastPort(rp);
+}
+
+test "a flag's two letters are one flag: which cells of a row begin one" {
+    // Two flags side by side, a letter, a lone flag letter, a letter.
+    var cells: [8]Cell = undefined;
+    var grid = Term.init(&cells, 8, 1);
+    grid.write("\u{1F1E9}\u{1F1EA}\u{1F1EB}\u{1F1F7}a\u{1F1E9}b");
+    try testing.expectEqual(@as(u32, 0x1F1EA), grid.at(1, 0).ch);
+    try testing.expectEqual(@as(u32, 'a'), grid.at(4, 0).ch);
+    for ([_]bool{ true, false, true, false, false, false, false }, 0..) |begins, x| {
+        try testing.expectEqual(begins, isFlag(&grid, @intCast(x), 0));
+    }
+    // Three in a row: the first two are a flag, the third is by itself -
+    // also at the row's end, where nothing is behind it.
+    var three: [3]Cell = undefined;
+    var short = Term.init(&three, 3, 1);
+    short.write("\u{1F1E9}\u{1F1EA}\u{1F1EB}");
+    try testing.expect(isFlag(&short, 0, 0));
+    try testing.expect(!isFlag(&short, 1, 0));
+    try testing.expect(!isFlag(&short, 2, 0));
 }
 
 test "a cell's marks are drawn with its character, where the font's shaping puts them" {
