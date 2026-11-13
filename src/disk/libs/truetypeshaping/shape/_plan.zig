@@ -36,6 +36,7 @@
 const _tables = @import("_tables.zig");
 const Table = _tables.Table;
 const _would = @import("_would.zig");
+const _scripts = @import("_scripts.zig");
 
 fn tag(comptime letters: *const [4]u8) u32 {
     return (@as(u32, letters[0]) << 24) | (@as(u32, letters[1]) << 16) | (@as(u32, letters[2]) << 8) | letters[3];
@@ -97,7 +98,8 @@ pub const Layout = struct {
     /// of those tried.
     script: u32 = 0,
 
-    /// What `table` - a `GSUB` or a `GPOS` - has for `script`, or else
+    /// What `table` - a `GSUB` or a `GPOS` - has for `script` - under
+    /// its latest tag first (`_scripts.newest`) - or else
     /// for `other_script`, and `language`, for a font at the place
     /// `coords` on its axes; nothing for a table of no length or of a
     /// version not known here.
@@ -109,7 +111,8 @@ pub const Layout = struct {
         };
         const scripts = table.partAt(4);
         var chosen = Table.none;
-        for ([_]u32{ script, other_script, tag("DFLT"), tag("dflt"), tag("latn") }) |tried| {
+        for ([_]u32{ _scripts.newest(script), script, other_script, tag("DFLT"), tag("dflt"), tag("latn") }) |tried| {
+            if (tried == 0) continue;
             chosen = findTagged(scripts, 0, tried) orelse continue;
             layout.script = tried;
             break;

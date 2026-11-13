@@ -35,7 +35,7 @@
 //! consonant with the halant (`Layout.wouldReplace`). In the same way a
 //! ra and a halant are a reph only where `rphf` has a rule for the two.
 //! A font whose script is listed under the older tag (`deva`, any tag
-//! not ending in "2") was made for the halant behind the consonant it
+//! not ending in "2" or "3") was made for the halant behind the consonant it
 //! joins, not before: for it the halant after the base is moved behind
 //! the last consonant, a ra with a halant before the base takes its
 //! form below, and rules count that ask for glyphs around.
@@ -204,7 +204,7 @@ pub const Model = struct {
         return .{
             .layout = layout,
             .virama = virama,
-            .old = layout.script & 0xFF != '2',
+            .old = layout.script & 0xFF != '2' and layout.script & 0xFF != '3',
             .reph = active(layout, features, rphf),
             .pre_base = active(layout, features, pref),
             .below = active(layout, features, blwf),

@@ -71,6 +71,13 @@ const spelled = [_]Spelled{
     .{ .code = tag("Mymr"), .tags = .{ .first = tag("mym2"), .other = tag("mymr") } },
 };
 
+/// The tag a font may list a script under before `first`: a tag that
+/// ends in "2" has a later one that ends in "3" (`dev3` before `dev2`),
+/// for the same rules as the "2". 0 for a tag with none.
+pub fn newest(first: u32) u32 {
+    return if (first & 0xFF == '2') first + 1 else 0;
+}
+
 /// The tags a font lists the script of the number `script` under;
 /// `DFLT` for the two that are no writing system's.
 pub fn tagsOf(script: u8) Tags {

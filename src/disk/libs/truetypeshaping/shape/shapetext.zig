@@ -53,8 +53,8 @@ const Source = @import("_source.zig").Source;
 /// belong to the stretch before them, those the text starts with to its
 /// first stretch. Each stretch is shaped by what the font lists for its
 /// script: under the script's four letters in small ones (`latn`,
-/// `grek`, `hebr`), and for the scripts that have a newer tag (`dev2`
-/// before `deva`) under that one first. A text of shared characters
+/// `grek`, `hebr`), and for the scripts that have newer tags (`dev3`,
+/// then `dev2`, before `deva`) under the newest the font has. A text of shared characters
 /// alone is shaped by what the font lists as `DFLT`.
 ///
 /// Each stretch is first made the characters the font draws it with. A

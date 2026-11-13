@@ -21,6 +21,7 @@ const tts = @import("sdk").truetypeshaping;
 const layout = @import("layout.zig");
 const subtables = @import("subtables.zig");
 const harness = @import("harness.zig");
+const _scripts = @import("../shape/_scripts.zig");
 
 const File = layout.File;
 const testing = std.testing;
@@ -145,6 +146,18 @@ test "the forms of a syllable's consonants, the script under its newer tag" {
         .{ .text = "\u{915}\u{94D}\u{200D}\u{924}", .glyphs = &.{ KA_HALF, TA }, .clusters = &.{ 0, 9 } },
         .{ .text = "\u{915}\u{94D}\u{200C}\u{924}", .glyphs = &.{ KA, HALANT, TA }, .clusters = &.{ 0, 3, 9 } },
     });
+}
+
+test "the script under its latest tag is shaped as under the newer one" {
+    try expectWords("dev3", &.{
+        .{ .text = "\u{930}\u{94D}\u{915}", .glyphs = &.{ KA, REPH }, .clusters = &.{ 0, 0 } },
+        .{ .text = "\u{915}\u{94D}\u{930}", .glyphs = &.{ RA_BEHIND, KA }, .clusters = &.{ 0, 0 } },
+        .{ .text = "\u{915}\u{94D}\u{924}", .glyphs = &.{ KA_HALF, TA }, .clusters = &.{ 0, 6 } },
+        .{ .text = "\u{915}\u{93F}", .glyphs = &.{ SIGN_I_FIRST, KA }, .clusters = &.{ 0, 0 } },
+    });
+    try testing.expectEqual(tts.scriptTag("dev3"), _scripts.newest(tts.scriptTag("dev2")));
+    try testing.expectEqual(@as(u32, 0), _scripts.newest(tts.scriptTag("deva")));
+    try testing.expectEqual(@as(u32, 0), _scripts.newest(tts.scriptTag("latn")));
 }
 
 test "the forms of a syllable's consonants, the script under its older tag" {
