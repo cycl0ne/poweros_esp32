@@ -159,7 +159,7 @@ fn tables(places: *File, pictures: *File, major: u16, strikes: []const Strike) v
 }
 
 /// Which pair of tables a font's pictures are in.
-const Pair = enum { coverage, colour };
+const Pair = enum { coverage, colour, older };
 
 /// What a built font of pictures is made of.
 const Made = struct {
@@ -188,8 +188,8 @@ fn fontOf(file: *File, made: Made) void {
     tables(&other_places, &other_pictures, made.major, made.other);
     const colour = made.pair == .colour;
     const both = [4]builder.Table{
-        .{ .tag = if (colour) "CBLC" else "EBLC", .bytes = places.written() },
-        .{ .tag = if (colour) "CBDT" else "EBDT", .bytes = pictures.written() },
+        .{ .tag = if (colour) "CBLC" else if (made.pair == .older) "bloc" else "EBLC", .bytes = places.written() },
+        .{ .tag = if (colour) "CBDT" else if (made.pair == .older) "bdat" else "EBDT", .bytes = pictures.written() },
         .{ .tag = if (colour) "EBLC" else "CBLC", .bytes = other_places.written() },
         .{ .tag = if (colour) "EBDT" else "CBDT", .bytes = other_pictures.written() },
     };
@@ -1071,6 +1071,13 @@ test "pictures: a strike of bits its pair does not have is passed over, and of t
     font = @ptrCast(@alignCast(outline));
     try testing.expectEqual(@as(u32, 8), (_strike.pictureOf(font, 1, null) orelse return error.NoPicture).strike.depth);
     try testing.expectEqualSlices(u8, &.{0xF0}, (try show(tb, outline, 1, 10)).pixels());
+    tb.CloseOutline(outline);
+
+    // The same pictures under the tables' other names.
+    fontOf(&file, .{ .pair = .older, .strikes = &.{of_coverage} });
+    outline = tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NoOutline;
+    try testing.expectEqualSlices(u8, &.{0xF0}, (try show(tb, outline, 1, 10)).pixels());
+    try testing.expectEqualSlices(u8, &.{0xF0}, (try show(tb, outline, 2, 10)).pixels());
     tb.CloseOutline(outline);
 
     // With none after it the glyph has no picture, and no ink.

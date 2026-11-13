@@ -140,8 +140,8 @@ const _outline = @import("_outline.zig");
 /// characters are Unicode's or that encoding's: the two-byte encodings
 /// of East Asia before Unicode have no table here.
 ///
-/// Pictures in `sbix`, and in the `bloc` and `bdat` tables, are not
-/// read, nor are a picture's formats 3 and 4, nor the measures of a
+/// Pictures in `sbix` are not read, nor are a picture's formats 3 and
+/// 4, nor the measures of a
 /// line set downwards.
 ///
 /// SEE ALSO:

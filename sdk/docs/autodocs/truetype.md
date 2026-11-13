@@ -1075,8 +1075,8 @@ Roman encoding's is read, and a map of format 2 only where its
 characters are Unicode's or that encoding's: the two-byte encodings
 of East Asia before Unicode have no table here.
 
-Pictures in `sbix`, and in the `bloc` and `bdat` tables, are not
-read, nor are a picture's formats 3 and 4, nor the measures of a
+Pictures in `sbix` are not read, nor are a picture's formats 3 and
+4, nor the measures of a
 line set downwards.
 
 **SEE ALSO**

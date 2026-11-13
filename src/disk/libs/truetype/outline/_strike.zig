@@ -2,8 +2,9 @@
 //! A font's pictures: where a font without outlines keeps its glyphs as
 //! bitmaps, and what each one measures.
 //!
-//! Two tables hold them. One lists where the pictures are (`CBLC`, or
-//! `EBLC`), the other is the pictures (`CBDT`, or `EBDT`). The list is a
+//! Two tables hold them. One lists where the pictures are (`CBLC`,
+//! `EBLC` or `bloc`), the other is the pictures (`CBDT`, `EBDT` or
+//! `bdat`). The list is a
 //! strike for each size the font was drawn at: how many pixels an em is
 //! across and down, how many bits a pixel has, and ranges of glyphs. A
 //! range says in which form its glyphs' pictures are kept and where each
@@ -27,7 +28,9 @@
 //!
 //! `CBLC` and `CBDT` are read for PNG files in strikes of 32 bits a
 //! pixel, `EBLC` and `EBDT` for the other forms in strikes of 1, 2, 4 or
-//! 8; a font with both is read by the first pair.
+//! 8 - and `bloc` and `bdat`, the same two tables under the names a
+//! font of another make gives them; a font with several pairs is read
+//! by the first of these.
 //!
 //! Nothing is taken on trust. A count is cut to what its table has room
 //! for, at most `most_strikes` strikes are looked at, every place is
@@ -107,7 +110,7 @@ pub const Part = struct {
 /// The font's pictures found: the colour ones before the others, and
 /// none for a font that has neither pair of tables whole.
 pub fn open(font: *const Font) Strikes {
-    const pairs = [_][2]*const [4]u8{ .{ "CBLC", "CBDT" }, .{ "EBLC", "EBDT" } };
+    const pairs = [_][2]*const [4]u8{ .{ "CBLC", "CBDT" }, .{ "EBLC", "EBDT" }, .{ "bloc", "bdat" } };
     for (pairs, 0..) |pair, nth| {
         const places = _outline.findTable(font, pair[0]) orelse continue;
         const pictures = _outline.findTable(font, pair[1]) orelse continue;
