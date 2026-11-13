@@ -15,8 +15,8 @@
 //! high with the row of headings under it, and intuition draws the ribbon
 //! - the desktop draws only the headings there. Minimized from its mark,
 //! the ribbon is its row of tabs, and the strip shrinks with it; in a
-//! window lower inside than `minimize_below` it is that row by itself,
-//! and the strip follows as the window is sized across it (`measureAgain`).
+//! window whose inside is less than twice as high as the ribbon whole
+//! (`foldBelow`) it is that row by itself, and the strip follows as the window is sized across it (`measureAgain`).
 //! Window > Ribbon - the prefs' RIBBON - puts every drawer window's
 //! ribbon in or takes it out at once (`follow`).
 //!
@@ -55,10 +55,13 @@ const Id = strings.Id;
 /// minimized and brought back, with.
 pub const ID_RIBBON = 10;
 
-/// The height of a window's inside below which the ribbon is its row of
-/// tabs alone, a tab's page dropped down over the window when the tab is
-/// pressed: what a ribbon whole leaves a view too short below.
-pub const minimize_below = 400;
+/// The height of a window's inside below which a ribbon `whole` high is
+/// its row of tabs alone, a tab's page dropped down over the window when
+/// the tab is pressed: twice the ribbon's, so that the ribbon whole never
+/// takes more of the inside than it leaves the view.
+pub fn foldBelow(whole: i32) u32 {
+    return @intCast(@max(0, whole) * 2);
+}
 
 /// What a button does; its number is the button's gadget ID.
 pub const Command = enum(u32) {
@@ -235,11 +238,13 @@ pub fn make(d: *Desktop, dr: *Drawer) void {
         .{ .tag = gc.GA_Top, .data = 0 },
         .{ .tag = gc.GA_RelWidth, .data = 0 },
         .{ .tag = gc.GA_Height, .data = 1 },
-        .{ .tag = rb.RIBBON_MinimizeBelow, .data = minimize_below },
         .{},
     }) orelse return;
     dr.ribbon = built;
     dr.ribbon_state = .{};
+    // Measured whole, with nothing folding it yet, for the height it
+    // folds below.
+    _ = d.ib.SetAttrsTagList(built.ribbon, &[_]TagItem{ .{ .tag = rb.RIBBON_MinimizeBelow, .data = foldBelow(need(d, dr)) }, .{} });
     // Measured for the window before it is added, so that it is laid out
     // at the height it has.
     dr.ribbon_height = need(d, dr);
@@ -282,7 +287,7 @@ pub fn followAll(d: *Desktop) void {
 
 /// How high the ribbon wants to be in `dr`'s window as it is now: its
 /// row of tabs alone while it is minimized, or in a window lower than
-/// `minimize_below`.
+/// it folds below (`foldBelow`).
 fn need(d: *Desktop, dr: *Drawer) i32 {
     const built = dr.ribbon orelse return 0;
     var ask = gc.GpDomain{ .which = gc.GDOMAIN_NOMINAL };
@@ -291,7 +296,7 @@ fn need(d: *Desktop, dr: *Drawer) i32 {
 }
 
 /// The ribbon made as high as it now needs - minimized or brought back,
-/// or its window sized across `minimize_below` - laid out and drawn at
+/// or its window sized across the height it folds below - laid out and drawn at
 /// that height, and the strip and the view moved and drawn with it:
 /// whether its height changed, and all that was done.
 pub fn measureAgain(d: *Desktop, dr: *Drawer) bool {

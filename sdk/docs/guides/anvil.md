@@ -213,8 +213,9 @@ the Icons buttons with nothing picked they work on, Clean Up in a list.
 In a narrow window the groups are made smaller, down to a button each
 that drops its group down. The mark at the right end of the row of tabs,
 or a double click on a tab, minimizes the ribbon to its row and brings
-it back, and the view moves up or down with it. In a window less than
-400 pixels high inside the ribbon is its row of tabs by itself, a tab's
+it back, and the view moves up or down with it. In a window whose
+inside is less than twice as high as the ribbon it is its row of tabs
+by itself, a tab's
 page dropping down over the window when the tab is pressed; it opens out
 again as the window is made higher. The buttons have no keys of their
 own: a letter typed in a drawer's window would press one by mistake, and

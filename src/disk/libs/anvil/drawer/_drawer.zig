@@ -1104,7 +1104,7 @@ pub fn sortBy(d: *Desktop, dr: *Drawer, view: View) void {
 /// the desktop placed are laid out again across it (`arrange`) and drawn.
 /// Rows are laid out across the width, and are drawn again. A ribbon that
 /// folds to its row of tabs, or opens out again, as the window is sized
-/// across `ribbon.minimize_below` moves the view with it, which is drawn
+/// across the height it folds below moves the view with it, which is drawn
 /// again.
 pub fn resized(d: *Desktop, dr: *Drawer) void {
     if (ribbon.measureAgain(d, dr)) {
