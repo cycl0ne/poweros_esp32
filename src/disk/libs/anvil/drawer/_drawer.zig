@@ -39,13 +39,15 @@
 //! the others go round it.
 //!
 //! **The strip above the view**: the inside's top is given to what is not
-//! the drawer - the ribbon (`ribbon.zig`) and under it the row of
-//! headings - `Drawer.top` pixels of it (`setTop`). The drawer is the box
+//! the drawer - the row of headings - `Drawer.top` pixels of it
+//! (`setTop`). The ribbon (`ribbon.zig`) is above the inside, in the
+//! window's top border, which is as deep as the title bar and the ribbon
+//! (`frame`); the bar in the right border starts under it. The drawer is the box
 //! below, the view, `inner_width` by `inner_height`: a point of the drawer
 //! is counted from the view's corner, and what is drawn for the drawer,
 //! with the layer held, is cut at the view's top, so an icon scrolled up
 //! never reaches over the strip. The ribbon is a gadget, which intuition
-//! draws; of the strip, the desktop draws only the headings.
+//! draws with the border; the strip's headings the desktop draws.
 //!
 //! **Following**: the drawer is watched with StartNotify and read again
 //! when it changes - whoever changed it.
@@ -140,6 +142,9 @@ pub const Drawer = struct {
     /// prefs' RIBBON=NO.
     ribbon: ?*rb.Built = null,
     ribbon_height: i32 = 0,
+    /// How high the window's title bar is: the top border without the
+    /// ribbon in it.
+    title_height: i32 = 0,
     ribbon_state: ribbon.State = .{},
     /// The drawers the window showed before, and after once it has gone
     /// back, for Back and Forward.
@@ -303,6 +308,7 @@ pub fn open(d: *Desktop, wanted: []const u8) bool {
     @memcpy(dr.path[0..wanted.len], wanted);
     dr.icons.init(.unknown);
     dr.history.init();
+    dr.title_height = windowAttr(d, window, wn.WA_BorderTop);
     measure(d, dr);
     makeTitle(d, dr);
     d.ib.SetWindowTitles(window, &dr.title, wn.TITLE_UNCHANGED);
@@ -467,6 +473,23 @@ fn makeBars(d: *Desktop, dr: *Drawer) void {
     _ = d.ib.AddGList(window, horiz, -1, 1);
     d.ib.RefreshWindowFrame(window);
     dr.bars = .{ vert, horiz };
+}
+
+/// The window's frame made to hold the ribbon as it is now: the bar in
+/// the right border put under the ribbon, the top border measured again
+/// and drawn with what is in it (`RefreshWindowFrame`), and the view
+/// measured in the inside that leaves. The view is the caller's to draw.
+pub fn frame(d: *Desktop, dr: *Drawer) void {
+    const top = dr.title_height + dr.ribbon_height;
+    const bottom = windowAttr(d, dr.window, wn.WA_BorderBottom);
+    if (dr.bars[0]) |bar| _ = d.ib.SetAttrsTagList(bar, &[_]TagItem{
+        .{ .tag = gc.GA_Top, .data = @bitCast(@as(isize, top)) },
+        .{ .tag = gc.GA_RelHeight, .data = @bitCast(@as(isize, -(top + bottom))) },
+        .{},
+    });
+    _ = d.ib.WindowLimits(dr.window, least_width, least_height + dr.top + dr.ribbon_height, 0, 0);
+    d.ib.RefreshWindowFrame(dr.window);
+    _ = fit(d, dr);
 }
 
 /// How far one step of a bar - an arrow pressed - moves the view: a
@@ -1028,17 +1051,17 @@ fn headingFrame(d: *Desktop) ?*intuition.Object {
 fn setTop(d: *Desktop, dr: *Drawer, height: i32) void {
     if (height != dr.top) {
         dr.top = @max(0, height);
-        _ = d.ib.WindowLimits(dr.window, least_width, least_height + dr.top, 0, 0);
+        _ = d.ib.WindowLimits(dr.window, least_width, least_height + dr.top + dr.ribbon_height, 0, 0);
         _ = fit(d, dr);
     }
     drawStrip(d, dr);
 }
 
-/// The strip made as high as what stands in it, and drawn: the ribbon,
-/// and under it the row of headings, viewed as text.
+/// The strip made as high as what stands in it, and drawn: the row of
+/// headings, viewed as text.
 pub fn placeStrip(d: *Desktop, dr: *Drawer) void {
     dr.heads = if (dr.view == .icon) 0 else textview.headingsHeight(&d.drawer_look);
-    setTop(d, dr, dr.ribbon_height + dr.heads);
+    setTop(d, dr, dr.heads);
 }
 
 /// The look changed - the font, the pens: the strip made as high as its

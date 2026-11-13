@@ -10,13 +10,16 @@
 //!
 //! It is made from `table` with `rb.build` when the window opens, each
 //! label put in from the desktop's catalog (`anvil.cd`): a gadget
-//! of the inside at its top, as wide as the inside, as high as it says it
-//! needs (`GM_DOMAIN`). The strip above the view (`Drawer.top`) is that
-//! high with the row of headings under it, and intuition draws the ribbon
-//! - the desktop draws only the headings there. Minimized from its mark,
-//! the ribbon is its row of tabs, and the strip shrinks with it; in a
-//! window whose inside is less than twice as high as the ribbon whole
-//! (`foldBelow`) it is that row by itself, and the strip follows as the window is sized across it (`measureAgain`).
+//! in the window's top border, under the title bar, from the window's
+//! left side to its right one, as high as it says it needs
+//! (`GM_DOMAIN`). The top border is as deep as the title bar and the
+//! ribbon together (`_drawer.frame`), the inside and the bar in the
+//! right border begin under it, and intuition draws the ribbon with the
+//! border. Minimized from its mark, the ribbon is its row of tabs, and
+//! the border shrinks with it; in a window whose inside and ribbon
+//! together are less than twice as high as the ribbon whole
+//! (`foldBelow`) it is that row by itself, and the border follows as
+//! the window is sized across it (`measureAgain`).
 //! Window > Ribbon - the prefs' RIBBON - puts every drawer window's
 //! ribbon in or takes it out at once (`follow`).
 //!
@@ -37,6 +40,7 @@ const intuition = sdk.intuition;
 const utility = sdk.utility;
 const gc = intuition.gadgetclass;
 const mn = intuition.menus;
+const wn = intuition.windows;
 const rb = sdk.gadgets.ribbon;
 const tb = sdk.gadgets.toolbutton;
 const command = sdk.images.command;
@@ -221,8 +225,8 @@ pub fn stateOf(view: View, show_all: bool, is_volume: bool, switches: Switches, 
 
 /// The ribbon made and put across the top of `dr`'s inside, as high as
 /// it needs: none without its classes or the memory, or while the prefs'
-/// RIBBON is NO. The strip above the view is the caller's to make room
-/// for it (`_drawer.placeStrip`).
+/// RIBBON is NO. The window's top border is made deep enough for it
+/// (`_drawer.frame`).
 pub fn make(d: *Desktop, dr: *Drawer) void {
     if (!d.has_ribbon or !d.prefs.ribbon) return;
     // The labels in the desktop's language: its catalog stays open for
@@ -232,11 +236,23 @@ pub fn make(d: *Desktop, dr: *Drawer) void {
         made.* = line.entry;
         if (line.label) |id| made.label = d.text.get(id);
     }
+    // In the window's top border, under the title bar, from the left
+    // border to as far from the right edge: the window's sides run down
+    // beside it.
+    var left: usize = 0;
+    var bottom: usize = 0;
+    d.ib.GetWindowAttrs(dr.window, &[_]TagItem{
+        .{ .tag = wn.WA_BorderLeft, .data = @intFromPtr(&left) },
+        .{ .tag = wn.WA_BorderBottom, .data = @intFromPtr(&bottom) },
+        .{},
+    });
+    const side: i32 = @intCast(left);
     const built = rb.build(d.sys, d.ib, &lines, &[_]TagItem{
         .{ .tag = gc.GA_ID, .data = ID_RIBBON },
-        .{ .tag = gc.GA_Left, .data = 0 },
-        .{ .tag = gc.GA_Top, .data = 0 },
-        .{ .tag = gc.GA_RelWidth, .data = 0 },
+        .{ .tag = gc.GA_TopBorder, .data = 1 },
+        .{ .tag = gc.GA_Left, .data = @bitCast(@as(isize, side)) },
+        .{ .tag = gc.GA_Top, .data = @bitCast(@as(isize, dr.title_height)) },
+        .{ .tag = gc.GA_RelWidth, .data = @bitCast(@as(isize, -2 * side)) },
         .{ .tag = gc.GA_Height, .data = 1 },
         .{},
     }) orelse return;
@@ -244,13 +260,15 @@ pub fn make(d: *Desktop, dr: *Drawer) void {
     dr.ribbon_state = .{};
     // Measured whole, with nothing folding it yet, for the height it
     // folds below.
-    _ = d.ib.SetAttrsTagList(built.ribbon, &[_]TagItem{ .{ .tag = rb.RIBBON_MinimizeBelow, .data = foldBelow(need(d, dr)) }, .{} });
+    // The ribbon counts the window's whole height, its borders with it.
+    const borders: u32 = @intCast(dr.title_height + @as(i32, @intCast(bottom)));
+    _ = d.ib.SetAttrsTagList(built.ribbon, &[_]TagItem{ .{ .tag = rb.RIBBON_MinimizeBelow, .data = foldBelow(need(d, dr)) + borders }, .{} });
     // Measured for the window before it is added, so that it is laid out
     // at the height it has.
     dr.ribbon_height = need(d, dr);
     _ = d.ib.SetAttrsTagList(built.ribbon, &[_]TagItem{ .{ .tag = gc.GA_Height, .data = @intCast(dr.ribbon_height) }, .{} });
     _ = d.ib.AddGList(dr.window, built.ribbon, -1, 1);
-    d.ib.RefreshGList(built.ribbon, dr.window, 1);
+    _drawer.frame(d, dr);
 }
 
 /// The ribbon and what was made with it given back, once the window is
@@ -274,6 +292,7 @@ pub fn follow(d: *Desktop, dr: *Drawer) void {
     } else if (dr.ribbon) |built| {
         _ = d.ib.RemoveGList(dr.window, built.ribbon, 1);
         free(d, dr);
+        _drawer.frame(d, dr);
     }
     _drawer.placeStrip(d, dr);
     _drawer.drawInside(d, dr);
@@ -304,10 +323,8 @@ pub fn measureAgain(d: *Desktop, dr: *Drawer) bool {
     const height = need(d, dr);
     if (height == dr.ribbon_height) return false;
     dr.ribbon_height = height;
-    _ = d.ib.SetGadgetAttrsTagList(built.ribbon, dr.window, &[_]TagItem{ .{ .tag = gc.GA_Height, .data = @intCast(height) }, .{} });
-    var lay = gc.GpLayout{};
-    _ = d.ib.DoGadgetMethodA(built.ribbon, dr.window, null, @ptrCast(&lay));
-    d.ib.RefreshGList(built.ribbon, dr.window, 1);
+    _ = d.ib.SetAttrsTagList(built.ribbon, &[_]TagItem{ .{ .tag = gc.GA_Height, .data = @intCast(height) }, .{} });
+    _drawer.frame(d, dr);
     _drawer.placeStrip(d, dr);
     _drawer.drawInside(d, dr);
     return true;

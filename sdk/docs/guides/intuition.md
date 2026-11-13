@@ -873,6 +873,15 @@ came out is known once the window is open - which is when a window
 opened without an object has its bars made, added with `AddGList` and
 drawn with `RefreshWindowFrame`.
 
+The top border is the title bar and, under it, whatever gadgets live
+there (`GA_TopBorder`): `RefreshWindowFrame` makes it as deep as they
+reach, so a tool bar or a ribbon added after the window is open, taken
+out or made another height moves the inside's top edge with it, and the
+window hears `IDCMP_NEWSIZE`. Such a gadget is placed from the window's
+corner, under the title bar's height - `WA_BorderTop` before anything is
+added - and stands on the window's ground, across the whole window: the
+right border begins under it.
+
 A scroll bar there is part of the frame: no channel behind the knob,
 the border's colour down both sides of it, its arrows their triangles
 on the border. An arrow held sinks, its whole box, as the close and

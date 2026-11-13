@@ -72,6 +72,7 @@ const icc = intuition.icclass;
 const ic = intuition.imageclass;
 const rq = intuition.requesters;
 const sc = intuition.screens;
+const wn = intuition.windows;
 const st = intuition.style;
 const gadgets = sdk.gadgets;
 const support = gadgets.support;
@@ -92,8 +93,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
-    .revision = 6,
-    .date = "11.11.2026",
+    .revision = 7,
+    .date = "13.11.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -672,6 +673,10 @@ const Look = struct {
     tab_edges: support.Edges,
     /// The style's room above and below what is inside.
     padding: i32,
+    /// The pen its ground is filled in, in a window's border, where
+    /// what is behind it is the border's; none in a window's room, whose
+    /// ground the window paints.
+    ground: ?Pen = null,
 
     fn of(ib: *IntuitionBase, dri: ?*const intuition.DrawInfo, own_style: ?*const intuition.Style) Look {
         const edges = support.Edges.of(ib, dri, own_style, st.PART_MAIN);
@@ -963,11 +968,42 @@ fn eachOf(base: *gadgets.Base, cl: *Class, o: *Object, group: *const rb.RibbonGr
     if (part.launcher) |launcher| each(base, cl, o, launcher);
 }
 
+/// Whether the ribbon lives in a window's border, under the title bar:
+/// measured from the window's corner, on the border's ground.
+fn inBorder(o: *Object) bool {
+    return gc.gadget(o).activation & gc.GACT_BORDER != 0;
+}
+
+/// How far the room a requester is placed in starts from where the
+/// ribbon is measured from: the window's left and top border for a
+/// ribbon in the border of a window whose inside is a layer of its own,
+/// nothing otherwise.
+fn roomCorner(base: *gadgets.Base, o: *Object, info: *const classusr.GadgetInfo) gc.Box {
+    if (!inBorder(o)) return .{};
+    const ib = base.intuition_base;
+    const window = info.window;
+    var inside: usize = 0;
+    var left: usize = 0;
+    var top: usize = 0;
+    ib.GetWindowAttrs(window, &[_]TagItem{
+        .{ .tag = wn.WA_Layer, .data = @intFromPtr(&inside) },
+        .{ .tag = wn.WA_BorderLeft, .data = @intFromPtr(&left) },
+        .{ .tag = wn.WA_BorderTop, .data = @intFromPtr(&top) },
+        .{},
+    });
+    if (inside == @intFromPtr(info.layer)) return .{};
+    return .{ .left = @intCast(left), .top = @intCast(top) };
+}
+
 /// An entry made a member. A group grows round a member as it joins; a
 /// ribbon is the size its tabs need and no other, and its box is the
 /// layout's to set, so the box it had is put back.
 fn join(base: *gadgets.Base, cl: *Class, o: *Object, item: *Object) void {
     const g = gc.gadget(o);
+    // A member lives where the ribbon does: in the window's border with
+    // it, or in the window's room - a popup's - when it joins that.
+    const member = gc.gadget(item);
+    member.activation = (member.activation & ~gc.GACT_BORDER) | (g.activation & gc.GACT_BORDER);
     const was_width = g.width;
     const was_height = g.height;
     var on = classusr.OpMember{ .method_id = classusr.OM_ADDMEMBER, .object = item };
@@ -1261,7 +1297,7 @@ noinline fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPor
     const ib = base.intuition_base;
     const gb = base.graphics_base;
     const ground = graphics.Rect{ .min_x = row.left, .min_y = row.top, .max_x = row.left + row.width, .max_y = row.top + row.height };
-    gb.EraseRect(rp, &ground);
+    if (look.ground) |pen| support.fill(gb, rp, row, pen) else gb.EraseRect(rp, &ground);
     const edges = look.edges;
     const line_top = row.top + row.height - edges.y;
     const end = row.left + row.width - fold_width;
@@ -1319,7 +1355,8 @@ noinline fn render(base: *gadgets.Base, own: *const Data, o: *Object, r: *gc.GpR
     const rp = r.rast_port;
     const g = gc.gadget(o);
     const b = gc.boxFor(g, info);
-    const look = Look.of(ib, info.draw_info, g.style);
+    var look = Look.of(ib, info.draw_info, g.style);
+    if (inBorder(o)) look.ground = info.draw_info.pens[sc.BACKGROUNDPEN];
     const pens = support.pensFor(ib, info.draw_info, g.style, st.PART_MAIN, null);
     const ink = pens[sc.TEXTPEN];
     const dim = pens[sc.DIMTEXTPEN];
@@ -1373,7 +1410,11 @@ noinline fn redrawWhole(base: *gadgets.Base, own: *const Data, o: *Object, info:
     const m = Measures.of(base, own, g, info);
     m.done(ib);
     const ground = graphics.Rect{ .min_x = b.left, .min_y = b.top + m.row, .max_x = b.left + b.width, .max_y = b.top + b.height };
-    base.graphics_base.EraseRect(rp, &ground);
+    if (inBorder(o)) {
+        support.fill(base.graphics_base, rp, .{ .left = b.left, .top = b.top + m.row, .width = b.width, .height = b.height - m.row }, info.draw_info.pens[sc.BACKGROUNDPEN]);
+    } else {
+        base.graphics_base.EraseRect(rp, &ground);
+    }
     var msg = gc.GpRender{ .gadget_info = info, .rast_port = rp, .redraw = gc.GREDRAW_REDRAW };
     _ = ib.SendMessage(o, @ptrCast(&msg));
 }
@@ -1484,9 +1525,10 @@ fn put(base: *gadgets.Base, own: *Data, o: *Object, info: *classusr.GadgetInfo, 
         .{},
     };
     _ = ib.SetAttrsTagList(page, &box);
+    const corner = roomCorner(base, o, info);
     own.popup = .{
-        .left = left,
-        .top = top,
+        .left = left - corner.left,
+        .top = top - corner.top,
         .width = size.width,
         .height = size.height,
         .gadgets = page,

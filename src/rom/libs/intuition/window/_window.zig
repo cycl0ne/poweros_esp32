@@ -107,6 +107,10 @@ pub const Window = extern struct {
     layout_height: i32 = 0,
     border_left: i32 = 0,
     border_top: i32 = 0,
+    /// How high the title bar is, the top border's own part: the border
+    /// is deeper than this when gadgets live in it under the bar
+    /// (`measureTop`).
+    bar_height: i32 = 0,
     border_right: i32 = 0,
     border_bottom: i32 = 0,
     title: ?[*:0]const u8 = null,
@@ -565,7 +569,7 @@ pub fn legalPlace(ib: *IntuitionBase, w: *const Window, left: i32, top: i32, wid
         .top = @max(@min(top, s.height - height), 0),
     };
     const keep_x = @min(width, off_screen_keep);
-    const keep_y = @min(height, if (w.border_top > 0) w.border_top else off_screen_keep_rows);
+    const keep_y = @min(height, if (w.bar_height > 0) w.bar_height else off_screen_keep_rows);
     return .{
         .left = @max(@min(left, s.width - keep_x), keep_x - width),
         .top = @max(@min(top, s.height - keep_y), 0),
@@ -632,9 +636,10 @@ pub fn drawBorder(ib: *IntuitionBase, w: *Window) void {
     ib.layers_base.LockLayer(w.layer);
     defer ib.layers_base.UnlockLayer(w.layer);
 
+    // The gadgets' font, for the ones in the border that draw text.
     var font: usize = 0;
     const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) }, .{} };
-    gb.GetRPAttrs(w.rp, &ask);
+    gb.GetRPAttrs(w.gi_rp orelse w.rp, &ask);
     const inner_top = w.border_top;
     const inner_bottom = w.height - w.border_bottom;
     const strips = [_]graphics.Rect{
@@ -691,9 +696,13 @@ fn drawStrip(ib: *IntuitionBase, w: *Window, strip: graphics.Rect, font: usize) 
     defer gb.FreeBitMap(surface);
     var target = graphics.ClipTarget{ .rect = strip, .surface = surface, .dx = -strip.min_x, .dy = -strip.min_y };
     const whole = graphics.Rect{ .max_x = w.width, .max_y = w.height };
+    // The window's ground, for a gadget that clears to it round its shape.
+    var ground: usize = 0;
+    gb.GetRPAttrs(innerRastPort(w), &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground) }, .{} });
     // Its own surface is the display's, as a window's RastPort's is: what
     // bounds its clip and says its format. Every write goes to the target.
     const on = [_]TagItem{
+        .{ .tag = graphics.RPTAG_BackFill, .data = ground },
         .{ .tag = graphics.RPTAG_Surface, .data = w.screen.surface },
         .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&whole) },
         .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&target) },
@@ -706,6 +715,43 @@ fn drawStrip(ib: *IntuitionBase, w: *Window, strip: graphics.Rect, font: usize) 
     drawBorderGadgets(ib, w, rp);
     gb.BltBitMapRastPort(surface, 0, 0, w.rp, strip.min_x, strip.min_y, width, height);
     return true;
+}
+
+/// The top border made as deep as the gadgets that live in it now reach
+/// below the title bar, and no deeper: the inside begins under them, a
+/// GimmeZeroZero window's interior moved and sized to it, the gadgets
+/// laid out against the new inside, the border and the room drawn and
+/// the window told its size has changed (IDCMP_NEWSIZE) - the inside's
+/// has. Nothing when the border is as deep already, or the window would
+/// have no inside left. Under the screen semaphore.
+pub fn measureTop(ib: *IntuitionBase, w: *Window) void {
+    if (w.flags & WF_BORDERLESS != 0) return;
+    const gadgetclass = @import("../classes/gadgetclass.zig");
+    var deep = w.bar_height;
+    var next = w.gadgets;
+    while (next) |o| : (next = gadgetclass.gadgetOf(ib, o).next) {
+        const g = gadgetclass.gadgetOf(ib, o);
+        if (g.activation & gadgetclass.GACT_TOPBORDER == 0) continue;
+        if (g.flags & gadgetclass.GFLG_RELHEIGHT != 0) continue;
+        deep = @max(deep, g.top + g.height);
+    }
+    const by = deep - w.border_top;
+    if (by == 0 or deep + w.border_bottom >= w.height) return;
+    var behind: _gadget.Behind = .{};
+    _gadget.leftBehind(ib, w, &behind);
+    if (w.inner_layer) |inner| {
+        if (!ib.layers_base.MoveSizeLayer(inner, 0, by, 0, -by)) return;
+    }
+    w.border_top = deep;
+    @import("../requester/_requester.zig").follow(ib, w);
+    w.layout_width = 0;
+    w.layout_height = 0;
+    _gadget.layout(ib, w, w.gadgets, false);
+    drawBorder(ib, w);
+    _gadget.redrawRoom(ib, w, &behind);
+    const _input = @import("../input/_input.zig");
+    _input.sendNewSize(ib, w);
+    _input.windowEvent(ib, w, ie.IECLASS_EVENT, ie.IECODE_NEWSIZE);
 }
 
 /// The gadgets that live in the border, drawn through `rp`, which draws in
@@ -748,6 +794,13 @@ pub fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void 
     // The four strips, then the frame raised around the outside and sunk
     // around the inside.
     d.box(gb, rp, 0, 0, w.width, w.border_top, fill);
+    // Under the title bar, a top border deepened for the gadgets in it
+    // is the window's ground between its sides, which the gadgets there
+    // are drawn on.
+    if (w.border_top > w.bar_height) {
+        const side = @min(w.border_right, side_border);
+        d.box(gb, rp, w.border_left, w.bar_height, w.width - w.border_left - side, w.border_top - w.bar_height, dri.pens[sc.BACKGROUNDPEN]);
+    }
     d.box(gb, rp, 0, w.border_top, w.border_left, inner_h, fill);
     d.box(gb, rp, w.width - w.border_right, w.border_top, w.border_right, inner_h, fill);
     d.box(gb, rp, 0, w.height - w.border_bottom, w.width, w.border_bottom, fill);
@@ -787,7 +840,7 @@ pub fn paintBorder(ib: *IntuitionBase, w: *Window, rp: *graphics.RastPort) void 
         gb.GetRPAttrs(rp, &metric);
         d.pen(gb, rp, ink);
         const x: i32 = if (w.close_image != null) closeWidthOf(w) + 4 else 4;
-        const y = @divTrunc(w.border_top - @as(i32, @intCast(font_height)), 2) + @as(i32, @intCast(baseline));
+        const y = @divTrunc(w.bar_height - @as(i32, @intCast(font_height)), 2) + @as(i32, @intCast(baseline));
         gb.Move(rp, x, y);
         gb.Text(rp, title, textLen(title));
     }

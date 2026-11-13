@@ -188,7 +188,8 @@ still first. A small triangle at the right of the sorted column points
 up in its first order and down turned over; Protection does not sort.
 The rows are put in their new order where they are, not read again.
 View By Name, Date or Size takes the column in its first order. Bars in
-the right and bottom borders scroll it, a step at a time, and the wheel
+the right border, from under the ribbon down, and in the bottom border
+scroll it, a step at a time, and the wheel
 anywhere over the window scrolls it as far a notch as over the bar -
 across with Shift held. A box being drawn keeps its first corner on the
 icons it started at, and icons dragged in the window land where they are
@@ -201,7 +202,8 @@ The Window menu has Open Parent, Back, Forward, Close, Update, Shell,
 Show (only icons, or all files) and View By (icon, name, date, size) for
 the drawer it is used in, and Ribbon for every drawer's window at once.
 
-A ribbon runs across the top of each drawer's window, the drawer's
+A ribbon runs across the top of each drawer's window, under the title
+bar from one side of the window to the other, the drawer's
 commands as buttons on two tabs. Home has Back, Forward and Parent (Go),
 New Drawer, Update and Shell (Drawer), and Open, Rename, Delete,
 Information and Copy for the icons picked (Icons); View has Icons, Name,
@@ -214,8 +216,8 @@ In a narrow window the groups are made smaller, down to a button each
 that drops its group down. The mark at the right end of the row of tabs,
 or a double click on a tab, minimizes the ribbon to its row and brings
 it back, and the view moves up or down with it. In a window whose
-inside is less than twice as high as the ribbon it is its row of tabs
-by itself, a tab's
+inside and ribbon together are less than twice as high as the ribbon it
+is its row of tabs by itself, a tab's
 page dropping down over the window when the tab is pressed; it opens out
 again as the window is made higher. The buttons have no keys of their
 own: a letter typed in a drawer's window would press one by mistake, and

@@ -227,6 +227,9 @@ fn renderOverBorder(ib: *IntuitionBase, w: *Window, o: *Object, gi: *classusr.Ga
     var front: usize = 0;
     var back: usize = 0;
     var mode: usize = 0;
+    // The window's ground, for a gadget that clears to it round its shape.
+    var ground: usize = 0;
+    gb.GetRPAttrs(_window.innerRastPort(w), &[_]TagItem{ .{ .tag = graphics.RPTAG_BackFill, .data = @intFromPtr(&ground) }, .{} });
     gb.GetRPAttrs(rp, &[_]TagItem{
         .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&font) },
         .{ .tag = graphics.RPTAG_APen, .data = @intFromPtr(&front) },
@@ -239,6 +242,7 @@ fn renderOverBorder(ib: *IntuitionBase, w: *Window, o: *Object, gi: *classusr.Ga
     var target = graphics.ClipTarget{ .rect = area, .surface = surface, .dx = -place.left, .dy = -place.top };
     const whole = graphics.Rect{ .max_x = w.width, .max_y = w.height };
     const over = gb.CreateRastPortTagList(&[_]TagItem{
+        .{ .tag = graphics.RPTAG_BackFill, .data = ground },
         .{ .tag = graphics.RPTAG_Surface, .data = w.screen.surface },
         .{ .tag = graphics.RPTAG_ClipRect, .data = @intFromPtr(&whole) },
         .{ .tag = graphics.RPTAG_ClipTargets, .data = @intFromPtr(&target) },

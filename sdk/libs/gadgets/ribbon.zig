@@ -44,6 +44,13 @@
 //! down, as a press on the tab does, and `RIBBON_Minimized` stays as it
 //! was - minimized or brought back, the ribbon would still be its row.
 //!
+//! **In a window's top border** (`GA_TopBorder`, since 1.7) the ribbon
+//! stands under the title bar, measured from the window's corner, and
+//! `RefreshWindowFrame` makes the border as deep as it is high: after it
+//! is added, taken out or given another height. It fills its own ground
+//! there, its entries live in the border with it, and
+//! `RIBBON_MinimizeBelow` counts the window's whole height.
+//!
 //! A contextual tab (`RibbonTab.contextual`) is not in the row until the
 //! program shows it - while a table is picked, say - with `RIBBON_ShowTab`,
 //! and goes again with `RIBBON_HideTab`. A strip of its colour runs along

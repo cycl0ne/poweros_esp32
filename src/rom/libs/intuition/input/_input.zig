@@ -638,7 +638,7 @@ fn abort(ib: *IntuitionBase) void {
 pub fn partAt(w: *const Window, x: i32, y: i32) Part {
     if (x < 0 or y < 0 or x >= w.width or y >= w.height) return .none;
     if (w.flags & _window.WF_BORDERLESS != 0) return .inside;
-    if (y < w.border_top) {
+    if (y < w.bar_height) {
         if (w.flags & _window.WF_CLOSE != 0 and x < _window.closeWidthOf(w)) return .close;
         if (w.flags & _window.WF_DEPTH != 0 and x >= _window.depthLeft(w)) return .depth;
         if (w.flags & _window.WF_HASZOOM != 0) {

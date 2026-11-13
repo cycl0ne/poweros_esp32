@@ -107,7 +107,7 @@ Generated from the source by `./zig build autodoc`.
 - [PubScreenStatus](#pubscreenstatus) - Opens a public screen to visitors, or closes it to them.
 - [QueueGadgetRefresh](#queuegadgetrefresh) - A gadget drawn again by intuition soon, with whatever it holds then.
 - [RefreshGList](#refreshglist) - Draws gadgets of a window.
-- [RefreshWindowFrame](#refreshwindowframe) - Draws a window's border again.
+- [RefreshWindowFrame](#refreshwindowframe) - Draws a window's border again, as deep at the top as its gadgets need.
 - [ReleaseGIRPort](#releasegirport) - Gives back a RastPort from `ObtainGIRPort`.
 - [RemoveClass](#removeclass) - Takes a class off the public list.
 - [RemoveGList](#removeglist) - Takes gadgets out of a window.
@@ -6241,7 +6241,7 @@ ib.RefreshGList(first, window, -1);
 
 ## RefreshWindowFrame
 
-Draws a window's border again.
+Draws a window's border again, as deep at the top as its gadgets need.
 
 **SYNOPSIS**
 
@@ -6265,6 +6265,14 @@ Nothing.
 
 The frame, the title bar and the gadget images, in the colours of
 whether it is active - after a program has drawn over them.
+
+The top border is measured first: it is as deep as the gadgets that
+live in it (`GA_TopBorder`) reach below the title bar, and the title
+bar's height without any. A gadget added there, taken out or made
+another height since the border was last measured moves the inside's
+top edge with it: the gadgets are laid out against the new inside and
+the window hears IDCMP_NEWSIZE. The top border under the title bar is
+the window's ground, between the window's sides.
 
 **CONTEXT**
 

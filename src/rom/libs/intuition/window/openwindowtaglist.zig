@@ -230,6 +230,8 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         bb = if (at_bottom) _window.barHeight(font_height) else bottom_border;
     }
 
+    // The title bar's own height: gadgets under it make the border deeper.
+    const bar = bt;
     // A border is deep enough for the gadgets that live in it, even in a
     // window that has no border otherwise. A right or bottom one placed
     // from that edge needs as much as it reaches in from it; one placed
@@ -373,6 +375,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         .max_height = maximum(ub.GetTagData(wn.WA_MaxHeight, @intCast(s.height), tags), s.height),
         .border_left = bl,
         .border_top = bt,
+        .bar_height = bar,
         .border_right = br,
         .border_bottom = bb,
         .title = title,
@@ -482,15 +485,15 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         w.frame = it.NewObjectTagList(ib.frame_class, null, &edges);
         if (w.frame == null) ok = false;
         if (flags & WF_CLOSE != 0) {
-            w.close_image = gadgetImage(ib, s, ic.CLOSEIMAGE, closeWidthOf(w), bt);
+            w.close_image = gadgetImage(ib, s, ic.CLOSEIMAGE, closeWidthOf(w), bar);
             if (w.close_image == null) ok = false;
         }
         if (flags & WF_DEPTH != 0) {
-            w.depth_image = gadgetImage(ib, s, ic.DEPTHIMAGE, depthWidthOf(w), bt);
+            w.depth_image = gadgetImage(ib, s, ic.DEPTHIMAGE, depthWidthOf(w), bar);
             if (w.depth_image == null) ok = false;
         }
         if (flags & WF_HASZOOM != 0) {
-            w.zoom_image = gadgetImage(ib, s, ic.ZOOMIMAGE, depthWidthOf(w), bt);
+            w.zoom_image = gadgetImage(ib, s, ic.ZOOMIMAGE, depthWidthOf(w), bar);
             if (w.zoom_image == null) ok = false;
         }
         if (flags & WF_SIZE != 0) {
@@ -501,7 +504,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
         // The fourth gadget, on a screen whose hidden windows a window
         // takes in (`HideControl`) and in a window that may have it.
         if (_hide.mayCarry(w)) {
-            w.hide_image = gadgetImage(ib, s, ic.HIDEIMAGE, depthWidthOf(w), bt);
+            w.hide_image = gadgetImage(ib, s, ic.HIDEIMAGE, depthWidthOf(w), bar);
             if (w.hide_image == null) ok = false;
         }
     }

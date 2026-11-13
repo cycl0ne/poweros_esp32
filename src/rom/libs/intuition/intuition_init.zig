@@ -266,9 +266,12 @@ pub const LIBRARY_VERSION = 0;
 /// back to the window it took it from, and to the gadget of that one
 /// that had the input. 96: an event that is neither a key's nor the
 /// pointer's - a character typed by no key, a disk, a device - leaves
-/// the qualifiers held as they are.
-pub const LIBRARY_REVISION = 96;
-const BUILD_DATE = "12.11.2026";
+/// the qualifiers held as they are. 97: the top border is as deep as
+/// the gadgets in it reach under the title bar, measured again by
+/// RefreshWindowFrame, and is the window's ground there; a gadget in
+/// the border is drawn in the gadgets' font.
+pub const LIBRARY_REVISION = 97;
+const BUILD_DATE = "13.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

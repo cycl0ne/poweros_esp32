@@ -54,7 +54,7 @@ fn fits(w: *const Window) bool {
 /// without its fourth gadget.
 pub fn put(ib: *IntuitionBase, w: *Window) void {
     if (w.hide_image != null or !mayCarry(w)) return;
-    w.hide_image = _window.gadgetImage(ib, w.screen, ic.HIDEIMAGE, _window.depthWidthOf(w), w.border_top);
+    w.hide_image = _window.gadgetImage(ib, w.screen, ic.HIDEIMAGE, _window.depthWidthOf(w), w.bar_height);
     if (w.hide_image == null) return;
     _window.drawBorder(ib, w);
 }
