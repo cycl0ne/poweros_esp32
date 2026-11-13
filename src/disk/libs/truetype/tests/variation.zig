@@ -1138,7 +1138,13 @@ test "variable: a glyph's box and bearing are its moved points', to whole units 
         .{},
     } });
     outline = try openAt(tb, &sided, &place(900, 100));
-    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 640, .left_bearing = 40, .x_max = 500, .y_max = 700 }, try metricsOf(tb, outline, 1));
+    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 640, .left_bearing = 40, .x_min = 40, .x_max = 540, .y_max = 700 }, try metricsOf(tb, outline, 1));
+    // And its points are drawn from there: the square 40 to the right.
+    var sided_verbs: [8]u8 = undefined;
+    var sided_points: [8]vector.Point = undefined;
+    var sided_segments = truetype.Segments{ .verbs = &sided_verbs, .points = &sided_points, .verb_room = 8, .point_room = 8 };
+    try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 1, &sided_segments));
+    try testing.expectEqual(@as(f32, 40), sided_points[0].x);
     tb.CloseOutline(outline);
 
     try rig.down();

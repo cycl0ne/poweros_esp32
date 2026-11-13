@@ -459,6 +459,45 @@ test "truetype: character maps of formats 2 and 8, bytes of one and of two, and 
     try rig.down();
 }
 
+test "truetype: a glyph is drawn from its left side point, where its bearing differs from its box" {
+    var rig = try Rig.up();
+    const tb = rig.tb;
+
+    // The square's box begins at 0. Said to stand 30 from its left side
+    // point, it is drawn 30 to the right, and measured there.
+    var cmap = builder.Cmap.init(1);
+    cmap.begin(3, 1);
+    letter(&cmap, 4, 1);
+    var file: builder.File = .{};
+    const directory = builder.font(&file, .{ .cmap = cmap.written(), .glyphs = 3 });
+    const hmtx = std.mem.readInt(u32, file.bytes[(try recordOf(file.written(), directory, "hmtx")) + 8 ..][0..4], .big);
+    // The advance and glyph 0's bearing, then a bearing a glyph.
+    file.setWord(hmtx + 4, 30);
+    const outline = tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+
+    var metrics: truetype.GlyphMetrics = .{};
+    try testing.expect(tb.GlyphMetrics(outline, 1, &metrics));
+    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .left_bearing = 30, .x_min = 30, .x_max = 530, .y_max = 700 }, metrics);
+    var verbs: [8]u8 = undefined;
+    var points: [8]sdk.vector.Point = undefined;
+    var segments = truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = 8, .point_room = 8 };
+    try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 1, &segments));
+    var least: f32 = points[0].x;
+    var most: f32 = points[0].x;
+    for (points[0..segments.point_count]) |point| {
+        least = @min(least, point.x);
+        most = @max(most, point.x);
+    }
+    try testing.expectEqual(@as(f32, 30), least);
+    try testing.expectEqual(@as(f32, 530), most);
+    // The glyph beside it, whose bearing is its box's left, is where it
+    // was.
+    try testing.expect(tb.GlyphMetrics(outline, 2, &metrics));
+    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .x_max = 500, .y_max = 700 }, metrics);
+    tb.CloseOutline(outline);
+    try rig.down();
+}
+
 test "truetype: a character map that says more than it holds is read as far as it goes" {
     var rig = try Rig.up();
     const tb = rig.tb;

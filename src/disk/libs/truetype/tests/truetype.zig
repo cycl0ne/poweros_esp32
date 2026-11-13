@@ -227,10 +227,12 @@ pub fn buildFaceAt(out: *Out, style_bits: u8, first: u16) void {
     ends[3] = out.len;
     out.pad();
 
-    // hmtx: every glyph 600 wide.
+    // hmtx: every glyph 600 wide, and each one's left side where its
+    // box begins: the composite's 100 to the right.
     starts[4] = out.len;
     out.u16be(600);
     out.i16be(0);
+    for ([_]i16{ 0, 0, 100 }) |left| out.i16be(left);
     ends[4] = out.len;
     out.pad();
 
@@ -401,7 +403,7 @@ test "revision 2: glyphs by character, as outlines in the font's units, their me
 
     var gm: truetype.GlyphMetrics = .{};
     try testing.expect(tb.GlyphMetrics(outline, 3, &gm));
-    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .x_min = 100, .x_max = 600, .y_max = 700 }, gm);
+    try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .left_bearing = 100, .x_min = 100, .x_max = 600, .y_max = 700 }, gm);
     try testing.expect(tb.GlyphMetrics(outline, 0, &gm));
     try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600 }, gm);
     try testing.expect(!tb.GlyphMetrics(outline, 4, &gm));

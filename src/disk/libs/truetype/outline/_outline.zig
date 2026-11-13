@@ -663,7 +663,9 @@ pub fn boxOf(font: *const Font, glyph: u32) [4]i32 {
     if (hasPictures(font)) return _strike.boxOf(font, glyph);
     const data = glyphData(font, glyph) orelse return .{ 0, 0, 0, 0 };
     if (data.len < 10) return .{ 0, 0, 0, 0 };
-    return .{ signedIn(font, data, 2), signedIn(font, data, 4), signedIn(font, data, 6), signedIn(font, data, 8) };
+    // From the glyph's left side point, as its contours are.
+    const left = sidesOf(font, glyph).left;
+    return .{ signedIn(font, data, 2) - left, signedIn(font, data, 4), signedIn(font, data, 6) - left, signedIn(font, data, 8) };
 }
 
 /// How much further apart `left` and `right` are drawn side by side, in
@@ -737,14 +739,27 @@ const max_parts = 256;
 /// dx, dy: x' = a x + c y + dx, y' = b x + d y + dy). False when they do
 /// not fit or the data is damaged; for a glyph of cubic curves that does
 /// not fit, `into.short` says so and how much it needs.
+///
+/// A glyph asked for itself (`depth` 0) is moved so that its left side
+/// point is at 0: its points are where its left side bearing and its
+/// advance count from, also in a font whose `hmtx` bearing is not its
+/// box's left. A part of another glyph stays where its points are, as
+/// the other places it; a glyph of cubic curves is drawn from where its
+/// program starts.
 pub fn contours(font: *const Font, glyph: u32, into: *Contours, m: [6]f32, depth: u32) bool {
     into.short = false;
     if (isCubic(font)) return _cff.contours(font, glyph, into, m);
     const data = glyphData(font, glyph) orelse return true;
+    var placed = m;
+    if (depth == 0) {
+        const origin: f32 = @floatFromInt(_variation.originOf(font, glyph));
+        placed[4] -= m[0] * origin;
+        placed[5] -= m[1] * origin;
+    }
     const count = signedIn(font, data, 0);
-    if (count >= 0) return simple(font, glyph, data, @intCast(count), into, m);
+    if (count >= 0) return simple(font, glyph, data, @intCast(count), into, placed);
     if (depth >= max_depth) return false;
-    return composite(font, glyph, data, into, m, depth);
+    return composite(font, glyph, data, into, placed, depth);
 }
 
 fn simple(font: *const Font, glyph: u32, data: Table, contour_count: u32, into: *Contours, m: [6]f32) bool {

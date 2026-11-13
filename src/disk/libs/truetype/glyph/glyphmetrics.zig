@@ -6,7 +6,6 @@ const truetype = sdk.truetype;
 const _base = @import("../truetype_base.zig");
 const TrueTypeBase = _base.TrueTypeBase;
 const _outline = @import("../outline/_outline.zig");
-const _variation = @import("../outline/_variation.zig");
 const _render = @import("../render/_render.zig");
 
 /// A glyph's advance, left side bearing and box.
@@ -34,8 +33,11 @@ const _render = @import("../render/_render.zig");
 /// BEHAVIOR:
 /// The advance and the left side bearing are the font's horizontal
 /// metrics (`hmtx`); the box is the one the glyph's data gives, which
-/// holds its points on the curve and off it. A glyph of no outline, a
-/// space, has a box of 0s and its advance.
+/// holds its points on the curve and off it, counted from the glyph's
+/// left side point - so its left is the left side bearing, also in a
+/// font whose data has the box elsewhere - as `GlyphSegments` and
+/// `RenderGlyph` draw the glyph. A glyph of no outline, a space, has a
+/// box of 0s and its advance.
 ///
 /// A glyph of cubic curves has no box in its data: its program is run
 /// and the box is the one of its points, the curves' control points
@@ -53,9 +55,9 @@ const _render = @import("../render/_render.zig");
 /// so the glyph is read with its deltas, in memory taken and given back
 /// within the call, and the box is the one of its points there, the
 /// curves' control points among them, widened to whole units. The
-/// advance is `GlyphAdvance`'s. The left side bearing is from the
-/// glyph's origin there - its left side point as the deltas move it,
-/// rounded - to the left of that box. A glyph whose deltas are damaged
+/// advance is `GlyphAdvance`'s. The box is counted from the glyph's
+/// origin there - its left side point as the deltas move it, rounded -
+/// and the left side bearing is its left. A glyph whose deltas are damaged
 /// has a box of 0s and its advance.
 ///
 /// A glyph of cubic curves of a variable font away from its default
@@ -119,11 +121,7 @@ fn varied(tb: *TrueTypeBase, font: *const _outline.Font, glyph: u32, metrics: *t
     const c = &work.contours;
     const identity = [6]f32{ 1, 0, 0, 1, 0, 0 };
     const read = _outline.contours(font, glyph, c, identity, 0);
-    const origin = _variation.originOf(font, glyph);
-    if (!read or c.point_count == 0) {
-        metrics.left_bearing = -origin;
-        return true;
-    }
+    if (!read or c.point_count == 0) return true;
     var x_min = c.points[0].x;
     var y_min = c.points[0].y;
     var x_max = x_min;
@@ -138,6 +136,7 @@ fn varied(tb: *TrueTypeBase, font: *const _outline.Font, glyph: u32, metrics: *t
     metrics.y_min = @intFromFloat(@floor(y_min));
     metrics.x_max = @intFromFloat(@ceil(x_max));
     metrics.y_max = @intFromFloat(@ceil(y_max));
-    metrics.left_bearing = metrics.x_min - origin;
+    // The contours are read from the glyph's origin already.
+    metrics.left_bearing = metrics.x_min;
     return true;
 }

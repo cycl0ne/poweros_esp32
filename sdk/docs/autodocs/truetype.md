@@ -664,8 +664,11 @@ memory to read it.
 
 The advance and the left side bearing are the font's horizontal
 metrics (`hmtx`); the box is the one the glyph's data gives, which
-holds its points on the curve and off it. A glyph of no outline, a
-space, has a box of 0s and its advance.
+holds its points on the curve and off it, counted from the glyph's
+left side point - so its left is the left side bearing, also in a
+font whose data has the box elsewhere - as `GlyphSegments` and
+`RenderGlyph` draw the glyph. A glyph of no outline, a space, has a
+box of 0s and its advance.
 
 A glyph of cubic curves has no box in its data: its program is run
 and the box is the one of its points, the curves' control points
@@ -683,9 +686,9 @@ measures of that instance. The box its data gives is the default's,
 so the glyph is read with its deltas, in memory taken and given back
 within the call, and the box is the one of its points there, the
 curves' control points among them, widened to whole units. The
-advance is `GlyphAdvance`'s. The left side bearing is from the
-glyph's origin there - its left side point as the deltas move it,
-rounded - to the left of that box. A glyph whose deltas are damaged
+advance is `GlyphAdvance`'s. The box is counted from the glyph's
+origin there - its left side point as the deltas move it, rounded -
+and the left side bearing is its left. A glyph whose deltas are damaged
 has a box of 0s and its advance.
 
 A glyph of cubic curves of a variable font away from its default

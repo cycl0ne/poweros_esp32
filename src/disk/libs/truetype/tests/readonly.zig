@@ -236,7 +236,7 @@ test "truetype: no call writes to an outline, to its font or to the base" {
         try testing.expectEqual(@as(u32, 0), tb.GlyphVariant(outline, 'C', 0xFE00));
         try testing.expectEqual(@as(u32, 0), tb.FontName(outline, truetype.TTNAME_FAMILY, &text, text.len));
         try testing.expect(tb.GlyphMetrics(outline, 3, &glyph));
-        try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .x_min = 100, .x_max = 600, .y_max = 700 }, glyph);
+        try testing.expectEqual(truetype.GlyphMetrics{ .advance = 600, .left_bearing = 100, .x_min = 100, .x_max = 600, .y_max = 700 }, glyph);
         var segments = truetype.Segments{ .verbs = &verbs, .points = &points, .verb_room = 16, .point_room = 16 };
         try testing.expectEqual(truetype.TRUETYPE_OK, tb.GlyphSegments(outline, 2, &segments));
         try testing.expectEqualSlices(u8, &.{ M, L, Q, L, C }, verbs[0..segments.verb_count]);

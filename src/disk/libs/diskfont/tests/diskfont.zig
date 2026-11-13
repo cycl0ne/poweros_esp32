@@ -923,6 +923,9 @@ test "revision 13: a variable font is listed a style, each a place of the one fi
     try rig.init();
     defer rig.deinit() catch unreachable;
     try testing.expect(rig.dfb.lib().revision >= 13);
+    // Two sizes of a variable font are each read with their deltas: the
+    // room for that is more than the rig's own memory has twice.
+    try rig.lend();
     const builder = @import("../../truetype/tests/builder.zig");
     const variation = @import("../../truetype/tests/variation.zig");
     const truetype_init = @import("../../truetype/truetype_init.zig");
@@ -986,7 +989,6 @@ test "revision 13: a variable font is listed a style, each a place of the one fi
     // A size: the bold one is drawn from the bold place - its 'A' is
     // wider, as the glyph grows with the weight - and says it is bold,
     // so graphics does not thicken it again. Each holds its outline.
-    // (24 rows: the rig's memory is short of two taller ones.)
     const regular = dfb.OpenDiskFont(&.{ .name = "vary.font", .y_size = 24, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
     const heavy = dfb.OpenDiskFont(&.{ .name = "vary.font", .y_size = 24, .style = graphics.FSF_BOLD, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
     try testing.expect(regular != heavy);
