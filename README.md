@@ -291,7 +291,9 @@ Beside them:
   ball and a ship in space on a screen of their own or in a window,
   on the disks that hold facet.library; in
   `SYS:System` the Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
-  MemMap and Clock - the time on a dial or in figures, which the dock's clock opens; in
+  MemMap, Clock - the time on a dial or in figures, which the dock's clock opens - and,
+  on the 64-bit machines, SystemScan, which writes down what a machine is made of and
+  which of its PCI functions no driver has, to read and to save as a text file; in
   `SYS:Commodities` Exchange, which lists the commodities running and
   makes each active or inactive, shows or hides its window, or ends it,
   and the commodities

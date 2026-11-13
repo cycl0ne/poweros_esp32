@@ -183,6 +183,7 @@ const window_programs = [_]Program{
     .{ .disk = "System/Clock", .source = "system/clock/clock.zig", .name = "clock", .strings = "system/clock/clock.cd" },
     .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .imports = &.{"smbclient"} },
     .{ .disk = "System/Update", .source = "system/update/update.zig", .name = "sysupdate" },
+    .{ .disk = "System/SystemScan", .source = "system/systemscan/systemscan.zig", .name = "systemscan" },
     .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange" },
     .{ .disk = "Commodities/NoCapsLock", .source = "commodities/nocapslock/nocapslock.zig", .name = "nocapslock", .imports = &.{"commodity"} },
     .{ .disk = "Commodities/NumericPad", .source = "commodities/numericpad/numericpad.zig", .name = "numericpad", .imports = &.{"commodity"} },
@@ -390,7 +391,7 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// colours with - 60 KB for a chip that is not there. svg.datatype as
 /// well: what goes on an ESP32's flash disk is what that board is meant
 /// to do, and showing SVG files is not among it.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "System/SystemScan", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
 /// Drivers of what only the Raspberry Pi CM5 has among the AArch64
 /// machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host.
@@ -425,6 +426,7 @@ const no_3d_files = [_][]const u8{
 /// Lottie's paints: left off the ESP32s' disks with them.
 const rv64_only_files = [_][]const u8{
     "System/Docs/Update.md",
+    "System/Docs/SystemScan.md",
     "devs/datatypes/SVG",
     "devs/datatypes/SVGZ",
     "tests/datatypes/Drawing.svg",
@@ -730,6 +732,7 @@ pub const files = [_]File{
     .{ .disk = "System/Docs/Clock.md", .source = "system/clock/README.md" },
     .{ .disk = "System/Docs/Shares.md", .source = "system/shares/README.md" },
     .{ .disk = "System/Docs/Update.md", .source = "system/update/README.md" },
+    .{ .disk = "System/Docs/SystemScan.md", .source = "system/systemscan/README.md" },
     // SYS:Commodities/Docs - the same for the commodities.
     .{ .disk = "Commodities/Docs/Exchange.md", .source = "commodities/exchange/README.md" },
     .{ .disk = "Commodities/Docs/NoCapsLock.md", .source = "commodities/nocapslock/README.md" },
