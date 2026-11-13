@@ -767,7 +767,14 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     const st = stateOf(ib);
     _window.lock(ib);
     defer _window.unlock(ib);
-    st.qualifier = e.qualifier;
+    // The keys and buttons held are what the keyboard and the pointer
+    // say. An event a program or a device writes of something else - a
+    // character typed by no key, a disk put in, a device plugged - says
+    // nothing of them, and leaves the ones held as they are.
+    switch (e.class) {
+        ie.IECLASS_CHARACTER, ie.IECLASS_DISKINSERTED, ie.IECLASS_DISKREMOVED, ie.IECLASS_USB, ie.IECLASS_NEWPREFS, ie.IECLASS_EVENT, ie.IECLASS_NULL => {},
+        else => st.qualifier = e.qualifier,
+    }
     st.time = e.time;
     if (e.class == ie.IECLASS_NEWPOINTERPOS) {
         st.disp_x = e.x;

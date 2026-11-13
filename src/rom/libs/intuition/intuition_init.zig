@@ -264,8 +264,10 @@ pub const LIBRARY_VERSION = 0;
 /// window that listens for characters is told it (IDCMP_VANILLAKEY).
 /// 95: ReturnActivation - a window that borrowed the keyboard gives it
 /// back to the window it took it from, and to the gadget of that one
-/// that had the input.
-pub const LIBRARY_REVISION = 95;
+/// that had the input. 96: an event that is neither a key's nor the
+/// pointer's - a character typed by no key, a disk, a device - leaves
+/// the qualifiers held as they are.
+pub const LIBRARY_REVISION = 96;
 const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

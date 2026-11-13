@@ -4164,6 +4164,19 @@ test "a character typed by no key: into the string gadget, or to the window that
     _input.handle(ib, &face);
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
     try testing.expectEqual(wn.IDCMP_VANILLAKEY, got[0].class);
+    // The event says nothing of the keys held: a Shift that is down
+    // stays down through it, and is the message's.
+    const shift_down: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = 0x60, .qualifier = ie.IEQUALIFIER_LSHIFT };
+    _input.handle(ib, &shift_down);
+    _ = drainMessages(ib, w, &got);
+    _input.handle(ib, &face);
+    try testing.expectEqual(ie.IEQUALIFIER_LSHIFT, ib.input.qualifier);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(ie.IEQUALIFIER_LSHIFT, got[0].qualifier & ie.IEQUALIFIER_LSHIFT);
+    const shift_up: ie.InputEvent = .{ .class = ie.IECLASS_RAWKEY, .code = 0x60 | ie.IECODE_UP_PREFIX };
+    _input.handle(ib, &shift_up);
+    _ = drainMessages(ib, w, &got);
+    try testing.expectEqual(@as(u32, 0), ib.input.qualifier);
     try testing.expectEqual(@as(u32, 0x1F600), got[0].code);
     // What is no character of a text is passed by.
     for ([_]u32{ 0x0D, 0x1B, 0x7F, 0x9B, 0xD800, 0x110000 }) |code| {
