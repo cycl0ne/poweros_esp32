@@ -414,8 +414,7 @@ that one). `deutsch` and `usa` are in the ROM. Any other is a file
 of `DEVS:Keymaps` with the keymap's name, which `FindKeyMap` loads the
 first time a process asks for it and keeps; `KeyMapName` says what a
 keymap is called, and `NextKeyMap` walks the ones the library has, the
-ROM's first. A name is taken as it is written: `SetMap USA` finds
-no keymap. `SetMap` sets it until the next start; the one kept over a
+ROM's first. The case of a name's letters does not matter: `SetMap USA` is `usa`. `SetMap` sets it until the next start; the one kept over a
 start is `KEYMAP` in `ENV:Sys/locale.prefs`, which Prefs' Region page
 chooses from the library's keymaps and the files of `DEVS:Keymaps`
 ([above](#setting-the-default-envsyslocaleprefs)).

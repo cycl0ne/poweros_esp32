@@ -17,8 +17,9 @@ pub const LIBRARY_NAME = km.KEYMAPNAME;
 pub const LIBRARY_VERSION = 0;
 /// 1: MapRawKey, MapANSI, the default, FindKeyMap; "usa" and "deutsch".
 /// 3: a keymap from a file of DEVS:Keymaps, the list under a lock,
-/// KeyMapName. 4: NextKeyMap, the list walked.
-pub const LIBRARY_REVISION = 4;
+/// KeyMapName. 4: NextKeyMap, the list walked. 5: a name finds its
+/// keymap whatever the case of its letters.
+pub const LIBRARY_REVISION = 5;
 const BUILD_DATE = "12.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -6,8 +6,8 @@
 //! With a name - "deutsch" and "usa" are the ROM's, any other is a file
 //! of `DEVS:Keymaps`, "inscript" for one - makes that keymap.library's
 //! default, which every key made into a character from then on goes
-//! through. With none, says which it is. The name is the keymap's as it
-//! is written: `SetMap USA` finds none.
+//! through. With none, says which it is. The case of the name's letters
+//! does not matter: `SetMap USA` is `usa`.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;

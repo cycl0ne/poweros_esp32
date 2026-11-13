@@ -89,7 +89,8 @@ The keymap, or null when there is none of that name.
 
 **BEHAVIOR**
 
-The names are compared exactly. A name the list has not is looked for
+The names are compared whatever the case of their letters (0.5):
+`USA` finds `usa`. A name the list has not is looked for
 as the file `DEVS:Keymaps/<name>` (0.3): a load file
 with a ROM tag of the type `NodeType.keymap` and that name, whose
 rt_Init is a `KeyMapFile`. The file is loaded once and its keymap is

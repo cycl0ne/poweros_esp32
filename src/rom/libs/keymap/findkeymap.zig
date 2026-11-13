@@ -13,6 +13,7 @@
 //! may hold it.
 
 const sdk = @import("sdk");
+const unicode = sdk.utility.unicode;
 const exec = sdk.exec;
 const dos = sdk.dos;
 const keymap = sdk.keymap;
@@ -37,7 +38,8 @@ const KeymapBase = @import("keymap_base.zig").KeymapBase;
 /// The keymap, or null when there is none of that name.
 ///
 /// BEHAVIOR:
-/// The names are compared exactly. A name the list has not is looked for
+/// The names are compared whatever the case of their letters (0.5):
+/// `USA` finds `usa`. A name the list has not is looked for
 /// as the file `DEVS:Keymaps/<name>` (0.3): a load file
 /// with a ROM tag of the type `NodeType.keymap` and that name, whose
 /// rt_Init is a `KeyMapFile`. The file is loaded once and its keymap is
@@ -79,9 +81,19 @@ fn listed(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
     const sys = kb.sys_base;
     sys.AcquireLock(&kb.maps_lock);
     defer sys.ReleaseLock(&kb.maps_lock);
-    const node = sys.FindName(&kb.maps, name) orelse return null;
+    const node = named(kb, name) orelse return null;
     const kn: *keymap.KeyMapNode = @fieldParentPtr("node", node);
     return &kn.key_map;
+}
+
+/// The node on the list whose name is `name`, the case of their letters
+/// aside. Under the list's lock.
+fn named(kb: *KeymapBase, name: [*:0]const u8) ?*exec.Node {
+    var nodes = kb.maps.iterator();
+    while (nodes.next()) |node| {
+        if (sameName(node.name orelse continue, name)) return node;
+    }
+    return null;
 }
 
 /// A keymap made from a file: its node, whose name points at `name`, and
@@ -125,7 +137,9 @@ fn load(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
         dos_lib.UnLoadSeg(seg_list);
         return null;
     };
-    const made = adopt(kb, name, file, seg_list) orelse {
+    // On the list under the name its tag has, whatever case it was
+    // asked for in.
+    const made = adopt(kb, file.name, file.tables, seg_list) orelse {
         dos_lib.UnLoadSeg(seg_list);
         return null;
     };
@@ -135,22 +149,29 @@ fn load(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
     return &made.node.key_map;
 }
 
+/// A keymap found in a loaded file: its tables, and the name its tag
+/// has.
+const InFile = struct { tables: *const keymap.KeyMapFile, name: [*:0]const u8 };
+
 /// The keymap of the tag named `name` in a loaded file.
-fn fileIn(dos_lib: *DosBase, seg_list: *dos.SegList, name: [*:0]const u8) ?*const keymap.KeyMapFile {
+fn fileIn(dos_lib: *DosBase, seg_list: *dos.SegList, name: [*:0]const u8) ?InFile {
     var tag = dos_lib.FindSegResident(seg_list, null, .keymap);
     while (tag) |found| : (tag = dos_lib.FindSegResident(seg_list, found, .keymap)) {
         if (!sameName(found.name, name)) continue;
-        return @ptrCast(@alignCast(found.init orelse continue));
+        return .{ .tables = @ptrCast(@alignCast(found.init orelse continue)), .name = found.name };
     }
     return null;
 }
 
+/// Whether two names are one, the case of their letters aside.
 fn sameName(one: [*:0]const u8, other: [*:0]const u8) bool {
-    var at: usize = 0;
-    while (one[at] == other[at]) : (at += 1) {
-        if (one[at] == 0) return true;
-    }
-    return false;
+    return unicode.equalFolded(span(one), span(other));
+}
+
+fn span(text: [*:0]const u8) []const u8 {
+    var length: usize = 0;
+    while (text[length] != 0) length += 1;
+    return text[0..length];
 }
 
 /// `file`'s keymap on the list as `name`: the node made here, or the one
@@ -187,7 +208,7 @@ pub fn adopt(kb: *KeymapBase, name: [*:0]const u8, file: *const keymap.KeyMapFil
     };
 
     sys.AcquireLock(&kb.maps_lock);
-    const there = sys.FindName(&kb.maps, name);
+    const there = named(kb, name);
     if (there == null) sys.AddTail(&kb.maps, &made.node.node);
     sys.ReleaseLock(&kb.maps_lock);
     const node = there orelse return made;

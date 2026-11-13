@@ -233,6 +233,10 @@ test "a keymap from a file: its own character keys, the ROM's other keys, its na
     try testing.expectEqual(map, NextKeyMap(kb, second).?);
     try testing.expect(NextKeyMap(kb, map) == null);
     try testing.expect(NextKeyMap(kb, &own) == null);
+    // A name in another case is the same keymap.
+    try testing.expectEqual(map, FindKeyMap(kb, "FILE").?);
+    try testing.expectEqualStrings("usa", std.mem.span(KeyMapName(kb, FindKeyMap(kb, "USA").?).?));
+    try testing.expectEqual(made, findkeymap.adopt(kb, "File", &file, null).?);
     // A path is no keymap's name.
     try testing.expect(FindKeyMap(kb, "DEVS:Keymaps/file") == null);
 
