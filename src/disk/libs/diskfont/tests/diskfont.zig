@@ -533,6 +533,83 @@ fn writeOutlineFile(rig: *Rig, comptime name: []const u8, bytes: []const u8) !vo
     try rig.write("FONTS:" ++ name ++ ".font", block[0..fontfile.contentsSize(contents.count)]);
 }
 
+test "revision 15: a ligature's places are the ones its font names" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    try testing.expect(rig.dfb.lib().revision >= 15);
+    const truetype_init = @import("../../truetype/truetype_init.zig");
+    const lib = kexec.InitResident(kexec.SysBase, &truetype_init.truetype_library_tag, null) orelse return error.NoTrueType;
+    const truetype_lib: *exec.Library = @ptrCast(@alignCast(lib));
+    defer _ = rig.sysLib().RemLibrary(truetype_lib);
+    const shaping_init = @import("../../truetypeshaping/truetypeshaping_init.zig");
+    const made = kexec.InitResident(kexec.SysBase, &shaping_init.truetypeshaping_library_tag, null) orelse return error.NoShaping;
+    const shaping_lib: *exec.Library = @ptrCast(@alignCast(made));
+    defer _ = rig.sysLib().RemLibrary(shaping_lib);
+    const gb = rig.graphicsLib();
+
+    // 'A', 'B' and 'C' are the glyphs 1 to 3, each 600 units of 1000
+    // wide; 'A' and 'B' together are the glyph 4, and the font says the
+    // 'B' in it begins at 250.
+    const builder = @import("../../truetype/tests/builder.zig");
+    const layout = @import("../../truetypeshaping/tests/layout.zig");
+    const subtables = @import("../../truetypeshaping/tests/subtables.zig");
+    var cmap = builder.Cmap.init(1);
+    cmap.begin(3, 1);
+    cmap.run('A', &.{ 1, 2, 3 });
+    var joined: layout.File = .{};
+    subtables.ligature(&joined, &.{1}, &.{&.{.{ .rest = &.{2}, .glyph = 4 }}});
+    var gsub: layout.File = .{};
+    layout.table(&gsub, &.{.{ .tag = "liga", .lookups = &.{0} }}, &.{.{ .kind = 4, .subtables = &.{joined.written()} }});
+    var gdef: layout.File = .{};
+    for ([_]u16{ 1, 0, 0, 0, 12, 0 }) |word| gdef.word(word);
+    for ([_]u16{ 6, 1, 12 }) |word| gdef.word(word);
+    for ([_]u16{ 1, 1, 4 }) |word| gdef.word(word);
+    for ([_]u16{ 1, 4, 1, 250 }) |word| gdef.word(word);
+    var file: builder.File = .{};
+    _ = builder.font(&file, .{ .cmap = cmap.written(), .glyphs = 5, .more = &.{
+        .{ .tag = "GDEF", .bytes = gdef.written() },
+        .{ .tag = "GSUB", .bytes = gsub.written() },
+    } });
+    try writeOutlineFile(&rig, "lig", file.written());
+    const font = rig.dfb.OpenDiskFont(&.{ .name = "lig.font", .y_size = 20, .flags = graphics.FPF_DESIGNED }) orelse return error.NoFont;
+    try testing.expect(font.shape != null);
+
+    // The hook: the ligature with its first character's share, a space
+    // of no glyph for the second, then the 'C'.
+    const hook = font.shape.?;
+    var glyphs: [8]graphics.PlacedGlyph = undefined;
+    var request = graphics.ShapeRequest{ .text = "ABC", .length = 3, .glyphs = &glyphs, .room = glyphs.len };
+    try testing.expectEqual(graphics.SHAPE_OK, hook.entry.?(hook, font, &request));
+    try testing.expectEqual(@as(u32, 3), request.count);
+    try testing.expectEqual(graphics.PlacedGlyph{ .which = 4, .flags = graphics.GLYPHREQ_NUMBER, .cluster = 0, .advance = 5 }, glyphs[0]);
+    try testing.expectEqual(graphics.PlacedGlyph{ .which = 0, .flags = graphics.GLYPHREQ_SPACE, .cluster = 1, .advance = 7 }, glyphs[1]);
+    try testing.expectEqual(@as(u32, 'C'), glyphs[2].which);
+    try testing.expectEqual(@as(u32, 2), glyphs[2].cluster);
+    // Room for the glyphs but not for the space: how many there are.
+    request = .{ .text = "ABC", .length = 3, .glyphs = &glyphs, .room = 2 };
+    try testing.expectEqual(graphics.SHAPE_ROOM, hook.entry.?(hook, font, &request));
+    try testing.expectEqual(@as(u32, 3), request.count);
+
+    // The text is as wide as before, and the place inside the ligature
+    // is the font's, not the middle.
+    try testing.expectEqual(@as(i32, 24), try lengthIn(&rig, font, "ABC"));
+    var pixels: [32 * 32 * 2]u8 = @splat(0);
+    var surface = sdk.rtg.Surface{ .pixels = &pixels, .width = 32, .height = 32, .pitch = 64, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]sdk.utility.TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
+        .{},
+    };
+    const rp = gb.CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    try testing.expectEqual(@as(i32, 5), gb.TextOffsetToX(rp, "ABC", 3, 1));
+    try testing.expectEqual(@as(i32, 12), gb.TextOffsetToX(rp, "ABC", 3, 2));
+    try testing.expectEqual(@as(u32, 1), gb.TextXToOffset(rp, "ABC", 3, 4));
+    try testing.expectEqual(@as(u32, 2), gb.TextXToOffset(rp, "ABC", 3, 10));
+    gb.FreeRastPort(rp);
+    gb.CloseFont(font);
+}
+
 test "faces: bold asked of a family is its bold face, drawn bold; a face it lacks is left to the soft styles" {
     var rig: Rig = undefined;
     try rig.init();

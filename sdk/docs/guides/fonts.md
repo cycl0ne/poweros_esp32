@@ -1350,7 +1350,15 @@ mine.font.shape = &mine.shaper; // before AddFont, and never again
   names lies in: a cluster is drawn from one font, fits or does not
   fit as a whole, and has a place before and after it and none inside.
   Glyphs that name one byte for several clusters - a ligature - have
-  their width split evenly among those.
+  their width split evenly among those, unless the hook says where
+  the characters part: it then gives the glyph its first character's
+  share as its `advance` and puts a glyph of `GLYPHREQ_SPACE` behind
+  it for each further character - nothing drawn, the character's byte
+  as its `cluster`, its share as its `advance`. diskfont.library's
+  hook does so where the font names the places inside the glyph
+  (truetypeshaping.library's `LigatureCarets`, `GDEF`'s list of
+  ligature carets), so the cursor in `fi` stands where the font puts
+  it.
 - **`SHAPE_ROOM`** with the glyphs needed in `count` when they are more
   than `room`: graphics makes the room and asks a second time.
   **`SHAPE_LATER`** when the text could not be shaped this time - no

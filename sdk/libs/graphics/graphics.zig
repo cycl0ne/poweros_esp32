@@ -296,6 +296,13 @@ pub const GlyphRequest = extern struct {
 /// `GlyphRequest.flags`: `which` is a glyph's number in the font, not a
 /// code point.
 pub const GLYPHREQ_NUMBER: u32 = 1 << 0;
+/// In a shaped text: no glyph, the point moves by `advance` alone. A
+/// font's `shape` hook puts one behind a glyph that stands for several
+/// characters, for each character after the first, where it knows how
+/// much of the glyph's width each takes: the glyph's `advance` is then
+/// its first character's share and each of these the next one's, so a
+/// place inside the glyph is where the font says it is.
+pub const GLYPHREQ_SPACE: u32 = 1 << 1;
 
 /// A `render` hook's answer: the glyph is in the request.
 pub const GLYPH_OK: usize = 0;
@@ -340,7 +347,7 @@ pub const PlacedGlyph = extern struct {
     /// holds are the ones drawn. Number 0 is the glyph of a character
     /// the font has no form of.
     which: u32,
-    /// `GLYPHREQ_NUMBER` or nothing.
+    /// `GLYPHREQ_NUMBER`, `GLYPHREQ_SPACE` or nothing.
     flags: u32 = 0,
     /// The byte of the text at which the character it came of starts -
     /// of several characters that became one glyph, the first. A

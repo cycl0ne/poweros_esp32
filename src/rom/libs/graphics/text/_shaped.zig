@@ -54,7 +54,11 @@
 //! **Places in a text** (`xOf`, `offsetAt`). A cluster's width is the
 //! advances of its glyphs, and the place between two clusters is where
 //! the first one ends. What several clusters are drawn as together - a
-//! ligature - is divided evenly among them. A byte inside a cluster has
+//! ligature - is divided evenly among them, unless the font's hook
+//! said how: it then answers the glyph with its first character's share
+//! as its advance and a space of no glyph (`GLYPHREQ_SPACE`) for each
+//! further character, and the places come out of the advances as they
+//! do everywhere. A byte inside a cluster has
 //! the place behind it.
 //!
 //! **What fits** (`fit`). A piece cut from a text is shaped without
@@ -222,7 +226,9 @@ fn fill(gb: *GraphicsBase, line: *const TextFont, bytes: []const u8, placed: []P
                 const named = @min(from.cluster, @as(u32, @intCast(stretch.len - 1)));
                 cluster = @max(cluster, @as(u32, @intCast(boundaryUpTo(stretch, named))));
                 placed[made] = .{
-                    .glyph = if (from.flags & graphics.GLYPHREQ_NUMBER != 0)
+                    .glyph = if (from.flags & graphics.GLYPHREQ_SPACE != 0)
+                        null
+                    else if (from.flags & graphics.GLYPHREQ_NUMBER != 0)
                         _text.glyphByNumber(gb, one, from.which)
                     else
                         _text.glyphIn(gb, one, from.which),

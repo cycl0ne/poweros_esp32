@@ -520,11 +520,54 @@ fn shapeText(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) cal
 
     const scale = @as(f32, @floatFromInt(font.image.height)) / @as(f32, @floatFromInt(record.span));
     const text = request.text[0..request.length];
+    // A glyph that stands for several characters, whose places between
+    // them the font names, is answered with a space behind it for each
+    // character after the first: how many more glyphs that makes.
+    const parted = direction == truetypeshaping.TTS_LEFT_TO_RIGHT;
+    var spaces: u32 = 0;
+    if (parted) {
+        for (run.glyphs[0..run.count], 0..) |shaped, index| {
+            const end: u32 = if (index + 1 < run.count) run.glyphs[index + 1].cluster else request.length;
+            var carets: [most_carets]i32 = undefined;
+            spaces += partsOf(shaping, held.outline, &shaped, text, end, &carets);
+        }
+        if (run.count + spaces > request.room) {
+            request.count = run.count + spaces;
+            return graphics.SHAPE_ROOM;
+        }
+    }
+    const total = spaces;
     var left = run.count;
+    var behind: u32 = request.length;
     while (left != 0) {
         left -= 1;
         // Read whole before the answer is written over it.
         const shaped = run.glyphs[left];
+        var carets: [most_carets]i32 = undefined;
+        const parts = if (parted) partsOf(shaping, held.outline, &shaped, text, behind, &carets) else 0;
+        behind = shaped.cluster;
+        spaces -= parts;
+        const at = left + spaces;
+        const whole = pixelsOf(shaped.advance, scale);
+        // The spaces, the last character's first: each from the place
+        // before it to its own, the last to the glyph's end.
+        var part = parts;
+        var place: usize = shaped.cluster;
+        var starts: [most_carets]u32 = undefined;
+        for (starts[0..parts]) |*start| {
+            _ = utf8.next(text, &place);
+            start.* = @intCast(place);
+        }
+        while (part != 0) : (part -= 1) {
+            const from = pixelsOf(carets[part - 1], scale);
+            const to = if (part == parts) whole else pixelsOf(carets[part], scale);
+            request.glyphs[at + part] = .{
+                .which = 0,
+                .flags = graphics.GLYPHREQ_SPACE,
+                .cluster = starts[part - 1],
+                .advance = to - from,
+            };
+        }
         var which = shaped.glyph;
         var flags: u32 = graphics.GLYPHREQ_NUMBER;
         if (shaped.glyph != 0 and shaped.cluster < text.len) {
@@ -534,17 +577,46 @@ fn shapeText(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) cal
                 flags = 0;
             }
         }
-        request.glyphs[left] = .{
+        request.glyphs[at] = .{
             .which = which,
             .flags = flags,
             .cluster = shaped.cluster,
-            .advance = pixelsOf(shaped.advance, scale),
+            .advance = if (parts != 0) pixelsOf(carets[0], scale) else whole,
             .x = pixelsOf(shaped.x_offset, scale),
             .y = pixelsOf(shaped.y_offset, scale),
         };
     }
-    request.count = run.count;
+    request.count = run.count + total;
     return graphics.SHAPE_OK;
+}
+
+/// The most places inside one glyph that are taken from a font.
+const most_carets = 8;
+
+/// How many places inside the glyph `shaped`, which stands for the text
+/// from its cluster to `end`, the font names - written to `carets` - or
+/// 0 where it is not one place fewer than the glyph has characters, or
+/// the places do not lie one behind the other inside the glyph.
+fn partsOf(
+    shaping: *sdk.interface.truetypeshaping.TrueTypeShapingBase,
+    outline: *truetype.Outline,
+    shaped: *const truetypeshaping.ShapedGlyph,
+    text: []const u8,
+    end: u32,
+    carets: *[most_carets]i32,
+) u32 {
+    if (shaped.glyph == 0 or shaped.cluster >= end or end > text.len) return 0;
+    var chars: u32 = 0;
+    var at: usize = shaped.cluster;
+    while (at < end) : (chars += 1) _ = utf8.next(text, &at);
+    if (chars < 2 or chars - 1 > most_carets) return 0;
+    if (shaping.LigatureCarets(outline, shaped.glyph, carets, most_carets) != chars - 1) return 0;
+    var before: i32 = 0;
+    for (carets[0 .. chars - 1]) |caret| {
+        if (caret <= before or caret >= shaped.advance) return 0;
+        before = caret;
+    }
+    return chars - 1;
 }
 
 /// A measure in an outline's units as pixels at `scale`, rounded as

@@ -93,9 +93,11 @@ pub const LIBRARY_VERSION = 0;
 /// U+FE0E asks for that. 45: a letter and a mark written as two characters
 /// are drawn as the one character they make, where no font shapes them:
 /// `e` and U+0301 as the font's `é`, or as its `e`, not with the default
-/// character. The version stays 0 until there is something to demand of
-/// it.
-pub const LIBRARY_REVISION = 45;
+/// character. 46: a `shape` hook may answer a space of no glyph
+/// (`GLYPHREQ_SPACE`), by which a font says where the characters of a
+/// ligature part. The version stays 0 until there is something to
+/// demand of it.
+pub const LIBRARY_REVISION = 46;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
