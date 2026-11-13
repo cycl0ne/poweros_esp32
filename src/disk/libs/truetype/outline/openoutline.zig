@@ -133,9 +133,7 @@ const _outline = @import("_outline.zig");
 /// Hinting instructions are passed over, and so are a `CFF ` table's
 /// hints, and a font dictionary's own font matrix in a CID-keyed font:
 /// only the top dictionary's is read. A `CFF2` table's hints are passed over the same way,
-/// and with them the deltas its private dictionaries have for them. An
-/// `avar` table of version 2, which bends one axis by the others, is
-/// passed over. Of the Macintosh platform's character maps only the
+/// and with them the deltas its private dictionaries have for them. Of the Macintosh platform's character maps only the
 /// Roman encoding's is read, and a map of format 2 only where its
 /// characters are Unicode's or that encoding's: the two-byte encodings
 /// of East Asia before Unicode have no table here.

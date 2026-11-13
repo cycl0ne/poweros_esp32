@@ -243,7 +243,10 @@ pub fn open(font: *Font, values: ?[*]const truetype.AxisValue, count: u32) void 
         const bent = mapped(font, avar, axis, normalized(value, lower, middle, upper));
         const whole = rounded(bent * 16384.0);
         vary.coords[axis] = @intCast(@max(-16384, @min(16384, whole)));
-        if (vary.coords[axis] != 0) vary.varied = true;
+    }
+    bendTogether(font, avar);
+    for (vary.coords[0..vary.axis_count]) |coord| {
+        if (coord != 0) vary.varied = true;
     }
     if (!vary.varied) return;
 
@@ -267,13 +270,76 @@ fn normalized(value: f64, lower: f64, middle: f64, upper: f64) f64 {
     return (value - middle) / (upper - middle);
 }
 
+/// What an `avar` table of version 2 does after its maps: each axis'
+/// coordinate gets what the table's store of deltas has for it at the
+/// place the maps came to - so one axis is bent by where the others
+/// stand - and is cut to the axis' ends. Which item of the store an
+/// axis has is said by the table's map of items, or without one the
+/// axis' number in the first data. A table of version 1, and one
+/// without a store, changes nothing.
+fn bendTogether(font: *Font, avar: Table) void {
+    const vary = &font.vary;
+    if (avar.len < 8 or wordIn(font, avar, 0) != 2) return;
+    // Behind the maps, an axis each: where the map of items and the
+    // store are.
+    var at: u32 = 8;
+    var axis: u32 = 0;
+    const maps: u32 = wordIn(font, avar, 6);
+    while (axis < maps) : (axis += 1) at +|= 2 + @as(u32, wordIn(font, avar, at)) * 4;
+    if (at > avar.len or avar.len - at < 8) return;
+    const items_at = longIn(font, avar, at);
+    const store_at = longIn(font, avar, at + 4);
+    if (store_at == 0) return;
+    const items: ?Table = if (items_at != 0) partOf(avar, items_at) orelse return else null;
+    const store = partOf(avar, store_at) orelse return;
+    // Every axis by the place the maps came to, not by what the axes
+    // before it became.
+    var before: [max_axes]i16 = undefined;
+    const count = vary.axis_count;
+    @memcpy(before[0..count], vary.coords[0..count]);
+    axis = 0;
+    while (axis < count) : (axis += 1) {
+        const item = itemOf(font, items, axis) orelse continue;
+        const delta = deltaIn(bytesOf(font, store), before[0..count], item.outer, item.inner, null);
+        const moved = @as(i32, before[axis]) + rounded(delta);
+        vary.coords[axis] = @intCast(@max(-16384, @min(16384, moved)));
+    }
+}
+
+/// An item of a store of deltas: its data, and its row there.
+const Item = struct { outer: u32, inner: u32 };
+
+/// The item a map of items names for the entry `index` - one past the
+/// map's end has its last entry's - or, without a map, row `index` of
+/// the first data. Null for a map that cannot be read.
+fn itemOf(font: *const Font, map: ?Table, index: u32) ?Item {
+    const table = map orelse return .{ .outer = 0, .inner = index };
+    const form = byteIn(font, table, 0);
+    const entry_form: u32 = byteIn(font, table, 1);
+    const count: u32, const entries_at: u32 = switch (form) {
+        0 => .{ wordIn(font, table, 2), 4 },
+        1 => .{ longIn(font, table, 2), 6 },
+        else => return null,
+    };
+    if (count == 0) return null;
+    const entry_size = ((entry_form & 0x30) >> 4) + 1;
+    const inner_bits: u5 = @intCast((entry_form & 0x0F) + 1);
+    const at = entries_at +| @min(index, count - 1) *| entry_size;
+    if (at >= table.len or table.len - at < entry_size) return null;
+    var entry: u32 = 0;
+    var byte: u32 = 0;
+    while (byte < entry_size) : (byte += 1) entry = entry << 8 | byteIn(font, table, at + byte);
+    return .{ .outer = entry >> inner_bits, .inner = entry & ((@as(u32, 1) << inner_bits) - 1) };
+}
+
 /// `value` as `avar`'s map for `axis` bends it: the map's pairs say
 /// where some values go, and one between two of them goes between where
 /// they go, in a straight line; one outside them all keeps its distance
-/// from the nearest. Unchanged without a table of version 1 or a map for
-/// the axis.
+/// from the nearest. Unchanged without a table of version 1 or 2, or a
+/// map for the axis.
 fn mapped(font: *const Font, avar: Table, axis: u32, value: f64) f64 {
-    if (avar.len < 8 or wordIn(font, avar, 0) != 1 or axis >= wordIn(font, avar, 6)) return value;
+    const version = wordIn(font, avar, 0);
+    if (avar.len < 8 or (version != 1 and version != 2) or axis >= wordIn(font, avar, 6)) return value;
     var at: u32 = 8;
     var before: u32 = 0;
     while (before < axis) : (before += 1) at +|= 2 + @as(u32, wordIn(font, avar, at)) * 4;
@@ -524,30 +590,10 @@ pub fn storePart(font: *const Font, store: Table, outer: u32, index: u32) f64 {
 fn advanceDelta(font: *const Font, glyph: u32) f64 {
     const hvar = font.vary.hvar;
     const store = partOf(hvar, longIn(font, hvar, 4)) orelse return 0;
-    var outer: u32 = 0;
-    var inner: u32 = glyph;
     const map_at = longIn(font, hvar, 8);
-    if (map_at != 0) {
-        const map = partOf(hvar, map_at) orelse return 0;
-        const form = byteIn(font, map, 0);
-        const entry_form: u32 = byteIn(font, map, 1);
-        const count: u32, const entries_at: u32 = switch (form) {
-            0 => .{ wordIn(font, map, 2), 4 },
-            1 => .{ longIn(font, map, 2), 6 },
-            else => return 0,
-        };
-        if (count == 0) return 0;
-        const entry_size = ((entry_form & 0x30) >> 4) + 1;
-        const inner_bits: u5 = @intCast((entry_form & 0x0F) + 1);
-        const at = entries_at +| @min(glyph, count - 1) *| entry_size;
-        if (at >= map.len or map.len - at < entry_size) return 0;
-        var entry: u32 = 0;
-        var byte: u32 = 0;
-        while (byte < entry_size) : (byte += 1) entry = entry << 8 | byteIn(font, map, at + byte);
-        outer = entry >> inner_bits;
-        inner = entry & ((@as(u32, 1) << inner_bits) - 1);
-    }
-    return storeDelta(font, store, outer, inner);
+    const map: ?Table = if (map_at != 0) partOf(hvar, map_at) orelse return 0 else null;
+    const item = itemOf(font, map, glyph) orelse return 0;
+    return storeDelta(font, store, item.outer, item.inner);
 }
 
 // --- a glyph's deltas ----------------------------------------------------------

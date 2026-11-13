@@ -485,6 +485,9 @@ const Advances = enum {
     lost,
 };
 
+/// How a built font's `avar` of version 2 names its items.
+const Together = enum { none, rows, mapped };
+
 /// What a built variable font is made of beside its axes and deltas.
 const Make = struct {
     advances: Advances = .sides,
@@ -492,6 +495,12 @@ const Make = struct {
     /// way is a quarter, and width's so that half way is three quarters,
     /// with nothing said past that.
     bend: bool = false,
+    /// An `avar` table of version 2 instead: no pairs of its own, and a
+    /// store by which the width takes a quarter of its range more at the
+    /// weight's far end - by the axis' own row, or with `.mapped` by a
+    /// map of items that gives the weight that row and the width none
+    /// that moves.
+    together: Together = .none,
     /// Whether it has the measures of `OS/2` and `post`, and `MVAR`.
     measures: bool = false,
     /// How many axes `gvar` says it is for.
@@ -537,6 +546,39 @@ fn fontOf(file: *File, make: Make) void {
             &.{ .{ -16384, -16384 }, .{ 0, 0 }, .{ 8192, 4096 }, .{ 16384, 16384 } },
             &.{ .{ 0, 0 }, .{ 8192, 12288 } },
         });
+        more[count] = .{ .tag = "avar", .bytes = bend.written() };
+        count += 1;
+    }
+    var bent_store: File = .{};
+    if (make.together != .none) {
+        // One region, the weight from its default to its far end; the
+        // weight's row adds nothing, the width's 4096 of 16384.
+        store(&bent_store, 2, &.{&.{ .{ 0, 16384, 16384 }, .{ -16384, 0, 16384 } }}, &.{.{
+            .regions = &.{0},
+            .wide = 1,
+            .rows = &.{ &.{0}, &.{4096} },
+        }});
+        bend.word(2);
+        bend.word(0);
+        bend.word(0);
+        bend.word(2);
+        bend.word(0);
+        bend.word(0);
+        const places = bend.len;
+        bend.long(0);
+        bend.long(0);
+        if (make.together == .mapped) {
+            // Two entries of a byte, the row in its low four bits: the
+            // weight gets the width's row, the width the weight's.
+            bend.setLong(places, bend.len);
+            bend.byte(0);
+            bend.byte(3);
+            bend.word(2);
+            bend.byte(1);
+            bend.byte(0);
+        }
+        bend.setLong(places + 4, bend.len);
+        bend.text(bent_store.written());
         more[count] = .{ .tag = "avar", .bytes = bend.written() };
         count += 1;
     }
@@ -816,6 +858,44 @@ test "variable: a value is cut to its axis, and the first of a tag counts" {
         tb.CloseOutline(outline);
     }
 
+    try rig.down();
+}
+
+test "variable: avar of version 2 bends an axis by where the others stand" {
+    var rig = try Rig.up();
+    const tb = rig.tb;
+
+    const Case = struct { weight: f32, width: f32, coords: [2]i16 };
+    // The width takes a quarter of its range more at the weight's far
+    // end, half of that half way, nothing below the weight's default,
+    // and is cut at its own end.
+    var file: File = .{};
+    fontOf(&file, .{ .together = .rows });
+    for ([_]Case{
+        .{ .weight = 400, .width = 100, .coords = .{ 0, 0 } },
+        .{ .weight = 900, .width = 100, .coords = .{ 16384, 4096 } },
+        .{ .weight = 650, .width = 100, .coords = .{ 8192, 2048 } },
+        .{ .weight = 900, .width = 150, .coords = .{ 16384, 12288 } },
+        .{ .weight = 900, .width = 200, .coords = .{ 16384, 16384 } },
+        .{ .weight = 100, .width = 150, .coords = .{ -16384, 8192 } },
+    }) |case| {
+        const outline = try openAt(tb, &file, &place(case.weight, case.width));
+        try testing.expectEqual(case.coords, try coordinatesOf(tb, outline));
+        tb.CloseOutline(outline);
+    }
+    // By the table's map of items the rows change places: the weight is
+    // the one that moves, by its own place.
+    var mapped: File = .{};
+    fontOf(&mapped, .{ .together = .mapped });
+    for ([_]Case{
+        .{ .weight = 650, .width = 100, .coords = .{ 10240, 0 } },
+        .{ .weight = 900, .width = 150, .coords = .{ 16384, 8192 } },
+        .{ .weight = 250, .width = 100, .coords = .{ -8192, 0 } },
+    }) |case| {
+        const outline = try openAt(tb, &mapped, &place(case.weight, case.width));
+        try testing.expectEqual(case.coords, try coordinatesOf(tb, outline));
+        tb.CloseOutline(outline);
+    }
     try rig.down();
 }
 
