@@ -397,6 +397,9 @@ const Sources = struct {
     font: truetype_tests.Out = .{},
     face: diskfont.OutlineFont = undefined,
     opened: u32 = 0,
+    /// The language of each text shaped, in the order they were asked.
+    languages: [8]u32 = @splat(0xFFFF_FFFF),
+    shaped: u32 = 0,
     asked: [8][32]u8 = undefined,
     asked_count: u32 = 0,
     pens: [4]Pen = undefined,
@@ -451,8 +454,10 @@ const Sources = struct {
     pub fn CloseFace(s: *Sources, _: *diskfont.OutlineFont) void {
         s.opened -= 1;
     }
-    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
-        return s.sb.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, features, run);
+    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, language: u32, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
+        if (s.shaped < s.languages.len) s.languages[s.shaped] = language;
+        s.shaped += 1;
+        return s.sb.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, language, features, run);
     }
     pub fn GlyphMetrics(s: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
         return s.tb.GlyphMetrics(outline, glyph, metrics);
@@ -603,6 +608,42 @@ test "text: shaped across its spans, each glyph in its span's colour; letter spa
     try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[32 * 40 + 11]);
     sources.close();
     try rig.close();
+}
+
+test "text: its language is handed to the shaper, and a span in another is shaped by itself" {
+    const rig = try Rig.open();
+    var sources: Sources = .{ .library = undefined, .tb = undefined };
+    try sources.open();
+    var pens: [40 * 40]Pen = undefined;
+    try rig.drawWith(&sources,
+        \\<svg width="40" height="40" xml:lang="de-AT">
+        \\  <text x="2" y="12" font-size="10">A</text>
+        \\  <text x="2" y="24" font-size="10" xml:lang="sr">A<tspan xml:lang="tr">B</tspan></text>
+        \\  <text x="2" y="36" font-size="10" lang="xx">A</text>
+        \\</svg>
+    , 40, 40, &pens);
+    // The first text in the document's language; the second's two
+    // spans one after the other, each in its own; a code no tag is
+    // known for is no language said.
+    try testing.expectEqual(@as(u32, 4), sources.shaped);
+    try testing.expectEqual(tts.languageTag("DEU "), sources.languages[0]);
+    try testing.expectEqual(tts.languageTag("SRB "), sources.languages[1]);
+    try testing.expectEqual(tts.languageTag("TRK "), sources.languages[2]);
+    try testing.expectEqual(tts.TTS_LANGUAGE_DEFAULT, sources.languages[3]);
+    sources.close();
+    try rig.close();
+
+    // The codes: two letters in either case, with or without more behind
+    // them; Chinese by its script or its region.
+    try testing.expectEqual(tts.languageTag("HIN "), tts.languageOf("hi"));
+    try testing.expectEqual(tts.languageTag("HIN "), tts.languageOf("HI-in"));
+    try testing.expectEqual(tts.languageTag("ZHS "), tts.languageOf("zh"));
+    try testing.expectEqual(tts.languageTag("ZHS "), tts.languageOf("zh-Hans-CN"));
+    try testing.expectEqual(tts.languageTag("ZHT "), tts.languageOf("zh-Hant"));
+    try testing.expectEqual(tts.languageTag("ZHT "), tts.languageOf("zh_TW"));
+    try testing.expectEqual(tts.TTS_LANGUAGE_DEFAULT, tts.languageOf(""));
+    try testing.expectEqual(tts.TTS_LANGUAGE_DEFAULT, tts.languageOf("d"));
+    try testing.expectEqual(tts.TTS_LANGUAGE_DEFAULT, tts.languageOf("deu"));
 }
 
 test "text without fonts is left out, and the rest drawn" {

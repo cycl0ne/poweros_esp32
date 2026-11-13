@@ -264,7 +264,10 @@ the font has for them - and each glyph is drawn in the style of the
 span its character is in.
 A character with an `x`, `y`, `dx` or `dy` of its own starts a new
 stretch; a `letter-spacing` leaves the ligatures apart and comes once
-behind each character or ligature. Text is read from left to right. A
+behind each character or ligature. Since 1.6 a text's language
+(`xml:lang`, or `lang`, on the text or anything around it) is handed
+to the font, which may have forms of its own for it - a stretch ends
+where the language changes. Text is read from left to right. A
 `textPath` is not drawn. Since 1.5 a glyph's outline may be of any
 length: one of more than the picture's work memory holds (1024 verbs,
 2048 points) is read into memory of its own while it is drawn, and is

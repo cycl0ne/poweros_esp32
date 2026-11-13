@@ -148,6 +148,8 @@ pub const Name = enum(u8) {
     @"text-decoration",
     @"white-space",
     @"xml:space",
+    /// The language a text is in (`xml:lang`, or `lang`): since 1.6.
+    lang,
     dx,
     dy,
     filterUnits,
@@ -418,6 +420,7 @@ pub fn tagOf(full: []const u8) Tag {
 pub fn nameOf(full: []const u8) Name {
     if (std.mem.eql(u8, full, "xlink:href")) return .href;
     if (std.mem.eql(u8, full, "xml:space")) return .@"xml:space";
+    if (std.mem.eql(u8, full, "xml:lang")) return .lang;
     if (std.mem.indexOfScalar(u8, full, ':') != null) return .other;
     return std.meta.stringToEnum(Name, full) orelse .other;
 }

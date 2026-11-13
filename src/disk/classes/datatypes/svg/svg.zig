@@ -84,7 +84,7 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "svg.datatype",
     .version = 1,
-    .revision = 5,
+    .revision = 6,
     .date = "12.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME, compression.COMPRESSIONNAME },
@@ -273,8 +273,8 @@ const Sources = struct {
     }
     /// A stretch of text shaped by its font, read from left to right
     /// in no language of its own.
-    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
-        return s.sb.?.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, tts.TTS_LANGUAGE_DEFAULT, features, run);
+    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, language: u32, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
+        return s.sb.?.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, language, features, run);
     }
     pub fn GlyphMetrics(s: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
         return s.tb.?.GlyphMetrics(outline, glyph, metrics);

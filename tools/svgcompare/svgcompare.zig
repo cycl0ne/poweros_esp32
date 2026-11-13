@@ -228,7 +228,7 @@ const Sources = struct {
     /// A text shaped as truetypeshaping.library's `ShapeText` shapes it,
     /// with the font's tables and what truetype.library's code reads
     /// from it.
-    pub fn ShapeText(_: *Sources, outline: *truetype.Outline, text: []const u8, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
+    pub fn ShapeText(_: *Sources, outline: *truetype.Outline, text: []const u8, language: u32, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
         const font = fontOf(outline);
         const context: *anyopaque = @ptrCast(@constCast(font));
         var feature_count: usize = 0;
@@ -248,6 +248,7 @@ const Sources = struct {
                 .variantFn = variantOf,
             },
             .bytes = text,
+            .language = language,
             .features = if (features) |list| list[0..feature_count] else &.{},
         };
         return shaping.text.shapeText(&request, run);

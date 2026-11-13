@@ -63,6 +63,10 @@
 //! and its marks once, however many glyphs they have. A text is read
 //! from left to right.
 //!
+//! Since 1.6 a text's language - `xml:lang` or `lang`, inherited - is
+//! handed to the shaper as the tag fonts list the language under
+//! (`truetypeshaping.languageOf`), and a stretch ends where it changes.
+//!
 //! A glyph's outline is read into the work block. Since 1.5 one of
 //! more verbs or points than the block holds (`glyph_verbs`,
 //! `glyph_points`) is read into room of its own: `ext` allocates it
@@ -170,7 +174,7 @@ pub const Without = struct {
         return null;
     }
     pub fn CloseFace(_: *Without, _: *sdk.diskfont.OutlineFont) void {}
-    pub fn ShapeText(_: *Without, _: *sdk.truetype.Outline, _: []const u8, _: ?[*]const tts.Feature, _: *tts.ShapedRun) i32 {
+    pub fn ShapeText(_: *Without, _: *sdk.truetype.Outline, _: []const u8, _: u32, _: ?[*]const tts.Feature, _: *tts.ShapedRun) i32 {
         return tts.TTSERR_NOMEM;
     }
     pub fn GlyphMetrics(_: *Without, _: *sdk.truetype.Outline, _: u32, _: *sdk.truetype.GlyphMetrics) bool {
@@ -310,6 +314,9 @@ const Style = struct {
     decoration: u8 = 0,
     /// White space kept as it is.
     preserve: bool = false,
+    /// The language the text is in (`xml:lang`), as the tag fonts list
+    /// it under; 0 for none said, or one no tag is known for.
+    language: u32 = 0,
     // Not inherited.
     opacity: f32 = 1,
     shown: bool = true,
@@ -998,13 +1005,14 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
         }
 
         /// Whether a character of the span `run_index` goes on in the
-        /// stretch being gathered: in its font, at its size and with its
-        /// `letter-spacing`.
+        /// stretch being gathered: in its font, at its size, in its
+        /// language and with its `letter-spacing`.
         fn joins(p: *P, l: *const Layout, run_index: u8) bool {
             if (l.stretch == 0) return true;
             const first = &p.work.runs[p.work.stretch_runs[0]];
             const run = &p.work.runs[run_index];
             if (first.face != run.face or first.scale != run.scale) return false;
+            if (first.style.language != run.style.language) return false;
             return first.style.letter_spacing.resolve(.x, l.viewport) == run.style.letter_spacing.resolve(.x, l.viewport);
         }
 
@@ -1023,7 +1031,7 @@ fn Painter(comptime VB: type, comptime EXT: type) type {
             const apart = [_]tts.Feature{ .{ .tag = tts.featureTag("liga"), .value = 0 }, .{ .tag = tts.featureTag("clig"), .value = 0 }, .{} };
             var shaped: tts.ShapedRun = .{ .glyphs = &work.shaped, .room = max_shaped };
             const outline = work.faces[first.face].opened.?.outline;
-            if (p.ext.ShapeText(outline, work.stretch[0..length], if (spacing != 0) &apart else null, &shaped) != tts.TTS_OK) return;
+            if (p.ext.ShapeText(outline, work.stretch[0..length], first.style.language, if (spacing != 0) &apart else null, &shaped) != tts.TTS_OK) return;
             const glyphs = work.shaped[0..shaped.count];
             for (glyphs, 0..) |glyph, index| {
                 if (l.count == max_glyphs) return;
@@ -2030,6 +2038,7 @@ fn property(s: *Style, parent: *const Style, name: Name, text_in: []const u8) vo
             .@"word-spacing" => s.word_spacing = parent.word_spacing,
             .@"text-decoration" => s.decoration = parent.decoration,
             .@"white-space", .@"xml:space" => s.preserve = parent.preserve,
+            .lang => s.language = parent.language,
             else => {},
         }
         return;
@@ -2140,6 +2149,7 @@ fn property(s: *Style, parent: *const Style, name: Name, text_in: []const u8) vo
             }
             s.decoration = bits;
         },
+        .lang => s.language = tts.languageOf(text),
         .@"xml:space" => {
             if (std.mem.eql(u8, text, "preserve")) s.preserve = true;
             if (std.mem.eql(u8, text, "default")) s.preserve = false;
