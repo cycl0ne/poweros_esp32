@@ -13,6 +13,7 @@ const utf8 = sdk.utility.utf8;
 const _base = @import("../truetype_base.zig");
 const TrueTypeBase = _base.TrueTypeBase;
 const _outline = @import("_outline.zig");
+const _macroman = @import("_macroman.zig");
 const Font = _outline.Font;
 const Table = _outline.Table;
 
@@ -46,6 +47,9 @@ const Table = _outline.Table;
 /// then the first in any other language. A record of no bytes counts as
 /// none.
 ///
+/// A font that has the name only under the Macintosh platform, in its
+/// Roman encoding and in English, has that one: a byte a character.
+///
 /// The name is stored as UTF-16 and written as UTF-8: two surrogates
 /// that are a pair become their one character, one without the other
 /// U+FFFD, and a NUL within the name is left out. A name longer than the
@@ -61,8 +65,9 @@ const Table = _outline.Table;
 /// The buffer is the caller's.
 ///
 /// BUGS:
-/// A name the font has only in a Macintosh encoding is not read, and a
-/// name cannot be asked for in a language of the caller's choice.
+/// Of the Macintosh platform's names only the Roman encoding's English
+/// ones are read, and a name cannot be asked for in a language of the
+/// caller's choice.
 ///
 /// SEE ALSO:
 /// `OpenOutline`, `FontMetrics`
@@ -83,13 +88,16 @@ pub fn FontName(tb: *TrueTypeBase, outline: *truetype.Outline, name: u32, buffer
 /// caller that has the font itself - a tool on the host.
 pub fn nameOf(font: *const Font, name: u32, buffer: [*]u8, room: u32) u32 {
     if (room != 0) buffer[0] = 0;
-    const text = nameText(font, name) orelse return 0;
-    return written(font, text, buffer, room);
+    var roman = false;
+    const text = nameText(font, name, &roman) orelse return 0;
+    return written(font, text, roman, buffer, room);
 }
 
 /// Where the string of the font's name `name` is: the preferred one of
-/// its records of that number. Null when it has none that is read.
-fn nameText(font: *const Font, name: u32) ?Table {
+/// its records of that number, and in `roman` whether it is stored a
+/// byte a character in the Macintosh Roman encoding. Null when it has
+/// none that is read.
+fn nameText(font: *const Font, name: u32, roman: *bool) ?Table {
     const table = _outline.findTable(font, "name") orelse return null;
     if (table.len < 6) return null;
     const said: u32 = _outline.wordIn(font, table, 2);
@@ -101,41 +109,51 @@ fn nameText(font: *const Font, name: u32) ?Table {
     while (i < count) : (i += 1) {
         const record = 6 + i * 12;
         if (_outline.wordIn(font, table, record + 6) != name) continue;
+        const platform: u32 = _outline.wordIn(font, table, record);
         const rank = rankOf(
-            _outline.wordIn(font, table, record),
+            platform,
             _outline.wordIn(font, table, record + 2),
             _outline.wordIn(font, table, record + 4),
         );
         if (rank <= best_rank) continue;
         const length: u32 = _outline.wordIn(font, table, record + 8);
         const offset: u32 = strings + _outline.wordIn(font, table, record + 10);
-        if (length < 2 or offset > table.len or length > table.len - offset) continue;
+        const least: u32 = if (platform == 1) 1 else 2;
+        if (length < least or offset > table.len or length > table.len - offset) continue;
         best = .{ .at = table.at + offset, .len = length };
         best_rank = rank;
+        roman.* = platform == 1;
     }
     return best;
 }
 
-/// How much a record is preferred; 0 for one whose string is not UTF-16.
+/// How much a record is preferred; 0 for one whose string is not read:
+/// UTF-16 before the Macintosh Roman encoding's, which is read in
+/// English alone.
 fn rankOf(platform: u32, encoding: u32, language: u32) u32 {
     if (platform == 0) return 3;
+    if (platform == 1) return if (encoding == 0 and language == 0) 1 else 0;
     if (platform != 3 or (encoding != 0 and encoding != 1 and encoding != 10)) return 0;
     if (language == 0x0409) return 5;
     if (language & 0x3FF == 0x09) return 4;
     return 2;
 }
 
-/// `text`, UTF-16, as UTF-8 into `buffer` of `room` bytes, cut after a
+/// `text` - UTF-16, or with `roman` a byte a character in the Macintosh
+/// Roman encoding - as UTF-8 into `buffer` of `room` bytes, cut after a
 /// whole character and NUL-terminated; the bytes the whole of it takes.
-fn written(font: *const Font, text: Table, buffer: [*]u8, room: u32) u32 {
+fn written(font: *const Font, text: Table, roman: bool, buffer: [*]u8, room: u32) u32 {
     var needed: u32 = 0;
     var used: u32 = 0;
     var cut = room == 0;
     var at: u32 = 0;
-    while (text.len - at >= 2) {
-        var char: u32 = _outline.wordIn(font, text, at);
-        at += 2;
-        if (char >= 0xD800 and char < 0xDC00) {
+    const unit: u32 = if (roman) 1 else 2;
+    while (text.len - at >= unit) {
+        var char: u32 = if (roman) _macroman.charOf(_outline.byteIn(font, text, at)) else _outline.wordIn(font, text, at);
+        at += unit;
+        if (roman) {
+            // A byte is a character.
+        } else if (char >= 0xD800 and char < 0xDC00) {
             const low: u32 = _outline.wordIn(font, text, at);
             if (low >= 0xDC00 and low < 0xE000) {
                 char = 0x10000 + ((char - 0xD800) << 10) + (low - 0xDC00);

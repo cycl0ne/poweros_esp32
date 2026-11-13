@@ -406,6 +406,9 @@ another English, then one of no language (the Unicode platform's),
 then the first in any other language. A record of no bytes counts as
 none.
 
+A font that has the name only under the Macintosh platform, in its
+Roman encoding and in English, has that one: a byte a character.
+
 The name is stored as UTF-16 and written as UTF-8: two surrogates
 that are a pair become their one character, one without the other
 U+FFFD, and a NUL within the name is left out. A name longer than the
@@ -424,8 +427,9 @@ The buffer is the caller's.
 
 **BUGS**
 
-A name the font has only in a Macintosh encoding is not read, and a
-name cannot be asked for in a language of the caller's choice.
+Of the Macintosh platform's names only the Roman encoding's English
+ones are read, and a name cannot be asked for in a language of the
+caller's choice.
 
 **SEE ALSO**
 
@@ -1066,8 +1070,10 @@ hints and its font matrix: its glyphs are taken as drawn in the
 font's units. A `CFF2` table's hints are passed over the same way,
 and with them the deltas its private dictionaries have for them. An
 `avar` table of version 2, which bends one axis by the others, is
-passed over. A font whose only character map is in a Macintosh
-encoding is not opened.
+passed over. Of the Macintosh platform's character maps only the
+Roman encoding's is read, and a map of format 2 only where its
+characters are Unicode's or that encoding's: the two-byte encodings
+of East Asia before Unicode have no table here.
 
 Pictures in `sbix`, and in the `bloc` and `bdat` tables, are not
 read, nor are a picture's formats 3 and 4, nor the measures of a

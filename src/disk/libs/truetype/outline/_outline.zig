@@ -53,6 +53,7 @@ const sdk = @import("sdk");
 const _cff = @import("_cff.zig");
 const _strike = @import("_strike.zig");
 const _variation = @import("_variation.zig");
+const _macroman = @import("_macroman.zig");
 const CompressionBase = sdk.interface.compression.CompressionBase;
 
 /// A font file, opened: where its tables are and the measures rendering
@@ -77,9 +78,12 @@ pub const Font = struct {
     glyf: Table,
     hmtx: Table,
     /// The character map's subtable used, to the end of the `cmap` table,
-    /// and its format (0, 4, 6, 10, 12 or 13).
+    /// and its format (0, 2, 4, 6, 8, 10, 12 or 13).
     cmap: Table,
     cmap_format: u32,
+    /// The map is in the Macintosh Roman encoding: a character is asked
+    /// for by its byte there.
+    cmap_roman: bool = false,
     /// The variation sequences' subtable (format 14); of no length when
     /// the font has none.
     variants: Table,
@@ -339,15 +343,16 @@ fn readMeasures(font: *Font, maxp: Table) void {
 }
 
 /// The character map's subtables to read. Of the ones that map
-/// characters, a Unicode one before a symbol font's, and among those the
-/// format that reaches furthest: 12, 13, 10, 4, 6, 0; the first of two
-/// alike. The variation sequences (format 14) are kept beside it. False
+/// characters, a Unicode one before a symbol font's, and that before one
+/// in the Macintosh Roman encoding; among those the format that reaches
+/// furthest: 12, 13, 8, 10, 4, 2, 6, 0; the first of two alike. The variation sequences (format 14) are kept beside it. False
 /// when the font has no map this library reads.
 fn pickCmap(font: *Font, cmap: Table) bool {
     font.variants = .{};
     var best: ?Table = null;
     var best_rank: u32 = 0;
     var best_format: u32 = 0;
+    var best_roman = false;
     const count: u32 = wordIn(font, cmap, 2);
     var i: u32 = 0;
     while (i < count) : (i += 1) {
@@ -366,31 +371,38 @@ fn pickCmap(font: *Font, cmap: Table) bool {
             best = subtable;
             best_rank = rank;
             best_format = format;
+            best_roman = platform == 1 and encoding == 0;
         }
     }
     font.cmap = best orelse return false;
     font.cmap_format = best_format;
+    font.cmap_roman = best_roman;
     return true;
 }
 
 /// How much a character map's subtable is preferred; 0 for one that is
 /// not read. A symbol font's map (Windows, encoding 0) has its
 /// characters where the font puts them, U+F020 to U+F0FF mostly, and is
-/// taken when there is no Unicode one.
+/// taken when there is no Unicode one. One in the Macintosh Roman
+/// encoding (the Macintosh platform, encoding 0) is the last resort, of
+/// a font that has no other: its characters are that encoding's 256.
 fn cmapRank(platform: u32, encoding: u32, format: u32) u32 {
     const unicode = (platform == 0 and encoding != 5) or (platform == 3 and (encoding == 1 or encoding == 10));
     const symbol = platform == 3 and encoding == 0;
-    if (!unicode and !symbol) return 0;
+    const roman = platform == 1 and encoding == 0;
+    if (!unicode and !symbol and !roman) return 0;
     const reach: u32 = switch (format) {
-        12 => 6,
-        13 => 5,
-        10 => 4,
-        4 => 3,
+        12 => 8,
+        13 => 7,
+        8 => 6,
+        10 => 5,
+        4 => 4,
+        2 => 3,
         6 => 2,
         0 => 1,
         else => return 0,
     };
-    return if (unicode) 8 + reach else reach;
+    return if (unicode) 32 + reach else if (symbol) 16 + reach else reach;
 }
 
 /// The glyph a character is, 0 (the missing glyph) when it has none or
@@ -400,9 +412,10 @@ pub fn glyphIndex(font: *const Font, code: u32) u32 {
     return if (glyph < font.glyph_count) glyph else 0;
 }
 
-/// What the character map says `code` is, unchecked.
-fn mapped(font: *const Font, code: u32) u32 {
+/// What the character map says `char` is, unchecked.
+fn mapped(font: *const Font, char: u32) u32 {
     const map = font.cmap;
+    const code: u32 = if (font.cmap_roman) _macroman.byteOf(char) orelse return 0 else char;
     switch (font.cmap_format) {
         // A byte a character, for the first 256.
         0 => return if (code < 256) byteIn(font, map, 6 + code) else 0,
@@ -420,9 +433,39 @@ fn mapped(font: *const Font, code: u32) u32 {
             if (code < first or code - first >= count) return 0;
             return wordIn(font, map, 20 + (code - first) * 2);
         },
-        12, 13 => return groupGlyph(font, map, code),
+        2 => return byteGlyph(font, map, code),
+        // Groups behind a header of its own: the bits that say which
+        // characters are 32 bits wide are a reader of bytes' business.
+        8 => return groupGlyph(font, map, code, 8204, false),
+        12 => return groupGlyph(font, map, code, 12, false),
+        13 => return groupGlyph(font, map, code, 12, true),
         else => return 0,
     }
+}
+
+/// Format 2: characters of one byte and of two. A first byte names a
+/// subheader - a run of second bytes, what to add to a glyph, and where
+/// the run's glyphs are listed; the subheader 0 is the one of the
+/// characters of one byte.
+fn byteGlyph(font: *const Font, map: Table, code: u32) u32 {
+    if (code > 0xFFFF) return 0;
+    const keys: u32 = 6;
+    const subheaders: u32 = keys + 256 * 2;
+    const high = code >> 8;
+    const low = code & 0xFF;
+    const key: u32 = wordIn(font, map, keys + (if (code < 0x100) low else high) * 2);
+    // A character of one byte is the subheader 0's, and a first byte that
+    // names it is no first byte.
+    if ((code < 0x100) != (key == 0)) return 0;
+    const subheader = subheaders + key;
+    const first: u32 = wordIn(font, map, subheader);
+    const count: u32 = wordIn(font, map, subheader + 2);
+    const delta: u32 = wordIn(font, map, subheader + 4);
+    const offset: u32 = wordIn(font, map, subheader + 6);
+    if (low < first or low - first >= count) return 0;
+    const glyph: u32 = wordIn(font, map, subheader + 6 + offset + (low - first) * 2);
+    if (glyph == 0) return 0;
+    return (glyph + delta) & 0xFFFF;
 }
 
 /// Format 4: segments of the basic plane sorted by their last character,
@@ -454,23 +497,25 @@ fn segmentGlyph(font: *const Font, map: Table, code: u32) u32 {
     return (glyph + delta) & 0xFFFF;
 }
 
-/// Formats 12 and 13: groups of characters sorted by their last, each a
-/// first character and a glyph - the first character's, the others
-/// following it (12), or every character's (13).
-fn groupGlyph(font: *const Font, map: Table, code: u32) u32 {
-    const groups: u32 = @min(longIn(font, map, 12), (map.len -| 16) / 12);
+/// Formats 8, 12 and 13: groups of characters sorted by their last, each
+/// a first character and a glyph - the first character's, the others
+/// following it, or with `every` (13) every character's. The groups'
+/// count is at `counted`, the groups behind it.
+fn groupGlyph(font: *const Font, map: Table, code: u32, counted: u32, every: bool) u32 {
+    const list = counted + 4;
+    const groups: u32 = @min(longIn(font, map, counted), (map.len -| list) / 12);
     var low: u32 = 0;
     var high: u32 = groups;
     while (low < high) {
         const mid = low + (high - low) / 2;
-        if (longIn(font, map, 16 + mid * 12 + 4) < code) low = mid + 1 else high = mid;
+        if (longIn(font, map, list + mid * 12 + 4) < code) low = mid + 1 else high = mid;
     }
     if (low == groups) return 0;
-    const group = 16 + low * 12;
+    const group = list + low * 12;
     const first = longIn(font, map, group);
     if (first > code) return 0;
     const glyph = longIn(font, map, group + 8);
-    if (font.cmap_format == 13) return glyph;
+    if (every) return glyph;
     return glyph +| (code - first);
 }
 

@@ -72,10 +72,65 @@ fn letter(cmap: *builder.Cmap, format: u16, glyph: u16) void {
         6 => cmap.run('A', &.{glyph}),
         10 => cmap.longRun('A', &.{glyph}),
         12, 13 => cmap.groups(format, &.{.{ .first = 'A', .last = 'A', .glyph = glyph }}),
+        2 => bytesOfTwo(cmap, &.{.{ .first = 'A', .glyphs = &.{glyph} }}, &.{}),
+        8 => mixed(cmap, &.{.{ .first = 'A', .last = 'A', .glyph = glyph }}),
         else => {
             cmap.file.word(format);
             cmap.file.skip(30);
         },
+    }
+}
+
+/// A run of second bytes behind one first byte - or, for format 2's
+/// subheader 0, of the characters of one byte - and their glyphs.
+const ByteRun = struct { high: u8 = 0, first: u8, glyphs: []const u16, delta: u16 = 0 };
+
+/// Format 2: `single` is the run of the characters of one byte, `double`
+/// the runs of second bytes, a first byte each.
+fn bytesOfTwo(cmap: *builder.Cmap, single: []const ByteRun, double: []const ByteRun) void {
+    const file = &cmap.file;
+    const start = file.len;
+    file.word(2);
+    file.word(0);
+    file.word(0);
+    // The first bytes' subheaders, 8 bytes each from the one of single
+    // bytes on.
+    var keys: [256]u16 = @splat(0);
+    for (double, 1..) |run, index| keys[run.high] = @intCast(index * 8);
+    for (keys) |key| file.word(key);
+    const runs = 1 + double.len;
+    const headers = file.len;
+    file.skip(@intCast(runs * 8));
+    var number: u32 = 0;
+    const none = [_]ByteRun{.{ .first = 0, .glyphs = &.{} }};
+    for ([_][]const ByteRun{ if (single.len != 0) single[0..1] else &none, double }) |list| {
+        for (list) |run| {
+            const header = headers + number * 8;
+            file.setWord(header, run.first);
+            file.setWord(header + 2, @intCast(run.glyphs.len));
+            file.setWord(header + 4, run.delta);
+            file.setWord(header + 6, @intCast(file.len - (header + 6)));
+            for (run.glyphs) |glyph| file.word(glyph);
+            number += 1;
+        }
+    }
+    file.setWord(start + 2, @intCast(file.len - start));
+}
+
+/// Format 8: groups as format 12's, behind the bits that say which
+/// characters are 32 bits wide.
+fn mixed(cmap: *builder.Cmap, list: []const builder.Group) void {
+    const file = &cmap.file;
+    file.word(8);
+    file.word(0);
+    file.long(@intCast(16 + 8192 + list.len * 12));
+    file.long(0);
+    file.skip(8192);
+    file.long(@intCast(list.len));
+    for (list) |group| {
+        file.long(group.first);
+        file.long(group.last);
+        file.long(group.glyph);
     }
 }
 
@@ -340,6 +395,70 @@ test "truetype: variation sequences, a character and its selector as a glyph" {
     try rig.down();
 }
 
+test "truetype: a character map in the Macintosh Roman encoding is asked by its bytes" {
+    var rig = try Rig.up();
+    const tb = rig.tb;
+
+    var glyphs: [256]u8 = @splat(0);
+    glyphs['A'] = 1;
+    glyphs[0x8A] = 2; // the a with two dots
+    glyphs[0xDB] = 3; // the euro sign
+    glyphs[0xE4] = 4; // the per mille sign, not the a with two dots
+    var cmap = builder.Cmap.init(1);
+    cmap.begin(1, 0);
+    cmap.bytes(&glyphs);
+    var file: builder.File = .{};
+    fontOf(&file, &cmap, 8);
+    const outline = tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+    try expectGlyphs(tb, outline, &.{
+        .{ 'A', 1 },    .{ 0xE4, 2 }, .{ 0x20AC, 3 },   .{ 0x2030, 4 },
+        // Characters the encoding has no byte for.
+        .{ 0x0100, 0 }, .{ 0x8A, 0 }, .{ 0x1_0041, 0 },
+    });
+    tb.CloseOutline(outline);
+    try rig.down();
+}
+
+test "truetype: character maps of formats 2 and 8, bytes of one and of two, and groups" {
+    var rig = try Rig.up();
+    const tb = rig.tb;
+
+    // Format 2: 'A' to 'C' are characters of one byte; behind the first
+    // byte 0x81 the second bytes 0x40 to 0x42, and behind 0x82 one glyph
+    // that has something added.
+    var cmap = builder.Cmap.init(1);
+    cmap.begin(3, 1);
+    bytesOfTwo(&cmap, &.{.{ .first = 'A', .glyphs = &.{ 1, 2, 0 } }}, &.{
+        .{ .high = 0x81, .first = 0x40, .glyphs = &.{ 3, 4, 5 } },
+        .{ .high = 0x82, .first = 0x10, .glyphs = &.{2}, .delta = 4 },
+    });
+    var file: builder.File = .{};
+    fontOf(&file, &cmap, 8);
+    var outline = tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+    try expectGlyphs(tb, outline, &.{
+        .{ 'A', 1 },    .{ 'B', 2 },    .{ 'C', 0 },      .{ 'D', 0 },    .{ '@', 0 },
+        .{ 0x8140, 3 }, .{ 0x8142, 5 }, .{ 0x8143, 0 },   .{ 0x813F, 0 }, .{ 0x8210, 6 },
+        // A first byte with no subheader, and a first byte by itself.
+        .{ 0x8340, 0 }, .{ 0x81, 0 },   .{ 0x1_8140, 0 },
+    });
+    tb.CloseOutline(outline);
+
+    // Format 8: groups, as format 12's.
+    cmap = builder.Cmap.init(1);
+    cmap.begin(3, 10);
+    mixed(&cmap, &.{
+        .{ .first = 'A', .last = 'C', .glyph = 1 },
+        .{ .first = 0x1_F600, .last = 0x1_F601, .glyph = 5 },
+    });
+    fontOf(&file, &cmap, 8);
+    outline = tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+    try expectGlyphs(tb, outline, &.{
+        .{ 'A', 1 }, .{ 'C', 3 }, .{ 'D', 0 }, .{ 0x1_F600, 5 }, .{ 0x1_F601, 6 }, .{ 0x1_F602, 0 },
+    });
+    tb.CloseOutline(outline);
+    try rig.down();
+}
+
 test "truetype: a character map that says more than it holds is read as far as it goes" {
     var rig = try Rig.up();
     const tb = rig.tb;
@@ -415,10 +534,17 @@ test "truetype: which character map is read, of the ones a font has" {
     const tb = rig.tb;
     const none: ?u32 = null;
 
-    // A Macintosh encoding is passed over.
+    // The Macintosh Roman encoding's is the last resort, after a symbol
+    // font's; any other Macintosh encoding is passed over.
     try testing.expectEqual(@as(?u32, 1), letterOf(tb, &.{ .{ .platform = 1, .encoding = 0, .format = 6, .glyph = 3 }, .{ .platform = 3, .encoding = 1, .format = 4, .glyph = 1 } }));
-    // The format that reaches furthest, wherever it stands: 12, 13, 10, 4,
-    // 6, 0.
+    try testing.expectEqual(@as(?u32, 1), letterOf(tb, &.{ .{ .platform = 1, .encoding = 0, .format = 6, .glyph = 3 }, .{ .platform = 3, .encoding = 0, .format = 0, .glyph = 1 } }));
+    try testing.expectEqual(@as(?u32, 3), letterOf(tb, &.{ .{ .platform = 1, .encoding = 1, .format = 6, .glyph = 2 }, .{ .platform = 1, .encoding = 0, .format = 6, .glyph = 3 } }));
+    // The format that reaches furthest, wherever it stands: 12, 13, 8,
+    // 10, 4, 2, 6, 0.
+    try testing.expectEqual(@as(?u32, 2), letterOf(tb, &.{ .{ .platform = 3, .encoding = 10, .format = 8, .glyph = 1 }, .{ .platform = 3, .encoding = 10, .format = 13, .glyph = 2 } }));
+    try testing.expectEqual(@as(?u32, 2), letterOf(tb, &.{ .{ .platform = 0, .encoding = 4, .format = 10, .glyph = 1 }, .{ .platform = 3, .encoding = 10, .format = 8, .glyph = 2 } }));
+    try testing.expectEqual(@as(?u32, 2), letterOf(tb, &.{ .{ .platform = 3, .encoding = 1, .format = 2, .glyph = 1 }, .{ .platform = 3, .encoding = 1, .format = 4, .glyph = 2 } }));
+    try testing.expectEqual(@as(?u32, 2), letterOf(tb, &.{ .{ .platform = 0, .encoding = 3, .format = 6, .glyph = 1 }, .{ .platform = 3, .encoding = 1, .format = 2, .glyph = 2 } }));
     try testing.expectEqual(@as(?u32, 2), letterOf(tb, &.{ .{ .platform = 3, .encoding = 1, .format = 4, .glyph = 1 }, .{ .platform = 3, .encoding = 10, .format = 12, .glyph = 2 } }));
     try testing.expectEqual(@as(?u32, 2), letterOf(tb, &.{ .{ .platform = 3, .encoding = 10, .format = 12, .glyph = 2 }, .{ .platform = 3, .encoding = 1, .format = 4, .glyph = 1 } }));
     try testing.expectEqual(@as(?u32, 2), letterOf(tb, &.{ .{ .platform = 0, .encoding = 4, .format = 13, .glyph = 1 }, .{ .platform = 3, .encoding = 10, .format = 12, .glyph = 2 } }));
@@ -434,14 +560,13 @@ test "truetype: which character map is read, of the ones a font has" {
 
     // No map the library reads: the font is not opened.
     try testing.expectEqual(none, letterOf(tb, &.{}));
-    try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 1, .encoding = 0, .format = 0, .glyph = 1 }}));
+    try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 1, .encoding = 1, .format = 0, .glyph = 1 }}));
     try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 2, .encoding = 1, .format = 4, .glyph = 1 }}));
     try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 3, .encoding = 3, .format = 4, .glyph = 1 }}));
     try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 4, .encoding = 0, .format = 4, .glyph = 1 }}));
-    try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 3, .encoding = 1, .format = 2, .glyph = 1 }}));
-    try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 3, .encoding = 10, .format = 8, .glyph = 1 }}));
+    try testing.expectEqual(none, letterOf(tb, &.{.{ .platform = 3, .encoding = 1, .format = 9, .glyph = 1 }}));
     // One it does not read beside one it does.
-    try testing.expectEqual(@as(?u32, 1), letterOf(tb, &.{ .{ .platform = 3, .encoding = 10, .format = 8, .glyph = 2 }, .{ .platform = 3, .encoding = 1, .format = 4, .glyph = 1 } }));
+    try testing.expectEqual(@as(?u32, 1), letterOf(tb, &.{ .{ .platform = 3, .encoding = 10, .format = 9, .glyph = 2 }, .{ .platform = 3, .encoding = 1, .format = 4, .glyph = 1 } }));
 
     var file: builder.File = .{};
 
@@ -594,13 +719,18 @@ test "truetype: a font's names, UTF-16 as UTF-8" {
     const english = 0x0409;
     var table: builder.File = .{};
     builder.names(&table, &.{
-        // A Macintosh encoding is passed over.
+        // The Macintosh Roman encoding's is taken only where there is
+        // no other.
         .{ .platform = 1, .encoding = 0, .language = 0, .id = 1, .stored = "Mac Family" },
         .{ .platform = 3, .encoding = 1, .language = english, .id = 1, .stored = builder.utf16("Family") },
         // American English before another English, wherever it stands.
         .{ .platform = 3, .encoding = 1, .language = 0x0809, .id = 2, .stored = builder.utf16("British") },
         .{ .platform = 3, .encoding = 1, .language = english, .id = 2, .stored = builder.utf16("American") },
-        .{ .platform = 1, .encoding = 0, .language = 0, .id = 3, .stored = "Mac only" },
+        // A byte a character: 0x8A is the a with two dots, 0xDB the euro.
+        .{ .platform = 1, .encoding = 0, .language = 0, .id = 3, .stored = "M\x8Ac only \xDB" },
+        // In another language than English, or another encoding: not read.
+        .{ .platform = 1, .encoding = 0, .language = 2, .id = 23, .stored = "Deutsch" },
+        .{ .platform = 1, .encoding = 1, .language = 0, .id = 24, .stored = "\x83\x41" },
         // The Unicode platform before another language than English.
         .{ .platform = 3, .encoding = 1, .language = 0x0407, .id = 4, .stored = builder.utf16("Deutsch") },
         .{ .platform = 0, .encoding = 3, .language = 0, .id = 4, .stored = builder.utf16("Unicode") },
@@ -625,7 +755,7 @@ test "truetype: a font's names, UTF-16 as UTF-8" {
         .{ .platform = 3, .encoding = 2, .language = 0x0411, .id = 21, .stored = "\x83\x41" },
         .{ .platform = 2, .encoding = 1, .language = 0, .id = 22, .stored = "ISO" },
     });
-    table.setWord(6 + 14 * 12 + 10, 0xFFF0);
+    table.setWord(6 + 16 * 12 + 10, 0xFFF0);
 
     var cmap = builder.Cmap.init(1);
     cmap.begin(3, 1);
@@ -636,7 +766,9 @@ test "truetype: a font's names, UTF-16 as UTF-8" {
 
     try expectName(tb, outline, truetype.TTNAME_FAMILY, "Family");
     try expectName(tb, outline, truetype.TTNAME_STYLE, "American");
-    try expectName(tb, outline, truetype.TTNAME_UNIQUE, "");
+    try expectName(tb, outline, truetype.TTNAME_UNIQUE, "M\u{E4}c only \u{20AC}");
+    try expectName(tb, outline, 23, "");
+    try expectName(tb, outline, 24, "");
     try expectName(tb, outline, truetype.TTNAME_FULL, "Unicode");
     try expectName(tb, outline, truetype.TTNAME_VERSION, "Deutsch");
     try expectName(tb, outline, truetype.TTNAME_POSTSCRIPT, "Australian");

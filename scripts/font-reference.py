@@ -175,9 +175,10 @@ def pairs_of(font, mapping):
 def name_of(font, path, name_id):
     """The text of one name: its American English record on the Windows platform.
 
-    A name that only a Macintosh record gives is none to the library, and is
-    written as the empty string. Any other set of records has no rule here:
-    the script stops rather than guess which one the library should take.
+    A name that only Macintosh records give is the one in the Roman encoding
+    and in English, a byte a character, and none where there is no such
+    record. Any other set of records has no rule here: the script stops
+    rather than guess which one the library should take.
     """
     table = font["name"]
     record = table.getName(name_id, 3, 1, 0x409)
@@ -185,7 +186,8 @@ def name_of(font, path, name_id):
         return record.toUnicode()
     platforms = {r.platformID for r in table.names if r.nameID == name_id}
     if platforms == {1}:
-        return ""
+        record = table.getName(name_id, 1, 0, 0)
+        return record.string.decode("mac_roman") if record is not None else ""
     sys.exit("font-reference: %s: name %d has records this script has no rule for" % (path, name_id))
 
 
