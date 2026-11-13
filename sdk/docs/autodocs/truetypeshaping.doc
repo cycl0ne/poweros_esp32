@@ -344,9 +344,10 @@ truetypeshaping.library/ShapeText
 	one is shaped by the features above and nothing is rearranged or
 	told apart by its place in a word: the joined forms of Arabic and
 	the syllables of the other scripts of India are not made. A
-	syllable that is not whole - a vowel sign with no consonant - is
-	drawn as it is written: no dotted circle stands in for the missing
-	letter. The script's tag `dev3` is not read.
+	syllable that is not whole - a vowel sign or a halant with no
+	consonant before it - gets the font's dotted circle (U+25CC) for the
+	missing letter, of the sign's cluster, and is shaped as a sign on
+	it; in a font without that glyph it is drawn as it is written.
 
 	Only a letter and its marks are put together: two letters that
 	make one character - the single letters of a Hangul syllable - stay

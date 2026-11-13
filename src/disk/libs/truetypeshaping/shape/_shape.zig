@@ -289,6 +289,62 @@ fn kernByTable(order: *const Order, wanted: []const _plan.Wanted, buffer: *Buffe
 }
 
 /// The substitutions of a run a script's model shapes: the goes through
+/// A vowel letter and the vowel signs that would make it look like
+/// another letter of the script: Unicode has that letter as a character
+/// of its own, and the two written apart are kept apart.
+const VowelPair = struct { letter: u32, signs: []const u32 };
+const vowel_pairs = [_]VowelPair{
+    .{ .letter = 0x0905, .signs = &.{ 0x093A, 0x093B, 0x093E, 0x0945, 0x0946, 0x0949, 0x094A, 0x094B, 0x094C, 0x094F, 0x0956, 0x0957 } },
+    .{ .letter = 0x0906, .signs = &.{ 0x093A, 0x0945, 0x0946, 0x0947, 0x0948 } },
+    .{ .letter = 0x0909, .signs = &.{0x0941} },
+    .{ .letter = 0x090F, .signs = &.{ 0x0945, 0x0946, 0x0947 } },
+};
+
+/// Puts the glyph `circle` between a vowel letter and a sign behind it
+/// that would make it look like another letter (`vowel_pairs`), and
+/// between a ra with its halant and the letter i (U+0907), which would
+/// look like the long one: the sign then stands on the circle, of the
+/// sign's cluster. The glyphs are still the characters' own. False
+/// without the memory to grow.
+fn partVowels(buffer: *Buffer, font: *const Font, circle: u32) bool {
+    const glyphFn = font.glyphFn orelse return true;
+    if (circle == 0) return true;
+    const kind = _syllable.kindOf(_syllable.dotted_circle);
+    var at: u32 = 0;
+    while (at + 1 < buffer.len) : (at += 1) {
+        const items = buffer.slice();
+        var behind: u32 = 0;
+        if (items[at].category == _syllable.CATEGORY_VOWEL) {
+            for (vowel_pairs) |pair| {
+                if (items[at].glyph != glyphFn(font.context, pair.letter)) continue;
+                for (pair.signs) |sign| {
+                    if (items[at + 1].glyph == glyphFn(font.context, sign)) behind = at + 1;
+                }
+            }
+        } else if (items[at].category == _syllable.CATEGORY_RA and at + 2 < buffer.len and
+            items[at + 1].category == _syllable.CATEGORY_HALANT and
+            items[at + 2].glyph == glyphFn(font.context, 0x0907))
+        {
+            behind = at + 2;
+        }
+        if (behind == 0) continue;
+        if (!buffer.replace(behind, 1, 2)) {
+            if (buffer.failed) return false;
+            break;
+        }
+        const stand = &buffer.slice()[behind];
+        stand.* = .{
+            .glyph = circle,
+            .cluster = stand.cluster,
+            .mask = stand.mask,
+            .category = kind.category,
+            .position = kind.position,
+        };
+        at = behind;
+    }
+    return true;
+}
+
 /// `GSUB` in the model's order, with its work on the syllables between
 /// them. `wanted` comes back in the order of the goes.
 fn substituteByModel(call: *const Call, wanted: []_plan.Wanted) i32 {
@@ -303,7 +359,21 @@ fn substituteByModel(call: *const Call, wanted: []_plan.Wanted) i32 {
     var go: u8 = 0;
     while (go < _indic.go_count) : (go += 1) {
         switch (go) {
-            _indic.GO_LANGUAGE => _syllable.number(buffer.slice()),
+            _indic.GO_LANGUAGE => {
+                const circle = if (font.glyphFn) |glyphFn| glyphFn(font.context, _syllable.dotted_circle) else 0;
+                const before = buffer.len;
+                if (!partVowels(buffer, font, circle)) return truetypeshaping.TTSERR_NOMEM;
+                _syllable.number(buffer.slice());
+                if (!_syllable.mend(buffer, circle)) return truetypeshaping.TTSERR_NOMEM;
+                // A circle put in is a glyph of its own kind, not the
+                // sign's it was copied from.
+                if (buffer.len != before) {
+                    const gdef = Gdef.init(font.gdef);
+                    for (buffer.slice()) |*item| {
+                        if (item.glyph == circle and item.category == _syllable.CATEGORY_DOTTED_CIRCLE) gdef.classify(item, _buffer.CLASS_BASE);
+                    }
+                }
+            },
             _indic.GO_FORMS => if (!model.arrange(buffer)) return truetypeshaping.TTSERR_NOMEM,
             _indic.GO_REST => model.finish(buffer, order.after_letter),
             else => {},

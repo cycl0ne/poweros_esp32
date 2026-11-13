@@ -30,6 +30,7 @@
 
 const _buffer = @import("_buffer.zig");
 const Item = _buffer.Item;
+const Buffer = _buffer.Buffer;
 
 /// What a character is in its syllable.
 pub const CATEGORY_OTHER: u8 = 0;
@@ -499,6 +500,46 @@ fn find(items: []const Item) Found {
         }
     }
     return found;
+}
+
+/// The dotted circle, which stands in for the letter a sign has none of.
+pub const dotted_circle: u32 = 0x25CC;
+
+/// Puts the glyph `circle` - the font's dotted circle - before every
+/// syllable that is not whole, a sign with no letter to stand on. The
+/// circle is the syllable's first glyph and its base, of the syllable's
+/// number and kind and of its first sign's cluster. False
+/// without the memory to grow; a run that may not grow further keeps
+/// the syllables it could not mend as they are. `items` are numbered.
+pub fn mend(buffer: *Buffer, circle: u32) bool {
+    if (circle == 0) return true;
+    const kind = kindOf(dotted_circle);
+    var at: u32 = 0;
+    while (at < buffer.len) {
+        const syllable = buffer.slice()[at].syllable;
+        var end = at;
+        while (end < buffer.len and buffer.slice()[end].syllable == syllable) end += 1;
+        if (syllable & 0xF == SYLLABLE_BROKEN) {
+            if (!buffer.replace(at, 1, 2)) {
+                if (buffer.failed) return false;
+                break;
+            }
+            // A glyph of its own: nothing of the item it was copied
+            // from but where it is and the features that hold there.
+            const stand = &buffer.slice()[at];
+            stand.* = .{
+                .glyph = circle,
+                .cluster = stand.cluster,
+                .mask = stand.mask,
+                .category = kind.category,
+                .position = kind.position,
+                .syllable = syllable,
+            };
+            end += 1;
+        }
+        at = end;
+    }
+    return true;
 }
 
 /// Gives every item the syllable it is in: syllables are numbered from

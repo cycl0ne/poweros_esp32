@@ -102,9 +102,13 @@ fn stretchAt(bytes: []const u8, start: usize) Stretch {
     var script: u8 = _scripts.common;
     var chars: u32 = 0;
     var last: u32 = 0;
+    // A sign Devanagari shares with its neighbours: the accents of the
+    // Vedas.
+    var shared_sign = false;
     while (at < bytes.len) {
         const read = utf8.read(bytes[at..]);
         const its = _scripts.scriptOf(read.char);
+        if ((read.char >= 0x0951 and read.char <= 0x0954) or (read.char >= 0x1CD0 and read.char <= 0x1CFA)) shared_sign = true;
         if (its != _scripts.common and its != _scripts.inherited) {
             if (script == _scripts.common) {
                 script = its;
@@ -116,6 +120,10 @@ fn stretchAt(bytes: []const u8, start: usize) Stretch {
         chars += 1;
         last = read.char;
     }
+    // A text of such signs with no letter of any script is Devanagari's:
+    // the signs are in its block, and it is the one script shaped by its
+    // syllables.
+    if (script == _scripts.common and shared_sign) script = _scripts.scriptOf(0x0915);
     return .{ .end = at, .script = script, .chars = chars, .last = last };
 }
 

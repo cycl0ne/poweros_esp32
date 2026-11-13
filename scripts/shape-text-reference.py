@@ -35,8 +35,7 @@ keep away from it:
     stand behind letters the font has a character with the mark for. The
     made font has no outlines, and there both move a mark back by its
     advance.
-  - HarfBuzz mirrors brackets in a text read from right to left and makes
-    fractions around U+2044.
+  - HarfBuzz mirrors brackets in a text read from right to left.
   - A text of a script written from left to right that is told to be read
     from right to left HarfBuzz turns around before it shapes it, a letter
     with its marks at a time; ShapeText turns the shaped glyphs around one
@@ -51,8 +50,6 @@ keep away from it:
   - With `half` asked for the whole of a Devanagari text, HarfBuzz
     switches every feature that holds for the whole text off on a
     consonant before a non-joiner. No text here asks for it.
-  - Where a syllable is broken - a vowel sign with no consonant to stand
-    on - HarfBuzz can put a dotted circle under it. It is told not to.
   - Of a character whose bytes are cut short, or one UTF-8 forbids,
     HarfBuzz makes a U+FFFD for each byte and ShapeText one for them all.
     The bytes here that are no UTF-8 stand alone.
@@ -84,7 +81,6 @@ LEFT_TO_RIGHT = 4
 RIGHT_TO_LEFT = 5
 MONOTONE_CHARACTERS = 1
 REMOVE_DEFAULT_IGNORABLES = 0x08
-DO_NOT_INSERT_DOTTED_CIRCLE = 0x10
 WHOLE = 0xFFFFFFFF
 
 
@@ -239,7 +235,7 @@ class Font:
             private = "x-hbot" + case.language.strip()
             hb.hb_buffer_set_language(buffer, hb.hb_language_from_string(private.encode("ascii"), -1))
         hb.hb_buffer_set_cluster_level(buffer, MONOTONE_CHARACTERS)
-        hb.hb_buffer_set_flags(buffer, REMOVE_DEFAULT_IGNORABLES | DO_NOT_INSERT_DOTTED_CIRCLE)
+        hb.hb_buffer_set_flags(buffer, REMOVE_DEFAULT_IGNORABLES)
         features = (HbFeature * max(len(case.features), 1))()
         for place, (tag, value, first, last) in enumerate(case.features):
             features[place] = HbFeature(tag_of(tag), value, first, WHOLE if last == WHOLE else last + 1)
