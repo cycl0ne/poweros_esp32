@@ -530,6 +530,69 @@ const calculated = [_]Drawn{
     },
 };
 
+test "cubic outlines: a glyph put together from two others, by their names in the standard encoding" {
+    // The glyph 1 is "A" (the name 34), the glyph 2 the acute (125), the
+    // glyph 3 the two together - the accent moved by 50 and 100 - and
+    // the glyph 4 one put together from a code the font has no glyph for
+    // and from itself, which it may not be.
+    const letter = comptime builder.program("0 0 rmoveto 100 hlineto 200 vlineto endchar");
+    const accent = comptime builder.program("10 300 rmoveto 30 40 rlineto 30 -40 rlineto endchar");
+    const cases = comptime [_]Drawn{
+        .{ .program = builder.program("endchar"), .verbs = "", .points = &.{} },
+        .{ .program = letter, .verbs = "MLLZ", .points = &.{ .{ 0, 0 }, .{ 100, 0 }, .{ 100, 200 } } },
+        .{ .program = accent, .verbs = "MLLZ", .points = &.{ .{ 10, 300 }, .{ 40, 340 }, .{ 70, 300 } } },
+        .{
+            .program = builder.program("50 100 65 194 endchar"),
+            .verbs = "MLLZMLLZ",
+            .points = &.{ .{ 0, 0 }, .{ 100, 0 }, .{ 100, 200 }, .{ 60, 400 }, .{ 90, 440 }, .{ 120, 400 } },
+        },
+        .{
+            .program = builder.program("0 0 66 200 endchar"),
+            .verbs = "",
+            .points = &.{},
+        },
+    };
+    try expectAllDrawn(&cases, .{ .glyphs = &.{}, .names = &.{ 34, 125, 391, 173 } }, false);
+    // Without a list of its own a font has the standard one, where the
+    // name 34 is the glyph 34: this font has no such glyph, and nothing
+    // is put together.
+    const bare = comptime [_]Drawn{
+        .{ .program = builder.program("endchar"), .verbs = "", .points = &.{} },
+        .{ .program = letter, .verbs = "MLLZ", .points = &.{ .{ 0, 0 }, .{ 100, 0 }, .{ 100, 200 } } },
+        .{ .program = builder.program("50 100 65 194 endchar"), .verbs = "", .points = &.{} },
+    };
+    try expectAllDrawn(&bare, .{ .glyphs = &.{} }, false);
+}
+
+test "cubic outlines: a font matrix makes the programs' numbers the font's units" {
+    // 0.0005 where 0.001 would change nothing: every number is half as
+    // far in the font's units of 1000 to the em. The real number is a
+    // nought, a point, three noughts and a five, four bits each.
+    const half = [_]u8{ 30, 0x0A, 0x00, 0x05, 0xFF };
+    const none = [_]u8{139};
+    const cases = comptime [_]Drawn{
+        .{ .program = builder.program("endchar"), .verbs = "", .points = &.{} },
+        .{
+            .program = builder.program("100 200 rmoveto 50 hlineto 60 vlineto endchar"),
+            .verbs = "MLLZ",
+            .points = &.{ .{ 50, 100 }, .{ 75, 100 }, .{ 75, 130 } },
+        },
+    };
+    try expectAllDrawn(&cases, .{ .glyphs = &.{}, .matrix = &(half ++ none ++ none ++ half ++ none ++ none) }, false);
+    // Slanted: x takes a fifth of y besides.
+    const fifth = [_]u8{ 30, 0x0A, 0x00, 0x02, 0xFF };
+    const thousandth = [_]u8{ 30, 0x0A, 0x00, 0x1F };
+    const slanted = comptime [_]Drawn{
+        .{ .program = builder.program("endchar"), .verbs = "", .points = &.{} },
+        .{
+            .program = builder.program("100 200 rmoveto 50 hlineto 100 vlineto endchar"),
+            .verbs = "MLLZ",
+            .points = &.{ .{ 140, 200 }, .{ 190, 200 }, .{ 210, 300 } },
+        },
+    };
+    try expectAllDrawn(&slanted, .{ .glyphs = &.{}, .matrix = &(thousandth ++ none ++ fifth ++ thousandth ++ none ++ none) }, false);
+}
+
 test "cubic outlines: the operators that calculate" {
     try expectAllDrawn(&calculated, .{ .glyphs = &.{} }, false);
 }

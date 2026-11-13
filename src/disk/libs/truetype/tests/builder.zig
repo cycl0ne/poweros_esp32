@@ -613,6 +613,12 @@ pub const CffParts = struct {
     major: u8 = 1,
     /// What kind its programs are, when the top dictionary says so.
     charstring_type: ?u8 = null,
+    /// The numbers of the names of the glyphs from 1 on, a list of its
+    /// own in the format 0; none for a font that names no list.
+    names: []const u16 = &.{},
+    /// The top dictionary's font matrix, its six numbers as a
+    /// dictionary writes them; none for a font that says none.
+    matrix: []const u8 = &.{},
 };
 
 /// An offset of a list, in `size` bytes.
@@ -687,7 +693,9 @@ pub fn cff(file: *File, parts: CffParts) void {
 
     // The top dictionary, the one entry of its list.
     const kind: u32 = if (parts.charstring_type != null) 3 else 0;
-    const length: u32 = kind + @as(u32, if (cid) 5 + 7 + 7 + 6 else 6 + 11);
+    const named: u32 = if (parts.names.len != 0) 6 else 0;
+    const turned: u32 = if (parts.matrix.len != 0) @intCast(parts.matrix.len + 2) else 0;
+    const length: u32 = kind + named + turned + @as(u32, if (cid) 5 + 7 + 7 + 6 else 6 + 11);
     file.word(1);
     file.byte(parts.off_size);
     listOffset(file, parts.off_size, 1);
@@ -705,6 +713,15 @@ pub fn cff(file: *File, parts: CffParts) void {
         file.text(&.{ 12, 37 });
     }
     if (parts.charstring_type) |value| file.text(&.{ value + 139, 12, 6 });
+    if (parts.matrix.len != 0) {
+        file.text(parts.matrix);
+        file.text(&.{ 12, 7 });
+    }
+    var names_at: u32 = 0;
+    if (parts.names.len != 0) {
+        names_at = dictNumber(file);
+        file.byte(15);
+    }
     const programs_at = dictNumber(file);
     file.byte(17);
     if (!cid) {
@@ -719,6 +736,11 @@ pub fn cff(file: *File, parts: CffParts) void {
 
     file.setLong(programs_at, file.len - table);
     listOf(file, parts.glyphs, parts.off_size);
+    if (parts.names.len != 0) {
+        file.setLong(names_at, file.len - table);
+        file.byte(0);
+        for (parts.names) |name| file.word(name);
+    }
 
     if (!cid) {
         private(file, table, parts.locals, parts.off_size, private_size, private_at);

@@ -61,10 +61,18 @@
 //! numbers and operators, has more than `most_points` points, or puts a
 //! point further out than `far` units.
 //!
-//! Passed over: the font matrix (a program's units are taken as `head`'s
-//! units to the em), and the four numbers an `endchar` may have for a
-//! glyph put together from two others, an accent on a letter, which draw
-//! nothing here.
+//! A `CFF ` table's font matrix is read where the top dictionary has
+//! one: a program's numbers become `head`'s units by it, so a font whose
+//! programs are drawn at another size than `head` says, or slanted, is
+//! drawn as it means. A font dictionary's own matrix, of a CID-keyed
+//! font, is passed over.
+//!
+//! An `endchar` with four numbers before it puts the glyph together
+//! from two others, an accent on a letter: each is named by its code in
+//! the standard encoding, found through the font's own list of its
+//! glyphs' names (its charset), and drawn - the letter where it is, the
+//! accent moved by the first two numbers. One of the two may not be put
+//! together itself.
 
 const _outline = @import("_outline.zig");
 const _variation = @import("_variation.zig");
@@ -113,7 +121,15 @@ pub const Cff = struct {
     /// A `CFF2` table's item variation store: the regions its programs'
     /// deltas are for. Of no length in a table without one.
     store: Table = .{},
+    /// What makes a program's numbers `head`'s units: the font matrix
+    /// times the units of an em. Null where that changes nothing.
+    matrix: ?[6]f32 = null,
+    /// Where the list of the glyphs' names is: 0 for the standard one,
+    /// a name's number a glyph; `no_charset` for none that is read.
+    charset: u32 = no_charset,
 };
+
+const no_charset: u32 = 0xFFFF_FFFF;
 
 /// The most points a glyph has: as many as a glyph of quadratic curves
 /// can say it has.
@@ -145,7 +161,9 @@ const far: f32 = 16777216.0;
 const op_charstrings = 17;
 const op_private = 18;
 const op_subrs = 19;
+const op_charset = 15;
 const op_charstring_type = 0x0C06;
+const op_font_matrix = 0x0C07;
 const op_ros = 0x0C1E;
 const op_fd_array = 0x0C24;
 const op_fd_select = 0x0C25;
@@ -260,6 +278,150 @@ fn dictFind(font: *const Font, dict: Table, wanted: u32, numbers: *[3]i32) bool 
     return false;
 }
 
+/// The numbers before the operator `wanted` in a dictionary as they are
+/// written, whole or real, the first of them into `numbers`: how many
+/// there are, 0 when the dictionary has no such operator.
+fn dictReals(font: *const Font, dict: Table, wanted: u32, numbers: []f32) u32 {
+    var count: u32 = 0;
+    var at: u32 = 0;
+    while (at < dict.len) {
+        const first: u32 = byteIn(font, dict, at);
+        at += 1;
+        var value: f64 = 0;
+        switch (first) {
+            0...24 => {
+                var operator = first;
+                if (first == 12) {
+                    operator = 0x0C00 | @as(u32, byteIn(font, dict, at));
+                    at += 1;
+                }
+                if (operator == wanted) return count;
+                count = 0;
+                continue;
+            },
+            28 => {
+                value = @floatFromInt(@as(i16, @bitCast(wordIn(font, dict, at))));
+                at += 2;
+            },
+            29 => {
+                value = @floatFromInt(@as(i32, @bitCast(longIn(font, dict, at))));
+                at += 4;
+            },
+            // A real number: four bits a digit, a point, an exponent's
+            // sign or the number's, to the four bits that end it.
+            30 => {
+                var negative = false;
+                var digits: f64 = 0;
+                var behind: i32 = 0;
+                var seen_point = false;
+                var exponent: i32 = 0;
+                var exponent_sign: i32 = 0;
+                var half: u32 = 0;
+                reading: while (at < dict.len) {
+                    const pair = byteIn(font, dict, at);
+                    at += 1;
+                    half = 0;
+                    while (half < 2) : (half += 1) {
+                        const four: u32 = if (half == 0) pair >> 4 else pair & 0xF;
+                        switch (four) {
+                            0...9 => if (exponent_sign != 0) {
+                                if (exponent < 1000) exponent = exponent * 10 + @as(i32, @intCast(four));
+                            } else {
+                                digits = digits * 10 + @as(f64, @floatFromInt(four));
+                                if (seen_point) behind += 1;
+                            },
+                            0xA => seen_point = true,
+                            0xB => exponent_sign = 1,
+                            0xC => exponent_sign = -1,
+                            0xE => negative = true,
+                            0xF => break :reading,
+                            else => {},
+                        }
+                    }
+                }
+                var power = exponent_sign * exponent - behind;
+                while (power > 0) : (power -= 1) digits *= 10;
+                while (power < 0) : (power += 1) digits /= 10;
+                value = if (negative) -digits else digits;
+            },
+            32...246 => value = @floatFromInt(@as(i32, @intCast(first)) - 139),
+            247...250 => {
+                value = @floatFromInt(@as(i32, @intCast((first - 247) * 256 + byteIn(font, dict, at))) + 108);
+                at += 1;
+            },
+            251...254 => {
+                value = @floatFromInt(-@as(i32, @intCast((first - 251) * 256 + byteIn(font, dict, at))) - 108);
+                at += 1;
+            },
+            else => return 0,
+        }
+        if (count < numbers.len) numbers[count] = @floatCast(value);
+        count += 1;
+    }
+    return 0;
+}
+
+/// The number of the name a code of the standard encoding has; 0 for a
+/// code it has none for.
+fn standardName(code: u32) u32 {
+    return switch (code) {
+        32...126 => code - 31,
+        161...175 => code - 65,
+        177...180 => code - 66,
+        182...189 => code - 67,
+        191 => 123,
+        193...200 => code - 69,
+        202...203 => code - 70,
+        205...208 => code - 71,
+        225 => 138,
+        227 => 139,
+        232...235 => code - 92,
+        241 => 144,
+        245 => 145,
+        248...251 => code - 102,
+        else => 0,
+    };
+}
+
+/// The glyph whose name has the number `name`, by the font's list of its
+/// glyphs' names; null for a name no glyph has, and for a font whose
+/// list is not read.
+fn namedGlyph(font: *const Font, name: u32) ?u32 {
+    const cff = &font.cff;
+    const glyphs = cff.charstrings.count;
+    if (name == 0) return null;
+    if (cff.charset == no_charset) return null;
+    // The standard list: a name's number is its glyph.
+    if (cff.charset == 0) return if (name < glyphs and name <= 228) name else null;
+    const table = cff.table;
+    var at = cff.charset;
+    if (at >= table.len) return null;
+    const format = byteIn(font, table, at);
+    at += 1;
+    var glyph: u32 = 1;
+    switch (format) {
+        0 => while (glyph < glyphs and at + 2 <= table.len) : (glyph += 1) {
+            if (wordIn(font, table, at) == name) return glyph;
+            at += 2;
+        },
+        1, 2 => {
+            const size: u32 = if (format == 1) 3 else 4;
+            while (glyph < glyphs and at + size <= table.len) {
+                const first: u32 = wordIn(font, table, at);
+                const more: u32 = if (format == 1) byteIn(font, table, at + 2) else wordIn(font, table, at + 2);
+                if (name >= first and name - first <= more) {
+                    const found = glyph + (name - first);
+                    return if (found < glyphs) found else null;
+                }
+                glyph += more + 1;
+                at += size;
+            }
+        },
+        else => {},
+    }
+    return null;
+}
+
 /// The private dictionary `size` bytes long `offset` into the table;
 /// null when there is none, or it does not lie within the table.
 fn privateAt(table: Table, size: i32, offset: i32) ?Table {
@@ -311,7 +473,45 @@ pub fn open(font: *const Font, table: Table, blends: bool) ?Cff {
     } else if (dictFind(font, top, op_private, &numbers)) {
         if (privateAt(table, numbers[0], numbers[1])) |private| cff.local_subrs = localSubrs(font, table, private, false);
     }
+    // The names of the glyphs, of a font that is not CID-keyed: its own
+    // list, or the standard one where it names none.
+    if (!cff.cid) {
+        cff.charset = 0;
+        if (dictFind(font, top, op_charset, &numbers)) {
+            cff.charset = if (numbers[0] == 0) 0 else if (numbers[0] > 2 and numbers[0] < table.len) @intCast(numbers[0]) else no_charset;
+        }
+    }
+    var matrix: [6]f32 = undefined;
+    if (dictReals(font, top, op_font_matrix, &matrix) == 6) {
+        // `head`'s units, read here: the font's own measures are read
+        // after its outlines.
+        const head = _outline.findTable(font, "head") orelse return cff;
+        if (head.len < 20) return cff;
+        const units: f32 = @floatFromInt(wordIn(font, head, 18));
+        var plain = true;
+        for (&matrix, [6]f32{ 1, 0, 0, 1, 0, 0 }) |*part, same| {
+            part.* *= units;
+            // Not a number, or too large to mean anything: left out.
+            if (!(part.* >= -far and part.* <= far)) return cff;
+            if (@abs(part.* - same) > 0.0001) plain = false;
+        }
+        if (!plain) cff.matrix = matrix;
+    }
     return cff;
+}
+
+/// `m` after the table's font matrix: what takes a program's numbers
+/// to where `m` takes `head`'s units.
+fn throughMatrix(cff: *const Cff, m: [6]f32) [6]f32 {
+    const by = cff.matrix orelse return m;
+    return .{
+        m[0] * by[0] + m[2] * by[1],
+        m[1] * by[0] + m[3] * by[1],
+        m[0] * by[2] + m[2] * by[3],
+        m[1] * by[2] + m[3] * by[3],
+        m[0] * by[4] + m[2] * by[5] + m[4],
+        m[1] * by[4] + m[3] * by[5] + m[5],
+    };
 }
 
 /// The `CFF2` table read. Its header says how long it is itself and how
@@ -461,6 +661,9 @@ const Run = struct {
     regions: ?u32 = 0,
     data: u32 = 0,
     parts: [most_parts]f64 = @splat(0),
+    /// Whether the glyph run is one of the two another is put together
+    /// from: it may not be put together itself.
+    part: bool = false,
 
     /// The deltas of the program are for the regions of the store's data
     /// `data` from here on. A table without a store has no deltas.
@@ -559,6 +762,26 @@ const Run = struct {
         run.x += dx3;
         run.y += dy3;
         run.add(true, false);
+    }
+
+    /// The glyph of the standard encoding's `code` drawn into this one,
+    /// moved by `dx` and `dy` of the program's units. A code the font has
+    /// no glyph for draws nothing.
+    fn put(run: *Run, code: f32, dx: f32, dy: f32) void {
+        const font = run.font;
+        const whole_code = whole(code) orelse return;
+        if (whole_code < 0) return;
+        const glyph = namedGlyph(font, standardName(@intCast(whole_code))) orelse return;
+        const program = entryOf(font, font.cff.table, font.cff.charstrings, glyph) orelse return;
+        const kept = run.m;
+        run.m[4] += kept[0] * dx + kept[2] * dy;
+        run.m[5] += kept[1] * dx + kept[3] * dy;
+        run.x = 0;
+        run.y = 0;
+        run.part = true;
+        run.start(glyph, program);
+        run.part = false;
+        run.m = kept;
     }
 
     /// The program of `glyph` run, by the table's kind.
@@ -751,9 +974,20 @@ const Run = struct {
                     at = calls[nesting].at;
                     end = calls[nesting].end;
                 },
-                // The glyph's end.
+                // The glyph's end - and, with four numbers before it,
+                // the glyph put together from two others: how far the
+                // accent is moved, then the letter's code and the
+                // accent's.
                 14 => {
                     run.finish();
+                    if (!blends and depth >= 4 and !run.part) {
+                        const accent = stack[depth - 1];
+                        const letter = stack[depth - 2];
+                        const dx = stack[depth - 4];
+                        const dy = stack[depth - 3];
+                        run.put(letter, 0, 0);
+                        if (run.sound) run.put(accent, dx, dy);
+                    }
                     return;
                 },
                 // Which of the store's data the deltas are for.
@@ -964,7 +1198,7 @@ pub fn contours(font: *const Font, glyph: u32, into: *Contours, m: [6]f32) bool 
     const program = entryOf(font, cff.table, cff.charstrings, glyph) orelse return true;
     const points = into.point_count;
     const ends = into.end_count;
-    var run = Run{ .font = font, .into = into, .m = m, .points = points, .ends = ends };
+    var run = Run{ .font = font, .into = into, .m = throughMatrix(cff, m), .points = points, .ends = ends };
     run.start(glyph, program);
     if (run.sound and run.fits) return true;
     into.point_count = points;
@@ -983,7 +1217,7 @@ pub fn contours(font: *const Font, glyph: u32, into: *Contours, m: [6]f32) bool 
 pub fn boxOf(font: *const Font, glyph: u32) [4]i32 {
     const cff = &font.cff;
     const program = entryOf(font, cff.table, cff.charstrings, glyph) orelse return .{ 0, 0, 0, 0 };
-    var run = Run{ .font = font, .into = null, .m = .{ 1, 0, 0, 1, 0, 0 } };
+    var run = Run{ .font = font, .into = null, .m = throughMatrix(cff, .{ 1, 0, 0, 1, 0, 0 }) };
     run.start(glyph, program);
     if (!run.sound or run.ends == 0) return .{ 0, 0, 0, 0 };
     return .{

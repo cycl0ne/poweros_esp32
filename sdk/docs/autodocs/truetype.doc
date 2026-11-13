@@ -861,8 +861,8 @@ truetype.library/VariationDelta
 
    BUGS
 	Hinting instructions are passed over, and so are a `CFF ` table's
-	hints and its font matrix: its glyphs are taken as drawn in the
-	font's units. A `CFF2` table's hints are passed over the same way,
+	hints, and a font dictionary's own font matrix in a CID-keyed font:
+	only the top dictionary's is read. A `CFF2` table's hints are passed over the same way,
 	and with them the deltas its private dictionaries have for them. An
 	`avar` table of version 2, which bends one axis by the others, is
 	passed over. Of the Macintosh platform's character maps only the
