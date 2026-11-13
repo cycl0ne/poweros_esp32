@@ -1,7 +1,59 @@
 TABLE OF CONTENTS
 
+truetypeshaping.library/LigatureCarets
 truetypeshaping.library/ShapeGlyphs
 truetypeshaping.library/ShapeText
+truetypeshaping.library/LigatureCarets  truetypeshaping.library/LigatureCarets
+
+   NAME
+	LigatureCarets -- The places inside a ligature where the cursor may stand.
+
+   SYNOPSIS
+	    fn LigatureCarets(sb: *TrueTypeShapingBase, outline: *truetype.Outline, glyph: u32, carets: [*]i32, room: u32) u32
+
+   SINCE
+	1.10. LVO -28.
+
+   INPUTS
+	- `outline` - the font, opened with truetype.library's OpenOutline.
+	- `glyph` - the glyph's number in the font.
+	- `carets` - where the places go.
+	- `room` - how many `carets` holds.
+
+   RESULT
+	How many places the font names for the glyph; 0 for a glyph it names
+	none for, for a font without the list, and for a glyph one of whose
+	places is given as a point of its outline.
+
+   BEHAVIOR
+	The first `room` of the places are written, in the font's order -
+	along the line - each in the font's units from the glyph's point. A
+	ligature of n characters has n - 1 of them: the first is where the
+	first character ends. A result above `room` says how many there are.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: not callable.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is kept; the outline stays the caller's.
+
+   NOTES
+	The places are those of the font's default: a variable font's are not
+	moved with its place on its axes, and no size's own adjustment is
+	added.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ShapeText`, truetype.library `FontTable`
+
+   EXAMPLES
+	    var carets: [4]i32 = undefined;
+	    const count = sb.LigatureCarets(outline, shaped.glyph, &carets, carets.len);
 truetypeshaping.library/ShapeGlyphs        truetypeshaping.library/ShapeGlyphs
 
    NAME

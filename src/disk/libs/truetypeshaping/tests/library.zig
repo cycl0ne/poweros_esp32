@@ -224,6 +224,42 @@ test "ShapeGlyphs: a run that needs more room says how much and writes nothing" 
     try rig.down();
 }
 
+test "LigatureCarets: the places a font names inside a ligature" {
+    var rig = try Rig.up();
+    // A GDEF with nothing but the list: the glyph 3 has two places, a
+    // plain one and one with a table for sizes; the glyph 5 one given
+    // as a point of its outline.
+    var gdef: File = .{};
+    for ([_]u16{ 1, 0, 0, 0, 12, 0 }) |word| gdef.word(word);
+    for ([_]u16{ 8, 2, 16, 32 }) |word| gdef.word(word);
+    for ([_]u16{ 1, 2, 3, 5 }) |word| gdef.word(word);
+    for ([_]u16{ 2, 6, 10, 1, 300, 3, 450, 0 }) |word| gdef.word(word);
+    for ([_]u16{ 1, 4, 2, 7 }) |word| gdef.word(word);
+    var file: builder.File = .{};
+    fontWith(&file, &.{.{ .tag = "GDEF", .bytes = gdef.written() }});
+    const outline = rig.tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+
+    var carets: [4]i32 = @splat(-7);
+    try testing.expectEqual(@as(u32, 2), rig.sb.LigatureCarets(outline, 3, &carets, carets.len));
+    try testing.expectEqualSlices(i32, &.{ 300, 450, -7, -7 }, &carets);
+    // Less room than places: how many there are, the first ones written.
+    carets = @splat(-7);
+    try testing.expectEqual(@as(u32, 2), rig.sb.LigatureCarets(outline, 3, &carets, 1));
+    try testing.expectEqualSlices(i32, &.{ 300, -7, -7, -7 }, &carets);
+    // A place by a point of the outline, and a glyph the list lacks.
+    try testing.expectEqual(@as(u32, 0), rig.sb.LigatureCarets(outline, 5, &carets, carets.len));
+    try testing.expectEqual(@as(u32, 0), rig.sb.LigatureCarets(outline, 4, &carets, carets.len));
+    rig.tb.CloseOutline(outline);
+
+    // A font without the table.
+    var plain: builder.File = .{};
+    fontWith(&plain, &.{});
+    const bare = rig.tb.OpenOutline(&plain.bytes, plain.len, null) orelse return error.NotRead;
+    try testing.expectEqual(@as(u32, 0), rig.sb.LigatureCarets(bare, 3, &carets, carets.len));
+    rig.tb.CloseOutline(bare);
+    try rig.down();
+}
+
 test "ShapeGlyphs: errors of the call" {
     var rig = try Rig.up();
     var tables: Tables = .{};

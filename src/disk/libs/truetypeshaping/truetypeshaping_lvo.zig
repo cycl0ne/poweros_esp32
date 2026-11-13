@@ -15,6 +15,7 @@ const truetypeshaping_init = @import("truetypeshaping_init.zig");
 
 const ShapeGlyphs = @import("shape/shapeglyphs.zig").ShapeGlyphs;
 const ShapeText = @import("shape/shapetext.zig").ShapeText;
+const LigatureCarets = @import("shape/ligaturecarets.zig").LigatureCarets;
 
 /// truetypeshaping.library's interface, as the SDK generates it from
 /// sdk/fd/truetypeshaping_lib.fd.
@@ -42,6 +43,7 @@ comptime {
 const contract_files = [_][]const u8{
     @embedFile("shape/shapeglyphs.zig"),
     @embedFile("shape/shapetext.zig"),
+    @embedFile("shape/ligaturecarets.zig"),
 };
 
 fn lvoShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script: u32, direction: u32, language: u32, features: ?[*]const truetypeshaping.Feature, run: *truetypeshaping.ShapedRun) callconv(.c) i32 {
@@ -52,6 +54,10 @@ fn lvoShapeText(sb: *TrueTypeShapingBase, outline: *truetype.Outline, text: [*]c
     return ShapeText(sb, outline, text, length, direction, language, features, run);
 }
 
+fn lvoLigatureCarets(sb: *TrueTypeShapingBase, outline: *truetype.Outline, glyph: u32, carets: [*]i32, room: u32) callconv(.c) u32 {
+    return LigatureCarets(sb, outline, glyph, carets, room);
+}
+
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
     vec(exec.libClose),
@@ -59,6 +65,7 @@ pub const vectors = [_]*const anyopaque{
     vec(exec.libExtFunc),
     vec(lvoShapeGlyphs),
     vec(lvoShapeText),
+    vec(lvoLigatureCarets),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

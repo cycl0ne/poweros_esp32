@@ -22,4 +22,8 @@ i32 ShapeGlyphs(*truetype.Outline outline, u32 script, u32 direction, u32 langua
 /// TTSERR_ROOM with the count the run needs, TTSERR_NOMEM,
 /// TTSERR_DIRECTION, TTSERR_FEATURES.
 i32 ShapeText(*truetype.Outline outline, [*]const u8 text, u32 length, u32 direction, u32 language, ?[*]const truetypeshaping.Feature features, *truetypeshaping.ShapedRun run)
+/// The places inside the ligature `glyph` where the cursor may stand, as
+/// the font's GDEF names them, in its units from the glyph's point: how
+/// many there are, the first `room` of them written to `carets`.
+u32 LigatureCarets(*truetype.Outline outline, u32 glyph, [*]i32 carets, u32 room)
 ##end

@@ -17,6 +17,7 @@ pub const NAME = "truetypeshaping.library";
 pub const LVO = struct {
     pub const ShapeGlyphs = libraries.lvo(4);
     pub const ShapeText = libraries.lvo(5);
+    pub const LigatureCarets = libraries.lvo(6);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -24,6 +25,7 @@ pub const LVO = struct {
 pub const Fn = struct {
     pub const ShapeGlyphs = *const fn (*TrueTypeShapingBase, *truetype.Outline, u32, u32, u32, ?[*]const truetypeshaping.Feature, *truetypeshaping.ShapedRun) callconv(.c) i32;
     pub const ShapeText = *const fn (*TrueTypeShapingBase, *truetype.Outline, [*]const u8, u32, u32, u32, ?[*]const truetypeshaping.Feature, *truetypeshaping.ShapedRun) callconv(.c) i32;
+    pub const LigatureCarets = *const fn (*TrueTypeShapingBase, *truetype.Outline, u32, [*]i32, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -52,5 +54,12 @@ pub const TrueTypeShapingBase = opaque {
     /// TTSERR_DIRECTION, TTSERR_FEATURES.
     pub fn ShapeText(self: *TrueTypeShapingBase, outline: *truetype.Outline, text: [*]const u8, length: u32, direction: u32, language: u32, features: ?[*]const truetypeshaping.Feature, run: *truetypeshaping.ShapedRun) i32 {
         return libraries.call(self, LVO.ShapeText, Fn.ShapeText, .{ outline, text, length, direction, language, features, run });
+    }
+
+    /// The places inside the ligature `glyph` where the cursor may stand, as
+    /// the font's GDEF names them, in its units from the glyph's point: how
+    /// many there are, the first `room` of them written to `carets`.
+    pub fn LigatureCarets(self: *TrueTypeShapingBase, outline: *truetype.Outline, glyph: u32, carets: [*]i32, room: u32) u32 {
+        return libraries.call(self, LVO.LigatureCarets, Fn.LigatureCarets, .{ outline, glyph, carets, room });
     }
 };
