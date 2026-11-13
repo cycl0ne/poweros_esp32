@@ -92,6 +92,12 @@ const Source = @import("_source.zig").Source;
 /// switches it off there. Every other entry adds its feature. What the
 /// language requires is applied always.
 ///
+/// A fraction written with the fraction slash (U+2044) is shaped as
+/// one: the digits before the slash get `numr`, those behind it `dnom`,
+/// and all of them with the slash `frac`, each where the font lists it.
+/// The plain `/` makes none. One of the three named in `features` for
+/// the whole text is the caller's alone.
+///
 /// The glyphs are replaced by `GSUB` in two goes - `rvrn` first, then
 /// the rest - each in the order the table lists its lookups. Then the
 /// characters a text does not show are taken out: the soft hyphen, the

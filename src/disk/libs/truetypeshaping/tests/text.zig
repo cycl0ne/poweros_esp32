@@ -532,6 +532,50 @@ test "without the memory the call says so, and leaves the count" {
     try testing.expect(blocks > 4 and blocks < 64);
 }
 
+test "the digits around a fraction slash are a fraction" {
+    // The lookups in the order they are applied: the fraction's first,
+    // so the other two find what it made.
+    var whole: File = .{};
+    subtables.singleDelta(&whole, &.{ '1', '2', '3', '4', 0x2044 }, 0x1000);
+    var numerators: File = .{};
+    subtables.singleDelta(&numerators, &.{ '1' + 0x1000, '2' + 0x1000, '3' + 0x1000, '4' + 0x1000 }, 0x100);
+    var denominators: File = .{};
+    subtables.singleDelta(&denominators, &.{ '1' + 0x1000, '2' + 0x1000, '3' + 0x1000, '4' + 0x1000 }, 0x200);
+    var table: File = .{};
+    layout.table(&table, &.{
+        .{ .tag = "dnom", .lookups = &.{2} },
+        .{ .tag = "frac", .lookups = &.{0} },
+        .{ .tag = "numr", .lookups = &.{1} },
+    }, &.{
+        .{ .kind = 1, .subtables = &.{whole.written()} },
+        .{ .kind = 1, .subtables = &.{numerators.written()} },
+        .{ .kind = 1, .subtables = &.{denominators.written()} },
+    });
+    const tables: harness.Tables = .{ .gsub = table.written() };
+    const n = 0x100;
+    const d = 0x200;
+    const f = 0x1000;
+
+    // The digits before the slash, the slash, the digits behind it; a
+    // digit apart from them is as it was. The slash is three bytes.
+    var run = shapeText(tables, "a1\u{2044}23 4", .{});
+    try expectShaped(&run, &.{ 'a', '1' + n + f, 0x2044 + f, '2' + d + f, '3' + d + f, ' ', '4' }, &.{ 0, 1, 2, 5, 6, 7, 8 });
+    // The plain slash makes none, nor does a fraction slash by itself.
+    run = shapeText(tables, "1/2 \u{2044}", .{});
+    try expectShaped(&run, &.{ '1', '/', '2', ' ', 0x2044 }, &.{ 0, 1, 2, 3, 4 });
+    // One side alone is that side.
+    run = shapeText(tables, "\u{2044}2", .{});
+    try expectShaped(&run, &.{ 0x2044 + f, '2' + d + f }, &.{ 0, 3 });
+    // Many fractions take no more bits than one.
+    run = shapeText(tables, "1\u{2044}2 " ** 16, .{});
+    try testing.expectEqual(tts.TTS_OK, run.result);
+    try testing.expectEqual(@as(u32, 64), run.count);
+    try testing.expectEqual(@as(u32, '2' + d + f), run.glyphs[62].glyph);
+    // A caller's entry for the whole text is the caller's.
+    run = shapeText(tables, "1\u{2044}2", .{ .features = &.{.{ .tag = tts.featureTag("frac"), .value = 0 }} });
+    try expectShaped(&run, &.{ '1', 0x2044, '2' }, &.{ 0, 1, 4 });
+}
+
 test "more features with a part of the text than there are bits for" {
     var features: [32]tts.Feature = undefined;
     for (&features, 0..) |*feature, index| {

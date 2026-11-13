@@ -42,6 +42,7 @@
 
 const sdk = @import("sdk");
 const utf8 = sdk.utility.utf8;
+const unicode = sdk.utility.unicode;
 const truetypeshaping = sdk.truetypeshaping;
 const Feature = truetypeshaping.Feature;
 const ShapedGlyph = truetypeshaping.ShapedGlyph;
@@ -57,7 +58,8 @@ const _syllable = @import("_syllable.zig");
 
 const featureTag = truetypeshaping.featureTag;
 
-/// The features a text is shaped with: the glyphs a variable font draws
+/// The features a text is shaped with, besides those of its fractions
+/// (`fractions`): the glyphs a variable font draws
 /// instead; marks above and below; characters composed and taken apart;
 /// the forms of a language; ligatures a script requires, those of its
 /// context and the usual ones; forms by context; marks set on glyphs and
@@ -125,6 +127,66 @@ fn named(features: []const Feature, tag: u32) bool {
     return false;
 }
 
+/// The fraction slash, which makes the digits around it a fraction.
+const fraction_slash: u32 = 0x2044;
+
+/// How many fraction slashes `bytes` hold.
+fn slashes(bytes: []const u8) usize {
+    var count: usize = 0;
+    var at: usize = 0;
+    while (at < bytes.len) {
+        if (utf8.next(bytes, &at) == fraction_slash) count += 1;
+    }
+    return count;
+}
+
+/// Writes the features of the text's fractions to `merged` from `count`
+/// on: for each fraction slash with a digit before or behind it, `numr`
+/// for the digits before, `dnom` for those behind, and `frac` for all of
+/// them with the slash - by the bytes they are at, as a caller's
+/// features are. One the caller names for the whole text is the
+/// caller's and is left out here.
+fn fractions(text: *const Text, merged: []Feature, count: *u32) void {
+    const bytes = text.bytes;
+    const numr = featureTag("numr");
+    const dnom = featureTag("dnom");
+    const frac = featureTag("frac");
+    // Where the run of digits that ends here began.
+    var digits_from: usize = 0;
+    var in_digits = false;
+    var at: usize = 0;
+    while (at < bytes.len) {
+        const here = at;
+        const char = utf8.next(bytes, &at);
+        if (char != fraction_slash) {
+            const digit = unicode.class(char) == .digit;
+            if (digit and !in_digits) digits_from = here;
+            in_digits = digit;
+            continue;
+        }
+        const first = if (in_digits) digits_from else here;
+        var last = at;
+        while (last < bytes.len) {
+            var after = last;
+            if (unicode.class(utf8.next(bytes, &after)) != .digit) break;
+            last = after;
+        }
+        in_digits = false;
+        if (first == here and last == at) continue;
+        const ranges = [_]Feature{
+            .{ .tag = numr, .first = @intCast(first), .last = @intCast(here -| 1) },
+            .{ .tag = dnom, .first = @intCast(at), .last = @intCast(last -| 1) },
+            .{ .tag = frac, .first = @intCast(first), .last = @intCast(last - 1) },
+        };
+        for (ranges, [_]bool{ first != here, last != at, true }) |feature, there| {
+            if (!there or named(text.features, feature.tag)) continue;
+            merged[count.*] = feature;
+            count.* += 1;
+        }
+        at = last;
+    }
+}
+
 /// A list of features and how many of its first are not the caller's.
 const Merged = struct {
     features: []const Feature,
@@ -148,6 +210,7 @@ fn merge(text: *const Text, merged: []Feature, by_model: bool) Merged {
             count += 1;
         }
     }
+    fractions(text, merged, &count);
     const own = count;
     for (text.features) |feature| {
         if (by_model and feature.tag == _indic.left_out) continue;
@@ -200,7 +263,7 @@ pub fn shapeText(text: *const Text, run: *ShapedRun) i32 {
     const memory = text.memory;
     // Two lists: the one of any stretch, and the one of a stretch a
     // script's model shapes.
-    const room = defaults.len + forward.len + _indic.own_tags.len + text.features.len;
+    const room = defaults.len + forward.len + _indic.own_tags.len + 3 * slashes(text.bytes) + text.features.len;
     const block = memory.alloc(2 * room * @sizeOf(Feature)) orelse return truetypeshaping.TTSERR_NOMEM;
     defer memory.free(block);
     const merged_block: [*]Feature = @ptrCast(@alignCast(block));

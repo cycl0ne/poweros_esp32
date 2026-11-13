@@ -171,6 +171,15 @@ fn assignBits(features: []const Feature, wanted: []_plan.Wanted) bool {
             want.mask = _plan.whole_run;
             continue;
         }
+        // One bit serves every entry of a tag and a value: they hold
+        // for different parts, and a glyph has the bit or has it not.
+        for (wanted[0..index]) |earlier| {
+            if (earlier.tag != feature.tag or earlier.value != feature.value) continue;
+            if (earlier.mask == 0 or earlier.mask == _plan.whole_run) continue;
+            want.mask = earlier.mask;
+            break;
+        }
+        if (want.mask != 0) continue;
         if (used >= own_bits) return false;
         used += 1;
         want.mask = @as(u32, 1) << @intCast(used);
