@@ -25,6 +25,10 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 <a href="docs/screenshots/README.md#music-sysprogramsplayer"><img src="docs/screenshots/player-bars.png" width="49%" alt="Player on the Olimex's 2.8-inch panel: the same mix as the spectrum's bars"></a>
 </p>
 <p>
+<a href="docs/screenshots/README.md#every-script-text-in-utf-8"><img src="docs/screenshots/text.png" width="49%" alt="Notepad with a text in six scripts and emoji in colour, the emoji picker on its flags, and a console window with flags in its cells"></a>
+<a href="docs/screenshots/README.md#eight-cores-the-desktop-on-x86-64"><img src="docs/screenshots/desktop-x64.png" width="49%" alt="The desktop on x86-64: MultiView with a picture, Boing in a window, the Clock, Volume's equalizer and CPU Load with eight cores at work"></a>
+</p>
+<p>
 <a href="docs/screenshots/README.md#the-desktop-anvil"><img src="docs/screenshots/desktop.png" width="49%" alt="The desktop: the system disk and its programs drawer open, the dock along the bottom edge"></a>
 <a href="docs/screenshots/README.md#notepad-sysprogramsnotepad"><img src="docs/screenshots/notepad.png" width="49%" alt="Notepad with S:Startup-Sequence: the ribbon, and line numbers on"></a>
 </p>
@@ -37,7 +41,7 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 
 | | |
 |---|---|
-| [Screenshots](docs/screenshots/README.md) | four cores on AArch64, the desktop at rest and at work, the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
+| [Screenshots](docs/screenshots/README.md) | four cores on AArch64, text in every script and the emoji picker, eight cores on x86-64, the desktop at rest and at work, the Player, the shell, Notepad, HDToolBox, CPU load, drawing, a game, fonts, menus, gadgets, on the boards |
 | [What PowerOS is - and what it is not](#what-poweros-is---and-what-it-is-not) | the idea, and what is in it |
 | [Quick start](#quick-start) | boards, building, [QEMU the first time](#first-time-in-qemu), flashing, [the RISC-V machines](#the-risc-v-machines), [the AArch64 machine](#the-aarch64-machine), [the x86-64 machine](#the-x86-64-machine), [onto a card or an SSD](#onto-a-card-or-an-ssd) |
 | [Writing programs](sdk/docs/guides/programs.md) | examples: hello in the shell, a window, buttons |
@@ -280,7 +284,10 @@ Beside them:
   ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView - any file the datatypes
   know, a page's links followed to files and to the web - Notepad,
-  Sheet, Terminal, Player, FontView, Battery, Prefs and Volume; in
+  Sheet, Terminal, Player, Movie, which plays films in a window,
+  FontView, Battery, Prefs, Volume, and Boing and Cobra, a bouncing
+  ball and a ship in space on a screen of their own or in a window,
+  on the disks that hold facet.library; in
   `SYS:System` the Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
   MemMap and Clock - the time on a dial or in figures, which the dock's clock opens; in
   `SYS:Commodities` Exchange, which lists the commodities running and

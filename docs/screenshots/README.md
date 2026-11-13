@@ -1,8 +1,9 @@
 # Screenshots
 
 PowerOS 0.2 on the boards, in Espressif's QEMU and in QEMU's AArch64
-machine. The desktop's are QEMU's AArch64 machine at 1920×1080
-(`./zig build virt64-ramfb`), started from its NVMe system disk; the
+and x86-64 machines. The desktop's are QEMU's AArch64 machine at
+1920×1080 (`./zig build virt64-ramfb`), started from its NVMe system
+disk, and its x86-64 q35 machine at 1280×800 (`-Dboard=qemu_q35`); the
 older ones are Espressif's QEMU (`./zig build qemu-display`, with the
 QEMU from `scripts/build-qemu.sh`), on the 1024×600 display the
 Waveshare 7" board has; the Player's were taken on the Olimex with
@@ -19,6 +20,35 @@ textured cube in a window on the desktop, drawn through facet.library;
 CPU Load shows each of the four cores about half busy, Memory Map what
 holds the 494 MB, and the desktop's About names the machine. The same
 as a video: [desktop-a64.mp4](desktop-a64.mp4).
+
+## Every script: text in UTF-8
+
+![Notepad with a text in six scripts, the emoji picker on its flags, and a console window](text.png)
+
+One text in six scripts. `SYS:Programs/Notepad` holds a file with Latin,
+Devanagari, kana, Hangul and Han lines, each ending in an emoji in
+colour: the Hindi line's conjuncts are shaped by the font's own rules,
+and the last line's family, flags and skin tone are each one glyph made
+of several characters. `SYS:Commodities/Emoji` beside it is the picker,
+here on its flags: a click types the emoji into the window that was
+active before it, a search finds one by its name in the locale's
+language, and the gadget at the bottom chooses a skin tone. The console
+window below shows `Type` with the same kind of text: a flag or an emoji
+takes two cells, so the columns stay in line. The fonts are those
+`scripts/fetch-fonts.sh` fetches; see the
+[fonts guide](../../sdk/docs/guides/fonts.md).
+
+## Eight cores: the desktop on x86-64
+
+![MultiView with a picture, Boing in a window, the Clock, Volume's equalizer and CPU Load with eight cores](desktop-x64.png)
+
+The desktop in QEMU's q35 machine with eight cores, started by UEFI from
+its NVMe system disk. `SYS:Programs/MultiView` shows a PNG, and
+`SYS:Programs/Boing WINDOW HIRES` bounces its ball in a window below it,
+its frames drawn by several cores - which is what `SYS:System/CPULoad`
+shows, a bar and a line in the graph for each core. `SYS:System/Clock`
+and `SYS:Programs/Volume`, with the output's ten-band equalizer, are the
+small windows at the top; each program running has its icon in the dock.
 
 ## Music: `SYS:Programs/Player`
 
