@@ -37,6 +37,13 @@ pub const CONU_SNIPMAP: i32 = 3;
 pub const CONFLAG_DEFAULT: u32 = 0;
 /// Do not draw the text again when the window is sized; the program will.
 pub const CONFLAG_NODRAW_ON_NEWSIZE: u32 = 1;
+/// Keep the rows that scroll off the top of a console that keeps its
+/// text, and let them be looked at again: the wheel and Shift with Page
+/// Up and Page Down move the window over them, and so does a bar the
+/// console puts in the window's right border where that border is wide
+/// enough for one - the border a size gadget makes. Typing goes back to
+/// where the output is. A program's other screen keeps nothing.
+pub const CONFLAG_HISTORY: u32 = 2;
 
 /// The unit's keymap, into `io_Data` (a `KeyMap`): the default one's
 /// until CD_SETKEYMAP has given the unit its own.

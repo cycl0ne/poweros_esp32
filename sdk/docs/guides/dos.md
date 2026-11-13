@@ -1275,6 +1275,36 @@ whether input comes within that time (a whole line, when cooked)
 without reading it. Ctrl-C to Ctrl-F raise their signals in either mode,
 and when raw the byte comes as well; Ctrl-\ is the end of the input.
 
+The keys of a cooked line:
+
+| Key | What it does |
+|---|---|
+| cursor left, right | a character left or right |
+| Shift with cursor left or right, Home or End, Ctrl-A or Ctrl-Z | the start or the end of the line |
+| cursor up, down | the line before or after in the history |
+| Shift with cursor up, Ctrl-R | the newest line of the history that starts as the text before the cursor does |
+| Shift with cursor down, Ctrl-B | an empty line, below the newest of the history |
+| Backspace, Delete | the character before the cursor or under it deleted |
+| Ctrl-W, Ctrl-U | the word before the cursor or all before it deleted |
+| Ctrl-K, Ctrl-Y | what follows the cursor cut, and put back in at the cursor |
+| Ctrl-X | the whole line deleted |
+| Tab | the name before the cursor completed |
+| Ctrl-S, Ctrl-Q | output held until the next key |
+
+A console window keeps the rows that scroll off its top, and shows
+them again: the wheel moves the window over them three rows a notch,
+Shift with Page Up and Page Down a windowful, and a window with a size
+gadget has a bar for it in its right border. Text further up is
+selected and copied as any other. What is typed goes where the output
+is, so a key brings the window back there; output that comes meanwhile
+leaves the window on the rows it shows. The rows are kept as their
+text, colours and all, in 64 KiB on the ESP32s and 512 KiB on the
+64-bit machines - some 1,400 and 11,000 rows of forty characters - the
+oldest given up for the newest; `ESC [ 3 J` clears them with the
+screen. A program's other screen keeps none, nor do the rows of a
+scroll region. A program that opens console.device itself asks for
+all this with `CONFLAG_HISTORY`.
+
 A console window speaks VT100 and the parts of xterm programs use:
 the cursor, 256 colours, scroll regions, the other screen, the mouse.
 Its text is UTF-8 both ways, what is written and what is typed, and its

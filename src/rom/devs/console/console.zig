@@ -22,6 +22,20 @@
 //!
 //! A unit's cells and its cursor are guarded by the unit's own semaphore,
 //! since a write comes on its caller's task and a repaint on the console's.
+//!
+//! **The output further up** (`CONFLAG_HISTORY`). The rows that scroll off
+//! the top of a unit that keeps its text go into a ring of bytes
+//! (`term.History`, `history_size` of them, taken at the first write),
+//! and the window can be moved over them: by the wheel and by Shift with
+//! Page Up and Page Down, which the handler turns into a move for the
+//! task, and by a prop gadget the unit puts in the window's right border
+//! where that is wide enough, whose target is an object of a class of the
+//! device's own that writes the new top down for the task. While the
+//! view is up there, what is drawn and selected in is a second terminal
+//! (`Unit.view_grid`) put together from the ring's rows and the unit's
+//! own (`Term.compose`); writes go on into the unit's own all the while,
+//! and the view stays on the rows it shows. A key typed, or the other
+//! screen, brings it back to the output.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -34,6 +48,10 @@ const utf8 = sdk.utility.utf8;
 const ie = sdk.devices.inputevent;
 const input = sdk.devices.input;
 const wn = intuition.windows;
+const gc = intuition.gadgetclass;
+const pg = intuition.propgclass;
+const icc = intuition.icclass;
+const classusr = intuition.classusr;
 const sc = intuition.screens;
 const layers = sdk.layers;
 const TagItem = sdk.utility.TagItem;
@@ -48,7 +66,7 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 13;
+const DEVICE_REVISION = 14;
 const BUILD_DATE = "13.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -97,6 +115,27 @@ const TOKEN_ACTIVE: u32 = 1 << 2;
 const TOKEN_INACTIVE: u32 = 1 << 3;
 /// A key asked for the selection: it goes into the snip.
 const TOKEN_COPY: u32 = 1 << 4;
+/// Something was typed: the view goes back to where the output is.
+const TOKEN_LIVE: u32 = 1 << 5;
+/// The wheel or a key moved the view: by `Unit.view_lines` and
+/// `Unit.view_pages`.
+const TOKEN_VIEW: u32 = 1 << 6;
+/// The bar in the border was moved: to `Unit.bar_top`.
+const TOKEN_BAR: u32 = 1 << 7;
+
+/// What a console keeps of the rows that scrolled off its top, in bytes
+/// (`term.History`): a row takes its text and four bytes more, so with
+/// rows of forty characters this is some 1,400 rows where memory is the
+/// microcontroller's and some 11,000 on a 64-bit machine. Taken at a
+/// console's first write, so one that is never written to has none.
+const history_size: usize = if (@sizeOf(usize) == 8) 512 * 1024 else 64 * 1024;
+/// How many rows a notch of the wheel moves the view.
+const wheel_rows = 3;
+/// The narrowest right border a bar is put in.
+const bar_min = 12;
+/// Shift with Page Up and Page Down, as the keymap sends them.
+const key_page_up = "\x1b[5;2~";
+const key_page_down = "\x1b[6;2~";
 
 /// One console: the public part a program may read, then everything else.
 /// Not `extern`: it holds the terminal, which is this tree's own struct.
@@ -146,6 +185,32 @@ const Unit = struct {
     counted: u8 = 0,
     open_count: u32 = 0,
     pad: u8 = 0,
+    /// The rows that scrolled off the top (`CONFLAG_HISTORY`), and the
+    /// memory they are in; none until the first write, and none if that
+    /// found no memory.
+    history: term.History = .{ .bytes = undefined, .size = 0 },
+    history_mem: ?[*]u8 = null,
+    history_tried: u8 = 0,
+    /// How many rows up in the output the window shows: 0 is the output
+    /// itself. Above 0 what is drawn and selected in is `view_grid`, a
+    /// picture of that part put together in `view_cells` - `cell_count`
+    /// of them, held only while the view is up there.
+    view: u32 = 0,
+    view_cells: ?[*]term.Cell = null,
+    view_grid: term.Term,
+    /// How far the handler asked the view to move, in rows and in
+    /// windowfuls, up positive; and where the bar was dragged to. Under
+    /// the console's lock, with their tokens.
+    view_lines: i32 = 0,
+    view_pages: i32 = 0,
+    bar_top: u32 = 0,
+    /// The bar in the window's right border and the object it tells of
+    /// its moves, and what the bar was last set to.
+    bar: ?*intuition.Object = null,
+    link: ?*intuition.Object = null,
+    bar_count: u32 = 0,
+    bar_rows: u32 = 0,
+    bar_view: u32 = 0,
     /// Held while the cells or the cursor are touched.
     lock: exec.SignalSemaphore = .{ .link = .{ .type = .signalsem } },
 };
@@ -200,6 +265,8 @@ pub const ConsoleBase = extern struct {
     /// count is kept for it, and a write that turns reporting on or off
     /// is what moves it.
     reporting: u32 = 0,
+    /// The class of the objects the bars tell of their moves.
+    link_class: ?*intuition.Class = null,
 };
 
 fn consoleBase(dev: *exec.Device) *ConsoleBase {
@@ -292,6 +359,12 @@ fn geometryInto(u: *Unit, g: Geometry) void {
 
 // --- drawing, all of it under the unit's lock and its layer's ----------------------
 
+/// The terminal the window shows: the unit's own, or the picture of the
+/// output further up while the view is there.
+fn shown(u: *Unit) *term.Term {
+    return if (u.view != 0) &u.view_grid else &u.grid;
+}
+
 fn lockDrawing(u: *Unit) void {
     const cb = u.base;
     cb.sys_base.ObtainSemaphore(&u.lock);
@@ -310,7 +383,7 @@ fn unlockDrawing(u: *Unit) void {
 /// console keeps no text - one that keeps none cannot put back what the
 /// outline was drawn over.
 fn cursorLook(u: *Unit) render.CursorLook {
-    if (!u.grid.cursor().visible) return .off;
+    if (!shown(u).cursor().visible) return .off;
     if (u.active != 0) return .solid;
     if (u.pub_unit.unit_type == con.CONU_STANDARD) return .off;
     return .ghost;
@@ -318,18 +391,18 @@ fn cursorLook(u: *Unit) render.CursorLook {
 
 /// The cursor as it is now, wherever it is now.
 fn showCursor(u: *Unit) void {
-    render.drawCursor(u.base.graphics_base, layoutOf(u), &u.grid, cursorLook(u));
+    render.drawCursor(u.base.graphics_base, layoutOf(u), shown(u), cursorLook(u));
 }
 
 /// The cursor off the cell it is on, before anything moves under it.
 fn hideCursor(u: *Unit) void {
-    render.drawCursor(u.base.graphics_base, layoutOf(u), &u.grid, .off);
+    render.drawCursor(u.base.graphics_base, layoutOf(u), shown(u), .off);
 }
 
 /// The rows that changed, and the cursor back on top.
 fn showChanges(u: *Unit) void {
     const l = layoutOf(u);
-    render.drawDirty(u.base.graphics_base, l, &u.grid);
+    render.drawDirty(u.base.graphics_base, l, shown(u));
     showCursor(u);
     u.pub_unit.cp_x = @intCast(u.grid.cursor().x);
     u.pub_unit.cp_y = @intCast(u.grid.cursor().y);
@@ -339,9 +412,184 @@ fn showChanges(u: *Unit) void {
 /// drawn only once, by `showCursor`.
 fn showAll(u: *Unit) void {
     const l = layoutOf(u);
-    render.drawAll(u.base.graphics_base, l, &u.grid);
+    render.drawAll(u.base.graphics_base, l, shown(u));
     showEdges(u);
     showCursor(u);
+}
+
+// --- the output further up ---------------------------------------------------------
+
+/// A console that keeps what scrolls off its top and lets it be looked at.
+fn keeps(u: *Unit) bool {
+    return u.pub_unit.flags & con.CONFLAG_HISTORY != 0 and u.pub_unit.unit_type != con.CONU_STANDARD;
+}
+
+/// The memory for the rows that scroll off, before the first of them can.
+fn keepHistory(u: *Unit) void {
+    if (u.history_tried != 0 or !keeps(u)) return;
+    u.history_tried = 1;
+    const memory = u.base.sys_base.AllocMem(history_size, exec.MEMF_ANY) orelse return;
+    lockDrawing(u);
+    u.history_mem = @ptrCast(memory);
+    u.history = term.History.init(u.history_mem.?[0..history_size]);
+    u.grid.history = &u.history;
+    unlockDrawing(u);
+}
+
+/// The view back on the output, its picture's memory given back. Nothing
+/// is drawn.
+fn dropView(u: *Unit) void {
+    if (u.view_cells) |cells| u.base.sys_base.FreeMem(cells, u.cell_count * @sizeOf(term.Cell));
+    u.view_cells = null;
+    u.view = 0;
+    u.selecting = 0;
+}
+
+/// The window on the output `want` rows up, or as far up as there are
+/// rows; 0 is the output itself. With `again` it is put together and
+/// drawn even where it is already there, since what it shows has changed.
+fn setView(u: *Unit, want: u32, again: bool) void {
+    const count: u32 = if (u.history_mem != null and !u.grid.alternate) u.history.count else 0;
+    const back = @min(want, count);
+    if (back == u.view and !again) return;
+    if (back == 0) {
+        if (u.view == 0) return;
+        dropView(u);
+        _ = u.grid.takeScroll();
+        showAll(u);
+        return;
+    }
+    if (u.view_cells == null) {
+        const memory = u.base.sys_base.AllocMem(u.cell_count * @sizeOf(term.Cell), exec.MEMF_ANY) orelse return;
+        u.view_cells = @ptrCast(@alignCast(memory));
+        u.view_grid = term.Term.init(u.view_cells.?[0..u.cell_count], u.grid.cols, u.grid.rows);
+    }
+    u.selecting = 0;
+    u.view = back;
+    u.grid.compose(&u.view_grid, back);
+    showAll(u);
+}
+
+/// After a write while the view is up in the output: it stays on the
+/// rows it shows, which are `came` rows further up now. Where all it
+/// shows is rows that scrolled off, nothing on the window has changed.
+fn follow(u: *Unit, came: u32) void {
+    _ = u.grid.takeScroll();
+    u.grid.clearDirty();
+    if (u.grid.alternate) return setView(u, 0, true);
+    const want = u.view +| came;
+    if (u.view >= u.grid.rows and want <= u.history.count) {
+        u.view = want;
+        return;
+    }
+    setView(u, want, true);
+}
+
+/// The bar in step with the output and the view. Not under the unit's
+/// lock or its layer's: setting a gadget takes intuition's, which is
+/// held while a layer is waited for.
+fn showBar(u: *Unit) void {
+    const bar = u.bar orelse return;
+    const count: u32 = if (u.history_mem != null) u.history.count else 0;
+    const rows = u.grid.rows;
+    const view = @min(u.view, count);
+    if (count == u.bar_count and rows == u.bar_rows and view == u.bar_view) return;
+    u.bar_count = count;
+    u.bar_rows = rows;
+    u.bar_view = view;
+    _ = u.base.intuition_base.SetGadgetAttrsTagList(bar, u.window, &[_]TagItem{
+        .{ .tag = pg.PGA_Total, .data = count + rows },
+        .{ .tag = pg.PGA_Visible, .data = rows },
+        .{ .tag = pg.PGA_Top, .data = count - view },
+        .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+    });
+}
+
+/// What a bar tells of its moves: the new top, for the task to act on.
+/// On input.device's task, so it writes it down and signals.
+fn linked(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const cl: *intuition.Class = @ptrCast(hook);
+    const cb: *ConsoleBase = @ptrFromInt(cl.user_data);
+    const o: *intuition.Object = @ptrCast(@alignCast(object.?));
+    const msg: *classusr.Msg = @ptrCast(@alignCast(message.?));
+    if (msg.method_id == classusr.OM_UPDATE) {
+        const update: *classusr.OpUpdate = @ptrCast(@alignCast(msg));
+        const u: *Unit = @ptrFromInt(intuition.classes.instData(usize, cl, o).*);
+        if (cb.utility_base.FindTagItem(pg.PGA_Top, update.attr_list)) |item| {
+            const sys = cb.sys_base;
+            sys.AcquireLock(&cb.lock);
+            u.bar_top = @truncate(item.data);
+            u.tokens |= TOKEN_BAR;
+            sys.ReleaseLock(&cb.lock);
+            sys.Signal(&cb.task, cb.mask);
+        }
+        return 0;
+    }
+    return cb.intuition_base.SendSuperMessage(cl, o, msg);
+}
+
+/// The bar, in a right border wide enough to hold one - the border a
+/// window has its size gadget in, whose corner the bar stops above.
+fn makeBar(u: *Unit) void {
+    const cb = u.base;
+    const ib = cb.intuition_base;
+    const cl = cb.link_class orelse return;
+    if (!keeps(u)) return;
+    const right: isize = @bitCast(windowAttr(cb, u.window, wn.WA_BorderRight));
+    const top: isize = @bitCast(windowAttr(cb, u.window, wn.WA_BorderTop));
+    const bottom: isize = @bitCast(windowAttr(cb, u.window, wn.WA_BorderBottom));
+    if (right < bar_min) return;
+    const link = ib.NewObjectTagList(cl, null, null) orelse return;
+    intuition.classes.instData(usize, cl, link).* = @intFromPtr(u);
+    const rows = u.grid.rows;
+    const bar = ib.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
+        .{ .tag = gc.GA_RightBorder, .data = 1 },
+        .{ .tag = gc.GA_RelRight, .data = @bitCast(-(right - 4)) },
+        .{ .tag = gc.GA_Top, .data = @bitCast(top + 1) },
+        .{ .tag = gc.GA_Width, .data = @bitCast(right - 6) },
+        .{ .tag = gc.GA_RelHeight, .data = @bitCast(-(top + bottom + right + 2)) },
+        .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+        .{ .tag = pg.PGA_Total, .data = rows },
+        .{ .tag = pg.PGA_Visible, .data = rows },
+        .{ .tag = pg.PGA_Top, .data = 0 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(link) },
+        .{ .tag = sdk.utility.TAG_DONE, .data = 0 },
+    }) orelse {
+        ib.DisposeObject(link);
+        return;
+    };
+    u.bar = bar;
+    u.link = link;
+    u.bar_rows = rows;
+    _ = ib.AddGList(u.window, bar, -1, 1);
+    ib.RefreshGList(bar, u.window, 1);
+}
+
+/// The view moved by the handler: so many rows and windowfuls, up
+/// positive. Signalled by the caller.
+fn moveView(cb: *ConsoleBase, u: *Unit, lines: i32, pages: i32) void {
+    const sys = cb.sys_base;
+    sys.AcquireLock(&cb.lock);
+    u.view_lines += lines;
+    u.view_pages += pages;
+    u.tokens |= TOKEN_VIEW;
+    sys.ReleaseLock(&cb.lock);
+}
+
+/// Something was typed into `u`: where it goes is where the output is, so
+/// the view goes back there. True when the task has to be signalled.
+fn typedInto(cb: *ConsoleBase, u: *Unit) bool {
+    if (u.view == 0) return false;
+    addTokens(cb, u, TOKEN_LIVE);
+    return true;
+}
+
+fn sameBytes(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |x, y| {
+        if (x != y) return false;
+    }
+    return true;
 }
 
 // --- the ring of typed characters --------------------------------------------------
@@ -438,7 +686,7 @@ fn copySelection(cb: *ConsoleBase, u: *Unit) void {
     // fills the buffer exactly still has room for the NUL a hook is
     // handed.
     var text: [max_snip + 1]u8 = undefined;
-    const n = u.grid.selectionText(text[0..max_snip]);
+    const n = shown(u).selectionText(text[0..max_snip]);
     if (n == 0) return;
     text[n] = 0;
     setSnip(cb, text[0..n]);
@@ -632,11 +880,11 @@ fn pointed(cb: *ConsoleBase, p: Pointed) void {
         const cell = cellAt(cb, u, p.x, p.y) orelse return;
         // Below the last line of output is nothing to select, and a press
         // there starts nothing.
-        if (cell / u.grid.cols > u.grid.textEnd() / u.grid.cols) return;
+        if (cell / u.grid.cols > shown(u).textEnd() / u.grid.cols) return;
         u.sel_anchor = cell;
         u.sel_now = u.sel_anchor;
         u.selecting = 1;
-        u.grid.select(u.sel_anchor, u.sel_anchor + 1);
+        shown(u).select(u.sel_anchor, u.sel_anchor + 1);
         showChanges(u);
         return;
     }
@@ -651,14 +899,14 @@ fn pointed(cb: *ConsoleBase, p: Pointed) void {
         // Dragged below the last line of output, the end stays where the
         // output ends.
         if (cellAt(cb, u, p.x, p.y)) |cell| {
-            const end = u.grid.textEnd();
+            const end = shown(u).textEnd();
             u.sel_now = if (cell / u.grid.cols > end / u.grid.cols) end else cell;
         }
         if (p.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
             u.selecting = 0;
             copySelection(cb, u);
         }
-        u.grid.select(@min(u.sel_anchor, u.sel_now), @max(u.sel_anchor, u.sel_now) + 1);
+        shown(u).select(@min(u.sel_anchor, u.sel_now), @max(u.sel_anchor, u.sel_now) + 1);
         showChanges(u);
         return;
     }
@@ -724,12 +972,25 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                 // has taken it as its window's menu shortcut, or nothing
                 // has, and a letter must not land in the text either way.
                 if (isShiftInsert(buf[0..n])) {
+                    if (typedInto(cb, u)) signal = true;
                     paste(cb, u);
                     continue;
+                }
+                // Shift with Page Up and Page Down move the view over
+                // the output, in a console that keeps it and whose
+                // program has not the other screen up.
+                if (keeps(u) and !u.grid.alternate) {
+                    const up = sameBytes(buf[0..n], key_page_up);
+                    if (up or sameBytes(buf[0..n], key_page_down)) {
+                        moveView(cb, u, 0, if (up) 1 else -1);
+                        signal = true;
+                        continue;
+                    }
                 }
                 if (e.qualifier & ie.IEQUALIFIER_RCOMMAND != 0) {
                     if (km.character(&buf, @intCast(n))) |typed| switch (typed) {
                         'v', 'V' => {
+                            if (typedInto(cb, u)) signal = true;
                             paste(cb, u);
                             continue;
                         },
@@ -742,10 +1003,21 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                     };
                 }
                 if (n == 0) continue;
+                if (typedInto(cb, u)) signal = true;
                 sys.AcquireLock(&cb.lock);
                 push(u, buf[0..n]);
                 serveReads(u);
                 sys.ReleaseLock(&cb.lock);
+            },
+            // The wheel moves the active console's view over its output,
+            // unless its program asked for the pointer or has the other
+            // screen up.
+            ie.IECLASS_RAWMOUSE => {
+                if (e.code != ie.IECODE_WHEEL or e.y == 0) continue;
+                const u = activeUnit(cb) orelse continue;
+                if (!keeps(u) or u.grid.alternate or reports(u)) continue;
+                moveView(cb, u, -@as(i32, e.y) * wheel_rows, 0);
+                signal = true;
             },
             // A character typed by no key: its bytes, as a key's.
             ie.IECLASS_CHARACTER => {
@@ -753,6 +1025,7 @@ fn handleEvents(cb: *ConsoleBase, events: ?*ie.InputEvent) void {
                 var buf: [4]u8 = undefined;
                 const n = characterBytes(e, &buf);
                 if (n == 0) continue;
+                if (typedInto(cb, u)) signal = true;
                 sys.AcquireLock(&cb.lock);
                 push(u, buf[0..n]);
                 serveReads(u);
@@ -806,7 +1079,7 @@ fn handler(events: ?*ie.InputEvent, data: ?*anyopaque) callconv(.c) ?*ie.InputEv
 
 /// The strips beyond the cells, for the window's size now.
 fn showEdges(u: *Unit) void {
-    render.drawEdges(u.base.graphics_base, layoutOf(u), &u.grid, @intCast(windowAttr(u.base, u.window, wn.WA_InnerWidth)), @intCast(windowAttr(u.base, u.window, wn.WA_InnerHeight)));
+    render.drawEdges(u.base.graphics_base, layoutOf(u), shown(u), @intCast(windowAttr(u.base, u.window, wn.WA_InnerWidth)), @intCast(windowAttr(u.base, u.window, wn.WA_InnerHeight)));
 }
 
 /// The window was sized: a grid of the new size, with what fits kept.
@@ -867,12 +1140,37 @@ fn serveTokens(cb: *ConsoleBase, u: *Unit) void {
     const sys = cb.sys_base;
     sys.AcquireLock(&cb.lock);
     const tokens = u.tokens;
+    const lines = u.view_lines;
+    const pages = u.view_pages;
+    const bar_top = u.bar_top;
     u.tokens = 0;
+    u.view_lines = 0;
+    u.view_pages = 0;
     sys.ReleaseLock(&cb.lock);
     if (tokens == 0) return;
 
     lockDrawing(u);
-    defer unlockDrawing(u);
+    serveLocked(cb, u, tokens, .{ .lines = lines, .pages = pages, .bar_top = bar_top });
+    unlockDrawing(u);
+    showBar(u);
+}
+
+/// Where the handler asked the view to go.
+const Moves = struct { lines: i32, pages: i32, bar_top: u32 };
+
+fn serveLocked(cb: *ConsoleBase, u: *Unit, tokens: u32, moves: Moves) void {
+    if (tokens & TOKEN_BAR != 0) {
+        const count: u32 = if (u.history_mem != null) u.history.count else 0;
+        setView(u, count -| moves.bar_top, false);
+        // The bar is where it was dragged to: it need not be set there.
+        if (count - @min(u.view, count) == moves.bar_top) u.bar_view = u.view;
+    }
+    if (tokens & TOKEN_VIEW != 0) {
+        const page: i64 = @max(u.grid.rows, 2) - 1;
+        const want = @as(i64, u.view) + moves.lines + moves.pages * page;
+        setView(u, @intCast(std.math.clamp(want, 0, std.math.maxInt(u32))), false);
+    }
+    if (tokens & TOKEN_LIVE != 0) setView(u, 0, false);
     if (tokens & TOKEN_ACTIVE != 0) u.active = 1;
     if (tokens & TOKEN_INACTIVE != 0) {
         // The cursor comes off the cell before the window stops being the
@@ -885,7 +1183,14 @@ fn serveTokens(cb: *ConsoleBase, u: *Unit) void {
         // Sized by less than a character, the cells stay inside the
         // window and only the strips beyond them changed; unless the
         // window was uncovered as well, they are all that is drawn.
-        if (resized(u) or tokens & TOKEN_REFRESH != 0) showAll(u) else showEdges(u);
+        // The picture of the output further up is of the old size: it is
+        // put together again for the new one.
+        const back = u.view;
+        if (back != 0) dropView(u);
+        const changed = resized(u);
+        if (back != 0) setView(u, back, true);
+        if (u.view != 0) return;
+        if (changed or back != 0 or tokens & TOKEN_REFRESH != 0) showAll(u) else showEdges(u);
         return;
     }
     if (tokens & TOKEN_REFRESH != 0) {
@@ -958,6 +1263,13 @@ fn start(cb: *ConsoleBase) bool {
     cb.input_io.req.command = input.IND_ADDHANDLER;
     cb.input_io.data = &cb.handler;
     _ = sys.DoIO(&cb.input_io.req);
+    // What the bars tell of their moves: without the class a console has
+    // no bar, and the wheel and the keys move its view all the same.
+    if (cb.intuition_base.MakeClass(null, classusr.ROOTCLASS, null, @sizeOf(usize))) |cl| {
+        cl.dispatcher.entry = &linked;
+        cl.user_data = @intFromPtr(cb);
+        cb.link_class = cl;
+    }
     cb.started = 1;
     return true;
 }
@@ -980,6 +1292,8 @@ fn answerRequests(u: *Unit) void {
                 u.alt_cells = @ptrCast(@alignCast(memory));
                 break :blk u.alt_cells;
             } orelse return;
+            // The other screen has no rows further up.
+            dropView(u);
             u.grid.enterAlternate(alt[0..u.cell_count]);
             showAll(u);
         },
@@ -1023,9 +1337,16 @@ fn answerRequests(u: *Unit) void {
 }
 
 fn write(u: *Unit, bytes: []const u8) void {
+    keepHistory(u);
     lockDrawing(u);
-    defer unlockDrawing(u);
+    writeLocked(u, bytes);
+    unlockDrawing(u);
+    showBar(u);
+}
+
+fn writeLocked(u: *Unit, bytes: []const u8) void {
     const cb = u.base;
+    const before = u.history.total;
     // The cursor comes off before the text moves under it.
     hideCursor(u);
     // The screen itself may change hands in the middle of a write - a
@@ -1037,7 +1358,7 @@ fn write(u: *Unit, bytes: []const u8) void {
         rest = rest[took..];
         answerRequests(u);
     }
-    showChanges(u);
+    if (u.view != 0) follow(u, u.history.total -% before) else showChanges(u);
 
     // What the terminal answered - a cursor report, its size - is read
     // like anything typed.
@@ -1303,6 +1624,7 @@ fn makeUnit(cb: *ConsoleBase, window: *wn.Window, unit_type: i32, flags: u32) ?*
         .layer = @ptrFromInt(windowAttr(cb, window, wn.WA_Layer)),
         .rp = rp,
         .grid = term.Term.init(grid[0..count], g.cols, g.rows),
+        .view_grid = term.Term.init(grid[0..0], 0, 0),
         .cells = grid,
         .cell_count = count,
         .key_map = cb.keymap_base.AskKeyMapDefault().*,
@@ -1324,6 +1646,7 @@ fn makeUnit(cb: *ConsoleBase, window: *wn.Window, unit_type: i32, flags: u32) ?*
     lockDrawing(u);
     showAll(u);
     unlockDrawing(u);
+    makeBar(u);
     return u;
 }
 
@@ -1363,9 +1686,17 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
     // Whatever this console asked about the pointer goes with it.
     u.grid.mouse = .off;
     countReporting(u);
+    // The bar first, while the unit it tells of its moves is still there.
+    if (u.bar) |bar| {
+        _ = cb.intuition_base.RemoveGList(u.window, bar, 1);
+        cb.intuition_base.DisposeObject(bar);
+        cb.intuition_base.DisposeObject(u.link);
+    }
     sys.ObtainSemaphore(&cb.list_lock);
     sys.Remove(&u.node);
     sys.ReleaseSemaphore(&cb.list_lock);
+    dropView(u);
+    if (u.history_mem) |memory| sys.FreeMem(memory, history_size);
     sys.FreeMem(u.cells, u.cell_count * @sizeOf(term.Cell));
     if (u.alt_cells) |alt| sys.FreeMem(alt, u.cell_count * @sizeOf(term.Cell));
     sys.FreeMem(u, @sizeOf(Unit));

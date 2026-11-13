@@ -10,7 +10,9 @@
 //! history search (the text before the cursor as a prefix, any case), Tab
 //! completes a name (below), CR ends a line, ^S holds what programs write until the next character
 //! comes in (which is all ^Q is), Ctrl-\ ends the input; the terminal's
-//! ESC [ sequences: arrows, Home/End, Delete, shift-up (search).
+//! ESC [ sequences: arrows, Home/End, Delete, and the arrows with shift -
+//! up the search, down an empty line below the newest of the history (as
+//! ^B), left and right the start and the end of the line.
 //!
 //! **The line is UTF-8.** A byte past 0x7F is part of a character, which
 //! goes into the line when it is whole; bytes that are no UTF-8 go in as
@@ -648,10 +650,7 @@ pub const Editor = struct {
             0x08, 0x7F => if (ed.cursor > 0) ed.remove(stepBack(ed.line[0..ed.len], ed.cursor), ed.cursor),
             0x01 => ed.home(),
             0x1A => ed.end(),
-            0x02 => {
-                ed.replace("", 0);
-                ed.scan = null;
-            },
+            0x02 => ed.bottom(),
             0x18 => ed.replace("", 0),
             0x0B => {
                 ed.kill_len = ed.len - ed.cursor;
@@ -735,13 +734,13 @@ pub const Editor = struct {
     fn sequence(ed: *Editor, final: u8, first: usize, modifier: usize) void {
         switch (final) {
             'A' => if (modifier == 2) ed.search() else ed.older(),
-            'B' => ed.newer(),
-            'C' => if (ed.cursor < ed.len) {
+            'B' => if (modifier == 2) ed.bottom() else ed.newer(),
+            'C' => if (modifier == 2) ed.end() else if (ed.cursor < ed.len) {
                 const to = stepOver(ed.line[0..ed.len], ed.cursor);
                 ed.moveRight(cellsOf(ed.line[ed.cursor..to]));
                 ed.cursor = to;
             },
-            'D' => if (ed.cursor > 0) {
+            'D' => if (modifier == 2) ed.home() else if (ed.cursor > 0) {
                 const to = stepBack(ed.line[0..ed.len], ed.cursor);
                 ed.moveLeft(cellsOf(ed.line[to..ed.cursor]));
                 ed.cursor = to;
@@ -806,6 +805,12 @@ pub const Editor = struct {
     fn end(ed: *Editor) void {
         ed.moveRight(cellsOf(ed.line[ed.cursor..ed.len]));
         ed.cursor = ed.len;
+    }
+
+    /// An empty line, below the newest of the history.
+    fn bottom(ed: *Editor) void {
+        ed.replace("", 0);
+        ed.scan = null;
     }
 
     fn older(ed: *Editor) void {

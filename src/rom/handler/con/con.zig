@@ -131,9 +131,10 @@ pub const window = @import("window.zig");
 
 pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
-/// 1: Tab completes names.
-const HANDLER_REVISION = 8;
-const BUILD_DATE = "12.11.2026";
+/// 1: Tab completes names. 9: shift with the cursor keys left, right
+/// and down; its window's console keeps the output that scrolled off.
+const HANDLER_REVISION = 9;
+const BUILD_DATE = "13.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -735,7 +736,7 @@ const DeviceIo = struct {
             .req = .{ .message = .{ .reply_port = io.port, .length = @sizeOf(serial.IOExtSer) } },
             .data = @ptrCast(w),
         } };
-        u.open = io.sys.OpenDevice(u.device, u.unit, &u.read.io_ser.req, 0) == 0;
+        u.open = io.sys.OpenDevice(u.device, u.unit, &u.read.io_ser.req, con.CONFLAG_HISTORY) == 0;
         if (!u.open) {
             io.closeWindow();
             return false;
@@ -1301,6 +1302,13 @@ test "history: up and down, no duplicates, ^R search by prefix" {
     try testing.expectEqualStrings("one\n", nextLine(&ed, &buffer));
     keys(&ed, "t\x12\x12\r"); // "two", then no older "t...": stays
     try testing.expectEqualStrings("two\n", nextLine(&ed, &buffer));
+
+    keys(&ed, "\x1b[A\x1b[A\x1b[1;2Bz\r"); // shift-down: an empty line, the scan at the bottom
+    try testing.expectEqualStrings("z\n", nextLine(&ed, &buffer));
+    keys(&ed, "\x1b[A\r"); // so up is the newest again
+    try testing.expectEqualStrings("z\n", nextLine(&ed, &buffer));
+    keys(&ed, "bc\x1b[1;2Da\x1b[1;2Cd\r"); // shift-left the start, shift-right the end
+    try testing.expectEqualStrings("abcd\n", nextLine(&ed, &buffer));
 
     var small: editor.History = .{};
     var long: [700]u8 = @splat('a');

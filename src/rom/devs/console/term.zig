@@ -139,6 +139,223 @@ pub const MouseMode = enum { off, buttons, drag, any };
 /// to send instead of a button, since it cannot say which was let go.
 pub const MouseButton = enum(u8) { left = 0, middle = 1, right = 2, release = 3 };
 
+/// The rows that have scrolled off the top of a terminal, the newest
+/// last: a ring of bytes in the caller's memory, the oldest rows given
+/// up when a new one needs their room.
+///
+/// A row is kept as its text, not as its cells - a cell is twenty bytes
+/// and most of a row is blanks: the characters in UTF-8, the blanks a
+/// row ends in left out, and the colours and flags written down only
+/// where they change. So a row of plain text takes its bytes and four
+/// more, and the ring holds as many rows as their text allows rather
+/// than a fixed count. Each row has its length in front of it and behind
+/// it, so the rows are walked from either end.
+///
+/// A row is read back into cells of any width: what does not fit is cut.
+pub const History = struct {
+    bytes: [*]u8,
+    size: u32,
+    /// Where the oldest row starts, the bytes the rows take, and how many
+    /// rows there are.
+    start: u32 = 0,
+    used: u32 = 0,
+    count: u32 = 0,
+    /// Every row ever added, counting on past the ones given up: what a
+    /// caller compares to know how many came in.
+    total: u32 = 0,
+
+    /// The next five bytes are the flags and the two colours of what
+    /// follows.
+    const ATTR: u8 = 0x01;
+    /// A cell nothing was written in.
+    const UNWRITTEN: u8 = 0x02;
+    /// The next character is a mark of the one before it.
+    const MARK: u8 = 0x03;
+    /// The next character takes two cells.
+    const WIDE: u8 = 0x04;
+    /// The two lengths round a row.
+    const frame = 4;
+
+    pub fn init(memory: []u8) History {
+        return .{ .bytes = memory.ptr, .size = @intCast(memory.len) };
+    }
+
+    /// No rows.
+    pub fn clear(h: *History) void {
+        h.start = 0;
+        h.used = 0;
+        h.count = 0;
+    }
+
+    fn get(h: *const History, at: u32) u8 {
+        return h.bytes[(h.start + at) % h.size];
+    }
+
+    fn set(h: *History, at: u32, value: u8) void {
+        h.bytes[(h.start + at) % h.size] = value;
+    }
+
+    fn lengthAt(h: *const History, at: u32) u32 {
+        return @as(u32, h.get(at)) | @as(u32, h.get(at + 1)) << 8;
+    }
+
+    /// A row's bytes, written from `at` on when `into` is given: how many
+    /// they are.
+    fn encode(into: ?*History, at: u32, row: []const Cell) u32 {
+        var len = row.len;
+        while (len > 0) {
+            const c = row[len - 1];
+            if (c.ch != ' ' or c.flags != 0 or c.fg != COLOR_DEFAULT or c.bg != COLOR_DEFAULT or c.marks[0] != 0) break;
+            len -= 1;
+        }
+        var n: u32 = 0;
+        var attr = Cell{};
+        for (row[0..len], 0..) |c, i| {
+            if (c.ch == WIDE_TAIL) continue;
+            var piece: [6 + 1 + 4 + cell_marks * 5]u8 = undefined;
+            var m: usize = 0;
+            if (c.flags != attr.flags or c.fg != attr.fg or c.bg != attr.bg) {
+                attr = c;
+                piece[0] = ATTR;
+                piece[1] = c.flags;
+                piece[2] = @truncate(c.fg);
+                piece[3] = @truncate(c.fg >> 8);
+                piece[4] = @truncate(c.bg);
+                piece[5] = @truncate(c.bg >> 8);
+                m = 6;
+            }
+            if (!c.written and c.ch == ' ' and c.marks[0] == 0) {
+                piece[m] = UNWRITTEN;
+                m += 1;
+            } else {
+                if (i + 1 < row.len and row[i + 1].ch == WIDE_TAIL) {
+                    piece[m] = WIDE;
+                    m += 1;
+                }
+                m += utf8.encode(if (c.ch < 0x20) ' ' else c.ch, piece[m..][0..4]);
+                for (c.marks) |mark| {
+                    if (mark == 0) break;
+                    piece[m] = MARK;
+                    m += 1;
+                    m += utf8.encode(mark, piece[m..][0..4]);
+                }
+            }
+            if (into) |h| {
+                for (piece[0..m], 0..) |b, k| h.set(at + n + @as(u32, @intCast(k)), b);
+            }
+            n += @intCast(m);
+        }
+        return n;
+    }
+
+    /// A row, as the newest. The oldest rows go while it has no room; a
+    /// row the whole ring could not hold is not kept.
+    pub fn push(h: *History, row: []const Cell) void {
+        h.total +%= 1;
+        const length = encode(null, 0, row);
+        const need = length + frame;
+        if (need > h.size or length > 0xFFFF) return;
+        while (h.used + need > h.size) {
+            const gone = h.lengthAt(0) + frame;
+            h.start = (h.start + gone) % h.size;
+            h.used -= gone;
+            h.count -= 1;
+        }
+        const at = h.used;
+        h.set(at, @truncate(length));
+        h.set(at + 1, @truncate(length >> 8));
+        _ = encode(h, at + 2, row);
+        h.set(at + 2 + length, @truncate(length));
+        h.set(at + 3 + length, @truncate(length >> 8));
+        h.used += need;
+        h.count += 1;
+    }
+
+    /// Where the row `back` rows before the newest is (0 the newest
+    /// itself), for `read` and `next`; null when there are not that many.
+    pub fn locate(h: *const History, back: u32) ?u32 {
+        if (back >= h.count) return null;
+        var at = h.used;
+        var left = back + 1;
+        while (left > 0) : (left -= 1) at -= h.lengthAt(at - 2) + frame;
+        return at;
+    }
+
+    /// The row after the one at `at`, null after the newest.
+    pub fn next(h: *const History, at: u32) ?u32 {
+        const after = at + h.lengthAt(at) + frame;
+        return if (after < h.used) after else null;
+    }
+
+    /// The row at `at` into `into`, which is cleared first; what is past
+    /// its width is left out.
+    pub fn read(h: *const History, at: u32, into: []Cell) void {
+        for (into) |*c| c.* = .{};
+        const end = at + 2 + h.lengthAt(at);
+        var pos = at + 2;
+        var x: usize = 0;
+        var attr = Cell{};
+        var wide = false;
+        var mark = false;
+        // The cell the last character went into, for its marks.
+        var last: ?usize = null;
+        while (pos < end) {
+            const b = h.get(pos);
+            switch (b) {
+                ATTR => {
+                    attr.flags = h.get(pos + 1);
+                    attr.fg = @as(u16, h.get(pos + 2)) | @as(u16, h.get(pos + 3)) << 8;
+                    attr.bg = @as(u16, h.get(pos + 4)) | @as(u16, h.get(pos + 5)) << 8;
+                    pos += 6;
+                    continue;
+                },
+                UNWRITTEN => {
+                    if (x < into.len) into[x] = .{ .flags = attr.flags, .fg = attr.fg, .bg = attr.bg };
+                    x += 1;
+                    last = null;
+                    pos += 1;
+                    continue;
+                },
+                WIDE => {
+                    wide = true;
+                    pos += 1;
+                    continue;
+                },
+                MARK => {
+                    mark = true;
+                    pos += 1;
+                    continue;
+                },
+                else => {},
+            }
+            var held: [4]u8 = undefined;
+            var n: usize = 0;
+            while (n < 4 and pos + n < end) : (n += 1) held[n] = h.get(pos + @as(u32, @intCast(n)));
+            const found = utf8.read(held[0..n]);
+            pos += @intCast(found.length);
+            if (mark) {
+                mark = false;
+                if (last) |cell| {
+                    for (&into[cell].marks) |*slot| {
+                        if (slot.* != 0) continue;
+                        slot.* = found.char;
+                        break;
+                    }
+                }
+                continue;
+            }
+            const cells_n: usize = if (wide) 2 else 1;
+            wide = false;
+            if (x + cells_n <= into.len) {
+                into[x] = .{ .ch = found.char, .flags = attr.flags, .written = true, .fg = attr.fg, .bg = attr.bg };
+                if (cells_n == 2) into[x + 1] = .{ .ch = WIDE_TAIL, .flags = attr.flags, .written = true, .fg = attr.fg, .bg = attr.bg };
+                last = x;
+            } else last = null;
+            x += cells_n;
+        }
+    }
+};
+
 pub const Term = struct {
     /// `rows * cols` cells, the caller's memory.
     cells: [*]Cell,
@@ -216,6 +433,10 @@ pub const Term = struct {
     /// Where the output ended when the selection was made (`textEnd`):
     /// nothing from there on is selected.
     sel_limit: u32 = 0,
+    /// Where the rows that scroll off the top go, when the caller keeps
+    /// them: the first screen's only, and only while the whole screen
+    /// scrolls - a region's rows are a program's own display.
+    history: ?*History = null,
 
     /// A terminal over `cells`, which must hold `cols * rows` of them.
     pub fn init(cells: []Cell, cols: u32, rows: u32) Term {
@@ -320,6 +541,13 @@ pub const Term = struct {
     /// gives up.
     const Flow = struct { rows: u32 = 0, cursor_row: u32 = 0, cursor_col: u32 = 0 };
 
+    /// A row `flow` leaves out, built in the new grid's first row: into
+    /// the history, and the row empty again for the next.
+    fn shed(t: *const Term, cells: []Cell, cols: u32) void {
+        if (!t.alternate) if (t.history) |h| h.push(cells[0..cols]);
+        for (cells[0..cols]) |*c| c.* = .{};
+    }
+
     fn flow(t: *const Term, into: ?[]Cell, cols: u32, drop: u32) Flow {
         var out: Flow = .{};
         var out_row: u32 = 0;
@@ -356,6 +584,9 @@ pub const Term = struct {
                 if (out_col == cols or (out_col > 0 and out_col + 1 == cols and wide_head)) {
                     if (into) |cells| if (out_row >= drop) {
                         cells[(out_row - drop) * cols + cols - 1].flags |= CELL_WRAP;
+                    } else {
+                        cells[cols - 1].flags |= CELL_WRAP;
+                        t.shed(cells, cols);
                     };
                     out_row += 1;
                     out_col = 0;
@@ -367,6 +598,10 @@ pub const Term = struct {
                 if (into) |cells| if (out_row >= drop) {
                     const slot = (out_row - drop) * cols + out_col;
                     if (slot < cells.len) cells[slot] = t.cells[y * t.cols + i];
+                } else if (out_col < cells.len) {
+                    // A row that is left out: built in the first row, which
+                    // is empty until the rows that stay begin.
+                    cells[out_col] = t.cells[y * t.cols + i];
                 };
                 out_col += 1;
             }
@@ -376,6 +611,7 @@ pub const Term = struct {
                 out.cursor_row = out_row;
                 out.cursor_col = @min(out_col, cols - 1);
             }
+            if (into) |cells| if (out_row < drop) t.shed(cells, cols);
             out_row += 1;
             y = last + 1;
         }
@@ -421,10 +657,43 @@ pub const Term = struct {
         t.allDirty();
     }
 
+    /// The screen as it is `back` rows up in the output: into `view`, a
+    /// terminal of the same size over cells of its own. Its first `back`
+    /// rows are the newest rows of the history - which must hold that
+    /// many - and the rest this terminal's own from the top, the cursor
+    /// with them while its row is among them. `view` is there to be drawn
+    /// and selected in; nothing is written through it.
+    pub fn compose(t: *const Term, view: *Term, back: u32) void {
+        var from: ?u32 = if (t.history) |h| (if (back > 0) h.locate(back - 1) else null) else null;
+        var y: u32 = 0;
+        while (y < view.rows) : (y += 1) {
+            const row = view.cells[y * view.cols ..][0..view.cols];
+            if (y >= back) {
+                @memcpy(row, t.cells[(y - back) * t.cols ..][0..t.cols]);
+            } else if (from) |place| {
+                t.history.?.read(place, row);
+                from = t.history.?.next(place);
+            } else {
+                for (row) |*c| c.* = .{};
+            }
+        }
+        const shown = t.y + back < view.rows;
+        view.x = t.x;
+        view.y = if (shown) t.y + back else view.rows -| 1;
+        view.cursor_on = t.cursor_on and shown;
+        view.wrap_pending = false;
+        view.clearSelection();
+        view.scroll_lines = 0;
+        view.allDirty();
+    }
+
     // --- scrolling ----------------------------------------------------------
 
     fn scrollUp(t: *Term, lines: u32) void {
         const n = @min(lines, t.bottom - t.top + 1);
+        if (t.history) |h| if (!t.alternate and t.top == 0 and t.bottom + 1 == t.rows) {
+            for (0..n) |row| h.push(t.cells[row * t.cols ..][0..t.cols]);
+        };
         var y = t.top;
         while (y + n <= t.bottom) : (y += 1) {
             const to = t.cells[y * t.cols ..][0..t.cols];
@@ -1131,6 +1400,8 @@ pub const Term = struct {
             2, 3 => {
                 t.clearCells(0, t.rows * t.cols);
                 t.allDirty();
+                // 3 is the screen and what scrolled off it.
+                if (how == 3 and !t.alternate) if (t.history) |h| h.clear();
             },
             else => {
                 const from = t.y * t.cols + t.x;
@@ -2141,4 +2412,98 @@ test "UTF-8: a resize keeps a wide character on one row" {
     t.resize(narrow, 5, 3);
     try testing.expectEqualStrings("abcd ", rowText(&t, 0, &buf));
     try testing.expectEqualStrings("\xE6\x97\xA5\xE6\x97\xA5 ", rowText(&t, 1, &buf));
+}
+
+test "history: rows that scroll off are kept, and read back with their colours and marks" {
+    var t, const cells = scratch(10, 3);
+    defer testing.allocator.free(cells);
+    var memory: [256]u8 = undefined;
+    var history = History.init(&memory);
+    t.history = &history;
+    var buf: [64]u8 = undefined;
+
+    t.write("one\r\n\x1b[31mtwo\x1b[0m \xE6\x97\xA5e\xCC\x81\r\nthree\r\nfour\r\nfive");
+    try testing.expectEqual(@as(u32, 2), history.count);
+    try testing.expectEqualStrings("three     ", rowText(&t, 0, &buf));
+
+    var row: [10]Cell = undefined;
+    history.read(history.locate(1).?, &row);
+    try testing.expectEqual(@as(u32, 'o'), row[0].ch);
+    try testing.expect(row[0].written and !row[3].written);
+    const newest = history.locate(0).?;
+    try testing.expectEqual(@as(?u32, null), history.next(newest));
+    try testing.expectEqual(newest, history.next(history.locate(1).?).?);
+    history.read(newest, &row);
+    try testing.expectEqual(@as(u16, 1), row[0].fg);
+    try testing.expectEqual(COLOR_DEFAULT, row[3].fg);
+    try testing.expectEqual(@as(u32, 0x65E5), row[4].ch);
+    try testing.expectEqual(WIDE_TAIL, row[5].ch);
+    try testing.expectEqual([2]u32{ 0x301, 0 }, row[6].marks);
+    try testing.expectEqual(@as(?u32, null), history.locate(2));
+
+    // Narrower cells: the row is cut, a wide character never in half.
+    var narrow: [5]Cell = undefined;
+    history.read(newest, &narrow);
+    try testing.expectEqual(@as(u32, 'o'), narrow[2].ch);
+    try testing.expectEqual(@as(u32, ' '), narrow[4].ch);
+
+    // A region's rows, the other screen's and a cleared screen's are not
+    // output that scrolled away.
+    t.write("\x1b[1;2r\x1b[2;1H\r\n\r\n\x1b[r");
+    try testing.expectEqual(@as(u32, 2), history.count);
+    t.write("\x1b[3J");
+    try testing.expectEqual(@as(u32, 0), history.count);
+}
+
+test "history: the oldest rows go when the ring is full" {
+    var t, const cells = scratch(8, 2);
+    defer testing.allocator.free(cells);
+    var memory: [40]u8 = undefined; // a row of five letters takes nine bytes
+    var history = History.init(&memory);
+    t.history = &history;
+    var line: [8]u8 = undefined;
+    for (0..20) |i| {
+        const text = std.fmt.bufPrint(&line, "row{d:0>2}\r\n", .{i}) catch unreachable;
+        t.write(text);
+    }
+    try testing.expectEqual(@as(u32, 4), history.count);
+    try testing.expectEqual(@as(u32, 19), history.total);
+    var row: [8]Cell = undefined;
+    history.read(history.locate(0).?, &row);
+    try testing.expectEqual(@as(u32, '8'), row[4].ch); // row18
+    history.read(history.locate(3).?, &row);
+    try testing.expectEqual(@as(u32, '5'), row[4].ch); // row15
+}
+
+test "history: a view some rows back, and a resize sheds its rows into it" {
+    var t, const cells = scratch(6, 3);
+    defer testing.allocator.free(cells);
+    var memory: [256]u8 = undefined;
+    var history = History.init(&memory);
+    t.history = &history;
+    var buf: [40]u8 = undefined;
+    t.write("a\r\nb\r\nc\r\nd\r\ne");
+
+    const view_cells = testing.allocator.alloc(Cell, 6 * 3) catch unreachable;
+    defer testing.allocator.free(view_cells);
+    var view = Term.init(view_cells, 6, 3);
+    t.compose(&view, 1);
+    try testing.expectEqualStrings("b     ", rowText(&view, 0, &buf));
+    try testing.expectEqualStrings("d     ", rowText(&view, 2, &buf));
+    try testing.expect(!view.cursor().visible); // its row is below the view
+    t.compose(&view, 2);
+    try testing.expectEqualStrings("a     ", rowText(&view, 0, &buf));
+    try testing.expectEqualStrings("c     ", rowText(&view, 2, &buf));
+    view.select(0, 6 * 3);
+    try testing.expectEqualStrings("a\nb\nc", buf[0..view.selectionText(&buf)]);
+
+    // Two rows where there were three: the top one goes into the history.
+    const fewer = testing.allocator.alloc(Cell, 6 * 2) catch unreachable;
+    defer testing.allocator.free(fewer);
+    t.resize(fewer, 6, 2);
+    try testing.expectEqual(@as(u32, 3), history.count);
+    try testing.expectEqualStrings("d     ", rowText(&t, 0, &buf));
+    var row: [6]Cell = undefined;
+    history.read(history.locate(0).?, &row);
+    try testing.expectEqual(@as(u32, 'c'), row[0].ch);
 }
