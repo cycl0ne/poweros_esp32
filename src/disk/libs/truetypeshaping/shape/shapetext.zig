@@ -152,8 +152,13 @@ const Source = @import("_source.zig").Source;
 /// the next one that is no mark, and the left of the two as they are
 /// drawn takes the value on its advance. Last, a mark's advance
 /// becomes 0. In a font without `GPOS`, in a text read from left to
-/// right, the mark moves back by what its advance was, onto the glyph
-/// before it.
+/// right, the mark is set on the glyph before it by the boxes of the
+/// two outlines: over the middle of the letter's box - at its left or
+/// right edge where the mark's combining class says so - and, for a
+/// class above or below, lifted or lowered until it clears the letter
+/// and the marks set on that side before it by a sixteenth of an em. A
+/// mark or a letter of no outline leaves the mark moved back by what
+/// its advance was.
 ///
 /// A variable font opened away from its default is shaped at that
 /// instance, as `ShapeGlyphs` says: its advances, the numbers of
@@ -214,8 +219,9 @@ const Source = @import("_source.zig").Source;
 /// Only a letter and its marks are put together: two letters that
 /// make one character - the single letters of a Hangul syllable - stay
 /// two. A run of more than 32 marks on one letter is left in the order
-/// it was written. In a font without `GPOS` a mark is not set by its
-/// outline's box; it only moves back by its advance.
+/// it was written. In a font without `GPOS` a mark on a ligature is set
+/// over the whole glyph, not over the part it belongs to, and in a text
+/// read from right to left it is not moved at all.
 ///
 /// BUGS:
 /// None known.

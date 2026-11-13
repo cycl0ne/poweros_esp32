@@ -249,6 +249,7 @@ fn fill(list: *const _normal.List, buffer: *_buffer.Buffer) void {
             .class = _scripts.classOf(entry.char),
             .flags = _scripts.flagsOf(entry.char) | hidden,
             .space = entry.space,
+            .combining = if (entry.mark) _normal.combiningOf(entry.char) else 0,
         };
         if (list.model) {
             // What the model goes by: the character's part in a

@@ -219,6 +219,9 @@ pub const TextOptions = struct {
     variants: []const [3]u32 = &.{},
     /// The `kern` table's pairs: `.{ left, right, value }`.
     kerning: []const [3]i32 = &.{},
+    /// The boxes of glyphs' outlines: `.{ glyph, x_min, y_min, x_max,
+    /// y_max }`. Empty for a font that says none.
+    boxes: []const [5]i32 = &.{},
     /// How many blocks the shaping gets before there is no more memory.
     blocks: ?u32 = null,
     /// How many glyphs the answer has room for.
@@ -260,6 +263,16 @@ fn textDeltaOf(context: *anyopaque, store: []const u8, item: u32, regions: *u32)
     return variation.wholeDelta(store, options.coords, item, regions);
 }
 
+fn textBoxOf(context: *anyopaque, glyph: u32, box: *_shape.Box) bool {
+    const options: *const TextOptions = @ptrCast(@alignCast(context));
+    for (options.boxes) |entry| {
+        if (entry[0] != glyph) continue;
+        box.* = .{ .x_min = entry[1], .y_min = entry[2], .x_max = entry[3], .y_max = entry[4] };
+        return true;
+    }
+    return false;
+}
+
 fn textKerningOf(context: *anyopaque, left: u32, right: u32) i32 {
     const options: *const TextOptions = @ptrCast(@alignCast(context));
     for (options.kerning) |entry| {
@@ -285,6 +298,7 @@ pub fn shapeText(tables: Tables, text: []const u8, options: TextOptions) Run {
             .advanceFn = textAdvanceOf,
             .kerningFn = textKerningOf,
             .glyphFn = textGlyphOf,
+            .boxFn = if (options.boxes.len != 0) textBoxOf else null,
             .variantFn = textVariantOf,
             .emFn = textEmOf,
             .deltaFn = textDeltaOf,

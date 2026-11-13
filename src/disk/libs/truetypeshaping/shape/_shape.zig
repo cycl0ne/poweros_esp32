@@ -49,8 +49,9 @@
 //!     feature holds for and the next one that is no mark, the left of
 //!     the two taking the value on its advance.
 //!   - Then a mark's advance is 0. In a font without `GPOS`, read from
-//!     left to right, the mark moves back by what its advance was, onto
-//!     the glyph before it.
+//!     left to right, the mark is set on the glyph before it by the two
+//!     outlines' boxes (`setMarks`), or moves back by what its advance
+//!     was where there are none.
 //!
 //! A text of a script with a model (`Order.model`, `_indic.zig`) is
 //! shaped by its syllables: `GSUB` is applied in the model's goes
@@ -96,6 +97,10 @@ pub const Font = struct {
     /// left one first; null where the call does not ask.
     kerningFn: ?*const fn (context: *anyopaque, left: u32, right: u32) i32 = null,
     glyphFn: ?*const fn (context: *anyopaque, char: u32) u32 = null,
+    /// The box of a glyph's outline, in the font's units, y up from the
+    /// baseline; false for a glyph of none. Null where the call does not
+    /// ask: marks are then set by their advances alone.
+    boxFn: ?*const fn (context: *anyopaque, glyph: u32, box: *Box) bool = null,
     variantFn: ?*const fn (context: *anyopaque, char: u32, selector: u32) u32 = null,
     /// How many of the font's units an em has.
     emFn: ?*const fn (context: *anyopaque) u32 = null,
@@ -103,6 +108,103 @@ pub const Font = struct {
     /// for a font whose numbers are not varied.
     deltaFn: ?_variation.DeltaFn = null,
 };
+
+/// The box of a glyph's outline.
+pub const Box = struct {
+    x_min: i32 = 0,
+    y_min: i32 = 0,
+    x_max: i32 = 0,
+    y_max: i32 = 0,
+};
+
+/// Where a mark goes on its letter, by its combining class.
+const Side = enum { none, above, below };
+const Edge = enum { middle, left, right };
+const Seat = struct { side: Side, edge: Edge = .middle, gap: bool = true };
+
+fn seatOf(combining: u8) Seat {
+    return switch (combining) {
+        230 => .{ .side = .above },
+        228 => .{ .side = .above, .edge = .left },
+        232 => .{ .side = .above, .edge = .right },
+        214 => .{ .side = .above, .gap = false },
+        216 => .{ .side = .above, .edge = .right, .gap = false },
+        220 => .{ .side = .below },
+        218 => .{ .side = .below, .edge = .left },
+        222 => .{ .side = .below, .edge = .right },
+        202 => .{ .side = .below, .gap = false },
+        200 => .{ .side = .below, .edge = .left, .gap = false },
+        else => .{ .side = .none },
+    };
+}
+
+/// Sets the marks of a text read from left to right on the glyphs
+/// before them, in a font without `GPOS`: each mark's advance becomes 0.
+/// Where the font says its glyphs' boxes (`boxFn`), a mark is put over
+/// the middle of its letter's box - at its left or right edge where its
+/// combining class says so - and, where the class says above or below,
+/// lifted or lowered until it clears what is there, with a sixteenth of
+/// an em between: the letter, and the marks set on that side before it.
+/// A mark that clears it already stays at its height. Without the boxes,
+/// or for a mark or a letter of no outline, the mark moves back by what
+/// its advance was and no further.
+fn setMarks(order: *const Order, buffer: *Buffer) void {
+    const font = &order.font;
+    const gap: i32 = if (font.emFn) |emFn| @intCast(emFn(font.context) / 16) else 0;
+    var base: ?Box = null;
+    var base_advance: i32 = 0;
+    var top: i32 = 0;
+    var bottom: i32 = 0;
+    for (buffer.slice()) |*item| {
+        if (item.class != _buffer.CLASS_MARK) {
+            base = null;
+            base_advance = item.advance;
+            if (font.boxFn) |boxFn| {
+                var box: Box = .{};
+                if (boxFn(font.context, item.glyph, &box)) {
+                    base = box;
+                    top = box.y_max;
+                    bottom = box.y_min;
+                }
+            }
+            continue;
+        }
+        const advance = item.advance;
+        item.advance = 0;
+        var own: Box = .{};
+        const on = base orelse {
+            item.x_offset -|= advance;
+            continue;
+        };
+        if (!font.boxFn.?(font.context, item.glyph, &own)) {
+            item.x_offset -|= advance;
+            continue;
+        }
+        const seat = seatOf(item.combining);
+        // From the point behind the letter to the letter's own point,
+        // and from there to where the mark's box belongs.
+        const across = switch (seat.edge) {
+            .middle => on.x_min + @divTrunc((on.x_max - on.x_min) - (own.x_max - own.x_min), 2) - own.x_min,
+            .left => on.x_min - own.x_min,
+            .right => on.x_max - own.x_max,
+        };
+        item.x_offset +|= across -| base_advance;
+        const room: i32 = if (seat.gap) gap else 0;
+        switch (seat.side) {
+            .above => {
+                const lift = top + room - own.y_min;
+                if (lift > 0) item.y_offset +|= lift;
+                top = own.y_max + @max(lift, 0);
+            },
+            .below => {
+                const drop = bottom - room - own.y_max;
+                if (drop < 0) item.y_offset +|= drop;
+                bottom = own.y_min + @min(drop, 0);
+            },
+            .none => {},
+        }
+    }
+}
 
 /// What a call asks for.
 pub const Order = struct {
@@ -439,12 +541,13 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
     if (result != truetypeshaping.TTS_OK) return result;
     if (order.text) {
         kernByTable(order, wanted, buffer);
-        const hangs_back = !order.backward and font.gpos.empty();
-        for (buffer.slice()) |*item| {
-            // A model's marks keep the advances the font gives them.
-            if (order.model or item.class != _buffer.CLASS_MARK) continue;
-            if (hangs_back) item.x_offset -|= item.advance;
-            item.advance = 0;
+        // A model's marks keep the advances the font gives them.
+        if (!order.model) {
+            if (!order.backward and font.gpos.empty()) {
+                setMarks(order, buffer);
+            } else for (buffer.slice()) |*item| {
+                if (item.class == _buffer.CLASS_MARK) item.advance = 0;
+            }
         }
     }
     _gpos.finish(buffer, order.backward);

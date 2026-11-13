@@ -47,6 +47,7 @@ pub const Source = struct {
             .advanceFn = advanceOf,
             .kerningFn = kerningOf,
             .glyphFn = glyphOf,
+            .boxFn = boxOf,
             .variantFn = variantOf,
             .emFn = emOf,
             .deltaFn = deltaOf,
@@ -90,6 +91,15 @@ fn kerningOf(context: *anyopaque, left: u32, right: u32) i32 {
 fn glyphOf(context: *anyopaque, char: u32) u32 {
     const source: *Source = @ptrCast(@alignCast(context));
     return source.sb.truetype_base.GlyphIndex(source.outline, char);
+}
+
+fn boxOf(context: *anyopaque, glyph: u32, box: *_shape.Box) bool {
+    const source: *Source = @ptrCast(@alignCast(context));
+    var metrics: truetype.GlyphMetrics = .{};
+    if (!source.sb.truetype_base.GlyphMetrics(source.outline, glyph, &metrics)) return false;
+    if (metrics.x_min == metrics.x_max and metrics.y_min == metrics.y_max) return false;
+    box.* = .{ .x_min = metrics.x_min, .y_min = metrics.y_min, .x_max = metrics.x_max, .y_max = metrics.y_max };
+    return true;
 }
 
 fn variantOf(context: *anyopaque, char: u32, selector: u32) u32 {

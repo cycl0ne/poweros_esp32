@@ -257,6 +257,42 @@ test "a mark's advance is 0, and without GPOS it moves back by it" {
     try run.expectOffsets(&.{ .{ 0, 0 }, .{ 0, 0 }, .{ 0, 0 } });
 }
 
+test "without GPOS a mark is set on its letter by the two boxes" {
+    // An em of 1600: a sixteenth is 100. The font lacks the letters with
+    // marks, so the marks stay glyphs of their own.
+    const lacking = [_][2]u32{ .{ 0xE9, 0 }, .{ 0xEA, 0 }, .{ 0x1EB9, 0 }, .{ 0x1EBF, 0 }, .{ 0x1EC7, 0 } };
+    const options: harness.TextOptions = .{
+        .em = 1600,
+        .advances = &.{ .{ 0x301, 200 }, .{ 0x302, 200 }, .{ 0x323, 200 } },
+        .glyphs = &lacking,
+        .boxes = &.{
+            // The letter: 100 to 700 across, the baseline to 500.
+            .{ 'e', 100, 0, 700, 500 },
+            // An acute and a circumflex drawn 550 to 700 up, 200 wide;
+            // a dot below drawn 50 to 150 under the line.
+            .{ 0x301, 20, 550, 220, 700 },
+            .{ 0x302, 0, 550, 200, 700 },
+            .{ 0x323, 40, -150, 140, -50 },
+        },
+    };
+    // Above: over the box's middle (400, the mark's own middle 120),
+    // back by the letter's advance, and up until 100 clear of the top.
+    var run = shapeText(.{}, "e\u{301}x", options);
+    try expectShaped(&run, &.{ 'e', 0x301, 'x' }, &.{ 0, 1, 3 });
+    try run.expectAdvances(&.{ 1000, 0, 1000 });
+    try run.expectOffsets(&.{ .{ 0, 0 }, .{ 280 - 1000, 50 }, .{ 0, 0 } });
+    // A second one above stands on the first; one below hangs clear of
+    // the letter's foot.
+    run = shapeText(.{}, "e\u{302}\u{301}", options);
+    try run.expectOffsets(&.{ .{ 0, 0 }, .{ 300 - 1000, 50 }, .{ 280 - 1000, 300 } });
+    run = shapeText(.{}, "e\u{323}", options);
+    try run.expectOffsets(&.{ .{ 0, 0 }, .{ 310 - 1000, -50 } });
+    // A mark with no box, or on a glyph with none, moves back by its
+    // advance as before.
+    run = shapeText(.{}, "x\u{301}", options);
+    try run.expectOffsets(&.{ .{ 0, 0 }, .{ -200, 0 } });
+}
+
 test "what is a mark is GDEF's to say where it sorts the glyphs" {
     const options: harness.TextOptions = .{ .advances = &.{.{ 0x301, 200 }}, .glyphs = &.{.{ 0xE9, 0 }} };
     // The accent is of no kind, the "x" a mark.

@@ -84,6 +84,10 @@ pub const Item = struct {
     /// The width a space drawn with the font's space glyph gets
     /// (`_normal.zig`); 0 for every other glyph.
     space: u8 = 0,
+    /// A mark's combining class, as Unicode gives it to the character
+    /// it was made of: where it goes on its letter in a font that does
+    /// not say (`_shape.zig`); 0 for every other glyph.
+    combining: u8 = 0,
     /// The syllable it is in, in a script shaped by syllables: the
     /// syllable's number in the upper four bits, its kind in the lower
     /// (`_syllable.zig`); 0 in any other script.
