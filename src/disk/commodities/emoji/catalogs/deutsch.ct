@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (13.11.2026)
+## language deutsch
+## codeset 106
+; Emoji's strings in German.
+MSG_SEARCH
+Suche
+MSG_USED
+Zuletzt benutzt
+MSG_NONE_USED
+Noch keine benutzt
+MSG_NOT_FOUND
+Keine gefunden
+MSG_TONE_NONE
+Ohne Hautton
+MSG_TONE_LIGHT
+Hell
+MSG_TONE_MEDIUM_LIGHT
+Mittelhell
+MSG_TONE_MEDIUM
+Mittel
+MSG_TONE_MEDIUM_DARK
+Mitteldunkel
+MSG_TONE_DARK
+Dunkel
+MSG_GROUP_SMILEYS
+Smileys & Gefühle
+MSG_GROUP_PEOPLE
+Menschen & Körper
+MSG_GROUP_ANIMALS
+Tiere & Natur
+MSG_GROUP_FOOD
+Essen & Trinken
+MSG_GROUP_TRAVEL
+Reisen & Orte
+MSG_GROUP_ACTIVITIES
+Aktivitäten
+MSG_GROUP_OBJECTS
+Gegenstände
+MSG_GROUP_SYMBOLS
+Symbole
+MSG_GROUP_FLAGS
+Flaggen

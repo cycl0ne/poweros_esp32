@@ -39,6 +39,7 @@ pub const catalogs = [_]Catalog{
     .{ .disk = "locale/Catalogs/deutsch/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/deutsch.ct", .name = "programs/Player.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/deutsch.ct", .name = "programs/Movie.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/deutsch.ct", .name = "System/Clock.catalog" },
+    .{ .disk = "locale/Catalogs/deutsch/Commodities/Emoji.catalog", .descriptor = "commodities/emoji/emoji.cd", .translation = "commodities/emoji/catalogs/deutsch.ct", .name = "Commodities/Emoji.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/deutsch.ct", .name = "sys/anvil.catalog" },
     .{ .disk = "locale/Catalogs/deutsch/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/deutsch.ct", .name = "sys/http.catalog" },
     .{ .disk = "locale/Catalogs/hindi/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/hindi.ct", .name = "c/test/locale.catalog", .wide = true },
@@ -189,7 +190,7 @@ const window_programs = [_]Program{
     .{ .disk = "Commodities/AutoPoint", .source = "commodities/autopoint/autopoint.zig", .name = "autopoint", .imports = &.{"commodity"} },
     .{ .disk = "Commodities/ClickToFront", .source = "commodities/clicktofront/clicktofront.zig", .name = "clicktofront", .imports = &.{"commodity"} },
     .{ .disk = "Commodities/Blanker", .source = "commodities/blanker/blanker.zig", .name = "blanker", .imports = &.{"commodity"} },
-    .{ .disk = "Commodities/Emoji", .source = "commodities/emoji/emoji.zig", .name = "emoji", .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/Emoji", .source = "commodities/emoji/emoji.zig", .name = "emoji", .imports = &.{"commodity"}, .strings = "commodities/emoji/emoji.cd" },
     .{ .disk = "Commodities/FKey", .source = "commodities/fkey/fkey.zig", .name = "fkey", .imports = &.{"commodity"} },
 };
 

@@ -192,6 +192,7 @@ const image_dirs = [_][]const u8{
     "locale/Catalogs/deutsch/c/test",
     "locale/Catalogs/deutsch/programs",
     "locale/Catalogs/deutsch/System",
+    "locale/Catalogs/deutsch/Commodities",
     "locale/Catalogs/hindi",
     "locale/Catalogs/hindi/sys",
     "locale/Catalogs/hindi/c",

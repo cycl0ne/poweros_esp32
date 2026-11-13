@@ -76,6 +76,13 @@ The close gadget only hides the window: Emoji runs on, and its hotkey
 or starting it again bring the window back. Remove in the controller
 (SYS:Commodities/Exchange) or Ctrl-C in its shell end it.
 
+## Its words
+
+The window's words - Search, the tones, the groups' names, what the
+line under the grid says - come from `LOCALE:Catalogs/<language>/Commodities/Emoji.catalog`
+in the first of the locale's languages that has one, and are English
+without. The emoji's names have files of their own (above).
+
 ## What it looks like
 
 The emoji are drawn as text in the screen's font, opened larger. What

@@ -1,0 +1,51 @@
+; Emoji's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/Commodities/Emoji.catalog
+; stands in for them.
+#version 1
+;
+; The window.
+MSG_SEARCH (1//)
+Search
+;
+; The line under the grid, when it names no emoji.
+MSG_USED (//)
+Used last
+MSG_NONE_USED (//)
+None used yet
+MSG_NOT_FOUND (//)
+None found
+;
+; The skin tones, in the chooser's order.
+MSG_TONE_NONE (//)
+No tone
+MSG_TONE_LIGHT (//)
+Light
+MSG_TONE_MEDIUM_LIGHT (//)
+Medium-light
+MSG_TONE_MEDIUM (//)
+Medium
+MSG_TONE_MEDIUM_DARK (//)
+Medium-dark
+MSG_TONE_DARK (//)
+Dark
+;
+; The groups, as LOCALE:Emoji/emoji.list names them: a group of another
+; name is shown as the list has it.
+MSG_GROUP_SMILEYS (//)
+Smileys & Emotion
+MSG_GROUP_PEOPLE (//)
+People & Body
+MSG_GROUP_ANIMALS (//)
+Animals & Nature
+MSG_GROUP_FOOD (//)
+Food & Drink
+MSG_GROUP_TRAVEL (//)
+Travel & Places
+MSG_GROUP_ACTIVITIES (//)
+Activities
+MSG_GROUP_OBJECTS (//)
+Objects
+MSG_GROUP_SYMBOLS (//)
+Symbols
+MSG_GROUP_FLAGS (//)
+Flags

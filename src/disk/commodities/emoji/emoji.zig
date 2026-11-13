@@ -61,6 +61,8 @@ const ie = sdk.devices.inputevent;
 const prefs = sdk.prefs;
 const frame = @import("commodity");
 const picker = @import("picker.zig");
+const strings = @import("strings");
+const Text = sdk.locale.Strings(strings);
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -74,8 +76,8 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Emoji";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (12.11.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (13.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -89,10 +91,6 @@ const MSG_NOLIBRARY = "No %s\n";
 const MSG_NOMEMORY = "No memory\n";
 const MSG_BADPOPKEY = "Not a hotkey: %s\n";
 const MSG_NOLIST = "No emoji in %s\n";
-
-const TEXT_USED = "Used last";
-const TEXT_NONE_USED = "None used yet";
-const TEXT_NOT_FOUND = "None found";
 
 /// The language whose names fill in what the locale's leaves.
 const ENGLISH = "english";
@@ -122,13 +120,30 @@ const most_chars = 16;
 /// The tab of the ones used last: the clock at three.
 const used_label = "\u{1F552}";
 
-const tone_labels = [_:null]?[*:0]const u8{
-    "No tone",
-    "Light",
-    "Medium-light",
-    "Medium",
-    "Medium-dark",
-    "Dark",
+/// The groups the catalog has a name for, by what the list calls them.
+const group_texts = [_]strings.Id{
+    .MSG_GROUP_SMILEYS, .MSG_GROUP_PEOPLE,  .MSG_GROUP_ANIMALS,
+    .MSG_GROUP_FOOD,    .MSG_GROUP_TRAVEL,  .MSG_GROUP_ACTIVITIES,
+    .MSG_GROUP_OBJECTS, .MSG_GROUP_SYMBOLS, .MSG_GROUP_FLAGS,
+};
+
+/// A group's name in the user's language: the catalog's for a group the
+/// list names as the catalog's English does, else the list's own.
+fn groupName(app: *const App, listed: []const u8) []const u8 {
+    for (group_texts) |id| {
+        if (same(listed, span(strings.builtin(id)))) return span(app.text.get(id));
+    }
+    return listed;
+}
+
+/// The chooser's skin tones, in its order: none, then the five.
+const tone_texts = [_]strings.Id{
+    .MSG_TONE_NONE,
+    .MSG_TONE_LIGHT,
+    .MSG_TONE_MEDIUM_LIGHT,
+    .MSG_TONE_MEDIUM,
+    .MSG_TONE_MEDIUM_DARK,
+    .MSG_TONE_DARK,
 };
 
 /// The window's gadgets and what it stands on, while it is shown.
@@ -171,6 +186,11 @@ const App = struct {
     /// The ones used last or the tone are not what the file says.
     used_changed: bool,
     /// The tab shown: 0 the ones used last, then the groups.
+    /// Its words, in the language the user prefers; the ones built in
+    /// without locale.library or a catalog.
+    text: Text,
+    /// The tone chooser's labels, from `text`.
+    tone_labels: [tone_texts.len:null]?[*:0]const u8,
     tab: u32,
     query: picker.Query,
     /// The entries the grid shows, in order.
@@ -273,6 +293,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     app.shown = null;
     app.place = null;
     app.labels = @splat(null);
+    app.text = Text.open(sys);
+    defer app.text.close();
+    app.tone_labels = @splat(null);
+    for (tone_texts, 0..) |id, which| app.tone_labels[which] = app.text.get(id);
     const cb = app.cb;
 
     if (!app.book.read(list) or app.book.count == 0) {
@@ -407,14 +431,14 @@ fn makeLabels(app: *App) void {
 fn refill(app: *App) void {
     if (!app.query.empty()) {
         app.view_count = app.book.search(app.ub, &app.query, app.view);
-        say(app, if (app.view_count != 0) app.book.entries[app.view[0]].name else TEXT_NOT_FOUND);
+        say(app, if (app.view_count != 0) app.book.entries[app.view[0]].name else span(app.text.get(.MSG_NOT_FOUND)));
     } else if (app.tab == 0) {
         app.view_count = app.used.count;
         @memcpy(app.view[0..app.used.count], app.used.items[0..app.used.count]);
-        say(app, if (app.view_count != 0) TEXT_USED else TEXT_NONE_USED);
+        say(app, span(app.text.get(if (app.view_count != 0) .MSG_USED else .MSG_NONE_USED)));
     } else {
         app.view_count = app.book.group(app.tab - 1, app.view);
-        say(app, app.book.groups[app.tab - 1].name);
+        say(app, groupName(app, app.book.groups[app.tab - 1].name));
     }
     app.top = 0;
     app.pressed = null;
@@ -693,7 +717,7 @@ fn build(app: *App, screen: *intuition.Screen) ?Shown {
     const tone = ib.NewObjectTagList(null, cy.CYCLE_CLASS, &[_]TagItem{
         pair(gc.GA_ID, ID_TONE),
         pair(gc.GA_RelVerify, 1),
-        pair(cy.CYCLE_Labels, @intFromPtr(&tone_labels)),
+        pair(cy.CYCLE_Labels, @intFromPtr(&app.tone_labels)),
         pair(cy.CYCLE_Active, if (app.used.tone) |which| which + 1 else 0),
         .{},
     });
@@ -719,7 +743,7 @@ fn build(app: *App, screen: *intuition.Screen) ?Shown {
         pair(lg.LAYOUTA_Margin, 6),
         pair(lg.LAYOUTA_Spacing, 4),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(search)),
-        pair(lg.CHILDA_Label, @intFromPtr("Search")),
+        pair(lg.CHILDA_Label, @intFromPtr(app.text.get(.MSG_SEARCH))),
         pair(lg.CHILDA_WeightHeight, 0),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(tabs)),
         pair(lg.CHILDA_WeightHeight, 0),
