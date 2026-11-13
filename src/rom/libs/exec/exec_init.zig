@@ -119,11 +119,11 @@ pub const LIBRARY_VERSION = 1;
 /// machine's ready and waiting lists answer no list now. So a signal to a
 /// task waits only for the core that owns it, and a core choosing what to
 /// run next waits for no handler and for no other core's signal.
-/// 36: a `%s`'s width and limit, and a `%c`'s width, count the cells the
+/// 37: a `%s`'s width and limit, and a `%c`'s width, count the cells the
 /// text takes on a console, so a column lines up after a wide character
 /// or a marked one.
-pub const LIBRARY_REVISION = 36;
-const BUILD_DATE = "11.11.2026";
+pub const LIBRARY_REVISION = 37;
+const BUILD_DATE = "13.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -263,6 +263,41 @@ const exec_task_stack = 16 * 1024;
 pub fn execTask(_: *exec.interface.ExecBase) callconv(.c) void {
     exec.klog(sdk.exec.LOG_DEBUG, "a worker on each core\n", .{});
     _workers.setUp(exec.SysBase);
+    if (heldOnConsole(exec.SysBase)) {
+        exec.kprintf("Ctrl-D on the console: the startup is held\n", .{});
+        _ = exec.SysBase.iface().SetSignal(sdk.exec.SIGBREAKF_CTRL_D, sdk.exec.SIGBREAKF_CTRL_D);
+    }
     exec.klog(sdk.exec.LOG_DEBUG, "cold start\n", .{});
     _ = exec.SysBase.iface().InitCode(sdk.exec.RTF_COLDSTART, 0);
 }
+
+/// Whether a Ctrl-D, or a Ctrl-C, waits on the console as the cold start
+/// begins: then this task's own Ctrl-D is raised, and dos.library's init,
+/// the last of the COLDSTART residents and run here, starts no shell and
+/// no S:Startup-Sequence (its `startupHeld`). What is waiting is the raw
+/// port's FIFO, since nothing else reads the port yet: serial.device,
+/// whose init empties it and whose input is dropped until a unit is
+/// opened, is one of the residents to come. So the other end sends the
+/// key over and over while the machine is switched on, and some of it is
+/// there when this asks (tools/cm5-hold.py on the bench).
+///
+/// It is the way back where the disk's programs do not belong to the
+/// kernel that started - an update's system half written, the start on
+/// its new kernel never come - and the first program S:Startup-Sequence
+/// runs stops the machine at every start: held, the kernel shell's
+/// `reboot tryboot` starts the kernel the disk belongs to.
+fn heldOnConsole(base: *ExecBase) bool {
+    var looked: u32 = 0;
+    while (looked < held_looks) : (looked += 1) {
+        const character = exec.RawMayGetChar(base);
+        if (character < 0) return false;
+        if (character == ctrl_c or character == ctrl_d) return true;
+    }
+    return false;
+}
+
+/// The keys that hold the start, and how many waiting characters are
+/// looked at for one: a FIFO's worth, twice over.
+const ctrl_c: i32 = 0x03;
+const ctrl_d: i32 = 0x04;
+const held_looks: u32 = 64;

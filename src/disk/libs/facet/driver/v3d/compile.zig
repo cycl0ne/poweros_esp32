@@ -411,6 +411,12 @@ pub const Sampler = struct {
     compared: bool = false,
     /// What its image's coordinate names (since 1.179).
     dim: SamplerDim = .flat,
+    /// An image of MS 1, GLSL_SAMPLER_DIM_MS (spirv_to_nir.c:2431): read
+    /// only by a fetch of one of its samples, which v3d_nir_lower_txf_ms
+    /// makes a fetch of a texel of the pixel's quad, its sampler_dim then
+    /// 2D (v3d_nir_lower_txf_ms.c:46-59). `dim` is that one: flat, or
+    /// layers for an array of them (since 1.209).
+    multisampled: bool = false,
 };
 
 /// What a sampled image's coordinate names, as a nir_tex_instr's
@@ -541,14 +547,20 @@ pub const profile: spirv.Profile = .{
         // them for a device of no BFE, BFM or BFI (since 1.202).
         .bit_field_insert,               .bit_field_s_extract,
         .bit_field_u_extract,          .bit_reverse,                    .bit_count,
+        // A compute program's workgroup waiting for all its invocations
+        // (since 1.203).
+                             .control_barrier,
     },
-    .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform },
+    // Workgroup: a compute program's shared memory (since 1.203).
+    .storage_classes = &.{ .input, .output, .function, .uniform_constant, .push_constant, .uniform, .workgroup },
     .image_dims = &.{ .dim_2d, .dim_3d, .cube },
     // A bias, a level and a constant texel offset, TMUB's and P2's
     // (handle_tex_src, v3d_tex.c:129-170; since 1.180); and a gradient,
     // which nir_lower_tex's lower_txd makes a level (vir.c:802; since
     // 1.183). An offset the program computes wants ImageGatherExtended.
-    .image_operands = &.{ .bias, .lod, .grad, .const_offset },
+    // And the sample a fetch of an image of four reads, NIR's ms_index
+    // (spirv_to_nir.c:3475-3481; since 1.209).
+    .image_operands = &.{ .bias, .lod, .grad, .const_offset, .sample },
     // The vertex stage since 1.163 (docs/facet-vulkan10.md item 60).
     .stages = &.{ .fragment, .vertex, .gl_compute },
     .most_ids = most_ids,
@@ -667,6 +679,32 @@ pub const Tag = enum {
     /// before anything after it is (nir_to_vir.c:3857-3861; since 1.169).
     /// It makes no value.
     barrier,
+    /// NIR's load_shared: floats of the workgroup's shared memory at `at`,
+    /// the byte offset nir_lower_explicit_io gives it from the place
+    /// lower_compute laid its variable out at (`sharedLayout`;
+    /// v3dv_pipeline.c:3285-3291), or at the offset the step `a` computes
+    /// where it is no `none`. v3d reads it through the TMU from
+    /// cs_shared_offset, which the program works out at its start
+    /// (ntq_emit_tmu_general, nir_to_vir.c:578-588, :3665-3668; :4967-4992).
+    /// Two loads of one place are two steps: load_shared is no CAN_REORDER
+    /// (nir_intrinsics.py:1399), so nir_opt_cse leaves it be (since 1.203).
+    shared,
+    /// NIR's store_shared: the floats of `a` written at `at`, or at the
+    /// offset `from[0]` computes where it is no `none`, as `shared` reads
+    /// them (:3659-3663). It makes no value.
+    shared_store,
+    /// NIR's shared_atomic and shared_atomic_swap: `atomic` on the word at
+    /// `at`, or at `from[0]`, its operands `a` and `from[1]` as an
+    /// `ssbo_atomic`'s (:3657-3663). Its value is the word as it was.
+    shared_atomic,
+    /// NIR's barrier of a workgroup, which vtn makes of OpControlBarrier
+    /// (vtn_emit_scoped_control_barrier, spirv_to_nir.c:2813-2845): what
+    /// the TMU holds flushed, then a TSY op that blocks the invocations of
+    /// the workgroup - of its supergroup, in fact - at the next thread
+    /// switch until the last has come to it (emit_compute_barrier,
+    /// nir_to_vir.c:3563-3577, :3857-3870; since 1.203). It makes no
+    /// value.
+    control_barrier,
     /// 32-bit integers, or floats made integers or integers floats: NIR's
     /// integer ALU, `at` an `Integer`, each word of `a` (and `b`) one VIR
     /// operation as ntq_emit_alu emits it (nir_to_vir.c:1421-1806; since
@@ -917,18 +955,43 @@ pub const Lookup = enum(u8) {
     /// integer coordinate and level, and no sampler state
     /// (nir_tex_instr_need_sampler, nir.c; since 1.182).
     fetch,
+    /// A sample of an image of four, NIR's txf_ms, which
+    /// v3d_nir_lower_txf_ms makes a txf of the texel the sample is in the
+    /// pixel's quad (v3d_nir_lower_txf_ms.c:46-59) and of no lod source:
+    /// vtn gives a txf_ms none (spirv_to_nir.c:3433-3438), and
+    /// nir_lower_tex, which gives a txf its lod of 0 (nir_lower_tex.c:
+    /// 1849-1858), runs before it (vir.c:1987, :2004). So no TMUB is
+    /// written (handle_tex_src, v3d_tex.c:137-153; since 1.209).
+    fetch_sample,
 
     /// nir_tex_instr_has_implicit_derivative: whether the quad's helper
     /// pixels are needed for the coordinate.
     pub fn derived(lookup: Lookup) bool {
         return lookup == .implicit or lookup == .bias;
     }
+
+    /// Whether `from[0]` is a bias or a level, a TMUB write (since 1.209,
+    /// when a fetch came to have none).
+    pub fn leveled(lookup: Lookup) bool {
+        return lookup == .bias or lookup == .lod or lookup == .fetch;
+    }
+
+    /// A txf or a txf_ms: no sampler state (nir_tex_instr_need_sampler),
+    /// and the lookup started at TMUSF (v3d_tex.c:375-377).
+    pub fn fetches(lookup: Lookup) bool {
+        return lookup == .fetch or lookup == .fetch_sample;
+    }
 };
 
 /// Where a step is: in no arm of a kept selection, 0, or in one of its
-/// arms, the true one's odd and the false one's the even after it, the
-/// first kept selection's 1 and 2 (since 1.171).
+/// arms, the true one's odd and the false one's the even after it (since
+/// 1.171). A selection's arms are regions in the region it is in, which
+/// may be an arm of another (`Work.region_parent`; since 1.207).
 pub const Region = u8;
+
+/// The most regions a program has at once: two for each selection kept
+/// and each one still being read, and none.
+pub const most_regions = 2 * (most_kept + most_nesting) + 1;
 
 /// A selection kept a branch, as `read` leaves it for the list to lay
 /// out (since 1.171): the steps of its arms, the true arm's first where
@@ -1184,6 +1247,13 @@ pub const Word = union(enum) {
     /// since 1.177).
     spill_offset,
     spill_size_per_thread,
+    /// Where the dispatch's shared memory is: QUNIFORM_SHARED_OFFSET,
+    /// which v3dv writes as the address of the buffer it made the job of
+    /// the program's shared_size times the dispatch's workgroups
+    /// (v3dv_uniforms.c:658-662; cmd_buffer_create_csd_job,
+    /// v3dv_cmd_buffer.c:4434-4445). The program adds its workgroup's
+    /// place in it (nir_to_vir.c:4967-4992; since 1.203).
+    shared_offset,
     /// A size of the view a unit samples, or its levels: Mesa's
     /// QUNIFORM_TEXTURE_WIDTH, _HEIGHT, _DEPTH, _ARRAY_SIZE and _LEVELS,
     /// which v3dv writes from the view's extent, layers and levels
@@ -1251,8 +1321,7 @@ const builtin_count = @typeInfo(Builtin).@"enum".fields.len;
 /// v3d_compute_prog_data, v3d_compiler.h:1069-1076): its workgroup's size,
 /// which the dispatch's configuration is made of, and whether workgroups
 /// may share a supergroup, which a program of no subgroup operation may
-/// (v3d_nir_lower_subgroup_intrinsics, vir.c:1842, :1855). No shared
-/// memory: a Workgroup variable is refused (since 1.194).
+/// (v3d_nir_lower_subgroup_intrinsics, vir.c:1842, :1855).
 pub const ComputeProgram = struct {
     local_size: [3]u16 = .{ 1, 1, 1 },
     can_use_supergroups: bool = true,
@@ -1260,6 +1329,14 @@ pub const ComputeProgram = struct {
     /// prog_data's single_seg, !c->last_thrsw (vir.c:1041), CFG5's
     /// SINGLE_SEG (since 1.195).
     single_seg: bool = false,
+    /// The bytes of shared memory a workgroup has, prog_data's
+    /// shared_size (vir.c:1027), which the dispatch makes a buffer of for
+    /// each of its workgroups; and whether it waits at a barrier,
+    /// has_control_barrier (:1049), which holds a supergroup to half the
+    /// QPUs' threads (v3d_csd_choose_workgroups_per_supergroup,
+    /// v3d_util.c:56-67; since 1.203).
+    shared_size: u32 = 0,
+    has_control_barrier: bool = false,
 };
 
 /// Which of the VPM's three values a vertex program reads, each a row
@@ -1433,6 +1510,9 @@ pub const Work = struct {
     /// An image type's, and a sampled image type's, `SamplerDim` (since
     /// 1.179).
     sampler_dim: [most_ids]SamplerDim = @splat(.flat),
+    /// An image type of MS 1, and a sampled image type of one (since
+    /// 1.209).
+    multisampled: std.StaticBitSet(most_ids) = .initEmpty(),
     /// Which step a value id answers.
     step_of: [most_ids]u16 = @splat(none),
     /// `member_pointer`: which float of the member it names, or `whole`
@@ -1469,6 +1549,18 @@ pub const Work = struct {
     /// is not 0, the variables vtn keeps being those the body names
     /// (spirv_to_nir.c:7533-7551; since 1.168).
     uses_ssbo: bool = false,
+    /// The bytes of shared memory a workgroup has: info.shared_size, the
+    /// Workgroup variables laid out one after another, each at its
+    /// alignment (lower_vars_to_explicit, nir_lower_explicit_io.c:
+    /// 2001-2070; since 1.203).
+    shared_size: u32 = 0,
+    /// The ids an instruction names as a pointer (`namedPointers`): a
+    /// Workgroup variable none names is not laid out (since 1.203).
+    named: std.StaticBitSet(most_ids) = .initEmpty(),
+    /// An OpControlBarrier made a `control_barrier`:
+    /// info.uses_control_barrier (emit_compute_barrier, nir_to_vir.c:3570;
+    /// since 1.203).
+    uses_control_barrier: bool = false,
     /// `array`: how many elements, and the ArrayStride they are apart,
     /// which an OpDecorate may give before the type is declared
     /// (since 1.161).
@@ -1628,17 +1720,29 @@ pub const Work = struct {
     vattr_sizes: [most_attributes]u8 = @splat(0),
     attribute_location: [most_attributes]u8 = @splat(0),
     attribute_count: u32 = 0,
-    /// The varyings stored, in the order of their OpStores, which
-    /// nir_move_output_stores_to_end keeps at the end of the program
-    /// (v3d_nir_lower_vs_early, vir.c:1121): each the value's step and
-    /// the variable it went into.
+    /// The varyings stored, in the order nir_move_output_stores_to_end
+    /// puts them at the end of the program, of their locations
+    /// (v3d_nir_lower_vs_early, vir.c:1124; since 1.206): each the value's
+    /// step, the variable it went into, and a bit for each float stored.
     varying_values: [most_varyings]u16 = undefined,
     varying_into: [most_varyings]u16 = undefined,
+    varying_mask: [most_varyings]u8 = undefined,
     varying_count: u32 = 0,
     /// The point size stored, nir_lower_point_size's fmax of it and 1.0
-    /// (since 1.193), and how many varyings were stored before it.
+    /// (since 1.193).
     point_size: u16 = none,
-    point_size_order: u32 = 0,
+    /// The outputs as nir_lower_io_vars_to_temporaries makes them,
+    /// variables of the function's own (v3dv_pipeline.c:399-400): the
+    /// variable of each, gl_PerVertex's position and point size apart,
+    /// in the order they are declared (since 1.206).
+    output_vars: [most_locals]u16 = undefined,
+    output_var_count: u32 = 0,
+    /// How many of the variables are outputs', and the value last stored
+    /// into each output's whole.
+    output_local_count: u32 = 0,
+    output_whole: [most_locals]u16 = @splat(none),
+    position_local: u16 = none,
+    point_size_local: u16 = none,
 
     steps: [most_steps]Step = undefined,
     step_count: u32 = 0,
@@ -1728,13 +1832,17 @@ pub const Work = struct {
     skip_helpers: [most_steps]bool = @splat(false),
 
     /// Each step's region (`Region`), the one `read` is in, and the
-    /// selections it kept branches (since 1.171).
+    /// selections it kept branches (since 1.171). Each region's parent,
+    /// the region its selection is in, and how many there are; those of a
+    /// selection flattened last are given back (since 1.207).
     region: [most_steps]Region = @splat(0),
     current_region: Region = 0,
+    region_parent: [most_regions]Region = @splat(0),
+    region_count: Region = 0,
     kept: [most_kept]Kept = undefined,
     kept_count: u8 = 0,
 
-    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, position_pointer, point_size_pointer, system_part, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
+    pub const Thing = enum(u8) { none, other, float, vector, image, sampled_image, pointer, constant, variable, function, value, int, int_constant, structure, member_pointer, boolean, input_part, local_part, array, matrix, matrix_value, constant_matrix, system_part, plain_struct, local_aggregate, aggregate_value, constant_aggregate, scratch_pointer, local_tree };
 
     /// `chain_part` of a pointer to a whole member.
     pub const whole: u8 = 0xFF;
@@ -1765,7 +1873,7 @@ pub fn compile(work: *Work, words: []const u32) Error!Code {
     // reads it once.
     if (work.sample_count > 1) return Error.Samplers;
     for (work.program()) |each| switch (each.tag) {
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
         .discard => return Error.Discards,
         .sample_compared => return Error.Samplers,
         // Every one reads a 2D texture at s and t (since 1.179), at the
@@ -1955,6 +2063,8 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
             // The spill buffer's (since 1.177).
             .spill_offset => .spill_offset,
             .spill_size_per_thread => .spill_size_per_thread,
+            // The dispatch's shared memory (since 1.203).
+            .shared_offset => .shared_offset,
             // A size of a unit's view, or its levels (since 1.181).
             .texture_width => .{ .texture_size = .{ .unit = try units.at(data), .field = .width } },
             .texture_height => .{ .texture_size = .{ .unit = try units.at(data), .field = .height } },
@@ -1984,7 +2094,12 @@ fn compileRead(work: *Work, allocator: std.mem.Allocator, compiler: *const vir.C
         .flat_shade_flags = program.flat_shade_flags,
         .noperspective_flags = program.noperspective_flags,
         .vertex = if (work.stage == .vertex) vertexProgram(work, program.single_seg) else .{},
-        .compute = if (work.stage == .gl_compute) .{ .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) }, .single_seg = program.single_seg } else .{},
+        .compute = if (work.stage == .gl_compute) .{
+            .local_size = .{ @intCast(work.local_size[0]), @intCast(work.local_size[1]), @intCast(work.local_size[2]) },
+            .single_seg = program.single_seg,
+            .shared_size = work.shared_size,
+            .has_control_barrier = work.uses_control_barrier,
+        } else .{},
     };
 }
 
@@ -2031,7 +2146,7 @@ const Units = struct {
         for (work.program()) |each| {
             if (each.tag != .sample and each.tag != .sample_compared) continue;
             // A fetch reads no sampler state: it is the queries' below.
-            if (each.lookup == .fetch) continue;
+            if (each.lookup.fetches()) continue;
             const compared = each.tag == .sample_compared;
             const declared = work.samplers[each.at];
             const unit: u8 = units.find(declared) orelse made: {
@@ -2050,7 +2165,7 @@ const Units = struct {
         // comparison is in (since 1.181); and so does a fetch, whose P1
         // is a constant (v3d_tex.c:350-354; since 1.182).
         for (work.program()) |each| {
-            const fetches = each.tag == .sample and each.lookup == .fetch;
+            const fetches = each.tag == .sample and each.lookup.fetches();
             if (each.tag != .texture_size and each.tag != .texture_levels and !fetches) continue;
             if (units.of_declared[each.at] != no_unit) continue;
             const declared = work.samplers[each.at];
@@ -2122,6 +2237,7 @@ fn readStage(work: *Work, words: []const u32, stage: spirv.ExecutionModel, key: 
 /// decorate, and every type, constant and variable an instruction names is
 /// declared before it.
 fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
+    try namedPointers(work, words);
     var reader = spirv.Reader.of(words);
     var in_body = false;
     var blocks: u32 = 0;
@@ -2191,10 +2307,21 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             // what is not flattened (since 1.171); the arms of one
             // flattened are in the block it is in.
             const kept = inner.kept or (!inner.collapsed and armCost(work, inner.arms_from, inner.arms_to) > limitOf(inner.control, peephole_limit));
-            if (kept)
-                try keepSelection(work, &inner, depth)
-            else if (depth == 1)
-                @memset(work.region[inner.arms_from..inner.arms_to], 0);
+            if (kept) {
+                try keepSelection(work, &inner);
+            } else {
+                // Its arms are the block it is in, and their regions are
+                // given back where none was taken since. A selection kept
+                // in them, which nir_opt_collapse_if moved out (since
+                // 1.208), is in that block too, its arms in their own
+                // regions still: those name the true arm's as the region
+                // they are in, which names the one this selection is in,
+                // so `dominates` follows them out there.
+                for (work.region[inner.arms_from..inner.arms_to]) |*region| {
+                    if (region.* == inner.region or region.* == inner.region + 1) region.* = inner.parent_region;
+                }
+                if (work.region_count == inner.region + 1) work.region_count = inner.region - 1;
+            }
             // To nir_opt_dead_write_vars the merge of one kept is a block
             // of its own; one flattened is in the block before it, which
             // its arms are in too, and which goes on (since 1.177).
@@ -2212,6 +2339,10 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
             if (depth > 0) {
                 const outer = &nest[depth - 1];
                 outer.lone = inner.no == inner.merge or inner.quiet_no;
+                // An arm that holds a selection kept holds control flow,
+                // which nir_opt_peephole_select flattens none of: the
+                // selection it is in is kept too (:538-541; since 1.207).
+                if (kept) outer.kept = true;
                 if (inner.iand != none) outer.held = .{
                     .iand = inner.iand,
                     .condition = inner.condition,
@@ -2221,6 +2352,8 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     .control = inner.control,
                     .emptiness = if (inner.killed or !inner.quiet_yes) .kept else if (inner.constant_yes) .unsure else .empty,
                     .killed = inner.killed,
+                    .kept = kept,
+                    .entry = if (kept) work.kept_count - 1 else 0,
                 };
             }
         }
@@ -2584,16 +2717,22 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 // arrayed 2D one has its layer in TMUI; a cube of an
                 // array needs SampledCubeArray, which `look` refuses, and
                 // a 3D one cannot be arrayed (SPIR-V's OpTypeImage). A
-                // multisampled one is not a texture at all. Depth is
-                // taken whatever it says since 1.143: whether a sample
-                // compares is its opcode's, not the type's, as SPIR-V has
-                // it, and a depth image is read as any texture is.
+                // multisampled one is a 2D one, of layers or not, vtn's
+                // GLSL_SAMPLER_DIM_MS (spirv_to_nir.c:2431; since 1.209).
+                // Depth is taken whatever it says since 1.143: whether a
+                // sample compares is its opcode's, not the type's, as
+                // SPIR-V has it, and a depth image is read as any texture
+                // is.
                 if (operands.len < 8) return Error.Body;
                 const id = try idOf(operands[0]);
                 if (work.thing[try idOf(operands[1])] != .float) return Error.Type;
-                if (operands[3] > 2 or operands[4] > 1 or operands[5] != 0) return Error.Refused;
+                if (operands[3] > 2 or operands[4] > 1 or operands[5] > 1) return Error.Refused;
                 const dim: spirv.Dim = @enumFromInt(operands[2]);
                 const arrayed = operands[4] == 1;
+                if (operands[5] == 1) {
+                    if (dim != .dim_2d) return Error.Refused;
+                    work.multisampled.set(id);
+                }
                 work.sampler_dim[id] = switch (dim) {
                     .dim_2d => if (arrayed) .layers else .flat,
                     .dim_3d => if (arrayed) return Error.Refused else .volume,
@@ -2610,6 +2749,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 work.thing[id] = .sampled_image;
                 work.points[id] = image;
                 work.sampler_dim[id] = work.sampler_dim[image];
+                work.multisampled.setValue(id, work.multisampled.isSet(image));
             },
             .type_pointer => {
                 if (operands.len < 3) return Error.Body;
@@ -2771,8 +2911,44 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.thing[id] = .variable;
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.sampler_of[id] = @intCast(work.sampler_count);
-                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee] };
+                    work.samplers[work.sampler_count] = .{ .set = work.set[id], .binding = work.binding[id], .dim = work.sampler_dim[pointee], .multisampled = work.multisampled.isSet(pointee) };
                     work.sampler_count += 1;
+                    continue;
+                }
+                if (class == .workgroup) {
+                    // A compute program's shared memory (since 1.203):
+                    // a float, an integer, a vector, a matrix, or an array
+                    // or a struct of those, in the layout v3dv's
+                    // shared_type_info gives it (`sharedLayout`), placed
+                    // after the variables before it at its alignment
+                    // (lower_compute, v3dv_pipeline.c:3285-3291;
+                    // lower_vars_to_explicit, nir_lower_explicit_io.c:
+                    // 2042-2065). A pointer to it is a chain's base at its
+                    // place, as a block's member is, and each load, store
+                    // and atomic through one is NIR's load_shared,
+                    // store_shared and shared_atomic. One the body names
+                    // nowhere is not laid out: v3d_optimize_nir's
+                    // nir_remove_dead_variables takes it away first
+                    // (nir_to_vir.c:2253-2257; v3dv_pipeline.c:3407-3409).
+                    if (work.stage != .gl_compute) return Error.Storage;
+                    // No initializer: Vulkan 1.0 has none for Workgroup
+                    // memory, VK_KHR_zero_initialize_workgroup_memory being
+                    // later (nir_zero_initialize_shared_memory, vir.c:
+                    // 817-829).
+                    if (operands.len != 3) return Error.Storage;
+                    const laid = try sharedLayout(work, pointee);
+                    work.thing[id] = .member_pointer;
+                    work.class[id] = @intCast(@intFromEnum(class));
+                    work.points[id] = pointee;
+                    work.chain_base[id] = id;
+                    work.chain_dynamic[id] = none;
+                    work.chain_stride[id] = if (work.thing[pointee] == .matrix) try sharedColumnStride(work, pointee) else none;
+                    work.chain_offset[id] = 0;
+                    if (!work.named.isSet(id)) continue;
+                    const place = std.mem.alignForward(u32, work.shared_size, laid.alignment);
+                    if (place + laid.size > most_shared) return Error.Storage;
+                    work.chain_offset[id] = @intCast(place);
+                    work.shared_size = place + laid.size;
                     continue;
                 }
                 if (class == .function) {
@@ -2879,6 +3055,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     work.class[id] = @intCast(@intFromEnum(class));
                     work.points[id] = @intCast(block - &work.blocks[0]);
                     work.per_vertex = id;
+                    // nir_split_per_member_structs makes each member a
+                    // variable (vk_nir.c:321-325), and
+                    // nir_lower_io_vars_to_temporaries each of those a
+                    // variable of the function's own (since 1.206).
+                    for (block.member_builtin[0..block.member_count]) |builtin| {
+                        if (builtin == @intFromEnum(spirv.BuiltIn.position)) work.position_local = try outputLocal(work, .f32x4);
+                        if (builtin == @intFromEnum(spirv.BuiltIn.point_size)) work.point_size_local = try outputLocal(work, .f32x1);
+                    }
                     continue;
                 }
                 if (class == .input and systemOf(work, id) != null) {
@@ -2922,8 +3106,14 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     // A vertex program's varying: at a location, which
                     // says where the fragment program reads it (since
                     // 1.163).
+                    // A variable of the function's own, which the body may
+                    // store into and load from anywhere, copied out where
+                    // it ends (`copyOutputs`; since 1.206).
                     .output => if (work.stage == .vertex) {
                         if (work.location[id] == none) return Error.Location;
+                        work.points[id] = try outputLocal(work, floats);
+                        work.output_vars[work.output_var_count] = id;
+                        work.output_var_count += 1;
                     } else {
                         // One colour out, at location 0, of four floats:
                         // what the tile buffer takes without a
@@ -2933,6 +3123,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         if (floats != .f32x4) return Error.Type;
                         work.output = id;
                         work.output_count = 1;
+                        work.points[id] = try outputLocal(work, floats);
                     },
                     else => return Error.Storage,
                 }
@@ -2978,7 +3169,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         if (selection.no != selection.merge and !selection.seen_no) return Error.Branches;
                         // The merge block is where the selection was, and
                         // where an arm read alone ends.
-                        if (depth == 1) work.current_region = 0;
+                        work.current_region = selection.parent_region;
                         if (!selection.seen_yes or !selection.seen_no) selection.split = @intCast(work.step_count);
                         // A way in that is no arm leaves the variables
                         // as they were before the branch.
@@ -2995,7 +3186,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // in NIR, whether NIR's block is empty is not known
                         // here, and the shape is refused as before.
                         const no_else = selection.no == selection.merge or selection.quiet_no;
-                        if (selection.collapses and no_else) {
+                        if (selection.collapses and no_else and !selection.kept_first) {
                             if (selection.held.iand == none) return Error.Branches;
                             selection.collapsed = try collapseOf(work, selection, level, reader);
                         }
@@ -3003,10 +3194,20 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // the iand, which only the collapse makes.
                         if (selection.held.killed and !selection.collapsed) return Error.Discards;
                         if (selection.collapsed) {
-                            // The inner selection is on the iand now.
+                            // The inner selection is on the iand now: its
+                            // selects, or where it is kept, its phis and
+                            // its branch (since 1.208). The outer one is
+                            // an empty selection nir_opt_dead_cf takes
+                            // out, or flattens where a phi of it is left:
+                            // it is kept no more.
                             const inner = selection.held;
                             for (work.steps[inner.selects_from..inner.selects_to]) |*each| {
                                 if (each.tag == .select and each.a == inner.condition) each.a = inner.iand;
+                                if (each.tag == .phi and each.from[0] == inner.condition) each.from[0] = inner.iand;
+                            }
+                            if (inner.kept) {
+                                work.steps[work.kept[inner.entry].marks[0]].a = inner.iand;
+                                selection.kept = false;
                             }
                         }
                         selection.arms_to = @intCast(work.step_count);
@@ -3094,7 +3295,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                 if (selection.yes == selection.no) return Error.Branches;
                 // nir_opt_collapse_if's iand of this condition and the one
                 // of the selection it is in, where it builds it: after the
-                // block before this selection (:487-490). Made wherever
+                // block before this selection (:492-496). Made wherever
                 // the two may collapse, and read only where they do; a
                 // selection deeper in is not taken (since 1.159).
                 if (depth == 2) {
@@ -3103,10 +3304,15 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         selection.iand = try put(work, logicOf(.iand, condition, outer.condition));
                 }
                 selection.arms_from = @intCast(work.step_count);
-                // A selection in no other may be kept a branch: its arms
-                // are read into regions of their own until it is known
-                // whether it is (since 1.171).
-                if (depth == 1) selection.region = 2 * work.kept_count + 1;
+                // A selection may be kept a branch: its arms are read into
+                // regions of their own until it is known whether it is
+                // (since 1.171), in the region it is in (since 1.207).
+                if (work.region_count + 2 >= most_regions) return Error.Branches;
+                selection.parent_region = work.current_region;
+                selection.region = work.region_count + 1;
+                work.region_parent[selection.region] = work.current_region;
+                work.region_parent[selection.region + 1] = work.current_region;
+                work.region_count += 2;
                 work.before[depth - 1] = work.values;
                 flow = .arms;
             },
@@ -3236,7 +3442,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                         // An atomic or a barrier is neither either: it
                         // would run where the arm is not taken (since
                         // 1.169).
-                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier => try selection.keep(work, depth),
+                        .atomic_load, .atomic_store, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor, .memory_barrier, .control_barrier => selection.keep(),
                         // A store into a variable of the function's own
                         // is a value the merge chooses, a load and a store
                         // nir_lower_vars_to_ssa leaves none of (since
@@ -3256,7 +3462,7 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                             // intrinsic block_check_for_allowed_instrs lets
                             // none of through (nir_opt_peephole_select.c:109-129;
                             // scratch since 1.177).
-                            try selection.keep(work, depth);
+                            selection.keep();
                         } else return Error.Branches,
                         else => {
                             selection.empty = false;
@@ -3269,11 +3475,12 @@ fn read(work: *Work, words: []const u32, seen: spirv.Seen) Error!void {
                     else => return Error.Branches,
                 }
                 try step(work, instruction);
-                if (texture and !takenBefore(work, work.step_of[try idOf(operands[1])])) try selection.keep(work, depth);
+                if (texture and !takenBefore(work, work.step_of[try idOf(operands[1])])) selection.keep();
             },
         }
     }
     if (loop.active or jumped != 0) return Error.Branches;
+    try copyOutputs(work);
     try interpolatedVaryings(work);
     if (work.stage == .vertex) return finishVertex(work);
     if (work.stage == .gl_compute) return finishCompute(work);
@@ -3306,13 +3513,18 @@ fn finishVertex(work: *Work) Error!void {
     // shader that writes it whatever the pipeline draws (v3dv_pipeline.c:
     // 1375-1376, 1418-1419), and v3d_nir_setup_vpm_layout_vs's
     // psiz_vpm_offset (v3d_nir_lower_io.c:427-428; since 1.193).
+    // Its store is before the varyings', as VARYING_SLOT_PSIZ is before
+    // VARYING_SLOT_VAR0 (shader_enums.h:350, :381) and
+    // nir_move_output_stores_to_end puts them in the order of their
+    // slots (since 1.206).
     const point_size_at = work.varyings_vpm_offset;
-    if (work.point_size != none) work.varyings_vpm_offset += 1;
-    for (work.varying_values[0..work.varying_count], work.varying_into[0..work.varying_count], 0..) |value, into, k| {
-        if (work.point_size != none and k == work.point_size_order) try output(work, work.point_size, point_size_at);
-        try storeVarying(work, value, work.location[into], work.wide[into]);
+    if (work.point_size != none) {
+        work.varyings_vpm_offset += 1;
+        try output(work, work.point_size, point_size_at);
     }
-    if (work.point_size != none and work.point_size_order == work.varying_count) try output(work, work.point_size, point_size_at);
+    for (work.varying_values[0..work.varying_count], work.varying_into[0..work.varying_count], work.varying_mask[0..work.varying_count]) |value, into, mask| {
+        try storeVarying(work, value, work.location[into], work.wide[into], mask);
+    }
     try fixedOutputs(work);
     try algebraic(work);
     try attributes(work);
@@ -3357,8 +3569,9 @@ fn usedOutputs(key: *const VertexKey) u32 {
 
 /// One varying's stores, a float each where the fragment program reads it
 /// (v3d_nir_lower_vpm_output, v3d_nir_lower_io.c:194-217).
-fn storeVarying(work: *Work, value: u16, location: u32, floats: u32) Error!void {
+fn storeVarying(work: *Work, value: u16, location: u32, floats: u32, mask: u8) Error!void {
     for (0..floats) |k| {
+        if (mask & @as(u8, 1) << @intCast(k) == 0) continue;
         const slot = slotOf(&work.vertex_key, location, @intCast(k)) orelse continue;
         const bit = @as(u32, 1) << @intCast(slot);
         work.varyings_stored |= bit;
@@ -3402,21 +3615,28 @@ fn fixedOutputs(work: *Work) Error!void {
 
 /// The floats of each step something live reads, a bit each: what
 /// nir_opt_dce leaves of a program nir_lower_alu_to_scalar has made a
-/// float an instruction. An output and a discard are live, and so is
-/// what a live float is computed from: the same float of an operand of
-/// an operation float by float, the one of a scalar, and every float of
-/// what anything else reads.
+/// float an instruction. An output and a discard are live, and so is a
+/// kept selection's begin_if, its nir_if, whose condition nir_opt_dce
+/// keeps (since 1.205): one nir_opt_dead_cf took out is not here any
+/// more. What a live float is computed from is live: the same float of
+/// an operand of an operation float by float, the one of a scalar, the
+/// float a phi chooses of each way, as nir_lower_phis_to_scalar leaves it
+/// (since 1.205), and every float of what anything else reads.
 fn liveFloats(work: *const Work) [most_steps]u8 {
     var reads: [most_steps]u8 = @splat(0);
     var at = work.step_count;
     while (at > 0) {
         at -= 1;
         const each = work.steps[at];
-        if (each.tag == .output or each.tag == .discard) reads[at] = 1;
+        if (each.tag == .output or each.tag == .discard or each.tag == .begin_if) reads[at] = 1;
         const floats = reads[at];
         if (floats == 0) continue;
         switch (each.tag) {
             .component => reads[each.a] |= @as(u8, 1) << @intCast(each.at),
+            .phi => {
+                reads[each.a] |= @as(u8, 1) << @intCast(each.part[0]);
+                reads[each.b] |= @as(u8, 1) << @intCast(each.part[1]);
+            },
             .construct => for (0..each.kind.parts()) |k| {
                 if (floats & @as(u8, 1) << @intCast(k) != 0) reads[each.from[k]] |= @as(u8, 1) << @intCast(each.part[k]);
             },
@@ -4149,7 +4369,7 @@ fn loopCost(work: *const Work, from: u16, to: u16) u32 {
                 cost += each.kind.parts();
                 continue;
             },
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .discard, .sample, .sample_compared, .output, .viewport, .system => {
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier, .discard, .sample, .sample_compared, .output, .viewport, .system => {
                 cost += 1;
                 continue;
             },
@@ -4259,22 +4479,31 @@ const Selection = struct {
     arms_from: u16 = 0,
     arms_to: u16 = 0,
     /// Kept a branch (since 1.171): an arm holds what
-    /// nir_opt_peephole_select flattens nothing of. Its arms' regions,
-    /// the true arm's and the one after it; the first step of the arm
-    /// read second; whether the false arm came first in the module; and
+    /// nir_opt_peephole_select flattens nothing of, or a selection kept
+    /// (since 1.207). Its arms' regions, the true arm's and the one after
+    /// it, and the region it is in; the first step of the arm read
+    /// second; whether the false arm came first in the module; and
     /// whether a variable came to the merge from one way only.
     kept: bool = false,
+    /// Kept for what its true arm held itself, not for a selection in it:
+    /// where the two may collapse, the block before the inner one, which
+    /// nir_opt_collapse_if wants all of instructions nir_opt_peephole_select
+    /// may flatten (block_check_for_allowed_instrs,
+    /// nir_opt_peephole_select.c:464-469; since 1.208). What the arm holds
+    /// after the inner selection is no such block, and no collapse.
+    kept_first: bool = false,
     region: Region = 0,
+    parent_region: Region = 0,
     split: u16 = 0,
     false_first: bool = false,
     one_way: bool = false,
 
-    /// An arm holds what is not flattened: the selection is kept a branch,
-    /// where it is in no other (since 1.171). A vertex program's are not
-    /// yet.
-    fn keep(selection: *Selection, work: *const Work, depth: u32) Error!void {
-        if (depth != 1 or work.stage != .fragment) return Error.Branches;
+    /// An arm holds what is not flattened: the selection is kept a branch
+    /// (since 1.171), in a program of any stage (since 1.205), and in an
+    /// arm of another too (since 1.207).
+    fn keep(selection: *Selection) void {
         selection.kept = true;
+        if (selection.arm == selection.yes) selection.kept_first = true;
         selection.empty = false;
         selection.quiet = false;
         selection.lone = false;
@@ -4297,7 +4526,7 @@ const Selection = struct {
         }
         work.copies = work.copies_before[depth - 1];
         work.unused_count = 0;
-        if (depth == 1) work.current_region = selection.region + @intFromBool(arm != selection.yes);
+        work.current_region = selection.region + @intFromBool(arm != selection.yes);
     }
 
     fn enter(selection: *Selection, arm: u32) void {
@@ -4315,11 +4544,12 @@ const Selection = struct {
 /// the arm is (`dominates`): in no arm of a kept selection, nor of one
 /// still being read, whose arms are each a region of their own until the
 /// merge (since 1.171). The steps of the arm itself are in its region
-/// (since 1.185).
+/// (since 1.185). Those of an arm the arm is in are there too (since
+/// 1.207); one of the arm itself is a tex that kept it already.
 fn takenBefore(work: *const Work, at: u16) bool {
     for (0..at) |k| {
         const earlier: u16 = @intCast(k);
-        if (work.region[earlier] != 0) continue;
+        if (work.region[earlier] == work.region[at] or !dominates(work, earlier, at)) continue;
         if (oneValue(work, .{ .step = earlier, .part = 0 }, .{ .step = at, .part = 0 }, most_value_depth)) return true;
     }
     return false;
@@ -4341,6 +4571,10 @@ const Held = struct {
     emptiness: Emptiness = .kept,
     killed: bool = false,
     constant_after: bool = false,
+    /// Kept a branch, which no limit flattens (since 1.207), and its place
+    /// in `Work.kept` (since 1.208).
+    kept: bool = false,
+    entry: u16 = 0,
 };
 
 /// Whether an arm's block is empty in NIR: it holds an instruction, it
@@ -4387,7 +4621,7 @@ fn collapseOf(work: *Work, outer: *const Selection, level: u32, reader: spirv.Re
                 .unsure => Error.Branches,
             };
         }
-        if (!inner.killed and inner.cost <= limitOf(inner.control, limit)) return false;
+        if (!inner.killed and !inner.kept and inner.cost <= limitOf(inner.control, limit)) return false;
     }
     return false;
 }
@@ -4402,7 +4636,7 @@ fn droppable(work: *Work, outer: *const Selection, level: u32, reader: spirv.Rea
             const yes = work.ends[level][0][local][k];
             const no = work.ends[level][1][local][k];
             if (!innerSelect(work, &outer.held, yes)) continue;
-            if (no.step == none or !sameFloats(partOf(work, work.steps[yes.step].from[0], 0), no)) return false;
+            if (no.step == none or !sameFloats(innerFalse(work, yes), no)) return false;
         }
     }
     var ahead = reader;
@@ -4425,25 +4659,39 @@ fn droppable(work: *Work, outer: *const Selection, level: u32, reader: spirv.Rea
             const yes = partOf(work, by[0], @intCast(k));
             if (!innerSelect(work, &outer.held, yes)) continue;
             if (by[1] == none) return false;
-            if (!sameFloats(partOf(work, work.steps[yes.step].from[0], 0), partOf(work, by[1], @intCast(k)))) return false;
+            if (!sameFloats(innerFalse(work, yes), partOf(work, by[1], @intCast(k)))) return false;
         }
     }
     return true;
 }
 
 /// Whether a float is a select the merge of the selection `inner` names
-/// made.
+/// made, or a phi where that one is kept, on its condition or, once the
+/// two collapsed, on the iand (since 1.208).
 fn innerSelect(work: *const Work, inner: *const Held, of: Float) bool {
-    return of.step != none and of.part == 0 and of.step >= inner.selects_from and of.step < inner.selects_to and work.steps[of.step].tag == .select;
+    if (of.step == none or of.part != 0 or of.step < inner.selects_from or of.step >= inner.selects_to) return false;
+    const each = work.steps[of.step];
+    return switch (each.tag) {
+        .select => true,
+        .phi => each.from[0] == inner.condition or each.from[0] == inner.iand,
+        else => false,
+    };
+}
+
+/// The float an inner select or phi brings the false way.
+fn innerFalse(work: *const Work, of: Float) Float {
+    const each = work.steps[of.step];
+    if (each.tag == .phi) return .{ .step = each.b, .part = each.part[1] };
+    return partOf(work, each.from[0], 0);
 }
 
 /// Whether the outer merge of a collapse takes the float `yes` as it is:
 /// a select of the inner merge whose false float is `no`, which
-/// nir_opt_collapse_if's phi is of both ways (:474-485).
+/// nir_opt_collapse_if's phi is of both ways (:474-486).
 fn dropped(work: *const Work, selection: *const Selection, yes: Float, no: Float) bool {
     if (!selection.collapsed or no.step == none) return false;
     if (!innerSelect(work, &selection.held, yes)) return false;
-    return sameFloats(partOf(work, work.steps[yes.step].from[0], 0), partOf(work, no.step, no.part));
+    return sameFloats(innerFalse(work, yes), partOf(work, no.step, no.part));
 }
 
 fn sameFloats(a: Float, b: Float) bool {
@@ -4470,7 +4718,8 @@ fn quietOf(work: *const Work, instruction: spirv.Instruction) bool {
     };
 }
 
-/// Whether an OpStore's pointer is into a storage buffer.
+/// Whether an OpStore's pointer is into a storage buffer, or into shared
+/// memory (since 1.203).
 fn storesBuffer(work: *const Work, operands: []const u32) bool {
     if (operands.len < 1) return false;
     const id = idOf(operands[0]) catch return false;
@@ -4590,7 +4839,98 @@ const Values = [most_locals][4]Float;
 const unstored: Float = .{ .step = none, .part = 0 };
 
 fn isLocal(work: *const Work, id: u16) bool {
-    return work.thing[id] == .variable and work.class[id] == @intFromEnum(spirv.StorageClass.function);
+    if (work.thing[id] != .variable) return false;
+    if (work.class[id] == @intFromEnum(spirv.StorageClass.function)) return true;
+    // An output, nir_lower_io_vars_to_temporaries' variable of the
+    // function's own (since 1.206); gl_PerVertex's members are each one.
+    return work.class[id] == @intFromEnum(spirv.StorageClass.output) and id != work.per_vertex;
+}
+
+/// An output's variable of the function's own, which
+/// nir_lower_io_vars_to_temporaries makes it (create_shadow_temp,
+/// nir_lower_io_vars_to_temporaries.c:347-376), declared before the
+/// function's own (since 1.206).
+fn outputLocal(work: *Work, kind: Kind) Error!u16 {
+    if (work.local_count == most_locals) return Error.Storage;
+    const local = work.local_count;
+    work.local_kind[local] = kind;
+    work.local_bool[local] = false;
+    work.values[local] = @splat(unstored);
+    work.local_count += 1;
+    work.output_local_count += 1;
+    return @intCast(local);
+}
+
+/// What the copy of an output loads: the value last stored into its
+/// whole where its variable still holds that value's floats, which is
+/// nir_lower_vars_to_ssa's def of the store (nir_lower_vars_to_ssa.c:
+/// 723-733), else the floats it holds (since 1.206).
+fn outputValue(work: *Work, local: u16) Error!u16 {
+    const whole = work.output_whole[local];
+    if (whole != none) {
+        const same = for (0..work.local_kind[local].parts()) |k| {
+            const holds = work.values[local][k];
+            const was = partOf(work, whole, @intCast(k));
+            if (holds.step != was.step or holds.part != was.part) break false;
+        } else true;
+        if (same) return whole;
+    }
+    return localOf(work, local);
+}
+
+/// The floats of an output's variable stored into, a bit each: one of
+/// none is an undef, whose store nir_opt_undef takes out (opt_undef_store,
+/// nir_opt_undef.c:143-179).
+fn storedMask(work: *const Work, local: u16) u8 {
+    var mask: u8 = 0;
+    for (0..work.local_kind[local].parts()) |k| {
+        if (work.values[local][k].step != none) mask |= @as(u8, 1) << @intCast(k);
+    }
+    return mask;
+}
+
+/// nir_lower_io_vars_to_temporaries' copies, where the function ends
+/// (emit_output_copies_impl, nir_lower_io_vars_to_temporaries.c:133-144):
+/// each output the value its variable holds there, so it may be stored
+/// in an arm, or more than once, or loaded (since 1.206). An output of no
+/// float stored is not stored, and a float of one not stored is not
+/// either. A vertex program's position is kept for the fixed-function
+/// outputs, as v3d_nir_lower_vpm_output keeps state->pos
+/// (v3d_nir_lower_io.c:146-153); its point size is at least 1.0,
+/// nir_lower_point_size's fmax, which v3d_nir_lower_vs_early runs on the
+/// copy's store (vir.c:1110-1111); and its varyings are in the order of
+/// their locations, which nir_move_output_stores_to_end stores them in
+/// (nir_move_output_stores_to_end.c:86-93).
+fn copyOutputs(work: *Work) Error!void {
+    switch (work.stage) {
+        .fragment => if (work.output != none and storedMask(work, work.points[work.output]) != 0) {
+            work.stored = try outputValue(work, work.points[work.output]);
+        },
+        .vertex => {
+            if (work.position_local != none and storedMask(work, work.position_local) != 0) work.position = try outputValue(work, work.position_local);
+            if (work.point_size_local != none and storedMask(work, work.point_size_local) != 0) {
+                const size = try floatOf(work, work.values[work.point_size_local][0]);
+                work.point_size = try binary(work, .max, size, try immediate(work, 1.0));
+            }
+            var sorted: [most_locals]u16 = undefined;
+            var count: usize = 0;
+            for (work.output_vars[0..work.output_var_count]) |id| {
+                if (storedMask(work, work.points[id]) == 0) continue;
+                var at = count;
+                while (at > 0 and work.location[sorted[at - 1]] > work.location[id]) : (at -= 1) sorted[at] = sorted[at - 1];
+                sorted[at] = id;
+                count += 1;
+            }
+            for (sorted[0..count]) |id| {
+                if (work.varying_count == most_varyings) return Error.Outputs;
+                work.varying_values[work.varying_count] = try outputValue(work, work.points[id]);
+                work.varying_into[work.varying_count] = id;
+                work.varying_mask[work.varying_count] = storedMask(work, work.points[id]);
+                work.varying_count += 1;
+            }
+        },
+        else => {},
+    }
 }
 
 /// Whether an OpStore's pointer is a variable of the function's own, or
@@ -5479,11 +5819,18 @@ fn phiStep(condition: u16, yes: Float, no: Float) Step {
 /// its phis (since 1.171): one an arm of which holds what
 /// nir_opt_peephole_select does not flatten, or whose arms are over its
 /// limit. Its selects are its phis, where it was kept for the limit, and
-/// its marks are put down. Only one in no other selection, of no other
-/// in it, is kept.
-fn keepSelection(work: *Work, selection: *const Selection, depth: u32) Error!void {
-    if (depth != 1 or work.stage != .fragment) return Error.Branches;
-    if (selection.inner != 0 or selection.collapsed or selection.killed) return Error.Branches;
+/// its marks are put down. In a vertex or a compute program as in a
+/// fragment program: ntq_emit_if and the passes before it have nothing
+/// of the stage's (nir_to_vir.c:4355-4573; since 1.205), and 1.204 has
+/// the ids that tell a branch under the execute mask from a uniform one.
+///
+/// One in an arm of another, which is then kept too, and one with
+/// another in an arm, kept or flattened (since 1.207): ntq_emit_if emits
+/// each arm's list of control flow through ntq_emit_cf_list, an if in it
+/// as any other (:4399, :4409, :4508, :4537), and the outer one's mask
+/// is what the inner one's starts from (:4473-4486).
+fn keepSelection(work: *Work, selection: *const Selection) Error!void {
+    if (selection.collapsed or selection.killed) return Error.Branches;
     if (work.kept_count == most_kept) return Error.Branches;
     if (!selection.kept) {
         if (selection.one_way) return Error.Branches;
@@ -5536,7 +5883,7 @@ fn armCost(work: *const Work, from: u16, to: u16) u32 {
             // load_scratch is made of later, is let through by none
             // (nir_opt_peephole_select.c:109-129), nor is a store_deref
             // (since 1.177).
-            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return std.math.maxInt(u32),
+            .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return std.math.maxInt(u32),
             // ineg and iabs are move-like, as fneg and fabs are
             // (nir_opt_peephole_select.c:251-264; since 1.165).
             .integer => switch (@as(Integer, @enumFromInt(each.at))) {
@@ -5665,10 +6012,11 @@ fn algebraic(work: *Work) Error!void {
     try list.rematerialize(work);
     while (true) {
         list.dce(work);
+        const flattened = try list.flattenEmptied(work);
         const merged = list.cse(work);
         const rewrote = try list.run(work);
         const folded = try list.fold(work);
-        if (!merged and !rewrote and !folded) break;
+        if (!merged and !rewrote and !folded and !flattened) break;
     }
     list.layOut(work);
 }
@@ -5716,29 +6064,50 @@ const Order = struct {
     /// The steps in the order they were read, but for a kept
     /// selection's: its marks around its arms, and the true arm first,
     /// as vtn builds the nir_if's then_list before its else_list
-    /// whatever the order of the module's blocks (since 1.171).
+    /// whatever the order of the module's blocks (since 1.171). One in an
+    /// arm of another is laid out so in that arm (since 1.207).
     fn start(work: *const Work) Order {
         var list: Order = .{};
         var marked: [most_steps]bool = @splat(false);
         for (work.kept[0..work.kept_count]) |kept| for (kept.marks) |mark| {
             marked[mark] = true;
         };
-        var at: u16 = 0;
-        for (work.kept[0..work.kept_count]) |kept| {
-            while (at < kept.from) : (at += 1) if (!marked[at]) list.append(at);
+        var laid: [most_kept]bool = @splat(false);
+        list.lay(work, &marked, &laid, 0, @intCast(work.step_count));
+        return list;
+    }
+
+    /// The steps from `from` to `to`, and where the arms of kept
+    /// selections begin, the outermost of them, its marks and its arms.
+    /// Its arms are steps of `from` to `to`, and so is any selection in
+    /// one (`read` puts its marks down there).
+    fn lay(list: *Order, work: *const Work, marked: *const [most_steps]bool, laid: *[most_kept]bool, from: u16, to: u16) void {
+        var at = from;
+        while (true) {
+            var outermost: ?usize = null;
+            for (work.kept[0..work.kept_count], 0..) |kept, k| {
+                if (laid[k] or kept.from != at or kept.to > to) continue;
+                if (outermost == null or kept.to > work.kept[outermost.?].to) outermost = k;
+            }
+            const k = outermost orelse {
+                if (at == to) return;
+                if (!marked[at]) list.append(at);
+                at += 1;
+                continue;
+            };
+            laid[k] = true;
+            const kept = work.kept[k];
             const first: [2]u16 = .{ kept.from, kept.split };
             const second: [2]u16 = .{ kept.split, kept.to };
             const yes = if (kept.false_first) second else first;
             const no = if (kept.false_first) first else second;
             list.append(kept.marks[0]);
-            for (yes[0]..yes[1]) |each| list.append(@intCast(each));
+            list.lay(work, marked, laid, yes[0], yes[1]);
             list.append(kept.marks[1]);
-            for (no[0]..no[1]) |each| list.append(@intCast(each));
+            list.lay(work, marked, laid, no[0], no[1]);
             list.append(kept.marks[2]);
             at = kept.to;
         }
-        while (at < work.step_count) : (at += 1) if (!marked[at]) list.append(at);
-        return list;
     }
 
     fn append(list: *Order, at: u16) void {
@@ -5861,8 +6230,11 @@ const Order = struct {
             // What writes memory, or orders it, is kept whatever reads it
             // (nir_instr_can_remove, nir_opt_dce.c; since 1.168 and 1.169).
             if (each.tag == .discard or each.tag == .output or each.tag == .ssbo_store or each.tag == .ssbo_atomic or each.tag == .barrier or each.tag == .scratch_store) reached[at] = true;
-            // A kept selection's marks are its nir_if, which no pass but
-            // nir_opt_dead_cf takes out (since 1.171).
+            // Shared memory's too (since 1.203).
+            if (each.tag == .shared_store or each.tag == .shared_atomic or each.tag == .control_barrier) reached[at] = true;
+            // A kept selection's marks are its nir_if, which nir_opt_dce
+            // does not take out (since 1.171): `flattenEmptied` does, once
+            // its arms are empty.
             if (each.tag == .begin_if or each.tag == .begin_else or each.tag == .end_if) reached[at] = true;
             if (!reached[at]) continue;
             for (readsOf(each)) |field| if (field) |operand_at| {
@@ -5872,6 +6244,42 @@ const Order = struct {
         for (0..work.step_count) |k| {
             if (!reached[k]) list.gone[k] = true;
         }
+    }
+
+    /// A kept selection nir_opt_dce has left nothing in, which v3d's loop
+    /// takes out next (nir_to_vir.c:2263-2279; since 1.205): the
+    /// coordinate program's arms that only made a varying, or a vertex
+    /// program's whose fragment program does not read it
+    /// (nir_remove_unused_io_vars, vir.c:1097-1105). nir_opt_dead_cf
+    /// takes out one with no phi after it (node_is_dead,
+    /// nir_opt_dead_cf.c:171-271; dead_cf_block, :293-296), and
+    /// nir_opt_peephole_select_block flattens one whose phis are read,
+    /// for arms of no instruction are under any limit, DontFlatten's 0
+    /// among them (nir_opt_peephole_select.c:336-341, :548-553): each
+    /// phi a bcsel of the condition, the true way's float and the false
+    /// way's (:577-603). Both come to this: the phis still read made
+    /// selects, the marks taken out, and what only the begin_if read
+    /// left to the next round's nir_opt_dce.
+    fn flattenEmptied(list: *Order, work: *Work) Error!bool {
+        var progress = false;
+        for (work.kept[0..work.kept_count]) |kept| {
+            if (!list.present(kept.marks[0])) continue;
+            var at = list.next[kept.marks[0]];
+            const empty = while (at != none and at != kept.marks[2]) : (at = list.next[at]) {
+                if (at != kept.marks[1] and list.present(at)) break false;
+            } else true;
+            if (!empty) continue;
+            for (kept.to..kept.marks[0]) |phi| {
+                const each = work.steps[phi];
+                if (each.tag != .phi or !list.present(@intCast(phi))) continue;
+                var made = Step{ .tag = .select, .kind = .f32x1, .a = each.from[0], .b = try list.floatBefore(work, @intCast(phi), .{ .step = each.a, .part = each.part[0] }) };
+                made.from[0] = try list.floatBefore(work, @intCast(phi), .{ .step = each.b, .part = each.part[1] });
+                work.steps[phi] = made;
+            }
+            for (kept.marks) |mark| list.removed[mark] = true;
+            progress = true;
+        }
+        return progress;
     }
 
     /// nir_opt_cse: a step equal to one before it - the same operation of
@@ -6711,7 +7119,7 @@ fn oneFloat(work: *const Work, left: Float, right: Float) bool {
 /// component and a construct only name floats.
 fn computes(tag: Tag) bool {
     return switch (tag) {
-        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store => false,
+        .input, .constant, .push, .component, .construct, .discard, .output, .viewport, .system, .ssbo_store, .ssbo_atomic, .barrier, .begin_if, .begin_else, .end_if, .phi, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => false,
         else => true,
     };
 }
@@ -6805,14 +7213,16 @@ fn readsOf(each: Step) [4]?u16 {
         .component, .discard, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .output, .round_to_int, .ubo_indirect, .ssbo_indirect, .scratch_indirect => .{ each.a, null, null, null },
         .compare, .set_less, .add, .mul, .sub, .min, .max => .{ each.a, each.b, null, null },
         // A sample's bias or level too (since 1.180).
-        .sample => .{ each.a, null, if (each.lookup != .implicit) each.from[0] else null, null },
-        .sample_compared => .{ each.a, each.b, if (each.lookup != .implicit) each.from[0] else null, null },
+        .sample => .{ each.a, null, if (each.lookup.leveled()) each.from[0] else null, null },
+        .sample_compared => .{ each.a, each.b, if (each.lookup.leveled()) each.from[0] else null, null },
         // A size's level (since 1.181).
         .texture_size => .{ each.from[0], null, null, null },
         .texture_levels => .{ null, null, null, null },
-        .ssbo_store, .scratch_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
-        .ssbo_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
-        .barrier => .{ null, null, null, null },
+        .ssbo_store, .scratch_store, .shared_store => .{ each.a, if (each.from[0] != none) each.from[0] else null, null, null },
+        .ssbo_atomic, .shared_atomic => .{ each.a, if (each.from[0] != none) each.from[0] else null, if (each.from[1] != none) each.from[1] else null, null },
+        // A load_shared's offset, where it is computed (since 1.203).
+        .shared => .{ if (each.a != none) each.a else null, null, null, null },
+        .barrier, .control_barrier => .{ null, null, null, null },
     };
 }
 
@@ -6823,9 +7233,14 @@ pub fn readsOfStep(each: Step) [4]?u16 {
 
 /// Whether the step `earlier` is there wherever the later step `at` is:
 /// it is in no arm of a kept selection, or in the arm `at` is in (since
-/// 1.171).
+/// 1.171), or in an arm that one is in (since 1.207).
 fn dominates(work: *const Work, earlier: u16, at: u16) bool {
-    return work.region[earlier] == 0 or work.region[earlier] == work.region[at];
+    var region = work.region[at];
+    while (region != work.region[earlier]) {
+        if (region == 0) return false;
+        region = work.region_parent[region];
+    }
+    return true;
 }
 
 /// What of `each` read `from` reads `to`.
@@ -6853,15 +7268,15 @@ fn renameReads(each: *Step, renamed: *const [most_steps]u16) void {
             each.b = renamed[each.b];
             each.from[0] = renamed[each.from[0]];
         },
-        .ssbo_store, .ssbo_atomic, .scratch_store => {
+        .ssbo_store, .ssbo_atomic, .scratch_store, .shared_store, .shared_atomic => {
             each.a = renamed[each.a];
             if (each.from[0] != none) each.from[0] = renamed[each.from[0]];
-            if (each.tag == .ssbo_atomic and each.from[1] != none) each.from[1] = renamed[each.from[1]];
+            if ((each.tag == .ssbo_atomic or each.tag == .shared_atomic) and each.from[1] != none) each.from[1] = renamed[each.from[1]];
         },
         .sample, .sample_compared => {
             each.a = renamed[each.a];
             if (each.tag == .sample_compared) each.b = renamed[each.b];
-            if (each.lookup != .implicit) each.from[0] = renamed[each.from[0]];
+            if (each.lookup.leveled()) each.from[0] = renamed[each.from[0]];
         },
         .texture_size => each.from[0] = renamed[each.from[0]],
         .texture_levels => {},
@@ -6888,7 +7303,7 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
     if (work.stored == from) work.stored = to;
     for (work.steps[0..work.step_count]) |*user| {
         switch (user.tag) {
-            .input, .constant, .push, .ubo, .ssbo, .barrier, .scratch => {},
+            .input, .constant, .push, .ubo, .ssbo, .barrier, .scratch, .control_barrier => {},
             .construct => for (user.from[0..user.kind.parts()]) |*of| {
                 if (of.* == from) of.* = to;
             },
@@ -6897,15 +7312,15 @@ fn replaceUses(work: *Work, from: u16, to: u16) void {
                 if (user.b == from) user.b = to;
                 if (user.from[0] == from) user.from[0] = to;
             },
-            .ssbo_store, .ssbo_atomic, .scratch_store => {
+            .ssbo_store, .ssbo_atomic, .scratch_store, .shared_store, .shared_atomic => {
                 if (user.a == from) user.a = to;
                 if (user.from[0] == from) user.from[0] = to;
-                if (user.tag == .ssbo_atomic and user.from[1] == from) user.from[1] = to;
+                if ((user.tag == .ssbo_atomic or user.tag == .shared_atomic) and user.from[1] == from) user.from[1] = to;
             },
             .sample, .sample_compared => {
                 if (user.a == from) user.a = to;
                 if (user.tag == .sample_compared and user.b == from) user.b = to;
-                if (user.lookup != .implicit and user.from[0] == from) user.from[0] = to;
+                if (user.lookup.leveled() and user.from[0] == from) user.from[0] = to;
             },
             .texture_size => if (user.from[0] == from) {
                 user.from[0] = to;
@@ -7008,39 +7423,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 const kind = work.local_kind[local];
                 const value = if (work.local_bool[local]) try boolOf(work, operands[1]) else try operand(work, operands[1], kind);
                 for (0..kind.parts()) |k| work.values[local][k] = partOf(work, value, @intCast(k));
+                if (work.class[into] == @intFromEnum(spirv.StorageClass.output)) work.output_whole[local] = value;
                 touch(work, local);
-                return;
-            }
-            if (work.thing[into] == .position_pointer) {
-                // gl_Position: kept for the fixed-function outputs, as
-                // v3d_nir_lower_vpm_output keeps state->pos and stores
-                // nothing for it (v3d_nir_lower_io.c:146-153; since
-                // 1.163).
-                if (work.position != none) return Error.Outputs;
-                work.position = try operand(work, operands[1], .f32x4);
-                return;
-            }
-            if (work.thing[into] == .point_size_pointer) {
-                // gl_PointSize, at least 1.0: nir_lower_point_size's fmax,
-                // which v3d_nir_lower_vs_early runs where the program
-                // writes it (vir.c:1110-1111, nir_lower_point_size.c), and
-                // stored with the varyings, in the order of the stores
-                // (since 1.193). Once, as gl_Position is.
-                if (work.point_size != none) return Error.Outputs;
-                work.point_size = try binary(work, .max, try operand(work, operands[1], .f32x1), try immediate(work, 1.0));
-                work.point_size_order = work.varying_count;
-                return;
-            }
-            if (work.stage == .vertex and work.thing[into] == .variable and work.class[into] == @intFromEnum(spirv.StorageClass.output)) {
-                // A varying, stored where the program ends
-                // (nir_move_output_stores_to_end), once: a second store
-                // into one would want nir_opt_dead_write_vars.
-                const kind = std.enums.fromInt(Kind, work.wide[into]) orelse return Error.Type;
-                for (work.varying_into[0..work.varying_count]) |each| if (each == into) return Error.Outputs;
-                if (work.varying_count == most_varyings) return Error.Outputs;
-                work.varying_values[work.varying_count] = try operand(work, operands[1], kind);
-                work.varying_into[work.varying_count] = into;
-                work.varying_count += 1;
                 return;
             }
             if (work.thing[into] == .member_pointer) {
@@ -7070,8 +7454,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 try blockStore(work, base, work.chain_dynamic[into], offset, work.non_writable[into], value, kind);
                 return;
             }
-            if (into != work.output) return Error.Body;
-            work.stored = try operand(work, operands[1], .f32x4);
+            return Error.Body;
         },
         // OpAtomicLoad and OpAtomicStore: a load_deref and a store_deref,
         // ACCESS_ATOMIC and COHERENT, which v3d reads and writes as any
@@ -7084,7 +7467,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             const from = try idOf(operands[2]);
             const pointee = try atomicPointee(work, from);
             if (try idOf(operands[0]) != pointee) return Error.Type;
-            const barriers = try atomicBarriers(try uintOf(work, operands[4]));
+            const barriers = try atomicBarriers(try uintOf(work, operands[4]), ownSemantics(work, from));
             if (barriers.before) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
             work.step_of[id] = try blockLoad(work, work.chain_base[from], work.chain_dynamic[from], work.chain_offset[from], .f32x1, work.non_writable[from]);
             if (barriers.after) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
@@ -7093,7 +7476,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len != 4) return Error.Body;
             const into = try idOf(operands[0]);
             _ = try atomicPointee(work, into);
-            const barriers = try atomicBarriers(try uintOf(work, operands[2]));
+            const barriers = try atomicBarriers(try uintOf(work, operands[2]), ownSemantics(work, into));
             const value = try operand(work, operands[3], .f32x1);
             if (barriers.before) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
             try blockStore(work, work.chain_base[into], work.chain_dynamic[into], work.chain_offset[into], work.non_writable[into], value, .f32x1);
@@ -7106,6 +7489,25 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             if (operands.len != 2) return Error.Body;
             _ = try uintOf(work, operands[0]);
             if (try memoryBarrier(try uintOf(work, operands[1]))) _ = try put(work, .{ .tag = .barrier, .kind = .f32x1 });
+        },
+        // OpControlBarrier: the barrier vtn_emit_scoped_control_barrier
+        // makes of it (spirv_to_nir.c:4821-4866, :2813-2845), in a compute
+        // program a `control_barrier` (since 1.203). Of no memory
+        // semantics, or none of a storage class, it orders no memory; of
+        // neither memory nor execution wider than the invocation it is
+        // nothing. glslang's old barrier() of no semantics, which vtn
+        // mends (wa_glslang_cs_barrier, :4828-4842), glslc does not write.
+        .control_barrier => {
+            if (operands.len != 3) return Error.Body;
+            const execution = try scopeOf(try uintOf(work, operands[0]));
+            const memory_scope = try scopeOf(try uintOf(work, operands[1]));
+            const memory: Scope = if (try memoryBarrier(try uintOf(work, operands[2]))) memory_scope else .none;
+            if (@intFromEnum(memory) <= @intFromEnum(Scope.invocation) and @intFromEnum(execution) <= @intFromEnum(Scope.invocation)) return;
+            // Another stage's, emit_barrier's TSY op of a subgroup
+            // (nir_to_vir.c:3580-3613), is not ported.
+            if (work.stage != .gl_compute) return Error.Refused;
+            work.uses_control_barrier = true;
+            _ = try put(work, .{ .tag = .control_barrier, .kind = .f32x1 });
         },
         .load => {
             if (operands.len < 3) return Error.Body;
@@ -7245,7 +7647,10 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 // gl_PerVertex's gl_Position (since 1.163) and gl_PointSize
                 // (since 1.193), the members a program here may store. The
                 // clip and cull distances would want nir_lower_clip_vs.
-                if (operands.len != 4) return Error.Outputs;
+                // Each is the variable of the function's own
+                // nir_lower_io_vars_to_temporaries makes it, and a float
+                // of gl_Position one of its (since 1.206).
+                if (operands.len != 4 and operands.len != 5) return Error.Outputs;
                 const which = try indexOf(work, operands[3]);
                 const block = &work.blocks[work.points[base]];
                 if (which >= block.member_count) return Error.Outputs;
@@ -7253,9 +7658,24 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 if (builtin != @intFromEnum(spirv.BuiltIn.position) and builtin != @intFromEnum(spirv.BuiltIn.point_size)) return Error.Outputs;
                 const position = builtin == @intFromEnum(spirv.BuiltIn.position);
                 const wanted: Kind = if (position) .f32x4 else .f32x1;
-                if (work.thing[type_id] != .pointer or work.points[type_id] != block.member_type[which]) return Error.Type;
                 if (try kindOf(work, block.member_type[which]) != wanted) return Error.Type;
-                work.thing[id] = if (position) .position_pointer else .point_size_pointer;
+                if (work.thing[type_id] != .pointer or work.class[type_id] != @intFromEnum(spirv.StorageClass.output)) return Error.Type;
+                const local = if (position) work.position_local else work.point_size_local;
+                if (operands.len == 5) {
+                    if (!position) return Error.Outputs;
+                    const part = try indexOf(work, operands[4]);
+                    if (part >= 4) return Error.Body;
+                    if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
+                    work.thing[id] = .local_part;
+                    work.points[id] = local;
+                    work.chain_part[id] = @intCast(part);
+                    return;
+                }
+                if (work.points[type_id] != block.member_type[which]) return Error.Type;
+                work.thing[id] = .variable;
+                work.class[id] = @intFromEnum(spirv.StorageClass.output);
+                work.points[id] = local;
+                work.wide[id] = @intCast(wanted.parts());
                 return;
             }
             if (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.input) and systemOf(work, base) != null) {
@@ -7446,7 +7866,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                 const which = try indexOf(work, operands[3]);
                 if (work.wide[base] == 1 or which >= work.wide[base]) return Error.Body;
                 if (work.thing[type_id] != .pointer) return Error.Type;
-                if (work.class[type_id] != @intFromEnum(spirv.StorageClass.function)) return Error.Body;
+                if (work.class[type_id] != work.class[base]) return Error.Body;
                 if (try kindOf(work, work.points[type_id]) != .f32x1) return Error.Type;
                 work.thing[id] = .local_part;
                 work.points[id] = work.points[base];
@@ -7483,6 +7903,8 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             // and every member's it goes through (since 1.168).
             var non_writable = work.non_writable[base];
             if (work.thing[base] == .member_pointer) {
+                // A block's member, or a Workgroup variable, which is
+                // its own base (since 1.203).
                 variable = work.chain_base[base];
                 offset = work.chain_offset[base];
                 dynamic = work.chain_dynamic[base];
@@ -7491,6 +7913,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             } else if (base == work.push_variable or (work.thing[base] == .variable and work.class[base] == @intFromEnum(spirv.StorageClass.uniform))) {
                 pointee = blockOfVariable(work, base).type_id;
             } else return Error.Storage;
+            // Shared memory, in shared_type_info's layout and not in one
+            // decorations give (since 1.203).
+            const shared = isShared(work, variable);
             for (operands[3..]) |each| {
                 // An index no constant: its step, and the bytes the
                 // elements, columns or floats it counts are apart.
@@ -7513,12 +7938,20 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                         stride = block.member_stride[index];
                         pointee = block.member_type[index];
                     },
+                    .plain_struct => {
+                        // A member of a struct in shared memory, at the
+                        // offset its layout gives it (since 1.203).
+                        if (!shared or computed != none) return Error.Body;
+                        if (index >= work.wide[pointee]) return Error.Body;
+                        adds = try sharedMemberOffset(work, pointee, index);
+                        pointee = work.struct_members[work.points[pointee] + index];
+                    },
                     .array => {
                         // A runtime array's elements are all the draw's
                         // to have bound (since 1.164), and an index
                         // computed is the program's to keep among them.
                         if (!isRuntime(work, pointee) and index >= work.length[pointee]) return Error.Body;
-                        apart = work.array_stride[pointee];
+                        apart = if (shared) (try sharedLayout(work, work.points[pointee])).stride() else work.array_stride[pointee];
                         if (computed != none and apart == none) return Error.Storage;
                         adds = index * apart;
                         pointee = work.points[pointee];
@@ -7538,6 +7971,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
                     },
                     else => return Error.Body,
                 }
+                // A matrix in shared memory: its columns as far apart as
+                // its layout has them (since 1.203).
+                if (shared and work.thing[pointee] == .matrix) stride = try sharedColumnStride(work, pointee);
                 if (computed == none and dynamic == none) {
                     offset = std.math.add(u32, offset, adds) catch return Error.Storage;
                     continue;
@@ -7571,7 +8007,7 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
             work.chain_stride[id] = stride;
             work.chain_dynamic[id] = dynamic;
             work.non_writable[id] = non_writable;
-            if (variable != work.push_variable and work.ubos[work.points[variable]].storage) work.uses_ssbo = true;
+            if (!shared and variable != work.push_variable and work.ubos[work.points[variable]].storage) work.uses_ssbo = true;
         },
         .composite_extract => {
             if (operands.len < 4) return Error.Body;
@@ -8197,6 +8633,9 @@ fn step(work: *Work, instruction: spirv.Instruction) Error!void {
 /// makes in the same format (v3dv_pipeline.c:418-420; since 1.164).
 fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind, non_writable: bool) Error!u16 {
     if (offset >= none) return Error.Storage;
+    // A load_shared, at the offset nir_lower_explicit_io computes in the
+    // 32bit_offset format (v3dv_pipeline.c:3290-3291; since 1.203).
+    if (isShared(work, variable)) return put(work, .{ .tag = .shared, .kind = kind, .a = try offsetStep(work, dynamic, offset), .at = if (dynamic == none) offset else 0 });
     if (variable != work.push_variable) {
         const slot = work.points[variable];
         const storage = work.ubos[slot].storage;
@@ -8222,6 +8661,11 @@ fn blockLoad(work: *Work, variable: u16, dynamic: u16, offset: u32, kind: Kind, 
 /// 1.194).
 fn blockStore(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writable: bool, value: u16, kind: Kind) Error!void {
     if (offset >= none or variable == work.push_variable) return Error.Storage;
+    // A store_shared (since 1.203).
+    if (isShared(work, variable)) {
+        _ = try put(work, .{ .tag = .shared_store, .kind = kind, .a = value, .at = if (dynamic == none) offset else 0, .from = .{ try offsetStep(work, dynamic, offset), 0, 0, 0 } });
+        return;
+    }
     const slot = work.points[variable];
     if (!work.ubos[slot].storage or non_writable) return Error.Storage;
     if (work.stage == .vertex) return Error.Storage;
@@ -8262,7 +8706,7 @@ fn atomicOf(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     if (try idOf(operands[0]) != pointee) return Error.Type;
     _ = try uintOf(work, operands[3]);
     // CompareExchange's Unequal semantics are not read (:4318-4321).
-    const barriers = try atomicBarriers(try uintOf(work, operands[4]));
+    const barriers = try atomicBarriers(try uintOf(work, operands[4]), ownSemantics(work, into));
     const atomic: Atomic = switch (op) {
         .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub => .iadd,
         .atomic_s_min => .imin,
@@ -8293,6 +8737,8 @@ fn atomicOf(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
 /// to (since 1.169).
 fn blockAtomic(work: *Work, variable: u16, dynamic: u16, offset: u32, non_writable: bool, atomic: Atomic, first: u16, second: u16) Error!u16 {
     if (offset >= none or variable == work.push_variable) return Error.Storage;
+    // A shared_atomic or shared_atomic_swap (since 1.203).
+    if (isShared(work, variable)) return put(work, .{ .tag = .shared_atomic, .kind = .f32x1, .a = first, .at = if (dynamic == none) offset else 0, .from = .{ try offsetStep(work, dynamic, offset), second, 0, 0 }, .atomic = atomic });
     const slot = work.points[variable];
     if (!work.ubos[slot].storage or non_writable) return Error.Storage;
     if (work.stage == .vertex) return Error.Storage;
@@ -8323,16 +8769,17 @@ const Semantics = struct {
     const storage: u32 = 0x1fc0;
 };
 
-/// Where an atomic of a storage buffer has a barrier: before it, of its
-/// release, and after it, of its acquire, as vtn_split_barrier_semantics
-/// splits its semantics with the buffer's UniformMemory added
-/// (spirv_to_nir.c:2581-2661, :4447-4477), and vtn_emit_memory_barrier
+/// Where an atomic has a barrier: before it, of its release, and after it,
+/// of its acquire, as vtn_split_barrier_semantics splits its semantics
+/// with its memory's own added, a storage buffer's UniformMemory and
+/// shared memory's WorkgroupMemory (`ownSemantics`; spirv_to_nir.c:
+/// 2581-2661, :4440-4477; since 1.203), and vtn_emit_memory_barrier
 /// makes one of each part that is any (:2847-2862). More than one order
 /// is AcquireRelease (:2604-2613); SequentiallyConsistent is too
 /// (:2635). MakeAvailable and MakeVisible want the VulkanMemoryModel
 /// capability (:2710-2720), which the profile does not take.
-fn atomicBarriers(given: u32) Error!struct { before: bool, after: bool } {
-    const semantics = given | Semantics.uniform_memory;
+fn atomicBarriers(given: u32, own: u32) Error!struct { before: bool, after: bool } {
+    const semantics = given | own;
     if (semantics & (Semantics.make_available | Semantics.make_visible) != 0) return Error.Body;
     var ordered = semantics & Semantics.orders;
     if (@popCount(ordered) > 1) ordered = Semantics.acquire_release;
@@ -8358,12 +8805,155 @@ fn memoryBarrier(semantics: u32) Error!bool {
     return ordered and modes != 0;
 }
 
+/// mesa_scope, narrowest first (shader_enums.h:1653-1662).
+const Scope = enum(u8) { none, invocation, subgroup, shader_call, workgroup, queue_family, device };
+
+/// A SPIR-V scope as vtn_translate_scope makes it a mesa_scope
+/// (spirv_to_nir.c:2765-2797): CrossDevice is no scope
+/// of Vulkan's, QueueFamily wants the VulkanMemoryModel capability and
+/// ShaderCallKHR ray tracing, none of which the profile takes (since
+/// 1.203).
+fn scopeOf(word: u32) Error!Scope {
+    return switch (word) {
+        1 => .device,
+        2 => .workgroup,
+        3 => .subgroup,
+        4 => .invocation,
+        else => Error.Body,
+    };
+}
+
+/// The memory semantics of the storage class an atomic's pointer is of,
+/// which vtn adds to what it is given (vtn_mode_to_memory_semantics,
+/// vtn_variables.c:2668-2687): a storage buffer's UniformMemory, shared
+/// memory's WorkgroupMemory (since 1.203).
+fn ownSemantics(work: *const Work, pointer: u16) u32 {
+    return if (isShared(work, work.chain_base[pointer])) Semantics.workgroup_memory else Semantics.uniform_memory;
+}
+
 /// A constant's 32-bit word, an integer's: a scope or memory semantics
 /// (vtn_constant_uint; since 1.169).
 fn uintOf(work: *const Work, word: u32) Error!u32 {
     const id = try idOf(word);
     if (work.thing[id] != .int_constant) return Error.Body;
     return @bitCast(work.pool[work.points[id]]);
+}
+
+/// The most bytes of shared memory a compute program has: the device's
+/// maxComputeSharedMemorySize (instance/_instance.zig), which a module
+/// may not go past (since 1.203).
+/// The shared memory a workgroup may have: facet's
+/// maxComputeSharedMemorySize (instance/_instance.zig), which
+/// vkCreateComputePipelines refuses a pipeline past, where v3dv's is 32
+/// KiB (V3D_MAX_COMPUTE_SHARED_MEMORY_SIZE, v3d_limits.h:79; since 1.203).
+const most_shared: u32 = 16 * 1024;
+
+/// A type's bytes and alignment in shared memory.
+const Laid = struct {
+    size: u32,
+    alignment: u32,
+
+    /// How far apart an array's elements of it are:
+    /// glsl_get_explicit_type_for_size_align's stride (glsl_types.c:
+    /// 2821-2823).
+    fn stride(laid: Laid) u32 {
+        return std.mem.alignForward(u32, laid.size, laid.alignment);
+    }
+};
+
+/// A Workgroup variable's type laid out as lower_compute lays it out:
+/// nir_lower_vars_to_explicit_types with v3dv's shared_type_info
+/// (v3dv_pipeline.c:3273-3291), through
+/// glsl_get_explicit_type_for_size_align (glsl_types.c:2795-2885). A
+/// float or an integer is 4 bytes at 4; a vector of n is 4n at 4 times n,
+/// a vec3's at 16; an array's stride is its element's size rounded up to
+/// its alignment, and its size the stride times one less than its length
+/// plus the element's; a struct's members follow one another each at its
+/// alignment, the struct at the widest and rounded up to it; a matrix is
+/// its columns each a column's size rounded up to its alignment, at a
+/// column's alignment. A bool, which shared_type_info makes 4 bytes but
+/// a load of which vtn and nir_lower_explicit_io turn into a comparison,
+/// is not ported (since 1.203).
+fn sharedLayout(work: *Work, type_id: u16) Error!Laid {
+    return switch (work.thing[type_id]) {
+        .float, .int => .{ .size = 4, .alignment = 4 },
+        .vector => .{ .size = 4 * @as(u32, work.wide[type_id]), .alignment = 4 * @as(u32, if (work.wide[type_id] == 3) 4 else work.wide[type_id]) },
+        .matrix => .{ .size = @as(u32, work.wide[type_id]) * try sharedColumnStride(work, type_id), .alignment = (try sharedLayout(work, work.points[type_id])).alignment },
+        .array => {
+            if (isRuntime(work, type_id) or work.length[type_id] == 0) return Error.Storage;
+            const element = try sharedLayout(work, work.points[type_id]);
+            const size = std.math.add(u32, std.math.mul(u32, element.stride(), work.length[type_id] - 1) catch return Error.Storage, element.size) catch return Error.Storage;
+            if (size > most_shared) return Error.Storage;
+            return .{ .size = size, .alignment = element.alignment };
+        },
+        .plain_struct => {
+            var size: u32 = 0;
+            var alignment: u32 = 1;
+            for (work.struct_members[work.points[type_id]..][0..work.wide[type_id]]) |member| {
+                const laid = try sharedLayout(work, member);
+                size = std.mem.alignForward(u32, size, laid.alignment) + laid.size;
+                if (size > most_shared) return Error.Storage;
+                alignment = @max(alignment, laid.alignment);
+            }
+            return .{ .size = std.mem.alignForward(u32, size, alignment), .alignment = alignment };
+        },
+        else => Error.Storage,
+    };
+}
+
+/// How far apart a matrix's columns are in shared memory: a column's
+/// size rounded up to its alignment (glsl_types.c:2867-2873; since
+/// 1.203).
+fn sharedColumnStride(work: *Work, matrix: u16) Error!u16 {
+    return @intCast((try sharedLayout(work, work.points[matrix])).stride());
+}
+
+/// Where member `index` of a struct is in shared memory: after the ones
+/// before it, at its alignment (glsl_types.c:2838-2848; since 1.203).
+fn sharedMemberOffset(work: *Work, struct_id: u16, index: u32) Error!u32 {
+    var offset: u32 = 0;
+    for (work.struct_members[work.points[struct_id]..][0 .. index + 1], 0..) |member, k| {
+        const laid = try sharedLayout(work, member);
+        offset = std.mem.alignForward(u32, offset, laid.alignment);
+        if (k == index) return offset;
+        offset += laid.size;
+    }
+    unreachable;
+}
+
+/// Whether `variable`, a chain's base, is a Workgroup variable (since
+/// 1.203).
+fn isShared(work: *const Work, variable: u16) bool {
+    return work.class[variable] == @intFromEnum(spirv.StorageClass.workgroup);
+}
+
+/// The offset step of a load, a store or an atomic of shared memory: none
+/// at a constant offset, and else the offset computed plus the constant,
+/// as a block's (`blockStore`; since 1.203).
+fn offsetStep(work: *Work, dynamic: u16, offset: u32) Error!u16 {
+    if (dynamic == none or offset == 0) return dynamic;
+    return integerOf(work, .iadd, dynamic, try integerSplat(work, .f32x1, @intCast(offset)));
+}
+
+/// Every id an instruction names as a pointer, a pass over the words
+/// before they are read: an access chain's base, a load's, a store's and
+/// an atomic's pointer, the instructions the profile takes a Workgroup
+/// pointer in. A Workgroup variable none of them names is one
+/// nir_remove_dead_variables takes away (remove_dead_vars, a variable of
+/// no deref; v3d_optimize_nir, nir_to_vir.c:2253-2257), which then takes
+/// no shared memory (since 1.203).
+fn namedPointers(work: *Work, words: []const u32) Error!void {
+    var reader = spirv.Reader.of(words);
+    while (reader.next() catch return Error.Refused) |instruction| {
+        const operands = instruction.operands();
+        const at: usize = switch (instruction.op) {
+            .access_chain, .load, .atomic_load, .atomic_exchange, .atomic_compare_exchange, .atomic_compare_exchange_weak, .atomic_i_increment, .atomic_i_decrement, .atomic_i_add, .atomic_i_sub, .atomic_s_min, .atomic_u_min, .atomic_s_max, .atomic_u_max, .atomic_and, .atomic_or, .atomic_xor => 2,
+            .store, .atomic_store => 0,
+            else => continue,
+        };
+        if (operands.len <= at) continue;
+        if (operands[at] < most_ids) work.named.set(operands[at]);
+    }
 }
 
 /// Which steps differ from lane to lane, nir_divergence_analysis's
@@ -8400,6 +8990,23 @@ fn lanes(work: *Work) void {
         // (nir_divergence_analysis.c:994-1010; since 1.169).
         // As does a load_scratch, whatever its offset (:989; since 1.177).
         if (each.tag == .input or each.tag == .ssbo_atomic or each.tag == .scratch or each.tag == .scratch_indirect) work.divergent[at] = true;
+        // A shared atomic's word too (:1006-1009); a load_shared differs
+        // where its offset does (:674-679; since 1.203).
+        if (each.tag == .shared_atomic) work.divergent[at] = true;
+        // The system values that differ from lane to lane (since 1.204):
+        // a vertex's id and its instance's (:975, :572-573: v3dv's
+        // options have no nir_divergence_vertex, v3dv_pipeline.c:
+        // 217-218), and the CS payload's two words, which the local
+        // invocation index and id are made of (:977-979) and the
+        // workgroup id, of v3dv's
+        // nir_divergence_multiple_workgroup_per_compute_subgroup
+        // (:611-615). The base instance, the first vertex, and the
+        // dispatch's count and base of workgroups are the same in every
+        // lane (:240-250, :342).
+        if (each.tag == .system) switch (@as(SystemValue, @enumFromInt(each.at))) {
+            .vertex_id, .instance_id, .cs_payload0, .cs_payload1 => work.divergent[at] = true,
+            .base_instance, .first_vertex, .work_group_base_x, .work_group_base_y, .work_group_base_z, .num_work_groups_x, .num_work_groups_y, .num_work_groups_z => {},
+        };
         for (readsOf(each)) |field| if (field) |of| {
             if (work.divergent[of]) work.divergent[at] = true;
         };
@@ -10169,7 +10776,7 @@ fn groupIdOf(work: *Work) Error![3]u16 {
 /// How many of the payload's second word's top bits the local index is:
 /// local_invocation_index_bits, of the next power of two of the
 /// workgroup's size and 64 (nir_to_vir.c:4959-4965).
-fn localIndexBits(work: *const Work) u5 {
+pub fn localIndexBits(work: *const Work) u5 {
     const invocations = work.local_size[0] * work.local_size[1] * work.local_size[2];
     return @intCast(std.math.log2_int_ceil(u32, @max(invocations, 64)));
 }
@@ -10308,6 +10915,16 @@ fn isIntegerType(work: *const Work, type_id: u16) bool {
 /// gives and a fetch here must have. A fetch of a cube is no SPIR-V
 /// (OpImageFetch's Dim), and v3d_tex.c asserts it (:376). Its ConstOffset
 /// goes to P2 as a sample's does (handle_tex_src, :158-170; since 1.182).
+///
+/// A fetch of an image of four has a Sample and no Lod: vtn's txf_ms, the
+/// sample its ms_index (spirv_to_nir.c:3072-3076, :3475-3481), which
+/// v3d_nir_lower_txf_ms makes a txf of the texel of the pixel's quad the
+/// sample is in (`sampleTexelOf`), started at TMUSF with no level (since
+/// 1.209). Such an image is sampled by nothing else (vtn's asserts of the
+/// sampler_dim, :3034, :3054), and a Lod is no txf_ms's (:3433-3434). A
+/// ConstOffset is refused: v3d's lowering leaves it to P2, which would
+/// move the fetch by samples, not by pixels, and GLSL has no
+/// texelFetchOffset of a multisampled sampler that would give one.
 fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     const compared = op == .image_sample_dref_implicit_lod or op == .image_sample_dref_explicit_lod;
     const fetch = op == .image_fetch;
@@ -10321,6 +10938,9 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
     if (which == none) return Error.Body;
     const dim = work.samplers[which].dim;
     if (fetch and dim == .cube) return Error.Body;
+    const multisampled = work.samplers[which].multisampled;
+    if (multisampled and !fetch) return Error.Body;
+    var ms_index: ?u16 = null;
     var made: Step = .{
         .tag = if (compared) .sample_compared else .sample,
         .kind = if (compared) .f32x1 else .f32x4,
@@ -10337,7 +10957,10 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
         const lod = @intFromEnum(spirv.ImageOperands.lod);
         const grad = @intFromEnum(spirv.ImageOperands.grad);
         const const_offset = @intFromEnum(spirv.ImageOperands.const_offset);
-        if (mask & ~(bias | lod | grad | const_offset) != 0) return Error.Operands;
+        const sample_bit = @intFromEnum(spirv.ImageOperands.sample);
+        if (mask & ~(bias | lod | grad | const_offset | sample_bit) != 0) return Error.Operands;
+        if (multisampled and mask & lod != 0) return Error.Body;
+        if (multisampled and mask & const_offset != 0) return Error.Operands;
         if (mask & (bias | lod) != 0) {
             if (next >= operands.len) return Error.Body;
             // A bias is an implicit level's and a level an explicit
@@ -10361,11 +10984,24 @@ fn readSample(work: *Work, op: spirv.Op, operands: []const u32) Error!void {
             made.offsets = try texelOffsets(work, operands[next], dim);
             next += 1;
         }
+        // The sample of an image of four, and of nothing else (vtn_assert,
+        // spirv_to_nir.c:3475-3476).
+        if (mask & sample_bit != 0) {
+            if (next >= operands.len or !multisampled) return Error.Body;
+            ms_index = try operand(work, operands[next], .f32x1);
+            next += 1;
+        }
         if (next != operands.len) return Error.Body;
     }
+    if (multisampled) {
+        made.a = try sampleTexelOf(work, made.a, ms_index orelse return Error.Body, dim);
+        made.lookup = .fetch_sample;
+    }
     // An explicit level's sample has its Lod or its Grad (since 1.183); a
-    // fetch its Lod (since 1.182).
-    if (explicit and made.lookup != if (fetch) Lookup.fetch else Lookup.lod) return Error.Operands;
+    // fetch its Lod (since 1.182), but of an image of four its Sample
+    // (since 1.209).
+    const wanted: Lookup = if (multisampled) .fetch_sample else if (fetch) .fetch else .lod;
+    if (explicit and made.lookup != wanted) return Error.Operands;
     const at = try put(work, made);
     work.step_of[id] = at;
     if (work.sampled == none) work.sampled = at;
@@ -10501,6 +11137,30 @@ fn texelOffsets(work: *const Work, word: u32, dim: SamplerDim) Error![3]i8 {
 /// the third float, extracted from it as the Dref (since 1.143), and a
 /// plain sample's since 1.179. A cube's is normalized
 /// (`normalizedCube`).
+/// v3d_nir_lower_txf_ms_instr (v3d_nir_lower_txf_ms.c:35-62): the texel
+/// that sample `ms_index` of the pixel at `coordinate` is in an image of
+/// four, which lies as one of twice the width and the height, each
+/// pixel's samples a 2 x 2 quad of it (`tiling.sampleTexel`): x twice
+/// and the sample's low bit, y twice and its second bit, an array's layer
+/// as it is. Put before the fetch, where the pass's cursor is, and in its
+/// order (since 1.209).
+fn sampleTexelOf(work: *Work, coordinate: u16, ms_index: u16, dim: SamplerDim) Error!u16 {
+    const bit = try integerSplat(work, .f32x1, 1);
+    const x = try floatOf(work, partOf(work, coordinate, 0));
+    const across = try integerOf(work, .iadd, try integerOf(work, .ishl, x, bit), try integerOf(work, .iand, ms_index, bit));
+    const y = try floatOf(work, partOf(work, coordinate, 1));
+    const down = try integerOf(work, .iadd, try integerOf(work, .ishl, y, bit), try integerOf(work, .iand, try integerOf(work, .ushr, ms_index, bit), bit));
+    var made: Step = .{ .tag = .construct, .kind = if (dim == .layers) .f32x3 else .f32x2 };
+    made.from[0] = across;
+    made.from[1] = down;
+    if (dim == .layers) {
+        const layer = partOf(work, coordinate, 2);
+        made.from[2] = layer.step;
+        made.part[2] = layer.part;
+    }
+    return put(work, made);
+}
+
 fn sampledAt(work: *Work, word: u32, dim: SamplerDim) Error!u16 {
     const id = try idOf(word);
     const kind = if (work.step_of[id] != none)
@@ -10638,7 +11298,7 @@ fn settle(work: *Work) Error!void {
             // are already in registers, so neither costs an instruction.
             .input, .component, .construct => {},
             // Refused by `compile` before the plan is laid out.
-            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store => return Error.Storage,
+            .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_store, .ssbo_atomic, .barrier, .scratch, .scratch_indirect, .scratch_store, .shared, .shared_store, .shared_atomic, .control_barrier => return Error.Storage,
             .compare, .discard => return Error.Discards,
             .sample_compared, .texture_size, .texture_levels => return Error.Samplers,
             .begin_if, .begin_else, .end_if, .phi => return Error.Branches,
@@ -11385,6 +12045,35 @@ fn retyped(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32,
             k += count;
         }
         @compileError("no such instruction to retype");
+    }
+}
+
+/// `words` with the `at`th instruction of `op`, an image instruction of
+/// one image operand, given `mask` for its operands and the one it has
+/// twice: a word longer, and its count with it.
+fn withOperand(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime mask: u32) [words.len + 1]u32 {
+    comptime {
+        var seen: u32 = 0;
+        var k: usize = 5;
+        while (k < words.len) {
+            const count = words[k] >> 16;
+            if (count == 0) @compileError("a word count of zero");
+            if (words[k] & 0xFFFF == @intFromEnum(op)) {
+                if (seen == at) {
+                    if (count != 7) @compileError("that instruction has not one image operand");
+                    var copy: [words.len + 1]u32 = undefined;
+                    @memcpy(copy[0 .. k + 5], words[0 .. k + 5]);
+                    copy[k] = ((count + 1) << 16) | @intFromEnum(op);
+                    copy[k + 5] = mask;
+                    copy[k + 6] = words[k + 6];
+                    @memcpy(copy[k + 7 ..], words[k + 6 ..]);
+                    return copy;
+                }
+                seen += 1;
+            }
+            k += count;
+        }
+        @compileError("no such instruction to widen");
     }
 }
 
@@ -13177,6 +13866,109 @@ test "a texel of an array's layer is the layer's integer to TMUI, and of a 3D te
     try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmur, 3"));
     try testing.expectEqual(@as(usize, 1), countOf(volume_code, "mov tmub, 0"));
     try testing.expectEqual(@as(usize, 0), countOf(volume_code, "tmui"));
+}
+
+/// glslc_fetch_sample's words with its OpImageFetch's Sample taken out,
+/// mask and all: a fetch of an image of four that names no sample.
+const fetch_of_no_sample = made: {
+    const words = reference.glslc_fetch_sample;
+    const at = std.mem.indexOfScalar(u32, &words, 0x0007005F).?;
+    var cut: [words.len - 2]u32 = undefined;
+    for (0..at) |k| cut[k] = words[k];
+    cut[at] = 0x0005005F;
+    for (1..5) |k| cut[at + k] = words[at + k];
+    for (at + 7..words.len) |k| cut[k - 2] = words[k];
+    break :made cut;
+};
+
+test "a sample of a texture of four is vtn's txf_ms, which v3d_nir_lower_txf_ms makes the texel of the pixel's quad, fetched at TMUSF with no level" {
+    // An image of MS 1 (spirv_to_nir.c:2431) fetched with its Sample, a
+    // txf_ms of that ms_index (:3072-3076, :3475-3481). The pass makes it
+    // a txf at x twice and the sample's low bit, y twice and its second
+    // bit (v3d_nir_lower_txf_ms.c:46-59), of no lod: nir_lower_tex, which
+    // gives a txf one, ran before it (vir.c:1987, :2004). Sample 2 folds
+    // to x << 1 and (y << 1) + 1 (v3d_optimize_nir, vir.c:2077), and no
+    // TMUB is written (v3d_tex.c:137-153; since 1.209).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_fetch_sample);
+    try testing.expect(work.samplers[0].multisampled);
+    try testing.expectEqual(SamplerDim.flat, work.samplers[0].dim);
+    var fetches: usize = 0;
+    for (work.program()) |each| if (each.tag == .sample) {
+        try testing.expectEqual(Lookup.fetch_sample, each.lookup);
+        try testing.expectEqual(none, each.from[0]);
+        try testing.expectEqual(Tag.construct, work.steps[each.a].tag);
+        fetches += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), fetches);
+    try testing.expectEqualSlices(Word, &[_]Word{.{ .texture = 0 }}, code.stream());
+    try testing.expectEqual(@as(usize, 0), countOf(code, "tmub"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmut, "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "shl"));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "add"));
+    try testing.expectEqual(@as(usize, 0), opsOf(code, "and"));
+    try testing.expectEqual(@as(usize, 15), code.words.len);
+    try testing.expect(!Lookup.fetch_sample.derived() and !Lookup.fetch_sample.leveled() and Lookup.fetch_sample.fetches());
+    // The four samples a loop fetches, unrolled: x << 1 and y << 1 made
+    // once, each with 1 added where the sample's bit says (nir_opt_cse).
+    var four: Work = .{};
+    const four_code = try throughMesa(&four, &reference.glslc_fetch_samples);
+    try testing.expectEqual(@as(usize, 4), countOf(four_code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 0), countOf(four_code, "tmub"));
+    try testing.expectEqual(@as(usize, 2), countOf(four_code, "shl "));
+    try testing.expectEqual(@as(usize, 8), countOf(four_code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 33), four_code.words.len);
+    // A sample the program computes, of an array's layer: the bits taken
+    // with ANDs and a shift, and the layer to TMUI as it is.
+    var layers: Work = .{};
+    const layers_code = try throughMesa(&layers, &reference.glslc_fetch_sample_layers);
+    try testing.expect(layers.samplers[0].multisampled);
+    try testing.expectEqual(SamplerDim.layers, layers.samplers[0].dim);
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmui, 1"));
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "shr "));
+    try testing.expectEqual(@as(usize, 1), countOf(layers_code, "mov tmusf, "));
+    try testing.expectEqual(@as(usize, 0), countOf(layers_code, "tmub"));
+    try testing.expectEqual(@as(usize, 21), layers_code.words.len);
+}
+
+/// glslc_fetch's fetch at a Sample, glslc_fetch_sample's at a Lod and a
+/// ConstOffset where its Sample is, the same fetch made a sample, and its
+/// image made 3D: each a module of one operand changed.
+const sample_of_one = patched(&reference.glslc_fetch, .image_fetch, 0, 4, @intFromEnum(spirv.ImageOperands.sample));
+const sample_at_level = patched(&reference.glslc_fetch_sample, .image_fetch, 0, 4, @intFromEnum(spirv.ImageOperands.lod));
+/// The fetch given a Lod beside its Sample, both the constant 2.
+const sample_and_level = withOperand(&reference.glslc_fetch_sample, .image_fetch, 0, @intFromEnum(spirv.ImageOperands.lod) | @intFromEnum(spirv.ImageOperands.sample));
+const sample_moved = patched(&reference.glslc_fetch_sample, .image_fetch, 0, 4, @intFromEnum(spirv.ImageOperands.const_offset));
+const sample_sampled = reopcoded(&reference.glslc_fetch_sample, .image_fetch, 0, .image_sample_implicit_lod);
+const sample_of_volume = patched(&reference.glslc_fetch_sample, .type_image, 0, 2, @intFromEnum(spirv.Dim.dim_3d));
+
+test "an image of four is fetched with its Sample alone, and a Sample is an image of four's" {
+    // A Sample on a fetch of an image of one, which vtn asserts is a
+    // txf_ms's (spirv_to_nir.c:3475-3476).
+    var single: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&single, &sample_of_one));
+    // A fetch of an image of four with no Sample, and with a Lod, which
+    // is no txf_ms's (:3433-3434).
+    var bare: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&bare, &fetch_of_no_sample));
+    var leveled: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&leveled, &sample_at_level));
+    // A Lod beside the Sample, which vtn asserts against all the same:
+    // without the refusal it would compile, its level dropped.
+    var both: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&both, &sample_and_level));
+    // A ConstOffset, which v3d's lowering would leave to P2 to move by
+    // samples, not by pixels: refused.
+    var moved: Work = .{};
+    try testing.expectError(Error.Operands, throughMesa(&moved, &sample_moved));
+    // Sampled, not fetched: vtn asserts the sampler_dim is no MS one
+    // (:3034, :3054).
+    var sampled: Work = .{};
+    try testing.expectError(Error.Body, throughMesa(&sampled, &sample_sampled));
+    // And an image of four that is 3D, which is no SPIR-V.
+    var volume: Work = .{};
+    try testing.expectError(Error.Refused, throughMesa(&volume, &sample_of_volume));
 }
 
 test "a texel a constant offset away has P2 after the default P1, both constants, and no sampler state" {
@@ -15081,6 +15873,30 @@ test "through Mesa's back end, glslc's store in an arm on a push constant: a uni
     try expectStream(&[_]Word{ .{ .push = 0 }, .{ .float = @bitCast(@as(u32, 4)) }, .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 4 } }, .{ .float = @bitCast(@as(u32, 0xffffff84)) } }, code.stream());
 }
 
+/// A selection kept for a uniform buffer's float in its arm, then two
+/// that nir_opt_collapse_if makes one, kept for thirteen sums and sines,
+/// the first of the sums made again past the merge (since 1.208).
+const KeptThenCollapsed = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const x = b.component(v, 0);
+        const half = b.scalar(0.5);
+        const first = b.ifHolds(b.lessThan(b.component(v, 2), half));
+        const loaded = b.uniform(0, 0, 0, .f32x1);
+        b.endIf(first);
+        const green = b.merged(first, loaded, x);
+        const outer = b.ifHolds(b.lessThan(b.component(v, 1), half));
+        const inner = b.ifHolds(b.lessThan(x, half));
+        var made = x;
+        inline for (0..13) |_| made = b.sin(b.add(made, half));
+        b.endIf(inner);
+        const chosen = b.merged(inner, made, x);
+        b.endIf(outer);
+        const last = b.merged(outer, chosen, x);
+        b.color(b.vector(&.{ last, green, b.add(x, half), x }));
+    }
+});
+
 /// A selection over the limit in the arm of another: a branch in a
 /// branch.
 const DeepCostly = ir.Fragment(struct {
@@ -15118,11 +15934,30 @@ fn Arms(comptime count: usize) type {
     });
 }
 
-test "a branch in a branch, and a ninth branch, are refused" {
-    // Mesa keeps both (nir_opt_peephole_select flattens no arm that holds
-    // control flow); a kept selection here is one at the top level.
+test "a branch in a branch that nir_opt_collapse_if makes one, and a ninth branch refused" {
+    // The inner selection, kept for its cost, is all of the outer's true
+    // arm but for its comparison, and neither has a false arm: at the
+    // limit of 24 nir_opt_collapse_if makes the two one kept selection on
+    // the iand of the inner condition and the outer's
+    // (nir_opt_peephole_select.c:413-506; since 1.208), its arm still
+    // over the limit.
     var work: Work = .{};
-    try testing.expectError(Error.Branches, throughMesa(&work, DeepCostly.words));
+    const deep = try throughMesa(&work, DeepCostly.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), countOf(deep, "fcmp"));
+    try testing.expectEqual(@as(usize, 1), countOf(deep, "and rf"));
+    try testing.expectEqual(@as(usize, 134), deep.words.len);
+    // KeptThenCollapsed: the selection the two make is the second kept,
+    // its branch on the iand and the first's on its own comparison; the
+    // sum past the merge is made again, the arm's, in a region of its
+    // own still, dominating it not (nir_opt_cse.c:76).
+    work = .{};
+    const then = try throughMesa(&work, KeptThenCollapsed.words);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 3), countOf(then, "fcmp"));
+    try testing.expectEqual(@as(usize, 14), stepsOf(&work, .add));
+    try testing.expectEqual(@as(usize, 152), then.words.len);
     // Eight are kept, one after another, each its own blocks. Each phi is
     // the next one's false way and read nowhere else past it, so
     // aggressive_coalesce_block merges the webs whole (merge_merge_sets):
@@ -15137,6 +15972,546 @@ test "a branch in a branch, and a ninth branch, are refused" {
     try testing.expectEqual(@as(usize, 8), opsOf(code, "mov.ifa"));
     var nine: Work = .{};
     try testing.expectError(Error.Branches, throughMesa(&nine, Arms(9).words));
+}
+
+/// A kept selection's phi of a float made before it and one of a kept
+/// selection in its arm, which a float made before both brings the other
+/// way: the second float shares the inner phi's register, the first is
+/// copied where the outer false way ends (since 1.207).
+const NestedWebs = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const z = b.mul(b.component(v, 0), b.scalar(2.0));
+        const f = b.mul(b.component(v, 1), b.scalar(3.0));
+        const outer = b.ifHolds(b.lessThan(b.component(v, 2), half));
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(b.lessThan(b.component(v, 3), half));
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(inner);
+        const pin = b.merged(inner, t, f);
+        b.endIf(outer);
+        const pout = b.merged(outer, pin, z);
+        const x = b.component(v, 0);
+        b.color(b.vector(&.{ pout, x, x, x }));
+    }
+});
+
+/// One float both false ways bring, the outer's true way a sum of the
+/// inner phi: the inner phi's web, the float in it, merged whole into the
+/// outer phi's (merge_merge_sets; since 1.207).
+const NestedWhole = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.mul(b.component(v, 0), b.scalar(2.0));
+        const outer = b.ifHolds(b.lessThan(b.component(v, 2), half));
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(b.lessThan(b.component(v, 3), half));
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(inner);
+        const pin = b.merged(inner, t, x);
+        const sum = b.add(pin, g);
+        b.endIf(outer);
+        const pout = b.merged(outer, sum, x);
+        const y = b.component(v, 1);
+        b.color(b.vector(&.{ pout, y, y, y }));
+    }
+});
+
+/// A selection flattened in the arm of one kept, its product made again
+/// past the outer merge: the arm's does not dominate it, and both are
+/// made (since 1.207).
+const FlatInKept = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const outer = b.ifHolds(b.lessThan(x, half));
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(b.lessThan(b.component(v, 1), half));
+        const s = b.mul(b.component(v, 2), b.scalar(3.0));
+        b.endIf(inner);
+        const pin = b.merged(inner, s, g);
+        b.endIf(outer);
+        const pout = b.merged(outer, pin, x);
+        const later = b.mul(b.component(v, 2), b.scalar(3.0));
+        b.color(b.vector(&.{ pout, later, x, x }));
+    }
+});
+
+/// A kept selection in the arm of one on the same comparison, the outer
+/// arm going on past the inner merge with a uniform product, which the
+/// outer phi copies where its true way ends (since 1.207).
+const SameCondition = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const both = b.lessThan(x, half);
+        const outer = b.ifHolds(both);
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const inner = b.ifHolds(both);
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(inner);
+        const pin = b.merged(inner, t, g);
+        const sum = b.add(pin, x);
+        const twice = b.mul(g, b.scalar(2.0));
+        b.endIf(outer);
+        const pout = b.merged(outer, sum, x);
+        const doubled = b.merged(outer, twice, x);
+        b.color(b.vector(&.{ pout, doubled, x, x }));
+    }
+});
+
+/// Kept selections that are the first thing in each arm of one: the true
+/// arm's on a float and a half being apart, which v3d tests IFNA, the
+/// arm going on past its merge with a product made again past the outer
+/// merge; the false arm's on a comparison made before both too
+/// (since 1.207).
+const NestedAtStart = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const half = b.scalar(0.5);
+        const x = b.component(v, 0);
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const apart = b.notEqual(b.component(v, 3), half);
+        const low = b.lessThan(b.component(v, 1), half);
+        const outer = b.ifHolds(b.lessThan(x, half));
+        const first = b.ifHolds(apart);
+        const t = b.mul(b.uniform(0, 0, 4, .f32x1), g);
+        b.endIf(first);
+        const yes = b.merged(first, t, g);
+        const sum = b.add(yes, b.mul(b.component(v, 2), b.scalar(3.0)));
+        b.otherwise(outer);
+        const second = b.ifHolds(low);
+        const u = b.mul(b.uniform(0, 0, 8, .f32x1), g);
+        b.endIf(second);
+        const no = b.merged(second, u, x);
+        b.endIf(outer);
+        const pout = b.merged(outer, sum, no);
+        const later = b.mul(b.component(v, 2), b.scalar(3.0));
+        b.color(b.vector(&.{ pout, later, x, x }));
+    }
+});
+
+/// A uniform float made before two uniform selections, the inner in the
+/// outer's true arm: the true way of the inner's second phi, whose false
+/// way is not uniform, and the false way of the outer's first phi, whose
+/// true way is the inner's first, of two constants (since 1.207).
+const LaterCopyReads = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const g = b.uniform(0, 0, 0, .f32x1);
+        const n = b.mul(g, b.scalar(3.0));
+        const x = b.component(v, 0);
+        const first = b.scalar(1.0);
+        const second = b.scalar(2.0);
+        const outer = b.ifHolds(b.lessThan(g, b.scalar(0.5)));
+        const inner = b.ifHolds(b.lessThan(b.uniform(0, 0, 8, .f32x1), b.scalar(0.25)));
+        b.otherwise(inner);
+        const d = b.mul(b.uniform(0, 0, 4, .f32x1), x);
+        b.endIf(inner);
+        const q = b.merged(inner, first, second);
+        const q2 = b.merged(inner, n, d);
+        b.endIf(outer);
+        const p = b.merged(outer, q, n);
+        const p2 = b.merged(outer, q2, x);
+        b.color(b.vector(&.{ p, p2, x, x }));
+    }
+});
+
+/// A float made before a selection, named four times by a vector its arm
+/// multiplies, and brought by the false way (since 1.207).
+const SplatInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const s = b.mul(b.component(v, 1), b.scalar(3.0));
+        const e = b.vector(&.{ s, b.component(v, 2), b.component(v, 3), b.scalar(1.0) });
+        const at = b.ifHolds(b.lessThan(b.component(v, 0), b.scalar(0.5)));
+        const m = b.mul(b.vector(&.{ s, s, s, s }), b.uniform(0, 0, 0, .f32x4));
+        b.endIf(at);
+        b.color(b.merged(at, m, e));
+    }
+});
+
+/// A float made before a selection that each float of a product in its
+/// arm reads, and that its false way brings (since 1.207).
+const ScaleInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const s = b.mul(b.component(v, 1), b.scalar(3.0));
+        const e = b.vector(&.{ s, b.component(v, 2), b.component(v, 3), b.scalar(1.0) });
+        const at = b.ifHolds(b.lessThan(b.component(v, 0), b.scalar(0.5)));
+        const m = b.scale(b.uniform(0, 0, 0, .f32x4), s);
+        b.endIf(at);
+        const c = b.merged(at, m, e);
+        b.color(c);
+    }
+});
+
+/// Three bcsels in a kept arm on a comparison of a float that the first
+/// one's phi brings the other way (since 1.207).
+const SelectsInArm = ir.Fragment(struct {
+    pub fn body(b: *ir.Build) void {
+        const v = b.input(0, .f32x4);
+        const y = b.component(v, 1);
+        const e = b.vector(&.{ y, b.component(v, 2), b.component(v, 3), b.scalar(1.0) });
+        const at = b.ifHolds(b.lessThan(b.component(v, 0), b.scalar(0.5)));
+        const t = b.uniform(0, 0, 0, .f32x4);
+        const below = b.lessThan(y, b.scalar(0.5));
+        const p = b.select(below, b.component(t, 0), b.component(t, 1));
+        const q = b.select(below, b.component(t, 2), b.component(t, 3));
+        const r = b.select(below, b.component(t, 1), b.component(t, 0));
+        const m = b.vector(&.{ p, q, r, b.scalar(1.0) });
+        b.endIf(at);
+        b.color(b.merged(at, m, e));
+    }
+});
+
+/// The register the colour's first word packs its red from.
+fn redOf(code: Code, out: *[8]u8) []const u8 {
+    return packOperandOf(code, 0, out);
+}
+
+/// The register of the first pack's `which`th operand: 0 red, 1 green.
+fn packOperandOf(code: Code, which: usize, out: *[8]u8) []const u8 {
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        const at = std.mem.indexOf(u8, line, "vfpack tlb, ") orelse continue;
+        var operands = std.mem.tokenizeAny(u8, line[at + "vfpack tlb, ".len ..], ", ");
+        for (0..which) |_| _ = operands.next();
+        const name = operands.next().?;
+        @memcpy(out[0..name.len], name);
+        return out[0..name.len];
+    }
+    unreachable;
+}
+
+/// How many instructions write `register` with `op`, on either side.
+fn writesOf(code: Code, comptime op: []const u8, register: []const u8) usize {
+    var name: [32]u8 = undefined;
+    return countOf(code, std.fmt.bufPrint(&name, op ++ " {s}, ", .{register}) catch unreachable);
+}
+
+/// Whether one of the program's first `first` `op`s reads a register one
+/// before it wrote.
+fn rereadsWritten(code: Code, comptime op: []const u8, first: usize) bool {
+    var written: [16][8]u8 = undefined;
+    var lengths: [16]usize = undefined;
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        var sides = std.mem.splitScalar(u8, disasm.disasm(word, &buffer).?, ';');
+        while (sides.next()) |side| {
+            const trimmed = std.mem.trim(u8, side, " ");
+            if (!std.mem.startsWith(u8, trimmed, op ++ " ") or count == first) continue;
+            var operands = std.mem.splitSequence(u8, trimmed[op.len + 1 ..], ", ");
+            const dest = operands.next().?;
+            while (operands.next()) |each| {
+                const name = std.mem.trim(u8, each, " ");
+                for (written[0..count], lengths[0..count]) |*was, length| {
+                    if (std.mem.eql(u8, was[0..length], name)) return true;
+                }
+            }
+            @memcpy(written[count][0..dest.len], dest);
+            lengths[count] = dest.len;
+            count += 1;
+        }
+    }
+    return false;
+}
+
+test "through Mesa's back end, a selection kept in the arm of one kept: its mask the outer's with its condition, and a jump over each arm" {
+    // glslc_nested_kept: a sample in each arm keeps each selection, and
+    // the outer arm goes on past the inner merge. ntq_emit_cf_list meets
+    // the inner nir_if in the outer's then_list (nir_to_vir.c:4809-4818),
+    // in non-uniform control flow (:4562-4573): no fresh execute, but the
+    // outer's with the inner condition NORed in, a MOV of it with NORNZ
+    // (:4482-4492); a bu.allna over each then_list, neither cheap
+    // (:4505-4509); and a bu.alla over the inner else, the copies of the
+    // outer sample's floats into the inner phis' registers (:4535-4542).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_kept);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 4), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 53), code.words.len);
+    // Without -O glslc keeps the variable in memory, which
+    // nir_lower_vars_to_ssa makes the same phis of: the same program.
+    var o0: Work = .{};
+    const unoptimized = try throughMesa(&o0, &reference.glslc_nested_kept_o0);
+    try testing.expectEqualSlices(u64, code.words, unoptimized.words);
+}
+
+test "through Mesa's back end, a selection kept in the false arm of one kept" {
+    // ntq_emit_cf_list of the outer's else_list (nir_to_vir.c:4549):
+    // the inner selection's mask is made from the else's, as from a
+    // then_list's.
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_else);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 54), code.words.len);
+}
+
+test "through Mesa's back end, nested selections on a push constant and on a varying: uniform outside, under the mask inside" {
+    // The first selection is on the push constant, outside of any
+    // non-uniform control flow: ntq_emit_uniform_if, a bu.anynap
+    // (nir_to_vir.c:4562-4573, :4437-4439); the varying's in its arm is
+    // the first non-uniform one, with an execute of its own and its
+    // condition turned (:4470-4483). The second is on the varying, and the
+    // push constant's in its arm is in non-uniform control flow, so under
+    // the mask too, NORNZ (:4486-4487).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_uniform);
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.anynap"));
+    try testing.expectEqual(@as(usize, 3), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.alla "));
+    try testing.expectEqual(@as(usize, 5), countOf(code, "bu."));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 82), code.words.len);
+}
+
+test "through Mesa's back end, a compute program's store in an arm of a selection whose arm stores" {
+    // Each store's address is written under the mask of the arm it is in
+    // (emit_tmu_general_address_write, nir_to_vir.c:491-492), the inner's the
+    // outer's with its condition NORed in.
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_nested_store);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "add.ifa tmua"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 41), code.words.len);
+}
+
+test "through Mesa's back end, a vertex program's nested selections kept, which the coordinate program flattens" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_nested_vertex, key);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 7), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 2), countOf(vertex, "bu.allna"));
+    try testing.expectEqual(@as(usize, 2), countOf(vertex, "bu.alla "));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, ".nornz"));
+    try testing.expectEqual(@as(usize, 83), vertex.words.len);
+    // The coordinate program reads neither buffer: both selections' arms
+    // are emptied, and flattened however deep (nir_opt_peephole_select.c
+    // :548-553), the inner one first.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_nested_vertex, key);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "bu."));
+    try testing.expectEqual(@as(usize, 16), coordinate.words.len);
+}
+
+test "through Mesa's back end, a selection kept only for the one kept in its arm" {
+    // The outer arm is cheap but for the inner selection, control flow,
+    // which nir_opt_peephole_select flattens none of
+    // (nir_opt_peephole_select.c:538-541). nir_opt_cse finds the inner
+    // arm's product of v.y and 3.0 made in the outer arm: three products
+    // in all, and the four of the sample with it each read it in a register
+    // none of them writes (nir_liveness.c:247-256).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_only);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expect(!rereadsWritten(code, "fmul.ifa", 4));
+    try testing.expectEqual(@as(usize, 53), code.words.len);
+}
+
+test "through Mesa's back end, a sample in an inner arm that nir_opt_cse finds in the outer: the inner selection flattened" {
+    // The inner arm's sample is the outer's (nir_opt_cse), and what is
+    // left of the arm, four products, is under the limit: four bcsels in
+    // the outer arm. Each tests the comparison's bool again rather than
+    // compare again, the comparison reading v.y in the register of a phi
+    // the first bcsel writes (ntq_get_alu_parent, nir_to_vir.c:1248-1255).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_taken);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "fcmp"));
+    try testing.expectEqual(@as(usize, 38), code.words.len);
+}
+
+test "through Mesa's back end, a selection kept in the arm of one, all of its true arm: nir_opt_collapse_if's one kept selection on the iand" {
+    // nir_opt_collapse_if makes the two one on the iand of the inner
+    // condition and the outer's (nir_opt_peephole_select.c:492-496), the
+    // inner arm a block kept, and the outer phis trivial (:474-486): one
+    // branch, the iand of the two bools tested PUSHZ and IFNA
+    // (ntq_emit_bool_to_cond's out:, nir_to_vir.c:1277-1281; since 1.208).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_nested_collapse);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "and rf"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 33), code.words.len);
+}
+
+test "through Mesa's back end, nir_opt_collapse_if of a kept selection: not past a sample before it, and a float of the block before it chosen by a bcsel" {
+    // glslc_collapse_apart: a sample before the inner selection, which
+    // block_check_for_allowed_instrs refuses (nir_opt_peephole_select.c:
+    // 464-468): no collapse, the two kept, the inner on the sample's red
+    // under the outer's mask. Before 1.208 the collapse was taken and the
+    // program refused.
+    var work: Work = .{};
+    const apart = try throughMesa(&work, &reference.glslc_collapse_apart);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(apart, ".nornz"));
+    try testing.expectEqual(@as(usize, 4), countOf(apart, "ldtmu"));
+    try testing.expectEqual(@as(usize, 41), apart.words.len);
+    // glslc_collapse_sampled: the block before the inner selection makes
+    // k, which the outer merge chooses. The collapse moves the block
+    // before the selection on the iand (:498-502), and the empty outer
+    // selection left with k's phi is flattened, a bcsel on the outer
+    // condition past the branch.
+    work = .{};
+    const sampled = try throughMesa(&work, &reference.glslc_collapse_sampled);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), countOf(sampled, "and rf"));
+    try testing.expectEqual(@as(usize, 40), sampled.words.len);
+}
+
+test "through Mesa's back end, seventeen selections one after another, each flattened, each giving its regions back" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_flat_many);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 17), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 61), code.words.len);
+}
+
+test "through Mesa's back end, the webs of nested phis: what interferes is copied, the rest shares a register" {
+    var red: [8]u8 = undefined;
+    // NestedWebs: f, the inner false way's float, shares the phis'
+    // register, made into it before the branch; z, the outer false way's,
+    // is live where f is made (nir_defs_interfere, nir_liveness.c:292-312),
+    // so copied where that way ends; t, uniform, is in no web of a phi
+    // that is not (nir_from_ssa.c:426-430), so copied too.
+    var work: Work = .{};
+    const webs = try throughMesa(&work, NestedWebs.words);
+    const into = redOf(webs, &red);
+    try testing.expectEqual(@as(usize, 1), writesOf(webs, "fmul", into));
+    try testing.expectEqual(@as(usize, 2), writesOf(webs, "mov.ifa", into));
+    try testing.expectEqual(@as(usize, 0), countOf(webs, "bu.alla "));
+    try testing.expectEqual(@as(usize, 46), webs.words.len);
+    // NestedWhole: x both false ways bring, in the inner phi's web, merged
+    // whole into the outer's (merge_merge_sets, nir_from_ssa.c:197-223):
+    // made into the register, t copied, the sum made into it, and no
+    // false way copies anything.
+    work = .{};
+    const whole = try throughMesa(&work, NestedWhole.words);
+    const both = redOf(whole, &red);
+    try testing.expectEqual(@as(usize, 1), writesOf(whole, "fmul", both));
+    try testing.expectEqual(@as(usize, 1), writesOf(whole, "mov.ifa", both));
+    try testing.expectEqual(@as(usize, 1), writesOf(whole, "fadd.ifa", both));
+    try testing.expectEqual(@as(usize, 41), whole.words.len);
+    // LaterCopyReads: where the inner true way ends, the second phi's
+    // copy reads n after the first phi's copy is made, each copy an
+    // instruction of its own in the order of the phis (nir_from_ssa.c:
+    // 342-352), so n is live there (search_for_use_after_instr,
+    // nir_liveness.c:247-265). The first phi's web, its copies with it,
+    // is the outer phi's (merge_merge_sets), so n is in no web of it:
+    // made into a register of its own, and copied where the outer false
+    // way ends.
+    work = .{};
+    const later = try throughMesa(&work, LaterCopyReads.words);
+    const outer = redOf(later, &red);
+    try testing.expectEqual(@as(usize, 0), writesOf(later, "fmul", outer));
+    try testing.expectEqual(@as(usize, 3), writesOf(later, "mov", outer));
+    try testing.expectEqual(@as(usize, 45), later.words.len);
+}
+
+test "through Mesa's back end, a selection flattened in a kept arm, and one kept on the same comparison as the one it is in" {
+    // FlatInKept: the inner selection is a bcsel in the outer arm, and the
+    // product past the outer merge is made again, the arm's dominating it
+    // not (nir_opt_cse).
+    var work: Work = .{};
+    const flat = try throughMesa(&work, FlatInKept.words);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 31), flat.words.len);
+    // SameCondition: both kept, the inner comparison made again where the
+    // outer's flags are gone. nir_opt_if would take the inner condition
+    // in the outer's arm to be true (opt_if_evaluate_condition_use) and
+    // nir_opt_dead_cf the inner selection out: not yet. The product made
+    // past the inner merge is copied into the green phi's register where
+    // the outer true way ends, and x where its false way does: the inner
+    // selection, on the same comparison, copies nothing for the outer's
+    // phis.
+    work = .{};
+    var green: [8]u8 = undefined;
+    const same = try throughMesa(&work, SameCondition.words);
+    try testing.expectEqual(@as(usize, 2), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 2), countOf(same, "fcmp"));
+    try testing.expectEqual(@as(usize, 2), writesOf(same, "mov.ifa", packOperandOf(same, 1, &green)));
+    try testing.expectEqual(@as(usize, 50), same.words.len);
+}
+
+test "through Mesa's back end, kept selections first in each arm of one: ANDZ and NORNZ with the arm's mask" {
+    // NestedAtStart: the true arm's inner selection is on a float and a
+    // half being apart, which v3d tests IFNA and so ANDZ with the arm's
+    // mask; the false arm's on a comparison it tests IFA, so NORNZ
+    // (ntq_emit_nonuniform_if, nir_to_vir.c:4484-4491). The product
+    // the true arm reads past its inner merge is made again past the
+    // outer merge, the arm's not dominating it (nir_opt_cse.c:76).
+    var work: Work = .{};
+    const code = try throughMesa(&work, NestedAtStart.words);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".andz"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, ".nornz"));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .mul));
+    try testing.expectEqual(@as(usize, 74), code.words.len);
+}
+
+test "through Mesa's back end, a float an arm's product reads in each of its floats, and a comparison read again: neither from a register the arm wrote" {
+    var red: [8]u8 = undefined;
+    // ScaleInArm: s, made before the selection, is read by each of the
+    // four products of the scale in the arm, which nir_lower_alu_width
+    // makes an instruction a float (nir_lower_alu_width.c:407-432): live
+    // where the first is made (nir_liveness.c:247-256), so in no web with
+    // it, and copied where the false way ends. Before 1.207 the first
+    // product was written over it.
+    var work: Work = .{};
+    const scaled = try throughMesa(&work, ScaleInArm.words);
+    try testing.expect(!rereadsWritten(scaled, "fmul.ifa", 4));
+    try testing.expectEqual(@as(usize, 1), writesOf(scaled, "mov.ifa", redOf(scaled, &red)));
+    try testing.expectEqual(@as(usize, 39), scaled.words.len);
+    // SplatInArm: the same, s named four times by a vector rather than
+    // scaled: each product reads it through the vector it is in.
+    work = .{};
+    const splat = try throughMesa(&work, SplatInArm.words);
+    try testing.expect(!rereadsWritten(splat, "fmul.ifa", 4));
+    try testing.expectEqual(@as(usize, 1), writesOf(splat, "mov.ifa", redOf(splat, &red)));
+    try testing.expectEqual(@as(usize, 39), splat.words.len);
+    // SelectsInArm: v.y shares the red phi's register, which the first
+    // bcsel writes; the two after it test the comparison's bool, not
+    // compare v.y again (ntq_get_alu_parent, nir_to_vir.c:1248-1255).
+    // Before 1.207 each compared again what the first had written.
+    work = .{};
+    const selected = try throughMesa(&work, SelectsInArm.words);
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 2), countOf(selected, "fcmp"));
+    try testing.expectEqual(@as(usize, 33), selected.words.len);
 }
 
 /// A selection kept for its false arm's cost, with the same sine in both
@@ -15344,7 +16719,7 @@ test "through Mesa's back end, glslc's if and else without -O: its variables mad
     defer testing.allocator.free(stream_kept);
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_branch_unoptimized);
-    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
     try testing.expectEqualSlices(u64, kept, code.words);
     try testing.expectEqual(stream_kept.len, code.stream().len);
@@ -15395,8 +16770,6 @@ test "a variable of the function's own of a block's struct, or loaded as what it
     // `texel`'s pointer type made a pointer to a bool: a variable there
     // may be (since 1.165), but the vector loaded from it is no bool.
     try testing.expectError(Error.Type, throughMesa(&work, &comptime patched(&reference.glslc_cutout_unoptimized, .type_pointer, 0, 2, 26)));
-    // The colour out stored in an arm is still a store Mesa leaves there.
-    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch_unoptimized, .store, 1, 0, 71)));
 }
 
 test "through Mesa's back end, glslc's nested selections: the inner flattened first, the outer's phis naming the inner merge block" {
@@ -15578,9 +16951,16 @@ test "a selection is flattened under the limit its SelectionControl sets, and on
     try testing.expectEqual(@as(usize, 2), countOf(branch, "bu."));
     try testing.expectEqual(@as(usize, 45), branch.words.len);
     // The outer selection of glslc_collapse asking not to be: no collapse
-    // past its comparison, and the outer arm, a selection in it, then
-    // refused as a branch: no selection in a kept one is kept.
-    try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_collapse, .selection_merge, 0, 1, dont_flatten)));
+    // past its comparison, the inner selection flattened at 24 into a
+    // bcsel in the outer arm, which is kept (since 1.207; before, an arm
+    // that had held a selection was refused).
+    const outer = try throughMesa(&work, &comptime patched(&reference.glslc_collapse, .selection_merge, 0, 1, dont_flatten));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .begin_if));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 1), countOf(outer, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(outer, "bu."));
+    try testing.expectEqual(@as(usize, 30), outer.words.len);
     // A control of neither bit, which vtn fails.
     try testing.expectError(Error.Branches, throughMesa(&work, &comptime patched(&reference.glslc_branch, .selection_merge, 0, 1, 4)));
     // Flatten is the same program where the arms are under 24 anyway.
@@ -18526,7 +19906,7 @@ test "a loop of a constant trip count is unrolled as nir_opt_loop_unroll unrolls
     // of its own and the update in the continue block.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_looped_plain);
-    try testing.expectEqual(@as(u32, 2), work.local_count);
+    try testing.expectEqual(@as(u32, 2), work.local_count - work.output_local_count);
     try testing.expectEqualSlices(u64, kept, code.words);
     try testing.expectEqual(stream_kept.len, code.stream().len);
     for (stream_kept, code.stream()) |a, b| try testing.expectEqual(a, b);
@@ -18727,7 +20107,7 @@ test "an array of the function's own a loop Mesa unrolls indexes is a variable o
     // besides each varying's six.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_array);
-    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 15), code.words.len);
     try testing.expectEqual(@as(usize, 6 + 4), opsOf(code, "fmul"));
     try testing.expectEqual(@as(usize, 6 + 4), opsOf(code, "fadd"));
@@ -18737,7 +20117,7 @@ test "an array of the function's own a loop Mesa unrolls indexes is a variable o
     // words.
     var kept: Work = .{};
     const same = try throughMesa(&kept, &reference.glslc_local_array_kept);
-    try testing.expectEqual(@as(u32, 3 + 2 + 1 + 1), kept.local_count);
+    try testing.expectEqual(@as(u32, 3 + 2 + 1 + 1), kept.local_count - kept.output_local_count);
     try testing.expectEqualSlices(u64, code.words, same.words);
 }
 
@@ -18746,7 +20126,7 @@ test "a struct of the function's own is a variable of each member, as nir_split_
     // of l, member by member (vtn_variables.c:763-781; since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_struct);
-    try testing.expectEqual(@as(u32, 4), work.local_count);
+    try testing.expectEqual(@as(u32, 4), work.local_count - work.output_local_count);
     // The dot of m.dir and (0, 0, 1) its products and sums, as
     // nir_lower_alu_to_scalar lowers it: 1.0 times 1.0, the constant 1.0,
     // and the fmuls of 0.0 zeros (:277), each fadd of a zero the other
@@ -18762,7 +20142,7 @@ test "a struct of the function's own is a variable of each member, as nir_split_
     try testing.expectEqual(@as(usize, 14), code.words.len);
     var values: Work = .{};
     const same = try throughMesa(&values, &reference.glslc_local_struct_values);
-    try testing.expectEqual(@as(u32, 0), values.local_count);
+    try testing.expectEqual(@as(u32, 0), values.local_count - values.output_local_count);
     try testing.expectEqual(@as(u32, 6), code.varyings);
     try testing.expectEqual(@as(u32, 4), same.varyings);
     inline for (.{ "fmax", "fmul", "fadd", "vfpack" }) |op| try testing.expectEqual(opsOf(same, op), opsOf(code, op));
@@ -18778,7 +20158,7 @@ test "an array a loop stores into at its counter, and an array of structs from a
     // varying's fmul and fadd.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_taps);
-    try testing.expectEqual(@as(u32, 4), work.local_count);
+    try testing.expectEqual(@as(u32, 4), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 1 + 3), opsOf(code, "fmul"));
     try testing.expectEqual(@as(usize, 1 + 1), opsOf(code, "fadd"));
     // At -O0 the counter and the array of structs are variables too, the
@@ -18787,7 +20167,7 @@ test "an array a loop stores into at its counter, and an array of structs from a
     // a vec2 and a float of each tap.
     var kept: Work = .{};
     const same = try throughMesa(&kept, &reference.glslc_local_taps_kept);
-    try testing.expectEqual(@as(u32, 1 + 4 + 2 * 2), kept.local_count);
+    try testing.expectEqual(@as(u32, 1 + 4 + 2 * 2), kept.local_count - kept.output_local_count);
     try testing.expectEqualSlices(u64, code.words, same.words);
     try testing.expectEqual(code.stream().len, same.stream().len);
     for (code.stream(), same.stream()) |a, b| try testing.expectEqual(a, b);
@@ -18816,13 +20196,13 @@ test "a matrix of the function's own is a variable of each column, a column stor
     // m's two columns, and v (since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_matrix);
-    try testing.expectEqual(@as(u32, 2 + 1), work.local_count);
+    try testing.expectEqual(@as(u32, 2 + 1), work.local_count - work.output_local_count);
     // glslc -O's values: the column put into the matrix by an
     // OpCompositeInsert, vtn_composite_insert's copy with the column
     // replaced (since 1.176). The same words.
     var values: Work = .{};
     const same = try throughMesa(&values, &reference.glslc_local_matrix_values);
-    try testing.expectEqual(@as(u32, 0), values.local_count);
+    try testing.expectEqual(@as(u32, 0), values.local_count - values.output_local_count);
     try testing.expectEqualSlices(u64, same.words, code.words);
 }
 
@@ -18831,7 +20211,7 @@ test "an array of bools of the function's own is a variable of each, and a load 
     // reads, is taken out (since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_bools);
-    try testing.expectEqual(@as(u32, 2), work.local_count);
+    try testing.expectEqual(@as(u32, 2), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 1), countOf(code, "fcmp"));
     // The load of flags[1] made one of the whole array.
     work = .{};
@@ -18848,7 +20228,7 @@ test "an array of the function's own stored in selections' arms: an element in o
     // second does; a select of each float.
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_palette);
-    try testing.expectEqual(@as(u32, 2 + 2), work.local_count);
+    try testing.expectEqual(@as(u32, 2 + 2), work.local_count - work.output_local_count);
     try testing.expectEqual(@as(usize, 2), liveOf(&work, .compare));
     try testing.expectEqual(@as(usize, 8), liveOf(&work, .select));
     try testing.expectEqual(@as(usize, 1), liveLogicOf(&work, .ior));
@@ -18860,11 +20240,13 @@ test "a struct of a matrix and a float, stored from one stored nowhere and made 
     // p and unset, two columns and a float each, and k (since 1.176).
     var work: Work = .{};
     const code = try throughMesa(&work, &reference.glslc_local_pair);
-    try testing.expectEqual(@as(u32, 3 + 3 + 1), work.local_count);
+    try testing.expectEqual(@as(u32, 3 + 3 + 1), work.local_count - work.output_local_count);
     // In the order they are first used, which is the order
     // nir_lower_vars_to_ssa gives their values to the phi builder: unset,
     // loaded whole before anything is stored, then p, then k.
-    try testing.expectEqualSlices(u8, &.{ 3, 4, 5, 0, 1, 2, 6 }, work.first_used[0..work.used_count]);
+    // Each one past the colour's, variable 0, which its store at the end
+    // uses last (since 1.206).
+    try testing.expectEqualSlices(u8, &.{ 4, 5, 6, 1, 2, 3, 7, 0 }, work.first_used[0..work.used_count]);
     // p.m[1] is (z, w) either way, which no select chooses; p.w, p.m[0].x
     // and k's four floats are chosen.
     try testing.expectEqual(@as(usize, 1), liveOf(&work, .compare));
@@ -18902,7 +20284,7 @@ test "a struct or an array made by OpCompositeConstruct is read by OpCompositeEx
     // (since 1.176), and 1.0.
     var work: Work = .{};
     _ = try throughMesa(&work, &reference.glslc_aggregate_values);
-    try testing.expectEqual(@as(u32, 3), work.local_count);
+    try testing.expectEqual(@as(u32, 3), work.local_count - work.output_local_count);
     const out = work.steps[work.stored];
     for (0..3) |k| {
         const float = partOf(&work, work.stored, @intCast(k));
@@ -18924,7 +20306,7 @@ test "a variable of the function's own given a constant to start with, an array'
     const code = try throughMesa(&work, &words);
     var kept: Work = .{};
     const same = try throughMesa(&kept, &start);
-    try testing.expectEqual(kept.local_count, work.local_count);
+    try testing.expectEqual(kept.local_count - kept.output_local_count, work.local_count - work.output_local_count);
     try testing.expectEqualSlices(u64, same.words, code.words);
     try testing.expectEqualSlices(Word, same.stream(), code.stream());
     var zero: Work = .{};
@@ -19950,20 +21332,29 @@ test "a point size of 1.0 is stored as it is, the fmax of it and 1.0 folded, as 
     try testing.expect(code.vertex.point_size);
     try testing.expectEqual(@as(usize, 0), countOf(code, "fmax"));
     try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 0, 1, 2, 3 }, outputRows(&work, &rows));
     try testing.expectEqualSlices(Word, &.{
-        vpmIndex(0),     vpmIndex(1),               vpmIndex(2), vpmIndex(3),               vpmIndex(8),                vpmIndex(9),
-        .{ .float = 1 }, vpmIndex(4),               vpmIndex(5), vpmIndex(6),               vpmIndex(7),                .{ .viewport = .x_scale },
-        vpmIndex(0),     .{ .viewport = .y_scale }, vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2),
+        vpmIndex(0), vpmIndex(1),               vpmIndex(2), vpmIndex(3),               vpmIndex(8),                vpmIndex(9),
+        vpmIndex(4), vpmIndex(5),               vpmIndex(6), vpmIndex(7),               .{ .float = 1 },            .{ .viewport = .x_scale },
+        vpmIndex(0), .{ .viewport = .y_scale }, vpmIndex(1), .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2),
         vpmIndex(3),
     }, code.stream());
-    // A second store of it, the colour's made one of 1.0 into %43, is
-    // refused, as a second of gl_Position is.
+    // A second store of it, the colour's made one of 1.0 into %43: the
+    // variable nir_lower_io_vars_to_temporaries makes of it holds the
+    // second, which the copy at the end stores, and the colour, stored
+    // nowhere, is the 0s of what the fragment program reads and nothing
+    // stored (since 1.206; refused before, as a second gl_Position was).
     work = .{};
     const twice = comptime patched(&patched(&reference.glslc_point_one, .store, 2, 0, 43), .store, 2, 1, 41);
-    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &twice, key));
+    const second = try vertexThroughMesa(&work, &twice, key);
+    try testing.expect(second.vertex.point_size);
+    try testing.expectEqual(@as(usize, 0), countOf(second, "fmax"));
+    try testing.expectEqual(@as(usize, 9), countOf(second, "stvpmv"));
+    try testing.expectEqualSlices(u32, &.{ 4, 0, 1, 2, 3, 5, 6, 7, 8 }, outputRows(&work, &rows));
 }
 
-test "a point size stored after the varyings is stored after them, at its row all the same" {
+test "a point size stored after the varyings is stored before them, as nir_move_output_stores_to_end stores in the order of the slots, at its row all the same" {
     var work: Work = .{};
     var key = VertexKey{};
     key.reads[0] = 4;
@@ -19971,12 +21362,15 @@ test "a point size stored after the varyings is stored after them, at its row al
     try testing.expect(code.vertex.point_size);
     try testing.expectEqual(@as(usize, 9), countOf(code, "stvpmv"));
     var rows: [16]u32 = undefined;
-    try testing.expectEqualSlices(u32, &.{ 5, 6, 7, 8, 4, 0, 1, 2, 3 }, outputRows(&work, &rows));
-    // The colour at rows 5 to 8, then the point size at row 4, as
-    // nir_move_output_stores_to_end keeps the stores' order.
+    // The point size at row 4, then the colour at rows 5 to 8:
+    // nir_move_output_stores_to_end puts the stores in the order of their
+    // slots (nir_move_output_stores_to_end.c:86-93), and VARYING_SLOT_PSIZ
+    // is before VARYING_SLOT_VAR0 (shader_enums.h:350, :381). 1.193 kept
+    // the stores' order, which it does not (since 1.206).
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 0, 1, 2, 3 }, outputRows(&work, &rows));
     try testing.expectEqualSlices(Word, &.{
         vpmIndex(4),               vpmIndex(5), vpmIndex(6),               vpmIndex(7),     vpmIndex(0),               vpmIndex(1),                vpmIndex(2), vpmIndex(3),
-        vpmIndex(8),               vpmIndex(9), .{ .float = 8 },           .{ .float = 1 }, vpmIndex(5),               vpmIndex(6),                vpmIndex(7), vpmIndex(4),
+        vpmIndex(8),               vpmIndex(9), .{ .float = 8 },           .{ .float = 1 }, vpmIndex(4),               vpmIndex(5),                vpmIndex(6), vpmIndex(7),
         .{ .viewport = .x_scale }, vpmIndex(0), .{ .viewport = .y_scale }, vpmIndex(1),     .{ .viewport = .z_scale }, .{ .viewport = .z_offset }, vpmIndex(2), vpmIndex(3),
     }, code.stream());
 }
@@ -20122,8 +21516,6 @@ test "a compute program says its workgroup's size, of 256 invocations at most an
         // and a second global id.
         &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.vertex_index)),
         &comptime patched(ids, .decorate, 5, 2, @intFromEnum(spirv.BuiltIn.global_invocation_id)),
-        // The buffer in Workgroup memory, which is not ported.
-        &comptime patched(&patched(&patched(ids, .type_pointer, 2, 1, 4), .variable, 1, 2, 4), .type_pointer, 3, 1, 4),
         // OriginUpperLeft, a fragment program's.
         &comptime patched(ids, .execution_mode, 0, 1, @intFromEnum(spirv.ExecutionMode.origin_upper_left)),
         // Neither LocalSize nor the WorkgroupSize constant.
@@ -20162,4 +21554,713 @@ test "through Mesa's back end, a compute program's atomic is the TMU's: its oper
     try testing.expectEqual(@as(usize, 1), countOf(code, "tmuau"));
     try testing.expectEqual(@as(usize, 1), countOf(code, "ldtmu"));
     try testing.expectEqual(@as(usize, 1), addReads(code, "shr", "rf2"));
+}
+
+/// `words` with `extra`, whole instructions, put in before the `at`th
+/// instruction of `op`, and the id bound raised to `bound` where that is
+/// more: an instruction where glslc does not write one.
+fn withInserted(comptime words: []const u32, comptime op: spirv.Op, comptime at: u32, comptime extra: []const u32, comptime bound: u32) [words.len + extra.len]u32 {
+    comptime {
+        @setEvalBranchQuota(100_000);
+        const start = opStart(words, op, at);
+        var copy = (words[0..start] ++ extra ++ words[start..]).*;
+        if (bound > copy[3]) copy[3] = bound;
+        return copy;
+    }
+}
+
+/// A shared-memory step of a program as a test expects it: its tag,
+/// kind and constant offset, and its offset computed as `shapeOf` prints
+/// it, null where there is none and "*" where it is not looked at.
+const SharedStep = struct { tag: Tag, kind: Kind = .f32x1, at: u32 = 0, shape: ?[]const u8 = null };
+
+fn expectSharedSteps(work: *const Work, expected: []const SharedStep) !void {
+    var found: usize = 0;
+    for (work.program()) |each| {
+        switch (each.tag) {
+            .shared, .shared_store, .shared_atomic, .control_barrier => {},
+            else => continue,
+        }
+        try testing.expect(found < expected.len);
+        const want = expected[found];
+        found += 1;
+        try testing.expectEqual(want.tag, each.tag);
+        if (each.tag == .control_barrier) continue;
+        try testing.expectEqual(want.kind, each.kind);
+        try testing.expectEqual(want.at, each.at);
+        const offset = if (each.tag == .shared) each.a else each.from[0];
+        if (want.shape) |shape| {
+            try testing.expect(offset != none);
+            if (std.mem.eql(u8, shape, "*")) continue;
+            var got = shapeOf(work, offset);
+            try testing.expectEqualStrings(shape, got.text());
+        } else try testing.expectEqual(none, offset);
+    }
+    try testing.expectEqual(expected.len, found);
+}
+
+test "through Mesa's back end, a compute program's shared memory is its workgroup's place in the dispatch's: each variable at its offset through the TMU, and each barrier() the TMU flushed and a TSY op" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_shared);
+    try testing.expectEqualSlices(u16, &.{ 8, 2, 1 }, &code.compute.local_size);
+    // total at 0, values at 4 and places at 80, its vec3s 16 apart: 80 +
+    // 3 * 16 + 12 bytes (shared_type_info, v3dv_pipeline.c:3273-3291;
+    // glsl_types.c:2817-2823).
+    try testing.expectEqual(@as(u32, 140), code.compute.shared_size);
+    try testing.expect(code.compute.has_control_barrier);
+    // wg_in_mem first: the payload's second word shifted by 16, under the
+    // 10 bits the local index's 6 of 64 leave, times 140, and the
+    // dispatch's shared memory added (nir_to_vir.c:4967-4992); then the
+    // local index's shift, 32 - 6, and the rest. The vec3 store's and the
+    // atomic's configurations, places' 80 and .y's 84.
+    try expectStream(&.{
+        wordOf(16),                      wordOf(0x3ff),                                        wordOf(140),               .shared_offset,
+        wordOf(26),                      wordOf(0xffff),                                       .{ .work_group_base = 0 }, .{ .work_group_base = 1 },
+        wordOf(80),                      wordOf(0xffff_fffb),                                  wordOf(0xffff_ff87),       wordOf(84),
+        wordOf(@bitCast(@as(f32, 100))), .{ .ssbo = .{ .set = 0, .binding = 0, .reach = 0 } },
+    }, code.stream());
+    // The local index is the payload's top 6 bits
+    // (emit_load_local_invocation_index, :4931-4936).
+    try expectSharedSteps(&work, &.{
+        // total = 0u, at 0: the store of no offset computed.
+        .{ .tag = .shared_store },
+        // values[i], 4 apart from 4.
+        .{ .tag = .shared_store, .shape = "iadd(4, ishl(ushr(system, 26), 2))" },
+        // places[i & 3u], 16 apart from 80.
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "iadd(80, ishl(iand(ushr(system, 26), 3), 4))" },
+        .{ .tag = .control_barrier },
+        // atomicAdd(total, i + 1u).
+        .{ .tag = .shared_atomic },
+        // values[15u - i].
+        .{ .tag = .shared, .shape = "iadd(4, ishl(isub(15, ushr(system, 26)), 2))" },
+        .{ .tag = .control_barrier },
+        // places[(i + 1u) & 3u].y, 4 into its vec3, and places[i & 3u].x.
+        .{ .tag = .shared, .shape = "iadd(84, ishl(iand(iadd(ushr(system, 26), 1), 3), 4))" },
+        .{ .tag = .shared, .shape = "iadd(80, ishl(iand(ushr(system, 26), 3), 4))" },
+        // total.
+        .{ .tag = .shared },
+    });
+    // Each barrier a BARRIERID into SYNCB (:3563-3577), after the stores
+    // before it were waited for, once there and once at the end.
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "barrierid"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "tmuwt"));
+    // The vec3 store's configuration and the atomic's.
+    try testing.expectEqual(@as(usize, 2), countOf(code, "tmuau"));
+    // wg_in_mem times 140, and the global id's x times 3.
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "umul24"));
+    // The stores before the first barrier waited for before its TSY op,
+    // and a thread switch for each barrier besides the loads' (:3863-3870).
+    try testing.expect(firstOf(code, "tmuwt") < firstOf(code, "barrierid"));
+    try testing.expectEqual(@as(usize, 10), countOf(code, "thrsw"));
+}
+
+/// Where the first instruction that `name` is in is, or the end.
+fn firstOf(code: Code, name: []const u8) usize {
+    for (code.words, 0..) |word, at| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        if (std.mem.indexOf(u8, disasm.disasm(word, &buffer).?, name) != null) return at;
+    }
+    return code.words.len;
+}
+
+test "through Mesa's back end, shared memory laid out as v3dv lays it out: a struct's members each at its alignment, an array's elements its stride apart, a matrix's columns 16 apart" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_shared_layout);
+    // pairs' a at 0, b at 16 and c at 32, the struct 48 bytes and its
+    // elements 48 apart; m at 192, its columns 16 apart; count at 240.
+    try testing.expectEqual(@as(u32, 244), code.compute.shared_size);
+    try testing.expect(code.compute.has_control_barrier);
+    try expectSharedSteps(&work, &.{
+        .{ .tag = .shared_store, .shape = "imul(ushr(system, 26), 48)" },
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "iadd(imul(ushr(system, 26), 48), 16)" },
+        .{ .tag = .shared_store, .kind = .f32x2, .shape = "iadd(imul(ushr(system, 26), 48), 32)" },
+        // m[i % 3u], of an offset longer than a shape is printed.
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "*" },
+        .{ .tag = .shared_store, .at = 240 },
+        .{ .tag = .control_barrier },
+        // m, a column at a time (vtn_variables.c:763-780).
+        .{ .tag = .shared, .kind = .f32x3, .at = 192 },
+        .{ .tag = .shared, .kind = .f32x3, .at = 208 },
+        .{ .tag = .shared, .kind = .f32x3, .at = 224 },
+        // pairs[o]'s a, b.y, b.z and c.x.
+        .{ .tag = .shared, .shape = "imul(isub(3, ushr(system, 26)), 48)" },
+        .{ .tag = .shared, .shape = "iadd(20, imul(isub(3, ushr(system, 26)), 48))" },
+        .{ .tag = .shared, .shape = "iadd(24, imul(isub(3, ushr(system, 26)), 48))" },
+        .{ .tag = .shared, .shape = "iadd(imul(isub(3, ushr(system, 26)), 48), 32)" },
+        .{ .tag = .shared, .at = 240 },
+    });
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "barrierid"));
+    // The shared memory's 244 bytes a workgroup, its m stored at 192 and
+    // loaded at 192, 208 and 224, count at 240.
+    const stream = code.stream();
+    try testing.expectEqual(@as(u32, 244), @as(u32, @bitCast(stream[2].float)));
+    try testing.expectEqual(Word.shared_offset, stream[3]);
+    var seen: [4]usize = @splat(0);
+    for (stream) |word| if (word == .float) switch (@as(u32, @bitCast(word.float))) {
+        192 => seen[0] += 1,
+        208 => seen[1] += 1,
+        224 => seen[2] += 1,
+        240 => seen[3] += 1,
+        else => {},
+    };
+    try testing.expectEqualSlices(usize, &.{ 1, 1, 1, 2 }, &seen);
+}
+
+test "shared memory's layout: a vec3's 12 bytes at 16, an array's last element unpadded, and a bool, an array of no length and more than 16 KiB refused" {
+    var work: Work = .{};
+    work.thing[1] = .float;
+    work.thing[2] = .vector;
+    work.wide[2] = 3;
+    work.points[2] = 1;
+    try testing.expectEqual(Laid{ .size = 12, .alignment = 16 }, try sharedLayout(&work, 2));
+    work.thing[3] = .array;
+    work.points[3] = 2;
+    work.length[3] = 4;
+    try testing.expectEqual(Laid{ .size = 3 * 16 + 12, .alignment = 16 }, try sharedLayout(&work, 3));
+    // A vec2 at 8; a mat3, three vec3 columns 16 apart.
+    work.thing[4] = .vector;
+    work.wide[4] = 2;
+    work.points[4] = 1;
+    try testing.expectEqual(Laid{ .size = 8, .alignment = 8 }, try sharedLayout(&work, 4));
+    work.thing[5] = .matrix;
+    work.wide[5] = 3;
+    work.points[5] = 2;
+    try testing.expectEqual(Laid{ .size = 48, .alignment = 16 }, try sharedLayout(&work, 5));
+    try testing.expectEqual(@as(u16, 16), try sharedColumnStride(&work, 5));
+    // A bool, which vtn would load as a comparison of its word.
+    work.thing[6] = .boolean;
+    try testing.expectError(Error.Storage, sharedLayout(&work, 6));
+    // A float array: of no length, of 16 KiB, and of a float more.
+    work.thing[7] = .array;
+    work.points[7] = 1;
+    work.length[7] = 0;
+    try testing.expectError(Error.Storage, sharedLayout(&work, 7));
+    work.length[7] = 4096;
+    try testing.expectEqual(Laid{ .size = 16 * 1024, .alignment = 4 }, try sharedLayout(&work, 7));
+    work.length[7] = 4097;
+    try testing.expectError(Error.Storage, sharedLayout(&work, 7));
+    // A struct of a float, a vec3 and a vec2: at 0, 16 and 32, and its 40
+    // bytes rounded up to its alignment, a vec3's (glsl_types.c:2838-2858).
+    work.thing[8] = .plain_struct;
+    work.points[8] = 0;
+    work.wide[8] = 3;
+    work.struct_members[0..3].* = .{ 1, 2, 4 };
+    try testing.expectEqual(Laid{ .size = 48, .alignment = 16 }, try sharedLayout(&work, 8));
+    for ([_]u32{ 0, 16, 32 }, 0..) |offset, index| try testing.expectEqual(offset, try sharedMemberOffset(&work, 8, @intCast(index)));
+}
+
+test "shared memory and OpControlBarrier where they are not ported are refused, a barrier of the invocation alone is nothing, and a Workgroup variable nothing names takes no memory" {
+    const shared = &reference.glslc_compute_shared;
+    var work: Work = .{};
+    // total's initializer, which a module may carry only of
+    // VK_KHR_zero_initialize_workgroup_memory, a later extension.
+    try testing.expectError(Error.Storage, computeThroughMesa(&work, &comptime initialized(shared, 13)));
+    // A Block struct in Workgroup memory, a buffer's type.
+    work = .{};
+    const ids = &reference.glslc_compute_ids;
+    try testing.expectError(Error.Storage, computeThroughMesa(&work, &comptime patched(&patched(&patched(ids, .type_pointer, 2, 1, 4), .variable, 1, 2, 4), .type_pointer, 3, 1, 4)));
+    // A Workgroup variable in a fragment program: its input made one.
+    work = .{};
+    const bools = &reference.glslc_tree_bools;
+    try testing.expectError(Error.Storage, throughMesa(&work, &comptime patched(&patched(bools, .type_pointer, 0, 1, 4), .variable, 0, 2, 4)));
+    // OpControlBarrier in a fragment program, of Device scope and no
+    // memory semantics: emit_barrier's (nir_to_vir.c:3580-3613), not
+    // ported.
+    work = .{};
+    const barrier = [_]u32{ @as(u32, 4) << 16 | @intFromEnum(spirv.Op.control_barrier), 18, 18, 14 };
+    try testing.expectError(Error.Refused, throughMesa(&work, &comptime withInserted(bools, .returns, 0, &barrier, 0)));
+    // The first barrier's execution scope CrossDevice, which no Vulkan
+    // program names.
+    work = .{};
+    try testing.expectError(Error.Body, computeThroughMesa(&work, &comptime patched(shared, .control_barrier, 0, 0, 14)));
+    // Of the invocation, execution and memory: nothing
+    // (spirv_to_nir.c:2831-2832), the second barrier's TSY op alone.
+    work = .{};
+    var code = try computeThroughMesa(&work, &comptime patched(&patched(shared, .control_barrier, 0, 0, 36), .control_barrier, 0, 1, 36));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "barrierid"));
+    // Of no memory semantics, still the workgroup's: a TSY op each.
+    work = .{};
+    code = try computeThroughMesa(&work, &comptime patched(shared, .control_barrier, 0, 2, 14));
+    try testing.expectEqual(@as(usize, 2), opsOf(code, "barrierid"));
+    // Of the invocation's execution and no memory semantics: no memory
+    // scope either (:2824-2829), so nothing.
+    work = .{};
+    code = try computeThroughMesa(&work, &comptime patched(&patched(shared, .control_barrier, 0, 0, 36), .control_barrier, 0, 2, 14));
+    try testing.expectEqual(@as(usize, 1), opsOf(code, "barrierid"));
+    // values made float[4079]: places at 16336, and the whole 16380
+    // bytes; of 4080, places would end past the 16 KiB facet gives a
+    // workgroup (`most_shared`).
+    work = .{};
+    code = try computeThroughMesa(&work, &comptime patched(shared, .constant, 1, 2, 4079));
+    try testing.expectEqual(@as(u32, 16380), code.compute.shared_size);
+    work = .{};
+    try testing.expectError(Error.Storage, computeThroughMesa(&work, &comptime patched(shared, .constant, 1, 2, 4080)));
+    // A second float[16] in Workgroup memory, which nothing names:
+    // nir_remove_dead_variables' (nir_to_vir.c:2253-2257), of no place.
+    work = .{};
+    const unnamed = [_]u32{ @as(u32, 4) << 16 | @intFromEnum(spirv.Op.variable), 18, 97, 4 };
+    code = try computeThroughMesa(&work, &comptime withInserted(shared, .variable, 3, &unnamed, 98));
+    try testing.expectEqual(@as(u32, 140), code.compute.shared_size);
+    // A uint before total that is stored into and never read: named, at
+    // 0, and total at 4 after it.
+    work = .{};
+    const stored = [_]u32{ @as(u32, 4) << 16 | @intFromEnum(spirv.Op.variable), 12, 97, 4 };
+    const store = [_]u32{ @as(u32, 3) << 16 | @intFromEnum(spirv.Op.store), 97, 14 };
+    code = try computeThroughMesa(&work, &comptime withInserted(&withInserted(shared, .variable, 1, &stored, 98), .store, 0, &store, 0));
+    try testing.expectEqual(@as(u32, 140), code.compute.shared_size);
+    var stores: [2]u32 = undefined;
+    var found: usize = 0;
+    for (work.program()) |each| if (each.tag == .shared_store and found < 2) {
+        stores[found] = each.at;
+        found += 1;
+    };
+    try testing.expectEqualSlices(u32, &.{ 0, 4 }, &stores);
+}
+
+test "through Mesa's back end, a matrix in an array in shared memory: stored and loaded a column at a time, its vec3 columns 16 apart and the matrices 32" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_shared_matrices);
+    // Two mat2x3s, each two columns of a vec3's 16 bytes.
+    try testing.expectEqual(@as(u32, 64), code.compute.shared_size);
+    try expectSharedSteps(&work, &.{
+        // turns[i], stored whole: its columns at 0 and 16
+        // (vtn_variables.c:763-780).
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "ishl(ushr(system, 26), 5)" },
+        .{ .tag = .shared_store, .kind = .f32x3, .shape = "iadd(ishl(ushr(system, 26), 5), 16)" },
+        .{ .tag = .control_barrier },
+        // turns[1u - i], loaded whole.
+        .{ .tag = .shared, .kind = .f32x3, .shape = "ishl(isub(1, ushr(system, 26)), 5)" },
+        .{ .tag = .shared, .kind = .f32x3, .shape = "iadd(ishl(isub(1, ushr(system, 26)), 5), 16)" },
+    });
+}
+
+test "through Mesa's back end, a compute program's ids differ from lane to lane: its readonly buffer read at them through the TMU, and at the count of workgroups through unifa" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_readonly);
+    // r.w[i], r.w[gl_WorkGroupID.x + 128u] and r.w[gl_LocalInvocationIndex
+    // + 256u] differ (nir_divergence_analysis.c:977-979, :611-615);
+    // r.w[gl_NumWorkGroups.x + 512u] does not (:240).
+    var divergent: [4]bool = undefined;
+    var found: usize = 0;
+    for (work.program(), 0..) |each, at| if (each.tag == .ssbo_indirect) {
+        try testing.expect(found < divergent.len);
+        divergent[found] = work.divergent[at];
+        found += 1;
+    };
+    try testing.expectEqual(divergent.len, found);
+    try testing.expectEqualSlices(bool, &.{ true, true, true, false }, &divergent);
+    // The CS payload's two words differ; the count of workgroups does not.
+    for (work.program(), 0..) |each, at| if (each.tag == .system) {
+        const which: SystemValue = @enumFromInt(each.at);
+        try testing.expectEqual(which == .cs_payload0 or which == .cs_payload1, work.divergent[at]);
+    };
+    // Three loads through the TMU (ntq_emit_tmu_general) and one through
+    // unifa (ntq_emit_load_unifa, nir_to_vir.c:3315-3317).
+    try testing.expectEqual(@as(usize, 3), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "ldunifa"));
+}
+
+test "through Mesa's back end, a vertex program's uniform buffer read at its vertex's and its instance's index goes through the TMU: neither is the same in every lane" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_vertex_tints, key);
+    // The vertex id and the instance id differ (:975, :572-573); the
+    // first vertex and the base instance, which VertexIndex and
+    // InstanceIndex add to them, do not (:246-249).
+    var reads: usize = 0;
+    for (work.program(), 0..) |each, at| switch (each.tag) {
+        .ubo_indirect => {
+            try testing.expect(work.divergent[at]);
+            reads += 1;
+        },
+        .system => {
+            const which: SystemValue = @enumFromInt(each.at);
+            try testing.expectEqual(which == .vertex_id or which == .instance_id, work.divergent[at]);
+        },
+        else => {},
+    };
+    try testing.expectEqual(@as(usize, 2), reads);
+    // Each tint's four floats an LDTMU, and no LDUNIFA.
+    try testing.expectEqual(@as(usize, 8), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "ldunifa"));
+}
+
+/// The registers the add side of `code`'s instructions writes where its
+/// operation is `op`, in order, as the disassembler names them `rfN`
+/// (since 1.205).
+fn addDestsOf(code: Code, op: []const u8, into: []u8) []u8 {
+    var count: usize = 0;
+    for (code.words) |word| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (!std.mem.startsWith(u8, line, op) or line.len < op.len + 3) continue;
+        if (!std.mem.eql(u8, line[op.len .. op.len + 3], " rf")) continue;
+        const digits = line[op.len + 3 ..];
+        const end = std.mem.indexOfScalar(u8, digits, ',') orelse continue;
+        into[count] = std.fmt.parseInt(u8, digits[0..end], 10) catch continue;
+        count += 1;
+    }
+    return into[0..count];
+}
+
+/// Whether the program `work` was left holding has a kept selection's
+/// begin_if (since 1.205).
+fn hasBranch(work: *const Work) bool {
+    for (work.program()) |each| if (each.tag == .begin_if) return true;
+    return false;
+}
+
+test "through Mesa's back end, a compute program's store in an arm whose condition differs from lane to lane is a branch under the execute mask" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_branch);
+    // ntq_emit_nonuniform_if (nir_to_vir.c:4455-4562), as in a fragment
+    // program: the execute mask set where a lane does not take the arm,
+    // the arm jumped over where none does, and the TMU's addresses in it,
+    // the load's and the store's, written under the mask
+    // (ntq_emit_tmu_general). The condition is a value read at the
+    // global id, which differs (1.204).
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "bu.anyna"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "add.ifa tmua"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+}
+
+test "through Mesa's back end, a compute program's store in an arm whose condition is the same in every lane is a uniform branch" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_uniform_branch);
+    // ntq_emit_uniform_if (nir_to_vir.c:4355-4400): a jump past the arm
+    // where any lane, of those dispatched, does not take it (msfign P),
+    // and no execute mask: the store in the arm is no lane's alone.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.anynap"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, "mov.ifna"));
+    try testing.expectEqual(@as(usize, 0), countOf(code, ".ifa"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "tmua"));
+}
+
+test "through Mesa's back end, one invocation's store into shared memory is in its arm under the execute mask, and the barrier after the merge is every lane's" {
+    var work: Work = .{};
+    const code = try computeThroughMesa(&work, &reference.glslc_compute_shared_branch);
+    // The read of r.f[] and the store into total, each address under the
+    // mask; the barrier, its TMUWT before it, at the top level after the
+    // arm (emit_compute_barrier, nir_to_vir.c:3563-3577); then total read
+    // back by every lane.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "add.ifa tmua"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "mov.ifa tmua"));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "barrierid"));
+    var branch_at: ?usize = null;
+    var barrier_at: ?usize = null;
+    for (code.words, 0..) |word, k| {
+        var buffer: [disasm.most_text]u8 = undefined;
+        const line = disasm.disasm(word, &buffer).?;
+        if (std.mem.indexOf(u8, line, "bu.allna") != null) branch_at = k;
+        if (std.mem.indexOf(u8, line, "barrierid") != null) barrier_at = k;
+    }
+    try testing.expect(branch_at.? < barrier_at.?);
+}
+
+test "through Mesa's back end, a vertex program's uniform buffer read in an arm keeps the selection a branch, which nir_opt_dead_cf takes out of the coordinate program" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_vertex_branch, key);
+    // The vertex program: the read in the arm, its address under the
+    // mask, and the false arm's copies of vec4(0.5) jumped over where
+    // every lane took the true one.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, "bu.allna"));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, "bu.alla"));
+    try testing.expectEqual(@as(usize, 1), countOf(vertex, "add.ifa tmuau"));
+    try testing.expectEqual(@as(usize, 4), countOf(vertex, "ldtmu"));
+    // The coordinate program has no use for the colour: nir_opt_dce
+    // leaves the arm empty and the phi unread, and nir_opt_dead_cf takes
+    // the nir_if out (node_is_dead, nir_opt_dead_cf.c:171-271), its
+    // comparison and execute mask with it.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_vertex_branch, key);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "push"));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "bu."));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "ldtmu"));
+    // The id's row, which it reads for the vertex program's sake, and
+    // p's four, read and stored again; the place on screen.
+    try testing.expectEqual(@as(usize, 16), coordinate.words.len);
+    // Nor has a vertex program whose fragment program reads no colour
+    // (nir_remove_unused_io_vars, vir.c:1097-1105).
+    work = .{};
+    const unread = try vertexThroughMesa(&work, &reference.glslc_vertex_branch, .{});
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(unread, "bu."));
+}
+
+test "through Mesa's back end, a vertex program's two selections kept by DontFlatten: the place's in both programs, the colour's in the vertex program alone" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_vertex_kept, key);
+    // Both on the vertex's number, which differs: two branches under the
+    // execute mask. The id is read by the two conditions alone, which
+    // nir_opt_dce keeps for their nir_ifs, and the VPM has it.
+    try testing.expectEqual(@as(usize, 2), countOf(vertex, "bu.allna"));
+    try testing.expectEqual(SystemValues{ .vertex_id = true }, vertex.vertex.system_values);
+    // p whole; of c, the red, the green and the blue the two ways read,
+    // each phi its own float of each (nir_lower_phis_to_scalar).
+    try testing.expectEqualSlices(u8, &.{ 4, 3 }, vertex.vertex.vattr_sizes[0..2]);
+    // The place's x and y are the false way's values: each LDVPMV_IN
+    // writes the phi's register itself, as ntq_store_def does
+    // (nir_to_vir.c:2980-2982), which the arm then writes under the mask.
+    var loaded_buffer: [16]u8 = undefined;
+    var masked_buffer: [16]u8 = undefined;
+    const loaded = addDestsOf(vertex, "ldvpmv_in", &loaded_buffer);
+    const masked = addDestsOf(vertex, "fadd.ifa", &masked_buffer);
+    try testing.expect(masked.len >= 2);
+    for (masked[0..2]) |reg| try testing.expect(std.mem.indexOfScalar(u8, loaded, reg) != null);
+    // The coordinate program: the place's branch, and nothing of the
+    // colour's.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_vertex_kept, key);
+    try testing.expectEqual(@as(usize, 1), countOf(coordinate, "bu.allna"));
+    try testing.expectEqual(@as(usize, 2), countOf(coordinate, "fadd.ifa"));
+    try testing.expectEqual(@as(u8, 0), coordinate.vertex.vattr_sizes[1]);
+}
+
+test "through Mesa's back end, a kept selection whose arm the coordinate program leaves empty is flattened where its phi is read" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const vertex = try vertexThroughMesa(&work, &reference.glslc_vertex_kept_phi, key);
+    // The vertex program reads the colour in the arm: a branch.
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), countOf(vertex, "ldtmu"));
+    // The coordinate program has no use for the read. The place's phi
+    // follows the nir_if, which nir_opt_dead_cf leaves
+    // (nir_opt_dead_cf.c:178-183), but its arms are empty, which even
+    // DontFlatten's limit of 0 lets nir_opt_peephole_select flatten
+    // (nir_opt_peephole_select.c:339-341, :548-553): each of the
+    // place's four floats a bcsel of the condition, q's and p's.
+    work = .{};
+    key.coordinate = true;
+    key.system_values = vertex.vertex.system_values;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_vertex_kept_phi, key);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "ldtmu"));
+    try testing.expectEqual(@as(usize, 0), countOf(coordinate, "bu."));
+    var selects: usize = 0;
+    const program = work.program();
+    for (program) |each| if (each.tag == .select) {
+        // The true way's float is q's, p times a half; the false way's
+        // is p's own: each a component of the vector, or the vector.
+        const yes = program[each.b];
+        const no = program[each.from[0]];
+        try testing.expectEqual(Tag.mul, (if (yes.tag == .component) program[yes.a] else yes).tag);
+        try testing.expectEqual(Tag.input, (if (no.tag == .component) program[no.a] else no).tag);
+        selects += 1;
+    };
+    try testing.expectEqual(@as(usize, 4), selects);
+}
+
+/// The tag of the step a vertex program's output at `row` stores the
+/// float of, else `.output`.
+fn storedAt(work: *const Work, row: u32) Tag {
+    for (work.program()) |each| if (each.tag == .output and each.at == row) return work.steps[partOf(work, each.a, 0).step].tag;
+    return .output;
+}
+
+test "through Mesa's back end, a fragment program's colour stored in both arms without -O is a variable of the function's own, the merge's bcsels" {
+    // nir_lower_io_vars_to_temporaries makes the colour a variable
+    // (v3dv_pipeline.c:399-400), nir_lower_vars_to_ssa gives the merge a
+    // phi of it, and nir_opt_peephole_select a bcsel of each float; the
+    // copy at the end stores them (since 1.206).
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_outputs_arms_frag);
+    try testing.expect(!hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    for (0..4) |k| {
+        const chosen = work.steps[partOf(&work, work.stored, @intCast(k)).step];
+        try testing.expectEqual(Tag.select, chosen.tag);
+        // The false way's v * 0.5.
+        try testing.expectEqual(Tag.mul, work.steps[partOf(&work, chosen.from[0], 0).step].tag);
+    }
+    // The true way's x and y are v's y and z.
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 0).step].b, 1));
+    try testing.expect(isInputFloat(&work, work.steps[partOf(&work, work.stored, 1).step].b, 2));
+    try testing.expectEqual(@as(usize, 19), code.words.len);
+}
+
+test "through Mesa's back end, a fragment program's colour stored, then again in an arm that samples, is the kept selection's phis" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_outputs_kept_frag);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 0), stepsOf(&work, .select));
+    for (0..4) |k| try testing.expectEqual(Tag.phi, work.steps[partOf(&work, work.stored, @intCast(k)).step].tag);
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 2), countOf(code, "ldtmu"));
+    try testing.expectEqual(@as(usize, 35), code.words.len);
+}
+
+test "through Mesa's back end, a vertex program's outputs stored in an arm, through a chain, loaded and stored again, and in one arm alone, without -O" {
+    // gl_Position = p, and its y -p.y in the arm; vcolor = c, its rgb
+    // c.bgr in the arm, and its a loaded and halved after the merge;
+    // vplace = p.xy in the other arm alone (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    key.reads[1] = 2;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_arms_vert, key);
+    try testing.expect(!hasBranch(&work));
+    // The position's y, and the colour's r and b: its g is c's g both
+    // ways, which nir_opt_remove_phis leaves without a phi.
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .select));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 10), countOf(code, "stvpmv"));
+    try testing.expectEqual(Tag.select, storedAt(&work, 4));
+    try testing.expectEqual(Tag.input, storedAt(&work, 5));
+    try testing.expectEqual(Tag.select, storedAt(&work, 6));
+    try testing.expectEqual(Tag.mul, storedAt(&work, 7));
+    // vplace's phi of an undef and p.xy is p.xy (nir_opt_remove_phis.c:
+    // 105-175).
+    try testing.expectEqual(Tag.input, storedAt(&work, 8));
+    try testing.expectEqual(Tag.input, storedAt(&work, 9));
+    try testing.expectEqual(@as(usize, 32), code.words.len);
+    // The coordinate program has the position's select alone.
+    work = .{};
+    key.coordinate = true;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_outputs_arms_vert, key);
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 6), countOf(coordinate, "stvpmv"));
+    try testing.expectEqual(@as(usize, 20), coordinate.words.len);
+}
+
+test "through Mesa's back end, a vertex program's varying of which two floats are stored stores those two, the others the 0 of what nothing stored" {
+    // vcolor.x = p.z and vcolor.w = 1.0: the copy's stores of y and z are
+    // an undef's, which nir_opt_undef takes out (opt_undef_store,
+    // nir_opt_undef.c:143-179), and the rows the fragment program reads
+    // are given 0 after the fixed-function outputs (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_part_vert, key);
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 7, 0, 1, 2, 3, 5, 6 }, outputRows(&work, &rows));
+    try testing.expectEqual(Tag.input, storedAt(&work, 4));
+    for ([_]u32{ 5, 6 }) |row| {
+        const zero = for (work.program()) |each| {
+            if (each.tag == .output and each.at == row) break work.steps[each.a];
+        } else unreachable;
+        try testing.expectEqual(Tag.constant, zero.tag);
+        try testing.expectEqual(@as(f32, 0), work.pool[zero.at]);
+    }
+    try testing.expectEqual(@as(usize, 8), countOf(code, "stvpmv"));
+    try testing.expectEqual(@as(usize, 23), code.words.len);
+}
+
+test "through Mesa's back end, a vertex program's position and varying stored in the arms of a kept selection are its phis, in both programs" {
+    // A uniform buffer read at VertexIndex & 3 in the arm keeps the
+    // selection a branch (1.205); the position's four floats and the
+    // colour's are each a phi, and the coordinate program has the
+    // position's (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_kept_vert, key);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 8), stepsOf(&work, .phi));
+    for (4..8) |row| try testing.expectEqual(Tag.phi, storedAt(&work, @intCast(row)));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    try testing.expectEqual(@as(usize, 67), code.words.len);
+    work = .{};
+    key.coordinate = true;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_outputs_kept_vert, key);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 6), countOf(coordinate, "stvpmv"));
+    try testing.expectEqual(@as(usize, 53), coordinate.words.len);
+}
+
+test "an output's float through a chain is gl_Position's alone, and gl_PerVertex's other members are still refused" {
+    // gl_Position.y's chain made one into gl_PointSize's member, %9 the
+    // uint 1, which is one float: refused (since 1.206). So is one to the
+    // whole of gl_ClipDistance, member 2 (%45), as before.
+    var work: Work = .{};
+    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &comptime patched(&reference.glslc_outputs_arms_vert, .access_chain, 3, 3, 9), .{}));
+    try testing.expectError(Error.Outputs, vertexThroughMesa(&work, &comptime patched(&reference.glslc_outputs_arms_vert, .access_chain, 0, 3, 45), .{}));
+}
+
+test "through Mesa's back end, FacetBoth's shipped outputs: the colour stored in both arms, a float again in one, and its alpha loaded and stored after the merge" {
+    var work: Work = .{};
+    const code = try throughMesa(&work, &reference.glslc_shipped_outputs);
+    try testing.expect(!hasBranch(&work));
+    // r, g, b and the alpha before its fma: each a bcsel (since 1.206).
+    try testing.expectEqual(@as(usize, 4), stepsOf(&work, .select));
+    try testing.expectEqual(Tag.select, work.steps[partOf(&work, work.stored, 2).step].tag);
+    try testing.expectEqual(@as(usize, 19), code.words.len);
+}
+
+test "through Mesa's back end, FacetBoth's shipped vertex outputs: floats of the place and the colour stored again in a flattened arm, the place's x in a kept one" {
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_shipped_vertex_outputs, key);
+    // The place's y and the colour's r and b, bcsels; the place's x the
+    // kept selection's phi (since 1.206).
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 3), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 1), countOf(code, "bu.allna"));
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 44), code.words.len);
+    work = .{};
+    key.coordinate = true;
+    const coordinate = try vertexThroughMesa(&work, &reference.glslc_shipped_vertex_outputs, key);
+    try testing.expect(hasBranch(&work));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .select));
+    try testing.expectEqual(@as(usize, 1), stepsOf(&work, .phi));
+    try testing.expectEqual(@as(usize, 34), coordinate.words.len);
+}
+
+test "a vertex program's varyings are stored in the order of their locations, not of their declarations, as nir_move_output_stores_to_end stores them" {
+    // vcolor declared first made location 1 and vplace location 0: the
+    // copies' stores in the order of the slots (nir_move_output_stores_to_end.c:
+    // 86-93), vplace's two floats at rows 4 and 5 before vcolor's four
+    // (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 2;
+    key.reads[1] = 4;
+    const swapped = comptime patched(&patched(&reference.glslc_outputs_arms_vert, .decorate, 2, 2, 1), .decorate, 4, 2, 0);
+    _ = try vertexThroughMesa(&work, &swapped, key);
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(Tag.input, storedAt(&work, 4));
+    try testing.expectEqual(Tag.select, storedAt(&work, 6));
+}
+
+test "a vertex program's varying declared and never stored takes none of the eight a program may store" {
+    // Its copy stores an undef, which nir_opt_undef takes out
+    // (opt_undef_store, nir_opt_undef.c:143-179): nine declared, eight
+    // stored, is eight (since 1.206).
+    var work: Work = .{};
+    var key = VertexKey{};
+    key.reads[0] = 4;
+    key.reads[7] = 4;
+    const code = try vertexThroughMesa(&work, &reference.glslc_outputs_unstored_vert, key);
+    try testing.expectEqual(@as(u32, 8), work.varying_count);
+    var rows: [16]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 4, 5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3 }, outputRows(&work, &rows));
+    try testing.expectEqual(@as(usize, 12), countOf(code, "stvpmv"));
 }

@@ -472,8 +472,11 @@ fn spanOf(image: *const Image, level: u32, layer: u32) ?struct { at: usize, byte
         // by nothing. An image kept in rows has levels since 1.119.
         .rows => {
             // Four samples kept together, where its device says: the
-            // whole level, every sample of it (since 1.146).
-            if (image.quads) {
+            // whole level, every sample of it (since 1.146). And since
+            // 1.210 one sampled as well, or of more than one level, which
+            // such a device lays out as a texture (`_image.deviceLaid`):
+            // the level of that layer, the padding of its tiles with it.
+            if (_image.deviceLaid(image)) {
                 const span = image.device.physical.ops.texture_level.?(image, level, layer);
                 return .{ .at = @intCast(span.at), .bytes = @intCast(span.bytes) };
             }

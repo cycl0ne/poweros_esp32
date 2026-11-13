@@ -166,15 +166,16 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
             said.max_descriptor_set_input_attachments = 0;
             // What this device will sample from, by what the image holds: a
             // colour, and a depth since 1.142 (`can.sampled_depth`), each
-            // of one sample: one of four it draws into since 1.148 but
-            // samples none, its TMU yet to fetch a sample where the frame
-            // stored it (item 61's V7), so these two say the 1 bit alone
-            // as `narrowSampleCounts` said it for them before. No
-            // whole-number format (`can.whole_textures`), no stencil, no
-            // storage image. A mask of no bits says the device samples no
-            // image of that kind at all, which is what Vulkan means by it.
-            said.sampled_image_color_sample_counts = facet.SAMPLE_COUNT_1;
-            said.sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1;
+            // of one sample or four: one of four it draws into since 1.148,
+            // and since 1.209 its TMU fetches a sample where the frame
+            // stored it, in the pixel's quad (item 61's V7), as v3dv
+            // reports 1 and 4 on this same V3D (`supported_sample_counts`,
+            // v3dv_device.c:1024-1027, :1179-1189). No whole-number format
+            // (`can.whole_textures`), no stencil, no storage image. A mask
+            // of no bits says the device samples no image of that kind at
+            // all, which is what Vulkan means by it.
+            said.sampled_image_color_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4;
+            said.sampled_image_depth_sample_counts = facet.SAMPLE_COUNT_1 | facet.SAMPLE_COUNT_4;
             said.sampled_image_integer_sample_counts = 0;
             said.sampled_image_stencil_sample_counts = 0;
             said.storage_image_sample_counts = 0;
@@ -394,8 +395,9 @@ fn describe(sys: *ExecBase, physical: *PhysicalDevice) callconv(.c) bool {
         // where their images keep them (`_image.Image.quads`), and averages
         // the colour into a resolve attachment as each tile ends, or on the
         // CPU where the render area is not of whole supertiles
-        // (`frame.tilesInArea`). Sampling such an image is item 59's
-        // and step V7's, and refused until then (`_image.multisampled`).
+        // (`frame.tilesInArea`). A program fetches a sample of such an
+        // image in the pixel's quad (since 1.209, step V7;
+        // `compile.Lookup.fetch_sample`).
         .multisampling = true,
         // A subpass of no colour attachment, or of unused ones alone: the
         // frame's one render target the unused one v3dv configures

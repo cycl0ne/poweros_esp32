@@ -130,6 +130,9 @@ pub const Player = struct {
     /// 1.195).
     computing: bool = false,
     groups: [3]u32 = .{ 0, 0, 0 },
+    /// The dispatch's shared memory, a workgroup's bytes of it for each of
+    /// its workgroups (since 1.203).
+    shared_address: u32 = 0,
     /// The frame being made.
     frame: Frame = undefined,
     area: Area = undefined,
@@ -499,6 +502,10 @@ const Range = struct {
 /// The storage buffers a job keeps to drop from the CPU's caches.
 const most_storage = 32;
 
+/// Where a dispatch's shared memory starts: on a page, as v3dv_bo_alloc
+/// gives it a buffer of its own (since 1.203).
+const shared_alignment = 4096;
+
 /// What the group takes and where it must lie: the hardware wants a group
 /// of sixteen counters on a boundary of 1024 bytes, with the words
 /// themselves in the 64 at the start of it (Mesa's v3dv_query.c).
@@ -635,8 +642,9 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     player.image = image;
     // The layer the view begins at, an image kept in rows having layers
     // since 1.91: until then the frame began at the image's first byte
-    // whatever its view said.
-    const place = if (image) |each| colorPlace(each, framebuffer.colors[0].base_layer, framebuffer.height) else ColorPlace{ .first = 0, .bytes = 0, .stride = 0, .memory = cl.MEMORY_RASTER };
+    // whatever its view said. And the level it names, an image laid out
+    // as a texture here having levels since 1.210.
+    const place = if (image) |each| colorPlace(each, framebuffer.colors[0].base_level, framebuffer.colors[0].base_layer, framebuffer.height) else ColorPlace{ .first = 0, .bytes = 0, .stride = 0, .memory = cl.MEMORY_RASTER };
     player.image_first = place.first;
     player.image_bytes = place.bytes;
     player.kept_image = null;
@@ -689,8 +697,11 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
     // otherwise (`use_tlb_resolve`, v3dv_cmd_buffer.c:1184-1203). A
     // resolve attachment is of the colour's format and of one sample
     // (VUID-VkSubpassDescription-pResolveAttachments-00849, -00850), and
-    // here in rows, an image drawn into being kept in rows on this device
-    // (`_image.create`); one of any other shape is not resolved into.
+    // here an image drawn into, in rows or since 1.210 laid out as a
+    // texture, sampled as well, the tiles storing the average into the
+    // level its view names in that level's own tiling, as v3dv stores a
+    // resolve into its image's slice (v3dvx_cmd_buffer.c:364-411); one of
+    // any other shape is not resolved into.
     player.resolve_view = null;
     if (four) if (image) |each| if (framebuffer.resolves[0]) |view| resolve: {
         const into = view.image;
@@ -699,10 +710,10 @@ fn beginRenderPass(queue: *Queue, command: *const _command.BeginRenderPass, part
         if (!frames.tilesInArea(&player.frame)) break :resolve;
         const at = addressOf(queue, into);
         if (at == 0) break :resolve;
-        const rows = _image.rowsAt(into, view.base_level, view.base_layer);
-        player.resolve_first = rows.at;
-        player.resolve_bytes = @as(usize, rows.pitch) * framebuffer.height;
-        player.frame.resolve = .{ .image = at + @as(u32, @intCast(rows.at)), .stride = rows.pitch };
+        const resolved = colorPlace(into, view.base_level, view.base_layer, framebuffer.height);
+        player.resolve_first = resolved.first;
+        player.resolve_bytes = resolved.bytes;
+        player.frame.resolve = .{ .image = at + @as(u32, @intCast(resolved.first)), .stride = resolved.stride, .memory = resolved.memory };
     };
     // A depth or a stencil kept in memory and stored, over a render area
     // a tile the renderer renders sticks out of, is loaded first whatever
@@ -791,25 +802,30 @@ fn restartAtFour(queue: *Queue, pipeline: *const Pipeline) bool {
     return startBinning(queue);
 }
 
-/// Where a frame stores its colour: the rows of the layer its view begins
-/// at, or for an image of four samples that layer's level, where the
-/// device keeps each pixel's four together and the tiles store them all
-/// at once, in the level's own tiling (`_image.Image.quads`, since 1.147;
-/// v3dvx_cmd_buffer.c:396-406, 408-409).
+/// Where a frame stores its colour, or the tiles a resolve: the rows of the
+/// level and the layer its view begins at, or for an image laid out as a
+/// texture here that level of that layer, in the level's own tiling, as
+/// v3dv stores into its image's slice, its height in UIF blocks where it
+/// is UIF and its stride where it is rows (`cmd_buffer_render_pass_emit_store`,
+/// v3dvx_cmd_buffer.c:364-406; `_image.deviceLaid`). That is an image of
+/// four samples, each pixel's four kept together and the tiles storing
+/// them all at once (`_image.Image.quads`, since 1.147), and since 1.210
+/// one sampled as well, or of more than one level.
 const ColorPlace = struct { first: usize, bytes: usize, stride: u32, memory: u64 };
 
-fn colorPlace(image: *const _image.Image, layer: u32, height: u32) ColorPlace {
-    if (image.quads) {
+fn colorPlace(image: *const _image.Image, level: u32, layer: u32, height: u32) ColorPlace {
+    if (_image.deviceLaid(image)) {
         const layout = imageLayout(image);
-        const level = &layout.levels[0];
+        const made = &layout.levels[level];
         return .{
-            .first = layerAt(image, &layout, 0, layer) + level.offset,
-            .bytes = level.slice_bytes,
-            .stride = tiling.blocksDown(&layout, 0),
-            .memory = memoryOf(level.kind),
+            .first = layerAt(image, &layout, level, layer) + made.offset,
+            .bytes = made.slice_bytes,
+            .stride = tiling.blocksDown(&layout, level),
+            .memory = memoryOf(made.kind),
         };
     }
-    return .{ .first = _image.rowsAt(image, 0, layer).at, .bytes = @as(usize, image.pitch) * height, .stride = image.pitch, .memory = cl.MEMORY_RASTER };
+    const rows = _image.rowsAt(image, level, layer);
+    return .{ .first = rows.at, .bytes = @as(usize, rows.pitch) * height, .stride = rows.pitch, .memory = cl.MEMORY_RASTER };
 }
 
 /// The depth or the stencil a part keeps in its image's rows, or null where
@@ -1049,8 +1065,11 @@ fn endRenderPass(queue: *Queue) void {
     const area = player.area;
     // A frame of no colour has no resolve and nothing shown.
     const color_image = image orelse return;
+    // What the CPU wrote goes out before the TMU reads it, where the
+    // resolve attachment is sampled as well (since 1.210).
     if (player.resolve_view) |view| if (player.frame.resolve == null) {
         _transfer.resolveRectangle(color_image, player.color_layer, .{ area.left, area.top }, view.image, view.base_level, view.base_layer, .{ area.left, area.top }, area.right - area.left, area.bottom - area.top);
+        texturesToGpu(queue, view.image);
     };
     // What is shown is the resolve where there is one, as the cores show
     // it (`cpu/_play.zig`), a swapchain's image being of one sample.
@@ -1111,6 +1130,12 @@ fn lost(player: *const Player, sys: *ExecBase, finished: v3d.Engine.Finished, wh
 /// v3d_submit.c:535-562). A buffer the program reads and the dispatch has
 /// not bound leaves it to the function, as a draw leaves its vertex
 /// function to make of one (since 1.164).
+///
+/// A program of shared memory has a buffer of its shared_size for each of
+/// the dispatch's workgroups, as cmd_buffer_create_csd_job makes one
+/// (v3dv_cmd_buffer.c:4434-4445), carved from the chunks with the
+/// uniforms; where there is no memory for it the function runs on the
+/// cores (since 1.203).
 fn dispatch(queue: *Queue, count: [3]u32) void {
     const player = playerOf(queue);
     const sys = queue.device.sys;
@@ -1130,6 +1155,17 @@ fn dispatch(queue: *Queue, count: [3]u32) void {
     player.storage_over = false;
     player.groups = count;
     const program = &made.program;
+    player.shared_address = 0;
+    if (program.shared_size != 0) {
+        const groups = @as(u64, count[0]) * count[1] * count[2];
+        const bytes = std.math.cast(u32, groups * program.shared_size) orelse
+            return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+        const place = carve(queue, bytes, shared_alignment) orelse {
+            exec.kprintf(sys, "v3d: no memory for a dispatch's shared memory: its function runs on the cores\n", .{});
+            return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
+        };
+        player.shared_address = place.address;
+    }
     const uniforms = streamOf(queue, made.stream(), &.{}, null, 0, made.spillWords()) orelse {
         exec.kprintf(sys, "v3d: no memory for a dispatch's uniforms: its function runs on the cores\n", .{});
         return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
@@ -1146,6 +1182,8 @@ fn dispatch(queue: *Queue, count: [3]u32) void {
         .uniforms = uniforms,
         .version = hardware.version,
         .revision = hardware.revision,
+        .has_tsy_barrier = program.has_control_barrier,
+        .qpus = hardware.qpus,
     }) orelse return _compute.dispatch(sys, pipeline, &player.compute_resources, count, &_query.none);
     const space = &hardware.space;
     for (player.chunks[0..player.chunk_count]) |*chunk| {
@@ -1274,6 +1312,9 @@ fn streamOf(queue: *Queue, stream: []const compile.Word, tmus: []const Configura
         // (`driver.checkSpillSize`).
         .spill_offset => spill.address,
         .spill_size_per_thread => spill.size_per_thread,
+        // A compute program's, which `dispatch` carved the memory for
+        // (since 1.203).
+        .shared_offset => player.shared_address,
         // The unit's view, as `tmuConfiguration` measured it (since 1.181).
         .texture_size => |each| if (each.unit < tmus.len) tmus[each.unit].sizes[@intFromEnum(each.field)] else 0,
     };

@@ -325,15 +325,16 @@ const Rig = @import("facet.zig").Rig;
 /// no-attachments mask, after item 43 made such a subpass in 1.113.
 ///
 /// Items 28, 17, 22, 61 and 43 are split the way item 52 was, so **this
-/// count is the cores' and the V3D still falls short on eight rows**: 0
+/// count is the cores' and the V3D still falls short on six rows**: 0
 /// for the two texel offsets, which it reads off its own SPIR-V profile; 8
 /// for the two varyings, which it reads off its compiler's own cap - Mesa's
 /// v3dv carries 64 on this same GPU, so that is this compiler's limit, not
 /// the hardware's; 1 framebuffer layer, until its render list is played
-/// once a layer as v3dv's is (driver/v3d/driver.zig); one sample in the
-/// colour and depth sampled-image masks, until its TMU fetches a sample
-/// where a frame of four stored it (item 61's V7); and none in the stencil
-/// one, which it does not sample. The four rows of samplers and sampled
+/// once a layer as v3dv's is (driver/v3d/driver.zig); and none in the
+/// stencil sampled-image mask, which it does not sample. The colour and
+/// depth sampled-image masks hold the 4 bit since 1.209, when its TMU
+/// fetched a sample where a frame of four stored it, in the pixel's quad
+/// (item 61's V7). The four rows of samplers and sampled
 /// images, a stage's and a set's, it meets since 1.173: it said one a
 /// stage, which this note did not name, and a set's held to the sets.
 /// The three framebuffer masks hold the 4

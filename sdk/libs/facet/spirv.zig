@@ -189,6 +189,7 @@ pub const Op = enum(u16) {
     dpdx = 207,
     dpdy = 208,
     fwidth = 209,
+    control_barrier = 224,
     memory_barrier = 225,
     atomic_load = 227,
     atomic_store = 228,

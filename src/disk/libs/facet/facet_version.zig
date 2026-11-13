@@ -6718,4 +6718,301 @@ pub const LIBRARY_VERSION = 1;
 /// one step away. With the cores' function made wrong on purpose it is
 /// 46,565 apart. The other 294 cases are each as they were at 1.201, and
 /// FacetProbe passes its 890 checks.
-pub const LIBRARY_REVISION = 202;
+/// 203: **SPIR-V's Workgroup memory and OpControlBarrier, on the V3D
+/// (docs/facet-vulkan10.md item 60).** NIR's load_shared, store_shared
+/// and shared_atomic, through the TMU from cs_shared_offset
+/// (nir_to_vir.c:587-588, :4967-4992), the variables laid out by v3dv's
+/// shared_type_info (v3dv_pipeline.c:3273-3291; glsl_types.c:2795-2885)
+/// in the module's order, one nothing names taking no place
+/// (nir_remove_dead_variables, nir_to_vir.c:2253-2257); and a control
+/// barrier, vtn_emit_scoped_control_barrier's (spirv_to_nir.c:2813-2845),
+/// the TMU flushed, BARRIERID into SYNCB and a thread switch
+/// (emit_compute_barrier, nir_to_vir.c:3563-3577, :3857-3870). The
+/// stream's new `shared_offset` is the dispatch's shared memory, its
+/// size times its workgroups (v3dv_cmd_buffer.c:4435-4437), carved from
+/// the frame's chunks at 4096; a program with a barrier keeps its
+/// supergroup to half the QPUs' threads (v3d_util.c:56-67). A workgroup
+/// has facet's 16 KiB.
+///
+/// glslc_compute_shared, of 420 words, lays out 140 bytes, a vec3[4] at
+/// 80 16 apart; glslc_shared_layout, of 468, 244, a struct's members at
+/// 0, 16 and 32, a mat3's columns at 192, 208 and 224; and
+/// glslc_shared_matrices, of 288, two mat2x3s in 64. The V3D's tests are
+/// 359, six new. Of 34 mutations, 33 fail them; the other changes what a
+/// kept selection's phi may coalesce with, which no compute program
+/// reaches while kept selections are a fragment program's.
+///
+/// On the CM5 FacetBoth 1.67's "shipped compute: shared memory and
+/// barriers", three groups of three invocations handing their corners
+/// through shared memory across a barrier and counting them with
+/// atomicAdd between two, is 0 of 230400 pixels apart. With the cores'
+/// function made wrong on purpose it is 62,940 apart. The other 295
+/// cases are each as they were at 1.202, and FacetProbe passes its 890
+/// checks.
+///
+/// 204: **The system values that differ from lane to lane (docs/
+/// facet-vulkan10.md item 60).** A fix. No system value counted as
+/// differing, so a buffer read at an offset made from one went through
+/// unifa, one word for all the lanes, where v3d reads it through the TMU
+/// (ntq_emit_load_unifa, nir_to_vir.c:3315-3317). `lanes()` now has
+/// nir_divergence_analysis's answers under v3dv's options
+/// (v3dv_pipeline.c:217-218): a vertex's id and its instance's differ
+/// (nir_divergence_analysis.c:974-975, :572-573), and so do the CS
+/// payload's two words, which the local index and id are made of
+/// (:977-979) and the workgroup id, of
+/// nir_divergence_multiple_workgroup_per_compute_subgroup (:611-615);
+/// the first vertex, the base instance and the dispatch's count and base
+/// of workgroups do not (:240-250, :342). It was wrong since 1.192 for a
+/// vertex program reading a buffer at VertexIndex or InstanceIndex, and
+/// since 1.194 for a compute program reading a uniform or readonly
+/// buffer at an id.
+///
+/// glslc_compute_readonly, of 333 words, reads three times through the
+/// TMU and once, at the count of workgroups, through unifa;
+/// glslc_vertex_tints, of 266, reads twice through the TMU. The V3D's
+/// tests are 361, two new. Of 9 mutations, all 9 fail them.
+///
+/// On the CM5 FacetBoth 1.68's "shipped compute: reads a buffer at each
+/// invocation's id", three groups of three invocations each reading its
+/// corner from a readonly buffer at its global id, is 63,548 of 230400
+/// pixels apart with 1.203 and 0 apart with 1.204. The other 296 cases
+/// are each as they were at 1.203, and FacetProbe passes its 890 checks.
+///
+/// 205: **Kept selections in vertex and compute programs (docs/
+/// facet-vulkan10.md item 60).** Since 1.171 only a fragment program kept
+/// a selection a branch, and `keepSelection` answered another stage's
+/// with Error.Branches, a rule of this port's: ntq_emit_if and the passes
+/// before it have nothing of the stage's (nir_to_vir.c:4355-4573), and
+/// 1.204 has the ids that tell a branch under the execute mask from a
+/// uniform one. A store in an arm, to a storage buffer or to shared
+/// memory, a buffer read in one, and arms DontFlatten or the limit keeps
+/// are branches in any stage now: ntq_emit_nonuniform_if's execute mask
+/// (:4455-4561), or ntq_emit_uniform_if's msfign P jump (:4396-4400).
+///
+/// What a vertex program needed besides. `flattenEmptied` does in v3d's
+/// loop what nir_opt_dead_cf and nir_opt_peephole_select do with an if
+/// nir_opt_dce has emptied (nir_to_vir.c:2263-2279): one with no phi is
+/// dead (node_is_dead, nir_opt_dead_cf.c:171-271, :293-296), one whose
+/// phis are read is under any limit, DontFlatten's 0 among them, and
+/// flattened (nir_opt_peephole_select.c:336-341, :548-553, :577-603). It
+/// is the coordinate program's arm that only made a varying.
+/// `liveFloats` counted only an output or a discard as live, so a vertex
+/// id only a condition read was never loaded; a begin_if is live now, and
+/// a phi reads only the float it chooses of each way. An attribute's
+/// LDVPMV_IN goes through `storeDef`, as ntq_emit_load_input's does
+/// (nir_to_vir.c:2980-2982), for a phi's way coalesced into its register.
+///
+/// Six references, glslc_compute_branch, glslc_compute_uniform_branch,
+/// glslc_compute_shared_branch, glslc_vertex_branch, glslc_vertex_kept
+/// and glslc_vertex_kept_phi. The V3D's tests are 367, six new. Of 9
+/// mutations, all 9 fail them.
+///
+/// On the CM5 FacetBoth 1.69's "shipped compute: kept branches, under
+/// the mask and uniform", three groups of three invocations storing their
+/// corners through three kept selections, is 0 of 230400 pixels apart,
+/// and "shipped vertex branches", two DontFlatten branches on the
+/// vertex's number, is 12 apart, the triangles' edges. With the cores'
+/// functions made wrong on purpose they are 53,998 and 71,907 apart. The
+/// other 297 cases are each as they were at 1.204, and FacetProbe passes
+/// its 890 checks.
+///
+/// 206: **Outputs as variables of the function's own (docs/
+/// facet-vulkan10.md item 60).** Each output was the one value stored into
+/// it, once for a vertex program's, and a store into one in an arm refused
+/// the program. v3dv runs nir_lower_io_vars_to_temporaries on the outputs
+/// (v3dv_pipeline.c:399-400): each is a variable of the function's own,
+/// which a copy at its end stores into the output
+/// (emit_output_copies_impl, nir_lower_io_vars_to_temporaries.c:133-144).
+/// So now: a varying, the colour, and gl_PerVertex's gl_Position and
+/// gl_PointSize, which nir_split_per_member_structs makes variables of
+/// their own (vk_nir.c:321-325), are variables; stored in an arm, stored
+/// twice, stored a float at a time through a chain, and loaded, as
+/// glslang writes them without optimization. `copyOutputs` stores what
+/// they hold where the walk ends: a float stored nowhere is an undef whose
+/// store nir_opt_undef takes out (opt_undef_store, nir_opt_undef.c:
+/// 143-179), and an output stored whole is the value stored
+/// (nir_lower_vars_to_ssa.c:723-733).
+///
+/// A fix to 1.193: nir_move_output_stores_to_end stores in the order of
+/// the slots (nir_move_output_stores_to_end.c:86-93), so a point size's
+/// store is before the varyings', VARYING_SLOT_PSIZ being before
+/// VARYING_SLOT_VAR0 (shader_enums.h:350, :381), and the varyings are in
+/// the order of their locations; 1.193 kept the OpStores' order. The rows
+/// were right either way.
+///
+/// Eight references: glslc_outputs_arms_frag, glslc_outputs_kept_frag,
+/// glslc_outputs_arms_vert, glslc_outputs_part_vert,
+/// glslc_outputs_kept_vert, glslc_outputs_unstored_vert,
+/// glslc_shipped_outputs and glslc_shipped_vertex_outputs, each without
+/// -O. The V3D's tests are 377, ten new and three changed. Of 12
+/// mutations, all 12 fail them.
+///
+/// On the CM5 FacetBoth 1.70's "shipped outputs in arms", a fragment
+/// shader's colour stored in both arms and again after the merge, is 8 of
+/// 230400 pixels apart, at the selection's edge, and "shipped vertex
+/// outputs in arms", a vertex shader's place and colour stored again in a
+/// flattened arm and the place's x in a kept one, is 6 apart, the
+/// triangles' edges. With the cores' functions made wrong on purpose they
+/// are 12,423 and 37,922 apart. The other 299 cases are each as they were
+/// at 1.205, and FacetProbe passes its 890 checks.
+///
+/// 207: **Selections kept in the arms of selections kept (docs/
+/// facet-vulkan10.md item 60).** A selection kept a branch had to be at
+/// the top level; one in an arm was refused. ntq_emit_cf_list emits a
+/// nir_if wherever it is (nir_to_vir.c:4809-4818), ntq_emit_if takes the
+/// uniform form only outside non-uniform control flow (:4562-4573), and
+/// ntq_emit_nonuniform_if folds an inner condition into the execute it
+/// finds with NORNZ or ANDZ (:4482-4492). nir_opt_peephole_select
+/// flattens no arm that holds control flow (nir_opt_peephole_select.c:
+/// 538-541), so a selection that holds a kept one is kept. A selection's
+/// arms are regions in the region it is in (`Work.region_parent`), which
+/// `dominates` follows out as nir_opt_cse's dominance (nir_opt_cse.c:76);
+/// a selection flattened gives its regions back. The back end keeps a
+/// stack of branches, and fromSsa is nir_from_ssa's coalescing whole:
+/// each way's end in block order (nir_from_ssa.c:404-443), whole webs
+/// merged (:198-223), every pair of nodes tested (:232-304), with
+/// nir_def_is_live_at's liveness (nir_liveness.c:272-291).
+///
+/// Two fixes to wrong code 1.206 shipped. A scalar each float of a vector
+/// operation reads is live where its first float is made, as
+/// nir_lower_alu_width makes them one at a time (nir_lower_alu_width.c:
+/// 407-432; nir_liveness.c:247-256): a float made before an arm and
+/// scaled by in it shared the product's first float's register, which
+/// the rest then read written over. And a comparison that reads a float
+/// in a web is not emitted again for a bcsel or a branch, the bool tested
+/// instead (ntq_get_alu_parent, nir_to_vir.c:1248-1255): three bcsels in
+/// a kept arm compared a float the first had written under the mask.
+///
+/// Ten references: glslc_nested_kept, glslc_nested_kept_o0,
+/// glslc_nested_else, glslc_nested_uniform, glslc_nested_store,
+/// glslc_nested_vertex, glslc_nested_only, glslc_nested_taken,
+/// glslc_nested_collapse and glslc_flat_many. The V3D's tests are 390,
+/// thirteen new and two changed. Of 32 mutations, 30 fail them; the two
+/// left change nothing.
+///
+/// On the CM5 FacetBoth 1.71's "shipped nested kept branches", a kept
+/// selection in a kept arm whose arm scales by a float made before both,
+/// and "shipped bcsels in a kept arm", three bcsels on a float the red's
+/// phi brings, are each 8 of 230400 pixels apart, the edge pixels where
+/// the plain cases differ. With readAgain and readsWeb taken out of the
+/// back end each is 19,349 apart, the pixels where both comparisons
+/// hold. The other 301 cases are each as they were at 1.206, and
+/// FacetProbe passes its 890 checks.
+///
+/// 208: **nir_opt_collapse_if of a kept selection (docs/
+/// facet-vulkan10.md item 60).** An inner selection kept a branch, all of
+/// the outer's true arm but for the block before it, neither with a false
+/// arm, was refused. peephole_select_block tries nir_opt_collapse_if
+/// first (nir_opt_peephole_select.c:531-533), which moves the inner arm
+/// whole: it wants the block before it all of instructions that may be
+/// flattened (block_check_for_allowed_instrs, :464-469) and the outer
+/// merge's phis trivial (:445-462, :474-486), makes the iand of the two
+/// conditions (:492-496) and moves the inner selection before the outer
+/// one (:498-502). The inner selection's phis and its branch are put on
+/// the iand, which the back end tests with a PUSHZ (nir_to_vir.c:
+/// 1277-1281); the outer one is kept no more, and is flattened.
+/// `Selection.kept_first` keeps both where the outer was kept for the
+/// block before the inner one, and the kept arm's regions stay its own,
+/// so a float made in it dominates none made past the merge.
+///
+/// Two references: glslc_collapse_apart, a sample before the inner
+/// selection that keeps both, and glslc_collapse_sampled, one branch on
+/// the iand and the block's float a bcsel on the outer condition.
+/// glslc_nested_collapse and DeepCostly compile, where they were refused.
+/// The V3D's tests are 391, one new and two changed. Of 12 mutations, 10
+/// fail them; the two left change nothing.
+///
+/// On the CM5 FacetBoth 1.72's "shipped collapsed kept branch", a kept
+/// selection all of another's true arm but for a block that halves the
+/// alpha, is 8 of 230400 pixels apart, the edge pixels where the plain
+/// cases differ. With the iand made an ior it is 22,767 apart. The other
+/// 304 cases are each as they were at 1.207, and FacetProbe passes its
+/// 890 checks.
+///
+/// 209: **A sample of an image of four fetched through the TMU (docs/
+/// facet-vulkan10.md item 61's V7).** An image of four samples was not
+/// sampled on the V3D, whose sampled colour and depth masks said one.
+/// spirv_to_nir makes an OpImageFetch of a multisampled image with its
+/// Sample a txf_ms (spirv_to_nir.c:3072-3076, 3475-3481), and v3d lowers
+/// it to a txf of the texel at the sample's place in the pixel's quad: x
+/// twice and the sample's bit 0, y twice and its bit 1, an array's layer
+/// as it is (v3d_nir_lower_txf_ms.c:35-62). That runs after nir_lower_tex
+/// (vir.c:1987, :2004), so the txf is given no level (nir_lower_tex.c:
+/// 1849-1858), and it is started at TMUSF with no TMUB (v3d_tex.c:
+/// 137-153, 375-377). The texture state gives the TMU the image's twice
+/// the width and the height (v3dvx_image.c:48, :95-96). A Lod or a
+/// ConstOffset on such a fetch, and a sample of such an image, are
+/// refused, as vtn asserts against them (spirv_to_nir.c:3433-3434, :3034,
+/// :3054).
+///
+/// The V3D's sampled colour and depth masks hold the 4 bit, as v3dv's
+/// do (v3dv_device.c:1026-1027, 1179-1189), which closes two of its
+/// eight rows. An image of four that is sampled and a colour attachment
+/// stays refused there, as one of one is until item 48, and an input
+/// attachment of four until item 56.
+///
+/// Three references: glslc_fetch_sample, glslc_fetch_samples and
+/// glslc_fetch_sample_layers. The V3D's tests are 394, three new. Of 16
+/// mutations, all 16 fail them, one since a Lod beside the Sample was
+/// added to them.
+///
+/// On the CM5 FacetBoth 1.73's "shipped fetch of four samples", the far
+/// and the near triangle drawn into samples 0 and 2 and the glass into 1
+/// and 2, copied into an image of four that is sampled, and a sample
+/// fetched a band at a time, is 4 of 230400 pixels apart, 217 at worst.
+/// With the ushr taken out of the sample's place, so that samples 1 and
+/// 2 are read as 3 and 0, it is 5,018 apart, where the glass is. The
+/// other 306 cases are each as they were at 1.208, and FacetProbe passes
+/// its 891 checks, one new: the largest sampled image of four made on the
+/// V3D, whose format query says four for it now.
+///
+/// 210: **An image drawn into and sampled on the V3D (docs/
+/// facet-vulkan10.md item 48's V3D half).** On the V3D an image both
+/// COLOR_ATTACHMENT and SAMPLED was refused, by CreateImage and the
+/// format query alike, as was a colour attachment of more than one
+/// level. v3dv keeps every optimal image in UIF whatever its usage
+/// (v3dv_image.c:481-483), and its frame stores a colour into the slice
+/// of the level and the layer its view names, in that slice's own
+/// tiling: the Memory Format is the slice's, and Height in UB its padded
+/// height in UIF blocks where it is UIF
+/// (`cmd_buffer_render_pass_emit_store` and `_load`,
+/// v3dvx_cmd_buffer.c:364-406, 168-204). A resolve goes into its image's
+/// slice the same way (:398-411). On V3D 7.1 a clear needs no padding
+/// for it: the UIF padding goes into CLEAR_COLORS_PART3, which only V3D
+/// 4.2 emits (:1110-1148).
+///
+/// Such an image, and a colour attachment of levels, lies as the V3D's
+/// textures do, each layer one of its own (`_image.deviceLaid`), and the
+/// frame stores into the level its view names, in the level's tiling,
+/// where the TMU reads it (`_play.colorPlace`); a resolve attachment
+/// sampled as well is resolved into the same way, in the tiles or on the
+/// CPU after the pass. One of four samples, drawn into and sampled, is
+/// kept in quads as one drawn into alone is. A clear of such an image
+/// fills the level where the device keeps it (`_transfer.spanOf`), which
+/// before cleared rows that are not there: the new host test found it.
+/// The format query answers the whole chain of levels for a colour
+/// attachment there, and both sample counts for one sampled as well,
+/// which item 49 named. An image sampled and an input attachment at once
+/// stays refused on the V3D, which reads no input attachment (item 56).
+///
+/// The host tests are 3496, one new and two changed, over the V3D's
+/// layout ops: where a copy, a clear, a read back and a resolve put the
+/// texels of each level of each layer. Of 9 mutations of the library, all
+/// 9 fail them.
+///
+/// On the CM5 FacetBoth 1.74 has seven new cases, each an image drawn or
+/// resolved into and then sampled, with nothing copied between. "drawn
+/// into and sampled" and its r8g8b8a8 twin are 6 of 230400 pixels apart,
+/// 214 at worst; the r5g6b5 one is 6 apart, within a slack of 9, as the
+/// cores dither a 565 write and the V3D does not, and Vulkan lets either
+/// round to one of the two nearest values (83,154 apart with none).
+/// "drawn into level 1 and sampled" is 18 apart, 186 at worst; "four
+/// samples drawn into and fetched" 4 apart, 217 at worst, as the case
+/// that fetches from a copy is. The resolve into an image sampled is 31
+/// apart, in the tiles, and 24 over a part, on the CPU, 55 at worst, as
+/// the resolves into an image not sampled are 54 and 45. With the frame's
+/// Height in UB one UIF block short, all seven fail: 27,107 to 51,430
+/// apart. The other 307 cases are each as they were at 1.209, and
+/// FacetProbe 1.48 passes its 891 checks: the attachment sampled too is
+/// made now, as the query says.
+pub const LIBRARY_REVISION = 210;

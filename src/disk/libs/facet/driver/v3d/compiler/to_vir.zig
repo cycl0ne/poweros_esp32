@@ -203,6 +203,9 @@ const Emit = struct {
     payload_w: Reg = .{},
     payload_w_centroid: Reg = .{},
     payload_z: Reg = .{},
+    /// Where the workgroup's shared memory starts, worked out at the
+    /// program's start (c->cs_shared_offset; since 1.203).
+    cs_shared_offset: Reg = .{},
     outputs: [4]Reg = undefined,
     flush: [max_tmu_queue_size]Pending = undefined,
     flush_count: u32 = 0,
@@ -239,8 +242,16 @@ const Emit = struct {
     /// (nir_from_ssa.c:164-169, :938; since 1.189).
     uses: [compile.most_steps][4]Mask = undefined,
     at_end: [compile.most_steps][4]bool = undefined,
-    /// The kept selection being emitted.
-    branch: If = .{},
+    /// The web each copy at a way's end is in, by its phi, and whether a
+    /// web differs from lane to lane (merge_set's divergent; since
+    /// 1.207); and the kept selections and their phis.
+    copy_web: [compile.most_steps][2]Web = undefined,
+    web_divergent: [compile.most_steps]bool = undefined,
+    selections: Selections = .{},
+    /// The kept selections being emitted, the innermost last: one is in
+    /// an arm of the one before it (since 1.207).
+    branches: [compile.most_nesting]If = undefined,
+    branch_count: usize = 0,
     /// c->flat_shade_flags and c->noperspective_flags: the inputs that
     /// emit_fragment_varying made flat and without perspective, by the
     /// number it gave each (nir_to_vir.c:1085-1110; since 1.190).
@@ -363,10 +374,10 @@ fn nirToVir(e: *Emit) Error!void {
     }
     if (c.stage == .compute) {
         // The payload's two words, rf3 and rf2 on 7.1 (nir_to_vir.c:
-        // 4953-4954). No shared memory, so no wg_in_mem of it (:4967-4992;
-        // since 1.194).
+        // 4953-4954; since 1.194).
         e.system[@intFromEnum(compile.SystemValue.cs_payload0)] = try c.mul(.mov, .{vir.reg(.reg, 3)});
         e.system[@intFromEnum(compile.SystemValue.cs_payload1)] = try c.mul(.mov, .{vir.reg(.reg, 2)});
+        if (e.work.shared_size != 0) try setupShared(e);
         try setupScratch(e);
         return emitBlock(e);
     }
@@ -397,6 +408,25 @@ fn setupVsInputs(e: *Emit) Error!void {
         e.system[@intFromEnum(which)] = try c.add(.ldvpmv_in, .{try c.uniformUi(vpm_components)});
         vpm_components += 1;
     }
+}
+
+/// Where the workgroup's shared memory starts, cs_shared_offset
+/// (nir_to_vir.c:4967-4992; since 1.203): the dispatch's shared memory
+/// (QUNIFORM_SHARED_OFFSET) plus the workgroup's place among those in
+/// memory times its bytes. The place is the payload's second word's top
+/// half, wg_in_mem, under the local index's bits where the workgroup is
+/// more than one invocation, which the index then takes the top of.
+fn setupShared(e: *Emit) Error!void {
+    const c = e.c;
+    var wg_in_mem = try c.add(.shr, .{ e.system[@intFromEnum(compile.SystemValue.cs_payload1)], try c.uniformUi(16) });
+    const size = e.work.local_size;
+    if (size[0] != 1 or size[1] != 1 or size[2] != 1) {
+        const wg_bits: u5 = 16 - @as(u5, compile.localIndexBits(e.work));
+        const wg_mask: u32 = (@as(u32, 1) << wg_bits) - 1;
+        wg_in_mem = try c.add(.@"and", .{ wg_in_mem, try c.uniformUi(wg_mask) });
+    }
+    const shared_per_wg = try c.uniformUi(e.work.shared_size);
+    e.cs_shared_offset = try c.add(.add, .{ try c.uniform(.shared_offset, 0), try c.umul(wg_in_mem, shared_per_wg) });
 }
 
 /// Where the program keeps variables in scratch: spill_base worked out
@@ -493,10 +523,10 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
                 // among the VPM's floats (since 1.163). One it does not
                 // read nir_opt_dce has taken out, and so is nothing here.
                 for (0..parts) |k| {
-                    e.defs[at][k] = if (input.live & @as(u8, 1) << @intCast(k) != 0)
-                        try c.add(.ldvpmv_in, .{try c.uniformUi(@intCast(input.first + k))})
+                    if (input.live & @as(u8, 1) << @intCast(k) != 0)
+                        try storeDef(e, at, k, try c.add(.ldvpmv_in, .{try c.uniformUi(@intCast(input.first + k))}))
                     else
-                        c.undef;
+                        e.defs[at][k] = c.undef;
                 }
             } else for (0..parts) |k| {
                 // load_input's MOV of the varying (ntq_emit_load_input,
@@ -794,8 +824,22 @@ fn emitStep(e: *Emit, each: Step, at: u16) Error!void {
         // load_scratch and store_scratch, through the TMU from
         // spill_base (:3657-3668; since 1.177).
         .scratch, .scratch_indirect, .scratch_store => return emitTmuGeneral(e, each, at),
+        // load_shared, store_shared, shared_atomic and
+        // shared_atomic_swap, through the TMU from cs_shared_offset
+        // (:3657-3668; since 1.203).
+        .shared, .shared_store, .shared_atomic => return emitTmuGeneral(e, each, at),
         // A barrier: what the TMU holds flushed (:3857-3861; since 1.169).
         .barrier => try flushTmu(e),
+        // A compute program's barrier of execution: the TMU flushed, a
+        // TSY op that blocks the supergroup's invocations until the last
+        // has come to it, and the thread switch it blocks at, with no
+        // lookup outstanding (emit_compute_barrier, :3563-3577,
+        // :3857-3870; since 1.203).
+        .control_barrier => {
+            try flushTmu(e);
+            _ = try c.addDest(.barrierid, vir.magicReg(.syncb), .{});
+            try c.emitThrsw();
+        },
         // A kept selection (since 1.171).
         .begin_if => try beginIf(e, at),
         .begin_else => try beginElse(e),
@@ -881,8 +925,10 @@ fn beginIf(e: *Emit, at: u16) Error!void {
     const steps = e.work.program();
     const marks = branchAt(steps, at);
     const condition = steps[at].a;
-    e.branch = .{ .begin = marks.begin, .otherwise = marks.otherwise, .end = marks.end };
-    const branch = &e.branch;
+    if (e.branch_count == e.branches.len) return Error.Invalid;
+    e.branches[e.branch_count] = .{ .begin = marks.begin, .otherwise = marks.otherwise, .end = marks.end };
+    e.branch_count += 1;
+    const branch = &e.branches[e.branch_count - 1];
     // The false arm's block is empty where it holds nothing, nor any
     // copy into a web (nir_if_first_else_block, :4459-4462).
     branch.empty_else = armCost(e, marks.otherwise, marks.end, 1) == 0;
@@ -938,7 +984,7 @@ fn beginIf(e: *Emit, at: u16) Error!void {
 /// TMU flushed, and the false arm's block begun where it has one.
 fn beginElse(e: *Emit) Error!void {
     const c = e.c;
-    const branch = &e.branch;
+    const branch = &e.branches[e.branch_count - 1];
     try emitCopies(e, 0);
     try flushTmu(e);
     if (branch.empty_else) return;
@@ -970,7 +1016,7 @@ fn beginElse(e: *Emit) Error!void {
 /// the merge block, where the lanes the selection held back run again.
 fn endIf(e: *Emit) Error!void {
     const c = e.c;
-    const branch = &e.branch;
+    const branch = &e.branches[e.branch_count - 1];
     try emitCopies(e, 1);
     try flushTmu(e);
     try c.linkBlocks(c.cur_block.?, branch.after_block.?);
@@ -982,6 +1028,7 @@ fn endIf(e: *Emit) Error!void {
             try activateExecuteForBlock(c);
     }
     c.in_control_flow = branch.was_in_control_flow;
+    e.branch_count -= 1;
 }
 
 /// ntq_activate_execute_for_block (nir_to_vir.c:4315): the lanes whose
@@ -1004,17 +1051,8 @@ fn invert(cond: instr.Cond) instr.Cond {
 
 /// The phis of the kept selection being emitted, in order.
 fn phisOf(e: *const Emit, out: *[compile.most_steps]u16) []const u16 {
-    const steps = e.work.program();
-    const condition = steps[e.branch.begin].a;
-    var count: usize = 0;
-    var k = e.branch.end + 1;
-    while (k < steps.len and steps[k].tag != .begin_if) : (k += 1) {
-        if (steps[k].tag == .phi and steps[k].from[0] == condition) {
-            out[count] = k;
-            count += 1;
-        }
-    }
-    return out[0..count];
+    const branch = e.branches[e.branch_count - 1];
+    return phisAfter(e.work.program(), .{ .begin = branch.begin, .otherwise = branch.otherwise, .end = branch.end }, out);
 }
 
 /// What NIR's block of the arm from `from` to `to` holds, as
@@ -1110,17 +1148,31 @@ fn emitCopies(e: *Emit, side: usize) Error!void {
 /// What nir_convert_from_ssa (nir_from_ssa.c:927-983, with phi_webs_only
 /// and consider_divergence) makes of the kept selections' phis: a web of
 /// each, the phi and the copies isolate_phi_nodes_block puts at the end
-/// of each way in (:334-382), and into it, by aggressive_coalesce_block
-/// in the blocks' order (:403-443), each float a copy is of that differs
-/// as the phi does and interferes with nothing in the web (Boissinot et
-/// al.'s test, merge_sets_interfere, :231-332). A constant is SSA only
+/// of each way in (:334-382), which coalesce_phi_nodes_block merges
+/// (:385-401); then, by aggressive_coalesce_block in the blocks' order
+/// (:403-443, :969-971), each float a copy is of, with the web it is in,
+/// where the two differ alike and none of the one interferes with any of
+/// the other (merge_sets_interfere, :231-332, whose walk finds what a
+/// test of every pair finds, `Selections.interfere`). A constant is SSA only
 /// and copied (:419-424); a sample's or a load's float is a MOV
 /// nir_lower_phis_to_scalar put at the end of its way
 /// (nir_lower_phis_to_scalar.c), which is copied too, as is a bool, whose
 /// comparison's flags the walk keeps. What is not coalesced is copied
 /// into the web where its way ends (`emitCopies`).
+///
+/// The copy at the merge block's start, of the phi into what reads it
+/// (:368-379), joins the phi's web always: the phi is read by it alone,
+/// and the copies at the ways' ends are live only there. The phi and it
+/// are one float here.
+///
+/// Since 1.207 a kept selection may be in an arm of another, and a float
+/// in a web is coalesced with all of it, as Mesa's merge sets are. Until
+/// then the test was worked out for the one shape a selection had, and a
+/// float in a web was coalesced only where it was a phi.
 fn fromSsa(e: *Emit) Error!void {
     const steps = e.work.program();
+    const webs = &e.selections;
+    webs.find(steps);
     // Where each float is read, a float being a def of its own once
     // nir_lower_io_to_scalar and nir_lower_alu_to_scalar are done: a bit
     // of each step that reads it, through the components and constructs
@@ -1136,10 +1188,10 @@ fn fromSsa(e: *Emit) Error!void {
         at -= 1;
         const each = steps[at];
         switch (each.tag) {
-            .phi => {
-                const branch = branchOf(steps, @intCast(at));
-                uses[each.a][each.part[0]] |= bitOf(branch.otherwise);
-                uses[each.b][each.part[1]] |= bitOf(branch.end);
+            .phi => if (webs.of_phi[at] != no_selection) {
+                const marks = webs.marks[webs.of_phi[at]];
+                uses[each.a][each.part[0]] |= bitOf(marks.otherwise);
+                uses[each.b][each.part[1]] |= bitOf(marks.end);
             },
             .component => uses[each.a][each.at] |= uses[at][0],
             .construct => for (0..each.kind.parts()) |k| {
@@ -1154,33 +1206,35 @@ fn fromSsa(e: *Emit) Error!void {
         endRead(steps, at_end, .{ .step = e.work.stored, .part = @intCast(k) });
     };
 
-    var begin: u16 = 0;
-    while (begin < steps.len) : (begin += 1) {
-        if (steps[begin].tag != .begin_if) continue;
-        const branch = branchAt(steps, begin);
-        var phis: [compile.most_steps]u16 = undefined;
-        var count: usize = 0;
-        var k = branch.end + 1;
-        while (k < steps.len and steps[k].tag != .begin_if) : (k += 1) {
-            if (steps[k].tag == .phi and steps[k].from[0] == steps[begin].a) {
-                phis[count] = k;
-                count += 1;
-            }
-        }
-        const kept = Branch{ .begin = branch.begin, .otherwise = branch.otherwise, .end = branch.end, .phis = phis[0..count], .first_web = @intCast(e.web_count), .uses = uses, .at_end = at_end, .steps = steps };
-        for (kept.phis) |phi| {
-            e.web_of[phi][0] = @intCast(e.web_count);
-            e.web_count += 1;
-        }
-        for (0..2) |side| for (kept.phis, 0..) |phi, j| {
-            const web = e.web_of[phi][0];
-            const of = sourceOf(steps[phi], side);
-            if (!coalescable(e, &kept, of, side)) continue;
-            if (e.work.divergent[of.step] != e.work.divergent[phi]) continue;
-            if (kept.interferes(e, of, side, j, web)) continue;
-            join(e, of, web);
-        };
-    }
+    for (0..webs.count) |k| for (webs.phisOf(k)) |phi| {
+        const web: Web = @intCast(e.web_count);
+        e.web_of[phi][0] = web;
+        e.copy_web[phi] = .{ web, web };
+        e.web_divergent[web] = e.work.divergent[phi];
+        e.web_count += 1;
+    };
+    // Each way's end, where its copies are, in the order of the program,
+    // which is the order of its blocks.
+    var ways: [2 * compile.most_kept]Way = undefined;
+    var way_count: usize = 0;
+    for (0..webs.count) |k| for (0..2) |side| {
+        const way: Way = .{ .selection = @intCast(k), .side = @intCast(side) };
+        var place = way_count;
+        while (place > 0 and webs.endOf(ways[place - 1]) > webs.endOf(way)) : (place -= 1) ways[place] = ways[place - 1];
+        ways[place] = way;
+        way_count += 1;
+    };
+    for (ways[0..way_count]) |way| for (webs.phisOf(way.selection)) |phi| {
+        const of = sourceOf(steps[phi], way.side);
+        if (!coalescable(e, webs.marks[way.selection], of, way.side)) continue;
+        const into = e.web_of[phi][0];
+        const from = e.web_of[of.step][of.part];
+        if (from == into) continue;
+        const divergent = if (from == no_web) e.work.divergent[of.step] else e.web_divergent[from];
+        if (divergent != e.web_divergent[into]) continue;
+        if (webs.interfere(e, of, into)) continue;
+        join(e, of, into);
+    };
 }
 
 fn bitOf(at: u16) Mask {
@@ -1212,37 +1266,63 @@ fn endRead(steps: []const Step, at_end: *[compile.most_steps][4]bool, of: compil
 /// A kept selection's marks.
 const Marks = struct { begin: u16, otherwise: u16, end: u16 };
 
-/// The marks of the kept selection whose begin_if is `begin`.
+/// The marks of the kept selection whose begin_if is `begin`: past those
+/// of any selection in its arms (since 1.207).
 fn branchAt(steps: []const Step, begin: u16) Marks {
     var marks: Marks = .{ .begin = begin, .otherwise = begin, .end = begin };
+    var depth: usize = 0;
     var k = begin + 1;
-    while (steps[k].tag != .begin_else) k += 1;
-    marks.otherwise = k;
-    while (steps[k].tag != .end_if) k += 1;
-    marks.end = k;
-    return marks;
+    while (true) : (k += 1) switch (steps[k].tag) {
+        .begin_if => depth += 1,
+        .begin_else => if (depth == 0) {
+            marks.otherwise = k;
+        },
+        .end_if => if (depth == 0) {
+            marks.end = k;
+            return marks;
+        } else {
+            depth -= 1;
+        },
+        else => {},
+    };
 }
 
-/// The marks of the kept selection a phi is at the merge of: the last
-/// begin_if before it.
-fn branchOf(steps: []const Step, phi: u16) Marks {
-    var k = phi;
-    while (steps[k].tag != .begin_if) k -= 1;
-    return branchAt(steps, k);
+/// The phis of the kept selection of `marks`, in order: those of its
+/// condition past its end_if, and before the next mark of the level it
+/// is at, the begin_if of a selection after it or the end of the arm it
+/// is in (since 1.207).
+fn phisAfter(steps: []const Step, marks: Marks, out: []u16) []u16 {
+    const condition = steps[marks.begin].a;
+    var count: usize = 0;
+    var k = marks.end + 1;
+    while (k < steps.len) : (k += 1) switch (steps[k].tag) {
+        .begin_if, .begin_else, .end_if => break,
+        .phi => if (steps[k].from[0] == condition) {
+            out[count] = k;
+            count += 1;
+        },
+        else => {},
+    };
+    return out[0..count];
 }
 
 /// The float `of` put in the web `web`, and where it is in a web of a
-/// selection before, all that web with it (merge_merge_sets,
-/// nir_from_ssa.c:197-223).
+/// selection before, all that web with it, its copies too
+/// (merge_merge_sets, nir_from_ssa.c:197-223).
 fn join(e: *Emit, of: compile.Float, web: Web) void {
     const was = e.web_of[of.step][of.part];
     if (was == no_web) {
         e.web_of[of.step][of.part] = web;
+        e.web_divergent[web] = e.web_divergent[web] or e.work.divergent[of.step];
         return;
     }
     for (&e.web_of) |*parts| for (parts) |*part| {
         if (part.* == was) part.* = web;
     };
+    for (&e.copy_web) |*sides| for (sides) |*side| {
+        if (side.* == was) side.* = web;
+    };
+    e.web_divergent[web] = e.web_divergent[web] or e.web_divergent[was];
 }
 
 /// The float a phi has from one way: the true arm's, 0, or the false
@@ -1251,106 +1331,238 @@ fn sourceOf(phi: Step, side: usize) compile.Float {
     return if (side == 0) .{ .step = phi.a, .part = phi.part[0] } else .{ .step = phi.b, .part = phi.part[1] };
 }
 
-/// A kept selection as nir_convert_from_ssa sees it: its blocks' ends,
-/// its phis in order, and where each step is read.
-const Branch = struct {
-    begin: u16,
-    otherwise: u16,
-    end: u16,
-    phis: []const u16,
-    /// Its first phi's web: the webs before it are of selections before.
-    first_web: Web,
-    uses: *const [compile.most_steps][4]Mask,
-    at_end: *const [compile.most_steps][4]bool,
-    steps: []const Step,
+/// A kept selection's way in to its merge: its true arm's, 0, or its
+/// false arm's.
+const Way = struct { selection: u8, side: u1 };
 
-    const Where = enum { before, yes, no, after };
+/// No kept selection's.
+const no_selection: u8 = std.math.maxInt(u8);
 
-    fn where(branch: *const Branch, at: u16) Where {
-        if (at < branch.begin) return .before;
-        if (at < branch.otherwise) return .yes;
-        if (at < branch.end) return .no;
-        return .after;
+/// Whether a float the step at `time` makes after the one made there
+/// reads `node`, which is then live where that one is made, as
+/// search_for_use_after_instr (nir_liveness.c:247-256) finds it:
+/// nir_lower_alu_width makes a vector's operation an instruction a
+/// float, in order (nir_lower_alu_width.c:407-432), and each reads the
+/// one float of an operand that is a scalar, or a float a construct
+/// names twice (since 1.207). Before, the later floats' reads were
+/// missed, and a float in an arm made by multiplying with one made
+/// before it could share that one's register while the rest still read
+/// it.
+fn readAgain(steps: []const Step, node: Node, time: Time) bool {
+    const each = steps[time.at];
+    const operands: [2]?u16 = switch (each.tag) {
+        .add, .mul, .sub, .min, .max => .{ each.a, each.b },
+        .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2 => .{ each.a, null },
+        .integer => integer: {
+            const op: Integer = @enumFromInt(each.at);
+            // An f2i32 of an fround_even is an FTOIN of what that reads.
+            if (op == .f2i32 and steps[each.a].tag == .round) break :integer .{ steps[each.a].a, null };
+            break :integer .{ each.a, if (op.unary()) null else each.b };
+        },
+        else => return false,
+    };
+    for (time.sub + 1..each.kind.parts()) |k| for (operands) |operand| if (operand) |of| {
+        const part: u8 = if (steps[of].kind == .f32x1) 0 else @intCast(k);
+        const read = madeOf(steps, .{ .step = of, .part = part });
+        if (read.step == node.step and read.part == node.part) return true;
+    };
+    return false;
+}
+
+/// The float a component or a construct names, as the step that makes
+/// it has it.
+fn madeOf(steps: []const Step, of: compile.Float) compile.Float {
+    const each = steps[of.step];
+    return switch (each.tag) {
+        .component => madeOf(steps, .{ .step = each.a, .part = @intCast(each.at) }),
+        .construct => madeOf(steps, .{ .step = each.from[of.part], .part = each.part[of.part] }),
+        else => of,
+    };
+}
+
+/// What a web holds (merge_node): a float, a phi among them, or the copy
+/// at the end of the way `side` into the phi `step`.
+const Node = struct {
+    step: u16,
+    part: u8 = 0,
+    copy: bool = false,
+    side: u1 = 0,
+};
+
+/// Where a node is made in the program's order: its step, and its float
+/// among the step's, or its phi among the selection's at the end of its
+/// way (def_after's order, nir_from_ssa.c:65-79).
+const Time = struct {
+    at: u16,
+    sub: u16,
+
+    fn before(a: Time, b: Time) bool {
+        return a.at < b.at or (a.at == b.at and a.sub < b.sub);
     }
+};
 
-    /// Read past the merge: live into the merge block.
-    fn readAfter(branch: *const Branch, of: compile.Float) bool {
-        return branch.uses[of.step][of.part] & above(branch.end) != 0 or branch.at_end[of.step][of.part];
-    }
+/// The kept selections as nir_convert_from_ssa meets them: each one's
+/// marks and phis, in the order of the begin_ifs; and which selection
+/// each phi is of, and its place among the selection's phis.
+const Selections = struct {
+    marks: [compile.most_kept]Marks = undefined,
+    count: usize = 0,
+    phis: [compile.most_steps]u16 = undefined,
+    phis_from: [compile.most_kept + 1]u16 = undefined,
+    of_phi: [compile.most_steps]u8 = undefined,
+    place: [compile.most_steps]u16 = undefined,
+    /// The nodes of the two webs `interfere` compares.
+    nodes: [2][5 * compile.most_steps]Node = undefined,
+    steps: []const Step = &.{},
 
-    /// nir_def_is_live_at (nir_liveness.c) of the float `of` at the step
-    /// `at`: read after it in its block, the copies at the block's end
-    /// with it, or past the block's end.
-    fn liveAtStep(branch: *const Branch, of: compile.Float, at: u16) bool {
-        const used = branch.uses[of.step][of.part];
-        const to: u16 = switch (branch.where(at)) {
-            .before, .after => return used & above(at) != 0 or branch.at_end[of.step][of.part],
-            .yes => branch.otherwise,
-            .no => branch.end,
-        };
-        return used & span(at, to) != 0 or branch.readAfter(of);
-    }
-
-    /// Live at the copy of phi `j` at the end of way `side`: read by a
-    /// copy after it, a float being a def of its own once
-    /// nir_lower_alu_to_scalar and nir_lower_io_to_scalar are done, or
-    /// past the merge.
-    fn liveAtCopy(branch: *const Branch, of: compile.Float, side: usize, j: usize) bool {
-        for (branch.phis[j + 1 ..]) |later| {
-            const read = sourceOf(branch.steps[later], side);
-            if (read.step == of.step and read.part == of.part) return true;
-        }
-        return branch.readAfter(of);
-    }
-
-    /// Whether the float `of`, which phi `j` has from way `side`, cannot
-    /// share the phi's web: it is live where something in the web it
-    /// dominates is made, or something in the web that dominates it is
-    /// live where it is made.
-    fn interferes(branch: *const Branch, e: *const Emit, of: compile.Float, side: usize, j: usize, web: Web) bool {
-        const where_of = branch.where(of.step);
-        const before = where_of == .before;
-        // The copy at the end of its own way, and where it is made before
-        // the selection, the other way's copy and the phi.
-        if (branch.liveAtCopy(of, side, j)) return true;
-        if (before and (branch.liveAtCopy(of, 1 - side, j) or branch.readAfter(of))) return true;
-        // The true arm's float, where it was coalesced first: the one made
-        // before the selection is live where the other is made if read
-        // after it there, where its way ends, or past the merge
-        // (nir_def_is_live_at). Where both are made before, each is read
-        // where its own way ends, so that is always so, two floats of one
-        // step too: a def each, one after the other, once
-        // nir_lower_io_to_scalar and nir_lower_alu_to_scalar are done.
-        if (side == 1) {
-            const yes = sourceOf(branch.steps[branch.phis[j]], 0);
-            if (e.web_of[yes.step][yes.part] == web) {
-                if (branch.where(yes.step) == .before and branch.liveAtStep(yes, of.step)) return true;
-                if (before and branch.liveAtStep(of, yes.step)) return true;
+    fn find(webs: *Selections, steps: []const Step) void {
+        webs.steps = steps;
+        webs.count = 0;
+        @memset(&webs.of_phi, no_selection);
+        var count: u16 = 0;
+        for (steps, 0..) |each, at| {
+            if (each.tag != .begin_if) continue;
+            const k = webs.count;
+            const marks = branchAt(steps, @intCast(at));
+            webs.marks[k] = marks;
+            webs.phis_from[k] = count;
+            for (phisAfter(steps, marks, webs.phis[count..]), 0..) |phi, place| {
+                webs.of_phi[phi] = @intCast(k);
+                webs.place[phi] = @intCast(place);
+                count += 1;
             }
+            webs.count += 1;
         }
+        webs.phis_from[webs.count] = count;
+    }
+
+    fn phisOf(webs: *const Selections, k: usize) []const u16 {
+        return webs.phis[webs.phis_from[k]..webs.phis_from[k + 1]];
+    }
+
+    /// Where a way's copies are: its selection's begin_else, or its
+    /// end_if.
+    fn endOf(webs: *const Selections, way: Way) u16 {
+        const marks = webs.marks[way.selection];
+        return if (way.side == 0) marks.otherwise else marks.end;
+    }
+
+    /// The way whose copies are at `at`, if any is.
+    fn wayAt(webs: *const Selections, at: u16) ?Way {
+        for (webs.marks[0..webs.count], 0..) |marks, k| {
+            if (at == marks.otherwise) return .{ .selection = @intCast(k), .side = 0 };
+            if (at == marks.end) return .{ .selection = @intCast(k), .side = 1 };
+        }
+        return null;
+    }
+
+    fn timeOf(webs: *const Selections, node: Node) Time {
+        if (!node.copy) return .{ .at = node.step, .sub = node.part };
+        return .{ .at = webs.endOf(.{ .selection = webs.of_phi[node.step], .side = node.side }), .sub = webs.place[node.step] };
+    }
+
+    /// The steps that may run after `at`: those past it, but for the
+    /// false arm of each selection whose true arm it is in, or ends.
+    fn reach(webs: *const Selections, at: u16) Mask {
+        var mask = above(at);
+        for (webs.marks[0..webs.count]) |marks| {
+            if (marks.begin < at and at <= marks.otherwise) mask &= ~span(marks.otherwise, marks.end);
+        }
+        return mask;
+    }
+
+    /// nir_def_is_live_at (nir_liveness.c:270-290) of `node` where `time`
+    /// is, which comes after it: a float read at a step that may run
+    /// later, by a copy after it at the end of its way, or by the colour;
+    /// a copy, read by its phi alone, at the copies after it at its way's
+    /// end, of which it is live out.
+    fn liveAt(webs: *const Selections, e: *const Emit, node: Node, time: Time) bool {
+        if (node.copy) {
+            const own = webs.timeOf(node);
+            return time.at == own.at and time.sub > own.sub;
+        }
+        if (e.at_end[node.step][node.part]) return true;
+        if (e.uses[node.step][node.part] & webs.reach(time.at) != 0) return true;
+        if (readAgain(webs.steps, node, time)) return true;
+        const way = webs.wayAt(time.at) orelse return false;
+        for (webs.phisOf(way.selection)) |phi| {
+            if (webs.place[phi] <= time.sub) continue;
+            const read = sourceOf(webs.steps[phi], way.side);
+            if (read.step == node.step and read.part == node.part) return true;
+        }
+        return false;
+    }
+
+    /// nir_defs_interfere (nir_liveness.c:292-312): the one made first is
+    /// live where the other is made.
+    fn nodesInterfere(webs: *const Selections, e: *const Emit, a: Node, b: Node) bool {
+        const at_a = webs.timeOf(a);
+        const at_b = webs.timeOf(b);
+        if (at_a.at == at_b.at and at_a.sub == at_b.sub) return true;
+        return if (at_a.before(at_b)) webs.liveAt(e, a, at_b) else webs.liveAt(e, b, at_a);
+    }
+
+    /// What `web` holds, or the float `of` alone where it is in none.
+    fn members(webs: *const Selections, e: *const Emit, web: Web, of: compile.Float, out: []Node) []Node {
+        if (web == no_web) {
+            out[0] = .{ .step = of.step, .part = @intCast(of.part) };
+            return out[0..1];
+        }
+        var count: usize = 0;
+        for (e.web_of[0..webs.steps.len], 0..) |parts, step| for (parts, 0..) |part, k| {
+            if (part != web) continue;
+            out[count] = .{ .step = @intCast(step), .part = @intCast(k) };
+            count += 1;
+        };
+        for (webs.phis[0..webs.phis_from[webs.count]]) |phi| for (e.copy_web[phi], 0..) |side_web, side| {
+            if (side_web != web) continue;
+            out[count] = .{ .step = phi, .copy = true, .side = @intCast(side) };
+            count += 1;
+        };
+        return out[0..count];
+    }
+
+    /// merge_sets_interfere (nir_from_ssa.c:231-303): whether anything of
+    /// the web the float `of` is in, or of it alone, interferes with
+    /// anything of the web `into`. Mesa's walk tests each node against
+    /// the nearest that dominates it, which, the webs being free of
+    /// interference within, finds what testing every pair does.
+    fn interfere(webs: *Selections, e: *const Emit, of: compile.Float, into: Web) bool {
+        const from = webs.members(e, e.web_of[of.step][of.part], of, &webs.nodes[0]);
+        const to = webs.members(e, into, of, &webs.nodes[1]);
+        for (from) |a| for (to) |b| {
+            if (webs.nodesInterfere(e, a, b)) return true;
+        };
         return false;
     }
 };
 
-/// Whether a float may be coalesced into a web at all: one the walk makes
-/// one instruction of, in a block its way goes through, and not yet in a
-/// web; or a phi of a selection before, whose web is merged whole. A
-/// float in that web that is live here is live where the phi is made, so
-/// the phi is what is checked (merge_sets_interfere's nearest dominator,
-/// nir_from_ssa.c:273-300).
-fn coalescable(e: *const Emit, branch: *const Branch, of: compile.Float, side: usize) bool {
-    const web = e.web_of[of.step][of.part];
-    if (web != no_web) return e.work.steps[of.step].tag == .phi and web < branch.first_web;
+/// Where a step is to a kept selection: before it, in its true arm, in
+/// its false arm, or past it.
+const Where = enum { before, yes, no, after };
+
+fn whereOf(marks: Marks, at: u16) Where {
+    if (at < marks.begin) return .before;
+    if (at < marks.otherwise) return .yes;
+    if (at < marks.end) return .no;
+    return .after;
+}
+
+/// Whether a float may be coalesced into a web at all: a phi, whose
+/// copy at its merge's start is what a later way's copy reads; or one
+/// the walk makes one instruction of, in a block its way goes through.
+fn coalescable(e: *const Emit, marks: Marks, of: compile.Float, side: usize) bool {
     const each = e.work.steps[of.step];
+    if (each.tag == .phi) return true;
     const scalar = each.kind == .f32x1;
     const made = switch (each.tag) {
         .add, .mul, .sub, .min, .max, .negate, .abs, .sat, .sin, .cos, .sign, .floor, .ceil, .trunc, .round, .recip, .rsqrt, .exp2, .log2, .set_less, .integer, .round_to_int, .input => true,
         .select => !compile.isBool(e.work, of.step),
-        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect => scalar,
+        .push, .ubo, .ssbo, .ubo_indirect, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic => scalar,
         else => false,
     };
     if (!made) return false;
-    return switch (branch.where(of.step)) {
+    return switch (whereOf(marks, of.step)) {
         .before => true,
         .yes => side == 0,
         .no => side == 1,
@@ -1522,14 +1734,28 @@ fn condToBool(c: *Compile, cond: instr.Cond) Error!Reg {
 
 /// ntq_emit_bool_to_cond (nir_to_vir.c:1262): the flags as they are where
 /// they still hold the bool, the comparison emitted again where its
-/// step is one, and the bool tested against 0 where it is not.
+/// step is one, and the bool tested against 0 where it is not, or where
+/// the comparison reads a float in a web: ntq_get_alu_parent
+/// (:1239-1258) will not emit again what reads a load_reg, which a
+/// store_reg since may have written (since 1.207; before, a comparison
+/// read again after a phi's register it read was written in an arm).
 fn boolToCond(e: *Emit, step: u16) Error!instr.Cond {
     const c = e.c;
     const qsrc = try getSrc(e, step, 0);
     if (qsrc.file == .temp and c.flags_temp == @as(i32, @intCast(qsrc.index))) return c.flags_cond;
-    if (e.work.steps[step].tag == .compare) return emitComparison(e, e.work.steps[step]);
+    const compare = e.work.steps[step];
+    if (compare.tag == .compare and !readsWeb(e, compare)) return emitComparison(e, compare);
     c.setPf(try c.mulDest(.mov, vir.nopReg(), .{qsrc}), .pushz);
     return .ifna;
+}
+
+/// Whether a comparison reads a float that is in a web.
+fn readsWeb(e: *const Emit, compare: Step) bool {
+    for ([_]u16{ compare.a, compare.b }) |of| {
+        const read = madeOf(e.work.program(), .{ .step = of, .part = 0 });
+        if (e.web_of[read.step][read.part] != no_web) return true;
+    }
+    return false;
 }
 
 /// ntq_get_src (nir_to_vir.c:856): a float of a step, which a TMU
@@ -1602,9 +1828,9 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
 
     // get_required_tex_tmu_writes (v3d_tex.c:222): S and T, R or I where
     // the image has a third float, the comparator's TMUDREF, and a bias's
-    // or a level's TMUB (since 1.180). The input FIFO has 16 slots across
-    // all threads.
-    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared) + @intFromBool(each.lookup != .implicit);
+    // or a level's TMUB (since 1.180), which a fetch of a sample has not
+    // (since 1.209). The input FIFO has 16 slots across all threads.
+    const tmu_writes: u32 = 2 + @as(u32, @intFromBool(dim != .flat)) + @intFromBool(compared) + @intFromBool(each.lookup.leveled());
     while (tmu_writes > 16 / @as(u32, c.threads)) c.threads /= 2;
 
     // Pipelining it would overflow the TMU's FIFOs: flush what waits.
@@ -1628,7 +1854,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // A bias, or a level, after it, as vtn orders the sources
     // (spirv_to_nir.c:3420-3438): each one float to TMUB (v3d_tex.c:
     // 129-150; since 1.180).
-    if (each.lookup != .implicit) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
+    if (each.lookup.leveled()) _ = try tmuWrite(c, .tmub, try getSrc(e, each.from[0], 0));
 
     // The texture's number in the high bits of the address, for the
     // driver to put the texture's state there (v3d_tex.c:297-301): here
@@ -1651,7 +1877,7 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     // which TMUSLOD does for every other image (:135-150; since 1.180).
     const p2_packed = texConfigP2(each.offsets, each.lookup == .lod and dim == .cube);
     const needs_p2 = p2_packed != p2_default;
-    if (each.lookup != .fetch) {
+    if (!each.lookup.fetches()) {
         try wrtmuc(c, .tmu_config_p1, p1_packed | @as(u32, each.at) << 24);
     } else if (c.stage == .fragment and !e.work.skip_helpers[at]) {
         // A fetch needs no sampler, so its P1 is the constant of its own
@@ -1666,9 +1892,10 @@ fn emitTex(e: *Emit, each: Step, at: u16) Error!void {
     if (needs_p2) try wrtmuc(c, .constant, p2_packed);
 
     // A fetch's lookup is started at TMUSF (v3d_tex.c:375-377; since
-    // 1.182), a cube's at TMUSCM (:378-379), and one at a level the
-    // program gives at TMUSLOD (:380-381).
-    const retiring = try tmuWrite(c, if (each.lookup == .fetch) .tmusf else if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
+    // 1.182), a sample's too (since 1.209), a cube's at TMUSCM
+    // (:378-379), and one at a level the program gives at TMUSLOD
+    // (:380-381).
+    const retiring = try tmuWrite(c, if (each.lookup.fetches()) .tmusf else if (dim == .cube) .tmuscm else if (each.lookup == .lod) .tmuslod else .tmus, s);
     // Mesa's own count, which is the mask of the words rather than how
     // many: the scheduler only holds a lookup back for it.
     retiring.ldtmu_count = return_words;
@@ -1783,8 +2010,8 @@ fn writable(e: *const Emit, each: Step) bool {
 /// caches to be cleaned (tmu_dirty_rcl, :532-533).
 fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     const c = e.c;
-    const is_store = each.tag == .ssbo_store or each.tag == .scratch_store;
-    const is_atomic = each.tag == .ssbo_atomic;
+    const is_store = each.tag == .ssbo_store or each.tag == .scratch_store or each.tag == .shared_store;
+    const is_atomic = each.tag == .ssbo_atomic or each.tag == .shared_atomic;
     const tmu_op = if (is_atomic) atomicTmuOp(e, each) else tmu_op_regular;
     // An iadd made an increment or a decrement writes no operand
     // (:507-519).
@@ -1793,8 +2020,8 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     if (is_store or is_atomic) c.tmu_dirty_rcl = true;
     // The offset's step where it is computed, and else the constant one.
     const offset_src: u16 = switch (each.tag) {
-        .ubo_indirect, .ssbo_indirect, .scratch_indirect => each.a,
-        .ssbo_store, .ssbo_atomic, .scratch_store => each.from[0],
+        .ubo_indirect, .ssbo_indirect, .scratch_indirect, .shared => each.a,
+        .ssbo_store, .ssbo_atomic, .scratch_store, .shared_store, .shared_atomic => each.from[0],
         else => compile.none,
     };
     const dynamic_src = offset_src != compile.none;
@@ -1802,8 +2029,13 @@ fn emitTmuGeneral(e: *Emit, each: Step, at: u16) Error!void {
     // Scratch has no buffer: its base is spill_base, which the program
     // worked out at its start (:578-586; since 1.177).
     const is_scratch = each.tag == .scratch or each.tag == .scratch_indirect or each.tag == .scratch_store;
+    // Shared memory neither: its base is cs_shared_offset, the
+    // workgroup's place in it (:587-588; since 1.203).
+    const is_shared = each.tag == .shared or each.tag == .shared_store or each.tag == .shared_atomic;
     const base_offset = if (is_scratch)
         c.spill_base
+    else if (is_shared)
+        e.cs_shared_offset
     else if (each.tag == .ubo_indirect)
         try c.uniform(.ubo_addr, vir.unitDataCreate(@as(u32, each.b) + 1, 0))
     else
@@ -1890,7 +2122,7 @@ fn flushTmu(e: *Emit) Error!void {
         if (pending.component_mask > 0) {
             const tag = e.work.steps[pending.step].tag;
             const general = switch (tag) {
-                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect => true,
+                .ubo, .ubo_indirect, .ssbo, .ssbo_indirect, .ssbo_atomic, .scratch, .scratch_indirect, .shared, .shared_atomic => true,
                 else => false,
             };
             for (0..4) |j| {

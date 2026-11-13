@@ -21,8 +21,13 @@
 //! copied and nothing kept twice (`sampledRows`). That is llvmpipe's way,
 //! which lays every texture out the one way whatever it is bound as
 //! (`llvmpipe_texture_layout`, src/gallium/drivers/llvmpipe/
-//! lp_texture.c:154-223). A device whose images lie in a layout of its own
-//! (`Ops.texture_memory`) does not make one yet.
+//! lp_texture.c:154-223). On a device whose images lie in a layout of its
+//! own (`Ops.texture_memory`, the V3D) such an image lies in that layout
+//! instead (since 1.210), each layer a texture of its own as the device
+//! keeps one, and the pass stores into the level its view names where
+//! the TMU reads it, as v3dv keeps every optimal image in UIF whatever
+//! its usage (src/broadcom/vulkan/v3dv_image.c:481-483); so does one of
+//! more than one level there (`deviceLaid`).
 //!
 //! **An image kept in rows may have levels** (since 1.119), as a depth
 //! attachment may since 1.63: each level's rows after the level before,
@@ -790,8 +795,9 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
             image.bytes = image.layer_bytes * layers;
             image.alignment = memory.alignment;
         };
-        // Of four samples there, laid out as its device keeps them, which
-        // is never sampled (`multisampled`; since 1.146).
+        // Of four samples there, laid out as its device keeps them (since
+        // 1.146), and sampled so (since 1.209): the pass stores every
+        // sample into its quad, where the TMU fetches it.
         if (info.samples > 1) if (physical.ops.texture_memory) |own| return inQuads(image, own(info.format, extent.width, extent.height, 1, 1, info.samples), info.samples);
         return withPlanes(image, info.samples);
     }
@@ -829,16 +835,28 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     //
     // Either is of a format whose rows a texture reads
     // (`sampledRowFormat`), which the three a pass draws into are, in
-    // optimal tiling, on a device that keeps its images in this library's
-    // layout: the V3D's are its own (`Ops.texture_memory`), and its half
-    // of item 48 is to come. Not written through as a storage image as
+    // optimal tiling. On a device whose images lie in a layout of their
+    // own (`Ops.texture_memory`, the V3D) it lies in that layout instead
+    // (since 1.210, item 48's V3D half): at one sample each layer a
+    // texture of the device's, every level of it, which the pass stores
+    // into and the TMU reads where the pass stored it, as v3dv keeps
+    // every optimal image (v3dv_image.c:481-483) and stores a colour
+    // into its slice's own tiling (`cmd_buffer_render_pass_emit_store`,
+    // v3dvx_cmd_buffer.c:364-406); at four, in quads (`inQuads`), which
+    // a copy or a clear reaches every sample of, the pass stores all of
+    // (since 1.147) and the TMU fetches a sample of (since 1.209). Not
+    // written through as a storage image as
     // well, which `rows_written` is for one level and one layer alone; not
     // transient, as it has memory behind it; and not a 3D image, whose
     // slices no pass of Vulkan 1.0 draws into.
     const attachment = info.usage & (facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0;
     const sampled_rows = info.usage & facet.IMAGE_USAGE_SAMPLED != 0 and (info.samples != 1 or attachment);
     if (sampled_rows) {
-        if (physical.ops.texture_memory != null or sampledRowFormat(info.format) == null) return null;
+        // Read as an input attachment as well, not there: that device
+        // reads none (`Capabilities.input_attachments`, item 56), and the
+        // format query keeps the 4 bit wherever it says sampled.
+        if (physical.ops.texture_memory != null and info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) return null;
+        if (sampledRowFormat(info.format) == null) return null;
         const not_sampled = facet.IMAGE_USAGE_STORAGE | facet.IMAGE_USAGE_TRANSIENT_ATTACHMENT;
         if (info.tiling != .optimal or volume or info.usage & not_sampled != 0) return null;
     }
@@ -896,11 +914,13 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     // `maxMipLevels` be "the number of levels in the complete mipmap
     // chain" whatever its usage, and until 1.119 the format query answered
     // 1 for every image kept in rows. A linear image may keep the one, as
-    // Vulkan lets it, and so do a 3D image and an image on a device whose
-    // images lie in a layout of its own (`Ops.texture_memory`). One of
-    // compressed blocks is never in rows since 1.126.
+    // Vulkan lets it, and so does a 3D image. On a device whose images lie
+    // in a layout of its own (`Ops.texture_memory`) such an image lies in
+    // that layout, as a sampled one does there (since 1.210; until then it
+    // kept the one level). One of compressed blocks is never in rows since
+    // 1.126.
     if (info.mip_levels != 1) {
-        if (info.tiling != .optimal or volume or physical.ops.texture_memory != null) return null;
+        if (info.tiling != .optimal or volume) return null;
         if (info.mip_levels > mostLevels(extent.width, extent.height)) return null;
     }
     // Of four samples on a device of a layout of its own: in its own, as
@@ -910,6 +930,17 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
     image.layer_bytes = 0;
     for (0..info.mip_levels) |lod| image.layer_bytes += levelBytes(&image, @intCast(lod));
     image.bytes = image.layer_bytes * layers;
+    // Sampled, or of more than one level, on a device of a layout of its
+    // own: as that device keeps a texture, each layer one of its own, so
+    // that the pass stores the level its view names in the level's own
+    // tiling and the TMU reads it where it lies (since 1.210,
+    // `deviceLaid`), as a sampled depth attachment is (since 1.142).
+    if (sampled_rows or info.mip_levels > 1) if (physical.ops.texture_memory) |own| {
+        const memory = own(info.format, extent.width, extent.height, 1, info.mip_levels, 1);
+        image.layer_bytes = std.mem.alignForward(u64, memory.bytes, memory.alignment);
+        image.bytes = image.layer_bytes * layers;
+        image.alignment = memory.alignment;
+    };
     // Written through as a storage image as well: the rows are the
     // texture a function writes, over no memory yet (since 1.56).
     if (rows_written) image.texels = texelsOver(&image, @ptrFromInt(_memory.alignment)) catch return null;
@@ -940,11 +971,11 @@ fn laidOut(physical: *_instance.PhysicalDevice, info: *const facet.ImageCreateIn
 fn multisampled(physical: *const _instance.PhysicalDevice, info: *const facet.ImageCreateInfo) bool {
     if (info.samples != 4 or !physical.can.multisampling) return false;
     // A device of a layout of its own keeps the four samples together
-    // (`Image.quads`, since 1.146), and fetches none of them yet: v3dv's
-    // compiler reads one through its quad (v3d_nir_lower_txf_ms.c:46-51),
-    // facet's for the V3D after item 59 (docs/facet-vulkan10.md item 61,
-    // step V7).
-    if (physical.ops.texture_memory != null and info.usage & (facet.IMAGE_USAGE_SAMPLED | facet.IMAGE_USAGE_INPUT_ATTACHMENT) != 0) return false;
+    // (`Image.quads`, since 1.146), and since 1.209 fetches one through
+    // its quad as v3dv's compiler does (v3d_nir_lower_txf_ms.c:46-51;
+    // docs/facet-vulkan10.md item 61, step V7). It reads no input
+    // attachment (`Capabilities.input_attachments`).
+    if (physical.ops.texture_memory != null and info.usage & facet.IMAGE_USAGE_INPUT_ATTACHMENT != 0) return false;
     if (info.image_type != .@"2d" or info.tiling != .optimal or info.mip_levels != 1) return false;
     if (info.flags & facet.IMAGE_CREATE_CUBE_COMPATIBLE != 0) return false;
     const taken = facet.IMAGE_USAGE_COLOR_ATTACHMENT | facet.IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT |
@@ -1503,7 +1534,11 @@ pub fn deviceLaid(image: *const Image) bool {
     return switch (image.kind) {
         .texture => true,
         .depth => image.usage & facet.IMAGE_USAGE_SAMPLED != 0,
-        .rows => false,
+        // A colour attachment sampled as well, or one of more than one
+        // level (since 1.210, `shapeFor`): v3dv keeps every optimal image
+        // in its own tiling (v3dv_image.c:481-483), and so it is drawn
+        // into and sampled where it lies.
+        .rows => image.usage & facet.IMAGE_USAGE_SAMPLED != 0 or image.levels > 1,
     };
 }
 

@@ -57,8 +57,8 @@ const arg_count = 3;
 /// The firmware's property message that holds the flags for the next
 /// start, and the one flag there is: the bootloader reads what
 /// `[tryboot]` names this once.
-const TAG_SET_REBOOT_FLAGS: u32 = 0x0003_8064;
-const REBOOT_TRYBOOT: u32 = 1 << 0;
+const TAG_SET_REBOOT_FLAGS = videocore.TAG_SET_REBOOT_FLAGS;
+const REBOOT_TRYBOOT = videocore.REBOOT_TRYBOOT;
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;

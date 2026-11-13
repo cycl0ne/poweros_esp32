@@ -153,10 +153,10 @@ magenta item 52 is about now belongs to item 54 alone, item 28's
 remainder is a QPU back end that refuses the operand at pipeline
 creation, item 17's is a vertex program that keeps its varyings in
 registers and so stops at eight, item 22's is a render list played once
-a frame rather than once a layer, item 61's is its step V7, item 48's
-is a store and a load that name the UIF layout, and a clear through the
-TLB, and item 42's is a texture state and a render target of the view's
-format.
+a frame rather than once a layer, item 61's was its step V7, done in
+1.209, item 48's was a store and a load that name the level's own
+tiling, done in 1.210, and item 42's is a texture state and a render
+target of the view's format.
 
 None of the nine is the hardware's limit. Mesa's v3dv runs Vulkan on this
 same V3D 7.1 with 64 varyings, texel offsets of -8 to 7, 256 framebuffer
@@ -1687,7 +1687,7 @@ So facet's barrier, which records the two stage masks and plays as nothing on bo
 
 ### 48. Accept an image that is both SAMPLED and COLOR_ATTACHMENT
 
-*images / render to texture* &mdash; port, about 420 lines: about 90 on the cores, about 62 on the V3D, about 11 for a V3D clear, and about 257 of tests and docs &mdash; **the cores' half done in 1.119**; the V3D's is v3dv's store and load of the UIF layout and its TLB clear, about 73 lines and a board check
+*images / render to texture* &mdash; port, about 420 lines: about 90 on the cores, about 62 on the V3D, about 11 for a V3D clear, and about 257 of tests and docs &mdash; **the cores' half done in 1.119, the V3D's in 1.210**: v3dv's store and load into the level's own tiling, which were in place for depth since 1.142 and for four samples since 1.147, so the V3D's half came to about 30 lines of code and a board check, and CmdClearColorImage stays the CPU's
 
 An image's layout is settled at CreateImage from its usage — rows for an attachment, blocks of texels for a texture — and shapeFor returns null for SAMPLED or STORAGE together with COLOR_ATTACHMENT, so the ordinary Vulkan render-to-texture image cannot be made. Vulkan requires B8G8R8A8_UNORM and R8G8B8A8_UNORM to carry both COLOR_ATTACHMENT and SAMPLED in optimalTilingFeatures and gives no mechanism to refuse the combination; facet's own format table advertises attachment, sampled and storage in the one optimal mask, so the report and the refusal contradict each other. This cannot be fixed by adding a check: it needs either a layout transition that re-tiles the image in place, or a rasterizer that stores tiles straight into the texture layout. The workaround programs use today — draw into a rows image, CmdCopyImage into a texture image — is a copy a Vulkan program does not make. The single largest omission from the gap list.
 
@@ -1759,6 +1759,37 @@ UIF layout in their Memory Format and Height in UB fields
 the TLB (v3dv_meta_clear.c:70-193), about 73 lines and a board check.
 Until then the V3D answers `error_format_not_supported` to the format
 query and to CreateImage alike, which the probe checks on both devices.
+
+**The V3D's half done in 1.210.** On the V3D an image both
+COLOR_ATTACHMENT and SAMPLED is made now, as is a colour attachment of
+more than one level. Mesa's v3dv does it in three places:
+- **The layout.** Every optimal image is UIF, whatever its usage (v3dv_image.c:481-483).
+- **The frame's store and load.** They go into the slice of the level and the layer the view names, in that slice's own tiling. The Memory Format is the slice's, and Height in UB is its padded height in UIF blocks where it is UIF (`cmd_buffer_render_pass_emit_store`, v3dvx_cmd_buffer.c:364-406, and `_load`, :168-204). A resolve goes into its image's slice the same way (:398-411).
+- **The frame's clear.** On V3D 7.1 a frame that clears a UIF level needs nothing more. The UIF padding goes into CLEAR_COLORS_PART3, which only V3D 4.2 emits (:1110-1148).
+
+The store and the load were in place already. They took a Memory Format and a Height in UB for a sampled depth since 1.142 and for an image of four since 1.147, so the half was much smaller than sized: about 30 lines of code against the 73 sized, CmdClearColorImage left on the CPU. The parts:
+- **The image.** On a device of a layout of its own, a colour attachment that is sampled, or that has more than one level, lies as the device's textures do, each layer one of its own (`_image.shapeFor`, `deviceLaid`). One of four samples, drawn into and sampled, is kept in quads, as one drawn into alone is. The format query asks CreateImage's rules, so it answers the whole chain of levels for a colour attachment there, and both sample counts for one that is sampled too. That closes the V3D's part of item 49's second bullet.
+- **The frame.** `_play.colorPlace` gives the frame the level and the layer its view names, in the level's tiling, with Height in UB from `tiling.blocksDown`. A resolve attachment that is sampled too is resolved into the same way, in the tiles (`frame.Resolve.memory`), or on the CPU after the pass, and what the CPU wrote then goes out before the TMU reads it.
+- **The transfers.** A copy, a blit, a resolve and a copy to or from a buffer already went texel by texel through `_image.readTexel` and `writeTexel`, which find a device-laid texel where the device keeps it. CmdClearColorImage filled a level's span, and for such an image `_transfer.spanOf` gave the rows, which are not there. It gives the device's level now. The new host test found that.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **An image sampled and read as an input attachment at once**, refused on the V3D, which reads no input attachment (item 56). The query answers `error_format_not_supported`: answering the 1 bit alone would break the rule that a sampled image's counts hold `sampledImageColorSampleCounts`. *V3D-only*.
+- **A colour attachment that is sampled and written through as a storage image at once**, refused on both devices, as since 1.119 (`not_sampled` in `_image.shapeFor`). *Facet-wide*.
+- **CmdClearColorImage of such an image** is the CPU's fill of the level where the V3D keeps it, as every V3D clear has been since 1.142, not v3dv's clear through the TLB (v3dv_meta_clear.c:70-193). It gives the same texels. *V3D-only*.
+
+The *facet-wide* entry is on the list for the Radeon's.
+
+Results:
+- **The tests.** The host tests are 3496, one new: a sampled colour attachment of three levels and two layers, over the V3D's layout ops, where a copy from a buffer, a clear, a copy back and a resolve each put the texels. Two changed: the format query's answers on such a device, and the image of four drawn into and sampled. The V3D's frame test has a resolve stored into a UIF level. Of 9 mutations of the library, all 9 fail them, each on the tests' counts.
+
+On the CM5, FacetBoth 1.74 has seven new cases, each an image drawn or resolved into and then sampled, with nothing copied between:
+- **"drawn into and sampled"** and **"drawn into and sampled, r8g8b8a8"** are each 6 of 230400 pixels apart, 214 at worst, the first at 164,106. The clockwise quad and the glass are drawn into level 0 of the image, in a pass that leaves it to be sampled, and the level is sampled over the whole picture.
+- **"drawn into and sampled, r5g6b5"** is 6 apart, 215 at worst, within a slack of 9. The cores dither a 565 write and the V3D does not. Vulkan lets either round to one of the two nearest values, and one 565 step is 8 or 9 in eight bits. With no slack it was 83,154 apart.
+- **"drawn into level 1 and sampled"** is 18 apart, 186 at worst, the first at 163,98: the frame stores into level 1, in that level's own tiling.
+- **"four samples drawn into and fetched"** is 4 apart, 217 at worst, the first at 331,100, as "shipped fetch of four samples" is, which fetches from a copy.
+- **"four samples resolved into an image sampled"** is 31 apart, resolved in the V3D's tiles, and **"four samples resolved over a part into an image sampled"** 24 apart, resolved on the CPU after the pass. Both are 55 at worst, as "four samples, resolved in the pass" and "four samples, resolved over a part", which resolve into an image not sampled, are at 54 and 45 apart. Level 0 is cleared to a green first, so the part's edges show where the resolve stops.
+
+With the frame's Height in UB one UIF block short (`tiling.blocksDown(...) -| 1` in `_play.colorPlace`), all seven fail: 27,107 to 51,430 apart, 217 to 255 at worst. The other 307 cases are each as they were at 1.209. FacetProbe 1.48 is 891 of 891: its check of an attachment that is sampled too now asks that the image be made, as the query says.
 
 ### 49. Reconcile GetPhysicalDeviceFeatures with VkPhysicalDeviceFeatures, and decide what replaces the missing enable step
 
@@ -3011,6 +3042,278 @@ Results:
 
 On the CM5 FacetBoth 1.59 has two new cases, "shipped compute: writes vertices" and "shipped compute: writes a draw's numbers", whose compute shaders the module ships as SPIR-V. The first dispatches three groups of three invocations, and is 0 of 230400 pixels apart. The second dispatches indirectly into a buffer cleared first, and is 11 apart. Those are the same 11 pixels as "compute: writes a draw's numbers", whose draws it writes the same. With the cores' functions made wrong on purpose they are 85,628 and 64,296 apart: the V3D runs its own programs, not the functions. The other 282 cases are each as they were at 1.194, and FacetProbe is 890 of 890.
 
+**Then Workgroup memory and OpControlBarrier**, facet.library 1.203. A compute program may declare variables in Workgroup memory, GLSL's `shared`, and wait at OpControlBarrier, GLSL's barrier(). They are NIR's load_shared, store_shared and shared_atomic, and its barrier of an execution scope.
+
+- **The layout** is v3dv's: lower_compute lays the variables out with nir_lower_vars_to_explicit_types and shared_type_info (v3dv_pipeline.c:3273-3291), through glsl_get_explicit_type_for_size_align (glsl_types.c:2795-2885).
+  - A float or an integer is 4 bytes at 4. A vector of n is 4n bytes at 4n, except a vec3, whose 12 are at 16.
+  - An array's elements are its element's size, rounded up to its alignment, apart. Its size is that stride times one less than its length, plus the element's own: the last element is not padded.
+  - A struct's members follow one another, each at its alignment. The struct is at its widest member's, and its size is rounded up to it.
+  - A matrix is its columns, each a column's size rounded up to its alignment apart: a mat3's are 16 apart.
+- **The places.** Each variable is after the ones before it in the module, at its alignment (nir_lower_explicit_io.c:2042-2065). A variable nothing loads, stores or chains through takes no place: v3d_optimize_nir's nir_remove_dead_variables has taken it away (nir_to_vir.c:2253-2257). A pass over the words before they are read finds the pointers named.
+- **Loads, stores and atomics** go through the TMU, as a storage buffer's do (ntq_emit_tmu_general, nir_to_vir.c:587-588), from cs_shared_offset. A pointer into Workgroup memory is a chain's base, as a block's member is, and an atomic's barriers are of its semantics with WorkgroupMemory added (vtn_mode_to_memory_semantics, vtn_variables.c:2668-2687).
+- **cs_shared_offset** is worked out at the program's start (nir_to_vir.c:4967-4992):
+  - the payload's second word shifted down by 16, wg_in_mem;
+  - masked to the 16 bits the local index leaves, where the workgroup is more than one invocation;
+  - times the shared memory's size, and added to QUNIFORM_SHARED_OFFSET, the stream's new `shared_offset`.
+- **OpControlBarrier** is vtn_emit_scoped_control_barrier's (spirv_to_nir.c:2813-2845, :4821-4866).
+  - Its memory scope counts only where its semantics order memory of a storage class.
+  - Of neither memory nor execution wider than the invocation it is nothing (:2831-2832).
+  - Else it is the TMU flushed, BARRIERID into SYNCB, and a thread switch, at which the TSY op blocks (emit_compute_barrier, nir_to_vir.c:3563-3577, :3857-3870). Its execution scope counts wherever it is not NONE (:3863): one of the invocation's execution and the workgroup's memory is a TSY op as well.
+  - CrossDevice, QueueFamily and ShaderCallKHR scopes are refused (vtn_translate_scope, :2765-2797).
+- **The program says it has a barrier** (has_control_barrier, vir.c:1024-1034). Its supergroup then holds no more batches than half the QPUs' threads, so that two run at once while one waits at a barrier (v3d_csd_choose_workgroups_per_supergroup, v3d_util.c:56-67).
+- **The dispatch's shared memory** is the program's size times the dispatch's workgroups, as cmd_buffer_create_csd_job allocates it (v3dv_cmd_buffer.c:4435-4437). It is at 4096, in the frame's chunks.
+
+Where it is not v3dv's:
+- The shared memory is carved from the frame's chunks, not a buffer object of its own. A dispatch that cannot have it, or whose bytes are past 32 bits, runs on the cores.
+- A workgroup has 16 KiB of shared memory, facet's maxComputeSharedMemorySize (instance/_instance.zig), where v3dv's is 32 KiB (V3D_MAX_COMPUTE_SHARED_MEMORY_SIZE, v3d_limits.h:79). A pipeline past it is refused when it is made (createcomputepipelines.zig), and the compiler refuses it too.
+
+Still left out. Each is marked *facet-wide*, missing whatever the device, or *V3D-only*, left out because of the V3D, which a Radeon port has to do (see "What the V3D port leaves for the Radeon's" below):
+- **Kept selections in vertex and compute programs.** `keepSelection` keeps a branch in a fragment program alone (`Error.Branches`), so a conditional store, to shared memory or anywhere, refuses the program. *Facet-wide*: the rule is this port's, not Mesa's, and no feature gates it. It is the next step.
+- **A bool in shared memory.** shared_type_info makes it 4 bytes, and vtn and nir_lower_explicit_io load it as a comparison of its word. *Facet-wide*, of no feature.
+- **An initializer of a Workgroup variable.** It needs VK_KHR_zero_initialize_workgroup_memory (nir_zero_initialize_shared_memory, vir.c:817-829). *Facet-wide*, and after 1.0.
+- **Workgroups of more than 256 invocations.** v3dv runs one as a loop of 256 (nir_lower_workgroup_size, v3dv_pipeline.c:3300-3311); here it runs on the cores. *V3D-only*: 256 is the V3D's limit (V3D_MAX_CSD_WG_SIZE, v3d_limits.h:82), and facet's maxComputeWorkGroupInvocations is 1024.
+- **A barrier in another stage**, emit_barrier's TSY op (nir_to_vir.c:3580-3613). Vulkan 1.0 has OpControlBarrier in compute and tessellation control shaders alone. *V3D-only*: tessellationShader is off in v3dv (v3dv_device.c:334), and in facet (getphysicaldevicefeatures.zig:161).
+- **wa_glslang_cs_barrier** (spirv_to_nir.c:4828-4842), for a glslang older than glslc's, which wrote barrier() with no memory semantics. *Facet-wide*, of old modules alone.
+- **Shared memory past 16 KiB.** *Facet-wide*: facet's limit, where v3dv's is 32 KiB.
+
+Results:
+- **The references:**
+  - glslc_compute_shared, 420 words, an 8x2 workgroup. A uint at 0, a float[16] at 4, mirrored between two barriers, and a vec3[4] at 80, 16 apart: 140 bytes. A counter each invocation adds to by atomicAdd. Its program is 53 instructions, with two BARRIERIDs and ten thread switches. The first BARRIERID is after a TMUWT for the stores before it; the second is after the loads before it are read back.
+  - glslc_shared_layout, 468 words, of a workgroup of 4:
+    - a struct of a float, a vec3 and a vec2, at 0, 16 and 32, 48 apart;
+    - a mat3 at 192, loaded a column at a time at 192, 208 and 224;
+    - a counter at 240: 244 bytes.
+
+    Its program is 82 instructions.
+  - glslc_shared_matrices, 288 words: two mat2x3s stored and loaded whole, their columns 16 apart and the matrices 32: 64 bytes.
+- **The streams** begin 16, 0x3ff and the size, then `shared_offset`: wg_in_mem's shift, its mask of 10 bits, and its product.
+- **The layout's own test** has a vec3 at 16, a vec3[4] of 60 bytes, a vec2 at 8, a mat3 of 48 at 16, and a struct of 40 bytes made 48. It refuses a bool, an array of no length, and a float[4097]. A float[4096], 16 KiB, is laid out.
+- **The refusals:**
+  - Error.Storage: an initializer of total, a Block struct in Workgroup memory, and a Workgroup variable in a fragment program;
+  - Error.Refused: OpControlBarrier in a fragment program;
+  - Error.Body: a CrossDevice scope.
+- **What makes nothing.** A barrier of the invocation's execution and memory makes nothing. So does one of the invocation's execution and no semantics. One of the workgroup's execution and no semantics is still a TSY op.
+- **What takes no place.** A float[16] that nothing names takes none. A uint stored into and never read does, before what follows it. values made a float[4079] leaves 16380 bytes; a float[4080] puts places past 16 KiB and is refused.
+- **The supergroups** of 3 invocations on 2 QPUs of 2 threads are 5 workgroups with a barrier and 16 without; 24 invocations on 1 QPU of 2 threads are 1 and 2.
+- The V3D's tests are 359, six new. Of 34 mutations, 33 fail them. The other takes shared loads out of the loads a selection's phi may coalesce with (`coalescable`). No compute program reaches that while kept selections are a fragment program's.
+
+On the CM5, FacetBoth 1.67's new case, "shipped compute: shared memory and barriers", is 0 of 230400 pixels apart, 2 at worst. It is three groups of three invocations. Each invocation writes its corner's place into a vec2[3] in shared memory, and after a barrier reads the next corner's. Between two barriers each adds its corner's number to a shared uint, and the triangle's blue is that count, 6, in sixteenths. With the cores' function made wrong on purpose, the count in eighths, it is 62,940 apart: the V3D runs its own program, of shared memory and TSY barriers. The other 295 cases are each as they were at 1.202, and FacetProbe is 890 of 890.
+
+**Then the system values that differ from lane to lane**, facet.library 1.204. A fix: until now no system value counted as differing, so a buffer read at an offset made from one was read through unifa, one word for all the lanes, where v3d reads it through the TMU (ntq_emit_load_unifa, nir_to_vir.c:3315-3317, then ntq_emit_tmu_general). `lanes()` in compile.zig, nir_divergence_analysis's port, now has v3dv's answers for them (its options are nir_divergence_multiple_workgroup_per_compute_subgroup alone, v3dv_pipeline.c:217-218):
+- **They differ:**
+  - a vertex's id, which VertexIndex is made of (nir_divergence_analysis.c:974-975, :1154);
+  - its instance's id, which InstanceIndex is made of: it is the same in every lane only with nir_divergence_vertex, which v3dv does not pass (:572-573);
+  - the CS payload's two words, which LocalInvocationIndex and LocalInvocationId are made of (:977-979, :1154);
+  - and through them WorkgroupId, which v3dv's option makes differ (:611-615): a supergroup's lanes may be more than one workgroup's (v3d_csd_choose_workgroups_per_supergroup). GlobalInvocationId differs as its parts do.
+- **They are the same in every lane:** the first vertex and the base instance, which VertexIndex and InstanceIndex add, and the dispatch's count of workgroups and their base (:240-250, :342, falling through to :410).
+
+Which programs it was wrong for: since 1.192, a vertex program reading a uniform buffer, or a storage buffer, at an offset made from VertexIndex or InstanceIndex. Since 1.194, on the V3D since 1.195, a compute program reading a uniform buffer or a readonly storage buffer at an offset made from an invocation's or a workgroup's id. A buffer the program writes was read through the TMU anyway (1.168), and so is every store. No FacetBoth case did either, and none of their results changes.
+
+It matters for the next step too. A selection whose condition is made from an id is a branch under the execute mask, not a uniform branch (beginIf, to_vir.zig); with the ids counted the same in every lane it would have been the uniform one.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **The system values after Vulkan 1.0:** DrawIndex, BaseVertex and BaseInstance as variables of their own (VK_KHR_shader_draw_parameters, Vulkan 1.1) and the subgroup's ids (Vulkan 1.1). *Facet-wide*, and after 1.0.
+- **The divergence analysis's options are v3dv's**, built into `lanes()`. *V3D-only*: a Radeon port takes radv's own, read from its sources (see the list below).
+
+Results:
+- **The references:**
+  - glslc_compute_readonly, 333 words, a workgroup of 16. A readonly storage buffer is read at the global id, at the workgroup id plus 128, at the local index plus 256 and at the count of workgroups plus 512. The first three go through the TMU, three ldtmus, and the last through unifa, one ldunifa. Before the fix none went through the TMU.
+  - glslc_vertex_tints, 266 words. A uniform buffer's vec4 is read at VertexIndex & 3 and at (InstanceIndex & 1) + 4: eight ldtmus and no ldunifa.
+- The V3D's tests are 361, two new. Of 9 mutations, all 9 fail them. Each of the four values that differ made the same in every lane is caught, and so is each of four that are the same made to differ (the first vertex, the base instance, the count of workgroups, their base), and the switch taken out.
+
+On the CM5, FacetBoth 1.68's new case, "shipped compute: reads a buffer at each invocation's id", is three groups of three invocations. Each reads its corner's place from a readonly buffer, which the case has written, at its global id, adds the push constants and writes the corner out for the draw. With 1.203's facet.library and v3d.fdriver it is 63,548 of 230,400 pixels apart, 122 at worst: the bug, on the V3D. With 1.204's it is 0 of 230,400 apart, 2 at worst. The other 296 cases are each as they were at 1.203, and FacetProbe is 890 of 890.
+
+**Then kept selections in vertex and compute programs**, facet.library 1.205. Since 1.171 only a fragment program kept a selection a branch: `keepSelection` answered a vertex or a compute program's with Error.Branches. That rule was this port's. ntq_emit_if and the passes before it have nothing of the stage's (nir_to_vir.c:4355-4573), and 1.204 counts the ids that tell a branch under the execute mask from a uniform one. So the selections that stay branches in a fragment program do so in any stage now: a store in an arm, to a storage buffer or to shared memory; a buffer read in one; and arms DontFlatten or the limit keeps.
+- **The code is a fragment program's.** Where the condition differs from lane to lane, it is ntq_emit_nonuniform_if's (:4455-4561). The execute mask is set where a lane does not take the arm, and the arm is jumped over where no lane does, unless it is too small to pay (is_cheap_block, :4325, :4505-4507). The TMU's addresses in it are written under the mask. Where the condition is the same in every lane, it is ntq_emit_uniform_if's jump, msfign P (:4396-4400), which Mesa sets whatever the stage.
+- **nir_opt_dead_cf**, in every stage, which v3d's loop runs right after nir_opt_dce (nir_to_vir.c:2263-2264). An if with nothing left in its arms and no phi after it is dead (node_is_dead, nir_opt_dead_cf.c:171-271) and is taken out (dead_cf_block, :293-296). This is the coordinate program's case. nir_remove_unused_io_vars leaves it no varyings (vir.c:1097-1105), so an arm that only makes the colour is empty there. So is a vertex program's whose fragment program does not read that varying.
+- **nir_opt_peephole_select on an emptied if.** An emptied if whose phis are still read is flattened by the next nir_opt_peephole_select. Arms of no instruction are within any limit, DontFlatten's 0 among them (nir_opt_peephole_select.c:336-341, :548-553). Each phi becomes a bcsel of the condition and its two ways' floats, and the if goes (nir_opt_peephole_select_block, :577-603). `flattenEmptied` does both in the loop: what nir_opt_dce leaves of a kept selection's arms is checked after it, and an emptied one's phis still read become selects, its marks go, and its condition, read by nothing now, goes in the next round's dce. An if with no phi is the same with no select made.
+- **Two fixes the vertex programs needed:**
+  - `liveFloats` decides which of the attributes and of the VPM's values the program loads, and it counted only an output or a discard as live. So a value that only a branch's condition read was never loaded: the vertex id in `(gl_VertexIndex & 1) == 0`. Its register was never written, and the compile failed in to_qpu. A begin_if is live now, as nir_opt_dce keeps a nir_if's condition. A phi reads only the float it chooses of each way, as nir_lower_phis_to_scalar leaves it, which keeps an attribute no wider than Mesa's.
+  - An attribute's LDVPMV_IN set its float directly, where Mesa's ntq_emit_load_input goes through ntq_store_def (nir_to_vir.c:2980-2982). Where the float is a phi's false way, coalesced into the phi's register, nothing wrote that register. It goes through `storeDef` now.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **A kept selection that dce leaves only flattenable steps in.** Where nir_opt_dce takes out what kept the selection a branch, a read or a texture, but other steps remain in its arms, Mesa's next nir_opt_peephole_select flattens it if they are under its limit. Here it stays a branch. It is met in the coordinate program of a vertex shader whose arm makes both the place and the colour. *Facet-wide*: the decision to keep is made once, in the walk, before the passes. The result is the same; the code is longer.
+- **A vertex output stored in an arm** still refuses the program (Error.Branches). The walk keeps gl_Position and each varying as the one value stored (nir_move_output_stores_to_end is not ported); glslc -O stores them after the merge. *Facet-wide*.
+- **A kept selection in another.** Only one at the top level is kept, in any stage (`depth != 1`). *Facet-wide*.
+
+Nothing here is the V3D's alone, so the list for the Radeon's has nothing new.
+
+Results:
+- **The references:**
+  - glslc_compute_branch, 255 words: a store in an arm on a value read at the global id, and a load beside it. The execute mask is set once, the arm is jumped over with `bu.allna`, and both TMU addresses are written under the mask.
+  - glslc_compute_uniform_branch, 217 words: a store in an arm on a push constant. A `bu.anynap`, and no mask.
+  - glslc_compute_shared_branch, 293 words: one invocation stores into shared memory in its arm, its address under the mask. The barrier is after the branch, at the top level.
+  - glslc_vertex_branch, 279 words: a uniform buffer read in an arm, four ldtmus behind a TMUAU written under the mask. Its coordinate program has no branch and pushes no flags: 16 instructions. Nor does a vertex program whose fragment program reads no colour.
+  - glslc_vertex_kept, 417 words: two selections DontFlatten keeps, on the vertex's number. The vertex program has two branches. The id is loaded for their conditions alone, c is three floats wide, and the place's x and y are loaded into the registers the arm then writes under the mask. The coordinate program has the place's branch alone.
+  - glslc_vertex_kept_phi, 284 words: DontFlatten, a read in the arm, and a place the merge chooses between two values made before it. The vertex program has the branch; its coordinate program has four bcsels and no branch.
+- The V3D's tests are 367, six new. Of 9 mutations, all 9 fail them: the emptied if's flattening and its four parts, the marks no longer kept by dce, `liveFloats`' two changes, the stage's rule put back, and the LDVPMV_IN's store.
+
+On the CM5, FacetBoth 1.69 has two new cases.
+- **"shipped compute: kept branches, under the mask and uniform"** is 0 of 230400 pixels apart, 2 at worst. It is three groups of three invocations, each writing its corner of a triangle through three kept selections. The red is read and stored in an arm where the corner's own place is above -0.5, under the execute mask. The green and the alpha are stored where the push constants' x and y are above 0; the first is, the second is not. With the cores' function made wrong on purpose, the green's branch not taken, it is 53,998 apart.
+- **"shipped vertex branches"** draws the vertex and instance index case's triangles through a vertex shader of two DontFlatten branches. It moves the even vertices' place, which the coordinate program has too, and gives the vertices from the fourth on another colour, which only the vertex program has. It is 12 of 230400 apart, 192 at worst, the triangles' edges; "shipped vertex and instance index", of the same draw, is 11. With the cores' function moving the odd vertices instead, it is 71,907 apart.
+
+The other 297 cases are each as they were at 1.204, and FacetProbe is 890 of 890.
+
+**Then outputs as variables of the function's own**, facet.library 1.206. Until now each output was the one value stored into it. gl_Position, gl_PointSize and a varying were stored once each, and the colour where the body stored it last. A store into any of them in an arm refused the program (Error.Branches), and so did a second store into a vertex output (Error.Outputs). Mesa has none of these rules. v3dv runs nir_lower_io_vars_to_temporaries on the outputs (v3dv_pipeline.c:399-400), which makes each a variable of the function's own. A copy at the function's end stores what it holds into the real output (emit_output_copies_impl, nir_lower_io_vars_to_temporaries.c:133-144). nir_lower_global_vars_to_local and nir_lower_vars_to_ssa then make it values, as any other variable (v3dv_pipeline.c:408, nir_to_vir.c:2240). So an output may be:
+- stored in an arm;
+- stored more than once;
+- stored a float at a time, through a chain;
+- and loaded.
+
+glslang without optimization writes all of these, and the CTS's shaders are glslang's.
+- **The walk** gives each output a variable when it is declared: a varying, the colour, and gl_PerVertex's gl_Position and gl_PointSize. nir_split_per_member_structs makes each of those two a variable of its own (vk_nir.c:321-325). A store into one, or a load of one, is a variable's: in an arm, a phi at the merge, and a bcsel where the selection is flattened. A chain to a float of gl_Position, or of a varying, is a float of a variable (deref_vec_component, nir_lower_vars_to_ssa.c:586-602).
+- **The copies.** `copyOutputs` reads the variables where the walk ends.
+  - A float nothing was stored into is an undef, and nir_opt_undef takes its store out (opt_undef_store, nir_opt_undef.c:143-179). So an output never stored is not stored, and of a varying stored in part only those floats are. The rows the fragment program reads and nothing stored are 0, as before. A varying declared and never stored takes none of the eight places.
+  - Where an output's variable still holds the value last stored into its whole, the copy stores that value. nir_lower_vars_to_ssa gives the copy's load the store's def (nir_lower_vars_to_ssa.c:723-733).
+- **The order of the stores, a fix to 1.193.** nir_move_output_stores_to_end puts them in the order of their slots, the position last (nir_move_output_stores_to_end.c:86-93), and VARYING_SLOT_PSIZ is before VARYING_SLOT_VAR0 (shader_enums.h:350, :381). 1.193 kept the order of the OpStores, which put a point size stored after the varyings after them. It is before them now, and the varyings are in the order of their locations. Each float was at its right row either way, so no picture changes; the order of the instructions does.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **gl_ClipDistance and gl_CullDistance** are still refused (Error.Outputs). They need nir_lower_clip_vs. Both are on the list below already: shaderClipDistance is *facet-wide*, and shaderCullDistance is *V3D-only*.
+- **An output of an array or a struct**, such as `out vec4 colours[2]` or an output block, is refused, as before. *Facet-wide*: nir_lower_io_vars_to_scalar and nir_lower_io take them apart (vir.c:1096-1097, :1114-1116), and no feature gates them.
+- **The outputs' variables are among the 32** a program may have (`most_locals`): a vertex program of eight varyings has 22 left for its own. *Facet-wide*: Mesa has no such limit.
+
+Nothing here is the V3D's alone, so the list for the Radeon's has nothing new.
+
+Results:
+- **The references**, each compiled without -O:
+  - glslc_outputs_arms_frag, 207 words: the colour stored in both arms. Four bcsels and no branch, 19 instructions.
+  - glslc_outputs_kept_frag, 230 words: the colour stored, then sampled into in an arm, which keeps the selection a branch. The colour is its four phis: the sample's floats are written into their registers under the mask.
+  - glslc_outputs_arms_vert, 420 words:
+    - gl_Position stored, and its y again through a chain in an arm;
+    - a varying stored, three of its floats again in the arm, and its alpha loaded and halved after the merge;
+    - a second varying stored in the other arm alone.
+
+    That is three bcsels: the y, and the red and blue of the colour, whose green is c's green both ways. The second varying is p.xy, its phi of an undef taken out. The coordinate program has the y's bcsel alone.
+  - glslc_outputs_part_vert, 255 words: two of a varying's floats stored. The other two rows are given 0 after the fixed-function outputs.
+  - glslc_outputs_kept_vert, 383 words: gl_Position and a varying stored in the arms of a selection a uniform buffer's read keeps. The vertex program has eight phis, and the coordinate program has the position's four.
+  - glslc_outputs_unstored_vert, 421 words: nine varyings declared and eight stored.
+  - glslc_shipped_outputs and glslc_shipped_vertex_outputs: FacetBoth's two new shaders, word for word.
+- **The tests.** The V3D's tests are 377, ten new. Three changed:
+  - the point size's stores are before the varyings';
+  - a second store of it is the value the copy stores, where it was refused;
+  - the tests that count a program's variables count the function's own, without the outputs'.
+
+  Of 12 mutations, all 12 fail them.
+
+On the CM5, FacetBoth 1.70 has two new cases, each a shader glslc compiled without -O:
+- **"shipped outputs in arms"** is 8 of 230400 pixels apart, 204 at worst: pixels where the colour's red is near 0.5, on whichever side of the selection each device's interpolation puts it. "shipped variables", of the same kind, is 8 apart too. Its fragment shader stores the colour in both arms of a selection, a float of it again in the second, and its alpha after the merge. With the cores' function losing the arm's second store, it is 12,423 apart.
+- **"shipped vertex outputs in arms"** is 6 apart, 192 at worst, the triangles' edges. Its vertex shader stores the place and the colour, then stores floats of each again in an arm the back end flattens, where the place's x is above 0. On the vertex's number it stores the place's x again in an arm that DontFlatten keeps a branch, and the colour's alpha after the merges. With the cores' function losing the arm's swap of red and blue, it is 37,922 apart.
+
+The other 299 cases are each as they were at 1.205, and FacetProbe is 890 of 890.
+
+**Then selections kept in the arms of selections kept**, facet.library 1.207. Until now a selection kept a branch had to be at the top level. `keepSelection` refused one in an arm (Error.Branches), and so did any program whose kept arm held a selection a branch. Mesa has no such rule:
+- ntq_emit_cf_list emits a nir_if wherever it meets one, in an arm too (nir_to_vir.c:4809-4818).
+- ntq_emit_if takes the uniform form only outside non-uniform control flow (:4562-4573).
+- Inside it, ntq_emit_nonuniform_if makes the inner mask from the outer's. It keeps the execute it finds and folds the inner condition into it with a MOV of NORNZ, or ANDZ where the condition is inverted (:4482-4492).
+- nir_opt_peephole_select flattens no arm that holds control flow (nir_opt_peephole_select.c:538-541). So the selection that holds a kept one is kept too.
+
+The parts:
+- **The walk.** A selection's arms are regions in the region it is in (`Work.region_parent`), where until now they were regions of the top level.
+  - `dominates` follows a step's regions out. It is nir_opt_cse's dominance (nir_opt_cse.c:76) on this structured program: a step dominates one in its own region or in a region inside that.
+  - A selection flattened gives its arms' steps to the region it is in, and gives its regions back where they were the last. glslc_flat_many has seventeen selections in a row, and they fit in the 33 regions.
+  - A selection that holds a kept one is kept. Its arm then holds control flow, which no limit flattens.
+- **The order.** The steps are laid outermost first: a kept selection's marks around its arms, each arm laid the same way.
+- **The back end** keeps a stack of the branches it is in, `most_nesting` deep. A branch's phis are those of its condition after its end_if, up to the next mark of the level it is at. The two selections of SameCondition share one comparison, and each keeps its own phis.
+- **The coalescing, nir_from_ssa's as a whole.** Until now it tested a phi against its true way's float only, which was enough while no web met another selection's. NestedWebs shows where it is not: a phi's two floats are made before the outer selection, one each way. The old test would have given z and f one register, but z is live where f is made, and f writes over it.
+  - fromSsa now coalesces each way's end in the order of its blocks (aggressive_coalesce_block and aggressive_coalesce_parallel_copy, nir_from_ssa.c:404-443).
+  - It merges whole webs (merge_merge_sets, :198-223).
+  - It tests every pair of their nodes against each other (merge_sets_interfere, :232-304).
+  - Liveness is nir_def_is_live_at's (nir_liveness.c:272-291). A float is live where a step that may run later reads it. A step in the other arm of a selection whose true arm the float is in may not run later.
+  - A way's copies are each an instruction of its own, in the order of the phis (nir_from_ssa.c:342-352). So a float that a later copy at a way's end reads is live where the copies before it are made. LaterCopyReads shows it: a uniform float the inner selection's second phi takes is not put in the web its first phi's copies joined.
+
+Two fixes to wrong code that 1.206 shipped. Each is shown on the 1.206 compiler:
+- **A float that every float of a vector operation reads.** nir_lower_alu_to_scalar (nir_to_vir.c:2259) makes an instruction of each float, in order (nir_lower_alu_width.c:407-432). So a scalar that a scale reads is live where the scale's first float is made (search_for_use_after_instr, nir_liveness.c:247-256). facet looked for reads at later steps only. A float made before an arm, scaled by in it and brought by the other way, shared the register of the product's first float. The three products after it then read it written over. `readAgain` counts a read at a later float of the same step, and `madeOf` follows a construct to the float it names.
+- **A comparison emitted again where it reads a float in a web.** ntq_emit_bool_to_cond emits a bool's comparison again when the flags no longer hold it. ntq_get_alu_parent will not do that for a comparison that reads a load_reg, because a store_reg since may have written the register (nir_to_vir.c:1248-1255). It tests the bool instead (:1277-1281). facet compared again. In a kept arm, three bcsels on v.y < 0.5, with v.y in the red phi's web, compared v.y twice after the first bcsel had written that register under the mask. `readsWeb` is Mesa's rule.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **nir_opt_collapse_if of a kept selection.** An inner selection kept, all of the outer's true arm, neither with a false arm, is refused (Error.Branches): glslc_nested_collapse, and DeepCostly. Mesa makes the two one selection on the iand of their conditions (nir_opt_peephole_select.c:413-506), which keeps the inner arm a branch. *Facet-wide*, and the next step, 1.208.
+- **nir_opt_if's opt_if_evaluate_condition_use** (nir_opt_if.c:1016, run by v3d's loop at nir_to_vir.c:2300), not ported since 1.171, with opt_if_merge and opt_if_simplification. Since 1.207 there is a program it changes: a selection on the condition of the one it is in is kept a second branch. Mesa takes the condition to be true in that arm, and nir_opt_dead_cf then takes out the inner selection. *Facet-wide*: the program is right, only longer, and no feature gates it.
+- **The limits.** Selections nest 8 deep (`most_nesting`), 8 are kept in a program (`most_kept`), and their arms are 33 regions. *Facet-wide*: Mesa has none of these limits.
+
+Where the port is not Mesa's but the program is the same: the webs are numbered in the order of the begin_ifs, and Mesa's merge sets in the order of the blocks. That changes which register a web gets, not what the program computes.
+
+Nothing here is the V3D's alone, so the list for the Radeon's has nothing new.
+
+Results:
+- **The references**, each compiled with -O but where said:
+  - glslc_nested_kept, 262 words: a sample keeps a selection in the arm of one a sample keeps, and the outer arm goes on past the inner merge. Two bu.allna and one bu.alla, with the inner mask NORNZ, in 53 instructions. glslc_nested_kept_o0, 332 words, is the same shader without -O: the same program to the word.
+  - glslc_nested_else, 256 words: the kept selection is in the outer's false arm. 54 instructions.
+  - glslc_nested_uniform, 411 words: a selection on a varying in one on a push constant, which is uniform (a bu.anynap), with an execute of its own; and one on the push constant in one on a varying, under the mask too (NORNZ). 82 instructions.
+  - glslc_nested_store, 228 words: a compute program's store in an arm of a selection whose arm stores. Both addresses are written under their masks. 41 instructions.
+  - glslc_nested_vertex, 301 words: uniform buffer reads in nested arms on the vertex's number. The vertex program keeps both, in 83 instructions. The coordinate program reads neither and flattens both, in 16 instructions with no branch.
+  - glslc_nested_only, 378 words, without -O: the outer selection is kept only for the kept one in its arm. nir_opt_cse finds the inner arm's v.y * 3.0 made in the outer arm. 53 instructions.
+  - glslc_nested_taken, 255 words: the inner arm's sample is the outer's. What is left of the inner arm is four bcsels, which test the comparison's bool. 38 instructions.
+  - glslc_nested_collapse, 216 words: nir_opt_collapse_if's shape with the inner arm kept, refused until 1.208.
+  - glslc_flat_many, 838 words, without -O: seventeen selections in a row, each flattened. 17 bcsels and no branch.
+- **The shapes**, built in the IR, each described at its test: NestedWebs, NestedWhole, FlatInKept, SameCondition, NestedAtStart (a kept selection first in each arm of one, ANDZ in the one and NORNZ in the other), LaterCopyReads, and for the two fixes ScaleInArm, SplatInArm and SelectsInArm.
+- **The tests.** The V3D's tests are 390, thirteen new. Two changed:
+  - DeepCostly is refused for the collapse, where it was refused for its nesting.
+  - glslc_collapse with DontFlatten on the outer selection is a branch over the inner selection's bcsel, where it was refused.
+
+  Of 32 mutations, 30 fail them. Two of those were written again so they compile. Eight failed none at first, and fail since the shapes were added for them:
+  - NestedAtStart: the selections laid innermost first, a selection laid that is not in the arm, the region past a merge made the top level's, and ANDZ made NORNZ;
+  - SplatInArm: readAgain reading the second operand alone, and madeOf not following a construct;
+  - SameCondition, made longer: a selection's phis taken past the next mark of its level;
+  - LaterCopyReads: a joined web's copies left out of the tests after.
+
+  The two left change nothing:
+  - Two copies at a way's end ordered the other way about. Their phis are one selection's and are both read past it (nir_opt_dce takes a phi nothing reads), so they interfere anyway.
+  - The divergence that a web joined into another brings, dropped. fromSsa joins only webs of the same divergence.
+
+On the CM5, FacetBoth 1.71 has two new cases. Each is an IR twin of a host shape, its arm kept a branch by thirteen sums and sines:
+- **"shipped nested kept branches"** is 8 of 230400 pixels apart, 252 at worst. Its outer selection keeps the inner one in its arm, under the outer's mask. The inner arm scales a vector by three quarters of the green, made before both, which the inner false way brings to the red. The vector's first float is a quarter of the last sine: the sines come to nearly 1 whatever they start from, and the first draft, with a half of it plus a half, hid the fault under 1/255.
+- **"shipped bcsels in a kept arm"** is 8 apart, 240 at worst. Its kept arm has three bcsels on the green being under a half, and the green is what the red's phi brings the other way.
+
+The 8 are the edge pixels where the plain cases first differ: the first is at 154,70, which the V3D leaves the clear colour. With readAgain and readsWeb taken out of the back end, each case is 19,349 apart: the pixels where the red and the green are both under a half. Those are where the inner arm runs, and where a bcsel that compares its first's result again gets the other answer. The other 301 cases are each as they were at 1.206, and FacetProbe is 890 of 890.
+
+**Then nir_opt_collapse_if of a kept selection**, facet.library 1.208. Until now one shape was refused (Error.Branches): an inner selection kept a branch that is all of the outer's true arm, but for the block before it, where neither has a false arm. glslc_nested_collapse and DeepCostly are that shape. Mesa makes the two one selection:
+- peephole_select_block tries nir_opt_collapse_if at a block first (nir_opt_peephole_select.c:531-533). That is before it flattens the arm or asks whether the arm holds control flow.
+- nir_opt_collapse_if (:413-506) does not ask what the inner arm holds, and moves it whole. It asks only two things:
+  - that the outer merge's phis be the ones it can trivialize (:445-462, :474-486);
+  - that the block before the inner selection be all instructions nir_opt_peephole_select may flatten (block_check_for_allowed_instrs, :464-469).
+- It makes the iand of the two conditions (:492-496) and moves the block and the inner selection before the outer one (:498-502). That leaves the outer one empty: nir_opt_dead_cf takes it out, and nir_opt_peephole_select flattens it where a phi of it is left.
+- v3d's back end then emits one branch, on the iand. The iand is no comparison, so ntq_emit_bool_to_cond tests the bool, with a PUSHZ and IFNA (nir_to_vir.c:1277-1281).
+
+The parts:
+- **The rewrite.** Since 1.159 the collapse put the inner selection's selects on the iand. Now it also puts there the inner selection's phis and, where the inner selection is kept, the branch. `Held.entry` is the inner selection's place in `Work.kept`, so its branch's mark is found. The outer selection is kept no more and is flattened, its phis made bcsels on its own condition.
+- **Where it is refused, as Mesa does.** `Selection.kept_first` records that a selection was kept for what its true arm holds itself, not for a selection in it. Where the two may collapse, that is the block before the inner selection, and block_check_for_allowed_instrs refuses that block, so Mesa does not collapse the two. Neither does facet: glslc_collapse_apart keeps both.
+- **The outer merge's phis.** A kept inner selection brings its floats to the outer merge as phis, where a flattened one brought selects. `innerSelect` and `innerFalse` take either: `innerFalse` is the float that the inner phi or select brings the false way. With the outer phis' test, they are nir_opt_collapse_if's check that the outer phis are trivial (:445-462).
+- **The regions.** A flattened selection gives its arms' regions to the region it is in. A kept selection that the collapse moved out of those arms keeps its own regions, since they name the true arm's region as the one they are in, and that region names the outer one's, so `dominates` follows them out. So a float made in the kept arm does not dominate one made after the merge (nir_opt_cse.c:76), and KeptThenCollapsed's first sum is made again after the merge.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **A collapse of selections nested deeper than two**, kept or flattened, and the other shapes 1.159 refused. *Facet-wide*: Mesa collapses a chain one level at a time, as peephole_select_block meets each merge.
+- **nir_opt_if's opt_if_evaluate_condition_use** (nir_opt_if.c:1016), as at 1.207. *Facet-wide*.
+- **The limits**, as at 1.207: selections nest 8 deep, 8 are kept, and their arms are 33 regions. *Facet-wide*.
+
+Nothing here is the V3D's alone, so the list for the Radeon's has nothing new.
+
+Results:
+- **The references**, each compiled with -O:
+  - glslc_nested_collapse, 216 words: refused until now, 33 instructions. Each bool is a `mov 0` and a `mov.ifa -1`, and the iand is one `and` of the inner and outer bools. There is one branch on the iand, with the sample under the mask.
+  - glslc_collapse_apart, 224 words: the outer arm samples before the inner selection, which is on that sample's red. block_check_for_allowed_instrs refuses the sample, so both selections are kept. The inner mask is NORNZ in the outer's, and the program is 41 instructions.
+  - glslc_collapse_sampled, 263 words: the block before the inner selection makes k = v.z * 2, which the outer merge chooses. The two become one branch on the iand, in 40 instructions:
+    - k's product is made before the branch;
+    - the false way copies v.w into the alpha's register;
+    - k is a bcsel on the outer bool, which tests it with a PUSHZ: nir_opt_peephole_select's flattening of the empty outer selection.
+- **The shapes.** DeepCostly, whose inner arm is over the limit, is one branch on the iand, in 134 instructions. KeptThenCollapsed has a kept selection, then two that collapse. That is two branches, the second on the iand, and the first of its thirteen sums is made again after the merge, in 152 instructions.
+- **The tests.** The V3D's tests are 391, one new. Two changed: DeepCostly and glslc_nested_collapse compile, where they were refused.
+
+  Of 12 mutations, 10 fail them. Two of those failed none at first and fail since KeptThenCollapsed was added:
+  - every region of the arms given to the region the selection is in;
+  - the branch rewritten taken as the first kept.
+
+  The two left change nothing, and the code is now written their way:
+  - `kept_first` set for a selection kept from anywhere in its true arm, not only outside a selection in it;
+  - the regions that name the outer arm's not given that arm's region.
+
+On the CM5, FacetBoth 1.72 has one new case, an IR twin of glslc_collapse_sampled's shape:
+- **"shipped collapsed kept branch"** is 8 of 230400 pixels apart, 211 at worst: the edge pixels where the plain cases first differ, the first at 154,70.
+  - Its outer selection, on the red being under a half, halves the alpha in the block before the inner selection.
+  - The inner selection, on the green, is kept for thirteen sums and sines of the blue. Its arm turns the colour, its red the last sine times the blue.
+  - The two are one branch on the iand, and the alpha a bcsel on the red's comparison.
+
+With the iand made an ior in the back end, so that the branch also runs where the green alone is under a half, it is 22,767 apart. The first of those pixels, at 93,67, has its colour's channels turned. The other 304 cases are each as they were at 1.207, and FacetProbe is 890 of 890.
+
 ### 61. Multisampling: 4 samples a pixel on both devices, with resolve attachments and CmdResolveImage's body **[critical path]**
 
 *rasterisation* &mdash; conformance-blocking, port, **sized 07.11.2026: 21 commits, about 1,590 lines of code, 1,340 of tests and 90 of docs**; **the cores' half done in 1.114**, the V3D's is steps V1 to V8
@@ -3093,16 +3396,49 @@ facet reports 1|4 on both devices, with the standard locations on both since 1.1
 | V4 | **Done in 1.147.** Binning and rendering a 4x frame: a pass whose colour has four samples, its tile at four, its colour stored where its level lies and every load and store of all four samples. GFXH-1918 asks nothing more, the early depth test being off in every frame here. Seen on the board in V5, which first makes an image of four there | v3dvx_cmd_buffer.c:206-209, 396-413, 973-984, 1604-1618, 1854-1882 | 76 | 45 |
 | V5 | **Done in 1.148.** Resolve in the TLB, with S5 as the fallback; 4x turned on for the V3D, closing its three framebuffer rows. The tiles store the colour's average into the resolve's rows before the colour, where every tile they render lies inside the render area or over the framebuffer's edge, and the CPU resolves the area after the frame elsewhere. Against the first plan, aligned to the supertile and not the tile: the renderer renders whole every supertile the area touches, v3dv's as well, so a tile-aligned area alone would let a tile average into the attachment outside it. CmdResolveImage stays on the CPU: `resolve_image_tlb` is not ported. Its sampled colour and depth masks stay at one until V7. `standardSampleLocations` stays true, against v3dv: its compiler's four places are Vulkan's, and FacetBoth 1.16's five cases of four on the board are 22 to 54 pixels of 230400 apart from the cores', each by one sample's worth, where wrong places would part most pixels on an edge | v3dvx_cmd_buffer.c:640-686, 771-795; v3dv_pass.c:663-683; v3dv_cmd_buffer.c:421-446, 957-1005, 1184-1203; nir_to_vir.c:3111-3134 | 110 | 40 |
 | V6 | **Done in 1.149.** Alpha to coverage on the QPU: a compiled program of four samples ANDs its alpha's FTOC with MSF into SETMSF before the tile buffer is written, and writes Z through with early Z off, its early tests not promoted. `compile.Key` carries it beside the words, set only at four samples as v3dv's key is, so a pipeline of one draws without it, which until now was refused. Against the first plan, a fixed form of four that asks for it stays refused and on the cores: its hand-written program does not cover, and a fixed form's varyings are carried in another scaling than a compiled program reads, so it cannot take its words' program instead. FacetBoth 1.17's case on the board is 44 pixels of 230400 more than a sample apart from the cores', which dither which samples the alpha covers | nir_to_vir.c:2056-2065, 2073-2108; vir.c:1011-1013; v3dv_pipeline.c:1321-1324; v3dvx_pipeline.c:453, 459 | 110 | 35 |
-| V7 | Multisampled fetch through the TMU, after item 59 | v3d_nir_lower_txf_ms.c:46-51 | 45 | 25 |
+| V7 | **Done in 1.209.** Multisampled fetch through the TMU: an OpImageFetch of an image of four, with its Sample, is the texel at the sample's place in the pixel's quad, fetched at TMUSF at no level, and the texture state gives the TMU the image's 2W x 2H. The sampled colour and depth masks hold the 4 bit, which closes the V3D's last two rows of this item. Against the first plan, a sampled image of four that is a colour attachment as well stays refused, with one of one, until item 48's V3D half; and an input attachment of four until item 56. See below | v3d_nir_lower_txf_ms.c:35-62; vir.c:1987, 2004; v3d_tex.c:137-153, 375-377; v3dvx_image.c:48, 95-96; v3dv_device.c:1026-1027, 1179-1189 | 45 | 25 |
 | V8 | **Done in 1.150.** No-attachment subpasses at 4x, with item 43's V3D half: where a frame's first draw has a pipeline of four and the frame one, the frame starts again at four, of its size and in the tile four samples of no colour take, its tile lists, tile state and binner's list made again, nothing having been binned. A frame of any attachment has that attachment's count, which its pipelines are held to, so only one of none restarts. FacetBoth 1.18 counts a no-attachment subpass's draws with an occlusion query: 422266 samples on the V3D at four against the cores' 422322, and 105571 against 105583 at one. Found on the way: the binner was started at the last 64 KiB part of its list, not the first, so a frame of that many draws lost its binning mode; it starts at the first, as v3dv starts at its job's first block (v3dv_queue.c:733-737) | `cmd_buffer_restart_job_for_msaa_if_needed`, v3dv_cmd_buffer.c:2655-2735, called at :2906 | 40 | 40 |
 
-Docs add about 75 lines in K7 and 15 in V5. The V3D's sampled depth and stencil rows wait on item 58 and are not among these commits.
+Docs add about 75 lines in K7 and 15 in V5. The V3D's sampled depth and stencil rows waited on item 58 and are not among these commits. Item 58 sampled a depth in 1.142, and V7 closed the depth row in 1.209 with the colour's; the stencil row stays at none, the V3D sampling no stencil.
 
 Three things this item said are corrected:
 
 - **The tile is not halved.** At 4x a part's tile would hold 112.5 KiB against the A76's 64 KiB of L1, as worked out above, and halving `tile_size` would tax every 1x frame. The three extra sample planes go instead in the per-part run-time block that `lay()` already builds for extra colour attachments, so a 1x frame is unchanged. Whether a 4x frame should halve its own tile, as `v3d_choose_tile_size` does on the V3D, is a measurement for after K7.
 - **A pass with a resolve marks every tile dirty.** `finish` draws only dirty tiles, and `begin` marks them dirty only when something is cleared. Without this, a tile loaded with LOAD_OP_LOAD and drawn into by nothing would never be resolved.
 - **The pin is 0 since 1.114.** It said 10 at 1.89; item 17's half (1.90) and item 22's half (1.91) took it to 7, all seven this item's, K7 to 1, the no-attachments mask, and K8 to 0. The verified line above cites creategraphicspipelines.zig:378 and _image.zig:338, which at 1.95 are :414 and :352.
+
+**Then V7, a sample of an image of four fetched through the TMU**, facet.library 1.209. On the V3D, an image of four samples was not sampled until now: its sampled colour and depth masks said one. Mesa takes such a fetch in three steps:
+- spirv_to_nir makes an OpImageFetch of a multisampled image, with its Sample, a txf_ms (spirv_to_nir.c:3072-3076, 3475-3481). It asserts against a Lod on it (:3433-3434), and against an MS image being sampled rather than fetched (:3034, :3054).
+- v3d_nir_lower_txf_ms makes the txf_ms a txf of the texel at the sample's place in the pixel's quad (v3d_nir_lower_txf_ms.c:35-62). x becomes x twice plus the sample's bit 0, and y becomes y twice plus its bit 1. An array's layer stays as it is, and the sampler_dim becomes 2D.
+- That pass runs after nir_lower_tex (vir.c:1987, :2004), so the txf gets no default level (nir_lower_tex.c:1849-1858). The back end writes no TMUB (v3d_tex.c:137-153) and starts the fetch at TMUSF (:375-377).
+
+The parts:
+- **The profile and the image.** The Sample image operand is taken. A 2D image of MS 1, or an array of them, carries `Sampler.multisampled`, through its sampled image to the variable, and any other image of MS 1 is refused.
+- **The fetch.** `sampleTexelOf` makes the quad's texel from the coordinate and the sample: an ishl and an iadd of an iand for x, and the same of the ushr's iand for y. A constant sample folds. The lookup is `Lookup.fetch_sample`, which `fetches()` and not `leveled()`: the back end writes TMUT and starts at TMUSF, with no TMUB and no P1, as for a txf.
+- **The texture state.** `tiling.Layout.four` gives the TMU twice the width and twice the height, as v3dv's image of four does (v3dvx_image.c:48, :95-96). Its level 0 is UIF, as V3 laid it out.
+- **The masks and the image.** The V3D's sampled colour and depth masks say 1|4, as v3dv's do (v3dv_device.c:1026-1027, 1179-1189). An image of four that is sampled is made in quads: a colour that is no attachment, filled by a copy or a clear, and a depth attachment, which the frame of four stores into its quads since 1.147.
+
+Still left out. Each is marked *facet-wide* or *V3D-only*, as above:
+- **OpImageQuerySize and OpImageQuerySamples**, textureSize and textureSamples of an image of four. The profile takes neither, for any image. v3d answers textureSamples with a uniform (QUNIFORM_TEXTURE_SAMPLES, nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982). *Facet-wide*.
+- **A ConstOffset on a fetch of four**, refused (Error.Operands). GLSL has no texelFetchOffset of a sampler2DMS, so glslc writes none. *Facet-wide*.
+- **An image of four that is sampled and a colour attachment**, refused as one of one is, until item 48's V3D half. The format query holds the 1 bit wherever it holds the 4, so the two go together. *V3D-only*. Made since 1.210.
+- **An input attachment of four**, refused until item 56. *V3D-only*.
+
+The two *V3D-only* entries are the V3D port's own gaps, not the hardware's, so the list for the Radeon's has nothing new from them. The first *facet-wide* entry is on it.
+
+Results:
+- **The references**, each compiled with -O:
+  - glslc_fetch_sample, 157 words, texelFetch at sample 2: 15 instructions, the sample's bits folded into a shl and an add each way, one TMUT and the TMUSF, no TMUB.
+  - glslc_fetch_samples, 234 words, the four samples averaged: 33 instructions, four fetches at TMUSF.
+  - glslc_fetch_sample_layers, 220 words, a sampler2DMSArray's layer 1 at a sample the varying gives: 21 instructions, the layer at TMUI.
+- **The tests.** The V3D's tests are 394, three new. Of 16 mutations, all 16 fail them. One, the Lod beside a Sample let through, failed none at first: the test patched the Sample to a Lod, which another check refuses. It fails since a fetch with both was added.
+
+On the CM5, FacetBoth 1.73 has one new case:
+- **"shipped fetch of four samples"** is 4 of 230400 pixels apart, 217 at worst, the first at 331,100.
+  - The far and the near triangle are drawn at four samples into samples 0 and 2 alone, and the glass over them into 1 and 2, so the four samples of a pixel differ wherever a triangle is.
+  - The image is kept by `four_alone`, copied into an image of four that is sampled, and fetched over the textured quad by glslc's `shipped_fetch_four`, at the sample the u coordinate's band gives: 0 to 3, twice across.
+
+With the ushr taken out of the sample's place, samples 1 and 2 are read as 3 and 0, which differ from them only by the glass: 5,018 apart, all of them where the glass is. The other 306 cases are each as they were at 1.208. FacetProbe is 891 of 891: its one new check, "and the largest of four samples a pixel", makes the largest sampled image of four on the V3D, whose format query says four for it now.
 
 Found independently by: features, limits, semantics, entry-points, conformance-path (all 5 strands that looked at it).
 
@@ -4540,7 +4876,9 @@ breaks Vulkan's rules for the query itself:
   image/_image.zig:771-775), and on the V3D every image kept in rows to
   one level (:860-863). The first wants its levels and layers laid out as
   the rows of an image sampled where it is drawn are since 1.119, about 10
-  lines; the second is item 48's V3D half.
+  lines; the second was item 48's V3D half, done in 1.210: an optimal
+  colour attachment of more than one level lies in the V3D's own layout
+  there.
 - **Fewer usage bits are refused where more are taken**, which Vulkan
   forbids: the limits for usage that is a subset of another "must be no
   more strict". An image of a small texel, of r8_unorm, of wide channels
@@ -4603,6 +4941,43 @@ attachment.
 > instance/getphysicaldeviceimageformatproperties.zig; image/_image.zig
 > `laidOut`; the spec's VkImageFormatProperties, the query's body and
 > Required Format Support; 08.11.2026.
+
+## What the V3D port leaves for the Radeon's
+
+After the V3D, facet's next device is a Radeon, ported from radv as the V3D is from v3dv. Some of what the V3D port leaves out it leaves out because the V3D does not have it. A Radeon has much of it, and its port has to bring it, or it stays missing. This list keeps those together, so that the Radeon port misses nothing. Started at 1.203; each step's "Still left out" since marks its entries *facet-wide* or *V3D-only* the same way. What radv answers for each is still to be read from radv's sources, which the Mesa checkout here does not hold.
+
+**Features v3dv reports off, so the V3D port never does them** (v3dv_device.c:328-393; facet reports each off too, getphysicaldevicefeatures.zig:133-279):
+- tessellationShader, and with it OpControlBarrier outside compute shaders (1.203).
+- multiDrawIndirect, multiViewport, variableMultisampleRate.
+- textureCompressionBC, pipelineStatisticsQuery.
+- shaderStorageImageMultisample, shaderStorageImageWriteWithoutFormat.
+- shaderCullDistance.
+- shaderFloat64, and with it PackDouble2x32 and UnpackDouble2x32 (1.201). shaderInt64.
+- shaderResourceResidency, shaderResourceMinLod, and the sparse features.
+- The four ...ArrayDynamicIndexing features, which v3dv has only behind its WebGPU override (v3dv_device.c:313, 371-374).
+
+**Limits the V3D sets lower than Vulkan's:**
+- A workgroup of more than 256 invocations runs on the cores (V3D_MAX_CSD_WG_SIZE, v3d_limits.h:82; 1.194, 1.203).
+
+**Features v3dv has and facet reports off.** These are facet-wide: the V3D port may still do them from v3dv, and until it does, a Radeon port meets them too.
+- geometryShader, and shaderTessellationAndGeometryPointSize.
+- sampleRateShading, and with it the InterpolationFunction capability (Vulkan's SPIR-V capability table), so the interpolation functions (1.201). Mesa answers them with the plain varying where the draw is not multisampled (nir_to_vir.c:4075-4081).
+- dualSrcBlend, alphaToOne.
+- vertexPipelineStoresAndAtomics.
+- shaderImageGatherExtended, shaderStorageImageExtendedFormats, shaderStorageImageReadWithoutFormat.
+- shaderClipDistance; shaderInt16 on V3D 7.1.
+- textureCompressionETC2, textureCompressionASTC_LDR.
+- inheritedQueries.
+- maxComputeSharedMemorySize: facet's 16 KiB, v3dv's 32 KiB (1.203).
+
+**What the compiler takes from v3dv's options, which a Radeon's takes from radv's:**
+- The divergence analysis's options: v3dv's are nir_divergence_multiple_workgroup_per_compute_subgroup alone (v3dv_pipeline.c:217-218), so the workgroup id differs from lane to lane, and with no nir_divergence_vertex the instance id does too. They are built into `lanes()` in compile.zig (1.204).
+
+**Images CreateImage refuses that Vulkan lets a program make.** These are facet-wide: both devices refuse them.
+- A colour attachment that is sampled and written through as a storage image at once (1.210, item 48). Each device samples an image it draws into where it lies, but neither writes one through as well.
+
+**SPIR-V the profile refuses that a Vulkan 1.0 shader may hold.** These are facet-wide: the compiler's front end refuses them on every device.
+- OpImageQuerySize and OpImageQuerySamples of an image of four, textureSize and textureSamples of a sampler2DMS (1.209). Both are the ImageQuery capability's, which the profile takes. v3d answers textureSamples with a uniform (nir_to_vir.c:976-978), and textureSize through ntq_emit_txs (:980-982).
 
 ## Deferred by the decision, not out of reach
 

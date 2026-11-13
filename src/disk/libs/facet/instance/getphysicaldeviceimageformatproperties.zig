@@ -65,8 +65,9 @@ const _image = @import("../image/_image.zig");
 ///   colour attachment and any other optimal image kept in rows, which is
 ///   Vulkan's rule for an optimal image ("the number of levels in the
 ///   complete mipmap chain") - and 1 where it does not: a linear image, as
-///   Vulkan lets it, and on the V3D an image kept in rows
-///   (`Ops.texture_memory`).
+///   Vulkan lets it. On the V3D an image kept in rows answered 1 until
+///   1.210, when an optimal one of more than one level came to lie in the
+///   V3D's own layout (`Ops.texture_memory`).
 /// - `max_array_layers`: `max_image_array_layers`, 256, where the shape
 ///   takes layers - an image a function reads or writes, a sampled or
 ///   read-back depth attachment among them - and 1 for every other
@@ -102,9 +103,11 @@ const _image = @import("../image/_image.zig");
 /// Until 1.119 a format could be sampled and drawn into without one image
 /// being both, so a program asked about the usages one at a time. Since
 /// then the cores keep such an image in rows and sample it where they
-/// lie, as llvmpipe and v3dv both make one; the V3D still answers
-/// `error_format_not_supported` for the two at once, its half of
-/// docs/facet-vulkan10.md item 48 being to come.
+/// lie, as llvmpipe and v3dv both make one, and since 1.210 the V3D keeps
+/// it in its own layout, its frames storing into the level its TMU reads
+/// (docs/facet-vulkan10.md item 48's V3D half). Sampled and read as an
+/// input attachment at once it still answers `error_format_not_supported`
+/// there, reading no input attachment (item 56).
 ///
 /// Until 1.66 `max_resource_size` was the largest heap's bytes, which is
 /// a fact about the memory and not about the image, and the levels and

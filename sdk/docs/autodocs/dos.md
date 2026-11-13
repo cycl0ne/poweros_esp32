@@ -3307,7 +3307,7 @@ fn FindSegResident(db: *DosBase, seg_list: ?*dos.SegList, after: ?*const exec.Re
 
 **SINCE**
 
-1.25. LVO -644.
+1.26. LVO -644.
 
 **INPUTS**
 

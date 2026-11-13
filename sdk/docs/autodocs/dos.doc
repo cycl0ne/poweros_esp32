@@ -2584,7 +2584,7 @@ dos.library/WriteChars
 	    fn FindSegResident(db: *DosBase, seg_list: ?*dos.SegList, after: ?*const exec.Resident, kind: exec.NodeType) ?*const exec.Resident
 
    SINCE
-	1.25. LVO -644.
+	1.26. LVO -644.
 
    INPUTS
 	- `seg_list` - the chain LoadSeg answered; null finds nothing.
