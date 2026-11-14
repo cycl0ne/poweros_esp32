@@ -374,7 +374,7 @@ scripts/prune-cache.sh --dir ~/.cache/zig --limit 8G  # the global one
 ./zig build                  # the kernel and a flash disk: zig-out/bin/flash.bin
 ./zig build test             # the host tests and the checks of generated files
 ./zig build check            # the kernel and the disk of -Dboard= compile, nothing installed
-./zig build check-all        # test, and every board's kernel and every chip's disk
+./zig build check-all        # test, and every board's kernel and disk
 ./zig build qemu             # boot in QEMU on the serial console (quit: Ctrl-A X)
 ./zig build qemu-display     # the same with the display in a window
 ./zig build emu              # the ESP32-P4 kernel in esp-emulator (quit: Ctrl-C)
@@ -1208,6 +1208,7 @@ More build steps and options:
 | `-Dserve-port=8080` | the port `./zig build serve` hands a package out on |
 | `-Dextra=c/hello=path/to/hello.seg` | put a file built elsewhere on the disk images; with a chip before the path (`rv64sbi:c/hello=...`) on that chip's only, with `system:` in the 64-bit machines' release packages and on their system disks, not in the disk image in RAM - room for files that image and the flash disks cannot hold |
 | `-Dgames` | put what `games/` in the tree's root holds in the `Games` drawer of the 64-bit machines' release packages and system disks: `games/x/x.a64psci.seg` is `SYS:Games/x/x` on the AArch64 one's, any other file on all of them |
+| `-Dsets=base,gui,net` | the sets of programs and files on the board's disk for this build, in place of the ones the board names ([what a disk holds](#what-a-disk-holds)); `all` for every one |
 | `-Ddh0-size=8192` | `DH0:` that many KiB, the rest of the flash disk left for partitions made later (HDToolBox, `C:RDB ADD`) |
 | `-Drdb-size=1024` | the flash disk's partition table area before `DH0:`, in KiB (default 64): room for file systems kept in the table (HDToolBox, `C:RDB ADDFS`) |
 | `-Dnet=none` | the `qemu*` and virt display steps without a network, or another QEMU network backend (`tap,ifname=tap0,script=no,downscript=no`) |
@@ -1226,10 +1227,50 @@ More build steps and options:
 
 ## Repository layout
 
+### What a disk holds
+
+`src/disk/` is everything that can go on a disk. What a board's disk
+holds is that board's choice: a flash has room for what the board is
+meant to do. Every program and file is in one set, and a board names its
+sets in `src/boards/<board>/disk.zig`:
+
+| Set | What is in it |
+|---|---|
+| `base` | what a shell needs: `C:`, `S:`, the locale, the fonts |
+| `gui` | the desktop: anvil.library, the gadget and image classes, the datatypes of pictures and text, the programs with windows |
+| `net` | bsdsocket.library and what speaks over it, the network drivers, `C:net` |
+| `wifi` | the radios' drivers and what joins a network with them |
+| `media` | sound and film: the codecs, Player, Movie |
+| `storage` | cards, sticks and SSDs: the partition table, the file systems beside the flash's own, HDToolBox, the install |
+| `usb` | usb.library, the host controllers and the class drivers |
+| `3d` | facet.library, its drivers and what draws with it |
+| `modbus` | modbus.library and the RS-485 line |
+| `commodities` | commodities.library and `SYS:Commodities` |
+| `dev` | Git, the example library and gadget |
+| `tests` | `C:test` and `SYS:Tests` |
+
+The four ESP32 boards leave `dev` and `tests` off; the two emulators'
+disks have them, and are where the test programs are run. The 64-bit
+machines' disks hold every set. `-Dsets=` names other sets for one
+build, and what a chip cannot run is on none of its disks whatever the
+sets say.
+
+A file is on a disk when its set and the set of every drawer it lies in
+are among the disk's: `System/NetLoad` is in `net` and lies in a drawer
+of `gui`, and needs both. The `disk/` tree and `-Dextra` are the
+builder's own files and go on whatever the sets are.
+
+The sets are not closed over what their programs open. When something on
+a disk opens a library the sets leave off, the build says so after the
+disk is made - which library, its set, and who opens it - and goes on:
+most such opens are for one feature of a program that runs without it.
+When a disk is full, `mkfs` says how many bytes the volume has, how many
+the files take, and which ten are the largest.
+
 ```
 src/arch/      the chips (esp32s3, esp32p4, rv64sbi, a64psci, x64uefi): boot, exceptions, clock, MMU, memory, interrupts
 src/rom/       what is in the ROM: libraries, devices, handlers, resources, shell
-src/boards/    one folder per board: its parts and wiring, and its drivers
+src/boards/    one folder per board: its parts and wiring, its drivers, and the sets its disk holds
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)

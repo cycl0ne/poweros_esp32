@@ -291,8 +291,38 @@ fn send(fs: anytype, action: dos.ActionCode, args: dos.PacketArgs) Reply {
 /// A file from the host, or a directory to make.
 const Entry = struct { path: [:0]const u8, content: ?[]const u8 };
 
-/// What the command line puts on the volume, sent as packets.
-fn fill(fs: anytype, entries: []const Entry) void {
+/// The volume is full at `at`: says how much room it has, how much the
+/// files asked for take, and which of them are the largest, and ends.
+fn full(entries: []const Entry, at: []const u8, volume_bytes: u64) noreturn {
+    var total: u64 = 0;
+    var files: usize = 0;
+    var largest: [10]?Entry = @splat(null);
+    for (entries) |entry| {
+        const content = entry.content orelse continue;
+        total += content.len;
+        files += 1;
+        var held = entry;
+        for (&largest) |*slot| {
+            const kept = slot.* orelse {
+                slot.* = held;
+                break;
+            };
+            if (kept.content.?.len >= held.content.?.len) continue;
+            slot.* = held;
+            held = kept;
+        }
+    }
+    std.debug.print("mkfs: the volume is full at {s}: it has {d} bytes, and the {d} files asked for are {d} bytes before what the file system needs for itself. The largest:\n", .{ at, volume_bytes, files, total });
+    for (largest) |slot| {
+        const entry = slot orelse break;
+        std.debug.print("  {d:>9}  {s}\n", .{ entry.content.?.len, entry.path });
+    }
+    std.process.exit(1);
+}
+
+/// What the command line puts on the volume of `volume_bytes` bytes,
+/// sent as packets.
+fn fill(fs: anytype, entries: []const Entry, volume_bytes: u64) void {
     for (entries) |entry| {
         const path = entry.path;
         const content = entry.content orelse {
@@ -305,7 +335,10 @@ fn fill(fs: anytype, entries: []const Entry) void {
         const opened = send(fs, .findoutput, .{ .find = .{ .fh = &fh, .lock = null, .name = path.ptr } });
         if (opened.res1 == dos.DOSFALSE) fatal("{s}: cannot write it ({d})", .{ path, opened.res2 });
         const written = send(fs, .write, .{ .io = .{ .fh = &fh, .buffer = @constCast(content.ptr), .length = @intCast(content.len) } });
-        if (written.res1 != @as(isize, @intCast(content.len))) fatal("{s}: only {d} of {d} bytes ({d})", .{ path, written.res1, content.len, written.res2 });
+        if (written.res1 != @as(isize, @intCast(content.len))) {
+            if (written.res2 == dos.ERROR_DISK_FULL) full(entries, path, volume_bytes);
+            fatal("{s}: only {d} of {d} bytes ({d})", .{ path, written.res1, content.len, written.res2 });
+        }
         const closed = send(fs, .end, .{ .file = .{ .fh = &fh } });
         if (closed.res1 == dos.DOSFALSE) fatal("{s}: cannot close it ({d})", .{ path, closed.res2 });
         // The programs on disk are pure, so `resident` takes them without
@@ -575,7 +608,7 @@ fn gptDisk(io: std.Io, cwd: std.Io.Dir, path: []const u8, bytes: u64, label: []c
     var fs = posfs.FileSystem.init(posfs.Device.of(DiskMedia, &media));
     defer fs.deinit();
     fs.format(.{ .name = label, .partition_block = gpt_block }) catch |e| fatal("{s}: format: {t}", .{ path, e });
-    fill(&fs, entries);
+    fill(&fs, entries, media.length);
     fs.unmount() catch |e| fatal("{s}: unmount: {t}", .{ path, e });
 }
 
@@ -597,7 +630,7 @@ fn flashfsVolume(store: []u8, rdb_blocks: u32, part_sectors: u32, sector_size: u
     var fs = FileSystem.init(&media, null);
     defer fs.deinit();
     fs.format(label) catch |e| fatal("format: {t}", .{e});
-    fill(&fs, entries);
+    fill(&fs, entries, media.length);
     // Only as far as the file system went: the rest of the disk is left
     // alone, and on flash that means erased.
     var used: u32 = (partition_block + 1) * sector_size;

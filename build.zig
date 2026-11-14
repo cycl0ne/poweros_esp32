@@ -76,6 +76,36 @@ const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crow
 /// root, start code and linker script, and how its image is made.
 const Chip = poweros_sdk.Chip;
 
+/// The sets a disk holds (`src/disk/build.zig`).
+const Sets = poweros_userland.Sets;
+
+/// The boards whose disk is their flash. Each has a disk image of its
+/// own, with the sets that board names: a flash has room for what the
+/// board is meant to do.
+const flash_boards = [_]Board{ .waveshare_7b, .es3c35p, .qemu, .olimex_p4pc, .crowpanel_p4, .esp32p4_emu };
+
+/// The chips whose disk is in RAM, or on a medium as large as one likes:
+/// one image each, for every board on that chip.
+const ram_chips = [_]Chip{ .rv64sbi, .a64psci, .x64uefi };
+
+/// The sets `board`'s disk holds, as its `disk.zig` names them.
+fn boardSets(board: Board) Sets {
+    const text: []const u8 = switch (board) {
+        .waveshare_7b => @import("src/boards/waveshare_7b/disk.zig").sets,
+        .es3c35p => @import("src/boards/es3c35p/disk.zig").sets,
+        .qemu => @import("src/boards/qemu/disk.zig").sets,
+        .esp32p4_emu => @import("src/boards/esp32p4_emu/disk.zig").sets,
+        .olimex_p4pc => @import("src/boards/olimex_p4pc/disk.zig").sets,
+        .crowpanel_p4 => @import("src/boards/crowpanel_p4/disk.zig").sets,
+        .qemu_virt => @import("src/boards/qemu_virt/disk.zig").sets,
+        .visionfive2 => @import("src/boards/visionfive2/disk.zig").sets,
+        .qemu_virt_a64 => @import("src/boards/qemu_virt_a64/disk.zig").sets,
+        .rpi_cm5 => @import("src/boards/rpi_cm5/disk.zig").sets,
+        .qemu_q35 => @import("src/boards/qemu_q35/disk.zig").sets,
+    };
+    return poweros_userland.parseSets(text) orelse std.debug.panic("src/boards/{s}/disk.zig names a set there is none of: {s}", .{ @tagName(board), text });
+}
+
 fn chipOf(board: Board) Chip {
     return switch (board) {
         .waveshare_7b, .es3c35p, .qemu => .esp32s3,
@@ -383,13 +413,11 @@ const uefi_boot_dirs = [_][]const u8{ "Storage/Boot/EFI", "Storage/Boot/EFI/BOOT
 /// a package's `boot/`.
 const uefi_loader_path = "EFI/BOOT/BOOTX64.EFI";
 
-/// Whether the directory `dir` is made on `chip`'s image. LIBS:facet
-/// holds the drivers of the GPUs facet.library draws with, and the
-/// ESP32-S3's disk has neither it nor the library (`no_3d` there); the
-/// catalogs of `wide_languages` are on the 64-bit machines' disks only,
-/// with the fonts they are written in.
+/// Whether the directory `dir` is made on `chip`'s image: the catalogs
+/// of `wide_languages` are on the 64-bit machines' disks only, with the
+/// fonts they are written in. Whether a board's sets have it is asked
+/// apart (`poweros_userland.onDisk`).
 fn dirFor(dir: []const u8, chip: Chip) bool {
-    if (std.mem.eql(u8, dir, "libs/facet")) return chip != .esp32s3;
     const catalogs = "locale/Catalogs/";
     if (std.mem.startsWith(u8, dir, catalogs)) {
         const language = std.mem.sliceTo(dir[catalogs.len..], '/');
@@ -439,6 +467,11 @@ pub fn build(b: *std.Build) void {
     // (`qemu-package` refuses rather than pack them unasked), so this is
     // null when nothing was said about it.
     const disk_tree_option = b.option(bool, "disk-tree", "Put the disk/ tree on the disk images (default: yes, when there is one)");
+    const sets_option = b.option([]const u8, "sets", "The sets of programs and files on -Dboard='s disk, separated by commas, or all: base, gui, net, wifi, media, storage, usb, 3d, modbus, commodities, dev, tests (default: what src/boards/<board>/disk.zig names)");
+    const board_sets: Sets = if (sets_option) |text|
+        poweros_userland.parseSets(text) orelse std.debug.panic("-Dsets={s} names a set there is none of", .{text})
+    else
+        boardSets(board);
     const memdebug = b.option(bool, "memdebug", "Memory debugging on from exec's start: walls behind blocks, patterns in new and freed memory, wide stack guards (default: false; s3> memdebug and C:MemDebug switch it at run time)") orelse false;
     const logdebug = b.option(bool, "logdebug", "The log keeps the debug lines from exec's start, among them every module's name as it is started: what a boot that stops before there is a shell says for itself (default: false; C:Log LEVEL switches it at run time)") orelse false;
     const posfs_soak = b.option(u32, "posfs-soak", "`zig build test`: run posfs's power-cut test on this many more seeds, each on flash, a card and a stick (default: 0)") orelse 0;
@@ -717,13 +750,22 @@ pub fn build(b: *std.Build) void {
     const extras = extraFiles(b, &made);
     const games = gamesTree(b, &made);
 
-    // Five images from one recipe: the ESP32-S3's, the ESP32-P4's, the
-    // RISC-V 64 machines', the AArch64 machines' and the x86-64 machines',
-    // which differ only in their programs' load files.
-    const make_disk = b.addRunArtifact(mkfs);
-    const disk_bin = make_disk.addOutputFileArg("disk.bin");
-    const make_p4_disk = b.addRunArtifact(mkfs);
-    const p4_disk_bin = make_p4_disk.addOutputFileArg("disk-esp32p4.bin");
+    // The images, from one recipe: one for each board whose disk is its
+    // flash, with the sets that board names, and one for the RISC-V 64
+    // machines, the AArch64 machines and the x86-64 machines each. They
+    // differ in their programs' load files and in what the sets leave
+    // off. -Dsets is for the board this build is for.
+    var flash_runs: [flash_boards.len]*std.Build.Step.Run = undefined;
+    var flash_disks: [flash_boards.len]std.Build.LazyPath = undefined;
+    var disk_sets: [DiskImages.count]Sets = undefined;
+    for (flash_boards, 0..) |one, i| {
+        flash_runs[i] = b.addRunArtifact(mkfs);
+        flash_disks[i] = flash_runs[i].addOutputFileArg(flashDiskName(chipOf(one)));
+        disk_sets[i] = if (one == board) board_sets else boardSets(one);
+    }
+    for (ram_chips, flash_boards.len..) |chip, i| {
+        disk_sets[i] = if (chipOf(board) == chip) board_sets else Sets.initFull();
+    }
     const make_rv64_disk = b.addRunArtifact(mkfs);
     // The RISC-V 64 disk's files as a tree as well, and the list of them,
     // for a card that is SYS: to be brought up to date from
@@ -753,7 +795,7 @@ pub fn build(b: *std.Build) void {
     const x64_medium_made = make_x64_disk.addPrefixedOutputFileArg("--medium=", "disk-x64-medium-made.bin");
     const x64_system_disk = make_x64_disk.addPrefixedOutputFileArg("--gpt=", "system-x64.bin");
     make_x64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
-    const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk, make_a64_disk, make_x64_disk } };
+    const disks: DiskImages = .{ .runs = flash_runs ++ .{ make_rv64_disk, make_a64_disk, make_x64_disk }, .sets = disk_sets };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
     if (chipOf(board) == .esp32p4) {
         for (poweros_userland.programs) |program| {
@@ -782,9 +824,9 @@ pub fn build(b: *std.Build) void {
             b.fmt("{d}", .{disk_rdb_blocks}),
         });
     }
-    for (disks.runs, DiskImages.chips) |run, chip| {
+    for (disks.runs, DiskImages.chips, disks.sets) |run, chip, sets| {
         for (image_dirs) |dir| {
-            if (dirFor(dir, chip)) run.addArg(dir);
+            if (dirFor(dir, chip) and poweros_userland.onDisk(sets, dir)) run.addArg(dir);
         }
         switch (chip) {
             .esp32s3, .esp32p4 => {},
@@ -795,37 +837,48 @@ pub fn build(b: *std.Build) void {
             },
         }
     }
+    // The `disk/` tree and -Dextra are the developer's own and go on
+    // every disk, whatever its sets: a drawer of the build's that a
+    // board's sets left off is made after all where one of those files
+    // lies in it.
+    var own_paths: std.ArrayList([]const u8) = .empty;
+    own_paths.appendSlice(b.allocator, tree.dirs) catch @panic("OOM");
+    for (tree.files) |file| own_paths.append(b.allocator, file.path) catch @panic("OOM");
+    for (extras) |extra| {
+        own_paths.appendSlice(b.allocator, extra.dirs) catch @panic("OOM");
+        own_paths.append(b.allocator, extra.path) catch @panic("OOM");
+    }
+    for (disks.runs, DiskImages.chips, disks.sets) |run, chip, sets| {
+        for (image_dirs) |dir| {
+            if (!dirFor(dir, chip) or poweros_userland.onDisk(sets, dir)) continue;
+            for (own_paths.items) |path| {
+                if (path.len <= dir.len or path[dir.len] != '/' or !std.mem.startsWith(u8, path, dir)) continue;
+                run.addArg(dir);
+                break;
+            }
+        }
+    }
     // The directories those files need, made before anything goes in
     // them: mkfs takes its paths in the order they are given.
     disks.addArgs(tree.dirs);
     for (extras) |extra| disks.addArgs(extra.dirs);
+    const chip_deps = [_]*std.Build.Dependency{ disk_dep, p4_disk_dep, rv64_disk_dep, a64_disk_dep, x64_disk_dep };
     for (poweros_userland.programs) |program| {
-        if (poweros_userland.builtFor(program, .esp32s3)) {
-            make_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), disk_dep.namedLazyPath(program.disk));
-        }
-        if (poweros_userland.builtFor(program, .esp32p4)) {
-            make_p4_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), p4_disk_dep.namedLazyPath(program.disk));
-        }
-        if (poweros_userland.builtFor(program, .rv64sbi)) {
-            make_rv64_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), rv64_disk_dep.namedLazyPath(program.disk));
-        }
-        if (poweros_userland.builtFor(program, .a64psci)) {
-            make_a64_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), a64_disk_dep.namedLazyPath(program.disk));
-        }
-        if (poweros_userland.builtFor(program, .x64uefi)) {
-            make_x64_disk.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), x64_disk_dep.namedLazyPath(program.disk));
+        for (disks.runs, DiskImages.chips, disks.sets) |run, chip, sets| {
+            if (!poweros_userland.builtFor(program, chip) or !poweros_userland.onDisk(sets, program.disk)) continue;
+            run.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), chip_deps[@intFromEnum(chip)].namedLazyPath(program.disk));
         }
     }
     for (poweros_userland.files) |file| {
         const prefix = b.fmt("{s}=", .{file.disk});
         const path = disk_dep.namedLazyPath(file.disk);
-        for (disks.runs, DiskImages.chips) |run, chip| {
-            if (poweros_userland.fileFor(file, chip)) run.addPrefixedFileArg(prefix, path);
+        for (disks.runs, DiskImages.chips, disks.sets) |run, chip, sets| {
+            if (poweros_userland.fileFor(file, chip) and poweros_userland.onDisk(sets, file.disk)) run.addPrefixedFileArg(prefix, path);
         }
     }
     // The programs' catalogs, and the ROM modules' own.
     for (poweros_userland.catalogs) |catalog| {
-        disks.some(catalog.wide).addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), disk_dep.namedLazyPath(catalog.disk));
+        disks.some(catalog.wide).addFileIn(poweros_userland.setOfCatalog(catalog), catalog.disk, disk_dep.namedLazyPath(catalog.disk));
     }
     for (rom_catalogs) |catalog| {
         const catalog_file = poweros_sdk.addCatalog(b, sdk_dep, b.path(catalog.descriptor), b.path(catalog.translation), catalog.name);
@@ -834,20 +887,20 @@ pub fn build(b: *std.Build) void {
     // The chips' own versions after the shared ones, which they replace
     // on their images.
     for (poweros_userland.mac_files ++ poweros_userland.p4_files) |file| {
-        make_p4_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), p4_disk_dep.namedLazyPath(file.source));
+        disks.addChipFile(.esp32p4, file.disk, p4_disk_dep.namedLazyPath(file.source));
     }
     for (poweros_userland.mac_files) |file| {
-        make_rv64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), rv64_disk_dep.namedLazyPath(file.source));
+        disks.addChipFile(.rv64sbi, file.disk, rv64_disk_dep.namedLazyPath(file.source));
     }
     for (poweros_userland.a64_files) |file| {
-        make_a64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), a64_disk_dep.namedLazyPath(file.source));
+        disks.addChipFile(.a64psci, file.disk, a64_disk_dep.namedLazyPath(file.source));
     }
     for (poweros_userland.x64_files) |file| {
-        make_x64_disk.addPrefixedFileArg(b.fmt("{s}=", .{file.disk}), x64_disk_dep.namedLazyPath(file.source));
+        disks.addChipFile(.x64uefi, file.disk, x64_disk_dep.namedLazyPath(file.source));
     }
     if (wifi != null) {
         const wifi_device = poweros_userland.wifi_device;
-        make_disk.addPrefixedFileArg(b.fmt("{s}=", .{wifi_device.disk}), disk_dep.namedLazyPath(wifi_device.disk));
+        disks.addChipFile(.esp32s3, wifi_device.disk, disk_dep.namedLazyPath(wifi_device.disk));
     }
     // FONTS: - the fonts scripts/fetch-fonts.sh fetched, converted by
     // tools/fontconv into the system's own files, when they are there.
@@ -931,8 +984,8 @@ pub fn build(b: *std.Build) void {
         const run = b.addRunArtifact(anchors);
         run.addFileArg(.{ .cwd_relative = bundle });
         const store = run.addOutputFileArg("roots");
-        disks.addArg("certificates");
-        disks.addPrefixedFileArg("certificates/roots=", store);
+        disks.addDir("certificates");
+        disks.addFile("certificates/roots", store);
     }
     // LOCALE:Emoji/ - the emoji in their groups and order, and their
     // names in the disk's languages, which tools/emojigen makes of what
@@ -972,9 +1025,10 @@ pub fn build(b: *std.Build) void {
     // disk alone: the stick needs a high-speed port. Not in DEVS:usb/
     // itself, where every file is looked at as a driver.
     if (aic8800Dir(b)) |dir| {
-        make_p4_disk.addArgs(&.{ "devs/usb/firmware", "devs/usb/firmware/aic8800" });
+        disks.addChipDir(.esp32p4, "devs/usb/firmware");
+        disks.addChipDir(.esp32p4, "devs/usb/firmware/aic8800");
         for (aic8800_files) |name| {
-            make_p4_disk.addPrefixedFileArg(b.fmt("devs/usb/firmware/aic8800/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+            disks.addChipFile(.esp32p4, b.fmt("devs/usb/firmware/aic8800/{s}", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
         }
     }
     // DEVS:firmware/wave511_dec_fw.bin - what the JH7110's video decoder
@@ -1032,14 +1086,15 @@ pub fn build(b: *std.Build) void {
                 if (std.mem.eql(u8, field, icon_stack)) break true;
             } else false;
             if (!sized and one.pointer_bytes == null and one.chips == null) {
-                disks.addPrefixedFileArg(prefix, makeIcon(b, mkicon, picture, one, ""));
+                disks.addFile(one.path, makeIcon(b, mkicon, picture, one, ""));
                 continue;
             }
             // An icon that asks for a command's stack: made once for each
             // size of pointer, and each disk given its chip's - each disk
             // that has it.
             var by_width: [2]?std.Build.LazyPath = @splat(null);
-            for (disks.runs, DiskImages.pointer_bytes, DiskImages.chips) |run, bytes, chip| {
+            for (disks.runs, DiskImages.pointer_bytes, DiskImages.chips, disks.sets) |run, bytes, chip, sets| {
+                if (!poweros_userland.onDisk(sets, one.path)) continue;
                 if (one.pointer_bytes) |only| if (only != bytes) continue;
                 if (one.chips) |only| if (std.mem.indexOfScalar(Chip, only, chip) == null) continue;
                 const slot = &by_width[bytes / 8];
@@ -1095,9 +1150,8 @@ pub fn build(b: *std.Build) void {
         }
         if (games_icon) |icon| run.addPrefixedFileArg(b.fmt("--system-file={s}=", .{games_drawer_icon.path}), icon);
     }
-    // A build installs the disk of its board's chip, and makes no other.
-    if (chipOf(board) == .esp32s3) b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
-    if (chipOf(board) == .esp32p4) b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
+    // A build installs its board's disk, and makes no other.
+    if (flashDisk(flash_disks, board)) |image| b.getInstallStep().dependOn(&b.addInstallBinFile(image, flashDiskName(chipOf(board))).step);
 
     // The RISC-V 64 and AArch64 boards' flash disk is loaded into RAM
     // beside the kernel - by U-Boot's booti, or by QEMU's -initrd given
@@ -1181,8 +1235,8 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const built = switch (chipOf(board)) {
-        .esp32s3 => addImage(b, esptool, ressize, kernel, disk_bin, disk_offset),
-        .esp32p4 => addP4Image(b, esptool, ramimage, kernel, p4_disk_bin, disk_offset),
+        .esp32s3 => addImage(b, esptool, ressize, kernel, flashDisk(flash_disks, board).?, disk_offset),
+        .esp32p4 => addP4Image(b, esptool, ramimage, kernel, flashDisk(flash_disks, board).?, disk_offset),
         .rv64sbi => addRv64Image(b, kernel),
         .a64psci => addA64Image(b, kernel),
         .x64uefi => addX64Image(b, kernel),
@@ -1323,7 +1377,7 @@ pub fn build(b: *std.Build) void {
 
     // The emulator is a board of its own: the `qemu*` steps run its image,
     // with the same disk.
-    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug, logdebug), disk_bin, disk_offset);
+    const emulated = if (board == .qemu) built else addImage(b, esptool, ressize, addKernel(b, target, optimize, sdk, .qemu, disk_offset, cores, false, memdebug, logdebug), flashDisk(flash_disks, .qemu).?, disk_offset);
     const flash_image = emulated.flash_image;
 
     const run_qemu = qemuRun(b, qemu, flash_image, network, usb, qemuConsole(b, &.{"-nographic"}, uart1));
@@ -1347,7 +1401,7 @@ pub fn build(b: *std.Build) void {
     , .{ disk_sector, disk_offset / disk_sector });
     const keep = b.addSystemCommand(&.{ "sh", "-c", keep_disk, disk_image });
     keep.addFileArg(emulated.image);
-    keep.addFileArg(disk_bin);
+    keep.addFileArg(flashDisk(flash_disks, .qemu).?);
     keep.has_side_effects = true;
     const run_disk = qemuRunPath(b, qemu, .{ .cwd_relative = disk_image }, false, network, usb, qemuConsole(b, &.{"-nographic"}, uart1));
     run_disk.step.dependOn(&keep.step);
@@ -1355,7 +1409,7 @@ pub fn build(b: *std.Build) void {
 
     // The ESP32-P4 in esp-emulator (scripts/fetch-esp-emu.sh), a board of
     // its own: the `emu` step runs its image on the boards' v1.x ROM.
-    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest, memdebug, logdebug), p4_disk_bin, disk_offset);
+    const p4_emulated = if (board == .esp32p4_emu) built else addP4Image(b, esptool, ramimage, addKernel(b, p4_target, optimize, sdk, .esp32p4_emu, disk_offset, cores, selftest, memdebug, logdebug), flashDisk(flash_disks, .esp32p4_emu).?, disk_offset);
     const run_emu = b.addSystemCommand(&.{
         b.pathFromRoot("toolchain/esp-emu/esp-emu"), "--chip",                                                 "esp32p4",
         "--rom",                                     b.pathFromRoot("toolchain/esp-emu/esp32p4_rev0_rom.elf"), "--psram-size",
@@ -1639,7 +1693,7 @@ pub fn build(b: *std.Build) void {
     // (`tools/espackage`); a 64-bit board the files its firmware loads
     // and a `write.sh` that copies them (`tools/bootpackage`).
     const archive_parts: ArchiveParts = .{
-        .disks = .{ disk_bin, p4_disk_bin, rv64_disk_bin, a64_disk_bin, x64_disk_bin },
+        .disks = .{ .flash = flash_disks, .ram = .{ rv64_disk_bin, a64_disk_bin, x64_disk_bin } },
         .rv64_system = rv64_system_disk,
         .a64_system = a64_system_disk,
         .work_disk = blank_work_disk,
@@ -1661,7 +1715,7 @@ pub fn build(b: *std.Build) void {
     refusePrivateTree(b, release_step, disk_tree_option, tree, "release");
     const board_build: BoardBuild = .{
         .targets = .{ target, p4_target, rv64_target, a64_target, x64_target },
-        .disks = .{ disk_bin, p4_disk_bin, rv64_disk_bin, a64_disk_bin, x64_disk_bin },
+        .disks = .{ .flash = flash_disks, .ram = .{ rv64_disk_bin, a64_disk_bin, x64_disk_bin } },
         .optimize = optimize,
         .sdk = sdk,
         .esptool = esptool,
@@ -1740,13 +1794,7 @@ pub fn build(b: *std.Build) void {
     built.image.addStepDependencies(check_step);
     built.flash_image.addStepDependencies(check_step);
     if (built.flash_part) |part| part.addStepDependencies(check_step);
-    check_step.dependOn(switch (chipOf(board)) {
-        .esp32s3 => &make_disk.step,
-        .esp32p4 => &make_p4_disk.step,
-        .rv64sbi => &make_rv64_disk.step,
-        .a64psci => &make_a64_disk.step,
-        .x64uefi => &make_x64_disk.step,
-    });
+    check_step.dependOn(&disks.runOf(board).step);
     const test_options = b.addOptions();
     test_options.addOption(u32, "posfs_soak", posfs_soak);
     // Where the fetched fonts are, for the tests that read one; empty
@@ -1963,6 +2011,36 @@ pub fn build(b: *std.Build) void {
     write_modchart.addFileArg(disk_module_list);
     write_modchart.has_side_effects = true;
     b.step("modchart", "Generate the module charts (sdk/docs/modules.md) from the source").dependOn(&write_modchart.step);
+    // What the board's disk leaves without: a module its sets leave off
+    // that something on the disk opens, said after the disk is made. It
+    // is said and nothing more - what a disk holds is its board's choice.
+    {
+        const sets = disks.sets[DiskImages.indexOf(board)];
+        var listed: std.ArrayList(u8) = .empty;
+        // The radio's device is the ESP32-S3's, and there only with its
+        // vendor libraries.
+        const wifi_devices: []const poweros_userland.Program = if (wifi != null and chipOf(board) == .esp32s3) &.{poweros_userland.wifi_device} else &.{};
+        for ([_][]const poweros_userland.Program{ poweros_userland.programs, wifi_devices }) |some| {
+            for (some) |program| {
+                if (!poweros_userland.builtFor(program, chipOf(board))) continue;
+                const on = poweros_userland.onDisk(sets, program.disk);
+                listed.appendSlice(b.allocator, b.fmt("{s}={s}={s}={s}\n", .{
+                    if (isModule(program.disk)) program.name else program.disk,
+                    b.pathFromRoot(b.fmt("src/disk/{s}", .{program.source})),
+                    @tagName(program.set),
+                    if (on) "on" else "off",
+                })) catch @panic("OOM");
+            }
+        }
+        const find_needs = b.addRunArtifact(modchart);
+        find_needs.addArgs(&.{ "--needs", b.pathFromRoot("src"), b.pathFromRoot("sdk") });
+        find_needs.addFileArg(b.addWriteFiles().add("disk-programs", listed.items));
+        // The sources it reads are not its arguments: it runs each time.
+        find_needs.has_side_effects = true;
+        const say_needs = addReport(b, find_needs.captureStdOut(.{}), "", &disks.runOf(board).step);
+        check_step.dependOn(&say_needs.step);
+        b.getInstallStep().dependOn(&say_needs.step);
+    }
     const check_modchart = b.addRunArtifact(modchart);
     check_modchart.addArg("--check");
     check_modchart.addArgs(&modchart_args);
@@ -1994,13 +2072,9 @@ pub fn build(b: *std.Build) void {
     // compiling.
     test_step.dependOn(&mkpackage.step);
     test_step.dependOn(&serve.step);
-    // Every program and module on the disk compiles, for every chip:
-    // each disk image is made from all of them.
-    check_all_step.dependOn(&make_disk.step);
-    check_all_step.dependOn(&make_p4_disk.step);
-    check_all_step.dependOn(&make_rv64_disk.step);
-    check_all_step.dependOn(&make_a64_disk.step);
-    check_all_step.dependOn(&make_x64_disk.step);
+    // Every program and module on a disk compiles: every board's flash
+    // disk and every 64-bit chip's disk is made.
+    for (disks.runs) |run| check_all_step.dependOn(&run.step);
     // Every board's kernel compiles, not only the one being flashed.
     for (std.enums.values(Board)) |other| {
         const other_target = switch (chipOf(other)) {
@@ -2025,8 +2099,7 @@ pub fn build(b: *std.Build) void {
     // on its disk.
     const chip_name = @tagName(chipOf(board));
     const board_disk = switch (chipOf(board)) {
-        .esp32s3 => disk_bin,
-        .esp32p4 => p4_disk_bin,
+        .esp32s3, .esp32p4 => flashDisk(flash_disks, board).?,
         .rv64sbi => rv64_disk_bin,
         .a64psci => a64_disk_bin,
         .x64uefi => x64_disk_bin,
@@ -2264,7 +2337,7 @@ fn refusePrivateTree(b: *std.Build, step: *std.Build.Step, said: ?bool, tree: Tr
 /// in `Chip`'s order, and what an image is made with.
 const BoardBuild = struct {
     targets: [5]std.Build.ResolvedTarget,
-    disks: [5]std.Build.LazyPath,
+    disks: BoardDisks,
     optimize: std.builtin.OptimizeMode,
     sdk: *std.Build.Module,
     esptool: []const u8,
@@ -2282,8 +2355,8 @@ fn addBoardImage(b: *std.Build, with: BoardBuild, board: Board) Image {
     const slot = @intFromEnum(chip);
     const kernel = addKernel(b, with.targets[slot], with.optimize, with.sdk, board, with.disk_offset, with.cores, false, with.memdebug, with.logdebug);
     return switch (chip) {
-        .esp32s3 => addImage(b, with.esptool, with.ressize, kernel, with.disks[slot], with.disk_offset),
-        .esp32p4 => addP4Image(b, with.esptool, with.ramimage, kernel, with.disks[slot], with.disk_offset),
+        .esp32s3 => addImage(b, with.esptool, with.ressize, kernel, with.disks.of(board), with.disk_offset),
+        .esp32p4 => addP4Image(b, with.esptool, with.ramimage, kernel, with.disks.of(board), with.disk_offset),
         .rv64sbi => addRv64Image(b, kernel),
         .a64psci => addA64Image(b, kernel),
         .x64uefi => addX64Image(b, kernel),
@@ -2528,7 +2601,7 @@ fn addBootPackage(b: *std.Build, step: *std.Build.Step, board: Board, kernel_ima
 /// blank work disk they share, what `-Dboot=` added, where an ESP32
 /// board's flash disk is, and the cores a machine is started with.
 const ArchiveParts = struct {
-    disks: [5]std.Build.LazyPath,
+    disks: BoardDisks,
     rv64_system: std.Build.LazyPath,
     a64_system: std.Build.LazyPath,
     work_disk: std.Build.LazyPath,
@@ -2547,7 +2620,7 @@ const ArchiveParts = struct {
 /// those files copied onto it. The two emulators have none - neither is a
 /// machine anybody has by downloading an archive.
 fn addBoardArchive(b: *std.Build, step: *std.Build.Step, board: Board, image: Image, parts: ArchiveParts) void {
-    const disk = parts.disks[@intFromEnum(chipOf(board))];
+    const disk = parts.disks.of(board);
     switch (board) {
         .qemu, .esp32p4_emu => step.dependOn(&b.addFail(b.fmt(
             "archive: {s} is an emulator, not a machine anybody has by downloading an archive - Espressif's QEMU is built here (scripts/build-qemu.sh) and esp-emulator fetched (scripts/fetch-esp-emu.sh). Every other board has one.",
@@ -3161,18 +3234,77 @@ fn addImage(b: *std.Build, esptool: []const u8, ressize: *std.Build.Step.Compile
 /// src/arch/esp32p4/kernel.ld links it for (`_flash_part_offset`).
 const p4_flash_part_offset = 0x40000;
 
-/// Disk images made from one recipe: what is given goes into each.
-const DiskImages = struct {
-    runs: [5]*std.Build.Step.Run,
+/// The name a flash board's disk image is installed under, by its chip.
+fn flashDiskName(chip: Chip) []const u8 {
+    return switch (chip) {
+        .esp32s3 => "disk.bin",
+        .esp32p4 => "disk-esp32p4.bin",
+        .rv64sbi, .a64psci, .x64uefi => unreachable,
+    };
+}
 
-    /// How long a pointer is on each run's chip, in the order of `runs`:
-    /// the ESP32-S3's and the ESP32-P4's, then RISC-V 64's, AArch64's and
-    /// x86-64's.
-    const pointer_bytes = [5]u32{ 4, 4, 8, 8, 8 };
-    /// Each run's chip, and whether it writes a virt machine's system
-    /// disk as well (`--gpt`), in the same order.
-    const chips = [5]Chip{ .esp32s3, .esp32p4, .rv64sbi, .a64psci, .x64uefi };
-    const virt_disks = [5]bool{ false, false, true, true, true };
+/// `board`'s flash disk among `images`, in `flash_boards`' order; null
+/// for a board whose disk is not its flash.
+fn flashDisk(images: [flash_boards.len]std.Build.LazyPath, board: Board) ?std.Build.LazyPath {
+    const at = std.mem.indexOfScalar(Board, &flash_boards, board) orelse return null;
+    return images[at];
+}
+
+/// Every disk image there is, for the code that hands a board its own:
+/// the flash boards' in `flash_boards`' order, the others in
+/// `ram_chips`'.
+const BoardDisks = struct {
+    flash: [flash_boards.len]std.Build.LazyPath,
+    ram: [ram_chips.len]std.Build.LazyPath,
+
+    fn of(disks: BoardDisks, board: Board) std.Build.LazyPath {
+        if (flashDisk(disks.flash, board)) |image| return image;
+        return disks.ram[std.mem.indexOfScalar(Chip, &ram_chips, chipOf(board)).?];
+    }
+};
+
+/// Disk images made from one recipe. What is given goes into each that
+/// has a place for it: a file is on a disk when its set and the sets of
+/// the drawers it lies in are among that disk's
+/// (`poweros_userland.onDisk`).
+const DiskImages = struct {
+    runs: [count]*std.Build.Step.Run,
+    /// What each run's disk holds, in the order of `runs`.
+    sets: [count]Sets,
+
+    /// The flash boards' images, then the 64-bit chips'.
+    const count = flash_boards.len + ram_chips.len;
+
+    /// Each run's chip, in the order of `runs`.
+    const chips: [count]Chip = blk: {
+        var list: [count]Chip = undefined;
+        for (flash_boards, 0..) |board, i| list[i] = chipOf(board);
+        for (ram_chips, flash_boards.len..) |chip, i| list[i] = chip;
+        break :blk list;
+    };
+    /// How long a pointer is on each run's chip.
+    const pointer_bytes: [count]u32 = blk: {
+        var list: [count]u32 = undefined;
+        for (chips, 0..) |chip, i| list[i] = switch (chip) {
+            .esp32s3, .esp32p4 => 4,
+            .rv64sbi, .a64psci, .x64uefi => 8,
+        };
+        break :blk list;
+    };
+    /// Whether each run writes a virt machine's system disk as well
+    /// (`--gpt`).
+    const virt_disks: [count]bool = @as([flash_boards.len]bool, @splat(false)) ++ @as([ram_chips.len]bool, @splat(true));
+
+    /// Where `board`'s disk is in `runs`.
+    fn indexOf(board: Board) usize {
+        if (std.mem.indexOfScalar(Board, &flash_boards, board)) |at| return at;
+        return flash_boards.len + std.mem.indexOfScalar(Chip, &ram_chips, chipOf(board)).?;
+    }
+
+    /// The run that makes `board`'s disk.
+    fn runOf(images: *const DiskImages, board: Board) *std.Build.Step.Run {
+        return images.runs[indexOf(board)];
+    }
 
     fn addArg(images: DiskImages, arg: []const u8) void {
         for (images.runs) |run| run.addArg(arg);
@@ -3186,13 +3318,43 @@ const DiskImages = struct {
         for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
     }
 
+    /// The directory `dir` on every disk whose sets have it.
+    fn addDir(images: DiskImages, dir: []const u8) void {
+        for (images.runs, images.sets) |run, sets| {
+            if (poweros_userland.onDisk(sets, dir)) run.addArg(dir);
+        }
+    }
+
+    /// The file `from` at `path` on every disk whose sets have it.
+    fn addFile(images: DiskImages, path: []const u8, from: std.Build.LazyPath) void {
+        for (images.runs, images.sets) |run, sets| {
+            if (poweros_userland.onDisk(sets, path)) run.addPrefixedFileArg(run.step.owner.fmt("{s}=", .{path}), from);
+        }
+    }
+
+    /// The directory `dir` on `chip`'s disks whose sets have it.
+    fn addChipDir(images: DiskImages, chip: Chip, dir: []const u8) void {
+        for (images.runs, chips, images.sets) |run, of, sets| {
+            if (of == chip and poweros_userland.onDisk(sets, dir)) run.addArg(dir);
+        }
+    }
+
+    /// The file `from` at `path` on `chip`'s disks whose sets have it.
+    fn addChipFile(images: DiskImages, chip: Chip, path: []const u8, from: std.Build.LazyPath) void {
+        for (images.runs, chips, images.sets) |run, of, sets| {
+            if (of == chip and poweros_userland.onDisk(sets, path)) run.addPrefixedFileArg(run.step.owner.fmt("{s}=", .{path}), from);
+        }
+    }
+
     /// The runs of every disk, or of the 64-bit machines' only.
     fn some(images: *const DiskImages, wide_only: bool) Some {
-        return .{ .runs = if (wide_only) images.runs[2..5] else &images.runs };
+        const from: usize = if (wide_only) flash_boards.len else 0;
+        return .{ .runs = images.runs[from..], .sets = images.sets[from..] };
     }
 
     const Some = struct {
         runs: []const *std.Build.Step.Run,
+        sets: []const Sets,
 
         fn addArg(images: Some, arg: []const u8) void {
             for (images.runs) |run| run.addArg(arg);
@@ -3200,6 +3362,14 @@ const DiskImages = struct {
 
         fn addPrefixedFileArg(images: Some, prefix: []const u8, path: std.Build.LazyPath) void {
             for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
+        }
+
+        /// The file `from` at `path` on each of these disks that holds
+        /// `set`.
+        fn addFileIn(images: Some, set: poweros_userland.Set, path: []const u8, from: std.Build.LazyPath) void {
+            for (images.runs, images.sets) |run, sets| {
+                if (sets.contains(set)) run.addPrefixedFileArg(run.step.owner.fmt("{s}=", .{path}), from);
+            }
         }
     };
 };

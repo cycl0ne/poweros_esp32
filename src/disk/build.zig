@@ -14,6 +14,47 @@
 const std = @import("std");
 const poweros_sdk = @import("poweros_sdk");
 
+/// What the disk's programs and files are sorted into, by what they are
+/// for. A board names the sets its disk holds (`src/boards/<board>/
+/// disk.zig`, or `-Dsets=` for one build), and what is in none of them is
+/// left off that board's disk: a flash has room for what the board is
+/// meant to do, not for everything there is.
+///
+/// A set is a choice, and is apart from what a chip can run at all
+/// (`builtFor`): a driver of hardware a chip lacks is on no disk of that
+/// chip's, whatever its board names.
+///
+/// - `base`: what a shell needs - C:, S:, the locale, the fonts.
+/// - `gui`: the desktop - anvil.library, the classes, the datatypes of
+///   pictures and text, the programs with windows.
+/// - `net`: bsdsocket.library and what speaks over it, the network
+///   drivers, C:net.
+/// - `wifi`: the radios' drivers and what joins a network with them.
+/// - `media`: sound and film - the codecs, Player, Movie.
+/// - `storage`: cards, sticks and SSDs - the partition table, the file
+///   systems beside the flash's own, HDToolBox, the install.
+/// - `usb`: usb.library, the host controllers and the class drivers.
+/// - `3d`: facet.library, its drivers and what draws with it.
+/// - `modbus`: modbus.library and the RS-485 line.
+/// - `commodities`: commodities.library and SYS:Commodities.
+/// - `dev`: what somebody working on the system wants there - Git, the
+///   example library and gadget.
+/// - `tests`: C:test and SYS:Tests.
+pub const Set = enum { base, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, dev, tests };
+
+/// Some of the sets.
+pub const Sets = std.EnumSet(Set);
+
+/// The sets `text` names, separated by commas - `base,gui,net` - or all
+/// of them for `all`; null when a name in it is no set's.
+pub fn parseSets(text: []const u8) ?Sets {
+    if (std.mem.eql(u8, text, "all")) return Sets.initFull();
+    var sets = Sets.initEmpty();
+    var names = std.mem.tokenizeAny(u8, text, ", ");
+    while (names.next()) |name| sets.insert(std.meta.stringToEnum(Set, name) orelse return null);
+    return sets;
+}
+
 /// Something built for the disk: its place there, its root source file,
 /// the name its load file is known by, the inner modules it is built
 /// with (`inner_modules`), and the catalog descriptor its strings are made
@@ -21,8 +62,9 @@ const poweros_sdk = @import("poweros_sdk");
 /// named after its place unless `catalog` names it (`sys/` for the
 /// system's own modules). A module the disk's host tests take in beside
 /// anvil.library, whose strings they import as `strings`, imports its
-/// own under a name of its own.
-pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, strings_as: []const u8 = "strings", catalog: ?[]const u8 = null };
+/// own under a name of its own. And the set it is in (`Set`), which a
+/// board's disk has or has not.
+pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, set: Set = .base, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, strings_as: []const u8 = "strings", catalog: ?[]const u8 = null };
 
 /// A translation of a program's strings: its place on the disk, in
 /// LOCALE:Catalogs/<language>/, the descriptor and the translation it is
@@ -160,57 +202,57 @@ const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnet
 /// SYS:System, the commodities in SYS:Commodities, and the dock: started
 /// by their full name or from a shell there, not on the command path.
 const window_programs = [_]Program{
-    .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview" },
-    .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview" },
-    .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery" },
-    .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs" },
-    .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad", .strings = "programs/notepad/notepad.cd" },
-    .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet", .strings = "programs/sheet/sheet.cd" },
-    .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal" },
-    .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player", .strings = "programs/player/player.cd" },
-    .{ .disk = "programs/Movie", .source = "programs/movie/movie.zig", .name = "movie", .imports = &.{"filmsound"}, .strings = "programs/movie/movie.cd" },
-    .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume" },
-    .{ .disk = "programs/Boing", .source = "programs/boing/boing.zig", .name = "boing" },
-    .{ .disk = "programs/Cobra", .source = "programs/cobra/cobra.zig", .name = "cobra" },
+    .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview", .set = .gui },
+    .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview", .set = .gui },
+    .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery", .set = .gui },
+    .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs", .set = .gui },
+    .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad", .set = .gui, .strings = "programs/notepad/notepad.cd" },
+    .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet", .set = .gui, .strings = "programs/sheet/sheet.cd" },
+    .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal", .set = .gui },
+    .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player", .set = .media, .strings = "programs/player/player.cd" },
+    .{ .disk = "programs/Movie", .source = "programs/movie/movie.zig", .name = "movie", .set = .media, .imports = &.{"filmsound"}, .strings = "programs/movie/movie.cd" },
+    .{ .disk = "programs/Volume", .source = "programs/volume/volume.zig", .name = "volume", .set = .media },
+    .{ .disk = "programs/Boing", .source = "programs/boing/boing.zig", .name = "boing", .set = .@"3d" },
+    .{ .disk = "programs/Cobra", .source = "programs/cobra/cobra.zig", .name = "cobra", .set = .@"3d" },
     // The dock, one program in either place (`builtFor`).
-    .{ .disk = "programs/Dock", .source = "programs/dock/dock.zig", .name = "dock" },
-    .{ .disk = "WBStartup/Dock", .source = "programs/dock/dock.zig", .name = "dock" },
-    .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell" },
-    .{ .disk = "System/HDToolBox", .source = "system/hdtoolbox/hdtoolbox.zig", .name = "hdtoolbox" },
-    .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload" },
-    .{ .disk = "System/NetLoad", .source = "system/netload/netload.zig", .name = "netload" },
-    .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap" },
-    .{ .disk = "System/Clock", .source = "system/clock/clock.zig", .name = "clock", .strings = "system/clock/clock.cd" },
-    .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .imports = &.{"smbclient"} },
-    .{ .disk = "System/Update", .source = "system/update/update.zig", .name = "sysupdate" },
-    .{ .disk = "System/SystemScan", .source = "system/systemscan/systemscan.zig", .name = "systemscan" },
-    .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange" },
-    .{ .disk = "Commodities/NoCapsLock", .source = "commodities/nocapslock/nocapslock.zig", .name = "nocapslock", .imports = &.{"commodity"} },
-    .{ .disk = "Commodities/NumericPad", .source = "commodities/numericpad/numericpad.zig", .name = "numericpad", .imports = &.{"commodity"} },
-    .{ .disk = "Commodities/MouseBlanker", .source = "commodities/mouseblanker/mouseblanker.zig", .name = "mouseblanker", .imports = &.{"commodity"} },
-    .{ .disk = "Commodities/AutoPoint", .source = "commodities/autopoint/autopoint.zig", .name = "autopoint", .imports = &.{"commodity"} },
-    .{ .disk = "Commodities/ClickToFront", .source = "commodities/clicktofront/clicktofront.zig", .name = "clicktofront", .imports = &.{"commodity"} },
-    .{ .disk = "Commodities/Blanker", .source = "commodities/blanker/blanker.zig", .name = "blanker", .imports = &.{"commodity"} },
-    .{ .disk = "Commodities/Emoji", .source = "commodities/emoji/emoji.zig", .name = "emoji", .imports = &.{"commodity"}, .strings = "commodities/emoji/emoji.cd" },
-    .{ .disk = "Commodities/FKey", .source = "commodities/fkey/fkey.zig", .name = "fkey", .imports = &.{"commodity"} },
+    .{ .disk = "programs/Dock", .source = "programs/dock/dock.zig", .name = "dock", .set = .gui },
+    .{ .disk = "WBStartup/Dock", .source = "programs/dock/dock.zig", .name = "dock", .set = .gui },
+    .{ .disk = "System/Shell", .source = "system/shell/shell.zig", .name = "shell", .set = .gui },
+    .{ .disk = "System/HDToolBox", .source = "system/hdtoolbox/hdtoolbox.zig", .name = "hdtoolbox", .set = .storage },
+    .{ .disk = "System/CPULoad", .source = "system/cpuload/cpuload.zig", .name = "cpuload", .set = .gui },
+    .{ .disk = "System/NetLoad", .source = "system/netload/netload.zig", .name = "netload", .set = .net },
+    .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap", .set = .gui },
+    .{ .disk = "System/Clock", .source = "system/clock/clock.zig", .name = "clock", .set = .gui, .strings = "system/clock/clock.cd" },
+    .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .set = .net, .imports = &.{"smbclient"} },
+    .{ .disk = "System/Update", .source = "system/update/update.zig", .name = "sysupdate", .set = .storage },
+    .{ .disk = "System/SystemScan", .source = "system/systemscan/systemscan.zig", .name = "systemscan", .set = .gui },
+    .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange", .set = .commodities },
+    .{ .disk = "Commodities/NoCapsLock", .source = "commodities/nocapslock/nocapslock.zig", .name = "nocapslock", .set = .commodities, .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/NumericPad", .source = "commodities/numericpad/numericpad.zig", .name = "numericpad", .set = .commodities, .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/MouseBlanker", .source = "commodities/mouseblanker/mouseblanker.zig", .name = "mouseblanker", .set = .commodities, .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/AutoPoint", .source = "commodities/autopoint/autopoint.zig", .name = "autopoint", .set = .commodities, .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/ClickToFront", .source = "commodities/clicktofront/clicktofront.zig", .name = "clicktofront", .set = .commodities, .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/Blanker", .source = "commodities/blanker/blanker.zig", .name = "blanker", .set = .commodities, .imports = &.{"commodity"} },
+    .{ .disk = "Commodities/Emoji", .source = "commodities/emoji/emoji.zig", .name = "emoji", .set = .commodities, .imports = &.{"commodity"}, .strings = "commodities/emoji/emoji.cd" },
+    .{ .disk = "Commodities/FKey", .source = "commodities/fkey/fkey.zig", .name = "fkey", .set = .commodities, .imports = &.{"commodity"} },
 };
 
 /// Commands built with an inner module.
 const inner_commands = [_]Program{
-    .{ .disk = "c/net/mountshare", .source = "c/net/mountshare/mountshare.zig", .name = "mountshare", .imports = &.{"smbclient"} },
+    .{ .disk = "c/net/mountshare", .source = "c/net/mountshare/mountshare.zig", .name = "mountshare", .set = .net, .imports = &.{"smbclient"} },
 };
 
 /// Test programs built with an inner module.
 const inner_tests = [_]Program{
-    .{ .disk = "c/test/raster", .source = "c/test/raster/raster.zig", .name = "raster", .imports = &.{"raster"} },
-    .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .imports = &.{"raster"} },
-    .{ .disk = "c/test/facetcube", .source = "c/test/raster/facetcube.zig", .name = "facetcube", .imports = &.{"raster"} },
-    .{ .disk = "c/test/facetwindow", .source = "c/test/raster/facetwindow.zig", .name = "facetwindow", .imports = &.{"raster"} },
-    .{ .disk = "c/test/facetmany", .source = "c/test/raster/facetmany.zig", .name = "facetmany", .imports = &.{"raster"} },
-    .{ .disk = "c/test/facetboth", .source = "c/test/raster/facetboth.zig", .name = "facetboth" },
-    .{ .disk = "c/test/facetprobe", .source = "c/test/raster/facetprobe.zig", .name = "facetprobe" },
-    .{ .disk = "c/test/v3dtest", .source = "c/test/v3d/v3dtest.zig", .name = "v3dtest", .imports = &.{"v3d"} },
-    .{ .disk = "c/test/locale", .source = "c/test/locale/locale.zig", .name = "locale", .strings = "c/test/locale/locale.cd" },
+    .{ .disk = "c/test/raster", .source = "c/test/raster/raster.zig", .name = "raster", .set = .@"3d", .imports = &.{"raster"} },
+    .{ .disk = "c/test/cube", .source = "c/test/raster/cube.zig", .name = "cube", .set = .@"3d", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetcube", .source = "c/test/raster/facetcube.zig", .name = "facetcube", .set = .@"3d", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetwindow", .source = "c/test/raster/facetwindow.zig", .name = "facetwindow", .set = .@"3d", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetmany", .source = "c/test/raster/facetmany.zig", .name = "facetmany", .set = .@"3d", .imports = &.{"raster"} },
+    .{ .disk = "c/test/facetboth", .source = "c/test/raster/facetboth.zig", .name = "facetboth", .set = .@"3d" },
+    .{ .disk = "c/test/facetprobe", .source = "c/test/raster/facetprobe.zig", .name = "facetprobe", .set = .@"3d" },
+    .{ .disk = "c/test/v3dtest", .source = "c/test/v3d/v3dtest.zig", .name = "v3dtest", .set = .@"3d", .imports = &.{"v3d"} },
+    .{ .disk = "c/test/locale", .source = "c/test/locale/locale.zig", .name = "locale", .set = .tests, .strings = "c/test/locale/locale.cd" },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a
@@ -220,146 +262,146 @@ const inner_tests = [_]Program{
 /// for - LIBS:, DEVS:, HANDLERS: - and a class library in classes/, which
 /// the startup-sequence adds to LIBS:.
 const modules = [_]Program{
-    .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library" },
-    .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library" },
-    .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library" },
+    .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library", .set = .dev },
+    .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library", .set = .net },
+    .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library", .set = .net },
     .{ .disk = "libs/compression.library", .source = "libs/compression/compression.zig", .name = "compression.library" },
-    .{ .disk = "libs/http.library", .source = "libs/http/http.zig", .name = "http.library", .strings = "libs/http/http.cd", .strings_as = "http_strings", .catalog = "sys/http.catalog" },
-    .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library" },
-    .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library" },
+    .{ .disk = "libs/http.library", .source = "libs/http/http.zig", .name = "http.library", .set = .net, .strings = "libs/http/http.cd", .strings_as = "http_strings", .catalog = "sys/http.catalog" },
+    .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library", .set = .storage },
+    .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library", .set = .usb },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
-    .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .imports = &.{"raster"} },
-    .{ .disk = "libs/facet/v3d.fdriver", .source = "libs/facet/v3d_fdriver.zig", .name = "v3d.fdriver", .imports = &.{ "v3d", "raster" } },
-    .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library" },
-    .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library" },
-    .{ .disk = "libs/codecs/wav.acodec", .source = "libs/audiocodec/wav.zig", .name = "wav.acodec" },
-    .{ .disk = "libs/codecs/mp3.acodec", .source = "libs/audiocodec/mp3.zig", .name = "mp3.acodec" },
-    .{ .disk = "libs/codecs/flac.acodec", .source = "libs/audiocodec/flac.zig", .name = "flac.acodec" },
-    .{ .disk = "libs/codecs/vorbis.acodec", .source = "libs/audiocodec/vorbis.zig", .name = "vorbis.acodec" },
-    .{ .disk = "libs/codecs/aac.acodec", .source = "libs/audiocodec/aac.zig", .name = "aac.acodec" },
-    .{ .disk = "libs/codecs/ac3.acodec", .source = "libs/audiocodec/ac3.zig", .name = "ac3.acodec" },
-    .{ .disk = "libs/codecs/opus.acodec", .source = "libs/audiocodec/opus.zig", .name = "opus.acodec" },
-    .{ .disk = "libs/codecs/dts.acodec", .source = "libs/audiocodec/dts.zig", .name = "dts.acodec" },
-    .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library" },
-    .{ .disk = "libs/videoparse.library", .source = "libs/videoparse/videoparse.zig", .name = "videoparse.library", .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
-    .{ .disk = "libs/codecs/mp4.container", .source = "libs/media/mp4.zig", .name = "mp4.container" },
-    .{ .disk = "libs/codecs/mkv.container", .source = "libs/media/mkv.zig", .name = "mkv.container" },
-    .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library" },
-    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec", .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
-    .{ .disk = "libs/codecs/mjpeg.vcodec", .source = "libs/codecs/mjpeg.zig", .name = "mjpeg.vcodec", .imports = &.{"jpegdecode"} },
-    .{ .disk = "libs/codecs/h264.vcodec", .source = "libs/codecs/h264.zig", .name = "h264.vcodec", .imports = &.{"h264core"} },
-    .{ .disk = "libs/codecs/vp8.vcodec", .source = "libs/codecs/vp8.zig", .name = "vp8.vcodec", .imports = &.{"vp8core"} },
-    .{ .disk = "libs/codecs/vp9.vcodec", .source = "libs/codecs/vp9.zig", .name = "vp9.vcodec", .imports = &.{"vp9core"} },
-    .{ .disk = "libs/codecs/av1.vcodec", .source = "libs/codecs/av1.zig", .name = "av1.vcodec", .imports = &.{"av1core"} },
-    .{ .disk = "libs/codecs/hevc.vcodec", .source = "libs/codecs/hevc.zig", .name = "hevc.vcodec", .imports = &.{"hevccore"} },
-    .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library" },
-    .{ .disk = "libs/update.library", .source = "libs/update/update.zig", .name = "update.library" },
-    .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library" },
-    .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library", .strings = "libs/anvil/anvil.cd", .catalog = "sys/anvil.catalog" },
-    .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library" },
-    .{ .disk = "libs/wpa.library", .source = "libs/wpa/wpa.zig", .name = "wpa.library" },
-    .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library" },
-    .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library" },
-    .{ .disk = "libs/truetypeshaping.library", .source = "libs/truetypeshaping/truetypeshaping.zig", .name = "truetypeshaping.library" },
-    .{ .disk = "libs/vector.library", .source = "libs/vector/vector.zig", .name = "vector.library", .imports = &.{"vector"} },
-    .{ .disk = "libs/asl.library", .source = "libs/asl/asl.zig", .name = "asl.library" },
-    .{ .disk = "libs/iffparse.library", .source = "libs/iffparse/iffparse.zig", .name = "iffparse.library" },
-    .{ .disk = "libs/commodities.library", .source = "libs/commodities/commodities.zig", .name = "commodities.library" },
+    .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .set = .@"3d", .imports = &.{"raster"} },
+    .{ .disk = "libs/facet/v3d.fdriver", .source = "libs/facet/v3d_fdriver.zig", .name = "v3d.fdriver", .set = .@"3d", .imports = &.{ "v3d", "raster" } },
+    .{ .disk = "libs/modbus.library", .source = "libs/modbus/modbus.zig", .name = "modbus.library", .set = .modbus },
+    .{ .disk = "libs/audiocodec.library", .source = "libs/audiocodec/audiocodec.zig", .name = "audiocodec.library", .set = .media },
+    .{ .disk = "libs/codecs/wav.acodec", .source = "libs/audiocodec/wav.zig", .name = "wav.acodec", .set = .media },
+    .{ .disk = "libs/codecs/mp3.acodec", .source = "libs/audiocodec/mp3.zig", .name = "mp3.acodec", .set = .media },
+    .{ .disk = "libs/codecs/flac.acodec", .source = "libs/audiocodec/flac.zig", .name = "flac.acodec", .set = .media },
+    .{ .disk = "libs/codecs/vorbis.acodec", .source = "libs/audiocodec/vorbis.zig", .name = "vorbis.acodec", .set = .media },
+    .{ .disk = "libs/codecs/aac.acodec", .source = "libs/audiocodec/aac.zig", .name = "aac.acodec", .set = .media },
+    .{ .disk = "libs/codecs/ac3.acodec", .source = "libs/audiocodec/ac3.zig", .name = "ac3.acodec", .set = .media },
+    .{ .disk = "libs/codecs/opus.acodec", .source = "libs/audiocodec/opus.zig", .name = "opus.acodec", .set = .media },
+    .{ .disk = "libs/codecs/dts.acodec", .source = "libs/audiocodec/dts.zig", .name = "dts.acodec", .set = .media },
+    .{ .disk = "libs/media.library", .source = "libs/media/media.zig", .name = "media.library", .set = .media },
+    .{ .disk = "libs/videoparse.library", .source = "libs/videoparse/videoparse.zig", .name = "videoparse.library", .set = .media, .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
+    .{ .disk = "libs/codecs/mp4.container", .source = "libs/media/mp4.zig", .name = "mp4.container", .set = .media },
+    .{ .disk = "libs/codecs/mkv.container", .source = "libs/media/mkv.zig", .name = "mkv.container", .set = .media },
+    .{ .disk = "libs/videocodec.library", .source = "libs/videocodec/videocodec.zig", .name = "videocodec.library", .set = .media },
+    .{ .disk = "libs/codecs/chip.vcodec", .source = "libs/codecs/chip.zig", .name = "chip.vcodec", .set = .media, .imports = &.{ "h264sets", "hevcsets", "vp9header", "av1header" } },
+    .{ .disk = "libs/codecs/mjpeg.vcodec", .source = "libs/codecs/mjpeg.zig", .name = "mjpeg.vcodec", .set = .media, .imports = &.{"jpegdecode"} },
+    .{ .disk = "libs/codecs/h264.vcodec", .source = "libs/codecs/h264.zig", .name = "h264.vcodec", .set = .media, .imports = &.{"h264core"} },
+    .{ .disk = "libs/codecs/vp8.vcodec", .source = "libs/codecs/vp8.zig", .name = "vp8.vcodec", .set = .media, .imports = &.{"vp8core"} },
+    .{ .disk = "libs/codecs/vp9.vcodec", .source = "libs/codecs/vp9.zig", .name = "vp9.vcodec", .set = .media, .imports = &.{"vp9core"} },
+    .{ .disk = "libs/codecs/av1.vcodec", .source = "libs/codecs/av1.zig", .name = "av1.vcodec", .set = .media, .imports = &.{"av1core"} },
+    .{ .disk = "libs/codecs/hevc.vcodec", .source = "libs/codecs/hevc.zig", .name = "hevc.vcodec", .set = .media, .imports = &.{"hevccore"} },
+    .{ .disk = "libs/filter.library", .source = "libs/filter/filter.zig", .name = "filter.library", .set = .net },
+    .{ .disk = "libs/update.library", .source = "libs/update/update.zig", .name = "update.library", .set = .storage },
+    .{ .disk = "libs/icon.library", .source = "libs/icon/icon.zig", .name = "icon.library", .set = .gui },
+    .{ .disk = "libs/anvil.library", .source = "libs/anvil/anvil.zig", .name = "anvil.library", .set = .gui, .strings = "libs/anvil/anvil.cd", .catalog = "sys/anvil.catalog" },
+    .{ .disk = "libs/tls.library", .source = "libs/tls/tls.zig", .name = "tls.library", .set = .net },
+    .{ .disk = "libs/wpa.library", .source = "libs/wpa/wpa.zig", .name = "wpa.library", .set = .wifi },
+    .{ .disk = "libs/diskfont.library", .source = "libs/diskfont/diskfont.zig", .name = "diskfont.library", .set = .gui },
+    .{ .disk = "libs/truetype.library", .source = "libs/truetype/truetype.zig", .name = "truetype.library", .set = .gui },
+    .{ .disk = "libs/truetypeshaping.library", .source = "libs/truetypeshaping/truetypeshaping.zig", .name = "truetypeshaping.library", .set = .gui },
+    .{ .disk = "libs/vector.library", .source = "libs/vector/vector.zig", .name = "vector.library", .set = .gui, .imports = &.{"vector"} },
+    .{ .disk = "libs/asl.library", .source = "libs/asl/asl.zig", .name = "asl.library", .set = .gui },
+    .{ .disk = "libs/iffparse.library", .source = "libs/iffparse/iffparse.zig", .name = "iffparse.library", .set = .gui },
+    .{ .disk = "libs/commodities.library", .source = "libs/commodities/commodities.zig", .name = "commodities.library", .set = .commodities },
     .{ .disk = "libs/locale.library", .source = "libs/locale/locale.zig", .name = "locale.library" },
-    .{ .disk = "libs/datatypes.library", .source = "libs/datatypes/datatypes.zig", .name = "datatypes.library" },
-    .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget" },
-    .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget" },
-    .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget" },
-    .{ .disk = "classes/gadgets/radiobutton.gadget", .source = "classes/gadgets/radiobutton/radiobutton.zig", .name = "radiobutton.gadget" },
-    .{ .disk = "classes/gadgets/string.gadget", .source = "classes/gadgets/string/string.zig", .name = "string.gadget" },
-    .{ .disk = "classes/gadgets/text.gadget", .source = "classes/gadgets/text/text.zig", .name = "text.gadget" },
-    .{ .disk = "classes/gadgets/slider.gadget", .source = "classes/gadgets/slider/slider.zig", .name = "slider.gadget" },
-    .{ .disk = "classes/gadgets/scroller.gadget", .source = "classes/gadgets/scroller/scroller.zig", .name = "scroller.gadget" },
-    .{ .disk = "classes/gadgets/listview.gadget", .source = "classes/gadgets/listview/listview.zig", .name = "listview.gadget" },
-    .{ .disk = "classes/gadgets/palette.gadget", .source = "classes/gadgets/palette/palette.zig", .name = "palette.gadget" },
-    .{ .disk = "classes/gadgets/colorwheel.gadget", .source = "classes/gadgets/colorwheel/colorwheel.zig", .name = "colorwheel.gadget" },
-    .{ .disk = "classes/gadgets/gradientslider.gadget", .source = "classes/gadgets/gradientslider/gradientslider.zig", .name = "gradientslider.gadget" },
-    .{ .disk = "classes/gadgets/tapedeck.gadget", .source = "classes/gadgets/tapedeck/tapedeck.zig", .name = "tapedeck.gadget" },
-    .{ .disk = "classes/gadgets/fuelgauge.gadget", .source = "classes/gadgets/fuelgauge/fuelgauge.zig", .name = "fuelgauge.gadget" },
-    .{ .disk = "classes/gadgets/integer.gadget", .source = "classes/gadgets/integer/integer.zig", .name = "integer.gadget" },
-    .{ .disk = "classes/gadgets/chooser.gadget", .source = "classes/gadgets/chooser/chooser.zig", .name = "chooser.gadget" },
-    .{ .disk = "classes/gadgets/page.gadget", .source = "classes/gadgets/page/page.zig", .name = "page.gadget" },
-    .{ .disk = "classes/gadgets/clicktab.gadget", .source = "classes/gadgets/clicktab/clicktab.zig", .name = "clicktab.gadget" },
-    .{ .disk = "classes/gadgets/getfile.gadget", .source = "classes/gadgets/getfile/getfile.zig", .name = "getfile.gadget" },
-    .{ .disk = "classes/gadgets/getfont.gadget", .source = "classes/gadgets/getfont/getfont.zig", .name = "getfont.gadget" },
-    .{ .disk = "classes/gadgets/getdevice.gadget", .source = "classes/gadgets/getdevice/getdevice.zig", .name = "getdevice.gadget" },
-    .{ .disk = "classes/gadgets/spinner.gadget", .source = "classes/gadgets/spinner/spinner.zig", .name = "spinner.gadget" },
-    .{ .disk = "classes/gadgets/meter.gadget", .source = "classes/gadgets/meter/meter.zig", .name = "meter.gadget" },
-    .{ .disk = "classes/gadgets/arc.gadget", .source = "classes/gadgets/arc/arc.zig", .name = "arc.gadget" },
-    .{ .disk = "classes/gadgets/roller.gadget", .source = "classes/gadgets/roller/roller.zig", .name = "roller.gadget" },
-    .{ .disk = "classes/gadgets/calendar.gadget", .source = "classes/gadgets/calendar/calendar.zig", .name = "calendar.gadget" },
-    .{ .disk = "classes/gadgets/canvas.gadget", .source = "classes/gadgets/canvas/canvas.zig", .name = "canvas.gadget" },
-    .{ .disk = "classes/gadgets/qrcode.gadget", .source = "classes/gadgets/qrcode/qrcode.zig", .name = "qrcode.gadget" },
-    .{ .disk = "classes/gadgets/barcode.gadget", .source = "classes/gadgets/barcode/barcode.zig", .name = "barcode.gadget" },
-    .{ .disk = "classes/gadgets/chart.gadget", .source = "classes/gadgets/chart/chart.zig", .name = "chart.gadget" },
-    .{ .disk = "classes/gadgets/keyboard.gadget", .source = "classes/gadgets/keyboard/keyboard.zig", .name = "keyboard.gadget" },
-    .{ .disk = "classes/gadgets/textedit.gadget", .source = "classes/gadgets/textedit/textedit.zig", .name = "textedit.gadget" },
-    .{ .disk = "classes/gadgets/scrollgroup.gadget", .source = "classes/gadgets/scrollgroup/scrollgroup.zig", .name = "scrollgroup.gadget" },
-    .{ .disk = "classes/gadgets/listbrowser.gadget", .source = "classes/gadgets/listbrowser/listbrowser.zig", .name = "listbrowser.gadget" },
-    .{ .disk = "classes/gadgets/toolbutton.gadget", .source = "classes/gadgets/toolbutton/toolbutton.zig", .name = "toolbutton.gadget" },
-    .{ .disk = "classes/gadgets/ribbon.gadget", .source = "classes/gadgets/ribbon/ribbon.zig", .name = "ribbon.gadget" },
+    .{ .disk = "libs/datatypes.library", .source = "libs/datatypes/datatypes.zig", .name = "datatypes.library", .set = .gui },
+    .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget", .set = .dev },
+    .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/radiobutton.gadget", .source = "classes/gadgets/radiobutton/radiobutton.zig", .name = "radiobutton.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/string.gadget", .source = "classes/gadgets/string/string.zig", .name = "string.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/text.gadget", .source = "classes/gadgets/text/text.zig", .name = "text.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/slider.gadget", .source = "classes/gadgets/slider/slider.zig", .name = "slider.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/scroller.gadget", .source = "classes/gadgets/scroller/scroller.zig", .name = "scroller.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/listview.gadget", .source = "classes/gadgets/listview/listview.zig", .name = "listview.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/palette.gadget", .source = "classes/gadgets/palette/palette.zig", .name = "palette.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/colorwheel.gadget", .source = "classes/gadgets/colorwheel/colorwheel.zig", .name = "colorwheel.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/gradientslider.gadget", .source = "classes/gadgets/gradientslider/gradientslider.zig", .name = "gradientslider.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/tapedeck.gadget", .source = "classes/gadgets/tapedeck/tapedeck.zig", .name = "tapedeck.gadget", .set = .media },
+    .{ .disk = "classes/gadgets/fuelgauge.gadget", .source = "classes/gadgets/fuelgauge/fuelgauge.zig", .name = "fuelgauge.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/integer.gadget", .source = "classes/gadgets/integer/integer.zig", .name = "integer.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/chooser.gadget", .source = "classes/gadgets/chooser/chooser.zig", .name = "chooser.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/page.gadget", .source = "classes/gadgets/page/page.zig", .name = "page.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/clicktab.gadget", .source = "classes/gadgets/clicktab/clicktab.zig", .name = "clicktab.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/getfile.gadget", .source = "classes/gadgets/getfile/getfile.zig", .name = "getfile.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/getfont.gadget", .source = "classes/gadgets/getfont/getfont.zig", .name = "getfont.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/getdevice.gadget", .source = "classes/gadgets/getdevice/getdevice.zig", .name = "getdevice.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/spinner.gadget", .source = "classes/gadgets/spinner/spinner.zig", .name = "spinner.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/meter.gadget", .source = "classes/gadgets/meter/meter.zig", .name = "meter.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/arc.gadget", .source = "classes/gadgets/arc/arc.zig", .name = "arc.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/roller.gadget", .source = "classes/gadgets/roller/roller.zig", .name = "roller.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/calendar.gadget", .source = "classes/gadgets/calendar/calendar.zig", .name = "calendar.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/canvas.gadget", .source = "classes/gadgets/canvas/canvas.zig", .name = "canvas.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/qrcode.gadget", .source = "classes/gadgets/qrcode/qrcode.zig", .name = "qrcode.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/barcode.gadget", .source = "classes/gadgets/barcode/barcode.zig", .name = "barcode.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/chart.gadget", .source = "classes/gadgets/chart/chart.zig", .name = "chart.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/keyboard.gadget", .source = "classes/gadgets/keyboard/keyboard.zig", .name = "keyboard.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/textedit.gadget", .source = "classes/gadgets/textedit/textedit.zig", .name = "textedit.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/scrollgroup.gadget", .source = "classes/gadgets/scrollgroup/scrollgroup.zig", .name = "scrollgroup.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/listbrowser.gadget", .source = "classes/gadgets/listbrowser/listbrowser.zig", .name = "listbrowser.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/toolbutton.gadget", .source = "classes/gadgets/toolbutton/toolbutton.zig", .name = "toolbutton.gadget", .set = .gui },
+    .{ .disk = "classes/gadgets/ribbon.gadget", .source = "classes/gadgets/ribbon/ribbon.zig", .name = "ribbon.gadget", .set = .gui },
     // The image classes: pictures drawn to any size.
-    .{ .disk = "classes/images/command.image", .source = "classes/images/command/command.zig", .name = "command.image" },
-    .{ .disk = "classes/images/media.image", .source = "classes/images/media/media.zig", .name = "media.image" },
+    .{ .disk = "classes/images/command.image", .source = "classes/images/command/command.zig", .name = "command.image", .set = .gui },
+    .{ .disk = "classes/images/media.image", .source = "classes/images/media/media.zig", .name = "media.image", .set = .media },
     // The dock's docklets, in their own drawer: the dock lists it.
-    .{ .disk = "classes/docklets/clock.docklet", .source = "classes/docklets/clock/clock.zig", .name = "clock.docklet" },
-    .{ .disk = "classes/docklets/battery.docklet", .source = "classes/docklets/battery/battery.zig", .name = "battery.docklet" },
-    .{ .disk = "classes/docklets/volume.docklet", .source = "classes/docklets/volume/volume.zig", .name = "volume.docklet" },
-    .{ .disk = "classes/docklets/cpu.docklet", .source = "classes/docklets/cpu/cpu.zig", .name = "cpu.docklet" },
-    .{ .disk = "classes/docklets/network.docklet", .source = "classes/docklets/network/network.zig", .name = "network.docklet" },
-    .{ .disk = "classes/docklets/player.docklet", .source = "classes/docklets/player/player.zig", .name = "player.docklet" },
-    .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype" },
-    .{ .disk = "classes/datatypes/animation.datatype", .source = "classes/datatypes/animation/animation.zig", .name = "animation.datatype" },
-    .{ .disk = "classes/datatypes/model.datatype", .source = "classes/datatypes/model/model.zig", .name = "model.datatype" },
-    .{ .disk = "classes/datatypes/obj.datatype", .source = "classes/datatypes/obj/obj.zig", .name = "obj.datatype" },
-    .{ .disk = "classes/datatypes/sound.datatype", .source = "classes/datatypes/sound/sound.zig", .name = "sound.datatype" },
-    .{ .disk = "classes/datatypes/audiocodec.datatype", .source = "classes/datatypes/audiocodec/audiocodec.zig", .name = "audiocodec.datatype" },
-    .{ .disk = "classes/datatypes/videocodec.datatype", .source = "classes/datatypes/videocodec/videocodec.zig", .name = "videocodec.datatype", .imports = &.{"filmsound"} },
-    .{ .disk = "classes/datatypes/8svx.datatype", .source = "classes/datatypes/8svx/8svx.zig", .name = "8svx.datatype" },
-    .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype" },
-    .{ .disk = "classes/datatypes/ico.datatype", .source = "classes/datatypes/bmp/ico.zig", .name = "ico.datatype" },
-    .{ .disk = "classes/datatypes/ilbm.datatype", .source = "classes/datatypes/ilbm/ilbm.zig", .name = "ilbm.datatype" },
-    .{ .disk = "classes/datatypes/png.datatype", .source = "classes/datatypes/png/png.zig", .name = "png.datatype" },
-    .{ .disk = "classes/datatypes/gif.datatype", .source = "classes/datatypes/gif/gif.zig", .name = "gif.datatype" },
-    .{ .disk = "classes/datatypes/gifanim.datatype", .source = "classes/datatypes/gif/gifanim.zig", .name = "gifanim.datatype" },
-    .{ .disk = "classes/datatypes/lottie.datatype", .source = "classes/datatypes/lottie/lottie.zig", .name = "lottie.datatype" },
-    .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype" },
-    .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype", .imports = &.{"jpegdecode"} },
-    .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype" },
-    .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype" },
-    .{ .disk = "classes/datatypes/markdown.datatype", .source = "classes/datatypes/markdown/markdown.zig", .name = "markdown.datatype" },
-    .{ .disk = "classes/datatypes/html.datatype", .source = "classes/datatypes/html/html.zig", .name = "html.datatype" },
-    .{ .disk = "classes/datatypes/font.datatype", .source = "classes/datatypes/font/font.zig", .name = "font.datatype" },
-    .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device" },
-    .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device" },
-    .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device" },
-    .{ .disk = "devs/networks/intelnet.device", .source = "devs/networks/intelnet/intelnet.zig", .name = "intelnet.device" },
-    .{ .disk = "devs/networks/realnet.device", .source = "devs/networks/realnet/realnet.zig", .name = "realnet.device" },
-    .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device" },
-    .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device" },
-    .{ .disk = "devs/networks/cyw43455.device", .source = "devs/networks/cyw43455/cyw43455.zig", .name = "cyw43455.device" },
-    .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device" },
-    .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device" },
-    .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device" },
-    .{ .disk = "devs/usbotg.device", .source = "devs/usbotg/usbotg.zig", .name = "usbotg.device" },
-    .{ .disk = "devs/xhci.device", .source = "devs/xhci/xhci.zig", .name = "xhci.device" },
-    .{ .disk = "devs/nvme.device", .source = "devs/nvme/nvme.zig", .name = "nvme.device" },
-    .{ .disk = "devs/usb/hid.device", .source = "devs/usb/hid/hid.zig", .name = "hid.device" },
-    .{ .disk = "devs/usb/disk.device", .source = "devs/usb/disk/disk.zig", .name = "disk.device" },
-    .{ .disk = "devs/usb/ftdi.device", .source = "devs/usb/serial/ftdi.zig", .name = "ftdi.device" },
-    .{ .disk = "devs/usb/acm.device", .source = "devs/usb/serial/acm.zig", .name = "acm.device" },
-    .{ .disk = "devs/usb/ecm.device", .source = "devs/usb/ecm/ecm.zig", .name = "ecm.device" },
-    .{ .disk = "devs/usb/uac.device", .source = "devs/usb/audio/uac.zig", .name = "uac.device" },
-    .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device" },
-    .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler" },
-    .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler" },
-    .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler", .imports = &.{"smbclient"} },
-    .{ .disk = "devs/keymaps/inscript", .source = "devs/keymaps/inscript/inscript.zig", .name = "inscript" },
+    .{ .disk = "classes/docklets/clock.docklet", .source = "classes/docklets/clock/clock.zig", .name = "clock.docklet", .set = .gui },
+    .{ .disk = "classes/docklets/battery.docklet", .source = "classes/docklets/battery/battery.zig", .name = "battery.docklet", .set = .gui },
+    .{ .disk = "classes/docklets/volume.docklet", .source = "classes/docklets/volume/volume.zig", .name = "volume.docklet", .set = .media },
+    .{ .disk = "classes/docklets/cpu.docklet", .source = "classes/docklets/cpu/cpu.zig", .name = "cpu.docklet", .set = .gui },
+    .{ .disk = "classes/docklets/network.docklet", .source = "classes/docklets/network/network.zig", .name = "network.docklet", .set = .net },
+    .{ .disk = "classes/docklets/player.docklet", .source = "classes/docklets/player/player.zig", .name = "player.docklet", .set = .media },
+    .{ .disk = "classes/datatypes/picture.datatype", .source = "classes/datatypes/picture/picture.zig", .name = "picture.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/animation.datatype", .source = "classes/datatypes/animation/animation.zig", .name = "animation.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/model.datatype", .source = "classes/datatypes/model/model.zig", .name = "model.datatype", .set = .@"3d" },
+    .{ .disk = "classes/datatypes/obj.datatype", .source = "classes/datatypes/obj/obj.zig", .name = "obj.datatype", .set = .@"3d" },
+    .{ .disk = "classes/datatypes/sound.datatype", .source = "classes/datatypes/sound/sound.zig", .name = "sound.datatype", .set = .media },
+    .{ .disk = "classes/datatypes/audiocodec.datatype", .source = "classes/datatypes/audiocodec/audiocodec.zig", .name = "audiocodec.datatype", .set = .media },
+    .{ .disk = "classes/datatypes/videocodec.datatype", .source = "classes/datatypes/videocodec/videocodec.zig", .name = "videocodec.datatype", .set = .media, .imports = &.{"filmsound"} },
+    .{ .disk = "classes/datatypes/8svx.datatype", .source = "classes/datatypes/8svx/8svx.zig", .name = "8svx.datatype", .set = .media },
+    .{ .disk = "classes/datatypes/bmp.datatype", .source = "classes/datatypes/bmp/bmp.zig", .name = "bmp.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/ico.datatype", .source = "classes/datatypes/bmp/ico.zig", .name = "ico.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/ilbm.datatype", .source = "classes/datatypes/ilbm/ilbm.zig", .name = "ilbm.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/png.datatype", .source = "classes/datatypes/png/png.zig", .name = "png.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/gif.datatype", .source = "classes/datatypes/gif/gif.zig", .name = "gif.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/gifanim.datatype", .source = "classes/datatypes/gif/gifanim.zig", .name = "gifanim.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/lottie.datatype", .source = "classes/datatypes/lottie/lottie.zig", .name = "lottie.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype", .set = .gui, .imports = &.{"jpegdecode"} },
+    .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/markdown.datatype", .source = "classes/datatypes/markdown/markdown.zig", .name = "markdown.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/html.datatype", .source = "classes/datatypes/html/html.zig", .name = "html.datatype", .set = .net },
+    .{ .disk = "classes/datatypes/font.datatype", .source = "classes/datatypes/font/font.zig", .name = "font.datatype", .set = .gui },
+    .{ .disk = "devs/sdcard.device", .source = "devs/sdcard/sdcard.zig", .name = "sdcard.device", .set = .storage },
+    .{ .disk = "devs/rs485.device", .source = "devs/rs485/rs485.zig", .name = "rs485.device", .set = .modbus },
+    .{ .disk = "devs/networks/openeth.device", .source = "devs/networks/openeth/openeth.zig", .name = "openeth.device", .set = .net },
+    .{ .disk = "devs/networks/intelnet.device", .source = "devs/networks/intelnet/intelnet.zig", .name = "intelnet.device", .set = .net },
+    .{ .disk = "devs/networks/realnet.device", .source = "devs/networks/realnet/realnet.zig", .name = "realnet.device", .set = .net },
+    .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device", .set = .net },
+    .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device", .set = .net },
+    .{ .disk = "devs/networks/cyw43455.device", .source = "devs/networks/cyw43455/cyw43455.zig", .name = "cyw43455.device", .set = .wifi },
+    .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device", .set = .net },
+    .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device", .set = .net },
+    .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device", .set = .gui },
+    .{ .disk = "devs/usbotg.device", .source = "devs/usbotg/usbotg.zig", .name = "usbotg.device", .set = .usb },
+    .{ .disk = "devs/xhci.device", .source = "devs/xhci/xhci.zig", .name = "xhci.device", .set = .usb },
+    .{ .disk = "devs/nvme.device", .source = "devs/nvme/nvme.zig", .name = "nvme.device", .set = .storage },
+    .{ .disk = "devs/usb/hid.device", .source = "devs/usb/hid/hid.zig", .name = "hid.device", .set = .usb },
+    .{ .disk = "devs/usb/disk.device", .source = "devs/usb/disk/disk.zig", .name = "disk.device", .set = .usb },
+    .{ .disk = "devs/usb/ftdi.device", .source = "devs/usb/serial/ftdi.zig", .name = "ftdi.device", .set = .usb },
+    .{ .disk = "devs/usb/acm.device", .source = "devs/usb/serial/acm.zig", .name = "acm.device", .set = .usb },
+    .{ .disk = "devs/usb/ecm.device", .source = "devs/usb/ecm/ecm.zig", .name = "ecm.device", .set = .net },
+    .{ .disk = "devs/usb/uac.device", .source = "devs/usb/audio/uac.zig", .name = "uac.device", .set = .media },
+    .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device", .set = .wifi },
+    .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler", .set = .storage },
+    .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler", .set = .storage },
+    .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler", .set = .net, .imports = &.{"smbclient"} },
+    .{ .disk = "devs/keymaps/inscript", .source = "devs/keymaps/inscript/inscript.zig", .name = "inscript", .set = .gui },
 };
 
 /// Drivers of the ESP32-S3's own hardware, built for it alone: RS-485 on
@@ -397,28 +439,14 @@ const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.
 /// BCM2712's SD host.
 const a64_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "v3d.fdriver" };
 
-/// What draws in three dimensions, left off the ESP32-S3's disk:
-/// facet.library, the programs that drive its rasterizer, the two that
-/// fly a scene past the eye, and the classes that read a model out of a
-/// file. Together they are 2 MB of load files on a flash disk that has
-/// 14 MB for everything, and that board's own room goes to the rest of
-/// the system.
+/// What draws in three dimensions - facet.library, the programs that
+/// drive its rasterizer, the two that fly a scene past the eye, and the
+/// classes that read a model out of a file - is not built for the
+/// ESP32-S3: its compiler stops in facet.library's shader
+/// (`Cannot select: XtensaISD::PCREL_WRAPPER TargetConstantPool`, in
+/// `libs.facet.shader.Texels.at`). On the other chips they are the set
+/// `3d`.
 const no_3d = [_][]const u8{ "facet.library", "raster", "cube", "facetcube", "facetwindow", "facetmany", "facetprobe", "model.datatype", "obj.datatype", "boing", "cobra" };
-
-/// The files that go with them: the models in SYS:Tests/datatypes, the
-/// datatype descriptor that names obj.datatype, and what the two
-/// programs are in SYS:Programs/Docs.
-const no_3d_files = [_][]const u8{
-    "devs/datatypes/OBJ",
-    "tests/datatypes/Crate.obj",
-    "tests/datatypes/Crate.mtl",
-    "tests/datatypes/Crate.png",
-    "tests/datatypes/Torus.obj",
-    "tests/datatypes/Torus.mtl",
-    "tests/datatypes/Icosahedron.obj",
-    "programs/Docs/Boing.md",
-    "programs/Docs/Cobra.md",
-};
 
 /// What goes with the programs only the 64-bit machines have
 /// (`rv64_only`) - what they are, in SYS:System/Docs, the descriptors
@@ -451,6 +479,91 @@ const wide_only_files = [_][]const u8{
     "locale/Languages/zhongwen-fanti.language",
 };
 
+/// The set a path on the disk is in. A program's own place is in the
+/// program's set, and so is what goes with a program: its icon
+/// (`<place>.info`), its catalog (`.../<place>.catalog`), what it is in
+/// its drawer's `Docs`. A drawer is in the set of what it holds. The
+/// rest - the scripts, the locale, the fonts, the settings - is `base`.
+pub fn setOfPath(path: []const u8) Set {
+    @setEvalBranchQuota(200_000);
+    const info = ".info";
+    const place = if (std.mem.endsWith(u8, path, info)) path[0 .. path.len - info.len] else path;
+    for (programs) |program| {
+        if (std.mem.eql(u8, program.disk, place)) return program.set;
+    }
+    // `<drawer>/Docs/<Program>.md` goes with `<drawer>/<Program>`.
+    const docs = "/Docs/";
+    if (std.mem.indexOf(u8, place, docs)) |at| {
+        const name = std.fs.path.stem(place[at + docs.len ..]);
+        for (programs) |program| {
+            if (std.mem.startsWith(u8, program.disk, place[0 .. at + 1]) and std.mem.eql(u8, program.disk[at + 1 ..], name)) return program.set;
+        }
+    }
+    for (path_sets) |one| {
+        if (std.mem.startsWith(u8, place, one[0])) return one[1];
+    }
+    return .base;
+}
+
+/// Whether `path` is on a disk that holds `sets`: its own set is among
+/// them, and so is the set of every drawer it lies in. What is kept in a
+/// drawer of another set needs that set - a docklet of the network's is
+/// a class of the desktop's - and is left off with the drawer.
+pub fn onDisk(sets: Sets, path: []const u8) bool {
+    if (!sets.contains(setOfPath(path))) return false;
+    var dir = std.fs.path.dirname(path);
+    while (dir) |drawer| : (dir = std.fs.path.dirname(drawer)) {
+        if (!sets.contains(setOfPath(drawer))) return false;
+    }
+    return true;
+}
+
+/// A catalog's set: its program's, by the catalog's name
+/// (`programs/Notepad.catalog`), and the system's own by theirs.
+pub fn setOfCatalog(catalog: Catalog) Set {
+    const suffix = ".catalog";
+    return setOfPath(catalog.name[0 .. catalog.name.len - suffix.len]);
+}
+
+/// Paths that are in a set by how they begin, the first that fits: a
+/// directory and everything under it, or one file.
+const path_sets = [_]struct { []const u8, Set }{
+    // The models, the descriptor that names obj.datatype.
+    .{ "tests/datatypes/Crate.obj", .@"3d" },
+    .{ "tests/datatypes/Crate.mtl", .@"3d" },
+    .{ "tests/datatypes/Crate.png", .@"3d" },
+    .{ "tests/datatypes/Torus.obj", .@"3d" },
+    .{ "tests/datatypes/Torus.mtl", .@"3d" },
+    .{ "tests/datatypes/Icosahedron.obj", .@"3d" },
+    .{ "devs/datatypes/OBJ", .@"3d" },
+    .{ "libs/facet", .@"3d" },
+    .{ "tests", .tests },
+    .{ "c/test", .tests },
+    .{ "c/net", .net },
+    .{ "certificates", .net },
+    // An interface for a radio, and the rest of them.
+    .{ "devs/NetInterfaces/WLAN", .wifi },
+    .{ "devs/NetInterfaces", .net },
+    .{ "devs/networks/firmware", .wifi },
+    .{ "devs/networks/esp32s3wifi.device", .wifi },
+    .{ "devs/networks", .net },
+    .{ "devs/usb/firmware/aic8800", .wifi },
+    .{ "devs/usb/firmware", .wifi },
+    .{ "devs/usb", .usb },
+    .{ "s/network-startup", .net },
+    .{ "Commodities", .commodities },
+    // What the desktop shows and starts.
+    .{ "devs/datatypes", .gui },
+    .{ "classes", .gui },
+    .{ "programs", .gui },
+    .{ "System", .gui },
+    .{ "WBStartup", .gui },
+    .{ "libs/codecs", .media },
+    // The system's own catalogs, by their module.
+    .{ "sys/anvil", .gui },
+    .{ "sys/http", .net },
+};
+
 /// Whether `program` is built for `chip`. The lists name a program by its
 /// name, or by its place on the disk where one program has two.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
@@ -469,11 +582,11 @@ pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
 
 /// Whether `file` goes on `chip`'s disk. The 64-bit machines' have all
 /// of them; the ESP32s' leave out what goes with a program or a font
-/// they do not have, and the ESP32-S3's also what reads a model
-/// (`no_3d`).
+/// they do not have. Whether a board's disk has it is `setOfPath`'s
+/// to say.
 pub fn fileFor(file: File, chip: poweros_sdk.Chip) bool {
     const others: []const []const u8 = switch (chip) {
-        .esp32s3 => &(no_3d_files ++ rv64_only_files ++ wide_only_files),
+        .esp32s3 => &(rv64_only_files ++ wide_only_files),
         .esp32p4 => &(rv64_only_files ++ wide_only_files),
         .rv64sbi, .x64uefi, .a64psci => &.{},
     };
@@ -483,15 +596,54 @@ pub fn fileFor(file: File, chip: poweros_sdk.Chip) bool {
     return true;
 }
 
+/// The commands in C: and C:net that are in another set than their
+/// directory's - `base` for C:, `net` for C:net: each needs a library of
+/// that set to do anything.
+const command_sets = [_]struct { []const u8, Set }{
+    .{ "rdb", .storage },
+    .{ "showinfo", .gui },
+    .{ "fixfonts", .gui },
+    .{ "adddatatypes", .gui },
+    .{ "listfonts", .gui },
+    .{ "requestfile", .gui },
+    .{ "requestchoice", .gui },
+    .{ "requestdevice", .gui },
+    .{ "modbus", .modbus },
+    .{ "loadanvil", .gui },
+    .{ "iconx", .gui },
+    .{ "usb", .usb },
+    .{ "usbinfo", .usb },
+    .{ "play", .media },
+    .{ "screendump", .gui },
+    .{ "posfs", .storage },
+    .{ "binddrivers", .storage },
+    .{ "record", .media },
+    .{ "hash", .net },
+    .{ "install", .storage },
+    .{ "update", .storage },
+    .{ "wireless", .wifi },
+    .{ "git", .dev },
+};
+
+/// The set of the command `name`, which is `usual` unless `command_sets`
+/// names it.
+fn commandSet(name: []const u8, usual: Set) Set {
+    for (command_sets) |one| {
+        if (std.mem.eql(u8, one[0], name)) return one[1];
+    }
+    return usual;
+}
+
 pub const programs: []const Program = blk: {
+    @setEvalBranchQuota(100_000);
     var list: [commands.len + tests.len + inner_tests.len + inner_commands.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
     var n: usize = 0;
     for (commands) |name| {
-        list[n] = .{ .disk = "c/" ++ name, .source = "c/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
+        list[n] = .{ .disk = "c/" ++ name, .source = "c/" ++ name ++ "/" ++ name ++ ".zig", .name = name, .set = commandSet(name, .base) };
         n += 1;
     }
     for (tests) |name| {
-        list[n] = .{ .disk = "c/test/" ++ name, .source = "c/test/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
+        list[n] = .{ .disk = "c/test/" ++ name, .source = "c/test/" ++ name ++ "/" ++ name ++ ".zig", .name = name, .set = .tests };
         n += 1;
     }
     for (inner_tests) |program| {
@@ -503,7 +655,7 @@ pub const programs: []const Program = blk: {
         n += 1;
     }
     for (net_tools) |name| {
-        list[n] = .{ .disk = "c/net/" ++ name, .source = "c/net/" ++ name ++ "/" ++ name ++ ".zig", .name = name };
+        list[n] = .{ .disk = "c/net/" ++ name, .source = "c/net/" ++ name ++ "/" ++ name ++ ".zig", .name = name, .set = commandSet(name, .net) };
         n += 1;
     }
     for (window_programs) |program| {
@@ -558,7 +710,7 @@ pub const a64_files = [_]File{
 
 /// The radio's device: built only when the vendor libraries it links are
 /// at hand (scripts/fetch-wifi.sh), given to this package as `-Dwifi=`.
-pub const wifi_device: Program = .{ .disk = "devs/networks/esp32s3wifi.device", .source = "devs/networks/esp32s3wifi/esp32s3wifi.zig", .name = "esp32s3wifi.device" };
+pub const wifi_device: Program = .{ .disk = "devs/networks/esp32s3wifi.device", .source = "devs/networks/esp32s3wifi/esp32s3wifi.zig", .name = "esp32s3wifi.device", .set = .wifi };
 
 /// The vendor archives esp32s3wifi.device links, and the chip ROM's scripts.
 pub const wifi_archives = [_][]const u8{ "libcore.a", "libnet80211.a", "libpp.a", "libphy.a" };

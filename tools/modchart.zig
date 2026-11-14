@@ -31,6 +31,17 @@
 //!
 //! With --check it writes nothing and fails if a chart is not what it
 //! would write: the build's check that the charts are up to date.
+//!
+//! modchart --needs <src dir> <sdk dir> <disk programs>: what a disk's
+//! programs open that the disk does not hold. <disk programs> has a line
+//! `<name>=<root file>=<set>=<on|off>` for everything built for the
+//! disk's chip - a module by its name, a program by its place on the
+//! disk - `on` when it is on the disk and `off` when the board's sets
+//! leave it off. Each module that is off and that something on the disk
+//! opens is written to the standard output with its set and who opens
+//! it; nothing is written when there is none. It never fails for what it
+//! finds: what a disk holds is its board's choice, and this says what the
+//! choice leaves without.
 
 const std = @import("std");
 const mem = std.mem;
@@ -142,6 +153,11 @@ const Edge = struct {
         const order = mem.order(u8, a.from, b.from);
         return if (order == .eq) mem.lessThan(u8, a.to, b.to) else order == .lt;
     }
+
+    fn byTarget(_: void, a: Edge, b: Edge) bool {
+        const order = mem.order(u8, a.to, b.to);
+        return if (order == .eq) mem.lessThan(u8, a.from, b.from) else order == .lt;
+    }
 };
 
 /// A constant whose value is a module's name, and the file it is in.
@@ -229,6 +245,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
+    if (args.len > 1 and mem.eql(u8, args[1], "--needs")) return needs(io, arena, args[2..]);
     const check = args.len > 1 and mem.eql(u8, args[1], "--check");
     const first: usize = if (check) 2 else 1;
     if (args.len != first + 4) fatal("usage: modchart [--check] <modules.md> <src dir> <sdk dir> <disk modules>", .{});
@@ -269,6 +286,57 @@ pub fn main(init: std.process.Init) !void {
         fatal("{s} is out of date: run `./zig build modchart`", .{chart_path});
     }
     if (!mem.eql(u8, current, written)) try cwd.writeFile(io, .{ .sub_path = chart_path, .data = written });
+}
+
+/// Something on a disk's list: the set it is in, and whether the disk
+/// holds it.
+const Listed = struct { set: []const u8, on: bool };
+
+/// `--needs`: the modules a disk leaves off that something on it opens.
+fn needs(io: Io, arena: Allocator, args: []const []const u8) !void {
+    if (args.len != 3) fatal("usage: modchart --needs <src dir> <sdk dir> <disk programs>", .{});
+    const src_path = args[0];
+    const sdk_path = args[1];
+    const list_path = args[2];
+
+    var graph: Graph = .{};
+    try findRomModules(io, arena, &graph, src_path);
+    const rom_count = graph.modules.items.len;
+    var listed: std.StringHashMapUnmanaged(Listed) = .empty;
+    const list = try Io.Dir.cwd().readFileAlloc(io, list_path, arena, .unlimited);
+    var lines = mem.splitScalar(u8, list, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, '=');
+        const name = fields.next().?;
+        const root = fields.next() orelse fatal("{s}: not <name>=<root file>=<set>=<on|off>: {s}", .{ list_path, line });
+        const set = fields.next() orelse fatal("{s}: not <name>=<root file>=<set>=<on|off>: {s}", .{ list_path, line });
+        const state = fields.next() orelse fatal("{s}: not <name>=<root file>=<set>=<on|off>: {s}", .{ list_path, line });
+        try graph.modules.append(arena, .{ .name = name, .root = root, .rom = false });
+        try listed.put(arena, name, .{ .set = set, .on = mem.eql(u8, state, "on") });
+    }
+
+    for ([_][]const u8{ sdk_path, src_path }) |tree| try collectConstants(io, arena, &graph, tree);
+    for (graph.modules.items[rom_count..]) |module| {
+        if (listed.get(module.name).?.on) try scanModule(io, arena, &graph, module);
+    }
+    mem.sort(Edge, graph.edges.items, {}, Edge.byTarget);
+
+    var out: std.ArrayList(u8) = .empty;
+    var last: []const u8 = "";
+    for (graph.edges.items) |edge| {
+        const target = listed.get(edge.to) orelse continue;
+        if (target.on) continue;
+        if (!mem.eql(u8, last, edge.to)) {
+            if (last.len == 0) try out.appendSlice(arena, "Opened by what is on this disk, and left off it by the board's sets:\n");
+            try out.print(arena, "\n  {s} (set {s}), opened by", .{ edge.to, target.set });
+            last = edge.to;
+        } else try out.append(arena, ',');
+        try out.print(arena, " {s}", .{edge.from});
+    }
+    if (last.len != 0) try out.appendSlice(arena, "\n\n");
+    try Io.File.stdout().writeStreamingAll(io, out.items);
 }
 
 /// The ROM's modules, by their place under <src dir>.
