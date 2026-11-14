@@ -77,8 +77,11 @@ const _bind = @import("../bind/_bind.zig");
 const _notify = @import("../notify/_notify.zig");
 const _linkpower = @import("_linkpower.zig");
 
-/// The most ports a hub's ports are kept for.
-pub const max_ports = 15;
+/// The most ports a hub's ports are kept for: what the four bytes of
+/// its status bitmap hold, a bit each from bit 1. A hub plugged in has
+/// fifteen at most; a controller's root hub is all its root ports, USB 2
+/// and USB 3, which is more.
+pub const max_ports = 31;
 /// A control transfer's limit: a device that NAKs for longer is taken
 /// for one that will not answer.
 const control_timeout_ms = 1000;
@@ -1065,7 +1068,9 @@ fn isRootHub(hub: *const Hub) bool {
 /// A device that was found on a port and did not answer, said so; and on a
 /// root port it cannot be pulled out of, the controller to be reset.
 fn notAnswered(bus: *Bus, hub: *const Hub, port: u8) void {
-    const fixed = isRootHub(hub) and hub.fixed & (@as(u16, 1) << @intCast(port)) != 0;
+    // DeviceRemovable names the first fifteen ports; one past them can
+    // be pulled out.
+    const fixed = isRootHub(hub) and port < 16 and hub.fixed & (@as(u16, 1) << @intCast(port)) != 0;
     sdk.exec.kprintf(bus.usb_base.sys_base, "%s: bus %d: the device on port %d of the hub at address %d does not answer\n", .{ usb.USBNAME, bus.number, @as(u32, port), @as(u32, hub.device.public.address) });
     if (fixed) bus.wants_reset = true;
 }

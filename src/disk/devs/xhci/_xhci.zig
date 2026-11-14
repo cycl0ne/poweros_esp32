@@ -63,9 +63,11 @@ pub const DEVICE_NAME = "xhci.device";
 /// The device slots a controller is given at most: devices on its bus,
 /// hubs among them.
 pub const max_slots = 32;
-/// The root hub's ports at most: a hub's bitmap holds fifteen, and the
-/// USB 2 ones come first.
-pub const max_root_ports = 15;
+/// The root hub's ports at most: what the four bytes of its status
+/// bitmap hold, a bit each from bit 1. A controller's USB 2 ports and its
+/// USB 3 ports are all root ports - twelve and six on a laptop's - so
+/// this is well past a hub's fifteen. The USB 2 ones come first.
+pub const max_root_ports = 31;
 /// TRBs on a transfer ring and on the command ring: a TD is three at most
 /// - a control transfer's stages - and one TD is on a ring at a time.
 pub const ring_trbs = 32;

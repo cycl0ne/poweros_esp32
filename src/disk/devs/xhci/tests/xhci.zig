@@ -268,9 +268,14 @@ test "the root hub's ports: the USB 2 ones first, then the USB 3 ones" {
     try testing.expectEqual(@as(u32, 3), controller.mapPorts(.{}, 3, &map, &super));
     try testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, map[0..3]);
     try testing.expectEqual(@as(u32, 0), super);
-    // More than a hub's bitmap holds: the first fifteen.
-    try testing.expectEqual(@as(u32, 15), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 10, .usb3_first = 11, .usb3_count = 10 }, 20, &map, &super));
-    try testing.expectEqual(@as(u8, 15), map[14]);
+    // A laptop's controller, twelve USB 2 ports and six USB 3 ones: all
+    // eighteen, the last six SuperSpeed.
+    try testing.expectEqual(@as(u32, 18), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 12, .usb3_first = 13, .usb3_count = 6 }, 18, &map, &super));
+    try testing.expectEqual(@as(u8, 18), map[17]);
+    try testing.expectEqual(@as(u32, 0b111_1110_0000_0000_0000), super);
+    // More than the hub's bitmap holds: the first thirty-one.
+    try testing.expectEqual(@as(u32, 31), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 20, .usb3_first = 21, .usb3_count = 20 }, 40, &map, &super));
+    try testing.expectEqual(@as(u8, 31), map[30]);
     // A capability naming ports the controller does not have: left out.
     try testing.expectEqual(@as(u32, 2), controller.mapPorts(.{ .usb2_first = 1, .usb2_count = 2, .usb3_first = 3, .usb3_count = 2 }, 2, &map, &super));
     try testing.expectEqual(@as(u32, 0), super);

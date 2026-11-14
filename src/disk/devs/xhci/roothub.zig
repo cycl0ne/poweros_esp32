@@ -69,7 +69,7 @@ const config_descriptor = extern struct {
     .endpoint = .{
         .endpoint_address = d.USB_DIR_IN | 1,
         .attributes = d.USB_ENDPOINT_XFER_INT,
-        .max_packet_size = 2,
+        .max_packet_size = status_bytes,
         .interval = 12,
     },
 };
@@ -341,18 +341,23 @@ pub fn portChanged(host: *Host) void {
     answerStatus(host);
 }
 
+/// How many bytes the root hub's status bitmap is: a bit per port from
+/// bit 1, for every port the hub may have.
+const status_bytes = (_xhci.max_root_ports + 8) / 8;
+
 /// The held status-change transfer answered, if a port has changed: a
-/// bit per port, from bit 1.
+/// bit per port, from bit 1, in as many bytes as the ports take.
 fn answerStatus(host: *Host) void {
     const req = host.root.waiting orelse return;
-    var bitmap: u16 = 0;
+    var bitmap: u32 = 0;
     var port: u32 = 1;
     while (port <= host.ports) : (port += 1) {
-        if (statusOf(portsc(host, port).*).change != 0) bitmap |= @as(u16, 1) << @intCast(port);
+        if (statusOf(portsc(host, port).*).change != 0) bitmap |= @as(u32, 1) << @intCast(port);
     }
     if (bitmap == 0) return;
     host.root.waiting = null;
-    give(req, &[_]u8{ @truncate(bitmap), @truncate(bitmap >> 8) });
+    const bytes = [status_bytes]u8{ @truncate(bitmap), @truncate(bitmap >> 8), @truncate(bitmap >> 16), @truncate(bitmap >> 24) };
+    give(req, bytes[0..@min((host.ports + 8) / 8, status_bytes)]);
     _xhci.reply(host, req, 0);
 }
 
