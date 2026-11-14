@@ -47,8 +47,9 @@ const screen = struct {
 /// describes a controller only where nothing can find it, which is a
 /// controller of a chip's own.
 ///
-/// The machine's own older keyboard and mouse ports are not driven
-/// either: what is plugged into a machine of this kind today is USB.
+/// The machine's own older keyboard and mouse ports are no parts
+/// either: ps2.resource looks for their controller at the two ports every
+/// machine that has one has it at.
 /// QEMU's virtio GPU on PCI, there when the machine is started with
 /// `-device virtio-gpu-pci`: a function of its own, which the driver
 /// finds by what it is rather than by where it lies, so nothing here says

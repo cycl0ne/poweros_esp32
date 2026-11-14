@@ -8,6 +8,12 @@
 //! every machine of this architecture has, and power.resource for turning
 //! the machine off and for its power button.
 //!
+//! ps2.resource for the keyboard and the pointing device on the machine's
+//! keyboard controller - a laptop's own keyboard and TrackPoint - which
+//! hands their keys and moves to keyboard.device and mouse.device. A
+//! machine without the controller has the resource all the same, and it
+//! says there is none.
+//!
 //! And what starting from an NVMe disk takes, as on both other emulated
 //! 64-bit boards: pci.library, nvme.device and posfs-handler, the disk's
 //! own, built in as they are. The machine has no flash: SYS: is the system
@@ -56,6 +62,7 @@ pub const modules = .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
     @import("../../rom/resources/power/power.zig"),
+    @import("../../rom/resources/ps2/ps2.zig"),
     @import("../../disk/libs/pci/pci.zig"),
     @import("../../rom/resources/amdgpu/amdgpu.zig"),
     @import("../../rom/resources/watchdog/watchdog.zig"),

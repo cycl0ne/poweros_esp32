@@ -241,7 +241,9 @@ Beside them:
   way back from one that does not come up (`C:Update`,
   `SYS:System/Update`, `C:Reboot`).
 - **Devices:** timer, serial, console, input from keyboards, mice and
-  touch - and a character typed by no key, which goes to the text
+  touch - a PC's own keyboard and TrackPoint or touchpad on its keyboard
+  controller among them (`ps2.resource`, x86-64) - and a character typed
+  by no key, which goes to the text
   gadgets, the windows and the consoles as a key's does -, flash, SD
   card, NVMe, I2C, RS-485, clipboard; USB hosts on the
   ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk

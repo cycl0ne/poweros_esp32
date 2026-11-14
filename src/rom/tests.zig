@@ -17,6 +17,7 @@ test {
     _ = @import("resources/battmem/battmem.zig");
     _ = @import("resources/thermal/thermal.zig");
     _ = @import("resources/power/power.zig");
+    _ = @import("resources/ps2/ps2.zig");
     _ = @import("resources/amdgpu/amdgpu.zig");
     _ = @import("libs/rtg/rtg.zig");
     _ = @import("libs/rta/rta.zig");
