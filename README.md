@@ -1200,7 +1200,7 @@ More build steps and options:
 | `-Dstick-size=320` | how many mebibytes that medium's EFI System partition is |
 | `-Dstick-ram` | the system on that medium as a disk image beside the kernel too, which the loader reads into RAM: for a machine whose USB controller the system does not drive |
 | `./zig build archive -Dboard=olimex_p4pc` | what that board is handed over in, into `release/` |
-| `./zig build release` | every board's archive and package at once, into `release/` |
+| `./zig build release` | every board's archive and package at once, into `release/`, after `check-all` has passed |
 | `./zig build sums` | `release/SHA256SUMS` over the archives in `release/`, in the form `sha256sum -c` and `C:Hash CHECK` read |
 | `./zig build posfsck -- [--data] flash.bin` | check the posfs volumes of a flash dump or a card's image on the host ([posfs guide](sdk/docs/guides/posfs.md#checking-a-volume)) |
 | `-Ddisk-tree=false` | leave the `disk/` tree in this root off the disk images: what `archive` and `release` want for something to hand out, since those files are the builder's own |
@@ -1280,6 +1280,7 @@ src/boards/    one folder per board: its parts and wiring, the groups and driver
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)
+build/         the build's files, which build.zig calls into: boards, tools, disk images, fetched files, kernels, emulators, releases, tests
 tools/         build helpers: mkfs, mkpackage, serve, ressize, ramimage, padimage, mkicon, the autodocs, the module charts, checks
 release/       what a release is made of, written by the packaging steps and kept out of the repository
 scripts/       the QEMU build and its patches, the pinned fetches (Wi-Fi libraries and firmware, fonts, certificates, icons, esp-emulator, noVNC), a serial terminal, the display in a browser and pictures of it

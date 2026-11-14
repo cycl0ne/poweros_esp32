@@ -8,7 +8,7 @@
 //!
 //! A module is in one group. One that a board leaves out of its ROM and
 //! has on its disk instead - `pipe`, `motion` - is on the build's list of
-//! those too (`rom_on_disk` in build.zig).
+//! those too (`rom_on_disk` in build/disk.zig).
 
 /// What every image has: the devices and libraries dos stands on, dos
 /// and its handlers, the shell, and what tells a program which system
