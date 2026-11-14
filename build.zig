@@ -5,7 +5,7 @@
 //! images (disk.zig) and what was fetched for them (fetched.zig), the
 //! kernels and their images and the flash steps (kernel.zig), the
 //! emulators' steps (qemu.zig), packages and archives (release.zig), the
-//! tests and checks (tests.zig). Each phase there is a function that takes
+//! tests and checks (tests.zig), the `help` step (help.zig). Each phase there is a function that takes
 //! what the build has so far in a structure and hands on what it made.
 
 const std = @import("std");
@@ -21,6 +21,7 @@ const build_qemu = @import("build/qemu.zig");
 const build_release = @import("build/release.zig");
 const build_tools = @import("build/tools.zig");
 const build_tests = @import("build/tests.zig");
+const build_help = @import("build/help.zig");
 
 // The names `build` uses from them.
 const Board = build_boards.Board;
@@ -395,4 +396,7 @@ pub fn build(b: *std.Build) void {
         .rv64_disk_bin = rv64_disk_bin,
         .x64_disk_bin = x64_disk_bin,
     });
+
+    // Last, so that it lists every step and option above.
+    build_help.addHelpStep(b);
 }

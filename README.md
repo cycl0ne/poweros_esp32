@@ -372,6 +372,7 @@ scripts/prune-cache.sh --dir ~/.cache/zig --limit 8G  # the global one
 
 ```sh
 ./zig build                  # the kernel and a flash disk: zig-out/bin/flash.bin
+./zig build help             # every step and every option of this build, with what each is for
 ./zig build test             # the host tests and the checks of generated files
 ./zig build check            # the kernel and the disk of -Dboard= compile, nothing installed
 ./zig build check-all        # test, and every board's kernel and disk
