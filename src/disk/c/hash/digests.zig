@@ -97,32 +97,9 @@ fn same(text: []const u8, want: []const u8) bool {
 
 // --- CRC-32 -----------------------------------------------------------------------
 
-/// CRC-32 as zip, PNG and SFV files have it: the reflected polynomial
-/// 0xEDB88320, started at and finished with all ones.
-const crc_table = blk: {
-    @setEvalBranchQuota(4000);
-    var table: [256]u32 = undefined;
-    for (&table, 0..) |*entry, index| {
-        var crc: u32 = index;
-        for (0..8) |_| crc = if (crc & 1 != 0) 0xEDB8_8320 ^ (crc >> 1) else crc >> 1;
-        entry.* = crc;
-    }
-    break :blk table;
-};
-
-pub const crc_start: u32 = 0xFFFF_FFFF;
-
-/// More bytes into a running CRC.
-pub fn crcAdd(crc_in: u32, bytes: []const u8) u32 {
-    var crc = crc_in;
-    for (bytes) |byte| crc = crc_table[(crc ^ byte) & 0xFF] ^ (crc >> 8);
-    return crc;
-}
-
-/// A running CRC finished, as the four bytes a list shows, the highest
-/// first.
-pub fn crcDigest(crc: u32, into: *[4]u8) void {
-    const value = ~crc;
+/// A CRC-32 as zip, PNG and SFV files have it (compression.library's
+/// Crc32), as the four bytes a list shows, the highest first.
+pub fn crcDigest(value: u32, into: *[4]u8) void {
     into.* = .{ @truncate(value >> 24), @truncate(value >> 16), @truncate(value >> 8), @truncate(value) };
 }
 
@@ -336,11 +313,9 @@ fn fromLatin1InPlace(into: []u8, length: usize) ?[]const u8 {
 const std = @import("std");
 const testing = std.testing;
 
-test "CRC-32 of the check string, and in pieces" {
+test "a CRC-32 is shown highest byte first" {
     var digest: [4]u8 = undefined;
-    crcDigest(crcAdd(crc_start, "123456789"), &digest);
-    try testing.expectEqualSlices(u8, &.{ 0xCB, 0xF4, 0x39, 0x26 }, &digest);
-    crcDigest(crcAdd(crcAdd(crc_start, "1234"), "56789"), &digest);
+    crcDigest(0xCBF4_3926, &digest);
     try testing.expectEqualSlices(u8, &.{ 0xCB, 0xF4, 0x39, 0x26 }, &digest);
 }
 

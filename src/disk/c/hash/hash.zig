@@ -12,8 +12,8 @@
 //!
 //! ALGO is CRC32, MD5, SHA1, SHA224, SHA256 (what it is without ALGO),
 //! SHA384 or SHA512, in either case and with or without a `-` after SHA.
-//! CRC-32 is worked out here; the others come from crypto.library, which
-//! is opened only when one of them is asked for. A file longer than one
+//! CRC-32 comes from compression.library and the others from
+//! crypto.library, each opened only when it is asked for. A file longer than one
 //! read is read ahead (BUF_ASYNC, dos.library 1.15): its next piece comes
 //! while this one is hashed.
 //!
@@ -46,6 +46,7 @@ const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
+const CompressionBase = sdk.interface.compression.CompressionBase;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 const FPrintf = dos.stdio.FPrintf;
@@ -53,7 +54,7 @@ const digests = @import("digests.zig");
 const Algorithm = digests.Algorithm;
 
 pub const COMMAND_NAME = "Hash";
-const VERSION_STRING = "\x00$VER: Hash 1.3 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Hash 1.4 (14.11.2026)\r\n";
 
 const template = "FILE/M,ALGO/K,CHECK/S,TO/K,ALL/S,QUIET/S";
 const arg_file = 0;
@@ -93,6 +94,7 @@ const Run = struct {
     dl: *DosBase,
     /// crypto.library once an algorithm of its has been asked for.
     crypto_lib: ?*exec.Library,
+    compression_lib: ?*exec.Library,
     /// ALGO, or null when it was not given.
     algorithm: ?Algorithm,
     quiet: bool,
@@ -159,6 +161,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     run.sys = sys;
     run.dl = dl;
     run.crypto_lib = null;
+    run.compression_lib = null;
     run.algorithm = algorithm;
     run.quiet = argv[arg_quiet] != 0;
     run.all = argv[arg_all] != 0;
@@ -172,11 +175,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     run.malformed = 0;
     run.empty_list = false;
     defer if (run.crypto_lib) |crypto_lib| sys.CloseLibrary(crypto_lib);
+    defer if (run.compression_lib) |compression_lib| sys.CloseLibrary(compression_lib);
 
     if (!check) {
         // An algorithm crypto.library lacks is said once, before anything
         // is read.
         if (hasher(run, algorithm orelse .sha256) == null and algorithm != .crc32) return dos.RETURN_FAIL;
+        if (algorithm == .crc32 and checksummer(run) == null) return dos.RETURN_FAIL;
     }
 
     var to_file: ?*dos.FileHandle = null;
@@ -423,15 +428,21 @@ fn checkEntry(run: *Run, entry: *const digests.Entry, algorithm: Algorithm) void
 fn digestOf(run: *Run, file: ?*dos.FileHandle, algorithm: Algorithm, digest: *[digests.digest_max]u8) ?usize {
     const dl = run.dl;
     var read_ahead = file != dl.Input();
-    var crc = digests.crc_start;
+    var crc: u32 = 0;
     var context: crypto.HashContext = .{};
     var engine: ?*CryptoBase = null;
+    var summer: ?*CompressionBase = null;
     if (algorithm != .crc32) {
         engine = hasher(run, algorithm) orelse {
             run.stop = true;
             return null;
         };
         _ = engine.?.InitHash(&context, cryptoAlgorithm(algorithm));
+    } else {
+        summer = checksummer(run) orelse {
+            run.stop = true;
+            return null;
+        };
     }
     while (true) {
         if (dl.CheckSignal(exec.SIGBREAKF_CTRL_C) != 0) {
@@ -448,11 +459,27 @@ fn digestOf(run: *Run, file: ?*dos.FileHandle, algorithm: Algorithm, digest: *[d
             read_ahead = false;
         }
         const bytes = run.buffer[0..@intCast(got)];
-        if (engine) |cb| cb.UpdateHash(&context, bytes.ptr, @intCast(bytes.len)) else crc = digests.crcAdd(crc, bytes);
+        if (engine) |cb| cb.UpdateHash(&context, bytes.ptr, @intCast(bytes.len)) else crc = summer.?.Crc32(crc, bytes.ptr, @intCast(bytes.len));
     }
     if (engine) |cb| return cb.FinishHash(&context, digest);
     digests.crcDigest(crc, digest[0..4]);
     return 4;
+}
+
+/// compression.library, whose Crc32 takes CRC-32, opened the first time
+/// it is needed; null (and said) when it cannot be had.
+fn checksummer(run: *Run) ?*CompressionBase {
+    const dl = run.dl;
+    const compression_lib = run.compression_lib orelse open: {
+        const opened = run.sys.OpenLibrary(sdk.compression.COMPRESSIONNAME, 1) orelse {
+            _ = dl.Flush(dl.Output());
+            _ = FPrintf(dl, dl.ErrorOutput() orelse dl.Output(), MSG_NOLIBRARY, .{ COMMAND_NAME, sdk.compression.COMPRESSIONNAME });
+            return null;
+        };
+        run.compression_lib = opened;
+        break :open opened;
+    };
+    return @ptrCast(compression_lib);
 }
 
 /// crypto.library, opened the first time it is needed, when it has

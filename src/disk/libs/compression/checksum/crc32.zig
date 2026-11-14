@@ -25,7 +25,12 @@ const _checksum = @import("_checksum.zig");
 /// BEHAVIOR:
 /// The result may be handed in again for the bytes after, so a file's
 /// CRC is taken a buffer at a time: `Crc32(Crc32(0, a), b)` is
-/// `Crc32(0, a ++ b)`.
+/// `Crc32(0, a ++ b)`. The bytes go the fastest way the core has, which
+/// the library asks platform.resource for when it is made: 64 bytes a
+/// step by carry-less products on an x86-64 core with them
+/// (`CPUF_CLMUL`), eight bytes an instruction on an AArch64 core with
+/// CRC32 (`CPUF_CRC32`), eight bytes a step from tables anywhere else.
+/// The answer is the same whichever way.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -37,7 +42,8 @@ const _checksum = @import("_checksum.zig");
 /// Nothing is kept.
 ///
 /// NOTES:
-/// None.
+/// Hand it buffers, not bytes: the fast ways start at 64 bytes on x86-64
+/// and 8 elsewhere, and a shorter run goes a byte at a time.
 ///
 /// BUGS:
 /// None known.
@@ -50,7 +56,7 @@ const _checksum = @import("_checksum.zig");
 /// var crc: u32 = 0;
 /// crc = cb.Crc32(crc, buffer.ptr, got); // for each buffer read
 /// ```
-pub fn Crc32(_: *CompressionBase, crc: u32, data: ?*const anyopaque, length: u32) u32 {
+pub fn Crc32(cb: *CompressionBase, crc: u32, data: ?*const anyopaque, length: u32) u32 {
     const bytes: [*]const u8 = @ptrCast(data orelse return crc);
-    return _checksum.crc32(crc, bytes[0..length]);
+    return _checksum.crc32(cb.crc_path, crc, bytes[0..length]);
 }

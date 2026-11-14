@@ -342,6 +342,7 @@ flowchart TB
     m_clock_docklet --> m_dos_library
     m_commodities_library --> m_input_device
     m_commodities_library --> m_keymap_library
+    m_compression_library --> m_platform_resource
     m_crypto_library --> m_dma_resource
     m_crypto_library --> m_platform_resource
     m_crypto_library --> m_timer_device

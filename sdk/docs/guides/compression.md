@@ -167,3 +167,10 @@ var crc: u32 = 0;
 crc = cb.Crc32(crc, first.ptr, @intCast(first.len));
 crc = cb.Crc32(crc, rest.ptr, @intCast(rest.len)); // the same as over both at once
 ```
+
+`Crc32` takes the fastest way the core has, which the library asks
+platform.resource for when it is made (`CpuFeature`): carry-less
+products on an x86-64 core with them, the CRC32 instructions on an
+AArch64 core with them, tables anywhere else. The sum is the same
+whichever way; hand it buffers rather than single bytes, since the fast
+ways start at 64 bytes on x86-64 and at 8 elsewhere.

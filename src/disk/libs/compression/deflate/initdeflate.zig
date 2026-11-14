@@ -66,7 +66,7 @@ pub fn InitDeflate(cb: *CompressionBase, stream: *Stream, format: u32, level: u3
     if (stream.size < @sizeOf(Stream) or format > compression.FORMAT_GZIP or level > compression.LEVEL_BEST) return compression.COMPRESSERR_STREAM;
     const memory = cb.sys_base.AllocVec(@sizeOf(_deflate.State), exec.MEMF_ANY) orelse return compression.COMPRESSERR_MEMORY;
     const state: *_deflate.State = @ptrCast(@alignCast(memory));
-    _deflate.begin(state, format, level);
+    _deflate.begin(state, format, level, cb.crc_path);
     stream.state = state;
     stream.total_in = 0;
     stream.total_out = 0;

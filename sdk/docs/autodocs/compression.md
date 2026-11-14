@@ -233,7 +233,12 @@ ones).
 
 The result may be handed in again for the bytes after, so a file's
 CRC is taken a buffer at a time: `Crc32(Crc32(0, a), b)` is
-`Crc32(0, a ++ b)`.
+`Crc32(0, a ++ b)`. The bytes go the fastest way the core has, which
+the library asks platform.resource for when it is made: 64 bytes a
+step by carry-less products on an x86-64 core with them
+(`CPUF_CLMUL`), eight bytes an instruction on an AArch64 core with
+CRC32 (`CPUF_CRC32`), eight bytes a step from tables anywhere else.
+The answer is the same whichever way.
 
 **CONTEXT**
 
@@ -248,7 +253,8 @@ Nothing is kept.
 
 **NOTES**
 
-None.
+Hand it buffers, not bytes: the fast ways start at 64 bytes on x86-64
+and 8 elsewhere, and a shorter run goes a byte at a time.
 
 **BUGS**
 

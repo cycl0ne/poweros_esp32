@@ -87,6 +87,8 @@ const configs = [10]Config{
 pub const State = struct {
     magic: u32 = magic,
     format: u32,
+    /// How a gzip stream's CRC-32 goes through the bytes.
+    crc_path: _checksum.Path,
     level: u32,
     config: Config,
     /// The window, and the input ahead of `start`.
@@ -158,10 +160,12 @@ const Tree = struct {
 };
 
 /// A state set up for `format` and `level`, which the caller has
-/// checked. Large (about 320 KiB): the caller allocates it.
-pub fn begin(state: *State, format: u32, level: u32) void {
+/// checked, its gzip checksum taken by `crc_path`. Large (about 320 KiB):
+/// the caller allocates it.
+pub fn begin(state: *State, format: u32, level: u32, crc_path: _checksum.Path) void {
     state.magic = magic;
     state.format = format;
+    state.crc_path = crc_path;
     state.level = level;
     state.config = configs[level];
     state.head = @splat(0);
@@ -440,7 +444,7 @@ fn fill(state: *State, input: *[]const u8) void {
     @memcpy(state.window[end..][0..count], fresh);
     switch (state.format) {
         compression.FORMAT_ZLIB => state.check = _checksum.adler32(state.check, fresh),
-        compression.FORMAT_GZIP => state.check = _checksum.crc32(state.check, fresh),
+        compression.FORMAT_GZIP => state.check = _checksum.crc32(state.crc_path, state.check, fresh),
         else => {},
     }
     state.taken += count;

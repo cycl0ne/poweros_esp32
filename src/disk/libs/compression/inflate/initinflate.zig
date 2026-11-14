@@ -65,7 +65,7 @@ pub fn InitInflate(cb: *CompressionBase, stream: *Stream, format: u32) i32 {
     if (stream.size < @sizeOf(Stream) or format > compression.FORMAT_AUTO) return compression.COMPRESSERR_STREAM;
     const memory = cb.sys_base.AllocVec(@sizeOf(_inflate.State), exec.MEMF_ANY) orelse return compression.COMPRESSERR_MEMORY;
     const state: *_inflate.State = @ptrCast(@alignCast(memory));
-    _inflate.begin(state, format);
+    _inflate.begin(state, format, cb.crc_path);
     stream.state = state;
     stream.total_in = 0;
     stream.total_out = 0;

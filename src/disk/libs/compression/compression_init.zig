@@ -9,12 +9,15 @@ const compression = sdk.compression;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("compression_base.zig");
 const CompressionBase = _base.CompressionBase;
+const _checksum = @import("checksum/_checksum.zig");
+const PlatformBase = sdk.interface.platform.PlatformBase;
+const platform = sdk.resources.platform;
 const compression_lvo = @import("compression_lvo.zig");
 
 pub const LIBRARY_NAME = compression.COMPRESSIONNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
-const BUILD_DATE = "25.10.2026";
+pub const LIBRARY_REVISION = 1;
+const BUILD_DATE = "14.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -26,7 +29,21 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const header = lib.*;
     cb.* = .{ .lib = header, .sys_base = sys_base, .seg_list = seg_list };
     lib.revision = LIBRARY_REVISION;
+    cb.crc_path = crcPath(sys_base);
     return lib;
+}
+
+/// How CRC-32 goes through the bytes here: by carry-less products on an
+/// x86-64 core that has them, by the core's own instructions on an
+/// AArch64 core with CRC32, by tables anywhere else - and where there is
+/// no platform.resource to ask, which is the host's tests.
+fn crcPath(sys: *ExecBase) _checksum.Path {
+    if (!_checksum.has_products and !_checksum.has_instructions) return .tables;
+    const found = sys.OpenResource(platform.PLATFORMNAME) orelse return .tables;
+    const pr: *PlatformBase = @ptrCast(@alignCast(found));
+    if (_checksum.has_products and pr.CpuFeature(platform.CPUF_CLMUL)) return .products;
+    if (_checksum.has_instructions and pr.CpuFeature(platform.CPUF_CRC32)) return .instructions;
+    return .tables;
 }
 
 /// The library goes when nobody has it open: the base freed, and the

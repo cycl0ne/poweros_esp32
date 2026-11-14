@@ -82,6 +82,8 @@ pub const State = struct {
     /// FORMAT_RAW, FORMAT_ZLIB or FORMAT_GZIP; FORMAT_AUTO until the
     /// header says which.
     format: u32,
+    /// How a gzip stream's CRC-32 goes through the bytes.
+    crc_path: _checksum.Path = .tables,
     mode: Mode,
     /// The bits taken from the input and not yet used, the first the
     /// lowest.
@@ -129,10 +131,12 @@ pub fn of(stream: *compression.Stream) ?*State {
     return if (state.magic == magic) state else null;
 }
 
-/// A state set up for `format`, which the caller has checked.
-pub fn begin(state: *State, format: u32) void {
+/// A state set up for `format`, which the caller has checked, its gzip
+/// checksum taken by `crc_path`.
+pub fn begin(state: *State, format: u32, crc_path: _checksum.Path) void {
     state.* = .{
         .format = format,
+        .crc_path = crc_path,
         .mode = if (format == compression.FORMAT_RAW) .block else .header,
     };
 }
@@ -232,7 +236,7 @@ const Call = struct {
         call.checked = call.written;
         switch (call.state.format) {
             compression.FORMAT_ZLIB => call.state.check = _checksum.adler32(call.state.check, fresh),
-            compression.FORMAT_GZIP => call.state.check = _checksum.crc32(call.state.check, fresh),
+            compression.FORMAT_GZIP => call.state.check = _checksum.crc32(call.state.crc_path, call.state.check, fresh),
             else => {},
         }
     }

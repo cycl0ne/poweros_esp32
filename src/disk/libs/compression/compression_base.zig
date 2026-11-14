@@ -6,6 +6,7 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
+const _checksum = @import("checksum/_checksum.zig");
 
 pub const CompressionBase = extern struct {
     lib: exec.Library,
@@ -13,6 +14,9 @@ pub const CompressionBase = extern struct {
     sys_base: *ExecBase,
     /// What LoadSeg made, handed back at the expunge.
     seg_list: ?*anyopaque = null,
+    /// How CRC-32 goes through the bytes on this core, asked of
+    /// platform.resource when the library is made.
+    crc_path: _checksum.Path = .tables,
 };
 
 pub fn compressionBase(lib: *exec.Library) *CompressionBase {

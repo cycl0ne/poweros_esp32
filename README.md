@@ -791,6 +791,15 @@ core's own name, features and number, for a machine whose cores are not
 all alike. `C:Platform` prints it all (`Platform CPU` the name alone,
 `Platform CORES` a line a core), and About counts the cores by kind.
 
+**CRC-32 goes the fastest way the core has.** compression.library's
+`Crc32` - gzip's checksum, and what `C:Hash ALGO=CRC32` and the Git
+client's packs are summed with - asks platform.resource once, when the
+library is made: 64 bytes a step by carry-less products on an x86-64
+core that has them, eight bytes an instruction on an AArch64 core with
+CRC32, and eight bytes a step from tables on every other chip. On a
+Ryzen 9 9950X the products sum 19 GiB/s and the tables 3 GiB/s, where a
+byte a step managed 680 MiB/s.
+
 **AES, GCM and SHA run on the core's own instructions.** crypto.library
 asks platform.resource once, when it is made, for AES-NI, PCLMULQDQ and
 the SHA extensions (`CpuFeature`), and where the core has them a cipher's blocks go through the
