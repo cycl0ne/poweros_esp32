@@ -8,7 +8,11 @@
 //! which find the emulator's by the board's parts. It has no I2C, touch
 //! panel, codec or card slot, so none of their drivers is here.
 
-pub const modules = .{
+const rom = @import("../../rom/modules.zig");
+
+// What every image has, what draws, the ESP32s' own,
+// and the drivers of this board's parts.
+pub const modules = rom.core ++ rom.screen ++ rom.esp32 ++ .{
     @import("../../rom/libs/rtg_driver/qemuboard/qemuboard.zig"),
     @import("../../rom/libs/rta/rta.zig"),
     @import("../../rom/libs/rta_driver/null/null.zig"),

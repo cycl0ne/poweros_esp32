@@ -2,7 +2,11 @@
 //! The ROM tags the CrowPanel's image carries beyond the ones every image
 //! has: the drivers for the parts this board has.
 
-pub const modules = .{
+const rom = @import("../../rom/modules.zig");
+
+// What every image has, what draws, the ESP32s' own,
+// and the drivers of this board's parts.
+pub const modules = rom.core ++ rom.screen ++ rom.esp32 ++ .{
     // The chip's JPEG codec.
     @import("../../rom/resources/jpeg/jpeg.zig"),
     // The panel on MIPI-DSI.

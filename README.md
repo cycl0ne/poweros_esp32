@@ -1275,8 +1275,8 @@ the files take, and which ten are the largest.
 
 ```
 src/arch/      the chips (esp32s3, esp32p4, rv64sbi, a64psci, x64uefi): boot, exceptions, clock, MMU, memory, interrupts
-src/rom/       what is in the ROM: libraries, devices, handlers, resources, shell
-src/boards/    one folder per board: its parts and wiring, its drivers, and the sets its disk holds
+src/rom/       what is in the ROM: libraries, devices, handlers, resources, shell, and the groups a board's ROM is put together from (modules.zig)
+src/boards/    one folder per board: its parts and wiring, the groups and drivers in its ROM, and the sets its disk holds
 src/disk/      what goes on the disk: commands, test programs, disk-loaded
                libraries, devices and handlers, startup scripts (a package)
 sdk/           the SDK: types, constants, jump tables, autodocs, tools (a package)

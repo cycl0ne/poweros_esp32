@@ -11,7 +11,11 @@
 //! nodes - and posfs-handler, the file system on them. The machine has no
 //! flash: SYS: is the system disk's DH0:.
 
-pub const modules = .{
+const rom = @import("../../rom/modules.zig");
+
+// What every image has, what draws, the pipe and the clock of things that move, which this machine keeps in its ROM,
+// and the drivers of this board's parts.
+pub const modules = rom.core ++ rom.screen ++ rom.pipe ++ rom.motion ++ .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../rom/libs/rta/rta.zig"),
     @import("../../rom/libs/rta_driver/null/null.zig"),

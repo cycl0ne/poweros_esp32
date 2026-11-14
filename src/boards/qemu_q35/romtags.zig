@@ -58,7 +58,11 @@
 //! on an SSD starts none of them here, and finds them in the ROM when
 //! `S:Startup-Sequence` starts the buses.
 
-pub const modules = .{
+const rom = @import("../../rom/modules.zig");
+
+// What every image has, what draws, the pipe and the clock of things that move, which this machine keeps in its ROM,
+// and the drivers of this board's parts.
+pub const modules = rom.core ++ rom.screen ++ rom.pipe ++ rom.motion ++ .{
     @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
     @import("../../rom/resources/power/power.zig"),

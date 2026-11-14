@@ -3,7 +3,11 @@
 //! the drivers for the parts this board has. What is not needed to boot is
 //! not here, and a part the board lacks has no driver in the image.
 
-pub const modules = .{
+const rom = @import("../../rom/modules.zig");
+
+// What every image has, what draws, the ESP32s' own, the battery,
+// and the drivers of this board's parts.
+pub const modules = rom.core ++ rom.screen ++ rom.esp32 ++ rom.battery ++ .{
     // The I2C bus, and rtg's transport over it.
     @import("../../rom/devs/i2c/i2c.zig"),
     @import("../../rom/libs/rtg_driver/i2cbus/i2cbus.zig"),
@@ -13,6 +17,4 @@ pub const modules = .{
     @import("../../rom/resources/expander/expander.zig"),
     // The panel: RGB on LCD_CAM.
     @import("../../rom/libs/rtg_driver/rgbboard/rgbboard.zig"),
-    // The battery, whose voltage the board measures.
-    @import("../../rom/resources/battery/battery.zig"),
 };

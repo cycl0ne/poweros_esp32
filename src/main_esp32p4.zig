@@ -33,42 +33,11 @@ const sdk = @import("sdk");
 const st = sdk.expansion.systemtags;
 
 /// The ROM's modules: their ROM tags go into .resident, where exec's boot
-/// scan finds them. A list rather than a row of imports, so the SDK's
-/// layout check (sdk/sdk.zig) walks every structure they hold.
-pub const rom_modules = .{
-    @import("rom/devs/timer/timer.zig"),
-    @import("rom/devs/flash/flash.zig"),
-    @import("rom/devs/serial/serial.zig"),
-    @import("rom/devs/usbserial/usbserial.zig"),
-    @import("rom/devs/input/input.zig"),
-    @import("rom/devs/keyboard/keyboard.zig"),
-    @import("rom/devs/mouse/mouse.zig"),
-    @import("rom/libs/keymap/keymap.zig"),
-    @import("rom/libs/utility/utility.zig"),
-    @import("rom/libs/expansion/expansion.zig"),
-    @import("rom/resources/gpio/gpio.zig"),
-    @import("rom/resources/usbport/usbport.zig"),
-    @import("rom/resources/battclock/battclock.zig"),
-    @import("rom/resources/battmem/battmem.zig"),
-    @import("rom/resources/dma/dma.zig"),
-    @import("rom/libs/dos/dos.zig"),
-    @import("rom/libs/ramlib/ramlib.zig"),
-    @import("rom/handler/nil/nil.zig"),
-    @import("rom/handler/ram/ram.zig"),
-    @import("rom/handler/con/con.zig"),
-    @import("rom/handler/flashfs/flashfs.zig"),
-    @import("rom/shell/shell.zig"),
-    @import("rom/resources/watchdog/watchdog.zig"),
-    @import("rom/resources/platform/platform.zig"),
-    @import("rom/devs/console/console.zig"),
-    @import("rom/libs/rtg/rtg.zig"),
-    @import("rom/libs/graphics/graphics.zig"),
-    @import("rom/libs/layers/layers.zig"),
-    @import("rom/libs/intuition/intuition.zig"),
-    @import("rom/release.zig"),
-    // The drivers the board's parts want.
-    boards.romtags.modules,
-};
+/// scan finds them. The board's list (src/boards/<board>/romtags.zig),
+/// put together from the groups of src/rom/modules.zig and the drivers
+/// of the board's own parts; a list, so the SDK's layout check
+/// (sdk/sdk.zig) walks every structure the modules hold.
+pub const rom_modules = boards.romtags.modules;
 
 comptime {
     _ = @import("arch/esp32p4/trap.zig"); // exports riscv_exception for start.S

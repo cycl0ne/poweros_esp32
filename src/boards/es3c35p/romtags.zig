@@ -4,7 +4,11 @@
 //! boot is not here - sdcard.device and fat-handler are on the disk - and a
 //! part the board lacks has no driver in the image.
 
-pub const modules = .{
+const rom = @import("../../rom/modules.zig");
+
+// What every image has, what draws, the ESP32s' own, the battery,
+// and the drivers of this board's parts.
+pub const modules = rom.core ++ rom.screen ++ rom.esp32 ++ rom.battery ++ .{
     // The I2C bus, and rtg's transport over it.
     @import("../../rom/devs/i2c/i2c.zig"),
     @import("../../rom/libs/rtg_driver/i2cbus/i2cbus.zig"),
@@ -20,6 +24,4 @@ pub const modules = .{
     // The panel: a DCS controller on a QSPI bus.
     @import("../../rom/libs/rtg_driver/qspibus/qspibus.zig"),
     @import("../../rom/libs/rtg_driver/dcsboard/dcsboard.zig"),
-    // The battery, whose voltage the board measures.
-    @import("../../rom/resources/battery/battery.zig"),
 };
