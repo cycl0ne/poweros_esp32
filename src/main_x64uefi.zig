@@ -440,6 +440,19 @@ export fn kmain(at: usize) callconv(.c) noreturn {
         @tagName(builtin.mode),
     });
     note("handover at 0x%lx, firmware tables at 0x%lx, system table at 0x%lx", .{ @as(u64, at), @as(u64, tables_at), @as(u64, system_table) });
+    // Which partition the firmware read the loader from, by the first
+    // and last eight bytes of its identifier: the system is started on
+    // that partition's disk.
+    if (@hasDecl(boards.system, "boot_start")) {
+        const guid = &boards.system.boot_start.guid;
+        const first = std.mem.readInt(u64, guid[0..8], .big);
+        const last = std.mem.readInt(u64, guid[8..16], .big);
+        if (first != 0 or last != 0) {
+            note("started from the partition %lx %lx", .{ first, last });
+        } else {
+            note("the firmware named no partition it started from: the system is taken by boot priority", .{});
+        }
+    }
     if (tables.found) {
         note("firmware tables: %d listed, local controller at 0x%lx, %d I/O controller(s), %d core(s), %d line(s) rewired", .{
             tables.listed,
