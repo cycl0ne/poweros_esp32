@@ -63,7 +63,8 @@ pub fn parseSets(text: []const u8) ?Sets {
 /// system's own modules). A module the disk's host tests take in beside
 /// anvil.library, whose strings they import as `strings`, imports its
 /// own under a name of its own. And the set it is in (`Set`), which a
-/// board's disk has or has not.
+/// board's disk has or has not. No two programs have one name: the load
+/// file is installed under it.
 pub const Program = struct { disk: []const u8, source: []const u8, name: []const u8, set: Set = .base, imports: []const []const u8 = &.{}, strings: ?[]const u8 = null, strings_as: []const u8 = "strings", catalog: ?[]const u8 = null };
 
 /// A translation of a program's strings: its place on the disk, in
@@ -204,7 +205,9 @@ const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnet
 const window_programs = [_]Program{
     .{ .disk = "programs/FontView", .source = "programs/fontview/fontview.zig", .name = "fontview", .set = .gui },
     .{ .disk = "programs/MultiView", .source = "programs/multiview/multiview.zig", .name = "multiview", .set = .gui },
-    .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "battery", .set = .gui },
+    // Its load file is named apart from C:Battery's, as System/Update's
+    // is from C:Update's.
+    .{ .disk = "programs/Battery", .source = "programs/battery/battery.zig", .name = "batterymonitor", .set = .gui },
     .{ .disk = "programs/Prefs", .source = "programs/prefs/prefs.zig", .name = "prefs", .set = .gui },
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad", .set = .gui, .strings = "programs/notepad/notepad.cd" },
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet", .set = .gui, .strings = "programs/sheet/sheet.cd" },
@@ -635,7 +638,7 @@ fn commandSet(name: []const u8, usual: Set) Set {
 }
 
 pub const programs: []const Program = blk: {
-    @setEvalBranchQuota(100_000);
+    @setEvalBranchQuota(10_000_000);
     var list: [commands.len + tests.len + inner_tests.len + inner_commands.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
     var n: usize = 0;
     for (commands) |name| {
@@ -665,6 +668,16 @@ pub const programs: []const Program = blk: {
     for (modules) |module| {
         list[n] = module;
         n += 1;
+    }
+    // A load file is `<name>.seg` in zig-out/bin: two programs of one
+    // name would be written one over the other there. One program in
+    // two places - the dock - is one file.
+    for (list, 0..) |one, i| {
+        for (list[i + 1 ..]) |other| {
+            if (std.mem.eql(u8, one.name, other.name) and !std.mem.eql(u8, one.source, other.source)) {
+                @compileError(one.disk ++ " and " ++ other.disk ++ " have the load file name " ++ one.name);
+            }
+        }
     }
     const done = list;
     break :blk &done;
