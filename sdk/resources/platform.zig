@@ -19,7 +19,7 @@ pub const PLATFORMNAME = "platform.resource";
 pub const PlatformInfo = extern struct {
     /// The chip, as its maker names it ("ESP32-S3").
     chip: ?[*:0]const u8 = null,
-    /// The core inside it ("Xtensa LX7").
+    /// The core inside it, as CpuName has it ("Xtensa LX7").
     core: ?[*:0]const u8 = null,
     /// What it was built with ("zig 0.16.0-xtensa, ReleaseSafe").
     built: ?[*:0]const u8 = null,
@@ -61,6 +61,30 @@ pub const PlatformInfo = extern struct {
     psram_size: usize = 0,
     psram_vendor: u32 = 0,
 };
+
+/// CpuFeature's features: instructions a core may bring beyond what every
+/// program for its chip is built to. Each is a number, never a mask, and
+/// the numbers mean the same on every chip.
+///
+/// The AES round instructions, both directions.
+pub const CPUF_AES: u32 = 0;
+/// A carry-less product of two 64-bit words, all 128 bits of it.
+pub const CPUF_CLMUL: u32 = 1;
+/// The SHA-1 instructions.
+pub const CPUF_SHA1: u32 = 2;
+/// The SHA-224 and SHA-256 instructions.
+pub const CPUF_SHA256: u32 = 3;
+/// The SHA-384 and SHA-512 instructions.
+pub const CPUF_SHA512: u32 = 4;
+/// CRC-32 with the polynomial 0x04C11DB7, Ethernet's and zlib's.
+pub const CPUF_CRC32: u32 = 5;
+/// CRC-32C, with the polynomial 0x1EDC6F41 (Castagnoli).
+pub const CPUF_CRC32C: u32 = 6;
+/// One past the last feature there is.
+pub const CPUF_COUNT: u32 = 7;
+
+/// The most a CpuName is long, its NUL included.
+pub const CPU_NAME_SIZE = 64;
 
 /// SetMemoryType's kinds: every access reaching the machine on its own;
 /// writes gathered into bursts, reads as uncached (write-combining); or

@@ -62,6 +62,17 @@ pub fn implementationVersion() usize {
     return call(EXT_BASE, 2, 0, 0, 0).value;
 }
 
+/// The machine's mvendorid and marchid, which only machine mode reads:
+/// who made the core and which of theirs it is. 0 where the core does not
+/// say.
+pub fn machineVendor() usize {
+    return call(EXT_BASE, 4, 0, 0, 0).value;
+}
+
+pub fn machineArch() usize {
+    return call(EXT_BASE, 5, 0, 0, 0).value;
+}
+
 /// Whether the firmware has extension `ext`.
 pub fn probe(ext: usize) bool {
     return call(EXT_BASE, 3, ext, 0, 0).value != 0;

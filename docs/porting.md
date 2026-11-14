@@ -180,7 +180,11 @@ Inside exec, where the code is the CPU's own:
       the illegal instruction, and **how far a return address sits past
       its call**, which is the one place needing real care on a
       variable-length instruction set.
-- [ ] `resources/platform/platform.zig` - the chip's name and its core's.
+- [ ] `resources/platform/platform.zig` - the chip's name, and
+      `identifyCore`: the core's name and the features a task may use of
+      it (`CpuName`, `CpuFeature`), read from wherever the core says
+      them, with the decoding in `identify.zig` beside it, which the
+      host's tests run.
 
 In the ROM's devices and resources - each of these already switches on
 the chip, so each is a place to add an arm or a `<chip>/` subfolder:
@@ -363,8 +367,10 @@ on this year's. So an instruction engine has to be asked for at run time
 and fall back in the same image, which is what `sdk/hardware/x64uefi/rng.zig`
 already does for `rdrand`: CPUID leaf 1, bit 30 of ECX, checked once and
 remembered. A port that wants the crypto instructions wants that pattern,
-not `on_chip`'s - a feature word read at the library's init, and a
-function pointer per primitive chosen from it.
+not `on_chip`'s - platform.resource's `CpuFeature` asked at the
+library's init, and a function pointer per primitive chosen from the
+answers. A new chip's features are added to platform.resource, which
+says true only of what the kernel keeps the registers of.
 
 ### The pattern
 

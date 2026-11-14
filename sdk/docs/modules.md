@@ -343,6 +343,7 @@ flowchart TB
     m_commodities_library --> m_input_device
     m_commodities_library --> m_keymap_library
     m_crypto_library --> m_dma_resource
+    m_crypto_library --> m_platform_resource
     m_crypto_library --> m_timer_device
     m_cyw43455_device --> m_dos_library
     m_cyw43455_device --> m_timer_device

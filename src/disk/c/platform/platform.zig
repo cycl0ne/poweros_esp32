@@ -3,16 +3,17 @@
 //! and the stacks are, and whether there is PSRAM. Built against the SDK
 //! only.
 //!
-//!   Platform CHIP/S,CLOCK/S,TICK/S
+//!   Platform CHIP/S,CPU/S,CLOCK/S,TICK/S
 //!
 //! With no switch it prints the table the `s3>` shell's `info` prints, and
 //! from the same place: both ask platform.resource, so there is one source
 //! of truth and not two.
 //!
-//! One of CHIP, CLOCK or TICK prints that one value and nothing else, which
+//! One of CHIP, CPU, CLOCK or TICK prints that one value and nothing else, which
 //! is what a script wants - Avail's rule, and for the same reason:
 //!
 //!   Platform CHIP    ESP32-S3
+//!   Platform CPU     the core by its own name: Xtensa LX7
 //!   Platform CLOCK   the CPU clock in Hz, as the system measured it
 //!   Platform TICK    the kernel tick in Hz
 //!
@@ -33,15 +34,27 @@ const PlatformInfo = platform.PlatformInfo;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Platform";
-const VERSION_STRING = "\x00$VER: Platform 1.2 (24.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Platform 1.3 (14.11.2026)\r\n";
 
-const template = "CHIP/S,CLOCK/S,TICK/S";
+const template = "CHIP/S,CPU/S,CLOCK/S,TICK/S";
 const arg_chip = 0;
-const arg_clock = 1;
-const arg_tick = 2;
+const arg_cpu = 1;
+const arg_clock = 2;
+const arg_tick = 3;
+
+/// CpuFeature's features, by the names the table prints them under.
+const features = [_]struct { feature: u32, name: [*:0]const u8 }{
+    .{ .feature = platform.CPUF_AES, .name = "aes" },
+    .{ .feature = platform.CPUF_CLMUL, .name = "clmul" },
+    .{ .feature = platform.CPUF_SHA1, .name = "sha1" },
+    .{ .feature = platform.CPUF_SHA256, .name = "sha256" },
+    .{ .feature = platform.CPUF_SHA512, .name = "sha512" },
+    .{ .feature = platform.CPUF_CRC32, .name = "crc32" },
+    .{ .feature = platform.CPUF_CRC32C, .name = "crc32c" },
+};
 
 const MSG_NORESOURCE = "No %s - this is not a PowerOS machine\n";
-const MSG_NOTBOTH = "only one of CHIP, CLOCK, or TICK allowed\n";
+const MSG_NOTBOTH = "only one of CHIP, CPU, CLOCK, or TICK allowed\n";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -50,7 +63,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -66,6 +79,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     var asked: u32 = 0;
     if (argv[arg_chip] != 0) asked += 1;
+    if (argv[arg_cpu] != 0) asked += 1;
     if (argv[arg_clock] != 0) asked += 1;
     if (argv[arg_tick] != 0) asked += 1;
     if (asked > 1) {
@@ -76,6 +90,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         // One value and nothing else, which is what a script wants.
         if (argv[arg_chip] != 0) {
             _ = Printf(dl, "%s\n", .{pr.PlatformName()});
+        } else if (argv[arg_cpu] != 0) {
+            _ = Printf(dl, "%s\n", .{pr.CpuName()});
         } else if (argv[arg_clock] != 0) {
             _ = Printf(dl, "%d\n", .{pr.CpuClock()});
         } else {
@@ -103,6 +119,15 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (has(got, "prid")) {
         _ = Printf(dl, "chip     %s, %s, PRID 0x%04x\n", .{ text(p.chip), text(p.core), p.prid & 0xFFFF });
     }
+    // The instructions a task may use beyond the chip's base, where the
+    // core has any.
+    var any = false;
+    for (features) |one| {
+        if (!pr.CpuFeature(one.feature)) continue;
+        _ = Printf(dl, "%s%s", .{ @as([*:0]const u8, if (any) " " else "features "), one.name });
+        any = true;
+    }
+    if (any) _ = dl.PutStr("\n");
     if (has(got, "tick_irq")) {
         _ = Printf(dl, "clock    %d MHz CPU (configured %d, measured %d), %d Hz tick on interrupt %d\n", .{
             pr.CpuClock() / 1_000_000,

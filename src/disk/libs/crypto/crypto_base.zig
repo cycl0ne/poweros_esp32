@@ -50,7 +50,8 @@ pub const CryptoBase = extern struct {
     numbers: Numbers = .{},
     /// The JH7110's engine, once a call has set it up.
     sec: jh7110.State = .{},
-    /// The x86-64 core's AES-NI, asked when the library is made: AES's
+    /// The x86-64 core's AES-NI, asked of platform.resource when the
+    /// library is made: AES's
     /// rounds on the core (`engine/x64.zig`). False on the other chips.
     core_aes: bool = false,
     /// The x86-64 core's PCLMULQDQ: GCM's multiplications on the core.

@@ -54,6 +54,12 @@ pub const max_cores = 4;
 /// Each core's hart, as the firmware numbers it; start.S's a0.
 pub var hartids: [max_cores]usize = @splat(0);
 
+/// The ISA string of the first hart that runs the kernel, as the device
+/// tree has it (`rv64imafdc_zicsr...`), ended by a NUL; empty where the
+/// tree has none. The kernel's root sets it before anything reads it.
+pub var isa: [isa_size]u8 = @splat(0);
+pub const isa_size = 512;
+
 /// The core this runs on: 0 up.
 pub inline fn coreId() u32 {
     return @truncate(asm volatile ("mv %[r], tp"

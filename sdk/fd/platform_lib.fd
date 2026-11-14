@@ -32,4 +32,14 @@ u32 TickRate()
 /// the cores: uncached, write-combining or cached. False where the
 /// machine's map cannot mark it, or the chip keeps no such kinds.
 bool SetMemoryType(usize start, usize length, u32 kind)
+/// The core the system runs on, by its own name: what the core says of
+/// itself where it can ("AMD Ryzen 7 7840HS", "ARM Cortex-A76", "SiFive
+/// U74"), and the chip's core where it cannot ("Xtensa LX7"). A C string
+/// of at most CPU_NAME_SIZE bytes, never null, good for as long as the
+/// machine runs.
+[*:0]const u8 CpuName()
+/// Whether a task may use `feature` (CPUF_*): the core has the
+/// instructions and the system keeps their registers across a task
+/// switch. False for a number that names no feature.
+bool CpuFeature(u32 feature)
 ##end

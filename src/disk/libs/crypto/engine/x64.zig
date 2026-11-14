@@ -5,8 +5,8 @@
 //!
 //! The system is built for x86-64-v2, which has neither, so the
 //! instructions are written here in their SSE encoding and used only
-//! where the core says it has them (`features`, asked once when the
-//! library is made and kept in the base). They work on the 128-bit
+//! where a task may run them (platform.resource's CpuFeature, asked once
+//! when the library is made and kept in the base). They work on the 128-bit
 //! registers, which a task switch saves with the rest of the SSE state,
 //! so nothing of the kernel's is needed for them. A register holds a
 //! block's 16 bytes in memory order, as both instructions take it.
@@ -69,8 +69,9 @@ fn cpuid(leaf: u32, subleaf: u32) [4]u32 {
     return .{ eax, ebx, ecx, edx };
 }
 
-/// What the core says it has, from `cpuid`. Leaf 7 is asked only of a
-/// core that has it.
+/// What the core says it has, from `cpuid`: for the host, whose tests
+/// have no platform.resource to ask. Leaf 7 is asked only of a core that
+/// has it.
 pub fn features() Features {
     const highest = cpuid(0, 0)[0];
     const leaf1_ecx = cpuid(1, 0)[2];

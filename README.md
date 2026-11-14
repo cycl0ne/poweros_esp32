@@ -775,9 +775,21 @@ which marks a range of the kernel's map uncached, write-combining or
 cached while the system runs), and the samples are read back by
 streaming loads: read word by word, the same picture took 17 ms.
 
+**A program asks platform.resource what the core is.** `CpuName` is
+the core by its own name - an x86-64 core's brand string, an AArch64
+core's maker and part ("ARM Cortex-A76"), a RISC-V core's where its ids
+are known ("SiFive U74") - and `CpuFeature` says whether a task may use
+one of the instruction sets a core can bring beyond its chip's base: the
+AES rounds, the carry-less product, SHA-1, SHA-256, SHA-512, and the two
+CRC-32s. The same numbers on every chip, answered from the core's
+identification leaves on x86-64, its ID registers on AArch64 and the
+device tree's ISA string on RISC-V, and true only where the system also
+keeps the registers the instructions work in across a task switch.
+`C:Platform` prints both (`Platform CPU` the name alone).
+
 **AES, GCM and SHA run on the core's own instructions.** crypto.library
-asks `cpuid` once, when it is made, for AES-NI, PCLMULQDQ and the SHA
-extensions, and where the core has them a cipher's blocks go through the
+asks platform.resource once, when it is made, for AES-NI, PCLMULQDQ and
+the SHA extensions (`CpuFeature`), and where the core has them a cipher's blocks go through the
 core's AES rounds - eight at a time where the mode allows it - GCM's hash
 through its carry-less products, four blocks summed before one
 reduction, and SHA-1, SHA-224 and SHA-256 through its SHA rounds. They

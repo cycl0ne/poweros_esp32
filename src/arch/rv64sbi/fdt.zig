@@ -41,6 +41,10 @@ pub const max_reserved = 8;
 /// The most harts kept; more are left out.
 pub const max_harts = 8;
 
+/// The most of a hart's ISA string kept, its NUL included: what is past
+/// it is cut, and the extensions named there go unseen.
+pub const isa_size = 512;
+
 /// The most Ethernet ports whose station address is kept.
 pub const max_stations = 4;
 
@@ -60,6 +64,10 @@ pub const Facts = struct {
     hart_count: usize = 0,
     stations: [max_stations]Station = undefined,
     station_count: usize = 0,
+    /// The ISA string of the first hart in `harts`, ended by a NUL: the
+    /// node's `riscv,isa`, or its `riscv,isa-extensions` written the
+    /// same way. Empty where the node has neither.
+    isa: [isa_size]u8 = @splat(0),
 
     /// The station address the tree gives the port whose registers are at
     /// `address`, or null.
@@ -140,6 +148,22 @@ fn hasFpu(isa: []const u8) bool {
     return std.mem.indexOfScalar(u8, letters, 'f') != null and std.mem.indexOfScalar(u8, letters, 'd') != null;
 }
 
+/// A list of extensions (`riscv,isa-extensions`: names, each ended by a
+/// NUL) written as an ISA string: `rv64` and each name after a `_`.
+fn isaFromList(into: *[isa_size]u8, list: []const u8) void {
+    into.* = @splat(0);
+    @memcpy(into[0..4], "rv64");
+    var end: usize = 4;
+    var names = std.mem.splitScalar(u8, list, 0);
+    while (names.next()) |name| {
+        if (name.len == 0) continue;
+        if (end + 1 + name.len >= isa_size) break;
+        into[end] = '_';
+        @memcpy(into[end + 1 ..][0..name.len], name);
+        end += 1 + name.len;
+    }
+}
+
 /// The facts the tree at `address` has; none if there is no tree there.
 pub fn read(address: usize) Facts {
     var facts: Facts = .{};
@@ -180,6 +204,7 @@ pub fn read(address: usize) Facts {
     var cpu_okay = true;
     var cpu_mmu = false;
     var cpu_fpu = true;
+    var cpu_isa: [isa_size]u8 = @splat(0);
     // The Ethernet node being read, by the address in its name.
     var ethernet: ?usize = null;
     var ethernet_depth: u32 = 0;
@@ -215,12 +240,14 @@ pub fn read(address: usize) Facts {
                     cpu_okay = true;
                     cpu_mmu = false;
                     cpu_fpu = true;
+                    cpu_isa = @splat(0);
                 }
             },
             END_NODE => {
                 if (depth == 3 and in_cpu) {
                     in_cpu = false;
                     if (cpu_id != null and cpu_okay and cpu_mmu and cpu_fpu and facts.hart_count < max_harts) {
+                        if (facts.hart_count == 0) facts.isa = cpu_isa;
                         facts.harts[facts.hart_count] = cpu_id.?;
                         facts.hart_count += 1;
                     }
@@ -259,7 +286,14 @@ pub fn read(address: usize) Facts {
                     }
                     if (std.mem.eql(u8, name, "status")) cpu_okay = std.mem.startsWith(u8, value, "okay") or std.mem.startsWith(u8, value, "ok");
                     if (std.mem.eql(u8, name, "mmu-type")) cpu_mmu = true;
-                    if (std.mem.eql(u8, name, "riscv,isa")) cpu_fpu = hasFpu(std.mem.sliceTo(value, 0));
+                    if (std.mem.eql(u8, name, "riscv,isa")) {
+                        const isa = std.mem.sliceTo(value, 0);
+                        cpu_fpu = hasFpu(isa);
+                        const kept = @min(isa.len, isa_size - 1);
+                        cpu_isa = @splat(0);
+                        @memcpy(cpu_isa[0..kept], isa[0..kept]);
+                    }
+                    if (std.mem.eql(u8, name, "riscv,isa-extensions") and cpu_isa[0] == 0) isaFromList(&cpu_isa, value);
                 } else if (depth == 2 and node == .reserved_memory) {
                     if (std.mem.eql(u8, name, "#address-cells")) reserved_address_cells = be32(value);
                     if (std.mem.eql(u8, name, "#size-cells")) reserved_size_cells = be32(value);

@@ -123,6 +123,7 @@ fn takeBoard(tree: device_tree.Facts) void {
     ram.ram_size = tree.ram_size orelse boards.fact(st.SYSTAG_RamSize, 128 * 1024 * 1024);
     for (tree.reservedRanges(), 0..) |range, index| ram.reserved[index] = range;
     ram.reserved_count = tree.reserved_count;
+    cpu.isa = tree.isa;
     if (tree.initrd_start != null and tree.initrd_end != null and tree.initrd_end.? > tree.initrd_start.?) {
         hardware.ramdisk.base = tree.initrd_start.?;
         hardware.ramdisk.size = tree.initrd_end.? - tree.initrd_start.?;

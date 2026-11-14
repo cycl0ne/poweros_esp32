@@ -9,9 +9,15 @@
 //! or open count, and the functions start in the first slot of the jump
 //! table (sdk/fd/platform_lib.fd).
 //!
-//! It owns no hardware and sets nothing up at init: every answer is taken
+//! It owns no hardware, and what the clocks and the memory are is taken
 //! when it is asked for. That matters, because the tag is RTF_SINGLETASK
-//! and runs before `timer.init` has measured anything. The one thing it
+//! and runs before `timer.init` has measured anything. What the core is
+//! does not change, so that is asked once, at init: its name and the
+//! instructions a task may use of it (CpuName, CpuFeature), which
+//! `identify.zig` makes of the core's own words - an x86-64 core's
+//! identification leaves, an AArch64 core's ID registers, a RISC-V
+//! machine's ids from the firmware and its ISA string from the device
+//! tree - and the base keeps. The one thing it
 //! changes is on request: SetMemoryType, a range of memory made uncached,
 //! write-combining or cached in the kernel's map, for a driver of a device
 //! that keeps memory of its own.
@@ -36,31 +42,25 @@ const layout = arch.layout;
 const vec = exec.vec;
 const types = sdk.resources.platform;
 const PlatformInfo = types.PlatformInfo;
+const identify = @import("identify.zig");
 
 pub const RESOURCE_NAME = types.PLATFORMNAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 2;
-const BUILD_DATE = "07.11.2026";
+const RESOURCE_REVISION = 3;
+const BUILD_DATE = "14.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// The board's chip and its core, by name: constants of the chip the
-/// kernel is built for.
+/// The board's chip, by name: a constant of the chip the kernel is built
+/// for.
 const CHIP_NAME = switch (sdk.hardware.chip) {
     .esp32s3 => "ESP32-S3",
     .esp32p4 => "ESP32-P4",
     .rv64sbi => "RISC-V 64 under SBI",
     .a64psci => "AArch64 under PSCI",
     .x64uefi => "x86-64 under UEFI",
-};
-const CORE_NAME = switch (sdk.hardware.chip) {
-    .esp32s3 => "Xtensa LX7",
-    .esp32p4 => "RISC-V RV32IMAFC",
-    .rv64sbi => "RISC-V RV64GC",
-    .a64psci => "ARMv8.2-A Cortex-A76",
-    .x64uefi => "x86-64-v2",
 };
 /// What the kernel was built with, as `Version` and `Platform` print it.
 const BUILT_WITH = "zig " ++ builtin.zig_version_string ++ ", " ++ @tagName(builtin.mode);
@@ -83,12 +83,17 @@ comptime {
     }
 }
 
-/// The base. It keeps nothing but SysBase: every answer is read from the
-/// hardware and the kernel's own variables when it is asked for.
+/// The base. It keeps SysBase and what the core is, which init asked
+/// once; every other answer is read from the hardware and the kernel's
+/// own variables when it is asked for.
 const PlatformBase = extern struct {
     lib: exec.Library,
     /// SysBase, to call exec through its jump table.
     sys_base: *ExecBase,
+    /// The core's name, a C string, and the features a task may use of
+    /// it: bit CPUF_x for each.
+    cpu_name: identify.Name,
+    cpu_features: u32,
 };
 
 fn platformBase(lib: *exec.Library) *PlatformBase {
@@ -103,10 +108,55 @@ fn cpuClock() u32 {
     return if (timer.cpu_hz != 0) timer.cpu_hz else clock.cpu_hz;
 }
 
-fn lvoGetPlatformInfo(_: *PlatformBase, info: *PlatformInfo, size: u32) callconv(.c) u32 {
+/// The core asked what it is, into the base: the core init runs on, which
+/// is the first.
+fn identifyCore(pb: *PlatformBase) void {
+    pb.cpu_features = 0;
+    switch (comptime sdk.hardware.chip) {
+        // One core each, with nothing to ask it: the chips' engines for
+        // AES and SHA are peripherals, crypto.library's to drive.
+        .esp32s3 => identify.fixed(&pb.cpu_name, "Xtensa LX7"),
+        .esp32p4 => identify.fixed(&pb.cpu_name, "RISC-V RV32IMAFC"),
+        .rv64sbi => {
+            const sbi = sdk.hardware.sbi;
+            identify.riscvName(&pb.cpu_name, sbi.machineVendor(), sbi.machineArch());
+            var length: usize = 0;
+            while (length < cpu.isa.len and cpu.isa[length] != 0) length += 1;
+            pb.cpu_features = identify.riscvFeatures(cpu.isa[0..length]);
+        },
+        .a64psci => {
+            identify.armName(&pb.cpu_name, cpu.midr());
+            pb.cpu_features = identify.armFeatures(cpu.isar0());
+        },
+        .x64uefi => {
+            // The brand string is leaves 0x8000_0002 to 0x8000_0004, each
+            // register's bytes lowest first; the vendor's is leaf 0's EBX,
+            // EDX and ECX.
+            var brand: [48]u8 = @splat(0);
+            if (cpu.leaf(0x8000_0000, 0).eax >= 0x8000_0004) {
+                for (0..3) |index| {
+                    const part = cpu.leaf(0x8000_0002 + @as(u32, @intCast(index)), 0);
+                    for ([_]u32{ part.eax, part.ebx, part.ecx, part.edx }, 0..) |word, register| {
+                        for (0..4) |byte| brand[index * 16 + register * 4 + byte] = @truncate(word >> @intCast(byte * 8));
+                    }
+                }
+            }
+            var vendor: [12]u8 = undefined;
+            const first = cpu.leaf(0, 0);
+            for ([_]u32{ first.ebx, first.edx, first.ecx }, 0..) |word, register| {
+                for (0..4) |byte| vendor[register * 4 + byte] = @truncate(word >> @intCast(byte * 8));
+            }
+            identify.x86Name(&pb.cpu_name, &brand, &vendor);
+            const leaf7_ebx = if (first.eax >= 7) cpu.leaf(7, 0).ebx else 0;
+            pb.cpu_features = identify.x86Features(cpu.leaf(1, 0).ecx, leaf7_ebx);
+        },
+    }
+}
+
+fn lvoGetPlatformInfo(pb: *PlatformBase, info: *PlatformInfo, size: u32) callconv(.c) u32 {
     const whole: PlatformInfo = .{
         .chip = CHIP_NAME,
-        .core = CORE_NAME,
+        .core = @ptrCast(&pb.cpu_name),
         .built = BUILT_WITH,
         .prid = cpu.prid(),
         .vecbase = cpu.vecbase(),
@@ -250,12 +300,145 @@ fn lvoSetMemoryType(pb: *PlatformBase, start: usize, length: usize, kind: u32) c
     return SetMemoryType(pb, start, length, kind);
 }
 
+/// The core the system runs on, by its own name.
+///
+/// SYNOPSIS:
+/// ```zig
+/// fn CpuName(pb: *PlatformBase) [*:0]const u8
+/// ```
+///
+/// SINCE: 1.3. LVO -24.
+///
+/// INPUTS:
+/// None.
+///
+/// RESULT:
+/// A C string of at most CPU_NAME_SIZE bytes, its NUL included. Never
+/// null and never empty.
+///
+/// BEHAVIOR:
+/// The name is what the core says of itself where it can be asked: an
+/// x86-64 core's brand string with the spaces around it dropped
+/// ("AMD Ryzen 7 7840HS w/ Radeon 780M Graphics"), its vendor's string
+/// where it has none; an AArch64 core's maker and part ("ARM
+/// Cortex-A76"), or the two numbers in hexadecimal for a part not known
+/// ("AArch64 41:d4f"); a RISC-V 64 core's own name for one whose ids are
+/// known ("SiFive U74"), "RISC-V RV64GC" for any other. An ESP32's core
+/// is its chip's: "Xtensa LX7", "RISC-V RV32IMAFC". It is asked once,
+/// when the resource is made, and is GetPlatformInfo's `core`.
+///
+/// CONTEXT:
+/// - Waits: no.
+/// - Interrupts: yes.
+/// - Locks: none.
+/// - Process: a Task will do.
+///
+/// OWNERSHIP:
+/// The string is the resource's and stays where it is for as long as the
+/// machine runs: read it, keep the pointer, never write to it.
+///
+/// NOTES:
+/// For a person to read. A program that picks its code by what the core
+/// can do asks CpuFeature; a name says nothing a program can rely on.
+/// PlatformName is the chip or the kind of machine, this the core in it.
+///
+/// BUGS:
+/// The name is the first core's. A machine whose cores are not all alike
+/// is named for that one.
+///
+/// SEE ALSO:
+/// `CpuFeature`, `PlatformName`, `GetPlatformInfo`
+///
+/// EXAMPLES:
+/// ```zig
+/// _ = Printf(dl, "%s at %d MHz\n", .{ pr.CpuName(), pr.CpuClock() / 1_000_000 });
+/// ```
+pub fn CpuName(pb: *PlatformBase) [*:0]const u8 {
+    return @ptrCast(&pb.cpu_name);
+}
+
+fn lvoCpuName(pb: *PlatformBase) callconv(.c) [*:0]const u8 {
+    return CpuName(pb);
+}
+
+/// Whether a task may use one of the instruction sets a core can bring
+/// beyond its chip's base.
+///
+/// SYNOPSIS:
+/// ```zig
+/// fn CpuFeature(pb: *PlatformBase, feature: u32) bool
+/// ```
+///
+/// SINCE: 1.3. LVO -28.
+///
+/// INPUTS:
+/// - `feature` - one of CPUF_AES, the AES rounds in both directions;
+///   CPUF_CLMUL, the carry-less product of two 64-bit words; CPUF_SHA1;
+///   CPUF_SHA256, with SHA-224; CPUF_SHA512, with SHA-384; CPUF_CRC32,
+///   the polynomial 0x04C11DB7; CPUF_CRC32C, the polynomial 0x1EDC6F41.
+///
+/// RESULT:
+/// True where the core has the instructions and the system keeps the
+/// registers they work in across a task switch: a task may then run them
+/// as it runs any other. False where either is missing, and for a number
+/// that names no feature.
+///
+/// BEHAVIOR:
+/// The answer is made once, when the resource is made, of what the core
+/// says: an x86-64 core's identification leaves 1 and 7, an AArch64
+/// core's ID_AA64ISAR0_EL1, a RISC-V core's ISA string in the device
+/// tree (Zkne with Zknd, Zbc or Zbkc, Zknh, or Zkn and Zk for all of
+/// them). The call itself tests a bit. A feature means the same
+/// operation on every chip, in that chip's own instructions; the
+/// instructions are the caller's to write.
+///
+/// CONTEXT:
+/// - Waits: no.
+/// - Interrupts: yes.
+/// - Locks: none.
+/// - Process: a Task will do.
+///
+/// OWNERSHIP:
+/// Nothing changes hands.
+///
+/// NOTES:
+/// Only what is beyond the base is asked: what every program for a chip
+/// is built to - SSE4.2's vectors on x86-64, the vector registers on
+/// AArch64 - is there without asking. An ESP32's AES and SHA engines are
+/// peripherals, not instructions, and crypto.library drives them: every
+/// feature is false there. On x86-64 CPUF_SHA512 is false whatever the
+/// core has, since those instructions work in registers no task keeps,
+/// and CPUF_CRC32 is false because the core's instruction is CRC-32C.
+/// Ask once and keep the answer; it never changes.
+///
+/// BUGS:
+/// The answer is the first core's. A machine whose cores are not all
+/// alike may say true of a feature a task then meets a core without.
+///
+/// SEE ALSO:
+/// `CpuName`, `GetPlatformInfo`
+///
+/// EXAMPLES:
+/// ```zig
+/// const found = sys.OpenResource(platform.PLATFORMNAME) orelse return;
+/// const pr: *PlatformBase = @ptrCast(@alignCast(found));
+/// const fast = pr.CpuFeature(platform.CPUF_AES) and pr.CpuFeature(platform.CPUF_CLMUL);
+/// ```
+pub fn CpuFeature(pb: *PlatformBase, feature: u32) bool {
+    return identify.has(pb.cpu_features, feature);
+}
+
+fn lvoCpuFeature(pb: *PlatformBase, feature: u32) callconv(.c) bool {
+    return CpuFeature(pb, feature);
+}
+
 /// exec has copied the tag's name, version and ID string into the base.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     _ = seg_list;
     const pb = platformBase(lib);
     lib.revision = RESOURCE_REVISION;
     pb.sys_base = sys_base;
+    identifyCore(pb);
     return lib;
 }
 
@@ -265,6 +448,8 @@ const vectors = [_]*const anyopaque{
     vec(lvoCpuClock),
     vec(lvoTickRate),
     vec(lvoSetMemoryType),
+    vec(lvoCpuName),
+    vec(lvoCpuFeature),
 };
 
 const init_table = exec.InitTable{

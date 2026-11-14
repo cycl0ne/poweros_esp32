@@ -108,6 +108,20 @@ pub inline fn prid() u32 {
     return @truncate(mpidrs[coreId()]);
 }
 
+/// MIDR_EL1: who made this core and which of theirs it is.
+pub inline fn midr() u64 {
+    return asm volatile ("mrs %[r], midr_el1"
+        : [r] "=r" (-> u64),
+    );
+}
+
+/// ID_AA64ISAR0_EL1: the instructions this core has beyond the base.
+pub inline fn isar0() u64 {
+    return asm volatile ("mrs %[r], id_aa64isar0_el1"
+        : [r] "=r" (-> u64),
+    );
+}
+
 /// The exception level the kernel runs at: 1.
 pub inline fn currentEl() u32 {
     return @truncate(asm volatile ("mrs %[r], CurrentEL"

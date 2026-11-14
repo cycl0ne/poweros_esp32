@@ -80,6 +80,21 @@ const found = sys.OpenResource(platform.PLATFORMNAME) orelse return sdk.dos.RETU
 const pr: *sdk.interface.platform.PlatformBase = @ptrCast(@alignCast(found));
 ```
 
+platform.resource is where a program asks what it runs on: the chip
+(`PlatformName`), the core by its own name (`CpuName`), its clock
+(`CpuClock`), and whether a task may use an instruction set the core
+brings beyond the chip's base (`CpuFeature`). A program with a path
+written in such instructions asks once and keeps the answer:
+
+```zig
+const fast = pr.CpuFeature(platform.CPUF_AES) and pr.CpuFeature(platform.CPUF_CLMUL);
+```
+
+True means the core has the instructions and the system keeps the
+registers they work in when it switches tasks; false, or a core without
+them, is the plain path's. How many cores there are is exec's to say
+(`CoreCount`).
+
 ## Memory
 
 An ESP32 has two kinds of memory, and exec keeps each as a region with

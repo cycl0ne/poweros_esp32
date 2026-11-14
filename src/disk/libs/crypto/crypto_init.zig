@@ -7,6 +7,8 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const crypto = sdk.crypto;
 const ExecBase = sdk.interface.exec.ExecBase;
+const PlatformBase = sdk.interface.platform.PlatformBase;
+const platform = sdk.resources.platform;
 const _base = @import("crypto_base.zig");
 const CryptoBase = _base.CryptoBase;
 const _engine = @import("engine/_engine.zig");
@@ -16,8 +18,8 @@ const crypto_lvo = @import("crypto_lvo.zig");
 
 pub const LIBRARY_NAME = crypto.CRYPTONAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 11;
-const BUILD_DATE = "08.11.2026";
+pub const LIBRARY_REVISION = 12;
+const BUILD_DATE = "14.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -39,12 +41,25 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     _engine.start();
     sys_base.Enable();
     if (x64.built) {
-        const has = x64.features();
+        const has = coreFeatures(sys_base);
         cb.core_aes = has.aes;
         cb.core_clmul = has.clmul;
         cb.core_sha = has.sha;
     }
     return lib;
+}
+
+/// Which of the instructions `engine/x64.zig` uses a task may run:
+/// platform.resource's answer. The host, whose tests run this, has no
+/// such resource: the core is asked itself there.
+fn coreFeatures(sys: *ExecBase) x64.Features {
+    const found = sys.OpenResource(platform.PLATFORMNAME) orelse return x64.features();
+    const pr: *PlatformBase = @ptrCast(@alignCast(found));
+    return .{
+        .aes = pr.CpuFeature(platform.CPUF_AES),
+        .clmul = pr.CpuFeature(platform.CPUF_CLMUL),
+        .sha = pr.CpuFeature(platform.CPUF_SHA1) and pr.CpuFeature(platform.CPUF_SHA256),
+    };
 }
 
 /// The library goes when nobody has it open: the engines stopped, what

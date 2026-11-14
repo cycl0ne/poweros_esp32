@@ -1,6 +1,8 @@
 TABLE OF CONTENTS
 
 platform.resource/CpuClock
+platform.resource/CpuFeature
+platform.resource/CpuName
 platform.resource/GetPlatformInfo
 platform.resource/PlatformName
 platform.resource/SetMemoryType
@@ -19,6 +21,121 @@ platform.resource/TickRate
 	GetPlatformInfo's `cpu_hz` and `measured_cpu_hz` are both there to be
 	compared. What a delay loop or a benchmark wants. 0 before the tick has
 	been set up.
+platform.resource/CpuFeature                      platform.resource/CpuFeature
+
+   NAME
+	CpuFeature -- Whether a task may use one of the instruction sets a core can bring beyond its chip's base.
+
+   SYNOPSIS
+	    fn CpuFeature(pb: *PlatformBase, feature: u32) bool
+
+   SINCE
+	1.3. LVO -28.
+
+   INPUTS
+	- `feature` - one of CPUF_AES, the AES rounds in both directions;
+	  CPUF_CLMUL, the carry-less product of two 64-bit words; CPUF_SHA1;
+	  CPUF_SHA256, with SHA-224; CPUF_SHA512, with SHA-384; CPUF_CRC32,
+	  the polynomial 0x04C11DB7; CPUF_CRC32C, the polynomial 0x1EDC6F41.
+
+   RESULT
+	True where the core has the instructions and the system keeps the
+	registers they work in across a task switch: a task may then run them
+	as it runs any other. False where either is missing, and for a number
+	that names no feature.
+
+   BEHAVIOR
+	The answer is made once, when the resource is made, of what the core
+	says: an x86-64 core's identification leaves 1 and 7, an AArch64
+	core's ID_AA64ISAR0_EL1, a RISC-V core's ISA string in the device
+	tree (Zkne with Zknd, Zbc or Zbkc, Zknh, or Zkn and Zk for all of
+	them). The call itself tests a bit. A feature means the same
+	operation on every chip, in that chip's own instructions; the
+	instructions are the caller's to write.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: yes.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing changes hands.
+
+   NOTES
+	Only what is beyond the base is asked: what every program for a chip
+	is built to - SSE4.2's vectors on x86-64, the vector registers on
+	AArch64 - is there without asking. An ESP32's AES and SHA engines are
+	peripherals, not instructions, and crypto.library drives them: every
+	feature is false there. On x86-64 CPUF_SHA512 is false whatever the
+	core has, since those instructions work in registers no task keeps,
+	and CPUF_CRC32 is false because the core's instruction is CRC-32C.
+	Ask once and keep the answer; it never changes.
+
+   BUGS
+	The answer is the first core's. A machine whose cores are not all
+	alike may say true of a feature a task then meets a core without.
+
+   SEE ALSO
+	`CpuName`, `GetPlatformInfo`
+
+   EXAMPLES
+	    const found = sys.OpenResource(platform.PLATFORMNAME) orelse return;
+	    const pr: *PlatformBase = @ptrCast(@alignCast(found));
+	    const fast = pr.CpuFeature(platform.CPUF_AES) and pr.CpuFeature(platform.CPUF_CLMUL);
+platform.resource/CpuName                            platform.resource/CpuName
+
+   NAME
+	CpuName -- The core the system runs on, by its own name.
+
+   SYNOPSIS
+	    fn CpuName(pb: *PlatformBase) [*:0]const u8
+
+   SINCE
+	1.3. LVO -24.
+
+   INPUTS
+	None.
+
+   RESULT
+	A C string of at most CPU_NAME_SIZE bytes, its NUL included. Never
+	null and never empty.
+
+   BEHAVIOR
+	The name is what the core says of itself where it can be asked: an
+	x86-64 core's brand string with the spaces around it dropped
+	("AMD Ryzen 7 7840HS w/ Radeon 780M Graphics"), its vendor's string
+	where it has none; an AArch64 core's maker and part ("ARM
+	Cortex-A76"), or the two numbers in hexadecimal for a part not known
+	("AArch64 41:d4f"); a RISC-V 64 core's own name for one whose ids are
+	known ("SiFive U74"), "RISC-V RV64GC" for any other. An ESP32's core
+	is its chip's: "Xtensa LX7", "RISC-V RV32IMAFC". It is asked once,
+	when the resource is made, and is GetPlatformInfo's `core`.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: yes.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The string is the resource's and stays where it is for as long as the
+	machine runs: read it, keep the pointer, never write to it.
+
+   NOTES
+	For a person to read. A program that picks its code by what the core
+	can do asks CpuFeature; a name says nothing a program can rely on.
+	PlatformName is the chip or the kind of machine, this the core in it.
+
+   BUGS
+	The name is the first core's. A machine whose cores are not all alike
+	is named for that one.
+
+   SEE ALSO
+	`CpuFeature`, `PlatformName`, `GetPlatformInfo`
+
+   EXAMPLES
+	    _ = Printf(dl, "%s at %d MHz\n", .{ pr.CpuName(), pr.CpuClock() / 1_000_000 });
 platform.resource/GetPlatformInfo            platform.resource/GetPlatformInfo
 
    NAME

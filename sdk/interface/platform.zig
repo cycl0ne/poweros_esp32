@@ -21,6 +21,8 @@ pub const LVO = struct {
     pub const CpuClock = libraries.lvo(2);
     pub const TickRate = libraries.lvo(3);
     pub const SetMemoryType = libraries.lvo(4);
+    pub const CpuName = libraries.lvo(5);
+    pub const CpuFeature = libraries.lvo(6);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -31,6 +33,8 @@ pub const Fn = struct {
     pub const CpuClock = *const fn (*PlatformBase) callconv(.c) u32;
     pub const TickRate = *const fn (*PlatformBase) callconv(.c) u32;
     pub const SetMemoryType = *const fn (*PlatformBase, usize, usize, u32) callconv(.c) bool;
+    pub const CpuName = *const fn (*PlatformBase) callconv(.c) [*:0]const u8;
+    pub const CpuFeature = *const fn (*PlatformBase, u32) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -77,5 +81,21 @@ pub const PlatformBase = opaque {
     /// machine's map cannot mark it, or the chip keeps no such kinds.
     pub fn SetMemoryType(self: *PlatformBase, start: usize, length: usize, kind: u32) bool {
         return libraries.call(self, LVO.SetMemoryType, Fn.SetMemoryType, .{ start, length, kind });
+    }
+
+    /// The core the system runs on, by its own name: what the core says of
+    /// itself where it can ("AMD Ryzen 7 7840HS", "ARM Cortex-A76", "SiFive
+    /// U74"), and the chip's core where it cannot ("Xtensa LX7"). A C string
+    /// of at most CPU_NAME_SIZE bytes, never null, good for as long as the
+    /// machine runs.
+    pub fn CpuName(self: *PlatformBase) [*:0]const u8 {
+        return libraries.call(self, LVO.CpuName, Fn.CpuName, .{});
+    }
+
+    /// Whether a task may use `feature` (CPUF_*): the core has the
+    /// instructions and the system keeps their registers across a task
+    /// switch. False for a number that names no feature.
+    pub fn CpuFeature(self: *PlatformBase, feature: u32) bool {
+        return libraries.call(self, LVO.CpuFeature, Fn.CpuFeature, .{feature});
     }
 };
