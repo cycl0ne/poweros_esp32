@@ -372,7 +372,9 @@ scripts/prune-cache.sh --dir ~/.cache/zig --limit 8G  # the global one
 
 ```sh
 ./zig build                  # the kernel and a flash disk: zig-out/bin/flash.bin
-./zig build test             # host tests; every board and every program compiles
+./zig build test             # the host tests and the checks of generated files
+./zig build check            # the kernel and the disk of -Dboard= compile, nothing installed
+./zig build check-all        # test, and every board's kernel and every chip's disk
 ./zig build qemu             # boot in QEMU on the serial console (quit: Ctrl-A X)
 ./zig build qemu-display     # the same with the display in a window
 ./zig build emu              # the ESP32-P4 kernel in esp-emulator (quit: Ctrl-C)

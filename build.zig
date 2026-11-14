@@ -518,20 +518,24 @@ pub fn build(b: *std.Build) void {
     // What goes on the disk (src/disk, a package of its own): the
     // commands, the test programs, the modules loaded from LIBS:, DEVS:
     // and HANDLERS:, and the scripts, each built against the SDK and
-    // handed over under its place on the disk. Their load files are
-    // installed beside the kernel as well, to compare with `List C:`.
+    // handed over under its place on the disk. A flash board's load
+    // files are installed beside its kernel as well, to compare with
+    // `List C:`: the ESP32-S3's here, the ESP32-P4's where its package
+    // is made, below.
     const disk_dep = if (wifi) |dir|
         b.dependency("poweros_userland", .{ .optimize = optimize, .wifi = dir })
     else
         b.dependency("poweros_userland", .{ .optimize = optimize });
-    for (poweros_userland.programs) |program| {
-        if (!poweros_userland.builtFor(program, .esp32s3)) continue;
-        const load_file = b.fmt("{s}.seg", .{program.name});
-        b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(program.disk), load_file).step);
-    }
-    if (wifi != null) {
-        const wifi_device = poweros_userland.wifi_device;
-        b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(wifi_device.disk), "esp32s3wifi.device.seg").step);
+    if (chipOf(board) == .esp32s3) {
+        for (poweros_userland.programs) |program| {
+            if (!poweros_userland.builtFor(program, .esp32s3)) continue;
+            const load_file = b.fmt("{s}.seg", .{program.name});
+            b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(program.disk), load_file).step);
+        }
+        if (wifi != null) {
+            const wifi_device = poweros_userland.wifi_device;
+            b.getInstallStep().dependOn(&b.addInstallBinFile(disk_dep.namedLazyPath(wifi_device.disk), "esp32s3wifi.device.seg").step);
+        }
     }
 
     // The disk image: the same file system code the handler runs
@@ -751,6 +755,13 @@ pub fn build(b: *std.Build) void {
     make_x64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
     const disks: DiskImages = .{ .runs = .{ make_disk, make_p4_disk, make_rv64_disk, make_a64_disk, make_x64_disk } };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
+    if (chipOf(board) == .esp32p4) {
+        for (poweros_userland.programs) |program| {
+            if (!poweros_userland.builtFor(program, .esp32p4)) continue;
+            const load_file = b.fmt("{s}.seg", .{program.name});
+            b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_dep.namedLazyPath(program.disk), load_file).step);
+        }
+    }
     const rv64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.rv64sbi });
     const a64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.a64psci });
     const x64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.x64uefi });
@@ -1084,8 +1095,9 @@ pub fn build(b: *std.Build) void {
         }
         if (games_icon) |icon| run.addPrefixedFileArg(b.fmt("--system-file={s}=", .{games_drawer_icon.path}), icon);
     }
-    b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
-    b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
+    // A build installs the disk of its board's chip, and makes no other.
+    if (chipOf(board) == .esp32s3) b.getInstallStep().dependOn(&b.addInstallBinFile(disk_bin, "disk.bin").step);
+    if (chipOf(board) == .esp32p4) b.getInstallStep().dependOn(&b.addInstallBinFile(p4_disk_bin, "disk-esp32p4.bin").step);
 
     // The RISC-V 64 and AArch64 boards' flash disk is loaded into RAM
     // beside the kernel - by U-Boot's booti, or by QEMU's -initrd given
@@ -1715,8 +1727,26 @@ pub fn build(b: *std.Build) void {
     const sums_step = b.step("sums", "Write release/SHA256SUMS over the archives that are there");
     sums_step.dependOn(&run_sums.step);
 
-    // Target-independent code, tested on the host.
-    const test_step = b.step("test", "Run the unit tests on the host");
+    // Three steps, by what they cost. `test` is the code that runs on
+    // the host and the checks of what is generated or listed: nothing is
+    // built for a board. `check` builds what -Dboard= is made of - its
+    // kernel, its image and its chip's disk - and installs nothing.
+    // `check-all` is `test` and that for every board and every chip.
+    const test_step = b.step("test", "Run the unit tests on the host and the checks of generated files");
+    const check_step = b.step("check", "Build the kernel and the disk of -Dboard= without installing them");
+    const check_all_step = b.step("check-all", "`test`, and every board's kernel and every chip's disk");
+    check_all_step.dependOn(test_step);
+    check_all_step.dependOn(check_step);
+    built.image.addStepDependencies(check_step);
+    built.flash_image.addStepDependencies(check_step);
+    if (built.flash_part) |part| part.addStepDependencies(check_step);
+    check_step.dependOn(switch (chipOf(board)) {
+        .esp32s3 => &make_disk.step,
+        .esp32p4 => &make_p4_disk.step,
+        .rv64sbi => &make_rv64_disk.step,
+        .a64psci => &make_a64_disk.step,
+        .x64uefi => &make_x64_disk.step,
+    });
     const test_options = b.addOptions();
     test_options.addOption(u32, "posfs_soak", posfs_soak);
     // Where the fetched fonts are, for the tests that read one; empty
@@ -1964,13 +1994,13 @@ pub fn build(b: *std.Build) void {
     // compiling.
     test_step.dependOn(&mkpackage.step);
     test_step.dependOn(&serve.step);
-    // Every program and module on the disk compiles: the disk image is
-    // made from all of them. And for the ESP32-P4 too, into load files.
-    test_step.dependOn(&make_disk.step);
-    test_step.dependOn(&make_p4_disk.step);
-    test_step.dependOn(&make_rv64_disk.step);
-    test_step.dependOn(&make_a64_disk.step);
-    test_step.dependOn(&make_x64_disk.step);
+    // Every program and module on the disk compiles, for every chip:
+    // each disk image is made from all of them.
+    check_all_step.dependOn(&make_disk.step);
+    check_all_step.dependOn(&make_p4_disk.step);
+    check_all_step.dependOn(&make_rv64_disk.step);
+    check_all_step.dependOn(&make_a64_disk.step);
+    check_all_step.dependOn(&make_x64_disk.step);
     // Every board's kernel compiles, not only the one being flashed.
     for (std.enums.values(Board)) |other| {
         const other_target = switch (chipOf(other)) {
@@ -1980,7 +2010,7 @@ pub fn build(b: *std.Build) void {
             .a64psci => a64_target,
             .x64uefi => x64_target,
         };
-        if (other != board) test_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false, false).step);
+        if (other != board) check_all_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false, false).step);
     }
 
     // The SDK's interfaces (sdk/interface) come from its .fd files

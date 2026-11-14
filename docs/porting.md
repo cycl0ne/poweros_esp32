@@ -414,10 +414,12 @@ have to write:
 
 ## 12. Verification
 
-- [ ] `./zig build test` after every stage. It is the gate: it
+- [ ] `./zig build check-all` after every stage. It is the gate: it
       cross-compiles every board's kernel, builds every disk image, runs
       the host tests, checks that no module imports a board, and checks
-      the autodocs are current. The host guard in section 1 is the first
+      the autodocs are current. `./zig build test` is the host tests and
+      the checks alone, and `./zig build check -Dboard=<board>` one
+      board's kernel and disk. The host guard in section 1 is the first
       thing it catches.
 - [ ] An emulator step of the machine's own, so each stage can be shown:
       `./zig build qemu`, `emu`, `virt`, `virt64`, `q35`.
