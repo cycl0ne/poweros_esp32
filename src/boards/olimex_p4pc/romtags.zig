@@ -16,4 +16,6 @@ pub const modules = .{
     @import("../../rom/libs/rta_driver/es8311/es8311.zig"),
     @import("../../rom/libs/rta_driver/file/file.zig"),
     @import("../../rom/devs/audio/audio.zig"),
+    // The battery, whose voltage the board measures.
+    @import("../../rom/resources/battery/battery.zig"),
 };

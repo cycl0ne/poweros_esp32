@@ -20,4 +20,6 @@ pub const modules = .{
     // The panel: a DCS controller on a QSPI bus.
     @import("../../rom/libs/rtg_driver/qspibus/qspibus.zig"),
     @import("../../rom/libs/rtg_driver/dcsboard/dcsboard.zig"),
+    // The battery, whose voltage the board measures.
+    @import("../../rom/resources/battery/battery.zig"),
 };

@@ -48,7 +48,6 @@ pub const rom_modules = .{
     @import("rom/libs/expansion/expansion.zig"),
     @import("rom/resources/gpio/gpio.zig"),
     @import("rom/resources/usbport/usbport.zig"),
-    @import("rom/resources/battery/battery.zig"),
     @import("rom/resources/battclock/battclock.zig"),
     @import("rom/resources/battmem/battmem.zig"),
     @import("rom/resources/dma/dma.zig"),
@@ -57,7 +56,6 @@ pub const rom_modules = .{
     @import("rom/handler/nil/nil.zig"),
     @import("rom/handler/ram/ram.zig"),
     @import("rom/handler/con/con.zig"),
-    @import("rom/handler/pipe/pipe.zig"),
     @import("rom/handler/flashfs/flashfs.zig"),
     @import("rom/shell/shell.zig"),
     @import("rom/resources/watchdog/watchdog.zig"),
@@ -67,7 +65,6 @@ pub const rom_modules = .{
     @import("rom/libs/graphics/graphics.zig"),
     @import("rom/libs/layers/layers.zig"),
     @import("rom/libs/intuition/intuition.zig"),
-    @import("rom/libs/motion/motion.zig"),
     @import("rom/release.zig"),
     // The drivers the board's parts want.
     boards.romtags.modules,

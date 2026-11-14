@@ -3,8 +3,9 @@
 //! (`src/disk/build.zig`'s `Set`), which the build reads; `-Dsets=` names
 //! others for one build.
 //!
-//! Everything but what the emulated machine has no part for - the radio -
-//! and what draws in three dimensions: this is the image the test
-//! programs are run from.
+//! The image the test programs are run from: everything but the radio,
+//! which the emulated machine has no part for, what draws in three
+//! dimensions, and Git, which the flash has no room for beside the test
+//! programs.
 
-pub const sets = "base,gui,net,media,storage,usb,modbus,commodities,dev,tests";
+pub const sets = "base,gui,net,media,storage,usb,modbus,commodities,tests";

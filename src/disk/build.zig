@@ -37,9 +37,9 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `3d`: facet.library, its drivers and what draws with it.
 /// - `modbus`: modbus.library and the RS-485 line.
 /// - `commodities`: commodities.library and SYS:Commodities.
-/// - `dev`: what somebody working on the system wants there - Git, the
-///   example library and gadget.
-/// - `tests`: C:test and SYS:Tests.
+/// - `dev`: what somebody working on the system wants there - Git.
+/// - `tests`: C:test and SYS:Tests, and the example library and gadget
+///   they open.
 pub const Set = enum { base, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, dev, tests };
 
 /// Some of the sets.
@@ -262,7 +262,7 @@ const inner_tests = [_]Program{
 /// for - LIBS:, DEVS:, HANDLERS: - and a class library in classes/, which
 /// the startup-sequence adds to LIBS:.
 const modules = [_]Program{
-    .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library", .set = .dev },
+    .{ .disk = "libs/hello.library", .source = "libs/hello/hello.zig", .name = "hello.library", .set = .tests },
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library", .set = .net },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library", .set = .net },
     .{ .disk = "libs/compression.library", .source = "libs/compression/compression.zig", .name = "compression.library" },
@@ -309,7 +309,7 @@ const modules = [_]Program{
     .{ .disk = "libs/commodities.library", .source = "libs/commodities/commodities.zig", .name = "commodities.library", .set = .commodities },
     .{ .disk = "libs/locale.library", .source = "libs/locale/locale.zig", .name = "locale.library" },
     .{ .disk = "libs/datatypes.library", .source = "libs/datatypes/datatypes.zig", .name = "datatypes.library", .set = .gui },
-    .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget", .set = .dev },
+    .{ .disk = "classes/gadgets/hello.gadget", .source = "classes/gadgets/hello/hello.zig", .name = "hello.gadget", .set = .tests },
     .{ .disk = "classes/gadgets/checkbox.gadget", .source = "classes/gadgets/checkbox/checkbox.zig", .name = "checkbox.gadget", .set = .gui },
     .{ .disk = "classes/gadgets/cycle.gadget", .source = "classes/gadgets/cycle/cycle.zig", .name = "cycle.gadget", .set = .gui },
     .{ .disk = "classes/gadgets/radiobutton.gadget", .source = "classes/gadgets/radiobutton/radiobutton.zig", .name = "radiobutton.gadget", .set = .gui },

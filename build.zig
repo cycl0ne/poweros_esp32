@@ -88,6 +88,22 @@ const flash_boards = [_]Board{ .waveshare_7b, .es3c35p, .qemu, .olimex_p4pc, .cr
 /// one image each, for every board on that chip.
 const ram_chips = [_]Chip{ .rv64sbi, .a64psci, .x64uefi };
 
+/// A ROM module that the boards with a flash load from their disk
+/// instead: the file under src/rom/ it is built from, the name of its
+/// load file, and its place on the disk. Its file is both - a ROM tag
+/// where a kernel's list names it, a load file with that tag in it
+/// here - and dos or ramlib finds it on the disk when something first
+/// asks for it. The 64-bit machines' kernels keep these in their ROM.
+const RomOnDisk = struct { root: []const u8, name: []const u8, disk: []const u8 };
+
+/// What a flash board's ROM leaves to its disk: the pipe between two
+/// commands, which `|` in a shell opens, and the clock of things that
+/// move, which the first gadget that animates opens.
+const rom_on_disk = [_]RomOnDisk{
+    .{ .root = "src/rom/handler/pipe/pipe.zig", .name = "pipe-handler", .disk = "devs/handlers/pipe-handler" },
+    .{ .root = "src/rom/libs/motion/motion.zig", .name = "motion.library", .disk = "libs/motion.library" },
+};
+
 /// The sets `board`'s disk holds, as its `disk.zig` names them.
 fn boardSets(board: Board) Sets {
     const text: []const u8 = switch (board) {
@@ -867,6 +883,21 @@ pub fn build(b: *std.Build) void {
         for (disks.runs, DiskImages.chips, disks.sets) |run, chip, sets| {
             if (!poweros_userland.builtFor(program, chip) or !poweros_userland.onDisk(sets, program.disk)) continue;
             run.addPrefixedFileArg(b.fmt("{s}=", .{program.disk}), chip_deps[@intFromEnum(chip)].namedLazyPath(program.disk));
+        }
+    }
+    // The ROM modules the flash boards load from their disk, built for
+    // each of their chips and installed beside the board's own load
+    // files.
+    for (rom_on_disk) |module| {
+        for ([_]Chip{ .esp32s3, .esp32p4 }) |chip| {
+            const seg = poweros_sdk.addProgram(b, sdk_dep, .{
+                .name = module.name,
+                .root = b.path(module.root),
+                .optimize = optimize,
+                .chip = chip,
+            });
+            disks.addChipFile(chip, module.disk, seg);
+            if (chipOf(board) == chip) b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{module.name})).step);
         }
     }
     for (poweros_userland.files) |file| {

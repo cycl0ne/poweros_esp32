@@ -2,7 +2,7 @@
 
 Things that move - a gauge filling, a list gliding to a new line, a
 button fading into its pressed look, a ring of dots going round - all run
-on one clock: `motion.library`, in the ROM. So do things that only have
+on one clock: `motion.library`. So do things that only have
 to happen later, or every so often: a cursor that blinks, a key that
 repeats, a poll. This guide is how that clock works, what a program puts
 on it - animations, timers, timelines - how it hears of them, and how a
@@ -26,7 +26,9 @@ defer sys.CloseLibrary(lib);
 const mb: *MotionBase = @ptrCast(lib);
 ```
 
-The ROM's motion.library, 1.4, has every call in this guide. The
+The library is in the ROM of the 64-bit machines and `LIBS:motion.library`
+on the boards with a flash, where whoever opens it first waits for the
+file to be loaded. motion.library 1.4 has every call in this guide. The
 structures and tags are in `sdk.motion`, the calls in
 `sdk.interface.motion`.
 

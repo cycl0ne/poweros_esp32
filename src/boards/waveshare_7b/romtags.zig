@@ -13,4 +13,6 @@ pub const modules = .{
     @import("../../rom/resources/expander/expander.zig"),
     // The panel: RGB on LCD_CAM.
     @import("../../rom/libs/rtg_driver/rgbboard/rgbboard.zig"),
+    // The battery, whose voltage the board measures.
+    @import("../../rom/resources/battery/battery.zig"),
 };

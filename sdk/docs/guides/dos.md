@@ -999,11 +999,13 @@ in this order:
    handler name is tried instead.
 2. **Among dos's resident segments**, by the last part of the node's
    handler name: the ROM's handlers (`nil-handler`, `ram-handler`,
-   `con-handler`, `pipe-handler`, `flashfs-handler`, and `fat-handler`
-   in the ROM of a machine that starts from its card).
+   `con-handler`, `flashfs-handler`, `pipe-handler` in the ROM of the
+   64-bit machines, and `fat-handler` in the ROM of a machine that
+   starts from its card).
 3. **As a file**: a name with a path from that path, as a MountList's
    `Handler = DH0:devs/handlers/posfs-handler` gives it, and a bare name
-   from `HANDLERS:`, where `fat-handler` and `posfs-handler` are -
+   from `HANDLERS:`, where `fat-handler` and `posfs-handler` are, and
+   `pipe-handler` on the boards with a flash -
    unloaded again when the last process running it ends.
 
 A `DosPacket` carries an `action` (a `dos.ActionCode`: `.findinput`,

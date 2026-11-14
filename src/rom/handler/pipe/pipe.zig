@@ -48,8 +48,10 @@ const MsgPort = exec.MsgPort;
 
 pub const HANDLER_NAME = "pipe-handler";
 const HANDLER_VERSION = 1;
-const HANDLER_REVISION = 0;
-const BUILD_DATE = "16.9.2026";
+/// 1: the handler's file is a load file as well, `HANDLERS:pipe-handler`
+/// on a board whose ROM leaves it out.
+const HANDLER_REVISION = 1;
+const BUILD_DATE = "14.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -456,6 +458,34 @@ export const pipe_handler_tag: exec.ResidentHandler linksection(".resident") = .
     },
     .handler = &pipeHandler,
 };
+
+/// A handler is not a command. Whoever runs this file gets nothing done
+/// and a return code that says so.
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+    _ = args;
+    _ = len;
+    exec.kprintf(sys, "%s is a handler, not a command\n", .{HANDLER_NAME});
+    return 20; // RETURN_FAIL, without opening dos.library to say it
+}
+
+/// The "$VER:" string, which `Version <file>` looks for.
+const version_tag: [HANDLER_VERSION_STRING.len:0]u8 linksection(".version") = HANDLER_VERSION_STRING.*;
+
+/// Whether this is the ROM's copy: the kernel's root lists the ROM's
+/// modules, a program's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+// The file's entry and its version string, which only the file has: in
+// the ROM there is no file, and the host tests build this file beside
+// the other handlers, whose names are the same. The handler is a ROM
+// module where a board's ROM lists it and `HANDLERS:pipe-handler` where
+// it does not, which dos loads when `PIPE:` is first used.
+comptime {
+    if (!in_rom and !@import("builtin").is_test) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}
 
 // --- For the tests -----------------------------------------------------------
 

@@ -1246,11 +1246,11 @@ sets in `src/boards/<board>/disk.zig`:
 | `3d` | facet.library, its drivers and what draws with it |
 | `modbus` | modbus.library and the RS-485 line |
 | `commodities` | commodities.library and `SYS:Commodities` |
-| `dev` | Git, the example library and gadget |
-| `tests` | `C:test` and `SYS:Tests` |
+| `dev` | Git |
+| `tests` | `C:test` and `SYS:Tests`, and the example library and gadget they open |
 
 The four ESP32 boards leave `dev` and `tests` off; the two emulators'
-disks have them, and are where the test programs are run. The 64-bit
+disks have `tests`, and are where the test programs are run. The 64-bit
 machines' disks hold every set. `-Dsets=` names other sets for one
 build, and what a chip cannot run is on none of its disks whatever the
 sets say.
@@ -1259,6 +1259,12 @@ A file is on a disk when its set and the set of every drawer it lies in
 are among the disk's: `System/NetLoad` is in `net` and lies in a drawer
 of `gui`, and needs both. The `disk/` tree and `-Dextra` are the
 builder's own files and go on whatever the sets are.
+
+Two modules of the 64-bit machines' ROM are files on the flash boards'
+disks instead, in `base`: `HANDLERS:pipe-handler`, which dos loads when
+`|` in a shell first opens `PIPE:`, and `LIBS:motion.library`, loaded
+when something first animates. battery.resource is in the ROM of the
+boards that have a battery to measure.
 
 The sets are not closed over what their programs open. When something on
 a disk opens a library the sets leave off, the build says so after the

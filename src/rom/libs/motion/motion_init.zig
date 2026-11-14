@@ -19,10 +19,12 @@ pub const LIBRARY_VERSION = 1;
 /// and the calls on one), MixColour and MixRect. 3: timers
 /// (CreateTimerTagList and the calls on one). 4: timelines
 /// (CreateTimelineTagList and the calls on one). 5: the clock task's
-/// stack is the system's, not the first caller's.
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "22.10.2026";
-const LIBRARY_VERSION_STRING =
+/// stack is the system's, not the first caller's. 6: the library's file
+/// is a load file as well, `LIBS:motion.library` on a board whose ROM
+/// leaves it out.
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "14.11.2026";
+pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
