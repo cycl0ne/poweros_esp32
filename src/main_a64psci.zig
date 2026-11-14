@@ -204,6 +204,7 @@ fn startOthers(sys: *sdk.interface.exec.ExecBase) void {
 /// first line.
 export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     cpu.mpidrs[0] = mpidr & cpu.MPIDR_AFFINITY;
+    cpu.identifyHere();
     hardware.cpu.startCycleCounter();
     // Read before exec has the memory it is in.
     takeBoard(device_tree.read(fdt));

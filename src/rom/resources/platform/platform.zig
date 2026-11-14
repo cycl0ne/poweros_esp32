@@ -12,12 +12,14 @@
 //! It owns no hardware, and what the clocks and the memory are is taken
 //! when it is asked for. That matters, because the tag is RTF_SINGLETASK
 //! and runs before `timer.init` has measured anything. What the core is
-//! does not change, so that is asked once, at init: its name and the
-//! instructions a task may use of it (CpuName, CpuFeature), which
-//! `identify.zig` makes of the core's own words - an x86-64 core's
-//! identification leaves, an AArch64 core's ID registers, a RISC-V
-//! machine's ids from the firmware and its ISA string from the device
-//! tree - and the base keeps. The one thing it
+//! does not change: each core says it once, as it starts, in words the
+//! chip's own code keeps a core - an x86-64 core's identification
+//! leaves, an AArch64 core's ID registers, a RISC-V hart's ids from the
+//! firmware and its ISA string from the device tree. `identify.zig`
+//! makes a name of them and the instructions a task may use (CpuName,
+//! CpuFeature). A task runs on whichever core is free, so CpuFeature is
+//! what every core has, folded when it is first asked after a core has
+//! started and kept in the base. The one thing it
 //! changes is on request: SetMemoryType, a range of memory made uncached,
 //! write-combining or cached in the kernel's map, for a driver of a device
 //! that keeps memory of its own.
@@ -46,7 +48,7 @@ const identify = @import("identify.zig");
 
 pub const RESOURCE_NAME = types.PLATFORMNAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 3;
+const RESOURCE_REVISION = 4;
 const BUILD_DATE = "14.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -90,10 +92,11 @@ const PlatformBase = extern struct {
     lib: exec.Library,
     /// SysBase, to call exec through its jump table.
     sys_base: *ExecBase,
-    /// The core's name, a C string, and the features a task may use of
-    /// it: bit CPUF_x for each.
+    /// The first core's name, a C string.
     cpu_name: identify.Name,
-    cpu_features: u32,
+    /// The features every core has, bit CPUF_x for each, and above them
+    /// how many cores that was folded over: `everyCore`.
+    folded: u32,
 };
 
 fn platformBase(lib: *exec.Library) *PlatformBase {
@@ -108,49 +111,51 @@ fn cpuClock() u32 {
     return if (timer.cpu_hz != 0) timer.cpu_hz else clock.cpu_hz;
 }
 
-/// The core asked what it is, into the base: the core init runs on, which
-/// is the first.
-fn identifyCore(pb: *PlatformBase) void {
-    pb.cpu_features = 0;
+/// Core `core`'s name, from what it said of itself as it started.
+fn coreName(core: u32, name: *identify.Name) void {
     switch (comptime sdk.hardware.chip) {
-        // One core each, with nothing to ask it: the chips' engines for
-        // AES and SHA are peripherals, crypto.library's to drive.
-        .esp32s3 => identify.fixed(&pb.cpu_name, "Xtensa LX7"),
-        .esp32p4 => identify.fixed(&pb.cpu_name, "RISC-V RV32IMAFC"),
-        .rv64sbi => {
-            const sbi = sdk.hardware.sbi;
-            identify.riscvName(&pb.cpu_name, sbi.machineVendor(), sbi.machineArch());
-            var length: usize = 0;
-            while (length < cpu.isa.len and cpu.isa[length] != 0) length += 1;
-            pb.cpu_features = identify.riscvFeatures(cpu.isa[0..length]);
-        },
-        .a64psci => {
-            identify.armName(&pb.cpu_name, cpu.midr());
-            pb.cpu_features = identify.armFeatures(cpu.isar0());
-        },
-        .x64uefi => {
-            // The brand string is leaves 0x8000_0002 to 0x8000_0004, each
-            // register's bytes lowest first; the vendor's is leaf 0's EBX,
-            // EDX and ECX.
-            var brand: [48]u8 = @splat(0);
-            if (cpu.leaf(0x8000_0000, 0).eax >= 0x8000_0004) {
-                for (0..3) |index| {
-                    const part = cpu.leaf(0x8000_0002 + @as(u32, @intCast(index)), 0);
-                    for ([_]u32{ part.eax, part.ebx, part.ecx, part.edx }, 0..) |word, register| {
-                        for (0..4) |byte| brand[index * 16 + register * 4 + byte] = @truncate(word >> @intCast(byte * 8));
-                    }
-                }
-            }
-            var vendor: [12]u8 = undefined;
-            const first = cpu.leaf(0, 0);
-            for ([_]u32{ first.ebx, first.edx, first.ecx }, 0..) |word, register| {
-                for (0..4) |byte| vendor[register * 4 + byte] = @truncate(word >> @intCast(byte * 8));
-            }
-            identify.x86Name(&pb.cpu_name, &brand, &vendor);
-            const leaf7_ebx = if (first.eax >= 7) cpu.leaf(7, 0).ebx else 0;
-            pb.cpu_features = identify.x86Features(cpu.leaf(1, 0).ecx, leaf7_ebx);
-        },
+        // Cores of one kind, with nothing to ask them.
+        .esp32s3 => identify.fixed(name, "Xtensa LX7"),
+        .esp32p4 => identify.fixed(name, "RISC-V RV32IMAFC"),
+        .rv64sbi => identify.riscvName(name, cpu.vendors[core], cpu.architectures[core]),
+        .a64psci => identify.armName(name, cpu.midrs[core]),
+        .x64uefi => identify.x86Name(name, &cpu.identities[core].brand, &cpu.identities[core].vendor),
     }
+}
+
+/// The features a task may use on core `core`: bit CPUF_x for each.
+fn coreFeatures(core: u32) u32 {
+    return switch (comptime sdk.hardware.chip) {
+        // The chips' engines for AES and SHA are peripherals,
+        // crypto.library's to drive: no instructions.
+        .esp32s3, .esp32p4 => 0,
+        .rv64sbi => identify.riscvFeatures(cpu.isaOf(core)),
+        .a64psci => identify.armFeatures(cpu.isar0s[core]),
+        .x64uefi => identify.x86Features(cpu.identities[core].leaf1_ecx, cpu.identities[core].leaf7_ebx),
+    };
+}
+
+/// The features every core the system runs on has, which is what a task
+/// may use wherever it runs. Folded again when a core has started since:
+/// the resource is made before the other cores are let go. The count and
+/// the set are one word, so no reader sees one without the other: the
+/// set in the low `count_shift` bits, the count above. A count too large
+/// for its bits is never kept, and the set is folded at each call.
+fn everyCore(pb: *PlatformBase) u32 {
+    const cores = pb.sys_base.CoreCount();
+    const kept = @atomicLoad(u32, &pb.folded, .acquire);
+    if (kept >> count_shift == cores) return kept & set_mask;
+    var fold: identify.Fold = .{};
+    for (0..cores) |core| fold.add(coreFeatures(@intCast(core)));
+    if (cores <= ~@as(u32, 0) >> count_shift) @atomicStore(u32, &pb.folded, cores << count_shift | fold.set, .release);
+    return fold.set;
+}
+
+/// Where `folded` keeps its count, above every feature's bit.
+const count_shift = 20;
+const set_mask: u32 = (1 << count_shift) - 1;
+comptime {
+    if (types.CPUF_COUNT > count_shift) @compileError("more features than folded has bits for");
 }
 
 fn lvoGetPlatformInfo(pb: *PlatformBase, info: *PlatformInfo, size: u32) callconv(.c) u32 {
@@ -378,17 +383,19 @@ fn lvoCpuName(pb: *PlatformBase) callconv(.c) [*:0]const u8 {
 ///   the polynomial 0x04C11DB7; CPUF_CRC32C, the polynomial 0x1EDC6F41.
 ///
 /// RESULT:
-/// True where the core has the instructions and the system keeps the
-/// registers they work in across a task switch: a task may then run them
-/// as it runs any other. False where either is missing, and for a number
-/// that names no feature.
+/// True where every core the system runs on has the instructions and
+/// the system keeps the registers they work in across a task switch: a
+/// task may then run them as it runs any other, whichever core it is on.
+/// False where either is missing, and for a number that names no
+/// feature.
 ///
 /// BEHAVIOR:
-/// The answer is made once, when the resource is made, of what the core
-/// says: an x86-64 core's identification leaves 1 and 7, an AArch64
-/// core's ID_AA64ISAR0_EL1, a RISC-V core's ISA string in the device
-/// tree (Zkne with Zknd, Zbc or Zbkc, Zknh, or Zkn and Zk for all of
-/// them). The call itself tests a bit. A feature means the same
+/// Each core says what it has as it starts: an x86-64 core's
+/// identification leaves 1 and 7, an AArch64 core's ID_AA64ISAR0_EL1, a
+/// RISC-V hart's ISA string in the device tree (Zkne with Zknd, Zbc or
+/// Zbkc, Zknh, or Zkn and Zk for all of them). The answer is the
+/// features all of them have, worked out the first time it is asked
+/// once the cores are up and kept; the call itself then tests a bit. A feature means the same
 /// operation on every chip, in that chip's own instructions; the
 /// instructions are the caller's to write.
 ///
@@ -409,11 +416,13 @@ fn lvoCpuName(pb: *PlatformBase) callconv(.c) [*:0]const u8 {
 /// feature is false there. On x86-64 CPUF_SHA512 is false whatever the
 /// core has, since those instructions work in registers no task keeps,
 /// and CPUF_CRC32 is false because the core's instruction is CRC-32C.
-/// Ask once and keep the answer; it never changes.
+/// Every core is up before the first program is loaded from a disk, and
+/// from then on the answer never changes: ask once and keep it. A
+/// feature only some cores have is false, a task pinned to one of them
+/// included.
 ///
 /// BUGS:
-/// The answer is the first core's. A machine whose cores are not all
-/// alike may say true of a feature a task then meets a core without.
+/// None known.
 ///
 /// SEE ALSO:
 /// `CpuName`, `GetPlatformInfo`
@@ -425,7 +434,7 @@ fn lvoCpuName(pb: *PlatformBase) callconv(.c) [*:0]const u8 {
 /// const fast = pr.CpuFeature(platform.CPUF_AES) and pr.CpuFeature(platform.CPUF_CLMUL);
 /// ```
 pub fn CpuFeature(pb: *PlatformBase, feature: u32) bool {
-    return identify.has(pb.cpu_features, feature);
+    return identify.has(everyCore(pb), feature);
 }
 
 fn lvoCpuFeature(pb: *PlatformBase, feature: u32) callconv(.c) bool {
@@ -438,7 +447,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     const pb = platformBase(lib);
     lib.revision = RESOURCE_REVISION;
     pb.sys_base = sys_base;
-    identifyCore(pb);
+    coreName(0, &pb.cpu_name);
+    pb.folded = 0;
     return lib;
 }
 

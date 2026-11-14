@@ -211,6 +211,7 @@ pub fn answerName(answer: i64) [*:0]const u8 {
 export fn kmain_other(core: u32) callconv(.c) noreturn {
     cpu.takeCore(core, cpu.lapic_ids[core]);
     cpu.setUpState();
+    cpu.identifyHere();
     desc.setUp();
     apic.initCore1();
     timer.initCore1();

@@ -73,6 +73,7 @@ pub fn start(core: u32, stack_top: usize) bool {
 /// here, says it is up, and goes on as its idle task.
 export fn kmain_other(core: u32) callconv(.c) noreturn {
     _ = core;
+    cpu.identifyHere();
     plic.initCore1();
     timer.initCore1();
     exec.coreStarted(exec.SysBase);

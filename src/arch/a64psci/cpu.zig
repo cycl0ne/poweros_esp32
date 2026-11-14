@@ -43,6 +43,21 @@ pub const max_cores = 4;
 /// Each core's MPIDR affinity; start.S's for core 0.
 pub var mpidrs: [max_cores]u64 = @splat(0);
 
+/// Each core's MIDR_EL1 and ID_AA64ISAR0_EL1, read on that core as it
+/// starts (`identifyHere`): who made it, which of theirs it is, and the
+/// instructions it has beyond the base. platform.resource says what they
+/// mean.
+pub var midrs: [max_cores]u64 = @splat(0);
+pub var isar0s: [max_cores]u64 = @splat(0);
+
+/// The core this runs on asked what it is. After TPIDR_EL1 has its
+/// number.
+pub fn identifyHere() void {
+    const core = coreId();
+    midrs[core] = midr();
+    isar0s[core] = isar0();
+}
+
 /// The core this runs on: 0 up.
 pub inline fn coreId() u32 {
     return @truncate(asm volatile ("mrs %[r], tpidr_el1"

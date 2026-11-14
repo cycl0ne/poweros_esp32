@@ -64,10 +64,10 @@ pub const Facts = struct {
     hart_count: usize = 0,
     stations: [max_stations]Station = undefined,
     station_count: usize = 0,
-    /// The ISA string of the first hart in `harts`, ended by a NUL: the
+    /// Each hart's ISA string, in `harts`' order and ended by a NUL: the
     /// node's `riscv,isa`, or its `riscv,isa-extensions` written the
     /// same way. Empty where the node has neither.
-    isa: [isa_size]u8 = @splat(0),
+    isas: [max_harts][isa_size]u8 = @splat(@splat(0)),
 
     /// The station address the tree gives the port whose registers are at
     /// `address`, or null.
@@ -247,7 +247,7 @@ pub fn read(address: usize) Facts {
                 if (depth == 3 and in_cpu) {
                     in_cpu = false;
                     if (cpu_id != null and cpu_okay and cpu_mmu and cpu_fpu and facts.hart_count < max_harts) {
-                        if (facts.hart_count == 0) facts.isa = cpu_isa;
+                        facts.isas[facts.hart_count] = cpu_isa;
                         facts.harts[facts.hart_count] = cpu_id.?;
                         facts.hart_count += 1;
                     }

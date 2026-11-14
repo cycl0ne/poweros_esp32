@@ -18,6 +18,7 @@
 const exec_base = @import("../../rom/libs/exec/exec_base.zig");
 
 pub const ccount = @import("sdk").hardware.cpu.ccount;
+const sbi = @import("sdk").hardware.sbi;
 
 /// sstatus: the interrupts on, the interrupt state a trap saves and sret
 /// puts back, the privilege sret returns to, and the FPU's state.
@@ -54,11 +55,41 @@ pub const max_cores = 4;
 /// Each core's hart, as the firmware numbers it; start.S's a0.
 pub var hartids: [max_cores]usize = @splat(0);
 
-/// The ISA string of the first hart that runs the kernel, as the device
-/// tree has it (`rv64imafdc_zicsr...`), ended by a NUL; empty where the
-/// tree has none. The kernel's root sets it before anything reads it.
-pub var isa: [isa_size]u8 = @splat(0);
+/// The ISA strings of the harts that can run the kernel, as the device
+/// tree has them (`rv64imafdc_zicsr...`), each ended by a NUL and empty
+/// where the tree has none, with the hart each is of. The kernel's root
+/// sets them before anything reads them.
+pub var isas: [isa_harts][isa_size]u8 = @splat(@splat(0));
+pub var isa_hartids: [isa_harts]usize = @splat(0);
+pub var isa_count: usize = 0;
 pub const isa_size = 512;
+pub const isa_harts = 8;
+
+/// Core `core`'s ISA string, without its NUL; empty where the tree named
+/// none for its hart.
+pub fn isaOf(core: u32) []const u8 {
+    for (isa_hartids[0..isa_count], 0..) |hart, index| {
+        if (hart != hartids[core]) continue;
+        const isa = &isas[index];
+        var length: usize = 0;
+        while (length < isa.len and isa[length] != 0) length += 1;
+        return isa[0..length];
+    }
+    return "";
+}
+
+/// Each core's mvendorid and marchid, asked of the firmware on that core
+/// as it starts (`identifyHere`): who made it and which of theirs it is, 0
+/// where it does not say. platform.resource says what they mean.
+pub var vendors: [max_cores]usize = @splat(0);
+pub var architectures: [max_cores]usize = @splat(0);
+
+/// The core this runs on asked what it is. After `tp` has its number.
+pub fn identifyHere() void {
+    const core = coreId();
+    vendors[core] = sbi.machineVendor();
+    architectures[core] = sbi.machineArch();
+}
 
 /// The core this runs on: 0 up.
 pub inline fn coreId() u32 {

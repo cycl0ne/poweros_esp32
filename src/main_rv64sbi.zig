@@ -123,7 +123,9 @@ fn takeBoard(tree: device_tree.Facts) void {
     ram.ram_size = tree.ram_size orelse boards.fact(st.SYSTAG_RamSize, 128 * 1024 * 1024);
     for (tree.reservedRanges(), 0..) |range, index| ram.reserved[index] = range;
     ram.reserved_count = tree.reserved_count;
-    cpu.isa = tree.isa;
+    cpu.isas = tree.isas;
+    for (tree.hartIds(), 0..) |hart, index| cpu.isa_hartids[index] = hart;
+    cpu.isa_count = tree.hart_count;
     if (tree.initrd_start != null and tree.initrd_end != null and tree.initrd_end.? > tree.initrd_start.?) {
         hardware.ramdisk.base = tree.initrd_start.?;
         hardware.ramdisk.size = tree.initrd_end.? - tree.initrd_start.?;
@@ -172,6 +174,7 @@ fn startOthers(sys: *sdk.interface.exec.ExecBase) void {
 /// done RawIOInit; the log keeps it all from the first line.
 export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     cpu.hartids[0] = hartid;
+    cpu.identifyHere();
     // Read before exec has the memory it is in.
     takeBoard(device_tree.read(fdt));
     // The cores' clock, before anything else runs on them and before it

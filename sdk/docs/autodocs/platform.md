@@ -59,18 +59,20 @@ fn CpuFeature(pb: *PlatformBase, feature: u32) bool
 
 **RESULT**
 
-True where the core has the instructions and the system keeps the
-registers they work in across a task switch: a task may then run them
-as it runs any other. False where either is missing, and for a number
-that names no feature.
+True where every core the system runs on has the instructions and
+the system keeps the registers they work in across a task switch: a
+task may then run them as it runs any other, whichever core it is on.
+False where either is missing, and for a number that names no
+feature.
 
 **BEHAVIOR**
 
-The answer is made once, when the resource is made, of what the core
-says: an x86-64 core's identification leaves 1 and 7, an AArch64
-core's ID_AA64ISAR0_EL1, a RISC-V core's ISA string in the device
-tree (Zkne with Zknd, Zbc or Zbkc, Zknh, or Zkn and Zk for all of
-them). The call itself tests a bit. A feature means the same
+Each core says what it has as it starts: an x86-64 core's
+identification leaves 1 and 7, an AArch64 core's ID_AA64ISAR0_EL1, a
+RISC-V hart's ISA string in the device tree (Zkne with Zknd, Zbc or
+Zbkc, Zknh, or Zkn and Zk for all of them). The answer is the
+features all of them have, worked out the first time it is asked
+once the cores are up and kept; the call itself then tests a bit. A feature means the same
 operation on every chip, in that chip's own instructions; the
 instructions are the caller's to write.
 
@@ -94,12 +96,14 @@ peripherals, not instructions, and crypto.library drives them: every
 feature is false there. On x86-64 CPUF_SHA512 is false whatever the
 core has, since those instructions work in registers no task keeps,
 and CPUF_CRC32 is false because the core's instruction is CRC-32C.
-Ask once and keep the answer; it never changes.
+Every core is up before the first program is loaded from a disk, and
+from then on the answer never changes: ask once and keep it. A
+feature only some cores have is false, a task pinned to one of them
+included.
 
 **BUGS**
 
-The answer is the first core's. A machine whose cores are not all
-alike may say true of a feature a task then meets a core without.
+None known.
 
 **SEE ALSO**
 

@@ -96,6 +96,7 @@ pub fn answerName(answer: i64) [*:0]const u8 {
 /// task.
 export fn kmain_other(core: u32) callconv(.c) noreturn {
     _ = core;
+    cpu.identifyHere();
     hardware.cpu.startCycleCounter();
     @import("debugexc.zig").init();
     gic.initCore1();

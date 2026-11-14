@@ -6,6 +6,9 @@
 //! machine's ids and its ISA string - and the functions here say what
 //! they mean, so the host's tests run them on words written down.
 //!
+//! A task runs on whichever core is free, so what a task may use of a
+//! machine is what every one of its cores has: `Fold`.
+//!
 //! A name is a C string in a buffer of CPU_NAME_SIZE bytes, cut where it
 //! would not fit. A set of features is a word with bit CPUF_x set for
 //! each feature a task may use: the core has the instructions, and the
@@ -29,6 +32,18 @@ pub fn has(set: u32, feature: u32) bool {
     if (feature >= types.CPUF_COUNT) return false;
     return set & bit(feature) != 0;
 }
+
+/// What every core of several has: each core's set is added, and the
+/// result is the features all of them had. No feature for no core.
+pub const Fold = struct {
+    set: u32 = 0,
+    cores: u32 = 0,
+
+    pub fn add(fold: *Fold, set: u32) void {
+        fold.set = if (fold.cores == 0) set else fold.set & set;
+        fold.cores += 1;
+    }
+};
 
 /// `text` added to the name at `at`, as much of it as leaves room for
 /// the NUL; answers where the name ends now.
@@ -293,6 +308,31 @@ test "a number that names no feature is in no set" {
     try testing.expect(!has(0xFFFF_FFFF, 31));
     try testing.expect(!has(0xFFFF_FFFF, 32));
     try testing.expect(!has(0xFFFF_FFFF, 0xFFFF_FFFF));
+}
+
+test "a machine's features are the ones every core has" {
+    const none: Fold = .{};
+    try testing.expectEqual(@as(u32, 0), none.set);
+    // Four cores alike.
+    const a76 = armFeatures(0x0000_1000_1021_1120);
+    var alike: Fold = .{};
+    for (0..4) |_| alike.add(a76);
+    try testing.expectEqual(a76, alike.set);
+    // One of them without the SHA instructions, wherever it comes.
+    const plain = x86Features(LEAF1_AES | LEAF1_PCLMULQDQ | LEAF1_SSE42, 0);
+    const whole = x86Features(LEAF1_AES | LEAF1_PCLMULQDQ | LEAF1_SSE42, LEAF7_SHA);
+    for (0..3) |odd| {
+        var unlike: Fold = .{};
+        for (0..3) |core| unlike.add(if (core == odd) plain else whole);
+        try testing.expectEqual(plain, unlike.set);
+        try testing.expect(!has(unlike.set, types.CPUF_SHA256));
+        try testing.expect(has(unlike.set, types.CPUF_AES));
+    }
+    // A core with nothing leaves nothing.
+    var bare: Fold = .{};
+    bare.add(whole);
+    bare.add(0);
+    try testing.expectEqual(@as(u32, 0), bare.set);
 }
 
 test "an AArch64 core is named by its part, or by its numbers" {

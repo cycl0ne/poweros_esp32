@@ -410,6 +410,8 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // into them.
     _ = coretables.take(cpu1.countCores(tables.core_count));
     cpu1.takeCores(&tables, cpu.prid());
+    // What this core says of itself, into its place in them.
+    cpu.identifyHere();
     // The screen's own blocks made write-combining, now that the map is
     // the kernel's: a picture written word by word into uncached memory is
     // slow enough to be worth the two lines.

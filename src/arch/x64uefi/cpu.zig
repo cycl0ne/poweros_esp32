@@ -74,10 +74,54 @@ pub var blocks: [*]CoreBlock = &core_blocks;
 pub var lapic_ids: [*]u32 = &one_lapic_id;
 var one_lapic_id: [1]u32 = .{0};
 
+/// What a core says of itself, read on that core as it starts: its
+/// brand string (leaves 0x8000_0002 to 0x8000_0004, each register's bytes
+/// lowest first; zeroes from a core without them), its vendor's (leaf 0's
+/// EBX, EDX and ECX), and the feature words of leaf 1 (ECX) and leaf 7
+/// (EBX, 0 from a core without that leaf). platform.resource says what
+/// they mean.
+pub const Identity = extern struct {
+    brand: [48]u8 = @splat(0),
+    vendor: [12]u8 = @splat(0),
+    leaf1_ecx: u32 = 0,
+    leaf7_ebx: u32 = 0,
+};
+
+/// Each core's, by its number.
+pub var identities: [*]Identity = &one_identity;
+var one_identity: [1]Identity = .{.{}};
+
+/// The core this runs on asked what it is, into its place in the table:
+/// once it has its number and its SSE registers are on (`setUpState`),
+/// which the copying uses.
+pub fn identifyHere() void {
+    identities[coreId()] = identity();
+}
+
+fn identity() Identity {
+    var said: Identity = .{};
+    if (leaf(0x8000_0000, 0).eax >= 0x8000_0004) {
+        for (0..3) |index| {
+            const part = leaf(0x8000_0002 + @as(u32, @intCast(index)), 0);
+            for ([_]u32{ part.eax, part.ebx, part.ecx, part.edx }, 0..) |word, register| {
+                for (0..4) |byte| said.brand[index * 16 + register * 4 + byte] = @truncate(word >> @intCast(byte * 8));
+            }
+        }
+    }
+    const first = leaf(0, 0);
+    for ([_]u32{ first.ebx, first.edx, first.ecx }, 0..) |word, register| {
+        for (0..4) |byte| said.vendor[register * 4 + byte] = @truncate(word >> @intCast(byte * 8));
+    }
+    said.leaf1_ecx = leaf(1, 0).ecx;
+    if (first.eax >= 7) said.leaf7_ebx = leaf(7, 0).ebx;
+    return said;
+}
+
 /// This chip's share of the cores' tables.
 pub fn layTables(bump: *coretables.Bump, count: u32) void {
     if (bump.take(CoreBlock, count)) |at| blocks = at;
     if (bump.take(u32, count)) |at| lapic_ids = at;
+    if (bump.take(Identity, count)) |at| identities = at;
 }
 
 /// Core 0 moved onto them: what its own block held, and GS pointed at its
