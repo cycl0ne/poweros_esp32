@@ -784,8 +784,12 @@ AES rounds, the carry-less product, SHA-1, SHA-256, SHA-512, and the two
 CRC-32s. The same numbers on every chip, answered from the core's
 identification leaves on x86-64, its ID registers on AArch64 and the
 device tree's ISA string on RISC-V, and true only where the system also
-keeps the registers the instructions work in across a task switch.
-`C:Platform` prints both (`Platform CPU` the name alone).
+keeps the registers the instructions work in across a task switch. Each
+core says what it is as it starts, and since a task runs on whichever
+core is free, `CpuFeature` is what every core has; `GetCoreInfo` is one
+core's own name, features and number, for a machine whose cores are not
+all alike. `C:Platform` prints it all (`Platform CPU` the name alone,
+`Platform CORES` a line a core), and About counts the cores by kind.
 
 **AES, GCM and SHA run on the core's own instructions.** crypto.library
 asks platform.resource once, when it is made, for AES-NI, PCLMULQDQ and

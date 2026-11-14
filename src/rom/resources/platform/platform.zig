@@ -44,11 +44,12 @@ const layout = arch.layout;
 const vec = exec.vec;
 const types = sdk.resources.platform;
 const PlatformInfo = types.PlatformInfo;
+const CoreInfo = types.CoreInfo;
 const identify = @import("identify.zig");
 
 pub const RESOURCE_NAME = types.PLATFORMNAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 4;
+const RESOURCE_REVISION = 5;
 const BUILD_DATE = "14.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -132,6 +133,16 @@ fn coreFeatures(core: u32) u32 {
         .rv64sbi => identify.riscvFeatures(cpu.isaOf(core)),
         .a64psci => identify.armFeatures(cpu.isar0s[core]),
         .x64uefi => identify.x86Features(cpu.identities[core].leaf1_ecx, cpu.identities[core].leaf7_ebx),
+    };
+}
+
+/// Core `core` as the machine numbers it.
+fn coreNumber(core: u32) u64 {
+    return switch (comptime sdk.hardware.chip) {
+        .esp32s3, .esp32p4 => core,
+        .rv64sbi => cpu.hartids[core],
+        .a64psci => cpu.mpidrs[core],
+        .x64uefi => cpu.lapic_ids[core],
     };
 }
 
@@ -329,8 +340,10 @@ fn lvoSetMemoryType(pb: *PlatformBase, start: usize, length: usize, kind: u32) c
 /// Cortex-A76"), or the two numbers in hexadecimal for a part not known
 /// ("AArch64 41:d4f"); a RISC-V 64 core's own name for one whose ids are
 /// known ("SiFive U74"), "RISC-V RV64GC" for any other. An ESP32's core
-/// is its chip's: "Xtensa LX7", "RISC-V RV32IMAFC". It is asked once,
-/// when the resource is made, and is GetPlatformInfo's `core`.
+/// is its chip's: "Xtensa LX7", "RISC-V RV32IMAFC". It is the first
+/// core's, the one the machine started on, read as that core started,
+/// and is GetPlatformInfo's `core`. On a machine whose cores are not all
+/// alike the others have names of their own, which GetCoreInfo gives.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -348,11 +361,10 @@ fn lvoSetMemoryType(pb: *PlatformBase, start: usize, length: usize, kind: u32) c
 /// PlatformName is the chip or the kind of machine, this the core in it.
 ///
 /// BUGS:
-/// The name is the first core's. A machine whose cores are not all alike
-/// is named for that one.
+/// None known.
 ///
 /// SEE ALSO:
-/// `CpuFeature`, `PlatformName`, `GetPlatformInfo`
+/// `CpuFeature`, `GetCoreInfo`, `PlatformName`, `GetPlatformInfo`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -418,14 +430,15 @@ fn lvoCpuName(pb: *PlatformBase) callconv(.c) [*:0]const u8 {
 /// and CPUF_CRC32 is false because the core's instruction is CRC-32C.
 /// Every core is up before the first program is loaded from a disk, and
 /// from then on the answer never changes: ask once and keep it. A
-/// feature only some cores have is false, a task pinned to one of them
-/// included.
+/// feature only some cores have is false; a task that keeps to one core
+/// (exec's SetTaskAffinity) finds what that core has in GetCoreInfo's
+/// `features`.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `CpuName`, `GetPlatformInfo`
+/// `GetCoreInfo`, `CpuName`, `GetPlatformInfo`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -439,6 +452,83 @@ pub fn CpuFeature(pb: *PlatformBase, feature: u32) bool {
 
 fn lvoCpuFeature(pb: *PlatformBase, feature: u32) callconv(.c) bool {
     return CpuFeature(pb, feature);
+}
+
+/// One core of the machine: its name, what it has, and its number.
+///
+/// SYNOPSIS:
+/// ```zig
+/// fn GetCoreInfo(pb: *PlatformBase, core: u32, info: *CoreInfo,
+///     size: u32) u32
+/// ```
+///
+/// SINCE: 1.5. LVO -32.
+///
+/// INPUTS:
+/// - `core` - the core, 0 to one less than exec's CoreCount.
+/// - `info` - where the answer goes.
+/// - `size` - how many bytes are there: @sizeOf(CoreInfo).
+///
+/// RESULT:
+/// How many bytes were written: the lesser of `size` and the structure
+/// as the resource knows it. 0, and nothing written, for a core the
+/// system does not run on and for a `size` of 0.
+///
+/// BEHAVIOR:
+/// `id` is the core as the machine numbers it - an x86-64 core's local
+/// interrupt controller id, an AArch64 core's MPIDR affinity, a RISC-V
+/// core's hart id, an ESP32 core's own number. `features` has bit
+/// `1 << CPUF_x` set for each feature a task running on this core may
+/// use; CpuFeature is the bits every core has. `name` is the core's own,
+/// as CpuName gives core 0's. All of it is what the core said of itself
+/// as it started.
+///
+/// CONTEXT:
+/// - Waits: no.
+/// - Interrupts: yes.
+/// - Locks: none.
+/// - Process: a Task will do.
+///
+/// OWNERSHIP:
+/// `info` is the caller's; the name is copied into it.
+///
+/// NOTES:
+/// A program built against another SDK than the resource gets whole
+/// bytes up to the smaller structure: check the count before trusting a
+/// field near the end. `CoreKinds.of` (sdk/resources/platform.zig)
+/// counts a machine's cores by name, for a line that says "4 ARM
+/// Cortex-A76 + 4 ARM Cortex-A55".
+///
+/// BUGS:
+/// None known.
+///
+/// SEE ALSO:
+/// `CpuFeature`, `CpuName`, `GetPlatformInfo`, exec's `CoreCount` and
+/// `SetTaskAffinity`
+///
+/// EXAMPLES:
+/// ```zig
+/// var core: u32 = 0;
+/// while (core < sys.CoreCount()) : (core += 1) {
+///     var info: platform.CoreInfo = .{};
+///     if (pr.GetCoreInfo(core, &info, @sizeOf(platform.CoreInfo)) == 0) break;
+///     _ = Printf(dl, "%d: %s\n", .{ core, @as([*:0]const u8, @ptrCast(&info.name)) });
+/// }
+/// ```
+pub fn GetCoreInfo(pb: *PlatformBase, core: u32, info: *CoreInfo, size: u32) u32 {
+    if (core >= pb.sys_base.CoreCount()) return 0;
+    var whole: CoreInfo = .{ .id = coreNumber(core), .features = coreFeatures(core) };
+    coreName(core, &whole.name);
+    const fits = @min(size, @sizeOf(CoreInfo));
+    if (fits == 0) return 0;
+    const from: [*]const u8 = @ptrCast(&whole);
+    const into: [*]u8 = @ptrCast(info);
+    @memcpy(into[0..fits], from[0..fits]);
+    return fits;
+}
+
+fn lvoGetCoreInfo(pb: *PlatformBase, core: u32, info: *CoreInfo, size: u32) callconv(.c) u32 {
+    return GetCoreInfo(pb, core, info, size);
 }
 
 /// exec has copied the tag's name, version and ID string into the base.
@@ -460,6 +550,7 @@ const vectors = [_]*const anyopaque{
     vec(lvoSetMemoryType),
     vec(lvoCpuName),
     vec(lvoCpuFeature),
+    vec(lvoGetCoreInfo),
 };
 
 const init_table = exec.InitTable{

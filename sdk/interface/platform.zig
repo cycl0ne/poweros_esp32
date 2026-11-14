@@ -23,6 +23,7 @@ pub const LVO = struct {
     pub const SetMemoryType = libraries.lvo(4);
     pub const CpuName = libraries.lvo(5);
     pub const CpuFeature = libraries.lvo(6);
+    pub const GetCoreInfo = libraries.lvo(7);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -35,6 +36,7 @@ pub const Fn = struct {
     pub const SetMemoryType = *const fn (*PlatformBase, usize, usize, u32) callconv(.c) bool;
     pub const CpuName = *const fn (*PlatformBase) callconv(.c) [*:0]const u8;
     pub const CpuFeature = *const fn (*PlatformBase, u32) callconv(.c) bool;
+    pub const GetCoreInfo = *const fn (*PlatformBase, u32, *platform.CoreInfo, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -97,5 +99,14 @@ pub const PlatformBase = opaque {
     /// switch. False for a number that names no feature.
     pub fn CpuFeature(self: *PlatformBase, feature: u32) bool {
         return libraries.call(self, LVO.CpuFeature, Fn.CpuFeature, .{feature});
+    }
+
+    /// Core `core` - 0 to one less than exec's CoreCount - into `info`
+    /// (sdk/resources/platform.zig), of which `size` bytes are there: pass
+    /// @sizeOf(CoreInfo). Returns how many bytes it wrote, as GetPlatformInfo
+    /// does, and 0 with nothing written for a core the system does not run
+    /// on.
+    pub fn GetCoreInfo(self: *PlatformBase, core: u32, info: *platform.CoreInfo, size: u32) u32 {
+        return libraries.call(self, LVO.GetCoreInfo, Fn.GetCoreInfo, .{ core, info, size });
     }
 };

@@ -13,6 +13,7 @@ Generated from the source by `./zig build autodoc`.
 - [CpuClock](#cpuclock) - The clock the system runs and times by, in Hz.
 - [CpuFeature](#cpufeature) - Whether a task may use one of the instruction sets a core can bring beyond its chip's base.
 - [CpuName](#cpuname) - The core the system runs on, by its own name.
+- [GetCoreInfo](#getcoreinfo) - One core of the machine: its name, what it has, and its number.
 - [GetPlatformInfo](#getplatforminfo) - Fill in `info` (sdk/resources/platform.zig), of which `size` bytes are there - pass @sizeOf(PlatformInfo).
 - [PlatformName](#platformname) - The chip's name, a C string ("ESP32-S3").
 - [SetMemoryType](#setmemorytype) - A range of memory made uncached, write-combining or cached to the cores.
@@ -98,8 +99,9 @@ core has, since those instructions work in registers no task keeps,
 and CPUF_CRC32 is false because the core's instruction is CRC-32C.
 Every core is up before the first program is loaded from a disk, and
 from then on the answer never changes: ask once and keep it. A
-feature only some cores have is false, a task pinned to one of them
-included.
+feature only some cores have is false; a task that keeps to one core
+(exec's SetTaskAffinity) finds what that core has in GetCoreInfo's
+`features`.
 
 **BUGS**
 
@@ -107,7 +109,7 @@ None known.
 
 **SEE ALSO**
 
-`CpuName`, `GetPlatformInfo`
+`GetCoreInfo`, `CpuName`, `GetPlatformInfo`
 
 **EXAMPLES**
 
@@ -149,8 +151,10 @@ where it has none; an AArch64 core's maker and part ("ARM
 Cortex-A76"), or the two numbers in hexadecimal for a part not known
 ("AArch64 41:d4f"); a RISC-V 64 core's own name for one whose ids are
 known ("SiFive U74"), "RISC-V RV64GC" for any other. An ESP32's core
-is its chip's: "Xtensa LX7", "RISC-V RV32IMAFC". It is asked once,
-when the resource is made, and is GetPlatformInfo's `core`.
+is its chip's: "Xtensa LX7", "RISC-V RV32IMAFC". It is the first
+core's, the one the machine started on, read as that core started,
+and is GetPlatformInfo's `core`. On a machine whose cores are not all
+alike the others have names of their own, which GetCoreInfo gives.
 
 **CONTEXT**
 
@@ -172,17 +176,92 @@ PlatformName is the chip or the kind of machine, this the core in it.
 
 **BUGS**
 
-The name is the first core's. A machine whose cores are not all alike
-is named for that one.
+None known.
 
 **SEE ALSO**
 
-`CpuFeature`, `PlatformName`, `GetPlatformInfo`
+`CpuFeature`, `GetCoreInfo`, `PlatformName`, `GetPlatformInfo`
 
 **EXAMPLES**
 
 ```zig
 _ = Printf(dl, "%s at %d MHz\n", .{ pr.CpuName(), pr.CpuClock() / 1_000_000 });
+```
+
+## GetCoreInfo
+
+One core of the machine: its name, what it has, and its number.
+
+**SYNOPSIS**
+
+```zig
+fn GetCoreInfo(pb: *PlatformBase, core: u32, info: *CoreInfo,
+    size: u32) u32
+```
+
+**SINCE**
+
+1.5. LVO -32.
+
+**INPUTS**
+
+- `core` - the core, 0 to one less than exec's CoreCount.
+- `info` - where the answer goes.
+- `size` - how many bytes are there: @sizeOf(CoreInfo).
+
+**RESULT**
+
+How many bytes were written: the lesser of `size` and the structure
+as the resource knows it. 0, and nothing written, for a core the
+system does not run on and for a `size` of 0.
+
+**BEHAVIOR**
+
+`id` is the core as the machine numbers it - an x86-64 core's local
+interrupt controller id, an AArch64 core's MPIDR affinity, a RISC-V
+core's hart id, an ESP32 core's own number. `features` has bit
+`1 << CPUF_x` set for each feature a task running on this core may
+use; CpuFeature is the bits every core has. `name` is the core's own,
+as CpuName gives core 0's. All of it is what the core said of itself
+as it started.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`info` is the caller's; the name is copied into it.
+
+**NOTES**
+
+A program built against another SDK than the resource gets whole
+bytes up to the smaller structure: check the count before trusting a
+field near the end. `CoreKinds.of` (sdk/resources/platform.zig)
+counts a machine's cores by name, for a line that says "4 ARM
+Cortex-A76 + 4 ARM Cortex-A55".
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CpuFeature`, `CpuName`, `GetPlatformInfo`, exec's `CoreCount` and
+`SetTaskAffinity`
+
+**EXAMPLES**
+
+```zig
+var core: u32 = 0;
+while (core < sys.CoreCount()) : (core += 1) {
+    var info: platform.CoreInfo = .{};
+    if (pr.GetCoreInfo(core, &info, @sizeOf(platform.CoreInfo)) == 0) break;
+    _ = Printf(dl, "%d: %s\n", .{ core, @as([*:0]const u8, @ptrCast(&info.name)) });
+}
 ```
 
 ## GetPlatformInfo

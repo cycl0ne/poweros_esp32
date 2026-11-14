@@ -181,10 +181,12 @@ Inside exec, where the code is the CPU's own:
       its call**, which is the one place needing real care on a
       variable-length instruction set.
 - [ ] `resources/platform/platform.zig` - the chip's name, and
-      `identifyCore`: the core's name and the features a task may use of
-      it (`CpuName`, `CpuFeature`), read from wherever the core says
-      them, with the decoding in `identify.zig` beside it, which the
-      host's tests run.
+      `coreName`, `coreFeatures` and `coreNumber`: a core's name, the
+      features a task may use of it and the machine's number for it
+      (`CpuName`, `CpuFeature`, `GetCoreInfo`), from the words each core
+      leaves in `cpu.zig`'s per-core tables as it starts
+      (`identifyHere`), with the decoding in `identify.zig` beside it,
+      which the host's tests run.
 
 In the ROM's devices and resources - each of these already switches on
 the chip, so each is a place to add an arm or a `<chip>/` subfolder:

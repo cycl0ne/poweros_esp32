@@ -237,19 +237,24 @@ fn board(d: *Desktop, about: *About) void {
 fn processor(d: *Desktop, about: *About) void {
     const resource = d.sys.OpenResource(platform.PLATFORMNAME) orelse return;
     const pr: *PlatformBase = @ptrCast(@alignCast(resource));
-    var info: platform.PlatformInfo = .{};
-    _ = pr.GetPlatformInfo(&info, @sizeOf(platform.PlatformInfo));
     if (about.row(.MSG_ABOUT_PROCESSOR)) |line| line.addString(pr.PlatformName());
     // What the machine says it runs on, not a number counted up to a
     // ceiling of this file's own: a machine with sixteen cores has
     // sixteen.
-    const cores = d.sys.CoreCount();
-    if (cores > 0 or info.core != null) {
+    // Counted by kind: "8 AMD Ryzen 7 7840HS", or "4 ARM Cortex-A76 + 4
+    // ARM Cortex-A55" on a machine whose cores are not all alike.
+    const kinds = platform.CoreKinds.of(pr, d.sys.CoreCount());
+    if (kinds.used != 0) {
         if (about.row(.MSG_ABOUT_CORES)) |line| {
-            if (cores > 0) line.number(cores);
-            if (info.core) |core| {
-                if (cores > 0) line.add(" ");
-                line.addString(core);
+            for (kinds.kinds[0..kinds.used], 0..) |*alike, index| {
+                if (index != 0) line.add(" + ");
+                line.number(alike.count);
+                line.add(" ");
+                line.addString(@ptrCast(&alike.name));
+            }
+            if (kinds.others != 0) {
+                line.add(" + ");
+                line.number(kinds.others);
             }
         }
     }

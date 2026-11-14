@@ -3,11 +3,14 @@
 //! and the stacks are, and whether there is PSRAM. Built against the SDK
 //! only.
 //!
-//!   Platform CHIP/S,CPU/S,CLOCK/S,TICK/S
+//!   Platform CHIP/S,CPU/S,CORES/S,CLOCK/S,TICK/S
 //!
 //! With no switch it prints the table the `s3>` shell's `info` prints, and
 //! from the same place: both ask platform.resource, so there is one source
 //! of truth and not two.
+//!
+//! CORES prints a line a core: its number, the machine's number for it,
+//! its name and the features a task running on it may use.
 //!
 //! One of CHIP, CPU, CLOCK or TICK prints that one value and nothing else, which
 //! is what a script wants - Avail's rule, and for the same reason:
@@ -34,13 +37,14 @@ const PlatformInfo = platform.PlatformInfo;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Platform";
-const VERSION_STRING = "\x00$VER: Platform 1.3 (14.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Platform 1.4 (14.11.2026)\r\n";
 
-const template = "CHIP/S,CPU/S,CLOCK/S,TICK/S";
+const template = "CHIP/S,CPU/S,CORES/S,CLOCK/S,TICK/S";
 const arg_chip = 0;
 const arg_cpu = 1;
-const arg_clock = 2;
-const arg_tick = 3;
+const arg_cores = 2;
+const arg_clock = 3;
+const arg_tick = 4;
 
 /// CpuFeature's features, by the names the table prints them under.
 const features = [_]struct { feature: u32, name: [*:0]const u8 }{
@@ -54,7 +58,7 @@ const features = [_]struct { feature: u32, name: [*:0]const u8 }{
 };
 
 const MSG_NORESOURCE = "No %s - this is not a PowerOS machine\n";
-const MSG_NOTBOTH = "only one of CHIP, CPU, CLOCK, or TICK allowed\n";
+const MSG_NOTBOTH = "only one of CHIP, CPU, CORES, CLOCK, or TICK allowed\n";
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -63,7 +67,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [4]usize = @splat(0);
+    var argv: [5]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -80,6 +84,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var asked: u32 = 0;
     if (argv[arg_chip] != 0) asked += 1;
     if (argv[arg_cpu] != 0) asked += 1;
+    if (argv[arg_cores] != 0) asked += 1;
     if (argv[arg_clock] != 0) asked += 1;
     if (argv[arg_tick] != 0) asked += 1;
     if (asked > 1) {
@@ -92,6 +97,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             _ = Printf(dl, "%s\n", .{pr.PlatformName()});
         } else if (argv[arg_cpu] != 0) {
             _ = Printf(dl, "%s\n", .{pr.CpuName()});
+        } else if (argv[arg_cores] != 0) {
+            printCores(sys, dl, pr);
         } else if (argv[arg_clock] != 0) {
             _ = Printf(dl, "%d\n", .{pr.CpuClock()});
         } else {
@@ -119,8 +126,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (has(got, "prid")) {
         _ = Printf(dl, "chip     %s, %s, PRID 0x%04x\n", .{ text(p.chip), text(p.core), p.prid & 0xFFFF });
     }
-    // The instructions a task may use beyond the chip's base, where the
-    // core has any.
+    // The cores by kind: "4 ARM Cortex-A76 + 4 ARM Cortex-A55".
+    const kinds = platform.CoreKinds.of(pr, sys.CoreCount());
+    for (kinds.kinds[0..kinds.used], 0..) |*kind, index| {
+        _ = Printf(dl, "%s%d %s", .{
+            @as([*:0]const u8, if (index == 0) "cores    " else " + "),
+            kind.count,
+            @as([*:0]const u8, @ptrCast(&kind.name)),
+        });
+    }
+    if (kinds.others != 0) _ = Printf(dl, " + %d more", .{kinds.others});
+    if (kinds.used != 0) _ = dl.PutStr("\n");
+    // The instructions a task may use beyond the chip's base, where
+    // every core has any.
     var any = false;
     for (features) |one| {
         if (!pr.CpuFeature(one.feature)) continue;
@@ -166,6 +184,21 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     if (has(got, "built")) _ = Printf(dl, "built    %s\n", .{text(p.built)});
     return dos.RETURN_OK;
+}
+
+/// A line a core: its number, the machine's number for it, its name and
+/// the features a task running on it may use.
+fn printCores(sys: *ExecBase, dl: *DosBase, pr: *PlatformBase) void {
+    var core: u32 = 0;
+    while (core < sys.CoreCount()) : (core += 1) {
+        var info: platform.CoreInfo = .{};
+        if (pr.GetCoreInfo(core, &info, @sizeOf(platform.CoreInfo)) < @sizeOf(platform.CoreInfo)) break;
+        _ = Printf(dl, "%2d  id 0x%lx  %s ", .{ core, info.id, @as([*:0]const u8, @ptrCast(&info.name)) });
+        for (features) |one| {
+            if (info.features & (@as(u32, 1) << @intCast(one.feature)) != 0) _ = Printf(dl, " %s", .{one.name});
+        }
+        _ = dl.PutStr("\n");
+    }
 }
 
 /// Whether the answer reached far enough to hold a field. The ROM says how

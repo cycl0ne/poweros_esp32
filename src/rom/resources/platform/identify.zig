@@ -335,6 +335,44 @@ test "a machine's features are the ones every core has" {
     try testing.expectEqual(@as(u32, 0), bare.set);
 }
 
+test "a machine's cores are counted by their names" {
+    var a76: Name = undefined;
+    var a55: Name = undefined;
+    armName(&a76, 0x414F_D0B1);
+    armName(&a55, 0x412F_D050);
+    // Alike: one kind.
+    var alike: types.CoreKinds = .{};
+    for (0..8) |_| alike.add(&a76);
+    try testing.expectEqual(@as(u32, 1), alike.used);
+    try testing.expectEqual(@as(u32, 8), alike.kinds[0].count);
+    try testing.expectEqualStrings("ARM Cortex-A76", std.mem.sliceTo(&alike.kinds[0].name, 0));
+    // Two kinds, however their cores are numbered: in the order met.
+    var unlike: types.CoreKinds = .{};
+    for ([_]*const Name{ &a55, &a76, &a55, &a55, &a76, &a55 }) |name| unlike.add(name);
+    try testing.expectEqual(@as(u32, 2), unlike.used);
+    try testing.expectEqualStrings("ARM Cortex-A55", std.mem.sliceTo(&unlike.kinds[0].name, 0));
+    try testing.expectEqual(@as(u32, 4), unlike.kinds[0].count);
+    try testing.expectEqual(@as(u32, 2), unlike.kinds[1].count);
+    try testing.expectEqual(@as(u32, 0), unlike.others);
+    // More kinds than there is room for are counted, not named.
+    var many: types.CoreKinds = .{};
+    for (0..types.CoreKinds.max_kinds + 2) |index| {
+        var name: Name = undefined;
+        armName(&name, 0x4100_0000 | @as(u64, index) << 4);
+        many.add(&name);
+        many.add(&name);
+    }
+    try testing.expectEqual(@as(u32, types.CoreKinds.max_kinds), many.used);
+    try testing.expectEqual(@as(u32, 4), many.others);
+    // A name that only starts like another is another.
+    var long: Name = undefined;
+    fixed(&long, "ARM Cortex-A76AE");
+    var near: types.CoreKinds = .{};
+    near.add(&a76);
+    near.add(&long);
+    try testing.expectEqual(@as(u32, 2), near.used);
+}
+
 test "an AArch64 core is named by its part, or by its numbers" {
     var name: Name = undefined;
     // The BCM2712's: ARM, Cortex-A76 r4p1.

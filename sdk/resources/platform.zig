@@ -86,6 +86,78 @@ pub const CPUF_COUNT: u32 = 7;
 /// The most a CpuName is long, its NUL included.
 pub const CPU_NAME_SIZE = 64;
 
+/// struct CoreInfo: what GetCoreInfo fills in, of one core. Clear it,
+/// pass its size, and trust the bytes it says it wrote, as with
+/// PlatformInfo: fields are only ever added at the end.
+pub const CoreInfo = extern struct {
+    /// The core as the machine numbers it: its local interrupt
+    /// controller's id on x86-64, its MPIDR affinity on AArch64, its hart
+    /// id on RISC-V, its own number on an ESP32.
+    id: u64 align(4) = 0,
+    /// What this core has: bit `1 << CPUF_x` for each feature a task
+    /// running on it may use. CpuFeature is what every core has.
+    features: u32 = 0,
+    /// The core by its own name, a C string: CpuName is core 0's.
+    name: [CPU_NAME_SIZE]u8 = @splat(0),
+};
+
+/// Cores that share a name: how many, and the name, a C string.
+pub const CoreKind = extern struct {
+    count: u32 = 0,
+    name: [CPU_NAME_SIZE]u8 = @splat(0),
+};
+
+/// A machine's cores counted by kind, for a line that says "4 ARM
+/// Cortex-A76 + 4 ARM Cortex-A55": cores of one name are one kind, in
+/// the order their first was met. `of` asks the resource about every
+/// core; `add` takes one core's name.
+pub const CoreKinds = struct {
+    kinds: [max_kinds]CoreKind = @splat(.{}),
+    /// How many of `kinds` are in use.
+    used: u32 = 0,
+    /// The cores of further kinds, once `kinds` was full.
+    others: u32 = 0,
+
+    pub const max_kinds = 4;
+
+    /// The kinds of the `cores` cores the system runs on (exec's
+    /// CoreCount).
+    pub fn of(pr: *PlatformBase, cores: u32) CoreKinds {
+        var counted: CoreKinds = .{};
+        var core: u32 = 0;
+        while (core < cores) : (core += 1) {
+            var info: CoreInfo = .{};
+            if (pr.GetCoreInfo(core, &info, @sizeOf(CoreInfo)) < @offsetOf(CoreInfo, "name") + CPU_NAME_SIZE) continue;
+            counted.add(&info.name);
+        }
+        return counted;
+    }
+
+    /// One more core of the name `name`.
+    pub fn add(counted: *CoreKinds, name: *const [CPU_NAME_SIZE]u8) void {
+        for (counted.kinds[0..counted.used]) |*kind| {
+            if (!sameName(&kind.name, name)) continue;
+            kind.count += 1;
+            return;
+        }
+        if (counted.used == max_kinds) {
+            counted.others += 1;
+            return;
+        }
+        counted.kinds[counted.used] = .{ .count = 1, .name = name.* };
+        counted.used += 1;
+    }
+
+    /// Whether two names are the same up to their NULs.
+    fn sameName(one: *const [CPU_NAME_SIZE]u8, other: *const [CPU_NAME_SIZE]u8) bool {
+        for (one, other) |left, right| {
+            if (left != right) return false;
+            if (left == 0) return true;
+        }
+        return true;
+    }
+};
+
 /// SetMemoryType's kinds: every access reaching the machine on its own;
 /// writes gathered into bursts, reads as uncached (write-combining); or
 /// cached, as memory is.

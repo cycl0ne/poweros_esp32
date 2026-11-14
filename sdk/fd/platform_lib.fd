@@ -42,4 +42,10 @@ bool SetMemoryType(usize start, usize length, u32 kind)
 /// instructions and the system keeps their registers across a task
 /// switch. False for a number that names no feature.
 bool CpuFeature(u32 feature)
+/// Core `core` - 0 to one less than exec's CoreCount - into `info`
+/// (sdk/resources/platform.zig), of which `size` bytes are there: pass
+/// @sizeOf(CoreInfo). Returns how many bytes it wrote, as GetPlatformInfo
+/// does, and 0 with nothing written for a core the system does not run
+/// on.
+u32 GetCoreInfo(u32 core, *platform.CoreInfo info, u32 size)
 ##end

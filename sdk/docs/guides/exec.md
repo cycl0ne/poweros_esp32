@@ -90,10 +90,21 @@ written in such instructions asks once and keeps the answer:
 const fast = pr.CpuFeature(platform.CPUF_AES) and pr.CpuFeature(platform.CPUF_CLMUL);
 ```
 
-True means the core has the instructions and the system keeps the
-registers they work in when it switches tasks; false, or a core without
-them, is the plain path's. How many cores there are is exec's to say
-(`CoreCount`).
+True means every core has the instructions and the system keeps the
+registers they work in when it switches tasks, so the path is good on
+whichever core the task runs; false is the plain path's. How many cores
+there are is exec's to say (`CoreCount`), and what one of them is
+platform.resource's:
+
+```zig
+var info: platform.CoreInfo = .{};
+if (pr.GetCoreInfo(0, &info, @sizeOf(platform.CoreInfo)) != 0) {
+    // info.name, info.features (bit 1 << CPUF_x), info.id
+}
+```
+
+`platform.CoreKinds.of(pr, sys.CoreCount())` counts the cores by name,
+for a line that reads "4 ARM Cortex-A76 + 4 ARM Cortex-A55".
 
 ## Memory
 
