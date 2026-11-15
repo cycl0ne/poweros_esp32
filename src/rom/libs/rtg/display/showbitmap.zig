@@ -44,8 +44,9 @@ const _display = @import("_display.zig");
 /// not showing is not marked, so it can be freed. The same for null: a
 /// board that could not be made to show nothing goes on showing its
 /// picture. On a board that is sent its picture over a bus, rows of the
-/// buffer refused may have reached the glass before the send failed; the
-/// rows handed on next put that right.
+/// buffer refused may have reached the glass before the send failed: a
+/// row stays so until it is handed on again, and `RefreshBitMap` of the
+/// buffers still shown, all their rows, puts the glass right.
 ///
 /// CONTEXT:
 /// - Waits: for the display's next frame, where the board streams one.
@@ -59,9 +60,16 @@ const _display = @import("_display.zig");
 /// BUGS:
 /// Two drivers do not yet leave a failed show as nothing: the DSI boards'
 /// keeps the buffer it was handed when it answers an error - no memory
-/// for the stream's chain, a flip that did not land - and reads it at
-/// the next pointer move; the RGB panel's stops its stream before a start
-/// that can still fail, and the display is then dark.
+/// for the stream's chain, a flip that did not land - and reads it when
+/// the pointer next moves or is first laid; the RGB panel's stops its
+/// stream before a start that can still fail, and the display is then
+/// dark.
+///
+/// The `fb` driver does not look at whether an emulator's display took
+/// the new picture - the ramfb's settings written, the virtio GPU's
+/// commands handed over: where it did not, the show still answers
+/// `RTGERR_OK`, the buffer handed over is marked showing, and the window
+/// stays on the picture shown before until the next show.
 ///
 /// SEE ALSO:
 /// `BoardDisplayBitMap`, `AllocBitMap`

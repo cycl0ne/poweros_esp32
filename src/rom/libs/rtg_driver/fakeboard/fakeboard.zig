@@ -7,9 +7,9 @@
 //! display memory and everything that changes, and every entry point finds
 //! that block again through the node - an op has the board, the board has
 //! its driver, and the driver is a field of the block. What belongs to one
-//! board and not to the driver - its modes - is in the instance the
-//! library allocates beside each handle, so two boards of this driver
-//! never share a list.
+//! board and not to the driver - its modes, and the bands it shows - is
+//! in the instance the library allocates beside each handle, so two
+//! boards of this driver never share a list.
 //!
 //! Its engine really does fill, copy and invert, so a test can compare
 //! bytes and see both that the work happened and that the rectangle it was
@@ -94,8 +94,8 @@ pub const Log = struct {
     overlay_image: ?*const rtg.RtgPointerImage = null,
     overlay_left: i32 = 0,
     overlay_top: i32 = 0,
-    /// The bands last shown, as the driver got them, and how often bands
-    /// were.
+    /// The bands of the last show of bands, as the driver got them -
+    /// refused or not - and how often bands were asked for.
     bands_shown: u32 = 0,
     bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     band_count: u32 = 0,
@@ -155,9 +155,13 @@ pub const State = struct {
     /// What the driver's own wait for a blanking answers (`waitVBlank`).
     wait_answer: i32 = err.RTGERR_OK,
     /// Make the next show - of a buffer, of bands or of nothing - fail
-    /// with this, once: the board goes on showing what it showed, and the
-    /// show after it works. RTGERR_OK lets it work.
+    /// with this: the board goes on showing what it showed. It holds for
+    /// `show_refusals` shows running, and the show after them works.
+    /// RTGERR_OK lets it work.
     show_answer: i32 = err.RTGERR_OK,
+    /// How many shows running `show_answer` refuses: one, unless a test
+    /// says more. Back at one when they are spent.
+    show_refusals: u32 = 1,
 };
 
 /// What belongs to one board: the library allocates it beside the handle.
@@ -169,8 +173,8 @@ pub const Instance = struct {
     modes: [mode_table.len]rtg.RtgMode = mode_table,
     /// What the board shows: its bands from the top - one from line 0 for
     /// a buffer shown alone, none while nothing is shown. Kept once a show
-    /// can no longer fail, as a driver keeps them: a show that was
-    /// refused left them as they were.
+    /// can no longer fail: a show that was refused left them as they
+    /// were.
     showing: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     showing_count: u32 = 0,
 };
@@ -273,14 +277,20 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
 }
 
 /// The answer a test set for the next show, taken: RTGERR_OK when none
-/// was set, and RTGERR_OK again for the show after.
+/// was set, and RTGERR_OK again once it has refused as many shows as
+/// the test asked for.
 ///
 /// INPUTS:
-/// - `state` - the driver's block, whose `show_answer` is read and put
-///   back to RTGERR_OK.
+/// - `state` - the driver's block, whose `show_answer` is read, and put
+///   back to RTGERR_OK with the last of its `show_refusals`.
 fn showAnswer(state: *State) i32 {
     const answer = state.show_answer;
-    state.show_answer = err.RTGERR_OK;
+    if (answer == err.RTGERR_OK) return answer;
+    state.show_refusals -|= 1;
+    if (state.show_refusals == 0) {
+        state.show_answer = err.RTGERR_OK;
+        state.show_refusals = 1;
+    }
     return answer;
 }
 

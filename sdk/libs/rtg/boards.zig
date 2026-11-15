@@ -421,9 +421,12 @@ pub const RtgBoardOps = extern struct {
 
     /// Show these bands from now on: each a buffer from its `line` to the
     /// next band's, the last to the display's bottom. The library has
-    /// checked them (`ShowBitMapBands`); the driver keeps its own copy,
-    /// once nothing of the show can fail any more: on any answer but
-    /// RTGERR_OK it reads the bands it read before, as `show_bitmap`.
+    /// checked them (`ShowBitMapBands`); the driver keeps its own copy. On
+    /// any answer but RTGERR_OK it reads the bands it read before, as
+    /// `show_bitmap`: it takes the new ones once nothing of the show can
+    /// fail any more, or - where the show itself reads them, a picture
+    /// that is sent - has them in place meanwhile and puts the ones before
+    /// back.
     show_bands: ?*const fn (*RtgBoard, [*]const RtgBand, u32) callconv(.c) i32 = null,
 
     // --- a second image over the picture, laid as the pointer is but

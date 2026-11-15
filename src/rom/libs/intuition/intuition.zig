@@ -1205,6 +1205,17 @@ test "screens: a show the board refuses leaves the display in its bands, and the
     try testing.expectEqual(@as(u32, 1), glass.showing_count);
     try testing.expectEqual(shows, display.state.log.shown);
 
+    // Bands the board refuses, with another screen's buffer up: the
+    // front screen alone is shown.
+    it.ScreenToBack(front);
+    try testing.expect(display.board.showing.? != ahead.shown);
+    display.state.show_answer = sdk.rtg.errors.RTGERR_NO_MEMORY;
+    it.ScreenToFront(front);
+    try testing.expect(!ib.banded);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(ahead.shown, glass.showing[0].bitmap);
+    try testing.expectEqual(ahead.shown, display.board.showing.?);
+
     // Bands the board refuses while other bands are up: the front screen
     // alone is shown in their place.
     it.MoveScreen(front, 0, -5);
@@ -1215,7 +1226,21 @@ test "screens: a show the board refuses leaves the display in its bands, and the
     try testing.expectEqual(@as(u32, 1), glass.showing_count);
     try testing.expectEqual(ahead.shown, glass.showing[0].bitmap);
 
+    // And where the board refuses the front screen alone as well, the
+    // bands that were up stay, and are still held to be.
+    it.MoveScreen(front, 0, -5);
+    try testing.expect(ib.banded);
+    display.state.show_answer = sdk.rtg.errors.RTGERR_IO;
+    display.state.show_refusals = 2;
+    it.MoveScreen(front, 0, 5);
+    try testing.expect(ib.banded);
+    try testing.expectEqual(@as(u32, 2), glass.showing_count);
+
+    // The next showing that works puts it right.
     it.MoveScreen(front, 0, -20);
+    try testing.expect(!ib.banded);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(ahead.shown, glass.showing[0].bitmap);
     try testing.expect(it.CloseScreen(front));
     try testing.expect(it.CloseScreen(back));
     display.down(ib);

@@ -347,9 +347,12 @@ pub fn dropBlank(ib: *IntuitionBase, s: *Screen) void {
 /// list held but never with a spinlock held. A board that shows one buffer only
 /// shows the frontmost screen.
 ///
-/// A show the board refuses changes nothing on it, so `banded` - whether
-/// the display is in bands - is written once a show has answered: a
-/// display left in its bands is asked again the next time this is called.
+/// A show the board refuses changes nothing on it, so `banded` - set
+/// while the display may be in bands - is written only by a show of
+/// this function that answered RTGERR_OK: a display left in its bands is
+/// asked again the next time this is called. The alert's and the beep's
+/// own shows leave it as it is, which costs one show here and never
+/// leaves bands standing.
 pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap) void {
     const rb = ib.rtg_base orelse return;
     // An alert up keeps the display; it shows the front screen when it

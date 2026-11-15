@@ -242,6 +242,13 @@ the one refused may be freed. On a board that is sent its picture, rows
 of the buffer refused may have gone over the bus before the send failed;
 `RefreshBitMap` of the buffer still shown sends its rows again.
 
+Two boards do not keep this yet, for one buffer or for bands
+(`ShowBitMap`, BUGS). The ESP32-P4's `dsi` boards keep the buffers of a
+show they refused and read them when the pointer next moves or is first
+laid, so a program keeps them until a later show of a buffer has
+answered `RTGERR_OK`. The 7B's panel stops its stream before a start
+that can still fail, and is then dark.
+
 The `x` and `y` are the buffer's pixel at the display's top left, for a
 buffer larger than the display shown through a window of it. No board on
 this machine can pan: each driver refuses anything but `(0, 0)` itself,
@@ -304,8 +311,9 @@ the call answers `RTGERR_NO_MEMORY` and the display goes on showing what
 it showed, as after any bands that fail.
 
 A board without bands answers `RTGERR_NOT_SUPPORTED`, unless there is one
-plain band at origin 0, which is just `ShowBitMap`. intuition then shows
-the front screen alone.
+plain band at origin 0, which is just `ShowBitMap`. After bands a board
+refuses - one without bands, or one without the memory for them -
+intuition shows the front screen alone.
 
 ## The engine
 

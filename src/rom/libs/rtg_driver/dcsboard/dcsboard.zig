@@ -384,7 +384,8 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
 /// refuses puts the bands shown before back: the library marks nothing of
 /// a show that failed, so the buffers this driver reads stay the ones
 /// that cannot be freed. What such a send leaves on the glass is part old
-/// and part new (`failed_sends`); the rows sent next put it right.
+/// and part new (`failed_sends`), and stays so until those rows are sent
+/// again from the bands put back.
 ///
 /// INPUTS:
 /// - `panel` - the board's instance.
@@ -392,7 +393,8 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
 ///   `RTG_MAX_BANDS`.
 ///
 /// RESULT:
-/// `RTGERR_OK`, or what the bus answered.
+/// `RTGERR_OK` - also where a band ran dry on every try (`goesOn`) - or
+/// the error that stopped the send.
 fn showPicture(panel: *Panel, picture: []const rtg.RtgBand) i32 {
     var before: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
     const count_before = panel.band_count;

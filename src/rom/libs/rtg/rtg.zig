@@ -786,7 +786,9 @@ test "a show that fails changes nothing: the buffer shown stays, the one refused
     try testing.expectEqual(@as(u32, 5), fk.log.last_show_y);
     try testing.expectEqual(@as(u32, 1), glass.showing_count);
     try testing.expectEqual(first, glass.showing[0].bitmap);
+    // A show that works is a picture counted.
     const swaps = swapsOf(rb, board);
+    try testing.expectEqual(@as(u32, 1), swaps);
 
     // Refused: the answer is the driver's, and neither side has moved -
     // the library's marks, what it answers, its count of pictures, and
@@ -842,10 +844,13 @@ test "bands that fail change nothing: what was shown stays, in the library and o
     const third = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     const two = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
 
-    // One buffer up, then bands the board refuses: the one buffer stays.
+    // One buffer up, then bands the board refuses: the one buffer stays,
+    // and no picture is counted.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back, 0, 0));
+    const swaps = swapsOf(rb, board);
     fk.show_answer = rtg.errors.RTGERR_NO_MEMORY;
     try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(swaps, swapsOf(rb, board));
     try testing.expectEqual(@as(u32, 2), fk.log.band_count); // it was asked
     try testing.expectEqual(back, base(rb).BoardDisplayBitMap(board).?);
     try testing.expect(back.flags & showing != 0);
@@ -853,8 +858,9 @@ test "bands that fail change nothing: what was shown stays, in the library and o
     try testing.expectEqual(@as(u32, 1), glass.showing_count);
     try testing.expectEqual(back, glass.showing[0].bitmap);
 
-    // The same bands again, and they are up on both sides.
+    // The same bands again, and they are up on both sides: a picture.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(swaps + 1, swapsOf(rb, board));
     try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
     try testing.expectEqual(@as(u32, 2), glass.showing_count);
     try testing.expectEqual(@as(u32, 6), glass.showing[1].line);

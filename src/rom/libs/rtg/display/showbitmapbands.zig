@@ -73,8 +73,9 @@ const _display = @import("_display.zig");
 ///
 /// BUGS:
 /// The DSI boards' driver keeps the bands it was handed when it answers
-/// an error, and the RGB panel's stops its stream before a start that can
-/// still fail: `ShowBitMap`'s BUGS has both.
+/// an error, the RGB panel's stops its stream before a start that can
+/// still fail, and the `fb` driver answers `RTGERR_OK` for bands an
+/// emulator's display did not take: `ShowBitMap`'s BUGS has the three.
 ///
 /// SEE ALSO:
 /// `ShowBitMap`, `BoardDisplayBitMap`, `RefreshBitMap`

@@ -267,9 +267,10 @@ pub const LIBRARY_VERSION = 0;
 /// that had the input. 96: an event that is neither a key's nor the
 /// pointer's - a character typed by no key, a disk, a device - leaves
 /// the qualifiers held as they are.
-/// 97: a show the board refuses leaves the display as it was, and the
-/// screens' record of it too: a display left in its bands is shown its
-/// front screen the next time the screens are shown.
+/// 97: whether a display is in bands is written once a show has answered
+/// RTGERR_OK, so a display that a refused show left in its bands is
+/// asked again the next time its screens are shown; bands the board
+/// refuses while others are up give way to the front screen alone.
 pub const LIBRARY_REVISION = 97;
 const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
