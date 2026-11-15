@@ -15,7 +15,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?[*]const TagItem) usize
 /// ```
 ///
-/// SINCE: 1.0. LVO -192.
+/// SINCE: 1.0. LVO -316.
 ///
 /// INPUTS:
 /// - `tag_value` - the tag.

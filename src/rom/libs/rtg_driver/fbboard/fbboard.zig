@@ -178,6 +178,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
@@ -199,7 +200,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 32;
+const REVISION = 33;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -221,7 +222,7 @@ const page = 4096;
 const State = struct {
     driver: rtg.RtgDriver = .{},
     sys: *ExecBase,
-    rtg_base: *RtgBase,
+    rtg_base: *RtgDriverBase,
     /// The board while one exists. There is one display, so there is at
     /// most one.
     board: ?*rtg.RtgBoard = null,
@@ -2044,7 +2045,7 @@ fn pointerShown(screen: *Screen, show: bool) void {
 // --- the board -------------------------------------------------------------------
 
 /// The display the part describes, if it is there.
-fn findScanout(rb: *RtgBase, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
+fn findScanout(rb: *RtgDriverBase, board: *rtg.RtgBoard, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
     const address = rb.GetRtgTagData(st.PART_Address, 0, tag_list);
     return switch (chip) {
         st.CHIP_QEMU_RAMFB => .{ .ramfb = ramfb.find(address) orelse return null },
@@ -2073,7 +2074,7 @@ fn findScanout(rb: *RtgBase, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagI
                 @truncate(rb.GetRtgTagData(tags.RTGA_Pitch, 0, tag_list)),
                 @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
                 @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
-                rb.RtgFormatBits(@intFromEnum(format)) / 8,
+                board.rtg_base.?.RtgFormatBits(@intFromEnum(format)) / 8,
             ) orelse return null };
         },
         else => null,
@@ -2087,7 +2088,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const sys = state.sys;
 
     const chip: u32 = @truncate(rb.GetRtgTagData(st.PART_Chip, st.CHIP_NONE, tag_list));
-    const scanout = findScanout(rb, sys, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
+    const scanout = findScanout(rb, board, sys, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
     const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
     const bytes: u32 = switch (format) {
         .bgra32 => 4,
@@ -2097,7 +2098,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const screen = screenOf(board);
     screen.* = .{
         .sys = sys,
-        .rtg_base = rb,
+        .rtg_base = board.rtg_base.?,
         .scanout = scanout,
         .width = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
         .height = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
@@ -2686,7 +2687,7 @@ fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     if (!boardHasOne(sys)) return @ptrCast(sys);
 
     const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgBase = @ptrCast(library);
+    const rb: *RtgDriverBase = @ptrCast(library);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         sys.CloseLibrary(library);

@@ -2681,8 +2681,7 @@ const Display = struct {
     fn up(kib: *host_rom.intuition.IntuitionBase) !Display {
         const gb: *host_rom.graphics.GraphicsBase = @ptrCast(@alignCast(kib.graphics_base));
         const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
-        const state = host_rom.fakeboard.create(kib.sys_base) orelse return error.NoDriver;
-        try testing.expect(rtg_base.AddRtgDriver(&state.driver));
+        const state = host_rom.fakeboard.add(kib.sys_base, rtg_base) orelse return error.NoDriver;
         const empty = [_]TagItem{.{}};
         const board = rtg_base.CreateBoardTagList(host_rom.fakeboard.DRIVER_NAME, &empty) orelse return error.NoBoard;
         board.info.width = 64;
@@ -2697,8 +2696,7 @@ const Display = struct {
         const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         rtg_base.FreeBitMap(d.bitmap);
         rtg_base.DeleteBoard(d.board);
-        _ = rtg_base.RemRtgDriver(&d.state.driver);
-        host_rom.fakeboard.destroy(d.state);
+        host_rom.fakeboard.remove(d.state);
     }
 
     fn pixel(d: Display, x: usize, y: usize) u16 {

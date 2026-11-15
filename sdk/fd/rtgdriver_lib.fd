@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT
+//! rtg.library's functions for drivers: what a display's or a bus's
+//! driver calls, as the library's second interface. The base is the one
+//! OpenLibrary("rtg.library", 1) answers, seen as an RtgDriverBase; its
+//! slots follow those of the programs' interface, sdk/fd/rtg_lib.fd, in
+//! the one jump table.
+##include libs/utility/utility as utility
+##include libs/rtg/rtg as rtg
+##basetype RtgDriverBase
+##name rtg.library
+// The folder under src/ whose files hold these calls.
+##home rtg
+// The first slot after the programs' calls.
+##bias 72
+##public
+/// Put a driver on the list. False for a name already there, or for ops
+/// that fill in neither create. Not from interrupts.
+bool AddRtgDriver(*rtg.RtgDriver driver)
+/// Take a driver off the list. False while a board or a transport it made
+/// is still alive. Not from interrupts.
+bool RemRtgDriver(*rtg.RtgDriver driver)
+/// Tell a board's servers that something happened. A driver calls it from
+/// its own interrupt; returns what the chain answered.
+i32 SignalRtgEvent(*rtg.RtgBoard board, u32 event)
+/// A command and its parameters to the part. A command below zero sends
+/// the parameters alone.
+i32 TxParam(*rtg.RtgTransport io, i32 cmd, ?*const anyopaque param, u32 size)
+/// A command and a run of pixels. It comes back when the bytes have gone.
+i32 TxColor(*rtg.RtgTransport io, i32 cmd, ?*const anyopaque color, u32 size)
+/// Send a command and read `size` bytes back, with nothing else reaching
+/// the bus in between.
+i32 RxParam(*rtg.RtgTransport io, i32 cmd, ?*anyopaque buffer, u32 size)
+/// A tag's data, or `default_value` if it is not in the list. Here so a
+/// driver need open nothing but this library.
+usize GetRtgTagData(utility.Tag tag_value, usize default_value, ?[*]const utility.TagItem tag_list)
+##end

@@ -36,7 +36,11 @@ pub const LIBRARY_VERSION = 1;
 /// that answers with a pointer answers null and keeps no reason.
 /// 15: RtgFormatBits, RtgRowBytes and RtgCicp - a format's size and a
 /// stream's colour numbers, asked of the library.
-pub const LIBRARY_REVISION = 15;
+/// 16: two interfaces of the one table - what a driver calls
+/// (AddRtgDriver, RemRtgDriver, SignalRtgEvent, TxParam, TxColor,
+/// RxParam, GetRtgTagData) follows the programs' calls, in slots of its
+/// own.
+pub const LIBRARY_REVISION = 16;
 const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

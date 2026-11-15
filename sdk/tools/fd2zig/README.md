@@ -25,6 +25,7 @@ form, so a stale interface fails the tests. Hand edits to
 /// Doc comment for the next function
 bool Open([*:0]const u8 name, i32 mode)
 ##reserve 2                        # gaps in a fixed jump table
+##home rtg                         # the source folder, when not the .fd's name
 ##end
 ```
 

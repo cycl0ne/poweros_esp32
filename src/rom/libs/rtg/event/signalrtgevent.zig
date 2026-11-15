@@ -13,7 +13,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn SignalRtgEvent(_: *RtgBase, board: *rtg.RtgBoard, event: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -168.
+/// SINCE: 1.0. LVO -300.
 ///
 /// INPUTS:
 /// - `board` - the board.

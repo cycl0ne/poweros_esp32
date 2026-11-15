@@ -52,7 +52,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
@@ -64,8 +64,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 3;
-const BUILD_DATE = "24.10.2026";
+const REVISION = 4;
+const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -78,7 +78,7 @@ const bytes_per_pixel = 2;
 const State = struct {
     driver: rtg.RtgDriver = .{},
     sys: *ExecBase,
-    rtg_base: *RtgBase,
+    rtg_base: *RtgDriverBase,
     /// The board while one exists. There is one virtual display, so there
     /// is at most one.
     board: ?*rtg.RtgBoard = null,
@@ -609,7 +609,7 @@ fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     if (!boardHasIt(sys)) return @ptrCast(sys);
 
     const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgBase = @ptrCast(library);
+    const rb: *RtgDriverBase = @ptrCast(library);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         sys.CloseLibrary(library);

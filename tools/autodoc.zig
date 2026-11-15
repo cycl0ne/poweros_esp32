@@ -12,7 +12,9 @@
 //! with no such block gets its `.fd` text instead: the prototype as
 //! SYNOPSIS, the rest as BEHAVIOR. An `.fd` marked `##interface` - calls
 //! that many modules each have, a USB class driver's - has no one folder
-//! of its source: its text is its contract.
+//! of its source: its text is its contract. One with `##home <folder>` is
+//! a module's second interface, whose calls are in that module's folder
+//! and not in one of the `.fd`'s own name.
 //!
 //! With --check it writes nothing and fails if a file in <out dir> is not
 //! what it would write, or has no `.fd` any more: the build's check that
@@ -86,9 +88,10 @@ pub fn main(init: std.process.Init) !void {
         const fd_name = try std.fmt.allocPrint(arena, "{s}_lib.fd", .{stem});
         const fd = try fd_dir.readFileAlloc(io, fd_name, arena, .unlimited);
         const interface = mem.indexOf(u8, fd, "\n##interface") != null;
-        var home = try findHome(io, src_dir, stem);
+        const folder = homeOf(fd) orelse stem;
+        var home = try findHome(io, src_dir, folder);
         if (home == null and !interface)
-            fatal("{s}/{s}: no {s}/{{rom,disk}}/.../{s}/ holds its source", .{ fd_path, fd_name, src_path, stem });
+            fatal("{s}/{s}: no {s}/{{rom,disk}}/.../{s}/ holds its source", .{ fd_path, fd_name, src_path, folder });
         defer if (home) |*dir| dir.close(io);
         const module = try readModule(io, arena, fd_name, fd, home);
 
@@ -131,6 +134,18 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     if (stale != 0) std.process.exit(1);
+}
+
+/// The folder an `.fd`'s `##home` line names, or null when it has none.
+fn homeOf(fd: []const u8) ?[]const u8 {
+    var lines = mem.splitScalar(u8, fd, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (!mem.startsWith(u8, line, "##home")) continue;
+        const folder = mem.trim(u8, line["##home".len..], " \t");
+        if (folder.len != 0) return folder;
+    }
+    return null;
 }
 
 /// The first of `<rom dir>/{libs,devs,resources}/<stem>/` there is, opened

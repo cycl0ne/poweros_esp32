@@ -806,8 +806,7 @@ const Display = struct {
     fn sized(ib: *IntuitionBase, width: u32, height: u32, format: sdk.rtg.bitmaps.PixelFormat) !Display {
         const gb: *kgraphics.GraphicsBase = @ptrCast(@alignCast(ib.graphics_base));
         const rb: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
-        const state = fake.create(ib.sys_base) orelse return error.NoDriver;
-        try testing.expect(rb.AddRtgDriver(&state.driver));
+        const state = fake.add(ib.sys_base, rb) orelse return error.NoDriver;
         const empty = [_]TagItem{.{}};
         const board = rb.CreateBoardTagList(fake.DRIVER_NAME, &empty) orelse return error.NoBoard;
         // The display is the size of the buffer it is brought up with.
@@ -823,8 +822,7 @@ const Display = struct {
         const rb: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         rb.FreeBitMap(d.bitmap);
         rb.DeleteBoard(d.board);
-        _ = rb.RemRtgDriver(&d.state.driver);
-        fake.destroy(d.state);
+        fake.remove(d.state);
     }
 
     /// A pixel of what the display shows: the buffer it was brought up

@@ -1350,8 +1350,7 @@ const Composed = struct {
 
     fn make(lb: *LayersBase) !Composed {
         const rb = lb.rtg_base;
-        const state = fake.create(lb.sys_base) orelse return error.NoDriver;
-        if (!rb.AddRtgDriver(&state.driver)) return error.NoDriver;
+        const state = fake.add(lb.sys_base, rb) orelse return error.NoDriver;
         const empty = [_]TagItem{.{}};
         const board = rb.CreateBoardTagList(fake.DRIVER_NAME, &empty) orelse return error.NoBoard;
         const bitmap = rb.AllocBitMap(board, 32, 16, @intFromEnum(rtg.bitmaps.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse
@@ -1370,8 +1369,7 @@ const Composed = struct {
         gbase(lb).FreeRastPort(c.screen);
         rb.FreeBitMap(c.bitmap);
         rb.DeleteBoard(c.board);
-        _ = rb.RemRtgDriver(&c.state.driver);
-        fake.destroy(c.state);
+        fake.remove(c.state);
     }
 
     fn at(c: Composed, x: u32, y: u32) u16 {

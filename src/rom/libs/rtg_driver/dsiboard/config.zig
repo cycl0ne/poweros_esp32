@@ -17,6 +17,7 @@ const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const tags = rtg.tags;
 const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const BoardPin = sdk.expansion.BoardPin;
 const st = sdk.expansion.systemtags;
 const host = @import("host.zig");
@@ -61,13 +62,19 @@ pub const Config = struct {
     buffers: u32 = 1,
 };
 
-fn u32At(rb: *RtgBase, tag: u32, default: u32, tag_list: ?[*]const TagItem) u32 {
+fn u32At(rb: *RtgDriverBase, tag: u32, default: u32, tag_list: ?[*]const TagItem) u32 {
     return @truncate(rb.GetRtgTagData(tag, default, tag_list));
+}
+
+/// The library as a program calls it, for a call that is not a driver's
+/// own.
+fn programs(rb: *RtgDriverBase) *RtgBase {
+    return @ptrCast(rb);
 }
 
 /// Read the tags. Null if one that has to be there is not, or the panel
 /// asks for what this host cannot do.
-pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
+pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     var config = Config{};
     config.chip = u32At(rb, st.PART_Chip, st.CHIP_ANY, tag_list);
     config.i2c_unit = u32At(rb, st.PART_BusUnit, 0, tag_list);
@@ -75,7 +82,7 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     config.width = u32At(rb, tags.RTGA_Width, 0, tag_list);
     config.height = u32At(rb, tags.RTGA_Height, 0, tag_list);
     config.format = @enumFromInt(u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list));
-    config.bits_per_pixel = rb.RtgFormatBits(@intFromEnum(config.format));
+    config.bits_per_pixel = programs(rb).RtgFormatBits(@intFromEnum(config.format));
     config.lanes = u32At(rb, tags.RTGA_DSI_Lanes, 0, tag_list);
     config.lane_mbps = u32At(rb, tags.RTGA_DSI_LaneRate, 0, tag_list);
     config.pixel_hz = u32At(rb, tags.RTGA_DSI_PixelClock, 0, tag_list);

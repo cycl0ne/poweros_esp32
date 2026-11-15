@@ -20,8 +20,10 @@
 //! wired straight to the pixels needs no transport; a controller on a bus
 //! is a board and a transport together.
 //!
-//! Open it with OpenLibrary(RTGNAME, 1); its functions are in
-//! sdk/interface/rtg.zig.
+//! Open it with OpenLibrary(RTGNAME, 1). Its functions are two
+//! interfaces of the one base: what a program calls is in
+//! sdk/interface/rtg.zig (`RtgBase`), what a driver calls in
+//! sdk/interface/rtgdriver.zig (`RtgDriverBase`).
 
 /// The library's name, for OpenLibrary.
 pub const RTGNAME = "rtg.library";
@@ -36,7 +38,10 @@ pub const errors = @import("errors.zig");
 pub const tags = @import("tags.zig");
 pub const video = @import("video.zig");
 
+/// The library's base as a program calls it, and as a driver does: the
+/// two interfaces of the one jump table.
 pub const RtgBase = @import("../../interface/rtg.zig").RtgBase;
+pub const RtgDriverBase = @import("../../interface/rtgdriver.zig").RtgDriverBase;
 
 // The types and constants flat, so a caller writes rtg.RtgBoard and not
 // rtg.boards.RtgBoard.

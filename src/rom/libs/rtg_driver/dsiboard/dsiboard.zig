@@ -53,7 +53,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
@@ -84,7 +84,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 10;
+const REVISION = 11;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -109,7 +109,7 @@ const flip_wait_us = 100_000;
 const State = struct {
     driver: rtg.RtgDriver = .{},
     sys: *ExecBase,
-    rtg_base: *RtgBase,
+    rtg_base: *RtgDriverBase,
     /// The panel while a board of it exists. There is one host, so there
     /// is at most one.
     board: ?*rtg.RtgBoard = null,
@@ -169,6 +169,11 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
+/// rtg.library as a driver calls it, from a board's handle.
+fn driverBase(board: *rtg.RtgBoard) *RtgDriverBase {
+    return @ptrCast(board.rtg_base.?);
+}
+
 // --- the interrupts ------------------------------------------------------
 
 /// A picture has gone: send the next one, from the chain shown meanwhile
@@ -190,7 +195,7 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         panel.stats.frames +%= 1;
         panel.stats.blanks +%= 1;
         engine_file.frameTick(&panel.engine);
-        _ = panel.board.rtg_base.?.SignalRtgEvent(panel.board, rtg.events.RTGEV_VBLANK);
+        _ = driverBase(panel.board).SignalRtgEvent(panel.board, rtg.events.RTGEV_VBLANK);
     }
     return 1;
 }
@@ -324,7 +329,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     });
 
     if (!dwgdma.start()) return err.RTGERR_NO_DISPLAY;
-    const psram_mhz = psramMhz(sys, panel.board.rtg_base.?);
+    const psram_mhz = psramMhz(sys, driverBase(panel.board));
     bus.share(streamBytes(panel), psram_mhz);
     dwgdma.setUpChannel(channel);
 
@@ -482,7 +487,7 @@ fn giveBack(panel: *Panel) void {
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
-    const rb: *RtgBase = board.rtg_base.?;
+    const rb = driverBase(board);
     if (state.board != null) return err.RTGERR_IN_USE;
 
     var wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
@@ -602,7 +607,7 @@ fn take(wanted: *config.Config, mode: *const monitor.Mode) void {
 
 /// The PSRAM's bus clock in MHz, as the board's list gives it (80 if it
 /// does not).
-fn psramMhz(sys: *ExecBase, rb: *RtgBase) u32 {
+fn psramMhz(sys: *ExecBase, rb: *RtgDriverBase) u32 {
     const default_mhz = 80;
     const library = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return default_mhz;
     defer sys.CloseLibrary(library);
@@ -839,7 +844,7 @@ const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     _ = seg_list;
     const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgBase = @ptrCast(library);
+    const rb: *RtgDriverBase = @ptrCast(library);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         sys.CloseLibrary(library);

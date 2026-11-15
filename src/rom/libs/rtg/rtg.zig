@@ -17,7 +17,9 @@
 //! how to draw is the one above.
 //!
 //! The base is opened with OpenLibrary("rtg.library", 1). Its functions
-//! are sdk/fd/rtg_lib.fd, its types sdk/libs/rtg/.
+//! are two interfaces of the one jump table: sdk/fd/rtg_lib.fd for
+//! programs, sdk/fd/rtgdriver_lib.fd for drivers. Its types are
+//! sdk/libs/rtg/.
 //!
 //! Each call is a file of its own in the folder for its category -
 //! driver/, board/, bitmap/, display/, engine/, event/, transport/, tag/,
@@ -329,7 +331,7 @@ fn setUp() !*RtgBase {
     const made = kexec.InitResident(kexec.SysBase, &rtg_library_tag, null) orelse return error.NoRtg;
     const rb: *RtgBase = @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(made))));
     const state = fake.create(rb.sys_base) orelse return error.NoDriver;
-    if (!base(rb).AddRtgDriver(&state.driver)) return error.NoDriver;
+    if (!driverBase(rb).AddRtgDriver(&state.driver)) return error.NoDriver;
     return rb;
 }
 
@@ -350,7 +352,7 @@ fn fakeOf(rb: *RtgBase) *fake.State {
 /// no memory, and no signal of the test's task that a wait took.
 fn tearDown(rb: *RtgBase) !void {
     const state = fakeOf(rb);
-    _ = base(rb).RemRtgDriver(&state.driver);
+    _ = driverBase(rb).RemRtgDriver(&state.driver);
     fake.destroy(state);
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(rb.utility_base));
     _ = kexec.CloseLibrary(kexec.SysBase, &ub.lib);
@@ -368,6 +370,11 @@ fn base(rb: *RtgBase) *interface.RtgBase {
     return @ptrCast(rb);
 }
 
+/// The library through its second interface, the way a driver reaches it.
+fn driverBase(rb: *RtgBase) *sdk.interface.rtgdriver.RtgDriverBase {
+    return @ptrCast(rb);
+}
+
 fn makeBoard(rb: *RtgBase) !*rtg.RtgBoard {
     const tag_list = [_]TagItem{.{}};
     return base(rb).CreateBoardTagList("fake", &tag_list) orelse error.NoBoard;
@@ -382,8 +389,8 @@ test "rtg.library: made from its tag, opened by name, utility of its own" {
     kexec.CloseLibrary(kexec.SysBase, &rb.lib);
     // utility.library is open for the tag calls, and answers through it.
     const tag_list = [_]TagItem{ .{ .tag = rtg.tags.RTGA_Width, .data = 640 }, .{} };
-    try testing.expectEqual(@as(usize, 640), base(rb).GetRtgTagData(rtg.tags.RTGA_Width, 0, &tag_list));
-    try testing.expectEqual(@as(usize, 7), base(rb).GetRtgTagData(rtg.tags.RTGA_Height, 7, &tag_list));
+    try testing.expectEqual(@as(usize, 640), driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Width, 0, &tag_list));
+    try testing.expectEqual(@as(usize, 7), driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Height, 7, &tag_list));
     try tearDown(rb);
 }
 
@@ -393,11 +400,11 @@ test "drivers: walked by priority, and never twice" {
     const fk = fakeOf(rb);
 
     // The same name is refused, and so is a driver that makes nothing.
-    try testing.expect(!base(rb).AddRtgDriver(&fk.driver));
+    try testing.expect(!driverBase(rb).AddRtgDriver(&fk.driver));
 
     var empty_ops = rtg.RtgDriverOps{};
     var empty = rtg.RtgDriver{ .node = .{ .name = "empty" }, .ops = &empty_ops };
-    try testing.expect(!base(rb).AddRtgDriver(&empty));
+    try testing.expect(!driverBase(rb).AddRtgDriver(&empty));
 
     var second_ops = rtg.RtgDriverOps{ .create_transport = @ptrFromInt(0x1000) };
     var second = rtg.RtgDriver{
@@ -405,7 +412,7 @@ test "drivers: walked by priority, and never twice" {
         .ops = &second_ops,
         .type = rtg.boards.RTGDT_TRANSPORT,
     };
-    try testing.expect(base(rb).AddRtgDriver(&second));
+    try testing.expect(driverBase(rb).AddRtgDriver(&second));
 
     base(rb).LockRtgDrivers();
     // Highest priority first: "second" at 10 before "fake" at 0.
@@ -414,8 +421,8 @@ test "drivers: walked by priority, and never twice" {
     try testing.expect(base(rb).NextRtgDriver(&fk.driver) == null);
     base(rb).UnlockRtgDrivers();
 
-    try testing.expect(base(rb).RemRtgDriver(&second));
-    try testing.expect(!base(rb).RemRtgDriver(&second));
+    try testing.expect(driverBase(rb).RemRtgDriver(&second));
+    try testing.expect(!driverBase(rb).RemRtgDriver(&second));
     try tearDown(rb);
 }
 
@@ -1112,23 +1119,23 @@ test "events: highest first, and the first to answer ends it" {
     try testing.expect(base(rb).AddRtgEventServer(board, rtg.events.RTGEV_VBLANK, &low));
     try testing.expect(!base(rb).AddRtgEventServer(board, 99, &low));
 
-    _ = base(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
+    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
     try testing.expectEqual(@as(u32, 1), first_server_ran);
     try testing.expectEqual(@as(u32, 1), second_server_ran);
 
     // The one with the higher priority keeps the event to itself.
     stop_the_chain = true;
-    _ = base(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
+    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
     try testing.expectEqual(@as(u32, 2), first_server_ran);
     try testing.expectEqual(@as(u32, 1), second_server_ran);
 
     // An event nobody is listening for, and one that does not exist.
-    _ = base(rb).SignalRtgEvent(board, rtg.events.RTGEV_SHOWN);
-    try testing.expectEqual(@as(i32, 0), base(rb).SignalRtgEvent(board, 99));
+    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_SHOWN);
+    try testing.expectEqual(@as(i32, 0), driverBase(rb).SignalRtgEvent(board, 99));
 
     base(rb).RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &high);
     stop_the_chain = false;
-    _ = base(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
+    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
     try testing.expectEqual(@as(u32, 2), first_server_ran);
     try testing.expectEqual(@as(u32, 2), second_server_ran);
 

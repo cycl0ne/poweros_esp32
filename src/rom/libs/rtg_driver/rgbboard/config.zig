@@ -13,6 +13,7 @@ const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const tags = rtg.tags;
 const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const BoardPin = sdk.expansion.BoardPin;
 const st = sdk.expansion.systemtags;
 const lcd = @import("lcd.zig");
@@ -37,15 +38,21 @@ pub const Config = struct {
 };
 
 /// A line of the panel's part, from its PART_Pin* tag; absent: not wired.
-fn pinFrom(rb: *RtgBase, tag: u32, tag_list: ?[*]const TagItem) BoardPin {
+fn pinFrom(rb: *RtgDriverBase, tag: u32, tag_list: ?[*]const TagItem) BoardPin {
     return BoardPin.of(rb.GetRtgTagData(tag, 0, tag_list));
 }
 
+/// The library as a program calls it, for a call that is not a driver's
+/// own.
+fn programs(rb: *RtgDriverBase) *RtgBase {
+    return @ptrCast(rb);
+}
+
 /// Read the tags. Null if one that has to be there is not.
-pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
+pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     var config = Config{};
     const get = struct {
-        fn u32At(base: *RtgBase, tag: u32, default: u32, list: ?[*]const TagItem) u32 {
+        fn u32At(base: *RtgDriverBase, tag: u32, default: u32, list: ?[*]const TagItem) u32 {
             return @truncate(base.GetRtgTagData(tag, default, list));
         }
     };
@@ -54,7 +61,7 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     setup.width = get.u32At(rb, tags.RTGA_Width, 0, tag_list);
     setup.height = get.u32At(rb, tags.RTGA_Height, 0, tag_list);
     const format: rtg.PixelFormat = @enumFromInt(get.u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list));
-    setup.bits_per_pixel = rb.RtgFormatBits(@intFromEnum(format));
+    setup.bits_per_pixel = programs(rb).RtgFormatBits(@intFromEnum(format));
     setup.pixel_clock_hz = get.u32At(rb, tags.RTGA_RGB_PixelClock, 0, tag_list);
     setup.hsync_pulse = get.u32At(rb, tags.RTGA_RGB_HSyncPulse, 0, tag_list);
     setup.hsync_back_porch = get.u32At(rb, tags.RTGA_RGB_HSyncBackPorch, 0, tag_list);

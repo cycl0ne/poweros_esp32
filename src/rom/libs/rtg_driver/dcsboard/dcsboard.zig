@@ -40,7 +40,7 @@ const gpio_resource = sdk.resources.gpio;
 const GpioBase = gpio_resource.GpioBase;
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
@@ -53,7 +53,7 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 3;
+const REVISION = 4;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -88,7 +88,7 @@ fn stateOf(driver: *rtg.RtgDriver) *State {
 /// What one board keeps.
 const Panel = struct {
     sys: *ExecBase,
-    rtg_base: *RtgBase,
+    rtg_base: *RtgDriverBase,
     io: *rtg.RtgTransport,
     /// The band and the bus between its fill and its transfer, and a
     /// command's transaction: one task at a time (`oneBand`). A semaphore -
@@ -163,7 +163,7 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const sys = stateOf(made_by).sys;
-    const rb: *RtgBase = board.rtg_base.?;
+    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
     const io = board.transport orelse return err.RTGERR_BAD_TAGS;
 
     const width: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list));
@@ -573,7 +573,7 @@ fn sendTurned(panel: *Panel, y: u32, rows: u32) i32 {
 /// this one writing into its window.
 fn oneBand(
     panel: *Panel,
-    rb: *RtgBase,
+    rb: *RtgDriverBase,
     band: [*]align(4) u8,
     columns: *const [4]u8,
     lines: *const [4]u8,
@@ -701,7 +701,7 @@ const underrun_tries = 3;
 /// needs.
 fn writeBand(
     panel: *Panel,
-    rb: *RtgBase,
+    rb: *RtgDriverBase,
     columns: *const [4]u8,
     lines: *const [4]u8,
     band: [*]align(4) const u8,
@@ -824,7 +824,7 @@ const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     _ = seg_list;
     const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgBase = @ptrCast(library);
+    const rb: *RtgDriverBase = @ptrCast(library);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         sys.CloseLibrary(library);

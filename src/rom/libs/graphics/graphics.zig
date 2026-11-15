@@ -370,8 +370,7 @@ test "with a display: no tags finds the View, and the buffer it is showing" {
 
     const rb = kernelRtg(gb);
     const rbi: *sdk.interface.rtg.RtgBase = @ptrCast(rb);
-    const state = fake.create(rb.sys_base) orelse return error.NoDriver;
-    try testing.expect(rbi.AddRtgDriver(&state.driver));
+    const state = fake.add(rb.sys_base, rbi) orelse return error.NoDriver;
 
     const empty = [_]TagItem{.{}};
     const board = rbi.CreateBoardTagList(fake.DRIVER_NAME, &empty) orelse return error.NoBoard;
@@ -404,8 +403,7 @@ test "with a display: no tags finds the View, and the buffer it is showing" {
     base(gb).FreeRastPort(rp2);
     rbi.FreeBitMap(bm);
     rbi.DeleteBoard(board);
-    _ = rbi.RemRtgDriver(&state.driver);
-    fake.destroy(state);
+    fake.remove(state);
     try tearDown(gb);
 }
 
@@ -1482,8 +1480,7 @@ test "RectFill: the board's engine takes an opaque pen, and nothing else" {
 
     const rb = kernelRtg(gb);
     const rbi: *sdk.interface.rtg.RtgBase = @ptrCast(rb);
-    const state = fake.create(rb.sys_base) orelse return error.NoDriver;
-    try testing.expect(rbi.AddRtgDriver(&state.driver));
+    const state = fake.add(rb.sys_base, rbi) orelse return error.NoDriver;
     const empty = [_]TagItem{.{}};
     const brd = rbi.CreateBoardTagList(fake.DRIVER_NAME, &empty) orelse return error.NoBoard;
     const bm = rbi.AllocBitMap(brd, 8, 4, @intFromEnum(rtg.bitmaps.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse
@@ -1524,8 +1521,7 @@ test "RectFill: the board's engine takes an opaque pen, and nothing else" {
     base(gb).FreeRastPort(soft);
     rbi.FreeBitMap(bm);
     rbi.DeleteBoard(brd);
-    _ = rbi.RemRtgDriver(&state.driver);
-    fake.destroy(state);
+    fake.remove(state);
     try tearDown(gb);
 }
 

@@ -427,6 +427,22 @@ fn checkDocumentedLvo(comptime doc: []const u8, comptime offset: isize, comptime
 /// It reads the text, not the syntax tree, and is called from a host test
 /// only: nothing of it is in the ROM.
 pub fn checkForwarding(source: []const u8, comptime LVO: type, skip: []const []const u8) error{ WrapperForwarding, WrapperCount }!void {
+    return checkForwardingOf(source, @typeInfo(LVO).@"struct".decls.len, skip);
+}
+
+/// `checkForwarding` for a file that holds the wrappers of more than one
+/// interface - a library whose one jump table two `.fd` files describe:
+/// `count` is how many wrappers the file must hold, the calls of all its
+/// interfaces together.
+///
+/// INPUTS:
+/// - `source` - the `_lvo` file's own text.
+/// - `count` - how many wrappers it holds.
+/// - `skip` - the slots whose wrapper may add what only it has.
+///
+/// RESULT:
+/// As `checkForwarding`.
+pub fn checkForwardingOf(source: []const u8, count: usize, skip: []const []const u8) error{ WrapperForwarding, WrapperCount }!void {
     var checked: usize = 0;
     const tests_at = std.mem.indexOf(u8, source, "\n// --- tests") orelse source.len;
     var rest: []const u8 = source[0..tests_at];
@@ -458,7 +474,7 @@ pub fn checkForwarding(source: []const u8, comptime LVO: type, skip: []const []c
         if (!std.mem.eql(u8, slot, callee[name_start..])) return forwardingFailed(slot, "calls a function of another name");
 
         var names: [16][]const u8 = undefined;
-        const count = parameterNames(rest[open + 1 .. close], &names);
+        const named = parameterNames(rest[open + 1 .. close], &names);
 
         // The identifiers of the arguments that are parameters, in order:
         // the base first, then the wrapper's own.
@@ -472,7 +488,7 @@ pub fn checkForwarding(source: []const u8, comptime LVO: type, skip: []const []c
                 const end = if (word_char) index + 1 else index;
                 const word = args[word_start.?..end];
                 word_start = null;
-                for (names[0..count]) |name| {
+                for (names[0..named]) |name| {
                     if (std.mem.eql(u8, name, word)) {
                         if (!std.mem.eql(u8, names[seen], word)) return forwardingFailed(slot, "passes its parameters out of order");
                         seen += 1;
@@ -481,10 +497,10 @@ pub fn checkForwarding(source: []const u8, comptime LVO: type, skip: []const []c
                 }
             }
         }
-        if (seen != count) return forwardingFailed(slot, "does not pass on every parameter");
+        if (seen != named) return forwardingFailed(slot, "does not pass on every parameter");
         checked += 1;
     }
-    if (checked != @typeInfo(LVO).@"struct".decls.len) return error.WrapperCount;
+    if (checked != count) return error.WrapperCount;
 }
 
 /// Reports a wrapper `checkForwarding` refuses.

@@ -157,7 +157,7 @@ first time something opens it.
 | dos.library | ROM | processes, files, locks, handlers, assigns, `ReadArgs` | [md](autodocs/dos.md) · [doc](autodocs/dos.doc) |
 | ramlib.library | ROM, after dos | libraries and devices loaded from `LIBS:` and `DEVS:` when they are opened, and unloaded when they go - its one call is exec's | [md](autodocs/ramlib.md) · [doc](autodocs/ramlib.doc) |
 | expansion.library | ROM | the board: which parts it has and how they are wired; the devices by what they speak, with their units on this board; the disks' partitions until dos takes them in | [md](autodocs/expansion.md) · [doc](autodocs/expansion.doc) |
-| rtg.library | ROM | displays and their boards | [md](autodocs/rtg.md) · [doc](autodocs/rtg.doc) |
+| rtg.library | ROM | displays and their boards | [md](autodocs/rtg.md) · [doc](autodocs/rtg.doc); what a driver calls: [md](autodocs/rtgdriver.md) · [doc](autodocs/rtgdriver.doc) |
 | rta.library | ROM, on a board with sound and in QEMU | sound outputs and the drivers behind them | [md](autodocs/rta.md) · [doc](autodocs/rta.doc), [`rta.zig`](../libs/rta/rta.zig) |
 | graphics.library | ROM | drawing: RastPorts, bitmaps, text, fonts | [md](autodocs/graphics.md) · [doc](autodocs/graphics.doc) |
 | layers.library | ROM | overlapping layers and their clipping | [md](autodocs/layers.md) · [doc](autodocs/layers.doc) |

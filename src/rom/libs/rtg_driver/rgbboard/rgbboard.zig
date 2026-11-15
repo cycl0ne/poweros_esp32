@@ -32,7 +32,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
@@ -48,7 +48,7 @@ const pointer = @import("pointer.zig");
 const MODULE_NAME = "rtg-rgb";
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 4;
+const REVISION = 5;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -61,7 +61,7 @@ const VERSION_STRING =
 const State = struct {
     driver: rtg.RtgDriver = .{},
     sys: *ExecBase,
-    rtg_base: *RtgBase,
+    rtg_base: *RtgDriverBase,
     /// The panel while a board of it exists. There is one peripheral, so
     /// there is at most one.
     board: ?*rtg.RtgBoard = null,
@@ -77,7 +77,7 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
-    const rb: *RtgBase = board.rtg_base.?;
+    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
     if (state.board != null) return err.RTGERR_IN_USE;
 
     const wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
@@ -309,7 +309,7 @@ const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     _ = seg_list;
     const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgBase = @ptrCast(library);
+    const rb: *RtgDriverBase = @ptrCast(library);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         sys.CloseLibrary(library);

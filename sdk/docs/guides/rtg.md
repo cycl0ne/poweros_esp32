@@ -3,7 +3,8 @@
 What a display is to this system: the boards rtg.library keeps, the
 buffers a picture lives in, how a buffer gets onto the glass, and what a
 driver has to do to add a display. The calls themselves are in the
-reference: [rtg](../autodocs/rtg.md).
+reference: [rtg](../autodocs/rtg.md) for a program's, and
+[rtgdriver](../autodocs/rtgdriver.md) for a driver's.
 
 - [Where rtg.library sits](#where-rtglibrary-sits)
 - [Drivers and boards](#drivers-and-boards)
@@ -59,6 +60,19 @@ defer sys.CloseLibrary(lib);
 const rb: *RtgBase = @ptrCast(lib);
 ```
 
+**The library has two interfaces.** `RtgBase` (`sdk/interface/rtg.zig`)
+holds what a program calls. What only a driver calls - joining the list,
+a bus's transfers, an event raised, a tag read - is `RtgDriverBase`
+(`sdk/interface/rtgdriver.zig`): the same base, opened the same way, seen
+as the other type. Both are slots of the one jump table, the drivers'
+after the programs'.
+
+```zig
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
+
+const driver_calls: *RtgDriverBase = @ptrCast(lib);
+```
+
 ## Drivers and boards
 
 Two kinds of thing are registered with the library:
@@ -66,7 +80,7 @@ Two kinds of thing are registered with the library:
 - A **driver** is a module that knows one kind of display hardware. It
   joins with `AddRtgDriver` under a name ("rgb", "dcs", "dsi", "qemu",
   "fb") and stays until `RemRtgDriver`, which is refused while anything
-  it made is alive.
+  it made is alive. Both are calls of the drivers' interface.
 - A **board** is one display that a driver brought up. A caller makes one
   with `CreateBoardTagList(driver_name, tags)`, giving the panel's numbers
   in `RTGA_` tags, and gets an `RtgBoard` back. `DeleteBoard` stops it.
@@ -78,7 +92,8 @@ controller can be on more than one kind of bus, and the same bus can carry
 more than one kind of panel. A transport sends a command and its
 parameters (`TxParam`), a command and a run of pixels (`TxColor`), or asks
 and reads back (`RxParam`); each call comes back when its bytes have
-gone.
+gone. The three are the drivers' calls: it is the panel's driver that
+talks over the bus.
 
 **The machine's own display is made at boot.** graphics.library's init asks
 expansion.library for the board's panel part, hands its tags to the driver
@@ -594,7 +609,8 @@ first:
 The server's code is an `RtgEventFn` and **runs in interrupt context**:
 it may signal a task and no more. Returning non-zero ends the chain, so a
 server returns 0 unless it means to keep the event from those below it. A
-driver raises an event with `SignalRtgEvent`, from its own interrupt.
+driver raises an event with `SignalRtgEvent`, a call of the drivers'
+interface, from its own interrupt.
 
 Which events come depends on the board: the 7B's RGB panel raises
 `RTGEV_VBLANK` and `RTGEV_SHOWN`, the ESP32-P4's `dsi` boards - a panel
@@ -650,7 +666,8 @@ const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 
 fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     const library = sys.OpenLibrary(rtg.RTGNAME, 1) orelse return null;
-    const rb: *RtgBase = @ptrCast(library);
+    // The library as a driver calls it.
+    const rb: *RtgDriverBase = @ptrCast(library);
     // Everything that changes lives in memory allocated here, never in
     // the module's own image.
     const state: *State = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(State), exec.MEMF_CLEAR) orelse return null));

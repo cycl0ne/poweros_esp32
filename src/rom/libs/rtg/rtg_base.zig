@@ -47,6 +47,15 @@ pub const RtgBase = extern struct {
     pub fn iface(rb: *RtgBase) *sdk.interface.rtg.RtgBase {
         return @ptrCast(rb);
     }
+
+    /// This library as a driver sees it, to call the functions of its
+    /// second interface through the jump table.
+    ///
+    /// INPUTS:
+    /// - `rb` - the library's base.
+    pub fn driverIface(rb: *RtgBase) *sdk.interface.rtgdriver.RtgDriverBase {
+        return @ptrCast(rb);
+    }
 };
 
 /// LibExpunge: a ROM module stays.

@@ -5,6 +5,12 @@
 //! documents the LVO the call has; the slots and the forwarding in the
 //! tests at the end.
 //!
+//! The one table is two interfaces: the calls for programs
+//! (sdk/fd/rtg_lib.fd), then those for drivers (sdk/fd/rtgdriver_lib.fd),
+//! whose first slot is the one after the programs' last. Both lists are
+//! held to the table by the same checks, so a `##bias` that is off stops
+//! the build.
+//!
 //! Each wrapper is the slot a caller reaches through the table. It hands
 //! the work to the call - a file of its own in the folder for its
 //! category - with the library's base first.
@@ -79,34 +85,51 @@ const SetBoardPointer = @import("pointer/setboardpointer.zig").SetBoardPointer;
 const MoveBoardPointer = @import("pointer/moveboardpointer.zig").MoveBoardPointer;
 const ShowBoardPointer = @import("pointer/showboardpointer.zig").ShowBoardPointer;
 
-/// rtg.library's interface, as the SDK generates it from sdk/fd/rtg_lib.fd.
+/// rtg.library's two interfaces, as the SDK generates them: the programs'
+/// from sdk/fd/rtg_lib.fd, the drivers' from sdk/fd/rtgdriver_lib.fd.
 const interface = sdk.interface.rtg;
 const LVO = interface.LVO;
+const driver_interface = sdk.interface.rtgdriver;
+const DRIVER_LVO = driver_interface.LVO;
 
-// Every function in LVO is an lvo* function here, with the SDK's signature
-// (after the base), in its slot.
+/// The two, for the checks that go over both: what each is called in a
+/// message, its LVO struct and its function types.
+const interfaces = .{
+    .{ .who = "rtg.library", .lvo = LVO, .functions = interface.Fn },
+    .{ .who = "rtg.library, for drivers", .lvo = DRIVER_LVO, .functions = driver_interface.Fn },
+};
+
+// Every function of either LVO is an lvo* function here, with the SDK's
+// signature (after the base), in its slot of the one table.
 comptime {
-    for (@typeInfo(LVO).@"struct".decls) |d| {
-        const f = @field(@This(), "lvo" ++ d.name);
-        if (!exec.libraries.sameSignature(@TypeOf(&f), @field(interface.Fn, d.name))) {
-            @compileError("rtg.library's lvo" ++ d.name ++ " doesn't match the SDK's Fn." ++ d.name);
-        }
-        if (vectors[@divExact(-@field(LVO, d.name), exec.slot_size) - 1] != vec(f)) {
-            @compileError("rtg.library's lvo" ++ d.name ++ " isn't in the slot of LVO." ++ d.name);
+    for (interfaces) |one| {
+        for (@typeInfo(one.lvo).@"struct".decls) |d| {
+            const f = @field(@This(), "lvo" ++ d.name);
+            if (!exec.libraries.sameSignature(@TypeOf(&f), @field(one.functions, d.name))) {
+                @compileError(one.who ++ ": lvo" ++ d.name ++ " doesn't match the SDK's Fn." ++ d.name);
+            }
+            const slot = @divExact(-@field(one.lvo, d.name), exec.slot_size) - 1;
+            if (slot >= vectors.len) {
+                @compileError(one.who ++ ": LVO." ++ d.name ++ " is past the table's end: the .fd's ##bias is off");
+            }
+            if (vectors[slot] != vec(f)) {
+                @compileError(one.who ++ ": lvo" ++ d.name ++ " isn't in the slot of LVO." ++ d.name);
+            }
         }
     }
 }
 
-// Every call's contract is in the list, once, and documents the LVO the
-// .fd gives it.
+// Every call's contract is in the list, once, and documents the LVO its
+// .fd gives it. A file holds a call of one interface, and is passed over
+// by the other's check.
 comptime {
     @setEvalBranchQuota(50_000_000);
-    exec.libraries.checkContractFiles(&contract_files, LVO, "rtg.library", "pub fn ");
+    for (interfaces) |one| exec.libraries.checkContractFiles(&contract_files, one.lvo, one.who, "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`: every
-/// call of the table, once. A call added gets its file here, or the build
-/// stops and names it.
+/// call of the table, of either interface, once. A call added gets its
+/// file here, or the build stops and names it.
 const contract_files = [_][]const u8{
     @embedFile("driver/addrtgdriver.zig"),
     @embedFile("driver/remrtgdriver.zig"),
@@ -349,7 +372,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 10;
+const reserved_slots = 17;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -359,14 +382,15 @@ const reserved_slots = 10;
 fn reserved(_: *RtgBase) callconv(.c) void {}
 
 /// The jump table, in slot order: the standard vectors, then one
-/// `lvo<Name>` per `.fd` line and a `reserved` per slot kept free.
+/// `lvo<Name>` per `.fd` line and a `reserved` per slot kept free - the
+/// programs' calls first, the drivers' after them.
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
     vec(exec.libClose),
     vec(rtg_base.expunge),
     vec(exec.libExtFunc),
-    vec(lvoAddRtgDriver),
-    vec(lvoRemRtgDriver),
+    vec(reserved),
+    vec(reserved),
     vec(reserved),
     vec(lvoLockRtgDrivers),
     vec(lvoUnlockRtgDrivers),
@@ -402,13 +426,13 @@ pub const vectors = [_]*const anyopaque{
     vec(reserved),
     vec(lvoAddRtgEventServer),
     vec(lvoRemRtgEventServer),
-    vec(lvoSignalRtgEvent),
+    vec(reserved),
     vec(lvoCreateTransportTagList),
     vec(lvoDeleteTransport),
-    vec(lvoTxParam),
-    vec(lvoTxColor),
-    vec(lvoRxParam),
-    vec(lvoGetRtgTagData),
+    vec(reserved),
+    vec(reserved),
+    vec(reserved),
+    vec(reserved),
     vec(reserved),
     vec(reserved),
     vec(lvoRtgErrorText),
@@ -433,22 +457,47 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRtgFormatBits),
     vec(lvoRtgRowBytes),
     vec(lvoRtgCicp),
+    // The drivers' interface.
+    vec(lvoAddRtgDriver),
+    vec(lvoRemRtgDriver),
+    vec(lvoSignalRtgEvent),
+    vec(lvoTxParam),
+    vec(lvoTxColor),
+    vec(lvoRxParam),
+    vec(lvoGetRtgTagData),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
 
 const testing = std.testing;
 
-test "the jump table: the ROM's slots, every LVO at its function" {
-    // The reserved slots are in the table but not in the LVO.
-    try testing.expectEqual(exec.libraries.standard_vectors + @typeInfo(LVO).@"struct".decls.len + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 72), vectors.len);
-    inline for (@typeInfo(LVO).@"struct".decls) |d| {
-        const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
-        try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);
+/// How many calls the two interfaces have together.
+const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"struct".decls.len;
+
+test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
+    // The reserved slots are in the table but not in either LVO.
+    try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
+    try testing.expectEqual(@as(usize, 79), vectors.len);
+    inline for (interfaces) |one| {
+        inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
+            const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);
+            try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);
+        }
     }
 }
 
+test "the drivers' calls follow the programs': no slot of one lies among the other's" {
+    var last_of_programs: usize = 0;
+    inline for (@typeInfo(LVO).@"struct".decls) |d| {
+        last_of_programs = @max(last_of_programs, @as(usize, @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1)));
+    }
+    var first_of_drivers: usize = vectors.len;
+    inline for (@typeInfo(DRIVER_LVO).@"struct".decls) |d| {
+        first_of_drivers = @min(first_of_drivers, @as(usize, @intCast(@divExact(-@field(DRIVER_LVO, d.name), exec.slot_size) - 1)));
+    }
+    try testing.expectEqual(last_of_programs + 1, first_of_drivers);
+}
+
 test "every wrapper hands its parameters on, in order, to the call it is named after" {
-    try exec.libraries.checkForwarding(@embedFile("rtg_lvo.zig"), LVO, &.{});
+    try exec.libraries.checkForwardingOf(@embedFile("rtg_lvo.zig"), call_count, &.{});
 }

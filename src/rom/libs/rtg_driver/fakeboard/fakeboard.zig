@@ -26,6 +26,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 
 pub const DRIVER_NAME = "fake";
 
@@ -126,6 +127,9 @@ pub const Log = struct {
 pub const State = struct {
     driver: rtg.RtgDriver = .{},
     sys: *ExecBase,
+    /// rtg.library as a driver calls it, for a driver `add` put on the
+    /// list; null for one a test added itself.
+    rtg_base: ?*RtgDriverBase = null,
     /// The display memory its boards are cut out of.
     region: [*]u8,
     log: Log = .{},
@@ -222,6 +226,34 @@ pub fn destroy(state: *State) void {
     sys.FreeVec(state);
 }
 
+/// The driver made and put on rtg.library's list, for a test of a module
+/// that needs a board under it. Null without memory, or when the library
+/// has a driver of this name already.
+///
+/// INPUTS:
+/// - `sys` - exec.
+/// - `library` - rtg.library's base, as `OpenLibrary` answers it.
+pub fn add(sys: *ExecBase, library: *anyopaque) ?*State {
+    const state = create(sys) orelse return null;
+    const rb: *RtgDriverBase = @ptrCast(library);
+    if (!rb.AddRtgDriver(&state.driver)) {
+        destroy(state);
+        return null;
+    }
+    state.rtg_base = rb;
+    return state;
+}
+
+/// The driver `add` made taken off the list and given back. Its boards
+/// are deleted first.
+///
+/// INPUTS:
+/// - `state` - what `add` answered.
+pub fn remove(state: *State) void {
+    if (state.rtg_base) |rb| _ = rb.RemRtgDriver(&state.driver);
+    destroy(state);
+}
+
 /// A frame of `board` ends, as a real board's frame interrupt says it:
 /// the blanking is signalled to whoever waits for one. The board sends no
 /// frames of its own, so a test says when one ends.
@@ -230,7 +262,8 @@ pub fn destroy(state: *State) void {
 /// - `board` - the board whose frame ends.
 pub fn endFrame(board: *rtg.RtgBoard) void {
     stateOfBoard(board).log.frames_ended += 1;
-    _ = board.rtg_base.?.SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
+    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
+    _ = rb.SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
 }
 
 const mode_table = [_]rtg.RtgMode{

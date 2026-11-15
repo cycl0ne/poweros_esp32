@@ -12,7 +12,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -24.
+/// SINCE: 1.0. LVO -296.
 ///
 /// INPUTS:
 /// - `driver` - the driver.

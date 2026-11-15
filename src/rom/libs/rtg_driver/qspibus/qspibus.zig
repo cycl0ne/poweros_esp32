@@ -30,7 +30,7 @@ const dmares = sdk.resources.dma;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
 const tags = rtg.tags;
-const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 
 const gpspi = sdk.hardware.gpspi.spi2;
 const gpio = @import("sdk").hardware.gpio;
@@ -42,7 +42,7 @@ const GpioBase = gpio_resource.GpioBase;
 const MODULE_NAME = "rtg-qspi";
 const DRIVER_NAME = "qspi";
 const VERSION = 1;
-const REVISION = 1;
+const REVISION = 2;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -100,7 +100,7 @@ fn instanceOf(io: *rtg.RtgTransport) *Instance {
 
 fn createTransport(made_by: *rtg.RtgDriver, io: *rtg.RtgTransport, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
-    const rb: *RtgBase = io.rtg_base.?;
+    const rb: *RtgDriverBase = @ptrCast(io.rtg_base.?);
     if (state.transport != null) return err.RTGERR_IN_USE;
     const sys = state.sys;
     const instance = instanceOf(io);
@@ -303,7 +303,7 @@ const driver_ops = rtg.RtgDriverOps{ .create_transport = &createTransport };
 fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
     _ = seg_list;
     const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgBase = @ptrCast(library);
+    const rb: *RtgDriverBase = @ptrCast(library);
 
     const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
         sys.CloseLibrary(library);

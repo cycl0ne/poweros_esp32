@@ -26,7 +26,7 @@ const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const err = rtg.errors;
 const dmares = sdk.resources.dma;
@@ -48,7 +48,7 @@ const MODULE_NAME = "rtg-rgb";
 /// This is the board's instance, allocated and cleared by the library.
 pub const Panel = struct {
     sys: *ExecBase,
-    rtg_base: *RtgBase,
+    rtg_base: *RtgDriverBase,
     board: *rtg.RtgBoard,
     config: config.Config = .{},
     /// The one mode this panel has.
