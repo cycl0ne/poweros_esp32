@@ -8,14 +8,9 @@
 //! nothing.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const TagItem = sdk.utility.TagItem;
-const err = rtg.errors;
-const tags = rtg.tags;
 
 const RtgBase = @import("../rtg.zig").RtgBase;
-const registry = @import("../driver/_driver.zig");
 
 /// What the library keeps for a transport, beside the handle.
 pub const Private = struct {

@@ -5,14 +5,10 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const bm_flags = rtg.bitmaps;
 const err = rtg.errors;
 const boards = @import("../board/_board.zig");
-const _bitmap = @import("_bitmap.zig");
 
 /// Makes a buffer in a board's display memory.
 ///

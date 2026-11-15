@@ -3,7 +3,6 @@
 //! pixel format with a mask beside it.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;

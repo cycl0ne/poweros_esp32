@@ -3,14 +3,9 @@
 //! every right-angle turn.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
-const _board = @import("../board/_board.zig");
 
 /// Exchanges a board's axes.
 ///

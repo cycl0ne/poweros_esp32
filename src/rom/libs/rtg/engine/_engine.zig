@@ -16,9 +16,6 @@
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
-const err = rtg.errors;
-
-const RtgBase = @import("../rtg.zig").RtgBase;
 
 /// The board a buffer belongs to, and its ops.
 ///

@@ -117,11 +117,29 @@ pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const Ta
 /// One of the tags that say what the picture will be: all of them are
 /// small numbers, and anything that does not fit a byte is taken as the
 /// tag not given at all - no driver would know it anyway.
+///
+/// INPUTS:
+/// - `rb` - the library's base, for utility.library.
+/// - `tag` - the tag to read.
+/// - `unless` - what the tag means when it is not given.
+/// - `tag_list` - the caller's tags, or null.
+///
+/// RESULT:
+/// The tag's value, or `unless`.
 fn kind(rb: *RtgBase, tag: Tag, unless: u8, tag_list: ?[*]const TagItem) u8 {
     const told = rb.utility_base.GetTagData(tag, unless, tag_list);
     return if (told <= 255) @intCast(told) else unless;
 }
 
+/// The call's answer when no layer is opened: the reason kept for
+/// `RtgLastError`, and no layer.
+///
+/// INPUTS:
+/// - `rb` - the library's base, where the reason is kept.
+/// - `code` - the reason, an `RTGERR_` code.
+///
+/// RESULT:
+/// Null.
 fn failed(rb: *RtgBase, code: i32) ?*rtg.RtgVideoLayer {
     rb.last_error = code;
     return null;

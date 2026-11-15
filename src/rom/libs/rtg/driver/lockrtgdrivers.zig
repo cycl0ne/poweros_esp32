@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! LockRtgDrivers: Hold the driver list still so it can be walked.
 
-const sdk = @import("sdk");
-const exec = sdk.exec;
-const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 
 /// Holds the driver list still, so it can be walked.

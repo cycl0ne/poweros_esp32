@@ -2,13 +2,8 @@
 //! BoardBrightness: What it is now, 0 to 100.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
-const _board = @import("../board/_board.zig");
 
 /// Reads a board's brightness.
 ///

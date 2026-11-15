@@ -178,12 +178,11 @@ comptime {
     }
 }
 
-// Every slot's documented LVO is the one the .fd gives it.
+// Every call's contract is in the list, once, and documents the LVO the
+// .fd gives it.
 comptime {
     @setEvalBranchQuota(50_000_000);
-    for (contract_files) |source| {
-        exec.libraries.checkDocumentedLvosAt(source, LVO, "intuition.library", "pub fn ");
-    }
+    exec.libraries.checkContractFiles(&contract_files, LVO, "intuition.library", "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`: every
@@ -295,6 +294,36 @@ const contract_files = [_][]const u8{
     @embedFile("window/showwindow.zig"),
     @embedFile("window/hidecontrol.zig"),
     @embedFile("window/returnactivation.zig"),
+    @embedFile("window/getimsg.zig"),
+    @embedFile("window/replyimsg.zig"),
+    @embedFile("window/waitimsg.zig"),
+    @embedFile("window/movewindowinfrontof.zig"),
+    @embedFile("window/scrollwindowraster.zig"),
+    @embedFile("window/setmousequeue.zig"),
+    @embedFile("window/reportmouse.zig"),
+    @embedFile("screen/lockpubscreenlist.zig"),
+    @embedFile("screen/unlockpubscreenlist.zig"),
+    @embedFile("screen/nextpubscreen.zig"),
+    @embedFile("screen/setdefaultpubscreen.zig"),
+    @embedFile("screen/getdefaultpubscreen.zig"),
+    @embedFile("screen/setpubscreenmodes.zig"),
+    @embedFile("screen/pubscreenstatus.zig"),
+    @embedFile("screen/screendepth.zig"),
+    @embedFile("screen/showtitle.zig"),
+    @embedFile("screen/allocscreenbuffer.zig"),
+    @embedFile("screen/changescreenbuffer.zig"),
+    @embedFile("screen/freescreenbuffer.zig"),
+    @embedFile("misc/displaybeep.zig"),
+    @embedFile("misc/currenttime.zig"),
+    @embedFile("misc/displayalert.zig"),
+    @embedFile("misc/timeddisplayalert.zig"),
+    @embedFile("gadget/helpcontrol.zig"),
+    @embedFile("gadget/setedithook.zig"),
+    @embedFile("gadget/gadgetmouse.zig"),
+    @embedFile("menu/createmenusa.zig"),
+    @embedFile("menu/freemenus.zig"),
+    @embedFile("menu/layoutmenusa.zig"),
+    @embedFile("menu/layoutmenuitemsa.zig"),
 };
 
 fn lvoMakeClass(ib: *IntuitionBase, class_id: ?[*:0]const u8, super_id: ?[*:0]const u8, super_class: ?*Class, inst_size: u32) callconv(.c) ?*Class {

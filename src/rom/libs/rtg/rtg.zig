@@ -33,7 +33,6 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const utility = sdk.utility;
 const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const rtg = sdk.rtg;
 
 /// rtg.library's base (rtg_base.zig).
@@ -59,8 +58,6 @@ pub const rtg_library_tag = rtg_init.rtg_library_tag;
 const testing = std.testing;
 /// The library's interface as the SDK has it, for the tests' calls.
 const interface = sdk.interface.rtg;
-const LIBRARY_VERSION = rtg_init.LIBRARY_VERSION;
-const LIBRARY_REVISION = rtg_init.LIBRARY_REVISION;
 const memory = @import("memory/_memory.zig");
 
 test {

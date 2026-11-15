@@ -120,12 +120,11 @@ comptime {
     }
 }
 
-// Every slot's documented LVO is the one the .fd gives it.
+// Every call's contract is in the list, once, and documents the LVO the
+// .fd gives it.
 comptime {
     @setEvalBranchQuota(50_000_000);
-    for (contract_files) |source| {
-        exec.libraries.checkDocumentedLvosAt(source, LVO, "graphics.library", "pub fn ");
-    }
+    exec.libraries.checkContractFiles(&contract_files, LVO, "graphics.library", "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`: every
@@ -214,6 +213,8 @@ const contract_files = [_][]const u8{
     @embedFile("text/textoffsettox.zig"),
     @embedFile("text/textxtooffset.zig"),
     @embedFile("draw/drawroundbevel.zig"),
+    @embedFile("blit/blendpixelarray.zig"),
+    @embedFile("blit/scalepixelarray.zig"),
 };
 
 fn lvoCreateRastPortTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) callconv(.c) ?*graphics.RastPort {

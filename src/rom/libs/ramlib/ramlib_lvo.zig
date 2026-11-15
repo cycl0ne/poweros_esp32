@@ -25,10 +25,11 @@ comptime {
     }
 }
 
-// Every slot's documented LVO is the one the .fd gives it.
+// Every call's contract is in the list, once, and documents the LVO the
+// .fd gives it.
 comptime {
     @setEvalBranchQuota(1_000_000);
-    exec.libraries.checkDocumentedLvosAt(@embedFile("unloadmodule.zig"), LVO, "ramlib.library", "pub fn ");
+    exec.libraries.checkContractFiles(&.{@embedFile("unloadmodule.zig")}, LVO, "ramlib.library", "pub fn ");
 }
 
 fn lvoUnLoadModule(rlb: *RamLibBase, seg_list: ?*anyopaque) callconv(.c) void {

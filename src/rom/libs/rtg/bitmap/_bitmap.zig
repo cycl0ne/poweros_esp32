@@ -14,7 +14,6 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
-const err = rtg.errors;
 const bm_flags = rtg.bitmaps;
 
 const RtgBase = @import("../rtg.zig").RtgBase;

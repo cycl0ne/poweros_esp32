@@ -4,12 +4,8 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
-const _event = @import("_event.zig");
 
 /// Tells a board's servers that one of its events happened.
 ///

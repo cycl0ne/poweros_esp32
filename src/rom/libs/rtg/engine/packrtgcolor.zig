@@ -3,13 +3,8 @@
 //! format, right-aligned.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
-const _engine = @import("_engine.zig");
 
 /// Packs three eight-bit channels into one pixel of a format.
 ///

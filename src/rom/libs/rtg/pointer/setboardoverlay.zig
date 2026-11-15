@@ -4,7 +4,6 @@
 //! its coverage dithered into a mask.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;

@@ -234,11 +234,117 @@ pub fn checkDocumentedLvosAt(
     comptime who: []const u8,
     comptime declaration: []const u8,
 ) void {
+    readContracts(source, LVO, who, declaration, null);
+}
+
+/// Check at compile time that a module's contract files hold the contract
+/// of every call of its `.fd`, once, and that each documents the LVO the
+/// generated interface gives it: `checkDocumentedLvosAt` over all the
+/// files, and the list held complete.
+///
+/// INPUTS:
+/// - `sources` - the files' own text, as `@embedFile` gives it: the
+///   module's list of contract files.
+/// - `LVO` - the generated LVO struct, whose declarations are the calls.
+/// - `who` - the module's name, for the message.
+/// - `declaration` - what precedes a call's name at the start of a line,
+///   as `checkDocumentedLvosAt` takes it.
+///
+/// A call whose file is left out of the list is read by nothing, and its
+/// documented LVO then compared with nothing. So the build stops when
+/// the list holds fewer or more contracts than the `.fd` has calls, and
+/// names them: a call with no contract, and one found twice. A contract
+/// counts where its LVO is compared - a doc block right above the call's
+/// declaration that names one. The files are read once, in the pass that
+/// compares.
+pub fn checkContractFiles(
+    comptime sources: []const []const u8,
+    comptime LVO: type,
+    comptime who: []const u8,
+    comptime declaration: []const u8,
+) void {
+    const faults = comptime contractFaults(sources, LVO, who, declaration);
+    if (faults.len != 0) {
+        @compileError(who ++ ": its contract files do not hold one contract for each call:" ++ faults ++
+            " - a call's file goes in the list once, and the doc comment right above its `" ++ declaration ++
+            "<Name>(` says `SINCE: <version>. LVO -N.` (docs/codex.md, rule 4).");
+    }
+}
+
+/// What `checkContractFiles` finds wrong with a list, as text for its
+/// message: the calls of `LVO` with no contract in `sources`, each with
+/// a space in front, and after it the calls with more than one, each
+/// followed by `(twice)`. Empty for a list with one contract a call.
+///
+/// INPUTS:
+/// - `sources` - the files' own text.
+/// - `LVO` - the generated LVO struct.
+/// - `who` - the module's name, for the message of a contract whose LVO
+///   is wrong.
+/// - `declaration` - what precedes a call's name at the start of a line.
+///
+/// RESULT:
+/// The text, empty when nothing is wrong. A contract that documents
+/// another LVO than its call's stops the build here, as in
+/// `checkDocumentedLvosAt`.
+pub fn contractFaults(
+    comptime sources: []const []const u8,
+    comptime LVO: type,
+    comptime who: []const u8,
+    comptime declaration: []const u8,
+) []const u8 {
+    const calls = @typeInfo(LVO).@"struct".decls;
+    // How many contracts each slot was found with.
+    var found: [slotCount(LVO)]u8 = @splat(0);
+    for (sources) |source| readContracts(source, LVO, who, declaration, &found);
+    var faults: []const u8 = "";
+    for (calls) |entry| {
+        if (found[slotOf(@field(LVO, entry.name))] == 0) faults = faults ++ " " ++ entry.name;
+    }
+    for (calls) |entry| {
+        if (found[slotOf(@field(LVO, entry.name))] > 1) faults = faults ++ " " ++ entry.name ++ "(twice)";
+    }
+    return faults;
+}
+
+/// The slot an LVO names, counted from 0.
+///
+/// INPUTS:
+/// - `offset` - the LVO, as the generated interface has it.
+fn slotOf(comptime offset: isize) usize {
+    return @intCast(@divExact(-offset, @as(isize, slot_size)) - 1);
+}
+
+/// How many slots the calls of `LVO` reach: one past the highest.
+///
+/// INPUTS:
+/// - `LVO` - the generated LVO struct.
+fn slotCount(comptime LVO: type) usize {
+    var count: usize = 0;
+    for (@typeInfo(LVO).@"struct".decls) |entry| count = @max(count, slotOf(@field(LVO, entry.name)) + 1);
+    return count;
+}
+
+/// One pass over a file's lines, keeping where the current run of `///`
+/// lines began. A declaration at the start of a line - so the same text
+/// in a SYNOPSIS block is passed over, as in checkSlotNames - is checked
+/// against the doc run right above it.
+///
+/// INPUTS:
+/// - `source` - the file's text.
+/// - `LVO` - the generated LVO struct.
+/// - `who` - the module's name, for the message.
+/// - `declaration` - what precedes a call's name at the start of a line.
+/// - `found` - where the contracts are counted, a count a slot, for the
+///   caller that wants them; null for one that does not.
+fn readContracts(
+    comptime source: []const u8,
+    comptime LVO: type,
+    comptime who: []const u8,
+    comptime declaration: []const u8,
+    comptime found: ?[]u8,
+) void {
     @setEvalBranchQuota(20 * source.len + 100_000);
-    // One pass over the lines, keeping where the current run of `///`
-    // lines began. A declaration at the start of a line - so the same text
-    // in a SYNOPSIS block is passed over, as in checkSlotNames - is checked
-    // against the doc run right above it.
     var doc_start: ?usize = null;
     var line_start: usize = 0;
     while (line_start < source.len) {
@@ -252,7 +358,10 @@ pub fn checkDocumentedLvosAt(
                     if (std.mem.indexOfScalar(u8, line, '(')) |open| {
                         const name = line[declaration.len..open];
                         if (@hasDecl(LVO, name)) {
-                            checkDocumentedLvo(source[start..line_start], @field(LVO, name), who, name);
+                            const offset = @field(LVO, name);
+                            if (checkDocumentedLvo(source[start..line_start], offset, who, name)) {
+                                if (found) |counts| counts[slotOf(offset)] +|= 1;
+                            }
                         }
                     }
                 }
@@ -263,10 +372,11 @@ pub fn checkDocumentedLvosAt(
     }
 }
 
-/// One slot's doc block against its LVO from the .fd.
-fn checkDocumentedLvo(comptime doc: []const u8, comptime offset: isize, comptime who: []const u8, comptime name: []const u8) void {
+/// One slot's doc block against its LVO from the .fd. False when the
+/// block documents no LVO.
+fn checkDocumentedLvo(comptime doc: []const u8, comptime offset: isize, comptime who: []const u8, comptime name: []const u8) bool {
     const marker = "LVO -";
-    const found = std.mem.indexOf(u8, doc, marker) orelse return;
+    const found = std.mem.indexOf(u8, doc, marker) orelse return false;
     var n: isize = 0;
     var i = found + marker.len;
     while (i < doc.len and doc[i] >= '0' and doc[i] <= '9') : (i += 1) {
@@ -290,6 +400,7 @@ fn checkDocumentedLvo(comptime doc: []const u8, comptime offset: isize, comptime
             std.fmt.comptimePrint("{d}", .{(actual_index + 1) * machine_slot_size}) ++
             " - the .fd is the source of truth (docs/codex.md).");
     }
+    return true;
 }
 
 /// Check that every `lvo<Name>` wrapper only hands over: its body is one

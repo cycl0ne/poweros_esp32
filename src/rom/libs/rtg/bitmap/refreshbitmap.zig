@@ -3,14 +3,9 @@
 //! them to the display.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
-const _bitmap = @import("_bitmap.zig");
 
 /// Hands rows of a buffer that were written on to the display.
 ///

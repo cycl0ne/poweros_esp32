@@ -3,11 +3,7 @@
 //! @sizeOf(RtgBoardInfo).
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const copyOut = _board.copyOut;
 const countModes = _board.countModes;

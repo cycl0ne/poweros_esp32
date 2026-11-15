@@ -2,11 +2,7 @@
 //! DeleteTransport: Give a bus back.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const privateOf = _transport.privateOf;
 const err = rtg.errors;

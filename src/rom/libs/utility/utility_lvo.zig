@@ -113,9 +113,7 @@ comptime {
 comptime {
     // One quota for the whole run: the files' branches add up.
     @setEvalBranchQuota(50_000_000);
-    for (contract_files) |source| {
-        exec.libraries.checkDocumentedLvosAt(source, LVO, utility_init.LIBRARY_NAME, "pub fn ");
-    }
+    exec.libraries.checkContractFiles(&contract_files, LVO, utility_init.LIBRARY_NAME, "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`: every

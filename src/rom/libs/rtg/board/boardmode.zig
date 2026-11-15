@@ -2,11 +2,7 @@
 //! BoardMode: The mode the board is in now, or null for none.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");

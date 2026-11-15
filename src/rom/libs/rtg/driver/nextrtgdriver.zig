@@ -2,11 +2,7 @@
 //! NextRtgDriver: The next driver after `after`, or the first for null.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const driverOf = _driver.driverOf;
 const _driver = @import("_driver.zig");

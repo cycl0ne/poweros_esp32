@@ -55,15 +55,15 @@ comptime {
     }
 }
 
-// Every slot's documented LVO is the one the .fd gives it. The number in a
-// SINCE line is written by hand and read by whoever writes against exec, so
-// nothing else would ever compare the two. It caught one wrong already.
+// Every call's contract is in the list, once, and documents the LVO the
+// .fd gives it. The number in a SINCE line is written by hand and read by
+// whoever writes against exec, so nothing else would ever compare the two;
+// and a file left out of the list would be read by nothing. It caught two
+// numbers wrong already, the second in a file the list did not hold.
 comptime {
     // One quota for the whole run: the files' branches add up.
     @setEvalBranchQuota(50_000_000);
-    for (contract_files) |source| {
-        sdk.exec.libraries.checkDocumentedLvosAt(source, exec.LVO, exec.LIBRARY_NAME, "pub fn ");
-    }
+    sdk.exec.libraries.checkContractFiles(&contract_files, exec.LVO, exec.LIBRARY_NAME, "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`: every
@@ -207,6 +207,10 @@ const contract_files = [_][]const u8{
     @embedFile("memory/freepooled.zig"),
     @embedFile("task/sharework.zig"),
     @embedFile("task/postwork.zig"),
+    @embedFile("interrupt/alertat.zig"),
+    @embedFile("waitable/signalwaitable.zig"),
+    @embedFile("waitable/resetwaitable.zig"),
+    @embedFile("waitable/waitforany.zig"),
 };
 
 /// How many slots of the table are kept free.
@@ -1032,4 +1036,77 @@ test "the vector table: every function of the SDK's LVO at its slot" {
         const index: usize = @intCast(@divExact(-@field(exec.LVO, d.name), sdk.exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), exec_vectors[index]);
     }
+}
+
+/// A table of three calls with a slot left out between them, as the
+/// generated interface would have it, for the test of the contract check.
+const MadeUpLVO = struct {
+    pub const First = sdk.exec.libraries.lvo(4);
+    pub const Second = sdk.exec.libraries.lvo(5);
+    pub const Third = sdk.exec.libraries.lvo(7);
+};
+
+test "a module's contract files hold one contract for each call, or the calls are named" {
+    const faults = sdk.exec.libraries.contractFaults;
+    const first =
+        \\//! The first call's file.
+        \\
+        \\/// Does the first thing.
+        \\///
+        \\/// SINCE: 1.0. LVO -20.
+        \\pub fn First(base: *Base) void {}
+        \\
+    ;
+    const second_and_third =
+        \\/// Does the second thing.
+        \\///
+        \\/// SYNOPSIS:
+        \\/// ```zig
+        \\/// pub fn Third(base: *Base) void
+        \\/// ```
+        \\///
+        \\/// SINCE: 1.0. LVO -24.
+        \\pub fn Second(base: *Base) void {}
+        \\
+        \\/// Does the third thing.
+        \\///
+        \\/// SINCE: 1.2. LVO -32.
+        \\pub fn Third(base: *Base) void {}
+        \\
+    ;
+    // A helper named like nothing in the table, and a call whose doc
+    // comment names no LVO: neither is a contract.
+    const no_contract =
+        \\/// Helps.
+        \\pub fn helper(base: *Base) void {}
+        \\
+        \\/// Does the third thing, and says no LVO.
+        \\pub fn Third(base: *Base) void {}
+        \\
+    ;
+    // A doc comment parted from its call by a line is no longer its.
+    const parted =
+        \\/// Does the first thing.
+        \\///
+        \\/// SINCE: 1.0. LVO -20.
+        \\
+        \\pub fn First(base: *Base) void {}
+        \\
+    ;
+    const who = "made-up.library";
+    // One contract each, in any order of the files: nothing to say.
+    try testing.expectEqualStrings("", comptime faults(&.{ first, second_and_third }, MadeUpLVO, who, "pub fn "));
+    try testing.expectEqualStrings("", comptime faults(&.{ second_and_third, no_contract, first }, MadeUpLVO, who, "pub fn "));
+    // A file left out: its calls are named, in the table's order.
+    try testing.expectEqualStrings(" First", comptime faults(&.{second_and_third}, MadeUpLVO, who, "pub fn "));
+    try testing.expectEqualStrings(" Second Third", comptime faults(&.{first}, MadeUpLVO, who, "pub fn "));
+    try testing.expectEqualStrings(" First Second Third", comptime faults(&.{}, MadeUpLVO, who, "pub fn "));
+    // What is no contract does not count as one.
+    try testing.expectEqualStrings(" First Second Third", comptime faults(&.{no_contract}, MadeUpLVO, who, "pub fn "));
+    try testing.expectEqualStrings(" First", comptime faults(&.{ parted, second_and_third }, MadeUpLVO, who, "pub fn "));
+    // A file in the list twice: as many contracts too many.
+    try testing.expectEqualStrings(" First(twice)", comptime faults(&.{ first, second_and_third, first }, MadeUpLVO, who, "pub fn "));
+    try testing.expectEqualStrings(" Second(twice) Third(twice)", comptime faults(&.{ first, second_and_third, second_and_third }, MadeUpLVO, who, "pub fn "));
+    // Both at once: what is missing first, then what is there twice.
+    try testing.expectEqualStrings(" First Second(twice) Third(twice)", comptime faults(&.{ second_and_third, second_and_third }, MadeUpLVO, who, "pub fn "));
 }

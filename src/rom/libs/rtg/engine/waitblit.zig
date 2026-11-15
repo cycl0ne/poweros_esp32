@@ -3,13 +3,8 @@
 //! given.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
-const _engine = @import("_engine.zig");
 
 /// Waits until a board's engine has finished what it was given.
 ///

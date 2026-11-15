@@ -3,11 +3,9 @@
 //! (RTGA_*).
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
 const utility = sdk.utility;
 const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const claimOf = _board.claimOf;
 const countModes = _board.countModes;

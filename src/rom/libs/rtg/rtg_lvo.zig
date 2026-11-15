@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! rtg.library's jump table: every `lvo<Name>` wrapper, the table of them
 //! in slot order, and the checks that hold the table to the SDK's contract
-//! - the signatures and the documented LVOs at compile time, the slots and
-//! the forwarding in the tests at the end.
+//! - at compile time the signatures, and a contract for every call that
+//! documents the LVO the call has; the slots and the forwarding in the
+//! tests at the end.
 //!
 //! Each wrapper is the slot a caller reaches through the table. It hands
 //! the work to the call - a file of its own in the folder for its
@@ -103,16 +104,16 @@ comptime {
     }
 }
 
-// Every slot's documented LVO is the one the .fd gives it.
+// Every call's contract is in the list, once, and documents the LVO the
+// .fd gives it.
 comptime {
     @setEvalBranchQuota(50_000_000);
-    for (contract_files) |source| {
-        exec.libraries.checkDocumentedLvosAt(source, LVO, "rtg.library", "pub fn ");
-    }
+    exec.libraries.checkContractFiles(&contract_files, LVO, "rtg.library", "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`: every
-/// call of the table.
+/// call of the table, once. A call added gets its file here, or the build
+/// stops and names it.
 const contract_files = [_][]const u8{
     @embedFile("driver/addrtgdriver.zig"),
     @embedFile("driver/remrtgdriver.zig"),
@@ -173,6 +174,12 @@ const contract_files = [_][]const u8{
     @embedFile("pointer/setboardpointer.zig"),
     @embedFile("pointer/moveboardpointer.zig"),
     @embedFile("pointer/showboardpointer.zig"),
+    @embedFile("bitmap/refreshrect.zig"),
+    @embedFile("engine/copyrects.zig"),
+    @embedFile("video/openvideolayer.zig"),
+    @embedFile("video/closevideolayer.zig"),
+    @embedFile("video/showvideoframe.zig"),
+    @embedFile("video/movevideolayer.zig"),
 };
 
 fn lvoAddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) callconv(.c) bool {

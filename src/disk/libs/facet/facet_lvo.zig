@@ -172,12 +172,11 @@ comptime {
     }
 }
 
-// Every slot's documented LVO is the one the .fd gives it.
+// Every call's contract is in the list, once, and documents the LVO the
+// .fd gives it.
 comptime {
     @setEvalBranchQuota(10_000_000);
-    for (contract_files) |source| {
-        exec.libraries.checkDocumentedLvosAt(source, LVO, "facet.library", "pub fn ");
-    }
+    exec.libraries.checkContractFiles(&contract_files, LVO, "facet.library", "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`.
@@ -308,6 +307,24 @@ const contract_files = [_][]const u8{
     @embedFile("instance/getphysicaldeviceimageformatproperties.zig"),
     @embedFile("render/getrenderareagranularity.zig"),
     @embedFile("memory/getdevicememorycommitment.zig"),
+    @embedFile("command/cmdresolveimage.zig"),
+    @embedFile("memory/flushmappedmemoryranges.zig"),
+    @embedFile("memory/invalidatemappedmemoryranges.zig"),
+    @embedFile("instance/getphysicaldevicesparseimageformatproperties.zig"),
+    @embedFile("image/getimagesparsememoryrequirements.zig"),
+    @embedFile("queue/queuebindsparse.zig"),
+    @embedFile("sync/createevent.zig"),
+    @embedFile("sync/destroyevent.zig"),
+    @embedFile("sync/geteventstatus.zig"),
+    @embedFile("sync/setevent.zig"),
+    @embedFile("sync/resetevent.zig"),
+    @embedFile("command/cmdsetevent.zig"),
+    @embedFile("command/cmdresetevent.zig"),
+    @embedFile("command/cmdwaitevents.zig"),
+    @embedFile("pipeline/createpipelinecache.zig"),
+    @embedFile("pipeline/destroypipelinecache.zig"),
+    @embedFile("pipeline/getpipelinecachedata.zig"),
+    @embedFile("pipeline/mergepipelinecaches.zig"),
 };
 
 fn lvoCreateInstance(base: *FacetBase, info: *const facet.InstanceCreateInfo, instance: *?*facet.Instance) callconv(.c) facet.Result {

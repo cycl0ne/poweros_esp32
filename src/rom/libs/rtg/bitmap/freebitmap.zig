@@ -2,15 +2,10 @@
 //! FreeBitMap: Give a buffer back.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
 const bm_flags = rtg.bitmaps;
-const _bitmap = @import("_bitmap.zig");
 
 /// Gives a buffer back.
 ///

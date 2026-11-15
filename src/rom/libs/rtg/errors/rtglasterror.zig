@@ -2,12 +2,6 @@
 //! RtgLastError: The error of the last call on this task that had
 //! nowhere to return one: the calls that answer with a pointer.
 
-const sdk = @import("sdk");
-const exec = sdk.exec;
-const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
 
 /// Tells what the last call that answers with a pointer went wrong with.

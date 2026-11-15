@@ -11,16 +11,12 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
-const ExecBase = sdk.interface.exec.ExecBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
-const err = rtg.errors;
 const tags = rtg.tags;
 
 const RtgBase = @import("../rtg.zig").RtgBase;
 const Arena = @import("../memory/_memory.zig").Arena;
-const bitmaps = @import("../bitmap/_bitmap.zig");
-const registry = @import("../driver/_driver.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -238,7 +234,3 @@ pub fn countModes(board: *rtg.RtgBoard) u32 {
     while (node) |n| : (node = n.next()) count += 1;
     return count;
 }
-
-// --- what is up -------------------------------------------------------------
-
-// --- how the picture is turned ----------------------------------------------

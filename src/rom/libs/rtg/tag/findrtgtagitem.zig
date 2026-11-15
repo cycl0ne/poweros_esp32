@@ -2,8 +2,6 @@
 //! FindRtgTagItem: The tag of that value in the list, or null.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
-const rtg = sdk.rtg;
 const utility = sdk.utility;
 const TagItem = utility.TagItem;
 const Tag = utility.Tag;

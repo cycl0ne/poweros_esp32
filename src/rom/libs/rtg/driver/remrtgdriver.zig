@@ -2,13 +2,8 @@
 //! RemRtgDriver: Take a driver off the list.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const RtgBase = @import("../rtg.zig").RtgBase;
-const _driver = @import("_driver.zig");
 
 /// Takes a driver off the library's list.
 ///

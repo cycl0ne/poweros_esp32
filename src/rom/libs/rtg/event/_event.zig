@@ -12,12 +12,7 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
-const rtg = sdk.rtg;
-const err = rtg.errors;
 const ExecBase = sdk.interface.exec.ExecBase;
-
-const RtgBase = @import("../rtg.zig").RtgBase;
-const boards = @import("../board/_board.zig");
 
 /// What waits for a blanking when the driver has no wait of its own: an
 /// Interrupt on the waiting task's own stack, which signals it and lets

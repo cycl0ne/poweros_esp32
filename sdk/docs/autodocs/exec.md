@@ -1171,7 +1171,7 @@ fn AlertAt(_: *ExecBase, alert_num: u32, where: usize, text: ?[*:0]const u8) voi
 
 **SINCE**
 
-1.0. LVO -466.
+1.0. LVO -464.
 
 **INPUTS**
 

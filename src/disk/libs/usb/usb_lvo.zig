@@ -44,12 +44,11 @@ comptime {
     }
 }
 
-// Every slot's documented LVO is the one the .fd gives it.
+// Every call's contract is in the list, once, and documents the LVO the
+// .fd gives it.
 comptime {
     @setEvalBranchQuota(10_000_000);
-    for (contract_files) |source| {
-        exec.libraries.checkDocumentedLvosAt(source, LVO, "usb.library", "pub fn ");
-    }
+    exec.libraries.checkContractFiles(&contract_files, LVO, "usb.library", "pub fn ");
 }
 
 /// The files whose call carries its contract, above `pub fn <Name>`.

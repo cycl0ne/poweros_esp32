@@ -2,11 +2,7 @@
 //! DeleteBoard: Stop a board and give everything back.
 
 const sdk = @import("sdk");
-const exec = sdk.exec;
 const rtg = sdk.rtg;
-const utility = sdk.utility;
-const TagItem = utility.TagItem;
-const Tag = utility.Tag;
 const err = rtg.errors;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const bitmaps = @import("../bitmap/_bitmap.zig");
