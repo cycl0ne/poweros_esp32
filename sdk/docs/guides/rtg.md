@@ -384,7 +384,9 @@ rectangle. Every operation is finished when the
 call returns; the caller's task waits for the engine's interrupt
 meanwhile, so the CPU is free for others. An operation the engine has
 not ended within a fifth of a second is stopped, and the CPU does what
-it left: a refusal comes before the first pixel is written, never after.
+it left - of a blend, all of the engine's part, so rows the engine had
+finished are mixed twice: a refusal comes before the first pixel is
+written, never after.
 The engine shares the
 PSRAM with the panel's stream, which cannot wait: the stream is put first
 on the bus, and a panel that streams more than the PSRAM leaves room for

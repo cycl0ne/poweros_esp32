@@ -43,9 +43,12 @@
 //! **A job that does not end** - an error, or no end within its bound -
 //! is stopped before its wait returns: the PPA's units back to idle, the
 //! channels stopped and reset, so that nothing of it writes the rectangle
-//! afterwards, or a block that is then freed. What it left the CPU
-//! does, and the job is answered as done. The first such job is said on
-//! the raw port; `failures` counts them.
+//! afterwards, or a block that is then freed. What it left of the
+//! rectangle the CPU does, and the job is answered as done. The scaler's
+//! own job (`scale.zig`) has written only its block, nothing of the
+//! buffer: that one is answered RTGERR_NOT_SUPPORTED, and the caller
+//! scales in software. The first job that does not end is said on the
+//! raw port; `failures` counts them.
 //!
 //! One operation at a time, under the panel's engine semaphore; each one
 //! is done before it returns, so WaitBlit has nothing left to wait for.
@@ -495,8 +498,9 @@ fn overlapping(src: *const rtg.RtgBitMap, dest: *const rtg.RtgBitMap, src_first:
 }
 
 /// A job the engine did not take, counted: RTGERR_NOT_SUPPORTED, and the
-/// caller does all of it itself. Only where nothing has been written - a
-/// job that was begun is finished by the CPU and answered RTGERR_OK.
+/// caller does all of it itself. Only where nothing of the buffer has
+/// been written - a job that wrote any of it is finished by the CPU and
+/// answered RTGERR_OK.
 ///
 /// INPUTS:
 /// - `engine` - the engine, for its count.
@@ -507,8 +511,9 @@ pub fn failed(engine: *Engine) i32 {
 
 // --- tests (host: ./zig build test) -----------------------------------------
 //
-// What needs no engine: which part of a row is the engine's, and whether
-// a copy reads what it writes.
+// What needs no engine: which part of a row is the engine's, whether a
+// copy reads what it writes, and the CPU's fill and copy of a
+// rectangle's ends and middle.
 
 const testing = @import("std").testing;
 
@@ -564,8 +569,53 @@ test "a copy that reads what it writes: one buffer's rectangles that meet, or tw
     try testing.expect(!overlapping(&one, &one, first.of(&one, below), first.end(&one, below), &below));
     const meeting = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 8, .height = 8, .dest_x = 4, .dest_y = 4 };
     try testing.expect(overlapping(&one, &one, first.of(&one, meeting), first.end(&one, meeting), &meeting));
-    // The same memory described with another pitch, its spans crossing:
-    // taken as meeting, since the columns say nothing then.
+    // One memory described twice, its spans crossing: taken as meeting.
+    // From another first byte with the same pitch the columns count from
+    // different places, and with another pitch they say nothing.
+    const inside = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 8, .height = 8, .dest_x = 8, .dest_y = 0 };
+    const shifted = rtg.RtgBitMap{ .pixels = memory[16..], .width = 24, .height = 16, .pitch = 64, .size_bytes = memory.len - 16, .format = .rgb565 };
+    try testing.expect(overlapping(&shifted, &one, first.of(&shifted, inside), first.end(&shifted, inside), &inside));
     const narrow = rtg.RtgBitMap{ .pixels = &memory, .width = 16, .height = 32, .pitch = 32, .size_bytes = memory.len, .format = .rgb565 };
-    try testing.expect(overlapping(&one, &narrow, first.of(&one, beside), first.end(&one, beside), &beside));
+    try testing.expect(overlapping(&one, &narrow, first.of(&one, inside), first.end(&one, inside), &inside));
+}
+
+test "the CPU's ends and its middle fill and copy a rectangle once, and nothing beside it" {
+    // Four rows of 96 pixels. The rectangle is columns 5 to 85 of rows 1
+    // and 2: the engine's part of it is 32 to 64, the CPU's the two ends
+    // - and, where the engine does not end its job, that part too.
+    var pixels: [4 * 96]u16 align(64) = @splat(0);
+    const dest = rtg.RtgBitMap{ .pixels = @ptrCast(&pixels), .width = 96, .height = 4, .pitch = 192, .size_bytes = 4 * 192, .format = .rgb565 };
+    const x = 5;
+    const width = 80;
+    const y = 1;
+    const rows = 2;
+    const middle = middleOf(x, width);
+    try testing.expectEqual(Middle{ .start = 32, .end = 64 }, middle);
+
+    fillByCpu(&dest, x, middle.start, y, rows, 0x1234);
+    fillByCpu(&dest, middle.end, x + width, y, rows, 0x1234);
+    fillByCpu(&dest, middle.start, middle.end, y, rows, 0x1234);
+    for (0..4) |row| for (0..96) |column| {
+        const inside_it = row >= y and row < y + rows and column >= x and column < x + width;
+        try testing.expectEqual(@as(u16, if (inside_it) 0x1234 else 0), pixels[row * 96 + column]);
+    };
+
+    // A copy from a buffer whose pixels say where they are, its rectangle
+    // at another column and another row than the destination's: the two
+    // ends and the middle, as `copy` hands them over.
+    @memset(&pixels, 0);
+    var source_pixels: [4 * 96]u16 align(64) = undefined;
+    for (&source_pixels, 0..) |*pixel, index| pixel.* = @intCast(0x1000 + index);
+    const src = rtg.RtgBitMap{ .pixels = @ptrCast(&source_pixels), .width = 96, .height = 4, .pitch = 192, .size_bytes = 4 * 192, .format = .rgb565 };
+    const sx = 3;
+    const sy = 2;
+    const shift = middle.start - x;
+    copyByCpu(&src, &dest, sx, sy, x, y, shift, rows);
+    copyByCpu(&src, &dest, sx + (middle.end - x), sy, middle.end, y, x + width - middle.end, rows);
+    copyByCpu(&src, &dest, sx + shift, sy, middle.start, y, middle.end - middle.start, rows);
+    for (0..4) |row| for (0..96) |column| {
+        const inside_it = row >= y and row < y + rows and column >= x and column < x + width;
+        const expected: u16 = if (inside_it) @intCast(0x1000 + (row - y + sy) * 96 + (column - x + sx)) else 0;
+        try testing.expectEqual(expected, pixels[row * 96 + column]);
+    };
 }

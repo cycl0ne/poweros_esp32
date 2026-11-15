@@ -60,7 +60,10 @@ const err = rtg.errors;
 /// it has to be where the board's engine can read it.
 ///
 /// BUGS:
-/// None known.
+/// On the DSI boards a job the engine does not end within its bound is
+/// finished by the CPU and answered `RTGERR_OK`. Nothing says how far the
+/// engine got, so the CPU mixes all of the rectangle's whole cache lines,
+/// and rows of them the engine had finished are mixed a second time.
 ///
 /// SEE ALSO:
 /// `BlendRect`, `ScalePixels`, `CopyRect`

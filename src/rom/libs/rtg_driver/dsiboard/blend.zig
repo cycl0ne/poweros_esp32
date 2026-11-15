@@ -291,7 +291,9 @@ fn colorByCpu(dest: *const rtg.RtgBitMap, from: u32, to: u32, y: u32, rows: u32,
 // --- tests (host: ./zig build test) -----------------------------------------
 //
 // The CPU's mixing, which is the ragged ends of every job and the whole
-// middle of one the engine does not end.
+// middle of one the engine does not end. `pictureOf` and `sourceOf` are
+// not among them: their limits are the 2D-DMA's fields and modes and the
+// chip's memory map, which a host build does not have.
 
 const testing = @import("std").testing;
 
@@ -305,6 +307,13 @@ test "a pixel mixed by its coverage: none, all, and a half rounded" {
     // three quarters - what a rectangle laid twice would show.
     try testing.expectEqual(@as(u16, 0x8410), mix(0x0000, 0x00FF_FFFF, 128));
     try testing.expectEqual(@as(u16, 0xC618), mix(0x8410, 0x00FF_FFFF, 128));
+    // To the nearest: blue 15 at 128 is 7.53, which is 8 and cuts to 1;
+    // blue 12 at 153 is 7.2, which is 7 and cuts to 0.
+    try testing.expectEqual(@as(u16, 0x0001), mix(0x0000, 0x0000_000F, 128));
+    try testing.expectEqual(@as(u16, 0x0000), mix(0x0000, 0x0000_000C, 153));
+    // The pixel under it is widened to eight bits by repeating its high
+    // bits: white stays white under a pen that all but leaves it.
+    try testing.expectEqual(@as(u16, 0xFFFF), mix(0xFFFF, 0x0000_0000, 1));
 }
 
 test "a picture's pixel as the mixing takes it, from each format" {
@@ -320,10 +329,11 @@ test "a picture's pixel as the mixing takes it, from each format" {
 }
 
 test "the CPU's ends and its middle lay a rectangle once, and nothing beside it" {
-    // Two rows of 96 pixels, black; a picture of white at half coverage.
-    var pixels: [2 * 96]u16 align(64) = @splat(0);
+    // Four rows of 96 pixels, black; a picture of white at half coverage,
+    // laid on rows 1 and 2.
+    var pixels: [4 * 96]u16 align(64) = @splat(0);
     var picture_pixels: [2 * 96]u32 align(4) = @splat(0x80FF_FFFF);
-    const dest = rtg.RtgBitMap{ .pixels = @ptrCast(&pixels), .width = 96, .height = 2, .pitch = 192, .size_bytes = 2 * 192, .format = .rgb565 };
+    const dest = rtg.RtgBitMap{ .pixels = @ptrCast(&pixels), .width = 96, .height = 4, .pitch = 192, .size_bytes = 4 * 192, .format = .rgb565 };
     const picture = Picture{
         .first_row = @intFromPtr(&picture_pixels),
         .pitch = 96 * 4,
@@ -336,32 +346,73 @@ test "the CPU's ends and its middle lay a rectangle once, and nothing beside it"
     // ends - and, where the engine does not end its job, that part too.
     const x = 5;
     const width = 80;
+    const y = 1;
+    const rows = 2;
     const middle = engine_file.middleOf(x, width);
     try testing.expectEqual(engine_file.Middle{ .start = 32, .end = 64 }, middle);
-    layByCpu(&dest, x, middle.start, 0, 2, picture, x);
-    layByCpu(&dest, middle.end, x + width, 0, 2, picture, x);
-    layByCpu(&dest, middle.start, middle.end, 0, 2, picture, x);
-    for (0..2) |row| for (0..96) |column| {
-        const inside = column >= x and column < x + width;
+    layByCpu(&dest, x, middle.start, y, rows, picture, x);
+    layByCpu(&dest, middle.end, x + width, y, rows, picture, x);
+    layByCpu(&dest, middle.start, middle.end, y, rows, picture, x);
+    for (0..4) |row| for (0..96) |column| {
+        const inside = row >= y and row < y + rows and column >= x and column < x + width;
         try testing.expectEqual(@as(u16, if (inside) 0x8410 else 0), pixels[row * 96 + column]);
     };
 
     // The same for a colour: 0x80 of white.
     @memset(&pixels, 0);
-    colorByCpu(&dest, x, middle.start, 0, 2, 0x80FF_FFFF);
-    colorByCpu(&dest, middle.end, x + width, 0, 2, 0x80FF_FFFF);
-    colorByCpu(&dest, middle.start, middle.end, 0, 2, 0x80FF_FFFF);
-    for (0..2) |row| for (0..96) |column| {
-        const inside = column >= x and column < x + width;
+    colorByCpu(&dest, x, middle.start, y, rows, 0x80FF_FFFF);
+    colorByCpu(&dest, middle.end, x + width, y, rows, 0x80FF_FFFF);
+    colorByCpu(&dest, middle.start, middle.end, y, rows, 0x80FF_FFFF);
+    for (0..4) |row| for (0..96) |column| {
+        const inside = row >= y and row < y + rows and column >= x and column < x + width;
         try testing.expectEqual(@as(u16, if (inside) 0x8410 else 0), pixels[row * 96 + column]);
     };
 
-    // The picture's column that lands on the rectangle's left edge is the
-    // one the middle starts from too: a picture that rises along a row.
+    // Which pixel of the picture lands where: a picture whose blue rises
+    // along a row and from row to row, its column 3 on the rectangle's
+    // left edge. The middle starts 27 columns in, so the buffer's column
+    // 32 shows the picture's column 30, of its first row and its second.
     @memset(&pixels, 0);
-    for (&picture_pixels, 0..) |*pixel, index| pixel.* = 0xFF00_0000 | @as(u32, @intCast(index % 96)) << 3;
-    layByCpu(&dest, middle.start, middle.end, 0, 1, picture, x);
-    // Buffer column 32 is the picture's column 27: blue 27 << 3, cut to 5 bits.
-    try testing.expectEqual(@as(u16, 27), pixels[32]);
-    try testing.expectEqual(@as(u16, (63 - x) % 32), pixels[63]);
+    for (&picture_pixels, 0..) |*pixel, index| {
+        const column: u32 = @intCast(index % 96);
+        const row: u32 = @intCast(index / 96);
+        pixel.* = 0xFF00_0000 | ((column + 7 * row) % 32) << 3;
+    }
+    var moved = picture;
+    moved.column = 3;
+    layByCpu(&dest, middle.start, middle.end, y, rows, moved, x);
+    try testing.expectEqual(@as(u16, 30), pixels[1 * 96 + 32]);
+    try testing.expectEqual(@as(u16, 5), pixels[2 * 96 + 32]);
+    try testing.expectEqual(@as(u16, 4), pixels[2 * 96 + 63]);
+    for (0..4) |row| for (0..96) |column| {
+        const inside = row >= y and row < y + rows and column >= middle.start and column < middle.end;
+        if (!inside) try testing.expectEqual(@as(u16, 0), pixels[row * 96 + column]);
+    };
+}
+
+test "what a picture's pixel covers: its own coverage, the constant alpha, or the two together" {
+    // One pixel of white over black, from each kind of picture.
+    var under: [1]u16 align(64) = .{0};
+    const dest = rtg.RtgBitMap{ .pixels = @ptrCast(&under), .width = 1, .height = 1, .pitch = 2, .size_bytes = 2, .format = .rgb565 };
+    const covered = Source{ .cm = 0, .bytes = 4, .pbyte = 0, .covered = true };
+    const full = [_]u8{ 0xFF, 0xFF, 0xFF, 0xFF };
+    const none = [_]u8{ 0xFF, 0xFF, 0xFF, 0x00 };
+
+    // Its own coverage under a constant alpha: 255 by 128 is 127.
+    layByCpu(&dest, 0, 1, 0, 1, .{ .first_row = @intFromPtr(&full), .pitch = 4, .width = 1, .column = 0, .source = covered, .alpha = 128 }, 0);
+    try testing.expectEqual(@as(u16, 0x7BEF), under[0]);
+    // Its coverage not read: the constant alpha alone, whatever the
+    // pixel says.
+    under[0] = 0;
+    layByCpu(&dest, 0, 1, 0, 1, .{ .first_row = @intFromPtr(&none), .pitch = 4, .width = 1, .column = 0, .source = covered, .alpha = 128, .whole = true }, 0);
+    try testing.expectEqual(@as(u16, 0x8410), under[0]);
+    // A format without coverage: the constant alpha alone.
+    under[0] = 0;
+    layByCpu(&dest, 0, 1, 0, 1, .{ .first_row = @intFromPtr(&full), .pitch = 3, .width = 1, .column = 0, .source = .{ .cm = 0, .bytes = 3, .pbyte = 0 }, .alpha = 128 }, 0);
+    try testing.expectEqual(@as(u16, 0x8410), under[0]);
+    // No constant alpha: its own coverage alone, and none leaves the
+    // pixel under it.
+    under[0] = 0x1234;
+    layByCpu(&dest, 0, 1, 0, 1, .{ .first_row = @intFromPtr(&none), .pitch = 4, .width = 1, .column = 0, .source = covered, .alpha = 255 }, 0);
+    try testing.expectEqual(@as(u16, 0x1234), under[0]);
 }

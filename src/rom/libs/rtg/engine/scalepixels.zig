@@ -56,7 +56,8 @@ const err = rtg.errors;
 /// read; it has to be where the board's engine can read it.
 ///
 /// BUGS:
-/// None known.
+/// On the DSI boards, rows of the scaled picture mixed a second time
+/// where the engine did not end laying it: `BlendPixels`' BUGS.
 ///
 /// SEE ALSO:
 /// `BlendPixels`, `CopyRect`

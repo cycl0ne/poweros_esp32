@@ -44,7 +44,8 @@ const err = rtg.errors;
 /// Nothing is allocated.
 ///
 /// BUGS:
-/// None known.
+/// On the DSI boards, rows mixed a second time where the engine did not
+/// end its job: `BlendPixels`' BUGS.
 ///
 /// SEE ALSO:
 /// `FillRect`, `BlendPixels`

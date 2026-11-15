@@ -147,16 +147,16 @@ const ranges = [_]Range{
 };
 
 /// The lowest and highest lane rate the PHY takes, in Mbit/s.
-pub const rate_min = 80;
-pub const rate_max = 1500;
+const rate_min = 80;
+const rate_max = 1500;
 
 /// How far the rate the PLL makes may lie from the one asked for, in
 /// hundredths of it. The PLL makes the multiples of 10 and of 13 1/3
 /// Mbit/s, so from 246 Mbit/s up every rate has a setting inside this;
-/// below, a rate between two steps has none and is refused. The video
-/// timings are worked out from the rate the PLL makes, so a difference
-/// this small costs nothing, and it is half the smallest margin of the
-/// lanes over the picture a link here was seen to fail at.
+/// below, the rates furthest from a step have none and are refused. The
+/// video timings are worked out from the rate the PLL makes, so a
+/// difference this small costs nothing, and it is half the smallest
+/// margin of the lanes over the picture a link here was seen to fail at.
 const near_percent = 2;
 
 /// The PLL's divider and multiplier for a lane rate, and the rate they
@@ -376,6 +376,7 @@ fn waitFor(address: usize, set: u32, clear: u32) bool {
 // ranges and the byte clocks a line is.
 
 const testing = @import("std").testing;
+const monitor_modes = @import("monitor.zig").modes;
 
 /// The rate nearest `mbps` of every setting there is - N 1 to 4, M even -
 /// in kbit/s as `pllFor` counts them, the lower of two as near; found by
@@ -434,13 +435,16 @@ test "the PLL: every lane rate the PHY takes gets the nearest setting there is, 
 }
 
 test "the PLL: the rates the boards' panels and the monitor's modes run at keep their settings" {
-    // The two panels', and the three an HDMI mode comes with.
+    // The two panels', the one a board's list gives its HDMI port, and
+    // the three the monitor's modes come with.
     try testing.expectEqual(Pll{ .n = 2, .m = 50, .kbps = 500_000 }, pllFor(500).?);
     try testing.expectEqual(Pll{ .n = 1, .m = 50, .kbps = 1_000_000 }, pllFor(1000).?);
     try testing.expectEqual(Pll{ .n = 4, .m = 130, .kbps = 650_000 }, pllFor(650).?);
     try testing.expectEqual(Pll{ .n = 1, .m = 48, .kbps = 960_000 }, pllFor(960).?);
     try testing.expectEqual(Pll{ .n = 1, .m = 64, .kbps = 1_280_000 }, pllFor(1280).?);
     try testing.expectEqual(Pll{ .n = 1, .m = 72, .kbps = 1_440_000 }, pllFor(1440).?);
+    // Whatever modes the monitor's list holds: each gets its rate exactly.
+    for (monitor_modes) |mode| try testing.expectEqual(mode.lane_mbps * 1000, pllFor(mode.lane_mbps).?.kbps);
 }
 
 test "the PLL: between two settings the nearer, midway the lower, and none outside the PHY's rates" {
@@ -482,13 +486,24 @@ test "the PHY's ranges: each rate in the one that holds it" {
     try testing.expectEqual(@as(u8, 0x07), hsFreqRange(500));
     try testing.expectEqual(@as(u8, 0x18), hsFreqRange(650));
     try testing.expectEqual(@as(u8, 0x2A), hsFreqRange(1000));
+    try testing.expectEqual(@as(u8, 0x1A), hsFreqRange(960));
+    try testing.expectEqual(@as(u8, 0x3B), hsFreqRange(1280));
+    try testing.expectEqual(@as(u8, 0x2C), hsFreqRange(1440));
     try testing.expectEqual(@as(u8, 0x3C), hsFreqRange(1500));
 }
 
-test "a line in the lane's byte clocks: rounded, and whole for the HDMI modes' rates" {
+test "a line in the lane's byte clocks: to the nearest, and whole for the HDMI modes' rates" {
     // The P4-PC's panel: 514 pixel clocks of 16 MHz at 500 Mbit/s are
-    // 2007.8 byte clocks.
+    // 2007.8 byte clocks, and its back porch of 20 is 78.1.
     try testing.expectEqual(@as(u32, 2008), byteClocks(514, 500_000, 16_000_000));
+    try testing.expectEqual(@as(u32, 78), byteClocks(20, 500_000, 16_000_000));
     // 800x600 over HDMI: 1056 clocks of 40 MHz at 650 Mbit/s, whole.
     try testing.expectEqual(@as(u32, 2145), byteClocks(1056, 650_000, 40_000_000));
+    // The monitor's modes: a line of each is whole byte clocks.
+    for (monitor_modes) |mode| {
+        const line = mode.width + mode.hsync + mode.hbp + mode.hfp;
+        const bits = @as(u64, line) * mode.lane_mbps * 1_000_000;
+        try testing.expectEqual(@as(u64, 0), bits % (@as(u64, mode.pixel_hz) * 8));
+        try testing.expectEqual(bits / (@as(u64, mode.pixel_hz) * 8), byteClocks(line, mode.lane_mbps * 1000, mode.pixel_hz));
+    }
 }

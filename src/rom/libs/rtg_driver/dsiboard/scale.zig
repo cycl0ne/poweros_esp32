@@ -23,7 +23,9 @@
 //! Anything else - a picture made smaller, a ratio between the steps, a
 //! format the scaler has no mode for, a picture the 2D-DMA cannot read,
 //! no memory for the block, a job too small to be worth it - is answered
-//! RTGERR_NOT_SUPPORTED.
+//! RTGERR_NOT_SUPPORTED. A job the scaler took and did not end is
+//! answered so too: it wrote only the block, which is freed once the job
+//! is stopped, and the buffer is as it was.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;

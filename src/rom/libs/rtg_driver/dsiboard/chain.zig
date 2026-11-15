@@ -108,3 +108,27 @@ pub fn rearm(chain: Chain) void {
 pub fn free(sys: *ExecBase, chain: Chain) void {
     if (chain.memory) |memory| sys.FreeMem(memory, chain.bytes);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// What touches no controller: how many items the bands of a picture take.
+
+const testing = @import("std").testing;
+
+test "a chain's items: one a band, and one a line of a band that repeats its row" {
+    var buffer = rtg.RtgBitMap{ .pixels = null, .width = 16, .height = 16, .pitch = 32, .size_bytes = 0, .format = .rgb565 };
+    const repeat = rtg.boards.RTGBANDF_REPEAT;
+    // One buffer shown whole is a chain of one; repeating its first row,
+    // an item a line.
+    try testing.expectEqual(@as(u32, 1), itemsFor(&.{.{ .bitmap = &buffer }}, 600));
+    try testing.expectEqual(@as(u32, 600), itemsFor(&.{.{ .bitmap = &buffer, .flags = repeat }}, 600));
+    // Two bands, the second from line 100: two items, or the first one's
+    // hundred lines and the second's one.
+    try testing.expectEqual(@as(u32, 2), itemsFor(&.{ .{ .bitmap = &buffer }, .{ .bitmap = &buffer, .line = 100, .origin = 100 } }, 600));
+    try testing.expectEqual(@as(u32, 101), itemsFor(&.{ .{ .bitmap = &buffer, .flags = repeat }, .{ .bitmap = &buffer, .line = 100, .origin = 100 } }, 600));
+    // A band with no line of its own - the next begins where it does, or
+    // it begins at the display's bottom - takes none.
+    try testing.expectEqual(@as(u32, 1), itemsFor(&.{ .{ .bitmap = &buffer }, .{ .bitmap = &buffer } }, 600));
+    try testing.expectEqual(@as(u32, 0), itemsFor(&.{.{ .bitmap = &buffer, .line = 600 }}, 600));
+    try testing.expectEqual(@as(u32, 0), itemsFor(&.{}, 600));
+}

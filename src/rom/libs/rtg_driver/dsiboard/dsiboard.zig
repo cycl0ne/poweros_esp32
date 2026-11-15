@@ -226,8 +226,9 @@ fn pixelDivider(pixel_hz: u32) u32 {
 }
 
 /// From nothing to a panel that has taken its bring-up and waits for a
-/// picture. `bus` reaches an HDMI bridge; `lane` is the PLL's setting for
-/// the lanes' rate, which everything the link is timed by then follows.
+/// picture. `bus_to_bridge` reaches an HDMI bridge; `lane` is the PLL's
+/// setting for the lanes' rate, which everything the link is timed by
+/// then follows.
 fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     const sys = panel.sys;
     const wanted = &panel.config;
