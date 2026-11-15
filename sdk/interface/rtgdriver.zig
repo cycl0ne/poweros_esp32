@@ -17,13 +17,19 @@ pub const NAME = "rtg.library";
 
 /// Each function's offset in the jump table (its LVO).
 pub const LVO = struct {
-    pub const AddRtgDriver = libraries.lvo(72);
-    pub const RemRtgDriver = libraries.lvo(73);
-    pub const SignalRtgEvent = libraries.lvo(74);
-    pub const TxParam = libraries.lvo(75);
-    pub const TxColor = libraries.lvo(76);
-    pub const RxParam = libraries.lvo(77);
-    pub const GetRtgTagData = libraries.lvo(78);
+    pub const AddRtgDriver = libraries.lvo(75);
+    pub const RemRtgDriver = libraries.lvo(76);
+    pub const SignalRtgEvent = libraries.lvo(77);
+    pub const TxParam = libraries.lvo(78);
+    pub const TxColor = libraries.lvo(79);
+    pub const RxParam = libraries.lvo(80);
+    pub const GetRtgTagData = libraries.lvo(81);
+    pub const CreateBoard = libraries.lvo(82);
+    pub const DeleteBoard = libraries.lvo(83);
+    pub const AddRtgDevice = libraries.lvo(84);
+    pub const RemRtgDevice = libraries.lvo(85);
+    pub const OpenTransport = libraries.lvo(86);
+    pub const CloseTransport = libraries.lvo(87);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -36,6 +42,12 @@ pub const Fn = struct {
     pub const TxColor = *const fn (*RtgDriverBase, *rtg.RtgTransport, i32, ?*const anyopaque, u32) callconv(.c) i32;
     pub const RxParam = *const fn (*RtgDriverBase, *rtg.RtgTransport, i32, ?*anyopaque, u32) callconv(.c) i32;
     pub const GetRtgTagData = *const fn (*RtgDriverBase, utility.Tag, usize, ?[*]const utility.TagItem) callconv(.c) usize;
+    pub const CreateBoard = *const fn (*RtgDriverBase, *rtg.RtgDriver, *rtg.RtgDevice, *const rtg.RtgBoardSpec) callconv(.c) ?*rtg.RtgBoard;
+    pub const DeleteBoard = *const fn (*RtgDriverBase, ?*rtg.RtgBoard) callconv(.c) void;
+    pub const AddRtgDevice = *const fn (*RtgDriverBase, ?[*]const utility.TagItem) callconv(.c) ?*rtg.RtgDevice;
+    pub const RemRtgDevice = *const fn (*RtgDriverBase, ?*rtg.RtgDevice) callconv(.c) void;
+    pub const OpenTransport = *const fn (*RtgDriverBase, *rtg.RtgDriver, *rtg.RtgDevice) callconv(.c) ?*rtg.RtgTransport;
+    pub const CloseTransport = *const fn (*RtgDriverBase, ?*rtg.RtgTransport) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -89,5 +101,47 @@ pub const RtgDriverBase = opaque {
     /// driver need open nothing but this library.
     pub fn GetRtgTagData(self: *RtgDriverBase, tag_value: utility.Tag, default_value: usize, tag_list: ?[*]const utility.TagItem) usize {
         return libraries.call(self, LVO.GetRtgTagData, Fn.GetRtgTagData, .{ tag_value, default_value, tag_list });
+    }
+
+    /// A board for one output of a device, from the driver's attach: the
+    /// handle and the instance the description asks for, cleared. It joins
+    /// the library's list, named, once the attach has answered RTGERR_OK.
+    /// Null: not inside the driver's attach for that device, or no memory.
+    pub fn CreateBoard(self: *RtgDriverBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard {
+        return libraries.call(self, LVO.CreateBoard, Fn.CreateBoard, .{ driver, device, spec });
+    }
+
+    /// Give a board back: for an attach that fails after making one, and for
+    /// a driver that is being removed. Refused while an event server or a
+    /// video layer is still on it. Null does nothing.
+    pub fn DeleteBoard(self: *RtgDriverBase, board: ?*rtg.RtgBoard) void {
+        return libraries.call(self, LVO.DeleteBoard, Fn.DeleteBoard, .{board});
+    }
+
+    /// A device the library cannot find by itself, made from tags that say
+    /// what a panel part's say (PART_Chip, PART_Bus, RTGA_*), and offered to
+    /// the drivers at once. The tags are read for as long as the device
+    /// lives. Null without memory.
+    pub fn AddRtgDevice(self: *RtgDriverBase, tag_list: ?[*]const utility.TagItem) ?*rtg.RtgDevice {
+        return libraries.call(self, LVO.AddRtgDevice, Fn.AddRtgDevice, .{tag_list});
+    }
+
+    /// A device AddRtgDevice made is gone: its boards are marked gone and
+    /// stay handles, its driver's detach is called, and the device is freed.
+    /// Null does nothing.
+    pub fn RemRtgDevice(self: *RtgDriverBase, device: ?*rtg.RtgDevice) void {
+        return libraries.call(self, LVO.RemRtgDevice, Fn.RemRtgDevice, .{device});
+    }
+
+    /// The bus a device is reached over, made by the transport driver whose
+    /// table names the device's bus, from the device's tags. Null: no such
+    /// driver, no memory, or a driver that could not make it.
+    pub fn OpenTransport(self: *RtgDriverBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?*rtg.RtgTransport {
+        return libraries.call(self, LVO.OpenTransport, Fn.OpenTransport, .{ driver, device });
+    }
+
+    /// Give a bus back. Null does nothing.
+    pub fn CloseTransport(self: *RtgDriverBase, io: ?*rtg.RtgTransport) void {
+        return libraries.call(self, LVO.CloseTransport, Fn.CloseTransport, .{io});
     }
 };

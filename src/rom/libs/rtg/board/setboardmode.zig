@@ -26,7 +26,8 @@ const _board = @import("_board.zig");
 ///
 /// RESULT:
 /// `RTGERR_OK`, or: `RTGERR_NOT_SUPPORTED` for a board with no modes to
-/// set, `RTGERR_BAD_MODE` with no default, `RTGERR_IN_USE` while a buffer
+/// set, `RTGERR_NO_DISPLAY` on a board whose device has gone,
+/// `RTGERR_BAD_MODE` with no default, `RTGERR_IN_USE` while a buffer
 /// that is not `RTGBMF_VOLATILE` is alive, or what the driver answered.
 ///
 /// BEHAVIOR:
@@ -73,6 +74,8 @@ pub fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
     // and nothing shown in between.
     _board.obtain(rb, board);
     defer _board.release(rb, board);
+    // A board whose device has gone is put in no mode any more.
+    if (_board.dark(board)) return err.RTGERR_NO_DISPLAY;
     const wanted = mode orelse rtg_lib.FindBoardMode(board, 0, 0, 0) orelse return err.RTGERR_BAD_MODE;
 
     // A buffer that has not agreed to lose its memory keeps the board in

@@ -21,7 +21,10 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// The next board, or null at the end.
 ///
 /// BEHAVIOR:
-/// The boards alive, in the order they were made.
+/// The boards, highest priority first: as their drivers made them, the
+/// picture the firmware lit last. The first is the machine's display. A
+/// board whose device has gone (`RTGBF_GONE`) is passed over; `after` may
+/// be such a board, and the walk goes on behind it.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task is changing the board list.
@@ -32,14 +35,14 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 ///
 /// OWNERSHIP:
 /// Nothing is allocated. The list is held for each step, not between
-/// them: `after` must still be a board, which the caller agrees on with
-/// any task that may delete one.
+/// them: a board is never freed for a program, so `after` is a board for
+/// as long as the machine runs.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `FindBoard`, `CreateBoardTagList`
+/// `FindBoard`, `BindRtgDrivers`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -52,6 +55,11 @@ pub fn NextBoard(rb: *RtgBase, after: ?*rtg.RtgBoard) ?*rtg.RtgBoard {
     // between them.
     sys.ObtainSemaphoreShared(&rb.board_lock);
     defer sys.ReleaseSemaphore(&rb.board_lock);
-    const node = if (after) |board| board.node.next() else rb.boards.first();
-    return @fieldParentPtr("node", node orelse return null);
+    var node = if (after) |board| board.node.next() else rb.boards.first();
+    while (node) |one| : (node = one.next()) {
+        const board: *rtg.RtgBoard = @fieldParentPtr("node", one);
+        // One whose device has gone is still a handle, and no display.
+        if (board.info.flags & rtg.boards.RTGBF_GONE == 0) return board;
+    }
+    return null;
 }

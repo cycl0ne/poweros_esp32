@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Making a board, and passing the calls on to the driver that made it.
+//! A board's record, and its way onto the library's list.
 //!
-//! The library reads the tags every driver shares, allocates the handle,
-//! the driver's own data and the name, and then lets the driver fill the
-//! rest in. Past that it does the book-keeping that has to be the same for
-//! every board - which buffer is up, what the display memory has been cut
-//! into, which capabilities the ops table actually offers - and dispatches
-//! the rest. Where the driver left a slot null, the answer is
+//! A driver makes a board while it is offered a device (`CreateBoard`):
+//! the library allocates the handle and the driver's own data, and the
+//! driver fills the rest in before its attach answers. Then the board
+//! joins the list (`list`): the library reads the tags of its device that
+//! every driver shares, works out which capabilities the ops table
+//! actually offers, cuts up the display memory, and names the board. Past
+//! that it does the book-keeping that has to be the same for every board
+//! - which buffer is up, what the display memory has been cut into - and
+//! dispatches the rest. Where the driver left a slot null, the answer is
 //! RTGERR_NOT_SUPPORTED: the library does not do the work instead.
+//!
+//! A board is never freed for a program. One whose device has gone is
+//! retired (`retire`): it stays a handle, and says it is gone. A driver
+//! deletes a board (`DeleteBoard`) - the tests' does, as it is removed.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -16,7 +23,9 @@ const TagItem = sdk.utility.TagItem;
 const tags = rtg.tags;
 
 const RtgBase = @import("../rtg.zig").RtgBase;
-const Arena = @import("../memory/_memory.zig").Arena;
+const memory_mod = @import("../memory/_memory.zig");
+const Arena = memory_mod.Arena;
+const registry = @import("../driver/_driver.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -28,8 +37,16 @@ pub const Private = struct {
     lock: exec.SignalSemaphore = .{},
     /// What the display memory has been cut into.
     arena: Arena = .{},
-    /// The board's name, since the caller's string is the caller's.
+    /// The board's name ("fb.0"), which the handle's node points at.
     name_buf: [32]u8 = .{0} ** 32,
+    /// The name of the device it is an output of, kept: the device may
+    /// go, and the board's info still says which it was.
+    device_name: [rtg.drivers.RTG_NAME_MAX]u8 = .{0} ** rtg.drivers.RTG_NAME_MAX,
+    /// Its place among the boards of its device.
+    device_link: exec.Node = .{},
+    /// Whether it has joined the library's list: from when its driver's
+    /// attach answered RTGERR_OK.
+    listed: bool = false,
     /// The mode it is in, or null.
     mode: ?*rtg.RtgMode = null,
     /// How often a new buffer was shown.
@@ -65,29 +82,32 @@ pub fn release(rb: *RtgBase, board: *rtg.RtgBoard) void {
     rb.sys_base.ReleaseSemaphore(&privateOf(board).lock);
 }
 
-/// What the tags say, before the driver sees them.
+/// The board a link in its device's list of boards belongs to.
+///
+/// INPUTS:
+/// - `link` - the board's `device_link`.
+pub fn ofDeviceLink(link: *exec.Node) *rtg.RtgBoard {
+    const private: *Private = @fieldParentPtr("device_link", link);
+    return &private.board;
+}
+
+/// What the device's tags say of a board, read by the library.
 const Request = struct {
-    name: ?[*:0]const u8 = null,
-    user_data: ?*anyopaque = null,
     alignment: u32 = 0,
-    transport: ?*rtg.RtgTransport = null,
     brightness: ?u32 = null,
     display_on: bool = false,
     compose: bool = false,
 };
 
-/// What the caller's tags ask of a new board, read once.
+/// What a device's tags ask of its boards, read once.
 ///
 /// INPUTS:
 /// - `rb` - the library. Its tag calls read the list.
-/// - `tag_list` - the caller's tags.
-pub fn readRequest(rb: *RtgBase, tag_list: ?[*]const TagItem) Request {
+/// - `tag_list` - the device's tags.
+fn readRequest(rb: *RtgBase, tag_list: ?[*]const TagItem) Request {
     const ub = rb.utility_base;
     return .{
-        .name = @ptrFromInt(ub.GetTagData(tags.RTGA_BoardName, 0, tag_list)),
-        .user_data = @ptrFromInt(ub.GetTagData(tags.RTGA_UserData, 0, tag_list)),
         .alignment = @truncate(ub.GetTagData(tags.RTGA_Alignment, 0, tag_list)),
-        .transport = @ptrFromInt(ub.GetTagData(tags.RTGA_Transport, 0, tag_list)),
         .brightness = if (ub.FindTagItem(tags.RTGA_Brightness, tag_list)) |item|
             @as(u32, @truncate(item.data))
         else
@@ -97,40 +117,165 @@ pub fn readRequest(rb: *RtgBase, tag_list: ?[*]const TagItem) Request {
     };
 }
 
-/// The board's name: what the caller asked for, or the driver's name and a
-/// number. It is copied, because the caller's string is the caller's.
+/// The board's name: its driver's, a point and the number of the board
+/// among the driver's, in the order they were made ("fb.1").
 ///
 /// INPUTS:
 /// - `rb` - the library. Its `Strlcpy` does the copy.
 /// - `private` - the board's record, whose name buffer is filled.
-/// - `driver_name` - the driver's name, used when none is wanted.
-/// - `wanted` - the caller's name for it, or null.
-/// - `serial` - the number to put after the driver's name.
-pub fn setName(rb: *RtgBase, private: *Private, driver_name: [*:0]const u8, wanted: ?[*:0]const u8, serial: u32) void {
-    const source: [*:0]const u8 = wanted orelse driver_name;
-    // Up to len - 4 characters of name, which leaves room for a number:
-    // Strlcpy keeps one byte of `room` for its NUL.
-    const room = private.name_buf.len - 3;
-    var at = @min(rb.utility_base.Strlcpy(&private.name_buf, room, source), room - 1);
-    if (wanted == null) {
-        // "rgb0", "rgb1": the driver's name and which one this is.
-        var digits: [10]u8 = undefined;
-        var count: usize = 0;
-        var left = serial;
-        while (true) {
-            digits[count] = '0' + @as(u8, @intCast(left % 10));
-            count += 1;
-            left /= 10;
-            if (left == 0) break;
-        }
-        while (count > 0 and at < private.name_buf.len - 1) {
-            count -= 1;
-            private.name_buf[at] = digits[count];
-            at += 1;
-        }
+/// - `driver_name` - the driver's name.
+/// - `serial` - the number to put after the point.
+fn setName(rb: *RtgBase, private: *Private, driver_name: [*:0]const u8, serial: u32) void {
+    // Room for the point and a number behind the name: Strlcpy keeps one
+    // byte of `room` for its NUL.
+    const room = private.name_buf.len - 11;
+    var at = @min(rb.utility_base.Strlcpy(&private.name_buf, room, driver_name), room - 1);
+    private.name_buf[at] = '.';
+    at += 1;
+    var digits: [10]u8 = undefined;
+    var count: usize = 0;
+    var left = serial;
+    while (true) {
+        digits[count] = '0' + @as(u8, @intCast(left % 10));
+        count += 1;
+        left /= 10;
+        if (left == 0) break;
+    }
+    while (count > 0) {
+        count -= 1;
+        private.name_buf[at] = digits[count];
+        at += 1;
     }
     private.name_buf[at] = 0;
     private.board.node.name = @ptrCast(&private.name_buf);
+}
+
+/// Where a board stands on the library's list: the picture the firmware
+/// lit last, every other board as it was made.
+const firmware_priority = -100;
+
+/// A board its driver made joins the library's list, once the driver's
+/// attach has answered RTGERR_OK: what its ops amount to, what its
+/// device's tags ask of it, its display memory cut up from here on, and
+/// its name.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, made by `CreateBoard` and filled in by its
+///   driver.
+///
+/// CONTEXT:
+/// Called with the device list's and the driver list's locks held; takes
+/// the board list's.
+pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    const rtg_lib = rb.iface();
+    const sys = rb.sys_base;
+    const private = privateOf(board);
+    if (private.listed) return;
+    const driver = board.driver.?;
+    const device = board.device.?;
+    const request = readRequest(rb, device.tags);
+
+    // What the driver said it can do, and what it left to the caller.
+    board.info.caps = if (board.ops) |ops| capsOf(ops) else 0;
+    // Whether its screens' windows are composed is the board's to say,
+    // for intuition to read: the device's tags, or its driver where they
+    // say nothing.
+    if (request.compose) board.info.flags |= rtg.boards.RTGBF_COMPOSE;
+    if (device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0) board.info.flags |= rtg.boards.RTGBF_FIRMWARE;
+    board.info.modes = countModes(board);
+
+    // The display memory it reported, cut up from here on by the library.
+    const alignment: u32 = if (request.alignment != 0)
+        request.alignment
+    else if (board.region.alignment != 0)
+        board.region.alignment
+    else
+        0;
+    if (board.region.flags & rtg.boards.RTGRF_SYSTEM_MEMORY != 0) {
+        private.arena.initSystem(sys, board.region.size, alignment, memory_mod.attributesOf(board.region.flags));
+    } else {
+        private.arena.init(sys, @intFromPtr(board.region.base), board.region.size, alignment);
+    }
+    board.region.alignment = private.arena.alignment;
+    board.info.memory_total = private.arena.free_bytes;
+
+    // A driver that came to a display already running hands back the
+    // buffer it is being refreshed from. That memory is spoken for: it is
+    // taken out of what the library may hand to anybody else.
+    if (board.showing) |shown| {
+        if (claimOf(board, &private.arena, shown)) |claim| {
+            _ = private.arena.reserve(sys, claim.offset, claim.bytes);
+        }
+        shown.flags |= rtg.bitmaps.RTGBMF_SHOWING;
+        board.info.flags |= rtg.boards.RTGBF_SHOWING;
+    }
+
+    // Named as it joins the list, under the list's lock: the number is
+    // read and raised by one board at a time, and only a board that was
+    // made takes one.
+    sys.ObtainSemaphore(&rb.board_lock);
+    const of_driver = registry.privateOf(driver);
+    setName(rb, private, driver.spec.name, of_driver.board_serial);
+    of_driver.board_serial += 1;
+    board.info.name = board.node.name;
+    _ = rb.utility_base.Strlcpy(&private.device_name, private.device_name.len, device.node.name.?);
+    board.info.device = @ptrCast(&private.device_name);
+    board.node.pri = if (device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0) firmware_priority else 0;
+    sys.Enqueue(&rb.boards, &board.node);
+    private.listed = true;
+    sys.ReleaseSemaphore(&rb.board_lock);
+
+    if (request.display_on) _ = rtg_lib.SetBoardDisplay(board, true);
+    if (request.brightness) |percent| _ = rtg_lib.SetBoardBrightness(board, percent);
+}
+
+/// A board that never joined the list is given back: one made in an
+/// attach that did not answer RTGERR_OK. Its driver has given back what
+/// it took for it, so its `destroy` is not called.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; not on the library's list.
+pub fn free(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    const sys = rb.sys_base;
+    const private = privateOf(board);
+    sys.Remove(&private.device_link);
+    if (board.driver) |driver| {
+        if (driver.boards != 0) driver.boards -= 1;
+    }
+    if (board.instance) |instance| sys.FreeVec(instance);
+    sys.FreeVec(private);
+}
+
+/// A board's device is gone: the board says so from now on, shows
+/// nothing, and is passed over by `NextBoard`. Its handle, its buffers
+/// and its place on the list stay.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, on the library's list.
+pub fn retire(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    const private = privateOf(board);
+    // Nothing of it is left up: whoever holds a buffer it showed may free
+    // it. What the driver answers is not looked at - its hardware is
+    // going.
+    if (board.showing != null) _ = rb.iface().ShowBitMap(board, null, 0, 0);
+    obtain(rb, board);
+    board.info.flags |= rtg.boards.RTGBF_GONE | rtg.boards.RTGBF_NO_DISPLAY;
+    board.info.flags &= ~@as(u32, rtg.boards.RTGBF_DISPLAY_ON);
+    rb.sys_base.Remove(&private.device_link);
+    private.device_link = .{};
+    board.device = null;
+    release(rb, board);
+}
+
+/// Whether a board has no display to show on: its device is gone.
+///
+/// INPUTS:
+/// - `board` - the board.
+pub fn dark(board: *const rtg.RtgBoard) bool {
+    return board.info.flags & rtg.boards.RTGBF_NO_DISPLAY != 0;
 }
 
 /// Which RTGBC_ bits an ops table amounts to. The driver does not say what

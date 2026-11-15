@@ -37,9 +37,6 @@ pub const fontimage = @import("fontimage.zig");
 pub const GRAPHICSNAME = "graphics.library";
 /// The version a caller of this SDK asks for.
 pub const GRAPHICS_VERSION = 0;
-/// The name of the rtg board graphics.library's init brings the machine's
-/// display up as, which is how anything finds that board again.
-pub const DISPLAY_BOARD = "display";
 
 /// A rectangle, half-open: `max_x` is one past the last pixel, so the
 /// width is `max_x - min_x` and an empty rectangle is one whose max is not

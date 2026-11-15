@@ -11,7 +11,7 @@
 // The folder under src/ whose files hold these calls.
 ##home rtg
 // The first slot after the programs' calls.
-##bias 72
+##bias 75
 ##public
 /// Put a driver's description on the list: the library makes the
 /// driver's node, with the state the description asks for behind it,
@@ -37,4 +37,28 @@ i32 RxParam(*rtg.RtgTransport io, i32 cmd, ?*anyopaque buffer, u32 size)
 /// A tag's data, or `default_value` if it is not in the list. Here so a
 /// driver need open nothing but this library.
 usize GetRtgTagData(utility.Tag tag_value, usize default_value, ?[*]const utility.TagItem tag_list)
+/// A board for one output of a device, from the driver's attach: the
+/// handle and the instance the description asks for, cleared. It joins
+/// the library's list, named, once the attach has answered RTGERR_OK.
+/// Null: not inside the driver's attach for that device, or no memory.
+?*rtg.RtgBoard CreateBoard(*rtg.RtgDriver driver, *rtg.RtgDevice device, *const rtg.RtgBoardSpec spec)
+/// Give a board back: for an attach that fails after making one, and for
+/// a driver that is being removed. Refused while an event server or a
+/// video layer is still on it. Null does nothing.
+void DeleteBoard(?*rtg.RtgBoard board)
+/// A device the library cannot find by itself, made from tags that say
+/// what a panel part's say (PART_Chip, PART_Bus, RTGA_*), and offered to
+/// the drivers at once. The tags are read for as long as the device
+/// lives. Null without memory.
+?*rtg.RtgDevice AddRtgDevice(?[*]const utility.TagItem tag_list)
+/// A device AddRtgDevice made is gone: its boards are marked gone and
+/// stay handles, its driver's detach is called, and the device is freed.
+/// Null does nothing.
+void RemRtgDevice(?*rtg.RtgDevice device)
+/// The bus a device is reached over, made by the transport driver whose
+/// table names the device's bus, from the device's tags. Null: no such
+/// driver, no memory, or a driver that could not make it.
+?*rtg.RtgTransport OpenTransport(*rtg.RtgDriver driver, *rtg.RtgDevice device)
+/// Give a bus back. Null does nothing.
+void CloseTransport(?*rtg.RtgTransport io)
 ##end

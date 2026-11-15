@@ -4,6 +4,7 @@
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
+const _driver = @import("_driver.zig");
 
 /// Takes a driver off the library's list and frees it.
 ///
@@ -12,18 +13,20 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -296.
+/// SINCE: 1.0. LVO -308.
 ///
 /// INPUTS:
 /// - `driver` - the driver's node, as `AddRtgDriver` answered it.
 ///
 /// RESULT:
-/// True if it came off. False while a board or a bus it made is still
-/// alive, and for a node that is not on the list.
+/// True if it came off. False while it has a device, or a board or a bus
+/// it made is still alive, and for a node that is not on the list.
 ///
 /// BEHAVIOR:
 /// A driver whose boards are still alive keeps its code in use, so it is
-/// not taken off under them. Whether the node is on the list is asked
+/// not taken off under them: its boards are deleted (`DeleteBoard`) and
+/// its devices taken away (`RemRtgDevice`) first, which only a test's
+/// driver sees done. Whether the node is on the list is asked
 /// first, by its address alone: one that is not is not read. The node and
 /// the driver's state behind it are freed.
 ///
@@ -41,7 +44,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `AddRtgDriver`, `DeleteBoard`, `DeleteTransport`
+/// `AddRtgDriver`, `DeleteBoard`, `RemRtgDevice`, `CloseTransport`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -56,9 +59,9 @@ pub fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool {
     var node = rb.drivers.first();
     while (node) |one| : (node = one.next()) {
         if (one != &driver.node) continue;
-        if (driver.boards != 0 or driver.buses != 0) return false;
+        if (driver.devices != 0 or driver.boards != 0 or driver.buses != 0) return false;
         sys.Remove(&driver.node);
-        sys.FreeVec(driver);
+        sys.FreeVec(_driver.privateOf(driver));
         return true;
     }
     return false;

@@ -3,25 +3,25 @@
 //! framebuffer, and the two DMA channels that keep the panel fed.
 //!
 //! A module of its own: a description of a driver called "rgb" behind a
-//! ROM tag, which rtg.library puts on its list. Anything that then asks
-//! rtg.library for a board of that name, with the panel's numbers in its
-//! tags, gets a panel brought up and ready to be given a buffer to show.
+//! ROM tag, which rtg.library puts on its list. It takes a panel on
+//! LCD_CAM (`BUS_LCD`): rtg.library offers it such a part of the board's
+//! list with the panel's numbers in its tags, and the driver brings the
+//! panel up and makes its board, ready to be given a buffer to show.
 //! Which numbers those are - this board's, or another one's - is the
-//! caller's business; this driver knows the peripheral, not the machine
-//! it is soldered to.
+//! list's business; this driver knows the peripheral, not the machine it
+//! is soldered to.
 //!
 //! The module keeps nothing of its own. A ROM image is read only, so what
 //! changes is the library's to allocate, and every entry point finds it
 //! again through what it is handed: an op has the board, the board has
-//! its driver's node, and the node has exec, rtg.library and the
-//! driver's `State`. Per-board state is the `Panel` the library allocates
-//! beside each handle.
+//! its driver's node, and the node has exec and rtg.library. Per-board
+//! state is the `Panel` the library allocates beside each handle.
 //!
 //! A picture may also be several buffers at once, in bands of lines
 //! (ShowBitMapBands): the copy's chains then take each line from the band
 //! that covers it, a descriptor a line, so a band starts on any line.
 //!
-//! The order matters and none of it is optional. `CreateBoardTagList`
+//! The order matters and none of it is optional. The driver's `attach`
 //! lets the panel out of reset, takes its memory and its DMA channels and
 //! programs the peripheral; `SetBoardMode` puts the timings in; and
 //! `ShowBitMap` is what starts the pixel stream. That last split is not
@@ -45,42 +45,39 @@ const pointer = @import("pointer.zig");
 
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 6;
-const BUILD_DATE = "15.11.2026";
+const REVISION = 7;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// What is the driver's and not one board's: the library allocates it
-/// behind the driver's node and clears it.
-const State = struct {
-    /// The panel while a board of it exists. There is one peripheral, so
-    /// there is at most one.
-    board: ?*rtg.RtgBoard = null,
-};
-
-fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @ptrCast(@alignCast(driver.state.?));
-}
-
 fn panelOf(board: *rtg.RtgBoard) *Panel {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
-fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const state = stateOf(made_by);
-    const sys = made_by.sys_base;
-    const rb = made_by.rtg_base;
-    if (state.board != null) return err.RTGERR_IN_USE;
+/// A panel on LCD_CAM is offered: brought up, and a board made of it.
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const TagItem) callconv(.c) i32 {
+    const sys = driver.sys_base;
+    const rb = driver.rtg_base;
+    // There is one peripheral: a second panel on it is declined.
+    if (driver.boards != 0) return err.RTGERR_IN_USE;
 
     const wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
 
+    const board = rb.CreateBoard(driver, device, &.{
+        .ops = &ops,
+        .instance_size = @sizeOf(Panel),
+        .flags = rtg.boards.RTGBF_STREAMING,
+    }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .rtg_base = rb, .board = board, .config = wanted };
 
     const code = panels.bringUp(panel);
-    if (code != err.RTGERR_OK) return code;
+    if (code != err.RTGERR_OK) {
+        rb.DeleteBoard(board);
+        return code;
+    }
 
     // One mode: the panel is what it is, and a panel is not a monitor.
     const setup = &panel.config.setup;
@@ -106,13 +103,10 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .alignment = sdk.hardware.DCACHE_LINE_SIZE,
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
-    board.ops = &ops;
     board.info.buffers = panel.frames;
     board.info.pixel_clock_hz = setup.pixel_clock_hz;
     board.info.refresh_mhz = panel.mode.refresh_mhz;
-    board.info.flags |= rtg.boards.RTGBF_STREAMING;
     board.info.brightness = brightness(board);
-    state.board = board;
     return err.RTGERR_OK;
 }
 
@@ -129,7 +123,6 @@ fn refreshMilliHz(setup: *const lcd.Setup) u32 {
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const panel = panelOf(board);
     _ = panels.giveBack(panel, err.RTGERR_OK);
-    if (board.driver) |driver| stateOf(driver).board = null;
 }
 
 /// One mode, the panel's own: putting the board in it is what programs the
@@ -294,7 +287,13 @@ const ops = rtg.RtgBoardOps{
     .move_overlay = &moveOverlay,
 };
 
-const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
+
+/// What it takes: a panel on LCD_CAM.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = sdk.expansion.systemtags.BUS_LCD },
+    .{},
+};
 
 /// The driver's tag: a description and no init. rtg.library reads it at
 /// its own init and puts the driver on its list; nothing is brought up
@@ -318,8 +317,7 @@ export const rtg_rgb_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
         // of. Reading the panel out of that same memory costs the copy the
         // time it has to make the next bufferful ready in.
         .flags = rtg.drivers.RTGDF_INTERNAL_INSTANCE,
+        .matches = &matches,
         .ops = &driver_ops,
-        .state_size = @sizeOf(State),
-        .instance_size = @sizeOf(Panel),
     },
 };

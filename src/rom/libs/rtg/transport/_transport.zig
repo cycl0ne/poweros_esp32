@@ -1,21 +1,18 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Command buses: making one, and passing transfers to its driver.
+//! Command buses: the record of one, and passing transfers to its driver.
 //!
-//! A transport is made the same way a board is - a driver by name, a tag
-//! list, a handle the library allocates and the driver fills in - and a
-//! board is given one at create. It is refused deletion while a board
-//! still names it, since a board with a bus that has gone would talk into
-//! nothing.
+//! A bus is made for the driver of the device that sits on it
+//! (`OpenTransport`): the transport driver whose table names the device's
+//! bus makes it, from the device's tags, in a handle the library
+//! allocates. The panel's driver keeps it, talks over it (`TxParam`,
+//! `TxColor`, `RxParam`) and gives it back (`CloseTransport`).
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
 
-const RtgBase = @import("../rtg.zig").RtgBase;
-
-/// What the library keeps for a transport, beside the handle.
+/// What the library keeps for a transport: the handle.
 pub const Private = struct {
     io: rtg.RtgTransport = .{},
-    name_buf: [32]u8 = .{0} ** 32,
 };
 
 /// The library's own record around a transport's handle.
@@ -24,16 +21,4 @@ pub const Private = struct {
 /// - `io` - the transport.
 pub fn privateOf(io: *rtg.RtgTransport) *Private {
     return @fieldParentPtr("io", io);
-}
-
-/// Names a transport: the caller's name, or else the driver's.
-///
-/// INPUTS:
-/// - `rb` - the library. Its `Strlcpy` does the copy.
-/// - `private` - the transport's record.
-/// - `driver_name` - the driver's name.
-/// - `wanted` - the caller's name for it, or null.
-pub fn setName(rb: *RtgBase, private: *Private, driver_name: [*:0]const u8, wanted: ?[*:0]const u8) void {
-    _ = rb.utility_base.Strlcpy(&private.name_buf, private.name_buf.len, wanted orelse driver_name);
-    private.io.node.name = @ptrCast(&private.name_buf);
 }

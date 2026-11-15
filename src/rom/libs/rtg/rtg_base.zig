@@ -8,9 +8,10 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const ExpansionBase = sdk.interface.expansion.ExpansionBase;
+const PCIBase = sdk.interface.pci.PCIBase;
 
-/// The base: the driver list, the boards made from it, and the libraries
-/// it calls.
+/// The base: the drivers, the devices they are offered, the boards they
+/// made of them, and the libraries it calls.
 pub const RtgBase = extern struct {
     lib: exec.Library,
     /// SysBase, to call exec through its jump table.
@@ -27,7 +28,24 @@ pub const RtgBase = extern struct {
     /// the list still while it is walked.
     drivers: exec.List,
     driver_lock: exec.SignalSemaphore,
-    /// The boards and the transports alive.
+    /// The devices, in the order they were found, and the semaphore held
+    /// while the list changes and while a device is offered to the
+    /// drivers. It is taken before the driver list's and the board
+    /// list's.
+    devices: exec.List,
+    device_lock: exec.SignalSemaphore,
+    /// Whether the machine's own devices - its panel parts, its display
+    /// functions on PCI - are on the list: put there once, at the first
+    /// bind.
+    devices_listed: bool,
+    /// How many devices of the part kind were made, for naming the next
+    /// ("panel.1").
+    panel_serial: u32,
+    /// pci.library, opened when the machine's devices are listed, where
+    /// the machine has it, and kept: the devices on PCI are its
+    /// functions.
+    pci_base: ?*PCIBase,
+    /// The boards, highest priority first, and the transports alive.
     boards: exec.List,
     transports: exec.List,
     board_lock: exec.SignalSemaphore,
@@ -35,8 +53,6 @@ pub const RtgBase = extern struct {
     /// - and the driver's pointer ops, which run inside it: a semaphore, as
     /// a driver may send the pointer's rows over a bus.
     pointer_lock: exec.SignalSemaphore,
-    /// How many boards have been made, for naming the next one.
-    board_serial: u32,
     /// timer.device's request on its microsecond unit, opened by the init:
     /// what a wait with a time limit copies, with a reply port of the
     /// waiting task's own, so any task may wait. Its device is null where

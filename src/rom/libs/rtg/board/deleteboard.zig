@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! DeleteBoard: Stop a board and give everything back.
+//! DeleteBoard: Give a board back.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
@@ -8,29 +8,36 @@ const bitmaps = @import("../bitmap/_bitmap.zig");
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
 
-/// Stops a board and gives back everything it held.
+/// Gives a board back: stops it and frees everything it held.
 ///
 /// SYNOPSIS:
 /// ```zig
 /// fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -48.
+/// SINCE: 1.0. LVO -336.
 ///
 /// INPUTS:
-/// - `board` - the board. Null does nothing.
+/// - `board` - the board, as `CreateBoard` answered it. Null does nothing.
 ///
 /// RESULT:
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A board that still has an event server on it is refused - it stays on
-/// the list, which is how a caller sees it - and nothing of it is touched: the
-/// server's node would be left linked into a list that is freed. So is
-/// one with a video layer still open (`CloseVideoLayer` first).
-/// Otherwise it is taken off the display first, then every buffer it still has is
-/// freed, the driver's `destroy` is called, and the board leaves the list.
-/// The driver and a transport it used are one open less.
+/// A driver's call, for two cases. An `attach` that fails after it made a
+/// board deletes it: the board has not joined the list, the driver has
+/// given back what it took for it, and the handle and the instance are
+/// freed - its `destroy` is not called. And a driver that is being removed
+/// deletes its boards, which only a test's driver is: a program is never
+/// handed a board that goes away.
+///
+/// A board on the list that still has an event server on it is refused -
+/// it stays on the list, which is how a caller sees it - and nothing of
+/// it is touched: the server's node would be left linked into a list that
+/// is freed. So is one with a video layer still open (`CloseVideoLayer`
+/// first). Otherwise it is taken off the display first, then every buffer
+/// it still has is freed, the driver's `destroy` is called, and the board
+/// leaves the list and its device. The driver is one board less.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the board list, and if the
@@ -41,7 +48,7 @@ const _board = @import("_board.zig");
 ///
 /// OWNERSHIP:
 /// The board, its buffers and its display memory are gone. Event servers
-/// are the caller's, and are taken off with `RemRtgEventServer` first.
+/// are their owner's, and are taken off with `RemRtgEventServer` first.
 ///
 /// BUGS:
 /// The answer of taking the board off the display is not looked at: one
@@ -49,7 +56,7 @@ const _board = @import("_board.zig");
 /// driver's `destroy` called all the same.
 ///
 /// SEE ALSO:
-/// `CreateBoardTagList`, `RemRtgEventServer`
+/// `CreateBoard`, `RemRtgDevice`, `RemRtgDriver`, `RemRtgEventServer`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -61,10 +68,14 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     const sys = rb.sys_base;
     const private = privateOf(gone);
 
+    // One its attach never finished: nothing was shown, nothing cut from
+    // its display memory, and its driver has undone what it did.
+    if (!private.listed) return _board.free(rb, gone);
+
     // A server still on it is someone's node in a list about to be freed,
     // and a video layer someone's handle on a plane of it.
-    for (&gone.event_lists) |*list| {
-        if (list.first() != null) return;
+    for (&gone.event_lists) |*servers| {
+        if (servers.first() != null) return;
     }
     if (private.video_layers != 0) return;
 
@@ -84,11 +95,10 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     sys.ObtainSemaphore(&rb.board_lock);
     sys.Remove(&gone.node);
     sys.ReleaseSemaphore(&rb.board_lock);
+    // Off its device's list, unless the device went first.
+    if (gone.device != null) sys.Remove(&private.device_link);
 
     private.arena.deinit(sys);
-    if (gone.transport) |io| {
-        if (io.open_cnt != 0) io.open_cnt -= 1;
-    }
     if (gone.driver) |driver| {
         if (driver.boards != 0) driver.boards -= 1;
     }

@@ -78,7 +78,7 @@ test {
     _ = @import("video/rtgcicp.zig");
     _ = @import("board/_board.zig");
     _ = @import("board/boardcontrol.zig");
-    _ = @import("board/createboardtaglist.zig");
+    _ = @import("board/createboard.zig");
     _ = @import("board/deleteboard.zig");
     _ = @import("board/findboard.zig");
     _ = @import("board/findboardmode.zig");
@@ -96,10 +96,13 @@ test {
     _ = @import("display/waitvblank.zig");
     _ = @import("driver/_driver.zig");
     _ = @import("driver/addrtgdriver.zig");
-    _ = @import("driver/lockrtgdrivers.zig");
-    _ = @import("driver/nextrtgdriver.zig");
+    _ = @import("driver/getrtgdrivers.zig");
     _ = @import("driver/remrtgdriver.zig");
-    _ = @import("driver/unlockrtgdrivers.zig");
+    _ = @import("device/_device.zig");
+    _ = @import("device/addrtgdevice.zig");
+    _ = @import("device/bindrtgdrivers.zig");
+    _ = @import("device/getrtgdevices.zig");
+    _ = @import("device/remrtgdevice.zig");
     _ = @import("engine/_engine.zig");
     _ = @import("engine/blitpattern.zig");
     _ = @import("engine/blittemplate.zig");
@@ -113,8 +116,8 @@ test {
     _ = @import("memory/_memory.zig");
     _ = @import("tag/getrtgtagdata.zig");
     _ = @import("transport/_transport.zig");
-    _ = @import("transport/createtransporttaglist.zig");
-    _ = @import("transport/deletetransport.zig");
+    _ = @import("transport/opentransport.zig");
+    _ = @import("transport/closetransport.zig");
     _ = @import("transport/rxparam.zig");
     _ = @import("transport/txcolor.zig");
     _ = @import("transport/txparam.zig");
@@ -134,6 +137,9 @@ const kutility = @import("../utility/utility.zig");
 /// to.
 const kpens = @import("../graphics/rastport/_rastport.zig");
 const fake = @import("../rtg_driver/fakeboard/fakeboard.zig");
+const fakebus = @import("../rtg_driver/fakeboard/fakebus.zig");
+const devices = @import("device/_device.zig");
+const registry = @import("driver/_driver.zig");
 const timer = sdk.devices.timer;
 
 /// timer.device for the tests. It serves what the library sends and
@@ -335,16 +341,20 @@ fn setUp() !*RtgBase {
     return rb;
 }
 
-/// The test board's own state, found through the node it registered: the
-/// driver of its name on the library's list.
+/// The test board's own state, found through its node: the driver of its
+/// name on the library's list.
 fn fakeOf(rb: *RtgBase) *fake.State {
-    base(rb).LockRtgDrivers();
-    defer base(rb).UnlockRtgDrivers();
-    var driver = base(rb).NextRtgDriver(null);
-    while (driver) |one| : (driver = base(rb).NextRtgDriver(one)) {
-        if (std.mem.orderZ(u8, one.node.name.?, fake.DRIVER_NAME) == .eq) return fake.stateOf(one);
-    }
-    unreachable;
+    return fake.stateOf(driverNamed(rb, fake.DRIVER_NAME).?);
+}
+
+/// The driver of that name on the library's list, or null.
+fn driverNamed(rb: *RtgBase, name: [*:0]const u8) ?*rtg.RtgDriver {
+    return registry.driverOf(kexec.FindName(kexec.SysBase, &rb.drivers, name) orelse return null);
+}
+
+/// The drivers on the library's list, in its order, as their names.
+fn driverNames(rb: *RtgBase, into: *[8]rtg.RtgDriverInfo) u32 {
+    return base(rb).GetRtgDrivers(into, into.len);
 }
 
 /// Neither library expunges itself: take the driver off, close utility
@@ -373,9 +383,10 @@ fn driverBase(rb: *RtgBase) *sdk.interface.rtgdriver.RtgDriverBase {
     return @ptrCast(rb);
 }
 
+/// A device of the test board's kind offered, and the board its driver
+/// made of it.
 fn makeBoard(rb: *RtgBase) !*rtg.RtgBoard {
-    const tag_list = [_]TagItem{.{}};
-    return base(rb).CreateBoardTagList("fake", &tag_list) orelse error.NoBoard;
+    return fake.makeBoard(fakeOf(rb)) orelse error.NoBoard;
 }
 
 test "rtg.library: made from its tag, opened by name, utility of its own" {
@@ -413,12 +424,13 @@ test "drivers: walked by priority, and never twice" {
     };
     const second = driverBase(rb).AddRtgDriver(&second_spec, null).?;
 
-    base(rb).LockRtgDrivers();
     // Highest priority first: "second" at 10 before "fake" at 0.
-    try testing.expectEqual(second, base(rb).NextRtgDriver(null).?);
-    try testing.expectEqual(fk.driver, base(rb).NextRtgDriver(second).?);
-    try testing.expect(base(rb).NextRtgDriver(fk.driver) == null);
-    base(rb).UnlockRtgDrivers();
+    var listed: [8]rtg.RtgDriverInfo = undefined;
+    try testing.expectEqual(@as(u32, 2), driverNames(rb, &listed));
+    try testing.expectEqualStrings("second", std.mem.sliceTo(&listed[0].name, 0));
+    try testing.expectEqualStrings("fake", std.mem.sliceTo(&listed[1].name, 0));
+    try testing.expectEqual(second, driverNamed(rb, "second").?);
+    try testing.expectEqual(fk.driver, driverNamed(rb, "fake").?);
 
     // Off the list once: a node that is not on it is not read.
     try testing.expect(driverBase(rb).RemRtgDriver(second));
@@ -432,7 +444,7 @@ test "a driver's node: its description, the library's bases, its own state clear
 
     // A driver that asks for state gets it behind its node, cleared.
     const Kept = extern struct { first: u64, last: u32 };
-    const ops = rtg.RtgDriverOps{ .create_board = @ptrFromInt(0x1000) };
+    const ops = rtg.RtgDriverOps{ .attach = @ptrFromInt(0x1000) };
     const with_state = rtg.RtgDriverSpec{
         .name = "kept",
         .id_string = "kept 2.5",
@@ -449,6 +461,7 @@ test "a driver's node: its description, the library's bases, its own state clear
     try testing.expectEqual(rb.sys_base, driver.sys_base);
     try testing.expectEqual(driverBase(rb), driver.rtg_base);
     try testing.expectEqual(@as(?*anyopaque, @ptrCast(&seg)), driver.seg_list);
+    try testing.expectEqual(@as(u32, 0), driver.devices);
     try testing.expectEqual(@as(u32, 0), driver.boards);
     try testing.expectEqual(@as(u32, 0), driver.buses);
     const kept: *Kept = @ptrCast(@alignCast(driver.state.?));
@@ -470,7 +483,7 @@ test "a driver's node: its description, the library's bases, its own state clear
 
 /// Two drivers' ROM tags, as a boot scan would have found them.
 const RomTags = struct {
-    const ops = rtg.RtgDriverOps{ .create_board = @ptrFromInt(0x1000) };
+    const ops = rtg.RtgDriverOps{ .attach = @ptrFromInt(0x1000) };
     const low: rtg.ResidentRtgDriver = .{
         .resident = .{ .match_tag = &low.resident, .type = .rtg_driver, .name = "rtg-low" },
         .spec = .{ .name = "low", .priority = -5, .kind = rtg.drivers.RTGDT_BOARD, .ops = &ops },
@@ -495,11 +508,13 @@ test "the drivers of the ROM: read from their tags at the library's init, by the
 
     // Both drivers are on the list, the higher first; the library's tag
     // is none of them.
-    base(rb).LockRtgDrivers();
-    const high = base(rb).NextRtgDriver(null).?;
-    const low = base(rb).NextRtgDriver(high).?;
-    try testing.expect(base(rb).NextRtgDriver(low) == null);
-    base(rb).UnlockRtgDrivers();
+    var listed: [8]rtg.RtgDriverInfo = undefined;
+    try testing.expectEqual(@as(u32, 2), driverNames(rb, &listed));
+    try testing.expectEqualStrings("high", std.mem.sliceTo(&listed[0].name, 0));
+    try testing.expectEqualStrings("low", std.mem.sliceTo(&listed[1].name, 0));
+    try testing.expectEqual(@as(u8, 0), listed[0].loaded);
+    const high = driverNamed(rb, "high").?;
+    const low = driverNamed(rb, "low").?;
     try testing.expectEqual(&RomTags.high.spec, high.spec);
     try testing.expectEqual(&RomTags.low.spec, low.spec);
     try testing.expect(high.seg_list == null);
@@ -510,19 +525,25 @@ test "the drivers of the ROM: read from their tags at the library's init, by the
     try tearDown(rb);
 }
 
-test "a board: its own name, its own instance, its driver held" {
+test "a board: its own name, its own instance, its driver and its device held" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
 
     const board = try makeBoard(rb);
+    try testing.expectEqual(@as(u32, 1), fk.log.offered);
     try testing.expectEqual(@as(u32, 1), fk.log.created);
     try testing.expectEqual(@as(u32, 1), fk.driver.boards);
-    // Named after its driver, and the name is the library's copy.
-    try testing.expectEqualStrings("fake0", std.mem.span(board.node.name.?));
-    try testing.expectEqual(board, base(rb).FindBoard("fake0").?);
+    try testing.expectEqual(@as(u32, 1), fk.driver.devices);
+    // Named after its driver and a number, and the name is the library's.
+    try testing.expectEqualStrings("fake.0", std.mem.span(board.node.name.?));
+    try testing.expectEqual(board, base(rb).FindBoard("fake.0").?);
     try testing.expectEqual(board, base(rb).NextBoard(null).?);
     try testing.expect(base(rb).NextBoard(board) == null);
+    // It is its device's first output, and says which device that is.
+    try testing.expectEqual(fk.devices[0].?, board.device.?);
+    try testing.expectEqual(fk.driver, board.device.?.driver.?);
+    try testing.expectEqual(@as(u32, 0), board.unit);
     // The driver's data is its own, and the library cleared it.
     const instance: *fake.Instance = @ptrCast(@alignCast(board.instance.?));
     try testing.expectEqual(fake.instance_pattern, instance.pattern);
@@ -532,45 +553,320 @@ test "a board: its own name, its own instance, its driver held" {
     try testing.expect(info.caps & rtg.boards.RTGBC_FILL_RECT != 0);
     try testing.expect(info.caps & rtg.boards.RTGBC_BLIT_TEMPLATE == 0);
     try testing.expectEqual(@as(u32, 3), info.modes);
+    try testing.expectEqualStrings("fake.0", std.mem.span(info.name.?));
+    try testing.expectEqualStrings("panel.0", std.mem.span(info.device.?));
+    try testing.expectEqualStrings("Fake 0", std.mem.span(info.label.?));
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try testing.expectEqual(@as(u32, 1), fk.log.destroyed);
     try testing.expectEqual(@as(u32, 0), fk.driver.boards);
     try testing.expect(base(rb).NextBoard(null) == null);
+    // The device is still the driver's, with no board of it left.
+    try testing.expectEqual(@as(u32, 1), fk.driver.devices);
     try tearDown(rb);
 }
 
-test "a board is named, and its user data kept, when the tags say so" {
-    const rb = try setUp();
-    defer kexec.deinit();
-
-    var mine: u32 = 5;
-    const tag_list = [_]TagItem{
-        .{ .tag = rtg.tags.RTGA_BoardName, .data = @intFromPtr("screen") },
-        .{ .tag = rtg.tags.RTGA_UserData, .data = @intFromPtr(&mine) },
-        .{},
-    };
-    const board = base(rb).CreateBoardTagList("fake", &tag_list).?;
-    try testing.expectEqualStrings("screen", std.mem.span(board.node.name.?));
-    try testing.expectEqual(@as(?*anyopaque, @ptrCast(&mine)), board.user_data);
-    base(rb).DeleteBoard(board);
-    try tearDown(rb);
-}
-
-test "a driver that is not there, and a create that fails, leave nothing" {
+test "a device from tags: named, offered at once, and listed with its driver" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
 
-    const tag_list = [_]TagItem{.{}};
-    try testing.expect(base(rb).CreateBoardTagList("nothing", &tag_list) == null);
+    // Nothing of the machine's is on the list before the first bind, and
+    // the host has neither a board's list nor PCI to find any on.
+    var listed: [4]rtg.RtgDeviceInfo = undefined;
+    try testing.expectEqual(@as(u32, 0), base(rb).GetRtgDevices(&listed, listed.len));
+    try testing.expectEqual(@as(u32, 0), base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 0), base(rb).GetRtgDevices(null, 0));
+
+    const device = fake.addDevice(fk, null).?;
+    try testing.expectEqualStrings("panel.0", std.mem.span(device.node.name.?));
+    try testing.expectEqual(rtg.drivers.RTGDEV_PART, device.kind);
+    try testing.expectEqual(fake.chip, device.chip);
+    try testing.expectEqual(fake.bus, device.bus);
+    try testing.expect(device.part == null and device.pci == null);
+    try testing.expectEqual(@as(?[*]const TagItem, fake.deviceTags()), device.tags);
+    // Offered as it was added: the fake has it, and made its board.
+    try testing.expectEqual(fk.driver, device.driver.?);
+    try testing.expectEqual(@as(u32, 1), fk.driver.devices);
+    const board = base(rb).NextBoard(null).?;
+    try testing.expectEqual(device, board.device.?);
+
+    try testing.expectEqual(@as(u32, 1), base(rb).GetRtgDevices(&listed, listed.len));
+    try testing.expectEqualStrings("panel.0", std.mem.sliceTo(&listed[0].name, 0));
+    try testing.expectEqualStrings("fake display", std.mem.sliceTo(&listed[0].chip_name, 0));
+    try testing.expectEqualStrings("fake", std.mem.sliceTo(&listed[0].driver, 0));
+    try testing.expectEqual(@as(u32, 1), listed[0].boards);
+    try testing.expectEqual(@as(u32, 0), listed[0].flags);
+    try testing.expectEqual(@as(u8, 0), listed[0].behind[0]);
+
+    // A second one takes the next number, and one bind later nothing is
+    // left to offer.
+    const second = fake.addDevice(fk, null).?;
+    try testing.expectEqualStrings("panel.1", std.mem.span(second.node.name.?));
+    try testing.expectEqual(@as(u32, 2), base(rb).GetRtgDevices(null, 0));
+    try testing.expectEqual(@as(u32, 0), base(rb).BindRtgDrivers());
+    try tearDown(rb);
+}
+
+test "a driver that declines: nothing kept, the device left for a driver that comes later" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
 
     fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
-    try testing.expect(base(rb).CreateBoardTagList("fake", &tag_list) == null);
+    const device = fake.addDevice(fk, null).?;
+    try testing.expectEqual(@as(u32, 1), fk.log.offered);
     try testing.expectEqual(@as(u32, 0), fk.log.created);
     try testing.expectEqual(@as(u32, 0), fk.driver.boards);
+    try testing.expectEqual(@as(u32, 0), fk.driver.devices);
+    try testing.expect(device.driver == null);
     try testing.expect(base(rb).NextBoard(null) == null);
-    // The leak check in tearDown is what proves the handle came back.
+
+    // Offered again by the next bind, and taken this time.
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 1), base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 2), fk.log.offered);
+    try testing.expectEqual(fk.driver, device.driver.?);
+    try testing.expectEqualStrings("fake.0", std.mem.span(base(rb).NextBoard(null).?.node.name.?));
+    // The leak check in tearDown is what proves nothing of the refusal
+    // stayed.
+    try tearDown(rb);
+}
+
+/// A driver of the tests' own that makes a board and leaves it, declining:
+/// what an attach may not do, which the library puts right.
+const Careless = struct {
+    const board_ops = rtg.RtgBoardOps{};
+    fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, _: ?[*]const TagItem) callconv(.c) i32 {
+        _ = driver.rtg_base.CreateBoard(driver, device, &.{ .ops = &board_ops, .instance_size = 24 });
+        return rtg.errors.RTGERR_IO;
+    }
+    const ops = rtg.RtgDriverOps{ .attach = &attach };
+    const matches = [_]rtg.RtgMatch{ .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = fake.chip, .priority = 5 }, .{} };
+    const spec = rtg.RtgDriverSpec{ .name = "careless", .kind = rtg.drivers.RTGDT_BOARD, .matches = &matches, .ops = &ops };
+};
+
+test "who is asked first: the closer entry, then the entry's priority, and a board left behind is freed" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+
+    // A driver that names the bus alone is asked after the fake, which
+    // names the chip - whatever its place on the list.
+    const Taker = struct {
+        var offered: u32 = 0;
+        fn attach(_: *rtg.RtgDriver, _: *rtg.RtgDevice, _: ?[*]const TagItem) callconv(.c) i32 {
+            offered += 1;
+            return rtg.errors.RTGERR_NO_DISPLAY;
+        }
+        const ops = rtg.RtgDriverOps{ .attach = &attach };
+        const matches = [_]rtg.RtgMatch{ .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = fake.bus }, .{} };
+        const spec = rtg.RtgDriverSpec{ .name = "by-bus", .priority = 50, .kind = rtg.drivers.RTGDT_BOARD, .matches = &matches, .ops = &ops };
+    };
+    Taker.offered = 0;
+    const by_bus = driverBase(rb).AddRtgDriver(&Taker.spec, null).?;
+    const device = fake.addDevice(fk, null).?;
+    try testing.expectEqual(fk.driver, device.driver.?);
+    try testing.expectEqual(@as(u32, 0), Taker.offered);
+
+    // One that names the chip with a higher entry priority is asked
+    // before the fake. It makes a board and declines: the board is freed,
+    // and the fake takes the device.
+    const careless = driverBase(rb).AddRtgDriver(&Careless.spec, null).?;
+    const before = fk.log.offered;
+    const next = fake.addDevice(fk, null).?;
+    try testing.expectEqual(fk.driver, next.driver.?);
+    try testing.expectEqual(before + 1, fk.log.offered);
+    try testing.expectEqual(@as(u32, 0), careless.boards);
+    try testing.expectEqual(@as(u32, 0), careless.devices);
+    try testing.expectEqual(@as(u32, 0), Taker.offered);
+
+    // With the fake declining too, the bus's driver is asked last.
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const last = fake.addDevice(fk, null).?;
+    try testing.expect(last.driver == null);
+    try testing.expectEqual(@as(u32, 1), Taker.offered);
+
+    // The closeness itself: a chip, or a vendor with a device, above a
+    // bus, a vendor alone or a class; nothing for a field that is not the
+    // device's.
+    const m = rtg.drivers;
+    try testing.expectEqual(@as(?u32, 2), devices.closeness(&.{ .fields = m.RTGMATCH_CHIP, .chip = fake.chip }, device));
+    try testing.expectEqual(@as(?u32, 2), devices.closeness(&.{ .fields = m.RTGMATCH_CHIP | m.RTGMATCH_BUS, .chip = fake.chip, .bus = fake.bus }, device));
+    try testing.expectEqual(@as(?u32, 1), devices.closeness(&.{ .fields = m.RTGMATCH_BUS, .bus = fake.bus }, device));
+    try testing.expectEqual(@as(?u32, null), devices.closeness(&.{ .fields = m.RTGMATCH_CHIP, .chip = fake.chip + 1 }, device));
+    try testing.expectEqual(@as(?u32, null), devices.closeness(&.{ .fields = m.RTGMATCH_CHIP | m.RTGMATCH_BUS, .chip = fake.chip, .bus = 1 }, device));
+    // A part is no function on PCI.
+    try testing.expectEqual(@as(?u32, null), devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR, .vendor = 0x1AF4 }, device));
+    var function = sdk.pci.PCIDevice{ .vendor_id = 0x1AF4, .device_id = 0x1050, .class_code = 0x03_8000 };
+    const on_pci = rtg.RtgDevice{ .kind = m.RTGDEV_PCI, .pci = &function, .bus = sdk.expansion.systemtags.BUS_PCI };
+    try testing.expectEqual(@as(?u32, 2), devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR | m.RTGMATCH_DEVICE, .vendor = 0x1AF4, .device = 0x1050 }, &on_pci));
+    try testing.expectEqual(@as(?u32, 1), devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR, .vendor = 0x1AF4 }, &on_pci));
+    try testing.expectEqual(@as(?u32, 1), devices.closeness(&.{ .fields = m.RTGMATCH_CLASS, .class_code = 0x03_0000, .class_mask = 0xFF_0000 }, &on_pci));
+    try testing.expectEqual(@as(?u32, null), devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR | m.RTGMATCH_DEVICE, .vendor = 0x1AF4, .device = 0x1010 }, &on_pci));
+    try testing.expectEqual(@as(?u32, null), devices.closeness(&.{ .fields = m.RTGMATCH_CLASS, .class_code = 0x02_0000, .class_mask = 0xFF_0000 }, &on_pci));
+    // A function is no part of a chip.
+    try testing.expectEqual(@as(?u32, null), devices.closeness(&.{ .fields = m.RTGMATCH_CHIP, .chip = 0 }, &on_pci));
+
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expect(fake.remove(fk));
+    try testing.expect(driverBase(rb).RemRtgDriver(careless));
+    try testing.expect(driverBase(rb).RemRtgDriver(by_bus));
+    _ = fake.add(rb.sys_base, rb) orelse return error.NoDriver;
+    try tearDown(rb);
+}
+
+test "two boards of one device: each an output, numbered as they were made, the first the display" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+
+    fk.outputs = 2;
+    const device = fake.addDevice(fk, null).?;
+    try testing.expectEqual(@as(u32, 2), fk.driver.boards);
+    try testing.expectEqual(@as(u32, 1), fk.driver.devices);
+    const first = base(rb).NextBoard(null).?;
+    const second = base(rb).NextBoard(first).?;
+    try testing.expect(base(rb).NextBoard(second) == null);
+    try testing.expectEqualStrings("fake.0", std.mem.span(first.node.name.?));
+    try testing.expectEqualStrings("fake.1", std.mem.span(second.node.name.?));
+    try testing.expectEqual(@as(u32, 0), first.unit);
+    try testing.expectEqual(@as(u32, 1), second.unit);
+    try testing.expectEqual(device, first.device.?);
+    try testing.expectEqual(device, second.device.?);
+    try testing.expect(fake.instanceOf(first) != fake.instanceOf(second));
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(second, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqualStrings("Fake 1", std.mem.span(info.label.?));
+    try testing.expectEqualStrings("panel.0", std.mem.span(info.device.?));
+
+    var listed: [2]rtg.RtgDeviceInfo = undefined;
+    try testing.expectEqual(@as(u32, 1), base(rb).GetRtgDevices(&listed, listed.len));
+    try testing.expectEqual(@as(u32, 2), listed[0].boards);
+
+    // Outside its attach a driver makes no board of the device.
+    const full = rtg.RtgBoardOps{};
+    try testing.expect(driverBase(rb).CreateBoard(fk.driver, device, &.{ .ops = &full }) == null);
+    try tearDown(rb);
+}
+
+test "a device taken away: its boards gone from the walk, still handles, and showing nothing" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+
+    const board = try makeBoard(rb);
+    const device = board.device.?;
+    const mode = base(rb).FindBoardMode(board, 0, 0, 0).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, mode));
+    const bm = base(rb).AllocBitMap(board, 8, 8, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm, 0, 0));
+
+    driverBase(rb).RemRtgDevice(device);
+    fk.devices[0] = null;
+    try testing.expectEqual(@as(u32, 1), fk.log.detached);
+    try testing.expectEqual(@as(u32, 0), fk.driver.devices);
+    try testing.expectEqual(@as(u32, 0), base(rb).GetRtgDevices(null, 0));
+    // The board is passed over, and still found by its name.
+    try testing.expect(base(rb).NextBoard(null) == null);
+    try testing.expectEqual(board, base(rb).FindBoard("fake.0").?);
+    try testing.expect(board.device == null);
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.flags & rtg.boards.RTGBF_GONE != 0);
+    try testing.expect(info.flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    // It still says which device it was an output of.
+    try testing.expectEqualStrings("panel.0", std.mem.span(info.device.?));
+    // What it showed was taken down, so the buffer can go; nothing more
+    // is shown on it, and it is put in no mode.
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, bm, 0, 0));
+    const one = [_]rtg.RtgBand{.{ .bitmap = bm }};
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMapBands(board, &one, one.len));
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).SetBoardMode(board, mode));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    base(rb).FreeBitMap(bm);
+
+    // A board made after it takes the next number, and is the display.
+    const next = try makeBoard(rb);
+    try testing.expectEqualStrings("fake.1", std.mem.span(next.node.name.?));
+    try testing.expectEqual(next, base(rb).NextBoard(null).?);
+    try testing.expect(base(rb).NextBoard(next) == null);
+    // The walk goes on behind a board that is gone.
+    try testing.expectEqual(next, base(rb).NextBoard(board).?);
+
+    // A device of the machine's own never goes: only one that was added.
+    driverBase(rb).RemRtgDevice(null);
+    // The driver deletes its boards as it is removed, the gone one too.
+    try tearDown(rb);
+}
+
+test "a bus opened by a driver: made by the driver that names the device's bus, and given back" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+
+    // With no transport driver on the list the bus cannot be opened, and
+    // the board's driver declines.
+    fk.opens_bus = true;
+    const unreached = fake.addDevice(fk, null).?;
+    try testing.expect(unreached.driver == null);
+    try testing.expectEqual(@as(u32, 0), fk.driver.boards);
+
+    const buses = fakebus.add(rb) orelse return error.NoDriver;
+    // A bus its driver cannot make is no bus either.
+    buses.create_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(@as(u32, 0), base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 0), buses.driver.buses);
+    buses.create_answer = rtg.errors.RTGERR_OK;
+
+    try testing.expectEqual(@as(u32, 1), base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 1), buses.created);
+    try testing.expectEqual(@as(u32, 1), buses.driver.buses);
+    // Made from the device's own tags.
+    try testing.expectEqual(@as(?[*]const TagItem, fake.deviceTags()), buses.last_tags);
+    const board = base(rb).NextBoard(null).?;
+    const io = fake.instanceOf(board).bus.?;
+    try testing.expectEqualStrings("fakebus", std.mem.span(io.node.name.?));
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(buses.driver)), io.driver);
+    // The library cleared the bus's own data, which is its driver's.
+    const line = fakebus.instanceOf(io);
+    try testing.expectEqual(@as(u32, 0), line.sends);
+
+    // The three transfers reach the bus's driver, with what they were
+    // given, and its answer comes back.
+    var bytes: [4]u8 = .{ 1, 2, 3, 4 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).TxParam(io, 0x2A, &bytes, bytes.len));
+    try testing.expectEqual(@as(u32, 1), line.sends);
+    try testing.expectEqual(@as(i32, 0x2A), line.last_cmd);
+    try testing.expectEqual(@as(u32, 4), line.last_size);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).TxColor(io, 0x2C, &bytes, 2));
+    try testing.expectEqual(@as(u32, 1), line.colors);
+    try testing.expectEqual(@as(u32, 2), line.last_size);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).RxParam(io, 0x04, &bytes, 3));
+    try testing.expectEqual(@as(u32, 1), line.reads);
+    try testing.expectEqualSlices(u8, &.{ 4, 4, 4, 4 }, &bytes);
+    line.answer = rtg.errors.RTGERR_TIMEOUT;
+    try testing.expectEqual(rtg.errors.RTGERR_TIMEOUT, driverBase(rb).TxParam(io, 0x29, null, 0));
+    // A bus whose driver filled in no transfer says so.
+    var bare = rtg.RtgTransport{};
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, driverBase(rb).TxParam(&bare, 0, null, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, driverBase(rb).TxColor(&bare, 0, null, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, driverBase(rb).RxParam(&bare, 0, null, 0));
+
+    // A driver that neither has the device nor is being offered it opens
+    // no bus of it; null closes nothing.
+    try testing.expect(driverBase(rb).OpenTransport(buses.driver, board.device.?) == null);
+    driverBase(rb).CloseTransport(null);
+
+    // The bus's driver stays while a bus of it is open, and the bus goes
+    // with the board that opened it.
+    try testing.expect(!fakebus.remove(buses));
+    driverBase(rb).DeleteBoard(board);
+    try testing.expectEqual(@as(u32, 1), buses.destroyed);
+    try testing.expectEqual(@as(u32, 0), buses.driver.buses);
+    try testing.expect(fakebus.remove(buses));
     try tearDown(rb);
 }
 
@@ -602,7 +898,7 @@ test "modes: walked, found, and set" {
     try testing.expectEqual(@as(u32, 480), info.height);
     try testing.expectEqual(@as(u32, 2), info.mode_id);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -690,7 +986,7 @@ test "display memory: cut up, aligned, and put back together" {
     try testing.expect(base(rb).AllocBitMap(board, 1024, 1024, format, 0) == null);
     try testing.expect(base(rb).AllocBitMap(board, 8, 8, 99, 0) == null);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -717,7 +1013,7 @@ test "memory a display is already using is never handed out twice" {
     try testing.expect(@intFromPtr(next.pixels.?) >= @intFromPtr(shown.pixels.?) + fake.claimed_bytes);
 
     base(rb).FreeBitMap(next);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -743,7 +1039,7 @@ test "a buffer that keeps its memory stops a mode change" {
     );
     base(rb).FreeBitMap(loose);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -771,7 +1067,7 @@ test "showing a buffer, and what may not be shown" {
 
     base(rb).FreeBitMap(up);
     base(rb).FreeBitMap(hidden);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -831,7 +1127,7 @@ test "showing buffers in bands, and what may not be shown so" {
     base(rb).FreeBitMap(hidden);
     base(rb).FreeBitMap(front);
     base(rb).FreeBitMap(back);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -933,7 +1229,7 @@ test "the board's lock: held around the driver's show and mode, free after every
     try testing.expectEqual(@as(u32, 0), Held.missed);
     base(rb).FreeBitMap(front);
     base(rb).FreeBitMap(back);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -947,14 +1243,14 @@ test "a buffer: a format that is none, and a board with no display memory" {
     const board = try makeBoard(rb);
     try testing.expect(base(rb).AllocBitMap(board, 8, 8, 256, 0) == null);
     try testing.expect(base(rb).AllocBitMap(board, 8, 8, ~@as(u32, 0), 0) == null);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
 
     // A board that reports no display memory says so, and no memory was
     // taken for the buffer's handle: the leak check holds that.
     fk.region_size = 0;
     const dark = try makeBoard(rb);
     try testing.expect(base(rb).AllocBitMap(dark, 8, 8, format, 0) == null);
-    base(rb).DeleteBoard(dark);
+    driverBase(rb).DeleteBoard(dark);
     try tearDown(rb);
 }
 
@@ -964,16 +1260,67 @@ test "boards are numbered as they are made, and one that was not made takes no n
     const fk = fakeOf(rb);
 
     const first = try makeBoard(rb);
-    try testing.expectEqualStrings("fake0", std.mem.span(first.node.name.?));
+    try testing.expectEqualStrings("fake.0", std.mem.span(first.node.name.?));
     fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
-    try testing.expect(base(rb).CreateBoardTagList("fake", null) == null);
+    try testing.expect(fake.makeBoard(fk) == null);
     fk.create_answer = rtg.errors.RTGERR_OK;
     const second = try makeBoard(rb);
-    try testing.expectEqualStrings("fake1", std.mem.span(second.node.name.?));
+    try testing.expectEqualStrings("fake.1", std.mem.span(second.node.name.?));
     try testing.expectEqual(second.node.name, second.info.name);
 
-    base(rb).DeleteBoard(second);
-    base(rb).DeleteBoard(first);
+    driverBase(rb).DeleteBoard(second);
+    driverBase(rb).DeleteBoard(first);
+    try tearDown(rb);
+}
+
+test "the picture the firmware lit is the last board of the walk" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+
+    // A device that says it is the firmware's framebuffer, of a chip the
+    // fake is made to take: a driver of the tests' own, by its bus.
+    const st = sdk.expansion.systemtags;
+    const lit_tags = [_]TagItem{
+        .{ .tag = st.PART_Chip, .data = st.CHIP_UEFI_FB },
+        .{ .tag = st.PART_Bus, .data = fake.bus },
+        .{ .tag = st.PART_Address, .data = 0x8000_0000 },
+        .{},
+    };
+    const Lit = struct {
+        const board_ops = rtg.RtgBoardOps{};
+        fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, _: ?[*]const TagItem) callconv(.c) i32 {
+            _ = driver.rtg_base.CreateBoard(driver, device, &.{ .ops = &board_ops }) orelse return rtg.errors.RTGERR_NO_MEMORY;
+            return rtg.errors.RTGERR_OK;
+        }
+        const ops = rtg.RtgDriverOps{ .attach = &attach };
+        const matches = [_]rtg.RtgMatch{ .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = st.CHIP_UEFI_FB }, .{} };
+        const spec = rtg.RtgDriverSpec{ .name = "lit", .kind = rtg.drivers.RTGDT_BOARD, .matches = &matches, .ops = &ops };
+    };
+    const lit = driverBase(rb).AddRtgDriver(&Lit.spec, null).?;
+    const device = driverBase(rb).AddRtgDevice(&lit_tags).?;
+    try testing.expect(device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0);
+    // It lies behind no function on PCI: the host has none.
+    try testing.expect(device.behind == null);
+    const firmware = base(rb).NextBoard(null).?;
+    try testing.expectEqualStrings("lit.0", std.mem.span(firmware.node.name.?));
+    try testing.expect(firmware.info.flags & rtg.boards.RTGBF_FIRMWARE != 0);
+
+    // A board made after it stands before it: the machine's display.
+    const board = try makeBoard(rb);
+    try testing.expectEqual(board, base(rb).NextBoard(null).?);
+    try testing.expectEqual(firmware, base(rb).NextBoard(board).?);
+    try testing.expect(base(rb).NextBoard(firmware) == null);
+    try testing.expect(board.info.flags & rtg.boards.RTGBF_FIRMWARE == 0);
+    var listed: [4]rtg.RtgDeviceInfo = undefined;
+    try testing.expectEqual(@as(u32, 2), base(rb).GetRtgDevices(&listed, listed.len));
+    try testing.expect(listed[0].flags & rtg.drivers.RTGDVF_FIRMWARE != 0);
+    try testing.expectEqualStrings("lit", std.mem.sliceTo(&listed[0].driver, 0));
+
+    driverBase(rb).DeleteBoard(firmware);
+    driverBase(rb).RemRtgDevice(device);
+    try testing.expect(driverBase(rb).RemRtgDriver(lit));
+    _ = fk;
     try tearDown(rb);
 }
 
@@ -1047,7 +1394,7 @@ test "a show that fails changes nothing: the buffer shown stays, the one refused
     try testing.expectEqual(@as(u32, 0), glass.showing_count);
 
     base(rb).FreeBitMap(first);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1106,7 +1453,7 @@ test "bands that fail change nothing: what was shown stays, in the library and o
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
     base(rb).FreeBitMap(front);
     base(rb).FreeBitMap(back);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1142,7 +1489,7 @@ test "what is written is handed on by the row" {
     try testing.expectEqual(refreshed, fk.log.refreshed);
 
     base(rb).FreeBitMap(bitmap);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1171,7 +1518,7 @@ test "info and stats: as much as the caller has room for, whole fields" {
     try testing.expectEqual(@as(u32, 42), stats.frames);
     try testing.expectEqual(@as(u32, 1), stats.starved_frames);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1224,11 +1571,11 @@ test "events: highest first, and the first to answer ends it" {
     try testing.expectEqual(@as(u32, 2), second_server_ran);
 
     // A board with a server still on it is not deleted from under it.
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try testing.expectEqual(board, base(rb).NextBoard(null).?);
     base(rb).RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &low);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1302,7 +1649,7 @@ test "WaitVBlank: woken by the board's frames, the limit's request taken back" {
     try testing.expectEqual(opened, rb.timer_io);
     FakeTimer.abort_replies_later = false;
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try testing.expect(base(rb).NextBoard(null) == null);
     try tearDown(rb);
 }
@@ -1363,7 +1710,7 @@ test "WaitVBlank: a board that sends no frames is waited for no longer than the 
     try testing.expectEqual(@as(u32, 2), FakeTimer.sent);
     board.ops = kept;
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1417,7 +1764,7 @@ test "the engine: the rectangle is cut down before the board sees it" {
     try testing.expectEqual(fills, fk.log.fills);
 
     base(rb).FreeBitMap(bitmap);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1455,7 +1802,7 @@ test "a copy is cut down to both buffers at once" {
 
     base(rb).FreeBitMap(target);
     base(rb).FreeBitMap(source);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1512,7 +1859,7 @@ test "several copies go to the board as one job, each cut down, or one by one" {
 
     base(rb).FreeBitMap(target);
     base(rb).FreeBitMap(source);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1574,7 +1921,7 @@ test "pixels and a colour laid over a buffer: cut down, the picture moved with t
     try testing.expectEqual(@as(u32, 4), fk.log.last_scale_width);
 
     base(rb).FreeBitMap(bitmap);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1607,7 +1954,7 @@ test "a board with no engine says so, and the library does not draw" {
     try testing.expectEqual(@as(u16, 0), row[0]);
 
     base(rb).FreeBitMap(bitmap);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1629,7 +1976,7 @@ test "the display: on, off, and how bright" {
     try testing.expectEqual(@as(isize, 8), base(rb).BoardControl(board, rtg.tags.RTGCTRL_RGB_SHIFT, 7));
     try testing.expectEqual(rtg.tags.RTGCTRL_RGB_SHIFT, fk.log.last_control);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1652,7 +1999,7 @@ test "the counters are reset on every board, with a control of its own or withou
     try testing.expectEqual(@as(u32, 0), swapsOf(rb, board));
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
     base(rb).FreeBitMap(shown);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
 
     // A board whose driver has none takes it all the same, and no other
     // code.
@@ -1668,7 +2015,7 @@ test "the counters are reset on every board, with a control of its own or withou
     try testing.expectEqual(@as(isize, rtg.errors.RTGERR_NOT_SUPPORTED), base(rb).BoardControl(plain, rtg.tags.RTGCTRL_RGB_SHIFT, 7));
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, null, 0, 0));
     base(rb).FreeBitMap(picture);
-    base(rb).DeleteBoard(plain);
+    driverBase(rb).DeleteBoard(plain);
     try tearDown(rb);
 }
 
@@ -1701,7 +2048,7 @@ test "turning the picture: what the board can do, and what it cannot" {
     try testing.expectEqual(was_width, info.width);
     try testing.expectEqual(was_height, info.height);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1726,7 +2073,7 @@ test "a board whose pixels go out as they are written will not turn" {
     try testing.expectEqual(@as(u8, 0), info.mirror_y);
     try testing.expectEqual(@as(u32, 0), fk.log.mirrors);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1803,7 +2150,7 @@ test "the pointer: converted once, placed by its point, shown and hidden" {
 
     // An image still set when the board goes is freed with it.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &image, 0, 0));
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1823,7 +2170,7 @@ test "the pointer on a 32-bit board: its channels in the order the format names 
     try testing.expectEqual(rtg.PixelFormat.bgra32, made.format);
     try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0xFF, 0xFF, 0x30, 0x20, 0x10, 0xFF }, made.pixels[0..8]);
 
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1889,7 +2236,7 @@ test "the overlay: its coverage dithered, following the pointer, placed on its o
 
     // One still set when the board goes is freed with it.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &image, 0, 0));
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1907,7 +2254,7 @@ test "a board with no pointer says so" {
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ShowBoardPointer(board, true));
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardOverlay(board, &image, 0, 0));
     base(rb).MoveBoardPointer(board, 3, 3);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -1976,7 +2323,7 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     try testing.expect(fk.log.video_picture == null);
 
     // The board is not deleted under an open layer.
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try testing.expectEqual(@as(u32, 0), fk.log.destroyed);
     base(rb).CloseVideoLayer(layer);
     base(rb).CloseVideoLayer(null);
@@ -1992,7 +2339,7 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     try testing.expectEqual(@as(u32, 0), forced.flags & rtg.RTGVLF_UNDER);
     try testing.expectEqual(@as(u32, 0), forced.key);
     base(rb).CloseVideoLayer(forced);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try testing.expectEqual(@as(u32, 1), fk.log.destroyed);
     try tearDown(rb);
 }
@@ -2006,7 +2353,7 @@ test "a board with no video layer says so" {
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_VIDEO);
     try testing.expect(base(rb).OpenVideoLayer(board, null) == null);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
@@ -2132,9 +2479,13 @@ test "a buffer with a watch hook: the hook is told what was written, and the boa
     defer kexec.deinit();
     const fk = fakeOf(rb);
 
-    // RTGA_Compose is the board's to keep, for intuition to read.
-    const composing = [_]TagItem{ .{ .tag = rtg.tags.RTGA_Compose, .data = 1 }, .{} };
-    const board = base(rb).CreateBoardTagList(fake.DRIVER_NAME, &composing) orelse return error.NoBoard;
+    // RTGA_Compose is the board's to keep, for intuition to read: a tag of
+    // its device.
+    const composing = [_]TagItem{
+        .{ .tag = rtg.tags.RTGA_Compose, .data = 1 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(fake.deviceTags()) },
+    };
+    const board = fake.makeBoardFrom(fk, &composing) orelse return error.NoBoard;
     try testing.expect(board.info.flags & rtg.boards.RTGBF_COMPOSE != 0);
     const plain = try makeBoard(rb);
     try testing.expect(plain.info.flags & rtg.boards.RTGBF_COMPOSE == 0);
@@ -2164,7 +2515,7 @@ test "a buffer with a watch hook: the hook is told what was written, and the boa
     try testing.expectEqual(@as(u32, 2), told.calls);
 
     base(rb).FreeBitMap(bm);
-    base(rb).DeleteBoard(plain);
-    base(rb).DeleteBoard(board);
+    driverBase(rb).DeleteBoard(plain);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }

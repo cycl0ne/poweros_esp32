@@ -13,7 +13,7 @@ const _driver = @import("_driver.zig");
 /// fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver
 /// ```
 ///
-/// SINCE: 1.0. LVO -292.
+/// SINCE: 1.0. LVO -304.
 ///
 /// INPUTS:
 /// - `spec` - the driver's description: its name, what it makes and the
@@ -24,8 +24,8 @@ const _driver = @import("_driver.zig");
 ///
 /// RESULT:
 /// The driver's node, or null: for operations that fill in neither
-/// `create_board` nor `create_transport`, for a name already on the list,
-/// and without memory.
+/// `attach` nor `create_transport`, for a name already on the list, and
+/// without memory.
 ///
 /// BEHAVIOR:
 /// The library makes the node and, in the same block behind it, the
@@ -35,12 +35,13 @@ const _driver = @import("_driver.zig");
 /// expansion.library where the machine has it. The block is in internal
 /// memory for a driver whose interrupts read it
 /// (`RTGDF_INTERNAL_INSTANCE`). The list is kept by the descriptions'
-/// priority, so a caller walking it meets the most wanted driver first. A
-/// driver that can make neither a board nor a transport would sit on the
-/// list answering nothing, so it is refused.
+/// priority, so of two that name a device as closely the more wanted is
+/// asked first. A driver that can take no device and make no bus would
+/// sit on the list answering nothing, so it is refused.
 ///
 /// The library calls this itself for every driver in the ROM, at its
-/// init; a test calls it for its own driver.
+/// init; a test calls it for its own driver. No device is offered to the
+/// driver by this call: `BindRtgDrivers` offers the ones no driver has.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the driver list.
@@ -56,7 +57,7 @@ const _driver = @import("_driver.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `RemRtgDriver`, `NextRtgDriver`, `CreateBoardTagList`
+/// `RemRtgDriver`, `BindRtgDrivers`, `GetRtgDrivers`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -64,9 +65,9 @@ const _driver = @import("_driver.zig");
 /// ```
 pub fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver {
     const sys = rb.sys_base;
-    // A driver that can make neither a board nor a transport would sit on
-    // the list answering nothing.
-    if (spec.ops.create_board == null and spec.ops.create_transport == null) return null;
+    // A driver that can take no device and make no bus would sit on the
+    // list answering nothing.
+    if (spec.ops.attach == null and spec.ops.create_transport == null) return null;
 
     sys.ObtainSemaphore(&rb.driver_lock);
     defer sys.ReleaseSemaphore(&rb.driver_lock);
@@ -76,15 +77,16 @@ pub fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*an
     // The node and the driver's state in one block, the state behind the
     // node.
     const memory = sys.AllocVec(_driver.state_offset + spec.state_size, _driver.memoryFor(spec)) orelse return null;
-    const driver: *rtg.RtgDriver = @ptrCast(@alignCast(memory));
-    driver.* = .{
+    const private: *_driver.Private = @ptrCast(@alignCast(memory));
+    private.* = .{ .driver = .{
         .node = .{ .type = .rtg_driver, .name = spec.name, .pri = spec.priority },
         .spec = spec,
         .sys_base = sys,
         .rtg_base = rb.driverIface(),
         .expansion_base = rb.expansion_base,
         .seg_list = seg_list,
-    };
+    } };
+    const driver = &private.driver;
     if (spec.state_size != 0) driver.state = @as([*]u8, @ptrCast(memory)) + _driver.state_offset;
     sys.Enqueue(&rb.drivers, &driver.node);
     return driver;

@@ -74,7 +74,7 @@ const Printf = dos.stdio.Printf;
 const B = rtg.boards;
 
 pub const COMMAND_NAME = "Engine";
-const VERSION_STRING = "\x00$VER: Engine 1.4 (30.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Engine 1.5 (16.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N,LOAD/K/N,DRAG/K/N,PACED/S";
@@ -652,7 +652,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer sys.CloseLibrary(graphics_lib);
-    const board = rb.FindBoard(sdk.graphics.DISPLAY_BOARD) orelse {
+    // The machine's display: the first board rtg.library lists.
+    const board = rb.NextBoard(null) orelse {
         _ = Printf(dl, "No display board\n", .{});
         return dos.RETURN_FAIL;
     };

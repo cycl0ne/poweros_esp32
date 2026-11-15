@@ -2,18 +2,20 @@
 //! Rtg: what displays this machine has, and what drives them. Built
 //! against the SDK only.
 //!
-//!   Rtg BOARD,DRIVERS/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S
+//!   Rtg BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S
 //!
-//! With nothing asked for it prints the two lists: the display drivers
-//! that have joined rtg.library, and the boards made from them. Name a
-//! board and it prints that board in full - what it is, what it can be
-//! asked to do, the modes it has, what its display memory has been cut
-//! into and, for a display that refreshes itself, how the stream is doing.
+//! With nothing asked for it prints the three lists: the display drivers
+//! on rtg.library's list, the devices the machine has for them - a panel
+//! of the board, a display function on PCI - each with the driver that
+//! took it, and the boards the drivers made. Name a board and it prints
+//! that board in full - what it is, what it can be asked to do, the modes
+//! it has, what its display memory has been cut into and, for a display
+//! that refreshes itself, how the stream is doing.
 //!
 //! The switches pick sections rather than repeat the name: MODES, MEMORY
 //! and STATS each print that one section, for the board named or for every
-//! board; DRIVERS and BOARDS print one list alone, which is what a script
-//! wants; FULL prints every section of every board.
+//! board; DRIVERS, DEVICES and BOARDS print one list alone, which is what
+//! a script wants; FULL prints every section of every board.
 //!
 //! Everything it prints comes from GetBoardInfo and GetBoardStats, which
 //! answer with the bytes they wrote, so a command older or newer than the
@@ -29,21 +31,26 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.3 (15.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.4 (16.11.2026)\r\n";
 
-const template = "BOARD,DRIVERS/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
+const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
 const arg_drivers = 1;
-const arg_boards = 2;
-const arg_modes = 3;
-const arg_memory = 4;
-const arg_stats = 5;
-const arg_full = 6;
+const arg_devices = 2;
+const arg_boards = 3;
+const arg_modes = 4;
+const arg_memory = 5;
+const arg_stats = 6;
+const arg_full = 7;
 
 const MSG_NOLIBRARY = "No %s - this machine has no display layer\n";
 const MSG_NOBOARD = "No board \"%s\"\n";
 const MSG_NOBOARDS = "No boards: no display driver found anything to drive\n";
 const MSG_NODRIVERS = "No display drivers\n";
+const MSG_NODEVICES = "No devices: the machine has no display rtg.library knows of\n";
+
+/// The most drivers and devices one list prints.
+const max_listed = 16;
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -52,7 +59,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [7]usize = @splat(0);
+    var argv: [8]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -75,11 +82,11 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const want_stats = argv[arg_stats] != 0;
     const one_section = !full and (want_modes or want_memory or want_stats);
 
-    // DRIVERS or BOARDS on their own is one list and nothing else.
-    if (argv[arg_drivers] != 0 and argv[arg_boards] == 0 and !one_section) {
-        return printDrivers(dl, rb);
-    }
-    if (argv[arg_boards] != 0 and argv[arg_drivers] == 0 and !one_section) {
+    // DRIVERS, DEVICES or BOARDS on its own is one list and nothing else.
+    const lists = @as(u32, @intFromBool(argv[arg_drivers] != 0)) + @intFromBool(argv[arg_devices] != 0) + @intFromBool(argv[arg_boards] != 0);
+    if (lists == 1 and !one_section) {
+        if (argv[arg_drivers] != 0) return printDrivers(dl, rb);
+        if (argv[arg_devices] != 0) return printDevices(dl, rb);
         return printBoards(dl, rb);
     }
 
@@ -135,8 +142,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_OK;
     }
 
-    // Nothing asked for: both lists.
+    // Nothing asked for: the three lists.
     _ = printDrivers(dl, rb);
+    _ = dl.PutStr("\n");
+    _ = printDevices(dl, rb);
     _ = dl.PutStr("\n");
     return printBoards(dl, rb);
 }
@@ -144,29 +153,79 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 // --- the lists --------------------------------------------------------------
 
 fn printDrivers(dl: *DosBase, rb: *RtgBase) i32 {
-    var driver = blk: {
-        rb.LockRtgDrivers();
-        break :blk rb.NextRtgDriver(null);
-    };
-    if (driver == null) {
-        rb.UnlockRtgDrivers();
+    var found: [max_listed]rtg.RtgDriverInfo = undefined;
+    const there = rb.GetRtgDrivers(&found, found.len);
+    if (there == 0) {
         _ = dl.PutStr(MSG_NODRIVERS);
         return dos.RETURN_WARN;
     }
-    _ = dl.PutStr("Driver          Ver  Kind       Handles  Module\n");
+    _ = dl.PutStr("Driver          Ver  Kind       Devices  Boards  Buses  Module\n");
     var id: [48]u8 = undefined;
-    while (driver) |d| : (driver = rb.NextRtgDriver(d)) {
-        _ = Printf(dl, "%-14s  %d.%-2d %-9s  %7d  %s\n", .{
-            name(d.node.name),
-            d.spec.version,
-            d.spec.revision,
-            kindOf(d.spec.kind),
-            d.boards + d.buses,
-            idText(&id, d.spec.id_string),
+    for (found[0..@min(there, found.len)]) |*driver| {
+        _ = Printf(dl, "%-14s  %d.%-2d %-9s  %7d  %6d  %5d  %s\n", .{
+            stringOf(&driver.name),
+            driver.version,
+            driver.revision,
+            kindOf(driver.kind),
+            driver.devices,
+            driver.boards,
+            driver.buses,
+            idText(&id, stringOf(&driver.id_string)),
         });
     }
-    rb.UnlockRtgDrivers();
     return dos.RETURN_OK;
+}
+
+fn printDevices(dl: *DosBase, rb: *RtgBase) i32 {
+    var found: [max_listed]rtg.RtgDeviceInfo = undefined;
+    const there = rb.GetRtgDevices(&found, found.len);
+    if (there == 0) {
+        _ = dl.PutStr(MSG_NODEVICES);
+        return dos.RETURN_WARN;
+    }
+    _ = dl.PutStr("Device        What                  Driver    Boards  Notes\n");
+    for (found[0..@min(there, found.len)]) |*device| {
+        var what: [24]u8 = undefined;
+        _ = Printf(dl, "%-12s  %-20s  %-8s  %6d  ", .{
+            stringOf(&device.name),
+            whatOf(&what, device),
+            if (device.driver[0] != 0) stringOf(&device.driver) else "-",
+            device.boards,
+        });
+        if (device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0) _ = dl.PutStr("lit by the firmware");
+        if (device.behind[0] != 0) _ = Printf(dl, ", behind %s", .{stringOf(&device.behind)});
+        _ = dl.PutStr("\n");
+    }
+    return dos.RETURN_OK;
+}
+
+/// A name `GetRtgDrivers` or `GetRtgDevices` copied out, as a string.
+fn stringOf(buffer: []const u8) [*:0]const u8 {
+    return @ptrCast(buffer.ptr);
+}
+
+/// What a device is, for people: a part's chip name, or a function's
+/// vendor and device as PCI writes them ("1af4:1050").
+fn whatOf(buffer: *[24]u8, device: *const rtg.RtgDeviceInfo) [*:0]const u8 {
+    if (device.kind != rtg.drivers.RTGDEV_PCI) {
+        return if (device.chip_name[0] != 0) stringOf(&device.chip_name) else "-";
+    }
+    const digits = "0123456789abcdef";
+    var at: usize = 0;
+    for ([_]u32{ device.vendor, device.device }, 0..) |value, which| {
+        if (which == 1) {
+            buffer[at] = ':';
+            at += 1;
+        }
+        var shift: u5 = 12;
+        while (true) : (shift -= 4) {
+            buffer[at] = digits[(value >> shift) & 0xF];
+            at += 1;
+            if (shift == 0) break;
+        }
+    }
+    buffer[at] = 0;
+    return @ptrCast(buffer);
 }
 
 fn printBoards(dl: *DosBase, rb: *RtgBase) i32 {
@@ -206,6 +265,12 @@ fn printBoard(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     _ = Printf(dl, "%-12s %s\n", .{ "Board", name(info.name) });
     var id: [48]u8 = undefined;
     _ = Printf(dl, "%-12s %s (%s)\n", .{ "Driver", name(info.driver), idText(&id, info.id_string) });
+    // Its device and what the output is called, where the answer reached
+    // that far.
+    if (got >= @offsetOf(rtg.RtgBoardInfo, "device") + @sizeOf(?[*:0]const u8)) {
+        if (info.device) |device| _ = Printf(dl, "%-12s %s\n", .{ "Device", device });
+        if (info.label) |label| _ = Printf(dl, "%-12s %s\n", .{ "Output", label });
+    }
     _ = Printf(dl, "%-12s %dx%d %s, %d bytes a row\n", .{
         "Mode",
         info.width,
@@ -353,6 +418,9 @@ const state_words = [_]Named{
     .{ .bit = rtg.boards.RTGBF_STREAMING, .word = "streaming" },
     .{ .bit = rtg.boards.RTGBF_ADOPTED, .word = "adopted" },
     .{ .bit = rtg.boards.RTGBF_POINTER, .word = "pointer-shown" },
+    .{ .bit = rtg.boards.RTGBF_COMPOSE, .word = "composed" },
+    .{ .bit = rtg.boards.RTGBF_GONE, .word = "gone" },
+    .{ .bit = rtg.boards.RTGBF_FIRMWARE, .word = "firmware" },
 };
 
 const mode_words = [_]Named{

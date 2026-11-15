@@ -133,7 +133,7 @@ tags and constants, each with its doc comment.
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and
   Ethernet adapters, writing a controller, and USB in QEMU.
-- [Displays](guides/rtg.md) - rtg.library: drivers and boards, modes,
+- [Displays](guides/rtg.md) - rtg.library: drivers, devices and boards, modes,
   buffers, handing on what was drawn, showing a buffer, several at once
   in bands, the engine, turning the picture, the pointer, events,
   asking a board, writing a driver, and the boards of this machine.

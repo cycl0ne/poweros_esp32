@@ -27,6 +27,7 @@ const boards = @import("../board/_board.zig");
 ///
 /// RESULT:
 /// `RTGERR_OK`, or: `RTGERR_BAD_ARG` for another board's buffer,
+/// `RTGERR_NO_DISPLAY` for a buffer on a board whose device has gone,
 /// `RTGERR_NOT_DISPLAYABLE`, `RTGERR_NOT_SUPPORTED` for a board that
 /// cannot show buffers or cannot pan to a non-zero `x` or `y`, or what the
 /// driver answered.
@@ -91,6 +92,8 @@ pub fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x
     boards.obtain(rb, board);
     defer boards.release(rb, board);
     if (bitmap) |bm| {
+        // A board whose device has gone shows nothing any more.
+        if (boards.dark(board)) return err.RTGERR_NO_DISPLAY;
         if (bm.board != @as(?*anyopaque, @ptrCast(board))) return err.RTGERR_BAD_ARG;
         if (bm.flags & rtg.bitmaps.RTGBMF_DISPLAYABLE == 0) return err.RTGERR_NOT_DISPLAYABLE;
     }

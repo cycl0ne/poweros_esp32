@@ -1,12 +1,65 @@
 TABLE OF CONTENTS
 
+rtg.library/AddRtgDevice
 rtg.library/AddRtgDriver
+rtg.library/CloseTransport
+rtg.library/CreateBoard
+rtg.library/DeleteBoard
 rtg.library/GetRtgTagData
+rtg.library/OpenTransport
+rtg.library/RemRtgDevice
 rtg.library/RemRtgDriver
 rtg.library/RxParam
 rtg.library/SignalRtgEvent
 rtg.library/TxColor
 rtg.library/TxParam
+rtg.library/AddRtgDevice                              rtg.library/AddRtgDevice
+
+   NAME
+	AddRtgDevice -- Makes a device from tags and offers it to the drivers.
+
+   SYNOPSIS
+	    fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice
+
+   SINCE
+	1.18. LVO -340.
+
+   INPUTS
+	- `tag_list` - what the device is, in the tags a panel part of the
+	  board's list has: `PART_Chip`, `PART_Bus`, `PART_ChipName`, and the
+	  `RTGA_` tags its driver reads. Read for as long as the device lives.
+
+   RESULT
+	The device, or null without memory. It is answered whether a driver
+	took it or not: `device.driver` says.
+
+   BEHAVIOR
+	For hardware the library cannot find by itself - a display that is
+	neither a panel of the board's list nor a function on PCI, and the
+	tests' own. The device joins the list as one of the part kind, named
+	`panel.` and the next number, and is offered at once as
+	`BindRtgDrivers` offers one: to the drivers whose table names it, the
+	closest first. The boards its driver makes join the library's list.
+
+   CONTEXT
+	- Waits: yes. A driver brings its hardware up in its `attach`.
+	- Interrupts: no.
+	- Locks: takes the device list's lock, and inside it the driver
+	  list's and the board list's. No spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The device is the library's until `RemRtgDevice`. The tags stay the
+	caller's and are kept valid until then.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`RemRtgDevice`, `BindRtgDrivers`, `CreateBoard`
+
+   EXAMPLES
+	    const device = rb.AddRtgDevice(&found_tags) orelse return error.NoMemory;
 rtg.library/AddRtgDriver                              rtg.library/AddRtgDriver
 
    NAME
@@ -16,7 +69,7 @@ rtg.library/TxParam
 	    fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver
 
    SINCE
-	1.0. LVO -292.
+	1.0. LVO -304.
 
    INPUTS
 	- `spec` - the driver's description: its name, what it makes and the
@@ -27,8 +80,8 @@ rtg.library/TxParam
 
    RESULT
 	The driver's node, or null: for operations that fill in neither
-	`create_board` nor `create_transport`, for a name already on the list,
-	and without memory.
+	`attach` nor `create_transport`, for a name already on the list, and
+	without memory.
 
    BEHAVIOR
 	The library makes the node and, in the same block behind it, the
@@ -38,12 +91,13 @@ rtg.library/TxParam
 	expansion.library where the machine has it. The block is in internal
 	memory for a driver whose interrupts read it
 	(`RTGDF_INTERNAL_INSTANCE`). The list is kept by the descriptions'
-	priority, so a caller walking it meets the most wanted driver first. A
-	driver that can make neither a board nor a transport would sit on the
-	list answering nothing, so it is refused.
+	priority, so of two that name a device as closely the more wanted is
+	asked first. A driver that can take no device and make no bus would
+	sit on the list answering nothing, so it is refused.
 
 	The library calls this itself for every driver in the ROM, at its
-	init; a test calls it for its own driver.
+	init; a test calls it for its own driver. No device is offered to the
+	driver by this call: `BindRtgDrivers` offers the ones no driver has.
 
    CONTEXT
 	- Waits: yes, while another task holds the driver list.
@@ -59,10 +113,166 @@ rtg.library/TxParam
 	None known.
 
    SEE ALSO
-	`RemRtgDriver`, `NextRtgDriver`, `CreateBoardTagList`
+	`RemRtgDriver`, `BindRtgDrivers`, `GetRtgDrivers`
 
    EXAMPLES
 	    const driver = rb.AddRtgDriver(&my_spec, null) orelse return error.DriverRefused;
+rtg.library/CloseTransport                          rtg.library/CloseTransport
+
+   NAME
+	CloseTransport -- Gives a bus back.
+
+   SYNOPSIS
+	    fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
+
+   SINCE
+	1.18. LVO -352.
+
+   INPUTS
+	- `io` - the bus, as `OpenTransport` answered it. Null does nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	The bus's driver's `destroy` is called, the bus leaves the library's
+	list, and its handle and instance are freed. Whoever opened it sends
+	nothing over it any more: a board's driver closes its bus when its
+	bring-up fails, and from its board's `destroy`.
+
+   CONTEXT
+	- Waits: yes, while another task holds the board list, and if the
+	  bus's driver does.
+	- Interrupts: no. The driver may wait on its bus.
+	- Locks: takes the board list's lock. No spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The bus is gone; its driver is one bus less.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenTransport`
+
+   EXAMPLES
+	    rb.CloseTransport(io);
+rtg.library/CreateBoard                                rtg.library/CreateBoard
+
+   NAME
+	CreateBoard -- Makes a board for one output of a device.
+
+   SYNOPSIS
+	    fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard
+
+   SINCE
+	1.18. LVO -332.
+
+   INPUTS
+	- `driver` - the driver that makes it: the one whose `attach` is
+	  running for `device`.
+	- `device` - the device the board is an output of.
+	- `spec` - what the driver says of the board: its ops, what the output
+	  is called, how many bytes of its own it keeps with the board, what
+	  is true of it from the start, where its buffers come from, and which
+	  output of the device it is. Read during the call and not kept; the
+	  label's string stays the driver's.
+
+   RESULT
+	The board, or null: when `driver` is not being offered `device`, and
+	without memory.
+
+   BEHAVIOR
+	The board's handle and the driver's instance come from memory the
+	driver can read from its interrupts (`RTGDF_INTERNAL_INSTANCE`), the
+	instance cleared. The handle has the driver, the device, the ops, the
+	region and the flags of the description; the driver fills in the
+	rest - its modes, its info, the region where it was not known - before
+	its `attach` answers. The board is on no list yet and has no name: it
+	joins the library's list once the `attach` has answered `RTGERR_OK`,
+	named after its driver and a number in the order the driver's boards
+	were made ("rgb.0"), the firmware's picture last on the list. A board
+	comes up in no mode and showing nothing; `SetBoardMode` and
+	`ShowBitMap` are what put a picture up.
+
+	An `attach` that fails after making a board deletes it (`DeleteBoard`);
+	one it leaves is freed by the library.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: called inside `attach`, with the device list's and the driver
+	  list's locks held by the caller's task.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The board is the library's from when it joins the list, and is never
+	freed for a program; until then it is the driver's to delete. The
+	driver is one board more.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`DeleteBoard`, `BindRtgDrivers`, `AddRtgDevice`, `NextBoard`
+
+   EXAMPLES
+	    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel) }) orelse return rtg.errors.RTGERR_NO_MEMORY;
+rtg.library/DeleteBoard                                rtg.library/DeleteBoard
+
+   NAME
+	DeleteBoard -- Gives a board back: stops it and frees everything it held.
+
+   SYNOPSIS
+	    fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
+
+   SINCE
+	1.0. LVO -336.
+
+   INPUTS
+	- `board` - the board, as `CreateBoard` answered it. Null does nothing.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A driver's call, for two cases. An `attach` that fails after it made a
+	board deletes it: the board has not joined the list, the driver has
+	given back what it took for it, and the handle and the instance are
+	freed - its `destroy` is not called. And a driver that is being removed
+	deletes its boards, which only a test's driver is: a program is never
+	handed a board that goes away.
+
+	A board on the list that still has an event server on it is refused -
+	it stays on the list, which is how a caller sees it - and nothing of
+	it is touched: the server's node would be left linked into a list that
+	is freed. So is one with a video layer still open (`CloseVideoLayer`
+	first). Otherwise it is taken off the display first, then every buffer
+	it still has is freed, the driver's `destroy` is called, and the board
+	leaves the list and its device. The driver is one board less.
+
+   CONTEXT
+	- Waits: yes, while another task holds the board list, and if the
+	  driver does.
+	- Interrupts: no. The driver may wait on its bus.
+	- Locks: no spinlock may be held: a driver may wait.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The board, its buffers and its display memory are gone. Event servers
+	are their owner's, and are taken off with `RemRtgEventServer` first.
+
+   BUGS
+	The answer of taking the board off the display is not looked at: one
+	whose driver refuses to show nothing has its buffers freed and its
+	driver's `destroy` called all the same.
+
+   SEE ALSO
+	`CreateBoard`, `RemRtgDevice`, `RemRtgDriver`, `RemRtgEventServer`
+
+   EXAMPLES
+	    rb.DeleteBoard(board);
 rtg.library/GetRtgTagData                            rtg.library/GetRtgTagData
 
    NAME
@@ -72,7 +282,7 @@ rtg.library/TxParam
 	    fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?[*]const TagItem) usize
 
    SINCE
-	1.0. LVO -316.
+	1.0. LVO -328.
 
    INPUTS
 	- `tag_value` - the tag.
@@ -99,10 +309,110 @@ rtg.library/TxParam
 	None known.
 
    SEE ALSO
-	`CreateBoardTagList`
+	`CreateBoard`, `AddRtgDevice`
 
    EXAMPLES
 	    const hz = rb.GetRtgTagData(MY_Clock, 12_000_000, tags);
+rtg.library/OpenTransport                            rtg.library/OpenTransport
+
+   NAME
+	OpenTransport -- Opens the bus a device is reached over.
+
+   SYNOPSIS
+	    fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?*rtg.RtgTransport
+
+   SINCE
+	1.18. LVO -348.
+
+   INPUTS
+	- `driver` - the driver that asks: the one that has `device`, or is
+	  being offered it.
+	- `device` - the device on the bus.
+
+   RESULT
+	The bus, or null: when `driver` neither has the device nor is being
+	offered it, for a bus no transport driver's table names, without
+	memory, and when no transport driver could make it.
+
+   BEHAVIOR
+	A panel on a bus is two drivers: one for the panel, which takes the
+	device, and one for the bus. The transport drivers whose table names
+	the device - its bus, most often - are asked in turn, the closest
+	first, to make the bus from the device's tags (`create_transport`):
+	the pads, the clock and the framing are tags of the part. The first
+	that answers `RTGERR_OK` has made it. The handle and the driver's
+	instance come from memory the bus's driver can read from its
+	interrupts. The panel's driver talks over the bus with `TxParam`,
+	`TxColor` and `RxParam`.
+
+   CONTEXT
+	- Waits: yes, while another task holds the driver list or the board
+	  list, and if the bus's driver does.
+	- Interrupts: no.
+	- Locks: takes the driver list's lock and the board list's. No
+	  spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The bus is the caller's until `CloseTransport`. Its driver is one bus
+	more.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`CloseTransport`, `TxParam`, `TxColor`, `RxParam`
+
+   EXAMPLES
+	    const io = rb.OpenTransport(driver, device) orelse return rtg.errors.RTGERR_NO_DISPLAY;
+rtg.library/RemRtgDevice                              rtg.library/RemRtgDevice
+
+   NAME
+	RemRtgDevice -- Takes away a device `AddRtgDevice` made.
+
+   SYNOPSIS
+	    fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void
+
+   SINCE
+	1.18. LVO -344.
+
+   INPUTS
+	- `device` - the device, as `AddRtgDevice` answered it. Null does
+	  nothing, and so does one of the machine's own: a panel part and a
+	  function on PCI never go.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Every board its driver made of it is marked as gone first
+	(`RTGBF_GONE`, `RTGBF_NO_DISPLAY`): taken off the display, passed over
+	by `NextBoard` from now on, and answering `RTGERR_NO_DISPLAY` to a
+	show - but still a handle, with its buffers, for whoever holds it.
+	Then the driver's `detach` is called, where it has one, to stop the
+	hardware, and the device leaves the list and is freed. The boards are
+	the driver's to delete (`DeleteBoard`) when it is removed itself.
+
+   CONTEXT
+	- Waits: yes, while another task holds the device list or a board's
+	  lock, and if the driver does.
+	- Interrupts: no.
+	- Locks: takes the device list's lock, and inside it each board's. No
+	  spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The device is gone, and its tags are the caller's again. Its boards
+	stay the library's. The driver is one device less.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddRtgDevice`, `DeleteBoard`, `NextBoard`
+
+   EXAMPLES
+	    rb.RemRtgDevice(device);
 rtg.library/RemRtgDriver                              rtg.library/RemRtgDriver
 
    NAME
@@ -112,18 +422,20 @@ rtg.library/TxParam
 	    fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
    SINCE
-	1.0. LVO -296.
+	1.0. LVO -308.
 
    INPUTS
 	- `driver` - the driver's node, as `AddRtgDriver` answered it.
 
    RESULT
-	True if it came off. False while a board or a bus it made is still
-	alive, and for a node that is not on the list.
+	True if it came off. False while it has a device, or a board or a bus
+	it made is still alive, and for a node that is not on the list.
 
    BEHAVIOR
 	A driver whose boards are still alive keeps its code in use, so it is
-	not taken off under them. Whether the node is on the list is asked
+	not taken off under them: its boards are deleted (`DeleteBoard`) and
+	its devices taken away (`RemRtgDevice`) first, which only a test's
+	driver sees done. Whether the node is on the list is asked
 	first, by its address alone: one that is not is not read. The node and
 	the driver's state behind it are freed.
 
@@ -141,7 +453,7 @@ rtg.library/TxParam
 	None known.
 
    SEE ALSO
-	`AddRtgDriver`, `DeleteBoard`, `DeleteTransport`
+	`AddRtgDriver`, `DeleteBoard`, `RemRtgDevice`, `CloseTransport`
 
    EXAMPLES
 	    if (rb.RemRtgDriver(driver)) unload();
@@ -154,7 +466,7 @@ rtg.library/TxParam
 	    fn RxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -312.
+	1.0. LVO -324.
 
    INPUTS
 	- `io` - the transport.
@@ -195,7 +507,7 @@ rtg.library/TxParam
 	    fn SignalRtgEvent(_: *RtgBase, board: *rtg.RtgBoard, event: u32) i32
 
    SINCE
-	1.0. LVO -300.
+	1.0. LVO -312.
 
    INPUTS
 	- `board` - the board.
@@ -236,7 +548,7 @@ rtg.library/TxParam
 	    fn TxColor(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -308.
+	1.0. LVO -320.
 
    INPUTS
 	- `io` - the transport.
@@ -278,7 +590,7 @@ rtg.library/TxParam
 	    fn TxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -304.
+	1.0. LVO -316.
 
    INPUTS
 	- `io` - the transport.

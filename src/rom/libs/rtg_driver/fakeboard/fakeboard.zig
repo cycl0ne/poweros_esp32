@@ -13,7 +13,10 @@
 //!
 //! A real driver's description is behind a ROM tag, and the library puts
 //! it on its list. This one is put there by a test (`add`), which also
-//! takes the display memory its boards are cut out of.
+//! takes the display memory its boards are cut out of. Its devices are
+//! none the library can find: a test adds one (`addDevice`), and the
+//! driver, offered it, makes a board of it - or several, or declines, or
+//! opens the device's bus first, as the test told it.
 //!
 //! Its engine really does fill and copy, so a test can compare
 //! bytes and see both that the work happened and that the rectangle it was
@@ -30,9 +33,19 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
+const st = sdk.expansion.systemtags;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 
 pub const DRIVER_NAME = "fake";
+
+/// The chip a device of the test board's kind says it is, and the bus it
+/// says it sits on: numbers no board's list has.
+pub const chip: u32 = 0x7E57_0001;
+pub const bus: u32 = 0x7E57_0002;
+
+/// The most devices and boards one test has of this driver.
+pub const max_devices = 4;
+pub const max_boards = 8;
 
 /// The display memory it reports. Small on purpose: the host tests run
 /// exec on 80 KiB of test RAM and everything else has to fit beside it.
@@ -48,6 +61,9 @@ pub const instance_pattern: u32 = 0x5A5A_1234;
 pub const Log = struct {
     created: u32 = 0,
     destroyed: u32 = 0,
+    /// Devices offered, and devices taken away again (`detach`).
+    offered: u32 = 0,
+    detached: u32 = 0,
     set_mode: u32 = 0,
     shown: u32 = 0,
     refreshed: u32 = 0,
@@ -136,11 +152,24 @@ pub const State = struct {
     /// The display memory its boards are cut out of.
     region: [*]u8,
     log: Log = .{},
+    /// The devices `addDevice` added, to be taken away again.
+    devices: [max_devices]?*rtg.RtgDevice = @splat(null),
+    device_count: u32 = 0,
+    /// The boards it made, in the order they were made: one that was
+    /// deleted leaves its place empty.
+    boards: [max_boards]?*rtg.RtgBoard = @splat(null),
+    made: u32 = 0,
 
     // What a test makes the board do.
 
-    /// Make the next create fail with this, or RTGERR_OK to let it work.
+    /// Decline the next device offered with this, or RTGERR_OK to take
+    /// it.
     create_answer: i32 = err.RTGERR_OK,
+    /// How many boards it makes of the next device it takes: its outputs.
+    outputs: u32 = 1,
+    /// Open the device's bus before it makes a board, as the driver of a
+    /// panel on a bus does, and decline when there is none.
+    opens_bus: bool = false,
     /// Leave the engine's slots empty, as a board with no engine has them.
     without_engine: bool = false,
     /// Refuse to turn the picture, as a board whose pixels go out in the
@@ -175,6 +204,8 @@ pub const State = struct {
 pub const Instance = struct {
     pattern: u32 = 0,
     calls: u32 = 0,
+    /// The bus the board's device sits on, when the driver opened it.
+    bus: ?*rtg.RtgTransport = null,
     /// This board's own modes. A driver that kept one list in its image
     /// would hand the same nodes to two boards and corrupt both.
     modes: [mode_table.len]rtg.RtgMode = mode_table,
@@ -202,16 +233,37 @@ pub fn instanceOf(board: *rtg.RtgBoard) *Instance {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
+/// What it takes: a device of its own chip, which no board's list has.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = chip },
+    .{},
+};
+
 /// The driver's description, as a real driver's ROM tag holds one.
 pub const spec = rtg.RtgDriverSpec{
     .name = DRIVER_NAME,
     .id_string = "fake board 1.0",
     .version = 1,
     .kind = rtg.drivers.RTGDT_BOARD,
+    .matches = &matches,
     .ops = &driver_ops,
     .state_size = @sizeOf(State),
-    .instance_size = @sizeOf(Instance),
 };
+
+/// A device of the test board's kind, as tags say it. Its bus is the
+/// test bus's (`fakebus.zig`).
+const device_tag_list = [_]sdk.utility.FixedTagItem{
+    .value(st.PART_Chip, chip),
+    .pointer(st.PART_ChipName, "fake display"),
+    .value(st.PART_Bus, bus),
+    .done,
+};
+
+/// The tags of a device of the test board's kind: what `AddRtgDevice` is
+/// handed, and what a test's own list ends in with a TAG_MORE.
+pub fn deviceTags() [*]const TagItem {
+    return @ptrCast(&device_tag_list);
+}
 
 /// The driver put on rtg.library's list, for a test: its description
 /// handed to AddRtgDriver, the display memory its boards are cut out of
@@ -233,17 +285,63 @@ pub fn add(sys: *ExecBase, library: *anyopaque) ?*State {
     return state;
 }
 
-/// The driver `add` put on the list taken off it again, and its display
-/// memory given back. Its boards are deleted first: false, and nothing
-/// given back, while one is alive.
+/// A device put on the library's list and offered - one of the test
+/// board's kind, which this driver takes unless a test has told it to
+/// decline. Null without memory, and with `max_devices` of them there.
+///
+/// INPUTS:
+/// - `state` - what `add` answered.
+/// - `tag_list` - what the device is; null for `deviceTags()`. A test's
+///   own list says more and ends in a TAG_MORE to those, or names another
+///   chip. It is read until the driver is removed.
+pub fn addDevice(state: *State, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice {
+    if (state.device_count == max_devices) return null;
+    const device = state.driver.rtg_base.AddRtgDevice(tag_list orelse deviceTags()) orelse return null;
+    state.devices[state.device_count] = device;
+    state.device_count += 1;
+    return device;
+}
+
+/// A device of the test board's kind added, and the first board the
+/// driver made of it: what a test of a module above rtg.library draws
+/// on. Null without memory, and when the driver declined.
+///
+/// INPUTS:
+/// - `state` - what `add` answered.
+pub fn makeBoard(state: *State) ?*rtg.RtgBoard {
+    return makeBoardFrom(state, null);
+}
+
+/// As `makeBoard`, from a device of the test's own tags.
+///
+/// INPUTS:
+/// - `state` - what `add` answered.
+/// - `tag_list` - what the device is, as `addDevice` takes it.
+pub fn makeBoardFrom(state: *State, tag_list: ?[*]const TagItem) ?*rtg.RtgBoard {
+    const before = state.made;
+    _ = addDevice(state, tag_list) orelse return null;
+    if (state.made == before) return null;
+    return state.boards[before];
+}
+
+/// The driver `add` put on the list taken off it again, with all it has:
+/// its boards deleted, its devices taken away, and its display memory
+/// given back. False, and the driver still on the list, while a board
+/// cannot go - an event server or a video layer is still on it.
 ///
 /// INPUTS:
 /// - `state` - what `add` answered.
 pub fn remove(state: *State) bool {
     const sys = state.sys;
+    const rb = state.driver.rtg_base;
     const region = state.region;
+    // A driver being removed deletes its boards; `destroyBoard` clears
+    // the place of each that went.
+    for (state.boards[0..state.made]) |made| rb.DeleteBoard(made);
+    for (state.devices[0..state.device_count]) |device| rb.RemRtgDevice(device);
+    state.device_count = 0;
     // The state goes with the node.
-    if (!state.driver.rtg_base.RemRtgDriver(state.driver)) return false;
+    if (!rb.RemRtgDriver(state.driver)) return false;
     sys.FreeMem(@ptrCast(region), region_bytes);
     return true;
 }
@@ -290,8 +388,24 @@ const mode_table = [_]rtg.RtgMode{
 // --- the ops ----------------------------------------------------------------
 
 fn destroyBoard(board: *rtg.RtgBoard) callconv(.c) void {
+    const state = stateOfBoard(board);
     instanceOf(board).calls += 1;
-    stateOfBoard(board).log.destroyed += 1;
+    state.log.destroyed += 1;
+    // The bus it opened goes with the board.
+    if (instanceOf(board).bus) |io| state.driver.rtg_base.CloseTransport(io);
+    forget(state, board);
+}
+
+/// A board that is going leaves its place among the ones made.
+fn forget(state: *State, board: *rtg.RtgBoard) void {
+    for (state.boards[0..state.made]) |*made| {
+        if (made.* == board) made.* = null;
+    }
+}
+
+/// The device is taken from the driver.
+fn detach(driver: *rtg.RtgDriver, _: *rtg.RtgDevice) callconv(.c) void {
+    stateOf(driver).log.detached += 1;
 }
 
 fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
@@ -725,36 +839,77 @@ const fixed_ops = rtg.RtgBoardOps{
     .stats = &stats,
 };
 
-fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, _: ?[*]const TagItem) callconv(.c) i32 {
-    const state = stateOf(made_by);
+/// A device of its chip is offered: a board made for each of its
+/// outputs, as the test said - or the device declined, with nothing
+/// kept.
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, _: ?[*]const TagItem) callconv(.c) i32 {
+    const state = stateOf(driver);
+    const rb = driver.rtg_base;
+    state.log.offered += 1;
     if (state.create_answer != err.RTGERR_OK) return state.create_answer;
-    state.log.created += 1;
-    const sys = made_by.sys_base;
+    if (state.made + state.outputs > max_boards) return err.RTGERR_NO_MEMORY;
 
-    const rb = board.rtg_base.?;
+    // A panel on a bus: the bus first.
+    var io: ?*rtg.RtgTransport = null;
+    if (state.opens_bus) io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
+
+    const first = state.made;
+    var unit: u32 = 0;
+    while (unit < state.outputs) : (unit += 1) {
+        const board = makeOutput(driver, device, unit) orelse {
+            // What was made of this device goes, and the bus with it.
+            for (state.boards[first..state.made]) |*made| {
+                rb.DeleteBoard(made.*);
+                made.* = null;
+            }
+            state.made = first;
+            rb.CloseTransport(io);
+            return err.RTGERR_NO_MEMORY;
+        };
+        state.boards[state.made] = board;
+        state.made += 1;
+        state.log.created += 1;
+    }
+    // The first board has the bus, and gives it back as it goes.
+    if (io) |opened| instanceOf(state.boards[first].?).bus = opened;
+    return err.RTGERR_OK;
+}
+
+/// One output's board, filled in as a real driver fills one in before its
+/// attach answers. Null without memory.
+fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.RtgBoard {
+    const state = stateOf(driver);
+    const sys = driver.sys_base;
+    const board = driver.rtg_base.CreateBoard(driver, device, &.{
+        .label = if (unit == 0) "Fake 0" else "Fake 1",
+        .ops = if (state.cannot_turn)
+            &fixed_ops
+        else if (state.without_engine)
+            &plain_ops
+        else
+            &full_ops,
+        .instance_size = @sizeOf(Instance),
+        .flags = rtg.boards.RTGBF_STREAMING,
+        // Every board of it is cut out of the one display memory: a test
+        // takes buffers on one of them.
+        .region = .{
+            .base = state.region,
+            // No more than there is, whatever a test asked for.
+            .size = @min(state.region_size, region_bytes),
+            .alignment = 64,
+            .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
+        },
+        .unit = unit,
+    }) orelse return null;
     const instance = instanceOf(board);
     instance.* = .{ .pattern = instance_pattern };
 
-    board.ops = if (state.cannot_turn)
-        &fixed_ops
-    else if (state.without_engine)
-        &plain_ops
-    else
-        &full_ops;
-
     // This board's own modes, out of its own instance.
     for (&instance.modes) |*mode| sys.AddTail(&board.modes, &mode.node);
-
-    board.region = .{
-        .base = state.region,
-        .size = state.region_size,
-        .alignment = 64,
-        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
-    };
-    board.info.flags |= rtg.boards.RTGBF_STREAMING;
     board.info.buffers = 2;
 
     if (state.claims_display) {
+        const rb = board.rtg_base.?;
         var described = rtg.RtgBitMap{
             .pixels = state.region,
             .width = 64,
@@ -770,7 +925,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, _: ?[*]const TagIt
             instance.showing_count = 1;
         }
     }
-    return err.RTGERR_OK;
+    return board;
 }
 
-const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };

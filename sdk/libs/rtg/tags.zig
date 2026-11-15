@@ -17,20 +17,17 @@
 const TAG_USER = @import("../utility/tagitem.zig").TAG_USER;
 const RTGCTRL_DRIVER = @import("boards.zig").RTGCTRL_DRIVER;
 
-/// The generic tags, which mean the same to every board driver. The
-/// library reads the name, user data, alignment, transport, brightness
-/// and display-on; the driver reads the rest of them from the same list.
+/// The generic tags, which mean the same to every board driver. They are
+/// a device's: a panel part's tags in the board's list. The library reads
+/// the alignment, brightness, display-on and whether its screens' windows
+/// are composed; the driver reads the rest of them from the same list.
 pub const RTGA_Dummy = TAG_USER + 4000;
 /// Where the drivers' own blocks start. Each takes 64.
 pub const RTGA_DriverBase = TAG_USER + 4100;
 
 // --- every board ---------------------------------------------------------
 
-/// [*:0]const u8: what to call this board. Absent: the driver's name and a
-/// number ("rgb0").
-pub const RTGA_BoardName = RTGA_Dummy + 1;
-/// ?*anyopaque: the caller's, kept in the handle and never touched.
-pub const RTGA_UserData = RTGA_Dummy + 2;
+// RTGA_Dummy + 1 and 2 are not used.
 /// u32: the mode to come up in. Absent: the driver's default mode.
 pub const RTGA_Width = RTGA_Dummy + 3;
 pub const RTGA_Height = RTGA_Dummy + 4;
@@ -60,8 +57,7 @@ pub const RTGA_Brightness = RTGA_Dummy + 16;
 /// bool: turn the display on at create. Absent: false - SetBoardMode is
 /// what turns it on.
 pub const RTGA_DisplayOn = RTGA_Dummy + 17;
-/// ?*RtgTransport: the bus this board talks through. Absent: it has none.
-pub const RTGA_Transport = RTGA_Dummy + 18;
+// RTGA_Dummy + 18 is not used.
 /// bool: take over a display that is already running rather than bring one
 /// up. A driver that cannot answers RTGERR_NOT_SUPPORTED.
 pub const RTGA_Adopt = RTGA_Dummy + 19;

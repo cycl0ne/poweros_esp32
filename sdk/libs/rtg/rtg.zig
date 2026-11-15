@@ -3,12 +3,15 @@
 //! them.
 //!
 //! A display driver is a module of its own: a constant description behind
-//! a ROM tag (`drivers.zig`), which the library puts on its list. From
-//! then on a caller asks for a board by the driver's name, gets a handle
-//! back, and works in terms of modes, buffers, a blanking and the few
-//! operations the board's own engine can do. Nothing above the driver
-//! knows what kind of display it is talking to; nothing below it knows who
-//! is looking.
+//! a ROM tag (`drivers.zig`), which the library puts on its list. The
+//! library offers each display the machine has - a panel of the board's
+//! list, a function on PCI - to the drivers that say they take such a
+//! thing (`BindRtgDrivers`), and the one that takes it makes a board for
+//! each output. A caller walks the boards (`NextBoard`: the first is the
+//! machine's display), and works in terms of modes, buffers, a blanking
+//! and the few operations the board's own engine can do. Nothing above
+//! the driver knows what kind of display it is talking to; nothing below
+//! it knows who is looking.
 //!
 //! The library holds no drawing code. A buffer is memory with a width, a
 //! height, a pitch and a format, and whoever has it writes into it and
@@ -77,6 +80,7 @@ pub const RtgPattern = bitmaps.RtgPattern;
 pub const RtgMode = boards.RtgMode;
 pub const RtgRegion = boards.RtgRegion;
 pub const RtgBoard = boards.RtgBoard;
+pub const RtgBoardSpec = boards.RtgBoardSpec;
 pub const RtgBoardInfo = boards.RtgBoardInfo;
 pub const RtgBoardStats = boards.RtgBoardStats;
 pub const RtgBand = boards.RtgBand;
@@ -91,6 +95,9 @@ pub const RtgDriverOps = drivers.RtgDriverOps;
 pub const RtgDriverSpec = drivers.RtgDriverSpec;
 pub const ResidentRtgDriver = drivers.ResidentRtgDriver;
 pub const RtgMatch = drivers.RtgMatch;
+pub const RtgDevice = drivers.RtgDevice;
+pub const RtgDriverInfo = drivers.RtgDriverInfo;
+pub const RtgDeviceInfo = drivers.RtgDeviceInfo;
 
 pub const RtgVideoLayer = video.RtgVideoLayer;
 pub const RTGVLF_UNDER = video.RTGVLF_UNDER;

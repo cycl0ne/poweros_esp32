@@ -2682,8 +2682,7 @@ const Display = struct {
         const gb: *host_rom.graphics.GraphicsBase = @ptrCast(@alignCast(kib.graphics_base));
         const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         const state = host_rom.fakeboard.add(kib.sys_base, rtg_base) orelse return error.NoDriver;
-        const empty = [_]TagItem{.{}};
-        const board = rtg_base.CreateBoardTagList(host_rom.fakeboard.DRIVER_NAME, &empty) orelse return error.NoBoard;
+        const board = host_rom.fakeboard.makeBoard(state) orelse return error.NoBoard;
         board.info.width = 64;
         board.info.height = 40;
         const bitmap = rtg_base.AllocBitMap(board, 64, 40, @intFromEnum(sdk.rtg.bitmaps.PixelFormat.rgb565), sdk.rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse return error.NoBitMap;
@@ -2695,7 +2694,6 @@ const Display = struct {
         const gb: *host_rom.graphics.GraphicsBase = @ptrCast(@alignCast(kib.graphics_base));
         const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         rtg_base.FreeBitMap(d.bitmap);
-        rtg_base.DeleteBoard(d.board);
         _ = host_rom.fakeboard.remove(d.state);
     }
 

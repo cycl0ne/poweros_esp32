@@ -43,9 +43,9 @@ const owner = "rtg-fb";
 /// The vendor every virtio device has, and the two device numbers a GPU
 /// may carry: the one every modern device of its kind has, and the one a
 /// device that also speaks the older arrangement keeps.
-const VENDOR: u32 = 0x1AF4;
-const DEVICE_GPU: u32 = 0x1050;
-const DEVICE_GPU_OLD: u32 = 0x1010;
+pub const VENDOR: u32 = 0x1AF4;
+pub const DEVICE_GPU: u32 = 0x1050;
+pub const DEVICE_GPU_OLD: u32 = 0x1010;
 
 /// A virtio capability, past the two bytes every capability starts with:
 /// which kind of window it describes, which BAR it is in, where in that
@@ -87,19 +87,14 @@ pub const Windows = struct {
     config: usize = 0,
 };
 
-/// The machine's first virtio GPU on PCI, claimed and switched on, with
-/// its windows read out of its configuration space. Null where the
-/// machine has no pci.library, no such function, one somebody else has
-/// claimed, or one whose capabilities do not describe the windows this
-/// drives.
-pub fn find(sys: *ExecBase) ?Windows {
+/// A virtio GPU's function on PCI, claimed and switched on, with its
+/// windows read out of its configuration space. Null where the machine
+/// has no pci.library, for a function somebody else has claimed, and for
+/// one whose capabilities do not describe the windows this drives.
+pub fn take(sys: *ExecBase, device: *PCIDevice) ?Windows {
     const lib = sys.OpenLibrary(pci.PCINAME, 1) orelse return null;
     const base: *PCIBase = @ptrCast(lib);
-    var found: ?*PCIDevice = null;
-    while (base.FindPCIDevice(found, VENDOR, pci.PCI_ANY)) |device| {
-        found = device;
-        if (device.device_id != DEVICE_GPU and device.device_id != DEVICE_GPU_OLD) continue;
-        if (base.ClaimPCIDevice(device, owner) != null) continue;
+    if (base.ClaimPCIDevice(device, owner) == null) {
         if (windowsOf(sys, lib, base, device)) |windows| {
             switchOn(base, device);
             return windows;

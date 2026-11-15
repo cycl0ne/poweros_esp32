@@ -28,10 +28,12 @@ const RtgBase = rtg_base.RtgBase;
 
 const AddRtgDriver = @import("driver/addrtgdriver.zig").AddRtgDriver;
 const RemRtgDriver = @import("driver/remrtgdriver.zig").RemRtgDriver;
-const LockRtgDrivers = @import("driver/lockrtgdrivers.zig").LockRtgDrivers;
-const UnlockRtgDrivers = @import("driver/unlockrtgdrivers.zig").UnlockRtgDrivers;
-const NextRtgDriver = @import("driver/nextrtgdriver.zig").NextRtgDriver;
-const CreateBoardTagList = @import("board/createboardtaglist.zig").CreateBoardTagList;
+const GetRtgDrivers = @import("driver/getrtgdrivers.zig").GetRtgDrivers;
+const BindRtgDrivers = @import("device/bindrtgdrivers.zig").BindRtgDrivers;
+const GetRtgDevices = @import("device/getrtgdevices.zig").GetRtgDevices;
+const AddRtgDevice = @import("device/addrtgdevice.zig").AddRtgDevice;
+const RemRtgDevice = @import("device/remrtgdevice.zig").RemRtgDevice;
+const CreateBoard = @import("board/createboard.zig").CreateBoard;
 const DeleteBoard = @import("board/deleteboard.zig").DeleteBoard;
 const NextBoard = @import("board/nextboard.zig").NextBoard;
 const FindBoard = @import("board/findboard.zig").FindBoard;
@@ -73,8 +75,8 @@ const ScalePixels = @import("engine/scalepixels.zig").ScalePixels;
 const AddRtgEventServer = @import("event/addrtgeventserver.zig").AddRtgEventServer;
 const RemRtgEventServer = @import("event/remrtgeventserver.zig").RemRtgEventServer;
 const SignalRtgEvent = @import("event/signalrtgevent.zig").SignalRtgEvent;
-const CreateTransportTagList = @import("transport/createtransporttaglist.zig").CreateTransportTagList;
-const DeleteTransport = @import("transport/deletetransport.zig").DeleteTransport;
+const OpenTransport = @import("transport/opentransport.zig").OpenTransport;
+const CloseTransport = @import("transport/closetransport.zig").CloseTransport;
 const TxParam = @import("transport/txparam.zig").TxParam;
 const TxColor = @import("transport/txcolor.zig").TxColor;
 const RxParam = @import("transport/rxparam.zig").RxParam;
@@ -133,10 +135,12 @@ comptime {
 const contract_files = [_][]const u8{
     @embedFile("driver/addrtgdriver.zig"),
     @embedFile("driver/remrtgdriver.zig"),
-    @embedFile("driver/lockrtgdrivers.zig"),
-    @embedFile("driver/unlockrtgdrivers.zig"),
-    @embedFile("driver/nextrtgdriver.zig"),
-    @embedFile("board/createboardtaglist.zig"),
+    @embedFile("driver/getrtgdrivers.zig"),
+    @embedFile("device/bindrtgdrivers.zig"),
+    @embedFile("device/getrtgdevices.zig"),
+    @embedFile("device/addrtgdevice.zig"),
+    @embedFile("device/remrtgdevice.zig"),
+    @embedFile("board/createboard.zig"),
     @embedFile("board/deleteboard.zig"),
     @embedFile("board/nextboard.zig"),
     @embedFile("board/findboard.zig"),
@@ -169,8 +173,8 @@ const contract_files = [_][]const u8{
     @embedFile("event/addrtgeventserver.zig"),
     @embedFile("event/remrtgeventserver.zig"),
     @embedFile("event/signalrtgevent.zig"),
-    @embedFile("transport/createtransporttaglist.zig"),
-    @embedFile("transport/deletetransport.zig"),
+    @embedFile("transport/opentransport.zig"),
+    @embedFile("transport/closetransport.zig"),
     @embedFile("transport/txparam.zig"),
     @embedFile("transport/txcolor.zig"),
     @embedFile("transport/rxparam.zig"),
@@ -197,17 +201,23 @@ fn lvoAddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*any
 fn lvoRemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) callconv(.c) bool {
     return RemRtgDriver(rb, driver);
 }
-fn lvoLockRtgDrivers(rb: *RtgBase) callconv(.c) void {
-    LockRtgDrivers(rb);
+fn lvoBindRtgDrivers(rb: *RtgBase) callconv(.c) u32 {
+    return BindRtgDrivers(rb);
 }
-fn lvoUnlockRtgDrivers(rb: *RtgBase) callconv(.c) void {
-    UnlockRtgDrivers(rb);
+fn lvoGetRtgDrivers(rb: *RtgBase, into: ?[*]rtg.RtgDriverInfo, count: u32) callconv(.c) u32 {
+    return GetRtgDrivers(rb, into, count);
 }
-fn lvoNextRtgDriver(rb: *RtgBase, after: ?*rtg.RtgDriver) callconv(.c) ?*rtg.RtgDriver {
-    return NextRtgDriver(rb, after);
+fn lvoGetRtgDevices(rb: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) callconv(.c) u32 {
+    return GetRtgDevices(rb, into, count);
 }
-fn lvoCreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) callconv(.c) ?*rtg.RtgBoard {
-    return CreateBoardTagList(rb, driver_name, tag_list);
+fn lvoCreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) callconv(.c) ?*rtg.RtgBoard {
+    return CreateBoard(rb, driver, device, spec);
+}
+fn lvoAddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) callconv(.c) ?*rtg.RtgDevice {
+    return AddRtgDevice(rb, tag_list);
+}
+fn lvoRemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) callconv(.c) void {
+    RemRtgDevice(rb, device);
 }
 fn lvoDeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) callconv(.c) void {
     DeleteBoard(rb, board);
@@ -287,11 +297,11 @@ fn lvoRemRtgEventServer(rb: *RtgBase, board: *rtg.RtgBoard, event: u32, server: 
 fn lvoSignalRtgEvent(rb: *RtgBase, board: *rtg.RtgBoard, event: u32) callconv(.c) i32 {
     return SignalRtgEvent(rb, board, event);
 }
-fn lvoCreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) callconv(.c) ?*rtg.RtgTransport {
-    return CreateTransportTagList(rb, driver_name, tag_list);
+fn lvoOpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) callconv(.c) ?*rtg.RtgTransport {
+    return OpenTransport(rb, driver, device);
 }
-fn lvoDeleteTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) callconv(.c) void {
-    DeleteTransport(rb, io);
+fn lvoCloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) callconv(.c) void {
+    CloseTransport(rb, io);
 }
 fn lvoTxParam(rb: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaque, size: u32) callconv(.c) i32 {
     return TxParam(rb, io, cmd, param, size);
@@ -372,7 +382,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 17;
+const reserved_slots = 24;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -392,11 +402,11 @@ pub const vectors = [_]*const anyopaque{
     vec(reserved),
     vec(reserved),
     vec(reserved),
-    vec(lvoLockRtgDrivers),
-    vec(lvoUnlockRtgDrivers),
-    vec(lvoNextRtgDriver),
-    vec(lvoCreateBoardTagList),
-    vec(lvoDeleteBoard),
+    vec(reserved),
+    vec(reserved),
+    vec(reserved),
+    vec(reserved),
+    vec(reserved),
     vec(lvoNextBoard),
     vec(lvoFindBoard),
     vec(lvoGetBoardInfo),
@@ -427,8 +437,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoAddRtgEventServer),
     vec(lvoRemRtgEventServer),
     vec(reserved),
-    vec(lvoCreateTransportTagList),
-    vec(lvoDeleteTransport),
+    vec(reserved),
+    vec(reserved),
     vec(reserved),
     vec(reserved),
     vec(reserved),
@@ -457,6 +467,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRtgFormatBits),
     vec(lvoRtgRowBytes),
     vec(lvoRtgCicp),
+    vec(lvoBindRtgDrivers),
+    vec(lvoGetRtgDrivers),
+    vec(lvoGetRtgDevices),
     // The drivers' interface.
     vec(lvoAddRtgDriver),
     vec(lvoRemRtgDriver),
@@ -465,6 +478,12 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoTxColor),
     vec(lvoRxParam),
     vec(lvoGetRtgTagData),
+    vec(lvoCreateBoard),
+    vec(lvoDeleteBoard),
+    vec(lvoAddRtgDevice),
+    vec(lvoRemRtgDevice),
+    vec(lvoOpenTransport),
+    vec(lvoCloseTransport),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -477,7 +496,7 @@ const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"
 test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
     // The reserved slots are in the table but not in either LVO.
     try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 79), vectors.len);
+    try testing.expectEqual(@as(usize, 88), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

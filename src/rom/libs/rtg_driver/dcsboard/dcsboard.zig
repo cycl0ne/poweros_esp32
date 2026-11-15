@@ -3,9 +3,10 @@
 //! CASET, RASET, RAMWR, MADCTL - over a command bus, as a display board.
 //!
 //! A module of its own: a description of a driver called "dcs" behind a
-//! ROM tag, which rtg.library puts on its list. A board of it is made on
-//! a bus a transport driver
-//! made first (`RTGA_Transport`), and everything that makes one controller
+//! ROM tag, which rtg.library puts on its list. It takes a panel on a
+//! command bus (`BUS_SPI`): offered one, it opens the bus the panel sits
+//! on (`OpenTransport`, which a transport driver makes from the same
+//! tags) and makes its board on it. Everything that makes one controller
 //! differ from the next arrives as tags: the bring-up the panel's maker
 //! gives, the MADCTL values that set it upright and on its side, and the
 //! alignment its windows keep. So another controller of this kind is
@@ -54,8 +55,8 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 5;
-const BUILD_DATE = "15.11.2026";
+const REVISION = 6;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -110,11 +111,6 @@ const Panel = struct {
     gpio_base: ?*GpioBase = null,
     held_pads: [2]u8 = .{ 0, 0 },
     held_count: u8 = 0,
-    /// A picture's bytes, and how many pictures the board may have at
-    /// once - several, so one can be drawn while another is on the glass;
-    /// the library takes each from system memory as it is asked for.
-    frame_bytes: usize = 0,
-    frames: u32 = 0,
     band: ?[*]align(4) u8 = null,
     band_rows: u32 = 0,
     stats: rtg.RtgBoardStats = .{},
@@ -152,19 +148,59 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
-fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const sys = made_by.sys_base;
-    const rb = made_by.rtg_base;
-    const io = board.transport orelse return err.RTGERR_BAD_TAGS;
-
-    const width: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list));
-    const height: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list));
-    const init_at = rb.GetRtgTagData(tags.RTGA_DCS_InitSequence, 0, tag_list);
-    const init_length = rb.GetRtgTagData(tags.RTGA_DCS_InitLength, 0, tag_list);
-    if (width == 0 or height == 0 or init_at == 0) return err.RTGERR_BAD_TAGS;
-    const bring_up = @as([*]const u8, @ptrFromInt(init_at))[0..init_length];
+/// A panel on a command bus is offered: its bus opened, the controller
+/// brought up, and a board made of it. Whatever fails, the bus and the
+/// board are given back.
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const TagItem) callconv(.c) i32 {
+    const rb = driver.rtg_base;
+    // What has to be there, looked at before anything is taken.
+    const size = sizeOf(rb, tag_list);
+    const bring_up = sequenceOf(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
+    if (size.width == 0 or size.height == 0) return err.RTGERR_BAD_TAGS;
     if (!sequence.valid(bring_up)) return err.RTGERR_BAD_TAGS;
 
+    // The bus the controller sits on, made from the same tags.
+    const io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
+    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel) }) orelse {
+        rb.CloseTransport(io);
+        return err.RTGERR_NO_MEMORY;
+    };
+    const code = bringUpBoard(driver, board, io, tag_list);
+    if (code != err.RTGERR_OK) {
+        rb.DeleteBoard(board);
+        rb.CloseTransport(io);
+    }
+    return code;
+}
+
+/// The panel's size, as its tags give it; 0 where they give none.
+fn sizeOf(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) struct { width: u32, height: u32 } {
+    return .{
+        .width = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
+        .height = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
+    };
+}
+
+/// The controller's bring-up, as its tags give it; null where they give
+/// none.
+fn sequenceOf(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?[]const u8 {
+    const init_at = rb.GetRtgTagData(tags.RTGA_DCS_InitSequence, 0, tag_list);
+    const init_length = rb.GetRtgTagData(tags.RTGA_DCS_InitLength, 0, tag_list);
+    if (init_at == 0) return null;
+    return @as([*]const u8, @ptrFromInt(init_at))[0..init_length];
+}
+
+/// The board's panel filled in from the tags, which `attach` has looked
+/// at, and brought up on its bus. On any answer but RTGERR_OK it has
+/// given back what it took, the bus and the board excepted, which are the
+/// caller's to give back.
+fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransport, tag_list: ?[*]const TagItem) i32 {
+    const sys = driver.sys_base;
+    const rb = driver.rtg_base;
+    const size = sizeOf(rb, tag_list);
+    const width = size.width;
+    const height = size.height;
+    const bring_up = sequenceOf(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
     const panel = panelOf(board);
     panel.* = .{
         .sys = sys,
@@ -209,10 +245,10 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         giveBack(panel);
         return err.RTGERR_BAD_TAGS;
     }
-    panel.frame_bytes = @as(usize, width) * height * 2;
+    const frame_bytes = @as(usize, width) * height * 2;
     // As many pictures as the board asks for (`RTGA_Buffers`) at once, each
     // taken by the library as it is asked for.
-    panel.frames = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
+    const frames = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
 
     // Dark until there is a picture, then out of reset and through the
     // maker's bring-up.
@@ -247,12 +283,11 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     }
 
     board.region = .{
-        .size = panel.frames * panel.frame_bytes,
+        .size = frames * frame_bytes,
         .alignment = sdk.hardware.DCACHE_LINE_SIZE,
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
-    board.ops = &ops;
-    board.info.buffers = panel.frames;
+    board.info.buffers = frames;
     board.info.brightness = 0;
     return err.RTGERR_OK;
 }
@@ -318,6 +353,8 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const panel = panelOf(board);
     setBacklight(panel, false);
     giveBack(panel);
+    // The bus it opened goes with the board.
+    panel.rtg_base.CloseTransport(panel.io);
 }
 
 /// The mode is a way up: MADCTL says which, and the windows are cut from
@@ -807,7 +844,13 @@ const ops = rtg.RtgBoardOps{
     .show_pointer = &showPointer,
 };
 
-const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
+
+/// What it takes: a panel reached over a command bus on SPI.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = sdk.expansion.systemtags.BUS_SPI },
+    .{},
+};
 
 /// The driver's tag: a description and no init. rtg.library reads it at
 /// its own init and puts the driver on its list; nothing of this module
@@ -826,8 +869,8 @@ export const rtg_dcs_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
         .version = VERSION,
         .revision = REVISION,
         .kind = rtg.drivers.RTGDT_BOARD,
+        .matches = &matches,
         .ops = &driver_ops,
-        .instance_size = @sizeOf(Panel),
     },
 };
 

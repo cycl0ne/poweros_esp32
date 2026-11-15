@@ -15,7 +15,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?[*]const TagItem) usize
 /// ```
 ///
-/// SINCE: 1.0. LVO -316.
+/// SINCE: 1.0. LVO -328.
 ///
 /// INPUTS:
 /// - `tag_value` - the tag.
@@ -42,7 +42,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `CreateBoardTagList`
+/// `CreateBoard`, `AddRtgDevice`
 ///
 /// EXAMPLES:
 /// ```zig

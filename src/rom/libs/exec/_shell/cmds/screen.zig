@@ -132,10 +132,10 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     if (rb.SetBoardBrightness(display.board, percent) != rtg.errors.RTGERR_OK) shell.print("the backlight does not answer\n", .{});
 }
 
-/// The board graphics.library made, and the picture it shows. Null when
-/// there is no display or nothing is shown.
+/// The machine's display - the first board rtg.library lists - and the
+/// picture it shows. Null when there is no display or nothing is shown.
 fn find(rb: *RtgBase) ?Display {
-    const board = rb.FindBoard(sdk.graphics.DISPLAY_BOARD) orelse return null;
+    const board = rb.NextBoard(null) orelse return null;
     const bitmap = board.showing orelse return null;
     const pixels = bitmap.pixels orelse return null;
     return .{

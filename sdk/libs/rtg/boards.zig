@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! Display boards: what a driver makes, and what a caller gets back.
 //!
+//! A board is one output of a device: a connector, or a panel. Its driver
+//! makes it while it is offered the device (`CreateBoard`, with an
+//! `RtgBoardSpec`), and the library names it - the driver's name, a point
+//! and a number, in the order they are made ("rgb.0"). A board's handle is
+//! good for as long as the machine runs: one whose device has gone says
+//! `RTGBF_GONE`, is passed over by `NextBoard`, and shows nothing.
+//!
 //! A board is a display and the memory it reads from. It has a list of
 //! modes it can be put into, a region of display memory the library hands
 //! buffers out of, a way to be given a buffer to show, a vertical blank,
@@ -17,7 +24,6 @@ const nodes = @import("../exec/nodes.zig");
 const lists = @import("../exec/lists.zig");
 const bitmaps = @import("bitmaps.zig");
 const video = @import("video.zig");
-const transport = @import("transport.zig");
 const events = @import("events.zig");
 const drivers = @import("drivers.zig");
 const tagitem = @import("../utility/tagitem.zig");
@@ -92,8 +98,8 @@ pub const RTGRF_DMA_MEMORY: u32 = 1 << 4;
 /// disk may be older or newer than the ROM answering it, so fields are
 /// only ever added at the end.
 pub const RtgBoardInfo = extern struct {
-    /// The driver that made it, the board's own name, and what the driver
-    /// calls itself.
+    /// The driver that made it, the board's own name ("rgb.0"), and what
+    /// the driver calls itself.
     driver: ?[*:0]const u8 = null,
     name: ?[*:0]const u8 = null,
     id_string: ?[*:0]const u8 = null,
@@ -127,6 +133,11 @@ pub const RtgBoardInfo = extern struct {
     mirror_x: u8 = 0,
     mirror_y: u8 = 0,
     pad2: [2]u8 = .{ 0, 0 },
+    /// What the output is called on the machine ("HDMI 0"), as its driver
+    /// says it; null for one with no name of its own (rtg 18).
+    label: ?[*:0]const u8 = null,
+    /// The device it is an output of ("panel.0", "pci.01:00.0") (rtg 18).
+    device: ?[*:0]const u8 = null,
 };
 
 /// RtgBoardInfo.flags
@@ -150,6 +161,11 @@ pub const RTGBF_POINTER: u32 = 1 << 6;
 /// The windows of a screen on it are composed (RTGA_Compose): intuition
 /// opens its screens' layers that way.
 pub const RTGBF_COMPOSE: u32 = 1 << 7;
+/// Its device has gone, for good: it is off NextBoard's walk and has no
+/// display (RTGBF_NO_DISPLAY comes with it). The handle stays valid.
+pub const RTGBF_GONE: u32 = 1 << 8;
+/// It is the picture the firmware lit: the last board of the walk.
+pub const RTGBF_FIRMWARE: u32 = 1 << 9;
 
 /// RtgBoardInfo.caps: which ops the driver filled in.
 pub const RTGBC_SET_MODE: u32 = 1 << 0;
@@ -274,31 +290,57 @@ pub const RTG_POINTER_MAX: u32 = 64;
 /// where that interrupt reads it.
 pub const RTG_OVERLAY_MAX: u32 = 160;
 
+/// What a driver says of a board as it makes it (`CreateBoard`). It is
+/// read during the call and not kept.
+pub const RtgBoardSpec = extern struct {
+    /// What the output is called on the machine ("HDMI 0"), or null. The
+    /// string stays the driver's, and stays valid as long as the driver
+    /// is on the list.
+    label: ?[*:0]const u8 = null,
+    /// The board's operations.
+    ops: *const RtgBoardOps,
+    /// Bytes of the driver's own the library allocates behind the board
+    /// and clears (`RtgBoard.instance`). 0: none.
+    instance_size: u32 = 0,
+    /// RTGBF_*: what is true of the board from the start - RTGBF_STREAMING,
+    /// RTGBF_ADOPTED, RTGBF_COMPOSE where the device's tags do not say.
+    flags: u32 = 0,
+    /// Where its buffers are taken from. A driver that knows it only once
+    /// the hardware has answered leaves it empty and writes
+    /// `RtgBoard.region` before its `attach` answers.
+    region: RtgRegion = .{},
+    /// Which output of the device it is, from 0.
+    unit: u32 = 0,
+};
+
 /// A board. What the driver keeps for itself is `instance`, which the
 /// library allocates, clears and frees with the handle.
 pub const RtgBoard = extern struct {
-    /// ln_Name is the instance's name ("rgb0"); ln_Pri orders the list.
+    /// ln_Name is the board's name ("rgb.0"); ln_Pri orders the list,
+    /// highest first: the firmware's picture last.
     node: Node = .{},
     rtg_base: ?*RtgBase = null,
     driver: ?*drivers.RtgDriver = null,
-    /// The command bus it sits on, for a board that has one.
-    transport: ?*transport.RtgTransport = null,
+    /// The device it is an output of; null once that has gone.
+    device: ?*drivers.RtgDevice = null,
+    /// Which output of the device it is, from 0.
+    unit: u32 = 0,
+    pad0: u32 = 0,
     ops: ?*const RtgBoardOps = null,
     info: RtgBoardInfo = .{},
-    /// The modes, RtgMode nodes. The driver fills the list before it
-    /// returns from create.
+    /// The modes, RtgMode nodes. The driver fills the list before its
+    /// attach answers.
     modes: List = .{},
     /// The display memory, and what has been handed out of it.
     region: RtgRegion = .{},
     bitmaps: List = .{},
     /// The buffer the display shows - the last band's - or null. The
     /// library's, written once the driver's show has answered RTGERR_OK;
-    /// a driver writes it only in create, for a display it found running.
+    /// a driver writes it only in its attach, for a display it found
+    /// running.
     showing: ?*RtgBitMap = null,
     /// Event servers, one list per RTGEV_*.
     event_lists: [events.RTGEV_COUNT]List = [_]List{.{}} ** events.RTGEV_COUNT,
-    /// The caller's, untouched by the library and the driver.
-    user_data: ?*anyopaque = null,
     /// The driver's own data: `instance_size` bytes the library allocated
     /// and cleared when the board was made, and frees with it.
     instance: ?*anyopaque = null,
@@ -322,8 +364,9 @@ pub const RtgBoard = extern struct {
 /// What a driver fills in. Every slot may be null; a null slot is an
 /// operation the board has not got.
 pub const RtgBoardOps = extern struct {
-    /// Undo what create did. DeleteBoard calls it last, after the board
-    /// has been un-shown and its buffers freed.
+    /// Undo what the board's making took. DeleteBoard calls it for a board
+    /// that joined the list, last, after the board has been un-shown and
+    /// its buffers freed.
     destroy: ?*const fn (*RtgBoard) callconv(.c) void = null,
     /// Put the board in that mode. The driver sets info.width, .height,
     /// .format and .pitch, and may replace the region - the library has

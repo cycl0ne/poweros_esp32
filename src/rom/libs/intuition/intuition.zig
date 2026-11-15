@@ -807,8 +807,7 @@ const Display = struct {
         const gb: *kgraphics.GraphicsBase = @ptrCast(@alignCast(ib.graphics_base));
         const rb: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         const state = fake.add(ib.sys_base, rb) orelse return error.NoDriver;
-        const empty = [_]TagItem{.{}};
-        const board = rb.CreateBoardTagList(fake.DRIVER_NAME, &empty) orelse return error.NoBoard;
+        const board = fake.makeBoard(state) orelse return error.NoBoard;
         // The display is the size of the buffer it is brought up with.
         board.info.width = width;
         board.info.height = height;
@@ -821,7 +820,6 @@ const Display = struct {
         const gb: *kgraphics.GraphicsBase = @ptrCast(@alignCast(ib.graphics_base));
         const rb: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         rb.FreeBitMap(d.bitmap);
-        rb.DeleteBoard(d.board);
         _ = fake.remove(d.state);
     }
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! rtg.library's functions for programs: the displays of this machine. A
-//! caller asks for a board by its driver's name; what comes back has
+//! caller walks the boards the drivers made, the first of which is the
+//! machine's display; a board has
 //! modes, display memory, a buffer it is shown out of and a blanking. The
 //! library draws nothing of its own - an operation a board's engine can do
 //! is offered through the board, and a board that has not got it says so.
@@ -20,11 +21,6 @@ pub const NAME = "rtg.library";
 
 /// Each function's offset in the jump table (its LVO).
 pub const LVO = struct {
-    pub const LockRtgDrivers = libraries.lvo(7);
-    pub const UnlockRtgDrivers = libraries.lvo(8);
-    pub const NextRtgDriver = libraries.lvo(9);
-    pub const CreateBoardTagList = libraries.lvo(10);
-    pub const DeleteBoard = libraries.lvo(11);
     pub const NextBoard = libraries.lvo(12);
     pub const FindBoard = libraries.lvo(13);
     pub const GetBoardInfo = libraries.lvo(14);
@@ -49,8 +45,6 @@ pub const LVO = struct {
     pub const BlitPattern = libraries.lvo(35);
     pub const AddRtgEventServer = libraries.lvo(39);
     pub const RemRtgEventServer = libraries.lvo(40);
-    pub const CreateTransportTagList = libraries.lvo(42);
-    pub const DeleteTransport = libraries.lvo(43);
     pub const RtgErrorText = libraries.lvo(50);
     pub const MirrorBoard = libraries.lvo(51);
     pub const SetBoardPointer = libraries.lvo(54);
@@ -71,16 +65,14 @@ pub const LVO = struct {
     pub const RtgFormatBits = libraries.lvo(69);
     pub const RtgRowBytes = libraries.lvo(70);
     pub const RtgCicp = libraries.lvo(71);
+    pub const BindRtgDrivers = libraries.lvo(72);
+    pub const GetRtgDrivers = libraries.lvo(73);
+    pub const GetRtgDevices = libraries.lvo(74);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
 /// library's base.
 pub const Fn = struct {
-    pub const LockRtgDrivers = *const fn (*RtgBase) callconv(.c) void;
-    pub const UnlockRtgDrivers = *const fn (*RtgBase) callconv(.c) void;
-    pub const NextRtgDriver = *const fn (*RtgBase, ?*rtg.RtgDriver) callconv(.c) ?*rtg.RtgDriver;
-    pub const CreateBoardTagList = *const fn (*RtgBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) ?*rtg.RtgBoard;
-    pub const DeleteBoard = *const fn (*RtgBase, ?*rtg.RtgBoard) callconv(.c) void;
     pub const NextBoard = *const fn (*RtgBase, ?*rtg.RtgBoard) callconv(.c) ?*rtg.RtgBoard;
     pub const FindBoard = *const fn (*RtgBase, [*:0]const u8) callconv(.c) ?*rtg.RtgBoard;
     pub const GetBoardInfo = *const fn (*RtgBase, *rtg.RtgBoard, *rtg.RtgBoardInfo, u32) callconv(.c) u32;
@@ -105,8 +97,6 @@ pub const Fn = struct {
     pub const BlitPattern = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPattern) callconv(.c) i32;
     pub const AddRtgEventServer = *const fn (*RtgBase, *rtg.RtgBoard, u32, *exec.Interrupt) callconv(.c) bool;
     pub const RemRtgEventServer = *const fn (*RtgBase, *rtg.RtgBoard, u32, *exec.Interrupt) callconv(.c) void;
-    pub const CreateTransportTagList = *const fn (*RtgBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) ?*rtg.RtgTransport;
-    pub const DeleteTransport = *const fn (*RtgBase, ?*rtg.RtgTransport) callconv(.c) void;
     pub const RtgErrorText = *const fn (*RtgBase, i32) callconv(.c) [*:0]const u8;
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
@@ -127,6 +117,9 @@ pub const Fn = struct {
     pub const RtgFormatBits = *const fn (*RtgBase, u32) callconv(.c) u32;
     pub const RtgRowBytes = *const fn (*RtgBase, u32, u32) callconv(.c) u32;
     pub const RtgCicp = *const fn (*RtgBase, u32, u32) callconv(.c) i32;
+    pub const BindRtgDrivers = *const fn (*RtgBase) callconv(.c) u32;
+    pub const GetRtgDrivers = *const fn (*RtgBase, ?[*]rtg.RtgDriverInfo, u32) callconv(.c) u32;
+    pub const GetRtgDevices = *const fn (*RtgBase, ?[*]rtg.RtgDeviceInfo, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -137,41 +130,13 @@ pub const RtgBase = opaque {
         return @ptrCast(@alignCast(self));
     }
 
-    /// Hold the driver list still so it can be walked. Nests.
-    pub fn LockRtgDrivers(self: *RtgBase) void {
-        return libraries.call(self, LVO.LockRtgDrivers, Fn.LockRtgDrivers, .{});
-    }
-
-    /// Let it go again.
-    pub fn UnlockRtgDrivers(self: *RtgBase) void {
-        return libraries.call(self, LVO.UnlockRtgDrivers, Fn.UnlockRtgDrivers, .{});
-    }
-
-    /// The next driver after `after`, or the first for null. The list must be
-    /// locked.
-    pub fn NextRtgDriver(self: *RtgBase, after: ?*rtg.RtgDriver) ?*rtg.RtgDriver {
-        return libraries.call(self, LVO.NextRtgDriver, Fn.NextRtgDriver, .{after});
-    }
-
-    /// A board from that driver, set up by the tags (RTGA_*). It is in no mode
-    /// and shows nothing yet. Null: no driver of that name, no memory, or a
-    /// driver that could not make it.
-    pub fn CreateBoardTagList(self: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const utility.TagItem) ?*rtg.RtgBoard {
-        return libraries.call(self, LVO.CreateBoardTagList, Fn.CreateBoardTagList, .{ driver_name, tag_list });
-    }
-
-    /// Stop a board and give everything back. Free your buffers and remove
-    /// your event servers first. Null does nothing.
-    pub fn DeleteBoard(self: *RtgBase, board: ?*rtg.RtgBoard) void {
-        return libraries.call(self, LVO.DeleteBoard, Fn.DeleteBoard, .{board});
-    }
-
-    /// The next board after `after`, or the first for null.
+    /// The next board after `after`, or the first for null: the machine's
+    /// display. A board whose device has gone is passed over.
     pub fn NextBoard(self: *RtgBase, after: ?*rtg.RtgBoard) ?*rtg.RtgBoard {
         return libraries.call(self, LVO.NextBoard, Fn.NextBoard, .{after});
     }
 
-    /// The board of that name, or null.
+    /// The board of that name ("rgb.0"), gone or not, or null.
     pub fn FindBoard(self: *RtgBase, board_name: [*:0]const u8) ?*rtg.RtgBoard {
         return libraries.call(self, LVO.FindBoard, Fn.FindBoard, .{board_name});
     }
@@ -313,18 +278,6 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.RemRtgEventServer, Fn.RemRtgEventServer, .{ board, event, server });
     }
 
-    /// A bus from that driver, set up by the tags (RTGA_*). Null: no driver
-    /// of that name, no memory, or a driver that could not make it.
-    pub fn CreateTransportTagList(self: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const utility.TagItem) ?*rtg.RtgTransport {
-        return libraries.call(self, LVO.CreateTransportTagList, Fn.CreateTransportTagList, .{ driver_name, tag_list });
-    }
-
-    /// Give a bus back. Refused while a board is still on it. Null does
-    /// nothing.
-    pub fn DeleteTransport(self: *RtgBase, io: ?*rtg.RtgTransport) void {
-        return libraries.call(self, LVO.DeleteTransport, Fn.DeleteTransport, .{io});
-    }
-
     /// An error in words. Never null.
     pub fn RtgErrorText(self: *RtgBase, error_code: i32) [*:0]const u8 {
         return libraries.call(self, LVO.RtgErrorText, Fn.RtgErrorText, .{error_code});
@@ -461,5 +414,25 @@ pub const RtgBase = opaque {
     /// where the number says nothing, or names what no board here shows.
     pub fn RtgCicp(self: *RtgBase, kind: u32, value: u32) i32 {
         return libraries.call(self, LVO.RtgCicp, Fn.RtgCicp, .{ kind, value });
+    }
+
+    /// Offer every device no driver has to the drivers on the list: a panel of
+    /// the board's list, a display function on PCI. The driver that takes one
+    /// makes a board for each of its outputs. Answers how many boards were
+    /// made. graphics.library calls it as the machine starts. Not from
+    /// interrupts.
+    pub fn BindRtgDrivers(self: *RtgBase) u32 {
+        return libraries.call(self, LVO.BindRtgDrivers, Fn.BindRtgDrivers, .{});
+    }
+
+    /// Copy out up to `count` of the drivers on the list, highest priority
+    /// first; answers how many there are. Null and 0 ask for the number alone.
+    pub fn GetRtgDrivers(self: *RtgBase, into: ?[*]rtg.RtgDriverInfo, count: u32) u32 {
+        return libraries.call(self, LVO.GetRtgDrivers, Fn.GetRtgDrivers, .{ into, count });
+    }
+
+    /// The same for the devices, in the order they were found.
+    pub fn GetRtgDevices(self: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32 {
+        return libraries.call(self, LVO.GetRtgDevices, Fn.GetRtgDevices, .{ into, count });
     }
 };

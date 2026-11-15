@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! rtg.library's functions for programs: the displays of this machine. A
-//! caller asks for a board by its driver's name; what comes back has
+//! caller walks the boards the drivers made, the first of which is the
+//! machine's display; a board has
 //! modes, display memory, a buffer it is shown out of and a blanking. The
 //! library draws nothing of its own - an operation a board's engine can do
 //! is offered through the board, and a board that has not got it says so.
@@ -13,25 +14,12 @@
 ##name rtg.library
 ##bias 4
 ##public
-// Three slots kept free, so the slots after them stay where they are.
-##reserve 3
-/// Hold the driver list still so it can be walked. Nests.
-void LockRtgDrivers()
-/// Let it go again.
-void UnlockRtgDrivers()
-/// The next driver after `after`, or the first for null. The list must be
-/// locked.
-?*rtg.RtgDriver NextRtgDriver(?*rtg.RtgDriver after)
-/// A board from that driver, set up by the tags (RTGA_*). It is in no mode
-/// and shows nothing yet. Null: no driver of that name, no memory, or a
-/// driver that could not make it.
-?*rtg.RtgBoard CreateBoardTagList([*:0]const u8 driver_name, ?[*]const utility.TagItem tag_list)
-/// Stop a board and give everything back. Free your buffers and remove
-/// your event servers first. Null does nothing.
-void DeleteBoard(?*rtg.RtgBoard board)
-/// The next board after `after`, or the first for null.
+// Eight slots kept free, so the slots after them stay where they are.
+##reserve 8
+/// The next board after `after`, or the first for null: the machine's
+/// display. A board whose device has gone is passed over.
 ?*rtg.RtgBoard NextBoard(?*rtg.RtgBoard after)
-/// The board of that name, or null.
+/// The board of that name ("rgb.0"), gone or not, or null.
 ?*rtg.RtgBoard FindBoard([*:0]const u8 board_name)
 /// Fill in `info`, of which `size` bytes are there - pass
 /// @sizeOf(RtgBoardInfo). Returns the bytes written; check it before
@@ -110,16 +98,8 @@ i32 BlitPattern(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPatt
 bool AddRtgEventServer(*rtg.RtgBoard board, u32 event, *exec.Interrupt server)
 /// Take it off again.
 void RemRtgEventServer(*rtg.RtgBoard board, u32 event, *exec.Interrupt server)
-// A slot kept free, so the slots after it stay where they are.
-##reserve 1
-/// A bus from that driver, set up by the tags (RTGA_*). Null: no driver
-/// of that name, no memory, or a driver that could not make it.
-?*rtg.RtgTransport CreateTransportTagList([*:0]const u8 driver_name, ?[*]const utility.TagItem tag_list)
-/// Give a bus back. Refused while a board is still on it. Null does
-/// nothing.
-void DeleteTransport(?*rtg.RtgTransport io)
-// Six slots kept free, so the slots after them stay where they are.
-##reserve 6
+// Nine slots kept free, so the slots after them stay where they are.
+##reserve 9
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis. RTGERR_NOT_SUPPORTED unless the
@@ -200,4 +180,15 @@ u32 RtgRowBytes(u32 format, u32 width)
 /// (RTGCICP_MATRIX, RTGCICP_TRANSFER, RTGCICP_PRIMARIES). Below zero
 /// where the number says nothing, or names what no board here shows.
 i32 RtgCicp(u32 kind, u32 value)
+/// Offer every device no driver has to the drivers on the list: a panel of
+/// the board's list, a display function on PCI. The driver that takes one
+/// makes a board for each of its outputs. Answers how many boards were
+/// made. graphics.library calls it as the machine starts. Not from
+/// interrupts.
+u32 BindRtgDrivers()
+/// Copy out up to `count` of the drivers on the list, highest priority
+/// first; answers how many there are. Null and 0 ask for the number alone.
+u32 GetRtgDrivers(?[*]rtg.RtgDriverInfo into, u32 count)
+/// The same for the devices, in the order they were found.
+u32 GetRtgDevices(?[*]rtg.RtgDeviceInfo into, u32 count)
 ##end

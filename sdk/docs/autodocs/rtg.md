@@ -1,7 +1,8 @@
 # rtg.library
 
 rtg.library's functions for programs: the displays of this machine. A
-caller asks for a board by its driver's name; what comes back has
+caller walks the boards the drivers made, the first of which is the
+machine's display; a board has
 modes, display memory, a buffer it is shown out of and a blanking. The
 library draws nothing of its own - an operation a board's engine can do
 is offered through the board, and a board that has not got it says so.
@@ -15,6 +16,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddRtgEventServer](#addrtgeventserver) - Hangs an interrupt server on one of a board's events.
 - [AllocBitMap](#allocbitmap) - Makes a buffer in a board's display memory.
 - [AttachBitMap](#attachbitmap) - Makes a buffer handle over memory the caller owns.
+- [BindRtgDrivers](#bindrtgdrivers) - Offers every device no driver has to the drivers on the list.
 - [BlendPixels](#blendpixels) - Lays pixels of the caller's own over a rectangle of a buffer with the board's engine, each by its own coverage.
 - [BlendRect](#blendrect) - Lays a colour over a rectangle of a buffer with the board's engine, by the colour's alpha.
 - [BlitPattern](#blitpattern) - Fills a rectangle with a one-bit tile with the board's engine.
@@ -25,24 +27,20 @@ Generated from the source by `./zig build autodoc`.
 - [CloseVideoLayer](#closevideolayer) - Gives a video layer back to its board.
 - [CopyRect](#copyrect) - Copies a rectangle between buffers with the board's engine.
 - [CopyRects](#copyrects) - Copies several rectangles from one buffer to another as one job of the board's engine.
-- [CreateBoardTagList](#createboardtaglist) - Makes a board from a driver.
-- [CreateTransportTagList](#createtransporttaglist) - Makes a bus from a driver, for boards to talk through.
-- [DeleteBoard](#deleteboard) - Stops a board and gives back everything it held.
-- [DeleteTransport](#deletetransport) - Gives a bus back.
 - [FillRect](#fillrect) - Fills a rectangle of a buffer with the board's engine.
 - [FindBoard](#findboard) - Finds a board by its name.
 - [FindBoardMode](#findboardmode) - Finds a board's mode by its size and format.
 - [FreeBitMap](#freebitmap) - Gives a buffer back.
 - [GetBoardInfo](#getboardinfo) - Reads what a board is and what state it is in.
 - [GetBoardStats](#getboardstats) - Reads what a board that refreshes itself has been through.
-- [LockRtgDrivers](#lockrtgdrivers) - Holds the driver list still, so it can be walked.
+- [GetRtgDevices](#getrtgdevices) - Copies out the devices on the library's list.
+- [GetRtgDrivers](#getrtgdrivers) - Copies out the drivers on the library's list.
 - [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis.
 - [MoveBoardOverlay](#moveboardoverlay) - Puts the overlay's point at (x, y), and from then on keeps it there rather than with the pointer.
 - [MoveBoardPointer](#moveboardpointer) - Puts the pointer's point at a place on the picture.
 - [MoveVideoLayer](#movevideolayer) - Puts a video layer somewhere on the display, or hides it.
 - [NextBoard](#nextboard) - Walks the list of boards.
 - [NextBoardMode](#nextboardmode) - Walks a board's modes.
-- [NextRtgDriver](#nextrtgdriver) - Walks the driver list.
 - [OpenVideoLayer](#openvideolayer) - Takes one of a board's video layers: a plane of its controller that shows a picture in YUV itself, scaled into a place on the display.
 - [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
@@ -61,7 +59,6 @@ Generated from the source by `./zig build autodoc`.
 - [ShowBitMapBands](#showbitmapbands) - Shows several of a board's buffers at once, each in a band of display lines.
 - [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
 - [ShowVideoFrame](#showvideoframe) - Shows a picture in YUV on a video layer, scaled into its place.
-- [UnlockRtgDrivers](#unlockrtgdrivers) - Lets the driver list go again.
 - [WaitVBlank](#waitvblank) - Waits for the display's blanking.
 
 ## AddRtgEventServer
@@ -247,6 +244,78 @@ None known.
 ```zig
 var described: rtg.RtgBitMap = .{ .pixels = mem.ptr, .width = 320, .height = 200, .format = .rgb565 };
 const buffer = rb.AttachBitMap(board, &described) orelse return error.NoMemory;
+```
+
+## BindRtgDrivers
+
+Offers every device no driver has to the drivers on the list.
+
+**SYNOPSIS**
+
+```zig
+fn BindRtgDrivers(rb: *RtgBase) u32
+```
+
+**SINCE**
+
+1.18. LVO -292.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+How many boards were made by this call. 0 on a machine with no display
+a driver takes, and when every device has its driver already.
+
+**BEHAVIOR**
+
+The first call puts the machine's own devices on the list: every panel
+part of the board's list, in the list's order, then every function on
+PCI whose class is a display, where the machine has pci.library. Each
+device that has no driver is then offered to the drivers whose table
+names it, the closest first - a chip, or a vendor and a device, above
+a bus, a vendor alone or a class - and among those as close by the
+entry's priority and the driver's. A driver is asked through its
+`attach`: it looks at the hardware and makes a board for each output.
+The first that answers `RTGERR_OK` has the device for good, and its
+boards join the list, each named after its driver and a number; one
+that declines has given back what it took, and the next is asked. A
+device no driver takes stays on the list and is offered again by the
+next call - to a driver that has joined the list since.
+
+The boards are walked with `NextBoard`: the first is the machine's
+display, the firmware's picture the last. graphics.library calls this
+as the machine starts, and takes the first board.
+
+**CONTEXT**
+
+- Waits: yes. A driver brings its hardware up in its `attach` - a
+  panel is held in reset for tens of milliseconds.
+- Interrupts: no.
+- Locks: takes the device list's lock, and inside it the driver
+  list's and the board list's. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The devices and the boards are the library's. A board is never freed
+for a program.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NextBoard`, `GetRtgDevices`, `GetRtgDrivers`, `AddRtgDevice`
+
+**EXAMPLES**
+
+```zig
+_ = rb.BindRtgDrivers();
+const display = rb.NextBoard(null) orelse return;
 ```
 
 ## BlendPixels
@@ -836,245 +905,6 @@ const pieces = [_]rtg.RtgCopy{
 _ = rb.CopyRects(window, display, &pieces, pieces.len);
 ```
 
-## CreateBoardTagList
-
-Makes a board from a driver.
-
-**SYNOPSIS**
-
-```zig
-fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) ?*rtg.RtgBoard
-```
-
-**SINCE**
-
-1.0. LVO -44.
-
-**INPUTS**
-
-- `driver_name` - the driver to make it with.
-- `tag_list` - the `RTGA_` options: the board's name, a transport it
-  talks through, whether to switch the display on, a brightness,
-  whether its screens' windows are composed (`RTGA_Compose`), and data
-  for the driver.
-
-**RESULT**
-
-The board, or null: for no driver of that name that makes boards, no
-memory, or a driver that could not make it.
-
-**BEHAVIOR**
-
-The board's handle and the driver's instance come from memory the
-driver can read from its interrupts. The driver fills the handle in:
-its modes, its display memory and what its engine can do. A board comes
-up in no mode and showing nothing; `SetBoardMode` and `ShowBitMap` are
-what put a picture up. Without `RTGA_BoardName` the board is named after
-the driver and a number: rgb0, rgb1. It has its name once the driver
-has made it, as it joins the list. `RTGA_Compose` is kept as
-`RTGBF_COMPOSE` in the board's flags for intuition to read; the driver
-does nothing for it.
-
-**CONTEXT**
-
-- Waits: yes, while another task holds the board list, and if the
-  driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-The board is the caller's until `DeleteBoard`. The driver and a
-transport it names are held open meanwhile.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`DeleteBoard`, `SetBoardMode`, `FindBoard`
-
-**EXAMPLES**
-
-```zig
-const tags = [_]TagItem{ .{ .tag = rtg.tags.RTGA_BoardName, .data = @intFromPtr("panel") }, .{} };
-const board = rb.CreateBoardTagList("rgb", &tags) orelse return error.NoBoard;
-```
-
-## CreateTransportTagList
-
-Makes a bus from a driver, for boards to talk through.
-
-**SYNOPSIS**
-
-```zig
-fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) ?*rtg.RtgTransport
-```
-
-**SINCE**
-
-1.0. LVO -172.
-
-**INPUTS**
-
-- `driver_name` - the driver to make it with.
-- `tag_list` - the `RTGA_` options: the transport's name, and data for
-  the driver.
-
-**RESULT**
-
-The transport, or null: for no driver of that name that makes buses,
-no memory, or a driver that could not make it.
-
-**BEHAVIOR**
-
-A panel on a bus is two drivers: one for the bus and one for the panel,
-which names the transport with `RTGA_Transport` when its board is made.
-
-**CONTEXT**
-
-- Waits: yes, while another task holds the board list, and if the
-  driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-The caller's until `DeleteTransport`. The driver is held open
-meanwhile.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`DeleteTransport`, `CreateBoardTagList`, `TxParam`
-
-**EXAMPLES**
-
-```zig
-const io = rb.CreateTransportTagList("qspi", &tags) orelse return error.NoBus;
-```
-
-## DeleteBoard
-
-Stops a board and gives back everything it held.
-
-**SYNOPSIS**
-
-```zig
-fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
-```
-
-**SINCE**
-
-1.0. LVO -48.
-
-**INPUTS**
-
-- `board` - the board. Null does nothing.
-
-**RESULT**
-
-Nothing.
-
-**BEHAVIOR**
-
-A board that still has an event server on it is refused - it stays on
-the list, which is how a caller sees it - and nothing of it is touched: the
-server's node would be left linked into a list that is freed. So is
-one with a video layer still open (`CloseVideoLayer` first).
-Otherwise it is taken off the display first, then every buffer it still has is
-freed, the driver's `destroy` is called, and the board leaves the list.
-The driver and a transport it used are one open less.
-
-**CONTEXT**
-
-- Waits: yes, while another task holds the board list, and if the
-  driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-The board, its buffers and its display memory are gone. Event servers
-are the caller's, and are taken off with `RemRtgEventServer` first.
-
-**BUGS**
-
-The answer of taking the board off the display is not looked at: one
-whose driver refuses to show nothing has its buffers freed and its
-driver's `destroy` called all the same.
-
-**SEE ALSO**
-
-`CreateBoardTagList`, `RemRtgEventServer`
-
-**EXAMPLES**
-
-```zig
-rb.DeleteBoard(board);
-```
-
-## DeleteTransport
-
-Gives a bus back.
-
-**SYNOPSIS**
-
-```zig
-fn DeleteTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
-```
-
-**SINCE**
-
-1.0. LVO -176.
-
-**INPUTS**
-
-- `io` - the transport. Null does nothing.
-
-**RESULT**
-
-Nothing.
-
-**BEHAVIOR**
-
-A transport a board still talks through is refused: it stays, its
-`open_cnt` not 0. Otherwise the driver's `destroy` is called and the
-transport leaves the list.
-
-**CONTEXT**
-
-- Waits: yes, while another task holds the board list, and if the
-  driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-The transport is gone; its driver is one open less.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`CreateTransportTagList`, `DeleteBoard`
-
-**EXAMPLES**
-
-```zig
-rb.DeleteTransport(io);
-```
-
 ## FillRect
 
 Fills a rectangle of a buffer with the board's engine.
@@ -1149,7 +979,8 @@ fn FindBoard(rb: *RtgBase, board_name: [*:0]const u8) ?*rtg.RtgBoard
 
 **INPUTS**
 
-- `board_name` - the name, as `CreateBoardTagList` gave it.
+- `board_name` - the name the library gave it: its driver's, a point
+  and a number ("rgb.0").
 
 **RESULT**
 
@@ -1157,7 +988,8 @@ The board, or null.
 
 **BEHAVIOR**
 
-An exact match on the name.
+An exact match on the name. A board whose device has gone
+(`RTGBF_GONE`) is found too: its handle stays what it was.
 
 **CONTEXT**
 
@@ -1169,8 +1001,8 @@ An exact match on the name.
 
 **OWNERSHIP**
 
-Nothing is allocated. The board is not held once the call returns: one
-another task may delete is the caller's to agree on with that task.
+Nothing is allocated. A board is never freed for a program, so the
+handle is good for as long as the machine runs.
 
 **BUGS**
 
@@ -1178,12 +1010,12 @@ None known.
 
 **SEE ALSO**
 
-`NextBoard`, `CreateBoardTagList`
+`NextBoard`, `BindRtgDrivers`
 
 **EXAMPLES**
 
 ```zig
-const board = rb.FindBoard("rgb0") orelse return;
+const board = rb.FindBoard("rgb.0") orelse return;
 ```
 
 ## FindBoardMode
@@ -1415,43 +1247,52 @@ var stats: rtg.RtgBoardStats = .{};
 _ = rb.GetBoardStats(board, &stats, @sizeOf(rtg.RtgBoardStats));
 ```
 
-## LockRtgDrivers
+## GetRtgDevices
 
-Holds the driver list still, so it can be walked.
+Copies out the devices on the library's list.
 
 **SYNOPSIS**
 
 ```zig
-fn LockRtgDrivers(rb: *RtgBase) void
+fn GetRtgDevices(rb: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32
 ```
 
 **SINCE**
 
-1.0. LVO -32.
+1.18. LVO -300.
 
 **INPUTS**
 
-None.
+- `into` - where the devices go, or null to ask how many there are.
+- `count` - how many `into` has room for.
 
 **RESULT**
 
-Nothing.
+How many devices there are, which may be more than were copied.
 
 **BEHAVIOR**
 
-A semaphore over the list: `AddRtgDriver` and `RemRtgDriver` wait
-while it is held. It nests.
+Up to `count` devices are copied, in the order they were found: the
+board's panel parts, the display functions on PCI, then the ones made
+by `AddRtgDevice`. Each says its name, what the hardware is called,
+what it is - its kind, its chip and bus, a function's vendor, device
+and class - the driver that has it, how many boards that made of it,
+and for the firmware's framebuffer the device it lies behind. The
+machine's own devices are on the list from the first
+`BindRtgDrivers`; before it the answer is those that were added.
 
 **CONTEXT**
 
-- Waits: yes, while another task holds the driver list.
-- Interrupts: no. It may wait.
-- Locks: no spinlock may be held: it waits for a lock.
+- Waits: yes, while another task holds the device list - through a
+  bind, which lasts as long as a driver's bring-up.
+- Interrupts: no.
+- Locks: takes the device list's lock. No spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-The caller holds the list until `UnlockRtgDrivers`.
+Nothing is allocated: the copies are the caller's, and hold no pointer
+into the library.
 
 **BUGS**
 
@@ -1459,13 +1300,74 @@ None known.
 
 **SEE ALSO**
 
-`UnlockRtgDrivers`, `NextRtgDriver`
+`GetRtgDrivers`, `BindRtgDrivers`, `NextBoard`
 
 **EXAMPLES**
 
 ```zig
-rb.LockRtgDrivers();
-defer rb.UnlockRtgDrivers();
+var found: [8]rtg.RtgDeviceInfo = undefined;
+const there = rb.GetRtgDevices(&found, found.len);
+for (found[0..@min(there, found.len)]) |*device| list(device);
+```
+
+## GetRtgDrivers
+
+Copies out the drivers on the library's list.
+
+**SYNOPSIS**
+
+```zig
+fn GetRtgDrivers(rb: *RtgBase, into: ?[*]rtg.RtgDriverInfo, count: u32) u32
+```
+
+**SINCE**
+
+1.18. LVO -296.
+
+**INPUTS**
+
+- `into` - where the drivers go, or null to ask how many there are.
+- `count` - how many `into` has room for.
+
+**RESULT**
+
+How many drivers there are, which may be more than were copied.
+
+**BEHAVIOR**
+
+Up to `count` drivers are copied, highest priority first: each one's
+name, what it calls itself, its version and revision, what it makes
+(`RTGDT_BOARD`, `RTGDT_TRANSPORT`), its flags and priority, how many
+devices it has and how many boards and buses of it are alive, and
+whether it was loaded from a file.
+
+**CONTEXT**
+
+- Waits: yes, while another task holds the driver list - through an
+  offer of a device, which lasts as long as a driver's bring-up.
+- Interrupts: no.
+- Locks: takes the driver list's lock. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated: the copies are the caller's, and hold no pointer
+into the library.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetRtgDevices`, `BindRtgDrivers`, `AddRtgDriver`
+
+**EXAMPLES**
+
+```zig
+var found: [8]rtg.RtgDriverInfo = undefined;
+const there = rb.GetRtgDrivers(&found, found.len);
+for (found[0..@min(there, found.len)]) |*driver| list(driver);
 ```
 
 ## MirrorBoard
@@ -1742,7 +1644,10 @@ The next board, or null at the end.
 
 **BEHAVIOR**
 
-The boards alive, in the order they were made.
+The boards, highest priority first: as their drivers made them, the
+picture the firmware lit last. The first is the machine's display. A
+board whose device has gone (`RTGBF_GONE`) is passed over; `after` may
+be such a board, and the walk goes on behind it.
 
 **CONTEXT**
 
@@ -1755,8 +1660,8 @@ The boards alive, in the order they were made.
 **OWNERSHIP**
 
 Nothing is allocated. The list is held for each step, not between
-them: `after` must still be a board, which the caller agrees on with
-any task that may delete one.
+them: a board is never freed for a program, so `after` is a board for
+as long as the machine runs.
 
 **BUGS**
 
@@ -1764,7 +1669,7 @@ None known.
 
 **SEE ALSO**
 
-`FindBoard`, `CreateBoardTagList`
+`FindBoard`, `BindRtgDrivers`
 
 **EXAMPLES**
 
@@ -1824,61 +1729,6 @@ None known.
 ```zig
 var mode = rb.NextBoardMode(board, null);
 while (mode) |m| : (mode = rb.NextBoardMode(board, m)) list(m);
-```
-
-## NextRtgDriver
-
-Walks the driver list.
-
-**SYNOPSIS**
-
-```zig
-fn NextRtgDriver(rb: *RtgBase, after: ?*rtg.RtgDriver) ?*rtg.RtgDriver
-```
-
-**SINCE**
-
-1.0. LVO -40.
-
-**INPUTS**
-
-- `after` - the driver to go on from, or null for the first.
-
-**RESULT**
-
-The next driver, or null at the end of the list.
-
-**BEHAVIOR**
-
-The list is not held here: the caller holds it with `LockRtgDrivers`
-for the whole walk, so nothing joins or leaves in between.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: no.
-- Locks: none taken; the caller holds the list.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`LockRtgDrivers`, `UnlockRtgDrivers`
-
-**EXAMPLES**
-
-```zig
-rb.LockRtgDrivers();
-defer rb.UnlockRtgDrivers();
-var driver = rb.NextRtgDriver(null);
-while (driver) |d| : (driver = rb.NextRtgDriver(d)) list(d);
 ```
 
 ## OpenVideoLayer
@@ -2590,7 +2440,8 @@ fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
 **RESULT**
 
 `RTGERR_OK`, or: `RTGERR_NOT_SUPPORTED` for a board with no modes to
-set, `RTGERR_BAD_MODE` with no default, `RTGERR_IN_USE` while a buffer
+set, `RTGERR_NO_DISPLAY` on a board whose device has gone,
+`RTGERR_BAD_MODE` with no default, `RTGERR_IN_USE` while a buffer
 that is not `RTGBMF_VOLATILE` is alive, or what the driver answered.
 
 **BEHAVIOR**
@@ -2817,6 +2668,7 @@ fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u3
 **RESULT**
 
 `RTGERR_OK`, or: `RTGERR_BAD_ARG` for another board's buffer,
+`RTGERR_NO_DISPLAY` for a buffer on a board whose device has gone,
 `RTGERR_NOT_DISPLAYABLE`, `RTGERR_NOT_SUPPORTED` for a board that
 cannot show buffers or cannot pan to a non-zero `x` or `y`, or what the
 driver answered.
@@ -2912,6 +2764,7 @@ fn ShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBa
 `RTGERR_OK`, or: `RTGERR_BAD_ARG` for bands out of order, another
 board's buffer, a buffer not the display's size, or rows a band would
 show that its buffer has not got; `RTGERR_NOT_DISPLAYABLE`;
+`RTGERR_NO_DISPLAY` on a board whose device has gone;
 `RTGERR_NOT_SUPPORTED` for a board that can show only one buffer -
 unless the bands are one buffer at its own origin, which is what
 `ShowBitMap` shows; or what the driver answered.
@@ -3106,57 +2959,6 @@ if (rb.ShowVideoFrame(layer, &frame.picture, &all) == rtg.errors.RTGERR_OK) {
     if (shown) |*old| vcb.ReleaseVideoFrame(film, old);
     shown = frame;
 }
-```
-
-## UnlockRtgDrivers
-
-Lets the driver list go again.
-
-**SYNOPSIS**
-
-```zig
-fn UnlockRtgDrivers(rb: *RtgBase) void
-```
-
-**SINCE**
-
-1.0. LVO -36.
-
-**INPUTS**
-
-None.
-
-**RESULT**
-
-Nothing.
-
-**BEHAVIOR**
-
-One `LockRtgDrivers` given back.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: no.
-- Locks: none needed.
-- Process: the task that took it.
-
-**OWNERSHIP**
-
-The caller no longer holds the list.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`LockRtgDrivers`
-
-**EXAMPLES**
-
-```zig
-rb.UnlockRtgDrivers();
 ```
 
 ## WaitVBlank

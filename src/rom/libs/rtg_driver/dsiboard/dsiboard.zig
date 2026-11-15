@@ -4,8 +4,9 @@
 //! fed from a picture in PSRAM.
 //!
 //! A module of its own: a description of a driver called "dsi" behind a
-//! ROM tag, which rtg.library puts on its list. A board of it is made
-//! from the panel's tags: the
+//! ROM tag, which rtg.library puts on its list. It takes what is on the
+//! DSI host (`BUS_MIPI_DSI`): offered such a part, it makes a board from
+//! the part's tags: the
 //! link (lanes and lane rate), the pixel clock and timings, and the
 //! panel's bring-up as DCS commands - so another panel on this host is
 //! another tag list and not another driver.
@@ -85,8 +86,8 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 12;
-const BUILD_DATE = "15.11.2026";
+const REVISION = 13;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -105,14 +106,6 @@ const pixel_source: u32 = 1;
 const channel = 0;
 /// How long a flip waits for the frame it lands on.
 const flip_wait_us = 100_000;
-
-/// What is the driver's and not one board's: the library allocates it
-/// behind the driver's node and clears it.
-const State = struct {
-    /// The panel while a board of it exists. There is one host, so there
-    /// is at most one.
-    board: ?*rtg.RtgBoard = null,
-};
 
 /// One panel: the board's instance, allocated and cleared by the library
 /// in internal memory.
@@ -155,14 +148,12 @@ const Panel = struct {
     dma_int: exec.Interrupt = .{},
     bridge_int: exec.Interrupt = .{},
     hooked: bool = false,
+    /// The DSI host's and the DMA controller's clocks are on (`bringUp`).
+    clocked: bool = false,
     stats: rtg.RtgBoardStats = .{},
     /// The PPA and the 2D-DMA: FillRect and CopyRect.
     engine: engine_file.Engine = .{},
 };
-
-fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @ptrCast(@alignCast(driver.state.?));
-}
 
 fn panelOf(board: *rtg.RtgBoard) *Panel {
     return @ptrCast(@alignCast(board.instance.?));
@@ -253,6 +244,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     system.enable(.dsi);
     system.enable(.dw_gdma);
     sys.Enable();
+    panel.clocked = true;
 
     // The panel's reset, where the board wired one.
     if (drive(wanted.reset_pin, true)) {
@@ -477,18 +469,26 @@ fn giveBack(panel: *Panel) void {
     }
     engine_file.takeDown(&panel.engine);
     link_file.free(&panel.link, sys);
-    bridge.stop();
-    host.stop();
+    // The bridge's and the host's registers answer only with their clock
+    // on: a bring-up that failed before that has nothing to stop.
+    if (panel.clocked) {
+        bridge.stop();
+        host.stop();
+    }
     if (panel.config.backlight_pin.wired()) _ = drive(panel.config.backlight_pin, false);
 }
 
 // --- the board's ops -----------------------------------------------------
 
-fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const state = stateOf(made_by);
-    const sys = made_by.sys_base;
-    const rb = made_by.rtg_base;
-    if (state.board != null) return err.RTGERR_IN_USE;
+/// What is on the DSI host is offered - a panel, or an HDMI bridge: it is
+/// brought up, and a board made of it. A board that lists both is offered
+/// them in the list's order; the bridge is declined without a monitor
+/// behind it, and whichever has the host, the other is declined.
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const TagItem) callconv(.c) i32 {
+    const sys = driver.sys_base;
+    const rb = driver.rtg_base;
+    // There is one host: what else is on it is declined.
+    if (driver.boards != 0) return err.RTGERR_IN_USE;
 
     var wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
 
@@ -502,6 +502,11 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     // tags' own rate was asked of it as they were read.
     const lane = host.pllFor(wanted.lane_mbps) orelse return err.RTGERR_BAD_TAGS;
 
+    const board = rb.CreateBoard(driver, device, &.{
+        .ops = &ops,
+        .instance_size = @sizeOf(Panel),
+        .flags = rtg.boards.RTGBF_STREAMING,
+    }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .board = board, .config = wanted };
     sys.InitSemaphore(&panel.pointer.lock);
@@ -518,7 +523,10 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     if (bridge_bus != null) {
         panel.hdmi = true;
         panel.composing = true;
-        if (!link_file.allocate(&panel.link, sys, wanted.width, wanted.height, .bgr24)) return err.RTGERR_NO_MEMORY;
+        if (!link_file.allocate(&panel.link, sys, wanted.width, wanted.height, .bgr24)) {
+            rb.DeleteBoard(board);
+            return err.RTGERR_NO_MEMORY;
+        }
         panel.stream_pitch = panel.link.pitch;
         panel.stream_frame_bytes = panel.link.pitch * wanted.height;
     }
@@ -526,6 +534,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const code = bringUp(panel, bridge_bus, lane);
     if (code != err.RTGERR_OK) {
         giveBack(panel);
+        rb.DeleteBoard(board);
         return code;
     }
 
@@ -552,13 +561,10 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .alignment = hardware.DCACHE_LINE_SIZE,
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
-    board.ops = &ops;
     board.info.buffers = wanted.buffers;
     board.info.pixel_clock_hz = panel.pixel_hz;
     board.info.refresh_mhz = panel.mode.refresh_mhz;
-    board.info.flags |= rtg.boards.RTGBF_STREAMING;
     board.info.brightness = panel.brightness;
-    state.board = board;
     return err.RTGERR_OK;
 }
 
@@ -637,7 +643,6 @@ fn refreshMilliHz(panel: *const Panel) u32 {
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     giveBack(panelOf(board));
-    if (board.driver) |driver| stateOf(driver).board = null;
 }
 
 /// One mode, the panel's own or the monitor's, which create already set
@@ -835,7 +840,13 @@ const ops = rtg.RtgBoardOps{
     .move_overlay = &moveOverlay,
 };
 
-const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
+
+/// What it takes: a panel or a bridge on the DSI host.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = st.BUS_MIPI_DSI },
+    .{},
+};
 
 /// The driver's tag: a description and no init. rtg.library reads it at
 /// its own init and puts the driver on its list; nothing of this module
@@ -856,8 +867,7 @@ export const rtg_dsi_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
         .kind = rtg.drivers.RTGDT_BOARD,
         // The DMA's interrupt reads the panel at every frame's end.
         .flags = rtg.drivers.RTGDF_INTERNAL_INSTANCE,
+        .matches = &matches,
         .ops = &driver_ops,
-        .state_size = @sizeOf(State),
-        .instance_size = @sizeOf(Panel),
     },
 };

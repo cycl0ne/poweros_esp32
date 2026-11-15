@@ -36,6 +36,7 @@ const boards = @import("../board/_board.zig");
 /// `RTGERR_OK`, or: `RTGERR_BAD_ARG` for bands out of order, another
 /// board's buffer, a buffer not the display's size, or rows a band would
 /// show that its buffer has not got; `RTGERR_NOT_DISPLAYABLE`;
+/// `RTGERR_NO_DISPLAY` on a board whose device has gone;
 /// `RTGERR_NOT_SUPPORTED` for a board that can show only one buffer -
 /// unless the bands are one buffer at its own origin, which is what
 /// `ShowBitMap` shows; or what the driver answered.
@@ -100,6 +101,8 @@ pub fn ShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.R
     // in, shown and marked as one step.
     boards.obtain(rb, board);
     defer boards.release(rb, board);
+    // A board whose device has gone shows nothing any more.
+    if (boards.dark(board)) return err.RTGERR_NO_DISPLAY;
     const height = board.info.height;
     var shown: [rtg.RTG_MAX_BANDS]*rtg.RtgBitMap = undefined;
     for (bands[0..count], 0..) |band, i| {

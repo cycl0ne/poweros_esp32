@@ -45,8 +45,14 @@ pub const LIBRARY_VERSION = 1;
 /// 17: a driver is a description (RtgDriverSpec) behind a ROM tag with no
 /// init - the library puts the ROM's on its list itself, and makes each
 /// driver's node and state; AddRtgDriver takes a description.
-pub const LIBRARY_REVISION = 17;
-const BUILD_DATE = "15.11.2026";
+/// 18: devices - the board's panel parts and the display functions on
+/// PCI - offered to the drivers that say they take them
+/// (BindRtgDrivers); a driver makes its boards (CreateBoard) and opens
+/// its bus (OpenTransport); GetRtgDrivers, GetRtgDevices, AddRtgDevice,
+/// RemRtgDevice. A board is named by the library and never freed for a
+/// program.
+pub const LIBRARY_REVISION = 18;
+const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -93,11 +99,15 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     rb.sys_base = sys_base;
     rb.utility_base = @ptrCast(sys_base.OpenLibrary(sdk.interface.utility.NAME, UTILITY_VERSION) orelse return null);
     rb.expansion_base = @ptrCast(sys_base.OpenLibrary(sdk.expansion.EXPANSIONNAME, EXPANSION_VERSION));
-    rb.board_serial = 0;
+    rb.pci_base = null;
+    rb.devices_listed = false;
+    rb.panel_serial = 0;
     sys_base.NewList(&rb.drivers);
+    sys_base.NewList(&rb.devices);
     sys_base.NewList(&rb.boards);
     sys_base.NewList(&rb.transports);
     sys_base.InitSemaphore(&rb.driver_lock);
+    sys_base.InitSemaphore(&rb.device_lock);
     sys_base.InitSemaphore(&rb.board_lock);
     sys_base.InitSemaphore(&rb.pointer_lock);
     rb.timer_io = .{};

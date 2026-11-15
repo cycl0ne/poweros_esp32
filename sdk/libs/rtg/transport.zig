@@ -5,8 +5,8 @@
 //! bus: a command, some parameters, and runs of pixels. The bus and the
 //! panel are two different things - the same controller turns up on more
 //! than one bus, and the same bus carries more than one kind of panel - so
-//! a transport is its own handle, made by its own driver, and a board is
-//! given one to talk through.
+//! a transport is its own handle, made by its own driver, and a board's
+//! driver opens the one its device sits on (`OpenTransport`).
 //!
 //! What crosses the bus is a command and then either its parameters or a
 //! run of pixels. How a part wants them framed is its bus driver's
@@ -19,16 +19,14 @@ const RtgBase = @import("../../interface/rtg.zig").RtgBase;
 
 /// A bus a board talks through.
 pub const RtgTransport = extern struct {
-    /// ln_Name is the instance's name ("qspi0").
+    /// ln_Name is the bus's name: its driver's.
     node: Node = .{},
     rtg_base: ?*RtgBase = null,
     /// The *RtgDriver that made it, one of kind RTGDT_TRANSPORT.
     driver: ?*anyopaque = null,
     ops: ?*const RtgTransportOps = null,
-    /// How many boards were given this bus. DeleteTransport refuses while
-    /// it is not zero.
-    open_cnt: u16 = 0,
-    pad: u16 = 0,
+    /// Whoever opened it's own, untouched by the library and the bus's
+    /// driver.
     user_data: ?*anyopaque = null,
     /// The driver's own data: `instance_size` bytes the library allocated
     /// and cleared when the bus was made, and frees with it.

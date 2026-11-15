@@ -25,8 +25,6 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const st = sdk.expansion.systemtags;
-const rtg = sdk.rtg;
-const tags = rtg.tags;
 const Tag = sdk.utility.FixedTagItem;
 
 /// The machine, as QEMU names it.
@@ -39,43 +37,24 @@ const screen = struct {
     pub const height: u32 = 800;
 };
 
-/// **The USB buses are not here.** A controller of this machine's is an
-/// xHCI function on PCI, which usb.library finds for itself: the sockets
-/// of a PC are in groups with a controller each - some at the front,
-/// some at the back, more behind the chip's internal bridges - and how
-/// many there are is the machine's answer, not a list's. A board part
-/// describes a controller only where nothing can find it, which is a
-/// controller of a chip's own.
-///
-/// The machine's own older keyboard and mouse ports are no parts
-/// either: ps2.resource looks for their controller at the two ports every
-/// machine that has one has it at.
-/// QEMU's virtio GPU on PCI, there when the machine is started with
-/// `-device virtio-gpu-pci`: a function of its own, which the driver
-/// finds by what it is rather than by where it lies, so nothing here says
-/// an address. The picture is as large as the emulator's window has it
-/// (`xres`, `yres`), the size below where it says none.
-///
-/// It is listed before the firmware's own framebuffer, which the kernel
-/// adds after these: a machine that has this display shows it there, and
-/// one that has not falls through to what the firmware lit.
-const gpu = [_]Tag{
-    .value(st.PART_Kind, st.PARTKIND_PANEL),
-    .value(st.PART_Chip, st.CHIP_VIRTIO_GPU),
-    .pointer(st.PART_ChipName, "virtio-gpu"),
-    .value(st.PART_Bus, st.BUS_PCI),
-    .value(tags.RTGA_Width, screen.width),
-    .value(tags.RTGA_Height, screen.height),
-    .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
-    // At most sixteen pictures at once - screens, and the buffers behind
-    // them - each taken from memory as it is opened: a ceiling, not memory
-    // set aside.
-    .value(tags.RTGA_Buffers, 16),
-    // The windows of a screen each draw into a buffer of their own, and
-    // what can be seen of them is copied into the screen's.
-    .value(tags.RTGA_Compose, 1),
-    .done,
-};
+// **The USB buses are not here.** A controller of this machine's is an
+// xHCI function on PCI, which usb.library finds for itself: the sockets
+// of a PC are in groups with a controller each - some at the front,
+// some at the back, more behind the chip's internal bridges - and how
+// many there are is the machine's answer, not a list's. A board part
+// describes a controller only where nothing can find it, which is a
+// controller of a chip's own.
+//
+// The machine's own older keyboard and mouse ports are no parts
+// either: ps2.resource looks for their controller at the two ports every
+// machine that has one has it at.
+//
+// **Nor is a display on PCI.** QEMU's virtio GPU, there when the machine
+// is started with `-device virtio-gpu-pci`, is a function rtg.library
+// finds where it is and offers to the driver that takes it; what such a
+// display is driven with is the driver's to know. The firmware's own
+// framebuffer is the one display the kernel declares, as a panel part,
+// after these.
 
 /// Where the firmware started this system from: the kernel copies the
 /// identifier of the partition the loader was read from in before
@@ -116,7 +95,6 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_BootStart, &boot_start),
     .value(st.SYSTAG_ScreenWidth, screen.width),
     .value(st.SYSTAG_ScreenHeight, screen.height),
-    .pointer(st.SYSTAG_Part, &gpu),
     .done,
 };
 

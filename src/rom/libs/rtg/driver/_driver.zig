@@ -6,25 +6,39 @@
 //! the state the description asks for behind it in the same block - and
 //! the node is what everything holds from then on: a board names it, an
 //! op is handed it, and the driver finds its own state through it. The
-//! list is ordered by the descriptions' priority, highest first, so a
-//! driver that should be preferred when two could drive the same thing
-//! says so; a caller that names a driver gets that one whatever its
-//! priority.
+//! list is ordered by the descriptions' priority, highest first, so of
+//! two drivers whose tables name a device as closely the one that should
+//! be preferred says so.
 //!
 //! The library puts the drivers of the ROM on the list itself, at its
 //! init: every tag of type `.rtg_driver` is a `ResidentRtgDriver`, read
 //! where it lies (`addResidents`). Nothing of a driver runs for that.
 //!
 //! The semaphore holds the list still. Adding and removing take it, and so
-//! does a caller that means to walk it with NextRtgDriver - which is why
-//! LockRtgDrivers is a call of its own rather than something the walk does
-//! for itself: a walk that locked each step would hand back a driver that
-//! could be gone by the time it was used.
+//! does whatever walks it: an offer of a device, which holds it through
+//! the drivers' `attach`, and `GetRtgDrivers`, which copies the list out
+//! so that a program holds no node of it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
+
+/// What the library keeps for a driver, beside the node a driver sees.
+pub const Private = struct {
+    driver: rtg.RtgDriver,
+    /// How many boards the driver has made, for numbering the next one
+    /// ("fb.1").
+    board_serial: u32 = 0,
+};
+
+/// The library's own record around a driver's node.
+///
+/// INPUTS:
+/// - `driver` - the driver's node.
+pub fn privateOf(driver: *rtg.RtgDriver) *Private {
+    return @fieldParentPtr("driver", driver);
+}
 
 /// The driver a node of the driver list belongs to.
 ///
@@ -34,13 +48,13 @@ pub fn driverOf(node: *exec.Node) *rtg.RtgDriver {
     return @fieldParentPtr("node", node);
 }
 
-/// What a driver's node and its state are aligned to in their one block:
-/// as much as any field a driver keeps can ask for.
+/// What a driver's record and its state are aligned to in their one
+/// block: as much as any field a driver keeps can ask for.
 pub const state_alignment = @alignOf(u64);
 
-/// Where a driver's state begins in the block its node is in: past the
-/// node, on the state's alignment.
-pub const state_offset = (@sizeOf(rtg.RtgDriver) + (state_alignment - 1)) & ~@as(usize, state_alignment - 1);
+/// Where a driver's state begins in the block its record is in: past the
+/// record, on the state's alignment.
+pub const state_offset = (@sizeOf(Private) + (state_alignment - 1)) & ~@as(usize, state_alignment - 1);
 
 /// Where a driver's node, handles and instances go: internal memory when
 /// the description says its interrupts touch them, and wherever there is
@@ -52,23 +66,6 @@ pub fn memoryFor(spec: *const rtg.RtgDriverSpec) u32 {
     const clear = exec.MEMF_CLEAR;
     if (spec.flags & rtg.drivers.RTGDF_INTERNAL_INSTANCE != 0) return exec.MEMF_INTERNAL | clear;
     return exec.MEMF_ANY | clear;
-}
-
-/// A driver of that name that can make a board, or one that can make a
-/// transport - the two creates are separate, so a name that is on the
-/// list but cannot do what is being asked is not the driver wanted.
-///
-/// INPUTS:
-/// - `rb` - the library.
-/// - `name` - the driver's name.
-/// - `kind` - `RTGDT_BOARD` or `RTGDT_TRANSPORT`.
-pub fn findDriverOfType(rb: *RtgBase, name: [*:0]const u8, kind: u32) ?*rtg.RtgDriver {
-    const sys = rb.sys_base;
-    sys.ObtainSemaphore(&rb.driver_lock);
-    defer sys.ReleaseSemaphore(&rb.driver_lock);
-    const driver = driverOf(sys.FindName(&rb.drivers, name) orelse return null);
-    if (driver.spec.kind & kind == 0) return null;
-    return driver;
 }
 
 /// Puts the drivers of the ROM on the list: every tag of type

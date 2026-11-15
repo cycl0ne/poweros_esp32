@@ -1,27 +1,25 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The machine's display, brought up by this library's init: the board's
-//! panel, or the emulator's virtual display, made into an rtg board and
-//! showing its first picture.
+//! The machine's display, brought up by this library's init: the first
+//! board rtg.library has, showing its first picture.
 //!
-//! It asks expansion.library for the board's panel parts, whose tags are
-//! what rtg.library's drivers are told - the geometry, the timings or the
-//! bus, the pads and the control lines - and hands them to rtg.library,
-//! which finds the driver that can drive such a thing and brings it up: a
-//! panel on LCD_CAM to the "rgb" driver, one on SPI to the "qspi"
-//! transport and the "dcs" controller on it, one on MIPI-DSI to the "dsi"
-//! driver, the emulator's display to the "qemu" driver. What comes back is a board with display memory; a buffer
-//! out of that memory is the picture, cleared to black and shown. Nothing
-//! is drawn before this: the kernel's output until then is exec's raw port.
-//!
-//! A board may list more than one way to a screen - an HDMI bridge ahead
-//! of the panel on the same link. They are tried in the list's order, and
-//! the first whose driver takes it is the display: a driver refuses a part
-//! whose screen is not there, an HDMI bridge without a monitor behind it.
+//! Which display a machine has, and which driver drives it, is
+//! rtg.library's to find: it offers each of the machine's displays - a
+//! panel of the board's list, a function on PCI - to the drivers that
+//! say they take such a thing (`BindRtgDrivers`), and the driver that
+//! takes one brings it up and makes a board of it. A board that lists
+//! more than one way to a screen - an HDMI bridge ahead of the panel on
+//! the same link - has each offered in the list's order: a driver
+//! declines a part whose screen is not there, a bridge without a monitor
+//! behind it. The first board of rtg.library's walk is the machine's
+//! display; a buffer out of its display memory is the picture, cleared to
+//! black and shown. Nothing is drawn before this: the kernel's output
+//! until then is exec's raw port.
 //!
 //! The order is the panel's and none of it is optional:
 //!
-//!   1. the board, which lets the panel out of reset and takes its memory,
-//!      its two DMA channels and the buffers it is really fed from;
+//!   1. the board, whose driver has let the panel out of reset and taken
+//!      its memory, its two DMA channels and the buffers it is really fed
+//!      from;
 //!   2. the mode, which programs the pads, the timings and the clock;
 //!   3. a buffer, the first picture drawn into it, and the whole of it
 //!      written back out of the cache while nothing is reading it;
@@ -30,129 +28,50 @@
 //! Step 3 before step 4 is the point of the split: a 1.2 MB write-back
 //! landing on top of a running stream is enough to starve it.
 //!
-//! The board is rtg.library's once it is made, and found again by name;
-//! the View (`rastport/_rastport.zig`) finds it as the first board rtg
-//! lists.
+//! The board is rtg.library's, and found again as it was found here: the
+//! View (`rastport/_rastport.zig`) asks for the first board rtg lists.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
-const tags = rtg.tags;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
-const TagItem = sdk.utility.TagItem;
 const RtgBase = sdk.interface.rtg.RtgBase;
 const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const GraphicsBase = @import("../graphics_base.zig").GraphicsBase;
 
-/// What the display's board is called, which is how everything finds it
-/// again.
-const BOARD_NAME = sdk.graphics.DISPLAY_BOARD;
+/// The size of the screen the machine runs, as the board's list gives it;
+/// 0 each way where it gives none.
+const Screen = struct { width: u32 = 0, height: u32 = 0 };
 
-/// What the machine says about its display: the screen it runs, and one
-/// of its panel parts.
-const Machine = struct {
-    width: u32 = 0,
-    height: u32 = 0,
-    panel: ?*const expansion.BoardPart = null,
-    bus: u32 = st.BUS_NONE,
-    /// The panel is the emulator's display, which owns its own pixels.
-    emulated: bool = false,
-};
-
-/// The most panel parts a board lists that are tried.
-const max_panels = 4;
-
-/// The machine's screen size and its panel parts in the list's order, as
-/// expansion.library describes them; how many there are. None when
-/// expansion.library is not there or names no panel.
-fn readMachine(gb: *GraphicsBase, into: *[max_panels]Machine) usize {
+/// The machine's screen size, as expansion.library's system tags say it.
+/// None when expansion.library is not there.
+fn readScreen(gb: *GraphicsBase) Screen {
     const sys = gb.sys_base;
     const ub = gb.utility_base;
-    const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return 0;
+    const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return .{};
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
     const root = eb.SystemTags();
-    const width: u32 = @truncate(ub.GetTagData(st.SYSTAG_ScreenWidth, 0, root));
-    const height: u32 = @truncate(ub.GetTagData(st.SYSTAG_ScreenHeight, 0, root));
-    var count: usize = 0;
-    var found = eb.FindBoardPart(null, st.PARTKIND_PANEL, st.CHIP_ANY);
-    while (found) |part| : (found = eb.FindBoardPart(part, st.PARTKIND_PANEL, st.CHIP_ANY)) {
-        if (count == max_panels) break;
-        into[count] = .{
-            .width = width,
-            .height = height,
-            .panel = part,
-            .bus = @truncate(ub.GetTagData(st.PART_Bus, st.BUS_NONE, part.tags)),
-            .emulated = part.chip == st.CHIP_QEMU_DISPLAY,
-        };
-        count += 1;
-    }
-    return count;
-}
-
-/// Which display this machine turned out to have, and its picture's size.
-const Found = struct { which: *rtg.RtgBoard, emulated: bool, width: u32 = 0, height: u32 = 0, bytes: usize = 0 };
-
-/// The machine's panel, made into a board called BOARD_NAME whichever
-/// driver drives it, so everything past this point is the same and nothing
-/// else here has to know which it got. Null when the machine has no panel
-/// or its driver will not take it.
-fn createBoard(rb: *RtgBase, machine: *const Machine) ?Found {
-    const part = machine.panel orelse return null;
-    const panel_tags = @intFromPtr(part.tags);
-    const named = [_]TagItem{
-        .{ .tag = tags.RTGA_BoardName, .data = @intFromPtr(BOARD_NAME) },
-        .{ .tag = sdk.utility.TAG_MORE, .data = panel_tags },
+    return .{
+        .width = @truncate(ub.GetTagData(st.SYSTAG_ScreenWidth, 0, root)),
+        .height = @truncate(ub.GetTagData(st.SYSTAG_ScreenHeight, 0, root)),
     };
-    switch (machine.bus) {
-        // A panel on LCD_CAM: its tags are the RGB driver's, and this adds
-        // only the name everything finds the board by.
-        st.BUS_LCD => if (rb.CreateBoardTagList("rgb", &named)) |which| {
-            return .{ .which = which, .emulated = false };
-        },
-        // A controller on a QSPI bus: the bus first, from the same tags,
-        // then the controller on it with the bus it was given.
-        st.BUS_SPI => if (rb.CreateTransportTagList("qspi", part.tags)) |io| {
-            const on_bus = [_]TagItem{
-                .{ .tag = tags.RTGA_BoardName, .data = @intFromPtr(BOARD_NAME) },
-                .{ .tag = tags.RTGA_Transport, .data = @intFromPtr(io) },
-                .{ .tag = sdk.utility.TAG_MORE, .data = panel_tags },
-            };
-            if (rb.CreateBoardTagList("dcs", &on_bus)) |which| return .{ .which = which, .emulated = false };
-            rb.DeleteTransport(io);
-        },
-        // A panel on the MIPI-DSI host: its tags are the DSI driver's.
-        st.BUS_MIPI_DSI => if (rb.CreateBoardTagList("dsi", &named)) |which| {
-            return .{ .which = which, .emulated = false };
-        },
-        // The emulator's display: memory and a doorbell. Any other panel
-        // in the memory map reads its picture out of RAM by itself.
-        st.BUS_MEMORY => if (rb.CreateBoardTagList(if (machine.emulated) "qemu" else "fb", &named)) |which| {
-            return .{ .which = which, .emulated = machine.emulated };
-        },
-        // A display on PCI: the same driver, which finds the function
-        // itself - the part says which chip it is and nothing about
-        // where it lies, because where it lies is the bus's to say.
-        st.BUS_PCI => if (rb.CreateBoardTagList("fb", &named)) |which| {
-            return .{ .which = which, .emulated = false };
-        },
-        else => {},
-    }
-    return null;
 }
 
-/// The panel, from nothing to a picture. Null and nothing taken if any
-/// step fails.
-fn bringUp(rb: *RtgBase, machine: *const Machine) ?Found {
-    const found = createBoard(rb, machine) orelse return null;
-    const which = found.which;
+/// What was brought up: the picture's size and its bytes.
+const Shown = struct { width: u32, height: u32, bytes: usize };
+
+/// A board, from nothing shown to a picture. Null if any step fails; what
+/// was taken for it is given back, and the board stays as its driver made
+/// it.
+fn bringUp(rb: *RtgBase, which: *rtg.RtgBoard, screen: Screen) ?Shown {
     // The board's mode of the screen's size, which is what says which way
     // up a panel that can be turned runs; its default when it has only one.
-    const mode = rb.FindBoardMode(which, machine.width, machine.height, 0) orelse
+    const mode = rb.FindBoardMode(which, screen.width, screen.height, 0) orelse
         rb.FindBoardMode(which, 0, 0, 0) orelse
-        return giveBack(rb, which);
-    if (rb.SetBoardMode(which, mode) != rtg.errors.RTGERR_OK) return giveBack(rb, which);
+        return null;
+    if (rb.SetBoardMode(which, mode) != rtg.errors.RTGERR_OK) return null;
 
     const picture = rb.AllocBitMap(
         which,
@@ -160,7 +79,7 @@ fn bringUp(rb: *RtgBase, machine: *const Machine) ?Found {
         mode.height,
         @intFromEnum(mode.format),
         rtg.bitmaps.RTGBMF_DISPLAYABLE | rtg.bitmaps.PIXMAPF_SCREEN,
-    ) orelse return giveBack(rb, which);
+    ) orelse return null;
 
     // The first picture, black, handed on while nothing is reading it:
     // RefreshBitMap is each driver's own way to the glass - a write-back
@@ -171,24 +90,14 @@ fn bringUp(rb: *RtgBase, machine: *const Machine) ?Found {
 
     if (rb.ShowBitMap(which, picture, 0, 0) != rtg.errors.RTGERR_OK) {
         rb.FreeBitMap(picture);
-        return giveBack(rb, which);
+        return null;
     }
     _ = rb.SetBoardBrightness(which, 100);
     return .{
-        .which = which,
-        .emulated = found.emulated,
         .width = mode.width,
         .height = mode.height,
         .bytes = @as(usize, picture.pitch) * picture.height,
     };
-}
-
-fn giveBack(rb: *RtgBase, which: *rtg.RtgBoard) ?Found {
-    const bus = which.transport;
-    rb.DeleteBoard(which);
-    // A bus made for this board goes with it.
-    if (bus) |io| rb.DeleteTransport(io);
-    return null;
 }
 
 /// Brings the machine's display up and shows a black picture on it.
@@ -203,9 +112,10 @@ fn giveBack(rb: *RtgBase, which: *rtg.RtgBoard) ?Found {
 /// and `CreateRastPortTagList(null)` answers null.
 ///
 /// BEHAVIOR:
-/// It runs last in `init`, after the drivers' residents (21 to 23) have
-/// added their drivers to rtg.library (24), and says on the raw port what
-/// it brought up.
+/// It runs last in `init`, after rtg.library (24) has put the drivers of
+/// the ROM on its list. It has rtg.library offer the machine's displays
+/// to them, takes the first board of the walk, and says on the raw port
+/// what it brought up.
 ///
 /// CONTEXT:
 /// - Waits: yes. A panel is held in reset for tens of milliseconds, and
@@ -214,21 +124,14 @@ fn giveBack(rb: *RtgBase, which: *rtg.RtgBoard) ?Found {
 /// - Locks: no spinlock may be held, because of the wait.
 /// - Process: a Task will do. The exec task runs it at cold start.
 pub fn openDisplay(gb: *GraphicsBase) void {
-    var machines: [max_panels]Machine = undefined;
-    const count = readMachine(gb, &machines);
-    for (machines[0..count]) |*machine| {
-        const found = bringUp(gb.rtg_base, machine) orelse continue;
-        if (found.emulated) {
-            // The emulator's display owns its own pixels, so there is no
-            // framebuffer of this machine's to report.
-            exec.kprintf(gb.sys_base, "graphics.library: %dx%d virtual display\n", .{ found.width, found.height });
-        } else {
-            exec.kprintf(gb.sys_base, "graphics.library: %dx%d panel, %d KiB a picture\n", .{
-                found.width,
-                found.height,
-                @as(u32, @intCast(found.bytes / 1024)),
-            });
-        }
-        return;
-    }
+    const rb = gb.rtg_base;
+    _ = rb.BindRtgDrivers();
+    const which = rb.NextBoard(null) orelse return;
+    const shown = bringUp(rb, which, readScreen(gb)) orelse return;
+    exec.kprintf(gb.sys_base, "graphics.library: %dx%d on %s, %d KiB a picture\n", .{
+        shown.width,
+        shown.height,
+        which.node.name.?,
+        @as(u32, @intCast(shown.bytes / 1024)),
+    });
 }

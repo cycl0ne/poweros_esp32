@@ -3,8 +3,9 @@
 //!
 //! A module of its own, on the same footing as the panel driver: a
 //! description of a driver called "qemu" behind a ROM tag, which
-//! rtg.library puts on its list. It makes a board only where the virtual
-//! display is actually there.
+//! rtg.library puts on its list. It takes the emulator's display
+//! (`CHIP_QEMU_DISPLAY`), and makes a board of it when the board's list
+//! has that part.
 //!
 //! What it drives is a frame of memory and a doorbell. The device owns the
 //! pixels - they are its own VRAM, not the machine's - and a register says
@@ -45,9 +46,8 @@
 //! emulator's window, or captured from its monitor without one.
 //!
 //! The module keeps nothing of its own: a ROM image is read only, so what
-//! changes is the library's to allocate - the driver's `State` behind its
-//! node, a `Screen` beside each board - and found again through what an
-//! op is handed.
+//! changes is the library's to allocate - a `Screen` beside each board -
+//! and found again through what an op is handed.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -64,22 +64,14 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 5;
-const BUILD_DATE = "15.11.2026";
+const REVISION = 6;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 const bytes_per_pixel = 2;
-
-/// What is the driver's and not one board's: the library allocates it
-/// behind the driver's node and clears it.
-const State = struct {
-    /// The board while one exists. There is one virtual display, so there
-    /// is at most one.
-    board: ?*rtg.RtgBoard = null,
-};
 
 /// Everything one board of this driver has. The library allocates it
 /// beside the handle.
@@ -153,10 +145,6 @@ fn pace(screen: *Screen, frames: u32) void {
     io.node.command = timer.TR_ADDREQUEST;
     io.time = timer.TimeVal.fromMicros(@as(u64, frame_us) * frames);
     _ = sys.DoIO(&io.node);
-}
-
-fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @ptrCast(@alignCast(driver.state.?));
 }
 
 fn screenOf(board: *rtg.RtgBoard) *Screen {
@@ -378,24 +366,49 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     }.apply, .{ left, top });
 }
 
-fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const state = stateOf(made_by);
-    const sys = made_by.sys_base;
-    const rb = made_by.rtg_base;
-    if (state.board != null) return err.RTGERR_IN_USE;
-    // Nothing to drive on a board without the emulator's display.
-    if (!boardHasIt(made_by)) return err.RTGERR_NO_DISPLAY;
+/// The emulator's display is offered: a board made of it, in the size
+/// its tags give.
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const TagItem) callconv(.c) i32 {
+    const sys = driver.sys_base;
+    const rb = driver.rtg_base;
+    // There is one virtual display: a second part of it is declined.
+    if (driver.boards != 0) return err.RTGERR_IN_USE;
 
-    const screen = screenOf(board);
-    screen.* = .{
-        .sys = sys,
-        .width = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
-        .height = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
-    };
-    sys.InitSemaphore(&screen.compose_lock);
+    const width: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list));
+    const height: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list));
     // The device takes each side as 16 bits.
-    if (screen.width == 0 or screen.height == 0) return err.RTGERR_BAD_ARG;
-    if (screen.width > 0xFFFF or screen.height > 0xFFFF) return err.RTGERR_BAD_ARG;
+    if (width == 0 or height == 0) return err.RTGERR_BAD_TAGS;
+    if (width > 0xFFFF or height > 0xFFFF) return err.RTGERR_BAD_TAGS;
+    // A picture's bytes, in 64 bits: two sides of 16 bits and two bytes a
+    // pixel do not fit in 32.
+    const frame: u64 = @as(u64, width) * height * bytes_per_pixel;
+    // As many pictures as the board asks for and the VRAM holds are as
+    // many buffers as can be shown in turn, each by naming its address.
+    const room: u32 = @intCast(qemu_rgb.vramSize() / frame);
+    if (room == 0) return err.RTGERR_BAD_TAGS;
+    const asked: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list));
+    const frames = @min(@max(asked, 1), room);
+    // A frame more, if there is one, to compose the pointer in: a board
+    // without it has no pointer and no bands.
+    const composed: ?[*]u8 = if (frames < room) @ptrFromInt(qemu_rgb.vram + frames * @as(usize, @intCast(frame))) else null;
+
+    // The device's own VRAM is the board's display memory, so a buffer cut
+    // out of it is already where the device reads from and a refresh is a
+    // doorbell rather than a copy. It is not cached: these are device
+    // bytes, and nothing has to be written back before they are read.
+    const board = rb.CreateBoard(driver, device, &.{
+        .ops = if (composed != null) &pointer_ops else &ops,
+        .instance_size = @sizeOf(Screen),
+        .region = .{
+            .base = @ptrFromInt(qemu_rgb.vram),
+            .size = frames * @as(usize, @intCast(frame)),
+            .alignment = bytes_per_pixel,
+            .flags = rtg.boards.RTGRF_DISPLAYABLE,
+        },
+    }) orelse return err.RTGERR_NO_MEMORY;
+    const screen = screenOf(board);
+    screen.* = .{ .sys = sys, .width = width, .height = height, .composed = composed };
+    sys.InitSemaphore(&screen.compose_lock);
 
     // One mode. A virtual display is not a monitor either: it is the shape
     // the emulator was built for.
@@ -409,29 +422,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .flags = rtg.boards.RTGMF_DEFAULT,
     };
     sys.AddTail(&board.modes, &screen.mode.node);
-
-    // The device's own VRAM is the board's display memory, so a buffer cut
-    // out of it is already where the device reads from and a refresh is a
-    // doorbell rather than a copy. It is not cached: these are device
-    // bytes, and nothing has to be written back before they are read. As
-    // many pictures as the board asks for and the VRAM holds are as many
-    // buffers as can be shown in turn, each by naming its address.
-    const frame = screen.width * screen.height * bytes_per_pixel;
-    const room = qemu_rgb.vramSize() / frame;
-    if (room == 0) return err.RTGERR_BAD_ARG;
-    const asked: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list));
-    const frames = @min(@max(asked, 1), room);
-    // A frame more, if there is one, to compose the pointer in.
-    if (frames < room) screen.composed = @ptrFromInt(qemu_rgb.vram + frames * frame);
-    board.region = .{
-        .base = @ptrFromInt(qemu_rgb.vram),
-        .size = frames * frame,
-        .alignment = bytes_per_pixel,
-        .flags = rtg.boards.RTGRF_DISPLAYABLE,
-    };
-    board.ops = if (screen.composed != null) &pointer_ops else &ops;
     board.info.buffers = frames;
-    state.board = board;
     return err.RTGERR_OK;
 }
 
@@ -439,7 +430,6 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
     if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
     screen.timer_open = false;
-    if (board.driver) |driver| stateOf(driver).board = null;
 }
 
 /// One mode, so this only ever sizes the window to it.
@@ -590,15 +580,13 @@ const pointer_ops = rtg.boards.RtgBoardOps{
     .move_overlay = &moveOverlay,
 };
 
-const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
 
-/// Whether the board has the emulator's display: its part in the board's
-/// system tag list.
-fn boardHasIt(driver: *rtg.RtgDriver) bool {
-    const eb = driver.expansion_base orelse return false;
-    const st = sdk.expansion.systemtags;
-    return eb.FindBoardPart(null, st.PARTKIND_PANEL, st.CHIP_QEMU_DISPLAY) != null;
-}
+/// What it takes: the emulator's display.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = sdk.expansion.systemtags.CHIP_QEMU_DISPLAY },
+    .{},
+};
 
 /// The driver's tag: a description and no init. rtg.library reads it at
 /// its own init and puts the driver on its list; nothing of this module
@@ -617,8 +605,7 @@ export const rtg_qemu_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
         .version = VERSION,
         .revision = REVISION,
         .kind = rtg.drivers.RTGDT_BOARD,
+        .matches = &matches,
         .ops = &driver_ops,
-        .state_size = @sizeOf(State),
-        .instance_size = @sizeOf(Screen),
     },
 };

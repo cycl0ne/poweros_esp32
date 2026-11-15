@@ -50,7 +50,7 @@ const Printf = dos.stdio.Printf;
 const Rect = graphics.Rect;
 
 pub const COMMAND_NAME = "Speed2D";
-const VERSION_STRING = "\x00$VER: Speed2D 1.1 (15.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Speed2D 1.2 (16.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N";
@@ -479,7 +479,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const graphics_lib = sys.OpenLibrary(graphics.GRAPHICSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(graphics_lib);
     const gb: *GraphicsBase = @ptrCast(graphics_lib);
-    const board = rb.FindBoard(graphics.DISPLAY_BOARD) orelse {
+    // The machine's display: the first board rtg.library lists.
+    const board = rb.NextBoard(null) orelse {
         _ = Printf(dl, "No display board\n", .{});
         return dos.RETURN_FAIL;
     };

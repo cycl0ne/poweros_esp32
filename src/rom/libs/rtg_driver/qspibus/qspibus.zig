@@ -3,9 +3,10 @@
 //! controllers want it.
 //!
 //! A module of its own: a description of a driver of the transport kind
-//! behind a ROM tag, which rtg.library puts on its list; from then on
-//! anything that asks rtg.library for a "qspi" bus gets one of these.
-//! What it does is turn TxParam, TxColor and RxParam into SPI
+//! behind a ROM tag, which rtg.library puts on its list. It makes the bus
+//! of a part reached over SPI (`BUS_SPI`): the driver of such a panel
+//! asks rtg.library for its device's bus (`OpenTransport`) and gets one
+//! of these. What it does is turn TxParam, TxColor and RxParam into SPI
 //! transactions.
 //!
 //! Every transaction starts with an opcode and a 24-bit address, both on
@@ -42,8 +43,8 @@ const GpioBase = gpio_resource.GpioBase;
 const MODULE_NAME = "rtg-qspi";
 const DRIVER_NAME = "qspi";
 const VERSION = 1;
-const REVISION = 3;
-const BUILD_DATE = "15.11.2026";
+const REVISION = 4;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -63,18 +64,6 @@ const stuck_after = 20_000_000;
 /// pixels has to come from here.
 const internal_lower: usize = 0x3FC8_8000;
 const internal_upper: usize = 0x3FD0_0000;
-
-/// What is the driver's and not one bus's: the library allocates it
-/// behind the driver's node and clears it.
-const State = struct {
-    /// The bus while one exists. There is one controller, so there is at
-    /// most one.
-    transport: ?*rtg.RtgTransport = null,
-};
-
-fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @ptrCast(@alignCast(driver.state.?));
-}
 
 /// What one bus keeps. In internal memory (RTGDF_INTERNAL_INSTANCE), which
 /// is where the DMA reads its descriptors.
@@ -98,9 +87,9 @@ fn instanceOf(io: *rtg.RtgTransport) *Instance {
 }
 
 fn createTransport(made_by: *rtg.RtgDriver, io: *rtg.RtgTransport, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const state = stateOf(made_by);
     const rb = made_by.rtg_base;
-    if (state.transport != null) return err.RTGERR_IN_USE;
+    // There is one controller: a second bus on it is refused.
+    if (made_by.buses != 0) return err.RTGERR_IN_USE;
     const sys = made_by.sys_base;
     const instance = instanceOf(io);
     instance.* = .{ .sys = sys };
@@ -154,7 +143,6 @@ fn createTransport(made_by: *rtg.RtgDriver, io: *rtg.RtgTransport, tag_list: ?[*
     connect(instance.pads[0], instance.pads[1], instance.pads[2..6]);
 
     io.ops = &ops;
-    state.transport = io;
     return err.RTGERR_OK;
 }
 
@@ -188,7 +176,6 @@ fn giveBack(instance: *Instance) void {
 fn destroy(io: *rtg.RtgTransport) callconv(.c) void {
     _ = finish();
     giveBack(instanceOf(io));
-    if (io.driver) |driver| stateOf(@ptrCast(@alignCast(driver))).transport = null;
 }
 
 /// Wait for the transaction on the bus to end.
@@ -296,6 +283,12 @@ const ops = rtg.RtgTransportOps{
 
 const driver_ops = rtg.RtgDriverOps{ .create_transport = &createTransport };
 
+/// What it makes the bus of: a part reached over SPI.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = st.BUS_SPI },
+    .{},
+};
+
 /// The driver's tag: a description and no init. rtg.library reads it at
 /// its own init and puts the driver on its list; nothing of this module
 /// runs until a bus is asked for.
@@ -315,8 +308,8 @@ export const rtg_qspi_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
         .kind = rtg.drivers.RTGDT_TRANSPORT,
         // The DMA reads its descriptors out of the instance.
         .flags = rtg.drivers.RTGDF_INTERNAL_INSTANCE,
+        .matches = &matches,
         .ops = &driver_ops,
-        .state_size = @sizeOf(State),
         .instance_size = @sizeOf(Instance),
     },
 };

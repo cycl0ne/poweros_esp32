@@ -159,8 +159,12 @@ Each layer uses the ones below it; libraries are blue, devices green.
 Two libraries stand between the hardware and everything a program shows
 and plays:
 
-**rtg.library** keeps the displays. Each is a board of a driver, and
-graphics.library, layers and intuition draw into its buffers without
+**rtg.library** keeps the displays. Each of the machine's - a panel
+of the board, a display function on PCI - is offered to the drivers
+that say they take such a thing, and the one that takes it makes a board
+for each output; the first board is the machine's display (`C:Rtg`
+lists drivers, devices and boards). graphics.library, layers and
+intuition draw into a board's buffers without
 knowing what panel is behind them, so one program draws on a 3.5" SPI
 panel and on a 1080p monitor alike. A board's engine takes the fills,
 copies, blends and scales: the ESP32-P4's PPA and 2D-DMA, the four cores

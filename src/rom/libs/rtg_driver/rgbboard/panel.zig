@@ -560,6 +560,8 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
         panel.streaming = false;
     }
     if (panel.vblank.code != null) {
+        // The source off before its server goes.
+        lcd.intEnable(0);
         sys.RemIntServer(intbits.INTB_LCD_CAM, &panel.vblank);
         panel.vblank.code = null;
     }

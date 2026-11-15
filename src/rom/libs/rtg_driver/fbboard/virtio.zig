@@ -365,7 +365,7 @@ const layout = struct {
     const bytes = answer + @sizeOf(DisplayInfo);
 };
 
-/// One GPU, from `find` or `findOnPci` on; `start` brings it up.
+/// One GPU, from `find` or `onPci` on; `start` brings it up.
 pub const Gpu = struct {
     /// How its registers are reached.
     port: Transport,
@@ -481,11 +481,27 @@ pub fn find(base: usize, count: u32, stride: usize) ?Gpu {
     return null;
 }
 
-/// The machine's first virtio GPU on PCI, claimed and switched on
-/// (`virtiopci.zig`). Null where the machine has none, or no
-/// pci.library to find it with.
-pub fn findOnPci(sys: *ExecBase) ?Gpu {
-    return .{ .port = .{ .pci = virtiopci.find(sys) orelse return null } };
+/// The vendor and the devices a virtio GPU's function on PCI says it is:
+/// the arrangement the standard settled on, and the one before it.
+pub const pci_vendor = virtiopci.VENDOR;
+pub const pci_device = virtiopci.DEVICE_GPU;
+pub const pci_device_old = virtiopci.DEVICE_GPU_OLD;
+
+/// A virtio GPU that is a function on PCI, claimed and switched on
+/// (`virtiopci.zig`). Null for a function somebody else has claimed, one
+/// whose capabilities do not describe the windows this drives, or
+/// without pci.library.
+pub fn onPci(sys: *ExecBase, function: *sdk.pci.PCIDevice) ?Gpu {
+    return .{ .port = .{ .pci = virtiopci.take(sys, function) orelse return null } };
+}
+
+/// A GPU that was found and not started is let go: a function on PCI
+/// given back.
+pub fn giveBack(gpu: *Gpu) void {
+    switch (gpu.port) {
+        .pci => |*port| virtiopci.forget(port),
+        else => {},
+    }
 }
 
 /// The device reset and brought up with both queues, in a block of its

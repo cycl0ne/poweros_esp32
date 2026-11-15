@@ -7,7 +7,7 @@ reference: [rtg](../autodocs/rtg.md) for a program's, and
 [rtgdriver](../autodocs/rtgdriver.md) for a driver's.
 
 - [Where rtg.library sits](#where-rtglibrary-sits)
-- [Drivers and boards](#drivers-and-boards)
+- [Drivers, devices and boards](#drivers-devices-and-boards)
 - [Modes](#modes)
 - [Buffers](#buffers)
 - [Handing on what was drawn](#handing-on-what-was-drawn)
@@ -68,48 +68,80 @@ the other type. Both are slots of the one jump table, the drivers' after
 the programs'. A driver opens nothing: the node the library makes for it
 carries the base (`driver.rtg_base`).
 
-## Drivers and boards
+## Drivers, devices and boards
 
-Two kinds of thing the library keeps:
+Three kinds of thing the library keeps:
 
 - A **driver** is a module that knows one kind of display hardware. It
   is a constant description (`RtgDriverSpec`) behind a ROM tag, under a
-  name ("rgb", "dcs", "dsi", "qemu", "fb"). The library puts the drivers
-  of the ROM on its list at its own init (`AddRtgDriver`), and nothing
-  of a driver runs until a board or a bus is asked of it.
-  `RemRtgDriver` takes one off again and is refused while anything it
-  made is alive. Both are calls of the drivers' interface.
-- A **board** is one display that a driver brought up. A caller makes one
-  with `CreateBoardTagList(driver_name, tags)`, giving the panel's numbers
-  in `RTGA_` tags, and gets an `RtgBoard` back. `DeleteBoard` stops it.
+  name ("rgb", "dcs", "dsi", "qemu", "fb"), with a table of what it
+  takes. The library puts the drivers of the ROM on its list at its own
+  init (`AddRtgDriver`), and nothing of a driver runs until a device is
+  offered to it.
+- A **device** is hardware a driver can drive: a panel part of the
+  board's list, named `panel.` and its number among the panels
+  ("panel.0"), or a function on PCI whose class is a display, named by
+  its place ("pci.01:00.0"). The picture the firmware lit is a device
+  like the others, and says so.
+- A **board** is one output of a device - a panel, or a connector -
+  which the device's driver brought up. It is named after its driver and
+  a number, in the order the driver's boards were made ("rgb.0",
+  "fb.1"), and its handle is good for as long as the machine runs.
+
+**A device is offered to the drivers** by `BindRtgDrivers`. Each device
+no driver has goes to the drivers whose table names it, the closest
+first: one that names the part's chip, or a function's vendor and
+device, before one that names only its bus or its class; among those as
+close, the driver higher on the list. A driver looks at the hardware and
+makes a board for each output it finds, or declines - a bridge with no
+monitor behind it, a display that is not there - and the next driver is
+asked. The first that takes the device has it for good. A device no
+driver takes stays on the list, and is offered again at the next call.
 
 A display that is not wired straight to the pixels sits on a bus. The bus
-is a **transport** of its own (`CreateTransportTagList`), made by its own
-driver, and the board is given it with `RTGA_Transport`: the same panel
-controller can be on more than one kind of bus, and the same bus can carry
-more than one kind of panel. A transport sends a command and its
-parameters (`TxParam`), a command and a run of pixels (`TxColor`), or asks
-and reads back (`RxParam`); each call comes back when its bytes have
-gone. The three are the drivers' calls: it is the panel's driver that
-talks over the bus.
+is a **transport** of its own, made by its own driver: the panel's driver
+asks for the bus its device sits on (`OpenTransport`), and the transport
+driver whose table names that bus makes it from the device's tags. The
+same panel controller can be on more than one kind of bus, and the same
+bus can carry more than one kind of panel. A transport sends a command
+and its parameters (`TxParam`), a command and a run of pixels
+(`TxColor`), or asks and reads back (`RxParam`); each call comes back
+when its bytes have gone. All of these are the drivers' calls: it is the
+panel's driver that talks over the bus.
 
-**The machine's own display is made at boot.** graphics.library's init asks
-expansion.library for the board's panel part, hands its tags to the driver
-that drives such a panel, puts the board in its mode of the screen's size
-(`SYSTAG_ScreenWidth` and `SYSTAG_ScreenHeight`), or in its default mode
-when it has none such, clears a first buffer to black and shows it. The mode
-is what says which way up a panel that can be turned runs: the 3.5" board's
-default is upright, 320 by 480, and its screen 480 by 320. The board is
-called `display` (`sdk.graphics.DISPLAY_BOARD`), which is how everything
-finds it again:
+**The machine's own display is made at boot.** graphics.library's init
+has the devices offered (`BindRtgDrivers`) and takes the first board,
+puts it in its mode of the screen's size (`SYSTAG_ScreenWidth` and
+`SYSTAG_ScreenHeight`), or in its default mode when it has none such,
+clears a first buffer to black and shows it. The mode is what says which
+way up a panel that can be turned runs: the 3.5" board's default is
+upright, 320 by 480, and its screen 480 by 320.
+
+**The first board is the machine's display**, and that is how everything
+finds it:
 
 ```zig
-const board = rb.FindBoard(sdk.graphics.DISPLAY_BOARD) orelse return dos.RETURN_FAIL;
+const board = rb.NextBoard(null) orelse return dos.RETURN_FAIL;
 ```
 
-`NextBoard(null)` walks every board, and `NextRtgDriver` every driver -
-with the list held by `LockRtgDrivers`/`UnlockRtgDrivers` while it is
-walked.
+`NextBoard` walks the boards in the order of their priority: as their
+drivers made them, the firmware's picture last. So a machine with a
+display of its own and the firmware's shows on its own. A board whose
+device has gone - a display that was unplugged - says `RTGBF_GONE`: the
+walk passes over it, a show on it answers `RTGERR_NO_DISPLAY`, and
+whoever holds its handle or a buffer of it holds something valid still.
+`FindBoard` finds a board by its name, gone or not.
+
+`GetRtgDrivers` and `GetRtgDevices` copy the two lists out, for a
+program that reports on them: each driver with its version, what it
+makes and how many devices, boards and buses it has, each device with
+its name, what it is, the driver that took it and the boards made of it.
+
+```zig
+var found: [8]rtg.RtgDeviceInfo = undefined;
+const there = rb.GetRtgDevices(&found, found.len);
+for (found[0..@min(there, found.len)]) |*device| list(device);
+```
 
 ## Modes
 
@@ -649,10 +681,10 @@ while `refreshes_dropped` climbs was handed on for the wrong buffer.
 
 The calls that answer with a status answer an `RTGERR_` code: 0 is
 `RTGERR_OK`, everything else is below zero, and `RtgErrorText` gives any
-code in words. The calls that answer with a pointer -
-`CreateBoardTagList`, `AllocBitMap`, `AttachBitMap`,
-`CreateTransportTagList`, `OpenVideoLayer` - answer null for whatever
-went wrong; each one's contract says what that can be.
+code in words. The calls that answer with a pointer - `AllocBitMap`,
+`AttachBitMap`, `OpenVideoLayer`, and a driver's `CreateBoard`,
+`OpenTransport` and `AddRtgDevice` - answer null for whatever went
+wrong; each one's contract says what that can be.
 
 ## Writing a driver
 
@@ -664,7 +696,13 @@ rtg.library reads the tags of that type at its own init and puts each
 description on its list:
 
 ```zig
-const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
+
+/// What it takes: a panel on LCD_CAM.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = st.BUS_LCD },
+    .{},
+};
 
 export const rtg_mine_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
     .resident = .{
@@ -678,12 +716,21 @@ export const rtg_mine_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
         .name = "mine",
         .version = 1,
         .kind = rtg.drivers.RTGDT_BOARD,
+        .matches = &matches,
         .ops = &driver_ops,
         .state_size = @sizeOf(State),
-        .instance_size = @sizeOf(Panel),
     },
 };
 ```
+
+**What a driver takes** is its table of `RtgMatch` entries, ended by an
+entry with no fields: a part's chip (`RTGMATCH_CHIP`), a part's bus
+(`RTGMATCH_BUS`), a function's vendor and device on PCI
+(`RTGMATCH_VENDOR`, `RTGMATCH_DEVICE`), its class (`RTGMATCH_CLASS`,
+compared under `class_mask`). Every field an entry counts has to be the
+device's. A driver for one controller names the chip; a driver for a
+family names the bus, and reads what makes one panel differ from the
+next from the part's tags.
 
 **The driver's node** is an `RtgDriver` the library makes for the
 description (`AddRtgDriver(spec, seg_list)`). Every op is handed it, or
@@ -698,8 +745,9 @@ keeps nothing in its own image:
 - `state_size` bytes behind the node, cleared when the driver joins the
   list: what is the driver's and not one board's. `driver.state` points
   at them, and is null for a driver that asks for none.
-- `instance_size` bytes with each board or bus, cleared and freed with
-  the handle: a board's `instance`.
+- `RtgBoardSpec.instance_size` bytes with each board, cleared and freed
+  with the handle: a board's `instance`. A transport driver says in its
+  description (`instance_size`) how many bytes it keeps with a bus.
 
 A driver whose interrupts read its node or its instances sets
 `RTGDF_INTERNAL_INSTANCE`, and all of them are put in internal memory,
@@ -707,27 +755,52 @@ where an interrupt reads them without queueing behind the display's own
 memory traffic.
 
 ```zig
-fn createBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const sys = driver.sys_base;
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const rb = driver.rtg_base;
-    const state: *State = @ptrCast(@alignCast(driver.state.?));
-    const panel: *Panel = @ptrCast(@alignCast(board.instance.?));
     const width: u32 = @truncate(rb.GetRtgTagData(rtg.tags.RTGA_Width, 0, tag_list));
+    if (width == 0) return rtg.errors.RTGERR_BAD_TAGS;
+    const board = rb.CreateBoard(driver, device, &.{
+        .ops = &ops,
+        .instance_size = @sizeOf(Panel),
+    }) orelse return rtg.errors.RTGERR_NO_MEMORY;
+    const panel: *Panel = @ptrCast(@alignCast(board.instance.?));
+    const code = bringUp(panel, tag_list);
+    if (code != rtg.errors.RTGERR_OK) {
+        rb.DeleteBoard(board);
+        return code;
+    }
     ...
+    return rtg.errors.RTGERR_OK;
 }
 ```
 
-**`create_board`** is called by `CreateBoardTagList` with the driver's
-node, a board the library has allocated and cleared, and the tags. It
-fills the board in - its `ops`, its modes on `board.modes`, its display
-memory in `board.region`, its info - and answers `RTGERR_OK` or why not.
-The board gets its name once the driver has answered, as it joins the
-list. The tags below `RTGA_DriverBase` mean the same to every driver.
-The library reads the name, the user data, the alignment, the transport,
-the brightness and whether the display starts on; the size, the format,
+**`attach`** is called with the driver's node, a device its table names
+and the device's tags - a part's own; none for a function on PCI, which
+says what it is by itself (`device.pci`). The driver makes a board for
+each output with `CreateBoard`, handing over an `RtgBoardSpec`: the
+board's ops, what the output is called, the size of its instance, what
+is true of it from the start (`RTGBF_STREAMING`), where its buffers come
+from, and which output it is. It then fills the board in - its modes on
+`board.modes`, its info, its display memory in `board.region` where the
+description left that open - and answers `RTGERR_OK`: the boards join
+the list, each named as it does. On any other answer the driver has
+given back what it took and deleted the boards it made (`DeleteBoard`),
+and the library asks the next driver. A panel on a bus opens the bus
+first (`OpenTransport(driver, device)`) and closes it when its bring-up
+fails and from its board's `destroy` (`CloseTransport`).
+
+The tags below `RTGA_DriverBase` mean the same to every driver. The
+library reads the alignment, the brightness, whether the display starts
+on and whether its screens' windows are composed; the size, the format,
 the pitch and the buffers are the driver's to read from the same list.
 Above `RTGA_DriverBase` each driver has a block of 64 of its own, listed
 in `sdk/libs/rtg/tags.zig` so that two never claim one.
+
+**A device nothing can find** - a display that is neither a panel of the
+board's list nor a function on PCI - is put on the list by whoever found
+it: `AddRtgDevice(tags)`, with the tags a panel part has, offers it at
+once, and `RemRtgDevice` takes it away again. Its boards are then marked
+as gone and its driver's `detach` is called to stop the hardware.
 
 **`RtgBoardOps`** is a table of slots, each one an operation the board
 has. A slot left null is one it has not got: the call answers
@@ -776,10 +849,13 @@ older SDK keeps its layout.
 | VisionFive 2 on HDMI, the monitor's mode | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | the bands composed into one picture, which the controller then reads |
 | QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | as the VisionFive 2's |
 
-graphics.library hands a panel in the memory map to the `qemu` driver
-when it is the ESP32-S3 emulator's display, and to `fb` otherwise. The
-`fb` driver joins rtg.library only on a board that lists a panel of a
-chip it drives (`CHIP_JH7110_DC8200`, `CHIP_QEMU_RAMFB`). On the
+The `qemu` driver takes the ESP32-S3 emulator's display, by its chip.
+The `fb` driver takes a panel part of a chip it drives
+(`CHIP_JH7110_DC8200`, `CHIP_BCM2712_HVS`, `CHIP_VIRTIO_GPU`,
+`CHIP_QEMU_RAMFB`, `CHIP_UEFI_FB`) and a virtio GPU's function on PCI,
+and makes a board of each it is offered: QEMU's virt machine started
+with a virtio GPU and the ramfb has two, `fb.0` on the GPU and `fb.1`,
+the last, on the ramfb. On the
 VisionFive 2 it says on the raw port when the power domain or the
 transmitter's PLL does not come up, and when no monitor is plugged in.
 `./zig build virt` starts QEMU without a display, so the virt machine's
@@ -831,10 +907,12 @@ and frames lose their syncs.
 
 ## Tools
 
-- `C:Rtg` lists the drivers and the boards; `Rtg display` prints the
-  machine's display in full - what it can do, its modes, its display
-  memory cut into buffers, and how the stream is doing. `MODES`, `MEMORY`
-  and `STATS` print one section, `FULL` everything.
+- `C:Rtg` lists the drivers, the devices - each with the driver that
+  took it - and the boards; `Rtg fb.0` prints that board in full - its
+  device, what it can do, its modes, its display memory cut into
+  buffers, and how the stream is doing. `DRIVERS`, `DEVICES` and
+  `BOARDS` print one list, `MODES`, `MEMORY` and `STATS` one section,
+  `FULL` everything.
 - `C:Backlight` sets the brightness through the board's IO expander
   (expander.resource), and says so on a board without one.
 - `C:test/Engine` checks the board's FillRect and CopyRect pixel for

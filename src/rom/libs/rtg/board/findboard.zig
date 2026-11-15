@@ -15,13 +15,15 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// SINCE: 1.0. LVO -56.
 ///
 /// INPUTS:
-/// - `board_name` - the name, as `CreateBoardTagList` gave it.
+/// - `board_name` - the name the library gave it: its driver's, a point
+///   and a number ("rgb.0").
 ///
 /// RESULT:
 /// The board, or null.
 ///
 /// BEHAVIOR:
-/// An exact match on the name.
+/// An exact match on the name. A board whose device has gone
+/// (`RTGBF_GONE`) is found too: its handle stays what it was.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task is changing the board list.
@@ -31,18 +33,18 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// Nothing is allocated. The board is not held once the call returns: one
-/// another task may delete is the caller's to agree on with that task.
+/// Nothing is allocated. A board is never freed for a program, so the
+/// handle is good for as long as the machine runs.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `NextBoard`, `CreateBoardTagList`
+/// `NextBoard`, `BindRtgDrivers`
 ///
 /// EXAMPLES:
 /// ```zig
-/// const board = rb.FindBoard("rgb0") orelse return;
+/// const board = rb.FindBoard("rgb.0") orelse return;
 /// ```
 pub fn FindBoard(rb: *RtgBase, board_name: [*:0]const u8) ?*rtg.RtgBoard {
     const sys = rb.sys_base;

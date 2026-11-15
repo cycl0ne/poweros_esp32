@@ -95,13 +95,15 @@ pub const LIBRARY_VERSION = 0;
 /// `e` and U+0301 as the font's `é`, or as its `e`, not with the default
 /// character. 46: a `shape` hook may answer a space of no glyph
 /// (`GLYPHREQ_SPACE`), by which a font says where the characters of a
-/// ligature part. The version stays 0 until there is something to
-/// demand of it.
-pub const LIBRARY_REVISION = 46;
+/// ligature part. 47: the machine's display is the first board
+/// rtg.library has, once its drivers have taken the machine's displays
+/// (`BindRtgDrivers`); the board has no name of this library's. The
+/// version stays 0 until there is something to demand of it.
+pub const LIBRARY_REVISION = 47;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "12.11.2026";
+const BUILD_DATE = "16.11.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

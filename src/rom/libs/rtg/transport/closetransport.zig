@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
-//! DeleteTransport: Give a bus back.
+//! CloseTransport: Give a bus back.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
@@ -11,47 +11,47 @@ const _transport = @import("_transport.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn DeleteTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
+/// fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -176.
+/// SINCE: 1.18. LVO -352.
 ///
 /// INPUTS:
-/// - `io` - the transport. Null does nothing.
+/// - `io` - the bus, as `OpenTransport` answered it. Null does nothing.
 ///
 /// RESULT:
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A transport a board still talks through is refused: it stays, its
-/// `open_cnt` not 0. Otherwise the driver's `destroy` is called and the
-/// transport leaves the list.
+/// The bus's driver's `destroy` is called, the bus leaves the library's
+/// list, and its handle and instance are freed. Whoever opened it sends
+/// nothing over it any more: a board's driver closes its bus when its
+/// bring-up fails, and from its board's `destroy`.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the board list, and if the
-///   driver does.
+///   bus's driver does.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Locks: no spinlock may be held: a driver may wait.
+/// - Locks: takes the board list's lock. No spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The transport is gone; its driver is one open less.
+/// The bus is gone; its driver is one bus less.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `CreateTransportTagList`, `DeleteBoard`
+/// `OpenTransport`
 ///
 /// EXAMPLES:
 /// ```zig
-/// rb.DeleteTransport(io);
+/// rb.CloseTransport(io);
 /// ```
-pub fn DeleteTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void {
+pub fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void {
     const gone = io orelse return;
     const sys = rb.sys_base;
-    // A board still talking through it keeps it alive.
-    if (gone.open_cnt != 0) return;
+
     if (gone.ops) |ops| {
         if (ops.destroy) |destroy| destroy(gone);
     }
@@ -59,8 +59,8 @@ pub fn DeleteTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void {
     sys.Remove(&gone.node);
     sys.ReleaseSemaphore(&rb.board_lock);
 
-    if (gone.driver) |driver_ptr| {
-        const driver: *rtg.RtgDriver = @ptrCast(@alignCast(driver_ptr));
+    if (gone.driver) |made_by| {
+        const driver: *rtg.RtgDriver = @ptrCast(@alignCast(made_by));
         if (driver.buses != 0) driver.buses -= 1;
     }
     if (gone.instance) |instance| sys.FreeVec(instance);

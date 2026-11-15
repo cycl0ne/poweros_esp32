@@ -13,8 +13,9 @@
 //!
 //! A module of its own, on the same footing as the other drivers: a
 //! description of a driver called "fb" behind a ROM tag, which
-//! rtg.library puts on its list. It makes a board where the board lists
-//! a panel of a chip it drives.
+//! rtg.library puts on its list. It takes a panel part of one of the
+//! chips above and a virtio GPU's function on PCI, and makes a board of
+//! each it is offered: a machine with two of them has two boards.
 //!
 //! What it drives is an address. The display reads a whole picture from
 //! RAM every frame, wherever it is told the picture is: there is no stream
@@ -171,9 +172,8 @@
 //! takes.
 //!
 //! The module keeps nothing of its own: a ROM image is read only, so what
-//! changes is the library's to allocate - the driver's `State` behind its
-//! node, a `Screen` beside each board - and found again through what an
-//! op is handed.
+//! changes is the library's to allocate - a `Screen` beside each board -
+//! and found again through what an op is handed.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -202,15 +202,12 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 34;
-const BUILD_DATE = "15.11.2026";
+const REVISION = 35;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
-
-/// The chips this drives, as the board's panel part names them.
-const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU, st.CHIP_BCM2712_HVS, st.CHIP_UEFI_FB };
 
 /// What every row and every buffer starts on: whole cache lines, so a
 /// refresh writes back exactly the rows it names, and as wide as any
@@ -218,14 +215,6 @@ const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_
 const row_alignment = 128;
 /// Where the block of buffers starts.
 const page = 4096;
-
-/// What is the driver's and not one board's: the library allocates it
-/// behind the driver's node and clears it.
-const State = struct {
-    /// The board while one exists. There is one display, so there is at
-    /// most one.
-    board: ?*rtg.RtgBoard = null,
-};
 
 /// Which display, and what it was found to be.
 const Scanout = union(enum) {
@@ -533,8 +522,10 @@ fn sleep(screen: *Screen, micros: u64) void {
     _ = sys.DoIO(&io.node);
 }
 
-fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @ptrCast(@alignCast(driver.state.?));
+/// The library as a program calls it, for a call that is not a driver's
+/// own.
+fn programs(rb: *RtgDriverBase) *RtgBase {
+    return @ptrCast(rb);
 }
 
 fn screenOf(board: *rtg.RtgBoard) *Screen {
@@ -2043,8 +2034,10 @@ fn pointerShown(screen: *Screen, show: bool) void {
 
 // --- the board -------------------------------------------------------------------
 
-/// The display the part describes, if it is there.
-fn findScanout(rb: *RtgDriverBase, board: *rtg.RtgBoard, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
+/// The display the device is, if it is there.
+fn findScanout(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, chip: u32, tag_list: ?[*]const TagItem) ?Scanout {
+    const rb = driver.rtg_base;
+    const sys = driver.sys_base;
     const address = rb.GetRtgTagData(st.PART_Address, 0, tag_list);
     return switch (chip) {
         st.CHIP_QEMU_RAMFB => .{ .ramfb = ramfb.find(address) orelse return null },
@@ -2053,11 +2046,11 @@ fn findScanout(rb: *RtgDriverBase, board: *rtg.RtgBoard, sys: *ExecBase, chip: u
         st.CHIP_JH7110_DC8200 => .jh7110,
         // Nor of the BCM2712's before the firmware has its clocks running.
         st.CHIP_BCM2712_HVS => .bcm2712,
-        // On PCI the driver finds the function itself and the part says
-        // nothing about where it lies; on a memory-mapped transport the
-        // board names the block, or the first of a row of them.
-        st.CHIP_VIRTIO_GPU => if (rb.GetRtgTagData(st.PART_Bus, st.BUS_NONE, tag_list) == st.BUS_PCI)
-            .{ .virtio = virtio.findOnPci(sys) orelse return null }
+        // On PCI the device is the function itself; on a memory-mapped
+        // transport the board names the block, or the first of a row of
+        // them.
+        st.CHIP_VIRTIO_GPU => if (device.pci) |function|
+            .{ .virtio = virtio.onPci(sys, function) orelse return null }
         else
             .{ .virtio = virtio.find(
                 address,
@@ -2073,33 +2066,79 @@ fn findScanout(rb: *RtgDriverBase, board: *rtg.RtgBoard, sys: *ExecBase, chip: u
                 @truncate(rb.GetRtgTagData(tags.RTGA_Pitch, 0, tag_list)),
                 @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
                 @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
-                board.rtg_base.?.RtgFormatBits(@intFromEnum(format)) / 8,
+                programs(rb).RtgFormatBits(@intFromEnum(format)) / 8,
             ) orelse return null };
         },
         else => null,
     };
 }
 
-fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const state = stateOf(made_by);
-    if (state.board != null) return err.RTGERR_IN_USE;
-    // Nothing to drive on a board that lists no panel of these chips.
-    if (!boardHasOne(made_by)) return err.RTGERR_NO_DISPLAY;
-    const rb = made_by.rtg_base;
-    const sys = made_by.sys_base;
+/// What a virtio GPU found on PCI is driven with: a function says what
+/// it is by itself and carries no tags, so what a part's would say is
+/// said here. The size is what stands where the emulator's window gives
+/// none.
+const function_tags = [_]TagItem{
+    .{ .tag = tags.RTGA_Width, .data = 1280 },
+    .{ .tag = tags.RTGA_Height, .data = 800 },
+    .{ .tag = tags.RTGA_PixelFormat, .data = @intFromEnum(rtg.PixelFormat.bgra32) },
+    // At most sixteen pictures at once - screens, and the buffers behind
+    // them - each taken from memory as it is opened: a ceiling, not memory
+    // set aside.
+    .{ .tag = tags.RTGA_Buffers, .data = 16 },
+    .{},
+};
 
-    const chip: u32 = @truncate(rb.GetRtgTagData(st.PART_Chip, st.CHIP_NONE, tag_list));
-    const scanout = findScanout(rb, board, sys, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
+/// A display this drives is offered - a panel part of one of its chips,
+/// or a virtio GPU's function on PCI: found, brought up, and a board made
+/// of it.
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const TagItem) callconv(.c) i32 {
+    const rb = driver.rtg_base;
+    const on_pci = device.kind == rtg.drivers.RTGDEV_PCI;
+    const tag_list: ?[*]const TagItem = if (on_pci) &function_tags else device_tags;
+    const chip: u32 = if (on_pci) st.CHIP_VIRTIO_GPU else device.chip;
+
+    // What the tags have to say, looked at before anything is taken.
     const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
-    const bytes: u32 = switch (format) {
-        .bgra32 => 4,
-        .rgb565 => 2,
-        else => return err.RTGERR_BAD_FORMAT,
+    if (format != .bgra32 and format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    const width: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list));
+    const height: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list));
+    if (width == 0 or height == 0) return err.RTGERR_BAD_TAGS;
+    if (width > 0x3FFF or height > 0x3FFF) return err.RTGERR_BAD_TAGS;
+
+    const scanout = findScanout(driver, device, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
+    const board = rb.CreateBoard(driver, device, &.{
+        .ops = switch (scanout) {
+            .bcm2712 => &bcm2712_ops,
+            .jh7110 => &jh7110_ops,
+            else => &ops,
+        },
+        .instance_size = @sizeOf(Screen),
+        // The windows of a screen on a GPU found on PCI each draw into a
+        // buffer of their own, and what can be seen of them is copied
+        // into the screen's; a part says so in its tags.
+        .flags = if (on_pci) rtg.boards.RTGBF_COMPOSE else 0,
+    }) orelse {
+        var found = scanout;
+        if (found == .virtio) virtio.giveBack(&found.virtio);
+        return err.RTGERR_NO_MEMORY;
     };
+    const code = bringUp(driver, board, scanout, tag_list);
+    if (code != err.RTGERR_OK) rb.DeleteBoard(board);
+    return code;
+}
+
+/// The board's screen filled in and its display brought up as far as the
+/// first show needs. On any answer but RTGERR_OK it has given back what
+/// it took, the board excepted, which is the caller's to delete.
+fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_list: ?[*]const TagItem) i32 {
+    const rb = driver.rtg_base;
+    const sys = driver.sys_base;
+    const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
+    const bytes: u32 = if (format == .bgra32) 4 else 2;
     const screen = screenOf(board);
     screen.* = .{
         .sys = sys,
-        .rtg_base = board.rtg_base.?,
+        .rtg_base = programs(rb),
         .scanout = scanout,
         .width = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
         .height = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
@@ -2107,13 +2146,14 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .bytes = bytes,
     };
     sys.InitSemaphore(&screen.compose_lock);
-    if (screen.width == 0 or screen.height == 0) return err.RTGERR_BAD_ARG;
-    if (screen.width > 0x3FFF or screen.height > 0x3FFF) return err.RTGERR_BAD_ARG;
     if (scanout == .virtio) {
         // The GPU up, and the picture as large as the emulator's window
         // has it - QEMU's xres and yres - where it says.
-        if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
         const gpu = &screen.scanout.virtio;
+        if (format != .bgra32) {
+            virtio.giveBack(gpu);
+            return err.RTGERR_BAD_FORMAT;
+        }
         if (!virtio.start(gpu, sys)) return err.RTGERR_NO_DISPLAY;
         if (virtio.displaySize(gpu, Waiter{ .screen = screen })) |size| {
             if (size.width <= 0x3FFF and size.height <= 0x3FFF) {
@@ -2201,16 +2241,10 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED |
             rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY,
     };
-    board.ops = switch (scanout) {
-        .bcm2712 => &bcm2712_ops,
-        .jh7110 => &jh7110_ops,
-        else => &ops,
-    };
     board.info.buffers = frames;
     board.info.pixel_clock_hz = screen.modes[screen.current].pixel_clock_hz;
     board.info.refresh_mhz = screen.modes[screen.current].refresh_mhz;
     engine.setUp(&screen.engine, sys);
-    state.board = board;
     return err.RTGERR_OK;
 }
 
@@ -2235,7 +2269,6 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     screen.composed = null;
     screen.cursor_memory = null;
     screen.cursor = null;
-    if (board.driver) |driver| stateOf(driver).board = null;
 }
 
 /// Mode `index` added to the board's list, `width` by `height` in the
@@ -2668,16 +2701,21 @@ const jh7110_ops = ops: {
     break :ops more;
 };
 
-const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
 
-/// Whether the board lists a panel of a chip this drives.
-fn boardHasOne(driver: *rtg.RtgDriver) bool {
-    const eb = driver.expansion_base orelse return false;
-    for (chips) |chip| {
-        if (eb.FindBoardPart(null, st.PARTKIND_PANEL, chip) != null) return true;
-    }
-    return false;
-}
+/// What it takes: a panel part of one of these chips, and a virtio GPU's
+/// function on PCI, in the arrangement the standard settled on and the
+/// one before it.
+const matches = [_]rtg.RtgMatch{
+    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = st.CHIP_QEMU_RAMFB },
+    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = st.CHIP_JH7110_DC8200 },
+    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = st.CHIP_VIRTIO_GPU },
+    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = st.CHIP_BCM2712_HVS },
+    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = st.CHIP_UEFI_FB },
+    .{ .fields = rtg.drivers.RTGMATCH_VENDOR | rtg.drivers.RTGMATCH_DEVICE, .vendor = virtio.pci_vendor, .device = virtio.pci_device },
+    .{ .fields = rtg.drivers.RTGMATCH_VENDOR | rtg.drivers.RTGMATCH_DEVICE, .vendor = virtio.pci_vendor, .device = virtio.pci_device_old },
+    .{},
+};
 
 /// The driver's tag: a description and no init. rtg.library reads it at
 /// its own init and puts the driver on its list; nothing of this module
@@ -2696,8 +2734,7 @@ export const rtg_fb_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
         .version = VERSION,
         .revision = REVISION,
         .kind = rtg.drivers.RTGDT_BOARD,
+        .matches = &matches,
         .ops = &driver_ops,
-        .state_size = @sizeOf(State),
-        .instance_size = @sizeOf(Screen),
     },
 };
