@@ -64,7 +64,6 @@ pub const RTGYUV_PEAK_DEFAULT = bitmaps.RTGYUV_PEAK_DEFAULT;
 pub const RTGCICP_MATRIX = bitmaps.RTGCICP_MATRIX;
 pub const RTGCICP_TRANSFER = bitmaps.RTGCICP_TRANSFER;
 pub const RTGCICP_PRIMARIES = bitmaps.RTGCICP_PRIMARIES;
-pub const RtgRGB = bitmaps.RtgRGB;
 pub const RtgTemplate = bitmaps.RtgTemplate;
 pub const RtgPattern = bitmaps.RtgPattern;
 

@@ -287,14 +287,6 @@ pub const RTGCICP_MATRIX: u32 = 0;
 pub const RTGCICP_TRANSFER: u32 = 1;
 pub const RTGCICP_PRIMARIES: u32 = 2;
 
-/// A colour taken apart, eight bits a channel.
-pub const RtgRGB = extern struct {
-    red: u8 = 0,
-    green: u8 = 0,
-    blue: u8 = 0,
-    alpha: u8 = 255,
-};
-
 /// A one-bit shape painted in two colours - a glyph, a cursor, a mask.
 /// The bits are mono1 and `pitch` is their row stride.
 pub const RtgTemplate = extern struct {
