@@ -19,8 +19,8 @@
 //! a string of its own. No arrow goes to a handler: dos.library names each
 //! to start it, and reaches it by packets. A name that arrives at run time - a mount entry's
 //! device, a caller's, a file's type - the source cannot show, nor one an
-//! SDK helper opens for the module: those opens are listed below
-//! (`run_time`) and drawn dashed.
+//! SDK helper opens for the module, nor a base a module is handed: those
+//! are listed below (`run_time`) and drawn dashed.
 //!
 //! <modules.md> holds each chart between `<!-- modchart <chart> -->` and
 //! `<!-- modchart end -->`; the chart is written afresh and the text
@@ -102,6 +102,10 @@ const run_time = [_][2][]const u8{
     .{ "sdcard.device", "input.device" },
     // The serial unit (sdk.devices.serialunit), for a break's time.
     .{ "serial.device", "timer.device" },
+    // The library a display driver is handed: the node rtg.library makes
+    // for a driver's description carries its base, and the driver opens
+    // nothing.
+    .{ "display drivers", "rtg.library" },
     // The record locks' table (sdk.dos.record.Records), for the time a
     // lock may wait.
     .{ "ram-handler", "timer.device" },

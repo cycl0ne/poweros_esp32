@@ -3,8 +3,9 @@
 //! D-PHY, the bridge in front of it, and the DMA channel that keeps it
 //! fed from a picture in PSRAM.
 //!
-//! A module of its own: it opens rtg.library at cold start and hands in a
-//! driver called "dsi". A board of it is made from the panel's tags: the
+//! A module of its own: a description of a driver called "dsi" behind a
+//! ROM tag, which rtg.library puts on its list. A board of it is made
+//! from the panel's tags: the
 //! link (lanes and lane rate), the pixel clock and timings, and the
 //! panel's bring-up as DCS commands - so another panel on this host is
 //! another tag list and not another driver.
@@ -84,7 +85,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 11;
+const REVISION = 12;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -105,11 +106,9 @@ const channel = 0;
 /// How long a flip waits for the frame it lands on.
 const flip_wait_us = 100_000;
 
-/// Everything this driver has that changes, allocated once by the init.
+/// What is the driver's and not one board's: the library allocates it
+/// behind the driver's node and clears it.
 const State = struct {
-    driver: rtg.RtgDriver = .{},
-    sys: *ExecBase,
-    rtg_base: *RtgDriverBase,
     /// The panel while a board of it exists. There is one host, so there
     /// is at most one.
     board: ?*rtg.RtgBoard = null,
@@ -162,7 +161,7 @@ const Panel = struct {
 };
 
 fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @fieldParentPtr("driver", driver);
+    return @ptrCast(@alignCast(driver.state.?));
 }
 
 fn panelOf(board: *rtg.RtgBoard) *Panel {
@@ -329,7 +328,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     });
 
     if (!dwgdma.start()) return err.RTGERR_NO_DISPLAY;
-    const psram_mhz = psramMhz(sys, driverBase(panel.board));
+    const psram_mhz = psramMhz(panel.board.driver.?);
     bus.share(streamBytes(panel), psram_mhz);
     dwgdma.setUpChannel(channel);
 
@@ -487,7 +486,8 @@ fn giveBack(panel: *Panel) void {
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
-    const rb = driverBase(board);
+    const sys = made_by.sys_base;
+    const rb = made_by.rtg_base;
     if (state.board != null) return err.RTGERR_IN_USE;
 
     var wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
@@ -496,15 +496,15 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     // takes.
     var bridge_bus: ?lt8912b.I2c = null;
     defer if (bridge_bus) |bus_to_bridge| bus_to_bridge.close();
-    if (wanted.chip == st.CHIP_LT8912B) bridge_bus = monitorFor(state.sys, &wanted) orelse return err.RTGERR_NO_DISPLAY;
+    if (wanted.chip == st.CHIP_LT8912B) bridge_bus = monitorFor(sys, &wanted) orelse return err.RTGERR_NO_DISPLAY;
     // The PLL's setting for the rate that will run - over HDMI the one
     // the monitor's mode came with - found before anything is taken. The
     // tags' own rate was asked of it as they were read.
     const lane = host.pllFor(wanted.lane_mbps) orelse return err.RTGERR_BAD_TAGS;
 
     const panel = panelOf(board);
-    panel.* = .{ .sys = state.sys, .board = board, .config = wanted };
-    state.sys.InitSemaphore(&panel.pointer.lock);
+    panel.* = .{ .sys = sys, .board = board, .config = wanted };
+    sys.InitSemaphore(&panel.pointer.lock);
     // A screen's rows: the stream reads a panel's straight, so they are
     // exactly its width; over HDMI it reads the copy instead, and the
     // screens' rows are whole cache lines as AllocBitMap makes them, for a
@@ -518,7 +518,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     if (bridge_bus != null) {
         panel.hdmi = true;
         panel.composing = true;
-        if (!link_file.allocate(&panel.link, state.sys, wanted.width, wanted.height, .bgr24)) return err.RTGERR_NO_MEMORY;
+        if (!link_file.allocate(&panel.link, sys, wanted.width, wanted.height, .bgr24)) return err.RTGERR_NO_MEMORY;
         panel.stream_pitch = panel.link.pitch;
         panel.stream_frame_bytes = panel.link.pitch * wanted.height;
     }
@@ -542,7 +542,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .refresh_mhz = refreshMilliHz(panel),
         .flags = rtg.boards.RTGMF_DEFAULT,
     };
-    state.sys.AddTail(&board.modes, &panel.mode.node);
+    sys.AddTail(&board.modes, &panel.mode.node);
 
     // Its buffers are taken from system memory as they are asked for - a
     // line-aligned block each, which the DMA reads in whole lines - and no
@@ -607,12 +607,10 @@ fn take(wanted: *config.Config, mode: *const monitor.Mode) void {
 
 /// The PSRAM's bus clock in MHz, as the board's list gives it (80 if it
 /// does not).
-fn psramMhz(sys: *ExecBase, rb: *RtgDriverBase) u32 {
+fn psramMhz(driver: *rtg.RtgDriver) u32 {
     const default_mhz = 80;
-    const library = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return default_mhz;
-    defer sys.CloseLibrary(library);
-    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(library);
-    return @truncate(rb.GetRtgTagData(sdk.expansion.systemtags.SYSTAG_PsramSpeed, default_mhz, eb.SystemTags()));
+    const eb = driver.expansion_base orelse return default_mhz;
+    return @truncate(driver.rtg_base.GetRtgTagData(sdk.expansion.systemtags.SYSTAG_PsramSpeed, default_mhz, eb.SystemTags()));
 }
 
 /// What the stream reads a second, on average: a frame's bytes, as often
@@ -839,48 +837,27 @@ const ops = rtg.RtgBoardOps{
 
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 
-/// Cold start at 22: after rtg.library (24), which it joins. It brings
-/// nothing up here: a board is made when something asks for one.
-fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
-    _ = seg_list;
-    const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgDriverBase = @ptrCast(library);
-
-    const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    };
-    const state: *State = @ptrCast(@alignCast(memory));
-    state.* = .{ .sys = sys, .rtg_base = rb };
-    state.driver = .{
-        .node = .{ .name = DRIVER_NAME, .pri = 0 },
+/// The driver's tag: a description and no init. rtg.library reads it at
+/// its own init and puts the driver on its list; nothing of this module
+/// runs until a board is asked for.
+export const rtg_dsi_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&rtg_dsi_tag),
+        .version = VERSION,
+        .type = .rtg_driver,
+        .name = MODULE_NAME,
+        .id_string = VERSION_STRING[1..], // past the NUL: a C string
+    },
+    .spec = .{
+        .name = DRIVER_NAME,
+        .id_string = VERSION_STRING[1..],
         .version = VERSION,
         .revision = REVISION,
-        .id_string = VERSION_STRING[1..],
-        .type = rtg.boards.RTGDT_BOARD,
+        .kind = rtg.drivers.RTGDT_BOARD,
         // The DMA's interrupt reads the panel at every frame's end.
-        .flags = rtg.boards.RTGDF_INTERNAL_INSTANCE,
+        .flags = rtg.drivers.RTGDF_INTERNAL_INSTANCE,
         .ops = &driver_ops,
+        .state_size = @sizeOf(State),
         .instance_size = @sizeOf(Panel),
-    };
-    if (!rb.AddRtgDriver(&state.driver)) {
-        sys.FreeVec(memory);
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    }
-    // The library stays open and the state stays allocated: the driver is
-    // on the list for good, and the list is how anything finds it again.
-    return @ptrCast(sys);
-}
-
-/// No library and no vectors: the tag's init is the whole of it.
-export const rtg_dsi_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &rtg_dsi_tag,
-    .flags = exec.RTF_COLDSTART,
-    .version = VERSION,
-    .pri = 22,
-    .type = .rtg_driver,
-    .name = MODULE_NAME,
-    .id_string = VERSION_STRING[1..], // past the NUL: a C string
-    .init = @ptrCast(@constCast(&init)),
+    },
 };

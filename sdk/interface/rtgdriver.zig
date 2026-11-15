@@ -29,7 +29,7 @@ pub const LVO = struct {
 /// Each function's type, by its name in LVO. The first argument is the
 /// library's base.
 pub const Fn = struct {
-    pub const AddRtgDriver = *const fn (*RtgDriverBase, *rtg.RtgDriver) callconv(.c) bool;
+    pub const AddRtgDriver = *const fn (*RtgDriverBase, *const rtg.RtgDriverSpec, ?*anyopaque) callconv(.c) ?*rtg.RtgDriver;
     pub const RemRtgDriver = *const fn (*RtgDriverBase, *rtg.RtgDriver) callconv(.c) bool;
     pub const SignalRtgEvent = *const fn (*RtgDriverBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const TxParam = *const fn (*RtgDriverBase, *rtg.RtgTransport, i32, ?*const anyopaque, u32) callconv(.c) i32;
@@ -46,14 +46,18 @@ pub const RtgDriverBase = opaque {
         return @ptrCast(@alignCast(self));
     }
 
-    /// Put a driver on the list. False for a name already there, or for ops
-    /// that fill in neither create. Not from interrupts.
-    pub fn AddRtgDriver(self: *RtgDriverBase, driver: *rtg.RtgDriver) bool {
-        return libraries.call(self, LVO.AddRtgDriver, Fn.AddRtgDriver, .{driver});
+    /// Put a driver's description on the list: the library makes the
+    /// driver's node, with the state the description asks for behind it,
+    /// cleared. `seg_list` is the segments of a driver that was loaded, null
+    /// for one in ROM. Null for a name already there, for ops that fill in
+    /// neither create, or without memory. Not from interrupts.
+    pub fn AddRtgDriver(self: *RtgDriverBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver {
+        return libraries.call(self, LVO.AddRtgDriver, Fn.AddRtgDriver, .{ spec, seg_list });
     }
 
-    /// Take a driver off the list. False while a board or a transport it made
-    /// is still alive. Not from interrupts.
+    /// Take a driver off the list and free its node and its state. False
+    /// while a board or a bus it made is still alive, and for one that is not
+    /// on the list. Not from interrupts.
     pub fn RemRtgDriver(self: *RtgDriverBase, driver: *rtg.RtgDriver) bool {
         return libraries.call(self, LVO.RemRtgDriver, Fn.RemRtgDriver, .{driver});
     }

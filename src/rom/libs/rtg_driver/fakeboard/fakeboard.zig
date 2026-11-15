@@ -3,13 +3,17 @@
 //!
 //! It is written the way a real driver is written, because it is what
 //! anyone writing one will read: nothing is kept in the module's own
-//! image. `create` allocates one block holding the driver node, the
-//! display memory and everything that changes, and every entry point finds
-//! that block again through the node - an op has the board, the board has
-//! its driver, and the driver is a field of the block. What belongs to one
-//! board and not to the driver - its modes, and the bands it shows - is
-//! in the instance the library allocates beside each handle, so two
-//! boards of this driver never share a list.
+//! image. The driver is its description, `spec`; the library allocates
+//! the driver's `State` behind the node it makes for it, and every entry
+//! point finds that state again through the node - an op has the board,
+//! the board has its driver's node, and the node has the state. What
+//! belongs to one board and not to the driver - its modes, and the bands
+//! it shows - is in the instance the library allocates beside each
+//! handle, so two boards of this driver never share a list.
+//!
+//! A real driver's description is behind a ROM tag, and the library puts
+//! it on its list. This one is put there by a test (`add`), which also
+//! takes the display memory its boards are cut out of.
 //!
 //! Its engine really does fill and copy, so a test can compare
 //! bytes and see both that the work happened and that the rectangle it was
@@ -123,13 +127,12 @@ pub const Log = struct {
     last_wait_frames: u32 = 0,
 };
 
-/// Everything this driver has that changes, allocated by `create`.
+/// Everything this driver has that changes: the library allocates it
+/// behind the driver's node, and `add` fills it in.
 pub const State = struct {
-    driver: rtg.RtgDriver = .{},
+    /// The driver's node, as the library made it.
+    driver: *rtg.RtgDriver,
     sys: *ExecBase,
-    /// rtg.library as a driver calls it, for a driver `add` put on the
-    /// list; null for one a test added itself.
-    rtg_base: ?*RtgDriverBase = null,
     /// The display memory its boards are cut out of.
     region: [*]u8,
     log: Log = .{},
@@ -184,7 +187,7 @@ pub const Instance = struct {
 };
 
 pub fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @fieldParentPtr("driver", driver);
+    return @ptrCast(@alignCast(driver.state.?));
 }
 
 fn stateOfBoard(board: *rtg.RtgBoard) *State {
@@ -199,59 +202,50 @@ pub fn instanceOf(board: *rtg.RtgBoard) *Instance {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
-/// The driver, ready to be handed to AddRtgDriver. Null without memory.
-pub fn create(sys: *ExecBase) ?*State {
-    const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
-    const region = sys.AllocMem(region_bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        sys.FreeVec(memory);
-        return null;
-    };
-    const state: *State = @ptrCast(@alignCast(memory));
-    state.* = .{ .sys = sys, .region = @ptrCast(region) };
-    state.driver = .{
-        .node = .{ .name = DRIVER_NAME, .pri = 0 },
-        .version = 1,
-        .id_string = "fake board 1.0",
-        .type = rtg.boards.RTGDT_BOARD,
-        .ops = &driver_ops,
-        .instance_size = @sizeOf(Instance),
-    };
-    return state;
-}
+/// The driver's description, as a real driver's ROM tag holds one.
+pub const spec = rtg.RtgDriverSpec{
+    .name = DRIVER_NAME,
+    .id_string = "fake board 1.0",
+    .version = 1,
+    .kind = rtg.drivers.RTGDT_BOARD,
+    .ops = &driver_ops,
+    .state_size = @sizeOf(State),
+    .instance_size = @sizeOf(Instance),
+};
 
-/// Give back what create took. The driver must be off the list first.
-pub fn destroy(state: *State) void {
-    const sys = state.sys;
-    sys.FreeMem(@ptrCast(state.region), region_bytes);
-    sys.FreeVec(state);
-}
-
-/// The driver made and put on rtg.library's list, for a test of a module
-/// that needs a board under it. Null without memory, or when the library
-/// has a driver of this name already.
+/// The driver put on rtg.library's list, for a test: its description
+/// handed to AddRtgDriver, the display memory its boards are cut out of
+/// taken, and its state filled in. Null without memory, or when the
+/// library has a driver of this name already.
 ///
 /// INPUTS:
 /// - `sys` - exec.
 /// - `library` - rtg.library's base, as `OpenLibrary` answers it.
 pub fn add(sys: *ExecBase, library: *anyopaque) ?*State {
-    const state = create(sys) orelse return null;
     const rb: *RtgDriverBase = @ptrCast(library);
-    if (!rb.AddRtgDriver(&state.driver)) {
-        destroy(state);
+    const region = sys.AllocMem(region_bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    const driver = rb.AddRtgDriver(&spec, null) orelse {
+        sys.FreeMem(region, region_bytes);
         return null;
-    }
-    state.rtg_base = rb;
+    };
+    const state = stateOf(driver);
+    state.* = .{ .driver = driver, .sys = sys, .region = @ptrCast(region) };
     return state;
 }
 
-/// The driver `add` made taken off the list and given back. Its boards
-/// are deleted first.
+/// The driver `add` put on the list taken off it again, and its display
+/// memory given back. Its boards are deleted first: false, and nothing
+/// given back, while one is alive.
 ///
 /// INPUTS:
 /// - `state` - what `add` answered.
-pub fn remove(state: *State) void {
-    if (state.rtg_base) |rb| _ = rb.RemRtgDriver(&state.driver);
-    destroy(state);
+pub fn remove(state: *State) bool {
+    const sys = state.sys;
+    const region = state.region;
+    // The state goes with the node.
+    if (!state.driver.rtg_base.RemRtgDriver(state.driver)) return false;
+    sys.FreeMem(@ptrCast(region), region_bytes);
+    return true;
 }
 
 /// A frame of `board` ends, as a real board's frame interrupt says it:
@@ -735,6 +729,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, _: ?[*]const TagIt
     const state = stateOf(made_by);
     if (state.create_answer != err.RTGERR_OK) return state.create_answer;
     state.log.created += 1;
+    const sys = made_by.sys_base;
 
     const rb = board.rtg_base.?;
     const instance = instanceOf(board);
@@ -748,7 +743,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, _: ?[*]const TagIt
         &full_ops;
 
     // This board's own modes, out of its own instance.
-    for (&instance.modes) |*mode| state.sys.AddTail(&board.modes, &mode.node);
+    for (&instance.modes) |*mode| sys.AddTail(&board.modes, &mode.node);
 
     board.region = .{
         .base = state.region,

@@ -1,32 +1,46 @@
 // SPDX-License-Identifier: MPL-2.0
-//! AddRtgDriver: Put a driver on the list.
+//! AddRtgDriver: Put a driver's description on the list.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
+const _driver = @import("_driver.zig");
 
-/// Puts a driver on the library's list.
+/// Puts a driver's description on the library's list.
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn AddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
+/// fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver
 /// ```
 ///
 /// SINCE: 1.0. LVO -292.
 ///
 /// INPUTS:
-/// - `driver` - the driver, with its name in `node.name` and its operations
-///   in `ops`. On no list yet.
+/// - `spec` - the driver's description: its name, what it makes and the
+///   operations the library calls. It stays where it is and is read there
+///   for as long as the driver is on the list.
+/// - `seg_list` - the segments of a driver that was loaded from a file,
+///   kept in the node; null for one in ROM.
 ///
 /// RESULT:
-/// True if it went on. False for a driver with no name, no operations, or
-/// operations that fill in neither `create_board` nor `create_transport`,
-/// and for a name already on the list.
+/// The driver's node, or null: for operations that fill in neither
+/// `create_board` nor `create_transport`, for a name already on the list,
+/// and without memory.
 ///
 /// BEHAVIOR:
-/// The list is kept by priority, so a caller walking it meets the most
-/// wanted driver first. A driver that can make neither a board nor a
-/// transport would sit on the list answering nothing, so it is refused.
+/// The library makes the node and, in the same block behind it, the
+/// `state_size` bytes the description asks for, cleared; `state` is null
+/// for a driver that asks for none. The node carries what a driver needs
+/// to work: exec, this library as a driver calls it, and
+/// expansion.library where the machine has it. The block is in internal
+/// memory for a driver whose interrupts read it
+/// (`RTGDF_INTERNAL_INSTANCE`). The list is kept by the descriptions'
+/// priority, so a caller walking it meets the most wanted driver first. A
+/// driver that can make neither a board nor a transport would sit on the
+/// list answering nothing, so it is refused.
+///
+/// The library calls this itself for every driver in the ROM, at its
+/// init; a test calls it for its own driver.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the driver list.
@@ -35,8 +49,8 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The driver stays its own module's. The list holds it until
-/// `RemRtgDriver`.
+/// The node and the state are the library's, freed by `RemRtgDriver`. The
+/// description stays its module's.
 ///
 /// BUGS:
 /// None known.
@@ -46,20 +60,32 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// if (!rb.AddRtgDriver(&my_driver)) return error.DriverRefused;
+/// const driver = rb.AddRtgDriver(&my_spec, null) orelse return error.DriverRefused;
 /// ```
-pub fn AddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool {
-    const name = driver.node.name orelse return false;
-    const ops = driver.ops orelse return false;
+pub fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver {
+    const sys = rb.sys_base;
     // A driver that can make neither a board nor a transport would sit on
     // the list answering nothing.
-    if (ops.create_board == null and ops.create_transport == null) return false;
+    if (spec.ops.create_board == null and spec.ops.create_transport == null) return null;
 
-    rb.sys_base.ObtainSemaphore(&rb.driver_lock);
-    defer rb.sys_base.ReleaseSemaphore(&rb.driver_lock);
+    sys.ObtainSemaphore(&rb.driver_lock);
+    defer sys.ReleaseSemaphore(&rb.driver_lock);
 
-    if (rb.sys_base.FindName(&rb.drivers, name) != null) return false;
-    driver.open_cnt = 0;
-    rb.sys_base.Enqueue(&rb.drivers, &driver.node);
-    return true;
+    if (sys.FindName(&rb.drivers, spec.name) != null) return null;
+
+    // The node and the driver's state in one block, the state behind the
+    // node.
+    const memory = sys.AllocVec(_driver.state_offset + spec.state_size, _driver.memoryFor(spec)) orelse return null;
+    const driver: *rtg.RtgDriver = @ptrCast(@alignCast(memory));
+    driver.* = .{
+        .node = .{ .type = .rtg_driver, .name = spec.name, .pri = spec.priority },
+        .spec = spec,
+        .sys_base = sys,
+        .rtg_base = rb.driverIface(),
+        .expansion_base = rb.expansion_base,
+        .seg_list = seg_list,
+    };
+    if (spec.state_size != 0) driver.state = @as([*]u8, @ptrCast(memory)) + _driver.state_offset;
+    sys.Enqueue(&rb.drivers, &driver.node);
+    return driver;
 }

@@ -2696,7 +2696,7 @@ const Display = struct {
         const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         rtg_base.FreeBitMap(d.bitmap);
         rtg_base.DeleteBoard(d.board);
-        host_rom.fakeboard.remove(d.state);
+        _ = host_rom.fakeboard.remove(d.state);
     }
 
     fn pixel(d: Display, x: usize, y: usize) u16 {

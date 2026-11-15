@@ -22,7 +22,7 @@ pub const RtgTransport = extern struct {
     /// ln_Name is the instance's name ("qspi0").
     node: Node = .{},
     rtg_base: ?*RtgBase = null,
-    /// An *RtgDriver of type RTGDT_TRANSPORT.
+    /// The *RtgDriver that made it, one of kind RTGDT_TRANSPORT.
     driver: ?*anyopaque = null,
     ops: ?*const RtgTransportOps = null,
     /// How many boards were given this bus. DeleteTransport refuses while

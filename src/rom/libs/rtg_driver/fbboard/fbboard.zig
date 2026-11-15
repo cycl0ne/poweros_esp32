@@ -11,9 +11,10 @@
 //! what it is, to switch on the sound the link it lit can carry, and to
 //! flip it between that buffer and a frame of the device's own.
 //!
-//! A module of its own, on the same footing as the other drivers: it
-//! opens rtg.library at cold start and hands in a driver called "fb",
-//! when the board lists a panel of a chip it drives.
+//! A module of its own, on the same footing as the other drivers: a
+//! description of a driver called "fb" behind a ROM tag, which
+//! rtg.library puts on its list. It makes a board where the board lists
+//! a panel of a chip it drives.
 //!
 //! What it drives is an address. The display reads a whole picture from
 //! RAM every frame, wherever it is told the picture is: there is no stream
@@ -169,9 +170,10 @@
 //! elsewhere, and should it stop coming, they wait as long as a frame
 //! takes.
 //!
-//! The module keeps nothing of its own: a ROM image is read only, so the
-//! driver node and everything that changes are allocated at init and found
-//! again through the node.
+//! The module keeps nothing of its own: a ROM image is read only, so what
+//! changes is the library's to allocate - the driver's `State` behind its
+//! node, a `Screen` beside each board - and found again through what an
+//! op is handed.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -200,7 +202,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 33;
+const REVISION = 34;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -217,12 +219,9 @@ const row_alignment = 128;
 /// Where the block of buffers starts.
 const page = 4096;
 
-/// The driver node is a field of this, so anything holding the node is
-/// holding all of it.
+/// What is the driver's and not one board's: the library allocates it
+/// behind the driver's node and clears it.
 const State = struct {
-    driver: rtg.RtgDriver = .{},
-    sys: *ExecBase,
-    rtg_base: *RtgDriverBase,
     /// The board while one exists. There is one display, so there is at
     /// most one.
     board: ?*rtg.RtgBoard = null,
@@ -535,7 +534,7 @@ fn sleep(screen: *Screen, micros: u64) void {
 }
 
 fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @fieldParentPtr("driver", driver);
+    return @ptrCast(@alignCast(driver.state.?));
 }
 
 fn screenOf(board: *rtg.RtgBoard) *Screen {
@@ -2084,8 +2083,10 @@ fn findScanout(rb: *RtgDriverBase, board: *rtg.RtgBoard, sys: *ExecBase, chip: u
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
     if (state.board != null) return err.RTGERR_IN_USE;
-    const rb = state.rtg_base;
-    const sys = state.sys;
+    // Nothing to drive on a board that lists no panel of these chips.
+    if (!boardHasOne(made_by)) return err.RTGERR_NO_DISPLAY;
+    const rb = made_by.rtg_base;
+    const sys = made_by.sys_base;
 
     const chip: u32 = @truncate(rb.GetRtgTagData(st.PART_Chip, st.CHIP_NONE, tag_list));
     const scanout = findScanout(rb, board, sys, chip, tag_list) orelse return err.RTGERR_NO_DISPLAY;
@@ -2667,61 +2668,36 @@ const jh7110_ops = ops: {
     break :ops more;
 };
 
-const driver_ops = rtg.boards.RtgDriverOps{ .create_board = &createBoard };
+const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 
 /// Whether the board lists a panel of a chip this drives.
-fn boardHasOne(sys: *ExecBase) bool {
-    const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return false;
-    defer sys.CloseLibrary(expansion_lib);
-    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(expansion_lib);
+fn boardHasOne(driver: *rtg.RtgDriver) bool {
+    const eb = driver.expansion_base orelse return false;
     for (chips) |chip| {
         if (eb.FindBoardPart(null, st.PARTKIND_PANEL, chip) != null) return true;
     }
     return false;
 }
 
-/// Cold start at 23: after rtg.library (24), which it joins. Nothing is
-/// registered on a board without such a panel.
-fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
-    _ = seg_list;
-    if (!boardHasOne(sys)) return @ptrCast(sys);
-
-    const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgDriverBase = @ptrCast(library);
-
-    const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    };
-    const state: *State = @ptrCast(@alignCast(memory));
-    state.* = .{ .sys = sys, .rtg_base = rb };
-    state.driver = .{
-        .node = .{ .name = DRIVER_NAME, .pri = 0 },
+/// The driver's tag: a description and no init. rtg.library reads it at
+/// its own init and puts the driver on its list; nothing of this module
+/// runs until a board is asked for.
+export const rtg_fb_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&rtg_fb_tag),
+        .version = VERSION,
+        .type = .rtg_driver,
+        .name = MODULE_NAME,
+        .id_string = VERSION_STRING[1..], // past the NUL: a C string
+    },
+    .spec = .{
+        .name = DRIVER_NAME,
+        .id_string = VERSION_STRING[1..],
         .version = VERSION,
         .revision = REVISION,
-        .id_string = VERSION_STRING[1..],
-        .type = rtg.boards.RTGDT_BOARD,
+        .kind = rtg.drivers.RTGDT_BOARD,
         .ops = &driver_ops,
+        .state_size = @sizeOf(State),
         .instance_size = @sizeOf(Screen),
-    };
-    if (!rb.AddRtgDriver(&state.driver)) {
-        sys.FreeVec(memory);
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    }
-    // The library stays open and the state stays allocated: the driver is
-    // on the list for good, and the list is how anything finds it again.
-    return @ptrCast(sys);
-}
-
-/// No library and no vectors: the tag's init is the whole of it.
-export const rtg_fb_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &rtg_fb_tag,
-    .flags = exec.RTF_COLDSTART,
-    .version = VERSION,
-    .pri = 23,
-    .type = .rtg_driver,
-    .name = MODULE_NAME,
-    .id_string = VERSION_STRING[1..], // past the NUL: a C string
-    .init = @ptrCast(@constCast(&init)),
+    },
 };

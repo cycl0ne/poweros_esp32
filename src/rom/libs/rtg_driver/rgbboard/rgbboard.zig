@@ -2,19 +2,20 @@
 //! An RGB panel as a display board: the chip's LCD_CAM peripheral, a
 //! framebuffer, and the two DMA channels that keep the panel fed.
 //!
-//! A module of its own: it opens rtg.library at cold start and hands in a
-//! driver called "rgb". Anything that then asks rtg.library for a board of
-//! that name, with the panel's numbers in its tags, gets a panel brought
-//! up and ready to be given a buffer to show. Which numbers those are -
-//! this board's, or another one's - is the caller's business; this driver
-//! knows the peripheral, not the machine it is soldered to.
+//! A module of its own: a description of a driver called "rgb" behind a
+//! ROM tag, which rtg.library puts on its list. Anything that then asks
+//! rtg.library for a board of that name, with the panel's numbers in its
+//! tags, gets a panel brought up and ready to be given a buffer to show.
+//! Which numbers those are - this board's, or another one's - is the
+//! caller's business; this driver knows the peripheral, not the machine
+//! it is soldered to.
 //!
-//! The module keeps nothing of its own. A ROM image is read only, so the
-//! driver node, SysBase and everything else that changes are allocated at
-//! init, and every entry point finds them again through the node: an op
-//! has the board, the board has its driver, and the driver is a field of
-//! the block. Per-board state is the `Panel` the library allocates beside
-//! each handle.
+//! The module keeps nothing of its own. A ROM image is read only, so what
+//! changes is the library's to allocate, and every entry point finds it
+//! again through what it is handed: an op has the board, the board has
+//! its driver's node, and the node has exec, rtg.library and the
+//! driver's `State`. Per-board state is the `Panel` the library allocates
+//! beside each handle.
 //!
 //! A picture may also be several buffers at once, in bands of lines
 //! (ShowBitMapBands): the copy's chains then take each line from the band
@@ -30,9 +31,6 @@
 
 const std = @import("std");
 const sdk = @import("sdk");
-const exec = sdk.exec;
-const ExecBase = sdk.interface.exec.ExecBase;
-const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
@@ -45,30 +43,25 @@ const Panel = panels.Panel;
 const lcd = @import("lcd.zig");
 const pointer = @import("pointer.zig");
 
-const MODULE_NAME = "rtg-rgb";
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 5;
+const REVISION = 6;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
-    "\x00$VER: " ++ MODULE_NAME ++ " " ++
+    "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// Everything this driver has that changes, allocated once by the init.
-/// The driver node is a field of it, so anything holding the node is
-/// holding this.
+/// What is the driver's and not one board's: the library allocates it
+/// behind the driver's node and clears it.
 const State = struct {
-    driver: rtg.RtgDriver = .{},
-    sys: *ExecBase,
-    rtg_base: *RtgDriverBase,
     /// The panel while a board of it exists. There is one peripheral, so
     /// there is at most one.
     board: ?*rtg.RtgBoard = null,
 };
 
 fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @fieldParentPtr("driver", driver);
+    return @ptrCast(@alignCast(driver.state.?));
 }
 
 fn panelOf(board: *rtg.RtgBoard) *Panel {
@@ -77,13 +70,14 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
-    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
+    const sys = made_by.sys_base;
+    const rb = made_by.rtg_base;
     if (state.board != null) return err.RTGERR_IN_USE;
 
     const wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
 
     const panel = panelOf(board);
-    panel.* = .{ .sys = state.sys, .rtg_base = rb, .board = board, .config = wanted };
+    panel.* = .{ .sys = sys, .rtg_base = rb, .board = board, .config = wanted };
 
     const code = panels.bringUp(panel);
     if (code != err.RTGERR_OK) return code;
@@ -101,7 +95,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         .refresh_mhz = refreshMilliHz(setup),
         .flags = rtg.boards.RTGMF_DEFAULT,
     };
-    state.sys.AddTail(&board.modes, &panel.mode.node);
+    sys.AddTail(&board.modes, &panel.mode.node);
 
     // The panel shows a picture wherever it is, so its buffers are taken
     // from system memory as they are asked for - a line-aligned block
@@ -302,53 +296,30 @@ const ops = rtg.RtgBoardOps{
 
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 
-/// Cold start at 22: after rtg.library (24), which it joins, and after the
-/// resources a panel needs - dma.resource (70), i2c.device (35) and
-/// expander.resource (30). It brings nothing up here: a board is made when
-/// something asks for one.
-fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
-    _ = seg_list;
-    const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgDriverBase = @ptrCast(library);
-
-    const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    };
-    const state: *State = @ptrCast(@alignCast(memory));
-    state.* = .{ .sys = sys, .rtg_base = rb };
-    state.driver = .{
-        .node = .{ .name = DRIVER_NAME, .pri = 0 },
+/// The driver's tag: a description and no init. rtg.library reads it at
+/// its own init and puts the driver on its list; nothing is brought up
+/// until a board is asked for.
+export const rtg_rgb_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&rtg_rgb_tag),
+        .version = VERSION,
+        .type = .rtg_driver,
+        .name = panels.MODULE_NAME,
+        .id_string = VERSION_STRING[1..], // past the NUL: a C string
+    },
+    .spec = .{
+        .name = DRIVER_NAME,
+        .id_string = VERSION_STRING[1..],
         .version = VERSION,
         .revision = REVISION,
-        .id_string = VERSION_STRING[1..],
-        .type = rtg.boards.RTGDT_BOARD,
+        .kind = rtg.drivers.RTGDT_BOARD,
         // Its refill interrupt reads the panel sixty times a frame, while
         // both DMA channels are working the memory a display streams out
         // of. Reading the panel out of that same memory costs the copy the
         // time it has to make the next bufferful ready in.
-        .flags = rtg.boards.RTGDF_INTERNAL_INSTANCE,
+        .flags = rtg.drivers.RTGDF_INTERNAL_INSTANCE,
         .ops = &driver_ops,
+        .state_size = @sizeOf(State),
         .instance_size = @sizeOf(Panel),
-    };
-    if (!rb.AddRtgDriver(&state.driver)) {
-        sys.FreeVec(memory);
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    }
-    // The library stays open and the state stays allocated: the driver is
-    // on the list for good, and the list is how anything finds it again.
-    return @ptrCast(sys);
-}
-
-/// No library and no vectors: the tag's init is the whole of it.
-export const rtg_rgb_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &rtg_rgb_tag,
-    .flags = exec.RTF_COLDSTART,
-    .version = VERSION,
-    .pri = 22,
-    .type = .rtg_driver,
-    .name = MODULE_NAME,
-    .id_string = VERSION_STRING[1..], // past the NUL: a C string
-    .init = @ptrCast(@constCast(&init)),
+    },
 };

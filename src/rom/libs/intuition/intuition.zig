@@ -822,7 +822,7 @@ const Display = struct {
         const rb: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         rb.FreeBitMap(d.bitmap);
         rb.DeleteBoard(d.board);
-        fake.remove(d.state);
+        _ = fake.remove(d.state);
     }
 
     /// A pixel of what the display shows: the buffer it was brought up

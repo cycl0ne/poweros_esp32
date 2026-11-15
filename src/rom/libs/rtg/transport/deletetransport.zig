@@ -61,7 +61,7 @@ pub fn DeleteTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void {
 
     if (gone.driver) |driver_ptr| {
         const driver: *rtg.RtgDriver = @ptrCast(@alignCast(driver_ptr));
-        if (driver.open_cnt != 0) driver.open_cnt -= 1;
+        if (driver.buses != 0) driver.buses -= 1;
     }
     if (gone.instance) |instance| sys.FreeVec(instance);
     sys.FreeVec(privateOf(gone));

@@ -323,15 +323,15 @@ test {
 
 /// exec on its test RAM, utility.library and rtg.library from their tags,
 /// the tests' timer.device there for the library to open, and the test
-/// board's driver registered.
+/// board's driver put on the list: exec has no ROM here whose tags the
+/// library could read for drivers.
 fn setUp() !*RtgBase {
     try kexec.setUp();
     _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
     try FakeTimer.add();
     const made = kexec.InitResident(kexec.SysBase, &rtg_library_tag, null) orelse return error.NoRtg;
     const rb: *RtgBase = @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(made))));
-    const state = fake.create(rb.sys_base) orelse return error.NoDriver;
-    if (!driverBase(rb).AddRtgDriver(&state.driver)) return error.NoDriver;
+    _ = fake.add(rb.sys_base, rb) orelse return error.NoDriver;
     return rb;
 }
 
@@ -351,9 +351,7 @@ fn fakeOf(rb: *RtgBase) *fake.State {
 /// and the timer for rtg, free all three, and check that nothing is left -
 /// no memory, and no signal of the test's task that a wait took.
 fn tearDown(rb: *RtgBase) !void {
-    const state = fakeOf(rb);
-    _ = driverBase(rb).RemRtgDriver(&state.driver);
-    fake.destroy(state);
+    try testing.expect(fake.remove(fakeOf(rb)));
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(rb.utility_base));
     _ = kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     if (rb.timer_io.node.device != null) kexec.CloseDevice(kexec.SysBase, &rb.timer_io.node);
@@ -400,29 +398,115 @@ test "drivers: walked by priority, and never twice" {
     const fk = fakeOf(rb);
 
     // The same name is refused, and so is a driver that makes nothing.
-    try testing.expect(!driverBase(rb).AddRtgDriver(&fk.driver));
+    try testing.expect(driverBase(rb).AddRtgDriver(&fake.spec, null) == null);
 
-    var empty_ops = rtg.RtgDriverOps{};
-    var empty = rtg.RtgDriver{ .node = .{ .name = "empty" }, .ops = &empty_ops };
-    try testing.expect(!driverBase(rb).AddRtgDriver(&empty));
+    const empty_ops = rtg.RtgDriverOps{};
+    const empty = rtg.RtgDriverSpec{ .name = "empty", .ops = &empty_ops };
+    try testing.expect(driverBase(rb).AddRtgDriver(&empty, null) == null);
 
-    var second_ops = rtg.RtgDriverOps{ .create_transport = @ptrFromInt(0x1000) };
-    var second = rtg.RtgDriver{
-        .node = .{ .name = "second", .pri = 10 },
+    const second_ops = rtg.RtgDriverOps{ .create_transport = @ptrFromInt(0x1000) };
+    const second_spec = rtg.RtgDriverSpec{
+        .name = "second",
+        .priority = 10,
         .ops = &second_ops,
-        .type = rtg.boards.RTGDT_TRANSPORT,
+        .kind = rtg.drivers.RTGDT_TRANSPORT,
     };
-    try testing.expect(driverBase(rb).AddRtgDriver(&second));
+    const second = driverBase(rb).AddRtgDriver(&second_spec, null).?;
 
     base(rb).LockRtgDrivers();
     // Highest priority first: "second" at 10 before "fake" at 0.
-    try testing.expectEqual(&second, base(rb).NextRtgDriver(null).?);
-    try testing.expectEqual(&fk.driver, base(rb).NextRtgDriver(&second).?);
-    try testing.expect(base(rb).NextRtgDriver(&fk.driver) == null);
+    try testing.expectEqual(second, base(rb).NextRtgDriver(null).?);
+    try testing.expectEqual(fk.driver, base(rb).NextRtgDriver(second).?);
+    try testing.expect(base(rb).NextRtgDriver(fk.driver) == null);
     base(rb).UnlockRtgDrivers();
 
-    try testing.expect(driverBase(rb).RemRtgDriver(&second));
-    try testing.expect(!driverBase(rb).RemRtgDriver(&second));
+    // Off the list once: a node that is not on it is not read.
+    try testing.expect(driverBase(rb).RemRtgDriver(second));
+    try testing.expect(!driverBase(rb).RemRtgDriver(second));
+    try tearDown(rb);
+}
+
+test "a driver's node: its description, the library's bases, its own state cleared" {
+    const rb = try setUp();
+    defer kexec.deinit();
+
+    // A driver that asks for state gets it behind its node, cleared.
+    const Kept = extern struct { first: u64, last: u32 };
+    const ops = rtg.RtgDriverOps{ .create_board = @ptrFromInt(0x1000) };
+    const with_state = rtg.RtgDriverSpec{
+        .name = "kept",
+        .id_string = "kept 2.5",
+        .version = 2,
+        .revision = 5,
+        .kind = rtg.drivers.RTGDT_BOARD,
+        .ops = &ops,
+        .state_size = @sizeOf(Kept),
+    };
+    var seg: u32 = 0;
+    const driver = driverBase(rb).AddRtgDriver(&with_state, &seg).?;
+    try testing.expectEqual(&with_state, driver.spec);
+    try testing.expectEqualStrings("kept", std.mem.span(driver.node.name.?));
+    try testing.expectEqual(rb.sys_base, driver.sys_base);
+    try testing.expectEqual(driverBase(rb), driver.rtg_base);
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(&seg)), driver.seg_list);
+    try testing.expectEqual(@as(u32, 0), driver.boards);
+    try testing.expectEqual(@as(u32, 0), driver.buses);
+    const kept: *Kept = @ptrCast(@alignCast(driver.state.?));
+    try testing.expectEqual(@as(u64, 0), kept.first);
+    try testing.expectEqual(@as(u32, 0), kept.last);
+    // Its own, and past the node.
+    try testing.expect(@intFromPtr(kept) >= @intFromPtr(driver) + @sizeOf(rtg.RtgDriver));
+    kept.* = .{ .first = 0x1122_3344_5566_7788, .last = 7 };
+    try testing.expectEqual(&with_state, driver.spec);
+    try testing.expect(driverBase(rb).RemRtgDriver(driver));
+
+    // One that asks for none has none.
+    const without = rtg.RtgDriverSpec{ .name = "bare", .kind = rtg.drivers.RTGDT_BOARD, .ops = &ops };
+    const bare = driverBase(rb).AddRtgDriver(&without, null).?;
+    try testing.expect(bare.state == null);
+    try testing.expect(driverBase(rb).RemRtgDriver(bare));
+    try tearDown(rb);
+}
+
+/// Two drivers' ROM tags, as a boot scan would have found them.
+const RomTags = struct {
+    const ops = rtg.RtgDriverOps{ .create_board = @ptrFromInt(0x1000) };
+    const low: rtg.ResidentRtgDriver = .{
+        .resident = .{ .match_tag = &low.resident, .type = .rtg_driver, .name = "rtg-low" },
+        .spec = .{ .name = "low", .priority = -5, .kind = rtg.drivers.RTGDT_BOARD, .ops = &ops },
+    };
+    const high: rtg.ResidentRtgDriver = .{
+        .resident = .{ .match_tag = &high.resident, .type = .rtg_driver, .name = "rtg-high" },
+        .spec = .{ .name = "high", .priority = 5, .kind = rtg.drivers.RTGDT_BOARD, .ops = &ops },
+    };
+};
+
+test "the drivers of the ROM: read from their tags at the library's init, by their priority" {
+    try kexec.setUp();
+    defer kexec.deinit();
+    _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+    try FakeTimer.add();
+    // What a boot scan leaves: the tags, a driver's among them.
+    var table = [_]?*const exec.Resident{ &RomTags.low.resident, &kutility.utility_library_tag, &RomTags.high.resident, null };
+    kexec.SysBase.res_modules = &table;
+    const made = kexec.InitResident(kexec.SysBase, &rtg_library_tag, null) orelse return error.NoRtg;
+    kexec.SysBase.res_modules = null;
+    const rb: *RtgBase = @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(made))));
+
+    // Both drivers are on the list, the higher first; the library's tag
+    // is none of them.
+    base(rb).LockRtgDrivers();
+    const high = base(rb).NextRtgDriver(null).?;
+    const low = base(rb).NextRtgDriver(high).?;
+    try testing.expect(base(rb).NextRtgDriver(low) == null);
+    base(rb).UnlockRtgDrivers();
+    try testing.expectEqual(&RomTags.high.spec, high.spec);
+    try testing.expectEqual(&RomTags.low.spec, low.spec);
+    try testing.expect(high.seg_list == null);
+
+    try testing.expect(driverBase(rb).RemRtgDriver(high));
+    try testing.expect(driverBase(rb).RemRtgDriver(low));
+    _ = fake.add(rb.sys_base, rb) orelse return error.NoDriver;
     try tearDown(rb);
 }
 
@@ -433,7 +517,7 @@ test "a board: its own name, its own instance, its driver held" {
 
     const board = try makeBoard(rb);
     try testing.expectEqual(@as(u32, 1), fk.log.created);
-    try testing.expectEqual(@as(u16, 1), fk.driver.open_cnt);
+    try testing.expectEqual(@as(u32, 1), fk.driver.boards);
     // Named after its driver, and the name is the library's copy.
     try testing.expectEqualStrings("fake0", std.mem.span(board.node.name.?));
     try testing.expectEqual(board, base(rb).FindBoard("fake0").?);
@@ -451,7 +535,7 @@ test "a board: its own name, its own instance, its driver held" {
 
     base(rb).DeleteBoard(board);
     try testing.expectEqual(@as(u32, 1), fk.log.destroyed);
-    try testing.expectEqual(@as(u16, 0), fk.driver.open_cnt);
+    try testing.expectEqual(@as(u32, 0), fk.driver.boards);
     try testing.expect(base(rb).NextBoard(null) == null);
     try tearDown(rb);
 }
@@ -484,7 +568,7 @@ test "a driver that is not there, and a create that fails, leave nothing" {
     fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
     try testing.expect(base(rb).CreateBoardTagList("fake", &tag_list) == null);
     try testing.expectEqual(@as(u32, 0), fk.log.created);
-    try testing.expectEqual(@as(u16, 0), fk.driver.open_cnt);
+    try testing.expectEqual(@as(u32, 0), fk.driver.boards);
     try testing.expect(base(rb).NextBoard(null) == null);
     // The leak check in tearDown is what proves the handle came back.
     try tearDown(rb);

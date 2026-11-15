@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Display boards: what a driver registers, and what a caller gets back.
+//! Display boards: what a driver makes, and what a caller gets back.
 //!
 //! A board is a display and the memory it reads from. It has a list of
 //! modes it can be put into, a region of display memory the library hands
@@ -19,6 +19,7 @@ const bitmaps = @import("bitmaps.zig");
 const video = @import("video.zig");
 const transport = @import("transport.zig");
 const events = @import("events.zig");
+const drivers = @import("drivers.zig");
 const tagitem = @import("../utility/tagitem.zig");
 
 const Node = nodes.Node;
@@ -279,7 +280,7 @@ pub const RtgBoard = extern struct {
     /// ln_Name is the instance's name ("rgb0"); ln_Pri orders the list.
     node: Node = .{},
     rtg_base: ?*RtgBase = null,
-    driver: ?*RtgDriver = null,
+    driver: ?*drivers.RtgDriver = null,
     /// The command bus it sits on, for a board that has one.
     transport: ?*transport.RtgTransport = null,
     ops: ?*const RtgBoardOps = null,
@@ -515,51 +516,3 @@ pub const RTG_MAX_BANDS = 8;
 /// with the driver.
 pub const RTGCTRL_RESET_STATS: u32 = 1;
 pub const RTGCTRL_DRIVER: u32 = 0x1000;
-
-/// RtgDriver.type: which of the two creates it fills in. A driver may be
-/// both.
-pub const RTGDT_BOARD: u32 = 1 << 0;
-pub const RTGDT_TRANSPORT: u32 = 1 << 1;
-
-/// RtgDriver.flags: this driver's handles and instances are read from its
-/// own interrupts, so they must be in memory the CPU reaches quickly and
-/// without waiting on whatever the display is being fed from. Without it
-/// they are allocated wherever there is room, which on a machine whose
-/// spare memory is the same memory a display streams out of means every
-/// read from an interrupt queues behind the stream.
-pub const RTGDF_INTERNAL_INSTANCE: u32 = 1 << 0;
-
-/// A driver on the library's list. One of these is what a module hands to
-/// AddRtgDriver; the module keeps it for as long as it is registered.
-pub const RtgDriver = extern struct {
-    /// ln_Name is the name a caller creates by ("rgb", "qspi"); ln_Pri
-    /// orders the list, highest first.
-    node: Node = .{},
-    version: u16 = 0,
-    revision: u16 = 0,
-    id_string: ?[*:0]const u8 = null,
-    /// RTGDT_*
-    type: u32 = 0,
-    /// RTGDF_*
-    flags: u32 = 0,
-    ops: ?*const RtgDriverOps = null,
-    /// Bytes of private data the library puts behind each handle it makes
-    /// for this driver.
-    instance_size: u32 = 0,
-    /// Handles alive. RemRtgDriver refuses while it is not zero.
-    open_cnt: u16 = 0,
-    pad: u16 = 0,
-    /// The segments of a driver that was loaded, or null for one in ROM.
-    seg_list: ?*anyopaque = null,
-    user_data: ?*anyopaque = null,
-};
-
-pub const RtgDriverOps = extern struct {
-    /// Fill the board in from the tags: its ops, its info, its modes, its
-    /// region, its instance. The library has allocated and cleared it and
-    /// has already read the tags every driver shares; the board gets its
-    /// name once this has answered. RTGERR_OK or why not.
-    create_board: ?*const fn (*RtgDriver, *RtgBoard, ?[*]const tagitem.TagItem) callconv(.c) i32 = null,
-    /// The same for a command bus.
-    create_transport: ?*const fn (*RtgDriver, *transport.RtgTransport, ?[*]const tagitem.TagItem) callconv(.c) i32 = null,
-};

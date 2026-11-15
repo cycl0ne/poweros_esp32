@@ -1369,7 +1369,7 @@ const Composed = struct {
         gbase(lb).FreeRastPort(c.screen);
         rb.FreeBitMap(c.bitmap);
         rb.DeleteBoard(c.board);
-        fake.remove(c.state);
+        _ = fake.remove(c.state);
     }
 
     fn at(c: Composed, x: u32, y: u32) u16 {

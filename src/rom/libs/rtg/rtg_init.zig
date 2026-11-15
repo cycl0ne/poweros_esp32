@@ -3,8 +3,9 @@
 //!
 //! The tag is a cold-start, auto-init resident; exec builds the library
 //! from the InitTable - the jump table is rtg_lvo.zig's - and calls
-//! `init`, which opens utility.library and timer.device and sets up the
-//! lists and locks.
+//! `init`, which opens utility.library, expansion.library and
+//! timer.device, sets up the lists and locks, and puts the drivers of the
+//! ROM on the driver list.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -14,6 +15,7 @@ const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const rtg_lvo = @import("rtg_lvo.zig");
 const RtgBase = @import("rtg_base.zig").RtgBase;
+const drivers = @import("driver/_driver.zig");
 
 pub const LIBRARY_NAME = rtg.RTGNAME;
 pub const LIBRARY_VERSION = 1;
@@ -40,7 +42,10 @@ pub const LIBRARY_VERSION = 1;
 /// (AddRtgDriver, RemRtgDriver, SignalRtgEvent, TxParam, TxColor,
 /// RxParam, GetRtgTagData) follows the programs' calls, in slots of its
 /// own.
-pub const LIBRARY_REVISION = 16;
+/// 17: a driver is a description (RtgDriverSpec) behind a ROM tag with no
+/// init - the library puts the ROM's on its list itself, and makes each
+/// driver's node and state; AddRtgDriver takes a description.
+pub const LIBRARY_REVISION = 17;
 const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -49,6 +54,8 @@ const LIBRARY_VERSION_STRING =
 
 /// The utility.library version the tag calls need.
 const UTILITY_VERSION = 1;
+/// The expansion.library version the drivers' questions need.
+const EXPANSION_VERSION = 1;
 
 /// The base around the Library header exec made.
 ///
@@ -62,7 +69,10 @@ fn rtgBase(lib: *exec.Library) *RtgBase {
 /// base. Without utility.library there is no rtg.library - the tag lists
 /// are how a board is configured, and they are utility's. timer.device is
 /// opened here, once, for the waits that have a time limit: at the first
-/// wait two tasks could both be the first.
+/// wait two tasks could both be the first. expansion.library is opened
+/// for the drivers, which ask it about the board's parts, and the drivers
+/// the ROM holds go on the list last, from their tags: nothing of a
+/// driver runs here.
 ///
 /// INPUTS:
 /// - `lib` - the library as exec made it.
@@ -72,7 +82,7 @@ fn rtgBase(lib: *exec.Library) *RtgBase {
 /// RESULT:
 /// The library, or null if utility.library could not be opened. Without
 /// timer.device it still starts, and a wait that needs a time limit is
-/// refused.
+/// refused; without expansion.library a driver finds none in its node.
 ///
 /// CONTEXT:
 /// Runs on the exec task at cold start, with multitasking started.
@@ -82,6 +92,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     lib.revision = LIBRARY_REVISION;
     rb.sys_base = sys_base;
     rb.utility_base = @ptrCast(sys_base.OpenLibrary(sdk.interface.utility.NAME, UTILITY_VERSION) orelse return null);
+    rb.expansion_base = @ptrCast(sys_base.OpenLibrary(sdk.expansion.EXPANSIONNAME, EXPANSION_VERSION));
     rb.board_serial = 0;
     sys_base.NewList(&rb.drivers);
     sys_base.NewList(&rb.boards);
@@ -94,6 +105,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     if (sys_base.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &rb.timer_io.node, 0) != 0) {
         rb.timer_io.node.device = null;
     }
+    drivers.addResidents(rb);
     return lib;
 }
 
@@ -104,9 +116,10 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-/// Cold start at 24: after utility.library (103) and timer.device (50),
-/// which it opens, and after the resources a driver needs (dma 70, i2c
-/// 35, expander 30), and before any driver, which opens this.
+/// Cold start at 24: after utility.library (103), expansion.library (102)
+/// and timer.device (50), which it opens, and after the resources a
+/// driver needs (dma 70, i2c 35, expander 30). A driver is started by
+/// nothing: its first code runs when a board or a bus is asked of it.
 pub export const rtg_library_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &rtg_library_tag,
     .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,

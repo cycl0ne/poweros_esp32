@@ -11,7 +11,9 @@
 //!      back at it);
 //!   2. the module: the directory of the symbol rt_Init points to (its
 //!      InitTable or init routine). "rom.devs.timer.timer.init_table" is in
-//!      "rom.devs.timer.", so it covers timer.zig and timeval.zig;
+//!      "rom.devs.timer.", so it covers timer.zig and timeval.zig. A tag
+//!      with no init names its module by what follows it: a handler's by
+//!      its entry, a display driver's by its ops;
 //!   3. the sizes of every function and object named in that directory:
 //!      code in .text, data in .rodata and .data, plus the tag itself.
 //!
@@ -41,6 +43,15 @@ fn isResidentHandler(kind: u8) bool {
     }
     return false;
 }
+
+/// The rt_Type of a display driver's tag (NodeType.rtg_driver), a
+/// ResidentRtgDriver: rt_Init is null and the driver's description
+/// follows the tag. Its module is that of the ops the description names,
+/// which lie `driver_ops_offset` bytes into the description
+/// (sdk/libs/rtg/drivers.zig holds the place still).
+const driver_type = 21;
+const driver_spec_size = 40;
+const driver_ops_offset = 28;
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("ressize: " ++ fmt ++ "\n", args);
@@ -140,9 +151,10 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
         const is_handler = isResidentHandler(elf[tag_off + 14]);
-        const init_addr = u32At(elf, tag_off + @as(usize, if (is_handler) resident_size else 24));
+        const is_driver = elf[tag_off + 14] == driver_type;
+        const init_addr = u32At(elf, tag_off + @as(usize, if (is_handler) resident_size else if (is_driver) resident_size + driver_ops_offset else 24));
         var code: u32 = 0;
-        var data: u32 = if (is_handler) resident_size + 4 else resident_size;
+        var data: u32 = if (is_handler) resident_size + 4 else if (is_driver) resident_size + driver_spec_size else resident_size;
         const owner = for (symbols.items) |s| {
             if (s.value == init_addr and s.size != 0) break s;
         } else null;

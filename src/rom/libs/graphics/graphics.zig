@@ -403,7 +403,7 @@ test "with a display: no tags finds the View, and the buffer it is showing" {
     base(gb).FreeRastPort(rp2);
     rbi.FreeBitMap(bm);
     rbi.DeleteBoard(board);
-    fake.remove(state);
+    _ = fake.remove(state);
     try tearDown(gb);
 }
 
@@ -1521,7 +1521,7 @@ test "RectFill: the board's engine takes an opaque pen, and nothing else" {
     base(gb).FreeRastPort(soft);
     rbi.FreeBitMap(bm);
     rbi.DeleteBoard(brd);
-    fake.remove(state);
+    _ = fake.remove(state);
     try tearDown(gb);
 }
 

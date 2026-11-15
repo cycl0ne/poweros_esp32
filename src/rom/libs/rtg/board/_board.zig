@@ -165,17 +165,6 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     return caps;
 }
 
-/// Where a driver's handles go: internal memory when the driver says its
-/// interrupts touch them, and wherever there is room otherwise.
-///
-/// INPUTS:
-/// - `driver` - the driver.
-pub fn memoryFor(driver: *rtg.RtgDriver) u32 {
-    const clear = exec.MEMF_CLEAR;
-    if (driver.flags & rtg.boards.RTGDF_INTERNAL_INSTANCE != 0) return exec.MEMF_INTERNAL | clear;
-    return exec.MEMF_ANY | clear;
-}
-
 /// What a buffer the driver came with takes out of the display memory the
 /// library hands round: where it starts, counted from the first aligned
 /// address, and how much of it is inside. A buffer that starts before that

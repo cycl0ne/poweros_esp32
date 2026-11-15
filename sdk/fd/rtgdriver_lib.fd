@@ -13,11 +13,15 @@
 // The first slot after the programs' calls.
 ##bias 72
 ##public
-/// Put a driver on the list. False for a name already there, or for ops
-/// that fill in neither create. Not from interrupts.
-bool AddRtgDriver(*rtg.RtgDriver driver)
-/// Take a driver off the list. False while a board or a transport it made
-/// is still alive. Not from interrupts.
+/// Put a driver's description on the list: the library makes the
+/// driver's node, with the state the description asks for behind it,
+/// cleared. `seg_list` is the segments of a driver that was loaded, null
+/// for one in ROM. Null for a name already there, for ops that fill in
+/// neither create, or without memory. Not from interrupts.
+?*rtg.RtgDriver AddRtgDriver(*const rtg.RtgDriverSpec spec, ?*anyopaque seg_list)
+/// Take a driver off the list and free its node and its state. False
+/// while a board or a bus it made is still alive, and for one that is not
+/// on the list. Not from interrupts.
 bool RemRtgDriver(*rtg.RtgDriver driver)
 /// Tell a board's servers that something happened. A driver calls it from
 /// its own interrupt; returns what the chain answered.

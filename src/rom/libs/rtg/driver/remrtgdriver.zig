@@ -5,7 +5,7 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 
-/// Takes a driver off the library's list.
+/// Takes a driver off the library's list and frees it.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -15,15 +15,17 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// SINCE: 1.0. LVO -296.
 ///
 /// INPUTS:
-/// - `driver` - the driver.
+/// - `driver` - the driver's node, as `AddRtgDriver` answered it.
 ///
 /// RESULT:
-/// True if it came off. False while a board or a transport it made is
-/// still alive, and for a driver that is not on the list.
+/// True if it came off. False while a board or a bus it made is still
+/// alive, and for a node that is not on the list.
 ///
 /// BEHAVIOR:
 /// A driver whose boards are still alive keeps its code in use, so it is
-/// not taken off under them.
+/// not taken off under them. Whether the node is on the list is asked
+/// first, by its address alone: one that is not is not read. The node and
+/// the driver's state behind it are freed.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the driver list.
@@ -32,7 +34,8 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The driver is its own module's again.
+/// The node and the state are gone; the description is its module's, as
+/// it was.
 ///
 /// BUGS:
 /// None known.
@@ -42,20 +45,21 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 ///
 /// EXAMPLES:
 /// ```zig
-/// if (rb.RemRtgDriver(&my_driver)) unload();
+/// if (rb.RemRtgDriver(driver)) unload();
 /// ```
 pub fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool {
-    rb.sys_base.ObtainSemaphore(&rb.driver_lock);
-    defer rb.sys_base.ReleaseSemaphore(&rb.driver_lock);
+    const sys = rb.sys_base;
+    sys.ObtainSemaphore(&rb.driver_lock);
+    defer sys.ReleaseSemaphore(&rb.driver_lock);
 
-    if (driver.open_cnt != 0) return false;
     // Only a driver that is on the list comes off it.
     var node = rb.drivers.first();
-    while (node) |n| : (node = n.next()) {
-        if (n == &driver.node) {
-            rb.sys_base.Remove(&driver.node);
-            return true;
-        }
+    while (node) |one| : (node = one.next()) {
+        if (one != &driver.node) continue;
+        if (driver.boards != 0 or driver.buses != 0) return false;
+        sys.Remove(&driver.node);
+        sys.FreeVec(driver);
+        return true;
     }
     return false;
 }

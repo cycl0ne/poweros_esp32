@@ -6,7 +6,8 @@ module to one its code names - by a constant that holds the name, or the
 name itself - to open and call it. A dashed arrow is a module opened by
 a name that arrives at run time - from a mount entry, a caller, an
 interface's file or a file's type - drawn to the ones it is on this
-machine.
+machine, or one a module is handed and does not open: rtg.library, by
+the display drivers on its list.
 
 The charts are made from the source: `./zig build modchart` writes them,
 and `./zig build test` fails when one is out of date.
@@ -101,7 +102,7 @@ flowchart TB
     m_display_drivers --> m_expander_resource
     m_display_drivers --> m_gpio_resource
     m_display_drivers --> m_i2c_device
-    m_display_drivers --> m_rtg_library
+    m_display_drivers -.-> m_rtg_library
     m_display_drivers --> m_timer_device
     m_dos_library --> m_intuition_library
     m_dos_library --> m_timer_device

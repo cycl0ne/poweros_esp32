@@ -2,10 +2,11 @@
 //! A display's command bus on the chip's SPI2 controller, as QSPI panel
 //! controllers want it.
 //!
-//! A module of its own: it opens rtg.library at cold start, hands in a
-//! driver of the transport kind, and from then on anything that asks
-//! rtg.library for a "qspi" bus gets one of these. What it does is turn
-//! TxParam, TxColor and RxParam into SPI transactions.
+//! A module of its own: a description of a driver of the transport kind
+//! behind a ROM tag, which rtg.library puts on its list; from then on
+//! anything that asks rtg.library for a "qspi" bus gets one of these.
+//! What it does is turn TxParam, TxColor and RxParam into SPI
+//! transactions.
 //!
 //! Every transaction starts with an opcode and a 24-bit address, both on
 //! one line; the command is the address's middle byte. The opcode says
@@ -30,7 +31,6 @@ const dmares = sdk.resources.dma;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
 const tags = rtg.tags;
-const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 
 const gpspi = sdk.hardware.gpspi.spi2;
 const gpio = @import("sdk").hardware.gpio;
@@ -42,7 +42,7 @@ const GpioBase = gpio_resource.GpioBase;
 const MODULE_NAME = "rtg-qspi";
 const DRIVER_NAME = "qspi";
 const VERSION = 1;
-const REVISION = 2;
+const REVISION = 3;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -64,17 +64,16 @@ const stuck_after = 20_000_000;
 const internal_lower: usize = 0x3FC8_8000;
 const internal_upper: usize = 0x3FD0_0000;
 
-/// Everything this driver has that changes, allocated once by the init.
+/// What is the driver's and not one bus's: the library allocates it
+/// behind the driver's node and clears it.
 const State = struct {
-    driver: rtg.RtgDriver = .{},
-    sys: *ExecBase,
     /// The bus while one exists. There is one controller, so there is at
     /// most one.
     transport: ?*rtg.RtgTransport = null,
 };
 
 fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @fieldParentPtr("driver", driver);
+    return @ptrCast(@alignCast(driver.state.?));
 }
 
 /// What one bus keeps. In internal memory (RTGDF_INTERNAL_INSTANCE), which
@@ -100,9 +99,9 @@ fn instanceOf(io: *rtg.RtgTransport) *Instance {
 
 fn createTransport(made_by: *rtg.RtgDriver, io: *rtg.RtgTransport, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
-    const rb: *RtgDriverBase = @ptrCast(io.rtg_base.?);
+    const rb = made_by.rtg_base;
     if (state.transport != null) return err.RTGERR_IN_USE;
-    const sys = state.sys;
+    const sys = made_by.sys_base;
     const instance = instanceOf(io);
     instance.* = .{ .sys = sys };
 
@@ -297,47 +296,27 @@ const ops = rtg.RtgTransportOps{
 
 const driver_ops = rtg.RtgDriverOps{ .create_transport = &createTransport };
 
-/// Cold start at 21: after rtg.library (24), which it joins, and after
-/// dma.resource (70), which it takes a channel from when a bus is asked
-/// for.
-fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
-    _ = seg_list;
-    const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgDriverBase = @ptrCast(library);
-
-    const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    };
-    const state: *State = @ptrCast(@alignCast(memory));
-    state.* = .{ .sys = sys };
-    state.driver = .{
-        .node = .{ .name = DRIVER_NAME, .pri = 0 },
+/// The driver's tag: a description and no init. rtg.library reads it at
+/// its own init and puts the driver on its list; nothing of this module
+/// runs until a bus is asked for.
+export const rtg_qspi_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&rtg_qspi_tag),
+        .version = VERSION,
+        .type = .rtg_driver,
+        .name = MODULE_NAME,
+        .id_string = VERSION_STRING[1..], // past the NUL: a C string
+    },
+    .spec = .{
+        .name = DRIVER_NAME,
+        .id_string = VERSION_STRING[1..],
         .version = VERSION,
         .revision = REVISION,
-        .id_string = VERSION_STRING[1..],
-        .type = rtg.boards.RTGDT_TRANSPORT,
+        .kind = rtg.drivers.RTGDT_TRANSPORT,
         // The DMA reads its descriptors out of the instance.
-        .flags = rtg.boards.RTGDF_INTERNAL_INSTANCE,
+        .flags = rtg.drivers.RTGDF_INTERNAL_INSTANCE,
         .ops = &driver_ops,
+        .state_size = @sizeOf(State),
         .instance_size = @sizeOf(Instance),
-    };
-    if (!rb.AddRtgDriver(&state.driver)) {
-        sys.FreeVec(memory);
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    }
-    return @ptrCast(sys);
-}
-
-/// No library and no vectors: the tag's init is the whole of it.
-export const rtg_qspi_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &rtg_qspi_tag,
-    .flags = exec.RTF_COLDSTART,
-    .version = VERSION,
-    .pri = 21,
-    .type = .rtg_driver,
-    .name = MODULE_NAME,
-    .id_string = VERSION_STRING[1..], // past the NUL: a C string
-    .init = @ptrCast(@constCast(&init)),
+    },
 };

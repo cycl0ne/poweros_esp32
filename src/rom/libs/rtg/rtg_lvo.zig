@@ -191,8 +191,8 @@ const contract_files = [_][]const u8{
     @embedFile("video/rtgcicp.zig"),
 };
 
-fn lvoAddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) callconv(.c) bool {
-    return AddRtgDriver(rb, driver);
+fn lvoAddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) callconv(.c) ?*rtg.RtgDriver {
+    return AddRtgDriver(rb, spec, seg_list);
 }
 fn lvoRemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) callconv(.c) bool {
     return RemRtgDriver(rb, driver);

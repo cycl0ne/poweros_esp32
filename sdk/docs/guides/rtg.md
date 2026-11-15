@@ -61,26 +61,24 @@ const rb: *RtgBase = @ptrCast(lib);
 ```
 
 **The library has two interfaces.** `RtgBase` (`sdk/interface/rtg.zig`)
-holds what a program calls. What only a driver calls - joining the list,
-a bus's transfers, an event raised, a tag read - is `RtgDriverBase`
-(`sdk/interface/rtgdriver.zig`): the same base, opened the same way, seen
-as the other type. Both are slots of the one jump table, the drivers'
-after the programs'.
-
-```zig
-const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
-
-const driver_calls: *RtgDriverBase = @ptrCast(lib);
-```
+holds what a program calls. What only a driver calls - a description put
+on the list, a bus's transfers, an event raised, a tag read - is
+`RtgDriverBase` (`sdk/interface/rtgdriver.zig`): the same base, seen as
+the other type. Both are slots of the one jump table, the drivers' after
+the programs'. A driver opens nothing: the node the library makes for it
+carries the base (`driver.rtg_base`).
 
 ## Drivers and boards
 
-Two kinds of thing are registered with the library:
+Two kinds of thing the library keeps:
 
 - A **driver** is a module that knows one kind of display hardware. It
-  joins with `AddRtgDriver` under a name ("rgb", "dcs", "dsi", "qemu",
-  "fb") and stays until `RemRtgDriver`, which is refused while anything
-  it made is alive. Both are calls of the drivers' interface.
+  is a constant description (`RtgDriverSpec`) behind a ROM tag, under a
+  name ("rgb", "dcs", "dsi", "qemu", "fb"). The library puts the drivers
+  of the ROM on its list at its own init (`AddRtgDriver`), and nothing
+  of a driver runs until a board or a bus is asked of it.
+  `RemRtgDriver` takes one off again and is refused while anything it
+  made is alive. Both are calls of the drivers' interface.
 - A **board** is one display that a driver brought up. A caller makes one
   with `CreateBoardTagList(driver_name, tags)`, giving the panel's numbers
   in `RTGA_` tags, and gets an `RtgBoard` back. `DeleteBoard` stops it.
@@ -658,52 +656,78 @@ went wrong; each one's contract says what that can be.
 
 ## Writing a driver
 
-A driver is a module of its own - a ROM tag, or a file it is loaded from -
-that fills in an `RtgDriver` and joins the library:
+A driver is a module of its own, and all it is to the library is a
+description: an `RtgDriverSpec` behind a ROM tag of type `.rtg_driver`
+(`ResidentRtgDriver`, `sdk/libs/rtg/drivers.zig`). The tag has no init
+routine and no start class, so exec starts nothing of the module.
+rtg.library reads the tags of that type at its own init and puts each
+description on its list:
 
 ```zig
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 
-fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
-    const library = sys.OpenLibrary(rtg.RTGNAME, 1) orelse return null;
-    // The library as a driver calls it.
-    const rb: *RtgDriverBase = @ptrCast(library);
-    // Everything that changes lives in memory allocated here, never in
-    // the module's own image.
-    const state: *State = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(State), exec.MEMF_CLEAR) orelse return null));
-    state.* = .{ .sys = sys };
-    state.driver = .{
-        .node = .{ .name = "mine" },
-        .type = rtg.boards.RTGDT_BOARD,
+export const rtg_mine_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&rtg_mine_tag),
+        .version = 1,
+        .type = .rtg_driver,
+        .name = "rtg-mine",
+        .id_string = "rtg-mine 1.0 (15.11.2026)\r\n",
+    },
+    .spec = .{
+        .name = "mine",
+        .version = 1,
+        .kind = rtg.drivers.RTGDT_BOARD,
         .ops = &driver_ops,
+        .state_size = @sizeOf(State),
         .instance_size = @sizeOf(Panel),
-        .seg_list = seg_list,
-    };
-    _ = rb.AddRtgDriver(&state.driver);
-    return @ptrCast(state);
+    },
+};
+```
+
+**The driver's node** is an `RtgDriver` the library makes for the
+description (`AddRtgDriver(spec, seg_list)`). Every op is handed it, or
+a board that names it (`board.driver`), and it carries what a driver
+works with: exec (`sys_base`), rtg.library as a driver calls it
+(`rtg_base`), expansion.library where the machine has it
+(`expansion_base`), and the driver's own state.
+
+**What a driver keeps is the library's to allocate**, so the module
+keeps nothing in its own image:
+
+- `state_size` bytes behind the node, cleared when the driver joins the
+  list: what is the driver's and not one board's. `driver.state` points
+  at them, and is null for a driver that asks for none.
+- `instance_size` bytes with each board or bus, cleared and freed with
+  the handle: a board's `instance`.
+
+A driver whose interrupts read its node or its instances sets
+`RTGDF_INTERNAL_INSTANCE`, and all of them are put in internal memory,
+where an interrupt reads them without queueing behind the display's own
+memory traffic.
+
+```zig
+fn createBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
+    const sys = driver.sys_base;
+    const rb = driver.rtg_base;
+    const state: *State = @ptrCast(@alignCast(driver.state.?));
+    const panel: *Panel = @ptrCast(@alignCast(board.instance.?));
+    const width: u32 = @truncate(rb.GetRtgTagData(rtg.tags.RTGA_Width, 0, tag_list));
+    ...
 }
 ```
 
-**`create_board`** is called by `CreateBoardTagList` with a board the
-library has allocated and cleared, and the tags. It fills the board in - its
-`ops`, its modes on `board.modes`, its display memory in `board.region`, its
-info - and answers `RTGERR_OK` or why not. The board gets its name once
-the driver has answered, as it joins the list. The tags below `RTGA_DriverBase`
-mean the same to every driver. The library reads the name, the user data,
-the alignment, the transport, the brightness, whether the display starts on,
-and the error pointer; the size, the format, the pitch, the display memory
-and the buffers are the driver's to read from the same list. Above
-`RTGA_DriverBase` each driver has a block of 64 of its own, listed in
-`sdk/libs/rtg/tags.zig` so that two never claim one.
-
-**A board's own state** is its `instance`: `instance_size` bytes the
-library allocates with the handle, clears and frees with it. Everything an
-op needs is reached from the board it is given - the instance, and the
-driver through `board.driver` - so the module keeps nothing in its own
-image. A driver whose ops are read from its own interrupts sets
-`RTGDF_INTERNAL_INSTANCE`, and its instances are put in internal memory,
-where an interrupt reads them without queueing behind the display's own
-memory traffic.
+**`create_board`** is called by `CreateBoardTagList` with the driver's
+node, a board the library has allocated and cleared, and the tags. It
+fills the board in - its `ops`, its modes on `board.modes`, its display
+memory in `board.region`, its info - and answers `RTGERR_OK` or why not.
+The board gets its name once the driver has answered, as it joins the
+list. The tags below `RTGA_DriverBase` mean the same to every driver.
+The library reads the name, the user data, the alignment, the transport,
+the brightness and whether the display starts on; the size, the format,
+the pitch and the buffers are the driver's to read from the same list.
+Above `RTGA_DriverBase` each driver has a block of 64 of its own, listed
+in `sdk/libs/rtg/tags.zig` so that two never claim one.
 
 **`RtgBoardOps`** is a table of slots, each one an operation the board
 has. A slot left null is one it has not got: the call answers

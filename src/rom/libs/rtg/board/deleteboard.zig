@@ -90,7 +90,7 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
         if (io.open_cnt != 0) io.open_cnt -= 1;
     }
     if (gone.driver) |driver| {
-        if (driver.open_cnt != 0) driver.open_cnt -= 1;
+        if (driver.boards != 0) driver.boards -= 1;
     }
     if (gone.instance) |instance| sys.FreeVec(instance);
     sys.FreeVec(private);

@@ -7,9 +7,10 @@ const exec = sdk.exec;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 
-/// The base: the driver list, the boards made from it, and the two
-/// libraries it calls.
+/// The base: the driver list, the boards made from it, and the libraries
+/// it calls.
 pub const RtgBase = extern struct {
     lib: exec.Library,
     /// SysBase, to call exec through its jump table.
@@ -18,6 +19,10 @@ pub const RtgBase = extern struct {
     /// its, and a driver reaches them through this library so that it need
     /// open nothing else.
     utility_base: *UtilityBase,
+    /// expansion.library, opened by the init where the machine has it and
+    /// kept: every driver's node carries it, for the board's parts a
+    /// driver asks about. Null on a machine without it.
+    expansion_base: ?*ExpansionBase,
     /// The drivers, highest priority first, and the semaphore that holds
     /// the list still while it is walked.
     drivers: exec.List,

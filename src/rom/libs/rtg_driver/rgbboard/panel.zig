@@ -42,7 +42,9 @@ const config = @import("config.zig");
 const stream = @import("stream.zig");
 const pointer = @import("pointer.zig");
 
-const MODULE_NAME = "rtg-rgb";
+/// What the module is called: its ROM tag's name, and what its DMA
+/// channels, pads and interrupts are held under.
+pub const MODULE_NAME = "rtg-rgb";
 
 /// One panel: what it is, what it is running on, and how it is doing.
 /// This is the board's instance, allocated and cleared by the library.

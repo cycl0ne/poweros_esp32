@@ -12,7 +12,6 @@ const countModes = _board.countModes;
 const capsOf = _board.capsOf;
 const setName = _board.setName;
 const Private = _board.Private;
-const memoryFor = _board.memoryFor;
 const err = rtg.errors;
 const registry = @import("../driver/_driver.zig");
 const memory_mod = @import("../memory/_memory.zig");
@@ -77,16 +76,17 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     const sys = rb.sys_base;
     const request = readRequest(rb, tag_list);
 
-    const driver = registry.findDriverOfType(rb, driver_name, rtg.boards.RTGDT_BOARD) orelse {
+    const driver = registry.findDriverOfType(rb, driver_name, rtg.drivers.RTGDT_BOARD) orelse {
         return null;
     };
-    const create = driver.ops.?.create_board orelse {
+    const spec = driver.spec;
+    const create = spec.ops.create_board orelse {
         return null;
     };
 
     // A driver whose interrupts read its handle wants that handle in
     // memory it can read without queueing behind a display's own stream.
-    const where = memoryFor(driver);
+    const where = registry.memoryFor(spec);
     const memory = sys.AllocVec(@sizeOf(Private), where) orelse {
         return null;
     };
@@ -100,18 +100,18 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     board.driver = driver;
     board.transport = request.transport;
     board.user_data = request.user_data;
-    board.info.driver = driver.node.name;
-    board.info.id_string = driver.id_string;
+    board.info.driver = spec.name;
+    board.info.id_string = spec.id_string;
     sys.NewList(&board.modes);
     sys.NewList(&board.bitmaps);
     for (&board.event_lists) |*list| sys.NewList(list);
 
-    if (driver.instance_size != 0) {
-        board.instance = sys.AllocVec(driver.instance_size, where) orelse {
+    if (spec.instance_size != 0) {
+        board.instance = sys.AllocVec(spec.instance_size, where) orelse {
             sys.FreeVec(memory);
             return null;
         };
-        board.instance_size = driver.instance_size;
+        board.instance_size = spec.instance_size;
     }
 
     const code = create(driver, board, tag_list);
@@ -155,7 +155,7 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     }
 
     if (request.transport) |io| io.open_cnt += 1;
-    driver.open_cnt += 1;
+    driver.boards += 1;
 
     // Named as it joins the list, under the list's lock: the number is
     // read and raised by one board at a time, and only a board that was

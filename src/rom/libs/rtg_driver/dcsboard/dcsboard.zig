@@ -2,8 +2,9 @@
 //! A display controller that keeps its own picture and speaks MIPI DCS -
 //! CASET, RASET, RAMWR, MADCTL - over a command bus, as a display board.
 //!
-//! A module of its own: it opens rtg.library at cold start and hands in a
-//! driver called "dcs". A board of it is made on a bus a transport driver
+//! A module of its own: a description of a driver called "dcs" behind a
+//! ROM tag, which rtg.library puts on its list. A board of it is made on
+//! a bus a transport driver
 //! made first (`RTGA_Transport`), and everything that makes one controller
 //! differ from the next arrives as tags: the bring-up the panel's maker
 //! gives, the MADCTL values that set it upright and on its side, and the
@@ -53,7 +54,7 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 4;
+const REVISION = 5;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -74,16 +75,6 @@ const band_bytes = 16 * 1024;
 
 /// What an absent tag reads as, where 0 is a real value.
 const absent = std.math.maxInt(usize);
-
-/// Everything this driver has that changes, allocated once by the init.
-const State = struct {
-    driver: rtg.RtgDriver = .{},
-    sys: *ExecBase,
-};
-
-fn stateOf(driver: *rtg.RtgDriver) *State {
-    return @fieldParentPtr("driver", driver);
-}
 
 /// What one board keeps.
 const Panel = struct {
@@ -162,8 +153,8 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
 }
 
 fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
-    const sys = stateOf(made_by).sys;
-    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
+    const sys = made_by.sys_base;
+    const rb = made_by.rtg_base;
     const io = board.transport orelse return err.RTGERR_BAD_TAGS;
 
     const width: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list));
@@ -818,47 +809,26 @@ const ops = rtg.RtgBoardOps{
 
 const driver_ops = rtg.RtgDriverOps{ .create_board = &createBoard };
 
-/// Cold start at 22: after rtg.library (24), which it joins. It brings
-/// nothing up here: a board is made when something asks for one, on a bus
-/// that was made first.
-fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
-    _ = seg_list;
-    const library = sys.OpenLibrary(rtg.RTGNAME, VERSION) orelse return @ptrCast(sys);
-    const rb: *RtgDriverBase = @ptrCast(library);
-
-    const memory = sys.AllocVec(@sizeOf(State), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    };
-    const state: *State = @ptrCast(@alignCast(memory));
-    state.* = .{ .sys = sys };
-    state.driver = .{
-        .node = .{ .name = DRIVER_NAME, .pri = 0 },
+/// The driver's tag: a description and no init. rtg.library reads it at
+/// its own init and puts the driver on its list; nothing of this module
+/// runs until a board is asked for.
+export const rtg_dcs_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
+    .resident = .{
+        .match_tag = @ptrCast(&rtg_dcs_tag),
+        .version = VERSION,
+        .type = .rtg_driver,
+        .name = MODULE_NAME,
+        .id_string = VERSION_STRING[1..], // past the NUL: a C string
+    },
+    .spec = .{
+        .name = DRIVER_NAME,
+        .id_string = VERSION_STRING[1..],
         .version = VERSION,
         .revision = REVISION,
-        .id_string = VERSION_STRING[1..],
-        .type = rtg.boards.RTGDT_BOARD,
+        .kind = rtg.drivers.RTGDT_BOARD,
         .ops = &driver_ops,
         .instance_size = @sizeOf(Panel),
-    };
-    if (!rb.AddRtgDriver(&state.driver)) {
-        sys.FreeVec(memory);
-        sys.CloseLibrary(library);
-        return @ptrCast(sys);
-    }
-    return @ptrCast(sys);
-}
-
-/// No library and no vectors: the tag's init is the whole of it.
-export const rtg_dcs_tag: exec.Resident linksection(".resident") = .{
-    .match_tag = &rtg_dcs_tag,
-    .flags = exec.RTF_COLDSTART,
-    .version = VERSION,
-    .pri = 22,
-    .type = .rtg_driver,
-    .name = MODULE_NAME,
-    .id_string = VERSION_STRING[1..], // past the NUL: a C string
-    .init = @ptrCast(@constCast(&init)),
+    },
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

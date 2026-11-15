@@ -61,14 +61,15 @@ pub fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list
     const sys = rb.sys_base;
     const ub = rb.utility_base;
 
-    const driver = registry.findDriverOfType(rb, driver_name, rtg.boards.RTGDT_TRANSPORT) orelse {
+    const driver = registry.findDriverOfType(rb, driver_name, rtg.drivers.RTGDT_TRANSPORT) orelse {
         return null;
     };
-    const create = driver.ops.?.create_transport orelse {
+    const spec = driver.spec;
+    const create = spec.ops.create_transport orelse {
         return null;
     };
 
-    const where = @import("../board/_board.zig").memoryFor(driver);
+    const where = registry.memoryFor(spec);
     const memory = sys.AllocVec(@sizeOf(Private), where) orelse {
         return null;
     };
@@ -79,12 +80,12 @@ pub fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list
     io.driver = @ptrCast(driver);
     setName(rb, private, driver_name, @ptrFromInt(ub.GetTagData(tags.RTGA_BoardName, 0, tag_list)));
 
-    if (driver.instance_size != 0) {
-        io.instance = sys.AllocVec(driver.instance_size, where) orelse {
+    if (spec.instance_size != 0) {
+        io.instance = sys.AllocVec(spec.instance_size, where) orelse {
             sys.FreeVec(memory);
             return null;
         };
-        io.instance_size = driver.instance_size;
+        io.instance_size = spec.instance_size;
     }
 
     const code = create(driver, io, tag_list);
@@ -94,7 +95,7 @@ pub fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list
         return null;
     }
 
-    driver.open_cnt += 1;
+    driver.buses += 1;
     sys.ObtainSemaphore(&rb.board_lock);
     sys.AddTail(&rb.transports, &io.node);
     sys.ReleaseSemaphore(&rb.board_lock);

@@ -29,7 +29,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.2 (15.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.3 (15.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
@@ -158,11 +158,11 @@ fn printDrivers(dl: *DosBase, rb: *RtgBase) i32 {
     while (driver) |d| : (driver = rb.NextRtgDriver(d)) {
         _ = Printf(dl, "%-14s  %d.%-2d %-9s  %7d  %s\n", .{
             name(d.node.name),
-            d.version,
-            d.revision,
-            kindOf(d.type),
-            d.open_cnt,
-            idText(&id, d.id_string),
+            d.spec.version,
+            d.spec.revision,
+            kindOf(d.spec.kind),
+            d.boards + d.buses,
+            idText(&id, d.spec.id_string),
         });
     }
     rb.UnlockRtgDrivers();
@@ -399,8 +399,8 @@ fn printCaps(dl: *DosBase, caps: u32) void {
 }
 
 fn kindOf(kind: u32) [*:0]const u8 {
-    const board = kind & rtg.boards.RTGDT_BOARD != 0;
-    const bus = kind & rtg.boards.RTGDT_TRANSPORT != 0;
+    const board = kind & rtg.drivers.RTGDT_BOARD != 0;
+    const bus = kind & rtg.drivers.RTGDT_TRANSPORT != 0;
     if (board and bus) return "board+bus";
     if (board) return "board";
     if (bus) return "bus";

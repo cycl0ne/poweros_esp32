@@ -10,9 +10,9 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
-- [AddRtgDriver](#addrtgdriver) - Puts a driver on the library's list.
+- [AddRtgDriver](#addrtgdriver) - Puts a driver's description on the library's list.
 - [GetRtgTagData](#getrtgtagdata) - Returns a tag's data from a list, or a default.
-- [RemRtgDriver](#remrtgdriver) - Takes a driver off the library's list.
+- [RemRtgDriver](#remrtgdriver) - Takes a driver off the library's list and frees it.
 - [RxParam](#rxparam) - Sends a command and reads bytes back from the part on a bus.
 - [SignalRtgEvent](#signalrtgevent) - Tells a board's servers that one of its events happened.
 - [TxColor](#txcolor) - Sends a command and a run of pixels to the part on a bus.
@@ -20,12 +20,12 @@ Generated from the source by `./zig build autodoc`.
 
 ## AddRtgDriver
 
-Puts a driver on the library's list.
+Puts a driver's description on the library's list.
 
 **SYNOPSIS**
 
 ```zig
-fn AddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
+fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver
 ```
 
 **SINCE**
@@ -34,20 +34,33 @@ fn AddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
 **INPUTS**
 
-- `driver` - the driver, with its name in `node.name` and its operations
-  in `ops`. On no list yet.
+- `spec` - the driver's description: its name, what it makes and the
+  operations the library calls. It stays where it is and is read there
+  for as long as the driver is on the list.
+- `seg_list` - the segments of a driver that was loaded from a file,
+  kept in the node; null for one in ROM.
 
 **RESULT**
 
-True if it went on. False for a driver with no name, no operations, or
-operations that fill in neither `create_board` nor `create_transport`,
-and for a name already on the list.
+The driver's node, or null: for operations that fill in neither
+`create_board` nor `create_transport`, for a name already on the list,
+and without memory.
 
 **BEHAVIOR**
 
-The list is kept by priority, so a caller walking it meets the most
-wanted driver first. A driver that can make neither a board nor a
-transport would sit on the list answering nothing, so it is refused.
+The library makes the node and, in the same block behind it, the
+`state_size` bytes the description asks for, cleared; `state` is null
+for a driver that asks for none. The node carries what a driver needs
+to work: exec, this library as a driver calls it, and
+expansion.library where the machine has it. The block is in internal
+memory for a driver whose interrupts read it
+(`RTGDF_INTERNAL_INSTANCE`). The list is kept by the descriptions'
+priority, so a caller walking it meets the most wanted driver first. A
+driver that can make neither a board nor a transport would sit on the
+list answering nothing, so it is refused.
+
+The library calls this itself for every driver in the ROM, at its
+init; a test calls it for its own driver.
 
 **CONTEXT**
 
@@ -58,8 +71,8 @@ transport would sit on the list answering nothing, so it is refused.
 
 **OWNERSHIP**
 
-The driver stays its own module's. The list holds it until
-`RemRtgDriver`.
+The node and the state are the library's, freed by `RemRtgDriver`. The
+description stays its module's.
 
 **BUGS**
 
@@ -72,7 +85,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-if (!rb.AddRtgDriver(&my_driver)) return error.DriverRefused;
+const driver = rb.AddRtgDriver(&my_spec, null) orelse return error.DriverRefused;
 ```
 
 ## GetRtgTagData
@@ -131,7 +144,7 @@ const hz = rb.GetRtgTagData(MY_Clock, 12_000_000, tags);
 
 ## RemRtgDriver
 
-Takes a driver off the library's list.
+Takes a driver off the library's list and frees it.
 
 **SYNOPSIS**
 
@@ -145,17 +158,19 @@ fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
 **INPUTS**
 
-- `driver` - the driver.
+- `driver` - the driver's node, as `AddRtgDriver` answered it.
 
 **RESULT**
 
-True if it came off. False while a board or a transport it made is
-still alive, and for a driver that is not on the list.
+True if it came off. False while a board or a bus it made is still
+alive, and for a node that is not on the list.
 
 **BEHAVIOR**
 
 A driver whose boards are still alive keeps its code in use, so it is
-not taken off under them.
+not taken off under them. Whether the node is on the list is asked
+first, by its address alone: one that is not is not read. The node and
+the driver's state behind it are freed.
 
 **CONTEXT**
 
@@ -166,7 +181,8 @@ not taken off under them.
 
 **OWNERSHIP**
 
-The driver is its own module's again.
+The node and the state are gone; the description is its module's, as
+it was.
 
 **BUGS**
 
@@ -179,7 +195,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-if (rb.RemRtgDriver(&my_driver)) unload();
+if (rb.RemRtgDriver(driver)) unload();
 ```
 
 ## RxParam

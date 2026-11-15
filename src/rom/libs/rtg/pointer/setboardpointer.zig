@@ -6,7 +6,7 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
-const _board = @import("../board/_board.zig");
+const registry = @import("../driver/_driver.zig");
 
 /// Gives a board the image its pointer is drawn with.
 ///
@@ -201,7 +201,7 @@ pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, h
     const mask_pitch = (width + 7) / 8;
     const header = (@sizeOf(rtg.RtgPointerImage) + 7) & ~@as(usize, 7);
     const size = header + @as(usize, pitch) * height + @as(usize, mask_pitch) * height;
-    const memory = sys.AllocVec(@intCast(size), _board.memoryFor(board.driver.?)) orelse return .{ .code = err.RTGERR_NO_MEMORY };
+    const memory = sys.AllocVec(@intCast(size), registry.memoryFor(board.driver.?.spec)) orelse return .{ .code = err.RTGERR_NO_MEMORY };
     const base: [*]u8 = @ptrCast(memory);
     const pixels = base + header;
     const mask = pixels + @as(usize, pitch) * height;

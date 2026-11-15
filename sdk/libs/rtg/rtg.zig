@@ -2,10 +2,11 @@
 //! rtg.library: the displays of this machine, and the drivers that drive
 //! them.
 //!
-//! A display driver is a module of its own. It registers with AddRtgDriver
-//! and from then on a caller asks for a board by the driver's name, gets a
-//! handle back, and works in terms of modes, buffers, a blanking and the
-//! few operations the board's own engine can do. Nothing above the driver
+//! A display driver is a module of its own: a constant description behind
+//! a ROM tag (`drivers.zig`), which the library puts on its list. From
+//! then on a caller asks for a board by the driver's name, gets a handle
+//! back, and works in terms of modes, buffers, a blanking and the few
+//! operations the board's own engine can do. Nothing above the driver
 //! knows what kind of display it is talking to; nothing below it knows who
 //! is looking.
 //!
@@ -15,7 +16,7 @@
 //! engine can do faster is offered through the board, and a board that has
 //! not got it says so - it is never done in software instead.
 //!
-//! Two kinds of thing are registered: a **board**, which is a display, and
+//! Two kinds of thing a driver makes: a **board**, which is a display, and
 //! a **transport**, which is a bus a display is reached over. A display
 //! wired straight to the pixels needs no transport; a controller on a bus
 //! is a board and a transport together.
@@ -32,6 +33,7 @@ pub const RTG_VERSION = 1;
 
 pub const bitmaps = @import("bitmaps.zig");
 pub const boards = @import("boards.zig");
+pub const drivers = @import("drivers.zig");
 pub const transport = @import("transport.zig");
 pub const events = @import("events.zig");
 pub const errors = @import("errors.zig");
@@ -83,8 +85,12 @@ pub const RTG_MAX_BANDS = boards.RTG_MAX_BANDS;
 pub const RTG_MAX_COPIES = boards.RTG_MAX_COPIES;
 pub const RtgBoardOps = boards.RtgBoardOps;
 pub const RtgPointerImage = boards.RtgPointerImage;
-pub const RtgDriver = boards.RtgDriver;
-pub const RtgDriverOps = boards.RtgDriverOps;
+
+pub const RtgDriver = drivers.RtgDriver;
+pub const RtgDriverOps = drivers.RtgDriverOps;
+pub const RtgDriverSpec = drivers.RtgDriverSpec;
+pub const ResidentRtgDriver = drivers.ResidentRtgDriver;
+pub const RtgMatch = drivers.RtgMatch;
 
 pub const RtgVideoLayer = video.RtgVideoLayer;
 pub const RTGVLF_UNDER = video.RTGVLF_UNDER;
