@@ -47,6 +47,9 @@ test {
     _ = @import("libs/rtg_driver/dcsboard/sequence.zig");
     _ = @import("libs/rtg_driver/dcsboard/dcsboard.zig");
     _ = @import("libs/rtg_driver/dsiboard/monitor.zig");
+    _ = @import("libs/rtg_driver/dsiboard/host.zig");
+    _ = @import("libs/rtg_driver/dsiboard/engine.zig");
+    _ = @import("libs/rtg_driver/dsiboard/blend.zig");
     _ = @import("libs/rtg_driver/edid.zig");
     _ = @import("libs/rtg_driver/fbboard/phy.zig");
     _ = @import("libs/rtg_driver/fbboard/bcm2712.zig");

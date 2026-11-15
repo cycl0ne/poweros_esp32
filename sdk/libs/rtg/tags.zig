@@ -229,7 +229,10 @@ pub const RTGA_DCS_SwappedTurn = RTGA_DCS_Dummy + 6;
 pub const RTGA_DSI_Dummy = RTGA_DriverBase + 256;
 /// u32: the data lanes the panel takes, 1 or 2. Needed.
 pub const RTGA_DSI_Lanes = RTGA_DSI_Dummy + 1;
-/// u32, Mbit/s: what each lane carries, 80 to 1500. Needed.
+/// u32, Mbit/s: what each lane carries, 80 to 1500. The PHY makes the
+/// multiples of 10 and of 13 1/3 Mbit/s: a rate between two of them runs
+/// at the nearest, and one further than 2% from any is refused with
+/// RTGERR_BAD_TAGS. Needed.
 pub const RTGA_DSI_LaneRate = RTGA_DSI_Dummy + 2;
 /// u32, Hz: the pixel clock the panel's timings count in. The chip makes
 /// the nearest it can, and the timings stay in its clocks. Needed.

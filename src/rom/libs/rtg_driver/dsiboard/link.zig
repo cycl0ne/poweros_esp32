@@ -273,10 +273,10 @@ fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.Rtg
     if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return false;
     dma2d.describe(parts.send, @intFromPtr(source.pixels.?), source.pitch / 2, source.height, x, row, width, rows, dma2d.pbyte_2);
     dma2d.describe(parts.receive, link.pixels, link.width, link.height, x, line, width, rows, if (wide) dma2d.pbyte_3 else dma2d.pbyte_2);
-    const signal = engine_file.prepare(engine, sys, watched);
+    const asleep = engine_file.prepare(engine, sys, watched);
     dma2d.runOut(engine_file.send_channel, parts.send_at);
     dma2d.runIn(engine_file.receive_channel, parts.receive_at);
-    return engine_file.wait(engine, sys, signal);
+    return engine_file.wait(engine, sys, asleep);
 }
 
 /// The CPU's conversion, through the data cache; `convert` writes it

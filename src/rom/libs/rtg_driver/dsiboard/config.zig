@@ -100,7 +100,8 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
 
     if (config.width == 0 or config.height == 0) return null;
     if (config.lanes < 1 or config.lanes > 2) return null;
-    if (config.lane_mbps < host.rate_min or config.lane_mbps > host.rate_max) return null;
+    // A rate the PHY takes, and one its PLL makes or comes near.
+    if (host.pllFor(config.lane_mbps) == null) return null;
     if (config.pixel_hz == 0 or config.hsync == 0 or config.vsync == 0) return null;
     if (config.chip == st.CHIP_LT8912B) {
         if (config.i2c_address == 0) return null;

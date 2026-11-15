@@ -14,7 +14,9 @@
 //! buffer whose start or pitch is not whole lines is not the engine's,
 //! and neither is a rectangle with too few whole lines in it to be worth
 //! the setting up (`smallest_at_80`). Both are answered
-//! RTGERR_NOT_SUPPORTED, and the caller does them in software.
+//! RTGERR_NOT_SUPPORTED, and the caller does them in software. That
+//! answer says nothing was written: it comes before the first pixel, and
+//! never after.
 //!
 //! **The cache around it.** Before the engine runs, the rows it reads and
 //! writes are written back out of the cache in one go: whatever the CPU
@@ -30,12 +32,20 @@
 //! anything outside the PSRAM and the internal memory - is refused too.
 //!
 //! **Waiting for it.** The CPU does its part while the engine works, then
-//! the calling task waits on a signal of its own, which the 2D-DMA's end
-//! interrupt sends - the CPU is free for other tasks meanwhile. The
-//! panel's frame interrupt (`frameTick`) keeps count: a job still running
-//! after `patience_frames` frames is given up and done by the CPU. Before
-//! the stream runs there are no frames to count, and the task watches
-//! the engine itself, for at most `timeout_us`.
+//! the calling task waits for the job's end, which the 2D-DMA's end
+//! interrupt signals on a waitable of the engine's - the CPU is free for
+//! other tasks meanwhile. The wait has the clock's bound, `timeout_us`,
+//! whatever the stream does. While the stream runs, the panel's frame
+//! interrupt (`frameTick`) keeps count as well: a job still running after
+//! `patience_frames` frames is given up then. Before the stream runs the
+//! task watches the engine itself, for at most `timeout_us`.
+//!
+//! **A job that does not end** - an error, or no end within its bound -
+//! is stopped before its wait returns: the PPA's units back to idle, the
+//! channels stopped and reset, so that nothing of it writes the rectangle
+//! afterwards, or a block that is then freed. What it left the CPU
+//! does, and the job is answered as done. The first such job is said on
+//! the raw port; `failures` counts them.
 //!
 //! One operation at a time, under the panel's engine semaphore; each one
 //! is done before it returns, so WaitBlit has nothing left to wait for.
@@ -83,8 +93,8 @@ const smallest_at_80 = 32768;
 /// 0.4 ms to set up and 0.06 us a pixel, and the two meet near 600
 /// pixels.
 const smallest_blend = 2048;
-/// How long one operation may take without the stream's frames to count
-/// it by, and with them, in frames.
+/// How long one operation may take, by the clock; and while the stream's
+/// frames count it too, in frames - the earlier of the two ends the wait.
 const timeout_us = 200_000;
 const patience_frames = 10;
 
@@ -98,14 +108,16 @@ pub const Engine = struct {
     /// The end interrupt's server, and whether it is hooked up.
     int: exec.Interrupt = .{},
     hooked: bool = false,
-    /// The task waiting for the job and its signal; how the job ended, as
-    /// the interrupt found it; the frames it has run for; whether they ran
-    /// out.
-    waiter: ?*exec.Task = null,
-    waiter_mask: u32 = 0,
+    /// What the task waiting for a job waits on: signalled when the job
+    /// has ended, and when its frames have run out. Whether a task waits;
+    /// how the job ended, as the interrupt found it; the frames it has
+    /// run for.
+    done: exec.Waitable = .{},
+    waiting: bool = false,
     ended: u32 = 0,
     frames_waited: u32 = 0,
-    gave_up: bool = false,
+    /// Whether a job that did not end has been said on the raw port.
+    told: bool = false,
     /// Room for the three descriptors, which sit in the two 64-byte lines
     /// inside it (`line`, the first's address) and are only ever written
     /// through their uncached view.
@@ -178,72 +190,115 @@ pub fn takeDown(engine: *Engine) void {
     engine.dma = null;
 }
 
-/// The 2D-DMA's receive side ended: the waiting task told.
+/// The 2D-DMA's receive side ended: how it ended kept, and the task
+/// waiting for it woken.
 fn endServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const engine: *Engine = @ptrCast(@alignCast(is_data.?));
     const raised = dma2d.takeEnded(receive_channel);
     if (raised == 0) return 0;
     engine.ended = raised;
-    if (engine.waiter) |task| engine.sys.?.Signal(task, engine.waiter_mask);
+    engine.sys.?.SignalWaitable(&engine.done);
     return 1;
 }
 
 /// A frame has gone by, from the panel's frame interrupt: a job that has
-/// run for `patience_frames` of them is given up, and its task told.
+/// run for `patience_frames` of them is given up, and its task woken.
+///
+/// INPUTS:
+/// - `engine` - the engine.
 pub fn frameTick(engine: *Engine) void {
-    const task = engine.waiter orelse return;
+    if (!engine.waiting) return;
     engine.frames_waited += 1;
-    if (engine.frames_waited != patience_frames) return;
-    engine.gave_up = true;
-    engine.sys.?.Signal(task, engine.waiter_mask);
+    if (engine.frames_waited == patience_frames) engine.sys.?.SignalWaitable(&engine.done);
 }
 
-/// Before the job starts: the calling task made its waiter, with a signal
-/// of its own, and the end interrupt armed; -1 when it will watch the
-/// engine itself instead - no frames to count by (`watched` false), or no
-/// signal free.
-pub fn prepare(engine: *Engine, sys: *ExecBase, watched: bool) i8 {
-    if (!watched) return -1;
-    const signal = sys.AllocSignal(-1);
-    if (signal < 0) return -1;
+/// Before the job starts: the engine's waitable reset and the end
+/// interrupt armed, for a task that will sleep until the job has ended.
+///
+/// INPUTS:
+/// - `engine` - the engine, its lock held.
+/// - `sys` - exec.
+/// - `watched` - the stream runs, and its frames count the job's time.
+///
+/// RESULT:
+/// Whether the task will sleep; false when it watches the engine itself
+/// instead, with no frames to count by.
+pub fn prepare(engine: *Engine, sys: *ExecBase, watched: bool) bool {
+    if (!watched) return false;
+    sys.ResetWaitable(&engine.done);
     sys.Disable();
     engine.ended = 0;
     engine.frames_waited = 0;
-    engine.gave_up = false;
-    engine.waiter_mask = @as(u32, 1) << @intCast(signal);
-    engine.waiter = sys.FindTask(null);
+    engine.waiting = true;
     sys.Enable();
     dma2d.interruptWhenEnded(receive_channel);
-    return signal;
+    return true;
 }
 
-/// After the CPU's part: until the job has ended, or been given up.
-/// Whether it ended well; the channels are released either way.
-pub fn wait(engine: *Engine, sys: *ExecBase, signal: i8) bool {
-    if (signal < 0) return release(dma2d.poll(receive_channel, timeout_us));
-    var raised: u32 = 0;
-    while (true) {
-        sys.Disable();
-        raised = engine.ended;
-        const gave_up = engine.gave_up;
-        if (raised != 0 or gave_up) engine.waiter = null;
-        sys.Enable();
-        if (raised != 0 or gave_up) break;
-        _ = sys.Wait(engine.waiter_mask);
-    }
-    _ = sys.SetSignal(0, engine.waiter_mask);
-    sys.FreeSignal(signal);
-    return release(raised);
+/// After the CPU's part: until the job has ended, its frames have run
+/// out, or `timeout_us` has gone by - the clock's bound holds whatever
+/// becomes of the stream meanwhile.
+///
+/// INPUTS:
+/// - `engine` - the engine, its lock held.
+/// - `sys` - exec.
+/// - `asleep` - what `prepare` answered.
+///
+/// RESULT:
+/// Whether the job ended well. One that did not is stopped before this
+/// returns (`release`), so what it was to write is the caller's again.
+pub fn wait(engine: *Engine, sys: *ExecBase, asleep: bool) bool {
+    if (!asleep) return release(engine, sys, dma2d.poll(receive_channel, timeout_us));
+    const ends = [_]*exec.Waitable{&engine.done};
+    _ = sys.WaitForAny(&ends, ends.len, timeout_us);
+    sys.Disable();
+    engine.waiting = false;
+    const raised = engine.ended;
+    sys.Enable();
+    return release(engine, sys, raised);
 }
 
 /// The channels disconnected after a job that ended as `raised` says:
-/// whether it ended well.
-fn release(raised: u32) bool {
-    dma2d.releaseIn(receive_channel);
-    dma2d.releaseOut(send_channel);
-    dma2d.releaseOut(over_channel);
-    return dma2d.endedWell(raised);
+/// whether it ended well. One that did not - an error, or no end at all -
+/// is stopped first, and the first of them said on the raw port.
+///
+/// INPUTS:
+/// - `engine` - the engine.
+/// - `sys` - exec.
+/// - `raised` - how the receive side ended, 0 for not at all.
+fn release(engine: *Engine, sys: *ExecBase, raised: u32) bool {
+    if (dma2d.endedWell(raised)) {
+        dma2d.releaseIn(receive_channel);
+        dma2d.releaseOut(send_channel);
+        dma2d.releaseOut(over_channel);
+        return true;
+    }
+    stop();
+    engine.failures +%= 1;
+    if (!engine.told) {
+        engine.told = true;
+        exec.kprintf(sys, "%s: a job did not end and was stopped; the CPU does what it left\n", .{owner_name});
+    }
+    return false;
+}
+
+/// A job stopped where it is: the blend unit and the scaler back to idle,
+/// then each of the engine's 2D channels - a channel's number names its
+/// send side and its receive side - stopped, reset and disconnected, as
+/// a channel is when it goes back to dma.resource. Nothing of the job
+/// writes once this returns, as far as the channels' own reset says: one
+/// that does not come to rest within its bound is not noticed.
+fn stop() void {
+    ppa.reset();
+    ppa.resetScaler();
+    dma2d.stopChannel(send_channel);
+    dma2d.stopChannel(over_channel);
+}
+
+comptime {
+    // `stop` reaches the receive channel by the send channel's number.
+    if (send_channel != receive_channel) @compileError("the engine's receive channel is not the receive side of its send channel");
 }
 
 /// The descriptors - two send channels' and the receive channel's -
@@ -351,7 +406,7 @@ pub fn fill(engine: *Engine, sys: *ExecBase, bitmap: *rtg.RtgBitMap, area: *cons
     ppa.reset();
     if (!dma2d.connectIn(receive_channel, dma2d.peri_ppa_blend, .{})) return failed(engine);
     dma2d.describe(parts.receive, @intFromPtr(bitmap.pixels.?), bitmap.pitch / 2, bitmap.height, middle.start, y, middle.end - middle.start, height, dma2d.pbyte_2);
-    const signal = prepare(engine, sys, watched);
+    const asleep = prepare(engine, sys, watched);
     dma2d.runIn(receive_channel, parts.receive_at);
     ppa.fill(ppa.argbOf(color), middle.end - middle.start, height);
 
@@ -359,9 +414,11 @@ pub fn fill(engine: *Engine, sys: *ExecBase, bitmap: *rtg.RtgBitMap, area: *cons
     fillByCpu(bitmap, x, middle.start, y, height, pixel);
     fillByCpu(bitmap, middle.end, x + width, y, height, pixel);
 
-    const done = wait(engine, sys, signal);
+    const done = wait(engine, sys, asleep);
     forget(sys, bitmap, middle, y, height);
-    if (!done) return failed(engine);
+    // The ends are filled and the job is stopped: the middle is the
+    // CPU's as well, whatever the engine got done of it.
+    if (!done) fillByCpu(bitmap, middle.start, middle.end, y, height, pixel);
     engine.fills +%= 1;
     return err.RTGERR_OK;
 }
@@ -398,16 +455,17 @@ pub fn copy(engine: *Engine, sys: *ExecBase, src: *rtg.RtgBitMap, dest: *rtg.Rtg
     const run = middle.end - middle.start;
     dma2d.describe(parts.send, @intFromPtr(src.pixels.?), src.pitch / 2, src.height, sx + shift, sy, run, height, dma2d.pbyte_2);
     dma2d.describe(parts.receive, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, dy, run, height, dma2d.pbyte_2);
-    const signal = prepare(engine, sys, watched);
+    const asleep = prepare(engine, sys, watched);
     dma2d.runOut(send_channel, parts.send_at);
     dma2d.runIn(receive_channel, parts.receive_at);
 
     copyByCpu(src, dest, sx, sy, dx, dy, shift, height);
     copyByCpu(src, dest, sx + (middle.end - dx), sy, middle.end, dy, dx + width - middle.end, height);
 
-    const done = wait(engine, sys, signal);
+    const done = wait(engine, sys, asleep);
     forget(sys, dest, middle, dy, height);
-    if (!done) return failed(engine);
+    // As for a fill: the middle too, from a source the copy never writes.
+    if (!done) copyByCpu(src, dest, sx + shift, sy, middle.start, dy, run, height);
     engine.copies +%= 1;
     return err.RTGERR_OK;
 }
@@ -436,7 +494,78 @@ fn overlapping(src: *const rtg.RtgBitMap, dest: *const rtg.RtgBitMap, src_first:
         what.src_y < what.dest_y + what.height and what.dest_y < what.src_y + what.height;
 }
 
+/// A job the engine did not take, counted: RTGERR_NOT_SUPPORTED, and the
+/// caller does all of it itself. Only where nothing has been written - a
+/// job that was begun is finished by the CPU and answered RTGERR_OK.
+///
+/// INPUTS:
+/// - `engine` - the engine, for its count.
 pub fn failed(engine: *Engine) i32 {
     engine.failures +%= 1;
     return err.RTGERR_NOT_SUPPORTED;
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// What needs no engine: which part of a row is the engine's, and whether
+// a copy reads what it writes.
+
+const testing = @import("std").testing;
+
+test "the engine's part of a row: from the first line boundary in it to the last" {
+    // Whole lines, and a run that starts and ends inside one.
+    try testing.expectEqual(Middle{ .start = 0, .end = 64 }, middleOf(0, 64));
+    try testing.expectEqual(Middle{ .start = 32, .end = 64 }, middleOf(1, 64));
+    try testing.expectEqual(Middle{ .start = 64, .end = 128 }, middleOf(33, 100));
+    // No whole line in it: the middle is empty, wherever it is put.
+    for ([_][2]u32{ .{ 31, 2 }, .{ 5, 20 }, .{ 32, 31 }, .{ 0, 31 }, .{ 63, 32 } }) |run| {
+        const middle = middleOf(run[0], run[1]);
+        try testing.expectEqual(middle.start, middle.end);
+    }
+    // For every run: the middle is whole lines inside it, and the two
+    // ends are less than a line each - ends and middle are the run once.
+    var x: u32 = 0;
+    while (x < 70) : (x += 1) {
+        var width: u32 = 1;
+        while (width < 140) : (width += 1) {
+            const middle = middleOf(x, width);
+            try testing.expect(middle.start % line_pixels == 0 and middle.end % line_pixels == 0);
+            try testing.expect(middle.start >= x and middle.end >= middle.start);
+            if (middle.end > middle.start) {
+                try testing.expect(middle.end <= x + width);
+                try testing.expect(middle.start - x < line_pixels and x + width - middle.end < line_pixels);
+            }
+        }
+    }
+}
+
+test "a copy that reads what it writes: one buffer's rectangles that meet, or two descriptions of one memory" {
+    var memory: [16 * 64]u8 align(64) = undefined;
+    var other: [16 * 64]u8 align(64) = undefined;
+    const one = rtg.RtgBitMap{ .pixels = &memory, .width = 32, .height = 16, .pitch = 64, .size_bytes = memory.len, .format = .rgb565 };
+    const two = rtg.RtgBitMap{ .pixels = &other, .width = 32, .height = 16, .pitch = 64, .size_bytes = other.len, .format = .rgb565 };
+    const first = struct {
+        fn of(bitmap: *const rtg.RtgBitMap, what: rtg.RtgCopy) usize {
+            return rowAddress(bitmap, @intCast(what.src_x), @intCast(what.src_y));
+        }
+        fn end(bitmap: *const rtg.RtgBitMap, what: rtg.RtgCopy) usize {
+            return rowAddress(bitmap, @intCast(what.src_x + what.width), @intCast(what.src_y + what.height - 1));
+        }
+    };
+
+    // Two buffers: never.
+    const across = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 32, .height = 16, .dest_x = 0, .dest_y = 0 };
+    try testing.expect(!overlapping(&one, &two, first.of(&one, across), first.end(&one, across), &across));
+    // One buffer, rectangles apart - side by side in the same rows, whose
+    // spans of memory cross - and rectangles that meet.
+    const beside = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 8, .height = 8, .dest_x = 16, .dest_y = 0 };
+    try testing.expect(!overlapping(&one, &one, first.of(&one, beside), first.end(&one, beside), &beside));
+    const below = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 32, .height = 4, .dest_x = 0, .dest_y = 8 };
+    try testing.expect(!overlapping(&one, &one, first.of(&one, below), first.end(&one, below), &below));
+    const meeting = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 8, .height = 8, .dest_x = 4, .dest_y = 4 };
+    try testing.expect(overlapping(&one, &one, first.of(&one, meeting), first.end(&one, meeting), &meeting));
+    // The same memory described with another pitch, its spans crossing:
+    // taken as meeting, since the columns say nothing then.
+    const narrow = rtg.RtgBitMap{ .pixels = &memory, .width = 16, .height = 32, .pitch = 32, .size_bytes = memory.len, .format = .rgb565 };
+    try testing.expect(overlapping(&one, &narrow, first.of(&one, beside), first.end(&one, beside), &beside));
 }

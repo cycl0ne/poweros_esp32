@@ -84,7 +84,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 7;
+const REVISION = 8;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -226,8 +226,9 @@ fn pixelDivider(pixel_hz: u32) u32 {
 }
 
 /// From nothing to a panel that has taken its bring-up and waits for a
-/// picture. `bus` reaches an HDMI bridge.
-fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c) i32 {
+/// picture. `bus` reaches an HDMI bridge; `lane` is the PLL's setting for
+/// the lanes' rate, which everything the link is timed by then follows.
+fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     const sys = panel.sys;
     const wanted = &panel.config;
 
@@ -255,12 +256,15 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c) i32 {
         systimer.spinUs(@as(u64, wanted.settle_ms) * 1000);
     }
 
-    panel.lane_kbps = host.startPhy(wanted.lanes, wanted.lane_mbps);
+    panel.lane_kbps = host.startPhy(wanted.lanes, lane);
     if (panel.lane_kbps == 0) {
         sdk.exec.kprintf(sys, "%s: the D-PHY did not come up\n", .{MODULE_NAME});
         return err.RTGERR_NO_DISPLAY;
     }
-    host.commandMode(wanted.lane_mbps);
+    // The rate the lanes run at, which is the one asked for wherever the
+    // PLL makes it.
+    const lane_mbps = panel.lane_kbps / 1000;
+    host.commandMode(lane_mbps);
 
     if (bus_to_bridge) |bridge_bus| {
         // An HDMI bridge: brought up over I2C for the mode the link carries.
@@ -277,7 +281,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c) i32 {
             .vsync_high = wanted.vsync_high,
             .pixel_hz = panel.pixel_hz,
         };
-        if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, wanted.lane_mbps, mode)) {
+        if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, lane_mbps, mode)) {
             sdk.exec.kprintf(sys, "%s: the HDMI bridge did not take its bring-up\n", .{MODULE_NAME});
             return err.RTGERR_NO_DISPLAY;
         }
@@ -484,6 +488,10 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     var bridge_bus: ?lt8912b.I2c = null;
     defer if (bridge_bus) |bus_to_bridge| bus_to_bridge.close();
     if (wanted.chip == st.CHIP_LT8912B) bridge_bus = monitorFor(state.sys, &wanted) orelse return err.RTGERR_NO_DISPLAY;
+    // The PLL's setting for the rate that will run - over HDMI the one
+    // the monitor's mode came with - found before anything is taken. The
+    // tags' own rate was asked of it as they were read.
+    const lane = host.pllFor(wanted.lane_mbps) orelse return err.RTGERR_BAD_TAGS;
 
     const panel = panelOf(board);
     panel.* = .{ .sys = state.sys, .board = board, .config = wanted };
@@ -506,7 +514,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         panel.stream_frame_bytes = panel.link.pitch * wanted.height;
     }
 
-    const code = bringUp(panel, bridge_bus);
+    const code = bringUp(panel, bridge_bus, lane);
     if (code != err.RTGERR_OK) {
         giveBack(panel);
         return code;

@@ -77,14 +77,17 @@ pub fn scalePixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: 
     // The scaler says where each of its blocks goes; the descriptor only
     // names the picture they go into.
     dma2d.describe(parts.receive, block, pitch / 4, out_height, 0, 0, 2, 2, 0);
-    const signal = engine_file.prepare(engine, sys, watched);
+    const asleep = engine_file.prepare(engine, sys, watched);
     dma2d.runOut(engine_file.send_channel, parts.send_at);
     dma2d.runIn(engine_file.receive_channel, parts.receive_at);
     ppa.scale(picture.source.cm, picture.source.swap, x16, y16, height, out_width);
-    const done = engine_file.wait(engine, sys, signal);
+    const done = engine_file.wait(engine, sys, asleep);
     var bytes: u32 = block_bytes;
     sys.CachePostDMA(@ptrFromInt(block), &bytes, 0);
-    if (!done) return engine_file.failed(engine);
+    // The scaler wrote its own block and nothing of the buffer: a scale
+    // that did not end is stopped and counted by now, so the block can
+    // go, and the caller scales in software.
+    if (!done) return err.RTGERR_NOT_SUPPORTED;
 
     const scaled = blend.Picture{
         .first_row = block,

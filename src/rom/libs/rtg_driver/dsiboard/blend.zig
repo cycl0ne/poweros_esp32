@@ -16,6 +16,13 @@
 //! to be worth it (`Engine.smallest_blend`) are answered
 //! RTGERR_NOT_SUPPORTED, and the caller does them in software.
 //!
+//! A job the engine does not end is finished by the CPU and answered as
+//! done: its ends are mixed by then, and a caller told "not supported"
+//! would lay the whole rectangle over them again. Nothing says how far
+//! such a job got, so rows of the middle the engine had finished are
+//! mixed a second time; the ends and every row it had not reached are
+//! right.
+//!
 //! **The mixing.** Each channel is (over x coverage + under x (255 -
 //! coverage) + 127) / 255, the buffer's pixel widened to eight bits a
 //! channel by repeating its high bits and the result cut back to RGB565.
@@ -118,8 +125,8 @@ pub fn blendPixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: 
 }
 
 /// A picture over the rectangle, by the engine and the CPU; by the CPU
-/// alone when the engine would get no whole line. The engine's lock is
-/// held.
+/// alone when the engine would get no whole line, and the CPU the rest
+/// when the engine does not end its job. The engine's lock is held.
 pub fn lay(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, picture: Picture, watched: bool) i32 {
     const x: u32 = @intCast(area.x);
     const y: u32 = @intCast(area.y);
@@ -141,16 +148,19 @@ pub fn lay(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const r
     dma2d.describe(parts.send, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, y, run, height, dma2d.pbyte_2);
     dma2d.describe(parts.over, picture.first_row, picture.width, height, picture.column + (middle.start - x), 0, run, height, picture.source.pbyte);
     dma2d.describe(parts.receive, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, y, run, height, dma2d.pbyte_2);
-    const signal = engine_file.prepare(engine, sys, watched);
+    const asleep = engine_file.prepare(engine, sys, watched);
     run3(parts);
     ppa.blend(overOf(picture), run, height);
 
     layByCpu(dest, x, middle.start, y, height, picture, x);
     layByCpu(dest, middle.end, x + width, y, height, picture, x);
 
-    const done = engine_file.wait(engine, sys, signal);
+    const done = engine_file.wait(engine, sys, asleep);
     engine_file.forget(sys, dest, middle, y, height);
-    if (!done) return engine_file.failed(engine);
+    // The ends are mixed and the job is stopped: the middle is the CPU's
+    // as well, over what memory holds now that its lines are out of the
+    // cache.
+    if (!done) layByCpu(dest, middle.start, middle.end, y, height, picture, x);
     engine.blends +%= 1;
     return err.RTGERR_OK;
 }
@@ -181,16 +191,18 @@ pub fn blendRect(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *c
     // The coverage block: any bytes of the buffer, a byte a pixel.
     dma2d.describe(parts.over, @intFromPtr(dest.pixels.?), dest.pitch, dest.height, middle.start, y, run, height, dma2d.pbyte_1);
     dma2d.describe(parts.receive, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, y, run, height, dma2d.pbyte_2);
-    const signal = engine_file.prepare(engine, sys, watched);
+    const asleep = engine_file.prepare(engine, sys, watched);
     run3(parts);
     ppa.blend(.{ .cm = ppa.cm_a8, .coverage = .replace, .fixed = coverage, .color = color }, run, height);
 
     colorByCpu(dest, x, middle.start, y, height, color);
     colorByCpu(dest, middle.end, x + width, y, height, color);
 
-    const done = engine_file.wait(engine, sys, signal);
+    const done = engine_file.wait(engine, sys, asleep);
     engine_file.forget(sys, dest, middle, y, height);
-    if (!done) return engine_file.failed(engine);
+    // As for a picture: the middle by the CPU where the engine did not
+    // end it.
+    if (!done) colorByCpu(dest, middle.start, middle.end, y, height, color);
     engine.blends +%= 1;
     return err.RTGERR_OK;
 }
@@ -274,4 +286,82 @@ fn colorByCpu(dest: *const rtg.RtgBitMap, from: u32, to: u32, y: u32, rows: u32,
         const out: [*]u16 = @ptrFromInt(engine_file.rowAddress(dest, from, y + row));
         for (0..to - from) |index| out[index] = mix(out[index], color, color >> 24);
     }
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// The CPU's mixing, which is the ragged ends of every job and the whole
+// middle of one the engine does not end.
+
+const testing = @import("std").testing;
+
+test "a pixel mixed by its coverage: none, all, and a half rounded" {
+    try testing.expectEqual(@as(u32, 0xF800), pack565(0x00FF0000));
+    try testing.expectEqual(@as(u32, 0x07E0), pack565(0x0000FF00));
+    try testing.expectEqual(@as(u32, 0x001F), pack565(0x000000FF));
+    try testing.expectEqual(@as(u16, 0x1234), mix(0x1234, 0xFFFF_FFFF, 0));
+    try testing.expectEqual(@as(u16, 0xFFFF), mix(0x1234, 0x00FF_FFFF, 255));
+    // White at 128 over black is the half; over that half again it is
+    // three quarters - what a rectangle laid twice would show.
+    try testing.expectEqual(@as(u16, 0x8410), mix(0x0000, 0x00FF_FFFF, 128));
+    try testing.expectEqual(@as(u16, 0xC618), mix(0x8410, 0x00FF_FFFF, 128));
+}
+
+test "a picture's pixel as the mixing takes it, from each format" {
+    const covered = Source{ .cm = 0, .bytes = 4, .pbyte = 0, .covered = true };
+    const three = Source{ .cm = 0, .bytes = 3, .pbyte = 0 };
+    const swapped = Source{ .cm = 0, .swap = true, .bytes = 3, .pbyte = 0 };
+    const two = Source{ .cm = 0, .bytes = 2, .pbyte = 0 };
+    try testing.expectEqual(@as(u32, 0x80112233), penAt(&[_]u8{ 0x33, 0x22, 0x11, 0x80 }, covered));
+    try testing.expectEqual(@as(u32, 0xFF112233), penAt(&[_]u8{ 0x33, 0x22, 0x11 }, three));
+    try testing.expectEqual(@as(u32, 0xFF332211), penAt(&[_]u8{ 0x33, 0x22, 0x11 }, swapped));
+    // RGB565's red widened to eight bits by repeating its high bits.
+    try testing.expectEqual(@as(u32, 0xFFFF0000), penAt(&[_]u8{ 0x00, 0xF8 }, two));
+}
+
+test "the CPU's ends and its middle lay a rectangle once, and nothing beside it" {
+    // Two rows of 96 pixels, black; a picture of white at half coverage.
+    var pixels: [2 * 96]u16 align(64) = @splat(0);
+    var picture_pixels: [2 * 96]u32 align(4) = @splat(0x80FF_FFFF);
+    const dest = rtg.RtgBitMap{ .pixels = @ptrCast(&pixels), .width = 96, .height = 2, .pitch = 192, .size_bytes = 2 * 192, .format = .rgb565 };
+    const picture = Picture{
+        .first_row = @intFromPtr(&picture_pixels),
+        .pitch = 96 * 4,
+        .width = 96,
+        .column = 0,
+        .source = .{ .cm = 0, .bytes = 4, .pbyte = 0, .covered = true },
+        .alpha = 255,
+    };
+    // Columns 5 to 85: the engine's part is 32 to 64, the CPU's the two
+    // ends - and, where the engine does not end its job, that part too.
+    const x = 5;
+    const width = 80;
+    const middle = engine_file.middleOf(x, width);
+    try testing.expectEqual(engine_file.Middle{ .start = 32, .end = 64 }, middle);
+    layByCpu(&dest, x, middle.start, 0, 2, picture, x);
+    layByCpu(&dest, middle.end, x + width, 0, 2, picture, x);
+    layByCpu(&dest, middle.start, middle.end, 0, 2, picture, x);
+    for (0..2) |row| for (0..96) |column| {
+        const inside = column >= x and column < x + width;
+        try testing.expectEqual(@as(u16, if (inside) 0x8410 else 0), pixels[row * 96 + column]);
+    };
+
+    // The same for a colour: 0x80 of white.
+    @memset(&pixels, 0);
+    colorByCpu(&dest, x, middle.start, 0, 2, 0x80FF_FFFF);
+    colorByCpu(&dest, middle.end, x + width, 0, 2, 0x80FF_FFFF);
+    colorByCpu(&dest, middle.start, middle.end, 0, 2, 0x80FF_FFFF);
+    for (0..2) |row| for (0..96) |column| {
+        const inside = column >= x and column < x + width;
+        try testing.expectEqual(@as(u16, if (inside) 0x8410 else 0), pixels[row * 96 + column]);
+    };
+
+    // The picture's column that lands on the rectangle's left edge is the
+    // one the middle starts from too: a picture that rises along a row.
+    @memset(&pixels, 0);
+    for (&picture_pixels, 0..) |*pixel, index| pixel.* = 0xFF00_0000 | @as(u32, @intCast(index % 96)) << 3;
+    layByCpu(&dest, middle.start, middle.end, 0, 1, picture, x);
+    // Buffer column 32 is the picture's column 27: blue 27 << 3, cut to 5 bits.
+    try testing.expectEqual(@as(u16, 27), pixels[32]);
+    try testing.expectEqual(@as(u16, (63 - x) % 32), pixels[63]);
 }

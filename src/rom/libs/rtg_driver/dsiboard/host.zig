@@ -6,8 +6,9 @@
 //! The D-PHY has no block of its own: it is driven through the host's PHY
 //! registers, and its PLL is set through a test interface - a register
 //! address and a value clocked in by hand. The PLL multiplies the 20 MHz
-//! reference by M/N to the lane rate; its range (hsfreqrange) is looked up
-//! by that rate.
+//! reference by M/N to the lane rate - the nearest it makes to the rate
+//! asked for, and none when that is not near (`pllFor`); its range
+//! (hsfreqrange) is looked up by the rate it makes.
 //!
 //! Commands go in command mode, in low power, as generic packets: a DCS
 //! command with no parameter or one is a short packet, anything longer a
@@ -149,28 +150,56 @@ const ranges = [_]Range{
 pub const rate_min = 80;
 pub const rate_max = 1500;
 
+/// How far the rate the PLL makes may lie from the one asked for, in
+/// hundredths of it. The PLL makes the multiples of 10 and of 13 1/3
+/// Mbit/s, so from 246 Mbit/s up every rate has a setting inside this;
+/// below, a rate between two steps has none and is refused. The video
+/// timings are worked out from the rate the PLL makes, so a difference
+/// this small costs nothing, and it is half the smallest margin of the
+/// lanes over the picture a link here was seen to fail at.
+const near_percent = 2;
+
 /// The PLL's divider and multiplier for a lane rate, and the rate they
 /// give in kbit/s.
 pub const Pll = struct { n: u32, m: u32, kbps: u32 };
 
-/// The N and M nearest `mbps`: f_ref / N between 5 and 40 MHz, M even.
-pub fn pllFor(mbps: u32) Pll {
+/// The N and M whose rate is nearest `mbps`: f_ref / N between 5 and
+/// 40 MHz, M even - for each N the even M at or below the exact quotient
+/// and the next one up. Of two rates as near, the lower: a receiver
+/// takes a slow clock better than one past its rating. Of two settings
+/// for one rate, the smaller N.
+///
+/// INPUTS:
+/// - `mbps` - the lane rate asked for, in Mbit/s.
+///
+/// RESULT:
+/// The setting; null for a rate outside the PHY's (`rate_min` to
+/// `rate_max`), and for one the PLL makes nothing within `near_percent`
+/// of.
+pub fn pllFor(mbps: u32) ?Pll {
+    if (mbps < rate_min or mbps > rate_max) return null;
     const ref_mhz = pll_reference_hz / 1_000_000;
-    var best: Pll = .{ .n = 1, .m = 2, .kbps = 2 * ref_mhz * 1000 };
-    var best_error: u32 = ~@as(u32, 0);
+    const asked = mbps * 1000;
+    var best: ?Pll = null;
+    var best_off: u32 = 0;
     var n: u32 = @max(1, ref_mhz / 40);
     while (n <= ref_mhz / 5) : (n += 1) {
-        const m = mbps * n / ref_mhz;
-        if (m % 2 != 0 or m == 0) continue;
-        const kbps = ref_mhz * m * 1000 / n;
-        const off = if (kbps > mbps * 1000) kbps - mbps * 1000 else mbps * 1000 - kbps;
-        if (off < best_error) {
-            best_error = off;
-            best = .{ .n = n, .m = m, .kbps = kbps };
+        const below = (mbps * n / ref_mhz) & ~@as(u32, 1);
+        for ([_]u32{ below, below + 2 }) |m| {
+            if (m == 0) continue;
+            const kbps = ref_mhz * m * 1000 / n;
+            if (kbps < rate_min * 1000 or kbps > rate_max * 1000) continue;
+            const off = if (kbps > asked) kbps - asked else asked - kbps;
+            const nearer = if (best) |so_far| off < best_off or (off == best_off and kbps < so_far.kbps) else true;
+            if (nearer) {
+                best_off = off;
+                best = .{ .n = n, .m = m, .kbps = kbps };
+            }
         }
-        if (off < 10) break;
     }
-    return best;
+    const found = best orelse return null;
+    if (best_off * 100 > asked * near_percent) return null;
+    return found;
 }
 
 fn hsFreqRange(mbps: u32) u8 {
@@ -191,10 +220,11 @@ fn testWrite(address: u8, value: u8) void {
     reg(phy_tst_ctrl0).* = 0;
 }
 
-/// The PHY up on `lanes` data lanes, its PLL set for `mbps` a lane, and
-/// waited for until it has locked and every lane rests in its stop state.
-/// The rate the PLL really gives, in kbit/s; 0 if the PHY never got there.
-pub fn startPhy(lanes: u32, mbps: u32) u32 {
+/// The PHY up on `lanes` data lanes, its PLL set as `pll` says and its
+/// range the one that rate lies in, and waited for until it has locked
+/// and every lane rests in its stop state. The rate the PLL gives, in
+/// kbit/s; 0 if the PHY never got there.
+pub fn startPhy(lanes: u32, pll: Pll) u32 {
     reg(phy_if_cfg).* = (reg(phy_if_cfg).* & ~@as(u32, 0x3)) | (lanes - 1);
     reg(pwr_up).* = 1;
     reg(phy_rstz).* = phy_shutdownz;
@@ -202,8 +232,7 @@ pub fn startPhy(lanes: u32, mbps: u32) u32 {
     reg(phy_rstz).* = phy_shutdownz | phy_rstz_bit | phy_enableclk;
     reg(phy_rstz).* = phy_shutdownz | phy_rstz_bit | phy_enableclk | phy_forcepll;
 
-    const pll = pllFor(mbps);
-    testWrite(0x44, hsFreqRange(mbps) << 1);
+    testWrite(0x44, hsFreqRange(pll.kbps / 1000) << 1);
     testWrite(0x19, 0x30);
     testWrite(0x17, @intCast(pll.n - 1));
     testWrite(0x18, @intCast((pll.m - 1) & 0x1F));
@@ -339,4 +368,127 @@ fn waitFor(address: usize, set: u32, clear: u32) bool {
         if (value & set == set and value & clear == 0) return true;
         if (systimer.uptimeUs() - since > wait_us) return false;
     }
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// What touches no register: the PLL's setting for a lane rate, the PHY's
+// ranges and the byte clocks a line is.
+
+const testing = @import("std").testing;
+
+/// The rate nearest `mbps` of every setting there is - N 1 to 4, M even -
+/// in kbit/s as `pllFor` counts them, the lower of two as near; found by
+/// trying them all, with the distances in twelfths of a kbit/s so that a
+/// third of one is exact.
+fn nearestOfAll(mbps: u32) u32 {
+    const asked: u64 = @as(u64, mbps) * 12_000;
+    var best: u32 = 0;
+    var best_off: u64 = ~@as(u64, 0);
+    var n: u32 = 1;
+    while (n <= 4) : (n += 1) {
+        var m: u32 = 2;
+        while (m <= 512) : (m += 2) {
+            const rate: u64 = 240_000 * @as(u64, m) / n;
+            if (rate < rate_min * 12_000 or rate > rate_max * 12_000) continue;
+            const off = if (rate > asked) rate - asked else asked - rate;
+            const kbps: u32 = @intCast(rate / 12);
+            if (off < best_off or (off == best_off and kbps < best)) {
+                best_off = off;
+                best = kbps;
+            }
+        }
+    }
+    return best;
+}
+
+test "the PLL: every lane rate the PHY takes gets the nearest setting there is, or none when that is not near" {
+    var exact: u32 = 0;
+    var inexact: u32 = 0;
+    var refused: u32 = 0;
+    var mbps: u32 = rate_min;
+    while (mbps <= rate_max) : (mbps += 1) {
+        const nearest = nearestOfAll(mbps);
+        const asked = mbps * 1000;
+        const off = if (nearest > asked) nearest - asked else asked - nearest;
+        const setting = pllFor(mbps) orelse {
+            // Refused only where nothing is near.
+            try testing.expect(off * 100 > asked * near_percent);
+            refused += 1;
+            continue;
+        };
+        try testing.expectEqual(nearest, setting.kbps);
+        try testing.expect(off * 100 <= asked * near_percent);
+        // A setting the PLL takes: M even and inside its nine bits, the
+        // reference divided to 5 to 40 MHz, and the rate it names.
+        try testing.expect(setting.m % 2 == 0 and setting.m >= 2 and setting.m <= 512);
+        try testing.expect(pll_reference_hz / setting.n >= 5_000_000 and pll_reference_hz / setting.n <= 40_000_000);
+        try testing.expectEqual(pll_reference_hz / 1000 * setting.m / setting.n, setting.kbps);
+        if (setting.kbps == asked) exact += 1 else inexact += 1;
+    }
+    // How many of the 1,421 fall where: a change of the tolerance shows
+    // here.
+    try testing.expectEqual(@as(u32, 143), exact);
+    try testing.expectEqual(@as(u32, 1242), inexact);
+    try testing.expectEqual(@as(u32, 36), refused);
+}
+
+test "the PLL: the rates the boards' panels and the monitor's modes run at keep their settings" {
+    // The two panels', and the three an HDMI mode comes with.
+    try testing.expectEqual(Pll{ .n = 2, .m = 50, .kbps = 500_000 }, pllFor(500).?);
+    try testing.expectEqual(Pll{ .n = 1, .m = 50, .kbps = 1_000_000 }, pllFor(1000).?);
+    try testing.expectEqual(Pll{ .n = 4, .m = 130, .kbps = 650_000 }, pllFor(650).?);
+    try testing.expectEqual(Pll{ .n = 1, .m = 48, .kbps = 960_000 }, pllFor(960).?);
+    try testing.expectEqual(Pll{ .n = 1, .m = 64, .kbps = 1_280_000 }, pllFor(1280).?);
+    try testing.expectEqual(Pll{ .n = 1, .m = 72, .kbps = 1_440_000 }, pllFor(1440).?);
+}
+
+test "the PLL: between two settings the nearer, midway the lower, and none outside the PHY's rates" {
+    // Above and below what was asked, whichever is nearer.
+    try testing.expectEqual(@as(u32, 90_000), pllFor(89).?.kbps);
+    try testing.expectEqual(Pll{ .n = 1, .m = 6, .kbps = 120_000 }, pllFor(119).?);
+    try testing.expectEqual(Pll{ .n = 1, .m = 50, .kbps = 1_000_000 }, pllFor(999).?);
+    // A third of the reference: 13 1/3 Mbit/s a step.
+    try testing.expectEqual(Pll{ .n = 3, .m = 14, .kbps = 93_333 }, pllFor(93).?);
+    try testing.expectEqual(Pll{ .n = 3, .m = 224, .kbps = 1_493_333 }, pllFor(1496).?);
+    // Midway between two: the lower.
+    try testing.expectEqual(@as(u32, 270_000), pllFor(275).?.kbps);
+    try testing.expectEqual(@as(u32, 280_000), pllFor(285).?.kbps);
+    // Further than the tolerance from any: none. From 246 up there is
+    // always one.
+    try testing.expect(pllFor(85) == null);
+    try testing.expect(pllFor(115) == null);
+    try testing.expect(pllFor(245) == null);
+    try testing.expect(pllFor(246) != null);
+    // Outside the PHY's rates nothing, and nothing traps.
+    try testing.expect(pllFor(0) == null);
+    try testing.expect(pllFor(rate_min - 1) == null);
+    try testing.expect(pllFor(rate_max + 1) == null);
+    try testing.expect(pllFor(~@as(u32, 0)) == null);
+    try testing.expectEqual(@as(u32, 80_000), pllFor(rate_min).?.kbps);
+    try testing.expectEqual(@as(u32, 1_500_000), pllFor(rate_max).?.kbps);
+}
+
+test "the PHY's ranges: each rate in the one that holds it" {
+    // The table rises, ends at the PHY's highest rate, and every code
+    // fits the register it goes into shifted by one.
+    for (ranges[1..], ranges[0 .. ranges.len - 1]) |range, before| try testing.expect(range.upto > before.upto);
+    try testing.expectEqual(@as(u16, rate_max), ranges[ranges.len - 1].upto);
+    for (ranges) |range| try testing.expect(range.code < 0x80);
+    try testing.expectEqual(@as(u8, 0x00), hsFreqRange(80));
+    try testing.expectEqual(@as(u8, 0x00), hsFreqRange(89));
+    try testing.expectEqual(@as(u8, 0x10), hsFreqRange(90));
+    try testing.expectEqual(@as(u8, 0x10), hsFreqRange(93));
+    try testing.expectEqual(@as(u8, 0x07), hsFreqRange(500));
+    try testing.expectEqual(@as(u8, 0x18), hsFreqRange(650));
+    try testing.expectEqual(@as(u8, 0x2A), hsFreqRange(1000));
+    try testing.expectEqual(@as(u8, 0x3C), hsFreqRange(1500));
+}
+
+test "a line in the lane's byte clocks: rounded, and whole for the HDMI modes' rates" {
+    // The P4-PC's panel: 514 pixel clocks of 16 MHz at 500 Mbit/s are
+    // 2007.8 byte clocks.
+    try testing.expectEqual(@as(u32, 2008), byteClocks(514, 500_000, 16_000_000));
+    // 800x600 over HDMI: 1056 clocks of 40 MHz at 650 Mbit/s, whole.
+    try testing.expectEqual(@as(u32, 2145), byteClocks(1056, 650_000, 40_000_000));
 }

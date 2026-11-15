@@ -374,7 +374,10 @@ each covers, which the scaler would skip, and the caller does it itself.
 The scaler scales into a block of its own, which is then blended over the
 rectangle. Every operation is finished when the
 call returns; the caller's task waits for the engine's interrupt
-meanwhile, so the CPU is free for others. The engine shares the
+meanwhile, so the CPU is free for others. An operation the engine has
+not ended within a fifth of a second is stopped, and the CPU does what
+it left: a refusal comes before the first pixel is written, never after.
+The engine shares the
 PSRAM with the panel's stream, which cannot wait: the stream is put first
 on the bus, and a panel that streams more than the PSRAM leaves room for
 - 40 MB/s at 80 MHz, proportionally more with a faster one - holds the
@@ -727,7 +730,10 @@ timings, the D-PHY's supply where the chip's LDO feeds it
 as DCS commands (`RTGA_DSI_InitSequence`, steps as `dcsStep` writes them),
 which the driver sends in command mode after the panel's reset - its
 reset line, or its own soft reset where it has none. Another panel on the
-same host is another tag list.
+same host is another tag list. The lane rate is made by the D-PHY's PLL,
+in steps of 10 and of 13 1/3 Mbit/s: a rate between two runs at the
+nearest, the link's timings following the rate made, and a list whose
+rate is further than 2% from any is refused with `RTGERR_BAD_TAGS`.
 
 **HDMI** goes through a bridge on the same link, an LT8912B
 (`CHIP_LT8912B`), whose part names its I2C unit and address instead of a
