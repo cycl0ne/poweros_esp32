@@ -48,8 +48,8 @@ const pointer = @import("pointer.zig");
 const MODULE_NAME = "rtg-rgb";
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 2;
-const BUILD_DATE = "08.10.2026";
+const REVISION = 3;
+const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++

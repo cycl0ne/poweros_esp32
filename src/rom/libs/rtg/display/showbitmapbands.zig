@@ -7,13 +7,14 @@ const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
 const _display = @import("_display.zig");
+const boards = @import("../board/_board.zig");
 
 /// Shows several of a board's buffers at once, each in a band of display
 /// lines.
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn ShowBitMapBands(_: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32
+/// fn ShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32
 /// ```
 ///
 /// SINCE: 1.2. LVO -232.
@@ -58,9 +59,12 @@ const _display = @import("_display.zig");
 /// holds here too.
 ///
 /// CONTEXT:
-/// - Waits: for the display's next frame, where the board streams one.
+/// - Waits: for the display's next frame, where the board streams one,
+///   and while another task holds the board's lock.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Locks: no spinlock may be held: a driver may wait.
+/// - Locks: takes the board's lock around the checks, the driver's show
+///   and the marks on the board's buffers. No spinlock may be held: a
+///   driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -89,9 +93,13 @@ const _display = @import("_display.zig");
 /// };
 /// _ = rb.ShowBitMapBands(board, &bands, bands.len);
 /// ```
-pub fn ShowBitMapBands(_: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
+pub fn ShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
     if (count == 0 or count > rtg.RTG_MAX_BANDS) return err.RTGERR_BAD_ARG;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
+    // As ShowBitMap: the bands are checked against the mode the board is
+    // in, shown and marked as one step.
+    boards.obtain(rb, board);
+    defer boards.release(rb, board);
     const height = board.info.height;
     var shown: [rtg.RTG_MAX_BANDS]*rtg.RtgBitMap = undefined;
     for (bands[0..count], 0..) |band, i| {

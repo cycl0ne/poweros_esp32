@@ -38,9 +38,12 @@ const _board = @import("_board.zig");
 /// information follows it.
 ///
 /// CONTEXT:
-/// - Waits: only if the driver does.
+/// - Waits: if the driver does, and while another task holds the board's
+///   lock.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Locks: no spinlock may be held: a driver may wait.
+/// - Locks: takes the board's lock around all of it - the buffers, the
+///   driver's mode, the display memory. No spinlock may be held: a driver
+///   may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -65,6 +68,11 @@ pub fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
     const private = privateOf(board);
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     const set = ops.set_mode orelse return err.RTGERR_NOT_SUPPORTED;
+    // The buffers looked at, the picture taken down, the driver's mode and
+    // the display memory laid out afresh are one step: no buffer is made
+    // and nothing shown in between.
+    _board.obtain(rb, board);
+    defer _board.release(rb, board);
     const wanted = mode orelse rtg_lib.FindBoardMode(board, 0, 0, 0) orelse return err.RTGERR_BAD_MODE;
 
     // A buffer that has not agreed to lose its memory keeps the board in

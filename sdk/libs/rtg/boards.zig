@@ -343,7 +343,9 @@ pub const RtgBoardOps = extern struct {
     destroy: ?*const fn (*RtgBoard) callconv(.c) void = null,
     /// Put the board in that mode. The driver sets info.width, .height,
     /// .format and .pitch, and may replace the region - the library has
-    /// already dealt with the buffers that were alive.
+    /// already dealt with the buffers that were alive. Called with the
+    /// board's lock held, as the two shows are: one of the three at a
+    /// time on a board.
     set_mode: ?*const fn (*RtgBoard, *const RtgMode) callconv(.c) i32 = null,
     /// Show that buffer, its pixel (x, y) at the top left; null shows
     /// nothing. The library passes x and y on unchecked: a board that
@@ -583,8 +585,8 @@ pub const RtgDriver = extern struct {
 pub const RtgDriverOps = extern struct {
     /// Fill the board in from the tags: its ops, its info, its modes, its
     /// region, its instance. The library has allocated and cleared it and
-    /// has already read the tags every driver shares. RTGERR_OK or why
-    /// not.
+    /// has already read the tags every driver shares; the board gets its
+    /// name once this has answered. RTGERR_OK or why not.
     create_board: ?*const fn (*RtgDriver, *RtgBoard, ?[*]const tagitem.TagItem) callconv(.c) i32 = null,
     /// The same for a command bus.
     create_transport: ?*const fn (*RtgDriver, *transport.RtgTransport, ?[*]const tagitem.TagItem) callconv(.c) i32 = null,

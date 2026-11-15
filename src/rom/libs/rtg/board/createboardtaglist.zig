@@ -47,7 +47,8 @@ const _board = @import("_board.zig");
 /// its modes, its display memory and what its engine can do. A board comes
 /// up in no mode and showing nothing; `SetBoardMode` and `ShowBitMap` are
 /// what put a picture up. Without `RTGA_BoardName` the board is named after
-/// the driver and a number: rgb0, rgb1. `RTGA_Compose` is kept as
+/// the driver and a number: rgb0, rgb1. It has its name once the driver
+/// has made it, as it joins the list. `RTGA_Compose` is kept as
 /// `RTGBF_COMPOSE` in the board's flags for intuition to read; the driver
 /// does nothing for it.
 ///
@@ -96,6 +97,7 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     };
     const private: *Private = @ptrCast(@alignCast(memory));
     private.* = .{};
+    sys.InitSemaphore(&private.lock);
     const board = &private.board;
 
     board.node.type = .graphics;
@@ -105,8 +107,6 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     board.user_data = request.user_data;
     board.info.driver = driver.node.name;
     board.info.id_string = driver.id_string;
-    setName(rb, private, driver_name, request.name, rb.board_serial);
-    board.info.name = board.node.name;
     sys.NewList(&board.modes);
     sys.NewList(&board.bitmaps);
     for (&board.event_lists) |*list| sys.NewList(list);
@@ -164,9 +164,14 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     if (request.transport) |io| io.open_cnt += 1;
     driver.open_cnt += 1;
 
+    // Named as it joins the list, under the list's lock: the number is
+    // read and raised by one board at a time, and only a board that was
+    // made takes one.
     sys.ObtainSemaphore(&rb.board_lock);
-    sys.AddTail(&rb.boards, &board.node);
+    setName(rb, private, driver_name, request.name, rb.board_serial);
+    board.info.name = board.node.name;
     rb.board_serial += 1;
+    sys.AddTail(&rb.boards, &board.node);
     sys.ReleaseSemaphore(&rb.board_lock);
 
     if (request.display_on) _ = rtg_lib.SetBoardDisplay(board, true);

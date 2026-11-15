@@ -26,7 +26,6 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
-const tags = rtg.tags;
 
 pub const DRIVER_NAME = "fake";
 
@@ -162,6 +161,13 @@ pub const State = struct {
     /// How many shows running `show_answer` refuses: one, unless a test
     /// says more. Back at one when they are spent.
     show_refusals: u32 = 1,
+    /// How much display memory the next board made reports: all of it,
+    /// unless a test says less - none is a board with no display memory.
+    region_size: usize = region_bytes,
+    /// Called with the board at the start of every op that changes what
+    /// the board shows or the mode it is in, for a test that looks at
+    /// what the library holds while the driver works.
+    meanwhile: ?*const fn (board: *rtg.RtgBoard) void = null,
 };
 
 /// What belongs to one board: the library allocates it beside the handle.
@@ -270,6 +276,7 @@ fn destroyBoard(board: *rtg.RtgBoard) callconv(.c) void {
 fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     instanceOf(board).calls += 1;
     stateOfBoard(board).log.set_mode += 1;
+    if (stateOfBoard(board).meanwhile) |look| look(board);
     board.info.width = mode.width;
     board.info.height = mode.height;
     board.info.format = mode.format;
@@ -298,6 +305,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     const instance = instanceOf(board);
     instance.calls += 1;
     const state = stateOfBoard(board);
+    if (state.meanwhile) |look| look(board);
     state.log.shown += 1;
     state.log.last_show_bitmap = bitmap;
     state.log.last_show_x = x;
@@ -317,6 +325,7 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
     const instance = instanceOf(board);
     instance.calls += 1;
     const state = stateOfBoard(board);
+    if (state.meanwhile) |look| look(board);
     state.log.bands_shown += 1;
     @memcpy(state.log.bands[0..count], bands[0..count]);
     state.log.band_count = count;
@@ -737,7 +746,7 @@ const fixed_ops = rtg.RtgBoardOps{
     .stats = &stats,
 };
 
-fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) callconv(.c) i32 {
+fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, _: ?[*]const TagItem) callconv(.c) i32 {
     const state = stateOf(made_by);
     if (state.create_answer != err.RTGERR_OK) return state.create_answer;
     state.log.created += 1;
@@ -758,7 +767,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
 
     board.region = .{
         .base = state.region,
-        .size = rb.GetRtgTagData(tags.RTGA_DisplayMemorySize, region_bytes, tag_list),
+        .size = state.region_size,
         .alignment = 64,
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
     };

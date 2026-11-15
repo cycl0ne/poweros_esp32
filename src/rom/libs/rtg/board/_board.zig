@@ -21,6 +21,11 @@ const Arena = @import("../memory/_memory.zig").Arena;
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
     board: rtg.RtgBoard = .{},
+    /// The board's lock: held by whatever changes the board - its list of
+    /// buffers, what its display memory is cut into, what is shown and
+    /// the mode it is in - with the driver's op for it inside. Handing on
+    /// what was drawn and the engine's calls take none.
+    lock: exec.SignalSemaphore = .{},
     /// What the display memory has been cut into.
     arena: Arena = .{},
     /// The board's name, since the caller's string is the caller's.
@@ -41,6 +46,25 @@ pub const Private = struct {
 /// - `board` - the board.
 pub fn privateOf(board: *rtg.RtgBoard) *Private {
     return @fieldParentPtr("board", board);
+}
+
+/// Takes a board's lock, for a call that changes the board. It waits
+/// while another task holds it - through a show, which may last a frame.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board.
+pub fn obtain(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    rb.sys_base.ObtainSemaphore(&privateOf(board).lock);
+}
+
+/// Gives a board's lock back.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, its lock taken by `obtain`.
+pub fn release(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    rb.sys_base.ReleaseSemaphore(&privateOf(board).lock);
 }
 
 /// Records why a call that answers with a pointer failed: in the library,

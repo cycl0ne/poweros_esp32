@@ -2,6 +2,7 @@
 //! AllocBitMap: A buffer in the board's display memory, its rows
 //! aligned as the board asks.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
@@ -29,8 +30,10 @@ const boards = @import("../board/_board.zig");
 ///
 /// RESULT:
 /// The buffer, or null. `RtgLastError` then says why: `RTGERR_BAD_ARG` for
-/// a size of 0, `RTGERR_BAD_FORMAT`, or `RTGERR_NO_MEMORY` (no room, or
-/// the board holds as many buffers as it may).
+/// a size of 0, `RTGERR_BAD_FORMAT` for a format this build does not know,
+/// `RTGERR_NO_DISPLAY` for a board with no display memory, or
+/// `RTGERR_NO_MEMORY` (no room, or the board holds as many buffers as it
+/// may).
 ///
 /// BEHAVIOR:
 /// Every row starts on the board's alignment, so a stretch of rows handed
@@ -42,9 +45,11 @@ const boards = @import("../board/_board.zig");
 /// and format.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the board's lock - through a
+///   show, which may last a frame.
 /// - Interrupts: no. It allocates.
-/// - Locks: none needed.
+/// - Locks: takes the board's lock around the board's display memory and
+///   its list of buffers. No spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -69,10 +74,23 @@ pub fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, 
         rb.last_error = err.RTGERR_BAD_ARG;
         return null;
     }
+    // A number no format has is refused as one this build does not know.
+    if (format > std.math.maxInt(@typeInfo(rtg.PixelFormat).@"enum".tag_type)) {
+        rb.last_error = err.RTGERR_BAD_FORMAT;
+        return null;
+    }
     const pixel_format: rtg.PixelFormat = @enumFromInt(format);
     const row = bm_flags.formatRowBytes(pixel_format, width);
     if (row == 0) {
         rb.last_error = err.RTGERR_BAD_FORMAT;
+        return null;
+    }
+
+    boards.obtain(rb, board);
+    defer boards.release(rb, board);
+    // A board with no display memory is asked for nothing.
+    if (!private.arena.usable()) {
+        rb.last_error = err.RTGERR_NO_DISPLAY;
         return null;
     }
     // Every row starts on the board's alignment, so a stretch of rows
@@ -93,12 +111,6 @@ pub fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, 
         rb.last_error = err.RTGERR_NO_MEMORY;
         return null;
     };
-    if (!private.arena.usable()) {
-        private.arena.give(sys, piece.offset, piece.taken);
-        sys.FreeVec(memory);
-        rb.last_error = err.RTGERR_NO_DISPLAY;
-        return null;
-    }
 
     bitmap.pixels = @ptrFromInt(piece.pixels);
     bitmap.width = width;

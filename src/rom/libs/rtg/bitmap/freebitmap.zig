@@ -29,9 +29,11 @@ const bm_flags = rtg.bitmaps;
 /// the caller's, to free once another is shown.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the board's lock - through a
+///   show, which may last a frame.
 /// - Interrupts: no. It frees memory.
-/// - Locks: none needed.
+/// - Locks: takes the board's lock around its list of buffers and its
+///   display memory. No spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -50,17 +52,24 @@ const bm_flags = rtg.bitmaps;
 pub fn FreeBitMap(rb: *RtgBase, bitmap: ?*rtg.RtgBitMap) void {
     const freed = bitmap orelse return;
     const sys = rb.sys_base;
-    // What the board is reading is not the caller's to take away.
-    if (freed.flags & bm_flags.RTGBMF_SHOWING != 0) {
-        rb.last_error = rtg.errors.RTGERR_IN_USE;
-        return;
-    }
     const board: ?*rtg.RtgBoard = @ptrCast(@alignCast(freed.board));
-    if (board) |b| {
+    if (board) |owner| {
+        // Under the board's lock, so a show that is marking this buffer
+        // has either marked it or will not find it.
+        boards.obtain(rb, owner);
+        defer boards.release(rb, owner);
+        // What the board is reading is not the caller's to take away.
+        if (freed.flags & bm_flags.RTGBMF_SHOWING != 0) {
+            rb.last_error = rtg.errors.RTGERR_IN_USE;
+            return;
+        }
         sys.Remove(&freed.node);
         if (freed.flags & bm_flags.RTGBMF_BOARD_MEMORY != 0 and freed.pixels != null) {
-            boards.privateOf(b).arena.give(sys, freed.offset, freed.taken);
+            boards.privateOf(owner).arena.give(sys, freed.offset, freed.taken);
         }
+    } else if (freed.flags & bm_flags.RTGBMF_SHOWING != 0) {
+        rb.last_error = rtg.errors.RTGERR_IN_USE;
+        return;
     }
     sys.FreeVec(freed);
 }

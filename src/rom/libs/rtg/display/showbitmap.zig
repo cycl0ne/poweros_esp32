@@ -7,12 +7,13 @@ const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
 const _display = @import("_display.zig");
+const boards = @import("../board/_board.zig");
 
 /// Shows a buffer on a board's display.
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn ShowBitMap(_: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32
+/// fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32
 /// ```
 ///
 /// SINCE: 1.0. LVO -100.
@@ -49,9 +50,12 @@ const _display = @import("_display.zig");
 /// buffers still shown, all their rows, puts the glass right.
 ///
 /// CONTEXT:
-/// - Waits: for the display's next frame, where the board streams one.
+/// - Waits: for the display's next frame, where the board streams one,
+///   and while another task holds the board's lock.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Locks: no spinlock may be held: a driver may wait.
+/// - Locks: takes the board's lock around the driver's show and the marks
+///   on the board's buffers, so two shows of one board follow each other.
+///   No spinlock may be held: a driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -78,10 +82,14 @@ const _display = @import("_display.zig");
 /// ```zig
 /// _ = rb.ShowBitMap(board, buffer, 0, 0);
 /// ```
-pub fn ShowBitMap(_: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32 {
+pub fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32 {
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     const show = ops.show_bitmap orelse return err.RTGERR_NOT_SUPPORTED;
 
+    // One show at a time on a board, the driver's and the marks together:
+    // no buffer is freed, and no other picture asked for, in between.
+    boards.obtain(rb, board);
+    defer boards.release(rb, board);
     if (bitmap) |bm| {
         if (bm.board != @as(?*anyopaque, @ptrCast(board))) return err.RTGERR_BAD_ARG;
         if (bm.flags & rtg.bitmaps.RTGBMF_DISPLAYABLE == 0) return err.RTGERR_NOT_DISPLAYABLE;

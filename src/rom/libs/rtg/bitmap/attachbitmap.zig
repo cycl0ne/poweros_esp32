@@ -8,6 +8,7 @@ const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const bm_flags = rtg.bitmaps;
 const err = rtg.errors;
+const boards = @import("../board/_board.zig");
 
 /// Makes a buffer handle over memory the caller owns.
 ///
@@ -34,9 +35,11 @@ const err = rtg.errors;
 /// engine or its refresh.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: yes, while another task holds the board's lock - through a
+///   show, which may last a frame.
 /// - Interrupts: no. It allocates.
-/// - Locks: none needed.
+/// - Locks: takes the board's lock around its list of buffers. No
+///   spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -88,7 +91,9 @@ pub fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.Rt
     bitmap.board = @ptrCast(board);
     bitmap.node.type = .graphics;
 
+    boards.obtain(rb, board);
     sys.AddTail(&board.bitmaps, &bitmap.node);
+    boards.release(rb, board);
     rb.last_error = err.RTGERR_OK;
     return bitmap;
 }

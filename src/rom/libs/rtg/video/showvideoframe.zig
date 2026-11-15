@@ -70,7 +70,9 @@ pub fn ShowVideoFrame(_: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const r
     if (picture != null) {
         const part = src orelse return err.RTGERR_BAD_ARG;
         if (part.x < 0 or part.y < 0 or part.width <= 0 or part.height <= 0) return err.RTGERR_BAD_ARG;
-        if (part.x + part.width > layer.max_width or part.y + part.height > layer.max_height) return err.RTGERR_BAD_ARG;
+        // Added wide: a part near the end of the numbers is refused, not
+        // wrapped round to one that fits.
+        if (@as(i64, part.x) + part.width > layer.max_width or @as(i64, part.y) + part.height > layer.max_height) return err.RTGERR_BAD_ARG;
     }
     return board.ops.?.video_show.?(board, layer, picture, if (picture != null) src else null);
 }

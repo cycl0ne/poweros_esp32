@@ -218,8 +218,10 @@ fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, form
 **RESULT**
 
 The buffer, or null. `RtgLastError` then says why: `RTGERR_BAD_ARG` for
-a size of 0, `RTGERR_BAD_FORMAT`, or `RTGERR_NO_MEMORY` (no room, or
-the board holds as many buffers as it may).
+a size of 0, `RTGERR_BAD_FORMAT` for a format this build does not know,
+`RTGERR_NO_DISPLAY` for a board with no display memory, or
+`RTGERR_NO_MEMORY` (no room, or the board holds as many buffers as it
+may).
 
 **BEHAVIOR**
 
@@ -233,9 +235,11 @@ and format.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the board's lock - through a
+  show, which may last a frame.
 - Interrupts: no. It allocates.
-- Locks: none needed.
+- Locks: takes the board's lock around the board's display memory and
+  its list of buffers. No spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -291,9 +295,11 @@ engine or its refresh.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the board's lock - through a
+  show, which may last a frame.
 - Interrupts: no. It allocates.
-- Locks: none needed.
+- Locks: takes the board's lock around its list of buffers. No
+  spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -632,13 +638,15 @@ fn BoardControl(_: *RtgBase, board: *rtg.RtgBoard, what: u32, value: isize) isiz
 
 **RESULT**
 
-What the driver answered, or `RTGERR_NOT_SUPPORTED` for a code it does
-not know or a board with no control at all.
+`RTGERR_OK` for `RTGCTRL_RESET_STATS`. For a driver's own code what
+the driver answered, or `RTGERR_NOT_SUPPORTED` for a code it does not
+know or a board with no control at all.
 
 **BEHAVIOR**
 
-`RTGCTRL_RESET_STATS` also clears the library's own count of buffers
-shown, before the driver is asked.
+`RTGCTRL_RESET_STATS` clears the library's own count of buffers shown
+and is then handed to the driver, where it has a control, for the
+counters it keeps; what the driver answers to it is not looked at.
 
 **CONTEXT**
 
@@ -987,7 +995,8 @@ driver can read from its interrupts. The driver fills the handle in:
 its modes, its display memory and what its engine can do. A board comes
 up in no mode and showing nothing; `SetBoardMode` and `ShowBitMap` are
 what put a picture up. Without `RTGA_BoardName` the board is named after
-the driver and a number: rgb0, rgb1. `RTGA_Compose` is kept as
+the driver and a number: rgb0, rgb1. It has its name once the driver
+has made it, as it joins the list. `RTGA_Compose` is kept as
 `RTGBF_COMPOSE` in the board's flags for intuition to read; the driver
 does nothing for it.
 
@@ -1280,7 +1289,8 @@ An exact match on the name.
 
 - Waits: yes, while another task is changing the board list.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: takes the board list's lock, shared, for the step. No spinlock
+  may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1497,9 +1507,11 @@ the caller's, to free once another is shown.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: yes, while another task holds the board's lock - through a
+  show, which may last a frame.
 - Interrupts: no. It frees memory.
-- Locks: none needed.
+- Locks: takes the board's lock around its list of buffers and its
+  display memory. No spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1555,9 +1567,11 @@ turned ones, since they are what a caller draws on.
 
 **CONTEXT**
 
-- Waits: only if the driver's brightness read does.
+- Waits: if the driver's brightness read does, and while another task
+  holds the board's lock - through a show, which may last a frame.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: takes the board's lock while it reads what is free of the
+  display memory. No spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2075,7 +2089,8 @@ The boards alive, in the order they were made.
 
 - Waits: yes, while another task is changing the board list.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: takes the board list's lock, shared, for the step. No spinlock
+  may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3020,9 +3035,12 @@ information follows it.
 
 **CONTEXT**
 
-- Waits: only if the driver does.
+- Waits: if the driver does, and while another task holds the board's
+  lock.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes the board's lock around all of it - the buffers, the
+  driver's mode, the display memory. No spinlock may be held: a driver
+  may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3212,7 +3230,7 @@ Shows a buffer on a board's display.
 **SYNOPSIS**
 
 ```zig
-fn ShowBitMap(_: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32
+fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32
 ```
 
 **SINCE**
@@ -3255,9 +3273,12 @@ buffers still shown, all their rows, puts the glass right.
 
 **CONTEXT**
 
-- Waits: for the display's next frame, where the board streams one.
+- Waits: for the display's next frame, where the board streams one,
+  and while another task holds the board's lock.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes the board's lock around the driver's show and the marks
+  on the board's buffers, so two shows of one board follow each other.
+  No spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -3296,7 +3317,7 @@ Shows several of a board's buffers at once, each in a band of display lines.
 **SYNOPSIS**
 
 ```zig
-fn ShowBitMapBands(_: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32
+fn ShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32
 ```
 
 **SINCE**
@@ -3347,9 +3368,12 @@ holds here too.
 
 **CONTEXT**
 
-- Waits: for the display's next frame, where the board streams one.
+- Waits: for the display's next frame, where the board streams one,
+  and while another task holds the board's lock.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes the board's lock around the checks, the driver's show
+  and the marks on the board's buffers. No spinlock may be held: a
+  driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**

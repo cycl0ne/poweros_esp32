@@ -30,7 +30,9 @@ pub const LIBRARY_VERSION = 1;
 /// 11: RtgBoardStats.blanks - the display's frames begun.
 /// 12: WaitVBlank's wait for a board's frames has a time limit, and
 /// answers RTGERR_TIMEOUT past it.
-pub const LIBRARY_REVISION = 12;
+/// 13: a board's lock around what changes the board - its buffers, what
+/// is shown, its mode; RTGCTRL_RESET_STATS on a board with no control.
+pub const LIBRARY_REVISION = 13;
 const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

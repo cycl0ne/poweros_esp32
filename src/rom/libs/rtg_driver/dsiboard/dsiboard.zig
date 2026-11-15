@@ -404,7 +404,10 @@ fn stopStream(panel: *Panel) void {
 
 /// Show `bands` from the next frame on, whole; the first time, this starts
 /// the stream. Returns once the chain they make is the one being sent, and
-/// the one before it is no longer read.
+/// the one before it is no longer read. The library's two shows come here
+/// one at a time, under the board's lock, so the chain handed over is
+/// taken up before the next is made; `compose` comes under the pointer's
+/// lock instead.
 fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
     const sys = panel.sys;
     const band_count: u32 = @intCast(@min(bands.len, rtg.RTG_MAX_BANDS));

@@ -26,7 +26,8 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// CONTEXT:
 /// - Waits: yes, while another task is changing the board list.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: takes the board list's lock, shared, for the step. No spinlock
+///   may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:

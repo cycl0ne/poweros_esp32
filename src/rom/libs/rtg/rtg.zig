@@ -59,6 +59,7 @@ const testing = std.testing;
 /// The library's interface as the SDK has it, for the tests' calls.
 const interface = sdk.interface.rtg;
 const memory = @import("memory/_memory.zig");
+const boards = @import("board/_board.zig");
 
 test {
     _ = rtg_base;
@@ -754,6 +755,151 @@ test "showing buffers in bands, and what may not be shown so" {
     try tearDown(rb);
 }
 
+/// What the driver saw of the board's lock while it worked: how often it
+/// was held by the task that called, and how often not.
+const Held = struct {
+    var seen: u32 = 0;
+    var missed: u32 = 0;
+
+    /// The fake board's `meanwhile`: the lock of the board it works on is
+    /// the calling task's.
+    fn look(board: *rtg.RtgBoard) void {
+        const lock = &boards.privateOf(board).lock;
+        if (lock.owner == kexec.FindTask(kexec.SysBase, null) and lock.nestCount() != 0) seen += 1 else missed += 1;
+    }
+
+    /// Whether nothing holds the lock of `board`.
+    fn free(board: *rtg.RtgBoard) bool {
+        const lock = &boards.privateOf(board).lock;
+        return lock.owner == null and lock.nestCount() == 0;
+    }
+};
+
+test "the board's lock: held around the driver's show and mode, free after every call" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    Held.seen = 0;
+    Held.missed = 0;
+    fk.meanwhile = &Held.look;
+    try testing.expect(Held.free(board));
+
+    // The mode: the driver is asked under the lock, and the picture taken
+    // down inside it is too.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(@as(u32, 1), Held.seen);
+    try testing.expect(Held.free(board));
+    board.info.width = 16;
+    board.info.height = 16;
+
+    // Buffers made and described: the lock is free again, also where the
+    // call was refused.
+    const back = base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
+    try testing.expect(Held.free(board));
+    const front = base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
+    try testing.expect(base(rb).AllocBitMap(board, 0, 4, format, 0) == null);
+    try testing.expect(base(rb).AllocBitMap(board, 4, 4, 99, 0) == null);
+    try testing.expect(base(rb).AllocBitMap(board, 4096, 4096, format, 0) == null);
+    try testing.expect(Held.free(board));
+    var pixels: [64]u8 = undefined;
+    var described = rtg.RtgBitMap{ .pixels = &pixels, .width = 4, .height = 4, .format = .rgb565 };
+    const attached = base(rb).AttachBitMap(board, &described).?;
+    try testing.expect(Held.free(board));
+    described.width = 0;
+    try testing.expect(base(rb).AttachBitMap(board, &described) == null);
+    try testing.expect(Held.free(board));
+
+    // A show of one buffer, of bands, one refused by the library and one
+    // by the driver.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back, 0, 0));
+    try testing.expectEqual(@as(u32, 2), Held.seen);
+    try testing.expect(Held.free(board));
+    const two = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(@as(u32, 3), Held.seen);
+    try testing.expect(Held.free(board));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, attached, 0, 0));
+    try testing.expectEqual(@as(u32, 3), Held.seen);
+    try testing.expect(Held.free(board));
+    const out_of_order = [_]rtg.RtgBand{ .{ .bitmap = back, .line = 2 }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &out_of_order, out_of_order.len));
+    try testing.expect(Held.free(board));
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, front, 0, 0));
+    try testing.expectEqual(@as(u32, 4), Held.seen);
+    try testing.expect(Held.free(board));
+
+    // A buffer still shown is refused, one not shown given back.
+    base(rb).FreeBitMap(front);
+    try testing.expect(front.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    try testing.expect(Held.free(board));
+    base(rb).FreeBitMap(attached);
+    try testing.expect(Held.free(board));
+
+    // What the display memory has free is read under it as well.
+    _ = freeOf(rb, board);
+    try testing.expect(Held.free(board));
+
+    // A mode change refused for a buffer that keeps its memory.
+    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).SetBoardMode(board, null));
+    try testing.expect(Held.free(board));
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(@as(u32, 5), Held.seen);
+    // The driver never worked without it.
+    try testing.expectEqual(@as(u32, 0), Held.missed);
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a buffer: a format that is none, and a board with no display memory" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+
+    // A number past every format is refused as a format not known.
+    const board = try makeBoard(rb);
+    try testing.expect(base(rb).AllocBitMap(board, 8, 8, 256, 0) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).RtgLastError());
+    try testing.expect(base(rb).AllocBitMap(board, 8, 8, ~@as(u32, 0), 0) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).RtgLastError());
+    base(rb).DeleteBoard(board);
+
+    // A board that reports no display memory says so, and no memory was
+    // taken for the buffer's handle: the leak check holds that.
+    fk.region_size = 0;
+    const dark = try makeBoard(rb);
+    try testing.expect(base(rb).AllocBitMap(dark, 8, 8, format, 0) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).RtgLastError());
+    base(rb).DeleteBoard(dark);
+    try tearDown(rb);
+}
+
+test "boards are numbered as they are made, and one that was not made takes no number" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+
+    const first = try makeBoard(rb);
+    try testing.expectEqualStrings("fake0", std.mem.span(first.node.name.?));
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expect(base(rb).CreateBoardTagList("fake", null) == null);
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    const second = try makeBoard(rb);
+    try testing.expectEqualStrings("fake1", std.mem.span(second.node.name.?));
+    try testing.expectEqual(second.node.name, second.info.name);
+
+    base(rb).DeleteBoard(second);
+    base(rb).DeleteBoard(first);
+    try tearDown(rb);
+}
+
 /// How often a new picture was shown on `board`, as the library counts.
 fn swapsOf(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
     var stats: rtg.RtgBoardStats = .{};
@@ -1415,6 +1561,45 @@ test "the display: on, off, and how bright" {
     try tearDown(rb);
 }
 
+test "the counters are reset on every board, with a control of its own or without" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const reset = rtg.boards.RTGCTRL_RESET_STATS;
+
+    // A board whose driver has a control: the library's count is cleared,
+    // the driver is handed the code for its own, and the answer is the
+    // library's, whatever the driver made of it.
+    const board = try makeBoard(rb);
+    const shown = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, shown, 0, 0));
+    try testing.expectEqual(@as(u32, 1), swapsOf(rb, board));
+    try testing.expectEqual(@as(isize, rtg.errors.RTGERR_OK), base(rb).BoardControl(board, reset, 7));
+    try testing.expectEqual(reset, fk.log.last_control);
+    try testing.expectEqual(@as(u32, 0), swapsOf(rb, board));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    base(rb).FreeBitMap(shown);
+    base(rb).DeleteBoard(board);
+
+    // A board whose driver has none takes it all the same, and no other
+    // code.
+    fk.without_engine = true;
+    const plain = try makeBoard(rb);
+    const picture = base(rb).AllocBitMap(plain, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, picture, 0, 0));
+    try testing.expectEqual(@as(u32, 1), swapsOf(rb, plain));
+    const controls = fk.log.control_calls;
+    try testing.expectEqual(@as(isize, rtg.errors.RTGERR_OK), base(rb).BoardControl(plain, reset, 0));
+    try testing.expectEqual(@as(u32, 0), swapsOf(rb, plain));
+    try testing.expectEqual(controls, fk.log.control_calls);
+    try testing.expectEqual(@as(isize, rtg.errors.RTGERR_NOT_SUPPORTED), base(rb).BoardControl(plain, rtg.tags.RTGCTRL_RGB_SHIFT, 7));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, null, 0, 0));
+    base(rb).FreeBitMap(picture);
+    base(rb).DeleteBoard(plain);
+    try tearDown(rb);
+}
+
 test "turning the picture: what the board can do, and what it cannot" {
     const rb = try setUp();
     defer kexec.deinit();
@@ -1729,6 +1914,10 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, null));
     try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, &.{ .width = 0, .height = 4 }));
     try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, &.{ .x = 4090, .width = 8, .height = 4 }));
+    // A part at the end of the numbers is past the limit too, each way.
+    const far = std.math.maxInt(i32);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, &.{ .x = far, .width = 8, .height = 4 }));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowVideoFrame(layer, &picture, &.{ .y = far, .width = 4, .height = 8 }));
     try testing.expectEqual(@as(u32, 0), fk.log.video_shows);
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MoveVideoLayer(layer, &.{ .x = 10, .y = 20, .width = 12, .height = 12 }));
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowVideoFrame(layer, &picture, &all));

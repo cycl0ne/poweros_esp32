@@ -228,6 +228,16 @@ sending board the whole new buffer is sent. An `fb` board is told the
 new buffer's address, and a flip from one picture to another waits out a
 frame by the clock before the call returns.
 
+What changes a board is done one task at a time. `AllocBitMap`,
+`AttachBitMap`, `FreeBitMap`, `ShowBitMap`, `ShowBitMapBands` and
+`SetBoardMode` hold the board's lock while they work, the driver's show
+or mode inside it: a buffer is never freed between a show and its mark,
+and two shows of one board follow each other. So each of them may wait
+for as long as a show takes - a frame on a streaming board - and none is
+called with a spinlock held. Handing on what was drawn (`RefreshBitMap`,
+`RefreshRect`) and the engine's calls take no lock: many tasks call them,
+at every draw.
+
 So **double buffering** is two buffers and two calls: draw into the one
 not shown, show it, draw into the other. intuition does exactly this for a
 screen with `AllocScreenBuffer` and `ChangeScreenBuffer`.
@@ -606,8 +616,10 @@ that refreshes itself: frames, late and starved ones, refills of the
 buffers it is fed from and the late ones, buffers shown, refreshes and the
 ones dropped because they were for a buffer not shown, rows refreshed,
 failed sends and underruns on a bus. `BoardControl(board,
-RTGCTRL_RESET_STATS, 0)` starts them again; numbers from
-`RTGCTRL_DRIVER` up are a driver's own.
+RTGCTRL_RESET_STATS, 0)` starts them again, on every board - one whose
+driver has no control of its own included, where it clears the library's
+count of buffers shown; numbers from `RTGCTRL_DRIVER` up are a driver's
+own.
 
 The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one
@@ -654,7 +666,8 @@ fn init(seg_list: ?*anyopaque, sys: *ExecBase) callconv(.c) ?*anyopaque {
 **`create_board`** is called by `CreateBoardTagList` with a board the
 library has allocated and cleared, and the tags. It fills the board in - its
 `ops`, its modes on `board.modes`, its display memory in `board.region`, its
-info - and answers `RTGERR_OK` or why not. The tags below `RTGA_DriverBase`
+info - and answers `RTGERR_OK` or why not. The board gets its name once
+the driver has answered, as it joins the list. The tags below `RTGA_DriverBase`
 mean the same to every driver. The library reads the name, the user data,
 the alignment, the transport, the brightness, whether the display starts on,
 and the error pointer; the size, the format, the pitch, the display memory
@@ -680,7 +693,9 @@ not check: a driver that cannot pan refuses an `x` or `y` that is not
 zero in its `show_bitmap`. A `show_bitmap` or `show_bands` that answers
 an error has left the board reading what it read and kept nothing of
 what it was handed: the library leaves its marks, and the caller may
-free the buffer refused.
+free the buffer refused. `set_mode`, `show_bitmap` and `show_bands` are
+called with the board's lock held, so one of the three runs on a board
+at a time and a driver needs no lock of its own between them.
 
 | Slot | What it does |
 |---|---|

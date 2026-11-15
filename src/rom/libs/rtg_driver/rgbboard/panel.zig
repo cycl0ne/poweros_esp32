@@ -94,12 +94,12 @@ pub const Panel = struct {
     /// the panel or on their way there, kept until a picture replaces
     /// them.
     banded: ?[*]?*dmares.DMADescriptor = null,
-    /// The chains of a picture to be shown from the next frame on, and the
-    /// task waiting to hear it has been: the copy's interrupt takes them up
-    /// as it starts the frame's first stretch.
+    /// The chains of a picture to be shown from the next frame on: the
+    /// copy's interrupt takes them up as it starts the frame's first
+    /// stretch, and signals `taken` for the task that waits to hear it
+    /// has (`swapTo`).
     pending: ?[*]?*dmares.DMADescriptor = null,
-    waiter: ?*exec.Task = null,
-    waiter_mask: u32 = 0,
+    taken: exec.Waitable = .{},
     /// Which buffer the panel finishes next, and which stretch goes in it.
     next_buffer: u32 = 0,
     next_stretch: u32 = 0,
@@ -472,22 +472,41 @@ pub fn flip(panel: *Panel, pixels: [*]u8) i32 {
     return code;
 }
 
+/// How long a picture handed to the copy is waited for, in microseconds:
+/// two frames' time. The copy takes it up at a frame's first stretch, so
+/// a stream that runs leaves it waiting a frame at most.
+///
+/// INPUTS:
+/// - `panel` - the panel, whose frame time is read; a sixtieth of a
+///   second is taken where it has none yet.
+fn swapLimitMicros(panel: *const Panel) u64 {
+    const frame_us: u64 = panel.frame_cycles / panel.cycles_per_us;
+    return 2 * (if (frame_us != 0) frame_us else 1_000_000 / 60);
+}
+
 /// `chains` made the ones the copy reads from the next frame on; returns
-/// once they are.
+/// once they are, or with RTGERR_TIMEOUT when the copy has not taken them
+/// up within two frames' time - a stream that stopped sending frames. They
+/// are then taken back: the copy goes on reading the picture it read, and
+/// the chains are the caller's again. One show at a time comes here, which
+/// the board's lock sees to.
 fn swapTo(panel: *Panel, chains: [*]?*dmares.DMADescriptor) i32 {
     const sys = panel.sys;
     if (chains == panel.fill_from) return err.RTGERR_OK;
-    const bit = sys.AllocSignal(-1);
-    if (bit < 0) return err.RTGERR_NO_MEMORY;
-    defer sys.FreeSignal(bit);
-    const mask = @as(u32, 1) << @intCast(bit);
+    sys.ResetWaitable(&panel.taken);
     sys.Disable();
-    panel.waiter = sys.FindTask(null);
-    panel.waiter_mask = mask;
     panel.pending = chains;
     sys.Enable();
-    _ = sys.Wait(mask);
-    return err.RTGERR_OK;
+    const ends = [_]*exec.Waitable{&panel.taken};
+    _ = sys.WaitForAny(&ends, ends.len, swapLimitMicros(panel));
+    // Whether the copy took the picture up is read where the copy writes
+    // it, not from how the wait ended: one taken up as the limit ran out
+    // is shown, and is not taken back.
+    sys.Disable();
+    const shown = panel.fill_from == chains;
+    if (!shown and panel.pending == chains) panel.pending = null;
+    sys.Enable();
+    return if (shown) err.RTGERR_OK else err.RTGERR_TIMEOUT;
 }
 
 /// The pending picture, if any, made the one the copy reads, and whoever
@@ -497,8 +516,7 @@ fn takePending(panel: *Panel) void {
     const chains = panel.pending orelse return;
     panel.fill_from = chains;
     panel.pending = null;
-    if (panel.waiter) |task| panel.sys.Signal(task, panel.waiter_mask);
-    panel.waiter = null;
+    panel.sys.SignalWaitable(&panel.taken);
     _ = panel.rtg_base.SignalRtgEvent(panel.board, rtg.events.RTGEV_SHOWN);
 }
 
@@ -840,6 +858,10 @@ fn vblankServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     // is held as short as it can be made: interrupts off, and the sequence
     // itself in internal memory.
     stream.stopStream(panel);
+    // The copy in flight still walks the chains of the picture shown: it
+    // has ended before whoever waits for the new one is told the old one
+    // is no longer read, and may free them.
+    waitCopy(panel);
     // The frame starts over from its first stretch, so a picture waiting
     // to be shown can be taken up now.
     takePending(panel);
