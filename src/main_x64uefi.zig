@@ -196,7 +196,9 @@ fn takeScreen() void {
         .bgrx32 => .bgra32,
         else => return,
     };
-    const bytes = rtg.formatBytes(format);
+    // The one format taken, named above: four bytes a pixel. No library
+    // is there yet to ask.
+    const bytes = 4;
     panel = .{
         .value(st.PART_Kind, st.PARTKIND_PANEL),
         .value(st.PART_Chip, st.CHIP_UEFI_FB),

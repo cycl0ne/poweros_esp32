@@ -10,7 +10,6 @@
 
 const std = @import("std");
 const rtg = @import("sdk").rtg;
-const step = rtg.tags.dcsStep;
 
 /// One step of a bring-up.
 pub const Step = struct {
@@ -267,7 +266,9 @@ pub fn layPointer(into: []u8, band: Band, image: *const @import("sdk").rtg.RtgPo
 }
 
 test "steps: walked in order, and a short one refused" {
-    const bytes = step(0xF1, 0, .{0x00}) ++ step(0x11, 120, .{}) ++ step(0x2A, 0, .{ 0x00, 0x00, 0x01, 0x3F });
+    // Three steps as a board's list holds them: the command, how many
+    // parameters, the milliseconds to wait, the parameters.
+    const bytes = [_]u8{ 0xF1, 1, 0, 0x00 } ++ [_]u8{ 0x11, 0, 120 } ++ [_]u8{ 0x2A, 4, 0, 0x00, 0x00, 0x01, 0x3F };
     try std.testing.expect(valid(&bytes));
     var steps: Steps = .{ .bytes = &bytes };
     const first = steps.next().?;

@@ -21,7 +21,7 @@ const st = sdk.expansion.systemtags;
 const pins = sdk.expansion.boardpin;
 const rtg = sdk.rtg;
 const tags = rtg.tags;
-const dcsStep = tags.dcsStep;
+const dcsStep = @import("../panelsequence.zig").dcsStep;
 
 /// The board, as its maker names it.
 const name = "Elecrow CrowPanel Advanced 10.1\" ESP32-P4";

@@ -208,6 +208,30 @@ pub fn report(gb: *GraphicsBase, tag_list: ?[*]const TagItem, tag: sdk.utility.T
     if (at != 0) @as(*i32, @ptrFromInt(at)).* = code;
 }
 
+/// Bits a pixel of a format takes, as this library lays its pixels: the
+/// figure every drawing loop steps by. It is the library's own beside the
+/// pens it packs, so no pixel costs a call; a test holds it to
+/// rtg.library's `RtgFormatBits` for every format.
+///
+/// INPUTS:
+/// - `format` - a surface's format.
+///
+/// RESULT:
+/// 32, 24, 16, 8 or 1; 0 for a format this library does not know.
+///
+/// CONTEXT:
+/// Any, at comptime too. It is arithmetic on its argument.
+pub fn formatBits(format: PixelFormat) u32 {
+    return switch (format) {
+        .rgba32, .bgra32 => 32,
+        .rgb24, .bgr24 => 24,
+        .rgb565, .argb1555 => 16,
+        .indexed8, .gray8 => 8,
+        .mono1 => 1,
+        _ => 0,
+    };
+}
+
 /// A pen in a surface's format.
 ///
 /// INPUTS:

@@ -208,4 +208,14 @@ i32 ShowVideoFrame(*rtg.RtgVideoLayer layer, ?*const rtg.RtgYuv picture, ?*const
 /// The layer's place, in the display's coordinates, from the next frame;
 /// an empty rectangle hides it.
 i32 MoveVideoLayer(*rtg.RtgVideoLayer layer, *const rtg.RtgRect place)
+/// Bits a pixel of that format takes; 0 for a format this build does not
+/// know.
+u32 RtgFormatBits(u32 format)
+/// Bytes a row of `width` pixels of that format needs, before any rounding
+/// a board asks for; 0 for a format not known.
+u32 RtgRowBytes(u32 format, u32 width)
+/// One of H.273's numbers as rtg says it: `kind` is the table it is of
+/// (RTGCICP_MATRIX, RTGCICP_TRANSFER, RTGCICP_PRIMARIES). Below zero
+/// where the number says nothing, or names what no board here shows.
+i32 RtgCicp(u32 kind, u32 value)
 ##end

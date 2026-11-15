@@ -33,38 +33,6 @@ pub const PixelFormat = enum(u8) {
     _,
 };
 
-/// Bits a pixel. 0 for a format this build does not know.
-pub fn formatBits(format: PixelFormat) u32 {
-    return switch (format) {
-        .rgba32, .bgra32 => 32,
-        .rgb24, .bgr24 => 24,
-        .rgb565, .argb1555 => 16,
-        .indexed8, .gray8 => 8,
-        .mono1 => 1,
-        _ => 0,
-    };
-}
-
-/// Bytes a pixel, for the formats that are whole bytes. 0 for mono1, whose
-/// pixels are bits, and 0 for a format this build does not know - so a
-/// caller that multiplies by it gets nothing rather than something wrong.
-pub fn formatBytes(format: PixelFormat) u32 {
-    return switch (format) {
-        .rgba32, .bgra32 => 4,
-        .rgb24, .bgr24 => 3,
-        .rgb565, .argb1555 => 2,
-        .indexed8, .gray8 => 1,
-        else => 0,
-    };
-}
-
-/// The bytes a row of `width` pixels of `format` needs, before any
-/// rounding a board asks for. mono1 rounds up to the byte.
-pub fn formatRowBytes(format: PixelFormat, width: u32) u32 {
-    if (format == .mono1) return (width + 7) / 8;
-    return width * formatBytes(format);
-}
-
 /// Where the buffer's memory came from and what may be done with it.
 /// The first two are what a drawing surface already says about itself.
 pub const PIXMAPF_SCREEN: u32 = 1 << 0;
@@ -311,48 +279,13 @@ pub const RTGYUV_FULL: u8 = 1;
 /// metre.
 pub const RTGYUV_PEAK_DEFAULT: u16 = 1000;
 
-// --- what a stream or a container says, as rtg says it ----------------------
-//
-// A stream's parameter set and a container's own element both describe
-// the colours in the numbering of ITU-T H.273 (the "code points" the
-// standards share, CICP), where 2 is "unspecified" - which is what a
-// file that says nothing of itself leaves. These three turn such a
-// number into rtg's, and answer null where nothing was said or where it
-// is something no board here shows: then what the caller had stands.
-
-/// `RtgYuv.matrix` for H.273's matrix coefficients (Table 4).
-pub fn cicpMatrix(value: u8) ?u8 {
-    return switch (value) {
-        1 => RTGYUV_BT709,
-        // FCC, BT.470 B/G, BT.601 and SMPTE 240M are a television's.
-        4, 5, 6, 7 => RTGYUV_BT601,
-        // BT.2020, of either luminance.
-        9, 10 => RTGYUV_BT2020,
-        else => null,
-    };
-}
-
-/// `RtgYuv.transfer` for H.273's transfer characteristics (Table 3).
-pub fn cicpTransfer(value: u8) ?u8 {
-    return switch (value) {
-        // BT.709's curve, BT.601's, and BT.2020's at either depth: one
-        // curve, the television's.
-        1, 6, 14, 15 => RTGYUV_SDR,
-        16 => RTGYUV_PQ,
-        18 => RTGYUV_HLG,
-        else => null,
-    };
-}
-
-/// `RtgYuv.primaries` for H.273's colour primaries (Table 2).
-pub fn cicpPrimaries(value: u8) ?u8 {
-    return switch (value) {
-        1, 5, 6, 7 => RTGYUV_BT709,
-        9 => RTGYUV_BT2020,
-        11, 12 => RTGYUV_P3,
-        else => null,
-    };
-}
+/// RtgCicp's `kind`: which of ITU-T H.273's tables a number is of - the
+/// matrix coefficients, the transfer characteristics or the colour
+/// primaries - as a stream's parameter set and a container's own element
+/// both give them.
+pub const RTGCICP_MATRIX: u32 = 0;
+pub const RTGCICP_TRANSFER: u32 = 1;
+pub const RTGCICP_PRIMARIES: u32 = 2;
 
 /// A colour taken apart, eight bits a channel.
 pub const RtgRGB = extern struct {

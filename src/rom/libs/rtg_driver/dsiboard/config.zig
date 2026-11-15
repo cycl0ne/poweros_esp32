@@ -44,7 +44,7 @@ pub const Config = struct {
     /// The sync pulses' polarity, as the mode's standard has them.
     hsync_high: bool = false,
     vsync_high: bool = false,
-    /// The panel's bring-up: steps as `dcsStep` writes them.
+    /// The panel's bring-up: steps as the boards' lists write them.
     init_sequence: ?[*]const u8 = null,
     init_length: u32 = 0,
     /// The LDO channel that feeds the D-PHY, 0 for none, and its voltage.
@@ -75,7 +75,7 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     config.width = u32At(rb, tags.RTGA_Width, 0, tag_list);
     config.height = u32At(rb, tags.RTGA_Height, 0, tag_list);
     config.format = @enumFromInt(u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list));
-    config.bits_per_pixel = rtg.bitmaps.formatBits(config.format);
+    config.bits_per_pixel = rb.RtgFormatBits(@intFromEnum(config.format));
     config.lanes = u32At(rb, tags.RTGA_DSI_Lanes, 0, tag_list);
     config.lane_mbps = u32At(rb, tags.RTGA_DSI_LaneRate, 0, tag_list);
     config.pixel_hz = u32At(rb, tags.RTGA_DSI_PixelClock, 0, tag_list);

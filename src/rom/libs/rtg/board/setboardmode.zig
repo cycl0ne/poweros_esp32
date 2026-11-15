@@ -113,6 +113,6 @@ pub fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
     board.info.pitch = if (wanted.pitch != 0)
         wanted.pitch
     else
-        @truncate(private.arena.roundUp(rtg.bitmaps.formatRowBytes(wanted.format, wanted.width)));
+        @truncate(private.arena.roundUp(rtg_lib.RtgRowBytes(@intFromEnum(wanted.format), wanted.width)));
     return err.RTGERR_OK;
 }

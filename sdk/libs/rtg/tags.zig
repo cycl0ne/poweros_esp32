@@ -172,17 +172,6 @@ pub const RTGA_DCS_Dummy = RTGA_DriverBase + 192;
 pub const RTGA_DCS_InitSequence = RTGA_DCS_Dummy + 1;
 pub const RTGA_DCS_InitLength = RTGA_DCS_Dummy + 2;
 
-/// One step of an RTGA_DCS_InitSequence or RTGA_DSI_InitSequence, as a
-/// board writes it down: the command, the milliseconds to wait after it,
-/// and its parameters. Steps join with `++`.
-pub fn dcsStep(comptime cmd: u8, comptime delay_ms: u8, comptime params: anytype) [3 + params.len]u8 {
-    var bytes: [3 + params.len]u8 = undefined;
-    bytes[0] = cmd;
-    bytes[1] = params.len;
-    bytes[2] = delay_ms;
-    inline for (params, 0..) |param, i| bytes[3 + i] = param;
-    return bytes;
-}
 /// u32: the MADCTL value of the upright mode. Absent: 0.
 pub const RTGA_DCS_Madctl = RTGA_DCS_Dummy + 3;
 /// u32: the MADCTL value that turns the picture on its side, which gives
@@ -223,7 +212,7 @@ pub const RTGA_DSI_VSyncPulse = RTGA_DSI_Dummy + 7;
 pub const RTGA_DSI_VSyncBackPorch = RTGA_DSI_Dummy + 8;
 pub const RTGA_DSI_VSyncFrontPorch = RTGA_DSI_Dummy + 9;
 /// *const u8 and u32: the panel's bring-up, sent as DCS commands before
-/// the picture streams; steps as RTGA_DCS_InitSequence's (`dcsStep`).
+/// the picture streams; steps as RTGA_DCS_InitSequence's.
 /// Needed for a panel; a bridge the driver knows (CHIP_LT8912B) is
 /// brought up by the driver.
 pub const RTGA_DSI_InitSequence = RTGA_DSI_Dummy + 10;

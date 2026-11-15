@@ -56,10 +56,12 @@ pub const LIBRARY_VERSION = 0;
 /// 16: a hidden layer's picture shown somewhere else on the display,
 /// stretched into a rectangle of its own - FlyLayer - which is a window
 /// flying into the window that takes the put-away ones in.
-pub const LIBRARY_REVISION = 16;
+/// 17: a window's own buffer has its rows as long as rtg.library says a
+/// row of the screen's format is (RtgRowBytes).
+pub const LIBRARY_REVISION = 17;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
-const BUILD_DATE = "03.11.2026";
+const BUILD_DATE = "15.11.2026";
 
 /// The `$VER:` string, NUL first so a scan of the image finds it.
 const LIBRARY_VERSION_STRING =

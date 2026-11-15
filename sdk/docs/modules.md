@@ -337,6 +337,7 @@ flowchart TB
     m_bsdsocket_library -.-> m_openeth_device
     m_bsdsocket_library -.-> m_slip_device
     m_bsdsocket_library --> m_timer_device
+    m_chip_vcodec --> m_rtg_library
     m_chip_vcodec --> m_videodec_resource
     m_clipboard_device --> m_dos_library
     m_clock_docklet --> m_dos_library
@@ -473,6 +474,7 @@ flowchart TB
     m_videocodec_library --> m_audiocodec_library
     m_videocodec_library --> m_dos_library
     m_videocodec_library --> m_media_library
+    m_videocodec_library --> m_rtg_library
     m_vorbis_acodec --> m_media_library
     m_vp9_vcodec --> m_videoparse_library
     m_wav_acodec --> m_media_library

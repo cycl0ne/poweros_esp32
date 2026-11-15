@@ -7027,4 +7027,8 @@ pub const LIBRARY_VERSION = 1;
 /// shows whole pictures as CreateWindowSurface says. The DSI boards
 /// count their frames from rtg-dsi 1.7, which is what would have taken
 /// the late way there. Read from the code: not yet on a board.
-pub const LIBRARY_REVISION = 211;
+///
+/// 212: **A window surface's rows by rtg.library's word.** How many bytes
+/// a row of the screen's pixels takes is asked of rtg.library
+/// (`RtgRowBytes`) when the surface's pictures are made.
+pub const LIBRARY_REVISION = 212;

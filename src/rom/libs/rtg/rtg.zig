@@ -71,6 +71,9 @@ test {
     _ = @import("bitmap/attachbitmap.zig");
     _ = @import("bitmap/freebitmap.zig");
     _ = @import("bitmap/refreshbitmap.zig");
+    _ = @import("bitmap/rtgformatbits.zig");
+    _ = @import("bitmap/rtgrowbytes.zig");
+    _ = @import("video/rtgcicp.zig");
     _ = @import("board/_board.zig");
     _ = @import("board/boardcontrol.zig");
     _ = @import("board/createboardtaglist.zig");
@@ -1935,6 +1938,72 @@ test "the pointer's colours: a pixel of each format as every drawing call writes
     try testing.expectEqual(@as(u32, 0), pointers.pack(.indexed8, colour));
     try testing.expectEqual(@as(u32, 0), pointers.pack(.mono1, colour));
     try testing.expectEqual(@as(u32, 0), pointers.pack(@enumFromInt(99), colour));
+}
+
+test "a format's size: bits a pixel, bytes a row, nothing for a format that is none" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const bits = [_]struct { format: rtg.PixelFormat, bits: u32 }{
+        .{ .format = .rgba32, .bits = 32 },
+        .{ .format = .bgra32, .bits = 32 },
+        .{ .format = .rgb24, .bits = 24 },
+        .{ .format = .bgr24, .bits = 24 },
+        .{ .format = .rgb565, .bits = 16 },
+        .{ .format = .argb1555, .bits = 16 },
+        .{ .format = .indexed8, .bits = 8 },
+        .{ .format = .gray8, .bits = 8 },
+        .{ .format = .mono1, .bits = 1 },
+    };
+    for (bits) |one| {
+        const format = @intFromEnum(one.format);
+        try testing.expectEqual(one.bits, base(rb).RtgFormatBits(format));
+        // A row of whole bytes a pixel; one bit a pixel rounds up.
+        try testing.expectEqual((one.bits * 13 + 7) / 8, base(rb).RtgRowBytes(format, 13));
+        try testing.expectEqual(@as(u32, 0), base(rb).RtgRowBytes(format, 0));
+    }
+    try testing.expectEqual(@as(u32, 640), base(rb).RtgRowBytes(@intFromEnum(rtg.PixelFormat.rgb565), 320));
+    try testing.expectEqual(@as(u32, 2), base(rb).RtgRowBytes(@intFromEnum(rtg.PixelFormat.mono1), 9));
+    // A number past the formats, and one no format's byte holds.
+    for ([_]u32{ 9, 99, 255, 256, ~@as(u32, 0) }) |none| {
+        try testing.expectEqual(@as(u32, 0), base(rb).RtgFormatBits(none));
+        try testing.expectEqual(@as(u32, 0), base(rb).RtgRowBytes(none, 320));
+    }
+    // A row that does not fit in 32 bits is no row.
+    const bgra32 = @intFromEnum(rtg.PixelFormat.bgra32);
+    try testing.expectEqual(@as(u32, 0xFFFF_FFFC), base(rb).RtgRowBytes(bgra32, 0x3FFF_FFFF));
+    try testing.expectEqual(@as(u32, 0), base(rb).RtgRowBytes(bgra32, 0x4000_0000));
+    try testing.expectEqual(@as(u32, 0), base(rb).RtgRowBytes(bgra32, ~@as(u32, 0)));
+    try tearDown(rb);
+}
+
+test "a stream's colour numbers as a picture says them, and nothing where they say nothing" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const matrix = rtg.RTGCICP_MATRIX;
+    const transfer = rtg.RTGCICP_TRANSFER;
+    const primaries = rtg.RTGCICP_PRIMARIES;
+
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_BT709), base(rb).RtgCicp(matrix, 1));
+    for ([_]u32{ 4, 5, 6, 7 }) |television| try testing.expectEqual(@as(i32, rtg.RTGYUV_BT601), base(rb).RtgCicp(matrix, television));
+    for ([_]u32{ 9, 10 }) |wide| try testing.expectEqual(@as(i32, rtg.RTGYUV_BT2020), base(rb).RtgCicp(matrix, wide));
+
+    for ([_]u32{ 1, 6, 14, 15 }) |curve| try testing.expectEqual(@as(i32, rtg.RTGYUV_SDR), base(rb).RtgCicp(transfer, curve));
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_PQ), base(rb).RtgCicp(transfer, 16));
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_HLG), base(rb).RtgCicp(transfer, 18));
+
+    for ([_]u32{ 1, 5, 6, 7 }) |television| try testing.expectEqual(@as(i32, rtg.RTGYUV_BT709), base(rb).RtgCicp(primaries, television));
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_BT2020), base(rb).RtgCicp(primaries, 9));
+    for ([_]u32{ 11, 12 }) |cinema| try testing.expectEqual(@as(i32, rtg.RTGYUV_P3), base(rb).RtgCicp(primaries, cinema));
+
+    // "Unspecified", a number nothing here shows, one past a byte, and a
+    // table that is none of the three.
+    for ([_]u32{ matrix, transfer, primaries }) |kind| {
+        for ([_]u32{ 0, 2, 3, 8, 13, 255, 256, ~@as(u32, 0) }) |silent| {
+            try testing.expect(base(rb).RtgCicp(kind, silent) < 0);
+        }
+    }
+    try testing.expect(base(rb).RtgCicp(3, 1) < 0);
+    try tearDown(rb);
 }
 
 test "every error has words, and so has one that does not exist" {

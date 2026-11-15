@@ -176,6 +176,10 @@ either), and `rgba32`, `rgb24`, `bgr24`, `argb1555`, `indexed8`, `gray8`
 and `mono1` for buffers that are not shown. A pixel's bytes lie in
 memory in the order its format's name gives its channels; graphics.library
 turns a colour into a pixel of a format, and draws with it.
+`RtgFormatBits(format)` says how many bits a pixel of a format takes and
+`RtgRowBytes(format, width)` how many bytes a row of them needs, 0 for a
+format the library does not know; each is a call, so it is read once and
+not in the loop over the pixels.
 
 ## Handing on what was drawn
 
@@ -530,9 +534,13 @@ if (rb.ShowVideoFrame(layer, &frame.picture, &all) != rtg.errors.RTGERR_OK) putT
   as `RtgYuv` says them, an ordinary film (BT.709, eight bits, video's
   range) unless given. A controller's converter holds one matrix and no
   curve, so a film of high dynamic range, one in BT.2020's red, green
-  and blue, or one of ten bits gets `RTGERR_NOT_SUPPORTED` and no layer:
-  it goes through graphics, which maps such a film into the screen's
-  range. Better no layer than a film shown flat and grey.
+  and blue, or one of ten bits gets no layer: it goes through graphics,
+  which maps such a film into the screen's range. Better no layer than
+  a film shown flat and grey. A stream and its container give these in
+  ITU-T H.273's numbers; `RtgCicp(kind, value)` turns one of them into
+  `RtgYuv`'s - `RTGCICP_MATRIX`, `RTGCICP_TRANSFER` or
+  `RTGCICP_PRIMARIES` says which table it is of - and answers below zero
+  where the number says nothing.
 - `MoveVideoLayer(layer, place)` puts it in the display's coordinates -
   a window's place on its screen, the screen's `SA_Top` added. An empty
   place hides it.
@@ -748,7 +756,8 @@ from PSRAM itself.
 (`RTGA_DSI_Lanes`, `RTGA_DSI_LaneRate`), the pixel clock and the six
 timings, the D-PHY's supply where the chip's LDO feeds it
 (`RTGA_DSI_PhyLdo`, `RTGA_DSI_PhyMillivolts`), and the panel's bring-up
-as DCS commands (`RTGA_DSI_InitSequence`, steps as `dcsStep` writes them),
+as DCS commands (`RTGA_DSI_InitSequence`, steps as the board's list
+writes them with `dcsStep` of `src/boards/panelsequence.zig`),
 which the driver sends in command mode after the panel's reset - its
 reset line, or its own soft reset where it has none. Another panel on the
 same host is another tag list. The lane rate is made by the D-PHY's PLL,

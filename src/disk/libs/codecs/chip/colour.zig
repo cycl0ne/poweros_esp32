@@ -45,6 +45,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
 const ExecBase = sdk.interface.exec.ExecBase;
+const RtgBase = sdk.interface.rtg.RtgBase;
 // videoparse.library's readers of the sets, as their own modules hand
 // them out (`h264/sets.zig`, `hevc/sets.zig`): a file belongs to one
 // module, and these are the very files the library reads a stream with.
@@ -91,27 +92,34 @@ const SEI_LIGHT_LEVEL = 144;
 const METADATA_HDR_CLL = 1;
 const METADATA_HDR_MDCV = 2;
 
-// The VUI's matrix, curve and primaries are H.273's numbers, which rtg
-// turns into its own (`cicpMatrix` and the two beside it); what the VUI
-// does not say is what it would have been guessed to be.
+// The VUI's matrix, curve and primaries are H.273's numbers, which
+// rtg.library turns into its own (RtgCicp); what the VUI does not say is
+// what it would have been guessed to be, and so is all of it where the
+// machine has no rtg.library.
 
-fn matrixOf(matrix: u8, height: u32) u8 {
-    return rtg.bitmaps.cicpMatrix(matrix) orelse
+/// One of H.273's numbers as rtg says it, or null where it says nothing.
+fn told(rb: ?*RtgBase, kind: u32, value: u8) ?u8 {
+    const answer = (rb orelse return null).RtgCicp(kind, value);
+    return if (answer >= 0) @intCast(answer) else null;
+}
+
+fn matrixOf(rb: ?*RtgBase, matrix: u8, height: u32) u8 {
+    return told(rb, rtg.RTGCICP_MATRIX, matrix) orelse
         if (height >= 720) rtg.RTGYUV_BT709 else rtg.RTGYUV_BT601;
 }
 
-fn transferOf(transfer: u8) u8 {
-    return rtg.bitmaps.cicpTransfer(transfer) orelse rtg.RTGYUV_SDR;
+fn transferOf(rb: ?*RtgBase, transfer: u8) u8 {
+    return told(rb, rtg.RTGCICP_TRANSFER, transfer) orelse rtg.RTGYUV_SDR;
 }
 
-fn primariesOf(primaries: u8) u8 {
-    return rtg.bitmaps.cicpPrimaries(primaries) orelse rtg.RTGYUV_BT709;
+fn primariesOf(rb: ?*RtgBase, primaries: u8) u8 {
+    return told(rb, rtg.RTGCICP_PRIMARIES, primaries) orelse rtg.RTGYUV_BT709;
 }
 
 /// The colours the setup record's SPS says, for a picture `height` rows
 /// high; what it does not say is what it would have been guessed to be.
 /// `hevc` tells an hvcC record from an avcC one.
-pub fn of(sys: *ExecBase, hevc: bool, config: []const u8, height: u32) Colour {
+pub fn of(sys: *ExecBase, rb: ?*RtgBase, hevc: bool, config: []const u8, height: u32) Colour {
     const unit = (if (hevc) hevcSps(config) else avcSps(config)) orelse return .{};
     // The unit without its header, unescaped: a parameter set is small,
     // and this happens once a stream.
@@ -120,7 +128,7 @@ pub fn of(sys: *ExecBase, hevc: bool, config: []const u8, height: u32) Colour {
     const room: [*]u8 = @ptrCast(sys.AllocVec(@intCast(payload.len), exec.MEMF_ANY) orelse return .{});
     defer sys.FreeVec(room);
     const rbsp = room[0..payload.len];
-    var got = if (hevc) hevcColour(sys, rbsp[0..hevc_nal.unescape(payload, rbsp)], height) else avcColour(sys, rbsp[0..h264_nal.unescape(payload, rbsp)], height);
+    var got = if (hevc) hevcColour(sys, rb, rbsp[0..hevc_nal.unescape(payload, rbsp)], height) else avcColour(sys, rb, rbsp[0..h264_nal.unescape(payload, rbsp)], height);
     // An hvcC record may carry prefix SEI units of its own beside the
     // parameter sets; most carry none, and then the stream is where the
     // light is.
@@ -161,7 +169,7 @@ pub fn ofVp9(packet: []const u8, height: u32) ?Colour {
 /// unit. A sequence header's colour description and range are taken
 /// where `got` has none yet (`known` then), and the light metadata OBUs
 /// say the film was mastered for wherever they say it.
-pub fn readAv1(obus: []const u8, height: u32, got: *Colour) void {
+pub fn readAv1(rb: ?*RtgBase, obus: []const u8, height: u32, got: *Colour) void {
     var light: Light = .{};
     var at: usize = 0;
     while (at < obus.len) {
@@ -171,9 +179,9 @@ pub fn readAv1(obus: []const u8, height: u32, got: *Colour) void {
             av1header.OBU_SEQUENCE_HEADER => if (!got.known) {
                 const s = av1header.sequence(o.payload) catch continue;
                 got.* = .{
-                    .matrix = matrixOf(s.matrix_coefficients, height),
-                    .transfer = transferOf(s.transfer_characteristics),
-                    .primaries = primariesOf(s.color_primaries),
+                    .matrix = matrixOf(rb, s.matrix_coefficients, height),
+                    .transfer = transferOf(rb, s.transfer_characteristics),
+                    .primaries = primariesOf(rb, s.color_primaries),
                     .range = if (s.color_range) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED,
                     .peak = got.peak,
                     .known = true,
@@ -295,7 +303,7 @@ fn configPeak(config: []const u8, scratch: []u8) u16 {
     return light.nits();
 }
 
-fn hevcColour(sys: *ExecBase, rbsp: []const u8, height: u32) Colour {
+fn hevcColour(sys: *ExecBase, rb: ?*RtgBase, rbsp: []const u8, height: u32) Colour {
     // A sequence parameter set is a large thing to hold - its reference
     // picture sets alone are kilobytes - so it is not put on the
     // caller's stack.
@@ -305,24 +313,24 @@ fn hevcColour(sys: *ExecBase, rbsp: []const u8, height: u32) Colour {
     var b = hevc_bits.Bits.init(rbsp);
     _ = hevc_params.parseSps(&b, s, .{}) catch return .{};
     return .{
-        .matrix = matrixOf(s.matrix, height),
-        .transfer = transferOf(s.transfer),
-        .primaries = primariesOf(s.colour_primaries),
+        .matrix = matrixOf(rb, s.matrix, height),
+        .transfer = transferOf(rb, s.transfer),
+        .primaries = primariesOf(rb, s.colour_primaries),
         .range = if (s.full_range) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED,
         .known = true,
     };
 }
 
-fn avcColour(sys: *ExecBase, rbsp: []const u8, height: u32) Colour {
+fn avcColour(sys: *ExecBase, rb: ?*RtgBase, rbsp: []const u8, height: u32) Colour {
     const s: *h264_params.Sps = @ptrCast(@alignCast(sys.AllocVec(@sizeOf(h264_params.Sps), exec.MEMF_ANY) orelse return .{}));
     defer sys.FreeVec(s);
     s.* = .{};
     var b = h264_bits.Bits.init(rbsp);
     _ = h264_params.parseSps(&b, s, .{}) catch return .{};
     return .{
-        .matrix = matrixOf(s.matrix, height),
-        .transfer = transferOf(s.transfer),
-        .primaries = primariesOf(s.colour_primaries),
+        .matrix = matrixOf(rb, s.matrix, height),
+        .transfer = transferOf(rb, s.transfer),
+        .primaries = primariesOf(rb, s.colour_primaries),
         .range = if (s.full_range) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED,
         .known = true,
     };
@@ -581,7 +589,7 @@ test "a VP9 key frame's colours, and a frame that is not one" {
 test "an AV1 temporal unit's sequence header, and the light its metadata says" {
     const unit = ivfFrames(@embedFile("../av1/tests/t1.ivf"))[0];
     var got: Colour = .{};
-    readAv1(unit, 112, &got);
+    readAv1(null, unit, 112, &got);
     try testing.expect(got.known);
     try testing.expectEqual(rtg.RTGYUV_BT601, got.matrix);
     try testing.expectEqual(rtg.RTGYUV_SDR, got.transfer);
@@ -590,15 +598,15 @@ test "an AV1 temporal unit's sequence header, and the light its metadata says" {
     // film's brightest pixel at 400.
     const mdcv = [_]u8{ 0x2A, 25, METADATA_HDR_MDCV } ++ [_]u8{0} ** 16 ++ [_]u8{ 0x00, 0x03, 0xE8, 0x00 } ++ [_]u8{0} ** 4;
     const cll = [_]u8{ 0x2A, 5, METADATA_HDR_CLL, 0x01, 0x90, 0x00, 0x64 };
-    readAv1(&(mdcv ++ cll), 112, &got);
+    readAv1(null, &(mdcv ++ cll), 112, &got);
     try testing.expectEqual(@as(u16, 400), got.peak);
     try testing.expect(got.known);
     // A sequence header after the first changes nothing; the light holds.
-    readAv1(unit, 2160, &got);
+    readAv1(null, unit, 2160, &got);
     try testing.expectEqual(rtg.RTGYUV_BT601, got.matrix);
     try testing.expectEqual(@as(u16, 400), got.peak);
     // Bytes that are no OBUs.
     var none: Colour = .{};
-    readAv1(&.{ 0xFF, 0xFF, 0xFF }, 112, &none);
+    readAv1(null, &.{ 0xFF, 0xFF, 0xFF }, 112, &none);
     try testing.expect(!none.known);
 }

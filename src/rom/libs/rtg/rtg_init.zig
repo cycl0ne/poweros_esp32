@@ -34,7 +34,9 @@ pub const LIBRARY_VERSION = 1;
 /// is shown, its mode; RTGCTRL_RESET_STATS on a board with no control.
 /// 14: ten calls nothing used are gone, their slots kept free; a call
 /// that answers with a pointer answers null and keeps no reason.
-pub const LIBRARY_REVISION = 14;
+/// 15: RtgFormatBits, RtgRowBytes and RtgCicp - a format's size and a
+/// stream's colour numbers, asked of the library.
+pub const LIBRARY_REVISION = 15;
 const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

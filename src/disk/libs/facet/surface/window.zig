@@ -178,7 +178,7 @@ fn make(surface: *Surface, pictures: []Picture) bool {
     const now = shape(surface) orelse return false;
     // In the screen's pixels, copied as they are; rows a cache line apart,
     // as the tiles write them back.
-    const pitch = std.mem.alignForward(u32, now.width * rtg.bitmaps.formatBytes(kept.format), _memory.alignment);
+    const pitch = std.mem.alignForward(u32, kept.rb.RtgRowBytes(@intFromEnum(kept.format), now.width), _memory.alignment);
     for (pictures, 0..) |*picture, k| {
         const offscreen = allocate(kept.sys, surface.picture_memory, now.width, now.height, pitch, kept.format) orelse {
             unmake(surface, pictures[0..k], null);

@@ -2,7 +2,6 @@
 //! AllocBitMap: A buffer in the board's display memory, its rows
 //! aligned as the board asks.
 
-const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
@@ -71,15 +70,11 @@ pub fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, 
     if (width == 0 or height == 0) {
         return null;
     }
-    // A number no format has is refused as one this build does not know.
-    if (format > std.math.maxInt(@typeInfo(rtg.PixelFormat).@"enum".tag_type)) {
-        return null;
-    }
+    // No bytes a row is a format this build does not know, a number no
+    // format has included.
+    const row = rb.iface().RtgRowBytes(format, width);
+    if (row == 0) return null;
     const pixel_format: rtg.PixelFormat = @enumFromInt(format);
-    const row = bm_flags.formatRowBytes(pixel_format, width);
-    if (row == 0) {
-        return null;
-    }
 
     boards.obtain(rb, board);
     defer boards.release(rb, board);

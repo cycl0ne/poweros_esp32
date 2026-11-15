@@ -94,7 +94,7 @@ pub fn BlendPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
         rp.last_error = graphics.GERR_BAD_FORMAT;
         return;
     }
-    const src_bytes = rtg.bitmaps.formatBits(from) / 8;
+    const src_bytes = rastport.formatBits(from) / 8;
     var it = drawing.visible(rp, area.*);
     var bound = Rect{};
     var any = false;

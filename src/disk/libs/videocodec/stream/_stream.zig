@@ -90,10 +90,21 @@ pub const Stream = struct {
 /// word: a remux has been seen to clear a stream's primaries while the
 /// file's own element kept them. VP8 and VP9 say nothing in the stream
 /// at all, so for a WebM of high dynamic range this is the whole of it.
-pub fn tellColours(track: *const media.MediaTrack, picture: *rtg.RtgYuv) void {
-    if (rtg.bitmaps.cicpMatrix(track.matrix)) |one| picture.matrix = one;
-    if (rtg.bitmaps.cicpTransfer(track.transfer)) |one| picture.transfer = one;
-    if (rtg.bitmaps.cicpPrimaries(track.primaries)) |one| picture.primaries = one;
+///
+/// INPUTS:
+/// - `base` - the library, whose rtg.library turns the container's
+///   numbers into a picture's; without one they are left unsaid.
+/// - `track` - the track, as the container described it.
+/// - `picture` - the picture a decoder filled in.
+pub fn tellColours(base: *VideoCodecBase, track: *const media.MediaTrack, picture: *rtg.RtgYuv) void {
+    if (base.rtg_base) |rtg_lib| {
+        const matrix = rtg_lib.RtgCicp(rtg.RTGCICP_MATRIX, track.matrix);
+        if (matrix >= 0) picture.matrix = @intCast(matrix);
+        const transfer = rtg_lib.RtgCicp(rtg.RTGCICP_TRANSFER, track.transfer);
+        if (transfer >= 0) picture.transfer = @intCast(transfer);
+        const primaries = rtg_lib.RtgCicp(rtg.RTGCICP_PRIMARIES, track.primaries);
+        if (primaries >= 0) picture.primaries = @intCast(primaries);
+    }
     if (track.range != 0) picture.range = if (track.range == 2) rtg.RTGYUV_FULL else rtg.RTGYUV_LIMITED;
     if (track.peak != 0) picture.peak = track.peak;
 }

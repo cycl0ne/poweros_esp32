@@ -125,7 +125,7 @@ fn memorySurface(pixels: []u8, format: rtg.bitmaps.PixelFormat) rtg.Surface {
 /// The same for a test that needs room: a shape with corners does not fit
 /// in eight pixels by four.
 fn sizedSurface(pixels: []u8, format: rtg.bitmaps.PixelFormat, width: u32, height: u32) rtg.Surface {
-    const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    const bytes = @max(rastport.formatBits(format) / 8, 1);
     return .{
         .pixels = pixels.ptr,
         .width = width,
@@ -3882,10 +3882,28 @@ test "text in any shape: proportional, large, coverage and colour" {
     try tearDown(gb);
 }
 
+test "a pixel's size: the library's own figure is rtg.library's for every format" {
+    const gb = try setUp();
+    defer kexec.deinit();
+    // Every format there is, and numbers no format has: one past the
+    // last, and the largest the format's byte holds.
+    var number: u32 = 0;
+    while (number <= std.math.maxInt(u8)) : (number += 1) {
+        const format: rtg.bitmaps.PixelFormat = @enumFromInt(number);
+        try testing.expectEqual(gb.rtg_base.RtgFormatBits(number), rastport.formatBits(format));
+    }
+    // The formats are not all unknown to both.
+    try testing.expectEqual(@as(u32, 32), rastport.formatBits(.bgra32));
+    try testing.expectEqual(@as(u32, 16), rastport.formatBits(.rgb565));
+    try testing.expectEqual(@as(u32, 1), rastport.formatBits(.mono1));
+    try testing.expectEqual(@as(u32, 0), rastport.formatBits(@enumFromInt(9)));
+    try tearDown(gb);
+}
+
 /// The pixel at (x, y) of a surface of two or four bytes a pixel, read a
 /// byte at a time, the first the lowest.
 fn pixelOf(surface: *const rtg.Surface, x: u32, y: u32) u32 {
-    const bytes = rtg.bitmaps.formatBits(surface.format) / 8;
+    const bytes = rastport.formatBits(surface.format) / 8;
     const at = surface.pixels.? + @as(usize, y) * surface.pitch + x * bytes;
     var value: u32 = 0;
     for (0..bytes) |i| value |= @as(u32, at[i]) << @intCast(i * 8);
@@ -3894,7 +3912,7 @@ fn pixelOf(surface: *const rtg.Surface, x: u32, y: u32) u32 {
 
 /// Every pixel of a surface set to `pen`.
 fn groundOf(surface: *const rtg.Surface, pen: graphics.Pen) void {
-    const bytes = rtg.bitmaps.formatBits(surface.format) / 8;
+    const bytes = rastport.formatBits(surface.format) / 8;
     const value = rastport.packPen(surface.format, pen).?;
     var at: usize = 0;
     while (at < surface.size_bytes) : (at += bytes) {
@@ -3918,7 +3936,7 @@ fn rgbaText(format: rtg.bitmaps.PixelFormat) !void {
     defer kexec.deinit();
 
     var pixels: [16 * 8 * 4]u8 = @splat(0);
-    const bytes = rtg.bitmaps.formatBits(format) / 8;
+    const bytes = rastport.formatBits(format) / 8;
     var surface = sizedSurface(pixels[0 .. 16 * 8 * bytes], format, 16, 8);
     const black = graphics.penRGB(0, 0, 0);
     const white = graphics.penRGB(255, 255, 255);
@@ -5392,7 +5410,7 @@ test "WriteYUVPixelArray: into the surface's own format, whatever it is" {
     const nv12 = TestYuv.nv12(colors);
     for ([_]rtg.bitmaps.PixelFormat{ .rgba32, .rgb24, .bgr24, .rgb565, .argb1555, .gray8 }) |format| {
         var pixels: [4 * 2 * 4 + 1]u8 = @splat(0);
-        const bytes = rtg.bitmaps.formatBits(format) / 8;
+        const bytes = rastport.formatBits(format) / 8;
         // One byte in, so a four-byte format's rows are not aligned for a
         // word: the pixels go down a byte at a time instead.
         var surface = rtg.Surface{
@@ -5603,7 +5621,7 @@ const Reference = struct {
         const t = r.target(x, y) orelse return;
         const pen = if (back) r.bg else r.fg;
         const format = r.surface.format;
-        const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+        const bytes = @max(rastport.formatBits(format) / 8, 1);
         const at = r.surface.pixels.? + @as(usize, @intCast(y + t.dy)) * r.surface.pitch +
             @as(usize, @intCast(x + t.dx)) * bytes;
         var value: u32 = 0;
@@ -5723,7 +5741,7 @@ test "the drawing loops write what a pixel at a time wrote, in every format and 
     };
 
     for (formats) |format| {
-        const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+        const bytes = @max(rastport.formatBits(format) / 8, 1);
         for ([_]usize{ 0, 1, 2 }) |offset| {
             var got = sizedSurface(got_memory[offset..][0 .. width * height * bytes], format, width, height);
             var want = sizedSurface(want_memory[offset..][0 .. width * height * bytes], format, width, height);

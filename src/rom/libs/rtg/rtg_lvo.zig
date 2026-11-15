@@ -56,6 +56,9 @@ const OpenVideoLayer = @import("video/openvideolayer.zig").OpenVideoLayer;
 const CloseVideoLayer = @import("video/closevideolayer.zig").CloseVideoLayer;
 const ShowVideoFrame = @import("video/showvideoframe.zig").ShowVideoFrame;
 const MoveVideoLayer = @import("video/movevideolayer.zig").MoveVideoLayer;
+const RtgFormatBits = @import("bitmap/rtgformatbits.zig").RtgFormatBits;
+const RtgRowBytes = @import("bitmap/rtgrowbytes.zig").RtgRowBytes;
+const RtgCicp = @import("video/rtgcicp.zig").RtgCicp;
 const BlitTemplate = @import("engine/blittemplate.zig").BlitTemplate;
 const BlitPattern = @import("engine/blitpattern.zig").BlitPattern;
 const BlendPixels = @import("engine/blendpixels.zig").BlendPixels;
@@ -160,6 +163,9 @@ const contract_files = [_][]const u8{
     @embedFile("video/closevideolayer.zig"),
     @embedFile("video/showvideoframe.zig"),
     @embedFile("video/movevideolayer.zig"),
+    @embedFile("bitmap/rtgformatbits.zig"),
+    @embedFile("bitmap/rtgrowbytes.zig"),
+    @embedFile("video/rtgcicp.zig"),
 };
 
 fn lvoAddRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) callconv(.c) bool {
@@ -332,6 +338,16 @@ fn lvoMoveVideoLayer(rb: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.
     return MoveVideoLayer(rb, layer, place);
 }
 
+fn lvoRtgFormatBits(rb: *RtgBase, format: u32) callconv(.c) u32 {
+    return RtgFormatBits(rb, format);
+}
+fn lvoRtgRowBytes(rb: *RtgBase, format: u32, width: u32) callconv(.c) u32 {
+    return RtgRowBytes(rb, format, width);
+}
+fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
+    return RtgCicp(rb, kind, value);
+}
+
 /// How many slots of the table are kept free.
 const reserved_slots = 10;
 
@@ -414,6 +430,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCloseVideoLayer),
     vec(lvoShowVideoFrame),
     vec(lvoMoveVideoLayer),
+    vec(lvoRtgFormatBits),
+    vec(lvoRtgRowBytes),
+    vec(lvoRtgCicp),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -423,7 +442,7 @@ const testing = std.testing;
 test "the jump table: the ROM's slots, every LVO at its function" {
     // The reserved slots are in the table but not in the LVO.
     try testing.expectEqual(exec.libraries.standard_vectors + @typeInfo(LVO).@"struct".decls.len + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 69), vectors.len);
+    try testing.expectEqual(@as(usize, 72), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

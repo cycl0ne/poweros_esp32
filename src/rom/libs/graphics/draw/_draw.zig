@@ -146,7 +146,7 @@ pub fn visible(rp: *const RastPort, area: Rect) Visible {
 /// INPUTS:
 /// - `format` - the surface's format.
 pub fn pixelBytes(format: PixelFormat) u32 {
-    return @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    return @max(rastport.formatBits(format) / 8, 1);
 }
 
 /// Read one pixel, still in the surface's format.

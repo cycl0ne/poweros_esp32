@@ -73,12 +73,12 @@ const _codec = @import("../codec/_codec.zig");
 ///     vcb.ReleaseVideoFrame(film, &frame);
 /// }
 /// ```
-pub fn DecodeVideoFrame(_: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.VideoFrame) i32 {
+pub fn DecodeVideoFrame(base: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.VideoFrame) i32 {
     const s = _stream.of(stream);
     const slot = _stream.freeSlot(s) orelse return vc.VCERR_BUSY;
     const result = _codec.decode(s, frame, slot);
     if (result != vc.VCERR_OK) return result;
-    _stream.tellColours(&s.picture, &frame.picture);
+    _stream.tellColours(base, &s.picture, &frame.picture);
     s.held[slot] = true;
     frame.number = s.number;
     frame.private = .{ slot + 1, _stream.frame_mark, 0 };

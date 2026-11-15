@@ -54,7 +54,7 @@ pub fn read(rb: *RtgBase, tag_list: ?[*]const TagItem) ?Config {
     setup.width = get.u32At(rb, tags.RTGA_Width, 0, tag_list);
     setup.height = get.u32At(rb, tags.RTGA_Height, 0, tag_list);
     const format: rtg.PixelFormat = @enumFromInt(get.u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list));
-    setup.bits_per_pixel = rtg.bitmaps.formatBits(format);
+    setup.bits_per_pixel = rb.RtgFormatBits(@intFromEnum(format));
     setup.pixel_clock_hz = get.u32At(rb, tags.RTGA_RGB_PixelClock, 0, tag_list);
     setup.hsync_pulse = get.u32At(rb, tags.RTGA_RGB_HSyncPulse, 0, tag_list);
     setup.hsync_back_porch = get.u32At(rb, tags.RTGA_RGB_HSyncBackPorch, 0, tag_list);

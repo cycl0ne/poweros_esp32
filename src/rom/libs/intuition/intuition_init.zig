@@ -271,7 +271,9 @@ pub const LIBRARY_VERSION = 0;
 /// RTGERR_OK, so a display that a refused show left in its bands is
 /// asked again the next time its screens are shown; bands the board
 /// refuses while others are up give way to the front screen alone.
-pub const LIBRARY_REVISION = 97;
+/// 98: a screen's depth is what rtg.library says a pixel of its format
+/// takes (RtgFormatBits).
+pub const LIBRARY_REVISION = 98;
 const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -113,7 +113,7 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
         return;
     }
 
-    const src_bytes = rtg.bitmaps.formatBits(from) / 8;
+    const src_bytes = rastport.formatBits(from) / 8;
     const shrinks = src_w > dest_w or src_h > dest_h;
     var it = drawing.visible(rp, dest_area.*);
     var bound = Rect{};

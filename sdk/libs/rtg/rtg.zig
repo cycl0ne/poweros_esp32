@@ -61,12 +61,12 @@ pub const RTGYUV_HLG = bitmaps.RTGYUV_HLG;
 pub const RTGYUV_LIMITED = bitmaps.RTGYUV_LIMITED;
 pub const RTGYUV_FULL = bitmaps.RTGYUV_FULL;
 pub const RTGYUV_PEAK_DEFAULT = bitmaps.RTGYUV_PEAK_DEFAULT;
+pub const RTGCICP_MATRIX = bitmaps.RTGCICP_MATRIX;
+pub const RTGCICP_TRANSFER = bitmaps.RTGCICP_TRANSFER;
+pub const RTGCICP_PRIMARIES = bitmaps.RTGCICP_PRIMARIES;
 pub const RtgRGB = bitmaps.RtgRGB;
 pub const RtgTemplate = bitmaps.RtgTemplate;
 pub const RtgPattern = bitmaps.RtgPattern;
-pub const formatBits = bitmaps.formatBits;
-pub const formatBytes = bitmaps.formatBytes;
-pub const formatRowBytes = bitmaps.formatRowBytes;
 
 pub const RtgMode = boards.RtgMode;
 pub const RtgRegion = boards.RtgRegion;

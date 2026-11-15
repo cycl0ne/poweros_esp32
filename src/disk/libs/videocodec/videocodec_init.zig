@@ -13,15 +13,16 @@ const _codec = @import("codec/_codec.zig");
 
 pub const LIBRARY_NAME = sdk.videocodec.VIDEOCODECNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 11;
-const BUILD_DATE = "08.11.2026";
+pub const LIBRARY_REVISION = 12;
+const BUILD_DATE = "15.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The base filled in, dos.library and utility.library opened. Without
-/// them there is no library: null, and exec frees the base.
+/// them there is no library: null, and exec frees the base. rtg.library
+/// is opened where the machine has it.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     const base = _base.videoCodecBase(lib);
     const header = lib.*;
@@ -36,6 +37,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
         .seg_list = seg_list,
         .dos_base = @ptrCast(dos_lib),
         .utility_base = @ptrCast(utility_lib),
+        .rtg_base = @ptrCast(sys_base.OpenLibrary(sdk.rtg.RTGNAME, sdk.rtg.RTG_VERSION)),
     };
     sys_base.InitSemaphore(&base.modules_lock);
     lib.revision = LIBRARY_REVISION;
@@ -53,6 +55,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const sys = base.sys_base;
     const seg_list = base.seg_list;
     _codec.forget(base);
+    if (base.rtg_base) |rtg_lib| sys.CloseLibrary(@ptrCast(@alignCast(rtg_lib)));
     sys.CloseLibrary(@ptrCast(@alignCast(base.dos_base)));
     sys.CloseLibrary(@ptrCast(@alignCast(base.utility_base)));
     sys.DetachLibrary(lib);

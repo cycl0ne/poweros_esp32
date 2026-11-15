@@ -112,7 +112,7 @@ pub fn make(lb: *LayersBase, info: *LayerInfo, width: u32, height: u32, clear: b
     const sys = lb.sys_base;
     const board = boardOf(info) orelse return null;
     const format = info.surface.format;
-    const row = rtg.bitmaps.formatRowBytes(format, width);
+    const row = lb.rtg_base.RtgRowBytes(@intFromEnum(format), width);
     if (row == 0 or height == 0) return null;
     const pitch = (row + line - 1) & ~@as(u32, line - 1);
     const pixels_bytes = @as(usize, pitch) * height;

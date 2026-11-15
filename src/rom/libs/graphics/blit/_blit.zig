@@ -271,7 +271,7 @@ pub fn patternRows(rp: *const RastPort, r: drawing.Piece, bits: [*]const u8, pit
 /// INPUTS:
 /// - `surface` - the surface.
 pub fn pixelBytes(surface: *const rtg.Surface) u32 {
-    return @max(rtg.bitmaps.formatBits(surface.format) / 8, 1);
+    return @max(rastport.formatBits(surface.format) / 8, 1);
 }
 
 /// One pixel from a surface to a RastPort, both in one format.
@@ -563,8 +563,8 @@ pub fn blendRow(to: [*]u8, to_format: rtg.bitmaps.PixelFormat, from: [*]const u8
             }
         }
     }
-    const to_bytes = @max(rtg.bitmaps.formatBits(to_format) / 8, 1);
-    const from_bytes = @max(rtg.bitmaps.formatBits(from_format) / 8, 1);
+    const to_bytes = @max(rastport.formatBits(to_format) / 8, 1);
+    const from_bytes = @max(rastport.formatBits(from_format) / 8, 1);
     for (0..count) |i| {
         const pen = rastport.unpackPen(from_format, rows.load(from + i * from_bytes, from_bytes));
         blendPixel(to + i * to_bytes, to_bytes, to_format, pen);
@@ -605,7 +605,7 @@ fn blendRowAs(
 /// - `fx` - where across, in 256ths of a pixel, from the picture's left.
 /// - `fy` - where down, the same.
 pub fn sampleBetween(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelFormat, area: Rect, fx: i64, fy: i64) graphics.Pen {
-    const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    const bytes = @max(rastport.formatBits(format) / 8, 1);
     const x0: i32 = @intCast(@max(@min(@divFloor(fx, 256), area.max_x - 1), area.min_x));
     const y0: i32 = @intCast(@max(@min(@divFloor(fy, 256), area.max_y - 1), area.min_y));
     const x1 = @min(x0 + 1, area.max_x - 1);
@@ -711,7 +711,7 @@ pub fn spanOf(dest: i32, dest_start: i32, dest_size: i32, src_start: i32, src_si
 /// - `across` - the stretch across, from `spanOf`.
 /// - `down` - the stretch down.
 pub fn sampleOver(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelFormat, area: Rect, across: Span, down: Span) graphics.Pen {
-    const bytes = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    const bytes = @max(rastport.formatBits(format) / 8, 1);
     const first_x = @max(across.first(), area.min_x);
     const last_x = @min(across.last(), area.max_x - 1);
     const first_y = @max(down.first(), area.min_y);

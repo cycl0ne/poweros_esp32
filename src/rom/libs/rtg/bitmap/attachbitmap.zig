@@ -60,7 +60,7 @@ pub fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.Rt
     if (described.pixels == null or described.width == 0 or described.height == 0) {
         return null;
     }
-    const row = bm_flags.formatRowBytes(described.format, described.width);
+    const row = rb.iface().RtgRowBytes(@intFromEnum(described.format), described.width);
     if (row == 0) {
         return null;
     }

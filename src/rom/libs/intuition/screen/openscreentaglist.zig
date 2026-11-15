@@ -189,7 +189,7 @@ pub fn OpenScreenTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Screen {
         .default_title = @ptrFromInt(ub.GetTagData(sc.SA_Title, 0, tags)),
         .width = bounds.width(),
         .height = bounds.height(),
-        .depth = sdk.rtg.bitmaps.formatBits(@enumFromInt(format)),
+        .depth = if (ib.rtg_base) |rtg_lib| rtg_lib.RtgFormatBits(format) else 0,
         .pens = _screen.drawnPens(ib.system_pens),
         .draw_info = undefined,
         .pub_node = .{ .screen = @ptrCast(s) },

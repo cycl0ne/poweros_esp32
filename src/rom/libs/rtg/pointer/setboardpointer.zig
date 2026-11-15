@@ -193,7 +193,8 @@ pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, h
         else => return .{ .code = err.RTGERR_BAD_FORMAT },
     }
     const format = board.info.format;
-    const bytes = rtg.formatBytes(format);
+    // Whole bytes a pixel: a board of one bit a pixel has no pointer.
+    const bytes = rb.iface().RtgFormatBits(@intFromEnum(format)) / 8;
     if (bytes == 0) return .{ .code = err.RTGERR_BAD_FORMAT };
 
     const pitch = (width * bytes + 3) & ~@as(u32, 3);

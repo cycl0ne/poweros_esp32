@@ -120,7 +120,7 @@ pub fn AllocBitMapTagList(gb: *GraphicsBase, tags: ?[*]const TagItem) ?*Surface 
         return null;
     }
 
-    const bytes_per_pixel = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    const bytes_per_pixel = @max(rastport.formatBits(format) / 8, 1);
     const pitch = ub.AlignUp(@as(usize, width) * bytes_per_pixel, @sizeOf(usize));
     const pixels_bytes = pitch * height;
     const offset = _bitmap.pixel_offset;

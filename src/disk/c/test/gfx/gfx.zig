@@ -84,7 +84,7 @@ const LayersBase = sdk.interface.layers.LayersBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Gfx";
-const VERSION_STRING = "\x00$VER: Gfx 1.1 (09.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Gfx 1.2 (15.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DISPLAY/S,MEMORY/S,FORMATS/S,FILL/S,BLIT/S,LINES/S,REGION/S,DRAW/S,GURU/S,LAYERS/S,ALL/S,SPEED/S";
@@ -154,7 +154,12 @@ const probe_height = 4;
 /// telling apart here: a machine that cannot spare 32 bytes has a larger
 /// problem than this command.
 fn takesFormat(sys: *ExecBase, gb: *GraphicsBase, format: rtg.bitmaps.PixelFormat) bool {
-    const bytes_per_pixel = @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    // What a pixel of the format takes is rtg.library's to say; where the
+    // library is not there the probe is given the widest, four bytes.
+    const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION);
+    defer if (rtg_lib) |opened| sys.CloseLibrary(opened);
+    const bits = if (rtg_lib) |opened| @as(*rtg.RtgBase, @ptrCast(opened)).RtgFormatBits(@intFromEnum(format)) else 32;
+    const bytes_per_pixel = @max(bits / 8, 1);
     const pitch = probe_width * bytes_per_pixel;
     const size = pitch * probe_height;
 

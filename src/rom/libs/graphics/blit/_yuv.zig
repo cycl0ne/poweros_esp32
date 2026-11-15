@@ -293,7 +293,7 @@ fn bandOf(piece: *const Piece, first: u32, end: u32) void {
 const checked = builtin.is_test;
 
 inline fn putAs(comptime format: PixelFormat, comptime words: bool, to: [*]u8, i: usize, pen: Pen) void {
-    const bytes = comptime @max(rtg.bitmaps.formatBits(format) / 8, 1);
+    const bytes = comptime @max(rastport.formatBits(format) / 8, 1);
     const value = @call(.always_inline, rastport.packPen, .{ format, pen }) orelse 0;
     if (words) {
         const word: [*]u32 = @ptrCast(@alignCast(to));
@@ -564,7 +564,7 @@ fn meanOfPair(p: *const Planes, cb: [*]const u8, cr: [*]const u8, pitch: usize, 
 fn smoothRows(piece: *const Piece, first: u32, end: u32) void {
     const p = piece.planes;
     const c = p.colors;
-    const to_bytes = @max(rtg.bitmaps.formatBits(piece.format) / 8, 1);
+    const to_bytes = @max(rastport.formatBits(piece.format) / 8, 1);
     const src = piece.src;
     const dest = piece.dest;
     const chroma_area = chromaArea(src);

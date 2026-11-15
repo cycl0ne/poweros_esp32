@@ -58,7 +58,7 @@ const panel_data_pins = [4]u8{ 11, 13, 14, 9 };
 
 /// The maker's bring-up of the ST77922, as their sample sends it.
 const panel_bring_up = blk: {
-    const dcsStep = @import("sdk").rtg.tags.dcsStep;
+    const dcsStep = @import("../panelsequence.zig").dcsStep;
     break :blk dcsStep(0xF1, 0, .{0x00}) ++
         dcsStep(0x60, 0, .{ 0x00, 0x00, 0x00 }) ++
         dcsStep(0x65, 0, .{0x80}) ++

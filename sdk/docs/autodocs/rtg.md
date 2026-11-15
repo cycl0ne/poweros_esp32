@@ -50,7 +50,10 @@ Generated from the source by `./zig build autodoc`.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
 - [RemRtgDriver](#remrtgdriver) - Takes a driver off the library's list.
 - [RemRtgEventServer](#remrtgeventserver) - Takes an interrupt server off one of a board's events.
+- [RtgCicp](#rtgcicp) - Turns one of H.273's numbers for a picture's colours into rtg's.
 - [RtgErrorText](#rtgerrortext) - Says what an `RTGERR_` code means, in words.
+- [RtgFormatBits](#rtgformatbits) - Says how many bits a pixel of a format takes.
+- [RtgRowBytes](#rtgrowbytes) - Says how many bytes a row of pixels of a format needs.
 - [RxParam](#rxparam) - Sends a command and reads bytes back from the part on a bus.
 - [ScalePixels](#scalepixels) - Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage.
 - [SetBoardBrightness](#setboardbrightness) - Sets a board's brightness.
@@ -2323,6 +2326,76 @@ None known.
 rb.RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &server);
 ```
 
+## RtgCicp
+
+Turns one of H.273's numbers for a picture's colours into rtg's.
+
+**SYNOPSIS**
+
+```zig
+fn RtgCicp(_: *RtgBase, kind: u32, value: u32) i32
+```
+
+**SINCE**
+
+1.15. LVO -288.
+
+**INPUTS**
+
+- `kind` - which of H.273's tables `value` is of: `RTGCICP_MATRIX`
+  (matrix coefficients, its Table 4), `RTGCICP_TRANSFER` (transfer
+  characteristics, Table 3) or `RTGCICP_PRIMARIES` (colour primaries,
+  Table 2).
+- `value` - the number, as the stream or the container has it.
+
+**RESULT**
+
+What `RtgYuv`'s field of that kind takes - `RTGYUV_BT601`,
+`RTGYUV_BT709` or `RTGYUV_BT2020` for a matrix; `RTGYUV_SDR`,
+`RTGYUV_PQ` or `RTGYUV_HLG` for a transfer; `RTGYUV_BT709`,
+`RTGYUV_BT2020` or `RTGYUV_P3` for primaries - or -1: for a number
+that says nothing ("unspecified" among them), one that names what no
+board here shows, and a `kind` that is none of the three.
+
+**BEHAVIOR**
+
+Several of H.273's numbers are one of rtg's: every matrix a
+television has had is `RTGYUV_BT601`, both BT.2020 matrices
+`RTGYUV_BT2020`; BT.709's curve, BT.601's and BT.2020's at either
+depth are the one `RTGYUV_SDR`; BT.601's primaries are taken as
+BT.709's, which they are within a step.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+On -1 what the caller had stands: the decoder's own word, or what a
+picture of that size would be guessed to be.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenVideoLayer`, `ShowVideoFrame`
+
+**EXAMPLES**
+
+```zig
+const told = rb.RtgCicp(rtg.RTGCICP_MATRIX, track.matrix);
+if (told >= 0) picture.matrix = @intCast(told);
+```
+
 ## RtgErrorText
 
 Says what an `RTGERR_` code means, in words.
@@ -2373,6 +2446,122 @@ None known.
 
 ```zig
 report(rb.RtgErrorText(code));
+```
+
+## RtgFormatBits
+
+Says how many bits a pixel of a format takes.
+
+**SYNOPSIS**
+
+```zig
+fn RtgFormatBits(_: *RtgBase, format: u32) u32
+```
+
+**SINCE**
+
+1.15. LVO -280.
+
+**INPUTS**
+
+- `format` - a `PixelFormat`, as a number.
+
+**RESULT**
+
+32, 24, 16, 8 or 1; 0 for a format this build does not know, a number
+no format has included.
+
+**BEHAVIOR**
+
+The figure is the format's alone: it says nothing of a board. A format
+of whole bytes takes this over eight of them a pixel; `mono1` takes a
+bit, eight pixels to the byte, which is why a row's length is asked of
+`RtgRowBytes` and not worked out from this.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+It is a call, so it is read once, outside the loop over the pixels.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RtgRowBytes`, `AllocBitMap`
+
+**EXAMPLES**
+
+```zig
+const bytes = rb.RtgFormatBits(@intFromEnum(surface.format)) / 8;
+```
+
+## RtgRowBytes
+
+Says how many bytes a row of pixels of a format needs.
+
+**SYNOPSIS**
+
+```zig
+fn RtgRowBytes(rb: *RtgBase, format: u32, width: u32) u32
+```
+
+**SINCE**
+
+1.15. LVO -284.
+
+**INPUTS**
+
+- `format` - a `PixelFormat`, as a number.
+- `width` - how many pixels the row has.
+
+**RESULT**
+
+The bytes, before any rounding a board asks for. 0 for a format this
+build does not know, for no pixels, and for a row that does not fit
+in 32 bits.
+
+**BEHAVIOR**
+
+A format of whole bytes takes its bytes a pixel times the width;
+`mono1`, whose pixels are bits, rounds up to the byte. A board's
+buffers have their rows further apart than this - on the board's
+alignment - which is the buffer's `pitch`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RtgFormatBits`, `AttachBitMap`
+
+**EXAMPLES**
+
+```zig
+const row = rb.RtgRowBytes(@intFromEnum(rtg.PixelFormat.rgb565), 320); // 640
 ```
 
 ## RxParam

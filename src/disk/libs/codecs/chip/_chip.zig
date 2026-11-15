@@ -44,6 +44,7 @@ const utility = sdk.utility;
 const videodec = sdk.resources.videodec;
 const VideoDecBase = videodec.VideoDecBase;
 const ExecBase = sdk.interface.exec.ExecBase;
+const RtgBase = sdk.interface.rtg.RtgBase;
 const module = @import("../module.zig");
 const Base = module.Base;
 const annexb = @import("annexb.zig");
@@ -85,6 +86,9 @@ const Decoder = struct {
     /// The bytes in `buffer` waiting to be fed, and their time.
     pending: usize = 0,
     pending_time: i64 = 0,
+    /// rtg.library, opened with the decoder for what the stream's colour
+    /// numbers are as a picture says them; null on a machine without it.
+    rtg_base: ?*RtgBase = null,
     /// What the stream's own parameter sets or headers say its colours
     /// are: the chip reports none of it.
     colours: colour.Colour = .{},
@@ -160,15 +164,16 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
     const memory = sys.AllocVec(@sizeOf(Decoder), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(code, vc.VCERR_NOMEMORY);
     const c: *Decoder = @ptrCast(@alignCast(memory));
     c.* = .{ .sys = sys, .vb = vb, .decoder = undefined, .codec = codec, .length_size = setup.length_size, .height = params.height, .held = params.held };
+    c.rtg_base = @ptrCast(sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION));
     switch (codec) {
-        videodec.VDCODEC_H264, videodec.VDCODEC_H265 => c.colours = colour.of(sys, codec == videodec.VDCODEC_H265, config, params.height),
-        videodec.VDCODEC_AV1 => colour.readAv1(av1Obus(config), params.height, &c.colours),
+        videodec.VDCODEC_H264, videodec.VDCODEC_H265 => c.colours = colour.of(sys, c.rtg_base, codec == videodec.VDCODEC_H265, config, params.height),
+        videodec.VDCODEC_AV1 => colour.readAv1(c.rtg_base, av1Obus(config), params.height, &c.colours),
         else => {},
     }
     if (!settled(c)) c.hunt = hunt_packets;
     if (setup.header_size != 0) {
         const header = sys.AllocVec(setup.header_size, exec.MEMF_ANY) orelse {
-            sys.FreeVec(c);
+            giveBack(c);
             return failed(code, vc.VCERR_NOMEMORY);
         };
         c.header = @ptrCast(header);
@@ -189,11 +194,23 @@ fn open(sys: *ExecBase, params: *const vcodec.VCodecParams, code: *i32) ?*vcodec
         .{ .tag = videodec.VDA_HeldFrames, .data = params.held },
         .{},
     }, &err) orelse {
-        sys.FreeVec(c.header);
-        sys.FreeVec(c);
+        giveBack(c);
         return failed(code, fromChip(err));
     };
     return @ptrCast(c);
+}
+
+/// What a decoder holds beside the chip's own, given back: rtg.library
+/// closed, the header, the packet buffer and the decoder's memory freed.
+///
+/// INPUTS:
+/// - `c` - the decoder, the chip's part of it closed or never opened.
+fn giveBack(c: *Decoder) void {
+    const sys = c.sys;
+    if (c.rtg_base) |rtg_lib| sys.CloseLibrary(@ptrCast(@alignCast(rtg_lib)));
+    sys.FreeVec(c.header);
+    sys.FreeVec(c.buffer);
+    sys.FreeVec(c);
 }
 
 fn failed(code: *i32, why: i32) ?*vcodec.VCodecDecoder {
@@ -205,11 +222,8 @@ fn failed(code: *i32, why: i32) ?*vcodec.VCodecDecoder {
 /// freed.
 pub fn CloseVCodec(_: *Base, decoder: ?*vcodec.VCodecDecoder) void {
     const c = of(decoder orelse return);
-    const sys = c.sys;
     c.vb.CloseVideoDecoder(c.decoder);
-    sys.FreeVec(c.header);
-    sys.FreeVec(c.buffer);
-    sys.FreeVec(c);
+    giveBack(c);
 }
 
 /// A packet turned into Annex B form (VP9's and AV1's as it is) and fed -
@@ -352,7 +366,7 @@ fn lookThrough(c: *Decoder, units: []const u8) void {
         videodec.VDCODEC_VP9 => if (colour.ofVp9(units, c.height)) |got| {
             c.colours = got;
         },
-        videodec.VDCODEC_AV1 => colour.readAv1(units, c.height, &c.colours),
+        videodec.VDCODEC_AV1 => colour.readAv1(c.rtg_base, units, c.height, &c.colours),
         else => {
             var scratch: [colour.sei_room]u8 = undefined;
             const peak = colour.peakOf(c.codec == videodec.VDCODEC_H265, units, c.length_size, &scratch);

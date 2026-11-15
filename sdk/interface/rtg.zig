@@ -75,6 +75,9 @@ pub const LVO = struct {
     pub const CloseVideoLayer = libraries.lvo(66);
     pub const ShowVideoFrame = libraries.lvo(67);
     pub const MoveVideoLayer = libraries.lvo(68);
+    pub const RtgFormatBits = libraries.lvo(69);
+    pub const RtgRowBytes = libraries.lvo(70);
+    pub const RtgCicp = libraries.lvo(71);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -135,6 +138,9 @@ pub const Fn = struct {
     pub const CloseVideoLayer = *const fn (*RtgBase, ?*rtg.RtgVideoLayer) callconv(.c) void;
     pub const ShowVideoFrame = *const fn (*RtgBase, *rtg.RtgVideoLayer, ?*const rtg.RtgYuv, ?*const rtg.RtgRect) callconv(.c) i32;
     pub const MoveVideoLayer = *const fn (*RtgBase, *rtg.RtgVideoLayer, *const rtg.RtgRect) callconv(.c) i32;
+    pub const RtgFormatBits = *const fn (*RtgBase, u32) callconv(.c) u32;
+    pub const RtgRowBytes = *const fn (*RtgBase, u32, u32) callconv(.c) u32;
+    pub const RtgCicp = *const fn (*RtgBase, u32, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -491,5 +497,24 @@ pub const RtgBase = opaque {
     /// an empty rectangle hides it.
     pub fn MoveVideoLayer(self: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) i32 {
         return libraries.call(self, LVO.MoveVideoLayer, Fn.MoveVideoLayer, .{ layer, place });
+    }
+
+    /// Bits a pixel of that format takes; 0 for a format this build does not
+    /// know.
+    pub fn RtgFormatBits(self: *RtgBase, format: u32) u32 {
+        return libraries.call(self, LVO.RtgFormatBits, Fn.RtgFormatBits, .{format});
+    }
+
+    /// Bytes a row of `width` pixels of that format needs, before any rounding
+    /// a board asks for; 0 for a format not known.
+    pub fn RtgRowBytes(self: *RtgBase, format: u32, width: u32) u32 {
+        return libraries.call(self, LVO.RtgRowBytes, Fn.RtgRowBytes, .{ format, width });
+    }
+
+    /// One of H.273's numbers as rtg says it: `kind` is the table it is of
+    /// (RTGCICP_MATRIX, RTGCICP_TRANSFER, RTGCICP_PRIMARIES). Below zero
+    /// where the number says nothing, or names what no board here shows.
+    pub fn RtgCicp(self: *RtgBase, kind: u32, value: u32) i32 {
+        return libraries.call(self, LVO.RtgCicp, Fn.RtgCicp, .{ kind, value });
     }
 };

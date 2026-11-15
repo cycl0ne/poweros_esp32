@@ -199,7 +199,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 31;
+const REVISION = 32;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -253,6 +253,8 @@ fn hasCursorPlane(scanout: Scanout) bool {
 /// beside the handle.
 const Screen = struct {
     sys: *ExecBase,
+    /// rtg.library, as the driver calls it.
+    rtg_base: *RtgBase,
     scanout: Scanout,
     /// The picture: RTGA_Width by RTGA_Height in RTGA_PixelFormat, rows
     /// `pitch` bytes apart, `bytes` a pixel.
@@ -559,7 +561,7 @@ fn handOn(screen: *Screen, picture: *const rtg.RtgBitMap, box: Box) void {
     if (box.left >= box.right or box.top >= box.end) return;
     const pixels = picture.pixels orelse return;
     const pitch = picture.pitch;
-    const bytes = rtg.formatBytes(picture.format);
+    const bytes = screen.rtg_base.RtgFormatBits(@intFromEnum(picture.format)) / 8;
     if (box.left == 0 and box.right >= picture.width) {
         writeBack(screen, pixels + box.top * pitch, (box.end - box.top) * pitch);
     } else {
@@ -2071,7 +2073,7 @@ fn findScanout(rb: *RtgBase, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagI
                 @truncate(rb.GetRtgTagData(tags.RTGA_Pitch, 0, tag_list)),
                 @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
                 @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
-                rtg.formatBytes(format),
+                rb.RtgFormatBits(@intFromEnum(format)) / 8,
             ) orelse return null };
         },
         else => null,
@@ -2095,6 +2097,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     const screen = screenOf(board);
     screen.* = .{
         .sys = sys,
+        .rtg_base = rb,
         .scanout = scanout,
         .width = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
         .height = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
