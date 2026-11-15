@@ -30,11 +30,6 @@ pub const RtgBase = extern struct {
     /// - and the driver's pointer ops, which run inside it: a semaphore, as
     /// a driver may send the pointer's rows over a bus.
     pointer_lock: exec.SignalSemaphore,
-    /// What the last call that answers with a pointer went wrong with. It
-    /// is one word for the whole library, not one per task, so a caller
-    /// that cannot be sure it was the last to fail passes RTGA_ErrorPtr
-    /// and reads its own.
-    last_error: i32,
     /// How many boards have been made, for naming the next one.
     board_serial: u32,
     /// timer.device's request on its microsecond unit, opened by the init:

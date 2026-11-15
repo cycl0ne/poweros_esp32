@@ -12,10 +12,7 @@
 pub const RTGEV_VBLANK: u32 = 0;
 /// A buffer handed to ShowBitMap is the one being displayed.
 pub const RTGEV_SHOWN: u32 = 1;
-/// A transport's pixels have gone out and the buffer they came from may be
-/// used again.
-pub const RTGEV_TX_DONE: u32 = 2;
-pub const RTGEV_COUNT: usize = 3;
+pub const RTGEV_COUNT: usize = 2;
 
 /// is_Code of a board's event server. `is_data` is the Interrupt's own,
 /// and `board` is an *RtgBoard.

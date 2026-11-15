@@ -22,7 +22,6 @@ pub const NAME = "rtg.library";
 pub const LVO = struct {
     pub const AddRtgDriver = libraries.lvo(4);
     pub const RemRtgDriver = libraries.lvo(5);
-    pub const FindRtgDriver = libraries.lvo(6);
     pub const LockRtgDrivers = libraries.lvo(7);
     pub const UnlockRtgDrivers = libraries.lvo(8);
     pub const NextRtgDriver = libraries.lvo(9);
@@ -36,7 +35,6 @@ pub const LVO = struct {
     pub const NextBoardMode = libraries.lvo(17);
     pub const FindBoardMode = libraries.lvo(18);
     pub const SetBoardMode = libraries.lvo(19);
-    pub const BoardMode = libraries.lvo(20);
     pub const AllocBitMap = libraries.lvo(21);
     pub const AttachBitMap = libraries.lvo(22);
     pub const FreeBitMap = libraries.lvo(23);
@@ -48,13 +46,9 @@ pub const LVO = struct {
     pub const SetBoardBrightness = libraries.lvo(29);
     pub const BoardBrightness = libraries.lvo(30);
     pub const FillRect = libraries.lvo(31);
-    pub const InvertRect = libraries.lvo(32);
     pub const CopyRect = libraries.lvo(33);
     pub const BlitTemplate = libraries.lvo(34);
     pub const BlitPattern = libraries.lvo(35);
-    pub const WaitBlit = libraries.lvo(36);
-    pub const PackRtgColor = libraries.lvo(37);
-    pub const UnpackRtgColor = libraries.lvo(38);
     pub const AddRtgEventServer = libraries.lvo(39);
     pub const RemRtgEventServer = libraries.lvo(40);
     pub const SignalRtgEvent = libraries.lvo(41);
@@ -64,12 +58,8 @@ pub const LVO = struct {
     pub const TxColor = libraries.lvo(45);
     pub const RxParam = libraries.lvo(46);
     pub const GetRtgTagData = libraries.lvo(47);
-    pub const FindRtgTagItem = libraries.lvo(48);
-    pub const RtgLastError = libraries.lvo(49);
     pub const RtgErrorText = libraries.lvo(50);
     pub const MirrorBoard = libraries.lvo(51);
-    pub const SwapBoardAxes = libraries.lvo(52);
-    pub const SetBoardGap = libraries.lvo(53);
     pub const SetBoardPointer = libraries.lvo(54);
     pub const MoveBoardPointer = libraries.lvo(55);
     pub const ShowBoardPointer = libraries.lvo(56);
@@ -92,7 +82,6 @@ pub const LVO = struct {
 pub const Fn = struct {
     pub const AddRtgDriver = *const fn (*RtgBase, *rtg.RtgDriver) callconv(.c) bool;
     pub const RemRtgDriver = *const fn (*RtgBase, *rtg.RtgDriver) callconv(.c) bool;
-    pub const FindRtgDriver = *const fn (*RtgBase, [*:0]const u8) callconv(.c) ?*rtg.RtgDriver;
     pub const LockRtgDrivers = *const fn (*RtgBase) callconv(.c) void;
     pub const UnlockRtgDrivers = *const fn (*RtgBase) callconv(.c) void;
     pub const NextRtgDriver = *const fn (*RtgBase, ?*rtg.RtgDriver) callconv(.c) ?*rtg.RtgDriver;
@@ -106,7 +95,6 @@ pub const Fn = struct {
     pub const NextBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgMode) callconv(.c) ?*rtg.RtgMode;
     pub const FindBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32) callconv(.c) ?*rtg.RtgMode;
     pub const SetBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgMode) callconv(.c) i32;
-    pub const BoardMode = *const fn (*RtgBase, *rtg.RtgBoard) callconv(.c) ?*rtg.RtgMode;
     pub const AllocBitMap = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32, u32) callconv(.c) ?*rtg.RtgBitMap;
     pub const AttachBitMap = *const fn (*RtgBase, *rtg.RtgBoard, *const rtg.RtgBitMap) callconv(.c) ?*rtg.RtgBitMap;
     pub const FreeBitMap = *const fn (*RtgBase, ?*rtg.RtgBitMap) callconv(.c) void;
@@ -118,13 +106,9 @@ pub const Fn = struct {
     pub const SetBoardBrightness = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const BoardBrightness = *const fn (*RtgBase, *rtg.RtgBoard) callconv(.c) u32;
     pub const FillRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, u32) callconv(.c) i32;
-    pub const InvertRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect) callconv(.c) i32;
     pub const CopyRect = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, *const rtg.RtgCopy) callconv(.c) i32;
     pub const BlitTemplate = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgTemplate) callconv(.c) i32;
     pub const BlitPattern = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPattern) callconv(.c) i32;
-    pub const WaitBlit = *const fn (*RtgBase, *rtg.RtgBoard) callconv(.c) void;
-    pub const PackRtgColor = *const fn (*RtgBase, u32, u32, u32, u32) callconv(.c) u32;
-    pub const UnpackRtgColor = *const fn (*RtgBase, u32, u32, *rtg.RtgRGB) callconv(.c) void;
     pub const AddRtgEventServer = *const fn (*RtgBase, *rtg.RtgBoard, u32, *exec.Interrupt) callconv(.c) bool;
     pub const RemRtgEventServer = *const fn (*RtgBase, *rtg.RtgBoard, u32, *exec.Interrupt) callconv(.c) void;
     pub const SignalRtgEvent = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
@@ -134,12 +118,8 @@ pub const Fn = struct {
     pub const TxColor = *const fn (*RtgBase, *rtg.RtgTransport, i32, ?*const anyopaque, u32) callconv(.c) i32;
     pub const RxParam = *const fn (*RtgBase, *rtg.RtgTransport, i32, ?*anyopaque, u32) callconv(.c) i32;
     pub const GetRtgTagData = *const fn (*RtgBase, utility.Tag, usize, ?[*]const utility.TagItem) callconv(.c) usize;
-    pub const FindRtgTagItem = *const fn (*RtgBase, utility.Tag, ?[*]const utility.TagItem) callconv(.c) ?*const utility.TagItem;
-    pub const RtgLastError = *const fn (*RtgBase) callconv(.c) i32;
     pub const RtgErrorText = *const fn (*RtgBase, i32) callconv(.c) [*:0]const u8;
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
-    pub const SwapBoardAxes = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
-    pub const SetBoardGap = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32) callconv(.c) i32;
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
     pub const MoveBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
     pub const ShowBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
@@ -177,12 +157,6 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.RemRtgDriver, Fn.RemRtgDriver, .{driver});
     }
 
-    /// The driver of that name, or null. Hold the list with LockRtgDrivers to
-    /// use the answer.
-    pub fn FindRtgDriver(self: *RtgBase, driver_name: [*:0]const u8) ?*rtg.RtgDriver {
-        return libraries.call(self, LVO.FindRtgDriver, Fn.FindRtgDriver, .{driver_name});
-    }
-
     /// Hold the driver list still so it can be walked. Nests.
     pub fn LockRtgDrivers(self: *RtgBase) void {
         return libraries.call(self, LVO.LockRtgDrivers, Fn.LockRtgDrivers, .{});
@@ -200,7 +174,8 @@ pub const RtgBase = opaque {
     }
 
     /// A board from that driver, set up by the tags (RTGA_*). It is in no mode
-    /// and shows nothing yet. Null: RtgLastError says why.
+    /// and shows nothing yet. Null: no driver of that name, no memory, or a
+    /// driver that could not make it.
     pub fn CreateBoardTagList(self: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const utility.TagItem) ?*rtg.RtgBoard {
         return libraries.call(self, LVO.CreateBoardTagList, Fn.CreateBoardTagList, .{ driver_name, tag_list });
     }
@@ -259,20 +234,18 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.SetBoardMode, Fn.SetBoardMode, .{ board, mode });
     }
 
-    /// The mode the board is in now, or null for none.
-    pub fn BoardMode(self: *RtgBase, board: *rtg.RtgBoard) ?*rtg.RtgMode {
-        return libraries.call(self, LVO.BoardMode, Fn.BoardMode, .{board});
-    }
-
     /// A buffer in the board's display memory, its rows aligned as the board
-    /// asks. RTGBMF_DISPLAYABLE makes one the board can be shown. Null:
-    /// RtgLastError says why.
+    /// asks. RTGBMF_DISPLAYABLE makes one the board can be shown. Null: a
+    /// size of 0, a format this build does not know, a board with no display
+    /// memory, or no room.
     pub fn AllocBitMap(self: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32, flags: u32) ?*rtg.RtgBitMap {
         return libraries.call(self, LVO.AllocBitMap, Fn.AllocBitMap, .{ board, width, height, format, flags });
     }
 
     /// A buffer over memory the caller owns: the seven fields of a surface are
-    /// read out of `described` and nothing is allocated. Null: RtgLastError.
+    /// read out of `described` and nothing is allocated. Null: no pixels, a
+    /// size of 0, a pitch shorter than a row, a format this build does not
+    /// know, or no memory.
     pub fn AttachBitMap(self: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.RtgBitMap) ?*rtg.RtgBitMap {
         return libraries.call(self, LVO.AttachBitMap, Fn.AttachBitMap, .{ board, described });
     }
@@ -332,11 +305,6 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.FillRect, Fn.FillRect, .{ dest, area, color });
     }
 
-    /// Complement every pixel of a rectangle. Same rules as FillRect.
-    pub fn InvertRect(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32 {
-        return libraries.call(self, LVO.InvertRect, Fn.InvertRect, .{ dest, area });
-    }
-
     /// Copy a rectangle. The two buffers may be one and the rectangles may
     /// overlap. Same rules as FillRect.
     pub fn CopyRect(self: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const rtg.RtgCopy) i32 {
@@ -351,22 +319,6 @@ pub const RtgBase = opaque {
     /// A one-bit tile, anchored to the buffer. Same rules as FillRect.
     pub fn BlitPattern(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) i32 {
         return libraries.call(self, LVO.BlitPattern, Fn.BlitPattern, .{ dest, area, tile });
-    }
-
-    /// Wait until the board's engine has finished what it was given. Returns
-    /// at once for a board that has none.
-    pub fn WaitBlit(self: *RtgBase, board: *rtg.RtgBoard) void {
-        return libraries.call(self, LVO.WaitBlit, Fn.WaitBlit, .{board});
-    }
-
-    /// Three eight-bit channels into one pixel of that format, right-aligned.
-    pub fn PackRtgColor(self: *RtgBase, format: u32, red: u32, green: u32, blue: u32) u32 {
-        return libraries.call(self, LVO.PackRtgColor, Fn.PackRtgColor, .{ format, red, green, blue });
-    }
-
-    /// One pixel of that format back into three eight-bit channels.
-    pub fn UnpackRtgColor(self: *RtgBase, format: u32, color: u32, out: *rtg.RtgRGB) void {
-        return libraries.call(self, LVO.UnpackRtgColor, Fn.UnpackRtgColor, .{ format, color, out });
     }
 
     /// Hand an RTGEV_* event of that board to your Interrupt, highest ln_Pri
@@ -387,8 +339,8 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.SignalRtgEvent, Fn.SignalRtgEvent, .{ board, event });
     }
 
-    /// A bus from that driver, set up by the tags (RTGA_*). Null:
-    /// RtgLastError says why.
+    /// A bus from that driver, set up by the tags (RTGA_*). Null: no driver
+    /// of that name, no memory, or a driver that could not make it.
     pub fn CreateTransportTagList(self: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const utility.TagItem) ?*rtg.RtgTransport {
         return libraries.call(self, LVO.CreateTransportTagList, Fn.CreateTransportTagList, .{ driver_name, tag_list });
     }
@@ -405,8 +357,7 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.TxParam, Fn.TxParam, .{ io, cmd, param, size });
     }
 
-    /// A command and a run of pixels. It may come back before the bytes have
-    /// gone; RTGEV_TX_DONE says when they have.
+    /// A command and a run of pixels. It comes back when the bytes have gone.
     pub fn TxColor(self: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaque, size: u32) i32 {
         return libraries.call(self, LVO.TxColor, Fn.TxColor, .{ io, cmd, color, size });
     }
@@ -423,18 +374,6 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.GetRtgTagData, Fn.GetRtgTagData, .{ tag_value, default_value, tag_list });
     }
 
-    /// The tag of that value in the list, or null. Follows TAG_MORE.
-    pub fn FindRtgTagItem(self: *RtgBase, tag_value: utility.Tag, tag_list: ?[*]const utility.TagItem) ?*const utility.TagItem {
-        return libraries.call(self, LVO.FindRtgTagItem, Fn.FindRtgTagItem, .{ tag_value, tag_list });
-    }
-
-    /// The error of the last call that had nowhere to return one: the calls
-    /// that answer with a pointer. One word for the whole library, not one
-    /// per task; RTGA_ErrorPtr gives a caller its own.
-    pub fn RtgLastError(self: *RtgBase) i32 {
-        return libraries.call(self, LVO.RtgLastError, Fn.RtgLastError, .{});
-    }
-
     /// An error in words. Never null.
     pub fn RtgErrorText(self: *RtgBase, error_code: i32) [*:0]const u8 {
         return libraries.call(self, LVO.RtgErrorText, Fn.RtgErrorText, .{error_code});
@@ -445,19 +384,6 @@ pub const RtgBase = opaque {
     /// business of whoever draws it.
     pub fn MirrorBoard(self: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) i32 {
         return libraries.call(self, LVO.MirrorBoard, Fn.MirrorBoard, .{ board, mirror_x, mirror_y });
-    }
-
-    /// Exchange the board's axes; with MirrorBoard that is every right-angle
-    /// turn. GetBoardInfo's width and height follow, since they are what a
-    /// caller draws on.
-    pub fn SwapBoardAxes(self: *RtgBase, board: *rtg.RtgBoard, swap: bool) i32 {
-        return libraries.call(self, LVO.SwapBoardAxes, Fn.SwapBoardAxes, .{ board, swap });
-    }
-
-    /// The offset added to every coordinate, for glass whose visible area does
-    /// not start where the controller's does.
-    pub fn SetBoardGap(self: *RtgBase, board: *rtg.RtgBoard, gap_x: u32, gap_y: u32) i32 {
-        return libraries.call(self, LVO.SetBoardGap, Fn.SetBoardGap, .{ board, gap_x, gap_y });
     }
 
     /// The pointer's image: a surface with an alpha channel, whose pixel
@@ -541,8 +467,8 @@ pub const RtgBase = opaque {
 
     /// One of the board's video layers - a plane that shows a picture in YUV
     /// itself, scaled into a place - under the picture (RTGVA_Under, the
-    /// default) or over it. Null, and RtgLastError says why: NOT_SUPPORTED
-    /// without RTGBC_VIDEO, IN_USE when its layers are all taken.
+    /// default) or over it. Null without RTGBC_VIDEO, when its layers are all
+    /// taken, or for a picture whose colours the plane cannot make.
     pub fn OpenVideoLayer(self: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const utility.TagItem) ?*rtg.RtgVideoLayer {
         return libraries.call(self, LVO.OpenVideoLayer, Fn.OpenVideoLayer, .{ board, tag_list });
     }

@@ -77,7 +77,8 @@ driver, and the board is given it with `RTGA_Transport`: the same panel
 controller can be on more than one kind of bus, and the same bus can carry
 more than one kind of panel. A transport sends a command and its
 parameters (`TxParam`), a command and a run of pixels (`TxColor`), or asks
-and reads back (`RxParam`).
+and reads back (`RxParam`); each call comes back when its bytes have
+gone.
 
 **The machine's own display is made at boot.** graphics.library's init asks
 expansion.library for the board's panel part, hands its tags to the driver
@@ -123,7 +124,7 @@ monitor without an EDID gets 1920 x 1080 at 60 Hz.
 ```zig
 // info from GetBoardInfo (below): the display's size and format.
 const picture = rb.AllocBitMap(board, info.width, info.height, @intFromEnum(info.format), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse {
-    _ = Printf(dl, "No buffer: %s\n", .{rb.RtgErrorText(rb.RtgLastError())});
+    _ = dl.PutStr("No buffer\n");
     return dos.RETURN_FAIL;
 };
 defer rb.FreeBitMap(picture);
@@ -172,8 +173,9 @@ the head are the library's and the board's.
 The pixel formats are `PixelFormat`: `rgb565` on the ESP32s' panels,
 `bgra32` on the displays of the RISC-V 64 machines (the `fb` driver takes
 either), and `rgba32`, `rgb24`, `bgr24`, `argb1555`, `indexed8`, `gray8`
-and `mono1` for buffers that are not shown. `PackRtgColor` turns three 8-bit
-channels into a pixel of a format, and `UnpackRtgColor` takes one apart.
+and `mono1` for buffers that are not shown. A pixel's bytes lie in
+memory in the order its format's name gives its channels; graphics.library
+turns a colour into a pixel of a format, and draws with it.
 
 ## Handing on what was drawn
 
@@ -328,7 +330,7 @@ intuition shows the front screen alone.
 ## The engine
 
 Some boards have an engine that does a few things to a buffer faster than
-the CPU: `FillRect`, `CopyRect`, `InvertRect`, `BlitTemplate` (a one-bit
+the CPU: `FillRect`, `CopyRect`, `BlitTemplate` (a one-bit
 shape in two colours) and `BlitPattern` (a one-bit tile anchored to the
 buffer); `BlendPixels` lays pixels of the caller's own over a buffer by
 their coverage, times a constant alpha, `BlendRect` a colour by its
@@ -338,8 +340,8 @@ all it covers where it is made smaller. `CopyRects` copies several rectangles
 from one buffer to another as one job - the pieces of a window seen
 between others, copied on to the display by an engine that shares its
 work between cores with the cores woken once; a board without it is given
-them one by one, as `CopyRect` gives them. `WaitBlit` waits until the
-engine is done.
+them one by one, as `CopyRect` gives them. Every job is done when its
+call returns.
 
 **The library never does these in software.** A board without the
 operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in
@@ -414,18 +416,16 @@ only one that reorders blocks and converts colour, is the JPEG codec's
 ## Turning the picture
 
 A controller that can be told its scan direction turns the picture
-itself: `MirrorBoard` mirrors about each axis and `SwapBoardAxes`
-exchanges them, which together give every right-angle turn.
-`GetBoardInfo`'s width and height follow, since they are what a caller
-draws on. `SetBoardGap` adds an offset to every coordinate, for glass
-whose visible area does not start where the controller's does.
+itself: `MirrorBoard` mirrors about each axis, and `GetBoardInfo` says
+how it is mirrored. A quarter turn is a mode of the board's with its
+sides exchanged, where a board has one.
 
-A board that streams memory in the order it was written cannot turn
-anything, and has none of these (`RTGBC_MIRROR`, `RTGBC_SWAP_XY`,
-`RTGBC_GAP` clear): turning the picture is then the business of whoever
-draws it.
+A board that streams memory in the order it was written cannot mirror
+anything (`RTGBC_MIRROR` clear): turning the picture is then the
+business of whoever draws it.
 
-No board on this machine has them. The 3.5" board's controller turns the
+The Compute Module 5's display mirrors, in its planes; no other board
+here does. The 3.5" board's controller turns the
 picture by its mode instead: an upright and a sideways one, chosen with
 `SetBoardMode`.
 
@@ -518,8 +518,8 @@ if (rb.ShowVideoFrame(layer, &frame.picture, &all) != rtg.errors.RTGERR_OK) putT
 ```
 
 - `OpenVideoLayer(board, tags)` takes one of the board's layers, or
-  answers null with `RtgLastError`: `RTGERR_NOT_SUPPORTED` without
-  `RTGBC_VIDEO`, `RTGERR_IN_USE` when they are all taken. A screen's
+  answers null: without `RTGBC_VIDEO`, when they are all taken, or for
+  pictures whose colours the plane cannot make. A screen's
   board is intuition's `SA_Board` (GetScreenAttrs). The layer is under
   the screens' picture unless `RTGVA_Under` is FALSE, and its fields say
   what it is: `RTGVLF_UNDER`, the `key` colour it is seen through, and
@@ -582,7 +582,6 @@ first:
 |---|---|
 | `RTGEV_VBLANK` | a frame ended and the blanking is now |
 | `RTGEV_SHOWN` | a buffer given to `ShowBitMap` is the one being displayed |
-| `RTGEV_TX_DONE` | a transport's pixels have gone out, and the buffer may be used again |
 
 The server's code is an `RtgEventFn` and **runs in interrupt context**:
 it may signal a task and no more. Returning non-zero ends the chain, so a
@@ -591,9 +590,8 @@ driver raises an event with `SignalRtgEvent`, from its own interrupt.
 
 Which events come depends on the board: the 7B's RGB panel raises
 `RTGEV_VBLANK` and `RTGEV_SHOWN`, the ESP32-P4's `dsi` boards - a panel
-or HDMI - `RTGEV_VBLANK` alone, the QSPI and I2C transports
-`RTGEV_TX_DONE`; the 3.5" board, the emulator and the `fb` boards raise
-neither of the first two, so a server for them never runs there.
+or HDMI - `RTGEV_VBLANK` alone; the 3.5" board, the emulator and the
+`fb` boards raise neither, so a server for them never runs there.
 
 ## Asking a board about itself
 
@@ -628,13 +626,11 @@ while `refreshes_dropped` climbs was handed on for the wrong buffer.
 ## Errors
 
 The calls that answer with a status answer an `RTGERR_` code: 0 is
-`RTGERR_OK`, everything else is below zero. The calls that answer with a
-pointer - `CreateBoardTagList`, `AllocBitMap`, `AttachBitMap`,
-`CreateTransportTagList` - answer null, and `RtgLastError` says why. That
-is one word for the whole library, so a caller of `CreateBoardTagList` or
-`CreateTransportTagList` that wants its own passes `RTGA_ErrorPtr` with
-somewhere to put it. `RtgErrorText` gives any code in
-words.
+`RTGERR_OK`, everything else is below zero, and `RtgErrorText` gives any
+code in words. The calls that answer with a pointer -
+`CreateBoardTagList`, `AllocBitMap`, `AttachBitMap`,
+`CreateTransportTagList`, `OpenVideoLayer` - answer null for whatever
+went wrong; each one's contract says what that can be.
 
 ## Writing a driver
 
@@ -707,8 +703,8 @@ at a time and a driver needs no lock of its own between them.
 | `refresh` | rows of a buffer were written: write them back or send them |
 | `display`, `set_brightness`, `brightness` | the display enable and the backlight |
 | `stats`, `control` | the counters, and the driver's own requests |
-| `fill_rect` ... `wait_blit` | the engine |
-| `mirror`, `swap_xy`, `set_gap` | turning the picture |
+| `fill_rect`, `copy_rect`, `blit_template`, `blit_pattern` | the engine |
+| `mirror` | mirroring the picture |
 | `set_pointer`, `move_pointer`, `show_pointer` | the pointer |
 | `set_overlay`, `move_overlay` | a second image under the pointer |
 | `blend_pixels`, `blend_rect`, `scale_pixels` | the engine's blends and scale |

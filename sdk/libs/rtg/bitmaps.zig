@@ -66,11 +66,9 @@ pub fn formatRowBytes(format: PixelFormat, width: u32) u32 {
 }
 
 /// Where the buffer's memory came from and what may be done with it.
-/// The first four are what a drawing surface already says about itself.
+/// The first two are what a drawing surface already says about itself.
 pub const PIXMAPF_SCREEN: u32 = 1 << 0;
 pub const PIXMAPF_MEMORY: u32 = 1 << 1;
-pub const PIXMAPF_ADDRMALLOC: u32 = 1 << 2;
-pub const PIXMAPF_ADDRSHAREDMEM: u32 = 1 << 3;
 
 /// The board can be given this buffer to show. AllocBitMap is told to make
 /// one: it then comes out of memory the board can read, laid out as the

@@ -53,10 +53,6 @@ pub const RtgMode = extern struct {
 pub const RTGMF_DEFAULT: u32 = 1 << 0;
 /// The mode the board is in now.
 pub const RTGMF_CURRENT: u32 = 1 << 1;
-/// Two buffers of this mode fit in the display memory.
-pub const RTGMF_DOUBLE_BUFFER: u32 = 1 << 2;
-/// A buffer larger than the display may be shown through a window of it.
-pub const RTGMF_PANNABLE: u32 = 1 << 3;
 
 /// A stretch of display memory, as its driver reports it - or, with
 /// RTGRF_SYSTEM_MEMORY, no stretch at all: `base` is null and `size` the
@@ -126,16 +122,10 @@ pub const RtgBoardInfo = extern struct {
     /// How many buffers it can be given to show at once.
     buffers: u32 = 0,
     /// How the picture is turned: whether the board is mirroring about
-    /// each axis and whether it has exchanged them. `width` and `height`
-    /// above are what a caller draws on, so they are already exchanged
-    /// when `swapped` is set.
+    /// each axis (MirrorBoard).
     mirror_x: u8 = 0,
     mirror_y: u8 = 0,
-    swapped: u8 = 0,
-    pad2: u8 = 0,
-    /// What SetBoardGap added to every coordinate.
-    gap_x: u32 = 0,
-    gap_y: u32 = 0,
+    pad2: [2]u8 = .{ 0, 0 },
 };
 
 /// RtgBoardInfo.flags
@@ -163,19 +153,15 @@ pub const RTGBF_COMPOSE: u32 = 1 << 7;
 /// RtgBoardInfo.caps: which ops the driver filled in.
 pub const RTGBC_SET_MODE: u32 = 1 << 0;
 pub const RTGBC_SHOW: u32 = 1 << 1;
-pub const RTGBC_PAN: u32 = 1 << 2;
 pub const RTGBC_VBLANK: u32 = 1 << 3;
 pub const RTGBC_REFRESH: u32 = 1 << 4;
 pub const RTGBC_DISPLAY: u32 = 1 << 5;
 pub const RTGBC_BRIGHTNESS: u32 = 1 << 6;
 pub const RTGBC_STATS: u32 = 1 << 7;
 pub const RTGBC_CONTROL: u32 = 1 << 8;
-/// It can mirror the picture about an axis, exchange the two axes, or be
-/// given an offset to add to every coordinate. A board that cannot leaves
+/// It can mirror the picture about an axis. A board that cannot leaves
 /// turning the picture to whoever draws it.
 pub const RTGBC_MIRROR: u32 = 1 << 9;
-pub const RTGBC_SWAP_XY: u32 = 1 << 10;
-pub const RTGBC_GAP: u32 = 1 << 11;
 /// It lays a pointer over the picture on the way to the glass
 /// (SetBoardPointer, MoveBoardPointer, ShowBoardPointer), without the
 /// picture holding it.
@@ -185,11 +171,8 @@ pub const RTGBC_POINTER: u32 = 1 << 12;
 pub const RTGBC_OVERLAY: u32 = 1 << 13;
 pub const RTGBC_FILL_RECT: u32 = 1 << 16;
 pub const RTGBC_COPY_RECT: u32 = 1 << 17;
-pub const RTGBC_INVERT_RECT: u32 = 1 << 18;
 pub const RTGBC_BLIT_TEMPLATE: u32 = 1 << 19;
 pub const RTGBC_BLIT_PATTERN: u32 = 1 << 20;
-/// There is an engine, so there is something for WaitBlit to wait for.
-pub const RTGBC_ENGINE: u32 = 1 << 21;
 /// Its engine lays pixels of a caller's own over a buffer by their
 /// coverage (BlendPixels), a colour by its alpha (BlendRect), and a
 /// picture scaled between its pixels (ScalePixels).
@@ -378,27 +361,16 @@ pub const RtgBoardOps = extern struct {
     /// Both rectangles are clipped before the call. The two buffers may be
     /// the same one and the rectangles may overlap.
     copy_rect: ?*const fn (*RtgBoard, *RtgBitMap, *RtgBitMap, *const bitmaps.RtgCopy) callconv(.c) i32 = null,
-    invert_rect: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
     blit_template: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgTemplate) callconv(.c) i32 = null,
     blit_pattern: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgPattern) callconv(.c) i32 = null,
-    /// Wait until the engine has finished everything asked of it.
-    wait_blit: ?*const fn (*RtgBoard) callconv(.c) void = null,
 
     // --- how the picture is turned. A board that can do it in its own
-    // hardware - a controller with a scan direction to set - fills these
+    // hardware - a controller with a scan direction to set - fills this
     // in; one that streams memory in the order it is written cannot, and
-    // leaves them null. New ops are only ever added here, at the end, so
-    // that a driver built against an older SDK keeps its layout. ---
+    // leaves it null. ---
 
     /// Mirror the picture about each axis.
     mirror: ?*const fn (*RtgBoard, bool, bool) callconv(.c) i32 = null,
-    /// Exchange the axes. With `mirror` that is every right-angle turn:
-    /// 90 is swap and mirror one axis, 180 is mirror both, 270 is swap and
-    /// mirror the other.
-    swap_xy: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
-    /// Add an offset to every coordinate, for glass whose visible area
-    /// does not start where the controller's does.
-    set_gap: ?*const fn (*RtgBoard, u32, u32) callconv(.c) i32 = null,
 
     // --- the pointer. A board that can lay a small image over the
     // picture on the way to the glass - into a copy the picture passes
@@ -560,7 +532,7 @@ pub const RTGDF_INTERNAL_INSTANCE: u32 = 1 << 0;
 /// A driver on the library's list. One of these is what a module hands to
 /// AddRtgDriver; the module keeps it for as long as it is registered.
 pub const RtgDriver = extern struct {
-    /// ln_Name is the name a caller creates by ("rgb", "i2c"); ln_Pri
+    /// ln_Name is the name a caller creates by ("rgb", "qspi"); ln_Pri
     /// orders the list, highest first.
     node: Node = .{},
     version: u16 = 0,

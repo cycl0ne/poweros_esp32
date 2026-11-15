@@ -18,9 +18,8 @@ const TAG_USER = @import("../utility/tagitem.zig").TAG_USER;
 const RTGCTRL_DRIVER = @import("boards.zig").RTGCTRL_DRIVER;
 
 /// The generic tags, which mean the same to every board driver. The
-/// library reads the name, user data, alignment, transport, brightness,
-/// display-on and error pointer; the driver reads the rest of them from
-/// the same list.
+/// library reads the name, user data, alignment, transport, brightness
+/// and display-on; the driver reads the rest of them from the same list.
 pub const RTGA_Dummy = TAG_USER + 4000;
 /// Where the drivers' own blocks start. Each takes 64.
 pub const RTGA_DriverBase = TAG_USER + 4100;
@@ -40,10 +39,7 @@ pub const RTGA_PixelFormat = RTGA_Dummy + 5;
 /// u32: bytes a row. Absent: the width in that format, rounded up to the
 /// alignment.
 pub const RTGA_Pitch = RTGA_Dummy + 6;
-/// ?[*]u8 and usize: memory the caller provides for the board to display
-/// out of, instead of the driver finding or allocating its own.
-pub const RTGA_DisplayMemory = RTGA_Dummy + 7;
-pub const RTGA_DisplayMemorySize = RTGA_Dummy + 8;
+// RTGA_Dummy + 7 and 8 are not used.
 /// u32: what every buffer starts on and every row is rounded to. Absent: a
 /// cache line, which is also what a display reads in one go.
 pub const RTGA_Alignment = RTGA_Dummy + 9;
@@ -69,8 +65,7 @@ pub const RTGA_Transport = RTGA_Dummy + 18;
 /// bool: take over a display that is already running rather than bring one
 /// up. A driver that cannot answers RTGERR_NOT_SUPPORTED.
 pub const RTGA_Adopt = RTGA_Dummy + 19;
-/// *i32: where to put the error as well as in RtgLastError.
-pub const RTGA_ErrorPtr = RTGA_Dummy + 20;
+// RTGA_Dummy + 20 is not used.
 /// bool: the windows of a screen on this board are composed - each draws
 /// into a buffer of its own, and what of it can be seen is copied into the
 /// screen's (RTGBF_COMPOSE). For a machine whose memory is fast enough to
@@ -150,25 +145,7 @@ pub const RTGCTRL_DCS_ROW_ASKED: u32 = RTGCTRL_DRIVER + 16;
 /// Forget which rows have been asked for.
 pub const RTGCTRL_DCS_FORGET_ROWS: u32 = RTGCTRL_DRIVER + 17;
 
-// --- the I2C transport driver: RTGA_DriverBase + 64, 64 wide -------------
-
-pub const RTGA_I2C_Dummy = RTGA_DriverBase + 64;
-/// u32: which i2c.device unit. Absent: 0.
-pub const RTGA_I2C_Unit = RTGA_I2C_Dummy + 1;
-/// u32: the part's address, right-aligned. Needed.
-pub const RTGA_I2C_Address = RTGA_I2C_Dummy + 2;
-/// u32: bits a command word and bits a parameter word. Absent: 8 and 8.
-pub const RTGA_I2C_CmdBits = RTGA_I2C_Dummy + 3;
-pub const RTGA_I2C_ParamBits = RTGA_I2C_Dummy + 4;
-/// u32: control bytes in front of every transfer. Absent: 1.
-pub const RTGA_I2C_ControlBytes = RTGA_I2C_Dummy + 5;
-/// u32: which bit of them says that pixels follow. Absent: 6.
-pub const RTGA_I2C_DcBit = RTGA_I2C_Dummy + 6;
-/// bool: that bit clear means pixels, rather than set. Absent: false.
-pub const RTGA_I2C_DcLowOnData = RTGA_I2C_Dummy + 7;
-/// u32, Hz: re-time the bus before the first transfer. Absent: leave it as
-/// the unit has it.
-pub const RTGA_I2C_Speed = RTGA_I2C_Dummy + 8;
+// RTGA_DriverBase + 64, 64 wide, is not used.
 
 // --- the QSPI transport driver: RTGA_DriverBase + 128, 64 wide -----------
 

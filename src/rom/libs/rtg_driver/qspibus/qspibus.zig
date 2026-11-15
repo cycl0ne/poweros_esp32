@@ -42,8 +42,8 @@ const GpioBase = gpio_resource.GpioBase;
 const MODULE_NAME = "rtg-qspi";
 const DRIVER_NAME = "qspi";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "22.9.2026";
+const REVISION = 1;
+const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -87,8 +87,6 @@ const Instance = struct {
     param_opcode: u8 = 0x02,
     color_opcode: u8 = 0x32,
     read_opcode: u8 = 0x03,
-    /// The clock the bus runs at.
-    hz: u32 = 0,
     /// The bus's pads - chip select, clock, D0 to D3 - and gpio.resource,
     /// which they are taken from while the bus exists.
     pads: [6]u8 = .{ 0, 0, 0, 0, 0, 0 },
@@ -127,8 +125,6 @@ fn createTransport(made_by: *rtg.RtgDriver, io: *rtg.RtgTransport, tag_list: ?[*
     instance.param_opcode = @truncate(rb.GetRtgTagData(tags.RTGA_QSPI_ParamOpcode, 0x02, tag_list));
     instance.color_opcode = @truncate(rb.GetRtgTagData(tags.RTGA_QSPI_ColorOpcode, 0x32, tag_list));
     instance.read_opcode = @truncate(rb.GetRtgTagData(tags.RTGA_QSPI_ReadOpcode, 0x03, tag_list));
-    io.cmd_bits = 8;
-    io.param_bits = 8;
 
     const db: *dmares.DmaBase = @ptrCast(sys.OpenResource(dmares.DMANAME) orelse {
         giveBack(instance);
@@ -155,7 +151,7 @@ fn createTransport(made_by: *rtg.RtgDriver, io: *rtg.RtgTransport, tag_list: ?[*
     // clock.
     _ = db.SetDMAPriority(ch, dmares.DMA_OUT, dmares.DMA_MAXPRI);
 
-    instance.hz = gpspi.init(@truncate(rb.GetRtgTagData(tags.RTGA_QSPI_ClockHz, 40_000_000, tag_list)));
+    _ = gpspi.init(@truncate(rb.GetRtgTagData(tags.RTGA_QSPI_ClockHz, 40_000_000, tag_list)));
     connect(instance.pads[0], instance.pads[1], instance.pads[2..6]);
 
     io.ops = &ops;
@@ -235,12 +231,9 @@ fn txColor(io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaque, size: u32)
     const instance = instanceOf(io);
     const code = finish();
     if (code != err.RTGERR_OK) return code;
-    const sent = send(instance, instance.color_opcode, cmd, .write_four, color, size);
-    // An underrun still ended the transfer: the bytes are the caller's.
-    if (sent == err.RTGERR_OK or sent == err.RTGERR_UNDERRUN) {
-        if (firstBoardOn(io)) |board| _ = io.rtg_base.?.SignalRtgEvent(board, rtg.events.RTGEV_TX_DONE);
-    }
-    return sent;
+    // The wait for the transaction's end is inside: the bytes are the
+    // caller's again when this returns, after an underrun too.
+    return send(instance, instance.color_opcode, cmd, .write_four, color, size);
 }
 
 /// One transaction whose data comes out of memory through the DMA, and
@@ -293,17 +286,6 @@ fn rxParam(io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, size: u32) call
     const done = finish();
     if (done == err.RTGERR_OK) gpspi.unload(into[0..size]);
     return done;
-}
-
-/// The first board that talks through this bus, for the events a transfer
-/// raises. A bus carries one panel.
-fn firstBoardOn(io: *rtg.RtgTransport) ?*rtg.RtgBoard {
-    const rb = io.rtg_base.?;
-    var board = rb.NextBoard(null);
-    while (board) |b| : (board = rb.NextBoard(b)) {
-        if (b.transport == io) return b;
-    }
-    return null;
 }
 
 const ops = rtg.RtgTransportOps{

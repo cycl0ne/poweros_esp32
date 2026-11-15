@@ -56,7 +56,7 @@ const _engine = @import("_engine.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `CopyRect`, `WaitBlit`
+/// `CopyRect`
 ///
 /// EXAMPLES:
 /// ```zig

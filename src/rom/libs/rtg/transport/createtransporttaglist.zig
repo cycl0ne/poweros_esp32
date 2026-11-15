@@ -25,13 +25,12 @@ const _transport = @import("_transport.zig");
 ///
 /// INPUTS:
 /// - `driver_name` - the driver to make it with.
-/// - `tag_list` - the `RTGA_` options: the transport's name, data for the
-///   driver, and `RTGA_ErrorPtr` for the reason if it fails.
+/// - `tag_list` - the `RTGA_` options: the transport's name, and data for
+///   the driver.
 ///
 /// RESULT:
-/// The transport, or null. `RtgLastError` - and `RTGA_ErrorPtr`, if given
-/// - then says why: `RTGERR_NO_DRIVER`, `RTGERR_NO_MEMORY`, or what the
-/// driver answered.
+/// The transport, or null: for no driver of that name that makes buses,
+/// no memory, or a driver that could not make it.
 ///
 /// BEHAVIOR:
 /// A panel on a bus is two drivers: one for the bus and one for the panel,
@@ -56,28 +55,21 @@ const _transport = @import("_transport.zig");
 ///
 /// EXAMPLES:
 /// ```zig
-/// const io = rb.CreateTransportTagList("i2c", null) orelse return error.NoBus;
+/// const io = rb.CreateTransportTagList("qspi", &tags) orelse return error.NoBus;
 /// ```
 pub fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]const TagItem) ?*rtg.RtgTransport {
     const sys = rb.sys_base;
     const ub = rb.utility_base;
-    const error_ptr: ?*i32 = @ptrFromInt(ub.GetTagData(tags.RTGA_ErrorPtr, 0, tag_list));
 
     const driver = registry.findDriverOfType(rb, driver_name, rtg.boards.RTGDT_TRANSPORT) orelse {
-        rb.last_error = err.RTGERR_NO_DRIVER;
-        if (error_ptr) |p| p.* = err.RTGERR_NO_DRIVER;
         return null;
     };
     const create = driver.ops.?.create_transport orelse {
-        rb.last_error = err.RTGERR_NO_DRIVER;
-        if (error_ptr) |p| p.* = err.RTGERR_NO_DRIVER;
         return null;
     };
 
     const where = @import("../board/_board.zig").memoryFor(driver);
     const memory = sys.AllocVec(@sizeOf(Private), where) orelse {
-        rb.last_error = err.RTGERR_NO_MEMORY;
-        if (error_ptr) |p| p.* = err.RTGERR_NO_MEMORY;
         return null;
     };
     const private: *Private = @ptrCast(@alignCast(memory));
@@ -86,13 +78,10 @@ pub fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list
     io.rtg_base = @ptrCast(rb);
     io.driver = @ptrCast(driver);
     setName(rb, private, driver_name, @ptrFromInt(ub.GetTagData(tags.RTGA_BoardName, 0, tag_list)));
-    for (&io.event_lists) |*list| sys.NewList(list);
 
     if (driver.instance_size != 0) {
         io.instance = sys.AllocVec(driver.instance_size, where) orelse {
             sys.FreeVec(memory);
-            rb.last_error = err.RTGERR_NO_MEMORY;
-            if (error_ptr) |p| p.* = err.RTGERR_NO_MEMORY;
             return null;
         };
         io.instance_size = driver.instance_size;
@@ -102,8 +91,6 @@ pub fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list
     if (code != err.RTGERR_OK) {
         if (io.instance) |instance| sys.FreeVec(instance);
         sys.FreeVec(memory);
-        rb.last_error = code;
-        if (error_ptr) |p| p.* = code;
         return null;
     }
 
@@ -112,7 +99,5 @@ pub fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list
     sys.AddTail(&rb.transports, &io.node);
     sys.ReleaseSemaphore(&rb.board_lock);
 
-    rb.last_error = err.RTGERR_OK;
-    if (error_ptr) |p| p.* = err.RTGERR_OK;
     return io;
 }

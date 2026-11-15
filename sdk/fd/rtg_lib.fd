@@ -19,9 +19,8 @@ bool AddRtgDriver(*rtg.RtgDriver driver)
 /// Take a driver off the list. False while a board or a transport it made
 /// is still alive. Not from interrupts.
 bool RemRtgDriver(*rtg.RtgDriver driver)
-/// The driver of that name, or null. Hold the list with LockRtgDrivers to
-/// use the answer.
-?*rtg.RtgDriver FindRtgDriver([*:0]const u8 driver_name)
+// A slot kept free, so the slots after it stay where they are.
+##reserve 1
 /// Hold the driver list still so it can be walked. Nests.
 void LockRtgDrivers()
 /// Let it go again.
@@ -30,7 +29,8 @@ void UnlockRtgDrivers()
 /// locked.
 ?*rtg.RtgDriver NextRtgDriver(?*rtg.RtgDriver after)
 /// A board from that driver, set up by the tags (RTGA_*). It is in no mode
-/// and shows nothing yet. Null: RtgLastError says why.
+/// and shows nothing yet. Null: no driver of that name, no memory, or a
+/// driver that could not make it.
 ?*rtg.RtgBoard CreateBoardTagList([*:0]const u8 driver_name, ?[*]const utility.TagItem tag_list)
 /// Stop a board and give everything back. Free your buffers and remove
 /// your event servers first. Null does nothing.
@@ -59,14 +59,17 @@ isize BoardControl(*rtg.RtgBoard board, u32 what, isize value)
 /// RTGERR_IN_USE while a buffer that is not RTGBMF_VOLATILE is alive;
 /// volatile ones lose their memory and keep their handle.
 i32 SetBoardMode(*rtg.RtgBoard board, ?*rtg.RtgMode mode)
-/// The mode the board is in now, or null for none.
-?*rtg.RtgMode BoardMode(*rtg.RtgBoard board)
+// A slot kept free, so the slots after it stay where they are.
+##reserve 1
 /// A buffer in the board's display memory, its rows aligned as the board
-/// asks. RTGBMF_DISPLAYABLE makes one the board can be shown. Null:
-/// RtgLastError says why.
+/// asks. RTGBMF_DISPLAYABLE makes one the board can be shown. Null: a
+/// size of 0, a format this build does not know, a board with no display
+/// memory, or no room.
 ?*rtg.RtgBitMap AllocBitMap(*rtg.RtgBoard board, u32 width, u32 height, u32 format, u32 flags)
 /// A buffer over memory the caller owns: the seven fields of a surface are
-/// read out of `described` and nothing is allocated. Null: RtgLastError.
+/// read out of `described` and nothing is allocated. Null: no pixels, a
+/// size of 0, a pitch shorter than a row, a format this build does not
+/// know, or no memory.
 ?*rtg.RtgBitMap AttachBitMap(*rtg.RtgBoard board, *const rtg.RtgBitMap described)
 /// Give a buffer back. Refused while the board is showing it. Null does
 /// nothing.
@@ -96,8 +99,8 @@ u32 BoardBrightness(*rtg.RtgBoard board)
 /// no work. RTGERR_NOT_SUPPORTED unless the board's engine fills - the
 /// library does not draw.
 i32 FillRect(*rtg.RtgBitMap dest, *const rtg.RtgRect area, u32 color)
-/// Complement every pixel of a rectangle. Same rules as FillRect.
-i32 InvertRect(*rtg.RtgBitMap dest, *const rtg.RtgRect area)
+// A slot kept free, so the slots after it stay where they are.
+##reserve 1
 /// Copy a rectangle. The two buffers may be one and the rectangles may
 /// overlap. Same rules as FillRect.
 i32 CopyRect(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, *const rtg.RtgCopy copy)
@@ -105,13 +108,8 @@ i32 CopyRect(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, *const rtg.RtgCopy copy)
 i32 BlitTemplate(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgTemplate shape)
 /// A one-bit tile, anchored to the buffer. Same rules as FillRect.
 i32 BlitPattern(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPattern tile)
-/// Wait until the board's engine has finished what it was given. Returns
-/// at once for a board that has none.
-void WaitBlit(*rtg.RtgBoard board)
-/// Three eight-bit channels into one pixel of that format, right-aligned.
-u32 PackRtgColor(u32 format, u32 red, u32 green, u32 blue)
-/// One pixel of that format back into three eight-bit channels.
-void UnpackRtgColor(u32 format, u32 color, *rtg.RtgRGB out)
+// Three slots kept free, so the slots after them stay where they are.
+##reserve 3
 /// Hand an RTGEV_* event of that board to your Interrupt, highest ln_Pri
 /// first. is_Code is an RtgEventFn and runs in interrupt context. False
 /// for an event that does not exist.
@@ -121,8 +119,8 @@ void RemRtgEventServer(*rtg.RtgBoard board, u32 event, *exec.Interrupt server)
 /// Tell a board's servers that something happened. A driver calls it from
 /// its own interrupt; returns what the chain answered.
 i32 SignalRtgEvent(*rtg.RtgBoard board, u32 event)
-/// A bus from that driver, set up by the tags (RTGA_*). Null:
-/// RtgLastError says why.
+/// A bus from that driver, set up by the tags (RTGA_*). Null: no driver
+/// of that name, no memory, or a driver that could not make it.
 ?*rtg.RtgTransport CreateTransportTagList([*:0]const u8 driver_name, ?[*]const utility.TagItem tag_list)
 /// Give a bus back. Refused while a board is still on it. Null does
 /// nothing.
@@ -130,8 +128,7 @@ void DeleteTransport(?*rtg.RtgTransport io)
 /// A command and its parameters to the part. A command below zero sends
 /// the parameters alone.
 i32 TxParam(*rtg.RtgTransport io, i32 cmd, ?*const anyopaque param, u32 size)
-/// A command and a run of pixels. It may come back before the bytes have
-/// gone; RTGEV_TX_DONE says when they have.
+/// A command and a run of pixels. It comes back when the bytes have gone.
 i32 TxColor(*rtg.RtgTransport io, i32 cmd, ?*const anyopaque color, u32 size)
 /// Send a command and read `size` bytes back, with nothing else reaching
 /// the bus in between.
@@ -139,25 +136,16 @@ i32 RxParam(*rtg.RtgTransport io, i32 cmd, ?*anyopaque buffer, u32 size)
 /// A tag's data, or `default_value` if it is not in the list. Here so a
 /// driver need open nothing but this library.
 usize GetRtgTagData(utility.Tag tag_value, usize default_value, ?[*]const utility.TagItem tag_list)
-/// The tag of that value in the list, or null. Follows TAG_MORE.
-?*const utility.TagItem FindRtgTagItem(utility.Tag tag_value, ?[*]const utility.TagItem tag_list)
-/// The error of the last call that had nowhere to return one: the calls
-/// that answer with a pointer. One word for the whole library, not one
-/// per task; RTGA_ErrorPtr gives a caller its own.
-i32 RtgLastError()
+// Two slots kept free, so the slots after them stay where they are.
+##reserve 2
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis. RTGERR_NOT_SUPPORTED unless the
 /// board can do it itself, in which case turning the picture is the
 /// business of whoever draws it.
 i32 MirrorBoard(*rtg.RtgBoard board, bool mirror_x, bool mirror_y)
-/// Exchange the board's axes; with MirrorBoard that is every right-angle
-/// turn. GetBoardInfo's width and height follow, since they are what a
-/// caller draws on.
-i32 SwapBoardAxes(*rtg.RtgBoard board, bool swap)
-/// The offset added to every coordinate, for glass whose visible area does
-/// not start where the controller's does.
-i32 SetBoardGap(*rtg.RtgBoard board, u32 gap_x, u32 gap_y)
+// Two slots kept free, so the slots after them stay where they are.
+##reserve 2
 /// The pointer's image: a surface with an alpha channel, whose pixel
 /// (hot_x, hot_y) is the point. Converted once, into the board's format
 /// with a mask. Null takes the image away. RTGERR_NOT_SUPPORTED unless
@@ -206,8 +194,8 @@ i32 RefreshRect(*rtg.RtgBitMap bitmap, *const rtg.RtgRect area)
 i32 CopyRects(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, [*]const rtg.RtgCopy copies, u32 count)
 /// One of the board's video layers - a plane that shows a picture in YUV
 /// itself, scaled into a place - under the picture (RTGVA_Under, the
-/// default) or over it. Null, and RtgLastError says why: NOT_SUPPORTED
-/// without RTGBC_VIDEO, IN_USE when its layers are all taken.
+/// default) or over it. Null without RTGBC_VIDEO, when its layers are all
+/// taken, or for a picture whose colours the plane cannot make.
 ?*rtg.RtgVideoLayer OpenVideoLayer(*rtg.RtgBoard board, ?[*]const utility.TagItem tag_list)
 /// Give a layer back: nothing shown on it from the next frame. Null does
 /// nothing.

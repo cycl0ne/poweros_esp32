@@ -5,7 +5,6 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
-const boards = @import("../board/_board.zig");
 
 /// Tells a board's servers that one of its events happened.
 ///
@@ -50,7 +49,6 @@ const boards = @import("../board/_board.zig");
 /// ```
 pub fn SignalRtgEvent(_: *RtgBase, board: *rtg.RtgBoard, event: u32) i32 {
     if (event >= rtg.events.RTGEV_COUNT) return 0;
-    if (event == rtg.events.RTGEV_VBLANK) boards.privateOf(board).vblanks +%= 1;
 
     var node = board.event_lists[event].first();
     while (node) |n| : (node = n.next()) {

@@ -32,8 +32,7 @@ const _board = @import("_board.zig");
 /// BEHAVIOR:
 /// The display memory still free, its largest piece, the number of modes
 /// and the brightness are read fresh; the rest is what the board already
-/// says about itself. After `SwapBoardAxes` the width and height are the
-/// turned ones, since they are what a caller draws on.
+/// says about itself.
 ///
 /// CONTEXT:
 /// - Waits: if the driver's brightness read does, and while another task
@@ -50,7 +49,7 @@ const _board = @import("_board.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `GetBoardStats`, `BoardMode`
+/// `GetBoardStats`, `FindBoardMode`
 ///
 /// EXAMPLES:
 /// ```zig

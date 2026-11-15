@@ -7,7 +7,6 @@ const exec = sdk.exec;
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const bm_flags = rtg.bitmaps;
-const err = rtg.errors;
 const boards = @import("../board/_board.zig");
 
 /// Makes a buffer handle over memory the caller owns.
@@ -25,9 +24,8 @@ const boards = @import("../board/_board.zig");
 ///   0 means the rows are packed.
 ///
 /// RESULT:
-/// The buffer, or null. `RtgLastError` then says why: `RTGERR_BAD_ARG` for
-/// no pixels, a size of 0 or a pitch shorter than a row,
-/// `RTGERR_BAD_FORMAT`, or `RTGERR_NO_MEMORY`.
+/// The buffer, or null: for no pixels, a size of 0, a pitch shorter than
+/// a row, a format this build does not know, or no memory for the handle.
 ///
 /// BEHAVIOR:
 /// Only the handle is allocated; the pixels stay where they are. It is
@@ -60,22 +58,18 @@ const boards = @import("../board/_board.zig");
 pub fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.RtgBitMap) ?*rtg.RtgBitMap {
     const sys = rb.sys_base;
     if (described.pixels == null or described.width == 0 or described.height == 0) {
-        rb.last_error = err.RTGERR_BAD_ARG;
         return null;
     }
     const row = bm_flags.formatRowBytes(described.format, described.width);
     if (row == 0) {
-        rb.last_error = err.RTGERR_BAD_FORMAT;
         return null;
     }
     const pitch = if (described.pitch != 0) described.pitch else row;
     if (pitch < row) {
-        rb.last_error = err.RTGERR_BAD_ARG;
         return null;
     }
 
     const memory = sys.AllocVec(@sizeOf(rtg.RtgBitMap), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
-        rb.last_error = err.RTGERR_NO_MEMORY;
         return null;
     };
     const bitmap: *rtg.RtgBitMap = @ptrCast(@alignCast(memory));
@@ -94,6 +88,5 @@ pub fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.Rt
     boards.obtain(rb, board);
     sys.AddTail(&board.bitmaps, &bitmap.node);
     boards.release(rb, board);
-    rb.last_error = err.RTGERR_OK;
     return bitmap;
 }

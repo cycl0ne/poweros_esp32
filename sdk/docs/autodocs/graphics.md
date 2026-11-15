@@ -3363,9 +3363,9 @@ The RastPort's own memory, and nothing else.
 
 **NOTES**
 
-- It does not wait for a board's engine. A drawing call still in flight
-  is finished with `rtg.WaitBlit` before the RastPort goes, once there
-  are drawing calls to be in flight.
+- It does not wait for a board's engine: every drawing call is done
+  when it returns, so none is in flight once the caller has stopped
+  drawing.
 
 **BUGS**
 
@@ -3373,7 +3373,7 @@ None known.
 
 **SEE ALSO**
 
-`CreateRastPortTagList`, `rtg.FreeBitMap`, `rtg.WaitBlit`
+`CreateRastPortTagList`, `rtg.FreeBitMap`
 
 **EXAMPLES**
 

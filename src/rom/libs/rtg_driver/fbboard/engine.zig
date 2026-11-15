@@ -5,8 +5,7 @@
 //! over much of a buffer is cut into bands of rows, and exec's workers, a
 //! task on each core, draw them at once with the task that asked
 //! (ShareWork): it draws a band itself, and its call returns when every
-//! band is drawn. Every job is finished when its call returns, so WaitBlit
-//! has only other tasks' to wait for.
+//! band is drawn. Every job is finished when its call returns.
 //!
 //! A job too small to be worth handing out (`smallest`) is drawn by its
 //! asker alone, since handing it out costs a few signals between the
@@ -55,29 +54,16 @@ const line_bytes = 64;
 /// The engine, in the board's instance.
 pub const Engine = struct {
     sys: ?*ExecBase = null,
-    /// Held shared by each job while it is drawn, so WaitBlit can wait
-    /// for every one under way.
-    drawing: exec.SignalSemaphore = .{},
 };
 
 pub fn setUp(engine: *Engine, sys: *ExecBase) void {
     engine.* = .{ .sys = sys };
-    sys.InitSemaphore(&engine.drawing);
-}
-
-/// Until the jobs under way, other tasks', are done.
-pub fn waitIdle(engine: *Engine) void {
-    const sys = engine.sys orelse return;
-    sys.ObtainSemaphore(&engine.drawing);
-    sys.ReleaseSemaphore(&engine.drawing);
 }
 
 /// `job` done in as many as `wanted` parts, by the asker and exec's
 /// workers.
 fn share(engine: *Engine, job: Job, wanted: u32) void {
     const sys = engine.sys orelse return alone(job, wanted);
-    sys.ObtainSemaphoreShared(&engine.drawing);
-    defer sys.ReleaseSemaphore(&engine.drawing);
     var shared = job;
     _ = sys.ShareWork(&runPart, &shared, wanted);
 }

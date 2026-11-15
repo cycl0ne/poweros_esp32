@@ -38,7 +38,7 @@ const err = rtg.errors;
 /// None known.
 ///
 /// SEE ALSO:
-/// `RtgLastError`
+/// `ShowBitMap`
 ///
 /// EXAMPLES:
 /// ```zig

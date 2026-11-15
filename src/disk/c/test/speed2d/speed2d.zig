@@ -50,7 +50,7 @@ const Printf = dos.stdio.Printf;
 const Rect = graphics.Rect;
 
 pub const COMMAND_NAME = "Speed2D";
-const VERSION_STRING = "\x00$VER: Speed2D 1.0 (19.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Speed2D 1.1 (15.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N";
@@ -491,11 +491,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     const caps = info.caps;
     const B = rtg.boards;
+    // An engine is any of its jobs: a bit a slot the driver filled.
+    const engine_caps = B.RTGBC_FILL_RECT | B.RTGBC_COPY_RECT | B.RTGBC_BLIT_TEMPLATE | B.RTGBC_BLIT_PATTERN |
+        B.RTGBC_BLEND_PIXELS | B.RTGBC_BLEND_RECT | B.RTGBC_SCALE_PIXELS;
     _ = Printf(dl, "Board %s, %ux%u: engine %s (fill %s, copy %s, blend %s, scale %s, pattern %s, template %s)\n", .{
         info.driver orelse "?",
         info.width,
         info.height,
-        yes(caps & B.RTGBC_ENGINE),
+        yes(caps & engine_caps),
         yes(caps & B.RTGBC_FILL_RECT),
         yes(caps & B.RTGBC_COPY_RECT),
         yes(caps & B.RTGBC_BLEND_RECT),

@@ -48,7 +48,7 @@ const _engine = @import("_engine.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `InvertRect`, `PackRtgColor`, `WaitBlit`
+/// `BlendRect`, `CopyRect`
 ///
 /// EXAMPLES:
 /// ```zig

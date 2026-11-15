@@ -29,7 +29,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.1 (25.09.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.2 (15.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
@@ -235,24 +235,22 @@ fn printBoard(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     if (info.flags & rtg.boards.RTGBF_STREAMING != 0) printStats(dl, rb, board);
 }
 
-/// How the picture is turned, for a board that can be turned at all or one
-/// that has been. A board that answers RTGERR_NOT_SUPPORTED to all three
-/// says nothing here: turning its picture is the business of whoever draws
-/// it.
+/// How the picture is turned, for a board that can mirror it or one that
+/// has. A board that answers RTGERR_NOT_SUPPORTED says nothing here:
+/// turning its picture is the business of whoever draws it.
 fn printTurn(dl: *DosBase, info: *const rtg.RtgBoardInfo) void {
-    const can = info.caps & (rtg.boards.RTGBC_MIRROR | rtg.boards.RTGBC_SWAP_XY | rtg.boards.RTGBC_GAP);
-    const turned = info.mirror_x != 0 or info.mirror_y != 0 or info.swapped != 0;
+    const can = info.caps & rtg.boards.RTGBC_MIRROR;
+    const turned = info.mirror_x != 0 or info.mirror_y != 0;
     if (can == 0 and !turned) return;
-    _ = Printf(dl, "%-12s %s%s%s", .{
-        "Turned",
-        if (info.swapped != 0) "axes exchanged" else "upright",
-        if (info.mirror_x != 0) ", mirrored about x" else "",
-        if (info.mirror_y != 0) ", mirrored about y" else "",
-    });
-    if (info.gap_x != 0 or info.gap_y != 0) {
-        _ = Printf(dl, ", offset %d,%d", .{ info.gap_x, info.gap_y });
-    }
-    _ = dl.PutStr("\n");
+    const how: [*:0]const u8 = if (info.mirror_x != 0 and info.mirror_y != 0)
+        "mirrored about x and y"
+    else if (info.mirror_x != 0)
+        "mirrored about x"
+    else if (info.mirror_y != 0)
+        "mirrored about y"
+    else
+        "upright";
+    _ = Printf(dl, "%-12s %s\n", .{ "Turned", how });
 }
 
 fn printModes(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
@@ -360,14 +358,11 @@ const state_words = [_]Named{
 const mode_words = [_]Named{
     .{ .bit = rtg.boards.RTGMF_CURRENT, .word = "current" },
     .{ .bit = rtg.boards.RTGMF_DEFAULT, .word = "default" },
-    .{ .bit = rtg.boards.RTGMF_DOUBLE_BUFFER, .word = "double-buffer" },
-    .{ .bit = rtg.boards.RTGMF_PANNABLE, .word = "pannable" },
 };
 
 const cap_words = [_]Named{
     .{ .bit = rtg.boards.RTGBC_SET_MODE, .word = "set-mode" },
     .{ .bit = rtg.boards.RTGBC_SHOW, .word = "show" },
-    .{ .bit = rtg.boards.RTGBC_PAN, .word = "pan" },
     .{ .bit = rtg.boards.RTGBC_VBLANK, .word = "wait-blank" },
     .{ .bit = rtg.boards.RTGBC_REFRESH, .word = "refresh" },
     .{ .bit = rtg.boards.RTGBC_DISPLAY, .word = "display" },
@@ -375,15 +370,11 @@ const cap_words = [_]Named{
     .{ .bit = rtg.boards.RTGBC_STATS, .word = "stats" },
     .{ .bit = rtg.boards.RTGBC_CONTROL, .word = "control" },
     .{ .bit = rtg.boards.RTGBC_MIRROR, .word = "mirror" },
-    .{ .bit = rtg.boards.RTGBC_SWAP_XY, .word = "swap-axes" },
-    .{ .bit = rtg.boards.RTGBC_GAP, .word = "gap" },
     .{ .bit = rtg.boards.RTGBC_POINTER, .word = "pointer" },
     .{ .bit = rtg.boards.RTGBC_FILL_RECT, .word = "fill" },
     .{ .bit = rtg.boards.RTGBC_COPY_RECT, .word = "copy" },
-    .{ .bit = rtg.boards.RTGBC_INVERT_RECT, .word = "invert" },
     .{ .bit = rtg.boards.RTGBC_BLIT_TEMPLATE, .word = "template" },
     .{ .bit = rtg.boards.RTGBC_BLIT_PATTERN, .word = "pattern" },
-    .{ .bit = rtg.boards.RTGBC_ENGINE, .word = "engine" },
 };
 
 fn printWords(dl: *DosBase, bits: u32, words: []const Named, none: [*:0]const u8) void {

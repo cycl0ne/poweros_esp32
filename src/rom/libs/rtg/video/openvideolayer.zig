@@ -31,10 +31,9 @@ const privateOf = @import("../board/_board.zig").privateOf;
 ///   range, video's range and eight bits unless given.
 ///
 /// RESULT:
-/// The layer, or null with `RtgLastError` saying why:
-/// `RTGERR_NOT_SUPPORTED` for a board without `RTGBC_VIDEO` or one whose
+/// The layer, or null: for a board without `RTGBC_VIDEO` or one whose
 /// controller cannot make the display's colours out of such a picture,
-/// `RTGERR_IN_USE` when its layers are all taken, `RTGERR_NO_MEMORY`.
+/// when its layers are all taken, or without memory for the handle.
 ///
 /// BEHAVIOR:
 /// The layer comes with nothing on it and no place: `MoveVideoLayer`
@@ -90,9 +89,9 @@ const privateOf = @import("../board/_board.zig").privateOf;
 /// ```
 pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) ?*rtg.RtgVideoLayer {
     const sys = rb.sys_base;
-    const ops = board.ops orelse return failed(rb, err.RTGERR_NOT_SUPPORTED);
-    if (board.info.caps & rtg.boards.RTGBC_VIDEO == 0) return failed(rb, err.RTGERR_NOT_SUPPORTED);
-    const memory = sys.AllocVec(@sizeOf(rtg.RtgVideoLayer), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return failed(rb, err.RTGERR_NO_MEMORY);
+    const ops = board.ops orelse return null;
+    if (board.info.caps & rtg.boards.RTGBC_VIDEO == 0) return null;
+    const memory = sys.AllocVec(@sizeOf(rtg.RtgVideoLayer), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const layer: *rtg.RtgVideoLayer = @ptrCast(@alignCast(memory));
     const under = rb.utility_base.GetTagData(rtg.RTGVA_Under, 1, tag_list) != 0;
     layer.* = .{
@@ -107,7 +106,7 @@ pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const Ta
     const result = ops.video_open.?(board, layer);
     if (result != err.RTGERR_OK) {
         sys.FreeVec(memory);
-        return failed(rb, result);
+        return null;
     }
     if (layer.flags & rtg.RTGVLF_UNDER == 0) layer.key = 0;
     _ = @atomicRmw(u32, &privateOf(board).video_layers, .Add, 1, .monotonic);
@@ -129,18 +128,4 @@ pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const Ta
 fn kind(rb: *RtgBase, tag: Tag, unless: u8, tag_list: ?[*]const TagItem) u8 {
     const told = rb.utility_base.GetTagData(tag, unless, tag_list);
     return if (told <= 255) @intCast(told) else unless;
-}
-
-/// The call's answer when no layer is opened: the reason kept for
-/// `RtgLastError`, and no layer.
-///
-/// INPUTS:
-/// - `rb` - the library's base, where the reason is kept.
-/// - `code` - the reason, an `RTGERR_` code.
-///
-/// RESULT:
-/// Null.
-fn failed(rb: *RtgBase, code: i32) ?*rtg.RtgVideoLayer {
-    rb.last_error = code;
-    return null;
 }

@@ -25,8 +25,8 @@ const bm_flags = rtg.bitmaps;
 /// BEHAVIOR:
 /// Display memory the library allocated goes back to the board; memory
 /// `AttachBitMap` was given stays the caller's. A buffer the board is
-/// showing is refused, with `RTGERR_IN_USE` in `RtgLastError`; it stays
-/// the caller's, to free once another is shown.
+/// showing is refused, and nothing says so but its `RTGBMF_SHOWING`,
+/// still set: it stays the caller's, to free once another is shown.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the board's lock - through a
@@ -59,16 +59,12 @@ pub fn FreeBitMap(rb: *RtgBase, bitmap: ?*rtg.RtgBitMap) void {
         boards.obtain(rb, owner);
         defer boards.release(rb, owner);
         // What the board is reading is not the caller's to take away.
-        if (freed.flags & bm_flags.RTGBMF_SHOWING != 0) {
-            rb.last_error = rtg.errors.RTGERR_IN_USE;
-            return;
-        }
+        if (freed.flags & bm_flags.RTGBMF_SHOWING != 0) return;
         sys.Remove(&freed.node);
         if (freed.flags & bm_flags.RTGBMF_BOARD_MEMORY != 0 and freed.pixels != null) {
             boards.privateOf(owner).arena.give(sys, freed.offset, freed.taken);
         }
     } else if (freed.flags & bm_flags.RTGBMF_SHOWING != 0) {
-        rb.last_error = rtg.errors.RTGERR_IN_USE;
         return;
     }
     sys.FreeVec(freed);

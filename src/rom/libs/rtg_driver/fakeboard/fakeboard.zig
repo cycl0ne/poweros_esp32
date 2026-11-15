@@ -11,7 +11,7 @@
 //! in the instance the library allocates beside each handle, so two
 //! boards of this driver never share a list.
 //!
-//! Its engine really does fill, copy and invert, so a test can compare
+//! Its engine really does fill and copy, so a test can compare
 //! bytes and see both that the work happened and that the rectangle it was
 //! given had already been cut down to the buffer. Everything it is asked
 //! is recorded, so a test can also see what it was *not* asked.
@@ -56,11 +56,8 @@ pub const Log = struct {
     /// as well.
     copy_jobs: u32 = 0,
     last_copy_count: u32 = 0,
-    inverts: u32 = 0,
     mirrors: u32 = 0,
-    swaps: u32 = 0,
-    gaps: u32 = 0,
-    /// The rectangle of the last fill or invert, as the driver got it.
+    /// The rectangle of the last fill, as the driver got it.
     last_rect: rtg.RtgRect = .{},
     last_copy: rtg.RtgCopy = .{},
     /// The buffer, and its pixel at the display's top left, as the last
@@ -73,9 +70,6 @@ pub const Log = struct {
     last_control: u32 = 0,
     last_mirror_x: bool = false,
     last_mirror_y: bool = false,
-    last_swap: bool = false,
-    last_gap_x: u32 = 0,
-    last_gap_y: u32 = 0,
     display_on: bool = false,
     brightness: u32 = 0,
     /// The pointer as the board has it: the image it was last given,
@@ -388,23 +382,6 @@ fn mirror(board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) callconv(.c) i32
     return err.RTGERR_OK;
 }
 
-fn swapXy(board: *rtg.RtgBoard, swap: bool) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
-    const log = &stateOfBoard(board).log;
-    log.swaps += 1;
-    log.last_swap = swap;
-    return err.RTGERR_OK;
-}
-
-fn setGap(board: *rtg.RtgBoard, gap_x: u32, gap_y: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
-    const log = &stateOfBoard(board).log;
-    log.gaps += 1;
-    log.last_gap_x = gap_x;
-    log.last_gap_y = gap_y;
-    return err.RTGERR_OK;
-}
-
 fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
     instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
@@ -535,23 +512,6 @@ fn fillRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect
         var x: u32 = @intCast(area.x);
         const right: u32 = @intCast(area.x + area.width);
         while (x < right) : (x += 1) row[x] = @truncate(color);
-    }
-    return err.RTGERR_OK;
-}
-
-fn invertRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
-    const log = &stateOfBoard(board).log;
-    log.inverts += 1;
-    log.last_rect = area.*;
-    if (dest.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    var y: u32 = @intCast(area.y);
-    const end: u32 = @intCast(area.y + area.height);
-    while (y < end) : (y += 1) {
-        const row = rows16(dest, y);
-        var x: u32 = @intCast(area.x);
-        const right: u32 = @intCast(area.x + area.width);
-        while (x < right) : (x += 1) row[x] = ~row[x];
     }
     return err.RTGERR_OK;
 }
@@ -690,10 +650,6 @@ fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
     return err.RTGERR_NOT_SUPPORTED;
 }
 
-fn waitBlit(board: *rtg.RtgBoard) callconv(.c) void {
-    instanceOf(board).calls += 1;
-}
-
 /// Everything a board can be asked.
 const full_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
@@ -709,11 +665,7 @@ const full_ops = rtg.RtgBoardOps{
     .fill_rect = &fillRect,
     .copy_rect = &copyRect,
     .copy_rects = &copyRects,
-    .invert_rect = &invertRect,
-    .wait_blit = &waitBlit,
     .mirror = &mirror,
-    .swap_xy = &swapXy,
-    .set_gap = &setGap,
     .set_pointer = &setPointer,
     .move_pointer = &movePointer,
     .show_pointer = &showPointer,

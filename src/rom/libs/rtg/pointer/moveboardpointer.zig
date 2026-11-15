@@ -29,8 +29,8 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// not its corner. Nothing is done for the same place twice. An overlay
 /// that follows the pointer (SetBoardOverlay) moves with it.
 ///
-/// A board that turns its picture itself (`MirrorBoard`, `SwapBoardAxes`,
-/// `SetBoardGap`) turns the pointer with it: the driver lays the pointer
+/// A board that turns its picture itself (`MirrorBoard`) turns the
+/// pointer with it: the driver lays the pointer
 /// into the picture's own order on its way out, before the turn.
 ///
 /// CONTEXT:

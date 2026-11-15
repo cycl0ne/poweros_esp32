@@ -41,7 +41,7 @@ const err = rtg.errors;
 /// None known.
 ///
 /// SEE ALSO:
-/// `SwapBoardAxes`, `SetBoardGap`
+/// `GetBoardInfo`
 ///
 /// EXAMPLES:
 /// ```zig

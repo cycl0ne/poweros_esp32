@@ -42,7 +42,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// None known.
 ///
 /// SEE ALSO:
-/// `RemRtgDriver`, `FindRtgDriver`, `CreateBoardTagList`
+/// `RemRtgDriver`, `NextRtgDriver`, `CreateBoardTagList`
 ///
 /// EXAMPLES:
 /// ```zig

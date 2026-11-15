@@ -3,7 +3,6 @@
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
-const err = rtg.errors;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const bitmaps = @import("../bitmap/_bitmap.zig");
 const privateOf = _board.privateOf;
@@ -25,8 +24,8 @@ const _board = @import("_board.zig");
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A board that still has an event server on it is refused, with
-/// `RTGERR_IN_USE` in `RtgLastError`, and nothing of it is touched: the
+/// A board that still has an event server on it is refused - it stays on
+/// the list, which is how a caller sees it - and nothing of it is touched: the
 /// server's node would be left linked into a list that is freed. So is
 /// one with a video layer still open (`CloseVideoLayer` first).
 /// Otherwise it is taken off the display first, then every buffer it still has is
@@ -65,15 +64,9 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     // A server still on it is someone's node in a list about to be freed,
     // and a video layer someone's handle on a plane of it.
     for (&gone.event_lists) |*list| {
-        if (list.first() != null) {
-            rb.last_error = err.RTGERR_IN_USE;
-            return;
-        }
+        if (list.first() != null) return;
     }
-    if (private.video_layers != 0) {
-        rb.last_error = err.RTGERR_IN_USE;
-        return;
-    }
+    if (private.video_layers != 0) return;
 
     // Nothing is left looking at it, and nothing of it is left up.
     if (gone.showing != null) _ = rtg_lib.ShowBitMap(gone, null, 0, 0);

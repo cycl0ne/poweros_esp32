@@ -27,23 +27,22 @@ const err = rtg.errors;
 /// were not the ones given.
 ///
 /// BEHAVIOR:
-/// It may come back before the bytes have gone: `RTGEV_TX_DONE` says when
-/// they have, and the bytes must stay put until then.
+/// It comes back when the bytes have gone: the bus has been waited for.
 ///
 /// CONTEXT:
-/// - Waits: only if the driver does.
+/// - Waits: yes, for the bus.
 /// - Interrupts: no. The driver may wait on its bus.
 /// - Locks: no spinlock may be held: a driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The bytes stay the caller's, and must stay put until `RTGEV_TX_DONE`.
+/// The bytes stay the caller's, and are no longer read when this returns.
 ///
 /// BUGS:
 /// None known.
 ///
 /// SEE ALSO:
-/// `TxParam`, `AddRtgEventServer`
+/// `TxParam`, `RxParam`
 ///
 /// EXAMPLES:
 /// ```zig

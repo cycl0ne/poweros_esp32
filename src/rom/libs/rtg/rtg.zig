@@ -20,13 +20,14 @@
 //! are sdk/fd/rtg_lib.fd, its types sdk/libs/rtg/.
 //!
 //! Each call is a file of its own in the folder for its category -
-//! driver/, board/, bitmap/, display/, engine/, event/, transport/, tag/
-//! and errors/ - and memory/ holds the arena display memory is cut from.
+//! driver/, board/, bitmap/, display/, engine/, event/, transport/, tag/,
+//! pointer/, video/ and errors/ - and memory/ holds the arena display
+//! memory is cut from.
 //! The jump table is rtg_lvo.zig, the ROM tag and init rtg_init.zig, the
 //! base rtg_base.zig. This file holds the names the rest of the kernel
 //! reaches the library by, and the tests of calls working together. The
-//! drivers this machine has are in `../rtg_driver/`: qemuboard/,
-//! rgbboard/ and i2cbus/, and fakeboard/ for the host tests.
+//! drivers are in `../rtg_driver/`, a folder each, with fakeboard/ for
+//! the host tests.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -72,7 +73,6 @@ test {
     _ = @import("bitmap/refreshbitmap.zig");
     _ = @import("board/_board.zig");
     _ = @import("board/boardcontrol.zig");
-    _ = @import("board/boardmode.zig");
     _ = @import("board/createboardtaglist.zig");
     _ = @import("board/deleteboard.zig");
     _ = @import("board/findboard.zig");
@@ -87,13 +87,10 @@ test {
     _ = @import("display/mirrorboard.zig");
     _ = @import("display/setboardbrightness.zig");
     _ = @import("display/setboarddisplay.zig");
-    _ = @import("display/setboardgap.zig");
     _ = @import("display/showbitmap.zig");
-    _ = @import("display/swapboardaxes.zig");
     _ = @import("display/waitvblank.zig");
     _ = @import("driver/_driver.zig");
     _ = @import("driver/addrtgdriver.zig");
-    _ = @import("driver/findrtgdriver.zig");
     _ = @import("driver/lockrtgdrivers.zig");
     _ = @import("driver/nextrtgdriver.zig");
     _ = @import("driver/remrtgdriver.zig");
@@ -103,18 +100,12 @@ test {
     _ = @import("engine/blittemplate.zig");
     _ = @import("engine/copyrect.zig");
     _ = @import("engine/fillrect.zig");
-    _ = @import("engine/invertrect.zig");
-    _ = @import("engine/packrtgcolor.zig");
-    _ = @import("engine/unpackrtgcolor.zig");
-    _ = @import("engine/waitblit.zig");
     _ = @import("errors/rtgerrortext.zig");
-    _ = @import("errors/rtglasterror.zig");
     _ = @import("event/_event.zig");
     _ = @import("event/addrtgeventserver.zig");
     _ = @import("event/remrtgeventserver.zig");
     _ = @import("event/signalrtgevent.zig");
     _ = @import("memory/_memory.zig");
-    _ = @import("tag/findrtgtagitem.zig");
     _ = @import("tag/getrtgtagdata.zig");
     _ = @import("transport/_transport.zig");
     _ = @import("transport/createtransporttaglist.zig");
@@ -134,6 +125,9 @@ test {
 /// The kernel's exec and utility, to set up and tear down around it.
 const kexec = @import("../exec/exec.zig");
 const kutility = @import("../utility/utility.zig");
+/// graphics.library's pen packing, which the pointer's conversion is held
+/// to.
+const kpens = @import("../graphics/rastport/_rastport.zig");
 const fake = @import("../rtg_driver/fakeboard/fakeboard.zig");
 const timer = sdk.devices.timer;
 
@@ -320,7 +314,6 @@ const Sleep = struct {
 
 test {
     _ = @import("../rtg_driver/fakeboard/fakeboard.zig");
-    _ = @import("../rtg_driver/i2cbus/frame.zig");
 }
 
 /// exec on its test RAM, utility.library and rtg.library from their tags,
@@ -337,10 +330,16 @@ fn setUp() !*RtgBase {
     return rb;
 }
 
-/// The test board's own state, found the way anything finds a driver's:
-/// through the node it registered.
+/// The test board's own state, found through the node it registered: the
+/// driver of its name on the library's list.
 fn fakeOf(rb: *RtgBase) *fake.State {
-    return fake.stateOf(base(rb).FindRtgDriver(fake.DRIVER_NAME).?);
+    base(rb).LockRtgDrivers();
+    defer base(rb).UnlockRtgDrivers();
+    var driver = base(rb).NextRtgDriver(null);
+    while (driver) |one| : (driver = base(rb).NextRtgDriver(one)) {
+        if (std.mem.orderZ(u8, one.node.name.?, fake.DRIVER_NAME) == .eq) return fake.stateOf(one);
+    }
+    unreachable;
 }
 
 /// Neither library expunges itself: take the driver off, close utility
@@ -385,13 +384,11 @@ test "rtg.library: made from its tag, opened by name, utility of its own" {
     try tearDown(rb);
 }
 
-test "drivers: found by name, walked by priority, and never twice" {
+test "drivers: walked by priority, and never twice" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
 
-    try testing.expectEqual(&fk.driver, base(rb).FindRtgDriver("fake").?);
-    try testing.expect(base(rb).FindRtgDriver("nothing") == null);
     // The same name is refused, and so is a driver that makes nothing.
     try testing.expect(!base(rb).AddRtgDriver(&fk.driver));
 
@@ -454,17 +451,14 @@ test "a board is named, and its user data kept, when the tags say so" {
     defer kexec.deinit();
 
     var mine: u32 = 5;
-    var code: i32 = 123;
     const tag_list = [_]TagItem{
         .{ .tag = rtg.tags.RTGA_BoardName, .data = @intFromPtr("screen") },
         .{ .tag = rtg.tags.RTGA_UserData, .data = @intFromPtr(&mine) },
-        .{ .tag = rtg.tags.RTGA_ErrorPtr, .data = @intFromPtr(&code) },
         .{},
     };
     const board = base(rb).CreateBoardTagList("fake", &tag_list).?;
     try testing.expectEqualStrings("screen", std.mem.span(board.node.name.?));
     try testing.expectEqual(@as(?*anyopaque, @ptrCast(&mine)), board.user_data);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, code);
     base(rb).DeleteBoard(board);
     try tearDown(rb);
 }
@@ -476,18 +470,12 @@ test "a driver that is not there, and a create that fails, leave nothing" {
 
     const tag_list = [_]TagItem{.{}};
     try testing.expect(base(rb).CreateBoardTagList("nothing", &tag_list) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DRIVER, base(rb).RtgLastError());
 
     fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
-    var code: i32 = 0;
-    const with_error = [_]TagItem{
-        .{ .tag = rtg.tags.RTGA_ErrorPtr, .data = @intFromPtr(&code) },
-        .{},
-    };
-    try testing.expect(base(rb).CreateBoardTagList("fake", &with_error) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, code);
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).RtgLastError());
+    try testing.expect(base(rb).CreateBoardTagList("fake", &tag_list) == null);
+    try testing.expectEqual(@as(u32, 0), fk.log.created);
     try testing.expectEqual(@as(u16, 0), fk.driver.open_cnt);
+    try testing.expect(base(rb).NextBoard(null) == null);
     // The leak check in tearDown is what proves the handle came back.
     try tearDown(rb);
 }
@@ -507,9 +495,10 @@ test "modes: walked, found, and set" {
     try testing.expectEqual(second, base(rb).FindBoardMode(board, 640, 0, 0).?);
     try testing.expect(base(rb).FindBoardMode(board, 800, 600, 0) == null);
 
-    try testing.expect(base(rb).BoardMode(board) == null);
+    var before: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &before, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(@as(u32, 0), before.flags & rtg.boards.RTGBF_MODE_SET);
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, second));
-    try testing.expectEqual(second, base(rb).BoardMode(board).?);
     try testing.expect(second.flags & rtg.boards.RTGMF_CURRENT != 0);
     try testing.expect(first.flags & rtg.boards.RTGMF_CURRENT == 0);
 
@@ -605,9 +594,7 @@ test "display memory: cut up, aligned, and put back together" {
 
     // More than there is, and a format that is not a format.
     try testing.expect(base(rb).AllocBitMap(board, 1024, 1024, format, 0) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, base(rb).RtgLastError());
     try testing.expect(base(rb).AllocBitMap(board, 8, 8, 99, 0) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).RtgLastError());
 
     base(rb).DeleteBoard(board);
     try tearDown(rb);
@@ -683,7 +670,6 @@ test "showing a buffer, and what may not be shown" {
     // What the board is reading is not the caller's to take away.
     base(rb).FreeBitMap(up);
     try testing.expectEqual(up, base(rb).BoardDisplayBitMap(board).?);
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
 
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
     try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
@@ -866,9 +852,7 @@ test "a buffer: a format that is none, and a board with no display memory" {
     // A number past every format is refused as a format not known.
     const board = try makeBoard(rb);
     try testing.expect(base(rb).AllocBitMap(board, 8, 8, 256, 0) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).RtgLastError());
     try testing.expect(base(rb).AllocBitMap(board, 8, 8, ~@as(u32, 0), 0) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).RtgLastError());
     base(rb).DeleteBoard(board);
 
     // A board that reports no display memory says so, and no memory was
@@ -876,7 +860,6 @@ test "a buffer: a format that is none, and a board with no display memory" {
     fk.region_size = 0;
     const dark = try makeBoard(rb);
     try testing.expect(base(rb).AllocBitMap(dark, 8, 8, format, 0) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).RtgLastError());
     base(rb).DeleteBoard(dark);
     try tearDown(rb);
 }
@@ -951,7 +934,6 @@ test "a show that fails changes nothing: the buffer shown stays, the one refused
 
     // The one still shown cannot be freed; the one refused can.
     base(rb).FreeBitMap(first);
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
     try testing.expectEqual(first, base(rb).BoardDisplayBitMap(board).?);
     const free_before = freeOf(rb, board);
     base(rb).FreeBitMap(second);
@@ -1149,7 +1131,6 @@ test "events: highest first, and the first to answer ends it" {
 
     // A board with a server still on it is not deleted from under it.
     base(rb).DeleteBoard(board);
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
     try testing.expectEqual(board, base(rb).NextBoard(null).?);
     base(rb).RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &low);
 
@@ -1518,7 +1499,6 @@ test "a board with no engine says so, and the library does not draw" {
 
     const area = rtg.RtgRect{ .width = 4, .height = 4 };
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).FillRect(bitmap, &area, 0xFFFF));
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).InvertRect(bitmap, &area));
     const copy = rtg.RtgCopy{ .width = 4, .height = 4 };
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).CopyRect(bitmap, bitmap, &copy));
     const shape = rtg.RtgTemplate{ .bits = @ptrCast("x"), .pitch = 1 };
@@ -1531,8 +1511,6 @@ test "a board with no engine says so, and the library does not draw" {
     // Nothing was written, because nothing drew.
     const row: [*]u16 = @ptrCast(@alignCast(bitmap.rowPtr(0)));
     try testing.expectEqual(@as(u16, 0), row[0]);
-    // Waiting for an engine that is not there comes straight back.
-    base(rb).WaitBlit(board);
 
     base(rb).FreeBitMap(bitmap);
     base(rb).DeleteBoard(board);
@@ -1609,45 +1587,25 @@ test "turning the picture: what the board can do, and what it cannot" {
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expect(info.caps & rtg.boards.RTGBC_MIRROR != 0);
-    try testing.expect(info.caps & rtg.boards.RTGBC_SWAP_XY != 0);
-    try testing.expect(info.caps & rtg.boards.RTGBC_GAP != 0);
     // A board reports itself the right way up until it is turned.
     try testing.expectEqual(@as(u8, 0), info.mirror_x);
-    try testing.expectEqual(@as(u8, 0), info.swapped);
+    try testing.expectEqual(@as(u8, 0), info.mirror_y);
 
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     const was_width = info.width;
     const was_height = info.height;
 
-    // Mirroring is remembered and handed to the board as asked.
+    // Mirroring is remembered and handed to the board as asked, and what
+    // a caller draws on keeps its sides.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, false));
     try testing.expectEqual(@as(u32, 1), fk.log.mirrors);
     try testing.expect(fk.log.last_mirror_x and !fk.log.last_mirror_y);
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(@as(u8, 1), info.mirror_x);
     try testing.expectEqual(@as(u8, 0), info.mirror_y);
-
-    // Exchanging the axes turns what a caller draws on with it.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SwapBoardAxes(board, true));
-    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
-    try testing.expectEqual(@as(u8, 1), info.swapped);
-    try testing.expectEqual(was_height, info.width);
-    try testing.expectEqual(was_width, info.height);
-
-    // Asking for what it is already doing is not asking again.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SwapBoardAxes(board, true));
-    try testing.expectEqual(@as(u32, 1), fk.log.swaps);
-    // And back, which turns the sides back too.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SwapBoardAxes(board, false));
-    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(was_width, info.width);
-    try testing.expectEqual(@as(u8, 0), info.swapped);
-
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardGap(board, 4, 8));
-    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
-    try testing.expectEqual(@as(u32, 4), info.gap_x);
-    try testing.expectEqual(@as(u32, 8), info.gap_y);
+    try testing.expectEqual(was_height, info.height);
 
     base(rb).DeleteBoard(board);
     try tearDown(rb);
@@ -1664,19 +1622,14 @@ test "a board whose pixels go out as they are written will not turn" {
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_MIRROR);
-    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_SWAP_XY);
-    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_GAP);
 
     const width = info.width;
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).MirrorBoard(board, true, true));
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SwapBoardAxes(board, true));
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardGap(board, 1, 1));
     // Refused means nothing moved: what it says about itself is unchanged.
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(width, info.width);
     try testing.expectEqual(@as(u8, 0), info.mirror_x);
-    try testing.expectEqual(@as(u8, 0), info.swapped);
-    try testing.expectEqual(@as(u32, 0), info.gap_x);
+    try testing.expectEqual(@as(u8, 0), info.mirror_y);
     try testing.expectEqual(@as(u32, 0), fk.log.mirrors);
 
     base(rb).DeleteBoard(board);
@@ -1886,7 +1839,6 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     };
     for (kinds) |one| {
         try testing.expect(base(rb).OpenVideoLayer(board, &[_]TagItem{ one, .{} }) == null);
-        try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).RtgLastError());
     }
     try testing.expectEqual(@as(u32, 0), fk.log.video_opens);
 
@@ -1904,7 +1856,6 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     try testing.expectEqual(@as(u32, 0x0008_0008), layer.key);
     try testing.expectEqual(@as(u32, 3), layer.max_up);
     try testing.expect(base(rb).OpenVideoLayer(board, null) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
 
     // A picture is shown with its part, which says how big it is.
     var luma: [16]u8 = @splat(16);
@@ -1932,7 +1883,6 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
 
     // The board is not deleted under an open layer.
     base(rb).DeleteBoard(board);
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
     try testing.expectEqual(@as(u32, 0), fk.log.destroyed);
     base(rb).CloseVideoLayer(layer);
     base(rb).CloseVideoLayer(null);
@@ -1962,40 +1912,29 @@ test "a board with no video layer says so" {
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_VIDEO);
     try testing.expect(base(rb).OpenVideoLayer(board, null) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).RtgLastError());
     base(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 
-test "colours: packed into a format and taken apart again" {
-    const rb = try setUp();
-    defer kexec.deinit();
-    const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
-
-    try testing.expectEqual(@as(u32, 0xFFFF), base(rb).PackRtgColor(rgb565, 255, 255, 255));
-    try testing.expectEqual(@as(u32, 0), base(rb).PackRtgColor(rgb565, 0, 0, 0));
-    try testing.expectEqual(@as(u32, 0xF800), base(rb).PackRtgColor(rgb565, 255, 0, 0));
-    try testing.expectEqual(@as(u32, 0x001F), base(rb).PackRtgColor(rgb565, 0, 0, 255));
-
-    var out: rtg.RtgRGB = .{};
-    base(rb).UnpackRtgColor(rgb565, 0xFFFF, &out);
-    try testing.expectEqual(@as(u8, 255), out.red);
-    try testing.expectEqual(@as(u8, 255), out.green);
-    try testing.expectEqual(@as(u8, 255), out.blue);
-    base(rb).UnpackRtgColor(rgb565, 0xF800, &out);
-    try testing.expectEqual(@as(u8, 255), out.red);
-    try testing.expectEqual(@as(u8, 0), out.green);
-
-    const rgba32 = @intFromEnum(rtg.PixelFormat.rgba32);
-    try testing.expectEqual(@as(u32, 0x1020_30FF), base(rb).PackRtgColor(rgba32, 0x10, 0x20, 0x30));
-    base(rb).UnpackRtgColor(rgba32, 0x1020_30FF, &out);
-    try testing.expectEqual(@as(u8, 0x10), out.red);
-    try testing.expectEqual(@as(u8, 0x30), out.blue);
-    try testing.expectEqual(@as(u8, 0xFF), out.alpha);
-
-    // A format nobody knows packs to nothing rather than to rubbish.
-    try testing.expectEqual(@as(u32, 0), base(rb).PackRtgColor(99, 255, 255, 255));
-    try tearDown(rb);
+test "the pointer's colours: a pixel of each format as every drawing call writes one" {
+    const pointers = @import("pointer/setboardpointer.zig");
+    const colour = pointers.Colour{ .red = 0x10, .green = 0x20, .blue = 0x30 };
+    // Opaque, in graphics.library's own order: a pen of full coverage.
+    const pen: u32 = 0xFF10_2030;
+    const formats = [_]rtg.PixelFormat{ .rgba32, .bgra32, .rgb24, .bgr24, .rgb565, .argb1555, .gray8 };
+    for (formats) |format| {
+        try testing.expectEqual(kpens.packPen(format, pen).?, pointers.pack(format, colour));
+    }
+    // The 24- and 32-bit ones, as their bytes lie in memory: the word's
+    // low byte first.
+    try testing.expectEqual(@as(u32, 0xFF30_2010), pointers.pack(.rgba32, colour)); // r, g, b, a
+    try testing.expectEqual(@as(u32, 0xFF10_2030), pointers.pack(.bgra32, colour)); // b, g, r, a
+    try testing.expectEqual(@as(u32, 0x0030_2010), pointers.pack(.rgb24, colour)); // r, g, b
+    try testing.expectEqual(@as(u32, 0x0010_2030), pointers.pack(.bgr24, colour)); // b, g, r
+    // A format with no colour of its own packs to nothing.
+    try testing.expectEqual(@as(u32, 0), pointers.pack(.indexed8, colour));
+    try testing.expectEqual(@as(u32, 0), pointers.pack(.mono1, colour));
+    try testing.expectEqual(@as(u32, 0), pointers.pack(@enumFromInt(99), colour));
 }
 
 test "every error has words, and so has one that does not exist" {

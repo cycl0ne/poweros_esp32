@@ -14,7 +14,6 @@ const setName = _board.setName;
 const Private = _board.Private;
 const memoryFor = _board.memoryFor;
 const err = rtg.errors;
-const fail = _board.fail;
 const registry = @import("../driver/_driver.zig");
 const memory_mod = @import("../memory/_memory.zig");
 const readRequest = _board.readRequest;
@@ -33,13 +32,12 @@ const _board = @import("_board.zig");
 /// - `driver_name` - the driver to make it with.
 /// - `tag_list` - the `RTGA_` options: the board's name, a transport it
 ///   talks through, whether to switch the display on, a brightness,
-///   whether its screens' windows are composed (`RTGA_Compose`), data for
-///   the driver, and `RTGA_ErrorPtr` for the reason if it fails.
+///   whether its screens' windows are composed (`RTGA_Compose`), and data
+///   for the driver.
 ///
 /// RESULT:
-/// The board, or null. `RtgLastError` - and `RTGA_ErrorPtr`, if given -
-/// then says why: `RTGERR_NO_DRIVER`, `RTGERR_NO_MEMORY`, or what the
-/// driver answered.
+/// The board, or null: for no driver of that name that makes boards, no
+/// memory, or a driver that could not make it.
 ///
 /// BEHAVIOR:
 /// The board's handle and the driver's instance come from memory the
@@ -80,11 +78,9 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     const request = readRequest(rb, tag_list);
 
     const driver = registry.findDriverOfType(rb, driver_name, rtg.boards.RTGDT_BOARD) orelse {
-        fail(rb, err.RTGERR_NO_DRIVER, request.error_ptr);
         return null;
     };
     const create = driver.ops.?.create_board orelse {
-        fail(rb, err.RTGERR_NO_DRIVER, request.error_ptr);
         return null;
     };
 
@@ -92,7 +88,6 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     // memory it can read without queueing behind a display's own stream.
     const where = memoryFor(driver);
     const memory = sys.AllocVec(@sizeOf(Private), where) orelse {
-        fail(rb, err.RTGERR_NO_MEMORY, request.error_ptr);
         return null;
     };
     const private: *Private = @ptrCast(@alignCast(memory));
@@ -114,7 +109,6 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     if (driver.instance_size != 0) {
         board.instance = sys.AllocVec(driver.instance_size, where) orelse {
             sys.FreeVec(memory);
-            fail(rb, err.RTGERR_NO_MEMORY, request.error_ptr);
             return null;
         };
         board.instance_size = driver.instance_size;
@@ -124,7 +118,6 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     if (code != err.RTGERR_OK) {
         if (board.instance) |instance| sys.FreeVec(instance);
         sys.FreeVec(memory);
-        fail(rb, code, request.error_ptr);
         return null;
     }
 
@@ -177,7 +170,5 @@ pub fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
     if (request.display_on) _ = rtg_lib.SetBoardDisplay(board, true);
     if (request.brightness) |percent| _ = rtg_lib.SetBoardBrightness(board, percent);
 
-    rb.last_error = err.RTGERR_OK;
-    if (request.error_ptr) |p| p.* = err.RTGERR_OK;
     return board;
 }

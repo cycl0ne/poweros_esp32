@@ -49,7 +49,7 @@ const _engine = @import("_engine.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `FillRect`, `WaitBlit`
+/// `FillRect`, `CopyRects`
 ///
 /// EXAMPLES:
 /// ```zig

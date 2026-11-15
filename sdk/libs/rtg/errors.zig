@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! What a call answers when it could not do what was asked.
 //!
-//! Every call that can fail returns one of these directly. The few that
-//! return a pointer leave it in RtgLastError instead, and RtgErrorText
-//! turns any of them into words.
+//! Every call that answers with a status returns one of these, and
+//! RtgErrorText turns any of them into words. The few that answer with a
+//! pointer answer null; their contracts say when.
 
 pub const RTGERR_OK: i32 = 0;
 /// No driver of that name is registered.

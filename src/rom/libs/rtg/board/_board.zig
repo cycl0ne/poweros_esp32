@@ -30,8 +30,6 @@ pub const Private = struct {
     arena: Arena = .{},
     /// The board's name, since the caller's string is the caller's.
     name_buf: [32]u8 = .{0} ** 32,
-    /// Blankings counted since the board was made, for WaitVBlank.
-    vblanks: u32 = 0,
     /// The mode it is in, or null.
     mode: ?*rtg.RtgMode = null,
     /// How often a new buffer was shown.
@@ -67,18 +65,6 @@ pub fn release(rb: *RtgBase, board: *rtg.RtgBoard) void {
     rb.sys_base.ReleaseSemaphore(&privateOf(board).lock);
 }
 
-/// Records why a call that answers with a pointer failed: in the library,
-/// and where the caller's `RTGA_ErrorPtr` asked for it.
-///
-/// INPUTS:
-/// - `rb` - the library.
-/// - `code` - the `RTGERR_` code.
-/// - `error_ptr` - the caller's `RTGA_ErrorPtr`, or null.
-pub fn fail(rb: *RtgBase, code: i32, error_ptr: ?*i32) void {
-    rb.last_error = code;
-    if (error_ptr) |p| p.* = code;
-}
-
 /// What the tags say, before the driver sees them.
 const Request = struct {
     name: ?[*:0]const u8 = null,
@@ -88,7 +74,6 @@ const Request = struct {
     brightness: ?u32 = null,
     display_on: bool = false,
     compose: bool = false,
-    error_ptr: ?*i32 = null,
 };
 
 /// What the caller's tags ask of a new board, read once.
@@ -109,7 +94,6 @@ pub fn readRequest(rb: *RtgBase, tag_list: ?[*]const TagItem) Request {
             null,
         .display_on = ub.GetTagData(tags.RTGA_DisplayOn, 0, tag_list) != 0,
         .compose = ub.GetTagData(tags.RTGA_Compose, 0, tag_list) != 0,
-        .error_ptr = @ptrFromInt(ub.GetTagData(tags.RTGA_ErrorPtr, 0, tag_list)),
     };
 }
 
@@ -157,8 +141,6 @@ pub fn setName(rb: *RtgBase, private: *Private, driver_name: [*:0]const u8, want
 pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     var caps: u32 = 0;
     if (ops.set_mode != null) caps |= rtg.boards.RTGBC_SET_MODE;
-    // Showing a buffer is not panning over one: no driver says it can move
-    // the picture within a buffer, so none claims it.
     if (ops.show_bitmap != null) caps |= rtg.boards.RTGBC_SHOW;
     if (ops.wait_vblank != null) caps |= rtg.boards.RTGBC_VBLANK;
     if (ops.refresh != null) caps |= rtg.boards.RTGBC_REFRESH;
@@ -168,13 +150,9 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     if (ops.control != null) caps |= rtg.boards.RTGBC_CONTROL;
     if (ops.fill_rect != null) caps |= rtg.boards.RTGBC_FILL_RECT;
     if (ops.copy_rect != null) caps |= rtg.boards.RTGBC_COPY_RECT;
-    if (ops.invert_rect != null) caps |= rtg.boards.RTGBC_INVERT_RECT;
     if (ops.blit_template != null) caps |= rtg.boards.RTGBC_BLIT_TEMPLATE;
     if (ops.blit_pattern != null) caps |= rtg.boards.RTGBC_BLIT_PATTERN;
-    if (ops.wait_blit != null) caps |= rtg.boards.RTGBC_ENGINE;
     if (ops.mirror != null) caps |= rtg.boards.RTGBC_MIRROR;
-    if (ops.swap_xy != null) caps |= rtg.boards.RTGBC_SWAP_XY;
-    if (ops.set_gap != null) caps |= rtg.boards.RTGBC_GAP;
     // A pointer is all three or none: one that could be set but not moved
     // is no pointer.
     if (ops.set_pointer != null and ops.move_pointer != null and ops.show_pointer != null) caps |= rtg.boards.RTGBC_POINTER;

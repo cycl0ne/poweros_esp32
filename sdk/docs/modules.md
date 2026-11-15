@@ -180,9 +180,8 @@ flowchart TB
 <!-- modchart end -->
 
 - **The display drivers** are the board's: rgbboard on the 7B, dcsboard
-  on the ES3C35P, qemuboard in QEMU, and the command buses a panel is
-  spoken to over - qspibus, and i2cbus over i2c.device. Each opens only
-  what its panel needs.
+  on the ES3C35P, qemuboard in QEMU, and the command bus a panel is
+  spoken to over - qspibus. Each opens only what its panel needs.
 - **The sound drivers** are the board's too: i2s, a line on the chip's
   I2S controller, and over it es8311 (the codec, set up over i2c.device)
   on the ES3C35P and the ESP32-P4-PC, or i2samp (amplifiers that take I2S)

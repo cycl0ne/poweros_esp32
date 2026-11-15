@@ -56,7 +56,7 @@ const _board = @import("_board.zig");
 /// emptied and its mode set under the picture it still shows.
 ///
 /// SEE ALSO:
-/// `FindBoardMode`, `BoardMode`, `AllocBitMap`
+/// `FindBoardMode`, `GetBoardInfo`, `AllocBitMap`
 ///
 /// EXAMPLES:
 /// ```zig

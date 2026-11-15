@@ -39,7 +39,7 @@ const _driver = @import("_driver.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `LockRtgDrivers`, `FindRtgDriver`
+/// `LockRtgDrivers`, `UnlockRtgDrivers`
 ///
 /// EXAMPLES:
 /// ```zig

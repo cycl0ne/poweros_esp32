@@ -199,7 +199,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 30;
+const REVISION = 31;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -2605,10 +2605,6 @@ fn blitPattern(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.Rt
     return engine.pattern(&screenOf(board).engine, bitmap, area, tile);
 }
 
-fn waitBlit(board: *rtg.RtgBoard) callconv(.c) void {
-    engine.waitIdle(&screenOf(board).engine);
-}
-
 fn blendRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
     return engine.blendRect(&screenOf(board).engine, bitmap, area, color);
 }
@@ -2638,7 +2634,6 @@ const ops = rtg.boards.RtgBoardOps{
     .copy_rect = &copyRect,
     .blit_template = &blitTemplate,
     .blit_pattern = &blitPattern,
-    .wait_blit = &waitBlit,
     .blend_pixels = &blendPixels,
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,

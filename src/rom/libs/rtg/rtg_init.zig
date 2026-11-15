@@ -32,7 +32,9 @@ pub const LIBRARY_VERSION = 1;
 /// answers RTGERR_TIMEOUT past it.
 /// 13: a board's lock around what changes the board - its buffers, what
 /// is shown, its mode; RTGCTRL_RESET_STATS on a board with no control.
-pub const LIBRARY_REVISION = 13;
+/// 14: ten calls nothing used are gone, their slots kept free; a call
+/// that answers with a pointer answers null and keeps no reason.
+pub const LIBRARY_REVISION = 14;
 const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -74,7 +76,6 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     lib.revision = LIBRARY_REVISION;
     rb.sys_base = sys_base;
     rb.utility_base = @ptrCast(sys_base.OpenLibrary(sdk.interface.utility.NAME, UTILITY_VERSION) orelse return null);
-    rb.last_error = rtg.errors.RTGERR_OK;
     rb.board_serial = 0;
     sys_base.NewList(&rb.drivers);
     sys_base.NewList(&rb.boards);

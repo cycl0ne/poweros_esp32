@@ -51,7 +51,7 @@
 //! raw port; `failures` counts them.
 //!
 //! One operation at a time, under the panel's engine semaphore; each one
-//! is done before it returns, so WaitBlit has nothing left to wait for.
+//! is done before it returns.
 //!
 //! **Its channels** are dma.resource's 2D channels 1 and 2 - send
 //! channels 1 and 2, receive channel 1 - claimed when the engine is set

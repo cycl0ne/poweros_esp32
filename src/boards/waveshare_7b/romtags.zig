@@ -8,9 +8,8 @@ const rom = @import("../../rom/modules.zig");
 // What every image has, what draws, the ESP32s' own, the battery,
 // and the drivers of this board's parts.
 pub const modules = rom.core ++ rom.screen ++ rom.esp32 ++ rom.battery ++ .{
-    // The I2C bus, and rtg's transport over it.
+    // The I2C bus.
     @import("../../rom/devs/i2c/i2c.zig"),
-    @import("../../rom/libs/rtg_driver/i2cbus/i2cbus.zig"),
     // The GT911.
     @import("../../rom/devs/touch/touch.zig"),
     // The CH422G, which holds the panel's and the touch controller's lines.

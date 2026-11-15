@@ -84,7 +84,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 8;
+const REVISION = 9;
 const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -796,11 +796,6 @@ fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
     return scale_file.scalePixels(&panel.engine, panel.sys, dest, area, pixels, width, height, panel.streaming);
 }
 
-/// Every operation is done before it returns: nothing to wait for.
-fn waitBlit(board: *rtg.RtgBoard) callconv(.c) void {
-    _ = board;
-}
-
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     _ = value;
     return switch (what) {
@@ -827,7 +822,6 @@ const ops = rtg.RtgBoardOps{
     .control = &control,
     .fill_rect = &fillRect,
     .copy_rect = &copyRect,
-    .wait_blit = &waitBlit,
     .blend_pixels = &blendPixels,
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,

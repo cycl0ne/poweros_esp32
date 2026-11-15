@@ -35,8 +35,10 @@ pub fn driverOf(node: *exec.Node) *rtg.RtgDriver {
 /// - `name` - the driver's name.
 /// - `kind` - `RTGDT_BOARD` or `RTGDT_TRANSPORT`.
 pub fn findDriverOfType(rb: *RtgBase, name: [*:0]const u8, kind: u32) ?*rtg.RtgDriver {
-    const rtg_lib = rb.iface();
-    const driver = rtg_lib.FindRtgDriver(name) orelse return null;
+    const sys = rb.sys_base;
+    sys.ObtainSemaphore(&rb.driver_lock);
+    defer sys.ReleaseSemaphore(&rb.driver_lock);
+    const driver = driverOf(sys.FindName(&rb.drivers, name) orelse return null);
     if (driver.type & kind == 0) return null;
     return driver;
 }

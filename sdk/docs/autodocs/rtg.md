@@ -23,7 +23,6 @@ Generated from the source by `./zig build autodoc`.
 - [BoardBrightness](#boardbrightness) - Reads a board's brightness.
 - [BoardControl](#boardcontrol) - Asks a board something only its driver knows about.
 - [BoardDisplayBitMap](#boarddisplaybitmap) - Tells which buffer a board is showing.
-- [BoardMode](#boardmode) - Tells which mode a board is in.
 - [CloseVideoLayer](#closevideolayer) - Gives a video layer back to its board.
 - [CopyRect](#copyrect) - Copies a rectangle between buffers with the board's engine.
 - [CopyRects](#copyrects) - Copies several rectangles from one buffer to another as one job of the board's engine.
@@ -34,13 +33,10 @@ Generated from the source by `./zig build autodoc`.
 - [FillRect](#fillrect) - Fills a rectangle of a buffer with the board's engine.
 - [FindBoard](#findboard) - Finds a board by its name.
 - [FindBoardMode](#findboardmode) - Finds a board's mode by its size and format.
-- [FindRtgDriver](#findrtgdriver) - Finds a driver by its name.
-- [FindRtgTagItem](#findrtgtagitem) - Finds a tag in a list.
 - [FreeBitMap](#freebitmap) - Gives a buffer back.
 - [GetBoardInfo](#getboardinfo) - Reads what a board is and what state it is in.
 - [GetBoardStats](#getboardstats) - Reads what a board that refreshes itself has been through.
 - [GetRtgTagData](#getrtgtagdata) - Returns a tag's data from a list, or a default.
-- [InvertRect](#invertrect) - Complements every pixel of a rectangle with the board's engine.
 - [LockRtgDrivers](#lockrtgdrivers) - Holds the driver list still, so it can be walked.
 - [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis.
 - [MoveBoardOverlay](#moveboardoverlay) - Puts the overlay's point at (x, y), and from then on keeps it there rather than with the pointer.
@@ -50,18 +46,15 @@ Generated from the source by `./zig build autodoc`.
 - [NextBoardMode](#nextboardmode) - Walks a board's modes.
 - [NextRtgDriver](#nextrtgdriver) - Walks the driver list.
 - [OpenVideoLayer](#openvideolayer) - Takes one of a board's video layers: a plane of its controller that shows a picture in YUV itself, scaled into a place on the display.
-- [PackRtgColor](#packrtgcolor) - Packs three eight-bit channels into one pixel of a format.
 - [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
 - [RemRtgDriver](#remrtgdriver) - Takes a driver off the library's list.
 - [RemRtgEventServer](#remrtgeventserver) - Takes an interrupt server off one of a board's events.
 - [RtgErrorText](#rtgerrortext) - Says what an `RTGERR_` code means, in words.
-- [RtgLastError](#rtglasterror) - Tells what the last call that answers with a pointer went wrong with.
 - [RxParam](#rxparam) - Sends a command and reads bytes back from the part on a bus.
 - [ScalePixels](#scalepixels) - Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage.
 - [SetBoardBrightness](#setboardbrightness) - Sets a board's brightness.
 - [SetBoardDisplay](#setboarddisplay) - Switches a board's display on or off.
-- [SetBoardGap](#setboardgap) - Sets the offset added to every coordinate a board sends.
 - [SetBoardMode](#setboardmode) - Puts a board in a mode.
 - [SetBoardOverlay](#setboardoverlay) - Gives a board a second image to lay over its picture, under the pointer, which from then on follows the pointer.
 - [SetBoardPointer](#setboardpointer) - Gives a board the image its pointer is drawn with.
@@ -70,12 +63,9 @@ Generated from the source by `./zig build autodoc`.
 - [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
 - [ShowVideoFrame](#showvideoframe) - Shows a picture in YUV on a video layer, scaled into its place.
 - [SignalRtgEvent](#signalrtgevent) - Tells a board's servers that one of its events happened.
-- [SwapBoardAxes](#swapboardaxes) - Exchanges a board's axes.
 - [TxColor](#txcolor) - Sends a command and a run of pixels to the part on a bus.
 - [TxParam](#txparam) - Sends a command and its parameters to the part on a bus.
 - [UnlockRtgDrivers](#unlockrtgdrivers) - Lets the driver list go again.
-- [UnpackRtgColor](#unpackrtgcolor) - Unpacks one pixel of a format into its channels.
-- [WaitBlit](#waitblit) - Waits until a board's engine has finished what it was given.
 - [WaitVBlank](#waitvblank) - Waits for the display's blanking.
 
 ## AddRtgDriver
@@ -127,7 +117,7 @@ None known.
 
 **SEE ALSO**
 
-`RemRtgDriver`, `FindRtgDriver`, `CreateBoardTagList`
+`RemRtgDriver`, `NextRtgDriver`, `CreateBoardTagList`
 
 **EXAMPLES**
 
@@ -217,11 +207,10 @@ fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, form
 
 **RESULT**
 
-The buffer, or null. `RtgLastError` then says why: `RTGERR_BAD_ARG` for
-a size of 0, `RTGERR_BAD_FORMAT` for a format this build does not know,
-`RTGERR_NO_DISPLAY` for a board with no display memory, or
-`RTGERR_NO_MEMORY` (no room, or the board holds as many buffers as it
-may).
+The buffer, or null: for a size of 0, a format this build does not
+know, a board with no display memory, or no room - in the display
+memory, in the system's, or because the board holds as many buffers as
+it may.
 
 **BEHAVIOR**
 
@@ -283,9 +272,8 @@ fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.RtgBit
 
 **RESULT**
 
-The buffer, or null. `RtgLastError` then says why: `RTGERR_BAD_ARG` for
-no pixels, a size of 0 or a pitch shorter than a row,
-`RTGERR_BAD_FORMAT`, or `RTGERR_NO_MEMORY`.
+The buffer, or null: for no pixels, a size of 0, a pitch shorter than
+a row, a format this build does not know, or no memory for the handle.
 
 **BEHAVIOR**
 
@@ -725,57 +713,6 @@ None known.
 const shown = rb.BoardDisplayBitMap(board) orelse return;
 ```
 
-## BoardMode
-
-Tells which mode a board is in.
-
-**SYNOPSIS**
-
-```zig
-fn BoardMode(_: *RtgBase, board: *rtg.RtgBoard) ?*rtg.RtgMode
-```
-
-**SINCE**
-
-1.0. LVO -84.
-
-**INPUTS**
-
-- `board` - the board.
-
-**RESULT**
-
-The mode, or null before `SetBoardMode`.
-
-**BEHAVIOR**
-
-The mode the last `SetBoardMode` that worked put the board in.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe. It reads one field.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`SetBoardMode`, `GetBoardInfo`
-
-**EXAMPLES**
-
-```zig
-const mode = rb.BoardMode(board) orelse return error.NoMode;
-```
-
 ## CloseVideoLayer
 
 Gives a video layer back to its board.
@@ -883,7 +820,7 @@ None known.
 
 **SEE ALSO**
 
-`FillRect`, `WaitBlit`
+`FillRect`, `CopyRects`
 
 **EXAMPLES**
 
@@ -948,7 +885,7 @@ None known.
 
 **SEE ALSO**
 
-`CopyRect`, `WaitBlit`
+`CopyRect`
 
 **EXAMPLES**
 
@@ -979,14 +916,13 @@ fn CreateBoardTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[*]co
 - `driver_name` - the driver to make it with.
 - `tag_list` - the `RTGA_` options: the board's name, a transport it
   talks through, whether to switch the display on, a brightness,
-  whether its screens' windows are composed (`RTGA_Compose`), data for
-  the driver, and `RTGA_ErrorPtr` for the reason if it fails.
+  whether its screens' windows are composed (`RTGA_Compose`), and data
+  for the driver.
 
 **RESULT**
 
-The board, or null. `RtgLastError` - and `RTGA_ErrorPtr`, if given -
-then says why: `RTGERR_NO_DRIVER`, `RTGERR_NO_MEMORY`, or what the
-driver answered.
+The board, or null: for no driver of that name that makes boards, no
+memory, or a driver that could not make it.
 
 **BEHAVIOR**
 
@@ -1045,14 +981,13 @@ fn CreateTransportTagList(rb: *RtgBase, driver_name: [*:0]const u8, tag_list: ?[
 **INPUTS**
 
 - `driver_name` - the driver to make it with.
-- `tag_list` - the `RTGA_` options: the transport's name, data for the
-  driver, and `RTGA_ErrorPtr` for the reason if it fails.
+- `tag_list` - the `RTGA_` options: the transport's name, and data for
+  the driver.
 
 **RESULT**
 
-The transport, or null. `RtgLastError` - and `RTGA_ErrorPtr`, if given
-- then says why: `RTGERR_NO_DRIVER`, `RTGERR_NO_MEMORY`, or what the
-driver answered.
+The transport, or null: for no driver of that name that makes buses,
+no memory, or a driver that could not make it.
 
 **BEHAVIOR**
 
@@ -1083,7 +1018,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-const io = rb.CreateTransportTagList("i2c", null) orelse return error.NoBus;
+const io = rb.CreateTransportTagList("qspi", &tags) orelse return error.NoBus;
 ```
 
 ## DeleteBoard
@@ -1110,8 +1045,8 @@ Nothing.
 
 **BEHAVIOR**
 
-A board that still has an event server on it is refused, with
-`RTGERR_IN_USE` in `RtgLastError`, and nothing of it is touched: the
+A board that still has an event server on it is refused - it stays on
+the list, which is how a caller sees it - and nothing of it is touched: the
 server's node would be left linked into a list that is freed. So is
 one with a video layer still open (`CloseVideoLayer` first).
 Otherwise it is taken off the display first, then every buffer it still has is
@@ -1171,8 +1106,8 @@ Nothing.
 
 **BEHAVIOR**
 
-A transport a board still talks through is refused, with `RTGERR_IN_USE`
-in `RtgLastError`. Otherwise the driver's `destroy` is called and the
+A transport a board still talks through is refused: it stays, its
+`open_cnt` not 0. Otherwise the driver's `destroy` is called and the
 transport leaves the list.
 
 **CONTEXT**
@@ -1251,7 +1186,7 @@ None known.
 
 **SEE ALSO**
 
-`InvertRect`, `PackRtgColor`, `WaitBlit`
+`BlendRect`, `CopyRect`
 
 **EXAMPLES**
 
@@ -1368,114 +1303,6 @@ None known.
 const mode = rb.FindBoardMode(board, 1024, 600, 0) orelse return error.NoMode;
 ```
 
-## FindRtgDriver
-
-Finds a driver by its name.
-
-**SYNOPSIS**
-
-```zig
-fn FindRtgDriver(rb: *RtgBase, driver_name: [*:0]const u8) ?*rtg.RtgDriver
-```
-
-**SINCE**
-
-1.0. LVO -28.
-
-**INPUTS**
-
-- `driver_name` - the name, as the driver registered it.
-
-**RESULT**
-
-The driver, or null if none has that name.
-
-**BEHAVIOR**
-
-The list is held while it is searched. The answer is only good while
-the driver stays on the list: hold it with `LockRtgDrivers` for as long
-as the answer is used.
-
-**CONTEXT**
-
-- Waits: yes, while another task holds the driver list.
-- Interrupts: no. It may wait.
-- Locks: no spinlock may be held: it waits for a lock.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated. The driver stays its module's.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`LockRtgDrivers`, `NextRtgDriver`
-
-**EXAMPLES**
-
-```zig
-rb.LockRtgDrivers();
-defer rb.UnlockRtgDrivers();
-const driver = rb.FindRtgDriver("qemu") orelse return;
-```
-
-## FindRtgTagItem
-
-Finds a tag in a list.
-
-**SYNOPSIS**
-
-```zig
-fn FindRtgTagItem(rb: *RtgBase, tag_value: Tag, tag_list: ?[*]const TagItem) ?*const TagItem
-```
-
-**SINCE**
-
-1.0. LVO -196.
-
-**INPUTS**
-
-- `tag_value` - the tag.
-- `tag_list` - the list; `TAG_MORE` is followed.
-
-**RESULT**
-
-The item, or null.
-
-**BEHAVIOR**
-
-utility.library's `FindTagItem`, here so a driver need open nothing but
-this library.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe in itself: it reads the list.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`GetRtgTagData`
-
-**EXAMPLES**
-
-```zig
-if (rb.FindRtgTagItem(MY_Mirror, tags) != null) mirror = true;
-```
-
 ## FreeBitMap
 
 Gives a buffer back.
@@ -1502,8 +1329,8 @@ Nothing.
 
 Display memory the library allocated goes back to the board; memory
 `AttachBitMap` was given stays the caller's. A buffer the board is
-showing is refused, with `RTGERR_IN_USE` in `RtgLastError`; it stays
-the caller's, to free once another is shown.
+showing is refused, and nothing says so but its `RTGBMF_SHOWING`,
+still set: it stays the caller's, to free once another is shown.
 
 **CONTEXT**
 
@@ -1562,8 +1389,7 @@ field near the end.
 
 The display memory still free, its largest piece, the number of modes
 and the brightness are read fresh; the rest is what the board already
-says about itself. After `SwapBoardAxes` the width and height are the
-turned ones, since they are what a caller draws on.
+says about itself.
 
 **CONTEXT**
 
@@ -1584,7 +1410,7 @@ None known.
 
 **SEE ALSO**
 
-`GetBoardStats`, `BoardMode`
+`GetBoardStats`, `FindBoardMode`
 
 **EXAMPLES**
 
@@ -1696,64 +1522,12 @@ None known.
 
 **SEE ALSO**
 
-`FindRtgTagItem`
+`CreateBoardTagList`
 
 **EXAMPLES**
 
 ```zig
 const hz = rb.GetRtgTagData(MY_Clock, 12_000_000, tags);
-```
-
-## InvertRect
-
-Complements every pixel of a rectangle with the board's engine.
-
-**SYNOPSIS**
-
-```zig
-fn InvertRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
-```
-
-**SINCE**
-
-1.0. LVO -132.
-
-**INPUTS**
-
-- `dest` - the buffer, of a board.
-- `area` - the rectangle.
-
-**RESULT**
-
-As for `FillRect`.
-
-**BEHAVIOR**
-
-As for `FillRect`: cut to the buffer here, and the engine's or nobody's.
-
-**CONTEXT**
-
-- Waits: only if the driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`FillRect`
-
-**EXAMPLES**
-
-```zig
-_ = rb.InvertRect(buffer, &area);
 ```
 
 ## LockRtgDrivers
@@ -1856,7 +1630,7 @@ None known.
 
 **SEE ALSO**
 
-`SwapBoardAxes`, `SetBoardGap`
+`GetBoardInfo`
 
 **EXAMPLES**
 
@@ -1960,8 +1734,8 @@ pointer is. The image's point is put here, which is its hot spot and
 not its corner. Nothing is done for the same place twice. An overlay
 that follows the pointer (SetBoardOverlay) moves with it.
 
-A board that turns its picture itself (`MirrorBoard`, `SwapBoardAxes`,
-`SetBoardGap`) turns the pointer with it: the driver lays the pointer
+A board that turns its picture itself (`MirrorBoard`) turns the
+pointer with it: the driver lays the pointer
 into the picture's own order on its way out, before the turn.
 
 **CONTEXT**
@@ -2211,7 +1985,7 @@ None known.
 
 **SEE ALSO**
 
-`LockRtgDrivers`, `FindRtgDriver`
+`LockRtgDrivers`, `UnlockRtgDrivers`
 
 **EXAMPLES**
 
@@ -2249,10 +2023,9 @@ fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagIte
 
 **RESULT**
 
-The layer, or null with `RtgLastError` saying why:
-`RTGERR_NOT_SUPPORTED` for a board without `RTGBC_VIDEO` or one whose
+The layer, or null: for a board without `RTGBC_VIDEO` or one whose
 controller cannot make the display's colours out of such a picture,
-`RTGERR_IN_USE` when its layers are all taken, `RTGERR_NO_MEMORY`.
+when its layers are all taken, or without memory for the handle.
 
 **BEHAVIOR**
 
@@ -2311,62 +2084,6 @@ const tags = [_]TagItem{
 };
 const layer = rb.OpenVideoLayer(board, &tags) orelse return putThroughGraphics();
 defer rb.CloseVideoLayer(layer);
-```
-
-## PackRtgColor
-
-Packs three eight-bit channels into one pixel of a format.
-
-**SYNOPSIS**
-
-```zig
-fn PackRtgColor(_: *RtgBase, format: u32, red: u32, green: u32, blue: u32) u32
-```
-
-**SINCE**
-
-1.0. LVO -152.
-
-**INPUTS**
-
-- `format` - the pixel format.
-- `red` - 0 to 255; more is 255.
-- `green` - 0 to 255.
-- `blue` - 0 to 255.
-
-**RESULT**
-
-The pixel, right-aligned. 0 for a format with no rule for it.
-
-**BEHAVIOR**
-
-The formats with alpha get an opaque one. A grey format weighs the
-three as the eye does, and a one-bit format sets its bit for anything
-that is not black.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe. It works on its arguments alone.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`UnpackRtgColor`, `FillRect`
-
-**EXAMPLES**
-
-```zig
-const red = rb.PackRtgColor(@intFromEnum(rtg.PixelFormat.rgb565), 255, 0, 0);
 ```
 
 ## RefreshBitMap
@@ -2650,70 +2367,12 @@ None known.
 
 **SEE ALSO**
 
-`RtgLastError`
+`ShowBitMap`
 
 **EXAMPLES**
 
 ```zig
 report(rb.RtgErrorText(code));
-```
-
-## RtgLastError
-
-Tells what the last call that answers with a pointer went wrong with.
-
-**SYNOPSIS**
-
-```zig
-fn RtgLastError(rb: *RtgBase) i32
-```
-
-**SINCE**
-
-1.0. LVO -200.
-
-**INPUTS**
-
-None.
-
-**RESULT**
-
-The error code, `RTGERR_OK` if none.
-
-**BEHAVIOR**
-
-The calls that answer with a pointer - `CreateBoardTagList`,
-`AllocBitMap` and the like - have nowhere to return an error, so they
-leave it here.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe. It reads one field.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-It is one word for the whole library, not one per task: another task's
-failure can land between a call and this. A caller that cannot be sure
-passes `RTGA_ErrorPtr` and reads its own.
-
-**SEE ALSO**
-
-`RtgErrorText`, `CreateBoardTagList`
-
-**EXAMPLES**
-
-```zig
-const board = rb.CreateBoardTagList("rgb", null) orelse {
-    report(rb.RtgErrorText(rb.RtgLastError()));
-    return;
-};
 ```
 
 ## RxParam
@@ -2946,59 +2605,6 @@ None known.
 _ = rb.SetBoardDisplay(board, true);
 ```
 
-## SetBoardGap
-
-Sets the offset added to every coordinate a board sends.
-
-**SYNOPSIS**
-
-```zig
-fn SetBoardGap(_: *RtgBase, board: *rtg.RtgBoard, gap_x: u32, gap_y: u32) i32
-```
-
-**SINCE**
-
-1.0. LVO -216.
-
-**INPUTS**
-
-- `board` - the board.
-- `gap_x` - columns to skip at the left.
-- `gap_y` - rows to skip at the top.
-
-**RESULT**
-
-`RTGERR_OK`, `RTGERR_NOT_SUPPORTED`, or what the driver answered.
-
-**BEHAVIOR**
-
-For glass whose visible area does not start where the controller's does.
-
-**CONTEXT**
-
-- Waits: only if the driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`MirrorBoard`, `SwapBoardAxes`
-
-**EXAMPLES**
-
-```zig
-_ = rb.SetBoardGap(board, 0, 8);
-```
-
 ## SetBoardMode
 
 Puts a board in a mode.
@@ -3056,7 +2662,7 @@ emptied and its mode set under the picture it still shows.
 
 **SEE ALSO**
 
-`FindBoardMode`, `BoardMode`, `AllocBitMap`
+`FindBoardMode`, `GetBoardInfo`, `AllocBitMap`
 
 **EXAMPLES**
 
@@ -3594,61 +3200,6 @@ None known.
 _ = rb.SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
 ```
 
-## SwapBoardAxes
-
-Exchanges a board's axes.
-
-**SYNOPSIS**
-
-```zig
-fn SwapBoardAxes(_: *RtgBase, board: *rtg.RtgBoard, swap: bool) i32
-```
-
-**SINCE**
-
-1.0. LVO -212.
-
-**INPUTS**
-
-- `board` - the board.
-- `swap` - true to exchange them.
-
-**RESULT**
-
-`RTGERR_OK` - also when it is already that way - `RTGERR_NOT_SUPPORTED`,
-or what the driver answered.
-
-**BEHAVIOR**
-
-With `MirrorBoard` that is every right-angle turn. The board's width
-and height in `GetBoardInfo` are exchanged too, since they are what a
-caller draws on.
-
-**CONTEXT**
-
-- Waits: only if the driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`MirrorBoard`, `GetBoardInfo`
-
-**EXAMPLES**
-
-```zig
-_ = rb.SwapBoardAxes(board, true);
-```
-
 ## TxColor
 
 Sends a command and a run of pixels to the part on a bus.
@@ -3678,19 +3229,18 @@ were not the ones given.
 
 **BEHAVIOR**
 
-It may come back before the bytes have gone: `RTGEV_TX_DONE` says when
-they have, and the bytes must stay put until then.
+It comes back when the bytes have gone: the bus has been waited for.
 
 **CONTEXT**
 
-- Waits: only if the driver does.
+- Waits: yes, for the bus.
 - Interrupts: no. The driver may wait on its bus.
 - Locks: no spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-The bytes stay the caller's, and must stay put until `RTGEV_TX_DONE`.
+The bytes stay the caller's, and are no longer read when this returns.
 
 **BUGS**
 
@@ -3698,7 +3248,7 @@ None known.
 
 **SEE ALSO**
 
-`TxParam`, `AddRtgEventServer`
+`TxParam`, `RxParam`
 
 **EXAMPLES**
 
@@ -3810,115 +3360,6 @@ None known.
 
 ```zig
 rb.UnlockRtgDrivers();
-```
-
-## UnpackRtgColor
-
-Unpacks one pixel of a format into its channels.
-
-**SYNOPSIS**
-
-```zig
-fn UnpackRtgColor(_: *RtgBase, format: u32, color: u32, out: *rtg.RtgRGB) void
-```
-
-**SINCE**
-
-1.0. LVO -156.
-
-**INPUTS**
-
-- `format` - the pixel format.
-- `color` - the pixel, right-aligned.
-- `out` - where the channels go.
-
-**RESULT**
-
-Nothing; the channels are in `out`, all 0 for a format with no rule.
-
-**BEHAVIOR**
-
-The inverse of `PackRtgColor` for every format that loses nothing; a
-format with fewer bits a channel gives its bits back spread over the
-range.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe. It works on its arguments alone.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`PackRtgColor`
-
-**EXAMPLES**
-
-```zig
-var rgb: rtg.RtgRGB = .{};
-rb.UnpackRtgColor(format, pixel, &rgb);
-```
-
-## WaitBlit
-
-Waits until a board's engine has finished what it was given.
-
-**SYNOPSIS**
-
-```zig
-fn WaitBlit(_: *RtgBase, board: *rtg.RtgBoard) void
-```
-
-**SINCE**
-
-1.0. LVO -148.
-
-**INPUTS**
-
-- `board` - the board.
-
-**RESULT**
-
-Nothing.
-
-**BEHAVIOR**
-
-Returns at once for a board with no engine, or one whose engine is
-finished before it returns.
-
-**CONTEXT**
-
-- Waits: yes, while the engine works.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`FillRect`, `CopyRect`
-
-**EXAMPLES**
-
-```zig
-_ = rb.FillRect(buffer, &area, colour);
-rb.WaitBlit(board);
 ```
 
 ## WaitVBlank

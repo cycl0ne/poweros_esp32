@@ -5,7 +5,6 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const privateOf = _transport.privateOf;
-const err = rtg.errors;
 const _transport = @import("_transport.zig");
 
 /// Gives a bus back.
@@ -24,8 +23,8 @@ const _transport = @import("_transport.zig");
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A transport a board still talks through is refused, with `RTGERR_IN_USE`
-/// in `RtgLastError`. Otherwise the driver's `destroy` is called and the
+/// A transport a board still talks through is refused: it stays, its
+/// `open_cnt` not 0. Otherwise the driver's `destroy` is called and the
 /// transport leaves the list.
 ///
 /// CONTEXT:
@@ -52,10 +51,7 @@ pub fn DeleteTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void {
     const gone = io orelse return;
     const sys = rb.sys_base;
     // A board still talking through it keeps it alive.
-    if (gone.open_cnt != 0) {
-        rb.last_error = err.RTGERR_IN_USE;
-        return;
-    }
+    if (gone.open_cnt != 0) return;
     if (gone.ops) |ops| {
         if (ops.destroy) |destroy| destroy(gone);
     }
