@@ -7015,4 +7015,16 @@ pub const LIBRARY_VERSION = 1;
 /// apart. The other 307 cases are each as they were at 1.209, and
 /// FacetProbe 1.48 passes its 891 checks: the attachment sampled too is
 /// made now, as the query says.
-pub const LIBRARY_REVISION = 210;
+///
+/// 211: **A window's late picture on a board that streams its buffer.**
+/// A picture that follows the last by more than a frame is copied at
+/// once (revision 9) on a board that counts its frames. It is whole
+/// there only where the board keeps a copy from crossing what its
+/// display reads, which the `fb` boards do. A board whose display reads
+/// the screen's buffer as it lies (`RTGBF_STREAMING`: the RGB panel's
+/// stream, the DSI boards) has no such lock, so there every picture
+/// waits for its frame (`surface/window.zig` `streams`), and the window
+/// shows whole pictures as CreateWindowSurface says. The DSI boards
+/// count their frames from rtg-dsi 1.7, which is what would have taken
+/// the late way there. Read from the code: not yet on a board.
+pub const LIBRARY_REVISION = 211;

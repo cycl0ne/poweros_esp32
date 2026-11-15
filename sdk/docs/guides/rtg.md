@@ -248,7 +248,11 @@ blanking to wait for and answers `RTGERR_NOT_SUPPORTED` - the 3.5"
 board does. An `fb` board is not told when a frame begins either; it
 waits the frames out at 60 a second on timer.device, so a program that
 paces itself by the display runs at the speed it would on one that
-says. `SetBoardDisplay` turns the display on or off, and
+says. A board that streams - the 7B's panel, the ESP32-P4's `dsi`
+boards - says when each frame ends, and is waited for no longer than
+two frames' time for each blanking asked for: past that the answer is
+`RTGERR_TIMEOUT`, so the call comes back on a board whose stream stands
+still or has not begun. `SetBoardDisplay` turns the display on or off, and
 `SetBoardBrightness` sets the backlight, 0 to 100 whichever way round the
 part counts.
 
@@ -555,7 +559,8 @@ server returns 0 unless it means to keep the event from those below it. A
 driver raises an event with `SignalRtgEvent`, from its own interrupt.
 
 Which events come depends on the board: the 7B's RGB panel raises
-`RTGEV_VBLANK` and `RTGEV_SHOWN`, the QSPI and I2C transports
+`RTGEV_VBLANK` and `RTGEV_SHOWN`, the ESP32-P4's `dsi` boards - a panel
+or HDMI - `RTGEV_VBLANK` alone, the QSPI and I2C transports
 `RTGEV_TX_DONE`; the 3.5" board, the emulator and the `fb` boards raise
 neither of the first two, so a server for them never runs there.
 

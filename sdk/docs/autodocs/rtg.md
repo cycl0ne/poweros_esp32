@@ -3879,15 +3879,20 @@ fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32
 
 **RESULT**
 
-`RTGERR_OK`, `RTGERR_NOT_SUPPORTED` for a board that signals no
-blankings, `RTGERR_NO_MEMORY` without a free signal, or what the
-driver's own wait answered.
+`RTGERR_OK`; `RTGERR_TIMEOUT` when the blankings did not come within
+two frames' time for each; `RTGERR_NOT_SUPPORTED` for a board that
+signals no blankings, and where there is no timer.device to end the
+wait by; `RTGERR_NO_MEMORY` without a free signal; or what the driver's
+own wait answered.
 
 **BEHAVIOR**
 
 A driver with a wait of its own does it. Otherwise the task hangs an
 event server on `RTGEV_VBLANK` that signals it after the count, and
-waits.
+waits for that or for the time limit, whichever is first: two frames
+of the board's refresh rate for each blanking asked for, a frame taken
+as a sixtieth of a second on a board that names no rate. So the call
+comes back on a board whose stream has stopped, or has not begun.
 
 **CONTEXT**
 
@@ -3898,7 +3903,16 @@ waits.
 
 **OWNERSHIP**
 
-A signal is taken for the wait and given back.
+A signal is taken for the wait and given back. Nothing is allocated:
+the event server, the limit's request and its reply port are on the
+caller's stack; the server is off the board's list and the request
+back from timer.device when this returns.
+
+**NOTES**
+
+`RTGERR_TIMEOUT` says nothing was waited for in step with the display:
+a caller that paces itself by this call has been held for the limit
+and no longer.
 
 **BUGS**
 
@@ -3906,10 +3920,12 @@ None known.
 
 **SEE ALSO**
 
-`AddRtgEventServer`
+`AddRtgEventServer`, `GetBoardStats`
 
 **EXAMPLES**
 
 ```zig
-_ = rb.WaitVBlank(board, 0);
+if (rb.WaitVBlank(board, 0) == rtg.errors.RTGERR_TIMEOUT) {
+    // the board sends no frames just now
+}
 ```

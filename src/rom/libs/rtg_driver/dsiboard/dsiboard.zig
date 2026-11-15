@@ -22,8 +22,11 @@
 //! lies in one piece of memory (`chain.zig`) - and its transfer-done
 //! interrupt sends it again: from a new chain, if one was shown
 //! meanwhile, which is how a flip or a band change happens at a frame's
-//! end. The picture is read straight out of PSRAM; the CPU's writes reach
-//! it when RefreshBitMap writes them back out of the cache.
+//! end. That interrupt is the frame's: it counts the frame begun
+//! (`RtgBoardStats.blanks`) and signals `RTGEV_VBLANK`, which is what
+//! WaitVBlank waits for. The picture is read straight out of PSRAM; the
+//! CPU's writes reach it when RefreshBitMap writes them back out of the
+//! cache.
 //!
 //! **HDMI.** A part that is an HDMI bridge (CHIP_LT8912B) is the same
 //! board with four differences: create refuses it unless a monitor's
@@ -81,8 +84,8 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 6;
-const BUILD_DATE = "28.10.2026";
+const REVISION = 7;
+const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -169,7 +172,8 @@ fn panelOf(board: *rtg.RtgBoard) *Panel {
 // --- the interrupts ------------------------------------------------------
 
 /// A picture has gone: send the next one, from the chain shown meanwhile
-/// if there is one.
+/// if there is one. The next frame has begun with it, which is counted
+/// and said to whoever waits for a blanking (WaitVBlank).
 fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const panel: *Panel = @ptrCast(@alignCast(is_data.?));
@@ -184,7 +188,9 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         chain_file.rearm(panel.chain);
         dwgdma.run(channel, panel.chain.first);
         panel.stats.frames +%= 1;
+        panel.stats.blanks +%= 1;
         engine_file.frameTick(&panel.engine);
+        _ = panel.board.rtg_base.?.SignalRtgEvent(panel.board, rtg.events.RTGEV_VBLANK);
     }
     return 1;
 }

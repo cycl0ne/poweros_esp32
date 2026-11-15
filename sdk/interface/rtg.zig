@@ -303,7 +303,8 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.RefreshBitMap, Fn.RefreshBitMap, .{ bitmap, y, rows });
     }
 
-    /// Wait for `frames` blankings; 0 is the next one. Not from interrupts.
+    /// Wait for `frames` blankings; 0 is the next one. RTGERR_TIMEOUT when
+    /// they do not come within two frames' time each. Not from interrupts.
     pub fn WaitVBlank(self: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32 {
         return libraries.call(self, LVO.WaitVBlank, Fn.WaitVBlank, .{ board, frames });
     }

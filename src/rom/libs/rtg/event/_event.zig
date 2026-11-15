@@ -7,7 +7,8 @@
 //!
 //! WaitVBlank is built out of the same thing: a board whose driver can
 //! wait is asked to, and one that only signals gets a server of the
-//! library's own on the stack of the task that is waiting.
+//! library's own on the stack of the task that is waiting, with a time
+//! limit beside it (display/waitvblank.zig).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;

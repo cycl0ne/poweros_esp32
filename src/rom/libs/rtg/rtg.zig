@@ -137,6 +137,188 @@ test {
 const kexec = @import("../exec/exec.zig");
 const kutility = @import("../utility/utility.zig");
 const fake = @import("../rtg_driver/fakeboard/fakeboard.zig");
+const timer = sdk.devices.timer;
+
+/// timer.device for the tests. It serves what the library sends and
+/// nothing else: TR_ADDREQUEST on the unit its open gave, which waits
+/// until a test lets its time pass (`expire`); any other request is
+/// answered IOERR_NOCMD at once, as the device answers a command it does
+/// not know. What a request was sent with is kept for the test to read.
+/// One request at a time, which is all the library sends.
+const FakeTimer = struct {
+    var device: ?*exec.Device = null;
+    var unit: exec.Unit = .{};
+    /// The unit number the device was opened on; `no_unit` before.
+    var opened_unit: u32 = no_unit;
+    const no_unit = ~@as(u32, 0);
+    /// The request whose time has not come.
+    var waiting: ?*exec.IORequest = null;
+    /// How an abort is answered: with the reply made inside AbortIO, as
+    /// the device makes it - or, set, with the request only taken off and
+    /// its reply left for `land`, as a device that answers an abort
+    /// before the reply is made.
+    var abort_replies_later = false;
+    /// The request an abort took off whose reply is still to be made.
+    var leaving: ?*exec.IORequest = null;
+    /// Requests sent and taken back, and the time the last was sent with.
+    var sent: u32 = 0;
+    var aborted: u32 = 0;
+    var last_micros: u64 = 0;
+    /// Where the last request sent was. Never read through: its memory
+    /// is its sender's, and has gone by the time a test looks.
+    var last: ?*exec.IORequest = null;
+
+    fn open(dev: *exec.Device, io: *exec.IORequest, unit_number: u32, flags: u32) callconv(.c) i32 {
+        _ = flags;
+        dev.open_cnt += 1;
+        opened_unit = unit_number;
+        io.unit = &unit;
+        return 0;
+    }
+    fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
+        _ = io;
+        dev.open_cnt -= 1;
+        return null;
+    }
+    /// Never by itself: `remove` takes it off.
+    fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
+        _ = dev;
+        return null;
+    }
+    fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
+        _ = dev;
+        io.flags &= ~exec.IOF_QUICK;
+        last = io;
+        if (io.command != timer.TR_ADDREQUEST or io.unit != &unit) {
+            io.err = exec.IOERR_NOCMD;
+            kexec.ReplyIO(kexec.SysBase, io);
+            return;
+        }
+        const request: *timer.TimeRequest = @fieldParentPtr("node", io);
+        io.err = 0;
+        io.message.node.type = .message;
+        sent += 1;
+        last_micros = request.time.toMicros();
+        waiting = io;
+    }
+    fn abortIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) i32 {
+        _ = dev;
+        if (waiting != io) return -1;
+        waiting = null;
+        aborted += 1;
+        io.err = exec.IOERR_ABORTED;
+        if (abort_replies_later) {
+            leaving = io;
+        } else {
+            kexec.ReplyIO(kexec.SysBase, io);
+        }
+        return 0;
+    }
+    /// The waiting request's time has come: it is replied, as the
+    /// device's interrupt replies it.
+    fn expire() void {
+        const io = waiting orelse return;
+        waiting = null;
+        kexec.ReplyIO(kexec.SysBase, io);
+    }
+    /// The reply of the request an abort took off, made now.
+    fn land() void {
+        const io = leaving orelse return;
+        leaving = null;
+        kexec.ReplyIO(kexec.SysBase, io);
+    }
+
+    const vectors = [_]*const anyopaque{
+        exec.vec(open),
+        exec.vec(close),
+        exec.vec(expunge),
+        exec.vec(exec.libExtFunc),
+        exec.vec(beginIO),
+        exec.vec(abortIO),
+    };
+
+    /// The device on exec's list, before the library is made and opens it.
+    fn add() !void {
+        unit = .{};
+        opened_unit = no_unit;
+        waiting = null;
+        abort_replies_later = false;
+        leaving = null;
+        sent = 0;
+        aborted = 0;
+        last_micros = 0;
+        last = null;
+        const dev = kexec.MakeLibrary(kexec.SysBase, &vectors, @sizeOf(exec.Device), null, null) orelse return error.NoTimer;
+        dev.node.name = sdk.interface.timer.NAME;
+        kexec.AddDevice(kexec.SysBase, dev);
+        device = dev;
+    }
+
+    /// Off the list and freed, once nothing has it open.
+    fn remove() void {
+        const dev = device orelse return;
+        device = null;
+        kexec.Remove(kexec.SysBase, &dev.node);
+        kexec.freeLibraryMemory(kexec.SysBase, dev);
+    }
+};
+
+/// The task switch for the tests, in place of the CPU's: a task that
+/// waits is switched away from by exec's own dispatcher, `meanwhile` runs
+/// as an interrupt would while it sleeps - again for as long as the task
+/// is not woken - and the dispatcher brings the task back once it is. A
+/// wait nothing ends stops the test instead of spinning.
+const Sleep = struct {
+    /// What an interrupt does while the task sleeps.
+    var meanwhile: ?*const fn () void = null;
+    /// How often a task slept, and how many interrupts came meanwhile.
+    var sleeps: u32 = 0;
+    var interrupts: u32 = 0;
+    var switching = false;
+    /// The switch that was there before.
+    var before: *const fn () void = undefined;
+    /// More interrupts than this in one sleep is a wait nothing ends.
+    const patience = 16;
+
+    fn switchNow() void {
+        const sys = kexec.SysBase;
+        const task = kexec.FindTask(sys, null).?;
+        // A switch that is merely due changes nothing here: there is one
+        // task, and it runs.
+        if (task.state != .wait or switching) return;
+        switching = true;
+        defer switching = false;
+        sleeps += 1;
+        // Out of the task: the core goes on with its idle task. A task's
+        // context is the task, as with no CPU to save one.
+        kexec.interruptEnter(sys);
+        var idle = kexec.interruptExit(sys, task);
+        // Interrupts, until one wakes the task: at that one's end the
+        // dispatcher goes back to it.
+        var came: u32 = 0;
+        while (task.state == .wait) : (came += 1) {
+            if (came == patience) @panic("a task waits and nothing wakes it");
+            kexec.interruptEnter(sys);
+            interrupts += 1;
+            if (meanwhile) |happens| happens();
+            idle = kexec.interruptExit(sys, idle);
+        }
+        if (task.state != .run) @panic("a task was woken and the core did not go back to it");
+    }
+
+    fn install(happens: *const fn () void) void {
+        meanwhile = happens;
+        sleeps = 0;
+        interrupts = 0;
+        before = kexec.task_hardware.switch_now;
+        kexec.task_hardware.switch_now = switchNow;
+    }
+
+    fn uninstall() void {
+        meanwhile = null;
+        kexec.task_hardware.switch_now = before;
+    }
+};
 
 test {
     _ = @import("../rtg_driver/fakeboard/fakeboard.zig");
@@ -144,10 +326,12 @@ test {
 }
 
 /// exec on its test RAM, utility.library and rtg.library from their tags,
-/// with the test board's driver registered.
+/// the tests' timer.device there for the library to open, and the test
+/// board's driver registered.
 fn setUp() !*RtgBase {
     try kexec.setUp();
     _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+    try FakeTimer.add();
     const made = kexec.InitResident(kexec.SysBase, &rtg_library_tag, null) orelse return error.NoRtg;
     const rb: *RtgBase = @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(made))));
     const state = fake.create(rb.sys_base) orelse return error.NoDriver;
@@ -161,17 +345,21 @@ fn fakeOf(rb: *RtgBase) *fake.State {
     return fake.stateOf(base(rb).FindRtgDriver(fake.DRIVER_NAME).?);
 }
 
-/// Neither library expunges itself: take the driver off, close utility for
-/// rtg, free both, and check that nothing is left.
+/// Neither library expunges itself: take the driver off, close utility
+/// and the timer for rtg, free all three, and check that nothing is left -
+/// no memory, and no signal of the test's task that a wait took.
 fn tearDown(rb: *RtgBase) !void {
     const state = fakeOf(rb);
     _ = base(rb).RemRtgDriver(&state.driver);
     fake.destroy(state);
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(rb.utility_base));
     _ = kexec.CloseLibrary(kexec.SysBase, &ub.lib);
+    if (rb.timer_io.node.device != null) kexec.CloseDevice(kexec.SysBase, &rb.timer_io.node);
+    FakeTimer.remove();
     kexec.Remove(kexec.SysBase, &rb.lib.node);
     kexec.freeLibraryMemory(kexec.SysBase, &rb.lib);
     kutility.freeForTests(ub);
+    try testing.expectEqual(exec.tasks.system_signals, kexec.FindTask(kexec.SysBase, null).?.sig_alloc);
     try kexec.expectNoLeaks();
 }
 
@@ -690,6 +878,151 @@ test "events: highest first, and the first to answer ends it" {
 
     base(rb).DeleteBoard(board);
     try tearDown(rb);
+}
+
+/// The board the frames of the next tests end on.
+var frames_board: ?*rtg.RtgBoard = null;
+
+fn endOneFrame() void {
+    fake.endFrame(frames_board.?);
+}
+
+/// A frame ends - or, where an abort's reply is still to be made, that
+/// reply lands.
+fn frameOrLanding() void {
+    if (FakeTimer.leaving != null) FakeTimer.land() else endOneFrame();
+}
+
+test "WaitVBlank: woken by the board's frames, the limit's request taken back" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    const blankings = &board.event_lists[rtg.events.RTGEV_VBLANK];
+    // The library's own request, which every wait copies and none sends.
+    const opened = rb.timer_io;
+    try testing.expectEqual(timer.UNIT_MICROHZ, FakeTimer.opened_unit);
+    frames_board = board;
+    Sleep.install(&endOneFrame);
+    defer Sleep.uninstall();
+
+    // The next blanking: the task sleeps once, and the frame that ends
+    // meanwhile wakes it. The limit never came, and is taken back; the
+    // wait's server is off the board.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 0));
+    try testing.expect(blankings.isEmpty());
+    try testing.expectEqual(@as(u32, 1), Sleep.sleeps);
+    try testing.expectEqual(@as(u32, 1), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 1), FakeTimer.sent);
+    try testing.expectEqual(@as(u32, 1), FakeTimer.aborted);
+    try testing.expect(FakeTimer.waiting == null);
+    try testing.expect(FakeTimer.last.? != &rb.timer_io.node);
+    try testing.expectEqual(opened, rb.timer_io);
+    // Two frames' time for the one asked, a frame a sixtieth of a second
+    // on a board that names no rate.
+    try testing.expectEqual(@as(u64, 2 * 16_667), FakeTimer.last_micros);
+
+    // Three of them: one sleep through all three, woken by the third,
+    // and the limit three times as long - by the board's own rate, 50 a
+    // second here.
+    board.info.refresh_mhz = 50_000;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 3));
+    try testing.expect(blankings.isEmpty());
+    try testing.expectEqual(@as(u32, 2), Sleep.sleeps);
+    try testing.expectEqual(@as(u32, 4), Sleep.interrupts);
+    try testing.expectEqual(@as(u32, 4), fk.log.frames_ended);
+    try testing.expectEqual(@as(u64, 3 * 2 * 20_000), FakeTimer.last_micros);
+    try testing.expectEqual(@as(u32, 2), FakeTimer.aborted);
+    try testing.expectEqual(opened, rb.timer_io);
+
+    // An abort answered before its reply is made: the wait goes on until
+    // the reply has landed - a sleep more - so none is left to land on a
+    // port that has gone with the call.
+    FakeTimer.abort_replies_later = true;
+    Sleep.meanwhile = &frameOrLanding;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 1));
+    try testing.expect(FakeTimer.leaving == null);
+    try testing.expect(blankings.isEmpty());
+    try testing.expectEqual(@as(u32, 4), Sleep.sleeps);
+    try testing.expectEqual(@as(u32, 6), Sleep.interrupts);
+    try testing.expectEqual(@as(u32, 5), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 3), FakeTimer.aborted);
+    try testing.expectEqual(opened, rb.timer_io);
+    FakeTimer.abort_replies_later = false;
+
+    base(rb).DeleteBoard(board);
+    try testing.expect(base(rb).NextBoard(null) == null);
+    try tearDown(rb);
+}
+
+test "WaitVBlank: a board that sends no frames is waited for no longer than the limit" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    const blankings = &board.event_lists[rtg.events.RTGEV_VBLANK];
+    Sleep.install(&FakeTimer.expire);
+    defer Sleep.uninstall();
+
+    // No frame ends: the limit's time passes while the task sleeps, and
+    // the wait's server is off the board all the same.
+    try testing.expectEqual(rtg.errors.RTGERR_TIMEOUT, base(rb).WaitVBlank(board, 2));
+    try testing.expect(blankings.isEmpty());
+    try testing.expectEqual(@as(u32, 1), Sleep.sleeps);
+    try testing.expectEqual(@as(u32, 0), fk.log.frames_ended);
+    try testing.expectEqual(@as(u64, 2 * 2 * 16_667), FakeTimer.last_micros);
+    try testing.expectEqual(@as(u32, 0), FakeTimer.aborted);
+    try testing.expect(FakeTimer.waiting == null);
+
+    // One frame of the two, and then no more: the frame wakes nobody,
+    // and the limit ends the wait all the same.
+    frames_board = board;
+    frames_then_time = 0;
+    Sleep.meanwhile = &oneFrameThenTime;
+    try testing.expectEqual(rtg.errors.RTGERR_TIMEOUT, base(rb).WaitVBlank(board, 2));
+    try testing.expect(blankings.isEmpty());
+    try testing.expectEqual(@as(u32, 1), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 2), Sleep.sleeps);
+    try testing.expectEqual(@as(u32, 3), Sleep.interrupts);
+
+    // A board that signals no blankings is not waited for, and neither is
+    // one where there is no clock to end the wait by.
+    board.info.flags &= ~rtg.boards.RTGBF_STREAMING;
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).WaitVBlank(board, 1));
+    board.info.flags |= rtg.boards.RTGBF_STREAMING;
+    const device = rb.timer_io.node.device;
+    rb.timer_io.node.device = null;
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).WaitVBlank(board, 1));
+    rb.timer_io.node.device = device;
+    try testing.expectEqual(@as(u32, 2), FakeTimer.sent);
+
+    // A driver with a wait of its own is asked, with the count as given,
+    // and what it answers is the call's answer.
+    var ops = board.ops.?.*;
+    ops.wait_vblank = &fake.waitVBlank;
+    const kept = board.ops;
+    board.ops = &ops;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 0));
+    try testing.expectEqual(@as(u32, 1), fk.log.vblank_waits);
+    try testing.expectEqual(@as(u32, 0), fk.log.last_wait_frames);
+    fk.wait_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).WaitVBlank(board, 7));
+    try testing.expectEqual(@as(u32, 7), fk.log.last_wait_frames);
+    try testing.expectEqual(@as(u32, 2), FakeTimer.sent);
+    board.ops = kept;
+
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+/// How often `oneFrameThenTime` ran.
+var frames_then_time: u32 = 0;
+
+/// The first interrupt ends a frame, which is not yet the count; the
+/// next lets the limit's time pass.
+fn oneFrameThenTime() void {
+    frames_then_time += 1;
+    if (frames_then_time == 1) endOneFrame() else FakeTimer.expire();
 }
 
 test "the engine: the rectangle is cut down before the board sees it" {

@@ -3,12 +3,14 @@
 //!
 //! The tag is a cold-start, auto-init resident; exec builds the library
 //! from the InitTable - the jump table is rtg_lvo.zig's - and calls
-//! `init`, which opens utility.library and sets up the lists and locks.
+//! `init`, which opens utility.library and timer.device and sets up the
+//! lists and locks.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
+const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const rtg_lvo = @import("rtg_lvo.zig");
 const RtgBase = @import("rtg_base.zig").RtgBase;
@@ -26,8 +28,10 @@ pub const LIBRARY_VERSION = 1;
 /// 10: video layers - OpenVideoLayer, CloseVideoLayer, ShowVideoFrame,
 /// MoveVideoLayer: a plane that shows a picture in YUV itself.
 /// 11: RtgBoardStats.blanks - the display's frames begun.
-pub const LIBRARY_REVISION = 11;
-const BUILD_DATE = "30.10.2026";
+/// 12: WaitVBlank's wait for a board's frames has a time limit, and
+/// answers RTGERR_TIMEOUT past it.
+pub const LIBRARY_REVISION = 12;
+const BUILD_DATE = "15.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -46,7 +50,9 @@ fn rtgBase(lib: *exec.Library) *RtgBase {
 
 /// LibInit: exec has copied the tag's name, version and ID string into the
 /// base. Without utility.library there is no rtg.library - the tag lists
-/// are how a board is configured, and they are utility's.
+/// are how a board is configured, and they are utility's. timer.device is
+/// opened here, once, for the waits that have a time limit: at the first
+/// wait two tasks could both be the first.
 ///
 /// INPUTS:
 /// - `lib` - the library as exec made it.
@@ -54,7 +60,9 @@ fn rtgBase(lib: *exec.Library) *RtgBase {
 /// - `sys_base` - exec, kept in the base.
 ///
 /// RESULT:
-/// The library, or null if utility.library could not be opened.
+/// The library, or null if utility.library could not be opened. Without
+/// timer.device it still starts, and a wait that needs a time limit is
+/// refused.
 ///
 /// CONTEXT:
 /// Runs on the exec task at cold start, with multitasking started.
@@ -72,6 +80,11 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&rb.driver_lock);
     sys_base.InitSemaphore(&rb.board_lock);
     sys_base.InitSemaphore(&rb.pointer_lock);
+    rb.timer_io = .{};
+    rb.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
+    if (sys_base.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &rb.timer_io.node, 0) != 0) {
+        rb.timer_io.node.device = null;
+    }
     return lib;
 }
 
@@ -82,9 +95,9 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-/// Cold start at 24: after utility.library (103), which it opens, and
-/// after the resources a driver needs (dma 70, i2c 35, expander 30), and
-/// before any driver, which opens this.
+/// Cold start at 24: after utility.library (103) and timer.device (50),
+/// which it opens, and after the resources a driver needs (dma 70, i2c
+/// 35, expander 30), and before any driver, which opens this.
 pub export const rtg_library_tag: exec.Resident linksection(".resident") = .{
     .match_tag = &rtg_library_tag,
     .flags = exec.RTF_COLDSTART | exec.RTF_AUTOINIT,

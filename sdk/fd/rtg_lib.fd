@@ -82,7 +82,8 @@ i32 ShowBitMap(*rtg.RtgBoard board, ?*rtg.RtgBitMap bitmap, u32 x, u32 y)
 /// `rows` 0 is all of them. What a caller that wrote the pixels itself
 /// calls when it has finished.
 i32 RefreshBitMap(*rtg.RtgBitMap bitmap, u32 y, u32 rows)
-/// Wait for `frames` blankings; 0 is the next one. Not from interrupts.
+/// Wait for `frames` blankings; 0 is the next one. RTGERR_TIMEOUT when
+/// they do not come within two frames' time each. Not from interrupts.
 i32 WaitVBlank(*rtg.RtgBoard board, u32 frames)
 /// The display enable. Not the backlight.
 i32 SetBoardDisplay(*rtg.RtgBoard board, bool on)

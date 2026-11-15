@@ -4,6 +4,7 @@
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
+const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 
@@ -36,6 +37,12 @@ pub const RtgBase = extern struct {
     last_error: i32,
     /// How many boards have been made, for naming the next one.
     board_serial: u32,
+    /// timer.device's request on its microsecond unit, opened by the init:
+    /// what a wait with a time limit copies, with a reply port of the
+    /// waiting task's own, so any task may wait. Its device is null where
+    /// there is no timer.device, and a wait that needs a limit is then
+    /// refused.
+    timer_io: timer.TimeRequest,
 
     /// This library as a caller sees it, to call its own functions through
     /// the jump table.

@@ -239,11 +239,13 @@ fn letGo(kept: *Window) void {
     _ = kept.lb.ShowLayerPicture(kept.layer, null, null);
 }
 
-/// The display's next frame waited for, unless one has begun since the last
-/// picture was copied: that picture took longer than a frame to follow, and
-/// waiting for yet another would halve the rate, though no picture is copied
-/// across what the display reads (`bands_lock`, on a board that counts its
-/// frames). Then the picture copied into the
+/// The display's next frame waited for. Not where one has begun since the
+/// last picture was copied, on a board that itself keeps a copy from
+/// crossing what its display reads (`bands_lock`, on an `fb` board): that
+/// picture took longer than a frame to follow, and waiting for yet another
+/// would halve the rate. A board whose display reads the screen's buffer
+/// as it lies (`streams`) has nothing of the kind, so there every picture
+/// waits for its frame. Then the picture copied into the
 /// window with its layer held - as much of it as fits inside the border
 /// now, where the window has been made smaller since the swapchain was -
 /// or, in a composed window, shown there as it is. False once the window
@@ -254,7 +256,7 @@ fn show(surface: *Surface, picture: *Picture) bool {
     const kept = of(surface);
     const offscreen = offscreenOf(picture);
     if (kept.board) |board| {
-        if (blanksOf(kept, board) == kept.blanks) _ = kept.rb.WaitVBlank(board, 0);
+        if (streams(kept, board) or blanksOf(kept, board) == kept.blanks) _ = kept.rb.WaitVBlank(board, 0);
         kept.blanks = blanksOf(kept, board);
     }
     const held = kept.ib.LockIBase(0);
@@ -277,6 +279,16 @@ fn show(surface: *Surface, picture: *Picture) bool {
     }
     kept.gb.BltBitMapRastPort(&offscreen.surface, 0, 0, kept.rastport, inside.left, inside.top, @intCast(width), @intCast(height));
     return true;
+}
+
+/// Whether the board's display reads the buffer the window is drawn into
+/// as it lies (`RTGBF_STREAMING`: a panel's stream out of the screen's own
+/// memory). A picture copied there part way through a frame is seen part
+/// new and part old: only its start at a frame's keeps it whole.
+fn streams(kept: *const Window, board: *rtg.RtgBoard) bool {
+    var info: rtg.RtgBoardInfo = .{};
+    _ = kept.rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    return info.flags & rtg.boards.RTGBF_STREAMING != 0;
 }
 
 /// The frames the board has counted, 0 for one that does not count them.

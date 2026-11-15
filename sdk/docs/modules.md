@@ -145,6 +145,7 @@ flowchart TB
     m_ram_handler --> m_dos_library
     m_ram_handler -.-> m_timer_device
     m_ramlib_library --> m_dos_library
+    m_rtg_library --> m_timer_device
     m_serial_device --> m_gpio_resource
     m_serial_device -.-> m_timer_device
     m_sound_drivers --> m_dma_resource
