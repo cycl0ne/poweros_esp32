@@ -236,6 +236,12 @@ A buffer being shown is marked `RTGBMF_SHOWING`, and `FreeBitMap` refuses
 it: the display is still reading it. `BoardDisplayBitMap` answers which
 buffer that is. `ShowBitMap(board, null, 0, 0)` shows nothing.
 
+A show that fails changes nothing: the call answers the error, the
+display goes on reading the buffer it read, that one stays marked, and
+the one refused may be freed. On a board that is sent its picture, rows
+of the buffer refused may have gone over the bus before the send failed;
+`RefreshBitMap` of the buffer still shown sends its rows again.
+
 The `x` and `y` are the buffer's pixel at the display's top left, for a
 buffer larger than the display shown through a window of it. No board on
 this machine can pan: each driver refuses anything but `(0, 0)` itself,
@@ -293,7 +299,9 @@ the new bands up at a frame's start, as a flip.
 
 An `fb` board composes the bands into its extra frame, each row from the
 buffer its band shows, and the display reads that frame; a refresh
-copies the rows the bands show into it.
+copies the rows the bands show into it. Without memory for that frame
+the call answers `RTGERR_NO_MEMORY` and the display goes on showing what
+it showed, as after any bands that fail.
 
 A board without bands answers `RTGERR_NOT_SUPPORTED`, unless there is one
 plain band at origin 0, which is just `ShowBitMap`. intuition then shows
@@ -656,7 +664,10 @@ has. A slot left null is one it has not got: the call answers
 checks and clips before it calls a slot, so a driver is never given a
 rectangle outside the buffer or a band list out of order. A pan it does
 not check: a driver that cannot pan refuses an `x` or `y` that is not
-zero in its `show_bitmap`.
+zero in its `show_bitmap`. A `show_bitmap` or `show_bands` that answers
+an error has left the board reading what it read and kept nothing of
+what it was handed: the library leaves its marks, and the caller may
+free the buffer refused.
 
 | Slot | What it does |
 |---|---|

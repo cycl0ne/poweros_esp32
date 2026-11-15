@@ -10,7 +10,13 @@ const _board = @import("../board/_board.zig");
 /// marked RTGBMF_SHOWING - so none of them can be freed - and every other
 /// buffer of the board not; `front`, the one that covers the display's
 /// bottom, is what BoardDisplayBitMap answers. A change of picture is
-/// counted.
+/// counted. It is called once the driver's show has answered RTGERR_OK
+/// and nowhere before, so a show that failed leaves every mark as it was.
+///
+/// INPUTS:
+/// - `board` - the board.
+/// - `shown` - the buffers the display now reads, none for nothing shown.
+/// - `front` - the one at the display's bottom, or null.
 pub fn markShowing(board: *rtg.RtgBoard, shown: []const *rtg.RtgBitMap, front: ?*rtg.RtgBitMap) void {
     var node = board.bitmaps.head;
     while (node) |n| : (node = n.succ) {

@@ -1120,7 +1120,9 @@ are the caller's, and are taken off with `RemRtgEventServer` first.
 
 **BUGS**
 
-None known.
+The answer of taking the board off the display is not looked at: one
+whose driver refuses to show nothing has its buffers freed and its
+driver's `destroy` called all the same.
 
 **SEE ALSO**
 
@@ -3025,7 +3027,9 @@ the caller's.
 
 **BUGS**
 
-None known.
+The answer of taking the picture off the display is not looked at: a
+board whose driver refuses to show nothing has its volatile buffers
+emptied and its mode set under the picture it still shows.
 
 **SEE ALSO**
 
@@ -3234,6 +3238,15 @@ returns when it has: the one shown before is no longer read and may be
 drawn into - which is how a program shows a frame while it draws the
 next.
 
+A show that fails changes nothing. On any answer but `RTGERR_OK` the
+board goes on reading the buffers it read, they stay marked showing
+and `BoardDisplayBitMap` answers as it did; a buffer refused that was
+not showing is not marked, so it can be freed. The same for null: a
+board that could not be made to show nothing goes on showing its
+picture. On a board that is sent its picture over a bus, rows of the
+buffer refused may have reached the glass before the send failed; the
+rows handed on next put that right.
+
 **CONTEXT**
 
 - Waits: for the display's next frame, where the board streams one.
@@ -3247,7 +3260,11 @@ Nothing is allocated. The buffer stays the caller's.
 
 **BUGS**
 
-None known.
+Two drivers do not yet leave a failed show as nothing: the DSI boards'
+keeps the buffer it was handed when it answers an error - no memory
+for the stream's chain, a flip that did not land - and reads it at
+the next pointer move; the RGB panel's stops its stream before a start
+that can still fail, and the display is then dark.
 
 **SEE ALSO**
 
@@ -3309,6 +3326,12 @@ band's buffer, the one at the display's bottom. A display that is
 already showing takes the new bands up at the start of a frame, and
 this returns when it has.
 
+Bands that fail change nothing: on any answer but `RTGERR_OK` what
+was shown - one buffer or bands - stays shown and marked, and a buffer
+of the bands refused that was not showing is not marked, so it can be
+freed. What `ShowBitMap` says of a board that is sent its picture
+holds here too.
+
 **CONTEXT**
 
 - Waits: for the display's next frame, where the board streams one.
@@ -3328,7 +3351,9 @@ for one shown alone: the board knows which of its rows are on the glass.
 
 **BUGS**
 
-None known.
+The DSI boards' driver keeps the bands it was handed when it answers
+an error, and the RGB panel's stops its stream before a start that can
+still fail: `ShowBitMap`'s BUGS has both.
 
 **SEE ALSO**
 

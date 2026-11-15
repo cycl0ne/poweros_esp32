@@ -199,8 +199,8 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 29;
-const BUILD_DATE = "08.11.2026";
+const REVISION = 30;
+const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -2510,8 +2510,9 @@ fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, area: Box) void {
 
 /// Several buffers at once, in bands: composed - the rows that show
 /// something else than before - shown, and a frame waited out, as a flip
-/// is. With no memory to compose them in, the last alone,
-/// as a board that cannot show bands would show it.
+/// is. Several are one picture only in the composed frame: with no memory
+/// for it nothing is changed, the display goes on showing what it showed,
+/// and RTGERR_NO_MEMORY is answered.
 fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
     const screen = screenOf(board);
     for (bands[0..count]) |band| {
@@ -2522,13 +2523,17 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         showFlipped(screen, bands[0..count]);
         return err.RTGERR_OK;
     }
-    var code = err.RTGERR_OK;
     var unused: ?*anyopaque = null;
     const was_shown = shown: {
         hold(screen);
         defer letGo(screen);
         const before = screen.showing != null;
         const was = composing(screen);
+        // The frame before the bands are taken, so that without it they
+        // stay as they are - and after `was` is read, which says whether
+        // the display read the frame until now: one taken here has
+        // nothing in it yet.
+        if (count > 1 and ownFrame(screen) == null) return err.RTGERR_NO_MEMORY;
         var old: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
         const old_count = screen.band_count;
         @memcpy(old[0..old_count], screen.bands[0..old_count]);
@@ -2536,11 +2541,6 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         screen.band_count = count;
         screen.showing = bands[count - 1].bitmap;
         provide(screen);
-        if (count > 1 and screen.composed == null) {
-            screen.bands[0] = .{ .bitmap = bands[count - 1].bitmap };
-            screen.band_count = 1;
-            code = err.RTGERR_NO_MEMORY;
-        }
         reband(screen, old[0..old_count], was);
         present(screen);
         unused = spare(screen);
@@ -2548,7 +2548,7 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
     };
     if (was_shown) pace(screen, 1);
     giveBack(screen, unused);
-    return code;
+    return err.RTGERR_OK;
 }
 
 /// Frames waited for: by the frame interrupt where it comes, else by the

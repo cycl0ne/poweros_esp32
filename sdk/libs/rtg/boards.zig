@@ -307,6 +307,9 @@ pub const RtgBoard = extern struct {
     /// The display memory, and what has been handed out of it.
     region: RtgRegion = .{},
     bitmaps: List = .{},
+    /// The buffer the display shows - the last band's - or null. The
+    /// library's, written once the driver's show has answered RTGERR_OK;
+    /// a driver writes it only in create, for a display it found running.
     showing: ?*RtgBitMap = null,
     /// Event servers, one list per RTGEV_*.
     event_lists: [events.RTGEV_COUNT]List = [_]List{.{}} ** events.RTGEV_COUNT,
@@ -344,7 +347,10 @@ pub const RtgBoardOps = extern struct {
     set_mode: ?*const fn (*RtgBoard, *const RtgMode) callconv(.c) i32 = null,
     /// Show that buffer, its pixel (x, y) at the top left; null shows
     /// nothing. The library passes x and y on unchecked: a board that
-    /// cannot pan refuses any that is not zero.
+    /// cannot pan refuses any that is not zero. On any answer but
+    /// RTGERR_OK the board reads what it read before and keeps no pointer
+    /// to the buffer it refused: the library leaves its marks as they
+    /// were, and the caller may free that buffer.
     show_bitmap: ?*const fn (*RtgBoard, ?*RtgBitMap, u32, u32) callconv(.c) i32 = null,
     /// Wait for `frames` vertical blanks; 0 is the next one.
     wait_vblank: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
@@ -415,7 +421,9 @@ pub const RtgBoardOps = extern struct {
 
     /// Show these bands from now on: each a buffer from its `line` to the
     /// next band's, the last to the display's bottom. The library has
-    /// checked them (`ShowBitMapBands`); the driver keeps its own copy.
+    /// checked them (`ShowBitMapBands`); the driver keeps its own copy,
+    /// once nothing of the show can fail any more: on any answer but
+    /// RTGERR_OK it reads the bands it read before, as `show_bitmap`.
     show_bands: ?*const fn (*RtgBoard, [*]const RtgBand, u32) callconv(.c) i32 = null,
 
     // --- a second image over the picture, laid as the pointer is but

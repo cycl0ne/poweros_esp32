@@ -49,7 +49,9 @@ const _board = @import("_board.zig");
 /// are the caller's, and are taken off with `RemRtgEventServer` first.
 ///
 /// BUGS:
-/// None known.
+/// The answer of taking the board off the display is not looked at: one
+/// whose driver refuses to show nothing has its buffers freed and its
+/// driver's `destroy` called all the same.
 ///
 /// SEE ALSO:
 /// `CreateBoardTagList`, `RemRtgEventServer`

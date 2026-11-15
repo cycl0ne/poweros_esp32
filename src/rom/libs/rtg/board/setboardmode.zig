@@ -52,7 +52,9 @@ const _board = @import("_board.zig");
 /// the caller's.
 ///
 /// BUGS:
-/// None known.
+/// The answer of taking the picture off the display is not looked at: a
+/// board whose driver refuses to show nothing has its volatile buffers
+/// emptied and its mode set under the picture it still shows.
 ///
 /// SEE ALSO:
 /// `FindBoardMode`, `BoardMode`, `AllocBitMap`

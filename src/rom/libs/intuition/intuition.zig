@@ -1166,6 +1166,62 @@ test "screens: pulled down to show the one behind, by MoveScreen, by tags and by
     try tearDown(ib);
 }
 
+test "screens: a show the board refuses leaves the display in its bands, and the next showing puts it right" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const sc = intuition.screens;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+    const glass = fake.instanceOf(display.board);
+
+    const back = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const front = it.OpenScreenTagList(&[_]TagItem{.{}}).?;
+    const ahead: *_kscreen.Screen = @ptrCast(@alignCast(front));
+    it.MoveScreen(front, 0, 20);
+    try testing.expect(ib.banded);
+    try testing.expectEqual(@as(u32, 2), glass.showing_count);
+
+    // Back to the top, and the board refuses the one buffer: the bands
+    // stay up, and are still held to be.
+    display.state.show_answer = sdk.rtg.errors.RTGERR_IO;
+    it.MoveScreen(front, 0, -20);
+    try testing.expectEqual(@as(usize, 0), screenAttr(ib, front, sc.SA_Top));
+    try testing.expectEqual(@as(u32, 2), glass.showing_count);
+    try testing.expect(ib.banded);
+
+    // The screens shown again: the front one alone, on both sides.
+    _kscreen.showFront(ib, display.board, display.bitmap);
+    try testing.expect(!ib.banded);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(ahead.shown, glass.showing[0].bitmap);
+    try testing.expectEqual(ahead.shown, display.board.showing.?);
+
+    // Bands the board refuses, with one buffer up: the front screen
+    // alone stays, and nothing is shown a second time.
+    const shows = display.state.log.shown;
+    display.state.show_answer = sdk.rtg.errors.RTGERR_NO_MEMORY;
+    it.MoveScreen(front, 0, 20);
+    try testing.expect(!ib.banded);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(shows, display.state.log.shown);
+
+    // Bands the board refuses while other bands are up: the front screen
+    // alone is shown in their place.
+    it.MoveScreen(front, 0, -5);
+    try testing.expect(ib.banded);
+    display.state.show_answer = sdk.rtg.errors.RTGERR_NO_MEMORY;
+    it.MoveScreen(front, 0, 5);
+    try testing.expect(!ib.banded);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(ahead.shown, glass.showing[0].bitmap);
+
+    it.MoveScreen(front, 0, -20);
+    try testing.expect(it.CloseScreen(front));
+    try testing.expect(it.CloseScreen(back));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "DisplayBeep, CurrentTime, TimedDisplayAlert" {
     const ib = try setUp();
     defer kexec.deinit();

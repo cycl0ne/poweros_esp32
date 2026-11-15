@@ -51,6 +51,12 @@ const _display = @import("_display.zig");
 /// already showing takes the new bands up at the start of a frame, and
 /// this returns when it has.
 ///
+/// Bands that fail change nothing: on any answer but `RTGERR_OK` what
+/// was shown - one buffer or bands - stays shown and marked, and a buffer
+/// of the bands refused that was not showing is not marked, so it can be
+/// freed. What `ShowBitMap` says of a board that is sent its picture
+/// holds here too.
+///
 /// CONTEXT:
 /// - Waits: for the display's next frame, where the board streams one.
 /// - Interrupts: no. The driver may wait on its bus.
@@ -66,7 +72,9 @@ const _display = @import("_display.zig");
 /// for one shown alone: the board knows which of its rows are on the glass.
 ///
 /// BUGS:
-/// None known.
+/// The DSI boards' driver keeps the bands it was handed when it answers
+/// an error, and the RGB panel's stops its stream before a start that can
+/// still fail: `ShowBitMap`'s BUGS has both.
 ///
 /// SEE ALSO:
 /// `ShowBitMap`, `BoardDisplayBitMap`, `RefreshBitMap`

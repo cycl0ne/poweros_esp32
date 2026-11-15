@@ -53,8 +53,8 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 2;
-const BUILD_DATE = "08.10.2026";
+const REVISION = 3;
+const BUILD_DATE = "15.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -147,7 +147,9 @@ const Panel = struct {
     overlay_top: i32 = 0,
 
     /// What the controller is sent from: the bands of the picture shown,
-    /// one for a single buffer, none before the first.
+    /// one for a single buffer, none before the first. While a show's
+    /// picture is being sent they are that picture's; a show the bus
+    /// refuses puts back the ones before (`showPicture`).
     bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     band_count: u32 = 0,
 };
@@ -346,7 +348,8 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
 
 /// Show that buffer: all of it goes over the bus, and it is what a refresh
 /// sends from then on. The controller has no second picture to flip to,
-/// so a new buffer shown is a whole picture sent.
+/// so a new buffer shown is a whole picture sent. A send the bus refuses
+/// leaves the picture shown before as what a refresh sends.
 fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     if (x != 0 or y != 0) return err.RTGERR_NOT_SUPPORTED;
@@ -357,25 +360,54 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     if (bm.pixels == null) return err.RTGERR_BAD_ARG;
     if (bm.width != panel.width or bm.height != panel.height) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    panel.stats.buffer_swaps += 1;
-    panel.bands[0] = .{ .bitmap = bm };
-    panel.band_count = 1;
-    return send(panel, 0, bm.height);
+    const whole = [_]rtg.RtgBand{.{ .bitmap = bm }};
+    return showPicture(panel, &whole);
 }
 
 /// Several buffers at once, in bands: the whole picture sent, each line
 /// from the band that covers it, and a refresh of any of them sends the
-/// lines it shows from then on.
+/// lines it shows from then on. A send the bus refuses leaves the picture
+/// shown before as what a refresh sends.
 fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     for (bands[0..count]) |band| {
         if (band.bitmap.pixels == null) return err.RTGERR_BAD_ARG;
         if (band.bitmap.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     }
-    panel.stats.buffer_swaps += 1;
-    @memcpy(panel.bands[0..count], bands[0..count]);
-    panel.band_count = count;
-    return send(panel, 0, panel.height);
+    return showPicture(panel, bands[0..count]);
+}
+
+/// The whole picture sent from `picture`'s bands, which are what the panel
+/// is sent from afterwards. They are in place while the send runs: it
+/// reads them, and rows another task refreshes meanwhile, and the
+/// pointer's, then come from the picture being sent. A send the bus
+/// refuses puts the bands shown before back: the library marks nothing of
+/// a show that failed, so the buffers this driver reads stay the ones
+/// that cannot be freed. What such a send leaves on the glass is part old
+/// and part new (`failed_sends`); the rows sent next put it right.
+///
+/// INPUTS:
+/// - `panel` - the board's instance.
+/// - `picture` - the bands to show, as the library checked them: one to
+///   `RTG_MAX_BANDS`.
+///
+/// RESULT:
+/// `RTGERR_OK`, or what the bus answered.
+fn showPicture(panel: *Panel, picture: []const rtg.RtgBand) i32 {
+    var before: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
+    const count_before = panel.band_count;
+    @memcpy(before[0..count_before], panel.bands[0..count_before]);
+    @memcpy(panel.bands[0..picture.len], picture);
+    panel.band_count = @intCast(picture.len);
+    const code = send(panel, 0, panel.height);
+    if (code != err.RTGERR_OK) {
+        // The count is never above the bands that are in place: lowered
+        // before they are written, raised after.
+        panel.band_count = @min(panel.band_count, count_before);
+        @memcpy(panel.bands[0..count_before], before[0..count_before]);
+        panel.band_count = count_before;
+    }
+    return code;
 }
 
 /// Rows the CPU wrote. Only the buffer being shown goes anywhere: the
@@ -826,3 +858,225 @@ export const rtg_dcs_tag: exec.Resident linksection(".resident") = .{
     .id_string = VERSION_STRING[1..], // past the NUL: a C string
     .init = @ptrCast(@constCast(&init)),
 };
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// A board of this driver cannot be made on the host: its create drives
+// pads and waits on the chip's timer. So the tests make a panel by hand -
+// what create fills in, as far as a show reads it - on a bus of their
+// own, and call the ops as the library does. What they hold is the one
+// path no board can be asked for: a send the bus refuses.
+
+const testing = std.testing;
+const kexec = @import("../../exec/exec.zig");
+const kutility = @import("../../utility/utility.zig");
+const krtg = @import("../../rtg/rtg.zig");
+
+/// The bus of the tests: it takes every window, counts the runs of
+/// pixels, and refuses the run a test names.
+const TestBus = struct {
+    /// Runs of pixels asked for, and which of them - counted from 1 - is
+    /// refused; 0 refuses none.
+    runs: u32 = 0,
+    refuse_at: u32 = 0,
+    /// The panel, and the first band's buffer it named at the last run:
+    /// what that send was composed from.
+    panel: ?*Panel = null,
+    during: ?*rtg.RtgBitMap = null,
+
+    fn of(io: *rtg.RtgTransport) *TestBus {
+        return @ptrCast(@alignCast(io.user_data.?));
+    }
+    fn txParam(_: *rtg.RtgTransport, _: i32, _: ?*const anyopaque, _: u32) callconv(.c) i32 {
+        return err.RTGERR_OK;
+    }
+    fn txColor(io: *rtg.RtgTransport, _: i32, _: ?*const anyopaque, _: u32) callconv(.c) i32 {
+        const bus = of(io);
+        bus.runs += 1;
+        if (bus.panel) |panel| bus.during = panel.bands[0].bitmap;
+        return if (bus.runs == bus.refuse_at) err.RTGERR_IO else err.RTGERR_OK;
+    }
+    const ops = rtg.RtgTransportOps{ .tx_param = &txParam, .tx_color = &txColor };
+};
+
+/// A picture of the tests: 8 pixels wide, `rows` high, RGB565, its rows
+/// on four bytes as the senders ask.
+fn TestPicture(comptime rows: u32) type {
+    return struct {
+        pixels: [8 * 2 * rows]u8 align(4) = @splat(0),
+        bitmap: rtg.RtgBitMap = .{},
+
+        fn set(picture: *@This()) *rtg.RtgBitMap {
+            picture.bitmap = .{ .pixels = &picture.pixels, .width = 8, .height = rows, .pitch = 16, .size_bytes = picture.pixels.len, .format = .rgb565 };
+            return &picture.bitmap;
+        }
+    };
+}
+
+/// exec, utility.library and rtg.library from their tags, for the bus
+/// calls a send makes through the library's table.
+fn testLibrary() !*krtg.RtgBase {
+    try kexec.setUp();
+    _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
+    const made = kexec.InitResident(kexec.SysBase, &krtg.rtg_library_tag, null) orelse return error.NoRtg;
+    return @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(made))));
+}
+
+/// Both libraries taken off and freed, and nothing left.
+fn dropLibrary(rb: *krtg.RtgBase) !void {
+    const ub: *kutility.UtilityBase = @ptrCast(@alignCast(rb.utility_base));
+    _ = kexec.CloseLibrary(kexec.SysBase, &ub.lib);
+    kexec.Remove(kexec.SysBase, &rb.lib.node);
+    kexec.freeLibraryMemory(kexec.SysBase, &rb.lib);
+    kutility.freeForTests(ub);
+    try kexec.expectNoLeaks();
+}
+
+/// A panel as create leaves it, 8 pixels wide: upright with `height` rows
+/// sent two to a band, or turned clockwise onto a panel 8 rows tall.
+fn testPanel(rb: *krtg.RtgBase, io: *rtg.RtgTransport, band: *align(4) [64]u8, height: u32, turn: sequence.Turn) Panel {
+    var panel = Panel{ .sys = rb.sys_base, .rtg_base = @ptrCast(rb), .io = io };
+    panel.width = 8;
+    panel.height = height;
+    panel.native_width = if (turn == .none) 8 else height;
+    panel.native_height = if (turn == .none) height else 8;
+    panel.turn = turn;
+    panel.band = band;
+    panel.band_rows = 2;
+    return panel;
+}
+
+test "dcs: a show the bus refuses puts back the picture that was shown" {
+    const rb = try testLibrary();
+    defer kexec.deinit();
+    var bus = TestBus{};
+    var io = rtg.RtgTransport{ .ops = &TestBus.ops, .user_data = &bus };
+    var band: [64]u8 align(4) = undefined;
+    var panel = testPanel(rb, &io, &band, 8, .none);
+    rb.sys_base.InitSemaphore(&panel.band_lock);
+    bus.panel = &panel;
+    var board = rtg.RtgBoard{ .instance = &panel };
+    var one = TestPicture(8){};
+    var other = TestPicture(8){};
+    const first = one.set();
+    const second = other.set();
+
+    // The very first show refused: the board shows nothing, as before it.
+    bus.refuse_at = 1;
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, first, 0, 0));
+    try testing.expectEqual(@as(u32, 0), panel.band_count);
+    try testing.expectEqual(@as(u32, 1), panel.stats.failed_sends);
+    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, 0, 0));
+    try testing.expectEqual(@as(u32, 1), panel.stats.refreshes_dropped);
+
+    // Shown: four bands of two rows, and it is what the panel is sent from.
+    bus.runs = 0;
+    bus.refuse_at = 0;
+    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first, 0, 0));
+    try testing.expectEqual(@as(u32, 4), bus.runs);
+    try testing.expectEqual(@as(u32, 1), panel.band_count);
+    try testing.expectEqual(first, panel.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 1), panel.stats.frames);
+
+    // Another buffer, refused at its second band: while it was sent the
+    // panel named it, and afterwards the first again.
+    bus.runs = 0;
+    bus.refuse_at = 2;
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second, 0, 0));
+    try testing.expectEqual(second, bus.during.?);
+    try testing.expectEqual(@as(u32, 1), panel.band_count);
+    try testing.expectEqual(first, panel.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 2), panel.stats.failed_sends);
+    try testing.expectEqual(@as(u32, 1), panel.stats.frames);
+
+    // So a refresh of the one shown is sent, and one of the buffer
+    // refused goes nowhere.
+    bus.runs = 0;
+    bus.refuse_at = 0;
+    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, 0, 2));
+    try testing.expectEqual(@as(u32, 1), bus.runs);
+    try testing.expectEqual(err.RTGERR_OK, refresh(&board, second, 0, 2));
+    try testing.expectEqual(@as(u32, 1), bus.runs);
+    try testing.expectEqual(@as(u32, 2), panel.stats.refreshes_dropped);
+
+    try dropLibrary(rb);
+}
+
+test "dcs: bands the bus refuses, and one buffer refused over bands" {
+    const rb = try testLibrary();
+    defer kexec.deinit();
+    var bus = TestBus{};
+    var io = rtg.RtgTransport{ .ops = &TestBus.ops, .user_data = &bus };
+    var band: [64]u8 align(4) = undefined;
+    var panel = testPanel(rb, &io, &band, 8, .none);
+    rb.sys_base.InitSemaphore(&panel.band_lock);
+    bus.panel = &panel;
+    var board = rtg.RtgBoard{ .instance = &panel };
+    var one = TestPicture(8){};
+    var other = TestPicture(8){};
+    var another = TestPicture(8){};
+    const first = one.set();
+    const second = other.set();
+    const third = another.set();
+    const two = [_]rtg.RtgBand{ .{ .bitmap = first }, .{ .bitmap = second, .line = 4, .origin = 4 } };
+
+    // One buffer up, then bands refused at their first band: one band
+    // again, the buffer from the top.
+    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first, 0, 0));
+    bus.runs = 0;
+    bus.refuse_at = 1;
+    try testing.expectEqual(err.RTGERR_IO, showBands(&board, &two, two.len));
+    try testing.expectEqual(@as(u32, 1), panel.band_count);
+    try testing.expectEqual(first, panel.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 0), panel.bands[0].line);
+
+    // The bus willing: both bands are what the panel is sent from.
+    bus.refuse_at = 0;
+    try testing.expectEqual(err.RTGERR_OK, showBands(&board, &two, two.len));
+    try testing.expectEqual(@as(u32, 2), panel.band_count);
+    try testing.expectEqual(second, panel.bands[1].bitmap);
+    try testing.expectEqual(@as(u32, 4), panel.bands[1].line);
+
+    // One buffer refused over them: both bands are back, the second too,
+    // which the one buffer had no place for.
+    bus.runs = 0;
+    bus.refuse_at = 3;
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, third, 0, 0));
+    try testing.expectEqual(third, bus.during.?);
+    try testing.expectEqual(@as(u32, 2), panel.band_count);
+    try testing.expectEqual(first, panel.bands[0].bitmap);
+    try testing.expectEqual(second, panel.bands[1].bitmap);
+    try testing.expectEqual(@as(u32, 4), panel.bands[1].origin);
+
+    try dropLibrary(rb);
+}
+
+test "dcs: a picture sent turned, refused, leaves the one that was shown" {
+    const rb = try testLibrary();
+    defer kexec.deinit();
+    var bus = TestBus{};
+    var io = rtg.RtgTransport{ .ops = &TestBus.ops, .user_data = &bus };
+    var band: [64]u8 align(4) = undefined;
+    // 8 wide and 4 high, on a panel 4 wide and 8 tall: one band of the
+    // panel's 8 rows, 4 pixels each.
+    var panel = testPanel(rb, &io, &band, 4, .clockwise);
+    rb.sys_base.InitSemaphore(&panel.band_lock);
+    bus.panel = &panel;
+    var board = rtg.RtgBoard{ .instance = &panel };
+    var one = TestPicture(4){};
+    var other = TestPicture(4){};
+    const first = one.set();
+    const second = other.set();
+
+    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first, 0, 0));
+    try testing.expectEqual(@as(u32, 1), bus.runs);
+    bus.runs = 0;
+    bus.refuse_at = 1;
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second, 0, 0));
+    try testing.expectEqual(second, bus.during.?);
+    try testing.expectEqual(@as(u32, 1), panel.band_count);
+    try testing.expectEqual(first, panel.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 1), panel.stats.failed_sends);
+
+    try dropLibrary(rb);
+}

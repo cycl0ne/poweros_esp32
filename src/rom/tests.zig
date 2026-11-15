@@ -45,6 +45,7 @@ test {
     _ = @import("libs/utility/date/datesplit.zig");
     _ = @import("libs/utility/date/datejoin.zig");
     _ = @import("libs/rtg_driver/dcsboard/sequence.zig");
+    _ = @import("libs/rtg_driver/dcsboard/dcsboard.zig");
     _ = @import("libs/rtg_driver/dsiboard/monitor.zig");
     _ = @import("libs/rtg_driver/edid.zig");
     _ = @import("libs/rtg_driver/fbboard/phy.zig");

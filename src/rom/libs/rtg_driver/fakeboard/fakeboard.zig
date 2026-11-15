@@ -15,6 +15,10 @@
 //! bytes and see both that the work happened and that the rectangle it was
 //! given had already been cut down to the buffer. Everything it is asked
 //! is recorded, so a test can also see what it was *not* asked.
+//!
+//! It keeps the bands it shows, as a display does, and a test can make its
+//! next show fail: what a refusal leaves can then be read on the board as
+//! well as in the library.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -60,6 +64,9 @@ pub const Log = struct {
     /// The rectangle of the last fill or invert, as the driver got it.
     last_rect: rtg.RtgRect = .{},
     last_copy: rtg.RtgCopy = .{},
+    /// The buffer, and its pixel at the display's top left, as the last
+    /// show of one buffer was handed them - refused or not.
+    last_show_bitmap: ?*rtg.RtgBitMap = null,
     last_show_x: u32 = 0,
     last_show_y: u32 = 0,
     last_refresh_y: u32 = 0,
@@ -147,6 +154,10 @@ pub const State = struct {
     video_over_only: bool = false,
     /// What the driver's own wait for a blanking answers (`waitVBlank`).
     wait_answer: i32 = err.RTGERR_OK,
+    /// Make the next show - of a buffer, of bands or of nothing - fail
+    /// with this, once: the board goes on showing what it showed, and the
+    /// show after it works. RTGERR_OK lets it work.
+    show_answer: i32 = err.RTGERR_OK,
 };
 
 /// What belongs to one board: the library allocates it beside the handle.
@@ -156,6 +167,12 @@ pub const Instance = struct {
     /// This board's own modes. A driver that kept one list in its image
     /// would hand the same nodes to two boards and corrupt both.
     modes: [mode_table.len]rtg.RtgMode = mode_table,
+    /// What the board shows: its bands from the top - one from line 0 for
+    /// a buffer shown alone, none while nothing is shown. Kept once a show
+    /// can no longer fail, as a driver keeps them: a show that was
+    /// refused left them as they were.
+    showing: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
+    showing_count: u32 = 0,
 };
 
 pub fn stateOf(driver: *rtg.RtgDriver) *State {
@@ -166,7 +183,11 @@ fn stateOfBoard(board: *rtg.RtgBoard) *State {
     return stateOf(board.driver.?);
 }
 
-fn instanceOf(board: *rtg.RtgBoard) *Instance {
+/// The board's own record, for a test to read what it shows.
+///
+/// INPUTS:
+/// - `board` - a board of this driver.
+pub fn instanceOf(board: *rtg.RtgBoard) *Instance {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
@@ -251,22 +272,48 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
     return err.RTGERR_OK;
 }
 
+/// The answer a test set for the next show, taken: RTGERR_OK when none
+/// was set, and RTGERR_OK again for the show after.
+///
+/// INPUTS:
+/// - `state` - the driver's block, whose `show_answer` is read and put
+///   back to RTGERR_OK.
+fn showAnswer(state: *State) i32 {
+    const answer = state.show_answer;
+    state.show_answer = err.RTGERR_OK;
+    return answer;
+}
+
 fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
-    _ = bitmap;
-    const log = &stateOfBoard(board).log;
-    log.shown += 1;
-    log.last_show_x = x;
-    log.last_show_y = y;
+    const instance = instanceOf(board);
+    instance.calls += 1;
+    const state = stateOfBoard(board);
+    state.log.shown += 1;
+    state.log.last_show_bitmap = bitmap;
+    state.log.last_show_x = x;
+    state.log.last_show_y = y;
+    // What it shows changes once nothing of the show can fail any more.
+    const answer = showAnswer(state);
+    if (answer != err.RTGERR_OK) return answer;
+    instance.showing_count = 0;
+    if (bitmap) |shown| {
+        instance.showing[0] = .{ .bitmap = shown };
+        instance.showing_count = 1;
+    }
     return err.RTGERR_OK;
 }
 
 fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
-    const log = &stateOfBoard(board).log;
-    log.bands_shown += 1;
-    @memcpy(log.bands[0..count], bands[0..count]);
-    log.band_count = count;
+    const instance = instanceOf(board);
+    instance.calls += 1;
+    const state = stateOfBoard(board);
+    state.log.bands_shown += 1;
+    @memcpy(state.log.bands[0..count], bands[0..count]);
+    state.log.band_count = count;
+    const answer = showAnswer(state);
+    if (answer != err.RTGERR_OK) return answer;
+    @memcpy(instance.showing[0..count], bands[0..count]);
+    instance.showing_count = count;
     return err.RTGERR_OK;
 }
 
@@ -719,6 +766,10 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
             .flags = rtg.bitmaps.RTGBMF_DISPLAYABLE,
         };
         board.showing = rb.AttachBitMap(board, &described);
+        if (board.showing) |running| {
+            instance.showing[0] = .{ .bitmap = running };
+            instance.showing_count = 1;
+        }
     }
     return err.RTGERR_OK;
 }

@@ -346,6 +346,10 @@ pub fn dropBlank(ib: *IntuitionBase, s: *Screen) void {
 /// Showing waits for the frame it starts on, so this is called with the
 /// list held but never with a spinlock held. A board that shows one buffer only
 /// shows the frontmost screen.
+///
+/// A show the board refuses changes nothing on it, so `banded` - whether
+/// the display is in bands - is written once a show has answered: a
+/// display left in its bands is asked again the next time this is called.
 pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap) void {
     const rb = ib.rtg_base orelse return;
     // An alert up keeps the display; it shows the front screen when it
@@ -355,18 +359,18 @@ pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap)
     const count = bandsOf(ib, board, home, &bands);
     if (count == 1) {
         if (board.showing == bands[0].bitmap and !ib.banded) return;
-        ib.banded = false;
-        _ = rb.ShowBitMap(board, bands[0].bitmap, 0, 0);
+        if (rb.ShowBitMap(board, bands[0].bitmap, 0, 0) == rtg.errors.RTGERR_OK) ib.banded = false;
         return;
     }
     if (rb.ShowBitMapBands(board, &bands, count) == rtg.errors.RTGERR_OK) {
         ib.banded = true;
         return;
     }
-    // No bands on this board: the front screen alone.
-    ib.banded = false;
+    // No bands on this board, or none this time: the front screen alone -
+    // also where it is the last of bands that are still up.
     const front = bands[count - 1].bitmap;
-    if (board.showing != front) _ = rb.ShowBitMap(board, front, 0, 0);
+    if (board.showing == front and !ib.banded) return;
+    if (rb.ShowBitMap(board, front, 0, 0) == rtg.errors.RTGERR_OK) ib.banded = false;
 }
 
 /// The screen display line `y` shows, as `bandsOf` lays them: null for the

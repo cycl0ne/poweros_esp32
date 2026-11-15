@@ -42,6 +42,15 @@ const _display = @import("_display.zig");
 /// drawn into - which is how a program shows a frame while it draws the
 /// next.
 ///
+/// A show that fails changes nothing. On any answer but `RTGERR_OK` the
+/// board goes on reading the buffers it read, they stay marked showing
+/// and `BoardDisplayBitMap` answers as it did; a buffer refused that was
+/// not showing is not marked, so it can be freed. The same for null: a
+/// board that could not be made to show nothing goes on showing its
+/// picture. On a board that is sent its picture over a bus, rows of the
+/// buffer refused may have reached the glass before the send failed; the
+/// rows handed on next put that right.
+///
 /// CONTEXT:
 /// - Waits: for the display's next frame, where the board streams one.
 /// - Interrupts: no. The driver may wait on its bus.
@@ -52,7 +61,11 @@ const _display = @import("_display.zig");
 /// Nothing is allocated. The buffer stays the caller's.
 ///
 /// BUGS:
-/// None known.
+/// Two drivers do not yet leave a failed show as nothing: the DSI boards'
+/// keeps the buffer it was handed when it answers an error - no memory
+/// for the stream's chain, a flip that did not land - and reads it at
+/// the next pointer move; the RGB panel's stops its stream before a start
+/// that can still fail, and the display is then dark.
 ///
 /// SEE ALSO:
 /// `BoardDisplayBitMap`, `AllocBitMap`

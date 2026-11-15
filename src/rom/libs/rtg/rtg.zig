@@ -757,6 +757,134 @@ test "showing buffers in bands, and what may not be shown so" {
     try tearDown(rb);
 }
 
+/// How often a new picture was shown on `board`, as the library counts.
+fn swapsOf(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
+    var stats: rtg.RtgBoardStats = .{};
+    _ = base(rb).GetBoardStats(board, &stats, @sizeOf(rtg.RtgBoardStats));
+    return stats.buffer_swaps;
+}
+
+/// The display memory of `board` not handed out.
+fn freeOf(rb: *RtgBase, board: *rtg.RtgBoard) usize {
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    return info.memory_free;
+}
+
+test "a show that fails changes nothing: the buffer shown stays, the one refused can go" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    const glass = fake.instanceOf(board);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const showing = rtg.bitmaps.RTGBMF_SHOWING;
+    const first = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const second = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+
+    // The board is handed what was asked for: the buffer, and x and y.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, first, 3, 5));
+    try testing.expectEqual(first, fk.log.last_show_bitmap.?);
+    try testing.expectEqual(@as(u32, 3), fk.log.last_show_x);
+    try testing.expectEqual(@as(u32, 5), fk.log.last_show_y);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(first, glass.showing[0].bitmap);
+    const swaps = swapsOf(rb, board);
+
+    // Refused: the answer is the driver's, and neither side has moved -
+    // the library's marks, what it answers, its count of pictures, and
+    // what the board itself shows.
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, second, 0, 0));
+    try testing.expectEqual(second, fk.log.last_show_bitmap.?);
+    try testing.expectEqual(first, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(first.flags & showing != 0);
+    try testing.expect(second.flags & showing == 0);
+    try testing.expectEqual(swaps, swapsOf(rb, board));
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(first, glass.showing[0].bitmap);
+
+    // The one still shown cannot be freed; the one refused can.
+    base(rb).FreeBitMap(first);
+    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).RtgLastError());
+    try testing.expectEqual(first, base(rb).BoardDisplayBitMap(board).?);
+    const free_before = freeOf(rb, board);
+    base(rb).FreeBitMap(second);
+    try testing.expect(freeOf(rb, board) > free_before);
+
+    // Showing nothing refused: the picture stays up, and stays marked.
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(first, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(first.flags & showing != 0);
+    try testing.expect(board.info.flags & rtg.boards.RTGBF_SHOWING != 0);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+
+    // The refusal was that show's alone: the next one works.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expectEqual(@as(u32, 0), glass.showing_count);
+
+    base(rb).FreeBitMap(first);
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "bands that fail change nothing: what was shown stays, in the library and on the board" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    const glass = fake.instanceOf(board);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const showing = rtg.bitmaps.RTGBMF_SHOWING;
+    board.info.width = 16;
+    board.info.height = 16;
+    const back = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const front = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const third = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const two = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+
+    // One buffer up, then bands the board refuses: the one buffer stays.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back, 0, 0));
+    fk.show_answer = rtg.errors.RTGERR_NO_MEMORY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(@as(u32, 2), fk.log.band_count); // it was asked
+    try testing.expectEqual(back, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(back.flags & showing != 0);
+    try testing.expect(front.flags & showing == 0);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(back, glass.showing[0].bitmap);
+
+    // The same bands again, and they are up on both sides.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expectEqual(@as(u32, 2), glass.showing_count);
+    try testing.expectEqual(@as(u32, 6), glass.showing[1].line);
+
+    // A buffer refused over bands: the bands stay, and the buffer can go.
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, third, 0, 0));
+    try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(back.flags & showing != 0 and front.flags & showing != 0);
+    try testing.expect(third.flags & showing == 0);
+    try testing.expectEqual(@as(u32, 2), glass.showing_count);
+    base(rb).FreeBitMap(third);
+
+    // One of the bands' own buffers refused alone: it is still up in its
+    // band, so it stays marked.
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, front, 0, 0));
+    try testing.expect(front.flags & showing != 0);
+    try testing.expectEqual(@as(u32, 2), glass.showing_count);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    base(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
 test "what is written is handed on by the row" {
     const rb = try setUp();
     defer kexec.deinit();
