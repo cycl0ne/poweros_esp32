@@ -1489,11 +1489,13 @@ fn pointPicture(address: usize, turn: Turn) void {
     word(picture_plane + W_PTR1).* = @truncate(from);
 }
 
-/// The picture at `address` shown from now on: the picture's plane's
-/// address rewritten. The HVS takes it up as it next fetches.
-pub fn show(address: usize) void {
+/// `picture` shown from now on, a buffer of the mode the display is in,
+/// as the library describes one: the picture's plane's address
+/// rewritten. The HVS takes it up as it next fetches.
+pub fn show(picture: *const rtg.RtgBitMap) void {
+    const pixels = picture.pixels orelse return;
     if (!running()) return;
-    pointPicture(address, turnOf());
+    pointPicture(@intFromPtr(pixels), turnOf());
 }
 
 /// The picture mirrored as `turn` says from the next frame on, the one

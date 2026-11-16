@@ -67,6 +67,7 @@ const modes = @import("mode/_mode.zig");
 const frame_state = @import("frame/_frame.zig");
 const monitors = @import("monitor/_monitor.zig");
 const edid = @import("monitor/_edid.zig");
+const flips = @import("compose/_flip.zig");
 
 test {
     _ = rtg_base;
@@ -78,6 +79,8 @@ test {
     _ = @import("bitmap/freebitmap.zig");
     _ = @import("bitmap/refreshrect.zig");
     _ = @import("compose/_compose.zig");
+    _ = @import("compose/_damage.zig");
+    _ = @import("compose/_flip.zig");
     _ = @import("compose/composelines.zig");
     _ = @import("bitmap/rtgformatbits.zig");
     _ = @import("bitmap/rtgrowbytes.zig");
@@ -3901,6 +3904,361 @@ test "a picture of four bytes a pixel is composed as one of two is; one of a bit
     try testing.expect(base(rb).BoardDisplayBitMap(mono) == null);
     base(rb).FreeBitMap(bits);
     driverBase(rb).DeleteBoard(mono);
+    try tearDown(rb);
+}
+
+// --- a board that is flipped between frames ---------------------------------
+
+/// A board of the test driver's that is flipped between frames, with one
+/// mode of that size in RGB565.
+fn makeFlipped(rb: *RtgBase, width: u32, height: u32) !*rtg.RtgBoard {
+    const fk = fakeOf(rb);
+    fk.flipped = true;
+    defer fk.flipped = false;
+    return makeDisplay(rb, width, height);
+}
+
+/// The pixel at (x, y) of the frame the test board's display reads.
+fn glassAt(board: *rtg.RtgBoard, x: u32, y: u32) u16 {
+    const glass = fake.glassOf(board).?;
+    const row: [*]const u16 = @ptrCast(@alignCast(glass.pixels.? + @as(usize, y) * glass.pitch));
+    return row[x];
+}
+
+/// Whether the frame the display reads is the buffer marked `mark`,
+/// whole, but for the pixels a test names as changed.
+fn glassIs(board: *rtg.RtgBoard, mark: u16, changed: []const [3]u16) bool {
+    const glass = fake.glassOf(board).?;
+    var y: u32 = 0;
+    while (y < glass.height) : (y += 1) {
+        var x: u32 = 0;
+        next: while (x < glass.width) : (x += 1) {
+            for (changed) |one| {
+                if (one[0] == x and one[1] == y) {
+                    if (glassAt(board, x, y) != one[2]) return false;
+                    continue :next;
+                }
+            }
+            if (glassAt(board, x, y) != painted(mark, x, y)) return false;
+        }
+    }
+    return true;
+}
+
+test "a flipped board: the first picture with the mode, each next one made in the frame the display is not reading" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeFlipped(rb, 16, 12);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const state = &boards.privateOf(board).compose.flip;
+
+    // Its driver wrote neither bands nor a pointer nor an overlay.
+    const caps = infoOf(rb, board).caps;
+    try testing.expect(caps & rtg.boards.RTGBC_BANDS != 0 and caps & rtg.boards.RTGBC_REFRESH != 0);
+    try testing.expect(caps & rtg.boards.RTGBC_POINTER != 0 and caps & rtg.boards.RTGBC_OVERLAY != 0);
+
+    const back = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const front = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(back, 1);
+    paint(front, 2);
+    const free_before = freeOf(rb, board);
+
+    // The first show puts the board in its mode: the driver is handed the
+    // frame the display starts on, with the whole picture in it, and no
+    // flip is made. The frames are not buffers of the board's.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
+    try testing.expectEqual(state.frames[0].?, fk.log.last_show_frame.?);
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & rtg.boards.RTGSHOW_DIRECT);
+    try testing.expectEqual(@as(u32, 0), fk.log.flips);
+    try testing.expect(state.frames[1] != null and state.frames[1] != state.frames[0]);
+    try testing.expect(state.frames[0].?.pixels != back.pixels);
+    try testing.expect(glassIs(board, 1, &.{}));
+    try testing.expect(state.task != null);
+
+    // Something drawn is noted, and no more: the display reads its frame
+    // on. The board's task then makes the next picture in the other
+    // frame - what was drawn, and all the first picture had, which that
+    // frame never got - and the display is flipped to it.
+    poke(back, 3, 2, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, &.{ .x = 3, .y = 2, .width = 1, .height = 1 }));
+    try testing.expectEqual(@as(u32, 0), fk.log.flips);
+    try testing.expectEqual(painted(1, 3, 2), glassAt(board, 3, 2));
+    flips.service(rb, board);
+    try testing.expectEqual(@as(u32, 1), fk.log.flips);
+    try testing.expectEqual(state.frames[1].?, fake.glassOf(board).?);
+    try testing.expect(glassIs(board, 1, &.{.{ 3, 2, white }}));
+    // The frame was handed on to the driver before the flip, the buffer
+    // drawn in never.
+    try testing.expectEqual(state.frames[1].?, fk.log.last_refresh_bitmap.?);
+
+    // The next picture goes back into the first frame, which has not had
+    // the drawing before: both are in it.
+    poke(back, 9, 7, green);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, &.{ .x = 9, .y = 7, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(state.frames[0].?, fake.glassOf(board).?);
+    try testing.expect(glassIs(board, 1, &.{ .{ 3, 2, white }, .{ 9, 7, green } }));
+    // With nothing noted no picture is made.
+    flips.service(rb, board);
+    try testing.expectEqual(@as(u32, 2), fk.log.flips);
+
+    // Bands: the show makes the picture itself, and returns with it on
+    // the glass. What is written under a band is not noted.
+    const bands = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &bands, bands.len));
+    try testing.expectEqual(@as(u32, 3), fk.log.flips);
+    try testing.expectEqual(white, glassAt(board, 3, 2));
+    try testing.expectEqual(painted(2, 2, 0), glassAt(board, 2, 6));
+    try testing.expectEqual(painted(2, 15, 5), glassAt(board, 15, 11));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, &.{ .x = 0, .y = 8, .width = 16, .height = 2 }));
+    flips.service(rb, board);
+    try testing.expectEqual(@as(u32, 3), fk.log.flips);
+
+    // The library's pointer: where it is seen is noted, and the next
+    // picture has it; a move, and the picture after has the place it
+    // left put right - in both frames.
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    base(rb).MoveBoardPointer(board, 4, 4);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expectEqual(painted(1, 4, 4), glassAt(board, 4, 4));
+    flips.service(rb, board);
+    try testing.expectEqual(red, glassAt(board, 4, 4));
+    base(rb).MoveBoardPointer(board, 10, 9);
+    flips.service(rb, board);
+    try testing.expectEqual(painted(1, 4, 4), glassAt(board, 4, 4));
+    try testing.expectEqual(red, glassAt(board, 10, 9));
+    base(rb).MoveBoardPointer(board, 11, 9);
+    flips.service(rb, board);
+    try testing.expectEqual(painted(1, 4, 4), glassAt(board, 4, 4));
+    try testing.expectEqual(painted(2, 10, 3), glassAt(board, 10, 9));
+    try testing.expectEqual(red, glassAt(board, 11, 9));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    flips.service(rb, board);
+
+    // A flip the driver refuses: the display reads what it read, and the
+    // next picture is made whole.
+    const flips_before = fk.log.flips;
+    const reading = fake.glassOf(board).?;
+    poke(back, 0, 0, blue);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, &.{ .width = 1, .height = 1 }));
+    fk.flip_answer = rtg.errors.RTGERR_IO;
+    flips.service(rb, board);
+    try testing.expectEqual(flips_before + 1, fk.log.flips);
+    try testing.expectEqual(reading, fake.glassOf(board).?);
+    fk.flip_answer = rtg.boards.RTGFLIP_TAKEN;
+    flips.service(rb, board);
+    try testing.expect(reading != fake.glassOf(board).?);
+    try testing.expectEqual(blue, glassAt(board, 0, 0));
+    try testing.expectEqual(white, glassAt(board, 3, 2));
+    try testing.expectEqual(painted(2, 7, 2), glassAt(board, 7, 8));
+
+    // And a show whose flip is refused changes nothing in the library:
+    // the bands before are what it holds.
+    fk.flip_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, front));
+    try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(back.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    fk.flip_answer = rtg.boards.RTGFLIP_TAKEN;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, front));
+    try testing.expect(glassIs(board, 2, &.{}));
+    try testing.expect(back.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
+
+    // Nothing shown is a black picture, made and flipped to.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, null, 0));
+    try testing.expectEqual(@as(u16, 0), glassAt(board, 8, 8));
+    try testing.expectEqual(@as(u16, 0), glassAt(board, 0, 0));
+
+    // This board's display memory is one block: its two frames are two
+    // pictures out of it, and nothing else went.
+    try testing.expectEqual(free_before - 2 * 12 * @as(usize, back.pitch), freeOf(rb, board));
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a flip is waited for: the frame read until then is not written before the display's next frame" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeFlipped(rb, 16, 12);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+
+    // A driver that only tells the display: the library waits for the
+    // frame itself, with both locks of the picture let go - the task
+    // sleeps, and the frame that ends meanwhile wakes it.
+    fk.flip_answer = rtg.errors.RTGERR_OK;
+    frames_board = board;
+    // The tests' switch has one task to go back to: the board's own is
+    // taken off, and the pictures made by hand.
+    flips.stopTask(rb, board);
+    Sleep.install(&endOneFrame);
+    defer Sleep.uninstall();
+    // The board's driver says its frames: one was said.
+    fake.endFrame(board);
+    const ended = fk.log.frames_ended;
+    poke(picture, 1, 1, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 1, .y = 1, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(@as(u32, 1), fk.log.flips);
+    try testing.expect(Sleep.sleeps >= 1);
+    try testing.expect(fk.log.frames_ended > ended);
+    try testing.expectEqual(white, glassAt(board, 1, 1));
+    try testing.expect(Composing.free(board));
+    const flip_lock = &boards.privateOf(board).compose.flip.lock;
+    try testing.expect(flip_lock.owner == null and flip_lock.nestCount() == 0);
+
+    // A show waits the same way, before it returns.
+    const sleeps = Sleep.sleeps;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, null, 0));
+    try testing.expect(Sleep.sleeps > sleeps);
+    try testing.expect(flip_lock.owner == null and flip_lock.nestCount() == 0);
+
+    fk.flip_answer = rtg.boards.RTGFLIP_TAKEN;
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "frames of a driver's own: asked for with the mode and after a flip refused; the same one twice is one frame" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+
+    // Two of its own: the library makes its pictures in them, and takes
+    // none of its own.
+    fk.own_frames = .two;
+    const board = try makeFlipped(rb, 16, 12);
+    const instance = fake.instanceOf(board);
+    const state = &boards.privateOf(board).compose.flip;
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(picture, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    try testing.expectEqual(@as(u32, 1), fk.log.frames_asked);
+    try testing.expect(!state.owned);
+    try testing.expectEqual(&instance.frames[0], fake.glassOf(board).?);
+    try testing.expect(glassIs(board, 1, &.{}));
+    poke(picture, 2, 2, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 2, .y = 2, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(&instance.frames[1], fake.glassOf(board).?);
+    try testing.expect(glassIs(board, 1, &.{.{ 2, 2, white }}));
+
+    // A flip refused: the frames are asked for again - here the driver
+    // goes over to one frame for both - and the next picture is whole.
+    fk.own_frames = .one;
+    fk.flip_answer = rtg.errors.RTGERR_IO;
+    poke(picture, 5, 5, green);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 5, .y = 5, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(@as(u32, 2), fk.log.frames_asked);
+    try testing.expectEqual(state.frames[0].?, state.frames[1].?);
+    fk.flip_answer = rtg.boards.RTGFLIP_TAKEN;
+    flips.service(rb, board);
+    try testing.expectEqual(&instance.frames[0], fake.glassOf(board).?);
+    try testing.expect(glassIs(board, 1, &.{ .{ 2, 2, white }, .{ 5, 5, green } }));
+    // One frame: what is drawn goes into the frame the display reads,
+    // that rectangle alone.
+    poke(picture, 7, 7, blue);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 7, .y = 7, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(rtg.RtgRect{ .x = 7, .y = 7, .width = 1, .height = 1 }, fk.log.last_refresh);
+    try testing.expect(glassIs(board, 1, &.{ .{ 2, 2, white }, .{ 5, 5, green }, .{ 7, 7, blue } }));
+
+    fk.own_frames = .library;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a buffer read in place of a frame: shown after another nothing was written in, until something is written in it" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    fk.direct_flip = true;
+    const board = try makeFlipped(rb, 16, 12);
+    fk.direct_flip = false;
+    try testing.expect(infoOf(rb, board).flags & rtg.boards.RTGBF_DIRECT_FLIP != 0);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const direct = rtg.boards.RTGSHOW_DIRECT;
+    const state = &boards.privateOf(board).compose.flip;
+    const one = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const other = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(one, 1);
+    paint(other, 2);
+
+    // The first picture is a frame's.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, one));
+    try testing.expectEqual(state.frames[0].?, fake.glassOf(board).?);
+    // The next buffer, shown in place of one nothing was written in: the
+    // display is flipped to the buffer itself, handed on whole, and
+    // nothing is copied.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, other));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(other, fk.log.last_flip.?);
+    try testing.expectEqual(other, fake.glassOf(board).?);
+    try testing.expectEqual(other, fk.log.last_refresh_bitmap.?);
+    try testing.expectEqual(rtg.RtgRect{ .width = 16, .height = 12 }, fk.log.last_refresh);
+    try testing.expectEqual(@as(u32, 0), state.pictures);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, one));
+    try testing.expectEqual(one, fake.glassOf(board).?);
+    try testing.expectEqual(@as(u32, 2), state.direct_flips);
+
+    // Something written in the buffer the display reads: handed on at
+    // once, and the task takes the frames up again with a whole picture.
+    poke(one, 4, 4, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(one, &.{ .x = 4, .y = 4, .width = 1, .height = 1 }));
+    try testing.expectEqual(one, fk.log.last_refresh_bitmap.?);
+    try testing.expectEqual(rtg.RtgRect{ .x = 4, .y = 4, .width = 1, .height = 1 }, fk.log.last_refresh);
+    flips.service(rb, board);
+    try testing.expect(fake.glassOf(board).? == state.frames[0].? or fake.glassOf(board).? == state.frames[1].?);
+    try testing.expect(glassIs(board, 1, &.{.{ 4, 4, white }}));
+    // The buffer shown next takes the place of one that was written in:
+    // a frame's again. The one after that, not: read as it is.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, other));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expect(fake.glassOf(board).? != other);
+    try testing.expect(glassIs(board, 2, &.{}));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, one));
+    try testing.expectEqual(one, fake.glassOf(board).?);
+
+    // The library's pointer over the picture: the board is shown frames,
+    // the pointer in them, and stays so with it gone.
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    base(rb).MoveBoardPointer(board, 8, 8);
+    try testing.expectEqual(one, fake.glassOf(board).?);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expect(fake.glassOf(board).? != one);
+    try testing.expectEqual(red, glassAt(board, 8, 8));
+    try testing.expectEqual(white, glassAt(board, 4, 4));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, false));
+    flips.service(rb, board);
+    try testing.expect(fake.glassOf(board).? != one);
+    try testing.expectEqual(painted(1, 8, 8), glassAt(board, 8, 8));
+    // Two bands are never a buffer read direct.
+    const bands = [_]rtg.RtgBand{ .{ .bitmap = one }, .{ .bitmap = other, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &bands, bands.len));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(painted(2, 3, 0), glassAt(board, 3, 6));
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, null, 0));
+    base(rb).FreeBitMap(other);
+    base(rb).FreeBitMap(one);
+    driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
 

@@ -33,6 +33,11 @@
 //! library composes (`ComposeLines`) into a picture it keeps, and a test
 //! reads that picture back - the bands, the overlay and the pointer as
 //! they would be on the glass.
+//!
+//! Or one that is flipped between frames (`flipped`): the board fills in
+//! `flip`, and keeps the frame it was last told to read, which a test
+//! reads back as the glass; with `own_frames` it hands the library two
+//! frames of its own, or the same one twice.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -102,6 +107,14 @@ pub const Log = struct {
     /// (`update`), and the last of them.
     updates: u32 = 0,
     last_update: rtg.RtgRect = .{},
+    /// Flips the board was told to make, and the frame of the last; how
+    /// often it was asked for frames of its own.
+    flips: u32 = 0,
+    last_flip: ?*rtg.RtgBitMap = null,
+    frames_asked: u32 = 0,
+    /// The frame a show handed the board to start on, with a mode set
+    /// anew.
+    last_show_frame: ?*rtg.RtgBitMap = null,
     last_control: u32 = 0,
     last_mirror_x: bool = false,
     last_mirror_y: bool = false,
@@ -241,6 +254,20 @@ pub const State = struct {
     direct_bands: ?u32 = null,
     /// What `update` answers: RTGERR_OK delivers the rectangle.
     update_answer: i32 = err.RTGERR_OK,
+    /// Make the next board one that is flipped between frames: its ops
+    /// fill in `flip` and leave the pointer and the overlay to the
+    /// library, and the frame it was last told to read is the glass
+    /// (`glassOf`). With `direct_flip` it says it reads a whole buffer in
+    /// place of a frame (`RTGBF_DIRECT_FLIP`).
+    flipped: bool = false,
+    direct_flip: bool = false,
+    /// What `flip` answers: `RTGFLIP_TAKEN`, so that the library waits
+    /// for no frame, unless a test says RTGERR_OK - then it waits for
+    /// one - or an error.
+    flip_answer: i32 = rtg.boards.RTGFLIP_TAKEN,
+    /// The frames the next flipped board hands the library: none of its
+    /// own (`.library`), two of its own, or the same one twice.
+    own_frames: enum { library, two, one } = .library,
     /// Called with the board at the start of every op that changes what
     /// the board shows or the mode it is in, for a test that looks at
     /// what the library holds while the driver works.
@@ -276,6 +303,12 @@ pub const Instance = struct {
     picture_height: u32 = 0,
     picture_pitch: u32 = 0,
     picture_bytes: u32 = 0,
+    /// A flipped board: the frame the display reads, as the last flip or
+    /// the last mode set told it, and the frames of its own it hands the
+    /// library - their descriptions and their memory.
+    glass: ?*rtg.RtgBitMap = null,
+    frames: [2]rtg.RtgBitMap = .{ .{}, .{} },
+    frame_memory: [2]?*anyopaque = .{ null, null },
 };
 
 pub fn stateOf(driver: *rtg.RtgDriver) *State {
@@ -479,6 +512,10 @@ fn destroyBoard(board: *rtg.RtgBoard) callconv(.c) void {
     state.log.destroyed += 1;
     if (instanceOf(board).picture) |picture| state.sys.FreeVec(picture);
     instanceOf(board).picture = null;
+    for (&instanceOf(board).frame_memory) |*memory| {
+        if (memory.*) |block| state.sys.FreeVec(block);
+        memory.* = null;
+    }
     // The bus it opened goes with the board.
     if (instanceOf(board).bus) |io| state.driver.rtg_base.CloseTransport(io);
     forget(state, board);
@@ -535,6 +572,7 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         log.set_mode += 1;
         log.last_mode = what.mode.*;
         log.last_timings = what.timings.*;
+        log.last_show_frame = what.frame;
     }
     var answer = showAnswer(state);
     // A display with a picture of its own: the picture's memory for the
@@ -542,7 +580,11 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     // the picture fetched, which is what its `update` does.
     if (answer == err.RTGERR_OK and anew and board.ops.?.update != null) answer = takePicture(board, what.mode);
     const direct = what.flags & rtg.boards.RTGSHOW_DIRECT != 0;
-    if (answer == err.RTGERR_OK and what.count != 0 and !direct) {
+    if (answer == err.RTGERR_OK and board.ops.?.flip != null) {
+        // A flipped board: the display starts on the frame a mode set
+        // hands over, and every other picture reaches it through `flip`.
+        if (anew) instance.glass = what.frame;
+    } else if (answer == err.RTGERR_OK and what.count != 0 and !direct) {
         if (instance.picture != null) {
             answer = updateOp(board, &.{ .width = @intCast(instance.picture_width), .height = @intCast(instance.picture_height) });
         } else {
@@ -586,6 +628,55 @@ fn takePicture(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) i32 {
 /// - `board` - a board of this driver.
 pub fn pictureOf(board: *rtg.RtgBoard) ?[*]const u8 {
     return instanceOf(board).picture;
+}
+
+/// The frame a flipped board's display reads, for a test to read as the
+/// glass: one of the two frames, or a buffer it reads in place of one.
+/// Null before the board was put in a mode.
+///
+/// INPUTS:
+/// - `board` - a board of this driver.
+pub fn glassOf(board: *rtg.RtgBoard) ?*rtg.RtgBitMap {
+    return instanceOf(board).glass;
+}
+
+/// The display told to read `frame` from the next blanking on.
+fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
+    const state = stateOfBoard(board);
+    const instance = instanceOf(board);
+    instance.calls += 1;
+    if (state.while_handed) |look| look(board);
+    state.log.flips += 1;
+    state.log.last_flip = frame;
+    if (state.flip_answer < 0) return state.flip_answer;
+    instance.glass = frame;
+    return state.flip_answer;
+}
+
+/// Two frames of the board's own for a mode, as a driver hands over
+/// memory only it can get - or the same one twice, as the test said.
+fn framesOp(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, into: *[2]?*rtg.RtgBitMap) callconv(.c) i32 {
+    const state = stateOfBoard(board);
+    const instance = instanceOf(board);
+    state.log.frames_asked += 1;
+    const count: usize = if (state.own_frames == .one) 1 else 2;
+    for (0..count) |which| {
+        if (instance.frame_memory[which]) |before| state.sys.FreeVec(before);
+        instance.frame_memory[which] = null;
+        const memory = state.sys.AllocVec(mode.pitch * mode.height, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return err.RTGERR_NO_MEMORY;
+        instance.frame_memory[which] = memory;
+        instance.frames[which] = .{
+            .pixels = @ptrCast(memory),
+            .width = mode.width,
+            .height = mode.height,
+            .pitch = mode.pitch,
+            .format = mode.format,
+            .size_bytes = mode.pitch * mode.height,
+        };
+    }
+    into[0] = &instance.frames[0];
+    into[1] = &instance.frames[count - 1];
+    return err.RTGERR_OK;
 }
 
 /// A rectangle of the board's own picture changed: fetched from the
@@ -908,6 +999,24 @@ fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
     return err.RTGERR_NOT_SUPPORTED;
 }
 
+/// A board that is flipped between frames of the library's: it is told
+/// which frame to read, and the pointer and the overlay are the
+/// library's to lay.
+const flipped_ops = rtg.RtgBoardOps{
+    .destroy = &destroyBoard,
+    .show = &showOp,
+    .refresh = &refresh,
+    .flip = &flipOp,
+    .engine = &engine_group,
+};
+
+/// The same, with frames of its own.
+const own_frames_ops = made: {
+    var more = flipped_ops;
+    more.frames = &framesOp;
+    break :made more;
+};
+
 /// A pointer and an overlay of the board's own, as a cursor plane's
 /// driver has them.
 const pointer_group = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
@@ -1040,7 +1149,9 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
     const state = stateOf(driver);
     const board = driver.rtg_base.CreateBoard(driver, device, &.{
         .label = if (unit == 0) "Fake 0" else "Fake 1",
-        .ops = if (state.composed)
+        .ops = if (state.flipped)
+            (if (state.own_frames == .library) &flipped_ops else &own_frames_ops)
+        else if (state.composed)
             &composed_ops
         else if (state.connector)
             &connector_ops
@@ -1051,7 +1162,7 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
         else
             &full_ops,
         .instance_size = @sizeOf(Instance),
-        .flags = rtg.boards.RTGBF_STREAMING,
+        .flags = rtg.boards.RTGBF_STREAMING | (if (state.flipped and state.direct_flip) rtg.boards.RTGBF_DIRECT_FLIP else 0),
         // Every board of it is cut out of the one display memory: a test
         // takes buffers on one of them.
         .region = .{
@@ -1067,7 +1178,7 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
         // What its display reads by itself: bands on the board that has
         // everything, one whole buffer on the two that have less, none
         // on one with a picture of its own - or what the test said.
-        .direct_bands = state.direct_bands orelse if (state.composed)
+        .direct_bands = state.direct_bands orelse if (state.composed or state.flipped)
             0
         else if (state.connector or !(state.cannot_turn or state.without_engine))
             rtg.RTG_MAX_BANDS

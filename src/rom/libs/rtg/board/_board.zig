@@ -362,7 +362,7 @@ pub fn dark(board: *const rtg.RtgBoard) bool {
 pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     var caps: u32 = 0;
     if (ops.show != null) caps |= rtg.boards.RTGBC_SHOW;
-    if (ops.refresh != null or ops.update != null) caps |= rtg.boards.RTGBC_REFRESH;
+    if (ops.refresh != null or ops.update != null or ops.flip != null) caps |= rtg.boards.RTGBC_REFRESH;
     if (ops.display != null) caps |= rtg.boards.RTGBC_DISPLAY;
     if (ops.set_brightness != null) caps |= rtg.boards.RTGBC_BRIGHTNESS;
     if (ops.stats != null) caps |= rtg.boards.RTGBC_STATS;
@@ -371,8 +371,9 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     if (ops.detect != null) caps |= rtg.boards.RTGBC_MONITOR;
     // A pointer and an overlay: the board's own, or the library's on a
     // board whose picture it composes.
-    if (ops.pointer != null or ops.update != null) caps |= rtg.boards.RTGBC_POINTER;
-    if (ops.overlay != null or ops.update != null) caps |= rtg.boards.RTGBC_OVERLAY;
+    const composed = ops.update != null or ops.flip != null;
+    if (ops.pointer != null or composed) caps |= rtg.boards.RTGBC_POINTER;
+    if (ops.overlay != null or composed) caps |= rtg.boards.RTGBC_OVERLAY;
     if (ops.engine) |engine| {
         if (engine.fill_rect != null) caps |= rtg.boards.RTGBC_FILL_RECT;
         if (engine.copy_rect != null) caps |= rtg.boards.RTGBC_COPY_RECT;

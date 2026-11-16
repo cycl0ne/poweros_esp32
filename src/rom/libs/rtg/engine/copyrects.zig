@@ -9,6 +9,7 @@ const boardOf = _engine.boardOf;
 const err = rtg.errors;
 const drawable = _engine.drawable;
 const _engine = @import("_engine.zig");
+const flips = @import("../compose/_flip.zig");
 
 /// Copies several rectangles from one buffer to another as one job of
 /// the board's engine.
@@ -44,9 +45,13 @@ const _engine = @import("_engine.zig");
 /// an answer other than `RTGERR_OK` some of them may have been copied.
 ///
 /// CONTEXT:
-/// - Waits: only if the driver does.
+/// - Waits: where the driver does; and into a buffer a band of a flipped
+///   board shows, while a picture is made of the bands.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Locks: no spinlock may be held: a driver may wait.
+/// - Locks: takes a flipped board's read lock around a copy into a
+///   buffer one of its bands shows, so that a picture copied all at once
+///   is never fetched half old and half new. No spinlock may be held: a
+///   driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -66,12 +71,16 @@ const _engine = @import("_engine.zig");
 /// };
 /// _ = rb.CopyRects(window, display, &pieces, pieces.len);
 /// ```
-pub fn CopyRects(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32 {
+pub fn CopyRects(rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32 {
     if (!drawable(src) or !drawable(dest)) return err.RTGERR_BAD_ARG;
     if (src == dest) return err.RTGERR_BAD_ARG;
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
+    // On a flipped board no picture is made of a shown buffer while the
+    // copies land in it: they are one picture.
+    const held = flips.holdCopy(rb, board, dest);
+    defer if (held) flips.letCopy(rb, board);
     var cut: [rtg.RTG_MAX_COPIES]rtg.RtgCopy = undefined;
     var at: u32 = 0;
     while (at < count) {

@@ -890,9 +890,13 @@ copy - also when the two are one memory described twice.
 
 **CONTEXT**
 
-- Waits: only if the driver does.
+- Waits: where the driver does; and into a buffer a band of a flipped
+  board shows, while a picture is made of the bands.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes a flipped board's read lock around a copy into a
+  buffer one of its bands shows, so that a picture copied all at once
+  is never fetched half old and half new. No spinlock may be held: a
+  driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -955,9 +959,13 @@ an answer other than `RTGERR_OK` some of them may have been copied.
 
 **CONTEXT**
 
-- Waits: only if the driver does.
+- Waits: where the driver does; and into a buffer a band of a flipped
+  board shows, while a picture is made of the bands.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes a flipped board's read lock around a copy into a
+  buffer one of its bands shows, so that a picture copied all at once
+  is never fetched half old and half new. No spinlock may be held: a
+  driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**

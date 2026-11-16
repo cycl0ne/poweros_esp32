@@ -597,21 +597,33 @@ finger makes the copy when an icon is first dragged. The picture goes
 into the copy through the data cache and reaches memory a whole line at
 a time, so moving a pointer leaves the stream its bandwidth.
 
-An `fb` board whose display is not flipped - QEMU's ramfb, its virtio
-GPU, a firmware's framebuffer - is composed by the library the same
-way: while a pointer or the overlay is shown, or the picture is several
-bands, the display reads a frame of the driver's own that the library's
-picture is fetched into, and with nothing over the picture it reads the
-shown buffer itself, and nothing is copied; a firmware's framebuffer is
-that frame already, and is always read. On the VisionFive 2 the
+An `fb` board whose display is not flipped - QEMU's ramfb, a
+firmware's framebuffer - is composed by the library the same way: while
+a pointer or the overlay is shown, or the picture is several bands, the
+display reads a frame of the driver's own that the library's picture is
+fetched into, and with nothing over the picture it reads the shown
+buffer itself, and nothing is copied; a firmware's framebuffer is that
+frame already, and is always read.
+
+An `fb` board whose display is flipped - an HDMI port's, which reads
+RAM past the caches; QEMU's virtio GPU, whose pictures are copies the
+emulator keeps; an AMD display behind a firmware's framebuffer, which
+would be copied into while it is read - never reads a buffer anybody
+draws in. It reads one of two frames, and the library makes the next
+picture in the other: what was written since the last one, and what
+went into that one, fetched from the bands with the overlay and the
+pointer laid over them, and then flipped to, from the next frame on. A
+drawing is seen a frame or two after it was made, and whole. On the
+VisionFive 2 and the Compute Module 5 the
 pointer is the display controller's cursor plane instead, which lays it
 over the picture itself: the image goes into one of two buffers as ARGB,
 opaque where the mask says and clear elsewhere, and a change writes the
 plane's buffer, place and configuration together while the controller's
 shadow registers are held - a new place is taken only with the
 configuration written after it. The two buffers take turns, so the one
-the plane reads is never the one written. The overlay still goes into
-the extra frame.
+the plane reads is never the one written. The overlay goes into the
+pictures the library makes, and on the Compute Module 5 is a plane of
+its own under the cursor's.
 
 - `SetBoardPointer(board, image, hot_x, hot_y)` takes a surface with an
   alpha channel, at most `RTG_POINTER_MAX` (64) each way, and converts it
@@ -950,6 +962,40 @@ picture: no more bands than its display reads, no overlay, no pointer
 the library lays. When that changes the library asks for the show again
 the other way.
 
+A display that must never read a buffer anybody draws in - it reads RAM
+past the caches, or its picture is copied into while it is read - fills
+in `flip(board, frame)`: read this frame from the next blanking on. The
+library then keeps two frames for the board, each a picture of the mode
+it is in, taken from where the board's buffers come from and beside
+what the board may hold of those. It notes what is written as
+rectangles, and a task of the board's makes the next picture in the
+frame the display is not reading - what was noted since the last one,
+and what went into that one - hands it on (`refresh`, with the frame as
+the buffer), calls `flip`, and waits for the frame before the one read
+until then is written again. So such a driver writes no compositor
+either: it starts the display on a frame, hands a frame on, and flips.
+`flip` answers `RTGERR_OK` once the display is told, and the library
+waits a frame; `RTGFLIP_TAKEN` where the driver has itself seen the
+display take the frame, and the library waits for nothing. On an error
+the display reads what it read, and the next picture is made whole.
+With `RTGSHOW_MODE_CHANGED`, `show` on such a board is handed the first
+frame (`what.frame`), the whole picture made in it: the display is
+started reading that. Without the flag `show` has nothing to do: the
+picture reaches the display through `flip`.
+
+Where the frames are memory only the driver can get - a device's own, a
+firmware's framebuffer - it fills in `frames(board, mode, into)` and
+hands two over, each described as a buffer is; the two may be one and
+the same, and the display then reads the frame the pictures are made
+in. A board that says `RTGBF_DIRECT_FLIP` reads a whole buffer in place
+of a frame: where a program shows one buffer after another and draws in
+none while it is shown, with nothing of the library's over the picture,
+`flip` is handed the buffer itself and nothing is copied.
+
+`CopyRect` and `CopyRects` into a buffer a flipped board shows wait
+while a picture is made of it, and a picture waits for them: a window's
+next frame copied in all at once is never seen half old and half new.
+
 `show(board, what)` is the one op for what is on the glass. `what` is an
 `RtgShow`: the mode and its timings, the bands (`bands`, `count`; none
 is nothing shown), and `flags`. With `RTGSHOW_MODE_CHANGED` the board is
@@ -990,6 +1036,8 @@ calls nothing: its board is waited for by the clock.
 | `detect`, `check_mode` | a connector: what is on it, and whether the board can make a timing |
 | `refresh` | a rectangle of a buffer was written, shown or not: write it back out of the cache, or tell the display |
 | `update` | a rectangle of the display's own picture changed: fetch it (`ComposeLines`) and deliver it |
+| `flip` | the display is flipped between two frames the library makes its pictures in: read this one from the next blanking on |
+| `frames` | a flipped board's two frames, where they are memory only the driver can get |
 | `display`, `set_brightness`, `brightness` | the display enable and the backlight |
 | `mirror` | mirroring the picture |
 | `stats`, `control` | the counters, and the driver's own requests |
@@ -1008,8 +1056,8 @@ calls nothing: its board is waited for by the clock.
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
 | Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; a rectangle that changed is fetched from rtg.library in RGB565 and widened into it, by the 2D-DMA where it is large | composed by rtg.library into the copy, one block of which is the chain |
 | QEMU | `qemu` | the emulator's display reads memory of its own: the shown buffer while nothing lies over the picture, else a frame rtg.library composes | composed by the library into that frame |
-| VisionFive 2 on HDMI, the monitor's mode | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | the bands composed into one picture, which the controller then reads |
-| QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | as the VisionFive 2's |
+| VisionFive 2 on HDMI, the monitor's mode | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | composed by rtg.library into one of two frames, which the controller is flipped between |
+| QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | one whole buffer read by the emulator; else composed by rtg.library into a frame of the driver's |
 
 The `qemu` driver takes the ESP32-S3 emulator's display, by its chip.
 The `fb` driver takes a panel part of a chip it drives

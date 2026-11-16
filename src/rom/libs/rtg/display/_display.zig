@@ -29,6 +29,14 @@
 //! picture, which its driver fetches from the library while it is asked.
 //! So the bands are put in place before the driver is asked, under the
 //! board's compose lock, and put back where it refuses.
+//!
+//! On a board that is flipped between frames (`compose/_flip.zig`) the
+//! picture is the library's to make as well: with another mode the whole
+//! picture is made in the first of the mode's frames, which the driver's
+//! op is handed to start the display on; in the mode the board is in,
+//! the driver's op is asked and then the picture made and flipped to. A
+//! flip the driver refuses is the show's answer, and what was in place
+//! is put back.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
@@ -37,12 +45,13 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
 const modes = @import("../mode/_mode.zig");
 const composer = @import("../compose/_compose.zig");
+const flips = @import("../compose/_flip.zig");
 
 /// The board's buffers marked as the display now shows them: the bands'
 /// marked RTGBMF_SHOWING - so none of them can be freed - and every other
 /// buffer of the board not; the last band's, which covers the display's
-/// bottom, is what BoardDisplayBitMap answers. The bands are kept. A
-/// change of picture is counted.
+/// bottom, is what BoardDisplayBitMap answers. The bands themselves are
+/// in place already (`composer.place`). A change of picture is counted.
 ///
 /// INPUTS:
 /// - `board` - the board.
@@ -55,11 +64,7 @@ fn keep(board: *rtg.RtgBoard, bands: []const rtg.RtgBand) void {
         const bm: *rtg.RtgBitMap = @fieldParentPtr("node", n);
         bm.flags &= ~rtg.bitmaps.RTGBMF_SHOWING;
     }
-    for (bands, 0..) |band, i| {
-        band.bitmap.flags |= rtg.bitmaps.RTGBMF_SHOWING;
-        private.bands[i] = band;
-    }
-    private.band_count = @intCast(bands.len);
+    for (bands) |band| band.bitmap.flags |= rtg.bitmaps.RTGBMF_SHOWING;
     if (bands.len != 0) {
         board.showing = bands[bands.len - 1].bitmap;
         board.info.flags |= rtg.boards.RTGBF_SHOWING;
@@ -94,8 +99,9 @@ fn enter(board: *rtg.RtgBoard, record: *modes.Record) void {
 }
 
 /// The board is in no mode, and shows nothing.
-fn leave(board: *rtg.RtgBoard) void {
+fn leave(rb: *RtgBase, board: *rtg.RtgBoard) void {
     const private = boards.privateOf(board);
+    composer.empty(rb, board);
     keep(board, &.{});
     if (private.mode) |before| before.mode.flags &= ~rtg.modes.RTGMF_CURRENT;
     private.mode = null;
@@ -133,7 +139,7 @@ fn check(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgB
 
 /// The driver's op, with a mode and bands, read the way the board's
 /// compose state says: direct, or as the library's picture.
-fn ask(board: *rtg.RtgBoard, record: *modes.Record, bands: []const rtg.RtgBand, flags: u32) i32 {
+fn ask(board: *rtg.RtgBoard, record: *modes.Record, bands: []const rtg.RtgBand, flags: u32, frame: ?*rtg.RtgBitMap) i32 {
     const op = board.ops.?.show.?;
     const direct = bands.len != 0 and composer.stateOf(board).direct;
     return op(board, &.{
@@ -142,7 +148,40 @@ fn ask(board: *rtg.RtgBoard, record: *modes.Record, bands: []const rtg.RtgBand, 
         .bands = if (bands.len != 0) bands.ptr else null,
         .count = @intCast(bands.len),
         .flags = flags | (if (direct) rtg.boards.RTGSHOW_DIRECT else 0),
+        .frame = frame,
     });
+}
+
+/// The bands in place put on the glass: the driver asked, and on a
+/// flipped board the picture made as well - in the mode's first frame,
+/// which the driver is handed with a mode it is to be put in, else in
+/// the frame the display is not reading, and flipped to.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its locks are held, and the bands are in
+///   place.
+/// - `record` - the mode they are shown in.
+/// - `bands` - the bands.
+/// - `flags` - `RTGSHOW_MODE_CHANGED`, or none.
+/// - `old` - the bands shown before.
+///
+/// RESULT:
+/// RTGERR_OK, or why the display reads what it read - or, with the mode
+/// to be changed, nothing.
+fn present(rb: *RtgBase, board: *rtg.RtgBoard, record: *modes.Record, bands: []const rtg.RtgBand, flags: u32, old: []const rtg.RtgBand) i32 {
+    if (!flips.flipped(board)) return ask(board, record, bands, flags, null);
+    if (flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0) {
+        var frame: ?*rtg.RtgBitMap = null;
+        const made = flips.first(rb, board, &record.mode, &frame);
+        if (made != err.RTGERR_OK) return made;
+        const code = ask(board, record, bands, flags, frame);
+        if (code == err.RTGERR_OK) flips.begun(rb, board);
+        return code;
+    }
+    const code = ask(board, record, bands, flags, null);
+    if (code != err.RTGERR_OK) return code;
+    return flips.shown(rb, board, old);
 }
 
 /// Puts a board in a mode and shows bands in it, as one step.
@@ -172,22 +211,25 @@ pub fn show(rb: *RtgBase, board: *rtg.RtgBoard, wanted: ?*modes.Record, bands: [
     if (checked != err.RTGERR_OK) return checked;
 
     // What the picture is made of changes under the compose lock: nothing
-    // is handed on and no pointer moved between the old and the new.
-    composer.obtain(rb, board);
-    defer composer.release(rb, board);
+    // is handed on and no pointer moved between the old and the new. On
+    // a flipped board no picture is being made either.
+    composer.obtainWhole(rb, board);
+    defer composer.releaseWhole(rb, board);
     const direct = composer.plain(board, bands);
-    // A picture the library composes is of whole bytes a pixel.
-    if (!direct and bands.len != 0 and !composer.takes(rb, target.mode.format)) return err.RTGERR_BAD_FORMAT;
-    // In place while the driver is asked: its own picture is made of
-    // them.
+    // A picture the library composes is of whole bytes a pixel - and on
+    // a flipped board every picture is the library's, black too.
+    const composed = if (flips.flipped(board)) true else !direct and bands.len != 0;
+    if (composed and !composer.takes(rb, target.mode.format)) return err.RTGERR_BAD_FORMAT;
+    // In place while the driver is asked: the picture is made of them.
     const kept = composer.place(rb, board, &target.mode, bands, direct);
+    const old = kept.bands[0..kept.count];
 
     if (target == before) {
         // What it shows changes, and the driver keeps what was on any
         // answer but RTGERR_OK.
-        const code = ask(board, target, bands, 0);
+        const code = present(rb, board, target, bands, 0, old);
         if (code != err.RTGERR_OK) {
-            composer.putBack(board, &kept);
+            composer.putBack(rb, board, &kept);
             return code;
         }
         keep(board, bands);
@@ -198,18 +240,18 @@ pub fn show(rb: *RtgBase, board: *rtg.RtgBoard, wanted: ?*modes.Record, bands: [
     // here shows nothing: what was shown is asked for again, in the mode
     // before - and where that is no longer to be had, the board is in no
     // mode and says so.
-    const code = ask(board, target, bands, rtg.boards.RTGSHOW_MODE_CHANGED);
+    const code = present(rb, board, target, bands, rtg.boards.RTGSHOW_MODE_CHANGED, old);
     if (code == err.RTGERR_OK) {
         enter(board, target);
         keep(board, bands);
         boards.changed(rb, board);
         return err.RTGERR_OK;
     }
-    composer.putBack(board, &kept);
-    if (before) |old| {
+    composer.putBack(rb, board, &kept);
+    if (before) |old_mode| {
         const shown = private.bands[0..private.band_count];
-        if (old.offered and ask(board, old, shown, rtg.boards.RTGSHOW_MODE_CHANGED) == err.RTGERR_OK) return code;
-        leave(board);
+        if (old_mode.offered and present(rb, board, old_mode, shown, rtg.boards.RTGSHOW_MODE_CHANGED, shown) == err.RTGERR_OK) return code;
+        leave(rb, board);
         boards.changed(rb, board);
     }
     return code;
@@ -228,14 +270,14 @@ pub fn again(rb: *RtgBase, board: *rtg.RtgBoard) void {
     const current = private.mode orelse return;
     const ops = board.ops orelse return;
     if (ops.show == null) return;
-    composer.obtain(rb, board);
-    defer composer.release(rb, board);
+    composer.obtainWhole(rb, board);
+    defer composer.releaseWhole(rb, board);
     const shown = private.bands[0..private.band_count];
-    if (ask(board, current, shown, rtg.boards.RTGSHOW_MODE_CHANGED) == err.RTGERR_OK) {
+    if (present(rb, board, current, shown, rtg.boards.RTGSHOW_MODE_CHANGED, shown) == err.RTGERR_OK) {
         enter(board, current);
         return;
     }
-    leave(board);
+    leave(rb, board);
 }
 
 /// What a board shows, shown the other way: its compose state says
@@ -244,16 +286,18 @@ pub fn again(rb: *RtgBase, board: *rtg.RtgBoard) void {
 /// board is in.
 ///
 /// INPUTS:
-/// - `board` - the board, showing something; its lock and its compose
-///   lock are held, and its compose state already says the new way.
+/// - `rb` - the library.
+/// - `board` - the board, showing something; its locks are held, and its
+///   compose state already says the new way.
 ///
 /// RESULT:
 /// What the driver answered: on anything but RTGERR_OK the display reads
 /// what it read.
-pub fn otherWay(board: *rtg.RtgBoard) i32 {
+pub fn otherWay(rb: *RtgBase, board: *rtg.RtgBoard) i32 {
     const private = boards.privateOf(board);
     const current = private.mode orelse return err.RTGERR_NO_MODE;
-    return ask(board, current, private.bands[0..private.band_count], 0);
+    const shown = private.bands[0..private.band_count];
+    return present(rb, board, current, shown, 0, shown);
 }
 
 /// A board made to show nothing and put in no mode: its monitor has not
@@ -270,13 +314,19 @@ pub fn otherWay(board: *rtg.RtgBoard) i32 {
 pub fn clear(rb: *RtgBase, board: *rtg.RtgBoard) bool {
     const private = boards.privateOf(board);
     const current = private.mode orelse return private.band_count == 0;
-    composer.obtain(rb, board);
-    defer composer.release(rb, board);
+    composer.obtainWhole(rb, board);
+    defer composer.releaseWhole(rb, board);
     if (private.band_count != 0) {
         const ops = board.ops orelse return false;
         if (ops.show == null) return false;
-        if (ask(board, current, &.{}, 0) != err.RTGERR_OK) return false;
+        // Nothing in place while the driver is asked, and what was there
+        // again where it will not.
+        const kept = composer.place(rb, board, &current.mode, &.{}, composer.stateOf(board).direct);
+        if (present(rb, board, current, &.{}, 0, kept.bands[0..kept.count]) != err.RTGERR_OK) {
+            composer.putBack(rb, board, &kept);
+            return false;
+        }
     }
-    leave(board);
+    leave(rb, board);
     return true;
 }

@@ -9,6 +9,7 @@ const Private = _board.Private;
 const registry = @import("../driver/_driver.zig");
 const devices = @import("../device/_device.zig");
 const _board = @import("_board.zig");
+const flips = @import("../compose/_flip.zig");
 
 /// Makes a board for one output of a device.
 ///
@@ -98,6 +99,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     sys.InitSemaphore(&private.lock);
     sys.InitSemaphore(&private.compose.lock);
     const board = &private.board;
+    flips.setUp(rb, board);
 
     board.node.type = .graphics;
     board.rtg_base = @ptrCast(rb);

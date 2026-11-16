@@ -30,10 +30,16 @@
 //! stream's own copy (`RtgPointerOps`, `RtgOverlayOps`) - is not the
 //! library's to lay: its calls go to the driver, under the same lock.
 //!
-//! Locks: the board's lock is taken before its compose lock. A show holds
-//! both. A pointer or an overlay set or shown may change whether the
-//! board is plain, and takes both too; a move and a hand-on take the
-//! compose lock alone.
+//! A display that is flipped between frames (`flip`) is composed the
+//! same, into the frame it is not reading: what changes is noted, and a
+//! task of the board's makes the next picture of it (`_flip.zig`).
+//!
+//! Locks: the board's lock is taken before its compose lock, and on a
+//! flipped board the flip lock between the two. A show holds them all.
+//! A pointer or an overlay set or shown may change how the board is
+//! shown, and takes them too; a move takes the compose lock alone, and
+//! so does a hand-on, which on a flipped board takes none but the damage
+//! lock.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -42,6 +48,7 @@ const err = rtg.errors;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
 const shows = @import("../display/_display.zig");
+const flips = @import("_flip.zig");
 
 /// What the library keeps for a board's picture, beside the bands
 /// (`Private.bands`), the pointer and the overlay (`RtgBoard`).
@@ -60,6 +67,9 @@ pub const State = struct {
     height: u32 = 0,
     bytes: u32 = 0,
     format: rtg.PixelFormat = .rgb565,
+    /// The frames of a board that is flipped, and what changed since a
+    /// picture was last made in one (`_flip.zig`).
+    flip: flips.State = .{},
 };
 
 /// A board's compose state.
@@ -88,14 +98,37 @@ pub fn release(rb: *RtgBase, board: *rtg.RtgBoard) void {
     rb.sys_base.ReleaseSemaphore(&stateOf(board).lock);
 }
 
+/// Takes the locks a show is made under, and a change that may show the
+/// board another way: the flip lock of a flipped board, then the compose
+/// lock.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock is held.
+pub fn obtainWhole(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    flips.obtain(rb, board);
+    obtain(rb, board);
+}
+
+/// Gives the two back: the compose lock first, so that a pointer moves
+/// while the frame of a flip made under them is waited for.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, its locks taken by `obtainWhole`.
+pub fn releaseWhole(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    release(rb, board);
+    flips.release(rb, board);
+}
+
 /// Whether the library composes a picture for the board: its display has
-/// one of its own.
+/// one of its own, or is flipped between frames.
 ///
 /// INPUTS:
 /// - `board` - the board.
 pub fn composes(board: *const rtg.RtgBoard) bool {
     const ops = board.ops orelse return false;
-    return ops.update != null;
+    return ops.update != null or ops.flip != null;
 }
 
 /// Whether the board's pointer is the library's to lay.
@@ -133,12 +166,41 @@ pub fn composing(board: *rtg.RtgBoard) bool {
 /// - `bands` - the bands, checked for the board's mode.
 pub fn plain(board: *rtg.RtgBoard, bands: []const rtg.RtgBand) bool {
     if (!composes(board)) return true;
+    if (flips.flipped(board)) return readsBuffer(board, bands);
     const reads = stateOf(board).direct_bands;
     if (bands.len > reads) return false;
     // A display that reads one band reads one whole buffer.
     if (reads == 1 and bands.len == 1 and (bands[0].flags != 0 or bands[0].origin != 0)) return false;
     if (laysOverlay(board) and board.overlay != null) return false;
     if (laysPointer(board) and board.pointer != null and board.info.flags & rtg.boards.RTGBF_POINTER != 0) return false;
+    return true;
+}
+
+/// Whether a flipped board's display is to read a buffer in place of a
+/// frame, as things stand: on a board that says it can
+/// (`RTGBF_DIRECT_FLIP`), one whole buffer shown in place of another
+/// that nothing was written in while it was shown - or in place of
+/// itself while the display reads it so - with nothing of the library's
+/// over the picture. That is a program that draws a picture in one
+/// buffer while it shows another and then shows that one. A screen drawn
+/// in while it is shown is shown frames.
+///
+/// INPUTS:
+/// - `board` - a flipped board; its compose lock is held, and the bands
+///   it shows are still in place.
+/// - `bands` - the bands it is to show.
+fn readsBuffer(board: *rtg.RtgBoard, bands: []const rtg.RtgBand) bool {
+    if (board.info.flags & rtg.boards.RTGBF_DIRECT_FLIP == 0) return false;
+    const private = boards.privateOf(board);
+    const state = &private.compose;
+    if (state.flip.written) return false;
+    if (bands.len != 1 or private.band_count != 1) return false;
+    const new = bands[0];
+    const old = private.bands[0];
+    if (new.flags != 0 or new.origin != 0 or old.flags != 0 or old.origin != 0) return false;
+    if (laysOverlay(board) and board.overlay != null) return false;
+    if (laysPointer(board) and board.pointer != null and board.info.flags & rtg.boards.RTGBF_POINTER != 0) return false;
+    if (new.bitmap == old.bitmap and !state.direct) return false;
     return true;
 }
 
@@ -181,8 +243,12 @@ pub fn place(rb: *RtgBase, board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands
     const state = &private.compose;
     var kept = Kept{ .count = private.band_count, .direct = state.direct, .width = state.width, .height = state.height, .bytes = state.bytes, .format = state.format };
     for (private.bands[0..private.band_count], 0..) |band, i| kept.bands[i] = band;
+    // On a flipped board what is written meanwhile is turned into the
+    // display's rectangles through the bands, with no lock but this.
+    flips.holdBands(rb, board);
     for (bands, 0..) |band, i| private.bands[i] = band;
     private.band_count = @intCast(bands.len);
+    flips.letBands(rb, board);
     state.direct = direct;
     state.width = mode.width;
     state.height = mode.height;
@@ -194,18 +260,32 @@ pub fn place(rb: *RtgBase, board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands
 /// What was in place before a show that was refused, in place again.
 ///
 /// INPUTS:
+/// - `rb` - the library.
 /// - `board` - the board; its lock and its compose lock are held.
 /// - `kept` - what `place` answered.
-pub fn putBack(board: *rtg.RtgBoard, kept: *const Kept) void {
+pub fn putBack(rb: *RtgBase, board: *rtg.RtgBoard, kept: *const Kept) void {
     const private = boards.privateOf(board);
     const state = &private.compose;
+    flips.holdBands(rb, board);
     for (kept.bands[0..kept.count], 0..) |band, i| private.bands[i] = band;
     private.band_count = kept.count;
+    flips.letBands(rb, board);
     state.direct = kept.direct;
     state.width = kept.width;
     state.height = kept.height;
     state.bytes = kept.bytes;
     state.format = kept.format;
+}
+
+/// The board shows nothing from now on: no band is in place.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock and its compose lock are held.
+pub fn empty(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    flips.holdBands(rb, board);
+    boards.privateOf(board).band_count = 0;
+    flips.letBands(rb, board);
 }
 
 // --- the picture's pixels ----------------------------------------------------
@@ -375,10 +455,12 @@ const Changed = struct {
     }
 };
 
-/// The rectangles a change touched handed to the driver's `update`, where
-/// the display shows the library's picture.
-fn deliver(board: *rtg.RtgBoard, changed: *const Changed) void {
+/// The rectangles a change touched delivered, where the display shows
+/// the library's picture: handed to the driver's `update`, or on a
+/// flipped board noted for the next picture.
+fn deliver(rb: *RtgBase, board: *rtg.RtgBoard, changed: *const Changed) void {
     if (!composing(board)) return;
+    if (flips.flipped(board)) return flips.note(rb, board, changed.rects[0..changed.count]);
     const update = board.ops.?.update.?;
     for (changed.rects[0..changed.count]) |*rect| _ = update(board, rect);
 }
@@ -388,14 +470,16 @@ fn deliver(board: *rtg.RtgBoard, changed: *const Changed) void {
 /// rectangles the change touched delivered.
 ///
 /// INPUTS:
-/// - `board` - the board; its lock and its compose lock are held.
+/// - `rb` - the library.
+/// - `board` - the board; its lock, its flip lock where it is flipped
+///   and its compose lock are held.
 /// - `changed` - where the images were and are.
 ///
 /// RESULT:
 /// RTGERR_OK, or what the driver answered a show of its own picture
 /// with: the display then reads what it read, and the change is the
 /// caller's to take back.
-fn settle(board: *rtg.RtgBoard, changed: *const Changed) i32 {
+fn settle(rb: *RtgBase, board: *rtg.RtgBoard, changed: *const Changed) i32 {
     const private = boards.privateOf(board);
     const state = &private.compose;
     if (private.band_count == 0) return err.RTGERR_OK;
@@ -403,14 +487,14 @@ fn settle(board: *rtg.RtgBoard, changed: *const Changed) i32 {
     if (direct != state.direct) {
         if (!direct and state.bytes == 0) return err.RTGERR_BAD_FORMAT;
         state.direct = direct;
-        const code = shows.otherWay(board);
+        const code = shows.otherWay(rb, board);
         if (code == err.RTGERR_OK) return code;
         state.direct = !direct;
         // A display that would not go back to reading the buffers itself
         // shows the library's picture still, without the image.
         if (!direct) return code;
     }
-    deliver(board, changed);
+    deliver(rb, board, changed);
     return err.RTGERR_OK;
 }
 
@@ -431,6 +515,9 @@ fn settle(board: *rtg.RtgBoard, changed: *const Changed) i32 {
 /// what the driver answered.
 pub fn handOn(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *const rtg.RtgRect) i32 {
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
+    // A flipped board's display reads none of its buffers: what was
+    // written is noted, with no lock a picture being made holds.
+    if (ops.flip != null) return flips.written(rb, board, bitmap, cut);
     const update = ops.update orelse {
         const refresh = ops.refresh orelse return err.RTGERR_NOT_SUPPORTED;
         return refresh(board, bitmap, cut);
@@ -470,6 +557,22 @@ pub fn handOn(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *
 
 // --- the pointer and the overlay ---------------------------------------------------
 
+/// The locks a pointer's or an overlay's change is made under: the
+/// compose lock - and, where the library lays the image (`own`), the
+/// board's lock and a flipped board's flip lock before it, as the board
+/// may then be shown another way.
+fn hold(rb: *RtgBase, board: *rtg.RtgBoard, own: bool) void {
+    if (!own) return obtain(rb, board);
+    boards.obtain(rb, board);
+    obtainWhole(rb, board);
+}
+
+fn letGo(rb: *RtgBase, board: *rtg.RtgBoard, own: bool) void {
+    if (!own) return release(rb, board);
+    releaseWhole(rb, board);
+    boards.release(rb, board);
+}
+
 /// A board's pointer given an image, or none: handed to the board's own
 /// pointer where it has one, else laid by the library from now on.
 ///
@@ -484,10 +587,8 @@ pub fn handOn(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *
 pub fn setPointer(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImage) i32 {
     const sys = rb.sys_base;
     const own = laysPointer(board);
-    if (own) boards.obtain(rb, board);
-    defer if (own) boards.release(rb, board);
-    obtain(rb, board);
-    defer release(rb, board);
+    hold(rb, board, own);
+    defer letGo(rb, board, own);
 
     const old = board.pointer;
     if (own) {
@@ -495,7 +596,7 @@ pub fn setPointer(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImag
         changed.add(pointerRect(board));
         board.pointer = made;
         changed.add(pointerRect(board));
-        const code = settle(board, &changed);
+        const code = settle(rb, board, &changed);
         if (code != err.RTGERR_OK) {
             board.pointer = old;
             return code;
@@ -525,10 +626,8 @@ pub fn setPointer(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImag
 /// was.
 pub fn showPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
     const own = laysPointer(board);
-    if (own) boards.obtain(rb, board);
-    defer if (own) boards.release(rb, board);
-    obtain(rb, board);
-    defer release(rb, board);
+    hold(rb, board, own);
+    defer letGo(rb, board, own);
 
     const flag: u32 = rtg.boards.RTGBF_POINTER;
     if ((board.info.flags & flag != 0) == show) return err.RTGERR_OK;
@@ -537,7 +636,7 @@ pub fn showPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
         changed.add(pointerRect(board));
         board.info.flags ^= flag;
         changed.add(pointerRect(board));
-        const code = settle(board, &changed);
+        const code = settle(rb, board, &changed);
         if (code != err.RTGERR_OK) board.info.flags ^= flag;
         return code;
     }
@@ -580,7 +679,7 @@ pub fn movePointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
         group.move(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
     };
     changed.add(pointerRect(board));
-    deliver(board, &changed);
+    deliver(rb, board, &changed);
 }
 
 /// A board's overlay given an image, or none, its point put at the
@@ -597,10 +696,8 @@ pub fn movePointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
 pub fn setOverlay(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImage) i32 {
     const sys = rb.sys_base;
     const own = laysOverlay(board);
-    if (own) boards.obtain(rb, board);
-    defer if (own) boards.release(rb, board);
-    obtain(rb, board);
-    defer release(rb, board);
+    hold(rb, board, own);
+    defer letGo(rb, board, own);
 
     const old = board.overlay;
     if (own) {
@@ -614,7 +711,7 @@ pub fn setOverlay(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImag
         board.overlay_follows = 1;
         board.overlay = made;
         changed.add(overlayRect(board));
-        const code = settle(board, &changed);
+        const code = settle(rb, board, &changed);
         if (code != err.RTGERR_OK) {
             board.overlay = old;
             board.overlay_x = was_x;
@@ -659,5 +756,5 @@ pub fn moveOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
     const ops = board.ops orelse return;
     if (ops.overlay) |group| group.move(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
     changed.add(overlayRect(board));
-    deliver(board, &changed);
+    deliver(rb, board, &changed);
 }

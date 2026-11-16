@@ -170,7 +170,12 @@ panel and on a 1080p monitor alike. Where a display has a picture of
 its own - a controller's memory behind a bus, a firmware's framebuffer,
 a stream's copy - rtg.library composes it: screens pulled down over
 each other, a dragged icon and the pointer over them, so a driver for
-such a display says only which rectangle of it to deliver. A board's
+such a display says only which rectangle of it to deliver. A display
+that must never read a buffer drawn in - an HDMI port reading RAM past
+the caches, an emulator's GPU - is flipped between two frames: the
+library makes each picture in the one the display is not reading, from
+what was written since the last, and the driver only tells the display
+which to read. A board's
 engine takes the fills, copies, blends and scales: the ESP32-P4's PPA
 and 2D-DMA, the four cores of the VisionFive 2 and the Compute Module 5,
 whose displays read their picture out of RAM

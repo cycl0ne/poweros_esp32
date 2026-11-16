@@ -29,6 +29,13 @@
 //! and the pointer, which such a board has without its driver writing
 //! either. A board that has both is shown direct for as long as nothing
 //! lies over its picture.
+//!
+//! A display that reads its picture past everything the CPU does to it -
+//! out of RAM, past the caches - fills in `flip` instead: read this frame
+//! from the next blanking on. The library keeps two frames for such a
+//! board, makes the next picture in the one the display is not reading,
+//! from what changed since, and has the driver flip to it: a drawing is
+//! seen a frame or two after it was made, and whole.
 
 const nodes = @import("../exec/nodes.zig");
 const lists = @import("../exec/lists.zig");
@@ -162,6 +169,11 @@ pub const RTGBF_FIRMWARE: u32 = 1 << 9;
 /// It has a connector: its monitor comes and goes (`GetBoardMonitor`),
 /// and its modes are what the monitor on it names.
 pub const RTGBF_CONNECTOR: u32 = 1 << 10;
+/// A board that is flipped between frames reads a whole buffer itself in
+/// place of a frame, where a program shows one buffer after another and
+/// draws in none while it is shown: nothing is copied then. Said by the
+/// driver.
+pub const RTGBF_DIRECT_FLIP: u32 = 1 << 11;
 
 /// RtgBoardInfo.caps: which ops the driver filled in, and what the
 /// library does for the board.
@@ -407,10 +419,17 @@ pub const RtgBoardOps = extern struct {
     /// the library composes: the library has the new bands in place, and
     /// the driver fetches all of the picture with `ComposeLines` and
     /// delivers it before it answers - what its `update` does for the
-    /// whole display. A board with no `update` is always shown direct,
-    /// one that reads no band itself never. `count` 0 shows nothing:
-    /// what a display does then is its driver's, and neither way to the
-    /// glass is meant.
+    /// whole display. A board with neither `update` nor `flip` is always
+    /// shown direct, one that reads no band itself never. `count` 0
+    /// shows nothing: what a display does then is its driver's, and
+    /// neither way to the glass is meant.
+    ///
+    /// On a board with `flip` the picture is the library's to make and
+    /// to flip to, and `show` has only the mode to see to. With
+    /// `RTGSHOW_MODE_CHANGED` it is handed the frame the display is to
+    /// read from the start (`RtgShow.frame`), the whole picture in it;
+    /// without it, it changes nothing, and the pictures reach the display
+    /// through `flip`.
     ///
     /// Without `RTGSHOW_MODE_CHANGED` the board is in `mode` already and
     /// only what it shows changes: on any answer but RTGERR_OK the board
@@ -443,14 +462,19 @@ pub const RtgBoardOps = extern struct {
     /// of every timing a monitor names, and lists the ones taken. Null:
     /// every one is taken.
     check_mode: ?*const fn (*RtgBoard, *const RtgTimings) callconv(.c) i32 = null,
-    /// A rectangle of a buffer of the board was written by the CPU,
-    /// shown or not: where the display does not see the machine's memory
-    /// as it is written - a cache to write back, a window to be told -
-    /// this is where it is made to. The rectangle has been cut down to
-    /// the buffer and is never empty. On a board with `update` it is
-    /// called with the compose lock held, on any other with none: several
-    /// tasks may be in it at once. Null: the display sees memory as it
-    /// is written.
+    /// A rectangle of a buffer the display reads, or may be shown to read
+    /// later, was written by the CPU: where the display does not see the
+    /// machine's memory as it is written - a cache to write back, a
+    /// window to be told - this is where it is made to. On a board that
+    /// reads the shown buffers that is any buffer of the board, shown or
+    /// not. On a board with `flip` it is one of the two frames, after
+    /// the library made a picture in it, and a buffer the display reads
+    /// in place of a frame (`RTGBF_DIRECT_FLIP`); what is written into
+    /// any other buffer the display never reads. The rectangle has been
+    /// cut down to the buffer and is never empty. On a board with
+    /// `update` or `flip` it is called with the compose lock held, on
+    /// any other with none: several tasks may be in it at once. Null:
+    /// the display sees memory as it is written.
     refresh: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
     /// The display has a picture of its own, and this rectangle of it
     /// changed: fetch its lines with `ComposeLines` and deliver them.
@@ -459,6 +483,29 @@ pub const RtgBoardOps = extern struct {
     /// lock held, in the task that drew or moved the pointer; it may
     /// wait. What it answers is what `RefreshRect` answers.
     update: ?*const fn (*RtgBoard, *const bitmaps.RtgRect) callconv(.c) i32 = null,
+    /// The display is flipped between frames: read this one from the
+    /// next blanking on. The frame is one of the board's two - the
+    /// library's, or the driver's own (`frames`) - with the next picture
+    /// made in it and handed on (`refresh`), or a buffer of the board
+    /// the display is to read in place of a frame (`RTGBF_DIRECT_FLIP`).
+    /// It comes back once the display is told, and answers RTGERR_OK: the
+    /// library then waits for the frame before it writes the frame read
+    /// until now. `RTGFLIP_TAKEN` where the driver has itself seen the
+    /// display take the frame: the library waits for nothing. On an
+    /// error the display reads what it read; the library asks for the
+    /// frames again (`frames`), and makes the next picture whole. Called
+    /// with the board's compose lock held, by a task of the library's or
+    /// inside a show.
+    flip: ?*const fn (*RtgBoard, *RtgBitMap) callconv(.c) i32 = null,
+    /// A flipped board whose frames are memory only its driver can get -
+    /// a device's own, a firmware's framebuffer: hand over two for this
+    /// mode, each described as a buffer is - its pixels, its size, its
+    /// row length, its format. The library only ever writes them. The
+    /// two may be one and the same: the display then reads the one frame
+    /// the pictures are made in. Asked before the board is put in the
+    /// mode, and again after a flip that failed. Null: the library takes
+    /// the frames from where it takes the board's buffers.
+    frames: ?*const fn (*RtgBoard, *const RtgMode, *[2]?*RtgBitMap) callconv(.c) i32 = null,
     /// The display enable. Not the backlight.
     display: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
     /// 0 to 100, the right way round whatever the part does.
@@ -587,6 +634,10 @@ pub const RtgShow = extern struct {
     count: u32 = 0,
     /// RTGSHOW_*
     flags: u32 = 0,
+    /// On a board with `flip`, with `RTGSHOW_MODE_CHANGED`: the frame the
+    /// display reads from the start, the whole picture made in it and
+    /// handed on - black where nothing is shown. Null otherwise.
+    frame: ?*RtgBitMap = null,
 };
 
 /// RtgShow.flags
@@ -598,6 +649,10 @@ pub const RTGSHOW_DIRECT: u32 = 1 << 0;
 /// in for a monitor that came. Without it the board is in the mode, and
 /// only what it shows changes.
 pub const RTGSHOW_MODE_CHANGED: u32 = 1 << 1;
+
+/// What `flip` answers where the driver has itself seen the display take
+/// the frame: the library waits for no frame.
+pub const RTGFLIP_TAKEN: i32 = 1;
 
 /// Part of the display shown from a buffer: from display line `line`
 /// down to where the next band starts - or the display's bottom - the

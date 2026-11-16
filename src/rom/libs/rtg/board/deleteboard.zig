@@ -9,6 +9,7 @@ const modes = @import("../mode/_mode.zig");
 const monitors = @import("../monitor/_monitor.zig");
 const shows = @import("../display/_display.zig");
 const frames = @import("../frame/_frame.zig");
+const flips = @import("../compose/_flip.zig");
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
 
@@ -79,10 +80,12 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     if (frames.waiting(sys, &private.frames)) return;
     if (private.video_layers != 0) return;
 
-    // Nothing is left looking at it, and nothing of it is left up.
+    // Nothing is left looking at it, and nothing of it is left up: a
+    // flipped board's task is stopped, and its frames go.
     _board.obtain(rb, gone);
     _ = shows.clear(rb, gone);
     _board.release(rb, gone);
+    flips.stop(rb, gone);
     bitmaps.freeAll(rb, gone);
 
     if (gone.ops) |ops| {

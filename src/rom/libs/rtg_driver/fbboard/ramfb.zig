@@ -67,8 +67,6 @@ const config_bytes = 28;
 const FOURCC_XRGB8888: u32 = 0x3432_5258;
 const FOURCC_RGB565: u32 = 0x3631_4752;
 
-pub const Format = enum { bgra32, rgb565 };
-
 /// How many times a request is looked at before it is given up: it is done
 /// before the write that names it returns, so the first look is the last.
 const patience: u32 = 1000;
@@ -135,20 +133,22 @@ pub fn find(base: usize) ?Ramfb {
     return null;
 }
 
-/// Show the picture at `address`: `width` by `height` pixels, rows
-/// `pitch` bytes apart, in `format`. The window takes it at its next
-/// refresh. False if the device would not have it.
-pub fn show(ramfb: Ramfb, address: usize, width: u32, height: u32, pitch: u32, format: Format) bool {
+/// Show `picture`, a buffer as the library describes one: its pixels,
+/// its size, its rows and its format - RGB565, or 32 bits a pixel. The
+/// window takes it at its next refresh. False if the device would not
+/// have it.
+pub fn show(ramfb: Ramfb, picture: *const sdk.rtg.RtgBitMap) bool {
+    const pixels = picture.pixels orelse return false;
     const config: Config = .{
-        .address = @byteSwap(@as(u64, address)),
-        .fourcc = @byteSwap(switch (format) {
-            .bgra32 => FOURCC_XRGB8888,
+        .address = @byteSwap(@as(u64, @intFromPtr(pixels))),
+        .fourcc = @byteSwap(@as(u32, switch (picture.format) {
             .rgb565 => FOURCC_RGB565,
-        }),
+            else => FOURCC_XRGB8888,
+        })),
         .flags = 0,
-        .width = @byteSwap(width),
-        .height = @byteSwap(height),
-        .pitch = @byteSwap(pitch),
+        .width = @byteSwap(picture.width),
+        .height = @byteSwap(picture.height),
+        .pitch = @byteSwap(picture.pitch),
     };
     return transfer(ramfb.base, CONTROL_SELECT | CONTROL_WRITE | @as(u32, ramfb.select) << 16, @intFromPtr(&config), config_bytes);
 }

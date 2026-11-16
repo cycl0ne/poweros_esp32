@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MPL-2.0
-//! What of the display changed since a picture was last made, as a few
-//! rectangles: a rectangle that overlaps or touches another is merged
-//! with it, and once there are `max_boxes` the next goes into the one it
-//! grows least. So a drawing scattered over the display costs a copy of
-//! what was drawn, not of the rows from its top to its bottom, and a
-//! thousand small ones cost no more bookkeeping than sixteen.
+//! What of a flipped board's display changed since a picture was last
+//! made (`_flip.zig`), as a few rectangles: a rectangle that overlaps
+//! another or shares an edge with it is merged with it, and once there
+//! are `max_boxes` the next goes into the one it grows least. So a
+//! drawing scattered over the display costs a copy of what was drawn, not
+//! of the rows from its top to its bottom, and a thousand small ones cost
+//! no more bookkeeping than sixteen: adding one looks at each rectangle
+//! kept a few times at the most, which is why it may be done under a
+//! spinlock.
 //!
 //! Bands shown in place of others change only the rows that come from
 //! another buffer, or from another row of it, than before (`rebanded`):
@@ -14,6 +17,9 @@
 const std = @import("std");
 const rtg = @import("sdk").rtg;
 const RtgBand = rtg.RtgBand;
+
+/// A number above every line a display has.
+const no_line: u32 = 0xFFFF_FFFF;
 
 /// A rectangle of the display: columns `left` up to `right`, rows `top`
 /// up to `end`.
@@ -32,9 +38,20 @@ pub const Box = struct {
         return .{ .left = @min(a.left, b.left), .top = @min(a.top, b.top), .right = @max(a.right, b.right), .end = @max(a.end, b.end) };
     }
 
-    /// Whether the two overlap or share an edge.
+    /// Whether the two overlap or share an edge. Two that meet at a
+    /// corner alone do not: their union would take in two quarters
+    /// neither holds.
     pub fn touches(a: Box, b: Box) bool {
-        return a.left <= b.right and b.left <= a.right and a.top <= b.end and b.top <= a.end;
+        const across = a.left < b.right and b.left < a.right;
+        const down = a.top < b.end and b.top < a.end;
+        const beside = a.left <= b.right and b.left <= a.right;
+        const above = a.top <= b.end and b.top <= a.end;
+        return (across and above) or (down and beside);
+    }
+
+    /// Whether all of `inner` lies inside the rectangle.
+    pub fn holds(box: Box, inner: Box) bool {
+        return box.left <= inner.left and box.top <= inner.top and box.right >= inner.right and box.end >= inner.end;
     }
 
     pub fn area(box: Box) u64 {
@@ -54,6 +71,15 @@ pub const Damage = struct {
     /// room left for it, merged into the one that grows least.
     pub fn add(damage: *Damage, box: Box) void {
         if (box.isEmpty()) return;
+        // What is drawn again where it was drawn - the usual case - is
+        // inside a rectangle kept already: one look at each, and nothing
+        // changes. Past that a rectangle is merged at most as often as
+        // there are rectangles, each merge a look at each: a few hundred
+        // comparisons at the worst, which is what a caller's spinlock is
+        // held for.
+        for (damage.boxes[0..damage.count]) |kept| {
+            if (kept.holds(box)) return;
+        }
         var grown = box;
         var i: u32 = 0;
         while (i < damage.count) {
@@ -72,7 +98,7 @@ pub const Damage = struct {
             return;
         }
         var best: u32 = 0;
-        var least: u64 = std.math.maxInt(u64);
+        var least: u64 = ~@as(u64, 0);
         for (damage.boxes[0..damage.count], 0..) |kept, j| {
             const growth = kept.unionOf(grown).area() - kept.area();
             if (growth >= least) continue;
@@ -128,7 +154,7 @@ fn nextLine(bands: []const RtgBand, y: u32) u32 {
     for (bands) |band| {
         if (band.line > y) return band.line;
     }
-    return std.math.maxInt(u32);
+    return no_line;
 }
 
 /// Whether two bands show every line they share from the same row of the
@@ -156,6 +182,30 @@ test "rectangles apart are kept apart, empty ones are not kept" {
     try testing.expectEqual(@as(u32, 2), damage.count);
     try testing.expectEqual(rect(0, 0, 10, 10), damage.boxes[0]);
     try testing.expectEqual(rect(100, 100, 110, 110), damage.boxes[1]);
+}
+
+test "two that meet at a corner alone stay two" {
+    var damage: Damage = .{};
+    damage.add(rect(0, 0, 10, 10));
+    damage.add(rect(10, 10, 20, 20));
+    damage.add(rect(20, 0, 30, 10));
+    try testing.expectEqual(@as(u32, 3), damage.count);
+    // One that shares an edge with two of them joins those, and the
+    // third then shares an edge with what that made.
+    damage.add(rect(10, 0, 20, 10));
+    try testing.expectEqual(@as(u32, 1), damage.count);
+    try testing.expectEqual(rect(0, 0, 30, 20), damage.boxes[0]);
+}
+
+test "one inside a rectangle kept changes nothing" {
+    var damage: Damage = .{};
+    damage.add(rect(0, 0, 100, 100));
+    damage.add(rect(200, 0, 300, 100));
+    damage.add(rect(10, 10, 20, 20));
+    damage.add(rect(200, 0, 300, 100));
+    try testing.expectEqual(@as(u32, 2), damage.count);
+    try testing.expectEqual(rect(0, 0, 100, 100), damage.boxes[0]);
+    try testing.expectEqual(rect(200, 0, 300, 100), damage.boxes[1]);
 }
 
 test "overlapping and touching rectangles are one" {

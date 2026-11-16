@@ -26,7 +26,9 @@
 //! and the slot is free again once the device has named it. The device is
 //! told by a register write (QueueNotify). Nothing waits for it unless the
 //! next step needs it done: the screen's size at the start, an image for
-//! the cursor, a slot when every one is with the device.
+//! the cursor, a slot when every one is with the device, and a resource
+//! as it is made - once a picture, so that one the device did not make,
+//! or that got no backing, is let go again and not kept as a picture.
 //!
 //! **Two ways to its registers, and one device behind them.** A
 //! memory-mapped transport is a block of registers at an address the
@@ -326,7 +328,7 @@ const Cursor = extern struct {
 pub const cursor_side = 64;
 
 /// A buffer the display may show: its pixels, its rows' pitch, how many.
-pub const Picture = struct {
+const Picture = struct {
     pixels: usize,
     pitch: u32,
     height: u32,
@@ -779,15 +781,36 @@ pub fn displaySize(gpu: *Gpu, waiter: anytype) ?struct { width: u32, height: u32
 }
 
 /// A resource of `format`, `pitch / 4` by `height`, backed by the bytes at
-/// `pixels`: its id, 0 when the commands could not be handed over.
+/// `pixels`: its id, 0 when the device did not make it or did not take
+/// its backing. Each of the two commands is waited for and its answer
+/// read; a resource made that got no backing is let go again.
 fn makeResource(gpu: *Gpu, pixels: usize, pitch: u32, height: u32, format: u32, waiter: anytype) u32 {
     const id = gpu.next_id;
     const made = Create2d{ .resource_id = id, .format = format, .width = pitch / 4, .height = height };
-    _ = send(gpu, &made, null, waiter) orelse return 0;
+    if (!carriedOut(gpu, &made, waiter)) return 0;
+    // The id is the device's from here on, whatever becomes of the rest.
     gpu.next_id += 1;
     const backing = AttachBacking{ .resource_id = id, .address = pixels, .length = pitch * height };
-    _ = send(gpu, &backing, null, waiter) orelse return 0;
+    if (!carriedOut(gpu, &backing, waiter)) {
+        const gone = Unref{ .resource_id = id };
+        _ = send(gpu, &gone, null, waiter);
+        kick(gpu, 0);
+        return 0;
+    }
     return id;
+}
+
+/// A control command handed over, the device told, and its answer waited
+/// for: whether the device carried it out. False too where no slot came
+/// free or no answer came within a second.
+fn carriedOut(gpu: *Gpu, request: anytype, waiter: anytype) bool {
+    const slot = send(gpu, request, null, waiter) orelse return false;
+    kick(gpu, 0);
+    if (!finish(gpu, slot, waiter)) return false;
+    // The slot's answer stays as it is until the slot is taken again,
+    // which the caller's hold of the lock keeps anyone from.
+    const answer: *const Header = @ptrCast(&gpu.slots[slot].response);
+    return answer.type < RESP_ERR_UNSPEC;
 }
 
 /// The entry of `picture`, taken for it when it has none - the one used
@@ -823,10 +846,16 @@ fn transfer(gpu: *Gpu, id: u32, pitch: u32, rect: Rect, waiter: anytype) ?u32 {
     return send(gpu, &copy, null, waiter);
 }
 
-/// `rect` of `picture` written: copied into the emulator's copy and shown
+/// The buffer `bitmap` is, as the resources are told apart.
+fn pictureOf(bitmap: *const sdk.rtg.RtgBitMap) Picture {
+    return .{ .pixels = @intFromPtr(bitmap.pixels), .pitch = bitmap.pitch, .height = bitmap.height };
+}
+
+/// `rect` of `bitmap` written: copied into the emulator's copy and shown
 /// where the picture is the one shown, else noted for when it is.
-pub fn update(gpu: *Gpu, picture: Picture, rect: Rect, waiter: anytype) void {
-    if (rect.width == 0 or rect.height == 0) return;
+pub fn update(gpu: *Gpu, bitmap: *const sdk.rtg.RtgBitMap, rect: Rect, waiter: anytype) void {
+    if (rect.width == 0 or rect.height == 0 or bitmap.pixels == null) return;
+    const picture = pictureOf(bitmap);
     gpu.sys.ObtainSemaphore(&gpu.lock);
     defer gpu.sys.ReleaseSemaphore(&gpu.lock);
     const entry = entryOf(gpu, picture, waiter) orelse return;
@@ -837,25 +866,14 @@ pub fn update(gpu: *Gpu, picture: Picture, rect: Rect, waiter: anytype) void {
     kick(gpu, 0);
 }
 
-/// The emulator's copy of the picture at `pixels` let go of, as its
-/// memory is given back: a picture made there later starts afresh and is
-/// copied whole. The one shown is kept.
-pub fn forget(gpu: *Gpu, pixels: usize, waiter: anytype) void {
-    gpu.sys.ObtainSemaphore(&gpu.lock);
-    defer gpu.sys.ReleaseSemaphore(&gpu.lock);
-    for (&gpu.resources) |*one| {
-        if (one.pixels != pixels or one.id == 0 or one.id == gpu.shown) continue;
-        const gone = Unref{ .resource_id = one.id };
-        _ = send(gpu, &gone, null, waiter) orelse return;
-        kick(gpu, 0);
-        one.* = .{};
-    }
-}
-
-/// `picture` shown, `width` by `height` of it from its top left: its
-/// resource made the first time - and copied whole - and what was written
-/// into it while another was shown copied first.
-pub fn show(gpu: *Gpu, picture: Picture, width: u32, height: u32, waiter: anytype) bool {
+/// `bitmap` shown, a buffer as the library describes one, all of it:
+/// its resource made the first time - and copied whole - and what was
+/// written into it while another was shown copied first.
+pub fn show(gpu: *Gpu, bitmap: *const sdk.rtg.RtgBitMap, waiter: anytype) bool {
+    if (bitmap.pixels == null) return false;
+    const picture = pictureOf(bitmap);
+    const width = bitmap.width;
+    const height = bitmap.height;
     gpu.sys.ObtainSemaphore(&gpu.lock);
     defer gpu.sys.ReleaseSemaphore(&gpu.lock);
     const entry = entryOf(gpu, picture, waiter) orelse return false;

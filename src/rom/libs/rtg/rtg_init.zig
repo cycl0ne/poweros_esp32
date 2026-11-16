@@ -88,7 +88,14 @@ pub const LIBRARY_VERSION = 1;
 /// 25: a driver may say how many bands its display reads, and which ops
 /// it has, until its attach answers (RtgBoard.direct_bands); an image
 /// the library lays is taken from any memory.
-pub const LIBRARY_REVISION = 25;
+/// 26: a board that is flipped between two frames has its pictures made
+/// by the library: its driver fills in flip, and what is written is
+/// noted as rectangles, which a task of the board's fetches into the
+/// frame the display is not reading (RtgBoardOps.flip and frames,
+/// RtgShow.frame, RTGFLIP_TAKEN, RTGBF_DIRECT_FLIP). CopyRect and
+/// CopyRects into a buffer such a board shows wait while a picture is
+/// made of it.
+pub const LIBRARY_REVISION = 26;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

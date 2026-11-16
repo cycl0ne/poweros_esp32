@@ -9,6 +9,7 @@ const boardOf = _engine.boardOf;
 const err = rtg.errors;
 const drawable = _engine.drawable;
 const _engine = @import("_engine.zig");
+const flips = @import("../compose/_flip.zig");
 
 /// Copies a rectangle between buffers with the board's engine.
 ///
@@ -37,9 +38,13 @@ const _engine = @import("_engine.zig");
 /// copy - also when the two are one memory described twice.
 ///
 /// CONTEXT:
-/// - Waits: only if the driver does.
+/// - Waits: where the driver does; and into a buffer a band of a flipped
+///   board shows, while a picture is made of the bands.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Locks: no spinlock may be held: a driver may wait.
+/// - Locks: takes a flipped board's read lock around a copy into a
+///   buffer one of its bands shows, so that a picture copied all at once
+///   is never fetched half old and half new. No spinlock may be held: a
+///   driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -55,12 +60,16 @@ const _engine = @import("_engine.zig");
 /// ```zig
 /// _ = rb.CopyRect(buffer, buffer, &.{ .src_x = 0, .src_y = 10, .dest_x = 0, .dest_y = 0, .width = 800, .height = 590 });
 /// ```
-pub fn CopyRect(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const rtg.RtgCopy) i32 {
+pub fn CopyRect(rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const rtg.RtgCopy) i32 {
     if (!drawable(src) or !drawable(dest)) return err.RTGERR_BAD_ARG;
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const cut = clipCopy(src, dest, copy) orelse return err.RTGERR_OK;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
     const copy_rect = engine.copy_rect orelse return err.RTGERR_NOT_SUPPORTED;
+    // On a flipped board no picture is made of a shown buffer while the
+    // copy lands in it.
+    const held = flips.holdCopy(rb, board, dest);
+    defer if (held) flips.letCopy(rb, board);
     return copy_rect(board, src, dest, &cut);
 }

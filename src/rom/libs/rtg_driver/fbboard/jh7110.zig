@@ -573,10 +573,13 @@ pub fn takeInterrupts() u32 {
     return dc(INTERRUPT_ACKNOWLEDGE).*;
 }
 
-/// The picture at `address` shown from now on.
-pub fn show(address: usize) void {
+/// `picture` shown from now on: a buffer of the mode the display is
+/// in, as the library describes one, of which the controller is told
+/// the address.
+pub fn show(picture: *const rtg.RtgBitMap) void {
+    const pixels = picture.pixels orelse return;
     hold();
-    dc(FRAMEBUFFER_ADDRESS).* = @truncate(address);
+    dc(FRAMEBUFFER_ADDRESS).* = @truncate(@intFromPtr(pixels));
     letGo();
 }
 
