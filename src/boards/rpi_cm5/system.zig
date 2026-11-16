@@ -222,19 +222,42 @@ const screen = struct {
     pub const height: u32 = 1080;
 };
 
+/// The first HDMI port's blocks beside the video scaler, as the device
+/// tree has them (the SoC's bus at 0x7C00_0000 is the machine's at
+/// 0x10_7C00_0000): pixel valve 0, the HDMI0 controller's registers and
+/// its DVP, PHY, rate manager, colour converter and HD blocks, the
+/// register of the DVP's clock gates, the packet RAM, and the port's DDC,
+/// a BSC master at 0x10_7D50_8200; with the mailbox the firmware is asked
+/// its clocks through, and the scaler's IOMMU.
+const hdmi0: sdk.hardware.bcm2712.HdmiPort = .{
+    .mailbox = mailbox,
+    .iommu = 0x10_0000_5200,
+    .pixel_valve = 0x10_7C41_0000,
+    .hdmi = 0x10_7C70_1400,
+    .dvp = 0x10_7C70_1000,
+    .phy = 0x10_7C70_1D00,
+    .rate_manager = 0x10_7C70_2000,
+    .csc = 0x10_7C70_0100,
+    .hd = 0x10_7C72_0000,
+    .dvp_gates = 0x10_7C70_0008,
+    .packets = 0x10_7C70_3800,
+    .ddc = 0x10_7D50_8200,
+};
+
 /// The display behind the IO board's first HDMI port (HDMI0): the
 /// BCM2712's video scaler at 0x10_7C58_0000, which reads its picture out
 /// of RAM, the HDMI0 controller, and pixel valve 0 between them, which
 /// raises GIC interrupt 133 at each frame - what the bcm2712 rtg driver
 /// is told comes with it (`rtg_driver/bcm2712board/`). Its clocks are
 /// the VideoCore firmware's, asked through the mailbox the RTC is read
-/// through.
+/// through. The port's other blocks are in `hdmi0`.
 const display = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_PANEL),
     .value(st.PART_Chip, st.CHIP_BCM2712_HVS),
     .pointer(st.PART_ChipName, "bcm2712 hvs hdmi0"),
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x10_7C58_0000),
+    .pointer(st.PART_Blocks, &hdmi0),
     .value(st.PART_Irq, 133),
     .value(tags.RTGA_Width, screen.width),
     .value(tags.RTGA_Height, screen.height),

@@ -102,11 +102,21 @@ const list = @import("list.zig");
 /// its display at run time; elsewhere the display does not wake.
 pub const on_bcm2712 = sdk.hardware.chip == .a64psci;
 
+/// Where the port is, as the board's list names it: the video scaler's
+/// registers, which are the part's own address, and the port's other
+/// blocks - the mailbox its clocks are asked through, the scaler's IOMMU,
+/// its pixel valve, the HDMI controller's blocks, the packet RAM and the
+/// DDC's master - from the table the part points at. The driver reads
+/// them from its part and keeps them beside its board.
+pub const Port = struct {
+    hvs: usize,
+    blocks: sdk.hardware.bcm2712.HdmiPort,
+};
+
 /// The VideoCore's mailbox, and what the display asks its firmware: to
 /// let go of the display it drives itself, and the clocks' rates - the
 /// HSM's (the firmware's M2MC clock), the BVB's, and the HVS's (DISP),
 /// which the firmware keeps running.
-const MAILBOX: usize = 0x10_7C01_3880;
 const TAG_NOTIFY_DISPLAY_DONE: u32 = 0x0003_0066;
 const TAG_GET_CLOCK_RATE: u32 = 0x0003_0002;
 const TAG_GET_MAX_CLOCK_RATE: u32 = 0x0003_0004;
@@ -119,12 +129,9 @@ const CLOCK_DISP: u32 = 16;
 const HSM_MIN_HZ: u64 = 120_000_000;
 
 /// The HVS's IOMMU, switched off: control 0.
-const IOMMU: usize = 0x10_0000_5200;
-
 /// The HVS: its control, its arbiter's priorities, and per channel - 0
 /// is pixel valve 0's - its control words, its display list's head, its
 /// share of the composite output buffer (COB) and its status.
-const HVS: usize = 0x10_7C58_0000;
 const HVS_CONTROL = 0x20;
 const CONTROL_HVS_EN: u32 = 1 << 31;
 const CONTROL_PF_LINES_SHIFT = 18;
@@ -165,7 +172,6 @@ pub const upm_overlay: u32 = 136;
 
 /// Pixel valve 0: its control, its vertical control, the mode's timing,
 /// its interrupts, the pixel mux and the pipe's start.
-const PV: usize = 0x10_7C41_0000;
 const PV_CONTROL = 0x00;
 const PV_V_CONTROL = 0x04;
 const PV_VSYNCD_EVEN = 0x08;
@@ -194,15 +200,7 @@ const PV_PIPE_INIT: u32 = 1 << 8 | 1 << 4 | 1 << 0;
 /// latency, three bytes each.
 const pv_fifo_level: u32 = 64 - 3 * 6;
 
-/// The HDMI0 controller's blocks.
-pub const HDMI: usize = 0x10_7C70_1400;
-const HDMI_DVP: usize = 0x10_7C70_1000;
-const HDMI_PHY: usize = 0x10_7C70_1D00;
-const HDMI_RM: usize = 0x10_7C70_2000;
-const HDMI_CSC: usize = 0x10_7C70_0100;
-pub const HDMI_HD: usize = 0x10_7C72_0000;
 /// The DVP's clock gates, one bit for each port's 108 MHz, set to stop it.
-const DVP_MISC_CONFIG: usize = 0x10_7C70_0008;
 const DVP_HDMI0_GATE: u32 = 1 << 3;
 
 const FIFO_CTL = 0x07C;
@@ -283,7 +281,6 @@ const VID_BLANK_INSERT_EN: u32 = 1 << 16;
 /// The packet RAM: a packet's nine words for each infoframe type, its
 /// header in the first and its four subpackets of seven bytes in the
 /// eight after, each four bytes then three.
-const HDMI_PACKET: usize = 0x10_7C70_3800;
 const PACKET_STRIDE = 0x24;
 pub const INFOFRAME_VENDOR: u8 = 0x81;
 pub const INFOFRAME_AVI: u8 = 0x82;
@@ -324,8 +321,6 @@ const pll_misc = [_]u32{ 0x810C_6000, 0x00B8_C451, 0x4640_2E31, 0x00B8_C005, 0x4
 /// The port's DDC: a BSC I2C controller - the target's address, eight
 /// words of data each way, the count, its control, the transfer's enable
 /// and status, and more control.
-pub const DDC: usize = 0x10_7D50_8200;
-
 pub const BSC_CTL = 0x28;
 pub const BSC_IIC_ENABLE = 0x2C;
 pub const BSC_CTLHI = 0x50;
@@ -354,12 +349,12 @@ pub fn at(base: usize, offset: usize) *volatile u32 {
     return reg(base + offset);
 }
 
-fn hvsDisp(offset: usize) *volatile u32 {
-    return reg(HVS + DISP0 + offset);
+fn hvsDisp(port: *const Port, offset: usize) *volatile u32 {
+    return reg(port.hvs + DISP0 + offset);
 }
 
-pub fn word(index: u32) *volatile u32 {
-    return reg(HVS + DLIST + @as(usize, index) * 4);
+pub fn word(port: *const Port, index: u32) *volatile u32 {
+    return reg(port.hvs + DLIST + @as(usize, index) * 4);
 }
 
 // --- what a mode set and the sound both write --------------------------------
@@ -384,38 +379,38 @@ pub const Shared = struct {
 
 /// The firmware asked `tag` with `value`: whether it answered. The
 /// message's buffer is RAM it reaches, taken for the call.
-fn ask(sys: *ExecBase, tag: u32, value: []u32) bool {
+fn ask(port: *const Port, sys: *ExecBase, tag: u32, value: []u32) bool {
     const memory = sys.AllocMem(videocore.buffer_bytes * 2, exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return false;
     defer sys.FreeMem(memory, videocore.buffer_bytes * 2);
     const buffer = videocore.bufferIn(memory) orelse return false;
-    return videocore.call(sys, MAILBOX, buffer, tag, value);
+    return videocore.call(sys, port.blocks.mailbox, buffer, tag, value);
 }
 
 /// Clock `clock` set to `hz`: whether the firmware took it.
-fn setClock(sys: *ExecBase, clock: u32, hz: u64) bool {
+fn setClock(port: *const Port, sys: *ExecBase, clock: u32, hz: u64) bool {
     var value = [3]u32{ clock, @intCast(hz), 0 };
-    return ask(sys, TAG_SET_CLOCK_RATE, &value) and value[1] != 0;
+    return ask(port, sys, TAG_SET_CLOCK_RATE, &value) and value[1] != 0;
 }
 
 /// Clock `clock`'s rate; 0 while it is stopped, null when the firmware
 /// does not say.
-fn clockRate(sys: *ExecBase, clock: u32) ?u32 {
+fn clockRate(port: *const Port, sys: *ExecBase, clock: u32) ?u32 {
     var value = [2]u32{ clock, 0 };
-    if (!ask(sys, TAG_GET_CLOCK_RATE, &value)) return null;
+    if (!ask(port, sys, TAG_GET_CLOCK_RATE, &value)) return null;
     return value[1];
 }
 
 /// Clock `clock` running at `hz` at least: set to it when it is slower.
-fn atLeast(sys: *ExecBase, clock: u32, hz: u64) bool {
-    const now = clockRate(sys, clock) orelse return false;
-    return now >= hz or setClock(sys, clock, hz);
+fn atLeast(port: *const Port, sys: *ExecBase, clock: u32, hz: u64) bool {
+    const now = clockRate(port, sys, clock) orelse return false;
+    return now >= hz or setClock(port, sys, clock, hz);
 }
 
 /// The fastest the firmware gives for clock `clock`; null when it does
 /// not say.
-fn maxClockRate(sys: *ExecBase, clock: u32) ?u32 {
+fn maxClockRate(port: *const Port, sys: *ExecBase, clock: u32) ?u32 {
     var value = [2]u32{ clock, 0 };
-    if (!ask(sys, TAG_GET_MAX_CLOCK_RATE, &value)) return null;
+    if (!ask(port, sys, TAG_GET_MAX_CLOCK_RATE, &value)) return null;
     return value[1];
 }
 
@@ -426,10 +421,10 @@ fn maxClockRate(sys: *ExecBase, clock: u32) ?u32 {
 /// starts from its own medium does in the second after the power comes
 /// on, long before a monitor that was asleep answers - and the display
 /// is then asked for rather than given up on.
-fn startDisp(sys: *ExecBase) bool {
-    const most = maxClockRate(sys, CLOCK_DISP) orelse return false;
+fn startDisp(port: *const Port, sys: *ExecBase) bool {
+    const most = maxClockRate(port, sys, CLOCK_DISP) orelse return false;
     if (most == 0) return false;
-    return setClock(sys, CLOCK_DISP, most) and (clockRate(sys, CLOCK_DISP) orelse 0) != 0;
+    return setClock(port, sys, CLOCK_DISP, most) and (clockRate(port, sys, CLOCK_DISP) orelse 0) != 0;
 }
 
 /// The HSM's rate for a TMDS clock of `tmds_hz`.
@@ -445,8 +440,8 @@ pub fn bvbHz(tmds_hz: u64) u64 {
 }
 
 /// The clocks the controller needs for a TMDS clock of `tmds_hz`.
-fn clocksFor(sys: *ExecBase, tmds_hz: u64) bool {
-    return setClock(sys, CLOCK_HSM, hsmHz(tmds_hz)) and setClock(sys, CLOCK_BVB, bvbHz(tmds_hz));
+fn clocksFor(port: *const Port, sys: *ExecBase, tmds_hz: u64) bool {
+    return setClock(port, sys, CLOCK_HSM, hsmHz(tmds_hz)) and setClock(port, sys, CLOCK_BVB, bvbHz(tmds_hz));
 }
 
 // --- waking ------------------------------------------------------------------
@@ -459,34 +454,34 @@ fn clocksFor(sys: *ExecBase, tmds_hz: u64) bool {
 /// needs. Nothing of the display's is read before its clocks are known
 /// to run. Done again it changes nothing. `sys` is exec's;
 /// `waiter.wait(micros)` waits that long.
-pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
+pub fn wake(port: *const Port, sys: *ExecBase, waiter: anytype) Failure {
     _ = waiter;
     if (!on_bcm2712) return .firmware;
     // Firmware that does not know the tag has no display of its own to
     // let go of.
     var none = [0]u32{};
-    _ = ask(sys, TAG_NOTIFY_DISPLAY_DONE, &none);
-    if ((clockRate(sys, CLOCK_DISP) orelse 0) == 0 and !startDisp(sys)) return .firmware;
-    if (!atLeast(sys, CLOCK_HSM, hsmHz(0)) or !atLeast(sys, CLOCK_BVB, bvbHz(0))) return .firmware;
-    at(DVP_MISC_CONFIG, 0).* &= ~DVP_HDMI0_GATE;
+    _ = ask(port, sys, TAG_NOTIFY_DISPLAY_DONE, &none);
+    if ((clockRate(port, sys, CLOCK_DISP) orelse 0) == 0 and !startDisp(port, sys)) return .firmware;
+    if (!atLeast(port, sys, CLOCK_HSM, hsmHz(0)) or !atLeast(port, sys, CLOCK_BVB, bvbHz(0))) return .firmware;
+    at(port.blocks.dvp_gates, 0).* &= ~DVP_HDMI0_GATE;
     // The DDC (brcmstb_i2c_set_bsc_reg_defaults): four bytes a data word,
     // 97.5 kHz, nothing under way.
-    at(DDC, BSC_CTLHI).* = BSC_CTLHI_WORDS;
-    at(DDC, BSC_CTL).* = BSC_CTL_97K;
-    at(DDC, BSC_IIC_ENABLE).* = 0;
+    at(port.blocks.ddc, BSC_CTLHI).* = BSC_CTLHI_WORDS;
+    at(port.blocks.ddc, BSC_CTL).* = BSC_CTL_97K;
+    at(port.blocks.ddc, BSC_IIC_ENABLE).* = 0;
     return .none;
 }
 
 /// Whether the HVS's first channel runs this driver's list.
-pub fn running() bool {
-    return hvsDisp(DISP_CTRL0).* & CTRL0_ENB != 0 and hvsDisp(DISP_LPTRS).* & 0xFFF == list_start;
+pub fn running(port: *const Port) bool {
+    return hvsDisp(port, DISP_CTRL0).* & CTRL0_ENB != 0 and hvsDisp(port, DISP_LPTRS).* & 0xFFF == list_start;
 }
 
 /// Whether a monitor is on the port: the controller's hot-plug line.
 /// Only once `wake` has its clocks running.
-pub fn monitor() bool {
+pub fn monitor(port: *const Port) bool {
     if (!on_bcm2712) return false;
-    return at(HDMI, HOTPLUG).* & HOTPLUG_CONNECTED != 0;
+    return at(port.blocks.hdmi, HOTPLUG).* & HOTPLUG_CONNECTED != 0;
 }
 
 // --- the PHY -----------------------------------------------------------------
@@ -546,28 +541,28 @@ pub fn laneDrive(tmds_hz: u64, clock_lane: bool) u32 {
 
 /// The PHY reset, its PLL set for `tmds_hz` and locked, its lanes driven
 /// and powered up (vc6_hdmi_phy_init).
-fn phyStart(tmds_hz: u64) void {
+fn phyStart(port: *const Port, tmds_hz: u64) void {
     const div = vcoDivider(tmds_hz);
     const vco = tmds_hz * div * 10;
-    at(HDMI_PHY, PHY_RESET_CTL).* = 0;
-    at(HDMI_PHY, PHY_POWERUP_CTL).* = 0;
-    at(HDMI_PHY, PHY_PLL_POST_KDIV).* = PHY_KDIV_BYPASS;
-    for (pll_misc, 0..) |value, i| at(HDMI_PHY, PHY_PLL_MISC_0 + i * 4).* = value;
-    at(HDMI_PHY, PHY_PLL_REFCLK).* = PHY_REFCLK_CMOS_54;
-    at(HDMI_PHY, PHY_RESET_CTL).* = 0x7F;
-    at(HDMI_RM, RM_OFFSET).* = RM_OFFSET_ONLY | rmOffset(vco);
-    at(HDMI_PHY, PHY_PLL_VCOCLK_DIV).* = PHY_VCODIV_EN | div;
-    at(HDMI_PHY, PHY_PLL_CFG).* = 0;
-    at(HDMI_PHY, PHY_PLL_POST_KDIV).* = PHY_KDIV_RUN;
-    at(HDMI_PHY, PHY_CTL_0).* = laneDrive(tmds_hz, false);
-    at(HDMI_PHY, PHY_CTL_1).* = laneDrive(tmds_hz, false);
-    at(HDMI_PHY, PHY_CTL_2).* = laneDrive(tmds_hz, false);
-    at(HDMI_PHY, PHY_CTL_CK).* = laneDrive(tmds_hz, true);
-    at(HDMI_PHY, PHY_TMDS_CLK_WORD_SEL).* = if (tmds_hz >= 340_000_000) 3 else 0;
-    at(HDMI_PHY, PHY_POWERUP_CTL).* = PHY_POWERUP_ALL;
-    at(HDMI_PHY, PHY_PLL_POWERUP_CTL).* = 1;
-    at(HDMI_PHY, PHY_PLL_RESET_CTL).* &= ~PHY_PLL_RESETB;
-    at(HDMI_PHY, PHY_PLL_RESET_CTL).* |= PHY_PLL_RESETB;
+    at(port.blocks.phy, PHY_RESET_CTL).* = 0;
+    at(port.blocks.phy, PHY_POWERUP_CTL).* = 0;
+    at(port.blocks.phy, PHY_PLL_POST_KDIV).* = PHY_KDIV_BYPASS;
+    for (pll_misc, 0..) |value, i| at(port.blocks.phy, PHY_PLL_MISC_0 + i * 4).* = value;
+    at(port.blocks.phy, PHY_PLL_REFCLK).* = PHY_REFCLK_CMOS_54;
+    at(port.blocks.phy, PHY_RESET_CTL).* = 0x7F;
+    at(port.blocks.rate_manager, RM_OFFSET).* = RM_OFFSET_ONLY | rmOffset(vco);
+    at(port.blocks.phy, PHY_PLL_VCOCLK_DIV).* = PHY_VCODIV_EN | div;
+    at(port.blocks.phy, PHY_PLL_CFG).* = 0;
+    at(port.blocks.phy, PHY_PLL_POST_KDIV).* = PHY_KDIV_RUN;
+    at(port.blocks.phy, PHY_CTL_0).* = laneDrive(tmds_hz, false);
+    at(port.blocks.phy, PHY_CTL_1).* = laneDrive(tmds_hz, false);
+    at(port.blocks.phy, PHY_CTL_2).* = laneDrive(tmds_hz, false);
+    at(port.blocks.phy, PHY_CTL_CK).* = laneDrive(tmds_hz, true);
+    at(port.blocks.phy, PHY_TMDS_CLK_WORD_SEL).* = if (tmds_hz >= 340_000_000) 3 else 0;
+    at(port.blocks.phy, PHY_POWERUP_CTL).* = PHY_POWERUP_ALL;
+    at(port.blocks.phy, PHY_PLL_POWERUP_CTL).* = 1;
+    at(port.blocks.phy, PHY_PLL_RESET_CTL).* &= ~PHY_PLL_RESETB;
+    at(port.blocks.phy, PHY_PLL_RESET_CTL).* |= PHY_PLL_RESETB;
 }
 
 // --- what the monitor is sent ------------------------------------------------
@@ -680,11 +675,11 @@ pub fn vendorFrame(hdmi_vic: u8) Infoframe {
 /// The packet `frame` into the packet RAM and sent with every frame from
 /// now on (vc4_hdmi_write_infoframe): its sending stopped and waited out,
 /// its nine words written, then sent again. The packet RAM must be on.
-pub fn writePacket(frame: *const Infoframe, waiter: anytype) void {
+pub fn writePacket(port: *const Port, frame: *const Infoframe, waiter: anytype) void {
     const id: u5 = @intCast(frame[0] - 0x80);
     const bit = @as(u32, 1) << id;
-    stopPacket(frame[0], waiter);
-    const first = HDMI_PACKET + @as(usize, id) * PACKET_STRIDE;
+    stopPacket(port, frame[0], waiter);
+    const first = port.blocks.packets + @as(usize, id) * PACKET_STRIDE;
     var i: usize = 0;
     while (i < 28) : (i += 7) {
         const pair = first + i / 7 * 8;
@@ -692,15 +687,15 @@ pub fn writePacket(frame: *const Infoframe, waiter: anytype) void {
         reg(pair + 4).* = @as(u32, frame[i + 3]) | @as(u32, frame[i + 4]) << 8 | @as(u32, frame[i + 5]) << 16 | @as(u32, frame[i + 6]) << 24;
     }
     reg(first + 32).* = 0;
-    at(HDMI, RAM_PACKET_CONFIG).* |= bit;
-    waitBits(at(HDMI, RAM_PACKET_STATUS), bit, true, 100, waiter);
+    at(port.blocks.hdmi, RAM_PACKET_CONFIG).* |= bit;
+    waitBits(at(port.blocks.hdmi, RAM_PACKET_STATUS), bit, true, 100, waiter);
 }
 
 /// The packet of type `kind` no longer sent, waited out.
-pub fn stopPacket(kind: u8, waiter: anytype) void {
+pub fn stopPacket(port: *const Port, kind: u8, waiter: anytype) void {
     const bit = @as(u32, 1) << @as(u5, @intCast(kind - 0x80));
-    at(HDMI, RAM_PACKET_CONFIG).* &= ~bit;
-    waitBits(at(HDMI, RAM_PACKET_STATUS), bit, false, 100, waiter);
+    at(port.blocks.hdmi, RAM_PACKET_CONFIG).* &= ~bit;
+    waitBits(at(port.blocks.hdmi, RAM_PACKET_STATUS), bit, false, 100, waiter);
 }
 
 // --- starting ----------------------------------------------------------------
@@ -709,78 +704,78 @@ pub fn stopPacket(kind: u8, waiter: anytype) void {
 /// of a frame, the controller's packets and picture blanked, the
 /// scrambling off at both ends, the valve's FIFO cleared and the HVS's
 /// channel reset (vc4_crtc_disable).
-fn stop(waiter: anytype) void {
-    if (at(PV, PV_V_CONTROL).* & PV_VCONTROL_VIDEN != 0) {
-        at(PV, PV_V_CONTROL).* &= ~PV_VCONTROL_VIDEN;
+fn stop(port: *const Port, waiter: anytype) void {
+    if (at(port.blocks.pixel_valve, PV_V_CONTROL).* & PV_VCONTROL_VIDEN != 0) {
+        at(port.blocks.pixel_valve, PV_V_CONTROL).* &= ~PV_VCONTROL_VIDEN;
         waiter.wait(20_000);
     }
-    at(HDMI, RAM_PACKET_CONFIG).* = 0;
-    if (at(HDMI, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE != 0) {
-        at(HDMI, SCRAMBLER_CTL).* &= ~SCRAMBLER_ENABLE;
-        _ = ddc.scdcScrambling(false, waiter);
+    at(port.blocks.hdmi, RAM_PACKET_CONFIG).* = 0;
+    if (at(port.blocks.hdmi, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE != 0) {
+        at(port.blocks.hdmi, SCRAMBLER_CTL).* &= ~SCRAMBLER_ENABLE;
+        _ = ddc.scdcScrambling(port, false, waiter);
     }
-    at(HDMI_HD, HD_VID_CTL).* |= VID_CLRRGB | VID_BLANKPIX;
-    at(PV, PV_INTEN).* = 0;
-    at(PV, PV_CONTROL).* &= ~PV_CONTROL_EN;
-    at(PV, PV_CONTROL).* |= PV_CONTROL_FIFO_CLR;
-    if (hvsDisp(DISP_CTRL0).* & CTRL0_ENB != 0) {
-        hvsDisp(DISP_CTRL0).* |= CTRL0_RESET;
-        hvsDisp(DISP_CTRL0).* &= ~CTRL0_ENB;
+    at(port.blocks.hd, HD_VID_CTL).* |= VID_CLRRGB | VID_BLANKPIX;
+    at(port.blocks.pixel_valve, PV_INTEN).* = 0;
+    at(port.blocks.pixel_valve, PV_CONTROL).* &= ~PV_CONTROL_EN;
+    at(port.blocks.pixel_valve, PV_CONTROL).* |= PV_CONTROL_FIFO_CLR;
+    if (hvsDisp(port, DISP_CTRL0).* & CTRL0_ENB != 0) {
+        hvsDisp(port, DISP_CTRL0).* |= CTRL0_RESET;
+        hvsDisp(port, DISP_CTRL0).* &= ~CTRL0_ENB;
     }
 }
 
 /// The HVS on, its IOMMU off, and the composite output buffer shared
 /// between its three channels, four lines of 3840 for each of the first
 /// two (vc6_hvs_hw_init, vc4_hvs_cob_init).
-fn hvsStart() void {
-    at(IOMMU, 0).* = 0;
-    at(HVS, HVS_CONTROL).* = CONTROL_HVS_EN | 8 << CONTROL_PF_LINES_SHIFT | 15 << CONTROL_MAX_REQS_SHIFT;
-    at(HVS, PRI_MAP0).* = 0xFFFF_FFFF;
-    at(HVS, PRI_MAP1).* = 0xFFFF_FFFF;
+fn hvsStart(port: *const Port) void {
+    at(port.blocks.iommu, 0).* = 0;
+    at(port.hvs, HVS_CONTROL).* = CONTROL_HVS_EN | 8 << CONTROL_PF_LINES_SHIFT | 15 << CONTROL_MAX_REQS_SHIFT;
+    at(port.hvs, PRI_MAP0).* = 0xFFFF_FFFF;
+    at(port.hvs, PRI_MAP1).* = 0xFFFF_FFFF;
     var top: u32 = widest;
-    reg(HVS + DISP0 + 2 * DISP_STRIDE + DISP_COB).* = top << 16;
+    reg(port.hvs + DISP0 + 2 * DISP_STRIDE + DISP_COB).* = top << 16;
     var base = top + 16;
     top += widest * 4;
-    reg(HVS + DISP0 + DISP_STRIDE + DISP_COB).* = top << 16 | base;
+    reg(port.hvs + DISP0 + DISP_STRIDE + DISP_COB).* = top << 16 | base;
     base = top + 16;
     top += widest * 4;
-    hvsDisp(DISP_COB).* = top << 16 | base;
+    hvsDisp(port, DISP_COB).* = top << 16 | base;
 }
 
 /// The controller's timing for `mode` (vc5_hdmi_set_timings), eight bits
 /// a colour, no pixel doubling.
-fn hdmiTiming(mode: *const rtg.RtgTimings) void {
+fn hdmiTiming(port: *const Port, mode: *const rtg.RtgTimings) void {
     var horza = mode.h_active | mode.h_front << 16;
     if (timing.vsyncHigh(mode)) horza |= HORZA_VPOS;
     if (timing.hsyncHigh(mode)) horza |= HORZA_HPOS;
-    at(HDMI, H_HORZA).* = horza;
-    at(HDMI, H_HORZB).* = mode.h_back << 16 | mode.h_sync;
+    at(port.blocks.hdmi, H_HORZA).* = horza;
+    at(port.blocks.hdmi, H_HORZB).* = mode.h_back << 16 | mode.h_sync;
     const verta = (mode.v_sync & 0x1F) << 24 | (mode.v_front & 0x7F) << 16 | mode.v_active;
-    at(HDMI, H_VERTA0).* = verta;
-    at(HDMI, H_VERTA1).* = verta;
-    at(HDMI, H_VERTB0).* = mode.v_back & 0x1FF;
-    at(HDMI, H_VERTB1).* = (timing.htotal(mode) >> 1) << 16 | (mode.v_back & 0x1FF);
-    at(HDMI, DEEP_COLOR_CONFIG_1).* = at(HDMI, DEEP_COLOR_CONFIG_1).* & ~@as(u32, 0x70F) | 2 << 8;
-    at(HDMI, GCP_WORD_1).* = at(HDMI, GCP_WORD_1).* & ~@as(u32, 0xFFFF) | GCP_CLEAR_AVMUTE;
-    at(HDMI, GCP_CONFIG).* |= GCP_ENABLE;
-    at(HDMI, MISC_CONTROL).* &= ~@as(u32, 0xF);
-    at(HDMI_DVP, DVP_CLOCK_STOP).* = 0;
+    at(port.blocks.hdmi, H_VERTA0).* = verta;
+    at(port.blocks.hdmi, H_VERTA1).* = verta;
+    at(port.blocks.hdmi, H_VERTB0).* = mode.v_back & 0x1FF;
+    at(port.blocks.hdmi, H_VERTB1).* = (timing.htotal(mode) >> 1) << 16 | (mode.v_back & 0x1FF);
+    at(port.blocks.hdmi, DEEP_COLOR_CONFIG_1).* = at(port.blocks.hdmi, DEEP_COLOR_CONFIG_1).* & ~@as(u32, 0x70F) | 2 << 8;
+    at(port.blocks.hdmi, GCP_WORD_1).* = at(port.blocks.hdmi, GCP_WORD_1).* & ~@as(u32, 0xFFFF) | GCP_CLEAR_AVMUTE;
+    at(port.blocks.hdmi, GCP_CONFIG).* |= GCP_ENABLE;
+    at(port.blocks.hdmi, MISC_CONTROL).* &= ~@as(u32, 0xF);
+    at(port.blocks.dvp, DVP_CLOCK_STOP).* = 0;
 }
 
 /// Pixel valve 0's timing for `mode` (vc4_crtc_config_pv): progressive,
 /// a pixel a clock, 24 bits from the HDMI controller's clock.
-fn pvTiming(mode: *const rtg.RtgTimings) void {
-    at(PV, PV_CONTROL).* &= ~PV_CONTROL_EN;
-    at(PV, PV_CONTROL).* |= PV_CONTROL_FIFO_CLR;
-    at(PV, PV_HORZA).* = mode.h_back << 16 | mode.h_sync;
-    at(PV, PV_HORZB).* = mode.h_front << 16 | mode.h_active;
-    at(PV, PV_V_CONTROL).* = PV_VCONTROL_CONTINUOUS | PV_VCONTROL_ODD_TIMING;
-    at(PV, PV_VSYNCD_EVEN).* = 0;
-    at(PV, PV_VERTA).* = mode.v_back << 16 | mode.v_sync;
-    at(PV, PV_VERTB).* = mode.v_front << 16 | mode.v_active;
-    at(PV, PV_MUX_CFG).* = PV_MUX_NO_SWAP;
-    at(PV, PV_PIPE_INIT_CTRL).* = PV_PIPE_INIT;
-    at(PV, PV_CONTROL).* = PV_CONTROL_FIFO_CLR |
+fn pvTiming(port: *const Port, mode: *const rtg.RtgTimings) void {
+    at(port.blocks.pixel_valve, PV_CONTROL).* &= ~PV_CONTROL_EN;
+    at(port.blocks.pixel_valve, PV_CONTROL).* |= PV_CONTROL_FIFO_CLR;
+    at(port.blocks.pixel_valve, PV_HORZA).* = mode.h_back << 16 | mode.h_sync;
+    at(port.blocks.pixel_valve, PV_HORZB).* = mode.h_front << 16 | mode.h_active;
+    at(port.blocks.pixel_valve, PV_V_CONTROL).* = PV_VCONTROL_CONTINUOUS | PV_VCONTROL_ODD_TIMING;
+    at(port.blocks.pixel_valve, PV_VSYNCD_EVEN).* = 0;
+    at(port.blocks.pixel_valve, PV_VERTA).* = mode.v_back << 16 | mode.v_sync;
+    at(port.blocks.pixel_valve, PV_VERTB).* = mode.v_front << 16 | mode.v_active;
+    at(port.blocks.pixel_valve, PV_MUX_CFG).* = PV_MUX_NO_SWAP;
+    at(port.blocks.pixel_valve, PV_PIPE_INIT_CTRL).* = PV_PIPE_INIT;
+    at(port.blocks.pixel_valve, PV_CONTROL).* = PV_CONTROL_FIFO_CLR |
         (pv_fifo_level & 0x3F) << PV_CONTROL_FIFO_LEVEL_SHIFT |
         (pv_fifo_level >> 6) << PV_CONTROL_FIFO_LEVEL_HIGH_SHIFT |
         PV_CONTROL_CLR_AT_START | PV_CONTROL_TRIGGER_UNDERFLOW | PV_CONTROL_WAIT_HSTART;
@@ -788,19 +783,19 @@ fn pvTiming(mode: *const rtg.RtgTimings) void {
 
 /// RGB through the controller's CSC, unchanged or squashed to 16-235
 /// (vc5_hdmi_csc_setup, vc5_hdmi_csc_full_rgb_to_rgb).
-fn hdmiColours(limited: bool) void {
+fn hdmiColours(port: *const Port, limited: bool) void {
     const scale = if (limited) CSC_LIMITED else CSC_ONE;
     const offset = if (limited) CSC_LIMITED_OFFSET else 0;
-    at(HDMI_DVP, DVP_VEC_INTERFACE_CFG).* = 0;
-    at(HDMI_DVP, DVP_VEC_INTERFACE_XBAR).* = XBAR_RGB;
-    at(HDMI_CSC, CSC_12_11).* = scale;
-    at(HDMI_CSC, CSC_14_13).* = offset << 16;
-    at(HDMI_CSC, CSC_22_21).* = scale << 16;
-    at(HDMI_CSC, CSC_24_23).* = offset << 16;
-    at(HDMI_CSC, CSC_32_31).* = 0;
-    at(HDMI_CSC, CSC_34_33).* = offset << 16 | scale;
-    at(HDMI_CSC, CSC_CHANNEL_CTL).* = 0;
-    at(HDMI_CSC, CSC_CTL).* = CSC_ENABLE_CUSTOM;
+    at(port.blocks.dvp, DVP_VEC_INTERFACE_CFG).* = 0;
+    at(port.blocks.dvp, DVP_VEC_INTERFACE_XBAR).* = XBAR_RGB;
+    at(port.blocks.csc, CSC_12_11).* = scale;
+    at(port.blocks.csc, CSC_14_13).* = offset << 16;
+    at(port.blocks.csc, CSC_22_21).* = scale << 16;
+    at(port.blocks.csc, CSC_24_23).* = offset << 16;
+    at(port.blocks.csc, CSC_32_31).* = 0;
+    at(port.blocks.csc, CSC_34_33).* = offset << 16 | scale;
+    at(port.blocks.csc, CSC_CHANNEL_CTL).* = 0;
+    at(port.blocks.csc, CSC_CTL).* = CSC_ENABLE_CUSTOM;
 }
 
 /// Until `bits` of `register` are `set` or not, `tries` milliseconds at
@@ -817,67 +812,67 @@ fn waitBits(register: *volatile u32, bits: u32, set: bool, tries: u32, waiter: a
 /// the monitor sent the picture. With the display up, it changes
 /// to `mode`; sound that plays goes on in it. The order is
 /// vc4_crtc_atomic_enable's. `waiter.wait(micros)` waits that long.
-pub fn start(sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink: Sink, address: usize, pitch: u32, waiter: anytype) Failure {
+pub fn start(port: *const Port, sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink: Sink, address: usize, pitch: u32, waiter: anytype) Failure {
     if (!on_bcm2712) return .firmware;
     if (!sends(timing.khz(mode))) return .clock;
-    const woken = wake(sys, waiter);
+    const woken = wake(port, sys, waiter);
     if (woken != .none) return woken;
     sys.ObtainSemaphore(&shared.lock);
     defer sys.ReleaseSemaphore(&shared.lock);
     const output = outputFor(sink, mode);
     const tmds_hz = @as(u64, timing.khz(mode)) * 1000;
-    stop(waiter);
-    if (!clocksFor(sys, tmds_hz)) return .firmware;
+    stop(port, waiter);
+    if (!clocksFor(port, sys, tmds_hz)) return .firmware;
 
     // The controller reset (vc5_hdmi_reset), the HVS's channel 0 on with
     // the list: the picture, and the overlay and the cursor hidden over
     // it.
-    at(HDMI_HD, HD_DVP_CTL).* = 0;
-    at(HDMI_DVP, DVP_CLOCK_STOP).* |= CLOCK_STOP_PIXEL;
-    hvsStart();
-    list.writePlane(picture_plane, .{ .address = address, .pitch = pitch, .width = mode.h_active, .height = mode.v_active, .upm = upm_picture, .handle = 0 });
-    list.writePlane(overlay_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_overlay, .handle = 2, .alpha = true, .seen = false });
-    list.writePlane(cursor_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_cursor, .handle = 1, .alpha = true, .seen = false });
-    word(list_end).* = CTL0_END;
-    hvsDisp(DISP_LPTRS).* = list_start;
-    hvsDisp(DISP_CTRL0).* = CTRL0_RESET;
-    hvsDisp(DISP_CTRL1).* &= ~CTRL1_INTLACE;
-    hvsDisp(DISP_CTRL0).* = CTRL0_ENB | (mode.h_active - 1) << CTRL0_FWIDTH_SHIFT | (mode.v_active - 1);
+    at(port.blocks.hd, HD_DVP_CTL).* = 0;
+    at(port.blocks.dvp, DVP_CLOCK_STOP).* |= CLOCK_STOP_PIXEL;
+    hvsStart(port);
+    list.writePlane(port, picture_plane, .{ .address = address, .pitch = pitch, .width = mode.h_active, .height = mode.v_active, .upm = upm_picture, .handle = 0 });
+    list.writePlane(port, overlay_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_overlay, .handle = 2, .alpha = true, .seen = false });
+    list.writePlane(port, cursor_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_cursor, .handle = 1, .alpha = true, .seen = false });
+    word(port, list_end).* = CTL0_END;
+    hvsDisp(port, DISP_LPTRS).* = list_start;
+    hvsDisp(port, DISP_CTRL0).* = CTRL0_RESET;
+    hvsDisp(port, DISP_CTRL1).* &= ~CTRL1_INTLACE;
+    hvsDisp(port, DISP_CTRL0).* = CTRL0_ENB | (mode.h_active - 1) << CTRL0_FWIDTH_SHIFT | (mode.v_active - 1);
 
     // The controller's PHY and timing, the valve's, the colours, then the
     // video let through (pre_crtc_configure, config_pv, pre_crtc_enable,
     // post_crtc_enable), as HDMI with its infoframes or as DVI.
-    phyStart(tmds_hz);
-    at(HDMI, SCHEDULER_CONTROL).* |= SCHEDULER_MANUAL_FORMAT | SCHEDULER_IGNORE_VSYNC_PREDICTS;
-    hdmiTiming(mode);
-    pvTiming(mode);
-    at(PV, PV_CONTROL).* |= PV_CONTROL_EN;
-    hdmiColours(output.limited);
-    at(HDMI, FIFO_CTL).* = FIFO_MASTER_SLAVE_N;
-    at(PV, PV_V_CONTROL).* |= PV_VCONTROL_VIDEN;
-    var video = at(HDMI_HD, HD_VID_CTL).* & ~(VID_VSYNC_LOW | VID_HSYNC_LOW);
+    phyStart(port, tmds_hz);
+    at(port.blocks.hdmi, SCHEDULER_CONTROL).* |= SCHEDULER_MANUAL_FORMAT | SCHEDULER_IGNORE_VSYNC_PREDICTS;
+    hdmiTiming(port, mode);
+    pvTiming(port, mode);
+    at(port.blocks.pixel_valve, PV_CONTROL).* |= PV_CONTROL_EN;
+    hdmiColours(port, output.limited);
+    at(port.blocks.hdmi, FIFO_CTL).* = FIFO_MASTER_SLAVE_N;
+    at(port.blocks.pixel_valve, PV_V_CONTROL).* |= PV_VCONTROL_VIDEN;
+    var video = at(port.blocks.hd, HD_VID_CTL).* & ~(VID_VSYNC_LOW | VID_HSYNC_LOW);
     video |= VID_ENABLE | VID_CLRRGB | VID_UNDERFLOW_ENABLE | VID_FRAME_COUNTER_RESET | VID_BLANK_INSERT_EN;
     if (!timing.vsyncHigh(mode)) video |= VID_VSYNC_LOW;
     if (!timing.hsyncHigh(mode)) video |= VID_HSYNC_LOW;
-    at(HDMI_HD, HD_VID_CTL).* = video;
-    at(HDMI_HD, HD_VID_CTL).* &= ~VID_BLANKPIX;
+    at(port.blocks.hd, HD_VID_CTL).* = video;
+    at(port.blocks.hd, HD_VID_CTL).* &= ~VID_BLANKPIX;
     if (output.hdmi) {
-        at(HDMI, SCHEDULER_CONTROL).* |= SCHEDULER_MODE_HDMI;
-        waitBits(at(HDMI, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, true, 1000, waiter);
-        at(HDMI, RAM_PACKET_CONFIG).* = RAM_PACKET_ENABLE;
-        writePacket(&aviFrame(shared, sink, mode, output), waiter);
-        if (!sink.forum and hdmiVic(mode.vic) != 0) writePacket(&vendorFrame(hdmiVic(mode.vic)), waiter);
+        at(port.blocks.hdmi, SCHEDULER_CONTROL).* |= SCHEDULER_MODE_HDMI;
+        waitBits(at(port.blocks.hdmi, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, true, 1000, waiter);
+        at(port.blocks.hdmi, RAM_PACKET_CONFIG).* = RAM_PACKET_ENABLE;
+        writePacket(port, &aviFrame(shared, sink, mode, output), waiter);
+        if (!sink.forum and hdmiVic(mode.vic) != 0) writePacket(port, &vendorFrame(hdmiVic(mode.vic)), waiter);
     } else {
-        at(HDMI, RAM_PACKET_CONFIG).* &= ~RAM_PACKET_ENABLE;
-        at(HDMI, SCHEDULER_CONTROL).* &= ~SCHEDULER_MODE_HDMI;
-        waitBits(at(HDMI, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, false, 1000, waiter);
+        at(port.blocks.hdmi, RAM_PACKET_CONFIG).* &= ~RAM_PACKET_ENABLE;
+        at(port.blocks.hdmi, SCHEDULER_CONTROL).* &= ~SCHEDULER_MODE_HDMI;
+        waitBits(at(port.blocks.hdmi, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, false, 1000, waiter);
     }
-    recenter(waiter);
+    recenter(port, waiter);
     // Past 340 MHz, the monitor told before the scrambler starts
     // (vc4_hdmi_enable_scrambling).
     if (output.scrambled) {
-        _ = ddc.scdcScrambling(true, waiter);
-        at(HDMI, SCRAMBLER_CTL).* |= SCRAMBLER_ENABLE;
+        _ = ddc.scdcScrambling(port, true, waiter);
+        at(port.blocks.hdmi, SCRAMBLER_CTL).* |= SCRAMBLER_ENABLE;
     }
 
     // The sound that plays, sent in the new mode: its clock regeneration
@@ -885,30 +880,30 @@ pub fn start(sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink:
     shared.pixel_khz = timing.khz(mode);
     shared.hdmi = output.hdmi;
     if (output.hdmi and shared.audio_channels != 0) {
-        sound.regenerate(shared);
-        writePacket(&sound.audioFrame(shared.audio_channels), waiter);
+        sound.regenerate(port, shared);
+        writePacket(port, &sound.audioFrame(shared.audio_channels), waiter);
     }
 
     // The frame interrupt: the start of each vertical front porch.
-    at(PV, PV_INTSTAT).* = PV_INT_VFP_START;
-    at(PV, PV_INTEN).* = PV_INT_VFP_START;
+    at(port.blocks.pixel_valve, PV_INTSTAT).* = PV_INT_VFP_START;
+    at(port.blocks.pixel_valve, PV_INTEN).* = PV_INT_VFP_START;
     return .none;
 }
 
 /// What a running display needs now and then, about once a second: the
 /// monitor's scrambling turned on again when it has lost it, as it does
 /// when it is switched off and on (vc4_hdmi_scrambling_wq).
-pub fn tend(waiter: anytype) void {
-    if (!on_bcm2712 or !running() or !transmitting()) return;
-    if (at(HDMI, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE == 0) return;
-    const status = ddc.scdcRead(SCDC_SCRAMBLER_STATUS, waiter) orelse return;
-    if (status & SCDC_SCRAMBLING == 0) _ = ddc.scdcScrambling(true, waiter);
+pub fn tend(port: *const Port, waiter: anytype) void {
+    if (!on_bcm2712 or !running(port) or !transmitting(port)) return;
+    if (at(port.blocks.hdmi, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE == 0) return;
+    const status = ddc.scdcRead(port, SCDC_SCRAMBLER_STATUS, waiter) orelse return;
+    if (status & SCDC_SCRAMBLING == 0) _ = ddc.scdcScrambling(port, true, waiter);
 }
 
 /// The controller's FIFO centred between the valve and the PHY, twice a
 /// millisecond apart (vc4_hdmi_recenter_fifo).
-fn recenter(waiter: anytype) void {
-    const fifo = at(HDMI, FIFO_CTL);
+fn recenter(port: *const Port, waiter: anytype) void {
+    const fifo = at(port.blocks.hdmi, FIFO_CTL);
     const drift = fifo.* & FIFO_VALID_WRITE;
     for (0..2) |i| {
         if (i != 0) waiter.wait(1000);
@@ -921,24 +916,24 @@ fn recenter(waiter: anytype) void {
 
 /// What pixel valve 0 raised since this was last asked, cleared: 0 when
 /// the interrupt was not its.
-pub fn takeInterrupts() u32 {
-    const raised = at(PV, PV_INTSTAT).* & at(PV, PV_INTEN).*;
-    if (raised != 0) at(PV, PV_INTSTAT).* = raised;
+pub fn takeInterrupts(port: *const Port) u32 {
+    const raised = at(port.blocks.pixel_valve, PV_INTSTAT).* & at(port.blocks.pixel_valve, PV_INTEN).*;
+    if (raised != 0) at(port.blocks.pixel_valve, PV_INTSTAT).* = raised;
     return raised;
 }
 
 /// The monitor sent the picture, or blank pixels without syncs - no
 /// signal, to a monitor. CLRSYNC reads back as 0 and holds only while it
 /// is written, so the picture is back as soon as a write leaves it out.
-pub fn transmit(on: bool) void {
-    if (!running()) return;
-    const video = at(HDMI_HD, HD_VID_CTL);
+pub fn transmit(port: *const Port, on: bool) void {
+    if (!running(port)) return;
+    const video = at(port.blocks.hd, HD_VID_CTL);
     video.* = if (on) video.* & ~(VID_CLRSYNC | VID_BLANKPIX) else video.* | VID_CLRSYNC | VID_BLANKPIX;
 }
 
 /// Whether the monitor is sent the picture.
-fn transmitting() bool {
-    return at(HDMI_HD, HD_VID_CTL).* & VID_BLANKPIX == 0;
+fn transmitting(port: *const Port) bool {
+    return at(port.blocks.hd, HD_VID_CTL).* & VID_BLANKPIX == 0;
 }
 
 const std = @import("std");

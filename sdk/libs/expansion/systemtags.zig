@@ -384,6 +384,10 @@ pub const PART_DataAddress = PART_Dummy + 0x55;
 /// The request line by which a part asks a DMA controller for its data:
 /// the line's number at that controller.
 pub const PART_DmaRequest = PART_Dummy + 0x56;
+/// A part made of several blocks of registers: a pointer to a table of
+/// where the ones beside PART_Address are. The table's shape is the
+/// chip's own (`sdk.hardware.bcm2712.HdmiPort` for CHIP_BCM2712_HVS).
+pub const PART_Blocks = PART_Dummy + 0x57;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.

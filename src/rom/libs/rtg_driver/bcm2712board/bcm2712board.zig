@@ -94,7 +94,7 @@ const list = @import("list.zig");
 const MODULE_NAME = "rtg-bcm2712";
 const DRIVER_NAME = "bcm2712";
 const VERSION = 1;
-const REVISION = 2;
+const REVISION = 3;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -125,6 +125,9 @@ const Screen = struct {
     sys: *ExecBase,
     /// rtg.library, as the driver calls it.
     rtg_base: *RtgBase,
+    /// Where the port is: the scaler's registers and the port's other
+    /// blocks, as the board's list names them.
+    port: bcm2712.Port,
     /// The picture: its size, rows `pitch` bytes apart, four bytes a
     /// pixel.
     width: u32 = 0,
@@ -221,7 +224,7 @@ fn pace(screen: *Screen, frames: u32) void {
 fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const screen: *Screen = @ptrCast(@alignCast(data.?));
-    if (bcm2712.takeInterrupts() == 0) return 0;
+    if (bcm2712.takeInterrupts(&screen.port) == 0) return 0;
     drivers(screen).FrameDone(screen.board);
     // The port's hot-plug line raises no interrupt here: the library is
     // asked to look at the connector now and then (`detect`), which
@@ -302,7 +305,7 @@ fn drivers(screen: *const Screen) *RtgDriverBase {
 fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) void {
     const address = @intFromPtr(picture.pixels orelse return);
     if (address == screen.scanning) return;
-    list.show(picture);
+    list.show(&screen.port, picture);
     screen.scanning = address;
 }
 
@@ -347,6 +350,7 @@ fn hotSpot(screen: *const Screen) struct { x: u32, y: u32 } {
 fn cursorPlane(screen: *Screen) void {
     const at = hotSpot(screen);
     list.cursor(
+        &screen.port,
         @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
         screen.cursor_small,
         screen.cursor_hot_x,
@@ -415,6 +419,7 @@ fn overlayBuffer(screen: *Screen, turn: u1) [*]u8 {
 fn overlayPlane(screen: *Screen) void {
     if (screen.overlay_images == null) return;
     list.overlay(
+        &screen.port,
         @intFromPtr(overlayBuffer(screen, screen.overlay_turn)),
         screen.overlay_width,
         screen.overlay_height,
@@ -469,8 +474,8 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 /// the monitor sent it, the cursor and the overlay hidden - put back as
 /// the board has it.
 fn putBack(screen: *Screen) void {
-    list.mirror(screen.scanning, screen.turn);
-    if (screen.dark) bcm2712.transmit(false);
+    list.mirror(&screen.port, screen.scanning, screen.turn);
+    if (screen.dark) bcm2712.transmit(&screen.port, false);
     cursorPlane(screen);
     overlayPlane(screen);
 }
@@ -482,7 +487,7 @@ fn mirror(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
     const sys = screen.sys;
     sys.ObtainSemaphore(&screen.port_lock);
     screen.turn = .{ .x = x, .y = y };
-    if (screen.scanning != 0) list.mirror(screen.scanning, screen.turn);
+    if (screen.scanning != 0) list.mirror(&screen.port, screen.scanning, screen.turn);
     sys.ReleaseSemaphore(&screen.port_lock);
     cursorPlane(screen);
     overlayPlane(screen);
@@ -499,7 +504,7 @@ fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     sys.ObtainSemaphore(&screen.port_lock);
     defer sys.ReleaseSemaphore(&screen.port_lock);
     screen.dark = asleep;
-    bcm2712.transmit(!asleep);
+    bcm2712.transmit(&screen.port, !asleep);
     return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
@@ -512,9 +517,9 @@ fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const screen = screenOf(board);
     const waiter = Waiter{ .screen = screen };
-    const now = ddc.feature(ddc.VCP_BRIGHTNESS, waiter) orelse return err.RTGERR_IO;
+    const now = ddc.feature(&screen.port, ddc.VCP_BRIGHTNESS, waiter) orelse return err.RTGERR_IO;
     const value: u16 = @intCast((percent * now.most + 50) / 100);
-    if (!ddc.setFeature(ddc.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
+    if (!ddc.setFeature(&screen.port, ddc.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
     return err.RTGERR_OK;
 }
 
@@ -524,7 +529,7 @@ fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
 /// without the port's, as `setBrightness`.
 fn brightness(board: *rtg.RtgBoard) callconv(.c) i32 {
     const screen = screenOf(board);
-    const now = ddc.feature(ddc.VCP_BRIGHTNESS, Waiter{ .screen = screen }) orelse return err.RTGERR_IO;
+    const now = ddc.feature(&screen.port, ddc.VCP_BRIGHTNESS, Waiter{ .screen = screen }) orelse return err.RTGERR_IO;
     const most: u32 = now.most;
     const value: u32 = @min(now.value, now.most);
     return @intCast((value * 100 + most / 2) / most);
@@ -556,7 +561,7 @@ fn halt(screen: *Screen) void {
     unhookFrames(screen);
     if (screen.scanning == 0) return;
     screen.sys.ObtainSemaphore(&screen.port_lock);
-    bcm2712.transmit(false);
+    bcm2712.transmit(&screen.port, false);
     screen.sys.ReleaseSemaphore(&screen.port_lock);
     screen.scanning = 0;
 }
@@ -575,6 +580,12 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     if (width == 0 or height == 0) return err.RTGERR_BAD_TAGS;
     if (width > largest_side or height > largest_side) return err.RTGERR_BAD_TAGS;
 
+    // Where the port is: the scaler's registers from the part's address,
+    // its other blocks from the table the part points at.
+    const hvs = rb.GetRtgTagData(st.PART_Address, 0, tag_list);
+    const blocks: ?*const sdk.hardware.bcm2712.HdmiPort = @ptrFromInt(rb.GetRtgTagData(st.PART_Blocks, 0, tag_list));
+    if (hvs == 0) return err.RTGERR_BAD_TAGS;
+    const port = bcm2712.Port{ .hvs = hvs, .blocks = (blocks orelse return err.RTGERR_BAD_TAGS).* };
     // Nothing is asked of the scaler here: not before the firmware has
     // its clocks running, which a mode's start sees to.
     const board = rb.CreateBoard(driver, device, &.{
@@ -591,7 +602,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .format = format,
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
-    screen.* = .{ .sys = sys, .rtg_base = programs(rb), .width = width, .height = height, .board = board };
+    screen.* = .{ .sys = sys, .rtg_base = programs(rb), .port = port, .width = width, .height = height, .board = board };
     // The port's waits are on timer.device.
     screen.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     screen.timer_open = sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &screen.timer_io.node, 0) == 0;
@@ -700,13 +711,13 @@ fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
     // A port that runs is awake: waking it again would put the
     // controller's pixel clocks back on the divider under the picture.
     if (!running) {
-        const failure = bcm2712.wake(sys, waiter);
+        const failure = bcm2712.wake(&screen.port, sys, waiter);
         if (failure != .none) {
             exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, bcm2712.why(failure) });
             return err.RTGERR_NO_DISPLAY;
         }
     }
-    const plugged = bcm2712.monitor();
+    const plugged = bcm2712.monitor(&screen.port);
     if (plugged == screen.plugged) {
         screen.settling = 0;
     } else {
@@ -728,7 +739,7 @@ fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
         screen.edid_tries += 1;
         readEdid(screen, waiter);
     }
-    if (running) bcm2712.tend(waiter);
+    if (running) bcm2712.tend(&screen.port, waiter);
     const length = @min(screen.edid_size, asked.edid_max);
     @memcpy(asked.edid[0..length], screen.edid[0..length]);
     asked.edid_size = length;
@@ -739,14 +750,14 @@ fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
 /// nothing where it does not read.
 fn readEdid(screen: *Screen, waiter: Waiter) void {
     const first: *[edid_block]u8 = screen.edid[0..edid_block];
-    var read = ddc.readEdid(0, first, waiter);
-    if (read and !sumsToZero(first)) read = ddc.readEdid(0, first, waiter);
+    var read = ddc.readEdid(&screen.port, 0, first, waiter);
+    if (read and !sumsToZero(first)) read = ddc.readEdid(&screen.port, 0, first, waiter);
     if (!read) return;
     var blocks: u32 = 1;
     const named = @min(@as(u32, first[126]) + 1, ddc.edid_blocks);
     while (blocks < named) : (blocks += 1) {
         const block: *[edid_block]u8 = screen.edid[blocks * edid_block ..][0..edid_block];
-        if (!ddc.readEdid(@intCast(blocks), block, waiter)) break;
+        if (!ddc.readEdid(&screen.port, @intCast(blocks), block, waiter)) break;
     }
     screen.edid_size = blocks * edid_block;
 }
@@ -764,14 +775,14 @@ fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) 
 /// False, and said on the raw port, when it did not come up.
 fn startPort(screen: *Screen, address: usize) bool {
     const sys = screen.sys;
-    const failure = bcm2712.start(sys, &screen.shared, &screen.timings, screen.sink, address, screen.pitch, Waiter{ .screen = screen });
+    const failure = bcm2712.start(&screen.port, sys, &screen.shared, &screen.timings, screen.sink, address, screen.pitch, Waiter{ .screen = screen });
     if (failure != .none) {
         exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, bcm2712.why(failure) });
         return false;
     }
     screen.scanning = address;
     putBack(screen);
-    const plugged = bcm2712.monitor();
+    const plugged = bcm2712.monitor(&screen.port);
     if (plugged != screen.plugged) {
         screen.edid_size = 0;
         screen.edid_tries = 0;
@@ -871,13 +882,13 @@ fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
     const sys = screen.sys;
     const waiter = Waiter{ .screen = screen };
     const one = format orelse {
-        if (screen.audio != null) sound.audioStop(sys, &screen.shared, waiter);
+        if (screen.audio != null) sound.audioStop(&screen.port, sys, &screen.shared, waiter);
         screen.audio = null;
         return err.RTGERR_OK;
     };
     if (screen.scanning == 0) return err.RTGERR_NO_MODE;
     if (one.bits != 16) return err.RTGERR_NOT_SUPPORTED;
-    if (!sound.audioStart(sys, &screen.shared, one.sample_rate, one.channels, waiter)) return err.RTGERR_NOT_SUPPORTED;
+    if (!sound.audioStart(&screen.port, sys, &screen.shared, one.sample_rate, one.channels, waiter)) return err.RTGERR_NOT_SUPPORTED;
     screen.audio = one.*;
     return err.RTGERR_OK;
 }

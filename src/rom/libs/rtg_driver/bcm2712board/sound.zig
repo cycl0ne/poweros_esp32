@@ -16,7 +16,7 @@
 //! After vc4_hdmi.c's audio half.
 
 const sdk = @import("sdk");
-const port = @import("bcm2712.zig");
+const bcm2712 = @import("bcm2712.zig");
 
 const ExecBase = sdk.interface.exec.ExecBase;
 
@@ -83,8 +83,8 @@ pub const INFOFRAME_AUDIO: u8 = 0x84;
 
 /// The audio infoframe for `channels` of LPCM: the rest as the stream's
 /// own header says, the speakers front left and right.
-pub fn audioFrame(channels: u32) port.Infoframe {
-    return port.infoframe(INFOFRAME_AUDIO, 1, &.{ @intCast(channels - 1), 0, 0, 0, 0, 0, 0, 0, 0, 0 });
+pub fn audioFrame(channels: u32) bcm2712.Infoframe {
+    return bcm2712.infoframe(INFOFRAME_AUDIO, 1, &.{ @intCast(channels - 1), 0, 0, 0, 0, 0, 0, 0, 0, 0 });
 }
 
 /// The MAI's code for a sample rate; 0, not said, for any other.
@@ -128,19 +128,19 @@ pub fn maiSample(rate: u32) u32 {
 /// N and CTS, which the monitor rebuilds the sample clock from, for the
 /// sound playing at the mode's pixel clock (vc4_hdmi_set_n_cts), as
 /// rtg.library works them out. Nothing without the library.
-pub fn regenerate(shared: *const port.Shared) void {
+pub fn regenerate(port: *const bcm2712.Port, shared: *const bcm2712.Shared) void {
     const rb = shared.rtg_base orelse return;
     var n: u32 = 0;
     var cts: u32 = 0;
     if (!rb.HdmiAudioClock(shared.pixel_khz * 1000, shared.audio_rate, &n, &cts)) return;
-    port.at(port.HDMI, CRP_CFG).* = CRP_EXTERNAL_CTS | n;
-    port.at(port.HDMI, CTS_0).* = cts;
-    port.at(port.HDMI, CTS_1).* = cts;
+    bcm2712.at(port.blocks.hdmi, CRP_CFG).* = CRP_EXTERNAL_CTS | n;
+    bcm2712.at(port.blocks.hdmi, CTS_0).* = cts;
+    bcm2712.at(port.blocks.hdmi, CTS_1).* = cts;
 }
 
 /// Whether sound can go out: the display up as HDMI.
-pub fn audible(shared: *const port.Shared) bool {
-    if (!port.on_bcm2712 or !port.running()) return false;
+pub fn audible(port: *const bcm2712.Port, shared: *const bcm2712.Shared) bool {
+    if (!bcm2712.on_bcm2712 or !bcm2712.running(port)) return false;
     return shared.hdmi;
 }
 
@@ -149,42 +149,42 @@ pub fn audible(shared: *const port.Shared) bool {
 /// (vc4_hdmi_audio_startup, then vc4_hdmi_audio_prepare). The DMA
 /// channel that feeds the FIFO starts after. False, and nothing started,
 /// when the display is not up as HDMI.
-pub fn audioStart(sys: *ExecBase, shared: *port.Shared, rate: u32, channels: u32, waiter: anytype) bool {
-    if (!port.on_bcm2712 or channels == 0 or channels > 8 or rateCode(rate) == 0) return false;
+pub fn audioStart(port: *const bcm2712.Port, sys: *ExecBase, shared: *bcm2712.Shared, rate: u32, channels: u32, waiter: anytype) bool {
+    if (!bcm2712.on_bcm2712 or channels == 0 or channels > 8 or rateCode(rate) == 0) return false;
     sys.ObtainSemaphore(&shared.lock);
     defer sys.ReleaseSemaphore(&shared.lock);
-    if (!port.running() or !shared.hdmi) return false;
-    port.at(port.HDMI_HD, HD_MAI_CTL).* = MAI_RESET | MAI_FLUSH | MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
-    port.at(port.HDMI_HD, HD_MAI_SMP).* = maiSample(rate);
-    port.at(port.HDMI_HD, HD_MAI_CTL).* = channels << MAI_CHNUM_SHIFT | MAI_WHOLSMP | MAI_CHALIGN | MAI_ENABLE;
-    port.at(port.HDMI_HD, HD_MAI_FMT).* = rateCode(rate) << 8 | MAI_FORMAT_PCM << 16;
-    port.at(port.HDMI_HD, HD_MAI_THR).* = MAI_THRESHOLDS;
+    if (!bcm2712.running(port) or !shared.hdmi) return false;
+    bcm2712.at(port.blocks.hd, HD_MAI_CTL).* = MAI_RESET | MAI_FLUSH | MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
+    bcm2712.at(port.blocks.hd, HD_MAI_SMP).* = maiSample(rate);
+    bcm2712.at(port.blocks.hd, HD_MAI_CTL).* = channels << MAI_CHNUM_SHIFT | MAI_WHOLSMP | MAI_CHALIGN | MAI_ENABLE;
+    bcm2712.at(port.blocks.hd, HD_MAI_FMT).* = rateCode(rate) << 8 | MAI_FORMAT_PCM << 16;
+    bcm2712.at(port.blocks.hd, HD_MAI_THR).* = MAI_THRESHOLDS;
     const mask = (@as(u32, 1) << @intCast(channels)) - 1;
-    port.at(port.HDMI, MAI_CONFIG).* = MAI_CONFIG_REVERSED | mask;
-    port.at(port.HDMI, MAI_CHANNEL_MAP).* = channelMap(mask);
-    port.at(port.HDMI, AUDIO_PACKET_CONFIG).* = AUDIO_ZERO_FLAT | AUDIO_ZERO_INACTIVE | AUDIO_B_FRAME | mask;
+    bcm2712.at(port.blocks.hdmi, MAI_CONFIG).* = MAI_CONFIG_REVERSED | mask;
+    bcm2712.at(port.blocks.hdmi, MAI_CHANNEL_MAP).* = channelMap(mask);
+    bcm2712.at(port.blocks.hdmi, AUDIO_PACKET_CONFIG).* = AUDIO_ZERO_FLAT | AUDIO_ZERO_INACTIVE | AUDIO_B_FRAME | mask;
     shared.audio_rate = rate;
     shared.audio_channels = channels;
-    regenerate(shared);
-    port.writePacket(&audioFrame(channels), waiter);
+    regenerate(port, shared);
+    bcm2712.writePacket(port, &audioFrame(channels), waiter);
     return true;
 }
 
 /// The sound stopped, once its DMA channel has: the MAI and its FIFO
 /// reset, the audio infoframe no longer sent (vc4_hdmi_audio_shutdown,
 /// vc4_hdmi_audio_reset).
-pub fn audioStop(sys: *ExecBase, shared: *port.Shared, waiter: anytype) void {
-    if (!port.on_bcm2712) return;
+pub fn audioStop(port: *const bcm2712.Port, sys: *ExecBase, shared: *bcm2712.Shared, waiter: anytype) void {
+    if (!bcm2712.on_bcm2712) return;
     sys.ObtainSemaphore(&shared.lock);
     defer sys.ReleaseSemaphore(&shared.lock);
     shared.audio_rate = 0;
     shared.audio_channels = 0;
-    if (!port.running()) return;
-    port.at(port.HDMI_HD, HD_MAI_CTL).* = MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
-    if (shared.hdmi) port.stopPacket(INFOFRAME_AUDIO, waiter);
-    port.at(port.HDMI_HD, HD_MAI_CTL).* = MAI_RESET;
-    port.at(port.HDMI_HD, HD_MAI_CTL).* = MAI_ERRORF;
-    port.at(port.HDMI_HD, HD_MAI_CTL).* = MAI_FLUSH;
+    if (!bcm2712.running(port)) return;
+    bcm2712.at(port.blocks.hd, HD_MAI_CTL).* = MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
+    if (shared.hdmi) bcm2712.stopPacket(port, INFOFRAME_AUDIO, waiter);
+    bcm2712.at(port.blocks.hd, HD_MAI_CTL).* = MAI_RESET;
+    bcm2712.at(port.blocks.hd, HD_MAI_CTL).* = MAI_ERRORF;
+    bcm2712.at(port.blocks.hd, HD_MAI_CTL).* = MAI_FLUSH;
 }
 
 /// Each channel of `mask` taken from the MAI's channel of its own number

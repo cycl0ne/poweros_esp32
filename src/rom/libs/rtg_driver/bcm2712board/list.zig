@@ -19,7 +19,7 @@
 //! takes them.
 
 const sdk = @import("sdk");
-const port = @import("bcm2712.zig");
+const bcm2712 = @import("bcm2712.zig");
 
 const rtg = sdk.rtg;
 
@@ -107,7 +107,7 @@ pub fn planeOf(plane: Plane) [plane_words]u32 {
         (if (plane.vflip) PTR0_VFLIP else 0) | plane.upm << PTR0_UPM_BASE_SHIFT | plane.handle << PTR0_UPM_HANDLE_SHIFT | upper(plane.address),
         @truncate(plane.address),
         plane.pitch,
-        port.CTL0_END,
+        bcm2712.CTL0_END,
     };
 }
 
@@ -124,8 +124,8 @@ pub fn upmUnits(pitch: u32) u32 {
     return (line * 2 + UPM_UNIT - 1) / UPM_UNIT;
 }
 
-pub fn writePlane(first: u32, plane: Plane) void {
-    for (planeOf(plane), 0..) |value, i| port.word(first + @as(u32, @intCast(i))).* = value;
+pub fn writePlane(port: *const bcm2712.Port, first: u32, plane: Plane) void {
+    for (planeOf(plane), 0..) |value, i| bcm2712.word(port, first + @as(u32, @intCast(i))).* = value;
 }
 
 /// How the picture is turned: mirrored left to right, top to bottom.
@@ -191,59 +191,59 @@ pub fn imagePlaneOf(image: Image, left: i32, top: i32, width: u32, height: u32, 
 
 /// The picture's plane's size and pitch, and how it is turned, as its
 /// words have them.
-fn pictureWidth() u32 {
-    return (port.word(port.picture_plane + W_POS2).* & 0x1FFF) + 1;
+fn pictureWidth(port: *const bcm2712.Port) u32 {
+    return (bcm2712.word(port, bcm2712.picture_plane + W_POS2).* & 0x1FFF) + 1;
 }
 
-fn pictureHeight() u32 {
-    return (port.word(port.picture_plane + W_POS2).* >> 16 & 0x1FFF) + 1;
+fn pictureHeight(port: *const bcm2712.Port) u32 {
+    return (bcm2712.word(port, bcm2712.picture_plane + W_POS2).* >> 16 & 0x1FFF) + 1;
 }
 
-fn turnOf() Turn {
+fn turnOf(port: *const bcm2712.Port) Turn {
     return .{
-        .x = port.word(port.picture_plane + W_POS0).* & POS0_HFLIP != 0,
-        .y = port.word(port.picture_plane + W_PTR0).* & PTR0_VFLIP != 0,
+        .x = bcm2712.word(port, bcm2712.picture_plane + W_POS0).* & POS0_HFLIP != 0,
+        .y = bcm2712.word(port, bcm2712.picture_plane + W_PTR0).* & PTR0_VFLIP != 0,
     };
 }
 
 /// Where the picture's plane starts reading a picture at `address`: its
 /// last row where it reads from the bottom up.
-fn readFrom(address: usize, turn: Turn) usize {
+fn readFrom(port: *const bcm2712.Port, address: usize, turn: Turn) usize {
     if (!turn.y) return address;
-    return address + @as(usize, pictureHeight() - 1) * port.word(port.picture_plane + W_PTR2).*;
+    return address + @as(usize, pictureHeight(port) - 1) * bcm2712.word(port, bcm2712.picture_plane + W_PTR2).*;
 }
 
-fn pointPicture(address: usize, turn: Turn) void {
-    const from = readFrom(address, turn);
-    const flags = port.word(port.picture_plane + W_PTR0).* & ~(PTR0_VFLIP | 0xFF);
-    port.word(port.picture_plane + W_PTR0).* = flags | (if (turn.y) PTR0_VFLIP else 0) | upper(from);
-    port.word(port.picture_plane + W_PTR1).* = @truncate(from);
+fn pointPicture(port: *const bcm2712.Port, address: usize, turn: Turn) void {
+    const from = readFrom(port, address, turn);
+    const flags = bcm2712.word(port, bcm2712.picture_plane + W_PTR0).* & ~(PTR0_VFLIP | 0xFF);
+    bcm2712.word(port, bcm2712.picture_plane + W_PTR0).* = flags | (if (turn.y) PTR0_VFLIP else 0) | upper(from);
+    bcm2712.word(port, bcm2712.picture_plane + W_PTR1).* = @truncate(from);
 }
 
 /// `picture` shown from now on, a buffer of the mode the display is in,
 /// as the library describes one: the picture's plane's address
 /// rewritten. The HVS takes it up as it next fetches.
-pub fn show(picture: *const rtg.RtgBitMap) void {
+pub fn show(port: *const bcm2712.Port, picture: *const rtg.RtgBitMap) void {
     const pixels = picture.pixels orelse return;
-    if (!port.running()) return;
-    pointPicture(@intFromPtr(pixels), turnOf());
+    if (!bcm2712.running(port)) return;
+    pointPicture(port, @intFromPtr(pixels), turnOf(port));
 }
 
 /// The picture mirrored as `turn` says from the next frame on, the one
 /// at `address` - the one shown - read backwards. The cursor and the
 /// overlay are turned with it when they are next written.
-pub fn mirror(address: usize, turn: Turn) void {
-    if (!port.running()) return;
-    const position = port.word(port.picture_plane + W_POS0).* & ~POS0_HFLIP;
-    port.word(port.picture_plane + W_POS0).* = position | (if (turn.x) POS0_HFLIP else 0);
-    pointPicture(address, turn);
+pub fn mirror(port: *const bcm2712.Port, address: usize, turn: Turn) void {
+    if (!bcm2712.running(port)) return;
+    const position = bcm2712.word(port, bcm2712.picture_plane + W_POS0).* & ~POS0_HFLIP;
+    bcm2712.word(port, bcm2712.picture_plane + W_POS0).* = position | (if (turn.x) POS0_HFLIP else 0);
+    pointPicture(port, address, turn);
 }
 
 /// An image's plane rewritten - its words but the first, the address
 /// last, so that the HVS does not fetch a new image at an old size.
-fn writeImage(first: u32, plane: Plane) void {
+fn writeImage(port: *const bcm2712.Port, first: u32, plane: Plane) void {
     const words = planeOf(plane);
-    for ([_]usize{ W_CTL2, W_POS0, W_POS2, W_PTR2, W_PTR0, W_PTR1 }) |i| port.word(first + @as(u32, @intCast(i))).* = words[i];
+    for ([_]usize{ W_CTL2, W_POS0, W_POS2, W_PTR2, W_PTR0, W_PTR1 }) |i| bcm2712.word(port, first + @as(u32, @intCast(i))).* = words[i];
 }
 
 /// The largest cursor image, each way.
@@ -252,13 +252,13 @@ pub const cursor_side = 64;
 /// The cursor's plane: the image at `address` (`cursor_side` square, or
 /// half that when `small`), its hot spot at (x, y) on the picture, shown
 /// or not, turned as the picture is.
-pub fn cursor(address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u32, shown: bool) void {
-    if (!port.running()) return;
+pub fn cursor(port: *const bcm2712.Port, address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u32, shown: bool) void {
+    if (!bcm2712.running(port)) return;
     const side: u32 = if (small) cursor_side / 2 else cursor_side;
-    const image = Image{ .address = address, .pitch = side * 4, .width = side, .height = side, .upm = port.upm_cursor, .handle = 1 };
+    const image = Image{ .address = address, .pitch = side * 4, .width = side, .height = side, .upm = bcm2712.upm_cursor, .handle = 1 };
     const left = @as(i32, @intCast(x)) - @as(i32, @intCast(hot_x));
     const top = @as(i32, @intCast(y)) - @as(i32, @intCast(hot_y));
-    writeImage(port.cursor_plane, imagePlaneOf(image, left, top, pictureWidth(), pictureHeight(), turnOf(), shown));
+    writeImage(port, bcm2712.cursor_plane, imagePlaneOf(image, left, top, pictureWidth(port), pictureHeight(port), turnOf(port), shown));
 }
 
 /// The largest overlay, each way: rtg's.
@@ -267,17 +267,17 @@ pub const overlay_side = 160;
 /// The overlay's plane: `width` by `height` pixels of the image at
 /// `address`, rows `overlay_side` pixels apart, its top left at (left,
 /// top) on the picture, shown or not, turned as the picture is.
-pub fn overlay(address: usize, width: u32, height: u32, left: i32, top: i32, shown: bool) void {
-    if (!port.running()) return;
+pub fn overlay(port: *const bcm2712.Port, address: usize, width: u32, height: u32, left: i32, top: i32, shown: bool) void {
+    if (!bcm2712.running(port)) return;
     const image = Image{
         .address = address,
         .pitch = overlay_side * 4,
         .width = @max(width, 1),
         .height = @max(height, 1),
-        .upm = port.upm_overlay,
+        .upm = bcm2712.upm_overlay,
         .handle = 2,
     };
-    writeImage(port.overlay_plane, imagePlaneOf(image, left, top, pictureWidth(), pictureHeight(), turnOf(), shown and width != 0 and height != 0));
+    writeImage(port, bcm2712.overlay_plane, imagePlaneOf(image, left, top, pictureWidth(port), pictureHeight(port), turnOf(port), shown and width != 0 and height != 0));
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -299,8 +299,8 @@ test "the BCM2712's display list: a picture's plane, and the cursor's cut to the
     }, &words);
     // The cursor at the top left, its hot spot 4 pixels in: 4 columns and
     // rows of it are off the picture.
-    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = port.upm_cursor, .handle = 1 };
-    const small = Image{ .address = 0x1000, .pitch = 128, .width = 32, .height = 32, .upm = port.upm_cursor, .handle = 1 };
+    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = bcm2712.upm_cursor, .handle = 1 };
+    const small = Image{ .address = 0x1000, .pitch = 128, .width = 32, .height = 32, .upm = bcm2712.upm_cursor, .handle = 1 };
     const corner = imagePlaneOf(big, -4, -4, 1920, 1080, .{}, true);
     try testing.expectEqual(@as(usize, 0x1000 + 4 * 256 + 4 * 4), corner.address);
     try testing.expectEqual(@as(u32, 0), corner.x);
@@ -335,7 +335,7 @@ test "the BCM2712's display list turned: the picture and an image read backwards
 
     // Mirrored left to right, a 64-pixel cursor at (100, 50) is at
     // 1920 - 164 on the glass, read from its own first column backwards.
-    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = port.upm_cursor, .handle = 1 };
+    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = bcm2712.upm_cursor, .handle = 1 };
     const across = imagePlaneOf(big, 100, 50, 1920, 1080, .{ .x = true }, true);
     try testing.expectEqual(@as(u32, 1920 - 164), across.x);
     try testing.expectEqual(@as(u32, 50), across.y);

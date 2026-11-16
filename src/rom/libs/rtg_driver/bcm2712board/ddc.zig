@@ -8,7 +8,7 @@
 //! the port up; what is here only talks to the monitor. One task talks on
 //! it at a time: the driver holds its port's lock around every call.
 
-const port = @import("bcm2712.zig");
+const bcm2712 = @import("bcm2712.zig");
 
 /// The monitor's SCDC, on the DDC: the TMDS configuration - the bit
 /// clock at a fortieth of the TMDS clock, the scrambling - and the
@@ -89,41 +89,41 @@ pub fn readCondition(first: bool, last: bool) u32 {
 /// the data words, or read into them - ending and starting as
 /// `condition` says. False when the target did not answer, or the
 /// controller did not finish in 100 ms (brcmstb_send_i2c_cmd).
-fn run(condition: u32, read: bool, length: usize, waiter: anytype) bool {
-    const control = port.BSC_CTL_97K | (if (read) BSC_CTL_READ else 0);
-    port.at(port.DDC, port.BSC_CTLHI).* = port.BSC_CTLHI_WORDS;
-    port.at(port.DDC, BSC_CNT).* = @intCast(length & 0x3F);
-    port.at(port.DDC, port.BSC_CTL).* = control | BSC_CTL_INT_EN;
-    port.at(port.DDC, port.BSC_IIC_ENABLE).* = condition | BSC_ENABLE;
+fn run(port: *const bcm2712.Port, condition: u32, read: bool, length: usize, waiter: anytype) bool {
+    const control = bcm2712.BSC_CTL_97K | (if (read) BSC_CTL_READ else 0);
+    bcm2712.at(port.blocks.ddc, bcm2712.BSC_CTLHI).* = bcm2712.BSC_CTLHI_WORDS;
+    bcm2712.at(port.blocks.ddc, BSC_CNT).* = @intCast(length & 0x3F);
+    bcm2712.at(port.blocks.ddc, bcm2712.BSC_CTL).* = control | BSC_CTL_INT_EN;
+    bcm2712.at(port.blocks.ddc, bcm2712.BSC_IIC_ENABLE).* = condition | BSC_ENABLE;
     var waited: u32 = 0;
-    while (port.at(port.DDC, port.BSC_IIC_ENABLE).* & BSC_DONE == 0 and waited < 100) : (waited += 1) waiter.wait(1000);
-    const status = port.at(port.DDC, port.BSC_IIC_ENABLE).*;
-    port.at(port.DDC, port.BSC_CTL).* = control;
-    port.at(port.DDC, BSC_CNT).* = 0;
-    port.at(port.DDC, port.BSC_IIC_ENABLE).* = 0;
+    while (bcm2712.at(port.blocks.ddc, bcm2712.BSC_IIC_ENABLE).* & BSC_DONE == 0 and waited < 100) : (waited += 1) waiter.wait(1000);
+    const status = bcm2712.at(port.blocks.ddc, bcm2712.BSC_IIC_ENABLE).*;
+    bcm2712.at(port.blocks.ddc, bcm2712.BSC_CTL).* = control;
+    bcm2712.at(port.blocks.ddc, BSC_CNT).* = 0;
+    bcm2712.at(port.blocks.ddc, bcm2712.BSC_IIC_ENABLE).* = 0;
     return status & BSC_DONE != 0 and status & BSC_NOACK == 0;
 }
 
 /// Up to 32 bytes written, four to a data word, the first in its low
 /// byte.
-fn send(condition: u32, bytes: []const u8, waiter: anytype) bool {
+fn send(port: *const bcm2712.Port, condition: u32, bytes: []const u8, waiter: anytype) bool {
     var i: usize = 0;
     while (i * 4 < bytes.len) : (i += 1) {
         var data: u32 = 0;
         for (0..4) |byte| {
             if (i * 4 + byte < bytes.len) data |= @as(u32, bytes[i * 4 + byte]) << @intCast(byte * 8);
         }
-        port.at(port.DDC, BSC_DATA_IN + i * 4).* = data;
+        bcm2712.at(port.blocks.ddc, BSC_DATA_IN + i * 4).* = data;
     }
-    return run(condition, false, bytes.len, waiter);
+    return run(port, condition, false, bytes.len, waiter);
 }
 
 /// Up to 32 bytes read into `into`.
-fn receive(condition: u32, into: []u8, waiter: anytype) bool {
-    if (!run(condition, true, into.len, waiter)) return false;
+fn receive(port: *const bcm2712.Port, condition: u32, into: []u8, waiter: anytype) bool {
+    if (!run(port, condition, true, into.len, waiter)) return false;
     var i: usize = 0;
     while (i * 4 < into.len) : (i += 1) {
-        const data = port.at(port.DDC, BSC_DATA_OUT + i * 4).*;
+        const data = bcm2712.at(port.blocks.ddc, BSC_DATA_OUT + i * 4).*;
         for (0..4) |byte| {
             if (i * 4 + byte < into.len) into[i * 4 + byte] = @truncate(data >> @intCast(byte * 8));
         }
@@ -135,44 +135,44 @@ fn receive(condition: u32, into: []u8, waiter: anytype) bool {
 /// halves of its first segment: the offset written to the EDID's address,
 /// then the block read in pieces of 32 bytes. False when the monitor did
 /// not answer. Only once `wake` has the DDC ready.
-pub fn readEdid(number: u8, block: *[128]u8, waiter: anytype) bool {
-    if (!port.on_bcm2712 or number > 1) return false;
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = EDID_ADDRESS << 1;
+pub fn readEdid(port: *const bcm2712.Port, number: u8, block: *[128]u8, waiter: anytype) bool {
+    if (!bcm2712.on_bcm2712 or number > 1) return false;
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = EDID_ADDRESS << 1;
     const offset = [1]u8{number * 128};
-    if (!send(COND_RESTART | COND_NOSTOP, &offset, waiter)) return false;
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = EDID_ADDRESS << 1 | 1;
+    if (!send(port, COND_RESTART | COND_NOSTOP, &offset, waiter)) return false;
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = EDID_ADDRESS << 1 | 1;
     var done: usize = 0;
     while (done < block.len) : (done += bsc_chunk) {
         const condition = readCondition(done == 0, done + bsc_chunk >= block.len);
-        if (!receive(condition, block[done .. done + bsc_chunk], waiter)) return false;
+        if (!receive(port, condition, block[done .. done + bsc_chunk], waiter)) return false;
     }
     return true;
 }
 
 /// SCDC register `offset` of the monitor's, read: the offset written,
 /// then a byte read. Null when the monitor did not answer.
-pub fn scdcRead(offset: u8, waiter: anytype) ?u8 {
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
-    if (!send(COND_RESTART | COND_NOSTOP, &.{offset}, waiter)) return null;
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1 | 1;
+pub fn scdcRead(port: *const bcm2712.Port, offset: u8, waiter: anytype) ?u8 {
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
+    if (!send(port, COND_RESTART | COND_NOSTOP, &.{offset}, waiter)) return null;
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1 | 1;
     var value = [1]u8{0};
-    if (!receive(readCondition(true, true), &value, waiter)) return null;
+    if (!receive(port, readCondition(true, true), &value, waiter)) return null;
     return value[0];
 }
 
 /// SCDC register `offset` written with `value`.
-fn scdcWrite(offset: u8, value: u8, waiter: anytype) bool {
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
-    return send(0, &.{ offset, value }, waiter);
+fn scdcWrite(port: *const bcm2712.Port, offset: u8, value: u8, waiter: anytype) bool {
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
+    return send(port, 0, &.{ offset, value }, waiter);
 }
 
 /// The monitor told to take scrambled TMDS at a bit clock of a fortieth,
 /// or the TMDS as it was (drm_scdc_set_high_tmds_clock_ratio, then
 /// drm_scdc_set_scrambling): its TMDS configuration's two bits.
-pub fn scdcScrambling(on: bool, waiter: anytype) bool {
-    const config = scdcRead(SCDC_TMDS_CONFIG, waiter) orelse return false;
-    const both = SCDC_RATIO_40 | port.SCDC_SCRAMBLING;
-    return scdcWrite(SCDC_TMDS_CONFIG, if (on) config | both else config & ~both, waiter);
+pub fn scdcScrambling(port: *const bcm2712.Port, on: bool, waiter: anytype) bool {
+    const config = scdcRead(port, SCDC_TMDS_CONFIG, waiter) orelse return false;
+    const both = SCDC_RATIO_40 | bcm2712.SCDC_SCRAMBLING;
+    return scdcWrite(port, SCDC_TMDS_CONFIG, if (on) config | both else config & ~both, waiter);
 }
 
 /// A control's value as the monitor answers it, and its largest.
@@ -216,24 +216,24 @@ pub fn answerOf(answer: *const [11]u8, code: u8) ?Feature {
 
 /// The monitor's control `code`, asked for over the DDC: null when it
 /// does not answer. Takes some 50 ms.
-pub fn feature(code: u8, waiter: anytype) ?Feature {
-    if (!port.on_bcm2712) return null;
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
-    if (!send(0, &askFor(code), waiter)) return null;
+pub fn feature(port: *const bcm2712.Port, code: u8, waiter: anytype) ?Feature {
+    if (!bcm2712.on_bcm2712) return null;
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
+    if (!send(port, 0, &askFor(code), waiter)) return null;
     waiter.wait(ddcci_answer_us);
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1 | 1;
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1 | 1;
     var answer: [11]u8 = undefined;
-    if (!receive(readCondition(true, true), &answer, waiter)) return null;
+    if (!receive(port, readCondition(true, true), &answer, waiter)) return null;
     return answerOf(&answer, code);
 }
 
 /// The monitor's control `code` set to `value`, and the time it wants
 /// before it is spoken to again waited out: false when it did not take
 /// the message.
-pub fn setFeature(code: u8, value: u16, waiter: anytype) bool {
-    if (!port.on_bcm2712) return false;
-    port.at(port.DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
-    const taken = send(0, &setTo(code, value), waiter);
+pub fn setFeature(port: *const bcm2712.Port, code: u8, value: u16, waiter: anytype) bool {
+    if (!bcm2712.on_bcm2712) return false;
+    bcm2712.at(port.blocks.ddc, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
+    const taken = send(port, 0, &setTo(code, value), waiter);
     waiter.wait(ddcci_set_us);
     return taken;
 }

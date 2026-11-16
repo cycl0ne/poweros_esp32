@@ -144,6 +144,10 @@ pub const acpi = @import("acpi.zig");
 /// asked for what only it reaches (the BCM2712's); its messages are the
 /// same anywhere, so it is built for every chip, and asked only there.
 pub const videocore = @import("videocore.zig");
+/// The BCM2712's blocks as a board's list names them: tables of
+/// addresses for a part made of several. Shapes alone, so it is built
+/// for every chip.
+pub const bcm2712 = @import("bcm2712.zig");
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;
