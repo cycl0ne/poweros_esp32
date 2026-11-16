@@ -2,11 +2,13 @@
 //! What the tags say a panel is.
 //!
 //! Everything this driver needs, read out of the tag list once at create
-//! and kept in the board's own instance: the peripheral's `Setup`, the
-//! three control lines wherever the board has them wired, and how the
-//! picture is fed. A tag that is not there takes the default beside it in
-//! `sdk/libs/rtg/tags.zig`; a tag that has to be there and is not makes the
-//! create fail rather than the panel come up wrong.
+//! and kept in the board's own instance: the panel's timings, which the
+//! library reads (`ReadTimingTags`), the peripheral's `Setup` made of
+//! them, the three control lines wherever the board has them wired, and
+//! how the picture is fed. A tag that is not there takes the default
+//! beside it in `sdk/libs/rtg/tags.zig`; a tag that has to be there and is
+//! not, or says what the peripheral cannot do, makes the create fail
+//! rather than the panel come up wrong.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
@@ -19,6 +21,9 @@ const st = sdk.expansion.systemtags;
 const lcd = @import("lcd.zig");
 
 pub const Config = struct {
+    /// The panel's timings, as its part's tags give them: the board's one
+    /// mode.
+    timings: rtg.RtgTimings = .{},
     setup: lcd.Setup = .{},
     /// The panel's own lines, wherever they are.
     reset_pin: BoardPin = .{},
@@ -57,24 +62,44 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
         }
     };
 
+    // The panel's timings: a size, a clock and both sync pulses, or it is
+    // not a panel this peripheral streams to.
+    const timings = &config.timings;
+    if (!rb.ReadTimingTags(tag_list, timings)) return null;
+    if (timings.pixel_clock_hz == 0) return null;
+    // 16 bits a pixel in RGB565 is what this peripheral is driven at here.
+    // The number is looked at before it is taken for a format: one no
+    // format has is refused, not a trap.
+    const format = get.u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list);
+    if (format != @intFromEnum(rtg.PixelFormat.rgb565)) return null;
+
     const setup = &config.setup;
-    setup.width = get.u32At(rb, tags.RTGA_Width, 0, tag_list);
-    setup.height = get.u32At(rb, tags.RTGA_Height, 0, tag_list);
-    const format: rtg.PixelFormat = @enumFromInt(get.u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list));
-    setup.bits_per_pixel = programs(rb).RtgFormatBits(@intFromEnum(format));
-    setup.pixel_clock_hz = get.u32At(rb, tags.RTGA_RGB_PixelClock, 0, tag_list);
-    setup.hsync_pulse = get.u32At(rb, tags.RTGA_RGB_HSyncPulse, 0, tag_list);
-    setup.hsync_back_porch = get.u32At(rb, tags.RTGA_RGB_HSyncBackPorch, 0, tag_list);
-    setup.hsync_front_porch = get.u32At(rb, tags.RTGA_RGB_HSyncFrontPorch, 0, tag_list);
-    setup.vsync_pulse = get.u32At(rb, tags.RTGA_RGB_VSyncPulse, 0, tag_list);
-    setup.vsync_back_porch = get.u32At(rb, tags.RTGA_RGB_VSyncBackPorch, 0, tag_list);
-    setup.vsync_front_porch = get.u32At(rb, tags.RTGA_RGB_VSyncFrontPorch, 0, tag_list);
+    setup.width = timings.h_active;
+    setup.height = timings.v_active;
+    setup.bits_per_pixel = programs(rb).RtgFormatBits(format);
+    setup.pixel_clock_hz = timings.pixel_clock_hz;
+    setup.hsync_pulse = timings.h_sync;
+    setup.hsync_back_porch = timings.h_back;
+    setup.hsync_front_porch = timings.h_front;
+    setup.vsync_pulse = timings.v_sync;
+    setup.vsync_back_porch = timings.v_back;
+    setup.vsync_front_porch = timings.v_front;
     setup.active_start = get.u32At(rb, tags.RTGA_RGB_ActiveStart, 0, tag_list);
 
-    const flags = get.u32At(rb, tags.RTGA_RGB_Flags, 0, tag_list);
-    setup.pclk_active_low = flags & tags.RTGRGBF_PCLK_ACTIVE_LOW != 0;
-    setup.hsync_idle_low = flags & tags.RTGRGBF_HSYNC_IDLE_LOW != 0;
-    setup.vsync_idle_low = flags & tags.RTGRGBF_VSYNC_IDLE_LOW != 0;
+    // A sync pulse that is high is a line that rests low.
+    setup.pclk_active_low = timings.flags & rtg.modes.RTGTM_PCLK_FALLING != 0;
+    setup.pclk_idle_high = timings.flags & rtg.modes.RTGTM_PCLK_IDLE_HIGH != 0;
+    setup.hsync_idle_low = timings.flags & rtg.modes.RTGTM_HSYNC_HIGH != 0;
+    setup.vsync_idle_low = timings.flags & rtg.modes.RTGTM_VSYNC_HIGH != 0;
+    setup.de_idle_high = timings.flags & rtg.modes.RTGTM_DE_LOW != 0;
+
+    // What the peripheral's fields hold: a picture and a line of twelve
+    // bits, a frame of ten, a back porch counted from the sync's start of
+    // eight. A figure past them would be cut to them without a word.
+    if (!lcd.fits(setup)) return null;
+    // A row of a buffer is whole cache lines, which the copy reads the
+    // picture in: a width that is not gives rows the stream cannot follow.
+    if ((setup.width * (setup.bits_per_pixel / 8)) % sdk.hardware.DCACHE_LINE_SIZE != 0) return null;
 
     setup.data_width = get.u32At(rb, tags.RTGA_RGB_DataWidth, 16, tag_list);
     const pins_at = rb.GetRtgTagData(tags.RTGA_RGB_DataPins, 0, tag_list);
@@ -84,10 +109,20 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     var i: u32 = 0;
     while (i < setup.data_width) : (i += 1) setup.data_pins[i] = pins[i];
 
-    setup.pclk_pin = @truncate(get.u32At(rb, tags.RTGA_RGB_PclkPin, 0, tag_list));
-    setup.hsync_pin = @truncate(get.u32At(rb, tags.RTGA_RGB_HSyncPin, 0, tag_list));
-    setup.vsync_pin = @truncate(get.u32At(rb, tags.RTGA_RGB_VSyncPin, 0, tag_list));
-    setup.de_pin = @truncate(get.u32At(rb, tags.RTGA_RGB_DePin, 0, tag_list));
+    // The four timing signals' pads, each needed: one left out is not
+    // pad 0.
+    const no_pad: u32 = 0xFFFF_FFFF;
+    const signal_pads = [_]struct { tag: u32, into: *u8 }{
+        .{ .tag = tags.RTGA_RGB_PclkPin, .into = &setup.pclk_pin },
+        .{ .tag = tags.RTGA_RGB_HSyncPin, .into = &setup.hsync_pin },
+        .{ .tag = tags.RTGA_RGB_VSyncPin, .into = &setup.vsync_pin },
+        .{ .tag = tags.RTGA_RGB_DePin, .into = &setup.de_pin },
+    };
+    for (signal_pads) |signal| {
+        const pad = get.u32At(rb, signal.tag, no_pad, tag_list);
+        if (pad > 0xFF) return null;
+        signal.into.* = @truncate(pad);
+    }
     setup.drive_strength = @intCast(@min(get.u32At(rb, tags.RTGA_RGB_DriveStrength, 3, tag_list), 3));
 
     config.reset_pin = pinFrom(rb, st.PART_PinReset, tag_list);
@@ -99,11 +134,5 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     config.buffers = @max(get.u32At(rb, tags.RTGA_Buffers, 1, tag_list), 1);
     config.dma_priority = get.u32At(rb, tags.RTGA_RGB_DmaPriority, sdk.resources.dma.DMA_MAXPRI, tag_list);
 
-    // A panel with no size, no clock or no blanking is not a panel.
-    if (setup.width == 0 or setup.height == 0) return null;
-    if (setup.pixel_clock_hz == 0) return null;
-    if (setup.hsync_pulse == 0 or setup.vsync_pulse == 0) return null;
-    // 16 bits a pixel is what this peripheral is driven at here.
-    if (setup.bits_per_pixel != 16) return null;
     return config;
 }

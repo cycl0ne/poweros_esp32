@@ -8,9 +8,9 @@
 //! good for as long as the machine runs: one whose device has gone says
 //! `RTGBF_GONE`, is passed over by `NextBoard`, and shows nothing.
 //!
-//! A board is a display and the memory it reads from. It has a list of
-//! modes it can be put into, a region of display memory the library hands
-//! buffers out of, a way to be given a buffer to show, a vertical blank,
+//! A board is a display and the memory it reads from. It has modes it
+//! can be put into (`modes.zig`), a region of display memory the library
+//! hands buffers out of, a way to be given a buffer to show, a vertical blank,
 //! and - if its own engine can do them - a few operations on a buffer that
 //! are faster than the CPU doing them.
 //!
@@ -26,40 +26,16 @@ const bitmaps = @import("bitmaps.zig");
 const video = @import("video.zig");
 const events = @import("events.zig");
 const drivers = @import("drivers.zig");
+const modes = @import("modes.zig");
 const tagitem = @import("../utility/tagitem.zig");
 
 const Node = nodes.Node;
 const List = lists.List;
 const RtgBitMap = bitmaps.RtgBitMap;
 const PixelFormat = bitmaps.PixelFormat;
+const RtgMode = modes.RtgMode;
+const RtgTimings = modes.RtgTimings;
 const RtgBase = @import("../../interface/rtg.zig").RtgBase;
-
-/// One thing a board can be set to.
-pub const RtgMode = extern struct {
-    /// ln_Name is the mode as a caller would name it ("1024x600"); ln_Pri
-    /// orders the list, highest first.
-    node: Node = .{},
-    /// The driver's own number for it, which SetBoardMode gives back.
-    id: u32 = 0,
-    width: u32 = 0,
-    height: u32 = 0,
-    format: PixelFormat = .rgb565,
-    pad: [3]u8 = .{ 0, 0, 0 },
-    /// Bytes a row when a buffer of this mode is made. 0: the width in
-    /// that format, rounded up to the region's alignment.
-    pitch: u32 = 0,
-    pixel_clock_hz: u32 = 0,
-    /// The refresh in milli-Hertz. 0 for a display that does not refresh
-    /// itself.
-    refresh_mhz: u32 = 0,
-    flags: u32 = 0,
-};
-
-/// RtgMode.flags
-/// What the board comes up in when no mode is asked for.
-pub const RTGMF_DEFAULT: u32 = 1 << 0;
-/// The mode the board is in now.
-pub const RTGMF_CURRENT: u32 = 1 << 1;
 
 /// A stretch of display memory, as its driver reports it - or, with
 /// RTGRF_SYSTEM_MEMORY, no stretch at all: `base` is null and `size` the
@@ -103,9 +79,10 @@ pub const RtgBoardInfo = extern struct {
     driver: ?[*:0]const u8 = null,
     name: ?[*:0]const u8 = null,
     id_string: ?[*:0]const u8 = null,
-    /// How many modes NextBoardMode will answer with.
+    /// How many modes it has (`GetBoardModes`).
     modes: u32 = 0,
-    /// The mode it is in (RtgMode.id) and what that amounts to.
+    /// The mode it is in (RtgMode.id) and what that amounts to; 0 while it
+    /// is in none.
     mode_id: u32 = 0,
     width: u32 = 0,
     height: u32 = 0,
@@ -328,9 +305,6 @@ pub const RtgBoard = extern struct {
     pad0: u32 = 0,
     ops: ?*const RtgBoardOps = null,
     info: RtgBoardInfo = .{},
-    /// The modes, RtgMode nodes. The driver fills the list before its
-    /// attach answers.
-    modes: List = .{},
     /// The display memory, and what has been handed out of it.
     region: RtgRegion = .{},
     bitmaps: List = .{},
@@ -368,12 +342,13 @@ pub const RtgBoardOps = extern struct {
     /// that joined the list, last, after the board has been un-shown and
     /// its buffers freed.
     destroy: ?*const fn (*RtgBoard) callconv(.c) void = null,
-    /// Put the board in that mode. The driver sets info.width, .height,
-    /// .format and .pitch, and may replace the region - the library has
-    /// already dealt with the buffers that were alive. Called with the
-    /// board's lock held, as the two shows are: one of the three at a
-    /// time on a board.
-    set_mode: ?*const fn (*RtgBoard, *const RtgMode) callconv(.c) i32 = null,
+    /// Put the board in that mode, whose timings are `timings` - a mode
+    /// of the board's list, as the library keeps it. The library writes
+    /// the board's info once the op has answered RTGERR_OK; the driver may
+    /// replace the region - the library has already dealt with the buffers
+    /// that were alive. Called with the board's lock held, as the two
+    /// shows are: one of the three at a time on a board.
+    set_mode: ?*const fn (*RtgBoard, *const RtgMode, *const RtgTimings) callconv(.c) i32 = null,
     /// Show that buffer, its pixel (x, y) at the top left; null shows
     /// nothing. The library passes x and y on unchecked: a board that
     /// cannot pan refuses any that is not zero. On any answer but

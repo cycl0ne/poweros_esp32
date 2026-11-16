@@ -91,9 +91,9 @@ pub const RtgDriverOps = extern struct {
     /// A device the driver's table names is offered, with its tags. The
     /// driver looks at the hardware, makes a board for each output it
     /// finds (`CreateBoard`) and brings each up as far as its first show
-    /// needs: its ops are in the board's description, and its modes, its
-    /// display memory (`RtgBoard.region`) and its info it fills in before
-    /// it answers. RTGERR_OK: it has the device from now on, and its
+    /// needs: its ops are in the board's description, and its modes
+    /// (`AddBoardMode`), its display memory (`RtgBoard.region`) and its
+    /// info it fills in before it answers. RTGERR_OK: it has the device from now on, and its
     /// boards join the library's list. Anything else: it declines - it
     /// has given back what it took, and deleted the boards it made
     /// (`DeleteBoard`) - and the next driver is asked. May wait.

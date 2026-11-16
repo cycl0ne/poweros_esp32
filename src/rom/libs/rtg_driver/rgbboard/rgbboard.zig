@@ -45,7 +45,7 @@ const pointer = @import("pointer.zig");
 
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 7;
+const REVISION = 8;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
@@ -81,18 +81,12 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
 
     // One mode: the panel is what it is, and a panel is not a monitor.
     const setup = &panel.config.setup;
-    panel.mode = .{
-        .node = .{ .name = "panel", .pri = 0 },
-        .id = 1,
-        .width = setup.width,
-        .height = setup.height,
-        .format = .rgb565,
-        .pitch = setup.width * (setup.bits_per_pixel / 8),
-        .pixel_clock_hz = setup.pixel_clock_hz,
-        .refresh_mhz = refreshMilliHz(setup),
-        .flags = rtg.boards.RTGMF_DEFAULT,
-    };
-    sys.AddTail(&board.modes, &panel.mode.node);
+    panel.pitch = setup.width * (setup.bits_per_pixel / 8);
+    if (rb.AddBoardMode(board, &panel.config.timings, @intFromEnum(rtg.PixelFormat.rgb565), rtg.modes.RTGMF_DEFAULT) == 0) {
+        _ = panels.giveBack(panel, err.RTGERR_NO_MEMORY);
+        rb.DeleteBoard(board);
+        return err.RTGERR_NO_MEMORY;
+    }
 
     // The panel shows a picture wherever it is, so its buffers are taken
     // from system memory as they are asked for - a line-aligned block
@@ -104,20 +98,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.info.buffers = panel.frames;
-    board.info.pixel_clock_hz = setup.pixel_clock_hz;
-    board.info.refresh_mhz = panel.mode.refresh_mhz;
     board.info.brightness = brightness(board);
     return err.RTGERR_OK;
-}
-
-/// Frames a second, in thousandths: the pixel clock over everything a
-/// frame costs, blanking and all.
-fn refreshMilliHz(setup: *const lcd.Setup) u32 {
-    const line = setup.hsync_pulse + setup.hsync_back_porch + setup.width + setup.hsync_front_porch;
-    const lines = setup.vsync_pulse + setup.vsync_back_porch + setup.height + setup.vsync_front_porch;
-    const whole: u64 = @as(u64, line) * lines;
-    if (whole == 0) return 0;
-    return @truncate(@as(u64, setup.pixel_clock_hz) * 1000 / whole);
 }
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
@@ -127,10 +109,8 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
 
 /// One mode, the panel's own: putting the board in it is what programs the
 /// pads, the timings and the clock.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
-    const panel = panelOf(board);
-    if (mode.id != panel.mode.id) return err.RTGERR_BAD_MODE;
-    return panels.program(panel);
+fn setMode(board: *rtg.RtgBoard, _: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+    return panels.program(panelOf(board));
 }
 
 /// Feed the panel from that buffer. The first time, this is what starts the
@@ -152,9 +132,10 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
         return err.RTGERR_OK;
     };
     const pixels = bm.pixels orelse return err.RTGERR_BAD_ARG;
-    if (bm.width != panel.mode.width or bm.height != panel.mode.height) return err.RTGERR_NOT_DISPLAYABLE;
-    if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
-    if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
+    const setup = &panel.config.setup;
+    if (bm.width != setup.width or bm.height != setup.height) return err.RTGERR_NOT_DISPLAYABLE;
+    if (bm.pitch != panel.pitch) return err.RTGERR_NOT_DISPLAYABLE;
+    if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     if (panel.streaming and panel.aligned) return panels.flip(panel, pixels);
     return panels.start(panel, pixels);
 }
@@ -167,8 +148,8 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
     for (bands[0..count]) |band| {
         const bm = band.bitmap;
         if (bm.pixels == null) return err.RTGERR_BAD_ARG;
-        if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
-        if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
+        if (bm.pitch != panel.pitch) return err.RTGERR_NOT_DISPLAYABLE;
+        if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     }
     return panels.showBands(panel, bands[0..count]);
 }

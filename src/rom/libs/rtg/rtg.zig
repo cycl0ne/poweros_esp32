@@ -22,9 +22,9 @@
 //! sdk/libs/rtg/.
 //!
 //! Each call is a file of its own in the folder for its category -
-//! driver/, board/, bitmap/, display/, engine/, event/, transport/, tag/,
-//! pointer/, video/ and errors/ - and memory/ holds the arena display
-//! memory is cut from.
+//! driver/, device/, board/, mode/, bitmap/, display/, engine/, event/,
+//! transport/, tag/, pointer/, video/ and errors/ - and memory/ holds the
+//! arena display memory is cut from.
 //! The jump table is rtg_lvo.zig, the ROM tag and init rtg_init.zig, the
 //! base rtg_base.zig. This file holds the names the rest of the kernel
 //! reaches the library by, and the tests of calls working together. The
@@ -63,6 +63,7 @@ const testing = std.testing;
 const interface = sdk.interface.rtg;
 const memory = @import("memory/_memory.zig");
 const boards = @import("board/_board.zig");
+const modes = @import("mode/_mode.zig");
 
 test {
     _ = rtg_base;
@@ -81,11 +82,9 @@ test {
     _ = @import("board/createboard.zig");
     _ = @import("board/deleteboard.zig");
     _ = @import("board/findboard.zig");
-    _ = @import("board/findboardmode.zig");
     _ = @import("board/getboardinfo.zig");
     _ = @import("board/getboardstats.zig");
     _ = @import("board/nextboard.zig");
-    _ = @import("board/nextboardmode.zig");
     _ = @import("board/setboardmode.zig");
     _ = @import("display/boardbrightness.zig");
     _ = @import("display/boarddisplaybitmap.zig");
@@ -114,6 +113,12 @@ test {
     _ = @import("event/remrtgeventserver.zig");
     _ = @import("event/signalrtgevent.zig");
     _ = @import("memory/_memory.zig");
+    _ = @import("mode/_mode.zig");
+    _ = @import("mode/addboardmode.zig");
+    _ = @import("mode/bestboardmode.zig");
+    _ = @import("mode/findboardmode.zig");
+    _ = @import("mode/getboardmodes.zig");
+    _ = @import("mode/readtimingtags.zig");
     _ = @import("tag/getrtgtagdata.zig");
     _ = @import("transport/_transport.zig");
     _ = @import("transport/opentransport.zig");
@@ -758,7 +763,7 @@ test "a device taken away: its boards gone from the walk, still handles, and sho
 
     const board = try makeBoard(rb);
     const device = board.device.?;
-    const mode = base(rb).FindBoardMode(board, 0, 0, 0).?;
+    const mode = base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY);
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, mode));
     const bm = base(rb).AllocBitMap(board, 8, 8, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm, 0, 0));
@@ -870,35 +875,307 @@ test "a bus opened by a driver: made by the driver that names the device's bus, 
     try tearDown(rb);
 }
 
-test "modes: walked, found, and set" {
+/// The board's modes, copied out; how many of them there are.
+fn modesOf(rb: *RtgBase, board: *rtg.RtgBoard, into: *[8]rtg.RtgMode) u32 {
+    return base(rb).GetBoardModes(board, into, into.len);
+}
+
+test "modes: copied out the larger picture first, named and numbered as they were made" {
     const rb = try setUp();
     defer kexec.deinit();
     const board = try makeBoard(rb);
 
-    const first = base(rb).NextBoardMode(board, null).?;
-    try testing.expectEqualStrings("320x200", std.mem.span(first.node.name.?));
-    const second = base(rb).NextBoardMode(board, first).?;
-    try testing.expectEqual(@as(u32, 640), second.width);
+    // How many there are, asked alone, and no more copied than there is
+    // room for.
+    try testing.expectEqual(@as(u32, 3), base(rb).GetBoardModes(board, null, 0));
+    var one: [1]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 3), base(rb).GetBoardModes(board, &one, one.len));
+    try testing.expectEqual(@as(u32, 640), one[0].width);
+
+    var found: [8]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 3), modesOf(rb, board, &found));
+    // The second the driver added is the largest, and has kept its number.
+    try testing.expectEqual(@as(u32, 2), found[0].id);
+    try testing.expectEqualStrings("640x480", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqual(@as(u32, 60_000), found[0].refresh_mhz);
+    try testing.expectEqual(@as(u32, 25_200_000), found[0].pixel_clock_hz);
+    // A row is the width in the format, on what the display memory is
+    // aligned to: what a buffer of the mode has.
+    try testing.expectEqual(@as(u32, 1280), found[0].pitch);
+    try testing.expectEqual(@as(u32, 1), found[1].id);
+    try testing.expectEqualStrings("320x200", std.mem.sliceTo(&found[1].name, 0));
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[1].flags);
+    // A display with no clock says no refresh; a row of one bit a pixel is
+    // rounded up as any other.
+    try testing.expectEqual(@as(u32, 3), found[2].id);
+    try testing.expectEqualStrings("64x64", std.mem.sliceTo(&found[2].name, 0));
+    try testing.expectEqual(rtg.PixelFormat.mono1, found[2].format);
+    try testing.expectEqual(@as(u32, 0), found[2].refresh_mhz);
+    try testing.expectEqual(@as(u32, 64), found[2].pitch);
+
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a mode: found by its figures, set by its number, and the board says what it is in" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    const any = rtg.RTG_ANY;
+    const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
 
     // Nothing asked for is the board's default.
-    try testing.expectEqual(first, base(rb).FindBoardMode(board, 0, 0, 0).?);
-    try testing.expectEqual(second, base(rb).FindBoardMode(board, 640, 0, 0).?);
-    try testing.expect(base(rb).FindBoardMode(board, 800, 600, 0) == null);
+    try testing.expectEqual(@as(u32, 1), base(rb).FindBoardMode(board, any, any, any, any));
+    try testing.expectEqual(@as(u32, 2), base(rb).FindBoardMode(board, 640, any, any, any));
+    try testing.expectEqual(@as(u32, 2), base(rb).FindBoardMode(board, 640, 480, 60_000, rgb565));
+    // Only what is exactly that: a size it has not, a refresh it has not,
+    // and a format the mode of that size is not in. Format 0 is a format.
+    try testing.expectEqual(@as(u32, 0), base(rb).FindBoardMode(board, 800, 600, any, any));
+    try testing.expectEqual(@as(u32, 0), base(rb).FindBoardMode(board, 640, 480, 75_000, any));
+    try testing.expectEqual(@as(u32, 0), base(rb).FindBoardMode(board, 640, 480, any, @intFromEnum(rtg.PixelFormat.rgba32)));
+    try testing.expectEqual(@as(u32, 3), base(rb).FindBoardMode(board, any, any, 0, any));
 
     var before: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &before, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(@as(u32, 0), before.flags & rtg.boards.RTGBF_MODE_SET);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, second));
-    try testing.expect(second.flags & rtg.boards.RTGMF_CURRENT != 0);
-    try testing.expect(first.flags & rtg.boards.RTGMF_CURRENT == 0);
+    try testing.expectEqual(@as(u32, 0), before.mode_id);
+
+    // A number the board has no mode of is refused, and the driver not
+    // asked.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(board, 9));
+    try testing.expectEqual(@as(u32, 0), fk.log.set_mode);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 2));
+    // The driver was handed the mode and its timings.
+    try testing.expectEqual(@as(u32, 2), fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 640), fk.log.last_timings.h_active);
+    try testing.expectEqual(@as(u32, 96), fk.log.last_timings.h_sync);
+    try testing.expectEqual(@as(u32, 25_200_000), fk.log.last_timings.pixel_clock_hz);
 
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(@as(u32, 640), info.width);
     try testing.expectEqual(@as(u32, 480), info.height);
+    try testing.expectEqual(@as(u32, 1280), info.pitch);
     try testing.expectEqual(@as(u32, 2), info.mode_id);
+    try testing.expectEqual(@as(u32, 60_000), info.refresh_mhz);
+    try testing.expectEqual(@as(u32, 25_200_000), info.pixel_clock_hz);
+    try testing.expect(info.flags & rtg.boards.RTGBF_MODE_SET != 0);
+
+    // The copies say which mode the board is in; 0 is the default.
+    var found: [8]rtg.RtgMode = undefined;
+    _ = modesOf(rb, board, &found);
+    try testing.expect(found[0].flags & rtg.modes.RTGMF_CURRENT != 0);
+    try testing.expect(found[1].flags & rtg.modes.RTGMF_CURRENT == 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    _ = modesOf(rb, board, &found);
+    try testing.expect(found[0].flags & rtg.modes.RTGMF_CURRENT == 0);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT | rtg.modes.RTGMF_CURRENT, found[1].flags);
+    // A mode with no clock leaves the board saying none.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 3));
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(@as(u32, 0), info.refresh_mhz);
+    try testing.expectEqual(@as(u32, 0), info.pixel_clock_hz);
 
     driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "the nearest mode to a wish: on a board of one mode always that mode" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    fk.modes = 1;
+    const board = try makeBoard(rb);
+    const any = rtg.RTG_ANY;
+
+    var got: rtg.RtgMode = .{};
+    // Whoever asks for another size gets the board's, and sees which.
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, 640, 800, any, any, &got));
+    try testing.expectEqual(@as(u32, 320), got.width);
+    try testing.expectEqual(@as(u32, 200), got.height);
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, 16, 16, 75_000, @intFromEnum(rtg.PixelFormat.bgra32), null));
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, any, any, any, any, null));
+    // The exact one is still asked for exactly.
+    try testing.expectEqual(@as(u32, 0), base(rb).FindBoardMode(board, 640, 800, any, any));
+
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "the nearest mode to a wish: by format, then size, then refresh; none on a board with no mode" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const any = rtg.RTG_ANY;
+    const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
+    const mono1 = @intFromEnum(rtg.PixelFormat.mono1);
+
+    // A board with no mode answers 0 and leaves the copy alone.
+    fk.modes = 0;
+    const bare = try makeBoard(rb);
+    var got: rtg.RtgMode = .{ .id = 77 };
+    try testing.expectEqual(@as(u32, 0), base(rb).BestBoardMode(bare, 320, 200, any, any, &got));
+    try testing.expectEqual(@as(u32, 77), got.id);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(bare, 0));
+    driverBase(rb).DeleteBoard(bare);
+
+    fk.modes = fake.mode_table.len;
+    const board = try makeBoard(rb);
+    // The size itself.
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, 320, 200, any, any, &got));
+    try testing.expectEqual(@as(u32, 320), got.width);
+    // Else the smallest that holds it.
+    try testing.expectEqual(@as(u32, 2), base(rb).BestBoardMode(board, 400, 300, any, any, null));
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, 100, 100, any, any, null));
+    try testing.expectEqual(@as(u32, 3), base(rb).BestBoardMode(board, 32, 32, any, any, null));
+    // Else the largest.
+    try testing.expectEqual(@as(u32, 2), base(rb).BestBoardMode(board, 800, 600, any, any, &got));
+    try testing.expectEqual(@as(u32, 640), got.width);
+    // One side left open holds whatever it is.
+    try testing.expectEqual(@as(u32, 2), base(rb).BestBoardMode(board, any, 480, any, any, null));
+    // A format wished for is looked for among the modes of that format.
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, 32, 32, any, rgb565, null));
+    try testing.expectEqual(@as(u32, 3), base(rb).BestBoardMode(board, 640, 480, any, mono1, null));
+    // One the board has none of leaves the size to decide.
+    try testing.expectEqual(@as(u32, 2), base(rb).BestBoardMode(board, 640, 480, any, @intFromEnum(rtg.PixelFormat.bgra32), null));
+    // Nothing wished for is the default.
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, any, any, any, any, null));
+
+    // The size at a second refresh: 840 by 500 at 31.5 MHz is 75 a second.
+    const faster: rtg.RtgTimings = .{ .pixel_clock_hz = 31_500_000, .h_active = 640, .h_front = 16, .h_sync = 64, .h_back = 120, .v_active = 480, .v_front = 1, .v_sync = 3, .v_back = 16 };
+    try testing.expectEqual(@as(u32, 4), driverBase(rb).AddBoardMode(board, &faster, rgb565, 0));
+    try testing.expectEqual(@as(u32, 4), base(rb).BestBoardMode(board, 640, 480, 75_000, any, null));
+    try testing.expectEqual(@as(u32, 2), base(rb).BestBoardMode(board, 640, 480, 61_000, any, null));
+    try testing.expectEqual(@as(u32, 4), base(rb).BestBoardMode(board, 640, 480, 70_000, any, null));
+    // The refresh left open: the higher, unless the default is of that
+    // size.
+    try testing.expectEqual(@as(u32, 4), base(rb).BestBoardMode(board, 640, 480, any, any, null));
+    try testing.expectEqual(@as(u32, 1), base(rb).BestBoardMode(board, 320, 200, any, any, null));
+
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a mode added: its name with the refresh where a size has two, the default moved, the same figures the same mode" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const board = try makeBoard(rb);
+    const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
+    var found: [8]rtg.RtgMode = undefined;
+
+    const faster: rtg.RtgTimings = .{ .pixel_clock_hz = 31_500_000, .h_active = 640, .h_front = 16, .h_sync = 64, .h_back = 120, .v_active = 480, .v_front = 1, .v_sync = 3, .v_back = 16 };
+    try testing.expectEqual(@as(u32, 4), driverBase(rb).AddBoardMode(board, &faster, rgb565, rtg.modes.RTGMF_DEFAULT));
+    try testing.expectEqual(@as(u32, 4), modesOf(rb, board, &found));
+    // Of one size the higher refresh first, and both say which they are.
+    try testing.expectEqual(@as(u32, 4), found[0].id);
+    try testing.expectEqualStrings("640x480@75", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqualStrings("640x480@60", std.mem.sliceTo(&found[1].name, 0));
+    try testing.expectEqualStrings("320x200", std.mem.sliceTo(&found[2].name, 0));
+    // The default is the one added as it, and no other.
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    try testing.expectEqual(@as(u32, 0), found[2].flags);
+    try testing.expectEqual(@as(u32, 4), base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+    // A row was set as it was added: the board has its display memory.
+    try testing.expectEqual(@as(u32, 1280), found[0].pitch);
+
+    // The same figures again are the mode that is there, with the timings
+    // handed over now.
+    var again = faster;
+    again.h_front = 24;
+    again.h_back = 112;
+    try testing.expectEqual(@as(u32, 4), driverBase(rb).AddBoardMode(board, &again, rgb565, 0));
+    try testing.expectEqual(@as(u32, 4), base(rb).GetBoardModes(board, null, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 4));
+    try testing.expectEqual(@as(u32, 24), fakeOf(rb).log.last_timings.h_front);
+    // It stays the default: a mode is not made less by being added again.
+    try testing.expectEqual(@as(u32, 4), base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+
+    // A picture a quarter turn round is a mode of its own, and says so;
+    // an interlaced one is named for it.
+    const turned: rtg.RtgTimings = .{ .h_active = 64, .v_active = 64 };
+    try testing.expectEqual(@as(u32, 5), driverBase(rb).AddBoardMode(board, &turned, @intFromEnum(rtg.PixelFormat.mono1), rtg.modes.RTGMF_TURNED));
+    var fields = faster;
+    fields.h_active = 720;
+    fields.flags = rtg.modes.RTGTM_INTERLACED;
+    try testing.expectEqual(@as(u32, 6), driverBase(rb).AddBoardMode(board, &fields, rgb565, 0));
+    try testing.expectEqual(@as(u32, 6), modesOf(rb, board, &found));
+    try testing.expectEqualStrings("720x480i", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expect(found[0].flags & rtg.modes.RTGMF_INTERLACED != 0);
+    try testing.expect(found[5].flags & rtg.modes.RTGMF_TURNED != 0);
+
+    // What is no mode: an empty picture, and a format that is none.
+    const empty: rtg.RtgTimings = .{ .h_active = 640 };
+    try testing.expectEqual(@as(u32, 0), driverBase(rb).AddBoardMode(board, &empty, rgb565, 0));
+    try testing.expectEqual(@as(u32, 0), driverBase(rb).AddBoardMode(board, &faster, 200, 0));
+    try testing.expectEqual(@as(u32, 0), driverBase(rb).AddBoardMode(board, &faster, 0x1_0004, 0));
+    try testing.expectEqual(@as(u32, 6), base(rb).GetBoardModes(board, null, 0));
+
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a panel's timings from its tags: the size, the clock and the blanking; what is no panel" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const tags = rtg.tags;
+
+    const panel = [_]TagItem{
+        .{ .tag = tags.RTGA_Width, .data = 1024 },
+        .{ .tag = tags.RTGA_Height, .data = 600 },
+        .{ .tag = tags.RTGA_PixelClock, .data = 30_000_000 },
+        .{ .tag = tags.RTGA_HSyncPulse, .data = 162 },
+        .{ .tag = tags.RTGA_HBackPorch, .data = 152 },
+        .{ .tag = tags.RTGA_HFrontPorch, .data = 48 },
+        .{ .tag = tags.RTGA_VSyncPulse, .data = 45 },
+        .{ .tag = tags.RTGA_VBackPorch, .data = 13 },
+        .{ .tag = tags.RTGA_VFrontPorch, .data = 3 },
+        .{ .tag = tags.RTGA_TimingFlags, .data = rtg.modes.RTGTM_PCLK_FALLING },
+        .{},
+    };
+    var timings: rtg.RtgTimings = .{};
+    try testing.expect(driverBase(rb).ReadTimingTags(&panel, &timings));
+    try testing.expectEqual(@as(u32, 1024), timings.h_active);
+    try testing.expectEqual(@as(u32, 600), timings.v_active);
+    try testing.expectEqual(@as(u32, 30_000_000), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 162), timings.h_sync);
+    try testing.expectEqual(@as(u32, 152), timings.h_back);
+    try testing.expectEqual(@as(u32, 48), timings.h_front);
+    try testing.expectEqual(@as(u32, 45), timings.v_sync);
+    try testing.expectEqual(@as(u32, 13), timings.v_back);
+    try testing.expectEqual(@as(u32, 3), timings.v_front);
+    try testing.expectEqual(rtg.modes.RTGTM_PCLK_FALLING, timings.flags);
+    // 30 MHz over 1386 by 661: what the mode made of them says.
+    try testing.expectEqual(@as(u32, 32_745), modes.refreshOf(&timings));
+
+    // A display behind a bus is its size and no more.
+    const bus_panel = [_]TagItem{
+        .{ .tag = tags.RTGA_Width, .data = 320 },
+        .{ .tag = tags.RTGA_Height, .data = 480 },
+        .{},
+    };
+    try testing.expect(driverBase(rb).ReadTimingTags(&bus_panel, &timings));
+    try testing.expectEqual(@as(u32, 320), timings.h_active);
+    try testing.expectEqual(@as(u32, 0), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 0), timings.flags);
+
+    // No size, and a clock without a sync pulse: refused, and what was
+    // there is left.
+    const before = timings;
+    const sizeless = [_]TagItem{ .{ .tag = tags.RTGA_Width, .data = 320 }, .{} };
+    try testing.expect(!driverBase(rb).ReadTimingTags(&sizeless, &timings));
+    const pulseless = [_]TagItem{
+        .{ .tag = tags.RTGA_Width, .data = 320 },
+        .{ .tag = tags.RTGA_Height, .data = 480 },
+        .{ .tag = tags.RTGA_PixelClock, .data = 8_000_000 },
+        .{ .tag = tags.RTGA_HSyncPulse, .data = 4 },
+        .{},
+    };
+    try testing.expect(!driverBase(rb).ReadTimingTags(&pulseless, &timings));
+    try testing.expect(!driverBase(rb).ReadTimingTags(null, &timings));
+    try testing.expectEqual(before, timings);
+
     try tearDown(rb);
 }
 
@@ -1025,13 +1302,13 @@ test "a buffer that keeps its memory stops a mode change" {
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
 
     const fixed = base(rb).AllocBitMap(board, 32, 32, format, 0).?;
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).SetBoardMode(board, 0));
     try testing.expectEqual(@as(u32, 0), fk.log.set_mode);
     base(rb).FreeBitMap(fixed);
 
     // One that agreed to lose it keeps its handle and loses its pixels.
     const loose = base(rb).AllocBitMap(board, 32, 32, format, rtg.bitmaps.RTGBMF_VOLATILE).?;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
     try testing.expect(loose.pixels == null);
     try testing.expectEqual(
         rtg.errors.RTGERR_BAD_ARG,
@@ -1165,7 +1442,7 @@ test "the board's lock: held around the driver's show and mode, free after every
 
     // The mode: the driver is asked under the lock, and the picture taken
     // down inside it is too.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
     try testing.expectEqual(@as(u32, 1), Held.seen);
     try testing.expect(Held.free(board));
     board.info.width = 16;
@@ -1220,7 +1497,7 @@ test "the board's lock: held around the driver's show and mode, free after every
     try testing.expect(Held.free(board));
 
     // A mode change refused for a buffer that keeps its memory.
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).SetBoardMode(board, 0));
     try testing.expect(Held.free(board));
 
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
@@ -2032,7 +2309,7 @@ test "turning the picture: what the board can do, and what it cannot" {
     try testing.expectEqual(@as(u8, 0), info.mirror_x);
     try testing.expectEqual(@as(u8, 0), info.mirror_y);
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     const was_width = info.width;
     const was_height = info.height;
@@ -2058,7 +2335,7 @@ test "a board whose pixels go out as they are written will not turn" {
     const fk = fakeOf(rb);
     fk.cannot_turn = true;
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
 
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
@@ -2088,7 +2365,7 @@ test "the pointer: converted once, placed by its point, shown and hidden" {
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expect(info.caps & rtg.boards.RTGBC_POINTER != 0);
@@ -2159,7 +2436,7 @@ test "the pointer on a 32-bit board: its channels in the order the format names 
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
     board.info.format = .bgra32;
 
     // A red pixel and a grey one, rgba32.
@@ -2179,7 +2456,7 @@ test "the overlay: its coverage dithered, following the pointer, placed on its o
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, null));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expect(info.caps & rtg.boards.RTGBC_OVERLAY != 0);

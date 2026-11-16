@@ -1,5 +1,6 @@
 TABLE OF CONTENTS
 
+rtg.library/AddBoardMode
 rtg.library/AddRtgDevice
 rtg.library/AddRtgDriver
 rtg.library/CloseTransport
@@ -7,12 +8,73 @@ rtg.library/CreateBoard
 rtg.library/DeleteBoard
 rtg.library/GetRtgTagData
 rtg.library/OpenTransport
+rtg.library/ReadTimingTags
 rtg.library/RemRtgDevice
 rtg.library/RemRtgDriver
 rtg.library/RxParam
 rtg.library/SignalRtgEvent
 rtg.library/TxColor
 rtg.library/TxParam
+rtg.library/AddBoardMode                              rtg.library/AddBoardMode
+
+   NAME
+	AddBoardMode -- Adds a mode to a board's list.
+
+   SYNOPSIS
+	    fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32) u32
+
+   SINCE
+	1.19. LVO -364.
+
+   INPUTS
+	- `board` - the board, one of the caller's own.
+	- `timings` - the mode's timings: its picture's size, and where the
+	  display has a clock, the clock and the blanking. Copied.
+	- `format` - the pixel format the board shows the mode in, as a number.
+	- `flags` - `RTGMF_DEFAULT` for the mode the board comes up in,
+	  `RTGMF_TURNED` for a picture that lies on the panel a quarter turn
+	  round.
+
+   RESULT
+	The mode's number, from 1; 0 for timings whose picture is empty, for a
+	format this build does not know, and without memory.
+
+   BEHAVIOR
+	The library makes the mode: its name is its size ("1024x600") - with
+	the refresh behind it where the board has that size at more than one -
+	its refresh is what the timings come to, 0 where they have no clock,
+	and its number is the next the board has not used. The list is kept
+	with the larger picture first. The first mode added is the board's
+	default until one is added with `RTGMF_DEFAULT`. A mode added again -
+	the same size, format, refresh and turn - is the one that is there: it
+	takes the timings handed over and keeps its number.
+
+	A row of a buffer of the mode is as long as `AllocBitMap` makes one:
+	the width in the format, rounded up to what the board's display memory
+	is aligned to. It is set once the board has joined the list, so a
+	driver that needs the figure in its `attach` works it out from its own
+	region.
+
+   CONTEXT
+	- Waits: while another task holds the board's lock.
+	- Interrupts: no.
+	- Locks: takes the board's lock. No spinlock may be held.
+	- Process: a Task will do. A driver calls it in its `attach`.
+
+   OWNERSHIP
+	The mode is the library's and goes with the board. Nothing is kept of
+	`timings`.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`ReadTimingTags`, `GetBoardModes`, `CreateBoard`
+
+   EXAMPLES
+	    var timings: rtg.RtgTimings = .{};
+	    if (!rb.ReadTimingTags(tag_list, &timings)) return rtg.errors.RTGERR_BAD_TAGS;
+	    _ = rb.AddBoardMode(board, &timings, @intFromEnum(rtg.PixelFormat.rgb565), rtg.modes.RTGMF_DEFAULT);
 rtg.library/AddRtgDevice                              rtg.library/AddRtgDevice
 
    NAME
@@ -22,7 +84,7 @@ rtg.library/TxParam
 	    fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice
 
    SINCE
-	1.18. LVO -340.
+	1.18. LVO -348.
 
    INPUTS
 	- `tag_list` - what the device is, in the tags a panel part of the
@@ -69,7 +131,7 @@ rtg.library/TxParam
 	    fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver
 
    SINCE
-	1.0. LVO -304.
+	1.0. LVO -312.
 
    INPUTS
 	- `spec` - the driver's description: its name, what it makes and the
@@ -126,7 +188,7 @@ rtg.library/TxParam
 	    fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
 
    SINCE
-	1.18. LVO -352.
+	1.18. LVO -360.
 
    INPUTS
 	- `io` - the bus, as `OpenTransport` answered it. Null does nothing.
@@ -167,7 +229,7 @@ rtg.library/TxParam
 	    fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard
 
    SINCE
-	1.18. LVO -332.
+	1.18. LVO -340.
 
    INPUTS
 	- `driver` - the driver that makes it: the one whose `attach` is
@@ -188,8 +250,8 @@ rtg.library/TxParam
 	driver can read from its interrupts (`RTGDF_INTERNAL_INSTANCE`), the
 	instance cleared. The handle has the driver, the device, the ops, the
 	region and the flags of the description; the driver fills in the
-	rest - its modes, its info, the region where it was not known - before
-	its `attach` answers. The board is on no list yet and has no name: it
+	rest - its modes (`AddBoardMode`), its info, the region where it was
+	not known - before its `attach` answers. The board is on no list yet and has no name: it
 	joins the library's list once the `attach` has answered `RTGERR_OK`,
 	named after its driver and a number in the order the driver's boards
 	were made ("rgb.0"), the firmware's picture last on the list. A board
@@ -215,7 +277,8 @@ rtg.library/TxParam
 	None known.
 
    SEE ALSO
-	`DeleteBoard`, `BindRtgDrivers`, `AddRtgDevice`, `NextBoard`
+	`DeleteBoard`, `AddBoardMode`, `BindRtgDrivers`, `AddRtgDevice`,
+	`NextBoard`
 
    EXAMPLES
 	    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel) }) orelse return rtg.errors.RTGERR_NO_MEMORY;
@@ -228,7 +291,7 @@ rtg.library/TxParam
 	    fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 
    SINCE
-	1.0. LVO -336.
+	1.0. LVO -344.
 
    INPUTS
 	- `board` - the board, as `CreateBoard` answered it. Null does nothing.
@@ -282,7 +345,7 @@ rtg.library/TxParam
 	    fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?[*]const TagItem) usize
 
    SINCE
-	1.0. LVO -328.
+	1.0. LVO -336.
 
    INPUTS
 	- `tag_value` - the tag.
@@ -322,7 +385,7 @@ rtg.library/TxParam
 	    fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?*rtg.RtgTransport
 
    SINCE
-	1.18. LVO -348.
+	1.18. LVO -356.
 
    INPUTS
 	- `driver` - the driver that asks: the one that has `device`, or is
@@ -365,6 +428,53 @@ rtg.library/TxParam
 
    EXAMPLES
 	    const io = rb.OpenTransport(driver, device) orelse return rtg.errors.RTGERR_NO_DISPLAY;
+rtg.library/ReadTimingTags                          rtg.library/ReadTimingTags
+
+   NAME
+	ReadTimingTags -- Reads the generic timing tags of a list into a structure.
+
+   SYNOPSIS
+	    fn ReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTimings) bool
+
+   SINCE
+	1.19. LVO -368.
+
+   INPUTS
+	- `tag_list` - a device's tags.
+	- `timings` - where the timings go.
+
+   RESULT
+	True, and `timings` filled in. False, and `timings` left as it was,
+	for a list without `RTGA_Width` or `RTGA_Height`, and for one that
+	names a pixel clock and lacks a sync pulse.
+
+   BEHAVIOR
+	`RTGA_Width` and `RTGA_Height` are the picture; `RTGA_PixelClock` the
+	clock; `RTGA_HSyncPulse`, `RTGA_HBackPorch`, `RTGA_HFrontPorch` and
+	the three for the vertical the blanking; `RTGA_TimingFlags` the
+	`RTGTM_*` flags. A tag that is not there reads as 0. A list with no
+	clock is a display that has none - a controller behind a bus - and
+	needs no more than its size; one with a clock is a panel that is
+	streamed its picture, and a panel without a sync pulse is not one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe in itself: it reads the list.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AddBoardMode`, `GetRtgTagData`
+
+   EXAMPLES
+	    var timings: rtg.RtgTimings = .{};
+	    if (!rb.ReadTimingTags(tag_list, &timings)) return rtg.errors.RTGERR_BAD_TAGS;
 rtg.library/RemRtgDevice                              rtg.library/RemRtgDevice
 
    NAME
@@ -374,7 +484,7 @@ rtg.library/TxParam
 	    fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void
 
    SINCE
-	1.18. LVO -344.
+	1.18. LVO -352.
 
    INPUTS
 	- `device` - the device, as `AddRtgDevice` answered it. Null does
@@ -422,7 +532,7 @@ rtg.library/TxParam
 	    fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
    SINCE
-	1.0. LVO -308.
+	1.0. LVO -316.
 
    INPUTS
 	- `driver` - the driver's node, as `AddRtgDriver` answered it.
@@ -466,7 +576,7 @@ rtg.library/TxParam
 	    fn RxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -324.
+	1.0. LVO -332.
 
    INPUTS
 	- `io` - the transport.
@@ -507,7 +617,7 @@ rtg.library/TxParam
 	    fn SignalRtgEvent(_: *RtgBase, board: *rtg.RtgBoard, event: u32) i32
 
    SINCE
-	1.0. LVO -312.
+	1.0. LVO -320.
 
    INPUTS
 	- `board` - the board.
@@ -548,7 +658,7 @@ rtg.library/TxParam
 	    fn TxColor(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -320.
+	1.0. LVO -328.
 
    INPUTS
 	- `io` - the transport.
@@ -590,7 +700,7 @@ rtg.library/TxParam
 	    fn TxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -316.
+	1.0. LVO -324.
 
    INPUTS
 	- `io` - the transport.

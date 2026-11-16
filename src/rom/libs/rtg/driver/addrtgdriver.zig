@@ -13,7 +13,7 @@ const _driver = @import("_driver.zig");
 /// fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver
 /// ```
 ///
-/// SINCE: 1.0. LVO -304.
+/// SINCE: 1.0. LVO -312.
 ///
 /// INPUTS:
 /// - `spec` - the driver's description: its name, what it makes and the

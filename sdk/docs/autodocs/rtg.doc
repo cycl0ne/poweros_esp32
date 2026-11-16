@@ -3,6 +3,7 @@ TABLE OF CONTENTS
 rtg.library/AddRtgEventServer
 rtg.library/AllocBitMap
 rtg.library/AttachBitMap
+rtg.library/BestBoardMode
 rtg.library/BindRtgDrivers
 rtg.library/BlendPixels
 rtg.library/BlendRect
@@ -19,6 +20,7 @@ rtg.library/FindBoard
 rtg.library/FindBoardMode
 rtg.library/FreeBitMap
 rtg.library/GetBoardInfo
+rtg.library/GetBoardModes
 rtg.library/GetBoardStats
 rtg.library/GetRtgDevices
 rtg.library/GetRtgDrivers
@@ -27,7 +29,6 @@ rtg.library/MoveBoardOverlay
 rtg.library/MoveBoardPointer
 rtg.library/MoveVideoLayer
 rtg.library/NextBoard
-rtg.library/NextBoardMode
 rtg.library/OpenVideoLayer
 rtg.library/RefreshBitMap
 rtg.library/RefreshRect
@@ -190,6 +191,62 @@ rtg.library/WaitVBlank
    EXAMPLES
 	    var described: rtg.RtgBitMap = .{ .pixels = mem.ptr, .width = 320, .height = 200, .format = .rgb565 };
 	    const buffer = rb.AttachBitMap(board, &described) orelse return error.NoMemory;
+rtg.library/BestBoardMode                            rtg.library/BestBoardMode
+
+   NAME
+	BestBoardMode -- Finds the mode of a board that comes nearest a wish.
+
+   SYNOPSIS
+	    fn BestBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32, mode: ?*rtg.RtgMode) u32
+
+   SINCE
+	1.19. LVO -308.
+
+   INPUTS
+	- `board` - the board.
+	- `width` - the width wished for, or `RTG_ANY`.
+	- `height` - the height wished for, or `RTG_ANY`.
+	- `refresh_mhz` - the refresh wished for, in milli-Hertz, or `RTG_ANY`.
+	- `format` - the pixel format wished for, as a number, or `RTG_ANY`.
+	- `mode` - where the mode found is copied to, or null.
+
+   RESULT
+	The number of the mode, and what it is in `mode`. 0, and `mode` left
+	as it was, only on a board that has no mode.
+
+   BEHAVIOR
+	A format wished for is looked for among the board's modes of that
+	format, where it has any; else among all of them. Then the size
+	decides: a mode of the size wished for where there is one, else the
+	smallest that holds it, else the largest. Of several modes of one size
+	the refresh nearest the one wished for is taken - with the refresh left
+	open the board's default where it is of that size, else the highest. A
+	wish that leaves both sides of the size open is for the size of the
+	board's default mode.
+
+	So a display of one mode always answers that mode: whoever asks for
+	another size is handed the board's, and sees which it got by comparing
+	`mode` with what it asked for.
+
+   CONTEXT
+	- Waits: while another task holds the board's lock.
+	- Interrupts: no.
+	- Locks: takes the board's lock. No spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated: the copy is the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FindBoardMode`, `GetBoardModes`, `SetBoardMode`
+
+   EXAMPLES
+	    var got: rtg.RtgMode = .{};
+	    const mode_id = rb.BestBoardMode(board, 800, 600, rtg.RTG_ANY, rtg.RTG_ANY, &got);
+	    if (got.width != 800 or got.height != 600) tellOf(&got);
 rtg.library/BindRtgDrivers                          rtg.library/BindRtgDrivers
 
    NAME
@@ -783,32 +840,36 @@ rtg.library/WaitVBlank
 rtg.library/FindBoardMode                            rtg.library/FindBoardMode
 
    NAME
-	FindBoardMode -- Finds a board's mode by its size and format.
+	FindBoardMode -- Finds a board's mode by its size, refresh and format.
 
    SYNOPSIS
-	    fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32) ?*rtg.RtgMode
+	    fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32) u32
 
    SINCE
 	1.0. LVO -76.
 
    INPUTS
 	- `board` - the board.
-	- `width` - the width wanted, or 0 for any.
-	- `height` - the height wanted, or 0 for any.
-	- `format` - the pixel format wanted, or 0 for any.
+	- `width` - the width wanted, or `RTG_ANY`.
+	- `height` - the height wanted, or `RTG_ANY`.
+	- `refresh_mhz` - the refresh wanted, in milli-Hertz as the mode says
+	  it, or `RTG_ANY`.
+	- `format` - the pixel format wanted, as a number, or `RTG_ANY`.
 
    RESULT
-	The first mode that matches, or null. With all three 0, the board's
-	default mode - the one marked `RTGMF_DEFAULT`, or else its first.
+	The number of a mode that is exactly that, or 0. Where several are,
+	the board's default if it is one of them, else the first of the list.
 
    BEHAVIOR
-	Each 0 matches anything, so a caller can ask for any 1024-wide mode, or
-	the default.
+	Each `RTG_ANY` matches whatever the mode has, so a caller can ask for
+	any mode 1024 wide, and all four `RTG_ANY` is the board's default
+	mode. A mode that is only near what was asked is not answered:
+	`BestBoardMode` does that.
 
    CONTEXT
-	- Waits: no.
-	- Interrupts: no. It calls through the jump table.
-	- Locks: none needed.
+	- Waits: while another task holds the board's lock.
+	- Interrupts: no.
+	- Locks: takes the board's lock. No spinlock may be held.
 	- Process: a Task will do.
 
    OWNERSHIP
@@ -818,10 +879,11 @@ rtg.library/WaitVBlank
 	None known.
 
    SEE ALSO
-	`NextBoardMode`, `SetBoardMode`
+	`BestBoardMode`, `GetBoardModes`, `SetBoardMode`
 
    EXAMPLES
-	    const mode = rb.FindBoardMode(board, 1024, 600, 0) orelse return error.NoMode;
+	    const mode_id = rb.FindBoardMode(board, 1024, 600, rtg.RTG_ANY, rtg.RTG_ANY);
+	    if (mode_id == 0) return error.NoMode;
 rtg.library/FreeBitMap                                  rtg.library/FreeBitMap
 
    NAME
@@ -886,9 +948,8 @@ rtg.library/WaitVBlank
 	field near the end.
 
    BEHAVIOR
-	The display memory still free, its largest piece, the number of modes
-	and the brightness are read fresh; the rest is what the board already
-	says about itself.
+	The display memory still free, its largest piece and the brightness
+	are read fresh; the rest is what the board already says about itself.
 
    CONTEXT
 	- Waits: if the driver's brightness read does, and while another task
@@ -905,11 +966,58 @@ rtg.library/WaitVBlank
 	None known.
 
    SEE ALSO
-	`GetBoardStats`, `FindBoardMode`
+	`GetBoardStats`, `GetBoardModes`
 
    EXAMPLES
 	    var info: rtg.RtgBoardInfo = .{};
 	    _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+rtg.library/GetBoardModes                            rtg.library/GetBoardModes
+
+   NAME
+	GetBoardModes -- Copies out the modes a board can be put into.
+
+   SYNOPSIS
+	    fn GetBoardModes(rb: *RtgBase, board: *rtg.RtgBoard, into: ?[*]rtg.RtgMode, count: u32) u32
+
+   SINCE
+	1.19. LVO -304.
+
+   INPUTS
+	- `board` - the board.
+	- `into` - where the modes go, or null to ask how many there are.
+	- `count` - how many `into` has room for.
+
+   RESULT
+	How many modes the board has, which may be more than were copied.
+
+   BEHAVIOR
+	Up to `count` modes are copied, the larger picture first and of one
+	size the higher refresh. Each says its number, its size, format and
+	row length, its pixel clock and refresh, its name, and in its flags
+	whether it is the board's default (`RTGMF_DEFAULT`) and the mode the
+	board is in (`RTGMF_CURRENT`).
+
+   CONTEXT
+	- Waits: while another task holds the board's lock - through a show,
+	  which may last a frame.
+	- Interrupts: no.
+	- Locks: takes the board's lock. No spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated: the copies are the caller's, and hold no pointer
+	into the library.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`FindBoardMode`, `BestBoardMode`, `SetBoardMode`
+
+   EXAMPLES
+	    var found: [16]rtg.RtgMode = undefined;
+	    const there = rb.GetBoardModes(board, &found, found.len);
+	    for (found[0..@min(there, found.len)]) |*mode| list(mode);
 rtg.library/GetBoardStats                            rtg.library/GetBoardStats
 
    NAME
@@ -1285,45 +1393,6 @@ rtg.library/WaitVBlank
    EXAMPLES
 	    var board = rb.NextBoard(null);
 	    while (board) |b| : (board = rb.NextBoard(b)) show(b);
-rtg.library/NextBoardMode                            rtg.library/NextBoardMode
-
-   NAME
-	NextBoardMode -- Walks a board's modes.
-
-   SYNOPSIS
-	    fn NextBoardMode(_: *RtgBase, board: *rtg.RtgBoard, after: ?*rtg.RtgMode) ?*rtg.RtgMode
-
-   SINCE
-	1.0. LVO -72.
-
-   INPUTS
-	- `board` - the board.
-	- `after` - the mode to go on from, or null for the first.
-
-   RESULT
-	The next mode, or null at the end.
-
-   BEHAVIOR
-	The modes are the driver's, fixed when the board was made.
-
-   CONTEXT
-	- Waits: no.
-	- Interrupts: safe: the modes do not change after the board is made.
-	- Locks: none needed.
-	- Process: a Task will do.
-
-   OWNERSHIP
-	Nothing is allocated. The modes are the board's.
-
-   BUGS
-	None known.
-
-   SEE ALSO
-	`FindBoardMode`, `SetBoardMode`
-
-   EXAMPLES
-	    var mode = rb.NextBoardMode(board, null);
-	    while (mode) |m| : (mode = rb.NextBoardMode(board, m)) list(m);
 rtg.library/OpenVideoLayer                          rtg.library/OpenVideoLayer
 
    NAME
@@ -1861,28 +1930,32 @@ rtg.library/WaitVBlank
 	SetBoardMode -- Puts a board in a mode.
 
    SYNOPSIS
-	    fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
+	    fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) i32
 
    SINCE
 	1.0. LVO -80.
 
    INPUTS
 	- `board` - the board.
-	- `mode` - one of its modes, or null for its default.
+	- `mode_id` - the number of one of its modes, as `FindBoardMode`,
+	  `BestBoardMode` and `GetBoardModes` answer it, or 0 for its default.
 
    RESULT
 	`RTGERR_OK`, or: `RTGERR_NOT_SUPPORTED` for a board with no modes to
 	set, `RTGERR_NO_DISPLAY` on a board whose device has gone,
-	`RTGERR_BAD_MODE` with no default, `RTGERR_IN_USE` while a buffer
-	that is not `RTGBMF_VOLATILE` is alive, or what the driver answered.
+	`RTGERR_BAD_MODE` for a number the board has no mode of, and with no
+	default, `RTGERR_IN_USE` while a buffer that is not `RTGBMF_VOLATILE`
+	is alive, or what the driver answered.
 
    BEHAVIOR
 	The board stops showing what it was showing, and every volatile buffer
 	loses its memory but keeps its handle. A buffer that has not agreed to
 	that keeps the board in the mode it is in: the new mode may be smaller,
 	and re-homing it would move its pixels under whoever draws into it. The
-	display memory is laid out afresh for the new mode, and the board's
-	information follows it.
+	driver is handed the mode and its timings. The display memory is laid
+	out afresh for the new mode, and the board's information follows it:
+	its size, format and row length, its pixel clock and refresh, and the
+	mode's number.
 
    CONTEXT
 	- Waits: if the driver does, and while another task holds the board's
@@ -1903,10 +1976,10 @@ rtg.library/WaitVBlank
 	emptied and its mode set under the picture it still shows.
 
    SEE ALSO
-	`FindBoardMode`, `GetBoardInfo`, `AllocBitMap`
+	`FindBoardMode`, `BestBoardMode`, `GetBoardInfo`, `AllocBitMap`
 
    EXAMPLES
-	    if (rb.SetBoardMode(board, null) != rtg.errors.RTGERR_OK) return error.NoMode;
+	    if (rb.SetBoardMode(board, 0) != rtg.errors.RTGERR_OK) return error.NoMode;
 rtg.library/SetBoardOverlay                        rtg.library/SetBoardOverlay
 
    NAME

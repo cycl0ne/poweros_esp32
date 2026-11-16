@@ -26,6 +26,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 const memory_mod = @import("../memory/_memory.zig");
 const Arena = memory_mod.Arena;
 const registry = @import("../driver/_driver.zig");
+const modes = @import("../mode/_mode.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -47,8 +48,11 @@ pub const Private = struct {
     /// Whether it has joined the library's list: from when its driver's
     /// attach answered RTGERR_OK.
     listed: bool = false,
-    /// The mode it is in, or null.
-    mode: ?*rtg.RtgMode = null,
+    /// The modes (`mode/_mode.zig`), the larger picture first; the number
+    /// the last mode made took; and the mode the board is in, or null.
+    modes: exec.List = .{},
+    mode_serial: u32 = 0,
+    mode: ?*modes.Record = null,
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
     /// Video layers open on it (OpenVideoLayer).
@@ -183,7 +187,7 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     // say nothing.
     if (request.compose) board.info.flags |= rtg.boards.RTGBF_COMPOSE;
     if (device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0) board.info.flags |= rtg.boards.RTGBF_FIRMWARE;
-    board.info.modes = countModes(board);
+    board.info.modes = modes.count(board);
 
     // The display memory it reported, cut up from here on by the library.
     const alignment: u32 = if (request.alignment != 0)
@@ -225,6 +229,9 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     sys.Enqueue(&rb.boards, &board.node);
     private.listed = true;
     sys.ReleaseSemaphore(&rb.board_lock);
+    // A row of each mode's buffers, now that the display memory says what
+    // a buffer is aligned to.
+    modes.setPitches(rb, board);
 
     if (request.display_on) _ = rtg_lib.SetBoardDisplay(board, true);
     if (request.brightness) |percent| _ = rtg_lib.SetBoardBrightness(board, percent);
@@ -244,6 +251,7 @@ pub fn free(rb: *RtgBase, board: *rtg.RtgBoard) void {
     if (board.driver) |driver| {
         if (driver.boards != 0) driver.boards -= 1;
     }
+    modes.freeAll(rb, board);
     if (board.instance) |instance| sys.FreeVec(instance);
     sys.FreeVec(private);
 }
@@ -356,17 +364,4 @@ pub fn copyOut(comptime T: type, whole: *const T, into: *T, size: u32) u32 {
     const to: [*]u8 = @ptrCast(into);
     @memcpy(to[0..fits], from[0..fits]);
     return fits;
-}
-
-// --- modes ------------------------------------------------------------------
-
-/// How many modes a board has.
-///
-/// INPUTS:
-/// - `board` - the board.
-pub fn countModes(board: *rtg.RtgBoard) u32 {
-    var count: u32 = 0;
-    var node = board.modes.first();
-    while (node) |n| : (node = n.next()) count += 1;
-    return count;
 }

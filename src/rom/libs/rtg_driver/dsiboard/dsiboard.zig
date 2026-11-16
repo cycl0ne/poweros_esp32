@@ -86,7 +86,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 13;
+const REVISION = 14;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -113,8 +113,6 @@ const Panel = struct {
     sys: *ExecBase,
     board: *rtg.RtgBoard,
     config: config.Config = .{},
-    /// The one mode this panel has.
-    mode: rtg.RtgMode = .{},
     frame_bytes: u32 = 0,
     /// The link is an HDMI bridge's: RGB888, from `link`.
     hdmi: bool = false,
@@ -418,7 +416,7 @@ fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
         sys.ReleaseSemaphore(&panel.pointer.lock);
         sent = panel.stream_bands[0..count];
     }
-    const made = chain_file.build(sys, sent, panel.mode.height, panel.stream_pitch) orelse return err.RTGERR_NO_MEMORY;
+    const made = chain_file.build(sys, sent, panel.config.height, panel.stream_pitch) orelse return err.RTGERR_NO_MEMORY;
     if (!panel.streaming) {
         startStream(panel, made);
         if (panel.hdmi) settleBridge(panel);
@@ -452,7 +450,7 @@ fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
 fn compose(panel: *Panel) bool {
     if (panel.composing) return true;
     const sys = panel.sys;
-    if (!link_file.allocate(&panel.link, sys, panel.mode.width, panel.mode.height, .rgb565)) return false;
+    if (!link_file.allocate(&panel.link, sys, panel.config.width, panel.config.height, .rgb565)) return false;
     panel.composing = true;
     if (panel.streaming and panel.shown_count > 0) _ = show(panel, panel.shown[0..panel.shown_count]);
     return true;
@@ -539,19 +537,25 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     }
 
     // One mode: the panel is what it is, and a monitor gets the one
-    // picked for it.
-    panel.mode = .{
-        .node = .{ .name = "panel", .pri = 0 },
-        .id = 1,
-        .width = wanted.width,
-        .height = wanted.height,
-        .format = .rgb565,
-        .pitch = panel.screen_pitch,
+    // picked for it - at the pixel clock the chip makes of the one asked.
+    const timings: rtg.RtgTimings = .{
         .pixel_clock_hz = panel.pixel_hz,
-        .refresh_mhz = refreshMilliHz(panel),
-        .flags = rtg.boards.RTGMF_DEFAULT,
+        .h_active = wanted.width,
+        .h_front = wanted.hfp,
+        .h_sync = wanted.hsync,
+        .h_back = wanted.hbp,
+        .v_active = wanted.height,
+        .v_front = wanted.vfp,
+        .v_sync = wanted.vsync,
+        .v_back = wanted.vbp,
+        .flags = (if (wanted.hsync_high) rtg.modes.RTGTM_HSYNC_HIGH else 0) |
+            (if (wanted.vsync_high) rtg.modes.RTGTM_VSYNC_HIGH else 0),
     };
-    sys.AddTail(&board.modes, &panel.mode.node);
+    if (rb.AddBoardMode(board, &timings, @intFromEnum(rtg.PixelFormat.rgb565), rtg.modes.RTGMF_DEFAULT) == 0) {
+        giveBack(panel);
+        rb.DeleteBoard(board);
+        return err.RTGERR_NO_MEMORY;
+    }
 
     // Its buffers are taken from system memory as they are asked for - a
     // line-aligned block each, which the DMA reads in whole lines - and no
@@ -562,8 +566,6 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.info.buffers = wanted.buffers;
-    board.info.pixel_clock_hz = panel.pixel_hz;
-    board.info.refresh_mhz = panel.mode.refresh_mhz;
     board.info.brightness = panel.brightness;
     return err.RTGERR_OK;
 }
@@ -630,25 +632,14 @@ fn streamBytes(panel: *const Panel) u64 {
     return @as(u64, panel.stream_frame_bytes) * panel.pixel_hz / whole;
 }
 
-/// Frames a second, in thousandths: the pixel clock over everything a
-/// frame costs, blanking and all.
-fn refreshMilliHz(panel: *const Panel) u32 {
-    const wanted = &panel.config;
-    const line = wanted.hsync + wanted.hbp + wanted.width + wanted.hfp;
-    const lines = wanted.vsync + wanted.vbp + wanted.height + wanted.vfp;
-    const whole: u64 = @as(u64, line) * lines;
-    if (whole == 0) return 0;
-    return @truncate(@as(u64, panel.pixel_hz) * 1000 / whole);
-}
-
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     giveBack(panelOf(board));
 }
 
 /// One mode, the panel's own or the monitor's, which create already set
 /// up.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
-    return if (mode.id == panelOf(board).mode.id) err.RTGERR_OK else err.RTGERR_BAD_MODE;
+fn setMode(_: *rtg.RtgBoard, _: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+    return err.RTGERR_OK;
 }
 
 /// Feed the panel from that buffer: a chain of one band. The first time,
@@ -663,9 +654,9 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
         return err.RTGERR_OK;
     };
     if (bm.pixels == null) return err.RTGERR_BAD_ARG;
-    if (bm.width != panel.mode.width or bm.height != panel.mode.height) return err.RTGERR_NOT_DISPLAYABLE;
-    if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
-    if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
+    if (bm.width != panel.config.width or bm.height != panel.config.height) return err.RTGERR_NOT_DISPLAYABLE;
+    if (bm.pitch != panel.screen_pitch) return err.RTGERR_NOT_DISPLAYABLE;
+    if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     const whole = [_]rtg.RtgBand{.{ .bitmap = bm }};
     return show(panel, &whole);
 }
@@ -678,8 +669,8 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
     for (bands[0..count]) |band| {
         const bm = band.bitmap;
         if (bm.pixels == null) return err.RTGERR_BAD_ARG;
-        if (bm.pitch != panel.mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
-        if (bm.format != panel.mode.format) return err.RTGERR_BAD_FORMAT;
+        if (bm.pitch != panel.screen_pitch) return err.RTGERR_NOT_DISPLAYABLE;
+        if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     }
     return show(panel, bands[0..count]);
 }

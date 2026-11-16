@@ -3,9 +3,10 @@
 //!
 //! Everything this driver needs, read out of the tag list once at create
 //! and kept in the board's own instance: the picture's size and format,
-//! the link (lanes, lane rate), the pixel clock and the timings, the
-//! panel's bring-up, the D-PHY's supply, and the panel's reset and
-//! backlight lines wherever the board has them. A part that is an HDMI
+//! the link (lanes, lane rate), the pixel clock and the timings - which
+//! the library reads (`ReadTimingTags`) - the panel's bring-up, the
+//! D-PHY's supply, and the panel's reset and backlight lines wherever the
+//! board has them. A part that is an HDMI
 //! bridge (CHIP_LT8912B) has no bring-up of its own: it says where on
 //! I2C the bridge is instead. A tag that is not there
 //! takes the default beside it in `sdk/libs/rtg/tags.zig`; a tag that has
@@ -79,21 +80,31 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     config.chip = u32At(rb, st.PART_Chip, st.CHIP_ANY, tag_list);
     config.i2c_unit = u32At(rb, st.PART_BusUnit, 0, tag_list);
     config.i2c_address = u32At(rb, st.PART_Address, 0, tag_list);
-    config.width = u32At(rb, tags.RTGA_Width, 0, tag_list);
-    config.height = u32At(rb, tags.RTGA_Height, 0, tag_list);
-    config.format = @enumFromInt(u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list));
-    config.bits_per_pixel = programs(rb).RtgFormatBits(@intFromEnum(config.format));
+    // The picture and its timings: a size, a clock and both sync pulses,
+    // or it is nothing this host streams to.
+    var timings: rtg.RtgTimings = .{};
+    if (!rb.ReadTimingTags(tag_list, &timings)) return null;
+    if (timings.pixel_clock_hz == 0) return null;
+    config.width = timings.h_active;
+    config.height = timings.v_active;
+    config.pixel_hz = timings.pixel_clock_hz;
+    config.hsync = timings.h_sync;
+    config.hbp = timings.h_back;
+    config.hfp = timings.h_front;
+    config.vsync = timings.v_sync;
+    config.vbp = timings.v_back;
+    config.vfp = timings.v_front;
+    config.hsync_high = timings.flags & rtg.modes.RTGTM_HSYNC_HIGH != 0;
+    config.vsync_high = timings.flags & rtg.modes.RTGTM_VSYNC_HIGH != 0;
+    // The screens are RGB565, whatever the link carries. The number is
+    // looked at before it is taken for a format: one no format has is
+    // refused, not a trap.
+    const format = u32At(rb, tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list);
+    if (format != @intFromEnum(rtg.PixelFormat.rgb565)) return null;
+    config.format = .rgb565;
+    config.bits_per_pixel = programs(rb).RtgFormatBits(format);
     config.lanes = u32At(rb, tags.RTGA_DSI_Lanes, 0, tag_list);
     config.lane_mbps = u32At(rb, tags.RTGA_DSI_LaneRate, 0, tag_list);
-    config.pixel_hz = u32At(rb, tags.RTGA_DSI_PixelClock, 0, tag_list);
-    config.hsync = u32At(rb, tags.RTGA_DSI_HSyncPulse, 0, tag_list);
-    config.hbp = u32At(rb, tags.RTGA_DSI_HSyncBackPorch, 0, tag_list);
-    config.hfp = u32At(rb, tags.RTGA_DSI_HSyncFrontPorch, 0, tag_list);
-    config.vsync = u32At(rb, tags.RTGA_DSI_VSyncPulse, 0, tag_list);
-    config.vbp = u32At(rb, tags.RTGA_DSI_VSyncBackPorch, 0, tag_list);
-    config.vfp = u32At(rb, tags.RTGA_DSI_VSyncFrontPorch, 0, tag_list);
-    config.hsync_high = u32At(rb, tags.RTGA_DSI_HSyncHigh, 0, tag_list) != 0;
-    config.vsync_high = u32At(rb, tags.RTGA_DSI_VSyncHigh, 0, tag_list) != 0;
     const sequence = rb.GetRtgTagData(tags.RTGA_DSI_InitSequence, 0, tag_list);
     if (sequence != 0) config.init_sequence = @ptrFromInt(sequence);
     config.init_length = u32At(rb, tags.RTGA_DSI_InitLength, 0, tag_list);
@@ -105,18 +116,31 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     config.settle_ms = u32At(rb, tags.RTGA_SettleMillis, 20, tag_list);
     config.buffers = @max(u32At(rb, tags.RTGA_Buffers, 1, tag_list), 1);
 
-    if (config.width == 0 or config.height == 0) return null;
+    // What the host's and the bridge's fields hold: a picture of twelve
+    // bits each way, a line and a frame of sixteen. One too small to be a
+    // burst of the stream is none either.
+    if (config.width < 8 or config.height < 8) return null;
+    if (config.width > 0xFFF or config.height > 0xFFF) return null;
+    const line = @as(u64, config.hsync) + config.hbp + config.width + config.hfp;
+    const lines = @as(u64, config.vsync) + config.vbp + config.height + config.vfp;
+    if (line > 0xFFFF or lines > 0xFFFF) return null;
     if (config.lanes < 1 or config.lanes > 2) return null;
     // A rate the PHY takes, and one its PLL makes or comes near.
     if (host.pllFor(config.lane_mbps) == null) return null;
-    if (config.pixel_hz == 0 or config.hsync == 0 or config.vsync == 0) return null;
-    if (config.chip == st.CHIP_LT8912B) {
+    const hdmi = config.chip == st.CHIP_LT8912B;
+    // The lanes carry the picture: all of them together at least the bits
+    // the pixel clock asks for - RGB888 over a bridge to a monitor.
+    const carried: u64 = @as(u64, config.lanes) * config.lane_mbps * 1_000_000;
+    const wanted: u64 = @as(u64, config.pixel_hz) * (if (hdmi) 24 else config.bits_per_pixel);
+    if (carried < wanted) return null;
+    if (hdmi) {
         if (config.i2c_address == 0) return null;
-    } else if (config.init_sequence == null or config.init_length == 0) {
-        return null;
+    } else {
+        if (config.init_sequence == null or config.init_length == 0) return null;
+        // A panel is streamed its screens as they lie in memory, a row
+        // whole cache lines: a width that is not gives rows the stream
+        // cannot follow.
+        if ((config.width * (config.bits_per_pixel / 8)) % sdk.hardware.DCACHE_LINE_SIZE != 0) return null;
     }
-    // The bridge sends what memory holds; 16 bits a pixel is what it is
-    // driven at here.
-    if (config.format != .rgb565) return null;
     return config;
 }

@@ -145,10 +145,33 @@ for (found[0..@min(there, found.len)]) |*device| list(device);
 
 ## Modes
 
-A board has a list of `RtgMode`s: a width, a height, a pixel format, the
-bytes a row, and the refresh. `NextBoardMode` walks them, `FindBoardMode`
-finds one by size and format (a 0 matches anything, so `(0, 0, 0)` is the
-board's default), and `SetBoardMode` puts the board in one.
+A board has modes: each a width, a height, a pixel format, the bytes a
+row, the pixel clock and the refresh, with a name ("1024x600", and
+"1024x600@75" where the board has that size at more than one refresh)
+and a number. The number is the board's own, from 1, and stays the
+mode's for as long as the board lives; a mode is named by it, and a
+program holds no pointer into the board's list.
+
+`GetBoardModes` copies the list out, the larger picture first; each
+copy says in its flags whether it is the board's default
+(`RTGMF_DEFAULT`), the mode the board is in (`RTGMF_CURRENT`), a
+picture a quarter turn round (`RTGMF_TURNED`) or interlaced.
+`FindBoardMode` answers the number of the mode of exactly that size,
+refresh and format - `RTG_ANY` leaves a figure open, so all four
+`RTG_ANY` is the board's default - or 0. `BestBoardMode` answers the
+mode nearest a wish and copies out what it is: of the size wished for
+where the board has it, else the smallest that holds it, else its
+largest. On a display of one mode that is always that mode, and the
+caller sees what it got by comparing the copy with what it asked for.
+`SetBoardMode` puts the board in the mode of a number, 0 for its
+default.
+
+```zig
+var got: rtg.RtgMode = .{};
+const mode_id = rb.BestBoardMode(board, 800, 600, rtg.RTG_ANY, rtg.RTG_ANY, &got);
+if (got.width != 800 or got.height != 600) tellOf(&got);
+_ = rb.SetBoardMode(board, mode_id);
+```
 
 A mode change and the buffers alive on the board do not mix: their size
 and layout belong to the old mode. So `SetBoardMode` is refused with
@@ -780,10 +803,10 @@ says what it is by itself (`device.pci`). The driver makes a board for
 each output with `CreateBoard`, handing over an `RtgBoardSpec`: the
 board's ops, what the output is called, the size of its instance, what
 is true of it from the start (`RTGBF_STREAMING`), where its buffers come
-from, and which output it is. It then fills the board in - its modes on
-`board.modes`, its info, its display memory in `board.region` where the
-description left that open - and answers `RTGERR_OK`: the boards join
-the list, each named as it does. On any other answer the driver has
+from, and which output it is. It then fills the board in - its modes,
+each added with `AddBoardMode`, its info, its display memory in
+`board.region` where the description left that open - and answers
+`RTGERR_OK`: the boards join the list, each named as it does. On any other answer the driver has
 given back what it took and deleted the boards it made (`DeleteBoard`),
 and the library asks the next driver. A panel on a bus opens the bus
 first (`OpenTransport(driver, device)`) and closes it when its bring-up
@@ -791,8 +814,28 @@ fails and from its board's `destroy` (`CloseTransport`).
 
 The tags below `RTGA_DriverBase` mean the same to every driver. The
 library reads the alignment, the brightness, whether the display starts
-on and whether its screens' windows are composed; the size, the format,
-the pitch and the buffers are the driver's to read from the same list.
+on and whether its screens' windows are composed; the format, the pitch
+and the buffers are the driver's to read from the same list.
+
+**A panel's timings** are one block of those tags: `RTGA_Width` and
+`RTGA_Height`, `RTGA_PixelClock`, the sync pulses and the porches each
+way (`RTGA_HSyncPulse`, `RTGA_HBackPorch`, `RTGA_HFrontPorch` and the
+three for the vertical) and `RTGA_TimingFlags` - the pulses' polarity,
+the data enable's level and the pixel clock's edge (`RTGTM_*`).
+`ReadTimingTags` reads the block into an `RtgTimings`, and refuses a
+list with no size and one that names a clock without both sync pulses.
+A display with no clock of its own - a controller behind a bus - is its
+size alone. `AddBoardMode(board, &timings, format, flags)` makes a mode
+of timings: the library names it, numbers it, works out its refresh and
+keeps the timings, which the driver is handed again with the mode when
+the board is put in it. The first mode added is the board's default
+until one is added with `RTGMF_DEFAULT`.
+
+```zig
+var timings: rtg.RtgTimings = .{};
+if (!rb.ReadTimingTags(tag_list, &timings)) return rtg.errors.RTGERR_BAD_TAGS;
+_ = rb.AddBoardMode(board, &timings, @intFromEnum(rtg.PixelFormat.rgb565), rtg.modes.RTGMF_DEFAULT);
+```
 Above `RTGA_DriverBase` each driver has a block of 64 of its own, listed
 in `sdk/libs/rtg/tags.zig` so that two never claim one.
 
@@ -818,7 +861,7 @@ at a time and a driver needs no lock of its own between them.
 | Slot | What it does |
 |---|---|
 | `destroy` | undo what create did; called last, after the buffers are gone |
-| `set_mode` | put the board in a mode; set `info`'s size, format and pitch |
+| `set_mode` | put the board in a mode, handed with its timings; the library writes `info` once it has answered |
 | `show_bitmap` | show a buffer, or none |
 | `show_bands` | show several, in bands of lines (`RtgBand.rowAt` says which row a line shows) |
 | `wait_vblank` | wait for the blanking |
@@ -870,8 +913,8 @@ DSI bridge holds 8 KB and asks for the picture in bursts, so it is fed
 from PSRAM itself.
 
 **A DSI panel** is described by its part's tags: the lanes and their rate
-(`RTGA_DSI_Lanes`, `RTGA_DSI_LaneRate`), the pixel clock and the six
-timings, the D-PHY's supply where the chip's LDO feeds it
+(`RTGA_DSI_Lanes`, `RTGA_DSI_LaneRate`), the generic timing tags, the
+D-PHY's supply where the chip's LDO feeds it
 (`RTGA_DSI_PhyLdo`, `RTGA_DSI_PhyMillivolts`), and the panel's bring-up
 as DCS commands (`RTGA_DSI_InitSequence`, steps as the board's list
 writes them with `dcsStep` of `src/boards/panelsequence.zig`),
@@ -885,7 +928,7 @@ rate is further than 2% from any is refused with `RTGERR_BAD_TAGS`.
 **HDMI** goes through a bridge on the same link, an LT8912B
 (`CHIP_LT8912B`), whose part names its I2C unit and address instead of a
 bring-up, and the sync polarity the mode's standard gives
-(`RTGA_DSI_HSyncHigh`, `RTGA_DSI_VSyncHigh`). The driver takes that part
+(`RTGA_TimingFlags`). The driver takes that part
 only when a monitor's EDID answers on the bridge's bus, and refuses it
 otherwise, so graphics.library goes on to the board's next panel part -
 a board lists the bridge first. The part's own mode is the one every

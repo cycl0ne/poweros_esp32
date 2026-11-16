@@ -137,15 +137,15 @@ const panel = [_]Tag{
     // and one more - a program's own screen double buffered beside the
     // Workbench. Each is taken from memory when it is opened.
     .value(tags.RTGA_Buffers, 3),
-    .value(tags.RTGA_RGB_PixelClock, pixel_clock_hz),
-    .value(tags.RTGA_RGB_HSyncPulse, 162),
-    .value(tags.RTGA_RGB_HSyncBackPorch, 152),
-    .value(tags.RTGA_RGB_HSyncFrontPorch, 48),
-    .value(tags.RTGA_RGB_VSyncPulse, 45),
-    .value(tags.RTGA_RGB_VSyncBackPorch, 13),
-    .value(tags.RTGA_RGB_VSyncFrontPorch, 3),
+    .value(tags.RTGA_PixelClock, pixel_clock_hz),
+    .value(tags.RTGA_HSyncPulse, 162),
+    .value(tags.RTGA_HBackPorch, 152),
+    .value(tags.RTGA_HFrontPorch, 48),
+    .value(tags.RTGA_VSyncPulse, 45),
+    .value(tags.RTGA_VBackPorch, 13),
+    .value(tags.RTGA_VFrontPorch, 3),
     // The data is taken on the falling edge of the pixel clock.
-    .value(tags.RTGA_RGB_Flags, tags.RTGRGBF_PCLK_ACTIVE_LOW),
+    .value(tags.RTGA_TimingFlags, rtg.modes.RTGTM_PCLK_FALLING),
     .pointer(tags.RTGA_RGB_DataPins, &panel_data_pins),
     .value(tags.RTGA_RGB_DataWidth, panel_data_pins.len),
     .value(tags.RTGA_RGB_PclkPin, 7),

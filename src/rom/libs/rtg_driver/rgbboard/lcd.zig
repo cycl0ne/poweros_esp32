@@ -131,9 +131,13 @@ pub const Setup = extern struct {
     active_start: u32 = 0,
     /// The data is taken on the falling edge of the pixel clock.
     pclk_active_low: bool = false,
+    /// The pixel clock rests high between the pixels.
+    pclk_idle_high: bool = false,
     /// The sync lines rest low rather than high.
     hsync_idle_low: bool = false,
     vsync_idle_low: bool = false,
+    /// The data enable rests high, and is low while the pixels come.
+    de_idle_high: bool = false,
     /// The pads: the colour bits least significant first, then the four
     /// timing signals.
     data_pins: [24]u8 = .{0} ** 24,
@@ -145,6 +149,22 @@ pub const Setup = extern struct {
     /// How hard the pads drive (RTGA_RGB_DriveStrength).
     drive_strength: u8 = 3,
 };
+
+/// Whether a panel's numbers fit the peripheral's fields: the picture and
+/// a whole line in twelve bits, the picture's lines and a whole frame in
+/// ten, the lines before the picture in eight and the clocks before it in
+/// eleven. `timing` writes each under its field's mask, so a number past
+/// one would come out as another.
+pub fn fits(setup: *const Setup) bool {
+    const p = setup;
+    if (p.width == 0 or p.height == 0 or p.hsync_pulse == 0 or p.vsync_pulse == 0) return false;
+    const line = @as(u64, p.hsync_pulse) + p.hsync_back_porch + p.width + p.hsync_front_porch;
+    const lines = @as(u64, p.vsync_pulse) + p.vsync_back_porch + p.height + p.vsync_front_porch;
+    if (line > 0x1000 or lines > 0x400) return false;
+    if (@as(u64, p.vsync_back_porch) + p.vsync_pulse > 0x100) return false;
+    const picture_at: u64 = if (p.active_start != 0) p.active_start else @as(u64, p.hsync_back_porch) + emittedPulse(p.hsync_pulse);
+    return picture_at >= 1 and picture_at <= 0x800;
+}
 
 /// The sync pulse the peripheral can actually emit. Its width field is
 /// seven bits and wraps rather than saturating, so a pulse longer than 128
@@ -236,6 +256,7 @@ pub fn setUp(setup: *const Setup) void {
     }
     // Which edge of the pixel clock the data is taken on. The panel's.
     if (p.pclk_active_low) clock |= clk_ck_out_edge;
+    if (p.pclk_idle_high) clock |= clk_ck_idle_edge;
     r(lcd_clock).* = clock;
 
     // RGB mode, two bytes a pixel, the data phase only, and output that
@@ -286,6 +307,7 @@ fn timing(setup: *const Setup) void {
         (0 << ctrl2_hsync_position_shift); // at the start of the line
     if (!p.hsync_idle_low) ctrl2 |= ctrl2_hsync_idle_pol;
     if (!p.vsync_idle_low) ctrl2 |= ctrl2_vsync_idle_pol;
+    if (p.de_idle_high) ctrl2 |= ctrl2_de_idle_pol;
     r(lcd_ctrl2).* = ctrl2;
 }
 

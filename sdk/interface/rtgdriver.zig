@@ -17,19 +17,21 @@ pub const NAME = "rtg.library";
 
 /// Each function's offset in the jump table (its LVO).
 pub const LVO = struct {
-    pub const AddRtgDriver = libraries.lvo(75);
-    pub const RemRtgDriver = libraries.lvo(76);
-    pub const SignalRtgEvent = libraries.lvo(77);
-    pub const TxParam = libraries.lvo(78);
-    pub const TxColor = libraries.lvo(79);
-    pub const RxParam = libraries.lvo(80);
-    pub const GetRtgTagData = libraries.lvo(81);
-    pub const CreateBoard = libraries.lvo(82);
-    pub const DeleteBoard = libraries.lvo(83);
-    pub const AddRtgDevice = libraries.lvo(84);
-    pub const RemRtgDevice = libraries.lvo(85);
-    pub const OpenTransport = libraries.lvo(86);
-    pub const CloseTransport = libraries.lvo(87);
+    pub const AddRtgDriver = libraries.lvo(77);
+    pub const RemRtgDriver = libraries.lvo(78);
+    pub const SignalRtgEvent = libraries.lvo(79);
+    pub const TxParam = libraries.lvo(80);
+    pub const TxColor = libraries.lvo(81);
+    pub const RxParam = libraries.lvo(82);
+    pub const GetRtgTagData = libraries.lvo(83);
+    pub const CreateBoard = libraries.lvo(84);
+    pub const DeleteBoard = libraries.lvo(85);
+    pub const AddRtgDevice = libraries.lvo(86);
+    pub const RemRtgDevice = libraries.lvo(87);
+    pub const OpenTransport = libraries.lvo(88);
+    pub const CloseTransport = libraries.lvo(89);
+    pub const AddBoardMode = libraries.lvo(90);
+    pub const ReadTimingTags = libraries.lvo(91);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -48,6 +50,8 @@ pub const Fn = struct {
     pub const RemRtgDevice = *const fn (*RtgDriverBase, ?*rtg.RtgDevice) callconv(.c) void;
     pub const OpenTransport = *const fn (*RtgDriverBase, *rtg.RtgDriver, *rtg.RtgDevice) callconv(.c) ?*rtg.RtgTransport;
     pub const CloseTransport = *const fn (*RtgDriverBase, ?*rtg.RtgTransport) callconv(.c) void;
+    pub const AddBoardMode = *const fn (*RtgDriverBase, *rtg.RtgBoard, *const rtg.RtgTimings, u32, u32) callconv(.c) u32;
+    pub const ReadTimingTags = *const fn (*RtgDriverBase, ?[*]const utility.TagItem, *rtg.RtgTimings) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -143,5 +147,23 @@ pub const RtgDriverBase = opaque {
     /// Give a bus back. Null does nothing.
     pub fn CloseTransport(self: *RtgDriverBase, io: ?*rtg.RtgTransport) void {
         return libraries.call(self, LVO.CloseTransport, Fn.CloseTransport, .{io});
+    }
+
+    /// A mode of a board, from its driver: these timings in that pixel
+    /// format, with RTGMF_DEFAULT for the one the board comes up in and
+    /// RTGMF_TURNED for a picture a quarter turn round. The library names it
+    /// and gives it a number, which it answers; 0 for timings with no picture,
+    /// a format this build does not know, or no memory. A mode of the same
+    /// figures is the one already there.
+    pub fn AddBoardMode(self: *RtgDriverBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32) u32 {
+        return libraries.call(self, LVO.AddBoardMode, Fn.AddBoardMode, .{ board, timings, format, flags });
+    }
+
+    /// A part's timings - RTGA_Width, RTGA_Height and the block from
+    /// RTGA_PixelClock to RTGA_TimingFlags - into `timings`. False for a list
+    /// with no size, and for one that names a pixel clock without both sync
+    /// pulses; `timings` is then left as it was.
+    pub fn ReadTimingTags(self: *RtgDriverBase, tag_list: ?[*]const utility.TagItem, timings: *rtg.RtgTimings) bool {
+        return libraries.call(self, LVO.ReadTimingTags, Fn.ReadTimingTags, .{ tag_list, timings });
     }
 };

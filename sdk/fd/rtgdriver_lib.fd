@@ -11,7 +11,7 @@
 // The folder under src/ whose files hold these calls.
 ##home rtg
 // The first slot after the programs' calls.
-##bias 75
+##bias 77
 ##public
 /// Put a driver's description on the list: the library makes the
 /// driver's node, with the state the description asks for behind it,
@@ -61,4 +61,16 @@ void RemRtgDevice(?*rtg.RtgDevice device)
 ?*rtg.RtgTransport OpenTransport(*rtg.RtgDriver driver, *rtg.RtgDevice device)
 /// Give a bus back. Null does nothing.
 void CloseTransport(?*rtg.RtgTransport io)
+/// A mode of a board, from its driver: these timings in that pixel
+/// format, with RTGMF_DEFAULT for the one the board comes up in and
+/// RTGMF_TURNED for a picture a quarter turn round. The library names it
+/// and gives it a number, which it answers; 0 for timings with no picture,
+/// a format this build does not know, or no memory. A mode of the same
+/// figures is the one already there.
+u32 AddBoardMode(*rtg.RtgBoard board, *const rtg.RtgTimings timings, u32 format, u32 flags)
+/// A part's timings - RTGA_Width, RTGA_Height and the block from
+/// RTGA_PixelClock to RTGA_TimingFlags - into `timings`. False for a list
+/// with no size, and for one that names a pixel clock without both sync
+/// pulses; `timings` is then left as it was.
+bool ReadTimingTags(?[*]const utility.TagItem tag_list, *rtg.RtgTimings timings)
 ##end

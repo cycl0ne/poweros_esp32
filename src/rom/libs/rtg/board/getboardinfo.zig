@@ -6,7 +6,6 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const copyOut = _board.copyOut;
-const countModes = _board.countModes;
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
 
@@ -30,9 +29,8 @@ const _board = @import("_board.zig");
 /// field near the end.
 ///
 /// BEHAVIOR:
-/// The display memory still free, its largest piece, the number of modes
-/// and the brightness are read fresh; the rest is what the board already
-/// says about itself.
+/// The display memory still free, its largest piece and the brightness
+/// are read fresh; the rest is what the board already says about itself.
 ///
 /// CONTEXT:
 /// - Waits: if the driver's brightness read does, and while another task
@@ -49,7 +47,7 @@ const _board = @import("_board.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `GetBoardStats`, `FindBoardMode`
+/// `GetBoardStats`, `GetBoardModes`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -64,7 +62,6 @@ pub fn GetBoardInfo(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo,
     board.info.memory_free = private.arena.free_bytes;
     board.info.memory_largest = private.arena.largest(rb.sys_base);
     _board.release(rb, board);
-    board.info.modes = countModes(board);
     if (board.ops) |ops| {
         if (ops.brightness) |read| board.info.brightness = read(board);
     }

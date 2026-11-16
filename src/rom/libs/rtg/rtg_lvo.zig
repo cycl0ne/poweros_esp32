@@ -40,8 +40,11 @@ const FindBoard = @import("board/findboard.zig").FindBoard;
 const GetBoardInfo = @import("board/getboardinfo.zig").GetBoardInfo;
 const GetBoardStats = @import("board/getboardstats.zig").GetBoardStats;
 const BoardControl = @import("board/boardcontrol.zig").BoardControl;
-const NextBoardMode = @import("board/nextboardmode.zig").NextBoardMode;
-const FindBoardMode = @import("board/findboardmode.zig").FindBoardMode;
+const FindBoardMode = @import("mode/findboardmode.zig").FindBoardMode;
+const GetBoardModes = @import("mode/getboardmodes.zig").GetBoardModes;
+const BestBoardMode = @import("mode/bestboardmode.zig").BestBoardMode;
+const AddBoardMode = @import("mode/addboardmode.zig").AddBoardMode;
+const ReadTimingTags = @import("mode/readtimingtags.zig").ReadTimingTags;
 const SetBoardMode = @import("board/setboardmode.zig").SetBoardMode;
 const AllocBitMap = @import("bitmap/allocbitmap.zig").AllocBitMap;
 const AttachBitMap = @import("bitmap/attachbitmap.zig").AttachBitMap;
@@ -147,8 +150,11 @@ const contract_files = [_][]const u8{
     @embedFile("board/getboardinfo.zig"),
     @embedFile("board/getboardstats.zig"),
     @embedFile("board/boardcontrol.zig"),
-    @embedFile("board/nextboardmode.zig"),
-    @embedFile("board/findboardmode.zig"),
+    @embedFile("mode/findboardmode.zig"),
+    @embedFile("mode/getboardmodes.zig"),
+    @embedFile("mode/bestboardmode.zig"),
+    @embedFile("mode/addboardmode.zig"),
+    @embedFile("mode/readtimingtags.zig"),
     @embedFile("board/setboardmode.zig"),
     @embedFile("bitmap/allocbitmap.zig"),
     @embedFile("bitmap/attachbitmap.zig"),
@@ -237,14 +243,23 @@ fn lvoGetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStat
 fn lvoBoardControl(rb: *RtgBase, board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     return BoardControl(rb, board, what, value);
 }
-fn lvoNextBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, after: ?*rtg.RtgMode) callconv(.c) ?*rtg.RtgMode {
-    return NextBoardMode(rb, board, after);
+fn lvoFindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32) callconv(.c) u32 {
+    return FindBoardMode(rb, board, width, height, refresh_mhz, format);
 }
-fn lvoFindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32) callconv(.c) ?*rtg.RtgMode {
-    return FindBoardMode(rb, board, width, height, format);
+fn lvoGetBoardModes(rb: *RtgBase, board: *rtg.RtgBoard, into: ?[*]rtg.RtgMode, count: u32) callconv(.c) u32 {
+    return GetBoardModes(rb, board, into, count);
 }
-fn lvoSetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) callconv(.c) i32 {
-    return SetBoardMode(rb, board, mode);
+fn lvoBestBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32, mode: ?*rtg.RtgMode) callconv(.c) u32 {
+    return BestBoardMode(rb, board, width, height, refresh_mhz, format, mode);
+}
+fn lvoAddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32) callconv(.c) u32 {
+    return AddBoardMode(rb, board, timings, format, flags);
+}
+fn lvoReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTimings) callconv(.c) bool {
+    return ReadTimingTags(rb, tag_list, timings);
+}
+fn lvoSetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) callconv(.c) i32 {
+    return SetBoardMode(rb, board, mode_id);
 }
 fn lvoAllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32, flags: u32) callconv(.c) ?*rtg.RtgBitMap {
     return AllocBitMap(rb, board, width, height, format, flags);
@@ -382,7 +397,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 24;
+const reserved_slots = 25;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -412,7 +427,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetBoardInfo),
     vec(lvoGetBoardStats),
     vec(lvoBoardControl),
-    vec(lvoNextBoardMode),
+    vec(reserved),
     vec(lvoFindBoardMode),
     vec(lvoSetBoardMode),
     vec(reserved),
@@ -470,6 +485,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBindRtgDrivers),
     vec(lvoGetRtgDrivers),
     vec(lvoGetRtgDevices),
+    vec(lvoGetBoardModes),
+    vec(lvoBestBoardMode),
     // The drivers' interface.
     vec(lvoAddRtgDriver),
     vec(lvoRemRtgDriver),
@@ -484,6 +501,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemRtgDevice),
     vec(lvoOpenTransport),
     vec(lvoCloseTransport),
+    vec(lvoAddBoardMode),
+    vec(lvoReadTimingTags),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -496,7 +515,7 @@ const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"
 test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
     // The reserved slots are in the table but not in either LVO.
     try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 88), vectors.len);
+    try testing.expectEqual(@as(usize, 92), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

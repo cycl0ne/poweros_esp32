@@ -16,6 +16,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddRtgEventServer](#addrtgeventserver) - Hangs an interrupt server on one of a board's events.
 - [AllocBitMap](#allocbitmap) - Makes a buffer in a board's display memory.
 - [AttachBitMap](#attachbitmap) - Makes a buffer handle over memory the caller owns.
+- [BestBoardMode](#bestboardmode) - Finds the mode of a board that comes nearest a wish.
 - [BindRtgDrivers](#bindrtgdrivers) - Offers every device no driver has to the drivers on the list.
 - [BlendPixels](#blendpixels) - Lays pixels of the caller's own over a rectangle of a buffer with the board's engine, each by its own coverage.
 - [BlendRect](#blendrect) - Lays a colour over a rectangle of a buffer with the board's engine, by the colour's alpha.
@@ -29,9 +30,10 @@ Generated from the source by `./zig build autodoc`.
 - [CopyRects](#copyrects) - Copies several rectangles from one buffer to another as one job of the board's engine.
 - [FillRect](#fillrect) - Fills a rectangle of a buffer with the board's engine.
 - [FindBoard](#findboard) - Finds a board by its name.
-- [FindBoardMode](#findboardmode) - Finds a board's mode by its size and format.
+- [FindBoardMode](#findboardmode) - Finds a board's mode by its size, refresh and format.
 - [FreeBitMap](#freebitmap) - Gives a buffer back.
 - [GetBoardInfo](#getboardinfo) - Reads what a board is and what state it is in.
+- [GetBoardModes](#getboardmodes) - Copies out the modes a board can be put into.
 - [GetBoardStats](#getboardstats) - Reads what a board that refreshes itself has been through.
 - [GetRtgDevices](#getrtgdevices) - Copies out the devices on the library's list.
 - [GetRtgDrivers](#getrtgdrivers) - Copies out the drivers on the library's list.
@@ -40,7 +42,6 @@ Generated from the source by `./zig build autodoc`.
 - [MoveBoardPointer](#moveboardpointer) - Puts the pointer's point at a place on the picture.
 - [MoveVideoLayer](#movevideolayer) - Puts a video layer somewhere on the display, or hides it.
 - [NextBoard](#nextboard) - Walks the list of boards.
-- [NextBoardMode](#nextboardmode) - Walks a board's modes.
 - [OpenVideoLayer](#openvideolayer) - Takes one of a board's video layers: a plane of its controller that shows a picture in YUV itself, scaled into a place on the display.
 - [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
@@ -244,6 +245,76 @@ None known.
 ```zig
 var described: rtg.RtgBitMap = .{ .pixels = mem.ptr, .width = 320, .height = 200, .format = .rgb565 };
 const buffer = rb.AttachBitMap(board, &described) orelse return error.NoMemory;
+```
+
+## BestBoardMode
+
+Finds the mode of a board that comes nearest a wish.
+
+**SYNOPSIS**
+
+```zig
+fn BestBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32, mode: ?*rtg.RtgMode) u32
+```
+
+**SINCE**
+
+1.19. LVO -308.
+
+**INPUTS**
+
+- `board` - the board.
+- `width` - the width wished for, or `RTG_ANY`.
+- `height` - the height wished for, or `RTG_ANY`.
+- `refresh_mhz` - the refresh wished for, in milli-Hertz, or `RTG_ANY`.
+- `format` - the pixel format wished for, as a number, or `RTG_ANY`.
+- `mode` - where the mode found is copied to, or null.
+
+**RESULT**
+
+The number of the mode, and what it is in `mode`. 0, and `mode` left
+as it was, only on a board that has no mode.
+
+**BEHAVIOR**
+
+A format wished for is looked for among the board's modes of that
+format, where it has any; else among all of them. Then the size
+decides: a mode of the size wished for where there is one, else the
+smallest that holds it, else the largest. Of several modes of one size
+the refresh nearest the one wished for is taken - with the refresh left
+open the board's default where it is of that size, else the highest. A
+wish that leaves both sides of the size open is for the size of the
+board's default mode.
+
+So a display of one mode always answers that mode: whoever asks for
+another size is handed the board's, and sees which it got by comparing
+`mode` with what it asked for.
+
+**CONTEXT**
+
+- Waits: while another task holds the board's lock.
+- Interrupts: no.
+- Locks: takes the board's lock. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated: the copy is the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindBoardMode`, `GetBoardModes`, `SetBoardMode`
+
+**EXAMPLES**
+
+```zig
+var got: rtg.RtgMode = .{};
+const mode_id = rb.BestBoardMode(board, 800, 600, rtg.RTG_ANY, rtg.RTG_ANY, &got);
+if (got.width != 800 or got.height != 600) tellOf(&got);
 ```
 
 ## BindRtgDrivers
@@ -1020,12 +1091,12 @@ const board = rb.FindBoard("rgb.0") orelse return;
 
 ## FindBoardMode
 
-Finds a board's mode by its size and format.
+Finds a board's mode by its size, refresh and format.
 
 **SYNOPSIS**
 
 ```zig
-fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32) ?*rtg.RtgMode
+fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32) u32
 ```
 
 **SINCE**
@@ -1035,25 +1106,29 @@ fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, fo
 **INPUTS**
 
 - `board` - the board.
-- `width` - the width wanted, or 0 for any.
-- `height` - the height wanted, or 0 for any.
-- `format` - the pixel format wanted, or 0 for any.
+- `width` - the width wanted, or `RTG_ANY`.
+- `height` - the height wanted, or `RTG_ANY`.
+- `refresh_mhz` - the refresh wanted, in milli-Hertz as the mode says
+  it, or `RTG_ANY`.
+- `format` - the pixel format wanted, as a number, or `RTG_ANY`.
 
 **RESULT**
 
-The first mode that matches, or null. With all three 0, the board's
-default mode - the one marked `RTGMF_DEFAULT`, or else its first.
+The number of a mode that is exactly that, or 0. Where several are,
+the board's default if it is one of them, else the first of the list.
 
 **BEHAVIOR**
 
-Each 0 matches anything, so a caller can ask for any 1024-wide mode, or
-the default.
+Each `RTG_ANY` matches whatever the mode has, so a caller can ask for
+any mode 1024 wide, and all four `RTG_ANY` is the board's default
+mode. A mode that is only near what was asked is not answered:
+`BestBoardMode` does that.
 
 **CONTEXT**
 
-- Waits: no.
-- Interrupts: no. It calls through the jump table.
-- Locks: none needed.
+- Waits: while another task holds the board's lock.
+- Interrupts: no.
+- Locks: takes the board's lock. No spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1066,12 +1141,13 @@ None known.
 
 **SEE ALSO**
 
-`NextBoardMode`, `SetBoardMode`
+`BestBoardMode`, `GetBoardModes`, `SetBoardMode`
 
 **EXAMPLES**
 
 ```zig
-const mode = rb.FindBoardMode(board, 1024, 600, 0) orelse return error.NoMode;
+const mode_id = rb.FindBoardMode(board, 1024, 600, rtg.RTG_ANY, rtg.RTG_ANY);
+if (mode_id == 0) return error.NoMode;
 ```
 
 ## FreeBitMap
@@ -1158,9 +1234,8 @@ field near the end.
 
 **BEHAVIOR**
 
-The display memory still free, its largest piece, the number of modes
-and the brightness are read fresh; the rest is what the board already
-says about itself.
+The display memory still free, its largest piece and the brightness
+are read fresh; the rest is what the board already says about itself.
 
 **CONTEXT**
 
@@ -1181,13 +1256,74 @@ None known.
 
 **SEE ALSO**
 
-`GetBoardStats`, `FindBoardMode`
+`GetBoardStats`, `GetBoardModes`
 
 **EXAMPLES**
 
 ```zig
 var info: rtg.RtgBoardInfo = .{};
 _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+```
+
+## GetBoardModes
+
+Copies out the modes a board can be put into.
+
+**SYNOPSIS**
+
+```zig
+fn GetBoardModes(rb: *RtgBase, board: *rtg.RtgBoard, into: ?[*]rtg.RtgMode, count: u32) u32
+```
+
+**SINCE**
+
+1.19. LVO -304.
+
+**INPUTS**
+
+- `board` - the board.
+- `into` - where the modes go, or null to ask how many there are.
+- `count` - how many `into` has room for.
+
+**RESULT**
+
+How many modes the board has, which may be more than were copied.
+
+**BEHAVIOR**
+
+Up to `count` modes are copied, the larger picture first and of one
+size the higher refresh. Each says its number, its size, format and
+row length, its pixel clock and refresh, its name, and in its flags
+whether it is the board's default (`RTGMF_DEFAULT`) and the mode the
+board is in (`RTGMF_CURRENT`).
+
+**CONTEXT**
+
+- Waits: while another task holds the board's lock - through a show,
+  which may last a frame.
+- Interrupts: no.
+- Locks: takes the board's lock. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated: the copies are the caller's, and hold no pointer
+into the library.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindBoardMode`, `BestBoardMode`, `SetBoardMode`
+
+**EXAMPLES**
+
+```zig
+var found: [16]rtg.RtgMode = undefined;
+const there = rb.GetBoardModes(board, &found, found.len);
+for (found[0..@min(there, found.len)]) |*mode| list(mode);
 ```
 
 ## GetBoardStats
@@ -1676,59 +1812,6 @@ None known.
 ```zig
 var board = rb.NextBoard(null);
 while (board) |b| : (board = rb.NextBoard(b)) show(b);
-```
-
-## NextBoardMode
-
-Walks a board's modes.
-
-**SYNOPSIS**
-
-```zig
-fn NextBoardMode(_: *RtgBase, board: *rtg.RtgBoard, after: ?*rtg.RtgMode) ?*rtg.RtgMode
-```
-
-**SINCE**
-
-1.0. LVO -72.
-
-**INPUTS**
-
-- `board` - the board.
-- `after` - the mode to go on from, or null for the first.
-
-**RESULT**
-
-The next mode, or null at the end.
-
-**BEHAVIOR**
-
-The modes are the driver's, fixed when the board was made.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe: the modes do not change after the board is made.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated. The modes are the board's.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`FindBoardMode`, `SetBoardMode`
-
-**EXAMPLES**
-
-```zig
-var mode = rb.NextBoardMode(board, null);
-while (mode) |m| : (mode = rb.NextBoardMode(board, m)) list(m);
 ```
 
 ## OpenVideoLayer
@@ -2425,7 +2508,7 @@ Puts a board in a mode.
 **SYNOPSIS**
 
 ```zig
-fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
+fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) i32
 ```
 
 **SINCE**
@@ -2435,14 +2518,16 @@ fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32
 **INPUTS**
 
 - `board` - the board.
-- `mode` - one of its modes, or null for its default.
+- `mode_id` - the number of one of its modes, as `FindBoardMode`,
+  `BestBoardMode` and `GetBoardModes` answer it, or 0 for its default.
 
 **RESULT**
 
 `RTGERR_OK`, or: `RTGERR_NOT_SUPPORTED` for a board with no modes to
 set, `RTGERR_NO_DISPLAY` on a board whose device has gone,
-`RTGERR_BAD_MODE` with no default, `RTGERR_IN_USE` while a buffer
-that is not `RTGBMF_VOLATILE` is alive, or what the driver answered.
+`RTGERR_BAD_MODE` for a number the board has no mode of, and with no
+default, `RTGERR_IN_USE` while a buffer that is not `RTGBMF_VOLATILE`
+is alive, or what the driver answered.
 
 **BEHAVIOR**
 
@@ -2450,8 +2535,10 @@ The board stops showing what it was showing, and every volatile buffer
 loses its memory but keeps its handle. A buffer that has not agreed to
 that keeps the board in the mode it is in: the new mode may be smaller,
 and re-homing it would move its pixels under whoever draws into it. The
-display memory is laid out afresh for the new mode, and the board's
-information follows it.
+driver is handed the mode and its timings. The display memory is laid
+out afresh for the new mode, and the board's information follows it:
+its size, format and row length, its pixel clock and refresh, and the
+mode's number.
 
 **CONTEXT**
 
@@ -2476,12 +2563,12 @@ emptied and its mode set under the picture it still shows.
 
 **SEE ALSO**
 
-`FindBoardMode`, `GetBoardInfo`, `AllocBitMap`
+`FindBoardMode`, `BestBoardMode`, `GetBoardInfo`, `AllocBitMap`
 
 **EXAMPLES**
 
 ```zig
-if (rb.SetBoardMode(board, null) != rtg.errors.RTGERR_OK) return error.NoMode;
+if (rb.SetBoardMode(board, 0) != rtg.errors.RTGERR_OK) return error.NoMode;
 ```
 
 ## SetBoardOverlay

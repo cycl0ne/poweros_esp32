@@ -67,11 +67,17 @@ const Shown = struct { width: u32, height: u32, bytes: usize };
 /// it.
 fn bringUp(rb: *RtgBase, which: *rtg.RtgBoard, screen: Screen) ?Shown {
     // The board's mode of the screen's size, which is what says which way
-    // up a panel that can be turned runs; its default when it has only one.
-    const mode = rb.FindBoardMode(which, screen.width, screen.height, 0) orelse
-        rb.FindBoardMode(which, 0, 0, 0) orelse
-        return null;
-    if (rb.SetBoardMode(which, mode) != rtg.errors.RTGERR_OK) return null;
+    // up a panel that can be turned runs; its default where it has none of
+    // that size, or the list gives no size.
+    const width = if (screen.width != 0) screen.width else rtg.RTG_ANY;
+    const height = if (screen.height != 0) screen.height else rtg.RTG_ANY;
+    var mode_id = rb.FindBoardMode(which, width, height, rtg.RTG_ANY, rtg.RTG_ANY);
+    if (mode_id == 0) mode_id = rb.FindBoardMode(which, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY);
+    if (mode_id == 0) return null;
+    if (rb.SetBoardMode(which, mode_id) != rtg.errors.RTGERR_OK) return null;
+    // What the board is in now, as it says it.
+    var mode: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(which, &mode, @sizeOf(rtg.RtgBoardInfo));
 
     const picture = rb.AllocBitMap(
         which,

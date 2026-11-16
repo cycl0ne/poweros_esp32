@@ -64,7 +64,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 6;
+const REVISION = 7;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -83,7 +83,6 @@ const Screen = struct {
     /// what the glass would show.
     width: u32 = 0,
     height: u32 = 0,
-    mode: rtg.RtgMode = .{},
     /// What ShowBitMap was last given, and where it is shown from.
     showing: ?*rtg.RtgBitMap = null,
     /// How many times the picture has been handed to the window. There is
@@ -376,6 +375,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
 
     const width: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list));
     const height: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list));
+    // The window shows RGB565 and nothing else.
+    const format = rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list);
+    if (format != @intFromEnum(rtg.PixelFormat.rgb565)) return err.RTGERR_BAD_FORMAT;
     // The device takes each side as 16 bits.
     if (width == 0 or height == 0) return err.RTGERR_BAD_TAGS;
     if (width > 0xFFFF or height > 0xFFFF) return err.RTGERR_BAD_TAGS;
@@ -411,17 +413,12 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     sys.InitSemaphore(&screen.compose_lock);
 
     // One mode. A virtual display is not a monitor either: it is the shape
-    // the emulator was built for.
-    screen.mode = .{
-        .node = .{ .name = "window", .pri = 0 },
-        .id = 1,
-        .width = screen.width,
-        .height = screen.height,
-        .format = .rgb565,
-        .pitch = screen.width * bytes_per_pixel,
-        .flags = rtg.boards.RTGMF_DEFAULT,
-    };
-    sys.AddTail(&board.modes, &screen.mode.node);
+    // the emulator was built for, and has no clock of its own.
+    const window: rtg.RtgTimings = .{ .h_active = width, .v_active = height };
+    if (rb.AddBoardMode(board, &window, @intFromEnum(rtg.PixelFormat.rgb565), rtg.modes.RTGMF_DEFAULT) == 0) {
+        rb.DeleteBoard(board);
+        return err.RTGERR_NO_MEMORY;
+    }
     board.info.buffers = frames;
     return err.RTGERR_OK;
 }
@@ -433,7 +430,7 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
 }
 
 /// One mode, so this only ever sizes the window to it.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
     const screen = screenOf(board);
     if (mode.width != screen.width or mode.height != screen.height) return err.RTGERR_BAD_MODE;
     if (!qemu_rgb.init(@intCast(screen.width), @intCast(screen.height))) {
@@ -441,10 +438,6 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
         exec.kprintf(screen.sys, "%s: the window will not take %dx%d; build QEMU with scripts/build-qemu.sh\n", .{ MODULE_NAME, screen.width, screen.height });
         return err.RTGERR_BAD_MODE;
     }
-    board.info.width = screen.width;
-    board.info.height = screen.height;
-    board.info.format = .rgb565;
-    board.info.pitch = screen.width * bytes_per_pixel;
     return err.RTGERR_OK;
 }
 

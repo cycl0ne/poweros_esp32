@@ -51,7 +51,13 @@ pub const LIBRARY_VERSION = 1;
 /// its bus (OpenTransport); GetRtgDrivers, GetRtgDevices, AddRtgDevice,
 /// RemRtgDevice. A board is named by the library and never freed for a
 /// program.
-pub const LIBRARY_REVISION = 18;
+/// 19: modes are the library's - a driver adds them (AddBoardMode) from
+/// timings it reads with ReadTimingTags, the library names and numbers
+/// them, and a program is handed copies (GetBoardModes) and names a mode
+/// by its number: FindBoardMode answers one, with a refresh and RTG_ANY,
+/// BestBoardMode the nearest to a wish, SetBoardMode takes one.
+/// NextBoardMode is gone.
+pub const LIBRARY_REVISION = 19;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

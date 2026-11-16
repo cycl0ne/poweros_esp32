@@ -20,7 +20,8 @@ const RTGCTRL_DRIVER = @import("boards.zig").RTGCTRL_DRIVER;
 /// The generic tags, which mean the same to every board driver. They are
 /// a device's: a panel part's tags in the board's list. The library reads
 /// the alignment, brightness, display-on and whether its screens' windows
-/// are composed; the driver reads the rest of them from the same list.
+/// are composed, and a driver has it read the timings (`ReadTimingTags`);
+/// the driver reads the rest of them from the same list.
 pub const RTGA_Dummy = TAG_USER + 4000;
 /// Where the drivers' own blocks start. Each takes 64.
 pub const RTGA_DriverBase = TAG_USER + 4100;
@@ -69,19 +70,30 @@ pub const RTGA_Adopt = RTGA_Dummy + 19;
 /// the screen's buffer.
 pub const RTGA_Compose = RTGA_Dummy + 21;
 
+// --- a panel's timings, read with ReadTimingTags --------------------------
+
+/// u32, Hz: the pixel clock the timings count in. Needed by a panel that
+/// is streamed its picture.
+pub const RTGA_PixelClock = RTGA_Dummy + 22;
+/// u32, in pixel clocks: the horizontal sync pulse, and the porch after
+/// and before it. The pulse is needed where the clock is.
+pub const RTGA_HSyncPulse = RTGA_Dummy + 23;
+pub const RTGA_HBackPorch = RTGA_Dummy + 24;
+pub const RTGA_HFrontPorch = RTGA_Dummy + 25;
+/// u32, in lines: the same for the vertical sync.
+pub const RTGA_VSyncPulse = RTGA_Dummy + 26;
+pub const RTGA_VBackPorch = RTGA_Dummy + 27;
+pub const RTGA_VFrontPorch = RTGA_Dummy + 28;
+/// u32, RTGTM_* (`modes.zig`): the sync pulses' polarity, the data
+/// enable's level and the pixel clock's edge. Absent: 0 - both pulses
+/// low, the data enable high, the pixels taken on the rising edge.
+pub const RTGA_TimingFlags = RTGA_Dummy + 29;
+
 // --- the RGB board driver: RTGA_DriverBase + 0, 64 wide ------------------
 
 pub const RTGA_RGB_Dummy = RTGA_DriverBase + 0;
-/// u32, Hz. Needed.
-pub const RTGA_RGB_PixelClock = RTGA_RGB_Dummy + 1;
-/// u32, in pixel clocks. All six are needed.
-pub const RTGA_RGB_HSyncPulse = RTGA_RGB_Dummy + 2;
-pub const RTGA_RGB_HSyncBackPorch = RTGA_RGB_Dummy + 3;
-pub const RTGA_RGB_HSyncFrontPorch = RTGA_RGB_Dummy + 4;
-/// u32, in lines.
-pub const RTGA_RGB_VSyncPulse = RTGA_RGB_Dummy + 5;
-pub const RTGA_RGB_VSyncBackPorch = RTGA_RGB_Dummy + 6;
-pub const RTGA_RGB_VSyncFrontPorch = RTGA_RGB_Dummy + 7;
+// RTGA_RGB_Dummy + 1 to 7 are not used: the panel's timings are the
+// generic RTGA_PixelClock to RTGA_VFrontPorch.
 /// u32: where the active area starts in the line, counted from the start
 /// of the sync pulse. Absent: worked out from the pulse the hardware can
 /// actually emit, which is not always the pulse that was asked for. Set it
@@ -111,13 +123,8 @@ pub const RTGA_RGB_DmaPriority = RTGA_RGB_Dummy + 17;
 /// weaker drive should say so.
 pub const RTGA_RGB_DriveStrength = RTGA_RGB_Dummy + 18;
 
-/// RTGA_RGB_Flags: which way round the timing signals rest.
-pub const RTGRGBF_HSYNC_IDLE_LOW: u32 = 1 << 0;
-pub const RTGRGBF_VSYNC_IDLE_LOW: u32 = 1 << 1;
-pub const RTGRGBF_DE_IDLE_HIGH: u32 = 1 << 2;
-/// The pixels are taken on the falling edge of the pixel clock.
-pub const RTGRGBF_PCLK_ACTIVE_LOW: u32 = 1 << 3;
-pub const RTGRGBF_PCLK_IDLE_HIGH: u32 = 1 << 4;
+/// RTGA_RGB_Flags. Bits 0 to 4 are not used: which way round the timing
+/// signals rest is the timings' own (RTGA_TimingFlags).
 /// Feed the display straight out of the framebuffer, with no buffer in
 /// between. Only for memory that can answer without a pause.
 pub const RTGRGBF_NO_BOUNCE: u32 = 1 << 5;
@@ -196,17 +203,9 @@ pub const RTGA_DSI_Lanes = RTGA_DSI_Dummy + 1;
 /// at the nearest, and one further than 2% from any is refused with
 /// RTGERR_BAD_TAGS. Needed.
 pub const RTGA_DSI_LaneRate = RTGA_DSI_Dummy + 2;
-/// u32, Hz: the pixel clock the panel's timings count in. The chip makes
-/// the nearest it can, and the timings stay in its clocks. Needed.
-pub const RTGA_DSI_PixelClock = RTGA_DSI_Dummy + 3;
-/// u32, in pixel clocks. All six are needed.
-pub const RTGA_DSI_HSyncPulse = RTGA_DSI_Dummy + 4;
-pub const RTGA_DSI_HSyncBackPorch = RTGA_DSI_Dummy + 5;
-pub const RTGA_DSI_HSyncFrontPorch = RTGA_DSI_Dummy + 6;
-/// u32, in lines.
-pub const RTGA_DSI_VSyncPulse = RTGA_DSI_Dummy + 7;
-pub const RTGA_DSI_VSyncBackPorch = RTGA_DSI_Dummy + 8;
-pub const RTGA_DSI_VSyncFrontPorch = RTGA_DSI_Dummy + 9;
+// RTGA_DSI_Dummy + 3 to 9 are not used: the panel's timings are the
+// generic RTGA_PixelClock to RTGA_VFrontPorch. The chip makes the pixel
+// clock nearest the one asked for, and the timings stay in its clocks.
 /// *const u8 and u32: the panel's bring-up, sent as DCS commands before
 /// the picture streams; steps as RTGA_DCS_InitSequence's.
 /// Needed for a panel; a bridge the driver knows (CHIP_LT8912B) is
@@ -217,8 +216,5 @@ pub const RTGA_DSI_InitLength = RTGA_DSI_Dummy + 11;
 /// voltage in millivolts. Absent: the board feeds the PHY itself.
 pub const RTGA_DSI_PhyLdo = RTGA_DSI_Dummy + 12;
 pub const RTGA_DSI_PhyMillivolts = RTGA_DSI_Dummy + 13;
-/// Bool: the horizontal and the vertical sync pulse are high, as the
-/// mode's standard has them - what a bridge to a monitor tells it.
-/// Absent: low.
-pub const RTGA_DSI_HSyncHigh = RTGA_DSI_Dummy + 14;
-pub const RTGA_DSI_VSyncHigh = RTGA_DSI_Dummy + 15;
+// RTGA_DSI_Dummy + 14 and 15 are not used: the sync pulses' polarity is
+// the timings' own (RTGA_TimingFlags).

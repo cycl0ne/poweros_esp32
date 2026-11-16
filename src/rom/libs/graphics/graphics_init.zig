@@ -97,9 +97,11 @@ pub const LIBRARY_VERSION = 0;
 /// (`GLYPHREQ_SPACE`), by which a font says where the characters of a
 /// ligature part. 47: the machine's display is the first board
 /// rtg.library has, once its drivers have taken the machine's displays
-/// (`BindRtgDrivers`); the board has no name of this library's. The
-/// version stays 0 until there is something to demand of it.
-pub const LIBRARY_REVISION = 47;
+/// (`BindRtgDrivers`); the board has no name of this library's. 48: the
+/// display is put in a mode by the mode's number, the one of the
+/// machine's screen size or the board's default. The version stays 0
+/// until there is something to demand of it.
+pub const LIBRARY_REVISION = 48;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

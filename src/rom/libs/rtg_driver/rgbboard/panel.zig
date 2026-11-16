@@ -53,8 +53,9 @@ pub const Panel = struct {
     rtg_base: *RtgDriverBase,
     board: *rtg.RtgBoard,
     config: config.Config = .{},
-    /// The one mode this panel has.
-    mode: rtg.RtgMode = .{},
+    /// Bytes a row of the picture, which is what a row of a buffer shown
+    /// has to be.
+    pitch: u32 = 0,
 
     /// A picture's bytes, and how many pictures the board may have at
     /// once: the library takes each from system memory as it is asked for
@@ -265,6 +266,9 @@ pub fn bringUp(panel: *Panel) i32 {
         return giveBack(panel, err.RTGERR_BAD_TAGS);
     }
     panel.stretches = setup.height / panel.config.bounce_lines;
+    // The copy owes a buffer its stretch for as long as the others take:
+    // a frame of fewer stretches than there are buffers has none to owe.
+    if (panel.stretches < bounce_count) return giveBack(panel, err.RTGERR_BAD_TAGS);
 
     const db: *dmares.DmaBase = @ptrCast(sys.OpenResource(dmares.DMANAME) orelse
         return giveBack(panel, err.RTGERR_NO_DISPLAY));

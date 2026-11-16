@@ -17,7 +17,7 @@ const _board = @import("_board.zig");
 /// fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard
 /// ```
 ///
-/// SINCE: 1.18. LVO -332.
+/// SINCE: 1.18. LVO -340.
 ///
 /// INPUTS:
 /// - `driver` - the driver that makes it: the one whose `attach` is
@@ -38,8 +38,8 @@ const _board = @import("_board.zig");
 /// driver can read from its interrupts (`RTGDF_INTERNAL_INSTANCE`), the
 /// instance cleared. The handle has the driver, the device, the ops, the
 /// region and the flags of the description; the driver fills in the
-/// rest - its modes, its info, the region where it was not known - before
-/// its `attach` answers. The board is on no list yet and has no name: it
+/// rest - its modes (`AddBoardMode`), its info, the region where it was
+/// not known - before its `attach` answers. The board is on no list yet and has no name: it
 /// joins the library's list once the `attach` has answered `RTGERR_OK`,
 /// named after its driver and a number in the order the driver's boards
 /// were made ("rgb.0"), the firmware's picture last on the list. A board
@@ -65,7 +65,8 @@ const _board = @import("_board.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `DeleteBoard`, `BindRtgDrivers`, `AddRtgDevice`, `NextBoard`
+/// `DeleteBoard`, `AddBoardMode`, `BindRtgDrivers`, `AddRtgDevice`,
+/// `NextBoard`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -97,7 +98,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     board.info.id_string = driver.spec.id_string;
     board.info.label = spec.label;
     board.info.flags = spec.flags;
-    sys.NewList(&board.modes);
+    sys.NewList(&private.modes);
     sys.NewList(&board.bitmaps);
     for (&board.event_lists) |*events| sys.NewList(events);
 

@@ -55,7 +55,7 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 6;
+const REVISION = 7;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -87,9 +87,10 @@ const Panel = struct {
     /// a band is about a millisecond, and a transport on a bus device
     /// waits for it.
     band_lock: exec.SignalSemaphore = .{},
-    /// Upright, and on its side when the controller can be turned.
-    modes: [2]rtg.RtgMode = @splat(.{}),
+    /// Upright, and on its side when the controller can be turned: the
+    /// MADCTL value of each, and whether the board has the second.
     madctl: [2]u8 = .{ 0, 0 },
+    turns: bool = false,
     /// The size of the mode it is in, which is what a window is cut from,
     /// and the panel's own, which is what the controller scans.
     width: u32 = 0,
@@ -158,6 +159,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     const bring_up = sequenceOf(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
     if (size.width == 0 or size.height == 0) return err.RTGERR_BAD_TAGS;
     if (!sequence.valid(bring_up)) return err.RTGERR_BAD_TAGS;
+    // The controller is sent RGB565 and nothing else.
+    const format = rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list);
+    if (format != @intFromEnum(rtg.PixelFormat.rgb565)) return err.RTGERR_BAD_FORMAT;
 
     // The bus the controller sits on, made from the same tags.
     const io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
@@ -259,27 +263,21 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
         return code;
     }
 
-    panel.modes[0] = .{
-        .node = .{ .name = "upright", .pri = 1 },
-        .id = 1,
-        .width = width,
-        .height = height,
-        .format = .rgb565,
-        .pitch = width * 2,
-        .flags = rtg.boards.RTGMF_DEFAULT,
-    };
-    sys.AddTail(&board.modes, &panel.modes[0].node);
+    // Upright, which it comes up in, and on its side where the
+    // controller or the driver turns the picture. A controller behind a
+    // bus has no clock: a mode is its size.
+    const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
+    const upright: rtg.RtgTimings = .{ .h_active = width, .v_active = height };
+    var added = rb.AddBoardMode(board, &upright, rgb565, rtg.modes.RTGMF_DEFAULT) != 0;
     if (swapped != absent or panel.swapped_turn != .none) {
         panel.madctl[1] = if (swapped != absent) @truncate(swapped) else panel.madctl[0];
-        panel.modes[1] = .{
-            .node = .{ .name = "on its side", .pri = 0 },
-            .id = 2,
-            .width = height,
-            .height = width,
-            .format = .rgb565,
-            .pitch = height * 2,
-        };
-        sys.AddTail(&board.modes, &panel.modes[1].node);
+        panel.turns = true;
+        const on_its_side: rtg.RtgTimings = .{ .h_active = height, .v_active = width };
+        added = added and rb.AddBoardMode(board, &on_its_side, rgb565, rtg.modes.RTGMF_TURNED) != 0;
+    }
+    if (!added) {
+        giveBack(panel);
+        return err.RTGERR_NO_MEMORY;
     }
 
     board.region = .{
@@ -359,18 +357,16 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
 
 /// The mode is a way up: MADCTL says which, and the windows are cut from
 /// its size from here on.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
     const panel = panelOf(board);
-    const which: usize = switch (mode.id) {
-        1 => 0,
-        2 => if (panel.modes[1].id == 2) 1 else return err.RTGERR_BAD_MODE,
-        else => return err.RTGERR_BAD_MODE,
-    };
+    const turned = mode.flags & rtg.modes.RTGMF_TURNED != 0;
+    if (turned and !panel.turns) return err.RTGERR_BAD_MODE;
+    const which: usize = @intFromBool(turned);
     const code = command(panel, MADCTL, &panel.madctl[which], 1);
     if (code != err.RTGERR_OK) return code;
-    panel.width = panel.modes[which].width;
-    panel.height = panel.modes[which].height;
-    panel.turn = if (which == 1) panel.swapped_turn else .none;
+    panel.width = mode.width;
+    panel.height = mode.height;
+    panel.turn = if (turned) panel.swapped_turn else .none;
     return err.RTGERR_OK;
 }
 

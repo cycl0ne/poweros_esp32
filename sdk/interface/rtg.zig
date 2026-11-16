@@ -26,7 +26,6 @@ pub const LVO = struct {
     pub const GetBoardInfo = libraries.lvo(14);
     pub const GetBoardStats = libraries.lvo(15);
     pub const BoardControl = libraries.lvo(16);
-    pub const NextBoardMode = libraries.lvo(17);
     pub const FindBoardMode = libraries.lvo(18);
     pub const SetBoardMode = libraries.lvo(19);
     pub const AllocBitMap = libraries.lvo(21);
@@ -68,6 +67,8 @@ pub const LVO = struct {
     pub const BindRtgDrivers = libraries.lvo(72);
     pub const GetRtgDrivers = libraries.lvo(73);
     pub const GetRtgDevices = libraries.lvo(74);
+    pub const GetBoardModes = libraries.lvo(75);
+    pub const BestBoardMode = libraries.lvo(76);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -78,9 +79,8 @@ pub const Fn = struct {
     pub const GetBoardInfo = *const fn (*RtgBase, *rtg.RtgBoard, *rtg.RtgBoardInfo, u32) callconv(.c) u32;
     pub const GetBoardStats = *const fn (*RtgBase, *rtg.RtgBoard, *rtg.RtgBoardStats, u32) callconv(.c) u32;
     pub const BoardControl = *const fn (*RtgBase, *rtg.RtgBoard, u32, isize) callconv(.c) isize;
-    pub const NextBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgMode) callconv(.c) ?*rtg.RtgMode;
-    pub const FindBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32) callconv(.c) ?*rtg.RtgMode;
-    pub const SetBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgMode) callconv(.c) i32;
+    pub const FindBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32, u32) callconv(.c) u32;
+    pub const SetBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const AllocBitMap = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32, u32) callconv(.c) ?*rtg.RtgBitMap;
     pub const AttachBitMap = *const fn (*RtgBase, *rtg.RtgBoard, *const rtg.RtgBitMap) callconv(.c) ?*rtg.RtgBitMap;
     pub const FreeBitMap = *const fn (*RtgBase, ?*rtg.RtgBitMap) callconv(.c) void;
@@ -120,6 +120,8 @@ pub const Fn = struct {
     pub const BindRtgDrivers = *const fn (*RtgBase) callconv(.c) u32;
     pub const GetRtgDrivers = *const fn (*RtgBase, ?[*]rtg.RtgDriverInfo, u32) callconv(.c) u32;
     pub const GetRtgDevices = *const fn (*RtgBase, ?[*]rtg.RtgDeviceInfo, u32) callconv(.c) u32;
+    pub const GetBoardModes = *const fn (*RtgBase, *rtg.RtgBoard, ?[*]rtg.RtgMode, u32) callconv(.c) u32;
+    pub const BestBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32, u32, ?*rtg.RtgMode) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -161,22 +163,18 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.BoardControl, Fn.BoardControl, .{ board, what, value });
     }
 
-    /// The next mode of a board, or its first for null.
-    pub fn NextBoardMode(self: *RtgBase, board: *rtg.RtgBoard, after: ?*rtg.RtgMode) ?*rtg.RtgMode {
-        return libraries.call(self, LVO.NextBoardMode, Fn.NextBoardMode, .{ board, after });
+    /// The number of the board's mode of exactly that size, refresh (in
+    /// milli-Hertz) and format, or 0. RTG_ANY matches whatever, so all four
+    /// RTG_ANY is the board's default mode.
+    pub fn FindBoardMode(self: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32) u32 {
+        return libraries.call(self, LVO.FindBoardMode, Fn.FindBoardMode, .{ board, width, height, refresh_mhz, format });
     }
 
-    /// The board's mode of that size and format, or null. A zero matches
-    /// anything, so (0, 0, 0) is the board's default mode.
-    pub fn FindBoardMode(self: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32) ?*rtg.RtgMode {
-        return libraries.call(self, LVO.FindBoardMode, Fn.FindBoardMode, .{ board, width, height, format });
-    }
-
-    /// Put the board in that mode, or in its default for null. Refused with
-    /// RTGERR_IN_USE while a buffer that is not RTGBMF_VOLATILE is alive;
-    /// volatile ones lose their memory and keep their handle.
-    pub fn SetBoardMode(self: *RtgBase, board: *rtg.RtgBoard, mode: ?*rtg.RtgMode) i32 {
-        return libraries.call(self, LVO.SetBoardMode, Fn.SetBoardMode, .{ board, mode });
+    /// Put the board in the mode of that number, or in its default for 0.
+    /// Refused with RTGERR_IN_USE while a buffer that is not RTGBMF_VOLATILE
+    /// is alive; volatile ones lose their memory and keep their handle.
+    pub fn SetBoardMode(self: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) i32 {
+        return libraries.call(self, LVO.SetBoardMode, Fn.SetBoardMode, .{ board, mode_id });
     }
 
     /// A buffer in the board's display memory, its rows aligned as the board
@@ -434,5 +432,21 @@ pub const RtgBase = opaque {
     /// The same for the devices, in the order they were found.
     pub fn GetRtgDevices(self: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32 {
         return libraries.call(self, LVO.GetRtgDevices, Fn.GetRtgDevices, .{ into, count });
+    }
+
+    /// Copy out up to `count` of the board's modes, the largest picture
+    /// first; answers how many there are. Null and 0 ask for the number
+    /// alone.
+    pub fn GetBoardModes(self: *RtgBase, board: *rtg.RtgBoard, into: ?[*]rtg.RtgMode, count: u32) u32 {
+        return libraries.call(self, LVO.GetBoardModes, Fn.GetBoardModes, .{ board, into, count });
+    }
+
+    /// The number of the board's mode nearest a wish - that size if it has
+    /// it, else the smallest that holds it, else its largest - and what it is,
+    /// into `mode`. RTG_ANY leaves a figure open. Never 0 on a board that has
+    /// a mode: on a display of one mode always that mode, and the caller
+    /// compares what it asked for with what came back.
+    pub fn BestBoardMode(self: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32, mode: ?*rtg.RtgMode) u32 {
+        return libraries.call(self, LVO.BestBoardMode, Fn.BestBoardMode, .{ board, width, height, refresh_mhz, format, mode });
     }
 };

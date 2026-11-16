@@ -32,15 +32,16 @@ u32 GetBoardStats(*rtg.RtgBoard board, *rtg.RtgBoardStats stats, u32 size)
 /// RTGCTRL_RESET_STATS, which every board takes. RTGERR_NOT_SUPPORTED for
 /// one it does not know.
 isize BoardControl(*rtg.RtgBoard board, u32 what, isize value)
-/// The next mode of a board, or its first for null.
-?*rtg.RtgMode NextBoardMode(*rtg.RtgBoard board, ?*rtg.RtgMode after)
-/// The board's mode of that size and format, or null. A zero matches
-/// anything, so (0, 0, 0) is the board's default mode.
-?*rtg.RtgMode FindBoardMode(*rtg.RtgBoard board, u32 width, u32 height, u32 format)
-/// Put the board in that mode, or in its default for null. Refused with
-/// RTGERR_IN_USE while a buffer that is not RTGBMF_VOLATILE is alive;
-/// volatile ones lose their memory and keep their handle.
-i32 SetBoardMode(*rtg.RtgBoard board, ?*rtg.RtgMode mode)
+// A slot kept free, so the slots after it stay where they are.
+##reserve 1
+/// The number of the board's mode of exactly that size, refresh (in
+/// milli-Hertz) and format, or 0. RTG_ANY matches whatever, so all four
+/// RTG_ANY is the board's default mode.
+u32 FindBoardMode(*rtg.RtgBoard board, u32 width, u32 height, u32 refresh_mhz, u32 format)
+/// Put the board in the mode of that number, or in its default for 0.
+/// Refused with RTGERR_IN_USE while a buffer that is not RTGBMF_VOLATILE
+/// is alive; volatile ones lose their memory and keep their handle.
+i32 SetBoardMode(*rtg.RtgBoard board, u32 mode_id)
 // A slot kept free, so the slots after it stay where they are.
 ##reserve 1
 /// A buffer in the board's display memory, its rows aligned as the board
@@ -191,4 +192,14 @@ u32 BindRtgDrivers()
 u32 GetRtgDrivers(?[*]rtg.RtgDriverInfo into, u32 count)
 /// The same for the devices, in the order they were found.
 u32 GetRtgDevices(?[*]rtg.RtgDeviceInfo into, u32 count)
+/// Copy out up to `count` of the board's modes, the largest picture
+/// first; answers how many there are. Null and 0 ask for the number
+/// alone.
+u32 GetBoardModes(*rtg.RtgBoard board, ?[*]rtg.RtgMode into, u32 count)
+/// The number of the board's mode nearest a wish - that size if it has
+/// it, else the smallest that holds it, else its largest - and what it is,
+/// into `mode`. RTG_ANY leaves a figure open. Never 0 on a board that has
+/// a mode: on a display of one mode always that mode, and the caller
+/// compares what it asked for with what came back.
+u32 BestBoardMode(*rtg.RtgBoard board, u32 width, u32 height, u32 refresh_mhz, u32 format, ?*rtg.RtgMode mode)
 ##end

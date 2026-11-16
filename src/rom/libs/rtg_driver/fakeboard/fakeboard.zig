@@ -7,9 +7,10 @@
 //! the driver's `State` behind the node it makes for it, and every entry
 //! point finds that state again through the node - an op has the board,
 //! the board has its driver's node, and the node has the state. What
-//! belongs to one board and not to the driver - its modes, and the bands
-//! it shows - is in the instance the library allocates beside each
-//! handle, so two boards of this driver never share a list.
+//! belongs to one board and not to the driver - the bands it shows - is
+//! in the instance the library allocates beside each handle. Its modes
+//! it adds to each board as it makes it (`AddBoardMode`), and the library
+//! keeps them.
 //!
 //! A real driver's description is behind a ROM tag, and the library puts
 //! it on its list. This one is put there by a test (`add`), which also
@@ -91,6 +92,10 @@ pub const Log = struct {
     last_control: u32 = 0,
     last_mirror_x: bool = false,
     last_mirror_y: bool = false,
+    /// The mode and the timings the board was last put in, as the driver
+    /// got them.
+    last_mode: rtg.RtgMode = .{},
+    last_timings: rtg.RtgTimings = .{},
     display_on: bool = false,
     brightness: u32 = 0,
     /// The pointer as the board has it: the image it was last given,
@@ -167,6 +172,9 @@ pub const State = struct {
     create_answer: i32 = err.RTGERR_OK,
     /// How many boards it makes of the next device it takes: its outputs.
     outputs: u32 = 1,
+    /// How many of its modes the next board made is given, from the first:
+    /// all of them, unless a test says fewer - one is a panel's board.
+    modes: u32 = mode_table.len,
     /// Open the device's bus before it makes a board, as the driver of a
     /// panel on a bus does, and decline when there is none.
     opens_bus: bool = false,
@@ -206,9 +214,6 @@ pub const Instance = struct {
     calls: u32 = 0,
     /// The bus the board's device sits on, when the driver opened it.
     bus: ?*rtg.RtgTransport = null,
-    /// This board's own modes. A driver that kept one list in its image
-    /// would hand the same nodes to two boards and corrupt both.
-    modes: [mode_table.len]rtg.RtgMode = mode_table,
     /// What the board shows: its bands from the top - one from line 0 for
     /// a buffer shown alone, none while nothing is shown. Kept once a show
     /// can no longer fail: a show that was refused left them as they
@@ -358,29 +363,25 @@ pub fn endFrame(board: *rtg.RtgBoard) void {
     _ = rb.SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
 }
 
-const mode_table = [_]rtg.RtgMode{
+/// A mode a board of this driver has: its timings, its format, and
+/// whether the board comes up in it.
+const ModeOf = struct { timings: rtg.RtgTimings, format: rtg.PixelFormat, flags: u32 = 0 };
+
+/// The modes every board of it is given, in this order - so the first is
+/// number 1: 320x200 and 640x480 at 60 frames a second exactly, and a
+/// picture of two colours on a display with no clock.
+pub const mode_table = [_]ModeOf{
     .{
-        .node = .{ .name = "320x200", .pri = 10 },
-        .id = 1,
-        .width = 320,
-        .height = 200,
+        .timings = .{ .pixel_clock_hz = 6_000_000, .h_active = 320, .h_front = 16, .h_sync = 32, .h_back = 32, .v_active = 200, .v_front = 10, .v_sync = 10, .v_back = 30 },
         .format = .rgb565,
-        .refresh_mhz = 60_000,
-        .flags = rtg.boards.RTGMF_DEFAULT,
+        .flags = rtg.modes.RTGMF_DEFAULT,
     },
     .{
-        .node = .{ .name = "640x480", .pri = 5 },
-        .id = 2,
-        .width = 640,
-        .height = 480,
+        .timings = .{ .pixel_clock_hz = 25_200_000, .h_active = 640, .h_front = 16, .h_sync = 96, .h_back = 48, .v_active = 480, .v_front = 10, .v_sync = 2, .v_back = 33 },
         .format = .rgb565,
-        .refresh_mhz = 60_000,
     },
     .{
-        .node = .{ .name = "64x64 mono", .pri = 0 },
-        .id = 3,
-        .width = 64,
-        .height = 64,
+        .timings = .{ .h_active = 64, .v_active = 64 },
         .format = .mono1,
     },
 };
@@ -408,13 +409,13 @@ fn detach(driver: *rtg.RtgDriver, _: *rtg.RtgDevice) callconv(.c) void {
     stateOf(driver).log.detached += 1;
 }
 
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, timings: *const rtg.RtgTimings) callconv(.c) i32 {
     instanceOf(board).calls += 1;
-    stateOfBoard(board).log.set_mode += 1;
-    if (stateOfBoard(board).meanwhile) |look| look(board);
-    board.info.width = mode.width;
-    board.info.height = mode.height;
-    board.info.format = mode.format;
+    const state = stateOfBoard(board);
+    state.log.set_mode += 1;
+    state.log.last_mode = mode.*;
+    state.log.last_timings = timings.*;
+    if (state.meanwhile) |look| look(board);
     return err.RTGERR_OK;
 }
 
@@ -879,7 +880,6 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, _: ?[*]const TagItem) 
 /// attach answers. Null without memory.
 fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.RtgBoard {
     const state = stateOf(driver);
-    const sys = driver.sys_base;
     const board = driver.rtg_base.CreateBoard(driver, device, &.{
         .label = if (unit == 0) "Fake 0" else "Fake 1",
         .ops = if (state.cannot_turn)
@@ -904,8 +904,13 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
     const instance = instanceOf(board);
     instance.* = .{ .pattern = instance_pattern };
 
-    // This board's own modes, out of its own instance.
-    for (&instance.modes) |*mode| sys.AddTail(&board.modes, &mode.node);
+    // Its modes: the library keeps them, and numbers them as they come.
+    for (mode_table[0..@min(state.modes, mode_table.len)]) |*one| {
+        if (driver.rtg_base.AddBoardMode(board, &one.timings, @intFromEnum(one.format), one.flags) == 0) {
+            driver.rtg_base.DeleteBoard(board);
+            return null;
+        }
+    }
     board.info.buffers = 2;
 
     if (state.claims_display) {

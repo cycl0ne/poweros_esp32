@@ -202,7 +202,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 35;
+const REVISION = 36;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -252,15 +252,17 @@ const Screen = struct {
     format: rtg.PixelFormat = .bgra32,
     bytes: u32 = 4,
     pitch: u32 = 0,
-    /// The modes: the board's own, or behind an HDMI port those the
-    /// monitor takes (`monitor.zig`), with their timings; their names; which one
-    /// the display is in; how long a frame of it takes.
-    modes: [monitor.max_modes]rtg.RtgMode = undefined,
+    /// The modes: the board's own one, or behind an HDMI port those the
+    /// monitor takes (`monitor.zig`), with their timings; the library's
+    /// number for each, as `AddBoardMode` answered it; which one the
+    /// display is in; how long a frame of it takes.
     timings: monitor.List = .{},
-    names: [monitor.max_modes][16]u8 = undefined,
-    mode_count: u32 = 0,
+    mode_ids: [monitor.max_modes]u32 = @splat(0),
     current: u32 = 0,
     frame_us: u32 = 16_667,
+    /// What a row of a buffer is rounded up to: the board's display
+    /// memory's alignment, which the library rounds a mode's rows by.
+    alignment: u32 = row_alignment,
     /// Behind the firmware's framebuffer, the display engine reading it
     /// where that engine is one this driver knows: what it says of itself,
     /// read when the board is made (`dcn.zig`). Null on every other
@@ -2145,6 +2147,10 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
         .format = format,
         .bytes = bytes,
     };
+    // The board's buffers start, and their rows are rounded, as its tags
+    // say; whole cache lines where they say nothing.
+    const asked_alignment: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Alignment, 0, tag_list));
+    if (asked_alignment != 0) screen.alignment = asked_alignment;
     sys.InitSemaphore(&screen.compose_lock);
     if (scanout == .virtio) {
         // The GPU up, and the picture as large as the emulator's window
@@ -2181,17 +2187,22 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
         const own = edid.knownMode(screen.width, screen.height, 60) orelse return err.RTGERR_BAD_ARG;
         screen.timings = hdmiModes(screen, own);
         screen.frame_irq = @truncate(rb.GetRtgTagData(st.PART_Irq, 0, tag_list));
-        for (screen.timings.modes[0..screen.timings.count], 0..) |*timing, i| {
-            addMode(screen, board, @intCast(i), timing.width, timing.height);
-            screen.modes[i].pixel_clock_hz = timing.pixel_khz * 1000;
-            screen.modes[i].refresh_mhz = timing.milliHz();
-        }
         screen.current = screen.timings.default;
+        for (screen.timings.modes[0..screen.timings.count], 0..) |*timing, i| {
+            const flags: u32 = if (i == screen.current) rtg.modes.RTGMF_DEFAULT else 0;
+            screen.mode_ids[i] = rb.AddBoardMode(board, &timingsOf(timing), @intFromEnum(format), flags);
+            if (screen.mode_ids[i] == 0) return err.RTGERR_NO_MEMORY;
+        }
     } else {
-        // One mode: the picture the board was built for.
-        addMode(screen, board, 0, screen.width, screen.height);
+        // One mode: the picture the board was built for, on a display
+        // with no clock of its own.
+        const own: rtg.RtgTimings = .{ .h_active = screen.width, .v_active = screen.height };
+        screen.mode_ids[0] = rb.AddBoardMode(board, &own, @intFromEnum(format), rtg.modes.RTGMF_DEFAULT);
+        if (screen.mode_ids[0] == 0) {
+            if (scanout == .virtio) virtio.stop(&screen.scanout.virtio);
+            return err.RTGERR_NO_MEMORY;
+        }
     }
-    screen.modes[screen.current].flags = rtg.boards.RTGMF_DEFAULT;
     take(screen, screen.current);
 
     // At most as many pictures of the largest mode as the board asks for,
@@ -2199,8 +2210,8 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
     // display here reaches. Not cleared: each is cleared before it is
     // first shown. The composed frame is taken as it is needed, the
     // cursor plane's two images now.
-    var frame: usize = 0;
-    for (screen.modes[0..screen.mode_count]) |*mode| frame = @max(frame, @as(usize, mode.pitch) * mode.height);
+    var frame: usize = @as(usize, screen.pitch) * screen.height;
+    for (screen.timings.modes[0..screen.timings.count]) |*timing| frame = @max(frame, @as(usize, rowBytes(screen, timing.width)) * timing.height);
     screen.frame_bytes = frame;
     const frames: u32 = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
     if (hasCursorPlane(scanout)) {
@@ -2237,13 +2248,11 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
     }
     board.region = .{
         .size = frames * frame,
-        .alignment = row_alignment,
+        .alignment = screen.alignment,
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED |
             rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY,
     };
     board.info.buffers = frames;
-    board.info.pixel_clock_hz = screen.modes[screen.current].pixel_clock_hz;
-    board.info.refresh_mhz = screen.modes[screen.current].refresh_mhz;
     engine.setUp(&screen.engine, sys);
     return err.RTGERR_OK;
 }
@@ -2271,60 +2280,55 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     screen.cursor = null;
 }
 
-/// Mode `index` added to the board's list, `width` by `height` in the
-/// screen's format, its name the size - and the refresh, when another
-/// mode has the same size.
-fn addMode(screen: *Screen, board: *rtg.RtgBoard, index: u32, width: u32, height: u32) void {
-    const name = &screen.names[index];
-    var at = writeNumber(name, 0, width);
-    name[at] = 'x';
-    at = writeNumber(name, at + 1, height);
-    if (screen.timings.count > 1) {
-        const rate = screen.timings.modes[index].hz();
-        for (screen.timings.modes[0..screen.timings.count], 0..) |*other, i| {
-            if (i == index or other.width != width or other.height != height) continue;
-            name[at] = '@';
-            at = writeNumber(name, at + 1, rate);
-            break;
-        }
-    }
-    name[at] = 0;
-    screen.modes[index] = .{
-        .node = .{ .name = @ptrCast(name), .pri = 0 },
-        .id = index + 1,
-        .width = width,
-        .height = height,
-        .format = screen.format,
-        .pitch = std.mem.alignForward(u32, width * screen.bytes, row_alignment),
+/// An EDID's timing as the library takes a mode's.
+fn timingsOf(timing: *const edid.Timing) rtg.RtgTimings {
+    return .{
+        .pixel_clock_hz = timing.pixel_khz * 1000,
+        .h_active = timing.width,
+        .h_front = timing.h_front,
+        .h_sync = timing.h_sync,
+        .h_back = timing.h_back,
+        .v_active = timing.height,
+        .v_front = timing.v_front,
+        .v_sync = timing.v_sync,
+        .v_back = timing.v_back,
+        .flags = (if (timing.hsync_high) rtg.modes.RTGTM_HSYNC_HIGH else 0) |
+            (if (timing.vsync_high) rtg.modes.RTGTM_VSYNC_HIGH else 0),
+        .vic = timing.vic,
     };
-    screen.mode_count = index + 1;
-    screen.sys.AddTail(&board.modes, &screen.modes[index].node);
 }
 
-/// `value` in decimal into `into` from `at`; where it ends.
-fn writeNumber(into: []u8, at: usize, value: u32) usize {
-    var digits: [10]u8 = undefined;
-    var count: usize = 0;
-    var rest = value;
-    while (true) {
-        digits[count] = @intCast('0' + rest % 10);
-        count += 1;
-        rest /= 10;
-        if (rest == 0) break;
+/// Bytes a row of a buffer `width` pixels wide has: the pixels, rounded
+/// up to the board's alignment, as the library rounds a mode's.
+fn rowBytes(screen: *const Screen, width: u32) u32 {
+    const row = width * screen.bytes;
+    const step = screen.alignment;
+    return (row + step - 1) / step * step;
+}
+
+/// Which of the screen's modes the library numbers `id`; null for a
+/// number it gave none of them.
+fn indexOf(screen: *const Screen, id: u32) ?u32 {
+    const count = @max(screen.timings.count, 1);
+    for (screen.mode_ids[0..count], 0..) |mode_id, i| {
+        if (mode_id == id and id != 0) return @intCast(i);
     }
-    for (0..count) |i| into[at + i] = digits[count - 1 - i];
-    return at + count;
+    return null;
 }
 
 /// Mode `index` taken as the screen's: its picture, its rows, a frame's
-/// time.
+/// time. A display with one mode has its picture already.
 fn take(screen: *Screen, index: u32) void {
-    const mode = &screen.modes[index];
     screen.current = index;
-    screen.width = mode.width;
-    screen.height = mode.height;
-    screen.pitch = mode.pitch;
-    screen.frame_us = if (mode.refresh_mhz != 0) 1_000_000_000 / mode.refresh_mhz else 16_667;
+    screen.frame_us = 16_667;
+    if (index < screen.timings.count) {
+        const timing = &screen.timings.modes[index];
+        screen.width = timing.width;
+        screen.height = timing.height;
+        const refresh_mhz = timing.milliHz();
+        if (refresh_mhz != 0) screen.frame_us = 1_000_000_000 / refresh_mhz;
+    }
+    screen.pitch = rowBytes(screen, screen.width);
 }
 
 /// The modes of the monitor on the HDMI port (`monitor.zig`), from its
@@ -2367,10 +2371,12 @@ fn portModes(comptime port: type, screen: *Screen, own: edid.Timing) monitor.Lis
 
 /// The display brought up the first time in `mode` - or changed to it -
 /// black: the composed frame cleared, given back once a buffer is shown.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
     const screen = screenOf(board);
-    const index = mode.id -% 1;
-    if (index >= screen.mode_count or mode.format != screen.format) return err.RTGERR_BAD_MODE;
+    const index = indexOf(screen, mode.id) orelse return err.RTGERR_BAD_MODE;
+    // A row as the library makes one of a buffer: what this driver sized
+    // its frames by.
+    if (mode.format != screen.format or mode.pitch != rowBytes(screen, mode.width)) return err.RTGERR_BAD_MODE;
     const changed = index != screen.current;
     take(screen, index);
     if (flips(screen) and (screen.scanning == 0 or changed)) {
@@ -2386,12 +2392,6 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) callconv(.c) i32 {
         screen.scanning = 0;
         if (!begin(screen, @intFromPtr(black))) return err.RTGERR_NO_DISPLAY;
     }
-    board.info.width = screen.width;
-    board.info.height = screen.height;
-    board.info.format = screen.format;
-    board.info.pitch = screen.pitch;
-    board.info.pixel_clock_hz = screen.modes[index].pixel_clock_hz;
-    board.info.refresh_mhz = screen.modes[index].refresh_mhz;
     return err.RTGERR_OK;
 }
 

@@ -31,7 +31,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.4 (16.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.5 (16.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
@@ -318,18 +318,21 @@ fn printTurn(dl: *DosBase, info: *const rtg.RtgBoardInfo) void {
     _ = Printf(dl, "%-12s %s\n", .{ "Turned", how });
 }
 
+/// The most modes of a board that are listed.
+const modes_listed = 32;
+
 fn printModes(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
-    var mode = rb.NextBoardMode(board, null);
-    if (mode == null) {
+    var found: [modes_listed]rtg.RtgMode = undefined;
+    const there = rb.GetBoardModes(board, &found, found.len);
+    if (there == 0) {
         _ = Printf(dl, "%-12s none\n", .{"Modes"});
         return;
     }
-    _ = dl.PutStr("Modes         id  size      format     row    clock    refresh  how it is\n");
-    while (mode) |m| : (mode = rb.NextBoardMode(board, m)) {
-        _ = Printf(dl, "             %3d  %4dx%-4d %-6s  %6d  %4d MHz  %2d.%03d Hz  ", .{
+    _ = dl.PutStr("Modes         id  name            format     row    clock    refresh  how it is\n");
+    for (found[0..@min(there, found.len)]) |*m| {
+        _ = Printf(dl, "             %3d  %-14s  %-6s  %6d  %4d MHz  %2d.%03d Hz  ", .{
             m.id,
-            m.width,
-            m.height,
+            @as([*:0]const u8, @ptrCast(&m.name)),
             formatName(m.format),
             m.pitch,
             m.pixel_clock_hz / 1_000_000,
@@ -424,8 +427,10 @@ const state_words = [_]Named{
 };
 
 const mode_words = [_]Named{
-    .{ .bit = rtg.boards.RTGMF_CURRENT, .word = "current" },
-    .{ .bit = rtg.boards.RTGMF_DEFAULT, .word = "default" },
+    .{ .bit = rtg.modes.RTGMF_CURRENT, .word = "current" },
+    .{ .bit = rtg.modes.RTGMF_DEFAULT, .word = "default" },
+    .{ .bit = rtg.modes.RTGMF_TURNED, .word = "turned" },
+    .{ .bit = rtg.modes.RTGMF_INTERLACED, .word = "interlaced" },
 };
 
 const cap_words = [_]Named{
