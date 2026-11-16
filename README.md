@@ -191,7 +191,11 @@ and 2D-DMA - and where a display reads its picture out of RAM, on the
 | `rgb` | the Waveshare 7B's 1024×600 RGB panel |
 | `dcs` on `qspi` | the ES3C35P's 480×320 SPI panel |
 | `dsi` | the ESP32-P4's MIPI DSI panels, and HDMI through the Olimex's LT8912B |
-| `fb` | the VisionFive 2's HDMI at 1920×1080, the Compute Module 5's first HDMI port in the monitor's own mode, QEMU's virtio GPU - on a memory-mapped transport (`virtio-gpu-device`) or on PCI (`virtio-gpu-pci`), the pointer the host's own - its `ramfb`, and the framebuffer a UEFI firmware lit |
+| `jh7110` | the VisionFive 2's HDMI port, in the monitor's own mode |
+| `bcm2712` | the Compute Module 5's first HDMI port, in the monitor's own mode |
+| `virtio` | QEMU's virtio GPU - on a memory-mapped transport (`virtio-gpu-device`) or on PCI (`virtio-gpu-pci`), the pointer the host's own |
+| `fw` | the framebuffer a UEFI firmware lit, and QEMU's `ramfb` |
+| `amd` | an AMD display behind the framebuffer its firmware lit, flipped between that buffer and a frame of the device's own |
 | `qemu` | Espressif QEMU's display |
 
 **rta.library** keeps the sound outputs and ways in. Each is a sink or a
@@ -697,7 +701,7 @@ what the desktop is drawn on. Those pages are mapped so that the writes
 to them are gathered into bursts rather than each reaching the machine on
 its own. No mode is set, and a firmware that lit none leaves the machine
 on its serial console, which is what `./zig build q35` runs it as. Behind
-an AMD display engine (`rtg_driver/fbboard/dcn.zig`) the driver writes
+an AMD display engine (`rtg_driver/amdboard/dcn.zig`) the driver writes
 two parts of it. The audio side of the link the firmware lit, which the
 firmware leaves switched off, so that a monitor's speakers can be played
 over HDMI. And where the display reads: from start-up it is flipped

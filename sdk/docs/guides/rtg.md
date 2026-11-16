@@ -33,7 +33,7 @@ reference: [rtg](../autodocs/rtg.md) for a program's, and
         |
   rtg.library          boards, modes, buffers, showing them
         |
-  a driver             "rgb", "dcs" on "qspi", "dsi", "qemu", "fb", ...
+  a driver             "rgb", "dcs" on "qspi", "dsi", "fw", "virtio", ...
 ```
 
 rtg.library knows displays and nothing about drawing. A buffer is memory
@@ -73,7 +73,7 @@ Three kinds of thing the library keeps:
 
 - A **driver** is a module that knows one kind of display hardware. It
   is a constant description (`RtgDriverSpec`) behind a ROM tag, under a
-  name ("rgb", "dcs", "dsi", "qemu", "fb"), with a table of what it
+  name ("rgb", "dcs", "dsi", "qemu", "fw", "virtio"), with a table of what it
   takes. The library puts the drivers of the ROM on its list at its own
   init (`AddRtgDriver`), and nothing of a driver runs until a device is
   offered to it.
@@ -183,8 +183,8 @@ and format, and refuses the others with `RTGERR_NOT_DISPLAYABLE` or
 `RTGERR_BAD_FORMAT`.
 
 The panels of this machine have one mode each - the 3.5" board has two,
-upright and on its side. The emulator's RAM display (the `fb` driver,
-below) has the one its board names. A board with a connector - an HDMI
+upright and on its side. The emulator's RAM display and a firmware's
+framebuffer (the `fw` driver, below) have the one their board names. A board with a connector - an HDMI
 port, the virtio GPU's window - has the modes the monitor on it names
 that the board can make (below); `Rtg MODES` lists them.
 
@@ -267,7 +267,8 @@ driver describes as a region:
   buffers come only from memory a DMA engine reaches (`MEMF_DMA`), for a
   display that reads nothing else.
 
-The `fb` driver works that way too, from `MEMF_DMA` memory - on the 64-bit
+The drivers of the 64-bit machines' displays (`fw`, `virtio`, `jh7110`,
+`bcm2712`, `amd`) work that way too, from `MEMF_DMA` memory - on those
 machines what is below 4 GiB: at most as many pictures as the board's
 `RTGA_Buffers` asks for, 16 on those machines, each taken when it is
 allocated. Its own frame, the one it lays the pointer into (below), it
@@ -295,7 +296,7 @@ handed an rtg buffer by pointer and nothing is translated. The fields past
 the head are the library's and the board's.
 
 The pixel formats are `PixelFormat`: `rgb565` on the ESP32s' panels,
-`bgra32` on the displays of the RISC-V 64 machines (the `fb` driver takes
+`bgra32` on the displays of the 64-bit machines (the `fw` driver takes
 either), and `rgba32`, `rgb24`, `bgr24`, `argb1555`, `indexed8`, `gray8`
 and `mono1` for buffers that are not shown. A pixel's bytes lie in
 memory in the order its format's name gives its channels; graphics.library
@@ -318,7 +319,8 @@ things with its picture:
   until it goes over the bus. The emulator's display is handed on the same
   way: its refresh tells the emulator that the buffer on show changed.
 - **It reads the picture out of RAM** every frame by itself, wherever it
-  is told the picture is: the `fb` boards. There is no stream to keep fed
+  is told the picture is: the boards of the 64-bit machines' displays.
+  There is no stream to keep fed
   and nothing to send, so showing a buffer is naming its address, and
   what the CPU writes into the buffer shown is on the glass by the next
   frame - once it is out of the caches, where the display does not see
@@ -352,7 +354,7 @@ if (rb.ShowBitMap(board, picture) != rtg.errors.RTGERR_OK) return dos.RETURN_FAI
 board that is a flip: the new buffer is taken up at the start of a frame,
 whole, and the call returns when it has - from then on the old one is not
 read and may be drawn into. Nothing is copied and nothing tears. On a
-sending board the whole new buffer is sent. An `fb` board is told the
+sending board the whole new buffer is sent. An `fw` board is told the
 new buffer's address, and a flip from one picture to another waits out a
 frame by the clock before the call returns.
 
@@ -464,6 +466,18 @@ follows the monitor's own buttons; that question takes some tenth of a
 second, and where the monitor does not answer `brightness` is what was
 last heard or set. `C:Backlight` reads and sets the brightness.
 
+**The link's sound.** A link that carries sound beside the picture - an
+HDMI port - has `RTGBC_AUDIO`. The sound's driver is another module,
+which feeds the samples its own way; what the link has to send with
+them is the display's driver's. `SetBoardAudio(board, &format)` has the
+link carry that sound from now on - its sample rate, channels and bits
+a sample (`RtgAudio`) - and `SetBoardAudio(board, null)` none.
+`RTGERR_NO_MODE` says the link is not up, `RTGERR_NOT_SUPPORTED` that
+it does not carry that format, or that the monitor is sent no packets.
+The driver keeps the format and sets its side up again when the mode
+changes while the sound plays. Whether the monitor plays sound is in
+`GetBoardMonitor` (`RTGMON_AUDIO`).
+
 ## Several buffers at once: bands
 
 ```zig
@@ -525,7 +539,7 @@ with `RTGERR_NOT_SUPPORTED`. A board has bands where its display reads
 several buffers itself, and wherever the library composes its picture:
 each line is then fetched from the band that covers it.
 
-An `fb` board composes the bands into its extra frame, each row from the
+An `fw` board composes the bands into its extra frame, each row from the
 buffer its band shows, and the display reads that frame; a refresh
 copies the rows the bands show into it. Without memory for that frame
 the call answers `RTGERR_NO_MEMORY` and the display goes on showing what
@@ -685,18 +699,19 @@ finger makes the copy when an icon is first dragged. The picture goes
 into the copy through the data cache and reaches memory a whole line at
 a time, so moving a pointer leaves the stream its bandwidth.
 
-An `fb` board whose display is not flipped - QEMU's ramfb, a
-firmware's framebuffer - is composed by the library the same way: while
+A display that is not flipped - QEMU's ramfb, a firmware's
+framebuffer, the `fw` driver's two - is composed by the library the same way: while
 a pointer or the overlay is shown, or the picture is several bands, the
 display reads a frame of the driver's own that the library's picture is
 fetched into, and with nothing over the picture it reads the shown
 buffer itself, and nothing is copied; a firmware's framebuffer is that
 frame already, and is always read.
 
-An `fb` board whose display is flipped - an HDMI port's, which reads
-RAM past the caches; QEMU's virtio GPU, whose pictures are copies the
-emulator keeps; an AMD display behind a firmware's framebuffer, which
-would be copied into while it is read - never reads a buffer anybody
+A display that is flipped - an HDMI port's, which reads RAM past the
+caches (`jh7110`, `bcm2712`); QEMU's virtio GPU, whose pictures are
+copies the emulator keeps (`virtio`); an AMD display behind a
+firmware's framebuffer, which would be copied into while it is read
+(`amd`) - never reads a buffer anybody
 draws in. It reads one of two frames, and the library makes the next
 picture in the other: what was written since the last one, and what
 went into that one, fetched from the bands with the overlay and the
@@ -1006,7 +1021,15 @@ handed over then, and goes on showing what it showed.
 `FindStandardTimings(width, height, refresh_hz, &timings)` answers the
 standard's timings for a size at a refresh - CEA-861's, with its number
 in `vic`, or VESA's - for a driver that has a size and no monitor's
-word for it.
+word for it. For a link that names its mode to the monitor and carries
+sound, two calls more: `BuildAviInfoFrame(&timings, flags, &frame)`
+writes the AVI infoframe for a mode - RGB, the picture's aspect, the
+mode's number, and by `flags` a computer's picture (`RTGAVI_IT`), the
+range said (`RTGAVI_RANGE_LIMITED`, `RTGAVI_RANGE_FULL`) and the number
+left out (`RTGAVI_NO_VIC`) - as `RTG_AVI_BYTES` bytes the driver puts
+where its link takes them; and `HdmiAudioClock(pixel_clock_hz,
+sample_rate, &n, &cts)` answers the two numbers a monitor rebuilds the
+sample clock from.
 
 ```zig
 var timings: rtg.RtgTimings = .{};
@@ -1129,6 +1152,7 @@ calls nothing: its board is waited for by the clock.
 | `power` | the display asleep and awake again - and blank, on a board the library composes nothing for; without it the library blanks and the board never sleeps |
 | `set_brightness` | the backlight, with how many levels it has in the board's description (`brightness_steps`) |
 | `brightness` | the brightness read from a display that keeps one by itself, a monitor; without it the brightness is what the library last set |
+| `audio` | the link's side of the sound it carries (`SetBoardAudio`): the numbers the monitor rebuilds the sample clock from, the audio infoframe, the sample packets on - or off again |
 | `mirror` | mirroring the picture in the board's own hardware, for the axes the description names (`caps`); the library mirrors the rest of a picture it composes |
 | `stats`, `control` | the counters, and the driver's own requests |
 | `pointer` (`RtgPointerOps`: `set`, `move`, `show`) | a pointer the board lays itself |
@@ -1146,17 +1170,23 @@ calls nothing: its board is waited for by the clock.
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
 | Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; a rectangle that changed is fetched from rtg.library in RGB565 and widened into it, by the 2D-DMA where it is large | composed by rtg.library into the copy, one block of which is the chain |
 | QEMU | `qemu` | the emulator's display reads memory of its own: the shown buffer while nothing lies over the picture, else a frame rtg.library composes | composed by the library into that frame |
-| VisionFive 2 on HDMI, the monitor's mode | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | composed by rtg.library into one of two frames, which the controller is flipped between |
-| QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | one whole buffer read by the emulator; else composed by rtg.library into a frame of the driver's |
+| VisionFive 2 on HDMI, the monitor's mode | `jh7110` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | composed by rtg.library into one of two frames, which the controller is flipped between |
+| QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fw` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | one whole buffer read by the emulator; else composed by rtg.library into a frame of the driver's |
 
 The `qemu` driver takes the ESP32-S3 emulator's display, by its chip.
-The `fb` driver takes a panel part of a chip it drives
-(`CHIP_JH7110_DC8200`, `CHIP_BCM2712_HVS`, `CHIP_VIRTIO_GPU`,
-`CHIP_QEMU_RAMFB`, `CHIP_UEFI_FB`) and a virtio GPU's function on PCI,
-and makes a board of each it is offered: QEMU's virt machine started
-with a virtio GPU and the ramfb has two, `fb.0` on the GPU and `fb.1`,
-the last, on the ramfb. On the
-VisionFive 2 it says on the raw port when the power domain or the
+Each of the 64-bit machines' displays has a driver of its own, which
+takes the panel part of its chip: `jh7110` the JH7110's display
+controller (`CHIP_JH7110_DC8200`), `bcm2712` the BCM2712's video scaler
+(`CHIP_BCM2712_HVS`), `virtio` a virtio GPU (`CHIP_VIRTIO_GPU`) and a
+virtio GPU's function on PCI, `fw` QEMU's ramfb (`CHIP_QEMU_RAMFB`) and
+the framebuffer a firmware lit (`CHIP_UEFI_FB`). `amd` is offered a
+firmware's framebuffer before `fw` and takes it where the engine reading
+it is an AMD display it knows; elsewhere it declines and `fw` has it.
+Each makes a board of what it is offered, named for the driver: QEMU's
+virt machine started with a virtio GPU and the ramfb has two,
+`virtio.0` and `fw.0`. A driver stops its display when its device is
+taken from it. On the
+VisionFive 2 `jh7110` says on the raw port when the power domain or the
 transmitter's PLL does not come up, and when no monitor is plugged in.
 `./zig build virt` starts QEMU without a display, so the virt machine's
 ramfb is there only on a QEMU started with `-device ramfb`; without it
@@ -1211,7 +1241,7 @@ and frames lose their syncs.
 ## Tools
 
 - `C:Rtg` lists the drivers, the devices - each with the driver that
-  took it - and the boards; `Rtg fb.0` prints that board in full - its
+  took it - and the boards; `Rtg fw.0` prints that board in full - its
   device, what it can do, its modes, its display memory cut into
   buffers, and how the stream is doing. `DRIVERS`, `DEVICES` and
   `BOARDS` print one list, `MODES`, `MEMORY` and `STATS` one section,
