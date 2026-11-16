@@ -89,7 +89,7 @@ var screen: handover.Framebuffer = .{};
 /// The panel part the kernel writes for that framebuffer, into the slot
 /// the board's list keeps for it: the display driver asks
 /// expansion.library for it and copies the picture into it
-/// (`src/rom/libs/rtg_driver/fbboard/uefi.zig`). The tags are here, in the
+/// (`src/rom/libs/rtg_driver/fwboard/uefi.zig`). The tags are here, in the
 /// kernel's own memory, because they say what the firmware did and not
 /// what the board knows - and because SystemTags promises a list that
 /// outlives everything and was never allocated.

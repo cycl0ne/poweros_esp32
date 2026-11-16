@@ -63,7 +63,9 @@ const rom = @import("../../rom/modules.zig");
 // What every image has, what draws, the pipe and the clock of things that move, which this machine keeps in its ROM,
 // and the drivers of this board's parts.
 pub const modules = rom.core ++ rom.screen ++ rom.pipe ++ rom.motion ++ .{
-    @import("../../rom/libs/rtg_driver/fbboard/fbboard.zig"),
+    @import("../../rom/libs/rtg_driver/fwboard/fwboard.zig"),
+    @import("../../rom/libs/rtg_driver/virtioboard/virtioboard.zig"),
+    @import("../../rom/libs/rtg_driver/amdboard/amdboard.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
     @import("../../rom/resources/power/power.zig"),
     @import("../../rom/resources/ps2/ps2.zig"),

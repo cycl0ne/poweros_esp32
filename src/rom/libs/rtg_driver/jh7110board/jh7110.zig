@@ -442,12 +442,14 @@ fn infoframe(mode: *const rtg.RtgTimings) void {
     for (frame, 0..) |byte, i| hdmi(PACKET_ADDR + i).* = byte;
 }
 
-/// The display brought up in `mode` - its pixel clock one the
-/// transmitter's PLL makes (`phy.sends`) - showing the picture at
-/// `address`, 32 bits a pixel, rows `pitch` bytes apart, below 4 GiB and
-/// out of the caches. With the display up, it changes to `mode`.
-/// `waiter.wait(micros)` waits that long.
-pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, address: usize, pitch: u32, waiter: anytype) Failure {
+/// The port's link brought up for `mode` - its pixel clock one the
+/// transmitter's PLL makes (`phy.sends`): the panel stopped, the
+/// transmitter's PHY and PLLs set, the mode's timing and infoframe sent,
+/// and the controller's pixel clock the mode's own. With the display up,
+/// it changes to `mode`. `waiter.wait(micros)` waits that long. The
+/// controller's planes are started after it (`startPlanes`), which waits
+/// for nothing.
+pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, waiter: anytype) Failure {
     if (!on_jh7110) return .power;
     const pll = phy.find(timing.khz(mode)) orelse return .clock;
     const woken = wake(sys, waiter);
@@ -481,9 +483,17 @@ pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, address: usize, pitch:
 
     // The controller's pixel clock from the PLL: the mode's own.
     pixelClock(system.VOUTCLK_DC8200_PIX0, PIX_FROM_HDMI);
+    return .none;
+}
 
-    // The controller: the mode from the picture at `address`, to the
-    // transmitter (sf_display_init).
+/// The controller started in `mode` after the link is up (`start`),
+/// showing the picture at `address`, 32 bits a pixel, rows `pitch` bytes
+/// apart, below 4 GiB and out of the caches: the mode from that picture,
+/// to the transmitter (sf_display_init). It writes the planes' hold and
+/// commit bits and leaves the cursor and the overlays off, and waits for
+/// nothing: for whoever holds the planes' lock, which then puts the
+/// cursor and the video layer back.
+pub fn startPlanes(mode: *const rtg.RtgTimings, address: usize, pitch: u32) void {
     const size = mode.h_active | mode.v_active << 15;
     const hsync_start = mode.h_active + mode.h_front;
     const vsync_start = mode.v_active + mode.v_front;
@@ -534,7 +544,14 @@ pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, address: usize, pitch:
     dc(0x24FC).* = 0x0000_0000;
     dc(0x24E8).* = 0x0000_0C24;
     dc(PANEL_START).* = 0x0000_0001;
-    return .none;
+}
+
+/// The controller stopped, on a port that runs: the panel no longer
+/// started, so no frame is read and no picture sent, and none of its
+/// interrupts raised. For whoever holds the planes' lock.
+pub fn stop() void {
+    dc(INTERRUPT_ENABLE).* = 0;
+    dc(PANEL_START).* = 0;
 }
 
 /// The pixel clock - the TMDS clock, with eight bits a colour - the

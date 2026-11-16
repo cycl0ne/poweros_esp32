@@ -42,7 +42,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const err = rta.errors;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
-const display = @import("../../rtg_driver/fbboard/bcm2712.zig");
+const display = @import("../../rtg_driver/bcm2712board/bcm2712.zig");
 const dma40 = @import("dma40.zig");
 
 const MODULE_NAME = "rta-hdmi";

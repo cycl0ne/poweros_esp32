@@ -19,11 +19,10 @@
 //! copied into it: the whole of it when another buffer is shown, and a
 //! rectangle alone when the buffer shown is refreshed - which is what the
 //! virtio GPU does with its copy in the emulator, and the reason that kind
-//! rather than the ramfb's is the one this follows. The copying is
-//! `fbboard.zig`'s, which holds the pictures and the engine that moves
-//! them. Where the engine behind the buffer is an AMD display engine
-//! (`dcn.zig`), it is told where to read after all, and is flipped
-//! between this buffer and a frame of the device's own.
+//! rather than the ramfb's is the one this follows. Where the engine
+//! behind the buffer is an AMD display engine (`dcn.zig`), it is told
+//! where to read after all, and is flipped between this buffer and a
+//! frame of the device's own.
 //!
 //! **The memory is the display's, not the machine's.** It is never handed
 //! to exec, and the kernel's map has it write-combining

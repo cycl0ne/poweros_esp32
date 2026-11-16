@@ -50,9 +50,9 @@ test {
     _ = @import("libs/rtg_driver/dsiboard/engine.zig");
     _ = @import("libs/rtg_driver/dsiboard/blend.zig");
     _ = @import("libs/rtg_driver/dsiboard/chain.zig");
-    _ = @import("libs/rtg_driver/fbboard/phy.zig");
-    _ = @import("libs/rtg_driver/fbboard/bcm2712.zig");
-    _ = @import("libs/rtg_driver/fbboard/virtio.zig");
+    _ = @import("libs/rtg_driver/jh7110board/phy.zig");
+    _ = @import("libs/rtg_driver/bcm2712board/bcm2712.zig");
+    _ = @import("libs/rtg_driver/virtioboard/virtio.zig");
     _ = @import("devs/keyboard/rawkey.zig");
     _ = @import("devs/mouse/events.zig");
     _ = @import("devs/input/events.zig");

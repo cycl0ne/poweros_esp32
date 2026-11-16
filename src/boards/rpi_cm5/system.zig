@@ -216,7 +216,7 @@ const fan = [_]Tag{
 
 /// The HDMI port's picture when the monitor gives no EDID: 1920x1080 at
 /// 60 Hz. With one, the monitor's modes are the board's, and the screen
-/// is the one it prefers (`rtg_driver/fbboard/monitor.zig`).
+/// is the one it prefers.
 const screen = struct {
     pub const width: u32 = 1920;
     pub const height: u32 = 1080;
@@ -225,8 +225,8 @@ const screen = struct {
 /// The display behind the IO board's first HDMI port (HDMI0): the
 /// BCM2712's video scaler at 0x10_7C58_0000, which reads its picture out
 /// of RAM, the HDMI0 controller, and pixel valve 0 between them, which
-/// raises GIC interrupt 133 at each frame - what the fb rtg driver is
-/// told comes with it (`rtg_driver/fbboard/bcm2712.zig`). Its clocks are
+/// raises GIC interrupt 133 at each frame - what the bcm2712 rtg driver
+/// is told comes with it (`rtg_driver/bcm2712board/`). Its clocks are
 /// the VideoCore firmware's, asked through the mailbox the RTC is read
 /// through.
 const display = [_]Tag{

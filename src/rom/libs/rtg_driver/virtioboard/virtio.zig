@@ -542,13 +542,16 @@ pub fn giveBack(gpu: *Gpu) void {
 }
 
 /// The device reset and brought up with both queues, in a block of its
-/// own. False, and nothing kept, when it will not come up.
+/// own. False, and nothing kept, when it will not come up: a function on
+/// PCI is given back then, without memory for the block too.
 pub fn start(gpu: *Gpu, sys: *ExecBase) bool {
     gpu.sys = sys;
     sys.InitSemaphore(&gpu.lock);
     gpu.memory_size = layout.bytes + page;
+    // The device reads the queues itself: memory it reaches.
     gpu.memory = sys.AllocMem(gpu.memory_size, exec.MEMF_DMA | exec.MEMF_CLEAR) orelse {
         gpu.memory_size = 0;
+        giveBack(gpu);
         return false;
     };
     const base = std.mem.alignForward(usize, @intFromPtr(gpu.memory.?), page);

@@ -221,7 +221,7 @@ const ethernet0 = [_]Tag{
 
 /// The HDMI port's picture when the monitor gives no EDID: 1920x1080 at
 /// 60 Hz. With one, the monitor's modes are the board's, and the screen
-/// is the one it prefers (`rtg_driver/fbboard/monitor.zig`) - so the
+/// is the one it prefers - so the
 /// system list names no screen size.
 const screen = struct {
     pub const width: u32 = 1920;

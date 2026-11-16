@@ -16,7 +16,7 @@
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;
-const display = @import("../../rtg_driver/fbboard/jh7110.zig");
+const display = @import("../../rtg_driver/jh7110board/jh7110.zig");
 
 /// The transmitter: register n is at n times four.
 const HDMI: usize = 0x2959_0000;
