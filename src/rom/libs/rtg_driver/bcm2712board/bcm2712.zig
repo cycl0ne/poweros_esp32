@@ -5,7 +5,7 @@
 //! list and composes its planes; pixel valve 0, which times the HVS's
 //! first channel out as a mode; and the HDMI0 controller with its PHY,
 //! whose PLL makes the pixel clock. The monitor's EDID comes over the
-//! port's DDC, a Broadcom BSC I2C controller of its own (`readEdid`).
+//! port's DDC, a Broadcom BSC I2C controller of its own (`ddc.zig`).
 //!
 //! The steps and their values are Linux's (the vc4 driver of Raspberry
 //! Pi's 6.12 tree: vc4_hvs.c, vc4_plane.c, vc4_crtc.c, vc4_hdmi.c and
@@ -21,7 +21,7 @@
 //! the firmware leaves stopped where no monitor was awake as it started,
 //! and which `startDisp` then asks for rather than give the display up.
 //!
-//! **The display list** is in the HVS's own memory, 0x4000 into its
+//! **The display list** (`list.zig`) is in the HVS's own memory, 0x4000 into its
 //! registers, from word 32 on (the bootloader's are the 32 before): the
 //! picture as a plane, the overlay - a dragged icon - as a second plane
 //! over it, the cursor as a third over both, and the end. A plane is nine
@@ -69,11 +69,11 @@
 //! go on sending the picture.)
 //!
 //! **The monitor's brightness** is its own, asked over the DDC with VESA's
-//! DDC/CI (`feature`, `setFeature`): its MCCS control 0x10, which a
+//! DDC/CI (`ddc.feature`, `ddc.setFeature`): its MCCS control 0x10, which a
 //! monitor that takes DDC/CI at all has. One that does not answers
 //! nothing.
 //!
-//! **The sound** (`audioStart`) goes into the controller's MAI FIFO,
+//! **The sound** (`sound.zig`) goes into the controller's MAI FIFO,
 //! which the sound's driver feeds IEC 958 subframes over a DMA channel;
 //! the controller sends them as audio sample packets, with the audio
 //! infoframe and the numbers the monitor rebuilds the sample clock from
@@ -93,11 +93,14 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const timing = @import("timing.zig");
+const ddc = @import("ddc.zig");
+const sound = @import("sound.zig");
+const list = @import("list.zig");
 
 /// Whether this is built for the AArch64 machines, whose BCM2712 waking
 /// the display drives. The driver is built for every chip, which picks
 /// its display at run time; elsewhere the display does not wake.
-const on_bcm2712 = sdk.hardware.chip == .a64psci;
+pub const on_bcm2712 = sdk.hardware.chip == .a64psci;
 
 /// The VideoCore's mailbox, and what the display asks its firmware: to
 /// let go of the display it drives itself, and the clocks' rates - the
@@ -144,47 +147,21 @@ const DLIST = 0x4000;
 const list_start: u32 = 32;
 
 /// A plane's words (vc6_plane_mode_set), unity scale, linear RGBA8888.
-const CTL0_END: u32 = 1 << 31;
-const CTL0_VALID: u32 = 1 << 30;
-const CTL0_NEXT_SHIFT = 24;
-const CTL0_ALPHA_MASK_FIXED: u32 = 3 << 18;
-const CTL0_UNITY: u32 = 1 << 15;
-const CTL0_ORDER_ARGB: u32 = 2 << 13;
-const PIXEL_FORMAT_RGBA8888: u32 = 7;
-const CTL2_PREMULT: u32 = 1 << 29;
-const CTL2_ALPHA_MIX: u32 = 1 << 28;
-const CTL2_ALPHA_SHIFT = 4;
-const ALPHA_OPAQUE: u32 = 0xFFF;
-const CONTEXT: u32 = 0xC0C0_C0C0;
-const PTR0_UPM_BASE_SHIFT = 16;
-const PTR0_UPM_HANDLE_SHIFT = 10;
-pub const plane_words = 9;
+pub const CTL0_END: u32 = 1 << 31;
+
 /// Where each word is in a plane.
 const W_CTL0 = 0;
-const W_POS0 = 1;
-const W_CTL2 = 2;
-const W_POS2 = 3;
-const W_PTR0 = 5;
-const W_PTR1 = 6;
-const W_PTR2 = 7;
+
 /// The picture's plane first, the overlay's over it, the cursor's over
 /// both, then the end.
-const picture_plane = list_start;
-const overlay_plane = list_start + plane_words;
-const cursor_plane = list_start + 2 * plane_words;
-const list_end = list_start + 3 * plane_words;
-/// A plane read backwards: each row (in its position word), and the rows
-/// (in its first pointer word).
-const POS0_HFLIP: u32 = 1 << 15;
-const PTR0_VFLIP: u32 = 1 << 31;
+pub const picture_plane = list_start;
+pub const overlay_plane = list_start + list.plane_words;
+pub const cursor_plane = list_start + 2 * list.plane_words;
+const list_end = list_start + 3 * list.plane_words;
 
-/// The HVS's prefetch memory, in units of 256 bytes, two lines a plane:
-/// the picture's from 0 - room for a row of 4K - then the cursor's and
-/// the overlay's, each as a handle of its own.
-const UPM_UNIT = 256;
 const upm_picture: u32 = 0;
-const upm_cursor: u32 = 128;
-const upm_overlay: u32 = 136;
+pub const upm_cursor: u32 = 128;
+pub const upm_overlay: u32 = 136;
 
 /// Pixel valve 0: its control, its vertical control, the mode's timing,
 /// its interrupts, the pixel mux and the pipe's start.
@@ -218,25 +195,21 @@ const PV_PIPE_INIT: u32 = 1 << 8 | 1 << 4 | 1 << 0;
 const pv_fifo_level: u32 = 64 - 3 * 6;
 
 /// The HDMI0 controller's blocks.
-const HDMI: usize = 0x10_7C70_1400;
+pub const HDMI: usize = 0x10_7C70_1400;
 const HDMI_DVP: usize = 0x10_7C70_1000;
 const HDMI_PHY: usize = 0x10_7C70_1D00;
 const HDMI_RM: usize = 0x10_7C70_2000;
 const HDMI_CSC: usize = 0x10_7C70_0100;
-const HDMI_HD: usize = 0x10_7C72_0000;
+pub const HDMI_HD: usize = 0x10_7C72_0000;
 /// The DVP's clock gates, one bit for each port's 108 MHz, set to stop it.
 const DVP_MISC_CONFIG: usize = 0x10_7C70_0008;
 const DVP_HDMI0_GATE: u32 = 1 << 3;
 
 const FIFO_CTL = 0x07C;
-const MAI_CHANNEL_MAP = 0x0A4;
-const MAI_CONFIG = 0x0A8;
-const AUDIO_PACKET_CONFIG = 0x0C0;
+
 const RAM_PACKET_CONFIG = 0x0C4;
 const RAM_PACKET_STATUS = 0x0CC;
-const CRP_CFG = 0x0D0;
-const CTS_0 = 0x0D4;
-const CTS_1 = 0x0D8;
+
 const SCHEDULER_CONTROL = 0x0E8;
 const H_HORZA = 0x0EC;
 const H_HORZB = 0x0F0;
@@ -289,11 +262,8 @@ const CSC_LIMITED: u32 = 0x1B80;
 const CSC_LIMITED_OFFSET: u32 = 0x0400;
 
 const HD_DVP_CTL = 0x00;
-const HD_MAI_CTL = 0x10;
-const HD_MAI_THR = 0x14;
-const HD_MAI_FMT = 0x18;
+
 const HD_MAI_DATA = 0x1C;
-const HD_MAI_SMP = 0x20;
 const HD_VID_CTL = 0x44;
 const VID_ENABLE: u32 = 1 << 31;
 const VID_UNDERFLOW_ENABLE: u32 = 1 << 30;
@@ -304,29 +274,6 @@ const VID_CLRSYNC: u32 = 1 << 24;
 const VID_CLRRGB: u32 = 1 << 23;
 const VID_BLANKPIX: u32 = 1 << 18;
 const VID_BLANK_INSERT_EN: u32 = 1 << 16;
-
-/// The MAI, the sound's way in: its control, its FIFO's thresholds for
-/// the DMA's request and for panic, the stream's format, the FIFO's
-/// data word and its sample clock - 108 MHz times M over N.
-const MAI_RESET: u32 = 1 << 0;
-const MAI_ERRORF: u32 = 1 << 1;
-const MAI_ERRORE: u32 = 1 << 2;
-const MAI_ENABLE: u32 = 1 << 3;
-const MAI_CHNUM_SHIFT = 4;
-const MAI_FLUSH: u32 = 1 << 9;
-const MAI_WHOLSMP: u32 = 1 << 12;
-const MAI_CHALIGN: u32 = 1 << 13;
-const MAI_DLATE: u32 = 1 << 15;
-const MAI_THRESHOLDS: u32 = 0x10 << 23 | 0x10 << 15 | 0x1C << 7 | 0x1C;
-const MAI_FORMAT_PCM: u32 = 2;
-const MAI_CONFIG_REVERSED: u32 = 1 << 27 | 1 << 26;
-const AUDIO_ZERO_FLAT: u32 = 1 << 29;
-const AUDIO_ZERO_INACTIVE: u32 = 1 << 24;
-/// The B frame's preamble, as the subframes carry it (alsa-lib's 8).
-const AUDIO_B_FRAME: u32 = 8 << 10;
-const CRP_EXTERNAL_CTS: u32 = 1 << 24;
-/// The DVP's 108 MHz, which the MAI's sample clock is divided from.
-const AUDIO_CLOCK_HZ: u64 = 108_000_000;
 
 /// HDMI0's MAI FIFO as the DMA engine reaches it, and the request line
 /// it asks for data on: the 40-bit engine's DREQ 12 on the D0 stepping
@@ -340,16 +287,9 @@ const HDMI_PACKET: usize = 0x10_7C70_3800;
 const PACKET_STRIDE = 0x24;
 pub const INFOFRAME_VENDOR: u8 = 0x81;
 pub const INFOFRAME_AVI: u8 = 0x82;
-pub const INFOFRAME_AUDIO: u8 = 0x84;
 
-/// The monitor's SCDC, on the DDC: the TMDS configuration - the bit
-/// clock at a fortieth of the TMDS clock, the scrambling - and the
-/// scrambler's status.
-const SCDC_ADDRESS: u32 = 0x54;
-const SCDC_TMDS_CONFIG: u8 = 0x20;
 const SCDC_SCRAMBLER_STATUS: u8 = 0x21;
-const SCDC_SCRAMBLING: u8 = 1 << 0;
-const SCDC_RATIO_40: u8 = 1 << 1;
+pub const SCDC_SCRAMBLING: u8 = 1 << 0;
 
 /// The PHY (vc6_hdmi_phy_init): its PLL from the 54 MHz crystal, its
 /// VCO 8 to 12 GHz, ten bits a TMDS character.
@@ -384,45 +324,15 @@ const pll_misc = [_]u32{ 0x810C_6000, 0x00B8_C451, 0x4640_2E31, 0x00B8_C005, 0x4
 /// The port's DDC: a BSC I2C controller - the target's address, eight
 /// words of data each way, the count, its control, the transfer's enable
 /// and status, and more control.
-const DDC: usize = 0x10_7D50_8200;
-const BSC_CHIP_ADDRESS = 0x00;
-const BSC_DATA_IN = 0x04;
-const BSC_CNT = 0x24;
-const BSC_CTL = 0x28;
-const BSC_IIC_ENABLE = 0x2C;
-const BSC_DATA_OUT = 0x30;
-const BSC_CTLHI = 0x50;
-/// 97.5 kHz: the 390 kHz clock, divided; the data words four bytes each.
-const BSC_CTL_97K: u32 = 1 << 4 | 1 << 7;
-const BSC_CTL_INT_EN: u32 = 1 << 6;
-const BSC_CTL_READ: u32 = 1;
-const BSC_CTLHI_WORDS: u32 = 1 << 6;
-const BSC_ENABLE: u32 = 1 << 0;
-const BSC_DONE: u32 = 1 << 1;
-const BSC_NOACK: u32 = 1 << 2;
-/// What a piece of a transfer is to end and start with.
-const COND_NOSTOP: u32 = 1 << 4;
-const COND_NOSTART: u32 = 1 << 5;
-const COND_RESTART: u32 = 1 << 6;
-const bsc_chunk = 32;
-const EDID_ADDRESS: u32 = 0x50;
+pub const DDC: usize = 0x10_7D50_8200;
 
-/// The monitor's own controls over the DDC (VESA's DDC/CI): its address,
-/// the host's in a message, the opcodes - a control asked for, its
-/// answer, a control set - and the address each checksum starts from,
-/// the monitor's when it is written to and the host's when it answers.
-/// The monitor wants 40 ms to answer and 50 ms after a control is set.
-const DDCCI_ADDRESS: u32 = 0x37;
-const DDCCI_HOST: u8 = 0x51;
-const DDCCI_GET: u8 = 0x01;
-const DDCCI_REPLY: u8 = 0x02;
-const DDCCI_SET: u8 = 0x03;
-const DDCCI_WRITTEN_SUM: u8 = 0x6E;
-const DDCCI_ANSWER_SUM: u8 = 0x50;
-const ddcci_answer_us = 40_000;
-const ddcci_set_us = 50_000;
-/// MCCS's control for the brightness: the luminance.
-pub const VCP_BRIGHTNESS: u8 = 0x10;
+pub const BSC_CTL = 0x28;
+pub const BSC_IIC_ENABLE = 0x2C;
+pub const BSC_CTLHI = 0x50;
+/// 97.5 kHz: the 390 kHz clock, divided; the data words four bytes each.
+pub const BSC_CTL_97K: u32 = 1 << 4 | 1 << 7;
+
+pub const BSC_CTLHI_WORDS: u32 = 1 << 6;
 
 /// How many times a wait reads its register before it gives up.
 const patience: u32 = 1_000_000;
@@ -440,7 +350,7 @@ pub fn why(failure: Failure) [*:0]const u8 {
     };
 }
 
-fn at(base: usize, offset: usize) *volatile u32 {
+pub fn at(base: usize, offset: usize) *volatile u32 {
     return reg(base + offset);
 }
 
@@ -448,7 +358,7 @@ fn hvsDisp(offset: usize) *volatile u32 {
     return reg(HVS + DISP0 + offset);
 }
 
-fn word(index: u32) *volatile u32 {
+pub fn word(index: u32) *volatile u32 {
     return reg(HVS + DLIST + @as(usize, index) * 4);
 }
 
@@ -568,7 +478,7 @@ pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
 }
 
 /// Whether the HVS's first channel runs this driver's list.
-fn running() bool {
+pub fn running() bool {
     return hvsDisp(DISP_CTRL0).* & CTRL0_ENB != 0 and hvsDisp(DISP_LPTRS).* & 0xFFF == list_start;
 }
 
@@ -577,174 +487,6 @@ fn running() bool {
 pub fn monitor() bool {
     if (!on_bcm2712) return false;
     return at(HDMI, HOTPLUG).* & HOTPLUG_CONNECTED != 0;
-}
-
-// --- the DDC -----------------------------------------------------------------
-
-/// What each piece of a read of `length` bytes is to end and start with,
-/// as Linux's brcmstb_i2c_xfer has a read after its write: the first
-/// starts again after the write and keeps the bus, the ones after go on
-/// without a start, the last ends with a stop.
-pub fn readCondition(first: bool, last: bool) u32 {
-    if (first and last) return 0;
-    if (first) return COND_NOSTOP;
-    if (last) return COND_NOSTART;
-    return COND_NOSTART | COND_NOSTOP;
-}
-
-/// One piece of a transfer of `length` bytes started - written from
-/// the data words, or read into them - ending and starting as
-/// `condition` says. False when the target did not answer, or the
-/// controller did not finish in 100 ms (brcmstb_send_i2c_cmd).
-fn run(condition: u32, read: bool, length: usize, waiter: anytype) bool {
-    const control = BSC_CTL_97K | (if (read) BSC_CTL_READ else 0);
-    at(DDC, BSC_CTLHI).* = BSC_CTLHI_WORDS;
-    at(DDC, BSC_CNT).* = @intCast(length & 0x3F);
-    at(DDC, BSC_CTL).* = control | BSC_CTL_INT_EN;
-    at(DDC, BSC_IIC_ENABLE).* = condition | BSC_ENABLE;
-    var waited: u32 = 0;
-    while (at(DDC, BSC_IIC_ENABLE).* & BSC_DONE == 0 and waited < 100) : (waited += 1) waiter.wait(1000);
-    const status = at(DDC, BSC_IIC_ENABLE).*;
-    at(DDC, BSC_CTL).* = control;
-    at(DDC, BSC_CNT).* = 0;
-    at(DDC, BSC_IIC_ENABLE).* = 0;
-    return status & BSC_DONE != 0 and status & BSC_NOACK == 0;
-}
-
-/// Up to 32 bytes written, four to a data word, the first in its low
-/// byte.
-fn send(condition: u32, bytes: []const u8, waiter: anytype) bool {
-    var i: usize = 0;
-    while (i * 4 < bytes.len) : (i += 1) {
-        var data: u32 = 0;
-        for (0..4) |byte| {
-            if (i * 4 + byte < bytes.len) data |= @as(u32, bytes[i * 4 + byte]) << @intCast(byte * 8);
-        }
-        at(DDC, BSC_DATA_IN + i * 4).* = data;
-    }
-    return run(condition, false, bytes.len, waiter);
-}
-
-/// Up to 32 bytes read into `into`.
-fn receive(condition: u32, into: []u8, waiter: anytype) bool {
-    if (!run(condition, true, into.len, waiter)) return false;
-    var i: usize = 0;
-    while (i * 4 < into.len) : (i += 1) {
-        const data = at(DDC, BSC_DATA_OUT + i * 4).*;
-        for (0..4) |byte| {
-            if (i * 4 + byte < into.len) into[i * 4 + byte] = @truncate(data >> @intCast(byte * 8));
-        }
-    }
-    return true;
-}
-
-/// Block `number` of the monitor's EDID into `block` - 0 or 1, the two
-/// halves of its first segment: the offset written to the EDID's address,
-/// then the block read in pieces of 32 bytes. False when the monitor did
-/// not answer. Only once `wake` has the DDC ready.
-pub fn readEdid(number: u8, block: *[128]u8, waiter: anytype) bool {
-    if (!on_bcm2712 or number > 1) return false;
-    at(DDC, BSC_CHIP_ADDRESS).* = EDID_ADDRESS << 1;
-    const offset = [1]u8{number * 128};
-    if (!send(COND_RESTART | COND_NOSTOP, &offset, waiter)) return false;
-    at(DDC, BSC_CHIP_ADDRESS).* = EDID_ADDRESS << 1 | 1;
-    var done: usize = 0;
-    while (done < block.len) : (done += bsc_chunk) {
-        const condition = readCondition(done == 0, done + bsc_chunk >= block.len);
-        if (!receive(condition, block[done .. done + bsc_chunk], waiter)) return false;
-    }
-    return true;
-}
-
-/// SCDC register `offset` of the monitor's, read: the offset written,
-/// then a byte read. Null when the monitor did not answer.
-fn scdcRead(offset: u8, waiter: anytype) ?u8 {
-    at(DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
-    if (!send(COND_RESTART | COND_NOSTOP, &.{offset}, waiter)) return null;
-    at(DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1 | 1;
-    var value = [1]u8{0};
-    if (!receive(readCondition(true, true), &value, waiter)) return null;
-    return value[0];
-}
-
-/// SCDC register `offset` written with `value`.
-fn scdcWrite(offset: u8, value: u8, waiter: anytype) bool {
-    at(DDC, BSC_CHIP_ADDRESS).* = SCDC_ADDRESS << 1;
-    return send(0, &.{ offset, value }, waiter);
-}
-
-/// The monitor told to take scrambled TMDS at a bit clock of a fortieth,
-/// or the TMDS as it was (drm_scdc_set_high_tmds_clock_ratio, then
-/// drm_scdc_set_scrambling): its TMDS configuration's two bits.
-fn scdcScrambling(on: bool, waiter: anytype) bool {
-    const config = scdcRead(SCDC_TMDS_CONFIG, waiter) orelse return false;
-    const both = SCDC_RATIO_40 | SCDC_SCRAMBLING;
-    return scdcWrite(SCDC_TMDS_CONFIG, if (on) config | both else config & ~both, waiter);
-}
-
-// --- the monitor's own controls (DDC/CI) -------------------------------------
-
-/// A control's value as the monitor answers it, and its largest.
-pub const Feature = struct { value: u16, most: u16 };
-
-/// What a message's checksum makes of `from` and its bytes: each XORed
-/// in.
-fn checksum(from: u8, bytes: []const u8) u8 {
-    var sum = from;
-    for (bytes) |byte| sum ^= byte;
-    return sum;
-}
-
-/// The message that asks for control `code`: from the host, two bytes
-/// long, the opcode and the control, and the checksum.
-pub fn askFor(code: u8) [5]u8 {
-    var message = [5]u8{ DDCCI_HOST, 0x80 | 2, DDCCI_GET, code, 0 };
-    message[4] = checksum(DDCCI_WRITTEN_SUM, message[0..4]);
-    return message;
-}
-
-/// The message that sets control `code` to `value`, high byte first.
-pub fn setTo(code: u8, value: u16) [7]u8 {
-    var message = [7]u8{ DDCCI_HOST, 0x80 | 4, DDCCI_SET, code, @truncate(value >> 8), @truncate(value), 0 };
-    message[6] = checksum(DDCCI_WRITTEN_SUM, message[0..6]);
-    return message;
-}
-
-/// The monitor's answer about control `code`: from the monitor, eight
-/// bytes long, a reply that it has the control, its largest value and
-/// its value, and a checksum that adds up. Null for anything else - a
-/// monitor that has not got the control, or was not ready.
-pub fn answerOf(answer: *const [11]u8, code: u8) ?Feature {
-    if (answer[0] != DDCCI_WRITTEN_SUM or answer[1] != 0x80 | 8) return null;
-    if (answer[2] != DDCCI_REPLY or answer[3] != 0 or answer[4] != code) return null;
-    if (checksum(DDCCI_ANSWER_SUM, answer[0..10]) != answer[10]) return null;
-    const most = @as(u16, answer[6]) << 8 | answer[7];
-    if (most == 0) return null;
-    return .{ .value = @as(u16, answer[8]) << 8 | answer[9], .most = most };
-}
-
-/// The monitor's control `code`, asked for over the DDC: null when it
-/// does not answer. Takes some 50 ms.
-pub fn feature(code: u8, waiter: anytype) ?Feature {
-    if (!on_bcm2712) return null;
-    at(DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
-    if (!send(0, &askFor(code), waiter)) return null;
-    waiter.wait(ddcci_answer_us);
-    at(DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1 | 1;
-    var answer: [11]u8 = undefined;
-    if (!receive(readCondition(true, true), &answer, waiter)) return null;
-    return answerOf(&answer, code);
-}
-
-/// The monitor's control `code` set to `value`, and the time it wants
-/// before it is spoken to again waited out: false when it did not take
-/// the message.
-pub fn setFeature(code: u8, value: u16, waiter: anytype) bool {
-    if (!on_bcm2712) return false;
-    at(DDC, BSC_CHIP_ADDRESS).* = DDCCI_ADDRESS << 1;
-    const taken = send(0, &setTo(code, value), waiter);
-    waiter.wait(ddcci_set_us);
-    return taken;
 }
 
 // --- the PHY -----------------------------------------------------------------
@@ -758,10 +500,6 @@ const max_khz: u32 = 600_000;
 pub fn sends(pixel_khz: u32) bool {
     return pixel_khz != 0 and pixel_khz <= max_khz;
 }
-
-/// How many blocks of a monitor's EDID the port reads: the two halves of
-/// its first segment.
-pub const edid_blocks: u32 = 2;
 
 /// The widest picture the HVS's composite output buffer is laid out for
 /// (`hvsStart`).
@@ -832,123 +570,6 @@ fn phyStart(tmds_hz: u64) void {
     at(HDMI_PHY, PHY_PLL_RESET_CTL).* |= PHY_PLL_RESETB;
 }
 
-// --- the display list --------------------------------------------------------
-
-/// A plane of its picture at `address`, `width` by `height` pixels at
-/// (x, y), rows `pitch` bytes apart, in the UPM from `upm` as handle
-/// `handle`: with alpha its pixels' own (the cursor's), or opaque (the
-/// picture's), and seen or not; each row read from its right end, the
-/// rows from the bottom up - `address` then the last row's.
-pub const Plane = struct {
-    address: usize,
-    pitch: u32,
-    x: u32 = 0,
-    y: u32 = 0,
-    width: u32,
-    height: u32,
-    upm: u32,
-    handle: u32,
-    alpha: bool = false,
-    seen: bool = true,
-    hflip: bool = false,
-    vflip: bool = false,
-};
-
-/// The plane's nine words (vc6_plane_mode_set, vc6_plane_allocate_upm).
-pub fn planeOf(plane: Plane) [plane_words]u32 {
-    const mask = if (plane.alpha) 0 else CTL0_ALPHA_MASK_FIXED;
-    const ctl2 = if (plane.seen) CTL2_PREMULT | ALPHA_OPAQUE << CTL2_ALPHA_SHIFT else CTL2_PREMULT | CTL2_ALPHA_MIX;
-    return .{
-        CTL0_VALID | plane_words << CTL0_NEXT_SHIFT | mask | CTL0_UNITY | CTL0_ORDER_ARGB | PIXEL_FORMAT_RGBA8888,
-        (plane.y & 0x1FFF) << 16 | (if (plane.hflip) POS0_HFLIP else 0) | (plane.x & 0x1FFF),
-        ctl2,
-        (plane.height - 1) << 16 | (plane.width - 1),
-        CONTEXT,
-        (if (plane.vflip) PTR0_VFLIP else 0) | plane.upm << PTR0_UPM_BASE_SHIFT | plane.handle << PTR0_UPM_HANDLE_SHIFT | upper(plane.address),
-        @truncate(plane.address),
-        plane.pitch,
-        CTL0_END,
-    };
-}
-
-/// An address's bits above the low 32, as a plane's first pointer word
-/// carries them: eight, as far as the HVS reaches.
-fn upper(address: usize) u32 {
-    return @as(u32, @truncate(@as(u64, address) >> 32)) & 0xFF;
-}
-
-/// The units of UPM a plane of rows `pitch` bytes apart takes: two lines
-/// of 32-byte words, with one to spare (vc6_upm_size).
-pub fn upmUnits(pitch: u32) u32 {
-    const line = (pitch + 62) / 32 * 32;
-    return (line * 2 + UPM_UNIT - 1) / UPM_UNIT;
-}
-
-fn writePlane(first: u32, plane: Plane) void {
-    for (planeOf(plane), 0..) |value, i| word(first + @as(u32, @intCast(i))).* = value;
-}
-
-/// How the picture is turned: mirrored left to right, top to bottom.
-pub const Turn = struct { x: bool = false, y: bool = false };
-
-/// An image laid over the picture - the cursor, the overlay: `width` by
-/// `height` pixels of ARGB at `address`, rows `pitch` bytes apart, with
-/// its piece of the UPM.
-pub const Image = struct {
-    address: usize,
-    pitch: u32,
-    width: u32,
-    height: u32,
-    upm: u32,
-    handle: u32,
-};
-
-/// The plane of `image`, its top left at (left, top) on a picture
-/// `width` by `height` that is turned `turn`: where the turned picture
-/// has it, cut to the glass, and read backwards where the picture is.
-/// An image wholly off the glass is a hidden pixel.
-pub fn imagePlaneOf(image: Image, left: i32, top: i32, width: u32, height: u32, turn: Turn, seen: bool) Plane {
-    const w: i32 = @intCast(image.width);
-    const h: i32 = @intCast(image.height);
-    const glass_w: i32 = @intCast(width);
-    const glass_h: i32 = @intCast(height);
-    // Its rectangle on the glass, and the part of that on it.
-    const box_x = if (turn.x) glass_w - left - w else left;
-    const box_y = if (turn.y) glass_h - top - h else top;
-    const x = @max(0, box_x);
-    const y = @max(0, box_y);
-    const right = @min(glass_w, box_x + w);
-    const bottom = @min(glass_h, box_y + h);
-    var plane: Plane = .{
-        .address = image.address,
-        .pitch = image.pitch,
-        .width = 1,
-        .height = 1,
-        .upm = image.upm,
-        .handle = image.handle,
-        .alpha = true,
-        .seen = false,
-        .hflip = turn.x,
-        .vflip = turn.y,
-    };
-    if (x >= right or y >= bottom) return plane;
-    // Columns and rows of the rectangle cut off at the glass's left and
-    // top, which are the image's last ones where it is turned that way.
-    const cut_x = x - box_x;
-    const cut_y = y - box_y;
-    const shown_w = right - x;
-    const shown_h = bottom - y;
-    const column = if (turn.x) w - cut_x - shown_w else cut_x;
-    const row = if (turn.y) h - 1 - cut_y else cut_y;
-    plane.address = image.address + @as(usize, @intCast(row)) * image.pitch + @as(usize, @intCast(column)) * 4;
-    plane.x = @intCast(x);
-    plane.y = @intCast(y);
-    plane.width = @intCast(shown_w);
-    plane.height = @intCast(shown_h);
-    plane.seen = seen;
-    return plane;
-}
-
 // --- what the monitor is sent ------------------------------------------------
 
 /// How a mode goes to a monitor: as HDMI or DVI; its RGB squashed to
@@ -1000,7 +621,7 @@ pub fn outputFor(sink: Sink, mode: *const rtg.RtgTimings) Output {
 /// bytes, up to 27, the rest 0.
 pub const Infoframe = [31]u8;
 
-fn infoframe(kind: u8, version: u8, body: []const u8) Infoframe {
+pub fn infoframe(kind: u8, version: u8, body: []const u8) Infoframe {
     var frame: Infoframe = @splat(0);
     frame[0] = kind;
     frame[1] = version;
@@ -1056,16 +677,10 @@ pub fn vendorFrame(hdmi_vic: u8) Infoframe {
     return infoframe(INFOFRAME_VENDOR, 1, &.{ 0x03, 0x0C, 0x00, 0x20, hdmi_vic });
 }
 
-/// The audio infoframe for `channels` of LPCM: the rest as the stream's
-/// own header says, the speakers front left and right.
-pub fn audioFrame(channels: u32) Infoframe {
-    return infoframe(INFOFRAME_AUDIO, 1, &.{ @intCast(channels - 1), 0, 0, 0, 0, 0, 0, 0, 0, 0 });
-}
-
 /// The packet `frame` into the packet RAM and sent with every frame from
 /// now on (vc4_hdmi_write_infoframe): its sending stopped and waited out,
 /// its nine words written, then sent again. The packet RAM must be on.
-fn writePacket(frame: *const Infoframe, waiter: anytype) void {
+pub fn writePacket(frame: *const Infoframe, waiter: anytype) void {
     const id: u5 = @intCast(frame[0] - 0x80);
     const bit = @as(u32, 1) << id;
     stopPacket(frame[0], waiter);
@@ -1082,7 +697,7 @@ fn writePacket(frame: *const Infoframe, waiter: anytype) void {
 }
 
 /// The packet of type `kind` no longer sent, waited out.
-fn stopPacket(kind: u8, waiter: anytype) void {
+pub fn stopPacket(kind: u8, waiter: anytype) void {
     const bit = @as(u32, 1) << @as(u5, @intCast(kind - 0x80));
     at(HDMI, RAM_PACKET_CONFIG).* &= ~bit;
     waitBits(at(HDMI, RAM_PACKET_STATUS), bit, false, 100, waiter);
@@ -1102,7 +717,7 @@ fn stop(waiter: anytype) void {
     at(HDMI, RAM_PACKET_CONFIG).* = 0;
     if (at(HDMI, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE != 0) {
         at(HDMI, SCRAMBLER_CTL).* &= ~SCRAMBLER_ENABLE;
-        _ = scdcScrambling(false, waiter);
+        _ = ddc.scdcScrambling(false, waiter);
     }
     at(HDMI_HD, HD_VID_CTL).* |= VID_CLRRGB | VID_BLANKPIX;
     at(PV, PV_INTEN).* = 0;
@@ -1220,9 +835,9 @@ pub fn start(sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink:
     at(HDMI_HD, HD_DVP_CTL).* = 0;
     at(HDMI_DVP, DVP_CLOCK_STOP).* |= CLOCK_STOP_PIXEL;
     hvsStart();
-    writePlane(picture_plane, .{ .address = address, .pitch = pitch, .width = mode.h_active, .height = mode.v_active, .upm = upm_picture, .handle = 0 });
-    writePlane(overlay_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_overlay, .handle = 2, .alpha = true, .seen = false });
-    writePlane(cursor_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_cursor, .handle = 1, .alpha = true, .seen = false });
+    list.writePlane(picture_plane, .{ .address = address, .pitch = pitch, .width = mode.h_active, .height = mode.v_active, .upm = upm_picture, .handle = 0 });
+    list.writePlane(overlay_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_overlay, .handle = 2, .alpha = true, .seen = false });
+    list.writePlane(cursor_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_cursor, .handle = 1, .alpha = true, .seen = false });
     word(list_end).* = CTL0_END;
     hvsDisp(DISP_LPTRS).* = list_start;
     hvsDisp(DISP_CTRL0).* = CTRL0_RESET;
@@ -1261,7 +876,7 @@ pub fn start(sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink:
     // Past 340 MHz, the monitor told before the scrambler starts
     // (vc4_hdmi_enable_scrambling).
     if (output.scrambled) {
-        _ = scdcScrambling(true, waiter);
+        _ = ddc.scdcScrambling(true, waiter);
         at(HDMI, SCRAMBLER_CTL).* |= SCRAMBLER_ENABLE;
     }
 
@@ -1270,8 +885,8 @@ pub fn start(sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink:
     shared.pixel_khz = timing.khz(mode);
     shared.hdmi = output.hdmi;
     if (output.hdmi and shared.audio_channels != 0) {
-        regenerate(shared);
-        writePacket(&audioFrame(shared.audio_channels), waiter);
+        sound.regenerate(shared);
+        writePacket(&sound.audioFrame(shared.audio_channels), waiter);
     }
 
     // The frame interrupt: the start of each vertical front porch.
@@ -1286,120 +901,8 @@ pub fn start(sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink:
 pub fn tend(waiter: anytype) void {
     if (!on_bcm2712 or !running() or !transmitting()) return;
     if (at(HDMI, SCRAMBLER_CTL).* & SCRAMBLER_ENABLE == 0) return;
-    const status = scdcRead(SCDC_SCRAMBLER_STATUS, waiter) orelse return;
-    if (status & SCDC_SCRAMBLING == 0) _ = scdcScrambling(true, waiter);
-}
-
-// --- the sound ---------------------------------------------------------------
-
-/// The MAI's code for a sample rate; 0, not said, for any other.
-pub fn rateCode(rate: u32) u32 {
-    return switch (rate) {
-        32_000 => 7,
-        44_100 => 8,
-        48_000 => 9,
-        88_200 => 11,
-        96_000 => 12,
-        176_400 => 14,
-        192_000 => 15,
-        else => 0,
-    };
-}
-
-/// The MAI's sample clock for `rate`: 108 MHz divided by N over M, the
-/// nearest fraction with M to 256 (vc4_hdmi_audio_set_mai_clock), as its
-/// register holds them - N above, M less one in the low byte.
-pub fn maiSample(rate: u32) u32 {
-    var best_n: u64 = 0;
-    var best_m: u64 = 1;
-    var best_error: u64 = ~@as(u64, 0);
-    var m: u64 = 1;
-    while (m <= 256) : (m += 1) {
-        const n = (AUDIO_CLOCK_HZ * m + rate / 2) / rate;
-        if (n == 0 or n > 0xFF_FFFF) continue;
-        const exact = AUDIO_CLOCK_HZ * m;
-        const off = if (n * rate > exact) n * rate - exact else exact - n * rate;
-        // |n/m - clock/rate|, compared without dividing.
-        if (best_error == ~@as(u64, 0) or off * best_m < best_error * m) {
-            best_n = n;
-            best_m = m;
-            best_error = off;
-        }
-        if (off == 0) break;
-    }
-    return @intCast(best_n << 8 | (best_m - 1));
-}
-
-/// N and CTS, which the monitor rebuilds the sample clock from, for the
-/// sound playing at the mode's pixel clock (vc4_hdmi_set_n_cts), as
-/// rtg.library works them out. Nothing without the library.
-fn regenerate(shared: *const Shared) void {
-    const rb = shared.rtg_base orelse return;
-    var n: u32 = 0;
-    var cts: u32 = 0;
-    if (!rb.HdmiAudioClock(shared.pixel_khz * 1000, shared.audio_rate, &n, &cts)) return;
-    at(HDMI, CRP_CFG).* = CRP_EXTERNAL_CTS | n;
-    at(HDMI, CTS_0).* = cts;
-    at(HDMI, CTS_1).* = cts;
-}
-
-/// Whether sound can go out: the display up as HDMI.
-pub fn audible(shared: *const Shared) bool {
-    if (!on_bcm2712 or !running()) return false;
-    return shared.hdmi;
-}
-
-/// The sound started: `channels` channels of IEC 958 subframes at `rate`
-/// into the MAI FIFO, sent as audio sample packets with their infoframe
-/// (vc4_hdmi_audio_startup, then vc4_hdmi_audio_prepare). The DMA
-/// channel that feeds the FIFO starts after. False, and nothing started,
-/// when the display is not up as HDMI.
-pub fn audioStart(sys: *ExecBase, shared: *Shared, rate: u32, channels: u32, waiter: anytype) bool {
-    if (!on_bcm2712 or channels == 0 or channels > 8 or rateCode(rate) == 0) return false;
-    sys.ObtainSemaphore(&shared.lock);
-    defer sys.ReleaseSemaphore(&shared.lock);
-    if (!running() or !shared.hdmi) return false;
-    at(HDMI_HD, HD_MAI_CTL).* = MAI_RESET | MAI_FLUSH | MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
-    at(HDMI_HD, HD_MAI_SMP).* = maiSample(rate);
-    at(HDMI_HD, HD_MAI_CTL).* = channels << MAI_CHNUM_SHIFT | MAI_WHOLSMP | MAI_CHALIGN | MAI_ENABLE;
-    at(HDMI_HD, HD_MAI_FMT).* = rateCode(rate) << 8 | MAI_FORMAT_PCM << 16;
-    at(HDMI_HD, HD_MAI_THR).* = MAI_THRESHOLDS;
-    const mask = (@as(u32, 1) << @intCast(channels)) - 1;
-    at(HDMI, MAI_CONFIG).* = MAI_CONFIG_REVERSED | mask;
-    at(HDMI, MAI_CHANNEL_MAP).* = channelMap(mask);
-    at(HDMI, AUDIO_PACKET_CONFIG).* = AUDIO_ZERO_FLAT | AUDIO_ZERO_INACTIVE | AUDIO_B_FRAME | mask;
-    shared.audio_rate = rate;
-    shared.audio_channels = channels;
-    regenerate(shared);
-    writePacket(&audioFrame(channels), waiter);
-    return true;
-}
-
-/// The sound stopped, once its DMA channel has: the MAI and its FIFO
-/// reset, the audio infoframe no longer sent (vc4_hdmi_audio_shutdown,
-/// vc4_hdmi_audio_reset).
-pub fn audioStop(sys: *ExecBase, shared: *Shared, waiter: anytype) void {
-    if (!on_bcm2712) return;
-    sys.ObtainSemaphore(&shared.lock);
-    defer sys.ReleaseSemaphore(&shared.lock);
-    shared.audio_rate = 0;
-    shared.audio_channels = 0;
-    if (!running()) return;
-    at(HDMI_HD, HD_MAI_CTL).* = MAI_DLATE | MAI_ERRORE | MAI_ERRORF;
-    if (shared.hdmi) stopPacket(INFOFRAME_AUDIO, waiter);
-    at(HDMI_HD, HD_MAI_CTL).* = MAI_RESET;
-    at(HDMI_HD, HD_MAI_CTL).* = MAI_ERRORF;
-    at(HDMI_HD, HD_MAI_CTL).* = MAI_FLUSH;
-}
-
-/// Each channel of `mask` taken from the MAI's channel of its own number
-/// (vc5_hdmi_channel_map): four bits a channel.
-pub fn channelMap(mask: u32) u32 {
-    var map: u32 = 0;
-    for (0..8) |i| {
-        if (mask & (@as(u32, 1) << @intCast(i)) != 0) map |= @as(u32, @intCast(i)) << @intCast(4 * i);
-    }
-    return map;
+    const status = ddc.scdcRead(SCDC_SCRAMBLER_STATUS, waiter) orelse return;
+    if (status & SCDC_SCRAMBLING == 0) _ = ddc.scdcScrambling(true, waiter);
 }
 
 /// The controller's FIFO centred between the valve and the PHY, twice a
@@ -1424,56 +927,6 @@ pub fn takeInterrupts() u32 {
     return raised;
 }
 
-/// The picture's plane's size and pitch, and how it is turned, as its
-/// words have them.
-fn pictureWidth() u32 {
-    return (word(picture_plane + W_POS2).* & 0x1FFF) + 1;
-}
-
-fn pictureHeight() u32 {
-    return (word(picture_plane + W_POS2).* >> 16 & 0x1FFF) + 1;
-}
-
-fn turnOf() Turn {
-    return .{
-        .x = word(picture_plane + W_POS0).* & POS0_HFLIP != 0,
-        .y = word(picture_plane + W_PTR0).* & PTR0_VFLIP != 0,
-    };
-}
-
-/// Where the picture's plane starts reading a picture at `address`: its
-/// last row where it reads from the bottom up.
-fn readFrom(address: usize, turn: Turn) usize {
-    if (!turn.y) return address;
-    return address + @as(usize, pictureHeight() - 1) * word(picture_plane + W_PTR2).*;
-}
-
-fn pointPicture(address: usize, turn: Turn) void {
-    const from = readFrom(address, turn);
-    const flags = word(picture_plane + W_PTR0).* & ~(PTR0_VFLIP | 0xFF);
-    word(picture_plane + W_PTR0).* = flags | (if (turn.y) PTR0_VFLIP else 0) | upper(from);
-    word(picture_plane + W_PTR1).* = @truncate(from);
-}
-
-/// `picture` shown from now on, a buffer of the mode the display is in,
-/// as the library describes one: the picture's plane's address
-/// rewritten. The HVS takes it up as it next fetches.
-pub fn show(picture: *const rtg.RtgBitMap) void {
-    const pixels = picture.pixels orelse return;
-    if (!running()) return;
-    pointPicture(@intFromPtr(pixels), turnOf());
-}
-
-/// The picture mirrored as `turn` says from the next frame on, the one
-/// at `address` - the one shown - read backwards. The cursor and the
-/// overlay are turned with it when they are next written.
-pub fn mirror(address: usize, turn: Turn) void {
-    if (!running()) return;
-    const position = word(picture_plane + W_POS0).* & ~POS0_HFLIP;
-    word(picture_plane + W_POS0).* = position | (if (turn.x) POS0_HFLIP else 0);
-    pointPicture(address, turn);
-}
-
 /// The monitor sent the picture, or blank pixels without syncs - no
 /// signal, to a monitor. CLRSYNC reads back as 0 and holds only while it
 /// is written, so the picture is back as soon as a write leaves it out.
@@ -1486,47 +939,6 @@ pub fn transmit(on: bool) void {
 /// Whether the monitor is sent the picture.
 fn transmitting() bool {
     return at(HDMI_HD, HD_VID_CTL).* & VID_BLANKPIX == 0;
-}
-
-/// An image's plane rewritten - its words but the first, the address
-/// last, so that the HVS does not fetch a new image at an old size.
-fn writeImage(first: u32, plane: Plane) void {
-    const words = planeOf(plane);
-    for ([_]usize{ W_CTL2, W_POS0, W_POS2, W_PTR2, W_PTR0, W_PTR1 }) |i| word(first + @as(u32, @intCast(i))).* = words[i];
-}
-
-/// The largest cursor image, each way.
-pub const cursor_side = 64;
-
-/// The cursor's plane: the image at `address` (`cursor_side` square, or
-/// half that when `small`), its hot spot at (x, y) on the picture, shown
-/// or not, turned as the picture is.
-pub fn cursor(address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u32, shown: bool) void {
-    if (!running()) return;
-    const side: u32 = if (small) cursor_side / 2 else cursor_side;
-    const image = Image{ .address = address, .pitch = side * 4, .width = side, .height = side, .upm = upm_cursor, .handle = 1 };
-    const left = @as(i32, @intCast(x)) - @as(i32, @intCast(hot_x));
-    const top = @as(i32, @intCast(y)) - @as(i32, @intCast(hot_y));
-    writeImage(cursor_plane, imagePlaneOf(image, left, top, pictureWidth(), pictureHeight(), turnOf(), shown));
-}
-
-/// The largest overlay, each way: rtg's.
-pub const overlay_side = 160;
-
-/// The overlay's plane: `width` by `height` pixels of the image at
-/// `address`, rows `overlay_side` pixels apart, its top left at (left,
-/// top) on the picture, shown or not, turned as the picture is.
-pub fn overlay(address: usize, width: u32, height: u32, left: i32, top: i32, shown: bool) void {
-    if (!running()) return;
-    const image = Image{
-        .address = address,
-        .pitch = overlay_side * 4,
-        .width = @max(width, 1),
-        .height = @max(height, 1),
-        .upm = upm_overlay,
-        .handle = 2,
-    };
-    writeImage(overlay_plane, imagePlaneOf(image, left, top, pictureWidth(), pictureHeight(), turnOf(), shown and width != 0 and height != 0));
 }
 
 const std = @import("std");
@@ -1552,119 +964,6 @@ test "the BCM2712's HDMI PHY: the VCO's divider, the rate manager and the lanes'
     try testing.expectEqual(@as(u64, 149_985_000), hsmHz(148_500_000));
     try testing.expectEqual(@as(u64, 75_000_000), bvbHz(148_500_000));
     try testing.expectEqual(@as(u64, 150_000_000), bvbHz(297_000_000));
-}
-
-test "the BCM2712's display list: a picture's plane, and the cursor's cut to the picture" {
-    const words = planeOf(.{ .address = 0x3000_0000, .pitch = 7680, .width = 1920, .height = 1080, .upm = 0, .handle = 0 });
-    try testing.expectEqualSlices(u32, &.{
-        0x4900_0000 | 3 << 18 | 1 << 15 | 2 << 13 | 7,
-        0,
-        0x2000_FFF0,
-        1079 << 16 | 1919,
-        0xC0C0_C0C0,
-        0,
-        0x3000_0000,
-        7680,
-        0x8000_0000,
-    }, &words);
-    // The cursor at the top left, its hot spot 4 pixels in: 4 columns and
-    // rows of it are off the picture.
-    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = upm_cursor, .handle = 1 };
-    const small = Image{ .address = 0x1000, .pitch = 128, .width = 32, .height = 32, .upm = upm_cursor, .handle = 1 };
-    const corner = imagePlaneOf(big, -4, -4, 1920, 1080, .{}, true);
-    try testing.expectEqual(@as(usize, 0x1000 + 4 * 256 + 4 * 4), corner.address);
-    try testing.expectEqual(@as(u32, 0), corner.x);
-    try testing.expectEqual(@as(u32, 60), corner.width);
-    try testing.expectEqual(@as(u32, 60), corner.height);
-    try testing.expectEqual(@as(u32, 256), corner.pitch);
-    const cursor_words = planeOf(corner);
-    try testing.expectEqual(@as(u32, 0), cursor_words[0] & 3 << 18);
-    try testing.expectEqual(@as(u32, 128 << 16 | 1 << 10), cursor_words[5]);
-    // At the bottom right, only the hot spot's pixel on it.
-    const edge = imagePlaneOf(small, 1919, 1079, 1920, 1080, .{}, true);
-    try testing.expectEqual(@as(u32, 1), edge.width);
-    try testing.expectEqual(@as(u32, 1), edge.height);
-    try testing.expectEqual(@as(u32, 1919), edge.x);
-    // Hidden: alpha 0, mixed.
-    try testing.expectEqual(@as(u32, 0x3000_0000), planeOf(imagePlaneOf(big, 10, 10, 1920, 1080, .{}, false))[2]);
-    // Wholly off the picture: a hidden pixel.
-    const gone = imagePlaneOf(big, -64, 10, 1920, 1080, .{}, true);
-    try testing.expect(!gone.seen and gone.width == 1 and gone.height == 1);
-    // A row of 1920 takes 61 units of UPM, of 4K 121, the cursor's 3:
-    // both fit before the cursor's at 128.
-    try testing.expectEqual(@as(u32, 61), upmUnits(7680));
-    try testing.expectEqual(@as(u32, 121), upmUnits(15360));
-    try testing.expectEqual(@as(u32, 3), upmUnits(256));
-}
-
-test "the BCM2712's display list turned: the picture and an image read backwards" {
-    const flipped = planeOf(.{ .address = 0x3000_0000 + 1079 * 7680, .pitch = 7680, .width = 1920, .height = 1080, .upm = 0, .handle = 0, .hflip = true, .vflip = true });
-    try testing.expectEqual(@as(u32, 1 << 15), flipped[1]);
-    try testing.expectEqual(@as(u32, 1 << 31), flipped[5]);
-    try testing.expectEqual(@as(u32, 0x3000_0000 + 1079 * 7680), flipped[6]);
-
-    // Mirrored left to right, a 64-pixel cursor at (100, 50) is at
-    // 1920 - 164 on the glass, read from its own first column backwards.
-    const big = Image{ .address = 0x1000, .pitch = 256, .width = 64, .height = 64, .upm = upm_cursor, .handle = 1 };
-    const across = imagePlaneOf(big, 100, 50, 1920, 1080, .{ .x = true }, true);
-    try testing.expectEqual(@as(u32, 1920 - 164), across.x);
-    try testing.expectEqual(@as(u32, 50), across.y);
-    try testing.expectEqual(@as(usize, 0x1000), across.address);
-    try testing.expect(across.hflip and !across.vflip and across.width == 64);
-    // At the picture's left edge, 4 columns off: on the glass it is 4
-    // columns off the right, which are the image's first 4 - so it is
-    // read from column 4, 60 wide.
-    const left_edge = imagePlaneOf(big, -4, 50, 1920, 1080, .{ .x = true }, true);
-    try testing.expectEqual(@as(u32, 1920 - 60), left_edge.x);
-    try testing.expectEqual(@as(u32, 60), left_edge.width);
-    try testing.expectEqual(@as(usize, 0x1000 + 4 * 4), left_edge.address);
-    // At the picture's right edge, 4 columns off: on the glass 4 off the
-    // left, the image's last 4 - read from column 0.
-    const right_edge = imagePlaneOf(big, 1920 - 60, 50, 1920, 1080, .{ .x = true }, true);
-    try testing.expectEqual(@as(u32, 0), right_edge.x);
-    try testing.expectEqual(@as(u32, 60), right_edge.width);
-    try testing.expectEqual(@as(usize, 0x1000), right_edge.address);
-    // Upside down, 4 rows off the picture's top: on the glass 4 off the
-    // bottom, the image's first 4; read from row 63 upwards, 60 rows.
-    const top_edge = imagePlaneOf(big, 100, -4, 1920, 1080, .{ .y = true }, true);
-    try testing.expectEqual(@as(u32, 1080 - 60), top_edge.y);
-    try testing.expectEqual(@as(u32, 60), top_edge.height);
-    try testing.expectEqual(@as(usize, 0x1000 + 63 * 256), top_edge.address);
-    try testing.expect(top_edge.vflip);
-    // 4 rows off the picture's bottom: on the glass 4 off the top, the
-    // image's last 4; read from row 59 upwards.
-    const bottom_edge = imagePlaneOf(big, 100, 1080 - 60, 1920, 1080, .{ .y = true }, true);
-    try testing.expectEqual(@as(u32, 0), bottom_edge.y);
-    try testing.expectEqual(@as(u32, 60), bottom_edge.height);
-    try testing.expectEqual(@as(usize, 0x1000 + 59 * 256), bottom_edge.address);
-}
-
-test "the monitor's controls: DDC/CI's messages and answers" {
-    // The brightness asked for, and set to 50: the checksum starts from
-    // the monitor's address, 0x6E.
-    try testing.expectEqualSlices(u8, &.{ 0x51, 0x82, 0x01, 0x10, 0xAC }, &askFor(VCP_BRIGHTNESS));
-    try testing.expectEqualSlices(u8, &.{ 0x51, 0x84, 0x03, 0x10, 0x00, 0x32, 0x9A }, &setTo(VCP_BRIGHTNESS, 50));
-    // The answer: 50 of 100, its checksum from the host's 0x50.
-    var answer = [11]u8{ 0x6E, 0x88, 0x02, 0x00, 0x10, 0x00, 0x00, 0x64, 0x00, 0x32, 0xF2 };
-    const got = answerOf(&answer, VCP_BRIGHTNESS).?;
-    try testing.expectEqual(@as(u16, 50), got.value);
-    try testing.expectEqual(@as(u16, 100), got.most);
-    // A checksum that does not add up, a control the monitor has not got.
-    answer[10] ^= 1;
-    try testing.expect(answerOf(&answer, VCP_BRIGHTNESS) == null);
-    answer[10] ^= 1;
-    answer[3] = 1;
-    answer[10] ^= 1;
-    try testing.expect(answerOf(&answer, VCP_BRIGHTNESS) == null);
-    // Not ready: the null message.
-    const nothing = [11]u8{ 0x6E, 0x80, 0xBE, 0, 0, 0, 0, 0, 0, 0, 0 };
-    try testing.expect(answerOf(&nothing, VCP_BRIGHTNESS) == null);
-}
-
-test "the BCM2712's DDC: how the pieces of a read end and start" {
-    try testing.expectEqual(COND_NOSTOP, readCondition(true, false));
-    try testing.expectEqual(COND_NOSTART | COND_NOSTOP, readCondition(false, false));
-    try testing.expectEqual(COND_NOSTART, readCondition(false, true));
 }
 
 test "what a monitor is sent: HDMI with its range said, limited without QS, DVI full" {
@@ -1704,18 +1003,6 @@ test "HDMI 1.4's 4K modes go in the vendor infoframe, HDMI 2.0's in the AVI's" {
     newer.forum = true;
     try testing.expectEqual(@as(u32, 0), aviFlags(newer, &uhd30, outputFor(newer, &uhd30)) & rtg.RTGAVI_NO_VIC);
     try testing.expectEqualSlices(u8, &.{ 0x81, 0x01, 0x05, 0x49, 0x03, 0x0C, 0x00, 0x20, 0x01, 0 }, vendorFrame(1)[0..10]);
-}
-
-test "the sound's numbers: the audio infoframe, the MAI's clock, the channels' map" {
-    try testing.expectEqualSlices(u8, &.{ 0x84, 0x01, 0x0A, 0x70, 0x01, 0 }, audioFrame(2)[0..6]);
-    // 108 MHz over 48 kHz is 2250 exactly; over 44.1 kHz 120000/49.
-    try testing.expectEqual(@as(u32, 2250 << 8), maiSample(48_000));
-    try testing.expectEqual(@as(u32, 120_000 << 8 | 48), maiSample(44_100));
-    try testing.expectEqual(@as(u32, 3375 << 8), maiSample(32_000));
-    try testing.expectEqual(@as(u32, 9), rateCode(48_000));
-    try testing.expectEqual(@as(u32, 0), rateCode(22_050));
-    try testing.expectEqual(@as(u32, 0x10), channelMap(0x3));
-    try testing.expectEqual(@as(u32, 0x7654_3210), channelMap(0xFF));
 }
 
 test "what the port makes: its clock, a picture its buffer holds, the controller's vertical fields" {

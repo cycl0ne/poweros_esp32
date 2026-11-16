@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The BCM2712's video scaler behind its first HDMI port (`bcm2712.zig`)
-//! as a display board: a display that reads its picture out of the
+//! The BCM2712's video scaler behind its first HDMI port as a display
+//! board - the port in `bcm2712.zig`, its DDC in `ddc.zig`, the scaler's
+//! display list in `list.zig`, the link's sound in `sound.zig`: a display that reads its picture out of the
 //! machine's RAM by itself.
 //!
 //! A module of its own, on the same footing as the other drivers: a
@@ -86,11 +87,14 @@ const tags = rtg.tags;
 const timer = sdk.devices.timer;
 
 const bcm2712 = @import("bcm2712.zig");
+const ddc = @import("ddc.zig");
+const sound = @import("sound.zig");
+const list = @import("list.zig");
 
 const MODULE_NAME = "rtg-bcm2712";
 const DRIVER_NAME = "bcm2712";
 const VERSION = 1;
-const REVISION = 1;
+const REVISION = 2;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -107,10 +111,10 @@ const page = 4096;
 /// which every size here is kept in.
 const largest_side = 0x3FFF;
 /// The bytes of one of the cursor plane's two images.
-const cursor_bytes = bcm2712.cursor_side * bcm2712.cursor_side * 4;
+const cursor_bytes = list.cursor_side * list.cursor_side * 4;
 /// The most bytes of a monitor's EDID the port reads.
 const edid_block = rtg.modes.RTG_EDID_BLOCK;
-const edid_most: usize = @as(usize, bcm2712.edid_blocks) * edid_block;
+const edid_most: usize = @as(usize, ddc.edid_blocks) * edid_block;
 /// How many frames go by between two looks at the port's connector:
 /// half a second of them at sixty a second.
 const look_frames = 30;
@@ -178,7 +182,7 @@ const Screen = struct {
     audio: ?rtg.RtgAudio = null,
     /// How the picture is turned, and whether the monitor is sent
     /// nothing.
-    turn: bcm2712.Turn = .{},
+    turn: list.Turn = .{},
     dark: bool = false,
     /// The cursor plane's two image buffers, as AllocMem gave them and
     /// where they start; which of them is the plane's, whether it is the
@@ -298,7 +302,7 @@ fn drivers(screen: *const Screen) *RtgDriverBase {
 fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) void {
     const address = @intFromPtr(picture.pixels orelse return);
     if (address == screen.scanning) return;
-    bcm2712.show(picture);
+    list.show(picture);
     screen.scanning = address;
 }
 
@@ -342,7 +346,7 @@ fn hotSpot(screen: *const Screen) struct { x: u32, y: u32 } {
 /// place, and whether it is seen: only with an image.
 fn cursorPlane(screen: *Screen) void {
     const at = hotSpot(screen);
-    bcm2712.cursor(
+    list.cursor(
         @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
         screen.cursor_small,
         screen.cursor_hot_x,
@@ -358,8 +362,8 @@ fn cursorPlane(screen: *Screen) void {
 fn cursorImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
     screen.pointer = image;
     const one = image orelse return cursorPlane(screen);
-    const small = one.width <= bcm2712.cursor_side / 2 and one.height <= bcm2712.cursor_side / 2;
-    const side: u32 = if (small) bcm2712.cursor_side / 2 else bcm2712.cursor_side;
+    const small = one.width <= list.cursor_side / 2 and one.height <= list.cursor_side / 2;
+    const side: u32 = if (small) list.cursor_side / 2 else list.cursor_side;
     const turn = screen.cursor_turn +% 1;
     const buffer = cursorBuffer(screen, turn);
     const pixels: [*]u32 = @ptrCast(@alignCast(buffer));
@@ -397,9 +401,9 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
 }
 
 /// The bytes of one of the overlay plane's buffers: rtg's largest image.
-const overlay_bytes = bcm2712.overlay_side * bcm2712.overlay_side * 4;
+const overlay_bytes = list.overlay_side * list.overlay_side * 4;
 comptime {
-    std.debug.assert(bcm2712.overlay_side == rtg.boards.RTG_OVERLAY_MAX);
+    std.debug.assert(list.overlay_side == rtg.boards.RTG_OVERLAY_MAX);
 }
 
 fn overlayBuffer(screen: *Screen, turn: u1) [*]u8 {
@@ -410,7 +414,7 @@ fn overlayBuffer(screen: *Screen, turn: u1) [*]u8 {
 /// is seen.
 fn overlayPlane(screen: *Screen) void {
     if (screen.overlay_images == null) return;
-    bcm2712.overlay(
+    list.overlay(
         @intFromPtr(overlayBuffer(screen, screen.overlay_turn)),
         screen.overlay_width,
         screen.overlay_height,
@@ -429,7 +433,7 @@ fn overlayImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
         return overlayPlane(screen);
     };
     if (screen.overlay_images == null) return;
-    const side: u32 = bcm2712.overlay_side;
+    const side: u32 = list.overlay_side;
     const turn = screen.overlay_turn +% 1;
     const buffer = overlayBuffer(screen, turn);
     const rows = @min(one.height, side);
@@ -465,7 +469,7 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 /// the monitor sent it, the cursor and the overlay hidden - put back as
 /// the board has it.
 fn putBack(screen: *Screen) void {
-    bcm2712.mirror(screen.scanning, screen.turn);
+    list.mirror(screen.scanning, screen.turn);
     if (screen.dark) bcm2712.transmit(false);
     cursorPlane(screen);
     overlayPlane(screen);
@@ -478,7 +482,7 @@ fn mirror(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
     const sys = screen.sys;
     sys.ObtainSemaphore(&screen.port_lock);
     screen.turn = .{ .x = x, .y = y };
-    if (screen.scanning != 0) bcm2712.mirror(screen.scanning, screen.turn);
+    if (screen.scanning != 0) list.mirror(screen.scanning, screen.turn);
     sys.ReleaseSemaphore(&screen.port_lock);
     cursorPlane(screen);
     overlayPlane(screen);
@@ -508,9 +512,9 @@ fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const screen = screenOf(board);
     const waiter = Waiter{ .screen = screen };
-    const now = bcm2712.feature(bcm2712.VCP_BRIGHTNESS, waiter) orelse return err.RTGERR_IO;
+    const now = ddc.feature(ddc.VCP_BRIGHTNESS, waiter) orelse return err.RTGERR_IO;
     const value: u16 = @intCast((percent * now.most + 50) / 100);
-    if (!bcm2712.setFeature(bcm2712.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
+    if (!ddc.setFeature(ddc.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
     return err.RTGERR_OK;
 }
 
@@ -520,7 +524,7 @@ fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
 /// without the port's, as `setBrightness`.
 fn brightness(board: *rtg.RtgBoard) callconv(.c) i32 {
     const screen = screenOf(board);
-    const now = bcm2712.feature(bcm2712.VCP_BRIGHTNESS, Waiter{ .screen = screen }) orelse return err.RTGERR_IO;
+    const now = ddc.feature(ddc.VCP_BRIGHTNESS, Waiter{ .screen = screen }) orelse return err.RTGERR_IO;
     const most: u32 = now.most;
     const value: u32 = @min(now.value, now.most);
     return @intCast((value * 100 + most / 2) / most);
@@ -735,14 +739,14 @@ fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
 /// nothing where it does not read.
 fn readEdid(screen: *Screen, waiter: Waiter) void {
     const first: *[edid_block]u8 = screen.edid[0..edid_block];
-    var read = bcm2712.readEdid(0, first, waiter);
-    if (read and !sumsToZero(first)) read = bcm2712.readEdid(0, first, waiter);
+    var read = ddc.readEdid(0, first, waiter);
+    if (read and !sumsToZero(first)) read = ddc.readEdid(0, first, waiter);
     if (!read) return;
     var blocks: u32 = 1;
-    const named = @min(@as(u32, first[126]) + 1, bcm2712.edid_blocks);
+    const named = @min(@as(u32, first[126]) + 1, ddc.edid_blocks);
     while (blocks < named) : (blocks += 1) {
         const block: *[edid_block]u8 = screen.edid[blocks * edid_block ..][0..edid_block];
-        if (!bcm2712.readEdid(@intCast(blocks), block, waiter)) break;
+        if (!ddc.readEdid(@intCast(blocks), block, waiter)) break;
     }
     screen.edid_size = blocks * edid_block;
 }
@@ -867,13 +871,13 @@ fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
     const sys = screen.sys;
     const waiter = Waiter{ .screen = screen };
     const one = format orelse {
-        if (screen.audio != null) bcm2712.audioStop(sys, &screen.shared, waiter);
+        if (screen.audio != null) sound.audioStop(sys, &screen.shared, waiter);
         screen.audio = null;
         return err.RTGERR_OK;
     };
     if (screen.scanning == 0) return err.RTGERR_NO_MODE;
     if (one.bits != 16) return err.RTGERR_NOT_SUPPORTED;
-    if (!bcm2712.audioStart(sys, &screen.shared, one.sample_rate, one.channels, waiter)) return err.RTGERR_NOT_SUPPORTED;
+    if (!sound.audioStart(sys, &screen.shared, one.sample_rate, one.channels, waiter)) return err.RTGERR_NOT_SUPPORTED;
     screen.audio = one.*;
     return err.RTGERR_OK;
 }
