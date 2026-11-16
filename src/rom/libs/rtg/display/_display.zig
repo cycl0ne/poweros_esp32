@@ -54,7 +54,9 @@
 //! driver has the op, is its driver's in all three states.
 //!
 //! **The backlight** is lit with the first picture (`light`): at what
-//! the board's device asks (`RTGA_Brightness`), else in full.
+//! the board's device asks (`RTGA_Brightness`), else in full. A monitor
+//! on a connector lights itself and keeps the brightness it has: only
+//! one its device's tags ask is set with the first picture.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
@@ -431,7 +433,9 @@ pub fn power(rb: *RtgBase, board: *rtg.RtgBoard, wanted: u32) i32 {
 
 /// The board's backlight lit for the first time, with its first
 /// picture: at the brightness the library keeps for it. From then on
-/// it is `SetBoardBrightness` and the power state that change it.
+/// it is `SetBoardBrightness` and the power state that change it. A
+/// monitor whose brightness nobody asked counts as lit already
+/// (`board/_board.zig`), and is not touched.
 ///
 /// INPUTS:
 /// - `rb` - the library.

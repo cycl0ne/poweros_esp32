@@ -98,7 +98,19 @@ pub const LIBRARY_VERSION = 1;
 /// 27: a driver's flip is called without the board's compose lock, so
 /// one that waits until the display has taken the frame holds up no
 /// pointer's move.
-pub const LIBRARY_REVISION = 29;
+/// 28: a band whose buffer is not the mode's size is scaled by the
+/// ratio of the widths where the library composes the picture
+/// (RTGBC_SCALE_BANDS, RTGBF_SCALES); a board whose monitor changed for
+/// one without its mode shows what it showed in the new monitor's.
+/// 29: SetBoardPower (on, blank, asleep; RtgBoardOps.power) in place of
+/// SetBoardDisplay; MirrorBoard by the board's hardware for the axes it
+/// turns and by the library for the rest (RTGBC_MIRROR_X,
+/// RTGBC_MIRROR_Y); the library keeps the brightness, a backlight is
+/// lit with the first picture (brightness_steps), and BoardBrightness
+/// is gone.
+/// 30: a monitor's own brightness is left as it is: the first picture
+/// sets one only where the device's tags ask it.
+pub const LIBRARY_REVISION = 30;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

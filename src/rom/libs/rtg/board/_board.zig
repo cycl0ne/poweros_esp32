@@ -77,7 +77,9 @@ pub const Private = struct {
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
     /// Whether the backlight was lit: with the board's first picture, or
-    /// by the first SetBoardBrightness.
+    /// by the first SetBoardBrightness. A monitor on a connector lights
+    /// itself: its board says so from the start, unless its device's
+    /// tags ask a brightness.
     lit: bool = false,
     /// The frames its driver says ended, and who waits for one
     /// (`frame/_frame.zig`).
@@ -223,7 +225,8 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     if (composer.composes(board)) board.info.caps |= both;
     // A backlight where the driver sets one and said how many levels it
     // has: it starts at what the device's tags ask, else in full, and
-    // is lit with the first picture.
+    // is lit with the first picture - a panel's; a monitor's is left as
+    // the monitor has it, further down.
     if (board.info.caps & rtg.boards.RTGBC_BRIGHTNESS == 0) board.info.brightness_steps = 0;
     if (board.info.brightness_steps == 0) {
         board.info.caps &= ~@as(u32, rtg.boards.RTGBC_BRIGHTNESS);
@@ -256,6 +259,9 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     // What is on its connector, and the modes that makes: before the board
     // can be found, so no task meets one whose monitor was not asked.
     monitors.firstLook(rb, board);
+    // A monitor keeps a brightness of its own, and lights itself: the
+    // first picture sets none, unless the device's tags ask one.
+    if (board.info.flags & rtg.boards.RTGBF_CONNECTOR != 0 and request.brightness == null) private.lit = true;
 
     // A driver that came to a display already running hands back the
     // buffer it is being refreshed from. That memory is spoken for: it is

@@ -451,10 +451,13 @@ The Blanker puts the display to sleep so.
 the part counts, on a board that has one (`RTGBC_BRIGHTNESS`);
 `GetBoardInfo` answers the value the library keeps (`brightness`) and
 how many levels there are (`brightness_steps`): 2 for a line that is on
-or off, 101 for a level for each per cent. The backlight is lit with
-the board's first picture, at what its part asks (`RTGA_Brightness`),
-else in full. A brightness set while the board is asleep is kept, and
-is what it wakes with. `C:Backlight` reads and sets it.
+or off, 101 for a level for each per cent. A panel's backlight is lit
+with the board's first picture, at what its part asks
+(`RTGA_Brightness`), else in full. A monitor on a connector keeps the
+brightness it has: only `SetBoardBrightness`, or a brightness its part
+asks, changes it, and until then `brightness` says 100 whatever the
+monitor is set to. A brightness set while the board is asleep is kept,
+and is what it wakes with. `C:Backlight` reads and sets it.
 
 ## Several buffers at once: bands
 

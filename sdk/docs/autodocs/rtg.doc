@@ -1949,9 +1949,15 @@ rtg.library/WaitVBlank
 	asleep comes back with it. On a board that is asleep it is kept and
 	not applied until the board wakes (`SetBoardPower`).
 
-	A board's backlight is lit with its first picture, at what its
-	device's tags ask (`RTGA_Brightness`), else in full; a brightness set
-	before that is applied at once, and the first picture leaves it.
+	A panel's backlight is lit with its board's first picture, at what
+	its device's tags ask (`RTGA_Brightness`), else in full; a brightness
+	set before that is applied at once, and the first picture leaves it.
+
+	A monitor on a connector (`RTGBF_CONNECTOR`) keeps a brightness of
+	its own, and it is left as the monitor has it: nothing sets it but
+	this call and a brightness its device's tags ask. Until one of them
+	has, `brightness` in `GetBoardInfo` says 100, whatever the monitor
+	is set to.
 
 	Dimmed is not asleep: `SetBoardPower` is what puts a display to
 	sleep.

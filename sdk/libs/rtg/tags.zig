@@ -52,8 +52,9 @@ pub const RTGA_Buffers = RTGA_Dummy + 10;
 /// milliseconds. Absent: 10 and 20.
 pub const RTGA_ResetMillis = RTGA_Dummy + 14;
 pub const RTGA_SettleMillis = RTGA_Dummy + 15;
-/// u32, 0 to 100: the brightness to set once the board is up. Absent: the
-/// brightness is not touched.
+/// u32, 0 to 100: the brightness set with the board's first picture.
+/// Absent: a panel's backlight is lit in full, and a monitor's
+/// brightness is left as the monitor has it.
 pub const RTGA_Brightness = RTGA_Dummy + 16;
 // RTGA_Dummy + 17 and 18 are not used.
 /// bool: take over a display that is already running rather than bring one

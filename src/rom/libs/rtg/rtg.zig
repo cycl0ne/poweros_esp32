@@ -3063,6 +3063,52 @@ test "the backlight: its levels, kept by the library, lit with the first picture
     try tearDown(rb);
 }
 
+test "a monitor's brightness is its own: the first picture sets one only where the device's tags ask it" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const dimmed = [_]TagItem{
+        .{ .tag = rtg.tags.RTGA_Brightness, .data = 40 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(fake.deviceTags()) },
+    };
+    // A monitor on a connector keeps the brightness it has: its first
+    // picture sets none, and one that is set is set.
+    const small = smallMonitor(smallTiming(64, 32, 8), null);
+    const monitor = try makeConnector(rb, std.mem.sliceAsBytes(&small), 0);
+    fk.connector = false;
+    try testing.expect(infoOf(rb, monitor).flags & rtg.boards.RTGBF_CONNECTOR != 0);
+    try testing.expect(infoOf(rb, monitor).caps & rtg.boards.RTGBC_BRIGHTNESS != 0);
+    const untouched = fk.log.brightness_calls;
+    const seen = base(rb).AllocBitMap(monitor, 64, 32, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(monitor, seen));
+    try testing.expectEqual(untouched, fk.log.brightness_calls);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(monitor, 70));
+    try testing.expectEqual(untouched + 1, fk.log.brightness_calls);
+    try testing.expectEqual(@as(u32, 70), fk.log.brightness);
+    try testing.expectEqual(@as(u32, 70), infoOf(rb, monitor).brightness);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(monitor, null));
+    base(rb).FreeBitMap(seen);
+    driverBase(rb).DeleteBoard(monitor);
+    // One whose device's tags ask a brightness has it with the first
+    // picture.
+    fk.connector = true;
+    fk.monitor_there = true;
+    fk.monitor_edid = std.mem.sliceAsBytes(&small);
+    fk.modes = 0;
+    const asked = fake.makeBoardFrom(fk, &dimmed) orelse return error.NoBoard;
+    fk.connector = false;
+    const unasked = fk.log.brightness_calls;
+    const shown = base(rb).AllocBitMap(asked, 64, 32, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(asked, shown));
+    try testing.expectEqual(unasked + 1, fk.log.brightness_calls);
+    try testing.expectEqual(@as(u32, 40), fk.log.brightness);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(asked, null));
+    base(rb).FreeBitMap(shown);
+    driverBase(rb).DeleteBoard(asked);
+    try tearDown(rb);
+}
+
 test "the counters are reset on every board, with a control of its own or without" {
     const rb = try setUp();
     defer kexec.deinit();

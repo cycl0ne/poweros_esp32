@@ -125,7 +125,9 @@ pub const RtgBoardInfo = extern struct {
     caps: u32 = 0,
     refresh_mhz: u32 = 0,
     pixel_clock_hz: u32 = 0,
-    /// 0 to 100, the right way round whatever the part does.
+    /// 0 to 100, the right way round whatever the part does: what the
+    /// library last set. A monitor's own brightness is not read: 100
+    /// until one is set (`SetBoardBrightness`).
     brightness: u32 = 0,
     /// How many buffers it can be given to show at once.
     buffers: u32 = 0,
@@ -228,9 +230,9 @@ pub const RTGBC_REFRESH: u32 = 1 << 4;
 /// driver filled in `power`. A board without it is blank when asked to
 /// sleep.
 pub const RTGBC_POWER: u32 = 1 << 5;
-/// It has a backlight to set (`SetBoardBrightness`): its driver filled
-/// in `set_brightness` and said how many levels it has
-/// (`brightness_steps`).
+/// It has a backlight to set, or its monitor takes a brightness
+/// (`SetBoardBrightness`): its driver filled in `set_brightness` and
+/// said how many levels it has (`brightness_steps`).
 pub const RTGBC_BRIGHTNESS: u32 = 1 << 6;
 pub const RTGBC_STATS: u32 = 1 << 7;
 pub const RTGBC_CONTROL: u32 = 1 << 8;
@@ -580,8 +582,10 @@ pub const RtgBoardOps = extern struct {
     power: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
     /// The backlight, 0 to 100, the right way round whatever the part
     /// does. The library keeps the value (`RtgBoard.info.brightness`),
-    /// and does not ask while the board is asleep. Called with the
-    /// board's lock held.
+    /// and does not ask while the board is asleep. A panel's is asked
+    /// for with the board's first picture; a monitor's brightness, on a
+    /// board with a connector, only when something sets one. Called
+    /// with the board's lock held.
     set_brightness: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
     /// Mirror the picture about each axis in the board's own hardware -
     /// a controller's scan direction, planes read backwards, a stream's
