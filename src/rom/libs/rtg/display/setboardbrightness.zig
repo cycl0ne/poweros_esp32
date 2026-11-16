@@ -32,7 +32,9 @@ const boards = @import("../board/_board.zig");
 /// `GetBoardInfo`) is on for anything above 0. The library keeps the
 /// value: `GetBoardInfo` answers it (`brightness`), and a board that was
 /// asleep comes back with it. On a board that is asleep it is kept and
-/// not applied until the board wakes (`SetBoardPower`).
+/// not applied until the board wakes (`SetBoardPower`) - but a monitor,
+/// which keeps the value itself, is asked at once, and the call
+/// answers what it did.
 ///
 /// A panel's backlight is lit with its board's first picture, at what
 /// its device's tags ask (`RTGA_Brightness`), else in full; a brightness
@@ -40,9 +42,9 @@ const boards = @import("../board/_board.zig");
 ///
 /// A monitor on a connector (`RTGBF_CONNECTOR`) keeps a brightness of
 /// its own, and it is left as the monitor has it: nothing sets it but
-/// this call and a brightness its device's tags ask. Until one of them
-/// has, `brightness` in `GetBoardInfo` says 100, whatever the monitor
-/// is set to.
+/// this call and a brightness its device's tags ask. `GetBoardInfo`
+/// asks the monitor what it is at, so `brightness` follows the
+/// monitor's own buttons too.
 ///
 /// Dimmed is not asleep: `SetBoardPower` is what puts a display to
 /// sleep.
@@ -73,8 +75,9 @@ pub fn SetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32 
     defer boards.release(rb, board);
     if (board.info.caps & rtg.boards.RTGBC_BRIGHTNESS == 0) return err.RTGERR_NOT_SUPPORTED;
     const want = @min(percent, 100);
-    // A board asleep has its backlight off: it wakes with this.
-    if (board.info.power != rtg.boards.RTGPWR_ASLEEP) {
+    // A board asleep has its backlight off: it wakes with this. A
+    // display that keeps the value itself is told at once.
+    if (board.info.power != rtg.boards.RTGPWR_ASLEEP or board.ops.?.brightness != null) {
         const code = board.ops.?.set_brightness.?(board, want);
         if (code != err.RTGERR_OK) return code;
     }

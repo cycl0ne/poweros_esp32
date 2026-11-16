@@ -38,12 +38,19 @@ const _board = @import("_board.zig");
 /// `mirror_y`) - which is what whoever turns a touch on the glass into a
 /// place in the picture reads.
 ///
+/// A monitor keeps a brightness of its own, which its buttons change
+/// too: a board whose driver reads it asks the monitor at every call,
+/// while the board has a display and is not asleep, and `brightness` is
+/// what it answered. Where it does not answer, `brightness` is what was
+/// last heard or set - 100 before anything was.
+///
 /// CONTEXT:
 /// - Waits: while another task holds the board's lock - through a show,
-///   which may last a frame.
+///   which may last a frame - and while a monitor is asked its
+///   brightness, some tenth of a second.
 /// - Interrupts: no.
 /// - Locks: takes the board's lock while it reads what is free of the
-///   display memory. No spinlock may be held.
+///   display memory and asks the monitor. No spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -72,6 +79,18 @@ pub fn GetBoardInfo(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo,
         board.info.caps |= rtg.boards.RTGBC_VBLANK;
     } else {
         board.info.caps &= ~@as(u32, rtg.boards.RTGBC_VBLANK);
+    }
+    // A display that keeps a brightness of its own is asked what it is
+    // at; one that does not answer leaves what was last heard.
+    if (board.ops) |ops| {
+        if (ops.brightness) |read| {
+            const there = board.info.flags & rtg.boards.RTGBF_NO_DISPLAY == 0;
+            const awake = board.info.power != rtg.boards.RTGPWR_ASLEEP;
+            if (there and awake and board.info.caps & rtg.boards.RTGBC_BRIGHTNESS != 0) {
+                const now = read(board);
+                if (now >= 0) board.info.brightness = @min(@as(u32, @intCast(now)), 100);
+            }
+        }
     }
     _board.release(rb, board);
     return copyOut(rtg.RtgBoardInfo, &board.info, info, size);

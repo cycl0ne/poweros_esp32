@@ -3063,7 +3063,7 @@ test "the backlight: its levels, kept by the library, lit with the first picture
     try tearDown(rb);
 }
 
-test "a monitor's brightness is its own: the first picture sets one only where the device's tags ask it" {
+test "a monitor's brightness is its own: read from it, and set with the first picture only where the device's tags ask it" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
@@ -3080,13 +3080,39 @@ test "a monitor's brightness is its own: the first picture sets one only where t
     try testing.expect(infoOf(rb, monitor).flags & rtg.boards.RTGBF_CONNECTOR != 0);
     try testing.expect(infoOf(rb, monitor).caps & rtg.boards.RTGBC_BRIGHTNESS != 0);
     const untouched = fk.log.brightness_calls;
+    // What it is at is the monitor's to say, before a picture and after.
+    fk.own_brightness = 35;
+    try testing.expectEqual(@as(u32, 35), infoOf(rb, monitor).brightness);
     const seen = base(rb).AllocBitMap(monitor, 64, 32, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(monitor, seen));
     try testing.expectEqual(untouched, fk.log.brightness_calls);
+    try testing.expectEqual(@as(u32, 35), infoOf(rb, monitor).brightness);
+    // Its own buttons are followed.
+    fk.own_brightness = 20;
+    try testing.expectEqual(@as(u32, 20), infoOf(rb, monitor).brightness);
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(monitor, 70));
     try testing.expectEqual(untouched + 1, fk.log.brightness_calls);
     try testing.expectEqual(@as(u32, 70), fk.log.brightness);
     try testing.expectEqual(@as(u32, 70), infoOf(rb, monitor).brightness);
+    // One that does not answer leaves what was last heard.
+    fk.own_brightness = 10;
+    fk.read_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(@as(u32, 70), infoOf(rb, monitor).brightness);
+    fk.read_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 10), infoOf(rb, monitor).brightness);
+    // Asleep it is not asked what it is at, and is still told one that
+    // is set: the monitor keeps it.
+    try testing.expectEqual(@as(i32, @intCast(rtg.boards.RTGPWR_ASLEEP)), base(rb).SetBoardPower(monitor, rtg.boards.RTGPWR_ASLEEP));
+    const reads = fk.log.brightness_reads;
+    fk.own_brightness = 5;
+    try testing.expectEqual(@as(u32, 10), infoOf(rb, monitor).brightness);
+    try testing.expectEqual(reads, fk.log.brightness_reads);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(monitor, 60));
+    try testing.expectEqual(untouched + 2, fk.log.brightness_calls);
+    try testing.expectEqual(@as(i32, @intCast(rtg.boards.RTGPWR_ON)), base(rb).SetBoardPower(monitor, rtg.boards.RTGPWR_ON));
+    try testing.expectEqual(@as(u32, 60), infoOf(rb, monitor).brightness);
+    // Awake again it was asked, the once.
+    try testing.expectEqual(reads + 1, fk.log.brightness_reads);
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(monitor, null));
     base(rb).FreeBitMap(seen);
     driverBase(rb).DeleteBoard(monitor);

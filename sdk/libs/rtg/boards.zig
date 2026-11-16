@@ -126,8 +126,9 @@ pub const RtgBoardInfo = extern struct {
     refresh_mhz: u32 = 0,
     pixel_clock_hz: u32 = 0,
     /// 0 to 100, the right way round whatever the part does: what the
-    /// library last set. A monitor's own brightness is not read: 100
-    /// until one is set (`SetBoardBrightness`).
+    /// library last set, or - on a display that keeps a brightness of
+    /// its own, a monitor - what it answered when `GetBoardInfo` asked
+    /// it.
     brightness: u32 = 0,
     /// How many buffers it can be given to show at once.
     buffers: u32 = 0,
@@ -587,6 +588,17 @@ pub const RtgBoardOps = extern struct {
     /// board with a connector, only when something sets one. Called
     /// with the board's lock held.
     set_brightness: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
+    /// The brightness of a display that keeps one by itself, read from
+    /// it: 0 to 100, or an error below 0 where it does not answer. A
+    /// monitor is such a display - its brightness is set over its own
+    /// channel, and with its own buttons. `GetBoardInfo` asks while the
+    /// board has a display and is not asleep, and keeps what it last
+    /// heard where the display does not answer; `SetBoardBrightness`
+    /// asks `set_brightness` on such a board even while it is asleep,
+    /// since the display keeps the value. Called with the board's lock
+    /// held; it may wait. Null: the brightness is what the library last
+    /// set.
+    brightness: ?*const fn (*RtgBoard) callconv(.c) i32 = null,
     /// Mirror the picture about each axis in the board's own hardware -
     /// a controller's scan direction, planes read backwards, a stream's
     /// lines sent last first - for the axes the driver said it turns

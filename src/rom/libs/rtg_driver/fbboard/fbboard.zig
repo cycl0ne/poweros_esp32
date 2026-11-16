@@ -120,8 +120,8 @@
 //! is the HVS reading its planes backwards; the board asleep
 //! (SetBoardPower) is the controller sending blank pixels without their
 //! syncs, which a monitor sleeps at, the mode and everything else left
-//! running; and the brightness is the monitor's own, set over the DDC
-//! with DDC/CI, where the monitor takes it. A start of the port - a mode
+//! running; and the brightness is the monitor's own, set and read over
+//! the DDC with DDC/CI, where the monitor takes it. A start of the port - a mode
 //! set, a monitor plugged in - puts the first two back as the board has
 //! them (`putBack`).
 //!
@@ -201,7 +201,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 43;
+const REVISION = 44;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -888,6 +888,18 @@ fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const value: u16 = @intCast((percent * now.most + 50) / 100);
     if (!bcm2712.setFeature(bcm2712.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
     return err.RTGERR_OK;
+}
+
+/// The monitor's brightness as it answers over DDC/CI, in per cent of
+/// its largest - set with its own buttons, or by `setBrightness`:
+/// RTGERR_IO where it does not answer. Under the board's lock and
+/// without the port's, as `setBrightness`.
+fn brightness(board: *rtg.RtgBoard) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const now = bcm2712.feature(bcm2712.VCP_BRIGHTNESS, Waiter{ .screen = screen }) orelse return err.RTGERR_IO;
+    const most: u32 = now.most;
+    const value: u32 = @min(now.value, now.most);
+    return @intCast((value * 100 + most / 2) / most);
 }
 
 // --- the video layer, on the JH7110's first overlay -------------------------
@@ -2014,6 +2026,7 @@ const bcm2712_ops = ops: {
     more.check_mode = &checkMode;
     more.power = &power;
     more.set_brightness = &setBrightness;
+    more.brightness = &brightness;
     more.mirror = &mirror;
     more.pointer = &pointer_ops;
     more.overlay = &overlay_ops;

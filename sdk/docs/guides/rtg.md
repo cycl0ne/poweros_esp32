@@ -453,11 +453,16 @@ the part counts, on a board that has one (`RTGBC_BRIGHTNESS`);
 how many levels there are (`brightness_steps`): 2 for a line that is on
 or off, 101 for a level for each per cent. A panel's backlight is lit
 with the board's first picture, at what its part asks
-(`RTGA_Brightness`), else in full. A monitor on a connector keeps the
-brightness it has: only `SetBoardBrightness`, or a brightness its part
-asks, changes it, and until then `brightness` says 100 whatever the
-monitor is set to. A brightness set while the board is asleep is kept,
-and is what it wakes with. `C:Backlight` reads and sets it.
+(`RTGA_Brightness`), else in full. A brightness set while the board is
+asleep is kept, and is what it wakes with.
+
+A monitor on a connector keeps a brightness of its own. The first
+picture leaves it: only `SetBoardBrightness`, or a brightness its part
+asks, changes it, and a monitor is told at once even while its board is
+asleep. `GetBoardInfo` asks the monitor what it is at, so `brightness`
+follows the monitor's own buttons; that question takes some tenth of a
+second, and where the monitor does not answer `brightness` is what was
+last heard or set. `C:Backlight` reads and sets the brightness.
 
 ## Several buffers at once: bands
 
@@ -1109,6 +1114,7 @@ calls nothing: its board is waited for by the clock.
 | `frames` | a flipped board's two frames, where they are memory only the driver can get |
 | `power` | the display asleep and awake again - and blank, on a board the library composes nothing for; without it the library blanks and the board never sleeps |
 | `set_brightness` | the backlight, with how many levels it has in the board's description (`brightness_steps`) |
+| `brightness` | the brightness read from a display that keeps one by itself, a monitor; without it the brightness is what the library last set |
 | `mirror` | mirroring the picture in the board's own hardware, for the axes the description names (`caps`); the library mirrors the rest of a picture it composes |
 | `stats`, `control` | the counters, and the driver's own requests |
 | `pointer` (`RtgPointerOps`: `set`, `move`, `show`) | a pointer the board lays itself |

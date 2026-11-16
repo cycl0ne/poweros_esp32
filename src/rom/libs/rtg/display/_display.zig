@@ -56,7 +56,8 @@
 //! **The backlight** is lit with the first picture (`light`): at what
 //! the board's device asks (`RTGA_Brightness`), else in full. A monitor
 //! on a connector lights itself and keeps the brightness it has: only
-//! one its device's tags ask is set with the first picture.
+//! one its device's tags ask is set with the first picture, and what
+//! it is at is read from it (`GetBoardInfo`, the driver's `brightness`).
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;

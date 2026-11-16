@@ -85,6 +85,8 @@ pub const Log = struct {
     power_calls: u32 = 0,
     last_power: u32 = 0,
     brightness_calls: u32 = 0,
+    /// How often the monitor was asked its brightness.
+    brightness_reads: u32 = 0,
     control_calls: u32 = 0,
     fills: u32 = 0,
     copies: u32 = 0,
@@ -267,6 +269,11 @@ pub const State = struct {
     /// What `mirror` and `set_brightness` answer: RTGERR_OK does it.
     mirror_answer: i32 = err.RTGERR_OK,
     brightness_answer: i32 = err.RTGERR_OK,
+    /// The brightness a monitor on a board with a connector is at, as
+    /// its own buttons or `set_brightness` left it, and what `brightness`
+    /// answers when it is asked: RTGERR_OK reads it.
+    own_brightness: u32 = 100,
+    read_answer: i32 = err.RTGERR_OK,
     /// Make the next board with a picture of its own, or the next
     /// flipped one, one whose display sleeps by itself and whose
     /// hardware mirrors: its ops fill in `power` and `mirror` as well.
@@ -756,7 +763,16 @@ fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     log.brightness_calls += 1;
     if (state.brightness_answer != err.RTGERR_OK) return state.brightness_answer;
     log.brightness = percent;
+    state.own_brightness = percent;
     return err.RTGERR_OK;
+}
+
+/// What the monitor is at, as the test left it.
+fn brightnessNow(board: *rtg.RtgBoard) callconv(.c) i32 {
+    const state = stateOfBoard(board);
+    state.log.brightness_reads += 1;
+    if (state.read_answer != err.RTGERR_OK) return state.read_answer;
+    return @intCast(state.own_brightness);
 }
 
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
@@ -1149,9 +1165,11 @@ fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) 
     return if (timings.pixel_clock_hz <= state.fastest_hz) err.RTGERR_OK else err.RTGERR_BAD_MODE;
 }
 
-/// A board with a connector: everything, and what is on it.
+/// A board with a connector: everything, what is on it, and the
+/// monitor's own brightness read.
 const connector_ops = ops: {
     var more = full_ops;
+    more.brightness = &brightnessNow;
     more.detect = &detect;
     more.check_mode = &checkMode;
     break :ops more;

@@ -1202,13 +1202,20 @@ its backlight and how many levels that has (`brightness`,
 `mirror_y`) - which is what whoever turns a touch on the glass into a
 place in the picture reads.
 
+A monitor keeps a brightness of its own, which its buttons change
+too: a board whose driver reads it asks the monitor at every call,
+while the board has a display and is not asleep, and `brightness` is
+what it answered. Where it does not answer, `brightness` is what was
+last heard or set - 100 before anything was.
+
 **CONTEXT**
 
 - Waits: while another task holds the board's lock - through a show,
-  which may last a frame.
+  which may last a frame - and while a monitor is asked its
+  brightness, some tenth of a second.
 - Interrupts: no.
 - Locks: takes the board's lock while it reads what is free of the
-  display memory. No spinlock may be held.
+  display memory and asks the monitor. No spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2502,7 +2509,9 @@ counts. A backlight that is a line on or off (`brightness_steps` 2 in
 `GetBoardInfo`) is on for anything above 0. The library keeps the
 value: `GetBoardInfo` answers it (`brightness`), and a board that was
 asleep comes back with it. On a board that is asleep it is kept and
-not applied until the board wakes (`SetBoardPower`).
+not applied until the board wakes (`SetBoardPower`) - but a monitor,
+which keeps the value itself, is asked at once, and the call
+answers what it did.
 
 A panel's backlight is lit with its board's first picture, at what
 its device's tags ask (`RTGA_Brightness`), else in full; a brightness
@@ -2510,9 +2519,9 @@ set before that is applied at once, and the first picture leaves it.
 
 A monitor on a connector (`RTGBF_CONNECTOR`) keeps a brightness of
 its own, and it is left as the monitor has it: nothing sets it but
-this call and a brightness its device's tags ask. Until one of them
-has, `brightness` in `GetBoardInfo` says 100, whatever the monitor
-is set to.
+this call and a brightness its device's tags ask. `GetBoardInfo`
+asks the monitor what it is at, so `brightness` follows the
+monitor's own buttons too.
 
 Dimmed is not asleep: `SetBoardPower` is what puts a display to
 sleep.

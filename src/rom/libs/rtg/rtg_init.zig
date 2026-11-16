@@ -110,7 +110,10 @@ pub const LIBRARY_VERSION = 1;
 /// is gone.
 /// 30: a monitor's own brightness is left as it is: the first picture
 /// sets one only where the device's tags ask it.
-pub const LIBRARY_REVISION = 30;
+/// 31: a monitor's brightness is read from it (RtgBoardOps.brightness):
+/// GetBoardInfo asks, and SetBoardBrightness tells a monitor at once
+/// even while its board is asleep.
+pub const LIBRARY_REVISION = 31;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
