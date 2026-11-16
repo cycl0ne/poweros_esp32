@@ -95,7 +95,7 @@ fn refusePrivateTree(b: *std.Build, step: *std.Build.Step, said: ?bool, tree: Tr
 /// build every board's in one go: each chip's target and its disk image,
 /// in `Chip`'s order, and what an image is made with.
 const BoardBuild = struct {
-    targets: [5]std.Build.ResolvedTarget,
+    targets: [std.enums.values(Chip).len]std.Build.ResolvedTarget,
     disks: BoardDisks,
     optimize: std.builtin.OptimizeMode,
     sdk: *std.Build.Module,
@@ -117,7 +117,7 @@ fn addBoardImage(b: *std.Build, with: BoardBuild, board: Board) Image {
         .esp32s3 => addImage(b, with.esptool, with.ressize, kernel, with.disks.of(board), with.disk_offset),
         .esp32p4 => addP4Image(b, with.esptool, with.ramimage, kernel, with.disks.of(board), with.disk_offset),
         .rv64sbi => addRv64Image(b, kernel),
-        .a64psci => addA64Image(b, kernel),
+        .a64psci, .a64v80 => addA64Image(b, kernel),
         .x64uefi => addX64Image(b, kernel),
     };
 }
@@ -128,6 +128,7 @@ pub fn ramDiskName(chip: Chip) []const u8 {
     return switch (chip) {
         .rv64sbi => "disk-rv64.bin",
         .a64psci => "disk-a64.bin",
+        .a64v80 => "disk-a64v80.bin",
         .x64uefi => "disk-x64.bin",
         .esp32s3 => "disk.bin",
         .esp32p4 => "disk-esp32p4.bin",
@@ -177,7 +178,7 @@ fn addPackage(
     gather.addPrefixedFileArg(b.fmt("boot/{s}=", .{ramDiskName(chip)}), parts.ram_disk);
     if (parts.boot_loader) |loader| gather.addPrefixedFileArg("boot/" ++ uefi_loader_path ++ "=", loader);
     // What the firmware of this board reads beside them.
-    if (board == .rpi_cm5) gather.addPrefixedFileArg("boot/config.txt=", b.path("src/boards/rpi_cm5/config.txt"));
+    if (piConfig(b, board)) |config| gather.addPrefixedFileArg("boot/config.txt=", config);
     for (parts.boot_files) |file| {
         gather.addPrefixedFileArg(b.fmt("boot/{s}=", .{file.name}), .{ .cwd_relative = file.host });
     }
@@ -335,8 +336,8 @@ fn addBootPackage(b: *std.Build, step: *std.Build.Step, board: Board, kernel_ima
         _ = bundle.addCopyFile(loader, b.fmt("{s}/{s}", .{ name, parts.loader_path }));
         files = b.fmt("{s} {s}", .{ parts.loader_path, files });
     }
-    if (board == .rpi_cm5) {
-        _ = bundle.addCopyFile(b.path("src/boards/rpi_cm5/config.txt"), b.fmt("{s}/config.txt", .{name}));
+    if (piConfig(b, board)) |config| {
+        _ = bundle.addCopyFile(config, b.fmt("{s}/config.txt", .{name}));
         files = b.fmt("{s} config.txt", .{files});
     }
     for (parts.boot_files) |file| {
@@ -403,11 +404,21 @@ fn addBoardArchive(b: *std.Build, step: *std.Build.Step, board: Board, image: Im
             .loader_path = "EFI/BOOT/BOOTX64.EFI",
             .boot_files = parts.boot_files,
         }),
-        .visionfive2, .rpi_cm5 => addBootPackage(b, step, board, image.image, .{
+        .visionfive2, .rpi_cm5, .rpi_cm4 => addBootPackage(b, step, board, image.image, .{
             .ram_disk = disk,
             .boot_files = parts.boot_files,
         }),
     }
+}
+
+/// The config.txt a Raspberry Pi's firmware reads beside the kernel, on
+/// the boards that have one (src/boards/<board>/config.txt); null on the
+/// others.
+fn piConfig(b: *std.Build, board: Board) ?std.Build.LazyPath {
+    return switch (board) {
+        .rpi_cm5, .rpi_cm4 => b.path(b.fmt("src/boards/{s}/config.txt", .{@tagName(board)})),
+        else => null,
+    };
 }
 
 /// `bundle`'s directory `name` packed into `release/<name>.tar.gz`, and
@@ -441,9 +452,12 @@ pub fn chipNames(b: *std.Build) []const u8 {
 pub const PackageStepsWith = struct {
     a64_disk_bin: std.Build.LazyPath,
     a64_tree: std.Build.LazyPath,
+    a64v80_disk_bin: std.Build.LazyPath,
+    a64v80_tree: std.Build.LazyPath,
     board: Board,
     image: std.Build.LazyPath,
     make_a64_disk: *std.Build.Step.Run,
+    make_a64v80_disk: *std.Build.Step.Run,
     make_rv64_disk: *std.Build.Step.Run,
     make_x64_disk: *std.Build.Step.Run,
     optimize: std.builtin.OptimizeMode,
@@ -467,9 +481,12 @@ pub const MadePackageSteps = struct {
 pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
     const a64_disk_bin = with.a64_disk_bin;
     const a64_tree = with.a64_tree;
+    const a64v80_disk_bin = with.a64v80_disk_bin;
+    const a64v80_tree = with.a64v80_tree;
     const board = with.board;
     const image = with.image;
     const make_a64_disk = with.make_a64_disk;
+    const make_a64v80_disk = with.make_a64v80_disk;
     const make_rv64_disk = with.make_rv64_disk;
     const make_x64_disk = with.make_x64_disk;
     const optimize = with.optimize;
@@ -527,16 +544,18 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
             package_step.dependOn(&no_package.step);
             serve_step.dependOn(&no_package.step);
         },
-        .rv64sbi, .a64psci, .x64uefi => {
+        .rv64sbi, .a64psci, .a64v80, .x64uefi => {
             const gathered = addPackage(b, package_step, mkpackage, board, image, .{
                 .tree = switch (chipOf(board)) {
                     .rv64sbi => rv64_tree,
                     .a64psci => a64_tree,
+                    .a64v80 => a64v80_tree,
                     else => x64_tree,
                 },
                 .ram_disk = switch (chipOf(board)) {
                     .rv64sbi => rv64_disk_bin,
                     .a64psci => a64_disk_bin,
+                    .a64v80 => a64v80_disk_bin,
                     else => x64_disk_bin,
                 },
                 .boot_files = boot_files,
@@ -568,10 +587,11 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
     // board's, and a build is for one board.
     switch (chipOf(board)) {
         .esp32s3, .esp32p4 => {},
-        .rv64sbi, .a64psci, .x64uefi => {
+        .rv64sbi, .a64psci, .a64v80, .x64uefi => {
             const run = switch (chipOf(board)) {
                 .rv64sbi => make_rv64_disk,
                 .a64psci => make_a64_disk,
+                .a64v80 => make_a64v80_disk,
                 else => make_x64_disk,
             };
             const list = b.addRunArtifact(mkpackage);
@@ -591,8 +611,7 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
                 list.addPrefixedFileArg("boot/" ++ uefi_loader_path ++ "=", loader);
                 run.addPrefixedFileArg("Storage/Boot/" ++ uefi_loader_path ++ "=", loader);
             }
-            if (board == .rpi_cm5) {
-                const config = b.path("src/boards/rpi_cm5/config.txt");
+            if (piConfig(b, board)) |config| {
                 list.addPrefixedFileArg("boot/config.txt=", config);
                 run.addPrefixedFileArg("Storage/Boot/config.txt=", config);
             }
@@ -618,6 +637,9 @@ pub const ReleaseStepsWith = struct {
     a64_system_disk: std.Build.LazyPath,
     a64_target: std.Build.ResolvedTarget,
     a64_tree: std.Build.LazyPath,
+    a64v80_disk_bin: std.Build.LazyPath,
+    a64v80_target: std.Build.ResolvedTarget,
+    a64v80_tree: std.Build.LazyPath,
     blank_work_disk: std.Build.LazyPath,
     board: Board,
     boot_files: []const BootFile,
@@ -654,6 +676,9 @@ pub fn addReleaseSteps(b: *std.Build, with: ReleaseStepsWith) void {
     const a64_system_disk = with.a64_system_disk;
     const a64_target = with.a64_target;
     const a64_tree = with.a64_tree;
+    const a64v80_disk_bin = with.a64v80_disk_bin;
+    const a64v80_target = with.a64v80_target;
+    const a64v80_tree = with.a64v80_tree;
     const blank_work_disk = with.blank_work_disk;
     const board = with.board;
     const boot_files = with.boot_files;
@@ -690,7 +715,7 @@ pub fn addReleaseSteps(b: *std.Build, with: ReleaseStepsWith) void {
     // (`tools/espackage`); a 64-bit board the files its firmware loads
     // and a `write.sh` that copies them (`tools/bootpackage`).
     const archive_parts: ArchiveParts = .{
-        .disks = .{ .flash = flash_disks, .ram = .{ rv64_disk_bin, a64_disk_bin, x64_disk_bin } },
+        .disks = .{ .flash = flash_disks, .ram = .{ rv64_disk_bin, a64_disk_bin, a64v80_disk_bin, x64_disk_bin } },
         .rv64_system = rv64_system_disk,
         .a64_system = a64_system_disk,
         .work_disk = blank_work_disk,
@@ -711,8 +736,8 @@ pub fn addReleaseSteps(b: *std.Build, with: ReleaseStepsWith) void {
     const release_step = b.step("release", "Build every board's release artifact into release/");
     refusePrivateTree(b, release_step, disk_tree_option, tree, "release");
     const board_build: BoardBuild = .{
-        .targets = .{ target, p4_target, rv64_target, a64_target, x64_target },
-        .disks = .{ .flash = flash_disks, .ram = .{ rv64_disk_bin, a64_disk_bin, x64_disk_bin } },
+        .targets = .{ target, p4_target, rv64_target, a64_target, x64_target, a64v80_target },
+        .disks = .{ .flash = flash_disks, .ram = .{ rv64_disk_bin, a64_disk_bin, a64v80_disk_bin, x64_disk_bin } },
         .optimize = optimize,
         .sdk = sdk,
         .esptool = esptool,
@@ -733,16 +758,18 @@ pub fn addReleaseSteps(b: *std.Build, with: ReleaseStepsWith) void {
         // written with, so it has none.
         switch (chipOf(one)) {
             .esp32s3, .esp32p4 => {},
-            .rv64sbi, .a64psci, .x64uefi => {
+            .rv64sbi, .a64psci, .a64v80, .x64uefi => {
                 _ = addPackage(b, release_step, mkpackage, one, one_image.image, .{
                     .tree = switch (chipOf(one)) {
                         .rv64sbi => rv64_tree,
                         .a64psci => a64_tree,
+                        .a64v80 => a64v80_tree,
                         else => x64_tree,
                     },
                     .ram_disk = switch (chipOf(one)) {
                         .rv64sbi => rv64_disk_bin,
                         .a64psci => a64_disk_bin,
+                        .a64v80 => a64v80_disk_bin,
                         else => x64_disk_bin,
                     },
                     .boot_files = boot_files,

@@ -40,7 +40,7 @@ pub const AbsExecBase: *const *ExecBase = @ptrFromInt(switch (@import("../../har
     .esp32s3 => 0x3FCE_9700,
     .esp32p4 => 0x4FF3_ABC0,
     .rv64sbi => 0x801F_F000,
-    .a64psci => 0x401F_F000,
+    .a64psci, .a64v80 => 0x401F_F000,
     .x64uefi => 0x001F_F000,
 });
 

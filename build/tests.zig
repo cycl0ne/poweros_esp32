@@ -24,6 +24,7 @@ const addReport = build_release.addReport;
 /// What `addCheckSteps` takes from the build so far.
 pub const CheckStepsWith = struct {
     a64_target: std.Build.ResolvedTarget,
+    a64v80_target: std.Build.ResolvedTarget,
     board: Board,
     built: Image,
     cores: u32,
@@ -50,6 +51,7 @@ pub const CheckStepsWith = struct {
 /// what `test` checks: `autodoc`, `modchart` and `fd`.
 pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     const a64_target = with.a64_target;
+    const a64v80_target = with.a64v80_target;
     const board = with.board;
     const built = with.built;
     const cores = with.cores;
@@ -376,6 +378,7 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
             .esp32p4 => p4_target,
             .rv64sbi => rv64_target,
             .a64psci => a64_target,
+            .a64v80 => a64v80_target,
             .x64uefi => x64_target,
         };
         if (other != board) check_all_step.dependOn(&addKernel(b, other_target, optimize, sdk, other, disk_offset, cores, false, false, false).step);

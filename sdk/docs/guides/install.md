@@ -348,6 +348,7 @@ reads itself, not from posfs:
 |---|---|---|
 | VisionFive 2 | U-Boot, from the card's FAT partition | the machine itself: sdcard.device and FAT's handler are in its ROM |
 | Compute Module 5 | the bootloader in its EEPROM, from a FAT partition in the order `BOOT_ORDER` gives ([bundle notes](../../../tools/bootpackage/bundle.md)) | the eMMC or `rpiboot`, from another machine; no driver here reaches the eMMC |
+| Compute Module 4 | the bootloader in its EEPROM, from the eMMC's FAT partition, a GPT's as well as an MBR's; `config.txt` names the disk image, and a partition without it starts all the same | the machine itself: sdcard.device - the eMMC on the BCM2711's SDHCI - and FAT's handler are in its ROM; `rpiboot` from another machine as the way back in (J2 on the IO board) |
 | QEMU's `virt` machines | the kernel is handed to QEMU | the host's command line |
 | A machine whose firmware is UEFI | the loader `EFI/BOOT/BOOTX64.EFI` in an EFI System partition, and `kernel.bin` beside it | the machine itself: both are on its own disk, under `SYS:Storage/Boot`, and the install writes them into the partition it makes |
 

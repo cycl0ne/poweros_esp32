@@ -578,7 +578,7 @@ test "a card that counts in blocks is identified" {
     try testing.expect(Spi.identify(&sim, &found));
     try testing.expectEqual(card.Kind.high_capacity, found.kind);
     try testing.expectEqual(@as(u64, 2048), found.csd.blocks);
-    try testing.expectEqualStrings("SPISD", &found.cid.name);
+    try testing.expectEqualStrings("SPISD", found.cid.name[0..5]);
     try testing.expectEqual(fast_hz, found.clock_hz);
     try testing.expect(sim.crc_on);
     try testing.expect(sim.selected);

@@ -92,7 +92,7 @@ pub fn build(b: *std.Build) void {
         // The machine's own tables say how many cores it has, so there is
         // no figure here to hold -Dcores against.
         .x64uefi => 0,
-        .rv64sbi, .a64psci => 4,
+        .rv64sbi, .a64psci, .a64v80 => 4,
         .esp32s3, .esp32p4 => 2,
     };
     if (most_cores != 0 and cores > most_cores) std.debug.panic("-Dcores={d}: this chip has {d} cores", .{ cores, most_cores });
@@ -145,12 +145,14 @@ pub fn build(b: *std.Build) void {
     const p4_target = b.resolveTargetQuery(poweros_sdk.p4_target_query);
     const rv64_target = b.resolveTargetQuery(poweros_sdk.rv64_target_query);
     const a64_target = b.resolveTargetQuery(poweros_sdk.a64_target_query);
+    const a64v80_target = b.resolveTargetQuery(poweros_sdk.a64v80_target_query);
     const x64_target = b.resolveTargetQuery(poweros_sdk.x64_target_query);
     const kernel_target = switch (chipOf(board)) {
         .esp32s3 => target,
         .esp32p4 => p4_target,
         .rv64sbi => rv64_target,
         .a64psci => a64_target,
+        .a64v80 => a64v80_target,
         .x64uefi => x64_target,
     };
 
@@ -212,9 +214,12 @@ pub fn build(b: *std.Build) void {
     const a64_disk_bin = disk_images.a64_disk_bin;
     const a64_system_disk = disk_images.a64_system_disk;
     const a64_tree = disk_images.a64_tree;
+    const a64v80_disk_bin = disk_images.a64v80_disk_bin;
+    const a64v80_tree = disk_images.a64v80_tree;
     const disks = disk_images.disks;
     const flash_disks = disk_images.flash_disks;
     const make_a64_disk = disk_images.make_a64_disk;
+    const make_a64v80_disk = disk_images.make_a64v80_disk;
     const make_rv64_disk = disk_images.make_rv64_disk;
     const make_x64_disk = disk_images.make_x64_disk;
     const rv64_disk_bin = disk_images.rv64_disk_bin;
@@ -250,7 +255,7 @@ pub fn build(b: *std.Build) void {
         .esp32s3 => addImage(b, esptool, ressize, kernel, flashDisk(flash_disks, board).?, disk_offset),
         .esp32p4 => addP4Image(b, esptool, ramimage, kernel, flashDisk(flash_disks, board).?, disk_offset),
         .rv64sbi => addRv64Image(b, kernel),
-        .a64psci => addA64Image(b, kernel),
+        .a64psci, .a64v80 => addA64Image(b, kernel),
         .x64uefi => addX64Image(b, kernel),
     };
     const image = built.image;
@@ -264,9 +269,12 @@ pub fn build(b: *std.Build) void {
     const packaging = addPackageSteps(b, .{
         .a64_disk_bin = a64_disk_bin,
         .a64_tree = a64_tree,
+        .a64v80_disk_bin = a64v80_disk_bin,
+        .a64v80_tree = a64v80_tree,
         .board = board,
         .image = image,
         .make_a64_disk = make_a64_disk,
+        .make_a64v80_disk = make_a64v80_disk,
         .make_rv64_disk = make_rv64_disk,
         .make_x64_disk = make_x64_disk,
         .optimize = optimize,
@@ -329,6 +337,9 @@ pub fn build(b: *std.Build) void {
         .a64_system_disk = a64_system_disk,
         .a64_target = a64_target,
         .a64_tree = a64_tree,
+        .a64v80_disk_bin = a64v80_disk_bin,
+        .a64v80_target = a64v80_target,
+        .a64v80_tree = a64v80_tree,
         .blank_work_disk = blank_work_disk,
         .board = board,
         .boot_files = boot_files,
@@ -361,6 +372,7 @@ pub fn build(b: *std.Build) void {
 
     addCheckSteps(b, .{
         .a64_target = a64_target,
+        .a64v80_target = a64v80_target,
         .board = board,
         .built = built,
         .cores = cores,
@@ -385,6 +397,7 @@ pub fn build(b: *std.Build) void {
 
     addFlashSteps(b, .{
         .a64_disk_bin = a64_disk_bin,
+        .a64v80_disk_bin = a64v80_disk_bin,
         .baud = baud,
         .board = board,
         .built = built,

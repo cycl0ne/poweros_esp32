@@ -9,12 +9,16 @@
 //! itself); how PSCI is called (`/psci`'s `method`, `smc` or `hvc`); and
 //! the cores that can run the kernel - every `/cpus/cpu@` node of
 //! `device_type` "cpu" that is not disabled, by its MPIDR affinity
-//! (`reg`). And each network port's station address: the
+//! (`reg`), with the address it is let go at where its `enable-method`
+//! is "spin-table" (`cpu-release-addr`: the Raspberry Pi 4's firmware,
+//! which has no PSCI and keeps the other cores waiting for an address
+//! there). And each network port's station address: the
 //! `local-mac-address` of every `ethernet@<address>` node, and of every
 //! radio on an SD host - a `wifi@` node in an `mmc@<address>` one, which
 //! the Pi's firmware writes - by its host's address. And where the Pi's
 //! bootloader started the kernel from: `/chosen/bootloader`'s `partition`
-//! and `tryboot`, each a 32-bit number. Read once in
+//! and `tryboot`, each a 32-bit number, and how: its `boot-mode`. Read
+//! once in
 //! kmain, before exec's memory exists: the tree sits in RAM exec is
 //! given, and is gone after.
 //!
@@ -54,6 +58,10 @@ pub const max_stations = 4;
 /// one.
 pub const Station = struct { address: usize, bytes: [6]u8 };
 
+/// The bootloader's `boot-mode` for a kernel a PC sent over USB
+/// (rpiboot), the module's USB port a device for it.
+pub const boot_mode_rpiboot: u32 = 3;
+
 /// How the PSCI firmware is reached, as `/psci` says.
 pub const Conduit = enum { unknown, hvc, smc };
 
@@ -68,6 +76,9 @@ pub const Facts = struct {
     reserved_count: usize = 0,
     /// The cores' MPIDR affinities, in the tree's order.
     cores: [max_cores]u64 = undefined,
+    /// Where each of them is let go, by the same index: the address it
+    /// waits on for where to start, 0 for a core PSCI starts.
+    releases: [max_cores]u64 = undefined,
     core_count: usize = 0,
     stations: [max_stations]Station = undefined,
     station_count: usize = 0,
@@ -75,6 +86,10 @@ pub const Facts = struct {
     /// not say; and whether that start was a try.
     boot_partition: u32 = 0,
     boot_tried: bool = false,
+    /// How the bootloader came by the kernel - its own number for the
+    /// medium, as in its BOOT_ORDER (`boot_mode_rpiboot`) - 0 where it did
+    /// not say.
+    boot_mode: u32 = 0,
 
     /// The station address the tree gives the port whose registers are at
     /// `address`, or null.
@@ -88,6 +103,11 @@ pub const Facts = struct {
     /// The cores that can run the kernel.
     pub fn coreIds(facts: *const Facts) []const u64 {
         return facts.cores[0..facts.core_count];
+    }
+
+    /// Where each of them is let go (`releases`), in the same order.
+    pub fn coreReleases(facts: *const Facts) []const u64 {
+        return facts.releases[0..facts.core_count];
     }
 
     /// RAM's ranges.
@@ -200,6 +220,8 @@ pub fn read(address: usize) Facts {
     var cpu_id: ?u64 = null;
     var cpu_okay = true;
     var cpu_kind = false;
+    var cpu_spins = false;
+    var cpu_release: u64 = 0;
     // The network port being read, by the address in its name - or its
     // SD host's, for a radio; and the SD host being read.
     var station: ?usize = null;
@@ -250,6 +272,8 @@ pub fn read(address: usize) Facts {
                     cpu_id = null;
                     cpu_okay = true;
                     cpu_kind = false;
+                    cpu_spins = false;
+                    cpu_release = 0;
                 }
             },
             END_NODE => {
@@ -257,6 +281,7 @@ pub fn read(address: usize) Facts {
                     in_cpu = false;
                     if (cpu_id != null and cpu_okay and cpu_kind and facts.core_count < max_cores) {
                         facts.cores[facts.core_count] = cpu_id.?;
+                        facts.releases[facts.core_count] = if (cpu_spins) cpu_release else 0;
                         facts.core_count += 1;
                     }
                 }
@@ -299,6 +324,7 @@ pub fn read(address: usize) Facts {
                 } else if (depth == 3 and in_bootloader and len == 4) {
                     if (std.mem.eql(u8, name, "partition")) facts.boot_partition = be32(value);
                     if (std.mem.eql(u8, name, "tryboot")) facts.boot_tried = be32(value) != 0;
+                    if (std.mem.eql(u8, name, "boot-mode")) facts.boot_mode = be32(value);
                 } else if (depth == 2 and node == .cpus) {
                     if (std.mem.eql(u8, name, "#address-cells")) cpus_address_cells = be32(value);
                 } else if (depth == 3 and in_cpu) {
@@ -307,6 +333,8 @@ pub fn read(address: usize) Facts {
                     }
                     if (std.mem.eql(u8, name, "status")) cpu_okay = std.mem.startsWith(u8, value, "okay") or std.mem.startsWith(u8, value, "ok");
                     if (std.mem.eql(u8, name, "device_type")) cpu_kind = isString(value, "cpu");
+                    if (std.mem.eql(u8, name, "enable-method")) cpu_spins = isString(value, "spin-table");
+                    if (std.mem.eql(u8, name, "cpu-release-addr")) cpu_release = number(value) orelse 0;
                 } else if (depth == 2 and node == .reserved_memory) {
                     if (std.mem.eql(u8, name, "#address-cells")) reserved_address_cells = be32(value);
                     if (std.mem.eql(u8, name, "#size-cells")) reserved_size_cells = be32(value);

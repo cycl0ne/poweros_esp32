@@ -26,8 +26,10 @@ pub const target_query: std.Target.Query = .{
     .cpu_model = .{ .explicit = &std.Target.xtensa.cpu.esp32s3 },
 };
 
-/// The chips code is built for.
-pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci, x64uefi };
+/// The chips code is built for. `a64v80` is AArch64 as `a64psci` is -
+/// the same kernel, the same hardware layer - for the cores of ARMv8.0
+/// alone (`a64v80_target_query`), with a disk image of its own.
+pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci, x64uefi, a64v80 };
 
 /// The ESP32-P4's HP cores: RV32IMAFC with the CSR and fence.i
 /// instructions, and none of the chip's own extensions (PIE, hardware
@@ -64,6 +66,22 @@ pub const a64_target_query: std.Target.Query = .{
     .os_tag = .freestanding,
     .abi = .none,
     .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a76 },
+};
+
+/// An AArch64 machine of ARMv8.0-A cores: the Raspberry Pi CM4's BCM2711,
+/// whose cores are Cortex-A72s - no LSE atomics, so exclusive loads and
+/// stores instead, and no crypto extension; CRC32 they have. Everything
+/// else as `a64_target_query`: the same kernel at EL1, the same 32 vector
+/// registers in a task. A chip of its own, so the A76 machines keep what
+/// their cores have.
+pub const a64v80_target_query: std.Target.Query = .{
+    .cpu_arch = .aarch64,
+    .os_tag = .freestanding,
+    .abi = .none,
+    .cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a72 },
+    // LLVM's A72 has the crypto extension; the BCM2711's cores were made
+    // without it.
+    .cpu_features_sub = std.Target.aarch64.featureSet(&.{ .aes, .sha2 }),
 };
 
 /// An x86-64 machine started by UEFI firmware: QEMU's q35, and a PC. The
@@ -103,6 +121,7 @@ pub fn programTargetQuery(chip: Chip) std.Target.Query {
             break :blk query;
         },
         .a64psci => a64_target_query,
+        .a64v80 => a64v80_target_query,
         .x64uefi => x64_target_query,
     };
 }
@@ -215,7 +234,7 @@ pub fn build(b: *std.Build) void {
         exe.entry = .{ .symbol_name = "_program_entry" };
         exe.link_emit_relocs = true;
         exe.setLinkerScript(b.path(switch (case.chip) {
-            .a64psci => "program_a64psci.ld",
+            .a64psci, .a64v80 => "program_a64psci.ld",
             .x64uefi => "program_x64uefi.ld",
             else => "program_esp32p4.ld",
         }));
@@ -313,7 +332,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
     const code_model: std.builtin.CodeModel = switch (program.chip) {
         .esp32s3 => .default,
         .esp32p4, .rv64sbi => .medany,
-        .a64psci, .x64uefi => .small,
+        .a64psci, .a64v80, .x64uefi => .small,
     };
     // The 128 bytes an x86-64 leaf function may keep below its stack
     // pointer, where an interrupt pushes its frame: see `x64_target_query`.
@@ -358,7 +377,7 @@ pub fn addProgram(b: *std.Build, dep: *std.Build.Dependency, program: Program) s
         .esp32s3 => "program.ld",
         .esp32p4 => "program_esp32p4.ld",
         .rv64sbi => "program_rv64sbi.ld",
-        .a64psci => "program_a64psci.ld",
+        .a64psci, .a64v80 => "program_a64psci.ld",
         .x64uefi => "program_x64uefi.ld",
     };
     if (program.rom_scripts.len == 0) {

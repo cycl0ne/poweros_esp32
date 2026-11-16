@@ -35,7 +35,7 @@ const handover = @import("boot/uefi/handover.zig");
 const layout = @import("arch/x64uefi/layout.zig");
 const mmu = @import("arch/x64uefi/mmu.zig");
 const ram = @import("arch/x64uefi/ram.zig");
-const screentext = @import("arch/x64uefi/screen.zig");
+const screentext = @import("arch/screentext.zig");
 const timer = @import("arch/x64uefi/timer.zig");
 const trap = @import("arch/x64uefi/trap.zig");
 const shell = @import("rom/libs/exec/_shell/shell.zig");
@@ -395,7 +395,14 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // over and the display driver has it. A machine started by UEFI may
     // have no serial port at all - most made in the last ten years have
     // none - and then the screen is the only place its boot can be read.
-    const screen_mine = screentext.take(screen);
+    // A format the stub did not know is one nothing is drawn in: the
+    // pixels would be the wrong size.
+    const screen_mine = screen.format != .unknown and screentext.take(.{
+        .base = @intCast(screen.base),
+        .width = screen.width,
+        .height = screen.height,
+        .stride = screen.stride,
+    });
     if (screen_mine) exec.setBoardMirror(&screentext.hardware);
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;

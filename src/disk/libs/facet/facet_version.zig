@@ -7015,4 +7015,7 @@ pub const LIBRARY_VERSION = 1;
 /// apart. The other 307 cases are each as they were at 1.209, and
 /// FacetProbe 1.48 passes its 891 checks: the attachment sampled too is
 /// made now, as the query says.
-pub const LIBRARY_REVISION = 210;
+/// 211: the V3D's driver finds the VideoCore firmware's mailbox as the
+/// board's firmware part (CHIP_RPI_FIRMWARE), not as its RTC's address;
+/// nothing it draws changes.
+pub const LIBRARY_REVISION = 211;

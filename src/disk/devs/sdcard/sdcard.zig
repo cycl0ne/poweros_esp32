@@ -8,7 +8,10 @@
 //!   CMD_WRITE        io_Length bytes from io_Data at io_Offset.
 //!   TDCMD_ERASE      answers: a card erases for itself, and
 //!                    TD_GETGEOMETRY's erase_size of 0 says so.
-//!   CMD_UPDATE       nothing is buffered below the handler, so it
+//!   CMD_UPDATE       an eMMC whose write cache is on puts what the cache
+//!                    holds into its flash (FLUSH_CACHE), after every
+//!                    write asked before; anywhere else nothing is held
+//!                    below the handler, and it answers.
 //!   CMD_CLEAR        answers.
 //!   TD_GETGEOMETRY   into io_Data: 512-byte blocks, how many there are,
 //!                    and DGF_REMOVABLE.
@@ -40,6 +43,32 @@
 //! and a read's bytes dropped from it before the CPU looks. A chip with
 //! no general-purpose SPI controller - the JH7110 - has no SPI slot, and
 //! none of that half is built for it.
+//!
+//! **The BCM2711's SDHCI** (`sdhci.zig`) is the third way: the Compute
+//! Module 4's EMMC2, its lines its own, so the part names only where its
+//! registers are and its interrupt. It answers the calls the SD/MMC host
+//! answers, and the device is built with one or the other for its chip.
+//! What is on it is an eMMC - or, on a module without one, a card in the
+//! IO board's slot: a card that answers neither an SD card's voltage
+//! check nor its power-up is asked as an eMMC (`identifyMmc`), which is
+//! then the unit's medium like a card, soldered on and never taken out.
+//! It is run as fast as both sides go: the high-speed timing at 52 MHz,
+//! the widest bus the board wired, and a bit on each edge of the clock
+//! where the card and the controller both offer it (`doubleRate`) - each
+//! step kept only if the card's EXT_CSD reads over it as it did before.
+//!
+//! **The eMMC's write cache** is turned on where it has one (`cacheOn`):
+//! a write is answered once it is in the card's memory, and the card
+//! puts it into its flash later, in an order of its own - a request no
+//! longer waits for the flash to be programmed, which on a file system
+//! writing a block here and a block there was most of its time. It is a
+//! USB stick's cache, and the handlers order their writes with
+//! CMD_UPDATE as they do for a stick: the request waits behind the
+//! writes before it and has the card flush (`flushCache`), so what went
+//! before one is in the flash when it is answered. A drive put away -
+//! C:Reboot holds every one still first - sends one. What a reset with
+//! no CMD_UPDATE before it, or a power cut, finds in the cache is lost,
+//! as on a stick pulled out.
 //!
 //! **The card's supply.** A slot whose part names `PART_PinPower` has the
 //! card's supply on a switch: it is switched on before the controller
@@ -114,24 +143,29 @@ const st = expansion.systemtags;
 const BoardPin = expansion.BoardPin;
 const gpio_resource = sdk.resources.gpio;
 const GpioBase = gpio_resource.GpioBase;
-const sdmmc = @import("sdmmc.zig");
 const sdspi = @import("sdspi.zig");
 const card = @import("card.zig");
 const pads = sdk.hardware.gpio;
 const systimer = sdk.hardware.systimer;
 const spi = sdk.hardware.gpspi.spi3;
 /// Whether a slot may be on SPI: the chip has the controller `sdspi.zig`
-/// talks over, as both ESP32s do. On a machine under SBI firmware it has
-/// not, and nothing of the SPI half is built.
-const spi_slots = sdk.hardware.chip != .rv64sbi;
+/// talks over, as both ESP32s do. On the 64-bit machines it has not, and
+/// nothing of the SPI half is built.
+const spi_slots = esp32;
 /// Whether a card's supply switch on a pad is driven from here: the
-/// ESP32s'. No board under SBI firmware has one; its slot's pads are its
-/// SD host's (`jh7110/sdhost.zig`).
-const own_pads = sdk.hardware.chip != .rv64sbi;
+/// ESP32s'. No 64-bit board has one; its slot's lines are its SD host's
+/// (`jh7110/sdhost.zig`, `sdhci.zig`).
+const own_pads = esp32;
+const esp32 = sdk.hardware.chip == .esp32s3 or sdk.hardware.chip == .esp32p4;
 const expander_resource = sdk.resources.expander;
 const ExpanderBase = sdk.interface.expander.ExpanderBase;
 const _sdcard = @import("_sdcard.zig");
 const SdCardBase = _sdcard.SdCardBase;
+/// The SD host: the DesignWare one, or the BCM2711's SDHCI.
+const sdmmc = _sdcard.sdmmc;
+/// Whether the host is an SDHCI, whose slot is its address and its
+/// interrupt, and on which an eMMC may be (`identifyMmc`).
+const sdhci_host = _sdcard.sdhci_host;
 const Work = _sdcard.Work;
 const mount = @import("mount.zig");
 const dos = sdk.dos;
@@ -139,8 +173,8 @@ const DosBase = sdk.interface.dos.DosBase;
 
 pub const DEVICE_NAME = _sdcard.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 10;
-const BUILD_DATE = "29.10.2026";
+const DEVICE_REVISION = 11;
+const BUILD_DATE = "16.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -158,8 +192,9 @@ const in_rom = @hasDecl(@import("root"), "rom_modules");
 const stack_size = if (@sizeOf(usize) == 8) 8192 else 4096;
 /// Where the block the controller's DMA and its interrupt reach comes
 /// from: internal memory, and on a machine whose memory runs past the
-/// DMA's 32 address bits, the part below them (MEMF_DMA).
-const work_memory: u32 = exec.MEMF_INTERNAL | if (sdk.hardware.chip == .rv64sbi) exec.MEMF_DMA else 0;
+/// DMA's 32 address bits - every one but the ESP32s - the part below
+/// them (MEMF_DMA).
+const work_memory: u32 = exec.MEMF_INTERNAL | if (esp32) 0 else exec.MEMF_DMA;
 /// Above dos's processes, below the kernel's tick users, as flash.device
 /// is: a file system waits on this and nothing else does.
 const task_pri = 5;
@@ -362,7 +397,12 @@ fn takeBack(sb: *SdCardBase, blocks: Blocks) void {
 /// the machine.
 fn waitIdle(sb: *SdCardBase) void {
     _ = sb;
-    const until = systimer.uptimeUs() + busy_timeout_us;
+    waitIdleFor(busy_timeout_us);
+}
+
+/// The same, for up to `us` microseconds.
+fn waitIdleFor(us: u64) void {
+    const until = systimer.uptimeUs() + us;
     while (sdmmc.busy() and systimer.uptimeUs() < until) {}
 }
 
@@ -412,6 +452,7 @@ inline fn onSpi(sb: *const SdCardBase) bool {
 /// say anything about itself that matters here.
 fn identify(sb: *SdCardBase) bool {
     sb.card = .{};
+    if (comptime @hasDecl(sdmmc, "setDdr")) sdmmc.setDdr(false);
     sdmmc.setWide(false);
     _ = sdmmc.setClock(sdmmc.identify_hz);
 
@@ -433,7 +474,15 @@ fn identify(sb: *SdCardBase) bool {
     while (waited < _sdcard.identify_timeout_us) : (waited += 10_000) {
         const arg = if (modern) card.op_cond_arg else card.op_cond_arg & ~@as(u32, 1 << 30);
         const answer = appCommand(sb, card.SD_SEND_OP_COND, arg, .short_unchecked, null);
-        if (!answer.ok()) return false;
+        if (!answer.ok()) {
+            // An eMMC answers neither the voltage check nor APP_CMD in its
+            // idle state: on a host one may be on, a card that never
+            // answered is asked as one.
+            if (sdhci_host) {
+                if (waited == 0) return identifyMmc(sb);
+            }
+            return false;
+        }
         ocr = answer.resp[0];
         if (ocr & (1 << 31) != 0) break;
         delay(sb, 10_000);
@@ -475,6 +524,7 @@ fn identify(sb: *SdCardBase) bool {
         if (wide.ok()) {
             sdmmc.setWide(true);
             sb.card.wide = true;
+            sb.card.bus_bits = 4;
         }
     }
 
@@ -486,6 +536,180 @@ fn identify(sb: *SdCardBase) bool {
     const fast = if (highSpeed(sb)) sdmmc.high_speed_hz else sdmmc.fast_hz;
     sb.card.clock_hz = sdmmc.setClock(fast);
     return true;
+}
+
+/// An eMMC on the bus, identified and made ready: its address given, its
+/// size from its EXT_CSD, its high-speed timing and the widest bus the
+/// board wired. False if it is not one either, or one this driver
+/// cannot use.
+///
+/// The order is the eMMC's own, and close to an SD card's: reset, told
+/// to power up until it says it is ready (CMD1, whose answer says at the
+/// same time whether it counts in sectors), asked who it is, given an
+/// address rather than asked for one, asked what it is, and selected.
+/// Its EXT_CSD - 512 bytes of data, which an eMMC of version 4 or later
+/// has - then says how big it is and what timings it offers. It is
+/// switched to the high-speed timing and then to a wider bus, each by
+/// writing a byte of that register (CMD6) and asking whether it took it.
+/// Nothing says which data lines the board wired, so the register is
+/// read again over eight lines, then over four, and the first width it
+/// reads the same over is kept (`widen`).
+fn identifyMmc(sb: *SdCardBase) bool {
+    sb.card = .{ .mmc = true };
+    sdmmc.setBusWidth(1);
+    _ = sdmmc.setClock(sdmmc.identify_hz);
+    _ = command(sb, card.GO_IDLE_STATE, 0, .none, null);
+    delay(sb, 2_000);
+
+    var ocr: u32 = 0;
+    var waited: u32 = 0;
+    while (waited < _sdcard.identify_timeout_us) : (waited += 10_000) {
+        const answer = command(sb, card.SEND_OP_COND, card.mmc_op_cond_arg, .short_unchecked, null);
+        if (!answer.ok()) return false;
+        ocr = answer.resp[0];
+        if (ocr & (1 << 31) != 0) break;
+        delay(sb, 10_000);
+    }
+    if (ocr & (1 << 31) == 0) return false;
+    sb.card.kind = if (ocr & (1 << 30) != 0) .high_capacity else .standard;
+
+    const cid = command(sb, card.ALL_SEND_CID, 0, .long, null);
+    if (!cid.ok()) return false;
+    sb.card.cid = card.decodeMmcCid(&cid.resp);
+
+    const address: u32 = @as(u32, card.mmc_address) << 16;
+    if (!command(sb, card.SET_RELATIVE_ADDR, address, .short, null).ok()) return false;
+    sb.card.address = card.mmc_address;
+
+    const csd = command(sb, card.SEND_CSD, address, .long, null);
+    if (!csd.ok()) return false;
+    sb.card.csd = card.decodeMmcCsd(&csd.resp) orelse return false;
+
+    if (!command(sb, card.SELECT_CARD, address, .short_busy, null).ok()) return false;
+
+    // An MMC older than version 4 has no EXT_CSD: its size is its CSD's,
+    // which reaches 2 GiB, and it runs on one line at 20 MHz.
+    if (sb.card.csd.mmc_spec < 4) {
+        if (sb.card.kind == .high_capacity or sb.card.csd.blocks == 0) return false;
+        if (!command(sb, card.SET_BLOCKLEN, @intCast(card.block_bytes), .short, null).ok()) return false;
+        sb.card.clock_hz = sdmmc.setClock(card.mmc_legacy_hz);
+        return true;
+    }
+
+    sb.card.clock_hz = sdmmc.setClock(card.mmc_default_hz);
+    const ext = readExtCsd(sb) orelse return false;
+    card.mmcYear(&sb.card.cid, ext.revision);
+    if (sb.card.kind == .high_capacity) sb.card.csd.blocks = ext.sectors;
+    if (sb.card.csd.blocks == 0) return false;
+
+    // The user area, where the partitions are, if the card was left
+    // reaching one of its boot areas.
+    if (ext.partition_config & card.partition_access_mask != 0) {
+        if (!switchMmc(sb, card.EXT_CSD_PARTITION_CONFIG, ext.partition_config & ~card.partition_access_mask)) return false;
+    }
+
+    // The high-speed timing, at the faster of the two clocks it offers;
+    // a card that refuses it stays at the default timing's.
+    if (ext.device_type & (card.device_type_hs_26 | card.device_type_hs_52) != 0 and
+        switchMmc(sb, card.EXT_CSD_HS_TIMING, 1))
+    {
+        sb.card.high_speed = true;
+        const hz = if (ext.device_type & card.device_type_hs_52 != 0) card.mmc_high_speed_52_hz else card.mmc_high_speed_26_hz;
+        sb.card.clock_hz = sdmmc.setClock(hz);
+    }
+
+    widen(sb, ext);
+    doubleRate(sb, ext);
+    cacheOn(sb, ext);
+
+    // The block length, which a card that counts in sectors fixes at 512
+    // and one that counts in bytes has to be told.
+    if (sb.card.kind == .standard) {
+        if (!command(sb, card.SET_BLOCKLEN, @intCast(card.block_bytes), .short, null).ok()) return false;
+    }
+    return true;
+}
+
+/// The eMMC's bus as wide as the board wired it: eight lines where the
+/// controller has them, then four, each kept only if the EXT_CSD read
+/// over it reads as it did over one line (`ext`); else back to one.
+fn widen(sb: *SdCardBase, ext: card.ExtCsd) void {
+    for ([_]u8{ 8, 4 }) |lines| {
+        if (lines == 8 and !sdmmc.eightBit()) continue;
+        if (!switchMmc(sb, card.EXT_CSD_BUS_WIDTH, card.mmcBusWidth(lines))) continue;
+        sdmmc.setBusWidth(lines);
+        const again = readExtCsd(sb) orelse continue;
+        if (!card.sameExtCsd(ext, again)) continue;
+        sb.card.wide = true;
+        sb.card.bus_bits = lines;
+        return;
+    }
+    _ = switchMmc(sb, card.EXT_CSD_BUS_WIDTH, card.mmcBusWidth(1));
+    sdmmc.setBusWidth(1);
+}
+
+/// The eMMC's data lines on both edges of the clock (DDR52), twice what
+/// they carry on one: where the card offers it, its bus is four or eight
+/// lines wide at the high-speed timing, and the controller can. The card
+/// is told first (BUS_WIDTH's dual-rate value), then the controller, and
+/// it is kept only if the EXT_CSD read over it reads as it did over one
+/// line (`ext`); else both go back to a single rate on the same lines.
+fn doubleRate(sb: *SdCardBase, ext: card.ExtCsd) void {
+    if (comptime !@hasDecl(sdmmc, "setDdr")) return;
+    if (!sb.card.high_speed or !sb.card.wide) return;
+    if (ext.device_type & card.device_type_ddr_52 == 0 or !sdmmc.ddr()) return;
+    const lines = sb.card.bus_bits;
+    if (switchMmc(sb, card.EXT_CSD_BUS_WIDTH, card.mmcBusWidthDdr(lines))) {
+        sdmmc.setDdr(true);
+        if (readExtCsd(sb)) |again| {
+            if (card.sameExtCsd(ext, again)) {
+                sb.card.ddr = true;
+                return;
+            }
+        }
+        sdmmc.setDdr(false);
+    }
+    _ = switchMmc(sb, card.EXT_CSD_BUS_WIDTH, card.mmcBusWidth(lines));
+}
+
+/// The eMMC's write cache turned on, where it has one: an eMMC of 4.5 or
+/// later says how big it is. A card that refuses goes on without.
+fn cacheOn(sb: *SdCardBase, ext: card.ExtCsd) void {
+    if (ext.revision < card.ext_csd_rev_cache or ext.cache_size == 0) return;
+    sb.card.cache = switchMmc(sb, card.EXT_CSD_CACHE_CTRL, 1);
+}
+
+/// What the eMMC's write cache holds put into its flash (FLUSH_CACHE), the
+/// card's busy waited out for as long as a flush may take, and its status
+/// asked; 0 when it was, or when nothing is cached.
+fn flushCache(sb: *SdCardBase) i8 {
+    if (!sb.card.cache) return 0;
+    const flushed = command(sb, card.SWITCH, card.switchArg(card.EXT_CSD_FLUSH_CACHE, 1), .short_busy, null);
+    if (!flushed.ok()) return flushed.fault.code();
+    waitIdleFor(flush_timeout_us);
+    const status = command(sb, card.SEND_STATUS, @as(u32, sb.card.address) << 16, .short, null);
+    if (!status.ok()) return status.fault.code();
+    if (status.resp[0] & card.r1_switch_error != 0) return td.TDERR_NotSpecified;
+    return 0;
+}
+
+/// The longest a flush of the cache is waited for, as Linux waits: the
+/// card says nothing of its own.
+const flush_timeout_us: u64 = 30_000_000;
+
+/// A byte of the eMMC's EXT_CSD written (CMD6), the card's busy waited
+/// out, and its status asked: whether it took the change.
+fn switchMmc(sb: *SdCardBase, index: u8, value: u8) bool {
+    if (!command(sb, card.SWITCH, card.switchArg(index, value), .short_busy, null).ok()) return false;
+    const status = command(sb, card.SEND_STATUS, @as(u32, sb.card.address) << 16, .short, null);
+    return status.ok() and status.resp[0] & card.r1_switch_error == 0;
+}
+
+/// The eMMC's EXT_CSD, read (CMD8) and decoded; null if it did not
+/// come, or came damaged.
+fn readExtCsd(sb: *SdCardBase) ?card.ExtCsd {
+    const raw = readRegister(sb, command, card.SEND_EXT_CSD, 0, card.ext_csd_bytes) orelse return null;
+    return card.decodeExtCsd(raw[0..card.ext_csd_bytes]);
 }
 
 /// The card switched to high speed, where the chip's side can clock it
@@ -743,8 +967,8 @@ fn tellMounter(sb: *SdCardBase) void {
 
 fn report(sb: *SdCardBase) void {
     const sys = sb.sys_base;
-    var name: [6]u8 = @splat(0);
-    @memcpy(name[0..5], &sb.card.cid.name);
+    var name: [7]u8 = @splat(0);
+    @memcpy(name[0..6], &sb.card.cid.name);
     if (onSpi(sb)) {
         sdk.exec.kprintf(sys, "%s: %s, %ld MB, SPI at %d kHz\n", .{
             DEVICE_NAME,
@@ -754,12 +978,18 @@ fn report(sb: *SdCardBase) void {
         });
         return;
     }
-    sdk.exec.kprintf(sys, "%s: %s, %ld MB, %d bits at %d kHz\n", .{
+    const kind: [*:0]const u8 = if (sb.card.mmc) "eMMC " else "";
+    const rate: [*:0]const u8 = if (sb.card.ddr) ", both edges," else "";
+    const cached: [*:0]const u8 = if (sb.card.cache) ", writes cached" else "";
+    sdk.exec.kprintf(sys, "%s: %s%s, %ld MB, %d bits%s at %d kHz%s\n", .{
         DEVICE_NAME,
+        kind,
         @as([*:0]const u8, @ptrCast(&name)),
         sb.card.bytes() / (1024 * 1024),
-        @as(u32, if (sb.card.wide) 4 else 1),
+        @as(u32, sb.card.bus_bits),
+        rate,
         sb.card.clock_hz / 1000,
+        cached,
     });
 }
 
@@ -1288,6 +1518,7 @@ fn slowIO(sb: *SdCardBase, io: *exec.IORequest) void {
                 io.err = exec.IOERR_BADADDRESS;
             }
         },
+        exec.CMD_UPDATE => io.err = flushCache(sb),
         td.TD_GETNUMTRACKS => req.actual = @intCast(sb.card.csd.blocks),
         td.TD_PROTSTATUS => req.actual = if (writeProtected(sb)) 1 else 0,
         td.TD_CHANGESTATE => req.actual = 0,
@@ -1326,9 +1557,12 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         td.TD_GETNUMTRACKS,
         td.TD_PROTSTATUS,
         => return queue(sb, io),
+        // An eMMC's cache is flushed on the task, behind the writes
+        // queued before; with nothing cached it answers here.
+        exec.CMD_UPDATE => if (sb.card.cache) return queue(sb, io),
         // A card erases for itself, and nothing below the handler is
-        // buffered, so these three answer where they stand.
-        td.TDCMD_ERASE, exec.CMD_UPDATE, exec.CMD_CLEAR => {},
+        // buffered, so these two answer where they stand.
+        td.TDCMD_ERASE, exec.CMD_CLEAR => {},
         // A handler's change interrupt: kept, and not answered, until the
         // same request comes back as TD_REMCHANGEINT.
         td.TD_ADDCHANGEINT => if (req.data == null) {
@@ -1427,9 +1661,12 @@ fn expunge(_: *exec.Device) callconv(.c) ?*anyopaque {
 /// where it has them, and a chip select and a supply switch that are pads
 /// of the chip.
 fn slotPads(slot: _sdcard.Slot, into: *[10]u8) []const u8 {
-    into[0] = slot.clock;
-    into[1] = slot.command;
-    var count: usize = 2;
+    var count: usize = 0;
+    for ([_]u8{ slot.clock, slot.command }) |line_pad| {
+        if (line_pad == _sdcard.no_pin) continue;
+        into[count] = line_pad;
+        count += 1;
+    }
     for (slot.data) |data_pad| {
         if (data_pad == _sdcard.no_pin) continue;
         into[count] = data_pad;
@@ -1480,6 +1717,24 @@ fn findSlot(sb: *SdCardBase) void {
         slot.select = @intCast(select.data());
         slot.power = @truncate(ub.GetTagData(st.PART_PinPower, 0, tags));
         sb.slot = slot;
+        sb.has_slot = 1;
+        return;
+    }
+
+    // On an SDHCI every line is the controller's own: the slot is where
+    // its registers are and the interrupt it raises, both of which the
+    // part has to say.
+    if (sdhci_host) {
+        const address = ub.GetTagData(st.PART_Address, 0, tags);
+        const irq = ub.GetTagData(st.PART_Irq, 0, tags);
+        if (address == 0 or irq == 0) return;
+        sb.slot = .{
+            .clock = _sdcard.no_pin,
+            .command = _sdcard.no_pin,
+            .data = @splat(_sdcard.no_pin),
+            .irq = @intCast(irq),
+            .address = address,
+        };
         sb.has_slot = 1;
         return;
     }
@@ -1541,6 +1796,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
         sdk.exec.klog(sys_base, exec.LOG_DEBUG, "%s: no card slot on this board\n", .{DEVICE_NAME});
         return null;
     }
+    if (sdhci_host) sdmmc.place(@intCast(sb.slot.address));
     if (!onSpi(sb) and !sdmmc.present(sys_base)) {
         sdk.exec.kprintf(sys_base, "%s: no SD host controller on this machine\n", .{DEVICE_NAME});
         return null;

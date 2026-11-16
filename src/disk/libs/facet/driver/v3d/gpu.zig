@@ -92,10 +92,10 @@ pub const Gpu = struct {
         defer sys.CloseLibrary(expansion_lib);
         const eb: *ExpansionBase = @ptrCast(expansion_lib);
         const part = eb.FindBoardPart(null, st.PARTKIND_GPU, st.CHIP_BCM2712_V3D) orelse return null;
-        const rtc = eb.FindBoardPart(null, st.PARTKIND_RTC, st.CHIP_RPI_RTC) orelse return null;
+        const firmware = eb.FindBoardPart(null, st.PARTKIND_FIRMWARE, st.CHIP_RPI_FIRMWARE) orelse return null;
         const hub = utility.GetTagData(st.PART_Address, 0, part.tags);
         const power_manager = utility.GetTagData(st.PART_PowerManager, 0, part.tags);
-        const mailbox = utility.GetTagData(st.PART_Address, 0, rtc.tags);
+        const mailbox = utility.GetTagData(st.PART_Address, 0, firmware.tags);
         const irq: u32 = @truncate(utility.GetTagData(st.PART_Irq, 0, part.tags));
         if (hub == 0 or power_manager == 0 or mailbox == 0 or irq == 0) return null;
         return .{

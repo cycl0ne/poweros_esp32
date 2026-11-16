@@ -68,7 +68,7 @@ pub const help =
 /// `cause` and `cores` show.
 const has_from_cpu = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => true,
-    .rv64sbi, .a64psci, .x64uefi => false,
+    .rv64sbi, .a64psci, .a64v80, .x64uefi => false,
 };
 
 pub fn run(shell: *Shell, args: *Args) anyerror!void {

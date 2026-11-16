@@ -8,7 +8,9 @@
 //! (`port`) are the chip's: on the ESP32-P4 its own 10/100 MAC on RMII
 //! (gmac.zig, rmii.zig), on the JH7110 its gigabit MACs on RGMII
 //! (eqos.zig, rgmii.zig), on the CM5 the RP1's gigabit MAC on RGMII
-//! (gem.zig, rp1eth.zig). The engines answer the same calls for their
+//! (gem.zig, rp1eth.zig), on the CM4 the BCM2711's GENET on RGMII
+//! (genet.zig, bcm2711eth.zig), whose descriptors are its own and the
+//! chains' shadows of them. The engines answer the same calls for their
 //! descriptors, so the chains below are the same code on each.
 //!
 //! **Why a second block of memory.** The base is wherever MakeLibrary put
@@ -62,6 +64,7 @@ pub const mac = switch (sdk.hardware.chip) {
     .rv64sbi => @import("eqos.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
     .a64psci => @import("gem.zig"),
+    .a64v80 => @import("genet.zig"),
     .x64uefi => @compileError("an x86-64 machine's Ethernet is a card on PCI, not this MAC"),
 };
 pub const port = switch (sdk.hardware.chip) {
@@ -69,6 +72,7 @@ pub const port = switch (sdk.hardware.chip) {
     .rv64sbi => @import("rgmii.zig"),
     .esp32s3 => @compileError("the ESP32-S3 has no Ethernet MAC"),
     .a64psci => @import("rp1eth.zig"),
+    .a64v80 => @import("bcm2711eth.zig"),
     .x64uefi => @compileError("an x86-64 machine's Ethernet is a card on PCI, not this MAC"),
 };
 
@@ -217,8 +221,10 @@ pub const EmacBase = extern struct {
 
     /// Every multicast frame taken while any group is joined: the MAC
     /// matches only a few addresses exactly, and the unit drops the
-    /// frames of groups nobody here joined.
+    /// frames of groups nobody here joined. A MAC that matches the groups
+    /// themselves (the GENET) is given them.
     pub fn setFilter(_: *EmacBase, groups: []const unit_file.Group, promiscuous: bool) void {
+        if (@hasDecl(mac, "setGroups")) return mac.setGroups(groups, promiscuous);
         var multicast = false;
         for (groups) |group| multicast = multicast or group.users != 0;
         mac.setFilter(promiscuous, multicast);

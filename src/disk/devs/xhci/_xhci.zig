@@ -114,11 +114,13 @@ pub const XhciBase = extern struct {
     open_lock: exec.SignalSemaphore = .{},
 };
 
-/// A controller of the board's own (CHIP_DWC3): where its registers are,
-/// and the interrupt its part names.
+/// A controller of the board's own (CHIP_DWC3, or CHIP_XHCI on
+/// BUS_MEMORY): where its registers are, the interrupt its part names,
+/// and whether it is a DWC3, made a host before its xHCI is touched.
 pub const BoardController = extern struct {
     regs: usize = 0,
     irq: u32 = 0,
+    dwc3: bool = false,
 };
 
 /// An endpoint of a device: its context's state as the driver set it,

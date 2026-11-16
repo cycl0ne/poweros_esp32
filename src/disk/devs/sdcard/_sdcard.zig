@@ -25,8 +25,13 @@ const ExpanderBase = sdk.interface.expander.ExpanderBase;
 const DosBase = sdk.interface.dos.DosBase;
 const automount = sdk.devices.automount;
 const dma = sdk.resources.dma;
-const sdmmc = @import("sdmmc.zig");
 const card = @import("card.zig");
+
+/// The SD host the device speaks through, picked by the chip: the
+/// BCM2711's SDHCI (`sdhci.zig`) on the Compute Module 4, the DesignWare
+/// SD/MMC host (`sdmmc.zig`) everywhere else. Both answer the same calls.
+pub const sdmmc = if (sdhci_host) @import("sdhci.zig") else @import("sdmmc.zig");
+pub const sdhci_host = sdk.hardware.chip == .a64v80;
 
 pub const DEVICE_NAME = "sdcard.device";
 /// The card's own drive, when it has no RigidDiskBlock.
@@ -40,10 +45,14 @@ pub const DRIVE_NAME = "SD0";
 /// memory, which is worth more than that. A machine with gigabytes of it
 /// takes 256 KiB a round: a card writes a long run of blocks much faster
 /// than the same blocks in pieces, and what Copy asks for in one go is
-/// one round.
-pub const chunk_blocks: u32 = if (sdk.hardware.chip == .rv64sbi) 512 else 32;
+/// one round. The BCM2711's eMMC takes 1 MiB: each round ends with the
+/// card programming what it was sent, which on a bus moving 80 MB/s is
+/// a third of a 256 KiB round's time.
+pub const chunk_blocks: u32 = if (small_memory) 32 else if (sdhci_host) 2048 else 512;
 pub const chunk_bytes: u32 = chunk_blocks * @as(u32, @intCast(card.block_bytes));
-/// One descriptor per 4096 bytes of it.
+/// The ESP32s', whose internal memory is counted in kilobytes.
+const small_memory = sdk.hardware.chip == .esp32s3 or sdk.hardware.chip == .esp32p4;
+/// One descriptor per most a descriptor carries.
 pub const descriptors: u32 = chunk_bytes / sdmmc.dma_buffer_max;
 
 /// How long a command may take before the card is given up on. A card may
@@ -184,6 +193,9 @@ pub const Slot = extern struct {
     power: u32 = 0,
     /// The SD/MMC host's interrupt, as exec numbers it.
     irq: u32 = 0,
+    /// An SDHCI's registers, as the part gives them; 0 where the chip
+    /// fixes them.
+    address: u64 = 0,
 };
 
 pub fn sdCardBase(dev: *exec.Device) *SdCardBase {
@@ -207,9 +219,10 @@ pub fn requestOf(msg: *exec.Message) *exec.IORequest {
 
 // --- what the controller said ---------------------------------------------
 
-/// The controller's complaints, in the card's terms.
+/// The controller's complaints, in the card's terms: the SDHCI reads its
+/// own bits (`sdhci.faultOf`), the DesignWare host's are read here.
 pub fn faultOf(status: u32, dma_status: u32) card.Fault {
-    return .{
+    return if (comptime @hasDecl(sdmmc, "faultOf")) sdmmc.faultOf(status, dma_status) else .{
         .no_answer = status & (sdmmc.int_response_timeout |
             sdmmc.int_data_read_timeout | sdmmc.int_host_timeout) != 0,
         .bad_checksum = status & (sdmmc.int_response_crc | sdmmc.int_data_crc |
@@ -242,7 +255,8 @@ pub fn geometry(sb: *SdCardBase, into: *td.DriveGeometry) void {
         .track_sectors = 1,
         .buf_mem_type = exec.MEMF_ANY,
         .device_type = td.DG_DIRECT_ACCESS,
-        .flags = td.DGF_REMOVABLE,
+        // An eMMC is soldered on.
+        .flags = if (sb.card.mmc) 0 else td.DGF_REMOVABLE,
         // A card erases for itself, and nothing here can be read through
         // the address space.
         .erase_size = 0,

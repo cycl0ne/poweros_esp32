@@ -17,6 +17,12 @@
 //! as an answer - the SCR - arrive as bytes, highest first, and are
 //! decoded from bytes.
 //!
+//! **An eMMC** is asked most of the same things in most of the same
+//! ways, and where it is not - how it is powered up, given its address,
+//! switched to a faster mode or a wider bus, and what it says about its
+//! size - the commands and the registers are here beside an SD card's,
+//! named for it (`SEND_OP_COND`, `decodeMmcCid`, `decodeExtCsd`).
+//!
 //! **What a card is addressed by** is the one difference that runs
 //! through the driver: a card of 2 GiB or less counts its offsets in
 //! bytes, and every card since counts them in blocks. `Card.blockArg`
@@ -55,6 +61,83 @@ pub const APP_CMD: u32 = 55;
 pub const SET_BUS_WIDTH: u32 = 6;
 pub const SD_SEND_OP_COND: u32 = 41;
 pub const SEND_SCR: u32 = 51;
+
+/// An eMMC's own commands, where they differ from an SD card's. It is
+/// told to power up with CMD1 rather than ACMD41, given its address
+/// rather than asked for one (CMD3, the same number), switched by writing
+/// a byte of its EXT_CSD (CMD6, the same number with another argument),
+/// and sends that register with CMD8 - which an SD card takes as its
+/// voltage check, and an eMMC in its idle state does not answer.
+pub const SEND_OP_COND: u32 = 1;
+pub const SET_RELATIVE_ADDR: u32 = 3;
+pub const SWITCH: u32 = 6;
+pub const SEND_EXT_CSD: u32 = 8;
+
+/// CMD1's argument: 2.7 to 3.6 volts, and the bit that says the host
+/// counts an eMMC larger than 2 GiB in sectors.
+pub const mmc_op_cond_arg: u32 = (1 << 30) | 0x00FF_8000;
+/// The address the host gives the one eMMC on its bus.
+pub const mmc_address: u16 = 1;
+/// R1's bit that says the last CMD6 was refused.
+pub const r1_switch_error: u32 = 1 << 7;
+
+/// An eMMC's clocks: before it is switched to anything - 20 MHz for a
+/// card older than version 4, which has no EXT_CSD, 26 MHz for one that
+/// has - and in its high-speed timing, whichever of the two it offers.
+pub const mmc_legacy_hz: u32 = 20_000_000;
+pub const mmc_default_hz: u32 = 26_000_000;
+pub const mmc_high_speed_26_hz: u32 = 26_000_000;
+pub const mmc_high_speed_52_hz: u32 = 52_000_000;
+
+/// The EXT_CSD: 512 bytes an eMMC sends as data. The bytes read here, by
+/// their place in it.
+pub const ext_csd_bytes: u32 = 512;
+pub const EXT_CSD_PARTITION_CONFIG: u8 = 179;
+pub const EXT_CSD_BUS_WIDTH: u8 = 183;
+pub const EXT_CSD_HS_TIMING: u8 = 185;
+pub const EXT_CSD_REV: u8 = 192;
+/// FLUSH_CACHE: 1 written has the card put what its cache holds into
+/// its flash, busy until it has.
+pub const EXT_CSD_FLUSH_CACHE: u8 = 32;
+/// CACHE_CTRL: 1 turns the card's write cache on.
+pub const EXT_CSD_CACHE_CTRL: u8 = 33;
+/// CACHE_SIZE, four bytes, lowest first: 0 for a card with no cache.
+pub const EXT_CSD_CACHE_SIZE: u16 = 249;
+/// The first revision with a cache (eMMC 4.5).
+pub const ext_csd_rev_cache: u8 = 6;
+pub const EXT_CSD_DEVICE_TYPE: u8 = 196;
+pub const EXT_CSD_SEC_COUNT: u16 = 212;
+/// PARTITION_CONFIG's low bits: which of the card's areas the commands
+/// reach - 0 the user area, where its partitions are; the boot areas
+/// and the rest are left alone.
+pub const partition_access_mask: u8 = 0x7;
+/// DEVICE_TYPE's bits for the high-speed timing at 26 and at 52 MHz,
+/// and for its dual data rate at 52 MHz on 1.8 or 3.3 V lines.
+pub const device_type_hs_26: u8 = 1 << 0;
+pub const device_type_hs_52: u8 = 1 << 1;
+pub const device_type_ddr_52: u8 = 1 << 2;
+
+/// CMD6's argument for an eMMC: the byte at `index` of its EXT_CSD
+/// written with `value` (access 3, "write byte").
+pub fn switchArg(index: u8, value: u8) u32 {
+    return (3 << 24) | (@as(u32, index) << 16) | (@as(u32, value) << 8);
+}
+
+/// BUS_WIDTH's value for one, four or eight data lines at single data
+/// rate.
+pub fn mmcBusWidth(lines: u8) u8 {
+    return switch (lines) {
+        8 => 2,
+        4 => 1,
+        else => 0,
+    };
+}
+
+/// BUS_WIDTH's value for four or eight data lines at dual data rate, a
+/// bit on each edge of the clock. There is none for one line.
+pub fn mmcBusWidthDdr(lines: u8) u8 {
+    return if (lines == 8) 6 else 5;
+}
 
 /// CMD8's argument: the voltage the host offers (2.7 to 3.6 volts) and a
 /// pattern the card echoes back, so an answer that is not an echo is
@@ -146,8 +229,9 @@ pub const Cid = extern struct {
     manufacturer: u8 = 0,
     /// Two letters: the maker's own identification.
     oem: [2]u8 = .{ 0, 0 },
-    /// Five characters, padded with spaces, not terminated.
-    name: [5]u8 = .{ 0, 0, 0, 0, 0 },
+    /// Five characters - six on an eMMC - padded with spaces, not
+    /// terminated; an SD card's sixth is 0.
+    name: [6]u8 = .{ 0, 0, 0, 0, 0, 0 },
     /// The card's revision, as the maker counts it: the high half is
     /// before the point and the low half after.
     revision: u8 = 0,
@@ -188,6 +272,8 @@ pub fn decodeCid(resp: *const [4]u32) Cid {
 
 /// What a card says about itself: how big it is and what it will allow.
 pub const Csd = extern struct {
+    /// An eMMC's SPEC_VERS: 4 or more has an EXT_CSD. 0 on an SD card.
+    mmc_spec: u8 = 0,
     /// 0 for a card that counts in bytes, 1 or 2 for one that counts in
     /// blocks.
     version: u8 = 0,
@@ -237,6 +323,94 @@ pub fn decodeCsd(resp: *const [4]u32) ?Csd {
         else => return null,
     }
     return csd;
+}
+
+/// The identification an eMMC answers CMD2 with: the maker's number, a
+/// one-byte OEM (kept in `oem[1]`), six characters of name, the
+/// revision, the serial, and a month and a year counted from 1997 -
+/// from 2013 on a card of EXT_CSD revision 5 or later, which is read
+/// after this (`mmcYear`).
+pub fn decodeMmcCid(resp: *const [4]u32) Cid {
+    var cid = Cid{};
+    cid.manufacturer = @intCast(bits(resp, 120, 8));
+    cid.oem[1] = @intCast(bits(resp, 104, 8));
+    for (0..6) |i| cid.name[i] = @intCast(bits(resp, @intCast(96 - i * 8), 8));
+    cid.revision = @intCast(bits(resp, 48, 8));
+    cid.serial = bits(resp, 16, 32);
+    cid.month = @intCast(bits(resp, 12, 4));
+    cid.year = @intCast(1997 + bits(resp, 8, 4));
+    return cid;
+}
+
+/// The year an eMMC was made, once its EXT_CSD revision is known: the
+/// four bits count from 2013 on revision 5 (eMMC 4.41) and later.
+pub fn mmcYear(cid: *Cid, ext_csd_revision: u8) void {
+    if (ext_csd_revision > 4 and cid.year < 2010) cid.year += 16;
+}
+
+/// The description an eMMC answers CMD9 with, or null if it says
+/// nothing this driver can use. Every eMMC states its size the way the
+/// older SD layout does - (C_SIZE + 1) * 2^(C_SIZE_MULT + 2) blocks of
+/// 2^READ_BL_LEN bytes - whatever its CSD_STRUCTURE says; one larger
+/// than 2 GiB sets C_SIZE to its top and gives its size in the EXT_CSD
+/// instead (`ExtCsd.sectors`), which the caller puts here.
+pub fn decodeMmcCsd(resp: *const [4]u32) ?Csd {
+    var csd = Csd{};
+    csd.version = @intCast(bits(resp, 126, 2));
+    csd.mmc_spec = @intCast(bits(resp, 122, 4));
+    csd.command_classes = @intCast(bits(resp, 84, 12));
+    csd.permanent_write_protect = bits(resp, 13, 1) != 0;
+    csd.temporary_write_protect = bits(resp, 12, 1) != 0;
+    const c_size = bits(resp, 62, 12);
+    const c_size_mult = bits(resp, 47, 3);
+    const read_len = bits(resp, 80, 4);
+    if (read_len > 11) return null;
+    const units: u64 = (@as(u64, c_size) + 1) << @intCast(c_size_mult + 2);
+    csd.blocks = (units << @intCast(read_len)) / block_bytes;
+    return csd;
+}
+
+/// What an eMMC's EXT_CSD says that matters here.
+pub const ExtCsd = struct {
+    /// Its size in 512-byte sectors, on a card that counts in them.
+    sectors: u32 = 0,
+    revision: u8 = 0,
+    /// The timings it offers (`device_type_hs_26`, `device_type_hs_52`).
+    device_type: u8 = 0,
+    partition_config: u8 = 0,
+    /// How big its write cache is; 0 if it has none.
+    cache_size: u32 = 0,
+    /// Bytes the card fixes, read again over a wider bus to see that
+    /// every line of it is wired (`sameExtCsd`).
+    fingerprint: [fingerprint_at.len]u8 = @splat(0),
+};
+
+/// Where in the EXT_CSD the bytes are that the card fixes and the host
+/// never writes - its partitioning support, its revision and structure,
+/// the timings it offers, its size, its timeouts and erase sizes - as
+/// Linux compares them after it widens the bus.
+const fingerprint_at = [_]u16{ 160, 192, 194, 196, 212, 213, 214, 215, 217, 221, 223, 224, 229, 230, 231, 232 };
+
+pub fn decodeExtCsd(raw: *const [ext_csd_bytes]u8) ExtCsd {
+    var ext = ExtCsd{
+        .sectors = @as(u32, raw[EXT_CSD_SEC_COUNT]) |
+            @as(u32, raw[EXT_CSD_SEC_COUNT + 1]) << 8 |
+            @as(u32, raw[EXT_CSD_SEC_COUNT + 2]) << 16 |
+            @as(u32, raw[EXT_CSD_SEC_COUNT + 3]) << 24,
+        .revision = raw[EXT_CSD_REV],
+        .device_type = raw[EXT_CSD_DEVICE_TYPE],
+        .partition_config = raw[EXT_CSD_PARTITION_CONFIG],
+        .cache_size = std.mem.readInt(u32, raw[EXT_CSD_CACHE_SIZE..][0..4], .little),
+    };
+    for (fingerprint_at, 0..) |index, i| ext.fingerprint[i] = raw[index];
+    return ext;
+}
+
+/// Whether two readings of an EXT_CSD are of the same register: the one
+/// read over a single line, and one read over a wider bus, which a line
+/// the board did not wire reads differently - or fails its checksum.
+pub fn sameExtCsd(a: ExtCsd, b: ExtCsd) bool {
+    return std.mem.eql(u8, &a.fingerprint, &b.fingerprint);
 }
 
 /// What a card's configuration register says. It arrives as eight bytes
@@ -299,10 +473,18 @@ pub const Card = extern struct {
     cid: Cid = .{},
     csd: Csd = .{},
     scr: Scr = .{},
-    /// Whether the bus was actually widened.
+    /// Whether the bus was actually widened, and to how many data lines.
     wide: bool = false,
+    bus_bits: u8 = 1,
+    /// Whether the card is an eMMC (or an MMC), not an SD card.
+    mmc: bool = false,
     /// Whether the card was switched to high speed.
     high_speed: bool = false,
+    /// Whether its data lines carry a bit on both edges of the clock.
+    ddr: bool = false,
+    /// Whether its write cache is on, so that what it was given has to be
+    /// flushed to be in its flash (CMD_UPDATE).
+    cache: bool = false,
     /// The clock the card is being run at.
     clock_hz: u32 = 0,
 
@@ -414,7 +596,7 @@ test "the identification of a card" {
     const cid = decodeCid(&answer);
     try testing.expectEqual(@as(u8, 0x03), cid.manufacturer);
     try testing.expectEqualSlices(u8, "SD", &cid.oem);
-    try testing.expectEqualSlices(u8, "SU64G", &cid.name);
+    try testing.expectEqualSlices(u8, "SU64G", cid.name[0..5]);
     try testing.expectEqual(@as(u8, 0x80), cid.revision);
     try testing.expectEqual(@as(u32, 0x1A2B_3C4D), cid.serial);
     try testing.expectEqual(@as(u16, 2021), cid.year);
@@ -554,4 +736,96 @@ test "what went wrong, as the error a caller is given" {
     const both = Fault{ .no_answer = true, .bad_checksum = true };
     try testing.expectEqual(td.TDERR_NoCard, both.code());
     try testing.expect(both.any());
+}
+
+/// A field of `len` bits at `start` set in a long answer, for building
+/// one field by field.
+fn setBits(words: *[4]u32, start: u8, len: u8, value: u32) void {
+    for (0..len) |i| {
+        if ((value >> @intCast(i)) & 1 == 0) continue;
+        const bit: u32 = start + @as(u32, @intCast(i));
+        words[bit / 32] |= @as(u32, 1) << @intCast(bit % 32);
+    }
+}
+
+test "the identification of an eMMC" {
+    // Maker 0x15, BGA (CBX 1), OEM 0, name "BJTD4R", revision 0x30,
+    // serial 0x12345678, made in the tenth month of year 6 - 2003 by the
+    // first count, 2019 on a card of EXT_CSD revision 5 or later.
+    var cid = decodeMmcCid(&longAnswer("150100424a544434523012345678a601"));
+    try testing.expectEqual(@as(u8, 0x15), cid.manufacturer);
+    try testing.expectEqual(@as(u8, 0), cid.oem[1]);
+    try testing.expectEqualSlices(u8, "BJTD4R", &cid.name);
+    try testing.expectEqual(@as(u8, 0x30), cid.revision);
+    try testing.expectEqual(@as(u32, 0x1234_5678), cid.serial);
+    try testing.expectEqual(@as(u8, 10), cid.month);
+    try testing.expectEqual(@as(u16, 2003), cid.year);
+    mmcYear(&cid, 8);
+    try testing.expectEqual(@as(u16, 2019), cid.year);
+    // Counted once only.
+    mmcYear(&cid, 8);
+    try testing.expectEqual(@as(u16, 2019), cid.year);
+}
+
+test "an eMMC's description, whatever its structure says" {
+    // CSD_STRUCTURE 3 - "see the EXT_CSD" - and SPEC_VERS 4, with the
+    // size fields at their top: C_SIZE 0xFFF, C_SIZE_MULT 7, READ_BL_LEN
+    // 9. The older formula reads that as 1 GiB; the card's real size is
+    // its EXT_CSD's.
+    var answer: [4]u32 = @splat(0);
+    setBits(&answer, 126, 2, 3);
+    setBits(&answer, 122, 4, 4);
+    setBits(&answer, 84, 12, 0x0F5);
+    setBits(&answer, 80, 4, 9);
+    setBits(&answer, 62, 12, 0xFFF);
+    setBits(&answer, 47, 3, 7);
+    const csd = decodeMmcCsd(&answer).?;
+    try testing.expectEqual(@as(u8, 4), csd.mmc_spec);
+    try testing.expectEqual(@as(u64, 2_097_152), csd.blocks);
+    try testing.expectEqual(@as(u16, 0x0F5), csd.command_classes);
+    try testing.expect(!csd.permanent_write_protect);
+    // An SD card's decoder would read structure 3 as a layout it does
+    // not know.
+    try testing.expect(decodeCsd(&answer) == null);
+}
+
+test "what an eMMC's EXT_CSD says" {
+    // A 32 GB module's eMMC: 61,071,360 sectors (29.1 GiB), revision 8
+    // (eMMC 5.1), both high-speed timings and DDR, its user area the one
+    // reached.
+    var raw: [ext_csd_bytes]u8 = @splat(0);
+    std.mem.writeInt(u32, raw[EXT_CSD_SEC_COUNT..][0..4], 61_071_360, .little);
+    raw[EXT_CSD_REV] = 8;
+    raw[EXT_CSD_DEVICE_TYPE] = 0x57;
+    raw[EXT_CSD_PARTITION_CONFIG] = 0x48;
+    std.mem.writeInt(u32, raw[EXT_CSD_CACHE_SIZE..][0..4], 0x400, .little);
+    const ext = decodeExtCsd(&raw);
+    try testing.expectEqual(@as(u32, 61_071_360), ext.sectors);
+    try testing.expectEqual(@as(u32, 0x400), ext.cache_size);
+    try testing.expectEqual(@as(u8, 8), ext.revision);
+    try testing.expect(ext.device_type & device_type_hs_52 != 0);
+    try testing.expectEqual(@as(u8, 0), ext.partition_config & partition_access_mask);
+    // Read again over a wider bus: the same register...
+    try testing.expect(sameExtCsd(ext, decodeExtCsd(&raw)));
+    // ...unless a line the board did not wire changed a byte of it.
+    var garbled = raw;
+    garbled[EXT_CSD_SEC_COUNT + 3] ^= 0x10;
+    try testing.expect(!sameExtCsd(ext, decodeExtCsd(&garbled)));
+    // Bytes the host writes are left out of the comparison: HS_TIMING
+    // reads 1 once the card is switched, CACHE_CTRL 1 once its cache is.
+    var switched = raw;
+    switched[EXT_CSD_HS_TIMING] = 1;
+    switched[EXT_CSD_CACHE_CTRL] = 1;
+    try testing.expect(sameExtCsd(ext, decodeExtCsd(&switched)));
+}
+
+test "an eMMC is switched by writing a byte of its EXT_CSD" {
+    // Access 3 (write byte), BUS_WIDTH (183), 8 lines (2).
+    try testing.expectEqual(@as(u32, 0x03B7_0200), switchArg(EXT_CSD_BUS_WIDTH, mmcBusWidth(8)));
+    try testing.expectEqual(@as(u32, 0x03B9_0100), switchArg(EXT_CSD_HS_TIMING, 1));
+    try testing.expectEqual(@as(u8, 1), mmcBusWidth(4));
+    try testing.expectEqual(@as(u8, 0), mmcBusWidth(1));
+    // Both edges of the clock: 8 lines 6, 4 lines 5.
+    try testing.expectEqual(@as(u32, 0x03B7_0600), switchArg(EXT_CSD_BUS_WIDTH, mmcBusWidthDdr(8)));
+    try testing.expectEqual(@as(u8, 5), mmcBusWidthDdr(4));
 }

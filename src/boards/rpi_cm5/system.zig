@@ -91,7 +91,7 @@ const pcie1 = [_]Tag{
 
 /// The VideoCore's mailbox, through which its firmware is asked what it
 /// keeps for the ARM: the RTC's count (`rtc`) and the cores' clock
-/// (`clock.zig`).
+/// (`clock.zig`); the programs that ask it find it as `firmware`.
 pub const mailbox: usize = 0x10_7C01_3880;
 
 /// The radio's station address and the Ethernet port's. The kernel copies
@@ -155,6 +155,17 @@ const wifi = [_]Tag{
     .value(st.PART_PinAntennaExternal, pins.driver(6)),
     .pointer(st.PART_StationAddress, &wifi_station),
     .pointer(st.PART_Label, "Wi-Fi"),
+    .done,
+};
+
+/// The VideoCore's firmware through its mailbox (`mailbox`): where
+/// C:Reboot TRYBOOT, C:CpuClock and facet.library's V3D driver find it.
+const firmware = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_FIRMWARE),
+    .value(st.PART_Chip, st.CHIP_RPI_FIRMWARE),
+    .pointer(st.PART_ChipName, "videocore"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, mailbox),
     .done,
 };
 
@@ -303,6 +314,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &wifi),
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &rtc),
+    .pointer(st.SYSTAG_Part, &firmware),
     .pointer(st.SYSTAG_Part, &display),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &temperature),

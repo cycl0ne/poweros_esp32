@@ -14,7 +14,7 @@ const magic: u32 = 0x424D_454D; // "BMEM"
 /// Whether the chip keeps the bits in the base itself, for want of a
 /// memory that outlives a reset.
 const in_base = switch (hardware.chip) {
-    .rv64sbi, .a64psci, .x64uefi => true,
+    .rv64sbi, .a64psci, .a64v80, .x64uefi => true,
     else => false,
 };
 

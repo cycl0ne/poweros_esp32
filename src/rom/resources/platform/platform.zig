@@ -63,6 +63,7 @@ const CHIP_NAME = switch (sdk.hardware.chip) {
     .esp32p4 => "ESP32-P4",
     .rv64sbi => "RISC-V 64 under SBI",
     .a64psci => "AArch64 under PSCI",
+    .a64v80 => "AArch64 of ARMv8.0",
     .x64uefi => "x86-64 under UEFI",
 };
 /// What the kernel was built with, as `Version` and `Platform` print it.
@@ -119,7 +120,7 @@ fn coreName(core: u32, name: *identify.Name) void {
         .esp32s3 => identify.fixed(name, "Xtensa LX7"),
         .esp32p4 => identify.fixed(name, "RISC-V RV32IMAFC"),
         .rv64sbi => identify.riscvName(name, cpu.vendors[core], cpu.architectures[core]),
-        .a64psci => identify.armName(name, cpu.midrs[core]),
+        .a64psci, .a64v80 => identify.armName(name, cpu.midrs[core]),
         .x64uefi => identify.x86Name(name, &cpu.identities[core].brand, &cpu.identities[core].vendor),
     }
 }
@@ -131,7 +132,7 @@ fn coreFeatures(core: u32) u32 {
         // crypto.library's to drive: no instructions.
         .esp32s3, .esp32p4 => 0,
         .rv64sbi => identify.riscvFeatures(cpu.isaOf(core)),
-        .a64psci => identify.armFeatures(cpu.isar0s[core]),
+        .a64psci, .a64v80 => identify.armFeatures(cpu.isar0s[core]),
         .x64uefi => identify.x86Features(cpu.identities[core].leaf1_ecx, cpu.identities[core].leaf7_ebx),
     };
 }
@@ -141,7 +142,7 @@ fn coreNumber(core: u32) u64 {
     return switch (comptime sdk.hardware.chip) {
         .esp32s3, .esp32p4 => core,
         .rv64sbi => cpu.hartids[core],
-        .a64psci => cpu.mpidrs[core],
+        .a64psci, .a64v80 => cpu.mpidrs[core],
         .x64uefi => cpu.lapic_ids[core],
     };
 }

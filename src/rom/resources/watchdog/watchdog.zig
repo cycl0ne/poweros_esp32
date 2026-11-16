@@ -53,7 +53,7 @@ pub const LVO = interface.LVO;
 const on_chipset = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => false,
     .x64uefi => true,
-    .rv64sbi, .a64psci => @compileError("watchdog.resource: no watchdog this drives on this chip"),
+    .rv64sbi, .a64psci, .a64v80 => @compileError("watchdog.resource: no watchdog this drives on this chip"),
 };
 
 // Every function in LVO is an lvo* function here, with the SDK's signature

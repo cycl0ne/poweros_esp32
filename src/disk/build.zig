@@ -437,10 +437,11 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// well: what goes on an ESP32's flash disk is what that board is meant
 /// to do, and showing SVG files is not among it.
 const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "System/SystemScan", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
-/// Drivers of what only the Raspberry Pi CM5 has among the AArch64
-/// machines and no other chip does: its radio, a CYW43455 on the
-/// BCM2712's SD host.
-const a64_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "v3d.fdriver" };
+/// Drivers of what only the Raspberry Pi CM5's BCM2712 has among the
+/// AArch64 machines and no other chip does: its radio, a CYW43455 on the
+/// BCM2712's SD host, and its V3D 7.1 - the CM4's BCM2711 has neither
+/// that host nor that V3D.
+const bcm2712_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "v3d.fdriver" };
 
 /// What draws in three dimensions - facet.library, the programs that
 /// drive its rasterizer, the two that fly a scene past the eye, and the
@@ -571,11 +572,12 @@ const path_sets = [_]struct { []const u8, Set }{
 /// name, or by its place on the disk where one program has two.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
-        .esp32s3 => &(mac_only ++ rv64_only ++ a64_only ++ no_3d),
-        .esp32p4 => &(s3_only ++ rv64_only ++ a64_only),
-        .rv64sbi => &(s3_only ++ esp_only ++ a64_only),
-        .x64uefi => &(s3_only ++ esp_only ++ a64_only ++ mac_only),
+        .esp32s3 => &(mac_only ++ rv64_only ++ bcm2712_only ++ no_3d),
+        .esp32p4 => &(s3_only ++ rv64_only ++ bcm2712_only),
+        .rv64sbi => &(s3_only ++ esp_only ++ bcm2712_only),
+        .x64uefi => &(s3_only ++ esp_only ++ bcm2712_only ++ mac_only),
         .a64psci => &(s3_only ++ esp_only),
+        .a64v80 => &(s3_only ++ esp_only ++ bcm2712_only),
     };
     for (others) |name| {
         if (std.mem.eql(u8, program.name, name) or std.mem.eql(u8, program.disk, name)) return false;
@@ -591,7 +593,7 @@ pub fn fileFor(file: File, chip: poweros_sdk.Chip) bool {
     const others: []const []const u8 = switch (chip) {
         .esp32s3 => &(rv64_only_files ++ wide_only_files),
         .esp32p4 => &(rv64_only_files ++ wide_only_files),
-        .rv64sbi, .x64uefi, .a64psci => &.{},
+        .rv64sbi, .x64uefi, .a64psci, .a64v80 => &.{},
     };
     for (others) |path| {
         if (std.mem.eql(u8, file.disk, path)) return false;

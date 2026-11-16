@@ -137,7 +137,7 @@ pub const chip_raw_io: RawIOHardware = .{ .init = uart.consoleInit, .put = uart.
 /// there.
 pub const usb_jtag_raw_io: RawIOHardware = switch (sdk.hardware.chip) {
     .esp32s3, .esp32p4 => .{ .init = usbJtagInit, .put = usbJtagPut, .get = usbJtagGet },
-    .rv64sbi, .a64psci, .x64uefi => no_raw_io,
+    .rv64sbi, .a64psci, .a64v80, .x64uefi => no_raw_io,
 };
 
 fn noInit() void {}

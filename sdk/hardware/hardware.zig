@@ -13,8 +13,10 @@
 
 const builtin = @import("builtin");
 
-/// The chips there are.
-pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci, x64uefi };
+/// The chips there are. `a64v80` is the AArch64 machine of ARMv8.0 cores
+/// (the Raspberry Pi CM4's BCM2711): the same hardware layer as
+/// `a64psci`, code built without the instructions its cores lack.
+pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci, x64uefi, a64v80 };
 
 /// The chip this code is built for. AArch64 is the PSCI machine, and
 /// x86-64 the UEFI machine, only where nothing runs below the code: a test
@@ -24,7 +26,12 @@ pub const Chip = enum { esp32s3, esp32p4, rv64sbi, a64psci, x64uefi };
 pub const chip: Chip = switch (builtin.cpu.arch) {
     .riscv32 => .esp32p4,
     .riscv64 => .rv64sbi,
-    .aarch64 => if (builtin.os.tag == .freestanding) .a64psci else .esp32s3,
+    .aarch64 => if (builtin.os.tag != .freestanding)
+        .esp32s3
+    else if (builtin.cpu.has(.aarch64, .lse))
+        .a64psci
+    else
+        .a64v80,
     .x86_64 => if (builtin.os.tag == .freestanding) .x64uefi else .esp32s3,
     else => .esp32s3,
 };
@@ -34,9 +41,12 @@ const own = switch (chip) {
     .esp32s3 => @import("esp32s3/hardware.zig"),
     .esp32p4 => @import("esp32p4/hardware.zig"),
     .rv64sbi => @import("rv64sbi/hardware.zig"),
-    .a64psci => @import("a64psci/hardware.zig"),
+    .a64psci, .a64v80 => @import("a64psci/hardware.zig"),
     .x64uefi => @import("x64uefi/hardware.zig"),
 };
+
+/// Whether this is one of the AArch64 machines, whichever its cores.
+pub const aarch64 = chip == .a64psci or chip == .a64v80;
 
 /// The interrupt sources, by number.
 pub const intbits = own.intbits;
@@ -102,7 +112,7 @@ pub const plic = if (chip == .rv64sbi) own.plic else struct {};
 /// The disk image the loader put in RAM, which flash.device serves on a
 /// machine under SBI or PSCI firmware, or one the UEFI stub read off its
 /// boot partition. The ESP32s have flash, so there it is empty.
-pub const ramdisk = if (chip == .rv64sbi or chip == .a64psci or chip == .x64uefi) own.ramdisk else struct {};
+pub const ramdisk = if (chip == .rv64sbi or aarch64 or chip == .x64uefi) own.ramdisk else struct {};
 pub const trng = if (chip == .rv64sbi) own.trng else struct {};
 /// The L2 cache controller's flush, on a machine under SBI firmware whose
 /// devices do not see the caches (the JH7110). The ESP32s' caches are
@@ -124,8 +134,8 @@ pub const cpuclock = if (chip == .rv64sbi) own.cpuclock else struct {};
 /// The PSCI firmware's calls (the cores' start and stop, reset) and the
 /// generic interrupt controller (GICv2): the AArch64 machines'. The
 /// others have neither, so there they are empty.
-pub const psci = if (chip == .a64psci) own.psci else struct {};
-pub const gic = if (chip == .a64psci) own.gic else struct {};
+pub const psci = if (aarch64) own.psci else struct {};
+pub const gic = if (aarch64) own.gic else struct {};
 /// The interrupt controllers of an x86-64 machine: one of each core's own,
 /// and the machine's I/O one in front of them. The others have neither, so
 /// there it is empty.
