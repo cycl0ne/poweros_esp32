@@ -46,7 +46,7 @@ const pointer = @import("pointer.zig");
 
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 10;
+const REVISION = 11;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++

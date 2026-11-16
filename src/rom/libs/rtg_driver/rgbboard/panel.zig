@@ -816,12 +816,14 @@ fn vblankServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     const panel: *Panel = @ptrCast(@alignCast(is_data.?));
     if (lcd.intStatus() & lcd.INT_VSYNC == 0) return 0; // not ours
     lcd.intClear(lcd.INT_VSYNC);
+    // When the frame ended, read before anything else is done: what
+    // follows takes its own time, which is not the frame's.
+    const now = cpu.ccount();
     panel.stats.frames +%= 1;
     // The frame ended: the library counts it, and whoever waits for one
     // - WaitVBlank - hears of it.
     panel.rtg_base.FrameDone(panel.board);
 
-    const now = cpu.ccount();
     const took = now -% panel.last_cycles;
     panel.last_cycles = now;
     if (panel.stats.frames > 1 and took > panel.frame_cycles + panel.line_cycles) {
