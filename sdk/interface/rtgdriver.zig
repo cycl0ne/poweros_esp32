@@ -19,7 +19,7 @@ pub const NAME = "rtg.library";
 pub const LVO = struct {
     pub const AddRtgDriver = libraries.lvo(82);
     pub const RemRtgDriver = libraries.lvo(83);
-    pub const SignalRtgEvent = libraries.lvo(84);
+    pub const FrameDone = libraries.lvo(84);
     pub const TxParam = libraries.lvo(85);
     pub const TxColor = libraries.lvo(86);
     pub const RxParam = libraries.lvo(87);
@@ -41,7 +41,7 @@ pub const LVO = struct {
 pub const Fn = struct {
     pub const AddRtgDriver = *const fn (*RtgDriverBase, *const rtg.RtgDriverSpec, ?*anyopaque) callconv(.c) ?*rtg.RtgDriver;
     pub const RemRtgDriver = *const fn (*RtgDriverBase, *rtg.RtgDriver) callconv(.c) bool;
-    pub const SignalRtgEvent = *const fn (*RtgDriverBase, *rtg.RtgBoard, u32) callconv(.c) i32;
+    pub const FrameDone = *const fn (*RtgDriverBase, *rtg.RtgBoard) callconv(.c) void;
     pub const TxParam = *const fn (*RtgDriverBase, *rtg.RtgTransport, i32, ?*const anyopaque, u32) callconv(.c) i32;
     pub const TxColor = *const fn (*RtgDriverBase, *rtg.RtgTransport, i32, ?*const anyopaque, u32) callconv(.c) i32;
     pub const RxParam = *const fn (*RtgDriverBase, *rtg.RtgTransport, i32, ?*anyopaque, u32) callconv(.c) i32;
@@ -82,10 +82,10 @@ pub const RtgDriverBase = opaque {
         return libraries.call(self, LVO.RemRtgDriver, Fn.RemRtgDriver, .{driver});
     }
 
-    /// Tell a board's servers that something happened. A driver calls it from
-    /// its own interrupt; returns what the chain answered.
-    pub fn SignalRtgEvent(self: *RtgDriverBase, board: *rtg.RtgBoard, event: u32) i32 {
-        return libraries.call(self, LVO.SignalRtgEvent, Fn.SignalRtgEvent, .{ board, event });
+    /// A frame of the board's display ended: counted, and whoever waits for
+    /// it (WaitVBlank) woken. A driver calls it from its frame interrupt.
+    pub fn FrameDone(self: *RtgDriverBase, board: *rtg.RtgBoard) void {
+        return libraries.call(self, LVO.FrameDone, Fn.FrameDone, .{board});
     }
 
     /// A command and its parameters to the part. A command below zero sends
@@ -120,8 +120,8 @@ pub const RtgDriverBase = opaque {
     }
 
     /// Give a board back: for an attach that fails after making one, and for
-    /// a driver that is being removed. Refused while an event server or a
-    /// video layer is still on it. Null does nothing.
+    /// a driver that is being removed. Refused while a task waits for a
+    /// frame of it or a video layer is still on it. Null does nothing.
     pub fn DeleteBoard(self: *RtgDriverBase, board: ?*rtg.RtgBoard) void {
         return libraries.call(self, LVO.DeleteBoard, Fn.DeleteBoard, .{board});
     }

@@ -172,9 +172,10 @@
 //!
 //! Where the display raises an interrupt at each frame (the board's part
 //! gives it as PART_Irq; on the AMD display, the pipe's update, through
-//! the device's interrupt ring), a flip and WaitVBlank wait for it;
-//! elsewhere, and should it stop coming, they wait as long as a frame
-//! takes.
+//! the device's interrupt ring), its server says the frame to the
+//! library (`FrameDone`), and a flip and WaitVBlank wait for it;
+//! elsewhere, and should it stop coming, the library waits as long as a
+//! frame takes.
 //!
 //! The module keeps nothing of its own: a ROM image is read only, so what
 //! changes is the library's to allocate - a `Screen` beside each board -
@@ -205,7 +206,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 38;
+const REVISION = 39;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -259,11 +260,9 @@ const Screen = struct {
     board: *rtg.RtgBoard,
     buffers: u32 = 1,
     /// The mode the display is in, as the library handed it over: its
-    /// number - 0 before the first - and its timings; how long a frame
-    /// of it takes.
+    /// number - 0 before the first - and its timings.
     mode_id: u32 = 0,
     timings: rtg.RtgTimings = .{},
-    frame_us: u32 = 16_667,
     /// What a row of a buffer is rounded up to: the board's display
     /// memory's alignment, which the library rounds a mode's rows by.
     alignment: u32 = row_alignment,
@@ -352,15 +351,10 @@ const Screen = struct {
     /// The cores, as the board's engine.
     engine: engine.Engine = .{},
     /// The display's frame interrupt, where it has one: its number (0 for
-    /// none), its server and whether that is on, the frames it has
-    /// counted, the tasks waiting for frames, and whether it has been seen
-    /// to come.
+    /// none), its server and whether that is on.
     frame_irq: u32 = 0,
     frame_int: exec.Interrupt = .{},
     frame_hooked: bool = false,
-    frames: u32 = 0,
-    frame_waiters: ?*FrameWaiter = null,
-    frames_come: bool = false,
     /// Where the display reads past the caches (`flipFrames`): the two
     /// frames it is shown, as AllocMem gave them and the bytes taken, and
     /// which of them it reads. Null where it is shown buffers itself.
@@ -409,52 +403,18 @@ const Screen = struct {
     plane_lock: exec.Lock = .{},
 };
 
-/// Wait for `frames` frames: for the display's frame interrupt to come
-/// that many times, where it comes, so that a flip is waited out to the
-/// frame the new picture starts in; else for as long as they take, which
-/// is what makes a program that paces itself by the display - a flip,
-/// WaitVBlank - run at the speed it would on a display that says when a
-/// frame begins. The CPU is given away meanwhile, either way.
+/// Wait for `frames` frames, as the library waits (WaitVBlank): for the
+/// display's frame interrupt to come that many times, where it comes, so
+/// that a flip is waited out to the frame the new picture starts in;
+/// else for as long as they take, which is what makes a program that
+/// paces itself by the display run at the speed it would on one that
+/// says when a frame begins. The CPU is given away meanwhile, either way.
 fn pace(screen: *Screen, frames: u32) void {
-    if (@atomicLoad(bool, &screen.frames_come, .acquire) and waitFrames(screen, frames)) return;
-    sleep(screen, @as(u64, screen.frame_us) * frames);
+    _ = screen.rtg_base.WaitVBlank(screen.board, frames);
 }
 
-/// A task waiting for frames, on its own stack: the count of frames it
-/// waits for, and what the frame interrupt signals when it is reached.
-const FrameWaiter = struct {
-    next: ?*FrameWaiter = null,
-    until: u32 = 0,
-    reached: exec.Waitable = .{},
-};
-
-/// Until the frame interrupt has come `frames` more times. False when it
-/// did not within two frames more: it is taken to have stopped, and the
-/// clock paces from then on.
-fn waitFrames(screen: *Screen, frames: u32) bool {
-    const sys = screen.sys;
-    var waiter = FrameWaiter{};
-    sys.Disable();
-    waiter.until = screen.frames +% frames;
-    waiter.next = screen.frame_waiters;
-    screen.frame_waiters = &waiter;
-    sys.Enable();
-    const answer = sys.WaitForAny(&[_]*exec.Waitable{&waiter.reached}, 1, @as(u64, screen.frame_us) * (frames + 2));
-    sys.Disable();
-    var link = &screen.frame_waiters;
-    while (link.*) |at| : (link = &at.next) {
-        if (at != &waiter) continue;
-        link.* = at.next;
-        break;
-    }
-    sys.Enable();
-    if (answer != exec.WAIT_TIMEOUT) return true;
-    @atomicStore(bool, &screen.frames_come, false, .release);
-    return false;
-}
-
-/// The display's interrupt: a frame counted, and every task whose count
-/// it reaches told.
+/// The display's interrupt: the frame said to the library, which counts
+/// it and wakes whoever waits for one.
 fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const screen: *Screen = @ptrCast(@alignCast(data.?));
@@ -468,12 +428,7 @@ fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         else => jh7110.takeInterrupts(),
     };
     if (raised == 0) return 0;
-    screen.frames +%= 1;
-    @atomicStore(bool, &screen.frames_come, true, .release);
-    var at = screen.frame_waiters;
-    while (at) |waiter| : (at = waiter.next) {
-        if (@as(i32, @bitCast(screen.frames -% waiter.until)) >= 0) screen.sys.SignalWaitable(&waiter.reached);
-    }
+    drivers(screen).FrameDone(screen.board);
     return 1;
 }
 
@@ -2428,7 +2383,6 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, timings: *const rtg.R
     screen.width = mode.width;
     screen.height = mode.height;
     screen.pitch = mode.pitch;
-    screen.frame_us = if (mode.refresh_mhz != 0) 1_000_000_000 / mode.refresh_mhz else 16_667;
     if (isHdmi(screen.scanout)) {
         // How the mode goes to the monitor now on the port.
         var monitor: rtg.RtgMonitorInfo = .{};
@@ -2634,17 +2588,9 @@ fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, area: Box) void {
     if (shown) lay(screen);
 }
 
-/// Frames waited for: by the frame interrupt where it comes, else by the
-/// clock.
-fn waitVBlank(board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
-    pace(screenOf(board), if (frames == 0) 1 else frames);
-    return err.RTGERR_OK;
-}
-
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     const screen = screenOf(board);
     into.frames = screen.updates;
-    into.blanks = @atomicLoad(u32, &screen.frames, .acquire);
 }
 
 // --- the engine: the cores (engine.zig) ---------------------------------------
@@ -2703,7 +2649,6 @@ fn scalePixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.Rt
 const ops = rtg.boards.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
-    .wait_vblank = &waitVBlank,
     .refresh = &refresh,
     .stats = &stats,
     .set_pointer = &setPointer,

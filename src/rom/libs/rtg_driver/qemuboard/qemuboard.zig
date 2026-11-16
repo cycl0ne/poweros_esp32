@@ -59,12 +59,12 @@ const err = rtg.errors;
 
 const qemu_rgb = sdk.hardware.qemu_rgb;
 const tags = rtg.tags;
-const timer = sdk.devices.timer;
+const RtgBase = sdk.interface.rtg.RtgBase;
 
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 8;
+const REVISION = 9;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -88,10 +88,6 @@ const Screen = struct {
     /// How many times the picture has been handed to the window. There is
     /// no blanking to count, so this is the only number worth having.
     updates: u32 = 0,
-    /// timer.device, opened the first time a frame is waited for: the
-    /// request each wait copies.
-    timer_io: timer.TimeRequest = .{},
-    timer_open: bool = false,
     /// The frame the window is fed from while a pointer is shown, past
     /// the board's buffers in VRAM; null when there was no room, and the
     /// board then has no pointer.
@@ -117,33 +113,12 @@ const Screen = struct {
     band_count: u32 = 0,
 };
 
-/// A frame of the panel the window stands in for, at 60 a second.
-const frame_us = 16_667;
-
-/// Wait as long as `frames` frames of a 60 Hz panel take. The window has
-/// no blanking of its own, so this is what makes a program that paces
-/// itself by the display - a flip, WaitVBlank - run here at the speed it
-/// runs on the glass, and give the CPU away while it waits as it would
-/// there. Nothing is waited for when timer.device cannot be had.
-fn pace(screen: *Screen, frames: u32) void {
-    const sys = screen.sys;
-    if (!screen.timer_open) {
-        screen.timer_io = .{};
-        screen.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
-        if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &screen.timer_io.node, 0) != 0) return;
-        screen.timer_open = true;
-    }
-    const bit = sys.AllocSignal(-1);
-    if (bit < 0) return;
-    defer sys.FreeSignal(bit);
-    // The waiting task's own port: any task may be the one showing.
-    var port: exec.MsgPort = .{ .sig_bit = @intCast(bit), .sig_task = sys.FindTask(null) };
-    port.msg_list.init(.message);
-    var io = screen.timer_io;
-    io.node.message.reply_port = &port;
-    io.node.command = timer.TR_ADDREQUEST;
-    io.time = timer.TimeVal.fromMicros(@as(u64, frame_us) * frames);
-    _ = sys.DoIO(&io.node);
+/// A frame of the display waited out, after a flip: the window has no
+/// frames of its own, so the library waits by the clock, and a program
+/// that flips runs here at the speed it runs on the glass.
+fn pace(board: *rtg.RtgBoard) void {
+    const rb: *RtgBase = @ptrCast(board.rtg_base.?);
+    _ = rb.WaitVBlank(board, 1);
 }
 
 fn screenOf(board: *rtg.RtgBoard) *Screen {
@@ -425,12 +400,6 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     return err.RTGERR_OK;
 }
 
-fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
-    const screen = screenOf(board);
-    if (screen.timer_open) screen.sys.CloseDevice(&screen.timer_io.node);
-    screen.timer_open = false;
-}
-
 /// One mode, so this only ever sizes the window to it.
 fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) i32 {
     const screen = screenOf(board);
@@ -474,7 +443,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
         break :flip another;
     };
     // Waited out with the frame let go: the pointer moves meanwhile.
-    if (flip) pace(screen, 1);
+    if (flip) pace(board);
     return err.RTGERR_OK;
 }
 
@@ -554,15 +523,7 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 
         present(screen);
         break :shown before;
     };
-    if (was_shown) pace(screen, 1);
-    return err.RTGERR_OK;
-}
-
-/// The window has no blanking of its own: the frames of a 60 Hz panel are
-/// waited out instead, so a program pacing itself by them runs as it would
-/// on the glass. Nothing is ever torn: the device copies whole pictures.
-fn waitVBlank(board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
-    pace(screenOf(board), if (frames == 0) 1 else frames);
+    if (was_shown) pace(board);
     return err.RTGERR_OK;
 }
 
@@ -572,9 +533,7 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
 }
 
 const ops = rtg.boards.RtgBoardOps{
-    .destroy = &destroy,
     .show = &showOp,
-    .wait_vblank = &waitVBlank,
     .refresh = &refresh,
     .stats = &stats,
     .control = &control,
@@ -583,9 +542,7 @@ const ops = rtg.boards.RtgBoardOps{
 /// The same with the pointer and with bands, for a board with a frame to
 /// compose them in.
 const pointer_ops = rtg.boards.RtgBoardOps{
-    .destroy = &destroy,
     .show = &showOp,
-    .wait_vblank = &waitVBlank,
     .refresh = &refresh,
     .stats = &stats,
     .control = &control,

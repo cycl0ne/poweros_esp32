@@ -16,7 +16,6 @@ reference: [rtg](../autodocs/rtg.md) for a program's, and
 - [The engine](#the-engine)
 - [Turning the picture](#turning-the-picture)
 - [The pointer](#the-pointer)
-- [Events](#events)
 - [Asking a board about itself](#asking-a-board-about-itself)
 - [Errors](#errors)
 - [Writing a driver](#writing-a-driver)
@@ -62,7 +61,7 @@ const rb: *RtgBase = @ptrCast(lib);
 
 **The library has two interfaces.** `RtgBase` (`sdk/interface/rtg.zig`)
 holds what a program calls. What only a driver calls - a description put
-on the list, a bus's transfers, an event raised, a tag read - is
+on the list, a bus's transfers, a frame said, a tag read - is
 `RtgDriverBase` (`sdk/interface/rtgdriver.zig`): the same base, seen as
 the other type. Both are slots of the one jump table, the drivers' after
 the programs'. A driver opens nothing: the node the library makes for it
@@ -399,19 +398,25 @@ laid, so a program keeps them until a later show of a buffer has
 answered `RTGERR_OK`. The 7B's panel stops its stream before a start
 that can still fail, and is then dark.
 
-`WaitVBlank(board, frames)` waits for the display's blanking: 0 is the
-next one. A board that neither streams nor has a wait of its own has no
-blanking to wait for and answers `RTGERR_NOT_SUPPORTED` - the 3.5"
-board does. An `fb` board is not told when a frame begins either; it
-waits the frames out at 60 a second on timer.device, so a program that
-paces itself by the display runs at the speed it would on one that
-says. A board that streams - the 7B's panel, the ESP32-P4's `dsi`
-boards - says when each frame ends, and is waited for no longer than
-two frames' time for each blanking asked for: past that the answer is
-`RTGERR_TIMEOUT`, so the call comes back on a board whose stream stands
-still or has not begun. `SetBoardDisplay` turns the display on or off, and
-`SetBoardBrightness` sets the backlight, 0 to 100 whichever way round the
-part counts.
+`WaitVBlank(board, frames)` waits for frames of the display to end: 0
+is the next one. It comes back on every board. A board whose driver
+says when each frame ends - the 7B's panel, the ESP32-P4's `dsi`
+boards, an HDMI port, the AMD display - is waited for by its frames,
+no longer than two frames' time for each frame asked for: past that
+the answer is `RTGERR_TIMEOUT`, so the call comes back on a board whose
+stream stands still, and the board is waited for by the clock until
+its frames come again. A board that says none - the 3.5" board, the
+emulators' displays, a firmware's framebuffer, any board before its
+stream has begun - is waited for by the clock, a frame's time for each
+frame asked for at the board's refresh rate, 60 a second where it names
+none; the answer is `RTGERR_OK`, and a program that paces itself by the
+display runs at the speed it would on one that says its frames.
+`GetBoardInfo` says which it is just now (`RTGBC_VBLANK`), and
+`GetBoardStats` counts the frames said (`blanks`): a program that reads
+the count before and after its work sees whether a frame began
+meanwhile. `SetBoardDisplay` turns the display on or off, and
+`SetBoardBrightness` sets the backlight, 0 to 100 whichever way round
+the part counts.
 
 ## Several buffers at once: bands
 
@@ -709,33 +714,6 @@ times up and a tenth down. Each plane's rows start on 16 bytes, below
 and top in whole runs of 32 pixels and pairs of rows. The decoder's
 frames and videocodec's Motion JPEG frames are laid out for it.
 
-## Events
-
-```zig
-var shown = exec.Interrupt{ .code = @ptrCast(&onShown), .data = &state };
-_ = rb.AddRtgEventServer(board, rtg.events.RTGEV_SHOWN, &shown);
-defer rb.RemRtgEventServer(board, rtg.events.RTGEV_SHOWN, &shown);
-```
-
-A board tells exec Interrupts on a list per event, highest priority
-first:
-
-| Event | When |
-|---|---|
-| `RTGEV_VBLANK` | a frame ended and the blanking is now |
-| `RTGEV_SHOWN` | a buffer given to `ShowBitMap` is the one being displayed |
-
-The server's code is an `RtgEventFn` and **runs in interrupt context**:
-it may signal a task and no more. Returning non-zero ends the chain, so a
-server returns 0 unless it means to keep the event from those below it. A
-driver raises an event with `SignalRtgEvent`, a call of the drivers'
-interface, from its own interrupt.
-
-Which events come depends on the board: the 7B's RGB panel raises
-`RTGEV_VBLANK` and `RTGEV_SHOWN`, the ESP32-P4's `dsi` boards - a panel
-or HDMI - `RTGEV_VBLANK` alone; the 3.5" board, the emulator and the
-`fb` boards raise neither, so a server for them never runs there.
-
 ## Asking a board about itself
 
 ```zig
@@ -962,12 +940,19 @@ the op has answered; a driver stores nothing there. `show` is called
 with the board's lock held, so one runs on a board at a time and a
 driver needs no lock of its own between two of them.
 
+**Frames.** A driver whose display raises an interrupt as a frame ends
+calls `FrameDone(board)` in it, once a frame. The library counts the
+frame and wakes the tasks that wait for one; a driver has no wait of
+its own, and one that must wait out a frame itself - a flip that
+returns when the new picture is read - calls `WaitVBlank` as a program
+does, which may be done inside `show`. A driver with no such interrupt
+calls nothing: its board is waited for by the clock.
+
 | Slot | What it does |
 |---|---|
 | `destroy` | undo what create did; called last, after the buffers are gone |
 | `show` | what is on the glass: the mode where it changed, and one buffer, several in bands of lines (`RtgBand.rowAt` says which row a line shows), or none |
 | `detect`, `check_mode` | a connector: what is on it, and whether the board can make a timing |
-| `wait_vblank` | wait for the blanking |
 | `refresh` | rows of a buffer were written: write them back or send them |
 | `display`, `set_brightness`, `brightness` | the display enable and the backlight |
 | `stats`, `control` | the counters, and the driver's own requests |

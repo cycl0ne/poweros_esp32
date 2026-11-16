@@ -17,6 +17,7 @@ Generated from the source by `./zig build autodoc`.
 - [CreateBoard](#createboard) - Makes a board for one output of a device.
 - [DeleteBoard](#deleteboard) - Gives a board back: stops it and frees everything it held.
 - [FindStandardTimings](#findstandardtimings) - Looks up the timings a standard gives a picture of a size at a refresh.
+- [FrameDone](#framedone) - Says that a frame of a board's display ended.
 - [GetRtgTagData](#getrtgtagdata) - Returns a tag's data from a list, or a default.
 - [MonitorChanged](#monitorchanged) - Has a board's connector looked at again.
 - [OpenTransport](#opentransport) - Opens the bus a device is reached over.
@@ -24,7 +25,6 @@ Generated from the source by `./zig build autodoc`.
 - [RemRtgDevice](#remrtgdevice) - Takes away a device `AddRtgDevice` made.
 - [RemRtgDriver](#remrtgdriver) - Takes a driver off the library's list and frees it.
 - [RxParam](#rxparam) - Sends a command and reads bytes back from the part on a bus.
-- [SignalRtgEvent](#signalrtgevent) - Tells a board's servers that one of its events happened.
 - [TxColor](#txcolor) - Sends a command and a run of pixels to the part on a bus.
 - [TxParam](#txparam) - Sends a command and its parameters to the part on a bus.
 
@@ -402,11 +402,11 @@ freed - its `destroy` is not called. And a driver that is being removed
 deletes its boards, which only a test's driver is: a program is never
 handed a board that goes away.
 
-A board on the list that still has an event server on it is refused -
-it stays on the list, which is how a caller sees it - and nothing of
-it is touched: the server's node would be left linked into a list that
-is freed. So is one with a video layer still open (`CloseVideoLayer`
-first). Otherwise it is taken off the display first, then every buffer
+A board on the list that a task still waits for a frame of
+(`WaitVBlank`) is refused - it stays on the list, which is how a
+caller sees it - and nothing of it is touched: the waiter would be
+left linked into a list that is freed. So is one with a video layer
+still open (`CloseVideoLayer` first). Otherwise it is taken off the display first, then every buffer
 it still has is freed, the driver's `destroy` is called, and the board
 leaves the list and its device. The driver is one board less.
 
@@ -420,8 +420,7 @@ leaves the list and its device. The driver is one board less.
 
 **OWNERSHIP**
 
-The board, its buffers and its display memory are gone. Event servers
-are their owner's, and are taken off with `RemRtgEventServer` first.
+The board, its buffers and its display memory are gone.
 
 **BUGS**
 
@@ -431,7 +430,7 @@ driver's `destroy` called all the same.
 
 **SEE ALSO**
 
-`CreateBoard`, `RemRtgDevice`, `RemRtgDriver`, `RemRtgEventServer`
+`CreateBoard`, `RemRtgDevice`, `RemRtgDriver`
 
 **EXAMPLES**
 
@@ -499,6 +498,69 @@ None known.
 ```zig
 var timings: rtg.RtgTimings = .{};
 if (!rb.FindStandardTimings(1920, 1080, 60, &timings)) return rtg.errors.RTGERR_BAD_MODE;
+```
+
+## FrameDone
+
+Says that a frame of a board's display ended.
+
+**SYNOPSIS**
+
+```zig
+fn FrameDone(rb: *RtgBase, board: *rtg.RtgBoard) void
+```
+
+**SINCE**
+
+1.22. LVO -340.
+
+**INPUTS**
+
+- `board` - the board whose display ended a frame: one of the
+  caller's own.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The frame is counted (`RtgBoardStats.blanks`), and every task that
+waits for frames of the board (`WaitVBlank`) is counted one frame on
+and signalled when its count is reached. From the first call on the
+board is one that says its frames (`RTGBC_VBLANK`): a wait is for
+them, with a limit, and no longer by the clock.
+
+A driver calls it once a frame, from the interrupt that says the
+frame ended - the blanking's, or the one that starts the next
+picture. A driver without such an interrupt does not call it, and
+its board is waited for by the clock.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes. That is where it is called.
+- Locks: takes the board's frame lock, a spinlock later in the lock
+  order than a driver's own, for a count and a walk of the waiters.
+- Process: any, or none.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WaitVBlank`, `GetBoardStats`, `MonitorChanged`
+
+**EXAMPLES**
+
+```zig
+// The frame interrupt's server.
+panel.rtg_base.FrameDone(panel.board);
 ```
 
 ## GetRtgTagData
@@ -924,61 +986,6 @@ None known.
 ```zig
 var id: [3]u8 = undefined;
 _ = rb.RxParam(io, 0x04, &id, id.len);
-```
-
-## SignalRtgEvent
-
-Tells a board's servers that one of its events happened.
-
-**SYNOPSIS**
-
-```zig
-fn SignalRtgEvent(_: *RtgBase, board: *rtg.RtgBoard, event: u32) i32
-```
-
-**SINCE**
-
-1.0. LVO -340.
-
-**INPUTS**
-
-- `board` - the board.
-- `event` - the `RTGEV_` event.
-
-**RESULT**
-
-What the chain answered: the first non-zero answer, or 0 if every
-server passed it on, or for an event that does not exist.
-
-**BEHAVIOR**
-
-A driver calls it from its own interrupt. The servers run in turn,
-highest priority first, until one answers non-zero. A blanking also
-counts in the board's statistics.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: yes: this is what a driver's interrupt calls.
-- Locks: none needed.
-- Process: any, or none.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`AddRtgEventServer`
-
-**EXAMPLES**
-
-```zig
-_ = rb.SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
 ```
 
 ## TxColor

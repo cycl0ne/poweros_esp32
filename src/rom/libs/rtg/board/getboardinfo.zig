@@ -5,6 +5,7 @@
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
+const frames = @import("../frame/_frame.zig");
 const copyOut = _board.copyOut;
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
@@ -61,6 +62,12 @@ pub fn GetBoardInfo(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo,
     _board.obtain(rb, board);
     board.info.memory_free = private.arena.free_bytes;
     board.info.memory_largest = private.arena.largest(rb.sys_base);
+    // Whether its driver says its frames, as they come.
+    if (frames.come(rb.sys_base, &private.frames)) {
+        board.info.caps |= rtg.boards.RTGBC_VBLANK;
+    } else {
+        board.info.caps &= ~@as(u32, rtg.boards.RTGBC_VBLANK);
+    }
     _board.release(rb, board);
     if (board.ops) |ops| {
         if (ops.brightness) |read| board.info.brightness = read(board);

@@ -63,8 +63,10 @@ i32 ShowBitMap(*rtg.RtgBoard board, ?*rtg.RtgBitMap bitmap)
 /// `rows` 0 is all of them. What a caller that wrote the pixels itself
 /// calls when it has finished.
 i32 RefreshBitMap(*rtg.RtgBitMap bitmap, u32 y, u32 rows)
-/// Wait for `frames` blankings; 0 is the next one. RTGERR_TIMEOUT when
-/// they do not come within two frames' time each. Not from interrupts.
+/// Wait for `frames` frames of the display to end; 0 is the next one.
+/// For the frames the board's driver says ended, RTGERR_TIMEOUT when
+/// they do not come within two frames' time each; by the clock on a
+/// board that says none. Not from interrupts.
 i32 WaitVBlank(*rtg.RtgBoard board, u32 frames)
 /// The display enable. Not the backlight.
 i32 SetBoardDisplay(*rtg.RtgBoard board, bool on)
@@ -86,16 +88,8 @@ i32 CopyRect(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, *const rtg.RtgCopy copy)
 i32 BlitTemplate(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgTemplate shape)
 /// A one-bit tile, anchored to the buffer. Same rules as FillRect.
 i32 BlitPattern(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPattern tile)
-// Three slots kept free, so the slots after them stay where they are.
-##reserve 3
-/// Hand an RTGEV_* event of that board to your Interrupt, highest ln_Pri
-/// first. is_Code is an RtgEventFn and runs in interrupt context. False
-/// for an event that does not exist.
-bool AddRtgEventServer(*rtg.RtgBoard board, u32 event, *exec.Interrupt server)
-/// Take it off again.
-void RemRtgEventServer(*rtg.RtgBoard board, u32 event, *exec.Interrupt server)
-// Nine slots kept free, so the slots after them stay where they are.
-##reserve 9
+// Fourteen slots kept free, so the slots after them stay where they are.
+##reserve 14
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis. RTGERR_NOT_SUPPORTED unless the

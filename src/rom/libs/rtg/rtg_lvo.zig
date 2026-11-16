@@ -80,9 +80,7 @@ const BlitPattern = @import("engine/blitpattern.zig").BlitPattern;
 const BlendPixels = @import("engine/blendpixels.zig").BlendPixels;
 const BlendRect = @import("engine/blendrect.zig").BlendRect;
 const ScalePixels = @import("engine/scalepixels.zig").ScalePixels;
-const AddRtgEventServer = @import("event/addrtgeventserver.zig").AddRtgEventServer;
-const RemRtgEventServer = @import("event/remrtgeventserver.zig").RemRtgEventServer;
-const SignalRtgEvent = @import("event/signalrtgevent.zig").SignalRtgEvent;
+const FrameDone = @import("frame/framedone.zig").FrameDone;
 const OpenTransport = @import("transport/opentransport.zig").OpenTransport;
 const CloseTransport = @import("transport/closetransport.zig").CloseTransport;
 const TxParam = @import("transport/txparam.zig").TxParam;
@@ -186,9 +184,7 @@ const contract_files = [_][]const u8{
     @embedFile("engine/blendpixels.zig"),
     @embedFile("engine/blendrect.zig"),
     @embedFile("engine/scalepixels.zig"),
-    @embedFile("event/addrtgeventserver.zig"),
-    @embedFile("event/remrtgeventserver.zig"),
-    @embedFile("event/signalrtgevent.zig"),
+    @embedFile("frame/framedone.zig"),
     @embedFile("transport/opentransport.zig"),
     @embedFile("transport/closetransport.zig"),
     @embedFile("transport/txparam.zig"),
@@ -328,14 +324,8 @@ fn lvoBlitTemplate(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect,
 fn lvoBlitPattern(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) callconv(.c) i32 {
     return BlitPattern(rb, dest, area, tile);
 }
-fn lvoAddRtgEventServer(rb: *RtgBase, board: *rtg.RtgBoard, event: u32, server: *exec.Interrupt) callconv(.c) bool {
-    return AddRtgEventServer(rb, board, event, server);
-}
-fn lvoRemRtgEventServer(rb: *RtgBase, board: *rtg.RtgBoard, event: u32, server: *exec.Interrupt) callconv(.c) void {
-    RemRtgEventServer(rb, board, event, server);
-}
-fn lvoSignalRtgEvent(rb: *RtgBase, board: *rtg.RtgBoard, event: u32) callconv(.c) i32 {
-    return SignalRtgEvent(rb, board, event);
+fn lvoFrameDone(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) void {
+    FrameDone(rb, board);
 }
 fn lvoOpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) callconv(.c) ?*rtg.RtgTransport {
     return OpenTransport(rb, driver, device);
@@ -422,7 +412,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 27;
+const reserved_slots = 29;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -474,8 +464,8 @@ pub const vectors = [_]*const anyopaque{
     vec(reserved),
     vec(reserved),
     vec(reserved),
-    vec(lvoAddRtgEventServer),
-    vec(lvoRemRtgEventServer),
+    vec(reserved),
+    vec(reserved),
     vec(reserved),
     vec(reserved),
     vec(reserved),
@@ -520,7 +510,7 @@ pub const vectors = [_]*const anyopaque{
     // The drivers' interface.
     vec(lvoAddRtgDriver),
     vec(lvoRemRtgDriver),
-    vec(lvoSignalRtgEvent),
+    vec(lvoFrameDone),
     vec(lvoTxParam),
     vec(lvoTxColor),
     vec(lvoRxParam),

@@ -24,7 +24,6 @@ const nodes = @import("../exec/nodes.zig");
 const lists = @import("../exec/lists.zig");
 const bitmaps = @import("bitmaps.zig");
 const video = @import("video.zig");
-const events = @import("events.zig");
 const drivers = @import("drivers.zig");
 const modes = @import("modes.zig");
 const tagitem = @import("../utility/tagitem.zig");
@@ -158,6 +157,10 @@ pub const RTGBF_CONNECTOR: u32 = 1 << 10;
 /// board without it shows one whole buffer. Said by the driver.
 pub const RTGBC_BANDS: u32 = 1 << 0;
 pub const RTGBC_SHOW: u32 = 1 << 1;
+/// Its driver says when a frame ends (`FrameDone`): `WaitVBlank` waits
+/// for the display's own frames, and `RtgBoardStats.blanks` counts them.
+/// Clear on a board that says none, or has stopped saying it: a wait is
+/// by the clock there. The library's, as the frames come.
 pub const RTGBC_VBLANK: u32 = 1 << 3;
 pub const RTGBC_REFRESH: u32 = 1 << 4;
 pub const RTGBC_DISPLAY: u32 = 1 << 5;
@@ -238,7 +241,9 @@ pub const RtgBoardStats = extern struct {
     /// picture's. The rows of one are wrong on the glass until they are
     /// sent again.
     underruns: u32 = 0,
-    /// The display's frames begun, where the board hears of them (rtg 11).
+    /// The display's frames ended, as the board's driver said them
+    /// (`FrameDone`): counted by the library, 0 on a board that says
+    /// none.
     blanks: u32 = 0,
 };
 
@@ -332,8 +337,6 @@ pub const RtgBoard = extern struct {
     /// RTGERR_OK; a driver writes it only in its attach, for a display it
     /// found running.
     showing: ?*RtgBitMap = null,
-    /// Event servers, one list per RTGEV_*.
-    event_lists: [events.RTGEV_COUNT]List = [_]List{.{}} ** events.RTGEV_COUNT,
     /// The driver's own data: `instance_size` bytes the library allocated
     /// and cleared when the board was made, and frees with it.
     instance: ?*anyopaque = null,
@@ -401,8 +404,6 @@ pub const RtgBoardOps = extern struct {
     /// of every timing a monitor names, and lists the ones taken. Null:
     /// every one is taken.
     check_mode: ?*const fn (*RtgBoard, *const RtgTimings) callconv(.c) i32 = null,
-    /// Wait for `frames` vertical blanks; 0 is the next one.
-    wait_vblank: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
     /// Rows `y` to `y + rows` of a buffer were written by the CPU: hand
     /// them on to the display. `rows` 0 is all of them.
     refresh: ?*const fn (*RtgBoard, *RtgBitMap, u32, u32) callconv(.c) i32 = null,

@@ -523,7 +523,6 @@ fn takePending(panel: *Panel) void {
     panel.fill_from = chains;
     panel.pending = null;
     panel.sys.SignalWaitable(&panel.taken);
-    _ = panel.rtg_base.SignalRtgEvent(panel.board, rtg.events.RTGEV_SHOWN);
 }
 
 /// Feed the panel from `pixels` and start it, the stream stopped first if
@@ -818,8 +817,9 @@ fn vblankServer(is_data: ?*anyopaque, _: u32) callconv(.c) i32 {
     if (lcd.intStatus() & lcd.INT_VSYNC == 0) return 0; // not ours
     lcd.intClear(lcd.INT_VSYNC);
     panel.stats.frames +%= 1;
-    // Whoever waits for a blanking - WaitVBlank - hears of it.
-    _ = panel.rtg_base.SignalRtgEvent(panel.board, rtg.events.RTGEV_VBLANK);
+    // The frame ended: the library counts it, and whoever waits for one
+    // - WaitVBlank - hears of it.
+    panel.rtg_base.FrameDone(panel.board);
 
     const now = cpu.ccount();
     const took = now -% panel.last_cycles;

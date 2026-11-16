@@ -29,6 +29,7 @@ const registry = @import("../driver/_driver.zig");
 const modes = @import("../mode/_mode.zig");
 const monitors = @import("../monitor/_monitor.zig");
 const shows = @import("../display/_display.zig");
+const frames = @import("../frame/_frame.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -68,6 +69,9 @@ pub const Private = struct {
     band_count: u32 = 0,
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
+    /// The frames its driver says ended, and who waits for one
+    /// (`frame/_frame.zig`).
+    frames: frames.State = .{},
     /// Video layers open on it (OpenVideoLayer).
     video_layers: u32 = 0,
 };
@@ -346,7 +350,6 @@ pub fn dark(board: *const rtg.RtgBoard) bool {
 pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     var caps: u32 = 0;
     if (ops.show != null) caps |= rtg.boards.RTGBC_SHOW;
-    if (ops.wait_vblank != null) caps |= rtg.boards.RTGBC_VBLANK;
     if (ops.refresh != null) caps |= rtg.boards.RTGBC_REFRESH;
     if (ops.display != null) caps |= rtg.boards.RTGBC_DISPLAY;
     if (ops.set_brightness != null) caps |= rtg.boards.RTGBC_BRIGHTNESS;

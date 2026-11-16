@@ -24,8 +24,8 @@
 //! lies in one piece of memory (`chain.zig`) - and its transfer-done
 //! interrupt sends it again: from a new chain, if one was shown
 //! meanwhile, which is how a flip or a band change happens at a frame's
-//! end. That interrupt is the frame's: it counts the frame begun
-//! (`RtgBoardStats.blanks`) and signals `RTGEV_VBLANK`, which is what
+//! end. That interrupt is the frame's: it says the frame ended
+//! (`FrameDone`), which the library counts (`RtgBoardStats.blanks`) and
 //! WaitVBlank waits for. The picture is read straight out of PSRAM; the
 //! CPU's writes reach it when RefreshBitMap writes them back out of the
 //! cache.
@@ -93,7 +93,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 16;
+const REVISION = 17;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -204,9 +204,8 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         chain_file.rearm(panel.chain);
         dwgdma.run(channel, panel.chain.first);
         panel.stats.frames +%= 1;
-        panel.stats.blanks +%= 1;
         engine_file.frameTick(&panel.engine);
-        _ = driverBase(panel.board).SignalRtgEvent(panel.board, rtg.events.RTGEV_VBLANK);
+        driverBase(panel.board).FrameDone(panel.board);
         // The bridge's connector, looked at now and then by the library.
         if (panel.hdmi) {
             panel.frames_unseen += 1;

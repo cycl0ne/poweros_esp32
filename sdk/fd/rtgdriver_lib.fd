@@ -23,9 +23,9 @@
 /// while a board or a bus it made is still alive, and for one that is not
 /// on the list. Not from interrupts.
 bool RemRtgDriver(*rtg.RtgDriver driver)
-/// Tell a board's servers that something happened. A driver calls it from
-/// its own interrupt; returns what the chain answered.
-i32 SignalRtgEvent(*rtg.RtgBoard board, u32 event)
+/// A frame of the board's display ended: counted, and whoever waits for
+/// it (WaitVBlank) woken. A driver calls it from its frame interrupt.
+void FrameDone(*rtg.RtgBoard board)
 /// A command and its parameters to the part. A command below zero sends
 /// the parameters alone.
 i32 TxParam(*rtg.RtgTransport io, i32 cmd, ?*const anyopaque param, u32 size)
@@ -43,8 +43,8 @@ usize GetRtgTagData(utility.Tag tag_value, usize default_value, ?[*]const utilit
 /// Null: not inside the driver's attach for that device, or no memory.
 ?*rtg.RtgBoard CreateBoard(*rtg.RtgDriver driver, *rtg.RtgDevice device, *const rtg.RtgBoardSpec spec)
 /// Give a board back: for an attach that fails after making one, and for
-/// a driver that is being removed. Refused while an event server or a
-/// video layer is still on it. Null does nothing.
+/// a driver that is being removed. Refused while a task waits for a
+/// frame of it or a video layer is still on it. Null does nothing.
 void DeleteBoard(?*rtg.RtgBoard board)
 /// A device the library cannot find by itself, made from tags that say
 /// what a panel part's say (PART_Chip, PART_Bus, RTGA_*), and offered to

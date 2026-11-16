@@ -1,41 +1,39 @@
 // SPDX-License-Identifier: MPL-2.0
-//! WaitVBlank: Wait for `frames` blankings; 0 is the next one.
+//! WaitVBlank: Wait for `frames` frames of the display to end; 0 is the
+//! next one.
 //!
-//! A board whose driver has a wait of its own is asked. One that only
-//! signals its blankings is waited for here: an event server on the
-//! waiting task's stack counts them down, and a request to timer.device -
-//! a copy of the library's, answered to a port on the same stack - ends
-//! the wait when they do not come. Both wake the task on one signal, so
-//! one Wait hears whichever is first.
+//! A board whose driver says its frames (FrameDone) is waited for by
+//! them: a waiter on the waiting task's stack is counted down by each
+//! frame, and a request to timer.device - a copy of the library's,
+//! answered to a port on the same stack - ends the wait when they do not
+//! come. Both wake the task on one signal, so one Wait hears whichever is
+//! first. A board that says none is waited for by the same request
+//! alone, for the frames' time.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
 const timer = sdk.devices.timer;
 const RtgBase = @import("../rtg.zig").RtgBase;
-const waiterServer = _event.waiterServer;
-const Waiter = _event.Waiter;
+const boards = @import("../board/_board.zig");
+const frames_file = @import("../frame/_frame.zig");
 const err = rtg.errors;
-const _event = @import("../event/_event.zig");
 
 /// A frame's time, in microseconds, on a board that does not say how
 /// often it refreshes: a panel's 60 a second.
 const default_frame_us: u64 = 16_667;
 
-/// How long a wait for `frames` blankings of `board` may take, in
-/// microseconds: two frames' time for each. A board that streams sends a
-/// blanking every frame, so twice that is one that will not come.
+/// A frame's time on `board`, in microseconds: by its refresh rate, a
+/// sixtieth of a second on a board that names none.
 ///
 /// INPUTS:
 /// - `board` - the board, for its refresh rate.
-/// - `frames` - how many blankings are waited for; not 0.
-fn limitMicros(board: *const rtg.RtgBoard, frames: u32) u64 {
+fn frameMicros(board: *const rtg.RtgBoard) u64 {
     const refresh_mhz = board.info.refresh_mhz;
-    const frame_us: u64 = if (refresh_mhz == 0) default_frame_us else 1_000_000_000 / @as(u64, refresh_mhz);
-    return 2 * frame_us * frames;
+    return if (refresh_mhz == 0) default_frame_us else 1_000_000_000 / @as(u64, refresh_mhz);
 }
 
-/// Waits for the display's blanking.
+/// Waits for frames of the display to end.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -46,34 +44,43 @@ fn limitMicros(board: *const rtg.RtgBoard, frames: u32) u64 {
 ///
 /// INPUTS:
 /// - `board` - the board.
-/// - `frames` - how many blankings to wait for; 0 is the next one.
+/// - `frames` - how many frames to wait for; 0 is the next one.
 ///
 /// RESULT:
-/// `RTGERR_OK`; `RTGERR_TIMEOUT` when the blankings did not come within
-/// two frames' time for each; `RTGERR_NOT_SUPPORTED` for a board that
-/// signals no blankings, and where there is no timer.device to end the
-/// wait by; `RTGERR_NO_MEMORY` without a free signal; or what the driver's
-/// own wait answered.
+/// `RTGERR_OK`; `RTGERR_TIMEOUT` when the board's driver says its frames
+/// and they did not come within two frames' time for each;
+/// `RTGERR_NOT_SUPPORTED` where there is no timer.device to wait by;
+/// `RTGERR_NO_MEMORY` without a free signal.
 ///
 /// BEHAVIOR:
-/// A driver with a wait of its own does it. Otherwise the task hangs an
-/// event server on `RTGEV_VBLANK` that signals it after the count, and
-/// waits for that or for the time limit, whichever is first: two frames
-/// of the board's refresh rate for each blanking asked for, a frame taken
-/// as a sixtieth of a second on a board that names no rate. So the call
-/// comes back on a board whose stream has stopped, or has not begun.
+/// On a board whose driver says when a frame ends (`FrameDone`,
+/// `RTGBC_VBLANK`) the task waits until that many have ended, or for the
+/// time limit, whichever is first: two frames of the board's refresh rate
+/// for each frame asked for, a frame taken as a sixtieth of a second on
+/// a board that names no rate. A wait the frames did not come for
+/// answers `RTGERR_TIMEOUT`, and the board is held to say none until its
+/// driver says the next.
+///
+/// On a board that says no frames - one with no frame interrupt, one
+/// whose stream has not begun or has stopped, one that is dark - the
+/// task waits by the clock, a frame's time for each frame asked for, and
+/// the answer is `RTGERR_OK`: a program that paces itself by the display
+/// runs at the speed it would on one that says its frames.
+///
+/// So the call comes back on every board.
 ///
 /// CONTEXT:
 /// - Waits: yes.
 /// - Interrupts: no. It waits.
-/// - Locks: no spinlock may be held.
+/// - Locks: no spinlock may be held. The board's lock is not taken: a
+///   driver calls it from its `show`, which holds it.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
 /// A signal is taken for the wait and given back. Nothing is allocated:
-/// the event server, the limit's request and its reply port are on the
-/// caller's stack; the server is off the board's list and the request
-/// back from timer.device when this returns.
+/// the waiter, the request and its reply port are on the caller's stack;
+/// the waiter is off the board's list and the request back from
+/// timer.device when this returns.
 ///
 /// NOTES:
 /// `RTGERR_TIMEOUT` says nothing was waited for in step with the display:
@@ -84,7 +91,7 @@ fn limitMicros(board: *const rtg.RtgBoard, frames: u32) u64 {
 /// None known.
 ///
 /// SEE ALSO:
-/// `AddRtgEventServer`, `GetBoardStats`
+/// `FrameDone`, `GetBoardStats`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -93,54 +100,50 @@ fn limitMicros(board: *const rtg.RtgBoard, frames: u32) u64 {
 /// }
 /// ```
 pub fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32 {
-    const rtg_lib = rb.iface();
     const sys = rb.sys_base;
     const wanted = if (frames == 0) 1 else frames;
-
-    if (board.ops) |ops| {
-        if (ops.wait_vblank) |wait| return wait(board, frames);
-    }
-    // Nothing to wait for unless the board signals blankings at all.
-    if (board.info.flags & rtg.boards.RTGBF_STREAMING == 0) return err.RTGERR_NOT_SUPPORTED;
+    const state = &boards.privateOf(board).frames;
     // A wait nothing could end is not begun.
     if (rb.timer_io.node.device == null) return err.RTGERR_NOT_SUPPORTED;
 
-    // AllocSignal hands the bit out cleared, so neither an old blanking
-    // nor an old reply is heard.
+    // AllocSignal hands the bit out cleared, so neither an old frame nor
+    // an old reply is heard.
     const signal_bit = sys.AllocSignal(-1);
     if (signal_bit < 0) return err.RTGERR_NO_MEMORY;
     defer sys.FreeSignal(signal_bit);
     const mask = @as(u32, 1) << @intCast(signal_bit);
     const task = sys.FindTask(null).?;
 
-    var waiter: Waiter = .{
-        .interrupt = .{ .node = .{ .type = .interrupt, .pri = 0, .name = "rtg vblank wait" } },
-        .sys = sys,
-        .task = task,
-        .mask = mask,
-        .left = wanted,
-    };
-    waiter.interrupt.data = @ptrCast(&waiter);
-    waiter.interrupt.code = @ptrCast(&waiterServer);
-    // The count is the interrupt's to write: read again at every look.
-    const left: *volatile u32 = &waiter.left;
-
-    // The limit: a copy of the library's request, answered to this task
-    // on the signal the blankings come on.
+    // The clock: a copy of the library's request, answered to this task
+    // on the signal the frames come on.
     var port: exec.MsgPort = .{ .sig_bit = @intCast(signal_bit), .sig_task = task };
     port.msg_list.init(.message);
-    var limit = rb.timer_io;
-    limit.node.message.reply_port = &port;
-    limit.node.command = timer.TR_ADDREQUEST;
-    limit.time = timer.TimeVal.fromMicros(limitMicros(board, wanted));
+    var clock = rb.timer_io;
+    clock.node.message.reply_port = &port;
+    clock.node.command = timer.TR_ADDREQUEST;
 
-    if (!rtg_lib.AddRtgEventServer(board, rtg.events.RTGEV_VBLANK, &waiter.interrupt)) return err.RTGERR_BAD_ARG;
-    sys.SendIO(&limit.node);
-    while (left.* != 0 and sys.CheckIO(&limit.node) == null) _ = sys.Wait(mask);
-    rtg_lib.RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &waiter.interrupt);
+    if (!frames_file.come(sys, state)) {
+        // No frames are said: the frames' time, by the clock.
+        clock.time = timer.TimeVal.fromMicros(frameMicros(board) * wanted);
+        sys.SendIO(&clock.node);
+        _ = sys.WaitIO(&clock.node);
+        return err.RTGERR_OK;
+    }
+
+    var waiter: frames_file.Waiter = .{ .task = task, .mask = mask, .left = wanted };
+    // The count is the interrupt's to write: read again at every look.
+    const left: *volatile u32 = &waiter.left;
+    // The limit: twice the frames' time. A board that says its frames
+    // says one every frame, so twice that is one that will not come.
+    clock.time = timer.TimeVal.fromMicros(2 * frameMicros(board) * wanted);
+
+    frames_file.add(sys, state, &waiter);
+    sys.SendIO(&clock.node);
+    while (left.* != 0 and sys.CheckIO(&clock.node) == null) _ = sys.Wait(mask);
+    const missing = frames_file.remove(sys, state, &waiter);
     // The request is back before its port goes with this call: taken back
     // where its time has not come, and its reply taken off the port.
-    if (sys.CheckIO(&limit.node) == null) _ = sys.AbortIO(&limit.node);
-    _ = sys.WaitIO(&limit.node);
-    return if (left.* == 0) err.RTGERR_OK else err.RTGERR_TIMEOUT;
+    if (sys.CheckIO(&clock.node) == null) _ = sys.AbortIO(&clock.node);
+    _ = sys.WaitIO(&clock.node);
+    return if (missing == 0) err.RTGERR_OK else err.RTGERR_TIMEOUT;
 }

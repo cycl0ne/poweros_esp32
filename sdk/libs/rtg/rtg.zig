@@ -39,7 +39,6 @@ pub const boards = @import("boards.zig");
 pub const drivers = @import("drivers.zig");
 pub const modes = @import("modes.zig");
 pub const transport = @import("transport.zig");
-pub const events = @import("events.zig");
 pub const errors = @import("errors.zig");
 pub const tags = @import("tags.zig");
 pub const video = @import("video.zig");
@@ -118,5 +117,3 @@ pub const RTGVA_Depth = video.RTGVA_Depth;
 
 pub const RtgTransport = transport.RtgTransport;
 pub const RtgTransportOps = transport.RtgTransportOps;
-
-pub const RtgEventFn = events.RtgEventFn;

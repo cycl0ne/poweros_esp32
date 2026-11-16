@@ -13,7 +13,6 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
-- [AddRtgEventServer](#addrtgeventserver) - Hangs an interrupt server on one of a board's events.
 - [AddRtgNotify](#addrtgnotify) - Asks for a task to be told when something about the boards changes.
 - [AllocBitMap](#allocbitmap) - Makes a buffer in a board's display memory.
 - [AttachBitMap](#attachbitmap) - Makes a buffer handle over memory the caller owns.
@@ -48,7 +47,6 @@ Generated from the source by `./zig build autodoc`.
 - [ReadBoardEDID](#readboardedid) - Copies out the EDID the monitor on a board's connector was read to have.
 - [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
-- [RemRtgEventServer](#remrtgeventserver) - Takes an interrupt server off one of a board's events.
 - [RemRtgNotify](#remrtgnotify) - Gives back a notification `AddRtgNotify` answered.
 - [RtgCicp](#rtgcicp) - Turns one of H.273's numbers for a picture's colours into rtg's.
 - [RtgErrorText](#rtgerrortext) - Says what an `RTGERR_` code means, in words.
@@ -63,64 +61,7 @@ Generated from the source by `./zig build autodoc`.
 - [ShowBoard](#showboard) - Puts a board in a mode and shows buffers in it, each in a band of display lines.
 - [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
 - [ShowVideoFrame](#showvideoframe) - Shows a picture in YUV on a video layer, scaled into its place.
-- [WaitVBlank](#waitvblank) - Waits for the display's blanking.
-
-## AddRtgEventServer
-
-Hangs an interrupt server on one of a board's events.
-
-**SYNOPSIS**
-
-```zig
-fn AddRtgEventServer(rb: *RtgBase, board: *rtg.RtgBoard, event: u32, server: *exec.Interrupt) bool
-```
-
-**SINCE**
-
-1.0. LVO -160.
-
-**INPUTS**
-
-- `board` - the board.
-- `event` - an `RTGEV_` event.
-- `server` - the Interrupt: `is_Code` an `RtgEventFn`, `is_Data` its
-  own, `ln_Pri` its place in the chain.
-
-**RESULT**
-
-True, or false for an event that does not exist.
-
-**BEHAVIOR**
-
-The chain is kept by priority, highest first. The server runs in
-interrupt context, when the driver signals the event: it may not wait
-and should be brief. A server that answers non-zero stops the chain.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe. It takes Disable.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-The server stays the caller's, and must stay put until
-`RemRtgEventServer`.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`RemRtgEventServer`, `SignalRtgEvent`
-
-**EXAMPLES**
-
-```zig
-if (!rb.AddRtgEventServer(board, rtg.events.RTGEV_VBLANK, &server)) return error.NoSuchEvent;
-```
+- [WaitVBlank](#waitvblank) - Waits for frames of the display to end.
 
 ## AddRtgNotify
 
@@ -1466,7 +1407,7 @@ Reads what a board that refreshes itself has been through.
 **SYNOPSIS**
 
 ```zig
-fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
+fn GetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
 ```
 
 **SINCE**
@@ -1486,15 +1427,17 @@ How many bytes were written, as for `GetBoardInfo`.
 **BEHAVIOR**
 
 The driver fills in what it counts - frames sent, frames late - and the
-library adds how many times a buffer was shown. All zeroes but that for
-a board that counts nothing. `BoardControl(RTGCTRL_RESET_STATS)` starts
-the counts again.
+library adds what it counts itself: how many times a buffer was shown,
+and the frames the driver said ended (`blanks`, `FrameDone`). All
+zeroes but those for a board that counts nothing.
+`BoardControl(RTGCTRL_RESET_STATS)` starts the counts again, except
+the frames', which only go up.
 
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: no.
-- Locks: none needed.
+- Locks: the board's frame lock is taken for the count, a spinlock.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1507,7 +1450,7 @@ None known.
 
 **SEE ALSO**
 
-`GetBoardInfo`, `BoardControl`
+`GetBoardInfo`, `BoardControl`, `WaitVBlank`
 
 **EXAMPLES**
 
@@ -2224,60 +2167,6 @@ None known.
 
 ```zig
 _ = rb.RefreshRect(buffer, &.{ .x = 64, .y = 128, .width = 64, .height = 64 });
-```
-
-## RemRtgEventServer
-
-Takes an interrupt server off one of a board's events.
-
-**SYNOPSIS**
-
-```zig
-fn RemRtgEventServer(rb: *RtgBase, board: *rtg.RtgBoard, event: u32, server: *exec.Interrupt) void
-```
-
-**SINCE**
-
-1.0. LVO -164.
-
-**INPUTS**
-
-- `board` - the board.
-- `event` - the event it was hung on.
-- `server` - the Interrupt.
-
-**RESULT**
-
-Nothing. A server not on the chain is left alone.
-
-**BEHAVIOR**
-
-The chain is changed with interrupts off, so a signal cannot run into
-it half changed; once this returns the server is not called again.
-
-**CONTEXT**
-
-- Waits: no.
-- Interrupts: safe. It takes Disable.
-- Locks: none needed.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-The server is the caller's again.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`AddRtgEventServer`
-
-**EXAMPLES**
-
-```zig
-rb.RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &server);
 ```
 
 ## RemRtgNotify
@@ -3228,7 +3117,7 @@ if (rb.ShowVideoFrame(layer, &frame.picture, &all) == rtg.errors.RTGERR_OK) {
 
 ## WaitVBlank
 
-Waits for the display's blanking.
+Waits for frames of the display to end.
 
 **SYNOPSIS**
 
@@ -3243,38 +3132,47 @@ fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32
 **INPUTS**
 
 - `board` - the board.
-- `frames` - how many blankings to wait for; 0 is the next one.
+- `frames` - how many frames to wait for; 0 is the next one.
 
 **RESULT**
 
-`RTGERR_OK`; `RTGERR_TIMEOUT` when the blankings did not come within
-two frames' time for each; `RTGERR_NOT_SUPPORTED` for a board that
-signals no blankings, and where there is no timer.device to end the
-wait by; `RTGERR_NO_MEMORY` without a free signal; or what the driver's
-own wait answered.
+`RTGERR_OK`; `RTGERR_TIMEOUT` when the board's driver says its frames
+and they did not come within two frames' time for each;
+`RTGERR_NOT_SUPPORTED` where there is no timer.device to wait by;
+`RTGERR_NO_MEMORY` without a free signal.
 
 **BEHAVIOR**
 
-A driver with a wait of its own does it. Otherwise the task hangs an
-event server on `RTGEV_VBLANK` that signals it after the count, and
-waits for that or for the time limit, whichever is first: two frames
-of the board's refresh rate for each blanking asked for, a frame taken
-as a sixtieth of a second on a board that names no rate. So the call
-comes back on a board whose stream has stopped, or has not begun.
+On a board whose driver says when a frame ends (`FrameDone`,
+`RTGBC_VBLANK`) the task waits until that many have ended, or for the
+time limit, whichever is first: two frames of the board's refresh rate
+for each frame asked for, a frame taken as a sixtieth of a second on
+a board that names no rate. A wait the frames did not come for
+answers `RTGERR_TIMEOUT`, and the board is held to say none until its
+driver says the next.
+
+On a board that says no frames - one with no frame interrupt, one
+whose stream has not begun or has stopped, one that is dark - the
+task waits by the clock, a frame's time for each frame asked for, and
+the answer is `RTGERR_OK`: a program that paces itself by the display
+runs at the speed it would on one that says its frames.
+
+So the call comes back on every board.
 
 **CONTEXT**
 
 - Waits: yes.
 - Interrupts: no. It waits.
-- Locks: no spinlock may be held.
+- Locks: no spinlock may be held. The board's lock is not taken: a
+  driver calls it from its `show`, which holds it.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
 A signal is taken for the wait and given back. Nothing is allocated:
-the event server, the limit's request and its reply port are on the
-caller's stack; the server is off the board's list and the request
-back from timer.device when this returns.
+the waiter, the request and its reply port are on the caller's stack;
+the waiter is off the board's list and the request back from
+timer.device when this returns.
 
 **NOTES**
 
@@ -3288,7 +3186,7 @@ None known.
 
 **SEE ALSO**
 
-`AddRtgEventServer`, `GetBoardStats`
+`FrameDone`, `GetBoardStats`
 
 **EXAMPLES**
 

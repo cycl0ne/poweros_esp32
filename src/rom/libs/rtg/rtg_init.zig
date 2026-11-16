@@ -67,7 +67,13 @@ pub const LIBRARY_VERSION = 1;
 /// library keeps the bands; ShowBitMap takes no offsets; a buffer lives
 /// through a mode change. SetBoardMode and ShowBitMapBands are gone,
 /// and a board is in no mode until it is first shown something.
-pub const LIBRARY_REVISION = 21;
+/// 22: the library waits for a frame - a driver says FrameDone from its
+/// frame interrupt, the library counts the frames (RtgBoardStats.blanks)
+/// and WaitVBlank waits for them with its limit, by the clock on a board
+/// that says none: it comes back on every board. The event servers
+/// (AddRtgEventServer, RemRtgEventServer, SignalRtgEvent) and the op
+/// wait_vblank are gone.
+pub const LIBRARY_REVISION = 22;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

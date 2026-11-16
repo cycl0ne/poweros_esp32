@@ -8,6 +8,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 const Private = _board.Private;
 const registry = @import("../driver/_driver.zig");
 const devices = @import("../device/_device.zig");
+const frames = @import("../frame/_frame.zig");
 const _board = @import("_board.zig");
 
 /// Makes a board for one output of a device.
@@ -86,6 +87,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     const private: *Private = @ptrCast(@alignCast(memory));
     private.* = .{};
     sys.InitSemaphore(&private.lock);
+    frames.init(sys, &private.frames);
     const board = &private.board;
 
     board.node.type = .graphics;
@@ -103,7 +105,6 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     sys.NewList(&private.modes);
     private.monitor_format = spec.format;
     sys.NewList(&board.bitmaps);
-    for (&board.event_lists) |*events| sys.NewList(events);
 
     if (spec.instance_size != 0) {
         board.instance = sys.AllocVec(spec.instance_size, where) orelse {

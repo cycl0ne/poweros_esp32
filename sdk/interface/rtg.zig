@@ -41,8 +41,6 @@ pub const LVO = struct {
     pub const CopyRect = libraries.lvo(33);
     pub const BlitTemplate = libraries.lvo(34);
     pub const BlitPattern = libraries.lvo(35);
-    pub const AddRtgEventServer = libraries.lvo(39);
-    pub const RemRtgEventServer = libraries.lvo(40);
     pub const RtgErrorText = libraries.lvo(50);
     pub const MirrorBoard = libraries.lvo(51);
     pub const SetBoardPointer = libraries.lvo(54);
@@ -97,8 +95,6 @@ pub const Fn = struct {
     pub const CopyRect = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, *const rtg.RtgCopy) callconv(.c) i32;
     pub const BlitTemplate = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgTemplate) callconv(.c) i32;
     pub const BlitPattern = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPattern) callconv(.c) i32;
-    pub const AddRtgEventServer = *const fn (*RtgBase, *rtg.RtgBoard, u32, *exec.Interrupt) callconv(.c) bool;
-    pub const RemRtgEventServer = *const fn (*RtgBase, *rtg.RtgBoard, u32, *exec.Interrupt) callconv(.c) void;
     pub const RtgErrorText = *const fn (*RtgBase, i32) callconv(.c) [*:0]const u8;
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
@@ -217,8 +213,10 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.RefreshBitMap, Fn.RefreshBitMap, .{ bitmap, y, rows });
     }
 
-    /// Wait for `frames` blankings; 0 is the next one. RTGERR_TIMEOUT when
-    /// they do not come within two frames' time each. Not from interrupts.
+    /// Wait for `frames` frames of the display to end; 0 is the next one.
+    /// For the frames the board's driver says ended, RTGERR_TIMEOUT when
+    /// they do not come within two frames' time each; by the clock on a
+    /// board that says none. Not from interrupts.
     pub fn WaitVBlank(self: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32 {
         return libraries.call(self, LVO.WaitVBlank, Fn.WaitVBlank, .{ board, frames });
     }
@@ -260,18 +258,6 @@ pub const RtgBase = opaque {
     /// A one-bit tile, anchored to the buffer. Same rules as FillRect.
     pub fn BlitPattern(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) i32 {
         return libraries.call(self, LVO.BlitPattern, Fn.BlitPattern, .{ dest, area, tile });
-    }
-
-    /// Hand an RTGEV_* event of that board to your Interrupt, highest ln_Pri
-    /// first. is_Code is an RtgEventFn and runs in interrupt context. False
-    /// for an event that does not exist.
-    pub fn AddRtgEventServer(self: *RtgBase, board: *rtg.RtgBoard, event: u32, server: *exec.Interrupt) bool {
-        return libraries.call(self, LVO.AddRtgEventServer, Fn.AddRtgEventServer, .{ board, event, server });
-    }
-
-    /// Take it off again.
-    pub fn RemRtgEventServer(self: *RtgBase, board: *rtg.RtgBoard, event: u32, server: *exec.Interrupt) void {
-        return libraries.call(self, LVO.RemRtgEventServer, Fn.RemRtgEventServer, .{ board, event, server });
     }
 
     /// An error in words. Never null.

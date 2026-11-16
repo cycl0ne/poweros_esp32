@@ -291,7 +291,8 @@ fn streams(kept: *const Window, board: *rtg.RtgBoard) bool {
     return info.flags & rtg.boards.RTGBF_STREAMING != 0;
 }
 
-/// The frames the board has counted, 0 for one that does not count them.
+/// The frames the board's driver has said ended, as the library counts
+/// them: 0 on a board that says none.
 fn blanksOf(kept: *const Window, board: *rtg.RtgBoard) u32 {
     var counts: rtg.RtgBoardStats = .{};
     _ = kept.rb.GetBoardStats(board, &counts, @sizeOf(rtg.RtgBoardStats));

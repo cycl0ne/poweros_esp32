@@ -23,7 +23,7 @@
 //!
 //! Each call is a file of its own in the folder for its category -
 //! driver/, device/, board/, mode/, monitor/, bitmap/, display/, engine/,
-//! event/, transport/, tag/, pointer/, video/ and errors/ - and memory/
+//! frame/, transport/, tag/, pointer/, video/ and errors/ - and memory/
 //! holds the arena display memory is cut from.
 //! The jump table is rtg_lvo.zig, the ROM tag and init rtg_init.zig, the
 //! base rtg_base.zig. This file holds the names the rest of the kernel
@@ -64,6 +64,7 @@ const interface = sdk.interface.rtg;
 const memory = @import("memory/_memory.zig");
 const boards = @import("board/_board.zig");
 const modes = @import("mode/_mode.zig");
+const frame_state = @import("frame/_frame.zig");
 const monitors = @import("monitor/_monitor.zig");
 const edid = @import("monitor/_edid.zig");
 
@@ -110,10 +111,8 @@ test {
     _ = @import("engine/copyrect.zig");
     _ = @import("engine/fillrect.zig");
     _ = @import("errors/rtgerrortext.zig");
-    _ = @import("event/_event.zig");
-    _ = @import("event/addrtgeventserver.zig");
-    _ = @import("event/remrtgeventserver.zig");
-    _ = @import("event/signalrtgevent.zig");
+    _ = @import("frame/_frame.zig");
+    _ = @import("frame/framedone.zig");
     _ = @import("memory/_memory.zig");
     _ = @import("mode/_mode.zig");
     _ = @import("mode/addboardmode.zig");
@@ -2529,60 +2528,60 @@ test "info and stats: as much as the caller has room for, whole fields" {
     try tearDown(rb);
 }
 
-var first_server_ran: u32 = 0;
-var second_server_ran: u32 = 0;
-var stop_the_chain = false;
-
-fn firstServer(_: ?*anyopaque, _: *anyopaque, _: u32) callconv(.c) i32 {
-    first_server_ran += 1;
-    return if (stop_the_chain) 1 else 0;
+/// The frames `board` has counted, as its stats say.
+fn blanksOf(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
+    var stats: rtg.RtgBoardStats = .{};
+    _ = base(rb).GetBoardStats(board, &stats, @sizeOf(rtg.RtgBoardStats));
+    return stats.blanks;
 }
 
-fn secondServer(_: ?*anyopaque, _: *anyopaque, _: u32) callconv(.c) i32 {
-    second_server_ran += 1;
-    return 0;
+/// Whether `board` says its frames just now, as its info says.
+fn saysFrames(rb: *RtgBase, board: *rtg.RtgBoard) bool {
+    return infoOf(rb, board).caps & rtg.boards.RTGBC_VBLANK != 0;
 }
 
-test "events: highest first, and the first to answer ends it" {
+test "frames: counted as the driver says them, and the board says that it does" {
     const rb = try setUp();
     defer kexec.deinit();
     const board = try makeBoard(rb);
-    first_server_ran = 0;
-    second_server_ran = 0;
-    stop_the_chain = false;
 
-    var high = exec.Interrupt{ .node = .{ .type = .interrupt, .pri = 10, .name = "high" }, .code = @ptrCast(&firstServer) };
-    var low = exec.Interrupt{ .node = .{ .type = .interrupt, .pri = 0, .name = "low" }, .code = @ptrCast(&secondServer) };
-    try testing.expect(base(rb).AddRtgEventServer(board, rtg.events.RTGEV_VBLANK, &high));
-    try testing.expect(base(rb).AddRtgEventServer(board, rtg.events.RTGEV_VBLANK, &low));
-    try testing.expect(!base(rb).AddRtgEventServer(board, 99, &low));
+    // A board whose driver has said no frame counts none and says none.
+    try testing.expectEqual(@as(u32, 0), blanksOf(rb, board));
+    try testing.expect(!saysFrames(rb, board));
 
-    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
-    try testing.expectEqual(@as(u32, 1), first_server_ran);
-    try testing.expectEqual(@as(u32, 1), second_server_ran);
+    fake.endFrame(board);
+    fake.endFrame(board);
+    fake.endFrame(board);
+    try testing.expectEqual(@as(u32, 3), blanksOf(rb, board));
+    try testing.expect(saysFrames(rb, board));
+    // The frames only go up: the counters' reset leaves them.
+    try testing.expectEqual(@as(isize, rtg.errors.RTGERR_OK), base(rb).BoardControl(board, rtg.boards.RTGCTRL_RESET_STATS, 0));
+    try testing.expectEqual(@as(u32, 3), blanksOf(rb, board));
+    // Another board's frames are its own.
+    const other = try makeBoard(rb);
+    try testing.expectEqual(@as(u32, 0), blanksOf(rb, other));
+    try testing.expect(!saysFrames(rb, other));
 
-    // The one with the higher priority keeps the event to itself.
-    stop_the_chain = true;
-    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
-    try testing.expectEqual(@as(u32, 2), first_server_ran);
-    try testing.expectEqual(@as(u32, 1), second_server_ran);
-
-    // An event nobody is listening for, and one that does not exist.
-    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_SHOWN);
-    try testing.expectEqual(@as(i32, 0), driverBase(rb).SignalRtgEvent(board, 99));
-
-    base(rb).RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &high);
-    stop_the_chain = false;
-    _ = driverBase(rb).SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
-    try testing.expectEqual(@as(u32, 2), first_server_ran);
-    try testing.expectEqual(@as(u32, 2), second_server_ran);
-
-    // A board with a server still on it is not deleted from under it.
+    // A board a task waits for a frame of is not deleted from under it.
+    const frames = &boards.privateOf(board).frames;
+    var waiter: frame_state.Waiter = .{ .task = kexec.FindTask(kexec.SysBase, null).?, .mask = 0, .left = 2 };
+    frame_state.add(rb.sys_base, frames, &waiter);
     driverBase(rb).DeleteBoard(board);
     try testing.expectEqual(board, base(rb).NextBoard(null).?);
-    base(rb).RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &low);
+    try testing.expectEqual(other, base(rb).NextBoard(board).?);
+    fake.endFrame(board);
+    try testing.expectEqual(@as(u32, 1), waiter.left);
+    // Taken off with a frame still to come: the board is held to say
+    // none until the next is said.
+    try testing.expectEqual(@as(u32, 1), frame_state.remove(rb.sys_base, frames, &waiter));
+    try testing.expect(!saysFrames(rb, board));
+    fake.endFrame(board);
+    try testing.expect(saysFrames(rb, board));
+    try testing.expectEqual(@as(u32, 1), waiter.left);
 
+    driverBase(rb).DeleteBoard(other);
     driverBase(rb).DeleteBoard(board);
+    try testing.expect(base(rb).NextBoard(null) == null);
     try tearDown(rb);
 }
 
@@ -2604,21 +2603,23 @@ test "WaitVBlank: woken by the board's frames, the limit's request taken back" {
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    const blankings = &board.event_lists[rtg.events.RTGEV_VBLANK];
+    const frames = &boards.privateOf(board).frames;
     // The library's own request, which every wait copies and none sends.
     const opened = rb.timer_io;
     try testing.expectEqual(timer.UNIT_MICROHZ, FakeTimer.opened_unit);
     frames_board = board;
     Sleep.install(&endOneFrame);
     defer Sleep.uninstall();
+    // The board's driver says its frames: one was said.
+    fake.endFrame(board);
 
-    // The next blanking: the task sleeps once, and the frame that ends
+    // The next frame: the task sleeps once, and the frame that ends
     // meanwhile wakes it. The limit never came, and is taken back; the
-    // wait's server is off the board.
+    // wait's waiter is off the board.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 0));
-    try testing.expect(blankings.isEmpty());
+    try testing.expect(frames.waiters == null);
     try testing.expectEqual(@as(u32, 1), Sleep.sleeps);
-    try testing.expectEqual(@as(u32, 1), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 2), fk.log.frames_ended);
     try testing.expectEqual(@as(u32, 1), FakeTimer.sent);
     try testing.expectEqual(@as(u32, 1), FakeTimer.aborted);
     try testing.expect(FakeTimer.waiting == null);
@@ -2633,10 +2634,10 @@ test "WaitVBlank: woken by the board's frames, the limit's request taken back" {
     // second here.
     board.info.refresh_mhz = 50_000;
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 3));
-    try testing.expect(blankings.isEmpty());
+    try testing.expect(frames.waiters == null);
     try testing.expectEqual(@as(u32, 2), Sleep.sleeps);
     try testing.expectEqual(@as(u32, 4), Sleep.interrupts);
-    try testing.expectEqual(@as(u32, 4), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 5), fk.log.frames_ended);
     try testing.expectEqual(@as(u64, 3 * 2 * 20_000), FakeTimer.last_micros);
     try testing.expectEqual(@as(u32, 2), FakeTimer.aborted);
     try testing.expectEqual(opened, rb.timer_io);
@@ -2648,74 +2649,90 @@ test "WaitVBlank: woken by the board's frames, the limit's request taken back" {
     Sleep.meanwhile = &frameOrLanding;
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 1));
     try testing.expect(FakeTimer.leaving == null);
-    try testing.expect(blankings.isEmpty());
+    try testing.expect(frames.waiters == null);
     try testing.expectEqual(@as(u32, 4), Sleep.sleeps);
     try testing.expectEqual(@as(u32, 6), Sleep.interrupts);
-    try testing.expectEqual(@as(u32, 5), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 6), fk.log.frames_ended);
     try testing.expectEqual(@as(u32, 3), FakeTimer.aborted);
     try testing.expectEqual(opened, rb.timer_io);
     FakeTimer.abort_replies_later = false;
+    // The frames the waits saw are the frames counted, and the board
+    // still says them.
+    try testing.expectEqual(@as(u32, 6), blanksOf(rb, board));
+    try testing.expect(saysFrames(rb, board));
 
     driverBase(rb).DeleteBoard(board);
     try testing.expect(base(rb).NextBoard(null) == null);
     try tearDown(rb);
 }
 
-test "WaitVBlank: a board that sends no frames is waited for no longer than the limit" {
+test "WaitVBlank: frames that stop are waited for no longer than the limit, and by the clock from then on" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    const blankings = &board.event_lists[rtg.events.RTGEV_VBLANK];
+    const frames = &boards.privateOf(board).frames;
     Sleep.install(&FakeTimer.expire);
     defer Sleep.uninstall();
 
-    // No frame ends: the limit's time passes while the task sleeps, and
-    // the wait's server is off the board all the same.
-    try testing.expectEqual(rtg.errors.RTGERR_TIMEOUT, base(rb).WaitVBlank(board, 2));
-    try testing.expect(blankings.isEmpty());
+    // A board that has said no frame is waited for by the clock: the
+    // frames' time, no waiter on the board, and nothing taken back.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 0));
     try testing.expectEqual(@as(u32, 1), Sleep.sleeps);
-    try testing.expectEqual(@as(u32, 0), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 1), FakeTimer.sent);
+    try testing.expectEqual(@as(u64, 16_667), FakeTimer.last_micros);
+    try testing.expectEqual(@as(u32, 0), FakeTimer.aborted);
+    try testing.expect(FakeTimer.waiting == null);
+    try testing.expect(frames.waiters == null);
+    // By the board's own rate, for each frame asked for.
+    board.info.refresh_mhz = 50_000;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 3));
+    try testing.expectEqual(@as(u64, 3 * 20_000), FakeTimer.last_micros);
+    board.info.refresh_mhz = 0;
+
+    // It says a frame, and then no more: the limit's time passes while
+    // the task sleeps, the waiter is off the board all the same, and the
+    // board is held to say none.
+    fake.endFrame(board);
+    try testing.expect(saysFrames(rb, board));
+    try testing.expectEqual(rtg.errors.RTGERR_TIMEOUT, base(rb).WaitVBlank(board, 2));
+    try testing.expect(frames.waiters == null);
+    try testing.expectEqual(@as(u32, 3), Sleep.sleeps);
+    try testing.expectEqual(@as(u32, 1), fk.log.frames_ended);
     try testing.expectEqual(@as(u64, 2 * 2 * 16_667), FakeTimer.last_micros);
     try testing.expectEqual(@as(u32, 0), FakeTimer.aborted);
     try testing.expect(FakeTimer.waiting == null);
+    try testing.expect(!saysFrames(rb, board));
 
-    // One frame of the two, and then no more: the frame wakes nobody,
-    // and the limit ends the wait all the same.
+    // From then on by the clock, and answered as a wait that was kept.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 2));
+    try testing.expectEqual(@as(u64, 2 * 16_667), FakeTimer.last_micros);
+    try testing.expectEqual(@as(u32, 4), FakeTimer.sent);
+
+    // The frames come again, one of the two asked for, and then no more:
+    // the frame wakes nobody, and the limit ends the wait all the same.
+    fake.endFrame(board);
     frames_board = board;
     frames_then_time = 0;
     Sleep.meanwhile = &oneFrameThenTime;
+    const interrupts = Sleep.interrupts;
     try testing.expectEqual(rtg.errors.RTGERR_TIMEOUT, base(rb).WaitVBlank(board, 2));
-    try testing.expect(blankings.isEmpty());
-    try testing.expectEqual(@as(u32, 1), fk.log.frames_ended);
-    try testing.expectEqual(@as(u32, 2), Sleep.sleeps);
-    try testing.expectEqual(@as(u32, 3), Sleep.interrupts);
+    try testing.expect(frames.waiters == null);
+    try testing.expectEqual(@as(u32, 3), fk.log.frames_ended);
+    try testing.expectEqual(@as(u32, 5), Sleep.sleeps);
+    try testing.expectEqual(interrupts + 2, Sleep.interrupts);
+    try testing.expectEqual(@as(u32, 3), blanksOf(rb, board));
+    try testing.expect(!saysFrames(rb, board));
 
-    // A board that signals no blankings is not waited for, and neither is
-    // one where there is no clock to end the wait by.
-    board.info.flags &= ~rtg.boards.RTGBF_STREAMING;
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).WaitVBlank(board, 1));
-    board.info.flags |= rtg.boards.RTGBF_STREAMING;
+    // With no clock to wait by nothing is waited for, on a board that
+    // says its frames or not.
     const device = rb.timer_io.node.device;
     rb.timer_io.node.device = null;
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).WaitVBlank(board, 1));
+    fake.endFrame(board);
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).WaitVBlank(board, 1));
     rb.timer_io.node.device = device;
-    try testing.expectEqual(@as(u32, 2), FakeTimer.sent);
-
-    // A driver with a wait of its own is asked, with the count as given,
-    // and what it answers is the call's answer.
-    var ops = board.ops.?.*;
-    ops.wait_vblank = &fake.waitVBlank;
-    const kept = board.ops;
-    board.ops = &ops;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 0));
-    try testing.expectEqual(@as(u32, 1), fk.log.vblank_waits);
-    try testing.expectEqual(@as(u32, 0), fk.log.last_wait_frames);
-    fk.wait_answer = rtg.errors.RTGERR_IO;
-    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).WaitVBlank(board, 7));
-    try testing.expectEqual(@as(u32, 7), fk.log.last_wait_frames);
-    try testing.expectEqual(@as(u32, 2), FakeTimer.sent);
-    board.ops = kept;
+    try testing.expectEqual(@as(u32, 5), FakeTimer.sent);
 
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);

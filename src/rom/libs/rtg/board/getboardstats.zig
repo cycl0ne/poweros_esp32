@@ -4,6 +4,7 @@
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
+const frames = @import("../frame/_frame.zig");
 const copyOut = _board.copyOut;
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
@@ -12,7 +13,7 @@ const _board = @import("_board.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
+/// fn GetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
 /// ```
 ///
 /// SINCE: 1.0. LVO -64.
@@ -27,14 +28,16 @@ const _board = @import("_board.zig");
 ///
 /// BEHAVIOR:
 /// The driver fills in what it counts - frames sent, frames late - and the
-/// library adds how many times a buffer was shown. All zeroes but that for
-/// a board that counts nothing. `BoardControl(RTGCTRL_RESET_STATS)` starts
-/// the counts again.
+/// library adds what it counts itself: how many times a buffer was shown,
+/// and the frames the driver said ended (`blanks`, `FrameDone`). All
+/// zeroes but those for a board that counts nothing.
+/// `BoardControl(RTGCTRL_RESET_STATS)` starts the counts again, except
+/// the frames', which only go up.
 ///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Locks: none needed.
+/// - Locks: the board's frame lock is taken for the count, a spinlock.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -44,18 +47,20 @@ const _board = @import("_board.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `GetBoardInfo`, `BoardControl`
+/// `GetBoardInfo`, `BoardControl`, `WaitVBlank`
 ///
 /// EXAMPLES:
 /// ```zig
 /// var stats: rtg.RtgBoardStats = .{};
 /// _ = rb.GetBoardStats(board, &stats, @sizeOf(rtg.RtgBoardStats));
 /// ```
-pub fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32 {
+pub fn GetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32 {
     var whole: rtg.RtgBoardStats = .{};
     if (board.ops) |ops| {
         if (ops.stats) |read| read(board, &whole);
     }
-    whole.buffer_swaps = privateOf(board).buffer_swaps;
+    const private = privateOf(board);
+    whole.buffer_swaps = private.buffer_swaps;
+    whole.blanks = frames.count(rb.sys_base, &private.frames);
     return copyOut(rtg.RtgBoardStats, &whole, stats, size);
 }

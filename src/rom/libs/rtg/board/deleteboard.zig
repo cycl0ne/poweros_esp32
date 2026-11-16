@@ -8,6 +8,7 @@ const bitmaps = @import("../bitmap/_bitmap.zig");
 const modes = @import("../mode/_mode.zig");
 const monitors = @import("../monitor/_monitor.zig");
 const shows = @import("../display/_display.zig");
+const frames = @import("../frame/_frame.zig");
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
 
@@ -34,11 +35,11 @@ const _board = @import("_board.zig");
 /// deletes its boards, which only a test's driver is: a program is never
 /// handed a board that goes away.
 ///
-/// A board on the list that still has an event server on it is refused -
-/// it stays on the list, which is how a caller sees it - and nothing of
-/// it is touched: the server's node would be left linked into a list that
-/// is freed. So is one with a video layer still open (`CloseVideoLayer`
-/// first). Otherwise it is taken off the display first, then every buffer
+/// A board on the list that a task still waits for a frame of
+/// (`WaitVBlank`) is refused - it stays on the list, which is how a
+/// caller sees it - and nothing of it is touched: the waiter would be
+/// left linked into a list that is freed. So is one with a video layer
+/// still open (`CloseVideoLayer` first). Otherwise it is taken off the display first, then every buffer
 /// it still has is freed, the driver's `destroy` is called, and the board
 /// leaves the list and its device. The driver is one board less.
 ///
@@ -50,8 +51,7 @@ const _board = @import("_board.zig");
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The board, its buffers and its display memory are gone. Event servers
-/// are their owner's, and are taken off with `RemRtgEventServer` first.
+/// The board, its buffers and its display memory are gone.
 ///
 /// BUGS:
 /// The answer of taking the board off the display is not looked at: one
@@ -59,7 +59,7 @@ const _board = @import("_board.zig");
 /// driver's `destroy` called all the same.
 ///
 /// SEE ALSO:
-/// `CreateBoard`, `RemRtgDevice`, `RemRtgDriver`, `RemRtgEventServer`
+/// `CreateBoard`, `RemRtgDevice`, `RemRtgDriver`
 ///
 /// EXAMPLES:
 /// ```zig
@@ -74,11 +74,9 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     // its display memory, and its driver has undone what it did.
     if (!private.listed) return _board.free(rb, gone);
 
-    // A server still on it is someone's node in a list about to be freed,
-    // and a video layer someone's handle on a plane of it.
-    for (&gone.event_lists) |*servers| {
-        if (servers.first() != null) return;
-    }
+    // A task that waits for a frame has its waiter on a list about to be
+    // freed, and a video layer is someone's handle on a plane of it.
+    if (frames.waiting(sys, &private.frames)) return;
     if (private.video_layers != 0) return;
 
     // Nothing is left looking at it, and nothing of it is left up.

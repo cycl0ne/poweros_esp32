@@ -146,10 +146,6 @@ pub const Log = struct {
     checks: u32 = 0,
     /// Frames the board was told to end (`endFrame`).
     frames_ended: u32 = 0,
-    /// Waits for a blanking the driver was asked for itself (`waitVBlank`),
-    /// and the count the last came with.
-    vblank_waits: u32 = 0,
-    last_wait_frames: u32 = 0,
 };
 
 /// Everything this driver has that changes: the library allocates it
@@ -210,8 +206,6 @@ pub const State = struct {
     /// Open the video layer over the picture whatever is asked, as a
     /// board that cannot lay its picture over a layer does.
     video_over_only: bool = false,
-    /// What the driver's own wait for a blanking answers (`waitVBlank`).
-    wait_answer: i32 = err.RTGERR_OK,
     /// Make the next show - of a buffer, of bands or of nothing - fail
     /// with this: the board goes on showing what it showed. It holds for
     /// `show_refusals` shows running, and the show after them works.
@@ -381,7 +375,8 @@ pub fn makeBoardFrom(state: *State, tag_list: ?[*]const TagItem) ?*rtg.RtgBoard 
 /// The driver `add` put on the list taken off it again, with all it has:
 /// its boards deleted, its devices taken away, and its display memory
 /// given back. False, and the driver still on the list, while a board
-/// cannot go - an event server or a video layer is still on it.
+/// cannot go - a task waits for a frame of it or a video layer is still
+/// on it.
 ///
 /// INPUTS:
 /// - `state` - what `add` answered.
@@ -401,16 +396,16 @@ pub fn remove(state: *State) bool {
     return true;
 }
 
-/// A frame of `board` ends, as a real board's frame interrupt says it:
-/// the blanking is signalled to whoever waits for one. The board sends no
-/// frames of its own, so a test says when one ends.
+/// A frame of `board` ends, as a real board's frame interrupt says it
+/// (`FrameDone`). The board sends no frames of its own, so a test says
+/// when one ends.
 ///
 /// INPUTS:
 /// - `board` - the board whose frame ends.
 pub fn endFrame(board: *rtg.RtgBoard) void {
     stateOfBoard(board).log.frames_ended += 1;
     const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
-    _ = rb.SignalRtgEvent(board, rtg.events.RTGEV_VBLANK);
+    rb.FrameDone(board);
 }
 
 /// A mode a board of this driver has: its timings, its format, and
@@ -654,22 +649,6 @@ fn videoMove(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, place: *const rtg.
     log.video_place = place.*;
     if (log.video_picture != null and !videoFits(layer, log.video_src, place.*)) return err.RTGERR_BAD_ARG;
     return err.RTGERR_OK;
-}
-
-/// A driver's own wait for a blanking: counted, and answered at once
-/// with what the test set (`State.wait_answer`). In none of the tables
-/// below - a board of this driver is waited for by the library - so a
-/// test that wants a board whose driver waits itself puts it in that
-/// board's table.
-///
-/// INPUTS:
-/// - `board` - the board asked.
-/// - `frames` - the count as WaitVBlank was given it, 0 included.
-pub fn waitVBlank(board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
-    const state = stateOfBoard(board);
-    state.log.vblank_waits += 1;
-    state.log.last_wait_frames = frames;
-    return state.wait_answer;
 }
 
 /// rgb565 only: what a board's engine would do, done by hand so the tests
