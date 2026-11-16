@@ -21,6 +21,14 @@
 //!
 //! A buffer is not touched by a mode change: it keeps its memory, and is
 //! shown again in the mode of its size.
+//!
+//! A show also says how the picture reaches the glass
+//! (`compose/_compose.zig`): the display reads the bands itself
+//! (`RTGSHOW_DIRECT`) where the board is plain - no more bands than it
+//! reads, nothing of the library's over them - and else shows its own
+//! picture, which its driver fetches from the library while it is asked.
+//! So the bands are put in place before the driver is asked, under the
+//! board's compose lock, and put back where it refuses.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
@@ -28,6 +36,7 @@ const err = rtg.errors;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
 const modes = @import("../mode/_mode.zig");
+const composer = @import("../compose/_compose.zig");
 
 /// The board's buffers marked as the display now shows them: the bands'
 /// marked RTGBMF_SHOWING - so none of them can be freed - and every other
@@ -122,15 +131,17 @@ fn check(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgB
     return err.RTGERR_OK;
 }
 
-/// The driver's op, with a mode and bands.
+/// The driver's op, with a mode and bands, read the way the board's
+/// compose state says: direct, or as the library's picture.
 fn ask(board: *rtg.RtgBoard, record: *modes.Record, bands: []const rtg.RtgBand, flags: u32) i32 {
     const op = board.ops.?.show.?;
+    const direct = bands.len != 0 and composer.stateOf(board).direct;
     return op(board, &.{
         .mode = &record.mode,
         .timings = &record.timings,
         .bands = if (bands.len != 0) bands.ptr else null,
         .count = @intCast(bands.len),
-        .flags = flags,
+        .flags = flags | (if (direct) rtg.boards.RTGSHOW_DIRECT else 0),
     });
 }
 
@@ -160,11 +171,25 @@ pub fn show(rb: *RtgBase, board: *rtg.RtgBoard, wanted: ?*modes.Record, bands: [
     const checked = check(board, &target.mode, bands);
     if (checked != err.RTGERR_OK) return checked;
 
+    // What the picture is made of changes under the compose lock: nothing
+    // is handed on and no pointer moved between the old and the new.
+    composer.obtain(rb, board);
+    defer composer.release(rb, board);
+    const direct = composer.plain(board, bands);
+    // A picture the library composes is of whole bytes a pixel.
+    if (!direct and bands.len != 0 and !composer.takes(rb, target.mode.format)) return err.RTGERR_BAD_FORMAT;
+    // In place while the driver is asked: its own picture is made of
+    // them.
+    const kept = composer.place(rb, board, &target.mode, bands, direct);
+
     if (target == before) {
         // What it shows changes, and the driver keeps what was on any
         // answer but RTGERR_OK.
         const code = ask(board, target, bands, 0);
-        if (code != err.RTGERR_OK) return code;
+        if (code != err.RTGERR_OK) {
+            composer.putBack(board, &kept);
+            return code;
+        }
         keep(board, bands);
         return err.RTGERR_OK;
     }
@@ -180,6 +205,7 @@ pub fn show(rb: *RtgBase, board: *rtg.RtgBoard, wanted: ?*modes.Record, bands: [
         boards.changed(rb, board);
         return err.RTGERR_OK;
     }
+    composer.putBack(board, &kept);
     if (before) |old| {
         const shown = private.bands[0..private.band_count];
         if (old.offered and ask(board, old, shown, rtg.boards.RTGSHOW_MODE_CHANGED) == err.RTGERR_OK) return code;
@@ -198,17 +224,36 @@ pub fn show(rb: *RtgBase, board: *rtg.RtgBoard, wanted: ?*modes.Record, bands: [
 /// - `rb` - the library.
 /// - `board` - the board, in a mode it offers; its lock is held.
 pub fn again(rb: *RtgBase, board: *rtg.RtgBoard) void {
-    _ = rb;
     const private = boards.privateOf(board);
     const current = private.mode orelse return;
     const ops = board.ops orelse return;
     if (ops.show == null) return;
+    composer.obtain(rb, board);
+    defer composer.release(rb, board);
     const shown = private.bands[0..private.band_count];
     if (ask(board, current, shown, rtg.boards.RTGSHOW_MODE_CHANGED) == err.RTGERR_OK) {
         enter(board, current);
         return;
     }
     leave(board);
+}
+
+/// What a board shows, shown the other way: its compose state says
+/// whether the display reads the bands itself from now on or shows the
+/// library's picture, and its driver is asked for that, in the mode the
+/// board is in.
+///
+/// INPUTS:
+/// - `board` - the board, showing something; its lock and its compose
+///   lock are held, and its compose state already says the new way.
+///
+/// RESULT:
+/// What the driver answered: on anything but RTGERR_OK the display reads
+/// what it read.
+pub fn otherWay(board: *rtg.RtgBoard) i32 {
+    const private = boards.privateOf(board);
+    const current = private.mode orelse return err.RTGERR_NO_MODE;
+    return ask(board, current, private.bands[0..private.band_count], 0);
 }
 
 /// A board made to show nothing and put in no mode: its monitor has not
@@ -223,9 +268,10 @@ pub fn again(rb: *RtgBase, board: *rtg.RtgBoard) void {
 /// RESULT:
 /// Whether the board shows nothing now.
 pub fn clear(rb: *RtgBase, board: *rtg.RtgBoard) bool {
-    _ = rb;
     const private = boards.privateOf(board);
     const current = private.mode orelse return private.band_count == 0;
+    composer.obtain(rb, board);
+    defer composer.release(rb, board);
     if (private.band_count != 0) {
         const ops = board.ops orelse return false;
         if (ops.show == null) return false;

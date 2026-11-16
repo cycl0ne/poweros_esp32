@@ -59,7 +59,6 @@ const ShowBoard = @import("display/showboard.zig").ShowBoard;
 const SetBoardOverlay = @import("pointer/setboardoverlay.zig").SetBoardOverlay;
 const MoveBoardOverlay = @import("pointer/moveboardoverlay.zig").MoveBoardOverlay;
 const BoardDisplayBitMap = @import("display/boarddisplaybitmap.zig").BoardDisplayBitMap;
-const RefreshBitMap = @import("bitmap/refreshbitmap.zig").RefreshBitMap;
 const RefreshRect = @import("bitmap/refreshrect.zig").RefreshRect;
 const WaitVBlank = @import("display/waitvblank.zig").WaitVBlank;
 const SetBoardDisplay = @import("display/setboarddisplay.zig").SetBoardDisplay;
@@ -81,6 +80,7 @@ const BlendPixels = @import("engine/blendpixels.zig").BlendPixels;
 const BlendRect = @import("engine/blendrect.zig").BlendRect;
 const ScalePixels = @import("engine/scalepixels.zig").ScalePixels;
 const FrameDone = @import("frame/framedone.zig").FrameDone;
+const ComposeLines = @import("compose/composelines.zig").ComposeLines;
 const OpenTransport = @import("transport/opentransport.zig").OpenTransport;
 const CloseTransport = @import("transport/closetransport.zig").CloseTransport;
 const TxParam = @import("transport/txparam.zig").TxParam;
@@ -172,7 +172,6 @@ const contract_files = [_][]const u8{
     @embedFile("pointer/setboardoverlay.zig"),
     @embedFile("pointer/moveboardoverlay.zig"),
     @embedFile("display/boarddisplaybitmap.zig"),
-    @embedFile("bitmap/refreshbitmap.zig"),
     @embedFile("display/waitvblank.zig"),
     @embedFile("display/setboarddisplay.zig"),
     @embedFile("display/setboardbrightness.zig"),
@@ -185,6 +184,7 @@ const contract_files = [_][]const u8{
     @embedFile("engine/blendrect.zig"),
     @embedFile("engine/scalepixels.zig"),
     @embedFile("frame/framedone.zig"),
+    @embedFile("compose/composelines.zig"),
     @embedFile("transport/opentransport.zig"),
     @embedFile("transport/closetransport.zig"),
     @embedFile("transport/txparam.zig"),
@@ -297,9 +297,6 @@ fn lvoShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) ca
 fn lvoBoardDisplayBitMap(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) ?*rtg.RtgBitMap {
     return BoardDisplayBitMap(rb, board);
 }
-fn lvoRefreshBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
-    return RefreshBitMap(rb, bitmap, y, rows);
-}
 fn lvoWaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
     return WaitVBlank(rb, board, frames);
 }
@@ -326,6 +323,9 @@ fn lvoBlitPattern(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
 }
 fn lvoFrameDone(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) void {
     FrameDone(rb, board);
+}
+fn lvoComposeLines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into: [*]u8, pitch: u32) callconv(.c) i32 {
+    return ComposeLines(rb, board, area, into, pitch);
 }
 fn lvoOpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) callconv(.c) ?*rtg.RtgTransport {
     return OpenTransport(rb, driver, device);
@@ -378,7 +378,7 @@ fn lvoBlendRect(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, co
 fn lvoScalePixels(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
     return ScalePixels(rb, dest, area, pixels, width, height);
 }
-fn lvoRefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
+fn lvoRefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) callconv(.c) i32 {
     return RefreshRect(rb, bitmap, area);
 }
 fn lvoCopyRects(rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
@@ -412,7 +412,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 29;
+const reserved_slots = 30;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -451,7 +451,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFreeBitMap),
     vec(lvoShowBitMap),
     vec(lvoBoardDisplayBitMap),
-    vec(lvoRefreshBitMap),
+    vec(reserved),
     vec(lvoWaitVBlank),
     vec(lvoSetBoardDisplay),
     vec(lvoSetBoardBrightness),
@@ -525,6 +525,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoReadTimingTags),
     vec(lvoMonitorChanged),
     vec(lvoFindStandardTimings),
+    vec(lvoComposeLines),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -537,7 +538,7 @@ const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"
 test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
     // The reserved slots are in the table but not in either LVO.
     try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 99), vectors.len);
+    try testing.expectEqual(@as(usize, 100), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

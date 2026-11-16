@@ -275,7 +275,8 @@ pub const LIBRARY_VERSION = 0;
 /// takes (RtgFormatBits).
 /// 99: screens pulled down are shown as bands with ShowBoard, in the mode
 /// the board is in.
-pub const LIBRARY_REVISION = 99;
+/// 100: a screen's second buffer is handed on whole with RefreshRect.
+pub const LIBRARY_REVISION = 100;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

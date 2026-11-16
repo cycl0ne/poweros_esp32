@@ -45,8 +45,10 @@ const lcd = @import("lcd.zig");
 const pointer = @import("pointer.zig");
 
 const DRIVER_NAME = "rgb";
+/// The panel shows RGB565 and nothing else: two bytes a pixel.
+const bytes_per_pixel = 2;
 const VERSION = 1;
-const REVISION = 11;
+const REVISION = 12;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
@@ -70,7 +72,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .ops = &ops,
         .instance_size = @sizeOf(Panel),
         .flags = rtg.boards.RTGBF_STREAMING,
-        .caps = rtg.boards.RTGBC_BANDS,
+        // The stream's copy reads every band of a show itself.
+        .direct_bands = rtg.RTG_MAX_BANDS,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .rtg_base = rb, .board = board, .config = wanted };
@@ -176,15 +179,31 @@ fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
     return showBands(board, bands, what.count);
 }
 
-/// Rows the CPU wrote, handed to the panel: it reads that memory without
-/// going through the cache, so what was written has to be pushed out of
-/// it first. The stream never stops, so that is the whole of it.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
+/// A rectangle the CPU wrote, handed to the panel: it reads that memory
+/// without going through the cache, so what was written has to be pushed
+/// out of it first. The stream never stops, so that is the whole of it.
+///
+/// A rectangle at least half a row wide goes as its rows, in one stretch;
+/// a narrower one a row at a time, its own bytes alone, so the side of a
+/// window's frame does not write back the rows it runs down.
+fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
+    const sys = panelOf(board).sys;
     const pixels = bitmap.pixels orelse return err.RTGERR_BAD_ARG;
-    var bytes: u32 = rows * bitmap.pitch;
-    if (bytes == 0) return err.RTGERR_OK;
-    const start: *anyopaque = @ptrFromInt(@intFromPtr(pixels) + @as(usize, y) * bitmap.pitch);
-    _ = panelOf(board).sys.CachePreDMA(start, &bytes, 0);
+    const top: usize = @intCast(area.y);
+    const rows: u32 = @intCast(area.height);
+    const wide: u32 = @as(u32, @intCast(area.width)) * bytes_per_pixel;
+    const first = @intFromPtr(pixels) + top * bitmap.pitch;
+    if (wide * 2 >= bitmap.pitch) {
+        var bytes: u32 = rows * bitmap.pitch;
+        _ = sys.CachePreDMA(@ptrFromInt(first), &bytes, 0);
+        return err.RTGERR_OK;
+    }
+    const left: usize = @as(usize, @intCast(area.x)) * bytes_per_pixel;
+    var row: u32 = 0;
+    while (row < rows) : (row += 1) {
+        var bytes: u32 = wide;
+        _ = sys.CachePreDMA(@ptrFromInt(first + @as(usize, row) * bitmap.pitch + left), &bytes, 0);
+    }
     return err.RTGERR_OK;
 }
 
@@ -270,8 +289,13 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     pointer.moveOverlay(panelOf(board), left, top);
 }
 
-/// What this board has. Every engine slot is null: this chip has nothing
-/// that draws, so a caller that wants a rectangle filled fills it itself.
+/// The pointer and the overlay are the stream's own: laid into its copy
+/// on the way to the glass, in the interrupt that fills it.
+const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
+const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
+
+/// What this board has. No engine: this chip has nothing that draws, so
+/// a caller that wants a rectangle filled fills it itself.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
@@ -281,11 +305,8 @@ const ops = rtg.RtgBoardOps{
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
-    .set_pointer = &setPointer,
-    .move_pointer = &movePointer,
-    .show_pointer = &showPointer,
-    .set_overlay = &setOverlay,
-    .move_overlay = &moveOverlay,
+    .pointer = &pointer_ops,
+    .overlay = &overlay_ops,
 };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach };

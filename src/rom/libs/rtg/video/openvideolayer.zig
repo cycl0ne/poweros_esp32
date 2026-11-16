@@ -90,7 +90,7 @@ const privateOf = @import("../board/_board.zig").privateOf;
 pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) ?*rtg.RtgVideoLayer {
     const sys = rb.sys_base;
     const ops = board.ops orelse return null;
-    if (board.info.caps & rtg.boards.RTGBC_VIDEO == 0) return null;
+    const video = ops.video orelse return null;
     const memory = sys.AllocVec(@sizeOf(rtg.RtgVideoLayer), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const layer: *rtg.RtgVideoLayer = @ptrCast(@alignCast(memory));
     const under = rb.utility_base.GetTagData(rtg.RTGVA_Under, 1, tag_list) != 0;
@@ -103,7 +103,7 @@ pub fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const Ta
         .range = kind(rb, rtg.RTGVA_Range, rtg.RTGYUV_LIMITED, tag_list),
         .depth = kind(rb, rtg.RTGVA_Depth, 8, tag_list),
     };
-    const result = ops.video_open.?(board, layer);
+    const result = video.open(board, layer);
     if (result != err.RTGERR_OK) {
         sys.FreeVec(memory);
         return null;

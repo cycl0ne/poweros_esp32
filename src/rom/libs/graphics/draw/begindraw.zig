@@ -73,7 +73,7 @@ const rastport = @import("../rastport/_rastport.zig");
 /// every path out, an error return included.
 ///
 /// SEE ALSO:
-/// `EndDraw`, `rtg.RefreshBitMap`
+/// `EndDraw`, `rtg.RefreshRect`
 ///
 /// EXAMPLES:
 /// ```zig

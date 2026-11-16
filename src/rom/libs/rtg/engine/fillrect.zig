@@ -59,6 +59,7 @@ pub fn FillRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, col
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const cut = clip(dest, area) orelse return err.RTGERR_OK;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    const fill = ops.fill_rect orelse return err.RTGERR_NOT_SUPPORTED;
+    const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
+    const fill = engine.fill_rect orelse return err.RTGERR_NOT_SUPPORTED;
     return fill(board, dest, &cut, color);
 }

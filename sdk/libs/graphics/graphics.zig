@@ -3,7 +3,7 @@
 //!
 //! graphics.library is the layer that draws. What it draws into is
 //! rtg.library's: a board's display memory, handed out as `RtgBitMap`s and
-//! put on the glass with RefreshBitMap. rtg holds no drawing of its own -
+//! put on the glass with RefreshRect. rtg holds no drawing of its own -
 //! a board offers what its engine can do and answers
 //! RTGERR_NOT_SUPPORTED for the rest - and this is the layer that knows
 //! how, in software, when the board does not.
@@ -613,7 +613,7 @@ pub const RastPort = opaque {};
 pub const RPTAG_Dummy = TAG_USER + 5000;
 
 /// `*RtgBitMap`: draw into this buffer of a board's. The board's engine is
-/// then available, and what is drawn is handed on with RefreshBitMap.
+/// then available, and what is drawn is handed on with RefreshRect.
 pub const RPTAG_BitMap = RPTAG_Dummy + 1;
 /// `*Surface`: draw into plain memory. There is no board behind it, so
 /// every operation is done in software and nothing is refreshed.

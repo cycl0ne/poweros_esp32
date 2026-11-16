@@ -51,7 +51,7 @@ const privateOf = @import("../board/_board.zig").privateOf;
 pub fn CloseVideoLayer(rb: *RtgBase, layer: ?*rtg.RtgVideoLayer) void {
     const gone = layer orelse return;
     const board = gone.board;
-    board.ops.?.video_close.?(board, gone);
+    board.ops.?.video.?.close(board, gone);
     _ = @atomicRmw(u32, &privateOf(board).video_layers, .Sub, 1, .monotonic);
     rb.sys_base.FreeVec(gone);
 }

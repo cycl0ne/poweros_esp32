@@ -74,5 +74,5 @@ pub fn ShowVideoFrame(_: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const r
         // wrapped round to one that fits.
         if (@as(i64, part.x) + part.width > layer.max_width or @as(i64, part.y) + part.height > layer.max_height) return err.RTGERR_BAD_ARG;
     }
-    return board.ops.?.video_show.?(board, layer, picture, if (picture != null) src else null);
+    return board.ops.?.video.?.show(board, layer, picture, if (picture != null) src else null);
 }

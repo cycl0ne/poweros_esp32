@@ -55,7 +55,7 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 8;
+const REVISION = 9;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -165,7 +165,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
 
     // The bus the controller sits on, made from the same tags.
     const io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
-    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel), .caps = rtg.boards.RTGBC_BANDS }) orelse {
+    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel), .direct_bands = rtg.RTG_MAX_BANDS }) orelse {
         rb.CloseTransport(io);
         return err.RTGERR_NO_MEMORY;
     };
@@ -471,12 +471,12 @@ fn showPicture(panel: *Panel, picture: []const rtg.RtgBand) i32 {
 ///
 /// A buffer shown in a band sends the lines of its rows that the band
 /// shows, and only those.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
+fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     const panel = panelOf(board);
+    const top: u32 = @intCast(area.y);
+    const end: u32 = top + @as(u32, @intCast(area.height));
     panel.stats.refreshes += 1;
-    panel.stats.rows_refreshed +%= if (rows == 0) bitmap.height else rows;
-    const top = @min(y, bitmap.height);
-    const end = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
+    panel.stats.rows_refreshed +%= end - top;
     const shown = panel.bands[0..panel.band_count];
     var code: i32 = err.RTGERR_OK;
     var sent = false;
@@ -854,12 +854,12 @@ const ops = rtg.RtgBoardOps{
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
-    .set_pointer = &setPointer,
-    .move_pointer = &movePointer,
-    .set_overlay = &setOverlay,
-    .move_overlay = &moveOverlay,
-    .show_pointer = &showPointer,
+    .pointer = &pointer_ops,
+    .overlay = &overlay_ops,
 };
+
+const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
+const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
 
@@ -998,7 +998,7 @@ test "dcs: a show the bus refuses puts back the picture that was shown" {
     try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, first));
     try testing.expectEqual(@as(u32, 0), panel.band_count);
     try testing.expectEqual(@as(u32, 1), panel.stats.failed_sends);
-    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, 0, 0));
+    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, &.{ .width = 8, .height = 8 }));
     try testing.expectEqual(@as(u32, 1), panel.stats.refreshes_dropped);
 
     // Shown: four bands of two rows, and it is what the panel is sent from.
@@ -1025,9 +1025,9 @@ test "dcs: a show the bus refuses puts back the picture that was shown" {
     // refused goes nowhere.
     bus.runs = 0;
     bus.refuse_at = 0;
-    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, 0, 2));
+    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, &.{ .width = 8, .height = 2 }));
     try testing.expectEqual(@as(u32, 1), bus.runs);
-    try testing.expectEqual(err.RTGERR_OK, refresh(&board, second, 0, 2));
+    try testing.expectEqual(err.RTGERR_OK, refresh(&board, second, &.{ .width = 8, .height = 2 }));
     try testing.expectEqual(@as(u32, 1), bus.runs);
     try testing.expectEqual(@as(u32, 2), panel.stats.refreshes_dropped);
 

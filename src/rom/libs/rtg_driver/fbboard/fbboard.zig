@@ -206,7 +206,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 39;
+const REVISION = 40;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -2083,7 +2083,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .flags = if (on_pci) rtg.boards.RTGBF_COMPOSE else 0,
         // A monitor's modes are made in the format the board shows.
         .format = format,
-        .caps = rtg.boards.RTGBC_BANDS,
+        // Every band of a show is read here: the picture is composed
+        // of them.
+        .direct_bands = rtg.RTG_MAX_BANDS,
     }) orelse {
         var found = scanout;
         if (found == .virtio) virtio.giveBack(&found.virtio);
@@ -2535,26 +2537,11 @@ fn showThese(screen: *Screen, bands: []const rtg.RtgBand) i32 {
     return err.RTGERR_OK;
 }
 
-/// Rows were written by the CPU: handed on, and into the composed frame
-/// while the display reads that - those of them the bands show, and the
-/// pointer back over them where they cross it.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
-    const screen = screenOf(board);
-    const first = if (rows == 0) 0 else @min(y, bitmap.height);
-    const last = if (rows == 0) bitmap.height else @min(y +| rows, bitmap.height);
-    if (flips(screen)) {
-        noteWritten(screen, bitmap, .{ .left = 0, .top = first, .right = @min(bitmap.width, screen.width), .end = last });
-        return err.RTGERR_OK;
-    }
-    // Any buffer, shown or not: one drawn ahead is shown by naming it.
-    handOn(screen, bitmap, .{ .left = 0, .top = first, .right = bitmap.width, .end = last });
-    compose(screen, bitmap, .{ .left = 0, .top = first, .right = @min(bitmap.width, screen.width), .end = last });
-    return err.RTGERR_OK;
-}
-
-/// A rectangle written: its pixels alone handed on, then that rectangle
-/// composed, and no more of the rows.
-fn refreshRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
+/// A rectangle was written by the CPU: its pixels alone handed on - any
+/// buffer's, shown or not: one drawn ahead is shown by naming it - and
+/// into the composed frame while the display reads that, the pointer
+/// back over them where they cross it.
+fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     const screen = screenOf(board);
     const x: u32 = @intCast(area.x);
     const first: u32 = @intCast(area.y);
@@ -2651,21 +2638,28 @@ const ops = rtg.boards.RtgBoardOps{
     .show = &showOp,
     .refresh = &refresh,
     .stats = &stats,
-    .set_pointer = &setPointer,
-    .move_pointer = &movePointer,
-    .show_pointer = &showPointer,
-    .set_overlay = &setOverlay,
-    .move_overlay = &moveOverlay,
+    .pointer = &pointer_ops,
+    .overlay = &overlay_ops,
+    .engine = &engine_ops,
+};
+
+const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
+const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
+
+/// The engine: the cores (engine.zig).
+const engine_ops = rtg.RtgEngineOps{
     .fill_rect = &fillRect,
     .copy_rect = &copyRect,
+    .copy_rects = &copyRects,
     .blit_template = &blitTemplate,
     .blit_pattern = &blitPattern,
     .blend_pixels = &blendPixels,
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,
-    .refresh_rect = &refreshRect,
-    .copy_rects = &copyRects,
 };
+
+/// The JH7110's video layer, its first overlay.
+const video_ops = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .show = &videoShow, .move = &videoMove };
 
 /// The BCM2712's port's: the same, and what its hardware does besides -
 /// the display switched off, the monitor's brightness, the picture
@@ -2686,10 +2680,7 @@ const jh7110_ops = ops: {
     var more = ops;
     more.detect = &detect;
     more.check_mode = &checkMode;
-    more.video_open = &videoOpen;
-    more.video_close = &videoClose;
-    more.video_show = &videoShow;
-    more.video_move = &videoMove;
+    more.video = &video_ops;
     break :ops more;
 };
 

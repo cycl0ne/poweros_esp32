@@ -59,6 +59,7 @@ pub fn BlendRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, co
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const cut = clip(dest, area) orelse return err.RTGERR_OK;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    const blend = ops.blend_rect orelse return err.RTGERR_NOT_SUPPORTED;
+    const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
+    const blend = engine.blend_rect orelse return err.RTGERR_NOT_SUPPORTED;
     return blend(board, dest, &cut, color);
 }

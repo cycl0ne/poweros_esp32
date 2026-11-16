@@ -14,6 +14,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddRtgDevice](#addrtgdevice) - Makes a device from tags and offers it to the drivers.
 - [AddRtgDriver](#addrtgdriver) - Puts a driver's description on the library's list.
 - [CloseTransport](#closetransport) - Gives a bus back.
+- [ComposeLines](#composelines) - Fetches the pixels of a rectangle of a board's picture, as the library composes it.
 - [CreateBoard](#createboard) - Makes a board for one output of a device.
 - [DeleteBoard](#deleteboard) - Gives a board back: stops it and frees everything it held.
 - [FindStandardTimings](#findstandardtimings) - Looks up the timings a standard gives a picture of a size at a refresh.
@@ -294,6 +295,85 @@ None known.
 rb.CloseTransport(io);
 ```
 
+## ComposeLines
+
+Fetches the pixels of a rectangle of a board's picture, as the library composes it.
+
+**SYNOPSIS**
+
+```zig
+fn ComposeLines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into: [*]u8, pitch: u32) i32
+```
+
+**SINCE**
+
+1.24. LVO -400.
+
+**INPUTS**
+
+- `board` - the board: one of the caller's own, whose display has a
+  picture of its own (`update`).
+- `area` - the rectangle, in the picture's own coordinates, wholly
+  inside the display in the mode the board is shown in.
+- `into` - where the pixels go, the rectangle's top left first:
+  `area.height` rows of `area.width` pixels in the mode's format.
+- `pitch` - bytes from one row of `into` to the next; at least a row
+  of the rectangle.
+
+**RESULT**
+
+`RTGERR_OK`; `RTGERR_BAD_ARG` for a rectangle that is empty or not
+wholly inside the display; `RTGERR_BAD_FORMAT` in a mode whose pixels
+are not whole bytes, and on a board that was never shown.
+
+**BEHAVIOR**
+
+Each line of the rectangle comes from the band that covers it - the
+buffer's row that far below the band's origin, its first row for a
+repeating band - and is black where no band does, as on a board that
+shows nothing. Over that the overlay is laid, and over both the
+pointer where it is shown: each a masked copy of the part of its
+image inside the rectangle. An image the board lays itself
+(`RtgPointerOps`, `RtgOverlayOps`) is not laid here.
+
+It is what a driver calls from its `update`, for the rectangle it was
+handed, and from its `show` for the whole display when the board is
+shown without `RTGSHOW_DIRECT`: the bands of that show are in place
+then. The pixels may go straight into the display's own memory or
+into a block the driver sends.
+
+**CONTEXT**
+
+- Waits: for the board's compose lock, where the caller does not hold
+  it; inside `update` and `show` it does.
+- Interrupts: no.
+- Locks: takes the board's compose lock, which nests for the task
+  that holds it.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `into` is the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CreateBoard`, `RefreshRect`, `SetBoardPointer`, `ShowBoard`
+
+**EXAMPLES**
+
+```zig
+// update: the rectangle straight into the display's own frame.
+fn update(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const at = screen.frame + @as(usize, @intCast(area.y)) * screen.pitch + @as(usize, @intCast(area.x)) * 4;
+    return screen.rtg_base.ComposeLines(board, area, at, screen.pitch);
+}
+```
+
 ## CreateBoard
 
 Makes a board for one output of a device.
@@ -315,8 +395,9 @@ fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spe
 - `device` - the device the board is an output of.
 - `spec` - what the driver says of the board: its ops, what the output
   is called, how many bytes of its own it keeps with the board, what
-  is true of it from the start, where its buffers come from, and which
-  output of the device it is; for a board with a connector, the pixel
+  is true of it from the start, where its buffers come from, which
+  output of the device it is, and how many bands its display reads by
+  itself (`direct_bands`); for a board with a connector, the pixel
   format its monitor's modes are made in. Read during the call and not
   kept; the label's string stays the driver's.
 
@@ -338,6 +419,14 @@ named after its driver and a number in the order the driver's boards
 were made ("rgb.0"), the firmware's picture last on the list. A board
 comes up in no mode and showing nothing; `ShowBoard` is what puts a
 picture up, and what its driver lights the output with.
+
+How the board's picture reaches the glass follows from the
+description. A display that reads the shown buffers itself says how
+many bands it reads so. One with a picture of its own fills in
+`update`, and the library composes that picture for it
+(`ComposeLines`), with bands, an overlay and a pointer its driver
+wrote none of. A board with both is shown direct for as long as
+nothing lies over its picture; one with neither shows nothing.
 
 An `attach` that fails after making a board deletes it (`DeleteBoard`);
 one it leaves is freed by the library.

@@ -7,6 +7,7 @@ const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
 const registry = @import("../driver/_driver.zig");
+const composer = @import("../compose/_compose.zig");
 
 /// Gives a board the image its pointer is drawn with.
 ///
@@ -36,17 +37,29 @@ const registry = @import("../driver/_driver.zig");
 /// The image is converted here and not again: every pixel into the
 /// board's format, and its alpha into a mask of one bit a pixel - an
 /// alpha of 128 or more is the pointer, anything less the picture showing
-/// through. So what a driver does on the way to the glass, often from an
-/// interrupt, is a masked copy of a fixed size. The point stays where
-/// MoveBoardPointer last put it, and the new image is placed around it.
-/// Whether it is seen is ShowBoardPointer's business.
+/// through. So laying it on the way to the glass, which a driver often
+/// does from an interrupt, is a masked copy of a fixed size. The point
+/// stays where MoveBoardPointer last put it, and the new image is placed
+/// around it. Whether it is seen is ShowBoardPointer's business.
+///
+/// A board that lays its pointer itself - a cursor plane, a stream's own
+/// copy - is handed the image. On a board whose picture the library
+/// composes, the library lays it: the part of the picture the old image
+/// covered and the part the new one covers are delivered again. A
+/// display that was reading the shown buffer itself is then shown the
+/// library's picture, and where its driver cannot do that the image is
+/// refused with the driver's answer.
 ///
 /// CONTEXT:
-/// - Waits: for rtg's pointer lock while another task moves the pointer,
-///   and for a driver that sends the pointer's rows over a bus.
+/// - Waits: for the board's compose lock while another task moves the
+///   pointer or hands on what it drew, for the board's lock where the
+///   library lays the pointer, and for a driver that sends rows over a
+///   bus.
 /// - Interrupts: no. It allocates.
-/// - Locks: takes rtg's pointer lock while the driver changes images, so a move
-///   cannot come between; no spinlock may be held.
+/// - Locks: takes the board's compose lock while the image changes, so
+///   a move cannot come between - and the board's lock before it where
+///   the library lays the pointer, as the board may be shown another
+///   way; no spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -61,7 +74,9 @@ const registry = @import("../driver/_driver.zig");
 /// never read.
 ///
 /// BUGS:
-/// None known.
+/// The image is made in the pixel format the board has when it is set.
+/// Where the library lays the pointer and the board is then put in a
+/// mode of another format, the image is not laid until it is set again.
 ///
 /// SEE ALSO:
 /// `MoveBoardPointer`, `ShowBoardPointer`, `GetBoardInfo`
@@ -72,11 +87,7 @@ const registry = @import("../driver/_driver.zig");
 ///     _ = rb.ShowBoardPointer(board, true);
 /// ```
 pub fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32 {
-    const sys = rb.sys_base;
-    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     if (board.info.caps & rtg.boards.RTGBC_POINTER == 0) return err.RTGERR_NOT_SUPPORTED;
-    const set_pointer = ops.set_pointer.?;
-    const move_pointer = ops.move_pointer.?;
 
     const made: ?*rtg.RtgPointerImage = if (image) |source| blk: {
         const converted = convert(rb, board, source, hot_x, hot_y, rtg.boards.RTG_POINTER_MAX, .threshold);
@@ -84,20 +95,11 @@ pub fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
         break :blk converted.image;
     } else null;
 
-    sys.ObtainSemaphore(&rb.pointer_lock);
-    const code = set_pointer(board, made);
+    const code = composer.setPointer(rb, board, made);
     if (code != err.RTGERR_OK) {
-        sys.ReleaseSemaphore(&rb.pointer_lock);
-        if (made) |gone| sys.FreeVec(gone);
-        return code;
+        if (made) |refused| rb.sys_base.FreeVec(refused);
     }
-    const old = board.pointer;
-    board.pointer = made;
-    if (made) |now| move_pointer(board, board.pointer_x - @as(i32, @intCast(now.hot_x)), board.pointer_y - @as(i32, @intCast(now.hot_y)));
-    sys.ReleaseSemaphore(&rb.pointer_lock);
-    // The driver has let go of the old one: set_pointer returned.
-    if (old) |gone| sys.FreeVec(gone);
-    return err.RTGERR_OK;
+    return code;
 }
 
 pub const Converted = struct { code: i32, image: ?*rtg.RtgPointerImage = null };

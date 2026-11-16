@@ -81,7 +81,7 @@ const rastport = @import("../rastport/_rastport.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `CreateRastPortTagList`, `rtg.FillRect`, `rtg.RefreshBitMap`
+/// `CreateRastPortTagList`, `rtg.FillRect`, `rtg.RefreshRect`
 ///
 /// EXAMPLES:
 /// ```zig

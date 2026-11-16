@@ -15,7 +15,7 @@
 //!
 //! The library holds no drawing code. A buffer is memory with a width, a
 //! height, a pitch and a format, and whoever has it writes into it and
-//! then hands the rows on with RefreshBitMap. An operation the board's
+//! then hands what it wrote on with RefreshRect. An operation the board's
 //! engine can do faster is offered through the board, and a board that has
 //! not got it says so - it is never done in software instead.
 //!
@@ -94,6 +94,10 @@ pub const RTGBANDF_REPEAT = boards.RTGBANDF_REPEAT;
 pub const RTG_MAX_BANDS = boards.RTG_MAX_BANDS;
 pub const RTG_MAX_COPIES = boards.RTG_MAX_COPIES;
 pub const RtgBoardOps = boards.RtgBoardOps;
+pub const RtgPointerOps = boards.RtgPointerOps;
+pub const RtgOverlayOps = boards.RtgOverlayOps;
+pub const RtgEngineOps = boards.RtgEngineOps;
+pub const RtgVideoOps = boards.RtgVideoOps;
 pub const RtgPointerImage = boards.RtgPointerImage;
 
 pub const RtgDriver = drivers.RtgDriver;

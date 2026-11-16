@@ -27,6 +27,12 @@
 //! It keeps the bands it shows and the mode it was put in, as a display
 //! does, and a test can make its next show fail: what a refusal leaves
 //! can then be read on the board as well as in the library.
+//!
+//! A test can make its next board one whose display has a picture of its
+//! own (`composed`): the board fills in `update`, fetches what the
+//! library composes (`ComposeLines`) into a picture it keeps, and a test
+//! reads that picture back - the bands, the overlay and the pointer as
+//! they would be on the glass.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -88,8 +94,14 @@ pub const Log = struct {
     /// them - refused or not.
     last_show_bitmap: ?*rtg.RtgBitMap = null,
     last_flags: u32 = 0,
-    last_refresh_y: u32 = 0,
-    last_refresh_rows: u32 = 0,
+    /// The buffer and the rectangle of the last refresh, as the driver
+    /// got them.
+    last_refresh_bitmap: ?*rtg.RtgBitMap = null,
+    last_refresh: rtg.RtgRect = .{},
+    /// Rectangles of its own picture the board was told changed
+    /// (`update`), and the last of them.
+    updates: u32 = 0,
+    last_update: rtg.RtgRect = .{},
     last_control: u32 = 0,
     last_mirror_x: bool = false,
     last_mirror_y: bool = false,
@@ -217,10 +229,26 @@ pub const State = struct {
     /// How much display memory the next board made reports: all of it,
     /// unless a test says less - none is a board with no display memory.
     region_size: usize = region_bytes,
+    /// Make the next board one whose display has a picture of its own:
+    /// its ops fill in `update` and leave the pointer and the overlay to
+    /// the library, and what it is delivered is kept for a test to read
+    /// (`pictureOf`).
+    composed: bool = false,
+    /// How many bands the display of the next board made reads by itself
+    /// (`RtgBoardSpec.direct_bands`); null for what its kind reads - bands
+    /// on the board that has everything, one whole buffer on the two that
+    /// have less, none on one with a picture of its own.
+    direct_bands: ?u32 = null,
+    /// What `update` answers: RTGERR_OK delivers the rectangle.
+    update_answer: i32 = err.RTGERR_OK,
     /// Called with the board at the start of every op that changes what
     /// the board shows or the mode it is in, for a test that looks at
     /// what the library holds while the driver works.
     meanwhile: ?*const fn (board: *rtg.RtgBoard) void = null,
+    /// Called with the board at the start of every `refresh` and every
+    /// `update`, for a test that looks at what is held while the driver
+    /// is handed what was written.
+    while_handed: ?*const fn (board: *rtg.RtgBoard) void = null,
 };
 
 /// What belongs to one board: the library allocates it beside the handle.
@@ -236,6 +264,18 @@ pub const Instance = struct {
     showing: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     showing_count: u32 = 0,
     mode_id: u32 = 0,
+    /// Whether the last show it took was one its display reads itself
+    /// (`RTGSHOW_DIRECT`).
+    direct: bool = false,
+    /// A board with a picture of its own: the picture, in the mode it was
+    /// last put in - `picture_height` rows of `picture_width` pixels,
+    /// `picture_pitch` bytes apart, `picture_bytes` bytes a pixel. Taken
+    /// when the board is put in a mode, given back with the board.
+    picture: ?[*]u8 = null,
+    picture_width: u32 = 0,
+    picture_height: u32 = 0,
+    picture_pitch: u32 = 0,
+    picture_bytes: u32 = 0,
 };
 
 pub fn stateOf(driver: *rtg.RtgDriver) *State {
@@ -437,6 +477,8 @@ fn destroyBoard(board: *rtg.RtgBoard) callconv(.c) void {
     const state = stateOfBoard(board);
     instanceOf(board).calls += 1;
     state.log.destroyed += 1;
+    if (instanceOf(board).picture) |picture| state.sys.FreeVec(picture);
+    instanceOf(board).picture = null;
     // The bus it opened goes with the board.
     if (instanceOf(board).bus) |io| state.driver.rtg_base.CloseTransport(io);
     forget(state, board);
@@ -494,7 +536,19 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         log.last_mode = what.mode.*;
         log.last_timings = what.timings.*;
     }
-    const answer = showAnswer(state);
+    var answer = showAnswer(state);
+    // A display with a picture of its own: the picture's memory for the
+    // mode, then - where it is not to read the buffers itself - all of
+    // the picture fetched, which is what its `update` does.
+    if (answer == err.RTGERR_OK and anew and board.ops.?.update != null) answer = takePicture(board, what.mode);
+    const direct = what.flags & rtg.boards.RTGSHOW_DIRECT != 0;
+    if (answer == err.RTGERR_OK and what.count != 0 and !direct) {
+        if (instance.picture != null) {
+            answer = updateOp(board, &.{ .width = @intCast(instance.picture_width), .height = @intCast(instance.picture_height) });
+        } else {
+            answer = err.RTGERR_NOT_SUPPORTED;
+        }
+    }
     if (answer != err.RTGERR_OK) {
         if (anew) instance.showing_count = 0;
         return answer;
@@ -502,16 +556,61 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     if (anew) instance.mode_id = what.mode.id;
     @memcpy(instance.showing[0..what.count], log.bands[0..what.count]);
     instance.showing_count = what.count;
+    instance.direct = direct;
     return err.RTGERR_OK;
 }
 
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
+/// The memory of a board's own picture, for the mode it is put in: taken
+/// anew, cleared, and the one before given back.
+fn takePicture(board: *rtg.RtgBoard, mode: *const rtg.RtgMode) i32 {
+    const state = stateOfBoard(board);
+    const instance = instanceOf(board);
+    const rb: *sdk.interface.rtg.RtgBase = @ptrCast(board.rtg_base.?);
+    const bytes = rb.RtgFormatBits(@intFromEnum(mode.format)) / 8;
+    if (bytes == 0) return err.RTGERR_BAD_FORMAT;
+    const pitch = mode.width * bytes;
+    const memory = state.sys.AllocVec(pitch * mode.height, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return err.RTGERR_NO_MEMORY;
+    if (instance.picture) |before| state.sys.FreeVec(before);
+    instance.picture = @ptrCast(memory);
+    instance.picture_width = mode.width;
+    instance.picture_height = mode.height;
+    instance.picture_pitch = pitch;
+    instance.picture_bytes = bytes;
+    return err.RTGERR_OK;
+}
+
+/// The board's own picture, as it was last delivered: what a test reads
+/// back. Null on a board without one.
+///
+/// INPUTS:
+/// - `board` - a board of this driver.
+pub fn pictureOf(board: *rtg.RtgBoard) ?[*]const u8 {
+    return instanceOf(board).picture;
+}
+
+/// A rectangle of the board's own picture changed: fetched from the
+/// library into the picture, as a display's driver delivers it.
+fn updateOp(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
+    const state = stateOfBoard(board);
+    const instance = instanceOf(board);
+    instance.calls += 1;
+    if (state.while_handed) |look| look(board);
+    state.log.updates += 1;
+    state.log.last_update = area.*;
+    if (state.update_answer != err.RTGERR_OK) return state.update_answer;
+    const picture = instance.picture orelse return err.RTGERR_NO_MODE;
+    const at = picture + @as(usize, @intCast(area.y)) * instance.picture_pitch + @as(usize, @intCast(area.x)) * instance.picture_bytes;
+    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
+    return rb.ComposeLines(board, area, at, instance.picture_pitch);
+}
+
+fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     instanceOf(board).calls += 1;
-    _ = bitmap;
+    if (stateOfBoard(board).while_handed) |look| look(board);
     const log = &stateOfBoard(board).log;
     log.refreshed += 1;
-    log.last_refresh_y = y;
-    log.last_refresh_rows = rows;
+    log.last_refresh_bitmap = bitmap;
+    log.last_refresh = area.*;
     return err.RTGERR_OK;
 }
 
@@ -809,6 +908,23 @@ fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
     return err.RTGERR_NOT_SUPPORTED;
 }
 
+/// A pointer and an overlay of the board's own, as a cursor plane's
+/// driver has them.
+const pointer_group = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
+const overlay_group = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
+
+/// Its engine: fills, copies and blends, and a scale it refuses.
+const engine_group = rtg.RtgEngineOps{
+    .fill_rect = &fillRect,
+    .copy_rect = &copyRect,
+    .copy_rects = &copyRects,
+    .blend_pixels = &blendPixels,
+    .blend_rect = &blendRect,
+    .scale_pixels = &scalePixels,
+};
+
+const video_group = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .show = &videoShow, .move = &videoMove };
+
 /// Everything a board can be asked.
 const full_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
@@ -819,22 +935,21 @@ const full_ops = rtg.RtgBoardOps{
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
-    .fill_rect = &fillRect,
-    .copy_rect = &copyRect,
-    .copy_rects = &copyRects,
     .mirror = &mirror,
-    .set_pointer = &setPointer,
-    .move_pointer = &movePointer,
-    .show_pointer = &showPointer,
-    .set_overlay = &setOverlay,
-    .move_overlay = &moveOverlay,
-    .blend_pixels = &blendPixels,
-    .blend_rect = &blendRect,
-    .scale_pixels = &scalePixels,
-    .video_open = &videoOpen,
-    .video_close = &videoClose,
-    .video_show = &videoShow,
-    .video_move = &videoMove,
+    .pointer = &pointer_group,
+    .overlay = &overlay_group,
+    .engine = &engine_group,
+    .video = &video_group,
+};
+
+/// A board whose display has a picture of its own: it is told what
+/// changed, and the pointer and the overlay are the library's to lay.
+const composed_ops = rtg.RtgBoardOps{
+    .destroy = &destroyBoard,
+    .show = &showOp,
+    .refresh = &refresh,
+    .update = &updateOp,
+    .engine = &engine_group,
 };
 
 /// What is on the connector, as the test set it: whether a monitor is
@@ -925,7 +1040,9 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
     const state = stateOf(driver);
     const board = driver.rtg_base.CreateBoard(driver, device, &.{
         .label = if (unit == 0) "Fake 0" else "Fake 1",
-        .ops = if (state.connector)
+        .ops = if (state.composed)
+            &composed_ops
+        else if (state.connector)
             &connector_ops
         else if (state.cannot_turn)
             &fixed_ops
@@ -947,9 +1064,15 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
         .unit = unit,
         // A monitor's modes in the format the tests draw in.
         .format = .rgb565,
-        // Bands on the board that has everything; one whole buffer on the
-        // two that have less.
-        .caps = if (state.connector or !(state.cannot_turn or state.without_engine)) rtg.boards.RTGBC_BANDS else 0,
+        // What its display reads by itself: bands on the board that has
+        // everything, one whole buffer on the two that have less, none
+        // on one with a picture of its own - or what the test said.
+        .direct_bands = state.direct_bands orelse if (state.composed)
+            0
+        else if (state.connector or !(state.cannot_turn or state.without_engine))
+            rtg.RTG_MAX_BANDS
+        else
+            1,
     }) orelse return null;
     const instance = instanceOf(board);
     instance.* = .{ .pattern = instance_pattern };

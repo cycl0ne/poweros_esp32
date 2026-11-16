@@ -71,6 +71,7 @@ pub fn CopyRects(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies:
     if (src == dest) return err.RTGERR_BAD_ARG;
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
+    const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
     var cut: [rtg.RTG_MAX_COPIES]rtg.RtgCopy = undefined;
     var at: u32 = 0;
     while (at < count) {
@@ -80,12 +81,12 @@ pub fn CopyRects(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies:
             n += 1;
         }
         if (n == 0) continue;
-        if (ops.copy_rects) |copy_rects| {
+        if (engine.copy_rects) |copy_rects| {
             const result = copy_rects(board, src, dest, &cut, n);
             if (result != err.RTGERR_OK) return result;
             continue;
         }
-        const copy_rect = ops.copy_rect orelse return err.RTGERR_NOT_SUPPORTED;
+        const copy_rect = engine.copy_rect orelse return err.RTGERR_NOT_SUPPORTED;
         for (cut[0..n]) |*one| {
             const result = copy_rect(board, src, dest, one);
             if (result != err.RTGERR_OK) return result;

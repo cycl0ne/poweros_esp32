@@ -32,7 +32,6 @@ pub const LVO = struct {
     pub const FreeBitMap = libraries.lvo(23);
     pub const ShowBitMap = libraries.lvo(24);
     pub const BoardDisplayBitMap = libraries.lvo(25);
-    pub const RefreshBitMap = libraries.lvo(26);
     pub const WaitVBlank = libraries.lvo(27);
     pub const SetBoardDisplay = libraries.lvo(28);
     pub const SetBoardBrightness = libraries.lvo(29);
@@ -86,7 +85,6 @@ pub const Fn = struct {
     pub const FreeBitMap = *const fn (*RtgBase, ?*rtg.RtgBitMap) callconv(.c) void;
     pub const ShowBitMap = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgBitMap) callconv(.c) i32;
     pub const BoardDisplayBitMap = *const fn (*RtgBase, *rtg.RtgBoard) callconv(.c) ?*rtg.RtgBitMap;
-    pub const RefreshBitMap = *const fn (*RtgBase, *rtg.RtgBitMap, u32, u32) callconv(.c) i32;
     pub const WaitVBlank = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const SetBoardDisplay = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
     pub const SetBoardBrightness = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
@@ -105,7 +103,7 @@ pub const Fn = struct {
     pub const BlendPixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32) callconv(.c) i32;
     pub const BlendRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, u32) callconv(.c) i32;
     pub const ScalePixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32, u32) callconv(.c) i32;
-    pub const RefreshRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect) callconv(.c) i32;
+    pub const RefreshRect = *const fn (*RtgBase, *rtg.RtgBitMap, ?*const rtg.RtgRect) callconv(.c) i32;
     pub const CopyRects = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, [*]const rtg.RtgCopy, u32) callconv(.c) i32;
     pub const OpenVideoLayer = *const fn (*RtgBase, *rtg.RtgBoard, ?[*]const utility.TagItem) callconv(.c) ?*rtg.RtgVideoLayer;
     pub const CloseVideoLayer = *const fn (*RtgBase, ?*rtg.RtgVideoLayer) callconv(.c) void;
@@ -206,13 +204,6 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.BoardDisplayBitMap, Fn.BoardDisplayBitMap, .{board});
     }
 
-    /// Rows y to y + rows of a buffer were written: hand them to the display.
-    /// `rows` 0 is all of them. What a caller that wrote the pixels itself
-    /// calls when it has finished.
-    pub fn RefreshBitMap(self: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32 {
-        return libraries.call(self, LVO.RefreshBitMap, Fn.RefreshBitMap, .{ bitmap, y, rows });
-    }
-
     /// Wait for `frames` frames of the display to end; 0 is the next one.
     /// For the frames the board's driver says ended, RTGERR_TIMEOUT when
     /// they do not come within two frames' time each; by the clock on a
@@ -275,13 +266,14 @@ pub const RtgBase = opaque {
     /// The pointer's image: a surface with an alpha channel, whose pixel
     /// (hot_x, hot_y) is the point. Converted once, into the board's format
     /// with a mask. Null takes the image away. RTGERR_NOT_SUPPORTED unless
-    /// the board lays a pointer over its picture (RTGBC_POINTER).
+    /// a pointer is laid over the board's picture (RTGBC_POINTER).
     pub fn SetBoardPointer(self: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32 {
         return libraries.call(self, LVO.SetBoardPointer, Fn.SetBoardPointer, .{ board, image, hot_x, hot_y });
     }
 
     /// Put the pointer's point at (x, y), in the coordinates a caller draws
-    /// in. Never waits; called on every pointer event.
+    /// in. Made to be called on every pointer event, from a task: it may
+    /// wait for a display that is sent its picture.
     pub fn MoveBoardPointer(self: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
         return libraries.call(self, LVO.MoveBoardPointer, Fn.MoveBoardPointer, .{ board, x, y });
     }
@@ -328,10 +320,10 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.ScalePixels, Fn.ScalePixels, .{ dest, area, pixels, width, height });
     }
 
-    /// A rectangle of a buffer was written: hand its pixels to the display,
-    /// as RefreshBitMap hands on rows - only those of the rectangle where the
-    /// board can, its rows where it cannot. Cut down to the buffer.
-    pub fn RefreshRect(self: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32 {
+    /// A rectangle of a buffer was written: hand its pixels on to the
+    /// display. Null is the whole buffer. What a caller that wrote the
+    /// pixels itself calls when it has finished. Cut down to the buffer.
+    pub fn RefreshRect(self: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) i32 {
         return libraries.call(self, LVO.RefreshRect, Fn.RefreshRect, .{ bitmap, area });
     }
 

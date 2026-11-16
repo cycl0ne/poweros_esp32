@@ -46,7 +46,9 @@ const Display = struct {
     /// rows is all of them. False if the board has no buffer shown.
     fn refresh(display: Display, y: u32, count_rows: u32) bool {
         const bitmap = display.board.showing orelse return false;
-        return display.rb.RefreshBitMap(bitmap, y, count_rows) == rtg.errors.RTGERR_OK;
+        if (count_rows == 0) return display.rb.RefreshRect(bitmap, null) == rtg.errors.RTGERR_OK;
+        const rows = rtg.RtgRect{ .y = @intCast(y), .width = @intCast(bitmap.width), .height = @intCast(count_rows) };
+        return display.rb.RefreshRect(bitmap, &rows) == rtg.errors.RTGERR_OK;
     }
 };
 

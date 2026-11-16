@@ -10,19 +10,20 @@ const boardOf = _engine.boardOf;
 const clip = _engine.clip;
 const drawable = _engine.drawable;
 const err = rtg.errors;
+const composer = @import("../compose/_compose.zig");
 
 /// Hands a rectangle of a buffer that was written on to the display.
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
+/// fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) i32
 /// ```
 ///
 /// SINCE: 1.5. LVO -256.
 ///
 /// INPUTS:
 /// - `bitmap` - the buffer.
-/// - `area` - the rectangle written.
+/// - `area` - the rectangle written; null for the whole buffer.
 ///
 /// RESULT:
 /// `RTGERR_OK` - also for a rectangle with nothing of it inside the
@@ -31,17 +32,24 @@ const err = rtg.errors;
 /// driver answered.
 ///
 /// BEHAVIOR:
-/// What `RefreshBitMap` does for rows, for a rectangle: what a caller
-/// that wrote part of a row - a window, a tile of a picture drawn in
-/// tiles - calls when it has finished. A board whose display reads the
-/// buffer through a cache the CPU writes into writes back only the
-/// rectangle's pixels, where whole rows would write back the rest of
-/// each row too. A board that has no way of its own is handed the
-/// rectangle's rows, as `RefreshBitMap` would hand them. The rectangle is
-/// cut to the buffer first.
+/// What a caller that wrote the pixels itself calls when it has
+/// finished: a window, a tile of a picture drawn in tiles, a whole
+/// buffer. The rectangle is cut to the buffer first.
 ///
-/// Rectangles that do not overlap may be handed on at once by several
-/// tasks, as tiles drawn on several cores are.
+/// Where the display reads the buffer itself, its driver is told
+/// (`refresh`), for a buffer shown or not: one whose display reads
+/// through a cache the CPU writes into writes back the rectangle's
+/// pixels, so a buffer drawn ahead is whole when it is shown. Where the
+/// display shows a picture the library composes, the rectangle is also
+/// turned into the display's own - the lines of each band that shows
+/// the buffer, a repeating band's all for its first row - and the
+/// driver delivers those (`update`), with the overlay and the pointer
+/// over them. A buffer no band shows reaches the glass when it is shown.
+///
+/// On a board whose display reads the buffers itself, rectangles that do
+/// not overlap may be handed on at once by several tasks, as tiles drawn
+/// on several cores are; on one with a picture of its own they follow
+/// each other.
 ///
 /// A buffer with a `watch` hook is not the board's to hear about: the
 /// hook is called instead, with the buffer and the rectangle cut to it,
@@ -50,9 +58,13 @@ const err = rtg.errors;
 /// on to the screen.
 ///
 /// CONTEXT:
-/// - Waits: only if the driver does.
+/// - Waits: for the board's compose lock on a board with a picture of
+///   its own, while another task hands on, moves the pointer or shows;
+///   and where the driver does.
 /// - Interrupts: no. The driver may wait on its bus.
-/// - Locks: no spinlock may be held: a driver may wait.
+/// - Locks: takes the board's compose lock on a board with a picture of
+///   its own, and never the board's lock. No spinlock may be held: a
+///   driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -62,22 +74,22 @@ const err = rtg.errors;
 /// None known.
 ///
 /// SEE ALSO:
-/// `RefreshBitMap`, `AllocBitMap`
+/// `AllocBitMap`, `ShowBoard`, `ComposeLines`
 ///
 /// EXAMPLES:
 /// ```zig
 /// _ = rb.RefreshRect(buffer, &.{ .x = 64, .y = 128, .width = 64, .height = 64 });
+/// // All of it.
+/// _ = rb.RefreshRect(buffer, null);
 /// ```
-pub fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32 {
+pub fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) i32 {
     if (!drawable(bitmap)) return err.RTGERR_BAD_ARG;
-    const cut = clip(bitmap, area) orelse return err.RTGERR_OK;
+    const whole = rtg.RtgRect{ .width = @intCast(bitmap.width), .height = @intCast(bitmap.height) };
+    const cut = clip(bitmap, area orelse &whole) orelse return err.RTGERR_OK;
     if (bitmap.watch) |hook| {
         _ = rb.utility_base.CallHookPkt(hook, bitmap, @constCast(&cut));
         return err.RTGERR_OK;
     }
     const board = boardOf(bitmap) orelse return err.RTGERR_BAD_ARG;
-    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    if (ops.refresh_rect) |refresh_rect| return refresh_rect(board, bitmap, &cut);
-    const refresh = ops.refresh orelse return err.RTGERR_NOT_SUPPORTED;
-    return refresh(board, bitmap, @intCast(cut.y), @intCast(cut.height));
+    return composer.handOn(rb, board, bitmap, &cut);
 }

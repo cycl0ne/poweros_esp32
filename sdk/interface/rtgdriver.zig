@@ -34,6 +34,7 @@ pub const LVO = struct {
     pub const ReadTimingTags = libraries.lvo(96);
     pub const MonitorChanged = libraries.lvo(97);
     pub const FindStandardTimings = libraries.lvo(98);
+    pub const ComposeLines = libraries.lvo(99);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -56,6 +57,7 @@ pub const Fn = struct {
     pub const ReadTimingTags = *const fn (*RtgDriverBase, ?[*]const utility.TagItem, *rtg.RtgTimings) callconv(.c) bool;
     pub const MonitorChanged = *const fn (*RtgDriverBase, *rtg.RtgBoard) callconv(.c) void;
     pub const FindStandardTimings = *const fn (*RtgDriverBase, u32, u32, u32, *rtg.RtgTimings) callconv(.c) bool;
+    pub const ComposeLines = *const fn (*RtgDriverBase, *rtg.RtgBoard, *const rtg.RtgRect, [*]u8, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -184,5 +186,16 @@ pub const RtgDriverBase = opaque {
     /// knows none.
     pub fn FindStandardTimings(self: *RtgDriverBase, width: u32, height: u32, refresh_hz: u32, timings: *rtg.RtgTimings) bool {
         return libraries.call(self, LVO.FindStandardTimings, Fn.FindStandardTimings, .{ width, height, refresh_hz, timings });
+    }
+
+    /// The pixels of a rectangle of the board's display as they are to be
+    /// seen, in the mode's format, into `into`, its rows `pitch` bytes apart:
+    /// the bands, and over them the overlay and the pointer where the
+    /// library lays them. What a driver whose display has a picture of its
+    /// own calls from its `update` and its `show`. RTGERR_BAD_ARG for a
+    /// rectangle that is empty or not wholly inside the display,
+    /// RTGERR_BAD_FORMAT in a mode whose pixels are not whole bytes.
+    pub fn ComposeLines(self: *RtgDriverBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into: [*]u8, pitch: u32) i32 {
+        return libraries.call(self, LVO.ComposeLines, Fn.ComposeLines, .{ board, area, into, pitch });
     }
 };

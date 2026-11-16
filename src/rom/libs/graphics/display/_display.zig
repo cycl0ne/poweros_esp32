@@ -89,11 +89,11 @@ fn bringUp(rb: *RtgBase, which: *rtg.RtgBoard, screen: Screen) ?Shown {
     ) orelse return null;
 
     // The first picture, black, handed on while nothing is reading it:
-    // RefreshBitMap is each driver's own way to the glass - a write-back
+    // RefreshRect is each board's own way to the glass - a write-back
     // out of the cache, a send over the bus, the emulator's doorbell.
     const pixels: [*]u8 = @ptrCast(picture.pixels.?);
     @memset(pixels[0 .. @as(usize, picture.pitch) * picture.height], 0);
-    _ = rb.RefreshBitMap(picture, 0, 0);
+    _ = rb.RefreshRect(picture, null);
 
     // The mode and the picture in it, as one step.
     const whole = [_]rtg.RtgBand{.{ .bitmap = picture }};

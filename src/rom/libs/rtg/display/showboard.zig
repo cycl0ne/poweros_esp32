@@ -43,9 +43,10 @@ const modes = @import("../mode/_mode.zig");
 /// buffer, a buffer with no pixels, or rows a band would show that its
 /// buffer has not got; `RTGERR_NOT_DISPLAYABLE` for a buffer that was not
 /// made to be shown or is not the mode's size; `RTGERR_BAD_FORMAT` for
-/// one not in the mode's format; `RTGERR_NO_DISPLAY` on a board whose
-/// device has gone; `RTGERR_NOT_SUPPORTED` for a board that shows
-/// nothing, or bands on one that shows only a whole buffer
+/// one not in the mode's format, and for bands the library would compose
+/// in a format whose pixels are not whole bytes; `RTGERR_NO_DISPLAY` on a
+/// board whose device has gone; `RTGERR_NOT_SUPPORTED` for a board that
+/// shows nothing, or bands on one that shows only a whole buffer
 /// (`RTGBC_BANDS`); or what the driver answered.
 ///
 /// BEHAVIOR:
@@ -83,7 +84,9 @@ const modes = @import("../mode/_mode.zig");
 /// - Interrupts: no. The driver may wait on its bus.
 /// - Locks: takes the board's lock around the checks, the driver's show
 ///   and the marks on the board's buffers, so two shows of one board
-///   follow each other. No spinlock may be held: a driver may wait.
+///   follow each other, and inside it the board's compose lock, so
+///   nothing is handed on and no pointer moved between the old picture
+///   and the new. No spinlock may be held: a driver may wait.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -91,9 +94,16 @@ const modes = @import("../mode/_mode.zig");
 /// buffers stay the caller's.
 ///
 /// NOTES:
-/// What is drawn into any shown buffer is handed on by `RefreshBitMap` as
-/// for one shown alone: the board knows which of its rows are on the
+/// What is drawn into any shown buffer is handed on by `RefreshRect` as
+/// for one shown alone: the library knows which of its rows are on the
 /// glass.
+///
+/// How the bands reach the glass is the board's: a display that reads
+/// buffers itself reads as many bands as it can, and one with a picture
+/// of its own is delivered the picture the library composes of them. A
+/// board that has both ways reads the buffers itself for as long as
+/// nothing lies over the picture - no more bands than it reads, no
+/// overlay, no pointer the library lays.
 ///
 /// BUGS:
 /// The DSI boards' driver keeps the bands it was handed when it answers
@@ -101,7 +111,7 @@ const modes = @import("../mode/_mode.zig");
 /// - and reads them when the pointer next moves or is first laid.
 ///
 /// SEE ALSO:
-/// `ShowBitMap`, `BoardDisplayBitMap`, `BestBoardMode`, `RefreshBitMap`
+/// `ShowBitMap`, `BoardDisplayBitMap`, `BestBoardMode`, `RefreshRect`
 ///
 /// EXAMPLES:
 /// ```zig

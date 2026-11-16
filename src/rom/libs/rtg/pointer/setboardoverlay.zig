@@ -8,6 +8,7 @@ const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
 const setboardpointer = @import("setboardpointer.zig");
+const composer = @import("../compose/_compose.zig");
 
 /// Gives a board a second image to lay over its picture, under the
 /// pointer, which from then on follows the pointer.
@@ -39,18 +40,22 @@ const setboardpointer = @import("setboardpointer.zig");
 /// every pixel into the board's format, and its coverage into a mask of
 /// one bit a pixel - dithered by a 4x4 ordered pattern rather than cut in
 /// half, so a soft edge, a shadow or an image made see-through keeps its
-/// look as a pattern of dots. The board lays it over the picture on the
-/// way to the glass, under the pointer, the picture never holding it; it
-/// is shown whether the pointer is or not, so a finger dragging on a
-/// touch panel, where the pointer is hidden, sees it. Its point is put at
-/// the pointer's, and it follows the pointer's moves until
-/// `MoveBoardOverlay` puts it somewhere of its own.
+/// look as a pattern of dots. It is laid over the picture on the way to
+/// the glass, under the pointer, the picture never holding it - by the
+/// board itself where it has the means, by the library where it composes
+/// the board's picture; it is shown whether the pointer is or not, so a
+/// finger dragging on a touch panel, where the pointer is hidden, sees
+/// it. Its point is put at the pointer's, and it follows the pointer's
+/// moves until `MoveBoardOverlay` puts it somewhere of its own.
 ///
 /// CONTEXT:
-/// - Waits: for rtg's pointer lock while another task moves the pointer,
-///   and for a driver that sends the rows over a bus.
+/// - Waits: for the board's compose lock while another task moves the
+///   pointer or hands on what it drew, for the board's lock where the
+///   library lays the overlay, and for a driver that sends the rows over
+///   a bus.
 /// - Interrupts: no. It allocates.
-/// - Locks: takes rtg's pointer lock while the driver changes images; no
+/// - Locks: takes the board's compose lock while the image changes, and
+///   the board's lock before it where the library lays the overlay; no
 ///   spinlock may be held.
 /// - Process: a Task will do.
 ///
@@ -64,7 +69,8 @@ const setboardpointer = @import("setboardpointer.zig");
 /// set the overlay on the right board and take it away again.
 ///
 /// BUGS:
-/// None known.
+/// As `SetBoardPointer`: an image made for one pixel format is not laid
+/// by the library in a mode of another.
 ///
 /// SEE ALSO:
 /// `MoveBoardOverlay`, `SetBoardPointer`, `MoveBoardPointer`
@@ -77,11 +83,7 @@ const setboardpointer = @import("setboardpointer.zig");
 /// }
 /// ```
 pub fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32 {
-    const sys = rb.sys_base;
-    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     if (board.info.caps & rtg.boards.RTGBC_OVERLAY == 0) return err.RTGERR_NOT_SUPPORTED;
-    const set_overlay = ops.set_overlay.?;
-    const move_overlay = ops.move_overlay.?;
 
     const made: ?*rtg.RtgPointerImage = if (image) |source| blk: {
         const converted = setboardpointer.convert(rb, board, source, hot_x, hot_y, rtg.boards.RTG_OVERLAY_MAX, .dither);
@@ -89,23 +91,9 @@ pub fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
         break :blk converted.image;
     } else null;
 
-    sys.ObtainSemaphore(&rb.pointer_lock);
-    // Placed before it is shown: the driver lays it where it belongs from
-    // its first frame.
-    board.overlay_x = board.pointer_x;
-    board.overlay_y = board.pointer_y;
-    board.overlay_follows = 1;
-    if (made) |now| move_overlay(board, board.overlay_x - @as(i32, @intCast(now.hot_x)), board.overlay_y - @as(i32, @intCast(now.hot_y)));
-    const code = set_overlay(board, made);
+    const code = composer.setOverlay(rb, board, made);
     if (code != err.RTGERR_OK) {
-        sys.ReleaseSemaphore(&rb.pointer_lock);
-        if (made) |gone| sys.FreeVec(gone);
-        return code;
+        if (made) |refused| rb.sys_base.FreeVec(refused);
     }
-    const old = board.overlay;
-    board.overlay = made;
-    sys.ReleaseSemaphore(&rb.pointer_lock);
-    // The driver has let go of the old one: set_overlay returned.
-    if (old) |gone| sys.FreeVec(gone);
-    return err.RTGERR_OK;
+    return code;
 }

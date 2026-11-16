@@ -60,6 +60,7 @@ pub fn CopyRect(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *c
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const cut = clipCopy(src, dest, copy) orelse return err.RTGERR_OK;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    const copy_rect = ops.copy_rect orelse return err.RTGERR_NOT_SUPPORTED;
+    const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
+    const copy_rect = engine.copy_rect orelse return err.RTGERR_NOT_SUPPORTED;
     return copy_rect(board, src, dest, &cut);
 }

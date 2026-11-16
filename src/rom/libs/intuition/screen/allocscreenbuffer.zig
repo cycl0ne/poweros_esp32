@@ -88,7 +88,7 @@ pub fn AllocScreenBuffer(ib: *IntuitionBase, screen: *Screen, flags: u32) ?*sc.S
         @memset(pixels[0 .. @as(usize, bitmap.pitch) * bitmap.height], 0);
     }
     // Written behind the cache's back: handed on before it can be shown.
-    _ = rb.RefreshBitMap(bitmap, 0, 0);
+    _ = rb.RefreshRect(bitmap, null);
     const on = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(bitmap) }, .{} };
     const rp = gb.CreateRastPortTagList(&on) orelse {
         rb.FreeBitMap(bitmap);

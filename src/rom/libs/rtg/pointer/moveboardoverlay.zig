@@ -4,6 +4,7 @@
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
+const composer = @import("../compose/_compose.zig");
 
 /// Puts the overlay's point at (x, y), and from then on keeps it there
 /// rather than with the pointer.
@@ -31,11 +32,12 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// place for one set later. Nothing is done for the same place twice.
 ///
 /// CONTEXT:
-/// - Waits: for the pointer's lock while another task moves the pointer,
-///   and on a board that sends rows over a bus, for that. From a task,
-///   never from an input handler.
+/// - Waits: for the board's compose lock while another task moves the
+///   pointer or hands on what it drew, and on a board that sends rows
+///   over a bus, for that. From a task, never from an input handler.
 /// - Interrupts: no.
-/// - Locks: takes rtg's pointer lock, a semaphore; no spinlock may be held.
+/// - Locks: takes the board's compose lock, a semaphore; no spinlock may
+///   be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -56,16 +58,5 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// rb.MoveBoardOverlay(board, start_x, start_y);
 /// ```
 pub fn MoveBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
-    const sys = rb.sys_base;
-    sys.ObtainSemaphore(&rb.pointer_lock);
-    defer sys.ReleaseSemaphore(&rb.pointer_lock);
-    const was_following = board.overlay_follows != 0;
-    board.overlay_follows = 0;
-    if (!was_following and board.overlay_x == x and board.overlay_y == y) return;
-    board.overlay_x = x;
-    board.overlay_y = y;
-    const image = board.overlay orelse return;
-    const ops = board.ops orelse return;
-    const move_overlay = ops.move_overlay orelse return;
-    move_overlay(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
+    composer.moveOverlay(rb, board, x, y);
 }

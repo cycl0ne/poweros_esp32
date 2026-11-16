@@ -10,7 +10,7 @@
 //!
 //! It does not draw either. A buffer is memory with a width, a height, a
 //! pitch and a format, and whoever holds one writes into it and then hands
-//! the rows on with RefreshBitMap. The drawing calls are here so that a
+//! what it wrote on with RefreshRect. The drawing calls are here so that a
 //! board whose own engine is faster than the CPU can offer that, and a
 //! board that has no engine answers RTGERR_NOT_SUPPORTED - the library
 //! never quietly does the work instead, because the layer that does know
@@ -76,7 +76,9 @@ test {
     _ = @import("bitmap/allocbitmap.zig");
     _ = @import("bitmap/attachbitmap.zig");
     _ = @import("bitmap/freebitmap.zig");
-    _ = @import("bitmap/refreshbitmap.zig");
+    _ = @import("bitmap/refreshrect.zig");
+    _ = @import("compose/_compose.zig");
+    _ = @import("compose/composelines.zig");
     _ = @import("bitmap/rtgformatbits.zig");
     _ = @import("bitmap/rtgrowbytes.zig");
     _ = @import("video/rtgcicp.zig");
@@ -1601,7 +1603,7 @@ test "a board that shows when its monitor changes: the mode again where the new 
     driverBase(rb).MonitorChanged(board);
     monitors.service(rb);
     try testing.expectEqual(@as(u32, 2), fk.log.set_mode);
-    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED, fk.log.last_flags);
+    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED | rtg.boards.RTGSHOW_DIRECT, fk.log.last_flags);
     try testing.expectEqual(wide, fk.log.last_mode.id);
     try testing.expectEqual(@as(u32, 12), fk.log.last_timings.h_front);
     try testing.expectEqual(@as(u32, 1), fk.log.band_count);
@@ -1852,6 +1854,8 @@ test "the mode and the bands as one step; a buffer lives through a mode change" 
     const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
     const showing = rtg.bitmaps.RTGBMF_SHOWING;
     const changed = rtg.boards.RTGSHOW_MODE_CHANGED;
+    // A picture this board is shown is one its display reads itself.
+    const direct = rtg.boards.RTGSHOW_DIRECT;
     // Buffers are the board's, in a mode or not.
     const square = base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
     const wide = base(rb).AllocBitMap(board, 32, 8, format, displayable).?;
@@ -1862,7 +1866,7 @@ test "the mode and the bands as one step; a buffer lives through a mode change" 
     // call of the driver's, with the mode and the picture.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, square));
     try testing.expectEqual(@as(u32, 1), fk.log.shown);
-    try testing.expectEqual(changed, fk.log.last_flags);
+    try testing.expectEqual(changed | direct, fk.log.last_flags);
     try testing.expectEqual(@as(u32, 1), fk.log.last_mode.id);
     try testing.expectEqual(@as(u32, 1), infoOf(rb, board).mode_id);
 
@@ -1870,7 +1874,7 @@ test "the mode and the bands as one step; a buffer lives through a mode change" 
     const in_wide = [_]rtg.RtgBand{.{ .bitmap = wide }};
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 2, &in_wide, in_wide.len));
     try testing.expectEqual(@as(u32, 2), fk.log.shown);
-    try testing.expectEqual(changed, fk.log.last_flags);
+    try testing.expectEqual(changed | direct, fk.log.last_flags);
     try testing.expectEqual(@as(u32, 2), fk.log.last_mode.id);
     try testing.expectEqual(@as(u32, 32), fk.log.last_timings.h_active);
     try testing.expectEqual(wide, fk.log.last_show_bitmap.?);
@@ -1899,9 +1903,9 @@ test "the mode and the bands as one step; a buffer lives through a mode change" 
     try testing.expectEqual(@as(u32, 16), infoOf(rb, board).width);
     // The mode it is in, named or kept, is no mode set anew.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 1, &in_square, in_square.len));
-    try testing.expectEqual(@as(u32, 0), fk.log.last_flags);
+    try testing.expectEqual(direct, fk.log.last_flags);
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &in_square, in_square.len));
-    try testing.expectEqual(@as(u32, 0), fk.log.last_flags);
+    try testing.expectEqual(direct, fk.log.last_flags);
 
     // A mode with nothing shown in it.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 2, null, 0));
@@ -1993,7 +1997,7 @@ test "another mode refused leaves the mode and what was shown; where that is gon
 
     // The next show puts it in a mode again.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 2, &in_wide, in_wide.len));
-    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED, fk.log.last_flags);
+    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED | rtg.boards.RTGSHOW_DIRECT, fk.log.last_flags);
     try testing.expectEqual(@as(u32, 2), infoOf(rb, board).mode_id);
 
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
@@ -2463,7 +2467,7 @@ test "bands that fail change nothing: what was shown stays, in the library and o
     try tearDown(rb);
 }
 
-test "what is written is handed on by the row" {
+test "what is written is handed on as the rectangle it is, cut to the buffer" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
@@ -2471,25 +2475,19 @@ test "what is written is handed on by the row" {
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
     const bitmap = base(rb).AllocBitMap(board, 32, 20, format, 0).?;
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshBitMap(bitmap, 4, 6));
-    try testing.expectEqual(@as(u32, 4), fk.log.last_refresh_y);
-    try testing.expectEqual(@as(u32, 6), fk.log.last_refresh_rows);
-    // No count is all of the rows there are, from where it was asked.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshBitMap(bitmap, 0, 0));
-    try testing.expectEqual(@as(u32, 20), fk.log.last_refresh_rows);
-    // More rows than it has is as many as it has.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshBitMap(bitmap, 18, 40));
-    try testing.expectEqual(@as(u32, 2), fk.log.last_refresh_rows);
-    try testing.expectEqual(rtg.errors.RTGERR_BOUNDS, base(rb).RefreshBitMap(bitmap, 20, 1));
-
-    // A rectangle, on a board with no way of its own: its rows, cut to
-    // the buffer; one with nothing inside reaches no driver.
+    // The driver is told the buffer and the rectangle, shown or not.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, &.{ .x = 3, .y = 4, .width = 5, .height = 6 }));
-    try testing.expectEqual(@as(u32, 4), fk.log.last_refresh_y);
-    try testing.expectEqual(@as(u32, 6), fk.log.last_refresh_rows);
+    try testing.expectEqual(bitmap, fk.log.last_refresh_bitmap.?);
+    try testing.expectEqual(rtg.RtgRect{ .x = 3, .y = 4, .width = 5, .height = 6 }, fk.log.last_refresh);
+    // No rectangle is all of the buffer.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, null));
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 0, .width = 32, .height = 20 }, fk.log.last_refresh);
+    // One that reaches past the buffer is as much of it as is inside; one
+    // with nothing inside reaches no driver.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, &.{ .x = 30, .y = -2, .width = 8, .height = 5 }));
-    try testing.expectEqual(@as(u32, 0), fk.log.last_refresh_y);
-    try testing.expectEqual(@as(u32, 3), fk.log.last_refresh_rows);
+    try testing.expectEqual(rtg.RtgRect{ .x = 30, .y = 0, .width = 2, .height = 3 }, fk.log.last_refresh);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, &.{ .x = 0, .y = 18, .width = 32, .height = 40 }));
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 18, .width = 32, .height = 2 }, fk.log.last_refresh);
     const refreshed = fk.log.refreshed;
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bitmap, &.{ .x = 32, .y = 0, .width = 4, .height = 4 }));
     try testing.expectEqual(refreshed, fk.log.refreshed);
@@ -2869,8 +2867,10 @@ test "several copies go to the board as one job, each cut down, or one by one" {
 
     // A board without the call is given them one at a time.
     const kept = board.ops;
+    var engine = board.ops.?.engine.?.*;
+    engine.copy_rects = null;
     var ops = board.ops.?.*;
-    ops.copy_rects = null;
+    ops.engine = &engine;
     board.ops = &ops;
     const copies = fk.log.copies;
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).CopyRects(source, target, &pieces, pieces.len));
@@ -3264,6 +3264,639 @@ test "the overlay: its coverage dithered, following the pointer, placed on its o
     try tearDown(rb);
 }
 
+// --- the picture the library composes ----------------------------------------
+
+/// A board of the test driver's whose display has a picture of its own,
+/// with one mode of that size in RGB565, whose display reads `reads` bands
+/// by itself.
+fn makeComposed(rb: *RtgBase, width: u32, height: u32, reads: u32) !*rtg.RtgBoard {
+    const fk = fakeOf(rb);
+    fk.composed = true;
+    fk.direct_bands = reads;
+    defer fk.composed = false;
+    defer fk.direct_bands = null;
+    return makeDisplay(rb, width, height);
+}
+
+/// What `paint` writes at (x, y) of a buffer marked `mark`: a pixel that
+/// says where it came from.
+fn painted(mark: u16, x: u32, y: u32) u16 {
+    return mark << 12 | @as(u16, @intCast(y)) << 6 | @as(u16, @intCast(x));
+}
+
+/// Every pixel of an RGB565 buffer written with its own place and `mark`.
+fn paint(bitmap: *rtg.RtgBitMap, mark: u16) void {
+    var y: u32 = 0;
+    while (y < bitmap.height) : (y += 1) {
+        const row: [*]u16 = @ptrCast(@alignCast(bitmap.pixels.? + @as(usize, y) * bitmap.pitch));
+        var x: u32 = 0;
+        while (x < bitmap.width) : (x += 1) row[x] = painted(mark, x, y);
+    }
+}
+
+/// One pixel of an RGB565 buffer written.
+fn poke(bitmap: *rtg.RtgBitMap, x: u32, y: u32, value: u16) void {
+    const row: [*]u16 = @ptrCast(@alignCast(bitmap.pixels.? + @as(usize, y) * bitmap.pitch));
+    row[x] = value;
+}
+
+/// The pixel at (x, y) of the picture the test board was last delivered.
+fn onGlass(board: *rtg.RtgBoard, x: u32, y: u32) u16 {
+    const instance = fake.instanceOf(board);
+    const row: [*]const u16 = @ptrCast(@alignCast(instance.picture.? + @as(usize, y) * instance.picture_pitch));
+    return row[x];
+}
+
+/// Whether the picture the test board was delivered is the buffer marked
+/// `mark`, whole, with nothing over it.
+fn seesOnly(board: *rtg.RtgBoard, mark: u16) bool {
+    const instance = fake.instanceOf(board);
+    var y: u32 = 0;
+    while (y < instance.picture_height) : (y += 1) {
+        var x: u32 = 0;
+        while (x < instance.picture_width) : (x += 1) {
+            if (onGlass(board, x, y) != painted(mark, x, y)) return false;
+        }
+    }
+    return true;
+}
+
+const red: u16 = 0xF800;
+const green: u16 = 0x07E0;
+const blue: u16 = 0x001F;
+const white: u16 = 0xFFFF;
+
+test "a display with a picture of its own: the bands composed, what was written delivered as the display's rectangle" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeComposed(rb, 16, 12, 0);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+
+    // Its driver wrote neither bands nor a pointer nor an overlay, and
+    // the board has all three.
+    const caps = infoOf(rb, board).caps;
+    try testing.expect(caps & rtg.boards.RTGBC_BANDS != 0);
+    try testing.expect(caps & rtg.boards.RTGBC_POINTER != 0 and caps & rtg.boards.RTGBC_OVERLAY != 0);
+    try testing.expect(caps & rtg.boards.RTGBC_REFRESH != 0);
+
+    const back = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const front = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const row = base(rb).AllocBitMap(board, 16, 1, format, displayable).?;
+    paint(back, 1);
+    paint(front, 2);
+    paint(row, 3);
+
+    // One buffer: not read direct, and delivered whole while the driver
+    // is asked.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & rtg.boards.RTGSHOW_DIRECT);
+    try testing.expectEqual(@as(u32, 1), fk.log.updates);
+    try testing.expectEqual(rtg.RtgRect{ .width = 16, .height = 12 }, fk.log.last_update);
+    try testing.expect(seesOnly(board, 1));
+
+    // Two in bands: each line from the band that covers it, the buffer's
+    // row that far below the band's origin.
+    const bands = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 5, .origin = 5 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &bands, bands.len));
+    try testing.expectEqual(painted(1, 3, 4), onGlass(board, 3, 4));
+    try testing.expectEqual(painted(2, 3, 0), onGlass(board, 3, 5));
+    try testing.expectEqual(painted(2, 15, 6), onGlass(board, 15, 11));
+
+    // What is written into a band's buffer is delivered as the display's
+    // rectangle: its lines, not the buffer's rows - and only that.
+    const updates = fk.log.updates;
+    poke(front, 3, 2, white);
+    poke(front, 9, 2, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(front, &.{ .x = 3, .y = 2, .width = 3, .height = 1 }));
+    try testing.expectEqual(updates + 1, fk.log.updates);
+    try testing.expectEqual(rtg.RtgRect{ .x = 3, .y = 7, .width = 3, .height = 1 }, fk.log.last_update);
+    try testing.expectEqual(white, onGlass(board, 3, 7));
+    try testing.expectEqual(painted(2, 9, 2), onGlass(board, 9, 7));
+    // The driver heard of the buffer's own rectangle too.
+    try testing.expectEqual(rtg.RtgRect{ .x = 3, .y = 2, .width = 3, .height = 1 }, fk.log.last_refresh);
+
+    // Rows no band shows are handed on and delivered nowhere: below what
+    // the band shows, and under the band over them.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(front, &.{ .x = 0, .y = 9, .width = 16, .height = 2 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, &.{ .x = 0, .y = 6, .width = 16, .height = 3 }));
+    try testing.expectEqual(updates + 1, fk.log.updates);
+    // A rectangle across the edge of a band: the lines the band shows.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, &.{ .x = 2, .y = 3, .width = 4, .height = 6 }));
+    try testing.expectEqual(rtg.RtgRect{ .x = 2, .y = 3, .width = 4, .height = 2 }, fk.log.last_update);
+
+    // A band that repeats one row: every line of it shows the row, and
+    // the row written is all its lines.
+    const repeating = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = row, .line = 8, .origin = 8, .flags = rtg.RTGBANDF_REPEAT } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &repeating, repeating.len));
+    try testing.expectEqual(painted(1, 4, 7), onGlass(board, 4, 7));
+    try testing.expectEqual(painted(3, 4, 0), onGlass(board, 4, 8));
+    try testing.expectEqual(painted(3, 4, 0), onGlass(board, 4, 11));
+    poke(row, 2, 0, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(row, &.{ .x = 2, .y = 0, .width = 2, .height = 1 }));
+    try testing.expectEqual(rtg.RtgRect{ .x = 2, .y = 8, .width = 2, .height = 4 }, fk.log.last_update);
+    try testing.expectEqual(white, onGlass(board, 2, 10));
+
+    // A buffer no band shows: its driver hears of it, the display not.
+    const refreshed = fk.log.refreshed;
+    const shown_updates = fk.log.updates;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(front, null));
+    try testing.expectEqual(refreshed + 1, fk.log.refreshed);
+    try testing.expectEqual(shown_updates, fk.log.updates);
+
+    // A delivery the driver could not make is what the hand-on answers.
+    fk.update_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).RefreshRect(back, null));
+    // And a show that could not be delivered changes nothing: the bands
+    // before are the library's still.
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, front));
+    try testing.expectEqual(row, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(front.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
+    fk.update_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, null));
+    try testing.expectEqual(painted(3, 5, 0), onGlass(board, 5, 9));
+
+    // Nothing shown: nothing is delivered, and what is composed is black.
+    const before_nothing = fk.log.updates;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, null, 0));
+    try testing.expectEqual(before_nothing, fk.log.updates);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, null));
+    try testing.expectEqual(before_nothing, fk.log.updates);
+    var fetched: [4]u16 = .{ 7, 7, 7, 7 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).ComposeLines(board, &.{ .x = 6, .y = 6, .width = 2, .height = 2 }, @ptrCast(&fetched), 4));
+    try testing.expectEqual([4]u16{ 0, 0, 0, 0 }, fetched);
+
+    base(rb).FreeBitMap(row);
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "ComposeLines: a rectangle of the picture, and what is none" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const board = try makeComposed(rb, 16, 12, 0);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    var into: [8 * 4]u16 = undefined;
+    const whole_lines = rtg.RtgRect{ .x = 4, .y = 2, .width = 8, .height = 4 };
+
+    // A board never shown has no picture to say the size of.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, driverBase(rb).ComposeLines(board, &whole_lines, @ptrCast(&into), 16));
+
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 5);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+
+    // The rectangle's rows, its own pitch apart, and nothing past them.
+    @memset(&into, 0xAAAA);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).ComposeLines(board, &.{ .x = 4, .y = 2, .width = 3, .height = 2 }, @ptrCast(&into), 16));
+    try testing.expectEqual(painted(5, 4, 2), into[0]);
+    try testing.expectEqual(painted(5, 6, 2), into[2]);
+    try testing.expectEqual(@as(u16, 0xAAAA), into[3]);
+    try testing.expectEqual(painted(5, 4, 3), into[8]);
+    try testing.expectEqual(@as(u16, 0xAAAA), into[16]);
+
+    // The last pixel of the picture is inside; a rectangle that is empty,
+    // starts before the picture or ends past it is none.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).ComposeLines(board, &.{ .x = 15, .y = 11, .width = 1, .height = 1 }, @ptrCast(&into), 2));
+    try testing.expectEqual(painted(5, 15, 11), into[0]);
+    for ([_]rtg.RtgRect{
+        .{ .x = 0, .y = 0, .width = 0, .height = 4 },
+        .{ .x = 0, .y = 0, .width = 4, .height = -1 },
+        .{ .x = -1, .y = 0, .width = 4, .height = 4 },
+        .{ .x = 0, .y = -1, .width = 4, .height = 4 },
+        .{ .x = 13, .y = 0, .width = 4, .height = 4 },
+        .{ .x = 0, .y = 9, .width = 4, .height = 4 },
+        .{ .x = std.math.maxInt(i32), .y = 0, .width = std.math.maxInt(i32), .height = 1 },
+    }) |area| {
+        try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, driverBase(rb).ComposeLines(board, &area, @ptrCast(&into), 16));
+    }
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "the library's pointer: laid over the picture at every edge, moved, changed and hidden, the buffer never touched" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeComposed(rb, 16, 12, 0);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+
+    // Three by two: red, clear, green; blue, clear, blue.
+    var pixels = [_]u32{ rgba(0xFF0000FF), rgba(0x12345600), rgba(0x00FF00FF), rgba(0x0000FFFF), rgba(0x0000FF7F), rgba(0x0000FFFF) };
+    const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 3, .height = 2, .pitch = 12, .format = .rgba32 };
+
+    // An image, and a place: nothing is seen, and nothing delivered,
+    // until the pointer is shown.
+    var updates = fk.log.updates;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &image, 0, 0));
+    base(rb).MoveBoardPointer(board, 5, 4);
+    try testing.expectEqual(updates, fk.log.updates);
+    try testing.expect(seesOnly(board, 1));
+    // The driver was asked for none of it.
+    try testing.expectEqual(@as(u32, 0), fk.log.pointer_sets + fk.log.pointer_moves);
+
+    // Shown: its rectangle delivered, the picture through its clear
+    // pixels.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expect(infoOf(rb, board).flags & rtg.boards.RTGBF_POINTER != 0);
+    try testing.expectEqual(updates + 1, fk.log.updates);
+    try testing.expectEqual(rtg.RtgRect{ .x = 5, .y = 4, .width = 3, .height = 2 }, fk.log.last_update);
+    try testing.expectEqual(red, onGlass(board, 5, 4));
+    try testing.expectEqual(painted(1, 6, 4), onGlass(board, 6, 4));
+    try testing.expectEqual(green, onGlass(board, 7, 4));
+    try testing.expectEqual(blue, onGlass(board, 5, 5));
+    try testing.expectEqual(painted(1, 6, 5), onGlass(board, 6, 5));
+    try testing.expectEqual(painted(1, 8, 4), onGlass(board, 8, 4));
+
+    // A short move: where it was and where it is as one rectangle, the
+    // picture back where it left.
+    updates = fk.log.updates;
+    base(rb).MoveBoardPointer(board, 6, 4);
+    try testing.expectEqual(updates + 1, fk.log.updates);
+    try testing.expectEqual(rtg.RtgRect{ .x = 5, .y = 4, .width = 4, .height = 2 }, fk.log.last_update);
+    try testing.expectEqual(painted(1, 5, 4), onGlass(board, 5, 4));
+    try testing.expectEqual(red, onGlass(board, 6, 4));
+    // The same place again is no move, and a long one is two rectangles.
+    base(rb).MoveBoardPointer(board, 6, 4);
+    try testing.expectEqual(updates + 1, fk.log.updates);
+    base(rb).MoveBoardPointer(board, 12, 9);
+    try testing.expectEqual(updates + 3, fk.log.updates);
+    try testing.expectEqual(painted(1, 6, 4), onGlass(board, 6, 4));
+    try testing.expectEqual(red, onGlass(board, 12, 9));
+
+    // Past the top left: the part of the image that is on the picture.
+    base(rb).MoveBoardPointer(board, -1, -1);
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 0, .width = 2, .height = 1 }, fk.log.last_update);
+    try testing.expectEqual(painted(1, 0, 0), onGlass(board, 0, 0));
+    try testing.expectEqual(blue, onGlass(board, 1, 0));
+    try testing.expectEqual(painted(1, 12, 9), onGlass(board, 12, 9));
+    // The bottom right corner: its first pixel alone.
+    base(rb).MoveBoardPointer(board, 15, 11);
+    try testing.expectEqual(red, onGlass(board, 15, 11));
+    try testing.expectEqual(painted(1, 14, 11), onGlass(board, 14, 11));
+    try testing.expectEqual(painted(1, 1, 0), onGlass(board, 1, 0));
+    // Off the picture altogether, as far as a place goes: nothing of it.
+    base(rb).MoveBoardPointer(board, std.math.maxInt(i32), std.math.minInt(i32));
+    try testing.expect(seesOnly(board, 1));
+    base(rb).MoveBoardPointer(board, std.math.minInt(i32), std.math.maxInt(i32));
+    try testing.expect(seesOnly(board, 1));
+
+    // What is drawn under it is delivered with the pointer over it.
+    base(rb).MoveBoardPointer(board, 2, 2);
+    poke(picture, 2, 2, white);
+    poke(picture, 3, 2, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 2, .y = 2, .width = 2, .height = 1 }));
+    try testing.expectEqual(red, onGlass(board, 2, 2));
+    try testing.expectEqual(white, onGlass(board, 3, 2));
+
+    // Another image while it is shown: the new one where the old was, the
+    // old one's rectangle put right.
+    var block = [_]u32{ rgba(0xFFFFFFFF), rgba(0xFFFFFFFF) };
+    const small = rtg.Surface{ .pixels = @ptrCast(&block), .width = 1, .height = 2, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &small, 0, 1));
+    try testing.expectEqual(white, onGlass(board, 2, 1));
+    try testing.expectEqual(white, onGlass(board, 2, 2));
+    try testing.expectEqual(painted(1, 4, 2), onGlass(board, 4, 2));
+    try testing.expectEqual(painted(1, 2, 3), onGlass(board, 2, 3));
+
+    // Hidden, and taken away: the picture as it was drawn. The buffer
+    // itself never held the pointer.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, false));
+    try testing.expectEqual(painted(1, 2, 1), onGlass(board, 2, 1));
+    try testing.expectEqual(white, onGlass(board, 2, 2));
+    poke(picture, 2, 2, painted(1, 2, 2));
+    poke(picture, 3, 2, painted(1, 3, 2));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, null));
+    try testing.expect(seesOnly(board, 1));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    try testing.expect(board.pointer == null);
+    try testing.expect(seesOnly(board, 1));
+
+    // An image still set when the board goes is freed with it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &image, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "the library's overlay: under the pointer, following it, placed on its own, in every band" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeComposed(rb, 16, 12, 0);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const back = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const front = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(back, 1);
+    paint(front, 2);
+    const bands = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &bands, bands.len));
+
+    // A pointer of one red pixel, and an overlay three by three, green,
+    // whose point is its middle.
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    var block: [9]u32 = @splat(rgba(0x00FF00FF));
+    const icon = rtg.Surface{ .pixels = @ptrCast(&block), .width = 3, .height = 3, .pitch = 12, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    base(rb).MoveBoardPointer(board, 8, 6);
+
+    // The overlay comes up around the pointer's point, across the two
+    // bands, the pointer over it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &icon, 1, 1));
+    try testing.expectEqual(@as(u32, 0), fk.log.overlay_sets + fk.log.overlay_moves);
+    try testing.expectEqual(green, onGlass(board, 7, 5));
+    try testing.expectEqual(green, onGlass(board, 9, 7));
+    try testing.expectEqual(red, onGlass(board, 8, 6));
+    try testing.expectEqual(painted(1, 6, 5), onGlass(board, 6, 5));
+    try testing.expectEqual(painted(2, 10, 1), onGlass(board, 10, 7));
+
+    // It follows the pointer, and the picture is back where both were.
+    base(rb).MoveBoardPointer(board, 2, 2);
+    try testing.expectEqual(painted(1, 7, 5), onGlass(board, 7, 5));
+    try testing.expectEqual(painted(2, 8, 0), onGlass(board, 8, 6));
+    try testing.expectEqual(green, onGlass(board, 1, 1));
+    try testing.expectEqual(red, onGlass(board, 2, 2));
+    try testing.expectEqual(green, onGlass(board, 3, 3));
+
+    // Put somewhere of its own - half off the right edge - it stays
+    // there, and the pointer goes on alone.
+    base(rb).MoveBoardOverlay(board, 15, 9);
+    try testing.expectEqual(painted(1, 1, 1), onGlass(board, 1, 1));
+    try testing.expectEqual(red, onGlass(board, 2, 2));
+    try testing.expectEqual(green, onGlass(board, 14, 8));
+    try testing.expectEqual(green, onGlass(board, 15, 10));
+    base(rb).MoveBoardPointer(board, 0, 0);
+    try testing.expectEqual(red, onGlass(board, 0, 0));
+    try testing.expectEqual(green, onGlass(board, 14, 8));
+    try testing.expectEqual(@as(i32, 15), board.overlay_x);
+
+    // It is seen whether the pointer is or not, and goes with null.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, false));
+    try testing.expectEqual(painted(1, 0, 0), onGlass(board, 0, 0));
+    try testing.expectEqual(green, onGlass(board, 15, 9));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, null, 0, 0));
+    try testing.expect(board.overlay == null);
+    try testing.expectEqual(painted(2, 15, 3), onGlass(board, 15, 9));
+    try testing.expectEqual(painted(2, 14, 2), onGlass(board, 14, 8));
+
+    // An overlay still set when the board goes is freed with it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &icon, 1, 1));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, null, 0));
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "direct while plain: the display reads the buffer itself until something lies over the picture" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeComposed(rb, 16, 12, 1);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const direct = rtg.boards.RTGSHOW_DIRECT;
+    const back = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const front = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const row = base(rb).AllocBitMap(board, 16, 1, format, displayable).?;
+    paint(back, 1);
+    paint(front, 2);
+    paint(row, 3);
+
+    // One whole buffer: read by the display, nothing delivered - at the
+    // show, and when it is drawn into.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expect(fake.instanceOf(board).direct);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, null));
+    try testing.expectEqual(@as(u32, 0), fk.log.updates);
+    try testing.expectEqual(@as(u32, 1), fk.log.refreshed);
+
+    // An image alone changes nothing; shown, the board is shown again
+    // with its own picture, the pointer in it.
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    base(rb).MoveBoardPointer(board, 4, 4);
+    try testing.expectEqual(@as(u32, 1), fk.log.shown);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expectEqual(@as(u32, 2), fk.log.shown);
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & (direct | rtg.boards.RTGSHOW_MODE_CHANGED));
+    try testing.expectEqual(back, fk.log.last_show_bitmap.?);
+    try testing.expect(!fake.instanceOf(board).direct);
+    try testing.expectEqual(red, onGlass(board, 4, 4));
+    try testing.expectEqual(painted(1, 5, 4), onGlass(board, 5, 4));
+    // From then on a move and a drawing are delivered.
+    base(rb).MoveBoardPointer(board, 5, 4);
+    try testing.expectEqual(red, onGlass(board, 5, 4));
+    poke(back, 0, 0, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, &.{ .width = 1, .height = 1 }));
+    try testing.expectEqual(white, onGlass(board, 0, 0));
+    poke(back, 0, 0, painted(1, 0, 0));
+
+    // Hidden: plain again, and read by the display again.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, false));
+    try testing.expectEqual(@as(u32, 3), fk.log.shown);
+    try testing.expect(fk.log.last_flags & direct != 0);
+    const delivered = fk.log.updates;
+    base(rb).MoveBoardPointer(board, 6, 6);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, null));
+    try testing.expectEqual(delivered, fk.log.updates);
+
+    // Another buffer shown stays direct; an overlay over it is not plain,
+    // and neither are two bands, nor one that repeats a row.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, front));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    var block: [4]u32 = @splat(rgba(0x00FF00FF));
+    const icon = rtg.Surface{ .pixels = @ptrCast(&block), .width = 2, .height = 2, .pitch = 8, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &icon, 0, 0));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(green, onGlass(board, 7, 7));
+    try testing.expectEqual(painted(2, 8, 8), onGlass(board, 8, 8));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, null, 0, 0));
+    try testing.expect(fk.log.last_flags & direct != 0);
+
+    const bands = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &bands, bands.len));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(painted(2, 3, 0), onGlass(board, 3, 6));
+    const repeating = [_]rtg.RtgBand{.{ .bitmap = row, .flags = rtg.RTGBANDF_REPEAT }};
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &repeating, repeating.len));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(painted(3, 9, 0), onGlass(board, 9, 11));
+
+    // A driver that will not show its own picture: the pointer is
+    // refused with its answer, and the display reads the buffer as
+    // before.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    fk.show_answer = rtg.errors.RTGERR_NO_MEMORY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, base(rb).ShowBoardPointer(board, true));
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, board).flags & rtg.boards.RTGBF_POINTER);
+    try testing.expect(fake.instanceOf(board).direct);
+    const untouched = fk.log.updates;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, null));
+    try testing.expectEqual(untouched, fk.log.updates);
+    // It works the next time.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expectEqual(red, onGlass(board, 6, 6));
+    // One that will not go back to reading the buffer shows its own
+    // picture still, without the pointer.
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, false));
+    try testing.expect(!fake.instanceOf(board).direct);
+    try testing.expectEqual(painted(1, 6, 6), onGlass(board, 6, 6));
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(row);
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+
+    // A display that reads bands itself reads two of them, and a board
+    // that composes nothing is always read direct.
+    const many = try makeComposed(rb, 16, 12, rtg.RTG_MAX_BANDS);
+    const upper = base(rb).AllocBitMap(many, 16, 12, format, displayable).?;
+    const lower = base(rb).AllocBitMap(many, 16, 12, format, displayable).?;
+    const two = [_]rtg.RtgBand{ .{ .bitmap = upper }, .{ .bitmap = lower, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(many, 0, &two, two.len));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(many, 0, null, 0));
+    base(rb).FreeBitMap(lower);
+    base(rb).FreeBitMap(upper);
+    driverBase(rb).DeleteBoard(many);
+    const plain = try makeDisplay(rb, 16, 12);
+    const alone = base(rb).AllocBitMap(plain, 16, 12, format, displayable).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, alone));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, null));
+    base(rb).FreeBitMap(alone);
+    driverBase(rb).DeleteBoard(plain);
+    try tearDown(rb);
+}
+
+/// What the driver saw of the board's compose lock while it delivered.
+const Composing = struct {
+    var seen_held: u32 = 0;
+    var missed: u32 = 0;
+
+    /// The fake board's `meanwhile`: the compose lock of the board it
+    /// works on is the calling task's.
+    fn look(board: *rtg.RtgBoard) void {
+        const lock = &boards.privateOf(board).compose.lock;
+        if (lock.owner == kexec.FindTask(kexec.SysBase, null) and lock.nestCount() != 0) seen_held += 1 else missed += 1;
+    }
+
+    /// Whether nothing holds either lock of `board`.
+    fn free(board: *rtg.RtgBoard) bool {
+        const lock = &boards.privateOf(board).compose.lock;
+        return lock.owner == null and lock.nestCount() == 0 and Held.free(board);
+    }
+};
+
+test "the compose lock: held around every show and every delivery, free after every call" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeComposed(rb, 16, 12, 1);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    Composing.seen_held = 0;
+    Composing.missed = 0;
+    fk.meanwhile = &Composing.look;
+    fk.while_handed = &Composing.look;
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    try testing.expect(Composing.free(board));
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    try testing.expect(Composing.free(board));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expect(Composing.free(board));
+    base(rb).MoveBoardPointer(board, 3, 3);
+    try testing.expect(Composing.free(board));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, null));
+    try testing.expect(Composing.free(board));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, &pointer, 0, 0));
+    base(rb).MoveBoardOverlay(board, 9, 9);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardOverlay(board, null, 0, 0));
+    // Refused by the driver: the locks are free all the same.
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, picture));
+    try testing.expect(Composing.free(board));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    try testing.expect(Composing.free(board));
+
+    // The driver was asked under the lock every time: for its shows, its
+    // refreshes and its deliveries.
+    try testing.expect(Composing.seen_held > 8);
+    try testing.expectEqual(@as(u32, 0), Composing.missed);
+
+    fk.meanwhile = null;
+    fk.while_handed = null;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a picture of four bytes a pixel is composed as one of two is; one of a bit a pixel is not" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    fk.composed = true;
+    const board = fake.makeDisplay(fk, 8, 4, .bgra32) orelse return error.NoBoard;
+    const picture = base(rb).AllocBitMap(board, 8, 4, @intFromEnum(rtg.PixelFormat.bgra32), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const words: [*]u32 = @ptrCast(@alignCast(picture.pixels.?));
+    for (0..4) |y| {
+        for (0..8) |x| words[y * picture.pitch / 4 + x] = @intCast(0xFF00_0000 | y << 8 | x);
+    }
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    const instance = fake.instanceOf(board);
+    try testing.expectEqual(@as(u32, 4), instance.picture_bytes);
+    const out: [*]const u32 = @ptrCast(@alignCast(instance.picture.?));
+    try testing.expectEqual(@as(u32, 0xFF00_0305), out[3 * 8 + 5]);
+
+    // The pointer, in the board's own bytes: red is 0xFFFF0000 here.
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    base(rb).MoveBoardPointer(board, 7, 3);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    try testing.expectEqual(@as(u32, 0xFFFF_0000), out[3 * 8 + 7]);
+    try testing.expectEqual(@as(u32, 0xFF00_0306), out[3 * 8 + 6]);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+
+    // A bit a pixel: no picture is composed of that, and the show says
+    // so - on a display that reads no buffer itself, every show.
+    const mono = fake.makeDisplay(fk, 16, 4, .mono1) orelse return error.NoBoard;
+    fk.composed = false;
+    const bits = base(rb).AllocBitMap(mono, 16, 4, @intFromEnum(rtg.PixelFormat.mono1), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).ShowBitMap(mono, bits));
+    try testing.expect(base(rb).BoardDisplayBitMap(mono) == null);
+    base(rb).FreeBitMap(bits);
+    driverBase(rb).DeleteBoard(mono);
+    try tearDown(rb);
+}
+
 test "a board with no pointer says so" {
     const rb = try setUp();
     defer kexec.deinit();
@@ -3526,10 +4159,10 @@ test "a buffer with a watch hook: the hook is told what was written, and the boa
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bm, &.{ .x = 2, .y = 1, .width = 20, .height = 2 }));
     try testing.expectEqual(@as(u32, 1), told.calls);
     try testing.expectEqual(rtg.RtgRect{ .x = 2, .y = 1, .width = 6, .height = 2 }, told.rect);
-    // Rows are a rectangle the buffer's width.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshBitMap(bm, 3, 0));
+    // No rectangle is the whole buffer.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(bm, null));
     try testing.expectEqual(@as(u32, 2), told.calls);
-    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 3, .width = 8, .height = 1 }, told.rect);
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 0, .width = 8, .height = 4 }, told.rect);
     try testing.expectEqual(before, fk.log.refreshed);
 
     // Without the hook, the board hears of it again.

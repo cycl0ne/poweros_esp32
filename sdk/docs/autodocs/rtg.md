@@ -45,7 +45,6 @@ Generated from the source by `./zig build autodoc`.
 - [NextBoard](#nextboard) - Walks the list of boards.
 - [OpenVideoLayer](#openvideolayer) - Takes one of a board's video layers: a plane of its controller that shows a picture in YUV itself, scaled into a place on the display.
 - [ReadBoardEDID](#readboardedid) - Copies out the EDID the monitor on a board's connector was read to have.
-- [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
 - [RemRtgNotify](#remrtgnotify) - Gives back a notification `AddRtgNotify` answered.
 - [RtgCicp](#rtgcicp) - Turns one of H.273's numbers for a picture's colours into rtg's.
@@ -159,7 +158,7 @@ it may.
 **BEHAVIOR**
 
 Every row starts on the board's alignment, so a stretch of rows handed
-to `RefreshBitMap` is exactly the memory that was written. On a board
+to `RefreshRect` is exactly the memory that was written. On a board
 whose display memory is system memory (`RTGRF_SYSTEM_MEMORY`) the
 buffer is taken from exec now, external memory first, and given back by
 `FreeBitMap`; its pixels are whatever that memory held. Its first
@@ -1671,11 +1670,12 @@ place for one set later. Nothing is done for the same place twice.
 
 **CONTEXT**
 
-- Waits: for the pointer's lock while another task moves the pointer,
-  and on a board that sends rows over a bus, for that. From a task,
-  never from an input handler.
+- Waits: for the board's compose lock while another task moves the
+  pointer or hands on what it drew, and on a board that sends rows
+  over a bus, for that. From a task, never from an input handler.
 - Interrupts: no.
-- Locks: takes rtg's pointer lock, a semaphore; no spinlock may be held.
+- Locks: takes the board's compose lock, a semaphore; no spinlock may
+  be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1734,19 +1734,25 @@ not its corner. Nothing is done for the same place twice. An overlay
 that follows the pointer (SetBoardOverlay) moves with it.
 
 A board that turns its picture itself (`MirrorBoard`) turns the
-pointer with it: the driver lays the pointer
-into the picture's own order on its way out, before the turn.
+pointer with it: the pointer is laid into the picture's own order on
+its way out, before the turn.
+
+On a board whose picture the library composes, a move is the
+rectangle the image left and the one it came to, delivered again - one
+rectangle where the two touch: it costs the image's size, not the
+picture's.
 
 **CONTEXT**
 
-- Waits: for the pointer's lock while another task changes the pointer,
-  and on a board that sends the rows the pointer left over a bus, for
-  that. Made to be called on every pointer event - from a task, never
-  from an input handler, which may not wait.
+- Waits: for the board's compose lock while another task changes the
+  pointer or hands on what it drew, and on a board that sends the
+  rows the pointer left over a bus, for that. Made to be called on
+  every pointer event - from a task, never from an input handler,
+  which may not wait.
 - Interrupts: no. A driver may send the rows the pointer left over a
   bus.
-- Locks: takes rtg's pointer lock, a semaphore, for the moment it takes the
-  driver to move it; no spinlock may be held.
+- Locks: takes the board's compose lock, a semaphore, for as long as
+  the move takes; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2039,65 +2045,6 @@ var bytes: [rtg.modes.RTG_EDID_MAX]u8 = undefined;
 const length = rb.ReadBoardEDID(board, &bytes, bytes.len);
 ```
 
-## RefreshBitMap
-
-Hands rows of a buffer that were written on to the display.
-
-**SYNOPSIS**
-
-```zig
-fn RefreshBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) i32
-```
-
-**SINCE**
-
-1.0. LVO -108.
-
-**INPUTS**
-
-- `bitmap` - the buffer.
-- `y` - the first row written.
-- `rows` - how many; 0 is every row from `y` on.
-
-**RESULT**
-
-`RTGERR_OK`, `RTGERR_BAD_ARG` for a buffer with no pixels or no board,
-`RTGERR_BOUNDS` for a first row past the end, `RTGERR_NOT_SUPPORTED`
-for a board that needs no telling, or what the driver answered.
-
-**BEHAVIOR**
-
-What a caller that wrote the pixels itself calls when it has finished.
-A board whose display reads the buffer itself needs nothing; one that
-sends the pixels over a bus sends those rows. The rows are cut to the
-buffer. A buffer with a `watch` hook has the hook told instead, with
-the rows as a rectangle the buffer's width, as `RefreshRect` does.
-
-**CONTEXT**
-
-- Waits: only if the driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`AllocBitMap`, `ShowBitMap`
-
-**EXAMPLES**
-
-```zig
-_ = rb.RefreshBitMap(buffer, 10, 50);
-```
-
 ## RefreshRect
 
 Hands a rectangle of a buffer that was written on to the display.
@@ -2105,7 +2052,7 @@ Hands a rectangle of a buffer that was written on to the display.
 **SYNOPSIS**
 
 ```zig
-fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i32
+fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) i32
 ```
 
 **SINCE**
@@ -2115,7 +2062,7 @@ fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) i
 **INPUTS**
 
 - `bitmap` - the buffer.
-- `area` - the rectangle written.
+- `area` - the rectangle written; null for the whole buffer.
 
 **RESULT**
 
@@ -2126,17 +2073,24 @@ driver answered.
 
 **BEHAVIOR**
 
-What `RefreshBitMap` does for rows, for a rectangle: what a caller
-that wrote part of a row - a window, a tile of a picture drawn in
-tiles - calls when it has finished. A board whose display reads the
-buffer through a cache the CPU writes into writes back only the
-rectangle's pixels, where whole rows would write back the rest of
-each row too. A board that has no way of its own is handed the
-rectangle's rows, as `RefreshBitMap` would hand them. The rectangle is
-cut to the buffer first.
+What a caller that wrote the pixels itself calls when it has
+finished: a window, a tile of a picture drawn in tiles, a whole
+buffer. The rectangle is cut to the buffer first.
 
-Rectangles that do not overlap may be handed on at once by several
-tasks, as tiles drawn on several cores are.
+Where the display reads the buffer itself, its driver is told
+(`refresh`), for a buffer shown or not: one whose display reads
+through a cache the CPU writes into writes back the rectangle's
+pixels, so a buffer drawn ahead is whole when it is shown. Where the
+display shows a picture the library composes, the rectangle is also
+turned into the display's own - the lines of each band that shows
+the buffer, a repeating band's all for its first row - and the
+driver delivers those (`update`), with the overlay and the pointer
+over them. A buffer no band shows reaches the glass when it is shown.
+
+On a board whose display reads the buffers itself, rectangles that do
+not overlap may be handed on at once by several tasks, as tiles drawn
+on several cores are; on one with a picture of its own they follow
+each other.
 
 A buffer with a `watch` hook is not the board's to hear about: the
 hook is called instead, with the buffer and the rectangle cut to it,
@@ -2146,9 +2100,13 @@ on to the screen.
 
 **CONTEXT**
 
-- Waits: only if the driver does.
+- Waits: for the board's compose lock on a board with a picture of
+  its own, while another task hands on, moves the pointer or shows;
+  and where the driver does.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes the board's compose lock on a board with a picture of
+  its own, and never the board's lock. No spinlock may be held: a
+  driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2161,12 +2119,14 @@ None known.
 
 **SEE ALSO**
 
-`RefreshBitMap`, `AllocBitMap`
+`AllocBitMap`, `ShowBoard`, `ComposeLines`
 
 **EXAMPLES**
 
 ```zig
 _ = rb.RefreshRect(buffer, &.{ .x = 64, .y = 128, .width = 64, .height = 64 });
+// All of it.
+_ = rb.RefreshRect(buffer, null);
 ```
 
 ## RemRtgNotify
@@ -2673,19 +2633,23 @@ The image is converted here and not again, as SetBoardPointer's is:
 every pixel into the board's format, and its coverage into a mask of
 one bit a pixel - dithered by a 4x4 ordered pattern rather than cut in
 half, so a soft edge, a shadow or an image made see-through keeps its
-look as a pattern of dots. The board lays it over the picture on the
-way to the glass, under the pointer, the picture never holding it; it
-is shown whether the pointer is or not, so a finger dragging on a
-touch panel, where the pointer is hidden, sees it. Its point is put at
-the pointer's, and it follows the pointer's moves until
-`MoveBoardOverlay` puts it somewhere of its own.
+look as a pattern of dots. It is laid over the picture on the way to
+the glass, under the pointer, the picture never holding it - by the
+board itself where it has the means, by the library where it composes
+the board's picture; it is shown whether the pointer is or not, so a
+finger dragging on a touch panel, where the pointer is hidden, sees
+it. Its point is put at the pointer's, and it follows the pointer's
+moves until `MoveBoardOverlay` puts it somewhere of its own.
 
 **CONTEXT**
 
-- Waits: for rtg's pointer lock while another task moves the pointer,
-  and for a driver that sends the rows over a bus.
+- Waits: for the board's compose lock while another task moves the
+  pointer or hands on what it drew, for the board's lock where the
+  library lays the overlay, and for a driver that sends the rows over
+  a bus.
 - Interrupts: no. It allocates.
-- Locks: takes rtg's pointer lock while the driver changes images; no
+- Locks: takes the board's compose lock while the image changes, and
+  the board's lock before it where the library lays the overlay; no
   spinlock may be held.
 - Process: a Task will do.
 
@@ -2702,7 +2666,8 @@ set the overlay on the right board and take it away again.
 
 **BUGS**
 
-None known.
+As `SetBoardPointer`: an image made for one pixel format is not laid
+by the library in a mode of another.
 
 **SEE ALSO**
 
@@ -2753,18 +2718,30 @@ board keeps the image it had.
 The image is converted here and not again: every pixel into the
 board's format, and its alpha into a mask of one bit a pixel - an
 alpha of 128 or more is the pointer, anything less the picture showing
-through. So what a driver does on the way to the glass, often from an
-interrupt, is a masked copy of a fixed size. The point stays where
-MoveBoardPointer last put it, and the new image is placed around it.
-Whether it is seen is ShowBoardPointer's business.
+through. So laying it on the way to the glass, which a driver often
+does from an interrupt, is a masked copy of a fixed size. The point
+stays where MoveBoardPointer last put it, and the new image is placed
+around it. Whether it is seen is ShowBoardPointer's business.
+
+A board that lays its pointer itself - a cursor plane, a stream's own
+copy - is handed the image. On a board whose picture the library
+composes, the library lays it: the part of the picture the old image
+covered and the part the new one covers are delivered again. A
+display that was reading the shown buffer itself is then shown the
+library's picture, and where its driver cannot do that the image is
+refused with the driver's answer.
 
 **CONTEXT**
 
-- Waits: for rtg's pointer lock while another task moves the pointer,
-  and for a driver that sends the pointer's rows over a bus.
+- Waits: for the board's compose lock while another task moves the
+  pointer or hands on what it drew, for the board's lock where the
+  library lays the pointer, and for a driver that sends rows over a
+  bus.
 - Interrupts: no. It allocates.
-- Locks: takes rtg's pointer lock while the driver changes images, so a move
-  cannot come between; no spinlock may be held.
+- Locks: takes the board's compose lock while the image changes, so
+  a move cannot come between - and the board's lock before it where
+  the library lays the pointer, as the board may be shown another
+  way; no spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2782,7 +2759,9 @@ never read.
 
 **BUGS**
 
-None known.
+The image is made in the pixel format the board has when it is set.
+Where the library lays the pointer and the board is then put in a
+mode of another format, the image is not laid until it is set again.
 
 **SEE ALSO**
 
@@ -2907,9 +2886,10 @@ more bands than a display shows, bands out of order, another board's
 buffer, a buffer with no pixels, or rows a band would show that its
 buffer has not got; `RTGERR_NOT_DISPLAYABLE` for a buffer that was not
 made to be shown or is not the mode's size; `RTGERR_BAD_FORMAT` for
-one not in the mode's format; `RTGERR_NO_DISPLAY` on a board whose
-device has gone; `RTGERR_NOT_SUPPORTED` for a board that shows
-nothing, or bands on one that shows only a whole buffer
+one not in the mode's format, and for bands the library would compose
+in a format whose pixels are not whole bytes; `RTGERR_NO_DISPLAY` on a
+board whose device has gone; `RTGERR_NOT_SUPPORTED` for a board that
+shows nothing, or bands on one that shows only a whole buffer
 (`RTGBC_BANDS`); or what the driver answered.
 
 **BEHAVIOR**
@@ -2949,7 +2929,9 @@ handed on again.
 - Interrupts: no. The driver may wait on its bus.
 - Locks: takes the board's lock around the checks, the driver's show
   and the marks on the board's buffers, so two shows of one board
-  follow each other. No spinlock may be held: a driver may wait.
+  follow each other, and inside it the board's compose lock, so
+  nothing is handed on and no pointer moved between the old picture
+  and the new. No spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2959,9 +2941,16 @@ buffers stay the caller's.
 
 **NOTES**
 
-What is drawn into any shown buffer is handed on by `RefreshBitMap` as
-for one shown alone: the board knows which of its rows are on the
+What is drawn into any shown buffer is handed on by `RefreshRect` as
+for one shown alone: the library knows which of its rows are on the
 glass.
+
+How the bands reach the glass is the board's: a display that reads
+buffers itself reads as many bands as it can, and one with a picture
+of its own is delivered the picture the library composes of them. A
+board that has both ways reads the buffers itself for as long as
+nothing lies over the picture - no more bands than it reads, no
+overlay, no pointer the library lays.
 
 **BUGS**
 
@@ -2971,7 +2960,7 @@ an error - no memory for the stream's chain, a flip that did not land
 
 **SEE ALSO**
 
-`ShowBitMap`, `BoardDisplayBitMap`, `BestBoardMode`, `RefreshBitMap`
+`ShowBitMap`, `BoardDisplayBitMap`, `BestBoardMode`, `RefreshRect`
 
 **EXAMPLES**
 
@@ -3010,18 +2999,26 @@ fn ShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32
 
 **BEHAVIOR**
 
-The picture itself never holds the pointer: the board lays it in on
-the way to the glass, so hiding it leaves the picture exactly as it was
+The picture itself never holds the pointer: it is laid in on the way
+to the glass, so hiding it leaves the picture exactly as it was
 drawn. Shown with no image set, nothing appears until one is.
 `RTGBF_POINTER` in `RtgBoardInfo.flags` says which it is.
 
+On a board whose picture the library composes, a display that reads
+the shown buffer itself is shown the library's picture while the
+pointer is seen, and reads the buffer again once nothing lies over
+the picture any more.
+
 **CONTEXT**
 
-- Waits: for rtg's pointer lock while another task changes the pointer,
-  and for a driver that sends the pointer's rows over a bus.
+- Waits: for the board's compose lock while another task changes the
+  pointer or hands on what it drew, for the board's lock where the
+  library lays the pointer, and for a driver that sends the pointer's
+  rows over a bus.
 - Interrupts: no. A driver may send the pointer's rows over a bus.
-- Locks: takes rtg's pointer lock while the driver changes it; no spinlock
-  may be held.
+- Locks: takes the board's compose lock while it changes, and the
+  board's lock before it where the library lays the pointer; no
+  spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**

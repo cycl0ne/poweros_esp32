@@ -6,10 +6,11 @@
 //! comes back is a buffer whose first seven fields are a drawing surface,
 //! so whoever draws into it needs to know nothing about boards.
 //!
-//! Writing into a buffer is the caller's business. RefreshBitMap is how it
-//! says it has finished a stretch of rows, and that is the call that
-//! reaches the board: for memory the CPU holds in its cache the board has
-//! to be told, and for a display on a bus the rows have to be sent.
+//! Writing into a buffer is the caller's business. RefreshRect is how it
+//! says it has finished a rectangle, and that is the call that reaches
+//! the board: for memory the CPU holds in its cache the board has to be
+//! told, and for a display with a picture of its own the rectangle has
+//! to be delivered.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;

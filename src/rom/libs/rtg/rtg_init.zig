@@ -76,7 +76,16 @@ pub const LIBRARY_VERSION = 1;
 /// 23: the tasks that wait for a frame are on a list changed inside
 /// Disable, not under a spinlock: the frame interrupt may find a task
 /// holding any lock.
-pub const LIBRARY_REVISION = 23;
+/// 24: the library composes - a display with a picture of its own has
+/// its driver fill in update and fetch the picture's pixels with
+/// ComposeLines: bands, an overlay and a pointer on a board whose driver
+/// wrote none of them, shown direct for as long as nothing lies over the
+/// picture (RtgBoardSpec.direct_bands, RTGSHOW_DIRECT). The ops for the
+/// pointer, the overlay, the engine and the video layers are tables of
+/// their own; a board's compose lock replaces the one pointer lock.
+/// RefreshRect takes null for the whole buffer, and RefreshBitMap is
+/// gone.
+pub const LIBRARY_REVISION = 24;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -134,7 +143,6 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&rb.driver_lock);
     sys_base.InitSemaphore(&rb.device_lock);
     sys_base.InitSemaphore(&rb.board_lock);
-    sys_base.InitSemaphore(&rb.pointer_lock);
     sys_base.NewList(&rb.notifies);
     sys_base.InitSemaphore(&rb.notify_lock);
     rb.monitor_task = null;

@@ -321,25 +321,23 @@ things with its picture:
   frame - once it is out of the caches, where the display does not see
   them.
 
-Either way the writer says what it wrote, with `RefreshBitMap(bitmap, y,
-rows)` (`rows` 0: every row from `y` on). A streaming board writes those
-rows back out of the cache, whichever buffer they are in; a sending board
-sends them, and rows of a buffer it is not showing go nowhere and cost
-nothing.
-
-A writer that wrote only part of each row - a window on a wide display,
-or a picture drawn a tile at a time - says so with `RefreshRect(bitmap,
-&rect)` (rtg.library 1.5). The `fb` boards then write back only the
-rectangle's pixels; a board that has no way of its own is handed the
-rectangle's rows, as `RefreshBitMap` would hand them. Rectangles that do
-not overlap may be handed on by several tasks at once.
+Either way the writer says what it wrote, with `RefreshRect(bitmap,
+&rect)` - a window on a wide display, a picture drawn a tile at a time -
+or with a null rectangle for the whole buffer. A board whose display
+reads the buffer itself writes the rectangle back out of the cache,
+whichever buffer it is in. A board whose display has a picture of its
+own is delivered the rectangle as the display's: the lines of each band
+that shows the buffer, with the overlay and the pointer over them; what
+is written into a buffer no band shows goes nowhere and costs nothing.
+On a board that reads its buffers itself, rectangles that do not overlap
+may be handed on by several tasks at once.
 
 **graphics.library does this for its RastPorts.** Every drawing call hands
 on the rows it touched. Between `BeginDraw` and `EndDraw` the rows are
 gathered instead, in the buffer's `dirty_top` and `dirty_end`, and the last
 `EndDraw` hands the lot on at once - one send for a whole window redrawn,
 and never a half-drawn row on the glass. A program that writes pixels
-itself, past graphics.library, calls `RefreshBitMap` when it has finished.
+itself, past graphics.library, calls `RefreshRect` when it has finished.
 
 ## Showing a buffer
 
@@ -361,9 +359,11 @@ board's lock while they work, the driver's show inside it: a buffer is
 never freed between a show and its mark,
 and two shows of one board follow each other. So each of them may wait
 for as long as a show takes - a frame on a streaming board - and none is
-called with a spinlock held. Handing on what was drawn (`RefreshBitMap`,
-`RefreshRect`) and the engine's calls take no lock: many tasks call them,
-at every draw.
+called with a spinlock held. Handing on what was drawn (`RefreshRect`)
+and the engine's calls never take the board's lock: many tasks call
+them, at every draw. On a board whose display has a picture of its own,
+handing on takes the board's compose lock for the delivery, as a pointer
+move does.
 
 So **double buffering** is two buffers and two calls: draw into the one
 not shown, show it, draw into the other. intuition does exactly this for a
@@ -389,7 +389,7 @@ A show that fails changes nothing: the call answers the error, the
 display goes on reading the buffer it read, that one stays marked, and
 the one refused may be freed. On a board that is sent its picture, rows
 of the buffer refused may have gone over the bus before the send failed;
-`RefreshBitMap` of the buffer still shown sends its rows again.
+`RefreshRect` of the buffer still shown sends it again.
 
 Two boards do not keep this yet, for one buffer or for bands
 (`ShowBitMap`, BUGS). The ESP32-P4's `dsi` boards keep the buffers of a
@@ -457,7 +457,9 @@ changes for one that takes the mode.
 
 A board that shows one whole buffer and no more has `RTGBC_BANDS` clear
 in its `caps`, and answers anything else than one buffer from the top
-with `RTGERR_NOT_SUPPORTED`.
+with `RTGERR_NOT_SUPPORTED`. A board has bands where its display reads
+several buffers itself, and wherever the library composes its picture:
+each line is then fetched from the band that covers it.
 
 An `fb` board composes the bands into its extra frame, each row from the
 buffer its band shows, and the display reads that frame; a refresh
@@ -574,10 +576,16 @@ picture by its mode instead: an upright and a sideways one, chosen with
 
 ## The pointer
 
-A board with `RTGBC_POINTER` lays a small image over the picture on its
-way to the glass, without the picture ever holding it - so the pointer
-can move over a screen that is being drawn without either disturbing the
-other. Where the display reads the picture straight out of memory, as
+On a board with `RTGBC_POINTER` a small image is laid over the picture
+on its way to the glass, without the picture ever holding it - so the
+pointer can move over a screen that is being drawn without either
+disturbing the other. A board that has the means lays it itself: a
+cursor plane, or a stream's own copy. On a board whose display has a
+picture of its own, rtg.library lays it as it composes that picture,
+and a move is the rectangle the image left and the one it came to,
+delivered again; the emulator's board is such a one, and reads the shown
+buffer itself for as long as no pointer, no overlay and no second band
+lies over the picture. Where the display reads the picture straight out of memory, as
 the DSI boards' stream does, the board streams a copy of what is shown
 instead, from the first time a pointer is shown, and lays the pointer
 into the copy: a frame's memory more (the HDMI link has its copy
@@ -608,8 +616,8 @@ the extra frame.
   once into the board's format with a one-bit mask. Pixel `(hot_x, hot_y)`
   is the point.
 - `MoveBoardPointer(board, x, y)` puts the point at `(x, y)`, in the
-  coordinates a caller draws in. It holds rtg's pointer semaphore while
-  the driver moves it, and on a board reached over a bus waits for the
+  coordinates a caller draws in. It holds the board's compose lock while
+  the pointer moves, and on a board reached over a bus waits for the
   send, so it is called from a task, never with a spinlock held;
   intuition calls it on every pointer event.
 - `ShowBoardPointer(board, show)` lays it over the picture or stops.
@@ -617,8 +625,8 @@ the extra frame.
 intuition drives all three from the mouse; a program sets its window's
 pointer with `SetWindowPointerA` and leaves the board to intuition.
 
-A board with `RTGBC_OVERLAY` lays a second image the same way, under the
-pointer: a dragged icon.
+On a board with `RTGBC_OVERLAY` a second image is laid the same way,
+under the pointer: a dragged icon.
 
 - `SetBoardOverlay(board, image, hot_x, hot_y)` takes a surface with an
   alpha channel of up to `RTG_OVERLAY_MAX` (160) each way and converts it
@@ -916,7 +924,29 @@ as gone and its driver's `detach` is called to stop the hardware.
 has. A slot left null is one it has not got: the call answers
 `RTGERR_NOT_SUPPORTED` and its `RTGBC_` bit stays clear. The library
 checks and clips before it calls a slot, so a driver is never given a
-rectangle outside the buffer or a band list out of order.
+rectangle outside the buffer or a band list out of order. The pointer,
+the overlay, the engine and the video layers are each a table of their
+own, named in `RtgBoardOps` or left null.
+
+**How the picture reaches the glass** a driver says by what it fills
+in. A display that reads the shown buffers itself says how many bands
+it reads so, in its board's description (`direct_bands`: 1 is one whole
+buffer). A display with a picture of its own - a controller's memory
+behind a bus, an emulator's copy - fills in `update(board, rect)`: this
+rectangle of the display changed. It fetches the rectangle's pixels with
+`ComposeLines(board, rect, into, pitch)` and delivers them. The library
+composes that picture: each line from the band that covers it, the
+overlay and the pointer over them. So such a board has bands, an
+overlay and a pointer its driver wrote none of, and `update` is all the
+driver is asked - for what was drawn (`RefreshRect`), and for the
+rectangles a pointer or an overlay left and came to. `update` runs with
+the board's compose lock held, in the task that drew or moved the
+pointer.
+
+A board with both is shown direct for as long as nothing lies over the
+picture: no more bands than its display reads, no overlay, no pointer
+the library lays. When that changes the library asks for the show again
+the other way.
 
 `show(board, what)` is the one op for what is on the glass. `what` is an
 `RtgShow`: the mode and its timings, the bands (`bands`, `count`; none
@@ -924,10 +954,12 @@ is nothing shown), and `flags`. With `RTGSHOW_MODE_CHANGED` the board is
 to be put in `what.mode` first - it was in another, in none, or its
 monitor changed - and without it the mode is the one the board is in and
 only the picture changes. The bands are checked: each buffer is the
-board's, displayable, and of the mode's width, row length and format. A
-driver that takes bands says so with `RTGBC_BANDS` in its description's
-`caps`; one that does not is only ever handed one whole buffer from the
-top, or none.
+board's, displayable, and of the mode's width, row length and format.
+With `RTGSHOW_DIRECT` the display is to read the bands itself, never
+more of them than the description's `direct_bands`. Without it the
+board shows its own picture: the library has the new bands in place,
+and the driver fetches the whole picture with `ComposeLines` and
+delivers it before it answers.
 
 A `show` without `RTGSHOW_MODE_CHANGED` that answers an error has left
 the board reading what it read and kept nothing of what it was handed:
@@ -937,8 +969,9 @@ nothing; the library then asks for the mode before and what was shown
 in it, again with `RTGSHOW_MODE_CHANGED`, and where that fails too holds
 the board to be in no mode. The library writes the board's `info` once
 the op has answered; a driver stores nothing there. `show` is called
-with the board's lock held, so one runs on a board at a time and a
-driver needs no lock of its own between two of them.
+with the board's lock and its compose lock held, so one runs on a board
+at a time, nothing is handed on meanwhile, and a driver needs no lock of
+its own for either.
 
 **Frames.** A driver whose display raises an interrupt as a frame ends
 calls `FrameDone(board)` in it, once a frame. The library counts the
@@ -953,19 +986,15 @@ calls nothing: its board is waited for by the clock.
 | `destroy` | undo what create did; called last, after the buffers are gone |
 | `show` | what is on the glass: the mode where it changed, and one buffer, several in bands of lines (`RtgBand.rowAt` says which row a line shows), or none |
 | `detect`, `check_mode` | a connector: what is on it, and whether the board can make a timing |
-| `refresh` | rows of a buffer were written: write them back or send them |
+| `refresh` | a rectangle of a buffer was written, shown or not: write it back out of the cache, or tell the display |
+| `update` | a rectangle of the display's own picture changed: fetch it (`ComposeLines`) and deliver it |
 | `display`, `set_brightness`, `brightness` | the display enable and the backlight |
-| `stats`, `control` | the counters, and the driver's own requests |
-| `fill_rect`, `copy_rect`, `blit_template`, `blit_pattern` | the engine |
 | `mirror` | mirroring the picture |
-| `set_pointer`, `move_pointer`, `show_pointer` | the pointer |
-| `set_overlay`, `move_overlay` | a second image under the pointer |
-| `blend_pixels`, `blend_rect`, `scale_pixels` | the engine's blends and scale |
-| `refresh_rect`, `copy_rects` | a rectangle written, and the engine's copies in a list |
-| `video_open`, `video_close`, `video_show`, `video_move` | a video layer (all four, or none) |
-
-New slots are only ever added at the end, so a driver built against an
-older SDK keeps its layout.
+| `stats`, `control` | the counters, and the driver's own requests |
+| `pointer` (`RtgPointerOps`: `set`, `move`, `show`) | a pointer the board lays itself |
+| `overlay` (`RtgOverlayOps`: `set`, `move`) | a second image under the pointer, laid by the board itself |
+| `engine` (`RtgEngineOps`: `fill_rect`, `copy_rect`, `copy_rects`, `blit_template`, `blit_pattern`, `blend_pixels`, `blend_rect`, `scale_pixels`) | the engine, each slot on its own |
+| `video` (`RtgVideoOps`: `open`, `close`, `show`, `move`) | a video layer |
 
 ## The boards of this machine
 
@@ -976,7 +1005,7 @@ older SDK keeps its layout.
 | Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a chain of blocks a frame; the DMA's interrupt starts the next; fills, blends and scales on the PPA, copies on the 2D-DMA | a DMA block for each band's run of rows, one a line for a band that repeats its row; changed at a frame's end |
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
 | Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
-| QEMU | `qemu` | the emulator's display reads memory of its own | the bands composed into one picture |
+| QEMU | `qemu` | the emulator's display reads memory of its own: the shown buffer while nothing lies over the picture, else a frame rtg.library composes | composed by the library into that frame |
 | VisionFive 2 on HDMI, the monitor's mode | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | the bands composed into one picture, which the controller then reads |
 | QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | as the VisionFive 2's |
 
@@ -1027,7 +1056,7 @@ seen within two seconds. The link is brought up when the board is put
 in a mode, in this host's timing for the mode's size. The bridge takes RGB888 only, and this
 revision of the chip sends what memory holds, so the screens stay RGB565
 and the stream reads a copy of what is shown, three bytes a pixel: showing
-bands converts their rows into it, and RefreshBitMap converts the rows
+bands converts their rows into it, and RefreshRect converts the rows
 drawn wherever a band shows them - the 2D-DMA widens RGB565 as it copies.
 The link stays in high speed through the blanking, as the bridge needs,
 and its lanes run faster than the picture's RGB888 by a margin found for

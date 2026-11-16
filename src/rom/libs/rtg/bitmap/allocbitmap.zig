@@ -34,7 +34,7 @@ const boards = @import("../board/_board.zig");
 ///
 /// BEHAVIOR:
 /// Every row starts on the board's alignment, so a stretch of rows handed
-/// to `RefreshBitMap` is exactly the memory that was written. On a board
+/// to `RefreshRect` is exactly the memory that was written. On a board
 /// whose display memory is system memory (`RTGRF_SYSTEM_MEMORY`) the
 /// buffer is taken from exec now, external memory first, and given back by
 /// `FreeBitMap`; its pixels are whatever that memory held. Its first
@@ -83,7 +83,7 @@ pub fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, 
         return null;
     }
     // Every row starts on the board's alignment, so a stretch of rows
-    // handed back with RefreshBitMap is exactly the memory that was
+    // handed back with RefreshRect is exactly the memory that was
     // written and nothing either side of it.
     const pitch = private.arena.roundUp(row);
     const bytes = pitch * @as(usize, height);

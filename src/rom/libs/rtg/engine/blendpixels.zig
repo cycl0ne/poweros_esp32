@@ -78,7 +78,8 @@ pub fn BlendPixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const cut = clip(dest, area) orelse return err.RTGERR_OK;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    const blend = ops.blend_pixels orelse return err.RTGERR_NOT_SUPPORTED;
+    const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
+    const blend = engine.blend_pixels orelse return err.RTGERR_NOT_SUPPORTED;
     // The picture's corner moved by what the cut took off, worked out
     // wide: a corner that would leave the numbers is no picture.
     const x = @as(i64, pixels.x) + cut.x - area.x;

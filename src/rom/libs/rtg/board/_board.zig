@@ -9,8 +9,10 @@
 //! actually offers, cuts up the display memory, and names the board. Past
 //! that it does the book-keeping that has to be the same for every board
 //! - which buffer is up, what the display memory has been cut into - and
-//! dispatches the rest. Where the driver left a slot null, the answer is
-//! RTGERR_NOT_SUPPORTED: the library does not do the work instead.
+//! dispatches the rest. Where the driver left an engine's slot null, the
+//! answer is RTGERR_NOT_SUPPORTED: the library does not draw instead. The
+//! picture of a display that has one of its own is the library's to
+//! compose (`compose/_compose.zig`).
 //!
 //! A board is never freed for a program. One whose device has gone is
 //! retired (`retire`): it stays a handle, and says it is gone. A driver
@@ -30,6 +32,7 @@ const modes = @import("../mode/_mode.zig");
 const monitors = @import("../monitor/_monitor.zig");
 const shows = @import("../display/_display.zig");
 const frames = @import("../frame/_frame.zig");
+const composer = @import("../compose/_compose.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -64,9 +67,13 @@ pub const Private = struct {
     monitor_format: rtg.PixelFormat = .bgra32,
     /// What the board shows: its bands from the top - one from line 0 for
     /// a buffer shown alone, none while nothing is shown - as the driver
-    /// last took them (`display/_display.zig`). Under the board's lock.
+    /// last took them (`display/_display.zig`). Written with the board's
+    /// lock and its compose lock held, so read under either.
     bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     band_count: u32 = 0,
+    /// How the picture reaches the glass, and the lock everything that
+    /// goes into it changes under (`compose/_compose.zig`).
+    compose: composer.State = .{},
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
     /// The frames its driver says ended, and who waits for one
@@ -195,9 +202,11 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     const device = board.device.?;
     const request = readRequest(rb, device.tags);
 
-    // What the driver said it can do - by the ops it filled in, and of
-    // the board as it made it - and what it left to the caller.
+    // What the driver said it can do, by the ops it filled in, and what
+    // the library does for a board whose picture it composes; the rest is
+    // left to the caller.
     if (board.ops) |ops| board.info.caps |= capsOf(ops);
+    if (composer.composes(board) or private.compose.direct_bands > 1) board.info.caps |= rtg.boards.RTGBC_BANDS;
     // Whether its screens' windows are composed is the board's to say,
     // for intuition to read: the device's tags, or its driver where they
     // say nothing.
@@ -343,33 +352,35 @@ pub fn dark(board: *const rtg.RtgBoard) bool {
 }
 
 /// Which RTGBC_ bits an ops table amounts to. The driver does not say what
-/// it can do; what it filled in says it.
+/// it can do; what it filled in says it. RTGBC_BANDS is not among them:
+/// it also hangs on how many bands the display reads itself.
 ///
 /// INPUTS:
 /// - `ops` - the driver's operations.
 pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     var caps: u32 = 0;
     if (ops.show != null) caps |= rtg.boards.RTGBC_SHOW;
-    if (ops.refresh != null) caps |= rtg.boards.RTGBC_REFRESH;
+    if (ops.refresh != null or ops.update != null) caps |= rtg.boards.RTGBC_REFRESH;
     if (ops.display != null) caps |= rtg.boards.RTGBC_DISPLAY;
     if (ops.set_brightness != null) caps |= rtg.boards.RTGBC_BRIGHTNESS;
     if (ops.stats != null) caps |= rtg.boards.RTGBC_STATS;
     if (ops.control != null) caps |= rtg.boards.RTGBC_CONTROL;
-    if (ops.fill_rect != null) caps |= rtg.boards.RTGBC_FILL_RECT;
-    if (ops.copy_rect != null) caps |= rtg.boards.RTGBC_COPY_RECT;
-    if (ops.blit_template != null) caps |= rtg.boards.RTGBC_BLIT_TEMPLATE;
-    if (ops.blit_pattern != null) caps |= rtg.boards.RTGBC_BLIT_PATTERN;
     if (ops.mirror != null) caps |= rtg.boards.RTGBC_MIRROR;
     if (ops.detect != null) caps |= rtg.boards.RTGBC_MONITOR;
-    // A pointer is all three or none: one that could be set but not moved
-    // is no pointer.
-    if (ops.set_pointer != null and ops.move_pointer != null and ops.show_pointer != null) caps |= rtg.boards.RTGBC_POINTER;
-    if (ops.set_overlay != null and ops.move_overlay != null) caps |= rtg.boards.RTGBC_OVERLAY;
-    if (ops.blend_pixels != null) caps |= rtg.boards.RTGBC_BLEND_PIXELS;
-    if (ops.blend_rect != null) caps |= rtg.boards.RTGBC_BLEND_RECT;
-    if (ops.scale_pixels != null) caps |= rtg.boards.RTGBC_SCALE_PIXELS;
-    // A layer is all four or none, as the pointer is.
-    if (ops.video_open != null and ops.video_close != null and ops.video_show != null and ops.video_move != null) caps |= rtg.boards.RTGBC_VIDEO;
+    // A pointer and an overlay: the board's own, or the library's on a
+    // board whose picture it composes.
+    if (ops.pointer != null or ops.update != null) caps |= rtg.boards.RTGBC_POINTER;
+    if (ops.overlay != null or ops.update != null) caps |= rtg.boards.RTGBC_OVERLAY;
+    if (ops.engine) |engine| {
+        if (engine.fill_rect != null) caps |= rtg.boards.RTGBC_FILL_RECT;
+        if (engine.copy_rect != null) caps |= rtg.boards.RTGBC_COPY_RECT;
+        if (engine.blit_template != null) caps |= rtg.boards.RTGBC_BLIT_TEMPLATE;
+        if (engine.blit_pattern != null) caps |= rtg.boards.RTGBC_BLIT_PATTERN;
+        if (engine.blend_pixels != null) caps |= rtg.boards.RTGBC_BLEND_PIXELS;
+        if (engine.blend_rect != null) caps |= rtg.boards.RTGBC_BLEND_RECT;
+        if (engine.scale_pixels != null) caps |= rtg.boards.RTGBC_SCALE_PIXELS;
+    }
+    if (ops.video != null) caps |= rtg.boards.RTGBC_VIDEO;
     return caps;
 }
 

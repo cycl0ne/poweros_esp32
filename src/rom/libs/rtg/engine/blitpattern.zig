@@ -57,6 +57,7 @@ pub fn BlitPattern(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
     const board = boardOf(dest) orelse return err.RTGERR_BAD_ARG;
     const cut = clip(dest, area) orelse return err.RTGERR_OK;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    const blit = ops.blit_pattern orelse return err.RTGERR_NOT_SUPPORTED;
+    const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
+    const blit = engine.blit_pattern orelse return err.RTGERR_NOT_SUPPORTED;
     return blit(board, dest, &cut, tile);
 }

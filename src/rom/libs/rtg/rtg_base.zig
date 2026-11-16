@@ -49,10 +49,6 @@ pub const RtgBase = extern struct {
     boards: exec.List,
     transports: exec.List,
     board_lock: exec.SignalSemaphore,
-    /// Every board's pointer - its image, where it is, whether it is shown
-    /// - and the driver's pointer ops, which run inside it: a semaphore, as
-    /// a driver may send the pointer's rows over a bus.
-    pointer_lock: exec.SignalSemaphore,
     /// The tasks that asked to be told when something about the boards
     /// changes (`AddRtgNotify`), and the semaphore held while the list
     /// changes and while they are told.

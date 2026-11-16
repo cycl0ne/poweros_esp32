@@ -93,7 +93,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 17;
+const REVISION = 18;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -544,7 +544,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGBF_STREAMING,
         // A monitor's modes are made in the format the screens are in.
         .format = .rgb565,
-        .caps = rtg.boards.RTGBC_BANDS,
+        // The stream reads every band of a show itself, or its copy of
+        // them.
+        .direct_bands = rtg.RTG_MAX_BANDS,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .board = board, .config = wanted, .own = wanted, .hdmi = hdmi, .composing = hdmi };
@@ -806,15 +808,16 @@ fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
     return showBands(board, bands, what.count);
 }
 
-/// Rows the CPU wrote, handed to the panel: the DMA reads that memory
-/// without going through the cache, so what was written has to be pushed
-/// out of it first. The stream never stops, so that is the whole of it -
-/// unless it reads the copy, which takes the rows and the pointer again.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
+/// A rectangle the CPU wrote, handed to the panel as its rows: the DMA
+/// reads that memory without going through the cache, so what was
+/// written has to be pushed out of it first. The stream never stops, so
+/// that is the whole of it - unless it reads the copy, which takes the
+/// rows and the pointer again.
+fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     const pixels = bitmap.pixels orelse return err.RTGERR_BAD_ARG;
-    const count = if (rows == 0) bitmap.height - y else rows;
+    const y: u32 = @intCast(area.y);
+    const count: u32 = @intCast(area.height);
     var bytes: u32 = count * bitmap.pitch;
-    if (bytes == 0) return err.RTGERR_OK;
     const start: *anyopaque = @ptrFromInt(@intFromPtr(pixels) + @as(usize, y) * bitmap.pitch);
     const panel = panelOf(board);
     _ = panel.sys.CachePreDMA(start, &bytes, 0);
@@ -948,16 +951,21 @@ const ops = rtg.RtgBoardOps{
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
+    .pointer = &pointer_ops,
+    .overlay = &overlay_ops,
+    .engine = &engine_ops,
+};
+
+const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
+const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
+
+/// Of the engine: fills, copies, blends and scales.
+const engine_ops = rtg.RtgEngineOps{
     .fill_rect = &fillRect,
     .copy_rect = &copyRect,
     .blend_pixels = &blendPixels,
     .blend_rect = &blendRect,
     .scale_pixels = &scalePixels,
-    .set_pointer = &setPointer,
-    .move_pointer = &movePointer,
-    .show_pointer = &showPointer,
-    .set_overlay = &setOverlay,
-    .move_overlay = &moveOverlay,
 };
 
 /// A bridge's board has the same, and a connector.

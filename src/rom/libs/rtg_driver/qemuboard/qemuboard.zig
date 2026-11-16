@@ -16,29 +16,21 @@
 //! in common below the board interface, which is the point of having the
 //! interface.
 //!
-//! The pointer is laid over the picture in a frame of its own. The
+//! The window reads one whole buffer by itself: a board's buffers are cut
+//! out of the VRAM, so showing one is the doorbell rung with its address,
+//! and nothing is copied. That is how the board is shown for as long as
+//! nothing lies over the picture.
+//!
+//! Anything more - a pointer, a dragged icon, a screen pulled down over
+//! the one behind - is one picture only in a frame it is composed in. The
 //! doorbell copies at the window's next refresh, not when it is rung, so
-//! the pointer cannot be put into the shown buffer, rung and taken out
-//! again. While a pointer is shown the window is fed from a composed frame
-//! in the VRAM past the board's buffers instead: the shown buffer's rows
-//! copied in as they are refreshed, and the pointer laid over them. A move
-//! puts back the pointer's old rectangle from the shown buffer and lays it
-//! at the new one, so it costs the pointer's size and not the picture's.
-//! With no pointer shown the window reads the shown buffer itself, as it
-//! always did, and nothing is copied. The overlay - a dragged icon - is
-//! laid the same way, under the pointer.
-//!
-//! A refresh comes from whichever task drew, a pointer move from
-//! intuition's pointer task, each on either core: everything that writes
-//! the composed frame or changes what is laid in it holds the board's
-//! `compose_lock`, so that rows copied in on one core never cover a
-//! pointer just laid on the other, nor a restore cut a hole into rows just
-//! copied.
-//!
-//! Several buffers shown at once, in bands of lines - a screen pulled down
-//! over the one behind - are composed the same way: each row of the
-//! composed frame copied from the band that covers it, the buffer's row
-//! that far below the band's origin, and the pointer over them.
+//! a pointer cannot be put into the shown buffer, rung and taken out
+//! again. The board has a frame of its own for that, in the VRAM past its
+//! buffers, and rtg.library composes the picture in it: the board is told
+//! which rectangle of its display changed (`update`), fetches those
+//! pixels from the library straight into the frame (`ComposeLines`), and
+//! rings the doorbell with the frame's address. A pointer's move is then
+//! the image's rectangle and not the picture.
 //!
 //! It exists so that the layers above it can be looked at before anything
 //! is flashed. A board here means rtg.library lists a display,
@@ -60,11 +52,12 @@ const err = rtg.errors;
 const qemu_rgb = sdk.hardware.qemu_rgb;
 const tags = rtg.tags;
 const RtgBase = sdk.interface.rtg.RtgBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 9;
+const REVISION = 10;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -83,34 +76,19 @@ const Screen = struct {
     /// what the glass would show.
     width: u32 = 0,
     height: u32 = 0,
-    /// What ShowBitMap was last given, and where it is shown from.
-    showing: ?*rtg.RtgBitMap = null,
+    /// Whether the window is fed a picture.
+    shown: bool = false,
+    /// The buffer the window reads by itself, while the board is shown
+    /// direct; null while it is fed from the composed frame, and while
+    /// nothing is shown.
+    direct: ?*rtg.RtgBitMap = null,
     /// How many times the picture has been handed to the window. There is
     /// no blanking to count, so this is the only number worth having.
     updates: u32 = 0,
-    /// The frame the window is fed from while a pointer is shown, past
-    /// the board's buffers in VRAM; null when there was no room, and the
-    /// board then has no pointer.
+    /// The frame the library's picture is composed in, past the board's
+    /// buffers in VRAM; null when there was no room, and the board then
+    /// shows one whole buffer and no more.
     composed: ?[*]u8 = null,
-    /// Held while the composed frame, or what is laid in it and what it
-    /// is composed from, changes.
-    compose_lock: exec.SignalSemaphore = .{},
-    /// The pointer: its image (the library's), where the image's top left
-    /// is, and whether it is shown.
-    pointer: ?*const rtg.RtgPointerImage = null,
-    pointer_left: i32 = 0,
-    pointer_top: i32 = 0,
-    pointer_shown: bool = false,
-    /// The overlay (a dragged icon): its image, laid under the pointer
-    /// whenever there is one, and where its top left is.
-    overlay: ?*const rtg.RtgPointerImage = null,
-    overlay_left: i32 = 0,
-    overlay_top: i32 = 0,
-    /// The bands shown, from the top: one, the shown buffer at its own
-    /// origin, unless a screen is pulled down. With more than one the
-    /// window is fed from the composed frame, each row from its band.
-    bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
-    band_count: u32 = 0,
 };
 
 /// A frame of the display waited out, after a flip: the window has no
@@ -125,10 +103,11 @@ fn screenOf(board: *rtg.RtgBoard) *Screen {
     return @ptrCast(@alignCast(board.instance.?));
 }
 
-/// Hand the window everything in the shown buffer.
+/// Hand the window everything in a frame of the VRAM.
 ///
 /// INPUTS:
 /// - `screen` - the board's own state, whose `updates` this counts.
+/// - `from` - the frame: a shown buffer's pixels, or the composed frame.
 ///
 /// BEHAVIOR:
 /// The device copies from the address it is given at its own pace, so a
@@ -141,203 +120,9 @@ fn screenOf(board: *rtg.RtgBoard) *Screen {
 /// - Interrupts: safe. Four register writes and nothing else.
 /// - Locks: none needed.
 /// - Process: a Task will do.
-fn present(screen: *Screen) void {
-    const shown = screen.showing orelse return;
-    const from = if (composing(screen)) screen.composed.? else shown.pixels.?;
+fn present(screen: *Screen, from: [*]const u8) void {
     qemu_rgb.update(@intFromPtr(from), @intCast(screen.width), @intCast(screen.height));
     screen.updates +%= 1;
-}
-
-// --- the pointer, in the composed frame -----------------------------------
-
-/// The composed frame held by this task (`compose_lock`), until `letGo`.
-fn hold(screen: *Screen) void {
-    screen.sys.ObtainSemaphore(&screen.compose_lock);
-}
-
-fn letGo(screen: *Screen) void {
-    screen.sys.ReleaseSemaphore(&screen.compose_lock);
-}
-
-/// Whether the window is fed from the composed frame: a pointer with an
-/// image is shown over a picture, there is an overlay, or the picture is
-/// several in bands.
-fn composing(screen: *Screen) bool {
-    if (screen.composed == null or screen.showing == null) return false;
-    return screen.band_count > 1 or (screen.pointer_shown and screen.pointer != null) or screen.overlay != null;
-}
-
-/// Where display row `y` comes from: its band's buffer, that buffer's row
-/// `y - origin`.
-fn sourceRow(screen: *Screen, y: u32) ?[*]u8 {
-    var i = screen.band_count;
-    while (i > 0) {
-        i -= 1;
-        const band = screen.bands[i];
-        if (y < band.line) continue;
-        const pitch = screen.width * bytes_per_pixel;
-        return band.bitmap.pixels.? + band.rowAt(y) * pitch;
-    }
-    return null;
-}
-
-/// Display rows `top` to `end`, each from its band, into the composed
-/// frame.
-fn copyRows(screen: *Screen, top: u32, end: u32) void {
-    const composed = screen.composed orelse return;
-    const pitch = screen.width * bytes_per_pixel;
-    var y = top;
-    while (y < end) : (y += 1) {
-        const from = sourceRow(screen, y) orelse continue;
-        screen.sys.CopyMem(from, composed + y * pitch, pitch);
-    }
-}
-
-/// The part of the image's rectangle at (left, top) that is on the
-/// picture, as columns and rows; null when none of it is.
-const Clip = struct { x0: u32, y0: u32, x1: u32, y1: u32 };
-
-fn clipOf(screen: *Screen, image: *const rtg.RtgPointerImage, left: i32, top: i32) ?Clip {
-    const x0 = @max(left, 0);
-    const y0 = @max(top, 0);
-    const x1 = @min(left + @as(i32, @intCast(image.width)), @as(i32, @intCast(screen.width)));
-    const y1 = @min(top + @as(i32, @intCast(image.height)), @as(i32, @intCast(screen.height)));
-    if (x0 >= x1 or y0 >= y1) return null;
-    return .{ .x0 = @intCast(x0), .y0 = @intCast(y0), .x1 = @intCast(x1), .y1 = @intCast(y1) };
-}
-
-/// The picture back where both images are: their rectangles copied from
-/// the shown buffer.
-fn restore(screen: *Screen) void {
-    // Where they are, read once.
-    restoreImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
-    restoreImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
-}
-
-fn restoreImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
-    const image = given orelse return;
-    const clip = clipOf(screen, image, left, top) orelse return;
-    const composed = screen.composed orelse return;
-    const pitch = screen.width * bytes_per_pixel;
-    var y = clip.y0;
-    while (y < clip.y1) : (y += 1) {
-        const from = sourceRow(screen, y) orelse continue;
-        const at = clip.x0 * bytes_per_pixel;
-        screen.sys.CopyMem(from + at, composed + y * pitch + at, (clip.x1 - clip.x0) * bytes_per_pixel);
-    }
-}
-
-/// The images laid over the composed frame: the overlay, then the pointer
-/// over it when it is shown.
-fn lay(screen: *Screen) void {
-    layImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
-    if (screen.pointer_shown) layImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
-}
-
-/// One image laid over the composed frame: a masked copy, cut to the
-/// picture.
-fn layImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
-    const image = given orelse return;
-    const clip = clipOf(screen, image, left, top) orelse return;
-    const composed = screen.composed orelse return;
-    if (image.format != .rgb565) return;
-    const pitch = screen.width * bytes_per_pixel;
-    var y = clip.y0;
-    while (y < clip.y1) : (y += 1) {
-        const image_y: u32 = @intCast(@as(i32, @intCast(y)) - top);
-        const from: [*]const u16 = @ptrCast(@alignCast(image.pixels + image_y * image.pitch));
-        const into: [*]u16 = @ptrCast(@alignCast(composed + y * pitch));
-        var x = clip.x0;
-        while (x < clip.x1) : (x += 1) {
-            const image_x: u32 = @intCast(@as(i32, @intCast(x)) - left);
-            if (image.opaqueAt(image_x, image_y)) into[x] = from[image_x];
-        }
-    }
-}
-
-/// The whole picture into the composed frame, with the images over it:
-/// when composing starts, and when another buffer is shown.
-fn rebuild(screen: *Screen) void {
-    if (!composing(screen)) return;
-    copyRows(screen, 0, screen.height);
-    lay(screen);
-}
-
-/// A change to either image: both rectangles put back, the change made,
-/// both laid again - they may overlap, and the one under must not be
-/// left with a hole the other's restore cut. The frame is rebuilt when
-/// composing starts or stops with it, and nothing is shown anew when the
-/// window is fed from the shown buffer before and after. Made holding the
-/// composed frame.
-fn change(screen: *Screen, comptime apply: fn (*Screen, anytype) void, arg: anytype) void {
-    hold(screen);
-    defer letGo(screen);
-    const was = composing(screen);
-    if (was) restore(screen);
-    apply(screen, arg);
-    if (!was and !composing(screen)) return;
-    if (!was) {
-        rebuild(screen);
-    } else if (composing(screen)) {
-        lay(screen);
-    }
-    present(screen);
-}
-
-fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
-    const screen = screenOf(board);
-    if (image) |one| {
-        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    }
-    change(screen, struct {
-        fn apply(on: *Screen, given: anytype) void {
-            on.pointer = given;
-        }
-    }.apply, image);
-    return err.RTGERR_OK;
-}
-
-fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
-    const screen = screenOf(board);
-    change(screen, struct {
-        fn apply(on: *Screen, place: anytype) void {
-            on.pointer_left = place[0];
-            on.pointer_top = place[1];
-        }
-    }.apply, .{ left, top });
-}
-
-fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
-    const screen = screenOf(board);
-    hold(screen);
-    defer letGo(screen);
-    screen.pointer_shown = show;
-    rebuild(screen);
-    present(screen);
-    return err.RTGERR_OK;
-}
-
-fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
-    const screen = screenOf(board);
-    if (image) |one| {
-        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    }
-    change(screen, struct {
-        fn apply(on: *Screen, given: anytype) void {
-            on.overlay = given;
-        }
-    }.apply, image);
-    return err.RTGERR_OK;
-}
-
-fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
-    const screen = screenOf(board);
-    change(screen, struct {
-        fn apply(on: *Screen, place: anytype) void {
-            on.overlay_left = place[0];
-            on.overlay_top = place[1];
-        }
-    }.apply, .{ left, top });
 }
 
 /// The emulator's display is offered: a board made of it, in the size
@@ -365,8 +150,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     if (room == 0) return err.RTGERR_BAD_TAGS;
     const asked: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list));
     const frames = @min(@max(asked, 1), room);
-    // A frame more, if there is one, to compose the pointer in: a board
-    // without it has no pointer and no bands.
+    // A frame more, if there is one, for the picture the library
+    // composes: a board without it has no pointer and no bands.
     const composed: ?[*]u8 = if (frames < room) @ptrFromInt(qemu_rgb.vram + frames * @as(usize, @intCast(frame))) else null;
 
     // The device's own VRAM is the board's display memory, so a buffer cut
@@ -374,10 +159,12 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     // doorbell rather than a copy. It is not cached: these are device
     // bytes, and nothing has to be written back before they are read.
     const board = rb.CreateBoard(driver, device, &.{
-        .ops = if (composed != null) &pointer_ops else &ops,
+        // A pointer, an overlay and bands are one picture only in the
+        // frame they are composed in.
+        .ops = if (composed != null) &composing_ops else &ops,
         .instance_size = @sizeOf(Screen),
-        // Bands are one picture only in the frame they are composed in.
-        .caps = if (composed != null) rtg.boards.RTGBC_BANDS else 0,
+        // The window reads one whole buffer of the VRAM by itself.
+        .direct_bands = 1,
         .region = .{
             .base = @ptrFromInt(qemu_rgb.vram),
             .size = frames * @as(usize, @intCast(frame)),
@@ -387,7 +174,6 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
     screen.* = .{ .sys = sys, .width = width, .height = height, .composed = composed };
-    sys.InitSemaphore(&screen.compose_lock);
 
     // One mode. A virtual display is not a monitor either: it is the shape
     // the emulator was built for, and has no clock of its own.
@@ -412,118 +198,90 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
     return err.RTGERR_OK;
 }
 
-/// Show a buffer, which here means: remember it and ring the doorbell with
-/// its address. The window takes the whole picture from there at its next
-/// refresh, so it never shows half of one and half of another.
-///
-/// The device reads packed rows out of its VRAM or internal memory, so a
-/// buffer has to be one cut from the region, the mode's size and pitch.
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
-    const screen = screenOf(board);
-    if (bitmap) |bm| {
-        if (bm.pixels == null) return err.RTGERR_BAD_ARG;
-        if (bm.width != screen.width or bm.height != screen.height) return err.RTGERR_NOT_DISPLAYABLE;
-        if (bm.pitch != screen.width * bytes_per_pixel) return err.RTGERR_NOT_DISPLAYABLE;
-    }
-    // A flip from one picture to another takes a frame, as on the glass.
-    // The first picture shown is not waited for: it comes up at cold
-    // start.
-    const flip = flip: {
-        hold(screen);
-        defer letGo(screen);
-        const another = screen.showing != null and bitmap != null and (screen.showing != bitmap or screen.band_count > 1);
-        screen.showing = bitmap;
-        screen.band_count = 0;
-        if (bitmap) |bm| {
-            screen.bands[0] = .{ .bitmap = bm };
-            screen.band_count = 1;
-        }
-        rebuild(screen);
-        if (bitmap != null) present(screen);
-        break :flip another;
-    };
-    // Waited out with the frame let go: the pointer moves meanwhile.
-    if (flip) pace(board);
-    return err.RTGERR_OK;
-}
-
 /// The board's one op for what is on the glass (`RtgShow`): put in the
-/// mode where the library says it is to be, then shown the bands - one
-/// whole buffer, several in bands, or nothing. With the mode set anew a
-/// show that fails leaves the board showing nothing.
+/// mode where the library says it is to be, then shown - one whole buffer
+/// the window reads by itself, the library's picture in the composed
+/// frame, or nothing. The window takes the whole picture at its next
+/// refresh, so it never shows half of one and half of another. With the
+/// mode set anew a show that fails leaves the board showing nothing.
 fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
+    const screen = screenOf(board);
     const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
     if (anew) {
         const code = setMode(board, what.mode, what.timings);
         if (code != err.RTGERR_OK) return code;
     }
     const code = showThese(board, what);
-    if (code != err.RTGERR_OK and anew) _ = showBitMap(board, null);
+    if (code != err.RTGERR_OK and anew) {
+        screen.shown = false;
+        screen.direct = null;
+    }
     return code;
 }
 
-/// The bands of a show, in the mode the board is in.
+/// What a show asks for, in the mode the board is in.
 fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
-    const bands = what.bands orelse return showBitMap(board, null);
-    if (what.count == 0) return showBitMap(board, null);
-    const first = bands[0];
-    if (what.count == 1 and first.origin == 0 and first.flags == 0) return showBitMap(board, first.bitmap);
-    return showBands(board, bands, what.count);
-}
-
-/// Rows were written by the CPU. They are already in the device's memory,
-/// so this is the doorbell and nothing more.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) callconv(.c) i32 {
     const screen = screenOf(board);
-    hold(screen);
-    defer letGo(screen);
-    // With the composed frame the rows go into it first - those of them
-    // the bands show - and the pointer back over them where they cross it.
-    if (composing(screen)) {
-        var shown = false;
-        for (screen.bands[0..screen.band_count], 0..) |band, i| {
-            if (band.bitmap != bitmap) continue;
-            const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
-            const first = if (rows == 0) 0 else y;
-            const last = if (rows == 0) bitmap.height else y +| rows;
-            const lines = band.linesOf(first, last, band_end);
-            if (lines.first >= lines.end) continue;
-            copyRows(screen, lines.first, lines.end);
-            shown = true;
-        }
-        if (!shown) return err.RTGERR_OK;
-        lay(screen);
-        present(screen);
+    const bands = what.bands orelse &[0]rtg.RtgBand{};
+    if (what.count == 0) {
+        // Nothing to feed the window from: it keeps what it last took.
+        screen.shown = false;
+        screen.direct = null;
         return err.RTGERR_OK;
     }
-    // Refreshing a buffer that is not the one being shown is not an error
-    // - it is a program drawing ahead into another buffer - but there is
-    // nothing to hand to the window.
-    if (screen.showing != bitmap) return err.RTGERR_OK;
-    present(screen);
+    // A flip from one picture to another takes a frame, as on the glass.
+    // The first picture shown is not waited for: it comes up at cold
+    // start.
+    const flip = screen.shown;
+    if (what.flags & rtg.boards.RTGSHOW_DIRECT != 0) {
+        // The device reads packed rows out of its VRAM: a buffer cut
+        // from the region, the mode's size and pitch, which the library
+        // has checked.
+        const bitmap = bands[0].bitmap;
+        const pixels = bitmap.pixels orelse return err.RTGERR_BAD_ARG;
+        screen.direct = bitmap;
+        screen.shown = true;
+        present(screen, pixels);
+    } else {
+        const code = compose(board, &.{ .width = @intCast(screen.width), .height = @intCast(screen.height) });
+        if (code != err.RTGERR_OK) return code;
+        screen.direct = null;
+        screen.shown = true;
+        present(screen, screen.composed.?);
+    }
+    if (flip) pace(board);
     return err.RTGERR_OK;
 }
 
-/// Several buffers at once, in bands: kept, composed, handed to the window,
-/// and a frame waited out, as a flip is.
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
+/// A rectangle of the library's picture fetched into the composed frame.
+fn compose(board: *rtg.RtgBoard, area: *const rtg.RtgRect) i32 {
     const screen = screenOf(board);
-    for (bands[0..count]) |band| {
-        const bm = band.bitmap;
-        if (bm.pixels == null or bm.pitch != screen.width * bytes_per_pixel) return err.RTGERR_NOT_DISPLAYABLE;
-    }
-    const was_shown = shown: {
-        hold(screen);
-        defer letGo(screen);
-        const before = screen.showing != null;
-        @memcpy(screen.bands[0..count], bands[0..count]);
-        screen.band_count = count;
-        screen.showing = bands[count - 1].bitmap;
-        rebuild(screen);
-        present(screen);
-        break :shown before;
-    };
-    if (was_shown) pace(board);
+    const composed = screen.composed orelse return err.RTGERR_NOT_SUPPORTED;
+    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
+    const pitch = screen.width * bytes_per_pixel;
+    const at = composed + @as(usize, @intCast(area.y)) * pitch + @as(usize, @intCast(area.x)) * bytes_per_pixel;
+    return rb.ComposeLines(board, area, at, pitch);
+}
+
+/// A rectangle of the display changed while the window is fed from the
+/// composed frame: fetched into it, and the doorbell rung.
+fn update(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const code = compose(board, area);
+    if (code != err.RTGERR_OK) return code;
+    present(screen, screen.composed.?);
+    return err.RTGERR_OK;
+}
+
+/// A rectangle of a buffer was written by the CPU. It is already in the
+/// device's memory, so where the window reads that buffer this is the
+/// doorbell and nothing more. Any other buffer is a program drawing
+/// ahead, or one the composed frame shows: nothing to hand to the window
+/// here.
+fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, _: *const rtg.RtgRect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    if (screen.direct != bitmap) return err.RTGERR_OK;
+    present(screen, bitmap.pixels.?);
     return err.RTGERR_OK;
 }
 
@@ -532,6 +290,8 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     into.frames = screen.updates;
 }
 
+/// A board with no frame to compose in: one whole buffer, read by the
+/// window itself.
 const ops = rtg.boards.RtgBoardOps{
     .show = &showOp,
     .refresh = &refresh,
@@ -539,18 +299,14 @@ const ops = rtg.boards.RtgBoardOps{
     .control = &control,
 };
 
-/// The same with the pointer and with bands, for a board with a frame to
-/// compose them in.
-const pointer_ops = rtg.boards.RtgBoardOps{
+/// A board with a frame for the library's picture: the same, and told
+/// which rectangle of its display changed.
+const composing_ops = rtg.boards.RtgBoardOps{
     .show = &showOp,
     .refresh = &refresh,
+    .update = &update,
     .stats = &stats,
     .control = &control,
-    .set_pointer = &setPointer,
-    .move_pointer = &movePointer,
-    .show_pointer = &showPointer,
-    .set_overlay = &setOverlay,
-    .move_overlay = &moveOverlay,
 };
 
 /// The board's own controls: its counter of pictures handed to the

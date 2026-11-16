@@ -16,9 +16,19 @@
 //!
 //! A driver fills in `RtgBoardOps`. A slot left null is an operation the
 //! board does not have: the call answers RTGERR_NOT_SUPPORTED and the
-//! matching RTGBC_ bit is clear in `RtgBoardInfo.caps`. The library adds
-//! nothing of its own - it does not draw - so a caller that finds a bit
-//! clear does the work itself.
+//! matching RTGBC_ bit is clear in `RtgBoardInfo.caps`. The library does
+//! not draw, so a caller that finds an engine's bit clear does the work
+//! itself.
+//!
+//! How a picture reaches the glass is the driver's to say, by what it
+//! fills in. A display that reads the shown buffers itself says how many
+//! bands it reads so (`RtgBoardSpec.direct_bands`). A display with a
+//! picture of its own - a controller's memory behind a bus, an
+//! emulator's copy - fills in `update`, and the library composes that
+//! picture for it (`ComposeLines`): the bands, and over them the overlay
+//! and the pointer, which such a board has without its driver writing
+//! either. A board that has both is shown direct for as long as nothing
+//! lies over its picture.
 
 const nodes = @import("../exec/nodes.zig");
 const lists = @import("../exec/lists.zig");
@@ -55,7 +65,7 @@ pub const RtgRegion = extern struct {
 /// The board can show a buffer that lives here.
 pub const RTGRF_DISPLAYABLE: u32 = 1 << 0;
 /// The CPU reaches it through the cache, so what it writes has to be
-/// handed on with RefreshBitMap before the board reads it.
+/// handed on with RefreshRect before the board reads it.
 pub const RTGRF_CPU_CACHED: u32 = 1 << 1;
 /// The memory belongs to somebody else and is not the driver's to free.
 pub const RTGRF_ADOPTED: u32 = 1 << 2;
@@ -94,9 +104,11 @@ pub const RtgBoardInfo = extern struct {
     memory_free: usize = 0,
     memory_largest: usize = 0,
     flags: u32 = 0,
-    /// RTGBC_*: the operations this board has. A bit is set when the
-    /// driver filled the slot in, and nothing else sets it - the library
-    /// draws nothing of its own.
+    /// RTGBC_*: the operations this board has. An engine's bit is set
+    /// when the driver filled the slot in, and nothing else sets it - the
+    /// library draws nothing of its own. The pointer's, the overlay's
+    /// and the bands' are also set where the library composes the
+    /// board's picture.
     caps: u32 = 0,
     refresh_mhz: u32 = 0,
     pixel_clock_hz: u32 = 0,
@@ -151,10 +163,12 @@ pub const RTGBF_FIRMWARE: u32 = 1 << 9;
 /// and its modes are what the monitor on it names.
 pub const RTGBF_CONNECTOR: u32 = 1 << 10;
 
-/// RtgBoardInfo.caps: which ops the driver filled in, and what it said
-/// of the board as it made it (`RtgBoardSpec.caps`).
+/// RtgBoardInfo.caps: which ops the driver filled in, and what the
+/// library does for the board.
 /// It shows several buffers at once, in bands of lines (`ShowBoard`); a
-/// board without it shows one whole buffer. Said by the driver.
+/// board without it shows one whole buffer. Set where the display reads
+/// more than one band itself (`RtgBoardSpec.direct_bands`), and where
+/// the library composes the board's picture.
 pub const RTGBC_BANDS: u32 = 1 << 0;
 pub const RTGBC_SHOW: u32 = 1 << 1;
 /// Its driver says when a frame ends (`FrameDone`): `WaitVBlank` waits
@@ -162,6 +176,9 @@ pub const RTGBC_SHOW: u32 = 1 << 1;
 /// Clear on a board that says none, or has stopped saying it: a wait is
 /// by the clock there. The library's, as the frames come.
 pub const RTGBC_VBLANK: u32 = 1 << 3;
+/// What is written into a shown buffer has to be handed on
+/// (`RefreshRect`) before it is seen: the driver filled in `refresh` or
+/// `update`.
 pub const RTGBC_REFRESH: u32 = 1 << 4;
 pub const RTGBC_DISPLAY: u32 = 1 << 5;
 pub const RTGBC_BRIGHTNESS: u32 = 1 << 6;
@@ -172,11 +189,12 @@ pub const RTGBC_CONTROL: u32 = 1 << 8;
 pub const RTGBC_MIRROR: u32 = 1 << 9;
 /// It says what is on its connector: its driver filled in `detect`.
 pub const RTGBC_MONITOR: u32 = 1 << 10;
-/// It lays a pointer over the picture on the way to the glass
+/// A pointer is laid over the picture on the way to the glass
 /// (SetBoardPointer, MoveBoardPointer, ShowBoardPointer), without the
-/// picture holding it.
+/// picture holding it: by the board's own hardware or driver
+/// (`RtgPointerOps`), or by the library where it composes the picture.
 pub const RTGBC_POINTER: u32 = 1 << 12;
-/// It lays a second image over the picture the same way, under the
+/// A second image is laid over the picture the same way, under the
 /// pointer (SetBoardOverlay, MoveBoardOverlay): a dragged icon.
 pub const RTGBC_OVERLAY: u32 = 1 << 13;
 pub const RTGBC_FILL_RECT: u32 = 1 << 16;
@@ -226,7 +244,7 @@ pub const RtgBoardStats = extern struct {
     /// part old and part new, because the panel was given a window and
     /// then not all of the pixels for it.
     failed_sends: u32 = 0,
-    /// RefreshBitMap calls that reached the board, and the ones dropped
+    /// RefreshRect calls that reached the board, and the ones dropped
     /// because the rows belong to a buffer that is not the one being
     /// shown. A part of the glass that is out of date while `refreshes`
     /// is not moving was never handed on at all; one while `dropped` is
@@ -247,7 +265,8 @@ pub const RtgBoardStats = extern struct {
     blanks: u32 = 0,
 };
 
-/// A pointer as a board is handed it: made by SetBoardPointer out of the
+/// A pointer as a board with pointer ops is handed it, and as the
+/// library lays it where it composes: made by SetBoardPointer out of the
 /// caller's image, once, in the board's own pixel format and with a
 /// mask of one bit a pixel beside it, so laying it over the picture is a
 /// masked copy and nothing more. For a driver with
@@ -310,8 +329,11 @@ pub const RtgBoardSpec = extern struct {
     /// modes of a monitor in.
     format: PixelFormat = .bgra32,
     pad: [3]u8 = .{ 0, 0, 0 },
-    /// RTGBC_*: what the board has that its ops do not say - RTGBC_BANDS.
-    caps: u32 = 0,
+    /// How many bands of a show the display reads by itself, out of the
+    /// buffers shown (`RTGSHOW_DIRECT`). 0: none - it has a picture of
+    /// its own, which the library composes. 1: one whole buffer. More:
+    /// bands as they are shown (`RtgBand`), a repeating one among them.
+    direct_bands: u32 = 0,
 };
 
 /// A board. What the driver keeps for itself is `instance`, which the
@@ -343,7 +365,8 @@ pub const RtgBoard = extern struct {
     instance_size: u32 = 0,
     /// The pointer: the image SetBoardPointer made, or null, and where
     /// its point is (MoveBoardPointer), in the coordinates a caller draws
-    /// in. The library's; a driver reads them and writes neither.
+    /// in. The library's, under the board's compose lock; a driver reads
+    /// them and writes neither.
     pointer: ?*RtgPointerImage = null,
     pointer_x: i32 = 0,
     pointer_y: i32 = 0,
@@ -358,7 +381,9 @@ pub const RtgBoard = extern struct {
 };
 
 /// What a driver fills in. Every slot may be null; a null slot is an
-/// operation the board has not got.
+/// operation the board has not got. The pointer, the overlay, the engine
+/// and the video layers are each a table of their own, named here or left
+/// null.
 pub const RtgBoardOps = extern struct {
     /// Undo what the board's making took. DeleteBoard calls it for a board
     /// that joined the list, last, after the board has been un-shown and
@@ -366,20 +391,32 @@ pub const RtgBoardOps = extern struct {
     destroy: ?*const fn (*RtgBoard) callconv(.c) void = null,
     /// The one op for what is on the glass: put the board in a mode and
     /// show these bands in it (`RtgShow`). Called with the board's lock
-    /// held: one show at a time on a board, so a driver needs no lock of
-    /// its own between two. The library has checked the bands - each a
-    /// displayable buffer of the board with pixels, in the mode's format,
-    /// width and row length, in order from the top - and keeps its own
-    /// copy of them; a driver that reads them later keeps one too.
+    /// and its compose lock held: one show at a time on a board, and
+    /// nothing handed on or laid over the picture meanwhile, so a driver
+    /// needs no lock of its own for either. The library has checked the
+    /// bands - each a displayable buffer of the board with pixels, in the
+    /// mode's format, width and row length, in order from the top - and
+    /// keeps its own copy of them.
+    ///
+    /// With `RTGSHOW_DIRECT` the display reads the bands' buffers itself
+    /// from now on, no more of them than the board said it reads
+    /// (`RtgBoardSpec.direct_bands`); a driver that reads them later
+    /// keeps a copy. Without it the board shows its own picture, which
+    /// the library composes: the library has the new bands in place, and
+    /// the driver fetches all of the picture with `ComposeLines` and
+    /// delivers it before it answers - what its `update` does for the
+    /// whole display. A board with no `update` is always shown direct,
+    /// one that reads no band itself never. `count` 0 shows nothing:
+    /// what a display does then is its driver's, and neither way to the
+    /// glass is meant.
     ///
     /// Without `RTGSHOW_MODE_CHANGED` the board is in `mode` already and
     /// only what it shows changes: on any answer but RTGERR_OK the board
     /// reads what it read before and has kept no pointer to a buffer it
-    /// refused - the library leaves its marks as they were, and the caller
-    /// may free that buffer. It takes the new bands once nothing of the
-    /// show can fail any more, or - where the show itself reads them, a
-    /// picture that is sent - has them in place meanwhile and puts the
-    /// ones before back.
+    /// refused - the library puts its own bands back, and the caller may
+    /// free that buffer. It takes the new bands once nothing of the show
+    /// can fail any more. A picture that is sent may have reached the
+    /// glass in part when the send fails.
     ///
     /// With `RTGSHOW_MODE_CHANGED` the board is put in `mode` first, with
     /// `timings` - a mode it was not in, or the one it is in for a monitor
@@ -404,21 +441,83 @@ pub const RtgBoardOps = extern struct {
     /// of every timing a monitor names, and lists the ones taken. Null:
     /// every one is taken.
     check_mode: ?*const fn (*RtgBoard, *const RtgTimings) callconv(.c) i32 = null,
-    /// Rows `y` to `y + rows` of a buffer were written by the CPU: hand
-    /// them on to the display. `rows` 0 is all of them.
-    refresh: ?*const fn (*RtgBoard, *RtgBitMap, u32, u32) callconv(.c) i32 = null,
+    /// A rectangle of a buffer of the board was written by the CPU,
+    /// shown or not: where the display does not see the machine's memory
+    /// as it is written - a cache to write back, a window to be told -
+    /// this is where it is made to. The rectangle has been cut down to
+    /// the buffer and is never empty. On a board with `update` it is
+    /// called with the compose lock held, on any other with none: several
+    /// tasks may be in it at once. Null: the display sees memory as it
+    /// is written.
+    refresh: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
+    /// The display has a picture of its own, and this rectangle of it
+    /// changed: fetch its lines with `ComposeLines` and deliver them.
+    /// The rectangle lies inside the display, in the picture's own
+    /// coordinates, and is never empty. Called with the board's compose
+    /// lock held, in the task that drew or moved the pointer; it may
+    /// wait. What it answers is what `RefreshRect` answers.
+    update: ?*const fn (*RtgBoard, *const bitmaps.RtgRect) callconv(.c) i32 = null,
     /// The display enable. Not the backlight.
     display: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
     /// 0 to 100, the right way round whatever the part does.
     set_brightness: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
     brightness: ?*const fn (*RtgBoard) callconv(.c) u32 = null,
+    /// Mirror the picture about each axis: a board that can do it in its
+    /// own hardware - a controller with a scan direction to set - fills
+    /// this in; one that streams memory in the order it is written
+    /// cannot, and leaves it null.
+    mirror: ?*const fn (*RtgBoard, bool, bool) callconv(.c) i32 = null,
     /// Fill in the counters.
     stats: ?*const fn (*RtgBoard, *RtgBoardStats) callconv(.c) void = null,
     /// Something only this driver knows about (RTGCTRL_*).
     control: ?*const fn (*RtgBoard, u32, isize) callconv(.c) isize = null,
+    /// The pointer, where the board lays it itself: a cursor plane, or a
+    /// stream's own copy. Null on a board the library composes for: the
+    /// library lays the pointer there.
+    pointer: ?*const RtgPointerOps = null,
+    /// The overlay, where the board lays it itself. Null as `pointer`.
+    overlay: ?*const RtgOverlayOps = null,
+    /// The board's engine. Null: it has none.
+    engine: ?*const RtgEngineOps = null,
+    /// The board's video layers. Null: it has none.
+    video: ?*const RtgVideoOps = null,
+};
 
-    // --- the engine. A board that has none leaves all of these null. ---
+/// A pointer the board lays over the picture itself, on the way to the
+/// glass - into a copy the picture passes through anyway, or as a plane
+/// of its own; the picture itself never holds the pointer. The
+/// coordinates are those a caller draws in, before any turn the board
+/// gives the picture, so a pointer laid into the picture's own order is
+/// turned with it. Called with the board's compose lock held.
+pub const RtgPointerOps = extern struct {
+    /// Take this image from now on, or none for null. It stays the
+    /// library's and stays valid until the next `set` has returned or the
+    /// board is destroyed; the driver has stopped reading the one before
+    /// when it returns.
+    set: *const fn (*RtgBoard, ?*const RtgPointerImage) callconv(.c) i32,
+    /// The image's top left is now at (x, y), which may be partly or
+    /// wholly off the picture. Called on every pointer event: it takes no
+    /// longer than the rows it touches.
+    move: *const fn (*RtgBoard, i32, i32) callconv(.c) void,
+    /// Lay it over the picture, or stop.
+    show: *const fn (*RtgBoard, bool) callconv(.c) i32,
+};
 
+/// A second image over the picture, laid as the pointer is but under it,
+/// and shown whether the pointer is or not.
+pub const RtgOverlayOps = extern struct {
+    /// Take this image from now on, or none for null; as the pointer's
+    /// `set`.
+    set: *const fn (*RtgBoard, ?*const RtgPointerImage) callconv(.c) i32,
+    /// The image's top left is now at (x, y); as the pointer's `move`.
+    move: *const fn (*RtgBoard, i32, i32) callconv(.c) void,
+};
+
+/// A board's engine: operations on a buffer its hardware does faster
+/// than the CPU. Each slot is on its own, and one left null is a job the
+/// caller does itself. Each answers RTGERR_NOT_SUPPORTED for a job it
+/// does not take.
+pub const RtgEngineOps = extern struct {
     /// The rectangle has been clipped to the buffer before the call, and
     /// is never empty. The colour is in the buffer's format,
     /// right-aligned. RTGERR_BAD_FORMAT for a format the engine cannot do.
@@ -426,49 +525,14 @@ pub const RtgBoardOps = extern struct {
     /// Both rectangles are clipped before the call. The two buffers may be
     /// the same one and the rectangles may overlap.
     copy_rect: ?*const fn (*RtgBoard, *RtgBitMap, *RtgBitMap, *const bitmaps.RtgCopy) callconv(.c) i32 = null,
+    /// Copy `count` rectangles, at most `RTG_MAX_COPIES`, from `src` to
+    /// `dest` as one job. Each has been clipped to both buffers and none is
+    /// empty; they do not overlap where they land, and the two are not
+    /// one buffer. A board without it is given them one by one through
+    /// `copy_rect`.
+    copy_rects: ?*const fn (*RtgBoard, *RtgBitMap, *RtgBitMap, [*]const bitmaps.RtgCopy, u32) callconv(.c) i32 = null,
     blit_template: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgTemplate) callconv(.c) i32 = null,
     blit_pattern: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgPattern) callconv(.c) i32 = null,
-
-    // --- how the picture is turned. A board that can do it in its own
-    // hardware - a controller with a scan direction to set - fills this
-    // in; one that streams memory in the order it is written cannot, and
-    // leaves it null. ---
-
-    /// Mirror the picture about each axis.
-    mirror: ?*const fn (*RtgBoard, bool, bool) callconv(.c) i32 = null,
-
-    // --- the pointer. A board that can lay a small image over the
-    // picture on the way to the glass - into a copy the picture passes
-    // through anyway - fills in all three; the picture itself never holds
-    // the pointer. The coordinates are those a caller draws in, before
-    // any turn the board gives the picture, so an overlay laid into the
-    // picture's own order is turned with it. ---
-
-    /// Take this image from now on, or none for null. It stays the
-    /// library's and stays valid until the next set_pointer has returned
-    /// or the board is destroyed; the driver has stopped reading the one
-    /// before when it returns.
-    set_pointer: ?*const fn (*RtgBoard, ?*const RtgPointerImage) callconv(.c) i32 = null,
-    /// The image's top left is now at (x, y), which may be partly or
-    /// wholly off the picture. Called on every pointer event: it never
-    /// waits, and it takes no longer than the rows it touches.
-    move_pointer: ?*const fn (*RtgBoard, i32, i32) callconv(.c) void = null,
-    /// Lay it over the picture, or stop.
-    show_pointer: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
-
-    // --- a second image over the picture, laid as the pointer is but
-    // under it, and shown whether the pointer is or not. A board fills in
-    // both or neither. ---
-
-    /// Take this image from now on, or none for null; as set_pointer.
-    set_overlay: ?*const fn (*RtgBoard, ?*const RtgPointerImage) callconv(.c) i32 = null,
-    /// The image's top left is now at (x, y); as move_pointer.
-    move_overlay: ?*const fn (*RtgBoard, i32, i32) callconv(.c) void = null,
-
-    // --- more of the engine: pixels laid over a buffer by their coverage.
-    // Each answers RTGERR_NOT_SUPPORTED for a job it does not take, and
-    // the caller does that one itself. ---
-
     /// Lay the pixels over the rectangle, each by its own coverage times
     /// the alpha (0 to 255). The rectangle has been clipped to the buffer,
     /// and the pixels' corner moved with it.
@@ -481,45 +545,28 @@ pub const RtgBoardOps = extern struct {
     /// over it by its coverage. The rectangle lies wholly inside the
     /// buffer.
     scale_pixels: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, *const bitmaps.RtgPixels, u32, u32) callconv(.c) i32 = null,
+};
 
-    // --- a refresh narrower than whole rows. ---
-
-    /// A rectangle of a buffer was written by the CPU: hand its pixels on
-    /// to the display, as `refresh` hands on rows. The rectangle has been
-    /// clipped to the buffer and is never empty. A board without it is
-    /// refreshed the rectangle's rows.
-    refresh_rect: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
-
-    // --- several copies as one job. ---
-
-    /// Copy `count` rectangles, at most `RTG_MAX_COPIES`, from `src` to
-    /// `dest` as one job. Each has been clipped to both buffers and none is
-    /// empty; they do not overlap where they land, and the two are not
-    /// one buffer. A board without it is given them one by one through
-    /// `copy_rect`.
-    copy_rects: ?*const fn (*RtgBoard, *RtgBitMap, *RtgBitMap, [*]const bitmaps.RtgCopy, u32) callconv(.c) i32 = null,
-
-    // --- a video layer: a plane that shows a picture in YUV itself. A
-    // board fills in all four or none. ---
-
+/// A board's video layers: planes that show a picture in YUV themselves.
+pub const RtgVideoOps = extern struct {
     /// Take one of the board's layers for `layer`: fill in its `key`,
     /// limits and `unit`, and clear `RTGVLF_UNDER` from its flags where
     /// the board cannot put its picture over a layer. Nothing is shown
-    /// until video_show. RTGERR_IN_USE when all its layers are taken.
-    video_open: ?*const fn (*RtgBoard, *video.RtgVideoLayer) callconv(.c) i32 = null,
+    /// until `show`. RTGERR_IN_USE when all its layers are taken.
+    open: *const fn (*RtgBoard, *video.RtgVideoLayer) callconv(.c) i32,
     /// Give it back: nothing shown on it from the next frame, and the
     /// last picture no longer read when this returns.
-    video_close: ?*const fn (*RtgBoard, *video.RtgVideoLayer) callconv(.c) void = null,
+    close: *const fn (*RtgBoard, *video.RtgVideoLayer) callconv(.c) void,
     /// Show `src` of the picture, scaled into the layer's place, from the
     /// next frame; null shows nothing. Returns once the controller has
     /// taken it, so the picture shown before is no longer read. The
     /// library has checked that a picture comes with a part that is not
     /// empty. RTGERR_BAD_ARG for one the plane cannot read or scale.
-    video_show: ?*const fn (*RtgBoard, *video.RtgVideoLayer, ?*const bitmaps.RtgYuv, ?*const bitmaps.RtgRect) callconv(.c) i32 = null,
+    show: *const fn (*RtgBoard, *video.RtgVideoLayer, ?*const bitmaps.RtgYuv, ?*const bitmaps.RtgRect) callconv(.c) i32,
     /// The layer's place on the display from the next frame; an empty
     /// rectangle hides it. RTGERR_BAD_ARG when the picture shown cannot
     /// be scaled into it, which hides it too.
-    video_move: ?*const fn (*RtgBoard, *video.RtgVideoLayer, *const bitmaps.RtgRect) callconv(.c) i32 = null,
+    move: *const fn (*RtgBoard, *video.RtgVideoLayer, *const bitmaps.RtgRect) callconv(.c) i32,
 };
 
 /// The most rectangles one `copy_rects` call hands a board: rtg cuts a
@@ -541,6 +588,10 @@ pub const RtgShow = extern struct {
 };
 
 /// RtgShow.flags
+/// The display reads the bands' buffers itself. Without it the board
+/// shows its own picture, which its driver fetches from the library
+/// (`ComposeLines`).
+pub const RTGSHOW_DIRECT: u32 = 1 << 0;
 /// The board is to be put in the mode: one it is not in, or the one it is
 /// in for a monitor that came. Without it the board is in the mode, and
 /// only what it shows changes.

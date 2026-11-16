@@ -93,7 +93,7 @@ const surfaceFor = _rastport.surfaceFor;
 ///
 /// SEE ALSO:
 /// `FreeRastPort`, `rtg.AllocBitMap`, `rtg.BoardDisplayBitMap`,
-/// `rtg.RefreshBitMap`
+/// `rtg.RefreshRect`
 ///
 /// EXAMPLES:
 /// ```zig

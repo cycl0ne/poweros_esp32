@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
+const composer = @import("../compose/_compose.zig");
 
 /// Shows a board's pointer, or hides it.
 ///
@@ -24,17 +25,25 @@ const err = rtg.errors;
 /// `RTGBC_POINTER`, or what the driver answered.
 ///
 /// BEHAVIOR:
-/// The picture itself never holds the pointer: the board lays it in on
-/// the way to the glass, so hiding it leaves the picture exactly as it was
+/// The picture itself never holds the pointer: it is laid in on the way
+/// to the glass, so hiding it leaves the picture exactly as it was
 /// drawn. Shown with no image set, nothing appears until one is.
 /// `RTGBF_POINTER` in `RtgBoardInfo.flags` says which it is.
 ///
+/// On a board whose picture the library composes, a display that reads
+/// the shown buffer itself is shown the library's picture while the
+/// pointer is seen, and reads the buffer again once nothing lies over
+/// the picture any more.
+///
 /// CONTEXT:
-/// - Waits: for rtg's pointer lock while another task changes the pointer,
-///   and for a driver that sends the pointer's rows over a bus.
+/// - Waits: for the board's compose lock while another task changes the
+///   pointer or hands on what it drew, for the board's lock where the
+///   library lays the pointer, and for a driver that sends the pointer's
+///   rows over a bus.
 /// - Interrupts: no. A driver may send the pointer's rows over a bus.
-/// - Locks: takes rtg's pointer lock while the driver changes it; no spinlock
-///   may be held.
+/// - Locks: takes the board's compose lock while it changes, and the
+///   board's lock before it where the library lays the pointer; no
+///   spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -51,15 +60,6 @@ const err = rtg.errors;
 /// _ = rb.ShowBoardPointer(board, false);
 /// ```
 pub fn ShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
-    const sys = rb.sys_base;
-    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
     if (board.info.caps & rtg.boards.RTGBC_POINTER == 0) return err.RTGERR_NOT_SUPPORTED;
-    const shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
-    if (shown == show) return err.RTGERR_OK;
-    sys.ObtainSemaphore(&rb.pointer_lock);
-    defer sys.ReleaseSemaphore(&rb.pointer_lock);
-    const code = ops.show_pointer.?(board, show);
-    if (code != err.RTGERR_OK) return code;
-    if (show) board.info.flags |= rtg.boards.RTGBF_POINTER else board.info.flags &= ~rtg.boards.RTGBF_POINTER;
-    return err.RTGERR_OK;
+    return composer.showPointer(rb, board, show);
 }

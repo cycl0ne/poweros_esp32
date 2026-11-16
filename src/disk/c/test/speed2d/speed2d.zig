@@ -23,7 +23,7 @@
 //! CacheClearE over 64 KiB, 128 KiB, 256 KiB, 1 MiB and 4 MiB of the buffer, its
 //! lines dirty - written just before each, outside the time - and clean,
 //! as a second write-back finds them; CachePreDMA over 1 MiB, dirty, which
-//! writes back without invalidating; and RefreshBitMap over the whole
+//! writes back without invalidating; and RefreshRect over the whole
 //! buffer.
 //!
 //! Last, the cases that are not whole and even are drawn once each and
@@ -50,7 +50,7 @@ const Printf = dos.stdio.Printf;
 const Rect = graphics.Rect;
 
 pub const COMMAND_NAME = "Speed2D";
-const VERSION_STRING = "\x00$VER: Speed2D 1.2 (16.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Speed2D 1.3 (16.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "ROUNDS/K/N";
@@ -451,9 +451,9 @@ fn flushes(b: *Bench, rounds: u32) void {
     }
     const start = now(b.tb);
     var round: u32 = 0;
-    while (round < rounds) : (round += 1) _ = b.rb.RefreshBitMap(b.bitmap, 0, 0);
+    while (round < rounds) : (round += 1) _ = b.rb.RefreshRect(b.bitmap, null);
     const us = (now(b.tb) - start) / rounds;
-    _ = Printf(b.dl, "%-32s %4lu.%03lu ms\n", .{ @as([*:0]const u8, "RefreshBitMap 1920x1080"), us / 1000, us % 1000 });
+    _ = Printf(b.dl, "%-32s %4lu.%03lu ms\n", .{ @as([*:0]const u8, "RefreshRect 1920x1080"), us / 1000, us % 1000 });
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {

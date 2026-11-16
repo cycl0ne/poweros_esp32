@@ -25,8 +25,9 @@ const _board = @import("_board.zig");
 /// - `device` - the device the board is an output of.
 /// - `spec` - what the driver says of the board: its ops, what the output
 ///   is called, how many bytes of its own it keeps with the board, what
-///   is true of it from the start, where its buffers come from, and which
-///   output of the device it is; for a board with a connector, the pixel
+///   is true of it from the start, where its buffers come from, which
+///   output of the device it is, and how many bands its display reads by
+///   itself (`direct_bands`); for a board with a connector, the pixel
 ///   format its monitor's modes are made in. Read during the call and not
 ///   kept; the label's string stays the driver's.
 ///
@@ -46,6 +47,14 @@ const _board = @import("_board.zig");
 /// were made ("rgb.0"), the firmware's picture last on the list. A board
 /// comes up in no mode and showing nothing; `ShowBoard` is what puts a
 /// picture up, and what its driver lights the output with.
+///
+/// How the board's picture reaches the glass follows from the
+/// description. A display that reads the shown buffers itself says how
+/// many bands it reads so. One with a picture of its own fills in
+/// `update`, and the library composes that picture for it
+/// (`ComposeLines`), with bands, an overlay and a pointer its driver
+/// wrote none of. A board with both is shown direct for as long as
+/// nothing lies over its picture; one with neither shows nothing.
 ///
 /// An `attach` that fails after making a board deletes it (`DeleteBoard`);
 /// one it leaves is freed by the library.
@@ -86,6 +95,8 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     const private: *Private = @ptrCast(@alignCast(memory));
     private.* = .{};
     sys.InitSemaphore(&private.lock);
+    sys.InitSemaphore(&private.compose.lock);
+    private.compose.direct_bands = spec.direct_bands;
     const board = &private.board;
 
     board.node.type = .graphics;
@@ -99,7 +110,6 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     board.info.id_string = driver.spec.id_string;
     board.info.label = spec.label;
     board.info.flags = spec.flags;
-    board.info.caps = spec.caps;
     sys.NewList(&private.modes);
     private.monitor_format = spec.format;
     sys.NewList(&board.bitmaps);

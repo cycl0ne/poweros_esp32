@@ -999,7 +999,7 @@ every path out, an error return included.
 
 **SEE ALSO**
 
-`EndDraw`, `rtg.RefreshBitMap`
+`EndDraw`, `rtg.RefreshRect`
 
 **EXAMPLES**
 
@@ -2101,7 +2101,7 @@ None known.
 **SEE ALSO**
 
 `FreeRastPort`, `rtg.AllocBitMap`, `rtg.BoardDisplayBitMap`,
-`rtg.RefreshBitMap`
+`rtg.RefreshRect`
 
 **EXAMPLES**
 
@@ -4263,7 +4263,7 @@ None known.
 
 **SEE ALSO**
 
-`CreateRastPortTagList`, `rtg.FillRect`, `rtg.RefreshBitMap`
+`CreateRastPortTagList`, `rtg.FillRect`, `rtg.RefreshRect`
 
 **EXAMPLES**
 

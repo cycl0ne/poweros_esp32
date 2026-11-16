@@ -58,5 +58,5 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// ```
 pub fn MoveVideoLayer(_: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) i32 {
     const board = layer.board;
-    return board.ops.?.video_move.?(board, layer, place);
+    return board.ops.?.video.?.move(board, layer, place);
 }

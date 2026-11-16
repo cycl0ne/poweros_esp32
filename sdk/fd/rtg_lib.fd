@@ -59,10 +59,8 @@ i32 ShowBitMap(*rtg.RtgBoard board, ?*rtg.RtgBitMap bitmap)
 /// The buffer the board is showing, or null. Its first seven fields are a
 /// drawing surface.
 ?*rtg.RtgBitMap BoardDisplayBitMap(*rtg.RtgBoard board)
-/// Rows y to y + rows of a buffer were written: hand them to the display.
-/// `rows` 0 is all of them. What a caller that wrote the pixels itself
-/// calls when it has finished.
-i32 RefreshBitMap(*rtg.RtgBitMap bitmap, u32 y, u32 rows)
+// A slot kept free, so the slots after it stay where they are.
+##reserve 1
 /// Wait for `frames` frames of the display to end; 0 is the next one.
 /// For the frames the board's driver says ended, RTGERR_TIMEOUT when
 /// they do not come within two frames' time each; by the clock on a
@@ -101,10 +99,11 @@ i32 MirrorBoard(*rtg.RtgBoard board, bool mirror_x, bool mirror_y)
 /// The pointer's image: a surface with an alpha channel, whose pixel
 /// (hot_x, hot_y) is the point. Converted once, into the board's format
 /// with a mask. Null takes the image away. RTGERR_NOT_SUPPORTED unless
-/// the board lays a pointer over its picture (RTGBC_POINTER).
+/// a pointer is laid over the board's picture (RTGBC_POINTER).
 i32 SetBoardPointer(*rtg.RtgBoard board, ?*const rtg.Surface image, u32 hot_x, u32 hot_y)
 /// Put the pointer's point at (x, y), in the coordinates a caller draws
-/// in. Never waits; called on every pointer event.
+/// in. Made to be called on every pointer event, from a task: it may
+/// wait for a display that is sent its picture.
 void MoveBoardPointer(*rtg.RtgBoard board, i32 x, i32 y)
 /// Lay the pointer over the picture, or stop.
 i32 ShowBoardPointer(*rtg.RtgBoard board, bool show)
@@ -132,10 +131,10 @@ i32 BlendRect(*rtg.RtgBitMap dest, *const rtg.RtgRect area, u32 color)
 /// cut: one not wholly inside the buffer is RTGERR_NOT_SUPPORTED, as is
 /// any job the board's engine does not take.
 i32 ScalePixels(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPixels pixels, u32 width, u32 height)
-/// A rectangle of a buffer was written: hand its pixels to the display,
-/// as RefreshBitMap hands on rows - only those of the rectangle where the
-/// board can, its rows where it cannot. Cut down to the buffer.
-i32 RefreshRect(*rtg.RtgBitMap bitmap, *const rtg.RtgRect area)
+/// A rectangle of a buffer was written: hand its pixels on to the
+/// display. Null is the whole buffer. What a caller that wrote the
+/// pixels itself calls when it has finished. Cut down to the buffer.
+i32 RefreshRect(*rtg.RtgBitMap bitmap, ?*const rtg.RtgRect area)
 /// Copy several rectangles of one buffer on to another as one job, each
 /// as CopyRect copies it and cut down to both buffers: the pieces of a
 /// window seen between others, copied by the board's engine at once

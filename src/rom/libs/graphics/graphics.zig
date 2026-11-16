@@ -7,7 +7,7 @@
 //! library opens rtg itself.
 //!
 //! What it will draw into is rtg.library's: a board's display memory,
-//! handed out as `RtgBitMap`s and put on the glass with RefreshBitMap.
+//! handed out as `RtgBitMap`s and put on the glass with RefreshRect.
 //! rtg.library deliberately holds no drawing at all - a board offers what
 //! its own engine can do and answers RTGERR_NOT_SUPPORTED for the rest -
 //! and this is the layer that knows how, in software, when the board does
@@ -1357,7 +1357,7 @@ test "BeginDraw, EndDraw: a refresh from outside the batch leaves what it gather
 
     // Someone else hands a row of the same buffer on by hand. That is
     // theirs; the batch's rows are still to go.
-    _ = gb.rtg_base.RefreshBitMap(&bm, 0, 1);
+    _ = gb.rtg_base.RefreshRect(&bm, &.{ .width = 8, .height = 1 });
     try testing.expectEqual(@as(u32, 4), bm.dirty_top);
     try testing.expectEqual(@as(u32, 5), bm.dirty_end);
 
@@ -1499,7 +1499,7 @@ test "RectFill: the board's engine takes an opaque pen, and nothing else" {
     try testing.expectEqual(@as(i32, 4), state.log.last_rect.width);
     try testing.expectEqual(@as(i32, 2), state.log.last_rect.height);
     // And the rows it touched were handed on.
-    try testing.expectEqual(@as(u32, 2), state.log.last_refresh_rows);
+    try testing.expectEqual(@as(i32, 2), state.log.last_refresh.height);
 
     // A pen that is not opaque cannot go to an engine that takes a colour
     // word, so it is composed here even though this board has one.

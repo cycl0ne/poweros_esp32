@@ -74,6 +74,7 @@ pub fn ScalePixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, 
     if (area.x < 0 or area.y < 0) return err.RTGERR_NOT_SUPPORTED;
     if (@as(i64, area.x) + area.width > dest.width or @as(i64, area.y) + area.height > dest.height) return err.RTGERR_NOT_SUPPORTED;
     const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    const scale = ops.scale_pixels orelse return err.RTGERR_NOT_SUPPORTED;
+    const engine = ops.engine orelse return err.RTGERR_NOT_SUPPORTED;
+    const scale = engine.scale_pixels orelse return err.RTGERR_NOT_SUPPORTED;
     return scale(board, dest, area, pixels, width, height);
 }

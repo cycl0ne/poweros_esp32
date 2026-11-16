@@ -50,7 +50,7 @@ pub const RTGBMF_ATTACHED: u32 = 1 << 10;
 pub const RTGBMF_SHOWING: u32 = 1 << 11;
 // 1 << 12 is not used.
 /// The CPU reaches the memory through the cache, so what is written has to
-/// be handed on with RefreshBitMap before the board reads it.
+/// be handed on with RefreshRect before the board reads it.
 pub const RTGBMF_CACHED: u32 = 1 << 13;
 
 /// The head of a buffer on its own: what a drawing surface is. Anything
@@ -112,7 +112,7 @@ pub const RtgBitMap = extern struct {
     dirty_left: u32 = 0,
     dirty_right: u32 = 0,
     /// Told instead of the board when a rectangle of this buffer is handed
-    /// on (RefreshRect, RefreshBitMap), or null. Its object is the buffer
+    /// on (RefreshRect), or null. Its object is the buffer
     /// and its message the `*const RtgRect` written, cut to the buffer. A
     /// buffer nobody shows - a window's own, when its screen is composed
     /// - has nothing for the board to do, and whoever copies it on to a
