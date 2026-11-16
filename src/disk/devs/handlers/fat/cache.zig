@@ -30,6 +30,18 @@
 //!   standing, and the next `get` would hand back what is no longer
 //!   there. So a run drops any block it crosses.
 //!
+//! **Changed blocks that lie next to each other go back together**, at
+//! a flush and when the oldest of them is pushed out: copied one after
+//! another into a run buffer (`run_blocks` of them at the most) and
+//! written in one request. A big file on a volume of small clusters
+//! changes the table a sector after the next, in both copies, and a card
+//! pays for a request in its own time, whatever its length - one a
+//! block was most of what writing the table cost. Nothing waits for it:
+//! a changed block may go back whenever it is pushed out anyway, so
+//! sending its changed neighbours with it orders nothing the file
+//! systems count on. `writeBackBlock` still writes the one block it is
+//! asked for. Without the memory for the buffer, every block goes alone.
+//!
 //! **Its size can change while it holds blocks** (`resize`, which
 //! ACTION_MORE_CACHE comes to): the blocks used most lately move over,
 //! and those that no longer fit go back to the medium first. A block is
@@ -58,6 +70,9 @@ pub const Error = error{
 /// The blocks a cache holds when nothing says otherwise.
 pub const default_blocks: u32 = 32;
 
+/// The most changed blocks one request takes back.
+pub const run_blocks: u32 = 16;
+
 /// The fewest it is made with: the blocks one packet goes back to over and
 /// over - an exFAT entry set across two directory blocks, the table sector
 /// of its chain and the bitmap block it takes clusters from.
@@ -75,6 +90,9 @@ pub fn BlockCache(comptime Media: type) type {
         /// The slots' bytes, `block_bytes` each, in one allocation.
         bytes: []u8,
         block_bytes: u32,
+        /// Where a run of changed blocks is put together, `run_blocks` of
+        /// them; empty when the memory could not be had.
+        run: []u8 = &.{},
         /// Ticks once per use, so the least recently used is the smallest.
         clock: u64 = 0,
         /// What the tests count.
@@ -91,6 +109,7 @@ pub fn BlockCache(comptime Media: type) type {
                 .slots = memory.slots,
                 .bytes = memory.bytes,
                 .block_bytes = block_bytes,
+                .run = media.alloc(block_bytes * run_blocks) orelse &.{},
             };
         }
 
@@ -100,8 +119,10 @@ pub fn BlockCache(comptime Media: type) type {
         pub fn deinit(self: *Self) void {
             _ = self.flush() catch {};
             giveBack(self.media, .{ .slots = self.slots, .bytes = self.bytes });
+            if (self.run.len != 0) self.media.free(self.run);
             self.slots = &.{};
             self.bytes = &.{};
+            self.run = &.{};
         }
 
         /// How many blocks it holds at the most.
@@ -200,7 +221,7 @@ pub fn BlockCache(comptime Media: type) type {
                 }
                 if (slot.used < self.slots[oldest].used) oldest = at;
             }
-            try self.writeBack(oldest);
+            try self.writeBackRun(oldest);
             self.slots[oldest] = .{ .lba = lba, .filled = true };
             return oldest;
         }
@@ -210,6 +231,37 @@ pub fn BlockCache(comptime Media: type) type {
             if (!slot.filled or !slot.dirty) return;
             if (!self.media.write(slot.lba, 1, self.slotBytes(at))) return Error.WriteFailed;
             slot.dirty = false;
+        }
+
+        /// The slot holding `lba` if it is changed.
+        fn changedAt(self: *Self, lba: u64) ?usize {
+            const at = self.find(lba) orelse return null;
+            return if (self.slots[at].dirty) at else null;
+        }
+
+        /// The block in slot `at` back on the medium if it is changed,
+        /// with the changed blocks held around it that follow on from one
+        /// another: those before it, then those after, `run_blocks` in
+        /// all at the most, in one request.
+        fn writeBackRun(self: *Self, at: usize) Error!void {
+            const slot = self.slots[at];
+            if (!slot.filled or !slot.dirty) return;
+            if (self.run.len == 0) return self.writeBack(at);
+            var first = slot.lba;
+            var count: u32 = 1;
+            while (count < run_blocks and first > 0 and self.changedAt(first - 1) != null) {
+                first -= 1;
+                count += 1;
+            }
+            while (count < run_blocks and self.changedAt(first + count) != null) count += 1;
+            if (count == 1) return self.writeBack(at);
+            var held: [run_blocks]usize = undefined;
+            for (0..count) |i| {
+                held[i] = self.changedAt(first + i).?;
+                @memcpy(self.run[i * self.block_bytes ..][0..self.block_bytes], self.slotBytes(held[i]));
+            }
+            if (!self.media.write(first, count, self.run[0 .. count * self.block_bytes])) return Error.WriteFailed;
+            for (held[0..count]) |each| self.slots[each].dirty = false;
         }
 
         fn touch(self: *Self, at: usize) void {
@@ -274,9 +326,10 @@ pub fn BlockCache(comptime Media: type) type {
             if (self.find(lba)) |at| try self.writeBack(at);
         }
 
-        /// Every changed block back on the medium.
+        /// Every changed block back on the medium, those that follow on
+        /// from one another together.
         pub fn flush(self: *Self) Error!bool {
-            for (0..self.slots.len) |at| try self.writeBack(at);
+            for (0..self.slots.len) |at| try self.writeBackRun(at);
             return true;
         }
 
@@ -402,6 +455,58 @@ test "one block written back alone, the others left changed" {
     try testing.expectEqual(reads, media.reads);
     _ = try cache.flush();
     try testing.expectEqual(@as(u64, 3), media.blocks_written);
+}
+
+test "changed blocks next to each other go back in one request" {
+    var media: TestMedia = undefined;
+    var cache = try setUp(&media);
+    defer media.deinit();
+    defer cache.deinit();
+
+    // 42, 40 and 41 changed in that order - a run out of order in the
+    // slots - and 50 apart from them.
+    (try cache.getForWrite(42))[0] = 0x42;
+    (try cache.getForWrite(40))[0] = 0x40;
+    (try cache.getForWrite(41))[0] = 0x41;
+    (try cache.getForWrite(50))[0] = 0x50;
+    const writes = media.writes;
+    _ = try cache.flush();
+    try testing.expectEqual(@as(u32, 2), media.writes - writes);
+    try testing.expectEqual(@as(u64, 4), media.blocks_written);
+    var back: [512]u8 = @splat(0);
+    const written = [_]struct { lba: u64, byte: u8 }{
+        .{ .lba = 40, .byte = 0x40 }, .{ .lba = 41, .byte = 0x41 },
+        .{ .lba = 42, .byte = 0x42 }, .{ .lba = 50, .byte = 0x50 },
+    };
+    for (written) |each| {
+        try testing.expect(media.read(each.lba, 1, &back));
+        try testing.expectEqual(each.byte, back[0]);
+    }
+    // Nothing is left changed.
+    _ = try cache.flush();
+    try testing.expectEqual(@as(u64, 4), media.blocks_written);
+}
+
+test "a block pushed out takes its changed neighbours with it" {
+    var media: TestMedia = undefined;
+    var cache = try setUp(&media);
+    defer media.deinit();
+    defer cache.deinit();
+
+    // Four slots: 60 and 61 changed, 70 and 71 read. 60 is the oldest, so
+    // a fifth block pushes it out, and 61 goes with it in one request.
+    (try cache.getForWrite(60))[0] = 1;
+    (try cache.getForWrite(61))[0] = 2;
+    _ = try cache.get(70);
+    _ = try cache.get(71);
+    const writes = media.writes;
+    _ = try cache.get(72);
+    try testing.expectEqual(@as(u32, 1), media.writes - writes);
+    try testing.expectEqual(@as(u64, 2), media.blocks_written);
+    // 61 is still held, and clean: a flush writes nothing.
+    try testing.expect(cache.find(61) != null);
+    _ = try cache.flush();
+    try testing.expectEqual(@as(u64, 2), media.blocks_written);
 }
 
 test "the block used longest ago is the one pushed out, and it is written back" {

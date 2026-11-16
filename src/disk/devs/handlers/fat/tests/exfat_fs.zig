@@ -490,6 +490,67 @@ test "a file cut short gives clusters back, and grown reads as zeroes" {
     for (back[1000..150_000]) |byte| try testing.expectEqual(@as(u8, 0), byte);
 }
 
+test "a file written whole goes to the medium in few commands, though its clusters are single sectors" {
+    var rig: Rig = undefined;
+    try rig.init(.{ .clusters = 4096, .cluster_shift = 0 });
+    defer rig.deinit();
+    const size = 64 * 1024; // 128 clusters
+    const out = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(out);
+    pattern(out, 5);
+
+    var fh: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, "runs").res1);
+    const writes_before = rig.media.writes;
+    const blocks_before = rig.media.blocks_written;
+    try testing.expectEqual(@as(isize, size), rig.write(&fh, out));
+    try testing.expect(rig.media.blocks_written - blocks_before >= size / 512);
+    try testing.expect(rig.media.writes - writes_before <= 10);
+    try rig.close(&fh);
+    try rig.remount();
+
+    const back = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(back);
+    try testing.expectEqual(@as(usize, size), try rig.readFile("runs", back));
+    try testing.expectEqualSlices(u8, out, back);
+}
+
+test "a file written in pieces around another's clusters reads back whole" {
+    var rig: Rig = undefined;
+    try rig.init(.{ .clusters = 4096, .cluster_shift = 0 });
+    defer rig.deinit();
+    const size = 20 * 1024;
+    const one = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(one);
+    const other = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(other);
+    pattern(one, 6);
+    pattern(other, 7);
+
+    var a: FileHandle = undefined;
+    var b: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&a, .findoutput, "one").res1);
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&b, .findoutput, "other").res1);
+    var done: usize = 0;
+    var piece: usize = 700;
+    while (done < size) : (piece = piece * 7 % 3001 + 512) {
+        const count = @min(piece, size - done);
+        try testing.expectEqual(@as(isize, @intCast(count)), rig.write(&a, one[done..][0..count]));
+        try testing.expectEqual(@as(isize, @intCast(count)), rig.write(&b, other[done..][0..count]));
+        done += count;
+    }
+    try rig.close(&a);
+    try rig.close(&b);
+    try rig.remount();
+
+    const back = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(back);
+    try testing.expectEqual(@as(usize, size), try rig.readFile("one", back));
+    try testing.expectEqualSlices(u8, one, back);
+    try testing.expectEqual(@as(usize, size), try rig.readFile("other", back));
+    try testing.expectEqualSlices(u8, other, back);
+}
+
 test "a run becomes a chain when the cluster after it is taken" {
     var rig: Rig = undefined;
     try rig.init(.{ .clusters = 2048, .cluster_shift = 3 });

@@ -1409,8 +1409,16 @@ pub fn FileSystem(comptime Media: type) type {
                 var count: u64 = undefined;
                 if (in_sector == 0 and left >= sector_bytes) {
                     if (from) |bytes| {
-                        // Whole sectors, to the end of this cluster at most.
-                        const sectors: u64 = @min(@min(left / sector_bytes, fs.geo.sectors_per_cluster - sector), max_run_sectors);
+                        // Whole sectors: the rest of this cluster, and on
+                        // into the clusters after it while they lie next
+                        // to it - one request for the run, as `read` makes
+                        // one, the chain grown first to every cluster the
+                        // run can reach. `growOne` keeps a run a run where
+                        // the clusters after it are free.
+                        const wanted_sectors: u64 = @min(left / sector_bytes, max_run_sectors);
+                        const last_ordinal = (at + wanted_sectors * sector_bytes - 1) / cluster_bytes;
+                        while (key.clusters <= last_ordinal) _ = try fs.growOne(key);
+                        const sectors = try fs.runAhead(key, place, sector, wanted_sectors);
                         count = sectors * sector_bytes;
                         const start: usize = @intCast(done);
                         fs.cache.writeRun(block, @intCast(sectors), bytes[start..][0..@intCast(count)]) catch return error.MediumFailed;

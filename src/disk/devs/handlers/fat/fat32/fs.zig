@@ -1214,8 +1214,24 @@ pub fn FileSystem(comptime Media: type) type {
                 var count: u32 = undefined;
                 if (in_sector == 0 and left >= sector_bytes) {
                     if (from) |bytes| {
-                        // Whole sectors, to the end of this cluster at most.
-                        const sectors = @min(left / sector_bytes, fs.geo.sectors_per_cluster - sector);
+                        // Whole sectors: the rest of this cluster, and on
+                        // into the clusters after it while they lie next
+                        // to it - one request for the run, as `read` makes
+                        // one. A request a cluster costs a card a command
+                        // and its programming time each, which on a volume
+                        // of 512-byte clusters is most of the time a big
+                        // file takes. Clusters past the end of the chain
+                        // are taken as the run reaches them; one taken
+                        // apart from the run starts the next.
+                        const wanted_sectors = left / sector_bytes;
+                        var sectors = @min(wanted_sectors, fs.geo.sectors_per_cluster - sector);
+                        while (sectors < wanted_sectors) {
+                            var ahead = place.*;
+                            const following = try fs.clusterFor(key, &ahead, place.ordinal + 1);
+                            if (following != place.cluster + 1) break;
+                            place.* = ahead;
+                            sectors += @min(wanted_sectors - sectors, fs.geo.sectors_per_cluster);
+                        }
                         count = sectors * sector_bytes;
                         fs.cache.writeRun(block, sectors, bytes[done..][0..count]) catch return error.MediumFailed;
                     } else {

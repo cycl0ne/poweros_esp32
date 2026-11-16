@@ -430,6 +430,73 @@ test "a file read whole goes to the medium in few commands" {
     try testing.expectEqualSlices(u8, out, back);
 }
 
+test "a file written whole goes to the medium in few commands, though its clusters are single sectors" {
+    // The clusters of a firmware's 256 MiB partition: one sector each.
+    var rig: Rig = undefined;
+    try rig.init(.{ .clusters = 70_000, .sectors_per_cluster = 1 });
+    defer rig.deinit();
+    const size = 64 * 1024; // 128 clusters, taken one after another
+    const out = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(out);
+    pattern(out, 5);
+
+    var fh: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&fh, .findoutput, "runs").res1);
+    const writes_before = rig.volume.media.writes;
+    const blocks_before = rig.volume.media.blocks_written;
+    try testing.expectEqual(@as(isize, size), rig.write(&fh, out));
+    // One run for the data; the dirty mark, a sector of each table and
+    // the entry around it - not a command a cluster.
+    try testing.expect(rig.volume.media.blocks_written - blocks_before >= size / 512);
+    try testing.expect(rig.volume.media.writes - writes_before <= 10);
+    try rig.close(&fh);
+    try rig.remount();
+
+    const back = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(back);
+    try testing.expectEqual(@as(usize, size), try rig.readFile("runs", back));
+    try testing.expectEqualSlices(u8, out, back);
+}
+
+test "a file written in pieces around another's clusters reads back whole" {
+    // Two files written in turns take clusters in turns: no run is longer
+    // than a piece, and each one written has to stop where the other's
+    // clusters begin.
+    var rig: Rig = undefined;
+    try rig.init(.{ .clusters = 70_000, .sectors_per_cluster = 1 });
+    defer rig.deinit();
+    const size = 20 * 1024;
+    const one = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(one);
+    const other = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(other);
+    pattern(one, 6);
+    pattern(other, 7);
+
+    var a: FileHandle = undefined;
+    var b: FileHandle = undefined;
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&a, .findoutput, "one").res1);
+    try testing.expectEqual(dos.DOSTRUE, rig.open(&b, .findoutput, "other").res1);
+    var done: usize = 0;
+    var piece: usize = 700;
+    while (done < size) : (piece = piece * 7 % 3001 + 512) {
+        const count = @min(piece, size - done);
+        try testing.expectEqual(@as(isize, @intCast(count)), rig.write(&a, one[done..][0..count]));
+        try testing.expectEqual(@as(isize, @intCast(count)), rig.write(&b, other[done..][0..count]));
+        done += count;
+    }
+    try rig.close(&a);
+    try rig.close(&b);
+    try rig.remount();
+
+    const back = try testing.allocator.alloc(u8, size);
+    defer testing.allocator.free(back);
+    try testing.expectEqual(@as(usize, size), try rig.readFile("one", back));
+    try testing.expectEqualSlices(u8, one, back);
+    try testing.expectEqual(@as(usize, size), try rig.readFile("other", back));
+    try testing.expectEqualSlices(u8, other, back);
+}
+
 test "writing over the middle of a file, and past its end" {
     var rig: Rig = undefined;
     try rig.init(.{});
