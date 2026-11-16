@@ -60,6 +60,7 @@ const tags = rtg.tags;
 
 const uefi = @import("uefi.zig");
 const dcn = @import("dcn.zig");
+const sound = @import("sound.zig");
 
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
@@ -369,7 +370,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     screen.pitch = rowBytes(screen, width);
     // The sound the link can carry, switched on: all that is wanted of
     // this side.
-    _ = dcn.soundUp(found);
+    _ = sound.soundUp(found);
     // Its frames counted by the pipe's interrupt, and the second of them
     // the device's own memory.
     hookFrames(screen);
