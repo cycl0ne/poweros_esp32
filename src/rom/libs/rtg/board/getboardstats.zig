@@ -13,7 +13,7 @@ const _board = @import("_board.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn GetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
+/// fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
 /// ```
 ///
 /// SINCE: 1.0. LVO -64.
@@ -37,7 +37,7 @@ const _board = @import("_board.zig");
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: no.
-/// - Locks: the board's frame lock is taken for the count, a spinlock.
+/// - Locks: none needed.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -54,13 +54,13 @@ const _board = @import("_board.zig");
 /// var stats: rtg.RtgBoardStats = .{};
 /// _ = rb.GetBoardStats(board, &stats, @sizeOf(rtg.RtgBoardStats));
 /// ```
-pub fn GetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32 {
+pub fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32 {
     var whole: rtg.RtgBoardStats = .{};
     if (board.ops) |ops| {
         if (ops.stats) |read| read(board, &whole);
     }
     const private = privateOf(board);
     whole.buffer_swaps = private.buffer_swaps;
-    whole.blanks = frames.count(rb.sys_base, &private.frames);
+    whole.blanks = frames.count(&private.frames);
     return copyOut(rtg.RtgBoardStats, &whole, stats, size);
 }

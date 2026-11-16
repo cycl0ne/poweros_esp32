@@ -8,7 +8,6 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 const Private = _board.Private;
 const registry = @import("../driver/_driver.zig");
 const devices = @import("../device/_device.zig");
-const frames = @import("../frame/_frame.zig");
 const _board = @import("_board.zig");
 
 /// Makes a board for one output of a device.
@@ -87,7 +86,6 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     const private: *Private = @ptrCast(@alignCast(memory));
     private.* = .{};
     sys.InitSemaphore(&private.lock);
-    frames.init(sys, &private.frames);
     const board = &private.board;
 
     board.node.type = .graphics;

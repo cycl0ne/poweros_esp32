@@ -4,9 +4,13 @@
 //! A driver with a frame interrupt calls FrameDone in it. The library
 //! counts the frame (`RtgBoardStats.blanks`) and wakes the tasks that
 //! wait for one (WaitVBlank): each has a waiter on its own stack, on a
-//! list of the board's, with the count of frames it still waits for. The
-//! list and the count are under a spinlock of the board's that the
-//! interrupt takes too.
+//! list of the board's, with the count of frames it still waits for.
+//!
+//! The list is what an interrupt reads, so it is changed inside Disable,
+//! which holds every core's interrupts off: a spinlock would have to
+//! stand after every lock a task may hold when the frame interrupt
+//! finds it, exec's own among them. The count and the flag are single
+//! words, written inside Disable and read as they are.
 //!
 //! Whether a board says its frames at all is not asked of the driver: it
 //! is seen. The first FrameDone says it does, and a wait whose frames
@@ -19,10 +23,6 @@
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-
-/// Where the frames' lock stands in the lock order: after a driver's own
-/// locks, which its frame interrupt may hold when it says a frame.
-pub const lock_order = exec.LOCKORDER_DRIVER + 1000;
 
 /// A task waiting for frames, on its own stack.
 pub const Waiter = struct {
@@ -37,25 +37,15 @@ pub const Waiter = struct {
 
 /// A board's frames (`Private.frames`).
 pub const State = struct {
-    /// Holds the waiters' list, `blanks` and `come` still. Taken by the
-    /// frame interrupt.
-    lock: exec.Lock = .{},
     /// The frames said so far.
     blanks: u32 = 0,
     /// Whether the driver says its frames: set by each frame, cleared by
     /// a wait they did not come for.
     come: bool = false,
+    /// The tasks that wait for a frame. Changed and walked inside
+    /// Disable.
     waiters: ?*Waiter = null,
 };
-
-/// Makes a board's frame state ready.
-///
-/// INPUTS:
-/// - `sys` - exec.
-/// - `state` - the state, cleared.
-pub fn init(sys: *ExecBase, state: *State) void {
-    sys.InitLock(&state.lock, "rtg frames", lock_order, exec.LOCKF_INTERRUPT);
-}
 
 /// A frame ended: counted, and every waiter whose count it reaches
 /// signalled.
@@ -64,38 +54,32 @@ pub fn init(sys: *ExecBase, state: *State) void {
 /// - `sys` - exec.
 /// - `state` - the board's frames.
 pub fn done(sys: *ExecBase, state: *State) void {
-    sys.AcquireLock(&state.lock);
-    state.blanks +%= 1;
-    state.come = true;
+    sys.Disable();
+    @atomicStore(u32, &state.blanks, state.blanks +% 1, .release);
+    @atomicStore(bool, &state.come, true, .release);
     var at = state.waiters;
     while (at) |waiter| : (at = waiter.next) {
         if (waiter.left == 0) continue;
         waiter.left -= 1;
         if (waiter.left == 0) sys.Signal(waiter.task, waiter.mask);
     }
-    sys.ReleaseLock(&state.lock);
+    sys.Enable();
 }
 
 /// Whether the board's driver says its frames just now.
 ///
 /// INPUTS:
-/// - `sys` - exec.
 /// - `state` - the board's frames.
-pub fn come(sys: *ExecBase, state: *State) bool {
-    sys.AcquireLock(&state.lock);
-    defer sys.ReleaseLock(&state.lock);
-    return state.come;
+pub fn come(state: *const State) bool {
+    return @atomicLoad(bool, &state.come, .acquire);
 }
 
 /// The frames said so far.
 ///
 /// INPUTS:
-/// - `sys` - exec.
 /// - `state` - the board's frames.
-pub fn count(sys: *ExecBase, state: *State) u32 {
-    sys.AcquireLock(&state.lock);
-    defer sys.ReleaseLock(&state.lock);
-    return state.blanks;
+pub fn count(state: *const State) u32 {
+    return @atomicLoad(u32, &state.blanks, .acquire);
 }
 
 /// Whether a task waits for a frame of the board.
@@ -104,8 +88,8 @@ pub fn count(sys: *ExecBase, state: *State) u32 {
 /// - `sys` - exec.
 /// - `state` - the board's frames.
 pub fn waiting(sys: *ExecBase, state: *State) bool {
-    sys.AcquireLock(&state.lock);
-    defer sys.ReleaseLock(&state.lock);
+    sys.Disable();
+    defer sys.Enable();
     return state.waiters != null;
 }
 
@@ -117,10 +101,10 @@ pub fn waiting(sys: *ExecBase, state: *State) bool {
 /// - `state` - the board's frames.
 /// - `waiter` - the waiter, its task, signal and count set.
 pub fn add(sys: *ExecBase, state: *State, waiter: *Waiter) void {
-    sys.AcquireLock(&state.lock);
+    sys.Disable();
     waiter.next = state.waiters;
     state.waiters = waiter;
-    sys.ReleaseLock(&state.lock);
+    sys.Enable();
 }
 
 /// Takes a waiter off the board's list again.
@@ -134,14 +118,14 @@ pub fn add(sys: *ExecBase, state: *State, waiter: *Waiter) void {
 /// The frames it still waited for: 0 when they all came. Where some did
 /// not, the board is held to say no frames until the next is said.
 pub fn remove(sys: *ExecBase, state: *State, waiter: *Waiter) u32 {
-    sys.AcquireLock(&state.lock);
-    defer sys.ReleaseLock(&state.lock);
+    sys.Disable();
+    defer sys.Enable();
     var link = &state.waiters;
     while (link.*) |at| : (link = &at.next) {
         if (at != waiter) continue;
         link.* = at.next;
         break;
     }
-    if (waiter.left != 0) state.come = false;
+    if (waiter.left != 0) @atomicStore(bool, &state.come, false, .release);
     return waiter.left;
 }

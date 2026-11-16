@@ -1084,7 +1084,7 @@ rtg.library/WaitVBlank
 	GetBoardStats -- Reads what a board that refreshes itself has been through.
 
    SYNOPSIS
-	    fn GetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
+	    fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
 
    SINCE
 	1.0. LVO -64.
@@ -1108,7 +1108,7 @@ rtg.library/WaitVBlank
    CONTEXT
 	- Waits: no.
 	- Interrupts: no.
-	- Locks: the board's frame lock is taken for the count, a spinlock.
+	- Locks: none needed.
 	- Process: a Task will do.
 
    OWNERSHIP

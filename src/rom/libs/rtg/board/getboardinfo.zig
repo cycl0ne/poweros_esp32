@@ -63,7 +63,7 @@ pub fn GetBoardInfo(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo,
     board.info.memory_free = private.arena.free_bytes;
     board.info.memory_largest = private.arena.largest(rb.sys_base);
     // Whether its driver says its frames, as they come.
-    if (frames.come(rb.sys_base, &private.frames)) {
+    if (frames.come(&private.frames)) {
         board.info.caps |= rtg.boards.RTGBC_VBLANK;
     } else {
         board.info.caps &= ~@as(u32, rtg.boards.RTGBC_VBLANK);

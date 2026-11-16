@@ -1407,7 +1407,7 @@ Reads what a board that refreshes itself has been through.
 **SYNOPSIS**
 
 ```zig
-fn GetBoardStats(rb: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
+fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
 ```
 
 **SINCE**
@@ -1437,7 +1437,7 @@ the frames', which only go up.
 
 - Waits: no.
 - Interrupts: no.
-- Locks: the board's frame lock is taken for the count, a spinlock.
+- Locks: none needed.
 - Process: a Task will do.
 
 **OWNERSHIP**

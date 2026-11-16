@@ -540,8 +540,8 @@ its board is waited for by the clock.
 
 - Waits: no.
 - Interrupts: yes. That is where it is called.
-- Locks: takes the board's frame lock, a spinlock later in the lock
-  order than a driver's own, for a count and a walk of the waiters.
+- Locks: none taken. The count and the walk of the waiters are inside
+  Disable, which an interrupt is in already.
 - Process: any, or none.
 
 **OWNERSHIP**

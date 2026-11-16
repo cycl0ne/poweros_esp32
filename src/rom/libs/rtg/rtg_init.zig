@@ -73,7 +73,10 @@ pub const LIBRARY_VERSION = 1;
 /// that says none: it comes back on every board. The event servers
 /// (AddRtgEventServer, RemRtgEventServer, SignalRtgEvent) and the op
 /// wait_vblank are gone.
-pub const LIBRARY_REVISION = 22;
+/// 23: the tasks that wait for a frame are on a list changed inside
+/// Disable, not under a spinlock: the frame interrupt may find a task
+/// holding any lock.
+pub const LIBRARY_REVISION = 23;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

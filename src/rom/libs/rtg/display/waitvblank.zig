@@ -122,7 +122,7 @@ pub fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32 {
     clock.node.message.reply_port = &port;
     clock.node.command = timer.TR_ADDREQUEST;
 
-    if (!frames_file.come(sys, state)) {
+    if (!frames_file.come(state)) {
         // No frames are said: the frames' time, by the clock.
         clock.time = timer.TimeVal.fromMicros(frameMicros(board) * wanted);
         sys.SendIO(&clock.node);
