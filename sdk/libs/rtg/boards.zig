@@ -115,11 +115,16 @@ pub const RtgBoardInfo = extern struct {
     label: ?[*:0]const u8 = null,
     /// The device it is an output of ("panel.0", "pci.01:00.0") (rtg 18).
     device: ?[*:0]const u8 = null,
+    /// Raised whenever something of the board changed that a task told of
+    /// it (`AddRtgNotify`) may want to read again: its monitor, its list
+    /// of modes, the mode it is in, whether it is gone (rtg 20).
+    changes: u32 = 0,
 };
 
 /// RtgBoardInfo.flags
-/// There is no display: the hardware is not there, or nobody has brought
-/// it up. Nothing but GetBoardInfo will answer.
+/// There is no display: the board's device has gone (RTGBF_GONE comes
+/// with it, and nothing is shown on it any more), or no monitor is on its
+/// connector - it is shown on all the same, for the monitor that comes.
 pub const RTGBF_NO_DISPLAY: u32 = 1 << 0;
 pub const RTGBF_DISPLAY_ON: u32 = 1 << 1;
 /// A mode has been set.
@@ -143,6 +148,9 @@ pub const RTGBF_COMPOSE: u32 = 1 << 7;
 pub const RTGBF_GONE: u32 = 1 << 8;
 /// It is the picture the firmware lit: the last board of the walk.
 pub const RTGBF_FIRMWARE: u32 = 1 << 9;
+/// It has a connector: its monitor comes and goes (`GetBoardMonitor`),
+/// and its modes are what the monitor on it names.
+pub const RTGBF_CONNECTOR: u32 = 1 << 10;
 
 /// RtgBoardInfo.caps: which ops the driver filled in.
 pub const RTGBC_SET_MODE: u32 = 1 << 0;
@@ -156,6 +164,8 @@ pub const RTGBC_CONTROL: u32 = 1 << 8;
 /// It can mirror the picture about an axis. A board that cannot leaves
 /// turning the picture to whoever draws it.
 pub const RTGBC_MIRROR: u32 = 1 << 9;
+/// It says what is on its connector: its driver filled in `detect`.
+pub const RTGBC_MONITOR: u32 = 1 << 10;
 /// It lays a pointer over the picture on the way to the glass
 /// (SetBoardPointer, MoveBoardPointer, ShowBoardPointer), without the
 /// picture holding it.
@@ -288,6 +298,10 @@ pub const RtgBoardSpec = extern struct {
     region: RtgRegion = .{},
     /// Which output of the device it is, from 0.
     unit: u32 = 0,
+    /// On a board with `detect`: the pixel format the library makes the
+    /// modes of a monitor in.
+    format: PixelFormat = .bgra32,
+    pad: [3]u8 = .{ 0, 0, 0 },
 };
 
 /// A board. What the driver keeps for itself is `instance`, which the
@@ -347,8 +361,23 @@ pub const RtgBoardOps = extern struct {
     /// the board's info once the op has answered RTGERR_OK; the driver may
     /// replace the region - the library has already dealt with the buffers
     /// that were alive. Called with the board's lock held, as the two
-    /// shows are: one of the three at a time on a board.
+    /// shows are: one of the three at a time on a board. Called again for
+    /// the mode the board is in when another monitor came that takes it:
+    /// the link is brought up again, with the timings handed over now, and
+    /// what was shown stays shown.
     set_mode: ?*const fn (*RtgBoard, *const RtgMode, *const RtgTimings) callconv(.c) i32 = null,
+    /// A board with a connector: whether a monitor is on it, and the
+    /// blocks of its EDID into the buffer handed over. Called in a task -
+    /// as the board joins the list, and on the library's own when the
+    /// driver said `MonitorChanged` - with the board's lock held; it may
+    /// wait. RTGERR_OK, or why nothing can be said: the monitor is then
+    /// taken as not there. Null: a panel, which is always there.
+    detect: ?*const fn (*RtgBoard, *modes.RtgDetect) callconv(.c) i32 = null,
+    /// Whether the board can make these timings - its clock, its link,
+    /// what its registers hold: RTGERR_OK if it can. The library asks it
+    /// of every timing a monitor names, and lists the ones taken. Null:
+    /// every one is taken.
+    check_mode: ?*const fn (*RtgBoard, *const RtgTimings) callconv(.c) i32 = null,
     /// Show that buffer, its pixel (x, y) at the top left; null shows
     /// nothing. The library passes x and y on unchecked: a board that
     /// cannot pan refuses any that is not zero. On any answer but
@@ -534,3 +563,7 @@ pub const RTG_MAX_BANDS = 8;
 /// with the driver.
 pub const RTGCTRL_RESET_STATS: u32 = 1;
 pub const RTGCTRL_DRIVER: u32 = 0x1000;
+
+/// What `AddRtgNotify` answers, for `RemRtgNotify` to give back. The
+/// library's own.
+pub const RtgNotify = opaque {};

@@ -16,7 +16,9 @@ Generated from the source by `./zig build autodoc`.
 - [CloseTransport](#closetransport) - Gives a bus back.
 - [CreateBoard](#createboard) - Makes a board for one output of a device.
 - [DeleteBoard](#deleteboard) - Gives a board back: stops it and frees everything it held.
+- [FindStandardTimings](#findstandardtimings) - Looks up the timings a standard gives a picture of a size at a refresh.
 - [GetRtgTagData](#getrtgtagdata) - Returns a tag's data from a list, or a default.
+- [MonitorChanged](#monitorchanged) - Has a board's connector looked at again.
 - [OpenTransport](#opentransport) - Opens the bus a device is reached over.
 - [ReadTimingTags](#readtimingtags) - Reads the generic timing tags of a list into a structure.
 - [RemRtgDevice](#remrtgdevice) - Takes away a device `AddRtgDevice` made.
@@ -38,7 +40,7 @@ fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimin
 
 **SINCE**
 
-1.19. LVO -364.
+1.19. LVO -380.
 
 **INPUTS**
 
@@ -65,6 +67,11 @@ with the larger picture first. The first mode added is the board's
 default until one is added with `RTGMF_DEFAULT`. A mode added again -
 the same size, format, refresh and turn - is the one that is there: it
 takes the timings handed over and keeps its number.
+
+On a board with a connector (`detect`) the modes are what the monitor
+names, made by the library; the ones added with this call are the
+board's own, which stand while no monitor is there or the one there
+names none the board can make.
 
 A row of a buffer of the mode is as long as `AllocBitMap` makes one:
 the width in the format, rounded up to what the board's display memory
@@ -112,7 +119,7 @@ fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice
 
 **SINCE**
 
-1.18. LVO -348.
+1.18. LVO -364.
 
 **INPUTS**
 
@@ -173,7 +180,7 @@ fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopa
 
 **SINCE**
 
-1.0. LVO -312.
+1.0. LVO -328.
 
 **INPUTS**
 
@@ -244,7 +251,7 @@ fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
 
 **SINCE**
 
-1.18. LVO -360.
+1.18. LVO -376.
 
 **INPUTS**
 
@@ -299,7 +306,7 @@ fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spe
 
 **SINCE**
 
-1.18. LVO -340.
+1.18. LVO -356.
 
 **INPUTS**
 
@@ -309,8 +316,9 @@ fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spe
 - `spec` - what the driver says of the board: its ops, what the output
   is called, how many bytes of its own it keeps with the board, what
   is true of it from the start, where its buffers come from, and which
-  output of the device it is. Read during the call and not kept; the
-  label's string stays the driver's.
+  output of the device it is; for a board with a connector, the pixel
+  format its monitor's modes are made in. Read during the call and not
+  kept; the label's string stays the driver's.
 
 **RESULT**
 
@@ -375,7 +383,7 @@ fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 
 **SINCE**
 
-1.0. LVO -344.
+1.0. LVO -360.
 
 **INPUTS**
 
@@ -431,6 +439,68 @@ driver's `destroy` called all the same.
 rb.DeleteBoard(board);
 ```
 
+## FindStandardTimings
+
+Looks up the timings a standard gives a picture of a size at a refresh.
+
+**SYNOPSIS**
+
+```zig
+fn FindStandardTimings(_: *RtgBase, width: u32, height: u32, refresh_hz: u32, timings: *rtg.RtgTimings) bool
+```
+
+**SINCE**
+
+1.20. LVO -392.
+
+**INPUTS**
+
+- `width` - the picture's width in pixels.
+- `height` - its height in lines.
+- `refresh_hz` - frames a second, to the nearest: 60 for 59.94.
+- `timings` - where the timings go.
+
+**RESULT**
+
+True, and `timings` filled in. False, and `timings` left as it was,
+for a size at a refresh the library has no standard timing of.
+
+**BEHAVIOR**
+
+The timings are those a monitor means when it names a mode without
+its timing: CEA-861's for the modes it numbers - the number is in
+`vic` - and VESA's for the sizes it times, each with its pixel clock,
+porches, sync pulses and their polarity. It is the table the library
+makes a monitor's modes of, so a driver that measured a picture, or
+has one size to bring up without a monitor's word, has the standard's
+figures for it.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe: it reads a constant table.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddBoardMode`, `ReadTimingTags`
+
+**EXAMPLES**
+
+```zig
+var timings: rtg.RtgTimings = .{};
+if (!rb.FindStandardTimings(1920, 1080, 60, &timings)) return rtg.errors.RTGERR_BAD_MODE;
+```
+
 ## GetRtgTagData
 
 Returns a tag's data from a list, or a default.
@@ -443,7 +513,7 @@ fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?
 
 **SINCE**
 
-1.0. LVO -336.
+1.0. LVO -352.
 
 **INPUTS**
 
@@ -485,6 +555,75 @@ None known.
 const hz = rb.GetRtgTagData(MY_Clock, 12_000_000, tags);
 ```
 
+## MonitorChanged
+
+Has a board's connector looked at again.
+
+**SYNOPSIS**
+
+```zig
+fn MonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) void
+```
+
+**SINCE**
+
+1.20. LVO -388.
+
+**INPUTS**
+
+- `board` - the board at whose connector something happened: one of
+  the caller's own, whose ops fill in `detect`.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The board is marked and the library's monitor task woken; the call
+does no more. The task then asks the board's `detect`, keeps what the
+monitor now there says of itself, and makes the board's modes again
+of the timings it names that the board's `check_mode` takes - a mode
+of the figures of one the board had keeps that mode's number. A board
+that shows is handed the mode it is in again (`set_mode`), with the
+timings the new monitor gives it, where the new list has that mode;
+where it has not, the board shows nothing and is in no mode until one
+is set. The board's `changes` are raised and the tasks that asked are
+told (`AddRtgNotify`).
+
+A driver calls it from its hot-plug interrupt, or from a task of its
+own that looks at the port. Several calls before the task has looked
+are one look, and a look that finds what the last one found - the same
+monitor, or none still - changes nothing: a driver whose connector has
+no interrupt may call it now and then. On a board without `detect` it
+does nothing.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes: a flag is written and a task signalled.
+- Locks: none taken.
+- Process: any, or none.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetBoardMonitor`, `AddRtgNotify`, `AddBoardMode`
+
+**EXAMPLES**
+
+```zig
+// The hot-plug line's interrupt.
+rb.MonitorChanged(board);
+```
+
 ## OpenTransport
 
 Opens the bus a device is reached over.
@@ -497,7 +636,7 @@ fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?
 
 **SINCE**
 
-1.18. LVO -356.
+1.18. LVO -372.
 
 **INPUTS**
 
@@ -563,7 +702,7 @@ fn ReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTi
 
 **SINCE**
 
-1.19. LVO -368.
+1.19. LVO -384.
 
 **INPUTS**
 
@@ -624,7 +763,7 @@ fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void
 
 **SINCE**
 
-1.18. LVO -352.
+1.18. LVO -368.
 
 **INPUTS**
 
@@ -686,7 +825,7 @@ fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
 **SINCE**
 
-1.0. LVO -316.
+1.0. LVO -332.
 
 **INPUTS**
 
@@ -744,7 +883,7 @@ fn RxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, si
 
 **SINCE**
 
-1.0. LVO -332.
+1.0. LVO -348.
 
 **INPUTS**
 
@@ -799,7 +938,7 @@ fn SignalRtgEvent(_: *RtgBase, board: *rtg.RtgBoard, event: u32) i32
 
 **SINCE**
 
-1.0. LVO -320.
+1.0. LVO -336.
 
 **INPUTS**
 
@@ -854,7 +993,7 @@ fn TxColor(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaqu
 
 **SINCE**
 
-1.0. LVO -328.
+1.0. LVO -344.
 
 **INPUTS**
 
@@ -910,7 +1049,7 @@ fn TxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaqu
 
 **SINCE**
 
-1.0. LVO -324.
+1.0. LVO -340.
 
 **INPUTS**
 

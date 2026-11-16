@@ -53,6 +53,15 @@ pub const RtgBase = extern struct {
     /// - and the driver's pointer ops, which run inside it: a semaphore, as
     /// a driver may send the pointer's rows over a bus.
     pointer_lock: exec.SignalSemaphore,
+    /// The tasks that asked to be told when something about the boards
+    /// changes (`AddRtgNotify`), and the semaphore held while the list
+    /// changes and while they are told.
+    notifies: exec.List,
+    notify_lock: exec.SignalSemaphore,
+    /// The task that looks at a board's connector when its driver says
+    /// the monitor changed (`monitor/_monitor.zig`): made with the first
+    /// board that has one, null until then.
+    monitor_task: ?*exec.Task,
     /// timer.device's request on its microsecond unit, opened by the init:
     /// what a wait with a time limit copies, with a reply port of the
     /// waiting task's own, so any task may wait. Its device is null where

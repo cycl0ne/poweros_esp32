@@ -45,6 +45,12 @@ const GetBoardModes = @import("mode/getboardmodes.zig").GetBoardModes;
 const BestBoardMode = @import("mode/bestboardmode.zig").BestBoardMode;
 const AddBoardMode = @import("mode/addboardmode.zig").AddBoardMode;
 const ReadTimingTags = @import("mode/readtimingtags.zig").ReadTimingTags;
+const MonitorChanged = @import("monitor/monitorchanged.zig").MonitorChanged;
+const FindStandardTimings = @import("monitor/findstandardtimings.zig").FindStandardTimings;
+const GetBoardMonitor = @import("monitor/getboardmonitor.zig").GetBoardMonitor;
+const ReadBoardEDID = @import("monitor/readboardedid.zig").ReadBoardEDID;
+const AddRtgNotify = @import("board/addrtgnotify.zig").AddRtgNotify;
+const RemRtgNotify = @import("board/remrtgnotify.zig").RemRtgNotify;
 const SetBoardMode = @import("board/setboardmode.zig").SetBoardMode;
 const AllocBitMap = @import("bitmap/allocbitmap.zig").AllocBitMap;
 const AttachBitMap = @import("bitmap/attachbitmap.zig").AttachBitMap;
@@ -155,6 +161,12 @@ const contract_files = [_][]const u8{
     @embedFile("mode/bestboardmode.zig"),
     @embedFile("mode/addboardmode.zig"),
     @embedFile("mode/readtimingtags.zig"),
+    @embedFile("monitor/monitorchanged.zig"),
+    @embedFile("monitor/findstandardtimings.zig"),
+    @embedFile("monitor/getboardmonitor.zig"),
+    @embedFile("monitor/readboardedid.zig"),
+    @embedFile("board/addrtgnotify.zig"),
+    @embedFile("board/remrtgnotify.zig"),
     @embedFile("board/setboardmode.zig"),
     @embedFile("bitmap/allocbitmap.zig"),
     @embedFile("bitmap/attachbitmap.zig"),
@@ -257,6 +269,24 @@ fn lvoAddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTi
 }
 fn lvoReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTimings) callconv(.c) bool {
     return ReadTimingTags(rb, tag_list, timings);
+}
+fn lvoMonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) void {
+    MonitorChanged(rb, board);
+}
+fn lvoFindStandardTimings(rb: *RtgBase, width: u32, height: u32, refresh_hz: u32, timings: *rtg.RtgTimings) callconv(.c) bool {
+    return FindStandardTimings(rb, width, height, refresh_hz, timings);
+}
+fn lvoGetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo, size: u32) callconv(.c) u32 {
+    return GetBoardMonitor(rb, board, info, size);
+}
+fn lvoReadBoardEDID(rb: *RtgBase, board: *rtg.RtgBoard, buffer: ?[*]u8, size: u32) callconv(.c) u32 {
+    return ReadBoardEDID(rb, board, buffer, size);
+}
+fn lvoAddRtgNotify(rb: *RtgBase, task: *exec.Task, signals: u32) callconv(.c) ?*rtg.RtgNotify {
+    return AddRtgNotify(rb, task, signals);
+}
+fn lvoRemRtgNotify(rb: *RtgBase, notify: ?*rtg.RtgNotify) callconv(.c) void {
+    RemRtgNotify(rb, notify);
 }
 fn lvoSetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) callconv(.c) i32 {
     return SetBoardMode(rb, board, mode_id);
@@ -487,6 +517,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetRtgDevices),
     vec(lvoGetBoardModes),
     vec(lvoBestBoardMode),
+    vec(lvoGetBoardMonitor),
+    vec(lvoReadBoardEDID),
+    vec(lvoAddRtgNotify),
+    vec(lvoRemRtgNotify),
     // The drivers' interface.
     vec(lvoAddRtgDriver),
     vec(lvoRemRtgDriver),
@@ -503,6 +537,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCloseTransport),
     vec(lvoAddBoardMode),
     vec(lvoReadTimingTags),
+    vec(lvoMonitorChanged),
+    vec(lvoFindStandardTimings),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -515,7 +551,7 @@ const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"
 test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
     // The reserved slots are in the table but not in either LVO.
     try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 92), vectors.len);
+    try testing.expectEqual(@as(usize, 98), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

@@ -17,7 +17,7 @@ const _board = @import("_board.zig");
 /// fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard
 /// ```
 ///
-/// SINCE: 1.18. LVO -340.
+/// SINCE: 1.18. LVO -356.
 ///
 /// INPUTS:
 /// - `driver` - the driver that makes it: the one whose `attach` is
@@ -26,8 +26,9 @@ const _board = @import("_board.zig");
 /// - `spec` - what the driver says of the board: its ops, what the output
 ///   is called, how many bytes of its own it keeps with the board, what
 ///   is true of it from the start, where its buffers come from, and which
-///   output of the device it is. Read during the call and not kept; the
-///   label's string stays the driver's.
+///   output of the device it is; for a board with a connector, the pixel
+///   format its monitor's modes are made in. Read during the call and not
+///   kept; the label's string stays the driver's.
 ///
 /// RESULT:
 /// The board, or null: when `driver` is not being offered `device`, and
@@ -99,6 +100,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     board.info.label = spec.label;
     board.info.flags = spec.flags;
     sys.NewList(&private.modes);
+    private.monitor_format = spec.format;
     sys.NewList(&board.bitmaps);
     for (&board.event_lists) |*events| sys.NewList(events);
 

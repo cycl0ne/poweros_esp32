@@ -376,7 +376,7 @@ fn waitFor(address: usize, set: u32, clear: u32) bool {
 // ranges and the byte clocks a line is.
 
 const testing = @import("std").testing;
-const monitor_modes = @import("monitor.zig").modes;
+const monitor_modes = @import("sends.zig").modes;
 
 /// The rate nearest `mbps` of every setting there is - N 1 to 4, M even -
 /// in kbit/s as `pllFor` counts them, the lower of two as near; found by

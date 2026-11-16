@@ -31,14 +31,22 @@
 //! cache.
 //!
 //! **HDMI.** A part that is an HDMI bridge (CHIP_LT8912B) is the same
-//! board with four differences: create refuses it unless a monitor's
+//! board with these differences. The part is declined unless a monitor's
 //! EDID answers on the bridge's bus, so the next part the board lists -
-//! its panel - is tried instead; the board's mode is the largest the
-//! monitor's EDID names of those this host can send (`monitor.zig`), the
-//! part's own when it names none of them; the bridge is brought up over
-//! I2C where a panel takes DCS commands; and the link carries RGB888,
-//! which the stream reads from a copy of what is shown (`link.zig`) while
-//! the screens stay RGB565.
+//! its panel - is offered instead. The board has a connector: it says
+//! what is on it (`detect`, the monitor's EDID read over the bridge's
+//! bus) and which timings it can make (`checkMode`: the sizes of
+//! `sends.zig` and the part's own, at 60 Hz), and rtg.library makes its
+//! modes of what the monitor names. The link is brought up when the board
+//! is put in a mode (`setMode`), in this host's timing for the mode's
+//! size - and again in the mode it is in when another monitor came, what
+//! was shown shown again. The bridge is brought up over I2C where a panel
+//! takes DCS commands; and the link carries RGB888, which the stream
+//! reads from a copy of what is shown (`link.zig`) while the screens stay
+//! RGB565. The bridge's hot-plug line raises no interrupt here: the
+//! frame's interrupt has the library look at the connector every two
+//! seconds (`MonitorChanged`), which changes nothing while the same
+//! monitor is there.
 //!
 //! **The pointer** and the overlay are laid into that copy, never into the
 //! screens, and rows going into the copy go around them (`pointer.zig`). A panel streams its screens straight until a
@@ -79,14 +87,13 @@ const Chain = chain_file.Chain;
 const link_file = @import("link.zig");
 const pointer_file = @import("pointer.zig");
 const lt8912b = @import("lt8912b.zig");
-const monitor = @import("monitor.zig");
-const edid = @import("../edid.zig");
+const sends = @import("sends.zig");
 const st = sdk.expansion.systemtags;
 
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 14;
+const REVISION = 15;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -106,6 +113,9 @@ const pixel_source: u32 = 1;
 const channel = 0;
 /// How long a flip waits for the frame it lands on.
 const flip_wait_us = 100_000;
+/// How many frames go by between two looks at the bridge's connector:
+/// two seconds of them.
+const look_frames = 120;
 
 /// One panel: the board's instance, allocated and cleared by the library
 /// in internal memory.
@@ -116,6 +126,19 @@ const Panel = struct {
     frame_bytes: u32 = 0,
     /// The link is an HDMI bridge's: RGB888, from `link`.
     hdmi: bool = false,
+    /// Over HDMI: the part's own mode, as its tags give it - what a
+    /// monitor that names none of the host's gets; whether the link is
+    /// brought up, and the number of the mode it is brought up in.
+    own: config.Config = .{},
+    up: bool = false,
+    mode_id: u32 = 0,
+    /// Over HDMI: whether a monitor answered at the last look, its EDID
+    /// as it was read when it came, and the frames sent since the library
+    /// was last asked to look.
+    monitor_there: bool = false,
+    edid: [lt8912b.edid_blocks * rtg.modes.RTG_EDID_BLOCK]u8 = undefined,
+    edid_size: u32 = 0,
+    frames_unseen: u32 = 0,
     /// The stream reads `link`, the copy of what is shown, and
     /// `stream_bands` are the bands it sends over that copy: over HDMI
     /// always, on a panel once the pointer or the overlay is to be seen.
@@ -184,6 +207,14 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         panel.stats.blanks +%= 1;
         engine_file.frameTick(&panel.engine);
         _ = driverBase(panel.board).SignalRtgEvent(panel.board, rtg.events.RTGEV_VBLANK);
+        // The bridge's connector, looked at now and then by the library.
+        if (panel.hdmi) {
+            panel.frames_unseen += 1;
+            if (panel.frames_unseen >= look_frames) {
+                panel.frames_unseen = 0;
+                driverBase(panel.board).MonitorChanged(panel.board);
+            }
+        }
     }
     return 1;
 }
@@ -404,6 +435,8 @@ fn stopStream(panel: *Panel) void {
 /// lock instead.
 fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
     const sys = panel.sys;
+    // A bridge's link comes up with the board's mode.
+    if (!panel.up) return err.RTGERR_NO_MODE;
     const band_count: u32 = @intCast(@min(bands.len, rtg.RTG_MAX_BANDS));
     for (bands[0..band_count], 0..) |band, index| panel.shown[index] = band;
     panel.shown_count = band_count;
@@ -478,66 +511,62 @@ fn giveBack(panel: *Panel) void {
 
 // --- the board's ops -----------------------------------------------------
 
-/// What is on the DSI host is offered - a panel, or an HDMI bridge: it is
-/// brought up, and a board made of it. A board that lists both is offered
-/// them in the list's order; the bridge is declined without a monitor
-/// behind it, and whichever has the host, the other is declined.
+/// What is on the DSI host is offered - a panel, or an HDMI bridge - and
+/// a board made of it. A panel is brought up here, in its one mode. A
+/// bridge is taken only with a monitor behind it, and brought up when
+/// the board is put in a mode the monitor names (`setMode`). A board that
+/// lists both is offered them in the list's order; the bridge is declined
+/// without a monitor behind it, and whichever has the host, the other is
+/// declined.
 fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const TagItem) callconv(.c) i32 {
     const sys = driver.sys_base;
     const rb = driver.rtg_base;
     // There is one host: what else is on it is declined.
     if (driver.boards != 0) return err.RTGERR_IN_USE;
 
-    var wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
-
-    // An HDMI bridge only with a monitor behind it, in the largest mode it
-    // takes.
-    var bridge_bus: ?lt8912b.I2c = null;
-    defer if (bridge_bus) |bus_to_bridge| bus_to_bridge.close();
-    if (wanted.chip == st.CHIP_LT8912B) bridge_bus = monitorFor(sys, &wanted) orelse return err.RTGERR_NO_DISPLAY;
-    // The PLL's setting for the rate that will run - over HDMI the one
-    // the monitor's mode came with - found before anything is taken. The
-    // tags' own rate was asked of it as they were read.
+    const wanted = config.read(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
+    const hdmi = wanted.chip == st.CHIP_LT8912B;
+    if (hdmi and !monitorBehind(sys, &wanted)) return err.RTGERR_NO_DISPLAY;
+    // The PLL's setting for the rate the tags ask, which was asked of it
+    // as they were read.
     const lane = host.pllFor(wanted.lane_mbps) orelse return err.RTGERR_BAD_TAGS;
 
     const board = rb.CreateBoard(driver, device, &.{
-        .ops = &ops,
+        .ops = if (hdmi) &bridge_ops else &ops,
         .instance_size = @sizeOf(Panel),
         .flags = rtg.boards.RTGBF_STREAMING,
+        // A monitor's modes are made in the format the screens are in.
+        .format = .rgb565,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
-    panel.* = .{ .sys = sys, .board = board, .config = wanted };
+    panel.* = .{ .sys = sys, .board = board, .config = wanted, .own = wanted, .hdmi = hdmi, .composing = hdmi };
     sys.InitSemaphore(&panel.pointer.lock);
-    // A screen's rows: the stream reads a panel's straight, so they are
-    // exactly its width; over HDMI it reads the copy instead, and the
-    // screens' rows are whole cache lines as AllocBitMap makes them, for a
-    // width that is not.
-    const row = wanted.width * (wanted.bits_per_pixel / 8);
-    const line = hardware.DCACHE_LINE_SIZE;
-    panel.screen_pitch = if (bridge_bus != null) (row + line - 1) / line * line else row;
-    panel.frame_bytes = panel.screen_pitch * wanted.height;
-    panel.stream_pitch = row;
-    panel.stream_frame_bytes = panel.frame_bytes;
-    if (bridge_bus != null) {
-        panel.hdmi = true;
-        panel.composing = true;
-        if (!link_file.allocate(&panel.link, sys, wanted.width, wanted.height, .bgr24)) {
-            rb.DeleteBoard(board);
-            return err.RTGERR_NO_MEMORY;
-        }
-        panel.stream_pitch = panel.link.pitch;
-        panel.stream_frame_bytes = panel.link.pitch * wanted.height;
-    }
+    sizeRows(panel);
 
-    const code = bringUp(panel, bridge_bus, lane);
+    // Its buffers are taken from system memory as they are asked for - a
+    // line-aligned block each, which the DMA reads in whole lines - and no
+    // more than the board says at once.
+    board.region = .{
+        .size = wanted.buffers * panel.frame_bytes,
+        .alignment = hardware.DCACHE_LINE_SIZE,
+        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
+    };
+    board.info.buffers = wanted.buffers;
+    board.info.brightness = panel.brightness;
+    // A bridge's modes are the library's to make, and its link comes up
+    // with the first of them.
+    if (hdmi) return err.RTGERR_OK;
+
+    const code = bringUp(panel, null, lane);
     if (code != err.RTGERR_OK) {
         giveBack(panel);
         rb.DeleteBoard(board);
         return code;
     }
+    panel.up = true;
 
-    // One mode: the panel is what it is, and a monitor gets the one
-    // picked for it - at the pixel clock the chip makes of the one asked.
+    // One mode: the panel is what it is - at the pixel clock the chip
+    // makes of the one asked.
     const timings: rtg.RtgTimings = .{
         .pixel_clock_hz = panel.pixel_hz,
         .h_active = wanted.width,
@@ -556,48 +585,79 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         rb.DeleteBoard(board);
         return err.RTGERR_NO_MEMORY;
     }
-
-    // Its buffers are taken from system memory as they are asked for - a
-    // line-aligned block each, which the DMA reads in whole lines - and no
-    // more than the board says at once.
-    board.region = .{
-        .size = wanted.buffers * panel.frame_bytes,
-        .alignment = hardware.DCACHE_LINE_SIZE,
-        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
-    };
-    board.info.buffers = wanted.buffers;
-    board.info.brightness = panel.brightness;
     return err.RTGERR_OK;
 }
 
-/// The bridge's I2C bus, when a monitor's EDID answers on it, and
-/// `wanted` set to the largest mode the EDID names (`monitor.zig`) - left
-/// the part's own when it names none of them; the monitor's name and the
-/// mode said on the raw port. Null, and nothing kept, when there is no
-/// monitor - or no bus.
-fn monitorFor(sys: *ExecBase, wanted: *config.Config) ?lt8912b.I2c {
-    const bus_to_bridge = lt8912b.I2c.open(sys, wanted.i2c_unit) orelse return null;
+/// A screen's rows and a frame's bytes, for the mode in `panel.config`:
+/// the stream reads a panel's screens straight, so their rows are exactly
+/// its width; over HDMI it reads the copy instead, and the screens' rows
+/// are whole cache lines as AllocBitMap makes them, for a width that is
+/// not. What the stream reads is set from the copy once that is taken.
+fn sizeRows(panel: *Panel) void {
+    const wanted = &panel.config;
+    const row = wanted.width * (wanted.bits_per_pixel / 8);
+    const line = hardware.DCACHE_LINE_SIZE;
+    panel.screen_pitch = if (panel.hdmi) (row + line - 1) / line * line else row;
+    panel.frame_bytes = panel.screen_pitch * wanted.height;
+    panel.stream_pitch = row;
+    panel.stream_frame_bytes = panel.frame_bytes;
+}
+
+/// Whether a monitor's EDID answers on the bridge's bus.
+fn monitorBehind(sys: *ExecBase, wanted: *const config.Config) bool {
+    const bus_to_bridge = lt8912b.I2c.open(sys, wanted.i2c_unit) orelse return false;
+    defer bus_to_bridge.close();
+    return lt8912b.monitorThere(bus_to_bridge);
+}
+
+/// What is on the bridge's connector, for the library: whether a
+/// monitor's EDID answers on the bridge's bus, and its blocks. They are
+/// read when a monitor has come; one that was there at the last look is
+/// the one read then.
+fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
+    const panel = panelOf(board);
+    const bus_to_bridge = lt8912b.I2c.open(panel.sys, panel.own.i2c_unit) orelse return err.RTGERR_IO;
+    defer bus_to_bridge.close();
     if (!lt8912b.monitorThere(bus_to_bridge)) {
-        bus_to_bridge.close();
-        return null;
+        panel.monitor_there = false;
+        return err.RTGERR_OK;
     }
-    var first: lt8912b.Edid = undefined;
-    var extension: lt8912b.Edid = undefined;
-    var name: [14]u8 = undefined;
-    name[0] = 0;
-    if (lt8912b.readEdid(bus_to_bridge, &first)) {
-        edid.name(&first, &name);
-        const cea: ?*const lt8912b.Edid = if (lt8912b.readExtension(bus_to_bridge, &first, &extension)) &extension else null;
-        if (monitor.best(&first, cea)) |mode| take(wanted, mode);
+    asked.present = 1;
+    if (!panel.monitor_there or panel.edid_size == 0) {
+        const block = rtg.modes.RTG_EDID_BLOCK;
+        panel.edid_size = 0;
+        const first: *lt8912b.Edid = panel.edid[0..block];
+        if (lt8912b.readEdid(bus_to_bridge, 0, first)) {
+            panel.edid_size = block;
+            if (first[126] != 0 and lt8912b.readEdid(bus_to_bridge, 1, panel.edid[block..][0..block])) panel.edid_size = 2 * block;
+        }
     }
-    const shown: [*:0]const u8 = if (name[0] != 0) @ptrCast(&name) else "a monitor";
-    sdk.exec.kprintf(sys, "%s: HDMI to %s, %dx%d\n", .{ MODULE_NAME, shown, wanted.width, wanted.height });
-    return bus_to_bridge;
+    panel.monitor_there = true;
+    const length = @min(panel.edid_size, asked.edid_max);
+    @memcpy(asked.edid[0..length], panel.edid[0..length]);
+    asked.edid_size = length;
+    return err.RTGERR_OK;
+}
+
+/// Whether the host sends `timings` to a monitor: a progressive picture
+/// at 60 a second, of a size `sends.zig` has a timing for or of the
+/// part's own.
+fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) i32 {
+    const panel = panelOf(board);
+    if (timings.flags & rtg.modes.RTGTM_INTERLACED != 0) return err.RTGERR_BAD_MODE;
+    const line: u64 = @as(u64, timings.h_active) + timings.h_front + timings.h_sync + timings.h_back;
+    const lines: u64 = @as(u64, timings.v_active) + timings.v_front + timings.v_sync + timings.v_back;
+    if (line * lines == 0) return err.RTGERR_BAD_MODE;
+    const millihertz = @as(u64, timings.pixel_clock_hz) * 1000 / (line * lines);
+    if (millihertz < 59_500 or millihertz > 60_500) return err.RTGERR_BAD_MODE;
+    if (sends.forSize(timings.h_active, timings.v_active) != null) return err.RTGERR_OK;
+    const own = timings.h_active == panel.own.width and timings.v_active == panel.own.height;
+    return if (own) err.RTGERR_OK else err.RTGERR_BAD_MODE;
 }
 
 /// `mode` in place of the part's own: the picture, its timings, the
 /// pixel clock and the link's rate on two lanes.
-fn take(wanted: *config.Config, mode: *const monitor.Mode) void {
+fn take(wanted: *config.Config, mode: *const sends.Mode) void {
     wanted.width = mode.width;
     wanted.height = mode.height;
     wanted.pixel_hz = mode.pixel_hz;
@@ -636,9 +696,52 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     giveBack(panelOf(board));
 }
 
-/// One mode, the panel's own or the monitor's, which create already set
-/// up.
-fn setMode(_: *rtg.RtgBoard, _: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+/// A panel has one mode, which `attach` brought up. Over HDMI the link is
+/// brought up here, in this host's timing for the mode's size
+/// (`sends.zig`), or the part's own: the bridge's copy taken, the PHY, the
+/// bridge and the host set for it. A link that is up is taken down first
+/// - for another mode, or for the mode it is in when another monitor
+/// came, and then what was shown is shown again.
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+    const panel = panelOf(board);
+    if (!panel.hdmi) return err.RTGERR_OK;
+    const sys = panel.sys;
+    var wanted = panel.own;
+    if (sends.forSize(mode.width, mode.height)) |sent| {
+        take(&wanted, sent);
+    } else if (mode.width != panel.own.width or mode.height != panel.own.height) {
+        return err.RTGERR_BAD_MODE;
+    }
+    const lane = host.pllFor(wanted.lane_mbps) orelse return err.RTGERR_BAD_MODE;
+    const bus_to_bridge = lt8912b.I2c.open(sys, wanted.i2c_unit) orelse return err.RTGERR_NO_DISPLAY;
+    defer bus_to_bridge.close();
+
+    // What the stream shows, to show again where the mode stays.
+    var shown: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
+    const shown_count = if (panel.streaming and mode.id == panel.mode_id) panel.shown_count else 0;
+    @memcpy(shown[0..shown_count], panel.shown[0..shown_count]);
+    // The copy goes and comes back another: the pointer and the overlay,
+    // which are laid into it, wait meanwhile.
+    sys.ObtainSemaphore(&panel.pointer.lock);
+    if (panel.up) giveBack(panel);
+    panel.up = false;
+    panel.shown_count = 0;
+
+    panel.config = wanted;
+    sizeRows(panel);
+    var code: i32 = err.RTGERR_NO_MEMORY;
+    if (link_file.allocate(&panel.link, sys, wanted.width, wanted.height, .bgr24)) {
+        panel.stream_pitch = panel.link.pitch;
+        panel.stream_frame_bytes = panel.link.pitch * wanted.height;
+        code = bringUp(panel, bus_to_bridge, lane);
+        if (code != err.RTGERR_OK) giveBack(panel);
+    }
+    panel.up = code == err.RTGERR_OK;
+    sys.ReleaseSemaphore(&panel.pointer.lock);
+    if (code != err.RTGERR_OK) return code;
+    panel.mode_id = mode.id;
+    board.region.size = wanted.buffers * panel.frame_bytes;
+    if (shown_count != 0) return show(panel, shown[0..shown_count]);
     return err.RTGERR_OK;
 }
 
@@ -687,7 +790,7 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
     const start: *anyopaque = @ptrFromInt(@intFromPtr(pixels) + @as(usize, y) * bitmap.pitch);
     const panel = panelOf(board);
     _ = panel.sys.CachePreDMA(start, &bytes, 0);
-    if (panel.composing) {
+    if (panel.composing and panel.up) {
         const sys = panel.sys;
         sys.ObtainSemaphore(&panel.pointer.lock);
         const kept = pointer_file.keepOut(&panel.pointer, &panel.link);
@@ -829,6 +932,14 @@ const ops = rtg.RtgBoardOps{
     .show_pointer = &showPointer,
     .set_overlay = &setOverlay,
     .move_overlay = &moveOverlay,
+};
+
+/// A bridge's board has the same, and a connector.
+const bridge_ops = ops: {
+    var more = ops;
+    more.detect = &detect;
+    more.check_mode = &checkMode;
+    break :ops more;
 };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach };

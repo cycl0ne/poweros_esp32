@@ -14,7 +14,7 @@ const _mode = @import("_mode.zig");
 /// fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32) u32
 /// ```
 ///
-/// SINCE: 1.19. LVO -364.
+/// SINCE: 1.19. LVO -380.
 ///
 /// INPUTS:
 /// - `board` - the board, one of the caller's own.
@@ -38,6 +38,11 @@ const _mode = @import("_mode.zig");
 /// default until one is added with `RTGMF_DEFAULT`. A mode added again -
 /// the same size, format, refresh and turn - is the one that is there: it
 /// takes the timings handed over and keeps its number.
+///
+/// On a board with a connector (`detect`) the modes are what the monitor
+/// names, made by the library; the ones added with this call are the
+/// board's own, which stand while no monitor is there or the one there
+/// names none the board can make.
 ///
 /// A row of a buffer of the mode is as long as `AllocBitMap` makes one:
 /// the width in the format, rounded up to what the board's display memory
@@ -72,6 +77,11 @@ pub fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgT
     if (rb.iface().RtgFormatBits(format) == 0) return 0;
     boards.obtain(rb, board);
     defer boards.release(rb, board);
-    const record = _mode.add(rb, board, timings, format, flags) orelse return 0;
+    const record = _mode.add(rb, board, timings, format, flags, .driver) orelse return 0;
+    // On a board whose monitor names modes, the driver's own stand by:
+    // they are offered while it names none.
+    if (boards.privateOf(board).monitor) |state| {
+        if (state.names_modes) _mode.withdraw(rb, board, .driver);
+    }
     return record.mode.id;
 }

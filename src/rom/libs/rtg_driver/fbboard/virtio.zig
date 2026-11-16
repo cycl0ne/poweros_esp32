@@ -114,6 +114,9 @@ const STATUS_FEATURES_OK: u32 = 8;
 /// VIRTIO_F_VERSION_1, feature 32: the second word's first bit. Version 2
 /// is refused without it.
 const FEATURE_VERSION_1: u32 = 1 << 0;
+/// VIRTIO_GPU_F_EDID, in the first word of the features: the device
+/// answers GET_EDID.
+const FEATURE_EDID: u32 = 1 << 1;
 
 // --- the queues ----------------------------------------------------------------------
 
@@ -207,7 +210,9 @@ const CMD_TRANSFER_TO_HOST_2D: u32 = 0x0105;
 const CMD_RESOURCE_ATTACH_BACKING: u32 = 0x0106;
 const CMD_UPDATE_CURSOR: u32 = 0x0300;
 const CMD_MOVE_CURSOR: u32 = 0x0301;
+const CMD_GET_EDID: u32 = 0x010A;
 const RESP_OK_DISPLAY_INFO: u32 = 0x1101;
+const RESP_OK_EDID: u32 = 0x1104;
 /// The first answer that says a command failed.
 const RESP_ERR_UNSPEC: u32 = 0x1200;
 
@@ -240,6 +245,22 @@ const DisplayInfo = extern struct {
         enabled: u32,
         flags: u32,
     },
+};
+
+/// GET_EDID: the EDID of one of the device's displays, the first here.
+const GetEdid = extern struct {
+    header: Header = .{ .type = CMD_GET_EDID },
+    scanout: u32 = 0,
+    padding: u32 = 0,
+};
+
+/// Its answer: how many bytes of EDID follow, and room for the most the
+/// device hands over.
+const EdidAnswer = extern struct {
+    header: Header,
+    size: u32,
+    padding: u32,
+    edid: [1024]u8,
 };
 
 const Create2d = extern struct {
@@ -362,7 +383,7 @@ const layout = struct {
     const slots = cursor + queueBytes(cursor_size);
     const cursors = slots + control_slots * @sizeOf(Slot);
     const answer = std.mem.alignForward(usize, cursors + cursor_size * @sizeOf(Cursor), 8);
-    const bytes = answer + @sizeOf(DisplayInfo);
+    const bytes = answer + @max(@sizeOf(DisplayInfo), @sizeOf(EdidAnswer));
 };
 
 /// One GPU, from `find` or `onPci` on; `start` brings it up.
@@ -398,6 +419,9 @@ pub const Gpu = struct {
     cursor_id: u32 = 0,
     /// Whether a command failing has been said on the raw port: once.
     told: bool = false,
+    /// The device describes its display as a monitor does: the EDID
+    /// feature was offered and taken (`takeFeatures`).
+    has_edid: bool = false,
 };
 
 /// A 64-bit field as two words, low half first: what the standard says,
@@ -432,34 +456,45 @@ fn settlesFeatures(gpu: *const Gpu) bool {
     };
 }
 
-/// None of the device's features taken - no 3D, no EDID - and
+/// Of the device's features the EDID taken where it offers it - its
+/// window described as a monitor describes itself - and no 3D; and
 /// VIRTIO_F_VERSION_1 answered where the transport is one that asks for
 /// it, since it is spoken to as the standard says and not as the
 /// arrangement before it did. False where the device does not offer that.
-fn takeFeatures(gpu: *const Gpu) bool {
+fn takeFeatures(gpu: *Gpu) bool {
+    gpu.has_edid = false;
     switch (gpu.port) {
         .mmio => |port| {
             if (port.version == 1) {
+                reg(port.base + DEVICE_FEATURES_SEL).* = 0;
+                const taken = reg(port.base + DEVICE_FEATURES).* & FEATURE_EDID;
                 reg(port.base + DRIVER_FEATURES_SEL).* = 0;
-                reg(port.base + DRIVER_FEATURES).* = 0;
+                reg(port.base + DRIVER_FEATURES).* = taken;
                 reg(port.base + GUEST_PAGE_SIZE).* = page;
+                gpu.has_edid = taken != 0;
                 return true;
             }
             reg(port.base + DEVICE_FEATURES_SEL).* = 1;
             if (reg(port.base + DEVICE_FEATURES).* & FEATURE_VERSION_1 == 0) return false;
+            reg(port.base + DEVICE_FEATURES_SEL).* = 0;
+            const taken = reg(port.base + DEVICE_FEATURES).* & FEATURE_EDID;
             reg(port.base + DRIVER_FEATURES_SEL).* = 1;
             reg(port.base + DRIVER_FEATURES).* = FEATURE_VERSION_1;
             reg(port.base + DRIVER_FEATURES_SEL).* = 0;
-            reg(port.base + DRIVER_FEATURES).* = 0;
+            reg(port.base + DRIVER_FEATURES).* = taken;
+            gpu.has_edid = taken != 0;
             return true;
         },
         .pci => |port| {
             reg(port.common + COMMON_DEVICE_FEATURES_SEL).* = 1;
             if (reg(port.common + COMMON_DEVICE_FEATURES).* & FEATURE_VERSION_1 == 0) return false;
+            reg(port.common + COMMON_DEVICE_FEATURES_SEL).* = 0;
+            const taken = reg(port.common + COMMON_DEVICE_FEATURES).* & FEATURE_EDID;
             reg(port.common + COMMON_DRIVER_FEATURES_SEL).* = 1;
             reg(port.common + COMMON_DRIVER_FEATURES).* = FEATURE_VERSION_1;
             reg(port.common + COMMON_DRIVER_FEATURES_SEL).* = 0;
-            reg(port.common + COMMON_DRIVER_FEATURES).* = 0;
+            reg(port.common + COMMON_DRIVER_FEATURES).* = taken;
+            gpu.has_edid = taken != 0;
             return true;
         },
     }
@@ -706,6 +741,25 @@ fn sendCursor(gpu: *Gpu, command: Cursor) void {
     gpu.cursor_busy |= @as(u16, 1) << @intCast(index);
     queue.hand(index);
     kick(gpu, 1);
+}
+
+/// The EDID the emulator gives the display - its window as a monitor
+/// would describe itself - copied into `into`, where the device has the
+/// feature: how many bytes, 0 for none.
+pub fn readEdid(gpu: *Gpu, into: []u8, waiter: anytype) u32 {
+    if (!gpu.has_edid) return 0;
+    gpu.sys.ObtainSemaphore(&gpu.lock);
+    defer gpu.sys.ReleaseSemaphore(&gpu.lock);
+    const answer: *EdidAnswer = @ptrCast(gpu.answer);
+    answer.header.type = 0;
+    const asked = GetEdid{};
+    const slot = send(gpu, &asked, std.mem.asBytes(answer), waiter) orelse return 0;
+    kick(gpu, 0);
+    if (!finish(gpu, slot, waiter)) return 0;
+    if (answer.header.type != RESP_OK_EDID) return 0;
+    const length: u32 = @intCast(@min(answer.size, answer.edid.len, into.len));
+    @memcpy(into[0..length], answer.edid[0..length]);
+    return length;
 }
 
 /// The size of the picture the emulator's window has for the display,

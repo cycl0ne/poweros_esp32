@@ -69,6 +69,10 @@ pub const LVO = struct {
     pub const GetRtgDevices = libraries.lvo(74);
     pub const GetBoardModes = libraries.lvo(75);
     pub const BestBoardMode = libraries.lvo(76);
+    pub const GetBoardMonitor = libraries.lvo(77);
+    pub const ReadBoardEDID = libraries.lvo(78);
+    pub const AddRtgNotify = libraries.lvo(79);
+    pub const RemRtgNotify = libraries.lvo(80);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -122,6 +126,10 @@ pub const Fn = struct {
     pub const GetRtgDevices = *const fn (*RtgBase, ?[*]rtg.RtgDeviceInfo, u32) callconv(.c) u32;
     pub const GetBoardModes = *const fn (*RtgBase, *rtg.RtgBoard, ?[*]rtg.RtgMode, u32) callconv(.c) u32;
     pub const BestBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32, u32, ?*rtg.RtgMode) callconv(.c) u32;
+    pub const GetBoardMonitor = *const fn (*RtgBase, *rtg.RtgBoard, *rtg.RtgMonitorInfo, u32) callconv(.c) u32;
+    pub const ReadBoardEDID = *const fn (*RtgBase, *rtg.RtgBoard, ?[*]u8, u32) callconv(.c) u32;
+    pub const AddRtgNotify = *const fn (*RtgBase, *exec.Task, u32) callconv(.c) ?*rtg.RtgNotify;
+    pub const RemRtgNotify = *const fn (*RtgBase, ?*rtg.RtgNotify) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -448,5 +456,31 @@ pub const RtgBase = opaque {
     /// compares what it asked for with what came back.
     pub fn BestBoardMode(self: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32, mode: ?*rtg.RtgMode) u32 {
         return libraries.call(self, LVO.BestBoardMode, Fn.BestBoardMode, .{ board, width, height, refresh_mhz, format, mode });
+    }
+
+    /// What is on the board's connector, into `info`, of which `size` bytes
+    /// are there - pass @sizeOf(RtgMonitorInfo). Returns the bytes written.
+    /// A panel is a monitor that is always there.
+    pub fn GetBoardMonitor(self: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo, size: u32) u32 {
+        return libraries.call(self, LVO.GetBoardMonitor, Fn.GetBoardMonitor, .{ board, info, size });
+    }
+
+    /// Copy out the EDID of the monitor on the board, up to `size` bytes;
+    /// answers its length, 0 for none. Null and 0 ask for the length alone.
+    pub fn ReadBoardEDID(self: *RtgBase, board: *rtg.RtgBoard, buffer: ?[*]u8, size: u32) u32 {
+        return libraries.call(self, LVO.ReadBoardEDID, Fn.ReadBoardEDID, .{ board, buffer, size });
+    }
+
+    /// Have `task` signalled with `signals` whenever something about the
+    /// boards changed: a board made or gone, a monitor come or gone, a list
+    /// of modes made again, a mode set. The task then reads the boards, and
+    /// each board's `changes`. Null without memory, or for no signals.
+    pub fn AddRtgNotify(self: *RtgBase, task: *exec.Task, signals: u32) ?*rtg.RtgNotify {
+        return libraries.call(self, LVO.AddRtgNotify, Fn.AddRtgNotify, .{ task, signals });
+    }
+
+    /// Give a notification back. Null does nothing.
+    pub fn RemRtgNotify(self: *RtgBase, notify: ?*rtg.RtgNotify) void {
+        return libraries.call(self, LVO.RemRtgNotify, Fn.RemRtgNotify, .{notify});
     }
 };

@@ -11,7 +11,7 @@
 // The folder under src/ whose files hold these calls.
 ##home rtg
 // The first slot after the programs' calls.
-##bias 77
+##bias 81
 ##public
 /// Put a driver's description on the list: the library makes the
 /// driver's node, with the state the description asks for behind it,
@@ -73,4 +73,13 @@ u32 AddBoardMode(*rtg.RtgBoard board, *const rtg.RtgTimings timings, u32 format,
 /// with no size, and for one that names a pixel clock without both sync
 /// pulses; `timings` is then left as it was.
 bool ReadTimingTags(?[*]const utility.TagItem tag_list, *rtg.RtgTimings timings)
+/// Something happened at the board's connector: have its `detect` asked
+/// again and its modes made of what the monitor now there names. The
+/// library does that on a task of its own. From an interrupt or a task.
+void MonitorChanged(*rtg.RtgBoard board)
+/// The standard's timings for a picture of that size at that refresh, in
+/// frames a second - CEA-861's, with its number, or VESA's - into
+/// `timings`. False, and `timings` left as it was, where the library
+/// knows none.
+bool FindStandardTimings(u32 width, u32 height, u32 refresh_hz, *rtg.RtgTimings timings)
 ##end

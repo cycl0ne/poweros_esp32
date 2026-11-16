@@ -119,5 +119,7 @@ pub fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) i32 {
     board.info.flags |= rtg.boards.RTGBF_MODE_SET;
     board.info.pixel_clock_hz = mode.pixel_clock_hz;
     board.info.refresh_mhz = mode.refresh_mhz;
+    // The board is in another mode: whoever asked is told.
+    _board.changed(rb, board);
     return err.RTGERR_OK;
 }

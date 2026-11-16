@@ -22,9 +22,9 @@
 //! sdk/libs/rtg/.
 //!
 //! Each call is a file of its own in the folder for its category -
-//! driver/, device/, board/, mode/, bitmap/, display/, engine/, event/,
-//! transport/, tag/, pointer/, video/ and errors/ - and memory/ holds the
-//! arena display memory is cut from.
+//! driver/, device/, board/, mode/, monitor/, bitmap/, display/, engine/,
+//! event/, transport/, tag/, pointer/, video/ and errors/ - and memory/
+//! holds the arena display memory is cut from.
 //! The jump table is rtg_lvo.zig, the ROM tag and init rtg_init.zig, the
 //! base rtg_base.zig. This file holds the names the rest of the kernel
 //! reaches the library by, and the tests of calls working together. The
@@ -64,6 +64,8 @@ const interface = sdk.interface.rtg;
 const memory = @import("memory/_memory.zig");
 const boards = @import("board/_board.zig");
 const modes = @import("mode/_mode.zig");
+const monitors = @import("monitor/_monitor.zig");
+const edid = @import("monitor/_edid.zig");
 
 test {
     _ = rtg_base;
@@ -119,6 +121,14 @@ test {
     _ = @import("mode/findboardmode.zig");
     _ = @import("mode/getboardmodes.zig");
     _ = @import("mode/readtimingtags.zig");
+    _ = @import("monitor/_edid.zig");
+    _ = @import("monitor/_monitor.zig");
+    _ = @import("monitor/findstandardtimings.zig");
+    _ = @import("monitor/getboardmonitor.zig");
+    _ = @import("monitor/monitorchanged.zig");
+    _ = @import("monitor/readboardedid.zig");
+    _ = @import("board/addrtgnotify.zig");
+    _ = @import("board/remrtgnotify.zig");
     _ = @import("tag/getrtgtagdata.zig");
     _ = @import("transport/_transport.zig");
     _ = @import("transport/opentransport.zig");
@@ -367,6 +377,8 @@ fn driverNames(rb: *RtgBase, into: *[8]rtg.RtgDriverInfo) u32 {
 /// no memory, and no signal of the test's task that a wait took.
 fn tearDown(rb: *RtgBase) !void {
     try testing.expect(fake.remove(fakeOf(rb)));
+    // The monitor task, where a board with a connector had it made.
+    monitors.stop(rb);
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(rb.utility_base));
     _ = kexec.CloseLibrary(kexec.SysBase, &ub.lib);
     if (rb.timer_io.node.device != null) kexec.CloseDevice(kexec.SysBase, &rb.timer_io.node);
@@ -1176,6 +1188,473 @@ test "a panel's timings from its tags: the size, the clock and the blanking; wha
     try testing.expect(!driverBase(rb).ReadTimingTags(null, &timings));
     try testing.expectEqual(before, timings);
 
+    try tearDown(rb);
+}
+
+/// A first block made an EDID's: its header put in front and the sum of
+/// its bytes brought to zero.
+fn sealed(block: edid.Block) edid.Block {
+    var whole = block;
+    const header = [8]u8{ 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
+    @memcpy(whole[0..8], &header);
+    whole[127] = 0;
+    var sum: u8 = 0;
+    for (whole) |byte| sum +%= byte;
+    whole[127] = 0 -% sum;
+    return whole;
+}
+
+/// An extension block summed to zero.
+fn summed(block: edid.Block) edid.Block {
+    var whole = block;
+    whole[127] = 0;
+    var sum: u8 = 0;
+    for (whole) |byte| sum +%= byte;
+    whole[127] = 0 -% sum;
+    return whole;
+}
+
+/// The portable 1080p monitor's EDID, as a driver's `detect` hands it
+/// over.
+const portable_bytes: []const u8 = std.mem.sliceAsBytes(&edid.portable_1080p);
+
+/// A 3840x2160 monitor: 4K at 60 preferred, at 594 MHz, and in its
+/// extension CEA's numbers 95 (4K at 30) and 16 (1080p at 60).
+const uhd_monitor: [2]edid.Block = blocks: {
+    var first: edid.Block = @splat(0);
+    for (38..54) |i| first[i] = 0x01;
+    const uhd60 = [18]u8{ 0x08, 0xE8, 0x00, 0x30, 0xF2, 0x70, 0x5A, 0x80, 0xB0, 0x58, 0x8A, 0x00, 0x50, 0x1D, 0x74, 0x00, 0x00, 0x1E };
+    @memcpy(first[54..72], &uhd60);
+    first[126] = 1;
+    var cea: edid.Block = @splat(0);
+    cea[0] = 0x02;
+    cea[1] = 0x03;
+    cea[2] = 7;
+    cea[4] = 2 << 5 | 2;
+    cea[5] = 95;
+    cea[6] = 16;
+    break :blocks .{ sealed(first), summed(cea) };
+};
+const uhd_bytes: []const u8 = std.mem.sliceAsBytes(&uhd_monitor);
+
+/// A 2560x1440 monitor that names its one mode in full and nothing else.
+const qhd_monitor: [1]edid.Block = blocks: {
+    var first: edid.Block = @splat(0);
+    for (38..54) |i| first[i] = 0x01;
+    const qhd = [18]u8{ 0x56, 0x5E, 0x00, 0xA0, 0xA0, 0xA0, 0x29, 0x50, 0x30, 0x20, 0x35, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1A };
+    @memcpy(first[54..72], &qhd);
+    break :blocks .{sealed(first)};
+};
+const qhd_bytes: []const u8 = std.mem.sliceAsBytes(&qhd_monitor);
+
+/// A board of the test driver's with a connector, the monitor of `bytes`
+/// on it, and none of the driver's own modes unless `own` says how many.
+fn makeConnector(rb: *RtgBase, bytes: ?[]const u8, own: u32) !*rtg.RtgBoard {
+    const fk = fakeOf(rb);
+    fk.connector = true;
+    fk.modes = own;
+    fk.monitor_there = bytes != null;
+    fk.monitor_edid = bytes;
+    return makeBoard(rb);
+}
+
+/// What the board says of itself now.
+fn infoOf(rb: *RtgBase, board: *rtg.RtgBoard) rtg.RtgBoardInfo {
+    var info: rtg.RtgBoardInfo = .{};
+    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    return info;
+}
+
+/// What is on the board's connector, as the library last saw it.
+fn monitorOf(rb: *RtgBase, board: *rtg.RtgBoard) rtg.RtgMonitorInfo {
+    var said: rtg.RtgMonitorInfo = .{};
+    _ = base(rb).GetBoardMonitor(board, &said, @sizeOf(rtg.RtgMonitorInfo));
+    return said;
+}
+
+test "a panel is a monitor that is always there, called what its part is called" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const board = try makeBoard(rb);
+    const said = monitorOf(rb, board);
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT | rtg.modes.RTGMON_PANEL, said.flags);
+    try testing.expectEqualStrings("fake display", std.mem.sliceTo(&said.name, 0));
+    try testing.expectEqual(@as(u32, 0), said.edid_size);
+    // As much of the answer as the caller has room for.
+    var short: rtg.RtgMonitorInfo = .{};
+    try testing.expectEqual(@as(u32, 4), base(rb).GetBoardMonitor(board, &short, 4));
+    try testing.expectEqual(said.flags, short.flags);
+    try testing.expectEqual(@as(u8, 0), short.name[0]);
+    // It has no EDID, its board no connector, and nothing asked its driver.
+    try testing.expectEqual(@as(u32, 0), base(rb).ReadBoardEDID(board, null, 0));
+    const info = infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_CONNECTOR);
+    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_MONITOR);
+    try testing.expectEqual(@as(u32, 0), fakeOf(rb).log.detects);
+    // A word of its driver's about a connector it has not is not heard.
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), fakeOf(rb).log.detects);
+    try testing.expect(rb.monitor_task == null);
+
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a monitor's modes: made of its EDID as the board joins the list, the one it prefers the default" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeConnector(rb, portable_bytes, fake.mode_table.len);
+
+    // The connector was asked once, in the task that made the board, and
+    // the task that looks again is there.
+    try testing.expectEqual(@as(u32, 1), fk.log.detects);
+    try testing.expect(rb.monitor_task != null);
+    var info = infoOf(rb, board);
+    try testing.expect(info.flags & rtg.boards.RTGBF_CONNECTOR != 0);
+    try testing.expect(info.caps & rtg.boards.RTGBC_MONITOR != 0);
+    try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_NO_DISPLAY);
+
+    // What it names that the standards time, the larger picture first:
+    // its own 1080p in full, then sizes by a bit, a size or a number.
+    const expected = [_][2]u32{
+        .{ 1920, 1080 }, .{ 1280, 1024 }, .{ 1440, 900 }, .{ 1280, 960 }, .{ 1280, 720 },
+        .{ 1024, 768 },  .{ 800, 600 },   .{ 720, 480 },  .{ 640, 480 },
+    };
+    var found: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, expected.len), base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, expected.len), info.modes);
+    for (expected, found[0..expected.len]) |want, *got| {
+        try testing.expectEqual(want[0], got.width);
+        try testing.expectEqual(want[1], got.height);
+        // In the format the board said a monitor's modes are made in.
+        try testing.expectEqual(rtg.PixelFormat.rgb565, got.format);
+        try testing.expect(got.refresh_mhz > 59_000 and got.refresh_mhz < 61_000);
+    }
+    // The driver's own three stand by: none of them is listed.
+    try testing.expectEqual(@as(u32, 0), base(rb).FindBoardMode(board, 320, 200, rtg.RTG_ANY, rtg.RTG_ANY));
+    // The mode it prefers is the default, with the timing it gave - the
+    // sync a line early - and CEA's number for it.
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    try testing.expectEqualStrings("1920x1080", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(found[0].id, fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 148_500_000), fk.log.last_timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 3), fk.log.last_timings.v_front);
+    try testing.expectEqual(@as(u8, 16), fk.log.last_timings.vic);
+    try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH | rtg.modes.RTGTM_VSYNC_HIGH, fk.log.last_timings.flags);
+    // A mode named by a number has the standard's timing and that number.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, found[7].id));
+    try testing.expectEqual(@as(u8, 3), fk.log.last_timings.vic);
+    try testing.expectEqual(@as(u32, 27_000_000), fk.log.last_timings.pixel_clock_hz);
+
+    // What the monitor says of itself, and its EDID as it was read.
+    const said = monitorOf(rb, board);
+    const m = rtg.modes;
+    try testing.expectEqual(m.RTGMON_PRESENT | m.RTGMON_EDID | m.RTGMON_HDMI | m.RTGMON_AUDIO | m.RTGMON_RANGE_SELECTABLE, said.flags);
+    try testing.expectEqualStrings("BOE", std.mem.sliceTo(&said.maker, 0));
+    try testing.expectEqualStrings("Display", std.mem.sliceTo(&said.name, 0));
+    try testing.expectEqual(@as(u32, 0x2556), said.product);
+    try testing.expectEqual(@as(u32, 350), said.width_mm);
+    try testing.expectEqual(@as(u16, 2024), said.year);
+    try testing.expectEqual(@as(u32, 300_000), said.max_tmds_khz);
+    try testing.expectEqual(@as(u32, 256), said.edid_size);
+    try testing.expectEqual(@as(u32, 256), base(rb).ReadBoardEDID(board, null, 0));
+    var bytes: [rtg.modes.RTG_EDID_MAX]u8 = @splat(0xEE);
+    try testing.expectEqual(@as(u32, 256), base(rb).ReadBoardEDID(board, &bytes, 130));
+    try testing.expectEqualSlices(u8, portable_bytes[0..130], bytes[0..130]);
+    try testing.expectEqual(@as(u8, 0xEE), bytes[130]);
+
+    info = infoOf(rb, board);
+    try testing.expectEqual(found[7].id, info.mode_id);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a monitor that prefers what the board cannot make gets 1080p at 60; one mode in full is its one mode" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    // A board that makes no clock past 300 MHz, as an HDMI 1.4 port.
+    fk.fastest_hz = 300_000_000;
+    const board = try makeConnector(rb, uhd_bytes, 0);
+    var found: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 2), base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, 3840), found[0].width);
+    try testing.expectEqual(@as(u32, 30_000), found[0].refresh_mhz);
+    try testing.expectEqual(@as(u32, 0), found[0].flags);
+    try testing.expectEqual(@as(u32, 1080), found[1].height);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[1].flags);
+    // The board was asked of the two the monitor's own clock allows: it
+    // says no faster one than HDMI 1.4's, so 4K at 60 is not its to take.
+    try testing.expectEqual(@as(u32, 2), fk.log.checks);
+    driverBase(rb).DeleteBoard(board);
+
+    // One detailed timing and no more: that mode, as the monitor times it.
+    fk.fastest_hz = 0xFFFF_FFFF;
+    const other = try makeConnector(rb, qhd_bytes, 0);
+    try testing.expectEqual(@as(u32, 1), base(rb).GetBoardModes(other, &found, found.len));
+    try testing.expectEqual(@as(u32, 2560), found[0].width);
+    try testing.expectEqual(@as(u32, 241_500_000), found[0].pixel_clock_hz);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(other, 0));
+    try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH, fk.log.last_timings.flags);
+    try testing.expectEqual(@as(u8, 0), fk.log.last_timings.vic);
+    // A monitor without an extension is a DVI monitor, of no sound.
+    const said = monitorOf(rb, other);
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT | rtg.modes.RTGMON_EDID, said.flags);
+    driverBase(rb).DeleteBoard(other);
+    try tearDown(rb);
+}
+
+test "a monitor that names nothing: the board's own modes, or its device's size at 60 a second" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+
+    // No monitor on the connector: the driver's own modes stand, and the
+    // board says it has no display - and is shown on all the same.
+    const board = try makeConnector(rb, null, fake.mode_table.len);
+    var found: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 3), base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, 1), base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+    try testing.expect(infoOf(rb, board).flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expectEqual(@as(u32, 0), monitorOf(rb, board).flags);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    const bm = base(rb).AllocBitMap(board, 8, 8, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    base(rb).FreeBitMap(bm);
+    driverBase(rb).DeleteBoard(board);
+
+    // A monitor whose EDID does not read, on a board that added no mode:
+    // the size its device's tags give, in the standard's timing.
+    const sized = [_]TagItem{
+        .{ .tag = rtg.tags.RTGA_Width, .data = 1280 },
+        .{ .tag = rtg.tags.RTGA_Height, .data = 720 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(fake.deviceTags()) },
+    };
+    fk.connector = true;
+    fk.modes = 0;
+    fk.monitor_there = true;
+    fk.monitor_edid = null;
+    const bare = fake.makeBoardFrom(fk, &sized) orelse return error.NoBoard;
+    try testing.expectEqual(@as(u32, 1), base(rb).GetBoardModes(bare, &found, found.len));
+    try testing.expectEqualStrings("1280x720", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqual(@as(u32, 74_250_000), found[0].pixel_clock_hz);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT, monitorOf(rb, bare).flags);
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, bare).flags & rtg.boards.RTGBF_NO_DISPLAY);
+    driverBase(rb).DeleteBoard(bare);
+
+    // Bytes that do not sum to zero are no EDID: not kept, and the same
+    // one mode.
+    var broken: [256]u8 = undefined;
+    @memcpy(&broken, portable_bytes);
+    broken[20] ^= 0xFF;
+    fk.monitor_edid = &broken;
+    const doubtful = fake.makeBoardFrom(fk, &sized) orelse return error.NoBoard;
+    try testing.expectEqual(@as(u32, 1), base(rb).GetBoardModes(doubtful, null, 0));
+    try testing.expectEqual(@as(u32, 0), base(rb).ReadBoardEDID(doubtful, null, 0));
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT, monitorOf(rb, doubtful).flags);
+    // A driver that cannot say what is on its connector has none there.
+    fk.detect_answer = rtg.errors.RTGERR_IO;
+    driverBase(rb).MonitorChanged(doubtful);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), monitorOf(rb, doubtful).flags);
+    try testing.expect(infoOf(rb, doubtful).flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expectEqual(@as(u32, 1), base(rb).GetBoardModes(doubtful, null, 0));
+    driverBase(rb).DeleteBoard(doubtful);
+    try tearDown(rb);
+}
+
+test "two monitors in turn: the list made again, a mode's number kept, the task told" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const sys = rb.sys_base;
+    const board = try makeConnector(rb, portable_bytes, fake.mode_table.len);
+    var first: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 9), base(rb).GetBoardModes(board, &first, first.len));
+    // The driver's own took the first three numbers, the monitor's the
+    // next nine.
+    try testing.expectEqual(@as(u32, 4), first[0].id);
+
+    // A task that asked is told.
+    const bit = sys.AllocSignal(-1);
+    try testing.expect(bit >= 0);
+    const mask = @as(u32, 1) << @intCast(bit);
+    const notify = base(rb).AddRtgNotify(sys.FindTask(null).?, mask).?;
+    try testing.expectEqual(@as(?*rtg.RtgNotify, null), base(rb).AddRtgNotify(sys.FindTask(null).?, 0));
+    const changes = infoOf(rb, board).changes;
+
+    // A look that finds the monitor it found changes nothing, and tells
+    // nobody.
+    driverBase(rb).MonitorChanged(board);
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 2), fk.log.detects);
+    try testing.expectEqual(changes, infoOf(rb, board).changes);
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, mask) & mask);
+
+    // Another monitor: its one mode is the list, with a number of its own.
+    fk.monitor_edid = qhd_bytes;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    var second: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 1), base(rb).GetBoardModes(board, &second, second.len));
+    try testing.expectEqual(@as(u32, 2560), second[0].width);
+    try testing.expectEqual(@as(u32, 13), second[0].id);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, second[0].flags);
+    try testing.expectEqual(changes + 1, infoOf(rb, board).changes);
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    try testing.expectEqualStrings("", std.mem.sliceTo(&monitorOf(rb, board).name, 0));
+
+    // The monitor taken off: the driver's own modes again, as they were.
+    fk.monitor_there = false;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 3), base(rb).GetBoardModes(board, &second, second.len));
+    try testing.expectEqual(@as(u32, 2), second[0].id);
+    try testing.expectEqual(@as(u32, 1), base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+    try testing.expect(infoOf(rb, board).flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+
+    // The first monitor again: every mode has the number it had.
+    fk.monitor_there = true;
+    fk.monitor_edid = portable_bytes;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 9), base(rb).GetBoardModes(board, &second, second.len));
+    for (first[0..9], second[0..9]) |before, after| {
+        try testing.expectEqual(before.id, after.id);
+        try testing.expectEqual(before.width, after.width);
+        try testing.expectEqual(before.flags, after.flags);
+    }
+
+    // A notification given back tells no more.
+    _ = sys.SetSignal(0, mask);
+    base(rb).RemRtgNotify(notify);
+    base(rb).RemRtgNotify(null);
+    fk.monitor_edid = uhd_bytes;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, mask) & mask);
+    try testing.expectEqual(@as(u32, 2), base(rb).GetBoardModes(board, null, 0));
+
+    sys.FreeSignal(bit);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a board that shows when its monitor changes: the mode again where the new one has it, none where it has not" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeConnector(rb, portable_bytes, 0);
+    const full_hd = base(rb).FindBoardMode(board, 1920, 1080, rtg.RTG_ANY, rtg.RTG_ANY);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, full_hd));
+    const bm = base(rb).AllocBitMap(board, 8, 8, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm, 0, 0));
+    try testing.expectEqual(@as(u32, 1), fk.log.set_mode);
+
+    // A monitor that names 1080p by its number: the board stays in the
+    // mode, its driver handed it again with the standard's timing, and
+    // what was shown stays shown.
+    fk.monitor_edid = uhd_bytes;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 2), fk.log.set_mode);
+    try testing.expectEqual(full_hd, fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 4), fk.log.last_timings.v_front);
+    try testing.expectEqual(bm, base(rb).BoardDisplayBitMap(board).?);
+    var info = infoOf(rb, board);
+    try testing.expectEqual(full_hd, info.mode_id);
+    try testing.expect(info.flags & rtg.boards.RTGBF_MODE_SET != 0);
+    var found: [16]rtg.RtgMode = undefined;
+    // The new monitor's list: 4K at 30, and the mode the board is in,
+    // which is its default - it takes no clock as fast as the 4K at 60 it
+    // prefers.
+    try testing.expectEqual(@as(u32, 2), base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, 3840), found[0].width);
+    try testing.expectEqual(@as(u32, 0), found[0].flags);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT | rtg.modes.RTGMF_CURRENT, found[1].flags);
+
+    // A monitor that has not got the mode: the board shows nothing and is
+    // in none, and the buffer can go.
+    fk.monitor_edid = qhd_bytes;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 2), fk.log.set_mode);
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    info = infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 0), info.mode_id);
+    try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_MODE_SET);
+    _ = base(rb).GetBoardModes(board, &found, found.len);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    base(rb).FreeBitMap(bm);
+    // The mode it was in is not the board's to set until a monitor has it.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(board, full_hd));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(@as(u32, 2560), infoOf(rb, board).width);
+
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "notifications: a board made, put in a mode and gone, each told and counted" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const sys = rb.sys_base;
+    const bit = sys.AllocSignal(-1);
+    try testing.expect(bit >= 0);
+    const mask = @as(u32, 1) << @intCast(bit);
+    const notify = base(rb).AddRtgNotify(sys.FindTask(null).?, mask).?;
+
+    const board = try makeBoard(rb);
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    const made = infoOf(rb, board).changes;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 2));
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    try testing.expectEqual(made + 1, infoOf(rb, board).changes);
+    // A mode refused changes nothing and tells nobody.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(board, 9));
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, mask) & mask);
+    // Its device taken away: the board is gone, and says so.
+    driverBase(rb).RemRtgDevice(board.device.?);
+    fakeOf(rb).devices[0] = null;
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    try testing.expectEqual(made + 2, infoOf(rb, board).changes);
+
+    base(rb).RemRtgNotify(notify);
+    sys.FreeSignal(bit);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "the standards' timings, for a driver that has a size and no monitor's word" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    var timings: rtg.RtgTimings = .{};
+    try testing.expect(driverBase(rb).FindStandardTimings(1920, 1080, 60, &timings));
+    try testing.expectEqual(@as(u32, 148_500_000), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 88), timings.h_front);
+    try testing.expectEqual(@as(u32, 44), timings.h_sync);
+    try testing.expectEqual(@as(u32, 148), timings.h_back);
+    try testing.expectEqual(@as(u32, 4), timings.v_front);
+    try testing.expectEqual(@as(u8, 16), timings.vic);
+    try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH | rtg.modes.RTGTM_VSYNC_HIGH, timings.flags);
+    try testing.expectEqual(@as(u32, 60_000), modes.refreshOf(&timings));
+    // VESA's 1024x768: both pulses low, and no number of CEA's.
+    try testing.expect(driverBase(rb).FindStandardTimings(1024, 768, 60, &timings));
+    try testing.expectEqual(@as(u32, 65_000_000), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 0), timings.flags);
+    try testing.expectEqual(@as(u8, 0), timings.vic);
+    // What no standard here times is left as it was.
+    const before = timings;
+    try testing.expect(!driverBase(rb).FindStandardTimings(1920, 1200, 60, &timings));
+    try testing.expect(!driverBase(rb).FindStandardTimings(1920, 1080, 75, &timings));
+    try testing.expectEqual(before, timings);
     try tearDown(rb);
 }
 

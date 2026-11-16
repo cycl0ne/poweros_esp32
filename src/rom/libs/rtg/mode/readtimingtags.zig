@@ -14,7 +14,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn ReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTimings) bool
 /// ```
 ///
-/// SINCE: 1.19. LVO -368.
+/// SINCE: 1.19. LVO -384.
 ///
 /// INPUTS:
 /// - `tag_list` - a device's tags.

@@ -102,24 +102,28 @@ pub fn monitorThere(bus: I2c) bool {
     return bus.probe(edid_address);
 }
 
-/// The monitor's EDID, its first block: false when it does not read, or
-/// does not begin as an EDID does.
-pub fn readEdid(bus: I2c, into: *Edid) bool {
-    if (!bus.read(edid_address, 0, into)) return false;
-    const header = [8]u8{ 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
-    for (header, 0..) |byte, i| {
-        if (into[i] != byte) return false;
-    }
-    return true;
+/// Whether a block of an EDID sums to zero, as every block does that was
+/// read as the monitor holds it.
+fn sumsToZero(block: *const Edid) bool {
+    var sum: u8 = 0;
+    for (block) |byte| sum +%= byte;
+    return sum == 0;
 }
 
-/// The block after the first - CEA-861's extension on an HDMI set - when
-/// the first says there is one: false when there is none, or it does not
-/// read.
-pub fn readExtension(bus: I2c, first: *const Edid, into: *Edid) bool {
-    if (first[126] == 0) return false;
-    return bus.read(edid_address, 128, into);
+/// Block `number` of the monitor's EDID, 0 or 1 - the two its memory
+/// holds at this address: read again once where it does not sum to zero.
+/// False when it does not read. Whether it is an EDID is rtg.library's
+/// to say.
+pub fn readEdid(bus: I2c, number: u32, into: *Edid) bool {
+    const offset: u8 = @intCast(number * into.len);
+    if (!bus.read(edid_address, offset, into)) return false;
+    if (sumsToZero(into)) return true;
+    return bus.read(edid_address, offset, into);
 }
+
+/// How many blocks of a monitor's EDID are read: its first, and one
+/// extension.
+pub const edid_blocks: u32 = 2;
 
 /// What the bridge sends the monitor: the picture's size, its timings in
 /// pixel clocks and lines, the sync pulses' polarity, the pixel clock.
@@ -280,20 +284,4 @@ fn receiverReset(bus: I2c, main: u32) bool {
         if (i % 2 == 0) systimer.spinUs(10_000);
     }
     return true;
-}
-
-/// Whether the bridge sees a monitor's hot-plug line.
-pub fn hotPlug(bus: I2c, main: u32) bool {
-    var value = [1]u8{0};
-    return bus.read(main, 0xC1, &value) and value[0] & 0x80 != 0;
-}
-
-/// What the DSI receiver measures in the stream: the sync's period
-/// counts, horizontal and vertical; 0 for a stream it does not see.
-pub const Seen = struct { hsync: u16 = 0, vsync: u16 = 0 };
-
-pub fn inputSeen(bus: I2c, main: u32) Seen {
-    var bytes = [4]u8{ 0, 0, 0, 0 };
-    if (!bus.read(main, 0x9C, &bytes)) return .{};
-    return .{ .hsync = @as(u16, bytes[1]) << 8 | bytes[0], .vsync = @as(u16, bytes[3]) << 8 | bytes[2] };
 }

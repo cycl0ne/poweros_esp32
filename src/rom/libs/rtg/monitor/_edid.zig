@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-//! What a monitor says it takes: its EDID, read by a board's driver over
-//! whatever reaches the monitor, taken apart here. Nothing here touches a
-//! bus, so the host tests hold all of it.
+//! What a monitor says it is and takes: its EDID, read by a board's
+//! driver over whatever reaches the monitor (the board's `detect`), taken
+//! apart here. Nothing here touches a bus, so the host tests hold all of
+//! it.
 //!
 //! The EDID is blocks of 128 bytes, each summing to zero. The first
 //! names the monitor and the modes it takes; an HDMI set usually has a
@@ -142,7 +143,7 @@ pub fn valid(block: *const Block) bool {
 }
 
 /// Whether `block` is CEA-861's extension.
-pub fn isCea(block: *const Block) bool {
+fn isCea(block: *const Block) bool {
     return block[0] == 0x02;
 }
 
@@ -152,36 +153,72 @@ pub fn name(first: *const Block, into: *[14]u8) void {
     into.* = @splat(0);
     var at: usize = 54;
     while (at + 18 <= 126) : (at += 18) {
-        const d = first[at..][0..18];
-        if (d[0] != 0 or d[1] != 0 or d[3] != 0xFC) continue;
-        var n: usize = 0;
-        while (n < 13 and d[5 + n] != 0x0A) : (n += 1) into[n] = d[5 + n];
+        const descriptor = first[at..][0..18];
+        if (descriptor[0] != 0 or descriptor[1] != 0 or descriptor[3] != 0xFC) continue;
+        var length: usize = 0;
+        while (length < 13 and descriptor[5 + length] != 0x0A) : (length += 1) into[length] = descriptor[5 + length];
         return;
     }
 }
 
+/// Who made a monitor and when, and how large its picture is, as its
+/// first block says.
+pub const Identity = struct {
+    /// The maker's three letters, NUL-terminated.
+    maker: [4]u8 = @splat(0),
+    product: u32 = 0,
+    serial: u32 = 0,
+    week: u16 = 0,
+    year: u16 = 0,
+    /// The picture's size in millimetres, 0 where the block gives none.
+    width_mm: u32 = 0,
+    height_mm: u32 = 0,
+};
+
+/// What the first block says of the monitor itself: the maker's letters
+/// (five bits each in bytes 8 and 9, 1 for A), the product and the serial
+/// number, the week and the year of its making (from 1990), and the
+/// picture's size, which the block gives in centimetres.
+pub fn identity(first: *const Block) Identity {
+    var found: Identity = .{};
+    const packed_letters = @as(u16, first[8]) << 8 | first[9];
+    const letters = [3]u8{ @truncate(packed_letters >> 10 & 0x1F), @truncate(packed_letters >> 5 & 0x1F), @truncate(packed_letters & 0x1F) };
+    for (letters, 0..) |letter, i| found.maker[i] = if (letter >= 1 and letter <= 26) 'A' - 1 + letter else '?';
+    found.product = @as(u32, first[11]) << 8 | first[10];
+    found.serial = @as(u32, first[15]) << 24 | @as(u32, first[14]) << 16 | @as(u32, first[13]) << 8 | first[12];
+    found.week = first[16];
+    found.year = 1990 + @as(u16, first[17]);
+    found.width_mm = @as(u32, first[21]) * 10;
+    found.height_mm = @as(u32, first[22]) * 10;
+    return found;
+}
+
 /// The detailed timing at byte `at` of `block`: 18 bytes. Null for a
 /// descriptor that is something else (its clock is 0), an interlaced
-/// mode, or one whose sync does not fit its blanking.
+/// mode, one whose picture is empty, or one whose sync does not fit its
+/// blanking.
 pub fn detailed(block: *const Block, at: usize) ?Timing {
     if (at + 18 > block.len) return null;
-    const d = block[at..][0..18];
-    const clock_10khz = @as(u32, d[1]) << 8 | d[0];
+    const descriptor = block[at..][0..18];
+    const clock_10khz = @as(u32, descriptor[1]) << 8 | descriptor[0];
     if (clock_10khz == 0) return null;
-    if (d[17] & 0x80 != 0) return null;
-    const h_blank = @as(u32, d[4] & 0xF) << 8 | d[3];
-    const v_blank = @as(u32, d[7] & 0xF) << 8 | d[6];
-    const h_front = @as(u32, d[11] >> 6) << 8 | d[8];
-    const h_sync = @as(u32, (d[11] >> 4) & 3) << 8 | d[9];
-    const v_front = @as(u32, (d[11] >> 2) & 3) << 4 | d[10] >> 4;
-    const v_sync = @as(u32, d[11] & 3) << 4 | (d[10] & 0xF);
+    if (descriptor[17] & 0x80 != 0) return null;
+    const width = @as(u32, descriptor[4] >> 4) << 8 | descriptor[2];
+    const height = @as(u32, descriptor[7] >> 4) << 8 | descriptor[5];
+    if (width == 0 or height == 0) return null;
+    const h_blank = @as(u32, descriptor[4] & 0xF) << 8 | descriptor[3];
+    const v_blank = @as(u32, descriptor[7] & 0xF) << 8 | descriptor[6];
+    const h_front = @as(u32, descriptor[11] >> 6) << 8 | descriptor[8];
+    const h_sync = @as(u32, (descriptor[11] >> 4) & 3) << 8 | descriptor[9];
+    const v_front = @as(u32, (descriptor[11] >> 2) & 3) << 4 | descriptor[10] >> 4;
+    const v_sync = @as(u32, descriptor[11] & 3) << 4 | (descriptor[10] & 0xF);
     if (h_front + h_sync > h_blank or v_front + v_sync > v_blank) return null;
     // Digital separate sync (bits 4-3) gives each pulse's polarity in
     // bits 2 and 1; anything else is taken as both low.
-    const separate = d[17] & 0x18 == 0x18;
+    const separate = descriptor[17] & 0x18 == 0x18;
     return .{
-        .width = @as(u32, d[4] >> 4) << 8 | d[2],
-        .height = @as(u32, d[7] >> 4) << 8 | d[5],
+        .width = width,
+        .height = height,
         .h_front = h_front,
         .h_sync = h_sync,
         .h_back = h_blank - h_front - h_sync,
@@ -189,8 +226,8 @@ pub fn detailed(block: *const Block, at: usize) ?Timing {
         .v_sync = v_sync,
         .v_back = v_blank - v_front - v_sync,
         .pixel_khz = clock_10khz * 10,
-        .hsync_high = separate and d[17] & 0x02 != 0,
-        .vsync_high = separate and d[17] & 0x04 != 0,
+        .hsync_high = separate and descriptor[17] & 0x02 != 0,
+        .vsync_high = separate and descriptor[17] & 0x04 != 0,
     };
 }
 
@@ -221,7 +258,7 @@ pub fn detailedTimings(first: *const Block, extension: ?*const Block, into: []Ti
 
 /// A mode as a monitor may name it: a picture at a refresh, and CEA's
 /// number for it if it has one.
-pub const Named = struct {
+const Named = struct {
     width: u32,
     height: u32,
     refresh_hz: u32 = 60,
@@ -237,9 +274,9 @@ pub fn takes(first: *const Block, extension: ?*const Block, mode: Named) bool {
     const count = detailedTimings(first, extension, &timings);
     for (timings[0..count]) |*timing| {
         if (timing.width != mode.width or timing.height != mode.height) continue;
-        // Taken at its refresh, give or take a hertz.
-        const millihertz = timing.milliHz();
-        if (millihertz + 1000 >= mode.refresh_hz * 1000 and millihertz <= mode.refresh_hz * 1000 + 1000) return true;
+        // Taken at its refresh to the nearest hertz, which is what makes
+        // two timings one mode (`sameAs`).
+        if (timing.hz() == mode.refresh_hz) return true;
     }
     if (extension) |cea| {
         if (isCea(cea) and mode.vic != 0 and videoCodes(cea, mode.vic)) return true;
@@ -387,10 +424,10 @@ pub fn sinkOf(extension: ?*const Block) Sink {
             // eighth byte, 5 MHz a step; the Forum's, in its sixth, and
             // its flags in the seventh.
             3 => if (length >= 3) {
-                if (std.mem.eql(u8, block[1..4], &oui_hdmi)) {
+                if (isMaker(block, &oui_hdmi)) {
                     sink.hdmi = true;
                     if (length >= 7 and block[7] != 0) sink.max_tmds_khz = @max(sink.max_tmds_khz, @as(u32, block[7]) * 5000);
-                } else if (std.mem.eql(u8, block[1..4], &oui_hdmi_forum)) {
+                } else if (isMaker(block, &oui_hdmi_forum)) {
                     forumCaps(&sink, block);
                 }
             },
@@ -406,18 +443,23 @@ pub fn sinkOf(extension: ?*const Block) Sink {
     return sink;
 }
 
+/// Whether a vendor's data block is that maker's: its second to fourth
+/// byte the IEEE's number, low byte first.
+fn isMaker(block: []const u8, number: *const [3]u8) bool {
+    return block[1] == number[0] and block[2] == number[1] and block[3] == number[2];
+}
+
 /// The HDMI Forum's capabilities from its vendor block or its sink
 /// capability block, which hold them at the same places: the fastest
-/// TMDS character rate in the sixth byte, 5 MHz a step, and SCDC_Present
-/// in the seventh's top bit.
+/// TMDS character rate in the sixth byte, 5 MHz a step - the larger of it
+/// and what HDMI's own block said, whichever block comes first - and
+/// SCDC_Present in the seventh's top bit.
 fn forumCaps(sink: *Sink, block: []const u8) void {
     sink.forum = true;
     if (block.len < 7) return;
-    if (block[5] != 0) sink.max_tmds_khz = @as(u32, block[5]) * 5000;
+    if (block[5] != 0) sink.max_tmds_khz = @max(sink.max_tmds_khz, @as(u32, block[5]) * 5000);
     sink.scdc = block[6] & 0x80 != 0;
 }
-
-const std = @import("std");
 
 // --- tests (host: ./zig build test) -----------------------------------------
 
@@ -567,4 +609,50 @@ test "a native video code counts as its number" {
     try testing.expect(videoCodes(&cea, 95));
     try testing.expect(videoCodes(&cea, 2));
     try testing.expect(!videoCodes(&cea, 4));
+}
+
+test "who made the portable monitor, when, and how large its picture is" {
+    const found = identity(&portable_1080p[0]);
+    try testing.expectEqualStrings("BOE", found.maker[0..3]);
+    try testing.expectEqual(@as(u8, 0), found.maker[3]);
+    try testing.expectEqual(@as(u32, 0x2556), found.product);
+    try testing.expectEqual(@as(u32, 0x0101_0101), found.serial);
+    try testing.expectEqual(@as(u16, 17), found.week);
+    try testing.expectEqual(@as(u16, 2024), found.year);
+    try testing.expectEqual(@as(u32, 350), found.width_mm);
+    try testing.expectEqual(@as(u32, 190), found.height_mm);
+}
+
+test "a detailed timing with no picture is none, and one a hertz off names no 60 Hz mode" {
+    var first: Block = @splat(0);
+    // 74.25 MHz, 1280 + 370 across, 720 + 30 down: 60 Hz.
+    const timing = [18]u8{ 0x01, 0x1D, 0x00, 0x72, 0x51, 0xD0, 0x1E, 0x20, 0x6E, 0x28, 0x55, 0x00, 0, 0, 0, 0, 0, 0x1E };
+    @memcpy(first[54..72], &timing);
+    try testing.expectEqual(@as(u32, 1280), detailed(&first, 54).?.width);
+    try testing.expect(takes(&first, null, .{ .width = 1280, .height = 720 }));
+    // The same with no lines, and with no columns.
+    first[59] = 0x00;
+    first[61] &= 0x0F;
+    try testing.expectEqual(@as(?Timing, null), detailed(&first, 54));
+    @memcpy(first[54..72], &timing);
+    first[56] = 0x00;
+    first[58] &= 0x0F;
+    try testing.expectEqual(@as(?Timing, null), detailed(&first, 54));
+    // 73 MHz over the same totals is 59 a second: not the 60 Hz mode.
+    @memcpy(first[54..72], &timing);
+    first[54] = 0x84;
+    first[55] = 0x1C;
+    try testing.expectEqual(@as(u32, 59), detailed(&first, 54).?.hz());
+    try testing.expect(!takes(&first, null, .{ .width = 1280, .height = 720 }));
+}
+
+test "the fastest clock is the larger of HDMI's and the Forum's, whichever block comes first" {
+    var cea: Block = @splat(0);
+    cea[0] = 0x02;
+    cea[1] = 0x03;
+    // The Forum's block first, 60 x 5 MHz, then HDMI's with 68 x 5 MHz.
+    const blocks = [_]u8{ 0x66, 0xD8, 0x5D, 0xC4, 0x01, 0x3C, 0x00, 0x67, 0x03, 0x0C, 0x00, 0x10, 0x00, 0x00, 0x44 };
+    @memcpy(cea[4..][0..blocks.len], &blocks);
+    cea[2] = 4 + blocks.len;
+    try testing.expectEqual(@as(u32, 340_000), sinkOf(&cea).max_tmds_khz);
 }

@@ -181,11 +181,61 @@ its pixels.
 
 The panels of this machine have one mode each - the 3.5" board has two,
 upright and on its side. The emulator's RAM display (the `fb` driver,
-below) has the one its board names. The VisionFive 2's HDMI port has the
-modes the monitor names in its EDID that the port can send - any whose
-pixel clock the transmitter's PLL makes, up to 297 MHz, 32 bits a pixel -
-and starts in the one the monitor prefers; `Rtg MODES` lists them. A
-monitor without an EDID gets 1920 x 1080 at 60 Hz.
+below) has the one its board names. A board with a connector - an HDMI
+port, the virtio GPU's window - has the modes the monitor on it names
+that the board can make (below); `Rtg MODES` lists them.
+
+## The monitor
+
+A board's monitor is what is on its connector. A panel is a monitor
+that is always there; a board with a connector (`RTGBF_CONNECTOR`) has
+one that comes and goes. `GetBoardMonitor` copies out what the library
+last saw there: whether a monitor is on it (`RTGMON_PRESENT`), and where
+its description was read (`RTGMON_EDID`) the maker's letters, the
+product and serial numbers, its name, the picture's size in
+millimetres, when it was made, and what it takes - HDMI's packets,
+sound, a choice of its RGB range, scrambling, its fastest clock.
+`ReadBoardEDID` copies out the EDID's bytes.
+
+```zig
+var monitor: rtg.RtgMonitorInfo = .{};
+_ = rb.GetBoardMonitor(board, &monitor, @sizeOf(rtg.RtgMonitorInfo));
+if (monitor.flags & rtg.modes.RTGMON_PRESENT == 0) return; // nothing on the connector
+```
+
+The board's modes are made of what its monitor names. The library reads
+the EDID as the board is made and again whenever the board's driver
+says its monitor changed, and lists every timing the monitor names that
+the board can make, up to the fastest clock the monitor takes: its
+detailed timings as they are, and a size, a bit or a number with the
+standard's timing. The mode the monitor prefers is the default; where
+the board cannot make that one, 1920 x 1080 at 60 Hz where the monitor
+names it, else the largest. A mode's number stays: the list made again
+for a monitor gives a mode of the same figures the number it had. A
+connector with nothing on it, or a monitor that says nothing the board
+can make, leaves the board with a mode of its own - the size its part
+names at 60 Hz, or what its driver added - so the output is there for
+the monitor that comes; the board says `RTGBF_NO_DISPLAY` meanwhile, and
+is shown on all the same.
+
+When the monitor of a board that shows is changed for another, the
+board stays in its mode where the new monitor has it - the link is
+brought up again for it, and what was shown stays shown. Where the new
+monitor has not got the mode, the board shows nothing and is in no mode
+until one is set.
+
+**Told of it.** `AddRtgNotify(task, signals)` has a task signalled
+whenever something about the boards changed: a board made or gone, a
+monitor come or gone, a list of modes made again, a mode set. The
+signal says only that something changed; the task walks the boards and
+reads each one's `changes` (`GetBoardInfo`), which is raised with every
+such change of that board. `RemRtgNotify` gives the notification back.
+
+```zig
+const bit = sys.AllocSignal(-1);
+const notify = rb.AddRtgNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(bit));
+defer rb.RemRtgNotify(notify);
+```
 
 ## Buffers
 
@@ -831,6 +881,28 @@ keeps the timings, which the driver is handed again with the mode when
 the board is put in it. The first mode added is the board's default
 until one is added with `RTGMF_DEFAULT`.
 
+**A board with a connector** fills two more slots, and the library
+makes its modes. `detect(board, asked)` says whether a monitor is on the
+connector (`asked.present`) and reads the blocks of its EDID into the
+library's buffer (`asked.edid`, `asked.edid_max`, `asked.edid_size`);
+it is called in a task, with the board's lock held, and may wait - as
+the board joins the list, and on the library's own task when the driver
+says `MonitorChanged(board)`, from its hot-plug interrupt or from a
+task of its own that looks at the port. A look that finds what the last
+one found changes nothing, so a driver whose connector has no interrupt
+may say it now and then. `check_mode(board, timings)` says whether the
+board can make a timing - its clock, what its registers hold - and is
+asked of every timing the monitor names. The description says which
+pixel format a monitor's modes are made in (`RtgBoardSpec.format`). The
+modes such a driver adds itself stand while the monitor names none.
+`set_mode` is called again for the mode the board is in when another
+monitor came that takes it: the driver brings the link up again, with
+the timings handed over then, and goes on showing what it showed.
+`FindStandardTimings(width, height, refresh_hz, &timings)` answers the
+standard's timings for a size at a refresh - CEA-861's, with its number
+in `vic`, or VESA's - for a driver that has a size and no monitor's
+word for it.
+
 ```zig
 var timings: rtg.RtgTimings = .{};
 if (!rb.ReadTimingTags(tag_list, &timings)) return rtg.errors.RTGERR_BAD_TAGS;
@@ -862,6 +934,7 @@ at a time and a driver needs no lock of its own between them.
 |---|---|
 | `destroy` | undo what create did; called last, after the buffers are gone |
 | `set_mode` | put the board in a mode, handed with its timings; the library writes `info` once it has answered |
+| `detect`, `check_mode` | a connector: what is on it, and whether the board can make a timing |
 | `show_bitmap` | show a buffer, or none |
 | `show_bands` | show several, in bands of lines (`RtgBand.rowAt` says which row a line shows) |
 | `wait_vblank` | wait for the blanking |
@@ -930,12 +1003,13 @@ rate is further than 2% from any is refused with `RTGERR_BAD_TAGS`.
 bring-up, and the sync polarity the mode's standard gives
 (`RTGA_TimingFlags`). The driver takes that part
 only when a monitor's EDID answers on the bridge's bus, and refuses it
-otherwise, so graphics.library goes on to the board's next panel part -
-a board lists the bridge first. The part's own mode is the one every
-monitor takes, 800 x 600; the driver shows the largest of 1360 x 768,
-1280 x 720 and 1024 x 768 the EDID names instead - among its
-established, standard or detailed timings, or the CEA extension's video
-codes - and offers that one mode. The bridge takes RGB888 only, and this
+otherwise, so the board's next panel part is offered - a board lists
+the bridge first. The board has a connector: its modes
+are those of 1360 x 768, 1280 x 720 and 1024 x 768 at 60 Hz the
+monitor's EDID names - the largest the default - and the part's own,
+800 x 600, where it names none of them; a monitor pulled or plugged is
+seen within two seconds. The link is brought up when the board is put
+in a mode, in this host's timing for the mode's size. The bridge takes RGB888 only, and this
 revision of the chip sends what memory holds, so the screens stay RGB565
 and the stream reads a copy of what is shown, three bytes a pixel: showing
 bands converts their rows into it, and RefreshBitMap converts the rows

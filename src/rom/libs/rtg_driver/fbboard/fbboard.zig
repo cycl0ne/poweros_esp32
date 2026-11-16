@@ -32,18 +32,23 @@
 //! shown, so there it is the hand-on that puts what was written on the
 //! glass, a rectangle at a time, and showing a buffer is naming its copy.
 //!
-//! The emulator's displays have one mode: the ramfb the size the board
-//! names, the virtio GPU the size QEMU's window has for it. An HDMI
-//! port's - the JH7110's, the BCM2712's - has the modes the monitor on it
-//! names in its EDID and the port can send, read when the board is made
-//! (`monitor.zig`): the one the monitor prefers is the default, and any
-//! of them can be set.
+//! The ramfb and the firmware's framebuffer have one mode, the size the
+//! board names. The others have a connector, and their modes are
+//! rtg.library's to make: the driver says what is on it (`detect`) - an
+//! HDMI port's monitor and its EDID, read over the port's DDC, the virtio
+//! GPU's window as the emulator describes it - and which timings the
+//! display can make (`checkMode`), and the library lists the modes the
+//! monitor names; the one it prefers is the default, and any of them can
+//! be set. A monitor plugged in later is said to the library
+//! (`MonitorChanged`, from `watch`), which asks again and has the port
+//! started again for it. The virtio GPU's own mode, the size QEMU's
+//! window has for it, stands where its EDID names none.
 //!
 //! The buffers are the machine's RAM below 4 GiB, which every display here
 //! reaches (MEMF_DMA): the library takes each when it is allocated and
 //! gives it back when it is freed (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY),
-//! at most as many pictures of the largest mode as the board asks for
-//! (RTGA_Buffers) - so a screen nobody has opened costs nothing. The
+//! at most as many pictures of the mode the display is in as the board
+//! asks for (RTGA_Buffers) - so a screen nobody has opened costs nothing. The
 //! driver's own are a frame to compose in - two the display is shown,
 //! behind an HDMI port - and, on a display with a cursor plane, the
 //! plane's two images.
@@ -192,8 +197,6 @@ const bcm2712 = @import("bcm2712.zig");
 const virtio = @import("virtio.zig");
 const uefi = @import("uefi.zig");
 const dcn = @import("dcn.zig");
-const monitor = @import("monitor.zig");
-const edid = @import("../edid.zig");
 const engine = @import("engine.zig");
 const damage = @import("damage.zig");
 const tags = rtg.tags;
@@ -202,7 +205,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 36;
+const REVISION = 37;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -252,13 +255,14 @@ const Screen = struct {
     format: rtg.PixelFormat = .bgra32,
     bytes: u32 = 4,
     pitch: u32 = 0,
-    /// The modes: the board's own one, or behind an HDMI port those the
-    /// monitor takes (`monitor.zig`), with their timings; the library's
-    /// number for each, as `AddBoardMode` answered it; which one the
-    /// display is in; how long a frame of it takes.
-    timings: monitor.List = .{},
-    mode_ids: [monitor.max_modes]u32 = @splat(0),
-    current: u32 = 0,
+    /// The board, and how many pictures it may have at once.
+    board: *rtg.RtgBoard,
+    buffers: u32 = 1,
+    /// The mode the display is in, as the library handed it over: its
+    /// number - 0 before the first - and its timings; how long a frame
+    /// of it takes.
+    mode_id: u32 = 0,
+    timings: rtg.RtgTimings = .{},
     frame_us: u32 = 16_667,
     /// What a row of a buffer is rounded up to: the board's display
     /// memory's alignment, which the library rounds a mode's rows by.
@@ -275,15 +279,18 @@ const Screen = struct {
     amd_frame: ?sdk.resources.amdgpu.GPUMemory = null,
     amd_flipping: bool = false,
     flip_wanted: u64 = 0,
-    /// Behind an HDMI port: what the monitor says of itself - HDMI or DVI,
-    /// sound, range, its fastest clock - from its EDID; whether it was on
-    /// the port when last looked at, how many looks in a row have seen
-    /// otherwise, and when the port was last looked at (`watch`).
-    sink: edid.Sink = .{},
+    /// Behind an HDMI port: what the monitor says of itself that decides
+    /// how a mode is sent to it - HDMI or DVI, its range - as the library
+    /// read it, taken as the mode is set; whether it was on the port when
+    /// last looked at, how many looks in a row have seen otherwise, and
+    /// when the port was last looked at (`watch`).
+    sink: bcm2712.Sink = .{},
     plugged: bool = false,
     settling: u32 = 0,
     watched_us: u64 = 0,
-    /// A picture of the largest mode: what the composed frame takes.
+    /// A picture of the largest mode the display has been in: what the
+    /// composed frame takes, and each of the two frames a display is
+    /// flipped between.
     frame_bytes: usize = 0,
     /// Where the display reads from; 0 before it has been told.
     scanning: usize = 0,
@@ -532,6 +539,11 @@ fn programs(rb: *RtgDriverBase) *RtgBase {
 
 fn screenOf(board: *rtg.RtgBoard) *Screen {
     return @ptrCast(@alignCast(board.instance.?));
+}
+
+/// The library as a driver calls it, from a board's screen.
+fn drivers(screen: *const Screen) *RtgDriverBase {
+    return @ptrCast(screen.rtg_base);
 }
 
 // --- the display -------------------------------------------------------------
@@ -1550,11 +1562,13 @@ fn flips(screen: *const Screen) bool {
     return screen.flipper != null;
 }
 
-/// The two frames taken (`takeFrames`) and the task that makes the
-/// pictures started. False where there are no frames, or no task.
-fn startFlipping(screen: *Screen) bool {
+/// The task that makes the pictures started, and the two frames taken
+/// (`takeFrames`) where the picture's size is known already - the AMD
+/// display's; an HDMI port's are taken with the mode it is put in
+/// (`sizeFor`). False where there are no frames, or no task.
+fn startFlipping(screen: *Screen, with_frames: bool) bool {
     const sys = screen.sys;
-    if (!takeFrames(screen)) return false;
+    if (with_frames and !takeFrames(screen)) return false;
     screen.front = 0;
     sys.InitSemaphore(&screen.flip_lock);
     sys.InitSemaphore(&screen.bands_lock);
@@ -1565,7 +1579,7 @@ fn startFlipping(screen: *Screen) bool {
     const task = sys.CreateTask(flipper_name, flipper_pri, &flipperCode, 0);
     sys.EndSystemMemory();
     const made = task orelse {
-        giveFrames(screen);
+        if (with_frames) giveFrames(screen);
         return false;
     };
     screen.flipper = made;
@@ -1670,11 +1684,11 @@ fn flipperCode(sys: *ExecBase) callconv(.c) void {
 const watch_us: u64 = 500_000;
 const settle_looks = 2;
 
-/// Whether the task looks at the port now and then: the BCM2712's, whose
-/// hot-plug line has no interrupt of its own here, once the display
-/// runs. The JH7110's is not looked at.
+/// Whether the task looks at the port now and then: an HDMI port's,
+/// whose hot-plug line has no interrupt of its own here, once the
+/// display runs.
 fn watches(screen: *const Screen) bool {
-    return screen.scanout == .bcm2712 and screen.scanning != 0;
+    return isHdmi(screen.scanout) and screen.scanning != 0;
 }
 
 /// How long the task waits for work before it looks at the port again;
@@ -1686,47 +1700,33 @@ fn untilWatch(screen: *const Screen) u64 {
     return if (due > now + 1000) due - now else 1000;
 }
 
-/// The port looked at, when it is time: a monitor that has come is
-/// read - its EDID, what it says of itself - and the display started
-/// again for it in the mode it is in, in the monitor's own timing of
-/// that mode where it names it; one that has gone is said on the raw
-/// port, the display left running. With a monitor on it, its scrambling
-/// is looked after (`bcm2712.tend`). The modes the board lists stay as
-/// they were made: a monitor that does not take the mode shows nothing
-/// until another is set. Made holding `flip_lock`.
+/// The port looked at, when it is time: a monitor that has come or gone
+/// - seen so for as many looks as it takes a plug to settle - is said to
+/// the library (`MonitorChanged`), which asks what is there (`detect`),
+/// makes the board's modes of it and has the port started again in the
+/// mode it is in (`setMode`). With a monitor on the BCM2712's, its
+/// scrambling is looked after (`bcm2712.tend`). Made holding
+/// `flip_lock`.
 fn watch(screen: *Screen) void {
     const now = sdk.hardware.systimer.uptimeUs();
     if (now -% screen.watched_us < watch_us - watch_us / 8) return;
     screen.watched_us = now;
     const waiter = Waiter{ .screen = screen };
-    const plugged = bcm2712.monitor();
+    const plugged = switch (screen.scanout) {
+        .bcm2712 => bcm2712.monitor(),
+        else => jh7110.monitor(),
+    };
     if (plugged == screen.plugged) {
         screen.settling = 0;
-        if (plugged) bcm2712.tend(waiter);
+        if (plugged and screen.scanout == .bcm2712) bcm2712.tend(waiter);
         return;
     }
     screen.settling += 1;
     if (screen.settling < settle_looks) return;
     screen.settling = 0;
     screen.plugged = plugged;
-    if (!plugged) {
-        exec.kprintf(screen.sys, "%s: the monitor was taken off the HDMI port\n", .{MODULE_NAME});
-        return;
-    }
-    const current = &screen.timings.modes[screen.current];
-    const found = portModes(bcm2712, screen, current.*);
-    for (found.modes[0..found.count]) |*timing| {
-        if (timing.sameAs(current)) {
-            current.* = timing.*;
-            break;
-        }
-    } else exec.kprintf(screen.sys, "%s: the monitor does not name %dx%d at %d Hz\n", .{ MODULE_NAME, current.width, current.height, current.hz() });
-    const failure = bcm2712.start(screen.sys, current, screen.sink, screen.scanning, screen.pitch, waiter);
-    if (failure != .none) {
-        exec.kprintf(screen.sys, "%s: %s\n", .{ MODULE_NAME, bcm2712.why(failure) });
-        return;
-    }
-    putBack(screen);
+    if (!plugged) exec.kprintf(screen.sys, "%s: the monitor was taken off the HDMI port\n", .{MODULE_NAME});
+    drivers(screen).MonitorChanged(screen.board);
 }
 
 /// `box` of the display noted for the next picture. Made holding
@@ -1795,6 +1795,8 @@ fn flipFrames(screen: *Screen) bool {
     if (stale) screen.direct = null;
     sys.ReleaseLock(&screen.damage_lock);
     if (fresh.isEmpty()) return false;
+    // An HDMI port has its frames from its first mode on.
+    if (isHdmi(screen.scanout) and screen.flip_memory == null) return false;
     const back = screen.flip_frames[screen.front ^ 1];
     var boxes = fresh;
     if (stale) boxes.add(whole(screen)) else boxes.addAll(&screen.last);
@@ -2112,6 +2114,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .ops = switch (scanout) {
             .bcm2712 => &bcm2712_ops,
             .jh7110 => &jh7110_ops,
+            .virtio => &virtio_ops,
             else => &ops,
         },
         .instance_size = @sizeOf(Screen),
@@ -2119,6 +2122,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         // buffer of their own, and what can be seen of them is copied
         // into the screen's; a part says so in its tags.
         .flags = if (on_pci) rtg.boards.RTGBF_COMPOSE else 0,
+        // A monitor's modes are made in the format the board shows.
+        .format = format,
     }) orelse {
         var found = scanout;
         if (found == .virtio) virtio.giveBack(&found.virtio);
@@ -2146,6 +2151,7 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
         .height = @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
         .format = format,
         .bytes = bytes,
+        .board = board,
     };
     // The board's buffers start, and their rows are rounded, as its tags
     // say; whole cache lines where they say nothing.
@@ -2173,6 +2179,7 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
         // this driver knows: what it says of itself goes in the boot's
         // lines, and the display is flipped (below).
         screen.dcn = dcn.find(sys, screen.scanout.uefi);
+        if (screen.dcn) |*found| found.rtg_base = rb;
         // The sound the link it lit can carry, which the firmware leaves
         // switched off and which no other driver can reach. The machine's
         // audio driver has its sinks already and asks the codec what is
@@ -2181,39 +2188,33 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
         if (screen.dcn) |found| _ = dcn.soundUp(found);
     }
     if (isHdmi(scanout)) {
-        // The modes the monitor takes, the part's size at 60 Hz without
-        // one, and the display's frame interrupt.
+        // The modes are the library's to make, of what the monitor on the
+        // port names (`detect`, `checkMode`) and of the part's size where
+        // none does. Here: the display's frame interrupt.
         if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
-        const own = edid.knownMode(screen.width, screen.height, 60) orelse return err.RTGERR_BAD_ARG;
-        screen.timings = hdmiModes(screen, own);
         screen.frame_irq = @truncate(rb.GetRtgTagData(st.PART_Irq, 0, tag_list));
-        screen.current = screen.timings.default;
-        for (screen.timings.modes[0..screen.timings.count], 0..) |*timing, i| {
-            const flags: u32 = if (i == screen.current) rtg.modes.RTGMF_DEFAULT else 0;
-            screen.mode_ids[i] = rb.AddBoardMode(board, &timingsOf(timing), @intFromEnum(format), flags);
-            if (screen.mode_ids[i] == 0) return err.RTGERR_NO_MEMORY;
-        }
     } else {
-        // One mode: the picture the board was built for, on a display
-        // with no clock of its own.
+        // One mode of its own: the picture the board was built for - the
+        // emulator's window, on the virtio GPU - on a display with no
+        // clock. A virtio GPU's stands while its EDID names none.
         const own: rtg.RtgTimings = .{ .h_active = screen.width, .v_active = screen.height };
-        screen.mode_ids[0] = rb.AddBoardMode(board, &own, @intFromEnum(format), rtg.modes.RTGMF_DEFAULT);
-        if (screen.mode_ids[0] == 0) {
+        if (rb.AddBoardMode(board, &own, @intFromEnum(format), rtg.modes.RTGMF_DEFAULT) == 0) {
             if (scanout == .virtio) virtio.stop(&screen.scanout.virtio);
             return err.RTGERR_NO_MEMORY;
         }
     }
-    take(screen, screen.current);
+    screen.pitch = rowBytes(screen, screen.width);
 
-    // At most as many pictures of the largest mode as the board asks for,
-    // each taken by the library as it is allocated, from memory every
-    // display here reaches. Not cleared: each is cleared before it is
-    // first shown. The composed frame is taken as it is needed, the
-    // cursor plane's two images now.
-    var frame: usize = @as(usize, screen.pitch) * screen.height;
-    for (screen.timings.modes[0..screen.timings.count]) |*timing| frame = @max(frame, @as(usize, rowBytes(screen, timing.width)) * timing.height);
-    screen.frame_bytes = frame;
+    // At most as many pictures of the mode the display is in as the
+    // board asks for, each taken by the library as it is allocated, from
+    // memory every display here reaches (`sizeFor` follows the mode). Not
+    // cleared: each is cleared before it is first shown. The composed
+    // frame is taken as it is needed, the cursor plane's two images now.
+    const frame: usize = @as(usize, screen.pitch) * screen.height;
+    // An HDMI port's frames are taken with its first mode.
+    screen.frame_bytes = if (isHdmi(scanout)) 0 else frame;
     const frames: u32 = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
+    screen.buffers = frames;
     if (hasCursorPlane(scanout)) {
         const own = takeOwn(screen, 2 * cursor_bytes) orelse {
             if (scanout == .virtio) virtio.stop(&screen.scanout.virtio);
@@ -2230,7 +2231,7 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
     }
     // A display that reads past the caches is shown frames of the
     // driver's own, never a buffer drawn in.
-    if (isHdmi(scanout) and !startFlipping(screen)) {
+    if (isHdmi(scanout) and !startFlipping(screen, false)) {
         if (screen.cursor_memory) |memory| sys.FreeMem(memory, 2 * cursor_bytes + page);
         if (screen.overlay_memory) |memory| sys.FreeMem(memory, 2 * overlay_bytes + page);
         screen.cursor_memory = null;
@@ -2244,7 +2245,7 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
     // is said why, and the picture is copied into the framebuffer.
     if (scanout == .uefi and screen.dcn != null) {
         hookFrames(screen);
-        _ = startFlipping(screen);
+        _ = startFlipping(screen, true);
     }
     board.region = .{
         .size = frames * frame,
@@ -2280,24 +2281,6 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     screen.cursor = null;
 }
 
-/// An EDID's timing as the library takes a mode's.
-fn timingsOf(timing: *const edid.Timing) rtg.RtgTimings {
-    return .{
-        .pixel_clock_hz = timing.pixel_khz * 1000,
-        .h_active = timing.width,
-        .h_front = timing.h_front,
-        .h_sync = timing.h_sync,
-        .h_back = timing.h_back,
-        .v_active = timing.height,
-        .v_front = timing.v_front,
-        .v_sync = timing.v_sync,
-        .v_back = timing.v_back,
-        .flags = (if (timing.hsync_high) rtg.modes.RTGTM_HSYNC_HIGH else 0) |
-            (if (timing.vsync_high) rtg.modes.RTGTM_VSYNC_HIGH else 0),
-        .vic = timing.vic,
-    };
-}
-
 /// Bytes a row of a buffer `width` pixels wide has: the pixels, rounded
 /// up to the board's alignment, as the library rounds a mode's.
 fn rowBytes(screen: *const Screen, width: u32) u32 {
@@ -2306,79 +2289,151 @@ fn rowBytes(screen: *const Screen, width: u32) u32 {
     return (row + step - 1) / step * step;
 }
 
-/// Which of the screen's modes the library numbers `id`; null for a
-/// number it gave none of them.
-fn indexOf(screen: *const Screen, id: u32) ?u32 {
-    const count = @max(screen.timings.count, 1);
-    for (screen.mode_ids[0..count], 0..) |mode_id, i| {
-        if (mode_id == id and id != 0) return @intCast(i);
+/// How many blocks of an EDID the ports read at the most: the first, and
+/// the extensions it names.
+const edid_block = rtg.modes.RTG_EDID_BLOCK;
+
+/// Whether a block of an EDID sums to zero, as every block does that was
+/// read as the monitor holds it.
+fn sumsToZero(block: *const [edid_block]u8) bool {
+    var sum: u8 = 0;
+    for (block) |byte| sum +%= byte;
+    return sum == 0;
+}
+
+/// What is on the display's connector, for the library: an HDMI port's
+/// monitor and its EDID, read over the port's DDC; the virtio GPU's
+/// window, which is always there, and the EDID the emulator gives it.
+fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
+    const screen = screenOf(board);
+    switch (screen.scanout) {
+        .jh7110 => return detectPort(jh7110, screen, asked),
+        .bcm2712 => return detectPort(bcm2712, screen, asked),
+        .virtio => |*gpu| {
+            asked.present = 1;
+            asked.edid_size = virtio.readEdid(gpu, asked.edid[0..asked.edid_max], Waiter{ .screen = screen });
+            return err.RTGERR_OK;
+        },
+        else => return err.RTGERR_NOT_SUPPORTED,
     }
-    return null;
 }
 
-/// Mode `index` taken as the screen's: its picture, its rows, a frame's
-/// time. A display with one mode has its picture already.
-fn take(screen: *Screen, index: u32) void {
-    screen.current = index;
-    screen.frame_us = 16_667;
-    if (index < screen.timings.count) {
-        const timing = &screen.timings.modes[index];
-        screen.width = timing.width;
-        screen.height = timing.height;
-        const refresh_mhz = timing.milliHz();
-        if (refresh_mhz != 0) screen.frame_us = 1_000_000_000 / refresh_mhz;
-    }
-    screen.pitch = rowBytes(screen, screen.width);
-}
-
-/// The modes of the monitor on the HDMI port (`monitor.zig`), from its
-/// EDID; the monitor's name, how many modes it has and the one it gets
-/// said on the raw port. The board's own alone when no monitor is on the
-/// port (which `begin` says), or its EDID does not read.
-fn hdmiModes(screen: *Screen, own: edid.Timing) monitor.List {
-    return switch (screen.scanout) {
-        .bcm2712 => portModes(bcm2712, screen, own),
-        else => portModes(jh7110, screen, own),
-    };
-}
-
-/// `hdmiModes` on the port `port` drives (`jh7110.zig`, `bcm2712.zig`).
-fn portModes(comptime port: type, screen: *Screen, own: edid.Timing) monitor.List {
+/// `detect` on the HDMI port `port` drives: the port woken where it does
+/// not run yet, its hot-plug line read, and the monitor's EDID - its
+/// first block, read again once where it does not sum to zero, and as
+/// many of the extensions it names as there is room for and the port
+/// reads. The DDC is the port's one: held against the task that makes the
+/// pictures, which looks after a monitor over it.
+fn detectPort(comptime port: type, screen: *Screen, asked: *rtg.RtgDetect) i32 {
+    const sys = screen.sys;
     const waiter = Waiter{ .screen = screen };
-    screen.sink = .{};
-    if (port.wake(screen.sys, waiter) != .none or !port.monitor()) return monitor.modesOf(null, null, own, port.sends);
-    var first: edid.Block = undefined;
-    var extension: edid.Block = undefined;
-    var name: [14]u8 = @splat(0);
-    var base: ?*const edid.Block = null;
-    var cea: ?*const edid.Block = null;
-    if (port.readEdid(0, &first, waiter) and edid.isFirst(&first) and edid.valid(&first)) {
-        base = &first;
-        edid.name(&first, &name);
-        if (first[126] != 0 and port.readEdid(1, &extension, waiter) and edid.valid(&extension)) cea = &extension;
+    sys.ObtainSemaphore(&screen.flip_lock);
+    defer sys.ReleaseSemaphore(&screen.flip_lock);
+    // A port that runs is awake: waking it again would put the
+    // controller's pixel clocks back on the divider under the picture.
+    if (screen.scanning == 0) {
+        const failure = port.wake(sys, waiter);
+        if (failure != .none) {
+            exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, port.why(failure) });
+            return err.RTGERR_NO_DISPLAY;
+        }
     }
-    const found = monitor.modesOf(base, cea, own, port.sends);
-    if (base != null) screen.sink = edid.sinkOf(cea);
-    const shown = &found.modes[found.default];
-    if (base == null) {
-        exec.kprintf(screen.sys, "%s: HDMI to a monitor whose EDID did not read, %dx%d at %d Hz\n", .{ MODULE_NAME, shown.width, shown.height, shown.hz() });
-    } else {
-        const who: [*:0]const u8 = if (name[0] != 0) @ptrCast(&name) else "a monitor";
-        exec.kprintf(screen.sys, "%s: HDMI to %s, %dx%d at %d Hz of %d modes\n", .{ MODULE_NAME, who, shown.width, shown.height, shown.hz(), found.count });
+    if (!port.monitor()) return err.RTGERR_OK;
+    asked.present = 1;
+    if (asked.edid_max < edid_block) return err.RTGERR_OK;
+    const first: *[edid_block]u8 = @ptrCast(asked.edid);
+    var read = port.readEdid(0, first, waiter);
+    if (read and !sumsToZero(first)) read = port.readEdid(0, first, waiter);
+    if (!read) return err.RTGERR_OK;
+    var blocks: u32 = 1;
+    const named = @min(@as(u32, first[126]) + 1, asked.edid_max / edid_block, port.edid_blocks);
+    while (blocks < named) : (blocks += 1) {
+        const block: *[edid_block]u8 = @ptrCast(asked.edid + blocks * edid_block);
+        if (!port.readEdid(@intCast(blocks), block, waiter)) break;
     }
-    return found;
+    asked.edid_size = blocks * edid_block;
+    return err.RTGERR_OK;
+}
+
+/// Whether the display can make `timings`: an HDMI port by its clock and
+/// by what its registers hold; any other takes what it is offered.
+fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) i32 {
+    const made = switch (screenOf(board).scanout) {
+        .jh7110 => jh7110.makes(timings),
+        .bcm2712 => bcm2712.makes(timings),
+        else => true,
+    };
+    return if (made) err.RTGERR_OK else err.RTGERR_BAD_MODE;
+}
+
+/// Room for the mode the screen has just taken: the composed frame, or
+/// the two frames a display is flipped between, taken anew where a
+/// picture of the mode is larger than they are - an HDMI port's with its
+/// first mode - and the board's display memory let hold as many such
+/// pictures as the board may have. False without memory for the frames.
+/// What the display read is then gone: it is started again.
+fn sizeFor(screen: *Screen, board: *rtg.RtgBoard) bool {
+    const sys = screen.sys;
+    const picture = @as(usize, screen.pitch) * screen.height;
+    if (isHdmi(screen.scanout)) {
+        if (picture > screen.frame_bytes or screen.flip_memory == null) {
+            sys.ObtainSemaphore(&screen.flip_lock);
+            defer sys.ReleaseSemaphore(&screen.flip_lock);
+            if (screen.flip_memory) |memory| sys.FreeMem(memory, screen.flip_bytes + page);
+            screen.flip_memory = null;
+            screen.flip_bytes = 0;
+            screen.scanning = 0;
+            screen.frame_bytes = @max(screen.frame_bytes, picture);
+            if (!takeFrames(screen)) return false;
+        }
+    } else if (picture > screen.frame_bytes) {
+        hold(screen);
+        const memory = screen.composed_memory;
+        const frame = screen.composed;
+        screen.composed_memory = null;
+        screen.composed = null;
+        if (frame) |gone| {
+            switch (screen.scanout) {
+                .virtio => |*gpu| virtio.forget(gpu, @intFromPtr(gone), Waiter{ .screen = screen }),
+                else => {},
+            }
+            if (screen.scanning == @intFromPtr(gone)) screen.scanning = 0;
+        }
+        letGo(screen);
+        if (memory) |old| sys.FreeMem(old, screen.frame_bytes + page);
+        screen.frame_bytes = picture;
+    }
+    board.region.size = @as(usize, screen.buffers) * screen.frame_bytes;
+    return true;
 }
 
 /// The display brought up the first time in `mode` - or changed to it -
 /// black: the composed frame cleared, given back once a buffer is shown.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+/// The mode it is in handed over again is a monitor that came to an HDMI
+/// port: the port is started again with the timings handed over now, as
+/// that monitor takes them, reading what it read.
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, timings: *const rtg.RtgTimings) callconv(.c) i32 {
     const screen = screenOf(board);
-    const index = indexOf(screen, mode.id) orelse return err.RTGERR_BAD_MODE;
-    // A row as the library makes one of a buffer: what this driver sized
+    // A row as the library makes one of a buffer: what this driver sizes
     // its frames by.
     if (mode.format != screen.format or mode.pitch != rowBytes(screen, mode.width)) return err.RTGERR_BAD_MODE;
-    const changed = index != screen.current;
-    take(screen, index);
+    const changed = mode.id != screen.mode_id;
+    screen.mode_id = mode.id;
+    screen.timings = timings.*;
+    screen.width = mode.width;
+    screen.height = mode.height;
+    screen.pitch = mode.pitch;
+    screen.frame_us = if (mode.refresh_mhz != 0) 1_000_000_000 / mode.refresh_mhz else 16_667;
+    if (isHdmi(screen.scanout)) {
+        // How the mode goes to the monitor now on the port.
+        var monitor: rtg.RtgMonitorInfo = .{};
+        _ = screen.rtg_base.GetBoardMonitor(board, &monitor, @sizeOf(rtg.RtgMonitorInfo));
+        screen.sink = bcm2712.Sink.of(&monitor);
+        if (!changed and screen.scanning != 0) {
+            return if (begin(screen, screen.scanning)) err.RTGERR_OK else err.RTGERR_NO_DISPLAY;
+        }
+    }
+    if (!sizeFor(screen, board)) return err.RTGERR_NO_MEMORY;
     if (flips(screen) and (screen.scanning == 0 or changed)) {
         if (!beginFlipped(screen)) return err.RTGERR_NO_DISPLAY;
     } else if (screen.scanning == 0 or changed) {
@@ -2419,7 +2474,7 @@ fn begin(screen: *Screen, address: usize) bool {
 /// BCM2712's, sent as the monitor takes it (`Screen.sink`) - and the
 /// frame interrupt hooked once it runs.
 fn startPort(comptime port: type, screen: *Screen, address: usize) void {
-    const mode = &screen.timings.modes[screen.current];
+    const mode = &screen.timings;
     const waiter = Waiter{ .screen = screen };
     const failure = if (port == bcm2712)
         port.start(screen.sys, mode, screen.sink, address, screen.pitch, waiter)
@@ -2684,6 +2739,8 @@ const ops = rtg.boards.RtgBoardOps{
 /// mirrored.
 const bcm2712_ops = ops: {
     var more = ops;
+    more.detect = &detect;
+    more.check_mode = &checkMode;
     more.display = &display;
     more.set_brightness = &setBrightness;
     more.brightness = &brightness;
@@ -2694,10 +2751,19 @@ const bcm2712_ops = ops: {
 /// The JH7110's port's: the same, and a video layer, its first overlay.
 const jh7110_ops = ops: {
     var more = ops;
+    more.detect = &detect;
+    more.check_mode = &checkMode;
     more.video_open = &videoOpen;
     more.video_close = &videoClose;
     more.video_show = &videoShow;
     more.video_move = &videoMove;
+    break :ops more;
+};
+
+/// The virtio GPU's: the same, and what the emulator says its window is.
+const virtio_ops = ops: {
+    var more = ops;
+    more.detect = &detect;
     break :ops more;
 };
 

@@ -14,6 +14,7 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [AddRtgEventServer](#addrtgeventserver) - Hangs an interrupt server on one of a board's events.
+- [AddRtgNotify](#addrtgnotify) - Asks for a task to be told when something about the boards changes.
 - [AllocBitMap](#allocbitmap) - Makes a buffer in a board's display memory.
 - [AttachBitMap](#attachbitmap) - Makes a buffer handle over memory the caller owns.
 - [BestBoardMode](#bestboardmode) - Finds the mode of a board that comes nearest a wish.
@@ -34,6 +35,7 @@ Generated from the source by `./zig build autodoc`.
 - [FreeBitMap](#freebitmap) - Gives a buffer back.
 - [GetBoardInfo](#getboardinfo) - Reads what a board is and what state it is in.
 - [GetBoardModes](#getboardmodes) - Copies out the modes a board can be put into.
+- [GetBoardMonitor](#getboardmonitor) - Reads what is on a board's connector.
 - [GetBoardStats](#getboardstats) - Reads what a board that refreshes itself has been through.
 - [GetRtgDevices](#getrtgdevices) - Copies out the devices on the library's list.
 - [GetRtgDrivers](#getrtgdrivers) - Copies out the drivers on the library's list.
@@ -43,9 +45,11 @@ Generated from the source by `./zig build autodoc`.
 - [MoveVideoLayer](#movevideolayer) - Puts a video layer somewhere on the display, or hides it.
 - [NextBoard](#nextboard) - Walks the list of boards.
 - [OpenVideoLayer](#openvideolayer) - Takes one of a board's video layers: a plane of its controller that shows a picture in YUV itself, scaled into a place on the display.
+- [ReadBoardEDID](#readboardedid) - Copies out the EDID the monitor on a board's connector was read to have.
 - [RefreshBitMap](#refreshbitmap) - Hands rows of a buffer that were written on to the display.
 - [RefreshRect](#refreshrect) - Hands a rectangle of a buffer that was written on to the display.
 - [RemRtgEventServer](#remrtgeventserver) - Takes an interrupt server off one of a board's events.
+- [RemRtgNotify](#remrtgnotify) - Gives back a notification `AddRtgNotify` answered.
 - [RtgCicp](#rtgcicp) - Turns one of H.273's numbers for a picture's colours into rtg's.
 - [RtgErrorText](#rtgerrortext) - Says what an `RTGERR_` code means, in words.
 - [RtgFormatBits](#rtgformatbits) - Says how many bits a pixel of a format takes.
@@ -117,6 +121,69 @@ None known.
 
 ```zig
 if (!rb.AddRtgEventServer(board, rtg.events.RTGEV_VBLANK, &server)) return error.NoSuchEvent;
+```
+
+## AddRtgNotify
+
+Asks for a task to be told when something about the boards changes.
+
+**SYNOPSIS**
+
+```zig
+fn AddRtgNotify(rb: *RtgBase, task: *exec.Task, signals: u32) ?*rtg.RtgNotify
+```
+
+**SINCE**
+
+1.20. LVO -320.
+
+**INPUTS**
+
+- `task` - the task to signal.
+- `signals` - the signals it is sent, as a mask: one the task
+  allocated.
+
+**RESULT**
+
+The notification, for `RemRtgNotify`; null for no signals, and without
+memory.
+
+**BEHAVIOR**
+
+From now on the task is signalled whenever a board was made or has
+gone, a monitor came or went, a board's list of modes was made again,
+or a board was put in another mode. The signal says only that
+something changed: the task walks the boards (`NextBoard`) and reads
+each one's `changes` (`GetBoardInfo`), which is raised with every such
+change of that board, to see which it was. Several changes before the
+task runs are one signal.
+
+**CONTEXT**
+
+- Waits: while another task holds the notifications' lock.
+- Interrupts: no.
+- Locks: takes the notifications' lock. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The notification is the library's memory and the caller's to give
+back with `RemRtgNotify`, before the task ends.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemRtgNotify`, `GetBoardInfo`, `GetBoardMonitor`
+
+**EXAMPLES**
+
+```zig
+const bit = sys.AllocSignal(-1);
+const notify = rb.AddRtgNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(bit));
+defer rb.RemRtgNotify(notify);
 ```
 
 ## AllocBitMap
@@ -1326,6 +1393,73 @@ const there = rb.GetBoardModes(board, &found, found.len);
 for (found[0..@min(there, found.len)]) |*mode| list(mode);
 ```
 
+## GetBoardMonitor
+
+Reads what is on a board's connector.
+
+**SYNOPSIS**
+
+```zig
+fn GetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo, size: u32) u32
+```
+
+**SINCE**
+
+1.20. LVO -312.
+
+**INPUTS**
+
+- `board` - the board.
+- `info` - where the answer goes.
+- `size` - how many bytes `info` has: `@sizeOf(RtgMonitorInfo)`.
+
+**RESULT**
+
+How many bytes were written. A caller built against an older SDK with a
+smaller structure gets that much; check the count before trusting a
+field near the end.
+
+**BEHAVIOR**
+
+The answer is what the board's connector was last seen to have: the
+library asks the driver when the board is made and whenever the driver
+says the monitor changed, not at this call. `RTGMON_PRESENT` says a
+monitor is there; with `RTGMON_EDID` its description was read, and the
+maker's letters, the product and serial numbers, the name, the
+picture's size in millimetres and when it was made are from it, as is
+what it takes: HDMI's packets (`RTGMON_HDMI`), sound (`RTGMON_AUDIO`),
+a choice of its RGB range, scrambling, and its fastest clock. A panel
+is a monitor that is always there (`RTGMON_PANEL`), called what its
+part is called. A board whose device has gone says what it last had.
+
+**CONTEXT**
+
+- Waits: while another task holds the board's lock - through a show,
+  which may last a frame, or a look at the connector.
+- Interrupts: no.
+- Locks: takes the board's lock. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated: the copy is the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReadBoardEDID`, `GetBoardModes`, `AddRtgNotify`
+
+**EXAMPLES**
+
+```zig
+var monitor: rtg.RtgMonitorInfo = .{};
+_ = rb.GetBoardMonitor(board, &monitor, @sizeOf(rtg.RtgMonitorInfo));
+if (monitor.flags & rtg.modes.RTGMON_PRESENT == 0) return;
+```
+
 ## GetBoardStats
 
 Reads what a board that refreshes itself has been through.
@@ -1904,6 +2038,65 @@ const layer = rb.OpenVideoLayer(board, &tags) orelse return putThroughGraphics()
 defer rb.CloseVideoLayer(layer);
 ```
 
+## ReadBoardEDID
+
+Copies out the EDID the monitor on a board's connector was read to have.
+
+**SYNOPSIS**
+
+```zig
+fn ReadBoardEDID(rb: *RtgBase, board: *rtg.RtgBoard, buffer: ?[*]u8, size: u32) u32
+```
+
+**SINCE**
+
+1.20. LVO -316.
+
+**INPUTS**
+
+- `board` - the board.
+- `buffer` - where the bytes go, or null to ask how many there are.
+- `size` - how many bytes `buffer` has room for.
+
+**RESULT**
+
+The EDID's length in bytes, which may be more than were copied: whole
+blocks of 128, at most `RTG_EDID_MAX`. 0 for a panel, a board with no
+monitor on it, and a monitor whose EDID did not read.
+
+**BEHAVIOR**
+
+Up to `size` bytes are copied, the first block first, as the library
+holds them from its last look at the connector: nothing is read from
+the monitor at this call. Only an EDID whose first block begins as one
+and sums to zero is held.
+
+**CONTEXT**
+
+- Waits: while another task holds the board's lock.
+- Interrupts: no.
+- Locks: takes the board's lock. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated: the copy is the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetBoardMonitor`
+
+**EXAMPLES**
+
+```zig
+var bytes: [rtg.modes.RTG_EDID_MAX]u8 = undefined;
+const length = rb.ReadBoardEDID(board, &bytes, bytes.len);
+```
+
 ## RefreshBitMap
 
 Hands rows of a buffer that were written on to the display.
@@ -2086,6 +2279,60 @@ None known.
 
 ```zig
 rb.RemRtgEventServer(board, rtg.events.RTGEV_VBLANK, &server);
+```
+
+## RemRtgNotify
+
+Gives back a notification `AddRtgNotify` answered.
+
+**SYNOPSIS**
+
+```zig
+fn RemRtgNotify(rb: *RtgBase, notify: ?*rtg.RtgNotify) void
+```
+
+**SINCE**
+
+1.20. LVO -324.
+
+**INPUTS**
+
+- `notify` - the notification. Null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The task is signalled no more for it: once this returns, no change is
+told through this notification. A signal sent before stays set on the
+task until it is waited for or cleared.
+
+**CONTEXT**
+
+- Waits: while another task holds the notifications' lock - while the
+  tasks are being told of a change.
+- Interrupts: no.
+- Locks: takes the notifications' lock. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The notification's memory is freed.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddRtgNotify`
+
+**EXAMPLES**
+
+```zig
+rb.RemRtgNotify(notify);
 ```
 
 ## RtgCicp

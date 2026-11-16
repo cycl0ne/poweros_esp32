@@ -94,7 +94,8 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const AMDGPUBase = sdk.interface.amdgpu.AMDGPUBase;
 const uefi = @import("uefi.zig");
 const regs = sdk.hardware.amd_dcn;
-const edid = @import("../edid.zig");
+const rtg = sdk.rtg;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 
 /// Who says what is found, on the boot's lines.
 const owner = "rtg-fb";
@@ -390,6 +391,9 @@ const address_high_mask: u32 = 0xffff;
 /// be saying.
 pub const Engine = struct {
     sys: *ExecBase,
+    /// rtg.library as a driver calls it, for the standards' timings a
+    /// timed pixel clock is held against; null until the driver gives it.
+    rtg_base: ?*RtgDriverBase = null,
     /// The resource that holds the device.
     gpu: *AMDGPUBase,
     /// The device's memory as the machine reaches it, and its registers.
@@ -859,14 +863,19 @@ fn pixelClock(engine: Engine) ?u32 {
     }
     const frame_us = periods[frames_timed / 2];
     if (frame_us == 0) return null;
-    const timed_khz: u32 = @intCast(@as(u64, h_total) * v_total * 1000 / frame_us);
-    for (&edid.known) |*timing| {
-        if (timing.width != engine.width or timing.height != engine.height) continue;
-        if (timing.htotal() != h_total or timing.vtotal() != v_total) continue;
-        const apart = if (timing.pixel_khz > timed_khz) timing.pixel_khz - timed_khz else timed_khz - timing.pixel_khz;
-        if (apart * 200 <= timing.pixel_khz) return timing.pixel_khz;
-    }
-    return timed_khz;
+    const whole = @as(u64, h_total) * v_total;
+    const timed_khz: u32 = @intCast(whole * 1000 / frame_us);
+    // The standard's timing of this picture at the refresh timed, where
+    // rtg.library has one, with the same totals.
+    const rb = engine.rtg_base orelse return timed_khz;
+    const refresh_hz: u32 = @intCast((@as(u64, timed_khz) * 1000 + whole / 2) / whole);
+    var standard: rtg.RtgTimings = .{};
+    if (!rb.FindStandardTimings(engine.width, engine.height, refresh_hz, &standard)) return timed_khz;
+    if (standard.h_front + standard.h_sync + standard.h_back + standard.h_active != h_total) return timed_khz;
+    if (standard.v_front + standard.v_sync + standard.v_back + standard.v_active != v_total) return timed_khz;
+    const standard_khz = standard.pixel_clock_hz / 1000;
+    const apart = if (standard_khz > timed_khz) standard_khz - timed_khz else timed_khz - standard_khz;
+    return if (apart * 200 <= standard_khz) standard_khz else timed_khz;
 }
 
 /// How many frames are timed, and how long the timing may take before

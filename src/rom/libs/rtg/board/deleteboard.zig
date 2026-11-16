@@ -6,6 +6,7 @@ const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const bitmaps = @import("../bitmap/_bitmap.zig");
 const modes = @import("../mode/_mode.zig");
+const monitors = @import("../monitor/_monitor.zig");
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
 
@@ -16,7 +17,7 @@ const _board = @import("_board.zig");
 /// fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -344.
+/// SINCE: 1.0. LVO -360.
 ///
 /// INPUTS:
 /// - `board` - the board, as `CreateBoard` answered it. Null does nothing.
@@ -101,6 +102,7 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
 
     private.arena.deinit(sys);
     modes.freeAll(rb, gone);
+    monitors.free(rb, gone);
     if (gone.driver) |driver| {
         if (driver.boards != 0) driver.boards -= 1;
     }

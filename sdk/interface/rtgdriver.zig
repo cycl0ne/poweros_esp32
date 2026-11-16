@@ -17,21 +17,23 @@ pub const NAME = "rtg.library";
 
 /// Each function's offset in the jump table (its LVO).
 pub const LVO = struct {
-    pub const AddRtgDriver = libraries.lvo(77);
-    pub const RemRtgDriver = libraries.lvo(78);
-    pub const SignalRtgEvent = libraries.lvo(79);
-    pub const TxParam = libraries.lvo(80);
-    pub const TxColor = libraries.lvo(81);
-    pub const RxParam = libraries.lvo(82);
-    pub const GetRtgTagData = libraries.lvo(83);
-    pub const CreateBoard = libraries.lvo(84);
-    pub const DeleteBoard = libraries.lvo(85);
-    pub const AddRtgDevice = libraries.lvo(86);
-    pub const RemRtgDevice = libraries.lvo(87);
-    pub const OpenTransport = libraries.lvo(88);
-    pub const CloseTransport = libraries.lvo(89);
-    pub const AddBoardMode = libraries.lvo(90);
-    pub const ReadTimingTags = libraries.lvo(91);
+    pub const AddRtgDriver = libraries.lvo(81);
+    pub const RemRtgDriver = libraries.lvo(82);
+    pub const SignalRtgEvent = libraries.lvo(83);
+    pub const TxParam = libraries.lvo(84);
+    pub const TxColor = libraries.lvo(85);
+    pub const RxParam = libraries.lvo(86);
+    pub const GetRtgTagData = libraries.lvo(87);
+    pub const CreateBoard = libraries.lvo(88);
+    pub const DeleteBoard = libraries.lvo(89);
+    pub const AddRtgDevice = libraries.lvo(90);
+    pub const RemRtgDevice = libraries.lvo(91);
+    pub const OpenTransport = libraries.lvo(92);
+    pub const CloseTransport = libraries.lvo(93);
+    pub const AddBoardMode = libraries.lvo(94);
+    pub const ReadTimingTags = libraries.lvo(95);
+    pub const MonitorChanged = libraries.lvo(96);
+    pub const FindStandardTimings = libraries.lvo(97);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -52,6 +54,8 @@ pub const Fn = struct {
     pub const CloseTransport = *const fn (*RtgDriverBase, ?*rtg.RtgTransport) callconv(.c) void;
     pub const AddBoardMode = *const fn (*RtgDriverBase, *rtg.RtgBoard, *const rtg.RtgTimings, u32, u32) callconv(.c) u32;
     pub const ReadTimingTags = *const fn (*RtgDriverBase, ?[*]const utility.TagItem, *rtg.RtgTimings) callconv(.c) bool;
+    pub const MonitorChanged = *const fn (*RtgDriverBase, *rtg.RtgBoard) callconv(.c) void;
+    pub const FindStandardTimings = *const fn (*RtgDriverBase, u32, u32, u32, *rtg.RtgTimings) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -165,5 +169,20 @@ pub const RtgDriverBase = opaque {
     /// pulses; `timings` is then left as it was.
     pub fn ReadTimingTags(self: *RtgDriverBase, tag_list: ?[*]const utility.TagItem, timings: *rtg.RtgTimings) bool {
         return libraries.call(self, LVO.ReadTimingTags, Fn.ReadTimingTags, .{ tag_list, timings });
+    }
+
+    /// Something happened at the board's connector: have its `detect` asked
+    /// again and its modes made of what the monitor now there names. The
+    /// library does that on a task of its own. From an interrupt or a task.
+    pub fn MonitorChanged(self: *RtgDriverBase, board: *rtg.RtgBoard) void {
+        return libraries.call(self, LVO.MonitorChanged, Fn.MonitorChanged, .{board});
+    }
+
+    /// The standard's timings for a picture of that size at that refresh, in
+    /// frames a second - CEA-861's, with its number, or VESA's - into
+    /// `timings`. False, and `timings` left as it was, where the library
+    /// knows none.
+    pub fn FindStandardTimings(self: *RtgDriverBase, width: u32, height: u32, refresh_hz: u32, timings: *rtg.RtgTimings) bool {
+        return libraries.call(self, LVO.FindStandardTimings, Fn.FindStandardTimings, .{ width, height, refresh_hz, timings });
     }
 };

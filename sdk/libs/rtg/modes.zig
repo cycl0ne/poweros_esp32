@@ -15,6 +15,18 @@
 //! the board lives. A program is handed a mode as a copy (`GetBoardModes`,
 //! `BestBoardMode`) and names it by its number; it holds no pointer into
 //! the board's list.
+//!
+//! A **monitor** is what is on a board's connector. It comes and goes. A
+//! board with a connector fills two ops: `detect`, which says whether a
+//! monitor is there and reads the blocks of its EDID, and `check_mode`,
+//! which says whether the board can make a timing. The library asks
+//! `detect` as the board joins its list and whenever the driver says
+//! `MonitorChanged`, reads the EDID, and makes the board's modes of the
+//! timings it names that `check_mode` takes; the mode the monitor prefers
+//! is the default. A mode's number stays: the list made again for a
+//! monitor gives a mode of the same figures the number it had. The modes
+//! a driver added itself stand while the monitor names none. A panel is a
+//! monitor that is always there: its board fills neither op.
 
 const bitmaps = @import("bitmaps.zig");
 const PixelFormat = bitmaps.PixelFormat;
@@ -99,3 +111,72 @@ pub const RTGMF_CURRENT: u32 = 1 << 1;
 pub const RTGMF_TURNED: u32 = 1 << 2;
 /// The mode's timings are interlaced (`RTGTM_INTERLACED`).
 pub const RTGMF_INTERLACED: u32 = 1 << 3;
+
+/// One block of an EDID, and the most of one the library keeps: eight
+/// blocks, which is what an emulator's display hands over.
+pub const RTG_EDID_BLOCK = 128;
+pub const RTG_EDID_MAX = 8 * RTG_EDID_BLOCK;
+
+/// What a board's `detect` op is handed and fills in.
+pub const RtgDetect = extern struct {
+    /// Where the monitor's EDID goes: whole blocks of 128 bytes, the
+    /// first block first. The library's buffer.
+    edid: [*]u8,
+    /// How many bytes `edid` has room for.
+    edid_max: u32,
+    /// How many bytes the driver read, a whole number of blocks: 0 for a
+    /// monitor whose EDID did not read, or that has none.
+    edid_size: u32 = 0,
+    /// Whether a monitor is on the connector.
+    present: u8 = 0,
+    pad: [3]u8 = .{ 0, 0, 0 },
+};
+
+/// What is on a board's connector, as `GetBoardMonitor` copies it out.
+/// Fields are only ever added at the end.
+pub const RtgMonitorInfo = extern struct {
+    /// RTGMON_*
+    flags: u32 = 0,
+    /// The maker's three letters ("DEL"), NUL-terminated; empty without
+    /// an EDID.
+    maker: [4]u8 = @splat(0),
+    /// The maker's number for the product, and the serial number.
+    product: u32 = 0,
+    serial: u32 = 0,
+    /// What the monitor calls itself, NUL-terminated; a panel's is what
+    /// its part is called. Empty where it says nothing.
+    name: [24]u8 = @splat(0),
+    /// The picture's size in millimetres; 0 where the monitor does not
+    /// say - a projector does not.
+    width_mm: u32 = 0,
+    height_mm: u32 = 0,
+    /// When it was made.
+    year: u16 = 0,
+    week: u16 = 0,
+    /// How many bytes of EDID the library holds (`ReadBoardEDID`).
+    edid_size: u32 = 0,
+    /// The fastest TMDS clock the monitor says it takes, in kHz; 0 where
+    /// it does not say.
+    max_tmds_khz: u32 = 0,
+};
+
+/// RtgMonitorInfo.flags
+/// A monitor is there. A panel always is.
+pub const RTGMON_PRESENT: u32 = 1 << 0;
+/// Its EDID was read and is held.
+pub const RTGMON_EDID: u32 = 1 << 1;
+/// It is a panel: part of the machine, with no connector to leave by.
+pub const RTGMON_PANEL: u32 = 1 << 2;
+/// It takes HDMI's packets between the lines - the infoframes, the
+/// sound; without, it is a DVI monitor.
+pub const RTGMON_HDMI: u32 = 1 << 3;
+/// It plays sound.
+pub const RTGMON_AUDIO: u32 = 1 << 4;
+/// Its RGB range may be chosen, full or limited, by the AVI infoframe.
+pub const RTGMON_RANGE_SELECTABLE: u32 = 1 << 5;
+/// It has the status and control data channel, which a TMDS clock past
+/// 340 MHz is scrambled through.
+pub const RTGMON_SCDC: u32 = 1 << 6;
+/// It is an HDMI 2.0 monitor: it takes CEA's numbers above 64 in the AVI
+/// infoframe.
+pub const RTGMON_HDMI2: u32 = 1 << 7;

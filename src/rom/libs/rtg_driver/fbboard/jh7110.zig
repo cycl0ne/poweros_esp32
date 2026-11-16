@@ -34,7 +34,8 @@ const system = sdk.hardware.system;
 const gpio = sdk.hardware.gpio;
 const signals = sdk.hardware.signals;
 const ExecBase = sdk.interface.exec.ExecBase;
-const edid = @import("../edid.zig");
+const rtg = sdk.rtg;
+const timing = @import("timing.zig");
 const phy = @import("phy.zig");
 
 /// Whether this is built for the JH7110, whose clocks and pads waking the
@@ -256,9 +257,11 @@ fn takePins() void {
 /// The domain on, the controller's and the transmitter's clocks running
 /// and their resets let go, and the transmitter's DDC ready to read the
 /// monitor's EDID (`readEdid`): what `start` needs first, and what tells
-/// which modes the monitor takes before one is picked. Done again it
-/// changes nothing. `sys` is exec's; `waiter.wait(micros)` waits that
-/// long.
+/// which modes the monitor takes before one is picked. It puts the
+/// controller's pixel clocks on the divider, so it is for a display that
+/// does not run, or one `start` is about to start again. A block that
+/// does not come out of its reset is answered, not written to. `sys` is
+/// exec's; `waiter.wait(micros)` waits that long.
 pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
     if (!on_jh7110) return .power;
     if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) {
@@ -275,8 +278,8 @@ pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
     system.releaseReset(.sys, system.SYSRST_VOUT_TOP_SRC);
     takePins();
     sys.Enable();
-    _ = system.waitOutOfReset(.sys, system.SYSRST_NOC_BUS_DISP_AXI);
-    _ = system.waitOutOfReset(.sys, system.SYSRST_VOUT_TOP_SRC);
+    if (!system.waitOutOfReset(.sys, system.SYSRST_NOC_BUS_DISP_AXI)) return .power;
+    if (!system.waitOutOfReset(.sys, system.SYSRST_VOUT_TOP_SRC)) return .power;
 
     // The controller, its pixel clock from the divider, not the
     // transmitter's PLL; then the transmitter, its clocks, out of reset
@@ -286,10 +289,12 @@ pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
     pixelClock(system.VOUTCLK_DC8200_PIX1, PIX_FROM_DIVIDER);
     for (dc_clocks) |clock| system.clockOn(.vout, clock);
     for (dc_resets) |reset| system.releaseReset(.vout, reset);
-    for (dc_resets) |reset| _ = system.waitOutOfReset(.vout, reset);
+    for (dc_resets) |reset| {
+        if (!system.waitOutOfReset(.vout, reset)) return .power;
+    }
     for (hdmi_clocks) |clock| system.clockOn(.vout, clock);
     system.releaseReset(.vout, system.VOUTRST_HDMI_TX_HDMI);
-    _ = system.waitOutOfReset(.vout, system.VOUTRST_HDMI_TX_HDMI);
+    if (!system.waitOutOfReset(.vout, system.VOUTRST_HDMI_TX_HDMI)) return .power;
 
     // Its DDC (inno_hdmi_i2c_init): the bus clock, the EDID's interrupt
     // off and cleared.
@@ -298,6 +303,26 @@ pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
     hdmi(INTERRUPT_MASK1).* = 0;
     hdmi(INTERRUPT_STATUS1).* = EDID_READY;
     return .none;
+}
+
+/// How many blocks of a monitor's EDID the port reads: any the monitor
+/// has, as far as the library keeps them.
+pub const edid_blocks: u32 = rtg.modes.RTG_EDID_MAX / rtg.modes.RTG_EDID_BLOCK;
+
+/// Whether the port can make `mode`: its pixel clock one the
+/// transmitter's PLL makes (`phy.sends`), progressive, and its figures
+/// ones the registers hold - the picture's sides in fifteen bits, a line
+/// and a frame in sixteen, and the vertical blanking, the lines from the
+/// sync's start to the picture and the sync itself in eight, which is all
+/// the transmitter has for them.
+pub fn makes(mode: *const rtg.RtgTimings) bool {
+    if (!phy.sends(timing.khz(mode))) return false;
+    if (mode.flags & rtg.modes.RTGTM_INTERLACED != 0) return false;
+    if (mode.h_active == 0 or mode.v_active == 0) return false;
+    if (mode.h_active > 0x7FFF or mode.v_active > 0x7FFF) return false;
+    if (timing.htotal(mode) > 0xFFFF or timing.vtotal(mode) > 0xFFFF) return false;
+    if (timing.vtotal(mode) - mode.v_active > 0xFF) return false;
+    return mode.v_sync + mode.v_back <= 0xFF;
 }
 
 /// Block `number` of the monitor's EDID into `block`: block n is word
@@ -370,20 +395,20 @@ fn tuneDrivers(vic: u8) void {
 }
 
 /// The mode's timing given to the transmitter (inno_hdmi_config_video_timing).
-fn videoTiming(mode: *const edid.Timing) void {
-    const htotal = mode.htotal();
-    const vtotal = mode.vtotal();
+fn videoTiming(mode: *const rtg.RtgTimings) void {
+    const htotal = timing.htotal(mode);
+    const vtotal = timing.vtotal(mode);
     hdmi16(VIDEO_EXT_HTOTAL, htotal);
-    hdmi16(VIDEO_EXT_HBLANK, htotal - mode.width);
+    hdmi16(VIDEO_EXT_HBLANK, htotal - mode.h_active);
     hdmi16(VIDEO_EXT_HDELAY, mode.h_sync + mode.h_back);
     hdmi16(VIDEO_EXT_HDURATION, mode.h_sync);
     hdmi16(VIDEO_EXT_VTOTAL, vtotal);
-    hdmi(VIDEO_EXT_VBLANK).* = (vtotal - mode.height) & 0xFF;
+    hdmi(VIDEO_EXT_VBLANK).* = (vtotal - mode.v_active) & 0xFF;
     hdmi(VIDEO_EXT_VDELAY).* = (mode.v_sync + mode.v_back) & 0xFF;
     hdmi(VIDEO_EXT_VDURATION).* = mode.v_sync & 0xFF;
     var control = TIMING_EXTERNAL;
-    if (mode.hsync_high) control |= TIMING_HSYNC_HIGH;
-    if (mode.vsync_high) control |= TIMING_VSYNC_HIGH;
+    if (timing.hsyncHigh(mode)) control |= TIMING_HSYNC_HIGH;
+    if (timing.vsyncHigh(mode)) control |= TIMING_VSYNC_HIGH;
     hdmi(VIDEO_TIMING_CTL).* = control;
 }
 
@@ -394,13 +419,13 @@ fn videoTiming(mode: *const edid.Timing) void {
 /// or treating it as video - and CEA's number for the mode, 0 for one
 /// that has none. U-Boot's left the version and the checksum 0, so a
 /// monitor threw it away.
-fn infoframe(mode: *const edid.Timing) void {
+fn infoframe(mode: *const rtg.RtgTimings) void {
     // The aspect a numbered mode is named with (720x480 and 720x576 are
     // each 4:3 under one number, 16:9 under another), else the picture's.
     const aspect: u8 = switch (mode.vic) {
         1, 2, 17 => 1,
         3, 18 => 2,
-        else => if (mode.width * 3 == mode.height * 4) 1 else if (mode.width * 9 == mode.height * 16) 2 else 0,
+        else => if (mode.h_active * 3 == mode.v_active * 4) 1 else if (mode.h_active * 9 == mode.v_active * 16) 2 else 0,
     };
     var frame: [PACKET_BYTES]u8 = @splat(0);
     frame[0] = 0x82; // AVI, version 2, 13 bytes
@@ -422,9 +447,9 @@ fn infoframe(mode: *const edid.Timing) void {
 /// `address`, 32 bits a pixel, rows `pitch` bytes apart, below 4 GiB and
 /// out of the caches. With the display up, it changes to `mode`.
 /// `waiter.wait(micros)` waits that long.
-pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u32, waiter: anytype) Failure {
+pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, address: usize, pitch: u32, waiter: anytype) Failure {
     if (!on_jh7110) return .power;
-    const pll = phy.find(mode.pixel_khz) orelse return .clock;
+    const pll = phy.find(timing.khz(mode)) orelse return .clock;
     const woken = wake(sys, waiter);
     if (woken != .none) return woken;
 
@@ -459,9 +484,9 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u3
 
     // The controller: the mode from the picture at `address`, to the
     // transmitter (sf_display_init).
-    const size = mode.width | mode.height << 15;
-    const hsync_start = mode.width + mode.h_front;
-    const vsync_start = mode.height + mode.v_front;
+    const size = mode.h_active | mode.v_active << 15;
+    const hsync_start = mode.h_active + mode.h_front;
+    const vsync_start = mode.v_active + mode.v_front;
     dc(INTERRUPT_ENABLE).* = 0xC000_1FFF;
     dc(0x1CC0).* = 0x0000_2000;
     dc(0x1800).* = 0x0000_0000;
@@ -490,10 +515,10 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, address: usize, pitch: u3
     dc(0x154C).* = 0x8006_0000;
     dc(0x2518).* = 0x0000_0001;
     dc(0x1A28).* = 0x0000_0000;
-    dc(DISPLAY_H).* = mode.htotal() << 16 | mode.width;
-    dc(DISPLAY_H_SYNC).* = hsync_start | (hsync_start + mode.h_sync) << 15 | SYNC_ON | (if (mode.hsync_high) 0 else SYNC_LOW);
-    dc(DISPLAY_V).* = mode.vtotal() << 16 | mode.height;
-    dc(DISPLAY_V_SYNC).* = vsync_start | (vsync_start + mode.v_sync) << 15 | SYNC_ON | (if (mode.vsync_high) 0 else SYNC_LOW);
+    dc(DISPLAY_H).* = timing.htotal(mode) << 16 | mode.h_active;
+    dc(DISPLAY_H_SYNC).* = hsync_start | (hsync_start + mode.h_sync) << 15 | SYNC_ON | (if (timing.hsyncHigh(mode)) 0 else SYNC_LOW);
+    dc(DISPLAY_V).* = timing.vtotal(mode) << 16 | mode.v_active;
+    dc(DISPLAY_V_SYNC).* = vsync_start | (vsync_start + mode.v_sync) << 15 | SYNC_ON | (if (timing.vsyncHigh(mode)) 0 else SYNC_LOW);
     dc(0x14B0).* = 0x0000_0000;
     dc(0x1CD0).* = 0x0000_00D2;
     dc(0x14B8).* = 0x0000_0005;

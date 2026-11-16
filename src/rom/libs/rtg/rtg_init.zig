@@ -57,7 +57,13 @@ pub const LIBRARY_VERSION = 1;
 /// by its number: FindBoardMode answers one, with a refresh and RTG_ANY,
 /// BestBoardMode the nearest to a wish, SetBoardMode takes one.
 /// NextBoardMode is gone.
-pub const LIBRARY_REVISION = 19;
+/// 20: the monitor - a board with a connector says what is on it
+/// (detect) and which timings it can make (check_mode), and the library
+/// reads the EDID and makes the board's modes of it, again whenever the
+/// driver says MonitorChanged; GetBoardMonitor, ReadBoardEDID; a task is
+/// told of what changes (AddRtgNotify, RemRtgNotify,
+/// RtgBoardInfo.changes).
+pub const LIBRARY_REVISION = 20;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -116,6 +122,9 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&rb.device_lock);
     sys_base.InitSemaphore(&rb.board_lock);
     sys_base.InitSemaphore(&rb.pointer_lock);
+    sys_base.NewList(&rb.notifies);
+    sys_base.InitSemaphore(&rb.notify_lock);
+    rb.monitor_task = null;
     rb.timer_io = .{};
     rb.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys_base.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &rb.timer_io.node, 0) != 0) {

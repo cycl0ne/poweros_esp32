@@ -140,6 +140,10 @@ pub const Log = struct {
     video_picture: ?*const rtg.RtgYuv = null,
     video_src: rtg.RtgRect = .{},
     video_place: rtg.RtgRect = .{},
+    /// How often its connector was asked what is on it (`detect`), and how
+    /// many timings it was asked whether it can make (`check_mode`).
+    detects: u32 = 0,
+    checks: u32 = 0,
     /// Frames the board was told to end (`endFrame`).
     frames_ended: u32 = 0,
     /// Waits for a blanking the driver was asked for itself (`waitVBlank`),
@@ -154,8 +158,10 @@ pub const State = struct {
     /// The driver's node, as the library made it.
     driver: *rtg.RtgDriver,
     sys: *ExecBase,
-    /// The display memory its boards are cut out of.
+    /// The display memory its boards are cut out of, and how much of it
+    /// there is.
     region: [*]u8,
+    region_bytes: usize = region_bytes,
     log: Log = .{},
     /// The devices `addDevice` added, to be taken away again.
     devices: [max_devices]?*rtg.RtgDevice = @splat(null),
@@ -175,6 +181,18 @@ pub const State = struct {
     /// How many of its modes the next board made is given, from the first:
     /// all of them, unless a test says fewer - one is a panel's board.
     modes: u32 = mode_table.len,
+    /// Make the next board one with a connector: its ops fill in `detect`
+    /// and `check_mode`, and its modes are what the monitor on it names.
+    connector: bool = false,
+    /// What is on the connector of every such board: whether a monitor
+    /// is, the bytes of its EDID - null for one that does not read - and
+    /// what `detect` answers.
+    monitor_there: bool = true,
+    monitor_edid: ?[]const u8 = null,
+    detect_answer: i32 = err.RTGERR_OK,
+    /// The fastest pixel clock a board with a connector makes, in Hz: a
+    /// timing past it is refused.
+    fastest_hz: u32 = 0xFFFF_FFFF,
     /// Open the device's bus before it makes a board, as the driver of a
     /// panel on a bus does, and decline when there is none.
     opens_bus: bool = false,
@@ -279,14 +297,26 @@ pub fn deviceTags() [*]const TagItem {
 /// - `sys` - exec.
 /// - `library` - rtg.library's base, as `OpenLibrary` answers it.
 pub fn add(sys: *ExecBase, library: *anyopaque) ?*State {
+    return addSized(sys, library, region_bytes);
+}
+
+/// As `add`, with `bytes` of display memory for its boards in place of
+/// `region_bytes`: for a test whose own memory is small and whose
+/// pictures are.
+///
+/// INPUTS:
+/// - `sys` - exec.
+/// - `library` - rtg.library's base, as `OpenLibrary` answers it.
+/// - `bytes` - how much display memory the driver takes.
+pub fn addSized(sys: *ExecBase, library: *anyopaque, bytes: usize) ?*State {
     const rb: *RtgDriverBase = @ptrCast(library);
-    const region = sys.AllocMem(region_bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    const region = sys.AllocMem(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
     const driver = rb.AddRtgDriver(&spec, null) orelse {
-        sys.FreeMem(region, region_bytes);
+        sys.FreeMem(region, bytes);
         return null;
     };
     const state = stateOf(driver);
-    state.* = .{ .driver = driver, .sys = sys, .region = @ptrCast(region) };
+    state.* = .{ .driver = driver, .sys = sys, .region = @ptrCast(region), .region_bytes = bytes, .region_size = bytes };
     return state;
 }
 
@@ -340,6 +370,7 @@ pub fn remove(state: *State) bool {
     const sys = state.sys;
     const rb = state.driver.rtg_base;
     const region = state.region;
+    const bytes = state.region_bytes;
     // A driver being removed deletes its boards; `destroyBoard` clears
     // the place of each that went.
     for (state.boards[0..state.made]) |made| rb.DeleteBoard(made);
@@ -347,7 +378,7 @@ pub fn remove(state: *State) bool {
     state.device_count = 0;
     // The state goes with the node.
     if (!rb.RemRtgDriver(state.driver)) return false;
-    sys.FreeMem(@ptrCast(region), region_bytes);
+    sys.FreeMem(@ptrCast(region), bytes);
     return true;
 }
 
@@ -822,6 +853,36 @@ const full_ops = rtg.RtgBoardOps{
     .video_move = &videoMove,
 };
 
+/// What is on the connector, as the test set it: whether a monitor is
+/// there, and as much of its EDID as there is room for.
+fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
+    const state = stateOfBoard(board);
+    state.log.detects += 1;
+    if (state.detect_answer != err.RTGERR_OK) return state.detect_answer;
+    asked.present = @intFromBool(state.monitor_there);
+    if (!state.monitor_there) return err.RTGERR_OK;
+    const bytes = state.monitor_edid orelse return err.RTGERR_OK;
+    const length: u32 = @intCast(@min(bytes.len, asked.edid_max));
+    @memcpy(asked.edid[0..length], bytes[0..length]);
+    asked.edid_size = length;
+    return err.RTGERR_OK;
+}
+
+/// A timing is one the board makes up to the clock the test set.
+fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) i32 {
+    const state = stateOfBoard(board);
+    state.log.checks += 1;
+    return if (timings.pixel_clock_hz <= state.fastest_hz) err.RTGERR_OK else err.RTGERR_BAD_MODE;
+}
+
+/// A board with a connector: everything, and what is on it.
+const connector_ops = ops: {
+    var more = full_ops;
+    more.detect = &detect;
+    more.check_mode = &checkMode;
+    break :ops more;
+};
+
 /// A board with no engine: it can be shown and refreshed and no more.
 const plain_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
@@ -882,7 +943,9 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
     const state = stateOf(driver);
     const board = driver.rtg_base.CreateBoard(driver, device, &.{
         .label = if (unit == 0) "Fake 0" else "Fake 1",
-        .ops = if (state.cannot_turn)
+        .ops = if (state.connector)
+            &connector_ops
+        else if (state.cannot_turn)
             &fixed_ops
         else if (state.without_engine)
             &plain_ops
@@ -895,11 +958,13 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
         .region = .{
             .base = state.region,
             // No more than there is, whatever a test asked for.
-            .size = @min(state.region_size, region_bytes),
+            .size = @min(state.region_size, state.region_bytes),
             .alignment = 64,
             .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED,
         },
         .unit = unit,
+        // A monitor's modes in the format the tests draw in.
+        .format = .rgb565,
     }) orelse return null;
     const instance = instanceOf(board);
     instance.* = .{ .pattern = instance_pattern };

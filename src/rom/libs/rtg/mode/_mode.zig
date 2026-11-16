@@ -14,6 +14,14 @@
 //! first. One mode is the default - the one its driver marked, or else the
 //! first made - and is what a wish that leaves everything open answers.
 //!
+//! A mode comes from one of two sides (`Origin`): its driver added it, or
+//! the library made it of what a monitor names (`monitor/_monitor.zig`).
+//! The monitor's are made again when the monitor changes. A mode that is
+//! not offered any more leaves the list and is set aside, with its number
+//! (`withdraw`): added again it comes back as the mode it was. The
+//! driver's own stand while the monitor names none, and are set aside
+//! while it does.
+//!
 //! A mode's name is its size ("1024x600"), with an "i" behind an
 //! interlaced one, and with its refresh ("1024x600@75") where the board
 //! has that size at more than one. A row of a buffer of the mode is the
@@ -29,14 +37,27 @@ const modes = rtg.modes;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
 
+/// Where a mode comes from.
+pub const Origin = enum(u8) {
+    /// Its driver added it (`AddBoardMode`).
+    driver,
+    /// The library made it of what the monitor names.
+    monitor,
+};
+
 /// One mode of a board.
 pub const Record = struct {
-    /// Its place in the board's list.
+    /// Its place in the board's list, or among the modes set aside.
     node: exec.Node = .{},
     /// What a caller is handed, as a copy.
     mode: rtg.RtgMode = .{},
     /// What the driver is handed with it.
     timings: rtg.RtgTimings = .{},
+    origin: Origin = .driver,
+    /// Whether the board offers it: it is in the list, not set aside.
+    offered: bool = true,
+    /// Whether it was added as the default of its side.
+    marked_default: bool = false,
 };
 
 /// The record a node of a board's mode list belongs to.
@@ -322,10 +343,49 @@ fn before(record: *const Record, other: *const Record) bool {
     return record.mode.refresh_mhz > other.mode.refresh_mhz;
 }
 
+/// `record` put in its place in the board's list: before the first mode
+/// it stands before.
+fn place(rb: *RtgBase, board: *rtg.RtgBoard, record: *Record) void {
+    const private = boards.privateOf(board);
+    var after: ?*exec.Node = null;
+    var walk = private.modes.first();
+    while (walk) |n| : (walk = n.next()) {
+        if (before(record, recordOf(n))) break;
+        after = n;
+    }
+    rb.sys_base.Insert(&private.modes, &record.node, after);
+    record.offered = true;
+}
+
+/// The mode of these figures in one of the board's two lists, or null.
+fn sameIn(list: *exec.List, timings: *const rtg.RtgTimings, format: u32, refresh_mhz: u32, kind: u32) ?*Record {
+    var node = list.first();
+    while (node) |n| : (node = n.next()) {
+        const mode = &recordOf(n).mode;
+        if (mode.width != timings.h_active or mode.height != timings.v_active) continue;
+        if (@intFromEnum(mode.format) != format or mode.refresh_mhz != refresh_mhz) continue;
+        if (mode.flags & kind_flags != kind) continue;
+        return recordOf(n);
+    }
+    return null;
+}
+
+/// The default put on one mode of the list and taken from the others.
+///
+/// INPUTS:
+/// - `board` - the board.
+/// - `record` - the mode that is the default from now on; in the list.
+pub fn setDefault(board: *rtg.RtgBoard, record: *Record) void {
+    var walk = boards.privateOf(board).modes.first();
+    while (walk) |n| : (walk = n.next()) recordOf(n).mode.flags &= ~modes.RTGMF_DEFAULT;
+    record.mode.flags |= modes.RTGMF_DEFAULT;
+}
+
 /// A mode added to a board: its record made, numbered, put in its place
-/// in the list and named - or, for the figures of a mode that is there,
-/// that mode given these timings. The first mode a board is given is its
-/// default until one is added that says it is.
+/// in the list and named - or, for the figures of a mode that is there or
+/// was set aside, that mode given these timings and offered again. The
+/// first mode a board is given is its default until one is added that
+/// says it is.
 ///
 /// INPUTS:
 /// - `rb` - the library.
@@ -333,27 +393,27 @@ fn before(record: *const Record, other: *const Record) bool {
 /// - `timings` - the mode's timings; its picture is not empty.
 /// - `format` - a pixel format this build knows.
 /// - `flags` - RTGMF_DEFAULT, RTGMF_TURNED.
+/// - `origin` - which side it comes from.
 ///
 /// RESULT:
 /// The mode's record, or null without memory.
-pub fn add(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32) ?*Record {
+pub fn add(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32, origin: Origin) ?*Record {
     const sys = rb.sys_base;
     const private = boards.privateOf(board);
     const refresh_mhz = refreshOf(timings);
     var kind = flags & modes.RTGMF_TURNED;
     if (timings.flags & modes.RTGTM_INTERLACED != 0) kind |= modes.RTGMF_INTERLACED;
 
-    var record: ?*Record = null;
-    var node = private.modes.first();
-    while (node) |n| : (node = n.next()) {
-        const mode = &recordOf(n).mode;
-        if (mode.width != timings.h_active or mode.height != timings.v_active) continue;
-        if (@intFromEnum(mode.format) != format or mode.refresh_mhz != refresh_mhz) continue;
-        if (mode.flags & kind_flags != kind) continue;
-        record = recordOf(n);
-        break;
-    }
-    const made = record orelse made: {
+    const made = sameIn(&private.modes, timings, format, refresh_mhz, kind) orelse made: {
+        if (private.monitor) |state| {
+            if (sameIn(&state.modes_aside, timings, format, refresh_mhz, kind)) |aside| {
+                // Back as the mode it was: its number is still its own.
+                sys.Remove(&aside.node);
+                aside.mode.pitch = pitchOf(rb, board, format, timings.h_active);
+                place(rb, board, aside);
+                break :made aside;
+            }
+        }
         const memory = sys.AllocVec(@sizeOf(Record), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
         const new: *Record = @ptrCast(@alignCast(memory));
         new.* = .{};
@@ -367,28 +427,80 @@ pub fn add(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, f
             .refresh_mhz = refresh_mhz,
             .flags = kind,
         };
-        // In its place: before the first mode it stands before.
-        var after: ?*exec.Node = null;
-        var walk = private.modes.first();
-        while (walk) |n| : (walk = n.next()) {
-            if (before(new, recordOf(n))) break;
-            after = n;
-        }
-        sys.Insert(&private.modes, &new.node, after);
+        place(rb, board, new);
         break :made new;
     };
+    made.origin = origin;
     made.timings = timings.*;
     made.mode.pixel_clock_hz = timings.pixel_clock_hz;
 
     const wants_default = flags & modes.RTGMF_DEFAULT != 0;
-    if (wants_default or defaultOf(board) == null) {
-        var walk = private.modes.first();
-        while (walk) |n| : (walk = n.next()) recordOf(n).mode.flags &= ~modes.RTGMF_DEFAULT;
-        made.mode.flags |= modes.RTGMF_DEFAULT;
-    }
+    if (wants_default) made.marked_default = true;
+    if (wants_default or defaultOf(board) == null) setDefault(board, made);
     nameAll(board);
     board.info.modes = count(board);
     return made;
+}
+
+/// Every mode of one side taken out of the board's list and set aside,
+/// with its number: the monitor's, as its list is made again; the
+/// driver's own, while the monitor names modes. The mode the board is in
+/// stays the board's, set aside or not.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock is held.
+/// - `origin` - whose modes go.
+pub fn withdraw(rb: *RtgBase, board: *rtg.RtgBoard, origin: Origin) void {
+    const sys = rb.sys_base;
+    const private = boards.privateOf(board);
+    // Only a board with a connector has modes that go.
+    const state = private.monitor orelse return;
+    var node = private.modes.first();
+    while (node) |n| {
+        node = n.next();
+        const record = recordOf(n);
+        if (record.origin != origin) continue;
+        sys.Remove(n);
+        record.offered = false;
+        record.mode.flags &= ~modes.RTGMF_DEFAULT;
+        if (origin == .monitor) record.marked_default = false;
+        sys.AddTail(&state.modes_aside, n);
+    }
+    // Which sizes the board has at more than one refresh may be other now.
+    nameAll(board);
+    board.info.modes = count(board);
+}
+
+/// The driver's own modes offered again, as it added them: taken back
+/// from where they were set aside, the one it marked the default. How
+/// many the board then has.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock is held.
+pub fn restore(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
+    const sys = rb.sys_base;
+    const private = boards.privateOf(board);
+    var node = if (private.monitor) |state| state.modes_aside.first() else null;
+    while (node) |n| {
+        node = n.next();
+        const record = recordOf(n);
+        if (record.origin != .driver) continue;
+        sys.Remove(n);
+        record.mode.pitch = pitchOf(rb, board, @intFromEnum(record.mode.format), record.mode.width);
+        place(rb, board, record);
+    }
+    // The default of what is offered now: the one marked, else the first.
+    var marked: ?*Record = null;
+    var walk = private.modes.first();
+    while (walk) |n| : (walk = n.next()) {
+        if (recordOf(n).marked_default and marked == null) marked = recordOf(n);
+    }
+    if (marked orelse if (private.modes.first()) |first| recordOf(first) else null) |record| setDefault(board, record);
+    nameAll(board);
+    board.info.modes = count(board);
+    return board.info.modes;
 }
 
 /// Every mode of a board freed, as the board itself goes.
@@ -400,6 +512,9 @@ pub fn freeAll(rb: *RtgBase, board: *rtg.RtgBoard) void {
     const sys = rb.sys_base;
     const private = boards.privateOf(board);
     while (sys.RemHead(&private.modes)) |node| sys.FreeVec(recordOf(node));
+    if (private.monitor) |state| {
+        while (sys.RemHead(&state.modes_aside)) |node| sys.FreeVec(recordOf(node));
+    }
     private.mode = null;
     board.info.modes = 0;
 }

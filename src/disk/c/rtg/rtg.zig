@@ -8,9 +8,10 @@
 //! on rtg.library's list, the devices the machine has for them - a panel
 //! of the board, a display function on PCI - each with the driver that
 //! took it, and the boards the drivers made. Name a board and it prints
-//! that board in full - what it is, what it can be asked to do, the modes
-//! it has, what its display memory has been cut into and, for a display
-//! that refreshes itself, how the stream is doing.
+//! that board in full - what it is, what is on its connector, what it can
+//! be asked to do, the modes it has, what its display memory has been cut
+//! into and, for a display that refreshes itself, how the stream is
+//! doing.
 //!
 //! The switches pick sections rather than repeat the name: MODES, MEMORY
 //! and STATS each print that one section, for the board named or for every
@@ -31,7 +32,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.5 (16.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.6 (16.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
@@ -287,6 +288,7 @@ fn printBoard(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
             (info.pixel_clock_hz / 1000) % 1000,
         });
     }
+    printMonitor(dl, rb, board);
     _ = Printf(dl, "%-12s %d at once\n", .{ "Buffers", info.buffers });
     _ = Printf(dl, "%-12s %d%%\n", .{ "Brightness", info.brightness });
     _ = Printf(dl, "%-12s ", .{"State"});
@@ -320,6 +322,38 @@ fn printTurn(dl: *DosBase, info: *const rtg.RtgBoardInfo) void {
 
 /// The most modes of a board that are listed.
 const modes_listed = 32;
+
+/// What is on the board's connector: a panel, or a monitor by its maker
+/// and name, with what its EDID says of it; nothing in particular for a
+/// connector with nothing on it.
+fn printMonitor(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
+    var monitor: rtg.RtgMonitorInfo = .{};
+    if (rb.GetBoardMonitor(board, &monitor, @sizeOf(rtg.RtgMonitorInfo)) == 0) return;
+    const m = rtg.modes;
+    const called: [*:0]const u8 = @ptrCast(&monitor.name);
+    if (monitor.flags & m.RTGMON_PANEL != 0) {
+        _ = Printf(dl, "%-12s the panel %s\n", .{ "Monitor", called });
+        return;
+    }
+    if (monitor.flags & m.RTGMON_PRESENT == 0) {
+        _ = Printf(dl, "%-12s none on the connector\n", .{"Monitor"});
+        return;
+    }
+    if (monitor.flags & m.RTGMON_EDID == 0) {
+        _ = Printf(dl, "%-12s one that does not say what it is\n", .{"Monitor"});
+        return;
+    }
+    _ = Printf(dl, "%-12s %s %s, product %04x, made %d, %d x %d mm, ", .{
+        "Monitor",
+        @as([*:0]const u8, @ptrCast(&monitor.maker)),
+        called,
+        monitor.product,
+        @as(u32, monitor.year),
+        monitor.width_mm,
+        monitor.height_mm,
+    });
+    printWords(dl, monitor.flags, &monitor_words, "DVI");
+}
 
 fn printModes(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     var found: [modes_listed]rtg.RtgMode = undefined;
@@ -424,6 +458,15 @@ const state_words = [_]Named{
     .{ .bit = rtg.boards.RTGBF_COMPOSE, .word = "composed" },
     .{ .bit = rtg.boards.RTGBF_GONE, .word = "gone" },
     .{ .bit = rtg.boards.RTGBF_FIRMWARE, .word = "firmware" },
+    .{ .bit = rtg.boards.RTGBF_CONNECTOR, .word = "connector" },
+};
+
+const monitor_words = [_]Named{
+    .{ .bit = rtg.modes.RTGMON_HDMI, .word = "HDMI" },
+    .{ .bit = rtg.modes.RTGMON_HDMI2, .word = "HDMI-2.0" },
+    .{ .bit = rtg.modes.RTGMON_AUDIO, .word = "sound" },
+    .{ .bit = rtg.modes.RTGMON_RANGE_SELECTABLE, .word = "range-selectable" },
+    .{ .bit = rtg.modes.RTGMON_SCDC, .word = "scrambling" },
 };
 
 const mode_words = [_]Named{
@@ -443,6 +486,7 @@ const cap_words = [_]Named{
     .{ .bit = rtg.boards.RTGBC_STATS, .word = "stats" },
     .{ .bit = rtg.boards.RTGBC_CONTROL, .word = "control" },
     .{ .bit = rtg.boards.RTGBC_MIRROR, .word = "mirror" },
+    .{ .bit = rtg.boards.RTGBC_MONITOR, .word = "monitor" },
     .{ .bit = rtg.boards.RTGBC_POINTER, .word = "pointer" },
     .{ .bit = rtg.boards.RTGBC_FILL_RECT, .word = "fill" },
     .{ .bit = rtg.boards.RTGBC_COPY_RECT, .word = "copy" },

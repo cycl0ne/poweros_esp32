@@ -90,7 +90,8 @@ const reg = sdk.hardware.mmio.reg;
 const videocore = sdk.hardware.videocore;
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
-const edid = @import("../edid.zig");
+const rtg = sdk.rtg;
+const timing = @import("timing.zig");
 
 /// Whether this is built for the AArch64 machines, whose BCM2712 waking
 /// the display drives. The driver is built for every chip, which picks
@@ -767,9 +768,30 @@ pub fn setFeature(code: u8, value: u16, waiter: anytype) bool {
 const max_khz: u32 = 600_000;
 
 /// Whether the port can send a mode of that pixel clock - to a monitor
-/// that takes it (`edid.Sink.mostKhz`).
+/// that takes it, which the library sees to.
 pub fn sends(pixel_khz: u32) bool {
     return pixel_khz != 0 and pixel_khz <= max_khz;
+}
+
+/// How many blocks of a monitor's EDID the port reads: the two halves of
+/// its first segment.
+pub const edid_blocks: u32 = 2;
+
+/// The widest picture the HVS's composite output buffer is laid out for
+/// (`hvsStart`).
+const widest: u32 = 3840;
+
+/// Whether the port can make `mode`: its pixel clock one it sends
+/// (`sends`), progressive, a picture the HVS's buffer is laid out for,
+/// and its vertical figures ones the controller's registers hold - the
+/// sync in five bits, the front porch in seven, the back porch in nine.
+pub fn makes(mode: *const rtg.RtgTimings) bool {
+    if (!sends(timing.khz(mode))) return false;
+    if (mode.flags & rtg.modes.RTGTM_INTERLACED != 0) return false;
+    if (mode.h_active == 0 or mode.v_active == 0) return false;
+    if (mode.h_active > widest or mode.v_active > 0xFFFF) return false;
+    if (mode.h_front > 0xFFFF or mode.h_sync > 0xFFFF or mode.h_back > 0xFFFF) return false;
+    return mode.v_sync <= 0x1F and mode.v_front <= 0x7F and mode.v_back <= 0x1FF;
 }
 
 /// The VCO's divider for a TMDS clock of `tmds_hz`: halfway between the
@@ -953,16 +975,37 @@ pub const Output = struct {
     scrambled: bool,
 };
 
+/// The fastest TMDS clock that goes unscrambled, HDMI 1.4's, in kHz.
+const hdmi14_khz: u32 = 340_000;
+
+/// What the monitor says of itself that decides how a mode goes to it
+/// (`rtg.RtgMonitorInfo.flags`): whether it takes HDMI's packets, whether
+/// its RGB range may be chosen, and whether it is an HDMI 2.0 monitor.
+pub const Sink = struct {
+    hdmi: bool = false,
+    quant_selectable: bool = false,
+    forum: bool = false,
+
+    /// What `GetBoardMonitor` answered, as the port reads it.
+    pub fn of(said: *const rtg.RtgMonitorInfo) Sink {
+        return .{
+            .hdmi = said.flags & rtg.modes.RTGMON_HDMI != 0,
+            .quant_selectable = said.flags & rtg.modes.RTGMON_RANGE_SELECTABLE != 0,
+            .forum = said.flags & rtg.modes.RTGMON_HDMI2 != 0,
+        };
+    }
+};
+
 /// How `mode` goes to the monitor `sink` says it is. A CEA mode but the
 /// first is taken as limited range unless the AVI infoframe says
 /// otherwise, which it may where the monitor lets it (QS).
-pub fn outputFor(sink: edid.Sink, mode: *const edid.Timing) Output {
+pub fn outputFor(sink: Sink, mode: *const rtg.RtgTimings) Output {
     const cea_limited = sink.hdmi and mode.vic > 1;
     return .{
         .hdmi = sink.hdmi,
         .limited = cea_limited and !sink.quant_selectable,
         .range_said = sink.hdmi and sink.quant_selectable,
-        .scrambled = mode.pixel_khz > edid.hdmi14_khz,
+        .scrambled = timing.khz(mode) > hdmi14_khz,
     };
 }
 
@@ -998,7 +1041,7 @@ pub fn hdmiVic(vic: u8) u8 {
 
 /// The CEA number the AVI infoframe carries for `mode`: none for a mode
 /// HDMI 1.4's vendor infoframe carries instead.
-fn aviVic(sink: edid.Sink, mode: *const edid.Timing) u8 {
+fn aviVic(sink: Sink, mode: *const rtg.RtgTimings) u8 {
     if (!sink.forum and hdmiVic(mode.vic) != 0) return 0;
     return mode.vic;
 }
@@ -1008,7 +1051,7 @@ fn aviVic(sink: edid.Sink, mode: *const edid.Timing) u8 {
 /// aspect - 4:3 for CEA's 640x480, 720x480 and 720x576 at their first
 /// numbers, 16:9 for its others - the active part the whole picture, the
 /// range when it is said, the mode's number.
-pub fn aviFrame(sink: edid.Sink, mode: *const edid.Timing, output: Output) Infoframe {
+pub fn aviFrame(sink: Sink, mode: *const rtg.RtgTimings, output: Output) Infoframe {
     const aspect: u8 = switch (mode.vic) {
         0 => 0,
         1, 2, 17 => 1,
@@ -1104,29 +1147,29 @@ fn hvsStart() void {
     at(HVS, HVS_CONTROL).* = CONTROL_HVS_EN | 8 << CONTROL_PF_LINES_SHIFT | 15 << CONTROL_MAX_REQS_SHIFT;
     at(HVS, PRI_MAP0).* = 0xFFFF_FFFF;
     at(HVS, PRI_MAP1).* = 0xFFFF_FFFF;
-    var top: u32 = 3840;
+    var top: u32 = widest;
     reg(HVS + DISP0 + 2 * DISP_STRIDE + DISP_COB).* = top << 16;
     var base = top + 16;
-    top += 3840 * 4;
+    top += widest * 4;
     reg(HVS + DISP0 + DISP_STRIDE + DISP_COB).* = top << 16 | base;
     base = top + 16;
-    top += 3840 * 4;
+    top += widest * 4;
     hvsDisp(DISP_COB).* = top << 16 | base;
 }
 
 /// The controller's timing for `mode` (vc5_hdmi_set_timings), eight bits
 /// a colour, no pixel doubling.
-fn hdmiTiming(mode: *const edid.Timing) void {
-    var horza = mode.width | mode.h_front << 16;
-    if (mode.vsync_high) horza |= HORZA_VPOS;
-    if (mode.hsync_high) horza |= HORZA_HPOS;
+fn hdmiTiming(mode: *const rtg.RtgTimings) void {
+    var horza = mode.h_active | mode.h_front << 16;
+    if (timing.vsyncHigh(mode)) horza |= HORZA_VPOS;
+    if (timing.hsyncHigh(mode)) horza |= HORZA_HPOS;
     at(HDMI, H_HORZA).* = horza;
     at(HDMI, H_HORZB).* = mode.h_back << 16 | mode.h_sync;
-    const verta = (mode.v_sync & 0x1F) << 24 | (mode.v_front & 0x7F) << 16 | mode.height;
+    const verta = (mode.v_sync & 0x1F) << 24 | (mode.v_front & 0x7F) << 16 | mode.v_active;
     at(HDMI, H_VERTA0).* = verta;
     at(HDMI, H_VERTA1).* = verta;
     at(HDMI, H_VERTB0).* = mode.v_back & 0x1FF;
-    at(HDMI, H_VERTB1).* = (mode.htotal() >> 1) << 16 | (mode.v_back & 0x1FF);
+    at(HDMI, H_VERTB1).* = (timing.htotal(mode) >> 1) << 16 | (mode.v_back & 0x1FF);
     at(HDMI, DEEP_COLOR_CONFIG_1).* = at(HDMI, DEEP_COLOR_CONFIG_1).* & ~@as(u32, 0x70F) | 2 << 8;
     at(HDMI, GCP_WORD_1).* = at(HDMI, GCP_WORD_1).* & ~@as(u32, 0xFFFF) | GCP_CLEAR_AVMUTE;
     at(HDMI, GCP_CONFIG).* |= GCP_ENABLE;
@@ -1136,15 +1179,15 @@ fn hdmiTiming(mode: *const edid.Timing) void {
 
 /// Pixel valve 0's timing for `mode` (vc4_crtc_config_pv): progressive,
 /// a pixel a clock, 24 bits from the HDMI controller's clock.
-fn pvTiming(mode: *const edid.Timing) void {
+fn pvTiming(mode: *const rtg.RtgTimings) void {
     at(PV, PV_CONTROL).* &= ~PV_CONTROL_EN;
     at(PV, PV_CONTROL).* |= PV_CONTROL_FIFO_CLR;
     at(PV, PV_HORZA).* = mode.h_back << 16 | mode.h_sync;
-    at(PV, PV_HORZB).* = mode.h_front << 16 | mode.width;
+    at(PV, PV_HORZB).* = mode.h_front << 16 | mode.h_active;
     at(PV, PV_V_CONTROL).* = PV_VCONTROL_CONTINUOUS | PV_VCONTROL_ODD_TIMING;
     at(PV, PV_VSYNCD_EVEN).* = 0;
     at(PV, PV_VERTA).* = mode.v_back << 16 | mode.v_sync;
-    at(PV, PV_VERTB).* = mode.v_front << 16 | mode.height;
+    at(PV, PV_VERTB).* = mode.v_front << 16 | mode.v_active;
     at(PV, PV_MUX_CFG).* = PV_MUX_NO_SWAP;
     at(PV, PV_PIPE_INIT_CTRL).* = PV_PIPE_INIT;
     at(PV, PV_CONTROL).* = PV_CONTROL_FIFO_CLR |
@@ -1184,16 +1227,16 @@ fn waitBits(register: *volatile u32, bits: u32, set: bool, tries: u32, waiter: a
 /// the monitor sent the picture. With the display up, it changes
 /// to `mode`; sound that plays goes on in it. The order is
 /// vc4_crtc_atomic_enable's. `waiter.wait(micros)` waits that long.
-pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address: usize, pitch: u32, waiter: anytype) Failure {
+pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, sink: Sink, address: usize, pitch: u32, waiter: anytype) Failure {
     if (!on_bcm2712) return .firmware;
-    if (!sends(mode.pixel_khz)) return .clock;
+    if (!sends(timing.khz(mode))) return .clock;
     const woken = wake(sys, waiter);
     if (woken != .none) return woken;
     const shared = sharedOf(sys);
     if (shared) |held| sys.ObtainSemaphore(&held.lock);
     defer if (shared) |held| sys.ReleaseSemaphore(&held.lock);
     const output = outputFor(sink, mode);
-    const tmds_hz = @as(u64, mode.pixel_khz) * 1000;
+    const tmds_hz = @as(u64, timing.khz(mode)) * 1000;
     stop(waiter);
     if (!clocksFor(sys, tmds_hz)) return .firmware;
 
@@ -1203,14 +1246,14 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address:
     at(HDMI_HD, HD_DVP_CTL).* = 0;
     at(HDMI_DVP, DVP_CLOCK_STOP).* |= CLOCK_STOP_PIXEL;
     hvsStart();
-    writePlane(picture_plane, .{ .address = address, .pitch = pitch, .width = mode.width, .height = mode.height, .upm = upm_picture, .handle = 0 });
+    writePlane(picture_plane, .{ .address = address, .pitch = pitch, .width = mode.h_active, .height = mode.v_active, .upm = upm_picture, .handle = 0 });
     writePlane(overlay_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_overlay, .handle = 2, .alpha = true, .seen = false });
     writePlane(cursor_plane, .{ .address = address, .pitch = 4, .width = 1, .height = 1, .upm = upm_cursor, .handle = 1, .alpha = true, .seen = false });
     word(list_end).* = CTL0_END;
     hvsDisp(DISP_LPTRS).* = list_start;
     hvsDisp(DISP_CTRL0).* = CTRL0_RESET;
     hvsDisp(DISP_CTRL1).* &= ~CTRL1_INTLACE;
-    hvsDisp(DISP_CTRL0).* = CTRL0_ENB | (mode.width - 1) << CTRL0_FWIDTH_SHIFT | (mode.height - 1);
+    hvsDisp(DISP_CTRL0).* = CTRL0_ENB | (mode.h_active - 1) << CTRL0_FWIDTH_SHIFT | (mode.v_active - 1);
 
     // The controller's PHY and timing, the valve's, the colours, then the
     // video let through (pre_crtc_configure, config_pv, pre_crtc_enable,
@@ -1225,8 +1268,8 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address:
     at(PV, PV_V_CONTROL).* |= PV_VCONTROL_VIDEN;
     var video = at(HDMI_HD, HD_VID_CTL).* & ~(VID_VSYNC_LOW | VID_HSYNC_LOW);
     video |= VID_ENABLE | VID_CLRRGB | VID_UNDERFLOW_ENABLE | VID_FRAME_COUNTER_RESET | VID_BLANK_INSERT_EN;
-    if (!mode.vsync_high) video |= VID_VSYNC_LOW;
-    if (!mode.hsync_high) video |= VID_HSYNC_LOW;
+    if (!timing.vsyncHigh(mode)) video |= VID_VSYNC_LOW;
+    if (!timing.hsyncHigh(mode)) video |= VID_HSYNC_LOW;
     at(HDMI_HD, HD_VID_CTL).* = video;
     at(HDMI_HD, HD_VID_CTL).* &= ~VID_BLANKPIX;
     if (output.hdmi) {
@@ -1251,7 +1294,7 @@ pub fn start(sys: *ExecBase, mode: *const edid.Timing, sink: edid.Sink, address:
     // The sound that plays, sent in the new mode: its clock regeneration
     // from the new pixel clock, its infoframe again.
     if (shared) |held| {
-        held.pixel_khz = mode.pixel_khz;
+        held.pixel_khz = timing.khz(mode);
         held.hdmi = output.hdmi;
         if (output.hdmi and held.audio_channels != 0) {
             regenerate(held);
@@ -1657,8 +1700,8 @@ test "the BCM2712's DDC: how the pieces of a read end and start" {
 }
 
 test "what a monitor is sent: HDMI with its range said, limited without QS, DVI full" {
-    const portable: edid.Sink = .{ .hdmi = true, .audio = true, .quant_selectable = true, .max_tmds_khz = 300_000 };
-    const full_hd = edid.knownMode(1920, 1080, 60).?;
+    const portable: Sink = .{ .hdmi = true, .quant_selectable = true };
+    const full_hd: rtg.RtgTimings = .{ .pixel_clock_hz = 148_500_000, .h_active = 1920, .v_active = 1080, .vic = 16 };
     const output = outputFor(portable, &full_hd);
     try testing.expect(output.hdmi and !output.limited and output.range_said and !output.scrambled);
     // RGB, 16:9 with the active part the picture, full range, VIC 16.
@@ -1666,29 +1709,29 @@ test "what a monitor is sent: HDMI with its range said, limited without QS, DVI 
 
     // A monitor without QS takes a CEA mode's RGB limited, and is not
     // told; 640x480 (VIC 1) stays full.
-    const plain: edid.Sink = .{ .hdmi = true, .audio = false, .quant_selectable = false, .max_tmds_khz = 0 };
+    const plain: Sink = .{ .hdmi = true };
     const squashed = outputFor(plain, &full_hd);
     try testing.expect(squashed.limited and !squashed.range_said);
     try testing.expectEqual(@as(u8, 0), aviFrame(plain, &full_hd, squashed)[6]);
-    const vga = edid.knownMode(640, 480, 60).?;
+    const vga: rtg.RtgTimings = .{ .pixel_clock_hz = 25_175_000, .h_active = 640, .v_active = 480, .vic = 1 };
     try testing.expect(!outputFor(plain, &vga).limited);
     try testing.expectEqual(@as(u8, 1 << 4 | 8), aviFrame(plain, &vga, outputFor(plain, &vga))[5]);
 
     // DVI: no infoframes, full range.
-    const dvi: edid.Sink = .{ .hdmi = false, .audio = false, .quant_selectable = false, .max_tmds_khz = 0 };
+    const dvi: Sink = .{};
     const as_dvi = outputFor(dvi, &full_hd);
     try testing.expect(!as_dvi.hdmi and !as_dvi.limited and !as_dvi.range_said);
 
     // 4K60 is scrambled.
-    const uhd60 = edid.knownMode(3840, 2160, 60).?;
+    const uhd60: rtg.RtgTimings = .{ .pixel_clock_hz = 594_000_000, .h_active = 3840, .v_active = 2160, .vic = 97 };
     try testing.expect(outputFor(portable, &uhd60).scrambled);
 }
 
 test "HDMI 1.4's 4K modes go in the vendor infoframe, HDMI 2.0's in the AVI's" {
-    const uhd30 = edid.knownMode(3840, 2160, 30).?;
+    const uhd30: rtg.RtgTimings = .{ .pixel_clock_hz = 297_000_000, .h_active = 3840, .v_active = 2160, .vic = 95 };
     try testing.expectEqual(@as(u8, 95), uhd30.vic);
     try testing.expectEqual(@as(u8, 1), hdmiVic(uhd30.vic));
-    const older: edid.Sink = .{ .hdmi = true, .audio = true, .quant_selectable = false, .max_tmds_khz = 300_000 };
+    const older: Sink = .{ .hdmi = true };
     try testing.expectEqual(@as(u8, 0), aviFrame(older, &uhd30, outputFor(older, &uhd30))[7]);
     var newer = older;
     newer.forum = true;
@@ -1711,4 +1754,25 @@ test "the sound's numbers: the audio infoframe, the MAI's clock, N and CTS" {
     try testing.expectEqual(@as(u32, 594_000), clockRegen(48_000, 594_000).cts);
     try testing.expectEqual(@as(u32, 0x10), channelMap(0x3));
     try testing.expectEqual(@as(u32, 0x7654_3210), channelMap(0xFF));
+}
+
+test "what the port makes: its clock, a picture its buffer holds, the controller's vertical fields" {
+    var mode: rtg.RtgTimings = .{ .pixel_clock_hz = 148_500_000, .h_active = 1920, .h_front = 88, .h_sync = 44, .h_back = 148, .v_active = 1080, .v_front = 4, .v_sync = 5, .v_back = 36 };
+    try testing.expect(makes(&mode));
+    mode.pixel_clock_hz = 601_000_000;
+    try testing.expect(!makes(&mode));
+    mode.pixel_clock_hz = 148_500_000;
+    mode.h_active = 4096;
+    try testing.expect(!makes(&mode));
+    mode.h_active = 0;
+    try testing.expect(!makes(&mode));
+    mode.h_active = 1920;
+    mode.v_sync = 32;
+    try testing.expect(!makes(&mode));
+    mode.v_sync = 5;
+    mode.v_back = 512;
+    try testing.expect(!makes(&mode));
+    mode.v_back = 36;
+    mode.flags = rtg.modes.RTGTM_INTERLACED;
+    try testing.expect(!makes(&mode));
 }

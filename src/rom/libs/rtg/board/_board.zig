@@ -27,6 +27,7 @@ const memory_mod = @import("../memory/_memory.zig");
 const Arena = memory_mod.Arena;
 const registry = @import("../driver/_driver.zig");
 const modes = @import("../mode/_mode.zig");
+const monitors = @import("../monitor/_monitor.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -53,6 +54,12 @@ pub const Private = struct {
     modes: exec.List = .{},
     mode_serial: u32 = 0,
     mode: ?*modes.Record = null,
+    /// On a board with a connector: what is on it, and the modes the board
+    /// does not offer now (`monitor/_monitor.zig`). Null on a panel's
+    /// board, whose monitor is always there and whose modes never go.
+    monitor: ?*monitors.State = null,
+    /// The pixel format a monitor's modes are made in.
+    monitor_format: rtg.PixelFormat = .bgra32,
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
     /// Video layers open on it (OpenVideoLayer).
@@ -204,6 +211,10 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     board.region.alignment = private.arena.alignment;
     board.info.memory_total = private.arena.free_bytes;
 
+    // What is on its connector, and the modes that makes: before the board
+    // can be found, so no task meets one whose monitor was not asked.
+    monitors.firstLook(rb, board);
+
     // A driver that came to a display already running hands back the
     // buffer it is being refreshed from. That memory is spoken for: it is
     // taken out of what the library may hand to anybody else.
@@ -235,6 +246,39 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
 
     if (request.display_on) _ = rtg_lib.SetBoardDisplay(board, true);
     if (request.brightness) |percent| _ = rtg_lib.SetBoardBrightness(board, percent);
+    // A board more: whoever asked is told.
+    changed(rb, board);
+}
+
+/// What the library keeps for a task that asked to be told
+/// (`AddRtgNotify`): what `RtgNotify` is behind its handle.
+pub const Notify = struct {
+    node: exec.Node = .{},
+    task: *exec.Task,
+    signals: u32,
+};
+
+/// Something about a board changed that a task may want to read again:
+/// its count of changes is raised, and every task that asked is
+/// signalled.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board that changed.
+///
+/// CONTEXT:
+/// In a task: it takes the notifications' lock. A board's lock may be
+/// held; the notifications' is the last taken.
+pub fn changed(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    const sys = rb.sys_base;
+    board.info.changes +%= 1;
+    sys.ObtainSemaphore(&rb.notify_lock);
+    var node = rb.notifies.first();
+    while (node) |n| : (node = n.next()) {
+        const notify: *Notify = @fieldParentPtr("node", n);
+        sys.Signal(notify.task, notify.signals);
+    }
+    sys.ReleaseSemaphore(&rb.notify_lock);
 }
 
 /// A board that never joined the list is given back: one made in an
@@ -252,6 +296,7 @@ pub fn free(rb: *RtgBase, board: *rtg.RtgBoard) void {
         if (driver.boards != 0) driver.boards -= 1;
     }
     modes.freeAll(rb, board);
+    monitors.free(rb, board);
     if (board.instance) |instance| sys.FreeVec(instance);
     sys.FreeVec(private);
 }
@@ -276,14 +321,16 @@ pub fn retire(rb: *RtgBase, board: *rtg.RtgBoard) void {
     private.device_link = .{};
     board.device = null;
     release(rb, board);
+    changed(rb, board);
 }
 
-/// Whether a board has no display to show on: its device is gone.
+/// Whether a board has no display to show on any more: its device is
+/// gone. A board whose monitor is not there is shown on all the same.
 ///
 /// INPUTS:
 /// - `board` - the board.
 pub fn dark(board: *const rtg.RtgBoard) bool {
-    return board.info.flags & rtg.boards.RTGBF_NO_DISPLAY != 0;
+    return board.info.flags & rtg.boards.RTGBF_GONE != 0;
 }
 
 /// Which RTGBC_ bits an ops table amounts to. The driver does not say what
@@ -306,6 +353,7 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     if (ops.blit_template != null) caps |= rtg.boards.RTGBC_BLIT_TEMPLATE;
     if (ops.blit_pattern != null) caps |= rtg.boards.RTGBC_BLIT_PATTERN;
     if (ops.mirror != null) caps |= rtg.boards.RTGBC_MIRROR;
+    if (ops.detect != null) caps |= rtg.boards.RTGBC_MONITOR;
     // A pointer is all three or none: one that could be set but not moved
     // is no pointer.
     if (ops.set_pointer != null and ops.move_pointer != null and ops.show_pointer != null) caps |= rtg.boards.RTGBC_POINTER;
