@@ -99,6 +99,7 @@ test {
     _ = @import("display/boarddisplaybitmap.zig");
     _ = @import("display/mirrorboard.zig");
     _ = @import("display/setboardbrightness.zig");
+    _ = @import("display/setboardaudio.zig");
     _ = @import("display/setboardpower.zig");
     _ = @import("display/showbitmap.zig");
     _ = @import("display/showboard.zig");
@@ -130,6 +131,8 @@ test {
     _ = @import("monitor/_edid.zig");
     _ = @import("monitor/_monitor.zig");
     _ = @import("monitor/findstandardtimings.zig");
+    _ = @import("monitor/buildaviinfoframe.zig");
+    _ = @import("monitor/hdmiaudioclock.zig");
     _ = @import("monitor/getboardmonitor.zig");
     _ = @import("monitor/monitorchanged.zig");
     _ = @import("monitor/readboardedid.zig");
@@ -5090,6 +5093,107 @@ test "a driver's flip runs with the flip lock and without the compose lock: a po
     base(rb).FreeBitMap(next);
     base(rb).FreeBitMap(picture);
     driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "SetBoardAudio: the link's driver told the sound, and none; a board whose link carries none" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeBoard(rb);
+    try testing.expect(infoOf(rb, board).caps & rtg.boards.RTGBC_AUDIO != 0);
+
+    const stereo = rtg.RtgAudio{ .sample_rate = 48_000, .channels = 2, .bits = 16 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardAudio(board, &stereo));
+    try testing.expectEqual(@as(u32, 1), fk.log.audio_calls);
+    try testing.expectEqual(@as(u32, 48_000), fk.log.last_audio.?.sample_rate);
+    try testing.expectEqual(@as(u32, 2), fk.log.last_audio.?.channels);
+    // What the driver answers is the answer.
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardAudio(board, &.{ .sample_rate = 44_100 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardAudio(board, null));
+    try testing.expectEqual(@as(u32, 3), fk.log.audio_calls);
+    try testing.expect(fk.log.last_audio == null);
+
+    // A board whose driver has no such op: no sound, and none to take off.
+    fk.without_engine = true;
+    const plain = try makeBoard(rb);
+    fk.without_engine = false;
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, plain).caps & rtg.boards.RTGBC_AUDIO);
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardAudio(plain, &stereo));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardAudio(plain, null));
+    try testing.expectEqual(@as(u32, 3), fk.log.audio_calls);
+    try tearDown(rb);
+}
+
+test "BuildAviInfoFrame: the header, the aspect, the range and the number, summing to zero" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    var frame: [rtg.RTG_AVI_BYTES + 1]u8 = @splat(0xAA);
+    // 1920x1080, CEA's 16: a computer's picture in the whole range.
+    var timings = rtg.RtgTimings{ .h_active = 1920, .v_active = 1080, .vic = 16 };
+    try testing.expectEqual(@as(u32, rtg.RTG_AVI_BYTES), driverBase(rb).BuildAviInfoFrame(&timings, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL, &frame));
+    try testing.expectEqualSlices(u8, &.{ 0x82, 0x02, 0x0D }, frame[0..3]);
+    try testing.expectEqual(@as(u8, 0x12), frame[4]);
+    try testing.expectEqual(@as(u8, 0x28), frame[5]);
+    try testing.expectEqual(@as(u8, 0x88), frame[6]);
+    try testing.expectEqual(@as(u8, 16), frame[7]);
+    var sum: u8 = 0;
+    for (frame[0..rtg.RTG_AVI_BYTES]) |byte| sum +%= byte;
+    try testing.expectEqual(@as(u8, 0), sum);
+    // Nothing past the frame is written.
+    try testing.expectEqual(@as(u8, 0xAA), frame[rtg.RTG_AVI_BYTES]);
+
+    // The range said limited, no computer's picture, the number left out.
+    _ = driverBase(rb).BuildAviInfoFrame(&timings, rtg.RTGAVI_RANGE_LIMITED | rtg.RTGAVI_NO_VIC, &frame);
+    try testing.expectEqual(@as(u8, 0x10), frame[4]);
+    try testing.expectEqual(@as(u8, 0x04), frame[6]);
+    try testing.expectEqual(@as(u8, 0), frame[7]);
+    // No range said: the monitor's own for the mode.
+    _ = driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0), frame[6]);
+
+    // 720x480 is 4:3 under its first number and 16:9 under its second; a
+    // mode with no number has the picture's own shape, or none.
+    timings = .{ .h_active = 720, .v_active = 480, .vic = 2 };
+    _ = driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x18), frame[5]);
+    timings.vic = 3;
+    _ = driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x28), frame[5]);
+    timings = .{ .h_active = 1024, .v_active = 768 };
+    _ = driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x18), frame[5]);
+    timings = .{ .h_active = 1280, .v_active = 800 };
+    _ = driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x08), frame[5]);
+    try tearDown(rb);
+}
+
+test "HdmiAudioClock: N the rate's own, CTS the clock in kilohertz for it" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    var n: u32 = 7;
+    var cts: u32 = 7;
+    try testing.expect(driverBase(rb).HdmiAudioClock(148_500_000, 48_000, &n, &cts));
+    try testing.expectEqual(@as(u32, 6144), n);
+    try testing.expectEqual(@as(u32, 148_500), cts);
+    try testing.expect(driverBase(rb).HdmiAudioClock(25_175_000, 32_000, &n, &cts));
+    try testing.expectEqual(@as(u32, 4096), n);
+    try testing.expectEqual(@as(u32, 25_175), cts);
+    try testing.expect(driverBase(rb).HdmiAudioClock(74_250_000, 44_100, &n, &cts));
+    try testing.expectEqual(@as(u32, 6272), n);
+    try testing.expectEqual(@as(u32, 82_500), cts);
+    try testing.expect(driverBase(rb).HdmiAudioClock(148_500_000, 96_000, &n, &cts));
+    try testing.expectEqual(@as(u32, 12_288), n);
+    try testing.expectEqual(@as(u32, 148_500), cts);
+    // A rate that is none of HDMI's: 128 times it over 1000.
+    try testing.expect(driverBase(rb).HdmiAudioClock(148_500_000, 22_050, &n, &cts));
+    try testing.expectEqual(@as(u32, 2822), n);
+    // No clock or no rate: no numbers.
+    n = 7;
+    try testing.expect(!driverBase(rb).HdmiAudioClock(0, 48_000, &n, &cts));
+    try testing.expect(!driverBase(rb).HdmiAudioClock(148_500_000, 0, &n, &cts));
+    try testing.expectEqual(@as(u32, 7), n);
     try tearDown(rb);
 }
 

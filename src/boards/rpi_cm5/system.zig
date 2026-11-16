@@ -255,7 +255,8 @@ const display = [_]Tag{
 /// The first HDMI port's sound: channel 10 of the DMA controller's
 /// 40-bit channels (the device tree's dma40, whose channels 6 to 10 are
 /// the ARM's), at 0x10_0001_0A00, its interrupt SPI 90, feeding the
-/// HDMI0 controller's MAI.
+/// HDMI0 controller's MAI - whose FIFO takes the samples at
+/// 0x10_7C72_001C and asks the channel for them on request line 12.
 const hdmi_sound = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_CODEC),
     .value(st.PART_Chip, st.CHIP_BCM2712_HDMI_AUDIO),
@@ -263,6 +264,8 @@ const hdmi_sound = [_]Tag{
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x10_0001_0A00),
     .value(st.PART_Irq, 122),
+    .value(st.PART_DataAddress, 0x10_7C72_001C),
+    .value(st.PART_DmaRequest, 12),
     .pointer(st.PART_Label, "HDMI 0 sound"),
     .done,
 };

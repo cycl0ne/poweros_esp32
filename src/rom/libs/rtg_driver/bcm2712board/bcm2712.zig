@@ -74,12 +74,12 @@
 //! nothing.
 //!
 //! **The sound** (`audioStart`) goes into the controller's MAI FIFO,
-//! which a DMA channel feeds IEC 958 subframes (rta-hdmi's
-//! `rta_driver/hdmi/bcm2712.zig`); the controller sends them as audio
-//! sample packets, with the audio infoframe and the numbers the monitor
-//! rebuilds the sample clock from (N and CTS), which depend on the
-//! mode's pixel clock. The display and its sound share what both write
-//! (`Shared`): a mode set while sound plays sets those again.
+//! which the sound's driver feeds IEC 958 subframes over a DMA channel;
+//! the controller sends them as audio sample packets, with the audio
+//! infoframe and the numbers the monitor rebuilds the sample clock from
+//! (N and CTS), which depend on the mode's pixel clock. What a mode set
+//! and the sound both write is kept together (`Shared`): a mode set
+//! while sound plays sets those again.
 //!
 //! Pixel valve 0 raises its interrupt at the start of each frame's
 //! vertical front porch, which is the board's frame interrupt
@@ -90,6 +90,7 @@ const reg = sdk.hardware.mmio.reg;
 const videocore = sdk.hardware.videocore;
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
 const timing = @import("timing.zig");
 
@@ -332,9 +333,6 @@ const AUDIO_CLOCK_HZ: u64 = 108_000_000;
 /// (bcm2712d0-rpi-5-b.dts). The CM5's device tree has the C stepping's
 /// 10, which the firmware's D0 overlay changes, and which no request
 /// ever comes on here.
-pub const mai_data: usize = HDMI_HD + HD_MAI_DATA;
-pub const audio_dreq: u32 = 12;
-
 /// The packet RAM: a packet's nine words for each infoframe type, its
 /// header in the first and its four subpackets of seven bytes in the
 /// eight after, each four bytes then three.
@@ -454,35 +452,23 @@ fn word(index: u32) *volatile u32 {
     return reg(HVS + DLIST + @as(usize, index) * 4);
 }
 
-// --- what the display and its sound share ------------------------------------
+// --- what a mode set and the sound both write --------------------------------
 
-/// What the display (rtg-fb) and its sound (rta-hdmi) share, found by
-/// its name: a public semaphore held while either writes what both do -
-/// the packet RAM's switches, the clock regeneration - with the mode's
-/// pixel clock, whether it goes out as HDMI, and the sound playing (no
-/// channels while none does). The first to ask makes it and it stays
-/// for good: the display, as it starts.
+/// What the port keeps for a mode set and the sound, which write the
+/// same things - the packet RAM's switches, the clock regeneration: a
+/// semaphore held while either writes them, the mode's pixel clock,
+/// whether it goes out as HDMI, and the sound playing (no channels while
+/// none does). The driver keeps it beside its board, and names
+/// rtg.library in it, whose calls build the AVI infoframe and work out
+/// the clock regeneration.
 pub const Shared = struct {
     lock: exec.SignalSemaphore = .{},
+    rtg_base: ?*RtgDriverBase = null,
     pixel_khz: u32 = 0,
     hdmi: bool = false,
     audio_rate: u32 = 0,
     audio_channels: u32 = 0,
 };
-
-pub const shared_name = "bcm2712.hdmi0";
-
-/// The shared state, made when nobody has yet; null without memory for
-/// it.
-pub fn sharedOf(sys: *ExecBase) ?*Shared {
-    if (sys.FindSemaphore(shared_name)) |found| return @fieldParentPtr("lock", found);
-    const memory = sys.AllocMem(@sizeOf(Shared), exec.MEMF_SYSTEM | exec.MEMF_CLEAR) orelse return null;
-    const made: *Shared = @ptrCast(@alignCast(memory));
-    made.* = .{};
-    made.lock.link.name = shared_name;
-    sys.AddSemaphore(&made.lock);
-    return made;
-}
 
 // --- the firmware ------------------------------------------------------------
 
@@ -1046,34 +1032,23 @@ fn aviVic(sink: Sink, mode: *const rtg.RtgTimings) u8 {
     return mode.vic;
 }
 
-/// The AVI infoframe for `mode` (hdmi_avi_infoframe_pack, as
-/// drm_hdmi_avi_infoframe_from_display_mode fills it): RGB, the picture's
-/// aspect - 4:3 for CEA's 640x480, 720x480 and 720x576 at their first
-/// numbers, 16:9 for its others - the active part the whole picture, the
-/// range when it is said, the mode's number.
-pub fn aviFrame(sink: Sink, mode: *const rtg.RtgTimings, output: Output) Infoframe {
-    const aspect: u8 = switch (mode.vic) {
-        0 => 0,
-        1, 2, 17 => 1,
-        else => 2,
-    };
-    const range: u8 = if (!output.range_said) 0 else if (output.limited) 1 else 2;
-    return infoframe(INFOFRAME_AVI, 2, &.{
-        // Active format information present, RGB.
-        0x10,
-        aspect << 4 | 8,
-        range << 2,
-        aviVic(sink, mode),
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-    });
+/// What the AVI infoframe for `mode` says beyond its picture, as
+/// `BuildAviInfoFrame` takes it: the range when it is said, and no number
+/// for a mode the vendor infoframe carries instead.
+pub fn aviFlags(sink: Sink, mode: *const rtg.RtgTimings, output: Output) u32 {
+    var flags: u32 = 0;
+    if (output.range_said) flags |= if (output.limited) rtg.RTGAVI_RANGE_LIMITED else rtg.RTGAVI_RANGE_FULL;
+    if (aviVic(sink, mode) == 0) flags |= rtg.RTGAVI_NO_VIC;
+    return flags;
+}
+
+/// The AVI infoframe for `mode`, as rtg.library builds it: RGB, the
+/// picture's aspect, the active part the whole picture, the range when it
+/// is said, the mode's number. All zeroes without the library.
+fn aviFrame(shared: *const Shared, sink: Sink, mode: *const rtg.RtgTimings, output: Output) Infoframe {
+    var frame: Infoframe = @splat(0);
+    if (shared.rtg_base) |rb| _ = rb.BuildAviInfoFrame(mode, aviFlags(sink, mode, output), &frame);
+    return frame;
 }
 
 /// HDMI's vendor infoframe naming HDMI 1.4's 4K mode `hdmi_vic`.
@@ -1227,14 +1202,13 @@ fn waitBits(register: *volatile u32, bits: u32, set: bool, tries: u32, waiter: a
 /// the monitor sent the picture. With the display up, it changes
 /// to `mode`; sound that plays goes on in it. The order is
 /// vc4_crtc_atomic_enable's. `waiter.wait(micros)` waits that long.
-pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, sink: Sink, address: usize, pitch: u32, waiter: anytype) Failure {
+pub fn start(sys: *ExecBase, shared: *Shared, mode: *const rtg.RtgTimings, sink: Sink, address: usize, pitch: u32, waiter: anytype) Failure {
     if (!on_bcm2712) return .firmware;
     if (!sends(timing.khz(mode))) return .clock;
     const woken = wake(sys, waiter);
     if (woken != .none) return woken;
-    const shared = sharedOf(sys);
-    if (shared) |held| sys.ObtainSemaphore(&held.lock);
-    defer if (shared) |held| sys.ReleaseSemaphore(&held.lock);
+    sys.ObtainSemaphore(&shared.lock);
+    defer sys.ReleaseSemaphore(&shared.lock);
     const output = outputFor(sink, mode);
     const tmds_hz = @as(u64, timing.khz(mode)) * 1000;
     stop(waiter);
@@ -1276,7 +1250,7 @@ pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, sink: Sink, address: u
         at(HDMI, SCHEDULER_CONTROL).* |= SCHEDULER_MODE_HDMI;
         waitBits(at(HDMI, SCHEDULER_CONTROL), SCHEDULER_HDMI_ACTIVE, true, 1000, waiter);
         at(HDMI, RAM_PACKET_CONFIG).* = RAM_PACKET_ENABLE;
-        writePacket(&aviFrame(sink, mode, output), waiter);
+        writePacket(&aviFrame(shared, sink, mode, output), waiter);
         if (!sink.forum and hdmiVic(mode.vic) != 0) writePacket(&vendorFrame(hdmiVic(mode.vic)), waiter);
     } else {
         at(HDMI, RAM_PACKET_CONFIG).* &= ~RAM_PACKET_ENABLE;
@@ -1293,13 +1267,11 @@ pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, sink: Sink, address: u
 
     // The sound that plays, sent in the new mode: its clock regeneration
     // from the new pixel clock, its infoframe again.
-    if (shared) |held| {
-        held.pixel_khz = timing.khz(mode);
-        held.hdmi = output.hdmi;
-        if (output.hdmi and held.audio_channels != 0) {
-            regenerate(held);
-            writePacket(&audioFrame(held.audio_channels), waiter);
-        }
+    shared.pixel_khz = timing.khz(mode);
+    shared.hdmi = output.hdmi;
+    if (output.hdmi and shared.audio_channels != 0) {
+        regenerate(shared);
+        writePacket(&audioFrame(shared.audio_channels), waiter);
     }
 
     // The frame interrupt: the start of each vertical front porch.
@@ -1358,26 +1330,22 @@ pub fn maiSample(rate: u32) u32 {
     return @intCast(best_n << 8 | (best_m - 1));
 }
 
-/// N and CTS, which the monitor rebuilds the sample clock from - 128
-/// times the rate is the TMDS clock times N over CTS - for `rate` at a
-/// pixel clock of `pixel_khz` (vc4_hdmi_set_n_cts).
-pub fn clockRegen(rate: u32, pixel_khz: u32) struct { n: u32, cts: u32 } {
-    const n = 128 * rate / 1000;
-    const cts = @as(u64, pixel_khz) * 1000 * n / (128 * @as(u64, rate));
-    return .{ .n = n, .cts = @intCast(cts) };
-}
-
+/// N and CTS, which the monitor rebuilds the sample clock from, for the
+/// sound playing at the mode's pixel clock (vc4_hdmi_set_n_cts), as
+/// rtg.library works them out. Nothing without the library.
 fn regenerate(shared: *const Shared) void {
-    const regen = clockRegen(shared.audio_rate, shared.pixel_khz);
-    at(HDMI, CRP_CFG).* = CRP_EXTERNAL_CTS | regen.n;
-    at(HDMI, CTS_0).* = regen.cts;
-    at(HDMI, CTS_1).* = regen.cts;
+    const rb = shared.rtg_base orelse return;
+    var n: u32 = 0;
+    var cts: u32 = 0;
+    if (!rb.HdmiAudioClock(shared.pixel_khz * 1000, shared.audio_rate, &n, &cts)) return;
+    at(HDMI, CRP_CFG).* = CRP_EXTERNAL_CTS | n;
+    at(HDMI, CTS_0).* = cts;
+    at(HDMI, CTS_1).* = cts;
 }
 
 /// Whether sound can go out: the display up as HDMI.
-pub fn audible(sys: *ExecBase) bool {
+pub fn audible(shared: *const Shared) bool {
     if (!on_bcm2712 or !running()) return false;
-    const shared = sharedOf(sys) orelse return false;
     return shared.hdmi;
 }
 
@@ -1386,9 +1354,8 @@ pub fn audible(sys: *ExecBase) bool {
 /// (vc4_hdmi_audio_startup, then vc4_hdmi_audio_prepare). The DMA
 /// channel that feeds the FIFO starts after. False, and nothing started,
 /// when the display is not up as HDMI.
-pub fn audioStart(sys: *ExecBase, rate: u32, channels: u32, waiter: anytype) bool {
-    if (!on_bcm2712 or channels == 0 or channels > 8) return false;
-    const shared = sharedOf(sys) orelse return false;
+pub fn audioStart(sys: *ExecBase, shared: *Shared, rate: u32, channels: u32, waiter: anytype) bool {
+    if (!on_bcm2712 or channels == 0 or channels > 8 or rateCode(rate) == 0) return false;
     sys.ObtainSemaphore(&shared.lock);
     defer sys.ReleaseSemaphore(&shared.lock);
     if (!running() or !shared.hdmi) return false;
@@ -1411,9 +1378,8 @@ pub fn audioStart(sys: *ExecBase, rate: u32, channels: u32, waiter: anytype) boo
 /// The sound stopped, once its DMA channel has: the MAI and its FIFO
 /// reset, the audio infoframe no longer sent (vc4_hdmi_audio_shutdown,
 /// vc4_hdmi_audio_reset).
-pub fn audioStop(sys: *ExecBase, waiter: anytype) void {
+pub fn audioStop(sys: *ExecBase, shared: *Shared, waiter: anytype) void {
     if (!on_bcm2712) return;
-    const shared = sharedOf(sys) orelse return;
     sys.ObtainSemaphore(&shared.lock);
     defer sys.ReleaseSemaphore(&shared.lock);
     shared.audio_rate = 0;
@@ -1706,18 +1672,17 @@ test "what a monitor is sent: HDMI with its range said, limited without QS, DVI 
     const full_hd: rtg.RtgTimings = .{ .pixel_clock_hz = 148_500_000, .h_active = 1920, .v_active = 1080, .vic = 16 };
     const output = outputFor(portable, &full_hd);
     try testing.expect(output.hdmi and !output.limited and output.range_said and !output.scrambled);
-    // RGB, 16:9 with the active part the picture, full range, VIC 16.
-    try testing.expectEqualSlices(u8, &.{ 0x82, 0x02, 0x0D, 0x1F, 0x10, 0x28, 0x08, 16, 0 }, aviFrame(portable, &full_hd, output)[0..9]);
+    // The AVI infoframe says the range, full.
+    try testing.expectEqual(rtg.RTGAVI_RANGE_FULL, aviFlags(portable, &full_hd, output));
 
     // A monitor without QS takes a CEA mode's RGB limited, and is not
     // told; 640x480 (VIC 1) stays full.
     const plain: Sink = .{ .hdmi = true };
     const squashed = outputFor(plain, &full_hd);
     try testing.expect(squashed.limited and !squashed.range_said);
-    try testing.expectEqual(@as(u8, 0), aviFrame(plain, &full_hd, squashed)[6]);
+    try testing.expectEqual(@as(u32, 0), aviFlags(plain, &full_hd, squashed));
     const vga: rtg.RtgTimings = .{ .pixel_clock_hz = 25_175_000, .h_active = 640, .v_active = 480, .vic = 1 };
     try testing.expect(!outputFor(plain, &vga).limited);
-    try testing.expectEqual(@as(u8, 1 << 4 | 8), aviFrame(plain, &vga, outputFor(plain, &vga))[5]);
 
     // DVI: no infoframes, full range.
     const dvi: Sink = .{};
@@ -1734,14 +1699,14 @@ test "HDMI 1.4's 4K modes go in the vendor infoframe, HDMI 2.0's in the AVI's" {
     try testing.expectEqual(@as(u8, 95), uhd30.vic);
     try testing.expectEqual(@as(u8, 1), hdmiVic(uhd30.vic));
     const older: Sink = .{ .hdmi = true };
-    try testing.expectEqual(@as(u8, 0), aviFrame(older, &uhd30, outputFor(older, &uhd30))[7]);
+    try testing.expect(aviFlags(older, &uhd30, outputFor(older, &uhd30)) & rtg.RTGAVI_NO_VIC != 0);
     var newer = older;
     newer.forum = true;
-    try testing.expectEqual(@as(u8, 95), aviFrame(newer, &uhd30, outputFor(newer, &uhd30))[7]);
+    try testing.expectEqual(@as(u32, 0), aviFlags(newer, &uhd30, outputFor(newer, &uhd30)) & rtg.RTGAVI_NO_VIC);
     try testing.expectEqualSlices(u8, &.{ 0x81, 0x01, 0x05, 0x49, 0x03, 0x0C, 0x00, 0x20, 0x01, 0 }, vendorFrame(1)[0..10]);
 }
 
-test "the sound's numbers: the audio infoframe, the MAI's clock, N and CTS" {
+test "the sound's numbers: the audio infoframe, the MAI's clock, the channels' map" {
     try testing.expectEqualSlices(u8, &.{ 0x84, 0x01, 0x0A, 0x70, 0x01, 0 }, audioFrame(2)[0..6]);
     // 108 MHz over 48 kHz is 2250 exactly; over 44.1 kHz 120000/49.
     try testing.expectEqual(@as(u32, 2250 << 8), maiSample(48_000));
@@ -1749,11 +1714,6 @@ test "the sound's numbers: the audio infoframe, the MAI's clock, N and CTS" {
     try testing.expectEqual(@as(u32, 3375 << 8), maiSample(32_000));
     try testing.expectEqual(@as(u32, 9), rateCode(48_000));
     try testing.expectEqual(@as(u32, 0), rateCode(22_050));
-    // HDMI's table: 6144 and 148500 at 1080p60, 594000 at 4K60.
-    const full_hd = clockRegen(48_000, 148_500);
-    try testing.expectEqual(@as(u32, 6144), full_hd.n);
-    try testing.expectEqual(@as(u32, 148_500), full_hd.cts);
-    try testing.expectEqual(@as(u32, 594_000), clockRegen(48_000, 594_000).cts);
     try testing.expectEqual(@as(u32, 0x10), channelMap(0x3));
     try testing.expectEqual(@as(u32, 0x7654_3210), channelMap(0xFF));
 }

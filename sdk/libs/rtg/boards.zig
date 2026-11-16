@@ -236,6 +236,10 @@ pub const RTGBC_POWER: u32 = 1 << 5;
 /// said how many levels it has (`brightness_steps`).
 pub const RTGBC_BRIGHTNESS: u32 = 1 << 6;
 pub const RTGBC_STATS: u32 = 1 << 7;
+/// Its link carries sound (`SetBoardAudio`): its driver filled in
+/// `audio`. Whether the monitor on it takes sound is the monitor's to
+/// say (`GetBoardMonitor`, `RTGMON_AUDIO`).
+pub const RTGBC_AUDIO: u32 = 1 << 14;
 pub const RTGBC_CONTROL: u32 = 1 << 8;
 /// Its picture can be mirrored left to right (`MirrorBoard`): by the
 /// library where it composes the picture, or by the board's own
@@ -271,6 +275,34 @@ pub const RTGBC_VIDEO: u32 = 1 << 25;
 /// What a board that refreshes itself has been through since the counters
 /// were last reset. A board with no such thing leaves a field 0. Size
 /// given and count returned, as RtgBoardInfo.
+/// The sound a display's link is to carry (`SetBoardAudio`): linear PCM
+/// as the sound's driver feeds it to the link.
+pub const RtgAudio = extern struct {
+    /// Samples a second of each channel.
+    sample_rate: u32 = 48_000,
+    /// How many channels: 2 for stereo.
+    channels: u32 = 2,
+    /// Bits a sample.
+    bits: u32 = 16,
+    /// None yet: 0.
+    flags: u32 = 0,
+};
+
+/// `BuildAviInfoFrame`: the picture is a computer's - IT content, shown
+/// whole (underscanned) - which a television may then show without
+/// cropping its edges or treating it as video.
+pub const RTGAVI_IT: u32 = 1 << 0;
+/// The frame says the RGB range: squashed to 16-235, or the whole byte.
+/// Neither leaves it to the monitor's default for the mode.
+pub const RTGAVI_RANGE_LIMITED: u32 = 1 << 1;
+pub const RTGAVI_RANGE_FULL: u32 = 1 << 2;
+/// The frame carries no number for the mode, though the timings have
+/// one: a mode named to the monitor another way.
+pub const RTGAVI_NO_VIC: u32 = 1 << 3;
+/// The bytes of an AVI infoframe as `BuildAviInfoFrame` writes it: its
+/// type, version and length, its checksum, and thirteen bytes.
+pub const RTG_AVI_BYTES = 17;
+
 pub const RtgBoardStats = extern struct {
     /// Frames sent to the display, and the ones that came late.
     frames: u32 = 0,
@@ -599,6 +631,17 @@ pub const RtgBoardOps = extern struct {
     /// held; it may wait. Null: the brightness is what the library last
     /// set.
     brightness: ?*const fn (*RtgBoard) callconv(.c) i32 = null,
+    /// The link's side of the sound it carries (`SetBoardAudio`): for a
+    /// format, what the link sends with the picture so that the monitor
+    /// plays the samples the sound's driver feeds it - the numbers the
+    /// sample clock is rebuilt from, the audio infoframe, the sample
+    /// packets on; for null, all of that off again. RTGERR_NO_MODE while
+    /// the link is not up, RTGERR_NOT_SUPPORTED for a format the link
+    /// does not carry or a monitor it is sent to without packets. A
+    /// driver keeps the format and sets its side up again when the mode
+    /// changes while the sound plays. Called with the board's lock held;
+    /// it may wait. Null: the link carries no sound.
+    audio: ?*const fn (*RtgBoard, ?*const RtgAudio) callconv(.c) i32 = null,
     /// Mirror the picture about each axis in the board's own hardware -
     /// a controller's scan direction, planes read backwards, a stream's
     /// lines sent last first - for the axes the driver said it turns

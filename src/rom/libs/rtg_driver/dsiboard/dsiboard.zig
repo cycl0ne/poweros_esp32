@@ -96,7 +96,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 20;
+const REVISION = 21;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -301,7 +301,12 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
             .vsync_high = wanted.vsync_high,
             .pixel_hz = panel.pixel_hz,
         };
-        if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, lane_mbps, mode)) {
+        // The mode's AVI infoframe: a computer's picture in the whole
+        // range, with no number, since the clocks here are not CEA's.
+        var avi: [rtg.RTG_AVI_BYTES]u8 = undefined;
+        const shown: rtg.RtgTimings = .{ .h_active = wanted.width, .v_active = wanted.height };
+        _ = driverBase(panel.board).BuildAviInfoFrame(&shown, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL | rtg.RTGAVI_NO_VIC, &avi);
+        if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, lane_mbps, mode, &avi)) {
             sdk.exec.kprintf(sys, "%s: the HDMI bridge did not take its bring-up\n", .{MODULE_NAME});
             return err.RTGERR_NO_DISPLAY;
         }

@@ -85,7 +85,7 @@ const jh7110 = @import("jh7110.zig");
 const MODULE_NAME = "rtg-jh7110";
 const DRIVER_NAME = "jh7110";
 const VERSION = 1;
-const REVISION = 0;
+const REVISION = 1;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -141,8 +141,11 @@ const Screen = struct {
     edid: [edid_most]u8 = undefined,
     edid_size: u32 = 0,
     edid_tries: u32 = 0,
+    /// The sound the link was told to carry: null for none.
+    audio: ?rtg.RtgAudio = null,
     /// Held while the port's DDC is talked on and while a task writes
-    /// what a start of the port also writes: the picture's address.
+    /// what a start of the port also writes: the picture's address, the
+    /// link's sound.
     port_lock: exec.SignalSemaphore = .{},
     /// Where the controller reads from; 0 while the port does not run.
     scanning: usize = 0,
@@ -856,7 +859,10 @@ fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) 
 fn startPort(screen: *Screen, address: usize) bool {
     const sys = screen.sys;
     const mode = &screen.timings;
-    const failure = jh7110.start(sys, mode, Waiter{ .screen = screen });
+    // A computer's picture, in the whole range.
+    var avi: [rtg.RTG_AVI_BYTES]u8 = undefined;
+    _ = drivers(screen).BuildAviInfoFrame(mode, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL, &avi);
+    const failure = jh7110.start(sys, mode, &avi, Waiter{ .screen = screen });
     if (failure != .none) {
         exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, jh7110.why(failure) });
         return false;
@@ -867,6 +873,9 @@ fn startPort(screen: *Screen, address: usize) bool {
     cursorWrite(screen);
     videoPutBack(screen);
     sys.ReleaseLock(&screen.plane_lock);
+    // The sound that plays, sent in the new mode: its numbers follow the
+    // pixel clock.
+    if (screen.audio) |playing| _ = linkSound(screen, &playing);
     const plugged = jh7110.monitor();
     if (plugged != screen.plugged) {
         screen.edid_size = 0;
@@ -950,6 +959,40 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
     return err.RTGERR_OK;
 }
 
+/// The transmitter set up for `format` at the mode's pixel clock, and
+/// its sound on. Holding `port_lock`, on a port that runs.
+fn linkSound(screen: *Screen, format: *const rtg.RtgAudio) i32 {
+    if (format.channels != 2 or format.bits != 16) return err.RTGERR_NOT_SUPPORTED;
+    const rate = jh7110.audioRate(format.sample_rate) orelse return err.RTGERR_NOT_SUPPORTED;
+    var n: u32 = 0;
+    var cts: u32 = 0;
+    if (!drivers(screen).HdmiAudioClock(screen.timings.pixel_clock_hz, format.sample_rate, &n, &cts)) return err.RTGERR_NO_MODE;
+    jh7110.audioStart(rate, n, cts);
+    return err.RTGERR_OK;
+}
+
+/// The link's side of its sound (`SetBoardAudio`): the transmitter told
+/// to send the stream on its first I2S input - which the sound's driver
+/// feeds - with the numbers the monitor rebuilds the sample clock from,
+/// or its sound off again. A mode set while the sound plays sets the
+/// numbers again. RTGERR_NO_MODE while the port does not run,
+/// RTGERR_NOT_SUPPORTED for anything but stereo of 16 bits at 48000 Hz.
+fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    sys.ObtainSemaphore(&screen.port_lock);
+    defer sys.ReleaseSemaphore(&screen.port_lock);
+    const one = format orelse {
+        if (screen.audio != null and screen.scanning != 0) jh7110.audioStop();
+        screen.audio = null;
+        return err.RTGERR_OK;
+    };
+    if (screen.scanning == 0) return err.RTGERR_NO_MODE;
+    const code = linkSound(screen, one);
+    if (code == err.RTGERR_OK) screen.audio = one.*;
+    return code;
+}
+
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     into.frames = screenOf(board).updates;
 }
@@ -969,6 +1012,7 @@ const ops = rtg.boards.RtgBoardOps{
     .stats = &stats,
     .detect = &detect,
     .check_mode = &checkMode,
+    .audio = &audio,
     .pointer = &pointer_ops,
     .video = &video_ops,
 };

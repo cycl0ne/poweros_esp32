@@ -47,6 +47,8 @@ const AddBoardMode = @import("mode/addboardmode.zig").AddBoardMode;
 const ReadTimingTags = @import("mode/readtimingtags.zig").ReadTimingTags;
 const MonitorChanged = @import("monitor/monitorchanged.zig").MonitorChanged;
 const FindStandardTimings = @import("monitor/findstandardtimings.zig").FindStandardTimings;
+const BuildAviInfoFrame = @import("monitor/buildaviinfoframe.zig").BuildAviInfoFrame;
+const HdmiAudioClock = @import("monitor/hdmiaudioclock.zig").HdmiAudioClock;
 const GetBoardMonitor = @import("monitor/getboardmonitor.zig").GetBoardMonitor;
 const ReadBoardEDID = @import("monitor/readboardedid.zig").ReadBoardEDID;
 const AddRtgNotify = @import("board/addrtgnotify.zig").AddRtgNotify;
@@ -65,6 +67,7 @@ const RefreshRect = @import("bitmap/refreshrect.zig").RefreshRect;
 const WaitVBlank = @import("display/waitvblank.zig").WaitVBlank;
 const SetBoardPower = @import("display/setboardpower.zig").SetBoardPower;
 const SetBoardBrightness = @import("display/setboardbrightness.zig").SetBoardBrightness;
+const SetBoardAudio = @import("display/setboardaudio.zig").SetBoardAudio;
 const FillRect = @import("engine/fillrect.zig").FillRect;
 const CopyRect = @import("engine/copyrect.zig").CopyRect;
 const CopyRects = @import("engine/copyrects.zig").CopyRects;
@@ -161,6 +164,8 @@ const contract_files = [_][]const u8{
     @embedFile("mode/readtimingtags.zig"),
     @embedFile("monitor/monitorchanged.zig"),
     @embedFile("monitor/findstandardtimings.zig"),
+    @embedFile("monitor/buildaviinfoframe.zig"),
+    @embedFile("monitor/hdmiaudioclock.zig"),
     @embedFile("monitor/getboardmonitor.zig"),
     @embedFile("monitor/readboardedid.zig"),
     @embedFile("board/addrtgnotify.zig"),
@@ -178,6 +183,7 @@ const contract_files = [_][]const u8{
     @embedFile("display/waitvblank.zig"),
     @embedFile("display/setboardpower.zig"),
     @embedFile("display/setboardbrightness.zig"),
+    @embedFile("display/setboardaudio.zig"),
     @embedFile("engine/fillrect.zig"),
     @embedFile("engine/copyrect.zig"),
     @embedFile("engine/blittemplate.zig"),
@@ -272,6 +278,12 @@ fn lvoMonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) void {
 fn lvoFindStandardTimings(rb: *RtgBase, width: u32, height: u32, refresh_hz: u32, timings: *rtg.RtgTimings) callconv(.c) bool {
     return FindStandardTimings(rb, width, height, refresh_hz, timings);
 }
+fn lvoBuildAviInfoFrame(rb: *RtgBase, timings: *const rtg.RtgTimings, flags: u32, into: [*]u8) callconv(.c) u32 {
+    return BuildAviInfoFrame(rb, timings, flags, into);
+}
+fn lvoHdmiAudioClock(rb: *RtgBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, cts: *u32) callconv(.c) bool {
+    return HdmiAudioClock(rb, pixel_clock_hz, sample_rate, n, cts);
+}
 fn lvoGetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo, size: u32) callconv(.c) u32 {
     return GetBoardMonitor(rb, board, info, size);
 }
@@ -307,6 +319,9 @@ fn lvoSetBoardPower(rb: *RtgBase, board: *rtg.RtgBoard, state: u32) callconv(.c)
 }
 fn lvoSetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     return SetBoardBrightness(rb, board, percent);
+}
+fn lvoSetBoardAudio(rb: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
+    return SetBoardAudio(rb, board, format);
 }
 fn lvoFillRect(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
     return FillRect(rb, dest, area, color);
@@ -417,7 +432,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 29;
+const reserved_slots = 28;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -460,7 +475,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoWaitVBlank),
     vec(lvoSetBoardPower),
     vec(lvoSetBoardBrightness),
-    vec(reserved),
+    vec(lvoSetBoardAudio),
     vec(lvoFillRect),
     vec(reserved),
     vec(lvoCopyRect),
@@ -531,6 +546,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoMonitorChanged),
     vec(lvoFindStandardTimings),
     vec(lvoComposeLines),
+    vec(lvoBuildAviInfoFrame),
+    vec(lvoHdmiAudioClock),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -543,7 +560,7 @@ const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"
 test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
     // The reserved slots are in the table but not in either LVO.
     try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 100), vectors.len);
+    try testing.expectEqual(@as(usize, 102), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

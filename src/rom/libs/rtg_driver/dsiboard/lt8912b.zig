@@ -191,9 +191,10 @@ fn writeAll(bus: I2c, address: u32, writes: []const Write) bool {
     return true;
 }
 
-/// The bridge brought up for `mode` on `lanes` lanes, its HDMI output on;
-/// false at the first write it does not take.
-pub fn setUp(bus: I2c, main: u32, lanes: u32, lane_mbps: u32, mode: Mode) bool {
+/// The bridge brought up for `mode` on `lanes` lanes, its HDMI output on,
+/// sending `frame`, the mode's AVI infoframe; false at the first write it
+/// does not take.
+pub fn setUp(bus: I2c, main: u32, lanes: u32, lane_mbps: u32, mode: Mode, frame: *const [sdk.rtg.RTG_AVI_BYTES]u8) bool {
     const dsi = main + 1;
     const avi = main + 2;
     if (!writeAll(bus, main, &digital_clocks)) return false;
@@ -212,7 +213,7 @@ pub fn setUp(bus: I2c, main: u32, lanes: u32, lane_mbps: u32, mode: Mode) bool {
     if (!writeAll(bus, dsi, &.{ .{ 0x4E, @truncate(word) }, .{ 0x4F, @truncate(word >> 8) }, .{ 0x50, @truncate(word >> 16) }, .{ 0x51, 0x80 } })) return false;
     if (!writeAll(bus, dsi, &dds)) return false;
     if (!videoTimings(bus, dsi, mode)) return false;
-    if (!infoframe(bus, main, avi, mode)) return false;
+    if (!infoframe(bus, main, avi, mode, frame)) return false;
 
     if (!receiverReset(bus, main)) return false;
     // HDMI rather than DVI: infoframes are sent.
@@ -241,29 +242,17 @@ fn videoTimings(bus: I2c, dsi: u32, mode: Mode) bool {
     return writeAll(bus, dsi, &writes);
 }
 
-/// The AVI infoframe: RGB, composed to be shown whole (underscanned), the
-/// picture's aspect, IT content in full-range RGB - a computer's picture,
+/// The mode's AVI infoframe, as rtg.library builds it (`frame`: its
+/// checksum from byte 3 on, then its bytes) - RGB, shown whole, the
+/// picture's aspect, IT content in full-range RGB: a computer's picture,
 /// which a television may then show without cropping its edges or
 /// treating it as video (one that takes the mode for a video format's
-/// crops it all the same) - and no CEA video code: the clocks here are not
-/// CEA's. The sync polarity goes on the main page.
-fn infoframe(bus: I2c, main: u32, avi: u32, mode: Mode) bool {
-    const aspect: u8 = if (mode.width * 3 == mode.height * 4) 1 else if (mode.width * 9 == mode.height * 16) 2 else 0;
-    // PB1: RGB (0), active format given (bit 4), underscanned (2).
-    const pb1: u8 = 0x10 | 0x02;
-    // PB2: the picture's aspect, the active format the same (8).
-    const pb2: u8 = (aspect << 4) | 0x08;
-    // PB3: IT content (bit 7), full-range RGB (2 in bits 2-3).
-    const pb3: u8 = 0x80 | (2 << 2);
-    const vic: u8 = 0;
-    // The checksum makes the header (0x82, version 2, 13 bytes) and the
-    // bytes sum to zero.
-    const sum: u32 = 0x82 + 0x02 + 0x0D + @as(u32, pb1) + pb2 + pb3 + vic;
-    const pb0: u8 = @truncate((0x100 - (sum & 0xFF)) & 0xFF);
+/// crops it all the same). The sync polarity goes on the main page.
+fn infoframe(bus: I2c, main: u32, avi: u32, mode: Mode, frame: *const [sdk.rtg.RTG_AVI_BYTES]u8) bool {
     const polarity: u8 = (if (mode.hsync_high) @as(u8, 2) else 0) | (if (mode.vsync_high) @as(u8, 1) else 0);
     if (!bus.write(avi, 0x3C, 0x41)) return false;
     if (!bus.write(main, 0xAB, polarity)) return false;
-    return writeAll(bus, avi, &.{ .{ 0x43, pb0 }, .{ 0x44, pb1 }, .{ 0x45, pb2 }, .{ 0x46, pb3 }, .{ 0x47, vic } });
+    return writeAll(bus, avi, &.{ .{ 0x43, frame[3] }, .{ 0x44, frame[4] }, .{ 0x45, frame[5] }, .{ 0x46, frame[6] }, .{ 0x47, frame[7] } });
 }
 
 /// With the stream running: the DDS started again at `pixel_hz` and let

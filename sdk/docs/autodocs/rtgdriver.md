@@ -13,6 +13,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddBoardMode](#addboardmode) - Adds a mode to a board's list.
 - [AddRtgDevice](#addrtgdevice) - Makes a device from tags and offers it to the drivers.
 - [AddRtgDriver](#addrtgdriver) - Puts a driver's description on the library's list.
+- [BuildAviInfoFrame](#buildaviinfoframe) - Builds the AVI infoframe a link sends with a mode of given timings.
 - [CloseTransport](#closetransport) - Gives a bus back.
 - [ComposeLines](#composelines) - Fetches the pixels of a rectangle of a board's picture, as the library composes it.
 - [CreateBoard](#createboard) - Makes a board for one output of a device.
@@ -20,6 +21,7 @@ Generated from the source by `./zig build autodoc`.
 - [FindStandardTimings](#findstandardtimings) - Looks up the timings a standard gives a picture of a size at a refresh.
 - [FrameDone](#framedone) - Says that a frame of a board's display ended.
 - [GetRtgTagData](#getrtgtagdata) - Returns a tag's data from a list, or a default.
+- [HdmiAudioClock](#hdmiaudioclock) - Works out N and CTS for a link's sound: the two numbers a monitor rebuilds the sample clock from.
 - [MonitorChanged](#monitorchanged) - Has a board's connector looked at again.
 - [OpenTransport](#opentransport) - Opens the bus a device is reached over.
 - [ReadTimingTags](#readtimingtags) - Reads the generic timing tags of a list into a structure.
@@ -238,6 +240,78 @@ None known.
 
 ```zig
 const driver = rb.AddRtgDriver(&my_spec, null) orelse return error.DriverRefused;
+```
+
+## BuildAviInfoFrame
+
+Builds the AVI infoframe a link sends with a mode of given timings.
+
+**SYNOPSIS**
+
+```zig
+fn BuildAviInfoFrame(_: *RtgBase, timings: *const rtg.RtgTimings, flags: u32, into: [*]u8) u32
+```
+
+**SINCE**
+
+1.33. LVO -404.
+
+**INPUTS**
+
+- `timings` - the mode's timings: its picture's size and its number
+  (`vic`), 0 for a mode that has none.
+- `flags` - `RTGAVI_IT` for a computer's picture, `RTGAVI_RANGE_LIMITED`
+  or `RTGAVI_RANGE_FULL` to say the RGB range, `RTGAVI_NO_VIC` to
+  leave the mode's number out.
+- `into` - room for `RTG_AVI_BYTES` bytes.
+
+**RESULT**
+
+The bytes written: `RTG_AVI_BYTES`.
+
+**BEHAVIOR**
+
+The frame is what HDMI names the picture to a monitor with: byte 0
+its type (0x82), byte 1 its version (2), byte 2 the length of what
+follows the checksum (13), byte 3 the checksum, which brings the sum
+of all seventeen to 0, and then the thirteen bytes.
+
+It says RGB with the active part the whole picture; the picture's
+aspect - 4:3 for the modes numbered 1, 2 and 17, 16:9 for 3 and 18,
+which have one shape under two numbers, and else the shape of the
+picture itself where it is 4:3 or 16:9, none otherwise; and the
+mode's number. With `RTGAVI_IT` it says a computer's picture, shown
+whole. With a range flag it says the range, which a monitor that
+lets it be chosen follows; without one the monitor takes its own for
+the mode.
+
+How the frame reaches the monitor - a packet buffer, a register a
+byte - is the driver's.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. `into` is the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`HdmiAudioClock`, `FindStandardTimings`
+
+**EXAMPLES**
+
+```zig
+var frame: [rtg.RTG_AVI_BYTES]u8 = undefined;
+_ = rb.BuildAviInfoFrame(&timings, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL, &frame);
 ```
 
 ## CloseTransport
@@ -717,6 +791,71 @@ None known.
 
 ```zig
 const hz = rb.GetRtgTagData(MY_Clock, 12_000_000, tags);
+```
+
+## HdmiAudioClock
+
+Works out N and CTS for a link's sound: the two numbers a monitor rebuilds the sample clock from.
+
+**SYNOPSIS**
+
+```zig
+fn HdmiAudioClock(_: *RtgBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, cts: *u32) bool
+```
+
+**SINCE**
+
+1.33. LVO -408.
+
+**INPUTS**
+
+- `pixel_clock_hz` - the link's clock: the mode's pixel clock, with
+  eight bits a colour.
+- `sample_rate` - samples a second.
+- `n` - where N goes.
+- `cts` - where CTS goes.
+
+**RESULT**
+
+True, and both written. False for a clock or a rate of 0: nothing is
+written.
+
+**BEHAVIOR**
+
+A link carries no sample clock: the monitor makes one from the link's
+own, by two numbers sent with the sound, so that 128 times the sample
+rate is the link's clock times N over CTS. N is the rate's own, as
+HDMI names it: 4096 for 32000 Hz, 6272 for 44100, 6144 for 48000,
+and as many times that for a rate that is a multiple of one of them;
+for any other rate, 128 times the rate over 1000. CTS is the link's
+clock times N over 128 times the rate, rounded down - with 6144 at
+48000 Hz, the clock in kilohertz.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BuildAviInfoFrame`
+
+**EXAMPLES**
+
+```zig
+var n: u32 = 0;
+var cts: u32 = 0;
+if (!rb.HdmiAudioClock(timings.pixel_clock_hz, 48_000, &n, &cts)) return;
 ```
 
 ## MonitorChanged

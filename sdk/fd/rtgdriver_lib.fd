@@ -91,4 +91,15 @@ bool FindStandardTimings(u32 width, u32 height, u32 refresh_hz, *rtg.RtgTimings 
 /// rectangle that is empty or not wholly inside the display,
 /// RTGERR_BAD_FORMAT in a mode whose pixels are not whole bytes.
 i32 ComposeLines(*rtg.RtgBoard board, *const rtg.RtgRect area, [*]u8 into, u32 pitch)
+/// The AVI infoframe a link sends with a mode of these timings, into
+/// `into`, RTG_AVI_BYTES of it: its header, its checksum and its bytes -
+/// RGB, the picture's aspect, the mode's number. `flags` (RTGAVI_) say a
+/// computer's picture, the range, and to leave the number out. Answers
+/// the bytes written.
+u32 BuildAviInfoFrame(*const rtg.RtgTimings timings, u32 flags, [*]u8 into)
+/// The two numbers a monitor rebuilds the sample clock of a link's sound
+/// from, N and CTS, for a pixel clock and a sample rate: 128 times the
+/// rate is the pixel clock times N over CTS. False for a rate or a clock
+/// of 0, and nothing is written.
+bool HdmiAudioClock(u32 pixel_clock_hz, u32 sample_rate, *u32 n, *u32 cts)
 ##end

@@ -35,6 +35,8 @@ pub const LVO = struct {
     pub const MonitorChanged = libraries.lvo(97);
     pub const FindStandardTimings = libraries.lvo(98);
     pub const ComposeLines = libraries.lvo(99);
+    pub const BuildAviInfoFrame = libraries.lvo(100);
+    pub const HdmiAudioClock = libraries.lvo(101);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -58,6 +60,8 @@ pub const Fn = struct {
     pub const MonitorChanged = *const fn (*RtgDriverBase, *rtg.RtgBoard) callconv(.c) void;
     pub const FindStandardTimings = *const fn (*RtgDriverBase, u32, u32, u32, *rtg.RtgTimings) callconv(.c) bool;
     pub const ComposeLines = *const fn (*RtgDriverBase, *rtg.RtgBoard, *const rtg.RtgRect, [*]u8, u32) callconv(.c) i32;
+    pub const BuildAviInfoFrame = *const fn (*RtgDriverBase, *const rtg.RtgTimings, u32, [*]u8) callconv(.c) u32;
+    pub const HdmiAudioClock = *const fn (*RtgDriverBase, u32, u32, *u32, *u32) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -198,5 +202,22 @@ pub const RtgDriverBase = opaque {
     /// RTGERR_BAD_FORMAT in a mode whose pixels are not whole bytes.
     pub fn ComposeLines(self: *RtgDriverBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into: [*]u8, pitch: u32) i32 {
         return libraries.call(self, LVO.ComposeLines, Fn.ComposeLines, .{ board, area, into, pitch });
+    }
+
+    /// The AVI infoframe a link sends with a mode of these timings, into
+    /// `into`, RTG_AVI_BYTES of it: its header, its checksum and its bytes -
+    /// RGB, the picture's aspect, the mode's number. `flags` (RTGAVI_) say a
+    /// computer's picture, the range, and to leave the number out. Answers
+    /// the bytes written.
+    pub fn BuildAviInfoFrame(self: *RtgDriverBase, timings: *const rtg.RtgTimings, flags: u32, into: [*]u8) u32 {
+        return libraries.call(self, LVO.BuildAviInfoFrame, Fn.BuildAviInfoFrame, .{ timings, flags, into });
+    }
+
+    /// The two numbers a monitor rebuilds the sample clock of a link's sound
+    /// from, N and CTS, for a pixel clock and a sample rate: 128 times the
+    /// rate is the pixel clock times N over CTS. False for a rate or a clock
+    /// of 0, and nothing is written.
+    pub fn HdmiAudioClock(self: *RtgDriverBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, cts: *u32) bool {
+        return libraries.call(self, LVO.HdmiAudioClock, Fn.HdmiAudioClock, .{ pixel_clock_hz, sample_rate, n, cts });
     }
 };

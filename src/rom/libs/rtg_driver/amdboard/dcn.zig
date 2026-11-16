@@ -350,16 +350,6 @@ const acr_cycle_mask: u32 = 0xfffff;
 const acr_samples_shift = 0;
 const acr_samples_mask: u32 = 0xfffff;
 
-/// The samples a cycle for each rate, as the standard for this kind of
-/// link gives them. The cycle itself is then the pixel clock where the
-/// two agree, which is what is written beside each.
-const acr_samples_32 = 4096;
-const acr_samples_44 = 6272;
-const acr_samples_48 = 6144;
-const acr_rate_32 = 32;
-const acr_rate_44_tenths = 441;
-const acr_rate_48 = 48;
-
 /// In the sample clock: which pipe it follows and which of the two is in
 /// use, and what it is divided down to - 24 MHz, in the hundreds of hertz
 /// both halves of the ratio are counted in.
@@ -936,15 +926,23 @@ fn linkUp(engine: Engine, link: u32, endpoint: u32, pixel_khz: u32) void {
     // come before the picture.
     orLink(engine, link, hdmi_clock, acr_sending);
     andLink(engine, link, hdmi_clock, ~(acr_from_what_is_written | acr_before_the_picture));
-    // The pair for each rate. The cycle is the pixel clock where the
-    // samples a cycle and the rate agree, which is what the standard's
-    // numbers are chosen for.
-    setLink(engine, link, acr_32_samples, acr_samples_shift, acr_samples_mask, acr_samples_32);
-    setLink(engine, link, acr_32_cycle, acr_cycle_shift, acr_cycle_mask, cycleFor(pixel_khz, acr_samples_32, acr_rate_32 * 10));
-    setLink(engine, link, acr_44_samples, acr_samples_shift, acr_samples_mask, acr_samples_44);
-    setLink(engine, link, acr_44_cycle, acr_cycle_shift, acr_cycle_mask, cycleFor(pixel_khz, acr_samples_44, acr_rate_44_tenths));
-    setLink(engine, link, acr_48_samples, acr_samples_shift, acr_samples_mask, acr_samples_48);
-    setLink(engine, link, acr_48_cycle, acr_cycle_shift, acr_cycle_mask, cycleFor(pixel_khz, acr_samples_48, acr_rate_48 * 10));
+    // The pair for each rate, as rtg.library works them out: the samples
+    // a cycle the standard's own number for the rate, the cycle the pixel
+    // clock where the two agree.
+    const pairs = [_]struct { rate: u32, samples: u32, cycle: u32 }{
+        .{ .rate = 32_000, .samples = acr_32_samples, .cycle = acr_32_cycle },
+        .{ .rate = 44_100, .samples = acr_44_samples, .cycle = acr_44_cycle },
+        .{ .rate = 48_000, .samples = acr_48_samples, .cycle = acr_48_cycle },
+    };
+    if (engine.rtg_base) |rb| {
+        for (pairs) |pair| {
+            var n: u32 = 0;
+            var cts: u32 = 0;
+            if (!rb.HdmiAudioClock(pixel_khz * 1000, pair.rate, &n, &cts)) continue;
+            setLink(engine, link, pair.samples, acr_samples_shift, acr_samples_mask, n);
+            setLink(engine, link, pair.cycle, acr_cycle_shift, acr_cycle_mask, @min(cts, acr_cycle_mask));
+        }
+    }
     // Which channel each side is, and that the clock is as accurate as
     // such a clock usually is.
     setLink(engine, link, afmt_status_left, status_channel_shift, status_channel_mask, 1);
@@ -964,16 +962,6 @@ fn linkUp(engine: Engine, link: u32, endpoint: u32, pixel_khz: u32) void {
     // Whose samples they are, and that they are being sent.
     writeLink(engine, link, afmt_source, (endpoint & link_from_mask) << link_from_shift);
     orLink(engine, link, afmt_audio, samples_sending);
-}
-
-/// How long a cycle of the sample clock is in pixels: the samples a cycle
-/// over the rate, times the pixel clock. The rate is in tenths of a
-/// kilohertz, so that 44.1 is a whole number of them.
-fn cycleFor(pixel_khz: u32, samples: u32, rate_tenths: u32) u32 {
-    const whole = @as(u64, pixel_khz) * samples * 10;
-    const over = @as(u64, 128) * rate_tenths;
-    const cycle = whole / over;
-    return if (cycle > acr_cycle_mask) acr_cycle_mask else @intCast(cycle);
 }
 
 /// One endpoint told what the far end has and allowed to answer. Its

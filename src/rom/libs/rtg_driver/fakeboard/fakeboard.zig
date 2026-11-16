@@ -87,6 +87,10 @@ pub const Log = struct {
     brightness_calls: u32 = 0,
     /// How often the monitor was asked its brightness.
     brightness_reads: u32 = 0,
+    /// How often the link was told a sound, and the last it was told:
+    /// null for none.
+    audio_calls: u32 = 0,
+    last_audio: ?rtg.RtgAudio = null,
     control_calls: u32 = 0,
     fills: u32 = 0,
     copies: u32 = 0,
@@ -756,6 +760,19 @@ fn power(board: *rtg.RtgBoard, wanted: u32) callconv(.c) i32 {
     return @intCast(wanted);
 }
 
+/// The link's sound, logged; a rate the test board does not carry is
+/// refused.
+fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.audio_calls += 1;
+    if (format) |one| {
+        if (one.sample_rate != 48_000) return err.RTGERR_NOT_SUPPORTED;
+        log.last_audio = one.*;
+    } else log.last_audio = null;
+    return err.RTGERR_OK;
+}
+
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     instanceOf(board).calls += 1;
     const state = stateOfBoard(board);
@@ -1105,6 +1122,7 @@ const full_ops = rtg.RtgBoardOps{
     .refresh = &refresh,
     .power = &power,
     .set_brightness = &setBrightness,
+    .audio = &audio,
     .stats = &stats,
     .control = &control,
     .mirror = &mirror,

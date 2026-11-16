@@ -35,6 +35,7 @@ pub const LVO = struct {
     pub const WaitVBlank = libraries.lvo(27);
     pub const SetBoardPower = libraries.lvo(28);
     pub const SetBoardBrightness = libraries.lvo(29);
+    pub const SetBoardAudio = libraries.lvo(30);
     pub const FillRect = libraries.lvo(31);
     pub const CopyRect = libraries.lvo(33);
     pub const BlitTemplate = libraries.lvo(34);
@@ -89,6 +90,7 @@ pub const Fn = struct {
     pub const WaitVBlank = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const SetBoardPower = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const SetBoardBrightness = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
+    pub const SetBoardAudio = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.RtgAudio) callconv(.c) i32;
     pub const FillRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, u32) callconv(.c) i32;
     pub const CopyRect = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, *const rtg.RtgCopy) callconv(.c) i32;
     pub const BlitTemplate = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgTemplate) callconv(.c) i32;
@@ -228,6 +230,14 @@ pub const RtgBase = opaque {
     /// RTGERR_NOT_SUPPORTED without RTGBC_BRIGHTNESS.
     pub fn SetBoardBrightness(self: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32 {
         return libraries.call(self, LVO.SetBoardBrightness, Fn.SetBoardBrightness, .{ board, percent });
+    }
+
+    /// The board's link carries this sound from now on - the monitor is sent
+    /// what it needs to play the samples the sound's driver feeds the link -
+    /// or none, for null. For the sound's driver. RTGERR_NOT_SUPPORTED
+    /// without RTGBC_AUDIO, RTGERR_NO_MODE while the link is not up.
+    pub fn SetBoardAudio(self: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) i32 {
+        return libraries.call(self, LVO.SetBoardAudio, Fn.SetBoardAudio, .{ board, format });
     }
 
     /// Fill a rectangle, in the buffer's format, right-aligned. The rectangle

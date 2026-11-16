@@ -116,7 +116,11 @@ pub const LIBRARY_VERSION = 1;
 /// 32: LockBitMap and UnlockBitMap: a writer of whole rectangles that is
 /// not the board's engine holds off the picture a flipped board makes of
 /// its buffers, as CopyRect and CopyRects do for an engine.
-pub const LIBRARY_REVISION = 32;
+/// 33: SetBoardAudio and the op `audio` (RTGBC_AUDIO): a display's link
+/// carries the sound its board is told, so the sound's driver asks the
+/// board and reaches no register of the display's; BuildAviInfoFrame
+/// and HdmiAudioClock for the drivers of such links.
+pub const LIBRARY_REVISION = 33;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

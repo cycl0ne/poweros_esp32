@@ -7,8 +7,11 @@
 //! sink for the HDMI sound the board lists (CHIP_BCM2712_HDMI_AUDIO),
 //! named as the board names the part. The part is the DMA channel that
 //! feeds the HDMI controller (PART_Address its registers, PART_Irq its
-//! interrupt); the controller is the display's (`rtg_driver/fbboard/
-//! bcm2712.zig`), which the sound shares with it.
+//! interrupt), with where the controller takes the samples
+//! (PART_DataAddress) and by which request line it asks for them
+//! (PART_DmaRequest). The controller is the display's: its side of the
+//! sound is asked of the display's board (rtg.library's
+//! `SetBoardAudio`), and no register of it is written here.
 //!
 //! The controller takes the sound as IEC 958 subframes, a 32-bit word a
 //! sample: the sample in bits 12 to 27 - the top of the 24 a subframe
@@ -20,14 +23,14 @@
 //! is when the next is late, keeps the blocks where they belong.
 //!
 //! Nothing is touched until the sink is started. That takes the ring's
-//! memory, sets up the controller's MAI for the stream (`audioStart`),
-//! and starts the channel on silence: two buffers, a control block
+//! memory, has the display's board set its link up for the stream, and
+//! starts the channel on silence: two buffers, a control block
 //! apiece, which the channel runs round (`dma40.zig`), raising its
 //! interrupt at the end of each; the interrupt signals the task the sink
 //! was started for, and the task fills the one just played. Stopping it
-//! stops the channel and the MAI and gives the memory back. A sink
-//! started while the display is down, or goes out as DVI, says there is
-//! no output.
+//! stops the channel and the link's sound and gives the memory back. A
+//! sink started while the display is down, or goes out as DVI, says
+//! there is no output.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -42,14 +45,15 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const err = rta.errors;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
-const display = @import("../../rtg_driver/bcm2712board/bcm2712.zig");
+const rtg = sdk.rtg;
+const RtgBase = sdk.interface.rtg.RtgBase;
 const dma40 = @import("dma40.zig");
 
 const MODULE_NAME = "rta-hdmi";
 const DRIVER_NAME = "hdmi";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "29.10.2026";
+const REVISION = 1;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -89,9 +93,17 @@ fn stateOf(driver: *rta.RtaDriver) *State {
 /// memory (RTADF_INTERNAL_INSTANCE).
 const Instance = struct {
     sys: *ExecBase,
-    /// The DMA channel's registers and its interrupt.
+    /// The DMA channel's registers and its interrupt; where the
+    /// controller takes the samples, and its request line at the DMA
+    /// controller.
     channel: usize,
     irq: u32,
+    fifo: usize,
+    request: u32,
+    /// rtg.library, opened when the sink is first started, and the board
+    /// whose link carries the sound while it does.
+    rtg_base: ?*RtgBase = null,
+    board: ?*rtg.RtgBoard = null,
     modes: [1]rta.AudioMode = @splat(.{}),
     /// The ring's memory as AllocVec gave it; in it, each buffer as the
     /// channel reads it and as the task fills it, and the control blocks.
@@ -101,8 +113,7 @@ const Instance = struct {
     blocks: [buffers]*dma40.Block = undefined,
     int: exec.Interrupt = .{},
     int_added: bool = false,
-    /// The MAI set up for the stream, and the channel running.
-    mai: bool = false,
+    /// The channel running.
     up: bool = false,
     /// The task the interrupt signals and with what; the buffers it has
     /// counted, the one that ended last, and the count the last one was
@@ -118,16 +129,6 @@ const Instance = struct {
 fn instanceOf(sink: *rta.AudioSink) *Instance {
     return @ptrCast(@alignCast(sink.instance.?));
 }
-
-/// What the display's calls wait with: the task given away meanwhile.
-const Waiter = struct {
-    sys: *ExecBase,
-
-    pub fn wait(waiter: Waiter, micros: u32) void {
-        var never: exec.Waitable = .{};
-        _ = waiter.sys.WaitForAny(&[_]*exec.Waitable{&never}, 1, micros);
-    }
-};
 
 // --- IEC 958 -----------------------------------------------------------------
 
@@ -170,9 +171,11 @@ fn createSink(made_by: *rta.RtaDriver, sink: *rta.AudioSink, tag_list: ?[*]const
     const state = stateOf(made_by);
     const channel: usize = @intCast(state.utility.GetTagData(st.PART_Address, 0, tag_list));
     const irq: u32 = @truncate(state.utility.GetTagData(st.PART_Irq, 0, tag_list));
-    if (channel == 0 or irq == 0) return err.RTAERR_BAD_TAGS;
+    const fifo: usize = @intCast(state.utility.GetTagData(st.PART_DataAddress, 0, tag_list));
+    const request: u32 = @truncate(state.utility.GetTagData(st.PART_DmaRequest, 0, tag_list));
+    if (channel == 0 or irq == 0 or fifo == 0) return err.RTAERR_BAD_TAGS;
     const instance = instanceOf(sink);
-    instance.* = .{ .sys = state.sys, .channel = channel, .irq = irq };
+    instance.* = .{ .sys = state.sys, .channel = channel, .irq = irq, .fifo = fifo, .request = request };
     instance.int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
         .data = instance,
@@ -235,7 +238,7 @@ fn streamUp(instance: *Instance) i32 {
     for (0..buffers) |i| {
         encode(instance.filled[i], instance.subframes[i]);
         const next = instance.blocks[(i + 1) % buffers];
-        instance.blocks[i].* = dma40.toDevice(@intFromPtr(instance.subframes[i]), display.mai_data, subframe_bytes, display.audio_dreq, @intFromPtr(next));
+        instance.blocks[i].* = dma40.toDevice(@intFromPtr(instance.subframes[i]), instance.fifo, subframe_bytes, instance.request, @intFromPtr(next));
     }
     var all: u32 = @intCast(size);
     _ = sys.CachePreDMA(memory, &all, 0);
@@ -243,8 +246,7 @@ fn streamUp(instance: *Instance) i32 {
     instance.taken = 0;
     instance.last = 0;
 
-    if (!display.audioStart(sys, sample_rate, channels, Waiter{ .sys = sys })) return err.RTAERR_NO_OUTPUT;
-    instance.mai = true;
+    if (!linkUp(instance)) return err.RTAERR_NO_OUTPUT;
     dma40.stop(instance.channel);
     sys.AddIntServer(instance.irq, &instance.int);
     instance.int_added = true;
@@ -253,14 +255,33 @@ fn streamUp(instance: *Instance) i32 {
     return err.RTAERR_OK;
 }
 
+/// The display's board told the stream, so that its link carries it: the
+/// first board rtg.library has whose link takes it. False where none
+/// does - no display, one that is down, a monitor sent no packets.
+fn linkUp(instance: *Instance) bool {
+    const rb: *RtgBase = instance.rtg_base orelse opened: {
+        const library = instance.sys.OpenLibrary(rtg.RTGNAME, 1) orelse return false;
+        instance.rtg_base = @ptrCast(library);
+        break :opened @ptrCast(library);
+    };
+    const format = rtg.RtgAudio{ .sample_rate = sample_rate, .channels = channels, .bits = 16 };
+    var board = rb.NextBoard(null);
+    while (board) |one| : (board = rb.NextBoard(one)) {
+        if (rb.SetBoardAudio(one, &format) != rtg.errors.RTGERR_OK) continue;
+        instance.board = one;
+        return true;
+    }
+    return false;
+}
+
 /// Everything the stream took given back: the channel stopped, then the
-/// MAI, the interrupt out, the memory freed.
+/// link's sound, the interrupt out, the memory freed.
 fn streamDown(instance: *Instance) void {
     const sys = instance.sys;
     if (instance.up) dma40.stop(instance.channel);
     instance.up = false;
-    if (instance.mai) display.audioStop(sys, Waiter{ .sys = sys });
-    instance.mai = false;
+    if (instance.board) |board| _ = instance.rtg_base.?.SetBoardAudio(board, null);
+    instance.board = null;
     if (instance.int_added) sys.RemIntServer(instance.irq, &instance.int);
     instance.int_added = false;
     if (instance.memory) |memory| sys.FreeVec(memory);
@@ -272,7 +293,6 @@ fn start(sink: *rta.AudioSink, mode: *const rta.AudioMode, task: *exec.Task, sig
     const instance = instanceOf(sink);
     if (mode.rate != sample_rate or mode.bits != 16 or mode.channels != channels) return err.RTAERR_BAD_MODE;
     if (instance.up) return err.RTAERR_IN_USE;
-    if (!display.audible(instance.sys)) return err.RTAERR_NO_OUTPUT;
     instance.signal_mask = signal_mask;
     instance.task = task;
     const code = streamUp(instance);

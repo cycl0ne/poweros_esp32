@@ -90,7 +90,7 @@ const bcm2712 = @import("bcm2712.zig");
 const MODULE_NAME = "rtg-bcm2712";
 const DRIVER_NAME = "bcm2712";
 const VERSION = 1;
-const REVISION = 0;
+const REVISION = 1;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -172,6 +172,10 @@ const Screen = struct {
     overlay_shown: bool = false,
     overlay_left: i32 = 0,
     overlay_top: i32 = 0,
+    /// What a mode set and the link's sound both write, kept together,
+    /// and the sound the link was told to carry: null for none.
+    shared: bcm2712.Shared = .{},
+    audio: ?rtg.RtgAudio = null,
     /// How the picture is turned, and whether the monitor is sent
     /// nothing.
     turn: bcm2712.Turn = .{},
@@ -597,6 +601,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     screen.frame_irq = @truncate(rb.GetRtgTagData(st.PART_Irq, 0, tag_list));
     screen.pitch = rowBytes(screen, width);
     sys.InitSemaphore(&screen.port_lock);
+    sys.InitSemaphore(&screen.shared.lock);
+    screen.shared.rtg_base = rb;
 
     // At most as many pictures of the mode the display is in as the
     // board asks for, each taken by the library as it is allocated, from
@@ -754,7 +760,7 @@ fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) 
 /// False, and said on the raw port, when it did not come up.
 fn startPort(screen: *Screen, address: usize) bool {
     const sys = screen.sys;
-    const failure = bcm2712.start(sys, &screen.timings, screen.sink, address, screen.pitch, Waiter{ .screen = screen });
+    const failure = bcm2712.start(sys, &screen.shared, &screen.timings, screen.sink, address, screen.pitch, Waiter{ .screen = screen });
     if (failure != .none) {
         exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, bcm2712.why(failure) });
         return false;
@@ -848,6 +854,30 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
     return err.RTGERR_OK;
 }
 
+/// The link's side of its sound (`SetBoardAudio`): the controller's MAI
+/// set up for the stream - whose samples the sound's driver feeds its
+/// FIFO - sent as audio sample packets with their infoframe and the
+/// numbers the monitor rebuilds the sample clock from; or all of that
+/// off again. A mode set while the sound plays sets the numbers and the
+/// infoframe again (`bcm2712.start`). RTGERR_NO_MODE while the port does
+/// not run, RTGERR_NOT_SUPPORTED where the mode goes out as DVI or the
+/// MAI does not take the format.
+fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
+    const screen = screenOf(board);
+    const sys = screen.sys;
+    const waiter = Waiter{ .screen = screen };
+    const one = format orelse {
+        if (screen.audio != null) bcm2712.audioStop(sys, &screen.shared, waiter);
+        screen.audio = null;
+        return err.RTGERR_OK;
+    };
+    if (screen.scanning == 0) return err.RTGERR_NO_MODE;
+    if (one.bits != 16) return err.RTGERR_NOT_SUPPORTED;
+    if (!bcm2712.audioStart(sys, &screen.shared, one.sample_rate, one.channels, waiter)) return err.RTGERR_NOT_SUPPORTED;
+    screen.audio = one.*;
+    return err.RTGERR_OK;
+}
+
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     into.frames = screenOf(board).updates;
 }
@@ -870,6 +900,7 @@ const ops = rtg.boards.RtgBoardOps{
     .power = &power,
     .set_brightness = &setBrightness,
     .brightness = &brightness,
+    .audio = &audio,
     .mirror = &mirror,
     .pointer = &pointer_ops,
     .overlay = &overlay_ops,

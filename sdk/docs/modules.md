@@ -154,6 +154,7 @@ flowchart TB
     m_sound_drivers --> m_gpio_resource
     m_sound_drivers --> m_i2c_device
     m_sound_drivers --> m_rta_library
+    m_sound_drivers --> m_rtg_library
     m_sound_drivers --> m_timer_device
     m_thermal_resource --> m_ps2_resource
     m_thermal_resource --> m_timer_device

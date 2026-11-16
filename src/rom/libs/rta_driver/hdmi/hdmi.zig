@@ -14,14 +14,15 @@
 //! one, at the highest priority, as Linux's device tree gives the I2S its
 //! channel - and the ring's memory, clocks I2STX0 from the board's
 //! 12.288 MHz oscillator on the part's PART_PinMCLK (`i2s.zig`), starts
-//! the stream on silence and turns the transmitter's sound on
-//! (`transmitter.zig`). The ring is two buffers, an item apiece, which the
+//! the stream on silence and has the display's board turn the link's
+//! sound on (rtg.library's `SetBoardAudio`): the transmitter is the
+//! display's, and no register of it is written here. The ring is two buffers, an item apiece, which the
 //! channel runs round (`sdk.hardware.dwdma`): each item is the last of its
 //! transfer, so the channel raises its interrupt at the end of each, the
 //! interrupt starts it on the other and signals the task the sink was
 //! started for, and the task fills the one just played. Stopping it turns
 //! the sound off and gives everything back. A sink started before the
-//! display driver has the transmitter up says there is no output.
+//! display is up says there is no output.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -39,14 +40,15 @@ const st = expansion.systemtags;
 const BoardPin = expansion.BoardPin;
 const dmares = sdk.resources.dma;
 const dwdma = sdk.hardware.dwdma;
+const rtg = sdk.rtg;
+const RtgBase = sdk.interface.rtg.RtgBase;
 const i2s = @import("i2s.zig");
-const transmitter = @import("transmitter.zig");
 
 const MODULE_NAME = "rta-hdmi";
 const DRIVER_NAME = "hdmi";
 const VERSION = 1;
-const REVISION = 2;
-const BUILD_DATE = "20.10.2026";
+const REVISION = 3;
+const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -89,6 +91,10 @@ const Instance = struct {
     int_added: bool = false,
     /// The stream is going out.
     up: bool = false,
+    /// rtg.library, opened when the sink is first started, and the board
+    /// whose link carries the sound while it does.
+    rtg_base: ?*RtgBase = null,
+    board: ?*rtg.RtgBoard = null,
     /// The task the interrupt signals and with what; the buffers it has
     /// counted and the count the last one was taken at - more than one
     /// between two takes is a buffer the channel went round to before the
@@ -191,17 +197,37 @@ fn streamUp(instance: *Instance) i32 {
     instance.int_added = true;
     dwdma.start(sys, &instance.ring, i2s.dma_handshake);
     i2s.start();
-    transmitter.start(i2s.sample_rate);
     instance.up = true;
+    if (!linkUp(instance)) return err.RTAERR_NO_OUTPUT;
     return err.RTAERR_OK;
+}
+
+/// The display's board told the stream, so that its link carries it: the
+/// first board rtg.library has whose link takes it. False where none
+/// does - no display, or one that is not up.
+fn linkUp(instance: *Instance) bool {
+    const rb: *RtgBase = instance.rtg_base orelse opened: {
+        const library = instance.sys.OpenLibrary(rtg.RTGNAME, 1) orelse return false;
+        instance.rtg_base = @ptrCast(library);
+        break :opened @ptrCast(library);
+    };
+    const format = rtg.RtgAudio{ .sample_rate = i2s.sample_rate, .channels = 2, .bits = 16 };
+    var board = rb.NextBoard(null);
+    while (board) |one| : (board = rb.NextBoard(one)) {
+        if (rb.SetBoardAudio(one, &format) != rtg.errors.RTGERR_OK) continue;
+        instance.board = one;
+        return true;
+    }
+    return false;
 }
 
 /// Everything the stream took given back: the sound off, the channel and
 /// I2STX0 stopped, the interrupt out, the channel and the memory freed.
 fn streamDown(instance: *Instance) void {
     const sys = instance.sys;
+    if (instance.board) |board| _ = instance.rtg_base.?.SetBoardAudio(board, null);
+    instance.board = null;
     if (instance.up) {
-        transmitter.stop();
         dwdma.stop(instance.ring.base, instance.ring.channel);
         i2s.stop();
     }
@@ -220,7 +246,6 @@ fn start(sink: *rta.AudioSink, mode: *const rta.AudioMode, task: *exec.Task, sig
     const instance = instanceOf(sink);
     if (mode.rate != i2s.sample_rate or mode.bits != 16) return err.RTAERR_BAD_MODE;
     if (instance.up) return err.RTAERR_IN_USE;
-    if (!transmitter.present()) return err.RTAERR_NO_OUTPUT;
     instance.signal_mask = signal_mask;
     instance.task = task;
     const code = streamUp(instance);

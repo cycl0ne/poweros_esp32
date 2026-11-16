@@ -378,6 +378,12 @@ pub const PART_PowerModeValue = PART_Dummy + 0x53;
 /// described some other way says nothing here, and nothing reads that
 /// description.
 pub const PART_PowerButton = PART_Dummy + 0x54;
+/// Where a part takes its data, where that is not among the registers
+/// PART_Address names: a FIFO a DMA channel feeds, in another block.
+pub const PART_DataAddress = PART_Dummy + 0x55;
+/// The request line by which a part asks a DMA controller for its data:
+/// the line's number at that controller.
+pub const PART_DmaRequest = PART_Dummy + 0x56;
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.

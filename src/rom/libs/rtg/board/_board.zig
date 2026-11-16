@@ -396,6 +396,7 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     if (ops.stats != null) caps |= rtg.boards.RTGBC_STATS;
     if (ops.control != null) caps |= rtg.boards.RTGBC_CONTROL;
     if (ops.detect != null) caps |= rtg.boards.RTGBC_MONITOR;
+    if (ops.audio != null) caps |= rtg.boards.RTGBC_AUDIO;
     // A pointer and an overlay: the board's own, or the library's on a
     // board whose picture it composes.
     const composed = ops.update != null or ops.flip != null;

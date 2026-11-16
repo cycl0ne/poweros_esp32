@@ -76,8 +76,11 @@ i32 SetBoardPower(*rtg.RtgBoard board, u32 state)
 /// the library keeps the value, and GetBoardInfo answers it.
 /// RTGERR_NOT_SUPPORTED without RTGBC_BRIGHTNESS.
 i32 SetBoardBrightness(*rtg.RtgBoard board, u32 percent)
-// A slot kept free, so the slots after it stay where they are.
-##reserve 1
+/// The board's link carries this sound from now on - the monitor is sent
+/// what it needs to play the samples the sound's driver feeds the link -
+/// or none, for null. For the sound's driver. RTGERR_NOT_SUPPORTED
+/// without RTGBC_AUDIO, RTGERR_NO_MODE while the link is not up.
+i32 SetBoardAudio(*rtg.RtgBoard board, ?*const rtg.RtgAudio format)
 /// Fill a rectangle, in the buffer's format, right-aligned. The rectangle
 /// is cut down to the buffer first; nothing of it inside is RTGERR_OK and
 /// no work. RTGERR_NOT_SUPPORTED unless the board's engine fills - the
