@@ -2091,9 +2091,10 @@ through a cache the CPU writes into writes back the rectangle's
 pixels, so a buffer drawn ahead is whole when it is shown. Where the
 display shows a picture the library composes, the rectangle is also
 turned into the display's own - the lines of each band that shows
-the buffer, a repeating band's all for its first row - and the
-driver delivers those (`update`), with the overlay and the pointer
-over them. A buffer no band shows reaches the glass when it is shown.
+the buffer, a repeating band's all for its first row, a scaled
+band's scaled as the band is - and the driver delivers those
+(`update`), with the overlay and the pointer over them. A buffer no
+band shows reaches the glass when it is shown.
 
 On a board whose display reads the buffers itself, rectangles that do
 not overlap may be handed on at once by several tasks, as tiles drawn
@@ -2801,8 +2802,9 @@ fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32
 
 - `board` - the board.
 - `bitmap` - one of its buffers made `RTGBMF_DISPLAYABLE`, in the
-  format and of the size of the mode the board is in, or null to show
-  nothing.
+  format and of the size of the mode the board is in - of any size on
+  a board that scales its bands (`RTGBC_SCALE_BANDS`), where it is
+  shown scaled to the display's width - or null to show nothing.
 
 **RESULT**
 
@@ -2882,9 +2884,10 @@ fn ShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const 
   the display line its first row sits at (`origin`, at most `line`);
   or, with `RTGBANDF_REPEAT` in its `flags`, a buffer as wide as the
   mode and at least a row high, whose first row every line of the band
-  shows. The first band starts at line 0, every other below the one
-  before, and the last runs to the display's bottom. Null with a
-  `count` of 0.
+  shows. On a board that scales its bands (`RTGBC_SCALE_BANDS`) a
+  buffer may be of any size. The first band starts at line 0, every
+  other below the one before, and the last runs to the display's
+  bottom. Null with a `count` of 0.
 - `count` - 0 to `RTG_MAX_BANDS`; 0 shows nothing.
 
 **RESULT**
@@ -2892,9 +2895,9 @@ fn ShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const 
 `RTGERR_OK`, or: `RTGERR_BAD_MODE` for a number the board has no mode
 of now; `RTGERR_NO_MODE` on a board with no mode; `RTGERR_BAD_ARG` for
 more bands than a display shows, bands out of order, another board's
-buffer, a buffer with no pixels, or rows a band would show that its
-buffer has not got; `RTGERR_NOT_DISPLAYABLE` for a buffer that was not
-made to be shown or is not the mode's size; `RTGERR_BAD_FORMAT` for
+buffer or a buffer with no pixels; `RTGERR_NOT_DISPLAYABLE` for a
+buffer that was not made to be shown, and for one that is not the
+mode's size on a board that scales no bands; `RTGERR_BAD_FORMAT` for
 one not in the mode's format, and for bands the library would compose
 in a format whose pixels are not whole bytes; `RTGERR_NO_DISPLAY` on a
 board whose device has gone; `RTGERR_NOT_SUPPORTED` for a board that
@@ -2906,7 +2909,13 @@ shows nothing, or bands on one that shows only a whole buffer
 The mode and what is shown in it change together. Display line `y` of
 a band shows its buffer's row `y - origin`, so a screen pulled down a
 hundred lines is a band from line 100 with its origin there, and the
-screen behind it a band from line 0 above it. A repeating band shows
+screen behind it a band from line 0 above it. A band whose buffer is
+not the mode's width is shown scaled, by the ratio of the mode's width
+to the buffer's, both ways the same: it fills the display's width,
+line `y` shows the buffer's row `(y - origin) * buffer width / mode
+width`, and neighbouring pixels are mixed where the mode's width is
+not a whole number of the buffer's. A line whose row the buffer has
+not got is black. A repeating band shows
 one row on all its lines: an empty stretch of the display in a colour,
 from a buffer of one row. Every buffer in a band is marked showing and
 cannot be freed; the others of the board are not. `BoardDisplayBitMap`
@@ -2958,8 +2967,13 @@ How the bands reach the glass is the board's: a display that reads
 buffers itself reads as many bands as it can, and one with a picture
 of its own is delivered the picture the library composes of them. A
 board that has both ways reads the buffers itself for as long as
-nothing lies over the picture - no more bands than it reads, no
-overlay, no pointer the library lays.
+nothing lies over the picture - no more bands than it reads, none
+the library scales, no overlay, no pointer the library lays.
+
+A band of another size is scaled by the library where it composes
+the board's picture, and read as it is by a display whose planes
+scale (`RTGBF_SCALES`). What is written into such a buffer is handed
+on as into any other, and reaches the glass scaled.
 
 **BUGS**
 

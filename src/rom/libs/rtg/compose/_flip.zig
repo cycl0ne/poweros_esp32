@@ -319,29 +319,17 @@ pub fn written(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: 
     const private = boards.privateOf(board);
     const compose = &private.compose;
     const state = &compose.flip;
-    const top: u32 = @intCast(cut.y);
-    const rows_end: u32 = top + @as(u32, @intCast(cut.height));
-    const left: u32 = @intCast(cut.x);
 
     var noted = false;
     sys.AcquireLock(&state.damage_lock);
-    const right: u32 = @min(left + @as(u32, @intCast(cut.width)), compose.width);
     const bands = private.bands[0..private.band_count];
-    if (left < right) {
-        for (bands, 0..) |band, i| {
-            if (band.bitmap != bitmap) continue;
-            const band_end = if (i + 1 < bands.len) bands[i + 1].line else compose.height;
-            // The display lines that show the rows written: all of a
-            // band that repeats its buffer's first row, where that row
-            // is among them.
-            const repeats = band.flags & rtg.RTGBANDF_REPEAT != 0;
-            if (repeats and top != 0) continue;
-            const from = if (repeats) band.line else @max(band.line, top +| band.origin);
-            const end = if (repeats) band_end else @min(band_end, rows_end +| band.origin);
-            if (from >= end) continue;
-            state.fresh.add(.{ .left = left, .top = from, .right = right, .end = end });
-            noted = true;
-        }
+    for (bands, 0..) |*band, i| {
+        if (band.bitmap != bitmap) continue;
+        const band_end = if (i + 1 < bands.len) bands[i + 1].line else compose.height;
+        // The rectangle of the display that shows what was written.
+        const seen = composer.shownOf(compose, band, band_end, cut) orelse continue;
+        state.fresh.add(boxOf(seen));
+        noted = true;
     }
     if (noted) state.written = true;
     const read = noted and state.reads_buffer;

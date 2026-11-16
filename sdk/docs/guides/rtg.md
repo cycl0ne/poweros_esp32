@@ -224,8 +224,11 @@ is shown on all the same.
 When the monitor of a board that shows is changed for another, the
 board stays in its mode where the new monitor has it - the link is
 brought up again for it, and what was shown stays shown. Where the new
-monitor has not got the mode, the board shows nothing and is in no mode
-until one is set.
+monitor has not got the mode, what was shown is shown in the mode that
+monitor prefers, scaled by the ratio of the two widths (bands, below),
+so a monitor that is there is not left dark; whoever showed it is told
+and may show again in a mode of its choice. A board that scales no
+bands shows nothing then and is in no mode until one is set.
 
 **Told of it.** `AddRtgNotify(task, signals)` has a task signalled
 whenever something about the boards changed: a board made or gone, a
@@ -446,9 +449,27 @@ on every line. One row then fills a stretch of any height, which is how
 intuition shows the empty part of the display above the backmost screen:
 a row of that screen's background pen, repeated.
 
+**A buffer of another size.** On a board with `RTGBC_SCALE_BANDS` in
+its `caps` a band's buffer need not be the mode's size. One of another
+width is shown scaled by the ratio of the mode's width to its own, both
+ways the same: it fills the display's width, and line `y` of its band
+shows its row `(y - origin) * buffer width / mode width`. A buffer half
+as wide as the mode shows each pixel twice across and on two lines;
+where the mode's width is no whole number of the buffer's, each pixel is
+mixed of the four around its place. A line whose row the buffer has not
+got is black, so a picture of another shape leaves a black stretch
+below it. The library scales as it composes the picture - every board
+whose picture it composes has the cap - and a display whose planes
+scale (`RTGBF_SCALES`) reads such a buffer itself. What is written into
+the buffer is handed on with `RefreshRect` as into any other.
+`C:test/Bands` shows three buffers so - one of the mode's size, one at
+twice its size and one at two thirds - and draws into the second while
+it is shown.
+
 The call checks the bands before the board sees them: in order, every
-buffer the board's own and displayable, of the mode's width, row length
-and format, and as high as the mode except a repeating one. Every buffer
+buffer the board's own and displayable, of the mode's format, and - on
+a board that scales no bands - of the mode's width and row length and
+as high as the mode except a repeating one. Every buffer
 in a band is marked showing; `BoardDisplayBitMap` answers the last
 band's, the one at the bottom. A streaming board takes the new bands up
 at a frame's start, as a flip. The library keeps the bands a board

@@ -38,9 +38,12 @@
 //! in is in the new list, its driver is handed that mode and what was
 //! shown again (`show`, with `RTGSHOW_MODE_CHANGED`), with the timings
 //! the monitor now there gives it, and brings the link up for it. Where
-//! it is not, the board shows nothing and is in no mode until it is
-//! shown in one. Either way its `changes` are
-//! raised and the tasks that asked are told.
+//! it is not, what it showed is shown in the mode the new monitor
+//! prefers, scaled - by the library where it composes the board's
+//! picture, or by planes that scale (`RTGBC_SCALE_BANDS`) - so that a
+//! monitor that is there is not left dark; a board that cannot scale
+//! shows nothing and is in no mode until it is shown in one. Either way
+//! its `changes` are raised and the tasks that asked are told.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -365,8 +368,10 @@ pub fn mark(rb: *RtgBase, board: *rtg.RtgBoard) void {
 /// One board whose driver said its monitor changed, looked at: its
 /// connector asked, its modes made again, and where it shows, its driver
 /// handed the mode it is in again - or, where the monitor now there has
-/// not got that mode, the board put in none, showing nothing. Whether
-/// the look found anything other than the last.
+/// not got that mode, what it showed shown in the mode that monitor
+/// prefers, scaled, and on a board that cannot scale the board put in
+/// none, showing nothing. Whether the look found anything other than
+/// the last.
 fn serve(rb: *RtgBase, board: *rtg.RtgBoard) bool {
     const private = boards.privateOf(board);
     boards.obtain(rb, board);
@@ -381,8 +386,9 @@ fn serve(rb: *RtgBase, board: *rtg.RtgBoard) bool {
         shows.again(rb, board);
         return true;
     }
-    // The monitor has not got the mode the board is in.
-    _ = shows.clear(rb, board);
+    // The monitor has not got the mode the board is in: what it showed
+    // in the mode this one prefers, scaled - or nothing.
+    if (!shows.elsewhere(rb, board)) _ = shows.clear(rb, board);
     return true;
 }
 

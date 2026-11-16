@@ -174,6 +174,10 @@ pub const RTGBF_CONNECTOR: u32 = 1 << 10;
 /// draws in none while it is shown: nothing is copied then. Said by the
 /// driver.
 pub const RTGBF_DIRECT_FLIP: u32 = 1 << 11;
+/// Its display's planes scale: a band whose buffer is not the mode's
+/// size is read by the display as it is, and scaled by it, by the ratio
+/// of the buffer's width to the mode's (`RtgBand`). Said by the driver.
+pub const RTGBF_SCALES: u32 = 1 << 12;
 
 /// RtgBoardInfo.caps: which ops the driver filled in, and what the
 /// library does for the board.
@@ -183,6 +187,12 @@ pub const RTGBF_DIRECT_FLIP: u32 = 1 << 11;
 /// the library composes the board's picture.
 pub const RTGBC_BANDS: u32 = 1 << 0;
 pub const RTGBC_SHOW: u32 = 1 << 1;
+/// A band's buffer need not be the mode's size (`RtgBand`): one of
+/// another width is shown scaled, by the ratio of the two widths, both
+/// ways the same. Set where the library composes the board's picture,
+/// and where the display's planes scale (`RTGBF_SCALES`). A board
+/// without it shows only buffers of the mode's size.
+pub const RTGBC_SCALE_BANDS: u32 = 1 << 2;
 /// Its driver says when a frame ends (`FrameDone`): `WaitVBlank` waits
 /// for the display's own frames, and `RtgBoardStats.blanks` counts them.
 /// Clear on a board that says none, or has stopped saying it: a wait is
@@ -409,13 +419,15 @@ pub const RtgBoardOps = extern struct {
     /// nothing handed on or laid over the picture meanwhile, so a driver
     /// needs no lock of its own for either. The library has checked the
     /// bands - each a displayable buffer of the board with pixels, in the
-    /// mode's format, width and row length, in order from the top - and
-    /// keeps its own copy of them.
+    /// mode's format, in order from the top, and each of the mode's
+    /// width, row length and height unless the board scales its bands
+    /// (`RTGBC_SCALE_BANDS`) - and keeps its own copy of them.
     ///
     /// With `RTGSHOW_DIRECT` the display reads the bands' buffers itself
     /// from now on, no more of them than the board said it reads
-    /// (`RtgBoardSpec.direct_bands`); a driver that reads them later
-    /// keeps a copy. Without it the board shows its own picture, which
+    /// (`RtgBoardSpec.direct_bands`), and each of the mode's size unless
+    /// the board said its planes scale (`RTGBF_SCALES`); a driver that
+    /// reads them later keeps a copy. Without it the board shows its own picture, which
     /// the library composes: the library has the new bands in place, and
     /// the driver fetches all of the picture with `ComposeLines` and
     /// delivers it before it answers - what its `update` does for the
@@ -662,6 +674,13 @@ pub const RTGFLIP_TAKEN: i32 = 1;
 /// down is one: the screen behind shows above it. With `RTGBANDF_REPEAT`
 /// every line of the band shows the buffer's first row instead, so one
 /// row fills a band of any height.
+///
+/// On a board that scales its bands (`RTGBC_SCALE_BANDS`) the buffer
+/// need not be the mode's size. One of another width is shown scaled by
+/// the ratio of the mode's width to its own, both ways the same: across
+/// the whole width of the display, and line `y` of the band shows the
+/// buffer's row `(y - origin) * buffer width / mode width`. A line whose
+/// row the buffer has not got is black.
 pub const RtgBand = extern struct {
     bitmap: *RtgBitMap,
     /// The first display line the band covers.

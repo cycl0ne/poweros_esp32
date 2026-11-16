@@ -252,6 +252,9 @@ pub const State = struct {
     /// on the board that has everything, one whole buffer on the two that
     /// have less, none on one with a picture of its own.
     direct_bands: ?u32 = null,
+    /// Make the next board one whose display's planes scale
+    /// (`RTGBF_SCALES`): it is handed bands of any size to read itself.
+    scales: bool = false,
     /// What `update` answers: RTGERR_OK delivers the rectangle.
     update_answer: i32 = err.RTGERR_OK,
     /// Make the next board one that is flipped between frames: its ops
@@ -1065,6 +1068,15 @@ const composed_ops = rtg.RtgBoardOps{
     .engine = &engine_group,
 };
 
+/// A board with a picture of its own and a connector: its modes are
+/// what the monitor on it names.
+const composed_connector_ops = made: {
+    var more = composed_ops;
+    more.detect = &detect;
+    more.check_mode = &checkMode;
+    break :made more;
+};
+
 /// What is on the connector, as the test set it: whether a monitor is
 /// there, and as much of its EDID as there is room for.
 fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
@@ -1156,7 +1168,7 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
         .ops = if (state.flipped)
             (if (state.own_frames == .library) &flipped_ops else &own_frames_ops)
         else if (state.composed)
-            &composed_ops
+            (if (state.connector) &composed_connector_ops else &composed_ops)
         else if (state.connector)
             &connector_ops
         else if (state.cannot_turn)
@@ -1166,7 +1178,8 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
         else
             &full_ops,
         .instance_size = @sizeOf(Instance),
-        .flags = rtg.boards.RTGBF_STREAMING | (if (state.flipped and state.direct_flip) rtg.boards.RTGBF_DIRECT_FLIP else 0),
+        .flags = rtg.boards.RTGBF_STREAMING | (if (state.flipped and state.direct_flip) rtg.boards.RTGBF_DIRECT_FLIP else 0) |
+            (if (state.scales) rtg.boards.RTGBF_SCALES else 0),
         // Every board of it is cut out of the one display memory: a test
         // takes buffers on one of them.
         .region = .{

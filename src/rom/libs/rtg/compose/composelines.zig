@@ -36,7 +36,10 @@ const _compose = @import("_compose.zig");
 /// Each line of the rectangle comes from the band that covers it - the
 /// buffer's row that far below the band's origin, its first row for a
 /// repeating band - and is black where no band does, as on a board that
-/// shows nothing. Over that the overlay is laid, and over both the
+/// shows nothing. A band whose buffer is not the display's width comes
+/// scaled, by the ratio of the two widths both ways, its neighbouring
+/// pixels mixed where that is no whole number; a line whose row the
+/// buffer has not got is black. Over that the overlay is laid, and over both the
 /// pointer where it is shown: each a masked copy of the part of its
 /// image inside the rectangle. An image the board lays itself
 /// (`RtgPointerOps`, `RtgOverlayOps`) is not laid here.

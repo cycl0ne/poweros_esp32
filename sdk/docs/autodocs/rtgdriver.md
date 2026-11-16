@@ -331,7 +331,10 @@ are not whole bytes, and on a board that was never shown.
 Each line of the rectangle comes from the band that covers it - the
 buffer's row that far below the band's origin, its first row for a
 repeating band - and is black where no band does, as on a board that
-shows nothing. Over that the overlay is laid, and over both the
+shows nothing. A band whose buffer is not the display's width comes
+scaled, by the ratio of the two widths both ways, its neighbouring
+pixels mixed where that is no whole number; a line whose row the
+buffer has not got is black. Over that the overlay is laid, and over both the
 pointer where it is shown: each a masked copy of the part of its
 image inside the rectangle. An image the board lays itself
 (`RtgPointerOps`, `RtgOverlayOps`) is not laid here.
@@ -739,9 +742,12 @@ of the timings it names that the board's `check_mode` takes - a mode
 of the figures of one the board had keeps that mode's number. A board
 that shows is handed the mode it is in and what it shows again
 (`show`), with the timings the new monitor gives it, where the new
-list has that mode; where it has not, the board shows nothing and is
-in no mode until it is shown in one. The board's `changes` are raised and the tasks that asked are
-told (`AddRtgNotify`).
+list has that mode; where it has not, what it showed is shown in the
+mode the new monitor prefers, scaled by the widths, on a board that
+scales its bands (`RTGBC_SCALE_BANDS`), and a board that does not
+shows nothing and is in no mode until it is shown in one. The
+board's `changes` are raised and the tasks that asked are told
+(`AddRtgNotify`).
 
 A driver calls it from its hot-plug interrupt, or from a task of its
 own that looks at the port. Several calls before the task has looked

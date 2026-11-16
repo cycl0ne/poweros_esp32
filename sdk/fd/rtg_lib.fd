@@ -206,7 +206,8 @@ void RemRtgNotify(?*rtg.RtgNotify notify)
 /// Put the board in the mode of that number - 0 keeps the mode it is in,
 /// or takes its default where it is in none - and show these bands in it,
 /// each a buffer from a display line down: a screen pulled down shows
-/// the one behind above it. `count` 0 shows nothing. One step: a show
-/// that fails changes nothing.
+/// the one behind above it. A buffer of another width than the mode's
+/// is shown scaled by the widths, on a board with RTGBC_SCALE_BANDS.
+/// `count` 0 shows nothing. One step: a show that fails changes nothing.
 i32 ShowBoard(*rtg.RtgBoard board, u32 mode_id, ?[*]const rtg.RtgBand bands, u32 count)
 ##end

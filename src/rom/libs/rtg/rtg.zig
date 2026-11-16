@@ -81,6 +81,7 @@ test {
     _ = @import("compose/_compose.zig");
     _ = @import("compose/_damage.zig");
     _ = @import("compose/_flip.zig");
+    _ = @import("compose/_scale.zig");
     _ = @import("compose/composelines.zig");
     _ = @import("bitmap/rtgformatbits.zig");
     _ = @import("bitmap/rtgrowbytes.zig");
@@ -3907,6 +3908,236 @@ test "a picture of four bytes a pixel is composed as one of two is; one of a bit
     try tearDown(rb);
 }
 
+// --- a band of another size ---------------------------------------------------
+
+/// Every pixel of an RGB565 buffer written with one colour.
+fn flood(bitmap: *rtg.RtgBitMap, colour: u16) void {
+    var y: u32 = 0;
+    while (y < bitmap.height) : (y += 1) {
+        var x: u32 = 0;
+        while (x < bitmap.width) : (x += 1) poke(bitmap, x, y, colour);
+    }
+}
+
+test "a band of another width: scaled by the widths as it is composed, both ways the same" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeComposed(rb, 16, 12, 0);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    try testing.expect(infoOf(rb, board).caps & rtg.boards.RTGBC_SCALE_BANDS != 0);
+
+    // Half the width: every pixel twice across and on two lines, none
+    // mixed.
+    const half = base(rb).AllocBitMap(board, 8, 6, format, displayable).?;
+    paint(half, 4);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, half));
+    var y: u32 = 0;
+    while (y < 12) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 16) : (x += 1) try testing.expectEqual(painted(4, x / 2, y / 2), onGlass(board, x, y));
+    }
+    // One pixel written is the four that show it, delivered as that.
+    poke(half, 3, 2, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(half, &.{ .x = 3, .y = 2, .width = 1, .height = 1 }));
+    try testing.expectEqual(rtg.RtgRect{ .x = 6, .y = 4, .width = 2, .height = 2 }, fk.log.last_update);
+    try testing.expectEqual(white, onGlass(board, 6, 4));
+    try testing.expectEqual(white, onGlass(board, 7, 5));
+    try testing.expectEqual(painted(4, 4, 2), onGlass(board, 8, 4));
+    try testing.expectEqual(painted(4, 3, 3), onGlass(board, 6, 6));
+    poke(half, 3, 2, painted(4, 3, 2));
+
+    // In a band under a buffer of the picture's size: its first row at
+    // the band's origin, and the lines its rows do not reach black.
+    const back = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(back, 1);
+    const bands = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = half, .line = 4, .origin = 2 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &bands, bands.len));
+    try testing.expectEqual(painted(1, 3, 3), onGlass(board, 3, 3));
+    try testing.expectEqual(painted(4, 2, 1), onGlass(board, 5, 4));
+    try testing.expectEqual(painted(4, 7, 4), onGlass(board, 15, 11));
+    const lower = [_]rtg.RtgBand{.{ .bitmap = half }};
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &lower, lower.len));
+    base(rb).FreeBitMap(back);
+
+    // One and a half times the width: neighbours mixed. The left half
+    // red and the right half green stay so, and what is written is
+    // delivered with the pixels beside it.
+    const wide = base(rb).AllocBitMap(board, 24, 18, format, displayable).?;
+    flood(wide, red);
+    y = 0;
+    while (y < 18) : (y += 1) {
+        var x: u32 = 12;
+        while (x < 24) : (x += 1) poke(wide, x, y, green);
+    }
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, wide));
+    y = 0;
+    while (y < 12) : (y += 1) {
+        try testing.expectEqual(red, onGlass(board, 0, y));
+        try testing.expectEqual(red, onGlass(board, 6, y));
+        try testing.expectEqual(green, onGlass(board, 9, y));
+        try testing.expectEqual(green, onGlass(board, 15, y));
+    }
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(wide, &.{ .x = 12, .y = 9, .width = 3, .height = 3 }));
+    const told = fk.log.last_update;
+    try testing.expect(told.x <= 8 and told.x + told.width >= 10);
+    try testing.expect(told.y <= 6 and told.y + told.height >= 8);
+    try testing.expect(told.width <= 5 and told.height <= 5);
+
+    // A buffer of the picture's width and fewer rows: the lines past its
+    // last are black.
+    const short = base(rb).AllocBitMap(board, 16, 5, format, displayable).?;
+    paint(short, 6);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, short));
+    try testing.expectEqual(painted(6, 9, 4), onGlass(board, 9, 4));
+    try testing.expectEqual(@as(u16, 0), onGlass(board, 9, 5));
+    try testing.expectEqual(@as(u16, 0), onGlass(board, 15, 11));
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(short);
+    base(rb).FreeBitMap(wide);
+    base(rb).FreeBitMap(half);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a band of another size is never read direct, but by planes that scale; a board with neither refuses it" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const direct = rtg.boards.RTGSHOW_DIRECT;
+
+    // A display that reads one whole buffer itself: one of its size is
+    // read, a smaller one is the library's picture.
+    const board = try makeComposed(rb, 16, 12, 1);
+    const whole = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const half = base(rb).AllocBitMap(board, 8, 6, format, displayable).?;
+    paint(whole, 1);
+    paint(half, 2);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, whole));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, half));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(painted(2, 7, 5), onGlass(board, 15, 11));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, whole));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(half);
+    base(rb).FreeBitMap(whole);
+    driverBase(rb).DeleteBoard(board);
+
+    // Planes that scale: the driver is handed the band as it is.
+    fk.scales = true;
+    const planes = try makeDisplay(rb, 16, 12);
+    fk.scales = false;
+    try testing.expect(infoOf(rb, planes).caps & rtg.boards.RTGBC_SCALE_BANDS != 0);
+    const small = base(rb).AllocBitMap(planes, 8, 6, format, displayable).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(planes, small));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(small, fk.log.bands[0].bitmap);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(planes, null));
+    base(rb).FreeBitMap(small);
+    driverBase(rb).DeleteBoard(planes);
+
+    // Neither: only a buffer of the mode's size.
+    const fixed = try makeDisplay(rb, 16, 12);
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, fixed).caps & rtg.boards.RTGBC_SCALE_BANDS);
+    const other = base(rb).AllocBitMap(fixed, 8, 6, format, displayable).?;
+    const shown_before = fk.log.shown;
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(fixed, other));
+    try testing.expectEqual(shown_before, fk.log.shown);
+    base(rb).FreeBitMap(other);
+    driverBase(rb).DeleteBoard(fixed);
+    try tearDown(rb);
+}
+
+test "a monitor changed for one without the board's mode: what was shown, scaled, in the mode the new one prefers" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const wide_only = smallMonitor(smallTiming(64, 32, 8), null);
+    const square_only = smallMonitor(smallTiming(32, 32, 8), null);
+    fk.composed = true;
+    const board = try makeConnector(rb, std.mem.sliceAsBytes(&wide_only), 0);
+    fk.composed = false;
+    const wide = base(rb).FindBoardMode(board, 64, 32, rtg.RTG_ANY, rtg.RTG_ANY);
+    try testing.expect(wide != 0);
+
+    // Two screens in bands: one red from the top, a blue one pulled down
+    // to the middle.
+    const back = base(rb).AllocBitMap(board, 64, 32, format, displayable).?;
+    const front = base(rb).AllocBitMap(board, 64, 32, format, displayable).?;
+    flood(back, red);
+    flood(front, blue);
+    const bands = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 16, .origin = 16 } };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &bands, bands.len));
+    try testing.expectEqual(wide, infoOf(rb, board).mode_id);
+    const changes = infoOf(rb, board).changes;
+
+    // A monitor of 32 by 32 alone: the board is in that mode, and shows
+    // the same two half as large - the blue one from line 8, its 32 rows
+    // on 16 lines, and nothing below them.
+    fk.monitor_edid = std.mem.sliceAsBytes(&square_only);
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    const info = infoOf(rb, board);
+    const square = base(rb).FindBoardMode(board, 32, 32, rtg.RTG_ANY, rtg.RTG_ANY);
+    try testing.expect(square != 0 and square != wide);
+    try testing.expectEqual(square, info.mode_id);
+    try testing.expectEqual(@as(u32, 32), info.width);
+    try testing.expect(info.changes != changes);
+    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED, fk.log.last_flags);
+    try testing.expectEqual(@as(u32, 2), fk.log.band_count);
+    try testing.expectEqual(@as(u32, 8), fk.log.bands[1].line);
+    try testing.expectEqual(@as(u32, 8), fk.log.bands[1].origin);
+    try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(back.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    try testing.expectEqual(@as(u32, 32), fake.instanceOf(board).picture_width);
+    for ([_]u32{ 0, 15, 31 }) |x| {
+        try testing.expectEqual(red, onGlass(board, x, 0));
+        try testing.expectEqual(red, onGlass(board, x, 7));
+        try testing.expectEqual(blue, onGlass(board, x, 8));
+        try testing.expectEqual(blue, onGlass(board, x, 23));
+        try testing.expectEqual(@as(u16, 0), onGlass(board, x, 24));
+        try testing.expectEqual(@as(u16, 0), onGlass(board, x, 31));
+    }
+    // What is drawn in the screen goes on being delivered, scaled.
+    flood(front, green);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(front, null));
+    try testing.expectEqual(green, onGlass(board, 20, 12));
+    try testing.expectEqual(red, onGlass(board, 20, 4));
+
+    // The first monitor back: its mode is the board's to be shown in
+    // again, the buffers in it as they are.
+    fk.monitor_edid = std.mem.sliceAsBytes(&wide_only);
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(wide, infoOf(rb, board).mode_id);
+    try testing.expectEqual(@as(u32, 16), fk.log.bands[1].line);
+    try testing.expectEqual(green, onGlass(board, 40, 16));
+    try testing.expectEqual(red, onGlass(board, 40, 15));
+
+    // A driver that cannot be put in the new monitor's mode leaves the
+    // board in none, showing nothing.
+    fk.monitor_edid = std.mem.sliceAsBytes(&square_only);
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, board).mode_id);
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expect(back.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
+
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
 // --- a board that is flipped between frames ---------------------------------
 
 /// A board of the test driver's that is flipped between frames, with one
@@ -4077,6 +4308,35 @@ test "a flipped board: the first picture with the mode, each next one made in th
     try testing.expectEqual(free_before - 2 * 12 * @as(usize, back.pitch), freeOf(rb, board));
     base(rb).FreeBitMap(front);
     base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a flipped board scales a band as one with a picture of its own does, and notes what was written scaled" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const board = try makeFlipped(rb, 16, 12);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    try testing.expect(infoOf(rb, board).caps & rtg.boards.RTGBC_SCALE_BANDS != 0);
+    const half = base(rb).AllocBitMap(board, 8, 6, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(half, 4);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, half));
+    var y: u32 = 0;
+    while (y < 12) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 16) : (x += 1) try testing.expectEqual(painted(4, x / 2, y / 2), glassAt(board, x, y));
+    }
+    // One pixel written: the four that show it are in the next picture.
+    poke(half, 5, 1, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(half, &.{ .x = 5, .y = 1, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(white, glassAt(board, 10, 2));
+    try testing.expectEqual(white, glassAt(board, 11, 3));
+    try testing.expectEqual(painted(4, 6, 1), glassAt(board, 12, 2));
+    try testing.expectEqual(painted(4, 5, 2), glassAt(board, 10, 4));
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(half);
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }

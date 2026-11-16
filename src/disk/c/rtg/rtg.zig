@@ -32,7 +32,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.8 (16.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.9 (16.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
@@ -479,6 +479,7 @@ const mode_words = [_]Named{
 const cap_words = [_]Named{
     .{ .bit = rtg.boards.RTGBC_SHOW, .word = "show" },
     .{ .bit = rtg.boards.RTGBC_BANDS, .word = "bands" },
+    .{ .bit = rtg.boards.RTGBC_SCALE_BANDS, .word = "scaled-bands" },
     .{ .bit = rtg.boards.RTGBC_VBLANK, .word = "frames" },
     .{ .bit = rtg.boards.RTGBC_REFRESH, .word = "refresh" },
     .{ .bit = rtg.boards.RTGBC_DISPLAY, .word = "display" },

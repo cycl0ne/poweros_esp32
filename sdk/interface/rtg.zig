@@ -449,8 +449,9 @@ pub const RtgBase = opaque {
     /// Put the board in the mode of that number - 0 keeps the mode it is in,
     /// or takes its default where it is in none - and show these bands in it,
     /// each a buffer from a display line down: a screen pulled down shows
-    /// the one behind above it. `count` 0 shows nothing. One step: a show
-    /// that fails changes nothing.
+    /// the one behind above it. A buffer of another width than the mode's
+    /// is shown scaled by the widths, on a board with RTGBC_SCALE_BANDS.
+    /// `count` 0 shows nothing. One step: a show that fails changes nothing.
     pub fn ShowBoard(self: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const rtg.RtgBand, count: u32) i32 {
         return libraries.call(self, LVO.ShowBoard, Fn.ShowBoard, .{ board, mode_id, bands, count });
     }

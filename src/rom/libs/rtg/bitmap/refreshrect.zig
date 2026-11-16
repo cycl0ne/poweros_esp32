@@ -42,9 +42,10 @@ const composer = @import("../compose/_compose.zig");
 /// pixels, so a buffer drawn ahead is whole when it is shown. Where the
 /// display shows a picture the library composes, the rectangle is also
 /// turned into the display's own - the lines of each band that shows
-/// the buffer, a repeating band's all for its first row - and the
-/// driver delivers those (`update`), with the overlay and the pointer
-/// over them. A buffer no band shows reaches the glass when it is shown.
+/// the buffer, a repeating band's all for its first row, a scaled
+/// band's scaled as the band is - and the driver delivers those
+/// (`update`), with the overlay and the pointer over them. A buffer no
+/// band shows reaches the glass when it is shown.
 ///
 /// On a board whose display reads the buffers itself, rectangles that do
 /// not overlap may be handed on at once by several tasks, as tiles drawn

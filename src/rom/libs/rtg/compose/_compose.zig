@@ -13,6 +13,11 @@
 //! over both. So a board whose driver wrote none of them has bands, an
 //! overlay and a pointer.
 //!
+//! A band's buffer need not be the picture's size on such a board. One
+//! of another width is scaled as it is composed, by the ratio of the two
+//! widths, both ways the same (`_scale.zig`); a line whose row the buffer
+//! has not got is black.
+//!
 //! Everything that goes into the picture changes under the board's
 //! **compose lock**, and the driver's `update` runs inside it: what was
 //! written into a shown buffer (`handOn`), a pointer or an overlay set,
@@ -22,7 +27,8 @@
 //!
 //! A board that has both ways is shown **direct while plain**: for as
 //! long as nothing lies over the picture - no more bands than the display
-//! reads itself, no overlay, no pointer of the library's. When that
+//! reads itself, none of another size than the picture's, no overlay, no
+//! pointer of the library's. When that
 //! changes the board is shown again the other way (`settle`), and back
 //! when it is plain again.
 //!
@@ -49,6 +55,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
 const shows = @import("../display/_display.zig");
 const flips = @import("_flip.zig");
+const scaling = @import("_scale.zig");
 
 /// What the library keeps for a board's picture, beside the bands
 /// (`Private.bands`), the pointer and the overlay (`RtgBoard`).
@@ -157,15 +164,42 @@ pub fn composing(board: *rtg.RtgBoard) bool {
     return composes(board) and private.band_count != 0 and !private.compose.direct;
 }
 
+/// Whether a band's buffer is the size of a mode's picture: its width,
+/// its rows as far apart, and - unless the band repeats one row - its
+/// height. A display reads such a buffer as it is; one of another size
+/// is scaled, by the library as it composes or by planes that scale.
+///
+/// INPUTS:
+/// - `mode` - the mode the band is shown in.
+/// - `band` - the band.
+pub fn sized(mode: *const rtg.RtgMode, band: *const rtg.RtgBand) bool {
+    const bitmap = band.bitmap;
+    if (bitmap.width != mode.width or bitmap.pitch != mode.pitch) return false;
+    return band.flags & rtg.RTGBANDF_REPEAT != 0 or bitmap.height == mode.height;
+}
+
+/// Whether the display reads every one of the bands as it is: each the
+/// mode's size, or the board's planes scale.
+fn readable(board: *const rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgBand) bool {
+    if (board.info.flags & rtg.boards.RTGBF_SCALES != 0) return true;
+    for (bands) |*band| {
+        if (!sized(mode, band)) return false;
+    }
+    return true;
+}
+
 /// Whether bands can be read by the display itself as things stand:
 /// always on a board the library composes nothing for; else no more of
-/// them than the display reads, and nothing of the library's over them.
+/// them than the display reads, none the library would scale, and
+/// nothing of the library's over them.
 ///
 /// INPUTS:
 /// - `board` - the board; its compose lock is held.
-/// - `bands` - the bands, checked for the board's mode.
-pub fn plain(board: *rtg.RtgBoard, bands: []const rtg.RtgBand) bool {
+/// - `mode` - the mode the bands are shown in.
+/// - `bands` - the bands, checked for that mode.
+pub fn plain(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgBand) bool {
     if (!composes(board)) return true;
+    if (!readable(board, mode, bands)) return false;
     if (flips.flipped(board)) return readsBuffer(board, bands);
     const reads = stateOf(board).direct_bands;
     if (bands.len > reads) return false;
@@ -301,9 +335,10 @@ fn bandAt(bands: []const rtg.RtgBand, y: u32) ?*const rtg.RtgBand {
 }
 
 /// The pixels of a rectangle of the board's picture as they are to be
-/// seen: each line from the band that covers it - black where none does -
-/// then the overlay and the pointer over them, where they are the
-/// library's to lay.
+/// seen: each line from the band that covers it - scaled where the
+/// band's buffer is not the picture's width, black where no band covers
+/// it or the buffer has no row for it - then the overlay and the pointer
+/// over them, where they are the library's to lay.
 ///
 /// INPUTS:
 /// - `rb` - the library.
@@ -337,9 +372,20 @@ pub fn lines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into:
             @memset(out[0..row_bytes], 0);
             continue;
         };
-        const source_row: u32 = if (band.flags & rtg.RTGBANDF_REPEAT != 0) 0 else y - band.origin;
+        const line: u32 = if (band.flags & rtg.RTGBANDF_REPEAT != 0) 0 else y - band.origin;
         const bitmap = band.bitmap;
-        const from = bitmap.pixels.? + @as(usize, source_row) * bitmap.pitch + @as(usize, left) * state.bytes;
+        if (bitmap.width != state.width) {
+            // A buffer of another width: scaled, both ways the same.
+            scaling.row(bitmap, state.width, state.bytes, line, left, @intCast(area.width), out);
+            continue;
+        }
+        // A buffer shorter than its band has no row for the lines past
+        // its last.
+        if (line >= bitmap.height) {
+            @memset(out[0..row_bytes], 0);
+            continue;
+        }
+        const from = bitmap.pixels.? + @as(usize, line) * bitmap.pitch + @as(usize, left) * state.bytes;
         sys.CopyMem(from, out, row_bytes);
     }
 
@@ -483,7 +529,8 @@ fn settle(rb: *RtgBase, board: *rtg.RtgBoard, changed: *const Changed) i32 {
     const private = boards.privateOf(board);
     const state = &private.compose;
     if (private.band_count == 0) return err.RTGERR_OK;
-    const direct = plain(board, private.bands[0..private.band_count]);
+    const record = private.mode orelse return err.RTGERR_OK;
+    const direct = plain(board, &record.mode, private.bands[0..private.band_count]);
     if (direct != state.direct) {
         if (!direct and state.bytes == 0) return err.RTGERR_BAD_FORMAT;
         state.direct = direct;
@@ -531,28 +578,62 @@ pub fn handOn(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *
     const private = boards.privateOf(board);
     const state = &private.compose;
     const shown = private.bands[0..private.band_count];
-    const top: u32 = @intCast(cut.y);
-    const rows_end: u32 = top + @as(u32, @intCast(cut.height));
-    // No further right than the picture: a buffer is the mode's width.
-    const right: u32 = @min(@as(u32, @intCast(cut.x + cut.width)), state.width);
-    if (@as(u32, @intCast(cut.x)) >= right) return code;
-    for (shown, 0..) |band, i| {
+    for (shown, 0..) |*band, i| {
         if (band.bitmap != bitmap) continue;
         const band_end = if (i + 1 < shown.len) shown[i + 1].line else state.height;
-        // The display lines that show the rows written.
-        var first: u32 = band.line;
-        var end: u32 = band_end;
-        if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
-            if (top != 0) continue;
-        } else {
-            first = @max(band.line, top +| band.origin);
-            end = @min(band_end, rows_end +| band.origin);
-        }
-        if (first >= end) continue;
-        const answer = update(board, &.{ .x = cut.x, .y = @intCast(first), .width = @intCast(right - @as(u32, @intCast(cut.x))), .height = @intCast(end - first) });
+        const seen = shownOf(state, band, band_end, cut) orelse continue;
+        const answer = update(board, &seen);
         if (code == err.RTGERR_OK) code = answer;
     }
     return code;
+}
+
+/// The rectangle of the display that shows a rectangle of a band's
+/// buffer, or null where the band shows none of it: the lines of the
+/// band whose rows were written - all of a band that repeats its
+/// buffer's first row, where that row is among them - and the columns
+/// written, no further right than the picture. A band that is scaled
+/// shows them scaled, with a pixel more each side where neighbours are
+/// mixed.
+///
+/// INPUTS:
+/// - `state` - the board's compose state, in the mode the bands are
+///   shown in.
+/// - `band` - a band whose buffer the rectangle is of.
+/// - `band_end` - the display line the band ends before.
+/// - `cut` - the rectangle written, cut down to the buffer.
+pub fn shownOf(state: *const State, band: *const rtg.RtgBand, band_end: u32, cut: *const rtg.RtgRect) ?rtg.RtgRect {
+    const bitmap = band.bitmap;
+    const scale = scaling.Scale{ .from = bitmap.width, .to = state.width };
+    const scaled = bitmap.width != state.width;
+    const top: u32 = @intCast(cut.y);
+    const rows_end: u32 = top + @as(u32, @intCast(cut.height));
+    var left: u32 = @intCast(cut.x);
+    var right: u32 = left + @as(u32, @intCast(cut.width));
+    if (scaled) {
+        const across = scale.span(left, right);
+        left = across.first;
+        right = across.end;
+    }
+    right = @min(right, state.width);
+    // The display lines that show the rows written.
+    var first: u32 = band.line;
+    var end: u32 = band_end;
+    if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
+        if (top != 0) return null;
+    } else {
+        var from = top;
+        var to = rows_end;
+        if (scaled) {
+            const down = scale.span(top, rows_end);
+            from = down.first;
+            to = down.end;
+        }
+        first = @max(band.line, from +| band.origin);
+        end = @min(band_end, to +| band.origin);
+    }
+    if (left >= right or first >= end) return null;
+    return .{ .x = @intCast(left), .y = @intCast(first), .width = @intCast(right - left), .height = @intCast(end - first) };
 }
 
 // --- the pointer and the overlay ---------------------------------------------------

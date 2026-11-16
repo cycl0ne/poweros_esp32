@@ -209,6 +209,9 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     private.compose.direct_bands = board.direct_bands;
     if (board.ops) |ops| board.info.caps |= capsOf(ops);
     if (composer.composes(board) or private.compose.direct_bands > 1) board.info.caps |= rtg.boards.RTGBC_BANDS;
+    // A band of another size than the mode's is scaled: by the library
+    // as it composes, or by the board's planes.
+    if (composer.composes(board) or board.info.flags & rtg.boards.RTGBF_SCALES != 0) board.info.caps |= rtg.boards.RTGBC_SCALE_BANDS;
     // Whether its screens' windows are composed is the board's to say,
     // for intuition to read: the device's tags, or its driver where they
     // say nothing.

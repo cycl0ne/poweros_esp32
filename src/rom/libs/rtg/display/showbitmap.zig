@@ -20,8 +20,9 @@ const boards = @import("../board/_board.zig");
 /// INPUTS:
 /// - `board` - the board.
 /// - `bitmap` - one of its buffers made `RTGBMF_DISPLAYABLE`, in the
-///   format and of the size of the mode the board is in, or null to show
-///   nothing.
+///   format and of the size of the mode the board is in - of any size on
+///   a board that scales its bands (`RTGBC_SCALE_BANDS`), where it is
+///   shown scaled to the display's width - or null to show nothing.
 ///
 /// RESULT:
 /// `RTGERR_OK`, or what `ShowBoard` answers for that one buffer from the

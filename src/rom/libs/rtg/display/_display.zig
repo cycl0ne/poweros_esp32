@@ -20,7 +20,13 @@
 //! library says of it.
 //!
 //! A buffer is not touched by a mode change: it keeps its memory, and is
-//! shown again in the mode of its size.
+//! shown again in the mode of its size - or, on a board that scales its
+//! bands (`RTGBC_SCALE_BANDS`), in any mode of its format: a band whose
+//! buffer is not the mode's width is shown scaled by the ratio of the
+//! two widths, both ways the same. That is also what becomes of a
+//! picture whose monitor is changed for one without its mode
+//! (`elsewhere`): it is shown in the mode the new monitor prefers,
+//! scaled.
 //!
 //! A show also says how the picture reaches the glass
 //! (`compose/_compose.zig`): the display reads the bands itself
@@ -118,17 +124,14 @@ fn check(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgB
         if (bm.flags & rtg.bitmaps.RTGBMF_DISPLAYABLE == 0) return err.RTGERR_NOT_DISPLAYABLE;
         if (bm.pixels == null) return err.RTGERR_BAD_ARG;
         if (bm.format != mode.format) return err.RTGERR_BAD_FORMAT;
-        // A buffer of the mode: its width, and rows as far apart as the
-        // mode's are.
-        if (bm.width != mode.width or bm.pitch != mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
-        const repeat = band.flags & rtg.RTGBANDF_REPEAT != 0;
-        if (if (repeat) bm.height == 0 else bm.height != mode.height) return err.RTGERR_NOT_DISPLAYABLE;
+        if (bm.width == 0 or bm.height == 0) return err.RTGERR_NOT_DISPLAYABLE;
+        // A buffer of the mode - its width, rows as far apart as the
+        // mode's, and its height unless one row is repeated - or, on a
+        // board that scales its bands, one of any size.
+        if (!composer.sized(mode, &band) and board.info.caps & rtg.boards.RTGBC_SCALE_BANDS == 0) return err.RTGERR_NOT_DISPLAYABLE;
         if (i == 0 and band.line != 0) return err.RTGERR_BAD_ARG;
         if (i > 0 and band.line <= bands[i - 1].line) return err.RTGERR_BAD_ARG;
         if (band.line >= mode.height or band.origin > band.line) return err.RTGERR_BAD_ARG;
-        // The band's last line shows a row the buffer has.
-        const end = if (i + 1 < bands.len) bands[i + 1].line else mode.height;
-        if (!repeat and end - band.origin > bm.height) return err.RTGERR_BAD_ARG;
     }
     // Several buffers, or one that is not shown whole from its first row,
     // are bands: a board shows them only where its driver said so.
@@ -215,7 +218,7 @@ pub fn show(rb: *RtgBase, board: *rtg.RtgBoard, wanted: ?*modes.Record, bands: [
     // a flipped board no picture is being made either.
     composer.obtainWhole(rb, board);
     defer composer.releaseWhole(rb, board);
-    const direct = composer.plain(board, bands);
+    const direct = composer.plain(board, &target.mode, bands);
     // A picture the library composes is of whole bytes a pixel - and on
     // a flipped board every picture is the library's, black too.
     const composed = if (flips.flipped(board)) true else !direct and bands.len != 0;
@@ -278,6 +281,46 @@ pub fn again(rb: *RtgBase, board: *rtg.RtgBoard) void {
         return;
     }
     leave(rb, board);
+}
+
+/// What a board shows, shown in the mode its monitor now prefers, in
+/// place of a mode that monitor has not got: the same bands, each from
+/// the line it started at as the new picture's width is to the old
+/// one's, their buffers scaled by the library or by the board's planes.
+/// So a monitor that is there is not left dark.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, in a mode it no longer offers; its lock is
+///   held.
+///
+/// RESULT:
+/// Whether it shows what it showed: false on a board that shows nothing,
+/// one with no mode to offer, one that cannot scale a band, and where
+/// its driver refused. The board is then as it was, or - where the
+/// driver was asked - in no mode and showing nothing.
+pub fn elsewhere(rb: *RtgBase, board: *rtg.RtgBoard) bool {
+    const private = boards.privateOf(board);
+    const before = private.mode orelse return false;
+    if (private.band_count == 0) return false;
+    const target = modes.defaultOf(board) orelse return false;
+    if (target == before or !target.offered) return false;
+    // Where each band starts in a picture of the new width: both ways
+    // by the widths, as its buffer is scaled. Two that come to start on
+    // one line are the lower one; one that starts past the bottom is
+    // not shown.
+    var bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
+    var count: usize = 0;
+    for (private.bands[0..private.band_count]) |band| {
+        var moved = band;
+        moved.line = @intCast(@as(u64, band.line) * target.mode.width / before.mode.width);
+        moved.origin = @intCast(@as(u64, band.origin) * target.mode.width / before.mode.width);
+        if (moved.line >= target.mode.height) break;
+        if (count != 0 and bands[count - 1].line == moved.line) count -= 1;
+        bands[count] = moved;
+        count += 1;
+    }
+    return show(rb, board, target, bands[0..count]) == err.RTGERR_OK;
 }
 
 /// What a board shows, shown the other way: its compose state says
