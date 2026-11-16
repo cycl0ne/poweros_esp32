@@ -311,12 +311,11 @@ const packet_general_always: u32 = 1 << 5;
 /// shape carries either kind, and the two differ in exactly what this is
 /// about - the one has blanking with nothing in it, the other has packets
 /// there, which is where sound goes. A firmware that only wants a picture
-/// has no reason to choose the second, and leaves the first.
+/// has no reason to choose the second, and leaves the first; such a link
+/// is left as the firmware drove it, and carries no sound.
 const back_kind_shift = 16;
 
 const back_kind_mask: u32 = 0x7;
-
-const back_kind_picture_only = 2;
 
 const back_kind_with_packets = 3;
 
@@ -464,6 +463,14 @@ pub fn soundUp(engine: dcn.Engine) bool {
         exec.kprintf(engine.sys, "%s: no audio endpoint is wired to a socket, so link %d's sound is left alone\n", .{ dcn.owner, link });
         return false;
     };
+    // A link the firmware drives for a picture alone is left as it is:
+    // its blanking carries nothing, and whether the monitor on it takes
+    // packets is not known here - nothing on this path reads what the
+    // monitor says of itself - so it is not sent any.
+    if (readLink(engine, link, dig_back) >> back_kind_shift & back_kind_mask != back_kind_with_packets) {
+        exec.kprintf(engine.sys, "%s: link %d is driven for a picture alone, so its sound is left alone\n", .{ dcn.owner, link });
+        return false;
+    }
     const pixel_khz = pixelClock(engine) orelse {
         exec.kprintf(engine.sys, "%s: pipe %d's frames cannot be timed, so link %d's sound is left alone\n", .{
             dcn.owner, engine.pipe, link,
@@ -521,7 +528,9 @@ fn wiredEndpoint(engine: dcn.Engine) ?u32 {
 /// clock within half a percent of that, the standard's number is taken
 /// instead: it is the clock the firmware set, and the timing is not as
 /// exact as the standard. Null where the pipe's count does not move,
-/// which is a pipe to leave alone.
+/// which is a pipe to leave alone, and where the timing comes out as no
+/// display's: a frame shorter than `shortest_frame_us`, a clock faster
+/// than `fastest_pixel_khz`.
 fn pixelClock(engine: dcn.Engine) ?u32 {
     const h_total = engine.h_total + 1;
     const v_total = engine.v_total + 1;
@@ -557,10 +566,14 @@ fn pixelClock(engine: dcn.Engine) ?u32 {
             periods[back - 1] = held;
         }
     }
+    // A frame shorter than a millisecond is no display's, and neither is
+    // a pixel clock past what a link carries: the count was read wrong.
     const frame_us = periods[frames_timed / 2];
-    if (frame_us == 0) return null;
+    if (frame_us < shortest_frame_us) return null;
     const whole = @as(u64, h_total) * v_total;
-    const timed_khz: u32 = @intCast(whole * 1000 / frame_us);
+    const measured = whole * 1000 / frame_us;
+    if (measured > fastest_pixel_khz) return null;
+    const timed_khz: u32 = @intCast(measured);
     // The standard's timing of this picture at the refresh timed, where
     // rtg.library has one, with the same totals.
     const rb = engine.rtg_base orelse return timed_khz;
@@ -592,23 +605,14 @@ fn clockUp(engine: dcn.Engine, pixel_khz: u32) void {
     writeClock(engine, audio_dto_phase, dto_phase_hundreds);
 }
 
-/// One link's packet part set to carry the samples of one endpoint.
+/// The shortest frame and the fastest pixel clock a timing may come out
+/// as and still be believed.
+const shortest_frame_us: u64 = 1000;
+const fastest_pixel_khz: u64 = 6_000_000;
+
+/// One link's packet part set to carry the samples of one endpoint, on a
+/// link that carries packets.
 fn linkUp(engine: dcn.Engine, link: u32, endpoint: u32, pixel_khz: u32) void {
-    // The kind of link it is driven as. Where the firmware left it driving
-    // a picture and nothing else, its blanking carries nothing and no
-    // amount of telling the rest of the engine about sound puts anything
-    // there, so it is moved to the kind that carries packets - which is
-    // the same wire, the same mode and the same picture, with the blanking
-    // put to use. Nothing else of the picture is touched: the timing, the
-    // front end and the buffer the pipe reads are left alone. Whether the
-    // monitor takes packets is not asked - nothing on this path reads what
-    // the monitor says of itself - so one that takes a picture alone is
-    // sent them too.
-    const kind = readLink(engine, link, dig_back) >> back_kind_shift & back_kind_mask;
-    if (kind == back_kind_picture_only) {
-        setLink(engine, link, dig_back, back_kind_shift, back_kind_mask, back_kind_with_packets);
-        exec.kprintf(engine.sys, "%s: link %d was driving a picture only; it now carries packets too\n", .{ dcn.owner, link });
-    }
     // Nothing of its own between the packets it is asked to send.
     orLink(engine, link, hdmi_control, control_no_extra_empty);
     // The blanking filled: the general control sent and kept being sent,

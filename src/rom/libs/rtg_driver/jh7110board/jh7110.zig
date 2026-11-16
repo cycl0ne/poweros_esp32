@@ -44,15 +44,6 @@ const phy = @import("phy.zig");
 /// display does not wake, and none of that is built.
 const on_jh7110 = sdk.hardware.chip == .rv64sbi;
 
-/// The power management unit: a domain is switched by writing its bit to
-/// the switch register and the "encourage" sequence after it.
-const PMU: usize = 0x1703_0000;
-const PMU_SW_TURN_ON = PMU + 0x0C;
-const PMU_SW_ENCOURAGE = PMU + 0x44;
-const PMU_CURR_POWER_MODE = PMU + 0x80;
-const DOMAIN_VOUT: u32 = 1 << 4;
-const ENCOURAGE = [_]u32{ 0xFF, 0x05, 0x50 };
-
 /// The bus to the VOUT domain and the domain's top: their clocks and
 /// resets in the system generator.
 const sys_clocks = [_]u32{ system.SYSCLK_NOC_BUS_DISP_AXI, system.SYSCLK_VOUT_SRC, system.SYSCLK_VOUT_TOP_AXI, system.SYSCLK_VOUT_TOP_AHB };
@@ -233,18 +224,6 @@ fn locked(port: Port, index: usize) bool {
     return false;
 }
 
-/// The VOUT domain switched on, if it is off.
-fn powerOn() bool {
-    if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT != 0) return true;
-    reg(PMU_SW_TURN_ON).* = DOMAIN_VOUT;
-    for (ENCOURAGE) |value| reg(PMU_SW_ENCOURAGE).* = value;
-    var tries: u32 = 0;
-    while (tries < patience) : (tries += 1) {
-        if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT != 0) return true;
-    }
-    return false;
-}
-
 /// Whether a monitor is on the port: the transmitter's hot-plug line.
 /// Only once `wake` has the transmitter out of reset.
 pub fn monitor(port: Port) bool {
@@ -274,8 +253,9 @@ fn takePins(port: Port) void {
 /// exec's; `waiter.wait(micros)` waits that long.
 pub fn wake(port: Port, sys: *ExecBase, waiter: anytype) Failure {
     if (!on_jh7110) return .power;
-    if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) {
-        if (!powerOn()) return .power;
+    // The display's power domain, switched by the chip's power manager.
+    if (!system.powered(system.PD_VOUT)) {
+        if (!system.powerOn(system.PD_VOUT)) return .power;
         waiter.wait(50_000);
     }
 

@@ -111,13 +111,24 @@ pub fn forget(windows: *Windows) void {
     windows.sys.CloseLibrary(windows.library);
 }
 
+/// The most capabilities a function's 256 bytes of configuration hold:
+/// each is three bytes at the least, on a boundary of four, past the 64
+/// of the header.
+const capabilities_most = (256 - 64) / 4;
+
 /// The function's windows, from its capability chain. Null where the
 /// common configuration or the notify window is missing, which is a
 /// device of the arrangement from before the standard.
 fn windowsOf(sys: *ExecBase, lib: *exec.Library, base: *PCIBase, device: *PCIDevice) ?Windows {
     var windows: Windows = .{ .device = device, .library = lib, .base = base, .sys = sys };
     var at = base.FindPCICapability(device, pci.PCI_CAP_ID_VNDR, 0);
-    while (at != 0) : (at = base.FindPCICapability(device, pci.PCI_CAP_ID_VNDR, at)) {
+    // No more of them than a function's configuration space has room
+    // for: a chain that circles is walked no further.
+    var seen: u32 = 0;
+    while (at != 0 and seen < capabilities_most) : ({
+        at = base.FindPCICapability(device, pci.PCI_CAP_ID_VNDR, at);
+        seen += 1;
+    }) {
         const kind = base.ReadPCIConfig(device, at + CAP_TYPE, 1);
         const which = base.ReadPCIConfig(device, at + CAP_BAR, 1);
         const offset = base.ReadPCIConfig(device, at + CAP_OFFSET, 4);

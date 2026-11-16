@@ -86,7 +86,7 @@ const jh7110 = @import("jh7110.zig");
 const MODULE_NAME = "rtg-jh7110";
 const DRIVER_NAME = "jh7110";
 const VERSION = 1;
-const REVISION = 2;
+const REVISION = 3;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -560,8 +560,10 @@ const VideoCut = struct { at: u32, shown: u32, from: u32, read: u32 };
 /// whole `unit`s, so where the display cuts a place's left or top the
 /// picture may start up to a unit early.
 fn videoCut(from: i32, read: i32, at: i32, shown: i32, side: u32, step: u32, unit: u32) ?VideoCut {
-    const start = @max(at, 0);
-    const end = @min(at + shown, @as(i32, @intCast(side)));
+    // Wide: a place may be put anywhere, and its far edge past what 32
+    // bits hold.
+    const start: i64 = @max(at, 0);
+    const end: i64 = @min(@as(i64, at) + shown, @as(i64, side));
     if (end - start < 2) return null;
     const off: u64 = @intCast(start - at);
     const skipped: u32 = @intCast((off * @as(u64, @intCast(read)) / @as(u64, @intCast(shown))) / unit * unit);
@@ -633,9 +635,9 @@ fn videoPut(screen: *Screen) bool {
 /// Whether `read` pixels scale to `shown`: three times up at most, a
 /// tenth down.
 fn videoScales(read: i32, shown: i32) bool {
-    const r: u64 = @intCast(read);
-    const s: u64 = @intCast(shown);
-    return s <= r * jh7110.video_max_up and s * jh7110.video_max_down >= r;
+    const from: u64 = @intCast(read);
+    const into: u64 = @intCast(shown);
+    return into <= from * jh7110.video_max_up and into * jh7110.video_max_down >= from;
 }
 
 /// What a start of the port leaves - its first overlay off, in U-Boot's

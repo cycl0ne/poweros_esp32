@@ -78,7 +78,7 @@ pub const VCP_BRIGHTNESS: u8 = 0x10;
 /// as Linux's brcmstb_i2c_xfer has a read after its write: the first
 /// starts again after the write and keeps the bus, the ones after go on
 /// without a start, the last ends with a stop.
-pub fn readCondition(first: bool, last: bool) u32 {
+fn readCondition(first: bool, last: bool) u32 {
     if (first and last) return 0;
     if (first) return COND_NOSTOP;
     if (last) return COND_NOSTART;
@@ -176,7 +176,7 @@ pub fn scdcScrambling(port: *const bcm2712.Port, on: bool, waiter: anytype) bool
 }
 
 /// A control's value as the monitor answers it, and its largest.
-pub const Feature = struct { value: u16, most: u16 };
+const Feature = struct { value: u16, most: u16 };
 
 /// What a message's checksum makes of `from` and its bytes: each XORed
 /// in.
@@ -188,14 +188,14 @@ fn checksum(from: u8, bytes: []const u8) u8 {
 
 /// The message that asks for control `code`: from the host, two bytes
 /// long, the opcode and the control, and the checksum.
-pub fn askFor(code: u8) [5]u8 {
+fn askFor(code: u8) [5]u8 {
     var message = [5]u8{ DDCCI_HOST, 0x80 | 2, DDCCI_GET, code, 0 };
     message[4] = checksum(DDCCI_WRITTEN_SUM, message[0..4]);
     return message;
 }
 
 /// The message that sets control `code` to `value`, high byte first.
-pub fn setTo(code: u8, value: u16) [7]u8 {
+fn setTo(code: u8, value: u16) [7]u8 {
     var message = [7]u8{ DDCCI_HOST, 0x80 | 4, DDCCI_SET, code, @truncate(value >> 8), @truncate(value), 0 };
     message[6] = checksum(DDCCI_WRITTEN_SUM, message[0..6]);
     return message;
@@ -205,7 +205,7 @@ pub fn setTo(code: u8, value: u16) [7]u8 {
 /// bytes long, a reply that it has the control, its largest value and
 /// its value, and a checksum that adds up. Null for anything else - a
 /// monitor that has not got the control, or was not ready.
-pub fn answerOf(answer: *const [11]u8, code: u8) ?Feature {
+fn answerOf(answer: *const [11]u8, code: u8) ?Feature {
     if (answer[0] != DDCCI_WRITTEN_SUM or answer[1] != 0x80 | 8) return null;
     if (answer[2] != DDCCI_REPLY or answer[3] != 0 or answer[4] != code) return null;
     if (checksum(DDCCI_ANSWER_SUM, answer[0..10]) != answer[10]) return null;

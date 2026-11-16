@@ -56,7 +56,7 @@ pub const Framebuffer = struct {
 /// believed about nothing else either.
 pub fn find(address: usize, pitch: u32, width: u32, height: u32, bytes: u32) ?Framebuffer {
     if (address == 0 or width == 0 or height == 0 or bytes == 0) return null;
-    if (pitch < width * bytes) return null;
+    if (pitch < @as(u64, width) * bytes) return null;
     return .{
         .pixels = address,
         .pitch = pitch,

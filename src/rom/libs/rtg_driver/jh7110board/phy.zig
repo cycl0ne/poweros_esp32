@@ -143,18 +143,6 @@ pub fn image(entry: *const Pll) Image {
     };
 }
 
-/// The pixel clock the pre-PLL makes when its registers read `regs`
-/// (0x1A1-0x1A6) and `frac` (0x1D1-0x1D3); 0 for none of these.
-pub fn clockOf(regs: [6]u8, frac: [3]u8) u32 {
-    for (&plls) |*entry| {
-        const set = image(entry);
-        if (!std.mem.eql(u8, &set.regs, &regs)) continue;
-        if (entry.frac != 0 and !std.mem.eql(u8, &set.frac, &frac)) continue;
-        return entry.pixel_khz;
-    }
-    return 0;
-}
-
 /// The post-PLL for a TMDS clock: 0x1AB, 0x1AC, 0x1AD, then 0x1AA - its
 /// post divider on (0x0E) or bypassed (0x02), powered up either way.
 pub fn post(pixel_khz: u32) [4]u8 {
@@ -172,14 +160,6 @@ test "148.5 MHz is U-Boot's 1080p setting" {
     const set = image(find(148_500).?);
     try testing.expectEqualSlices(u8, &.{ 0x01, 0xF0, 0x63, 0x15, 0x41, 0x42 }, &set.regs);
     try testing.expectEqualSlices(u8, &.{ 0x01, 0x14, 0x01, 0x0E }, &post(148_500));
-}
-
-test "each clock reads back as itself" {
-    for (&plls) |*entry| {
-        const set = image(entry);
-        try testing.expectEqual(entry.pixel_khz, clockOf(set.regs, set.frac));
-    }
-    try testing.expectEqual(@as(u32, 0), clockOf(.{ 0, 0, 0, 0, 0, 0 }, .{ 0, 0, 0 }));
 }
 
 test "the standard modes the port can send: all but 4K at 60 and 50 Hz" {

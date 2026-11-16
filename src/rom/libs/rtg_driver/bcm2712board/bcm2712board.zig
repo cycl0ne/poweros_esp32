@@ -94,7 +94,7 @@ const list = @import("list.zig");
 const MODULE_NAME = "rtg-bcm2712";
 const DRIVER_NAME = "bcm2712";
 const VERSION = 1;
-const REVISION = 3;
+const REVISION = 4;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++

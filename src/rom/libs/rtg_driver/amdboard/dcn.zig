@@ -11,9 +11,7 @@
 //! copying it into the one buffer the firmware named.
 //!
 //! **What is written, and what is not.** The mode the firmware chose and
-//! the link it trained are left as they were found - the one change to
-//! the link is that one driven for a picture alone is moved to the kind
-//! that carries packets as well (`sound.soundUp`). What the fetcher reads is
+//! the link it trained are left as they were found. What the fetcher reads is
 //! written: the board shows two frames, the firmware's framebuffer and
 //! one of the device's own memory (`newFrame`), and has the fetcher read
 //! the other at the pipe's next update (`flip`) - the point in each
@@ -83,6 +81,18 @@ pub const owner = "rtg-fb";
 /// the engine is given.
 const block_wanted = 2;
 const clocks_wanted = 1;
+
+/// The engine whose registers these files name: every offset here is
+/// that version's, and another's are elsewhere.
+const engine_major = 3;
+const engine_minor = 1;
+const engine_revision = 4;
+
+/// How far, in 32-bit words, the registers read and written here reach
+/// from where the display block's are counted - the last link's sound is
+/// the furthest - and from where the clocks' are.
+const display_reach: u64 = 0x2800;
+const clocks_reach: u64 = 0x100;
 
 // --- the registers, counted in 32-bit words from the block -------------------------
 
@@ -190,7 +200,10 @@ pub const Engine = struct {
 /// display engine, or one no pipe of which is scanning the picture the
 /// firmware described. Each of those is said out loud: what this reads is
 /// worth knowing even when it comes to nothing, since it is read on a
-/// machine the author does not have.
+/// machine the author does not have. Null as well for an engine of
+/// another version than the one whose registers these files name, and
+/// for a table that counts the engine's registers from outside the
+/// device's own: nothing of such an engine is read or written.
 pub fn find(sys: *ExecBase, fb: uefi.Framebuffer) ?Engine {
     const resource = sys.OpenResource(amdgpu.AMDGPUNAME) orelse return null;
     const gpu: *AMDGPUBase = @ptrCast(resource);
@@ -203,6 +216,28 @@ pub fn find(sys: *ExecBase, fb: uefi.Framebuffer) ?Engine {
     var block: amdgpu.GPUBlock = .{};
     if (!gpu.FindGPUBlock(amdgpu.GPUBLOCK_DISPLAY, 0, &block) or block.count <= block_wanted) {
         return say(sys, info, "its table of blocks holds no display engine");
+    }
+    // The registers named here are one version's. An engine of another
+    // is read and written nowhere: its picture stays the firmware's
+    // framebuffer's, copied into.
+    if (block.major != engine_major or block.minor != engine_minor or block.revision != engine_revision) {
+        exec.kprintf(sys, "%s: the display engine is %d.%d.%d, and only %d.%d.%d is driven here\n", .{
+            owner,
+            @as(u32, block.major),
+            @as(u32, block.minor),
+            @as(u32, block.revision),
+            @as(u32, engine_major),
+            @as(u32, engine_minor),
+            @as(u32, engine_revision),
+        });
+        return null;
+    }
+    // And they lie inside the device's own: a table that counts them
+    // from past its end is believed about nothing.
+    const display_end = (@as(u64, block.addresses[block_wanted]) + display_reach) * 4;
+    const clocks_end = (@as(u64, block.addresses[clocks_wanted]) + clocks_reach) * 4;
+    if (display_end > info.registers_bytes or clocks_end > info.registers_bytes) {
+        return say(sys, info, "its table counts the display engine's registers from past the end of its own");
     }
     var engine: Engine = .{
         .sys = sys,

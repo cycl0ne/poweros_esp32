@@ -282,8 +282,8 @@ const VID_BLANK_INSERT_EN: u32 = 1 << 16;
 /// header in the first and its four subpackets of seven bytes in the
 /// eight after, each four bytes then three.
 const PACKET_STRIDE = 0x24;
-pub const INFOFRAME_VENDOR: u8 = 0x81;
-pub const INFOFRAME_AVI: u8 = 0x82;
+const INFOFRAME_VENDOR: u8 = 0x81;
+const INFOFRAME_AVI: u8 = 0x82;
 
 const SCDC_SCRAMBLER_STATUS: u8 = 0x21;
 pub const SCDC_SCRAMBLING: u8 = 1 << 0;
@@ -334,7 +334,7 @@ const patience: u32 = 1_000_000;
 
 /// Why the display did not come up: the firmware did not set its clocks,
 /// or the port sends no such pixel clock.
-pub const Failure = enum { none, firmware, clock };
+const Failure = enum { none, firmware, clock };
 
 /// What went wrong, said on the raw port.
 pub fn why(failure: Failure) [*:0]const u8 {
@@ -428,12 +428,12 @@ fn startDisp(port: *const Port, sys: *ExecBase) bool {
 }
 
 /// The HSM's rate for a TMDS clock of `tmds_hz`.
-pub fn hsmHz(tmds_hz: u64) u64 {
+fn hsmHz(tmds_hz: u64) u64 {
     return @max(HSM_MIN_HZ, tmds_hz / 100 * 101);
 }
 
 /// The BVB's rate for a TMDS clock of `tmds_hz`.
-pub fn bvbHz(tmds_hz: u64) u64 {
+fn bvbHz(tmds_hz: u64) u64 {
     if (tmds_hz > 297_000_000) return 300_000_000;
     if (tmds_hz > 148_500_000) return 150_000_000;
     return 75_000_000;
@@ -492,7 +492,7 @@ const max_khz: u32 = 600_000;
 
 /// Whether the port can send a mode of that pixel clock - to a monitor
 /// that takes it, which the library sees to.
-pub fn sends(pixel_khz: u32) bool {
+fn sends(pixel_khz: u32) bool {
     return pixel_khz != 0 and pixel_khz <= max_khz;
 }
 
@@ -516,7 +516,7 @@ pub fn makes(mode: *const rtg.RtgTimings) bool {
 /// The VCO's divider for a TMDS clock of `tmds_hz`: halfway between the
 /// least that brings ten times the clock up to 8 GHz and the most that
 /// keeps it under 12 (vc6_phy_get_vco_freq).
-pub fn vcoDivider(tmds_hz: u64) u32 {
+fn vcoDivider(tmds_hz: u64) u32 {
     var div: u64 = 0;
     while (tmds_hz * div * 10 < VCO_MIN_HZ) div += 1;
     const least = div;
@@ -526,14 +526,14 @@ pub fn vcoDivider(tmds_hz: u64) u32 {
 
 /// The rate manager's offset for the VCO at `vco_hz`: twice it over the
 /// crystal, in 9.22 fixed point (phy_get_rm_offset).
-pub fn rmOffset(vco_hz: u64) u32 {
+fn rmOffset(vco_hz: u64) u32 {
     return @intCast(((vco_hz * 2) << 22) / CRYSTAL_HZ >> 2);
 }
 
 /// A lane's drive (CTL_0 to CTL_2, and CTL_CK for the clock lane) at a
 /// TMDS clock of `tmds_hz`, as vc6_hdmi_phy_settings has it: three bands
 /// of currents, termination and slew, to 222, 297 and 597 MHz.
-pub fn laneDrive(tmds_hz: u64, clock_lane: bool) u32 {
+fn laneDrive(tmds_hz: u64, clock_lane: bool) u32 {
     if (tmds_hz <= 222_000_000) return 0x8082_8700;
     if (tmds_hz <= 297_000_000) return if (clock_lane) 0xC087_0800 else 0xC087_0000;
     return if (clock_lane) 0x849F_8F00 else 0x848F_8700;
@@ -570,7 +570,7 @@ fn phyStart(port: *const Port, tmds_hz: u64) void {
 /// How a mode goes to a monitor: as HDMI or DVI; its RGB squashed to
 /// 16-235 or not; the range said in the AVI infoframe or left to the
 /// monitor's default; the TMDS scrambled.
-pub const Output = struct {
+const Output = struct {
     hdmi: bool,
     limited: bool,
     range_said: bool,
@@ -601,7 +601,7 @@ pub const Sink = struct {
 /// How `mode` goes to the monitor `sink` says it is. A CEA mode but the
 /// first is taken as limited range unless the AVI infoframe says
 /// otherwise, which it may where the monitor lets it (QS).
-pub fn outputFor(sink: Sink, mode: *const rtg.RtgTimings) Output {
+fn outputFor(sink: Sink, mode: *const rtg.RtgTimings) Output {
     const cea_limited = sink.hdmi and mode.vic > 1;
     return .{
         .hdmi = sink.hdmi,
@@ -631,7 +631,7 @@ pub fn infoframe(kind: u8, version: u8, body: []const u8) Infoframe {
 /// HDMI 1.4's numbers for the 4K modes it sends in its vendor infoframe
 /// rather than the AVI infoframe - to a monitor that is not HDMI 2.0 -
 /// by their CEA numbers; 0 for any other mode.
-pub fn hdmiVic(vic: u8) u8 {
+fn hdmiVic(vic: u8) u8 {
     return switch (vic) {
         95 => 1,
         94 => 2,
@@ -651,7 +651,7 @@ fn aviVic(sink: Sink, mode: *const rtg.RtgTimings) u8 {
 /// What the AVI infoframe for `mode` says beyond its picture, as
 /// `BuildAviInfoFrame` takes it: the range when it is said, and no number
 /// for a mode the vendor infoframe carries instead.
-pub fn aviFlags(sink: Sink, mode: *const rtg.RtgTimings, output: Output) u32 {
+fn aviFlags(sink: Sink, mode: *const rtg.RtgTimings, output: Output) u32 {
     var flags: u32 = 0;
     if (output.range_said) flags |= if (output.limited) rtg.RTGAVI_RANGE_LIMITED else rtg.RTGAVI_RANGE_FULL;
     if (aviVic(sink, mode) == 0) flags |= rtg.RTGAVI_NO_VIC;
@@ -668,7 +668,7 @@ fn aviFrame(shared: *const Shared, sink: Sink, mode: *const rtg.RtgTimings, outp
 }
 
 /// HDMI's vendor infoframe naming HDMI 1.4's 4K mode `hdmi_vic`.
-pub fn vendorFrame(hdmi_vic: u8) Infoframe {
+fn vendorFrame(hdmi_vic: u8) Infoframe {
     return infoframe(INFOFRAME_VENDOR, 1, &.{ 0x03, 0x0C, 0x00, 0x20, hdmi_vic });
 }
 

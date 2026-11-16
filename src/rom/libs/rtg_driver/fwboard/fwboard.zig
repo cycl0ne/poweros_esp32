@@ -61,7 +61,7 @@ const uefi = @import("uefi.zig");
 const MODULE_NAME = "rtg-fw";
 const DRIVER_NAME = "fw";
 const VERSION = 1;
-const REVISION = 0;
+const REVISION = 1;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++

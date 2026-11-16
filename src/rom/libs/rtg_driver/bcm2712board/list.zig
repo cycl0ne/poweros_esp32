@@ -79,7 +79,7 @@ const UPM_UNIT = 256;
 /// `handle`: with alpha its pixels' own (the cursor's), or opaque (the
 /// picture's), and seen or not; each row read from its right end, the
 /// rows from the bottom up - `address` then the last row's.
-pub const Plane = struct {
+const Plane = struct {
     address: usize,
     pitch: u32,
     x: u32 = 0,
@@ -95,7 +95,7 @@ pub const Plane = struct {
 };
 
 /// The plane's nine words (vc6_plane_mode_set, vc6_plane_allocate_upm).
-pub fn planeOf(plane: Plane) [plane_words]u32 {
+fn planeOf(plane: Plane) [plane_words]u32 {
     const mask = if (plane.alpha) 0 else CTL0_ALPHA_MASK_FIXED;
     const ctl2 = if (plane.seen) CTL2_PREMULT | ALPHA_OPAQUE << CTL2_ALPHA_SHIFT else CTL2_PREMULT | CTL2_ALPHA_MIX;
     return .{
@@ -119,7 +119,7 @@ fn upper(address: usize) u32 {
 
 /// The units of UPM a plane of rows `pitch` bytes apart takes: two lines
 /// of 32-byte words, with one to spare (vc6_upm_size).
-pub fn upmUnits(pitch: u32) u32 {
+fn upmUnits(pitch: u32) u32 {
     const line = (pitch + 62) / 32 * 32;
     return (line * 2 + UPM_UNIT - 1) / UPM_UNIT;
 }
@@ -134,7 +134,7 @@ pub const Turn = struct { x: bool = false, y: bool = false };
 /// An image laid over the picture - the cursor, the overlay: `width` by
 /// `height` pixels of ARGB at `address`, rows `pitch` bytes apart, with
 /// its piece of the UPM.
-pub const Image = struct {
+const Image = struct {
     address: usize,
     pitch: u32,
     width: u32,
@@ -147,7 +147,7 @@ pub const Image = struct {
 /// `width` by `height` that is turned `turn`: where the turned picture
 /// has it, cut to the glass, and read backwards where the picture is.
 /// An image wholly off the glass is a hidden pixel.
-pub fn imagePlaneOf(image: Image, left: i32, top: i32, width: u32, height: u32, turn: Turn, seen: bool) Plane {
+fn imagePlaneOf(image: Image, left: i32, top: i32, width: u32, height: u32, turn: Turn, seen: bool) Plane {
     const w: i32 = @intCast(image.width);
     const h: i32 = @intCast(image.height);
     const glass_w: i32 = @intCast(width);

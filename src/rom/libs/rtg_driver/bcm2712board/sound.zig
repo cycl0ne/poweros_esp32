@@ -79,7 +79,7 @@ const CRP_EXTERNAL_CTS: u32 = 1 << 24;
 /// The DVP's 108 MHz, which the MAI's sample clock is divided from.
 const AUDIO_CLOCK_HZ: u64 = 108_000_000;
 
-pub const INFOFRAME_AUDIO: u8 = 0x84;
+const INFOFRAME_AUDIO: u8 = 0x84;
 
 /// The audio infoframe for `channels` of LPCM: the rest as the stream's
 /// own header says, the speakers front left and right.
@@ -88,7 +88,7 @@ pub fn audioFrame(channels: u32) bcm2712.Infoframe {
 }
 
 /// The MAI's code for a sample rate; 0, not said, for any other.
-pub fn rateCode(rate: u32) u32 {
+fn rateCode(rate: u32) u32 {
     return switch (rate) {
         32_000 => 7,
         44_100 => 8,
@@ -104,7 +104,7 @@ pub fn rateCode(rate: u32) u32 {
 /// The MAI's sample clock for `rate`: 108 MHz divided by N over M, the
 /// nearest fraction with M to 256 (vc4_hdmi_audio_set_mai_clock), as its
 /// register holds them - N above, M less one in the low byte.
-pub fn maiSample(rate: u32) u32 {
+fn maiSample(rate: u32) u32 {
     var best_n: u64 = 0;
     var best_m: u64 = 1;
     var best_error: u64 = ~@as(u64, 0);
@@ -139,7 +139,7 @@ pub fn regenerate(port: *const bcm2712.Port, shared: *const bcm2712.Shared) void
 }
 
 /// Whether sound can go out: the display up as HDMI.
-pub fn audible(port: *const bcm2712.Port, shared: *const bcm2712.Shared) bool {
+fn audible(port: *const bcm2712.Port, shared: *const bcm2712.Shared) bool {
     if (!bcm2712.on_bcm2712 or !bcm2712.running(port)) return false;
     return shared.hdmi;
 }
@@ -189,7 +189,7 @@ pub fn audioStop(port: *const bcm2712.Port, sys: *ExecBase, shared: *bcm2712.Sha
 
 /// Each channel of `mask` taken from the MAI's channel of its own number
 /// (vc5_hdmi_channel_map): four bits a channel.
-pub fn channelMap(mask: u32) u32 {
+fn channelMap(mask: u32) u32 {
     var map: u32 = 0;
     for (0..8) |i| {
         if (mask & (@as(u32, 1) << @intCast(i)) != 0) map |= @as(u32, @intCast(i)) << @intCast(4 * i);

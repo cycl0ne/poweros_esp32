@@ -99,7 +99,7 @@ const COMMON_QUEUE_DEVICE = 0x30;
 /// How the device is reached: a block of registers at an address, with
 /// the version of the memory-mapped transport it speaks, or a function on
 /// PCI with the windows its capabilities named.
-pub const Transport = union(enum) {
+const Transport = union(enum) {
     mmio: struct { base: usize, version: u32 },
     pci: virtiopci.Windows,
 };
@@ -141,16 +141,21 @@ const Used = extern struct {
     length: u32,
 };
 
+/// `value` rounded up to a multiple of `to`, a power of two.
+fn roundUp(value: usize, to: usize) usize {
+    return (value + to - 1) & ~(to - 1);
+}
+
 /// Where a queue of `size` entries has the device's ring, as version 1
 /// lays it out and version 2 is told: past the descriptors and the
 /// driver's ring, on a page of its own.
 fn usedAt(size: u32) usize {
-    return std.mem.alignForward(usize, 16 * size + 2 * (3 + size), page);
+    return roundUp(16 * size + 2 * (3 + size), page);
 }
 
 /// The whole of such a queue, in pages.
 fn queueBytes(size: u32) usize {
-    return std.mem.alignForward(usize, usedAt(size) + 2 * 3 + 8 * size, page);
+    return roundUp(usedAt(size) + 2 * 3 + 8 * size, page);
 }
 
 /// One queue, as the driver sees it: its three parts, the driver's next
@@ -384,7 +389,7 @@ const layout = struct {
     const cursor = control + queueBytes(control_size);
     const slots = cursor + queueBytes(cursor_size);
     const cursors = slots + control_slots * @sizeOf(Slot);
-    const answer = std.mem.alignForward(usize, cursors + cursor_size * @sizeOf(Cursor), 8);
+    const answer = roundUp(cursors + cursor_size * @sizeOf(Cursor), 8);
     const bytes = answer + @max(@sizeOf(DisplayInfo), @sizeOf(EdidAnswer));
 };
 
@@ -554,7 +559,7 @@ pub fn start(gpu: *Gpu, sys: *ExecBase) bool {
         giveBack(gpu);
         return false;
     };
-    const base = std.mem.alignForward(usize, @intFromPtr(gpu.memory.?), page);
+    const base = roundUp(@intFromPtr(gpu.memory.?), page);
     gpu.slots = @ptrFromInt(base + layout.slots);
     gpu.cursors = @ptrFromInt(base + layout.cursors);
     gpu.answer = @ptrFromInt(base + layout.answer);
@@ -653,14 +658,16 @@ fn kick(gpu: *Gpu, index: u32) void {
     }
 }
 
+/// The bytes of what a pointer points at.
+fn bytesOf(pointer: anytype) []u8 {
+    const One = @typeInfo(@TypeOf(pointer)).pointer.child;
+    return @as([*]u8, @ptrCast(@constCast(pointer)))[0..@sizeOf(One)];
+}
+
 /// Waited for a moment, the `tries`th time: at once at first, then with
 /// the CPU given away.
 fn rest(tries: u32, waiter: anytype) void {
-    if (tries < spins) {
-        std.atomic.spinLoopHint();
-    } else {
-        waiter.wait(1000);
-    }
+    if (tries >= spins) waiter.wait(1000);
 }
 
 /// The control commands the device is done with, their slots free again;
@@ -702,7 +709,7 @@ fn freeSlot(gpu: *Gpu, waiter: anytype) ?u32 {
 fn send(gpu: *Gpu, request: anytype, answer: ?[]u8, waiter: anytype) ?u32 {
     const slot = freeSlot(gpu, waiter) orelse return null;
     const at = &gpu.slots[slot];
-    const asked = std.mem.asBytes(request);
+    const asked = bytesOf(request);
     @memcpy(at.request[0..asked.len], asked);
     const into = answer orelse at.response[0..];
     @as(*Header, @ptrCast(&at.response)).type = 0;
@@ -758,7 +765,7 @@ pub fn readEdid(gpu: *Gpu, into: []u8, waiter: anytype) u32 {
     const answer: *EdidAnswer = @ptrCast(gpu.answer);
     answer.header.type = 0;
     const asked = GetEdid{};
-    const slot = send(gpu, &asked, std.mem.asBytes(answer), waiter) orelse return 0;
+    const slot = send(gpu, &asked, bytesOf(answer), waiter) orelse return 0;
     kick(gpu, 0);
     if (!finish(gpu, slot, waiter)) return 0;
     if (answer.header.type != RESP_OK_EDID) return 0;
@@ -774,7 +781,7 @@ pub fn displaySize(gpu: *Gpu, waiter: anytype) ?struct { width: u32, height: u32
     defer gpu.sys.ReleaseSemaphore(&gpu.lock);
     gpu.answer.header.type = 0;
     const asked = Header{ .type = CMD_GET_DISPLAY_INFO };
-    const slot = send(gpu, &asked, std.mem.asBytes(gpu.answer), waiter) orelse return null;
+    const slot = send(gpu, &asked, bytesOf(gpu.answer), waiter) orelse return null;
     kick(gpu, 0);
     if (!finish(gpu, slot, waiter)) return null;
     if (gpu.answer.header.type != RESP_OK_DISPLAY_INFO) return null;

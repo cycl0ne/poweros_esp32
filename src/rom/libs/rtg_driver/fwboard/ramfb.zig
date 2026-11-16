@@ -95,7 +95,7 @@ fn transfer(base: usize, control: u32, address: usize, length: u32) bool {
     const at = @intFromPtr(&request);
     // The request is in memory before the device is told where it is.
     sdk.hardware.barrier.toDevice();
-    reg(base + DMA_ADDRESS).* = @byteSwap(@as(u32, @truncate(at >> 32)));
+    reg(base + DMA_ADDRESS).* = @byteSwap(@as(u32, @truncate(@as(u64, at) >> 32)));
     reg(base + DMA_ADDRESS + 4).* = @byteSwap(@as(u32, @truncate(at)));
     sdk.hardware.barrier.full();
     const word: *volatile u32 = &request.control;
@@ -108,12 +108,21 @@ fn transfer(base: usize, control: u32, address: usize, length: u32) bool {
     return false;
 }
 
+/// Whether two runs of bytes are the same bytes.
+fn same(one: []const u8, other: []const u8) bool {
+    if (one.len != other.len) return false;
+    for (one, other) |byte, wanted| {
+        if (byte != wanted) return false;
+    }
+    return true;
+}
+
 /// The ramfb, when the fw_cfg at `base` is one with a DMA interface and
 /// lists "etc/ramfb": QEMU started with `-device ramfb`.
 pub fn find(base: usize) ?Ramfb {
     var signature: [4]u8 = undefined;
     readItem(base, ITEM_SIGNATURE, &signature);
-    if (!std.mem.eql(u8, &signature, "QEMU")) return null;
+    if (!same(&signature, "QEMU")) return null;
     var id: [4]u8 = undefined;
     readItem(base, ITEM_ID, &id);
     if (@as(u32, id[0]) & ID_DMA == 0) return null;
@@ -125,7 +134,7 @@ pub fn find(base: usize) ?Ramfb {
         var file: File = undefined;
         if (!transfer(base, CONTROL_READ, @intFromPtr(&file), @sizeOf(File))) return null;
         const name = "etc/ramfb";
-        if (std.mem.eql(u8, file.name[0..name.len], name) and file.name[name.len] == 0) {
+        if (same(file.name[0..name.len], name) and file.name[name.len] == 0) {
             if (@byteSwap(file.size) != config_bytes) return null;
             return .{ .base = base, .select = @byteSwap(file.select) };
         }
