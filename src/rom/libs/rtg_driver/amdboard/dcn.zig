@@ -73,7 +73,7 @@ const rtg = sdk.rtg;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 
 /// Who says what is found, on the boot's lines.
-pub const owner = "rtg-fb";
+pub const owner = "rtg-amd";
 
 /// The two of the display block's addresses the registers here are
 /// counted from. A display engine answers with six: the third holds the

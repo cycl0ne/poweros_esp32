@@ -38,7 +38,7 @@ const PCIBase = sdk.interface.pci.PCIBase;
 const PCIDevice = pci.PCIDevice;
 
 /// Who the function is claimed by, for a listing.
-const owner = "rtg-fb";
+const owner = "rtg-virtio";
 
 /// The vendor every virtio device has, and the two device numbers a GPU
 /// may carry: the one every modern device of its kind has, and the one a

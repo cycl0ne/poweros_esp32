@@ -682,7 +682,7 @@ fn reclaim(gpu: *Gpu) void {
         const asked: *const Header = @ptrCast(&gpu.slots[slot].request);
         const answer: *const Header = @ptrCast(&gpu.slots[slot].response);
         if (answer.type >= RESP_ERR_UNSPEC and !gpu.told) {
-            exec.kprintf(gpu.sys, "rtg-fb: the virtio GPU answered 0x%x to command 0x%x\n", .{ answer.type, asked.type });
+            exec.kprintf(gpu.sys, "rtg-virtio: the virtio GPU answered 0x%x to command 0x%x\n", .{ answer.type, asked.type });
             gpu.told = true;
         }
         gpu.busy &= ~(@as(u64, 1) << @intCast(slot));

@@ -2,7 +2,7 @@
 //! The VideoCore's mailbox on the Raspberry Pis' chips - the BCM2835's,
 //! still on the BCM2712 - and the property channel through which the ARM
 //! asks the VideoCore's firmware for what only it reaches: the RTC
-//! (battclock.resource), the display's clocks (rtg-fb). A message is a
+//! (battclock.resource), the display's clocks (rtg-bcm2712). A message is a
 //! buffer's address with its channel in the low four bits, written into
 //! mailbox 1 when it is not full; the firmware answers on mailbox 0 with
 //! the same word once it has written its answer into the buffer.
