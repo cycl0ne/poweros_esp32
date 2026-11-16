@@ -28,6 +28,7 @@ const Arena = memory_mod.Arena;
 const registry = @import("../driver/_driver.zig");
 const modes = @import("../mode/_mode.zig");
 const monitors = @import("../monitor/_monitor.zig");
+const shows = @import("../display/_display.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -60,6 +61,11 @@ pub const Private = struct {
     monitor: ?*monitors.State = null,
     /// The pixel format a monitor's modes are made in.
     monitor_format: rtg.PixelFormat = .bgra32,
+    /// What the board shows: its bands from the top - one from line 0 for
+    /// a buffer shown alone, none while nothing is shown - as the driver
+    /// last took them (`display/_display.zig`). Under the board's lock.
+    bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
+    band_count: u32 = 0,
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
     /// Video layers open on it (OpenVideoLayer).
@@ -106,7 +112,6 @@ pub fn ofDeviceLink(link: *exec.Node) *rtg.RtgBoard {
 const Request = struct {
     alignment: u32 = 0,
     brightness: ?u32 = null,
-    display_on: bool = false,
     compose: bool = false,
 };
 
@@ -123,7 +128,6 @@ fn readRequest(rb: *RtgBase, tag_list: ?[*]const TagItem) Request {
             @as(u32, @truncate(item.data))
         else
             null,
-        .display_on = ub.GetTagData(tags.RTGA_DisplayOn, 0, tag_list) != 0,
         .compose = ub.GetTagData(tags.RTGA_Compose, 0, tag_list) != 0,
     };
 }
@@ -187,8 +191,9 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     const device = board.device.?;
     const request = readRequest(rb, device.tags);
 
-    // What the driver said it can do, and what it left to the caller.
-    board.info.caps = if (board.ops) |ops| capsOf(ops) else 0;
+    // What the driver said it can do - by the ops it filled in, and of
+    // the board as it made it - and what it left to the caller.
+    if (board.ops) |ops| board.info.caps |= capsOf(ops);
     // Whether its screens' windows are composed is the board's to say,
     // for intuition to read: the device's tags, or its driver where they
     // say nothing.
@@ -224,6 +229,8 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
         }
         shown.flags |= rtg.bitmaps.RTGBMF_SHOWING;
         board.info.flags |= rtg.boards.RTGBF_SHOWING;
+        private.bands[0] = .{ .bitmap = shown };
+        private.band_count = 1;
     }
 
     // Named as it joins the list, under the list's lock: the number is
@@ -244,7 +251,6 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     // a buffer is aligned to.
     modes.setPitches(rb, board);
 
-    if (request.display_on) _ = rtg_lib.SetBoardDisplay(board, true);
     if (request.brightness) |percent| _ = rtg_lib.SetBoardBrightness(board, percent);
     // A board more: whoever asked is told.
     changed(rb, board);
@@ -310,11 +316,10 @@ pub fn free(rb: *RtgBase, board: *rtg.RtgBoard) void {
 /// - `board` - the board, on the library's list.
 pub fn retire(rb: *RtgBase, board: *rtg.RtgBoard) void {
     const private = privateOf(board);
-    // Nothing of it is left up: whoever holds a buffer it showed may free
-    // it. What the driver answers is not looked at - its hardware is
-    // going.
-    if (board.showing != null) _ = rb.iface().ShowBitMap(board, null, 0, 0);
     obtain(rb, board);
+    // Nothing of it is left up: whoever holds a buffer it showed may free
+    // it.
+    _ = shows.clear(rb, board);
     board.info.flags |= rtg.boards.RTGBF_GONE | rtg.boards.RTGBF_NO_DISPLAY;
     board.info.flags &= ~@as(u32, rtg.boards.RTGBF_DISPLAY_ON);
     rb.sys_base.Remove(&private.device_link);
@@ -340,8 +345,7 @@ pub fn dark(board: *const rtg.RtgBoard) bool {
 /// - `ops` - the driver's operations.
 pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     var caps: u32 = 0;
-    if (ops.set_mode != null) caps |= rtg.boards.RTGBC_SET_MODE;
-    if (ops.show_bitmap != null) caps |= rtg.boards.RTGBC_SHOW;
+    if (ops.show != null) caps |= rtg.boards.RTGBC_SHOW;
     if (ops.wait_vblank != null) caps |= rtg.boards.RTGBC_VBLANK;
     if (ops.refresh != null) caps |= rtg.boards.RTGBC_REFRESH;
     if (ops.display != null) caps |= rtg.boards.RTGBC_DISPLAY;

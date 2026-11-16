@@ -19,8 +19,8 @@ const RTGCTRL_DRIVER = @import("boards.zig").RTGCTRL_DRIVER;
 
 /// The generic tags, which mean the same to every board driver. They are
 /// a device's: a panel part's tags in the board's list. The library reads
-/// the alignment, brightness, display-on and whether its screens' windows
-/// are composed, and a driver has it read the timings (`ReadTimingTags`);
+/// the alignment, brightness and whether its screens' windows are
+/// composed, and a driver has it read the timings (`ReadTimingTags`);
 /// the driver reads the rest of them from the same list.
 pub const RTGA_Dummy = TAG_USER + 4000;
 /// Where the drivers' own blocks start. Each takes 64.
@@ -55,10 +55,7 @@ pub const RTGA_SettleMillis = RTGA_Dummy + 15;
 /// u32, 0 to 100: the brightness to set once the board is up. Absent: the
 /// brightness is not touched.
 pub const RTGA_Brightness = RTGA_Dummy + 16;
-/// bool: turn the display on at create. Absent: false - SetBoardMode is
-/// what turns it on.
-pub const RTGA_DisplayOn = RTGA_Dummy + 17;
-// RTGA_Dummy + 18 is not used.
+// RTGA_Dummy + 17 and 18 are not used.
 /// bool: take over a display that is already running rather than bring one
 /// up. A driver that cannot answers RTGERR_NOT_SUPPORTED.
 pub const RTGA_Adopt = RTGA_Dummy + 19;

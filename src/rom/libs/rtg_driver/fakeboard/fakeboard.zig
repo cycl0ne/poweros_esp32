@@ -24,9 +24,9 @@
 //! given had already been cut down to the buffer. Everything it is asked
 //! is recorded, so a test can also see what it was *not* asked.
 //!
-//! It keeps the bands it shows, as a display does, and a test can make its
-//! next show fail: what a refusal leaves can then be read on the board as
-//! well as in the library.
+//! It keeps the bands it shows and the mode it was put in, as a display
+//! does, and a test can make its next show fail: what a refusal leaves
+//! can then be read on the board as well as in the library.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -65,6 +65,8 @@ pub const Log = struct {
     /// Devices offered, and devices taken away again (`detach`).
     offered: u32 = 0,
     detached: u32 = 0,
+    /// Shows the board was asked for, and those of them that came with
+    /// the mode to be set anew.
     set_mode: u32 = 0,
     shown: u32 = 0,
     refreshed: u32 = 0,
@@ -82,11 +84,10 @@ pub const Log = struct {
     /// The rectangle of the last fill, as the driver got it.
     last_rect: rtg.RtgRect = .{},
     last_copy: rtg.RtgCopy = .{},
-    /// The buffer, and its pixel at the display's top left, as the last
-    /// show of one buffer was handed them - refused or not.
+    /// The last band's buffer and the flags, as the last show was handed
+    /// them - refused or not.
     last_show_bitmap: ?*rtg.RtgBitMap = null,
-    last_show_x: u32 = 0,
-    last_show_y: u32 = 0,
+    last_flags: u32 = 0,
     last_refresh_y: u32 = 0,
     last_refresh_rows: u32 = 0,
     last_control: u32 = 0,
@@ -113,9 +114,8 @@ pub const Log = struct {
     overlay_image: ?*const rtg.RtgPointerImage = null,
     overlay_left: i32 = 0,
     overlay_top: i32 = 0,
-    /// The bands of the last show of bands, as the driver got them -
-    /// refused or not - and how often bands were asked for.
-    bands_shown: u32 = 0,
+    /// The bands of the last show, as the driver got them - refused or
+    /// not.
     bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     band_count: u32 = 0,
     /// Pixels and colours laid over a buffer: how often, and the last
@@ -181,6 +181,9 @@ pub const State = struct {
     /// How many of its modes the next board made is given, from the first:
     /// all of them, unless a test says fewer - one is a panel's board.
     modes: u32 = mode_table.len,
+    /// The one mode the next board made is given in their place
+    /// (`makeDisplay`); null for the table's.
+    display: ?ModeOf = null,
     /// Make the next board one with a connector: its ops fill in `detect`
     /// and `check_mode`, and its modes are what the monitor on it names.
     connector: bool = false,
@@ -235,9 +238,10 @@ pub const Instance = struct {
     /// What the board shows: its bands from the top - one from line 0 for
     /// a buffer shown alone, none while nothing is shown. Kept once a show
     /// can no longer fail: a show that was refused left them as they
-    /// were.
+    /// were. And the number of the mode it was last put in.
     showing: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
     showing_count: u32 = 0,
+    mode_id: u32 = 0,
 };
 
 pub fn stateOf(driver: *rtg.RtgDriver) *State {
@@ -347,6 +351,21 @@ pub fn makeBoard(state: *State) ?*rtg.RtgBoard {
     return makeBoardFrom(state, null);
 }
 
+/// A device of the test board's kind added, and the board made of it
+/// with one mode, of that size in that format: the display a test of a
+/// module above rtg.library opens its screens on, which is in that mode
+/// once a buffer of the size is shown on it. Null as `makeBoard`.
+///
+/// INPUTS:
+/// - `state` - what `add` answered.
+/// - `width`, `height` - the display's size.
+/// - `format` - the pixel format it shows.
+pub fn makeDisplay(state: *State, width: u32, height: u32, format: rtg.PixelFormat) ?*rtg.RtgBoard {
+    state.display = .{ .timings = .{ .h_active = width, .v_active = height }, .format = format, .flags = rtg.modes.RTGMF_DEFAULT };
+    defer state.display = null;
+    return makeBoard(state);
+}
+
 /// As `makeBoard`, from a device of the test's own tags.
 ///
 /// INPUTS:
@@ -440,16 +459,6 @@ fn detach(driver: *rtg.RtgDriver, _: *rtg.RtgDevice) callconv(.c) void {
     stateOf(driver).log.detached += 1;
 }
 
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, timings: *const rtg.RtgTimings) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
-    const state = stateOfBoard(board);
-    state.log.set_mode += 1;
-    state.log.last_mode = mode.*;
-    state.log.last_timings = timings.*;
-    if (state.meanwhile) |look| look(board);
-    return err.RTGERR_OK;
-}
-
 /// The answer a test set for the next show, taken: RTGERR_OK when none
 /// was set, and RTGERR_OK again once it has refused as many shows as
 /// the test asked for.
@@ -468,38 +477,36 @@ fn showAnswer(state: *State) i32 {
     return answer;
 }
 
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
+/// The board's one op for what is on the glass, as a display keeps the
+/// contract: what it was handed is logged, refused or not; in the mode it
+/// is in, a show that is refused leaves what it showed; with the mode set
+/// anew, one that is refused leaves it showing nothing; and what it shows
+/// changes once nothing of the show can fail any more.
+fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     const instance = instanceOf(board);
     instance.calls += 1;
     const state = stateOfBoard(board);
     if (state.meanwhile) |look| look(board);
-    state.log.shown += 1;
-    state.log.last_show_bitmap = bitmap;
-    state.log.last_show_x = x;
-    state.log.last_show_y = y;
-    // What it shows changes once nothing of the show can fail any more.
-    const answer = showAnswer(state);
-    if (answer != err.RTGERR_OK) return answer;
-    instance.showing_count = 0;
-    if (bitmap) |shown| {
-        instance.showing[0] = .{ .bitmap = shown };
-        instance.showing_count = 1;
+    const log = &state.log;
+    const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
+    log.shown += 1;
+    log.last_flags = what.flags;
+    log.band_count = what.count;
+    if (what.bands) |bands| @memcpy(log.bands[0..what.count], bands[0..what.count]);
+    log.last_show_bitmap = if (what.count != 0) log.bands[what.count - 1].bitmap else null;
+    if (anew) {
+        log.set_mode += 1;
+        log.last_mode = what.mode.*;
+        log.last_timings = what.timings.*;
     }
-    return err.RTGERR_OK;
-}
-
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
-    const instance = instanceOf(board);
-    instance.calls += 1;
-    const state = stateOfBoard(board);
-    if (state.meanwhile) |look| look(board);
-    state.log.bands_shown += 1;
-    @memcpy(state.log.bands[0..count], bands[0..count]);
-    state.log.band_count = count;
     const answer = showAnswer(state);
-    if (answer != err.RTGERR_OK) return answer;
-    @memcpy(instance.showing[0..count], bands[0..count]);
-    instance.showing_count = count;
+    if (answer != err.RTGERR_OK) {
+        if (anew) instance.showing_count = 0;
+        return answer;
+    }
+    if (anew) instance.mode_id = what.mode.id;
+    @memcpy(instance.showing[0..what.count], log.bands[0..what.count]);
+    instance.showing_count = what.count;
     return err.RTGERR_OK;
 }
 
@@ -826,9 +833,7 @@ fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
 /// Everything a board can be asked.
 const full_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
-    .show_bands = &showBands,
+    .show = &showOp,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,
@@ -886,8 +891,7 @@ const connector_ops = ops: {
 /// A board with no engine: it can be shown and refreshed and no more.
 const plain_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
+    .show = &showOp,
     .refresh = &refresh,
 };
 
@@ -895,8 +899,7 @@ const plain_ops = rtg.RtgBoardOps{
 /// be turned.
 const fixed_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
+    .show = &showOp,
     .refresh = &refresh,
     .stats = &stats,
 };
@@ -965,12 +968,16 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
         .unit = unit,
         // A monitor's modes in the format the tests draw in.
         .format = .rgb565,
+        // Bands on the board that has everything; one whole buffer on the
+        // two that have less.
+        .caps = if (state.connector or !(state.cannot_turn or state.without_engine)) rtg.boards.RTGBC_BANDS else 0,
     }) orelse return null;
     const instance = instanceOf(board);
     instance.* = .{ .pattern = instance_pattern };
 
     // Its modes: the library keeps them, and numbers them as they come.
-    for (mode_table[0..@min(state.modes, mode_table.len)]) |*one| {
+    const given: []const ModeOf = if (state.display) |*one| one[0..1] else mode_table[0..@min(state.modes, mode_table.len)];
+    for (given) |*one| {
         if (driver.rtg_base.AddBoardMode(board, &one.timings, @intFromEnum(one.format), one.flags) == 0) {
             driver.rtg_base.DeleteBoard(board);
             return null;

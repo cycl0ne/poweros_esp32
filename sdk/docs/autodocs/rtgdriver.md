@@ -40,7 +40,7 @@ fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimin
 
 **SINCE**
 
-1.19. LVO -380.
+1.19. LVO -384.
 
 **INPUTS**
 
@@ -119,7 +119,7 @@ fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice
 
 **SINCE**
 
-1.18. LVO -364.
+1.18. LVO -368.
 
 **INPUTS**
 
@@ -180,7 +180,7 @@ fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopa
 
 **SINCE**
 
-1.0. LVO -328.
+1.0. LVO -332.
 
 **INPUTS**
 
@@ -251,7 +251,7 @@ fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
 
 **SINCE**
 
-1.18. LVO -376.
+1.18. LVO -380.
 
 **INPUTS**
 
@@ -306,7 +306,7 @@ fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spe
 
 **SINCE**
 
-1.18. LVO -356.
+1.18. LVO -360.
 
 **INPUTS**
 
@@ -336,8 +336,8 @@ not known - before its `attach` answers. The board is on no list yet and has no 
 joins the library's list once the `attach` has answered `RTGERR_OK`,
 named after its driver and a number in the order the driver's boards
 were made ("rgb.0"), the firmware's picture last on the list. A board
-comes up in no mode and showing nothing; `SetBoardMode` and
-`ShowBitMap` are what put a picture up.
+comes up in no mode and showing nothing; `ShowBoard` is what puts a
+picture up, and what its driver lights the output with.
 
 An `attach` that fails after making a board deletes it (`DeleteBoard`);
 one it leaves is freed by the library.
@@ -383,7 +383,7 @@ fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 
 **SINCE**
 
-1.0. LVO -360.
+1.0. LVO -364.
 
 **INPUTS**
 
@@ -451,7 +451,7 @@ fn FindStandardTimings(_: *RtgBase, width: u32, height: u32, refresh_hz: u32, ti
 
 **SINCE**
 
-1.20. LVO -392.
+1.20. LVO -396.
 
 **INPUTS**
 
@@ -513,7 +513,7 @@ fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?
 
 **SINCE**
 
-1.0. LVO -352.
+1.0. LVO -356.
 
 **INPUTS**
 
@@ -567,7 +567,7 @@ fn MonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) void
 
 **SINCE**
 
-1.20. LVO -388.
+1.20. LVO -392.
 
 **INPUTS**
 
@@ -585,10 +585,10 @@ does no more. The task then asks the board's `detect`, keeps what the
 monitor now there says of itself, and makes the board's modes again
 of the timings it names that the board's `check_mode` takes - a mode
 of the figures of one the board had keeps that mode's number. A board
-that shows is handed the mode it is in again (`set_mode`), with the
-timings the new monitor gives it, where the new list has that mode;
-where it has not, the board shows nothing and is in no mode until one
-is set. The board's `changes` are raised and the tasks that asked are
+that shows is handed the mode it is in and what it shows again
+(`show`), with the timings the new monitor gives it, where the new
+list has that mode; where it has not, the board shows nothing and is
+in no mode until it is shown in one. The board's `changes` are raised and the tasks that asked are
 told (`AddRtgNotify`).
 
 A driver calls it from its hot-plug interrupt, or from a task of its
@@ -636,7 +636,7 @@ fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?
 
 **SINCE**
 
-1.18. LVO -372.
+1.18. LVO -376.
 
 **INPUTS**
 
@@ -702,7 +702,7 @@ fn ReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTi
 
 **SINCE**
 
-1.19. LVO -384.
+1.19. LVO -388.
 
 **INPUTS**
 
@@ -763,7 +763,7 @@ fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void
 
 **SINCE**
 
-1.18. LVO -368.
+1.18. LVO -372.
 
 **INPUTS**
 
@@ -825,7 +825,7 @@ fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
 **SINCE**
 
-1.0. LVO -332.
+1.0. LVO -336.
 
 **INPUTS**
 
@@ -883,7 +883,7 @@ fn RxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, si
 
 **SINCE**
 
-1.0. LVO -348.
+1.0. LVO -352.
 
 **INPUTS**
 
@@ -938,7 +938,7 @@ fn SignalRtgEvent(_: *RtgBase, board: *rtg.RtgBoard, event: u32) i32
 
 **SINCE**
 
-1.0. LVO -336.
+1.0. LVO -340.
 
 **INPUTS**
 
@@ -993,7 +993,7 @@ fn TxColor(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaqu
 
 **SINCE**
 
-1.0. LVO -344.
+1.0. LVO -348.
 
 **INPUTS**
 
@@ -1049,7 +1049,7 @@ fn TxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaqu
 
 **SINCE**
 
-1.0. LVO -340.
+1.0. LVO -344.
 
 **INPUTS**
 

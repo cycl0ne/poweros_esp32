@@ -807,12 +807,10 @@ const Display = struct {
         const gb: *kgraphics.GraphicsBase = @ptrCast(@alignCast(ib.graphics_base));
         const rb: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         const state = fake.add(ib.sys_base, rb) orelse return error.NoDriver;
-        const board = fake.makeBoard(state) orelse return error.NoBoard;
         // The display is the size of the buffer it is brought up with.
-        board.info.width = width;
-        board.info.height = height;
+        const board = fake.makeDisplay(state, width, height, format) orelse return error.NoBoard;
         const bitmap = rb.AllocBitMap(board, width, height, @intFromEnum(format), sdk.rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse return error.NoBitMap;
-        try testing.expectEqual(sdk.rtg.errors.RTGERR_OK, rb.ShowBitMap(board, bitmap, 0, 0));
+        try testing.expectEqual(sdk.rtg.errors.RTGERR_OK, rb.ShowBitMap(board, bitmap));
         return .{ .state = state, .board = board, .bitmap = bitmap };
     }
 
@@ -1081,7 +1079,8 @@ test "screens: pulled down to show the one behind, by MoveScreen, by tags and by
     const behind: *_kscreen.Screen = @ptrCast(@alignCast(back));
     const ahead: *_kscreen.Screen = @ptrCast(@alignCast(front));
     try testing.expectEqual(ahead.bitmap, display.board.showing.?);
-    try testing.expectEqual(@as(u32, 0), log.bands_shown);
+    // One whole buffer so far: the front screen's, from the top.
+    try testing.expectEqual(@as(u32, 1), log.band_count);
 
     // Down by 20: the screen behind above it, each from its own top.
     it.MoveScreen(front, 0, 20);
@@ -1199,7 +1198,8 @@ test "screens: a show the board refuses leaves the display in its bands, and the
     it.MoveScreen(front, 0, 20);
     try testing.expect(!ib.banded);
     try testing.expectEqual(@as(u32, 1), glass.showing_count);
-    try testing.expectEqual(shows, display.state.log.shown);
+    // The bands were asked for, once, and nothing after them.
+    try testing.expectEqual(shows + 1, display.state.log.shown);
 
     // Bands the board refuses, with another screen's buffer up: the
     // front screen alone is shown.

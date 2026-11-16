@@ -1,35 +1,236 @@
 // SPDX-License-Identifier: MPL-2.0
-//! What the display calls share: which of a board's buffers are marked as
-//! shown.
+//! What a board shows: the mode it is in and the bands of buffers in it,
+//! as one step.
+//!
+//! `ShowBoard` and `ShowBitMap` come here (`show`), with the board's
+//! lock held. The bands are checked against the mode they are to be
+//! shown in, the driver's one op is called with the mode, its timings and
+//! the bands (`RtgShow`), and once it has answered RTGERR_OK - and nowhere
+//! before - the library takes the step as made: the board's mode and
+//! what it says of it, its buffers marked as the display reads them, and
+//! its own copy of the bands, which is what is shown again when a monitor
+//! comes (`again`).
+//!
+//! **A show that fails changes nothing.** In the mode the board is in,
+//! that is the driver's to keep: it reads what it read. With another mode
+//! the driver is handed the mode and the bands together, and where it
+//! then answers an error it shows nothing; the library has it show what
+//! was shown before, in the mode before, and only where that fails too is
+//! the board left in no mode, showing nothing - which is then what the
+//! library says of it.
+//!
+//! A buffer is not touched by a mode change: it keeps its memory, and is
+//! shown again in the mode of its size.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
-const _board = @import("../board/_board.zig");
+const err = rtg.errors;
+const RtgBase = @import("../rtg.zig").RtgBase;
+const boards = @import("../board/_board.zig");
+const modes = @import("../mode/_mode.zig");
 
-/// The board's buffers marked as the display now shows them: `shown`
+/// The board's buffers marked as the display now shows them: the bands'
 /// marked RTGBMF_SHOWING - so none of them can be freed - and every other
-/// buffer of the board not; `front`, the one that covers the display's
-/// bottom, is what BoardDisplayBitMap answers. A change of picture is
-/// counted. It is called once the driver's show has answered RTGERR_OK
-/// and nowhere before, so a show that failed leaves every mark as it was.
+/// buffer of the board not; the last band's, which covers the display's
+/// bottom, is what BoardDisplayBitMap answers. The bands are kept. A
+/// change of picture is counted.
 ///
 /// INPUTS:
 /// - `board` - the board.
-/// - `shown` - the buffers the display now reads, none for nothing shown.
-/// - `front` - the one at the display's bottom, or null.
-pub fn markShowing(board: *rtg.RtgBoard, shown: []const *rtg.RtgBitMap, front: ?*rtg.RtgBitMap) void {
+/// - `bands` - what the display now shows, none for nothing shown.
+fn keep(board: *rtg.RtgBoard, bands: []const rtg.RtgBand) void {
+    const private = boards.privateOf(board);
     var node = board.bitmaps.head;
     while (node) |n| : (node = n.succ) {
         if (n.succ == null) break;
         const bm: *rtg.RtgBitMap = @fieldParentPtr("node", n);
         bm.flags &= ~rtg.bitmaps.RTGBMF_SHOWING;
     }
-    for (shown) |bm| bm.flags |= rtg.bitmaps.RTGBMF_SHOWING;
-    board.showing = front;
-    if (front != null) {
+    for (bands, 0..) |band, i| {
+        band.bitmap.flags |= rtg.bitmaps.RTGBMF_SHOWING;
+        private.bands[i] = band;
+    }
+    private.band_count = @intCast(bands.len);
+    if (bands.len != 0) {
+        board.showing = bands[bands.len - 1].bitmap;
         board.info.flags |= rtg.boards.RTGBF_SHOWING;
-        _board.privateOf(board).buffer_swaps +%= 1;
+        private.buffer_swaps +%= 1;
     } else {
+        board.showing = null;
         board.info.flags &= ~rtg.boards.RTGBF_SHOWING;
     }
+}
+
+/// The board is in a mode from now on: its info follows it, and where its
+/// buffers come from system memory, what they may hold together is what
+/// its driver said for the mode.
+fn enter(board: *rtg.RtgBoard, record: *modes.Record) void {
+    const private = boards.privateOf(board);
+    if (private.mode) |before| before.mode.flags &= ~rtg.modes.RTGMF_CURRENT;
+    record.mode.flags |= rtg.modes.RTGMF_CURRENT;
+    private.mode = record;
+    if (private.arena.system) {
+        private.arena.setLimit(board.region.size);
+        board.info.memory_total = private.arena.size;
+    }
+    const mode = &record.mode;
+    board.info.mode_id = mode.id;
+    board.info.width = mode.width;
+    board.info.height = mode.height;
+    board.info.format = mode.format;
+    board.info.pitch = mode.pitch;
+    board.info.pixel_clock_hz = mode.pixel_clock_hz;
+    board.info.refresh_mhz = mode.refresh_mhz;
+    board.info.flags |= rtg.boards.RTGBF_MODE_SET;
+}
+
+/// The board is in no mode, and shows nothing.
+fn leave(board: *rtg.RtgBoard) void {
+    const private = boards.privateOf(board);
+    keep(board, &.{});
+    if (private.mode) |before| before.mode.flags &= ~rtg.modes.RTGMF_CURRENT;
+    private.mode = null;
+    board.info.mode_id = 0;
+    board.info.flags &= ~@as(u32, rtg.boards.RTGBF_MODE_SET);
+}
+
+/// Whether bands can be shown in a mode: RTGERR_OK, or why not.
+fn check(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgBand) i32 {
+    if (bands.len > rtg.RTG_MAX_BANDS) return err.RTGERR_BAD_ARG;
+    for (bands, 0..) |band, i| {
+        const bm = band.bitmap;
+        if (bm.board != @as(?*anyopaque, @ptrCast(board))) return err.RTGERR_BAD_ARG;
+        if (bm.flags & rtg.bitmaps.RTGBMF_DISPLAYABLE == 0) return err.RTGERR_NOT_DISPLAYABLE;
+        if (bm.pixels == null) return err.RTGERR_BAD_ARG;
+        if (bm.format != mode.format) return err.RTGERR_BAD_FORMAT;
+        // A buffer of the mode: its width, and rows as far apart as the
+        // mode's are.
+        if (bm.width != mode.width or bm.pitch != mode.pitch) return err.RTGERR_NOT_DISPLAYABLE;
+        const repeat = band.flags & rtg.RTGBANDF_REPEAT != 0;
+        if (if (repeat) bm.height == 0 else bm.height != mode.height) return err.RTGERR_NOT_DISPLAYABLE;
+        if (i == 0 and band.line != 0) return err.RTGERR_BAD_ARG;
+        if (i > 0 and band.line <= bands[i - 1].line) return err.RTGERR_BAD_ARG;
+        if (band.line >= mode.height or band.origin > band.line) return err.RTGERR_BAD_ARG;
+        // The band's last line shows a row the buffer has.
+        const end = if (i + 1 < bands.len) bands[i + 1].line else mode.height;
+        if (!repeat and end - band.origin > bm.height) return err.RTGERR_BAD_ARG;
+    }
+    // Several buffers, or one that is not shown whole from its first row,
+    // are bands: a board shows them only where its driver said so.
+    const whole = bands.len == 0 or (bands.len == 1 and bands[0].origin == 0 and bands[0].flags == 0);
+    if (!whole and board.info.caps & rtg.boards.RTGBC_BANDS == 0) return err.RTGERR_NOT_SUPPORTED;
+    return err.RTGERR_OK;
+}
+
+/// The driver's op, with a mode and bands.
+fn ask(board: *rtg.RtgBoard, record: *modes.Record, bands: []const rtg.RtgBand, flags: u32) i32 {
+    const op = board.ops.?.show.?;
+    return op(board, &.{
+        .mode = &record.mode,
+        .timings = &record.timings,
+        .bands = if (bands.len != 0) bands.ptr else null,
+        .count = @intCast(bands.len),
+        .flags = flags,
+    });
+}
+
+/// Puts a board in a mode and shows bands in it, as one step.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock is held.
+/// - `wanted` - the mode, or null for the one the board is in - its
+///   default where it is in none.
+/// - `bands` - what to show, from the top; none shows nothing.
+///
+/// RESULT:
+/// RTGERR_OK, or why nothing changed - `ShowBoard`'s contract has them.
+pub fn show(rb: *RtgBase, board: *rtg.RtgBoard, wanted: ?*modes.Record, bands: []const rtg.RtgBand) i32 {
+    const private = boards.privateOf(board);
+    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
+    if (ops.show == null) return err.RTGERR_NOT_SUPPORTED;
+    // A board whose device has gone shows nothing any more, and nothing
+    // is what it shows already.
+    if (boards.dark(board)) return if (bands.len == 0 and wanted == null) err.RTGERR_OK else err.RTGERR_NO_DISPLAY;
+    const before = private.mode;
+    const target = wanted orelse before orelse modes.defaultOf(board) orelse return err.RTGERR_NO_MODE;
+    // A mode the board does not offer now - a monitor's that went - is
+    // none to put it in.
+    if (!target.offered) return err.RTGERR_BAD_MODE;
+    const checked = check(board, &target.mode, bands);
+    if (checked != err.RTGERR_OK) return checked;
+
+    if (target == before) {
+        // What it shows changes, and the driver keeps what was on any
+        // answer but RTGERR_OK.
+        const code = ask(board, target, bands, 0);
+        if (code != err.RTGERR_OK) return code;
+        keep(board, bands);
+        return err.RTGERR_OK;
+    }
+
+    // Another mode, and the bands in it. A driver that answers an error
+    // here shows nothing: what was shown is asked for again, in the mode
+    // before - and where that is no longer to be had, the board is in no
+    // mode and says so.
+    const code = ask(board, target, bands, rtg.boards.RTGSHOW_MODE_CHANGED);
+    if (code == err.RTGERR_OK) {
+        enter(board, target);
+        keep(board, bands);
+        boards.changed(rb, board);
+        return err.RTGERR_OK;
+    }
+    if (before) |old| {
+        const shown = private.bands[0..private.band_count];
+        if (old.offered and ask(board, old, shown, rtg.boards.RTGSHOW_MODE_CHANGED) == err.RTGERR_OK) return code;
+        leave(board);
+        boards.changed(rb, board);
+    }
+    return code;
+}
+
+/// What a board shows, shown again in the mode it is in, for a monitor
+/// that came: its driver brings the link up again, with the timings the
+/// monitor gives the mode now. Where the driver cannot, the board is in
+/// no mode and shows nothing.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, in a mode it offers; its lock is held.
+pub fn again(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    _ = rb;
+    const private = boards.privateOf(board);
+    const current = private.mode orelse return;
+    const ops = board.ops orelse return;
+    if (ops.show == null) return;
+    const shown = private.bands[0..private.band_count];
+    if (ask(board, current, shown, rtg.boards.RTGSHOW_MODE_CHANGED) == err.RTGERR_OK) {
+        enter(board, current);
+        return;
+    }
+    leave(board);
+}
+
+/// A board made to show nothing and put in no mode: its monitor has not
+/// got the mode it is in, or the board itself is going. Where its driver
+/// will not show nothing, everything stays as it is: a buffer on the
+/// glass is not let go.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock is held.
+///
+/// RESULT:
+/// Whether the board shows nothing now.
+pub fn clear(rb: *RtgBase, board: *rtg.RtgBoard) bool {
+    _ = rb;
+    const private = boards.privateOf(board);
+    const current = private.mode orelse return private.band_count == 0;
+    if (private.band_count != 0) {
+        const ops = board.ops orelse return false;
+        if (ops.show == null) return false;
+        if (ask(board, current, &.{}, 0) != err.RTGERR_OK) return false;
+    }
+    leave(board);
+    return true;
 }

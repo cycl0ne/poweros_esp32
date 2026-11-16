@@ -93,7 +93,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 15;
+const REVISION = 16;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -393,22 +393,24 @@ fn sendSequence(bytes: []const u8) bool {
 /// The stream started from `chain`.
 fn startStream(panel: *Panel, chain: Chain) void {
     panel.chain = chain;
+    // Before the channel runs: its first end is a frame's like any other.
+    panel.streaming = true;
     dwgdma.run(channel, chain.first);
     host.videoMode(true);
     bridge.dpi(true);
     bridge.underrunInterrupt(true);
-    panel.streaming = true;
 }
 
-/// The HDMI bridge set to follow the stream that has just started; said
-/// on the raw port if it could not be reached.
-fn settleBridge(panel: *Panel) void {
+/// The HDMI bridge set to follow the stream that has just started. False,
+/// and said on the raw port, when it could not be reached or did not take
+/// the stream.
+fn settleBridge(panel: *Panel) bool {
     const wanted = &panel.config;
-    const bus_to_bridge = lt8912b.I2c.open(panel.sys, wanted.i2c_unit) orelse return;
+    const bus_to_bridge = lt8912b.I2c.open(panel.sys, wanted.i2c_unit) orelse return false;
     defer bus_to_bridge.close();
-    if (!lt8912b.follow(bus_to_bridge, wanted.i2c_address, panel.pixel_hz)) {
-        sdk.exec.kprintf(panel.sys, "%s: the HDMI bridge did not take the stream\n", .{MODULE_NAME});
-    }
+    if (lt8912b.follow(bus_to_bridge, wanted.i2c_address, panel.pixel_hz)) return true;
+    sdk.exec.kprintf(panel.sys, "%s: the HDMI bridge did not take the stream\n", .{MODULE_NAME});
+    return false;
 }
 
 /// The stream stopped, and every chain freed.
@@ -452,7 +454,13 @@ fn show(panel: *Panel, bands: []const rtg.RtgBand) i32 {
     const made = chain_file.build(sys, sent, panel.config.height, panel.stream_pitch) orelse return err.RTGERR_NO_MEMORY;
     if (!panel.streaming) {
         startStream(panel, made);
-        if (panel.hdmi) settleBridge(panel);
+        // A bridge that does not take the stream shows nothing: the
+        // stream is stopped again, and nothing is shown.
+        if (panel.hdmi and !settleBridge(panel)) {
+            stopStream(panel);
+            panel.shown_count = 0;
+            return err.RTGERR_NO_DISPLAY;
+        }
         return err.RTGERR_OK;
     }
     sys.Disable();
@@ -537,6 +545,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGBF_STREAMING,
         // A monitor's modes are made in the format the screens are in.
         .format = .rgb565,
+        .caps = rtg.boards.RTGBC_BANDS,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .board = board, .config = wanted, .own = wanted, .hdmi = hdmi, .composing = hdmi };
@@ -701,8 +710,9 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
 /// (`sends.zig`), or the part's own: the bridge's copy taken, the PHY, the
 /// bridge and the host set for it. A link that is up is taken down first
 /// - for another mode, or for the mode it is in when another monitor
-/// came, and then what was shown is shown again.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+/// came - and shows nothing until the bands the library hands over with
+/// the mode are shown.
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) i32 {
     const panel = panelOf(board);
     if (!panel.hdmi) return err.RTGERR_OK;
     const sys = panel.sys;
@@ -716,10 +726,6 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
     const bus_to_bridge = lt8912b.I2c.open(sys, wanted.i2c_unit) orelse return err.RTGERR_NO_DISPLAY;
     defer bus_to_bridge.close();
 
-    // What the stream shows, to show again where the mode stays.
-    var shown: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
-    const shown_count = if (panel.streaming and mode.id == panel.mode_id) panel.shown_count else 0;
-    @memcpy(shown[0..shown_count], panel.shown[0..shown_count]);
     // The copy goes and comes back another: the pointer and the overlay,
     // which are laid into it, wait meanwhile.
     sys.ObtainSemaphore(&panel.pointer.lock);
@@ -741,7 +747,6 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
     if (code != err.RTGERR_OK) return code;
     panel.mode_id = mode.id;
     board.region.size = wanted.buffers * panel.frame_bytes;
-    if (shown_count != 0) return show(panel, shown[0..shown_count]);
     return err.RTGERR_OK;
 }
 
@@ -749,11 +754,11 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
 /// this starts the stream. With the stream running it is a flip: the
 /// buffer is sent from the next frame on, whole, and this returns once
 /// the frame before it is the last that reads the one it replaced.
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
+fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
     const panel = panelOf(board);
-    if (x != 0 or y != 0) return err.RTGERR_NOT_SUPPORTED;
     const bm = bitmap orelse {
         if (panel.streaming) stopStream(panel);
+        panel.shown_count = 0;
         return err.RTGERR_OK;
     };
     if (bm.pixels == null) return err.RTGERR_BAD_ARG;
@@ -767,7 +772,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
 /// Several buffers at once, in bands: each band a run of display lines
 /// from one buffer, whose rows are a line each. Shown from the next frame
 /// on, as a flip is.
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
     const panel = panelOf(board);
     for (bands[0..count]) |band| {
         const bm = band.bitmap;
@@ -776,6 +781,30 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     }
     return show(panel, bands[0..count]);
+}
+
+/// The board's one op for what is on the glass (`RtgShow`): put in the
+/// mode where the library says it is to be, then shown the bands - one
+/// whole buffer, several in bands, or nothing. With the mode set anew a
+/// show that fails leaves the board showing nothing.
+fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
+    const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
+    if (anew) {
+        const code = setMode(board, what.mode, what.timings);
+        if (code != err.RTGERR_OK) return code;
+    }
+    const code = showThese(board, what);
+    if (code != err.RTGERR_OK and anew) _ = showBitMap(board, null);
+    return code;
+}
+
+/// The bands of a show, in the mode the board is in.
+fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
+    const bands = what.bands orelse return showBitMap(board, null);
+    if (what.count == 0) return showBitMap(board, null);
+    const first = bands[0];
+    if (what.count == 1 and first.origin == 0 and first.flags == 0) return showBitMap(board, first.bitmap);
+    return showBands(board, bands, what.count);
 }
 
 /// Rows the CPU wrote, handed to the panel: the DMA reads that memory
@@ -913,9 +942,7 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
 /// a pointer and an overlay.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
-    .show_bands = &showBands,
+    .show = &showOp,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,

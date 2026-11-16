@@ -152,8 +152,11 @@ pub const RTGBF_FIRMWARE: u32 = 1 << 9;
 /// and its modes are what the monitor on it names.
 pub const RTGBF_CONNECTOR: u32 = 1 << 10;
 
-/// RtgBoardInfo.caps: which ops the driver filled in.
-pub const RTGBC_SET_MODE: u32 = 1 << 0;
+/// RtgBoardInfo.caps: which ops the driver filled in, and what it said
+/// of the board as it made it (`RtgBoardSpec.caps`).
+/// It shows several buffers at once, in bands of lines (`ShowBoard`); a
+/// board without it shows one whole buffer. Said by the driver.
+pub const RTGBC_BANDS: u32 = 1 << 0;
 pub const RTGBC_SHOW: u32 = 1 << 1;
 pub const RTGBC_VBLANK: u32 = 1 << 3;
 pub const RTGBC_REFRESH: u32 = 1 << 4;
@@ -302,6 +305,8 @@ pub const RtgBoardSpec = extern struct {
     /// modes of a monitor in.
     format: PixelFormat = .bgra32,
     pad: [3]u8 = .{ 0, 0, 0 },
+    /// RTGBC_*: what the board has that its ops do not say - RTGBC_BANDS.
+    caps: u32 = 0,
 };
 
 /// A board. What the driver keeps for itself is `instance`, which the
@@ -323,9 +328,9 @@ pub const RtgBoard = extern struct {
     region: RtgRegion = .{},
     bitmaps: List = .{},
     /// The buffer the display shows - the last band's - or null. The
-    /// library's, written once the driver's show has answered RTGERR_OK;
-    /// a driver writes it only in its attach, for a display it found
-    /// running.
+    /// library's, written once the driver's `show` has answered
+    /// RTGERR_OK; a driver writes it only in its attach, for a display it
+    /// found running.
     showing: ?*RtgBitMap = null,
     /// Event servers, one list per RTGEV_*.
     event_lists: [events.RTGEV_COUNT]List = [_]List{.{}} ** events.RTGEV_COUNT,
@@ -356,16 +361,34 @@ pub const RtgBoardOps = extern struct {
     /// that joined the list, last, after the board has been un-shown and
     /// its buffers freed.
     destroy: ?*const fn (*RtgBoard) callconv(.c) void = null,
-    /// Put the board in that mode, whose timings are `timings` - a mode
-    /// of the board's list, as the library keeps it. The library writes
-    /// the board's info once the op has answered RTGERR_OK; the driver may
-    /// replace the region - the library has already dealt with the buffers
-    /// that were alive. Called with the board's lock held, as the two
-    /// shows are: one of the three at a time on a board. Called again for
-    /// the mode the board is in when another monitor came that takes it:
-    /// the link is brought up again, with the timings handed over now, and
-    /// what was shown stays shown.
-    set_mode: ?*const fn (*RtgBoard, *const RtgMode, *const RtgTimings) callconv(.c) i32 = null,
+    /// The one op for what is on the glass: put the board in a mode and
+    /// show these bands in it (`RtgShow`). Called with the board's lock
+    /// held: one show at a time on a board, so a driver needs no lock of
+    /// its own between two. The library has checked the bands - each a
+    /// displayable buffer of the board with pixels, in the mode's format,
+    /// width and row length, in order from the top - and keeps its own
+    /// copy of them; a driver that reads them later keeps one too.
+    ///
+    /// Without `RTGSHOW_MODE_CHANGED` the board is in `mode` already and
+    /// only what it shows changes: on any answer but RTGERR_OK the board
+    /// reads what it read before and has kept no pointer to a buffer it
+    /// refused - the library leaves its marks as they were, and the caller
+    /// may free that buffer. It takes the new bands once nothing of the
+    /// show can fail any more, or - where the show itself reads them, a
+    /// picture that is sent - has them in place meanwhile and puts the
+    /// ones before back.
+    ///
+    /// With `RTGSHOW_MODE_CHANGED` the board is put in `mode` first, with
+    /// `timings` - a mode it was not in, or the one it is in for a monitor
+    /// that came, whose link is brought up again - and then shows the
+    /// bands. The library hands it over so only when the board shows
+    /// nothing, or for a monitor that came: on any answer but RTGERR_OK
+    /// the board shows nothing, whatever mode its hardware is left in, and
+    /// the library has it in none, so the next show comes with the flag
+    /// again. The library writes the board's info once the op has
+    /// answered RTGERR_OK. The driver may write `RtgBoard.region.size`
+    /// for the new mode, where its buffers come from system memory.
+    show: ?*const fn (*RtgBoard, *const RtgShow) callconv(.c) i32 = null,
     /// A board with a connector: whether a monitor is on it, and the
     /// blocks of its EDID into the buffer handed over. Called in a task -
     /// as the board joins the list, and on the library's own when the
@@ -378,13 +401,6 @@ pub const RtgBoardOps = extern struct {
     /// of every timing a monitor names, and lists the ones taken. Null:
     /// every one is taken.
     check_mode: ?*const fn (*RtgBoard, *const RtgTimings) callconv(.c) i32 = null,
-    /// Show that buffer, its pixel (x, y) at the top left; null shows
-    /// nothing. The library passes x and y on unchecked: a board that
-    /// cannot pan refuses any that is not zero. On any answer but
-    /// RTGERR_OK the board reads what it read before and keeps no pointer
-    /// to the buffer it refused: the library leaves its marks as they
-    /// were, and the caller may free that buffer.
-    show_bitmap: ?*const fn (*RtgBoard, ?*RtgBitMap, u32, u32) callconv(.c) i32 = null,
     /// Wait for `frames` vertical blanks; 0 is the next one.
     wait_vblank: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
     /// Rows `y` to `y + rows` of a buffer were written by the CPU: hand
@@ -438,18 +454,6 @@ pub const RtgBoardOps = extern struct {
     move_pointer: ?*const fn (*RtgBoard, i32, i32) callconv(.c) void = null,
     /// Lay it over the picture, or stop.
     show_pointer: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
-
-    // --- several buffers on the glass at once. ---
-
-    /// Show these bands from now on: each a buffer from its `line` to the
-    /// next band's, the last to the display's bottom. The library has
-    /// checked them (`ShowBitMapBands`); the driver keeps its own copy. On
-    /// any answer but RTGERR_OK it reads the bands it read before, as
-    /// `show_bitmap`: it takes the new ones once nothing of the show can
-    /// fail any more, or - where the show itself reads them, a picture
-    /// that is sent - has them in place meanwhile and puts the ones before
-    /// back.
-    show_bands: ?*const fn (*RtgBoard, [*]const RtgBand, u32) callconv(.c) i32 = null,
 
     // --- a second image over the picture, laid as the pointer is but
     // under it, and shown whether the pointer is or not. A board fills in
@@ -520,6 +524,26 @@ pub const RtgBoardOps = extern struct {
 /// The most rectangles one `copy_rects` call hands a board: rtg cuts a
 /// longer list into calls of this many.
 pub const RTG_MAX_COPIES = 16;
+
+/// What a board's `show` op is handed: the mode the board is to be in and
+/// what it is to show in it.
+pub const RtgShow = extern struct {
+    /// The mode, as the library keeps it, and its timings.
+    mode: *const RtgMode,
+    timings: *const RtgTimings,
+    /// The bands, from the top of the display down; null with `count` 0,
+    /// which shows nothing.
+    bands: ?[*]const RtgBand = null,
+    count: u32 = 0,
+    /// RTGSHOW_*
+    flags: u32 = 0,
+};
+
+/// RtgShow.flags
+/// The board is to be put in the mode: one it is not in, or the one it is
+/// in for a monitor that came. Without it the board is in the mode, and
+/// only what it shows changes.
+pub const RTGSHOW_MODE_CHANGED: u32 = 1 << 1;
 
 /// Part of the display shown from a buffer: from display line `line`
 /// down to where the next band starts - or the display's bottom - the

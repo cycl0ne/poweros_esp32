@@ -87,13 +87,13 @@ test {
     _ = @import("board/getboardinfo.zig");
     _ = @import("board/getboardstats.zig");
     _ = @import("board/nextboard.zig");
-    _ = @import("board/setboardmode.zig");
     _ = @import("display/boardbrightness.zig");
     _ = @import("display/boarddisplaybitmap.zig");
     _ = @import("display/mirrorboard.zig");
     _ = @import("display/setboardbrightness.zig");
     _ = @import("display/setboarddisplay.zig");
     _ = @import("display/showbitmap.zig");
+    _ = @import("display/showboard.zig");
     _ = @import("display/waitvblank.zig");
     _ = @import("driver/_driver.zig");
     _ = @import("driver/addrtgdriver.zig");
@@ -398,6 +398,14 @@ fn base(rb: *RtgBase) *interface.RtgBase {
 /// The library through its second interface, the way a driver reaches it.
 fn driverBase(rb: *RtgBase) *sdk.interface.rtgdriver.RtgDriverBase {
     return @ptrCast(rb);
+}
+
+/// A board put in the mode of that number - its default for 0 - showing
+/// nothing.
+fn setMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) i32 {
+    const id = if (mode_id != 0) mode_id else base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY);
+    if (id == 0) return rtg.errors.RTGERR_BAD_MODE;
+    return base(rb).ShowBoard(board, id, null, 0);
 }
 
 /// A device of the test board's kind offered, and the board its driver
@@ -773,12 +781,12 @@ test "a device taken away: its boards gone from the walk, still handles, and sho
     const fk = fakeOf(rb);
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
 
-    const board = try makeBoard(rb);
+    const board = try makeDisplay(rb, 8, 8);
     const device = board.device.?;
     const mode = base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, mode));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, mode));
     const bm = base(rb).AllocBitMap(board, 8, 8, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm));
 
     driverBase(rb).RemRtgDevice(device);
     fk.devices[0] = null;
@@ -798,11 +806,11 @@ test "a device taken away: its boards gone from the walk, still handles, and sho
     // What it showed was taken down, so the buffer can go; nothing more
     // is shown on it, and it is put in no mode.
     try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, bm, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, bm));
     const one = [_]rtg.RtgBand{.{ .bitmap = bm }};
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMapBands(board, &one, one.len));
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).SetBoardMode(board, mode));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBoard(board, 0, &one, one.len));
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, setMode(rb, board, mode));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
     base(rb).FreeBitMap(bm);
 
     // A board made after it takes the next number, and is the display.
@@ -955,10 +963,10 @@ test "a mode: found by its figures, set by its number, and the board says what i
 
     // A number the board has no mode of is refused, and the driver not
     // asked.
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(board, 9));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, setMode(rb, board, 9));
     try testing.expectEqual(@as(u32, 0), fk.log.set_mode);
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 2));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 2));
     // The driver was handed the mode and its timings.
     try testing.expectEqual(@as(u32, 2), fk.log.last_mode.id);
     try testing.expectEqual(@as(u32, 640), fk.log.last_timings.h_active);
@@ -980,12 +988,12 @@ test "a mode: found by its figures, set by its number, and the board says what i
     _ = modesOf(rb, board, &found);
     try testing.expect(found[0].flags & rtg.modes.RTGMF_CURRENT != 0);
     try testing.expect(found[1].flags & rtg.modes.RTGMF_CURRENT == 0);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
     _ = modesOf(rb, board, &found);
     try testing.expect(found[0].flags & rtg.modes.RTGMF_CURRENT == 0);
     try testing.expectEqual(rtg.modes.RTGMF_DEFAULT | rtg.modes.RTGMF_CURRENT, found[1].flags);
     // A mode with no clock leaves the board saying none.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 3));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 3));
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(@as(u32, 0), info.refresh_mhz);
     try testing.expectEqual(@as(u32, 0), info.pixel_clock_hz);
@@ -1030,7 +1038,7 @@ test "the nearest mode to a wish: by format, then size, then refresh; none on a 
     var got: rtg.RtgMode = .{ .id = 77 };
     try testing.expectEqual(@as(u32, 0), base(rb).BestBoardMode(bare, 320, 200, any, any, &got));
     try testing.expectEqual(@as(u32, 77), got.id);
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(bare, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, setMode(rb, bare, 0));
     driverBase(rb).DeleteBoard(bare);
 
     fk.modes = fake.mode_table.len;
@@ -1099,7 +1107,7 @@ test "a mode added: its name with the refresh where a size has two, the default 
     again.h_back = 112;
     try testing.expectEqual(@as(u32, 4), driverBase(rb).AddBoardMode(board, &again, rgb565, 0));
     try testing.expectEqual(@as(u32, 4), base(rb).GetBoardModes(board, null, 0));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 4));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 4));
     try testing.expectEqual(@as(u32, 24), fakeOf(rb).log.last_timings.h_front);
     // It stays the default: a mode is not made less by being added again.
     try testing.expectEqual(@as(u32, 4), base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
@@ -1338,14 +1346,14 @@ test "a monitor's modes: made of its EDID as the board joins the list, the one i
     // sync a line early - and CEA's number for it.
     try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
     try testing.expectEqualStrings("1920x1080", std.mem.sliceTo(&found[0].name, 0));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
     try testing.expectEqual(found[0].id, fk.log.last_mode.id);
     try testing.expectEqual(@as(u32, 148_500_000), fk.log.last_timings.pixel_clock_hz);
     try testing.expectEqual(@as(u32, 3), fk.log.last_timings.v_front);
     try testing.expectEqual(@as(u8, 16), fk.log.last_timings.vic);
     try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH | rtg.modes.RTGTM_VSYNC_HIGH, fk.log.last_timings.flags);
     // A mode named by a number has the standard's timing and that number.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, found[7].id));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, found[7].id));
     try testing.expectEqual(@as(u8, 3), fk.log.last_timings.vic);
     try testing.expectEqual(@as(u32, 27_000_000), fk.log.last_timings.pixel_clock_hz);
 
@@ -1397,7 +1405,7 @@ test "a monitor that prefers what the board cannot make gets 1080p at 60; one mo
     try testing.expectEqual(@as(u32, 1), base(rb).GetBoardModes(other, &found, found.len));
     try testing.expectEqual(@as(u32, 2560), found[0].width);
     try testing.expectEqual(@as(u32, 241_500_000), found[0].pixel_clock_hz);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(other, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, other, 0));
     try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH, fk.log.last_timings.flags);
     try testing.expectEqual(@as(u8, 0), fk.log.last_timings.vic);
     // A monitor without an extension is a DVI monitor, of no sound.
@@ -1420,10 +1428,12 @@ test "a monitor that names nothing: the board's own modes, or its device's size 
     try testing.expectEqual(@as(u32, 1), base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
     try testing.expect(infoOf(rb, board).flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
     try testing.expectEqual(@as(u32, 0), monitorOf(rb, board).flags);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
-    const bm = base(rb).AllocBitMap(board, 8, 8, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm, 0, 0));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    // In its mode of one bit a pixel, whose picture the tests' display
+    // memory holds.
+    const bm = base(rb).AllocBitMap(board, 64, 64, @intFromEnum(rtg.PixelFormat.mono1), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const in_mono = [_]rtg.RtgBand{.{ .bitmap = bm }};
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 3, &in_mono, in_mono.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
     base(rb).FreeBitMap(bm);
     driverBase(rb).DeleteBoard(board);
 
@@ -1547,57 +1557,104 @@ test "two monitors in turn: the list made again, a mode's number kept, the task 
     try tearDown(rb);
 }
 
+/// A detailed timing of a small picture at 60 a second: `width` by
+/// `height` in a line of `width + 36` clocks and a frame of
+/// `height + 18` lines, the horizontal front porch `h_front`, both sync
+/// pulses high.
+fn smallTiming(width: u8, height: u8, h_front: u8) [18]u8 {
+    const whole: u32 = (@as(u32, width) + 36) * (@as(u32, height) + 18);
+    const clock_10khz: u16 = @intCast(whole * 60 / 10_000);
+    return .{ @truncate(clock_10khz), @truncate(clock_10khz >> 8), width, 36, 0, height, 18, 0, h_front, 8, 0x22, 0, 0, 0, 0, 0, 0, 0x1E };
+}
+
+/// A monitor of one or two small modes, named in full: the first is the
+/// one it prefers.
+fn smallMonitor(first: [18]u8, second: ?[18]u8) [1]edid.Block {
+    var block: edid.Block = @splat(0);
+    for (38..54) |i| block[i] = 0x01;
+    @memcpy(block[54..72], &first);
+    if (second) |timing| @memcpy(block[72..90], &timing);
+    return .{sealed(block)};
+}
+
 test "a board that shows when its monitor changes: the mode again where the new one has it, none where it has not" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
-    const board = try makeConnector(rb, portable_bytes, 0);
-    const full_hd = base(rb).FindBoardMode(board, 1920, 1080, rtg.RTG_ANY, rtg.RTG_ANY);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, full_hd));
-    const bm = base(rb).AllocBitMap(board, 8, 8, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm, 0, 0));
+    // Three monitors of pictures small enough for the tests' display
+    // memory: one of 64 by 32; one that prefers 32 by 32 and has 64 by 32
+    // too, with another front porch; one of 32 by 32 alone.
+    const wide_only = smallMonitor(smallTiming(64, 32, 8), null);
+    const both = smallMonitor(smallTiming(32, 32, 8), smallTiming(64, 32, 12));
+    const square_only = smallMonitor(smallTiming(32, 32, 8), null);
+    const board = try makeConnector(rb, std.mem.sliceAsBytes(&wide_only), 0);
+    const wide = base(rb).FindBoardMode(board, 64, 32, rtg.RTG_ANY, rtg.RTG_ANY);
+    try testing.expect(wide != 0);
+    const bm = base(rb).AllocBitMap(board, 64, 32, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, bm));
     try testing.expectEqual(@as(u32, 1), fk.log.set_mode);
+    try testing.expectEqual(@as(u32, 8), fk.log.last_timings.h_front);
 
-    // A monitor that names 1080p by its number: the board stays in the
-    // mode, its driver handed it again with the standard's timing, and
-    // what was shown stays shown.
-    fk.monitor_edid = uhd_bytes;
+    // A monitor that has the mode too: the board stays in it, its driver
+    // handed the mode again with the timing this monitor gives it, and
+    // what was shown with it - it stays shown.
+    fk.monitor_edid = std.mem.sliceAsBytes(&both);
     driverBase(rb).MonitorChanged(board);
     monitors.service(rb);
     try testing.expectEqual(@as(u32, 2), fk.log.set_mode);
-    try testing.expectEqual(full_hd, fk.log.last_mode.id);
-    try testing.expectEqual(@as(u32, 4), fk.log.last_timings.v_front);
+    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED, fk.log.last_flags);
+    try testing.expectEqual(wide, fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 12), fk.log.last_timings.h_front);
+    try testing.expectEqual(@as(u32, 1), fk.log.band_count);
+    try testing.expectEqual(bm, fk.log.bands[0].bitmap);
     try testing.expectEqual(bm, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(bm.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
     var info = infoOf(rb, board);
-    try testing.expectEqual(full_hd, info.mode_id);
+    try testing.expectEqual(wide, info.mode_id);
     try testing.expect(info.flags & rtg.boards.RTGBF_MODE_SET != 0);
+    // The new monitor's list: the mode the board is in, and the one this
+    // monitor prefers, which is the default.
     var found: [16]rtg.RtgMode = undefined;
-    // The new monitor's list: 4K at 30, and the mode the board is in,
-    // which is its default - it takes no clock as fast as the 4K at 60 it
-    // prefers.
     try testing.expectEqual(@as(u32, 2), base(rb).GetBoardModes(board, &found, found.len));
-    try testing.expectEqual(@as(u32, 3840), found[0].width);
-    try testing.expectEqual(@as(u32, 0), found[0].flags);
-    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT | rtg.modes.RTGMF_CURRENT, found[1].flags);
+    try testing.expectEqual(@as(u32, 64), found[0].width);
+    try testing.expectEqual(rtg.modes.RTGMF_CURRENT, found[0].flags);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[1].flags);
 
     // A monitor that has not got the mode: the board shows nothing and is
     // in none, and the buffer can go.
-    fk.monitor_edid = qhd_bytes;
+    fk.monitor_edid = std.mem.sliceAsBytes(&square_only);
     driverBase(rb).MonitorChanged(board);
     monitors.service(rb);
     try testing.expectEqual(@as(u32, 2), fk.log.set_mode);
+    try testing.expectEqual(@as(u32, 0), fk.log.band_count);
     try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expect(bm.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
     info = infoOf(rb, board);
     try testing.expectEqual(@as(u32, 0), info.mode_id);
     try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_MODE_SET);
-    _ = base(rb).GetBoardModes(board, &found, found.len);
+    try testing.expectEqual(@as(u32, 1), base(rb).GetBoardModes(board, &found, found.len));
     try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
-    base(rb).FreeBitMap(bm);
-    // The mode it was in is not the board's to set until a monitor has it.
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(board, full_hd));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
-    try testing.expectEqual(@as(u32, 2560), infoOf(rb, board).width);
+    // The mode it was in is not the board's to be put in until a monitor
+    // has it, nor its buffer one to show in the mode that is.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, setMode(rb, board, wide));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, bm));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
+    try testing.expectEqual(@as(u32, 32), infoOf(rb, board).width);
 
+    // The driver that cannot bring the link up again for a monitor that
+    // came leaves the board in no mode, showing nothing.
+    const square = base(rb).AllocBitMap(board, 32, 32, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, square));
+    fk.monitor_edid = std.mem.sliceAsBytes(&both);
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    driverBase(rb).MonitorChanged(board);
+    monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, board).mode_id);
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expectEqual(@as(u32, 0), fake.instanceOf(board).showing_count);
+
+    base(rb).FreeBitMap(square);
+    base(rb).FreeBitMap(bm);
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
@@ -1614,11 +1671,11 @@ test "notifications: a board made, put in a mode and gone, each told and counted
     const board = try makeBoard(rb);
     try testing.expect(sys.SetSignal(0, mask) & mask != 0);
     const made = infoOf(rb, board).changes;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 2));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 2));
     try testing.expect(sys.SetSignal(0, mask) & mask != 0);
     try testing.expectEqual(made + 1, infoOf(rb, board).changes);
     // A mode refused changes nothing and tells nobody.
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).SetBoardMode(board, 9));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, setMode(rb, board, 9));
     try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, mask) & mask);
     // Its device taken away: the board is gone, and says so.
     driverBase(rb).RemRtgDevice(board.device.?);
@@ -1773,56 +1830,236 @@ test "memory a display is already using is never handed out twice" {
     try tearDown(rb);
 }
 
-test "a buffer that keeps its memory stops a mode change" {
+/// A board of the test driver's with one mode of that size in RGB565: a
+/// display small enough for its pictures to fit the tests' memory.
+fn makeDisplay(rb: *RtgBase, width: u32, height: u32) !*rtg.RtgBoard {
+    return fake.makeDisplay(fakeOf(rb), width, height, .rgb565) orelse error.NoBoard;
+}
+
+/// A second mode on a display, of that size: its number.
+fn addMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32) u32 {
+    const timings: rtg.RtgTimings = .{ .h_active = width, .v_active = height };
+    return driverBase(rb).AddBoardMode(board, &timings, @intFromEnum(rtg.PixelFormat.rgb565), 0);
+}
+
+test "the mode and the bands as one step; a buffer lives through a mode change" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
-    const board = try makeBoard(rb);
+    const board = try makeDisplay(rb, 16, 16);
+    try testing.expectEqual(@as(u32, 2), addMode(rb, board, 32, 8));
+    const glass = fake.instanceOf(board);
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const showing = rtg.bitmaps.RTGBMF_SHOWING;
+    const changed = rtg.boards.RTGSHOW_MODE_CHANGED;
+    // Buffers are the board's, in a mode or not.
+    const square = base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
+    const wide = base(rb).AllocBitMap(board, 32, 8, format, displayable).?;
+    const square_pixels = square.pixels.?;
+    const free_before = freeOf(rb, board);
 
-    const fixed = base(rb).AllocBitMap(board, 32, 32, format, 0).?;
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).SetBoardMode(board, 0));
-    try testing.expectEqual(@as(u32, 0), fk.log.set_mode);
-    base(rb).FreeBitMap(fixed);
+    // The first show of a board in no mode puts it in its default: one
+    // call of the driver's, with the mode and the picture.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, square));
+    try testing.expectEqual(@as(u32, 1), fk.log.shown);
+    try testing.expectEqual(changed, fk.log.last_flags);
+    try testing.expectEqual(@as(u32, 1), fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 1), infoOf(rb, board).mode_id);
 
-    // One that agreed to lose it keeps its handle and loses its pixels.
-    const loose = base(rb).AllocBitMap(board, 32, 32, format, rtg.bitmaps.RTGBMF_VOLATILE).?;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
-    try testing.expect(loose.pixels == null);
-    try testing.expectEqual(
-        rtg.errors.RTGERR_BAD_ARG,
-        base(rb).FillRect(loose, &rtg.RtgRect{ .width = 4, .height = 4 }, 0),
-    );
-    base(rb).FreeBitMap(loose);
+    // Another mode and what is shown in it: one step, one call.
+    const in_wide = [_]rtg.RtgBand{.{ .bitmap = wide }};
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 2, &in_wide, in_wide.len));
+    try testing.expectEqual(@as(u32, 2), fk.log.shown);
+    try testing.expectEqual(changed, fk.log.last_flags);
+    try testing.expectEqual(@as(u32, 2), fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 32), fk.log.last_timings.h_active);
+    try testing.expectEqual(wide, fk.log.last_show_bitmap.?);
+    try testing.expectEqual(@as(u32, 2), glass.mode_id);
+    var info = infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 2), info.mode_id);
+    try testing.expectEqual(@as(u32, 32), info.width);
+    try testing.expectEqual(@as(u32, 8), info.height);
+    try testing.expectEqual(wide.pitch, info.pitch);
+    try testing.expect(wide.flags & showing != 0);
+    try testing.expect(square.flags & showing == 0);
+    try testing.expectEqual(wide, base(rb).BoardDisplayBitMap(board).?);
+    // The buffer of the other mode was not touched: its memory is its
+    // own, and none was given back.
+    try testing.expectEqual(square_pixels, square.pixels.?);
+    try testing.expectEqual(free_before, freeOf(rb, board));
+    // It is no picture of this mode, and the driver is not asked.
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, square));
+    try testing.expectEqual(@as(u32, 2), fk.log.shown);
 
+    // Shown again in the mode of its size.
+    const in_square = [_]rtg.RtgBand{.{ .bitmap = square }};
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 1, &in_square, in_square.len));
+    try testing.expect(square.flags & showing != 0);
+    try testing.expect(wide.flags & showing == 0);
+    try testing.expectEqual(@as(u32, 16), infoOf(rb, board).width);
+    // The mode it is in, named or kept, is no mode set anew.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 1, &in_square, in_square.len));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &in_square, in_square.len));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags);
+
+    // A mode with nothing shown in it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 2, null, 0));
+    try testing.expectEqual(changed, fk.log.last_flags);
+    try testing.expectEqual(@as(u32, 0), fk.log.band_count);
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    info = infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 2), info.mode_id);
+    try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_SHOWING);
+
+    // A number the board has no mode of, and more bands than a display
+    // shows: refused before anything is asked.
+    const shown = fk.log.shown;
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, base(rb).ShowBoard(board, 9, null, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBoard(board, 0, &in_wide, rtg.RTG_MAX_BANDS + 1));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBoard(board, 0, null, 1));
+    try testing.expectEqual(shown, fk.log.shown);
+
+    base(rb).FreeBitMap(wide);
+    base(rb).FreeBitMap(square);
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
+}
+
+test "another mode refused leaves the mode and what was shown; where that is gone too, the board is in none" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeDisplay(rb, 16, 16);
+    _ = addMode(rb, board, 32, 8);
+    const glass = fake.instanceOf(board);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const showing = rtg.bitmaps.RTGBMF_SHOWING;
+    const square = base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
+    const wide = base(rb).AllocBitMap(board, 32, 8, format, displayable).?;
+    const in_wide = [_]rtg.RtgBand{.{ .bitmap = wide }};
+
+    // A board in no mode whose first show is refused stays in none.
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, square));
+    try testing.expectEqual(@as(u32, 1), fk.log.shown);
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, board).mode_id);
+    try testing.expect(square.flags & showing == 0);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, square));
+    const swaps = swapsOf(rb, board);
+    const changes = infoOf(rb, board).changes;
+    const shown = fk.log.shown;
+
+    // Another mode the driver refuses: it shows nothing then, and is
+    // asked for what was shown before, in the mode before. Neither side
+    // has moved when the call comes back.
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBoard(board, 2, &in_wide, in_wide.len));
+    try testing.expectEqual(shown + 2, fk.log.shown);
+    try testing.expectEqual(@as(u32, 1), fk.log.last_mode.id);
+    try testing.expectEqual(square, fk.log.last_show_bitmap.?);
+    try testing.expectEqual(@as(u32, 1), glass.mode_id);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(square, glass.showing[0].bitmap);
+    var info = infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 1), info.mode_id);
+    try testing.expectEqual(@as(u32, 16), info.width);
+    try testing.expectEqual(changes, info.changes);
+    try testing.expectEqual(square, base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(square.flags & showing != 0);
+    try testing.expect(wide.flags & showing == 0);
+    try testing.expectEqual(swaps, swapsOf(rb, board));
+    // The buffer refused can go, the one shown cannot.
+    base(rb).FreeBitMap(square);
+    try testing.expectEqual(square, base(rb).BoardDisplayBitMap(board).?);
+
+    // Where the driver cannot show what was shown either, the board is in
+    // no mode and shows nothing, on both sides, and says so.
+    fk.show_answer = rtg.errors.RTGERR_NO_MEMORY;
+    fk.show_refusals = 2;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, base(rb).ShowBoard(board, 2, &in_wide, in_wide.len));
+    try testing.expectEqual(@as(u32, 0), glass.showing_count);
+    info = infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 0), info.mode_id);
+    try testing.expectEqual(@as(u32, 0), info.flags & (rtg.boards.RTGBF_MODE_SET | rtg.boards.RTGBF_SHOWING));
+    try testing.expectEqual(changes + 1, info.changes);
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expect(square.flags & showing == 0);
+    var found: [4]rtg.RtgMode = undefined;
+    _ = modesOf4(rb, board, &found);
+    try testing.expectEqual(@as(u32, 0), (found[0].flags | found[1].flags) & rtg.modes.RTGMF_CURRENT);
+
+    // The next show puts it in a mode again.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 2, &in_wide, in_wide.len));
+    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED, fk.log.last_flags);
+    try testing.expectEqual(@as(u32, 2), infoOf(rb, board).mode_id);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(wide);
+    base(rb).FreeBitMap(square);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+/// The board's modes into a short list; how many there are.
+fn modesOf4(rb: *RtgBase, board: *rtg.RtgBoard, into: *[4]rtg.RtgMode) u32 {
+    return base(rb).GetBoardModes(board, into, into.len);
 }
 
 test "showing a buffer, and what may not be shown" {
     const rb = try setUp();
     defer kexec.deinit();
-    const board = try makeBoard(rb);
+    const fk = fakeOf(rb);
+    const board = try makeDisplay(rb, 16, 16);
+    const other = try makeDisplay(rb, 16, 16);
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
 
     const hidden = base(rb).AllocBitMap(board, 16, 16, format, 0).?;
-    const up = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const up = base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
+    const small = base(rb).AllocBitMap(board, 8, 16, format, displayable).?;
+    const short = base(rb).AllocBitMap(board, 16, 8, format, displayable).?;
+    const deep = base(rb).AllocBitMap(board, 16, 16, @intFromEnum(rtg.PixelFormat.bgra32), displayable).?;
+    const elsewhere = base(rb).AllocBitMap(other, 16, 16, format, displayable).?;
 
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, hidden, 0, 0));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, up, 0, 0));
+    // Not made to be shown, not the mode's size, not its format, not this
+    // board's: each refused by the library, the driver not asked.
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, hidden));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, small));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, short));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, base(rb).ShowBitMap(board, deep));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMap(board, elsewhere));
+    try testing.expectEqual(@as(u32, 0), fk.log.shown);
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, board).mode_id);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, up));
     try testing.expectEqual(up, base(rb).BoardDisplayBitMap(board).?);
     try testing.expect(up.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    // The driver was handed the one buffer as a band from the top.
+    try testing.expectEqual(@as(u32, 1), fk.log.band_count);
+    try testing.expectEqual(up, fk.log.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 0), fk.log.bands[0].line);
 
     // What the board is reading is not the caller's to take away.
     base(rb).FreeBitMap(up);
     try testing.expectEqual(up, base(rb).BoardDisplayBitMap(board).?);
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
     try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
     try testing.expect(up.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
+    // The board stays in its mode with nothing shown.
+    try testing.expectEqual(@as(u32, 1), infoOf(rb, board).mode_id);
 
+    base(rb).FreeBitMap(elsewhere);
+    base(rb).FreeBitMap(deep);
+    base(rb).FreeBitMap(short);
+    base(rb).FreeBitMap(small);
     base(rb).FreeBitMap(up);
     base(rb).FreeBitMap(hidden);
+    driverBase(rb).DeleteBoard(other);
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }
@@ -1830,11 +2067,9 @@ test "showing a buffer, and what may not be shown" {
 test "showing buffers in bands, and what may not be shown so" {
     const rb = try setUp();
     defer kexec.deinit();
-    const board = try makeBoard(rb);
-    const format = @intFromEnum(rtg.PixelFormat.rgb565);
-    board.info.width = 16;
-    board.info.height = 16;
     const fk = fakeOf(rb);
+    const board = try makeDisplay(rb, 16, 16);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
 
     const back = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     const front = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
@@ -1844,7 +2079,7 @@ test "showing buffers in bands, and what may not be shown so" {
     // The back buffer from the top, the front one from line 6 on, its own
     // first row there.
     const two = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &two, two.len));
     try testing.expectEqual(@as(u32, 2), fk.log.band_count);
     try testing.expectEqual(@as(u32, 6), fk.log.bands[1].line);
     try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
@@ -1852,38 +2087,57 @@ test "showing buffers in bands, and what may not be shown so" {
     try testing.expect(front.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
 
     // Lines out of order, a first band below the top, a buffer that
-    // cannot be shown, one too short for its lines, none at all.
+    // cannot be shown, one that is not the mode's size.
     const unordered = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6 }, .{ .bitmap = back, .line = 4 } };
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &unordered, unordered.len));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBoard(board, 0, &unordered, unordered.len));
     const low = [_]rtg.RtgBand{.{ .bitmap = back, .line = 2 }};
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &low, low.len));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBoard(board, 0, &low, low.len));
     const unseen = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = hidden, .line = 8 } };
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMapBands(board, &unseen, unseen.len));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBoard(board, 0, &unseen, unseen.len));
     const short = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = small, .line = 4 } };
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &short, short.len));
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &two, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBoard(board, 0, &short, short.len));
+    try testing.expectEqual(@as(u32, 1), fk.log.shown);
     // One row repeated over a band; a buffer of no rows refused for it.
     const row = base(rb).AllocBitMap(board, 16, 1, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     const repeated = [_]rtg.RtgBand{ .{ .bitmap = row, .flags = rtg.RTGBANDF_REPEAT }, .{ .bitmap = front, .line = 6, .origin = 6 } };
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &repeated, repeated.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &repeated, repeated.len));
     try testing.expectEqual(@as(u32, 0), repeated[0].rowAt(5));
     try testing.expectEqual(@as(u32, 0), repeated[0].linesOf(0, 1, 6).first);
     try testing.expectEqual(@as(u32, 6), repeated[0].linesOf(0, 1, 6).end);
     try testing.expectEqual(@as(u32, 4), repeated[1].rowAt(10));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &two, two.len));
     base(rb).FreeBitMap(row);
-    try testing.expectEqual(@as(u32, 3), fk.log.bands_shown);
+    try testing.expectEqual(@as(u32, 3), fk.log.shown);
 
-    // One buffer again: the other is no longer read.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back, 0, 0));
+    // One buffer again: the other is no longer read. No bands at all
+    // show nothing.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
     try testing.expect(front.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, null, 0));
+    try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expect(back.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
 
     base(rb).FreeBitMap(small);
     base(rb).FreeBitMap(hidden);
     base(rb).FreeBitMap(front);
     base(rb).FreeBitMap(back);
     driverBase(rb).DeleteBoard(board);
+
+    // A board that shows one whole buffer takes no bands, and says so:
+    // one buffer from its own top is what ShowBitMap shows.
+    fk.without_engine = true;
+    const plain = try makeDisplay(rb, 16, 16);
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, plain).caps & rtg.boards.RTGBC_BANDS);
+    const one = base(rb).AllocBitMap(plain, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const another = base(rb).AllocBitMap(plain, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const banded = [_]rtg.RtgBand{ .{ .bitmap = one }, .{ .bitmap = another, .line = 6, .origin = 6 } };
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ShowBoard(plain, 0, &banded, banded.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(plain, 0, &banded, 1));
+    try testing.expectEqual(one, base(rb).BoardDisplayBitMap(plain).?);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, null));
+    base(rb).FreeBitMap(another);
+    base(rb).FreeBitMap(one);
+    driverBase(rb).DeleteBoard(plain);
     try tearDown(rb);
 }
 
@@ -1907,11 +2161,12 @@ const Held = struct {
     }
 };
 
-test "the board's lock: held around the driver's show and mode, free after every call" {
+test "the board's lock: held around the driver's show, free after every call" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
-    const board = try makeBoard(rb);
+    const board = try makeDisplay(rb, 16, 16);
+    const wide_mode = addMode(rb, board, 32, 8);
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
     const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
     Held.seen = 0;
@@ -1919,13 +2174,10 @@ test "the board's lock: held around the driver's show and mode, free after every
     fk.meanwhile = &Held.look;
     try testing.expect(Held.free(board));
 
-    // The mode: the driver is asked under the lock, and the picture taken
-    // down inside it is too.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    // A mode with nothing in it: the driver is asked under the lock.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
     try testing.expectEqual(@as(u32, 1), Held.seen);
     try testing.expect(Held.free(board));
-    board.info.width = 16;
-    board.info.height = 16;
 
     // Buffers made and described: the lock is free again, also where the
     // call was refused.
@@ -1946,21 +2198,21 @@ test "the board's lock: held around the driver's show and mode, free after every
 
     // A show of one buffer, of bands, one refused by the library and one
     // by the driver.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
     try testing.expectEqual(@as(u32, 2), Held.seen);
     try testing.expect(Held.free(board));
     const two = [_]rtg.RtgBand{ .{ .bitmap = back }, .{ .bitmap = front, .line = 6, .origin = 6 } };
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &two, two.len));
     try testing.expectEqual(@as(u32, 3), Held.seen);
     try testing.expect(Held.free(board));
-    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, attached, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, base(rb).ShowBitMap(board, attached));
     try testing.expectEqual(@as(u32, 3), Held.seen);
     try testing.expect(Held.free(board));
     const out_of_order = [_]rtg.RtgBand{ .{ .bitmap = back, .line = 2 }, .{ .bitmap = front, .line = 6, .origin = 6 } };
-    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBitMapBands(board, &out_of_order, out_of_order.len));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).ShowBoard(board, 0, &out_of_order, out_of_order.len));
     try testing.expect(Held.free(board));
     fk.show_answer = rtg.errors.RTGERR_IO;
-    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, front, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, front));
     try testing.expectEqual(@as(u32, 4), Held.seen);
     try testing.expect(Held.free(board));
 
@@ -1975,12 +2227,15 @@ test "the board's lock: held around the driver's show and mode, free after every
     _ = freeOf(rb, board);
     try testing.expect(Held.free(board));
 
-    // A mode change refused for a buffer that keeps its memory.
-    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, base(rb).SetBoardMode(board, 0));
+    // Another mode refused, and what was shown asked for again: both
+    // under the lock.
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBoard(board, wide_mode, null, 0));
+    try testing.expectEqual(@as(u32, 6), Held.seen);
     try testing.expect(Held.free(board));
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
-    try testing.expectEqual(@as(u32, 5), Held.seen);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    try testing.expectEqual(@as(u32, 7), Held.seen);
     // The driver never worked without it.
     try testing.expectEqual(@as(u32, 0), Held.missed);
     base(rb).FreeBitMap(front);
@@ -2098,18 +2353,16 @@ test "a show that fails changes nothing: the buffer shown stays, the one refused
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
-    const board = try makeBoard(rb);
+    const board = try makeDisplay(rb, 16, 16);
     const glass = fake.instanceOf(board);
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
     const showing = rtg.bitmaps.RTGBMF_SHOWING;
     const first = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     const second = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
 
-    // The board is handed what was asked for: the buffer, and x and y.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, first, 3, 5));
+    // The board is handed what was asked for: the buffer.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, first));
     try testing.expectEqual(first, fk.log.last_show_bitmap.?);
-    try testing.expectEqual(@as(u32, 3), fk.log.last_show_x);
-    try testing.expectEqual(@as(u32, 5), fk.log.last_show_y);
     try testing.expectEqual(@as(u32, 1), glass.showing_count);
     try testing.expectEqual(first, glass.showing[0].bitmap);
     // A show that works is a picture counted.
@@ -2120,7 +2373,7 @@ test "a show that fails changes nothing: the buffer shown stays, the one refused
     // the library's marks, what it answers, its count of pictures, and
     // what the board itself shows.
     fk.show_answer = rtg.errors.RTGERR_IO;
-    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, second, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, second));
     try testing.expectEqual(second, fk.log.last_show_bitmap.?);
     try testing.expectEqual(first, base(rb).BoardDisplayBitMap(board).?);
     try testing.expect(first.flags & showing != 0);
@@ -2138,14 +2391,14 @@ test "a show that fails changes nothing: the buffer shown stays, the one refused
 
     // Showing nothing refused: the picture stays up, and stays marked.
     fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
-    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(board, null));
     try testing.expectEqual(first, base(rb).BoardDisplayBitMap(board).?);
     try testing.expect(first.flags & showing != 0);
     try testing.expect(board.info.flags & rtg.boards.RTGBF_SHOWING != 0);
     try testing.expectEqual(@as(u32, 1), glass.showing_count);
 
     // The refusal was that show's alone: the next one works.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
     try testing.expect(base(rb).BoardDisplayBitMap(board) == null);
     try testing.expectEqual(@as(u32, 0), glass.showing_count);
 
@@ -2158,12 +2411,10 @@ test "bands that fail change nothing: what was shown stays, in the library and o
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
-    const board = try makeBoard(rb);
+    const board = try makeDisplay(rb, 16, 16);
     const glass = fake.instanceOf(board);
     const format = @intFromEnum(rtg.PixelFormat.rgb565);
     const showing = rtg.bitmaps.RTGBMF_SHOWING;
-    board.info.width = 16;
-    board.info.height = 16;
     const back = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     const front = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     const third = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
@@ -2171,10 +2422,10 @@ test "bands that fail change nothing: what was shown stays, in the library and o
 
     // One buffer up, then bands the board refuses: the one buffer stays,
     // and no picture is counted.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
     const swaps = swapsOf(rb, board);
     fk.show_answer = rtg.errors.RTGERR_NO_MEMORY;
-    try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, base(rb).ShowBoard(board, 0, &two, two.len));
     try testing.expectEqual(swaps, swapsOf(rb, board));
     try testing.expectEqual(@as(u32, 2), fk.log.band_count); // it was asked
     try testing.expectEqual(back, base(rb).BoardDisplayBitMap(board).?);
@@ -2184,7 +2435,7 @@ test "bands that fail change nothing: what was shown stays, in the library and o
     try testing.expectEqual(back, glass.showing[0].bitmap);
 
     // The same bands again, and they are up on both sides: a picture.
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMapBands(board, &two, two.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &two, two.len));
     try testing.expectEqual(swaps + 1, swapsOf(rb, board));
     try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
     try testing.expectEqual(@as(u32, 2), glass.showing_count);
@@ -2192,7 +2443,7 @@ test "bands that fail change nothing: what was shown stays, in the library and o
 
     // A buffer refused over bands: the bands stay, and the buffer can go.
     fk.show_answer = rtg.errors.RTGERR_IO;
-    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, third, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, third));
     try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
     try testing.expect(back.flags & showing != 0 and front.flags & showing != 0);
     try testing.expect(third.flags & showing == 0);
@@ -2202,11 +2453,11 @@ test "bands that fail change nothing: what was shown stays, in the library and o
     // One of the bands' own buffers refused alone: it is still up in its
     // band, so it stays marked.
     fk.show_answer = rtg.errors.RTGERR_IO;
-    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, front, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).ShowBitMap(board, front));
     try testing.expect(front.flags & showing != 0);
     try testing.expectEqual(@as(u32, 2), glass.showing_count);
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
     base(rb).FreeBitMap(front);
     base(rb).FreeBitMap(back);
     driverBase(rb).DeleteBoard(board);
@@ -2746,30 +2997,30 @@ test "the counters are reset on every board, with a control of its own or withou
     // A board whose driver has a control: the library's count is cleared,
     // the driver is handed the code for its own, and the answer is the
     // library's, whatever the driver made of it.
-    const board = try makeBoard(rb);
+    const board = try makeDisplay(rb, 16, 16);
     const shown = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, shown, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, shown));
     try testing.expectEqual(@as(u32, 1), swapsOf(rb, board));
     try testing.expectEqual(@as(isize, rtg.errors.RTGERR_OK), base(rb).BoardControl(board, reset, 7));
     try testing.expectEqual(reset, fk.log.last_control);
     try testing.expectEqual(@as(u32, 0), swapsOf(rb, board));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
     base(rb).FreeBitMap(shown);
     driverBase(rb).DeleteBoard(board);
 
     // A board whose driver has none takes it all the same, and no other
     // code.
     fk.without_engine = true;
-    const plain = try makeBoard(rb);
+    const plain = try makeDisplay(rb, 16, 16);
     const picture = base(rb).AllocBitMap(plain, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, picture, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, picture));
     try testing.expectEqual(@as(u32, 1), swapsOf(rb, plain));
     const controls = fk.log.control_calls;
     try testing.expectEqual(@as(isize, rtg.errors.RTGERR_OK), base(rb).BoardControl(plain, reset, 0));
     try testing.expectEqual(@as(u32, 0), swapsOf(rb, plain));
     try testing.expectEqual(controls, fk.log.control_calls);
     try testing.expectEqual(@as(isize, rtg.errors.RTGERR_NOT_SUPPORTED), base(rb).BoardControl(plain, rtg.tags.RTGCTRL_RGB_SHIFT, 7));
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, null));
     base(rb).FreeBitMap(picture);
     driverBase(rb).DeleteBoard(plain);
     try tearDown(rb);
@@ -2788,7 +3039,7 @@ test "turning the picture: what the board can do, and what it cannot" {
     try testing.expectEqual(@as(u8, 0), info.mirror_x);
     try testing.expectEqual(@as(u8, 0), info.mirror_y);
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     const was_width = info.width;
     const was_height = info.height;
@@ -2814,7 +3065,7 @@ test "a board whose pixels go out as they are written will not turn" {
     const fk = fakeOf(rb);
     fk.cannot_turn = true;
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
 
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
@@ -2844,7 +3095,7 @@ test "the pointer: converted once, placed by its point, shown and hidden" {
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expect(info.caps & rtg.boards.RTGBC_POINTER != 0);
@@ -2915,7 +3166,7 @@ test "the pointer on a 32-bit board: its channels in the order the format names 
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
     board.info.format = .bgra32;
 
     // A red pixel and a grey one, rgba32.
@@ -2935,7 +3186,7 @@ test "the overlay: its coverage dithered, following the pointer, placed on its o
     defer kexec.deinit();
     const fk = fakeOf(rb);
     const board = try makeBoard(rb);
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardMode(board, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expect(info.caps & rtg.boards.RTGBC_OVERLAY != 0);

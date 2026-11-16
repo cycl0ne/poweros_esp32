@@ -38,12 +38,8 @@ isize BoardControl(*rtg.RtgBoard board, u32 what, isize value)
 /// milli-Hertz) and format, or 0. RTG_ANY matches whatever, so all four
 /// RTG_ANY is the board's default mode.
 u32 FindBoardMode(*rtg.RtgBoard board, u32 width, u32 height, u32 refresh_mhz, u32 format)
-/// Put the board in the mode of that number, or in its default for 0.
-/// Refused with RTGERR_IN_USE while a buffer that is not RTGBMF_VOLATILE
-/// is alive; volatile ones lose their memory and keep their handle.
-i32 SetBoardMode(*rtg.RtgBoard board, u32 mode_id)
-// A slot kept free, so the slots after it stay where they are.
-##reserve 1
+// Two slots kept free, so the slots after them stay where they are.
+##reserve 2
 /// A buffer in the board's display memory, its rows aligned as the board
 /// asks. RTGBMF_DISPLAYABLE makes one the board can be shown. Null: a
 /// size of 0, a format this build does not know, a board with no display
@@ -57,10 +53,9 @@ i32 SetBoardMode(*rtg.RtgBoard board, u32 mode_id)
 /// Give a buffer back. Refused while the board is showing it. Null does
 /// nothing.
 void FreeBitMap(?*rtg.RtgBitMap bitmap)
-/// Show that buffer, its pixel (x, y) at the top left; null shows nothing.
-/// A board that cannot pan answers RTGERR_NOT_SUPPORTED for an x or y that
-/// is not zero.
-i32 ShowBitMap(*rtg.RtgBoard board, ?*rtg.RtgBitMap bitmap, u32 x, u32 y)
+/// Show that buffer, whole, in the mode the board is in - its default
+/// where it is in none; null shows nothing.
+i32 ShowBitMap(*rtg.RtgBoard board, ?*rtg.RtgBitMap bitmap)
 /// The buffer the board is showing, or null. Its first seven fields are a
 /// drawing surface.
 ?*rtg.RtgBitMap BoardDisplayBitMap(*rtg.RtgBoard board)
@@ -119,9 +114,8 @@ i32 SetBoardPointer(*rtg.RtgBoard board, ?*const rtg.Surface image, u32 hot_x, u
 void MoveBoardPointer(*rtg.RtgBoard board, i32 x, i32 y)
 /// Lay the pointer over the picture, or stop.
 i32 ShowBoardPointer(*rtg.RtgBoard board, bool show)
-/// Show several buffers at once, each in a band of display lines: a
-/// screen pulled down shows the one behind above it.
-i32 ShowBitMapBands(*rtg.RtgBoard board, [*]const rtg.RtgBand bands, u32 count)
+// A slot kept free, so the slots after it stay where they are.
+##reserve 1
 /// A second image laid over the picture under the pointer - a dragged
 /// icon - converted once with its coverage dithered into a mask; it
 /// follows the pointer, its pixel (hot_x, hot_y) at the pointer's point.
@@ -216,4 +210,10 @@ u32 ReadBoardEDID(*rtg.RtgBoard board, ?[*]u8 buffer, u32 size)
 ?*rtg.RtgNotify AddRtgNotify(*exec.Task task, u32 signals)
 /// Give a notification back. Null does nothing.
 void RemRtgNotify(?*rtg.RtgNotify notify)
+/// Put the board in the mode of that number - 0 keeps the mode it is in,
+/// or takes its default where it is in none - and show these bands in it,
+/// each a buffer from a display line down: a screen pulled down shows
+/// the one behind above it. `count` 0 shows nothing. One step: a show
+/// that fails changes nothing.
+i32 ShowBoard(*rtg.RtgBoard board, u32 mode_id, ?[*]const rtg.RtgBand bands, u32 count)
 ##end

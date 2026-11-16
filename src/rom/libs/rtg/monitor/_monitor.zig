@@ -35,10 +35,11 @@
 //! plugged in later.
 //!
 //! **A board that shows** when its monitor changes: where the mode it is
-//! in is in the new list, its driver is handed that mode again
-//! (`set_mode`), with the timings the monitor now there gives it, and
-//! brings the link up for it. Where it is not, the board shows nothing
-//! and is in no mode until one is set. Either way its `changes` are
+//! in is in the new list, its driver is handed that mode and what was
+//! shown again (`show`, with `RTGSHOW_MODE_CHANGED`), with the timings
+//! the monitor now there gives it, and brings the link up for it. Where
+//! it is not, the board shows nothing and is in no mode until it is
+//! shown in one. Either way its `changes` are
 //! raised and the tasks that asked are told.
 
 const sdk = @import("sdk");
@@ -54,6 +55,7 @@ const boards = @import("../board/_board.zig");
 const modes = @import("../mode/_mode.zig");
 const devices = @import("../device/_device.zig");
 const edid = @import("_edid.zig");
+const shows = @import("../display/_display.zig");
 
 /// What the library keeps of the monitor of a board with a connector: a
 /// block of its own behind the board, made as the board joins the list.
@@ -374,20 +376,13 @@ fn serve(rb: *RtgBase, board: *rtg.RtgBoard) bool {
     if (!look(rb, board)) return false;
     const current = private.mode orelse return true;
     if (current.offered) {
-        // The link again, for the monitor now there: what was shown stays
-        // shown. What the driver answers is not looked at - a monitor that
-        // went again is looked at again.
-        if (board.ops.?.set_mode) |set| _ = set(board, &current.mode, &current.timings);
-        board.info.pixel_clock_hz = current.mode.pixel_clock_hz;
-        board.info.refresh_mhz = current.mode.refresh_mhz;
+        // The link again, for the monitor now there, and what was shown
+        // shown again.
+        shows.again(rb, board);
         return true;
     }
     // The monitor has not got the mode the board is in.
-    if (board.showing != null) _ = rb.iface().ShowBitMap(board, null, 0, 0);
-    current.mode.flags &= ~monitors.RTGMF_CURRENT;
-    private.mode = null;
-    board.info.mode_id = 0;
-    board.info.flags &= ~@as(u32, rtg.boards.RTGBF_MODE_SET);
+    _ = shows.clear(rb, board);
     return true;
 }
 
@@ -399,7 +394,7 @@ fn serve(rb: *RtgBase, board: *rtg.RtgBoard) bool {
 /// - `rb` - the library.
 ///
 /// CONTEXT:
-/// In a task; `detect` and `set_mode` may wait. It takes the board list's
+/// In a task; `detect` and `show` may wait. It takes the board list's
 /// lock for its walk and each board's lock in turn, never both.
 pub fn service(rb: *RtgBase) void {
     const sys = rb.sys_base;

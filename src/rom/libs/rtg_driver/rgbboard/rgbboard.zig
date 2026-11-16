@@ -18,16 +18,17 @@
 //! state is the `Panel` the library allocates beside each handle.
 //!
 //! A picture may also be several buffers at once, in bands of lines
-//! (ShowBitMapBands): the copy's chains then take each line from the band
+//! (ShowBoard): the copy's chains then take each line from the band
 //! that covers it, a descriptor a line, so a band starts on any line.
 //!
 //! The order matters and none of it is optional. The driver's `attach`
 //! lets the panel out of reset, takes its memory and its DMA channels and
-//! programs the peripheral; `SetBoardMode` puts the timings in; and
-//! `ShowBitMap` is what starts the pixel stream. That last split is not
-//! decoration: the first picture has to be drawn and written back out of
-//! the cache while nothing is reading it, and a 1.2 MB write-back landing
-//! on top of a running stream is enough to starve it.
+//! programs the peripheral; the first show (`show`, with the mode set
+//! anew) puts the timings in, and its picture is what starts the pixel
+//! stream. That the stream waits for a picture is not decoration: the
+//! first picture has to be drawn and written back out of the cache while
+//! nothing is reading it, and a 1.2 MB write-back landing on top of a
+//! running stream is enough to starve it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -45,7 +46,7 @@ const pointer = @import("pointer.zig");
 
 const DRIVER_NAME = "rgb";
 const VERSION = 1;
-const REVISION = 8;
+const REVISION = 9;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
@@ -69,6 +70,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .ops = &ops,
         .instance_size = @sizeOf(Panel),
         .flags = rtg.boards.RTGBF_STREAMING,
+        .caps = rtg.boards.RTGBC_BANDS,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .rtg_base = rb, .board = board, .config = wanted };
@@ -109,7 +111,7 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
 
 /// One mode, the panel's own: putting the board in it is what programs the
 /// pads, the timings and the clock.
-fn setMode(board: *rtg.RtgBoard, _: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, _: *const rtg.RtgMode, _: *const rtg.RtgTimings) i32 {
     return panels.program(panelOf(board));
 }
 
@@ -118,12 +120,8 @@ fn setMode(board: *rtg.RtgBoard, _: *const rtg.RtgMode, _: *const rtg.RtgTimings
 /// it. With the stream running it is a flip: the buffer is shown from the
 /// next frame on, whole, and this returns when it is - the one it replaced
 /// is no longer read.
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
+fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
     const panel = panelOf(board);
-    // The chain is over a whole picture from its first byte: a window of a
-    // larger one would need a chain per line, which this panel has no
-    // bandwidth for anyway.
-    if (x != 0 or y != 0) return err.RTGERR_NOT_SUPPORTED;
     const bm = bitmap orelse {
         if (panel.streaming) {
             lcd.stop();
@@ -143,7 +141,7 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
 /// Several buffers at once, in bands: the copy reads each display line
 /// from the row of the band that covers it, so a band may start on any
 /// line. Shown from the next frame on, as a flip is.
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
     const panel = panelOf(board);
     for (bands[0..count]) |band| {
         const bm = band.bitmap;
@@ -152,6 +150,30 @@ fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) call
         if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     }
     return panels.showBands(panel, bands[0..count]);
+}
+
+/// The board's one op for what is on the glass (`RtgShow`): put in the
+/// mode where the library says it is to be, then shown the bands - one
+/// whole buffer, several in bands, or nothing. With the mode set anew a
+/// show that fails leaves the board showing nothing.
+fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
+    const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
+    if (anew) {
+        const code = setMode(board, what.mode, what.timings);
+        if (code != err.RTGERR_OK) return code;
+    }
+    const code = showThese(board, what);
+    if (code != err.RTGERR_OK and anew) _ = showBitMap(board, null);
+    return code;
+}
+
+/// The bands of a show, in the mode the board is in.
+fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
+    const bands = what.bands orelse return showBitMap(board, null);
+    if (what.count == 0) return showBitMap(board, null);
+    const first = bands[0];
+    if (what.count == 1 and first.origin == 0 and first.flags == 0) return showBitMap(board, first.bitmap);
+    return showBands(board, bands, what.count);
 }
 
 /// Rows the CPU wrote, handed to the panel: it reads that memory without
@@ -252,9 +274,7 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 /// that draws, so a caller that wants a rectangle filled fills it itself.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
-    .show_bands = &showBands,
+    .show = &showOp,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,

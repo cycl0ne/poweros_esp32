@@ -51,12 +51,11 @@ const GetBoardMonitor = @import("monitor/getboardmonitor.zig").GetBoardMonitor;
 const ReadBoardEDID = @import("monitor/readboardedid.zig").ReadBoardEDID;
 const AddRtgNotify = @import("board/addrtgnotify.zig").AddRtgNotify;
 const RemRtgNotify = @import("board/remrtgnotify.zig").RemRtgNotify;
-const SetBoardMode = @import("board/setboardmode.zig").SetBoardMode;
 const AllocBitMap = @import("bitmap/allocbitmap.zig").AllocBitMap;
 const AttachBitMap = @import("bitmap/attachbitmap.zig").AttachBitMap;
 const FreeBitMap = @import("bitmap/freebitmap.zig").FreeBitMap;
 const ShowBitMap = @import("display/showbitmap.zig").ShowBitMap;
-const ShowBitMapBands = @import("display/showbitmapbands.zig").ShowBitMapBands;
+const ShowBoard = @import("display/showboard.zig").ShowBoard;
 const SetBoardOverlay = @import("pointer/setboardoverlay.zig").SetBoardOverlay;
 const MoveBoardOverlay = @import("pointer/moveboardoverlay.zig").MoveBoardOverlay;
 const BoardDisplayBitMap = @import("display/boarddisplaybitmap.zig").BoardDisplayBitMap;
@@ -167,12 +166,11 @@ const contract_files = [_][]const u8{
     @embedFile("monitor/readboardedid.zig"),
     @embedFile("board/addrtgnotify.zig"),
     @embedFile("board/remrtgnotify.zig"),
-    @embedFile("board/setboardmode.zig"),
     @embedFile("bitmap/allocbitmap.zig"),
     @embedFile("bitmap/attachbitmap.zig"),
     @embedFile("bitmap/freebitmap.zig"),
     @embedFile("display/showbitmap.zig"),
-    @embedFile("display/showbitmapbands.zig"),
+    @embedFile("display/showboard.zig"),
     @embedFile("pointer/setboardoverlay.zig"),
     @embedFile("pointer/moveboardoverlay.zig"),
     @embedFile("display/boarddisplaybitmap.zig"),
@@ -288,9 +286,6 @@ fn lvoAddRtgNotify(rb: *RtgBase, task: *exec.Task, signals: u32) callconv(.c) ?*
 fn lvoRemRtgNotify(rb: *RtgBase, notify: ?*rtg.RtgNotify) callconv(.c) void {
     RemRtgNotify(rb, notify);
 }
-fn lvoSetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) callconv(.c) i32 {
-    return SetBoardMode(rb, board, mode_id);
-}
 fn lvoAllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32, flags: u32) callconv(.c) ?*rtg.RtgBitMap {
     return AllocBitMap(rb, board, width, height, format, flags);
 }
@@ -300,8 +295,8 @@ fn lvoAttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.Rtg
 fn lvoFreeBitMap(rb: *RtgBase, bitmap: ?*rtg.RtgBitMap) callconv(.c) void {
     FreeBitMap(rb, bitmap);
 }
-fn lvoShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
-    return ShowBitMap(rb, board, bitmap, x, y);
+fn lvoShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) callconv(.c) i32 {
+    return ShowBitMap(rb, board, bitmap);
 }
 fn lvoBoardDisplayBitMap(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) ?*rtg.RtgBitMap {
     return BoardDisplayBitMap(rb, board);
@@ -375,8 +370,8 @@ fn lvoMoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) callc
 fn lvoShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
     return ShowBoardPointer(rb, board, show);
 }
-fn lvoShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
-    return ShowBitMapBands(rb, board, bands, count);
+fn lvoShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+    return ShowBoard(rb, board, mode_id, bands, count);
 }
 fn lvoSetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) callconv(.c) i32 {
     return SetBoardOverlay(rb, board, image, hot_x, hot_y);
@@ -427,7 +422,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 25;
+const reserved_slots = 27;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -459,7 +454,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBoardControl),
     vec(reserved),
     vec(lvoFindBoardMode),
-    vec(lvoSetBoardMode),
+    vec(reserved),
     vec(reserved),
     vec(lvoAllocBitMap),
     vec(lvoAttachBitMap),
@@ -497,7 +492,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetBoardPointer),
     vec(lvoMoveBoardPointer),
     vec(lvoShowBoardPointer),
-    vec(lvoShowBitMapBands),
+    vec(reserved),
     vec(lvoSetBoardOverlay),
     vec(lvoMoveBoardOverlay),
     vec(lvoBlendPixels),
@@ -521,6 +516,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoReadBoardEDID),
     vec(lvoAddRtgNotify),
     vec(lvoRemRtgNotify),
+    vec(lvoShowBoard),
     // The drivers' interface.
     vec(lvoAddRtgDriver),
     vec(lvoRemRtgDriver),
@@ -551,7 +547,7 @@ const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"
 test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
     // The reserved slots are in the table but not in either LVO.
     try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 98), vectors.len);
+    try testing.expectEqual(@as(usize, 99), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

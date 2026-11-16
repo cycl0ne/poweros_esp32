@@ -13,7 +13,7 @@ const _driver = @import("_driver.zig");
 /// fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 /// ```
 ///
-/// SINCE: 1.0. LVO -332.
+/// SINCE: 1.0. LVO -336.
 ///
 /// INPUTS:
 /// - `driver` - the driver's node, as `AddRtgDriver` answered it.

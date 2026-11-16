@@ -27,7 +27,6 @@ pub const LVO = struct {
     pub const GetBoardStats = libraries.lvo(15);
     pub const BoardControl = libraries.lvo(16);
     pub const FindBoardMode = libraries.lvo(18);
-    pub const SetBoardMode = libraries.lvo(19);
     pub const AllocBitMap = libraries.lvo(21);
     pub const AttachBitMap = libraries.lvo(22);
     pub const FreeBitMap = libraries.lvo(23);
@@ -49,7 +48,6 @@ pub const LVO = struct {
     pub const SetBoardPointer = libraries.lvo(54);
     pub const MoveBoardPointer = libraries.lvo(55);
     pub const ShowBoardPointer = libraries.lvo(56);
-    pub const ShowBitMapBands = libraries.lvo(57);
     pub const SetBoardOverlay = libraries.lvo(58);
     pub const MoveBoardOverlay = libraries.lvo(59);
     pub const BlendPixels = libraries.lvo(60);
@@ -73,6 +71,7 @@ pub const LVO = struct {
     pub const ReadBoardEDID = libraries.lvo(78);
     pub const AddRtgNotify = libraries.lvo(79);
     pub const RemRtgNotify = libraries.lvo(80);
+    pub const ShowBoard = libraries.lvo(81);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -84,11 +83,10 @@ pub const Fn = struct {
     pub const GetBoardStats = *const fn (*RtgBase, *rtg.RtgBoard, *rtg.RtgBoardStats, u32) callconv(.c) u32;
     pub const BoardControl = *const fn (*RtgBase, *rtg.RtgBoard, u32, isize) callconv(.c) isize;
     pub const FindBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32, u32) callconv(.c) u32;
-    pub const SetBoardMode = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const AllocBitMap = *const fn (*RtgBase, *rtg.RtgBoard, u32, u32, u32, u32) callconv(.c) ?*rtg.RtgBitMap;
     pub const AttachBitMap = *const fn (*RtgBase, *rtg.RtgBoard, *const rtg.RtgBitMap) callconv(.c) ?*rtg.RtgBitMap;
     pub const FreeBitMap = *const fn (*RtgBase, ?*rtg.RtgBitMap) callconv(.c) void;
-    pub const ShowBitMap = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgBitMap, u32, u32) callconv(.c) i32;
+    pub const ShowBitMap = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgBitMap) callconv(.c) i32;
     pub const BoardDisplayBitMap = *const fn (*RtgBase, *rtg.RtgBoard) callconv(.c) ?*rtg.RtgBitMap;
     pub const RefreshBitMap = *const fn (*RtgBase, *rtg.RtgBitMap, u32, u32) callconv(.c) i32;
     pub const WaitVBlank = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
@@ -106,7 +104,6 @@ pub const Fn = struct {
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
     pub const MoveBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
     pub const ShowBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
-    pub const ShowBitMapBands = *const fn (*RtgBase, *rtg.RtgBoard, [*]const rtg.RtgBand, u32) callconv(.c) i32;
     pub const SetBoardOverlay = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
     pub const MoveBoardOverlay = *const fn (*RtgBase, *rtg.RtgBoard, i32, i32) callconv(.c) void;
     pub const BlendPixels = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32) callconv(.c) i32;
@@ -130,6 +127,7 @@ pub const Fn = struct {
     pub const ReadBoardEDID = *const fn (*RtgBase, *rtg.RtgBoard, ?[*]u8, u32) callconv(.c) u32;
     pub const AddRtgNotify = *const fn (*RtgBase, *exec.Task, u32) callconv(.c) ?*rtg.RtgNotify;
     pub const RemRtgNotify = *const fn (*RtgBase, ?*rtg.RtgNotify) callconv(.c) void;
+    pub const ShowBoard = *const fn (*RtgBase, *rtg.RtgBoard, u32, ?[*]const rtg.RtgBand, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -178,13 +176,6 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.FindBoardMode, Fn.FindBoardMode, .{ board, width, height, refresh_mhz, format });
     }
 
-    /// Put the board in the mode of that number, or in its default for 0.
-    /// Refused with RTGERR_IN_USE while a buffer that is not RTGBMF_VOLATILE
-    /// is alive; volatile ones lose their memory and keep their handle.
-    pub fn SetBoardMode(self: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) i32 {
-        return libraries.call(self, LVO.SetBoardMode, Fn.SetBoardMode, .{ board, mode_id });
-    }
-
     /// A buffer in the board's display memory, its rows aligned as the board
     /// asks. RTGBMF_DISPLAYABLE makes one the board can be shown. Null: a
     /// size of 0, a format this build does not know, a board with no display
@@ -207,11 +198,10 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.FreeBitMap, Fn.FreeBitMap, .{bitmap});
     }
 
-    /// Show that buffer, its pixel (x, y) at the top left; null shows nothing.
-    /// A board that cannot pan answers RTGERR_NOT_SUPPORTED for an x or y that
-    /// is not zero.
-    pub fn ShowBitMap(self: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32 {
-        return libraries.call(self, LVO.ShowBitMap, Fn.ShowBitMap, .{ board, bitmap, x, y });
+    /// Show that buffer, whole, in the mode the board is in - its default
+    /// where it is in none; null shows nothing.
+    pub fn ShowBitMap(self: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
+        return libraries.call(self, LVO.ShowBitMap, Fn.ShowBitMap, .{ board, bitmap });
     }
 
     /// The buffer the board is showing, or null. Its first seven fields are a
@@ -313,12 +303,6 @@ pub const RtgBase = opaque {
     /// Lay the pointer over the picture, or stop.
     pub fn ShowBoardPointer(self: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
         return libraries.call(self, LVO.ShowBoardPointer, Fn.ShowBoardPointer, .{ board, show });
-    }
-
-    /// Show several buffers at once, each in a band of display lines: a
-    /// screen pulled down shows the one behind above it.
-    pub fn ShowBitMapBands(self: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
-        return libraries.call(self, LVO.ShowBitMapBands, Fn.ShowBitMapBands, .{ board, bands, count });
     }
 
     /// A second image laid over the picture under the pointer - a dragged
@@ -482,5 +466,14 @@ pub const RtgBase = opaque {
     /// Give a notification back. Null does nothing.
     pub fn RemRtgNotify(self: *RtgBase, notify: ?*rtg.RtgNotify) void {
         return libraries.call(self, LVO.RemRtgNotify, Fn.RemRtgNotify, .{notify});
+    }
+
+    /// Put the board in the mode of that number - 0 keeps the mode it is in,
+    /// or takes its default where it is in none - and show these bands in it,
+    /// each a buffer from a display line down: a screen pulled down shows
+    /// the one behind above it. `count` 0 shows nothing. One step: a show
+    /// that fails changes nothing.
+    pub fn ShowBoard(self: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const rtg.RtgBand, count: u32) i32 {
+        return libraries.call(self, LVO.ShowBoard, Fn.ShowBoard, .{ board, mode_id, bands, count });
     }
 };

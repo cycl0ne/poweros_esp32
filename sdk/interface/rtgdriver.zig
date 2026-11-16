@@ -17,23 +17,23 @@ pub const NAME = "rtg.library";
 
 /// Each function's offset in the jump table (its LVO).
 pub const LVO = struct {
-    pub const AddRtgDriver = libraries.lvo(81);
-    pub const RemRtgDriver = libraries.lvo(82);
-    pub const SignalRtgEvent = libraries.lvo(83);
-    pub const TxParam = libraries.lvo(84);
-    pub const TxColor = libraries.lvo(85);
-    pub const RxParam = libraries.lvo(86);
-    pub const GetRtgTagData = libraries.lvo(87);
-    pub const CreateBoard = libraries.lvo(88);
-    pub const DeleteBoard = libraries.lvo(89);
-    pub const AddRtgDevice = libraries.lvo(90);
-    pub const RemRtgDevice = libraries.lvo(91);
-    pub const OpenTransport = libraries.lvo(92);
-    pub const CloseTransport = libraries.lvo(93);
-    pub const AddBoardMode = libraries.lvo(94);
-    pub const ReadTimingTags = libraries.lvo(95);
-    pub const MonitorChanged = libraries.lvo(96);
-    pub const FindStandardTimings = libraries.lvo(97);
+    pub const AddRtgDriver = libraries.lvo(82);
+    pub const RemRtgDriver = libraries.lvo(83);
+    pub const SignalRtgEvent = libraries.lvo(84);
+    pub const TxParam = libraries.lvo(85);
+    pub const TxColor = libraries.lvo(86);
+    pub const RxParam = libraries.lvo(87);
+    pub const GetRtgTagData = libraries.lvo(88);
+    pub const CreateBoard = libraries.lvo(89);
+    pub const DeleteBoard = libraries.lvo(90);
+    pub const AddRtgDevice = libraries.lvo(91);
+    pub const RemRtgDevice = libraries.lvo(92);
+    pub const OpenTransport = libraries.lvo(93);
+    pub const CloseTransport = libraries.lvo(94);
+    pub const AddBoardMode = libraries.lvo(95);
+    pub const ReadTimingTags = libraries.lvo(96);
+    pub const MonitorChanged = libraries.lvo(97);
+    pub const FindStandardTimings = libraries.lvo(98);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the

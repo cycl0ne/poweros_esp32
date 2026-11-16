@@ -14,7 +14,7 @@ const err = rtg.errors;
 /// fn RxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, size: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -348.
+/// SINCE: 1.0. LVO -352.
 ///
 /// INPUTS:
 /// - `io` - the transport.

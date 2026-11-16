@@ -64,7 +64,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-qemu";
 const DRIVER_NAME = "qemu";
 const VERSION = 1;
-const REVISION = 7;
+const REVISION = 8;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -401,6 +401,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     const board = rb.CreateBoard(driver, device, &.{
         .ops = if (composed != null) &pointer_ops else &ops,
         .instance_size = @sizeOf(Screen),
+        // Bands are one picture only in the frame they are composed in.
+        .caps = if (composed != null) rtg.boards.RTGBC_BANDS else 0,
         .region = .{
             .base = @ptrFromInt(qemu_rgb.vram),
             .size = frames * @as(usize, @intCast(frame)),
@@ -430,7 +432,7 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
 }
 
 /// One mode, so this only ever sizes the window to it.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) i32 {
     const screen = screenOf(board);
     if (mode.width != screen.width or mode.height != screen.height) return err.RTGERR_BAD_MODE;
     if (!qemu_rgb.init(@intCast(screen.width), @intCast(screen.height))) {
@@ -447,9 +449,7 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
 ///
 /// The device reads packed rows out of its VRAM or internal memory, so a
 /// buffer has to be one cut from the region, the mode's size and pitch.
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
-    // No panning in the device.
-    if (x != 0 or y != 0) return err.RTGERR_BAD_ARG;
+fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
     const screen = screenOf(board);
     if (bitmap) |bm| {
         if (bm.pixels == null) return err.RTGERR_BAD_ARG;
@@ -476,6 +476,30 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
     // Waited out with the frame let go: the pointer moves meanwhile.
     if (flip) pace(screen, 1);
     return err.RTGERR_OK;
+}
+
+/// The board's one op for what is on the glass (`RtgShow`): put in the
+/// mode where the library says it is to be, then shown the bands - one
+/// whole buffer, several in bands, or nothing. With the mode set anew a
+/// show that fails leaves the board showing nothing.
+fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
+    const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
+    if (anew) {
+        const code = setMode(board, what.mode, what.timings);
+        if (code != err.RTGERR_OK) return code;
+    }
+    const code = showThese(board, what);
+    if (code != err.RTGERR_OK and anew) _ = showBitMap(board, null);
+    return code;
+}
+
+/// The bands of a show, in the mode the board is in.
+fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
+    const bands = what.bands orelse return showBitMap(board, null);
+    if (what.count == 0) return showBitMap(board, null);
+    const first = bands[0];
+    if (what.count == 1 and first.origin == 0 and first.flags == 0) return showBitMap(board, first.bitmap);
+    return showBands(board, bands, what.count);
 }
 
 /// Rows were written by the CPU. They are already in the device's memory,
@@ -513,7 +537,7 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, y: u32, rows: u32) call
 
 /// Several buffers at once, in bands: kept, composed, handed to the window,
 /// and a frame waited out, as a flip is.
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
     const screen = screenOf(board);
     for (bands[0..count]) |band| {
         const bm = band.bitmap;
@@ -549,29 +573,37 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
 
 const ops = rtg.boards.RtgBoardOps{
     .destroy = &destroy,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
+    .show = &showOp,
     .wait_vblank = &waitVBlank,
     .refresh = &refresh,
     .stats = &stats,
+    .control = &control,
 };
 
 /// The same with the pointer and with bands, for a board with a frame to
 /// compose them in.
 const pointer_ops = rtg.boards.RtgBoardOps{
     .destroy = &destroy,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
+    .show = &showOp,
     .wait_vblank = &waitVBlank,
     .refresh = &refresh,
     .stats = &stats,
+    .control = &control,
     .set_pointer = &setPointer,
     .move_pointer = &movePointer,
     .show_pointer = &showPointer,
-    .show_bands = &showBands,
     .set_overlay = &setOverlay,
     .move_overlay = &moveOverlay,
 };
+
+/// The board's own controls: its counter of pictures handed to the
+/// window is put back to none with the others.
+fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
+    _ = value;
+    if (what != rtg.boards.RTGCTRL_RESET_STATS) return err.RTGERR_NOT_SUPPORTED;
+    screenOf(board).updates = 0;
+    return err.RTGERR_OK;
+}
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
 

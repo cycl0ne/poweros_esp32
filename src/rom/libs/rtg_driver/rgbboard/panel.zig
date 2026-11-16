@@ -545,7 +545,11 @@ fn startOn(panel: *Panel, chains: [*]?*dmares.DMADescriptor) i32 {
     // instant the DMA begins, and that is a long way from the timings.
     primeBuffers(panel);
     lcd.fifoReset();
-    if (!db.StartDMA(panel.channel, dmares.DMA_OUT, panel.chain.?)) return err.RTGERR_NO_DISPLAY;
+    if (!db.StartDMA(panel.channel, dmares.DMA_OUT, panel.chain.?)) {
+        // Nothing reads the chains: the caller may free them.
+        panel.fill_from = null;
+        return err.RTGERR_NO_DISPLAY;
+    }
     lcd.start();
     panel.streaming = true;
     // `lcd_start` began a frame wherever the timing generator had got to,

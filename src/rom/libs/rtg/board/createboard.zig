@@ -17,7 +17,7 @@ const _board = @import("_board.zig");
 /// fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard
 /// ```
 ///
-/// SINCE: 1.18. LVO -356.
+/// SINCE: 1.18. LVO -360.
 ///
 /// INPUTS:
 /// - `driver` - the driver that makes it: the one whose `attach` is
@@ -44,8 +44,8 @@ const _board = @import("_board.zig");
 /// joins the library's list once the `attach` has answered `RTGERR_OK`,
 /// named after its driver and a number in the order the driver's boards
 /// were made ("rgb.0"), the firmware's picture last on the list. A board
-/// comes up in no mode and showing nothing; `SetBoardMode` and
-/// `ShowBitMap` are what put a picture up.
+/// comes up in no mode and showing nothing; `ShowBoard` is what puts a
+/// picture up, and what its driver lights the output with.
 ///
 /// An `attach` that fails after making a board deletes it (`DeleteBoard`);
 /// one it leaves is freed by the library.
@@ -99,6 +99,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     board.info.id_string = driver.spec.id_string;
     board.info.label = spec.label;
     board.info.flags = spec.flags;
+    board.info.caps = spec.caps;
     sys.NewList(&private.modes);
     private.monitor_format = spec.format;
     sys.NewList(&board.bitmaps);

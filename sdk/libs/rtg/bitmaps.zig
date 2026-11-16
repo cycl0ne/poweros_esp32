@@ -48,9 +48,7 @@ pub const RTGBMF_BOARD_MEMORY: u32 = 1 << 9;
 pub const RTGBMF_ATTACHED: u32 = 1 << 10;
 /// The board is reading it now. FreeBitMap refuses while this is set.
 pub const RTGBMF_SHOWING: u32 = 1 << 11;
-/// A mode change may take the memory away. Without it a mode change is
-/// refused while the buffer is alive.
-pub const RTGBMF_VOLATILE: u32 = 1 << 12;
+// 1 << 12 is not used.
 /// The CPU reaches the memory through the cache, so what is written has to
 /// be handed on with RefreshBitMap before the board reads it.
 pub const RTGBMF_CACHED: u32 = 1 << 13;

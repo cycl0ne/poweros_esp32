@@ -13,7 +13,7 @@ const _monitor = @import("_monitor.zig");
 /// fn MonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) void
 /// ```
 ///
-/// SINCE: 1.20. LVO -388.
+/// SINCE: 1.20. LVO -392.
 ///
 /// INPUTS:
 /// - `board` - the board at whose connector something happened: one of
@@ -28,10 +28,10 @@ const _monitor = @import("_monitor.zig");
 /// monitor now there says of itself, and makes the board's modes again
 /// of the timings it names that the board's `check_mode` takes - a mode
 /// of the figures of one the board had keeps that mode's number. A board
-/// that shows is handed the mode it is in again (`set_mode`), with the
-/// timings the new monitor gives it, where the new list has that mode;
-/// where it has not, the board shows nothing and is in no mode until one
-/// is set. The board's `changes` are raised and the tasks that asked are
+/// that shows is handed the mode it is in and what it shows again
+/// (`show`), with the timings the new monitor gives it, where the new
+/// list has that mode; where it has not, the board shows nothing and is
+/// in no mode until it is shown in one. The board's `changes` are raised and the tasks that asked are
 /// told (`AddRtgNotify`).
 ///
 /// A driver calls it from its hot-plug interrupt, or from a task of its

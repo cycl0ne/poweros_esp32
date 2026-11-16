@@ -57,11 +57,10 @@ Generated from the source by `./zig build autodoc`.
 - [ScalePixels](#scalepixels) - Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage.
 - [SetBoardBrightness](#setboardbrightness) - Sets a board's brightness.
 - [SetBoardDisplay](#setboarddisplay) - Switches a board's display on or off.
-- [SetBoardMode](#setboardmode) - Puts a board in a mode.
 - [SetBoardOverlay](#setboardoverlay) - Gives a board a second image to lay over its picture, under the pointer, which from then on follows the pointer.
 - [SetBoardPointer](#setboardpointer) - Gives a board the image its pointer is drawn with.
 - [ShowBitMap](#showbitmap) - Shows a buffer on a board's display.
-- [ShowBitMapBands](#showbitmapbands) - Shows several of a board's buffers at once, each in a band of display lines.
+- [ShowBoard](#showboard) - Puts a board in a mode and shows buffers in it, each in a band of display lines.
 - [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
 - [ShowVideoFrame](#showvideoframe) - Shows a picture in YUV on a video layer, scaled into its place.
 - [WaitVBlank](#waitvblank) - Waits for the display's blanking.
@@ -202,12 +201,12 @@ fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, form
 
 **INPUTS**
 
-- `board` - the board, in a mode.
+- `board` - the board, in a mode or not: a buffer is the board's, not a
+  mode's, and keeps its memory when the mode changes.
 - `width` - its width, in pixels.
 - `height` - its height.
 - `format` - its pixel format.
-- `flags` - `RTGBMF_DISPLAYABLE` for a buffer the board can show,
-  `RTGBMF_VOLATILE` for one that may lose its memory to `SetBoardMode`.
+- `flags` - `RTGBMF_DISPLAYABLE` for a buffer the board can show.
 
 **RESULT**
 
@@ -374,7 +373,7 @@ None known.
 
 **SEE ALSO**
 
-`FindBoardMode`, `GetBoardModes`, `SetBoardMode`
+`FindBoardMode`, `GetBoardModes`, `ShowBoard`
 
 **EXAMPLES**
 
@@ -1208,7 +1207,7 @@ None known.
 
 **SEE ALSO**
 
-`BestBoardMode`, `GetBoardModes`, `SetBoardMode`
+`BestBoardMode`, `GetBoardModes`, `ShowBoard`
 
 **EXAMPLES**
 
@@ -1383,7 +1382,7 @@ None known.
 
 **SEE ALSO**
 
-`FindBoardMode`, `BestBoardMode`, `SetBoardMode`
+`FindBoardMode`, `BestBoardMode`, `ShowBoard`
 
 **EXAMPLES**
 
@@ -2748,76 +2747,6 @@ None known.
 _ = rb.SetBoardDisplay(board, true);
 ```
 
-## SetBoardMode
-
-Puts a board in a mode.
-
-**SYNOPSIS**
-
-```zig
-fn SetBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32) i32
-```
-
-**SINCE**
-
-1.0. LVO -80.
-
-**INPUTS**
-
-- `board` - the board.
-- `mode_id` - the number of one of its modes, as `FindBoardMode`,
-  `BestBoardMode` and `GetBoardModes` answer it, or 0 for its default.
-
-**RESULT**
-
-`RTGERR_OK`, or: `RTGERR_NOT_SUPPORTED` for a board with no modes to
-set, `RTGERR_NO_DISPLAY` on a board whose device has gone,
-`RTGERR_BAD_MODE` for a number the board has no mode of, and with no
-default, `RTGERR_IN_USE` while a buffer that is not `RTGBMF_VOLATILE`
-is alive, or what the driver answered.
-
-**BEHAVIOR**
-
-The board stops showing what it was showing, and every volatile buffer
-loses its memory but keeps its handle. A buffer that has not agreed to
-that keeps the board in the mode it is in: the new mode may be smaller,
-and re-homing it would move its pixels under whoever draws into it. The
-driver is handed the mode and its timings. The display memory is laid
-out afresh for the new mode, and the board's information follows it:
-its size, format and row length, its pixel clock and refresh, and the
-mode's number.
-
-**CONTEXT**
-
-- Waits: if the driver does, and while another task holds the board's
-  lock.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: takes the board's lock around all of it - the buffers, the
-  driver's mode, the display memory. No spinlock may be held: a driver
-  may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-The display memory of volatile buffers is gone; their handles stay
-the caller's.
-
-**BUGS**
-
-The answer of taking the picture off the display is not looked at: a
-board whose driver refuses to show nothing has its volatile buffers
-emptied and its mode set under the picture it still shows.
-
-**SEE ALSO**
-
-`FindBoardMode`, `BestBoardMode`, `GetBoardInfo`, `AllocBitMap`
-
-**EXAMPLES**
-
-```zig
-if (rb.SetBoardMode(board, 0) != rtg.errors.RTGERR_OK) return error.NoMode;
-```
-
 ## SetBoardOverlay
 
 Gives a board a second image to lay over its picture, under the pointer, which from then on follows the pointer.
@@ -2984,7 +2913,7 @@ Shows a buffer on a board's display.
 **SYNOPSIS**
 
 ```zig
-fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32
+fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32
 ```
 
 **SINCE**
@@ -2994,37 +2923,33 @@ fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u3
 **INPUTS**
 
 - `board` - the board.
-- `bitmap` - one of its buffers made `RTGBMF_DISPLAYABLE`, or null to
-  show nothing.
-- `x` - the buffer's column at the display's left edge.
-- `y` - its row at the top edge.
+- `bitmap` - one of its buffers made `RTGBMF_DISPLAYABLE`, in the
+  format and of the size of the mode the board is in, or null to show
+  nothing.
 
 **RESULT**
 
-`RTGERR_OK`, or: `RTGERR_BAD_ARG` for another board's buffer,
+`RTGERR_OK`, or what `ShowBoard` answers for that one buffer from the
+display's top: `RTGERR_BAD_ARG` for another board's buffer or one with
+no pixels, `RTGERR_NOT_DISPLAYABLE`, `RTGERR_BAD_FORMAT`,
 `RTGERR_NO_DISPLAY` for a buffer on a board whose device has gone,
-`RTGERR_NOT_DISPLAYABLE`, `RTGERR_NOT_SUPPORTED` for a board that
-cannot show buffers or cannot pan to a non-zero `x` or `y`, or what the
-driver answered.
+`RTGERR_NO_MODE` on a board with no mode, `RTGERR_NOT_SUPPORTED` for a
+board that shows nothing, or what the driver answered.
 
 **BEHAVIOR**
 
-The buffers shown before - one, or several in bands - are no longer
-marked showing, so they can be freed; the new one is, so it cannot. A display that is already showing
-takes the new buffer up whole, at the start of a frame, and this
-returns when it has: the one shown before is no longer read and may be
-drawn into - which is how a program shows a frame while it draws the
-next.
+It is `ShowBoard` with the mode kept and one band: the buffer, its
+first row at the display's top. A board that is in no mode yet is put
+in its default with it. The buffers shown before - one, or several in
+bands - are no longer marked showing, so they can be freed; the new one
+is, so it cannot. A display that is already showing takes the new
+buffer up whole, at the start of a frame, and this returns when it
+has: the one shown before is no longer read and may be drawn into -
+which is how a program shows a frame while it draws the next.
 
-A show that fails changes nothing. On any answer but `RTGERR_OK` the
-board goes on reading the buffers it read, they stay marked showing
-and `BoardDisplayBitMap` answers as it did; a buffer refused that was
-not showing is not marked, so it can be freed. The same for null: a
-board that could not be made to show nothing goes on showing its
-picture. On a board that is sent its picture over a bus, rows of the
-buffer refused may have reached the glass before the send failed: a
-row stays so until it is handed on again, and `RefreshBitMap` of the
-buffers still shown, all their rows, puts the glass right.
+A show that fails changes nothing, as `ShowBoard` has it. The same for
+null: a board that could not be made to show nothing goes on showing
+its picture.
 
 **CONTEXT**
 
@@ -3042,116 +2967,122 @@ Nothing is allocated. The buffer stays the caller's.
 
 **BUGS**
 
-Two drivers do not yet leave a failed show as nothing: the DSI boards'
-keeps the buffer it was handed when it answers an error - no memory
-for the stream's chain, a flip that did not land - and reads it when
-the pointer next moves or is first laid; the RGB panel's stops its
-stream before a start that can still fail, and the display is then
-dark.
-
-The `fb` driver does not look at whether an emulator's display took
-the new picture - the ramfb's settings written, the virtio GPU's
-commands handed over: where it did not, the show still answers
-`RTGERR_OK`, the buffer handed over is marked showing, and the window
-stays on the picture shown before until the next show.
+`ShowBoard`'s BUGS has what a driver does not keep yet.
 
 **SEE ALSO**
 
-`BoardDisplayBitMap`, `AllocBitMap`
+`ShowBoard`, `BoardDisplayBitMap`, `AllocBitMap`
 
 **EXAMPLES**
 
 ```zig
-_ = rb.ShowBitMap(board, buffer, 0, 0);
+_ = rb.ShowBitMap(board, buffer);
 ```
 
-## ShowBitMapBands
+## ShowBoard
 
-Shows several of a board's buffers at once, each in a band of display lines.
+Puts a board in a mode and shows buffers in it, each in a band of display lines.
 
 **SYNOPSIS**
 
 ```zig
-fn ShowBitMapBands(rb: *RtgBase, board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32
+fn ShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const rtg.RtgBand, count: u32) i32
 ```
 
 **SINCE**
 
-1.2. LVO -232.
+1.21. LVO -328.
 
 **INPUTS**
 
 - `board` - the board.
+- `mode_id` - the number of the mode to put it in, as `FindBoardMode`,
+  `BestBoardMode` and `GetBoardModes` answer it; 0 keeps the mode it is
+  in, or takes its default where it is in none.
 - `bands` - `count` bands, from the top of the display down: each a
-  buffer of the board made `RTGBMF_DISPLAYABLE` and as large as the
-  display, the display `line` its band starts at, and the display line
-  its first row sits at (`origin`, at most `line`); or, with
-  `RTGBANDF_REPEAT` in its `flags`, a buffer as wide as the display
-  and at least a row high, whose first row every line of the band
-  shows. The first band
-  starts at line 0, every other below the one before, and the last
-  runs to the display's bottom.
-- `count` - 1 to `RTG_MAX_BANDS`.
+  buffer of the board made `RTGBMF_DISPLAYABLE`, in the mode's format
+  and as large as the mode, the display `line` its band starts at, and
+  the display line its first row sits at (`origin`, at most `line`);
+  or, with `RTGBANDF_REPEAT` in its `flags`, a buffer as wide as the
+  mode and at least a row high, whose first row every line of the band
+  shows. The first band starts at line 0, every other below the one
+  before, and the last runs to the display's bottom. Null with a
+  `count` of 0.
+- `count` - 0 to `RTG_MAX_BANDS`; 0 shows nothing.
 
 **RESULT**
 
-`RTGERR_OK`, or: `RTGERR_BAD_ARG` for bands out of order, another
-board's buffer, a buffer not the display's size, or rows a band would
-show that its buffer has not got; `RTGERR_NOT_DISPLAYABLE`;
-`RTGERR_NO_DISPLAY` on a board whose device has gone;
-`RTGERR_NOT_SUPPORTED` for a board that can show only one buffer -
-unless the bands are one buffer at its own origin, which is what
-`ShowBitMap` shows; or what the driver answered.
+`RTGERR_OK`, or: `RTGERR_BAD_MODE` for a number the board has no mode
+of now; `RTGERR_NO_MODE` on a board with no mode; `RTGERR_BAD_ARG` for
+more bands than a display shows, bands out of order, another board's
+buffer, a buffer with no pixels, or rows a band would show that its
+buffer has not got; `RTGERR_NOT_DISPLAYABLE` for a buffer that was not
+made to be shown or is not the mode's size; `RTGERR_BAD_FORMAT` for
+one not in the mode's format; `RTGERR_NO_DISPLAY` on a board whose
+device has gone; `RTGERR_NOT_SUPPORTED` for a board that shows
+nothing, or bands on one that shows only a whole buffer
+(`RTGBC_BANDS`); or what the driver answered.
 
 **BEHAVIOR**
 
-Display line `y` of a band shows its buffer's row `y - origin`, so a
-screen pulled down a hundred lines is a band from line 100 with its
-origin there, and the screen behind it a band from line 0 above it.
-A repeating band shows one row on all its lines: an empty stretch of
-the display in a colour, from a buffer of one row.
-Every buffer in a band is marked showing and cannot be freed; the
-others of the board are not. `BoardDisplayBitMap` answers the last
-band's buffer, the one at the display's bottom. A display that is
-already showing takes the new bands up at the start of a frame, and
-this returns when it has.
+The mode and what is shown in it change together. Display line `y` of
+a band shows its buffer's row `y - origin`, so a screen pulled down a
+hundred lines is a band from line 100 with its origin there, and the
+screen behind it a band from line 0 above it. A repeating band shows
+one row on all its lines: an empty stretch of the display in a colour,
+from a buffer of one row. Every buffer in a band is marked showing and
+cannot be freed; the others of the board are not. `BoardDisplayBitMap`
+answers the last band's buffer, the one at the display's bottom. A
+display that is already showing takes the new bands up at the start of
+a frame, and this returns when it has.
 
-Bands that fail change nothing: on any answer but `RTGERR_OK` what
-was shown - one buffer or bands - stays shown and marked, and a buffer
-of the bands refused that was not showing is not marked, so it can be
-freed. What `ShowBitMap` says of a board that is sent its picture
-holds here too.
+A buffer is not touched by a mode change: every buffer of the board
+keeps its memory, and one of another size is shown again by showing it
+in the mode of its size. What the board says of itself follows the
+mode (`GetBoardInfo`), and the tasks that asked are told
+(`AddRtgNotify`).
+
+A show that fails changes nothing: on any answer but `RTGERR_OK` the
+board is in the mode it was in and shows what it showed, marked as it
+was, and a buffer of the bands refused that was not showing is not
+marked, so it can be freed. For another mode the driver may have to be
+asked for what was shown again; where it then cannot show that either,
+the board is in no mode and shows nothing, and says so. On a board
+that is sent its picture over a bus, rows of a buffer refused may have
+reached the glass before the send failed: a row stays so until it is
+handed on again.
 
 **CONTEXT**
 
 - Waits: for the display's next frame, where the board streams one,
-  and while another task holds the board's lock.
+  for a link to come up where the mode changes, and while another task
+  holds the board's lock.
 - Interrupts: no. The driver may wait on its bus.
 - Locks: takes the board's lock around the checks, the driver's show
-  and the marks on the board's buffers. No spinlock may be held: a
-  driver may wait.
+  and the marks on the board's buffers, so two shows of one board
+  follow each other. No spinlock may be held: a driver may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
 
-The bands are read, not kept: the driver keeps its own copy. The
+The bands are read, not kept: the library keeps its own copy. The
 buffers stay the caller's.
 
 **NOTES**
 
 What is drawn into any shown buffer is handed on by `RefreshBitMap` as
-for one shown alone: the board knows which of its rows are on the glass.
+for one shown alone: the board knows which of its rows are on the
+glass.
 
 **BUGS**
 
 The DSI boards' driver keeps the bands it was handed when it answers
-an error, the RGB panel's stops its stream before a start that can
-still fail, and the `fb` driver answers `RTGERR_OK` for bands an
-emulator's display did not take: `ShowBitMap`'s BUGS has the three.
+an error - no memory for the stream's chain, a flip that did not land
+- and reads them when the pointer next moves or is first laid.
 
 **SEE ALSO**
 
-`ShowBitMap`, `BoardDisplayBitMap`, `RefreshBitMap`
+`ShowBitMap`, `BoardDisplayBitMap`, `BestBoardMode`, `RefreshBitMap`
 
 **EXAMPLES**
 
@@ -3161,7 +3092,7 @@ const bands = [_]rtg.RtgBand{
     .{ .bitmap = behind, .line = 0, .origin = 0 },
     .{ .bitmap = front, .line = 120, .origin = 120 },
 };
-_ = rb.ShowBitMapBands(board, &bands, bands.len);
+_ = rb.ShowBoard(board, 0, &bands, bands.len);
 ```
 
 ## ShowBoardPointer

@@ -117,9 +117,9 @@ fn flash(ib: *IntuitionBase, s: *Screen) void {
     const rp = gb.CreateRastPortTagList(&on) orelse return flashBar(ib, s, colour);
     defer gb.FreeRastPort(rp);
     gb.RectFill(rp, &.{ .max_x = @intCast(shown.width), .max_y = @intCast(shown.height) });
-    _ = rb.ShowBitMap(s.board, picture, 0, 0);
+    _ = rb.ShowBitMap(s.board, picture);
     _misc.wait(ib, flash_us);
-    _ = rb.ShowBitMap(s.board, shown, 0, 0);
+    _ = rb.ShowBitMap(s.board, shown);
 }
 
 /// Only the title bar flashed, and drawn again: all that can be when there

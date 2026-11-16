@@ -7,6 +7,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 const bitmaps = @import("../bitmap/_bitmap.zig");
 const modes = @import("../mode/_mode.zig");
 const monitors = @import("../monitor/_monitor.zig");
+const shows = @import("../display/_display.zig");
 const privateOf = _board.privateOf;
 const _board = @import("_board.zig");
 
@@ -17,7 +18,7 @@ const _board = @import("_board.zig");
 /// fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -360.
+/// SINCE: 1.0. LVO -364.
 ///
 /// INPUTS:
 /// - `board` - the board, as `CreateBoard` answered it. Null does nothing.
@@ -65,7 +66,6 @@ const _board = @import("_board.zig");
 /// rb.DeleteBoard(board);
 /// ```
 pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
-    const rtg_lib = rb.iface();
     const gone = board orelse return;
     const sys = rb.sys_base;
     const private = privateOf(gone);
@@ -82,7 +82,9 @@ pub fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void {
     if (private.video_layers != 0) return;
 
     // Nothing is left looking at it, and nothing of it is left up.
-    if (gone.showing != null) _ = rtg_lib.ShowBitMap(gone, null, 0, 0);
+    _board.obtain(rb, gone);
+    _ = shows.clear(rb, gone);
+    _board.release(rb, gone);
     bitmaps.freeAll(rb, gone);
 
     if (gone.ops) |ops| {

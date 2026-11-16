@@ -19,12 +19,12 @@ const boards = @import("../board/_board.zig");
 /// SINCE: 1.0. LVO -88.
 ///
 /// INPUTS:
-/// - `board` - the board, in a mode.
+/// - `board` - the board, in a mode or not: a buffer is the board's, not a
+///   mode's, and keeps its memory when the mode changes.
 /// - `width` - its width, in pixels.
 /// - `height` - its height.
 /// - `format` - its pixel format.
-/// - `flags` - `RTGBMF_DISPLAYABLE` for a buffer the board can show,
-///   `RTGBMF_VOLATILE` for one that may lose its memory to `SetBoardMode`.
+/// - `flags` - `RTGBMF_DISPLAYABLE` for a buffer the board can show.
 ///
 /// RESULT:
 /// The buffer, or null: for a size of 0, a format this build does not

@@ -90,6 +90,7 @@ pub const RtgBoardSpec = boards.RtgBoardSpec;
 pub const RtgBoardInfo = boards.RtgBoardInfo;
 pub const RtgBoardStats = boards.RtgBoardStats;
 pub const RtgBand = boards.RtgBand;
+pub const RtgShow = boards.RtgShow;
 pub const RTGBANDF_REPEAT = boards.RTGBANDF_REPEAT;
 pub const RTG_MAX_BANDS = boards.RTG_MAX_BANDS;
 pub const RTG_MAX_COPIES = boards.RTG_MAX_COPIES;

@@ -20,12 +20,13 @@
 //!   1. the board, whose driver has let the panel out of reset and taken
 //!      its memory, its two DMA channels and the buffers it is really fed
 //!      from;
-//!   2. the mode, which programs the pads, the timings and the clock;
-//!   3. a buffer, the first picture drawn into it, and the whole of it
-//!      written back out of the cache while nothing is reading it;
-//!   4. showing that buffer, which starts the pixel stream.
+//!   2. a buffer of the mode the board is to come up in, the first
+//!      picture drawn into it, and the whole of it written back out of
+//!      the cache while nothing is reading it;
+//!   3. showing that buffer in that mode, one step: it programs the pads,
+//!      the timings and the clock, and starts the pixel stream.
 //!
-//! Step 3 before step 4 is the point of the split: a 1.2 MB write-back
+//! Step 2 before step 3 is the point of the order: a 1.2 MB write-back
 //! landing on top of a running stream is enough to starve it.
 //!
 //! The board is rtg.library's, and found again as it was found here: the
@@ -71,13 +72,13 @@ fn bringUp(rb: *RtgBase, which: *rtg.RtgBoard, screen: Screen) ?Shown {
     // that size, or the list gives no size.
     const width = if (screen.width != 0) screen.width else rtg.RTG_ANY;
     const height = if (screen.height != 0) screen.height else rtg.RTG_ANY;
-    var mode_id = rb.FindBoardMode(which, width, height, rtg.RTG_ANY, rtg.RTG_ANY);
-    if (mode_id == 0) mode_id = rb.FindBoardMode(which, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY);
+    const any = rtg.RTG_ANY;
+    var mode: rtg.RtgMode = .{};
+    const mode_id = if (rb.FindBoardMode(which, width, height, any, any) != 0)
+        rb.BestBoardMode(which, width, height, any, any, &mode)
+    else
+        rb.BestBoardMode(which, any, any, any, any, &mode);
     if (mode_id == 0) return null;
-    if (rb.SetBoardMode(which, mode_id) != rtg.errors.RTGERR_OK) return null;
-    // What the board is in now, as it says it.
-    var mode: rtg.RtgBoardInfo = .{};
-    _ = rb.GetBoardInfo(which, &mode, @sizeOf(rtg.RtgBoardInfo));
 
     const picture = rb.AllocBitMap(
         which,
@@ -94,7 +95,9 @@ fn bringUp(rb: *RtgBase, which: *rtg.RtgBoard, screen: Screen) ?Shown {
     @memset(pixels[0 .. @as(usize, picture.pitch) * picture.height], 0);
     _ = rb.RefreshBitMap(picture, 0, 0);
 
-    if (rb.ShowBitMap(which, picture, 0, 0) != rtg.errors.RTGERR_OK) {
+    // The mode and the picture in it, as one step.
+    const whole = [_]rtg.RtgBand{.{ .bitmap = picture }};
+    if (rb.ShowBoard(which, mode_id, &whole, whole.len) != rtg.errors.RTGERR_OK) {
         rb.FreeBitMap(picture);
         return null;
     }

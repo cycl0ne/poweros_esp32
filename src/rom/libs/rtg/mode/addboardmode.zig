@@ -14,7 +14,7 @@ const _mode = @import("_mode.zig");
 /// fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32) u32
 /// ```
 ///
-/// SINCE: 1.19. LVO -380.
+/// SINCE: 1.19. LVO -384.
 ///
 /// INPUTS:
 /// - `board` - the board, one of the caller's own.

@@ -372,7 +372,7 @@ test "with a display: no tags finds the View, and the buffer it is showing" {
     const rbi: *sdk.interface.rtg.RtgBase = @ptrCast(rb);
     const state = fake.add(rb.sys_base, rbi) orelse return error.NoDriver;
 
-    const board = fake.makeBoard(state) orelse return error.NoBoard;
+    const board = fake.makeDisplay(state, 8, 4, .rgb565) orelse return error.NoBoard;
     const bm = rbi.AllocBitMap(
         board,
         8,
@@ -380,7 +380,7 @@ test "with a display: no tags finds the View, and the buffer it is showing" {
         @intFromEnum(rtg.bitmaps.PixelFormat.rgb565),
         rtg.bitmaps.RTGBMF_DISPLAYABLE,
     ) orelse return error.NoBitMap;
-    try testing.expectEqual(rtg.errors.RTGERR_OK, rbi.ShowBitMap(board, bm, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, rbi.ShowBitMap(board, bm));
 
     // No tags at all: the first board rtg lists, and what it is showing.
     const rp = base(gb).CreateRastPortTagList(null) orelse return error.NoRastPort;

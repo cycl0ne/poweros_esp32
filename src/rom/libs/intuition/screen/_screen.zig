@@ -29,7 +29,7 @@
 //! **Position.** A screen's top edge may be further down its display than
 //! line 0: pulled down by its bar, or moved by MoveScreen. The display then
 //! shows it from that line, and above it the screen behind - from that
-//! one's own top - and so on up, in bands (rtg's ShowBitMapBands). What no
+//! one's own top - and so on up, in bands (rtg's ShowBoard). What no
 //! screen reaches is empty, in the background pen of the screen below it:
 //! a band that repeats one row the screen keeps for that. Nothing is drawn
 //! again or copied for a move: each screen keeps its buffer, only the
@@ -362,10 +362,10 @@ pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap)
     const count = bandsOf(ib, board, home, &bands);
     if (count == 1) {
         if (board.showing == bands[0].bitmap and !ib.banded) return;
-        if (rb.ShowBitMap(board, bands[0].bitmap, 0, 0) == rtg.errors.RTGERR_OK) ib.banded = false;
+        if (rb.ShowBitMap(board, bands[0].bitmap) == rtg.errors.RTGERR_OK) ib.banded = false;
         return;
     }
-    if (rb.ShowBitMapBands(board, &bands, count) == rtg.errors.RTGERR_OK) {
+    if (rb.ShowBoard(board, 0, &bands, count) == rtg.errors.RTGERR_OK) {
         ib.banded = true;
         return;
     }
@@ -373,7 +373,7 @@ pub fn showFront(ib: *IntuitionBase, board: *rtg.RtgBoard, home: *rtg.RtgBitMap)
     // also where it is the last of bands that are still up.
     const front = bands[count - 1].bitmap;
     if (board.showing == front and !ib.banded) return;
-    if (rb.ShowBitMap(board, front, 0, 0) == rtg.errors.RTGERR_OK) ib.banded = false;
+    if (rb.ShowBitMap(board, front) == rtg.errors.RTGERR_OK) ib.banded = false;
 }
 
 /// The screen display line `y` shows, as `bandsOf` lays them: null for the

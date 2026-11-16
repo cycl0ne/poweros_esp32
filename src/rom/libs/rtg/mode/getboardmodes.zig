@@ -46,7 +46,7 @@ const _mode = @import("_mode.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `FindBoardMode`, `BestBoardMode`, `SetBoardMode`
+/// `FindBoardMode`, `BestBoardMode`, `ShowBoard`
 ///
 /// EXAMPLES:
 /// ```zig

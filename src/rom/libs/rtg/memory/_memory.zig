@@ -130,6 +130,18 @@ pub const Arena = struct {
         arena.free_bytes = limit;
     }
 
+    /// What buffers from system memory may hold together, set anew: for
+    /// a board whose mode changed, and with it the size of a picture. No
+    /// less than they hold already.
+    ///
+    /// INPUTS:
+    /// - `arena` - the bookkeeping, of system memory.
+    /// - `limit` - the most the buffers may hold together.
+    pub fn setLimit(arena: *Arena, limit: usize) void {
+        arena.size = @max(limit, arena.used);
+        arena.free_bytes = arena.size - arena.used;
+    }
+
     /// Whether buffers can be had at all: a region with room, or system
     /// memory.
     ///

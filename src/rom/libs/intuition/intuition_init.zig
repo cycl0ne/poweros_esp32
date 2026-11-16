@@ -273,8 +273,10 @@ pub const LIBRARY_VERSION = 0;
 /// refuses while others are up give way to the front screen alone.
 /// 98: a screen's depth is what rtg.library says a pixel of its format
 /// takes (RtgFormatBits).
-pub const LIBRARY_REVISION = 98;
-const BUILD_DATE = "15.11.2026";
+/// 99: screens pulled down are shown as bands with ShowBoard, in the mode
+/// the board is in.
+pub const LIBRARY_REVISION = 99;
+const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

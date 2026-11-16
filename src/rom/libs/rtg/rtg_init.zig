@@ -55,15 +55,19 @@ pub const LIBRARY_VERSION = 1;
 /// timings it reads with ReadTimingTags, the library names and numbers
 /// them, and a program is handed copies (GetBoardModes) and names a mode
 /// by its number: FindBoardMode answers one, with a refresh and RTG_ANY,
-/// BestBoardMode the nearest to a wish, SetBoardMode takes one.
-/// NextBoardMode is gone.
+/// BestBoardMode the nearest to a wish. NextBoardMode is gone.
 /// 20: the monitor - a board with a connector says what is on it
 /// (detect) and which timings it can make (check_mode), and the library
 /// reads the EDID and makes the board's modes of it, again whenever the
 /// driver says MonitorChanged; GetBoardMonitor, ReadBoardEDID; a task is
 /// told of what changes (AddRtgNotify, RemRtgNotify,
 /// RtgBoardInfo.changes).
-pub const LIBRARY_REVISION = 20;
+/// 21: one step for what is on the glass - ShowBoard puts the board in a
+/// mode and shows bands in it, the driver's one op is show, and the
+/// library keeps the bands; ShowBitMap takes no offsets; a buffer lives
+/// through a mode change. SetBoardMode and ShowBitMapBands are gone,
+/// and a board is in no mode until it is first shown something.
+pub const LIBRARY_REVISION = 21;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

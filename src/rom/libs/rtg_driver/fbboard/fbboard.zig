@@ -205,7 +205,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 37;
+const REVISION = 38;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -621,8 +621,9 @@ fn showable(screen: *const Screen, picture: *const rtg.RtgBitMap) bool {
 }
 
 /// The display told to read from `address` from its next frame on.
-fn scanFrom(screen: *Screen, address: usize) void {
-    if (address == screen.scanning) return;
+/// Whether it does: a device that refuses goes on reading where it read.
+fn scanFrom(screen: *Screen, address: usize) bool {
+    if (address == screen.scanning) return true;
     const shown = switch (screen.scanout) {
         .ramfb => |device| ramfb.show(device, address, screen.width, screen.height, screen.pitch, switch (screen.format) {
             .rgb565 => .rgb565,
@@ -666,15 +667,18 @@ fn scanFrom(screen: *Screen, address: usize) void {
         },
     };
     if (shown) screen.scanning = address;
+    return shown;
 }
 
 /// The display reading what is to be seen: the composed frame while
-/// anything is laid over the picture, else the shown buffer.
-fn present(screen: *Screen) void {
-    const shown = screen.showing orelse return;
+/// anything is laid over the picture, else the shown buffer. Whether it
+/// does.
+fn present(screen: *Screen) bool {
+    const shown = screen.showing orelse return true;
     const from = if (composing(screen)) screen.composed.? else shown.pixels.?;
-    scanFrom(screen, @intFromPtr(from));
+    if (!scanFrom(screen, @intFromPtr(from))) return false;
     screen.updates +%= 1;
+    return true;
 }
 
 // --- the pointer, in the composed frame -----------------------------------
@@ -967,7 +971,7 @@ fn change(screen: *Screen, comptime apply: fn (*Screen, anytype) void, arg: anyt
         } else if (composing(screen)) {
             lay(screen);
         }
-        present(screen);
+        _ = present(screen);
         break :unused spare(screen);
     };
     giveBack(screen, unused);
@@ -1033,7 +1037,7 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
         screen.pointer_shown = show;
         provide(screen);
         rebuild(screen);
-        present(screen);
+        _ = present(screen);
         break :unused spare(screen);
     };
     giveBack(screen, unused);
@@ -1804,7 +1808,7 @@ fn flipFrames(screen: *Screen) bool {
     for (boxes.list()) |box| makeBox(screen, back, box, over, pointer);
     sys.ReleaseSemaphore(&screen.bands_lock);
     screen.last = if (stale) boxes else fresh;
-    scanFrom(screen, @intFromPtr(back));
+    _ = scanFrom(screen, @intFromPtr(back));
     pace(screen, 1);
     screen.updates +%= 1;
     if (!flipTaken(screen)) {
@@ -1938,7 +1942,7 @@ fn showDirect(screen: *Screen, bitmap: *const rtg.RtgBitMap) void {
     const address = @intFromPtr(bitmap.pixels.?);
     if (address == screen.scanning) return;
     handOn(screen, bitmap, whole(screen));
-    scanFrom(screen, address);
+    _ = scanFrom(screen, address);
     pace(screen, 1);
     screen.updates +%= 1;
 }
@@ -2124,6 +2128,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .flags = if (on_pci) rtg.boards.RTGBF_COMPOSE else 0,
         // A monitor's modes are made in the format the board shows.
         .format = format,
+        .caps = rtg.boards.RTGBC_BANDS,
     }) orelse {
         var found = scanout;
         if (found == .virtio) virtio.giveBack(&found.virtio);
@@ -2412,7 +2417,7 @@ fn sizeFor(screen: *Screen, board: *rtg.RtgBoard) bool {
 /// The mode it is in handed over again is a monitor that came to an HDMI
 /// port: the port is started again with the timings handed over now, as
 /// that monitor takes them, reading what it read.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, timings: *const rtg.RtgTimings) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, timings: *const rtg.RtgTimings) i32 {
     const screen = screenOf(board);
     // A row as the library makes one of a buffer: what this driver sizes
     // its frames by.
@@ -2463,7 +2468,7 @@ const Waiter = struct {
 /// said on the raw port, when it did not come up.
 fn begin(screen: *Screen, address: usize) bool {
     switch (screen.scanout) {
-        .ramfb, .virtio, .uefi => scanFrom(screen, address),
+        .ramfb, .virtio, .uefi => _ = scanFrom(screen, address),
         .jh7110 => startPort(jh7110, screen, address),
         .bcm2712 => startPort(bcm2712, screen, address),
     }
@@ -2493,58 +2498,86 @@ fn startPort(comptime port: type, screen: *Screen, address: usize) void {
     hookFrames(screen);
 }
 
-/// Show a buffer: the display told where it is, from its next frame. Null
-/// shows black: the composed frame, cleared, which nothing else uses
-/// while no picture is shown.
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
-    // No panning.
-    if (x != 0 or y != 0) return err.RTGERR_BAD_ARG;
-    const screen = screenOf(board);
-    if (bitmap) |bm| {
-        if (bm.pixels == null) return err.RTGERR_BAD_ARG;
-        if (!showable(screen, bm)) return err.RTGERR_NOT_DISPLAYABLE;
-    }
-    if (flips(screen)) {
-        if (bitmap) |bm| {
-            showFlipped(screen, &[_]rtg.RtgBand{.{ .bitmap = bm }});
-        } else {
-            showFlipped(screen, &.{});
-        }
-        return err.RTGERR_OK;
-    }
-    // A flip from one picture to another takes a frame. The first picture
-    // shown is not waited for: it comes up at cold start.
+/// What a display that does not flip shows from now on: no band is
+/// black - the composed frame, cleared, which nothing else uses while no
+/// picture is shown; one whole buffer is read where it lies; anything
+/// else is composed, the rows that show something else than before, and
+/// that frame read. A picture that takes the place of another is waited
+/// out for a frame, as a flip is.
+///
+/// Nothing is changed where it fails: with no memory for the frame black
+/// and bands need (RTGERR_NO_MEMORY), and where the device does not take
+/// the address (RTGERR_IO) - the bands are those of before again, the
+/// composed frame made of them, and the display reads what it read.
+fn showPlain(screen: *Screen, bands: []const rtg.RtgBand) i32 {
     var unused: ?*anyopaque = null;
     const flip = flip: {
         hold(screen);
         defer letGo(screen);
-        if (bitmap == null and ownFrame(screen) == null) return err.RTGERR_NO_MEMORY;
-        const another = screen.showing != null and bitmap != null and (screen.showing != bitmap or screen.band_count > 1);
         const was = composing(screen);
+        // The frame before the bands are taken, so that without it they
+        // stay as they are - and after `was` is read, which says whether
+        // the display read the frame until now: one taken here has
+        // nothing in it yet.
+        if (bands.len != 1 and ownFrame(screen) == null) return err.RTGERR_NO_MEMORY;
         var old: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
         const old_count = screen.band_count;
         @memcpy(old[0..old_count], screen.bands[0..old_count]);
-        screen.showing = bitmap;
-        screen.band_count = 0;
-        if (bitmap) |bm| {
-            screen.bands[0] = .{ .bitmap = bm };
-            screen.band_count = 1;
-            provide(screen);
-            reband(screen, old[0..old_count], was);
-            present(screen);
-        } else {
+        const before = screen.showing;
+        const same = bands.len == 1 and old_count == 1 and bands[0].bitmap == old[0].bitmap and
+            bands[0].origin == old[0].origin and bands[0].flags == old[0].flags;
+        @memcpy(screen.bands[0..bands.len], bands);
+        screen.band_count = @intCast(bands.len);
+        screen.showing = if (bands.len == 0) null else bands[bands.len - 1].bitmap;
+        const taken = if (bands.len == 0) black: {
             const black = screen.composed.?;
             const bytes = @as(usize, screen.pitch) * screen.height;
             @memset(black[0..bytes], 0);
             handOn(screen, &pictureAt(screen, black), whole(screen));
-            scanFrom(screen, @intFromPtr(black));
+            break :black scanFrom(screen, @intFromPtr(black));
+        } else picture: {
+            provide(screen);
+            reband(screen, old[0..old_count], was);
+            break :picture present(screen);
+        };
+        if (!taken) {
+            @memcpy(screen.bands[0..old_count], old[0..old_count]);
+            screen.band_count = old_count;
+            screen.showing = before;
+            rebuild(screen);
+            return err.RTGERR_IO;
         }
         unused = spare(screen);
-        break :flip another;
+        break :flip before != null and bands.len != 0 and !same;
     };
     // Waited out with the frame let go: the pointer moves meanwhile.
     if (flip) pace(screen, 1);
     giveBack(screen, unused);
+    return err.RTGERR_OK;
+}
+
+/// The board's one op for what is on the glass (`RtgShow`): put in the
+/// mode where the library says it is to be, then shown the bands - one
+/// whole buffer, several in bands, or nothing. With the mode set anew a
+/// show that fails leaves the board showing nothing.
+fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
+    const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
+    if (anew) {
+        const code = setMode(board, what.mode, what.timings);
+        if (code != err.RTGERR_OK) return code;
+    }
+    const screen = screenOf(board);
+    const bands: []const rtg.RtgBand = if (what.bands) |list| list[0..what.count] else &.{};
+    const code = showThese(screen, bands);
+    if (code != err.RTGERR_OK and anew) _ = showThese(screen, &.{});
+    return code;
+}
+
+/// The bands of a show, in the mode the board is in; none shows nothing.
+/// They are the mode's: the library hands on none that is not.
+fn showThese(screen: *Screen, bands: []const rtg.RtgBand) i32 {
+    if (!flips(screen)) return showPlain(screen, bands);
+    showFlipped(screen, bands);
     return err.RTGERR_OK;
 }
 
@@ -2599,49 +2632,6 @@ fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, area: Box) void {
         shown = true;
     }
     if (shown) lay(screen);
-}
-
-/// Several buffers at once, in bands: composed - the rows that show
-/// something else than before - shown, and a frame waited out, as a flip
-/// is. Several are one picture only in the composed frame: with no memory
-/// for it nothing is changed, the display goes on showing what it showed,
-/// and RTGERR_NO_MEMORY is answered.
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
-    const screen = screenOf(board);
-    for (bands[0..count]) |band| {
-        const bm = band.bitmap;
-        if (bm.pixels == null or bm.pitch != screen.pitch or bm.format != screen.format) return err.RTGERR_NOT_DISPLAYABLE;
-    }
-    if (flips(screen)) {
-        showFlipped(screen, bands[0..count]);
-        return err.RTGERR_OK;
-    }
-    var unused: ?*anyopaque = null;
-    const was_shown = shown: {
-        hold(screen);
-        defer letGo(screen);
-        const before = screen.showing != null;
-        const was = composing(screen);
-        // The frame before the bands are taken, so that without it they
-        // stay as they are - and after `was` is read, which says whether
-        // the display read the frame until now: one taken here has
-        // nothing in it yet.
-        if (count > 1 and ownFrame(screen) == null) return err.RTGERR_NO_MEMORY;
-        var old: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
-        const old_count = screen.band_count;
-        @memcpy(old[0..old_count], screen.bands[0..old_count]);
-        @memcpy(screen.bands[0..count], bands[0..count]);
-        screen.band_count = count;
-        screen.showing = bands[count - 1].bitmap;
-        provide(screen);
-        reband(screen, old[0..old_count], was);
-        present(screen);
-        unused = spare(screen);
-        break :shown before;
-    };
-    if (was_shown) pace(screen, 1);
-    giveBack(screen, unused);
-    return err.RTGERR_OK;
 }
 
 /// Frames waited for: by the frame interrupt where it comes, else by the
@@ -2712,15 +2702,13 @@ fn scalePixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.Rt
 
 const ops = rtg.boards.RtgBoardOps{
     .destroy = &destroy,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
+    .show = &showOp,
     .wait_vblank = &waitVBlank,
     .refresh = &refresh,
     .stats = &stats,
     .set_pointer = &setPointer,
     .move_pointer = &movePointer,
     .show_pointer = &showPointer,
-    .show_bands = &showBands,
     .set_overlay = &setOverlay,
     .move_overlay = &moveOverlay,
     .fill_rect = &fillRect,

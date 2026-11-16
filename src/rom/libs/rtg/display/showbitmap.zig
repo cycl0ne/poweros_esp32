@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
-//! ShowBitMap: Show that buffer, its pixel (x, y) at the top left; null
+//! ShowBitMap: Show that buffer, whole, in the mode the board is in; null
 //! shows nothing.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
-const err = rtg.errors;
 const _display = @import("_display.zig");
 const boards = @import("../board/_board.zig");
 
@@ -13,42 +12,38 @@ const boards = @import("../board/_board.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32
+/// fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32
 /// ```
 ///
 /// SINCE: 1.0. LVO -100.
 ///
 /// INPUTS:
 /// - `board` - the board.
-/// - `bitmap` - one of its buffers made `RTGBMF_DISPLAYABLE`, or null to
-///   show nothing.
-/// - `x` - the buffer's column at the display's left edge.
-/// - `y` - its row at the top edge.
+/// - `bitmap` - one of its buffers made `RTGBMF_DISPLAYABLE`, in the
+///   format and of the size of the mode the board is in, or null to show
+///   nothing.
 ///
 /// RESULT:
-/// `RTGERR_OK`, or: `RTGERR_BAD_ARG` for another board's buffer,
+/// `RTGERR_OK`, or what `ShowBoard` answers for that one buffer from the
+/// display's top: `RTGERR_BAD_ARG` for another board's buffer or one with
+/// no pixels, `RTGERR_NOT_DISPLAYABLE`, `RTGERR_BAD_FORMAT`,
 /// `RTGERR_NO_DISPLAY` for a buffer on a board whose device has gone,
-/// `RTGERR_NOT_DISPLAYABLE`, `RTGERR_NOT_SUPPORTED` for a board that
-/// cannot show buffers or cannot pan to a non-zero `x` or `y`, or what the
-/// driver answered.
+/// `RTGERR_NO_MODE` on a board with no mode, `RTGERR_NOT_SUPPORTED` for a
+/// board that shows nothing, or what the driver answered.
 ///
 /// BEHAVIOR:
-/// The buffers shown before - one, or several in bands - are no longer
-/// marked showing, so they can be freed; the new one is, so it cannot. A display that is already showing
-/// takes the new buffer up whole, at the start of a frame, and this
-/// returns when it has: the one shown before is no longer read and may be
-/// drawn into - which is how a program shows a frame while it draws the
-/// next.
+/// It is `ShowBoard` with the mode kept and one band: the buffer, its
+/// first row at the display's top. A board that is in no mode yet is put
+/// in its default with it. The buffers shown before - one, or several in
+/// bands - are no longer marked showing, so they can be freed; the new one
+/// is, so it cannot. A display that is already showing takes the new
+/// buffer up whole, at the start of a frame, and this returns when it
+/// has: the one shown before is no longer read and may be drawn into -
+/// which is how a program shows a frame while it draws the next.
 ///
-/// A show that fails changes nothing. On any answer but `RTGERR_OK` the
-/// board goes on reading the buffers it read, they stay marked showing
-/// and `BoardDisplayBitMap` answers as it did; a buffer refused that was
-/// not showing is not marked, so it can be freed. The same for null: a
-/// board that could not be made to show nothing goes on showing its
-/// picture. On a board that is sent its picture over a bus, rows of the
-/// buffer refused may have reached the glass before the send failed: a
-/// row stays so until it is handed on again, and `RefreshBitMap` of the
-/// buffers still shown, all their rows, puts the glass right.
+/// A show that fails changes nothing, as `ShowBoard` has it. The same for
+/// null: a board that could not be made to show nothing goes on showing
+/// its picture.
 ///
 /// CONTEXT:
 /// - Waits: for the display's next frame, where the board streams one,
@@ -63,43 +58,19 @@ const boards = @import("../board/_board.zig");
 /// Nothing is allocated. The buffer stays the caller's.
 ///
 /// BUGS:
-/// Two drivers do not yet leave a failed show as nothing: the DSI boards'
-/// keeps the buffer it was handed when it answers an error - no memory
-/// for the stream's chain, a flip that did not land - and reads it when
-/// the pointer next moves or is first laid; the RGB panel's stops its
-/// stream before a start that can still fail, and the display is then
-/// dark.
-///
-/// The `fb` driver does not look at whether an emulator's display took
-/// the new picture - the ramfb's settings written, the virtio GPU's
-/// commands handed over: where it did not, the show still answers
-/// `RTGERR_OK`, the buffer handed over is marked showing, and the window
-/// stays on the picture shown before until the next show.
+/// `ShowBoard`'s BUGS has what a driver does not keep yet.
 ///
 /// SEE ALSO:
-/// `BoardDisplayBitMap`, `AllocBitMap`
+/// `ShowBoard`, `BoardDisplayBitMap`, `AllocBitMap`
 ///
 /// EXAMPLES:
 /// ```zig
-/// _ = rb.ShowBitMap(board, buffer, 0, 0);
+/// _ = rb.ShowBitMap(board, buffer);
 /// ```
-pub fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) i32 {
-    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
-    const show = ops.show_bitmap orelse return err.RTGERR_NOT_SUPPORTED;
-
-    // One show at a time on a board, the driver's and the marks together:
-    // no buffer is freed, and no other picture asked for, in between.
+pub fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
+    // One show at a time on a board, the driver's and the marks together.
     boards.obtain(rb, board);
     defer boards.release(rb, board);
-    if (bitmap) |bm| {
-        // A board whose device has gone shows nothing any more.
-        if (boards.dark(board)) return err.RTGERR_NO_DISPLAY;
-        if (bm.board != @as(?*anyopaque, @ptrCast(board))) return err.RTGERR_BAD_ARG;
-        if (bm.flags & rtg.bitmaps.RTGBMF_DISPLAYABLE == 0) return err.RTGERR_NOT_DISPLAYABLE;
-    }
-    const code = show(board, bitmap, x, y);
-    if (code != err.RTGERR_OK) return code;
-
-    if (bitmap) |bm| _display.markShowing(board, &.{bm}, bm) else _display.markShowing(board, &.{}, null);
-    return err.RTGERR_OK;
+    const whole = bitmap orelse return _display.show(rb, board, null, &.{});
+    return _display.show(rb, board, null, &.{.{ .bitmap = whole }});
 }

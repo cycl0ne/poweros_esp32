@@ -26,7 +26,7 @@
 //! not sent at all until it is.
 //!
 //! A picture may be several buffers at once, in bands of lines
-//! (ShowBitMapBands): every line is read from the band that covers it,
+//! (ShowBoard): every line is read from the band that covers it,
 //! and a buffer's refresh sends the lines it shows there.
 //!
 //! The pointer is laid into each band after it is turned round and before
@@ -55,7 +55,7 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 7;
+const REVISION = 8;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -165,7 +165,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
 
     // The bus the controller sits on, made from the same tags.
     const io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
-    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel) }) orelse {
+    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel), .caps = rtg.boards.RTGBC_BANDS }) orelse {
         rb.CloseTransport(io);
         return err.RTGERR_NO_MEMORY;
     };
@@ -357,7 +357,7 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
 
 /// The mode is a way up: MADCTL says which, and the windows are cut from
 /// its size from here on.
-fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) callconv(.c) i32 {
+fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimings) i32 {
     const panel = panelOf(board);
     const turned = mode.flags & rtg.modes.RTGMF_TURNED != 0;
     if (turned and !panel.turns) return err.RTGERR_BAD_MODE;
@@ -374,9 +374,8 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
 /// sends from then on. The controller has no second picture to flip to,
 /// so a new buffer shown is a whole picture sent. A send the bus refuses
 /// leaves the picture shown before as what a refresh sends.
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) callconv(.c) i32 {
+fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
     const panel = panelOf(board);
-    if (x != 0 or y != 0) return err.RTGERR_NOT_SUPPORTED;
     const bm = bitmap orelse {
         panel.band_count = 0;
         return err.RTGERR_OK;
@@ -392,13 +391,37 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap, x: u32, y: u32) cal
 /// from the band that covers it, and a refresh of any of them sends the
 /// lines it shows from then on. A send the bus refuses leaves the picture
 /// shown before as what a refresh sends.
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) callconv(.c) i32 {
+fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
     const panel = panelOf(board);
     for (bands[0..count]) |band| {
         if (band.bitmap.pixels == null) return err.RTGERR_BAD_ARG;
         if (band.bitmap.format != .rgb565) return err.RTGERR_BAD_FORMAT;
     }
     return showPicture(panel, bands[0..count]);
+}
+
+/// The board's one op for what is on the glass (`RtgShow`): put in the
+/// mode where the library says it is to be, then shown the bands - one
+/// whole buffer, several in bands, or nothing. With the mode set anew a
+/// show that fails leaves the board showing nothing.
+fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
+    const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
+    if (anew) {
+        const code = setMode(board, what.mode, what.timings);
+        if (code != err.RTGERR_OK) return code;
+    }
+    const code = showThese(board, what);
+    if (code != err.RTGERR_OK and anew) _ = showBitMap(board, null);
+    return code;
+}
+
+/// The bands of a show, in the mode the board is in.
+fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
+    const bands = what.bands orelse return showBitMap(board, null);
+    if (what.count == 0) return showBitMap(board, null);
+    const first = bands[0];
+    if (what.count == 1 and first.origin == 0 and first.flags == 0) return showBitMap(board, first.bitmap);
+    return showBands(board, bands, what.count);
 }
 
 /// The whole picture sent from `picture`'s bands, which are what the panel
@@ -824,9 +847,7 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
 /// The picture is turned by choosing a mode, not by the turning ops.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
-    .set_mode = &setMode,
-    .show_bitmap = &showBitMap,
-    .show_bands = &showBands,
+    .show = &showOp,
     .refresh = &refresh,
     .display = &display,
     .set_brightness = &setBrightness,
@@ -974,7 +995,7 @@ test "dcs: a show the bus refuses puts back the picture that was shown" {
 
     // The very first show refused: the board shows nothing, as before it.
     bus.refuse_at = 1;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, first, 0, 0));
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, first));
     try testing.expectEqual(@as(u32, 0), panel.band_count);
     try testing.expectEqual(@as(u32, 1), panel.stats.failed_sends);
     try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, 0, 0));
@@ -983,7 +1004,7 @@ test "dcs: a show the bus refuses puts back the picture that was shown" {
     // Shown: four bands of two rows, and it is what the panel is sent from.
     bus.runs = 0;
     bus.refuse_at = 0;
-    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first, 0, 0));
+    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first));
     try testing.expectEqual(@as(u32, 4), bus.runs);
     try testing.expectEqual(@as(u32, 1), panel.band_count);
     try testing.expectEqual(first, panel.bands[0].bitmap);
@@ -993,7 +1014,7 @@ test "dcs: a show the bus refuses puts back the picture that was shown" {
     // panel named it, and afterwards the first again.
     bus.runs = 0;
     bus.refuse_at = 2;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second, 0, 0));
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second));
     try testing.expectEqual(second, bus.during.?);
     try testing.expectEqual(@as(u32, 1), panel.band_count);
     try testing.expectEqual(first, panel.bands[0].bitmap);
@@ -1033,7 +1054,7 @@ test "dcs: bands the bus refuses, and one buffer refused over bands" {
 
     // One buffer up, then bands refused at their first band: one band
     // again, the buffer from the top.
-    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first, 0, 0));
+    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first));
     bus.runs = 0;
     bus.refuse_at = 1;
     try testing.expectEqual(err.RTGERR_IO, showBands(&board, &two, two.len));
@@ -1052,7 +1073,7 @@ test "dcs: bands the bus refuses, and one buffer refused over bands" {
     // which the one buffer had no place for.
     bus.runs = 0;
     bus.refuse_at = 3;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, third, 0, 0));
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, third));
     try testing.expectEqual(third, bus.during.?);
     try testing.expectEqual(@as(u32, 2), panel.band_count);
     try testing.expectEqual(first, panel.bands[0].bitmap);
@@ -1079,11 +1100,11 @@ test "dcs: a picture sent turned, refused, leaves the one that was shown" {
     const first = one.set();
     const second = other.set();
 
-    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first, 0, 0));
+    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first));
     try testing.expectEqual(@as(u32, 1), bus.runs);
     bus.runs = 0;
     bus.refuse_at = 1;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second, 0, 0));
+    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second));
     try testing.expectEqual(second, bus.during.?);
     try testing.expectEqual(@as(u32, 1), panel.band_count);
     try testing.expectEqual(first, panel.bands[0].bitmap);

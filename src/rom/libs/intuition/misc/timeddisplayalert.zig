@@ -107,7 +107,7 @@ pub fn TimedDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const
     // Up: the input is the alert's from now on.
     _screen.lock(ib);
     ib.alert = .{ .active = true, .half = @divTrunc(width, 2) };
-    _ = rb.ShowBitMap(board, picture, 0, 0);
+    _ = rb.ShowBitMap(board, picture);
     _screen.unlock(ib);
     if (dead_end) return false;
 
@@ -126,7 +126,7 @@ pub fn TimedDisplayAlert(ib: *IntuitionBase, alert_number: u32, text: [*:0]const
     _screen.lock(ib);
     ib.alert = .{};
     _screen.showFront(ib, board, homeOf(ib, board, shown));
-    if (board.showing == picture) _ = rb.ShowBitMap(board, shown, 0, 0);
+    if (board.showing == picture) _ = rb.ShowBitMap(board, shown);
     _screen.unlock(ib);
     gb.FreeRastPort(rp);
     if (font) |f| gb.CloseFont(f);

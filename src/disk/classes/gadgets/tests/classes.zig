@@ -2682,11 +2682,9 @@ const Display = struct {
         const gb: *host_rom.graphics.GraphicsBase = @ptrCast(@alignCast(kib.graphics_base));
         const rtg_base: *sdk.interface.rtg.RtgBase = @ptrCast(@alignCast(gb.rtg_base));
         const state = host_rom.fakeboard.add(kib.sys_base, rtg_base) orelse return error.NoDriver;
-        const board = host_rom.fakeboard.makeBoard(state) orelse return error.NoBoard;
-        board.info.width = 64;
-        board.info.height = 40;
+        const board = host_rom.fakeboard.makeDisplay(state, 64, 40, .rgb565) orelse return error.NoBoard;
         const bitmap = rtg_base.AllocBitMap(board, 64, 40, @intFromEnum(sdk.rtg.bitmaps.PixelFormat.rgb565), sdk.rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse return error.NoBitMap;
-        try testing.expectEqual(sdk.rtg.errors.RTGERR_OK, rtg_base.ShowBitMap(board, bitmap, 0, 0));
+        try testing.expectEqual(sdk.rtg.errors.RTGERR_OK, rtg_base.ShowBitMap(board, bitmap));
         return .{ .state = state, .board = board, .bitmap = bitmap };
     }
 
