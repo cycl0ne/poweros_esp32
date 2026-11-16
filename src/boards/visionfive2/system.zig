@@ -238,6 +238,11 @@ const display = [_]Tag{
     .value(st.PART_Bus, st.BUS_MEMORY),
     .value(st.PART_Address, 0x2940_0000),
     .value(st.PART_Irq, 95),
+    // The transmitter's pads, as the board's device tree has them: the
+    // DDC on pads 0 and 1, the hot-plug line on pad 15.
+    .value(st.PART_PinSCL, pins.gpio(0)),
+    .value(st.PART_PinSDA, pins.gpio(1)),
+    .value(st.PART_PinDetect, pins.gpio(15)),
     .value(tags.RTGA_Width, screen.width),
     .value(tags.RTGA_Height, screen.height),
     .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
@@ -267,7 +272,9 @@ const dmac = [_]Tag{
 
 /// The HDMI port's sound: I2STX0 into the HDMI transmitter, fed by a
 /// channel of the DMA controller, its master clock the 12.288 MHz
-/// oscillator on GPIO4 (the device tree's mclk_ext).
+/// oscillator on GPIO4 (the device tree's mclk_ext). The part's address
+/// is the transmitter's registers, which the display's driver drives -
+/// the picture's side of it and the sound's.
 const hdmi_sound = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_CODEC),
     .value(st.PART_Chip, st.CHIP_JH7110_HDMI),

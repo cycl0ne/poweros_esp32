@@ -70,20 +70,33 @@ const dc_clocks = [_]u32{ system.VOUTCLK_DC8200_AXI, system.VOUTCLK_DC8200_CORE,
 const dc_resets = [_]u32{ system.VOUTRST_DC8200_AXI, system.VOUTRST_DC8200_AHB, system.VOUTRST_DC8200_CORE };
 const hdmi_clocks = [_]u32{ system.VOUTCLK_HDMI_TX_SYS, system.VOUTCLK_HDMI_TX_MCLK, system.VOUTCLK_HDMI_TX_BCLK };
 
-/// The transmitter's pads, as the board's device tree has them: the DDC
-/// on pads 0 (SCL) and 1 (SDA) - the transmitter's signal that drives
-/// the pad, the one that enables it, and the input the pad feeds - pulled
-/// up, and the hot-plug line on pad 15, only read.
-const DdcPin = struct { pad: u8, out: u8, enable: u8, input: u8 };
-const ddc_pins = [_]DdcPin{
-    .{ .pad = 0, .out = signals.GPOUT_SYS_HDMI_DDC_SCL, .enable = signals.GPOEN_SYS_HDMI_DDC_SCL, .input = signals.GPI_SYS_HDMI_DDC_SCL },
-    .{ .pad = 1, .out = signals.GPOUT_SYS_HDMI_DDC_SDA, .enable = signals.GPOEN_SYS_HDMI_DDC_SDA, .input = signals.GPI_SYS_HDMI_DDC_SDA },
+/// The port, as the board's list names it: where the display
+/// controller's registers and the HDMI transmitter's are, and the pads
+/// the transmitter's DDC and its hot-plug line are on. The driver reads
+/// them from its part and keeps them beside its board.
+pub const Port = struct {
+    /// The display controller's registers.
+    dc: usize,
+    /// The HDMI transmitter's: register n is at n times four.
+    hdmi: usize,
+    /// The DDC's two pads and the hot-plug line's.
+    scl: u8,
+    sda: u8,
+    hotplug: u8,
 };
-const ddc_pad = gpio.PAD_INPUT_ENABLE | gpio.PAD_PULL_UP;
-const hotplug_pin: u8 = 15;
 
-/// The HDMI transmitter: register n is at n times four.
-const HDMI: usize = 0x2959_0000;
+/// The transmitter's pads: the DDC's two - the transmitter's signal that
+/// drives the pad, the one that enables it, and the input the pad feeds -
+/// pulled up, and the hot-plug line's, only read.
+const DdcPin = struct { pad: u8, out: u8, enable: u8, input: u8 };
+fn ddcPins(port: Port) [2]DdcPin {
+    return .{
+        .{ .pad = port.scl, .out = signals.GPOUT_SYS_HDMI_DDC_SCL, .enable = signals.GPOEN_SYS_HDMI_DDC_SCL, .input = signals.GPI_SYS_HDMI_DDC_SCL },
+        .{ .pad = port.sda, .out = signals.GPOUT_SYS_HDMI_DDC_SDA, .enable = signals.GPOEN_SYS_HDMI_DDC_SDA, .input = signals.GPI_SYS_HDMI_DDC_SDA },
+    };
+}
+const ddc_pad = gpio.PAD_INPUT_ENABLE | gpio.PAD_PULL_UP;
+
 const HDMI_STATUS = 0xC8;
 const STATUS_HOTPLUG: u32 = 1 << 7;
 /// Its DDC master, which reads the monitor's EDID 128 bytes at a time
@@ -143,8 +156,6 @@ const PLL_OFF: u32 = 1 << 0;
 /// The post-PLL off, with its post divider on and the TMDS clock in.
 const PLL_POST_OFF: u32 = 0x0F;
 
-/// The display controller.
-const DC: usize = 0x2940_0000;
 /// Its interrupts: reading ACKNOWLEDGE says which came since it was last
 /// read, and clears them; ENABLE says which may come, and `start` lets
 /// them, as U-Boot does.
@@ -200,12 +211,12 @@ pub fn why(failure: Failure) [*:0]const u8 {
     };
 }
 
-fn hdmi(index: usize) *volatile u32 {
-    return reg(HDMI + index * 4);
+fn hdmi(port: Port, index: usize) *volatile u32 {
+    return reg(port.hdmi + index * 4);
 }
 
-fn dc(offset: usize) *volatile u32 {
-    return reg(DC + offset);
+fn dc(port: Port, offset: usize) *volatile u32 {
+    return reg(port.dc + offset);
 }
 
 /// One of the controller's pixel clocks on, from `source` (PIX_FROM_*).
@@ -214,10 +225,10 @@ fn pixelClock(clock: u32, source: u32) void {
 }
 
 /// Whether `index` came to have bit 0 set.
-fn locked(index: usize) bool {
+fn locked(port: Port, index: usize) bool {
     var tries: u32 = 0;
     while (tries < patience) : (tries += 1) {
-        if (hdmi(index).* & 1 != 0) return true;
+        if (hdmi(port, index).* & 1 != 0) return true;
     }
     return false;
 }
@@ -236,21 +247,21 @@ fn powerOn() bool {
 
 /// Whether a monitor is on the port: the transmitter's hot-plug line.
 /// Only once `wake` has the transmitter out of reset.
-pub fn monitor() bool {
-    return hdmi(HDMI_STATUS).* & STATUS_HOTPLUG != 0;
+pub fn monitor(port: Port) bool {
+    return hdmi(port, HDMI_STATUS).* & STATUS_HOTPLUG != 0;
 }
 
 /// The transmitter's pads taken: the DDC's, and the hot-plug line, which
 /// the transmitter reads (`monitor`). Under Disable.
-fn takePins() void {
-    for (ddc_pins) |pin| {
+fn takePins(port: Port) void {
+    for (ddcPins(port)) |pin| {
         gpio.configure(pin.pad, ddc_pad);
         gpio.connectOut(pin.pad, pin.out, pin.enable);
         gpio.connectIn(pin.input, pin.pad);
     }
-    gpio.configure(hotplug_pin, gpio.PAD_INPUT_ENABLE);
-    gpio.outputEnable(hotplug_pin, false);
-    gpio.connectIn(signals.GPI_SYS_HDMI_HPD, hotplug_pin);
+    gpio.configure(port.hotplug, gpio.PAD_INPUT_ENABLE);
+    gpio.outputEnable(port.hotplug, false);
+    gpio.connectIn(signals.GPI_SYS_HDMI_HPD, port.hotplug);
 }
 
 /// The domain on, the controller's and the transmitter's clocks running
@@ -261,7 +272,7 @@ fn takePins() void {
 /// does not run, or one `start` is about to start again. A block that
 /// does not come out of its reset is answered, not written to. `sys` is
 /// exec's; `waiter.wait(micros)` waits that long.
-pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
+pub fn wake(port: Port, sys: *ExecBase, waiter: anytype) Failure {
     if (!on_jh7110) return .power;
     if (reg(PMU_CURR_POWER_MODE).* & DOMAIN_VOUT == 0) {
         if (!powerOn()) return .power;
@@ -275,7 +286,7 @@ pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
     system.clockOn(.sys, system.SYSCLK_VOUT_TOP_HDMITX0_MCLK);
     system.releaseReset(.sys, system.SYSRST_NOC_BUS_DISP_AXI);
     system.releaseReset(.sys, system.SYSRST_VOUT_TOP_SRC);
-    takePins();
+    takePins(port);
     sys.Enable();
     if (!system.waitOutOfReset(.sys, system.SYSRST_NOC_BUS_DISP_AXI)) return .power;
     if (!system.waitOutOfReset(.sys, system.SYSRST_VOUT_TOP_SRC)) return .power;
@@ -297,10 +308,10 @@ pub fn wake(sys: *ExecBase, waiter: anytype) Failure {
 
     // Its DDC (inno_hdmi_i2c_init): the bus clock, the EDID's interrupt
     // off and cleared.
-    hdmi(DDC_BUS_FREQ_L).* = DDC_DIVIDER & 0xFF;
-    hdmi(DDC_BUS_FREQ_H).* = DDC_DIVIDER >> 8;
-    hdmi(INTERRUPT_MASK1).* = 0;
-    hdmi(INTERRUPT_STATUS1).* = EDID_READY;
+    hdmi(port, DDC_BUS_FREQ_L).* = DDC_DIVIDER & 0xFF;
+    hdmi(port, DDC_BUS_FREQ_H).* = DDC_DIVIDER >> 8;
+    hdmi(port, INTERRUPT_MASK1).* = 0;
+    hdmi(port, INTERRUPT_STATUS1).* = EDID_READY;
     return .none;
 }
 
@@ -327,88 +338,88 @@ pub fn makes(mode: *const rtg.RtgTimings) bool {
 /// Block `number` of the monitor's EDID into `block`: block n is word
 /// address (n % 2) * 128 of segment n / 2. False when the monitor did
 /// not answer within 100 ms. Only once `wake` has the transmitter up.
-pub fn readEdid(number: u8, block: *[128]u8, waiter: anytype) bool {
+pub fn readEdid(port: Port, number: u8, block: *[128]u8, waiter: anytype) bool {
     // inno_hdmi_i2c_xfer: the interrupt let through to its status bit and
     // cleared, the read set up and started, the FIFO read out.
-    hdmi(INTERRUPT_MASK1).* = EDID_READY;
-    hdmi(INTERRUPT_STATUS1).* = EDID_READY;
-    defer hdmi(INTERRUPT_MASK1).* = 0;
-    hdmi(EDID_FIFO_OFFSET).* = 0;
-    hdmi(EDID_WORD_ADDR).* = @as(u32, number % 2) * 128;
-    hdmi(EDID_SEGMENT_POINTER).* = number / 2;
+    hdmi(port, INTERRUPT_MASK1).* = EDID_READY;
+    hdmi(port, INTERRUPT_STATUS1).* = EDID_READY;
+    defer hdmi(port, INTERRUPT_MASK1).* = 0;
+    hdmi(port, EDID_FIFO_OFFSET).* = 0;
+    hdmi(port, EDID_WORD_ADDR).* = @as(u32, number % 2) * 128;
+    hdmi(port, EDID_SEGMENT_POINTER).* = number / 2;
     var waited: u32 = 0;
-    while (hdmi(INTERRUPT_STATUS1).* & EDID_READY == 0) : (waited += 1) {
+    while (hdmi(port, INTERRUPT_STATUS1).* & EDID_READY == 0) : (waited += 1) {
         if (waited == 100) return false;
         waiter.wait(1000);
     }
-    hdmi(INTERRUPT_STATUS1).* = EDID_READY;
-    for (block) |*byte| byte.* = @truncate(hdmi(EDID_FIFO_ADDR).*);
+    hdmi(port, INTERRUPT_STATUS1).* = EDID_READY;
+    for (block) |*byte| byte.* = @truncate(hdmi(port, EDID_FIFO_ADDR).*);
     return true;
 }
 
 /// A 16-bit value into two of the transmitter's registers, low first.
-fn hdmi16(index: usize, value: u32) void {
-    hdmi(index).* = value & 0xFF;
-    hdmi(index + 1).* = (value >> 8) & 0xFF;
+fn hdmi16(port: Port, index: usize, value: u32) void {
+    hdmi(port, index).* = value & 0xFF;
+    hdmi(port, index + 1).* = (value >> 8) & 0xFF;
 }
 
 /// The PHY's PLLs set for `pll` (inno_hdmi_config_pll): both off while
 /// they are set, then on. Their lock is waited for after.
-fn setPll(pll: *const phy.Pll) void {
+fn setPll(port: Port, pll: *const phy.Pll) void {
     const set = phy.image(pll);
     const post = phy.post(pll.pixel_khz);
-    hdmi(PLL_PRE).* = PLL_OFF;
-    hdmi(PLL_POST).* = PLL_POST_OFF;
-    for (set.regs, 0..) |value, i| hdmi(PLL_PRE_SETTINGS + i).* = value;
+    hdmi(port, PLL_PRE).* = PLL_OFF;
+    hdmi(port, PLL_POST).* = PLL_POST_OFF;
+    for (set.regs, 0..) |value, i| hdmi(port, PLL_PRE_SETTINGS + i).* = value;
     if (pll.frac != 0) {
-        for (set.frac, 0..) |value, i| hdmi(PLL_PRE_FRACTION + i).* = value;
+        for (set.frac, 0..) |value, i| hdmi(port, PLL_PRE_FRACTION + i).* = value;
     }
-    for (post[0..3], 0..) |value, i| hdmi(PLL_POST_SETTINGS + i).* = value;
-    hdmi(PLL_POST).* = post[3];
-    hdmi(PLL_PRE).* = 0;
+    for (post[0..3], 0..) |value, i| hdmi(port, PLL_POST_SETTINGS + i).* = value;
+    hdmi(port, PLL_POST).* = post[3];
+    hdmi(port, PLL_PRE).* = 0;
 }
 
 /// The drivers' swing and pre-emphasis for the faster modes, as StarFive's
 /// Linux driver tunes them by CEA's number (its improve_eye_diagram); any
 /// other mode keeps the chip's own.
-fn tuneDrivers(vic: u8) void {
+fn tuneDrivers(port: Port, vic: u8) void {
     switch (vic) {
         93, 94, 95 => {
-            hdmi(0x100).* = 0x00;
-            hdmi(0x1BB).* = 0x40;
-            hdmi(0x1BC).* = 0x40;
-            hdmi(0x1BD).* = 0x40;
-            hdmi(0x1BF).* = 0x02;
-            hdmi(0x1C0).* = 0x22;
+            hdmi(port, 0x100).* = 0x00;
+            hdmi(port, 0x1BB).* = 0x40;
+            hdmi(port, 0x1BC).* = 0x40;
+            hdmi(port, 0x1BD).* = 0x40;
+            hdmi(port, 0x1BF).* = 0x02;
+            hdmi(port, 0x1C0).* = 0x22;
         },
         16, 31 => {
-            hdmi(0x1BF).* = 0x02;
-            hdmi(0x1C0).* = 0x22;
+            hdmi(port, 0x1BF).* = 0x02;
+            hdmi(port, 0x1C0).* = 0x22;
         },
         1, 3, 4 => {
-            hdmi(0x1BF).* = 0x00;
-            hdmi(0x1C0).* = 0x00;
+            hdmi(port, 0x1BF).* = 0x00;
+            hdmi(port, 0x1C0).* = 0x00;
         },
         else => {},
     }
 }
 
 /// The mode's timing given to the transmitter (inno_hdmi_config_video_timing).
-fn videoTiming(mode: *const rtg.RtgTimings) void {
+fn videoTiming(port: Port, mode: *const rtg.RtgTimings) void {
     const htotal = timing.htotal(mode);
     const vtotal = timing.vtotal(mode);
-    hdmi16(VIDEO_EXT_HTOTAL, htotal);
-    hdmi16(VIDEO_EXT_HBLANK, htotal - mode.h_active);
-    hdmi16(VIDEO_EXT_HDELAY, mode.h_sync + mode.h_back);
-    hdmi16(VIDEO_EXT_HDURATION, mode.h_sync);
-    hdmi16(VIDEO_EXT_VTOTAL, vtotal);
-    hdmi(VIDEO_EXT_VBLANK).* = (vtotal - mode.v_active) & 0xFF;
-    hdmi(VIDEO_EXT_VDELAY).* = (mode.v_sync + mode.v_back) & 0xFF;
-    hdmi(VIDEO_EXT_VDURATION).* = mode.v_sync & 0xFF;
+    hdmi16(port, VIDEO_EXT_HTOTAL, htotal);
+    hdmi16(port, VIDEO_EXT_HBLANK, htotal - mode.h_active);
+    hdmi16(port, VIDEO_EXT_HDELAY, mode.h_sync + mode.h_back);
+    hdmi16(port, VIDEO_EXT_HDURATION, mode.h_sync);
+    hdmi16(port, VIDEO_EXT_VTOTAL, vtotal);
+    hdmi(port, VIDEO_EXT_VBLANK).* = (vtotal - mode.v_active) & 0xFF;
+    hdmi(port, VIDEO_EXT_VDELAY).* = (mode.v_sync + mode.v_back) & 0xFF;
+    hdmi(port, VIDEO_EXT_VDURATION).* = mode.v_sync & 0xFF;
     var control = TIMING_EXTERNAL;
     if (timing.hsyncHigh(mode)) control |= TIMING_HSYNC_HIGH;
     if (timing.vsyncHigh(mode)) control |= TIMING_VSYNC_HIGH;
-    hdmi(VIDEO_TIMING_CTL).* = control;
+    hdmi(port, VIDEO_TIMING_CTL).* = control;
 }
 
 /// The AVI infoframe the transmitter sends with each frame, put into its
@@ -417,9 +428,9 @@ fn videoTiming(mode: *const rtg.RtgTimings) void {
 /// a television may then show without cropping its edges or treating it
 /// as video. U-Boot's left the version and the checksum 0, so a monitor
 /// threw it away.
-fn infoframe(frame: *const [rtg.RTG_AVI_BYTES]u8) void {
-    hdmi(PACKET_BUF_INDEX).* = PACKET_AVI;
-    for (frame, 0..) |byte, i| hdmi(PACKET_ADDR + i).* = byte;
+fn infoframe(port: Port, frame: *const [rtg.RTG_AVI_BYTES]u8) void {
+    hdmi(port, PACKET_BUF_INDEX).* = PACKET_AVI;
+    for (frame, 0..) |byte, i| hdmi(port, PACKET_ADDR + i).* = byte;
 }
 
 /// The port's link brought up for `mode` - its pixel clock one the
@@ -430,37 +441,37 @@ fn infoframe(frame: *const [rtg.RTG_AVI_BYTES]u8) void {
 /// changes to `mode`. `waiter.wait(micros)` waits that long. The
 /// controller's planes are started after it (`startPlanes`), which waits
 /// for nothing.
-pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, avi: *const [rtg.RTG_AVI_BYTES]u8, waiter: anytype) Failure {
+pub fn start(port: Port, sys: *ExecBase, mode: *const rtg.RtgTimings, avi: *const [rtg.RTG_AVI_BYTES]u8, waiter: anytype) Failure {
     if (!on_jh7110) return .power;
     const pll = phy.find(timing.khz(mode)) orelse return .clock;
-    const woken = wake(sys, waiter);
+    const woken = wake(port, sys, waiter);
     if (woken != .none) return woken;
 
     // The panel stopped, and the controller on the divider's clock while
     // the PLL changes.
-    dc(PANEL_START).* = 0;
+    dc(port, PANEL_START).* = 0;
     pixelClock(system.VOUTCLK_DC8200_PIX0, PIX_FROM_DIVIDER);
 
     // The transmitter's PHY (inno_hdmi_setup): the PLLs set for the clock
     // and locked, the LDO and the serializer on, the drivers tuned;
     // powered down while the mode's timing and infoframe are set, up again
     // with its drivers on.
-    hdmi(0x1B0).* |= 0x4;
-    hdmi(0x1CC).* = 0xF;
-    setPll(pll);
-    if (!locked(PLL_PRE_LOCKED) or !locked(PLL_POST_LOCKED)) return .pll;
-    hdmi(0x1B4).* = 0x7;
-    hdmi(0x1BE).* = 0x71;
-    tuneDrivers(mode.vic);
-    hdmi(SYS_CTRL).* = PHY_POWER_DOWN;
-    videoTiming(mode);
-    infoframe(avi);
-    hdmi(0xC9).* = 0x10;
-    hdmi(SYS_CTRL).* = PHY_POWER_ON;
-    hdmi(0x1B2).* = 0x8F;
+    hdmi(port, 0x1B0).* |= 0x4;
+    hdmi(port, 0x1CC).* = 0xF;
+    setPll(port, pll);
+    if (!locked(port, PLL_PRE_LOCKED) or !locked(port, PLL_POST_LOCKED)) return .pll;
+    hdmi(port, 0x1B4).* = 0x7;
+    hdmi(port, 0x1BE).* = 0x71;
+    tuneDrivers(port, mode.vic);
+    hdmi(port, SYS_CTRL).* = PHY_POWER_DOWN;
+    videoTiming(port, mode);
+    infoframe(port, avi);
+    hdmi(port, 0xC9).* = 0x10;
+    hdmi(port, SYS_CTRL).* = PHY_POWER_ON;
+    hdmi(port, 0x1B2).* = 0x8F;
     waiter.wait(50_000);
-    hdmi(PHY_SYNC).* = 0x00;
-    hdmi(PHY_SYNC).* = 0x01;
+    hdmi(port, PHY_SYNC).* = 0x00;
+    hdmi(port, PHY_SYNC).* = 0x01;
 
     // The controller's pixel clock from the PLL: the mode's own.
     pixelClock(system.VOUTCLK_DC8200_PIX0, PIX_FROM_HDMI);
@@ -474,65 +485,65 @@ pub fn start(sys: *ExecBase, mode: *const rtg.RtgTimings, avi: *const [rtg.RTG_A
 /// commit bits and leaves the cursor and the overlays off, and waits for
 /// nothing: for whoever holds the planes' lock, which then puts the
 /// cursor and the video layer back.
-pub fn startPlanes(mode: *const rtg.RtgTimings, address: usize, pitch: u32) void {
+pub fn startPlanes(port: Port, mode: *const rtg.RtgTimings, address: usize, pitch: u32) void {
     const size = mode.h_active | mode.v_active << 15;
     const hsync_start = mode.h_active + mode.h_front;
     const vsync_start = mode.v_active + mode.v_front;
-    dc(INTERRUPT_ENABLE).* = 0xC000_1FFF;
-    dc(0x1CC0).* = 0x0000_2000;
-    dc(0x1800).* = 0x0000_0000;
-    dc(0x24D8).* = 0x0000_0000;
-    dc(FRAMEBUFFER_BOTTOM_RIGHT).* = size;
-    dc(FRAMEBUFFER_SIZE).* = size;
-    dc(FRAMEBUFFER_ADDRESS).* = @truncate(address);
-    dc(FRAMEBUFFER_STRIDE).* = pitch;
-    dc(0x1CE8).* = 0x0000_0F61;
-    dc(0x2510).* = 0x0000_2042;
-    dc(0x2508).* = 0x808A_3156;
-    dc(0x2500).* = 0x8008_E1B2;
-    dc(0x1518).* = 0x1800_0000;
-    dc(0x1CC0).* = 0x0000_3000;
-    dc(0x1540).* = 0x0006_0000;
-    dc(0x2540).* = 0x0000_0001;
-    dc(0x1540).* = 0x8006_0000;
-    dc(0x1544).* = 0x0006_0000;
-    dc(0x2544).* = 0x0000_0002;
-    dc(0x1544).* = 0x8006_0000;
-    dc(0x1548).* = 0x0006_0000;
-    dc(0x2548).* = 0x0000_000C;
-    dc(0x1548).* = 0x8006_0000;
-    dc(0x154C).* = 0x0006_0000;
-    dc(0x254C).* = 0x0000_000D;
-    dc(0x154C).* = 0x8006_0000;
-    dc(0x2518).* = 0x0000_0001;
-    dc(0x1A28).* = 0x0000_0000;
-    dc(DISPLAY_H).* = timing.htotal(mode) << 16 | mode.h_active;
-    dc(DISPLAY_H_SYNC).* = hsync_start | (hsync_start + mode.h_sync) << 15 | SYNC_ON | (if (timing.hsyncHigh(mode)) 0 else SYNC_LOW);
-    dc(DISPLAY_V).* = timing.vtotal(mode) << 16 | mode.v_active;
-    dc(DISPLAY_V_SYNC).* = vsync_start | (vsync_start + mode.v_sync) << 15 | SYNC_ON | (if (timing.vsyncHigh(mode)) 0 else SYNC_LOW);
-    dc(0x14B0).* = 0x0000_0000;
-    dc(0x1CD0).* = 0x0000_00D2;
-    dc(0x14B8).* = 0x0000_0005;
-    dc(0x14D0).* = 0x0000_0052;
-    dc(0x1528).* = 0xDEAD_BEEF;
-    dc(0x1418).* = 0x0000_1111;
-    dc(0x1410).* = 0x0000_0000;
-    dc(0x2518).* = 0x0000_0000;
-    dc(0x1468).* = 0x0020_0024;
-    dc(0x1484).* = 0x0000_0000;
-    dc(0x1468).* = 0x0020_0024;
-    dc(0x24E8).* = 0x0000_0C24;
-    dc(0x24FC).* = 0x0000_0000;
-    dc(0x24E8).* = 0x0000_0C24;
-    dc(PANEL_START).* = 0x0000_0001;
+    dc(port, INTERRUPT_ENABLE).* = 0xC000_1FFF;
+    dc(port, 0x1CC0).* = 0x0000_2000;
+    dc(port, 0x1800).* = 0x0000_0000;
+    dc(port, 0x24D8).* = 0x0000_0000;
+    dc(port, FRAMEBUFFER_BOTTOM_RIGHT).* = size;
+    dc(port, FRAMEBUFFER_SIZE).* = size;
+    dc(port, FRAMEBUFFER_ADDRESS).* = @truncate(address);
+    dc(port, FRAMEBUFFER_STRIDE).* = pitch;
+    dc(port, 0x1CE8).* = 0x0000_0F61;
+    dc(port, 0x2510).* = 0x0000_2042;
+    dc(port, 0x2508).* = 0x808A_3156;
+    dc(port, 0x2500).* = 0x8008_E1B2;
+    dc(port, 0x1518).* = 0x1800_0000;
+    dc(port, 0x1CC0).* = 0x0000_3000;
+    dc(port, 0x1540).* = 0x0006_0000;
+    dc(port, 0x2540).* = 0x0000_0001;
+    dc(port, 0x1540).* = 0x8006_0000;
+    dc(port, 0x1544).* = 0x0006_0000;
+    dc(port, 0x2544).* = 0x0000_0002;
+    dc(port, 0x1544).* = 0x8006_0000;
+    dc(port, 0x1548).* = 0x0006_0000;
+    dc(port, 0x2548).* = 0x0000_000C;
+    dc(port, 0x1548).* = 0x8006_0000;
+    dc(port, 0x154C).* = 0x0006_0000;
+    dc(port, 0x254C).* = 0x0000_000D;
+    dc(port, 0x154C).* = 0x8006_0000;
+    dc(port, 0x2518).* = 0x0000_0001;
+    dc(port, 0x1A28).* = 0x0000_0000;
+    dc(port, DISPLAY_H).* = timing.htotal(mode) << 16 | mode.h_active;
+    dc(port, DISPLAY_H_SYNC).* = hsync_start | (hsync_start + mode.h_sync) << 15 | SYNC_ON | (if (timing.hsyncHigh(mode)) 0 else SYNC_LOW);
+    dc(port, DISPLAY_V).* = timing.vtotal(mode) << 16 | mode.v_active;
+    dc(port, DISPLAY_V_SYNC).* = vsync_start | (vsync_start + mode.v_sync) << 15 | SYNC_ON | (if (timing.vsyncHigh(mode)) 0 else SYNC_LOW);
+    dc(port, 0x14B0).* = 0x0000_0000;
+    dc(port, 0x1CD0).* = 0x0000_00D2;
+    dc(port, 0x14B8).* = 0x0000_0005;
+    dc(port, 0x14D0).* = 0x0000_0052;
+    dc(port, 0x1528).* = 0xDEAD_BEEF;
+    dc(port, 0x1418).* = 0x0000_1111;
+    dc(port, 0x1410).* = 0x0000_0000;
+    dc(port, 0x2518).* = 0x0000_0000;
+    dc(port, 0x1468).* = 0x0020_0024;
+    dc(port, 0x1484).* = 0x0000_0000;
+    dc(port, 0x1468).* = 0x0020_0024;
+    dc(port, 0x24E8).* = 0x0000_0C24;
+    dc(port, 0x24FC).* = 0x0000_0000;
+    dc(port, 0x24E8).* = 0x0000_0C24;
+    dc(port, PANEL_START).* = 0x0000_0001;
 }
 
 /// The controller stopped, on a port that runs: the panel no longer
 /// started, so no frame is read and no picture sent, and none of its
 /// interrupts raised. For whoever holds the planes' lock.
-pub fn stop() void {
-    dc(INTERRUPT_ENABLE).* = 0;
-    dc(PANEL_START).* = 0;
+pub fn stop(port: Port) void {
+    dc(port, INTERRUPT_ENABLE).* = 0;
+    dc(port, PANEL_START).* = 0;
 }
 
 // --- the link's sound ---------------------------------------------------------
@@ -561,15 +572,15 @@ const AUDIO_I2S_MAP = 0x39;
 const AUDIO_N = [3]usize{ 0x3F, 0x40, 0x41 };
 const AUDIO_CTS = [3]usize{ 0x45, 0x46, 0x47 };
 
-fn modify(index: usize, mask: u32, value: u32) void {
-    hdmi(index).* = hdmi(index).* & ~mask | value;
+fn modify(port: Port, index: usize, mask: u32, value: u32) void {
+    hdmi(port, index).* = hdmi(port, index).* & ~mask | value;
 }
 
 /// A 20-bit number into its three registers, the top four bits first.
-fn write20(registers: [3]usize, value: u32) void {
-    hdmi(registers[0]).* = (value >> 16) & 0xF;
-    hdmi(registers[1]).* = (value >> 8) & 0xFF;
-    hdmi(registers[2]).* = value & 0xFF;
+fn write20(port: Port, registers: [3]usize, value: u32) void {
+    hdmi(port, registers[0]).* = (value >> 16) & 0xF;
+    hdmi(port, registers[1]).* = (value >> 8) & 0xFF;
+    hdmi(port, registers[2]).* = value & 0xFF;
 }
 
 /// The transmitter's name for a sample rate; null for one it is not set
@@ -584,24 +595,24 @@ pub fn audioRate(rate: u32) ?u32 {
 /// The transmitter set up for a stereo stream on its first I2S input at
 /// the rate `rate` names (`audioRate`), sent with the numbers `n` and
 /// `cts`, and its sound on. Only on a port that runs.
-pub fn audioStart(rate: u32, n: u32, cts: u32) void {
+pub fn audioStart(port: Port, rate: u32, n: u32, cts: u32) void {
     // starfive_hdmi_audio_init: I2S, MCLK at 256 times the rate, the
     // standard format, each input to its own pair.
-    modify(AUDIO_CTRL1, CTS_EXTERNAL | SOURCE_MASK | MCLK_RATIO_MASK, CTS_EXTERNAL | MCLK_256FS);
-    modify(AUDIO_I2S_MODE, I2S_FORMAT_MASK, 0);
-    hdmi(AUDIO_I2S_MAP).* = 0;
+    modify(port, AUDIO_CTRL1, CTS_EXTERNAL | SOURCE_MASK | MCLK_RATIO_MASK, CTS_EXTERNAL | MCLK_256FS);
+    modify(port, AUDIO_I2S_MODE, I2S_FORMAT_MASK, 0);
+    hdmi(port, AUDIO_I2S_MAP).* = 0;
     // starfive_hdmi_audio_hw_params: the rate, two channels on the first
     // input, N and CTS.
-    hdmi(AUDIO_SAMPLE_RATE).* = rate;
-    modify(AUDIO_I2S_MODE, I2S_INPUTS_MASK, I2S_INPUT0);
-    write20(AUDIO_N, n);
-    write20(AUDIO_CTS, cts);
-    modify(AV_MUTE, AUDIO_MUTE, 0);
+    hdmi(port, AUDIO_SAMPLE_RATE).* = rate;
+    modify(port, AUDIO_I2S_MODE, I2S_INPUTS_MASK, I2S_INPUT0);
+    write20(port, AUDIO_N, n);
+    write20(port, AUDIO_CTS, cts);
+    modify(port, AV_MUTE, AUDIO_MUTE, 0);
 }
 
 /// The sound off; the picture stays. Only on a port that runs.
-pub fn audioStop() void {
-    modify(AV_MUTE, AUDIO_MUTE, AUDIO_MUTE);
+pub fn audioStop(port: Port) void {
+    modify(port, AV_MUTE, AUDIO_MUTE, AUDIO_MUTE);
 }
 
 /// Whether the port can send a mode of that pixel clock.
@@ -609,30 +620,30 @@ pub const sends = phy.sends;
 
 /// The shadow registers held, for writes that are to be taken together
 /// (`let go`), as Linux's driver writes a plane.
-fn hold() void {
-    dc(PANEL_CONFIG_EX).* |= PANEL_HOLD;
-    dc(FRAMEBUFFER_CONFIG_EX).* &= ~FRAMEBUFFER_SHADOW;
+fn hold(port: Port) void {
+    dc(port, PANEL_CONFIG_EX).* |= PANEL_HOLD;
+    dc(port, FRAMEBUFFER_CONFIG_EX).* &= ~FRAMEBUFFER_SHADOW;
 }
 
-fn letGo() void {
-    dc(FRAMEBUFFER_CONFIG_EX).* |= FRAMEBUFFER_SHADOW;
-    dc(PANEL_CONFIG_EX).* &= ~PANEL_HOLD;
+fn letGo(port: Port) void {
+    dc(port, FRAMEBUFFER_CONFIG_EX).* |= FRAMEBUFFER_SHADOW;
+    dc(port, PANEL_CONFIG_EX).* &= ~PANEL_HOLD;
 }
 
 /// What the controller raised since this was last asked, cleared: 0 when
 /// the interrupt was not its.
-pub fn takeInterrupts() u32 {
-    return dc(INTERRUPT_ACKNOWLEDGE).*;
+pub fn takeInterrupts(port: Port) u32 {
+    return dc(port, INTERRUPT_ACKNOWLEDGE).*;
 }
 
 /// `picture` shown from now on: a buffer of the mode the display is
 /// in, as the library describes one, of which the controller is told
 /// the address.
-pub fn show(picture: *const rtg.RtgBitMap) void {
+pub fn show(port: Port, picture: *const rtg.RtgBitMap) void {
     const pixels = picture.pixels orelse return;
-    hold();
-    dc(FRAMEBUFFER_ADDRESS).* = @truncate(@intFromPtr(pixels));
-    letGo();
+    hold(port);
+    dc(port, FRAMEBUFFER_ADDRESS).* = @truncate(@intFromPtr(pixels));
+    letGo(port);
 }
 
 /// The largest cursor image, each way.
@@ -643,13 +654,13 @@ pub const cursor_side = 64;
 /// its hot spot at (x, y) on the picture, shown or not. A new place alone
 /// is not taken: the controller fetches it with the configuration, whose
 /// UPDATE is written after it.
-pub fn cursor(address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u32, shown: bool) void {
-    hold();
-    dc(CURSOR_ADDRESS).* = @truncate(address);
-    dc(CURSOR_LOCATION).* = (x & 0x3FFF) | (y & 0x3FFF) << 16;
+pub fn cursor(port: Port, address: usize, small: bool, hot_x: u32, hot_y: u32, x: u32, y: u32, shown: bool) void {
+    hold(port);
+    dc(port, CURSOR_ADDRESS).* = @truncate(address);
+    dc(port, CURSOR_LOCATION).* = (x & 0x3FFF) | (y & 0x3FFF) << 16;
     const config = (hot_x & 0xFF) << 16 | (hot_y & 0xFF) << 8 | (if (small) 0 else CURSOR_SIZE_64) | CURSOR_UPDATE | CURSOR_VALID;
-    dc(CURSOR_CONFIG).* = if (shown) config | CURSOR_ARGB8888 else config;
-    letGo();
+    dc(port, CURSOR_CONFIG).* = if (shown) config | CURSOR_ARGB8888 else config;
+    letGo(port);
 }
 
 // --- the video layer: the first overlay -----------------------------------------
@@ -844,50 +855,50 @@ pub const VideoPlace = struct {
 };
 
 /// The scaler's filter loaded and the layer off: for a layer just taken.
-pub fn videoStart() void {
-    hold();
-    dc(OVERLAY_CONFIG).* = OVERLAY_OFF;
-    dc(OVERLAY_SCALE_CONFIG).* = SCALE_TAPS;
-    dc(OVERLAY_INIT_OFFSET).* = 0x8000_8000;
-    dc(OVERLAY_H_FILTER_INDEX).* = 0;
-    for (filter) |word| dc(OVERLAY_H_FILTER_DATA).* = word;
-    dc(OVERLAY_V_FILTER_INDEX).* = 0;
-    for (filter[0..vertical_words]) |word| dc(OVERLAY_V_FILTER_DATA).* = word;
-    dc(OVERLAY_CONFIG).* = OVERLAY_OFF | OVERLAY_COMMIT;
-    letGo();
+pub fn videoStart(port: Port) void {
+    hold(port);
+    dc(port, OVERLAY_CONFIG).* = OVERLAY_OFF;
+    dc(port, OVERLAY_SCALE_CONFIG).* = SCALE_TAPS;
+    dc(port, OVERLAY_INIT_OFFSET).* = 0x8000_8000;
+    dc(port, OVERLAY_H_FILTER_INDEX).* = 0;
+    for (filter) |word| dc(port, OVERLAY_H_FILTER_DATA).* = word;
+    dc(port, OVERLAY_V_FILTER_INDEX).* = 0;
+    for (filter[0..vertical_words]) |word| dc(port, OVERLAY_V_FILTER_DATA).* = word;
+    dc(port, OVERLAY_CONFIG).* = OVERLAY_OFF | OVERLAY_COMMIT;
+    letGo(port);
 }
 
 /// The picture shown in its place from the next frame, scaled by the
 /// place's steps.
-pub fn videoShow(picture: VideoPicture, place: VideoPlace) void {
+pub fn videoShow(port: Port, picture: VideoPicture, place: VideoPlace) void {
     const format = if (picture.planar) FORMAT_I420 else FORMAT_NV12;
     const config = OVERLAY_YUV | OVERLAY_ENABLE | format << OVERLAY_FORMAT_SHIFT |
         @as(u32, @intFromBool(picture.bt709)) << OVERLAY_SPACE_SHIFT;
     const matrix = &matrices[@intFromBool(picture.bt709)][@intFromBool(picture.full)];
-    hold();
-    dc(OVERLAY_CONFIG).* = config;
-    dc(OVERLAY_Y_ADDRESS).* = @truncate(picture.y);
-    dc(OVERLAY_U_ADDRESS).* = @truncate(picture.u);
-    dc(OVERLAY_V_ADDRESS).* = @truncate(picture.v);
-    dc(OVERLAY_Y_STRIDE).* = picture.y_pitch;
-    dc(OVERLAY_U_STRIDE).* = picture.c_pitch;
-    dc(OVERLAY_V_STRIDE).* = picture.c_pitch;
-    dc(OVERLAY_SIZE).* = picture.width | picture.height << 15;
-    dc(OVERLAY_TOP_LEFT).* = place.x | place.y << 15;
-    dc(OVERLAY_BOTTOM_RIGHT).* = (place.x + place.width) | (place.y + place.height) << 15;
-    dc(OVERLAY_SCALE_X).* = place.step_x;
-    dc(OVERLAY_SCALE_Y).* = place.step_y;
+    hold(port);
+    dc(port, OVERLAY_CONFIG).* = config;
+    dc(port, OVERLAY_Y_ADDRESS).* = @truncate(picture.y);
+    dc(port, OVERLAY_U_ADDRESS).* = @truncate(picture.u);
+    dc(port, OVERLAY_V_ADDRESS).* = @truncate(picture.v);
+    dc(port, OVERLAY_Y_STRIDE).* = picture.y_pitch;
+    dc(port, OVERLAY_U_STRIDE).* = picture.c_pitch;
+    dc(port, OVERLAY_V_STRIDE).* = picture.c_pitch;
+    dc(port, OVERLAY_SIZE).* = picture.width | picture.height << 15;
+    dc(port, OVERLAY_TOP_LEFT).* = place.x | place.y << 15;
+    dc(port, OVERLAY_BOTTOM_RIGHT).* = (place.x + place.width) | (place.y + place.height) << 15;
+    dc(port, OVERLAY_SCALE_X).* = place.step_x;
+    dc(port, OVERLAY_SCALE_Y).* = place.step_y;
     const scaled = place.step_x != unscaled or place.step_y != unscaled;
-    dc(OVERLAY_SCALE_CONFIG).* = if (scaled) SCALE_TAPS | SCALE_ON else SCALE_TAPS;
-    for (matrix.coefficients, 0..) |word, i| dc(OVERLAY_COEFFICIENTS + 0x40 * i).* = word;
-    for (matrix.offsets, 0..) |word, i| dc(OVERLAY_OFFSETS + 0x40 * i).* = word;
-    dc(OVERLAY_Y_CLAMP).* = matrix.y_clamp;
-    dc(OVERLAY_UV_CLAMP).* = matrix.uv_clamp;
-    dc(OVERLAY_SRC_ALPHA).* = 0xFF00_0000;
-    dc(OVERLAY_DST_ALPHA).* = 0xFF00_0000;
-    dc(OVERLAY_BLEND).* = OVERLAY_BLEND_NONE;
-    dc(OVERLAY_CONFIG).* = config | OVERLAY_COMMIT;
-    letGo();
+    dc(port, OVERLAY_SCALE_CONFIG).* = if (scaled) SCALE_TAPS | SCALE_ON else SCALE_TAPS;
+    for (matrix.coefficients, 0..) |word, i| dc(port, OVERLAY_COEFFICIENTS + 0x40 * i).* = word;
+    for (matrix.offsets, 0..) |word, i| dc(port, OVERLAY_OFFSETS + 0x40 * i).* = word;
+    dc(port, OVERLAY_Y_CLAMP).* = matrix.y_clamp;
+    dc(port, OVERLAY_UV_CLAMP).* = matrix.uv_clamp;
+    dc(port, OVERLAY_SRC_ALPHA).* = 0xFF00_0000;
+    dc(port, OVERLAY_DST_ALPHA).* = 0xFF00_0000;
+    dc(port, OVERLAY_BLEND).* = OVERLAY_BLEND_NONE;
+    dc(port, OVERLAY_CONFIG).* = config | OVERLAY_COMMIT;
+    letGo(port);
 }
 
 /// The scaler's step from `read` pixels of the picture to `shown` of the
@@ -902,11 +913,11 @@ pub fn videoStep(read: u32, shown: u32) u32 {
 pub const unscaled: u32 = 1 << 16;
 
 /// Nothing on the layer from the next frame.
-pub fn videoHide() void {
-    hold();
-    dc(OVERLAY_CONFIG).* = OVERLAY_OFF;
-    dc(OVERLAY_CONFIG).* = OVERLAY_OFF | OVERLAY_COMMIT;
-    letGo();
+pub fn videoHide(port: Port) void {
+    hold(port);
+    dc(port, OVERLAY_CONFIG).* = OVERLAY_OFF;
+    dc(port, OVERLAY_CONFIG).* = OVERLAY_OFF | OVERLAY_COMMIT;
+    letGo(port);
 }
 
 /// The colours the primary plane is clear at, over the video layer: each
@@ -915,18 +926,18 @@ pub const VideoKey = struct { low: u32, high: u32 };
 
 /// The layer under the primary plane, seen where the primary's pixel is
 /// within `key` - or with null over it, as U-Boot leaves them.
-pub fn videoOrder(key: ?VideoKey) void {
-    hold();
+pub fn videoOrder(port: Port, key: ?VideoKey) void {
+    hold(port);
     if (key) |colours| {
-        dc(FRAMEBUFFER_KEY_LOW).* = colours.low & 0x00FF_FFFF;
-        dc(FRAMEBUFFER_KEY_HIGH).* = 0xFF00_0000 | (colours.high & 0x00FF_FFFF);
-        dc(FRAMEBUFFER_CONFIG).* = (dc(FRAMEBUFFER_CONFIG).* & ~FRAMEBUFFER_TRANSPARENCY) | FRAMEBUFFER_KEYED;
-        dc(FRAMEBUFFER_CONFIG_EX).* = (dc(FRAMEBUFFER_CONFIG_EX).* & ~FRAMEBUFFER_ORDER) | 1 << FRAMEBUFFER_ORDER_SHIFT;
-        dc(OVERLAY_ORDER).* = 0;
+        dc(port, FRAMEBUFFER_KEY_LOW).* = colours.low & 0x00FF_FFFF;
+        dc(port, FRAMEBUFFER_KEY_HIGH).* = 0xFF00_0000 | (colours.high & 0x00FF_FFFF);
+        dc(port, FRAMEBUFFER_CONFIG).* = (dc(port, FRAMEBUFFER_CONFIG).* & ~FRAMEBUFFER_TRANSPARENCY) | FRAMEBUFFER_KEYED;
+        dc(port, FRAMEBUFFER_CONFIG_EX).* = (dc(port, FRAMEBUFFER_CONFIG_EX).* & ~FRAMEBUFFER_ORDER) | 1 << FRAMEBUFFER_ORDER_SHIFT;
+        dc(port, OVERLAY_ORDER).* = 0;
     } else {
-        dc(FRAMEBUFFER_CONFIG).* &= ~FRAMEBUFFER_TRANSPARENCY;
-        dc(FRAMEBUFFER_CONFIG_EX).* &= ~FRAMEBUFFER_ORDER;
-        dc(OVERLAY_ORDER).* = 1;
+        dc(port, FRAMEBUFFER_CONFIG).* &= ~FRAMEBUFFER_TRANSPARENCY;
+        dc(port, FRAMEBUFFER_CONFIG_EX).* &= ~FRAMEBUFFER_ORDER;
+        dc(port, OVERLAY_ORDER).* = 1;
     }
-    letGo();
+    letGo(port);
 }

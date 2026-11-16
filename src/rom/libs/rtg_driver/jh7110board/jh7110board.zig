@@ -79,13 +79,14 @@ const err = rtg.errors;
 const st = sdk.expansion.systemtags;
 const tags = rtg.tags;
 const timer = sdk.devices.timer;
+const BoardPin = sdk.expansion.boardpin.BoardPin;
 
 const jh7110 = @import("jh7110.zig");
 
 const MODULE_NAME = "rtg-jh7110";
 const DRIVER_NAME = "jh7110";
 const VERSION = 1;
-const REVISION = 1;
+const REVISION = 2;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -116,6 +117,10 @@ const Screen = struct {
     sys: *ExecBase,
     /// rtg.library, as the driver calls it.
     rtg_base: *RtgBase,
+    /// Where the controller's registers and the transmitter's are, and
+    /// the pads of the port's DDC and its hot-plug line, as the board's
+    /// list names them.
+    port: jh7110.Port,
     /// The picture: its size, rows `pitch` bytes apart, four bytes a
     /// pixel.
     width: u32 = 0,
@@ -207,7 +212,7 @@ fn pace(screen: *Screen, frames: u32) void {
 fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const screen: *Screen = @ptrCast(@alignCast(data.?));
-    if (jh7110.takeInterrupts() == 0) return 0;
+    if (jh7110.takeInterrupts(screen.port) == 0) return 0;
     drivers(screen).FrameDone(screen.board);
     // The port's hot-plug line raises no interrupt here: the library is
     // asked to look at the connector now and then (`detect`), which
@@ -289,7 +294,7 @@ fn scanFrom(screen: *Screen, picture: *const rtg.RtgBitMap) void {
     const address = @intFromPtr(picture.pixels orelse return);
     if (address == screen.scanning) return;
     screen.sys.AcquireLock(&screen.plane_lock);
-    jh7110.show(picture);
+    jh7110.show(screen.port, picture);
     screen.sys.ReleaseLock(&screen.plane_lock);
     screen.scanning = address;
 }
@@ -317,6 +322,7 @@ fn hotSpot(screen: *const Screen) struct { x: u32, y: u32 } {
 fn cursorWrite(screen: *Screen) void {
     const at = hotSpot(screen);
     jh7110.cursor(
+        screen.port,
         @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
         screen.cursor_small,
         screen.cursor_hot_x,
@@ -448,8 +454,8 @@ fn videoOpen(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) i32 {
     screen.video_key = if (under) .{ .low = video_key_darkest, .high = video_key } else null;
     screen.video_picture = null;
     screen.video_place = .{};
-    jh7110.videoStart();
-    jh7110.videoOrder(screen.video_key);
+    jh7110.videoStart(screen.port);
+    jh7110.videoOrder(screen.port, screen.video_key);
     return err.RTGERR_OK;
 }
 
@@ -460,8 +466,8 @@ fn videoClose(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer) callconv(.c) void
     const sys = screen.sys;
     sys.AcquireLock(&screen.plane_lock);
     if (screen.video == layer) {
-        jh7110.videoHide();
-        jh7110.videoOrder(null);
+        jh7110.videoHide(screen.port);
+        jh7110.videoOrder(screen.port, null);
         screen.video = null;
         screen.video_key = null;
         screen.video_picture = null;
@@ -482,11 +488,11 @@ fn videoShow(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, picture: ?*const r
         defer sys.ReleaseLock(&screen.plane_lock);
         screen.video_picture = null;
         const one = picture orelse {
-            jh7110.videoHide();
+            jh7110.videoHide(screen.port);
             break :result err.RTGERR_OK;
         };
         if (!videoReads(one, src.?.*)) {
-            jh7110.videoHide();
+            jh7110.videoHide(screen.port);
             break :result err.RTGERR_BAD_ARG;
         }
         screen.video_picture = one.*;
@@ -576,17 +582,17 @@ fn videoCut(from: i32, read: i32, at: i32, shown: i32, side: u32, step: u32, uni
 /// `plane_lock`.
 fn videoPut(screen: *Screen) bool {
     const one = screen.video_picture orelse {
-        jh7110.videoHide();
+        jh7110.videoHide(screen.port);
         return true;
     };
     const part = screen.video_src;
     const place = screen.video_place;
     if (place.width < 2 or place.height < 2) {
-        jh7110.videoHide();
+        jh7110.videoHide(screen.port);
         return place.width <= 0 or place.height <= 0;
     }
     if (!videoScales(part.width, place.width) or !videoScales(part.height, place.height)) {
-        jh7110.videoHide();
+        jh7110.videoHide(screen.port);
         return false;
     }
     const step_x = jh7110.videoStep(@intCast(part.width), @intCast(place.width));
@@ -594,7 +600,7 @@ fn videoPut(screen: *Screen) bool {
     const across = videoCut(part.x, part.width, place.x, place.width, screen.width, step_x, video_cut_across);
     const down = videoCut(part.y, part.height, place.y, place.height, screen.height, step_y, video_cut_down);
     if (across == null or down == null) {
-        jh7110.videoHide();
+        jh7110.videoHide(screen.port);
         return true;
     }
     const x = across.?;
@@ -602,7 +608,7 @@ fn videoPut(screen: *Screen) bool {
     const planar = one.layout == rtg.bitmaps.RTGYUV_I420;
     const chroma_x: usize = if (planar) x.from / 2 else x.from;
     const chroma = @as(usize, y.from / 2) * one.c_pitch + chroma_x;
-    jh7110.videoShow(.{
+    jh7110.videoShow(screen.port, .{
         .y = @intFromPtr(one.y) + @as(usize, y.from) * one.y_pitch + x.from,
         .u = @intFromPtr(one.cb) + chroma,
         .v = if (one.cr) |cr| @intFromPtr(cr) + chroma else 0,
@@ -637,8 +643,8 @@ fn videoScales(read: i32, shown: i32) bool {
 /// `plane_lock`.
 fn videoPutBack(screen: *Screen) void {
     if (screen.video == null) return;
-    jh7110.videoStart();
-    jh7110.videoOrder(screen.video_key);
+    jh7110.videoStart(screen.port);
+    jh7110.videoOrder(screen.port, screen.video_key);
     _ = videoPut(screen);
 }
 
@@ -664,9 +670,20 @@ fn halt(screen: *Screen) void {
     unhookFrames(screen);
     if (screen.scanning == 0) return;
     screen.sys.AcquireLock(&screen.plane_lock);
-    jh7110.stop();
+    jh7110.stop(screen.port);
     screen.sys.ReleaseLock(&screen.plane_lock);
     screen.scanning = 0;
+}
+
+/// Where the HDMI transmitter's registers are: the address of the part
+/// the board lists the transmitter as; 0 where it lists none.
+fn transmitterAt(driver: *rtg.RtgDriver) usize {
+    const sys = driver.sys_base;
+    const library = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, 1) orelse return 0;
+    defer sys.CloseLibrary(library);
+    const eb: *sdk.interface.expansion.ExpansionBase = @ptrCast(library);
+    const part = eb.FindBoardPart(null, st.PARTKIND_CODEC, st.CHIP_JH7110_HDMI) orelse return 0;
+    return driver.rtg_base.GetRtgTagData(st.PART_Address, 0, part.tags);
 }
 
 /// The controller's panel part is offered: a board made of it, its modes
@@ -683,6 +700,23 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     if (width == 0 or height == 0) return err.RTGERR_BAD_TAGS;
     if (width > largest_side or height > largest_side) return err.RTGERR_BAD_TAGS;
 
+    // Where the port is: the controller's registers and the pads of the
+    // DDC and the hot-plug line from the part, the transmitter's
+    // registers from the part the board lists it as.
+    const scl = BoardPin.of(rb.GetRtgTagData(st.PART_PinSCL, 0, tag_list));
+    const sda = BoardPin.of(rb.GetRtgTagData(st.PART_PinSDA, 0, tag_list));
+    const hotplug = BoardPin.of(rb.GetRtgTagData(st.PART_PinDetect, 0, tag_list));
+    const port = jh7110.Port{
+        .dc = rb.GetRtgTagData(st.PART_Address, 0, tag_list),
+        .hdmi = transmitterAt(driver),
+        .scl = scl.number,
+        .sda = sda.number,
+        .hotplug = hotplug.number,
+    };
+    if (port.dc == 0 or port.hdmi == 0) return err.RTGERR_BAD_TAGS;
+    for ([_]BoardPin{ scl, sda, hotplug }) |pin| {
+        if (pin.kind != sdk.expansion.boardpin.BPIN_GPIO) return err.RTGERR_BAD_TAGS;
+    }
     // Nothing is asked of the controller here: its registers do not
     // answer while its domain is off, which it is until a mode is set.
     const board = rb.CreateBoard(driver, device, &.{
@@ -692,7 +726,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .format = format,
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
-    screen.* = .{ .sys = sys, .rtg_base = programs(rb), .width = width, .height = height, .board = board };
+    screen.* = .{ .sys = sys, .rtg_base = programs(rb), .port = port, .width = width, .height = height, .board = board };
     // The port's waits are on timer.device.
     screen.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     screen.timer_open = sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &screen.timer_io.node, 0) == 0;
@@ -794,13 +828,13 @@ fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
     // A port that runs is awake: waking it again would put the
     // controller's pixel clocks back on the divider under the picture.
     if (!running) {
-        const failure = jh7110.wake(sys, waiter);
+        const failure = jh7110.wake(screen.port, sys, waiter);
         if (failure != .none) {
             exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, jh7110.why(failure) });
             return err.RTGERR_NO_DISPLAY;
         }
     }
-    const plugged = jh7110.monitor();
+    const plugged = jh7110.monitor(screen.port);
     if (plugged == screen.plugged) {
         screen.settling = 0;
     } else {
@@ -832,14 +866,14 @@ fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
 /// nothing where it does not read.
 fn readEdid(screen: *Screen, waiter: Waiter) void {
     const first: *[edid_block]u8 = screen.edid[0..edid_block];
-    var read = jh7110.readEdid(0, first, waiter);
-    if (read and !sumsToZero(first)) read = jh7110.readEdid(0, first, waiter);
+    var read = jh7110.readEdid(screen.port, 0, first, waiter);
+    if (read and !sumsToZero(first)) read = jh7110.readEdid(screen.port, 0, first, waiter);
     if (!read) return;
     var blocks: u32 = 1;
     const named = @min(@as(u32, first[126]) + 1, jh7110.edid_blocks);
     while (blocks < named) : (blocks += 1) {
         const block: *[edid_block]u8 = screen.edid[blocks * edid_block ..][0..edid_block];
-        if (!jh7110.readEdid(@intCast(blocks), block, waiter)) break;
+        if (!jh7110.readEdid(screen.port, @intCast(blocks), block, waiter)) break;
     }
     screen.edid_size = blocks * edid_block;
 }
@@ -862,13 +896,13 @@ fn startPort(screen: *Screen, address: usize) bool {
     // A computer's picture, in the whole range.
     var avi: [rtg.RTG_AVI_BYTES]u8 = undefined;
     _ = drivers(screen).BuildAviInfoFrame(mode, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL, &avi);
-    const failure = jh7110.start(sys, mode, &avi, Waiter{ .screen = screen });
+    const failure = jh7110.start(screen.port, sys, mode, &avi, Waiter{ .screen = screen });
     if (failure != .none) {
         exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, jh7110.why(failure) });
         return false;
     }
     sys.AcquireLock(&screen.plane_lock);
-    jh7110.startPlanes(mode, address, screen.pitch);
+    jh7110.startPlanes(screen.port, mode, address, screen.pitch);
     screen.scanning = address;
     cursorWrite(screen);
     videoPutBack(screen);
@@ -876,7 +910,7 @@ fn startPort(screen: *Screen, address: usize) bool {
     // The sound that plays, sent in the new mode: its numbers follow the
     // pixel clock.
     if (screen.audio) |playing| _ = linkSound(screen, &playing);
-    const plugged = jh7110.monitor();
+    const plugged = jh7110.monitor(screen.port);
     if (plugged != screen.plugged) {
         screen.edid_size = 0;
         screen.edid_tries = 0;
@@ -967,7 +1001,7 @@ fn linkSound(screen: *Screen, format: *const rtg.RtgAudio) i32 {
     var n: u32 = 0;
     var cts: u32 = 0;
     if (!drivers(screen).HdmiAudioClock(screen.timings.pixel_clock_hz, format.sample_rate, &n, &cts)) return err.RTGERR_NO_MODE;
-    jh7110.audioStart(rate, n, cts);
+    jh7110.audioStart(screen.port, rate, n, cts);
     return err.RTGERR_OK;
 }
 
@@ -983,7 +1017,7 @@ fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
     sys.ObtainSemaphore(&screen.port_lock);
     defer sys.ReleaseSemaphore(&screen.port_lock);
     const one = format orelse {
-        if (screen.audio != null and screen.scanning != 0) jh7110.audioStop();
+        if (screen.audio != null and screen.scanning != 0) jh7110.audioStop(screen.port);
         screen.audio = null;
         return err.RTGERR_OK;
     };
