@@ -552,6 +552,14 @@ work between cores with the cores woken once; a board without it is given
 them one by one, as `CopyRect` gives them. Every job is done when its
 call returns.
 
+A copy into a buffer a flipped board shows is held apart from the
+picture the board makes of its buffers, so a window's next frame copied
+whole is on the glass whole (`CopyRect`, `CopyRects`). A writer of whole
+rectangles that is not the engine has the same between `LockBitMap` and
+`UnlockBitMap`: graphics.library takes them around the rectangles it
+copies itself (`BltBitMapRects`). On a board that is not flipped the two
+do nothing.
+
 **The library never does these in software.** A board without the
 operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in
 `RtgBoardInfo.caps` (`RTGBC_FILL_RECT` and so on). A caller that finds the
@@ -571,14 +579,20 @@ without a mask (`BltBitMapRastPort` and every window move, refresh and
 backing store behind it), `BlendPixelArray`, a translucent pen filled
 under `DRMD_BLEND`, and a smooth scale (`RPTAG_Smooth`) whose destination
 is one whole piece of a board's buffer. What the board refuses it does
-itself, with the same result.
+itself, with the same result. For a buffer with no drawing state it has
+three calls that go the same way, the engine's where it takes the job
+and the cores' otherwise - `BltBitMapRects`, `BlendBitMapPixels` and
+`BlendBitMapRect` - which is how layers.library copies a window's
+pieces on to the display, lays a window seen through, and darkens what
+a shadow falls on.
 
 The ESP32-S3's boards have no engine: that chip has nothing that draws,
-so graphics.library draws everything with the CPU there. The `fb` boards
-of the RISC-V 64 machines take the processor's cores as their engine: a
-job over much of a buffer of 32 bits a pixel is cut into bands of rows,
-which exec's workers draw at once (`ShareWork`), pixel for pixel as
-graphics.library would; a small job is drawn by the task that asks. The
+so graphics.library draws everything with the CPU there. Nor have the
+boards of the 64-bit machines, whose displays read their picture out of
+RAM: there graphics.library draws on every core - a fill, a shape, a
+pattern, a move, a picture laid over or scaled smooth that covers much
+of a buffer is cut into bands of rows, which exec's workers draw at once
+(`ShareWork`); a small job is drawn by the task that asks. The
 ESP32-P4's
 `dsi` board fills with the PPA and copies with the 2D-DMA, for RGB565
 buffers whose start and pitch are whole cache lines. The engine writes

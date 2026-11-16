@@ -9,6 +9,7 @@ const PixelFormat = rtg.bitmaps.PixelFormat;
 const Rect = graphics.Rect;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _blit = @import("_blit.zig");
+const _lay = @import("_lay.zig");
 const RastPort = _blit.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const rastport = @import("../rastport/_rastport.zig");
@@ -100,8 +101,6 @@ pub fn BlendPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
     var any = false;
 
     while (it.next()) |r| {
-        const to_format = r.surface.format;
-        const to_bytes = _blit.pixelBytes(r.surface);
         // The clip took some off the front: the picture starts that much
         // further in.
         const from_x = src_x + (r.rect.min_x - area.min_x);
@@ -115,16 +114,10 @@ pub fn BlendPixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
                 continue;
             }
         }
-        const width: usize = @intCast(r.rect.width());
-        var y: i32 = r.rect.min_y;
-        while (y < r.rect.max_y) : (y += 1) {
-            const row = pixels + @as(usize, @intCast(from_y + (y - r.rect.min_y))) * pitch +
-                @as(usize, @intCast(from_x)) * src_bytes;
-            const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
-                @as(usize, @intCast(r.rect.min_x + r.dx)) * to_bytes;
-            _blit.blendRow(to, to_format, row, from, width);
-            drawing.grow(&bound, y, &any);
-        }
+        const corner = pixels + @as(usize, @intCast(from_y)) * pitch + @as(usize, @intCast(from_x)) * src_bytes;
+        _lay.lay(gb, r.surface, r.on(r.rect), corner, pitch, from, 255, false);
+        drawing.grow(&bound, r.rect.min_y, &any);
+        drawing.grow(&bound, r.rect.max_y - 1, &any);
     }
     if (any) drawing.handOn(gb, rp, drawing.written(area.*, bound));
 }

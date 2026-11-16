@@ -354,8 +354,7 @@ fn mapped(from: Rect, to: Rect, what: Rect) Rect {
 }
 
 /// A layer's buffer stretched on to the display at `area`, smoothly -
-/// every pixel the mean of what it covers, which is what the board's
-/// engine does where it takes the job. It goes through this library's own
+/// every pixel the mean of what it covers. It goes through this library's own
 /// RastPort on the display, so it is cut to the display and handed on to
 /// the board with the rest of the step, and nothing is drawn where the
 /// layer has no buffer.
@@ -402,9 +401,7 @@ pub fn replace(lb: *LayersBase, layer: *Layer, fresh: Buffer) bool {
     const width = @min(old.bitmap.width, fresh.bitmap.width);
     const height = @min(old.bitmap.height, fresh.bitmap.height);
     const copy = rtg.RtgCopy{ .width = @intCast(width), .height = @intCast(height) };
-    if (lb.rtg_base.CopyRect(old.bitmap, fresh.bitmap, &copy) != rtg.errors.RTGERR_OK) {
-        _ = lb.graphics_base.BltBitMap(@ptrCast(old.bitmap), 0, 0, @ptrCast(fresh.bitmap), 0, 0, @intCast(width), @intCast(height));
-    }
+    _ = lb.graphics_base.BltBitMapRects(@ptrCast(old.bitmap), fresh.bitmap, @ptrCast(&copy), 1);
     // The memory changes hands, each handle taking the other's: the
     // layer's handle the new memory, `fresh`'s the old to be given back.
     const kept = old.bitmap;
@@ -533,11 +530,9 @@ const Gather = struct {
 };
 
 /// A rectangle of `from` - `x`, `y` its corner there - on to `piece` of
-/// the display, `how` says how. `bitmap` is `from` as a board's buffer,
-/// or null for a picture in memory of the caller's.
-fn put(lb: *LayersBase, layer: *const Layer, from: *const rtg.Surface, bitmap: ?*rtg.RtgBitMap, x: i32, y: i32, piece: Rect, how: How) void {
+/// the display, `how` says how.
+fn put(lb: *LayersBase, layer: *const Layer, from: *const rtg.Surface, x: i32, y: i32, piece: Rect, how: How) void {
     const gb = lb.graphics_base;
-    const rb = lb.rtg_base;
     const display = layer.info.bitmap orelse return;
     const rect = rtg.RtgRect{ .x = piece.min_x, .y = piece.min_y, .width = piece.width(), .height = piece.height() };
     if (how == .laid) {
@@ -549,24 +544,12 @@ fn put(lb: *LayersBase, layer: *const Layer, from: *const rtg.Surface, bitmap: ?
             .x = x,
             .y = y,
         };
-        // A board that cannot lay it over has it copied: seen whole a
-        // moment early, rather than not at all.
-        if (rb.BlendPixels(display, &rect, &pixels, layer.opacity) == rtg.errors.RTGERR_OK) return;
+        // A picture that cannot be laid over - its corner outside it -
+        // is copied: seen whole a moment early, rather than not at all.
+        if (gb.BlendBitMapPixels(display, &rect, &pixels, layer.opacity) == graphics.GERR_OK) return;
     }
-    // The engine reads only a source's surface, so a picture in plain
-    // memory is described to it as a bitmap, as graphics.library does.
-    var described = rtg.RtgBitMap{
-        .pixels = from.pixels,
-        .width = from.width,
-        .height = from.height,
-        .pitch = from.pitch,
-        .size_bytes = from.size_bytes,
-        .format = from.format,
-        .flags = from.flags,
-    };
     const copy = rtg.RtgCopy{ .src_x = x, .src_y = y, .width = piece.width(), .height = piece.height(), .dest_x = piece.min_x, .dest_y = piece.min_y };
-    if (rb.CopyRect(bitmap orelse &described, display, &copy) == rtg.errors.RTGERR_OK) return;
-    _ = gb.BltBitMap(from, x, y, @ptrCast(display), piece.min_x, piece.min_y, piece.width(), piece.height());
+    _ = gb.BltBitMapRects(from, display, @ptrCast(&copy), 1);
 }
 
 /// Where the picture a layer shows lies on the display, or nothing.
@@ -591,10 +574,10 @@ fn putLayer(lb: *LayersBase, layer: *const Layer, piece: Rect, how: How) void {
     const over = pictureOn(layer);
     const shown = Rect.intersect(piece, over);
     if (shown.isEmpty()) {
-        put(lb, layer, buffer, own.bitmap, piece.min_x - ox, piece.min_y - oy, piece, how);
+        put(lb, layer, buffer, piece.min_x - ox, piece.min_y - oy, piece, how);
         return;
     }
-    put(lb, layer, layer.picture.?, null, shown.min_x - over.min_x, shown.min_y - over.min_y, shown, how);
+    put(lb, layer, layer.picture.?, shown.min_x - over.min_x, shown.min_y - over.min_y, shown, how);
     // The rest of the piece, around the picture: above, below, and to
     // either side of it.
     const around = [4]Rect{
@@ -604,14 +587,14 @@ fn putLayer(lb: *LayersBase, layer: *const Layer, piece: Rect, how: How) void {
         .{ .min_x = shown.max_x, .min_y = shown.min_y, .max_x = piece.max_x, .max_y = shown.max_y },
     };
     for (around) |rest| {
-        if (!rest.isEmpty()) put(lb, layer, buffer, own.bitmap, rest.min_x - ox, rest.min_y - oy, rest, how);
+        if (!rest.isEmpty()) put(lb, layer, buffer, rest.min_x - ox, rest.min_y - oy, rest, how);
     }
 }
 
 /// The pieces of one layer copied from its buffer on to the display
-/// together: one job of the board's engine for all of them (rtg's
-/// `CopyRects`) rather than one a piece, each of which wakes every core
-/// and waits for them. A piece the layer's picture shows over comes from
+/// together: one job for all of them (graphics.library's
+/// `BltBitMapRects`) rather than one a piece, each of which wakes every
+/// core and waits for them. A piece the layer's picture shows over comes from
 /// two places and goes by itself, as before.
 ///
 /// With a `Gather`, each piece is then darkened where the shadows of the
@@ -646,18 +629,14 @@ const Batch = struct {
         b.count += 1;
     }
 
-    /// What is collected copied on to the display. A board that does not
-    /// take the copies together has them each the way `putLayer` copies
-    /// one - again, where it took some of them before it stopped.
+    /// What is collected copied on to the display.
     fn flush(b: *Batch, lb: *LayersBase, layer: *const Layer) void {
         if (b.count == 0) return;
         const pieces = b.pieces[0..b.count];
         b.count = 0;
         const own = layer.own orelse return;
         const display = layer.info.bitmap orelse return;
-        if (lb.rtg_base.CopyRects(own.bitmap, display, &b.copies, @intCast(pieces.len)) != rtg.errors.RTGERR_OK) {
-            for (pieces) |piece| putLayer(lb, layer, piece, .copied);
-        }
+        _ = lb.graphics_base.BltBitMapRects(@ptrCast(own.bitmap), display, &b.copies, @intCast(pieces.len));
         for (pieces) |piece| b.finish(lb, layer, piece);
     }
 
@@ -726,8 +705,8 @@ fn eachPiece(lb: *LayersBase, layer: *const Layer, cut: Rect, context: anytype, 
 /// can see, and every other layer's, which change only while all are
 /// held - and no pool of the LayerInfo's, which the other layers' tasks
 /// share; nor the LayerInfo's RastPort, whose batch is not for two tasks
-/// at once. Each piece is copied on to the display's buffer, by the
-/// engine where the board has one, darkened where a shadow falls on it,
+/// at once. Each piece is copied on to the display's buffer by
+/// graphics.library, darkened where a shadow falls on it,
 /// and the pieces are handed on to the board together after.
 ///
 /// What is seen through, or under something seen through, waits: laying

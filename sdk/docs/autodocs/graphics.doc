@@ -15,9 +15,12 @@ graphics.library/AskSoftStyle
 graphics.library/AttemptRemFont
 graphics.library/BeginDraw
 graphics.library/BitMapScale
+graphics.library/BlendBitMapPixels
+graphics.library/BlendBitMapRect
 graphics.library/BlendPixelArray
 graphics.library/BltBitMap
 graphics.library/BltBitMapRastPort
+graphics.library/BltBitMapRects
 graphics.library/BltCoverBitMapRastPort
 graphics.library/BltMaskBitMapRastPort
 graphics.library/BltMaskRastPort
@@ -830,7 +833,9 @@ graphics.library/XorRegionRegion
 	source it covers where it is made smaller, every pixel by how much of
 	it is covered - each way by itself. A smooth scale whose destination
 	is one whole piece of a board's buffer goes to the board's engine
-	(`rtg.ScalePixels`) where it takes the job.
+	(`rtg.ScalePixels`) where it takes the job. Between two surfaces of
+	32 bits a pixel (`bgra32`) a smooth scale is drawn by every core at
+	once, on the machines whose displays read their picture out of RAM.
 
 	Which source pixel a destination pixel comes from is worked out from the
 	destination rectangle's own corner and not from the clipped one, so a
@@ -856,6 +861,131 @@ graphics.library/XorRegionRegion
 
    EXAMPLES
 	    gb.BitMapScale(thumb, &.{ .max_x = 32, .max_y = 32 }, rp, &.{ .min_x = 10, .min_y = 10, .max_x = 138, .max_y = 138 });
+graphics.library/BlendBitMapPixels          graphics.library/BlendBitMapPixels
+
+   NAME
+	BlendBitMapPixels -- Lays pixels of the caller's own over a rectangle of a buffer, each by its coverage, at a strength.
+
+   SYNOPSIS
+	    fn BlendBitMapPixels(gb: *GraphicsBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32
+
+   SINCE
+	0.52. LVO -364.
+
+   INPUTS
+	- `dest` - the buffer: a board's, or an `RtgBitMap` of the caller's
+	  own that describes plain memory and names no board.
+	- `area` - the rectangle.
+	- `pixels` - the picture: its first byte, pitch and format, and the
+	  pixel that lands on the rectangle's top left corner. The rectangle's
+	  size is how much of it is read. A pitch of 0 lays its one row over
+	  every row of the rectangle.
+	- `alpha` - 0 to 255, the strength: multiplied into every pixel's
+	  coverage; 255 leaves the coverage as it is, 0 lays nothing.
+
+   RESULT
+	`GERR_OK` - also when none of the rectangle is inside the buffer;
+	`GERR_BAD_FORMAT` for a format without colours on either side,
+	`GERR_BAD_SIZE` for a side with no pixels or a picture's corner below
+	0. Nothing is laid then.
+
+   BEHAVIOR
+	**The buffer has no drawing state**, as `BltBitMap`'s sides have
+	none: the rectangle is cut to the buffer, the picture's corner moving
+	with whatever was cut off its top and left, and nothing is handed on
+	to a display - the caller does that (`rtg.RefreshRect`).
+
+	Each pixel is mixed with the one under it by its coverage: fully
+	covered goes down as it is, uncovered leaves the buffer alone. Below
+	full strength the coverage is taken times `alpha` / 256. A format
+	without coverage - `rgb565`, `rgb24` - covers by `alpha` alone, and so
+	does a picture with `RTGPIXF_OPAQUE` in its flags, whatever its
+	pixels' top byte holds: a window's buffer laid over the display as it
+	fades.
+
+	Where `dest` is a board's and the board has an engine that takes the
+	job, the engine lays it (`rtg.BlendPixels`). Otherwise the rows are
+	cut into bands and every core lays its share at once; a rectangle of
+	few pixels is laid by the caller alone, and so is a picture that lies
+	in the rows it is laid over.
+
+   CONTEXT
+	- Waits: for exec's workers, where the rows are shared; for the
+	  board's engine, where it takes the job.
+	- Interrupts: no. The work is unbounded.
+	- Locks: none taken. No spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The picture stays the caller's and is only
+	read.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BlendBitMapRect`, `BltBitMapRects`, `BlendPixelArray`
+
+   EXAMPLES
+	    // A window's buffer over the display, half faded in.
+	    const picture: rtg.RtgPixels = .{ .pixels = window.pixels, .pitch = window.pitch, .format = window.format, .flags = rtg.RTGPIXF_OPAQUE };
+	    _ = gb.BlendBitMapPixels(display, &.{ .x = 40, .y = 30, .width = 320, .height = 200 }, &picture, 128);
+graphics.library/BlendBitMapRect              graphics.library/BlendBitMapRect
+
+   NAME
+	BlendBitMapRect -- Lays a colour over a rectangle of a buffer by the colour's alpha.
+
+   SYNOPSIS
+	    fn BlendBitMapRect(gb: *GraphicsBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pen: graphics.Pen) i32
+
+   SINCE
+	0.52. LVO -368.
+
+   INPUTS
+	- `dest` - the buffer: a board's, or an `RtgBitMap` of the caller's
+	  own that describes plain memory and names no board.
+	- `area` - the rectangle.
+	- `pen` - the colour, 0xAARRGGBB: its alpha is how much of it lands.
+
+   RESULT
+	`GERR_OK` - also when none of the rectangle is inside the buffer;
+	`GERR_BAD_FORMAT` for a buffer in a format without colours,
+	`GERR_BAD_SIZE` for one with no pixels. Nothing is laid then.
+
+   BEHAVIOR
+	**The buffer has no drawing state**, as `BltBitMap`'s sides have
+	none: the rectangle is cut to the buffer, and nothing is handed on to
+	a display - the caller does that (`rtg.RefreshRect`).
+
+	Every pixel of the rectangle is mixed with the colour by the colour's
+	alpha, as `RectFill` lays a pen under `DRMD_BLEND`: none of it for an
+	alpha of 0, the colour itself for 255, and black at an alpha is a
+	shade.
+
+	Where `dest` is a board's and the board has an engine that takes the
+	job, the engine lays it (`rtg.BlendRect`). Otherwise the rows are cut
+	into bands and every core lays its share at once; a rectangle of few
+	pixels is laid by the caller alone.
+
+   CONTEXT
+	- Waits: for exec's workers, where the rows are shared; for the
+	  board's engine, where it takes the job.
+	- Interrupts: no. The work is unbounded.
+	- Locks: none taken. No spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BlendBitMapPixels`, `BltBitMapRects`, `RectFill`
+
+   EXAMPLES
+	    // What is there, a third darker.
+	    _ = gb.BlendBitMapRect(display, &.{ .x = 0, .y = 0, .width = 640, .height = 480 }, 0x5500_0000);
 graphics.library/BlendPixelArray              graphics.library/BlendPixelArray
 
    NAME
@@ -933,7 +1063,7 @@ graphics.library/XorRegionRegion
 	BltBitMap -- Moves a rectangle of pixels from one surface to another.
 
    SYNOPSIS
-	    fn BltBitMap(_: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *rtg.Surface, dest_x: i32, dest_y: i32, width: i32, height: i32) i32
+	    fn BltBitMap(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *rtg.Surface, dest_x: i32, dest_y: i32, width: i32, height: i32) i32
 
    SINCE
 	0.13. LVO -152.
@@ -964,8 +1094,13 @@ graphics.library/XorRegionRegion
 	The two may be the same surface and may overlap: rows are taken from
 	the end when moving down and bytes from the end when moving right.
 
+	A rectangle of many pixels is moved by every core at once on the
+	machines whose displays read their picture out of RAM: its rows in
+	bands, or, within one surface, in chains of rows that do not meet.
+
    CONTEXT
-	- Waits: no.
+	- Waits: for exec's workers, where the rows are shared between the
+	  cores.
 	- Interrupts: no. The work is unbounded.
 	- Locks: none needed.
 	- Process: a Task will do.
@@ -1031,6 +1166,76 @@ graphics.library/XorRegionRegion
 
    EXAMPLES
 	    gb.BltBitMapRastPort(picture, 0, 0, rp, 20, 20, 64, 48);
+graphics.library/BltBitMapRects                graphics.library/BltBitMapRects
+
+   NAME
+	BltBitMapRects -- Moves several rectangles of pixels from a surface to a buffer as one job.
+
+   SYNOPSIS
+	    fn BltBitMapRects(gb: *GraphicsBase, src: *const rtg.Surface, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32
+
+   SINCE
+	0.52. LVO -360.
+
+   INPUTS
+	- `src` - the surface to take from. An `RtgBitMap` is one by pointer.
+	- `dest` - the buffer to put them in, in the same format: a board's
+	  (`AllocBitMap`, `AttachBitMap`), or an `RtgBitMap` of the caller's
+	  own that describes plain memory and names no board.
+	- `copies` - where from, where to and how big, one for each rectangle.
+	- `count` - how many there are.
+
+   RESULT
+	`GERR_OK`; `GERR_BAD_FORMAT` for two formats, `GERR_BAD_SIZE` for a
+	side with no pixels. Nothing is moved then. What falls outside either
+	side is not moved, and is no error.
+
+   BEHAVIOR
+	**Neither side has any drawing state**, as with `BltBitMap`: nothing
+	is clipped but to the two sides, no draw mode applies, and nothing is
+	handed on to a display - the caller does that (`rtg.RefreshRect`).
+
+	The rectangles are one job. Where `dest` is a board's and the board
+	has an engine that takes them, the engine copies them
+	(`rtg.CopyRects`). Otherwise the rows of all of them together are cut
+	into parts and every core copies its share at once, so the pieces of
+	a window seen between others cost one waking of the cores and not
+	one a piece; a job of few pixels is copied by the caller alone.
+
+	The rectangles must not overlap where they land: they are copied in
+	no order. Where the two sides share memory they are moved one after
+	another instead, each as `BltBitMap` moves it, so a rectangle may
+	overlap the place it came from.
+
+	On a board that is flipped between frames no picture is made of its
+	buffers while the rectangles land (`rtg.LockBitMap`): a window's
+	next frame copied whole is on the glass whole.
+
+   CONTEXT
+	- Waits: for exec's workers, where the rows are shared; for the
+	  board's engine, where it takes the job; and while a flipped board
+	  makes a picture.
+	- Interrupts: no. The work is unbounded.
+	- Locks: a flipped board's read lock, taken and given back here. No
+	  spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. Both sides and the list stay the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`BltBitMap`, `BlendBitMapPixels`, `BlendBitMapRect`
+
+   EXAMPLES
+	    const pieces = [_]rtg.RtgCopy{
+	        .{ .src_x = 0, .src_y = 0, .width = 200, .height = 40, .dest_x = 100, .dest_y = 80 },
+	        .{ .src_x = 0, .src_y = 40, .width = 60, .height = 100, .dest_x = 100, .dest_y = 120 },
+	    };
+	    if (gb.BltBitMapRects(window, display, &pieces, pieces.len) != graphics.GERR_OK) return;
+	    _ = rb.RefreshRect(display, &.{ .x = 100, .y = 80, .width = 200, .height = 140 });
 graphics.library/BltCoverBitMapRastPort graphics.library/BltCoverBitMapRastPort
 
    NAME
@@ -3531,6 +3736,10 @@ graphics.library/XorRegionRegion
 	Coverage is honoured where the format carries it, exactly as
 	`BlendPixelArray` does, so a picture with soft edges scales without
 	losing them.
+
+	A smooth scale of a `bgra32` picture on to a surface of the same
+	format is drawn by every core at once, on the machines whose displays
+	read their picture out of RAM.
 
 	The clip cuts the destination, and each piece of it still takes the
 	pixels that belong at that place, so a picture drawn in pieces is the

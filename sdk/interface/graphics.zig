@@ -104,6 +104,9 @@ pub const LVO = struct {
     pub const ScaleYUVPixelArray = libraries.lvo(86);
     pub const TextOffsetToX = libraries.lvo(87);
     pub const TextXToOffset = libraries.lvo(88);
+    pub const BltBitMapRects = libraries.lvo(89);
+    pub const BlendBitMapPixels = libraries.lvo(90);
+    pub const BlendBitMapRect = libraries.lvo(91);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -194,6 +197,9 @@ pub const Fn = struct {
     pub const ScaleYUVPixelArray = *const fn (*GraphicsBase, *graphics.RastPort, *const rtg.RtgYuv, *const graphics.Rect, *const graphics.Rect) callconv(.c) void;
     pub const TextOffsetToX = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, u32) callconv(.c) i32;
     pub const TextXToOffset = *const fn (*GraphicsBase, *graphics.RastPort, [*]const u8, u32, i32) callconv(.c) u32;
+    pub const BltBitMapRects = *const fn (*GraphicsBase, *const rtg.Surface, *rtg.RtgBitMap, [*]const rtg.RtgCopy, u32) callconv(.c) i32;
+    pub const BlendBitMapPixels = *const fn (*GraphicsBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPixels, u32) callconv(.c) i32;
+    pub const BlendBitMapRect = *const fn (*GraphicsBase, *rtg.RtgBitMap, *const rtg.RtgRect, graphics.Pen) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -780,5 +786,29 @@ pub const GraphicsBase = opaque {
     /// its letter carries, or `count` for the place after the text.
     pub fn TextXToOffset(self: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, x: i32) u32 {
         return libraries.call(self, LVO.TextXToOffset, Fn.TextXToOffset, .{ rp, string, count, x });
+    }
+
+    /// Several rectangles moved from one surface to a buffer as one job:
+    /// `count` of `copies`, each cut to both. Neither side has drawing state,
+    /// as with BltBitMap. The board's engine copies them where the buffer is
+    /// a board's and it takes the job; else every core copies its share of
+    /// the rows. Both must be in one format.
+    pub fn BltBitMapRects(self: *GraphicsBase, src: *const rtg.Surface, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32 {
+        return libraries.call(self, LVO.BltBitMapRects, Fn.BltBitMapRects, .{ src, dest, copies, count });
+    }
+
+    /// Pixels of one's own laid over a rectangle of a buffer, each mixed
+    /// with the pixel under it by its coverage times `alpha` (0 to 255) -
+    /// or by `alpha` alone for a picture flagged RTGPIXF_OPAQUE. By the
+    /// board's engine where it takes the job, else by every core.
+    pub fn BlendBitMapPixels(self: *GraphicsBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32 {
+        return libraries.call(self, LVO.BlendBitMapPixels, Fn.BlendBitMapPixels, .{ dest, area, pixels, alpha });
+    }
+
+    /// A colour laid over a rectangle of a buffer by its alpha: a shade, a
+    /// tint. By the board's engine where it takes the job, else by every
+    /// core.
+    pub fn BlendBitMapRect(self: *GraphicsBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pen: graphics.Pen) i32 {
+        return libraries.call(self, LVO.BlendBitMapRect, Fn.BlendBitMapRect, .{ dest, area, pen });
     }
 };

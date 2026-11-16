@@ -24,6 +24,7 @@ rtg.library/GetBoardMonitor
 rtg.library/GetBoardStats
 rtg.library/GetRtgDevices
 rtg.library/GetRtgDrivers
+rtg.library/LockBitMap
 rtg.library/MirrorBoard
 rtg.library/MoveBoardOverlay
 rtg.library/MoveBoardPointer
@@ -46,6 +47,7 @@ rtg.library/ShowBitMap
 rtg.library/ShowBoard
 rtg.library/ShowBoardPointer
 rtg.library/ShowVideoFrame
+rtg.library/UnlockBitMap
 rtg.library/WaitVBlank
 rtg.library/AddRtgNotify                              rtg.library/AddRtgNotify
 
@@ -1197,6 +1199,67 @@ rtg.library/WaitVBlank
 	    var found: [8]rtg.RtgDriverInfo = undefined;
 	    const there = rb.GetRtgDrivers(&found, found.len);
 	    for (found[0..@min(there, found.len)]) |*driver| list(driver);
+rtg.library/LockBitMap                                  rtg.library/LockBitMap
+
+   NAME
+	LockBitMap -- Holds off the picture a flipped board makes of its buffers, until `UnlockBitMap`.
+
+   SYNOPSIS
+	    fn LockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
+
+   SINCE
+	1.32. LVO -148.
+
+   INPUTS
+	- `bitmap` - the buffer about to be written in, of a board.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	A board that is flipped between frames makes each picture from the
+	buffers it shows, starting at the top. A picture written into a
+	shown buffer all at once - a window's next frame copied whole - would
+	be fetched half new and half old where the two meet. Between this
+	call and `UnlockBitMap` no picture is fetched from the board's
+	buffers: what is written in between is on the glass whole or not at
+	all. A fetch under way is waited for first.
+
+	On a board that is not flipped, and for a buffer of no board, nothing
+	is held and nothing waited for: the display reads the buffer as it
+	is. The two calls nest for one task, an unlock for each lock.
+
+	It is for a writer of whole rectangles that is not the board's
+	engine: `CopyRect` and `CopyRects` hold the picture off themselves.
+	It is not needed around drawing that is handed on with `RefreshRect`
+	a piece at a time.
+
+   CONTEXT
+	- Waits: yes, while a picture is fetched from the board's buffers.
+	- Interrupts: no.
+	- Locks: takes the board's read lock, a semaphore, held until
+	  `UnlockBitMap`. No spinlock may be held.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated. The lock is the calling task's, to give back
+	with `UnlockBitMap` on the same buffer.
+
+   NOTES
+	No picture is made while the lock is held: hold it for the copy
+	alone, never across a wait.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`UnlockBitMap`, `CopyRects`, `RefreshRect`
+
+   EXAMPLES
+	    rb.LockBitMap(display);
+	    copyFrame(display, frame);
+	    rb.UnlockBitMap(display);
+	    _ = rb.RefreshRect(display, null);
 rtg.library/MirrorBoard                                rtg.library/MirrorBoard
 
    NAME
@@ -2504,6 +2567,51 @@ rtg.library/WaitVBlank
 	        if (shown) |*old| vcb.ReleaseVideoFrame(film, old);
 	        shown = frame;
 	    }
+rtg.library/UnlockBitMap                              rtg.library/UnlockBitMap
+
+   NAME
+	UnlockBitMap -- Lets a flipped board make pictures of its buffers again, after `LockBitMap`.
+
+   SYNOPSIS
+	    fn UnlockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
+
+   SINCE
+	1.32. LVO -152.
+
+   INPUTS
+	- `bitmap` - the buffer `LockBitMap` was called with.
+
+   RESULT
+	Nothing.
+
+   BEHAVIOR
+	Gives back what `LockBitMap` took: the board's next picture is made
+	of the buffers as they are now. Nothing is handed on by it - what
+	was written is told the board with `RefreshRect`, as ever.
+
+	On a board that is not flipped, and for a buffer of no board, it does
+	nothing, as `LockBitMap` did.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: gives the board's read lock back. Only the task that called
+	  `LockBitMap` may call it, once for each.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	Nothing is allocated or freed.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`LockBitMap`, `RefreshRect`
+
+   EXAMPLES
+	    rb.LockBitMap(display);
+	    copyFrame(display, frame);
+	    rb.UnlockBitMap(display);
 rtg.library/WaitVBlank                                  rtg.library/WaitVBlank
 
    NAME

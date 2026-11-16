@@ -8,6 +8,7 @@ const rtg = sdk.rtg;
 const TagItem = sdk.utility.TagItem;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _blit = @import("_blit.zig");
+const _move = @import("_move.zig");
 const Rect = graphics.Rect;
 const drawing = @import("../draw/_draw.zig");
 const rows = @import("../rows/_rows.zig");
@@ -17,7 +18,7 @@ const pixelBytes = _blit.pixelBytes;
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn BltBitMap(_: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *rtg.Surface, dest_x: i32, dest_y: i32, width: i32, height: i32) i32
+/// fn BltBitMap(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *rtg.Surface, dest_x: i32, dest_y: i32, width: i32, height: i32) i32
 /// ```
 ///
 /// SINCE: 0.13. LVO -152.
@@ -48,8 +49,13 @@ const pixelBytes = _blit.pixelBytes;
 /// The two may be the same surface and may overlap: rows are taken from
 /// the end when moving down and bytes from the end when moving right.
 ///
+/// A rectangle of many pixels is moved by every core at once on the
+/// machines whose displays read their picture out of RAM: its rows in
+/// bands, or, within one surface, in chains of rows that do not meet.
+///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: for exec's workers, where the rows are shared between the
+///   cores.
 /// - Interrupts: no. The work is unbounded.
 /// - Locks: none needed.
 /// - Process: a Task will do.
@@ -67,7 +73,7 @@ const pixelBytes = _blit.pixelBytes;
 /// ```zig
 /// if (gb.BltBitMap(sheet, 32, 0, buffer, 0, 0, 16, 16) != graphics.GERR_OK) return;
 /// ```
-pub fn BltBitMap(_: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *rtg.Surface, dest_x: i32, dest_y: i32, width: i32, height: i32) i32 {
+pub fn BltBitMap(gb: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i32, dest: *rtg.Surface, dest_x: i32, dest_y: i32, width: i32, height: i32) i32 {
     if (src.format != dest.format) return graphics.GERR_BAD_FORMAT;
     const bytes = pixelBytes(dest);
 
@@ -96,19 +102,17 @@ pub fn BltBitMap(_: *GraphicsBase, src: *const rtg.Surface, src_x: i32, src_y: i
     });
     if (landing.isEmpty()) return graphics.GERR_OK;
 
-    const run: usize = @as(usize, @intCast(landing.width())) * bytes;
-    const same = src.pixels.? == dest.pixels.?;
-    const backwards = same and dy > 0;
-
-    var i: i32 = 0;
-    const landed = landing.height();
-    while (i < landed) : (i += 1) {
-        const y = if (backwards) landing.max_y - 1 - i else landing.min_y + i;
-        const to = dest.pixels.? + @as(usize, @intCast(y)) * dest.pitch +
-            @as(usize, @intCast(landing.min_x)) * bytes;
-        const at = src.pixels.? + @as(usize, @intCast(y - dy)) * src.pitch +
-            @as(usize, @intCast(landing.min_x - dx)) * bytes;
-        if (same and dx > 0) rows.copyBack(to, at, run) else rows.copy(to, at, run);
-    }
+    _move.move(
+        gb.sys_base,
+        src,
+        @intCast(landing.min_x - dx),
+        @intCast(landing.min_y - dy),
+        dest,
+        @intCast(landing.min_x),
+        @intCast(landing.min_y),
+        @intCast(landing.width()),
+        @intCast(landing.height()),
+        bytes,
+    );
     return graphics.GERR_OK;
 }

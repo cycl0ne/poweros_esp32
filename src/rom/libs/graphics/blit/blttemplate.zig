@@ -105,7 +105,7 @@ pub fn BltTemplate(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u
             }
         }
 
-        _blit.templateRows(rp, r, bits, pitch, from_x, from_y);
+        _blit.templateRows(gb, rp, r, bits, pitch, from_x, from_y);
         drawing.grow(&bound, r.rect.min_y, &any);
         drawing.grow(&bound, r.rect.max_y - 1, &any);
     }

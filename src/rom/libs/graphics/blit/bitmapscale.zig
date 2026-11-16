@@ -9,6 +9,7 @@ const TagItem = sdk.utility.TagItem;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const rastport = @import("../rastport/_rastport.zig");
 const _blit = @import("_blit.zig");
+const _scale = @import("_scale.zig");
 const Rect = graphics.Rect;
 const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
@@ -44,7 +45,9 @@ const pixelBytes = _blit.pixelBytes;
 /// source it covers where it is made smaller, every pixel by how much of
 /// it is covered - each way by itself. A smooth scale whose destination
 /// is one whole piece of a board's buffer goes to the board's engine
-/// (`rtg.ScalePixels`) where it takes the job.
+/// (`rtg.ScalePixels`) where it takes the job. Between two surfaces of
+/// 32 bits a pixel (`bgra32`) a smooth scale is drawn by every core at
+/// once, on the machines whose displays read their picture out of RAM.
 ///
 /// Which source pixel a destination pixel comes from is worked out from the
 /// destination rectangle's own corner and not from the clipped one, so a
@@ -110,6 +113,13 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
     const bytes = pixelBytes(src);
     const shrinks = src_w > dest_w or src_h > dest_h;
     while (it.next()) |r| {
+        // Smooth between two surfaces of 32 bits a pixel: the columns
+        // worked out once, the rows on every core.
+        if (dest.smooth and _scale.smooth(gb, r, src.pixels.?, src.pitch, src.format, from, dest_area.*, .store)) {
+            drawing.grow(&bound, r.rect.min_y, &any);
+            drawing.grow(&bound, r.rect.max_y - 1, &any);
+            continue;
+        }
         const count: usize = @intCast(r.rect.width());
         const run = count * bytes;
         var previous: ?[*]u8 = null;
@@ -119,7 +129,7 @@ pub fn BitMapScale(gb: *GraphicsBase, src: *const rtg.Surface, src_area: *const 
             // Which source row this destination row came from. Worked out
             // from the rectangle's own top, not the clipped one, or a
             // clipped stretch would take from the wrong place.
-            const sy = from.min_y + @divTrunc((y - dest_area.min_y) * src_h, dest_h);
+            const sy = from.min_y + @as(i32, @intCast(@divTrunc(@as(i64, y - dest_area.min_y) * src_h, dest_h)));
             const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
                 @as(usize, @intCast(r.rect.min_x + r.dx)) * bytes;
             if (dest.smooth) {

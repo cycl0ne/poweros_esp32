@@ -16,6 +16,12 @@
 //! pixel at a time, here. A board with no engine at all answers
 //! RTGERR_NOT_SUPPORTED and lands in the same software path, which is what
 //! the emulator's display and the panel both do today.
+//!
+//! The software path is every core's where a display reads its picture
+//! out of RAM: a fill of many pixels is cut into bands of rows, and
+//! exec's workers draw them at once with the task that asked
+//! (`rows/_bands.zig`). So are a shape, a pattern, a move, a picture laid
+//! over and a smooth scale, in the blits.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -29,6 +35,7 @@ const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const rastport = @import("../rastport/_rastport.zig");
 const regions = @import("../region/_region.zig");
 const rows = @import("../rows/_rows.zig");
+const bands = @import("../rows/_bands.zig");
 pub const RastPort = rastport.RastPort;
 
 /// One place a drawing call may write. It lives with the RastPort,
@@ -200,8 +207,8 @@ inline fn div255Pair(x: u32) u32 {
 /// 255`, which lands full coverage exactly on the colour and keeps a run
 /// of composites from drifting dark. Red and blue go together in one word
 /// a half-word each, so a pixel is two multiplies and two shifts rather
-/// than three divisions - the same sums fbboard's engine does, so a
-/// picture does not depend on which of the two laid it.
+/// than three divisions - the same sums every loop that lays a colour
+/// takes, so a picture does not depend on which of them laid it.
 pub const Mix = struct {
     /// The colour's red and blue, a half-word each, times its alpha and
     /// 127 more.
@@ -497,29 +504,61 @@ pub inline fn address(p: Piece, x: i32, y: i32) [*]u8 {
         @as(usize, @intCast(x + p.dx)) * pixelBytes(surface.format);
 }
 
-/// Fill one rectangle in software, a row at a time.
+/// Fill one rectangle in software: a row at a time, the rows in bands
+/// on every core where the rectangle is large (`_bands.zig`).
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: for exec's workers, where the rows are shared.
 /// - Interrupts: it only writes the caller's buffer, but it is unbounded
 ///   work and has no business in one.
 /// - Locks: none needed. Nothing here is shared.
 /// - Process: a Task will do.
 ///
 /// INPUTS:
+/// - `gb` - the library, for exec's workers.
 /// - `rp` - the RastPort. Its pen and draw mode decide the result.
 /// - `p` - the piece being written: its rectangle, surface and offset.
-pub fn fillSoftware(rp: *RastPort, p: Piece) void {
-    const area = p.rect;
+pub fn fillSoftware(gb: *GraphicsBase, rp: *RastPort, p: Piece) void {
     // A fill is solid: the line pattern is a property of a line, and a
     // filled rectangle is not one. Which pen it uses still follows
     // DRMD_INVERSVID, so an inverted fill is the background colour.
     const inverse = rp.draw_mode & graphics.DRMD_INVERSVID != 0;
-    const brush = Brush.either(rp, p.surface.format, inverse);
-    const count: usize = @intCast(area.width());
-    var row: i32 = area.min_y;
-    while (row < area.max_y) : (row += 1) brush.run(address(p, area.min_x, row), brush.bytes, count);
+    fillRows(gb, Brush.either(rp, p.surface.format, inverse), p.surface, p.on(p.rect));
 }
+
+/// A rectangle of a surface in one pen, its rows in bands on every core
+/// where it is large enough to be worth it.
+///
+/// INPUTS:
+/// - `gb` - the library, for exec's workers.
+/// - `brush` - the pen, as it lands.
+/// - `surface` - the surface.
+/// - `on` - the rectangle, in the surface's own coordinates and inside it.
+pub fn fillRows(gb: *GraphicsBase, brush: Brush, surface: *const rtg.Surface, on: Rect) void {
+    if (on.isEmpty()) return;
+    const job = Fill{
+        .brush = brush,
+        .column = surface.pixels.? + @as(usize, @intCast(on.min_x)) * brush.bytes,
+        .pitch = surface.pitch,
+        .count = @intCast(on.width()),
+    };
+    const pixels = @as(u64, job.count) * @as(u64, @intCast(on.height()));
+    bands.share(gb.sys_base, Fill, &job, bands.Rows.of(@intCast(on.min_y), @intCast(on.max_y), surface.pitch), pixels);
+}
+
+/// A fill: one pen over the same columns of every row.
+const Fill = struct {
+    brush: Brush,
+    /// The rectangle's first column in the surface's row 0.
+    column: [*]u8,
+    pitch: u32,
+    count: usize,
+
+    pub fn band(job: *const Fill, lo: u32, hi: u32) void {
+        var row = lo;
+        while (row < hi) : (row += 1) job.brush.run(job.column + @as(usize, row) * job.pitch, job.brush.bytes, job.count);
+    }
+};
 
 /// The board's engine, if this rectangle can go to it: its fill for an
 /// opaque pen, its blend (`BlendRect`) for a translucent one composed
@@ -1558,4 +1597,49 @@ test "Mix lays a colour as the sums divided by 255 lay it" {
     // The ends are not mixed at all.
     try testing.expectEqual(@as(Pen, 0xFF12_3456), over(0xFF12_3456, 0xFF65_4321));
     try testing.expectEqual(@as(Pen, 0xFF65_4321), over(0x0012_3456, 0xFF65_4321));
+}
+
+test "a fill in bands: every row once, in a pen put, laid over and turned over" {
+    const pitch = 64 * 4;
+    var memory: [pitch * 20]u8 align(64) = undefined;
+    var before: [memory.len]u8 = undefined;
+    var prng = std.Random.DefaultPrng.init(5);
+    const Case = struct { lay: Lay, pen: Pen };
+    const cases = [_]Case{
+        .{ .lay = .put, .pen = 0xFF12_3456 },
+        .{ .lay = .blend, .pen = 0x8090_A0B0 },
+        .{ .lay = .blend, .pen = 0x0112_3456 },
+        .{ .lay = .complement, .pen = 0 },
+        .{ .lay = .none, .pen = 0x0012_3456 },
+    };
+    for (cases) |case| {
+        prng.random().bytes(&memory);
+        before = memory;
+        const job = Fill{
+            .brush = .{ .format = .bgra32, .bytes = 4, .lay = case.lay, .packed_pen = case.pen, .mix = if (case.lay == .blend) Mix.of(case.pen) else undefined },
+            .column = @as([*]u8, &memory) + 3 * 4,
+            .pitch = pitch,
+            .count = 31,
+        };
+        // Three bands, the last first.
+        const all = bands.Rows.of(2, 17, pitch);
+        var part: u32 = 3;
+        while (part > 0) {
+            part -= 1;
+            const cut = all.band(part, 3);
+            job.band(cut.lo, cut.hi);
+        }
+        for (0..20) |y| for (0..64) |x| {
+            const old = std.mem.readInt(u32, before[y * pitch + x * 4 ..][0..4], .little);
+            const now = std.mem.readInt(u32, memory[y * pitch + x * 4 ..][0..4], .little);
+            const inside = x >= 3 and x < 34 and y >= 2 and y < 17;
+            const expected = if (!inside) old else switch (case.lay) {
+                .put => case.pen,
+                .blend => over(case.pen, old),
+                .complement => ~old,
+                .none => old,
+            };
+            try testing.expectEqual(expected, now);
+        };
+    }
 }

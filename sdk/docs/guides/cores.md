@@ -91,8 +91,9 @@ A job shared from inside a part is done by that part alone. So
 `ShareWork` never fails and never deadlocks: at worst it is the plain
 call it replaces.
 
-exec uses it for GCM's GHASH, for its own long cache write-backs, in
-fbboard's engine, and in facet's rasterizer.
+It is used for GCM's GHASH, for exec's own long cache write-backs, for
+what graphics.library draws in software and rtg.library copies into a
+frame on the 64-bit machines, and in facet's rasterizer.
 
 ## A job beside you: PostWork
 

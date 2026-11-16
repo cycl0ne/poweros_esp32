@@ -33,6 +33,8 @@ const rastport = @import("../rastport/_rastport.zig");
 pub const RastPort = rastport.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const rows = @import("../rows/_rows.zig");
+const bands = @import("../rows/_bands.zig");
+const _move = @import("_move.zig");
 
 /// One bit out of a row of bits, the leftmost in the highest bit of the
 /// first byte - the order a shape is written down in and the order the
@@ -223,47 +225,118 @@ pub const Stencil = struct {
     }
 };
 
-/// A shape over one piece, a row at a time.
+/// A shape over one piece, a row at a time, the rows in bands on every
+/// core where the piece is large (`_bands.zig`).
 ///
 /// INPUTS:
+/// - `gb` - the library, for exec's workers.
 /// - `rp` - the RastPort.
 /// - `r` - the piece being written.
 /// - `bits` - the shape.
 /// - `pitch` - bytes from one of its rows to the next.
 /// - `from_x` - the shape's column that lands on the piece's left.
 /// - `from_y` - its row that lands on the piece's top.
-pub fn templateRows(rp: *const RastPort, r: drawing.Piece, bits: [*]const u8, pitch: u32, from_x: i32, from_y: i32) void {
+pub fn templateRows(gb: *GraphicsBase, rp: *const RastPort, r: drawing.Piece, bits: [*]const u8, pitch: u32, from_x: i32, from_y: i32) void {
+    const on = r.on(r.rect);
     const pens = Stencil.of(rp, r.surface.format);
-    const width: usize = @intCast(r.rect.width());
-    var y: i32 = r.rect.min_y;
-    while (y < r.rect.max_y) : (y += 1) {
-        const line = bits + @as(usize, @intCast(from_y + (y - r.rect.min_y))) * pitch;
-        pens.row(drawing.address(r, r.rect.min_x, y), line, @intCast(from_x), width);
-    }
+    const job = Shape{
+        .pens = pens,
+        .column = r.surface.pixels.? + @as(usize, @intCast(on.min_x)) * pens.bytes,
+        .pitch = r.surface.pitch,
+        .count = @intCast(on.width()),
+        .bits = bits,
+        .bits_pitch = pitch,
+        .first = @intCast(on.min_y),
+        .from_x = @intCast(from_x),
+        .from_y = @intCast(from_y),
+    };
+    bands.share(gb.sys_base, Shape, &job, bands.Rows.of(@intCast(on.min_y), @intCast(on.max_y), r.surface.pitch), pixelsOf(on));
 }
 
+/// A shape's rows: a row of its bits for each row of the surface.
+const Shape = struct {
+    pens: Stencil,
+    /// The piece's first column in the surface's row 0.
+    column: [*]u8,
+    pitch: u32,
+    count: usize,
+    bits: [*]const u8,
+    bits_pitch: u32,
+    /// The surface's row the shape's row `from_y` lands on.
+    first: u32,
+    from_x: usize,
+    from_y: usize,
+
+    pub fn band(job: *const Shape, lo: u32, hi: u32) void {
+        var y = lo;
+        while (y < hi) : (y += 1) {
+            const line = job.bits + (job.from_y + (y - job.first)) * job.bits_pitch;
+            job.pens.row(job.column + @as(usize, y) * job.pitch, line, job.from_x, job.count);
+        }
+    }
+};
+
 /// A pattern over one piece: the tile's column stepped along the row
-/// rather than worked out with a division for each pixel.
+/// rather than worked out with a division for each pixel, the rows in
+/// bands on every core where the piece is large.
 ///
 /// INPUTS:
+/// - `gb` - the library, for exec's workers.
 /// - `rp` - the RastPort.
 /// - `r` - the piece being filled.
 /// - `bits` - the tile.
 /// - `pitch` - bytes from one row of it to the next.
 /// - `width` - how wide the tile is.
 /// - `height` - how tall.
-pub fn patternRows(rp: *const RastPort, r: drawing.Piece, bits: [*]const u8, pitch: u32, width: u32, height: u32) void {
+pub fn patternRows(gb: *GraphicsBase, rp: *const RastPort, r: drawing.Piece, bits: [*]const u8, pitch: u32, width: u32, height: u32) void {
+    const on = r.on(r.rect);
     const pens = Stencil.of(rp, r.surface.format);
-    // Where the pattern is anchored is the surface's origin, not the
-    // RastPort's, so it is the same tiling either way in and the two
-    // rectangles of one pattern still line up.
-    const first_col: u32 = @intCast(@mod(r.rect.min_x + r.dx, @as(i32, @intCast(width))));
-    const count: usize = @intCast(r.rect.width());
-    var y: i32 = r.rect.min_y;
-    while (y < r.rect.max_y) : (y += 1) {
-        const tile_row: usize = @intCast(@mod(y + r.dy, @as(i32, @intCast(height))));
-        pens.tiled(drawing.address(r, r.rect.min_x, y), bits + tile_row * pitch, first_col, width, count);
+    const job = Tile{
+        .pens = pens,
+        .column = r.surface.pixels.? + @as(usize, @intCast(on.min_x)) * pens.bytes,
+        .pitch = r.surface.pitch,
+        .count = @intCast(on.width()),
+        .bits = bits,
+        .bits_pitch = pitch,
+        .width = width,
+        .height = height,
+        // Where the pattern is anchored is the surface's origin, not the
+        // RastPort's, so it is the same tiling either way in and the two
+        // rectangles of one pattern still line up.
+        .first_col = @intCast(@mod(on.min_x, @as(i32, @intCast(width)))),
+    };
+    bands.share(gb.sys_base, Tile, &job, bands.Rows.of(@intCast(on.min_y), @intCast(on.max_y), r.surface.pitch), pixelsOf(on));
+}
+
+/// A pattern's rows: the tile's row for each row of the surface.
+const Tile = struct {
+    pens: Stencil,
+    /// The piece's first column in the surface's row 0.
+    column: [*]u8,
+    pitch: u32,
+    count: usize,
+    bits: [*]const u8,
+    bits_pitch: u32,
+    width: u32,
+    height: u32,
+    /// The tile's column the piece's first column takes.
+    first_col: u32,
+
+    pub fn band(job: *const Tile, lo: u32, hi: u32) void {
+        var y = lo;
+        while (y < hi) : (y += 1) {
+            const tile_row: usize = y % job.height;
+            job.pens.tiled(job.column + @as(usize, y) * job.pitch, job.bits + tile_row * job.bits_pitch, job.first_col, job.width, job.count);
+        }
     }
+};
+
+/// How many pixels a rectangle has.
+///
+/// INPUTS:
+/// - `r` - the rectangle, not empty.
+pub fn pixelsOf(r: Rect) u64 {
+    return @as(u64, @intCast(r.width())) * @as(u64, @intCast(r.height()));
 }
 
 /// How many bytes one pixel of a surface takes.
@@ -408,6 +481,26 @@ pub fn blitInto(
         // row `y - dy`. `dy` alone is not the answer - the destination is
         // counted in the RastPort and the source in the surface, and a
         // window's RastPort starts wherever the window is.
+        if (mask == null) {
+            // No mask is a plain move of the rectangle, whichever way
+            // round an overlap wants it, by every core where it is large.
+            const on = r.on(r.rect);
+            _move.move(
+                gb.sys_base,
+                src,
+                @intCast(r.rect.min_x - dx),
+                @intCast(r.rect.min_y - dy),
+                r.surface,
+                @intCast(on.min_x),
+                @intCast(on.min_y),
+                @intCast(on.width()),
+                @intCast(on.height()),
+                pixelBytes(src),
+            );
+            drawing.grow(&bound, r.rect.min_y, &any);
+            drawing.grow(&bound, r.rect.max_y - 1, &any);
+            continue;
+        }
         const same = src.pixels.? == r.surface.pixels.?;
         const back_rows = same and r.dy + dy > 0;
         const back_cols = same and r.dx + dx > 0;
@@ -415,19 +508,6 @@ pub fn blitInto(
         var i: i32 = 0;
         while (i < r.rect.height()) : (i += 1) {
             const y = if (back_rows) r.rect.max_y - 1 - i else r.rect.min_y + i;
-            if (mask == null) {
-                // No mask is a plain move of a row, whichever way round the
-                // overlap wants it.
-                const bytes = pixelBytes(src);
-                const run: usize = @as(usize, @intCast(r.rect.width())) * bytes;
-                const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
-                    @as(usize, @intCast(r.rect.min_x + r.dx)) * bytes;
-                const at = src.pixels.? + @as(usize, @intCast(y - dy)) * src.pitch +
-                    @as(usize, @intCast(r.rect.min_x - dx)) * bytes;
-                if (back_cols) rows.copyBack(to, at, run) else rows.copy(to, at, run);
-                drawing.grow(&bound, y, &any);
-                continue;
-            }
             var j: i32 = 0;
             while (j < r.rect.width()) : (j += 1) {
                 const x = if (back_cols) r.rect.max_x - 1 - j else r.rect.min_x + j;
@@ -739,4 +819,97 @@ pub fn sampleOver(pixels: [*]const u8, pitch: u32, format: rtg.bitmaps.PixelForm
     var mixed: graphics.Pen = 0;
     for (sums, 0..) |sum, i| mixed |= @as(graphics.Pen, @intCast((sum + total / 2) / total)) << @intCast(i * 8);
     return mixed;
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+//
+// The calls are held to their contracts in graphics.zig, where a RastPort
+// can be made; here the rows of a shape and of a pattern in bands, run
+// one after another, the last first.
+
+const testing = @import("std").testing;
+
+test "a template and a pattern in bands: set bits, clear bits, either pen or left alone" {
+    const std = @import("std");
+    const pitch = 64 * 4;
+    var memory: [pitch * 20]u8 align(64) = undefined;
+    var before: [memory.len]u8 = undefined;
+    var prng = std.Random.DefaultPrng.init(9);
+    var bits: [20 * 8]u8 = undefined;
+    prng.random().bytes(&bits);
+    const fore: u32 = 0xFF10_2030;
+    const back: u32 = 0xFF40_5060;
+    const pen = struct {
+        fn of(colour: u32) drawing.Brush {
+            return .{ .format = .bgra32, .bytes = 4, .lay = .put, .packed_pen = colour, .mix = undefined };
+        }
+    }.of;
+    // Ink alone, both pens, and the two swapped.
+    const pens = [_]Stencil{
+        .{ .set = pen(fore), .clear = null, .bytes = 4 },
+        .{ .set = pen(fore), .clear = pen(back), .bytes = 4 },
+        .{ .set = pen(back), .clear = pen(fore), .bytes = 4 },
+    };
+    const all = bands.Rows.of(2, 17, pitch);
+    for (pens) |inks| {
+        // A shape: the bit at (5 + column, 1 + row) for each pixel.
+        prng.random().bytes(&memory);
+        before = memory;
+        const shape = Shape{
+            .pens = inks,
+            .column = @as([*]u8, &memory) + 3 * 4,
+            .pitch = pitch,
+            .count = 31,
+            .bits = &bits,
+            .bits_pitch = 8,
+            .first = 2,
+            .from_x = 5,
+            .from_y = 1,
+        };
+        var part: u32 = 4;
+        while (part > 0) {
+            part -= 1;
+            const cut = all.band(part, 4);
+            shape.band(cut.lo, cut.hi);
+        }
+        for (0..20) |y| for (0..64) |x| {
+            const old = std.mem.readInt(u32, before[y * pitch + x * 4 ..][0..4], .little);
+            var expected = old;
+            if (x >= 3 and x < 34 and y >= 2 and y < 17) {
+                const set = bitAt(&bits, 8, @intCast(x - 3 + 5), @intCast(y - 2 + 1));
+                if (if (set) inks.set else inks.clear) |brush| expected = brush.packed_pen;
+            }
+            try testing.expectEqual(expected, std.mem.readInt(u32, memory[y * pitch + x * 4 ..][0..4], .little));
+        };
+
+        // A tile of 13 by 5, anchored to the surface's corner.
+        prng.random().bytes(&memory);
+        before = memory;
+        const tile = Tile{
+            .pens = inks,
+            .column = @as([*]u8, &memory) + 3 * 4,
+            .pitch = pitch,
+            .count = 31,
+            .bits = &bits,
+            .bits_pitch = 8,
+            .width = 13,
+            .height = 5,
+            .first_col = 3,
+        };
+        part = 4;
+        while (part > 0) {
+            part -= 1;
+            const cut = all.band(part, 4);
+            tile.band(cut.lo, cut.hi);
+        }
+        for (0..20) |y| for (0..64) |x| {
+            const old = std.mem.readInt(u32, before[y * pitch + x * 4 ..][0..4], .little);
+            var expected = old;
+            if (x >= 3 and x < 34 and y >= 2 and y < 17) {
+                const set = bitAt(&bits, 8, @intCast(x % 13), @intCast(y % 5));
+                if (if (set) inks.set else inks.clear) |brush| expected = brush.packed_pen;
+            }
+            try testing.expectEqual(expected, std.mem.readInt(u32, memory[y * pitch + x * 4 ..][0..4], .little));
+        };
+    }
 }

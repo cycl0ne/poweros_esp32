@@ -50,10 +50,11 @@
 //! next picture, made whole.
 //!
 //! **A picture copied into a shown buffer all at once** - a window's
-//! next frame, by the board's engine (CopyRect, CopyRects) - is not
-//! copied while a picture is fetched from the bands (`holdCopy`): the
-//! fetch starts at the top as the copy does, and would take the top of
-//! the new picture and the rest of the old.
+//! next frame, by the board's engine (CopyRect, CopyRects) or by a
+//! writer of its own between LockBitMap and UnlockBitMap - is not
+//! copied while a picture is fetched from the bands (`holdCopy`,
+//! `holdWrite`): the fetch starts at the top as the copy does, and would
+//! take the top of the new picture and the rest of the old.
 //!
 //! Locks, in the order they are taken: the board's lock; the **flip
 //! lock**, a semaphore, held while a picture is made, flipped to and
@@ -63,8 +64,8 @@
 //! runs and while the frame is waited for, so a pointer moves meanwhile
 //! - a driver may wait in its `flip` until it has seen the display take
 //! the frame; the read lock,
-//! a semaphore, around the fetch and around an engine's copy into a
-//! shown buffer; the damage lock, a spinlock, around what was noted, the
+//! a semaphore, around the fetch and around a copy into a shown buffer,
+//! an engine's or a locked writer's; the damage lock, a spinlock, around what was noted, the
 //! bands and whether they were written in.
 
 const builtin = @import("builtin");
@@ -244,6 +245,27 @@ pub fn holdCopy(rb: *RtgBase, board: *rtg.RtgBoard, dest: *const rtg.RtgBitMap) 
     // made whole after it.
     if (shows) sys.ObtainSemaphore(&state.read_lock);
     return shows;
+}
+
+/// Before a writer that is not the board's engine fills whole
+/// rectangles of the board's buffers (`LockBitMap`): the read lock of a
+/// flipped board taken, so that no picture is fetched from the bands
+/// meanwhile. `letWrite` gives it back.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the buffer's board.
+pub fn holdWrite(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    if (flipped(board)) rb.sys_base.ObtainSemaphore(&stateOf(board).read_lock);
+}
+
+/// The read lock given back, after `holdWrite`.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board.
+pub fn letWrite(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    if (flipped(board)) rb.sys_base.ReleaseSemaphore(&stateOf(board).read_lock);
 }
 
 /// The read lock given back, after a copy.

@@ -113,7 +113,10 @@ pub const LIBRARY_VERSION = 1;
 /// 31: a monitor's brightness is read from it (RtgBoardOps.brightness):
 /// GetBoardInfo asks, and SetBoardBrightness tells a monitor at once
 /// even while its board is asleep.
-pub const LIBRARY_REVISION = 31;
+/// 32: LockBitMap and UnlockBitMap: a writer of whole rectangles that is
+/// not the board's engine holds off the picture a flipped board makes of
+/// its buffers, as CopyRect and CopyRects do for an engine.
+pub const LIBRARY_REVISION = 32;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

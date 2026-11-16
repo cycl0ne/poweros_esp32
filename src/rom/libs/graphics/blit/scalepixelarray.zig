@@ -9,6 +9,7 @@ const PixelFormat = rtg.bitmaps.PixelFormat;
 const Rect = graphics.Rect;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _blit = @import("_blit.zig");
+const _scale = @import("_scale.zig");
 const RastPort = _blit.RastPort;
 const drawing = @import("../draw/_draw.zig");
 const rastport = @import("../rastport/_rastport.zig");
@@ -54,6 +55,10 @@ const rastport = @import("../rastport/_rastport.zig");
 /// Coverage is honoured where the format carries it, exactly as
 /// `BlendPixelArray` does, so a picture with soft edges scales without
 /// losing them.
+///
+/// A smooth scale of a `bgra32` picture on to a surface of the same
+/// format is drawn by every core at once, on the machines whose displays
+/// read their picture out of RAM.
 ///
 /// The clip cuts the destination, and each piece of it still takes the
 /// pixels that belong at that place, so a picture drawn in pieces is the
@@ -120,6 +125,13 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
     var any = false;
 
     while (it.next()) |r| {
+        // Smooth between two surfaces of 32 bits a pixel: the columns
+        // worked out once, the rows on every core.
+        if (rp.smooth and _scale.smooth(gb, r, pixels, pitch, from, src_area.*, dest_area.*, .lay)) {
+            drawing.grow(&bound, r.rect.min_y, &any);
+            drawing.grow(&bound, r.rect.max_y - 1, &any);
+            continue;
+        }
         const to_format = r.surface.format;
         const to_bytes = _blit.pixelBytes(r.surface);
         var y: i32 = r.rect.min_y;
@@ -128,7 +140,7 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
             // sum is worked out from the destination's own corner, so a
             // piece of a clipped picture takes the same pixels it would
             // have taken whole.
-            const sy = src_area.min_y + @divTrunc((y - dest_area.min_y) * src_h, dest_h);
+            const sy = src_area.min_y + @as(i32, @intCast(@divTrunc(@as(i64, y - dest_area.min_y) * src_h, dest_h)));
             const row = pixels + @as(usize, @intCast(sy)) * pitch;
             const to = r.surface.pixels.? + @as(usize, @intCast(y + r.dy)) * r.surface.pitch +
                 @as(usize, @intCast(r.rect.min_x + r.dx)) * to_bytes;
@@ -149,7 +161,7 @@ pub fn ScalePixelArray(gb: *GraphicsBase, rp: *RastPort, pixels: [*]const u8, pi
                 continue;
             }
             while (x < r.rect.max_x) : (x += 1) {
-                const sx = src_area.min_x + @divTrunc((x - dest_area.min_x) * src_w, dest_w);
+                const sx = src_area.min_x + @as(i32, @intCast(@divTrunc(@as(i64, x - dest_area.min_x) * src_w, dest_w)));
                 const pen = rastport.unpackPen(from, drawing.getPixel(row + @as(usize, @intCast(sx)) * src_bytes, src_bytes));
                 _blit.blendPixel(to + @as(usize, @intCast(x - r.rect.min_x)) * to_bytes, to_bytes, to_format, pen);
             }

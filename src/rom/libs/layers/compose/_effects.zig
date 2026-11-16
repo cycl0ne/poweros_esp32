@@ -314,7 +314,7 @@ fn indexIn(span: Span, lo: i32, hi: i32, side: i32, at: i32) i32 {
 /// on the display's buffer as it is, nothing handed on: the caller does
 /// that. `area` is inside the shadow's rectangle.
 fn darkenRect(lb: *LayersBase, caster: *const Layer, shadow: *const Shadow, area: Rect) void {
-    const rb = lb.rtg_base;
+    const gb = lb.graphics_base;
     const display = caster.info.bitmap orelse return;
     const size = shadow.size;
     const box = shadowBox(caster.bounds, size);
@@ -336,7 +336,7 @@ fn darkenRect(lb: *LayersBase, caster: *const Layer, shadow: *const Shadow, area
                     .x = indexIn(across, box.min_x, box.max_x, side, part.min_x),
                     .y = indexIn(down, box.min_y, box.max_y, side, part.min_y),
                 };
-                _ = rb.BlendPixels(display, &rect, &picture, opacity);
+                _ = gb.BlendBitMapPixels(display, &rect, &picture, opacity);
             } else if (across.edge != .middle) {
                 // A side: the picture's last row, again and again.
                 const picture = rtg.RtgPixels{
@@ -345,7 +345,7 @@ fn darkenRect(lb: *LayersBase, caster: *const Layer, shadow: *const Shadow, area
                     .format = .bgra32,
                     .x = indexIn(across, box.min_x, box.max_x, side, part.min_x),
                 };
-                _ = rb.BlendPixels(display, &rect, &picture, opacity);
+                _ = gb.BlendBitMapPixels(display, &rect, &picture, opacity);
             } else if (down.edge != .middle) {
                 // The top or the bottom: the sides' row turned on its
                 // side, laid a strip at a time.
@@ -359,11 +359,11 @@ fn darkenRect(lb: *LayersBase, caster: *const Layer, shadow: *const Shadow, area
                         .format = .bgra32,
                         .y = indexIn(down, box.min_y, box.max_y, side, part.min_y),
                     };
-                    _ = rb.BlendPixels(display, &run, &picture, opacity);
+                    _ = gb.BlendBitMapPixels(display, &run, &picture, opacity);
                 }
             } else {
                 const dark = strength * opacity / 255;
-                if (dark != 0) _ = rb.BlendRect(display, &rect, dark << 24);
+                if (dark != 0) _ = gb.BlendBitMapRect(display, &rect, dark << 24);
             }
         }
     }

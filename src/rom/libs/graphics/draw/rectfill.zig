@@ -118,7 +118,7 @@ pub fn RectFill(gb: *GraphicsBase, rp: *RastPort, area: *const Rect) void {
     while (it.next()) |r| {
         if (from_style) {
             _draw.fillStyled(rp, r);
-        } else if (!fillByEngine(gb, rp, r)) fillSoftware(rp, r);
+        } else if (!fillByEngine(gb, rp, r)) fillSoftware(gb, rp, r);
         any = true;
     }
     if (any) handOn(gb, rp, area.*);

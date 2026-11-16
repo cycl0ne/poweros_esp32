@@ -54,6 +54,8 @@ const RemRtgNotify = @import("board/remrtgnotify.zig").RemRtgNotify;
 const AllocBitMap = @import("bitmap/allocbitmap.zig").AllocBitMap;
 const AttachBitMap = @import("bitmap/attachbitmap.zig").AttachBitMap;
 const FreeBitMap = @import("bitmap/freebitmap.zig").FreeBitMap;
+const LockBitMap = @import("bitmap/lockbitmap.zig").LockBitMap;
+const UnlockBitMap = @import("bitmap/unlockbitmap.zig").UnlockBitMap;
 const ShowBitMap = @import("display/showbitmap.zig").ShowBitMap;
 const ShowBoard = @import("display/showboard.zig").ShowBoard;
 const SetBoardOverlay = @import("pointer/setboardoverlay.zig").SetBoardOverlay;
@@ -166,6 +168,8 @@ const contract_files = [_][]const u8{
     @embedFile("bitmap/allocbitmap.zig"),
     @embedFile("bitmap/attachbitmap.zig"),
     @embedFile("bitmap/freebitmap.zig"),
+    @embedFile("bitmap/lockbitmap.zig"),
+    @embedFile("bitmap/unlockbitmap.zig"),
     @embedFile("display/showbitmap.zig"),
     @embedFile("display/showboard.zig"),
     @embedFile("pointer/setboardoverlay.zig"),
@@ -316,6 +320,12 @@ fn lvoBlitTemplate(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect,
 fn lvoBlitPattern(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) callconv(.c) i32 {
     return BlitPattern(rb, dest, area, tile);
 }
+fn lvoLockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) callconv(.c) void {
+    LockBitMap(rb, bitmap);
+}
+fn lvoUnlockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) callconv(.c) void {
+    UnlockBitMap(rb, bitmap);
+}
 fn lvoFrameDone(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) void {
     FrameDone(rb, board);
 }
@@ -407,7 +417,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 31;
+const reserved_slots = 29;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -456,8 +466,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoCopyRect),
     vec(lvoBlitTemplate),
     vec(lvoBlitPattern),
-    vec(reserved),
-    vec(reserved),
+    vec(lvoLockBitMap),
+    vec(lvoUnlockBitMap),
     vec(reserved),
     vec(reserved),
     vec(reserved),

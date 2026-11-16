@@ -77,6 +77,8 @@ test {
     _ = @import("bitmap/allocbitmap.zig");
     _ = @import("bitmap/attachbitmap.zig");
     _ = @import("bitmap/freebitmap.zig");
+    _ = @import("bitmap/lockbitmap.zig");
+    _ = @import("bitmap/unlockbitmap.zig");
     _ = @import("bitmap/refreshrect.zig");
     _ = @import("compose/_compose.zig");
     _ = @import("compose/_damage.zig");
@@ -5088,6 +5090,49 @@ test "a driver's flip runs with the flip lock and without the compose lock: a po
     base(rb).FreeBitMap(next);
     base(rb).FreeBitMap(picture);
     driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "LockBitMap and UnlockBitMap: a flipped board's read lock, nested for its task; nothing held on any other buffer" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const board = try makeFlipped(rb, 16, 12);
+    const lock = &boards.privateOf(board).compose.flip.read_lock;
+    const shown = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, shown));
+
+    try testing.expectEqual(@as(u16, 0), lock.nestCount());
+    base(rb).LockBitMap(shown);
+    try testing.expectEqual(@as(u16, 1), lock.nestCount());
+    // An engine's copy inside it holds the lock a second time, and gives
+    // that hold back.
+    base(rb).LockBitMap(shown);
+    try testing.expectEqual(@as(u16, 2), lock.nestCount());
+    base(rb).UnlockBitMap(shown);
+    base(rb).UnlockBitMap(shown);
+    try testing.expectEqual(@as(u16, 0), lock.nestCount());
+
+    // What was written between the two is on the glass with the next
+    // picture, whole.
+    base(rb).LockBitMap(shown);
+    paint(shown, 4);
+    base(rb).UnlockBitMap(shown);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(shown, null));
+    flips.service(rb, board);
+    try testing.expect(glassIs(board, 4, &.{}));
+
+    // A board that is not flipped, and memory of no board: nothing held.
+    const plain = try makeDisplay(rb, 16, 12);
+    const other = base(rb).AllocBitMap(plain, 16, 12, format, 0).?;
+    base(rb).LockBitMap(other);
+    try testing.expectEqual(@as(u16, 0), boards.privateOf(plain).compose.flip.read_lock.nestCount());
+    base(rb).UnlockBitMap(other);
+    var loose = rtg.RtgBitMap{ .width = 4, .height = 4 };
+    base(rb).LockBitMap(&loose);
+    base(rb).UnlockBitMap(&loose);
+
+    base(rb).FreeBitMap(other);
     try tearDown(rb);
 }
 

@@ -209,9 +209,10 @@ pub inline fn store(at: [*]u8, bytes: u32, value: u32) void {
 /// - `src_w` - how wide the source rectangle is.
 /// - `dest_w` - how wide the stretched one is.
 pub fn stretch(to: [*]u8, from_row: [*]const u8, bytes: u32, count: usize, first: i32, start: i32, src_w: i32, dest_w: i32) void {
-    const top = start * src_w;
-    var sx: i32 = first + @divTrunc(top, dest_w);
-    var rem: i32 = @mod(top, dest_w);
+    // Wide: a piece far into a large picture is past what 32 bits hold.
+    const top = @as(i64, start) * src_w;
+    var sx: i32 = first + @as(i32, @intCast(@divTrunc(top, dest_w)));
+    var rem: i32 = @intCast(@mod(top, dest_w));
     const aligned16 = bytes == 2 and (@intFromPtr(to) | @intFromPtr(from_row)) & 1 == 0;
     const aligned32 = bytes == 4 and (@intFromPtr(to) | @intFromPtr(from_row)) & 3 == 0;
 

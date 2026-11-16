@@ -151,6 +151,13 @@ test {
     _ = @import("bitmap/_bitmap.zig");
     _ = @import("bitmap/allocbitmaptaglist.zig");
     _ = @import("bitmap/freebitmap.zig");
+    _ = @import("rows/_bands.zig");
+    _ = @import("blit/_move.zig");
+    _ = @import("blit/_lay.zig");
+    _ = @import("blit/_scale.zig");
+    _ = @import("blit/bltbitmaprects.zig");
+    _ = @import("blit/blendbitmappixels.zig");
+    _ = @import("blit/blendbitmaprect.zig");
     _ = @import("blit/_blit.zig");
     _ = @import("blit/bitmapscale.zig");
     _ = @import("blit/bltbitmap.zig");
@@ -5917,4 +5924,277 @@ fn evenOdd(ref: *const Reference, shapes: []const []const [2]i32) void {
             }
         }
     }
+}
+
+// --- a buffer with no drawing state, by the engine or by the cores -----------
+
+const blits = @import("blit/_blit.zig");
+const scaling = @import("blit/_scale.zig");
+
+/// A buffer of the test's own that names no board: plain memory, as the
+/// three calls take it.
+fn plainBitMap(memory: []u8, width: u32, height: u32, format: rtg.bitmaps.PixelFormat) rtg.RtgBitMap {
+    const pitch: u32 = @intCast(memory.len / height);
+    return .{ .pixels = memory.ptr, .width = width, .height = height, .pitch = pitch, .size_bytes = memory.len, .format = format };
+}
+
+fn wordAt(memory: []const u8, pitch: u32, x: usize, y: usize) u32 {
+    return std.mem.readInt(u32, memory[y * pitch + x * 4 ..][0..4], .little);
+}
+
+test "BltBitMapRects: every rectangle cut to both sides and moved, by the board's engine where it takes them" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    // Plain memory: the cores' job, here the caller's alone.
+    var from_memory: [16 * 8 * 4]u8 = undefined;
+    var to_memory: [16 * 8 * 4]u8 = undefined;
+    var before: [to_memory.len]u8 = undefined;
+    var prng = std.Random.DefaultPrng.init(20);
+    prng.random().bytes(&from_memory);
+    prng.random().bytes(&to_memory);
+    before = to_memory;
+    const from = plainBitMap(&from_memory, 16, 8, .bgra32);
+    var to = plainBitMap(&to_memory, 16, 8, .bgra32);
+    const list = [_]rtg.RtgCopy{
+        .{ .src_x = 0, .src_y = 0, .width = 4, .height = 3, .dest_x = 1, .dest_y = 1 },
+        // Off the right edge and above the top: cut to what is inside.
+        .{ .src_x = 2, .src_y = 2, .width = 8, .height = 4, .dest_x = 12, .dest_y = -1 },
+        // Nothing of it inside: passed over.
+        .{ .src_x = 0, .src_y = 0, .width = 4, .height = 4, .dest_x = 16, .dest_y = 0 },
+        .{ .src_x = 0, .src_y = 0, .width = 0, .height = 4, .dest_x = 0, .dest_y = 0 },
+    };
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BltBitMapRects(@ptrCast(&from), &to, &list, list.len));
+    for (0..8) |y| for (0..16) |x| {
+        var expected = wordAt(&before, 64, x, y);
+        if (x >= 1 and x < 5 and y >= 1 and y < 4) expected = wordAt(&from_memory, 64, x - 1, y - 1);
+        if (x >= 12 and y < 3) expected = wordAt(&from_memory, 64, x - 12 + 2, y + 1 + 2);
+        try testing.expectEqual(expected, wordAt(&to_memory, 64, x, y));
+    };
+
+    // One memory on both sides: a rectangle moved over itself, as
+    // BltBitMap moves it.
+    before = to_memory;
+    const over = [_]rtg.RtgCopy{.{ .src_x = 0, .src_y = 0, .width = 10, .height = 6, .dest_x = 3, .dest_y = 2 }};
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BltBitMapRects(@ptrCast(&to), &to, &over, 1));
+    for (2..8) |y| for (3..13) |x| try testing.expectEqual(wordAt(&before, 64, x - 3, y - 2), wordAt(&to_memory, 64, x, y));
+
+    // Two formats, or no pixels: an answer and nothing moved.
+    var other_memory: [16 * 8 * 2]u8 = @splat(0);
+    var other = plainBitMap(&other_memory, 16, 8, .rgb565);
+    try testing.expectEqual(graphics.GERR_BAD_FORMAT, base(gb).BltBitMapRects(@ptrCast(&from), &other, &list, 1));
+    var none = rtg.RtgBitMap{ .width = 16, .height = 8, .format = .bgra32 };
+    try testing.expectEqual(graphics.GERR_BAD_SIZE, base(gb).BltBitMapRects(@ptrCast(&from), &none, &list, 1));
+
+    // A board with an engine: its job, the rectangles together.
+    const rb = kernelRtg(gb);
+    const rbi: *sdk.interface.rtg.RtgBase = @ptrCast(rb);
+    const state = fake.add(rb.sys_base, rbi) orelse return error.NoDriver;
+    const board = fake.makeBoard(state) orelse return error.NoBoard;
+    const rgb565 = @intFromEnum(rtg.bitmaps.PixelFormat.rgb565);
+    const window = rbi.AllocBitMap(board, 8, 4, rgb565, 0) orelse return error.NoBitMap;
+    const display = rbi.AllocBitMap(board, 8, 4, rgb565, 0) orelse return error.NoBitMap;
+    const row: [*]u16 = @ptrCast(@alignCast(window.pixels.?));
+    for (0..8) |x| row[x] = @intCast(0x100 + x);
+    const pieces = [_]rtg.RtgCopy{
+        .{ .src_x = 0, .src_y = 0, .width = 3, .height = 1, .dest_x = 0, .dest_y = 1 },
+        .{ .src_x = 4, .src_y = 0, .width = 2, .height = 1, .dest_x = 5, .dest_y = 2 },
+    };
+    const jobs = state.log.copy_jobs;
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BltBitMapRects(@ptrCast(window), display, &pieces, 2));
+    try testing.expectEqual(jobs + 1, state.log.copy_jobs);
+    try testing.expectEqual(@as(u32, 2), state.log.last_copy_count);
+    const landed: [*]const u16 = @ptrCast(@alignCast(display.pixels.? + 2 * display.pitch));
+    try testing.expectEqual(@as(u16, 0x104), landed[5]);
+
+    // The same board with no engine: the same pixels, copied here.
+    state.without_engine = true;
+    const bare = fake.makeBoard(state) orelse return error.NoBoard;
+    const plain = rbi.AllocBitMap(bare, 8, 4, rgb565, 0) orelse return error.NoBitMap;
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BltBitMapRects(@ptrCast(window), plain, &pieces, 2));
+    try testing.expectEqual(jobs + 1, state.log.copy_jobs);
+    const copied: [*]const u16 = @ptrCast(@alignCast(plain.pixels.? + 1 * plain.pitch));
+    try testing.expectEqual(@as(u16, 0x102), copied[2]);
+    try testing.expectEqual(@as(u16, 0x105), @as([*]const u16, @ptrCast(@alignCast(plain.pixels.? + 2 * plain.pitch)))[6]);
+
+    rbi.FreeBitMap(plain);
+    rbi.FreeBitMap(display);
+    rbi.FreeBitMap(window);
+}
+
+test "BlendBitMapPixels: by each pixel's coverage, at a strength, a picture that covers fully, one row over many" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var memory: [8 * 4 * 4]u8 = @splat(0);
+    var buffer = plainBitMap(&memory, 8, 4, .bgra32);
+    const black = graphics.penRGB(0, 0, 0);
+    for (0..32) |i| std.mem.writeInt(u32, memory[i * 4 ..][0..4], black, .little);
+
+    // Four white pixels: covered fully, not at all, half, and a quarter.
+    const white = [4]u32{ 0xFFFF_FFFF, 0x00FF_FFFF, 0x80FF_FFFF, 0x40FF_FFFF };
+    var picture = rtg.RtgPixels{ .pixels = @ptrCast(&white), .pitch = 16, .format = .bgra32 };
+    const top = rtg.RtgRect{ .x = 0, .y = 0, .width = 4, .height = 1 };
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapPixels(&buffer, &top, &picture, 255));
+    try testing.expectEqual(graphics.penRGB(0xFF, 0xFF, 0xFF), wordAt(&memory, 32, 0, 0));
+    try testing.expectEqual(black, wordAt(&memory, 32, 1, 0));
+    try testing.expectEqual(graphics.penRGB(0x80, 0x80, 0x80), wordAt(&memory, 32, 2, 0));
+    try testing.expectEqual(graphics.penRGB(0x40, 0x40, 0x40), wordAt(&memory, 32, 3, 0));
+
+    // At half strength the coverage is taken times 128 / 256.
+    const second = rtg.RtgRect{ .x = 0, .y = 1, .width = 4, .height = 1 };
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapPixels(&buffer, &second, &picture, 128));
+    try testing.expectEqual(graphics.penRGB(0x7F, 0x7F, 0x7F), wordAt(&memory, 32, 0, 1));
+    try testing.expectEqual(black, wordAt(&memory, 32, 1, 1));
+    try testing.expectEqual(graphics.penRGB(0x40, 0x40, 0x40), wordAt(&memory, 32, 2, 1));
+
+    // A picture that covers fully is laid at the strength alone, whatever
+    // its pixels' top byte holds.
+    picture.flags = rtg.RTGPIXF_OPAQUE;
+    const third = rtg.RtgRect{ .x = 0, .y = 2, .width = 4, .height = 1 };
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapPixels(&buffer, &third, &picture, 128));
+    for (0..4) |x| try testing.expectEqual(graphics.penRGB(0x80, 0x80, 0x80), wordAt(&memory, 32, x, 2));
+    picture.flags = 0;
+
+    // A pitch of 0 lays the one row over every row; a rectangle cut by
+    // the buffer's edge takes the picture from where the cut left it.
+    for (0..32) |i| std.mem.writeInt(u32, memory[i * 4 ..][0..4], black, .little);
+    picture.pitch = 0;
+    const tall = rtg.RtgRect{ .x = -2, .y = -1, .width = 4, .height = 9 };
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapPixels(&buffer, &tall, &picture, 255));
+    for (0..4) |y| {
+        try testing.expectEqual(graphics.penRGB(0x80, 0x80, 0x80), wordAt(&memory, 32, 0, y));
+        try testing.expectEqual(graphics.penRGB(0x40, 0x40, 0x40), wordAt(&memory, 32, 1, y));
+        try testing.expectEqual(black, wordAt(&memory, 32, 2, y));
+    }
+
+    // No strength, nothing inside, a corner before the picture, a format
+    // with no colours.
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapPixels(&buffer, &top, &picture, 0));
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapPixels(&buffer, &.{ .x = 8, .y = 0, .width = 4, .height = 1 }, &picture, 255));
+    try testing.expectEqual(black, wordAt(&memory, 32, 2, 0));
+    picture.x = -1;
+    try testing.expectEqual(graphics.GERR_BAD_SIZE, base(gb).BlendBitMapPixels(&buffer, &top, &picture, 255));
+    picture.x = 0;
+    picture.format = .indexed8;
+    try testing.expectEqual(graphics.GERR_BAD_FORMAT, base(gb).BlendBitMapPixels(&buffer, &top, &picture, 255));
+    picture.format = .bgra32;
+
+    // A board with an engine is asked, and lays it.
+    const rb = kernelRtg(gb);
+    const rbi: *sdk.interface.rtg.RtgBase = @ptrCast(rb);
+    const state = fake.add(rb.sys_base, rbi) orelse return error.NoDriver;
+    const board = fake.makeBoard(state) orelse return error.NoBoard;
+    const display = rbi.AllocBitMap(board, 8, 4, @intFromEnum(rtg.bitmaps.PixelFormat.rgb565), 0) orelse return error.NoBitMap;
+    picture.pitch = 16;
+    const blends = state.log.blends;
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapPixels(display, &top, &picture, 255));
+    try testing.expectEqual(blends + 1, state.log.blends);
+    try testing.expectEqual(@as(u16, 0xFFFF), @as([*]const u16, @ptrCast(@alignCast(display.pixels.?)))[0]);
+    rbi.FreeBitMap(display);
+}
+
+test "BlendBitMapRect: a colour by its alpha - nothing, a shade, all of it" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var memory: [8 * 4 * 4]u8 = undefined;
+    var buffer = plainBitMap(&memory, 8, 4, .bgra32);
+    const grey = graphics.penRGB(0x80, 0x80, 0x80);
+    for (0..32) |i| std.mem.writeInt(u32, memory[i * 4 ..][0..4], grey, .little);
+
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapRect(&buffer, &.{ .x = 0, .y = 0, .width = 2, .height = 1 }, 0x00FF_FFFF));
+    try testing.expectEqual(grey, wordAt(&memory, 32, 0, 0));
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapRect(&buffer, &.{ .x = 2, .y = 0, .width = 2, .height = 1 }, 0x8000_0000));
+    try testing.expectEqual(graphics.penRGB(0x40, 0x40, 0x40), wordAt(&memory, 32, 2, 0));
+    try testing.expectEqual(graphics.penRGB(0x40, 0x40, 0x40), wordAt(&memory, 32, 3, 0));
+    try testing.expectEqual(grey, wordAt(&memory, 32, 4, 0));
+    // All of it, and cut to the buffer.
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapRect(&buffer, &.{ .x = 6, .y = 3, .width = 9, .height = 9 }, 0xFF10_2030));
+    try testing.expectEqual(@as(u32, 0xFF10_2030), wordAt(&memory, 32, 7, 3));
+    try testing.expectEqual(grey, wordAt(&memory, 32, 5, 3));
+    try testing.expectEqual(grey, wordAt(&memory, 32, 7, 2));
+
+    var none = rtg.RtgBitMap{ .width = 8, .height = 4, .format = .bgra32 };
+    try testing.expectEqual(graphics.GERR_BAD_SIZE, base(gb).BlendBitMapRect(&none, &.{ .width = 1, .height = 1 }, 0x8000_0000));
+
+    // A board with an engine is asked, and lays it.
+    const rb = kernelRtg(gb);
+    const rbi: *sdk.interface.rtg.RtgBase = @ptrCast(rb);
+    const state = fake.add(rb.sys_base, rbi) orelse return error.NoDriver;
+    const board = fake.makeBoard(state) orelse return error.NoBoard;
+    const display = rbi.AllocBitMap(board, 8, 4, @intFromEnum(rtg.bitmaps.PixelFormat.rgb565), 0) orelse return error.NoBitMap;
+    const rects = state.log.blend_rects;
+    try testing.expectEqual(graphics.GERR_OK, base(gb).BlendBitMapRect(display, &.{ .x = 1, .y = 1, .width = 2, .height = 2 }, 0x80FF_FFFF));
+    try testing.expectEqual(rects + 1, state.log.blend_rects);
+    try testing.expectEqual(@as(u32, 0x80FF_FFFF), state.log.last_color);
+    rbi.FreeBitMap(display);
+}
+
+test "a smooth scale of 32 bits a pixel: each pixel what the sampling answers, made larger and made smaller, a piece as the whole" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    const pitch = 64 * 4;
+    var memory: [pitch * 40]u8 align(64) = undefined;
+    var before: [memory.len]u8 = undefined;
+    var picture: [24 * 16]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(21);
+    prng.random().bytes(std.mem.sliceAsBytes(&picture));
+    // Some pixels that cover fully and some that cover nothing.
+    for (0..48) |i| {
+        picture[i * 7] |= 0xFF00_0000;
+        picture[i * 5 + 3] &= 0x00FF_FFFF;
+    }
+    var surface = rtg.Surface{ .pixels = &memory, .width = 64, .height = 40, .pitch = pitch, .size_bytes = memory.len, .format = .bgra32 };
+    const pixels: [*]const u8 = @ptrCast(&picture);
+    const src = graphics.Rect{ .min_x = 2, .min_y = 1, .max_x = 22, .max_y = 15 };
+    const Case = struct { dest: graphics.Rect, piece: graphics.Rect };
+    const cases = [_]Case{
+        // Larger both ways, whole and a piece of it.
+        .{ .dest = .{ .min_x = 3, .min_y = 2, .max_x = 60, .max_y = 37 }, .piece = .{ .min_x = 3, .min_y = 2, .max_x = 60, .max_y = 37 } },
+        .{ .dest = .{ .min_x = 3, .min_y = 2, .max_x = 60, .max_y = 37 }, .piece = .{ .min_x = 17, .min_y = 9, .max_x = 41, .max_y = 30 } },
+        // Smaller both ways, and smaller one way alone.
+        .{ .dest = .{ .min_x = 5, .min_y = 4, .max_x = 14, .max_y = 9 }, .piece = .{ .min_x = 5, .min_y = 4, .max_x = 14, .max_y = 9 } },
+        .{ .dest = .{ .min_x = 5, .min_y = 4, .max_x = 50, .max_y = 9 }, .piece = .{ .min_x = 8, .min_y = 5, .max_x = 50, .max_y = 9 } },
+    };
+    for (cases) |case| {
+        for ([_]scaling.Land{ .store, .lay }) |land| {
+            prng.random().bytes(&memory);
+            before = memory;
+            const piece = drawing.Piece{ .rect = case.piece, .surface = &surface, .bitmap = null, .dx = 0, .dy = 0 };
+            try testing.expect(scaling.smooth(gb, piece, pixels, 24 * 4, .bgra32, src, case.dest, land));
+            const shrinks = src.width() > case.dest.width() or src.height() > case.dest.height();
+            for (0..40) |row| for (0..64) |column| {
+                const x: i32 = @intCast(column);
+                const y: i32 = @intCast(row);
+                const old = wordAt(&before, pitch, column, row);
+                var expected = old;
+                if (x >= case.piece.min_x and x < case.piece.max_x and y >= case.piece.min_y and y < case.piece.max_y) {
+                    const pen = if (shrinks)
+                        blits.sampleOver(pixels, 24 * 4, .bgra32, src, blits.spanOf(x, case.dest.min_x, case.dest.width(), src.min_x, src.width()), blits.spanOf(y, case.dest.min_y, case.dest.height(), src.min_y, src.height()))
+                    else
+                        blits.sampleBetween(pixels, 24 * 4, .bgra32, src, blits.sourceOf(x, case.dest.min_x, case.dest.width(), src.min_x, src.width()), blits.sourceOf(y, case.dest.min_y, case.dest.height(), src.min_y, src.height()));
+                    expected = if (land == .store) pen else drawing.over(pen, old);
+                }
+                try testing.expectEqual(expected, wordAt(&memory, pitch, column, row));
+            };
+        }
+    }
+
+    // Through the calls: BitMapScale stores each pixel, ScalePixelArray
+    // lays it by its coverage.
+    var source = rtg.Surface{ .pixels = @ptrCast(&picture), .width = 24, .height = 16, .pitch = 24 * 4, .size_bytes = @sizeOf(@TypeOf(picture)), .format = .bgra32 };
+    const tags = [_]TagItem{ .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) }, .{ .tag = graphics.RPTAG_Smooth, .data = 1 }, .{} };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    const dest = cases[0].dest;
+    prng.random().bytes(&memory);
+    before = memory;
+    base(gb).BitMapScale(&source, &src, rp, &dest);
+    const stored = blits.sampleBetween(pixels, 24 * 4, .bgra32, src, blits.sourceOf(30, dest.min_x, dest.width(), src.min_x, src.width()), blits.sourceOf(20, dest.min_y, dest.height(), src.min_y, src.height()));
+    try testing.expectEqual(stored, wordAt(&memory, pitch, 30, 20));
+    before = memory;
+    base(gb).ScalePixelArray(rp, pixels, 24 * 4, @intFromEnum(rtg.bitmaps.PixelFormat.bgra32), &src, &dest);
+    try testing.expectEqual(drawing.over(stored, wordAt(&before, pitch, 30, 20)), wordAt(&memory, pitch, 30, 20));
+    base(gb).FreeRastPort(rp);
 }

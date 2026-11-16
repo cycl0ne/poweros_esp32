@@ -102,7 +102,7 @@ pub fn BltPattern(gb: *GraphicsBase, rp: *RastPort, bits: [*]const u8, pitch: u3
             }
         }
 
-        patternRows(rp, r, bits, pitch, width, height);
+        patternRows(gb, rp, r, bits, pitch, width, height);
         drawing.grow(&bound, r.rect.min_y, &any);
         drawing.grow(&bound, r.rect.max_y - 1, &any);
     }

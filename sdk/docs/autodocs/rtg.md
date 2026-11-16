@@ -37,6 +37,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetBoardStats](#getboardstats) - Reads what a board that refreshes itself has been through.
 - [GetRtgDevices](#getrtgdevices) - Copies out the devices on the library's list.
 - [GetRtgDrivers](#getrtgdrivers) - Copies out the drivers on the library's list.
+- [LockBitMap](#lockbitmap) - Holds off the picture a flipped board makes of its buffers, until `UnlockBitMap`.
 - [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis, or shows it unturned.
 - [MoveBoardOverlay](#moveboardoverlay) - Puts the overlay's point at (x, y), and from then on keeps it there rather than with the pointer.
 - [MoveBoardPointer](#moveboardpointer) - Puts the pointer's point at a place on the picture.
@@ -59,6 +60,7 @@ Generated from the source by `./zig build autodoc`.
 - [ShowBoard](#showboard) - Puts a board in a mode and shows buffers in it, each in a band of display lines.
 - [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
 - [ShowVideoFrame](#showvideoframe) - Shows a picture in YUV on a video layer, scaled into its place.
+- [UnlockBitMap](#unlockbitmap) - Lets a flipped board make pictures of its buffers again, after `LockBitMap`.
 - [WaitVBlank](#waitvblank) - Waits for frames of the display to end.
 
 ## AddRtgNotify
@@ -1545,6 +1547,82 @@ None known.
 var found: [8]rtg.RtgDriverInfo = undefined;
 const there = rb.GetRtgDrivers(&found, found.len);
 for (found[0..@min(there, found.len)]) |*driver| list(driver);
+```
+
+## LockBitMap
+
+Holds off the picture a flipped board makes of its buffers, until `UnlockBitMap`.
+
+**SYNOPSIS**
+
+```zig
+fn LockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
+```
+
+**SINCE**
+
+1.32. LVO -148.
+
+**INPUTS**
+
+- `bitmap` - the buffer about to be written in, of a board.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A board that is flipped between frames makes each picture from the
+buffers it shows, starting at the top. A picture written into a
+shown buffer all at once - a window's next frame copied whole - would
+be fetched half new and half old where the two meet. Between this
+call and `UnlockBitMap` no picture is fetched from the board's
+buffers: what is written in between is on the glass whole or not at
+all. A fetch under way is waited for first.
+
+On a board that is not flipped, and for a buffer of no board, nothing
+is held and nothing waited for: the display reads the buffer as it
+is. The two calls nest for one task, an unlock for each lock.
+
+It is for a writer of whole rectangles that is not the board's
+engine: `CopyRect` and `CopyRects` hold the picture off themselves.
+It is not needed around drawing that is handed on with `RefreshRect`
+a piece at a time.
+
+**CONTEXT**
+
+- Waits: yes, while a picture is fetched from the board's buffers.
+- Interrupts: no.
+- Locks: takes the board's read lock, a semaphore, held until
+  `UnlockBitMap`. No spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated. The lock is the calling task's, to give back
+with `UnlockBitMap` on the same buffer.
+
+**NOTES**
+
+No picture is made while the lock is held: hold it for the copy
+alone, never across a wait.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UnlockBitMap`, `CopyRects`, `RefreshRect`
+
+**EXAMPLES**
+
+```zig
+rb.LockBitMap(display);
+copyFrame(display, frame);
+rb.UnlockBitMap(display);
+_ = rb.RefreshRect(display, null);
 ```
 
 ## MirrorBoard
@@ -3166,6 +3244,65 @@ if (rb.ShowVideoFrame(layer, &frame.picture, &all) == rtg.errors.RTGERR_OK) {
     if (shown) |*old| vcb.ReleaseVideoFrame(film, old);
     shown = frame;
 }
+```
+
+## UnlockBitMap
+
+Lets a flipped board make pictures of its buffers again, after `LockBitMap`.
+
+**SYNOPSIS**
+
+```zig
+fn UnlockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
+```
+
+**SINCE**
+
+1.32. LVO -152.
+
+**INPUTS**
+
+- `bitmap` - the buffer `LockBitMap` was called with.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Gives back what `LockBitMap` took: the board's next picture is made
+of the buffers as they are now. Nothing is handed on by it - what
+was written is told the board with `RefreshRect`, as ever.
+
+On a board that is not flipped, and for a buffer of no board, it does
+nothing, as `LockBitMap` did.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: gives the board's read lock back. Only the task that called
+  `LockBitMap` may call it, once for each.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated or freed.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`LockBitMap`, `RefreshRect`
+
+**EXAMPLES**
+
+```zig
+rb.LockBitMap(display);
+copyFrame(display, frame);
+rb.UnlockBitMap(display);
 ```
 
 ## WaitVBlank

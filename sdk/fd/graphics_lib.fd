@@ -343,4 +343,20 @@ i32 TextOffsetToX(*graphics.RastPort rp, [*]const u8 string, u32 count, u32 offs
 /// the text as Text draws it: where a character starts, never a mark
 /// its letter carries, or `count` for the place after the text.
 u32 TextXToOffset(*graphics.RastPort rp, [*]const u8 string, u32 count, i32 x)
+// A board's buffer with no drawing state, by its engine or by the cores
+/// Several rectangles moved from one surface to a buffer as one job:
+/// `count` of `copies`, each cut to both. Neither side has drawing state,
+/// as with BltBitMap. The board's engine copies them where the buffer is
+/// a board's and it takes the job; else every core copies its share of
+/// the rows. Both must be in one format.
+i32 BltBitMapRects(*const rtg.Surface src, *rtg.RtgBitMap dest, [*]const rtg.RtgCopy copies, u32 count)
+/// Pixels of one's own laid over a rectangle of a buffer, each mixed
+/// with the pixel under it by its coverage times `alpha` (0 to 255) -
+/// or by `alpha` alone for a picture flagged RTGPIXF_OPAQUE. By the
+/// board's engine where it takes the job, else by every core.
+i32 BlendBitMapPixels(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPixels pixels, u32 alpha)
+/// A colour laid over a rectangle of a buffer by its alpha: a shade, a
+/// tint. By the board's engine where it takes the job, else by every
+/// core.
+i32 BlendBitMapRect(*rtg.RtgBitMap dest, *const rtg.RtgRect area, graphics.Pen pen)
 ##end

@@ -92,8 +92,17 @@ i32 CopyRect(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, *const rtg.RtgCopy copy)
 i32 BlitTemplate(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgTemplate shape)
 /// A one-bit tile, anchored to the buffer. Same rules as FillRect.
 i32 BlitPattern(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPattern tile)
-// Fourteen slots kept free, so the slots after them stay where they are.
-##reserve 14
+/// Hold off the picture a flipped board makes of its buffers, until
+/// UnlockBitMap: what is written into a shown buffer between the two is
+/// on the glass whole or not at all. For a writer of whole rectangles
+/// that is not the board's engine. Nothing on a board that is not
+/// flipped.
+void LockBitMap(*rtg.RtgBitMap bitmap)
+/// Let the board make pictures again. By the task that locked, once for
+/// each LockBitMap.
+void UnlockBitMap(*rtg.RtgBitMap bitmap)
+// Twelve slots kept free, so the slots after them stay where they are.
+##reserve 12
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis, or show it unturned: the

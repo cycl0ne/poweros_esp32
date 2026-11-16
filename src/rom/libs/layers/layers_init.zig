@@ -58,7 +58,12 @@ pub const LIBRARY_VERSION = 0;
 /// flying into the window that takes the put-away ones in.
 /// 17: a window's own buffer has its rows as long as rtg.library says a
 /// row of the screen's format is (RtgRowBytes).
-pub const LIBRARY_REVISION = 17;
+/// 18: what is composed is copied, laid over and darkened by
+/// graphics.library (BltBitMapRects, BlendBitMapPixels,
+/// BlendBitMapRect) - by the board's engine where it has one, else on
+/// every core - so a shadow and a layer seen through are drawn on every
+/// board.
+pub const LIBRARY_REVISION = 18;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses.
 const BUILD_DATE = "15.11.2026";

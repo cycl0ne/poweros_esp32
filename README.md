@@ -181,9 +181,9 @@ the caches, an emulator's GPU - is flipped between two frames: the
 library makes each picture in the one the display is not reading, from
 what was written since the last, and the driver only tells the display
 which to read. A board's
-engine takes the fills, copies, blends and scales: the ESP32-P4's PPA
-and 2D-DMA, the four cores of the VisionFive 2 and the Compute Module 5,
-whose displays read their picture out of RAM
+engine takes the fills, copies, blends and scales - the ESP32-P4's PPA
+and 2D-DMA - and where a display reads its picture out of RAM, on the
+64-bit machines, graphics.library draws them on every core
 ([displays guide](sdk/docs/guides/rtg.md)).
 
 | Driver | Display |

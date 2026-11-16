@@ -39,6 +39,8 @@ pub const LVO = struct {
     pub const CopyRect = libraries.lvo(33);
     pub const BlitTemplate = libraries.lvo(34);
     pub const BlitPattern = libraries.lvo(35);
+    pub const LockBitMap = libraries.lvo(36);
+    pub const UnlockBitMap = libraries.lvo(37);
     pub const RtgErrorText = libraries.lvo(50);
     pub const MirrorBoard = libraries.lvo(51);
     pub const SetBoardPointer = libraries.lvo(54);
@@ -91,6 +93,8 @@ pub const Fn = struct {
     pub const CopyRect = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, *const rtg.RtgCopy) callconv(.c) i32;
     pub const BlitTemplate = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgTemplate) callconv(.c) i32;
     pub const BlitPattern = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPattern) callconv(.c) i32;
+    pub const LockBitMap = *const fn (*RtgBase, *rtg.RtgBitMap) callconv(.c) void;
+    pub const UnlockBitMap = *const fn (*RtgBase, *rtg.RtgBitMap) callconv(.c) void;
     pub const RtgErrorText = *const fn (*RtgBase, i32) callconv(.c) [*:0]const u8;
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
@@ -248,6 +252,21 @@ pub const RtgBase = opaque {
     /// A one-bit tile, anchored to the buffer. Same rules as FillRect.
     pub fn BlitPattern(self: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) i32 {
         return libraries.call(self, LVO.BlitPattern, Fn.BlitPattern, .{ dest, area, tile });
+    }
+
+    /// Hold off the picture a flipped board makes of its buffers, until
+    /// UnlockBitMap: what is written into a shown buffer between the two is
+    /// on the glass whole or not at all. For a writer of whole rectangles
+    /// that is not the board's engine. Nothing on a board that is not
+    /// flipped.
+    pub fn LockBitMap(self: *RtgBase, bitmap: *rtg.RtgBitMap) void {
+        return libraries.call(self, LVO.LockBitMap, Fn.LockBitMap, .{bitmap});
+    }
+
+    /// Let the board make pictures again. By the task that locked, once for
+    /// each LockBitMap.
+    pub fn UnlockBitMap(self: *RtgBase, bitmap: *rtg.RtgBitMap) void {
+        return libraries.call(self, LVO.UnlockBitMap, Fn.UnlockBitMap, .{bitmap});
     }
 
     /// An error in words. Never null.

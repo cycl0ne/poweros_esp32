@@ -102,9 +102,15 @@ pub const LIBRARY_VERSION = 0;
 /// machine's screen size or the board's default. 49: the display's mode
 /// and its first picture are one step (`ShowBoard`). 50: what is drawn
 /// is handed on as rectangles on every board (`RefreshRect`), and
-/// gathered by the pixels between them. The version stays 0 until there
-/// is something to demand of it.
-pub const LIBRARY_REVISION = 51;
+/// gathered by the pixels between them. 52: what is drawn in software
+/// is drawn by every core on the machines whose displays read their
+/// picture out of RAM - a fill, a shape, a pattern, a move, a picture
+/// laid over and a smooth scale of 32 bits a pixel go in bands of rows
+/// to exec's workers - and a buffer with no drawing state has
+/// `BltBitMapRects`, `BlendBitMapPixels` and `BlendBitMapRect`, each the
+/// board's engine's where it takes the job. The version stays 0 until
+/// there is something to demand of it.
+pub const LIBRARY_REVISION = 52;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

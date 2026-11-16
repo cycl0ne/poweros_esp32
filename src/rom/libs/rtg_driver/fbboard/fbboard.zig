@@ -138,14 +138,12 @@
 //! whatever writes one - a flip, the pointer's moves, a film - holds
 //! `plane_lock`.
 //!
-//! The board's engine is the processor's own cores (`engine.zig`): a
-//! fill, a copy, a colour or a picture with coverage laid over, a picture
-//! scaled, a pattern or a template that covers much of a buffer is cut
-//! into bands of rows, which exec's workers draw at once (ShareWork). The
-//! write-back a refresh ends with is a CacheClearE, which exec shares
-//! between the cores the same way. A rectangle refreshed (RefreshRect)
-//! writes back only its own pixels, a run a row, so tiles drawn on
-//! several cores can each hand on their own.
+//! The board has no engine: what is drawn in its buffers is drawn by
+//! graphics.library, on every core. The write-back a refresh ends with
+//! is a CacheClearE, which exec shares between the cores as well. A
+//! rectangle refreshed (RefreshRect) writes back only its own pixels, a
+//! run a row, so tiles drawn on several cores can each hand on their
+//! own.
 //!
 //! An AMD display behind the firmware's framebuffer is flipped too, for
 //! a reason of its own: a picture copied into the one buffer it reads,
@@ -194,14 +192,13 @@ const bcm2712 = @import("bcm2712.zig");
 const virtio = @import("virtio.zig");
 const uefi = @import("uefi.zig");
 const dcn = @import("dcn.zig");
-const engine = @import("engine.zig");
 const tags = rtg.tags;
 const timer = sdk.devices.timer;
 
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 44;
+const REVISION = 45;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -349,8 +346,6 @@ const Screen = struct {
     /// image is, for its plane.
     overlay_left: i32 = 0,
     overlay_top: i32 = 0,
-    /// The cores, as the board's engine.
-    engine: engine.Engine = .{},
     /// The display's frame interrupt, where it has one: its number (0 for
     /// none), its server and whether that is on.
     frame_irq: u32 = 0,
@@ -1519,7 +1514,6 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
             rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY,
     };
     board.info.buffers = frames;
-    engine.setUp(&screen.engine, sys);
     return err.RTGERR_OK;
 }
 
@@ -1929,40 +1923,6 @@ fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
     into.frames = screen.updates;
 }
 
-// --- the engine: the cores (engine.zig) ---------------------------------------
-
-fn fillRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
-    return engine.fill(&screenOf(board).engine, bitmap, area, color);
-}
-
-fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, what: *const rtg.RtgCopy) callconv(.c) i32 {
-    return engine.copy(&screenOf(board).engine, src, dest, what);
-}
-
-fn copyRects(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, list: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
-    return engine.copyMany(&screenOf(board).engine, src, dest, list, count);
-}
-
-fn blitTemplate(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.bitmaps.RtgTemplate) callconv(.c) i32 {
-    return engine.template(&screenOf(board).engine, bitmap, area, shape);
-}
-
-fn blitPattern(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.bitmaps.RtgPattern) callconv(.c) i32 {
-    return engine.pattern(&screenOf(board).engine, bitmap, area, tile);
-}
-
-fn blendRect(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
-    return engine.blendRect(&screenOf(board).engine, bitmap, area, color);
-}
-
-fn blendPixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
-    return engine.blendPixels(&screenOf(board).engine, bitmap, area, pixels, alpha);
-}
-
-fn scalePixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
-    return engine.scale(&screenOf(board).engine, bitmap, area, pixels, width, height);
-}
-
 /// A display that is not flipped - the ramfb, the firmware's
 /// framebuffer: the picture the library composes fetched to where the
 /// display reads it, so the bands, the overlay and the pointer are the
@@ -1973,7 +1933,6 @@ const ops = rtg.boards.RtgBoardOps{
     .refresh = &refresh,
     .update = &update,
     .stats = &stats,
-    .engine = &engine_ops,
 };
 
 /// A display that is flipped between frames the library makes its
@@ -1986,7 +1945,6 @@ const flipped_ops = rtg.boards.RtgBoardOps{
     .refresh = &refresh,
     .flip = &flipOp,
     .stats = &stats,
-    .engine = &engine_ops,
 };
 
 /// The AMD display behind the firmware's framebuffer: flipped, between
@@ -2000,18 +1958,6 @@ const amd_ops = made: {
 
 const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
 const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
-
-/// The engine: the cores (engine.zig).
-const engine_ops = rtg.RtgEngineOps{
-    .fill_rect = &fillRect,
-    .copy_rect = &copyRect,
-    .copy_rects = &copyRects,
-    .blit_template = &blitTemplate,
-    .blit_pattern = &blitPattern,
-    .blend_pixels = &blendPixels,
-    .blend_rect = &blendRect,
-    .scale_pixels = &scalePixels,
-};
 
 /// The JH7110's video layer, its first overlay.
 const video_ops = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .show = &videoShow, .move = &videoMove };

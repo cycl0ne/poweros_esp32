@@ -90,6 +90,9 @@ const BlurCoverage = @import("bitmap/blurcoverage.zig").BlurCoverage;
 const TextFitted = @import("text/textfitted.zig").TextFitted;
 const TextOffsetToX = @import("text/textoffsettox.zig").TextOffsetToX;
 const TextXToOffset = @import("text/textxtooffset.zig").TextXToOffset;
+const BltBitMapRects = @import("blit/bltbitmaprects.zig").BltBitMapRects;
+const BlendBitMapPixels = @import("blit/blendbitmappixels.zig").BlendBitMapPixels;
+const BlendBitMapRect = @import("blit/blendbitmaprect.zig").BlendBitMapRect;
 const DrawRoundBevel = @import("draw/drawroundbevel.zig").DrawRoundBevel;
 const WriteYUVPixelArray = @import("blit/writeyuvpixelarray.zig").WriteYUVPixelArray;
 const ScaleYUVPixelArray = @import("blit/scaleyuvpixelarray.zig").ScaleYUVPixelArray;
@@ -212,6 +215,9 @@ const contract_files = [_][]const u8{
     @embedFile("text/textfitted.zig"),
     @embedFile("text/textoffsettox.zig"),
     @embedFile("text/textxtooffset.zig"),
+    @embedFile("blit/bltbitmaprects.zig"),
+    @embedFile("blit/blendbitmappixels.zig"),
+    @embedFile("blit/blendbitmaprect.zig"),
     @embedFile("draw/drawroundbevel.zig"),
     @embedFile("blit/blendpixelarray.zig"),
     @embedFile("blit/scalepixelarray.zig"),
@@ -442,6 +448,15 @@ fn lvoTextOffsetToX(gb: *GraphicsBase, rp: *graphics.RastPort, string: [*]const 
 fn lvoTextXToOffset(gb: *GraphicsBase, rp: *graphics.RastPort, string: [*]const u8, count: u32, x: i32) callconv(.c) u32 {
     return TextXToOffset(gb, @ptrCast(@alignCast(rp)), string, count, x);
 }
+fn lvoBltBitMapRects(gb: *GraphicsBase, src: *const rtg.Surface, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) callconv(.c) i32 {
+    return BltBitMapRects(gb, src, dest, copies, count);
+}
+fn lvoBlendBitMapPixels(gb: *GraphicsBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
+    return BlendBitMapPixels(gb, dest, area, pixels, alpha);
+}
+fn lvoBlendBitMapRect(gb: *GraphicsBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pen: graphics.Pen) callconv(.c) i32 {
+    return BlendBitMapRect(gb, dest, area, pen);
+}
 fn lvoWriteLUTPixelArray(gb: *GraphicsBase, rp: *graphics.RastPort, pixels: [*]const u8, pitch: u32, table: [*]const graphics.Pen, src_x: i32, src_y: i32, area: *const graphics.Rect) callconv(.c) void {
     WriteLUTPixelArray(gb, @ptrCast(@alignCast(rp)), pixels, pitch, table, src_x, src_y, area);
 }
@@ -575,6 +590,10 @@ pub const vectors = [_]*const anyopaque{
     // Places in a text
     vec(lvoTextOffsetToX),
     vec(lvoTextXToOffset),
+    // A board's buffer with no drawing state, by its engine or by the cores
+    vec(lvoBltBitMapRects),
+    vec(lvoBlendBitMapPixels),
+    vec(lvoBlendBitMapRect),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

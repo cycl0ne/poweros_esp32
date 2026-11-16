@@ -28,7 +28,7 @@ pub const LayersBase = extern struct {
     /// through. This is what keeps a caller from needing either.
     graphics_base: *GraphicsBase,
     /// rtg.library, opened by the init and kept: a composed layer's own
-    /// buffer is attached to its display's board, so that the board's
+    /// buffer is attached to its display's board, so that a board's
     /// engine draws in it as it does on the display, and what is drawn in
     /// it is told to this library rather than to the board.
     rtg_base: *RtgBase,
