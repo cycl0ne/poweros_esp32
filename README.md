@@ -166,10 +166,15 @@ for each output; the first board is the machine's display (`C:Rtg`
 lists drivers, devices and boards). graphics.library, layers and
 intuition draw into a board's buffers without
 knowing what panel is behind them, so one program draws on a 3.5" SPI
-panel and on a 1080p monitor alike. A board's engine takes the fills,
-copies, blends and scales: the ESP32-P4's PPA and 2D-DMA, the four cores
-of the VisionFive 2 and the Compute Module 5, whose displays read their
-picture out of RAM ([displays guide](sdk/docs/guides/rtg.md)).
+panel and on a 1080p monitor alike. Where a display has a picture of
+its own - a controller's memory behind a bus, a firmware's framebuffer,
+a stream's copy - rtg.library composes it: screens pulled down over
+each other, a dragged icon and the pointer over them, so a driver for
+such a display says only which rectangle of it to deliver. A board's
+engine takes the fills, copies, blends and scales: the ESP32-P4's PPA
+and 2D-DMA, the four cores of the VisionFive 2 and the Compute Module 5,
+whose displays read their picture out of RAM
+([displays guide](sdk/docs/guides/rtg.md)).
 
 | Driver | Display |
 |---|---|

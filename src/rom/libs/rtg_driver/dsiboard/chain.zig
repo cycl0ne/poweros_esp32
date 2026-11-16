@@ -80,7 +80,9 @@ pub fn build(sys: *ExecBase, bands: []const rtg.RtgBand, height: u32, line_bytes
                 index += 1;
             }
         } else {
-            put(first, count, index, rowAddress(band.bitmap, band.rowAt(band.line)), (end - band.line) * line_bytes);
+            // The band's first line shows the buffer's row that far
+            // below its origin.
+            put(first, count, index, rowAddress(band.bitmap, band.line - band.origin), (end - band.line) * line_bytes);
             index += 1;
         }
     }

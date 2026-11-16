@@ -13,27 +13,32 @@
 //! another tag list and not another driver.
 //!
 //! The picture lives in PSRAM, as display memory the library cuts buffers
-//! out of, and the controller holds a copy of its own. RefreshBitMap is
-//! what brings the copy up to date: the rows asked for, widened to the
-//! controller's alignment, go over the bus in bands, each band given its
-//! own window and a RAMWR. The bus sends each pixel high byte first, which
-//! is not how memory holds RGB565, so a band is turned round into a
-//! buffer in internal memory on its way - which is also where the DMA
-//! behind the bus reads from without help.
+//! out of, and the controller holds a picture of its own, which nothing
+//! reaches but what is sent. So the board is one whose picture
+//! rtg.library composes: it is told which rectangle of the display
+//! changed (`update`) - something drawn, a pointer moved, a screen pulled
+//! down - and sends it. The rectangle is widened to the controller's
+//! alignment, each way, and goes over the bus in bands, each band given
+//! its own window and a RAMWR. A band's pixels are fetched from the
+//! library (`ComposeLines`) - the bands of the picture, the overlay and
+//! the pointer over them - straight into a buffer in internal memory,
+//! which is where the DMA behind the bus reads from, and turned round in
+//! it: the bus sends each pixel high byte first, which is not how memory
+//! holds RGB565.
 //!
 //! Nothing is sent that nobody asked for: there is no stream, so the board
-//! reports no RTGBF_STREAMING, and a buffer that is not being shown is
-//! not sent at all until it is.
+//! reports no RTGBF_STREAMING, and what is written into a buffer no band
+//! shows is not sent at all until it is shown.
 //!
-//! A picture may be several buffers at once, in bands of lines
-//! (ShowBoard): every line is read from the band that covers it,
-//! and a buffer's refresh sends the lines it shows there.
+//! A picture on its side, on a controller that cannot exchange its own
+//! axes, is turned on its way: the panel's window for the rectangle is
+//! worked out, each band of it fetched as the rectangle of the picture it
+//! shows, and that turned into the band.
 //!
-//! The pointer is laid into each band after it is turned round and before
-//! it goes, so the picture in PSRAM never holds it. Moving it sends the
-//! rows it left and the rows it came to, which the picture supplies again
-//! with the pointer in its new place. The overlay - a dragged icon - is
-//! laid and moved the same way, under the pointer.
+//! What the bus asks of a band: it lies in internal memory, where the
+//! bus's DMA reads without the cache between, and it is no longer than
+//! the bus carries in one transaction (the QSPI bus: 32 KiB). A band here
+//! is `band_bytes`, half of that, so two of them are never one run.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -49,13 +54,14 @@ const err = rtg.errors;
 const tags = rtg.tags;
 
 const sequence = @import("sequence.zig");
+const st = sdk.expansion.systemtags;
 const gpio = @import("sdk").hardware.gpio;
 const systimer = sdk.hardware.systimer;
 
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 9;
+const REVISION = 10;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -71,7 +77,7 @@ const RASET = 0x2B;
 const RAMWR = 0x2C;
 const MADCTL = 0x36;
 
-/// The buffer a band is turned round in, in internal memory.
+/// The buffer a band is fetched into and sent from, in internal memory.
 const band_bytes = 16 * 1024;
 
 /// What an absent tag reads as, where 0 is a real value.
@@ -82,11 +88,10 @@ const Panel = struct {
     sys: *ExecBase,
     rtg_base: *RtgDriverBase,
     io: *rtg.RtgTransport,
-    /// The band and the bus between its fill and its transfer, and a
-    /// command's transaction: one task at a time (`oneBand`). A semaphore -
-    /// a band is about a millisecond, and a transport on a bus device
-    /// waits for it.
-    band_lock: exec.SignalSemaphore = .{},
+    /// The bus, for a band's window and its pixels and for a command on
+    /// its own: one task at a time (`sendBand`). A semaphore - a band is
+    /// about a millisecond, and a transport on a bus device waits for it.
+    bus_lock: exec.SignalSemaphore = .{},
     /// Upright, and on its side when the controller can be turned: the
     /// MADCTL value of each, and whether the board has the second.
     madctl: [2]u8 = .{ 0, 0 },
@@ -113,33 +118,19 @@ const Panel = struct {
     held_pads: [2]u8 = .{ 0, 0 },
     held_count: u8 = 0,
     band: ?[*]align(4) u8 = null,
-    band_rows: u32 = 0,
+    /// How many bytes the band holds.
+    band_size: u32 = band_bytes,
+    /// Where a rectangle of a picture on its side is fetched, before it
+    /// is turned into the band: as large as the band, in any memory -
+    /// only the CPU reads it. Null on a panel that turns nothing.
+    upright: ?[*]u8 = null,
     stats: rtg.RtgBoardStats = .{},
 
-    /// A bit per picture row, set when a refresh asks for that row. It
-    /// is what tells a row nobody handed on from a row that was handed
-    /// on and sent with the wrong pixels in it: the two look the same on
-    /// the glass and have nothing else to tell them apart.
+    /// A bit per picture row, set when a rectangle with that row in it is
+    /// sent. It is what tells a row nobody handed on from a row that was
+    /// handed on and sent with the wrong pixels in it: the two look the
+    /// same on the glass and have nothing else to tell them apart.
     asked: [rows_marked / 8]u8 = @splat(0),
-
-    /// The pointer: the image the library made, where its top left is on
-    /// the picture, and whether it is laid into what is sent.
-    pointer: ?*const rtg.RtgPointerImage = null,
-    pointer_left: i32 = 0,
-    pointer_top: i32 = 0,
-    pointer_shown: bool = false,
-    /// The overlay (a dragged icon): its image, laid under the pointer
-    /// whenever there is one, and where its top left is.
-    overlay: ?*const rtg.RtgPointerImage = null,
-    overlay_left: i32 = 0,
-    overlay_top: i32 = 0,
-
-    /// What the controller is sent from: the bands of the picture shown,
-    /// one for a single buffer, none before the first. While a show's
-    /// picture is being sent they are that picture's; a show the bus
-    /// refuses puts back the ones before (`showPicture`).
-    bands: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
-    band_count: u32 = 0,
 };
 
 /// The rows the marks cover, which is more than any mode this board has.
@@ -165,7 +156,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
 
     // The bus the controller sits on, made from the same tags.
     const io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
-    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel), .direct_bands = rtg.RTG_MAX_BANDS }) orelse {
+    // The controller reads no buffer itself: its picture is sent, and
+    // the library composes it.
+    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel) }) orelse {
         rb.CloseTransport(io);
         return err.RTGERR_NO_MEMORY;
     };
@@ -215,7 +208,7 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
         .native_width = width,
         .native_height = height,
     };
-    sys.InitSemaphore(&panel.band_lock);
+    sys.InitSemaphore(&panel.bus_lock);
     panel.alignment = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_DCS_Align, 1, tag_list))), 1);
     if (width % panel.alignment != 0 or height % panel.alignment != 0) return err.RTGERR_BAD_TAGS;
     panel.madctl[0] = @truncate(rb.GetRtgTagData(tags.RTGA_DCS_Madctl, 0, tag_list));
@@ -231,23 +224,31 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
     };
     if (swapped != absent and panel.swapped_turn != .none) return err.RTGERR_BAD_TAGS;
     // The part's own lines, from its PART_Pin* tags; absent: not wired.
-    const st = sdk.expansion.systemtags;
     panel.backlight = BoardPin.of(rb.GetRtgTagData(st.PART_PinBacklight, 0, tag_list));
     const reset_pin = BoardPin.of(rb.GetRtgTagData(st.PART_PinReset, 0, tag_list));
     const reset_ms: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_ResetMillis, 120, tag_list));
     if (!takePads(panel, reset_pin)) return err.RTGERR_IN_USE;
 
     // The memory first: a panel brought up with nowhere to draw is no use.
+    // The band is what the bus's DMA reads: internal memory.
     const side = @max(width, height);
     const band = sys.AllocVec(band_bytes, exec.MEMF_INTERNAL | exec.MEMF_DMA) orelse {
         giveBack(panel);
         return err.RTGERR_NO_MEMORY;
     };
     panel.band = @ptrCast(@alignCast(band));
-    panel.band_rows = sequence.bandRows(band_bytes, side * 2, panel.alignment);
-    if (panel.band_rows * side * 2 > band_bytes) {
+    // One alignment of rows of the longer side is the least a band is.
+    if (sequence.bandRows(band_bytes, side * 2, panel.alignment) * side * 2 > band_bytes) {
         giveBack(panel);
         return err.RTGERR_BAD_TAGS;
+    }
+    // A picture the driver turns is fetched upright first, which the CPU
+    // alone reads: any memory will do.
+    if (panel.swapped_turn != .none) {
+        panel.upright = @ptrCast(sys.AllocVec(band_bytes, exec.MEMF_ANY) orelse {
+            giveBack(panel);
+            return err.RTGERR_NO_MEMORY;
+        });
     }
     const frame_bytes = @as(usize, width) * height * 2;
     // As many pictures as the board asks for (`RTGA_Buffers`) at once, each
@@ -345,6 +346,8 @@ fn giveBack(panel: *Panel) void {
     panel.held_count = 0;
     if (panel.band) |band| panel.sys.FreeVec(band);
     panel.band = null;
+    if (panel.upright) |upright| panel.sys.FreeVec(upright);
+    panel.upright = null;
 }
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
@@ -370,129 +373,43 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
     return err.RTGERR_OK;
 }
 
-/// Show that buffer: all of it goes over the bus, and it is what a refresh
-/// sends from then on. The controller has no second picture to flip to,
-/// so a new buffer shown is a whole picture sent. A send the bus refuses
-/// leaves the picture shown before as what a refresh sends.
-fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
-    const panel = panelOf(board);
-    const bm = bitmap orelse {
-        panel.band_count = 0;
-        return err.RTGERR_OK;
-    };
-    if (bm.pixels == null) return err.RTGERR_BAD_ARG;
-    if (bm.width != panel.width or bm.height != panel.height) return err.RTGERR_NOT_DISPLAYABLE;
-    if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    const whole = [_]rtg.RtgBand{.{ .bitmap = bm }};
-    return showPicture(panel, &whole);
-}
-
-/// Several buffers at once, in bands: the whole picture sent, each line
-/// from the band that covers it, and a refresh of any of them sends the
-/// lines it shows from then on. A send the bus refuses leaves the picture
-/// shown before as what a refresh sends.
-fn showBands(board: *rtg.RtgBoard, bands: [*]const rtg.RtgBand, count: u32) i32 {
-    const panel = panelOf(board);
-    for (bands[0..count]) |band| {
-        if (band.bitmap.pixels == null) return err.RTGERR_BAD_ARG;
-        if (band.bitmap.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    }
-    return showPicture(panel, bands[0..count]);
-}
-
 /// The board's one op for what is on the glass (`RtgShow`): put in the
-/// mode where the library says it is to be, then shown the bands - one
-/// whole buffer, several in bands, or nothing. With the mode set anew a
-/// show that fails leaves the board showing nothing.
+/// mode where the library says it is to be, then sent the whole picture,
+/// which the library composes of the show's bands - they are in place
+/// while it is sent. The controller has no second picture to flip to, so
+/// a show is a whole picture sent; nothing shown sends nothing, and the
+/// controller keeps the picture it has. A send the bus refuses is the
+/// show's answer: what it leaves on the glass is part old and part new
+/// (`failed_sends`), and stays so until those rows are sent again.
 fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
-    const anew = what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0;
-    if (anew) {
+    const panel = panelOf(board);
+    if (what.flags & rtg.boards.RTGSHOW_MODE_CHANGED != 0) {
         const code = setMode(board, what.mode, what.timings);
         if (code != err.RTGERR_OK) return code;
     }
-    const code = showThese(board, what);
-    if (code != err.RTGERR_OK and anew) _ = showBitMap(board, null);
-    return code;
+    if (what.count == 0) return err.RTGERR_OK;
+    return send(board, .{ .left = 0, .top = 0, .right = panel.width, .end = panel.height });
 }
 
-/// The bands of a show, in the mode the board is in.
-fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
-    const bands = what.bands orelse return showBitMap(board, null);
-    if (what.count == 0) return showBitMap(board, null);
-    const first = bands[0];
-    if (what.count == 1 and first.origin == 0 and first.flags == 0) return showBitMap(board, first.bitmap);
-    return showBands(board, bands, what.count);
-}
-
-/// The whole picture sent from `picture`'s bands, which are what the panel
-/// is sent from afterwards. They are in place while the send runs: it
-/// reads them, and rows another task refreshes meanwhile, and the
-/// pointer's, then come from the picture being sent. A send the bus
-/// refuses puts the bands shown before back: the library marks nothing of
-/// a show that failed, so the buffers this driver reads stay the ones
-/// that cannot be freed. What such a send leaves on the glass is part old
-/// and part new (`failed_sends`), and stays so until those rows are sent
-/// again from the bands put back.
-///
-/// INPUTS:
-/// - `panel` - the board's instance.
-/// - `picture` - the bands to show, as the library checked them: one to
-///   `RTG_MAX_BANDS`.
-///
-/// RESULT:
-/// `RTGERR_OK` - also where a band ran dry on every try (`goesOn`) - or
-/// the error that stopped the send.
-fn showPicture(panel: *Panel, picture: []const rtg.RtgBand) i32 {
-    var before: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
-    const count_before = panel.band_count;
-    @memcpy(before[0..count_before], panel.bands[0..count_before]);
-    @memcpy(panel.bands[0..picture.len], picture);
-    panel.band_count = @intCast(picture.len);
-    const code = send(panel, 0, panel.height);
-    if (code != err.RTGERR_OK) {
-        // The count is never above the bands that are in place: lowered
-        // before they are written, raised after.
-        panel.band_count = @min(panel.band_count, count_before);
-        @memcpy(panel.bands[0..count_before], before[0..count_before]);
-        panel.band_count = count_before;
-    }
-    return code;
-}
-
-/// Rows the CPU wrote. Only the buffer being shown goes anywhere: the
-/// controller holds one picture, and that is it.
-///
-/// They go where this stands, on the caller's own task, so the picture
-/// that reaches the panel is the one the caller had when it asked. A
-/// send of its own, on a task of its own, would read the buffer while
-/// the caller was still writing it and put a half-written row on the
-/// glass - which is what a caller gathering its drawing into one refresh
-/// (graphics.library's BeginDraw) is taking trouble to avoid.
-///
-/// A buffer shown in a band sends the lines of its rows that the band
-/// shows, and only those.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
+/// A rectangle of the display changed: sent. It goes where this stands,
+/// on the caller's own task, so the picture that reaches the panel is the
+/// one the caller had when it asked. A send of its own, on a task of its
+/// own, would read the buffer while the caller was still writing it and
+/// put a half-written row on the glass - which is what a caller gathering
+/// its drawing into one hand-on (graphics.library's BeginDraw) is taking
+/// trouble to avoid.
+fn update(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
     const panel = panelOf(board);
-    const top: u32 = @intCast(area.y);
-    const end: u32 = top + @as(u32, @intCast(area.height));
-    panel.stats.refreshes += 1;
-    panel.stats.rows_refreshed +%= end - top;
-    const shown = panel.bands[0..panel.band_count];
-    var code: i32 = err.RTGERR_OK;
-    var sent = false;
-    for (shown, 0..) |band, i| {
-        if (band.bitmap != bitmap) continue;
-        // The band's lines, and those of them the rows asked for are on.
-        const band_end = if (i + 1 < shown.len) shown[i + 1].line else panel.height;
-        const lines = band.linesOf(top, end, band_end);
-        if (lines.first >= lines.end) continue;
-        sent = true;
-        markAsked(panel, lines.first, lines.end);
-        code = send(panel, lines.first, lines.end - lines.first);
-        if (code != err.RTGERR_OK) return code;
-    }
-    if (!sent) panel.stats.refreshes_dropped += 1;
-    return code;
+    const box = sequence.Box{
+        .left = @intCast(area.x),
+        .top = @intCast(area.y),
+        .right = @intCast(area.x + area.width),
+        .end = @intCast(area.y + area.height),
+    };
+    panel.stats.refreshes +%= 1;
+    panel.stats.rows_refreshed +%= box.rows();
+    markAsked(panel, box.top, box.end);
+    return send(board, box);
 }
 
 /// Rows `top` to `end` marked as asked for.
@@ -503,238 +420,78 @@ fn markAsked(panel: *Panel, top: u32, end: u32) void {
     }
 }
 
-/// Lines `y` to `y + rows` of the picture shown (0: all of them) to the
-/// panel, upright or turned, and a count of the sends that did not get
-/// there.
-fn send(panel: *Panel, y: u32, rows: u32) i32 {
-    if (panel.band_count == 0) return err.RTGERR_OK;
-    const code = if (panel.turn != .none) sendTurned(panel, y, rows) else sendUpright(panel, y, rows);
-    // A send that stopped part way has told the panel a window and then
-    // not filled it, so what is on the glass is part old and part new.
-    if (code != err.RTGERR_OK) panel.stats.failed_sends += 1;
-    return code;
-}
-
-/// Lines `y` to `y + rows` (0: all of them) to the controller, in bands
-/// of whole alignments, each with its window.
-fn sendUpright(panel: *Panel, y: u32, rows: u32) i32 {
-    const rb = panel.rtg_base;
-    const shown = panel.bands[0..panel.band_count];
-    const band = panel.band orelse return err.RTGERR_NO_MEMORY;
-    const area = sequence.window(y, rows, panel.height, panel.alignment);
-    const row_bytes = panel.width * 2;
-    const columns = windowBytes(0, panel.width - 1);
-
-    var code: i32 = err.RTGERR_OK;
-    var row = area.top;
-    while (row < area.end) {
-        const count = @min(panel.band_rows, area.end - row);
-        const lines = windowBytes(row, row + count - 1);
-        // Filled and sent by one task at a time, for the reason `oneBand`
-        // gives: the band is the board's only one.
-        code = band_done: {
-            panel.sys.ObtainSemaphore(&panel.band_lock);
-            defer panel.sys.ReleaseSemaphore(&panel.band_lock);
-            for (0..count) |i| {
-                // Rows start on the region's alignment, a whole cache line.
-                const from: [*]align(4) const u8 = @alignCast(sequence.bandRow(shown, row + @as(u32, @intCast(i))));
-                const into: [*]align(4) u8 = @alignCast(band + i * row_bytes);
-                sequence.swapPixels(into[0..row_bytes], from[0..row_bytes]);
-            }
-            layPointer(panel, band[0 .. count * row_bytes], .{
-                .first_row = row,
-                .rows = count,
-                .first_column = 0,
-                .columns = panel.width,
-                .picture_width = panel.width,
-                .picture_height = panel.height,
-                .turn = .none,
-            });
-            break :band_done writeBand(panel, rb, &columns, &lines, band, count * row_bytes);
-        };
-        if (!goesOn(code)) return code;
+/// A rectangle of the picture to the panel, upright or turned: the
+/// panel's window that holds it, in bands of whole alignments, each with
+/// its window. A count of the sends that did not get there.
+fn send(board: *rtg.RtgBoard, box: sequence.Box) i32 {
+    const panel = panelOf(board);
+    // Where the rectangle lies on the panel, as a window the controller
+    // takes.
+    const on_panel = sequence.onPanel(panel.turn, box, panel.width, panel.height);
+    const window = sequence.aligned(on_panel, panel.native_width, panel.native_height, panel.alignment);
+    const row_bytes = window.columns() * 2;
+    const per_band = sequence.bandRows(panel.band_size, row_bytes, panel.alignment);
+    var row = window.top;
+    while (row < window.end) {
+        const count = @min(per_band, window.end - row);
+        const code = sendBand(board, .{ .left = window.left, .top = row, .right = window.right, .end = row + count });
+        if (!goesOn(code)) {
+            // A send that stopped part way has told the panel a window
+            // and then not filled it, so what is on the glass is part
+            // old and part new.
+            panel.stats.failed_sends +%= 1;
+            return code;
+        }
         row += count;
     }
-    panel.stats.frames += 1;
+    panel.stats.frames +%= 1;
     return err.RTGERR_OK;
 }
 
-/// The same for a picture the panel cannot turn itself: rows of the
-/// picture are a strip of the panel's columns, and every panel row in that
-/// strip is read down a column of the picture as it is copied.
-fn sendTurned(panel: *Panel, y: u32, rows: u32) i32 {
+/// One band of the panel fetched and sent, one task at a time on the
+/// bus: the rectangle of the picture it shows as the library composes
+/// it, turned the way the bus carries it - and the way the panel lies,
+/// for a picture on its side - then its window and its pixels.
+///
+/// The band is the board's only one. The library has one task at a time
+/// in here - a show, a hand-on and a pointer's move each hold the board's
+/// compose lock - so it is filled and sent whole. The bus's own lock
+/// keeps a command sent on its own (`command`) from landing between the
+/// band's window and its pixels: a transaction set up on the bus and
+/// then set aside would have its registers written over.
+///
+/// The window is set per band rather than once per send: each band says
+/// where it goes.
+fn sendBand(board: *rtg.RtgBoard, band_box: sequence.Box) i32 {
+    const panel = panelOf(board);
     const rb = panel.rtg_base;
-    const shown = panel.bands[0..panel.band_count];
-    const bm = shown[0].bitmap;
-    const pixels = bm.pixels orelse return err.RTGERR_BAD_ARG;
     const band = panel.band orelse return err.RTGERR_NO_MEMORY;
-    const strip = sequence.turnedColumns(panel.turn, y, rows, panel.native_width, panel.alignment);
-    if (strip.top >= strip.end) return err.RTGERR_OK;
+    const bytes = band_box.columns() * band_box.rows() * 2;
+    const columns = windowBytes(band_box.left, band_box.right - 1);
+    const lines = windowBytes(band_box.top, band_box.end - 1);
 
-    const count_columns = strip.end - strip.top;
-    const row_bytes = count_columns * 2;
-    const columns = windowBytes(strip.top, strip.end - 1);
-
-    const picture: sequence.Turned = .{
-        .pixels = pixels,
-        .pitch = bm.pitch,
-        .panel_width = panel.native_width,
-        .panel_height = panel.native_height,
-        .turn = panel.turn,
-        .bands = shown,
-    };
-    const per_band = sequence.bandRows(band_bytes, row_bytes, panel.alignment);
-    var code: i32 = err.RTGERR_OK;
-    var row: u32 = 0;
-    while (row < panel.native_height) {
-        const count = @min(per_band, panel.native_height - row);
-        const lines = windowBytes(row, row + count - 1);
-        code = oneBand(panel, rb, band, &columns, &lines, picture, row, count, strip.top, count_columns, row_bytes);
-        if (!goesOn(code)) return code;
-        row += count;
+    panel.sys.ObtainSemaphore(&panel.bus_lock);
+    defer panel.sys.ReleaseSemaphore(&panel.bus_lock);
+    if (panel.turn == .none) {
+        // Straight into the band, and turned round where it lies.
+        const code = rb.ComposeLines(board, &rectOf(band_box), band, band_box.columns() * 2);
+        if (code != err.RTGERR_OK) return code;
+        sequence.swapPixels(band[0..bytes], band[0..bytes]);
+    } else {
+        // The picture's rectangle this band shows, upright, then turned
+        // into the band.
+        const upright = panel.upright orelse return err.RTGERR_NO_MEMORY;
+        const from = sequence.ofPicture(panel.turn, band_box, panel.width, panel.height);
+        const code = rb.ComposeLines(board, &rectOf(from), upright, from.columns() * 2);
+        if (code != err.RTGERR_OK) return code;
+        sequence.turnInto(band[0..bytes], upright[0..bytes], from.columns(), from.rows(), panel.turn);
     }
-    panel.stats.frames += 1;
-    return err.RTGERR_OK;
+    return writeBand(panel, rb, &columns, &lines, band, bytes);
 }
 
-/// One band filled and sent, one task at a time.
-///
-/// **The band is the board's only one, and filling it is not the bus's
-/// business.** A transfer holds the bus - the next one waits for it -
-/// but the *filling* happens here, before the bus is asked for anything
-/// at all, and the wait for a transfer to end is a poll on whichever
-/// task drew. That task can be put aside mid-poll, and another one
-/// drawing would then fill this band while the first one's transfer is
-/// still reading it out. What reached the glass would be the two
-/// mixed: a band of pixels belonging to neither picture.
-///
-/// So the fill and the transfer are one thing, under the band's lock
-/// (`band_lock`): another task that draws - on either core - waits for
-/// it. A transfer is polled on the SPI transports, about a millisecond; a
-/// transport on a bus device waits for its request, which is why the lock
-/// is a semaphore.
-///
-/// The window is set per band rather than once per send, which is what
-/// lets the pause be one band instead of a whole picture: each band
-/// says where it goes, so another task's send in between cannot leave
-/// this one writing into its window.
-fn oneBand(
-    panel: *Panel,
-    rb: *RtgDriverBase,
-    band: [*]align(4) u8,
-    columns: *const [4]u8,
-    lines: *const [4]u8,
-    picture: sequence.Turned,
-    row: u32,
-    count: u32,
-    first_column: u32,
-    count_columns: u32,
-    row_bytes: u32,
-) i32 {
-    panel.sys.ObtainSemaphore(&panel.band_lock);
-    defer panel.sys.ReleaseSemaphore(&panel.band_lock);
-    sequence.turnedBand(band[0 .. count * row_bytes], picture, row, count, first_column, count_columns);
-    // A turned picture's width is the panel's height.
-    layPointer(panel, band[0 .. count * row_bytes], .{
-        .first_row = row,
-        .rows = count,
-        .first_column = first_column,
-        .columns = count_columns,
-        .picture_width = picture.panel_height,
-        .picture_height = picture.panel_width,
-        .turn = picture.turn,
-    });
-    return writeBand(panel, rb, columns, lines, band, count * row_bytes);
-}
-
-/// The overlay over a band, if there is one, and the pointer over that,
-/// if one is shown.
-fn layPointer(panel: *Panel, into: []u8, band: sequence.Band) void {
-    if (panel.overlay) |overlay| sequence.layPointer(into, band, overlay, panel.overlay_left, panel.overlay_top);
-    if (!panel.pointer_shown) return;
-    const image = panel.pointer orelse return;
-    sequence.layPointer(into, band, image, panel.pointer_left, panel.pointer_top);
-}
-
-/// The picture rows the pointer covers at (`top`), with `image`, sent
-/// again: what is on the glass there follows the pointer.
-fn sendPointerRows(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage, top: i32) void {
-    const panel = panelOf(board);
-    const one = image orelse return;
-    const first = @max(top, 0);
-    const end = @min(top + @as(i32, @intCast(one.height)), @as(i32, @intCast(panel.height)));
-    if (first >= end) return;
-    _ = send(panel, @intCast(first), @intCast(end - first));
-}
-
-fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
-    const panel = panelOf(board);
-    if (image) |one| {
-        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    }
-    const old = panel.pointer;
-    panel.pointer = image;
-    if (panel.pointer_shown) {
-        sendPointerRows(board, old, panel.pointer_top);
-        sendPointerRows(board, image, panel.pointer_top);
-    }
-    return err.RTGERR_OK;
-}
-
-/// The rows it left and the rows it came to; one send when they overlap.
-fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
-    const panel = panelOf(board);
-    const old_top = panel.pointer_top;
-    panel.pointer_left = left;
-    panel.pointer_top = top;
-    if (!panel.pointer_shown) return;
-    const image = panel.pointer orelse return;
-    const height: i32 = @intCast(image.height);
-    if (top < old_top + height and old_top < top + height) {
-        const first = @max(@min(top, old_top), 0);
-        const end = @min(@max(top, old_top) + height, @as(i32, @intCast(panel.height)));
-        if (first < end) _ = send(panel, @intCast(first), @intCast(end - first));
-        return;
-    }
-    sendPointerRows(board, image, old_top);
-    sendPointerRows(board, image, top);
-}
-
-fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
-    const panel = panelOf(board);
-    panel.pointer_shown = show;
-    sendPointerRows(board, panel.pointer, panel.pointer_top);
-    return err.RTGERR_OK;
-}
-
-fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
-    const panel = panelOf(board);
-    if (image) |one| {
-        if (one.format != .rgb565) return err.RTGERR_BAD_FORMAT;
-    }
-    const old = panel.overlay;
-    panel.overlay = image;
-    sendPointerRows(board, old, panel.overlay_top);
-    sendPointerRows(board, image, panel.overlay_top);
-    return err.RTGERR_OK;
-}
-
-/// The rows it left and the rows it came to, as the pointer's.
-fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
-    const panel = panelOf(board);
-    const old_top = panel.overlay_top;
-    panel.overlay_left = left;
-    panel.overlay_top = top;
-    const image = panel.overlay orelse return;
-    const height: i32 = @intCast(image.height);
-    if (top < old_top + height and old_top < top + height) {
-        const first = @max(@min(top, old_top), 0);
-        const end = @min(@max(top, old_top) + height, @as(i32, @intCast(panel.height)));
-        if (first < end) _ = send(panel, @intCast(first), @intCast(end - first));
-        return;
-    }
-    sendPointerRows(board, image, old_top);
-    sendPointerRows(board, image, top);
+/// A rectangle as the library takes one.
+fn rectOf(box: sequence.Box) rtg.RtgRect {
+    return .{ .x = @intCast(box.left), .y = @intCast(box.top), .width = @intCast(box.columns()), .height = @intCast(box.rows()) };
 }
 
 /// How often a band whose transfer ran dry is sent again before its rows
@@ -744,8 +501,7 @@ const underrun_tries = 3;
 /// A filled band to the controller: its window, then its pixels. A
 /// transfer the DMA fell behind in is counted and sent again - the band
 /// is still in its buffer and says where it goes, so a second go lands
-/// on the same pixels. The caller holds the band's lock, as filling it
-/// needs.
+/// on the same pixels. The caller holds the bus's lock.
 fn writeBand(
     panel: *Panel,
     rb: *RtgDriverBase,
@@ -786,12 +542,12 @@ fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
     return command(panel, if (on) DISPON else DISPOFF, null, 0);
 }
 
-/// A command on its own, under the band's lock as a band is: a transaction
+/// A command on its own, under the bus's lock as a band is: a transaction
 /// set up on the bus and then set aside would have its registers written
 /// over by another task's band before it started.
 fn command(panel: *Panel, cmd: i32, params: ?*const anyopaque, size: u32) i32 {
-    panel.sys.ObtainSemaphore(&panel.band_lock);
-    defer panel.sys.ReleaseSemaphore(&panel.band_lock);
+    panel.sys.ObtainSemaphore(&panel.bus_lock);
+    defer panel.sys.ReleaseSemaphore(&panel.bus_lock);
     return panel.rtg_base.TxParam(panel.io, cmd, params, size);
 }
 
@@ -842,24 +598,21 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     };
 }
 
-/// What this board has. No engine: the controller draws nothing, so a
-/// caller that wants a rectangle filled fills it in the buffer itself.
-/// The picture is turned by choosing a mode, not by the turning ops.
+/// What this board has. Its picture is sent: `update` is how it hears of
+/// what changed, and the bands, the overlay and the pointer are the
+/// library's. No engine: the controller draws nothing, so a caller that
+/// wants a rectangle filled fills it in the buffer itself. The picture is
+/// turned by choosing a mode, not by the turning ops.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
-    .refresh = &refresh,
+    .update = &update,
     .display = &display,
     .set_brightness = &setBrightness,
     .brightness = &brightness,
     .stats = &stats,
     .control = &control,
-    .pointer = &pointer_ops,
-    .overlay = &overlay_ops,
 };
-
-const pointer_ops = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
-const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach };
 
@@ -893,222 +646,418 @@ export const rtg_dcs_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
 
 // --- tests (host: ./zig build test) -----------------------------------------
 //
-// A board of this driver cannot be made on the host: its create drives
-// pads and waits on the chip's timer. So the tests make a panel by hand -
-// what create fills in, as far as a show reads it - on a bus of their
-// own, and call the ops as the library does. What they hold is the one
-// path no board can be asked for: a send the bus refuses.
+// A board of this driver cannot be made by its own attach on the host:
+// that drives pads and waits on the chip's timer. So the tests have a
+// driver of their own offered a device - it makes a board with this
+// driver's ops and fills its panel in as the bring-up leaves it - and a
+// bus of their own behind it, which keeps what a controller would: the
+// window it was last told and the pixels sent into it. The tests then
+// call the library as a program does, and read the glass.
 
 const testing = std.testing;
 const kexec = @import("../../exec/exec.zig");
 const kutility = @import("../../utility/utility.zig");
 const krtg = @import("../../rtg/rtg.zig");
 
-/// The bus of the tests: it takes every window, counts the runs of
-/// pixels, and refuses the run a test names.
-const TestBus = struct {
+/// The tests' panel: 8 by 8, or 8 wide and 4 high on a panel 4 wide and
+/// 8 tall, and the controller's memory for it.
+const Glass = struct {
+    const side = 8;
+    /// The controller's picture, as the bus sent it: high byte first.
+    pixels: [side * side * 2]u8 = @splat(0),
+    /// The window it was last told.
+    columns: [2]u32 = .{ 0, 0 },
+    lines: [2]u32 = .{ 0, 0 },
     /// Runs of pixels asked for, and which of them - counted from 1 - is
     /// refused; 0 refuses none.
     runs: u32 = 0,
     refuse_at: u32 = 0,
-    /// The panel, and the first band's buffer it named at the last run:
-    /// what that send was composed from.
-    panel: ?*Panel = null,
-    during: ?*rtg.RtgBitMap = null,
+    /// The windows of the last runs, as (left, top, right, end).
+    windows: [8]sequence.Box = undefined,
+    /// How the next board is made: its panel's size, its turn, its
+    /// alignment.
+    native_width: u32 = side,
+    native_height: u32 = side,
+    turn: sequence.Turn = .none,
+    alignment: u32 = 1,
+    board: ?*rtg.RtgBoard = null,
 
-    fn of(io: *rtg.RtgTransport) *TestBus {
-        return @ptrCast(@alignCast(io.user_data.?));
+    var glass: Glass = .{};
+
+    /// The pixel the panel shows at its column and row, as memory holds
+    /// RGB565.
+    fn at(column: u32, row: u32) u16 {
+        const pixel = glass.pixels[(row * glass.native_width + column) * 2 ..];
+        return @as(u16, pixel[0]) << 8 | pixel[1];
     }
-    fn txParam(_: *rtg.RtgTransport, _: i32, _: ?*const anyopaque, _: u32) callconv(.c) i32 {
+
+    fn txParam(_: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaque, size: u32) callconv(.c) i32 {
+        if (cmd != CASET and cmd != RASET) return err.RTGERR_OK;
+        if (size != 4) return err.RTGERR_BAD_ARG;
+        const bytes: [*]const u8 = @ptrCast(param.?);
+        const range = [2]u32{ @as(u32, bytes[0]) << 8 | bytes[1], @as(u32, bytes[2]) << 8 | bytes[3] };
+        if (cmd == CASET) glass.columns = range else glass.lines = range;
         return err.RTGERR_OK;
     }
-    fn txColor(io: *rtg.RtgTransport, _: i32, _: ?*const anyopaque, _: u32) callconv(.c) i32 {
-        const bus = of(io);
-        bus.runs += 1;
-        if (bus.panel) |panel| bus.during = panel.bands[0].bitmap;
-        return if (bus.runs == bus.refuse_at) err.RTGERR_IO else err.RTGERR_OK;
+
+    fn txColor(_: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaque, size: u32) callconv(.c) i32 {
+        if (cmd != RAMWR) return err.RTGERR_BAD_ARG;
+        glass.windows[glass.runs % glass.windows.len] = .{ .left = glass.columns[0], .top = glass.lines[0], .right = glass.columns[1] + 1, .end = glass.lines[1] + 1 };
+        glass.runs += 1;
+        if (glass.runs == glass.refuse_at) return err.RTGERR_IO;
+        // The window's pixels, row after row.
+        const bytes: [*]const u8 = @ptrCast(color.?);
+        const wide = glass.columns[1] + 1 - glass.columns[0];
+        if (size != wide * (glass.lines[1] + 1 - glass.lines[0]) * 2) return err.RTGERR_BAD_ARG;
+        var row = glass.lines[0];
+        var from: usize = 0;
+        while (row <= glass.lines[1]) : (row += 1) {
+            const into = glass.pixels[(row * glass.native_width + glass.columns[0]) * 2 ..];
+            @memcpy(into[0 .. wide * 2], bytes[from..][0 .. wide * 2]);
+            from += wide * 2;
+        }
+        return err.RTGERR_OK;
     }
-    const ops = rtg.RtgTransportOps{ .tx_param = &txParam, .tx_color = &txColor };
+
+    fn createTransport(_: *rtg.RtgDriver, io: *rtg.RtgTransport, _: ?[*]const TagItem) callconv(.c) i32 {
+        io.ops = &bus_ops;
+        return err.RTGERR_OK;
+    }
+
+    const bus_ops = rtg.RtgTransportOps{ .tx_param = &txParam, .tx_color = &txColor };
+    const bus_driver_ops = rtg.RtgDriverOps{ .create_transport = &createTransport };
+    const test_bus: u32 = 0x7E57_0D05;
+    const test_chip: u32 = 0x7E57_0D06;
+    const bus_matches = [_]rtg.RtgMatch{ .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = test_bus }, .{} };
+    const bus_spec = rtg.RtgDriverSpec{
+        .name = "testbus",
+        .id_string = "dcs test bus",
+        .version = 1,
+        .kind = rtg.drivers.RTGDT_TRANSPORT,
+        .matches = &bus_matches,
+        .ops = &bus_driver_ops,
+    };
+
+    /// The tests' attach: a board with the driver's own ops, its panel
+    /// as the bring-up leaves it, on the tests' bus.
+    fn attachTest(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, _: ?[*]const TagItem) callconv(.c) i32 {
+        const sys = driver.sys_base;
+        const rb = driver.rtg_base;
+        const io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
+        const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel) }) orelse return err.RTGERR_NO_MEMORY;
+        const panel = panelOf(board);
+        panel.* = .{
+            .sys = sys,
+            .rtg_base = rb,
+            .io = io,
+            .width = glass.native_width,
+            .height = glass.native_height,
+            .native_width = glass.native_width,
+            .native_height = glass.native_height,
+            .alignment = glass.alignment,
+            .swapped_turn = glass.turn,
+            .turns = glass.turn != .none,
+        };
+        sys.InitSemaphore(&panel.bus_lock);
+        // A band of 64 bytes: four rows of the 8 wide panel.
+        panel.band_size = 64;
+        panel.band = @ptrCast(@alignCast(sys.AllocVec(64, exec.MEMF_ANY).?));
+        if (glass.turn != .none) panel.upright = @ptrCast(sys.AllocVec(64, exec.MEMF_ANY).?);
+        const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
+        const upright: rtg.RtgTimings = .{ .h_active = glass.native_width, .v_active = glass.native_height };
+        const on_its_side: rtg.RtgTimings = .{ .h_active = glass.native_height, .v_active = glass.native_width };
+        _ = rb.AddBoardMode(board, &upright, rgb565, if (glass.turn == .none) rtg.modes.RTGMF_DEFAULT else 0);
+        if (glass.turn != .none) _ = rb.AddBoardMode(board, &on_its_side, rgb565, rtg.modes.RTGMF_TURNED | rtg.modes.RTGMF_DEFAULT);
+        board.region = .{ .size = 4096, .alignment = 4, .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_SYSTEM_MEMORY };
+        glass.board = board;
+        return err.RTGERR_OK;
+    }
+
+    const board_driver_ops = rtg.RtgDriverOps{ .attach = &attachTest };
+    const board_matches = [_]rtg.RtgMatch{ .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = test_chip }, .{} };
+    const board_spec = rtg.RtgDriverSpec{
+        .name = "dcstest",
+        .id_string = "dcs test board",
+        .version = 1,
+        .kind = rtg.drivers.RTGDT_BOARD,
+        .matches = &board_matches,
+        .ops = &board_driver_ops,
+    };
+    const device_tags = [_]sdk.utility.FixedTagItem{
+        .value(st.PART_Chip, test_chip),
+        .pointer(st.PART_ChipName, "dcs test panel"),
+        .value(st.PART_Bus, test_bus),
+        .done,
+    };
 };
 
-/// A picture of the tests: 8 pixels wide, `rows` high, RGB565, its rows
-/// on four bytes as the senders ask.
-fn TestPicture(comptime rows: u32) type {
-    return struct {
-        pixels: [8 * 2 * rows]u8 align(4) = @splat(0),
-        bitmap: rtg.RtgBitMap = .{},
+/// What a test has: the library, its two drivers and the device it was
+/// offered.
+const Bench = struct {
+    rb: *krtg.RtgBase,
+    board: *rtg.RtgBoard,
+    bus_driver: *rtg.RtgDriver,
+    board_driver: *rtg.RtgDriver,
+    device: *rtg.RtgDevice,
 
-        fn set(picture: *@This()) *rtg.RtgBitMap {
-            picture.bitmap = .{ .pixels = &picture.pixels, .width = 8, .height = rows, .pitch = 16, .size_bytes = picture.pixels.len, .format = .rgb565 };
-            return &picture.bitmap;
-        }
-    };
-}
+    fn programs(bench: Bench) *sdk.interface.rtg.RtgBase {
+        return @ptrCast(bench.rb);
+    }
+};
 
-/// exec, utility.library and rtg.library from their tags, for the bus
-/// calls a send makes through the library's table.
-fn testLibrary() !*krtg.RtgBase {
+/// exec, utility.library and rtg.library from their tags, the tests' two
+/// drivers on its list, and a board made of the tests' device: a panel 8
+/// by 8, or one 4 wide and 8 tall whose picture lies on its side.
+fn testBench(turn: sequence.Turn, alignment: u32) !Bench {
     try kexec.setUp();
     _ = kexec.InitResident(kexec.SysBase, &kutility.utility_library_tag, null) orelse return error.NoUtility;
     const made = kexec.InitResident(kexec.SysBase, &krtg.rtg_library_tag, null) orelse return error.NoRtg;
-    return @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(made))));
+    const rb: *krtg.RtgBase = @fieldParentPtr("lib", @as(*exec.Library, @ptrCast(@alignCast(made))));
+    const drivers: *RtgDriverBase = @ptrCast(rb);
+    Glass.glass = .{ .turn = turn, .alignment = alignment, .native_width = if (turn == .none) 8 else 4 };
+    const bus_driver = drivers.AddRtgDriver(&Glass.bus_spec, null) orelse return error.NoDriver;
+    const board_driver = drivers.AddRtgDriver(&Glass.board_spec, null) orelse return error.NoDriver;
+    const device = drivers.AddRtgDevice(@ptrCast(&Glass.device_tags)) orelse return error.NoDevice;
+    const board = Glass.glass.board orelse return error.NoBoard;
+    return .{ .rb = rb, .board = board, .bus_driver = bus_driver, .board_driver = board_driver, .device = device };
 }
 
-/// Both libraries taken off and freed, and nothing left.
-fn dropLibrary(rb: *krtg.RtgBase) !void {
+/// The board, the device and the drivers given back, both libraries
+/// taken off and freed, and nothing left.
+fn dropBench(bench: Bench) !void {
+    const rb = bench.rb;
+    const drivers: *RtgDriverBase = @ptrCast(rb);
+    drivers.DeleteBoard(bench.board);
+    drivers.RemRtgDevice(bench.device);
+    try testing.expect(drivers.RemRtgDriver(bench.board_driver));
+    try testing.expect(drivers.RemRtgDriver(bench.bus_driver));
     const ub: *kutility.UtilityBase = @ptrCast(@alignCast(rb.utility_base));
     _ = kexec.CloseLibrary(kexec.SysBase, &ub.lib);
+    if (rb.timer_io.node.device != null) kexec.CloseDevice(kexec.SysBase, &rb.timer_io.node);
     kexec.Remove(kexec.SysBase, &rb.lib.node);
     kexec.freeLibraryMemory(kexec.SysBase, &rb.lib);
     kutility.freeForTests(ub);
     try kexec.expectNoLeaks();
 }
 
-/// A panel as create leaves it, 8 pixels wide: upright with `height` rows
-/// sent two to a band, or turned clockwise onto a panel 8 rows tall.
-fn testPanel(rb: *krtg.RtgBase, io: *rtg.RtgTransport, band: *align(4) [64]u8, height: u32, turn: sequence.Turn) Panel {
-    var panel = Panel{ .sys = rb.sys_base, .rtg_base = @ptrCast(rb), .io = io };
-    panel.width = 8;
-    panel.height = height;
-    panel.native_width = if (turn == .none) 8 else height;
-    panel.native_height = if (turn == .none) height else 8;
-    panel.turn = turn;
-    panel.band = band;
-    panel.band_rows = 2;
-    return panel;
+/// A buffer of the board with every pixel saying where it is: `mark` in
+/// its top bits, then its row and its column.
+fn paintedBuffer(bench: Bench, width: u32, height: u32, mark: u16) !*rtg.RtgBitMap {
+    const bitmap = bench.programs().AllocBitMap(bench.board, width, height, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE) orelse return error.NoBitMap;
+    for (0..height) |y| {
+        const row: [*]u16 = @ptrCast(@alignCast(bitmap.pixels.? + y * bitmap.pitch));
+        for (0..width) |x| row[x] = pixelOf(mark, @intCast(x), @intCast(y));
+    }
+    return bitmap;
 }
 
-test "dcs: a show the bus refuses puts back the picture that was shown" {
-    const rb = try testLibrary();
+fn pixelOf(mark: u16, x: u32, y: u32) u16 {
+    return mark << 12 | @as(u16, @intCast(y)) << 6 | @as(u16, @intCast(x));
+}
+
+test "dcs: a picture shown is sent whole, in bands; a rectangle drawn is its own window" {
+    const bench = try testBench(.none, 1);
     defer kexec.deinit();
-    var bus = TestBus{};
-    var io = rtg.RtgTransport{ .ops = &TestBus.ops, .user_data = &bus };
-    var band: [64]u8 align(4) = undefined;
-    var panel = testPanel(rb, &io, &band, 8, .none);
-    rb.sys_base.InitSemaphore(&panel.band_lock);
-    bus.panel = &panel;
-    var board = rtg.RtgBoard{ .instance = &panel };
-    var one = TestPicture(8){};
-    var other = TestPicture(8){};
-    const first = one.set();
-    const second = other.set();
+    const rb = bench.programs();
+    const glass = &Glass.glass;
+    const first = try paintedBuffer(bench, 8, 8, 1);
+
+    // The whole picture, four rows to a band, each with its window.
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, first));
+    try testing.expectEqual(@as(u32, 2), glass.runs);
+    try testing.expectEqual(sequence.Box{ .left = 0, .top = 4, .right = 8, .end = 8 }, glass.windows[1]);
+    try testing.expectEqual(pixelOf(1, 0, 0), Glass.at(0, 0));
+    try testing.expectEqual(pixelOf(1, 7, 7), Glass.at(7, 7));
+    try testing.expectEqual(@as(u32, 1), panelOf(bench.board).stats.frames);
+
+    // A rectangle drawn: its columns and rows, and no more of either.
+    glass.runs = 0;
+    const row: [*]u16 = @ptrCast(@alignCast(first.pixels.? + 5 * first.pitch));
+    row[3] = 0xFFFF;
+    row[6] = 0xFFFF;
+    try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(first, &.{ .x = 3, .y = 5, .width = 2, .height = 1 }));
+    try testing.expectEqual(@as(u32, 1), glass.runs);
+    try testing.expectEqual(sequence.Box{ .left = 3, .top = 5, .right = 5, .end = 6 }, glass.windows[0]);
+    try testing.expectEqual(@as(u16, 0xFFFF), Glass.at(3, 5));
+    try testing.expectEqual(pixelOf(1, 6, 5), Glass.at(6, 5));
+    // The row was asked for, and its neighbour not.
+    try testing.expectEqual(@as(isize, 1), rb.BoardControl(bench.board, tags.RTGCTRL_DCS_ROW_ASKED, 5));
+    try testing.expectEqual(@as(isize, 0), rb.BoardControl(bench.board, tags.RTGCTRL_DCS_ROW_ASKED, 4));
+
+    // A buffer that is not shown goes nowhere.
+    const other = try paintedBuffer(bench, 8, 8, 2);
+    glass.runs = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(other, null));
+    try testing.expectEqual(@as(u32, 0), glass.runs);
+
+    // Two buffers in bands: each line of the glass from the band that
+    // covers it.
+    const two = [_]rtg.RtgBand{ .{ .bitmap = first }, .{ .bitmap = other, .line = 4, .origin = 4 } };
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBoard(bench.board, 0, &two, two.len));
+    try testing.expectEqual(pixelOf(1, 2, 3), Glass.at(2, 3));
+    try testing.expectEqual(pixelOf(2, 2, 0), Glass.at(2, 4));
+    try testing.expectEqual(pixelOf(2, 7, 3), Glass.at(7, 7));
+
+    // The pointer is the library's, and reaches the glass as its own
+    // rectangle: one pixel, one window of one pixel.
+    var dot = [_]u32{@byteSwap(@as(u32, 0xFF0000FF))};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(err.RTGERR_OK, rb.SetBoardPointer(bench.board, &pointer, 0, 0));
+    rb.MoveBoardPointer(bench.board, 6, 2);
+    glass.runs = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBoardPointer(bench.board, true));
+    try testing.expectEqual(@as(u32, 1), glass.runs);
+    try testing.expectEqual(sequence.Box{ .left = 6, .top = 2, .right = 7, .end = 3 }, glass.windows[0]);
+    try testing.expectEqual(@as(u16, 0xF800), Glass.at(6, 2));
+    rb.MoveBoardPointer(bench.board, 1, 6);
+    try testing.expectEqual(pixelOf(1, 6, 2), Glass.at(6, 2));
+    try testing.expectEqual(@as(u16, 0xF800), Glass.at(1, 6));
+    try testing.expectEqual(err.RTGERR_OK, rb.SetBoardPointer(bench.board, null, 0, 0));
+    try testing.expectEqual(pixelOf(2, 1, 2), Glass.at(1, 6));
+
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, null));
+    rb.FreeBitMap(other);
+    rb.FreeBitMap(first);
+    try dropBench(bench);
+}
+
+test "dcs: a window is whole alignments, each way" {
+    const bench = try testBench(.none, 4);
+    defer kexec.deinit();
+    const rb = bench.programs();
+    const glass = &Glass.glass;
+    const picture = try paintedBuffer(bench, 8, 8, 1);
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, picture));
+
+    // One pixel drawn: the four by four around it.
+    glass.runs = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(picture, &.{ .x = 5, .y = 2, .width = 1, .height = 1 }));
+    try testing.expectEqual(@as(u32, 1), glass.runs);
+    try testing.expectEqual(sequence.Box{ .left = 4, .top = 0, .right = 8, .end = 4 }, glass.windows[0]);
+    // The whole picture: bands of four rows, the alignment's.
+    glass.runs = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(picture, null));
+    try testing.expectEqual(@as(u32, 2), glass.runs);
+    try testing.expectEqual(sequence.Box{ .left = 0, .top = 4, .right = 8, .end = 8 }, glass.windows[1]);
+
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, null));
+    rb.FreeBitMap(picture);
+    try dropBench(bench);
+}
+
+test "dcs: a show the bus refuses changes nothing; what was shown is sent again from the same buffer" {
+    const bench = try testBench(.none, 1);
+    defer kexec.deinit();
+    const rb = bench.programs();
+    const glass = &Glass.glass;
+    const panel = panelOf(bench.board);
+    const first = try paintedBuffer(bench, 8, 8, 1);
+    const second = try paintedBuffer(bench, 8, 8, 2);
 
     // The very first show refused: the board shows nothing, as before it.
-    bus.refuse_at = 1;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, first));
-    try testing.expectEqual(@as(u32, 0), panel.band_count);
+    glass.refuse_at = 1;
+    try testing.expectEqual(err.RTGERR_IO, rb.ShowBitMap(bench.board, first));
+    try testing.expect(rb.BoardDisplayBitMap(bench.board) == null);
     try testing.expectEqual(@as(u32, 1), panel.stats.failed_sends);
-    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, &.{ .width = 8, .height = 8 }));
-    try testing.expectEqual(@as(u32, 1), panel.stats.refreshes_dropped);
+    try testing.expectEqual(@as(u32, 0), panel.stats.frames);
 
-    // Shown: four bands of two rows, and it is what the panel is sent from.
-    bus.runs = 0;
-    bus.refuse_at = 0;
-    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first));
-    try testing.expectEqual(@as(u32, 4), bus.runs);
-    try testing.expectEqual(@as(u32, 1), panel.band_count);
-    try testing.expectEqual(first, panel.bands[0].bitmap);
-    try testing.expectEqual(@as(u32, 1), panel.stats.frames);
+    // Shown: two bands of four rows.
+    glass.runs = 0;
+    glass.refuse_at = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, first));
+    try testing.expectEqual(@as(u32, 2), glass.runs);
 
-    // Another buffer, refused at its second band: while it was sent the
-    // panel named it, and afterwards the first again.
-    bus.runs = 0;
-    bus.refuse_at = 2;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second));
-    try testing.expectEqual(second, bus.during.?);
-    try testing.expectEqual(@as(u32, 1), panel.band_count);
-    try testing.expectEqual(first, panel.bands[0].bitmap);
+    // Another buffer, refused at its second band: part of it reached the
+    // glass, and the library still holds the first as what is shown.
+    glass.runs = 0;
+    glass.refuse_at = 2;
+    try testing.expectEqual(err.RTGERR_IO, rb.ShowBitMap(bench.board, second));
+    try testing.expectEqual(pixelOf(2, 0, 0), Glass.at(0, 0));
+    try testing.expectEqual(pixelOf(1, 0, 7), Glass.at(0, 7));
+    try testing.expectEqual(first, rb.BoardDisplayBitMap(bench.board).?);
+    try testing.expect(second.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
     try testing.expectEqual(@as(u32, 2), panel.stats.failed_sends);
-    try testing.expectEqual(@as(u32, 1), panel.stats.frames);
 
-    // So a refresh of the one shown is sent, and one of the buffer
-    // refused goes nowhere.
-    bus.runs = 0;
-    bus.refuse_at = 0;
-    try testing.expectEqual(err.RTGERR_OK, refresh(&board, first, &.{ .width = 8, .height = 2 }));
-    try testing.expectEqual(@as(u32, 1), bus.runs);
-    try testing.expectEqual(err.RTGERR_OK, refresh(&board, second, &.{ .width = 8, .height = 2 }));
-    try testing.expectEqual(@as(u32, 1), bus.runs);
-    try testing.expectEqual(@as(u32, 2), panel.stats.refreshes_dropped);
+    // So handing the one shown on again puts the glass right, and the
+    // buffer refused goes nowhere.
+    glass.runs = 0;
+    glass.refuse_at = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(second, null));
+    try testing.expectEqual(@as(u32, 0), glass.runs);
+    try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(first, null));
+    try testing.expectEqual(pixelOf(1, 0, 0), Glass.at(0, 0));
 
-    try dropLibrary(rb);
-}
-
-test "dcs: bands the bus refuses, and one buffer refused over bands" {
-    const rb = try testLibrary();
-    defer kexec.deinit();
-    var bus = TestBus{};
-    var io = rtg.RtgTransport{ .ops = &TestBus.ops, .user_data = &bus };
-    var band: [64]u8 align(4) = undefined;
-    var panel = testPanel(rb, &io, &band, 8, .none);
-    rb.sys_base.InitSemaphore(&panel.band_lock);
-    bus.panel = &panel;
-    var board = rtg.RtgBoard{ .instance = &panel };
-    var one = TestPicture(8){};
-    var other = TestPicture(8){};
-    var another = TestPicture(8){};
-    const first = one.set();
-    const second = other.set();
-    const third = another.set();
+    // Bands refused over one buffer, and one buffer refused over bands:
+    // what the library holds is what was shown each time.
     const two = [_]rtg.RtgBand{ .{ .bitmap = first }, .{ .bitmap = second, .line = 4, .origin = 4 } };
+    glass.runs = 0;
+    glass.refuse_at = 1;
+    try testing.expectEqual(err.RTGERR_IO, rb.ShowBoard(bench.board, 0, &two, two.len));
+    try testing.expectEqual(first, rb.BoardDisplayBitMap(bench.board).?);
+    glass.refuse_at = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBoard(bench.board, 0, &two, two.len));
+    try testing.expectEqual(second, rb.BoardDisplayBitMap(bench.board).?);
+    glass.runs = 0;
+    glass.refuse_at = 2;
+    try testing.expectEqual(err.RTGERR_IO, rb.ShowBitMap(bench.board, first));
+    try testing.expect(second.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    glass.refuse_at = 0;
+    try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(second, null));
+    try testing.expectEqual(pixelOf(2, 3, 0), Glass.at(3, 4));
 
-    // One buffer up, then bands refused at their first band: one band
-    // again, the buffer from the top.
-    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first));
-    bus.runs = 0;
-    bus.refuse_at = 1;
-    try testing.expectEqual(err.RTGERR_IO, showBands(&board, &two, two.len));
-    try testing.expectEqual(@as(u32, 1), panel.band_count);
-    try testing.expectEqual(first, panel.bands[0].bitmap);
-    try testing.expectEqual(@as(u32, 0), panel.bands[0].line);
-
-    // The bus willing: both bands are what the panel is sent from.
-    bus.refuse_at = 0;
-    try testing.expectEqual(err.RTGERR_OK, showBands(&board, &two, two.len));
-    try testing.expectEqual(@as(u32, 2), panel.band_count);
-    try testing.expectEqual(second, panel.bands[1].bitmap);
-    try testing.expectEqual(@as(u32, 4), panel.bands[1].line);
-
-    // One buffer refused over them: both bands are back, the second too,
-    // which the one buffer had no place for.
-    bus.runs = 0;
-    bus.refuse_at = 3;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, third));
-    try testing.expectEqual(third, bus.during.?);
-    try testing.expectEqual(@as(u32, 2), panel.band_count);
-    try testing.expectEqual(first, panel.bands[0].bitmap);
-    try testing.expectEqual(second, panel.bands[1].bitmap);
-    try testing.expectEqual(@as(u32, 4), panel.bands[1].origin);
-
-    try dropLibrary(rb);
+    try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, null));
+    rb.FreeBitMap(second);
+    rb.FreeBitMap(first);
+    try dropBench(bench);
 }
 
-test "dcs: a picture sent turned, refused, leaves the one that was shown" {
-    const rb = try testLibrary();
-    defer kexec.deinit();
-    var bus = TestBus{};
-    var io = rtg.RtgTransport{ .ops = &TestBus.ops, .user_data = &bus };
-    var band: [64]u8 align(4) = undefined;
-    // 8 wide and 4 high, on a panel 4 wide and 8 tall: one band of the
-    // panel's 8 rows, 4 pixels each.
-    var panel = testPanel(rb, &io, &band, 4, .clockwise);
-    rb.sys_base.InitSemaphore(&panel.band_lock);
-    bus.panel = &panel;
-    var board = rtg.RtgBoard{ .instance = &panel };
-    var one = TestPicture(4){};
-    var other = TestPicture(4){};
-    const first = one.set();
-    const second = other.set();
+test "dcs: a picture on its side is turned onto the panel, a rectangle of it as the panel's window" {
+    // 8 wide and 4 high, on a panel 4 wide and 8 tall.
+    for ([_]sequence.Turn{ .clockwise, .counter_clockwise }) |turn| {
+        const bench = try testBench(turn, 1);
+        defer kexec.deinit();
+        const rb = bench.programs();
+        const glass = &Glass.glass;
+        const picture = try paintedBuffer(bench, 8, 4, 1);
 
-    try testing.expectEqual(err.RTGERR_OK, showBitMap(&board, first));
-    try testing.expectEqual(@as(u32, 1), bus.runs);
-    bus.runs = 0;
-    bus.refuse_at = 1;
-    try testing.expectEqual(err.RTGERR_IO, showBitMap(&board, second));
-    try testing.expectEqual(second, bus.during.?);
-    try testing.expectEqual(@as(u32, 1), panel.band_count);
-    try testing.expectEqual(first, panel.bands[0].bitmap);
-    try testing.expectEqual(@as(u32, 1), panel.stats.failed_sends);
+        // The board comes up in the mode on its side: the whole picture,
+        // every pixel where the panel has it.
+        try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, picture));
+        try testing.expectEqual(turn, panelOf(bench.board).turn);
+        for (0..4) |y| for (0..8) |x| {
+            const box = sequence.Box{ .left = @intCast(x), .top = @intCast(y), .right = @intCast(x + 1), .end = @intCast(y + 1) };
+            const where = sequence.onPanel(turn, box, 8, 4);
+            try testing.expectEqual(pixelOf(1, @intCast(x), @intCast(y)), Glass.at(where.left, where.top));
+        };
 
-    try dropLibrary(rb);
+        // Two pixels of one row drawn: the panel's window is two rows of
+        // one column, and nothing else is sent.
+        const row: [*]u16 = @ptrCast(@alignCast(picture.pixels.? + 1 * picture.pitch));
+        row[5] = 0xFFFF;
+        row[6] = 0xF800;
+        glass.runs = 0;
+        try testing.expectEqual(err.RTGERR_OK, rb.RefreshRect(picture, &.{ .x = 5, .y = 1, .width = 2, .height = 1 }));
+        try testing.expectEqual(@as(u32, 1), glass.runs);
+        const window = sequence.onPanel(turn, .{ .left = 5, .top = 1, .right = 7, .end = 2 }, 8, 4);
+        try testing.expectEqual(window, glass.windows[0]);
+        try testing.expectEqual(@as(u32, 1), window.columns());
+        try testing.expectEqual(@as(u32, 2), window.rows());
+        const white = sequence.onPanel(turn, .{ .left = 5, .top = 1, .right = 6, .end = 2 }, 8, 4);
+        const red = sequence.onPanel(turn, .{ .left = 6, .top = 1, .right = 7, .end = 2 }, 8, 4);
+        try testing.expectEqual(@as(u16, 0xFFFF), Glass.at(white.left, white.top));
+        try testing.expectEqual(@as(u16, 0xF800), Glass.at(red.left, red.top));
+
+        // Refused: the picture shown stays the library's.
+        const other = try paintedBuffer(bench, 8, 4, 2);
+        glass.runs = 0;
+        glass.refuse_at = 1;
+        try testing.expectEqual(err.RTGERR_IO, rb.ShowBitMap(bench.board, other));
+        try testing.expectEqual(picture, rb.BoardDisplayBitMap(bench.board).?);
+        glass.refuse_at = 0;
+
+        try testing.expectEqual(err.RTGERR_OK, rb.ShowBitMap(bench.board, null));
+        rb.FreeBitMap(other);
+        rb.FreeBitMap(picture);
+        try dropBench(bench);
+    }
 }

@@ -3,6 +3,7 @@
 //! pixel format with a mask beside it.
 
 const sdk = @import("sdk");
+const exec = sdk.exec;
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const err = rtg.errors;
@@ -64,9 +65,10 @@ const composer = @import("../compose/_compose.zig");
 ///
 /// OWNERSHIP:
 /// The caller's image is read and not kept; it may be freed on return.
-/// The converted one is the library's - in internal memory for a driver
-/// whose interrupts read its handles (`RTGDF_INTERNAL_INSTANCE`) - freed by the
-/// next SetBoardPointer or by DeleteBoard.
+/// The converted one is the library's - in internal memory where a
+/// driver whose interrupts read its handles lays it
+/// (`RTGDF_INTERNAL_INSTANCE`) - freed by the next SetBoardPointer or by
+/// DeleteBoard.
 ///
 /// NOTES:
 /// A board with no alpha in its own format still gets a mask: the mask is
@@ -90,7 +92,7 @@ pub fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
     if (board.info.caps & rtg.boards.RTGBC_POINTER == 0) return err.RTGERR_NOT_SUPPORTED;
 
     const made: ?*rtg.RtgPointerImage = if (image) |source| blk: {
-        const converted = convert(rb, board, source, hot_x, hot_y, rtg.boards.RTG_POINTER_MAX, .threshold);
+        const converted = convert(rb, board, source, hot_x, hot_y, rtg.boards.RTG_POINTER_MAX, .threshold, composer.laysPointer(board));
         if (converted.code != err.RTGERR_OK) return converted.code;
         break :blk converted.image;
     } else null;
@@ -180,10 +182,12 @@ pub fn pack(format: rtg.PixelFormat, colour: Colour) u32 {
 }
 
 /// The caller's image in the board's format, with its mask, in one block:
-/// the header, the pixels, the mask. It goes where the driver's handles
-/// go - internal memory for a driver whose interrupts read them. Shared
-/// with SetBoardOverlay, which takes a larger image and dithers.
-pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, hot_x: u32, hot_y: u32, most: u32, rule: MaskRule) Converted {
+/// the header, the pixels, the mask. An image the board's driver lays
+/// goes where the driver's handles go - internal memory for a driver
+/// whose interrupts read them; one the library lays (`composed`) is read
+/// by tasks alone, and goes anywhere. Shared with SetBoardOverlay, which
+/// takes a larger image and dithers.
+pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, hot_x: u32, hot_y: u32, most: u32, rule: MaskRule, composed: bool) Converted {
     const sys = rb.sys_base;
     const width = source.width;
     const height = source.height;
@@ -203,7 +207,8 @@ pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, h
     const mask_pitch = (width + 7) / 8;
     const header = (@sizeOf(rtg.RtgPointerImage) + 7) & ~@as(usize, 7);
     const size = header + @as(usize, pitch) * height + @as(usize, mask_pitch) * height;
-    const memory = sys.AllocVec(@intCast(size), registry.memoryFor(board.driver.?.spec)) orelse return .{ .code = err.RTGERR_NO_MEMORY };
+    const where = if (composed) exec.MEMF_ANY | exec.MEMF_CLEAR else registry.memoryFor(board.driver.?.spec);
+    const memory = sys.AllocVec(@intCast(size), where) orelse return .{ .code = err.RTGERR_NO_MEMORY };
     const base: [*]u8 = @ptrCast(memory);
     const pixels = base + header;
     const mask = pixels + @as(usize, pitch) * height;

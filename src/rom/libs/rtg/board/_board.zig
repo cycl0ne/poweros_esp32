@@ -204,7 +204,9 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
 
     // What the driver said it can do, by the ops it filled in, and what
     // the library does for a board whose picture it composes; the rest is
-    // left to the caller.
+    // left to the caller. How many bands its display reads is taken now:
+    // the driver has said its last word on it.
+    private.compose.direct_bands = board.direct_bands;
     if (board.ops) |ops| board.info.caps |= capsOf(ops);
     if (composer.composes(board) or private.compose.direct_bands > 1) board.info.caps |= rtg.boards.RTGBC_BANDS;
     // Whether its screens' windows are composed is the board's to say,

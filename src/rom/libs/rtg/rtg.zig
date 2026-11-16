@@ -2104,10 +2104,6 @@ test "showing buffers in bands, and what may not be shown so" {
     const row = base(rb).AllocBitMap(board, 16, 1, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
     const repeated = [_]rtg.RtgBand{ .{ .bitmap = row, .flags = rtg.RTGBANDF_REPEAT }, .{ .bitmap = front, .line = 6, .origin = 6 } };
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &repeated, repeated.len));
-    try testing.expectEqual(@as(u32, 0), repeated[0].rowAt(5));
-    try testing.expectEqual(@as(u32, 0), repeated[0].linesOf(0, 1, 6).first);
-    try testing.expectEqual(@as(u32, 6), repeated[0].linesOf(0, 1, 6).end);
-    try testing.expectEqual(@as(u32, 4), repeated[1].rowAt(10));
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoard(board, 0, &two, two.len));
     base(rb).FreeBitMap(row);
     try testing.expectEqual(@as(u32, 3), fk.log.shown);
@@ -2764,11 +2760,11 @@ test "the engine: the rectangle is cut down before the board sees it" {
     try testing.expectEqual(@as(i32, 4), fk.log.last_rect.height);
 
     // And the bytes really moved, inside the rectangle and nowhere else.
-    const row: [*]u16 = @ptrCast(@alignCast(bitmap.rowPtr(0)));
+    const row: [*]u16 = @ptrCast(@alignCast(rowOf(bitmap, 0)));
     try testing.expectEqual(@as(u16, 0), row[11]);
     try testing.expectEqual(@as(u16, 0xBEEF), row[12]);
     try testing.expectEqual(@as(u16, 0xBEEF), row[15]);
-    const past: [*]u16 = @ptrCast(@alignCast(bitmap.rowPtr(4)));
+    const past: [*]u16 = @ptrCast(@alignCast(rowOf(bitmap, 4)));
     try testing.expectEqual(@as(u16, 0), past[12]);
 
     // Nothing of it inside is no work at all, and no error.
@@ -2815,7 +2811,7 @@ test "a copy is cut down to both buffers at once" {
     try testing.expectEqual(@as(i32, 3), fk.log.last_copy.width);
 
     // A copy onto itself, one pixel along: the classic overlap.
-    const row: [*]u16 = @ptrCast(@alignCast(source.rowPtr(0)));
+    const row: [*]u16 = @ptrCast(@alignCast(rowOf(source, 0)));
     for (0..16) |x| row[x] = @intCast(x + 1);
     const shift = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 8, .height = 1, .dest_x = 1, .dest_y = 0 };
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).CopyRect(source, source, &shift));
@@ -2837,7 +2833,7 @@ test "several copies go to the board as one job, each cut down, or one by one" {
     const source = base(rb).AllocBitMap(board, 16, 8, format, 0).?;
     const target = base(rb).AllocBitMap(board, 8, 8, format, 0).?;
     for (0..8) |y| {
-        const row: [*]u16 = @ptrCast(@alignCast(source.rowPtr(@intCast(y))));
+        const row: [*]u16 = @ptrCast(@alignCast(rowOf(source, @intCast(y))));
         for (0..16) |x| row[x] = @intCast(y * 16 + x + 1);
     }
 
@@ -2853,8 +2849,8 @@ test "several copies go to the board as one job, each cut down, or one by one" {
     try testing.expectEqual(@as(u32, 2), fk.log.last_copy_count);
     try testing.expectEqual(@as(u32, 2), fk.log.copies);
     try testing.expectEqual(@as(i32, 4), fk.log.last_copy.width);
-    const row1: [*]u16 = @ptrCast(@alignCast(target.rowPtr(1)));
-    const row7: [*]u16 = @ptrCast(@alignCast(target.rowPtr(7)));
+    const row1: [*]u16 = @ptrCast(@alignCast(rowOf(target, 1)));
+    const row7: [*]u16 = @ptrCast(@alignCast(rowOf(target, 7)));
     try testing.expectEqual(@as(u16, 1 * 16 + 3 + 1), row1[3]);
     try testing.expectEqual(@as(u16, 6 * 16 + 11 + 1), row7[7]);
 
@@ -2912,7 +2908,7 @@ test "pixels and a colour laid over a buffer: cut down, the picture moved with t
     try testing.expectEqual(@as(i32, 0), fk.log.last_rect.x);
     try testing.expectEqual(@as(i32, 3), fk.log.last_rect.width);
     try testing.expectEqual(@as(i32, 1), fk.log.last_pixels.x);
-    const row: [*]u16 = @ptrCast(@alignCast(bitmap.rowPtr(0)));
+    const row: [*]u16 = @ptrCast(@alignCast(rowOf(bitmap, 0)));
     try testing.expectEqual(@as(u16, 0x8410), row[0]);
     try testing.expectEqual(@as(u16, 0), row[1]);
     try testing.expectEqual(@as(u16, 0xFFFF), row[2]);
@@ -2932,7 +2928,7 @@ test "pixels and a colour laid over a buffer: cut down, the picture moved with t
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).BlendRect(bitmap, &plate, 0xFF00_00FF));
     try testing.expectEqual(@as(i32, 2), fk.log.last_rect.width);
     try testing.expectEqual(@as(i32, 2), fk.log.last_rect.height);
-    try testing.expectEqual(@as(u16, 0x001F), @as([*]u16, @ptrCast(@alignCast(bitmap.rowPtr(7))))[15]);
+    try testing.expectEqual(@as(u16, 0x001F), @as([*]u16, @ptrCast(@alignCast(rowOf(bitmap, 7))))[15]);
 
     // A scale is not cut: one over the edge is not the board's to try.
     const scales = fk.log.scales;
@@ -2974,7 +2970,7 @@ test "a board with no engine says so, and the library does not draw" {
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).BlendRect(bitmap, &area, 0xFFFF_FFFF));
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).ScalePixels(bitmap, &area, &pixels, 1, 1));
     // Nothing was written, because nothing drew.
-    const row: [*]u16 = @ptrCast(@alignCast(bitmap.rowPtr(0)));
+    const row: [*]u16 = @ptrCast(@alignCast(rowOf(bitmap, 0)));
     try testing.expectEqual(@as(u16, 0), row[0]);
 
     base(rb).FreeBitMap(bitmap);
@@ -3101,6 +3097,17 @@ test "a board whose pixels go out as they are written will not turn" {
     try tearDown(rb);
 }
 
+/// The first byte of a buffer's row.
+fn rowOf(bitmap: *const rtg.RtgBitMap, y: u32) [*]u8 {
+    return bitmap.pixels.? + @as(usize, y) * bitmap.pitch;
+}
+
+/// Whether pixel (x, y) of a converted image is the image's own, by its
+/// mask.
+fn opaqueAt(image: *const rtg.RtgPointerImage, x: u32, y: u32) bool {
+    return image.mask[y * image.mask_pitch + x / 8] & (@as(u8, 0x80) >> @intCast(x % 8)) != 0;
+}
+
 /// A pixel written 0xRRGGBBAA as rgba32 lays it out in memory: red,
 /// green, blue and alpha, a byte each.
 fn rgba(value: u32) u32 {
@@ -3129,8 +3136,8 @@ test "the pointer: converted once, placed by its point, shown and hidden" {
     const made = fk.log.pointer_image.?;
     try testing.expectEqual(made, board.pointer.?);
     try testing.expectEqual(rtg.PixelFormat.rgb565, made.format);
-    try testing.expect(made.opaqueAt(0, 0) and !made.opaqueAt(1, 0) and made.opaqueAt(2, 0));
-    try testing.expect(made.opaqueAt(0, 1) and !made.opaqueAt(1, 1) and made.opaqueAt(2, 1));
+    try testing.expect(opaqueAt(made, 0, 0) and !opaqueAt(made, 1, 0) and opaqueAt(made, 2, 0));
+    try testing.expect(opaqueAt(made, 0, 1) and !opaqueAt(made, 1, 1) and opaqueAt(made, 2, 1));
     const row0: [*]const u16 = @ptrCast(@alignCast(made.pixels));
     const row1: [*]const u16 = @ptrCast(@alignCast(made.pixels + made.pitch));
     try testing.expectEqual(@as(u16, 0xF800), row0[0]);
@@ -3223,12 +3230,12 @@ test "the overlay: its coverage dithered, following the pointer, placed on its o
     const made = fk.log.overlay_image.?;
     try testing.expectEqual(made, board.overlay.?);
     for (0..8) |x| {
-        try testing.expect(made.opaqueAt(@intCast(x), 0)); // full: every pixel
-        try testing.expect(!made.opaqueAt(@intCast(x), 1)); // none: no pixel
+        try testing.expect(opaqueAt(made, @intCast(x), 0)); // full: every pixel
+        try testing.expect(!opaqueAt(made, @intCast(x), 1)); // none: no pixel
     }
     var half: u32 = 0;
     for (2..4) |y| for (0..8) |x| {
-        if (made.opaqueAt(@intCast(x), @intCast(y))) half += 1;
+        if (opaqueAt(made, @intCast(x), @intCast(y))) half += 1;
     };
     try testing.expectEqual(@as(u32, 8), half); // half: half of them, as dots
     // Its point at the pointer's, and with the pointer when it moves.

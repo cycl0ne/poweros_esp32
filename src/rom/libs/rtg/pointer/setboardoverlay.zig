@@ -61,8 +61,8 @@ const composer = @import("../compose/_compose.zig");
 ///
 /// OWNERSHIP:
 /// The caller's image is read and not kept. The converted one is the
-/// library's - in internal memory for a driver whose interrupts read it -
-/// freed by the next SetBoardOverlay or by DeleteBoard.
+/// library's - in internal memory where a driver whose interrupts read
+/// it lays it - freed by the next SetBoardOverlay or by DeleteBoard.
 ///
 /// NOTES:
 /// intuition's `BeginDrag` and `EndDrag` are how a program drags: they
@@ -86,7 +86,7 @@ pub fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
     if (board.info.caps & rtg.boards.RTGBC_OVERLAY == 0) return err.RTGERR_NOT_SUPPORTED;
 
     const made: ?*rtg.RtgPointerImage = if (image) |source| blk: {
-        const converted = setboardpointer.convert(rb, board, source, hot_x, hot_y, rtg.boards.RTG_OVERLAY_MAX, .dither);
+        const converted = setboardpointer.convert(rb, board, source, hot_x, hot_y, rtg.boards.RTG_OVERLAY_MAX, .dither, composer.laysOverlay(board));
         if (converted.code != err.RTGERR_OK) return converted.code;
         break :blk converted.image;
     } else null;

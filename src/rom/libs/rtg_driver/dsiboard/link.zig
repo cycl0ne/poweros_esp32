@@ -1,57 +1,54 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A copy of what is shown, which the stream reads instead of the
-//! screens: for an HDMI bridge always, and for a panel once a pointer
-//! is laid over the picture (`pointer.zig`), which the screens never
-//! hold.
+//! screens: for an HDMI bridge always, and for a panel while something
+//! lies over its picture - a pointer, a dragged icon - which the screens
+//! never hold.
+//!
+//! The copy is the board's own picture, and rtg.library composes it: the
+//! board is told which rectangle of the display changed (`update`), and
+//! `fill` fetches that rectangle's pixels from the library
+//! (`ComposeLines`) - the bands of the screens' buffers, the overlay and
+//! the pointer over them - and puts them into the copy.
 //!
 //! An HDMI bridge takes only RGB888, beside screens drawn in RGB565 - and
 //! this revision of the chip converts nothing on its way to the link - so
 //! its copy is three bytes a pixel; a panel's is the screens' own RGB565.
-//! Either is the size of the mode. What is shown is still bands of the
-//! screens' buffers; showing
-//! them converts each band's rows into the copy, at the lines it covers,
-//! and from then on rows a caller has drawn (RefreshBitMap) are converted
-//! again wherever a band shows them.
+//! Either is the size of the mode.
 //!
-//! **A band that repeats a row** - the empty part of the display above a
-//! screen pulled down - goes into the copy as lines of its own, so what
-//! is laid over it shows there too: it is converted from `blank`, a
-//! picture the size of the mode whose every row is that row, filled when
-//! the row first comes and again only when it changes. Without memory for
-//! it the row is converted once, at the band's first line, and the stream
-//! sends that line again for each of the band's lines - and the pointer
-//! does not show over it.
+//! **An RGB565 copy** is fetched into where it lies: the library's lines
+//! go straight into the copy.
 //!
-//! **A rectangle kept out.** `show` and `refresh` take the pointer's
-//! rectangle (`pointer.zig`) and convert around it, never into it, so
-//! what is laid there stays while the rows about it change; the pointer's
-//! side then fills it from the screens and lays the pointer again.
-//!
-//! **The conversion** is the engine's: a 2D-DMA copy, rows of the buffer
-//! into rows of the copy - its send channel widening RGB565 to RGB888 as
-//! it reads, for an RGB888 copy - under the engine's semaphore and on its
-//! channels. Without the engine the CPU converts (`put`, which the
-//! pointer's pixels go through too).
+//! **An RGB888 copy** has the picture twice: `composed`, the library's
+//! lines in RGB565, and the copy the stream reads, which they are widened
+//! into. A rectangle large enough for it is widened by the engine - a
+//! 2D-DMA copy, rows of `composed` into rows of the copy, its send
+//! channel widening RGB565 to RGB888 as it reads - under the engine's
+//! semaphore and on its channels; a small one, and any the engine does
+//! not end, by the CPU (`put`).
 //!
 //! **The CPU writes the copy through the data cache**, and every write
-//! into the copy, the engine's and the CPU's, is made holding the
-//! pointer's lock. Before the CPU lets go of it, the lines it wrote are
-//! written back and dropped from the cache (`writeOut`), so none is left
-//! there to be written back later over what the engine converted into it
-//! since. Through the cache, a rectangle reaches memory a line at a time;
-//! a pixel at a time past it, every byte was a transaction of its own
-//! with the stream, and dragging an icon starved it.
+//! into the copy is made holding the board's compose lock, which
+//! `update` and `show` are called with. Before the CPU lets go of it,
+//! the lines it wrote are written back and dropped from the cache
+//! (`writeOut`), so none is left there to be written back later over
+//! what the engine widened into it since. Through the cache, a rectangle
+//! reaches memory a line at a time; a pixel at a time past it, every byte
+//! was a transaction of its own with the stream, and dragging an icon
+//! starved it.
+//!
+//! Both pictures are in PSRAM (`MEMF_EXTERNAL`): a frame is far more
+//! than internal memory has to give, and the stream's channel and the
+//! engine read PSRAM past the cache.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
+const err = rtg.errors;
 const ExecBase = sdk.interface.exec.ExecBase;
+const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const dma2d = sdk.hardware.dma2d;
 const engine_file = @import("engine.zig");
 const Engine = engine_file.Engine;
-
-/// From an address in PSRAM to the same bytes past the data cache.
-const uncached_offset: usize = 0x4000_0000;
 
 /// A rectangle of the copy: columns `x0` to `x1`, lines `y0` to `y1`, the
 /// ends not in it.
@@ -68,199 +65,110 @@ pub const Link = struct {
     format: rtg.PixelFormat = .bgr24,
     memory: ?*anyopaque = null,
     memory_size: u32 = 0,
-    /// The bands shown, as the screens' buffers give them.
-    shown: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined,
-    shown_count: u32 = 0,
-    /// The copy as a buffer, for the stream's chain, and a buffer a row
-    /// long at each repeated band's line.
+    /// The copy as a buffer, for the stream's chain.
     whole: rtg.RtgBitMap = .{},
-    rows: [rtg.RTG_MAX_BANDS]rtg.RtgBitMap = @splat(.{}),
-    /// The repeated row as a whole picture, in RGB565, and the block it
-    /// is in; no picture while `blank.pixels` is null. `blank_filled`:
-    /// its rows hold a row yet.
-    blank: rtg.RtgBitMap = .{},
-    blank_memory: ?*anyopaque = null,
-    blank_size: u32 = 0,
-    blank_filled: bool = false,
-    /// Rows converted, by the engine and by the CPU.
+    /// Beside an RGB888 copy: the picture as the library composes it, in
+    /// RGB565, the size of the mode, its rows whole cache lines apart -
+    /// what is widened into the copy - and the block it is in. An RGB565
+    /// copy is that picture itself, and has none.
+    composed: rtg.RtgBitMap = .{},
+    composed_memory: ?*anyopaque = null,
+    composed_size: u32 = 0,
+    /// Rows put into the copy by the engine and by the CPU.
     engine_rows: u32 = 0,
     cpu_rows: u32 = 0,
 };
 
 /// The copy for a mode `width` x `height`, in `format` (`bgr24` or
-/// `rgb565`), black; false without memory.
+/// `rgb565`), and beside an RGB888 one the picture it is widened from;
+/// false without memory. What is in it is whatever the memory held: the
+/// show that follows fills all of it.
 pub fn allocate(link: *Link, sys: *ExecBase, width: u32, height: u32, format: rtg.PixelFormat) bool {
     const line = sdk.hardware.DCACHE_LINE_SIZE;
     const pitch = width * @as(u32, if (format == .rgb565) 2 else 3);
-    const bytes = pitch * height;
-    const size = bytes + line;
+    const size = pitch * height + line;
     const memory = sys.AllocMem(size, exec.MEMF_EXTERNAL) orelse return false;
     const pixels = (@intFromPtr(memory) + line - 1) & ~@as(usize, line - 1);
     link.* = .{ .pixels = pixels, .width = width, .height = height, .pitch = pitch, .format = format, .memory = memory, .memory_size = size };
-    // Black, written past the cache, and none of it left in the cache.
-    var cleared: u32 = bytes;
-    _ = sys.CachePreDMA(@ptrFromInt(pixels), &cleared, 0);
-    sys.CachePostDMA(@ptrFromInt(pixels), &cleared, 0);
-    const words: [*]volatile u32 = @ptrFromInt(pixels + uncached_offset);
-    var at: usize = 0;
-    while (at < bytes / 4) : (at += 1) words[at] = 0;
     link.whole = .{ .width = width, .height = height, .pitch = pitch, .format = format, .pixels = @ptrFromInt(pixels) };
+    if (format == .rgb565) return true;
+
+    const composed_pitch = (width * 2 + line - 1) / line * line;
+    const composed_size = composed_pitch * height + line;
+    const composed_memory = sys.AllocMem(composed_size, exec.MEMF_EXTERNAL) orelse {
+        free(link, sys);
+        return false;
+    };
+    const composed_pixels = (@intFromPtr(composed_memory) + line - 1) & ~@as(usize, line - 1);
+    link.composed = .{ .width = width, .height = height, .pitch = composed_pitch, .format = .rgb565, .pixels = @ptrFromInt(composed_pixels) };
+    link.composed_memory = composed_memory;
+    link.composed_size = composed_size;
     return true;
 }
 
 pub fn free(link: *Link, sys: *ExecBase) void {
     if (link.memory) |memory| sys.FreeMem(memory, link.memory_size);
-    if (link.blank_memory) |memory| sys.FreeMem(memory, link.blank_size);
+    if (link.composed_memory) |memory| sys.FreeMem(memory, link.composed_size);
     link.* = .{};
 }
 
-/// `blank` holding `row`'s first row on every row: made the first time,
-/// filled again when that row is not what it holds. Null without memory
-/// for it.
-fn blankOf(link: *Link, sys: *ExecBase, row: *const rtg.RtgBitMap) ?*const rtg.RtgBitMap {
-    const source = row.pixels orelse return null;
-    if (row.format != .rgb565) return null;
-    if (link.blank.pixels == null) {
-        const line = sdk.hardware.DCACHE_LINE_SIZE;
-        const pitch = link.width * 2;
-        const size = pitch * link.height + line;
-        const memory = sys.AllocMem(size, exec.MEMF_EXTERNAL) orelse return null;
-        const pixels = (@intFromPtr(memory) + line - 1) & ~@as(usize, line - 1);
-        link.blank = .{ .width = link.width, .height = link.height, .pitch = pitch, .format = .rgb565, .pixels = @ptrFromInt(pixels) };
-        link.blank_memory = memory;
-        link.blank_size = size;
-        link.blank_filled = false;
+/// A rectangle of the display changed: its pixels fetched from the
+/// library, as they are to be seen, and put into the copy.
+///
+/// INPUTS:
+/// - `link` - the copy.
+/// - `engine` - the board's engine, which widens into an RGB888 copy.
+/// - `sys` - exec.
+/// - `board` - the board, whose picture the library composes; its
+///   compose lock is held.
+/// - `area` - the rectangle, inside the display.
+/// - `watched` - the stream runs, and its frames time the engine.
+///
+/// RESULT:
+/// RTGERR_OK, RTGERR_NO_MEMORY on a board with no copy, or what
+/// `ComposeLines` answered.
+pub fn fill(link: *Link, engine: *Engine, sys: *ExecBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, watched: bool) i32 {
+    if (link.pixels == 0) return err.RTGERR_NO_MEMORY;
+    const rb: *RtgDriverBase = @ptrCast(board.rtg_base.?);
+    const x: u32 = @intCast(area.x);
+    const y: u32 = @intCast(area.y);
+    const width: u32 = @intCast(area.width);
+    const rows: u32 = @intCast(area.height);
+    const picture = if (link.format == .rgb565) &link.whole else &link.composed;
+    const first: [*]u8 = picture.pixels.? + @as(usize, y) * picture.pitch + @as(usize, x) * 2;
+    const code = rb.ComposeLines(board, area, first, picture.pitch);
+    if (code != err.RTGERR_OK) return code;
+    if (link.format == .rgb565) {
+        // Where it lies: out of the cache, for the stream to read.
+        writeOut(link, sys, .{ .x0 = x, .y0 = y, .x1 = x + width, .y1 = y + rows });
+        link.cpu_rows +%= rows;
+        return err.RTGERR_OK;
     }
-    const blank = &link.blank;
-    const bytes = @min(row.width, blank.width) * 2;
-    const first: [*]u8 = @ptrCast(blank.pixels.?);
-    const wanted: [*]const u8 = @ptrCast(source);
-    if (link.blank_filled and sameBytes(first[0..bytes], wanted[0..bytes])) return blank;
-    var at: u32 = 0;
-    while (at < blank.height) : (at += 1) @memcpy(first[at * blank.pitch ..][0..bytes], wanted[0..bytes]);
-    // Out of the cache, for the engine to read.
-    var written: u32 = blank.pitch * blank.height;
-    _ = sys.CachePreDMA(@ptrCast(first), &written, 0);
-    link.blank_filled = true;
-    return blank;
-}
-
-fn sameBytes(a: []const u8, b: []const u8) bool {
-    for (a, b) |x, y| if (x != y) return false;
-    return true;
-}
-
-/// The display lines band `index` of `bands` covers: from its line to
-/// the next band's, the last to the bottom.
-fn endOf(bands: []const rtg.RtgBand, index: usize, height: u32) u32 {
-    return if (index + 1 < bands.len) bands[index + 1].line else height;
-}
-
-/// `bands` shown: every band's rows converted into the copy, and the
-/// bands the stream is to send in their place written into `into` - the
-/// copy's own lines, a repeated band's one line again. How many.
-/// `watched`: the stream runs, and its frames time the engine. `keep`
-/// is left as it is.
-pub fn show(link: *Link, engine: *Engine, sys: *ExecBase, bands: []const rtg.RtgBand, watched: bool, keep: ?Rect, into: *[rtg.RTG_MAX_BANDS]rtg.RtgBand) u32 {
     sys.ObtainSemaphore(&engine.lock);
     defer sys.ReleaseSemaphore(&engine.lock);
-    const count: u32 = @intCast(@min(bands.len, rtg.RTG_MAX_BANDS));
-    for (bands[0..count], 0..) |band, index| link.shown[index] = band;
-    link.shown_count = count;
-    for (link.shown[0..count], 0..) |band, index| {
-        const end = endOf(link.shown[0..count], index, link.height);
-        if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
-            if (blankOf(link, sys, band.bitmap)) |blank| {
-                if (end > band.line) convertAround(link, engine, sys, blank, band.line, band.line, end - band.line, watched, keep);
-                into[index] = .{ .bitmap = &link.whole, .line = band.line, .origin = 0 };
-                continue;
-            }
-            if (end > band.line) convertAround(link, engine, sys, band.bitmap, 0, band.line, 1, watched, keep);
-            link.rows[index] = link.whole;
-            link.rows[index].pixels = @ptrFromInt(link.pixels + @as(usize, band.line) * link.pitch);
-            link.rows[index].height = 1;
-            into[index] = .{ .bitmap = &link.rows[index], .line = band.line, .flags = rtg.RTGBANDF_REPEAT };
-        } else {
-            if (end > band.line) convertAround(link, engine, sys, band.bitmap, band.rowAt(band.line), band.line, end - band.line, watched, keep);
-            into[index] = .{ .bitmap = &link.whole, .line = band.line, .origin = 0 };
-        }
-    }
-    return count;
+    widen(link, engine, sys, x, y, width, rows, watched);
+    return err.RTGERR_OK;
 }
 
-/// Rows `y` to `y + rows` of `bitmap` were drawn: converted again
-/// wherever a band shows them, around `keep`.
-pub fn refresh(link: *Link, engine: *Engine, sys: *ExecBase, bitmap: *const rtg.RtgBitMap, y: u32, rows: u32, watched: bool, keep: ?Rect) void {
-    sys.ObtainSemaphore(&engine.lock);
-    defer sys.ReleaseSemaphore(&engine.lock);
-    const shown = link.shown[0..link.shown_count];
-    for (shown, 0..) |band, index| {
-        if (band.bitmap != bitmap) continue;
-        const end = endOf(shown, index, link.height);
-        if (end <= band.line) continue;
-        if (band.flags & rtg.RTGBANDF_REPEAT != 0) {
-            if (y != 0) continue;
-            // Shown as lines of `blank`: converted again only when the row
-            // is not the one they hold.
-            if (link.blank.pixels != null) {
-                if (link.blank_filled and sameRow(link, bitmap)) continue;
-                const blank = blankOf(link, sys, bitmap) orelse continue;
-                convertAround(link, engine, sys, blank, band.line, band.line, end - band.line, watched, keep);
-                continue;
-            }
-            convertAround(link, engine, sys, bitmap, 0, band.line, 1, watched, keep);
-            continue;
-        }
-        // The band's rows, and the part of them drawn.
-        const first_row = band.rowAt(band.line);
-        const end_row = first_row + (end - band.line);
-        const from = @max(first_row, y);
-        const to = @min(end_row, y + rows);
-        if (to <= from) continue;
-        convertAround(link, engine, sys, bitmap, from, from + band.origin, to - from, watched, keep);
-    }
-}
-
-/// Whether `row`'s first row is what `blank` holds.
-fn sameRow(link: *const Link, row: *const rtg.RtgBitMap) bool {
-    const source = row.pixels orelse return false;
-    const bytes = @min(row.width, link.blank.width) * 2;
-    const held: [*]const u8 = @ptrCast(link.blank.pixels.?);
-    const wanted: [*]const u8 = @ptrCast(source);
-    return sameBytes(held[0..bytes], wanted[0..bytes]);
-}
-
-/// `convert`, leaving `keep` alone: the lines above and below it whole,
-/// and beside it the columns left and right of it.
-fn convertAround(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, watched: bool, keep: ?Rect) void {
-    const end = line + rows;
-    const out = keep orelse return convert(link, engine, sys, source, row, line, rows, 0, link.width, watched);
-    if (out.y1 <= line or out.y0 >= end or out.x0 >= out.x1) return convert(link, engine, sys, source, row, line, rows, 0, link.width, watched);
-    if (out.y0 > line) convert(link, engine, sys, source, row, line, out.y0 - line, 0, link.width, watched);
-    const top = @max(out.y0, line);
-    const bottom = @min(out.y1, end);
-    const beside_row = row + (top - line);
-    if (out.x0 > 0) convert(link, engine, sys, source, beside_row, top, bottom - top, 0, out.x0, watched);
-    if (out.x1 < link.width) convert(link, engine, sys, source, beside_row, top, bottom - top, out.x1, link.width - out.x1, watched);
-    if (end > out.y1) convert(link, engine, sys, source, row + (out.y1 - line), out.y1, end - out.y1, 0, link.width, watched);
-}
-
-/// `rows` rows of `source` from `row` on converted into the copy from
-/// display line `line` on, `columns` pixels of each from column `x`: by
-/// the engine, or by the CPU when it cannot. The engine's semaphore is
+/// A rectangle of `composed` widened into the copy: by the engine where
+/// it is large enough to be worth setting a job up for, by the CPU where
+/// it is not, or the engine does not end it. The engine's semaphore is
 /// held.
-fn convert(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, columns: u32, watched: bool) void {
-    if (rows == 0 or line >= link.height) return;
-    const count = @min(rows, link.height - line, source.height - @min(row, source.height));
-    const width = @min(columns, link.width -| x, source.width -| x);
-    if (count == 0 or width == 0) return;
-    if (byEngine(link, engine, sys, source, row, line, count, x, width, watched)) {
-        link.engine_rows +%= count;
-        return;
+fn widen(link: *Link, engine: *Engine, sys: *ExecBase, x: u32, y: u32, width: u32, rows: u32, watched: bool) void {
+    if (width * rows >= engine.smallest) {
+        // What the CPU composed, out of the cache for the engine to read:
+        // from the rectangle's first pixel to its last.
+        const first = @intFromPtr(link.composed.pixels.?) + @as(usize, y) * link.composed.pitch + @as(usize, x) * 2;
+        var bytes: u32 = (rows - 1) * link.composed.pitch + width * 2;
+        _ = sys.CachePreDMA(@ptrFromInt(first), &bytes, 0);
+        if (byEngine(link, engine, sys, &link.composed, y, y, rows, x, width, watched)) {
+            link.engine_rows +%= rows;
+            return;
+        }
     }
-    byCpu(link, source, row, line, count, x, width);
-    writeOut(link, sys, .{ .x0 = x, .y0 = line, .x1 = x + width, .y1 = line + count });
-    link.cpu_rows +%= count;
+    byCpu(link, &link.composed, y, y, rows, x, width);
+    writeOut(link, sys, .{ .x0 = x, .y0 = y, .x1 = x + width, .y1 = y + rows });
+    link.cpu_rows +%= rows;
 }
 
 fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, width: u32, watched: bool) bool {
@@ -279,7 +187,7 @@ fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.Rtg
     return engine_file.wait(engine, sys, asleep);
 }
 
-/// The CPU's conversion, through the data cache; `convert` writes it
+/// The CPU's conversion, through the data cache; `widen` writes it
 /// out.
 fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, width: u32) void {
     var r: u32 = 0;
@@ -292,9 +200,9 @@ fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u
 /// `count` RGB565 pixels from `from` into the copy at column `x` of line
 /// `line`, through the data cache: as they are into an RGB565 copy,
 /// widened blue first - as the engine writes them - into an RGB888 one.
-/// The caller keeps them inside the copy, holds the pointer's lock, and
-/// calls `writeOut` for them before it lets go of it.
-pub fn put(link: *const Link, line: u32, x: u32, from: [*]const u16, count: u32) void {
+/// The caller keeps them inside the copy and calls `writeOut` for them
+/// before it lets go of the board's compose lock.
+fn put(link: *const Link, line: u32, x: u32, from: [*]const u16, count: u32) void {
     const row = link.pixels + @as(usize, line) * link.pitch;
     if (link.format == .rgb565) {
         const to: [*]u16 = @ptrFromInt(row + @as(usize, x) * 2);
@@ -314,12 +222,12 @@ pub fn put(link: *const Link, line: u32, x: u32, from: [*]const u16, count: u32)
     }
 }
 
-/// The lines of the copy under `area`, which `put` wrote, written back to
-/// memory and dropped from the data cache: row by row, each row's
+/// The lines of the copy under `area`, which the CPU wrote, written back
+/// to memory and dropped from the data cache: row by row, each row's
 /// stretch rounded out to whole lines - only the copy's own bytes are in
-/// them, and nothing else writes the copy while the lock is held - but
-/// never past the copy's end.
-pub fn writeOut(link: *const Link, sys: *ExecBase, area: Rect) void {
+/// them, and nothing else writes the copy while the board's compose lock
+/// is held - but never past the copy's end.
+fn writeOut(link: *const Link, sys: *ExecBase, area: Rect) void {
     const line_size = sdk.hardware.DCACHE_LINE_SIZE;
     const bytes_per_pixel: usize = if (link.format == .rgb565) 2 else 3;
     const copy_end = link.pixels + @as(usize, link.pitch) * link.height;
@@ -330,20 +238,4 @@ pub fn writeOut(link: *const Link, sys: *ExecBase, area: Rect) void {
         const end = @min((row + area.x1 * bytes_per_pixel + line_size - 1) & ~@as(usize, line_size - 1), copy_end);
         sys.CacheClearE(@ptrFromInt(start), @intCast(end - start), exec.CACRF_ClearD);
     }
-}
-
-/// The row of the shown buffers that display line `line` shows: its
-/// band's, in RGB565; null where no band covers it.
-pub fn sourceRow(link: *const Link, line: u32) ?[*]const u16 {
-    var index = link.shown_count;
-    while (index > 0) {
-        index -= 1;
-        const band = link.shown[index];
-        if (line < band.line) continue;
-        const pixels = band.bitmap.pixels orelse return null;
-        const row = band.rowAt(line);
-        if (row >= band.bitmap.height) return null;
-        return @ptrFromInt(@intFromPtr(pixels) + @as(usize, row) * band.bitmap.pitch);
-    }
-    return null;
 }

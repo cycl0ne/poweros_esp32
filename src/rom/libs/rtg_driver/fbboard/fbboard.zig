@@ -49,41 +49,36 @@
 //! gives it back when it is freed (RTGRF_SYSTEM_MEMORY, RTGRF_DMA_MEMORY),
 //! at most as many pictures of the mode the display is in as the board
 //! asks for (RTGA_Buffers) - so a screen nobody has opened costs nothing. The
-//! driver's own are a frame to compose in - two the display is shown,
-//! behind an HDMI port - and, on a display with a cursor plane, the
-//! plane's two images.
+//! driver's own are a frame for a picture that is not one buffer - two
+//! the display is shown, behind an HDMI port - and, on a display with a
+//! cursor plane, the plane's two images.
 //!
-//! The pointer is laid over the picture in that frame, as the qemu board
-//! does it: while a pointer or the overlay is shown, or the picture is
-//! several in bands, the display reads the composed frame instead - the
-//! shown buffer's rectangles copied in as they are refreshed, no wider
-//! than what was written, and the images laid over them. The copy is the
-//! engine's, so a large one - the whole picture, when composing starts or
-//! another buffer is shown - is shared between the cores. A move puts
-//! back the pointer's old rectangle from the shown buffer and lays it at
-//! the new one, so it costs the pointer's size and not the picture's.
-//! With nothing over the picture the display reads the shown buffer
-//! itself, and nothing is copied.
+//! **A display that is not flipped** - the ramfb, the virtio GPU, the
+//! firmware's framebuffer with no engine behind it that this knows - has
+//! its picture composed by rtg.library. With nothing over the picture
+//! the ramfb and the virtio GPU read the shown buffer themselves, and
+//! nothing is copied. While a pointer or the overlay is shown, or the
+//! picture is several in bands, the display reads a frame of the
+//! driver's own instead: the board is told which rectangle of the display
+//! changed (`update`) and fetches it from the library into that frame
+//! (`ComposeLines`), no wider than what was written, so a pointer's move
+//! costs the pointer's size and not the picture's. The firmware's
+//! framebuffer is such a frame already, the only thing the display
+//! reads: the library's picture is fetched straight into it, at the
+//! firmware's own row length.
 //!
-//! The composed frame is taken when it is first needed. Where the pointer
-//! is the display's own, on the virtio GPU, it is given back once the
-//! display reads a buffer again, so it is there only while a screen is
-//! pulled down or an icon dragged. On the ramfb, where the pointer is laid
-//! in it, it stays. Black, as the display comes up or when nothing is
-//! shown, is the composed frame cleared.
-//!
-//! A refresh comes from whichever task drew, a pointer move from
-//! intuition's pointer task, each on any core: everything that writes the
-//! composed frame or changes what is laid in it holds the board's
-//! `compose_lock`, so that rows copied in on one core never cover a
-//! pointer just laid on another, nor a restore cut a hole into rows just
-//! copied.
+//! The frame of the driver's own is taken when it is first needed. Where
+//! the pointer is the display's own, on the virtio GPU, it is given back
+//! once the display reads a buffer again, so it is there only while a
+//! screen is pulled down or an icon dragged. On the ramfb, where the
+//! pointer is laid in it, it stays. Black, as the display comes up or
+//! when nothing is shown, is that frame cleared.
 //!
 //! The HDMI ports' displays read RAM past the caches, and the caches write
 //! their lines back in an order of their own: a picture drawn over while
 //! it is read shows, for a frame, a patchwork of old and new cache lines,
 //! sixteen pixels each. So there the display never reads a buffer anybody
-//! draws in, nor the composed frame. It reads one of two frames of the
+//! draws in, and the driver makes its pictures itself. It reads one of two frames of the
 //! driver's own (`flipFrames`): what is written is noted as rectangles
 //! (`damage.zig`), and a task of the driver's makes the next picture in
 //! the frame the display is not reading - those rectangles, and those
@@ -123,7 +118,7 @@
 //! picture at all. The virtio GPU's cursor is the same, laid over its
 //! window by the emulator - with a tablet, as the host's own pointer - and
 //! moved by a command; so there nothing is composed for the pointer
-//! either.
+//! either: the overlay is the library's there, in the composed picture.
 //!
 //! The BCM2712's port does more of what a board can be asked in its own
 //! hardware (`bcm2712_ops`): the picture mirrored either way (MirrorBoard)
@@ -206,7 +201,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 40;
+const REVISION = 41;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -293,23 +288,23 @@ const Screen = struct {
     frame_bytes: usize = 0,
     /// Where the display reads from; 0 before it has been told.
     scanning: usize = 0,
-    /// What ShowBitMap was last given.
+    /// The buffer at the display's bottom, as last shown, and on a
+    /// display that is not flipped whether a picture is shown at all.
     showing: ?*rtg.RtgBitMap = null,
+    shown: bool = false,
     /// How many times the display has been handed a picture.
     updates: u32 = 0,
     /// timer.device, opened the first time a frame is waited for: the
     /// request each wait copies.
     timer_io: timer.TimeRequest = .{},
     timer_open: bool = false,
-    /// The frame the pointer is composed in and black is shown from, as
-    /// AllocMem gave it and where it starts: null until it is needed
-    /// (`ownFrame`), and again once the display reads a buffer (`spare`).
+    /// On a display that is not flipped and reads a frame of the
+    /// driver's own: the frame the library's picture is fetched into and
+    /// black is shown from, as AllocMem gave it and where it starts.
+    /// Null until it is needed (`ownFrame`), and on the virtio GPU again
+    /// once the display reads a buffer (`dropFrame`).
     composed_memory: ?*anyopaque = null,
     composed: ?[*]u8 = null,
-    /// Held while the composed frame, or what is laid in it and what it
-    /// is composed from, changes. A semaphore: a write-back may wait for
-    /// exec's workers.
-    compose_lock: exec.SignalSemaphore = .{},
     /// Behind the BCM2712's port, the overlay's plane's two image buffers,
     /// as AllocMem gave them and where they start; which of them is the
     /// plane's, the size of the image in it, and whether it is shown.
@@ -541,30 +536,11 @@ fn handOn(screen: *Screen, picture: *const rtg.RtgBitMap, box: Box) void {
             .width = box.right - box.left,
             .height = box.end - box.top,
         }, Waiter{ .screen = screen }),
-        // The firmware's framebuffer holds what the display reads, so
-        // what was written in the picture it is reading goes into it.
-        // Another picture is not the display's to see until it is shown,
-        // and showing it copies the whole of it (`scanFrom`). Where the
-        // display is flipped, what is handed on is a frame of its own.
-        .uefi => |fb| if (!flips(screen) and screen.scanning == @intFromPtr(pixels)) copyOut(screen, fb, @intFromPtr(pixels), box),
+        // The firmware's framebuffer is what the display reads: where
+        // it is not flipped, the library's picture is fetched straight
+        // into it (`update`), and where it is, what is handed on is a
+        // frame of its own.
         else => {},
-    }
-}
-
-/// `box` of the picture at `from` - the display's size, rows and format -
-/// into the framebuffer the firmware lit, a row at a time: its rows are
-/// as far apart as the firmware set them, which is not the display's own
-/// pitch. The memory is write-combining, so the rows are gathered into
-/// bursts as they are written and nothing is written back afterwards.
-fn copyOut(screen: *Screen, fb: uefi.Framebuffer, from: usize, box: Box) void {
-    if (box.isEmpty()) return;
-    const pixels: [*]const u8 = @ptrFromInt(from);
-    const at = box.left * screen.bytes;
-    const length = (box.right - box.left) * screen.bytes;
-    var y = box.top;
-    const end = @min(box.end, fb.height);
-    while (y < end) : (y += 1) {
-        screen.sys.CopyMem(pixels + y * screen.pitch + at, fb.row(y) + at, length);
     }
 }
 
@@ -606,17 +582,15 @@ fn scanFrom(screen: *Screen, address: usize) bool {
         // framebuffer is in - on a machine whose device memory is part of
         // its RAM the CPU reaches it there - so its address in the
         // machine says nothing of the device's. Where it is not flipped,
-        // nothing tells it to read elsewhere: the picture is copied into
-        // the one buffer the firmware gave it, whole. Where flipping was
-        // given up, the frames are that buffer.
-        .uefi => |fb| done: {
+        // nothing tells it to read elsewhere: it reads the one buffer
+        // the firmware gave it, which the picture is fetched into. Where
+        // flipping was given up, the frames are that buffer.
+        .uefi => done: {
             if (screen.amd_flipping) {
                 const found = screen.dcn.?;
                 const frame = screen.amd_frame.?;
                 screen.flip_wanted = if (address == @intFromPtr(screen.flip_frames[1])) frame.device else found.surface;
                 dcn.flip(found, screen.flip_wanted, false);
-            } else if (!flips(screen)) {
-                copyOut(screen, fb, address, whole(screen));
             }
             break :done true;
         },
@@ -625,42 +599,7 @@ fn scanFrom(screen: *Screen, address: usize) bool {
     return shown;
 }
 
-/// The display reading what is to be seen: the composed frame while
-/// anything is laid over the picture, else the shown buffer. Whether it
-/// does.
-fn present(screen: *Screen) bool {
-    const shown = screen.showing orelse return true;
-    const from = if (composing(screen)) screen.composed.? else shown.pixels.?;
-    if (!scanFrom(screen, @intFromPtr(from))) return false;
-    screen.updates +%= 1;
-    return true;
-}
-
-// --- the pointer, in the composed frame -----------------------------------
-
-/// The composed frame held by this task (`compose_lock`), until `letGo`.
-fn hold(screen: *Screen) void {
-    screen.sys.ObtainSemaphore(&screen.compose_lock);
-}
-
-fn letGo(screen: *Screen) void {
-    screen.sys.ReleaseSemaphore(&screen.compose_lock);
-}
-
-/// Whether the display is to read the composed frame: a pointer with an
-/// image is shown over a picture, there is an overlay, or the picture is
-/// several in bands.
-fn wanted(screen: *const Screen) bool {
-    if (screen.showing == null) return false;
-    const pointer = screen.cursor == null and screen.pointer_shown and screen.pointer != null;
-    return screen.band_count > 1 or pointer or screen.overlay != null;
-}
-
-/// Whether the display reads the composed frame: it is wanted, and there
-/// was memory for it.
-fn composing(screen: *const Screen) bool {
-    return screen.composed != null and wanted(screen);
-}
+// --- the driver's own frame -------------------------------------------------
 
 /// Memory of the driver's own: `bytes` from a page on, where every display
 /// here reads, the system's and not the task's that happened to ask - what
@@ -672,9 +611,10 @@ fn takeOwn(screen: *Screen, bytes: usize) ?Own {
     return .{ .memory = memory, .at = @ptrFromInt(std.mem.alignForward(usize, @intFromPtr(memory), page)) };
 }
 
-/// The composed frame, taken when there is none yet; null without memory.
-/// Not cleared: it is written whole before the display reads it. Taken
-/// holding the composed frame, or before anything else can reach it.
+/// The frame of the driver's own that the library's picture is fetched
+/// into, and black is shown from, taken when there is none yet; null
+/// without memory. Not cleared: it is written whole before the display
+/// reads it.
 fn ownFrame(screen: *Screen) ?[*]u8 {
     if (screen.composed) |frame| return frame;
     const own = takeOwn(screen, screen.frame_bytes) orelse return null;
@@ -683,55 +623,36 @@ fn ownFrame(screen: *Screen) ?[*]u8 {
     return own.at;
 }
 
-/// The composed frame taken, when the display is to read it. Without
-/// memory there is none, and the display goes on reading the shown buffer.
-fn provide(screen: *Screen) void {
-    if (wanted(screen)) _ = ownFrame(screen);
-}
-
-/// The composed frame let go of, once nothing is laid over the picture
-/// and the display reads a buffer again: what AllocMem gave, for
-/// `giveBack` once the frame is let go. Null while it is wanted, read, or
-/// shown as black - and always on a display without a pointer of its own,
-/// the ramfb, where the pointer is hidden at every key and shown again at
-/// every move of the mouse, and the frame would come and go with it. The
-/// virtio GPU forgets its copy, so that a buffer the library makes in the
-/// same memory later is copied whole.
-fn spare(screen: *Screen) ?*anyopaque {
-    const frame = screen.composed orelse return null;
-    if (screen.cursor == null) return null;
-    if (screen.showing == null or wanted(screen) or screen.scanning == @intFromPtr(frame)) return null;
-    const memory = screen.composed_memory;
-    screen.composed = null;
-    screen.composed_memory = null;
+/// That frame given back, on a display that has it only while something
+/// lies over the picture: the virtio GPU, whose pointer is the host's
+/// own, so the frame is there only while a screen is pulled down or an
+/// icon dragged. The GPU forgets its copy, so that a buffer the library
+/// makes in the same memory later is copied whole. On the ramfb, where
+/// the pointer is laid in it - hidden at every key and shown again at
+/// every move of the mouse - it stays.
+fn dropFrame(screen: *Screen) void {
+    const frame = screen.composed orelse return;
     switch (screen.scanout) {
         .virtio => |*gpu| virtio.forget(gpu, @intFromPtr(frame), Waiter{ .screen = screen }),
-        else => {},
+        else => return,
     }
-    return memory;
-}
-
-/// What `spare` let go of, given back. The emulator's displays have let
-/// go of it already.
-fn giveBack(screen: *Screen, memory: ?*anyopaque) void {
-    const frame = memory orelse return;
-    screen.sys.FreeMem(frame, screen.frame_bytes + page);
-}
-
-/// Where display row `y` comes from: its band's buffer, that buffer's row
-/// `y - origin`.
-fn sourceRow(screen: *Screen, y: u32) ?[*]u8 {
-    var i = screen.band_count;
-    while (i > 0) {
-        i -= 1;
-        const band = screen.bands[i];
-        if (y < band.line) continue;
-        return band.bitmap.pixels.? + band.rowAt(y) * screen.pitch;
-    }
-    return null;
+    if (screen.composed_memory) |memory| screen.sys.FreeMem(memory, screen.frame_bytes + page);
+    screen.composed = null;
+    screen.composed_memory = null;
 }
 
 const Box = damage.Box;
+
+/// The buffer row display line `y` of a band shows: that far below the
+/// band's origin, the first where the band repeats one row.
+fn rowOf(band: rtg.RtgBand, y: u32) u32 {
+    return if (band.flags & rtg.RTGBANDF_REPEAT != 0) 0 else y - band.origin;
+}
+
+/// Whether pixel (x, y) of an image is the image's own, by its mask.
+fn opaqueAt(image: *const rtg.RtgPointerImage, x: u32, y: u32) bool {
+    return image.mask[y * image.mask_pitch + x / 8] & (@as(u8, 0x80) >> @intCast(x % 8)) != 0;
+}
 
 /// The whole display.
 fn whole(screen: *const Screen) Box {
@@ -748,15 +669,6 @@ fn pictureAt(screen: *const Screen, pixels: ?[*]u8) rtg.RtgBitMap {
         .pitch = screen.pitch,
         .format = screen.format,
     };
-}
-
-/// `box` of the display, each row from its band, into the composed frame,
-/// and handed on.
-fn copyArea(screen: *Screen, box: Box) void {
-    const composed = screen.composed orelse return;
-    if (box.isEmpty()) return;
-    copyInto(screen, composed, box);
-    handOn(screen, &pictureAt(screen, composed), box);
 }
 
 /// `box` of the display, each row from its band, into the frame at
@@ -779,7 +691,7 @@ fn copyBand(screen: *Screen, frame: [*]u8, band: rtg.RtgBand, box: Box, first: u
         var into = pictureAt(screen, frame);
         const what = rtg.RtgCopy{
             .src_x = @intCast(box.left),
-            .src_y = @intCast(band.rowAt(first)),
+            .src_y = @intCast(rowOf(band, first)),
             .width = @intCast(box.right - box.left),
             .height = @intCast(end - first),
             .dest_x = @intCast(box.left),
@@ -791,7 +703,7 @@ fn copyBand(screen: *Screen, frame: [*]u8, band: rtg.RtgBand, box: Box, first: u
     const length = (box.right - box.left) * screen.bytes;
     var y = first;
     while (y < end) : (y += 1) {
-        const from = band.bitmap.pixels.? + band.rowAt(y) * screen.pitch;
+        const from = band.bitmap.pixels.? + rowOf(band, y) * screen.pitch;
         screen.sys.CopyMem(from + at, frame + y * screen.pitch + at, length);
     }
 }
@@ -818,42 +730,6 @@ fn clipOf(screen: *Screen, image: *const rtg.RtgPointerImage, left: i32, top: i3
     return .{ .x0 = @intCast(x0), .y0 = @intCast(y0), .x1 = @intCast(x1), .y1 = @intCast(y1) };
 }
 
-/// The picture back where both images are: their rectangles copied from
-/// the shown buffer.
-fn restore(screen: *Screen) void {
-    restoreImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
-    if (screen.cursor == null) restoreImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
-}
-
-fn restoreImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
-    const image = given orelse return;
-    const clip = clipOf(screen, image, left, top) orelse return;
-    const composed = screen.composed orelse return;
-    const at = clip.x0 * screen.bytes;
-    const length = (clip.x1 - clip.x0) * screen.bytes;
-    var y = clip.y0;
-    while (y < clip.y1) : (y += 1) {
-        const from = sourceRow(screen, y) orelse continue;
-        screen.sys.CopyMem(from + at, composed + y * screen.pitch + at, length);
-    }
-    handOn(screen, &pictureAt(screen, composed), clip.box());
-}
-
-/// The images laid over the composed frame: the overlay, then the pointer
-/// over it when it is shown.
-fn lay(screen: *Screen) void {
-    layImage(screen, screen.overlay, screen.overlay_left, screen.overlay_top);
-    if (screen.pointer_shown and screen.cursor == null) layImage(screen, screen.pointer, screen.pointer_left, screen.pointer_top);
-}
-
-/// One image laid over the composed frame: a masked copy, cut to the
-/// picture.
-fn layImage(screen: *Screen, given: ?*const rtg.RtgPointerImage, left: i32, top: i32) void {
-    const composed = screen.composed orelse return;
-    const clip = layOver(screen, composed, given, left, top, whole(screen)) orelse return;
-    handOn(screen, &pictureAt(screen, composed), clip.box());
-}
-
 /// One image laid over the frame at `into`, cut to the picture and to
 /// `within`: where it was laid, null when nowhere.
 fn layOver(screen: *Screen, into_frame: [*]u8, given: ?*const rtg.RtgPointerImage, left: i32, top: i32, within: Box) ?Clip {
@@ -873,7 +749,7 @@ fn layOver(screen: *Screen, into_frame: [*]u8, given: ?*const rtg.RtgPointerImag
         var x = clip.x0;
         while (x < clip.x1) : (x += 1) {
             const image_x: u32 = @intCast(@as(i32, @intCast(x)) - left);
-            if (!image.opaqueAt(image_x, image_y)) continue;
+            if (!opaqueAt(image, image_x, image_y)) continue;
             switch (screen.bytes) {
                 2 => @as([*]u16, @ptrCast(@alignCast(into)))[x] = @as([*]const u16, @ptrCast(@alignCast(row)))[image_x],
                 else => @as([*]u32, @ptrCast(@alignCast(into)))[x] = @as([*]const u32, @ptrCast(@alignCast(row)))[image_x],
@@ -883,54 +759,12 @@ fn layOver(screen: *Screen, into_frame: [*]u8, given: ?*const rtg.RtgPointerImag
     return clip;
 }
 
-/// The whole picture into the composed frame, with the images over it:
-/// when composing starts.
-fn rebuild(screen: *Screen) void {
-    if (!composing(screen)) return;
-    copyArea(screen, whole(screen));
-    lay(screen);
-}
-
-/// The bands now set made in the composed frame, which showed `old`:
-/// when the display read it until now, only the rows that come from
-/// another buffer or another row of it are copied and handed on - a
-/// screen pulled further down leaves the rows above it - else the whole
-/// picture. The images are laid over it again.
-fn reband(screen: *Screen, old: []const rtg.RtgBand, was: bool) void {
-    if (!composing(screen)) return;
-    if (!was) return rebuild(screen);
-    var changed: damage.Damage = .{};
-    changed.rebanded(old, screen.bands[0..screen.band_count], screen.width, screen.height);
-    if (changed.isEmpty()) return;
-    for (changed.list()) |box| copyArea(screen, box);
-    lay(screen);
-}
-
-/// A change to either image: both rectangles put back, the change made,
-/// both laid again - they may overlap, and the one under must not be
-/// left with a hole the other's restore cut. The frame is taken and
-/// rebuilt when composing starts with it, given back when it stops, and
-/// nothing is shown anew when the display reads the shown buffer before
-/// and after. Made holding the composed frame.
-fn change(screen: *Screen, comptime apply: fn (*Screen, anytype) void, arg: anytype) void {
-    const unused = unused: {
-        hold(screen);
-        defer letGo(screen);
-        const was = composing(screen);
-        if (was) restore(screen);
-        apply(screen, arg);
-        provide(screen);
-        if (!was and !composing(screen)) break :unused null;
-        if (!was) {
-            rebuild(screen);
-        } else if (composing(screen)) {
-            lay(screen);
-        }
-        _ = present(screen);
-        break :unused spare(screen);
-    };
-    giveBack(screen, unused);
-}
+// --- the pointer and the overlay a display lays itself ---------------------
+//
+// A cursor plane, the BCM2712's overlay plane, and the pictures a flipped
+// display is shown: the boards that name these ops. Where the picture is
+// one the library composes, the library lays both, and these are not in
+// the board's table.
 
 fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
     const screen = screenOf(board);
@@ -941,15 +775,7 @@ fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
         cursorImage(screen, image);
         return err.RTGERR_OK;
     }
-    if (flips(screen)) {
-        pointerFlipped(screen, image);
-        return err.RTGERR_OK;
-    }
-    change(screen, struct {
-        fn apply(on: *Screen, given: anytype) void {
-            on.pointer = given;
-        }
-    }.apply, image);
+    pointerFlipped(screen, image);
     return err.RTGERR_OK;
 }
 
@@ -960,13 +786,7 @@ fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
         screen.pointer_top = top;
         return cursorPlane(screen);
     }
-    if (flips(screen)) return pointerMoved(screen, left, top);
-    change(screen, struct {
-        fn apply(on: *Screen, place: anytype) void {
-            on.pointer_left = place[0];
-            on.pointer_top = place[1];
-        }
-    }.apply, .{ left, top });
+    pointerMoved(screen, left, top);
 }
 
 fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
@@ -982,20 +802,7 @@ fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
         }
         return err.RTGERR_OK;
     }
-    if (flips(screen)) {
-        pointerShown(screen, show);
-        return err.RTGERR_OK;
-    }
-    const unused = unused: {
-        hold(screen);
-        defer letGo(screen);
-        screen.pointer_shown = show;
-        provide(screen);
-        rebuild(screen);
-        _ = present(screen);
-        break :unused spare(screen);
-    };
-    giveBack(screen, unused);
+    pointerShown(screen, show);
     return err.RTGERR_OK;
 }
 
@@ -1078,7 +885,7 @@ fn cursorImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
             const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
             var x: u32 = 0;
             while (x < columns) : (x += 1) {
-                if (one.opaqueAt(x, y)) pixels[y * side + x] = row[x] | 0xFF00_0000;
+                if (opaqueAt(one, x, y)) pixels[y * side + x] = row[x] | 0xFF00_0000;
             }
         }
         screen.cursor_hot_x = @min(one.hot_x, side - 1);
@@ -1105,15 +912,7 @@ fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv
         overlayImage(screen, image);
         return err.RTGERR_OK;
     }
-    if (flips(screen)) {
-        overlayFlipped(screen, image);
-        return err.RTGERR_OK;
-    }
-    change(screen, struct {
-        fn apply(on: *Screen, given: anytype) void {
-            on.overlay = given;
-        }
-    }.apply, image);
+    overlayFlipped(screen, image);
     return err.RTGERR_OK;
 }
 
@@ -1124,13 +923,7 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
         screen.overlay_top = top;
         return overlayPlane(screen);
     }
-    if (flips(screen)) return overlayMoved(screen, left, top);
-    change(screen, struct {
-        fn apply(on: *Screen, place: anytype) void {
-            on.overlay_left = place[0];
-            on.overlay_top = place[1];
-        }
-    }.apply, .{ left, top });
+    overlayMoved(screen, left, top);
 }
 
 // --- the overlay, on the BCM2712's plane of its own ------------------------
@@ -1178,7 +971,7 @@ fn overlayImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
         const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
         var x: u32 = 0;
         while (x < columns) : (x += 1) {
-            pixels[y * side + x] = if (one.opaqueAt(x, y)) row[x] | 0xFF00_0000 else 0;
+            pixels[y * side + x] = if (opaqueAt(one, x, y)) row[x] | 0xFF00_0000 else 0;
         }
     }
     writeBack(screen, buffer, rows * side * 4);
@@ -1714,9 +1507,15 @@ fn noteWritten(screen: *Screen, bitmap: *const rtg.RtgBitMap, area: Box) void {
     for (screen.bands[0..screen.band_count], 0..) |band, i| {
         if (band.bitmap != bitmap) continue;
         const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
-        const lines = band.linesOf(area.top, area.end, band_end);
-        if (lines.first >= lines.end) continue;
-        noteBox(screen, .{ .left = area.left, .top = lines.first, .right = area.right, .end = lines.end });
+        // The display lines that show the rows written: all of a band
+        // that repeats its buffer's first row, where that row is among
+        // them.
+        const repeats = band.flags & rtg.RTGBANDF_REPEAT != 0;
+        if (repeats and area.top != 0) continue;
+        const first = if (repeats) band.line else @max(band.line, area.top +| band.origin);
+        const end = if (repeats) band_end else @min(band_end, area.end +| band.origin);
+        if (first >= end) continue;
+        noteBox(screen, .{ .left = area.left, .top = first, .right = area.right, .end = end });
         noted = true;
     }
     if (noted) screen.written = true;
@@ -2083,9 +1882,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         .flags = if (on_pci) rtg.boards.RTGBF_COMPOSE else 0,
         // A monitor's modes are made in the format the board shows.
         .format = format,
-        // Every band of a show is read here: the picture is composed
-        // of them.
-        .direct_bands = rtg.RTG_MAX_BANDS,
+        // How many bands the display reads itself is said once it is
+        // known whether it is flipped (`bringUp`).
     }) orelse {
         var found = scanout;
         if (found == .virtio) virtio.giveBack(&found.virtio);
@@ -2119,7 +1917,6 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
     // say; whole cache lines where they say nothing.
     const asked_alignment: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Alignment, 0, tag_list));
     if (asked_alignment != 0) screen.alignment = asked_alignment;
-    sys.InitSemaphore(&screen.compose_lock);
     if (scanout == .virtio) {
         // The GPU up, and the picture as large as the emulator's window
         // has it - QEMU's xres and yres - where it says.
@@ -2208,6 +2005,18 @@ fn bringUp(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, scanout: Scanout, tag_l
     if (scanout == .uefi and screen.dcn != null) {
         hookFrames(screen);
         _ = startFlipping(screen, true);
+    }
+    // How the picture reaches the glass, now that it is known whether
+    // the display is flipped. One that is has every band of a show
+    // handed to it, and makes its pictures itself. One that is not shows
+    // the picture the library composes: the ramfb and the virtio GPU read
+    // one whole buffer by themselves besides, the firmware's framebuffer
+    // none.
+    if (flips(screen)) {
+        board.direct_bands = rtg.RTG_MAX_BANDS;
+        if (scanout == .uefi) board.ops = &flipped_ops;
+    } else {
+        board.direct_bands = if (scanout == .uefi) 0 else 1;
     }
     board.region = .{
         .size = frames * frame,
@@ -2349,7 +2158,9 @@ fn sizeFor(screen: *Screen, board: *rtg.RtgBoard) bool {
             if (!takeFrames(screen)) return false;
         }
     } else if (picture > screen.frame_bytes) {
-        hold(screen);
+        // The frame of the driver's own goes, and is taken anew for the
+        // larger picture when it is next needed. A show holds the
+        // board's compose lock: nothing is fetched into it meanwhile.
         const memory = screen.composed_memory;
         const frame = screen.composed;
         screen.composed_memory = null;
@@ -2361,7 +2172,6 @@ fn sizeFor(screen: *Screen, board: *rtg.RtgBoard) bool {
             }
             if (screen.scanning == @intFromPtr(gone)) screen.scanning = 0;
         }
-        letGo(screen);
         if (memory) |old| sys.FreeMem(old, screen.frame_bytes + page);
         screen.frame_bytes = picture;
     }
@@ -2398,17 +2208,34 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, timings: *const rtg.R
     if (flips(screen) and (screen.scanning == 0 or changed)) {
         if (!beginFlipped(screen)) return err.RTGERR_NO_DISPLAY;
     } else if (screen.scanning == 0 or changed) {
-        hold(screen);
-        defer letGo(screen);
-        const black = ownFrame(screen) orelse return err.RTGERR_NO_MEMORY;
-        const bytes = @as(usize, screen.pitch) * screen.height;
-        @memset(black[0..bytes], 0);
-        handOn(screen, &pictureAt(screen, black), whole(screen));
         // What it read until now says nothing about the new mode.
         screen.scanning = 0;
-        if (!begin(screen, @intFromPtr(black))) return err.RTGERR_NO_DISPLAY;
+        screen.shown = false;
+        if (!showBlack(screen)) return err.RTGERR_NO_DISPLAY;
     }
     return err.RTGERR_OK;
+}
+
+/// A display that is not flipped showing black: the firmware's
+/// framebuffer cleared where the display reads that, else the frame of
+/// the driver's own, cleared, and the display reading it. False without
+/// memory for that frame, and where the display does not take it.
+fn showBlack(screen: *Screen) bool {
+    switch (screen.scanout) {
+        .uefi => |fb| {
+            var y: u32 = 0;
+            while (y < @min(screen.height, fb.height)) : (y += 1) @memset(fb.row(y)[0 .. screen.width * screen.bytes], 0);
+            screen.scanning = fb.pixels;
+            return true;
+        },
+        else => {
+            const black = ownFrame(screen) orelse return false;
+            const bytes = @as(usize, screen.pitch) * screen.height;
+            @memset(black[0..bytes], 0);
+            handOn(screen, &pictureAt(screen, black), whole(screen));
+            return begin(screen, @intFromPtr(black));
+        },
+    }
 }
 
 /// What the HDMI ports' `start` waits with.
@@ -2454,62 +2281,83 @@ fn startPort(comptime port: type, screen: *Screen, address: usize) void {
     hookFrames(screen);
 }
 
-/// What a display that does not flip shows from now on: no band is
-/// black - the composed frame, cleared, which nothing else uses while no
-/// picture is shown; one whole buffer is read where it lies; anything
-/// else is composed, the rows that show something else than before, and
-/// that frame read. A picture that takes the place of another is waited
-/// out for a frame, as a flip is.
+/// What a display that is not flipped shows from now on. No band is
+/// black. One whole buffer the display is to read itself
+/// (`RTGSHOW_DIRECT`: the ramfb, the virtio GPU) is read where it lies.
+/// Anything else is the picture the library composes - bands, an overlay,
+/// a pointer - fetched whole into the firmware's framebuffer, where the
+/// display reads that, or into the frame of the driver's own, which the
+/// display then reads. A picture that takes the place of another is
+/// waited out for a frame, as a flip is.
 ///
-/// Nothing is changed where it fails: with no memory for the frame black
-/// and bands need (RTGERR_NO_MEMORY), and where the device does not take
-/// the address (RTGERR_IO) - the bands are those of before again, the
-/// composed frame made of them, and the display reads what it read.
-fn showPlain(screen: *Screen, bands: []const rtg.RtgBand) i32 {
-    var unused: ?*anyopaque = null;
-    const flip = flip: {
-        hold(screen);
-        defer letGo(screen);
-        const was = composing(screen);
-        // The frame before the bands are taken, so that without it they
-        // stay as they are - and after `was` is read, which says whether
-        // the display read the frame until now: one taken here has
-        // nothing in it yet.
-        if (bands.len != 1 and ownFrame(screen) == null) return err.RTGERR_NO_MEMORY;
-        var old: [rtg.RTG_MAX_BANDS]rtg.RtgBand = undefined;
-        const old_count = screen.band_count;
-        @memcpy(old[0..old_count], screen.bands[0..old_count]);
-        const before = screen.showing;
-        const same = bands.len == 1 and old_count == 1 and bands[0].bitmap == old[0].bitmap and
-            bands[0].origin == old[0].origin and bands[0].flags == old[0].flags;
-        @memcpy(screen.bands[0..bands.len], bands);
-        screen.band_count = @intCast(bands.len);
-        screen.showing = if (bands.len == 0) null else bands[bands.len - 1].bitmap;
-        const taken = if (bands.len == 0) black: {
-            const black = screen.composed.?;
-            const bytes = @as(usize, screen.pitch) * screen.height;
-            @memset(black[0..bytes], 0);
-            handOn(screen, &pictureAt(screen, black), whole(screen));
-            break :black scanFrom(screen, @intFromPtr(black));
-        } else picture: {
-            provide(screen);
-            reband(screen, old[0..old_count], was);
-            break :picture present(screen);
-        };
-        if (!taken) {
-            @memcpy(screen.bands[0..old_count], old[0..old_count]);
-            screen.band_count = old_count;
-            screen.showing = before;
-            rebuild(screen);
-            return err.RTGERR_IO;
+/// Nothing is changed where it fails: with no memory for that frame
+/// (RTGERR_NO_MEMORY), and where the device does not take the address
+/// (RTGERR_IO), the display reads what it read.
+fn showPlain(screen: *Screen, what: *const rtg.RtgShow) i32 {
+    const bands: []const rtg.RtgBand = if (what.bands) |list| list[0..what.count] else &.{};
+    if (bands.len == 0) {
+        if (!showBlack(screen)) return err.RTGERR_NO_MEMORY;
+        screen.shown = false;
+        return err.RTGERR_OK;
+    }
+    const last = bands[bands.len - 1].bitmap;
+    // The same buffer shown the other way - the pointer come or gone -
+    // is no other picture, and is not waited for.
+    const flip = screen.shown and !(bands.len == 1 and screen.showing == last);
+    if (what.flags & rtg.boards.RTGSHOW_DIRECT != 0) {
+        if (!scanFrom(screen, @intFromPtr(last.pixels.?))) return err.RTGERR_IO;
+        dropFrame(screen);
+    } else {
+        const code = fetch(screen, &.{ .width = @intCast(screen.width), .height = @intCast(screen.height) });
+        if (code != err.RTGERR_OK) return code;
+        if (screen.composed) |frame| {
+            if (!scanFrom(screen, @intFromPtr(frame))) return err.RTGERR_IO;
         }
-        unused = spare(screen);
-        break :flip before != null and bands.len != 0 and !same;
-    };
-    // Waited out with the frame let go: the pointer moves meanwhile.
+    }
+    screen.showing = last;
+    screen.shown = true;
+    screen.updates +%= 1;
+    // Waited out inside the show: the library holds the board's compose
+    // lock, and a pointer's move waits that frame.
     if (flip) pace(screen, 1);
-    giveBack(screen, unused);
     return err.RTGERR_OK;
+}
+
+/// A rectangle of the library's picture fetched to where the display
+/// reads it: straight into the firmware's framebuffer, whose rows are as
+/// far apart as the firmware set them - the memory is write-combining, so
+/// the rows are gathered into bursts as they are written and nothing is
+/// written back afterwards - or into the frame of the driver's own, which
+/// is then handed on: written back, and on the virtio GPU copied into the
+/// emulator's copy of it.
+fn fetch(screen: *Screen, area: *const rtg.RtgRect) i32 {
+    const x: u32 = @intCast(area.x);
+    const y: u32 = @intCast(area.y);
+    switch (screen.scanout) {
+        .uefi => |fb| {
+            if (y + @as(u32, @intCast(area.height)) > fb.height) return err.RTGERR_BAD_ARG;
+            return drivers(screen).ComposeLines(screen.board, area, fb.row(y) + x * screen.bytes, fb.pitch);
+        },
+        else => {
+            const frame = ownFrame(screen) orelse return err.RTGERR_NO_MEMORY;
+            const code = drivers(screen).ComposeLines(screen.board, area, frame + y * screen.pitch + x * screen.bytes, screen.pitch);
+            if (code != err.RTGERR_OK) return code;
+            handOn(screen, &pictureAt(screen, frame), .{
+                .left = x,
+                .top = y,
+                .right = x + @as(u32, @intCast(area.width)),
+                .end = y + @as(u32, @intCast(area.height)),
+            });
+            return err.RTGERR_OK;
+        },
+    }
+}
+
+/// A rectangle of the display's own picture changed, on a display that
+/// is not flipped: fetched from the library to where the display reads
+/// it.
+fn update(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
+    return fetch(screenOf(board), area);
 }
 
 /// The board's one op for what is on the glass (`RtgShow`): put in the
@@ -2523,24 +2371,22 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
         if (code != err.RTGERR_OK) return code;
     }
     const screen = screenOf(board);
-    const bands: []const rtg.RtgBand = if (what.bands) |list| list[0..what.count] else &.{};
-    const code = showThese(screen, bands);
-    if (code != err.RTGERR_OK and anew) _ = showThese(screen, &.{});
+    const code = showThese(screen, what);
+    if (code != err.RTGERR_OK and anew) _ = showThese(screen, &.{ .mode = what.mode, .timings = what.timings });
     return code;
 }
 
 /// The bands of a show, in the mode the board is in; none shows nothing.
 /// They are the mode's: the library hands on none that is not.
-fn showThese(screen: *Screen, bands: []const rtg.RtgBand) i32 {
-    if (!flips(screen)) return showPlain(screen, bands);
-    showFlipped(screen, bands);
+fn showThese(screen: *Screen, what: *const rtg.RtgShow) i32 {
+    if (!flips(screen)) return showPlain(screen, what);
+    showFlipped(screen, if (what.bands) |list| list[0..what.count] else &.{});
     return err.RTGERR_OK;
 }
 
 /// A rectangle was written by the CPU: its pixels alone handed on - any
-/// buffer's, shown or not: one drawn ahead is shown by naming it - and
-/// into the composed frame while the display reads that, the pointer
-/// back over them where they cross it.
+/// buffer's, shown or not: one drawn ahead is shown by naming it. On a
+/// display that is flipped it is noted for the next picture instead.
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
     const screen = screenOf(board);
     const x: u32 = @intCast(area.x);
@@ -2551,28 +2397,7 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
         return err.RTGERR_OK;
     }
     handOn(screen, bitmap, box);
-    compose(screen, bitmap, .{ .left = box.left, .top = box.top, .right = @min(box.right, screen.width), .end = box.end });
     return err.RTGERR_OK;
-}
-
-/// `area` of a buffer handed on - its own rows and columns - copied into
-/// the composed frame where the display reads that, and the images laid
-/// over it again.
-fn compose(screen: *Screen, bitmap: *rtg.RtgBitMap, area: Box) void {
-    hold(screen);
-    defer letGo(screen);
-    if (!composing(screen)) return;
-    if (area.left >= area.right) return;
-    var shown = false;
-    for (screen.bands[0..screen.band_count], 0..) |band, i| {
-        if (band.bitmap != bitmap) continue;
-        const band_end = if (i + 1 < screen.band_count) screen.bands[i + 1].line else screen.height;
-        const lines = band.linesOf(area.top, area.end, band_end);
-        if (lines.first >= lines.end) continue;
-        copyArea(screen, .{ .left = area.left, .top = lines.first, .right = area.right, .end = lines.end });
-        shown = true;
-    }
-    if (shown) lay(screen);
 }
 
 fn stats(board: *rtg.RtgBoard, into: *rtg.RtgBoardStats) callconv(.c) void {
@@ -2633,7 +2458,23 @@ fn scalePixels(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.Rt
     return engine.scale(&screenOf(board).engine, bitmap, area, pixels, width, height);
 }
 
+/// A display that is not flipped - the ramfb, the firmware's
+/// framebuffer: the picture the library composes fetched to where the
+/// display reads it, so the bands, the overlay and the pointer are the
+/// library's.
 const ops = rtg.boards.RtgBoardOps{
+    .destroy = &destroy,
+    .show = &showOp,
+    .refresh = &refresh,
+    .update = &update,
+    .stats = &stats,
+    .engine = &engine_ops,
+};
+
+/// A display that is flipped - the AMD display behind the firmware's
+/// framebuffer: it makes its pictures itself, the overlay and the
+/// pointer laid in them.
+const flipped_ops = rtg.boards.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
     .refresh = &refresh,
@@ -2665,7 +2506,7 @@ const video_ops = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .sh
 /// the display switched off, the monitor's brightness, the picture
 /// mirrored.
 const bcm2712_ops = ops: {
-    var more = ops;
+    var more = flipped_ops;
     more.detect = &detect;
     more.check_mode = &checkMode;
     more.display = &display;
@@ -2677,17 +2518,19 @@ const bcm2712_ops = ops: {
 
 /// The JH7110's port's: the same, and a video layer, its first overlay.
 const jh7110_ops = ops: {
-    var more = ops;
+    var more = flipped_ops;
     more.detect = &detect;
     more.check_mode = &checkMode;
     more.video = &video_ops;
     break :ops more;
 };
 
-/// The virtio GPU's: the same, and what the emulator says its window is.
+/// The virtio GPU's: a display that is not flipped, what the emulator
+/// says its window is, and the pointer the host's own, a cursor plane.
 const virtio_ops = ops: {
     var more = ops;
     more.detect = &detect;
+    more.pointer = &pointer_ops;
     break :ops more;
 };
 

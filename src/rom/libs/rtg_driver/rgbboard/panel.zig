@@ -412,10 +412,16 @@ fn freeChains(panel: *Panel, chains: [*]?*dmares.DMADescriptor) void {
 }
 
 /// The chains over a picture made of bands: display line y comes from
-/// the row of the band that covers it (`RtgBand.rowAt`). A descriptor
+/// the row of the band that covers it (`rowOf`). A descriptor
 /// per line, the stretch's last one ending it, all in one block with the
 /// stretches' heads in front, so `freeBanded` frees it whole. Null when
 /// there is no memory for them.
+/// The buffer row display line `y` of a band shows: that far below the
+/// band's origin, the first where the band repeats one row.
+fn rowOf(band: rtg.RtgBand, y: u32) u32 {
+    return if (band.flags & rtg.RTGBANDF_REPEAT != 0) 0 else y - band.origin;
+}
+
 pub fn bandChains(panel: *Panel, bands: []const rtg.RtgBand) ?[*]?*dmares.DMADescriptor {
     const lines = panel.config.bounce_lines;
     const line_bytes = panel.bounce_bytes / lines;
@@ -428,7 +434,7 @@ pub fn bandChains(panel: *Panel, bands: []const rtg.RtgBand) ?[*]?*dmares.DMADes
     for (0..count) |y| {
         while (band + 1 < bands.len and bands[band + 1].line <= y) band += 1;
         const shown = bands[band];
-        const row = shown.rowAt(@intCast(y));
+        const row = rowOf(shown, @intCast(y));
         const from = @intFromPtr(shown.bitmap.pixels.?) + row * shown.bitmap.pitch;
         const last = (y + 1) % lines == 0;
         const flags = dmares.DMADF_OWNER | if (last) dmares.DMADF_SUC_EOF else 0;

@@ -118,11 +118,6 @@ pub const RtgBitMap = extern struct {
     /// - has nothing for the board to do, and whoever copies it on to a
     /// screen is the one to know what changed. Set by the buffer's owner.
     watch: ?*hooks.Hook = null,
-
-    /// The first byte of a row. The caller has checked `y`.
-    pub inline fn rowPtr(bm: *const RtgBitMap, y: u32) [*]u8 {
-        return bm.pixels.? + @as(usize, y) * @as(usize, bm.pitch);
-    }
 };
 
 comptime {

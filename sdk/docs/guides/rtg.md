@@ -585,23 +585,25 @@ picture of its own, rtg.library lays it as it composes that picture,
 and a move is the rectangle the image left and the one it came to,
 delivered again; the emulator's board is such a one, and reads the shown
 buffer itself for as long as no pointer, no overlay and no second band
-lies over the picture. Where the display reads the picture straight out of memory, as
-the DSI boards' stream does, the board streams a copy of what is shown
-instead, from the first time a pointer is shown, and lays the pointer
-into the copy: a frame's memory more (the HDMI link has its copy
-anyway), and every refreshed row copied once more by the 2D-DMA. A
-board touched only with a finger never shows one, and never makes the
-copy. The pointer and a dragged icon go into the copy through the data
-cache and reach memory a whole line at a time, so moving them leaves
-the stream its bandwidth.
+lies over the picture. The 3.5" board's controller keeps its own
+picture, so there every rectangle is sent over the bus, a pointer's move
+as two small ones. Where the display reads the picture straight out of
+memory, as the DSI panels' stream does, the board streams the screens'
+buffers for as long as nothing lies over the picture, and a copy of its
+own - which the library's picture is fetched into - while a pointer or
+a dragged icon is to be seen: a frame's memory more, made the first
+time (the HDMI link has its copy anyway). A board touched only with a
+finger makes the copy when an icon is first dragged. The picture goes
+into the copy through the data cache and reaches memory a whole line at
+a time, so moving a pointer leaves the stream its bandwidth.
 
-An `fb` board lays them into its extra frame: while a pointer or the
-overlay is shown, or the picture is several bands, the display reads
-that frame - the shown buffer's rows copied in as they are refreshed,
-the images laid over them - and with nothing over the picture it reads
-the shown buffer itself, and nothing is copied. A move puts back the old
-rectangle from the shown buffer and lays the image at the new one, so it
-costs the pointer's size, not the picture's. On the VisionFive 2 the
+An `fb` board whose display is not flipped - QEMU's ramfb, its virtio
+GPU, a firmware's framebuffer - is composed by the library the same
+way: while a pointer or the overlay is shown, or the picture is several
+bands, the display reads a frame of the driver's own that the library's
+picture is fetched into, and with nothing over the picture it reads the
+shown buffer itself, and nothing is copied; a firmware's framebuffer is
+that frame already, and is always read. On the VisionFive 2 the
 pointer is the display controller's cursor plane instead, which lays it
 over the picture itself: the image goes into one of two buffers as ARGB,
 opaque where the mask says and clear elsewhere, and a change writes the
@@ -984,7 +986,7 @@ calls nothing: its board is waited for by the clock.
 | Slot | What it does |
 |---|---|
 | `destroy` | undo what create did; called last, after the buffers are gone |
-| `show` | what is on the glass: the mode where it changed, and one buffer, several in bands of lines (`RtgBand.rowAt` says which row a line shows), or none |
+| `show` | what is on the glass: the mode where it changed, and one buffer, several in bands of lines (display line `y` of a band shows its buffer's row `y - origin`, its first row where the band repeats one), or none |
 | `detect`, `check_mode` | a connector: what is on it, and whether the board can make a timing |
 | `refresh` | a rectangle of a buffer was written, shown or not: write it back out of the cache, or tell the display |
 | `update` | a rectangle of the display's own picture changed: fetch it (`ComposeLines`) and deliver it |
@@ -1001,10 +1003,10 @@ calls nothing: its board is waited for by the clock.
 | Board | Driver | How it is fed | Bands |
 |---|---|---|---|
 | Waveshare 7B, 7" 1024 x 600 | `rgb` | LCD_CAM streams pixels from three small buffers in internal memory; a DMA channel copies the picture from PSRAM into each one as the panel finishes it | a copy descriptor per display line, each from the row its band shows; changed at a frame's start |
-| LCDwiki ES3C35P, 3.5" 480 x 320 | `dcs` on `qspi` | the controller keeps its own picture; what changed is sent over SPI in bands of rows, each pixel's two bytes swapped on the way | each line sent from the band that covers it |
+| LCDwiki ES3C35P, 3.5" 480 x 320 | `dcs` on `qspi` | the controller keeps its own picture; the rectangle that changed is sent over SPI, widened to the controller's alignment, in bands of rows, each pixel's two bytes swapped on the way | composed by rtg.library: each line fetched from the band that covers it |
 | Olimex ESP32-P4-PC with MIPI-LCD2.8, 480 x 640 | `dsi` | the DSI bridge takes the picture straight out of PSRAM by DMA, a chain of blocks a frame; the DMA's interrupt starts the next; fills, blends and scales on the PPA, copies on the 2D-DMA | a DMA block for each band's run of rows, one a line for a band that repeats its row; changed at a frame's end |
 | CrowPanel 10.1", 1024 x 600 | `dsi` | as the ESP32-P4-PC's | as the ESP32-P4-PC's |
-| Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; rows drawn are converted into it by the 2D-DMA | the bands converted into the copy, the chain built over it |
+| Olimex ESP32-P4-PC on HDMI, 1360 x 768, 1280 x 720, 1024 x 768 or 800 x 600 | `dsi` | an RGB888 copy of what is shown, which the bridge takes out of PSRAM as above; a rectangle that changed is fetched from rtg.library in RGB565 and widened into it, by the 2D-DMA where it is large | composed by rtg.library into the copy, one block of which is the chain |
 | QEMU | `qemu` | the emulator's display reads memory of its own: the shown buffer while nothing lies over the picture, else a frame rtg.library composes | composed by the library into that frame |
 | VisionFive 2 on HDMI, the monitor's mode | `fb` | the JH7110's display controller reads the shown buffer out of RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | the bands composed into one picture, which the controller then reads |
 | QEMU's RISC-V virt with `-device ramfb`, 1920 x 1080 | `fb` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | as the VisionFive 2's |
@@ -1055,9 +1057,11 @@ monitor's EDID names - the largest the default - and the part's own,
 seen within two seconds. The link is brought up when the board is put
 in a mode, in this host's timing for the mode's size. The bridge takes RGB888 only, and this
 revision of the chip sends what memory holds, so the screens stay RGB565
-and the stream reads a copy of what is shown, three bytes a pixel: showing
-bands converts their rows into it, and RefreshRect converts the rows
-drawn wherever a band shows them - the 2D-DMA widens RGB565 as it copies.
+and the stream reads a copy of what is shown, three bytes a pixel: the
+picture rtg.library composes is fetched in RGB565, a rectangle at a
+time as it changes, and widened into the copy - by the 2D-DMA, which
+widens RGB565 as it copies, where the rectangle is large, by the CPU
+where it is small.
 The link stays in high speed through the blanking, as the bridge needs,
 and its lanes run faster than the picture's RGB888 by a margin found for
 each mode: the bridge remakes the pixel clock by how full its FIFO keeps,

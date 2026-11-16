@@ -288,11 +288,6 @@ pub const RtgPointerImage = extern struct {
     hot_y: u32,
     format: PixelFormat,
     pad: [3]u8 = .{ 0, 0, 0 },
-
-    /// Whether pixel (x, y) of the image is the pointer's.
-    pub inline fn opaqueAt(image: *const RtgPointerImage, x: u32, y: u32) bool {
-        return image.mask[y * image.mask_pitch + x / 8] & (@as(u8, 0x80) >> @intCast(x % 8)) != 0;
-    }
 };
 
 /// The largest pointer SetBoardPointer takes, each way: a driver lays it
@@ -333,6 +328,9 @@ pub const RtgBoardSpec = extern struct {
     /// buffers shown (`RTGSHOW_DIRECT`). 0: none - it has a picture of
     /// its own, which the library composes. 1: one whole buffer. More:
     /// bands as they are shown (`RtgBand`), a repeating one among them.
+    /// A driver that knows it only once the hardware has answered writes
+    /// `RtgBoard.direct_bands`, and `RtgBoard.ops` where the ops hang on
+    /// it too, before its `attach` answers.
     direct_bands: u32 = 0,
 };
 
@@ -348,7 +346,11 @@ pub const RtgBoard = extern struct {
     device: ?*drivers.RtgDevice = null,
     /// Which output of the device it is, from 0.
     unit: u32 = 0,
-    pad0: u32 = 0,
+    /// How many bands the display reads by itself, as its driver said
+    /// (`RtgBoardSpec.direct_bands`). Read by the library as the board
+    /// joins its list, with `ops`: a driver may write both until its
+    /// `attach` answers, and neither afterwards.
+    direct_bands: u32 = 0,
     ops: ?*const RtgBoardOps = null,
     info: RtgBoardInfo = .{},
     /// The display memory, and what has been handed out of it.
@@ -599,7 +601,8 @@ pub const RTGSHOW_MODE_CHANGED: u32 = 1 << 1;
 
 /// Part of the display shown from a buffer: from display line `line`
 /// down to where the next band starts - or the display's bottom - the
-/// buffer's rows, its first row at display line `origin`. A screen pulled
+/// buffer's rows, its first row at display line `origin`: display line
+/// `y` of the band shows the buffer's row `y - origin`. A screen pulled
 /// down is one: the screen behind shows above it. With `RTGBANDF_REPEAT`
 /// every line of the band shows the buffer's first row instead, so one
 /// row fills a band of any height.
@@ -611,21 +614,6 @@ pub const RtgBand = extern struct {
     origin: u32 = 0,
     /// RTGBANDF_*.
     flags: u32 = 0,
-
-    /// The buffer row display line `y` of the band shows.
-    pub fn rowAt(band: RtgBand, y: u32) u32 {
-        return if (band.flags & RTGBANDF_REPEAT != 0) 0 else y - band.origin;
-    }
-
-    /// The display lines, from `first` up to `end`, that show buffer rows
-    /// `top` up to `rows_end` of a band reaching down to `band_end`; none
-    /// when `first` is not below `end`.
-    pub fn linesOf(band: RtgBand, top: u32, rows_end: u32, band_end: u32) struct { first: u32, end: u32 } {
-        if (band.flags & RTGBANDF_REPEAT != 0) {
-            return if (top == 0 and rows_end > 0) .{ .first = band.line, .end = band_end } else .{ .first = 0, .end = 0 };
-        }
-        return .{ .first = @max(band.line, top +| band.origin), .end = @min(band_end, rows_end +| band.origin) };
-    }
 };
 
 /// RtgBand's flags: every line of the band shows the buffer's first row.

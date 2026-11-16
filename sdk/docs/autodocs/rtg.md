@@ -2656,8 +2656,8 @@ moves until `MoveBoardOverlay` puts it somewhere of its own.
 **OWNERSHIP**
 
 The caller's image is read and not kept. The converted one is the
-library's - in internal memory for a driver whose interrupts read it -
-freed by the next SetBoardOverlay or by DeleteBoard.
+library's - in internal memory where a driver whose interrupts read
+it lays it - freed by the next SetBoardOverlay or by DeleteBoard.
 
 **NOTES**
 
@@ -2747,9 +2747,10 @@ refused with the driver's answer.
 **OWNERSHIP**
 
 The caller's image is read and not kept; it may be freed on return.
-The converted one is the library's - in internal memory for a driver
-whose interrupts read its handles (`RTGDF_INTERNAL_INSTANCE`) - freed by the
-next SetBoardPointer or by DeleteBoard.
+The converted one is the library's - in internal memory where a
+driver whose interrupts read its handles lays it
+(`RTGDF_INTERNAL_INSTANCE`) - freed by the next SetBoardPointer or by
+DeleteBoard.
 
 **NOTES**
 

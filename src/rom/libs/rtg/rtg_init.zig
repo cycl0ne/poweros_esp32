@@ -85,7 +85,10 @@ pub const LIBRARY_VERSION = 1;
 /// their own; a board's compose lock replaces the one pointer lock.
 /// RefreshRect takes null for the whole buffer, and RefreshBitMap is
 /// gone.
-pub const LIBRARY_REVISION = 24;
+/// 25: a driver may say how many bands its display reads, and which ops
+/// it has, until its attach answers (RtgBoard.direct_bands); an image
+/// the library lays is taken from any memory.
+pub const LIBRARY_REVISION = 25;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

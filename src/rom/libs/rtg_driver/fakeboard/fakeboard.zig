@@ -753,7 +753,7 @@ fn videoMove(board: *rtg.RtgBoard, layer: *rtg.RtgVideoLayer, place: *const rtg.
 /// rgb565 only: what a board's engine would do, done by hand so the tests
 /// can compare bytes.
 fn rows16(bitmap: *rtg.RtgBitMap, y: u32) []u16 {
-    const start = bitmap.rowPtr(y);
+    const start = bitmap.pixels.? + @as(usize, y) * bitmap.pitch;
     return @as([*]u16, @ptrCast(@alignCast(start)))[0..bitmap.width];
 }
 

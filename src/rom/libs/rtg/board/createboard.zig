@@ -40,8 +40,9 @@ const _board = @import("_board.zig");
 /// driver can read from its interrupts (`RTGDF_INTERNAL_INSTANCE`), the
 /// instance cleared. The handle has the driver, the device, the ops, the
 /// region and the flags of the description; the driver fills in the
-/// rest - its modes (`AddBoardMode`), its info, the region where it was
-/// not known - before its `attach` answers. The board is on no list yet and has no name: it
+/// rest - its modes (`AddBoardMode`), its info, and the region, the ops
+/// and the bands its display reads where they were not known before the
+/// hardware answered - before its `attach` answers. The board is on no list yet and has no name: it
 /// joins the library's list once the `attach` has answered `RTGERR_OK`,
 /// named after its driver and a number in the order the driver's boards
 /// were made ("rgb.0"), the firmware's picture last on the list. A board
@@ -96,7 +97,6 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     private.* = .{};
     sys.InitSemaphore(&private.lock);
     sys.InitSemaphore(&private.compose.lock);
-    private.compose.direct_bands = spec.direct_bands;
     const board = &private.board;
 
     board.node.type = .graphics;
@@ -105,6 +105,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     board.device = device;
     board.unit = spec.unit;
     board.ops = spec.ops;
+    board.direct_bands = spec.direct_bands;
     board.region = spec.region;
     board.info.driver = driver.spec.name;
     board.info.id_string = driver.spec.id_string;
