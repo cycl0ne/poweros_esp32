@@ -27,6 +27,13 @@
 //! contacts over I2C - which an interrupt cannot do - turns the change
 //! into events, and hands them to whatever reads are waiting.
 //!
+//! A contact is reported where it is in the picture, not on the glass:
+//! turned as the screen is turned from the panel, and - where the
+//! display shows its picture mirrored (rtg.library's MirrorBoard) - as
+//! far from the other edge. The machine's display, the first board
+//! rtg.library lists, says how it is mirrored, and is read at every
+//! report.
+//!
 //! The device stays up once it is: the task, the interrupt server and the
 //! claimed pin are the machine's for good, as i2c.device keeps its units.
 //! A read waiting for an event is queued on the unit, so AbortIO and
@@ -58,7 +65,7 @@ const BoardPin = expansion.BoardPin;
 
 pub const DEVICE_NAME = touch.TOUCHNAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "22.10.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -144,6 +151,9 @@ const TouchBase = extern struct {
     i2c_io: i2c.IOExtI2C = .{},
     timer_io: timer.TimeRequest = .{},
     exp: ?*ExpanderBase = null,
+    /// rtg.library, opened by the task where the machine has it: its
+    /// first board says how the picture is mirrored.
+    rtg_base: ?*sdk.interface.rtg.RtgBase = null,
     address: u16 = 0,
     pad2: u16 = 0,
     /// Set when the controller would not answer a register read with a
@@ -291,6 +301,10 @@ fn bringUp(tb: *TouchBase) bool {
         .panel => bringUpPanel(tb) orelse return false,
         .none => return false,
     };
+
+    // The displays, for how the picture is mirrored; a machine without
+    // them has a picture that is not.
+    if (sys.OpenLibrary(sdk.rtg.RTGNAME, 1)) |rtg_lib| tb.rtg_base = @ptrCast(rtg_lib);
 
     sys.AddIntServer(intbits.INTB_GPIO, &tb.int);
     gpio.interruptClear(pin);
@@ -579,6 +593,16 @@ fn poll(tb: *TouchBase) void {
     // Where the fingers are on the screen, which is where a program draws.
     if (tb.turn != .none) {
         for (contacts[0..n]) |*c| c.* = _touch.turned(c.*, tb.turn, tb.glass_width, tb.glass_height);
+    }
+    // And in the picture, where the display shows it mirrored.
+    if (tb.rtg_base) |rb| {
+        if (rb.NextBoard(null)) |board| {
+            const mirror_x = board.info.mirror_x != 0;
+            const mirror_y = board.info.mirror_y != 0;
+            if (mirror_x or mirror_y) {
+                for (contacts[0..n]) |*c| c.* = _touch.mirrored(c.*, mirror_x, mirror_y, tb.info.width, tb.info.height);
+            }
+        }
     }
     report(tb, contacts[0..n]);
 }

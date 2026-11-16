@@ -172,7 +172,10 @@ a stream's copy - rtg.library composes it: screens pulled down over
 each other, a dragged icon and the pointer over them, so a driver for
 such a display says only which rectangle of it to deliver. A buffer
 that is not the mode's width is scaled into the picture as it is
-composed, so a picture made for one monitor is shown on the next. A display
+composed, so a picture made for one monitor is shown on the next; the
+picture is mirrored either way, pointer and all, by the display's own
+hardware or by the library; and a board is blank or asleep at a call,
+its picture and its backlight back as they were on waking. A display
 that must never read a buffer drawn in - an HDMI port reading RAM past
 the caches, an emulator's GPU - is flipped between two frames: the
 library makes each picture in the one the display is not reading, from

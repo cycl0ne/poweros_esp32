@@ -104,7 +104,7 @@ pub const LIBRARY_VERSION = 0;
 /// is handed on as rectangles on every board (`RefreshRect`), and
 /// gathered by the pixels between them. The version stays 0 until there
 /// is something to demand of it.
-pub const LIBRARY_REVISION = 50;
+pub const LIBRARY_REVISION = 51;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.

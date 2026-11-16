@@ -145,5 +145,8 @@ pub fn ShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]co
     defer boards.release(rb, board);
     var wanted: ?*modes.Record = null;
     if (mode_id != 0) wanted = modes.byId(board, mode_id) orelse return err.RTGERR_BAD_MODE;
-    return _display.show(rb, board, wanted, shown);
+    const code = _display.show(rb, board, wanted, shown);
+    // The first picture is what the backlight is lit with.
+    if (code == err.RTGERR_OK) _display.light(rb, board);
+    return code;
 }

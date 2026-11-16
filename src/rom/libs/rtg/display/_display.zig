@@ -43,6 +43,18 @@
 //! the driver's op is asked and then the picture made and flipped to. A
 //! flip the driver refuses is the show's answer, and what was in place
 //! is put back.
+//!
+//! **Power** (`power`). A board is on, blank or asleep. Blank is the
+//! library's: it composes black for a board whose picture it composes,
+//! and has the driver of any other show nothing while the bands stay
+//! the library's (`ask`). Asleep is the driver's (`power`), asked once
+//! the picture is black; a board whose driver has none is blank
+//! instead. What is shown or drawn meanwhile is kept, and is on the
+//! glass on waking. A board the library composes nothing for, whose
+//! driver has the op, is its driver's in all three states.
+//!
+//! **The backlight** is lit with the first picture (`light`): at what
+//! the board's device asks (`RTGA_Brightness`), else in full.
 
 const sdk = @import("sdk");
 const rtg = sdk.rtg;
@@ -141,10 +153,15 @@ fn check(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgB
 }
 
 /// The driver's op, with a mode and bands, read the way the board's
-/// compose state says: direct, or as the library's picture.
-fn ask(board: *rtg.RtgBoard, record: *modes.Record, bands: []const rtg.RtgBand, flags: u32, frame: ?*rtg.RtgBitMap) i32 {
+/// compose state says: direct, or as the library's picture. A board the
+/// library composes nothing for is handed no band while the library
+/// keeps it dark.
+fn ask(board: *rtg.RtgBoard, record: *modes.Record, shown: []const rtg.RtgBand, flags: u32, frame: ?*rtg.RtgBitMap) i32 {
     const op = board.ops.?.show.?;
-    const direct = bands.len != 0 and composer.stateOf(board).direct;
+    const state = composer.stateOf(board);
+    const hidden = state.dark and !composer.composes(board);
+    const bands: []const rtg.RtgBand = if (hidden) &.{} else shown;
+    const direct = bands.len != 0 and state.direct;
     return op(board, &.{
         .mode = &record.mode,
         .timings = &record.timings,
@@ -341,6 +358,93 @@ pub fn otherWay(rb: *RtgBase, board: *rtg.RtgBoard) i32 {
     const current = private.mode orelse return err.RTGERR_NO_MODE;
     const shown = private.bands[0..private.band_count];
     return present(rb, board, current, shown, 0, shown);
+}
+
+/// A board put in a power state: on, blank or asleep.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock is held.
+/// - `wanted` - RTGPWR_ON, RTGPWR_BLANK or RTGPWR_ASLEEP.
+///
+/// RESULT:
+/// The state the board is in then - RTGPWR_BLANK where it was asked to
+/// sleep and cannot - or an error below 0, and the board as it was.
+pub fn power(rb: *RtgBase, board: *rtg.RtgBoard, wanted: u32) i32 {
+    const on = rtg.boards.RTGPWR_ON;
+    const blank = rtg.boards.RTGPWR_BLANK;
+    const asleep = rtg.boards.RTGPWR_ASLEEP;
+    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
+    if (wanted > asleep) return err.RTGERR_BAD_ARG;
+    if (boards.dark(board)) return err.RTGERR_NO_DISPLAY;
+    const now = board.info.power;
+    if (wanted == now) return @intCast(now);
+
+    composer.obtainWhole(rb, board);
+    defer composer.releaseWhole(rb, board);
+    var reached = wanted;
+    if (composer.composes(board) or ops.power == null) {
+        // Blank is the library's; the driver is asked to sleep and to
+        // wake, around it.
+        if (wanted == on) {
+            if (now == asleep) {
+                const code = ops.power.?(board, on);
+                if (code < 0) return code;
+            }
+            const code = composer.darken(rb, board, false);
+            if (code != err.RTGERR_OK) {
+                if (now == asleep) _ = ops.power.?(board, asleep);
+                return code;
+            }
+        } else {
+            if (now == on) {
+                const code = composer.darken(rb, board, true);
+                if (code != err.RTGERR_OK) return code;
+            }
+            reached = blank;
+            if (wanted == asleep or now == asleep) {
+                if (ops.power) |op| {
+                    // Asleep from on or blank, or awake again and still
+                    // black.
+                    const code = op(board, if (wanted == asleep) asleep else on);
+                    if (code < 0) {
+                        if (now == on) _ = composer.darken(rb, board, false);
+                        return code;
+                    }
+                    if (wanted == asleep and code == asleep) reached = asleep;
+                }
+            }
+        }
+    } else {
+        // The display reads its buffers of alone: every state is its
+        // driver's.
+        const code = ops.power.?(board, wanted);
+        if (code < 0) return code;
+        reached = @intCast(code);
+    }
+    if (reached != now) {
+        board.info.power = reached;
+        boards.changed(rb, board);
+    }
+    return @intCast(reached);
+}
+
+/// The board's backlight lit for the first time, with its first
+/// picture: at the brightness the library keeps for it. From then on
+/// it is `SetBoardBrightness` and the power state that change it.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, just shown something; its lock is held, its
+///   compose lock not.
+pub fn light(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    _ = rb;
+    const private = boards.privateOf(board);
+    if (private.lit or private.band_count == 0) return;
+    private.lit = true;
+    if (board.info.caps & rtg.boards.RTGBC_BRIGHTNESS == 0) return;
+    if (board.info.power == rtg.boards.RTGPWR_ASLEEP) return;
+    _ = board.ops.?.set_brightness.?(board, board.info.brightness);
 }
 
 /// A board made to show nothing and put in no mode: its monitor has not

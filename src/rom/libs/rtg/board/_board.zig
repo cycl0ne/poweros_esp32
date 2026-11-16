@@ -76,6 +76,9 @@ pub const Private = struct {
     compose: composer.State = .{},
     /// How often a new buffer was shown.
     buffer_swaps: u32 = 0,
+    /// Whether the backlight was lit: with the board's first picture, or
+    /// by the first SetBoardBrightness.
+    lit: bool = false,
     /// The frames its driver says ended, and who waits for one
     /// (`frame/_frame.zig`).
     frames: frames.State = .{},
@@ -194,7 +197,6 @@ const firmware_priority = -100;
 /// Called with the device list's and the driver list's locks held; takes
 /// the board list's.
 pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
-    const rtg_lib = rb.iface();
     const sys = rb.sys_base;
     const private = privateOf(board);
     if (private.listed) return;
@@ -212,6 +214,23 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     // A band of another size than the mode's is scaled: by the library
     // as it composes, or by the board's planes.
     if (composer.composes(board) or board.info.flags & rtg.boards.RTGBF_SCALES != 0) board.info.caps |= rtg.boards.RTGBC_SCALE_BANDS;
+    // Mirrored: by the board's own hardware for the axes its driver
+    // said, where it filled the op in, and by the library for every axis
+    // of a picture it composes.
+    const both = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y;
+    if (board.ops == null or board.ops.?.mirror == null) private.compose.turns = 0;
+    board.info.caps |= private.compose.turns;
+    if (composer.composes(board)) board.info.caps |= both;
+    // A backlight where the driver sets one and said how many levels it
+    // has: it starts at what the device's tags ask, else in full, and
+    // is lit with the first picture.
+    if (board.info.caps & rtg.boards.RTGBC_BRIGHTNESS == 0) board.info.brightness_steps = 0;
+    if (board.info.brightness_steps == 0) {
+        board.info.caps &= ~@as(u32, rtg.boards.RTGBC_BRIGHTNESS);
+        board.info.brightness = 0;
+    } else {
+        board.info.brightness = @min(request.brightness orelse 100, 100);
+    }
     // Whether its screens' windows are composed is the board's to say,
     // for intuition to read: the device's tags, or its driver where they
     // say nothing.
@@ -269,7 +288,6 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     // a buffer is aligned to.
     modes.setPitches(rb, board);
 
-    if (request.brightness) |percent| _ = rtg_lib.SetBoardBrightness(board, percent);
     // A board more: whoever asked is told.
     changed(rb, board);
 }
@@ -339,7 +357,6 @@ pub fn retire(rb: *RtgBase, board: *rtg.RtgBoard) void {
     // it.
     _ = shows.clear(rb, board);
     board.info.flags |= rtg.boards.RTGBF_GONE | rtg.boards.RTGBF_NO_DISPLAY;
-    board.info.flags &= ~@as(u32, rtg.boards.RTGBF_DISPLAY_ON);
     rb.sys_base.Remove(&private.device_link);
     private.device_link = .{};
     board.device = null;
@@ -358,7 +375,9 @@ pub fn dark(board: *const rtg.RtgBoard) bool {
 
 /// Which RTGBC_ bits an ops table amounts to. The driver does not say what
 /// it can do; what it filled in says it. RTGBC_BANDS is not among them:
-/// it also hangs on how many bands the display reads itself.
+/// it also hangs on how many bands the display reads itself. Nor are the
+/// mirror's two, which hang on the axes the driver said, nor is the
+/// backlight's settled here: a driver with no line wired says no levels.
 ///
 /// INPUTS:
 /// - `ops` - the driver's operations.
@@ -366,11 +385,10 @@ pub fn capsOf(ops: *const rtg.RtgBoardOps) u32 {
     var caps: u32 = 0;
     if (ops.show != null) caps |= rtg.boards.RTGBC_SHOW;
     if (ops.refresh != null or ops.update != null or ops.flip != null) caps |= rtg.boards.RTGBC_REFRESH;
-    if (ops.display != null) caps |= rtg.boards.RTGBC_DISPLAY;
+    if (ops.power != null) caps |= rtg.boards.RTGBC_POWER;
     if (ops.set_brightness != null) caps |= rtg.boards.RTGBC_BRIGHTNESS;
     if (ops.stats != null) caps |= rtg.boards.RTGBC_STATS;
     if (ops.control != null) caps |= rtg.boards.RTGBC_CONTROL;
-    if (ops.mirror != null) caps |= rtg.boards.RTGBC_MIRROR;
     if (ops.detect != null) caps |= rtg.boards.RTGBC_MONITOR;
     // A pointer and an overlay: the board's own, or the library's on a
     // board whose picture it composes.

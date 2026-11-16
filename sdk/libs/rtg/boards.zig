@@ -36,6 +36,12 @@
 //! board, makes the next picture in the one the display is not reading,
 //! from what changed since, and has the driver flip to it: a drawing is
 //! seen a frame or two after it was made, and whole.
+//!
+//! What the library does for a picture it composes it does for every
+//! such board: a band scaled, the picture mirrored about either axis, and
+//! black while the board is blank or asleep. A driver adds what its own
+//! hardware does - `mirror` for the axes it turns itself, `power` for a
+//! display that sleeps, `set_brightness` for a backlight.
 
 const nodes = @import("../exec/nodes.zig");
 const lists = @import("../exec/lists.zig");
@@ -135,16 +141,32 @@ pub const RtgBoardInfo = extern struct {
     device: ?[*:0]const u8 = null,
     /// Raised whenever something of the board changed that a task told of
     /// it (`AddRtgNotify`) may want to read again: its monitor, its list
-    /// of modes, the mode it is in, whether it is gone (rtg 20).
+    /// of modes, the mode it is in, whether it is gone (rtg 20), its
+    /// power state and how its picture is mirrored (rtg 29).
     changes: u32 = 0,
+    /// RTGPWR_*: whether the picture is shown, black, or the display
+    /// asleep (`SetBoardPower`) (rtg 29).
+    power: u32 = 0,
+    /// How many levels its backlight has (`SetBoardBrightness`): 0 for
+    /// none, 2 for a line that is on or off, 101 for a level for each per
+    /// cent (rtg 29).
+    brightness_steps: u32 = 0,
 };
+
+/// RtgBoardInfo.power, and what `SetBoardPower` is asked for and answers.
+/// The picture is shown.
+pub const RTGPWR_ON: u32 = 0;
+/// The picture is black, everything else running: back in a frame.
+pub const RTGPWR_BLANK: u32 = 1;
+/// The display sleeps - its backlight off, a panel in its sleep, a
+/// monitor sent to sleep: back in about a second.
+pub const RTGPWR_ASLEEP: u32 = 2;
 
 /// RtgBoardInfo.flags
 /// There is no display: the board's device has gone (RTGBF_GONE comes
 /// with it, and nothing is shown on it any more), or no monitor is on its
 /// connector - it is shown on all the same, for the monitor that comes.
 pub const RTGBF_NO_DISPLAY: u32 = 1 << 0;
-pub const RTGBF_DISPLAY_ON: u32 = 1 << 1;
 /// A mode has been set.
 pub const RTGBF_MODE_SET: u32 = 1 << 2;
 /// A buffer has been given to it and is up.
@@ -202,15 +224,25 @@ pub const RTGBC_VBLANK: u32 = 1 << 3;
 /// (`RefreshRect`) before it is seen: the driver filled in `refresh` or
 /// `update`.
 pub const RTGBC_REFRESH: u32 = 1 << 4;
-pub const RTGBC_DISPLAY: u32 = 1 << 5;
+/// Its display sleeps by itself (`SetBoardPower`, `RTGPWR_ASLEEP`): its
+/// driver filled in `power`. A board without it is blank when asked to
+/// sleep.
+pub const RTGBC_POWER: u32 = 1 << 5;
+/// It has a backlight to set (`SetBoardBrightness`): its driver filled
+/// in `set_brightness` and said how many levels it has
+/// (`brightness_steps`).
 pub const RTGBC_BRIGHTNESS: u32 = 1 << 6;
 pub const RTGBC_STATS: u32 = 1 << 7;
 pub const RTGBC_CONTROL: u32 = 1 << 8;
-/// It can mirror the picture about an axis. A board that cannot leaves
-/// turning the picture to whoever draws it.
-pub const RTGBC_MIRROR: u32 = 1 << 9;
+/// Its picture can be mirrored left to right (`MirrorBoard`): by the
+/// library where it composes the picture, or by the board's own
+/// hardware where its driver said so.
+pub const RTGBC_MIRROR_X: u32 = 1 << 9;
 /// It says what is on its connector: its driver filled in `detect`.
 pub const RTGBC_MONITOR: u32 = 1 << 10;
+/// Its picture can be mirrored top to bottom (`MirrorBoard`), as
+/// `RTGBC_MIRROR_X`.
+pub const RTGBC_MIRROR_Y: u32 = 1 << 11;
 /// A pointer is laid over the picture on the way to the glass
 /// (SetBoardPointer, MoveBoardPointer, ShowBoardPointer), without the
 /// picture holding it: by the board's own hardware or driver
@@ -354,6 +386,16 @@ pub const RtgBoardSpec = extern struct {
     /// `RtgBoard.direct_bands`, and `RtgBoard.ops` where the ops hang on
     /// it too, before its `attach` answers.
     direct_bands: u32 = 0,
+    /// RTGBC_*: what the driver says of its own hardware that its ops
+    /// alone do not: `RTGBC_MIRROR_X` and `RTGBC_MIRROR_Y` for the axes
+    /// its `mirror` turns. Every other bit is the library's to work out.
+    caps: u32 = 0,
+    /// How many levels the backlight its `set_brightness` drives has: 0
+    /// for none - no line is wired - 2 for one that is on or off, 101 for
+    /// a level for each per cent. A driver that knows it only once it has
+    /// read its part's lines writes `RtgBoard.info.brightness_steps`
+    /// before its `attach` answers.
+    brightness_steps: u32 = 0,
 };
 
 /// A board. What the driver keeps for itself is `instance`, which the
@@ -490,8 +532,9 @@ pub const RtgBoardOps = extern struct {
     refresh: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
     /// The display has a picture of its own, and this rectangle of it
     /// changed: fetch its lines with `ComposeLines` and deliver them.
-    /// The rectangle lies inside the display, in the picture's own
-    /// coordinates, and is never empty. Called with the board's compose
+    /// The rectangle lies inside the display, in the display's own
+    /// coordinates - the picture's, mirrored where the library mirrors
+    /// it - and is never empty. Called with the board's compose
     /// lock held, in the task that drew or moved the pointer; it may
     /// wait. What it answers is what `RefreshRect` answers.
     update: ?*const fn (*RtgBoard, *const bitmaps.RtgRect) callconv(.c) i32 = null,
@@ -519,15 +562,36 @@ pub const RtgBoardOps = extern struct {
     /// mode, and again after a flip that failed. Null: the library takes
     /// the frames from where it takes the board's buffers.
     frames: ?*const fn (*RtgBoard, *const RtgMode, *[2]?*RtgBitMap) callconv(.c) i32 = null,
-    /// The display enable. Not the backlight.
-    display: ?*const fn (*RtgBoard, bool) callconv(.c) i32 = null,
-    /// 0 to 100, the right way round whatever the part does.
+    /// Put the display in a power state (RTGPWR_*) and answer the state
+    /// it is in then, or an error below 0, which leaves it as it was.
+    /// `RTGPWR_ASLEEP`: the output down as far as it comes back from by
+    /// itself - the backlight off, a panel's display off, a monitor sent
+    /// to sleep. `RTGPWR_ON`: all of that back, the backlight at
+    /// `RtgBoard.info.brightness`. On a board the library composes the
+    /// picture for, those two are all it is asked: a blank picture is
+    /// the library's, which composes black, and has done so before the
+    /// display is put to sleep. A driver that cannot sleep answers
+    /// `RTGPWR_BLANK`. On a board the display reads its buffers of
+    /// alone, it is asked for `RTGPWR_BLANK` too: the picture dark,
+    /// everything else running. Called with the board's lock and its
+    /// compose lock held; it may wait. Null: the library blanks - black
+    /// where it composes, nothing shown where it does not - and the
+    /// board never sleeps.
+    power: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
+    /// The backlight, 0 to 100, the right way round whatever the part
+    /// does. The library keeps the value (`RtgBoard.info.brightness`),
+    /// and does not ask while the board is asleep. Called with the
+    /// board's lock held.
     set_brightness: ?*const fn (*RtgBoard, u32) callconv(.c) i32 = null,
-    brightness: ?*const fn (*RtgBoard) callconv(.c) u32 = null,
-    /// Mirror the picture about each axis: a board that can do it in its
-    /// own hardware - a controller with a scan direction to set - fills
-    /// this in; one that streams memory in the order it is written
-    /// cannot, and leaves it null.
+    /// Mirror the picture about each axis in the board's own hardware -
+    /// a controller's scan direction, planes read backwards, a stream's
+    /// lines sent last first - for the axes the driver said it turns
+    /// (`RtgBoardSpec.caps`); an axis it did not say is never asked true.
+    /// Called with the board's lock and its compose lock held; where
+    /// something is shown, the library has it shown again once this has
+    /// answered RTGERR_OK - `update` for the whole display, or `show`.
+    /// Null: the library mirrors the picture as it composes it, and a
+    /// board it composes nothing for is not mirrored.
     mirror: ?*const fn (*RtgBoard, bool, bool) callconv(.c) i32 = null,
     /// Fill in the counters.
     stats: ?*const fn (*RtgBoard, *RtgBoardStats) callconv(.c) void = null,

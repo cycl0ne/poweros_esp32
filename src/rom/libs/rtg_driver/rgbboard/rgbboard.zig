@@ -48,7 +48,7 @@ const DRIVER_NAME = "rgb";
 /// The panel shows RGB565 and nothing else: two bytes a pixel.
 const bytes_per_pixel = 2;
 const VERSION = 1;
-const REVISION = 12;
+const REVISION = 13;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
@@ -74,9 +74,21 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGBF_STREAMING,
         // The stream's copy reads every band of a show itself.
         .direct_bands = rtg.RTG_MAX_BANDS,
+        // It sends its lines last first, and cannot turn one round.
+        .caps = rtg.boards.RTGBC_MIRROR_Y,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .rtg_base = rb, .board = board, .config = wanted };
+    // A panel with no display line has nothing to go dark by but its
+    // pictures, which is the library's.
+    if (wanted.display_pin.kind == sdk.expansion.boardpin.BPIN_NONE) board.ops = &ops_no_line;
+    // The backlight: a part with a brightness of its own, a line that
+    // is on or off, or none.
+    board.info.brightness_steps = switch (wanted.backlight_pin.kind) {
+        sdk.expansion.boardpin.BPIN_NONE => 0,
+        sdk.expansion.boardpin.BPIN_DRIVER => 101,
+        else => 2,
+    };
 
     const code = panels.bringUp(panel);
     if (code != err.RTGERR_OK) {
@@ -103,7 +115,6 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.info.buffers = panel.frames;
-    board.info.brightness = brightness(board);
     return err.RTGERR_OK;
 }
 
@@ -137,6 +148,8 @@ fn showBitMap(board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32 {
     if (bm.width != setup.width or bm.height != setup.height) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.pitch != panel.pitch) return err.RTGERR_NOT_DISPLAYABLE;
     if (bm.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    // Sent last line first, a picture is a chain a line, as bands are.
+    if (panel.mirror_y) return panels.showBands(panel, &.{.{ .bitmap = bm }});
     if (panel.streaming and panel.aligned) return panels.flip(panel, pixels);
     return panels.start(panel, pixels);
 }
@@ -207,33 +220,48 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
     return err.RTGERR_OK;
 }
 
-/// The panel's display enable, which is a line on whatever the board wired
-/// it to. Not the backlight.
-fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
+/// The board's power state, by the panel's display enable - a line on
+/// whatever the board wired it to: off while the board is blank or
+/// asleep, the stream running on, and asleep the backlight off too.
+/// Awake, the line is on again and the backlight as the library keeps
+/// it.
+fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     const panel = panelOf(board);
-    if (panel.config.display_pin.kind == sdk.expansion.boardpin.BPIN_NONE) return err.RTGERR_NOT_SUPPORTED;
-    return if (panels.setDisplayLine(panel, on)) err.RTGERR_OK else err.RTGERR_NO_DISPLAY;
+    const on = state == rtg.boards.RTGPWR_ON;
+    if (state == rtg.boards.RTGPWR_ASLEEP) _ = light(panel, 0);
+    if (!panels.setDisplayLine(panel, on)) return err.RTGERR_NO_DISPLAY;
+    if (on) _ = light(panel, board.info.brightness);
+    return @intCast(state);
 }
 
 /// The backlight, 0 to 100, the right way round whatever the part does.
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
-    const panel = panelOf(board);
-    const ex = openExpander(panel) orelse return err.RTGERR_NOT_SUPPORTED;
-    return if (ex.SetBacklight(percent)) err.RTGERR_OK else err.RTGERR_NO_DISPLAY;
+    return if (light(panelOf(board), percent)) err.RTGERR_OK else err.RTGERR_NO_DISPLAY;
 }
 
-fn brightness(board: *rtg.RtgBoard) callconv(.c) u32 {
-    const panel = panelOf(board);
-    const ex = openExpander(panel) orelse return 0;
-    return ex.Backlight();
+/// The backlight driven: a part of the expander with a brightness of its
+/// own, or a line that is on for anything above 0. False for one that
+/// did not take it, and where none is wired.
+fn light(panel: *Panel, percent: u32) bool {
+    const pin = panel.config.backlight_pin;
+    return switch (pin.kind) {
+        sdk.expansion.boardpin.BPIN_NONE => false,
+        sdk.expansion.boardpin.BPIN_DRIVER => blk: {
+            const ex = panels.openExpander(panel) orelse break :blk false;
+            break :blk ex.SetBacklight(percent);
+        },
+        else => panels.setLine(panel, pin, percent != 0),
+    };
 }
 
-/// This board's backlight is a part of the expander, not a pad: it has its
-/// own brightness rather than a level.
-fn openExpander(panel: *Panel) ?*sdk.interface.expander.ExpanderBase {
-    if (panel.config.backlight_pin.kind != sdk.expansion.boardpin.BPIN_DRIVER) return null;
-    const base = panel.sys.OpenResource(expander.EXPANDERNAME) orelse return null;
-    return @ptrCast(@alignCast(base));
+/// The picture sent last line first, or as it lies: mirrored top to
+/// bottom by the order of its lines. A line is never turned round. The
+/// library has what is shown shown again, which makes the copy's chains
+/// in the new order.
+fn mirror(board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) callconv(.c) i32 {
+    if (mirror_x) return err.RTGERR_NOT_SUPPORTED;
+    panelOf(board).mirror_y = mirror_y;
+    return err.RTGERR_OK;
 }
 
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
@@ -300,13 +328,20 @@ const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
     .refresh = &refresh,
-    .display = &display,
+    .power = &power,
     .set_brightness = &setBrightness,
-    .brightness = &brightness,
+    .mirror = &mirror,
     .stats = &stats,
     .control = &control,
     .pointer = &pointer_ops,
     .overlay = &overlay_ops,
+};
+
+/// The same for a panel with no display line wired.
+const ops_no_line = made: {
+    var less = ops;
+    less.power = null;
+    break :made less;
 };
 
 const driver_ops = rtg.RtgDriverOps{ .attach = &attach };

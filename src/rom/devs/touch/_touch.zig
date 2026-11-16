@@ -60,6 +60,16 @@ pub fn turned(c: TouchContact, turn: Turn, width: u32, height: u32) TouchContact
     return out;
 }
 
+/// A contact on the screen, where it is in a picture the display shows
+/// mirrored about each axis: as far from the other edge. `width` and
+/// `height` are the screen's.
+pub fn mirrored(c: TouchContact, mirror_x: bool, mirror_y: bool, width: u32, height: u32) TouchContact {
+    var out = c;
+    if (mirror_x) out.x = @as(i32, @intCast(width)) - 1 - c.x;
+    if (mirror_y) out.y = @as(i32, @intCast(height)) - 1 - c.y;
+    return out;
+}
+
 fn find(in: []const TouchContact, id: u32) ?TouchContact {
     for (in) |c| {
         if (c.id == id) return c;
@@ -185,6 +195,21 @@ test "queue: taken in order and linked, the oldest dropped when full" {
     _ = q.take(&one);
     // The first three went to make room.
     try testing.expectEqual(@as(i32, 3), one[0].x);
+}
+
+test "mirrored: a finger on a picture shown mirrored lands on what it touches" {
+    const c: TouchContact = .{ .id = 1, .x = 10, .y = 300, .size = 3 };
+    try testing.expectEqual(c, mirrored(c, false, false, 480, 320));
+    const across = mirrored(c, true, false, 480, 320);
+    try testing.expectEqual(@as(i32, 469), across.x);
+    try testing.expectEqual(@as(i32, 300), across.y);
+    const both = mirrored(c, true, true, 480, 320);
+    try testing.expectEqual(@as(i32, 469), both.x);
+    try testing.expectEqual(@as(i32, 19), both.y);
+    // A corner lands on the corner across.
+    const corner = mirrored(.{ .x = 0, .y = 0 }, true, true, 480, 320);
+    try testing.expectEqual(@as(i32, 479), corner.x);
+    try testing.expectEqual(@as(i32, 319), corner.y);
 }
 
 test "turned: a finger on the glass, where it is on the screen" {

@@ -160,6 +160,7 @@ flowchart TB
     m_touch_device --> m_expander_resource
     m_touch_device --> m_gpio_resource
     m_touch_device --> m_i2c_device
+    m_touch_device --> m_rtg_library
     m_touch_device --> m_timer_device
     m_usbport_resource --> m_ps2_resource
     m_usbserial_device --> m_usbport_resource

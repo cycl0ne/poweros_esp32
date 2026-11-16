@@ -121,6 +121,14 @@ pub const Panel = struct {
     vblank: exec.Interrupt = .{},
     /// Whether the pixel stream is running at all.
     streaming: bool = false,
+    /// Whether the picture is sent last line first: mirrored top to
+    /// bottom. The copy then reads a chain a line (`bandChains`), and
+    /// the pointer and the overlay are laid as far from the bottom,
+    /// their own rows last first (`pointer.zig`).
+    mirror_y: bool = false,
+    /// expander.resource, once it was asked for: a control line or the
+    /// backlight on it.
+    expander_base: ?*sdk.interface.expander.ExpanderBase = null,
     /// Whether it has been put in step since it was started, and where the
     /// active area is to go at the next blanking.
     aligned: bool = false,
@@ -199,13 +207,16 @@ fn measureAgainst(panel: *Panel) void {
     panel.fill_cycles = panel.cycles_per_us;
 }
 
-fn openExpander(panel: *Panel) ?*sdk.interface.expander.ExpanderBase {
+/// expander.resource, found once and kept.
+pub fn openExpander(panel: *Panel) ?*sdk.interface.expander.ExpanderBase {
+    if (panel.expander_base) |kept| return kept;
     const base = panel.sys.OpenResource(expander.EXPANDERNAME) orelse return null;
-    return @ptrCast(@alignCast(base));
+    panel.expander_base = @ptrCast(@alignCast(base));
+    return panel.expander_base;
 }
 
 /// A control line, wherever the board has it wired.
-fn setLine(panel: *Panel, pin: sdk.expansion.BoardPin, on: bool) bool {
+pub fn setLine(panel: *Panel, pin: sdk.expansion.BoardPin, on: bool) bool {
     const level = if (pin.active_low != 0) !on else on;
     return switch (pin.kind) {
         sdk.expansion.boardpin.BPIN_EXPANDER => blk: {
@@ -412,7 +423,8 @@ fn freeChains(panel: *Panel, chains: [*]?*dmares.DMADescriptor) void {
 }
 
 /// The chains over a picture made of bands: display line y comes from
-/// the row of the band that covers it (`rowOf`). A descriptor
+/// the row of the band that covers it (`rowOf`) - the line as far from
+/// the bottom, where the picture is sent last line first. A descriptor
 /// per line, the stretch's last one ending it, all in one block with the
 /// stretches' heads in front, so `freeBanded` frees it whole. Null when
 /// there is no memory for them.
@@ -430,11 +442,14 @@ pub fn bandChains(panel: *Panel, bands: []const rtg.RtgBand) ?[*]?*dmares.DMADes
     const memory = panel.sys.AllocVec(heads + count * @sizeOf(dmares.DMADescriptor), exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return null;
     const chains: [*]?*dmares.DMADescriptor = @ptrCast(@alignCast(memory));
     const descriptors: [*]dmares.DMADescriptor = @ptrFromInt(@intFromPtr(memory) + heads);
-    var band: usize = 0;
     for (0..count) |y| {
-        while (band + 1 < bands.len and bands[band + 1].line <= y) band += 1;
+        // The picture's line this display line shows, and the band that
+        // covers it: the last that starts at or above it.
+        const of_picture = if (panel.mirror_y) count - 1 - y else y;
+        var band: usize = 0;
+        while (band + 1 < bands.len and bands[band + 1].line <= of_picture) band += 1;
         const shown = bands[band];
-        const row = rowOf(shown, @intCast(y));
+        const row = rowOf(shown, @intCast(of_picture));
         const from = @intFromPtr(shown.bitmap.pixels.?) + row * shown.bitmap.pitch;
         const last = (y + 1) % lines == 0;
         const flags = dmares.DMADF_OWNER | if (last) dmares.DMADF_SUC_EOF else 0;

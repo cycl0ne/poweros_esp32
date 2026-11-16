@@ -30,12 +30,17 @@ const _board = @import("_board.zig");
 /// field near the end.
 ///
 /// BEHAVIOR:
-/// The display memory still free, its largest piece and the brightness
-/// are read fresh; the rest is what the board already says about itself.
+/// The display memory still free and its largest piece are read fresh;
+/// the rest is what the board already says about itself: the mode it is
+/// in, its power state (`power`), the brightness the library keeps for
+/// its backlight and how many levels that has (`brightness`,
+/// `brightness_steps`), and how its picture is mirrored (`mirror_x`,
+/// `mirror_y`) - which is what whoever turns a touch on the glass into a
+/// place in the picture reads.
 ///
 /// CONTEXT:
-/// - Waits: if the driver's brightness read does, and while another task
-///   holds the board's lock - through a show, which may last a frame.
+/// - Waits: while another task holds the board's lock - through a show,
+///   which may last a frame.
 /// - Interrupts: no.
 /// - Locks: takes the board's lock while it reads what is free of the
 ///   display memory. No spinlock may be held.
@@ -69,8 +74,5 @@ pub fn GetBoardInfo(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo,
         board.info.caps &= ~@as(u32, rtg.boards.RTGBC_VBLANK);
     }
     _board.release(rb, board);
-    if (board.ops) |ops| {
-        if (ops.brightness) |read| board.info.brightness = read(board);
-    }
     return copyOut(rtg.RtgBoardInfo, &board.info, info, size);
 }

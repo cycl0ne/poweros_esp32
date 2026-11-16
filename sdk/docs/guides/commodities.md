@@ -316,7 +316,7 @@ command line, and each has its page in `SYS:Commodities/Docs`.
 | MouseBlanker | the pointer goes while the keyboard is in use | - |
 | AutoPoint | the window under the pointer is the active one | - |
 | ClickToFront | a double click brings a window to the front | `QUALIFIER` |
-| Blanker | the screen darkens when nothing happens | `SECONDS`, `CYCLECOLORS`, `ANIMATION` |
+| Blanker | the screen darkens when nothing happens, and the display sleeps where nothing is drawn on it | `SECONDS`, `CYCLECOLORS`, `ANIMATION` |
 | FKey | functions on freely chosen keys | the keys, in `ENV:Sys/fkey.keys` |
 | Emoji | a window to pick an emoji from, typed into the window being worked in | the ones used last and the skin tone, in `ENV:Sys/emoji.used` |
 

@@ -33,9 +33,8 @@ pub const LVO = struct {
     pub const ShowBitMap = libraries.lvo(24);
     pub const BoardDisplayBitMap = libraries.lvo(25);
     pub const WaitVBlank = libraries.lvo(27);
-    pub const SetBoardDisplay = libraries.lvo(28);
+    pub const SetBoardPower = libraries.lvo(28);
     pub const SetBoardBrightness = libraries.lvo(29);
-    pub const BoardBrightness = libraries.lvo(30);
     pub const FillRect = libraries.lvo(31);
     pub const CopyRect = libraries.lvo(33);
     pub const BlitTemplate = libraries.lvo(34);
@@ -86,9 +85,8 @@ pub const Fn = struct {
     pub const ShowBitMap = *const fn (*RtgBase, *rtg.RtgBoard, ?*rtg.RtgBitMap) callconv(.c) i32;
     pub const BoardDisplayBitMap = *const fn (*RtgBase, *rtg.RtgBoard) callconv(.c) ?*rtg.RtgBitMap;
     pub const WaitVBlank = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
-    pub const SetBoardDisplay = *const fn (*RtgBase, *rtg.RtgBoard, bool) callconv(.c) i32;
+    pub const SetBoardPower = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
     pub const SetBoardBrightness = *const fn (*RtgBase, *rtg.RtgBoard, u32) callconv(.c) i32;
-    pub const BoardBrightness = *const fn (*RtgBase, *rtg.RtgBoard) callconv(.c) u32;
     pub const FillRect = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, u32) callconv(.c) i32;
     pub const CopyRect = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBitMap, *const rtg.RtgCopy) callconv(.c) i32;
     pub const BlitTemplate = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgTemplate) callconv(.c) i32;
@@ -212,19 +210,20 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.WaitVBlank, Fn.WaitVBlank, .{ board, frames });
     }
 
-    /// The display enable. Not the backlight.
-    pub fn SetBoardDisplay(self: *RtgBase, board: *rtg.RtgBoard, on: bool) i32 {
-        return libraries.call(self, LVO.SetBoardDisplay, Fn.SetBoardDisplay, .{ board, on });
+    /// Put the board in a power state: RTGPWR_ON, the picture shown;
+    /// RTGPWR_BLANK, the picture black; RTGPWR_ASLEEP, the display asleep.
+    /// Answers the state it is in then - RTGPWR_BLANK for a board that does
+    /// not sleep by itself - or an error below 0. What is shown or drawn
+    /// meanwhile is kept, and the backlight comes back as it was.
+    pub fn SetBoardPower(self: *RtgBase, board: *rtg.RtgBoard, state: u32) i32 {
+        return libraries.call(self, LVO.SetBoardPower, Fn.SetBoardPower, .{ board, state });
     }
 
-    /// 0 to 100, the right way round whatever the part does.
+    /// The backlight, 0 to 100, the right way round whatever the part does;
+    /// the library keeps the value, and GetBoardInfo answers it.
+    /// RTGERR_NOT_SUPPORTED without RTGBC_BRIGHTNESS.
     pub fn SetBoardBrightness(self: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32 {
         return libraries.call(self, LVO.SetBoardBrightness, Fn.SetBoardBrightness, .{ board, percent });
-    }
-
-    /// What it is now, 0 to 100.
-    pub fn BoardBrightness(self: *RtgBase, board: *rtg.RtgBoard) u32 {
-        return libraries.call(self, LVO.BoardBrightness, Fn.BoardBrightness, .{board});
     }
 
     /// Fill a rectangle, in the buffer's format, right-aligned. The rectangle
@@ -256,9 +255,10 @@ pub const RtgBase = opaque {
         return libraries.call(self, LVO.RtgErrorText, Fn.RtgErrorText, .{error_code});
     }
 
-    /// Mirror the picture about each axis. RTGERR_NOT_SUPPORTED unless the
-    /// board can do it itself, in which case turning the picture is the
-    /// business of whoever draws it.
+    /// Mirror the picture about each axis, or show it unturned: the
+    /// picture, the overlay and the pointer alike, on the way to the glass.
+    /// RTGERR_NOT_SUPPORTED for an axis the board has no cap for
+    /// (RTGBC_MIRROR_X, RTGBC_MIRROR_Y); nothing changes then.
     pub fn MirrorBoard(self: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) i32 {
         return libraries.call(self, LVO.MirrorBoard, Fn.MirrorBoard, .{ board, mirror_x, mirror_y });
     }

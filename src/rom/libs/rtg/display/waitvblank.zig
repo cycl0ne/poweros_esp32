@@ -62,7 +62,8 @@ fn frameMicros(board: *const rtg.RtgBoard) u64 {
 /// driver says the next.
 ///
 /// On a board that says no frames - one with no frame interrupt, one
-/// whose stream has not begun or has stopped, one that is dark - the
+/// whose stream has not begun or has stopped, one that is dark - and on
+/// one that is asleep (`SetBoardPower`) the
 /// task waits by the clock, a frame's time for each frame asked for, and
 /// the answer is `RTGERR_OK`: a program that paces itself by the display
 /// runs at the speed it would on one that says its frames.
@@ -122,8 +123,9 @@ pub fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32 {
     clock.node.message.reply_port = &port;
     clock.node.command = timer.TR_ADDREQUEST;
 
-    if (!frames_file.come(state)) {
-        // No frames are said: the frames' time, by the clock.
+    if (!frames_file.come(state) or board.info.power == rtg.boards.RTGPWR_ASLEEP) {
+        // No frames are said, or the display sleeps: the frames' time,
+        // by the clock.
         clock.time = timer.TimeVal.fromMicros(frameMicros(board) * wanted);
         sys.SendIO(&clock.node);
         _ = sys.WaitIO(&clock.node);

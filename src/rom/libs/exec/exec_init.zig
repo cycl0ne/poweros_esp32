@@ -122,7 +122,7 @@ pub const LIBRARY_VERSION = 1;
 /// 37: a `%s`'s width and limit, and a `%c`'s width, count the cells the
 /// text takes on a console, so a column lines up after a wide character
 /// or a marked one.
-pub const LIBRARY_REVISION = 39;
+pub const LIBRARY_REVISION = 40;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

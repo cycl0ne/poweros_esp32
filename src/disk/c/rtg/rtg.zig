@@ -32,7 +32,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.9 (16.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.10 (16.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
 const arg_board = 0;
@@ -290,23 +290,39 @@ fn printBoard(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     }
     printMonitor(dl, rb, board);
     _ = Printf(dl, "%-12s %d at once\n", .{ "Buffers", info.buffers });
-    _ = Printf(dl, "%-12s %d%%\n", .{ "Brightness", info.brightness });
     _ = Printf(dl, "%-12s ", .{"State"});
     printFlags(dl, info.flags);
     _ = Printf(dl, "%-12s ", .{"Can"});
     printCaps(dl, info.caps);
     printTurn(dl, &info);
+    printPower(dl, &info);
 
     printModes(dl, rb, board);
     printMemory(dl, rb, board);
     if (info.flags & rtg.boards.RTGBF_STREAMING != 0) printStats(dl, rb, board);
 }
 
+/// Whether the picture is shown, black or the display asleep, and the
+/// backlight where the board has one: its level, and how many it has.
+fn printPower(dl: *DosBase, info: *const rtg.RtgBoardInfo) void {
+    const state: [*:0]const u8 = switch (info.power) {
+        rtg.boards.RTGPWR_ON => "on",
+        rtg.boards.RTGPWR_BLANK => "blank",
+        rtg.boards.RTGPWR_ASLEEP => "asleep",
+        else => "?",
+    };
+    if (info.brightness_steps == 0) {
+        _ = Printf(dl, "%-12s %s\n", .{ "Power", state });
+    } else {
+        _ = Printf(dl, "%-12s %s, backlight %u%% of %u levels\n", .{ "Power", state, info.brightness, info.brightness_steps });
+    }
+}
+
 /// How the picture is turned, for a board that can mirror it or one that
 /// has. A board that answers RTGERR_NOT_SUPPORTED says nothing here:
 /// turning its picture is the business of whoever draws it.
 fn printTurn(dl: *DosBase, info: *const rtg.RtgBoardInfo) void {
-    const can = info.caps & rtg.boards.RTGBC_MIRROR;
+    const can = info.caps & (rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y);
     const turned = info.mirror_x != 0 or info.mirror_y != 0;
     if (can == 0 and !turned) return;
     const how: [*:0]const u8 = if (info.mirror_x != 0 and info.mirror_y != 0)
@@ -449,7 +465,6 @@ const Named = struct { bit: u32, word: [*:0]const u8 };
 
 const state_words = [_]Named{
     .{ .bit = rtg.boards.RTGBF_NO_DISPLAY, .word = "no-display" },
-    .{ .bit = rtg.boards.RTGBF_DISPLAY_ON, .word = "on" },
     .{ .bit = rtg.boards.RTGBF_MODE_SET, .word = "mode-set" },
     .{ .bit = rtg.boards.RTGBF_SHOWING, .word = "showing" },
     .{ .bit = rtg.boards.RTGBF_STREAMING, .word = "streaming" },
@@ -482,11 +497,12 @@ const cap_words = [_]Named{
     .{ .bit = rtg.boards.RTGBC_SCALE_BANDS, .word = "scaled-bands" },
     .{ .bit = rtg.boards.RTGBC_VBLANK, .word = "frames" },
     .{ .bit = rtg.boards.RTGBC_REFRESH, .word = "refresh" },
-    .{ .bit = rtg.boards.RTGBC_DISPLAY, .word = "display" },
+    .{ .bit = rtg.boards.RTGBC_POWER, .word = "sleep" },
     .{ .bit = rtg.boards.RTGBC_BRIGHTNESS, .word = "brightness" },
     .{ .bit = rtg.boards.RTGBC_STATS, .word = "stats" },
     .{ .bit = rtg.boards.RTGBC_CONTROL, .word = "control" },
-    .{ .bit = rtg.boards.RTGBC_MIRROR, .word = "mirror" },
+    .{ .bit = rtg.boards.RTGBC_MIRROR_X, .word = "mirror-x" },
+    .{ .bit = rtg.boards.RTGBC_MIRROR_Y, .word = "mirror-y" },
     .{ .bit = rtg.boards.RTGBC_MONITOR, .word = "monitor" },
     .{ .bit = rtg.boards.RTGBC_POINTER, .word = "pointer" },
     .{ .bit = rtg.boards.RTGBC_FILL_RECT, .word = "fill" },

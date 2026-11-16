@@ -30,9 +30,9 @@ const composer = @import("../compose/_compose.zig");
 /// not its corner. Nothing is done for the same place twice. An overlay
 /// that follows the pointer (SetBoardOverlay) moves with it.
 ///
-/// A board that turns its picture itself (`MirrorBoard`) turns the
-/// pointer with it: the pointer is laid into the picture's own order on
-/// its way out, before the turn.
+/// A picture that is mirrored (`MirrorBoard`) has its pointer mirrored
+/// with it: the place is the picture's own, and the pointer is laid
+/// into the picture's own order on its way out, before the turn.
 ///
 /// On a board whose picture the library composes, a move is the
 /// rectangle the image left and the one it came to, delivered again - one

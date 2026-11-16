@@ -42,11 +42,24 @@ pub fn crosses(panel: *Panel, stretch: u32) bool {
     const lines: i32 = @intCast(panel.config.bounce_lines);
     const first = @as(i32, @intCast(stretch)) * lines;
     if (panel.overlay) |overlay| {
-        if (panel.overlay_top < first + lines and panel.overlay_top + @as(i32, @intCast(overlay.height)) > first) return true;
+        const top = glassTop(panel, overlay, panel.overlay_top);
+        if (top < first + lines and top + @as(i32, @intCast(overlay.height)) > first) return true;
     }
     if (!panel.pointer_shown) return false;
     const image = panel.pointer orelse return false;
-    return panel.pointer_top < first + lines and panel.pointer_top + @as(i32, @intCast(image.height)) > first;
+    const top = glassTop(panel, image, panel.pointer_top);
+    return top < first + lines and top + @as(i32, @intCast(image.height)) > first;
+}
+
+/// The display line an image's top row is sent on: the picture's line
+/// it lies at, or - where the picture is sent last line first - the line
+/// as far from the bottom that its last row lies at.
+inline fn glassTop(panel: *const Panel, image: *const rtg.RtgPointerImage, top: i32) i32 {
+    // Inlined into the lay, which runs from internal memory and may
+    // reach nothing in flash: no check that would call there.
+    @setRuntimeSafety(false);
+    if (!panel.mirror_y) return top;
+    return @as(i32, @intCast(panel.config.setup.height)) - top - @as(i32, @intCast(image.height));
 }
 
 /// The lay owed to the copy that has just ended, if any, and the copy's
@@ -83,11 +96,15 @@ noinline fn lay(panel: *Panel) linksection(".iram.text") void {
 
 /// One image over the part of the last stretch copied that it crosses: a
 /// masked copy of at most a stretch's rows.
-noinline fn layImage(panel: *Panel, image: *const rtg.RtgPointerImage, left: i32, top: i32) linksection(".iram.text") void {
+noinline fn layImage(panel: *Panel, image: *const rtg.RtgPointerImage, left: i32, of_picture: i32) linksection(".iram.text") void {
     @setRuntimeSafety(false);
     const width: i32 = @intCast(panel.config.setup.width);
     const lines: i32 = @intCast(panel.config.bounce_lines);
     const first = @as(i32, @intCast(panel.copy_stretch)) * lines;
+    // Sent last line first, the image lies as far from the bottom and
+    // its own rows go out last first.
+    const mirrored = panel.mirror_y;
+    const top = glassTop(panel, image, of_picture);
     const y0 = @max(top, first);
     const y1 = @min(top + @as(i32, @intCast(image.height)), first + lines);
     const x0 = @max(left, 0);
@@ -96,7 +113,7 @@ noinline fn layImage(panel: *Panel, image: *const rtg.RtgPointerImage, left: i32
     const buffer = panel.bounce.? + @as(usize, panel.copy_into) * panel.bounce_bytes;
     var y = y0;
     while (y < y1) : (y += 1) {
-        const image_y: u32 = @intCast(y - top);
+        const image_y: u32 = if (mirrored) image.height - 1 - @as(u32, @intCast(y - top)) else @intCast(y - top);
         const into: [*]u16 = @ptrCast(@alignCast(buffer + @as(usize, @intCast(y - first)) * @as(usize, @intCast(width)) * 2));
         const from: [*]const u16 = @ptrCast(@alignCast(image.pixels + image_y * image.pitch));
         const mask = image.mask + image_y * image.mask_pitch;

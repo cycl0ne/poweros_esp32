@@ -101,7 +101,6 @@ fn bringUp(rb: *RtgBase, which: *rtg.RtgBoard, screen: Screen) ?Shown {
         rb.FreeBitMap(picture);
         return null;
     }
-    _ = rb.SetBoardBrightness(which, 100);
     return .{
         .width = mode.width,
         .height = mode.height,

@@ -94,11 +94,10 @@ test {
     _ = @import("board/getboardinfo.zig");
     _ = @import("board/getboardstats.zig");
     _ = @import("board/nextboard.zig");
-    _ = @import("display/boardbrightness.zig");
     _ = @import("display/boarddisplaybitmap.zig");
     _ = @import("display/mirrorboard.zig");
     _ = @import("display/setboardbrightness.zig");
-    _ = @import("display/setboarddisplay.zig");
+    _ = @import("display/setboardpower.zig");
     _ = @import("display/showbitmap.zig");
     _ = @import("display/showboard.zig");
     _ = @import("display/waitvblank.zig");
@@ -2982,25 +2981,85 @@ test "a board with no engine says so, and the library does not draw" {
     try tearDown(rb);
 }
 
-test "the display: on, off, and how bright" {
+test "the backlight: its levels, kept by the library, lit with the first picture" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
-    const board = try makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const board = try makeDisplay(rb, 16, 16);
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardDisplay(board, true));
-    try testing.expect(fk.log.display_on);
+    // A level for each per cent, full until something else is said, and
+    // nothing lit yet.
+    var info = infoOf(rb, board);
+    try testing.expect(info.caps & rtg.boards.RTGBC_BRIGHTNESS != 0);
+    try testing.expectEqual(@as(u32, 101), info.brightness_steps);
+    try testing.expectEqual(@as(u32, 100), info.brightness);
+    try testing.expectEqual(@as(u32, 0), fk.log.brightness_calls);
+
+    // Set: applied, and kept by the library.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(board, 60));
-    try testing.expectEqual(@as(u32, 60), base(rb).BoardBrightness(board));
+    try testing.expectEqual(@as(u32, 60), fk.log.brightness);
+    try testing.expectEqual(@as(u32, 60), infoOf(rb, board).brightness);
     // Above the top of the range is the top of the range.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(board, 400));
-    try testing.expectEqual(@as(u32, 100), base(rb).BoardBrightness(board));
+    try testing.expectEqual(@as(u32, 100), fk.log.brightness);
+    try testing.expectEqual(@as(u32, 100), infoOf(rb, board).brightness);
+    // One the driver could not set leaves what was.
+    fk.brightness_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).SetBoardBrightness(board, 20));
+    try testing.expectEqual(@as(u32, 100), infoOf(rb, board).brightness);
+    fk.brightness_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(board, 45));
+    // The first picture leaves a brightness that was set.
+    const calls = fk.log.brightness_calls;
+    const picture = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    try testing.expectEqual(calls, fk.log.brightness_calls);
+    try testing.expectEqual(@as(u32, 45), fk.log.brightness);
 
     // A control the driver knows, and the one every board takes.
     try testing.expectEqual(@as(isize, 8), base(rb).BoardControl(board, rtg.tags.RTGCTRL_RGB_SHIFT, 7));
     try testing.expectEqual(rtg.tags.RTGCTRL_RGB_SHIFT, fk.log.last_control);
-
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
     driverBase(rb).DeleteBoard(board);
+
+    // A board nobody set: dark until its first picture, lit with it at
+    // what its device's tags ask, and left alone by the next.
+    const dimmed = [_]TagItem{
+        .{ .tag = rtg.tags.RTGA_Brightness, .data = 40 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(fake.deviceTags()) },
+    };
+    fk.display = .{ .timings = .{ .h_active = 16, .v_active = 16 }, .format = .rgb565, .flags = rtg.modes.RTGMF_DEFAULT };
+    const lit = fake.makeBoardFrom(fk, &dimmed) orelse return error.NoBoard;
+    fk.display = null;
+    try testing.expectEqual(@as(u32, 40), infoOf(rb, lit).brightness);
+    const before = fk.log.brightness_calls;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, lit, 0));
+    try testing.expectEqual(before, fk.log.brightness_calls);
+    const first = base(rb).AllocBitMap(lit, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(lit, first));
+    try testing.expectEqual(before + 1, fk.log.brightness_calls);
+    try testing.expectEqual(@as(u32, 40), fk.log.brightness);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(lit, first));
+    try testing.expectEqual(before + 1, fk.log.brightness_calls);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(lit, null));
+    base(rb).FreeBitMap(first);
+    driverBase(rb).DeleteBoard(lit);
+
+    // A line that is on or off has two levels; a driver with no line
+    // wired has none, and the board no backlight to set.
+    fk.brightness_steps = 2;
+    const line = try makeBoard(rb);
+    try testing.expectEqual(@as(u32, 2), infoOf(rb, line).brightness_steps);
+    driverBase(rb).DeleteBoard(line);
+    fk.brightness_steps = 0;
+    const unwired = try makeBoard(rb);
+    info = infoOf(rb, unwired);
+    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_BRIGHTNESS);
+    try testing.expectEqual(@as(u32, 0), info.brightness_steps);
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).SetBoardBrightness(unwired, 50));
+    driverBase(rb).DeleteBoard(unwired);
     try tearDown(rb);
 }
 
@@ -3043,36 +3102,74 @@ test "the counters are reset on every board, with a control of its own or withou
     try tearDown(rb);
 }
 
-test "turning the picture: what the board can do, and what it cannot" {
+test "mirrored by the board's own hardware: the axes its driver said, handed on as asked, the picture shown again" {
     const rb = try setUp();
     defer kexec.deinit();
     const fk = fakeOf(rb);
-    const board = try makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const board = try makeDisplay(rb, 16, 16);
+    const both = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y;
 
-    var info: rtg.RtgBoardInfo = .{};
-    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
-    try testing.expect(info.caps & rtg.boards.RTGBC_MIRROR != 0);
+    var info = infoOf(rb, board);
+    try testing.expectEqual(both, info.caps & both);
     // A board reports itself the right way up until it is turned.
     try testing.expectEqual(@as(u8, 0), info.mirror_x);
     try testing.expectEqual(@as(u8, 0), info.mirror_y);
+    const picture = base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    const shown = fk.log.shown;
+    const changes = info.changes;
 
-    try testing.expectEqual(rtg.errors.RTGERR_OK, setMode(rb, board, 0));
-    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
-    const was_width = info.width;
-    const was_height = info.height;
-
-    // Mirroring is remembered and handed to the board as asked, and what
-    // a caller draws on keeps its sides.
+    // Mirroring is handed to the board as asked and remembered, what a
+    // caller draws on keeps its sides, and the driver is asked for what
+    // it shows again: a stream sends its lines the other way round.
     try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, false));
     try testing.expectEqual(@as(u32, 1), fk.log.mirrors);
     try testing.expect(fk.log.last_mirror_x and !fk.log.last_mirror_y);
-    _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(shown + 1, fk.log.shown);
+    try testing.expectEqual(picture, fk.log.bands[0].bitmap);
+    info = infoOf(rb, board);
     try testing.expectEqual(@as(u8, 1), info.mirror_x);
     try testing.expectEqual(@as(u8, 0), info.mirror_y);
-    try testing.expectEqual(was_width, info.width);
-    try testing.expectEqual(was_height, info.height);
+    try testing.expectEqual(@as(u32, 16), info.width);
+    try testing.expect(info.changes != changes);
+    // The same again changes nothing and asks nobody.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, false));
+    try testing.expectEqual(@as(u32, 1), fk.log.mirrors);
+    try testing.expectEqual(shown + 1, fk.log.shown);
 
+    // A turn the driver refuses leaves the picture as it was turned.
+    fk.mirror_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).MirrorBoard(board, true, true));
+    fk.mirror_answer = rtg.errors.RTGERR_OK;
+    info = infoOf(rb, board);
+    try testing.expectEqual(@as(u8, 1), info.mirror_x);
+    try testing.expectEqual(@as(u8, 0), info.mirror_y);
+    // And one whose picture cannot be shown again is turned back.
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).MirrorBoard(board, false, true));
+    try testing.expect(fk.log.last_mirror_x and !fk.log.last_mirror_y);
+    try testing.expectEqual(@as(u8, 0), infoOf(rb, board).mirror_y);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, false, false));
+    try testing.expect(!fk.log.last_mirror_x and !fk.log.last_mirror_y);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
     driverBase(rb).DeleteBoard(board);
+
+    // A stream that can send its lines last first and cannot turn one
+    // round: top to bottom alone, and the other axis refused whole.
+    fk.mirror_axes = rtg.boards.RTGBC_MIRROR_Y;
+    const stream = try makeBoard(rb);
+    fk.mirror_axes = both;
+    try testing.expectEqual(rtg.boards.RTGBC_MIRROR_Y, infoOf(rb, stream).caps & both);
+    const mirrors = fk.log.mirrors;
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).MirrorBoard(stream, true, true));
+    try testing.expectEqual(mirrors, fk.log.mirrors);
+    try testing.expectEqual(@as(u8, 0), infoOf(rb, stream).mirror_y);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(stream, false, true));
+    try testing.expect(!fk.log.last_mirror_x and fk.log.last_mirror_y);
+    try testing.expectEqual(@as(u8, 1), infoOf(rb, stream).mirror_y);
+    driverBase(rb).DeleteBoard(stream);
     try tearDown(rb);
 }
 
@@ -3086,16 +3183,19 @@ test "a board whose pixels go out as they are written will not turn" {
 
     var info: rtg.RtgBoardInfo = .{};
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
-    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_MIRROR);
+    try testing.expectEqual(@as(u32, 0), info.caps & (rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y));
 
     const width = info.width;
     try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).MirrorBoard(board, true, true));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, base(rb).MirrorBoard(board, false, true));
     // Refused means nothing moved: what it says about itself is unchanged.
     _ = base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
     try testing.expectEqual(width, info.width);
     try testing.expectEqual(@as(u8, 0), info.mirror_x);
     try testing.expectEqual(@as(u8, 0), info.mirror_y);
     try testing.expectEqual(@as(u32, 0), fk.log.mirrors);
+    // Unturned is what it is.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, false, false));
 
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
@@ -4134,6 +4234,487 @@ test "a monitor changed for one without the board's mode: what was shown, scaled
 
     base(rb).FreeBitMap(front);
     base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+// --- mirrored, and dark -------------------------------------------------------
+
+test "mirrored by the library: the picture, the pointer and what is written, each way, in the display's own coordinates" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeComposed(rb, 16, 12, 1);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const direct = rtg.boards.RTGSHOW_DIRECT;
+    const both = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y;
+    // Its driver wrote no mirror, and the board has both axes.
+    try testing.expectEqual(both, infoOf(rb, board).caps & both);
+
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    const changes = infoOf(rb, board).changes;
+
+    // Left to right: the display reads the buffer no more, and is
+    // delivered the picture with each row turned round.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, false));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    var info = infoOf(rb, board);
+    try testing.expectEqual(@as(u8, 1), info.mirror_x);
+    try testing.expectEqual(@as(u8, 0), info.mirror_y);
+    try testing.expect(info.changes != changes);
+    var y: u32 = 0;
+    while (y < 12) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 16) : (x += 1) try testing.expectEqual(painted(1, 15 - x, y), onGlass(board, x, y));
+    }
+    // What is written is delivered where the display shows it.
+    poke(picture, 2, 1, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 2, .y = 1, .width = 3, .height = 2 }));
+    try testing.expectEqual(rtg.RtgRect{ .x = 11, .y = 1, .width = 3, .height = 2 }, fk.log.last_update);
+    try testing.expectEqual(white, onGlass(board, 13, 1));
+    try testing.expectEqual(painted(1, 3, 1), onGlass(board, 12, 1));
+    poke(picture, 2, 1, painted(1, 2, 1));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, null));
+
+    // The pointer is placed in the picture's coordinates, and laid
+    // where the display shows that place.
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    base(rb).MoveBoardPointer(board, 3, 2);
+    try testing.expectEqual(red, onGlass(board, 12, 2));
+    try testing.expectEqual(rtg.RtgRect{ .x = 12, .y = 2, .width = 1, .height = 1 }, fk.log.last_update);
+    try testing.expectEqual(painted(1, 0, 0), onGlass(board, 15, 0));
+
+    // Both ways: the picture upside down as well, the pointer with it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, true));
+    y = 0;
+    while (y < 12) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 16) : (x += 1) {
+            const expected = if (x == 12 and y == 9) red else painted(1, 15 - x, 11 - y);
+            try testing.expectEqual(expected, onGlass(board, x, y));
+        }
+    }
+    // Top to bottom alone, and a rectangle fetched is the display's.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, false, true));
+    try testing.expectEqual(red, onGlass(board, 3, 9));
+    var fetched: [6]u16 = undefined;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).ComposeLines(board, &.{ .x = 4, .y = 2, .width = 3, .height = 2 }, @ptrCast(&fetched), 6));
+    try testing.expectEqual([6]u16{ painted(1, 4, 9), painted(1, 5, 9), painted(1, 6, 9), painted(1, 4, 8), painted(1, 5, 8), painted(1, 6, 8) }, fetched);
+
+    // Unturned with nothing over it, the display reads the buffer again.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, false, false));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    info = infoOf(rb, board);
+    try testing.expectEqual(@as(u8, 0), info.mirror_x);
+    try testing.expectEqual(@as(u8, 0), info.mirror_y);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+
+    // A flipped board the same: the next picture is made mirrored, and
+    // what is written is noted where the display shows it.
+    const flipped = try makeFlipped(rb, 16, 12);
+    const frame = base(rb).AllocBitMap(flipped, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(frame, 2);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(flipped, frame));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(flipped, true, true));
+    flips.service(rb, flipped);
+    y = 0;
+    while (y < 12) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 16) : (x += 1) try testing.expectEqual(painted(2, 15 - x, 11 - y), glassAt(flipped, x, y));
+    }
+    poke(frame, 1, 0, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(frame, &.{ .x = 1, .y = 0, .width = 1, .height = 1 }));
+    flips.service(rb, flipped);
+    try testing.expectEqual(white, glassAt(flipped, 14, 11));
+    try testing.expectEqual(painted(2, 2, 0), glassAt(flipped, 13, 11));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(flipped, null));
+    base(rb).FreeBitMap(frame);
+    driverBase(rb).DeleteBoard(flipped);
+    try tearDown(rb);
+}
+
+test "an axis the board's hardware turns is the hardware's, the other the library's; the whole picture is delivered again" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    fk.hardware = true;
+    fk.mirror_axes = rtg.boards.RTGBC_MIRROR_X;
+    const board = try makeComposed(rb, 16, 12, 0);
+    fk.hardware = false;
+    fk.mirror_axes = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y;
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+
+    // Left to right is the hardware's: the driver is told, the picture
+    // delivered again whole and as it lies - a controller whose scan
+    // direction changed holds a picture written the other way round.
+    const updates = fk.log.updates;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, false));
+    try testing.expectEqual(@as(u32, 1), fk.log.mirrors);
+    try testing.expect(fk.log.last_mirror_x and !fk.log.last_mirror_y);
+    try testing.expectEqual(updates + 1, fk.log.updates);
+    try testing.expectEqual(rtg.RtgRect{ .width = 16, .height = 12 }, fk.log.last_update);
+    try testing.expect(seesOnly(board, 1));
+
+    // Top to bottom is the library's: the driver hears of its own axis
+    // alone, and is delivered the picture upside down.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, true));
+    try testing.expectEqual(@as(u32, 1), fk.log.mirrors);
+    try testing.expectEqual(painted(1, 5, 11), onGlass(board, 5, 0));
+    try testing.expectEqual(painted(1, 15, 0), onGlass(board, 15, 11));
+    const info = infoOf(rb, board);
+    try testing.expectEqual(@as(u8, 1), info.mirror_x);
+    try testing.expectEqual(@as(u8, 1), info.mirror_y);
+    // The hardware's axis back: the driver is told, the library's stays.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, false, true));
+    try testing.expectEqual(@as(u32, 2), fk.log.mirrors);
+    try testing.expect(!fk.log.last_mirror_x);
+    try testing.expectEqual(painted(1, 5, 11), onGlass(board, 5, 0));
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a board with planes of its own: the library lays the pointer and the overlay for as long as it mirrors the picture" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    // Flipped, a cursor plane and an overlay plane, and hardware that
+    // turns no axis: the library mirrors.
+    fk.hardware = true;
+    fk.mirror_axes = 0;
+    const board = try makeFlipped(rb, 16, 12);
+    fk.hardware = false;
+    fk.mirror_axes = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y;
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+
+    // Unturned, the pointer is the plane's: nothing of it in the picture.
+    var dot = [_]u32{rgba(0xFF0000FF)};
+    const pointer = rtg.Surface{ .pixels = @ptrCast(&dot), .width = 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, &pointer, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBoardPointer(board, true));
+    base(rb).MoveBoardPointer(board, 3, 2);
+    flips.service(rb, board);
+    try testing.expect(fk.log.pointer_image != null and fk.log.pointer_shown);
+    try testing.expectEqual(@as(i32, 3), fk.log.pointer_left);
+    try testing.expectEqual(painted(1, 3, 2), glassAt(board, 3, 2));
+
+    // Mirrored by the library: the plane is given no image, and the
+    // pointer is in the picture, where the display shows its place.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, true, false));
+    try testing.expectEqual(@as(u32, 0), fk.log.mirrors);
+    try testing.expect(fk.log.pointer_image == null and !fk.log.pointer_shown);
+    flips.service(rb, board);
+    try testing.expectEqual(red, glassAt(board, 12, 2));
+    try testing.expectEqual(painted(1, 4, 2), glassAt(board, 11, 2));
+    // A move is the library's, and the plane hears of none.
+    const moves = fk.log.pointer_moves;
+    base(rb).MoveBoardPointer(board, 5, 6);
+    try testing.expectEqual(moves, fk.log.pointer_moves);
+    flips.service(rb, board);
+    try testing.expectEqual(red, glassAt(board, 10, 6));
+    try testing.expectEqual(painted(1, 3, 2), glassAt(board, 12, 2));
+
+    // Unturned again: the plane has the image, its place and is shown;
+    // the picture has none.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).MirrorBoard(board, false, false));
+    try testing.expect(fk.log.pointer_image != null and fk.log.pointer_shown);
+    try testing.expectEqual(@as(i32, 5), fk.log.pointer_left);
+    try testing.expectEqual(@as(i32, 6), fk.log.pointer_top);
+    flips.service(rb, board);
+    try testing.expect(glassIs(board, 1, &.{}));
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardPointer(board, null, 0, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "blank is the library's: a black picture, what is shown and drawn meanwhile kept, and on the glass again" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const direct = rtg.boards.RTGSHOW_DIRECT;
+    const on = rtg.boards.RTGPWR_ON;
+    const blank = rtg.boards.RTGPWR_BLANK;
+    const asleep = rtg.boards.RTGPWR_ASLEEP;
+
+    // A display that reads one buffer itself, whose driver has no power
+    // of its own: it never sleeps, and starts on.
+    const board = try makeComposed(rb, 16, 12, 1);
+    var info = infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_POWER);
+    try testing.expectEqual(on, info.power);
+    const back = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    const front = base(rb).AllocBitMap(board, 16, 12, format, displayable).?;
+    paint(back, 1);
+    paint(front, 2);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, back));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    const changes = info.changes;
+
+    // Blank: the display is shown the library's picture, which is
+    // black, and the board says so.
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(board, blank));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    info = infoOf(rb, board);
+    try testing.expectEqual(blank, info.power);
+    try testing.expect(info.changes != changes);
+    try testing.expect(back.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    var y: u32 = 0;
+    while (y < 12) : (y += 1) {
+        var x: u32 = 0;
+        while (x < 16) : (x += 1) try testing.expectEqual(@as(u16, 0), onGlass(board, x, y));
+    }
+    // What is drawn, moved and shown meanwhile reaches no glass.
+    const updates = fk.log.updates;
+    poke(back, 4, 4, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(back, null));
+    base(rb).MoveBoardPointer(board, 5, 5);
+    try testing.expectEqual(updates, fk.log.updates);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, front));
+    try testing.expectEqual(@as(u32, 0), fk.log.last_flags & direct);
+    try testing.expectEqual(@as(u16, 0), onGlass(board, 4, 4));
+    try testing.expectEqual(front, base(rb).BoardDisplayBitMap(board).?);
+    // Asleep on a board that does not sleep is blank, and nothing
+    // changes; a state there is none of is refused.
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(board, asleep));
+    try testing.expectEqual(blank, infoOf(rb, board).power);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, base(rb).SetBoardPower(board, 3));
+
+    // On again: what was shown meanwhile, read by the display itself.
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(board, on));
+    try testing.expect(fk.log.last_flags & direct != 0);
+    try testing.expectEqual(front, fk.log.bands[0].bitmap);
+    try testing.expectEqual(on, infoOf(rb, board).power);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(front);
+    base(rb).FreeBitMap(back);
+    driverBase(rb).DeleteBoard(board);
+
+    // A display with a picture of its own alone: delivered black, then
+    // the picture with what was drawn meanwhile.
+    const own = try makeComposed(rb, 16, 12, 0);
+    const picture = base(rb).AllocBitMap(own, 16, 12, format, displayable).?;
+    paint(picture, 3);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(own, picture));
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(own, blank));
+    try testing.expectEqual(@as(u16, 0), onGlass(own, 9, 9));
+    var fetched: [2]u16 = .{ 7, 7 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, driverBase(rb).ComposeLines(own, &.{ .x = 3, .y = 3, .width = 2, .height = 1 }, @ptrCast(&fetched), 4));
+    try testing.expectEqual([2]u16{ 0, 0 }, fetched);
+    poke(picture, 9, 9, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 9, .y = 9, .width = 1, .height = 1 }));
+    try testing.expectEqual(@as(u16, 0), onGlass(own, 9, 9));
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(own, on));
+    try testing.expectEqual(white, onGlass(own, 9, 9));
+    try testing.expectEqual(painted(3, 2, 2), onGlass(own, 2, 2));
+    // A black picture the driver cannot deliver leaves the board on.
+    fk.update_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).SetBoardPower(own, blank));
+    fk.update_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(on, infoOf(rb, own).power);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, null));
+    try testing.expectEqual(painted(3, 2, 2), onGlass(own, 2, 2));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(own, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(own);
+
+    // A flipped board: the next picture is black, nothing is made of
+    // what is drawn meanwhile, and the whole picture when it is on.
+    const flipped = try makeFlipped(rb, 16, 12);
+    const frame = base(rb).AllocBitMap(flipped, 16, 12, format, displayable).?;
+    paint(frame, 4);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(flipped, frame));
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(flipped, blank));
+    flips.service(rb, flipped);
+    try testing.expectEqual(@as(u16, 0), glassAt(flipped, 0, 0));
+    try testing.expectEqual(@as(u16, 0), glassAt(flipped, 15, 11));
+    const flipped_before = fk.log.flips;
+    poke(frame, 6, 6, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(frame, &.{ .x = 6, .y = 6, .width = 1, .height = 1 }));
+    flips.service(rb, flipped);
+    try testing.expectEqual(flipped_before, fk.log.flips);
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(flipped, on));
+    flips.service(rb, flipped);
+    try testing.expect(glassIs(flipped, 4, &.{.{ 6, 6, white }}));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(flipped, null));
+    base(rb).FreeBitMap(frame);
+    driverBase(rb).DeleteBoard(flipped);
+    try tearDown(rb);
+}
+
+test "asleep is the driver's, asked once the picture is black; the backlight is kept through it" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const on = rtg.boards.RTGPWR_ON;
+    const blank = rtg.boards.RTGPWR_BLANK;
+    const asleep = rtg.boards.RTGPWR_ASLEEP;
+    fk.hardware = true;
+    const board = try makeComposed(rb, 16, 12, 0);
+    fk.hardware = false;
+    try testing.expect(infoOf(rb, board).caps & rtg.boards.RTGBC_POWER != 0);
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(board, 70));
+
+    // Blank asks the driver nothing: the picture is black, and that is
+    // all.
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(board, blank));
+    try testing.expectEqual(@as(u32, 0), fk.log.power_calls);
+    try testing.expectEqual(@as(u16, 0), onGlass(board, 3, 3));
+    // Asleep from there: the driver alone.
+    const updates = fk.log.updates;
+    try testing.expectEqual(@as(i32, @intCast(asleep)), base(rb).SetBoardPower(board, asleep));
+    try testing.expectEqual(@as(u32, 1), fk.log.power_calls);
+    try testing.expectEqual(asleep, fk.log.last_power);
+    try testing.expectEqual(updates, fk.log.updates);
+    try testing.expectEqual(asleep, infoOf(rb, board).power);
+    // A brightness set while it sleeps is kept, and not applied.
+    const calls = fk.log.brightness_calls;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetBoardBrightness(board, 30));
+    try testing.expectEqual(calls, fk.log.brightness_calls);
+    try testing.expectEqual(@as(u32, 30), infoOf(rb, board).brightness);
+    try testing.expectEqual(@as(u32, 0), fk.log.brightness);
+    // Blank again: awake, and black still.
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(board, blank));
+    try testing.expectEqual(on, fk.log.last_power);
+    try testing.expectEqual(@as(u32, 30), fk.log.brightness);
+    try testing.expectEqual(@as(u16, 0), onGlass(board, 3, 3));
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(board, on));
+    try testing.expect(seesOnly(board, 1));
+
+    // From on: black first, then asleep; and awake before the picture.
+    try testing.expectEqual(@as(i32, @intCast(asleep)), base(rb).SetBoardPower(board, asleep));
+    try testing.expectEqual(@as(u16, 0), onGlass(board, 3, 3));
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(board, on));
+    try testing.expectEqual(on, fk.log.last_power);
+    try testing.expect(seesOnly(board, 1));
+
+    // A display that only goes blank says so; one that will not sleep
+    // leaves the board on, its picture back.
+    fk.sleep_answer = @intCast(blank);
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(board, asleep));
+    try testing.expectEqual(blank, infoOf(rb, board).power);
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(board, on));
+    fk.sleep_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, base(rb).SetBoardPower(board, asleep));
+    try testing.expectEqual(on, infoOf(rb, board).power);
+    try testing.expect(seesOnly(board, 1));
+    fk.sleep_answer = @intCast(asleep);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
+test "a display that reads its buffers of alone: every state its driver's, or nothing shown where it has none" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+    const on = rtg.boards.RTGPWR_ON;
+    const blank = rtg.boards.RTGPWR_BLANK;
+    const asleep = rtg.boards.RTGPWR_ASLEEP;
+
+    // With a power of its own: asked for each state, and shown nothing
+    // other than it was.
+    const board = try makeDisplay(rb, 16, 16);
+    const picture = base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+    const shown = fk.log.shown;
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(board, blank));
+    try testing.expectEqual(blank, fk.log.last_power);
+    try testing.expectEqual(@as(i32, @intCast(asleep)), base(rb).SetBoardPower(board, asleep));
+    try testing.expectEqual(asleep, fk.log.last_power);
+    try testing.expectEqual(asleep, infoOf(rb, board).power);
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(board, on));
+    try testing.expectEqual(@as(u32, 3), fk.log.power_calls);
+    try testing.expectEqual(shown, fk.log.shown);
+    // The same state again asks nobody.
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(board, on));
+    try testing.expectEqual(@as(u32, 3), fk.log.power_calls);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, null));
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+
+    // With none: its driver is shown nothing while the board is dark,
+    // the buffers stay the board's, and what is shown meanwhile is what
+    // it is shown when it is on again.
+    fk.without_engine = true;
+    const plain = try makeDisplay(rb, 16, 16);
+    fk.without_engine = false;
+    try testing.expectEqual(@as(u32, 0), infoOf(rb, plain).caps & rtg.boards.RTGBC_POWER);
+    const one = base(rb).AllocBitMap(plain, 16, 16, format, displayable).?;
+    const other = base(rb).AllocBitMap(plain, 16, 16, format, displayable).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, one));
+    try testing.expectEqual(@as(i32, @intCast(blank)), base(rb).SetBoardPower(plain, asleep));
+    try testing.expectEqual(@as(u32, 0), fk.log.band_count);
+    try testing.expectEqual(@as(u32, 0), fake.instanceOf(plain).showing_count);
+    try testing.expectEqual(one, base(rb).BoardDisplayBitMap(plain).?);
+    try testing.expect(one.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, other));
+    try testing.expectEqual(@as(u32, 0), fk.log.band_count);
+    try testing.expectEqual(other, base(rb).BoardDisplayBitMap(plain).?);
+    try testing.expectEqual(@as(i32, @intCast(on)), base(rb).SetBoardPower(plain, on));
+    try testing.expectEqual(@as(u32, 1), fk.log.band_count);
+    try testing.expectEqual(other, fk.log.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 1), fake.instanceOf(plain).showing_count);
+    // A driver that will not show nothing leaves the board on.
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).SetBoardPower(plain, blank));
+    try testing.expectEqual(on, infoOf(rb, plain).power);
+
+    // A board whose device has gone has no display to put in a state.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(plain, null));
+    base(rb).FreeBitMap(other);
+    base(rb).FreeBitMap(one);
+    boards.retire(rb, plain);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).SetBoardPower(plain, blank));
+    driverBase(rb).DeleteBoard(plain);
+    try tearDown(rb);
+}
+
+test "WaitVBlank on a board asleep is by the clock, though its frames were said" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const board = try makeBoard(rb);
+    Sleep.install(&FakeTimer.expire);
+    defer Sleep.uninstall();
+    // Its driver says its frames.
+    fake.endFrame(board);
+    try testing.expect(saysFrames(rb, board));
+    try testing.expectEqual(@as(i32, @intCast(rtg.boards.RTGPWR_ASLEEP)), base(rb).SetBoardPower(board, rtg.boards.RTGPWR_ASLEEP));
+    // A frame's time, and no waiter on the board's list meanwhile.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).WaitVBlank(board, 0));
+    try testing.expectEqual(@as(u64, 16_667), FakeTimer.last_micros);
+    try testing.expectEqual(@as(u32, 0), FakeTimer.aborted);
+    try testing.expect(boards.privateOf(board).frames.waiters == null);
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
 }

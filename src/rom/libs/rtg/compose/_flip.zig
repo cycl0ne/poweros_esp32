@@ -326,9 +326,11 @@ pub fn written(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: 
     for (bands, 0..) |*band, i| {
         if (band.bitmap != bitmap) continue;
         const band_end = if (i + 1 < bands.len) bands[i + 1].line else compose.height;
-        // The rectangle of the display that shows what was written.
+        // The rectangle of the display that shows what was written;
+        // on a dark board nothing does, and the whole picture is made
+        // when it is lit again.
         const seen = composer.shownOf(compose, band, band_end, cut) orelse continue;
-        state.fresh.add(boxOf(seen));
+        if (!compose.dark) state.fresh.add(boxOf(composer.onGlass(compose, seen)));
         noted = true;
     }
     if (noted) state.written = true;
@@ -339,7 +341,7 @@ pub fn written(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: 
     if (read) {
         if (board.ops.?.refresh) |refresh| code = refresh(board, bitmap, cut);
     }
-    if (noted) wake(rb, board);
+    if (noted and !compose.dark) wake(rb, board);
     return code;
 }
 
@@ -647,7 +649,11 @@ pub fn shown(rb: *RtgBase, board: *rtg.RtgBoard, old: []const rtg.RtgBand) i32 {
     if (state.reads_buffer) {
         changed.add(whole(board));
     } else {
-        changed.rebanded(old, bands, compose.width, compose.height);
+        // The rows of the picture that show something else, as the
+        // display has them.
+        var rows: Damage = .{};
+        rows.rebanded(old, bands, compose.width, compose.height);
+        for (rows.list()) |box| changed.add(boxOf(composer.onGlass(compose, rectOf(box))));
     }
     sys.AcquireLock(&state.damage_lock);
     state.fresh.addAll(&changed);

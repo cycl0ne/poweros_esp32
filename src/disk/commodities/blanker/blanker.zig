@@ -58,8 +58,8 @@ const TagItem = utility.TagItem;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Blanker";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (02.11.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (16.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -143,8 +143,7 @@ const Dark = struct {
     /// The display it is on, and what its brightness was before: a panel
     /// with nothing to show on it is turned off as well.
     board: ?*rtg.RtgBoard = null,
-    was_bright: u32 = 0,
-    dimmed: bool = false,
+    asleep: bool = false,
 };
 
 /// The window's gadgets and what it stands on, while it is shown.
@@ -411,25 +410,25 @@ fn unblank(app: *App) void {
     _ = app.ib.CloseScreen(dark.screen);
 }
 
-/// The display's backlight off, with what it was kept.
+/// The display put to sleep: its backlight off, a monitor sent to
+/// sleep. A display that does not sleep is black, which the screen is
+/// already.
 fn dim(app: *App) void {
     const rb = app.rb orelse return;
     const dark = &(app.dark orelse return);
     const board = dark.board orelse return;
-    const was = rb.BoardBrightness(board);
-    if (rb.SetBoardBrightness(board, 0) != rtg.errors.RTGERR_OK) return;
-    dark.was_bright = was;
-    dark.dimmed = true;
+    if (rb.SetBoardPower(board, rtg.boards.RTGPWR_ASLEEP) < 0) return;
+    dark.asleep = true;
 }
 
-/// The backlight back where it was.
+/// The display on again, its backlight as it was: the board keeps it.
 fn bright(app: *App) void {
     const rb = app.rb orelse return;
     const dark = &(app.dark orelse return);
-    if (!dark.dimmed) return;
+    if (!dark.asleep) return;
     const board = dark.board orelse return;
-    _ = rb.SetBoardBrightness(board, dark.was_bright);
-    dark.dimmed = false;
+    _ = rb.SetBoardPower(board, rtg.boards.RTGPWR_ON);
+    dark.asleep = false;
 }
 
 /// The whole screen in one colour.

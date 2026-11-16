@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-//! Backlight: the panel's backlight, and what else the board's IO expander
+//! Backlight: the display's backlight, and what the board's IO expander
 //! holds. Built against the SDK only.
 //!
 //!   Backlight [PERCENT/N] [PIN/K/N] [ON/S] [OFF/S] [PINS/S] [ADC/S]
@@ -11,14 +11,20 @@
 //!   Backlight ADC        the expander's analogue input
 //!   Backlight PIN 3 ON   drive one pin high (PIN 3 OFF for low)
 //!
-//! Everything here goes through expander.resource, which owns the part and
-//! the shadow of what has been written to it.
+//! The backlight is the display's: it is read and set through
+//! rtg.library, on the machine's display - the first board it lists -
+//! which keeps the value through a display asleep. A board whose display
+//! has none says so. The pins and the analogue input go through
+//! expander.resource, which owns the part and the shadow of what has been
+//! written to it.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const ExpanderBase = sdk.interface.expander.ExpanderBase;
+const RtgBase = sdk.interface.rtg.RtgBase;
+const rtg = sdk.rtg;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const expander = sdk.resources.expander;
@@ -27,7 +33,7 @@ const st = expansion.systemtags;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Backlight";
-const VERSION_STRING = "\x00$VER: Backlight 1.0 (17.9.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Backlight 1.1 (16.11.2026)\r\n";
 
 const template = "PERCENT/N,PIN/K/N,ON/S,OFF/S,PINS/S,ADC/S";
 const arg_percent = 0;
@@ -42,6 +48,10 @@ const MSG_BOTH = "only one of ON or OFF allowed\n";
 const MSG_RANGE = "a brightness is 0 to 100\n";
 const MSG_BADPIN = "a pin is 0 to %d\n";
 const MSG_FAILED = "the expander does not answer\n";
+const MSG_NOLIBRARY = "No %s\n";
+const MSG_NOBOARD = "No display board\n";
+const MSG_NOBACKLIGHT = "%s has no backlight to set\n";
+const MSG_NOTSET = "the backlight does not answer: %s\n";
 
 /// What a pin is wired to, for the listing: every part of the board with
 /// a line on this expander pin, as "gt911 RESET". The board's description
@@ -83,6 +93,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_ERROR;
     }
 
+    // The backlight is the display's.
+    if (argv[arg_pin] == 0 and argv[arg_pins] == 0 and argv[arg_adc] == 0) return backlight(sys, dl, &argv);
+
     // A resource is never closed: OpenResource only finds it.
     const base = sys.OpenResource(expander.EXPANDERNAME) orelse {
         _ = Printf(dl, MSG_NORESOURCE, .{expander.EXPANDERNAME});
@@ -116,35 +129,54 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     if (argv[arg_pins] != 0) return showPins(sys, dl, ex);
 
-    if (argv[arg_adc] != 0) {
-        const value = ex.ReadADC();
-        if (value < 0) {
-            _ = dl.PutStr(MSG_FAILED);
-            return dos.RETURN_ERROR;
-        }
-        _ = Printf(dl, "%d\n", .{value});
-        return dos.RETURN_OK;
+    const value = ex.ReadADC();
+    if (value < 0) {
+        _ = dl.PutStr(MSG_FAILED);
+        return dos.RETURN_ERROR;
+    }
+    _ = Printf(dl, "%d\n", .{value});
+    return dos.RETURN_OK;
+}
+
+/// The brightness of the machine's display, printed or set: 0 to 100,
+/// which the display's board keeps.
+fn backlight(sys: *ExecBase, dl: *DosBase, argv: *const [6]usize) i32 {
+    const rtg_lib = sys.OpenLibrary(rtg.RTGNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{rtg.RTGNAME});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.CloseLibrary(rtg_lib);
+    const rb: *RtgBase = @ptrCast(rtg_lib);
+    const board = rb.NextBoard(null) orelse {
+        _ = dl.PutStr(MSG_NOBOARD);
+        return dos.RETURN_FAIL;
+    };
+    var info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    if (info.caps & rtg.boards.RTGBC_BRIGHTNESS == 0) {
+        _ = Printf(dl, MSG_NOBACKLIGHT, .{info.name orelse "the display"});
+        return dos.RETURN_WARN;
     }
 
-    // The backlight.
     var want: i32 = -1;
-    if (argv[arg_on] != 0) want = @intCast(expander.BACKLIGHT_FULL);
-    if (argv[arg_off] != 0) want = @intCast(expander.BACKLIGHT_OFF);
+    if (argv[arg_on] != 0) want = 100;
+    if (argv[arg_off] != 0) want = 0;
     if (argv[arg_percent] != 0) want = numberAt(argv[arg_percent]);
     if (want < 0) {
         if (argv[arg_percent] != 0) {
             _ = dl.PutStr(MSG_RANGE);
             return dos.RETURN_ERROR;
         }
-        _ = Printf(dl, "%d\n", .{ex.Backlight()});
+        _ = Printf(dl, "%u\n", .{info.brightness});
         return dos.RETURN_OK;
     }
-    if (want > expander.BACKLIGHT_FULL) {
+    if (want > 100) {
         _ = dl.PutStr(MSG_RANGE);
         return dos.RETURN_ERROR;
     }
-    if (!ex.SetBacklight(@intCast(want))) {
-        _ = dl.PutStr(MSG_FAILED);
+    const code = rb.SetBoardBrightness(board, @intCast(want));
+    if (code != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, MSG_NOTSET, .{rb.RtgErrorText(code)});
         return dos.RETURN_ERROR;
     }
     return dos.RETURN_OK;

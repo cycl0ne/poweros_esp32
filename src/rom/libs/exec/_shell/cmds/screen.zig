@@ -53,12 +53,14 @@ const Display = struct {
 };
 
 pub const name = "screen";
-pub const usage = "screen [on|off|<percent>|display on|off|mirror [x] [y]|ruler|rows|refresh|reset|realign|shift <pixels>]";
+pub const usage = "screen [on|off|<percent>|power on|blank|asleep|mirror [x] [y]|ruler|rows|refresh|reset|realign|shift <pixels>]";
 pub const help =
     \\  screen               the panel's mode, backlight and the stream's counters
-    \\  screen on|off|<percent>  the backlight, through expander.resource - or
-    \\                       a monitor's brightness, where it takes DDC/CI
-    \\  screen display on|off  the display itself: a monitor sent nothing sleeps
+    \\  screen on|off|<percent>  the backlight - or a monitor's brightness,
+    \\                       where it takes DDC/CI
+    \\  screen power on|blank|asleep  the picture shown, black, or the
+    \\                       display asleep: its backlight off, a monitor
+    \\                       sent nothing
     \\  screen mirror [x] [y]  the picture mirrored left to right, top to
     \\                       bottom, or - with neither - as it is drawn
     \\  screen ruler         a scale across the glass, to measure where the picture starts
@@ -104,10 +106,22 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
         return;
     }
     if (_shell.same(word, "rows")) return askedRows(shell, display, args);
-    if (_shell.same(word, "display")) {
-        const on = args.next() orelse return error.Usage;
-        if (!_shell.same(on, "on") and !_shell.same(on, "off")) return error.Usage;
-        if (rb.SetBoardDisplay(display.board, _shell.same(on, "on")) != rtg.errors.RTGERR_OK) shell.print("the board can't switch its display\n", .{});
+    if (_shell.same(word, "power")) {
+        const what = args.next() orelse return error.Usage;
+        const wanted: u32 = if (_shell.same(what, "on"))
+            rtg.boards.RTGPWR_ON
+        else if (_shell.same(what, "blank"))
+            rtg.boards.RTGPWR_BLANK
+        else if (_shell.same(what, "asleep"))
+            rtg.boards.RTGPWR_ASLEEP
+        else
+            return error.Usage;
+        const reached = rb.SetBoardPower(display.board, wanted);
+        if (reached < 0) {
+            shell.print("the display did not take it: %s\n", .{rb.RtgErrorText(reached)});
+        } else if (reached != @as(i32, @intCast(wanted))) {
+            shell.print("the display does not sleep by itself: it is blank\n", .{});
+        }
         return;
     }
     if (_shell.same(word, "mirror")) {
@@ -176,7 +190,7 @@ fn state(shell: *Shell, display: Display) void {
         shown.height,
         @as(u32, @intCast(pixel_clock / 1_000_000)),
         @as(u32, @intCast(@intFromPtr(shown.pixels))),
-        display.rb.BoardBrightness(display.board),
+        display.board.info.brightness,
         counters.frames,
         display.count(tags.RTGCTRL_RGB_ACTIVE_START, 0),
         counters.late_frames,

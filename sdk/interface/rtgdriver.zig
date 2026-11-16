@@ -191,7 +191,8 @@ pub const RtgDriverBase = opaque {
     /// The pixels of a rectangle of the board's display as they are to be
     /// seen, in the mode's format, into `into`, its rows `pitch` bytes apart:
     /// the bands, and over them the overlay and the pointer where the
-    /// library lays them. What a driver whose display has a picture of its
+    /// library lays them, mirrored where the library mirrors the picture,
+    /// and black on a board that is blank or asleep. What a driver whose display has a picture of its
     /// own calls from its `update` and its `show`. RTGERR_BAD_ARG for a
     /// rectangle that is empty or not wholly inside the display,
     /// RTGERR_BAD_FORMAT in a mode whose pixels are not whole bytes.

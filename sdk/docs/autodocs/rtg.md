@@ -22,7 +22,6 @@ Generated from the source by `./zig build autodoc`.
 - [BlendRect](#blendrect) - Lays a colour over a rectangle of a buffer with the board's engine, by the colour's alpha.
 - [BlitPattern](#blitpattern) - Fills a rectangle with a one-bit tile with the board's engine.
 - [BlitTemplate](#blittemplate) - Draws a one-bit shape in two colours with the board's engine.
-- [BoardBrightness](#boardbrightness) - Reads a board's brightness.
 - [BoardControl](#boardcontrol) - Asks a board something only its driver knows about.
 - [BoardDisplayBitMap](#boarddisplaybitmap) - Tells which buffer a board is showing.
 - [CloseVideoLayer](#closevideolayer) - Gives a video layer back to its board.
@@ -38,7 +37,7 @@ Generated from the source by `./zig build autodoc`.
 - [GetBoardStats](#getboardstats) - Reads what a board that refreshes itself has been through.
 - [GetRtgDevices](#getrtgdevices) - Copies out the devices on the library's list.
 - [GetRtgDrivers](#getrtgdrivers) - Copies out the drivers on the library's list.
-- [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis.
+- [MirrorBoard](#mirrorboard) - Mirrors a board's picture about each axis, or shows it unturned.
 - [MoveBoardOverlay](#moveboardoverlay) - Puts the overlay's point at (x, y), and from then on keeps it there rather than with the pointer.
 - [MoveBoardPointer](#moveboardpointer) - Puts the pointer's point at a place on the picture.
 - [MoveVideoLayer](#movevideolayer) - Puts a video layer somewhere on the display, or hides it.
@@ -52,10 +51,10 @@ Generated from the source by `./zig build autodoc`.
 - [RtgFormatBits](#rtgformatbits) - Says how many bits a pixel of a format takes.
 - [RtgRowBytes](#rtgrowbytes) - Says how many bytes a row of pixels of a format needs.
 - [ScalePixels](#scalepixels) - Scales a part of a picture of the caller's own to a rectangle's size with the board's engine, and lays it over the rectangle by its coverage.
-- [SetBoardBrightness](#setboardbrightness) - Sets a board's brightness.
-- [SetBoardDisplay](#setboarddisplay) - Switches a board's display on or off.
+- [SetBoardBrightness](#setboardbrightness) - Sets the brightness of a board's backlight.
 - [SetBoardOverlay](#setboardoverlay) - Gives a board a second image to lay over its picture, under the pointer, which from then on follows the pointer.
 - [SetBoardPointer](#setboardpointer) - Gives a board the image its pointer is drawn with.
+- [SetBoardPower](#setboardpower) - Puts a board in a power state: on, blank or asleep.
 - [ShowBitMap](#showbitmap) - Shows a buffer on a board's display.
 - [ShowBoard](#showboard) - Puts a board in a mode and shows buffers in it, each in a band of display lines.
 - [ShowBoardPointer](#showboardpointer) - Shows a board's pointer, or hides it.
@@ -635,59 +634,6 @@ None known.
 _ = rb.BlitTemplate(buffer, &area, &shape);
 ```
 
-## BoardBrightness
-
-Reads a board's brightness.
-
-**SYNOPSIS**
-
-```zig
-fn BoardBrightness(_: *RtgBase, board: *rtg.RtgBoard) u32
-```
-
-**SINCE**
-
-1.0. LVO -124.
-
-**INPUTS**
-
-- `board` - the board.
-
-**RESULT**
-
-0 to 100: what the driver reads, or else the last that was set. 0 for a
-board with no operations.
-
-**BEHAVIOR**
-
-A board that can read its level back is asked, and the answer is kept
-in its information; one that cannot answers what was last set.
-
-**CONTEXT**
-
-- Waits: only if the driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`SetBoardBrightness`
-
-**EXAMPLES**
-
-```zig
-const level = rb.BoardBrightness(board);
-```
-
 ## BoardControl
 
 Asks a board something only its driver knows about.
@@ -1248,13 +1194,18 @@ field near the end.
 
 **BEHAVIOR**
 
-The display memory still free, its largest piece and the brightness
-are read fresh; the rest is what the board already says about itself.
+The display memory still free and its largest piece are read fresh;
+the rest is what the board already says about itself: the mode it is
+in, its power state (`power`), the brightness the library keeps for
+its backlight and how many levels that has (`brightness`,
+`brightness_steps`), and how its picture is mirrored (`mirror_x`,
+`mirror_y`) - which is what whoever turns a touch on the glass into a
+place in the picture reads.
 
 **CONTEXT**
 
-- Waits: if the driver's brightness read does, and while another task
-  holds the board's lock - through a show, which may last a frame.
+- Waits: while another task holds the board's lock - through a show,
+  which may last a frame.
 - Interrupts: no.
 - Locks: takes the board's lock while it reads what is free of the
   display memory. No spinlock may be held.
@@ -1591,12 +1542,12 @@ for (found[0..@min(there, found.len)]) |*driver| list(driver);
 
 ## MirrorBoard
 
-Mirrors a board's picture about each axis.
+Mirrors a board's picture about each axis, or shows it unturned.
 
 **SYNOPSIS**
 
 ```zig
-fn MirrorBoard(_: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) i32
+fn MirrorBoard(rb: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) i32
 ```
 
 **SINCE**
@@ -1606,24 +1557,42 @@ fn MirrorBoard(_: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool
 **INPUTS**
 
 - `board` - the board.
-- `mirror_x` - flip left and right.
-- `mirror_y` - flip top and bottom.
+- `mirror_x` - whether the picture is mirrored left to right.
+- `mirror_y` - whether it is mirrored top to bottom.
 
 **RESULT**
 
-`RTGERR_OK`, `RTGERR_NOT_SUPPORTED` unless the board can do it itself,
-or what the driver answered.
+`RTGERR_OK`; `RTGERR_NOT_SUPPORTED` for an axis the board cannot
+mirror (`RTGBC_MIRROR_X`, `RTGBC_MIRROR_Y`) - nothing changes then -
+or what the driver answered, and the picture turned as it was.
 
 **BEHAVIOR**
 
-Only a board that can turn the picture itself does it; otherwise that
-is the business of whoever draws.
+Each axis is set on its own: false leaves it unturned. The picture,
+the overlay and the pointer are mirrored alike on the way to the
+glass, so nothing above the board changes: whoever draws and whoever
+moves the pointer works in the picture's own coordinates. What is
+shown is on the glass mirrored when this returns.
+
+A board whose own hardware turns an axis - a controller's scan
+direction, planes read backwards, a stream's lines sent last first -
+does that axis itself. On a board whose picture the library composes
+it mirrors every other axis as it composes; such a picture is not
+read by the display itself for as long as it is mirrored.
+
+`GetBoardInfo` says how the picture is turned (`mirror_x`,
+`mirror_y`): what a touch panel's driver reads, so that a finger
+lands on the picture. The tasks that asked are told of a change
+(`AddRtgNotify`). A quarter turn is not this: it is a mode with its
+sides exchanged (`RTGMF_TURNED`).
 
 **CONTEXT**
 
-- Waits: only if the driver does.
+- Waits: for the picture delivered again, where the driver waits,
+  and while another task holds the board's lock.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes the board's lock, and inside it the board's compose
+  lock. No spinlock may be held.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -1636,11 +1605,12 @@ None known.
 
 **SEE ALSO**
 
-`GetBoardInfo`
+`GetBoardInfo`, `ComposeLines`, `MoveBoardPointer`
 
 **EXAMPLES**
 
 ```zig
+// Left and right exchanged, top and bottom as they are.
 _ = rb.MirrorBoard(board, true, false);
 ```
 
@@ -1741,9 +1711,9 @@ pointer is. The image's point is put here, which is its hot spot and
 not its corner. Nothing is done for the same place twice. An overlay
 that follows the pointer (SetBoardOverlay) moves with it.
 
-A board that turns its picture itself (`MirrorBoard`) turns the
-pointer with it: the pointer is laid into the picture's own order on
-its way out, before the turn.
+A picture that is mirrored (`MirrorBoard`) has its pointer mirrored
+with it: the place is the picture's own, and the pointer is laid
+into the picture's own order on its way out, before the turn.
 
 On a board whose picture the library composes, a move is the
 rectangle the image left and the one it came to, delivered again - one
@@ -2502,12 +2472,12 @@ _ = rb.ScalePixels(buffer, &.{ .x = 0, .y = 0, .width = 640, .height = 400 }, &p
 
 ## SetBoardBrightness
 
-Sets a board's brightness.
+Sets the brightness of a board's backlight.
 
 **SYNOPSIS**
 
 ```zig
-fn SetBoardBrightness(_: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32
+fn SetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32
 ```
 
 **SINCE**
@@ -2521,17 +2491,33 @@ fn SetBoardBrightness(_: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32
 
 **RESULT**
 
-`RTGERR_OK`, `RTGERR_NOT_SUPPORTED`, or what the driver answered.
+`RTGERR_OK`; `RTGERR_NOT_SUPPORTED` on a board with no backlight to
+set (`RTGBC_BRIGHTNESS` clear); or what the driver answered, and the
+brightness as it was.
 
 **BEHAVIOR**
 
-0 is dark and 100 is full, whichever way round the part itself counts.
+0 is dark and 100 is full, whichever way round the part itself
+counts. A backlight that is a line on or off (`brightness_steps` 2 in
+`GetBoardInfo`) is on for anything above 0. The library keeps the
+value: `GetBoardInfo` answers it (`brightness`), and a board that was
+asleep comes back with it. On a board that is asleep it is kept and
+not applied until the board wakes (`SetBoardPower`).
+
+A board's backlight is lit with its first picture, at what its
+device's tags ask (`RTGA_Brightness`), else in full; a brightness set
+before that is applied at once, and the first picture leaves it.
+
+Dimmed is not asleep: `SetBoardPower` is what puts a display to
+sleep.
 
 **CONTEXT**
 
-- Waits: only if the driver does.
+- Waits: only if the driver does, and while another task holds the
+  board's lock.
 - Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
+- Locks: takes the board's lock. No spinlock may be held: a driver
+  may wait.
 - Process: a Task will do.
 
 **OWNERSHIP**
@@ -2544,65 +2530,12 @@ None known.
 
 **SEE ALSO**
 
-`BoardBrightness`, `SetBoardDisplay`
+`GetBoardInfo`, `SetBoardPower`
 
 **EXAMPLES**
 
 ```zig
 _ = rb.SetBoardBrightness(board, 60);
-```
-
-## SetBoardDisplay
-
-Switches a board's display on or off.
-
-**SYNOPSIS**
-
-```zig
-fn SetBoardDisplay(_: *RtgBase, board: *rtg.RtgBoard, on: bool) i32
-```
-
-**SINCE**
-
-1.0. LVO -116.
-
-**INPUTS**
-
-- `board` - the board.
-- `on` - true for on.
-
-**RESULT**
-
-`RTGERR_OK`, `RTGERR_NOT_SUPPORTED`, or what the driver answered.
-
-**BEHAVIOR**
-
-The display's own enable, not the backlight: `SetBoardBrightness` is
-that.
-
-**CONTEXT**
-
-- Waits: only if the driver does.
-- Interrupts: no. The driver may wait on its bus.
-- Locks: no spinlock may be held: a driver may wait.
-- Process: a Task will do.
-
-**OWNERSHIP**
-
-Nothing is allocated.
-
-**BUGS**
-
-None known.
-
-**SEE ALSO**
-
-`SetBoardBrightness`
-
-**EXAMPLES**
-
-```zig
-_ = rb.SetBoardDisplay(board, true);
 ```
 
 ## SetBoardOverlay
@@ -2782,6 +2715,91 @@ mode of another format, the image is not laid until it is set again.
 ```zig
 if (rb.SetBoardPointer(board, arrow, 0, 0) == rtg.errors.RTGERR_OK)
     _ = rb.ShowBoardPointer(board, true);
+```
+
+## SetBoardPower
+
+Puts a board in a power state: on, blank or asleep.
+
+**SYNOPSIS**
+
+```zig
+fn SetBoardPower(rb: *RtgBase, board: *rtg.RtgBoard, state: u32) i32
+```
+
+**SINCE**
+
+1.29. LVO -116.
+
+**INPUTS**
+
+- `board` - the board.
+- `state` - `RTGPWR_ON`: the picture shown. `RTGPWR_BLANK`: the
+  picture black, everything else running. `RTGPWR_ASLEEP`: the
+  display asleep - its backlight off, a panel's display off, a
+  monitor sent to sleep.
+
+**RESULT**
+
+The state the board is in then: the one asked for, or `RTGPWR_BLANK`
+where it was asked to sleep and its display does not sleep by itself
+(`RTGBC_POWER` clear). Below 0, an error, and the board as it was:
+`RTGERR_BAD_ARG` for a state there is none of, `RTGERR_NO_DISPLAY` on
+a board whose device has gone, `RTGERR_NOT_SUPPORTED` on a board with
+no operations, or what the driver answered.
+
+**BEHAVIOR**
+
+A board starts on. The library keeps the state (`GetBoardInfo`,
+`power`), and everything the board showed through it: what is shown,
+drawn or moved while the board is dark is kept, and is on the glass
+when it is put on again, with its backlight at the brightness it had
+(`SetBoardBrightness`, which a board asleep keeps and does not
+apply). Nobody remembers what to put back.
+
+Blank is the library's work on every board whose picture it
+composes: the display is delivered a black picture, and nothing of
+what changes until the board is on again. A board whose display
+reads its buffers of alone is put in each state by its driver; one
+of those whose driver has no such operation is shown nothing while
+it is dark, its buffers still marked showing. Asleep is the driver's
+(`power`), asked once the picture is black, and undone before the
+picture comes back.
+
+The tasks that asked are told of a change (`AddRtgNotify`), and the
+board's `changes` are raised. A wait for a frame of a board asleep
+is by the clock (`WaitVBlank`).
+
+**CONTEXT**
+
+- Waits: for the picture delivered or the display to take the state,
+  where the driver waits, and while another task holds the board's
+  lock.
+- Interrupts: no. The driver may wait on its bus.
+- Locks: takes the board's lock, and inside it the board's compose
+  lock, so no picture is shown or handed on between the states. No
+  spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SetBoardBrightness`, `GetBoardInfo`, `ShowBoard`, `AddRtgNotify`
+
+**EXAMPLES**
+
+```zig
+// Nothing to see: the display sleeps until a key is pressed.
+_ = rb.SetBoardPower(board, rtg.boards.RTGPWR_ASLEEP);
+// ...
+_ = rb.SetBoardPower(board, rtg.boards.RTGPWR_ON);
 ```
 
 ## ShowBitMap
@@ -3172,7 +3190,8 @@ answers `RTGERR_TIMEOUT`, and the board is held to say none until its
 driver says the next.
 
 On a board that says no frames - one with no frame interrupt, one
-whose stream has not begun or has stopped, one that is dark - the
+whose stream has not begun or has stopped, one that is dark - and on
+one that is asleep (`SetBoardPower`) the
 task waits by the clock, a frame's time for each frame asked for, and
 the answer is `RTGERR_OK`: a program that paces itself by the display
 runs at the speed it would on one that says its frames.

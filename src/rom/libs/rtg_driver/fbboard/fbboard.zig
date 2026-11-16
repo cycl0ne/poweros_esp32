@@ -117,13 +117,13 @@
 //!
 //! The BCM2712's port does more of what a board can be asked in its own
 //! hardware (`bcm2712_ops`): the picture mirrored either way (MirrorBoard)
-//! is the HVS reading its planes backwards; the display switched off
-//! (SetBoardDisplay) is the controller sending blank pixels without their
+//! is the HVS reading its planes backwards; the board asleep
+//! (SetBoardPower) is the controller sending blank pixels without their
 //! syncs, which a monitor sleeps at, the mode and everything else left
-//! running; and the brightness is the monitor's own, set and read over the DDC with
-//! DDC/CI, where the monitor takes it. A start of the port - a mode set,
-//! a monitor plugged in - puts all three back as the board has them
-//! (`putBack`).
+//! running; and the brightness is the monitor's own, set over the DDC
+//! with DDC/CI, where the monitor takes it. A start of the port - a mode
+//! set, a monitor plugged in - puts the first two back as the board has
+//! them (`putBack`).
 //!
 //! The JH7110's port has a video layer besides (`jh7110_ops`): the
 //! controller's first overlay, which reads a film's frame in YUV planes
@@ -201,7 +201,7 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 42;
+const REVISION = 43;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -326,11 +326,10 @@ const Screen = struct {
     overlay_width: u32 = 0,
     overlay_height: u32 = 0,
     overlay_shown: bool = false,
-    /// Behind the BCM2712's port: how the picture is turned, whether the
-    /// monitor is sent nothing, and the brightness last set or read.
+    /// Behind the BCM2712's port: how the picture is turned, and whether
+    /// the monitor is sent nothing.
     turn: bcm2712.Turn = .{},
     dark: bool = false,
-    brightness: u32 = 100,
     /// The cursor plane's two image buffers on a display that has one, as
     /// AllocMem gave them and where they start; which of them is the
     /// plane's, whether it is the small size, and its image's hot spot.
@@ -862,45 +861,33 @@ fn mirror(board: *rtg.RtgBoard, x: bool, y: bool) callconv(.c) i32 {
     return err.RTGERR_OK;
 }
 
-/// The monitor sent the picture, or nothing, which it sleeps at.
-fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
+/// The monitor sent nothing, which it sleeps at, or the picture again.
+/// The library has made the picture black before it is asked to sleep,
+/// and makes it again once the monitor is sent it.
+fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     const screen = screenOf(board);
     const sys = screen.sys;
+    const asleep = state == rtg.boards.RTGPWR_ASLEEP;
     sys.ObtainSemaphore(&screen.port_lock);
     defer sys.ReleaseSemaphore(&screen.port_lock);
-    screen.dark = !on;
-    bcm2712.transmit(on);
-    return err.RTGERR_OK;
+    screen.dark = asleep;
+    bcm2712.transmit(!asleep);
+    return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
 /// The monitor's brightness set over DDC/CI, `percent` of its largest:
-/// RTGERR_IO where it does not answer. Holding `port_lock`, which keeps
-/// the port's other talk on the DDC away - the EDID, the SCDC.
+/// RTGERR_IO where it does not answer. The board's lock, which the
+/// library holds around this, keeps the port's other talk on the DDC
+/// away - a look at the connector, a start of the port - and the port's
+/// own lock is not taken: the question and its answer take a tenth of a
+/// second, and the pictures go on being flipped to meanwhile.
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const screen = screenOf(board);
-    const sys = screen.sys;
     const waiter = Waiter{ .screen = screen };
-    sys.ObtainSemaphore(&screen.port_lock);
-    defer sys.ReleaseSemaphore(&screen.port_lock);
     const now = bcm2712.feature(bcm2712.VCP_BRIGHTNESS, waiter) orelse return err.RTGERR_IO;
-    const wanted_percent: u32 = @min(percent, 100);
-    const value: u16 = @intCast((wanted_percent * now.most + 50) / 100);
+    const value: u16 = @intCast((percent * now.most + 50) / 100);
     if (!bcm2712.setFeature(bcm2712.VCP_BRIGHTNESS, value, waiter)) return err.RTGERR_IO;
-    screen.brightness = wanted_percent;
     return err.RTGERR_OK;
-}
-
-/// The monitor's brightness as it answers it - set with its own buttons,
-/// too - in per cent; what was last set or read where it does not answer.
-fn brightness(board: *rtg.RtgBoard) callconv(.c) u32 {
-    const screen = screenOf(board);
-    const sys = screen.sys;
-    sys.ObtainSemaphore(&screen.port_lock);
-    defer sys.ReleaseSemaphore(&screen.port_lock);
-    if (bcm2712.feature(bcm2712.VCP_BRIGHTNESS, Waiter{ .screen = screen })) |now| {
-        screen.brightness = (@as(u32, @min(now.value, now.most)) * 100 + now.most / 2) / now.most;
-    }
-    return screen.brightness;
 }
 
 // --- the video layer, on the JH7110's first overlay -------------------------
@@ -1384,6 +1371,10 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const
         // that shows one buffer after another.
         .flags = (if (on_pci) rtg.boards.RTGBF_COMPOSE else 0) |
             (if (scanout == .bcm2712) rtg.boards.RTGBF_DIRECT_FLIP else 0),
+        // The BCM2712's planes are read backwards either way, and the
+        // monitor on its port takes a brightness.
+        .caps = if (scanout == .bcm2712) rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y else 0,
+        .brightness_steps = if (scanout == .bcm2712) 101 else 0,
         // A monitor's modes are made in the format the board shows.
         .format = format,
         // How many bands the display reads itself is said once it is
@@ -2015,15 +2006,14 @@ const video_ops = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .sh
 
 /// The BCM2712's port's: flipped, a connector, the pointer and the
 /// overlay each a plane of its own, and what its hardware does besides -
-/// the display switched off, the monitor's brightness, the picture
+/// the monitor sent to sleep, the monitor's brightness, the picture
 /// mirrored.
 const bcm2712_ops = ops: {
     var more = flipped_ops;
     more.detect = &detect;
     more.check_mode = &checkMode;
-    more.display = &display;
+    more.power = &power;
     more.set_brightness = &setBrightness;
-    more.brightness = &brightness;
     more.mirror = &mirror;
     more.pointer = &pointer_ops;
     more.overlay = &overlay_ops;

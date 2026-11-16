@@ -96,7 +96,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 19;
+const REVISION = 20;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -161,8 +161,6 @@ const Panel = struct {
     chain: Chain = .{},
     pending: Chain = .{},
     retired: Chain = .{},
-    /// The backlight as last set, for a board that has a line for it.
-    brightness: u32 = 100,
     dma_int: exec.Interrupt = .{},
     bridge_int: exec.Interrupt = .{},
     hooked: bool = false,
@@ -534,7 +532,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.info.buffers = wanted.buffers;
-    board.info.brightness = panel.brightness;
+    // A backlight on a pad is on or off; a board with none wired, and
+    // one behind the bridge, has none to set.
+    board.info.brightness_steps = if (!hdmi and panel.config.backlight_pin.kind == boardpin.BPIN_GPIO) 2 else 0;
     // A bridge's modes are the library's to make, and its link comes up
     // with the first of them.
     if (hdmi) return err.RTGERR_OK;
@@ -816,23 +816,24 @@ fn update(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
     return link_file.fill(&panel.link, &panel.engine, panel.sys, board, area, panel.streaming);
 }
 
-/// The panel's own display on or off, by its DCS command. Not the
-/// backlight.
-fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
-    if (panelOf(board).hdmi) return err.RTGERR_NOT_SUPPORTED;
-    return if (host.dcsWrite(if (on) DISPON else DISPOFF, &.{})) err.RTGERR_OK else err.RTGERR_NO_DISPLAY;
+/// A panel asleep, or awake again: its own display off, by its DCS
+/// command, and the backlight off; the display on and the backlight as
+/// the library keeps it. The stream runs on, and the picture is black
+/// meanwhile, which is the library's.
+fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
+    const panel = panelOf(board);
+    const asleep = state == rtg.boards.RTGPWR_ASLEEP;
+    if (asleep) _ = drive(panel.config.backlight_pin, false);
+    if (!host.dcsWrite(if (asleep) DISPOFF else DISPON, &.{})) return err.RTGERR_NO_DISPLAY;
+    if (!asleep) _ = drive(panel.config.backlight_pin, board.info.brightness != 0);
+    return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
 /// The backlight, on for anything above 0: its line is on or off.
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     if (!drive(panel.config.backlight_pin, percent > 0)) return err.RTGERR_NOT_SUPPORTED;
-    panel.brightness = if (percent > 0) 100 else 0;
     return err.RTGERR_OK;
-}
-
-fn brightness(board: *rtg.RtgBoard) callconv(.c) u32 {
-    return panelOf(board).brightness;
 }
 
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
@@ -900,9 +901,8 @@ const ops = rtg.RtgBoardOps{
     .show = &showOp,
     .refresh = &refresh,
     .update = &update,
-    .display = &display,
+    .power = &power,
     .set_brightness = &setBrightness,
-    .brightness = &brightness,
     .stats = &stats,
     .control = &control,
     .engine = &engine_ops,
@@ -910,10 +910,14 @@ const ops = rtg.RtgBoardOps{
 
 /// A bridge's board has a connector, and its stream reads the copy
 /// alone: nothing but the CPU reads the screens' buffers, so nothing of
-/// them has to be written back.
+/// them has to be written back. The monitor behind it is not put to
+/// sleep from here and has no backlight of the board's: a board asleep
+/// is blank there.
 const bridge_ops = made: {
     var more = ops;
     more.refresh = null;
+    more.power = null;
+    more.set_brightness = null;
     more.detect = &detect;
     more.check_mode = &checkMode;
     break :made more;

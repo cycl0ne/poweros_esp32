@@ -81,7 +81,9 @@ pub const Log = struct {
     set_mode: u32 = 0,
     shown: u32 = 0,
     refreshed: u32 = 0,
-    display_calls: u32 = 0,
+    /// Power states the board was asked for, and the last of them.
+    power_calls: u32 = 0,
+    last_power: u32 = 0,
     brightness_calls: u32 = 0,
     control_calls: u32 = 0,
     fills: u32 = 0,
@@ -122,7 +124,6 @@ pub const Log = struct {
     /// got them.
     last_mode: rtg.RtgMode = .{},
     last_timings: rtg.RtgTimings = .{},
-    display_on: bool = false,
     brightness: u32 = 0,
     /// The pointer as the board has it: the image it was last given,
     /// where that image's top left is, and whether it is laid over the
@@ -252,6 +253,24 @@ pub const State = struct {
     /// on the board that has everything, one whole buffer on the two that
     /// have less, none on one with a picture of its own.
     direct_bands: ?u32 = null,
+    /// The axes the next board's own hardware mirrors (`RTGBC_MIRROR_X`,
+    /// `RTGBC_MIRROR_Y`), on the boards that fill in `mirror`: both,
+    /// unless a test says fewer.
+    mirror_axes: u32 = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y,
+    /// How many levels the next board's backlight has, on the boards
+    /// that fill in `set_brightness`: one for each per cent, unless a
+    /// test says a line on or off (2) or none wired (0).
+    brightness_steps: u32 = 101,
+    /// What `power` answers when it is asked to sleep: asleep, unless a
+    /// test says the display only goes blank, or an error.
+    sleep_answer: i32 = @intCast(rtg.boards.RTGPWR_ASLEEP),
+    /// What `mirror` and `set_brightness` answer: RTGERR_OK does it.
+    mirror_answer: i32 = err.RTGERR_OK,
+    brightness_answer: i32 = err.RTGERR_OK,
+    /// Make the next board with a picture of its own, or the next
+    /// flipped one, one whose display sleeps by itself and whose
+    /// hardware mirrors: its ops fill in `power` and `mirror` as well.
+    hardware: bool = false,
     /// Make the next board one whose display's planes scale
     /// (`RTGBF_SCALES`): it is handed bands of any size to read itself.
     scales: bool = false,
@@ -712,24 +731,32 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
     return err.RTGERR_OK;
 }
 
-fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
+/// The display put in a power state, as a driver's does it: it answers
+/// the state it reached - what the test said for asleep - and on waking
+/// puts its backlight back at what the library keeps.
+fn power(board: *rtg.RtgBoard, wanted: u32) callconv(.c) i32 {
     instanceOf(board).calls += 1;
-    const log = &stateOfBoard(board).log;
-    log.display_calls += 1;
-    log.display_on = on;
-    return err.RTGERR_OK;
+    const state = stateOfBoard(board);
+    if (state.meanwhile) |look| look(board);
+    const log = &state.log;
+    log.power_calls += 1;
+    log.last_power = wanted;
+    if (wanted == rtg.boards.RTGPWR_ASLEEP) {
+        if (state.sleep_answer == @as(i32, @intCast(rtg.boards.RTGPWR_ASLEEP))) log.brightness = 0;
+        return state.sleep_answer;
+    }
+    if (wanted == rtg.boards.RTGPWR_ON) log.brightness = board.info.brightness;
+    return @intCast(wanted);
 }
 
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     instanceOf(board).calls += 1;
-    const log = &stateOfBoard(board).log;
+    const state = stateOfBoard(board);
+    const log = &state.log;
     log.brightness_calls += 1;
+    if (state.brightness_answer != err.RTGERR_OK) return state.brightness_answer;
     log.brightness = percent;
     return err.RTGERR_OK;
-}
-
-fn brightness(board: *rtg.RtgBoard) callconv(.c) u32 {
-    return stateOfBoard(board).log.brightness;
 }
 
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
@@ -747,8 +774,10 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
 
 fn mirror(board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) callconv(.c) i32 {
     instanceOf(board).calls += 1;
-    const log = &stateOfBoard(board).log;
+    const state = stateOfBoard(board);
+    const log = &state.log;
     log.mirrors += 1;
+    if (state.mirror_answer != err.RTGERR_OK) return state.mirror_answer;
     log.last_mirror_x = mirror_x;
     log.last_mirror_y = mirror_y;
     return err.RTGERR_OK;
@@ -1024,6 +1053,18 @@ const own_frames_ops = made: {
     break :made more;
 };
 
+/// A flipped board whose display sleeps by itself, whose hardware
+/// mirrors, and which lays its pointer and its overlay as planes of
+/// its own.
+const flipped_hardware_ops = made: {
+    var more = flipped_ops;
+    more.power = &power;
+    more.mirror = &mirror;
+    more.pointer = &pointer_group;
+    more.overlay = &overlay_group;
+    break :made more;
+};
+
 /// A pointer and an overlay of the board's own, as a cursor plane's
 /// driver has them.
 const pointer_group = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
@@ -1046,9 +1087,8 @@ const full_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
     .show = &showOp,
     .refresh = &refresh,
-    .display = &display,
+    .power = &power,
     .set_brightness = &setBrightness,
-    .brightness = &brightness,
     .stats = &stats,
     .control = &control,
     .mirror = &mirror,
@@ -1066,6 +1106,16 @@ const composed_ops = rtg.RtgBoardOps{
     .refresh = &refresh,
     .update = &updateOp,
     .engine = &engine_group,
+};
+
+/// A board with a picture of its own whose display sleeps by itself,
+/// whose hardware mirrors, and which has a backlight.
+const composed_hardware_ops = made: {
+    var more = composed_ops;
+    more.power = &power;
+    more.mirror = &mirror;
+    more.set_brightness = &setBrightness;
+    break :made more;
 };
 
 /// A board with a picture of its own and a connector: its modes are
@@ -1166,9 +1216,9 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
     const board = driver.rtg_base.CreateBoard(driver, device, &.{
         .label = if (unit == 0) "Fake 0" else "Fake 1",
         .ops = if (state.flipped)
-            (if (state.own_frames == .library) &flipped_ops else &own_frames_ops)
+            (if (state.hardware) &flipped_hardware_ops else if (state.own_frames == .library) &flipped_ops else &own_frames_ops)
         else if (state.composed)
-            (if (state.connector) &composed_connector_ops else &composed_ops)
+            (if (state.hardware) &composed_hardware_ops else if (state.connector) &composed_connector_ops else &composed_ops)
         else if (state.connector)
             &connector_ops
         else if (state.cannot_turn)
@@ -1201,6 +1251,8 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
             rtg.RTG_MAX_BANDS
         else
             1,
+        .caps = state.mirror_axes,
+        .brightness_steps = state.brightness_steps,
     }) orelse return null;
     const instance = instanceOf(board);
     instance.* = .{ .pattern = instance_pattern };

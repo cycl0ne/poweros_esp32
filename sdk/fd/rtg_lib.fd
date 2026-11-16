@@ -66,12 +66,18 @@ i32 ShowBitMap(*rtg.RtgBoard board, ?*rtg.RtgBitMap bitmap)
 /// they do not come within two frames' time each; by the clock on a
 /// board that says none. Not from interrupts.
 i32 WaitVBlank(*rtg.RtgBoard board, u32 frames)
-/// The display enable. Not the backlight.
-i32 SetBoardDisplay(*rtg.RtgBoard board, bool on)
-/// 0 to 100, the right way round whatever the part does.
+/// Put the board in a power state: RTGPWR_ON, the picture shown;
+/// RTGPWR_BLANK, the picture black; RTGPWR_ASLEEP, the display asleep.
+/// Answers the state it is in then - RTGPWR_BLANK for a board that does
+/// not sleep by itself - or an error below 0. What is shown or drawn
+/// meanwhile is kept, and the backlight comes back as it was.
+i32 SetBoardPower(*rtg.RtgBoard board, u32 state)
+/// The backlight, 0 to 100, the right way round whatever the part does;
+/// the library keeps the value, and GetBoardInfo answers it.
+/// RTGERR_NOT_SUPPORTED without RTGBC_BRIGHTNESS.
 i32 SetBoardBrightness(*rtg.RtgBoard board, u32 percent)
-/// What it is now, 0 to 100.
-u32 BoardBrightness(*rtg.RtgBoard board)
+// A slot kept free, so the slots after it stay where they are.
+##reserve 1
 /// Fill a rectangle, in the buffer's format, right-aligned. The rectangle
 /// is cut down to the buffer first; nothing of it inside is RTGERR_OK and
 /// no work. RTGERR_NOT_SUPPORTED unless the board's engine fills - the
@@ -90,9 +96,10 @@ i32 BlitPattern(*rtg.RtgBitMap dest, *const rtg.RtgRect area, *const rtg.RtgPatt
 ##reserve 14
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
-/// Mirror the picture about each axis. RTGERR_NOT_SUPPORTED unless the
-/// board can do it itself, in which case turning the picture is the
-/// business of whoever draws it.
+/// Mirror the picture about each axis, or show it unturned: the
+/// picture, the overlay and the pointer alike, on the way to the glass.
+/// RTGERR_NOT_SUPPORTED for an axis the board has no cap for
+/// (RTGBC_MIRROR_X, RTGBC_MIRROR_Y); nothing changes then.
 i32 MirrorBoard(*rtg.RtgBoard board, bool mirror_x, bool mirror_y)
 // Two slots kept free, so the slots after them stay where they are.
 ##reserve 2

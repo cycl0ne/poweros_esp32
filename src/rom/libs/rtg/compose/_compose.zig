@@ -18,6 +18,22 @@
 //! widths, both ways the same (`_scale.zig`); a line whose row the buffer
 //! has not got is black.
 //!
+//! **Mirrored.** The picture can be mirrored about either axis
+//! (`mirror`): by the board's own hardware for the axes its driver said
+//! it turns, else by the library as it composes - top to bottom is the
+//! rows fetched last first, left to right each row turned round after
+//! the images are laid in it. Whoever draws and whoever moves the
+//! pointer works in the picture's own coordinates; what the driver is
+//! told and what it fetches is in the display's, as the glass has them
+//! (`onGlass`). A picture the library mirrors is never read direct.
+//!
+//! **Dark.** A board that is blank or asleep (`darken`) shows black for
+//! as long: the library composes black, and delivers nothing of what is
+//! drawn or moved meanwhile - all of which is kept, and is on the glass
+//! with the first picture after. A board the library composes nothing
+//! for is shown nothing instead, its bands kept by the library. A dark
+//! board is never read direct either.
+//!
 //! Everything that goes into the picture changes under the board's
 //! **compose lock**, and the driver's `update` runs inside it: what was
 //! written into a shown buffer (`handOn`), a pointer or an overlay set,
@@ -28,13 +44,19 @@
 //! A board that has both ways is shown **direct while plain**: for as
 //! long as nothing lies over the picture - no more bands than the display
 //! reads itself, none of another size than the picture's, no overlay, no
-//! pointer of the library's. When that
+//! pointer of the library's, no mirror of the library's - and the board
+//! is not dark. When that
 //! changes the board is shown again the other way (`settle`), and back
 //! when it is plain again.
 //!
 //! A pointer or an overlay the board lays itself - a cursor plane, a
 //! stream's own copy (`RtgPointerOps`, `RtgOverlayOps`) - is not the
 //! library's to lay: its calls go to the driver, under the same lock.
+//! But for as long as the library mirrors the picture: a plane lies over
+//! the picture as it is, not as it is turned, so the board's own is
+//! taken off and the library lays the image into the picture it mirrors,
+//! and hands it back to the plane when the picture is unturned again
+//! (`planes`).
 //!
 //! A display that is flipped between frames (`flip`) is composed the
 //! same, into the frame it is not reading: what changes is noted, and a
@@ -74,6 +96,19 @@ pub const State = struct {
     height: u32 = 0,
     bytes: u32 = 0,
     format: rtg.PixelFormat = .rgb565,
+    /// The picture mirrored by the library as it composes it, about each
+    /// axis: what the board's own hardware does not turn.
+    mirror_x: bool = false,
+    mirror_y: bool = false,
+    /// The axes the board's own hardware turns (`RTGBC_MIRROR_X`,
+    /// `RTGBC_MIRROR_Y`), as its driver said, and which of them it has
+    /// turned now.
+    turns: u32 = 0,
+    turned_x: bool = false,
+    turned_y: bool = false,
+    /// The board is blank or asleep: the library composes black, or -
+    /// where it composes nothing - has the driver show nothing.
+    dark: bool = false,
     /// The frames of a board that is flipped, and what changed since a
     /// picture was last made in one (`_flip.zig`).
     flip: flips.State = .{},
@@ -138,30 +173,76 @@ pub fn composes(board: *const rtg.RtgBoard) bool {
     return ops.update != null or ops.flip != null;
 }
 
-/// Whether the board's pointer is the library's to lay.
-///
-/// INPUTS:
-/// - `board` - the board.
-pub fn laysPointer(board: *const rtg.RtgBoard) bool {
-    return composes(board) and board.ops.?.pointer == null;
+/// Whether the library mirrors the board's picture itself, about either
+/// axis.
+fn mirrors(board: *rtg.RtgBoard) bool {
+    const state = stateOf(board);
+    return state.mirror_x or state.mirror_y;
 }
 
-/// Whether the board's overlay is the library's to lay.
+/// Whether the board's pointer is the library's to lay: on a board
+/// whose picture it composes, where the board lays none itself, and for
+/// as long as the library mirrors the picture.
 ///
 /// INPUTS:
-/// - `board` - the board.
-pub fn laysOverlay(board: *const rtg.RtgBoard) bool {
-    return composes(board) and board.ops.?.overlay == null;
+/// - `board` - the board; its compose lock is held, or the answer is
+///   asked again once it is.
+pub fn laysPointer(board: *rtg.RtgBoard) bool {
+    return composes(board) and (board.ops.?.pointer == null or mirrors(board));
 }
 
-/// Whether the display shows the library's picture now: something is
-/// shown, and not direct.
+/// Whether the board's overlay is the library's to lay, as its pointer.
+///
+/// INPUTS:
+/// - `board` - the board; its compose lock is held, or the answer is
+///   asked again once it is.
+pub fn laysOverlay(board: *rtg.RtgBoard) bool {
+    return composes(board) and (board.ops.?.overlay == null or mirrors(board));
+}
+
+/// The board's own pointer and overlay - a cursor plane, a plane for a
+/// dragged icon - taken off, or given what the board has again: for a
+/// picture the library begins to mirror, and one it mirrors no more.
+///
+/// INPUTS:
+/// - `board` - the board; its compose lock is held.
+/// - `on` - whether the planes show the images again.
+fn planes(board: *rtg.RtgBoard, on: bool) void {
+    const ops = board.ops orelse return;
+    const shown = board.info.flags & rtg.boards.RTGBF_POINTER != 0;
+    if (ops.pointer) |group| {
+        if (on) {
+            _ = group.set(board, board.pointer);
+            if (board.pointer) |image| group.move(board, board.pointer_x - @as(i32, @intCast(image.hot_x)), board.pointer_y - @as(i32, @intCast(image.hot_y)));
+            if (shown) _ = group.show(board, true);
+        } else {
+            if (shown) _ = group.show(board, false);
+            // The image may be changed and freed while the library lays
+            // it: the plane keeps none.
+            _ = group.set(board, null);
+        }
+    }
+    if (ops.overlay) |group| {
+        if (on) {
+            if (board.overlay) |image| {
+                group.move(board, board.overlay_x - @as(i32, @intCast(image.hot_x)), board.overlay_y - @as(i32, @intCast(image.hot_y)));
+                _ = group.set(board, image);
+            }
+        } else if (board.overlay != null) {
+            _ = group.set(board, null);
+        }
+    }
+}
+
+/// Whether the display shows the library's picture now, and is to be
+/// delivered what changes of it: something is shown, not direct, and the
+/// board is not dark.
 ///
 /// INPUTS:
 /// - `board` - the board; its compose lock is held.
 pub fn composing(board: *rtg.RtgBoard) bool {
     const private = boards.privateOf(board);
-    return composes(board) and private.band_count != 0 and !private.compose.direct;
+    return composes(board) and private.band_count != 0 and !private.compose.direct and !private.compose.dark;
 }
 
 /// Whether a band's buffer is the size of a mode's picture: its width,
@@ -199,9 +280,12 @@ fn readable(board: *const rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const
 /// - `bands` - the bands, checked for that mode.
 pub fn plain(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, bands: []const rtg.RtgBand) bool {
     if (!composes(board)) return true;
+    const state = stateOf(board);
+    // A picture the library mirrors or keeps black is its own.
+    if (state.mirror_x or state.mirror_y or state.dark) return false;
     if (!readable(board, mode, bands)) return false;
     if (flips.flipped(board)) return readsBuffer(board, bands);
-    const reads = stateOf(board).direct_bands;
+    const reads = state.direct_bands;
     if (bands.len > reads) return false;
     // A display that reads one band reads one whole buffer.
     if (reads == 1 and bands.len == 1 and (bands[0].flags != 0 or bands[0].origin != 0)) return false;
@@ -334,16 +418,31 @@ fn bandAt(bands: []const rtg.RtgBand, y: u32) ?*const rtg.RtgBand {
     return null;
 }
 
-/// The pixels of a rectangle of the board's picture as they are to be
+/// Where a rectangle goes: its rows from the first, each a stride on -
+/// back, for a picture fetched last row first.
+const Target = struct {
+    first: [*]u8,
+    stride: isize,
+
+    fn row(target: Target, index: u32) [*]u8 {
+        const from: isize = @bitCast(@intFromPtr(target.first));
+        return @ptrFromInt(@as(usize, @bitCast(from + target.stride * @as(isize, @intCast(index)))));
+    }
+};
+
+/// The pixels of a rectangle of the board's display as they are to be
 /// seen: each line from the band that covers it - scaled where the
 /// band's buffer is not the picture's width, black where no band covers
 /// it or the buffer has no row for it - then the overlay and the pointer
-/// over them, where they are the library's to lay.
+/// over them, where they are the library's to lay; all of it mirrored
+/// where the library mirrors the picture, and black on a board that is
+/// dark.
 ///
 /// INPUTS:
 /// - `rb` - the library.
 /// - `board` - the board; its compose lock is held.
-/// - `area` - the rectangle, in the picture's own coordinates.
+/// - `area` - the rectangle, in the display's coordinates: the picture's
+///   own, mirrored where the library mirrors.
 /// - `into` - where the pixels go: the rectangle's first row first.
 /// - `pitch` - bytes from one row of `into` to the next.
 ///
@@ -358,15 +457,29 @@ pub fn lines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into:
     if (state.bytes == 0) return err.RTGERR_BAD_FORMAT;
     if (area.width <= 0 or area.height <= 0 or area.x < 0 or area.y < 0) return err.RTGERR_BAD_ARG;
     if (@as(i64, area.x) + area.width > state.width or @as(i64, area.y) + area.height > state.height) return err.RTGERR_BAD_ARG;
-    const left: u32 = @intCast(area.x);
-    const top: u32 = @intCast(area.y);
-    const row_bytes: u32 = @as(u32, @intCast(area.width)) * state.bytes;
+    const columns: u32 = @intCast(area.width);
+    const row_bytes: u32 = columns * state.bytes;
     const rows: u32 = @intCast(area.height);
+    if (state.dark) {
+        var row: u32 = 0;
+        while (row < rows) : (row += 1) @memset((into + @as(usize, row) * pitch)[0..row_bytes], 0);
+        return err.RTGERR_OK;
+    }
+    // The rectangle of the picture the display's shows: itself, or its
+    // mirror image - and its rows the other way round where the picture
+    // is mirrored top to bottom.
+    const of_picture = onGlass(state, area.*);
+    const left: u32 = @intCast(of_picture.x);
+    const top: u32 = @intCast(of_picture.y);
+    const target: Target = if (state.mirror_y)
+        .{ .first = into + @as(usize, rows - 1) * pitch, .stride = -@as(isize, @intCast(pitch)) }
+    else
+        .{ .first = into, .stride = @intCast(pitch) };
     const bands = private.bands[0..private.band_count];
 
     var row: u32 = 0;
     while (row < rows) : (row += 1) {
-        const out = into + @as(usize, row) * pitch;
+        const out = target.row(row);
         const y = top + row;
         const band = bandAt(bands, y) orelse {
             @memset(out[0..row_bytes], 0);
@@ -376,7 +489,7 @@ pub fn lines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into:
         const bitmap = band.bitmap;
         if (bitmap.width != state.width) {
             // A buffer of another width: scaled, both ways the same.
-            scaling.row(bitmap, state.width, state.bytes, line, left, @intCast(area.width), out);
+            scaling.row(bitmap, state.width, state.bytes, line, left, columns, out);
             continue;
         }
         // A buffer shorter than its band has no row for the lines past
@@ -389,16 +502,53 @@ pub fn lines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into:
         sys.CopyMem(from, out, row_bytes);
     }
 
-    if (laysOverlay(board)) lay(state, board.overlay, board.overlay_x, board.overlay_y, area, into, pitch);
+    if (laysOverlay(board)) lay(state, board.overlay, board.overlay_x, board.overlay_y, &of_picture, target);
     if (laysPointer(board) and board.info.flags & rtg.boards.RTGBF_POINTER != 0) {
-        lay(state, board.pointer, board.pointer_x, board.pointer_y, area, into, pitch);
+        lay(state, board.pointer, board.pointer_x, board.pointer_y, &of_picture, target);
+    }
+    // Left to right: each row turned round, with what was laid in it.
+    if (state.mirror_x) {
+        row = 0;
+        while (row < rows) : (row += 1) turnRound(into + @as(usize, row) * pitch, columns, state.bytes);
     }
     return err.RTGERR_OK;
 }
 
+/// A row of pixels turned round where it lies: the first the last.
+fn turnRound(row: [*]u8, count: u32, bytes: u32) void {
+    var near: u32 = 0;
+    var far: u32 = count;
+    while (near + 1 < far) : (near += 1) {
+        far -= 1;
+        const a = row + @as(usize, near) * bytes;
+        const b = row + @as(usize, far) * bytes;
+        var i: u32 = 0;
+        while (i < bytes) : (i += 1) {
+            const kept = a[i];
+            a[i] = b[i];
+            b[i] = kept;
+        }
+    }
+}
+
+/// A rectangle of the picture as the display has it, and one of the
+/// display as the picture has it - the same turn: mirrored about each
+/// axis the library mirrors.
+///
+/// INPUTS:
+/// - `state` - the board's compose state, in the mode the picture is
+///   shown in.
+/// - `rect` - the rectangle, inside the picture.
+pub fn onGlass(state: *const State, rect: rtg.RtgRect) rtg.RtgRect {
+    var turned = rect;
+    if (state.mirror_x) turned.x = @as(i32, @intCast(state.width)) - rect.x - rect.width;
+    if (state.mirror_y) turned.y = @as(i32, @intCast(state.height)) - rect.y - rect.height;
+    return turned;
+}
+
 /// One image laid over the pixels of a rectangle: a masked copy of the
 /// part of it that is inside.
-fn lay(state: *const State, given: ?*const rtg.RtgPointerImage, x: i32, y: i32, area: *const rtg.RtgRect, into: [*]u8, pitch: u32) void {
+fn lay(state: *const State, given: ?*const rtg.RtgPointerImage, x: i32, y: i32, area: *const rtg.RtgRect, target: Target) void {
     const image = given orelse return;
     const where = cutTo(imageRect(image, x, y), area) orelse return;
     // An image made for another format than the picture's is in none the
@@ -410,7 +560,7 @@ fn lay(state: *const State, given: ?*const rtg.RtgPointerImage, x: i32, y: i32, 
     var row: i32 = 0;
     while (row < where.height) : (row += 1) {
         const image_y: u32 = @intCast(@as(i64, where.y) + row - image_top);
-        const out = into + @as(usize, @intCast(where.y + row - area.y)) * pitch + @as(usize, @intCast(where.x - area.x)) * bytes;
+        const out = target.row(@intCast(where.y + row - area.y)) + @as(usize, @intCast(where.x - area.x)) * bytes;
         const mask = image.mask + @as(usize, image_y) * image.mask_pitch;
         const pixels = image.pixels + @as(usize, image_y) * image.pitch;
         var column: i32 = 0;
@@ -506,9 +656,13 @@ const Changed = struct {
 /// flipped board noted for the next picture.
 fn deliver(rb: *RtgBase, board: *rtg.RtgBoard, changed: *const Changed) void {
     if (!composing(board)) return;
-    if (flips.flipped(board)) return flips.note(rb, board, changed.rects[0..changed.count]);
+    const state = stateOf(board);
+    // As the display has them.
+    var rects: [4]rtg.RtgRect = undefined;
+    for (changed.rects[0..changed.count], 0..) |rect, i| rects[i] = onGlass(state, rect);
+    if (flips.flipped(board)) return flips.note(rb, board, rects[0..changed.count]);
     const update = board.ops.?.update.?;
-    for (changed.rects[0..changed.count]) |*rect| _ = update(board, rect);
+    for (rects[0..changed.count]) |*rect| _ = update(board, rect);
 }
 
 /// After a change to what lies over the picture: the board shown the
@@ -542,6 +696,133 @@ fn settle(rb: *RtgBase, board: *rtg.RtgBoard, changed: *const Changed) i32 {
         if (!direct) return code;
     }
     deliver(rb, board, changed);
+    return err.RTGERR_OK;
+}
+
+/// The whole picture put on the glass again, after a change to how all
+/// of it is made - mirrored, dark or not: the board shown the other way
+/// where it is plain no longer, or plain again; else the whole display
+/// delivered - by `update`, or on a flipped board noted for the next
+/// picture. A board the library composes nothing for has its driver
+/// asked for what it shows again.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock, its flip lock where it is flipped
+///   and its compose lock are held, and its compose state already says
+///   the change.
+///
+/// RESULT:
+/// RTGERR_OK - also where nothing is shown - or what the driver
+/// answered: the display then shows what it showed.
+fn repaint(rb: *RtgBase, board: *rtg.RtgBoard) i32 {
+    const private = boards.privateOf(board);
+    const state = &private.compose;
+    if (private.band_count == 0) return err.RTGERR_OK;
+    const record = private.mode orelse return err.RTGERR_OK;
+    if (!composes(board)) return shows.otherWay(rb, board);
+    const direct = plain(board, &record.mode, private.bands[0..private.band_count]);
+    if (direct != state.direct) {
+        if (!direct and state.bytes == 0) return err.RTGERR_BAD_FORMAT;
+        state.direct = direct;
+        const code = shows.otherWay(rb, board);
+        if (code != err.RTGERR_OK) state.direct = !direct;
+        return code;
+    }
+    if (direct) return err.RTGERR_OK;
+    const whole = rtg.RtgRect{ .width = @intCast(state.width), .height = @intCast(state.height) };
+    if (flips.flipped(board)) {
+        flips.note(rb, board, &.{whole});
+        return err.RTGERR_OK;
+    }
+    return board.ops.?.update.?(board, &whole);
+}
+
+/// A board made dark, or its picture brought back: the library's blank,
+/// for a board that is blank or asleep. Dark, the library composes black
+/// and delivers nothing of what is drawn or moved; a board it composes
+/// nothing for is shown nothing by its driver, the bands kept here. What
+/// was shown or drawn meanwhile is on the glass when it is lit again.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock, its flip lock where it is flipped
+///   and its compose lock are held.
+/// - `dark` - whether it is to be dark.
+///
+/// RESULT:
+/// RTGERR_OK, or what the driver answered: the board is then as it was.
+pub fn darken(rb: *RtgBase, board: *rtg.RtgBoard, dark: bool) i32 {
+    const state = stateOf(board);
+    if (state.dark == dark) return err.RTGERR_OK;
+    state.dark = dark;
+    const code = repaint(rb, board);
+    if (code != err.RTGERR_OK) state.dark = !dark;
+    return code;
+}
+
+/// A board's picture mirrored about each axis, or not: by the board's
+/// own hardware for the axes its driver said it turns, by the library as
+/// it composes for the others, and what is shown put on the glass again.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; none of its locks is held.
+/// - `x`, `y` - whether the picture is to be mirrored left to right, and
+///   top to bottom.
+///
+/// RESULT:
+/// RTGERR_OK; RTGERR_NOT_SUPPORTED for an axis the board cannot mirror;
+/// or what the driver answered. On anything but RTGERR_OK the picture is
+/// turned as it was.
+pub fn mirror(rb: *RtgBase, board: *rtg.RtgBoard, x: bool, y: bool) i32 {
+    boards.obtain(rb, board);
+    defer boards.release(rb, board);
+    obtainWhole(rb, board);
+    defer releaseWhole(rb, board);
+    const ops = board.ops orelse return err.RTGERR_NOT_SUPPORTED;
+    const caps = board.info.caps;
+    if (x and caps & rtg.boards.RTGBC_MIRROR_X == 0) return err.RTGERR_NOT_SUPPORTED;
+    if (y and caps & rtg.boards.RTGBC_MIRROR_Y == 0) return err.RTGERR_NOT_SUPPORTED;
+    const state = stateOf(board);
+    const was_turned_x = state.turned_x;
+    const was_turned_y = state.turned_y;
+    const was_mirror_x = state.mirror_x;
+    const was_mirror_y = state.mirror_y;
+    // The hardware's axes are the hardware's; the library turns the rest.
+    const turn_x = x and state.turns & rtg.boards.RTGBC_MIRROR_X != 0;
+    const turn_y = y and state.turns & rtg.boards.RTGBC_MIRROR_Y != 0;
+    const hardware = turn_x != state.turned_x or turn_y != state.turned_y;
+    const own_x = x and !turn_x;
+    const own_y = y and !turn_y;
+    if (!hardware and own_x == state.mirror_x and own_y == state.mirror_y) return err.RTGERR_OK;
+    if (hardware) {
+        const code = ops.mirror.?(board, turn_x, turn_y);
+        if (code != err.RTGERR_OK) return code;
+    }
+    // A plane of the board's own lies over the picture unturned: the
+    // library lays its image for as long as it mirrors the picture.
+    const begins = (own_x or own_y) and !(was_mirror_x or was_mirror_y);
+    const ends = !(own_x or own_y) and (was_mirror_x or was_mirror_y);
+    if (begins) planes(board, false);
+    state.turned_x = turn_x;
+    state.turned_y = turn_y;
+    state.mirror_x = own_x;
+    state.mirror_y = own_y;
+    const code = repaint(rb, board);
+    if (code != err.RTGERR_OK) {
+        if (hardware) _ = ops.mirror.?(board, was_turned_x, was_turned_y);
+        state.turned_x = was_turned_x;
+        state.turned_y = was_turned_y;
+        state.mirror_x = was_mirror_x;
+        state.mirror_y = was_mirror_y;
+        if (begins) planes(board, true);
+        return code;
+    }
+    if (ends) planes(board, true);
+    board.info.mirror_x = @intFromBool(x);
+    board.info.mirror_y = @intFromBool(y);
+    boards.changed(rb, board);
     return err.RTGERR_OK;
 }
 
@@ -582,13 +863,13 @@ pub fn handOn(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *
         if (band.bitmap != bitmap) continue;
         const band_end = if (i + 1 < shown.len) shown[i + 1].line else state.height;
         const seen = shownOf(state, band, band_end, cut) orelse continue;
-        const answer = update(board, &seen);
+        const answer = update(board, &onGlass(state, seen));
         if (code == err.RTGERR_OK) code = answer;
     }
     return code;
 }
 
-/// The rectangle of the display that shows a rectangle of a band's
+/// The rectangle of the picture that shows a rectangle of a band's
 /// buffer, or null where the band shows none of it: the lines of the
 /// band whose rows were written - all of a band that repeats its
 /// buffer's first row, where that row is among them - and the columns
@@ -654,6 +935,18 @@ fn letGo(rb: *RtgBase, board: *rtg.RtgBoard, own: bool) void {
     boards.release(rb, board);
 }
 
+/// The locks of a change to an image taken, and whether the library
+/// lays that image: asked again with the locks held, since a picture
+/// mirrored meanwhile changes who lays.
+fn holdFor(rb: *RtgBase, board: *rtg.RtgBoard, lays: *const fn (*rtg.RtgBoard) bool) bool {
+    while (true) {
+        const own = lays(board);
+        hold(rb, board, own);
+        if (lays(board) == own) return own;
+        letGo(rb, board, own);
+    }
+}
+
 /// A board's pointer given an image, or none: handed to the board's own
 /// pointer where it has one, else laid by the library from now on.
 ///
@@ -667,8 +960,7 @@ fn letGo(rb: *RtgBase, board: *rtg.RtgBoard, own: bool) void {
 /// answered, and the board keeps the image it had.
 pub fn setPointer(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImage) i32 {
     const sys = rb.sys_base;
-    const own = laysPointer(board);
-    hold(rb, board, own);
+    const own = holdFor(rb, board, &laysPointer);
     defer letGo(rb, board, own);
 
     const old = board.pointer;
@@ -706,8 +998,7 @@ pub fn setPointer(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImag
 /// RTGERR_OK, or what the driver answered: the pointer is then as it
 /// was.
 pub fn showPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32 {
-    const own = laysPointer(board);
-    hold(rb, board, own);
+    const own = holdFor(rb, board, &laysPointer);
     defer letGo(rb, board, own);
 
     const flag: u32 = rtg.boards.RTGBF_POINTER;
@@ -751,14 +1042,18 @@ pub fn movePointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
     if (follows) {
         board.overlay_x = x;
         board.overlay_y = y;
-        if (board.overlay) |overlay| if (ops.overlay) |group| {
-            group.move(board, x - @as(i32, @intCast(overlay.hot_x)), y - @as(i32, @intCast(overlay.hot_y)));
-        };
+        if (!laysOverlay(board)) {
+            if (board.overlay) |overlay| if (ops.overlay) |group| {
+                group.move(board, x - @as(i32, @intCast(overlay.hot_x)), y - @as(i32, @intCast(overlay.hot_y)));
+            };
+        }
         changed.add(overlayRect(board));
     }
-    if (board.pointer) |image| if (ops.pointer) |group| {
-        group.move(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
-    };
+    if (!laysPointer(board)) {
+        if (board.pointer) |image| if (ops.pointer) |group| {
+            group.move(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
+        };
+    }
     changed.add(pointerRect(board));
     deliver(rb, board, &changed);
 }
@@ -776,8 +1071,7 @@ pub fn movePointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
 /// answered, and the board keeps the overlay it had.
 pub fn setOverlay(rb: *RtgBase, board: *rtg.RtgBoard, made: ?*rtg.RtgPointerImage) i32 {
     const sys = rb.sys_base;
-    const own = laysOverlay(board);
-    hold(rb, board, own);
+    const own = holdFor(rb, board, &laysOverlay);
     defer letGo(rb, board, own);
 
     const old = board.overlay;
@@ -835,7 +1129,9 @@ pub fn moveOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void {
     board.overlay_y = y;
     const image = board.overlay orelse return;
     const ops = board.ops orelse return;
-    if (ops.overlay) |group| group.move(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
+    if (!laysOverlay(board)) {
+        if (ops.overlay) |group| group.move(board, x - @as(i32, @intCast(image.hot_x)), y - @as(i32, @intCast(image.hot_y)));
+    }
     changed.add(overlayRect(board));
     deliver(rb, board, &changed);
 }

@@ -73,5 +73,8 @@ pub fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i
     boards.obtain(rb, board);
     defer boards.release(rb, board);
     const whole = bitmap orelse return _display.show(rb, board, null, &.{});
-    return _display.show(rb, board, null, &.{.{ .bitmap = whole }});
+    const code = _display.show(rb, board, null, &.{.{ .bitmap = whole }});
+    // The first picture is what the backlight is lit with.
+    if (code == rtg.errors.RTGERR_OK) _display.light(rb, board);
+    return code;
 }

@@ -417,9 +417,44 @@ display runs at the speed it would on one that says its frames.
 `GetBoardInfo` says which it is just now (`RTGBC_VBLANK`), and
 `GetBoardStats` counts the frames said (`blanks`): a program that reads
 the count before and after its work sees whether a frame began
-meanwhile. `SetBoardDisplay` turns the display on or off, and
+meanwhile.
+
+## Blank, asleep, and the backlight
+
+```zig
+_ = rb.SetBoardPower(board, rtg.boards.RTGPWR_ASLEEP);
+// ...
+_ = rb.SetBoardPower(board, rtg.boards.RTGPWR_ON);
+```
+
+A board is in one of three power states, and `SetBoardPower` answers
+the one it reached.
+
+| State | What it is | Back in |
+|---|---|---|
+| `RTGPWR_ON` | the picture shown | - |
+| `RTGPWR_BLANK` | the picture black, everything else running | a frame |
+| `RTGPWR_ASLEEP` | the backlight off, a panel's display off, a monitor sent to sleep | about a second |
+
+The library keeps the state (`GetBoardInfo`, `power`) and everything
+the board showed through it. What is shown, drawn or moved while the
+board is dark is kept, and is on the glass when it is on again, with the
+backlight at the brightness it had; nobody remembers what to put back.
+Blank is the library's on every board whose picture it composes: the
+display is delivered black, and nothing more until the board is on
+again. Asleep is the driver's (`RTGBC_POWER`); a board whose display
+does not sleep by itself is blank instead, and the call answers
+`RTGPWR_BLANK`. A wait for a frame of a board asleep is by the clock.
+The Blanker puts the display to sleep so.
+
 `SetBoardBrightness` sets the backlight, 0 to 100 whichever way round
-the part counts.
+the part counts, on a board that has one (`RTGBC_BRIGHTNESS`);
+`GetBoardInfo` answers the value the library keeps (`brightness`) and
+how many levels there are (`brightness_steps`): 2 for a line that is on
+or off, 101 for a level for each per cent. The backlight is lit with
+the board's first picture, at what its part asks (`RTGA_Brightness`),
+else in full. A brightness set while the board is asleep is kept, and
+is what it wakes with. `C:Backlight` reads and sets it.
 
 ## Several buffers at once: bands
 
@@ -581,19 +616,29 @@ only one that reorders blocks and converts colour, is the JPEG codec's
 
 ## Turning the picture
 
-A controller that can be told its scan direction turns the picture
-itself: `MirrorBoard` mirrors about each axis, and `GetBoardInfo` says
-how it is mirrored. A quarter turn is a mode of the board's with its
-sides exchanged, where a board has one.
+`MirrorBoard(board, mirror_x, mirror_y)` mirrors the picture left to
+right, top to bottom, both, or shows it as it lies. Each axis has a cap
+(`RTGBC_MIRROR_X`, `RTGBC_MIRROR_Y`), and an axis the board has not got
+is refused with nothing changed. The picture, the overlay and the
+pointer are mirrored alike on the way to the glass: whoever draws and
+whoever moves the pointer works in the picture's own coordinates, and
+nothing above the board changes. `GetBoardInfo` says how the picture is
+turned (`mirror_x`, `mirror_y`), which is what touch.device reads so
+that a finger lands on what it touches.
 
-A board that streams memory in the order it was written cannot mirror
-anything (`RTGBC_MIRROR` clear): turning the picture is then the
-business of whoever draws it.
+Who mirrors is the board's. Hardware that can does it itself: the
+3.5" board's controller by its scan direction, the Compute Module 5's
+display in its planes, the 7B's panel - top to bottom alone - by
+sending its lines last first. Every other axis of a picture the library
+composes is mirrored by the library as it composes: top to bottom is
+the rows fetched the other way round, left to right each row turned
+round. A picture the library mirrors is not read by the display itself
+meanwhile. So every board has both axes but the 7B's, whose stream
+cannot turn a line round.
 
-The Compute Module 5's display mirrors, in its planes; no other board
-here does. The 3.5" board's controller turns the
-picture by its mode instead: an upright and a sideways one, chosen with
-`ShowBoard`.
+A quarter turn is not this: it is a mode of the board's with its sides
+exchanged, where a board has one - the 3.5" board's upright and
+sideways modes, chosen with `ShowBoard`.
 
 ## The pointer
 
@@ -1059,8 +1104,9 @@ calls nothing: its board is waited for by the clock.
 | `update` | a rectangle of the display's own picture changed: fetch it (`ComposeLines`) and deliver it |
 | `flip` | the display is flipped between two frames the library makes its pictures in: read this one from the next blanking on |
 | `frames` | a flipped board's two frames, where they are memory only the driver can get |
-| `display`, `set_brightness`, `brightness` | the display enable and the backlight |
-| `mirror` | mirroring the picture |
+| `power` | the display asleep and awake again - and blank, on a board the library composes nothing for; without it the library blanks and the board never sleeps |
+| `set_brightness` | the backlight, with how many levels it has in the board's description (`brightness_steps`) |
+| `mirror` | mirroring the picture in the board's own hardware, for the axes the description names (`caps`); the library mirrors the rest of a picture it composes |
 | `stats`, `control` | the counters, and the driver's own requests |
 | `pointer` (`RtgPointerOps`: `set`, `move`, `show`) | a pointer the board lays itself |
 | `overlay` (`RtgOverlayOps`: `set`, `move`) | a second image under the pointer, laid by the board itself |

@@ -35,6 +35,18 @@
 //! worked out, each band of it fetched as the rectangle of the picture it
 //! shows, and that turned into the band.
 //!
+//! The picture mirrored (MirrorBoard) is the controller's own scan
+//! direction: MADCTL's two address-order bits, set over the value the
+//! mode has - the columns' bit for the picture's left and right while it
+//! lies upright, the rows' bit while it lies on its side, and the other
+//! for top and bottom. The controller then takes every window mirrored,
+//! so the whole picture is sent again, which the library asks for.
+//!
+//! Asleep (SetBoardPower) is the controller's display off and the
+//! backlight off; the picture it holds stays, and waking is the display
+//! on again and the backlight as the library keeps it. A blank picture
+//! is the library's: black, sent like any other.
+//!
 //! What the bus asks of a band: it lies in internal memory, where the
 //! bus's DMA reads without the cache between, and it is no longer than
 //! the bus carries in one transaction (the QSPI bus: 32 KiB). A band here
@@ -61,7 +73,7 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 10;
+const REVISION = 11;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -76,6 +88,10 @@ const CASET = 0x2A;
 const RASET = 0x2B;
 const RAMWR = 0x2C;
 const MADCTL = 0x36;
+
+/// MADCTL's address-order bits: the rows', and the columns'.
+const MADCTL_MY: u8 = 0x80;
+const MADCTL_MX: u8 = 0x40;
 
 /// The buffer a band is fetched into and sent from, in internal memory.
 const band_bytes = 16 * 1024;
@@ -96,6 +112,11 @@ const Panel = struct {
     /// MADCTL value of each, and whether the board has the second.
     madctl: [2]u8 = .{ 0, 0 },
     turns: bool = false,
+    /// Whether the mode it is in is the one on its side, and how the
+    /// picture is mirrored: what MADCTL is made of (`madctlNow`).
+    on_its_side: bool = false,
+    mirror_x: bool = false,
+    mirror_y: bool = false,
     /// The size of the mode it is in, which is what a window is cut from,
     /// and the panel's own, which is what the controller scans.
     width: u32 = 0,
@@ -111,7 +132,6 @@ const Panel = struct {
     swapped_turn: sequence.Turn = .none,
     alignment: u32 = 1,
     backlight: BoardPin = .{},
-    lit: u32 = 0,
     /// The panel's lines that are pads of the chip - its reset and its
     /// backlight - taken from gpio.resource while the board exists.
     gpio_base: ?*GpioBase = null,
@@ -158,7 +178,12 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     const io = rb.OpenTransport(driver, device) orelse return err.RTGERR_NO_DISPLAY;
     // The controller reads no buffer itself: its picture is sent, and
     // the library composes it.
-    const board = rb.CreateBoard(driver, device, &.{ .ops = &ops, .instance_size = @sizeOf(Panel) }) orelse {
+    const board = rb.CreateBoard(driver, device, &.{
+        .ops = &ops,
+        .instance_size = @sizeOf(Panel),
+        // The controller's scan direction turns either axis.
+        .caps = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y,
+    }) orelse {
         rb.CloseTransport(io);
         return err.RTGERR_NO_MEMORY;
     };
@@ -225,6 +250,9 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
     if (swapped != absent and panel.swapped_turn != .none) return err.RTGERR_BAD_TAGS;
     // The part's own lines, from its PART_Pin* tags; absent: not wired.
     panel.backlight = BoardPin.of(rb.GetRtgTagData(st.PART_PinBacklight, 0, tag_list));
+    // A backlight on a pad is on or off; any other is not this driver's
+    // to set, and the board says it has none.
+    board.info.brightness_steps = if (panel.backlight.kind == sdk.expansion.boardpin.BPIN_GPIO) 2 else 0;
     const reset_pin = BoardPin.of(rb.GetRtgTagData(st.PART_PinReset, 0, tag_list));
     const reset_ms: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_ResetMillis, 120, tag_list));
     if (!takePads(panel, reset_pin)) return err.RTGERR_IN_USE;
@@ -287,7 +315,6 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.info.buffers = frames;
-    board.info.brightness = 0;
     return err.RTGERR_OK;
 }
 
@@ -364,12 +391,39 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
     const panel = panelOf(board);
     const turned = mode.flags & rtg.modes.RTGMF_TURNED != 0;
     if (turned and !panel.turns) return err.RTGERR_BAD_MODE;
-    const which: usize = @intFromBool(turned);
-    const code = command(panel, MADCTL, &panel.madctl[which], 1);
+    const value = madctlFor(panel, turned, panel.mirror_x, panel.mirror_y);
+    const code = command(panel, MADCTL, &value, 1);
     if (code != err.RTGERR_OK) return code;
+    panel.on_its_side = turned;
     panel.width = mode.width;
     panel.height = mode.height;
     panel.turn = if (turned) panel.swapped_turn else .none;
+    return err.RTGERR_OK;
+}
+
+/// MADCTL for a mode and a mirror: the mode's own value, with an
+/// address order turned for each axis mirrored. Upright, the picture's
+/// columns are the controller's; on its side - by the controller's own
+/// exchange or by this driver's turn - they are its rows.
+fn madctlFor(panel: *const Panel, on_its_side: bool, mirror_x: bool, mirror_y: bool) u8 {
+    var value = panel.madctl[@intFromBool(on_its_side)];
+    const across: u8 = if (on_its_side) MADCTL_MY else MADCTL_MX;
+    const down: u8 = if (on_its_side) MADCTL_MX else MADCTL_MY;
+    if (mirror_x) value ^= across;
+    if (mirror_y) value ^= down;
+    return value;
+}
+
+/// The picture mirrored about each axis by the controller's scan
+/// direction. The picture it holds was written the other way round: the
+/// library has the whole of it sent again once this has answered.
+fn mirror(board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) callconv(.c) i32 {
+    const panel = panelOf(board);
+    const value = madctlFor(panel, panel.on_its_side, mirror_x, mirror_y);
+    const code = command(panel, MADCTL, &value, 1);
+    if (code != err.RTGERR_OK) return code;
+    panel.mirror_x = mirror_x;
+    panel.mirror_y = mirror_y;
     return err.RTGERR_OK;
 }
 
@@ -536,10 +590,17 @@ fn windowBytes(first: u32, last: u32) [4]u8 {
     return .{ @truncate(first >> 8), @truncate(first), @truncate(last >> 8), @truncate(last) };
 }
 
-/// The picture on or off. Not the backlight.
-fn display(board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
+/// Asleep, or awake again: the controller's display off and the
+/// backlight off; the display on and the backlight as the library keeps
+/// it. The picture the controller holds stays through it.
+fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     const panel = panelOf(board);
-    return command(panel, if (on) DISPON else DISPOFF, null, 0);
+    const asleep = state == rtg.boards.RTGPWR_ASLEEP;
+    if (asleep) setBacklight(panel, false);
+    const code = command(panel, if (asleep) DISPOFF else DISPON, null, 0);
+    if (code != err.RTGERR_OK) return if (code < 0) code else err.RTGERR_IO;
+    if (!asleep) setBacklight(panel, board.info.brightness != 0);
+    return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
 /// A command on its own, under the bus's lock as a band is: a transaction
@@ -560,10 +621,6 @@ fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     return err.RTGERR_OK;
 }
 
-fn brightness(board: *rtg.RtgBoard) callconv(.c) u32 {
-    return panelOf(board).lit;
-}
-
 fn setBacklight(panel: *Panel, on: bool) void {
     const pin = panel.backlight;
     if (pin.kind != sdk.expansion.boardpin.BPIN_GPIO) return;
@@ -571,7 +628,6 @@ fn setBacklight(panel: *Panel, on: bool) void {
     gpio.connectOut(pin.number, gpio.out_of_gpio, true);
     gpio.outputEnable(pin.number, true);
     gpio.setLevel(pin.number, on != (pin.active_low != 0));
-    panel.lit = if (on) 100 else 0;
 }
 
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
@@ -601,15 +657,15 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
 /// What this board has. Its picture is sent: `update` is how it hears of
 /// what changed, and the bands, the overlay and the pointer are the
 /// library's. No engine: the controller draws nothing, so a caller that
-/// wants a rectangle filled fills it in the buffer itself. The picture is
-/// turned by choosing a mode, not by the turning ops.
+/// wants a rectangle filled fills it in the buffer itself. A quarter turn
+/// is a mode; mirrored is the controller's scan direction.
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
     .update = &update,
-    .display = &display,
+    .power = &power,
     .set_brightness = &setBrightness,
-    .brightness = &brightness,
+    .mirror = &mirror,
     .stats = &stats,
     .control = &control,
 };

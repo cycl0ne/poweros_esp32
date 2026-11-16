@@ -61,9 +61,8 @@ const MoveBoardOverlay = @import("pointer/moveboardoverlay.zig").MoveBoardOverla
 const BoardDisplayBitMap = @import("display/boarddisplaybitmap.zig").BoardDisplayBitMap;
 const RefreshRect = @import("bitmap/refreshrect.zig").RefreshRect;
 const WaitVBlank = @import("display/waitvblank.zig").WaitVBlank;
-const SetBoardDisplay = @import("display/setboarddisplay.zig").SetBoardDisplay;
+const SetBoardPower = @import("display/setboardpower.zig").SetBoardPower;
 const SetBoardBrightness = @import("display/setboardbrightness.zig").SetBoardBrightness;
-const BoardBrightness = @import("display/boardbrightness.zig").BoardBrightness;
 const FillRect = @import("engine/fillrect.zig").FillRect;
 const CopyRect = @import("engine/copyrect.zig").CopyRect;
 const CopyRects = @import("engine/copyrects.zig").CopyRects;
@@ -173,9 +172,8 @@ const contract_files = [_][]const u8{
     @embedFile("pointer/moveboardoverlay.zig"),
     @embedFile("display/boarddisplaybitmap.zig"),
     @embedFile("display/waitvblank.zig"),
-    @embedFile("display/setboarddisplay.zig"),
+    @embedFile("display/setboardpower.zig"),
     @embedFile("display/setboardbrightness.zig"),
-    @embedFile("display/boardbrightness.zig"),
     @embedFile("engine/fillrect.zig"),
     @embedFile("engine/copyrect.zig"),
     @embedFile("engine/blittemplate.zig"),
@@ -300,14 +298,11 @@ fn lvoBoardDisplayBitMap(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) ?*rtg.
 fn lvoWaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) callconv(.c) i32 {
     return WaitVBlank(rb, board, frames);
 }
-fn lvoSetBoardDisplay(rb: *RtgBase, board: *rtg.RtgBoard, on: bool) callconv(.c) i32 {
-    return SetBoardDisplay(rb, board, on);
+fn lvoSetBoardPower(rb: *RtgBase, board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
+    return SetBoardPower(rb, board, state);
 }
 fn lvoSetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     return SetBoardBrightness(rb, board, percent);
-}
-fn lvoBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard) callconv(.c) u32 {
-    return BoardBrightness(rb, board);
 }
 fn lvoFillRect(rb: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
     return FillRect(rb, dest, area, color);
@@ -412,7 +407,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 30;
+const reserved_slots = 31;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -453,9 +448,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBoardDisplayBitMap),
     vec(reserved),
     vec(lvoWaitVBlank),
-    vec(lvoSetBoardDisplay),
+    vec(lvoSetBoardPower),
     vec(lvoSetBoardBrightness),
-    vec(lvoBoardBrightness),
+    vec(reserved),
     vec(lvoFillRect),
     vec(reserved),
     vec(lvoCopyRect),
