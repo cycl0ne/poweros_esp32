@@ -494,8 +494,9 @@ pub const RtgBoardOps = extern struct {
     /// display take the frame: the library waits for nothing. On an
     /// error the display reads what it read; the library asks for the
     /// frames again (`frames`), and makes the next picture whole. Called
-    /// with the board's compose lock held, by a task of the library's or
-    /// inside a show.
+    /// by a task of the library's or inside a show, one at a time, and
+    /// without the board's compose lock: it may wait, for as long as the
+    /// display takes, and a pointer the library lays moves meanwhile.
     flip: ?*const fn (*RtgBoard, *RtgBitMap) callconv(.c) i32 = null,
     /// A flipped board whose frames are memory only its driver can get -
     /// a device's own, a firmware's framebuffer: hand over two for this

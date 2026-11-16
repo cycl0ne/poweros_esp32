@@ -95,7 +95,10 @@ pub const LIBRARY_VERSION = 1;
 /// RtgShow.frame, RTGFLIP_TAKEN, RTGBF_DIRECT_FLIP). CopyRect and
 /// CopyRects into a buffer such a board shows wait while a picture is
 /// made of it.
-pub const LIBRARY_REVISION = 26;
+/// 27: a driver's flip is called without the board's compose lock, so
+/// one that waits until the display has taken the frame holds up no
+/// pointer's move.
+pub const LIBRARY_REVISION = 27;
 const BUILD_DATE = "16.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

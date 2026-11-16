@@ -276,6 +276,9 @@ pub const State = struct {
     /// `update`, for a test that looks at what is held while the driver
     /// is handed what was written.
     while_handed: ?*const fn (board: *rtg.RtgBoard) void = null,
+    /// Called inside a flipped board's `flip` alone, for a test to look
+    /// at what the library holds while a driver flips.
+    while_flipping: ?*const fn (board: *rtg.RtgBoard) void = null,
 };
 
 /// What belongs to one board: the library allocates it beside the handle.
@@ -646,6 +649,7 @@ fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
     const instance = instanceOf(board);
     instance.calls += 1;
     if (state.while_handed) |look| look(board);
+    if (state.while_flipping) |look| look(board);
     state.log.flips += 1;
     state.log.last_flip = frame;
     if (state.flip_answer < 0) return state.flip_answer;

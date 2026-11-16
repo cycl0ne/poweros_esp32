@@ -4127,6 +4127,57 @@ test "a flip is waited for: the frame read until then is not written before the 
     try tearDown(rb);
 }
 
+/// What a flipped board's driver saw of the locks while it flipped.
+const Flipping = struct {
+    var flips_seen: u32 = 0;
+    var compose_held: u32 = 0;
+    var flip_lock_missed: u32 = 0;
+
+    fn look(board: *rtg.RtgBoard) void {
+        const me = kexec.FindTask(kexec.SysBase, null);
+        const compose = &boards.privateOf(board).compose;
+        flips_seen += 1;
+        if (compose.lock.owner != null or compose.lock.nestCount() != 0) compose_held += 1;
+        if (compose.flip.lock.owner != me or compose.flip.lock.nestCount() == 0) flip_lock_missed += 1;
+    }
+};
+
+test "a driver's flip runs with the flip lock and without the compose lock: a pointer moves while it waits" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const board = try makeFlipped(rb, 16, 12);
+    flips.stopTask(rb, board);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const picture = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const next = base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    paint(picture, 1);
+    paint(next, 2);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, picture));
+
+    Flipping.flips_seen = 0;
+    Flipping.compose_held = 0;
+    Flipping.flip_lock_missed = 0;
+    fk.while_flipping = &Flipping.look;
+    // A picture made by the task's own work, and one made inside a show.
+    poke(picture, 2, 2, white);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, &.{ .x = 2, .y = 2, .width = 1, .height = 1 }));
+    flips.service(rb, board);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(board, next));
+    fk.while_flipping = null;
+
+    try testing.expect(Flipping.flips_seen >= 2);
+    try testing.expectEqual(@as(u32, 0), Flipping.compose_held);
+    try testing.expectEqual(@as(u32, 0), Flipping.flip_lock_missed);
+    try testing.expect(Composing.free(board));
+    try testing.expect(glassIs(board, 2, &.{}));
+
+    base(rb).FreeBitMap(next);
+    base(rb).FreeBitMap(picture);
+    driverBase(rb).DeleteBoard(board);
+    try tearDown(rb);
+}
+
 test "frames of a driver's own: asked for with the mode and after a flip refused; the same one twice is one frame" {
     const rb = try setUp();
     defer kexec.deinit();

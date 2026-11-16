@@ -59,8 +59,10 @@
 //! lock**, a semaphore, held while a picture is made, flipped to and
 //! waited for - by the task, and by a show or a pointer's change that
 //! may show the board another way; the compose lock, inside which the
-//! picture is fetched and `flip` is called, and which is let go before
-//! the frame is waited for, so a pointer moves meanwhile; the read lock,
+//! picture is fetched, and which is let go while the driver's `flip`
+//! runs and while the frame is waited for, so a pointer moves meanwhile
+//! - a driver may wait in its `flip` until it has seen the display take
+//! the frame; the read lock,
 //! a semaphore, around the fetch and around an engine's copy into a
 //! shown buffer; the damage lock, a spinlock, around what was noted, the
 //! bands and whether they were written in.
@@ -482,6 +484,18 @@ fn makeBox(rb: *RtgBase, board: *rtg.RtgBoard, frame: *rtg.RtgBitMap, box: Box) 
     if (board.ops.?.refresh) |refresh| _ = refresh(board, frame, &rectOf(box));
 }
 
+/// The display told to read `frame`: the driver's `flip`, with the
+/// compose lock let go for as long as it runs. A driver may wait in it
+/// for the display to take the frame, and a pointer the library lays is
+/// moved meanwhile - noted for the next picture. The flip lock, which
+/// the caller holds, keeps it one at a time and the frames as they are.
+fn tell(rb: *RtgBase, board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) i32 {
+    composer.release(rb, board);
+    const code = board.ops.?.flip.?(board, frame);
+    composer.obtain(rb, board);
+    return code;
+}
+
 /// After a flip that failed: the frames asked of the driver again, where
 /// they are its own, and the whole picture noted for the next try.
 fn startOver(rb: *RtgBase, board: *rtg.RtgBoard) void {
@@ -515,7 +529,6 @@ fn picture(rb: *RtgBase, board: *rtg.RtgBoard) i32 {
     const sys = rb.sys_base;
     const compose = composer.stateOf(board);
     const state = &compose.flip;
-    const flip = board.ops.?.flip.?;
 
     sys.AcquireLock(&state.damage_lock);
     const fresh = state.fresh;
@@ -539,7 +552,7 @@ fn picture(rb: *RtgBase, board: *rtg.RtgBoard) i32 {
     for (boxes.list()) |box| makeBox(rb, board, back, box);
     sys.ReleaseSemaphore(&state.read_lock);
 
-    const code = flip(board, back);
+    const code = tell(rb, board, back);
     if (code < 0) {
         startOver(rb, board);
         return code;
@@ -629,7 +642,7 @@ pub fn shown(rb: *RtgBase, board: *rtg.RtgBoard, old: []const rtg.RtgBand) i32 {
         // Nothing of it was handed on as it was drawn: out it goes,
         // whole.
         if (board.ops.?.refresh) |refresh| _ = refresh(board, bitmap, &area);
-        const code = board.ops.?.flip.?(board, bitmap);
+        const code = tell(rb, board, bitmap);
         if (code < 0) return code;
         // The frames are made whole when they are taken up again.
         sys.AcquireLock(&state.damage_lock);
