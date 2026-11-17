@@ -133,10 +133,13 @@ tags and constants, each with its doc comment.
   a device from a program (claims, pipes, control transfers), writing a
   class driver, keyboards and mice as sources, sticks, serial and
   Ethernet adapters, writing a controller, and USB in QEMU.
-- [Displays](guides/rtg.md) - rtg.library: drivers, devices and boards, modes,
-  buffers, handing on what was drawn, showing a buffer, several at once
-  in bands, the engine, turning the picture, the pointer, events,
-  asking a board, writing a driver, and the boards of this machine.
+- [Displays](guides/rtg.md) - rtg.library, in three parts. What a
+  program does with a board: the machine's display, modes, the monitor,
+  buffers, handing on what was drawn, showing, bands, power and the
+  backlight, the engine, mirroring, the pointer, video layers, the
+  settings. How a driver is written: its description, in the ROM or on
+  the disk, attach, display memory, timings, connectors, how the picture
+  reaches the glass, transports. And the displays of these machines.
 
 ## Who uses whom
 

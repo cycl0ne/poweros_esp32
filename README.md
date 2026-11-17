@@ -1292,6 +1292,10 @@ are among the disk's: `System/NetLoad` is in `net` and lies in a drawer
 of `gui`, and needs both. The `disk/` tree and `-Dextra` are the
 builder's own files and go on whatever the sets are.
 
+The 64-bit machines' display drivers are files on their disks as well,
+in `DEVS:gfxdrv/`, each built for the chips that have its display:
+rtg.library loads the one for a display its ROM has no driver for.
+
 Two modules of the 64-bit machines' ROM are files on the flash boards'
 disks instead, in `base`: `HANDLERS:pipe-handler`, which dos loads when
 `|` in a shell first opens `PIPE:`, and `LIBS:motion.library`, loaded
