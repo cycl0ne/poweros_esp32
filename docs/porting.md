@@ -314,6 +314,13 @@ const part = eb.FindBoardPart(null, st.PARTKIND_CRYPTO, st.CHIP_JH7110_CRYPTO) o
   null and goes away quietly, so a new machine starts with none of them
   and gains one at a time. This is what makes a port showable at every
   stage instead of at the end.
+- **A part's lines** - its reset, its enable, its backlight
+  (`PART_PinReset` and the others) - are each a pad of the chip, a pin
+  of the IO expander or the part's own (`BoardPin`). Its driver takes
+  them with `ClaimBoardPin`, drives them with `SetBoardPin` and gives
+  them back with `ReleaseBoardPin`, whatever kind each is, so a board
+  that moves a reset from a pad to the expander changes its list and
+  nothing else.
 
 `sdk/libs/expansion/systemtags.zig` names **30 kinds of part and 54
 chips**, which is the list of on-board hardware this system drives. It is

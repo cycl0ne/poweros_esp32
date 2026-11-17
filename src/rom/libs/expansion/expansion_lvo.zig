@@ -23,6 +23,9 @@ const ReleaseDeviceUnits = @import("device/releasedeviceunits.zig").ReleaseDevic
 const IsBootPartition = @import("boot/isbootpartition.zig").IsBootPartition;
 const NoteBootDrive = @import("boot/notebootdrive.zig").NoteBootDrive;
 const BootDrive = @import("boot/bootdrive.zig").BootDrive;
+const ClaimBoardPin = @import("pin/claimboardpin.zig").ClaimBoardPin;
+const ReleaseBoardPin = @import("pin/releaseboardpin.zig").ReleaseBoardPin;
+const SetBoardPin = @import("pin/setboardpin.zig").SetBoardPin;
 
 /// expansion.library's interface, as the SDK generates it from
 /// sdk/fd/expansion_lib.fd.
@@ -57,6 +60,9 @@ const contract_files = [_][]const u8{
     @embedFile("boot/isbootpartition.zig"),
     @embedFile("boot/notebootdrive.zig"),
     @embedFile("boot/bootdrive.zig"),
+    @embedFile("pin/claimboardpin.zig"),
+    @embedFile("pin/releaseboardpin.zig"),
+    @embedFile("pin/setboardpin.zig"),
 };
 
 fn lvoFindBoardPart(eb: *ExpansionBase, old: ?*const BoardPart, kind: u32, chip: u32) callconv(.c) ?*const BoardPart {
@@ -89,6 +95,15 @@ fn lvoNoteBootDrive(eb: *ExpansionBase, name: [*:0]const u8, boot_pri: i32) call
 fn lvoBootDrive(eb: *ExpansionBase) callconv(.c) ?[*:0]const u8 {
     return BootDrive(eb);
 }
+fn lvoClaimBoardPin(eb: *ExpansionBase, pin: usize, owner: [*:0]const u8) callconv(.c) ?[*:0]const u8 {
+    return ClaimBoardPin(eb, pin, owner);
+}
+fn lvoReleaseBoardPin(eb: *ExpansionBase, pin: usize) callconv(.c) void {
+    ReleaseBoardPin(eb, pin);
+}
+fn lvoSetBoardPin(eb: *ExpansionBase, pin: usize, asserted: bool) callconv(.c) bool {
+    return SetBoardPin(eb, pin, asserted);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -107,6 +122,9 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoIsBootPartition),
     vec(lvoNoteBootDrive),
     vec(lvoBootDrive),
+    vec(lvoClaimBoardPin),
+    vec(lvoReleaseBoardPin),
+    vec(lvoSetBoardPin),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

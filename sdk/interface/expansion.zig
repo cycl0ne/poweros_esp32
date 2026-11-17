@@ -33,6 +33,9 @@ pub const LVO = struct {
     pub const IsBootPartition = libraries.lvo(11);
     pub const NoteBootDrive = libraries.lvo(12);
     pub const BootDrive = libraries.lvo(13);
+    pub const ClaimBoardPin = libraries.lvo(14);
+    pub const ReleaseBoardPin = libraries.lvo(15);
+    pub const SetBoardPin = libraries.lvo(16);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -48,6 +51,9 @@ pub const Fn = struct {
     pub const IsBootPartition = *const fn (*ExpansionBase, ?*const [16]u8) callconv(.c) bool;
     pub const NoteBootDrive = *const fn (*ExpansionBase, [*:0]const u8, i32) callconv(.c) void;
     pub const BootDrive = *const fn (*ExpansionBase) callconv(.c) ?[*:0]const u8;
+    pub const ClaimBoardPin = *const fn (*ExpansionBase, usize, [*:0]const u8) callconv(.c) ?[*:0]const u8;
+    pub const ReleaseBoardPin = *const fn (*ExpansionBase, usize) callconv(.c) void;
+    pub const SetBoardPin = *const fn (*ExpansionBase, usize, bool) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -125,5 +131,30 @@ pub const ExpansionBase = opaque {
     /// null while there is none.
     pub fn BootDrive(self: *ExpansionBase) ?[*:0]const u8 {
         return libraries.call(self, LVO.BootDrive, Fn.BootDrive, .{});
+    }
+
+    /// Take a part's line - a BoardPin as its tag's ti_Data holds it - for
+    /// `owner`, which must outlive the claim: a pad of the chip from
+    /// gpio.resource, a pin of the IO expander from expander.resource. Null
+    /// when it is now the caller's, else who holds it. A line of no kind, one
+    /// the part works itself, and a pad where there is no gpio.resource are
+    /// nobody's to hold: null. Not from interrupts.
+    pub fn ClaimBoardPin(self: *ExpansionBase, pin: usize, owner: [*:0]const u8) ?[*:0]const u8 {
+        return libraries.call(self, LVO.ClaimBoardPin, Fn.ClaimBoardPin, .{ pin, owner });
+    }
+
+    /// Give back a line ClaimBoardPin took; its level is left as it is. Not
+    /// from interrupts.
+    pub fn ReleaseBoardPin(self: *ExpansionBase, pin: usize) void {
+        return libraries.call(self, LVO.ReleaseBoardPin, Fn.ReleaseBoardPin, .{pin});
+    }
+
+    /// Drive a part's line asserted or not, by the level it is asserted at:
+    /// a pad of the chip made an output of that level, a pin of the IO
+    /// expander set. False for a line of no kind and one the part works
+    /// itself, which its driver drives its own way, and where the line could
+    /// not be driven. Not from interrupts.
+    pub fn SetBoardPin(self: *ExpansionBase, pin: usize, asserted: bool) bool {
+        return libraries.call(self, LVO.SetBoardPin, Fn.SetBoardPin, .{ pin, asserted });
     }
 };

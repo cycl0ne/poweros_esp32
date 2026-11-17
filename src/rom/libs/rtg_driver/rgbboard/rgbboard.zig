@@ -48,7 +48,7 @@ const DRIVER_NAME = "rgb";
 /// The panel shows RGB565 and nothing else: two bytes a pixel.
 const bytes_per_pixel = 2;
 const VERSION = 1;
-const REVISION = 14;
+const REVISION = 15;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
@@ -78,7 +78,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .caps = rtg.boards.RTGBC_MIRROR_Y,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
-    panel.* = .{ .sys = sys, .rtg_base = rb, .board = board, .config = wanted };
+    panel.* = .{ .sys = sys, .rtg_base = rb, .board = board, .config = wanted, .expansion_base = driver.expansion_base };
     // A panel with no display line has nothing to go dark by but its
     // pictures, which is the library's.
     if (wanted.display_pin.kind == sdk.expansion.boardpin.BPIN_NONE) board.ops = &ops_no_line;

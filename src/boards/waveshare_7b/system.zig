@@ -123,7 +123,7 @@ const panel = [_]Tag{
     .pointer(st.PART_ChipName, "rgb panel"),
     .value(st.PART_Bus, st.BUS_LCD),
     .value(st.PART_PinClock, pins.gpio(7)),
-    .value(st.PART_PinReset, pins.expander(expander_pin_lcd_reset)),
+    .value(st.PART_PinReset, pins.expanderLow(expander_pin_lcd_reset)),
     .value(st.PART_PinEnable, pins.expander(expander_pin_disp)),
     .value(st.PART_PinPower, pins.expander(expander_pin_lcd_power)),
     // The backlight is the expander's own brightness, which is why it is

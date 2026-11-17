@@ -6,7 +6,10 @@
 //! pad number cannot, since pad 0 is a real pad.
 //!
 //! In a tag list a line is the `ti_Data` of its tag, the four bytes of a
-//! `BoardPin` read as one word: `data` and `of` convert.
+//! `BoardPin` read as one word: `data` and `of` convert. A driver takes
+//! the lines it drives with expansion.library's `ClaimBoardPin`, drives
+//! them with `SetBoardPin` and gives them back with `ReleaseBoardPin`,
+//! whatever kind each is.
 
 /// No line.
 pub const BPIN_NONE: u8 = 0;
@@ -16,6 +19,12 @@ pub const BPIN_GPIO: u8 = 1;
 pub const BPIN_EXPANDER: u8 = 2;
 /// The part's own, whatever that means to its driver.
 pub const BPIN_DRIVER: u8 = 3;
+
+/// Who holds a pin of the expander, as ClaimBoardPin answers it, where
+/// the board has no expander.resource.
+pub const BPIN_NO_EXPANDER = "(no expander)";
+/// The same for a pin the expander does not have.
+pub const BPIN_NO_SUCH_PIN = "(no such pin)";
 
 pub const BoardPin = extern struct {
     kind: u8 = BPIN_NONE,

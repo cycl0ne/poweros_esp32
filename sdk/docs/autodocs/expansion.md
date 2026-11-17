@@ -16,13 +16,16 @@ Generated from the source by `./zig build autodoc`.
 
 - [AddBootNode](#addbootnode) - Puts a disk's device node into the system.
 - [BootDrive](#bootdrive) - Says which drive holds the system on the disk the firmware started from.
+- [ClaimBoardPin](#claimboardpin) - Takes a part's line for its driver.
 - [EnterBootNodes](#enterbootnodes) - Hands dos.library the disks' device nodes kept for it, and says which one to boot from.
 - [FindBoardPart](#findboardpart) - The next part of the board after `old` whose kind and chip match.
 - [IsBootPartition](#isbootpartition) - Says whether a partition is the one the firmware read the kernel from.
 - [MakeDosNode](#makedosnode) - Makes a device node for a disk's partition, with what its handler is started with.
 - [NoteBootDrive](#notebootdrive) - Names the drive the system is to start from.
 - [ObtainDeviceUnits](#obtaindeviceunits) - Every unit of every device that speaks `speaks`, on this board.
+- [ReleaseBoardPin](#releaseboardpin) - Gives back a line ClaimBoardPin took.
 - [ReleaseDeviceUnits](#releasedeviceunits) - The list ObtainDeviceUnits answered, and every node on it, freed.
+- [SetBoardPin](#setboardpin) - Drives a part's line.
 - [SystemTags](#systemtags) - The root of the system tag list.
 
 ## AddBootNode
@@ -158,6 +161,80 @@ None known.
 
 ```zig
 if (eb.BootDrive()) |name| assignSystem(name);
+```
+
+## ClaimBoardPin
+
+Takes a part's line for its driver.
+
+**SYNOPSIS**
+
+```zig
+fn ClaimBoardPin(eb: *ExpansionBase, pin: usize, owner: [*:0]const u8) ?[*:0]const u8
+```
+
+**SINCE**
+
+1.6. LVO -60.
+
+**INPUTS**
+
+- `pin` - the line, as its tag's `ti_Data` holds it
+  (`BoardPin.data`).
+- `owner` - who takes it, as the resources list their holders; it
+  must outlive the claim.
+
+**RESULT**
+
+Null when the line is now the caller's. Otherwise who holds it: the
+other driver's name, `NO_SUCH_PAD` for a pad the chip has not got,
+`BPIN_NO_SUCH_PIN` for a pin the expander has not got, and
+`BPIN_NO_EXPANDER` for a pin of an expander the board has no
+expander.resource for.
+
+**BEHAVIOR**
+
+A pad of the chip (`BPIN_GPIO`) is taken from gpio.resource, a pin of
+the expander (`BPIN_EXPANDER`) from expander.resource. A line of no
+kind and one the part works itself (`BPIN_DRIVER`) are nobody's to
+hold, and the answer is null; so is a pad on a machine without
+gpio.resource, where nothing keeps a list of pads.
+
+**CONTEXT**
+
+- Waits: for the resource's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The line is the caller's until `ReleaseBoardPin`. The answered name
+is its holder's, to print and not to keep.
+
+**NOTES**
+
+A driver claims every line it will drive before it drives the first,
+so two drivers wired to one line meet at their claim and not at a
+panel that goes dark when the other starts.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseBoardPin`, `SetBoardPin`, gpio.resource's `AllocGPIO`,
+expander.resource's `ClaimPin`
+
+**EXAMPLES**
+
+```zig
+const reset = rb.GetRtgTagData(st.PART_PinReset, 0, tag_list);
+if (eb.ClaimBoardPin(reset, "rtg-dcs")) |holder| {
+    exec.kprintf(sys, "rtg-dcs: its reset line is %s's\n", .{holder});
+    return err.RTGERR_IN_USE;
+}
 ```
 
 ## EnterBootNodes
@@ -578,6 +655,66 @@ while (it.next()) |node| {
 }
 ```
 
+## ReleaseBoardPin
+
+Gives back a line ClaimBoardPin took.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseBoardPin(eb: *ExpansionBase, pin: usize) void
+```
+
+**SINCE**
+
+1.6. LVO -64.
+
+**INPUTS**
+
+- `pin` - the line, as it was claimed.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+A pad goes back to gpio.resource, a pin of the expander to
+expander.resource. The line keeps the level and the direction it had:
+a driver that wants it left low or as an input sets that first. A
+line of no kind and one the part works itself have nothing to give
+back.
+
+**CONTEXT**
+
+- Waits: for the resource's list.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Only a line the caller claimed: the resources do not check who gives
+one back.
+
+**NOTES**
+
+None.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ClaimBoardPin`, `SetBoardPin`
+
+**EXAMPLES**
+
+```zig
+eb.ReleaseBoardPin(panel.reset_pin.data());
+```
+
 ## ReleaseDeviceUnits
 
 The list ObtainDeviceUnits answered, and every node on it, freed.
@@ -634,6 +771,81 @@ None known.
 ```zig
 const list = eb.ObtainDeviceUnits(devices.DEVIF_BLOCK, null) orelse return;
 defer eb.ReleaseDeviceUnits(list);
+```
+
+## SetBoardPin
+
+Drives a part's line.
+
+**SYNOPSIS**
+
+```zig
+fn SetBoardPin(eb: *ExpansionBase, pin: usize, asserted: bool) bool
+```
+
+**SINCE**
+
+1.6. LVO -68.
+
+**INPUTS**
+
+- `pin` - the line, as its tag's `ti_Data` holds it
+  (`BoardPin.data`).
+- `asserted` - true for the level the line is asserted at - low for
+  one that is asserted low - false for the other.
+
+**RESULT**
+
+True when the line was driven. False for a line of no kind and one
+the part works itself (`BPIN_DRIVER`), which its driver drives its own
+way; for a pin of an expander the board has no expander.resource for,
+or that does not answer; and for a pad on a chip whose pads this does
+not drive.
+
+**BEHAVIOR**
+
+A pad of the chip is taken onto the GPIO matrix, its output from the
+GPIO's own register, its level written and then its driver switched
+on, so it never drives the other level first. A pin of the expander
+is set by expander.resource, which makes it an output the same way.
+The call does not claim the line: a driver claims it first
+(`ClaimBoardPin`).
+
+**CONTEXT**
+
+- Waits: for a pin of the expander, while it is sent over I2C.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated.
+
+**NOTES**
+
+A false answer for a line that is wired says the driver must reach
+the part another way: a panel without a reset line is reset by its
+own command.
+
+**BUGS**
+
+The pads of the ESP32-S3 and the ESP32-P4 are driven; on the other
+chips a pad answers false.
+
+**SEE ALSO**
+
+`ClaimBoardPin`, `ReleaseBoardPin`, expander.resource's `SetPin`
+
+**EXAMPLES**
+
+```zig
+if (eb.SetBoardPin(reset, true)) {
+    rb.RtgDelay(10 * 1000);
+    _ = eb.SetBoardPin(reset, false);
+} else {
+    _ = rb.TxParam(io, SWRESET, null, 0);
+}
 ```
 
 ## SystemTags

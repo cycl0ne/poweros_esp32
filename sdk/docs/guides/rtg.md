@@ -1105,7 +1105,9 @@ brightness, whether the display starts on and whether its screens'
 windows are composed; the format, the pitch and the buffers are the
 driver's to read from the same list, and a part's reset and the time it
 is then given (`RTGA_ResetMillis`, `RTGA_SettleMillis`) with its lines
-(`PART_PinReset` and the others of the part). Above `RTGA_DriverBase`
+(`PART_PinReset` and the others of the part), which it takes and drives
+through expansion.library (`ClaimBoardPin`, `SetBoardPin`) whether each
+is a pad of the chip or a pin of the IO expander. Above `RTGA_DriverBase`
 each driver has a block of 64 of its own, listed in
 `sdk/libs/rtg/tags.zig` so that two never claim one. `GetRtgTagData`
 reads a tag, so a driver need open nothing but the library.

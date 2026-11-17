@@ -56,6 +56,7 @@ pub const expansion_library_tag = expansion_init.expansion_library_tag;
 
 const testing = std.testing;
 const kexec = @import("../exec/exec.zig");
+const kgpio = @import("../../resources/gpio/gpio.zig");
 const kutility = @import("../utility/utility.zig");
 const kdos = @import("../dos/dos.zig");
 const FindBoardPart = @import("part/findboardpart.zig").FindBoardPart;
@@ -83,6 +84,9 @@ test {
     _ = @import("boot/enterbootnodes.zig");
     _ = @import("device/obtaindeviceunits.zig");
     _ = @import("device/releasedeviceunits.zig");
+    _ = @import("pin/claimboardpin.zig");
+    _ = @import("pin/releaseboardpin.zig");
+    _ = @import("pin/setboardpin.zig");
 }
 
 const TagItem = utility.TagItem;
@@ -525,6 +529,43 @@ test "one device in two places is listed once, the higher version's" {
     try testing.expect(_device.speaksAny(&.{ 1, 2, 0 }, 2));
     try testing.expect(!_device.speaksAny(&.{ 1, 0, 2 }, 2));
     try testing.expect(_device.speaksAny(&.{0}, 0));
+}
+
+test "a part's lines: a pad taken from gpio.resource and given back; one of no kind is nobody's" {
+    const eb = try setUp(null);
+    defer kexec.deinit();
+    const iface: *sdk.interface.expansion.ExpansionBase = @ptrCast(eb);
+    const pad = pins.gpio(9);
+    // No gpio.resource keeps a list: the pad is the caller's.
+    try testing.expect(iface.ClaimBoardPin(pad, "rtg-dcs") == null);
+    iface.ReleaseBoardPin(pad);
+
+    // With it, the pad is taken, refused to the next and given back.
+    const made = kexec.InitResident(kexec.SysBase, &kgpio.gpio_resource_tag, null) orelse return error.NoResource;
+    const gpio_lib: *exec.Library = @ptrCast(@alignCast(made));
+    try testing.expect(iface.ClaimBoardPin(pad, "rtg-dcs") == null);
+    try testing.expectEqualStrings("rtg-dcs", std.mem.span(iface.ClaimBoardPin(pad, "touch.device").?));
+    iface.ReleaseBoardPin(pad);
+    try testing.expect(iface.ClaimBoardPin(pad, "touch.device") == null);
+    iface.ReleaseBoardPin(pad);
+    // A pad the chip has not got.
+    try testing.expectEqualStrings(sdk.resources.gpio.NO_SUCH_PAD, std.mem.span(iface.ClaimBoardPin(pins.gpio(23), "rtg-dcs").?));
+    kexec.RemResource(kexec.SysBase, @ptrCast(gpio_lib));
+    kexec.freeLibraryMemory(kexec.SysBase, gpio_lib);
+
+    // A pin of an expander the board has no resource for is refused, and
+    // not driven.
+    const on_expander = pins.expanderLow(3);
+    try testing.expectEqualStrings(pins.BPIN_NO_EXPANDER, std.mem.span(iface.ClaimBoardPin(on_expander, "rtg-rgb").?));
+    try testing.expect(!iface.SetBoardPin(on_expander, true));
+    // A line of no kind, and one the part works itself: nobody's to hold,
+    // and the driver's own to drive.
+    for ([_]usize{ 0, pins.driver(1) }) |line| {
+        try testing.expect(iface.ClaimBoardPin(line, "rtg-rgb") == null);
+        try testing.expect(!iface.SetBoardPin(line, true));
+        iface.ReleaseBoardPin(line);
+    }
+    try tearDown(eb);
 }
 
 test "an ID string's revision" {

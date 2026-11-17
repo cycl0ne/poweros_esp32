@@ -33,10 +33,12 @@ const dmares = sdk.resources.dma;
 const expander = sdk.resources.expander;
 const gpio_resource = sdk.resources.gpio;
 const GpioBase = gpio_resource.GpioBase;
+const BoardPin = sdk.expansion.BoardPin;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const intbits = sdk.hardware.intbits;
 
 const lcd = @import("lcd.zig");
-const cpu = @import("sdk").hardware.cpu;
+const cpu = sdk.hardware.cpu;
 const config = @import("config.zig");
 const stream = @import("stream.zig");
 const pointer = @import("pointer.zig");
@@ -62,12 +64,15 @@ pub const Panel = struct {
     frame_bytes: usize = 0,
     frames: u32 = 0,
 
-    /// The pads the panel is on - its colour bits, its four timing
-    /// signals, and those of its control lines that are pads of the chip -
-    /// taken from gpio.resource while the board exists.
+    /// The pads the panel is on - its colour bits and its four timing
+    /// signals - taken from gpio.resource while the board exists; its
+    /// three control lines, whatever kind each is, through
+    /// expansion.library (`takePads`).
     gpio_base: ?*GpioBase = null,
     held_pads: [max_pads]u8 = @splat(0),
     held_count: u32 = 0,
+    expansion_base: ?*ExpansionBase = null,
+    lines_held: bool = false,
 
     dma: ?*dmares.DmaBase = null,
     /// The panel's channel and the ring it runs round the buffers.
@@ -125,8 +130,8 @@ pub const Panel = struct {
     /// the pointer and the overlay are laid as far from the bottom,
     /// their own rows last first (`pointer.zig`).
     mirror_y: bool = false,
-    /// expander.resource, once it was asked for: a control line or the
-    /// backlight on it.
+    /// expander.resource, once it was asked for: the backlight's own
+    /// brightness on it.
     expander_base: ?*sdk.interface.expander.ExpanderBase = null,
     /// Whether it has been put in step since it was started, and where the
     /// active area is to go at the next blanking.
@@ -214,23 +219,13 @@ pub fn openExpander(panel: *Panel) ?*sdk.interface.expander.ExpanderBase {
     return panel.expander_base;
 }
 
-/// A control line, wherever the board has it wired.
-pub fn setLine(panel: *Panel, pin: sdk.expansion.BoardPin, on: bool) bool {
-    const level = if (pin.active_low != 0) !on else on;
-    return switch (pin.kind) {
-        sdk.expansion.boardpin.BPIN_EXPANDER => blk: {
-            const ex = openExpander(panel) orelse break :blk false;
-            break :blk ex.SetPin(pin.number, level);
-        },
-        sdk.expansion.boardpin.BPIN_GPIO => blk: {
-            const gpio = @import("sdk").hardware.gpio;
-            gpio.outputEnable(pin.number, true);
-            gpio.setLevel(pin.number, level);
-            break :blk true;
-        },
-        // Not wired: nothing to do, and not a failure.
-        else => true,
-    };
+/// A control line driven asserted or not, wherever the board has it
+/// wired (`SetBoardPin`). A line not wired is nothing to do, and not a
+/// failure; false for one that could not be driven.
+pub fn setLine(panel: *Panel, pin: BoardPin, asserted: bool) bool {
+    if (!pin.wired()) return true;
+    const eb = panel.expansion_base orelse return false;
+    return eb.SetBoardPin(pin.data(), asserted);
 }
 
 /// The panel's display enable, for the op that offers it.
@@ -251,9 +246,9 @@ pub fn bringUp(panel: *Panel) i32 {
     measureAgainst(panel);
 
     // Out of reset and enabled before anything clocks it.
-    _ = setLine(panel, panel.config.reset_pin, false);
-    panel.rtg_base.RtgDelay(panel.config.reset_ms * 1000);
     _ = setLine(panel, panel.config.reset_pin, true);
+    panel.rtg_base.RtgDelay(panel.config.reset_ms * 1000);
+    _ = setLine(panel, panel.config.reset_pin, false);
     _ = setLine(panel, panel.config.display_pin, true);
     panel.rtg_base.RtgDelay(panel.config.settle_ms * 1000);
 
@@ -629,23 +624,46 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
     }
     // The panel itself goes dark and back into reset, while its lines are
     // still this driver's.
-    if (panel.held_count != 0 or panel.gpio_base == null) {
+    if (panel.lines_held) {
         _ = setLine(panel, panel.config.display_pin, false);
-        _ = setLine(panel, panel.config.reset_pin, false);
+        _ = setLine(panel, panel.config.reset_pin, true);
+        const eb = panel.expansion_base.?;
+        for (controlLines(panel)) |line| eb.ReleaseBoardPin(line.data());
+        panel.lines_held = false;
     }
     if (panel.gpio_base) |gb| gpio_resource.freePads(gb, panel.held_pads[0..panel.held_count]);
     panel.held_count = 0;
     return code;
 }
 
-/// The most pads a panel is on: 24 colour bits, 4 timing signals, 3
-/// control lines.
-const max_pads = 24 + 4 + 3;
+/// The most pads a panel's signals are on: 24 colour bits, 4 timing
+/// signals.
+const max_pads = 24 + 4;
 
-/// Every pad the panel is on, taken from gpio.resource. False if another
-/// driver holds one; a machine without the resource takes nothing.
+/// The panel's control lines: its reset, its display enable, its
+/// backlight.
+fn controlLines(panel: *const Panel) [3]BoardPin {
+    return .{ panel.config.reset_pin, panel.config.display_pin, panel.config.backlight_pin };
+}
+
+/// The panel's three control lines taken through expansion.library,
+/// whatever kind each is, then every pad of its signals from
+/// gpio.resource. False, said on the raw port, if another driver holds
+/// one; a machine without the library or the resource takes nothing
+/// from it.
 fn takePads(panel: *Panel) bool {
     const sys = panel.sys;
+    if (panel.expansion_base) |eb| {
+        const wanted = controlLines(panel);
+        for (wanted, 0..) |line, taken| {
+            if (eb.ClaimBoardPin(line.data(), MODULE_NAME)) |holder| {
+                for (wanted[0..taken]) |back| eb.ReleaseBoardPin(back.data());
+                exec.kprintf(sys, "%s: a control line of its panel is %s's\n", .{ MODULE_NAME, holder });
+                return false;
+            }
+        }
+        panel.lines_held = true;
+    }
     const gb: *GpioBase = @ptrCast(@alignCast(sys.OpenResource(gpio_resource.GPIONAME) orelse return true));
     const setup = &panel.config.setup;
     var count: u32 = 0;
@@ -658,15 +676,13 @@ fn takePads(panel: *Panel) bool {
         panel.held_pads[count] = pad;
         count += 1;
     }
-    const lines = [_]sdk.expansion.BoardPin{ panel.config.reset_pin, panel.config.display_pin, panel.config.backlight_pin };
-    for (lines) |line| {
-        if (line.kind != sdk.expansion.boardpin.BPIN_GPIO) continue;
-        panel.held_pads[count] = line.number;
-        count += 1;
-    }
     if (gpio_resource.allocPads(gb, panel.held_pads[0..count], MODULE_NAME)) |refused| {
         exec.kprintf(sys, "%s: GPIO%d is %s's\n", .{ MODULE_NAME, refused.pad, refused.holder });
-        panel.gpio_base = gb;
+        // The lines go back as they were taken, not driven.
+        if (panel.lines_held) {
+            for (controlLines(panel)) |line| panel.expansion_base.?.ReleaseBoardPin(line.data());
+            panel.lines_held = false;
+        }
         return false;
     }
     panel.gpio_base = gb;

@@ -73,11 +73,12 @@ const utility = sdk.utility;
 const TagItem = utility.TagItem;
 const err = rtg.errors;
 const hardware = sdk.hardware;
-const gpio = hardware.gpio;
 const system = hardware.system;
 const systimer = hardware.systimer;
 const intbits = hardware.intbits;
 const boardpin = sdk.expansion.boardpin;
+const BoardPin = sdk.expansion.BoardPin;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 
 const config = @import("config.zig");
 const host = @import("host.zig");
@@ -97,7 +98,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 22;
+const REVISION = 23;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -167,6 +168,10 @@ const Panel = struct {
     hooked: bool = false,
     /// The DSI host's and the DMA controller's clocks are on (`bringUp`).
     clocked: bool = false,
+    /// The part's reset and backlight, taken through expansion.library for
+    /// as long as the board is (`takeLines`).
+    expansion_base: ?*ExpansionBase = null,
+    lines_held: bool = false,
     stats: rtg.RtgBoardStats = .{},
     /// The PPA and the 2D-DMA: FillRect and CopyRect.
     engine: engine_file.Engine = .{},
@@ -226,14 +231,46 @@ fn bridgeServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
 
 // --- the panel's lines ---------------------------------------------------
 
-/// A line of the panel's driven to `level`, if it is a pad of the chip.
-fn drive(pin: sdk.expansion.BoardPin, asserted: bool) bool {
-    if (pin.kind != boardpin.BPIN_GPIO) return false;
-    gpio.toMatrix(pin.number);
-    gpio.connectOut(pin.number, gpio.out_of_gpio, true);
-    gpio.setLevel(pin.number, asserted == (pin.active_low == 0));
-    gpio.outputEnable(pin.number, true);
+/// The part's reset and backlight taken through expansion.library,
+/// whatever kind each is. False, said on the raw port, if another driver
+/// holds one; a machine without the library takes nothing.
+fn takeLines(panel: *Panel) bool {
+    const eb = panel.expansion_base orelse return true;
+    const reset = panel.config.reset_pin.data();
+    if (eb.ClaimBoardPin(reset, MODULE_NAME)) |holder| {
+        sdk.exec.kprintf(panel.sys, "%s: its panel's reset line is %s's\n", .{ MODULE_NAME, holder });
+        return false;
+    }
+    if (eb.ClaimBoardPin(panel.config.backlight_pin.data(), MODULE_NAME)) |holder| {
+        eb.ReleaseBoardPin(reset);
+        sdk.exec.kprintf(panel.sys, "%s: its panel's backlight is %s's\n", .{ MODULE_NAME, holder });
+        return false;
+    }
+    panel.lines_held = true;
     return true;
+}
+
+/// The two lines given back, the backlight off first.
+fn releaseLines(panel: *Panel) void {
+    if (!panel.lines_held) return;
+    _ = drive(panel, panel.config.backlight_pin, false);
+    const eb = panel.expansion_base.?;
+    eb.ReleaseBoardPin(panel.config.reset_pin.data());
+    eb.ReleaseBoardPin(panel.config.backlight_pin.data());
+    panel.lines_held = false;
+}
+
+/// A line of the panel's driven asserted or not. False where it is not
+/// one expansion.library drives - not wired, or the part's own.
+fn drive(panel: *Panel, pin: BoardPin, asserted: bool) bool {
+    const eb = panel.expansion_base orelse return false;
+    return eb.SetBoardPin(pin.data(), asserted);
+}
+
+/// Whether a line is one this driver can switch: a pad of the chip or a
+/// pin of the expander.
+fn switched(pin: BoardPin) bool {
+    return pin.kind == boardpin.BPIN_GPIO or pin.kind == boardpin.BPIN_EXPANDER;
 }
 
 // --- bringing it up ------------------------------------------------------
@@ -272,9 +309,10 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
 
     // The panel's reset, where the board wired one.
     const rb = driverBase(panel.board);
-    if (drive(wanted.reset_pin, true)) {
+    const reset_by_line = drive(panel, wanted.reset_pin, true);
+    if (reset_by_line) {
         rb.RtgDelay(wanted.reset_ms * 1000);
-        _ = drive(wanted.reset_pin, false);
+        _ = drive(panel, wanted.reset_pin, false);
         rb.RtgDelay(wanted.settle_ms * 1000);
     }
 
@@ -314,7 +352,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
         }
     } else {
         // A panel without a reset line is reset by its own command.
-        if (wanted.reset_pin.kind != boardpin.BPIN_GPIO) {
+        if (!reset_by_line) {
             if (!host.dcsWrite(panel.sys, SWRESET, &.{})) return err.RTGERR_NO_DISPLAY;
             rb.RtgDelay(wanted.settle_ms * 1000);
         }
@@ -370,7 +408,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     sys.AddIntServer(intbits.INTB_DSI_BRIDGE, &panel.bridge_int);
     panel.hooked = true;
 
-    if (wanted.backlight_pin.wired()) _ = drive(wanted.backlight_pin, true);
+    _ = drive(panel, wanted.backlight_pin, true);
     return err.RTGERR_OK;
 }
 
@@ -481,7 +519,7 @@ fn giveBack(panel: *Panel) void {
         bridge.stop();
         host.stop();
     }
-    if (panel.config.backlight_pin.wired()) _ = drive(panel.config.backlight_pin, false);
+    _ = drive(panel, panel.config.backlight_pin, false);
 }
 
 // --- the board's ops -----------------------------------------------------
@@ -517,7 +555,11 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .direct_bands = if (hdmi) 0 else rtg.RTG_MAX_BANDS,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
-    panel.* = .{ .sys = sys, .board = board, .config = wanted, .own = wanted, .hdmi = hdmi };
+    panel.* = .{ .sys = sys, .board = board, .config = wanted, .own = wanted, .hdmi = hdmi, .expansion_base = driver.expansion_base };
+    if (!takeLines(panel)) {
+        rb.DeleteBoard(board);
+        return err.RTGERR_IN_USE;
+    }
     sizeRows(panel);
     // The engine is the board's for as long as the board is, whatever
     // becomes of the link: its channels claimed now, and the board
@@ -534,9 +576,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
     };
     board.info.buffers = wanted.buffers;
-    // A backlight on a pad is on or off; a board with none wired, and
-    // one behind the bridge, has none to set.
-    board.info.brightness_steps = if (!hdmi and panel.config.backlight_pin.kind == boardpin.BPIN_GPIO) 2 else 0;
+    // A backlight on a pad or on the expander is on or off; a board with
+    // none wired, and one behind the bridge, has none to set.
+    board.info.brightness_steps = if (!hdmi and switched(panel.config.backlight_pin)) 2 else 0;
     // A bridge's modes are the library's to make, and its link comes up
     // with the first of them.
     if (hdmi) return err.RTGERR_OK;
@@ -545,6 +587,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     if (code != err.RTGERR_OK) {
         giveBack(panel);
         engine_file.takeDown(&panel.engine);
+        releaseLines(panel);
         rb.DeleteBoard(board);
         return code;
     }
@@ -568,6 +611,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     if (rb.AddBoardMode(board, &timings, @intFromEnum(rtg.PixelFormat.rgb565), rtg.modes.RTGMF_DEFAULT) == 0) {
         giveBack(panel);
         engine_file.takeDown(&panel.engine);
+        releaseLines(panel);
         rb.DeleteBoard(board);
         return err.RTGERR_NO_MEMORY;
     }
@@ -682,6 +726,7 @@ fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const panel = panelOf(board);
     giveBack(panel);
     engine_file.takeDown(&panel.engine);
+    releaseLines(panel);
 }
 
 /// A panel has one mode, which `attach` brought up. Over HDMI the link is
@@ -825,17 +870,17 @@ fn update(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
 fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     const asleep = state == rtg.boards.RTGPWR_ASLEEP;
-    if (asleep) _ = drive(panel.config.backlight_pin, false);
+    if (asleep) _ = drive(panel, panel.config.backlight_pin, false);
     if (!host.dcsWrite(panel.sys, if (asleep) DISPOFF else DISPON, &.{})) return err.RTGERR_NO_DISPLAY;
-    if (!asleep) _ = drive(panel.config.backlight_pin, board.info.brightness != 0);
+    if (!asleep) _ = drive(panel, panel.config.backlight_pin, board.info.brightness != 0);
     return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }
 
 /// The backlight, on for anything above 0: its line is on or off.
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const panel = panelOf(board);
-    if (!drive(panel.config.backlight_pin, percent > 0)) return err.RTGERR_NOT_SUPPORTED;
-    return err.RTGERR_OK;
+    if (!switched(panel.config.backlight_pin)) return err.RTGERR_NOT_SUPPORTED;
+    return if (drive(panel, panel.config.backlight_pin, percent > 0)) err.RTGERR_OK else err.RTGERR_IO;
 }
 
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {

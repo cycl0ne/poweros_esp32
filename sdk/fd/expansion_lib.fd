@@ -55,4 +55,20 @@ void NoteBootDrive([*:0]const u8 name, i32 boot_pri)
 /// dos.library's: the drive NoteBootDrive kept, without the colon, or
 /// null while there is none.
 ?[*:0]const u8 BootDrive()
+/// Take a part's line - a BoardPin as its tag's ti_Data holds it - for
+/// `owner`, which must outlive the claim: a pad of the chip from
+/// gpio.resource, a pin of the IO expander from expander.resource. Null
+/// when it is now the caller's, else who holds it. A line of no kind, one
+/// the part works itself, and a pad where there is no gpio.resource are
+/// nobody's to hold: null. Not from interrupts.
+?[*:0]const u8 ClaimBoardPin(usize pin, [*:0]const u8 owner)
+/// Give back a line ClaimBoardPin took; its level is left as it is. Not
+/// from interrupts.
+void ReleaseBoardPin(usize pin)
+/// Drive a part's line asserted or not, by the level it is asserted at:
+/// a pad of the chip made an output of that level, a pin of the IO
+/// expander set. False for a line of no kind and one the part works
+/// itself, which its driver drives its own way, and where the line could
+/// not be driven. Not from interrupts.
+bool SetBoardPin(usize pin, bool asserted)
 ##end

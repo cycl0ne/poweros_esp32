@@ -19,8 +19,10 @@ const ExpansionBase = expansion_base.ExpansionBase;
 /// The name it is opened by. The SDK's.
 pub const LIBRARY_NAME = expansion.EXPANSIONNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "13.11.2026";
+/// 6: ClaimBoardPin, ReleaseBoardPin and SetBoardPin - a part's line
+/// taken, driven and given back, whatever kind it is.
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

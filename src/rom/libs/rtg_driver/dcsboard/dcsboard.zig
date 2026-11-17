@@ -55,8 +55,8 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const BoardPin = sdk.expansion.BoardPin;
-const gpio_resource = sdk.resources.gpio;
-const GpioBase = gpio_resource.GpioBase;
+const boardpin = sdk.expansion.boardpin;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
@@ -68,12 +68,11 @@ const tags = rtg.tags;
 
 const sequence = @import("sequence.zig");
 const st = sdk.expansion.systemtags;
-const gpio = sdk.hardware.gpio;
 
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 13;
+const REVISION = 14;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -131,12 +130,13 @@ const Panel = struct {
     /// itself with MADCTL.
     swapped_turn: sequence.Turn = .none,
     alignment: u32 = 1,
+    /// The panel's own lines, from its PART_Pin* tags - its reset and
+    /// its backlight - taken through expansion.library while the board
+    /// exists (`takeLines`), whatever kind each is; absent: not wired.
+    reset: BoardPin = .{},
     backlight: BoardPin = .{},
-    /// The panel's lines that are pads of the chip - its reset and its
-    /// backlight - taken from gpio.resource while the board exists.
-    gpio_base: ?*GpioBase = null,
-    held_pads: [2]u8 = .{ 0, 0 },
-    held_count: u8 = 0,
+    expansion_base: ?*ExpansionBase = null,
+    lines_held: bool = false,
     band: ?[*]align(4) u8 = null,
     /// How many bytes the band holds.
     band_size: u32 = band_bytes,
@@ -247,15 +247,15 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
         else => return err.RTGERR_BAD_TAGS,
     };
     if (swapped != absent and panel.swapped_turn != .none) return err.RTGERR_BAD_TAGS;
-    // The part's own lines, from its PART_Pin* tags; absent: not wired.
+    panel.expansion_base = driver.expansion_base;
+    panel.reset = BoardPin.of(rb.GetRtgTagData(st.PART_PinReset, 0, tag_list));
     panel.backlight = BoardPin.of(rb.GetRtgTagData(st.PART_PinBacklight, 0, tag_list));
-    // A backlight on a pad is on or off; any other is not this driver's
-    // to set, and the board says it has none.
-    board.info.brightness_steps = if (panel.backlight.kind == sdk.expansion.boardpin.BPIN_GPIO) 2 else 0;
-    const reset_pin = BoardPin.of(rb.GetRtgTagData(st.PART_PinReset, 0, tag_list));
+    // A backlight on a pad or on the expander is on or off; any other is
+    // not this driver's to set, and the board says it has none.
+    board.info.brightness_steps = if (switched(panel.backlight)) 2 else 0;
     const reset_ms: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_ResetMillis, 10, tag_list));
     const settle_ms: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_SettleMillis, 120, tag_list));
-    if (!takePads(panel, reset_pin)) return err.RTGERR_IN_USE;
+    if (!takeLines(panel)) return err.RTGERR_IN_USE;
 
     // The memory first: a panel brought up with nowhere to draw is no use.
     // The band is what the bus's DMA reads: internal memory.
@@ -286,7 +286,7 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
     // Dark until there is a picture, then out of reset and through the
     // maker's bring-up.
     setBacklight(panel, false);
-    const code = bringUp(panel, reset_pin, reset_ms, settle_ms, bring_up);
+    const code = bringUp(panel, reset_ms, settle_ms, bring_up);
     if (code != err.RTGERR_OK) {
         giveBack(panel);
         return code;
@@ -321,16 +321,11 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
 /// The controller out of reset - its own line if it has one, the command
 /// if not - and every step of the bring-up, each with its wait. The
 /// waits give the CPU away (`RtgDelay`): some 250 ms on the 3.5" board.
-fn bringUp(panel: *Panel, reset_pin: BoardPin, reset_ms: u32, settle_ms: u32, bring_up: []const u8) i32 {
+fn bringUp(panel: *Panel, reset_ms: u32, settle_ms: u32, bring_up: []const u8) i32 {
     const rb = panel.rtg_base;
-    if (reset_pin.kind == sdk.expansion.boardpin.BPIN_GPIO) {
-        const asserted = reset_pin.active_low == 0;
-        gpio.toMatrix(reset_pin.number);
-        gpio.connectOut(reset_pin.number, gpio.out_of_gpio, true);
-        gpio.outputEnable(reset_pin.number, true);
-        gpio.setLevel(reset_pin.number, asserted);
+    if (setLine(panel, panel.reset, true)) {
         rb.RtgDelay(reset_ms * 1000);
-        gpio.setLevel(reset_pin.number, !asserted);
+        _ = setLine(panel, panel.reset, false);
     } else {
         const code = rb.TxParam(panel.io, SWRESET, null, 0);
         if (code != err.RTGERR_OK) return code;
@@ -350,31 +345,44 @@ fn sendStep(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(
     return @bitCast(@as(isize, code));
 }
 
-/// The panel's lines that are pads of the chip, taken from gpio.resource.
-/// False if another driver holds one; a machine without the resource
-/// takes nothing.
-fn takePads(panel: *Panel, reset_pin: BoardPin) bool {
-    const sys = panel.sys;
-    const gb: *GpioBase = @ptrCast(@alignCast(sys.OpenResource(gpio_resource.GPIONAME) orelse return true));
-    var count: u8 = 0;
-    for ([_]BoardPin{ reset_pin, panel.backlight }) |line| {
-        if (line.kind != sdk.expansion.boardpin.BPIN_GPIO) continue;
-        panel.held_pads[count] = line.number;
-        count += 1;
-    }
-    if (gpio_resource.allocPads(gb, panel.held_pads[0..count], MODULE_NAME)) |refused| {
-        exec.kprintf(sys, "%s: GPIO%d is %s's\n", .{ MODULE_NAME, refused.pad, refused.holder });
+/// The panel's two lines taken through expansion.library, whatever kind
+/// each is. False, said on the raw port, if another driver holds one; a
+/// machine without the library takes nothing.
+fn takeLines(panel: *Panel) bool {
+    const eb = panel.expansion_base orelse return true;
+    if (eb.ClaimBoardPin(panel.reset.data(), MODULE_NAME)) |holder| {
+        exec.kprintf(panel.sys, "%s: its panel's reset line is %s's\n", .{ MODULE_NAME, holder });
         return false;
     }
-    panel.gpio_base = gb;
-    panel.held_count = count;
+    if (eb.ClaimBoardPin(panel.backlight.data(), MODULE_NAME)) |holder| {
+        eb.ReleaseBoardPin(panel.reset.data());
+        exec.kprintf(panel.sys, "%s: its panel's backlight is %s's\n", .{ MODULE_NAME, holder });
+        return false;
+    }
+    panel.lines_held = true;
     return true;
 }
 
+/// One of the panel's lines driven asserted or not. False where it is
+/// not one expansion.library drives - not wired, or the part's own.
+fn setLine(panel: *Panel, line: BoardPin, asserted: bool) bool {
+    const eb = panel.expansion_base orelse return false;
+    return eb.SetBoardPin(line.data(), asserted);
+}
+
+/// Whether a line is one this driver can switch: a pad of the chip or a
+/// pin of the expander.
+fn switched(line: BoardPin) bool {
+    return line.kind == boardpin.BPIN_GPIO or line.kind == boardpin.BPIN_EXPANDER;
+}
+
 fn giveBack(panel: *Panel) void {
-    if (panel.gpio_base) |gb| gpio_resource.freePads(gb, panel.held_pads[0..panel.held_count]);
-    panel.gpio_base = null;
-    panel.held_count = 0;
+    if (panel.lines_held) {
+        const eb = panel.expansion_base.?;
+        eb.ReleaseBoardPin(panel.reset.data());
+        eb.ReleaseBoardPin(panel.backlight.data());
+    }
+    panel.lines_held = false;
     if (panel.band) |band| panel.sys.FreeVec(band);
     panel.band = null;
     if (panel.upright) |upright| panel.sys.FreeVec(upright);
@@ -616,22 +624,16 @@ fn command(panel: *Panel, cmd: i32, params: ?*const anyopaque, size: u32) i32 {
     return panel.rtg_base.TxParam(panel.io, cmd, params, size);
 }
 
-/// The backlight: a pad that lights it or not. Any brightness above 0 is
-/// on.
+/// The backlight: a line that lights it or not. Any brightness above 0
+/// is on.
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     const panel = panelOf(board);
-    if (panel.backlight.kind != sdk.expansion.boardpin.BPIN_GPIO) return err.RTGERR_NOT_SUPPORTED;
-    setBacklight(panel, percent != 0);
-    return err.RTGERR_OK;
+    if (!switched(panel.backlight)) return err.RTGERR_NOT_SUPPORTED;
+    return if (setLine(panel, panel.backlight, percent != 0)) err.RTGERR_OK else err.RTGERR_IO;
 }
 
 fn setBacklight(panel: *Panel, on: bool) void {
-    const pin = panel.backlight;
-    if (pin.kind != sdk.expansion.boardpin.BPIN_GPIO) return;
-    gpio.toMatrix(pin.number);
-    gpio.connectOut(pin.number, gpio.out_of_gpio, true);
-    gpio.outputEnable(pin.number, true);
-    gpio.setLevel(pin.number, on != (pin.active_low != 0));
+    _ = setLine(panel, panel.backlight, on);
 }
 
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
