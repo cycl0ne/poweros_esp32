@@ -3,7 +3,7 @@
 //! timed and checked. Built against the SDK only.
 //!
 //!   VideoDec FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,
-//!            PQ/S,HLG/S,BT2020/S,PEAK/K/N,WATCHDOG/K/N
+//!            PQ/S,HLG/S,BT2020/S,PEAK/K/N,WATCHDOG/K/N,SUMS/S
 //!
 //! The file - H.264, or H.265 with H265 or a name ending in .h265, .265
 //! or .hevc, in Annex B form as `ffmpeg -c:v copy -bsf:v
@@ -50,11 +50,17 @@
 //! fast as they come. How long putting a frame down took, on average and
 //! at most, is printed at the end. The close gadget or Ctrl-C stops it.
 //!
+//! SUMS prints each frame's CRC-32 as it is shown - zlib's, over the
+//! frame as FRAME writes it - one line a frame, `sum N XXXXXXXX`: a whole
+//! stream checked against `ffmpeg -pix_fmt nv12 -f rawvideo` cut into
+//! frames on the PC.
+//!
 //! WATCHDOG arms the watchdog for that many milliseconds before the
 //! decoder is opened, feeds it with each picture, and disarms it at the
 //! end: a decoder that stops the machine has it reset. An AMD graphics
 //! device's decoder is only started while the watchdog is armed.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
@@ -77,10 +83,10 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "VideoDec";
-const VERSION_STRING = "\x00$VER: VideoDec 1.5 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: VideoDec 1.6 (17.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,PQ/S,HLG/S,BT2020/S,PEAK/K/N,WATCHDOG/K/N";
+const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,PQ/S,HLG/S,BT2020/S,PEAK/K/N,WATCHDOG/K/N,SUMS/S";
 const arg_file = 0;
 const arg_h265 = 1;
 const arg_frame = 2;
@@ -95,6 +101,7 @@ const arg_hlg = 10;
 const arg_bt2020 = 11;
 const arg_peak = 12;
 const arg_watchdog = 13;
+const arg_sums = 14;
 
 /// What the stream's numbers mean, as the switches say: a picture is
 /// BT.709's at the ordinary range unless it is told otherwise.
@@ -213,6 +220,7 @@ const Tally = struct {
     wanted: ?u32 = null,
     to: ?[*:0]const u8 = null,
     written: bool = false,
+    sums: bool = false,
     /// RGB: the frame written as colours, through graphics.library.
     rgb: ?*GraphicsBase = null,
     sys: ?*ExecBase = null,
@@ -398,12 +406,23 @@ fn take(dl: *DosBase, vb: *VideoDecBase, decoder: *videodec.VideoDecoder, frame:
             }
         }
     }
+    if (t.sums) _ = Printf(dl, "sum %u %08x\n", .{ t.frames, frameSum(frame) });
     if (t.show) |show| {
         if (!show.put(dl, frame)) t.stopped = true;
     }
     t.last_time = frame.time;
     t.frames += 1;
     vb.ReleaseVideoFrame(decoder, frame);
+}
+
+/// The CRC-32 of the frame as writeFrame writes it.
+fn frameSum(frame: *const videodec.VideoDecFrame) u32 {
+    var crc = std.hash.Crc32.init();
+    var row: u32 = 0;
+    while (row < frame.height) : (row += 1) crc.update((frame.y.? + row * frame.pitch)[0..frame.width]);
+    row = 0;
+    while (row < (frame.height + 1) / 2) : (row += 1) crc.update((frame.cbcr.? + row * frame.pitch)[0..frame.width]);
+    return crc.final();
 }
 
 /// The frame as it is shown, as raw NV12, into the file `name`.
@@ -597,7 +616,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [14]usize = @splat(0);
+    var argv: [15]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -610,6 +629,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var tally: Tally = .{};
     if (argv[arg_frame] != 0) tally.wanted = @intCast(@max(0, @as(*const i32, @ptrFromInt(argv[arg_frame])).*));
     if (argv[arg_to] != 0) tally.to = @ptrFromInt(argv[arg_to]);
+    tally.sums = argv[arg_sums] != 0;
     tally.look = .{
         .transfer = if (argv[arg_pq] != 0) rtg.RTGYUV_PQ else if (argv[arg_hlg] != 0) rtg.RTGYUV_HLG else rtg.RTGYUV_SDR,
         .wide = argv[arg_bt2020] != 0,

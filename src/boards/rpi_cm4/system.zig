@@ -140,6 +140,19 @@ const hdmi_sound = [_]Tag{
     .done,
 };
 
+/// The chip's H.265 decoder: its registers at 0xFEB0_0000 and the
+/// interrupt controller in front of them 0x1_0000 above, GIC SPI 98; its
+/// clock is the firmware's (videodec.resource).
+const hevc = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_VIDEODEC),
+    .value(st.PART_Chip, st.CHIP_BCM2711_HEVC),
+    .pointer(st.PART_ChipName, "bcm2711 hevc"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0xFEB0_0000),
+    .value(st.PART_Irq, 32 + 98),
+    .done,
+};
+
 /// The VideoCore's firmware, start4.elf, through its mailbox (`mailbox`):
 /// where C:Reboot TRYBOOT and C:CpuClock find it.
 const firmware = [_]Tag{
@@ -188,6 +201,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &emmc),
     .pointer(st.SYSTAG_Part, &firmware),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
+    .pointer(st.SYSTAG_Part, &hevc),
     .done,
 };
 

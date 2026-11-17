@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 //! videodec.resource's base: the chip's decoder - where it is, whether it
-//! runs, the firmware's code buffer, or an AMD graphics device's decoder
-//! and its ring - the lock its commands are given under, and the decoders
-//! open on it, by their instance number.
+//! runs, the firmware's code buffer, an AMD graphics device's decoder and
+//! its ring, or the BCM2711's H.265 block - the lock its commands are
+//! given under, and the decoders open on it, by their instance number.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const vcn = @import("codec/_vcn.zig");
+const bcm2711 = @import("codec/_bcm2711.zig");
 
 /// How many decoders may be open at once.
 pub const max_decoders = 8;
@@ -25,8 +26,9 @@ pub const VideoDecBase = extern struct {
     /// The decoder's commands, one caller at a time: held for each call
     /// that gives the chip one, and while it waits for the chip's answer.
     lock: exec.SignalSemaphore,
-    /// The WAVE511: its registers (0: the board has none), its interrupt,
-    /// its state (STATE_*) and the codecs it takes (VDCODEC_*).
+    /// The WAVE511, or the BCM2711's H.265 block: its registers (0: the
+    /// board has none), its interrupt, its state (STATE_*) and the codecs
+    /// it takes (VDCODEC_*).
     vpu: usize,
     vpu_irq: u32,
     state: u32,
@@ -47,4 +49,8 @@ pub const VideoDecBase = extern struct {
     /// An AMD graphics device's decoder, where that is the machine's:
     /// where it is, its firmware's pieces and its ring.
     vcn: vcn.State,
+    /// The BCM2711's H.265 block, where that is the chip's: its
+    /// firmware's mailbox, its clock, and the phases' ends its interrupt
+    /// server took.
+    hevc: bcm2711.State,
 };

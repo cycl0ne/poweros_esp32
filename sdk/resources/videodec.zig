@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! videodec.resource: the chip's video decoder - the JH7110's WAVE511 on
-//! the VisionFive 2, and an AMD graphics device's on x86-64 (video block
-//! 4.0.2, the Radeon 780M's). A machine without one has no
-//! videodec.resource.
+//! the VisionFive 2, an AMD graphics device's on x86-64 (video block
+//! 4.0.2, the Radeon 780M's), and the BCM2711's H.265 block on the
+//! Compute Module 4. A machine without one has no videodec.resource.
 //!
 //! A decoder is opened for a codec (OpenVideoDecoder), fed the stream a
 //! picture at a time (FeedVideoDecoder) and asked for its frames in the
@@ -32,7 +32,10 @@
 //! to 8 bits, main still picture), VP9 (profile 0, and profile 2's
 //! 10 bits rounded to 8; 4:2:0) and AV1 (main: 4:2:0 in 8 bits, and 10
 //! rounded to 8, film grain applied) up to 8192 x 4352, its frames copied
-//! into the system's memory.
+//! into the system's memory. The BCM2711's block takes H.265 alone (main,
+//! main 10 rounded to 8 bits, main still picture) up to 4096 x 4096, its
+//! frames copied into the system's memory too; from videodec.resource
+//! 1.8 on.
 //!
 //! Get its base with OpenResource(VIDEODECNAME); its functions are in
 //! sdk/interface/videodec.zig.

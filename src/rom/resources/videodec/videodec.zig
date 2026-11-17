@@ -15,8 +15,9 @@
 //!
 //! The chip is `codec/_wave511.zig`; a decoder's ring, times, frames and
 //! waits `decoder/_decoder.zig`. An AMD graphics device's decoder is
-//! `codec/_vcn.zig`, a stream on it `decoder/_session.zig`; each call
-//! hands such a decoder to its own path. Each call is a file of its own under
+//! `codec/_vcn.zig`, a stream on it `decoder/_session.zig`; the BCM2711's
+//! H.265 block is `codec/_bcm2711.zig`, a stream on it
+//! `decoder/_bcm2711.zig`; each call hands such a decoder to its own path. Each call is a file of its own under
 //! `decoder/`. The jump table is videodec_lvo.zig, the ROM tag and init
 //! videodec_init.zig, the base videodec_base.zig. This file holds the
 //! names the rest of the kernel reaches the resource by, and the tests of
@@ -57,8 +58,10 @@ test {
     _ = @import("videodec_lvo.zig");
     _ = @import("codec/_wave511.zig");
     _ = @import("codec/_vcn.zig");
+    _ = @import("codec/_bcm2711.zig");
     _ = @import("decoder/_decoder.zig");
     _ = @import("decoder/_session.zig");
+    _ = @import("decoder/_bcm2711.zig");
 }
 
 fn setUp() !*VideoDecBase {

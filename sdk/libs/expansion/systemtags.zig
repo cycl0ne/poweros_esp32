@@ -761,6 +761,12 @@ pub const CHIP_BCM2711_HVS: u32 = 55;
 /// or CHIP_UEFI_FB on the same board). Only where the firmware lit it as
 /// HDMI, to a monitor that takes sound.
 pub const CHIP_BCM2711_HDMI_AUDIO: u32 = 56;
+/// The BCM2711's H.265 decoder (PARTKIND_VIDEODEC on BUS_MEMORY,
+/// PART_Address its registers, PART_Irq its interrupt): Main and Main 10
+/// into frames of 128-byte columns, the parameter sets and slice headers
+/// read by the host; its clock is the VideoCore firmware's, asked for
+/// through the board's CHIP_RPI_FIRMWARE.
+pub const CHIP_BCM2711_HEVC: u32 = 57;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

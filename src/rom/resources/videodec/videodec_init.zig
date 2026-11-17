@@ -10,6 +10,10 @@
 //! and started by the first OpenVideoDecoder, and only while the
 //! watchdog is armed. It is driven for H.264, H.265 and VP9.
 //!
+//! On the BCM2711 (the Compute Module 4) the decoder is the chip's H.265
+//! block, found among the board's parts: its clock is set and its
+//! interrupt hooked by the first OpenVideoDecoder.
+//!
 //! On a chip or board without the decoder (the host the tests run on) the
 //! resource is made all the same, without it: VideoDecCodecs answers 0,
 //! OpenVideoDecoder VDERR_NO_ENGINE.
@@ -26,24 +30,35 @@ const VideoDecBase = base.VideoDecBase;
 const Decoder = @import("decoder/_decoder.zig").Decoder;
 const wave511 = @import("codec/_wave511.zig");
 const vcn = @import("codec/_vcn.zig");
+const bcm2711 = @import("codec/_bcm2711.zig");
 
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 7;
-const BUILD_DATE = "09.11.2026";
+pub const RESOURCE_REVISION = 8;
+const BUILD_DATE = "17.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The decoder the chip may have: the JH7110's WAVE511 - where the board
-/// lists it - an AMD graphics device's on x86-64, or none.
-pub const Engine = enum { none, wave511, vcn };
+/// lists it - an AMD graphics device's on x86-64, the BCM2711's H.265
+/// block, or none.
+pub const Engine = enum { none, wave511, vcn, bcm2711 };
 pub const engine: Engine = switch (hardware.chip) {
     .rv64sbi => .wave511,
     .x64uefi => .vcn,
+    .a64v80 => .bcm2711,
     else => .none,
+};
+
+/// Whether a decoder is a session over videoparse.library - an AMD
+/// graphics device's, the H.265 block's - and its type.
+pub const sessions = engine == .vcn or engine == .bcm2711;
+pub const Session = switch (engine) {
+    .bcm2711 => @import("decoder/_bcm2711.zig").Session,
+    else => @import("decoder/_session.zig").Session,
 };
 
 fn videoDecBase(lib: *exec.Library) *VideoDecBase {
@@ -51,7 +66,8 @@ fn videoDecBase(lib: *exec.Library) *VideoDecBase {
 }
 
 /// ResInit: the lock, and on the JH7110 the decoder's part and its
-/// interrupt; on x86-64 the AMD graphics device's decoder, if it has one.
+/// interrupt; on x86-64 the AMD graphics device's decoder, if it has one;
+/// on the BCM2711 the H.265 block's part.
 ///
 /// CONTEXT:
 /// - Waits: no. - Interrupts: no; it runs on the exec task at cold start.
@@ -73,7 +89,16 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     vb.decoders = @splat(null);
     vb.hooked = false;
     vb.vcn = .{};
+    vb.hevc = .{};
     if (comptime engine == .wave511) findVdec(vb, sys_base);
+    if (comptime engine == .bcm2711) {
+        if (bcm2711.find(sys_base)) |part| {
+            vb.vpu = part.regs;
+            vb.vpu_irq = part.irq;
+            vb.hevc.mailbox = part.mailbox;
+            vb.codecs = types.VDCODEC_H265;
+        }
+    }
     if (comptime engine == .vcn) {
         if (vcn.find(sys_base, &vb.vcn)) vb.codecs = types.VDCODEC_H264 | types.VDCODEC_H265 | types.VDCODEC_VP9 | types.VDCODEC_AV1;
     }
@@ -115,6 +140,17 @@ fn vdecServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         d.raised |= done;
         vb.sys_base.SignalWaitable(&d.done);
     }
+    return 1;
+}
+
+/// The H.265 block ended a phase: what its interrupt controller latched
+/// cleared, and the decode waiting told.
+pub fn hevcServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
+    _ = int_number;
+    const vb: *VideoDecBase = @ptrCast(@alignCast(is_data.?));
+    const raised = bcm2711.takeInterrupt(vb.vpu) orelse return 0;
+    vb.hevc.raised |= raised;
+    vb.sys_base.SignalWaitable(&vb.hevc.done);
     return 1;
 }
 
