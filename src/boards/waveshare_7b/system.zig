@@ -148,7 +148,6 @@ const panel = [_]Tag{
     .value(tags.RTGA_TimingFlags, rtg.modes.RTGTM_PCLK_FALLING),
     .pointer(tags.RTGA_RGB_DataPins, &panel_data_pins),
     .value(tags.RTGA_RGB_DataWidth, panel_data_pins.len),
-    .value(tags.RTGA_RGB_PclkPin, 7),
     .value(tags.RTGA_RGB_HSyncPin, 46),
     .value(tags.RTGA_RGB_VSyncPin, 3),
     .value(tags.RTGA_RGB_DePin, 5),

@@ -117,8 +117,8 @@ pub const RTGA_RGB_Flags = RTGA_RGB_Dummy + 9;
 pub const RTGA_RGB_DataPins = RTGA_RGB_Dummy + 10;
 /// u32: how many of them. Absent: 16.
 pub const RTGA_RGB_DataWidth = RTGA_RGB_Dummy + 11;
-/// u32: the pads the four timing signals are on. All needed.
-pub const RTGA_RGB_PclkPin = RTGA_RGB_Dummy + 12;
+/// u32: the pads the three sync signals are on. All needed. The pixel
+/// clock's is the part's PART_PinClock, a GPIO.
 pub const RTGA_RGB_HSyncPin = RTGA_RGB_Dummy + 13;
 pub const RTGA_RGB_VSyncPin = RTGA_RGB_Dummy + 14;
 pub const RTGA_RGB_DePin = RTGA_RGB_Dummy + 15;

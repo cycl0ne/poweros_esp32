@@ -109,10 +109,13 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     @memcpy(setup.data_pins[0..setup.data_width], pins[0..setup.data_width]);
 
     // The four timing signals' pads, each needed: one left out is not
-    // pad 0.
+    // pad 0. The pixel clock's is the part's clock line, a pad of the
+    // chip's own.
+    const clock = pinFrom(rb, st.PART_PinClock, tag_list);
+    if (clock.kind != sdk.expansion.boardpin.BPIN_GPIO or clock.number > 0xFF) return null;
+    setup.pclk_pin = @truncate(clock.number);
     const no_pad: u32 = 0xFFFF_FFFF;
     const signal_pads = [_]struct { tag: u32, into: *u8 }{
-        .{ .tag = tags.RTGA_RGB_PclkPin, .into = &setup.pclk_pin },
         .{ .tag = tags.RTGA_RGB_HSyncPin, .into = &setup.hsync_pin },
         .{ .tag = tags.RTGA_RGB_VSyncPin, .into = &setup.vsync_pin },
         .{ .tag = tags.RTGA_RGB_DePin, .into = &setup.de_pin },
