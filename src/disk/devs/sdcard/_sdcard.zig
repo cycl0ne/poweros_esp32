@@ -194,8 +194,10 @@ pub const Slot = extern struct {
     /// The SD/MMC host's interrupt, as exec numbers it.
     irq: u32 = 0,
     /// An SDHCI's registers, as the part gives them; 0 where the chip
-    /// fixes them.
-    address: u64 = 0,
+    /// fixes them. A machine word, as the tag's data is: a u64 would make
+    /// the base 8-byte aligned on the 32-bit chips, which their device
+    /// base is not.
+    address: usize = 0,
 };
 
 pub fn sdCardBase(dev: *exec.Device) *SdCardBase {
