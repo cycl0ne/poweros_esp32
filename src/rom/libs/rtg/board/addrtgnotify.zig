@@ -68,3 +68,38 @@ pub fn AddRtgNotify(rb: *RtgBase, task: *exec.Task, signals: u32) ?*rtg.RtgNotif
     sys.ReleaseSemaphore(&rb.notify_lock);
     return @ptrCast(notify);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "notifications: a board made, put in a mode and gone, each told and counted" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const sys = rb.sys_base;
+    const bit = sys.AllocSignal(-1);
+    try testing.expect(bit >= 0);
+    const mask = @as(u32, 1) << @intCast(bit);
+    const notify = fixture.base(rb).AddRtgNotify(sys.FindTask(null).?, mask).?;
+
+    const board = try fixture.makeBoard(rb);
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    const made = fixture.infoOf(rb, board).changes;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 2));
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    try testing.expectEqual(made + 1, fixture.infoOf(rb, board).changes);
+    // A mode refused changes nothing and tells nobody.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, fixture.setMode(rb, board, 9));
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, mask) & mask);
+    // Its device taken away: the board is gone, and says so.
+    fixture.driverBase(rb).RemRtgDevice(board.device.?);
+    fixture.fakeOf(rb).devices[0] = null;
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    try testing.expectEqual(made + 2, fixture.infoOf(rb, board).changes);
+
+    fixture.base(rb).RemRtgNotify(notify);
+    sys.FreeSignal(bit);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

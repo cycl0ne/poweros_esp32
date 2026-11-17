@@ -485,7 +485,10 @@ rtg.library/WaitVBlank
 	As for `FillRect`, and `RTGERR_BAD_ARG` for a shape with no bits.
 
    BEHAVIOR
-	As for `FillRect`.
+	As for `FillRect`. Where the rectangle is cut at its left or its top
+	edge, the place in the bits the shape starts at (`src_x`, `src_y`)
+	moves on by what was cut off: what is drawn of the shape lies where
+	it would have lain uncut.
 
    CONTEXT
 	- Waits: only if the driver does.

@@ -94,3 +94,86 @@ pub fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRe
     const board = boardOf(bitmap) orelse return err.RTGERR_BAD_ARG;
     return composer.handOn(rb, board, bitmap, &cut);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const utility = fixture.utility;
+const TagItem = fixture.TagItem;
+const testing = fixture.testing;
+
+test "what is written is handed on as the rectangle it is, cut to the buffer" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const bitmap = fixture.base(rb).AllocBitMap(board, 32, 20, format, 0).?;
+
+    // The driver is told the buffer and the rectangle, shown or not.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, &.{ .x = 3, .y = 4, .width = 5, .height = 6 }));
+    try testing.expectEqual(bitmap, fk.log.last_refresh_bitmap.?);
+    try testing.expectEqual(rtg.RtgRect{ .x = 3, .y = 4, .width = 5, .height = 6 }, fk.log.last_refresh);
+    // No rectangle is all of the buffer.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, null));
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 0, .width = 32, .height = 20 }, fk.log.last_refresh);
+    // One that reaches past the buffer is as much of it as is inside; one
+    // with nothing inside reaches no driver.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, &.{ .x = 30, .y = -2, .width = 8, .height = 5 }));
+    try testing.expectEqual(rtg.RtgRect{ .x = 30, .y = 0, .width = 2, .height = 3 }, fk.log.last_refresh);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, &.{ .x = 0, .y = 18, .width = 32, .height = 40 }));
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 18, .width = 32, .height = 2 }, fk.log.last_refresh);
+    const refreshed = fk.log.refreshed;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, &.{ .x = 32, .y = 0, .width = 4, .height = 4 }));
+    try testing.expectEqual(refreshed, fk.log.refreshed);
+
+    fixture.base(rb).FreeBitMap(bitmap);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "a buffer with a watch hook: the hook is told what was written, and the board is not" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    // RTGA_Compose is the board's to keep, for intuition to read: a tag of
+    // its device.
+    const composing = [_]TagItem{
+        .{ .tag = rtg.tags.RTGA_Compose, .data = 1 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(fixture.fake.deviceTags()) },
+    };
+    const board = fixture.fake.makeBoardFrom(fk, &composing) orelse return error.NoBoard;
+    try testing.expect(board.info.flags & rtg.boards.RTGBF_COMPOSE != 0);
+    const plain = try fixture.makeBoard(rb);
+    try testing.expect(plain.info.flags & rtg.boards.RTGBF_COMPOSE == 0);
+
+    var pixels: [8 * 4 * 2]u8 = @splat(0);
+    const described = rtg.RtgBitMap{ .pixels = &pixels, .width = 8, .height = 4, .pitch = 16, .size_bytes = pixels.len, .format = .rgb565 };
+    const bm = fixture.base(rb).AttachBitMap(board, &described) orelse return error.NoBitMap;
+    var told: fixture.Told = .{};
+    var hook = utility.Hook{ .entry = &fixture.Told.hear, .data = &told };
+    bm.watch = &hook;
+
+    const before = fk.log.refreshed;
+    // Cut to the buffer, as the board would have had it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bm, &.{ .x = 2, .y = 1, .width = 20, .height = 2 }));
+    try testing.expectEqual(@as(u32, 1), told.calls);
+    try testing.expectEqual(rtg.RtgRect{ .x = 2, .y = 1, .width = 6, .height = 2 }, told.rect);
+    // No rectangle is the whole buffer.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bm, null));
+    try testing.expectEqual(@as(u32, 2), told.calls);
+    try testing.expectEqual(rtg.RtgRect{ .x = 0, .y = 0, .width = 8, .height = 4 }, told.rect);
+    try testing.expectEqual(before, fk.log.refreshed);
+
+    // Without the hook, the board hears of it again.
+    bm.watch = null;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bm, &.{ .width = 8, .height = 4 }));
+    try testing.expectEqual(before + 1, fk.log.refreshed);
+    try testing.expectEqual(@as(u32, 2), told.calls);
+
+    fixture.base(rb).FreeBitMap(bm);
+    fixture.driverBase(rb).DeleteBoard(plain);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

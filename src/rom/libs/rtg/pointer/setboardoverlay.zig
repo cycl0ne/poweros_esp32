@@ -97,3 +97,74 @@ pub fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Su
     }
     return code;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "the overlay: its coverage dithered, following the pointer, placed on its own, freed with the board" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 0));
+    var info: rtg.RtgBoardInfo = .{};
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.caps & rtg.boards.RTGBC_OVERLAY != 0);
+
+    // Eight by four, rgba32: a row of full coverage, a row of none, two
+    // rows at half.
+    var pixels: [32]u32 = undefined;
+    for (&pixels, 0..) |*pixel, i| pixel.* = fixture.rgba(switch (i / 8) {
+        0 => 0xFF0000FF,
+        1 => 0xFF000000,
+        else => 0x00FF0080,
+    });
+    const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 8, .height = 4, .pitch = 32, .format = .rgba32 };
+
+    fixture.base(rb).MoveBoardPointer(board, 100, 50);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardOverlay(board, &image, 4, 2));
+    const made = fk.log.overlay_image.?;
+    try testing.expectEqual(made, board.overlay.?);
+    for (0..8) |x| {
+        try testing.expect(fixture.opaqueAt(made, @intCast(x), 0)); // full: every pixel
+        try testing.expect(!fixture.opaqueAt(made, @intCast(x), 1)); // none: no pixel
+    }
+    var half: u32 = 0;
+    for (2..4) |y| for (0..8) |x| {
+        if (fixture.opaqueAt(made, @intCast(x), @intCast(y))) half += 1;
+    };
+    try testing.expectEqual(@as(u32, 8), half); // half: half of them, as dots
+    // Its point at the pointer's, and with the pointer when it moves.
+    try testing.expectEqual(@as(i32, 96), fk.log.overlay_left);
+    try testing.expectEqual(@as(i32, 48), fk.log.overlay_top);
+    fixture.base(rb).MoveBoardPointer(board, 110, 60);
+    try testing.expectEqual(@as(i32, 106), fk.log.overlay_left);
+    try testing.expectEqual(@as(i32, 58), fk.log.overlay_top);
+
+    // Placed on its own, it stays when the pointer moves on.
+    fixture.base(rb).MoveBoardOverlay(board, 20, 30);
+    try testing.expectEqual(@as(i32, 16), fk.log.overlay_left);
+    try testing.expectEqual(@as(i32, 28), fk.log.overlay_top);
+    const moves = fk.log.overlay_moves;
+    fixture.base(rb).MoveBoardPointer(board, 200, 200);
+    try testing.expectEqual(moves, fk.log.overlay_moves);
+    fixture.base(rb).MoveBoardOverlay(board, 20, 30); // the same place: no move
+    try testing.expectEqual(moves, fk.log.overlay_moves);
+
+    // A new image follows the pointer again; too large is refused and the
+    // one there stays.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardOverlay(board, &image, 0, 0));
+    try testing.expectEqual(@as(i32, 200), fk.log.overlay_left);
+    const huge = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = rtg.boards.RTG_OVERLAY_MAX + 1, .height = 1, .pitch = 4, .format = .rgba32 };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).SetBoardOverlay(board, &huge, 0, 0));
+    try testing.expect(board.overlay != null);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardOverlay(board, null, 0, 0));
+    try testing.expect(board.overlay == null and fk.log.overlay_image == null);
+
+    // One still set when the board goes is freed with it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardOverlay(board, &image, 0, 0));
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

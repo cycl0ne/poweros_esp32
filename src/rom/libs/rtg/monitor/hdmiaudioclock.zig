@@ -73,3 +73,36 @@ pub fn HdmiAudioClock(_: *RtgBase, pixel_clock_hz: u32, sample_rate: u32, n: *u3
     cts.* = @intCast(@as(u64, pixel_clock_hz) * number / (128 * @as(u64, sample_rate)));
     return true;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "HdmiAudioClock: N the rate's own, CTS the clock in kilohertz for it" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    var n: u32 = 7;
+    var cts: u32 = 7;
+    try testing.expect(fixture.driverBase(rb).HdmiAudioClock(148_500_000, 48_000, &n, &cts));
+    try testing.expectEqual(@as(u32, 6144), n);
+    try testing.expectEqual(@as(u32, 148_500), cts);
+    try testing.expect(fixture.driverBase(rb).HdmiAudioClock(25_175_000, 32_000, &n, &cts));
+    try testing.expectEqual(@as(u32, 4096), n);
+    try testing.expectEqual(@as(u32, 25_175), cts);
+    try testing.expect(fixture.driverBase(rb).HdmiAudioClock(74_250_000, 44_100, &n, &cts));
+    try testing.expectEqual(@as(u32, 6272), n);
+    try testing.expectEqual(@as(u32, 82_500), cts);
+    try testing.expect(fixture.driverBase(rb).HdmiAudioClock(148_500_000, 96_000, &n, &cts));
+    try testing.expectEqual(@as(u32, 12_288), n);
+    try testing.expectEqual(@as(u32, 148_500), cts);
+    // A rate that is none of HDMI's: 128 times it over 1000.
+    try testing.expect(fixture.driverBase(rb).HdmiAudioClock(148_500_000, 22_050, &n, &cts));
+    try testing.expectEqual(@as(u32, 2822), n);
+    // No clock or no rate: no numbers.
+    n = 7;
+    try testing.expect(!fixture.driverBase(rb).HdmiAudioClock(0, 48_000, &n, &cts));
+    try testing.expect(!fixture.driverBase(rb).HdmiAudioClock(148_500_000, 0, &n, &cts));
+    try testing.expectEqual(@as(u32, 7), n);
+    try fixture.tearDown(rb);
+}

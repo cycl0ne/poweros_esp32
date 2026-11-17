@@ -473,3 +473,97 @@ pub const Arena = struct {
         sys.FreeVec(block);
     }
 };
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const rtg = fixture.rtg;
+const testing = fixture.testing;
+
+test "display memory from the system: taken as asked for, aligned, held to its limit, given back" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const sys = rb.sys_base;
+    var arena: fixture.memory.Arena = .{};
+    arena.initSystem(sys, 3 * 2560, 64, 0);
+    try testing.expect(arena.usable());
+    try testing.expectEqual(@as(usize, 3 * 2560), arena.free_bytes);
+    var pieces: [3]fixture.memory.Piece = undefined;
+    for (&pieces) |*piece| {
+        piece.* = arena.take(sys, 2560) orelse return error.NoMemory;
+        try testing.expectEqual(@as(usize, 0), piece.pixels % 64);
+        try testing.expect(piece.pixels >= piece.offset and piece.pixels + 2560 <= piece.offset + piece.taken);
+    }
+    try testing.expectEqual(@as(usize, 0), arena.free_bytes);
+    try testing.expect(arena.take(sys, 2560) == null);
+    try testing.expectEqual(@as(usize, 0), arena.largest(sys));
+    for (pieces) |piece| arena.give(sys, piece.offset, piece.taken);
+    try testing.expectEqual(@as(usize, 3 * 2560), arena.free_bytes);
+    arena.deinit(sys);
+    try fixture.tearDown(rb);
+}
+
+test "display memory a DMA engine reaches: taken from there and nowhere else" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const sys = rb.sys_base;
+    var arena: fixture.memory.Arena = .{};
+    arena.initSystem(sys, 2 * 2560, 64, fixture.memory.attributesOf(rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY));
+    // The test RAM says nothing of DMA, so it is no answer.
+    try testing.expect(arena.take(sys, 2560) == null);
+    try testing.expectEqual(@as(usize, 0), arena.largest(sys));
+    var dma_ram: [8192]u8 align(64) = undefined;
+    _ = fixture.kexec.AddMemList(fixture.kexec.SysBase, dma_ram.len, exec.MEMF_DMA, -20, &dma_ram, "dma") orelse return error.NoRegion;
+    const piece = arena.take(sys, 2560) orelse return error.NoMemory;
+    try testing.expectEqual(@as(usize, 0), piece.pixels % 64);
+    try testing.expect(piece.offset >= @intFromPtr(&dma_ram) and piece.offset + piece.taken <= @intFromPtr(&dma_ram) + dma_ram.len);
+    try testing.expect(arena.largest(sys) != 0);
+    arena.give(sys, piece.offset, piece.taken);
+    try testing.expectEqual(@as(usize, 2 * 2560), arena.free_bytes);
+    arena.deinit(sys);
+    try fixture.tearDown(rb);
+}
+
+test "display memory: cut up, aligned, and put back together" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const board = try fixture.makeBoard(rb);
+
+    var info: rtg.RtgBoardInfo = .{};
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    // What is usable is the region less the lead-in to its first aligned
+    // address: the fake hands over plain allocated memory, as a driver
+    // that has not aligned its own may.
+    const whole = info.memory_total;
+    try testing.expect(whole <= fixture.fake.region_bytes);
+    try testing.expect(whole + 64 >= fixture.fake.region_bytes);
+
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const one = fixture.base(rb).AllocBitMap(board, 100, 10, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    // A row is rounded up to the board's alignment, so every row of it
+    // starts on one.
+    try testing.expectEqual(@as(u32, 256), one.pitch);
+    try testing.expectEqual(@as(usize, 2560), one.size_bytes);
+    try testing.expectEqual(@as(usize, 0), @intFromPtr(one.pixels.?) % 64);
+    try testing.expect(one.flags & rtg.bitmaps.RTGBMF_BOARD_MEMORY != 0);
+    try testing.expect(one.flags & rtg.bitmaps.RTGBMF_CACHED != 0);
+
+    const two = fixture.base(rb).AllocBitMap(board, 100, 10, format, 0).?;
+    try testing.expect(one.pixels.? != two.pixels.?);
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(whole - 2 * 2560, info.memory_free);
+
+    // Freed in the other order, the two pieces join up again.
+    fixture.base(rb).FreeBitMap(one);
+    fixture.base(rb).FreeBitMap(two);
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(whole, info.memory_free);
+    try testing.expectEqual(whole, info.memory_largest);
+
+    // More than there is, and a format that is not a format.
+    try testing.expect(fixture.base(rb).AllocBitMap(board, 1024, 1024, format, 0) == null);
+    try testing.expect(fixture.base(rb).AllocBitMap(board, 8, 8, 99, 0) == null);
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

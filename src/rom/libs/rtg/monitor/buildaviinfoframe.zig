@@ -94,3 +94,52 @@ pub fn BuildAviInfoFrame(_: *RtgBase, timings: *const rtg.RtgTimings, flags: u32
     frame[3] = 0 -% sum;
     return rtg.RTG_AVI_BYTES;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "BuildAviInfoFrame: the header, the aspect, the range and the number, summing to zero" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    var frame: [rtg.RTG_AVI_BYTES + 1]u8 = @splat(0xAA);
+    // 1920x1080, CEA's 16: a computer's picture in the whole range.
+    var timings = rtg.RtgTimings{ .h_active = 1920, .v_active = 1080, .vic = 16 };
+    try testing.expectEqual(@as(u32, rtg.RTG_AVI_BYTES), fixture.driverBase(rb).BuildAviInfoFrame(&timings, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL, &frame));
+    try testing.expectEqualSlices(u8, &.{ 0x82, 0x02, 0x0D }, frame[0..3]);
+    try testing.expectEqual(@as(u8, 0x12), frame[4]);
+    try testing.expectEqual(@as(u8, 0x28), frame[5]);
+    try testing.expectEqual(@as(u8, 0x88), frame[6]);
+    try testing.expectEqual(@as(u8, 16), frame[7]);
+    var sum: u8 = 0;
+    for (frame[0..rtg.RTG_AVI_BYTES]) |byte| sum +%= byte;
+    try testing.expectEqual(@as(u8, 0), sum);
+    // Nothing past the frame is written.
+    try testing.expectEqual(@as(u8, 0xAA), frame[rtg.RTG_AVI_BYTES]);
+
+    // The range said limited, no computer's picture, the number left out.
+    _ = fixture.driverBase(rb).BuildAviInfoFrame(&timings, rtg.RTGAVI_RANGE_LIMITED | rtg.RTGAVI_NO_VIC, &frame);
+    try testing.expectEqual(@as(u8, 0x10), frame[4]);
+    try testing.expectEqual(@as(u8, 0x04), frame[6]);
+    try testing.expectEqual(@as(u8, 0), frame[7]);
+    // No range said: the monitor's own for the mode.
+    _ = fixture.driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0), frame[6]);
+
+    // 720x480 is 4:3 under its first number and 16:9 under its second; a
+    // mode with no number has the picture's own shape, or none.
+    timings = .{ .h_active = 720, .v_active = 480, .vic = 2 };
+    _ = fixture.driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x18), frame[5]);
+    timings.vic = 3;
+    _ = fixture.driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x28), frame[5]);
+    timings = .{ .h_active = 1024, .v_active = 768 };
+    _ = fixture.driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x18), frame[5]);
+    timings = .{ .h_active = 1280, .v_active = 800 };
+    _ = fixture.driverBase(rb).BuildAviInfoFrame(&timings, 0, &frame);
+    try testing.expectEqual(@as(u8, 0x08), frame[5]);
+    try fixture.tearDown(rb);
+}

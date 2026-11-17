@@ -65,3 +65,46 @@ pub fn GetBoardModes(rb: *RtgBase, board: *rtg.RtgBoard, into: ?[*]rtg.RtgMode, 
     }
     return there;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "modes: copied out the larger picture first, named and numbered as they were made" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const board = try fixture.makeBoard(rb);
+
+    // How many there are, asked alone, and no more copied than there is
+    // room for.
+    try testing.expectEqual(@as(u32, 3), fixture.base(rb).GetBoardModes(board, null, 0));
+    var one: [1]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 3), fixture.base(rb).GetBoardModes(board, &one, one.len));
+    try testing.expectEqual(@as(u32, 640), one[0].width);
+
+    var found: [8]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 3), fixture.modesOf(rb, board, &found));
+    // The second the driver added is the largest, and has kept its number.
+    try testing.expectEqual(@as(u32, 2), found[0].id);
+    try testing.expectEqualStrings("640x480", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqual(@as(u32, 60_000), found[0].refresh_mhz);
+    try testing.expectEqual(@as(u32, 25_200_000), found[0].pixel_clock_hz);
+    // A row is the width in the format, on what the display memory is
+    // aligned to: what a buffer of the mode has.
+    try testing.expectEqual(@as(u32, 1280), found[0].pitch);
+    try testing.expectEqual(@as(u32, 1), found[1].id);
+    try testing.expectEqualStrings("320x200", std.mem.sliceTo(&found[1].name, 0));
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[1].flags);
+    // A display with no clock says no refresh; a row of one bit a pixel is
+    // rounded up as any other.
+    try testing.expectEqual(@as(u32, 3), found[2].id);
+    try testing.expectEqualStrings("64x64", std.mem.sliceTo(&found[2].name, 0));
+    try testing.expectEqual(rtg.PixelFormat.mono1, found[2].format);
+    try testing.expectEqual(@as(u32, 0), found[2].refresh_mhz);
+    try testing.expectEqual(@as(u32, 64), found[2].pitch);
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

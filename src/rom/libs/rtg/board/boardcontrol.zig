@@ -67,3 +67,47 @@ pub fn BoardControl(_: *RtgBase, board: *rtg.RtgBoard, what: u32, value: isize) 
     const control = ops.control orelse return err.RTGERR_NOT_SUPPORTED;
     return control(board, what, value);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "the counters are reset on every board, with a control of its own or without" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const reset = rtg.boards.RTGCTRL_RESET_STATS;
+
+    // A board whose driver has a control: the library's count is cleared,
+    // the driver is handed the code for its own, and the answer is the
+    // library's, whatever the driver made of it.
+    const board = try fixture.makeDisplay(rb, 16, 16);
+    const shown = fixture.base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, shown));
+    try testing.expectEqual(@as(u32, 1), fixture.swapsOf(rb, board));
+    try testing.expectEqual(@as(isize, rtg.errors.RTGERR_OK), fixture.base(rb).BoardControl(board, reset, 7));
+    try testing.expectEqual(reset, fk.log.last_control);
+    try testing.expectEqual(@as(u32, 0), fixture.swapsOf(rb, board));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, null));
+    fixture.base(rb).FreeBitMap(shown);
+    fixture.driverBase(rb).DeleteBoard(board);
+
+    // A board whose driver has none takes it all the same, and no other
+    // code.
+    fk.without_engine = true;
+    const plain = try fixture.makeDisplay(rb, 16, 16);
+    const picture = fixture.base(rb).AllocBitMap(plain, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(plain, picture));
+    try testing.expectEqual(@as(u32, 1), fixture.swapsOf(rb, plain));
+    const controls = fk.log.control_calls;
+    try testing.expectEqual(@as(isize, rtg.errors.RTGERR_OK), fixture.base(rb).BoardControl(plain, reset, 0));
+    try testing.expectEqual(@as(u32, 0), fixture.swapsOf(rb, plain));
+    try testing.expectEqual(controls, fk.log.control_calls);
+    try testing.expectEqual(@as(isize, rtg.errors.RTGERR_NOT_SUPPORTED), fixture.base(rb).BoardControl(plain, rtg.tags.RTGCTRL_RGB_SHIFT, 7));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(plain, null));
+    fixture.base(rb).FreeBitMap(picture);
+    fixture.driverBase(rb).DeleteBoard(plain);
+    try fixture.tearDown(rb);
+}

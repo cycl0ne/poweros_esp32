@@ -62,3 +62,34 @@ pub fn FindStandardTimings(_: *RtgBase, width: u32, height: u32, refresh_hz: u32
     timings.* = _monitor.timingsOf(&standard);
     return true;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "the standards' timings, for a driver that has a size and no monitor's word" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    var timings: rtg.RtgTimings = .{};
+    try testing.expect(fixture.driverBase(rb).FindStandardTimings(1920, 1080, 60, &timings));
+    try testing.expectEqual(@as(u32, 148_500_000), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 88), timings.h_front);
+    try testing.expectEqual(@as(u32, 44), timings.h_sync);
+    try testing.expectEqual(@as(u32, 148), timings.h_back);
+    try testing.expectEqual(@as(u32, 4), timings.v_front);
+    try testing.expectEqual(@as(u8, 16), timings.vic);
+    try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH | rtg.modes.RTGTM_VSYNC_HIGH, timings.flags);
+    try testing.expectEqual(@as(u32, 60_000), fixture.modes.refreshOf(&timings));
+    // VESA's 1024x768: both pulses low, and no number of CEA's.
+    try testing.expect(fixture.driverBase(rb).FindStandardTimings(1024, 768, 60, &timings));
+    try testing.expectEqual(@as(u32, 65_000_000), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 0), timings.flags);
+    try testing.expectEqual(@as(u8, 0), timings.vic);
+    // What no standard here times is left as it was.
+    const before = timings;
+    try testing.expect(!fixture.driverBase(rb).FindStandardTimings(1920, 1200, 60, &timings));
+    try testing.expect(!fixture.driverBase(rb).FindStandardTimings(1920, 1080, 75, &timings));
+    try testing.expectEqual(before, timings);
+    try fixture.tearDown(rb);
+}

@@ -129,3 +129,108 @@ fn kind(rb: *RtgBase, tag: Tag, unless: u8, tag_list: ?[*]const TagItem) u8 {
     const told = rb.utility_base.GetTagData(tag, unless, tag_list);
     return if (told <= 255) @intCast(told) else unless;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "video layers: one to a board, a picture needs its part, the limits kept, closed before the board goes" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    var info: rtg.RtgBoardInfo = .{};
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.caps & rtg.boards.RTGBC_VIDEO != 0);
+
+    // A layer is asked for a kind of picture, and a board whose converter
+    // cannot make the display's colours out of it hands out none: a film
+    // of high dynamic range, one in BT.2020's colours, one of ten bits.
+    // Nothing is taken by a refusal.
+    const kinds = [_]TagItem{
+        .{ .tag = rtg.RTGVA_Transfer, .data = rtg.RTGYUV_PQ },
+        .{ .tag = rtg.RTGVA_Transfer, .data = rtg.RTGYUV_HLG },
+        .{ .tag = rtg.RTGVA_Primaries, .data = rtg.RTGYUV_BT2020 },
+        .{ .tag = rtg.RTGVA_Matrix, .data = rtg.RTGYUV_BT2020 },
+        .{ .tag = rtg.RTGVA_Depth, .data = 10 },
+    };
+    for (kinds) |one| {
+        try testing.expect(fixture.base(rb).OpenVideoLayer(board, &[_]TagItem{ one, .{} }) == null);
+    }
+    try testing.expectEqual(@as(u32, 0), fk.log.video_opens);
+
+    // Under the picture unless asked otherwise, with its key and limits;
+    // the board's one layer is then taken. What it was asked for stays in
+    // its fields, where the driver read them.
+    const layer = fixture.base(rb).OpenVideoLayer(board, &[_]TagItem{ .{ .tag = rtg.RTGVA_Matrix, .data = rtg.RTGYUV_BT601 }, .{ .tag = rtg.RTGVA_Range, .data = rtg.RTGYUV_FULL }, .{} }) orelse return error.NoLayer;
+    try testing.expectEqual(rtg.RTGYUV_BT601, layer.matrix);
+    try testing.expectEqual(rtg.RTGYUV_FULL, layer.range);
+    try testing.expectEqual(rtg.RTGYUV_SDR, layer.transfer);
+    try testing.expectEqual(rtg.RTGYUV_BT709, layer.primaries);
+    try testing.expectEqual(@as(u8, 8), layer.depth);
+    try testing.expectEqual(board, layer.board);
+    try testing.expect(layer.flags & rtg.RTGVLF_UNDER != 0);
+    try testing.expectEqual(@as(u32, 0x0008_0008), layer.key);
+    try testing.expectEqual(@as(u32, 3), layer.max_up);
+    try testing.expect(fixture.base(rb).OpenVideoLayer(board, null) == null);
+
+    // A picture is shown with its part, which says how big it is.
+    var luma: [16]u8 = @splat(16);
+    var chroma: [8]u8 = @splat(128);
+    const picture = rtg.RtgYuv{ .y = &luma, .cb = &chroma, .y_pitch = 4, .c_pitch = 4 };
+    const all = rtg.RtgRect{ .width = 4, .height = 4 };
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowVideoFrame(layer, &picture, null));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowVideoFrame(layer, &picture, &.{ .width = 0, .height = 4 }));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowVideoFrame(layer, &picture, &.{ .x = 4090, .width = 8, .height = 4 }));
+    // A part at the end of the numbers is past the limit too, each way.
+    const far = std.math.maxInt(i32);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowVideoFrame(layer, &picture, &.{ .x = far, .width = 8, .height = 4 }));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowVideoFrame(layer, &picture, &.{ .y = far, .width = 4, .height = 8 }));
+    try testing.expectEqual(@as(u32, 0), fk.log.video_shows);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).MoveVideoLayer(layer, &.{ .x = 10, .y = 20, .width = 12, .height = 12 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowVideoFrame(layer, &picture, &all));
+    try testing.expectEqual(&picture, fk.log.video_picture.?);
+    try testing.expectEqual(all, fk.log.video_src);
+
+    // A place the picture cannot be scaled into is the driver's to refuse;
+    // nothing shown takes no part.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).MoveVideoLayer(layer, &.{ .width = 13, .height = 12 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowVideoFrame(layer, null, &all));
+    try testing.expect(fk.log.video_picture == null);
+
+    // The board is not deleted under an open layer.
+    fixture.driverBase(rb).DeleteBoard(board);
+    try testing.expectEqual(@as(u32, 0), fk.log.destroyed);
+    fixture.base(rb).CloseVideoLayer(layer);
+    fixture.base(rb).CloseVideoLayer(null);
+    try testing.expectEqual(@as(u32, 1), fk.log.video_closes);
+
+    // Over the picture when asked, or when the board cannot lay its
+    // picture over a layer: no key then.
+    const over = fixture.base(rb).OpenVideoLayer(board, &[_]TagItem{ .{ .tag = rtg.RTGVA_Under, .data = 0 }, .{} }) orelse return error.NoLayer;
+    try testing.expectEqual(@as(u32, 0), over.flags & rtg.RTGVLF_UNDER);
+    fixture.base(rb).CloseVideoLayer(over);
+    fk.video_over_only = true;
+    const forced = fixture.base(rb).OpenVideoLayer(board, null) orelse return error.NoLayer;
+    try testing.expectEqual(@as(u32, 0), forced.flags & rtg.RTGVLF_UNDER);
+    try testing.expectEqual(@as(u32, 0), forced.key);
+    fixture.base(rb).CloseVideoLayer(forced);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try testing.expectEqual(@as(u32, 1), fk.log.destroyed);
+    try fixture.tearDown(rb);
+}
+
+test "a board with no video layer says so" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    fixture.fakeOf(rb).without_engine = true;
+    const board = try fixture.makeBoard(rb);
+    var info: rtg.RtgBoardInfo = .{};
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_VIDEO);
+    try testing.expect(fixture.base(rb).OpenVideoLayer(board, null) == null);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

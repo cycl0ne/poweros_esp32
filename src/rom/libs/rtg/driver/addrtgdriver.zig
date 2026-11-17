@@ -91,3 +91,52 @@ pub fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*an
     sys.Enqueue(&rb.drivers, &driver.node);
     return driver;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "a driver's node: its description, the library's bases, its own state cleared" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+
+    // A driver that asks for state gets it behind its node, cleared.
+    const Kept = extern struct { first: u64, last: u32 };
+    const ops = rtg.RtgDriverOps{ .attach = @ptrFromInt(0x1000) };
+    const with_state = rtg.RtgDriverSpec{
+        .name = "kept",
+        .id_string = "kept 2.5",
+        .version = 2,
+        .revision = 5,
+        .kind = rtg.drivers.RTGDT_BOARD,
+        .ops = &ops,
+        .state_size = @sizeOf(Kept),
+    };
+    var seg: u32 = 0;
+    const driver = fixture.driverBase(rb).AddRtgDriver(&with_state, &seg).?;
+    try testing.expectEqual(&with_state, driver.spec);
+    try testing.expectEqualStrings("kept", std.mem.span(driver.node.name.?));
+    try testing.expectEqual(rb.sys_base, driver.sys_base);
+    try testing.expectEqual(fixture.driverBase(rb), driver.rtg_base);
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(&seg)), driver.seg_list);
+    try testing.expectEqual(@as(u32, 0), driver.devices);
+    try testing.expectEqual(@as(u32, 0), driver.boards);
+    try testing.expectEqual(@as(u32, 0), driver.buses);
+    const kept: *Kept = @ptrCast(@alignCast(driver.state.?));
+    try testing.expectEqual(@as(u64, 0), kept.first);
+    try testing.expectEqual(@as(u32, 0), kept.last);
+    // Its own, and past the node.
+    try testing.expect(@intFromPtr(kept) >= @intFromPtr(driver) + @sizeOf(rtg.RtgDriver));
+    kept.* = .{ .first = 0x1122_3344_5566_7788, .last = 7 };
+    try testing.expectEqual(&with_state, driver.spec);
+    try testing.expect(fixture.driverBase(rb).RemRtgDriver(driver));
+
+    // One that asks for none has none.
+    const without = rtg.RtgDriverSpec{ .name = "bare", .kind = rtg.drivers.RTGDT_BOARD, .ops = &ops };
+    const bare = fixture.driverBase(rb).AddRtgDriver(&without, null).?;
+    try testing.expect(bare.state == null);
+    try testing.expect(fixture.driverBase(rb).RemRtgDriver(bare));
+    try fixture.tearDown(rb);
+}

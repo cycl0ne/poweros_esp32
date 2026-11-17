@@ -72,3 +72,51 @@ pub fn LockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void {
     const board: *rtg.RtgBoard = @ptrCast(@alignCast(bitmap.board orelse return));
     flips.holdWrite(rb, board);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "LockBitMap and UnlockBitMap: a flipped board's read lock, nested for its task; nothing held on any other buffer" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const board = try fixture.makeFlipped(rb, 16, 12);
+    const lock = &fixture.boards.privateOf(board).compose.flip.read_lock;
+    const shown = fixture.base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, shown));
+
+    try testing.expectEqual(@as(u16, 0), lock.nestCount());
+    fixture.base(rb).LockBitMap(shown);
+    try testing.expectEqual(@as(u16, 1), lock.nestCount());
+    // An engine's copy inside it holds the lock a second time, and gives
+    // that hold back.
+    fixture.base(rb).LockBitMap(shown);
+    try testing.expectEqual(@as(u16, 2), lock.nestCount());
+    fixture.base(rb).UnlockBitMap(shown);
+    fixture.base(rb).UnlockBitMap(shown);
+    try testing.expectEqual(@as(u16, 0), lock.nestCount());
+
+    // What was written between the two is on the glass with the next
+    // picture, whole.
+    fixture.base(rb).LockBitMap(shown);
+    fixture.paint(shown, 4);
+    fixture.base(rb).UnlockBitMap(shown);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(shown, null));
+    fixture.flips.service(rb, board);
+    try testing.expect(fixture.glassIs(board, 4, &.{}));
+
+    // A board that is not flipped, and memory of no board: nothing held.
+    const plain = try fixture.makeDisplay(rb, 16, 12);
+    const other = fixture.base(rb).AllocBitMap(plain, 16, 12, format, 0).?;
+    fixture.base(rb).LockBitMap(other);
+    try testing.expectEqual(@as(u16, 0), fixture.boards.privateOf(plain).compose.flip.read_lock.nestCount());
+    fixture.base(rb).UnlockBitMap(other);
+    var loose = rtg.RtgBitMap{ .width = 4, .height = 4 };
+    fixture.base(rb).LockBitMap(&loose);
+    fixture.base(rb).UnlockBitMap(&loose);
+
+    fixture.base(rb).FreeBitMap(other);
+    try fixture.tearDown(rb);
+}

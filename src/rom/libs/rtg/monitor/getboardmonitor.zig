@@ -67,3 +67,38 @@ pub fn GetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitor
     _monitor.infoOf(rb, board, &said);
     return boards.copyOut(rtg.RtgMonitorInfo, &said, info, size);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "a panel is a monitor that is always there, called what its part is called" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const board = try fixture.makeBoard(rb);
+    const said = fixture.monitorOf(rb, board);
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT | rtg.modes.RTGMON_PANEL, said.flags);
+    try testing.expectEqualStrings("fake display", std.mem.sliceTo(&said.name, 0));
+    try testing.expectEqual(@as(u32, 0), said.edid_size);
+    // As much of the answer as the caller has room for.
+    var short: rtg.RtgMonitorInfo = .{};
+    try testing.expectEqual(@as(u32, 4), fixture.base(rb).GetBoardMonitor(board, &short, 4));
+    try testing.expectEqual(said.flags, short.flags);
+    try testing.expectEqual(@as(u8, 0), short.name[0]);
+    // It has no EDID, its board no connector, and nothing asked its driver.
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).ReadBoardEDID(board, null, 0));
+    const info = fixture.infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_CONNECTOR);
+    try testing.expectEqual(@as(u32, 0), info.caps & rtg.boards.RTGBC_MONITOR);
+    try testing.expectEqual(@as(u32, 0), fixture.fakeOf(rb).log.detects);
+    // A word of its driver's about a connector it has not is not heard.
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), fixture.fakeOf(rb).log.detects);
+    try testing.expect(rb.monitor_task == null);
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

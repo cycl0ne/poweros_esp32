@@ -73,3 +73,46 @@ pub fn CopyRect(rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *
     defer if (held) flips.letCopy(rb, board);
     return copy_rect(board, src, dest, &cut);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "a copy is cut down to both buffers at once" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const source = fixture.base(rb).AllocBitMap(board, 16, 8, format, 0).?;
+    const target = fixture.base(rb).AllocBitMap(board, 8, 8, format, 0).?;
+
+    // Eight columns is all the destination has room for.
+    const copy = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 16, .height = 8, .dest_x = 0, .dest_y = 0 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).CopyRect(source, target, &copy));
+    try testing.expectEqual(@as(i32, 8), fk.log.last_copy.width);
+    try testing.expectEqual(@as(i32, 8), fk.log.last_copy.height);
+
+    // A corner before the start of either moves both corners in, so the
+    // two stay in step.
+    const from_before = rtg.RtgCopy{ .src_x = -2, .src_y = 0, .width = 6, .height = 4, .dest_x = 3, .dest_y = 0 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).CopyRect(source, target, &from_before));
+    try testing.expectEqual(@as(i32, 0), fk.log.last_copy.src_x);
+    try testing.expectEqual(@as(i32, 5), fk.log.last_copy.dest_x);
+    // And then the destination runs out three columns later.
+    try testing.expectEqual(@as(i32, 3), fk.log.last_copy.width);
+
+    // A copy onto itself, one pixel along: the classic overlap.
+    const row: [*]u16 = @ptrCast(@alignCast(fixture.rowOf(source, 0)));
+    for (0..16) |x| row[x] = @intCast(x + 1);
+    const shift = rtg.RtgCopy{ .src_x = 0, .src_y = 0, .width = 8, .height = 1, .dest_x = 1, .dest_y = 0 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).CopyRect(source, source, &shift));
+    try testing.expectEqual(@as(u16, 1), row[1]);
+    try testing.expectEqual(@as(u16, 8), row[8]);
+
+    fixture.base(rb).FreeBitMap(target);
+    fixture.base(rb).FreeBitMap(source);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

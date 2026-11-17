@@ -73,3 +73,70 @@ pub fn ReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.R
     timings.* = read;
     return true;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "a panel's timings from its tags: the size, the clock and the blanking; what is no panel" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+
+    const panel = [_]TagItem{
+        .{ .tag = tags.RTGA_Width, .data = 1024 },
+        .{ .tag = tags.RTGA_Height, .data = 600 },
+        .{ .tag = tags.RTGA_PixelClock, .data = 30_000_000 },
+        .{ .tag = tags.RTGA_HSyncPulse, .data = 162 },
+        .{ .tag = tags.RTGA_HBackPorch, .data = 152 },
+        .{ .tag = tags.RTGA_HFrontPorch, .data = 48 },
+        .{ .tag = tags.RTGA_VSyncPulse, .data = 45 },
+        .{ .tag = tags.RTGA_VBackPorch, .data = 13 },
+        .{ .tag = tags.RTGA_VFrontPorch, .data = 3 },
+        .{ .tag = tags.RTGA_TimingFlags, .data = rtg.modes.RTGTM_PCLK_FALLING },
+        .{},
+    };
+    var timings: rtg.RtgTimings = .{};
+    try testing.expect(fixture.driverBase(rb).ReadTimingTags(&panel, &timings));
+    try testing.expectEqual(@as(u32, 1024), timings.h_active);
+    try testing.expectEqual(@as(u32, 600), timings.v_active);
+    try testing.expectEqual(@as(u32, 30_000_000), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 162), timings.h_sync);
+    try testing.expectEqual(@as(u32, 152), timings.h_back);
+    try testing.expectEqual(@as(u32, 48), timings.h_front);
+    try testing.expectEqual(@as(u32, 45), timings.v_sync);
+    try testing.expectEqual(@as(u32, 13), timings.v_back);
+    try testing.expectEqual(@as(u32, 3), timings.v_front);
+    try testing.expectEqual(rtg.modes.RTGTM_PCLK_FALLING, timings.flags);
+    // 30 MHz over 1386 by 661: what the mode made of them says.
+    try testing.expectEqual(@as(u32, 32_745), fixture.modes.refreshOf(&timings));
+
+    // A display behind a bus is its size and no more.
+    const bus_panel = [_]TagItem{
+        .{ .tag = tags.RTGA_Width, .data = 320 },
+        .{ .tag = tags.RTGA_Height, .data = 480 },
+        .{},
+    };
+    try testing.expect(fixture.driverBase(rb).ReadTimingTags(&bus_panel, &timings));
+    try testing.expectEqual(@as(u32, 320), timings.h_active);
+    try testing.expectEqual(@as(u32, 0), timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 0), timings.flags);
+
+    // No size, and a clock without a sync pulse: refused, and what was
+    // there is left.
+    const before = timings;
+    const sizeless = [_]TagItem{ .{ .tag = tags.RTGA_Width, .data = 320 }, .{} };
+    try testing.expect(!fixture.driverBase(rb).ReadTimingTags(&sizeless, &timings));
+    const pulseless = [_]TagItem{
+        .{ .tag = tags.RTGA_Width, .data = 320 },
+        .{ .tag = tags.RTGA_Height, .data = 480 },
+        .{ .tag = tags.RTGA_PixelClock, .data = 8_000_000 },
+        .{ .tag = tags.RTGA_HSyncPulse, .data = 4 },
+        .{},
+    };
+    try testing.expect(!fixture.driverBase(rb).ReadTimingTags(&pulseless, &timings));
+    try testing.expect(!fixture.driverBase(rb).ReadTimingTags(null, &timings));
+    try testing.expectEqual(before, timings);
+
+    try fixture.tearDown(rb);
+}

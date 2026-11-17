@@ -137,7 +137,10 @@ pub const LIBRARY_VERSION = 1;
 /// 37: the jump table packed - no slot is kept free any more, the
 /// programs' calls are 57 in a row and the drivers' 20 follow them, so
 /// every call but the first few has another LVO than it had.
-pub const LIBRARY_REVISION = 37;
+/// 38: BlitTemplate moves the shape's start in its bits by what a cut
+/// took off the rectangle's left and top, as BlendPixels moves its
+/// picture: the shape lay shifted where the rectangle was cut there.
+pub const LIBRARY_REVISION = 38;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

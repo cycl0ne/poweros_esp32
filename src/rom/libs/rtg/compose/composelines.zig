@@ -88,3 +88,55 @@ pub fn ComposeLines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect
     defer _compose.release(rb, board);
     return _compose.lines(rb, board, area, into, pitch);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "ComposeLines: a rectangle of the picture, and what is none" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const board = try fixture.makeComposed(rb, 16, 12, 0);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    var into: [8 * 4]u16 = undefined;
+    const whole_lines = rtg.RtgRect{ .x = 4, .y = 2, .width = 8, .height = 4 };
+
+    // A board never shown has no picture to say the size of.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, fixture.driverBase(rb).ComposeLines(board, &whole_lines, @ptrCast(&into), 16));
+
+    const picture = fixture.base(rb).AllocBitMap(board, 16, 12, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    fixture.paint(picture, 5);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, picture));
+
+    // The rectangle's rows, its own pitch apart, and nothing past them.
+    @memset(&into, 0xAAAA);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.driverBase(rb).ComposeLines(board, &.{ .x = 4, .y = 2, .width = 3, .height = 2 }, @ptrCast(&into), 16));
+    try testing.expectEqual(fixture.painted(5, 4, 2), into[0]);
+    try testing.expectEqual(fixture.painted(5, 6, 2), into[2]);
+    try testing.expectEqual(@as(u16, 0xAAAA), into[3]);
+    try testing.expectEqual(fixture.painted(5, 4, 3), into[8]);
+    try testing.expectEqual(@as(u16, 0xAAAA), into[16]);
+
+    // The last pixel of the picture is inside; a rectangle that is empty,
+    // starts before the picture or ends past it is none.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.driverBase(rb).ComposeLines(board, &.{ .x = 15, .y = 11, .width = 1, .height = 1 }, @ptrCast(&into), 2));
+    try testing.expectEqual(fixture.painted(5, 15, 11), into[0]);
+    for ([_]rtg.RtgRect{
+        .{ .x = 0, .y = 0, .width = 0, .height = 4 },
+        .{ .x = 0, .y = 0, .width = 4, .height = -1 },
+        .{ .x = -1, .y = 0, .width = 4, .height = 4 },
+        .{ .x = 0, .y = -1, .width = 4, .height = 4 },
+        .{ .x = 13, .y = 0, .width = 4, .height = 4 },
+        .{ .x = 0, .y = 9, .width = 4, .height = 4 },
+        .{ .x = std.math.maxInt(i32), .y = 0, .width = std.math.maxInt(i32), .height = 1 },
+    }) |area| {
+        try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.driverBase(rb).ComposeLines(board, &area, @ptrCast(&into), 16));
+    }
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, null));
+    fixture.base(rb).FreeBitMap(picture);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

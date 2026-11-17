@@ -103,3 +103,67 @@ pub fn CopyRects(rb: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies
     }
     return err.RTGERR_OK;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "several copies go to the board as one job, each cut down, or one by one" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const source = fixture.base(rb).AllocBitMap(board, 16, 8, format, 0).?;
+    const target = fixture.base(rb).AllocBitMap(board, 8, 8, format, 0).?;
+    for (0..8) |y| {
+        const row: [*]u16 = @ptrCast(@alignCast(fixture.rowOf(source, @intCast(y))));
+        for (0..16) |x| row[x] = @intCast(y * 16 + x + 1);
+    }
+
+    // Three pieces: one whole, one cut at the destination's edge, one
+    // wholly off it, which the board never sees.
+    const pieces = [_]rtg.RtgCopy{
+        .{ .src_x = 0, .src_y = 0, .width = 4, .height = 2, .dest_x = 0, .dest_y = 0 },
+        .{ .src_x = 8, .src_y = 4, .width = 6, .height = 3, .dest_x = 4, .dest_y = 5 },
+        .{ .src_x = 0, .src_y = 0, .width = 4, .height = 4, .dest_x = 9, .dest_y = 0 },
+    };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).CopyRects(source, target, &pieces, pieces.len));
+    try testing.expectEqual(@as(u32, 1), fk.log.copy_jobs);
+    try testing.expectEqual(@as(u32, 2), fk.log.last_copy_count);
+    try testing.expectEqual(@as(u32, 2), fk.log.copies);
+    try testing.expectEqual(@as(i32, 4), fk.log.last_copy.width);
+    const row1: [*]u16 = @ptrCast(@alignCast(fixture.rowOf(target, 1)));
+    const row7: [*]u16 = @ptrCast(@alignCast(fixture.rowOf(target, 7)));
+    try testing.expectEqual(@as(u16, 1 * 16 + 3 + 1), row1[3]);
+    try testing.expectEqual(@as(u16, 6 * 16 + 11 + 1), row7[7]);
+
+    // More than a call takes is cut into calls.
+    var many: [rtg.RTG_MAX_COPIES + 3]rtg.RtgCopy = undefined;
+    for (&many, 0..) |*one, i| one.* = .{ .src_x = @intCast(i % 16), .src_y = 0, .width = 1, .height = 1, .dest_x = @intCast(i % 8), .dest_y = @intCast(i / 8) };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).CopyRects(source, target, &many, many.len));
+    try testing.expectEqual(@as(u32, 3), fk.log.copy_jobs);
+    try testing.expectEqual(@as(u32, 3), fk.log.last_copy_count);
+
+    // A board without the call is given them one at a time.
+    const kept = board.ops;
+    var engine = board.ops.?.engine.?.*;
+    engine.copy_rects = null;
+    var ops = board.ops.?.*;
+    ops.engine = &engine;
+    board.ops = &ops;
+    const copies = fk.log.copies;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).CopyRects(source, target, &pieces, pieces.len));
+    try testing.expectEqual(@as(u32, 3), fk.log.copy_jobs);
+    try testing.expectEqual(copies + 2, fk.log.copies);
+    board.ops = kept;
+
+    // Onto itself is not several copies at once.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).CopyRects(source, source, &pieces, 1));
+
+    fixture.base(rb).FreeBitMap(target);
+    fixture.base(rb).FreeBitMap(source);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

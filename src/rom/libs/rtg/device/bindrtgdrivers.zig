@@ -75,3 +75,35 @@ pub fn BindRtgDrivers(rb: *RtgBase) u32 {
     }
     return made;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const rtg = fixture.rtg;
+const testing = fixture.testing;
+
+test "a driver that declines: nothing kept, the device left for a driver that comes later" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const device = fixture.fake.addDevice(fk, null).?;
+    try testing.expectEqual(@as(u32, 1), fk.log.offered);
+    try testing.expectEqual(@as(u32, 0), fk.log.created);
+    try testing.expectEqual(@as(u32, 0), fk.driver.boards);
+    try testing.expectEqual(@as(u32, 0), fk.driver.devices);
+    try testing.expect(device.driver == null);
+    try testing.expect(fixture.base(rb).NextBoard(null) == null);
+
+    // Offered again by the next bind, and taken this time.
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 2), fk.log.offered);
+    try testing.expectEqual(fk.driver, device.driver.?);
+    try testing.expectEqualStrings("fake.0", std.mem.span(fixture.base(rb).NextBoard(null).?.node.name.?));
+    // The leak check in tearDown is what proves nothing of the refusal
+    // stayed.
+    try fixture.tearDown(rb);
+}

@@ -72,3 +72,37 @@ pub fn SetBoardAudio(rb: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.Rtg
     const audio = ops.audio orelse return if (format == null) err.RTGERR_OK else err.RTGERR_NOT_SUPPORTED;
     return audio(board, format);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "SetBoardAudio: the link's driver told the sound, and none; a board whose link carries none" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    try testing.expect(fixture.infoOf(rb, board).caps & rtg.boards.RTGBC_AUDIO != 0);
+
+    const stereo = rtg.RtgAudio{ .sample_rate = 48_000, .channels = 2, .bits = 16 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardAudio(board, &stereo));
+    try testing.expectEqual(@as(u32, 1), fk.log.audio_calls);
+    try testing.expectEqual(@as(u32, 48_000), fk.log.last_audio.?.sample_rate);
+    try testing.expectEqual(@as(u32, 2), fk.log.last_audio.?.channels);
+    // What the driver answers is the answer.
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, fixture.base(rb).SetBoardAudio(board, &.{ .sample_rate = 44_100 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardAudio(board, null));
+    try testing.expectEqual(@as(u32, 3), fk.log.audio_calls);
+    try testing.expect(fk.log.last_audio == null);
+
+    // A board whose driver has no such op: no sound, and none to take off.
+    fk.without_engine = true;
+    const plain = try fixture.makeBoard(rb);
+    fk.without_engine = false;
+    try testing.expectEqual(@as(u32, 0), fixture.infoOf(rb, plain).caps & rtg.boards.RTGBC_AUDIO);
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, fixture.base(rb).SetBoardAudio(plain, &stereo));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardAudio(plain, null));
+    try testing.expectEqual(@as(u32, 3), fk.log.audio_calls);
+    try fixture.tearDown(rb);
+}

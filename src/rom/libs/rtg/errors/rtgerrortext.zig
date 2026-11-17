@@ -66,3 +66,25 @@ pub fn RtgErrorText(_: *RtgBase, error_code: i32) [*:0]const u8 {
         else => "unknown error",
     };
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "every error has words, and so has one that does not exist" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    inline for (@typeInfo(rtg.errors).@"struct".decls) |d| {
+        const value = @field(rtg.errors, d.name);
+        if (@TypeOf(value) != i32) continue;
+        const words = std.mem.span(fixture.base(rb).RtgErrorText(value));
+        try testing.expect(words.len != 0);
+        if (value != rtg.errors.RTGERR_OK) {
+            try testing.expect(!std.mem.eql(u8, words, "unknown error"));
+        }
+    }
+    try testing.expectEqualStrings("unknown error", std.mem.span(fixture.base(rb).RtgErrorText(-999)));
+    try fixture.tearDown(rb);
+}

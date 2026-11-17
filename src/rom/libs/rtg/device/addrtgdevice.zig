@@ -64,3 +64,51 @@ pub fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice {
     _ = _device.offer(rb, &private.device);
     return &private.device;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "a device from tags: named, offered at once, and listed with its driver" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    // Nothing of the machine's is on the list before the first bind, and
+    // the host has neither a board's list nor PCI to find any on.
+    var listed: [4]rtg.RtgDeviceInfo = undefined;
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).GetRtgDevices(&listed, listed.len));
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).GetRtgDevices(null, 0));
+
+    const device = fixture.fake.addDevice(fk, null).?;
+    try testing.expectEqualStrings("panel.0", std.mem.span(device.node.name.?));
+    try testing.expectEqual(rtg.drivers.RTGDEV_PART, device.kind);
+    try testing.expectEqual(fixture.fake.chip, device.chip);
+    try testing.expectEqual(fixture.fake.bus, device.bus);
+    try testing.expect(device.part == null and device.pci == null);
+    try testing.expectEqual(@as(?[*]const TagItem, fixture.fake.deviceTags()), device.tags);
+    // Offered as it was added: the fake has it, and made its board.
+    try testing.expectEqual(fk.driver, device.driver.?);
+    try testing.expectEqual(@as(u32, 1), fk.driver.devices);
+    const board = fixture.base(rb).NextBoard(null).?;
+    try testing.expectEqual(device, board.device.?);
+
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetRtgDevices(&listed, listed.len));
+    try testing.expectEqualStrings("panel.0", std.mem.sliceTo(&listed[0].name, 0));
+    try testing.expectEqualStrings("fake display", std.mem.sliceTo(&listed[0].chip_name, 0));
+    try testing.expectEqualStrings("fake", std.mem.sliceTo(&listed[0].driver, 0));
+    try testing.expectEqual(@as(u32, 1), listed[0].boards);
+    try testing.expectEqual(@as(u32, 0), listed[0].flags);
+    try testing.expectEqual(@as(u8, 0), listed[0].behind[0]);
+
+    // A second one takes the next number, and one bind later nothing is
+    // left to offer.
+    const second = fixture.fake.addDevice(fk, null).?;
+    try testing.expectEqualStrings("panel.1", std.mem.span(second.node.name.?));
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).GetRtgDevices(null, 0));
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).BindRtgDrivers());
+    try fixture.tearDown(rb);
+}

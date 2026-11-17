@@ -407,3 +407,126 @@ pub fn offer(rb: *RtgBase, device: *rtg.RtgDevice) u32 {
     }
     return 0;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "who is asked first: the closer entry, then the entry's priority, and a board left behind is freed" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    // A driver that names the bus alone is asked after the fake, which
+    // names the chip - whatever its place on the list.
+    const Taker = struct {
+        var offered: u32 = 0;
+        fn attach(_: *rtg.RtgDriver, _: *rtg.RtgDevice, _: ?[*]const TagItem) callconv(.c) i32 {
+            offered += 1;
+            return rtg.errors.RTGERR_NO_DISPLAY;
+        }
+        const ops = rtg.RtgDriverOps{ .attach = &attach };
+        const matches = [_]rtg.RtgMatch{ .{ .fields = rtg.drivers.RTGMATCH_BUS, .bus = fixture.fake.bus }, .{} };
+        const spec = rtg.RtgDriverSpec{ .name = "by-bus", .priority = 50, .kind = rtg.drivers.RTGDT_BOARD, .matches = &matches, .ops = &ops };
+    };
+    Taker.offered = 0;
+    const by_bus = fixture.driverBase(rb).AddRtgDriver(&Taker.spec, null).?;
+    const device = fixture.fake.addDevice(fk, null).?;
+    try testing.expectEqual(fk.driver, device.driver.?);
+    try testing.expectEqual(@as(u32, 0), Taker.offered);
+
+    // One that names the chip with a higher entry priority is asked
+    // before the fake. It makes a board and declines: the board is freed,
+    // and the fake takes the device.
+    const careless = fixture.driverBase(rb).AddRtgDriver(&fixture.Careless.spec, null).?;
+    const before = fk.log.offered;
+    const next = fixture.fake.addDevice(fk, null).?;
+    try testing.expectEqual(fk.driver, next.driver.?);
+    try testing.expectEqual(before + 1, fk.log.offered);
+    try testing.expectEqual(@as(u32, 0), careless.boards);
+    try testing.expectEqual(@as(u32, 0), careless.devices);
+    try testing.expectEqual(@as(u32, 0), Taker.offered);
+
+    // With the fake declining too, the bus's driver is asked last.
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const last = fixture.fake.addDevice(fk, null).?;
+    try testing.expect(last.driver == null);
+    try testing.expectEqual(@as(u32, 1), Taker.offered);
+
+    // The closeness itself: a chip, or a vendor with a device, above a
+    // bus, a vendor alone or a class; nothing for a field that is not the
+    // device's.
+    const m = rtg.drivers;
+    try testing.expectEqual(@as(?u32, 2), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_CHIP, .chip = fixture.fake.chip }, device));
+    try testing.expectEqual(@as(?u32, 2), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_CHIP | m.RTGMATCH_BUS, .chip = fixture.fake.chip, .bus = fixture.fake.bus }, device));
+    try testing.expectEqual(@as(?u32, 1), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_BUS, .bus = fixture.fake.bus }, device));
+    try testing.expectEqual(@as(?u32, null), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_CHIP, .chip = fixture.fake.chip + 1 }, device));
+    try testing.expectEqual(@as(?u32, null), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_CHIP | m.RTGMATCH_BUS, .chip = fixture.fake.chip, .bus = 1 }, device));
+    // A part is no function on PCI.
+    try testing.expectEqual(@as(?u32, null), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR, .vendor = 0x1AF4 }, device));
+    var function = sdk.pci.PCIDevice{ .vendor_id = 0x1AF4, .device_id = 0x1050, .class_code = 0x03_8000 };
+    const on_pci = rtg.RtgDevice{ .kind = m.RTGDEV_PCI, .pci = &function, .bus = sdk.expansion.systemtags.BUS_PCI };
+    try testing.expectEqual(@as(?u32, 2), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR | m.RTGMATCH_DEVICE, .vendor = 0x1AF4, .device = 0x1050 }, &on_pci));
+    try testing.expectEqual(@as(?u32, 1), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR, .vendor = 0x1AF4 }, &on_pci));
+    try testing.expectEqual(@as(?u32, 1), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_CLASS, .class_code = 0x03_0000, .class_mask = 0xFF_0000 }, &on_pci));
+    try testing.expectEqual(@as(?u32, null), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_VENDOR | m.RTGMATCH_DEVICE, .vendor = 0x1AF4, .device = 0x1010 }, &on_pci));
+    try testing.expectEqual(@as(?u32, null), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_CLASS, .class_code = 0x02_0000, .class_mask = 0xFF_0000 }, &on_pci));
+    // A function is no part of a chip.
+    try testing.expectEqual(@as(?u32, null), fixture.devices.closeness(&.{ .fields = m.RTGMATCH_CHIP, .chip = 0 }, &on_pci));
+
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expect(fixture.fake.remove(fk));
+    try testing.expect(fixture.driverBase(rb).RemRtgDriver(careless));
+    try testing.expect(fixture.driverBase(rb).RemRtgDriver(by_bus));
+    _ = fixture.fake.add(rb.sys_base, rb) orelse return error.NoDriver;
+    try fixture.tearDown(rb);
+}
+
+test "the firmware's picture handed over: a driver takes the device it lies behind, and its board is gone, its handle good" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+
+    // The board the firmware's picture is shown by, and something on it.
+    const old = try fixture.makeDisplay(rb, 16, 16);
+    const lit = old.device.?;
+    lit.flags |= rtg.drivers.RTGDVF_FIRMWARE;
+    const picture = fixture.base(rb).AllocBitMap(old, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(old, picture));
+
+    // The card it lies behind, which no driver has yet.
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const card = fixture.fake.addDevice(fk, null).?;
+    // The machine's own devices are listed with the first bind, which
+    // works out what lies behind what: said by hand after it.
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).BindRtgDrivers());
+    lit.behind = card;
+    try testing.expect(card.driver == null);
+    try testing.expectEqual(old, fixture.base(rb).NextBoard(null).?);
+    const changes = fixture.infoOf(rb, old).changes;
+
+    // A driver takes the card: it is told the display is lit, its board
+    // is the machine's, and the firmware's is gone.
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(usize, 1), fixture.driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Adopt, 0, card.tags));
+    try testing.expectEqual(@as(usize, 0), fixture.driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Adopt, 0, lit.tags));
+    const new = fixture.base(rb).NextBoard(null).?;
+    try testing.expect(new != old);
+    try testing.expect(fixture.base(rb).NextBoard(new) == null);
+    try testing.expectEqual(card, new.device.?);
+
+    // Its handle is good: it says it is gone, shows nothing and takes no
+    // show, and what it showed may be freed.
+    const info = fixture.infoOf(rb, old);
+    try testing.expect(info.flags & rtg.boards.RTGBF_GONE != 0);
+    try testing.expect(info.flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expect(info.changes != changes);
+    try testing.expect(fixture.base(rb).BoardDisplayBitMap(old) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, fixture.base(rb).ShowBitMap(old, picture));
+    try testing.expectEqual(old, fixture.base(rb).FindBoard("fake.0").?);
+    fixture.base(rb).FreeBitMap(picture);
+    try fixture.tearDown(rb);
+}

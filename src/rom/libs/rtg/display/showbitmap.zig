@@ -78,3 +78,121 @@ pub fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i
     if (code == rtg.errors.RTGERR_OK) _display.light(rb, board);
     return code;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "showing a buffer, and what may not be shown" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeDisplay(rb, 16, 16);
+    const other = try fixture.makeDisplay(rb, 16, 16);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const displayable = rtg.bitmaps.RTGBMF_DISPLAYABLE;
+
+    const hidden = fixture.base(rb).AllocBitMap(board, 16, 16, format, 0).?;
+    const up = fixture.base(rb).AllocBitMap(board, 16, 16, format, displayable).?;
+    const small = fixture.base(rb).AllocBitMap(board, 8, 16, format, displayable).?;
+    const short = fixture.base(rb).AllocBitMap(board, 16, 8, format, displayable).?;
+    const deep = fixture.base(rb).AllocBitMap(board, 16, 16, @intFromEnum(rtg.PixelFormat.bgra32), displayable).?;
+    const elsewhere = fixture.base(rb).AllocBitMap(other, 16, 16, format, displayable).?;
+
+    // Not made to be shown, not the mode's size, not its format, not this
+    // board's: each refused by the library, the driver not asked.
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, fixture.base(rb).ShowBitMap(board, hidden));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, fixture.base(rb).ShowBitMap(board, small));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, fixture.base(rb).ShowBitMap(board, short));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_FORMAT, fixture.base(rb).ShowBitMap(board, deep));
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowBitMap(board, elsewhere));
+    try testing.expectEqual(@as(u32, 0), fk.log.shown);
+    try testing.expectEqual(@as(u32, 0), fixture.infoOf(rb, board).mode_id);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, up));
+    try testing.expectEqual(up, fixture.base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(up.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    // The driver was handed the one buffer as a band from the top.
+    try testing.expectEqual(@as(u32, 1), fk.log.band_count);
+    try testing.expectEqual(up, fk.log.bands[0].bitmap);
+    try testing.expectEqual(@as(u32, 0), fk.log.bands[0].line);
+
+    // What the board is reading is not the caller's to take away.
+    fixture.base(rb).FreeBitMap(up);
+    try testing.expectEqual(up, fixture.base(rb).BoardDisplayBitMap(board).?);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, null));
+    try testing.expect(fixture.base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expect(up.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
+    // The board stays in its mode with nothing shown.
+    try testing.expectEqual(@as(u32, 1), fixture.infoOf(rb, board).mode_id);
+
+    fixture.base(rb).FreeBitMap(elsewhere);
+    fixture.base(rb).FreeBitMap(deep);
+    fixture.base(rb).FreeBitMap(short);
+    fixture.base(rb).FreeBitMap(small);
+    fixture.base(rb).FreeBitMap(up);
+    fixture.base(rb).FreeBitMap(hidden);
+    fixture.driverBase(rb).DeleteBoard(other);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "a show that fails changes nothing: the buffer shown stays, the one refused can go" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeDisplay(rb, 16, 16);
+    const glass = fixture.fake.instanceOf(board);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const showing = rtg.bitmaps.RTGBMF_SHOWING;
+    const first = fixture.base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const second = fixture.base(rb).AllocBitMap(board, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+
+    // The board is handed what was asked for: the buffer.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, first));
+    try testing.expectEqual(first, fk.log.last_show_bitmap.?);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(first, glass.showing[0].bitmap);
+    // A show that works is a picture counted.
+    const swaps = fixture.swapsOf(rb, board);
+    try testing.expectEqual(@as(u32, 1), swaps);
+
+    // Refused: the answer is the driver's, and neither side has moved -
+    // the library's marks, what it answers, its count of pictures, and
+    // what the board itself shows.
+    fk.show_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(rtg.errors.RTGERR_IO, fixture.base(rb).ShowBitMap(board, second));
+    try testing.expectEqual(second, fk.log.last_show_bitmap.?);
+    try testing.expectEqual(first, fixture.base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(first.flags & showing != 0);
+    try testing.expect(second.flags & showing == 0);
+    try testing.expectEqual(swaps, fixture.swapsOf(rb, board));
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+    try testing.expectEqual(first, glass.showing[0].bitmap);
+
+    // The one still shown cannot be freed; the one refused can.
+    fixture.base(rb).FreeBitMap(first);
+    try testing.expectEqual(first, fixture.base(rb).BoardDisplayBitMap(board).?);
+    const free_before = fixture.freeOf(rb, board);
+    fixture.base(rb).FreeBitMap(second);
+    try testing.expect(fixture.freeOf(rb, board) > free_before);
+
+    // Showing nothing refused: the picture stays up, and stays marked.
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, fixture.base(rb).ShowBitMap(board, null));
+    try testing.expectEqual(first, fixture.base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(first.flags & showing != 0);
+    try testing.expect(board.info.flags & rtg.boards.RTGBF_SHOWING != 0);
+    try testing.expectEqual(@as(u32, 1), glass.showing_count);
+
+    // The refusal was that show's alone: the next one works.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, null));
+    try testing.expect(fixture.base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expectEqual(@as(u32, 0), glass.showing_count);
+
+    fixture.base(rb).FreeBitMap(first);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

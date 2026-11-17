@@ -93,6 +93,12 @@ pub const Log = struct {
     last_audio: ?rtg.RtgAudio = null,
     control_calls: u32 = 0,
     fills: u32 = 0,
+    /// One-bit shapes and tiles asked for (`blit_template`,
+    /// `blit_pattern`), and what the last of each was handed.
+    templates: u32 = 0,
+    last_template: rtg.RtgTemplate = .{},
+    patterns: u32 = 0,
+    last_pattern: rtg.RtgPattern = .{},
     copies: u32 = 0,
     /// Copies asked for together (`copy_rects`): how many calls, and how
     /// many rectangles the last had. Each rectangle counts in `copies`
@@ -263,6 +269,9 @@ pub const State = struct {
     /// `RTGBC_MIRROR_Y`), on the boards that fill in `mirror`: both,
     /// unless a test says fewer.
     mirror_axes: u32 = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y,
+    /// Make the next board one whose engine takes one-bit shapes and
+    /// tiles too (`blit_template`, `blit_pattern`): counted, not drawn.
+    shapes: bool = false,
     /// Make the next board one that takes its buffers from the system's
     /// memory (`RTGRF_SYSTEM_MEMORY`), as many bytes as `region_size`
     /// says: its display memory is no stretch of the driver's.
@@ -1107,6 +1116,26 @@ const flipped_hardware_ops = made: {
 
 /// A pointer and an overlay of the board's own, as a cursor plane's
 /// driver has them.
+/// A one-bit shape: counted and kept, nothing drawn.
+fn blitTemplate(board: *rtg.RtgBoard, _: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.RtgTemplate) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.templates += 1;
+    log.last_rect = area.*;
+    log.last_template = shape.*;
+    return err.RTGERR_OK;
+}
+
+/// A one-bit tile: counted and kept, nothing drawn.
+fn blitPattern(board: *rtg.RtgBoard, _: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) callconv(.c) i32 {
+    instanceOf(board).calls += 1;
+    const log = &stateOfBoard(board).log;
+    log.patterns += 1;
+    log.last_rect = area.*;
+    log.last_pattern = tile.*;
+    return err.RTGERR_OK;
+}
+
 const pointer_group = rtg.RtgPointerOps{ .set = &setPointer, .move = &movePointer, .show = &showPointer };
 const overlay_group = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay };
 
@@ -1123,6 +1152,22 @@ const engine_group = rtg.RtgEngineOps{
 const video_group = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .show = &videoShow, .move = &videoMove };
 
 /// Everything a board can be asked.
+/// The engine of a board made with `shapes`: the same, and shapes and
+/// tiles of one bit, which it counts and does not draw.
+const shapes_engine_group = group: {
+    var more = engine_group;
+    more.blit_template = &blitTemplate;
+    more.blit_pattern = &blitPattern;
+    break :group more;
+};
+
+/// The board that has everything, with the engine that takes shapes.
+const shapes_ops = ops: {
+    var more = full_ops;
+    more.engine = &shapes_engine_group;
+    break :ops more;
+};
+
 const full_ops = rtg.RtgBoardOps{
     .destroy = &destroyBoard,
     .show = &showOp,
@@ -1268,6 +1313,8 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
             &fixed_ops
         else if (state.without_engine)
             &plain_ops
+        else if (state.shapes)
+            &shapes_ops
         else
             &full_ops,
         .instance_size = @sizeOf(Instance),

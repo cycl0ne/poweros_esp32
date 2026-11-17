@@ -503,3 +503,341 @@ pub fn stop(rb: *RtgBase) void {
     @atomicStore(?*exec.Task, &rb.monitor_task, null, .release);
     rb.sys_base.RemTask(task);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const utility = fixture.utility;
+const TagItem = fixture.TagItem;
+const testing = fixture.testing;
+
+test "a monitor's modes: made of its EDID as the board joins the list, the one it prefers the default" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeConnector(rb, fixture.portable_bytes, fixture.fake.mode_table.len);
+
+    // The connector was asked once, in the task that made the board, and
+    // the task that looks again is there.
+    try testing.expectEqual(@as(u32, 1), fk.log.detects);
+    try testing.expect(rb.monitor_task != null);
+    var info = fixture.infoOf(rb, board);
+    try testing.expect(info.flags & rtg.boards.RTGBF_CONNECTOR != 0);
+    try testing.expect(info.caps & rtg.boards.RTGBC_MONITOR != 0);
+    try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_NO_DISPLAY);
+
+    // What it names that the standards time, the larger picture first:
+    // its own 1080p in full, then sizes by a bit, a size or a number.
+    const expected = [_][2]u32{
+        .{ 1920, 1080 }, .{ 1280, 1024 }, .{ 1440, 900 }, .{ 1280, 960 }, .{ 1280, 720 },
+        .{ 1024, 768 },  .{ 800, 600 },   .{ 720, 480 },  .{ 640, 480 },
+    };
+    var found: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, expected.len), fixture.base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, expected.len), info.modes);
+    for (expected, found[0..expected.len]) |want, *got| {
+        try testing.expectEqual(want[0], got.width);
+        try testing.expectEqual(want[1], got.height);
+        // In the format the board said a monitor's modes are made in.
+        try testing.expectEqual(rtg.PixelFormat.rgb565, got.format);
+        try testing.expect(got.refresh_mhz > 59_000 and got.refresh_mhz < 61_000);
+    }
+    // The driver's own three stand by: none of them is listed.
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).FindBoardMode(board, 320, 200, rtg.RTG_ANY, rtg.RTG_ANY));
+    // The mode it prefers is the default, with the timing it gave - the
+    // sync a line early - and CEA's number for it.
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    try testing.expectEqualStrings("1920x1080", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 0));
+    try testing.expectEqual(found[0].id, fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 148_500_000), fk.log.last_timings.pixel_clock_hz);
+    try testing.expectEqual(@as(u32, 3), fk.log.last_timings.v_front);
+    try testing.expectEqual(@as(u8, 16), fk.log.last_timings.vic);
+    try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH | rtg.modes.RTGTM_VSYNC_HIGH, fk.log.last_timings.flags);
+    // A mode named by a number has the standard's timing and that number.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, found[7].id));
+    try testing.expectEqual(@as(u8, 3), fk.log.last_timings.vic);
+    try testing.expectEqual(@as(u32, 27_000_000), fk.log.last_timings.pixel_clock_hz);
+
+    // What the monitor says of itself, and its EDID as it was read.
+    const said = fixture.monitorOf(rb, board);
+    const m = rtg.modes;
+    try testing.expectEqual(m.RTGMON_PRESENT | m.RTGMON_EDID | m.RTGMON_HDMI | m.RTGMON_AUDIO | m.RTGMON_RANGE_SELECTABLE, said.flags);
+    try testing.expectEqualStrings("BOE", std.mem.sliceTo(&said.maker, 0));
+    try testing.expectEqualStrings("Display", std.mem.sliceTo(&said.name, 0));
+    try testing.expectEqual(@as(u32, 0x2556), said.product);
+    try testing.expectEqual(@as(u32, 350), said.width_mm);
+    try testing.expectEqual(@as(u16, 2024), said.year);
+    try testing.expectEqual(@as(u32, 300_000), said.max_tmds_khz);
+    try testing.expectEqual(@as(u32, 256), said.edid_size);
+    try testing.expectEqual(@as(u32, 256), fixture.base(rb).ReadBoardEDID(board, null, 0));
+    var bytes: [rtg.modes.RTG_EDID_MAX]u8 = @splat(0xEE);
+    try testing.expectEqual(@as(u32, 256), fixture.base(rb).ReadBoardEDID(board, &bytes, 130));
+    try testing.expectEqualSlices(u8, fixture.portable_bytes[0..130], bytes[0..130]);
+    try testing.expectEqual(@as(u8, 0xEE), bytes[130]);
+
+    info = fixture.infoOf(rb, board);
+    try testing.expectEqual(found[7].id, info.mode_id);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "a monitor that prefers what the board cannot make gets 1080p at 60; one mode in full is its one mode" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    // A board that makes no clock past 300 MHz, as an HDMI 1.4 port.
+    fk.fastest_hz = 300_000_000;
+    const board = try fixture.makeConnector(rb, fixture.uhd_bytes, 0);
+    var found: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, 3840), found[0].width);
+    try testing.expectEqual(@as(u32, 30_000), found[0].refresh_mhz);
+    try testing.expectEqual(@as(u32, 0), found[0].flags);
+    try testing.expectEqual(@as(u32, 1080), found[1].height);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[1].flags);
+    // The board was asked of the two the monitor's own clock allows: it
+    // says no faster one than HDMI 1.4's, so 4K at 60 is not its to take.
+    try testing.expectEqual(@as(u32, 2), fk.log.checks);
+    fixture.driverBase(rb).DeleteBoard(board);
+
+    // One detailed timing and no more: that mode, as the monitor times it.
+    fk.fastest_hz = 0xFFFF_FFFF;
+    const other = try fixture.makeConnector(rb, fixture.qhd_bytes, 0);
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetBoardModes(other, &found, found.len));
+    try testing.expectEqual(@as(u32, 2560), found[0].width);
+    try testing.expectEqual(@as(u32, 241_500_000), found[0].pixel_clock_hz);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, other, 0));
+    try testing.expectEqual(rtg.modes.RTGTM_HSYNC_HIGH, fk.log.last_timings.flags);
+    try testing.expectEqual(@as(u8, 0), fk.log.last_timings.vic);
+    // A monitor without an extension is a DVI monitor, of no sound.
+    const said = fixture.monitorOf(rb, other);
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT | rtg.modes.RTGMON_EDID, said.flags);
+    fixture.driverBase(rb).DeleteBoard(other);
+    try fixture.tearDown(rb);
+}
+
+test "a monitor that names nothing: the board's own modes, or its device's size at 60 a second" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    // No monitor on the connector: the driver's own modes stand, and the
+    // board says it has no display - and is shown on all the same.
+    const board = try fixture.makeConnector(rb, null, fixture.fake.mode_table.len);
+    var found: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 3), fixture.base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+    try testing.expect(fixture.infoOf(rb, board).flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expectEqual(@as(u32, 0), fixture.monitorOf(rb, board).flags);
+    // In its mode of one bit a pixel, whose picture the tests' display
+    // memory holds.
+    const bm = fixture.base(rb).AllocBitMap(board, 64, 64, @intFromEnum(rtg.PixelFormat.mono1), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    const in_mono = [_]rtg.RtgBand{.{ .bitmap = bm }};
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBoard(board, 3, &in_mono, in_mono.len));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, null));
+    fixture.base(rb).FreeBitMap(bm);
+    fixture.driverBase(rb).DeleteBoard(board);
+
+    // A monitor whose EDID does not read, on a board that added no mode:
+    // the size its device's tags give, in the standard's timing.
+    const sized = [_]TagItem{
+        .{ .tag = rtg.tags.RTGA_Width, .data = 1280 },
+        .{ .tag = rtg.tags.RTGA_Height, .data = 720 },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(fixture.fake.deviceTags()) },
+    };
+    fk.connector = true;
+    fk.modes = 0;
+    fk.monitor_there = true;
+    fk.monitor_edid = null;
+    const bare = fixture.fake.makeBoardFrom(fk, &sized) orelse return error.NoBoard;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetBoardModes(bare, &found, found.len));
+    try testing.expectEqualStrings("1280x720", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqual(@as(u32, 74_250_000), found[0].pixel_clock_hz);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT, fixture.monitorOf(rb, bare).flags);
+    try testing.expectEqual(@as(u32, 0), fixture.infoOf(rb, bare).flags & rtg.boards.RTGBF_NO_DISPLAY);
+    fixture.driverBase(rb).DeleteBoard(bare);
+
+    // Bytes that do not sum to zero are no EDID: not kept, and the same
+    // one mode.
+    var broken: [256]u8 = undefined;
+    @memcpy(&broken, fixture.portable_bytes);
+    broken[20] ^= 0xFF;
+    fk.monitor_edid = &broken;
+    const doubtful = fixture.fake.makeBoardFrom(fk, &sized) orelse return error.NoBoard;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetBoardModes(doubtful, null, 0));
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).ReadBoardEDID(doubtful, null, 0));
+    try testing.expectEqual(rtg.modes.RTGMON_PRESENT, fixture.monitorOf(rb, doubtful).flags);
+    // A driver that cannot say what is on its connector has none there.
+    fk.detect_answer = rtg.errors.RTGERR_IO;
+    fixture.driverBase(rb).MonitorChanged(doubtful);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), fixture.monitorOf(rb, doubtful).flags);
+    try testing.expect(fixture.infoOf(rb, doubtful).flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetBoardModes(doubtful, null, 0));
+    fixture.driverBase(rb).DeleteBoard(doubtful);
+    try fixture.tearDown(rb);
+}
+
+test "two monitors in turn: the list made again, a mode's number kept, the task told" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const sys = rb.sys_base;
+    const board = try fixture.makeConnector(rb, fixture.portable_bytes, fixture.fake.mode_table.len);
+    var first: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 9), fixture.base(rb).GetBoardModes(board, &first, first.len));
+    // The driver's own took the first three numbers, the monitor's the
+    // next nine.
+    try testing.expectEqual(@as(u32, 4), first[0].id);
+
+    // A task that asked is told.
+    const bit = sys.AllocSignal(-1);
+    try testing.expect(bit >= 0);
+    const mask = @as(u32, 1) << @intCast(bit);
+    const notify = fixture.base(rb).AddRtgNotify(sys.FindTask(null).?, mask).?;
+    try testing.expectEqual(@as(?*rtg.RtgNotify, null), fixture.base(rb).AddRtgNotify(sys.FindTask(null).?, 0));
+    const changes = fixture.infoOf(rb, board).changes;
+
+    // A look that finds the monitor it found changes nothing, and tells
+    // nobody.
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 2), fk.log.detects);
+    try testing.expectEqual(changes, fixture.infoOf(rb, board).changes);
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, mask) & mask);
+
+    // Another monitor: its one mode is the list, with a number of its own.
+    fk.monitor_edid = fixture.qhd_bytes;
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    var second: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetBoardModes(board, &second, second.len));
+    try testing.expectEqual(@as(u32, 2560), second[0].width);
+    try testing.expectEqual(@as(u32, 13), second[0].id);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, second[0].flags);
+    try testing.expectEqual(changes + 1, fixture.infoOf(rb, board).changes);
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+    try testing.expectEqualStrings("", std.mem.sliceTo(&fixture.monitorOf(rb, board).name, 0));
+
+    // The monitor taken off: the driver's own modes again, as they were.
+    fk.monitor_there = false;
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 3), fixture.base(rb).GetBoardModes(board, &second, second.len));
+    try testing.expectEqual(@as(u32, 2), second[0].id);
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+    try testing.expect(fixture.infoOf(rb, board).flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expect(sys.SetSignal(0, mask) & mask != 0);
+
+    // The first monitor again: every mode has the number it had.
+    fk.monitor_there = true;
+    fk.monitor_edid = fixture.portable_bytes;
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 9), fixture.base(rb).GetBoardModes(board, &second, second.len));
+    for (first[0..9], second[0..9]) |before, after| {
+        try testing.expectEqual(before.id, after.id);
+        try testing.expectEqual(before.width, after.width);
+        try testing.expectEqual(before.flags, after.flags);
+    }
+
+    // A notification given back tells no more.
+    _ = sys.SetSignal(0, mask);
+    fixture.base(rb).RemRtgNotify(notify);
+    fixture.base(rb).RemRtgNotify(null);
+    fk.monitor_edid = fixture.uhd_bytes;
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), sys.SetSignal(0, mask) & mask);
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).GetBoardModes(board, null, 0));
+
+    sys.FreeSignal(bit);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "a board that shows when its monitor changes: the mode again where the new one has it, none where it has not" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    // Three monitors of pictures small enough for the tests' display
+    // memory: one of 64 by 32; one that prefers 32 by 32 and has 64 by 32
+    // too, with another front porch; one of 32 by 32 alone.
+    const wide_only = fixture.smallMonitor(fixture.smallTiming(64, 32, 8), null);
+    const both = fixture.smallMonitor(fixture.smallTiming(32, 32, 8), fixture.smallTiming(64, 32, 12));
+    const square_only = fixture.smallMonitor(fixture.smallTiming(32, 32, 8), null);
+    const board = try fixture.makeConnector(rb, std.mem.sliceAsBytes(&wide_only), 0);
+    const wide = fixture.base(rb).FindBoardMode(board, 64, 32, rtg.RTG_ANY, rtg.RTG_ANY);
+    try testing.expect(wide != 0);
+    const bm = fixture.base(rb).AllocBitMap(board, 64, 32, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, bm));
+    try testing.expectEqual(@as(u32, 1), fk.log.set_mode);
+    try testing.expectEqual(@as(u32, 8), fk.log.last_timings.h_front);
+
+    // A monitor that has the mode too: the board stays in it, its driver
+    // handed the mode again with the timing this monitor gives it, and
+    // what was shown with it - it stays shown.
+    fk.monitor_edid = std.mem.sliceAsBytes(&both);
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 2), fk.log.set_mode);
+    try testing.expectEqual(rtg.boards.RTGSHOW_MODE_CHANGED | rtg.boards.RTGSHOW_DIRECT, fk.log.last_flags);
+    try testing.expectEqual(wide, fk.log.last_mode.id);
+    try testing.expectEqual(@as(u32, 12), fk.log.last_timings.h_front);
+    try testing.expectEqual(@as(u32, 1), fk.log.band_count);
+    try testing.expectEqual(bm, fk.log.bands[0].bitmap);
+    try testing.expectEqual(bm, fixture.base(rb).BoardDisplayBitMap(board).?);
+    try testing.expect(bm.flags & rtg.bitmaps.RTGBMF_SHOWING != 0);
+    var info = fixture.infoOf(rb, board);
+    try testing.expectEqual(wide, info.mode_id);
+    try testing.expect(info.flags & rtg.boards.RTGBF_MODE_SET != 0);
+    // The new monitor's list: the mode the board is in, and the one this
+    // monitor prefers, which is the default.
+    var found: [16]rtg.RtgMode = undefined;
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(@as(u32, 64), found[0].width);
+    try testing.expectEqual(rtg.modes.RTGMF_CURRENT, found[0].flags);
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[1].flags);
+
+    // A monitor that has not got the mode: the board shows nothing and is
+    // in none, and the buffer can go.
+    fk.monitor_edid = std.mem.sliceAsBytes(&square_only);
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 2), fk.log.set_mode);
+    try testing.expectEqual(@as(u32, 0), fk.log.band_count);
+    try testing.expect(fixture.base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expect(bm.flags & rtg.bitmaps.RTGBMF_SHOWING == 0);
+    info = fixture.infoOf(rb, board);
+    try testing.expectEqual(@as(u32, 0), info.mode_id);
+    try testing.expectEqual(@as(u32, 0), info.flags & rtg.boards.RTGBF_MODE_SET);
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetBoardModes(board, &found, found.len));
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    // The mode it was in is not the board's to be put in until a monitor
+    // has it, nor its buffer one to show in the mode that is.
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, fixture.setMode(rb, board, wide));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_DISPLAYABLE, fixture.base(rb).ShowBitMap(board, bm));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 0));
+    try testing.expectEqual(@as(u32, 32), fixture.infoOf(rb, board).width);
+
+    // The driver that cannot bring the link up again for a monitor that
+    // came leaves the board in no mode, showing nothing.
+    const square = fixture.base(rb).AllocBitMap(board, 32, 32, @intFromEnum(rtg.PixelFormat.rgb565), rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, square));
+    fk.monitor_edid = std.mem.sliceAsBytes(&both);
+    fk.show_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    fixture.driverBase(rb).MonitorChanged(board);
+    fixture.monitors.service(rb);
+    try testing.expectEqual(@as(u32, 0), fixture.infoOf(rb, board).mode_id);
+    try testing.expect(fixture.base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expectEqual(@as(u32, 0), fixture.fake.instanceOf(board).showing_count);
+
+    fixture.base(rb).FreeBitMap(square);
+    fixture.base(rb).FreeBitMap(bm);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

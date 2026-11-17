@@ -202,3 +202,102 @@ pub const DosFile = struct {
         return opened.dl.Read(opened.file, into.ptr, @intCast(into.len)) == @as(isize, @intCast(into.len));
     }
 };
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "a driver's file: its name and what it takes read out of it, nothing loaded" {
+    const entries = [_]rtg.RtgMatch{
+        .{ .fields = rtg.drivers.RTGMATCH_VENDOR | rtg.drivers.RTGMATCH_CLASS, .vendor = 0x1AF4, .class_code = 0x03_0000, .class_mask = 0xFF_0000, .priority = 3 },
+        .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = fixture.fake.chip },
+    };
+    var room: [1024]u8 = undefined;
+    var file = loadfile.Bytes{ .data = fixture.driverFile(&room, "virtio", .rtg_driver, &entries) };
+    var described: fixture.load.Described = .{};
+    try testing.expect(fixture.load.describe(file.source(), &described));
+    try testing.expectEqualStrings("virtio", described.nameText());
+    try testing.expectEqual(rtg.drivers.RTGDT_BOARD, described.kind);
+    try testing.expectEqual(@as(u32, 2), described.count);
+    try testing.expectEqual(@as(u32, 0x1AF4), described.matches[0].vendor);
+    try testing.expectEqual(@as(i32, 3), described.matches[0].priority);
+    try testing.expectEqual(fixture.fake.chip, described.matches[1].chip);
+
+    // A library's file is no driver's, nor is a file cut short, nor one
+    // that is no load file.
+    file.data = fixture.driverFile(&room, "some.library", .library, &entries);
+    try testing.expect(!fixture.load.describe(file.source(), &described));
+    const whole = fixture.driverFile(&room, "virtio", .rtg_driver, &entries);
+    file.data = whole[0 .. whole.len - @sizeOf(rtg.RtgMatch) - 4];
+    try testing.expect(!fixture.load.describe(file.source(), &described));
+    file.data = "not a load file at all, whatever its name";
+    try testing.expect(!fixture.load.describe(file.source(), &described));
+    // An entry with a bit no driver's table has: bytes that are no table.
+    const odd = [_]rtg.RtgMatch{.{ .fields = 1 << 20 }};
+    file.data = fixture.driverFile(&room, "odd", .rtg_driver, &odd);
+    try testing.expect(!fixture.load.describe(file.source(), &described));
+}
+
+test "a driver on the disk is wanted for a device no driver has, unless its name is taken or the device's line says no" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const sys = rb.sys_base;
+    const takes = [_]rtg.RtgMatch{.{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = fixture.fake.chip }};
+    var room: [1024]u8 = undefined;
+    var file = sdk.dos.loadfile.Bytes{ .data = fixture.driverFile(&room, "other", .rtg_driver, &takes) };
+    var described: fixture.load.Described = .{};
+    try testing.expect(fixture.load.describe(file.source(), &described));
+
+    // No device at all: nothing to load it for.
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!fixture.load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // A device the driver on the list declined.
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const device = fixture.fake.addDevice(fk, null).?;
+    try testing.expect(device.driver == null);
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(fixture.load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // The name of a driver that is on the list: the one there is used.
+    var named: fixture.load.Described = .{};
+    file.data = fixture.driverFile(&room, fixture.fake.DRIVER_NAME, .rtg_driver, &takes);
+    try testing.expect(fixture.load.describe(file.source(), &named));
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!fixture.load.wanted(rb, &named));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // A table that names another chip.
+    const elsewhere = [_]rtg.RtgMatch{.{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = fixture.fake.chip + 1 }};
+    var stranger: fixture.load.Described = .{};
+    file.data = fixture.driverFile(&room, "stranger", .rtg_driver, &elsewhere);
+    try testing.expect(fixture.load.describe(file.source(), &stranger));
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!fixture.load.wanted(rb, &stranger));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // The device's line keeps drivers from the disk off it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("panel.0", false));
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!fixture.load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("panel.0", true));
+
+    // A device a driver has is nobody else's.
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BindRtgDrivers());
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!fixture.load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // The file of drivers being tried: a name a line.
+    try testing.expect(fixture.load.tried("virtio\namd\r\n", "amd"));
+    try testing.expect(fixture.load.tried("virtio\namd", "virtio"));
+    try testing.expect(!fixture.load.tried("virtio\namd\n", "am"));
+    try testing.expect(!fixture.load.tried("", "amd"));
+    try fixture.tearDown(rb);
+}

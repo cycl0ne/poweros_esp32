@@ -131,3 +131,88 @@ pub fn RehomeBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, board: *rtg.RtgBoard) 
     bitmap.board = @ptrCast(board);
     return err.RTGERR_OK;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "a buffer given to another board: the memory along where it can go, the pixels copied where it cannot, the handle the same" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    // Two boards that take their buffers from the system's memory, and
+    // one that cuts them out of display memory of its own.
+    fk.system_memory = true;
+    fk.region_size = 4096;
+    const one = try fixture.makeDisplay(rb, 16, 16);
+    const other = try fixture.makeDisplay(rb, 16, 16);
+    fk.system_memory = false;
+    fk.region_size = fixture.fake.region_bytes;
+    const fixed = try fixture.makeDisplay(rb, 16, 16);
+
+    const picture = fixture.base(rb).AllocBitMap(one, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    fixture.paint(picture, 5);
+    const pixels = picture.pixels.?;
+    const free_one = fixture.infoOf(rb, one).memory_free;
+    const free_other = fixture.infoOf(rb, other).memory_free;
+    const used = fixture.infoOf(rb, one).memory_total - free_one;
+    try testing.expect(used != 0);
+
+    // Shown, it is its board's.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(one, picture));
+    try testing.expectEqual(rtg.errors.RTGERR_IN_USE, fixture.base(rb).RehomeBitMap(picture, other));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(one, null));
+    // To the board it is on: nothing to do.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RehomeBitMap(picture, one));
+
+    // To a board that reads the same memory: the memory goes along, and
+    // each board counts what it holds.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RehomeBitMap(picture, other));
+    try testing.expectEqual(pixels, picture.pixels.?);
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(other)), picture.board);
+    try testing.expectEqual(free_one + used, fixture.infoOf(rb, one).memory_free);
+    try testing.expectEqual(free_other - used, fixture.infoOf(rb, other).memory_free);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowBitMap(one, picture));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(other, picture));
+    try testing.expectEqual(picture, fk.log.bands[0].bitmap);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(other, null));
+
+    // To a board with display memory of its own: the pixels are copied
+    // there, the handle is the same, and the old memory is given back.
+    const free_fixed = fixture.infoOf(rb, fixed).memory_free;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RehomeBitMap(picture, fixed));
+    try testing.expect(picture.pixels.? != pixels);
+    for (0..16) |y| {
+        const row: [*]const u16 = @ptrCast(@alignCast(picture.pixels.? + y * picture.pitch));
+        for (0..16) |x| try testing.expectEqual(fixture.painted(5, @intCast(x), @intCast(y)), row[x]);
+    }
+    try testing.expectEqual(free_other, fixture.infoOf(rb, other).memory_free);
+    try testing.expect(fixture.infoOf(rb, fixed).memory_free < free_fixed);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(fixed, picture));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(fixed, null));
+
+    // A board with no room refuses, and the buffer stays where it is.
+    fk.system_memory = true;
+    fk.region_size = 64;
+    const cramped = try fixture.makeDisplay(rb, 16, 16);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_MEMORY, fixture.base(rb).RehomeBitMap(picture, cramped));
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(fixed)), picture.board);
+
+    // Memory of the caller's goes along as it is.
+    var rows: [16 * 16]u16 align(64) = @splat(0);
+    const described = rtg.RtgBitMap{ .pixels = @ptrCast(&rows), .width = 16, .height = 16, .pitch = 32, .size_bytes = 512, .format = .rgb565 };
+    const attached = fixture.base(rb).AttachBitMap(one, &described).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RehomeBitMap(attached, cramped));
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(cramped)), attached.board);
+    try testing.expectEqual(@as(?[*]u8, @ptrCast(&rows)), attached.pixels);
+
+    // A board that is gone takes none.
+    fixture.driverBase(rb).RemRtgDevice(one.device.?);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, fixture.base(rb).RehomeBitMap(attached, one));
+
+    fixture.base(rb).FreeBitMap(attached);
+    fixture.base(rb).FreeBitMap(picture);
+    try fixture.tearDown(rb);
+}

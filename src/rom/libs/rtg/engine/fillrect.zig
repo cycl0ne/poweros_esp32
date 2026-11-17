@@ -63,3 +63,53 @@ pub fn FillRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, col
     const fill = engine.fill_rect orelse return err.RTGERR_NOT_SUPPORTED;
     return fill(board, dest, &cut, color);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "the engine: the rectangle is cut down before the board sees it" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const bitmap = fixture.base(rb).AllocBitMap(board, 16, 8, format, 0).?;
+
+    // Over the right-hand edge and over the top: what reaches the driver
+    // is what is inside the buffer.
+    const over = rtg.RtgRect{ .x = 12, .y = -4, .width = 10, .height = 8 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).FillRect(bitmap, &over, 0xBEEF));
+    try testing.expectEqual(@as(i32, 12), fk.log.last_rect.x);
+    try testing.expectEqual(@as(i32, 0), fk.log.last_rect.y);
+    try testing.expectEqual(@as(i32, 4), fk.log.last_rect.width);
+    try testing.expectEqual(@as(i32, 4), fk.log.last_rect.height);
+
+    // And the bytes really moved, inside the rectangle and nowhere else.
+    const row: [*]u16 = @ptrCast(@alignCast(fixture.rowOf(bitmap, 0)));
+    try testing.expectEqual(@as(u16, 0), row[11]);
+    try testing.expectEqual(@as(u16, 0xBEEF), row[12]);
+    try testing.expectEqual(@as(u16, 0xBEEF), row[15]);
+    const past: [*]u16 = @ptrCast(@alignCast(fixture.rowOf(bitmap, 4)));
+    try testing.expectEqual(@as(u16, 0), past[12]);
+
+    // Nothing of it inside is no work at all, and no error.
+    const outside = rtg.RtgRect{ .x = 100, .y = 100, .width = 4, .height = 4 };
+    const fills = fk.log.fills;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).FillRect(bitmap, &outside, 0));
+    try testing.expectEqual(fills, fk.log.fills);
+    const empty = rtg.RtgRect{ .x = 0, .y = 0, .width = 0, .height = 4 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).FillRect(bitmap, &empty, 0));
+    try testing.expectEqual(fills, fk.log.fills);
+
+    // A rectangle that would run off the end of the numbers does not.
+    const huge = rtg.RtgRect{ .x = std.math.maxInt(i32) - 1, .y = 0, .width = 16, .height = 4 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).FillRect(bitmap, &huge, 0));
+    try testing.expectEqual(fills, fk.log.fills);
+
+    fixture.base(rb).FreeBitMap(bitmap);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

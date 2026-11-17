@@ -115,3 +115,29 @@ pub fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, 
     sys.AddTail(&board.bitmaps, &bitmap.node);
     return bitmap;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "a buffer: a format that is none, and a board with no display memory" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+
+    // A number past every format is refused as a format not known.
+    const board = try fixture.makeBoard(rb);
+    try testing.expect(fixture.base(rb).AllocBitMap(board, 8, 8, 256, 0) == null);
+    try testing.expect(fixture.base(rb).AllocBitMap(board, 8, 8, ~@as(u32, 0), 0) == null);
+    fixture.driverBase(rb).DeleteBoard(board);
+
+    // A board that reports no display memory says so, and no memory was
+    // taken for the buffer's handle: the leak check holds that.
+    fk.region_size = 0;
+    const dark = try fixture.makeBoard(rb);
+    try testing.expect(fixture.base(rb).AllocBitMap(dark, 8, 8, format, 0) == null);
+    fixture.driverBase(rb).DeleteBoard(dark);
+    try fixture.tearDown(rb);
+}

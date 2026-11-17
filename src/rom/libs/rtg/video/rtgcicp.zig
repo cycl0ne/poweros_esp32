@@ -94,3 +94,38 @@ pub fn RtgCicp(_: *RtgBase, kind: u32, value: u32) i32 {
         else => -1,
     };
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "a stream's colour numbers as a picture says them, and nothing where they say nothing" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const matrix = rtg.RTGCICP_MATRIX;
+    const transfer = rtg.RTGCICP_TRANSFER;
+    const primaries = rtg.RTGCICP_PRIMARIES;
+
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_BT709), fixture.base(rb).RtgCicp(matrix, 1));
+    for ([_]u32{ 4, 5, 6, 7 }) |television| try testing.expectEqual(@as(i32, rtg.RTGYUV_BT601), fixture.base(rb).RtgCicp(matrix, television));
+    for ([_]u32{ 9, 10 }) |wide| try testing.expectEqual(@as(i32, rtg.RTGYUV_BT2020), fixture.base(rb).RtgCicp(matrix, wide));
+
+    for ([_]u32{ 1, 6, 14, 15 }) |curve| try testing.expectEqual(@as(i32, rtg.RTGYUV_SDR), fixture.base(rb).RtgCicp(transfer, curve));
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_PQ), fixture.base(rb).RtgCicp(transfer, 16));
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_HLG), fixture.base(rb).RtgCicp(transfer, 18));
+
+    for ([_]u32{ 1, 5, 6, 7 }) |television| try testing.expectEqual(@as(i32, rtg.RTGYUV_BT709), fixture.base(rb).RtgCicp(primaries, television));
+    try testing.expectEqual(@as(i32, rtg.RTGYUV_BT2020), fixture.base(rb).RtgCicp(primaries, 9));
+    for ([_]u32{ 11, 12 }) |cinema| try testing.expectEqual(@as(i32, rtg.RTGYUV_P3), fixture.base(rb).RtgCicp(primaries, cinema));
+
+    // "Unspecified", a number nothing here shows, one past a byte, and a
+    // table that is none of the three.
+    for ([_]u32{ matrix, transfer, primaries }) |kind| {
+        for ([_]u32{ 0, 2, 3, 8, 13, 255, 256, ~@as(u32, 0) }) |silent| {
+            try testing.expect(fixture.base(rb).RtgCicp(kind, silent) < 0);
+        }
+    }
+    try testing.expect(fixture.base(rb).RtgCicp(3, 1) < 0);
+    try fixture.tearDown(rb);
+}

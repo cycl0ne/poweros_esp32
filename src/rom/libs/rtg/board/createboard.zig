@@ -135,3 +135,69 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     sys.AddTail(&of_device.boards, &private.device_link);
     return board;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "a board: its own name, its own instance, its driver and its device held" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    const board = try fixture.makeBoard(rb);
+    try testing.expectEqual(@as(u32, 1), fk.log.offered);
+    try testing.expectEqual(@as(u32, 1), fk.log.created);
+    try testing.expectEqual(@as(u32, 1), fk.driver.boards);
+    try testing.expectEqual(@as(u32, 1), fk.driver.devices);
+    // Named after its driver and a number, and the name is the library's.
+    try testing.expectEqualStrings("fake.0", std.mem.span(board.node.name.?));
+    try testing.expectEqual(board, fixture.base(rb).FindBoard("fake.0").?);
+    try testing.expectEqual(board, fixture.base(rb).NextBoard(null).?);
+    try testing.expect(fixture.base(rb).NextBoard(board) == null);
+    // It is its device's first output, and says which device that is.
+    try testing.expectEqual(fk.devices[0].?, board.device.?);
+    try testing.expectEqual(fk.driver, board.device.?.driver.?);
+    try testing.expectEqual(@as(u32, 0), board.unit);
+    // The driver's data is its own, and the library cleared it.
+    const instance: *fixture.fake.Instance = @ptrCast(@alignCast(board.instance.?));
+    try testing.expectEqual(fixture.fake.instance_pattern, instance.pattern);
+    // What it can do is what it filled in, and nothing else.
+    var info: rtg.RtgBoardInfo = .{};
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.caps & rtg.boards.RTGBC_FILL_RECT != 0);
+    try testing.expect(info.caps & rtg.boards.RTGBC_BLIT_TEMPLATE == 0);
+    try testing.expectEqual(@as(u32, 3), info.modes);
+    try testing.expectEqualStrings("fake.0", std.mem.span(info.name.?));
+    try testing.expectEqualStrings("panel.0", std.mem.span(info.device.?));
+    try testing.expectEqualStrings("Fake 0", std.mem.span(info.label.?));
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try testing.expectEqual(@as(u32, 1), fk.log.destroyed);
+    try testing.expectEqual(@as(u32, 0), fk.driver.boards);
+    try testing.expect(fixture.base(rb).NextBoard(null) == null);
+    // The device is still the driver's, with no board of it left.
+    try testing.expectEqual(@as(u32, 1), fk.driver.devices);
+    try fixture.tearDown(rb);
+}
+
+test "boards are numbered as they are made, and one that was not made takes no number" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    const first = try fixture.makeBoard(rb);
+    try testing.expectEqualStrings("fake.0", std.mem.span(first.node.name.?));
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    try testing.expect(fixture.fake.makeBoard(fk) == null);
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    const second = try fixture.makeBoard(rb);
+    try testing.expectEqualStrings("fake.1", std.mem.span(second.node.name.?));
+    try testing.expectEqual(second.node.name, second.info.name);
+
+    fixture.driverBase(rb).DeleteBoard(second);
+    fixture.driverBase(rb).DeleteBoard(first);
+    try fixture.tearDown(rb);
+}

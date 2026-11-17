@@ -72,3 +72,61 @@ pub fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void {
     sys.Remove(&gone.node);
     sys.FreeVec(private);
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "a device taken away: its boards gone from the walk, still handles, and showing nothing" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+
+    const board = try fixture.makeDisplay(rb, 8, 8);
+    const device = board.device.?;
+    const mode = fixture.base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, mode));
+    const bm = fixture.base(rb).AllocBitMap(board, 8, 8, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, bm));
+
+    fixture.driverBase(rb).RemRtgDevice(device);
+    fk.devices[0] = null;
+    try testing.expectEqual(@as(u32, 1), fk.log.detached);
+    try testing.expectEqual(@as(u32, 0), fk.driver.devices);
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).GetRtgDevices(null, 0));
+    // The board is passed over, and still found by its name.
+    try testing.expect(fixture.base(rb).NextBoard(null) == null);
+    try testing.expectEqual(board, fixture.base(rb).FindBoard("fake.0").?);
+    try testing.expect(board.device == null);
+    var info: rtg.RtgBoardInfo = .{};
+    _ = fixture.base(rb).GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    try testing.expect(info.flags & rtg.boards.RTGBF_GONE != 0);
+    try testing.expect(info.flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    // It still says which device it was an output of.
+    try testing.expectEqualStrings("panel.0", std.mem.span(info.device.?));
+    // What it showed was taken down, so the buffer can go; nothing more
+    // is shown on it, and it is put in no mode.
+    try testing.expect(fixture.base(rb).BoardDisplayBitMap(board) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, fixture.base(rb).ShowBitMap(board, bm));
+    const one = [_]rtg.RtgBand{.{ .bitmap = bm }};
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, fixture.base(rb).ShowBoard(board, 0, &one, one.len));
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, fixture.setMode(rb, board, mode));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowBitMap(board, null));
+    fixture.base(rb).FreeBitMap(bm);
+
+    // A board made after it takes the next number, and is the display.
+    const next = try fixture.makeBoard(rb);
+    try testing.expectEqualStrings("fake.1", std.mem.span(next.node.name.?));
+    try testing.expectEqual(next, fixture.base(rb).NextBoard(null).?);
+    try testing.expect(fixture.base(rb).NextBoard(next) == null);
+    // The walk goes on behind a board that is gone.
+    try testing.expectEqual(next, fixture.base(rb).NextBoard(board).?);
+
+    // A device of the machine's own never goes: only one that was added.
+    fixture.driverBase(rb).RemRtgDevice(null);
+    // The driver deletes its boards as it is removed, the gone one too.
+    try fixture.tearDown(rb);
+}

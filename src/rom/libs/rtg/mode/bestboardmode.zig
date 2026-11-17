@@ -70,3 +70,84 @@ pub fn BestBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32
     if (mode) |into| into.* = record.mode;
     return record.mode.id;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "the nearest mode to a wish: on a board of one mode always that mode" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    fk.modes = 1;
+    const board = try fixture.makeBoard(rb);
+    const any = rtg.RTG_ANY;
+
+    var got: rtg.RtgMode = .{};
+    // Whoever asks for another size gets the board's, and sees which.
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, 640, 800, any, any, &got));
+    try testing.expectEqual(@as(u32, 320), got.width);
+    try testing.expectEqual(@as(u32, 200), got.height);
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, 16, 16, 75_000, @intFromEnum(rtg.PixelFormat.bgra32), null));
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, any, any, any, any, null));
+    // The exact one is still asked for exactly.
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).FindBoardMode(board, 640, 800, any, any));
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "the nearest mode to a wish: by format, then size, then refresh; none on a board with no mode" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const any = rtg.RTG_ANY;
+    const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
+    const mono1 = @intFromEnum(rtg.PixelFormat.mono1);
+
+    // A board with no mode answers 0 and leaves the copy alone.
+    fk.modes = 0;
+    const bare = try fixture.makeBoard(rb);
+    var got: rtg.RtgMode = .{ .id = 77 };
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).BestBoardMode(bare, 320, 200, any, any, &got));
+    try testing.expectEqual(@as(u32, 77), got.id);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_MODE, fixture.setMode(rb, bare, 0));
+    fixture.driverBase(rb).DeleteBoard(bare);
+
+    fk.modes = fixture.fake.mode_table.len;
+    const board = try fixture.makeBoard(rb);
+    // The size itself.
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, 320, 200, any, any, &got));
+    try testing.expectEqual(@as(u32, 320), got.width);
+    // Else the smallest that holds it.
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).BestBoardMode(board, 400, 300, any, any, null));
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, 100, 100, any, any, null));
+    try testing.expectEqual(@as(u32, 3), fixture.base(rb).BestBoardMode(board, 32, 32, any, any, null));
+    // Else the largest.
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).BestBoardMode(board, 800, 600, any, any, &got));
+    try testing.expectEqual(@as(u32, 640), got.width);
+    // One side left open holds whatever it is.
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).BestBoardMode(board, any, 480, any, any, null));
+    // A format wished for is looked for among the modes of that format.
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, 32, 32, any, rgb565, null));
+    try testing.expectEqual(@as(u32, 3), fixture.base(rb).BestBoardMode(board, 640, 480, any, mono1, null));
+    // One the board has none of leaves the size to decide.
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).BestBoardMode(board, 640, 480, any, @intFromEnum(rtg.PixelFormat.bgra32), null));
+    // Nothing wished for is the default.
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, any, any, any, any, null));
+
+    // The size at a second refresh: 840 by 500 at 31.5 MHz is 75 a second.
+    const faster: rtg.RtgTimings = .{ .pixel_clock_hz = 31_500_000, .h_active = 640, .h_front = 16, .h_sync = 64, .h_back = 120, .v_active = 480, .v_front = 1, .v_sync = 3, .v_back = 16 };
+    try testing.expectEqual(@as(u32, 4), fixture.driverBase(rb).AddBoardMode(board, &faster, rgb565, 0));
+    try testing.expectEqual(@as(u32, 4), fixture.base(rb).BestBoardMode(board, 640, 480, 75_000, any, null));
+    try testing.expectEqual(@as(u32, 2), fixture.base(rb).BestBoardMode(board, 640, 480, 61_000, any, null));
+    try testing.expectEqual(@as(u32, 4), fixture.base(rb).BestBoardMode(board, 640, 480, 70_000, any, null));
+    // The refresh left open: the higher, unless the default is of that
+    // size.
+    try testing.expectEqual(@as(u32, 4), fixture.base(rb).BestBoardMode(board, 640, 480, any, any, null));
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BestBoardMode(board, 320, 200, any, any, null));
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

@@ -85,3 +85,67 @@ pub fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgT
     }
     return record.mode.id;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "a mode added: its name with the refresh where a size has two, the default moved, the same figures the same mode" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const board = try fixture.makeBoard(rb);
+    const rgb565 = @intFromEnum(rtg.PixelFormat.rgb565);
+    var found: [8]rtg.RtgMode = undefined;
+
+    const faster: rtg.RtgTimings = .{ .pixel_clock_hz = 31_500_000, .h_active = 640, .h_front = 16, .h_sync = 64, .h_back = 120, .v_active = 480, .v_front = 1, .v_sync = 3, .v_back = 16 };
+    try testing.expectEqual(@as(u32, 4), fixture.driverBase(rb).AddBoardMode(board, &faster, rgb565, rtg.modes.RTGMF_DEFAULT));
+    try testing.expectEqual(@as(u32, 4), fixture.modesOf(rb, board, &found));
+    // Of one size the higher refresh first, and both say which they are.
+    try testing.expectEqual(@as(u32, 4), found[0].id);
+    try testing.expectEqualStrings("640x480@75", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expectEqualStrings("640x480@60", std.mem.sliceTo(&found[1].name, 0));
+    try testing.expectEqualStrings("320x200", std.mem.sliceTo(&found[2].name, 0));
+    // The default is the one added as it, and no other.
+    try testing.expectEqual(rtg.modes.RTGMF_DEFAULT, found[0].flags);
+    try testing.expectEqual(@as(u32, 0), found[2].flags);
+    try testing.expectEqual(@as(u32, 4), fixture.base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+    // A row was set as it was added: the board has its display memory.
+    try testing.expectEqual(@as(u32, 1280), found[0].pitch);
+
+    // The same figures again are the mode that is there, with the timings
+    // handed over now.
+    var again = faster;
+    again.h_front = 24;
+    again.h_back = 112;
+    try testing.expectEqual(@as(u32, 4), fixture.driverBase(rb).AddBoardMode(board, &again, rgb565, 0));
+    try testing.expectEqual(@as(u32, 4), fixture.base(rb).GetBoardModes(board, null, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 4));
+    try testing.expectEqual(@as(u32, 24), fixture.fakeOf(rb).log.last_timings.h_front);
+    // It stays the default: a mode is not made less by being added again.
+    try testing.expectEqual(@as(u32, 4), fixture.base(rb).FindBoardMode(board, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY, rtg.RTG_ANY));
+
+    // A picture a quarter turn round is a mode of its own, and says so;
+    // an interlaced one is named for it.
+    const turned: rtg.RtgTimings = .{ .h_active = 64, .v_active = 64 };
+    try testing.expectEqual(@as(u32, 5), fixture.driverBase(rb).AddBoardMode(board, &turned, @intFromEnum(rtg.PixelFormat.mono1), rtg.modes.RTGMF_TURNED));
+    var fields = faster;
+    fields.h_active = 720;
+    fields.flags = rtg.modes.RTGTM_INTERLACED;
+    try testing.expectEqual(@as(u32, 6), fixture.driverBase(rb).AddBoardMode(board, &fields, rgb565, 0));
+    try testing.expectEqual(@as(u32, 6), fixture.modesOf(rb, board, &found));
+    try testing.expectEqualStrings("720x480i", std.mem.sliceTo(&found[0].name, 0));
+    try testing.expect(found[0].flags & rtg.modes.RTGMF_INTERLACED != 0);
+    try testing.expect(found[5].flags & rtg.modes.RTGMF_TURNED != 0);
+
+    // What is no mode: an empty picture, and a format that is none.
+    const empty: rtg.RtgTimings = .{ .h_active = 640 };
+    try testing.expectEqual(@as(u32, 0), fixture.driverBase(rb).AddBoardMode(board, &empty, rgb565, 0));
+    try testing.expectEqual(@as(u32, 0), fixture.driverBase(rb).AddBoardMode(board, &faster, 200, 0));
+    try testing.expectEqual(@as(u32, 0), fixture.driverBase(rb).AddBoardMode(board, &faster, 0x1_0004, 0));
+    try testing.expectEqual(@as(u32, 6), fixture.base(rb).GetBoardModes(board, null, 0));
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}

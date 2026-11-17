@@ -946,3 +946,108 @@ pub fn dosBase(rb: *RtgBase) ?*sdk.interface.dos.DosBase {
 pub fn pathOf(path: ?[*:0]const u8) [*:0]const u8 {
     return path orelse rtg.RTG_SETTINGS_ENV;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const testing = fixture.testing;
+
+test "settings: lines read, written and read again; a line that cannot be read is passed over" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const file =
+        "# the displays\n" ++
+        "DEVICE=pci.01:00.0 DRIVER=OFF BUFFERS=3 COMPOSE=YES\n" ++
+        "output=amd.0 monitor=del:a0c4:12345 mode=2560X1440@60 first=yes mirror=x brightness=80 range=limited\n" ++
+        "\n" ++
+        "; a monitor that says nothing\n" ++
+        "OUTPUT=jh7110.0 TIMINGS=148500000,1920,88,44,148,1080,4,5,36,+H,+V\n" ++
+        "OUTPUT=amd.0 MODE=1920x1080 MIRROR=NONE RANGE=FULL\n" ++
+        "DEVICE=panel.0 COMPOSE=NO\n";
+    try testing.expectEqual(@as(u32, 0), fixture.readSettings(rb, file));
+
+    // Written: the devices' lines, then the outputs', each in the one
+    // form, a monitor's numbers in full.
+    var first: [fixture.settings.header.len + 8 * fixture.settings.line_most]u8 = undefined;
+    const written = fixture.settingsText(rb, &first);
+    try testing.expect(std.mem.startsWith(u8, written, fixture.settings.header));
+    try testing.expectEqualStrings(
+        "DEVICE=pci.01:00.0 DRIVER=OFF BUFFERS=3 COMPOSE=YES\n" ++
+            "DEVICE=panel.0 COMPOSE=NO\n" ++
+            "OUTPUT=amd.0 MONITOR=DEL:A0C4:00012345 MODE=2560x1440@60 FIRST=YES MIRROR=X BRIGHTNESS=80 RANGE=LIMITED\n" ++
+            "OUTPUT=jh7110.0 TIMINGS=148500000,1920,88,44,148,1080,4,5,36,+H,+V\n" ++
+            "OUTPUT=amd.0 MODE=1920x1080 MIRROR=NONE RANGE=FULL\n",
+        written[fixture.settings.header.len..],
+    );
+    // And read again, it is written the same.
+    try testing.expectEqual(@as(u32, 0), fixture.readSettings(rb, written));
+    var second: [first.len]u8 = undefined;
+    try testing.expectEqualStrings(written, fixture.settingsText(rb, &second));
+
+    // A line that names nothing, a key its kind has not got, a value out
+    // of its range, a quote left open: each passed over, the rest kept.
+    const doubtful =
+        "MODE=640x480\n" ++
+        "OUTPUT=a.0 MODE=0x480\n" ++
+        "OUTPUT=a.0 MODE=640x480@\n" ++
+        "OUTPUT=a.0 BRIGHTNESS=101\n" ++
+        "OUTPUT=a.0 DRIVER=OFF\n" ++
+        "OUTPUT=a.0 MONITOR=DELL:1:2\n" ++
+        "OUTPUT=a.0 TIMINGS=1,2,3\n" ++
+        "OUTPUT=a.0 TIMINGS=148500000,1920,88,44,148,1080,4,5,36,+X\n" ++
+        "DEVICE=d.0 BUFFERS=0\n" ++
+        "DEVICE=d.0 DRIVER=MAYBE\n" ++
+        "OUTPUT=\"a.0 MODE=640x480\n" ++
+        "OUTPUT=kept.0 MIRROR=XY\n" ++
+        // A line that says nothing is no line.
+        "OUTPUT=bare.0\n" ++
+        "DEVICE=bare.1 DRIVER=ON\n";
+    try testing.expectEqual(@as(u32, 11), fixture.readSettings(rb, doubtful));
+    try testing.expectEqualStrings("OUTPUT=kept.0 MIRROR=XY\n", fixture.settingsText(rb, &second)[fixture.settings.header.len..]);
+
+    // A device's driver switched off and on again; a line left saying
+    // nothing goes.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("pci.02:00.0", false));
+    try testing.expectEqualStrings("DEVICE=pci.02:00.0 DRIVER=OFF\nOUTPUT=kept.0 MIRROR=XY\n", fixture.settingsText(rb, &second)[fixture.settings.header.len..]);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("pci.02:00.0", true));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("pci.03:00.0", true));
+    try testing.expectEqualStrings("OUTPUT=kept.0 MIRROR=XY\n", fixture.settingsText(rb, &second)[fixture.settings.header.len..]);
+    try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).SetRtgDeviceDriver("", false));
+    try fixture.tearDown(rb);
+}
+
+test "a device's line: in front of its tags for the driver it is offered to" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    // A device its driver does not take yet, and a line for it.
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const device = fixture.fake.addDevice(fk, null).?;
+    try testing.expect(device.driver == null);
+    try testing.expectEqual(@as(u32, 0), fixture.readSettings(rb, "DEVICE=panel.0 COMPOSE=YES BUFFERS=4\n"));
+    fixture.settings.dressAll(rb);
+    try testing.expectEqual(@as(usize, 4), fixture.driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Buffers, 0, device.tags));
+    try testing.expectEqual(@as(usize, 1), fixture.driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Compose, 0, device.tags));
+    // Its own tags follow.
+    try testing.expectEqual(fixture.driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Width, 0, fixture.fake.deviceTags()), fixture.driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Width, 0, device.tags));
+
+    // The line gone, the device has its own tags again.
+    try testing.expectEqual(@as(u32, 0), fixture.readSettings(rb, ""));
+    fixture.settings.dressAll(rb);
+    try testing.expectEqual(fixture.fake.deviceTags(), device.tags.?);
+
+    // With the line, the board its driver then makes of it has its
+    // windows composed.
+    try testing.expectEqual(@as(u32, 0), fixture.readSettings(rb, "DEVICE=panel.0 COMPOSE=YES\n"));
+    fixture.settings.dressAll(rb);
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BindRtgDrivers());
+    const board = fixture.base(rb).NextBoard(null).?;
+    try testing.expect(fixture.infoOf(rb, board).flags & rtg.boards.RTGBF_COMPOSE != 0);
+    // A device a driver has keeps what it was offered with.
+    try testing.expectEqual(@as(u32, 0), fixture.readSettings(rb, ""));
+    fixture.settings.dressAll(rb);
+    try testing.expectEqual(@as(usize, 1), fixture.driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Compose, 0, device.tags));
+    try fixture.tearDown(rb);
+}

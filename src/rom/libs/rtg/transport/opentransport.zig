@@ -105,3 +105,78 @@ pub fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevic
     }
     return null;
 }
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const std = fixture.std;
+const TagItem = fixture.TagItem;
+const testing = fixture.testing;
+
+test "a bus opened by a driver: made by the driver that names the device's bus, and given back" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+
+    // With no transport driver on the list the bus cannot be opened, and
+    // the board's driver declines.
+    fk.opens_bus = true;
+    const unreached = fixture.fake.addDevice(fk, null).?;
+    try testing.expect(unreached.driver == null);
+    try testing.expectEqual(@as(u32, 0), fk.driver.boards);
+
+    const buses = fixture.fakebus.add(rb) orelse return error.NoDriver;
+    // A bus its driver cannot make is no bus either.
+    buses.create_answer = rtg.errors.RTGERR_IO;
+    try testing.expectEqual(@as(u32, 0), fixture.base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 0), buses.driver.buses);
+    buses.create_answer = rtg.errors.RTGERR_OK;
+
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(u32, 1), buses.created);
+    try testing.expectEqual(@as(u32, 1), buses.driver.buses);
+    // Made from the device's own tags.
+    try testing.expectEqual(@as(?[*]const TagItem, fixture.fake.deviceTags()), buses.last_tags);
+    const board = fixture.base(rb).NextBoard(null).?;
+    const io = fixture.fake.instanceOf(board).bus.?;
+    try testing.expectEqualStrings("fakebus", std.mem.span(io.node.name.?));
+    try testing.expectEqual(@as(?*anyopaque, @ptrCast(buses.driver)), io.driver);
+    // The library cleared the bus's own data, which is its driver's.
+    const line = fixture.fakebus.instanceOf(io);
+    try testing.expectEqual(@as(u32, 0), line.sends);
+
+    // The three transfers reach the bus's driver, with what they were
+    // given, and its answer comes back.
+    var bytes: [4]u8 = .{ 1, 2, 3, 4 };
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.driverBase(rb).TxParam(io, 0x2A, &bytes, bytes.len));
+    try testing.expectEqual(@as(u32, 1), line.sends);
+    try testing.expectEqual(@as(i32, 0x2A), line.last_cmd);
+    try testing.expectEqual(@as(u32, 4), line.last_size);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.driverBase(rb).TxColor(io, 0x2C, &bytes, 2));
+    try testing.expectEqual(@as(u32, 1), line.colors);
+    try testing.expectEqual(@as(u32, 2), line.last_size);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.driverBase(rb).RxParam(io, 0x04, &bytes, 3));
+    try testing.expectEqual(@as(u32, 1), line.reads);
+    try testing.expectEqualSlices(u8, &.{ 4, 4, 4, 4 }, &bytes);
+    line.answer = rtg.errors.RTGERR_TIMEOUT;
+    try testing.expectEqual(rtg.errors.RTGERR_TIMEOUT, fixture.driverBase(rb).TxParam(io, 0x29, null, 0));
+    // A bus whose driver filled in no transfer says so.
+    var bare = rtg.RtgTransport{};
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, fixture.driverBase(rb).TxParam(&bare, 0, null, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, fixture.driverBase(rb).TxColor(&bare, 0, null, 0));
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, fixture.driverBase(rb).RxParam(&bare, 0, null, 0));
+
+    // A driver that neither has the device nor is being offered it opens
+    // no bus of it; null closes nothing.
+    try testing.expect(fixture.driverBase(rb).OpenTransport(buses.driver, board.device.?) == null);
+    fixture.driverBase(rb).CloseTransport(null);
+
+    // The bus's driver stays while a bus of it is open, and the bus goes
+    // with the board that opened it.
+    try testing.expect(!fixture.fakebus.remove(buses));
+    fixture.driverBase(rb).DeleteBoard(board);
+    try testing.expectEqual(@as(u32, 1), buses.destroyed);
+    try testing.expectEqual(@as(u32, 0), buses.driver.buses);
+    try testing.expect(fixture.fakebus.remove(buses));
+    try fixture.tearDown(rb);
+}
