@@ -1141,9 +1141,13 @@ fills in:
   on the 64-bit machines what is below 4 GiB.
 
 `RTGRF_CPU_CACHED` says the CPU reaches the region through a cache the
-display does not see: a buffer from it is `RTGBMF_CACHED`, and the
-driver's `refresh` writes the rows it is handed back out of the caches
-(`CacheClearE`). `RTGRF_ADOPTED` says the memory is somebody else's -
+display does not see: a buffer from it is `RTGBMF_CACHED`, and what is
+written into it is handed on (`refresh`). With `RTGRF_WRITE_BACK` the
+library writes each rectangle handed on back out of the caches itself
+(`CachePreDMA`) - a rectangle at least half a row wide as its rows in
+one stretch, a narrower one a row at a time - before it calls
+`refresh`, which a display that needs nothing more leaves out.
+`RTGRF_ADOPTED` says the memory is somebody else's -
 a firmware's framebuffer - and not the driver's to free. The alignment
 is a cache line unless the part asks for more (`RTGA_Alignment`); how
 many buffers a region on the system's memory allows is the part's
@@ -1187,7 +1191,15 @@ the board joins the list, and on the library's own task when the driver
 says `MonitorChanged(board)`, from its hot-plug interrupt or from a
 task of its own that looks at the port. A look that finds what the last
 one found changes nothing, so a driver whose connector has no interrupt
-may say it now and then. `check_mode(board, timings)` says whether the
+may say it now and then - or say in its description how many frames go
+by between two looks (`RtgBoardSpec.look_frames`), which `FrameDone`
+then asks for. Such a connector's looks settle while the board shows:
+a monitor come or gone is taken to have at the second look in a row
+that finds it, and the EDID of a monitor that gave none is asked for at
+three looks, not at every one (`asked.edid_max` is 0 after that). A
+monitor whose EDID the last look kept need not be read again: the
+library's buffer still holds it, and `asked.edid_known` says how many
+bytes, which the driver may answer as `asked.edid_size`. `check_mode(board, timings)` says whether the
 board can make a timing - its clock, what its registers hold - and is
 asked of every timing the monitor names. The description says which
 pixel format a monitor's modes are made in (`RtgBoardSpec.format`). The
@@ -1224,8 +1236,8 @@ buffers itself says how many bands it reads so, in its board's
 description (`direct_bands`: 1 is one whole buffer, more for bands as
 they are shown). `show` is handed the bands with `RTGSHOW_DIRECT`, and
 `refresh(board, bitmap, rect)` a rectangle written into any of the
-board's buffers, to be written back out of the cache or told to the
-display.
+board's buffers, to be told to the display - written back out of the
+cache already where the region says `RTGRF_WRITE_BACK`.
 
 **A picture of its own.** A display with a picture of its own - a
 controller's memory behind a bus, an emulator's copy, a frame of the
@@ -1317,7 +1329,9 @@ and wakes the tasks that wait for one; a driver has no wait of its own,
 and one that must wait out a frame itself - a flip that returns when
 the new picture is read - calls `WaitVBlank` as a program does, which
 may be done inside `show`. A driver with no such interrupt calls
-nothing: its board is waited for by the clock.
+nothing: its board is waited for by the clock. Where the description
+says `look_frames`, every so many frames `FrameDone` also has the
+connector looked at.
 
 ## The board's slots
 
@@ -1335,7 +1349,7 @@ or left null.
 | `destroy` | undo what attach did for the board; called last, after the buffers are gone |
 | `show` | what is on the glass: the mode where it changed, and one buffer, several in bands of lines (display line `y` of a band shows its buffer's row `y - origin`, its first row where the band repeats one), or none |
 | `detect`, `check_mode` | a connector: what is on it, and whether the board can make a timing |
-| `refresh` | a rectangle of a buffer was written, shown or not: write it back out of the cache, or tell the display |
+| `refresh` | a rectangle of a buffer was written, shown or not: tell the display, or write it back out of the cache where the library does not (`RTGRF_WRITE_BACK`) |
 | `update` | a rectangle of the display's own picture changed: fetch it (`ComposeLines`) and deliver it |
 | `flip` | the display is flipped between two frames the library makes its pictures in: read this one from the next blanking on |
 | `frames` | a flipped board's two frames, where they are memory only the driver can get |
@@ -1454,7 +1468,9 @@ board's next panel part is offered - a board lists the bridge first.
 The board has a connector: its modes are those of 1360 x 768,
 1280 x 720 and 1024 x 768 at 60 Hz the monitor's EDID names - the
 largest the default - and the part's own, 800 x 600, where it names none
-of them; a monitor pulled or plugged is seen within two seconds. The
+of them; the connector is looked at once a second, and a monitor
+pulled or plugged is seen within two - at the second look that finds
+it. The
 link is brought up when the board is put in a mode, in this host's
 timing for the mode's size. The bridge takes RGB888 only, and this
 revision of the chip sends what memory holds, so the screens stay RGB565
@@ -1536,8 +1552,9 @@ below 4 GiB (`RTGRF_SYSTEM_MEMORY`, `RTGRF_DMA_MEMORY`): at most as
 many pictures as the part's `RTGA_Buffers` asks for, 16 on those
 machines, each taken when it is allocated. So `RehomeBitMap` between
 two of them copies nothing. On the VisionFive 2 the display does not
-see the processor's caches, so the region is `RTGRF_CPU_CACHED`, and
-every refresh writes the rows it names back out of the caches.
+see the processor's caches, so the region is `RTGRF_CPU_CACHED` and
+`RTGRF_WRITE_BACK`: the library writes every rectangle handed on back
+out of the caches.
 
 **Flipped.** An HDMI port's display reads RAM past the caches
 (`jh7110`, `bcm2712`), the virtio GPU's pictures are copies the emulator

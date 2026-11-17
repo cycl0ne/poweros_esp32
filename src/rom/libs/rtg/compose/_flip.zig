@@ -360,9 +360,7 @@ pub fn written(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: 
     sys.ReleaseLock(&state.damage_lock);
 
     var code: i32 = err.RTGERR_OK;
-    if (read) {
-        if (board.ops.?.refresh) |refresh| code = refresh(board, bitmap, cut);
-    }
+    if (read) code = composer.refreshed(rb, board, bitmap, cut);
     if (noted and !compose.dark) wake(rb, board);
     return code;
 }
@@ -493,7 +491,7 @@ fn makeBox(rb: *RtgBase, board: *rtg.RtgBoard, frame: *rtg.RtgBitMap, box: Box) 
     } else {
         fetch.run(0, 1);
     }
-    if (board.ops.?.refresh) |refresh| _ = refresh(board, frame, &rectOf(box));
+    _ = composer.refreshed(rb, board, frame, &rectOf(box));
 }
 
 /// The display told to read `frame`: the driver's `flip`, with the
@@ -653,7 +651,7 @@ pub fn shown(rb: *RtgBase, board: *rtg.RtgBoard, old: []const rtg.RtgBand) i32 {
         const area = rtg.RtgRect{ .width = @intCast(bitmap.width), .height = @intCast(bitmap.height) };
         // Nothing of it was handed on as it was drawn: out it goes,
         // whole.
-        if (board.ops.?.refresh) |refresh| _ = refresh(board, bitmap, &area);
+        _ = composer.refreshed(rb, board, bitmap, &area);
         const code = tell(rb, board, bitmap);
         if (code < 0) return code;
         // The frames are made whole when they are taken up again.

@@ -66,6 +66,9 @@ pub const Private = struct {
     monitor: ?*monitors.State = null,
     /// The pixel format a monitor's modes are made in.
     monitor_format: rtg.PixelFormat = .bgra32,
+    /// The frames between two looks at the connector, which FrameDone
+    /// asks for: 0 for none (`RtgBoardSpec.look_frames`).
+    look_frames: u32 = 0,
     /// What the board shows: its bands from the top - one from line 0 for
     /// a buffer shown alone, none while nothing is shown - as the driver
     /// last took them (`display/_display.zig`). Written with the board's

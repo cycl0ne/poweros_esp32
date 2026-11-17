@@ -31,7 +31,9 @@ const flips = @import("../compose/_flip.zig");
 ///   itself (`direct_bands`), which axes its `mirror` turns and whether
 ///   it sends the colour range the settings ask for (`caps`), and
 ///   how many levels its backlight has (`brightness_steps`); for a board
-///   with a connector, the pixel format its monitor's modes are made in.
+///   with a connector, the pixel format its monitor's modes are made in,
+///   and how many of its frames go by between two looks at a connector
+///   that raises no interrupt (`look_frames`).
 ///   Read during the call and not kept; the label's string stays the
 ///   driver's.
 ///
@@ -121,6 +123,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     board.info.caps = spec.caps & rtg.boards.RTGBC_COLOR_RANGE;
     sys.NewList(&private.modes);
     private.monitor_format = spec.format;
+    private.look_frames = spec.look_frames;
     sys.NewList(&board.bitmaps);
 
     if (spec.instance_size != 0) {

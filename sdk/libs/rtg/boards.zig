@@ -90,6 +90,12 @@ pub const RTGRF_SYSTEM_MEMORY: u32 = 1 << 3;
 /// reaches, so each buffer is taken from exec's `MEMF_DMA` memory and
 /// nowhere else - on the 64-bit machines what is below 4 GiB.
 pub const RTGRF_DMA_MEMORY: u32 = 1 << 4;
+/// With RTGRF_CPU_CACHED: the display reads the memory past the CPU's
+/// caches, and the library writes each rectangle handed on out of them
+/// before it calls the board's `refresh` - a rectangle at least half a
+/// row wide as its rows in one stretch, a narrower one a row at a time.
+/// A board with nothing more to do for a rectangle has no `refresh`.
+pub const RTGRF_WRITE_BACK: u32 = 1 << 5;
 
 /// What a board is and what it can do. GetBoardInfo fills it in; clear it,
 /// pass its size, and trust the count that comes back - a program on the
@@ -365,7 +371,10 @@ pub const RtgBoardStats = extern struct {
 /// library lays it where it composes: made by SetBoardPointer out of the
 /// caller's image, once, in the board's own pixel format and with a
 /// mask of one bit a pixel beside it, so laying it over the picture is a
-/// masked copy and nothing more. For a driver with
+/// masked copy and nothing more. A pixel the mask leaves out is 0, and in
+/// a format with alpha a pixel it keeps covers fully: in `bgra32` the
+/// pixels are the image as a plane of ARGB takes it, clear where the
+/// picture shows through, and need no mask. For a driver with
 /// `RTGDF_INTERNAL_INSTANCE` it is in internal memory, where an interrupt
 /// reads it without waiting on the display's own memory.
 pub const RtgPointerImage = extern struct {
@@ -440,6 +449,13 @@ pub const RtgBoardSpec = extern struct {
     /// read its part's lines writes `RtgBoard.info.brightness_steps`
     /// before its `attach` answers.
     brightness_steps: u32 = 0,
+    /// On a board with `detect` whose connector raises no interrupt: how
+    /// many of its frames (`FrameDone`) go by between two looks at it,
+    /// which FrameDone asks for as `MonitorChanged` does. 0: the driver
+    /// says `MonitorChanged` itself. Such a connector's looks settle, and
+    /// a monitor's EDID that does not read is tried at a few looks only,
+    /// while the board shows (`RtgDetect`).
+    look_frames: u32 = 0,
 };
 
 /// A board. What the driver keeps for itself is `instance`, which the
@@ -571,8 +587,10 @@ pub const RtgBoardOps = extern struct {
     /// any other buffer the display never reads. The rectangle has been
     /// cut down to the buffer and is never empty. On a board with
     /// `update` or `flip` it is called with the compose lock held, on
-    /// any other with none: several tasks may be in it at once. Null:
-    /// the display sees memory as it is written.
+    /// any other with none: several tasks may be in it at once. Where
+    /// the region says RTGRF_WRITE_BACK, the library has written the
+    /// rectangle out of the caches already. Null: the display sees
+    /// memory as it is written, or that write-back is all it needs.
     refresh: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect) callconv(.c) i32 = null,
     /// The display has a picture of its own, and this rectangle of it
     /// changed: fetch its lines with `ComposeLines` and deliver them.

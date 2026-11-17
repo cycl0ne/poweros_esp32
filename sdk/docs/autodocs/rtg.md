@@ -2399,9 +2399,11 @@ finished: a window, a tile of a picture drawn in tiles, a whole
 buffer. The rectangle is cut to the buffer first.
 
 Where the display reads the buffer itself, its driver is told
-(`refresh`), for a buffer shown or not: one whose display reads
-through a cache the CPU writes into writes back the rectangle's
-pixels, so a buffer drawn ahead is whole when it is shown. Where the
+(`refresh`), for a buffer shown or not. Where the display reads past
+a cache the CPU writes into, the rectangle's pixels are written back
+- by the library where the board's region says so
+(`RTGRF_WRITE_BACK`), else by the driver - so a buffer drawn ahead is
+whole when it is shown. Where the
 display shows a picture the library composes, the rectangle is also
 turned into the display's own - the lines of each band that shows
 the buffer, a repeating band's all for its first row, a scaled

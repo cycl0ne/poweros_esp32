@@ -122,7 +122,11 @@ pub const RtgDetect = extern struct {
     /// Where the monitor's EDID goes: whole blocks of 128 bytes, the
     /// first block first. The library's buffer.
     edid: [*]u8,
-    /// How many bytes `edid` has room for.
+    /// How many bytes `edid` has room for: 0 where the library asks for
+    /// no EDID at this look - on a board that shows, a connector looked
+    /// at by its frames (`RtgBoardSpec.look_frames`) whose monitor gave
+    /// none is asked again at a few looks only, since each try holds the
+    /// connector for as long as its DDC takes to give up.
     edid_max: u32,
     /// How many bytes the driver read, a whole number of blocks: 0 for a
     /// monitor whose EDID did not read, or that has none.
@@ -130,6 +134,13 @@ pub const RtgDetect = extern struct {
     /// Whether a monitor is on the connector.
     present: u8 = 0,
     pad: [3]u8 = .{ 0, 0, 0 },
+    /// How many bytes of the EDID the last look kept are in `edid` still:
+    /// a driver that finds a monitor on its connector may answer them
+    /// (`edid_size = edid_known`) instead of reading them again, so a
+    /// look that finds nothing new costs the hot-plug line alone - a
+    /// monitor changed for another between two looks is then not seen.
+    /// 0 where the last look found no monitor, or no EDID of it.
+    edid_known: u32 = 0,
 };
 
 /// What is on a board's connector, as `GetBoardMonitor` copies it out.

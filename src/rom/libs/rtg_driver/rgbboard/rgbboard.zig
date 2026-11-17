@@ -45,10 +45,8 @@ const lcd = @import("lcd.zig");
 const pointer = @import("pointer.zig");
 
 const DRIVER_NAME = "rgb";
-/// The panel shows RGB565 and nothing else: two bytes a pixel.
-const bytes_per_pixel = 2;
 const VERSION = 1;
-const REVISION = 16;
+const REVISION = 17;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
@@ -108,11 +106,14 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     // The panel shows a picture wherever it is, so its buffers are taken
     // from system memory as they are asked for - a line-aligned block
     // each, since the DMA reaches PSRAM a cache line at a time - and no
-    // more than `frames` of them at once.
+    // more than `frames` of them at once. The DMA reads them past the
+    // cache: the library writes back what the CPU wrote, which is all a
+    // stream that never stops needs.
     board.region = .{
         .size = panel.frames * panel.frame_bytes,
         .alignment = sdk.hardware.DCACHE_LINE_SIZE,
-        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
+        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY |
+            rtg.boards.RTGRF_WRITE_BACK,
     };
     board.info.buffers = panel.frames;
     return err.RTGERR_OK;
@@ -190,34 +191,6 @@ fn showThese(board: *rtg.RtgBoard, what: *const rtg.RtgShow) i32 {
     const first = bands[0];
     if (what.count == 1 and first.origin == 0 and first.flags == 0) return showBitMap(board, first.bitmap);
     return showBands(board, bands, what.count);
-}
-
-/// A rectangle the CPU wrote, handed to the panel: it reads that memory
-/// without going through the cache, so what was written has to be pushed
-/// out of it first. The stream never stops, so that is the whole of it.
-///
-/// A rectangle at least half a row wide goes as its rows, in one stretch;
-/// a narrower one a row at a time, its own bytes alone, so the side of a
-/// window's frame does not write back the rows it runs down.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
-    const sys = panelOf(board).sys;
-    const pixels = bitmap.pixels orelse return err.RTGERR_BAD_ARG;
-    const top: usize = @intCast(area.y);
-    const rows: u32 = @intCast(area.height);
-    const wide: u32 = @as(u32, @intCast(area.width)) * bytes_per_pixel;
-    const first = @intFromPtr(pixels) + top * bitmap.pitch;
-    if (wide * 2 >= bitmap.pitch) {
-        var bytes: u32 = rows * bitmap.pitch;
-        _ = sys.CachePreDMA(@ptrFromInt(first), &bytes, 0);
-        return err.RTGERR_OK;
-    }
-    const left: usize = @as(usize, @intCast(area.x)) * bytes_per_pixel;
-    var row: u32 = 0;
-    while (row < rows) : (row += 1) {
-        var bytes: u32 = wide;
-        _ = sys.CachePreDMA(@ptrFromInt(first + @as(usize, row) * bitmap.pitch + left), &bytes, 0);
-    }
-    return err.RTGERR_OK;
 }
 
 /// The board's power state, by the panel's display enable - a line on
@@ -331,7 +304,6 @@ const overlay_ops = rtg.RtgOverlayOps{ .set = &setOverlay, .move = &moveOverlay 
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
-    .refresh = &refresh,
     .power = &power,
     .set_brightness = &setBrightness,
     .mirror = &mirror,

@@ -17,9 +17,9 @@
 //! while it is read shows, for a frame, a patchwork of old and new cache
 //! lines, sixteen pixels each. So it is never shown a buffer drawn in:
 //! rtg.library makes each picture in the one of two frames the display
-//! is not reading (its `compose/_flip.zig`), hands it on to this driver
-//! (`refresh`), which writes it out of the caches, and has it tell the
-//! controller to read that frame from the next frame on (`flipOp`),
+//! is not reading (its `compose/_flip.zig`), writes it out of the caches
+//! (`RTGRF_WRITE_BACK`), and has this driver tell the controller to read
+//! that frame from the next frame on (`flipOp`),
 //! which the library waits for. The bands and the overlay are the
 //! library's, laid in the pictures it makes.
 //!
@@ -27,9 +27,9 @@
 //! the port (`detect`) - whether a monitor is there, by the port's
 //! hot-plug line, and its EDID, read over the port's DDC - and which
 //! timings the port can make (`checkMode`), and the library lists the
-//! modes the monitor names. The line raises no interrupt here: the frame
-//! interrupt has the library look at the connector twice a second
-//! (`MonitorChanged`). A monitor plugged in later has the port started
+//! modes the monitor names. The line raises no interrupt here: the
+//! library looks at the connector every thirty frames (`look_frames`),
+//! twice a second. A monitor plugged in later has the port started
 //! again for it, with the timings handed over then.
 //!
 //! **The pointer** is the controller's cursor plane, which it lays over
@@ -84,15 +84,15 @@ const jh7110 = @import("jh7110.zig");
 const MODULE_NAME = "rtg-jh7110";
 const DRIVER_NAME = "jh7110";
 const VERSION = 1;
-const REVISION = 4;
+const REVISION = 5;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
-/// What every row and every buffer starts on: whole cache lines, so a
-/// refresh writes back exactly the rows it names, and as wide as the
+/// What every row and every buffer starts on: whole cache lines, so
+/// what is written back is exactly the rows handed on, and as wide as the
 /// controller fetches in one go.
 const row_alignment = 128;
 /// Where the cursor plane's images start.
@@ -102,11 +102,11 @@ const page = 4096;
 const largest_side = 0x3FFF;
 /// The bytes of one of the cursor plane's two images.
 const cursor_bytes = jh7110.cursor_side * jh7110.cursor_side * 4;
-/// The most bytes of a monitor's EDID the port reads.
+/// A block of a monitor's EDID.
 const edid_block = rtg.modes.RTG_EDID_BLOCK;
-const edid_most: usize = @as(usize, jh7110.edid_blocks) * edid_block;
-/// How many frames go by between two looks at the port's connector:
-/// half a second of them at sixty a second.
+/// How many frames go by between two looks at the port's connector,
+/// whose hot-plug line raises no interrupt here: half a second of them
+/// at sixty a second.
 const look_frames = 30;
 
 /// Everything the board of this driver has. The library allocates it
@@ -134,16 +134,6 @@ const Screen = struct {
     /// What a row of a buffer is rounded up to: the board's display
     /// memory's alignment, which the library rounds a mode's rows by.
     alignment: u32 = row_alignment,
-    /// Whether a monitor was on the port when last looked at, how many
-    /// looks in a row have seen otherwise, the frames since the library
-    /// was last asked to look, and the monitor's EDID as it was read when
-    /// it came (`detect`), with how often it was tried.
-    plugged: bool = false,
-    settling: u32 = 0,
-    frames_unseen: u32 = 0,
-    edid: [edid_most]u8 = undefined,
-    edid_size: u32 = 0,
-    edid_tries: u32 = 0,
     /// The sound the link was told to carry: null for none.
     audio: ?rtg.RtgAudio = null,
     /// Held while the port's DDC is talked on and while a task writes
@@ -207,15 +197,8 @@ fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const screen: *Screen = @ptrCast(@alignCast(data.?));
     if (jh7110.takeInterrupts(screen.port) == 0) return 0;
+    // Every `look_frames` of them, the library looks at the connector.
     drivers(screen).FrameDone(screen.board);
-    // The port's hot-plug line raises no interrupt here: the library is
-    // asked to look at the connector now and then (`detect`), which
-    // changes nothing while the same monitor is there.
-    screen.frames_unseen += 1;
-    if (screen.frames_unseen >= look_frames) {
-        screen.frames_unseen = 0;
-        drivers(screen).MonitorChanged(screen.board);
-    }
     return 1;
 }
 
@@ -318,13 +301,9 @@ fn cursorPlane(screen: *Screen) void {
     cursorWrite(screen);
 }
 
-/// Whether pixel (x, y) of an image is the image's own, by its mask.
-fn opaqueAt(image: *const rtg.RtgPointerImage, x: u32, y: u32) bool {
-    return image.mask[y * image.mask_pitch + x / 8] & (@as(u8, 0x80) >> @intCast(x % 8)) != 0;
-}
-
-/// A new image into the buffer the plane is not reading - ARGB, opaque
-/// where the mask says, clear elsewhere - and the plane turned to it.
+/// A new image into the buffer the plane is not reading, and the plane
+/// turned to it. The library's image is ARGB already, clear where its
+/// mask leaves a pixel out (`RtgPointerImage`): its rows are copied.
 fn cursorImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
     screen.pointer = image;
     const one = image orelse return cursorPlane(screen);
@@ -332,18 +311,11 @@ fn cursorImage(screen: *Screen, image: ?*const rtg.RtgPointerImage) void {
     const side: u32 = if (small) jh7110.cursor_side / 2 else jh7110.cursor_side;
     const turn = screen.cursor_turn +% 1;
     const buffer = cursorBuffer(screen, turn);
-    const pixels: [*]u32 = @ptrCast(@alignCast(buffer));
-    @memset(pixels[0 .. side * side], 0);
+    @memset(buffer[0 .. side * side * 4], 0);
     const rows = @min(one.height, side);
-    const columns = @min(one.width, side);
+    const row_bytes = @min(one.width, side) * 4;
     var y: u32 = 0;
-    while (y < rows) : (y += 1) {
-        const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
-        var x: u32 = 0;
-        while (x < columns) : (x += 1) {
-            if (opaqueAt(one, x, y)) pixels[y * side + x] = row[x] | 0xFF00_0000;
-        }
-    }
+    while (y < rows) : (y += 1) @memcpy(buffer[y * side * 4 ..][0..row_bytes], one.pixels[y * one.pitch ..][0..row_bytes]);
     screen.cursor_hot_x = @min(one.hot_x, side - 1);
     screen.cursor_hot_y = @min(one.hot_y, side - 1);
     screen.sys.CacheClearE(buffer, side * side * 4, exec.CACRF_ClearD);
@@ -700,6 +672,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .instance_size = @sizeOf(Screen),
         // A monitor's modes are made in the format the board shows.
         .format = format,
+        .look_frames = look_frames,
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
     screen.* = .{ .sys = sys, .rtg_base = programs(rb), .port = port, .width = width, .height = height, .board = board };
@@ -735,8 +708,10 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     board.region = .{
         .size = screen.buffers * frame,
         .alignment = screen.alignment,
+        // The controller reads past the caches: the library writes back
+        // what is handed on.
         .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED |
-            rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY,
+            rtg.boards.RTGRF_SYSTEM_MEMORY | rtg.boards.RTGRF_DMA_MEMORY | rtg.boards.RTGRF_WRITE_BACK,
     };
     board.info.buffers = screen.buffers;
     device.driver_data = screen;
@@ -770,85 +745,53 @@ fn sumsToZero(block: *const [edid_block]u8) bool {
     return sum == 0;
 }
 
-/// How many looks in a row must see a monitor come or go before it is
-/// taken to have: a second of looks, which is what a plug that bounces as
-/// it goes in, or a monitor that raises its hot-plug line before its EDID
-/// reads, takes.
-const settle_looks = 2;
-
-/// How often the EDID of a monitor that has come to a running port is
-/// tried.
-const edid_tries_most = 3;
-
 /// What is on the port, for the library: the port woken where it does
 /// not run yet, its hot-plug line read, and the monitor's EDID - its
 /// first block, read again once where it does not sum to zero, and as
-/// many of the extensions it names as there is room for. The EDID is
-/// read when a monitor has come - a few looks long where it does not
-/// read; one that was there at the last look is the one read then, so a
-/// look that finds nothing new costs the hot-plug line alone. With the
-/// port running, a monitor that has come or gone is taken to have once
-/// as many looks in a row as a plug takes to settle have seen it, and
-/// what was there is answered until then. The DDC is the port's one:
-/// held against every other task that talks on it.
+/// many of the extensions it names as there is room for. A monitor whose
+/// EDID the last look kept is taken to be the one still there, and not
+/// read again (`edid_known`): a look that finds nothing new costs the
+/// hot-plug line alone. The library settles the looks of a running
+/// port and asks for an EDID that does not read at a few of them only
+/// (`look_frames`). The DDC is the port's one: held against
+/// every other task that talks on it.
 fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
     const screen = screenOf(board);
     const sys = screen.sys;
     const waiter = Waiter{ .screen = screen };
     sys.ObtainSemaphore(&screen.port_lock);
     defer sys.ReleaseSemaphore(&screen.port_lock);
-    const running = screen.scanning != 0;
     // A port that runs is awake: waking it again would put the
     // controller's pixel clocks back on the divider under the picture.
-    if (!running) {
+    if (screen.scanning == 0) {
         const failure = jh7110.wake(screen.port, sys, waiter);
         if (failure != .none) {
             exec.kprintf(sys, "%s: %s\n", .{ MODULE_NAME, jh7110.why(failure) });
             return err.RTGERR_NO_DISPLAY;
         }
     }
-    const plugged = jh7110.monitor(screen.port);
-    if (plugged == screen.plugged) {
-        screen.settling = 0;
-    } else {
-        screen.settling += 1;
-        if (!running or screen.settling >= settle_looks) {
-            screen.settling = 0;
-            screen.plugged = plugged;
-            screen.edid_size = 0;
-            screen.edid_tries = 0;
-            if (!plugged and running) exec.kprintf(sys, "%s: the monitor was taken off the HDMI port\n", .{MODULE_NAME});
-        }
-    }
-    if (!screen.plugged) return err.RTGERR_OK;
+    if (!jh7110.monitor(screen.port)) return err.RTGERR_OK;
     asked.present = 1;
-    // A monitor whose EDID does not read is not asked at every look of a
-    // running port: each try holds the port for as long as the DDC
-    // takes to give up.
-    if (screen.edid_size == 0 and (!running or screen.edid_tries < edid_tries_most)) {
-        screen.edid_tries += 1;
-        readEdid(screen, waiter);
-    }
-    const length = @min(screen.edid_size, asked.edid_max);
-    @memcpy(asked.edid[0..length], screen.edid[0..length]);
-    asked.edid_size = length;
+    asked.edid_size = if (asked.edid_known != 0) asked.edid_known else readEdid(screen, asked.edid, asked.edid_max, waiter);
     return err.RTGERR_OK;
 }
 
-/// The EDID of the monitor on the port read into the screen's own copy:
-/// nothing where it does not read.
-fn readEdid(screen: *Screen, waiter: Waiter) void {
-    const first: *[edid_block]u8 = screen.edid[0..edid_block];
+/// The EDID of the monitor on the port read into `into`, which has room
+/// for `room` bytes: the bytes read, whole blocks, 0 where it does not
+/// read.
+fn readEdid(screen: *Screen, into: [*]u8, room: u32, waiter: Waiter) u32 {
+    const most = @min(room / edid_block, jh7110.edid_blocks);
+    if (most == 0) return 0;
+    const first: *[edid_block]u8 = into[0..edid_block];
     var read = jh7110.readEdid(screen.port, 0, first, waiter);
     if (read and !sumsToZero(first)) read = jh7110.readEdid(screen.port, 0, first, waiter);
-    if (!read) return;
+    if (!read) return 0;
     var blocks: u32 = 1;
-    const named = @min(@as(u32, first[126]) + 1, jh7110.edid_blocks);
+    const named = @min(@as(u32, first[126]) + 1, most);
     while (blocks < named) : (blocks += 1) {
-        const block: *[edid_block]u8 = screen.edid[blocks * edid_block ..][0..edid_block];
-        if (!jh7110.readEdid(screen.port, @intCast(blocks), block, waiter)) break;
+        if (!jh7110.readEdid(screen.port, @intCast(blocks), into[blocks * edid_block ..][0..edid_block], waiter)) break;
     }
-    screen.edid_size = blocks * edid_block;
+    return blocks * edid_block;
 }
 
 /// Whether the port can make `timings`: by its clock and by what its
@@ -883,15 +826,7 @@ fn startPort(screen: *Screen, address: usize) bool {
     // The sound that plays, sent in the new mode: its numbers follow the
     // pixel clock.
     if (screen.audio) |playing| _ = linkSound(screen, &playing);
-    const plugged = jh7110.monitor(screen.port);
-    if (plugged != screen.plugged) {
-        screen.edid_size = 0;
-        screen.edid_tries = 0;
-    }
-    screen.plugged = plugged;
-    screen.settling = 0;
-    screen.frames_unseen = 0;
-    if (!screen.plugged) exec.kprintf(sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
+    if (!jh7110.monitor(screen.port)) exec.kprintf(sys, "%s: no monitor on the HDMI port\n", .{MODULE_NAME});
     hookFrames(screen);
     return true;
 }
@@ -927,9 +862,8 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
 }
 
 /// The controller told to read `frame` from its next frame on: one of
-/// the two rtg.library makes its pictures in, handed on already
-/// (`refresh`). It takes the address at its next frame, which the library
-/// waits for.
+/// the two rtg.library makes its pictures in, written back already. It
+/// takes the address at its next frame, which the library waits for.
 fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
     const screen = screenOf(board);
     const sys = screen.sys;
@@ -942,27 +876,6 @@ fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
     defer sys.ReleaseSemaphore(&screen.port_lock);
     scanFrom(screen, frame);
     screen.updates +%= 1;
-    return err.RTGERR_OK;
-}
-
-/// A rectangle of a frame was written by the CPU, after rtg.library made
-/// a picture in it: its pixels alone written back out of the caches,
-/// which the controller reads past - a run a row, one run over the rows
-/// where the rectangle is as wide as the frame.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
-    const sys = screenOf(board).sys;
-    const pixels = bitmap.pixels orelse return err.RTGERR_OK;
-    if (area.width <= 0 or area.height <= 0) return err.RTGERR_OK;
-    const x: u32 = @intCast(area.x);
-    const y: u32 = @intCast(area.y);
-    const width: u32 = @intCast(area.width);
-    const height: u32 = @intCast(area.height);
-    if (x == 0 and width >= bitmap.width) {
-        sys.CacheClearE(pixels + y * bitmap.pitch, height * bitmap.pitch, exec.CACRF_ClearD);
-        return err.RTGERR_OK;
-    }
-    var row = y;
-    while (row < y + height) : (row += 1) sys.CacheClearE(pixels + row * bitmap.pitch + x * 4, width * 4, exec.CACRF_ClearD);
     return err.RTGERR_OK;
 }
 
@@ -1014,7 +927,6 @@ const video_ops = rtg.RtgVideoOps{ .open = &videoOpen, .close = &videoClose, .sh
 const ops = rtg.boards.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
-    .refresh = &refresh,
     .flip = &flipOp,
     .stats = &stats,
     .detect = &detect,

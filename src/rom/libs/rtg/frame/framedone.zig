@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
+const monitors = @import("../monitor/_monitor.zig");
 const _frame = @import("_frame.zig");
 
 /// Says that a frame of a board's display ended.
@@ -35,11 +36,16 @@ const _frame = @import("_frame.zig");
 /// picture. A driver without such an interrupt does not call it, and
 /// its board is waited for by the clock.
 ///
+/// On a board whose connector is looked at by its frames
+/// (`RtgBoardSpec.look_frames`), every so many frames the library is
+/// asked to look at it, as `MonitorChanged` asks.
+///
 /// CONTEXT:
 /// - Waits: no.
 /// - Interrupts: yes. That is where it is called.
 /// - Locks: none taken. The count and the walk of the waiters are inside
-///   Disable, which an interrupt is in already.
+///   Disable, which an interrupt is in already; a look is asked for with
+///   a flag and a signal.
 /// - Process: any, or none.
 ///
 /// OWNERSHIP:
@@ -57,13 +63,39 @@ const _frame = @import("_frame.zig");
 /// panel.rtg_base.FrameDone(panel.board);
 /// ```
 pub fn FrameDone(rb: *RtgBase, board: *rtg.RtgBoard) void {
-    _frame.done(rb.sys_base, &boards.privateOf(board).frames);
+    const private = boards.privateOf(board);
+    _frame.done(rb.sys_base, &private.frames);
+    const every = private.look_frames;
+    if (every != 0 and _frame.count(&private.frames) % every == 0) monitors.mark(rb, board);
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------
 
 const fixture = @import("../_testing.zig");
 const testing = fixture.testing;
+
+test "a connector looked at by its frames: every so many of them, a look is asked for" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    fk.look_frames = 3;
+    const board = try fixture.makeConnector(rb, fixture.qhd_bytes, 0);
+    const state = boards.privateOf(board).monitor.?;
+
+    fixture.fake.endFrame(board);
+    fixture.fake.endFrame(board);
+    try testing.expect(!@atomicLoad(bool, &state.changed, .acquire));
+    fixture.fake.endFrame(board);
+    try testing.expect(@atomicLoad(bool, &state.changed, .acquire));
+    // The look finds the same monitor: nothing changes.
+    const detects = fk.log.detects;
+    monitors.service(rb);
+    try testing.expectEqual(detects + 1, fk.log.detects);
+    try testing.expect(!@atomicLoad(bool, &state.changed, .acquire));
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
 
 test "frames: counted as the driver says them, and the board says that it does" {
     const rb = try fixture.setUp();

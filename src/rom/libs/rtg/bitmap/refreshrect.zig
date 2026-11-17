@@ -37,9 +37,11 @@ const composer = @import("../compose/_compose.zig");
 /// buffer. The rectangle is cut to the buffer first.
 ///
 /// Where the display reads the buffer itself, its driver is told
-/// (`refresh`), for a buffer shown or not: one whose display reads
-/// through a cache the CPU writes into writes back the rectangle's
-/// pixels, so a buffer drawn ahead is whole when it is shown. Where the
+/// (`refresh`), for a buffer shown or not. Where the display reads past
+/// a cache the CPU writes into, the rectangle's pixels are written back
+/// - by the library where the board's region says so
+/// (`RTGRF_WRITE_BACK`), else by the driver - so a buffer drawn ahead is
+/// whole when it is shown. Where the
 /// display shows a picture the library composes, the rectangle is also
 /// turned into the display's own - the lines of each band that shows
 /// the buffer, a repeating band's all for its first row, a scaled
@@ -127,6 +129,42 @@ test "what is written is handed on as the rectangle it is, cut to the buffer" {
     try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, &.{ .x = 32, .y = 0, .width = 4, .height = 4 }));
     try testing.expectEqual(refreshed, fk.log.refreshed);
 
+    fixture.base(rb).FreeBitMap(bitmap);
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "a board whose display reads past the caches needs no refresh of its own" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeBoard(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+    const bitmap = fixture.base(rb).AllocBitMap(board, 32, 20, format, 0).?;
+    // The fake's ops with nothing for a rectangle: no refresh, no picture
+    // of its own.
+    var bare = board.ops.?.*;
+    bare.refresh = null;
+    bare.update = null;
+    bare.flip = null;
+    const own = board.ops;
+    board.ops = &bare;
+    const refreshed = fk.log.refreshed;
+
+    // Without the write-back the board is not one to hand a rectangle to.
+    const flags = board.region.flags;
+    board.region.flags = flags & ~rtg.boards.RTGRF_WRITE_BACK;
+    try testing.expectEqual(rtg.errors.RTGERR_NOT_SUPPORTED, fixture.base(rb).RefreshRect(bitmap, &.{ .x = 3, .y = 4, .width = 5, .height = 6 }));
+    // With it the library writes the rectangle back itself - a narrow one
+    // a row at a time, a wide one in one stretch - and that is the whole
+    // of it.
+    board.region.flags = flags | rtg.boards.RTGRF_WRITE_BACK;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, &.{ .x = 3, .y = 4, .width = 5, .height = 6 }));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).RefreshRect(bitmap, null));
+    try testing.expectEqual(refreshed, fk.log.refreshed);
+
+    board.region.flags = flags;
+    board.ops = own;
     fixture.base(rb).FreeBitMap(bitmap);
     fixture.driverBase(rb).DeleteBoard(board);
     try fixture.tearDown(rb);

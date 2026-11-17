@@ -57,7 +57,7 @@ const virtio = @import("virtio.zig");
 const MODULE_NAME = "rtg-virtio";
 const DRIVER_NAME = "virtio";
 const VERSION = 1;
-const REVISION = 2;
+const REVISION = 3;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -189,32 +189,21 @@ fn hotSpot(screen: *const Screen) struct { x: u32, y: u32 } {
     };
 }
 
-/// Whether pixel (x, y) of an image is the image's own, by its mask.
-fn opaqueAt(image: *const rtg.RtgPointerImage, x: u32, y: u32) bool {
-    return image.mask[y * image.mask_pitch + x / 8] & (@as(u8, 0x80) >> @intCast(x % 8)) != 0;
-}
-
-/// A new image into the buffer the plane is not reading - ARGB, opaque
-/// where the mask says, clear elsewhere - and the plane turned to it.
+/// A new image into the buffer the plane is not reading, and the plane
+/// turned to it. The library's image is ARGB already, clear where its
+/// mask leaves a pixel out (`RtgPointerImage`): its rows are copied.
 /// While the pointer is hidden the image is one with nothing in it.
 fn cursorImage(screen: *Screen) void {
     const drawn = if (screen.pointer_shown) screen.pointer else null;
     const side: u32 = virtio.cursor_side;
     const turn = screen.cursor_turn +% 1;
     const buffer = cursorBuffer(screen, turn);
-    const pixels: [*]u32 = @ptrCast(@alignCast(buffer));
-    @memset(pixels[0 .. side * side], 0);
+    @memset(buffer[0 .. side * side * 4], 0);
     if (drawn) |one| {
         const rows = @min(one.height, side);
-        const columns = @min(one.width, side);
+        const row_bytes = @min(one.width, side) * 4;
         var y: u32 = 0;
-        while (y < rows) : (y += 1) {
-            const row: [*]const u32 = @ptrCast(@alignCast(one.pixels + y * one.pitch));
-            var x: u32 = 0;
-            while (x < columns) : (x += 1) {
-                if (opaqueAt(one, x, y)) pixels[y * side + x] = row[x] | 0xFF00_0000;
-            }
-        }
+        while (y < rows) : (y += 1) @memcpy(buffer[y * side * 4 ..][0..row_bytes], one.pixels[y * one.pitch ..][0..row_bytes]);
         screen.cursor_hot_x = @min(one.hot_x, side - 1);
         screen.cursor_hot_y = @min(one.hot_y, side - 1);
     }

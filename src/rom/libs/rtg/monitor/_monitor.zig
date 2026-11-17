@@ -10,7 +10,18 @@
 //! (`service`): no driver keeps a task for its monitor. A look that finds
 //! what the last one found - the same monitor, or none still - changes
 //! nothing, so a driver whose connector has no interrupt may have it
-//! looked at now and then.
+//! looked at now and then - by its frames, where it says how many go by
+//! between two looks (`RtgBoardSpec.look_frames`, asked for by
+//! FrameDone).
+//!
+//! **A connector looked at by its frames**, on a board that shows, has
+//! its looks settle: a monitor come or gone is taken to have once two
+//! looks in a row have found it - which a plug that bounces as it goes
+//! in, or a monitor that raises its hot-plug line before its EDID reads,
+//! takes - and what was there stands until then. The EDID of a monitor
+//! that gave none is asked for at three looks, not at every one: each
+//! try holds the connector for as long as its DDC takes to give up. A
+//! board that does not show takes every look as it is.
 //!
 //! **What a look does** (`look`), with the board's lock held: `detect`
 //! is called with the library's buffer, the EDID's first block is held to
@@ -81,7 +92,19 @@ pub const State = struct {
     /// The driver said something happened at the connector, and the
     /// monitor task has not looked yet. Written from interrupts.
     changed: bool = false,
+    /// On a connector looked at by its frames: the looks in a row that
+    /// found other than what stands, and the looks in a row at which a
+    /// monitor there gave no EDID.
+    settling: u32 = 0,
+    misses: u32 = 0,
 };
+
+/// How many looks in a row a monitor come or gone on a connector looked
+/// at by its frames must be found at before it is taken to have.
+const settle_looks = 2;
+/// At how many looks in a row the EDID of a monitor that gave none is
+/// asked for while its board shows.
+const edid_tries = 3;
 
 /// The monitor task's name and priority: above the programs that draw,
 /// below the tasks that move what is drawn.
@@ -325,21 +348,42 @@ pub fn renew(rb: *RtgBase, board: *rtg.RtgBoard) void {
 /// - `board` - the board, with `detect` and its monitor's state; its lock
 ///   is held, or it is on no list yet.
 fn look(rb: *RtgBase, board: *rtg.RtgBoard) bool {
-    const state = boards.privateOf(board).monitor.?;
+    const private = boards.privateOf(board);
+    const state = private.monitor.?;
     const detect = board.ops.?.detect.?;
+    // A connector looked at by its frames, on a board that shows: its
+    // looks settle, and its EDID is asked for at a few looks only.
+    const polled = private.look_frames != 0 and private.mode != null;
+    const was_present = state.info.flags & monitors.RTGMON_PRESENT != 0;
+    const room: u32 = if (polled and state.misses >= edid_tries) 0 else monitors.RTG_EDID_MAX;
     var present = false;
     var size: u32 = 0;
-    var asked: rtg.RtgDetect = .{ .edid = state.edid, .edid_max = monitors.RTG_EDID_MAX };
+    var asked: rtg.RtgDetect = .{ .edid = state.edid, .edid_max = room, .edid_known = state.info.edid_size };
     if (detect(board, &asked) == err.RTGERR_OK) {
         present = asked.present != 0;
         // Whole blocks, and no more than there was room for; none of a
         // monitor that is not there.
-        if (present) size = @min(asked.edid_size, monitors.RTG_EDID_MAX) / monitors.RTG_EDID_BLOCK * monitors.RTG_EDID_BLOCK;
+        if (present) size = @min(asked.edid_size, room) / monitors.RTG_EDID_BLOCK * monitors.RTG_EDID_BLOCK;
     }
+    if (polled and present != was_present) {
+        state.settling += 1;
+        // What stands is answered until the change has settled. A
+        // monitor that came has been read into the buffer meanwhile,
+        // where the one before it had left nothing to keep.
+        if (state.settling < settle_looks) return false;
+    }
+    state.settling = 0;
     const stamp = stampOf(present, state.edid[0..size]);
-    if (stamp == state.stamp) return false;
+    if (stamp == state.stamp) {
+        if (present and state.info.edid_size == 0) state.misses +|= 1;
+        return false;
+    }
     state.stamp = stamp;
     describe(state, present, size);
+    state.misses = if (present and state.info.edid_size == 0) 1 else 0;
+    if (was_present and !present and private.mode != null) {
+        exec.kprintf(rb.sys_base, "rtg.library: the monitor was taken off %s\n", .{board.node.name orelse "a board"});
+    }
     if (present) {
         board.info.flags &= ~rtg.boards.RTGBF_NO_DISPLAY;
     } else {

@@ -144,7 +144,7 @@ pub const LIBRARY_VERSION = 1;
 /// switched a device's drivers from the disk off.
 /// 40: RunPanelSequence and RtgDelay: a panel's bring-up checked and
 /// walked, and a wait that gives the CPU away, for every driver.
-pub const LIBRARY_REVISION = 40;
+pub const LIBRARY_REVISION = 41;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

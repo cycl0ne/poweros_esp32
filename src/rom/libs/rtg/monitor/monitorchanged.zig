@@ -41,7 +41,9 @@ const _monitor = @import("_monitor.zig");
 /// own that looks at the port. Several calls before the task has looked
 /// are one look, and a look that finds what the last one found - the same
 /// monitor, or none still - changes nothing: a driver whose connector has
-/// no interrupt may call it now and then. On a board without `detect` it
+/// no interrupt may call it now and then, or have FrameDone ask for a
+/// look every so many frames (`RtgBoardSpec.look_frames`), whose looks
+/// then settle while the board shows. On a board without `detect` it
 /// does nothing.
 ///
 /// CONTEXT:
@@ -66,4 +68,93 @@ const _monitor = @import("_monitor.zig");
 /// ```
 pub fn MonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) void {
     _monitor.mark(rb, board);
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+const boards = @import("../board/_board.zig");
+
+/// One look at the board's connector, as the monitor task takes it.
+fn lookAt(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    fixture.driverBase(rb).MonitorChanged(board);
+    _monitor.service(rb);
+}
+
+fn present(rb: *RtgBase, board: *rtg.RtgBoard) bool {
+    return fixture.monitorOf(rb, board).flags & rtg.modes.RTGMON_PRESENT != 0;
+}
+
+test "a connector looked at by its frames: a monitor that stays is not read again" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    fk.look_frames = 30;
+    fk.keeps_edid = true;
+    const board = try fixture.makeConnector(rb, fixture.qhd_bytes, 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 0));
+    const reads = fk.log.edid_reads;
+    try testing.expectEqual(@as(u32, 1), reads);
+
+    lookAt(rb, board);
+    lookAt(rb, board);
+    try testing.expectEqual(reads, fk.log.edid_reads);
+    try testing.expect(fixture.monitorOf(rb, board).flags & rtg.modes.RTGMON_EDID != 0);
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "a connector looked at by its frames, on a board that shows: a change settles, and an EDID that does not read is asked for three times" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    fk.look_frames = 30;
+    // Nothing on the connector: the board in its driver's one mode.
+    const board = try fixture.makeConnector(rb, null, 1);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 0));
+    try testing.expect(boards.privateOf(board).mode != null);
+    try testing.expect(!present(rb, board));
+
+    // A monitor comes whose EDID does not read: the first look leaves
+    // the connector empty, the second takes the monitor.
+    fk.monitor_there = true;
+    lookAt(rb, board);
+    try testing.expect(!present(rb, board));
+    lookAt(rb, board);
+    try testing.expect(present(rb, board));
+    try testing.expect(boards.privateOf(board).mode != null);
+    // Its EDID asked for at two more looks, then no longer.
+    lookAt(rb, board);
+    try testing.expect(fk.log.edid_room != 0);
+    lookAt(rb, board);
+    try testing.expect(fk.log.edid_room != 0);
+    const reads = fk.log.edid_reads;
+    lookAt(rb, board);
+    try testing.expectEqual(@as(u32, 0), fk.log.edid_room);
+    try testing.expectEqual(reads, fk.log.edid_reads);
+
+    // Taken off: what stood stands for one look.
+    fk.monitor_there = false;
+    lookAt(rb, board);
+    try testing.expect(present(rb, board));
+    lookAt(rb, board);
+    try testing.expect(!present(rb, board));
+
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
+}
+
+test "a connector its driver says changes itself takes every look as it is" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    const board = try fixture.makeConnector(rb, fixture.qhd_bytes, 0);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 0));
+    fk.monitor_there = false;
+    lookAt(rb, board);
+    try testing.expect(!present(rb, board));
+    fixture.driverBase(rb).DeleteBoard(board);
+    try fixture.tearDown(rb);
 }

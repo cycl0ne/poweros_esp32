@@ -486,7 +486,9 @@ fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spe
   itself (`direct_bands`), which axes its `mirror` turns and whether
   it sends the colour range the settings ask for (`caps`), and
   how many levels its backlight has (`brightness_steps`); for a board
-  with a connector, the pixel format its monitor's modes are made in.
+  with a connector, the pixel format its monitor's modes are made in,
+  and how many of its frames go by between two looks at a connector
+  that raises no interrupt (`look_frames`).
   Read during the call and not kept; the label's string stays the
   driver's.
 
@@ -715,12 +717,17 @@ frame ended - the blanking's, or the one that starts the next
 picture. A driver without such an interrupt does not call it, and
 its board is waited for by the clock.
 
+On a board whose connector is looked at by its frames
+(`RtgBoardSpec.look_frames`), every so many frames the library is
+asked to look at it, as `MonitorChanged` asks.
+
 **CONTEXT**
 
 - Waits: no.
 - Interrupts: yes. That is where it is called.
 - Locks: none taken. The count and the walk of the waiters are inside
-  Disable, which an interrupt is in already.
+  Disable, which an interrupt is in already; a look is asked for with
+  a flag and a signal.
 - Process: any, or none.
 
 **OWNERSHIP**
@@ -904,7 +911,9 @@ A driver calls it from its hot-plug interrupt, or from a task of its
 own that looks at the port. Several calls before the task has looked
 are one look, and a look that finds what the last one found - the same
 monitor, or none still - changes nothing: a driver whose connector has
-no interrupt may call it now and then. On a board without `detect` it
+no interrupt may call it now and then, or have FrameDone ask for a
+look every so many frames (`RtgBoardSpec.look_frames`), whose looks
+then settle while the board shows. On a board without `detect` it
 does nothing.
 
 **CONTEXT**

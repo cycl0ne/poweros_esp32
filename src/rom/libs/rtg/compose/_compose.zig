@@ -847,13 +847,12 @@ pub fn handOn(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *
     // written is noted, with no lock a picture being made holds.
     if (ops.flip != null) return flips.written(rb, board, bitmap, cut);
     const update = ops.update orelse {
-        const refresh = ops.refresh orelse return err.RTGERR_NOT_SUPPORTED;
-        return refresh(board, bitmap, cut);
+        if (ops.refresh == null and !writesBack(board)) return err.RTGERR_NOT_SUPPORTED;
+        return refreshed(rb, board, bitmap, cut);
     };
     obtain(rb, board);
     defer release(rb, board);
-    var code: i32 = err.RTGERR_OK;
-    if (ops.refresh) |refresh| code = refresh(board, bitmap, cut);
+    var code = refreshed(rb, board, bitmap, cut);
     if (!composing(board)) return code;
 
     const private = boards.privateOf(board);
@@ -867,6 +866,53 @@ pub fn handOn(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *
         if (code == err.RTGERR_OK) code = answer;
     }
     return code;
+}
+
+/// Whether the library writes what is handed on out of the caches for the
+/// board's display, which reads past them (`RTGRF_WRITE_BACK`).
+fn writesBack(board: *const rtg.RtgBoard) bool {
+    return board.region.flags & rtg.boards.RTGRF_WRITE_BACK != 0;
+}
+
+/// A rectangle of a buffer the board's display reads, written by the CPU,
+/// handed to the board: written out of the caches first where its region
+/// says the library does that, then the driver's `refresh` where it has
+/// one. The driver's answer, RTGERR_OK where it has none.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board.
+/// - `bitmap` - one of its buffers, with pixels.
+/// - `cut` - the rectangle, cut to the buffer and not empty.
+pub fn refreshed(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, cut: *const rtg.RtgRect) i32 {
+    if (writesBack(board)) writeBack(rb, bitmap, cut);
+    const refresh = board.ops.?.refresh orelse return err.RTGERR_OK;
+    return refresh(board, bitmap, cut);
+}
+
+/// A rectangle's pixels written out of the caches: at least half a row
+/// wide as its rows, in one stretch; narrower a row at a time, its own
+/// bytes alone, so the side of a window's frame does not write back the
+/// rows it runs down.
+fn writeBack(rb: *RtgBase, bitmap: *const rtg.RtgBitMap, cut: *const rtg.RtgRect) void {
+    const sys = rb.sys_base;
+    const pixels = bitmap.pixels orelse return;
+    if (cut.width <= 0 or cut.height <= 0) return;
+    const format = @intFromEnum(bitmap.format);
+    const wide = rb.iface().RtgRowBytes(format, @intCast(cut.width));
+    const left = rb.iface().RtgRowBytes(format, @intCast(cut.x));
+    const rows: u32 = @intCast(cut.height);
+    const first = @intFromPtr(pixels) + @as(usize, @intCast(cut.y)) * bitmap.pitch;
+    if (wide * 2 >= bitmap.pitch) {
+        var bytes: u32 = rows * bitmap.pitch;
+        _ = sys.CachePreDMA(@ptrFromInt(first), &bytes, 0);
+        return;
+    }
+    var row: u32 = 0;
+    while (row < rows) : (row += 1) {
+        var bytes: u32 = wide;
+        _ = sys.CachePreDMA(@ptrFromInt(first + @as(usize, row) * bitmap.pitch + left), &bytes, 0);
+    }
 }
 
 /// The rectangle of the picture that shows a rectangle of a band's

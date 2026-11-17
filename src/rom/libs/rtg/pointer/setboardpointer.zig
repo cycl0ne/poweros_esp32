@@ -334,13 +334,16 @@ test "the pointer on a 32-bit board: its channels in the order the format names 
     try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.setMode(rb, board, 0));
     board.info.format = .bgra32;
 
-    // A red pixel and a grey one, rgba32.
-    var pixels = [_]u32{ fixture.rgba(0xFF0000FF), fixture.rgba(0x102030FF) };
-    const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 2, .height = 1, .pitch = 8, .format = .rgba32 };
+    // A red pixel, a grey one, and one that does not cover, rgba32.
+    var pixels = [_]u32{ fixture.rgba(0xFF0000FF), fixture.rgba(0x102030FF), fixture.rgba(0x40506010) };
+    const image = rtg.Surface{ .pixels = @ptrCast(&pixels), .width = 3, .height = 1, .pitch = 12, .format = .rgba32 };
     try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetBoardPointer(board, &image, 0, 0));
     const made = fk.log.pointer_image.?;
     try testing.expectEqual(rtg.PixelFormat.bgra32, made.format);
-    try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0xFF, 0xFF, 0x30, 0x20, 0x10, 0xFF }, made.pixels[0..8]);
+    // The pixels kept cover fully; the one left out is 0: the image is
+    // ARGB as a plane takes it, without its mask.
+    try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0xFF, 0xFF, 0x30, 0x20, 0x10, 0xFF, 0, 0, 0, 0 }, made.pixels[0..12]);
+    try testing.expectEqual(@as(u8, 0b1100_0000), made.mask[0]);
 
     fixture.driverBase(rb).DeleteBoard(board);
     try fixture.tearDown(rb);

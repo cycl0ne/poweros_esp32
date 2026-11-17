@@ -182,6 +182,10 @@ pub const Log = struct {
     /// many timings it was asked whether it can make (`check_mode`).
     detects: u32 = 0,
     checks: u32 = 0,
+    /// The room the last `detect` was given for the EDID, and how often
+    /// the EDID was read rather than the kept one answered.
+    edid_room: u32 = 0,
+    edid_reads: u32 = 0,
     /// Frames the board was told to end (`endFrame`).
     frames_ended: u32 = 0,
 };
@@ -227,6 +231,11 @@ pub const State = struct {
     monitor_there: bool = true,
     monitor_edid: ?[]const u8 = null,
     detect_answer: i32 = err.RTGERR_OK,
+    /// The frames between two looks at the connector of the next board
+    /// made (`look_frames`), and whether its `detect` answers the EDID
+    /// the library kept (`edid_known`) rather than reading it again.
+    look_frames: u32 = 0,
+    keeps_edid: bool = false,
     /// The fastest pixel clock a board with a connector makes, in Hz: a
     /// timing past it is refused.
     fastest_hz: u32 = 0xFFFF_FFFF,
@@ -1197,9 +1206,15 @@ const composed_connector_ops = made: {
 fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
     const state = stateOfBoard(board);
     state.log.detects += 1;
+    state.log.edid_room = asked.edid_max;
     if (state.detect_answer != err.RTGERR_OK) return state.detect_answer;
     asked.present = @intFromBool(state.monitor_there);
     if (!state.monitor_there) return err.RTGERR_OK;
+    if (state.keeps_edid and asked.edid_known != 0) {
+        asked.edid_size = asked.edid_known;
+        return err.RTGERR_OK;
+    }
+    if (asked.edid_max != 0) state.log.edid_reads += 1;
     const bytes = state.monitor_edid orelse return err.RTGERR_OK;
     const length: u32 = @intCast(@min(bytes.len, asked.edid_max));
     @memcpy(asked.edid[0..length], bytes[0..length]);
@@ -1326,6 +1341,7 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
             1,
         .caps = state.mirror_axes | (if (state.color_range) rtg.boards.RTGBC_COLOR_RANGE else 0),
         .brightness_steps = state.brightness_steps,
+        .look_frames = state.look_frames,
     }) orelse return null;
     const instance = instanceOf(board);
     instance.* = .{ .pattern = instance_pattern };

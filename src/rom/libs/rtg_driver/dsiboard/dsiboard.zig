@@ -99,7 +99,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 25;
+const REVISION = 26;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -120,9 +120,10 @@ const pixel_source = system.DSI_CLK_SRC_REF_240M;
 const stream_route: dwdma.Route = .{ .handshake = bridge.dma_handshake, .priority = 1, .reads = 5, .writes = 2 };
 /// How long a flip waits for the frame it lands on.
 const flip_wait_us = 100_000;
-/// How many frames go by between two looks at the bridge's connector:
-/// two seconds of them.
-const look_frames = 120;
+/// How many frames go by between two looks at the bridge's connector,
+/// which the library takes (`look_frames`): a second of them, so a
+/// monitor pulled or plugged has settled within two.
+const look_frames = 60;
 
 /// One panel: the board's instance, allocated and cleared by the library
 /// in internal memory.
@@ -139,13 +140,6 @@ const Panel = struct {
     own: config.Config = .{},
     up: bool = false,
     mode_id: u32 = 0,
-    /// Over HDMI: whether a monitor answered at the last look, its EDID
-    /// as it was read when it came, and the frames sent since the library
-    /// was last asked to look.
-    monitor_there: bool = false,
-    edid: [lt8912b.edid_blocks * rtg.modes.RTG_EDID_BLOCK]u8 = undefined,
-    edid_size: u32 = 0,
-    frames_unseen: u32 = 0,
     /// The copy of what is shown, which rtg.library composes: over HDMI
     /// from the mode set on, on a panel from the first time it shows its
     /// own picture. `from_copy`: the stream reads it now.
@@ -223,15 +217,9 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
         dwdma.go(panel.dma_base, panel.dma_channel, panel.chain.first);
         panel.stats.frames +%= 1;
         engine_file.frameTick(&panel.engine);
+        // Over HDMI, every `look_frames` of them the library looks at
+        // the bridge's connector.
         driverBase(panel.board).FrameDone(panel.board);
-        // The bridge's connector, looked at now and then by the library.
-        if (panel.hdmi) {
-            panel.frames_unseen += 1;
-            if (panel.frames_unseen >= look_frames) {
-                panel.frames_unseen = 0;
-                driverBase(panel.board).MonitorChanged(panel.board);
-            }
-        }
     }
     return 1;
 }
@@ -598,6 +586,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         // A panel's stream reads every band of a show itself. A bridge's
         // reads none: its link carries RGB888, which only the copy is.
         .direct_bands = if (hdmi) 0 else rtg.RTG_MAX_BANDS,
+        // The bridge's connector raises no interrupt.
+        .look_frames = if (hdmi) look_frames else 0,
     }) orelse return err.RTGERR_NO_MEMORY;
     const panel = panelOf(board);
     panel.* = .{ .sys = sys, .board = board, .config = wanted, .own = wanted, .hdmi = hdmi, .expansion_base = driver.expansion_base };
@@ -614,11 +604,17 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
 
     // Its buffers are taken from system memory as they are asked for - a
     // line-aligned block each, which the DMA reads in whole lines - and no
-    // more than the board says at once.
+    // more than the board says at once. A panel's stream reads them past
+    // the cache - for any buffer, shown or not, and also while it reads
+    // the copy, since it reads the buffers again once nothing lies over
+    // the picture - so the library writes back what the CPU wrote. A
+    // bridge's stream reads the copy alone, and nothing but the CPU reads
+    // the screens' buffers.
     board.region = .{
         .size = wanted.buffers * panel.frame_bytes,
         .alignment = hardware.DCACHE_LINE_SIZE,
-        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
+        .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY |
+            (if (hdmi) 0 else rtg.boards.RTGRF_WRITE_BACK),
     };
     board.info.buffers = wanted.buffers;
     // A backlight on a pad or on the expander is on or off; a board with
@@ -686,31 +682,26 @@ fn monitorBehind(sys: *ExecBase, wanted: *const config.Config) bool {
 }
 
 /// What is on the bridge's connector, for the library: whether a
-/// monitor's EDID answers on the bridge's bus, and its blocks. They are
-/// read when a monitor has come; one that was there at the last look is
-/// the one read then.
+/// monitor's EDID answers on the bridge's bus, and its blocks, as many
+/// as there is room for. A monitor whose EDID the last look kept is
+/// taken to be the one still there, and not read again (`edid_known`).
 fn detect(board: *rtg.RtgBoard, asked: *rtg.RtgDetect) callconv(.c) i32 {
     const panel = panelOf(board);
     const bus_to_bridge = lt8912b.I2c.open(panel.sys, panel.own.i2c_unit) orelse return err.RTGERR_IO;
     defer bus_to_bridge.close();
-    if (!lt8912b.monitorThere(bus_to_bridge)) {
-        panel.monitor_there = false;
+    if (!lt8912b.monitorThere(bus_to_bridge)) return err.RTGERR_OK;
+    asked.present = 1;
+    if (asked.edid_known != 0) {
+        asked.edid_size = asked.edid_known;
         return err.RTGERR_OK;
     }
-    asked.present = 1;
-    if (!panel.monitor_there or panel.edid_size == 0) {
-        const block = rtg.modes.RTG_EDID_BLOCK;
-        panel.edid_size = 0;
-        const first: *lt8912b.Edid = panel.edid[0..block];
-        if (lt8912b.readEdid(bus_to_bridge, 0, first)) {
-            panel.edid_size = block;
-            if (first[126] != 0 and lt8912b.readEdid(bus_to_bridge, 1, panel.edid[block..][0..block])) panel.edid_size = 2 * block;
-        }
-    }
-    panel.monitor_there = true;
-    const length = @min(panel.edid_size, asked.edid_max);
-    @memcpy(asked.edid[0..length], panel.edid[0..length]);
-    asked.edid_size = length;
+    const block = rtg.modes.RTG_EDID_BLOCK;
+    if (asked.edid_max < block) return err.RTGERR_OK;
+    const first: *lt8912b.Edid = asked.edid[0..block];
+    if (!lt8912b.readEdid(bus_to_bridge, 0, first)) return err.RTGERR_OK;
+    asked.edid_size = block;
+    const room_for_two = asked.edid_max >= 2 * block;
+    if (first[126] != 0 and room_for_two and lt8912b.readEdid(bus_to_bridge, 1, asked.edid[block..][0..block])) asked.edid_size = 2 * block;
     return err.RTGERR_OK;
 }
 
@@ -871,35 +862,6 @@ fn showThese(panel: *Panel, what: *const rtg.RtgShow) i32 {
     return code;
 }
 
-/// A rectangle the CPU wrote, handed to the panel: the DMA reads that
-/// memory without going through the cache, so what was written has to be
-/// pushed out of it first - for any buffer, shown or not, and also while
-/// the stream reads the copy: it reads the buffers again once nothing
-/// lies over the picture.
-///
-/// A rectangle at least half a row wide goes as its rows, in one stretch;
-/// a narrower one a row at a time, its own bytes alone.
-fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
-    const sys = panelOf(board).sys;
-    const pixels = bitmap.pixels orelse return err.RTGERR_BAD_ARG;
-    const top: usize = @intCast(area.y);
-    const rows: u32 = @intCast(area.height);
-    const wide: u32 = @as(u32, @intCast(area.width)) * 2;
-    const first = @intFromPtr(pixels) + top * bitmap.pitch;
-    if (wide * 2 >= bitmap.pitch) {
-        var bytes: u32 = rows * bitmap.pitch;
-        _ = sys.CachePreDMA(@ptrFromInt(first), &bytes, 0);
-        return err.RTGERR_OK;
-    }
-    const left: usize = @as(usize, @intCast(area.x)) * 2;
-    var row: u32 = 0;
-    while (row < rows) : (row += 1) {
-        var bytes: u32 = wide;
-        _ = sys.CachePreDMA(@ptrFromInt(first + @as(usize, row) * bitmap.pitch + left), &bytes, 0);
-    }
-    return err.RTGERR_OK;
-}
-
 /// A rectangle of the display changed while the stream reads the copy:
 /// fetched from the library into it.
 fn update(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
@@ -991,7 +953,6 @@ const engine_ops = rtg.RtgEngineOps{
 const ops = rtg.RtgBoardOps{
     .destroy = &destroy,
     .show = &showOp,
-    .refresh = &refresh,
     .update = &update,
     .power = &power,
     .set_brightness = &setBrightness,
@@ -1001,13 +962,11 @@ const ops = rtg.RtgBoardOps{
 };
 
 /// A bridge's board has a connector, and its stream reads the copy
-/// alone: nothing but the CPU reads the screens' buffers, so nothing of
-/// them has to be written back. The monitor behind it is not put to
+/// alone. The monitor behind it is not put to
 /// sleep from here and has no backlight of the board's: a board asleep
 /// is blank there.
 const bridge_ops = made: {
     var more = ops;
-    more.refresh = null;
     more.power = null;
     more.set_brightness = null;
     more.detect = &detect;

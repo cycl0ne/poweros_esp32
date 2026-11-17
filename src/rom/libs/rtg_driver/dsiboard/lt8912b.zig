@@ -121,10 +121,6 @@ pub fn readEdid(bus: I2c, number: u32, into: *Edid) bool {
     return bus.read(edid_address, offset, into);
 }
 
-/// How many blocks of a monitor's EDID are read: its first, and one
-/// extension.
-pub const edid_blocks: u32 = 2;
-
 /// What the bridge sends the monitor: the picture's size, its timings in
 /// pixel clocks and lines, the sync pulses' polarity, the pixel clock.
 pub const Mode = struct {
