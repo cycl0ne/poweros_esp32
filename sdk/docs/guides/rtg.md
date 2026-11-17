@@ -272,6 +272,28 @@ const notify = rb.AddRtgNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(bit
 defer rb.RemRtgNotify(notify);
 ```
 
+**When the first board is another.** A driver loaded from the disk, or
+a settings line, makes another board the first while screens are open.
+intuition.library is told (it asks with `AddRtgNotify`), and gives
+every screen that is not on the first board to it: the old board shows
+nothing, each of the screen's buffers goes over with `RehomeBitMap`,
+and the first board shows its screens in the mode nearest their size,
+the pointer with them. The buffers' handles stay, so nothing is opened
+or drawn again. A program that shows buffers of its own does the same:
+
+```zig
+const first = rb.NextBoard(null).?;
+_ = rb.ShowBitMap(old, null);
+if (rb.RehomeBitMap(picture, first) == rtg.errors.RTGERR_OK) _ = rb.ShowBitMap(first, picture);
+```
+
+`RehomeBitMap` leaves the memory where it is when the new board reads
+buffers from there too - both take them from the system's memory, as
+the 64-bit machines' drivers all do - and copies the pixels into the
+new board's memory where it does not; then `pixels` and `pitch` of the
+handle are other than they were, and nothing may draw into the buffer
+during the call.
+
 ## Buffers
 
 ```zig

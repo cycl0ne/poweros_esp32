@@ -180,6 +180,12 @@ pub const State = extern struct {
     /// out, or a step of one (window/_fade.zig); its number, for motion.
     fade_mask: u32 = 0,
     fade_signal: u32 = 0,
+    /// The signal rtg.library tells the input task with when something
+    /// about the boards changed - one made or gone, another the first -
+    /// and what it gave for asking (`AddRtgNotify`): the screens follow
+    /// the first board (screen/_follow.zig).
+    boards_mask: u32 = 0,
+    boards_notify: ?*sdk.rtg.RtgNotify = null,
     /// A gadget of a window that never takes the activation, pressed
     /// beside whatever has the input, and its window; and whether the
     /// release of a press it was done with at once is still to come.
@@ -425,8 +431,18 @@ fn inputTask(sys: *ExecBase) callconv(.c) void {
     }
     const head: *volatile u32 = &st.head;
     const tail: *volatile u32 = &st.tail;
+    // Told when the boards change: the screens follow the first board.
+    if (ib.rtg_base) |rb| {
+        const boards_signal = sys.AllocSignal(-1);
+        if (boards_signal >= 0) {
+            st.boards_mask = @as(u32, 1) << @intCast(boards_signal);
+            st.boards_notify = rb.AddRtgNotify(sys.FindTask(null).?, st.boards_mask);
+            if (st.boards_notify == null) st.boards_mask = 0;
+        }
+    }
     while (true) {
-        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask | size_mask | st.fade_mask);
+        const got = sys.Wait(st.mask | verify_mask | st.refresh_mask | size_mask | st.fade_mask | st.boards_mask);
+        if (got & st.boards_mask != 0) @import("../screen/_follow.zig").follow(ib);
         if (got & verify_mask != 0) {
             _window.lock(ib);
             verify.poll(ib);

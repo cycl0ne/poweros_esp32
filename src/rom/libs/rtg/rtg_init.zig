@@ -131,7 +131,10 @@ pub const LIBRARY_VERSION = 1;
 /// and one named in display.trying passed over; a driver that takes the
 /// device a firmware's framebuffer lies behind is told so (RTGA_Adopt),
 /// and the firmware's board is gone once it has made its own.
-pub const LIBRARY_REVISION = 35;
+/// 36: RehomeBitMap: a buffer given to another board, its handle the
+/// same - the memory along where the new board reads it there, the
+/// pixels copied where it does not.
+pub const LIBRARY_REVISION = 36;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

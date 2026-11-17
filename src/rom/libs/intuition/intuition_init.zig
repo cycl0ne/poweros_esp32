@@ -280,7 +280,12 @@ pub const LIBRARY_VERSION = 0;
 /// settings line names (rtg.library, display.prefs): where that is not
 /// the mode of its first picture, the display is put in it, with a
 /// picture of that size.
-pub const LIBRARY_REVISION = 101;
+/// 102: the screens follow the machine's display: the input task is
+/// told when the boards change, and a screen that is not on the first
+/// board is given to it with its buffers (RehomeBitMap), shown there in
+/// the mode nearest its size, the pointer with it. ChangeScreenBuffer
+/// gives a buffer made before the move to the screen's board.
+pub const LIBRARY_REVISION = 102;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

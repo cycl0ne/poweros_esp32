@@ -34,6 +34,12 @@ const unlock = _screen.unlock;
 /// and the next frame can be drawn into it. A screen that is not in front
 /// shows the buffer when it is brought forward.
 ///
+/// A screen may have followed the machine's display to another board
+/// since the buffer was made: the buffer is given to the screen's board
+/// first (rtg.library's `RehomeBitMap`), and where that board has no
+/// room for it the call answers false and the screen shows what it
+/// showed.
+///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore, and for the display's next
 ///   frame - which paces a program drawing a frame at a time to the display.
@@ -67,6 +73,11 @@ pub fn ChangeScreenBuffer(ib: *IntuitionBase, screen: *Screen, buffer: *sc.Scree
     lock(ib);
     defer unlock(ib);
     if (@import("../input/menus.zig").busy(ib)) return false;
+    // A buffer made before the screen followed its display to another
+    // board goes after it now.
+    if (ib.rtg_base) |rb| {
+        if (rb.RehomeBitMap(buffer.bitmap, screen.board) != sdk.rtg.errors.RTGERR_OK) return false;
+    }
     screen.shown = buffer.bitmap;
     showFront(ib, screen.board, screen.home);
     return true;

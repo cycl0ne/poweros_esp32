@@ -974,6 +974,12 @@ and this returns when it has: the buffer shown before is no longer read
 and the next frame can be drawn into it. A screen that is not in front
 shows the buffer when it is brought forward.
 
+A screen may have followed the machine's display to another board
+since the buffer was made: the buffer is given to the screen's board
+first (rtg.library's `RehomeBitMap`), and where that board has no
+room for it the call answers false and the screen shows what it
+showed.
+
 **CONTEXT**
 
 - Waits: for the screen list's semaphore, and for the display's next

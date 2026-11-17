@@ -192,6 +192,33 @@ pub const Arena = struct {
         arena.free_bytes = arena.size - arena.used;
     }
 
+    /// A buffer's memory taken over from another board's count: what
+    /// `take` gave that board, counted here from now on. False where
+    /// this board holds as much as it may.
+    ///
+    /// INPUTS:
+    /// - `arena` - the bookkeeping, of system memory.
+    /// - `taken` - the piece's size, as `take` answered it for an arena
+    ///   that aligns alike.
+    pub fn adopt(arena: *Arena, taken: usize) bool {
+        const counted = taken - (arena.alignment - 1);
+        if (arena.used + counted > arena.size) return false;
+        arena.used += counted;
+        arena.free_bytes = arena.size - arena.used;
+        return true;
+    }
+
+    /// A buffer's memory no longer counted here: another board's count
+    /// has it, and the memory itself stays where it is.
+    ///
+    /// INPUTS:
+    /// - `arena` - the bookkeeping, of system memory.
+    /// - `taken` - the piece's size, as `take` answered it.
+    pub fn disown(arena: *Arena, taken: usize) void {
+        arena.used -= taken - (arena.alignment - 1);
+        arena.free_bytes = arena.size - arena.used;
+    }
+
     /// Give every block record back. The region itself is the driver's.
     ///
     /// INPUTS:

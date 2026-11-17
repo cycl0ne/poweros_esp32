@@ -48,6 +48,7 @@ pub const LVO = struct {
     pub const SetBoardSettings = libraries.lvo(41);
     pub const SetRtgDeviceDriver = libraries.lvo(42);
     pub const LoadRtgDrivers = libraries.lvo(43);
+    pub const RehomeBitMap = libraries.lvo(44);
     pub const RtgErrorText = libraries.lvo(50);
     pub const MirrorBoard = libraries.lvo(51);
     pub const SetBoardPointer = libraries.lvo(54);
@@ -109,6 +110,7 @@ pub const Fn = struct {
     pub const SetBoardSettings = *const fn (*RtgBase, *rtg.RtgBoard, *const rtg.RtgSettings) callconv(.c) i32;
     pub const SetRtgDeviceDriver = *const fn (*RtgBase, [*:0]const u8, bool) callconv(.c) i32;
     pub const LoadRtgDrivers = *const fn (*RtgBase) callconv(.c) u32;
+    pub const RehomeBitMap = *const fn (*RtgBase, *rtg.RtgBitMap, *rtg.RtgBoard) callconv(.c) i32;
     pub const RtgErrorText = *const fn (*RtgBase, i32) callconv(.c) [*:0]const u8;
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
@@ -338,6 +340,16 @@ pub const RtgBase = opaque {
     /// process.
     pub fn LoadRtgDrivers(self: *RtgBase) u32 {
         return libraries.call(self, LVO.LoadRtgDrivers, Fn.LoadRtgDrivers, .{});
+    }
+
+    /// Give a buffer to another board, its handle the same: that board
+    /// shows it and its engine draws into it from then on. The memory goes
+    /// along where the new board can read it there; else the pixels are
+    /// copied into memory of the new board's, and `pixels` and `pitch` of
+    /// the handle change - nothing may draw into it meanwhile. RTGERR_IN_USE
+    /// while its board shows it, RTGERR_NO_MEMORY without room.
+    pub fn RehomeBitMap(self: *RtgBase, bitmap: *rtg.RtgBitMap, board: *rtg.RtgBoard) i32 {
+        return libraries.call(self, LVO.RehomeBitMap, Fn.RehomeBitMap, .{ bitmap, board });
     }
 
     /// An error in words. Never null.

@@ -135,8 +135,15 @@ i32 SetRtgDeviceDriver([*:0]const u8 device_name, bool on)
 /// try and is passed over. Answers how many boards were made. From a
 /// process.
 u32 LoadRtgDrivers()
-// Six slots kept free, so the slots after them stay where they are.
-##reserve 6
+/// Give a buffer to another board, its handle the same: that board
+/// shows it and its engine draws into it from then on. The memory goes
+/// along where the new board can read it there; else the pixels are
+/// copied into memory of the new board's, and `pixels` and `pitch` of
+/// the handle change - nothing may draw into it meanwhile. RTGERR_IN_USE
+/// while its board shows it, RTGERR_NO_MEMORY without room.
+i32 RehomeBitMap(*rtg.RtgBitMap bitmap, *rtg.RtgBoard board)
+// Five slots kept free, so the slots after them stay where they are.
+##reserve 5
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis, or show it unturned: the

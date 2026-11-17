@@ -263,6 +263,10 @@ pub const State = struct {
     /// `RTGBC_MIRROR_Y`), on the boards that fill in `mirror`: both,
     /// unless a test says fewer.
     mirror_axes: u32 = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y,
+    /// Make the next board one that takes its buffers from the system's
+    /// memory (`RTGRF_SYSTEM_MEMORY`), as many bytes as `region_size`
+    /// says: its display memory is no stretch of the driver's.
+    system_memory: bool = false,
     /// Make the next board one whose driver sends the colours in the
     /// range the settings ask for (`RTGBC_COLOR_RANGE`).
     color_range: bool = false,
@@ -1271,7 +1275,11 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
             (if (state.scales) rtg.boards.RTGBF_SCALES else 0),
         // Every board of it is cut out of the one display memory: a test
         // takes buffers on one of them.
-        .region = .{
+        .region = if (state.system_memory) .{
+            .size = state.region_size,
+            .alignment = 64,
+            .flags = rtg.boards.RTGRF_DISPLAYABLE | rtg.boards.RTGRF_CPU_CACHED | rtg.boards.RTGRF_SYSTEM_MEMORY,
+        } else .{
             .base = state.region,
             // No more than there is, whatever a test asked for.
             .size = @min(state.region_size, state.region_bytes),

@@ -36,6 +36,7 @@ rtg.library/NextBoard
 rtg.library/OpenVideoLayer
 rtg.library/ReadBoardEDID
 rtg.library/RefreshRect
+rtg.library/RehomeBitMap
 rtg.library/RemRtgNotify
 rtg.library/RtgCicp
 rtg.library/RtgErrorText
@@ -1924,6 +1925,75 @@ rtg.library/WaitVBlank
 	    _ = rb.RefreshRect(buffer, &.{ .x = 64, .y = 128, .width = 64, .height = 64 });
 	    // All of it.
 	    _ = rb.RefreshRect(buffer, null);
+rtg.library/RehomeBitMap                              rtg.library/RehomeBitMap
+
+   NAME
+	RehomeBitMap -- Gives a buffer to another board.
+
+   SYNOPSIS
+	    fn RehomeBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, board: *rtg.RtgBoard) i32
+
+   SINCE
+	1.36. LVO -180.
+
+   INPUTS
+	- `bitmap` - the buffer: one `AllocBitMap` or `AttachBitMap` made.
+	- `board` - the board it is to be a buffer of.
+
+   RESULT
+	`RTGERR_OK`, also for a buffer that is that board's already;
+	`RTGERR_IN_USE` while its board shows it; `RTGERR_NO_DISPLAY` for a
+	board that is gone; `RTGERR_NO_MEMORY` where the board has no room
+	for it. On anything but `RTGERR_OK` the buffer is as it was.
+
+   BEHAVIOR
+	The handle stays the buffer's, so whoever holds it - a RastPort, a
+	screen, a layer - holds a buffer of the new board from now on: the
+	new board shows it, its engine draws into it, and it counts against
+	that board's display memory.
+
+	Where the memory can go along it does: a buffer over memory of the
+	caller's (`AttachBitMap`), and one taken from the system's memory
+	for a board that reads its buffers from there, given to another such
+	board that aligns them alike and asks no other kind of memory. Then
+	nothing of the buffer moves or changes but whose it is.
+
+	Where it cannot - the new board cuts its buffers out of display
+	memory of its own, or aligns them otherwise - the pixels are copied
+	into memory of the new board's and the old memory is given back:
+	`pixels`, `pitch` and `size_bytes` of the handle are other than they
+	were. The caller sees to it that nothing draws into the buffer
+	meanwhile, and that nothing keeps a row's address over the call.
+
+	A buffer goes to another board when its own is gone, or is no
+	longer the one its owner shows on: intuition.library gives a
+	screen's buffers to the first board when a driver loaded from the
+	disk made another board the first.
+
+   CONTEXT
+	- Waits: only while another task holds one of the two boards' locks.
+	- Interrupts: no.
+	- Locks: takes both boards' locks, the one at the lower address
+	  first.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The buffer stays its owner's to free (`FreeBitMap`). Memory the
+	library took for it is the library's to give back; memory the caller
+	attached stays the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`AllocBitMap`, `AttachBitMap`, `FreeBitMap`, `NextBoard`
+
+   EXAMPLES
+	    // The picture goes with its owner to the machine's new display.
+	    const first = rb.NextBoard(null).?;
+	    if (rb.RehomeBitMap(picture, first) == rtg.errors.RTGERR_OK) {
+	        _ = rb.ShowBitMap(first, picture);
+	    }
 rtg.library/RemRtgNotify                              rtg.library/RemRtgNotify
 
    NAME

@@ -102,6 +102,7 @@ const GetBoardSettings = @import("settings/getboardsettings.zig").GetBoardSettin
 const SetBoardSettings = @import("settings/setboardsettings.zig").SetBoardSettings;
 const SetRtgDeviceDriver = @import("settings/setrtgdevicedriver.zig").SetRtgDeviceDriver;
 const LoadRtgDrivers = @import("load/loadrtgdrivers.zig").LoadRtgDrivers;
+const RehomeBitMap = @import("bitmap/rehomebitmap.zig").RehomeBitMap;
 
 /// rtg.library's two interfaces, as the SDK generates them: the programs'
 /// from sdk/fd/rtg_lib.fd, the drivers' from sdk/fd/rtgdriver_lib.fd.
@@ -155,6 +156,7 @@ const contract_files = [_][]const u8{
     @embedFile("settings/setboardsettings.zig"),
     @embedFile("settings/setrtgdevicedriver.zig"),
     @embedFile("load/loadrtgdrivers.zig"),
+    @embedFile("bitmap/rehomebitmap.zig"),
     @embedFile("driver/addrtgdriver.zig"),
     @embedFile("driver/remrtgdriver.zig"),
     @embedFile("driver/getrtgdrivers.zig"),
@@ -347,6 +349,9 @@ fn lvoSetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, settings: *const rtg.
 fn lvoSetRtgDeviceDriver(rb: *RtgBase, device_name: [*:0]const u8, on: bool) callconv(.c) i32 {
     return SetRtgDeviceDriver(rb, device_name, on);
 }
+fn lvoRehomeBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, board: *rtg.RtgBoard) callconv(.c) i32 {
+    return RehomeBitMap(rb, bitmap, board);
+}
 fn lvoLoadRtgDrivers(rb: *RtgBase) callconv(.c) u32 {
     return LoadRtgDrivers(rb);
 }
@@ -462,7 +467,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 22;
+const reserved_slots = 21;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -519,7 +524,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetBoardSettings),
     vec(lvoSetRtgDeviceDriver),
     vec(lvoLoadRtgDrivers),
-    vec(reserved),
+    vec(lvoRehomeBitMap),
     vec(reserved),
     vec(reserved),
     vec(reserved),
