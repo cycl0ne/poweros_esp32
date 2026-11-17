@@ -23,6 +23,24 @@ const BoardPin = sdk.expansion.BoardPin;
 const st = sdk.expansion.systemtags;
 const host = @import("host.zig");
 
+/// A picture and its timings: its size, the sync pulse and the porches
+/// in pixel clocks across and in lines down, the pulses' polarity, as
+/// the mode's standard has it, and the pixel clock. What the host, the
+/// bridge, an HDMI bridge's part and the monitor modes all take.
+pub const Timing = struct {
+    width: u32 = 0,
+    height: u32 = 0,
+    hsync: u32 = 0,
+    hbp: u32 = 0,
+    hfp: u32 = 0,
+    vsync: u32 = 0,
+    vbp: u32 = 0,
+    vfp: u32 = 0,
+    hsync_high: bool = false,
+    vsync_high: bool = false,
+    pixel_hz: u32 = 0,
+};
+
 pub const Config = struct {
     /// What is on the link: a panel's controller, or the HDMI bridge
     /// (CHIP_LT8912B).
@@ -30,22 +48,11 @@ pub const Config = struct {
     /// The bridge's I2C unit and main address.
     i2c_unit: u32 = 0,
     i2c_address: u32 = 0,
-    width: u32 = 0,
-    height: u32 = 0,
+    timing: Timing = .{},
     format: rtg.PixelFormat = .rgb565,
     bits_per_pixel: u32 = 16,
     lanes: u32 = 0,
     lane_mbps: u32 = 0,
-    pixel_hz: u32 = 0,
-    hsync: u32 = 0,
-    hbp: u32 = 0,
-    hfp: u32 = 0,
-    vsync: u32 = 0,
-    vbp: u32 = 0,
-    vfp: u32 = 0,
-    /// The sync pulses' polarity, as the mode's standard has them.
-    hsync_high: bool = false,
-    vsync_high: bool = false,
     /// The panel's bring-up: steps as the boards' lists write them.
     init_sequence: ?[*]const u8 = null,
     init_length: u32 = 0,
@@ -85,17 +92,17 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     var timings: rtg.RtgTimings = .{};
     if (!rb.ReadTimingTags(tag_list, &timings)) return null;
     if (timings.pixel_clock_hz == 0) return null;
-    config.width = timings.h_active;
-    config.height = timings.v_active;
-    config.pixel_hz = timings.pixel_clock_hz;
-    config.hsync = timings.h_sync;
-    config.hbp = timings.h_back;
-    config.hfp = timings.h_front;
-    config.vsync = timings.v_sync;
-    config.vbp = timings.v_back;
-    config.vfp = timings.v_front;
-    config.hsync_high = timings.flags & rtg.modes.RTGTM_HSYNC_HIGH != 0;
-    config.vsync_high = timings.flags & rtg.modes.RTGTM_VSYNC_HIGH != 0;
+    config.timing.width = timings.h_active;
+    config.timing.height = timings.v_active;
+    config.timing.pixel_hz = timings.pixel_clock_hz;
+    config.timing.hsync = timings.h_sync;
+    config.timing.hbp = timings.h_back;
+    config.timing.hfp = timings.h_front;
+    config.timing.vsync = timings.v_sync;
+    config.timing.vbp = timings.v_back;
+    config.timing.vfp = timings.v_front;
+    config.timing.hsync_high = timings.flags & rtg.modes.RTGTM_HSYNC_HIGH != 0;
+    config.timing.vsync_high = timings.flags & rtg.modes.RTGTM_VSYNC_HIGH != 0;
     // The screens are RGB565, whatever the link carries. The number is
     // looked at before it is taken for a format: one no format has is
     // refused, not a trap.
@@ -119,10 +126,10 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     // What the host's and the bridge's fields hold: a picture of twelve
     // bits each way, a line and a frame of sixteen. One too small to be a
     // burst of the stream is none either.
-    if (config.width < 8 or config.height < 8) return null;
-    if (config.width > 0xFFF or config.height > 0xFFF) return null;
-    const line = @as(u64, config.hsync) + config.hbp + config.width + config.hfp;
-    const lines = @as(u64, config.vsync) + config.vbp + config.height + config.vfp;
+    if (config.timing.width < 8 or config.timing.height < 8) return null;
+    if (config.timing.width > 0xFFF or config.timing.height > 0xFFF) return null;
+    const line = @as(u64, config.timing.hsync) + config.timing.hbp + config.timing.width + config.timing.hfp;
+    const lines = @as(u64, config.timing.vsync) + config.timing.vbp + config.timing.height + config.timing.vfp;
     if (line > 0xFFFF or lines > 0xFFFF) return null;
     if (config.lanes < 1 or config.lanes > 2) return null;
     // A rate the PHY takes, and one its PLL makes or comes near.
@@ -131,7 +138,7 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     // The lanes carry the picture: all of them together at least the bits
     // the pixel clock asks for - RGB888 over a bridge to a monitor.
     const carried: u64 = @as(u64, config.lanes) * config.lane_mbps * 1_000_000;
-    const wanted: u64 = @as(u64, config.pixel_hz) * (if (hdmi) 24 else config.bits_per_pixel);
+    const wanted: u64 = @as(u64, config.timing.pixel_hz) * (if (hdmi) 24 else config.bits_per_pixel);
     if (carried < wanted) return null;
     if (hdmi) {
         if (config.i2c_address == 0) return null;
@@ -140,7 +147,7 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
         // A panel is streamed its screens as they lie in memory, a row
         // whole cache lines: a width that is not gives rows the stream
         // cannot follow.
-        if ((config.width * (config.bits_per_pixel / 8)) % sdk.hardware.DCACHE_LINE_SIZE != 0) return null;
+        if ((config.timing.width * (config.bits_per_pixel / 8)) % sdk.hardware.DCACHE_LINE_SIZE != 0) return null;
     }
     return config;
 }

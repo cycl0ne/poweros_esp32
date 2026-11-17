@@ -69,14 +69,7 @@ const fifo_words = 1024;
 /// What the bridge needs: the picture's size, its timings in pixel clocks
 /// and lines, its bits a pixel and its format.
 pub const Frame = struct {
-    width: u32,
-    height: u32,
-    hsync: u32,
-    hbp: u32,
-    hfp: u32,
-    vsync: u32,
-    vbp: u32,
-    vfp: u32,
+    timing: @import("config.zig").Timing,
     bits_per_pixel: u32,
     raw_type: u32,
 };
@@ -84,17 +77,17 @@ pub const Frame = struct {
 /// The bridge set up for `frame` and switched on, its DPI side still off.
 pub fn setUp(frame: Frame) void {
     reg(host_ctrl).* |= host_clocks;
-    const line = frame.hsync + frame.hbp + frame.width + frame.hfp;
-    const lines = frame.vsync + frame.vbp + frame.height + frame.vfp;
-    reg(dpi_h_cfg0).* = frame.width << 16 | line;
-    reg(dpi_h_cfg1).* = frame.hsync << 16 | frame.hbp;
-    reg(dpi_v_cfg0).* = frame.height << 16 | lines;
-    reg(dpi_v_cfg1).* = frame.vsync << 16 | frame.vbp;
-    const bits = @as(u64, frame.width) * frame.height * frame.bits_per_pixel;
+    const line = frame.timing.hsync + frame.timing.hbp + frame.timing.width + frame.timing.hfp;
+    const lines = frame.timing.vsync + frame.timing.vbp + frame.timing.height + frame.timing.vfp;
+    reg(dpi_h_cfg0).* = frame.timing.width << 16 | line;
+    reg(dpi_h_cfg1).* = frame.timing.hsync << 16 | frame.timing.hbp;
+    reg(dpi_v_cfg0).* = frame.timing.height << 16 | lines;
+    reg(dpi_v_cfg1).* = frame.timing.vsync << 16 | frame.timing.vbp;
+    const bits = @as(u64, frame.timing.width) * frame.timing.height * frame.bits_per_pixel;
     var raw = raw_num_total_set | @as(u32, @intCast((bits + 63) / 64));
     if (bits % 64 != 0) raw |= unalign_64bit;
     reg(raw_num_cfg).* = raw;
-    reg(dpi_misc_config).* = frame.width << 4;
+    reg(dpi_misc_config).* = frame.timing.width << 4;
     reg(pixel_type).* = (reg(pixel_type).* & ~@as(u32, 0xF)) | frame.raw_type;
     reg(dma_flow_ctrl).* = flow_dma_one_block;
     reg(dma_frame_interval).* &= ~multiblock;

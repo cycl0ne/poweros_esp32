@@ -251,7 +251,10 @@ pub fn wait(engine: *Engine, sys: *ExecBase, asleep: bool) bool {
     _ = sys.WaitForAny(&ends, ends.len, timeout_us);
     sys.Disable();
     engine.waiting = false;
-    const raised = engine.ended;
+    // An end the channel raised that no core has served yet - the wait's
+    // bound ran out as it came - is taken here, so the job is not given
+    // up as one that did not end.
+    const raised = if (engine.ended != 0) engine.ended else dma2d.takeEnded(receive_channel);
     sys.Enable();
     return release(engine, sys, raised);
 }

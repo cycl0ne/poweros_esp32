@@ -99,7 +99,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 26;
+const REVISION = 27;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -206,7 +206,7 @@ fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     if (raised & (dwdma.INT_DONE | dwdma.INT_ERRORS) != 0 and panel.streaming) {
         if (raised & dwdma.INT_ERRORS != 0) {
             panel.stats.failed_sends +%= 1;
-            dwdma.halt(panel.dma_base, panel.dma_channel);
+            _ = dwdma.halt(panel.dma_base, panel.dma_channel);
         }
         if (panel.pending.first != 0) {
             panel.retired = panel.chain;
@@ -300,7 +300,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
 
     // The clocks: the D-PHY's from the 20 MHz reference clock, the pixel
     // clock from the 240 MHz one.
-    const divider = pixelDivider(wanted.pixel_hz);
+    const divider = pixelDivider(wanted.timing.pixel_hz);
     panel.pixel_hz = pixel_source_hz / divider;
     sys.Disable();
     system.update(system.REF_CLK_CTRL1, system.REF_240M_CLK_EN, 0);
@@ -332,25 +332,19 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
 
     if (bus_to_bridge) |bridge_bus| {
         // An HDMI bridge: brought up over I2C for the mode the link carries.
-        const mode: lt8912b.Mode = .{
-            .width = wanted.width,
-            .height = wanted.height,
-            .hsync = wanted.hsync,
-            .hbp = wanted.hbp,
-            .hfp = wanted.hfp,
-            .vsync = wanted.vsync,
-            .vbp = wanted.vbp,
-            .vfp = wanted.vfp,
-            .hsync_high = wanted.hsync_high,
-            .vsync_high = wanted.vsync_high,
-            .pixel_hz = panel.pixel_hz,
-        };
+        // At the pixel clock the divider makes.
+        var mode: lt8912b.Mode = wanted.timing;
+        mode.pixel_hz = panel.pixel_hz;
         // The mode's AVI infoframe: a computer's picture in the whole
         // range, with no number, since the clocks here are not CEA's.
         var avi: [rtg.RTG_AVI_BYTES]u8 = undefined;
-        const shown: rtg.RtgTimings = .{ .h_active = wanted.width, .v_active = wanted.height };
+        const shown: rtg.RtgTimings = .{ .h_active = wanted.timing.width, .v_active = wanted.timing.height };
         _ = driverBase(panel.board).BuildAviInfoFrame(&shown, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL | rtg.RTGAVI_NO_VIC, &avi);
-        if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, lane_mbps, mode, &avi)) {
+        // HDMI, unless the monitor's EDID says it is a DVI one.
+        var monitor: rtg.RtgMonitorInfo = .{};
+        _ = panel.board.rtg_base.?.GetBoardMonitor(panel.board, &monitor, @sizeOf(rtg.RtgMonitorInfo));
+        const dvi = monitor.flags & rtg.modes.RTGMON_EDID != 0 and monitor.flags & rtg.modes.RTGMON_HDMI == 0;
+        if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, lane_mbps, mode, &avi, dvi)) {
             exec.kprintf(sys, "%s: the HDMI bridge did not take its bring-up\n", .{MODULE_NAME});
             return err.RTGERR_NO_DISPLAY;
         }
@@ -369,26 +363,12 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     }
 
     host.setVideo(.{
-        .width = wanted.width,
-        .height = wanted.height,
-        .hsync = wanted.hsync,
-        .hbp = wanted.hbp,
-        .hfp = wanted.hfp,
-        .vsync = wanted.vsync,
-        .vbp = wanted.vbp,
-        .vfp = wanted.vfp,
+        .timing = wanted.timing,
         .coding = if (panel.hdmi) host.coding_rgb888 else host.coding_rgb565,
         .low_power = !panel.hdmi,
     }, panel.lane_kbps, panel.pixel_hz);
     bridge.setUp(.{
-        .width = wanted.width,
-        .height = wanted.height,
-        .hsync = wanted.hsync,
-        .hbp = wanted.hbp,
-        .hfp = wanted.hfp,
-        .vsync = wanted.vsync,
-        .vbp = wanted.vbp,
-        .vfp = wanted.vfp,
+        .timing = wanted.timing,
         .bits_per_pixel = if (panel.hdmi) 24 else wanted.bits_per_pixel,
         .raw_type = if (panel.hdmi) bridge.raw_rgb888 else bridge.raw_rgb565,
     });
@@ -483,10 +463,12 @@ fn stopStream(panel: *Panel) void {
     bridge.underrunInterrupt(false);
     bridge.dpi(false);
     host.videoMode(false);
-    // The chains are freed only once the channel has stopped reading them.
-    dwdma.halt(panel.dma_base, panel.dma_channel);
+    // The chains are freed only once the channel has stopped reading
+    // them; one that did not stop keeps them, and they are not freed.
+    const stopped = dwdma.halt(panel.dma_base, panel.dma_channel);
+    if (!stopped) exec.kprintf(sys, "%s: the stream's channel did not stop; its chains are kept\n", .{MODULE_NAME});
     for ([_]*Chain{ &panel.chain, &panel.pending, &panel.retired }) |one| {
-        chain_file.free(sys, one.*);
+        if (stopped) chain_file.free(sys, one.*);
         one.* = .{};
     }
 }
@@ -498,7 +480,7 @@ fn stopStream(panel: *Panel) void {
 /// before the next is made.
 fn stream(panel: *Panel, bands: []const rtg.RtgBand) i32 {
     const sys = panel.sys;
-    const made = chain_file.build(sys, bands, panel.config.height, panel.stream_pitch) orelse return err.RTGERR_NO_MEMORY;
+    const made = chain_file.build(sys, bands, panel.config.timing.height, panel.stream_pitch) orelse return err.RTGERR_NO_MEMORY;
     if (!panel.streaming) {
         startStream(panel, made);
         // A bridge that does not take the stream shows nothing: the
@@ -638,16 +620,16 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     // makes of the one asked.
     const timings: rtg.RtgTimings = .{
         .pixel_clock_hz = panel.pixel_hz,
-        .h_active = wanted.width,
-        .h_front = wanted.hfp,
-        .h_sync = wanted.hsync,
-        .h_back = wanted.hbp,
-        .v_active = wanted.height,
-        .v_front = wanted.vfp,
-        .v_sync = wanted.vsync,
-        .v_back = wanted.vbp,
-        .flags = (if (wanted.hsync_high) rtg.modes.RTGTM_HSYNC_HIGH else 0) |
-            (if (wanted.vsync_high) rtg.modes.RTGTM_VSYNC_HIGH else 0),
+        .h_active = wanted.timing.width,
+        .h_front = wanted.timing.hfp,
+        .h_sync = wanted.timing.hsync,
+        .h_back = wanted.timing.hbp,
+        .v_active = wanted.timing.height,
+        .v_front = wanted.timing.vfp,
+        .v_sync = wanted.timing.vsync,
+        .v_back = wanted.timing.vbp,
+        .flags = (if (wanted.timing.hsync_high) rtg.modes.RTGTM_HSYNC_HIGH else 0) |
+            (if (wanted.timing.vsync_high) rtg.modes.RTGTM_VSYNC_HIGH else 0),
     };
     if (rb.AddBoardMode(board, &timings, @intFromEnum(rtg.PixelFormat.rgb565), rtg.modes.RTGMF_DEFAULT) == 0) {
         giveBack(panel);
@@ -666,10 +648,10 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
 /// not. What the stream reads is set from the copy once that is taken.
 fn sizeRows(panel: *Panel) void {
     const wanted = &panel.config;
-    const row = wanted.width * (wanted.bits_per_pixel / 8);
+    const row = wanted.timing.width * (wanted.bits_per_pixel / 8);
     const line = hardware.DCACHE_LINE_SIZE;
     panel.screen_pitch = if (panel.hdmi) (row + line - 1) / line * line else row;
-    panel.frame_bytes = panel.screen_pitch * wanted.height;
+    panel.frame_bytes = panel.screen_pitch * wanted.timing.height;
     panel.stream_pitch = row;
     panel.stream_frame_bytes = panel.frame_bytes;
 }
@@ -716,27 +698,19 @@ fn checkMode(board: *rtg.RtgBoard, timings: *const rtg.RtgTimings) callconv(.c) 
     if (line * lines == 0) return err.RTGERR_BAD_MODE;
     const millihertz = @as(u64, timings.pixel_clock_hz) * 1000 / (line * lines);
     if (millihertz < 59_500 or millihertz > 60_500) return err.RTGERR_BAD_MODE;
-    if (sends.forSize(timings.h_active, timings.v_active) != null) return err.RTGERR_OK;
-    const own = timings.h_active == panel.own.width and timings.v_active == panel.own.height;
+    // The table's rates are for its lanes: a part wired on fewer has its
+    // own mode alone.
+    if (sends.forSize(timings.h_active, timings.v_active) != null and panel.own.lanes == sends.lanes) return err.RTGERR_OK;
+    const own = timings.h_active == panel.own.timing.width and timings.v_active == panel.own.timing.height;
     return if (own) err.RTGERR_OK else err.RTGERR_BAD_MODE;
 }
 
 /// `mode` in place of the part's own: the picture, its timings, the
-/// pixel clock and the link's rate on two lanes.
+/// pixel clock and the lanes' rate. The lanes stay the part's, which
+/// `checkMode` has held to the ones the table's rates are for.
 fn take(wanted: *config.Config, mode: *const sends.Mode) void {
-    wanted.width = mode.width;
-    wanted.height = mode.height;
-    wanted.pixel_hz = mode.pixel_hz;
-    wanted.hsync = mode.hsync;
-    wanted.hbp = mode.hbp;
-    wanted.hfp = mode.hfp;
-    wanted.vsync = mode.vsync;
-    wanted.vbp = mode.vbp;
-    wanted.vfp = mode.vfp;
-    wanted.hsync_high = mode.hsync_high;
-    wanted.vsync_high = mode.vsync_high;
+    wanted.timing = mode.timing;
     wanted.lane_mbps = mode.lane_mbps;
-    wanted.lanes = 2;
 }
 
 /// The PSRAM's bus clock in MHz, as the board's list gives it (80 if it
@@ -751,8 +725,8 @@ fn psramMhz(driver: *rtg.RtgDriver) u32 {
 /// as the pixel clock sends frames.
 fn streamBytes(panel: *const Panel) u64 {
     const wanted = &panel.config;
-    const line = wanted.hsync + wanted.hbp + wanted.width + wanted.hfp;
-    const lines = wanted.vsync + wanted.vbp + wanted.height + wanted.vfp;
+    const line = wanted.timing.hsync + wanted.timing.hbp + wanted.timing.width + wanted.timing.hfp;
+    const lines = wanted.timing.vsync + wanted.timing.vbp + wanted.timing.height + wanted.timing.vfp;
     const whole: u64 = @as(u64, line) * lines;
     if (whole == 0) return 0;
     return @as(u64, panel.stream_frame_bytes) * panel.pixel_hz / whole;
@@ -779,7 +753,7 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
     var wanted = panel.own;
     if (sends.forSize(mode.width, mode.height)) |sent| {
         take(&wanted, sent);
-    } else if (mode.width != panel.own.width or mode.height != panel.own.height) {
+    } else if (mode.width != panel.own.timing.width or mode.height != panel.own.timing.height) {
         return err.RTGERR_BAD_MODE;
     }
     const lane = host.pllFor(wanted.lane_mbps) orelse return err.RTGERR_BAD_MODE;
@@ -794,9 +768,9 @@ fn setMode(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, _: *const rtg.RtgTimi
     panel.config = wanted;
     sizeRows(panel);
     var code: i32 = err.RTGERR_NO_MEMORY;
-    if (link_file.allocate(&panel.link, sys, wanted.width, wanted.height, .bgr24)) {
+    if (link_file.allocate(&panel.link, sys, wanted.timing.width, wanted.timing.height, .bgr24)) {
         panel.stream_pitch = panel.link.pitch;
-        panel.stream_frame_bytes = panel.link.pitch * wanted.height;
+        panel.stream_frame_bytes = panel.link.pitch * wanted.timing.height;
         code = bringUp(panel, bus_to_bridge, lane);
         if (code != err.RTGERR_OK) giveBack(panel);
     }
@@ -848,9 +822,9 @@ fn showThese(panel: *Panel, what: *const rtg.RtgShow) i32 {
     // The board's own picture: the copy, which a panel makes the first
     // time it is asked for, filled whole with what the library composes.
     if (panel.link.pixels == 0) {
-        if (!link_file.allocate(&panel.link, sys, panel.config.width, panel.config.height, .rgb565)) return err.RTGERR_NO_MEMORY;
+        if (!link_file.allocate(&panel.link, sys, panel.config.timing.width, panel.config.timing.height, .rgb565)) return err.RTGERR_NO_MEMORY;
     }
-    const whole = rtg.RtgRect{ .width = @intCast(panel.config.width), .height = @intCast(panel.config.height) };
+    const whole = rtg.RtgRect{ .width = @intCast(panel.config.timing.width), .height = @intCast(panel.config.timing.height) };
     const filled = link_file.fill(&panel.link, &panel.engine, sys, panel.board, &whole, panel.streaming);
     if (filled != err.RTGERR_OK) return filled;
     // A stream that reads the copy already sends what was just put into

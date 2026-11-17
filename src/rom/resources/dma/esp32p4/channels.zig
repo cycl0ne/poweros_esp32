@@ -69,7 +69,7 @@ pub fn controller(sys: *ExecBase) usize {
     sys.Enable();
     if (!dwdma.reset(found.base)) return 0;
     dwdma.enable(found.base);
-    for (0..dw_channels) |channel| dwdma.stop(found.base, @intCast(channel));
+    for (0..dw_channels) |channel| _ = dwdma.stop(found.base, @intCast(channel));
     return found.base;
 }
 

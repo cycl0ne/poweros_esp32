@@ -46,8 +46,8 @@ const dac = @import("dac.zig");
 const MODULE_NAME = "rta-pwmdac";
 const DRIVER_NAME = "pwmdac";
 const VERSION = 1;
-const REVISION = 0;
-const BUILD_DATE = "25.10.2026";
+const REVISION = 1;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -218,8 +218,11 @@ fn streamUp(instance: *Instance) i32 {
 /// stopped, the interrupt out, the channel and the memory freed.
 fn streamDown(instance: *Instance) void {
     const sys = instance.sys;
+    // The ring is freed only once the channel has stopped reading it; one
+    // that did not stop keeps it.
+    var stopped = true;
     if (instance.up) {
-        dwdma.stop(instance.ring.base, instance.ring.channel);
+        stopped = dwdma.stop(instance.ring.base, instance.ring.channel);
         dac.stop();
     }
     instance.up = false;
@@ -228,7 +231,10 @@ fn streamDown(instance: *Instance) void {
     if (instance.has_channel) instance.dma.?.FreeDMAChannel(instance.channel);
     instance.has_channel = false;
     instance.ring.items = null;
-    if (instance.memory) |memory| sys.FreeVec(memory);
+    if (!stopped) exec.kprintf(sys, "%s: the channel did not stop; its ring is kept\n", .{MODULE_NAME});
+    if (instance.memory) |memory| {
+        if (stopped) sys.FreeVec(memory);
+    }
     instance.memory = null;
     instance.task = null;
 }

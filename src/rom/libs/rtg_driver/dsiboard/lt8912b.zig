@@ -123,19 +123,7 @@ pub fn readEdid(bus: I2c, number: u32, into: *Edid) bool {
 
 /// What the bridge sends the monitor: the picture's size, its timings in
 /// pixel clocks and lines, the sync pulses' polarity, the pixel clock.
-pub const Mode = struct {
-    width: u32,
-    height: u32,
-    hsync: u32,
-    hbp: u32,
-    hfp: u32,
-    vsync: u32,
-    vbp: u32,
-    vfp: u32,
-    hsync_high: bool,
-    vsync_high: bool,
-    pixel_hz: u32,
-};
+pub const Mode = @import("config.zig").Timing;
 
 /// The DDS's frequency word for a pixel clock: 0x16C16 a megahertz.
 fn ddsWord(pixel_hz: u32) u32 {
@@ -187,10 +175,11 @@ fn writeAll(bus: I2c, address: u32, writes: []const Write) bool {
     return true;
 }
 
-/// The bridge brought up for `mode` on `lanes` lanes, its HDMI output on,
-/// sending `frame`, the mode's AVI infoframe; false at the first write it
+/// The bridge brought up for `mode` on `lanes` lanes, its HDMI output on:
+/// sending HDMI with `frame`, the mode's AVI infoframe, or DVI to a
+/// monitor that takes nothing else (`dvi`); false at the first write it
 /// does not take.
-pub fn setUp(bus: I2c, main: u32, lanes: u32, lane_mbps: u32, mode: Mode, frame: *const [sdk.rtg.RTG_AVI_BYTES]u8) bool {
+pub fn setUp(bus: I2c, main: u32, lanes: u32, lane_mbps: u32, mode: Mode, frame: *const [sdk.rtg.RTG_AVI_BYTES]u8, dvi: bool) bool {
     const dsi = main + 1;
     const avi = main + 2;
     if (!writeAll(bus, main, &digital_clocks)) return false;
@@ -212,8 +201,8 @@ pub fn setUp(bus: I2c, main: u32, lanes: u32, lane_mbps: u32, mode: Mode, frame:
     if (!infoframe(bus, main, avi, mode, frame)) return false;
 
     if (!receiverReset(bus, main)) return false;
-    // HDMI rather than DVI: infoframes are sent.
-    if (!bus.write(main, 0xB2, 0x01)) return false;
+    // HDMI, whose infoframes are sent, or DVI.
+    if (!bus.write(main, 0xB2, if (dvi) 0x00 else 0x01)) return false;
     if (!writeAll(bus, avi, &audio)) return false;
     if (!writeAll(bus, main, &lvds)) return false;
     // The HDMI transmitter on.

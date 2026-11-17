@@ -24,21 +24,15 @@
 //! The board's own mode, 800x600 on VESA's timings, is the part's: its
 //! tags give it, and it is what a monitor that names none of these gets.
 
-/// A mode as the DSI board drives it: the picture, its timings in pixel
-/// clocks and lines, the sync polarity, the pixel clock, and the lane rate
-/// on two lanes.
+const Timing = @import("config.zig").Timing;
+
+/// The lanes the table's rates are for.
+pub const lanes: u32 = 2;
+
+/// A mode as the DSI board drives it: the picture and its timings, and
+/// the lanes' rate on `lanes` lanes.
 pub const Mode = struct {
-    width: u32,
-    height: u32,
-    pixel_hz: u32,
-    hsync: u32,
-    hbp: u32,
-    hfp: u32,
-    vsync: u32,
-    vbp: u32,
-    vfp: u32,
-    hsync_high: bool,
-    vsync_high: bool,
+    timing: Timing,
     lane_mbps: u32,
 };
 
@@ -49,19 +43,19 @@ pub const modes = [_]Mode{
     // frame one line shorter. The lanes carry half again the picture:
     // 1440 Mbit/s, under the PHY's 1500; at a third more, 1280, the
     // bridge's clock hunts.
-    .{ .width = 1360, .height = 768, .pixel_hz = 80_000_000, .hsync = 112, .hbp = 144, .hfp = 64, .vsync = 6, .vbp = 17, .vfp = 3, .hsync_high = true, .vsync_high = true, .lane_mbps = 1440 },
+    .{ .timing = .{ .width = 1360, .height = 768, .pixel_hz = 80_000_000, .hsync = 112, .hbp = 144, .hfp = 64, .vsync = 6, .vbp = 17, .vfp = 3, .hsync_high = true, .vsync_high = true }, .lane_mbps = 1440 },
     // CEA's 1280x720p60: 1650 x 750 at 74.25 MHz, 45 kHz lines. At 80 MHz
     // a line is 1778 clocks; the 128 more are back porch.
-    .{ .width = 1280, .height = 720, .pixel_hz = 80_000_000, .hsync = 40, .hbp = 348, .hfp = 110, .vsync = 5, .vbp = 20, .vfp = 5, .hsync_high = true, .vsync_high = true, .lane_mbps = 1280 },
+    .{ .timing = .{ .width = 1280, .height = 720, .pixel_hz = 80_000_000, .hsync = 40, .hbp = 348, .hfp = 110, .vsync = 5, .vbp = 20, .vfp = 5, .hsync_high = true, .vsync_high = true }, .lane_mbps = 1280 },
     // VESA's 1024x768 at 60 Hz: 1344 x 806 at 65 MHz, 48.4 kHz lines. At
     // 60 MHz a line is 1240 clocks; the back porch is 104 shorter.
-    .{ .width = 1024, .height = 768, .pixel_hz = 60_000_000, .hsync = 136, .hbp = 56, .hfp = 24, .vsync = 6, .vbp = 29, .vfp = 3, .hsync_high = false, .vsync_high = false, .lane_mbps = 960 },
+    .{ .timing = .{ .width = 1024, .height = 768, .pixel_hz = 60_000_000, .hsync = 136, .hbp = 56, .hfp = 24, .vsync = 6, .vbp = 29, .vfp = 3, .hsync_high = false, .vsync_high = false }, .lane_mbps = 960 },
 };
 
 /// The mode of that size the host sends; null where it has none.
 pub fn forSize(width: u32, height: u32) ?*const Mode {
     for (&modes) |*mode| {
-        if (mode.width == width and mode.height == height) return mode;
+        if (mode.timing.width == width and mode.timing.height == height) return mode;
     }
     return null;
 }
@@ -72,13 +66,13 @@ const testing = @import("std").testing;
 
 test "the modes the host sends, by their size; each near 60 frames a second" {
     try testing.expectEqual(@as(u32, 1280), forSize(1280, 720).?.lane_mbps);
-    try testing.expectEqual(@as(u32, 60_000_000), forSize(1024, 768).?.pixel_hz);
+    try testing.expectEqual(@as(u32, 60_000_000), forSize(1024, 768).?.timing.pixel_hz);
     try testing.expectEqual(@as(?*const Mode, null), forSize(1920, 1080));
     try testing.expectEqual(@as(?*const Mode, null), forSize(800, 600));
     for (&modes) |*mode| {
-        const line = mode.hsync + mode.hbp + mode.width + mode.hfp;
-        const lines = mode.vsync + mode.vbp + mode.height + mode.vfp;
-        const millihertz = @as(u64, mode.pixel_hz) * 1000 / (@as(u64, line) * lines);
+        const line = mode.timing.hsync + mode.timing.hbp + mode.timing.width + mode.timing.hfp;
+        const lines = mode.timing.vsync + mode.timing.vbp + mode.timing.height + mode.timing.vfp;
+        const millihertz = @as(u64, mode.timing.pixel_hz) * 1000 / (@as(u64, line) * lines);
         try testing.expect(millihertz > 59_500 and millihertz < 60_500);
     }
 }

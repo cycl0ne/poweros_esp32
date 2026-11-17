@@ -313,14 +313,7 @@ pub fn commandsSent(sys: *ExecBase) bool {
 /// What video mode needs: the picture's size and its timings, in pixel
 /// clocks and lines.
 pub const Video = struct {
-    width: u32,
-    height: u32,
-    hsync: u32,
-    hbp: u32,
-    hfp: u32,
-    vsync: u32,
-    vbp: u32,
-    vfp: u32,
+    timing: @import("config.zig").Timing,
     coding: u32,
     /// Whether the link may drop to low power in the blanking.
     low_power: bool = true,
@@ -341,17 +334,17 @@ pub fn setVideo(video: Video, kbps: u32, pixel_hz: u32) void {
     reg(dpi_color_coding).* = video.coding;
     reg(dpi_cfg_pol).* = 0;
     reg(vid_mode_cfg).* = if (video.low_power) vid_mode_burst else vid_mode_burst_high_speed;
-    reg(vid_pkt_size).* = video.width;
+    reg(vid_pkt_size).* = video.timing.width;
     reg(vid_num_chunks).* = 0;
     reg(vid_null_size).* = 0;
-    const line = video.hsync + video.hbp + video.width + video.hfp;
-    reg(vid_hsa_time).* = byteClocks(video.hsync, kbps, pixel_hz);
-    reg(vid_hbp_time).* = byteClocks(video.hbp, kbps, pixel_hz);
+    const line = video.timing.hsync + video.timing.hbp + video.timing.width + video.timing.hfp;
+    reg(vid_hsa_time).* = byteClocks(video.timing.hsync, kbps, pixel_hz);
+    reg(vid_hbp_time).* = byteClocks(video.timing.hbp, kbps, pixel_hz);
     reg(vid_hline_time).* = byteClocks(line, kbps, pixel_hz);
-    reg(vid_vsa_lines).* = video.vsync;
-    reg(vid_vbp_lines).* = video.vbp;
-    reg(vid_vfp_lines).* = video.vfp;
-    reg(vid_vactive_lines).* = video.height;
+    reg(vid_vsa_lines).* = video.timing.vsync;
+    reg(vid_vbp_lines).* = video.timing.vbp;
+    reg(vid_vfp_lines).* = video.timing.vfp;
+    reg(vid_vactive_lines).* = video.timing.height;
 }
 
 /// From command mode to video mode, and back.
@@ -508,9 +501,10 @@ test "a line in the lane's byte clocks: to the nearest, and whole for the HDMI m
     try testing.expectEqual(@as(u32, 2145), byteClocks(1056, 650_000, 40_000_000));
     // The monitor's modes: a line of each is whole byte clocks.
     for (monitor_modes) |mode| {
-        const line = mode.width + mode.hsync + mode.hbp + mode.hfp;
+        const timing = mode.timing;
+        const line = timing.width + timing.hsync + timing.hbp + timing.hfp;
         const bits = @as(u64, line) * mode.lane_mbps * 1_000_000;
-        try testing.expectEqual(@as(u64, 0), bits % (@as(u64, mode.pixel_hz) * 8));
-        try testing.expectEqual(bits / (@as(u64, mode.pixel_hz) * 8), byteClocks(line, mode.lane_mbps * 1000, mode.pixel_hz));
+        try testing.expectEqual(@as(u64, 0), bits % (@as(u64, timing.pixel_hz) * 8));
+        try testing.expectEqual(bits / (@as(u64, timing.pixel_hz) * 8), byteClocks(line, mode.lane_mbps * 1000, timing.pixel_hz));
     }
 }

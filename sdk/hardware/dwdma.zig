@@ -143,19 +143,26 @@ fn run(base: usize, channel: u32, on: bool) void {
 }
 
 /// Channel `channel` stopped, once its burst is done; its configuration
-/// and interrupts kept, so `go` starts it again.
-pub fn halt(base: usize, channel: u32) void {
+/// and interrupts kept, so `go` starts it again. False when it still
+/// reads as enabled after a million looks: it may then still be reading
+/// its items and the memory they name.
+pub fn halt(base: usize, channel: u32) bool {
     run(base, channel, false);
     var tries: u32 = 0;
-    while (reg(base + DMAC_CHEN).* & @as(u32, 1) << @intCast(channel) != 0 and tries < 1_000_000) : (tries += 1) {}
+    while (reg(base + DMAC_CHEN).* & @as(u32, 1) << @intCast(channel) != 0) : (tries += 1) {
+        if (tries == 1_000_000) return false;
+    }
+    return true;
 }
 
 /// Channel `channel` stopped - once its burst is done - and its
-/// interrupts off: as dma.resource leaves a channel given back.
-pub fn stop(base: usize, channel: u32) void {
-    halt(base, channel);
+/// interrupts off: as dma.resource leaves a channel given back. False as
+/// for `halt`.
+pub fn stop(base: usize, channel: u32) bool {
+    const stopped = halt(base, channel);
     channelReg(base, channel, CH_INTSIGNAL_ENA).* = 0;
     channelReg(base, channel, CH_INTCLEAR).* = 0xFFFF_FFFF;
+    return stopped;
 }
 
 /// How a channel feeds a peripheral: the handshake line the peripheral

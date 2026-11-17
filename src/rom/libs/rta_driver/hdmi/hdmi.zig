@@ -47,8 +47,8 @@ const i2s = @import("i2s.zig");
 const MODULE_NAME = "rta-hdmi";
 const DRIVER_NAME = "hdmi";
 const VERSION = 1;
-const REVISION = 3;
-const BUILD_DATE = "16.11.2026";
+const REVISION = 4;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -227,8 +227,11 @@ fn streamDown(instance: *Instance) void {
     const sys = instance.sys;
     if (instance.board) |board| _ = instance.rtg_base.?.SetBoardAudio(board, null);
     instance.board = null;
+    // The ring is freed only once the channel has stopped reading it; one
+    // that did not stop keeps it.
+    var stopped = true;
     if (instance.up) {
-        dwdma.stop(instance.ring.base, instance.ring.channel);
+        stopped = dwdma.stop(instance.ring.base, instance.ring.channel);
         i2s.stop();
     }
     instance.up = false;
@@ -237,7 +240,10 @@ fn streamDown(instance: *Instance) void {
     if (instance.has_channel) instance.dma.?.FreeDMAChannel(instance.channel);
     instance.has_channel = false;
     instance.ring.items = null;
-    if (instance.memory) |memory| sys.FreeVec(memory);
+    if (!stopped) exec.kprintf(sys, "%s: the channel did not stop; its ring is kept\n", .{MODULE_NAME});
+    if (instance.memory) |memory| {
+        if (stopped) sys.FreeVec(memory);
+    }
     instance.memory = null;
     instance.task = null;
 }

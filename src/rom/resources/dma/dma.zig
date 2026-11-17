@@ -149,7 +149,7 @@ fn lvoFreeDMAChannel(db: *DmaBase, channel: u32) callconv(.c) void {
     } else if (has_2d and channel < dw_first) {
         chip.stop2d(channel - general);
     } else if (has_dw and channel < pl_first) {
-        if (db.dw_base != 0) chip.stopChannel(db.dw_base, channel - dw_first);
+        if (db.dw_base != 0) _ = chip.stopChannel(db.dw_base, channel - dw_first);
     } else if (has_pl) {
         if (db.pl_base != 0) chip.stopPlChannel(db.pl_base, channel - pl_first);
     }
