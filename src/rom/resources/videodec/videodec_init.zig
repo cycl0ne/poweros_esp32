@@ -12,7 +12,9 @@
 //!
 //! On the BCM2711 (the Compute Module 4) the decoder is the chip's H.265
 //! block, found among the board's parts: its clock is set and its
-//! interrupt hooked by the first OpenVideoDecoder.
+//! interrupt hooked by the first OpenVideoDecoder. H.264 is the VideoCore
+//! firmware's, offered where the board lists the firmware's queue
+//! (`CHIP_BCM2711_VCHIQ`); each H.264 decoder opens vchiq.resource.
 //!
 //! On a chip or board without the decoder (the host the tests run on) the
 //! resource is made all the same, without it: VideoDecCodecs answers 0,
@@ -35,7 +37,7 @@ const bcm2711 = @import("codec/_bcm2711.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 8;
+pub const RESOURCE_REVISION = 9;
 const BUILD_DATE = "17.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
@@ -96,7 +98,7 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
             vb.vpu = part.regs;
             vb.vpu_irq = part.irq;
             vb.hevc.mailbox = part.mailbox;
-            vb.codecs = types.VDCODEC_H265;
+            vb.codecs = types.VDCODEC_H265 | if (part.h264) types.VDCODEC_H264 else 0;
         }
     }
     if (comptime engine == .vcn) {

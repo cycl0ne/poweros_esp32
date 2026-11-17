@@ -154,7 +154,7 @@ inline fn at(regs: usize, offset: usize) *volatile u32 {
 
 /// The block as the board lists it, and the firmware's mailbox its clock
 /// is asked through.
-pub const Part = struct { regs: usize, irq: u32, mailbox: usize };
+pub const Part = struct { regs: usize, irq: u32, mailbox: usize, h264: bool };
 
 /// The board's H.265 block, and its firmware's mailbox; null on a board
 /// with either missing.
@@ -171,7 +171,9 @@ pub fn find(sys: *ExecBase) ?Part {
     const irq = ub.GetTagData(st.PART_Irq, 0, part.tags);
     const mailbox = ub.GetTagData(st.PART_Address, 0, firmware.tags);
     if (regs == 0 or irq == 0 or mailbox == 0) return null;
-    return .{ .regs = regs, .irq = @intCast(irq), .mailbox = mailbox };
+    // H.264 is the firmware's, behind its queue (decoder/_mmal.zig).
+    const queue = eb.FindBoardPart(null, st.PARTKIND_FIRMWARE, st.CHIP_BCM2711_VCHIQ) != null;
+    return .{ .regs = regs, .irq = @intCast(irq), .mailbox = mailbox, .h264 = queue };
 }
 
 /// What the resource keeps of the block beside its registers: the

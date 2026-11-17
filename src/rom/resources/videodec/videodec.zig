@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! videodec.resource: the chip's video decoder - the JH7110's WAVE511
-//! (the VisionFive 2's), or an AMD graphics device's on x86-64 - a stream
-//! fed a picture at a time and its frames handed out in the order they
-//! are shown.
+//! (the VisionFive 2's), an AMD graphics device's on x86-64, or the
+//! BCM2711's H.265 block and its VideoCore firmware's H.264 (the Compute
+//! Module 4's) - a stream fed a picture at a time and its frames handed
+//! out in the order they are shown.
 //!
 //! OpenVideoDecoder makes an instance on the chip, waking it and starting
 //! its firmware for the first; FeedVideoDecoder copies a picture into the
@@ -17,8 +18,10 @@
 //! waits `decoder/_decoder.zig`. An AMD graphics device's decoder is
 //! `codec/_vcn.zig`, a stream on it `decoder/_session.zig`; the BCM2711's
 //! H.265 block is `codec/_bcm2711.zig`, a stream on it
-//! `decoder/_bcm2711.zig`; each call hands such a decoder to its own path. Each call is a file of its own under
-//! `decoder/`. The jump table is videodec_lvo.zig, the ROM tag and init
+//! `decoder/_bcm2711.zig`, which hands an H.264 stream on to the
+//! firmware's decoder through vchiq.resource (`decoder/_mmal.zig`); each
+//! call hands such a decoder to its own path. Each call is a file of its
+//! own under `decoder/`. The jump table is videodec_lvo.zig, the ROM tag and init
 //! videodec_init.zig, the base videodec_base.zig. This file holds the
 //! names the rest of the kernel reaches the resource by, and the tests of
 //! it working as a whole - on the host, without the chip.
@@ -61,6 +64,7 @@ test {
     _ = @import("codec/_bcm2711.zig");
     _ = @import("decoder/_decoder.zig");
     _ = @import("decoder/_session.zig");
+    _ = @import("decoder/_mmal.zig");
     _ = @import("decoder/_bcm2711.zig");
 }
 

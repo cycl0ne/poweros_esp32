@@ -10,7 +10,8 @@
 //! port's sink (rta-hdmi) and audio.device, which plays through it, as
 //! the Compute Module 5 has them. And videodec.resource for the chip's
 //! H.265 block (CHIP_BCM2711_HEVC), and vchiq.resource, the queue to the
-//! VideoCore's firmware (CHIP_BCM2711_VCHIQ).
+//! VideoCore's firmware (CHIP_BCM2711_VCHIQ), through which videodec.resource
+//! decodes H.264.
 
 const rom = @import("../../rom/modules.zig");
 

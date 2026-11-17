@@ -2,7 +2,9 @@
 //! A decoder on the BCM2711's H.265 block (`codec/_bcm2711.zig`): what
 //! OpenVideoDecoder hands out there - an H.265 stream videoparse.library
 //! reads, whose pictures the block decodes one at a time, and the frames
-//! they come to, in the order they are shown.
+//! they come to, in the order they are shown. An H.264 stream goes to the
+//! VideoCore's firmware instead (`_mmal.zig`), and every call is handed
+//! on to that.
 //!
 //! **The stream** is read by a parser (`read`): a packet fed is copied
 //! and handed to it, and its events are taken as they come. A sequence
@@ -42,6 +44,7 @@ const VideoParseBase = sdk.interface.videoparse.VideoParseBase;
 const base = @import("../videodec_base.zig");
 const VideoDecBase = base.VideoDecBase;
 const bcm = @import("../codec/_bcm2711.zig");
+const MmalSession = @import("_mmal.zig").MmalSession;
 
 /// The slots a parser hands out at most.
 pub const most_slots = 40;
@@ -147,6 +150,8 @@ pub const Session = struct {
     codec: u32,
     /// How many frames the caller holds at once (VDA_HeldFrames).
     held: u32,
+    /// An H.264 stream's decoder, in the firmware: every call is its.
+    h264: ?*MmalSession = null,
     library: ?*VideoParseBase = null,
     parser: ?*vp.VideoParser = null,
     packet: ?[*]u8 = null,
@@ -213,6 +218,13 @@ pub const Session = struct {
     /// The stream's parser opened: VDERR_OK, VDERR_NO_ENGINE without
     /// videoparse.library, VDERR_NO_MEMORY.
     pub fn start(s: *Session) u32 {
+        if (s.codec == types.VDCODEC_H264) {
+            const memory = s.sys().AllocMem(@sizeOf(MmalSession), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return types.VDERR_NO_MEMORY;
+            const m: *MmalSession = @ptrCast(@alignCast(memory));
+            m.* = .{ .vb = s.vb, .held = s.held };
+            s.h264 = m;
+            return m.start();
+        }
         const lib = s.sys().OpenLibrary(vp.VIDEOPARSENAME, 1) orelse {
             exec.kprintf(s.sys(), "%s: no %s for the H.265 block\n", .{ types.VIDEODECNAME, vp.VIDEOPARSENAME });
             return types.VDERR_NO_ENGINE;
@@ -235,6 +247,7 @@ pub const Session = struct {
 
     /// A packet copied and read: as FeedVideoDecoder answers.
     pub fn feed(s: *Session, data: ?[*]const u8, length: u32, time: u64, flags: u32) u32 {
+        if (s.h264) |m| return m.feed(data, length, time, flags);
         if (s.failed != types.VDERR_OK) return s.failed;
         if (s.end_fed) return types.VDERR_END;
         if (s.reading) {
@@ -263,6 +276,7 @@ pub const Session = struct {
     /// The next frame to be shown, into `frame`: as DecodeVideoFrame
     /// answers.
     pub fn next(s: *Session, frame: *types.VideoDecFrame) u32 {
+        if (s.h264) |m| return m.next(frame);
         while (true) {
             if (s.failed != types.VDERR_OK) return s.failed;
             if (s.due_count > 0) {
@@ -284,6 +298,7 @@ pub const Session = struct {
     /// A frame handed back: its slot is given back once the stream needs
     /// it no more.
     pub fn release(s: *Session, frame: *types.VideoDecFrame) void {
+        if (s.h264) |m| return m.release(frame);
         const kept = frame.private[0];
         frame.* = .{};
         if (kept == 0 or kept > most_slots) return;
@@ -296,6 +311,7 @@ pub const Session = struct {
 
     /// What was fed and not handed out dropped, for a seek.
     pub fn flush(s: *Session) void {
+        if (s.h264) |m| return m.flush();
         if (s.parser) |parser| s.library.?.ResetVideoParser(parser);
         s.reading = false;
         s.open_picture = false;
@@ -314,6 +330,7 @@ pub const Session = struct {
 
     /// What the stream is: as GetVideoDecoderInfo answers.
     pub fn info(s: *Session, into: *types.VideoDecInfo) u32 {
+        if (s.h264) |m| return m.info(into);
         if (s.failed != types.VDERR_OK) return s.failed;
         if (!s.told) return types.VDERR_NEED_DATA;
         const q = &s.sequence;
@@ -338,6 +355,12 @@ pub const Session = struct {
     /// still write the frames and buffers: they are kept.
     pub fn end(s: *Session) void {
         const sys_base = s.sys();
+        if (s.h264) |m| {
+            m.end();
+            sys_base.FreeMem(m, @sizeOf(MmalSession));
+            s.h264 = null;
+            return;
+        }
         if (s.decoded > 0) {
             exec.kprintf(sys_base, "%s: the H.265 block: %u pictures, %lu us each in phase 1, %lu us in phase 2, %lu us copied out\n", .{
                 types.VIDEODECNAME, s.decoded, s.phase1_us / s.decoded, s.phase2_us / s.decoded, s.copy_us / s.decoded,
