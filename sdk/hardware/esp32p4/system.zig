@@ -34,10 +34,20 @@ pub const REF_CLK_CTRL1: usize = map.HP_SYS_CLKRST + 0x028;
 pub const REF_CLK_CTRL2: usize = map.HP_SYS_CLKRST + 0x02C;
 pub const REF_240M_CLK_EN: u32 = 1 << 30;
 pub const REF_20M_CLK_EN: u32 = 1 << 8;
+/// What those two reference clocks run at.
+pub const REF_240M_HZ: u32 = 240_000_000;
+pub const REF_20M_HZ: u32 = 20_000_000;
 pub const PERI_CLK_CTRL00: usize = map.HP_SYS_CLKRST + 0x030;
 pub const PERI_CLK_CTRL01: usize = map.HP_SYS_CLKRST + 0x034;
 pub const PERI_CLK_CTRL02: usize = map.HP_SYS_CLKRST + 0x038;
 pub const PERI_CLK_CTRL03: usize = map.HP_SYS_CLKRST + 0x03C;
+/// PERI_CLK_CTRL02's MIPI_DSI_DPHY_CLK_SRC_SEL: where the D-PHY's
+/// configuration and PLL reference clocks come from - 0, the field
+/// cleared, the 20 MHz reference clock; 1 RC_FAST; 2 the 25 MHz PLL.
+pub const MIPI_DSI_DPHY_CLK_SRC_SEL: u32 = 0x3 << 30;
+/// The DSI pixel clock's source for `setFunctionClock(.dsi, ...)` that is
+/// the 240 MHz reference clock.
+pub const DSI_CLK_SRC_REF_240M: u32 = 1;
 pub const PERI_CLK_CTRL10: usize = map.HP_SYS_CLKRST + 0x040;
 pub const PERI_CLK_CTRL11: usize = map.HP_SYS_CLKRST + 0x044;
 /// I2S1's receive and transmit clocks: PERI_CLK_CTRL14 the receiver's

@@ -99,7 +99,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 24;
+const REVISION = 25;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -113,8 +113,8 @@ const DISPON = 0x29;
 
 /// The 240 MHz reference clock the pixel clock is divided from, and its
 /// source number.
-const pixel_source_hz: u32 = 240_000_000;
-const pixel_source: u32 = 1;
+const pixel_source_hz = system.REF_240M_HZ;
+const pixel_source = system.DSI_CLK_SRC_REF_240M;
 /// How the stream's channel feeds the bridge: on the bridge's handshake,
 /// at priority 1, with five reads and two writes outstanding at most.
 const stream_route: dwdma.Route = .{ .handshake = bridge.dma_handshake, .priority = 1, .reads = 5, .writes = 2 };
@@ -317,7 +317,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     sys.Disable();
     system.update(system.REF_CLK_CTRL1, system.REF_240M_CLK_EN, 0);
     system.update(system.REF_CLK_CTRL2, system.REF_20M_CLK_EN, 0);
-    system.update(system.PERI_CLK_CTRL02, 0, @as(u32, 0x3) << 30);
+    system.update(system.PERI_CLK_CTRL02, 0, system.MIPI_DSI_DPHY_CLK_SRC_SEL);
     system.setFunctionClock(.dsi, .{ .source = pixel_source, .divider = divider });
     system.enable(.dsi);
     sys.Enable();
@@ -976,7 +976,7 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
     };
 }
 
-/// Of the engine: fills, copies, blends and scales.
+/// Of the engine: fills, copies, blends and scales (`engine.zig`).
 const engine_ops = rtg.RtgEngineOps{
     .fill_rect = &fillRect,
     .copy_rect = &copyRect,

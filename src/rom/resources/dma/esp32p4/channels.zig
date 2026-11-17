@@ -56,7 +56,7 @@ pub fn init() void {
     system.enable(.dma2d);
     dma2d.start();
     var channel: u32 = 0;
-    while (channel < dma2d_channels) : (channel += 1) dma2d.stopChannel(channel);
+    while (channel < dma2d_channels) : (channel += 1) _ = dma2d.stopChannel(channel);
 }
 
 /// The DW-GDMA clocked, out of reset and on, its channels stopped: where
@@ -83,7 +83,7 @@ pub fn disconnect(channel: u32) void {
 
 /// The 2D-DMA's channel `channel` stopped and disconnected.
 pub fn stop2d(channel: u32) void {
-    dma2d.stopChannel(channel);
+    _ = dma2d.stopChannel(channel);
 }
 
 /// Which numbers each engine gives a peripheral (the rest are free for

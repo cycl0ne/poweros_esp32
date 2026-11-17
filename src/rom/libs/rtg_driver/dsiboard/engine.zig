@@ -48,7 +48,7 @@
 //! own job (`scale.zig`) has written only its block, nothing of the
 //! buffer: that one is answered RTGERR_NOT_SUPPORTED, and the caller
 //! scales in software. The first job that does not end is said on the
-//! raw port; `failures` counts them.
+//! raw port.
 //!
 //! One operation at a time, under the panel's engine semaphore; each one
 //! is done before it returns.
@@ -66,7 +66,6 @@ const err = rtg.errors;
 const ExecBase = sdk.interface.exec.ExecBase;
 const hardware = sdk.hardware;
 const system = hardware.system;
-const intbits = hardware.intbits;
 const map = hardware.map;
 const dma2d = hardware.dma2d;
 const dmares = sdk.resources.dma;
@@ -81,7 +80,7 @@ pub const receive_channel = 1;
 const owner_name = "rtg-dsi engine";
 
 /// The data cache's line, and the RGB565 pixels in one.
-pub const line_bytes = 64;
+pub const line_bytes = hardware.DCACHE_LINE_SIZE;
 const line_pixels = line_bytes / 2;
 /// The fewest pixels worth handing to the engine, with the PSRAM at
 /// 80 MHz. Setting it up and keeping the cache right around it costs
@@ -101,8 +100,8 @@ const smallest_blend = 2048;
 const timeout_us = 200_000;
 const patience_frames = 10;
 
-/// What the engine keeps in the panel: its lock, its descriptors and how
-/// often each kind of job ran.
+/// What the engine keeps in the panel: its lock, its channels, its
+/// descriptors and how a job waits.
 pub const Engine = struct {
     sys: ?*ExecBase = null,
     lock: exec.SignalSemaphore = .{},
@@ -131,11 +130,6 @@ pub const Engine = struct {
     /// fill or a copy and for a blend.
     smallest: u32 = smallest_at_80,
     smallest_blend: u32 = smallest_blend,
-    fills: u32 = 0,
-    copies: u32 = 0,
-    blends: u32 = 0,
-    scales: u32 = 0,
-    failures: u32 = 0,
 };
 
 /// The engine's channels claimed, its clock on and its descriptors' lines
@@ -164,7 +158,7 @@ pub fn setUp(engine: *Engine, sys: *ExecBase, psram_mhz: u32) void {
 }
 
 /// The receive channel's interrupt.
-const end_interrupt = intbits.INTB_DMA2D_IN_CH0 + receive_channel;
+const end_interrupt = dmares.dmaIntNumber(dmares.DMA2D_CHANNEL0 + receive_channel, dmares.DMA_IN);
 
 /// The two 2D channels from dma.resource, both or neither.
 fn claim(engine: *Engine, sys: *ExecBase) bool {
@@ -277,8 +271,7 @@ fn release(engine: *Engine, sys: *ExecBase, raised: u32) bool {
         dma2d.releaseOut(over_channel);
         return true;
     }
-    stop();
-    engine.failures +%= 1;
+    stop(engine, sys);
     if (!engine.told) {
         engine.told = true;
         exec.kprintf(sys, "%s: a job did not end and was stopped; the CPU does what it left\n", .{owner_name});
@@ -290,13 +283,18 @@ fn release(engine: *Engine, sys: *ExecBase, raised: u32) bool {
 /// then each of the engine's 2D channels - a channel's number names its
 /// send side and its receive side - stopped, reset and disconnected, as
 /// a channel is when it goes back to dma.resource. Nothing of the job
-/// writes once this returns, as far as the channels' own reset says: one
-/// that does not come to rest within its bound is not noticed.
-fn stop() void {
+/// writes once this returns, as far as the channels' own reset says. A
+/// channel that does not come to rest within its bound may still write:
+/// the engine is then left alone from here on (`ready` cleared), the
+/// CPU does every job, and that is said on the raw port.
+fn stop(engine: *Engine, sys: *ExecBase) void {
     ppa.reset();
     ppa.resetScaler();
-    dma2d.stopChannel(send_channel);
-    dma2d.stopChannel(over_channel);
+    const send_rested = dma2d.stopChannel(send_channel);
+    const over_rested = dma2d.stopChannel(over_channel);
+    if (send_rested and over_rested) return;
+    engine.ready = false;
+    exec.kprintf(sys, "%s: a channel did not come to rest; the CPU does every job from now on\n", .{owner_name});
 }
 
 comptime {
@@ -407,7 +405,7 @@ pub fn fill(engine: *Engine, sys: *ExecBase, bitmap: *rtg.RtgBitMap, area: *cons
 
     const parts = descriptors(engine);
     ppa.reset();
-    if (!dma2d.connectIn(receive_channel, dma2d.peri_ppa_blend, .{})) return failed(engine);
+    if (!dma2d.connectIn(receive_channel, dma2d.peri_ppa_blend, .{})) return failed(engine, sys);
     dma2d.describe(parts.receive, @intFromPtr(bitmap.pixels.?), bitmap.pitch / 2, bitmap.height, middle.start, y, middle.end - middle.start, height, dma2d.pbyte_2);
     const asleep = prepare(engine, sys, watched);
     dma2d.runIn(receive_channel, parts.receive_at);
@@ -422,7 +420,6 @@ pub fn fill(engine: *Engine, sys: *ExecBase, bitmap: *rtg.RtgBitMap, area: *cons
     // The ends are filled and the job is stopped: the middle is the
     // CPU's as well, whatever the engine got done of it.
     if (!done) fillByCpu(bitmap, middle.start, middle.end, y, height, pixel);
-    engine.fills +%= 1;
     return err.RTGERR_OK;
 }
 
@@ -453,8 +450,8 @@ pub fn copy(engine: *Engine, sys: *ExecBase, src: *rtg.RtgBitMap, dest: *rtg.Rtg
     writeBack(sys, dest, middle.start, middle.end, dy, height);
 
     const parts = descriptors(engine);
-    if (!dma2d.connectOut(send_channel, dma2d.peri_memory_out)) return failed(engine);
-    if (!dma2d.connectIn(receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return failed(engine);
+    if (!dma2d.connectOut(send_channel, dma2d.peri_memory_out)) return failed(engine, sys);
+    if (!dma2d.connectIn(receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return failed(engine, sys);
     const run = middle.end - middle.start;
     dma2d.describe(parts.send, @intFromPtr(src.pixels.?), src.pitch / 2, src.height, sx + shift, sy, run, height, dma2d.pbyte_2);
     dma2d.describe(parts.receive, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, dy, run, height, dma2d.pbyte_2);
@@ -469,7 +466,6 @@ pub fn copy(engine: *Engine, sys: *ExecBase, src: *rtg.RtgBitMap, dest: *rtg.Rtg
     forget(sys, dest, middle, dy, height);
     // As for a fill: the middle too, from a source the copy never writes.
     if (!done) copyByCpu(src, dest, sx + shift, sy, middle.start, dy, run, height);
-    engine.copies +%= 1;
     return err.RTGERR_OK;
 }
 
@@ -497,16 +493,26 @@ fn overlapping(src: *const rtg.RtgBitMap, dest: *const rtg.RtgBitMap, src_first:
         what.src_y < what.dest_y + what.height and what.dest_y < what.src_y + what.height;
 }
 
-/// A job the engine did not take, counted: RTGERR_NOT_SUPPORTED, and the
-/// caller does all of it itself. Only where nothing of the buffer has
-/// been written - a job that wrote any of it is finished by the CPU and
-/// answered RTGERR_OK.
+/// A job the engine did not take - a channel that would not connect -
+/// with whatever of it did connect let go again (`stop`), so the engine
+/// is left as no job had begun: RTGERR_NOT_SUPPORTED, and the caller does
+/// all of it itself. Only where nothing of the buffer has been written -
+/// a job that wrote any of it is finished by the CPU and answered
+/// RTGERR_OK.
 ///
 /// INPUTS:
-/// - `engine` - the engine, for its count.
-pub fn failed(engine: *Engine) i32 {
-    engine.failures +%= 1;
+/// - `engine` - the engine, its lock held.
+/// - `sys` - exec.
+pub fn failed(engine: *Engine, sys: *ExecBase) i32 {
+    _ = letGo(engine, sys);
     return err.RTGERR_NOT_SUPPORTED;
+}
+
+/// Whatever of a job connected let go again (`stop`): false, for a
+/// caller that answers whether the engine did the job.
+pub fn letGo(engine: *Engine, sys: *ExecBase) bool {
+    stop(engine, sys);
+    return false;
 }
 
 // --- tests (host: ./zig build test) -----------------------------------------

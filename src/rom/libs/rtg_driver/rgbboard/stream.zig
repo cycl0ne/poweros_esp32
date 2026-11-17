@@ -33,9 +33,10 @@
 //! the driver's, taken and given back through the resource like any other
 //! owner's.
 
+const sdk = @import("sdk");
+const gdma = sdk.hardware.gdma;
+const cpu = sdk.hardware.cpu;
 const lcd = @import("lcd.zig");
-const gdma = @import("sdk").hardware.gdma;
-const cpu = @import("sdk").hardware.cpu;
 const Panel = @import("panel.zig").Panel;
 
 /// Stop the generator and the stream, and empty what they hold.
@@ -55,9 +56,9 @@ pub noinline fn restart(panel: *Panel) linksection(".iram.text") u32 {
     // A timing change belongs here, with the generator stopped: the
     // peripheral takes one where `update` is set, and anywhere else that
     // is in the middle of a frame the DMA is feeding.
-    if (panel.want_start) |start| {
-        lcd.setActiveStart(start);
-        panel.want_start = null;
+    if (panel.want_start != 0) {
+        lcd.setActiveStart(&panel.line_place, panel.want_start);
+        panel.want_start = 0;
     }
     gdma.start(panel.channel, .out, @truncate(@intFromPtr(panel.chain)));
     spin(panel.fill_cycles);

@@ -5,9 +5,10 @@
 //! picture into the small buffers in internal memory a stretch at a
 //! time (`panel.zig`), and a stretch the pointer crosses has the pointer
 //! laid over it there, after the copy has put it in and before the panel
-//! reads it: the buffer being filled is the one the panel reads next, a
-//! stretch's time - about 460 microseconds - after the copy starts, and the
-//! copy takes about half of that.
+//! reads it: the buffer being filled is the one the panel has just
+//! finished, which it reads again after the other two, two stretches'
+//! time - about 920 microseconds - after the copy starts, and the copy
+//! takes about a quarter of that.
 //!
 //! What says the copy is done is the copy channel's own end-of-transfer
 //! interrupt, which is enabled only for a copy of a stretch the pointer
@@ -137,10 +138,18 @@ pub fn setPointer(panel: *Panel, image: ?*const rtg.RtgPointerImage) i32 {
     return err.RTGERR_OK;
 }
 
+/// A place for an image kept within reach: one this far off the picture
+/// is as far off it as any further, and the interrupt's sums with it
+/// cannot run over.
+fn kept(place: i32) i32 {
+    const reach: i32 = 1 << 16;
+    return @max(@min(place, reach), -reach);
+}
+
 pub fn movePointer(panel: *Panel, left: i32, top: i32) void {
     panel.sys.Disable();
-    panel.pointer_left = left;
-    panel.pointer_top = top;
+    panel.pointer_left = kept(left);
+    panel.pointer_top = kept(top);
     panel.sys.Enable();
 }
 
@@ -163,7 +172,7 @@ pub fn setOverlay(panel: *Panel, image: ?*const rtg.RtgPointerImage) i32 {
 
 pub fn moveOverlay(panel: *Panel, left: i32, top: i32) void {
     panel.sys.Disable();
-    panel.overlay_left = left;
-    panel.overlay_top = top;
+    panel.overlay_left = kept(left);
+    panel.overlay_top = kept(top);
     panel.sys.Enable();
 }

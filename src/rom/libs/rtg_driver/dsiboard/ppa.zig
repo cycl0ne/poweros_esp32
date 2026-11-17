@@ -88,7 +88,7 @@ const sr_rst: u32 = 1 << 26;
 const sr_start: u32 = 1 << 27;
 
 /// The scaler's macro-block, and the block it reads for one.
-pub const macro_block = 16;
+const macro_block = 16;
 pub const port_block = 18;
 
 /// The blend unit back to idle, before its 2D-DMA channels are set up.

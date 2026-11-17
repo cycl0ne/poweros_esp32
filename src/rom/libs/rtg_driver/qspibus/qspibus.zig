@@ -19,6 +19,8 @@
 //! longer runs, and every run of pixels, through a GDMA channel from
 //! internal memory, which reads it in bursts: a word at a time it can
 //! fall behind a bus on four lines, and the bus does not wait for it.
+//! Longer parameters from elsewhere - a board's bring-up, in flash - are
+//! copied there first.
 //! Each call waits for its transaction to end, so the bytes are the
 //! caller's again when it returns, and says RTGERR_UNDERRUN when the
 //! DMA fell behind part way.
@@ -34,7 +36,7 @@ const err = rtg.errors;
 const tags = rtg.tags;
 
 const gpspi = sdk.hardware.gpspi.spi2;
-const gpio = @import("sdk").hardware.gpio;
+const gpio = sdk.hardware.gpio;
 const st = sdk.expansion.systemtags;
 const BoardPin = sdk.expansion.BoardPin;
 const gpio_resource = sdk.resources.gpio;
@@ -43,8 +45,8 @@ const GpioBase = gpio_resource.GpioBase;
 const MODULE_NAME = "rtg-qspi";
 const DRIVER_NAME = "qspi";
 const VERSION = 1;
-const REVISION = 4;
-const BUILD_DATE = "16.11.2026";
+const REVISION = 5;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -62,8 +64,8 @@ const stuck_after = 20_000_000;
 
 /// The internal data RAM, which the DMA reads without help. A run of
 /// pixels has to come from here.
-const internal_lower: usize = 0x3FC8_8000;
-const internal_upper: usize = 0x3FD0_0000;
+const internal_lower: usize = sdk.hardware.map.DRAM_START;
+const internal_upper: usize = sdk.hardware.map.DRAM_END;
 
 /// What one bus keeps. In internal memory (RTGDF_INTERNAL_INSTANCE), which
 /// is where the DMA reads its descriptors.
@@ -201,7 +203,7 @@ fn txParam(io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaque, size: u32)
     const instance = instanceOf(io);
     const code = finish();
     if (code != err.RTGERR_OK) return code;
-    if (size > gpspi.buffer_bytes) return send(instance, instance.param_opcode, cmd, .write_one, param, size);
+    if (size > gpspi.buffer_bytes) return sendLong(instance, cmd, param, size);
     gpspi.prepare(instance.param_opcode, addressOf(cmd), .write_one, size);
     if (size != 0) {
         const bytes: [*]const u8 = @ptrCast(param orelse return err.RTGERR_BAD_ARG);
@@ -256,6 +258,23 @@ fn send(instance: *Instance, opcode: u8, cmd: i32, data: gpspi.Data, bytes: ?*co
     const code = finish();
     if (code == err.RTGERR_OK and gpspi.starved()) return err.RTGERR_UNDERRUN;
     return code;
+}
+
+/// Parameters longer than the controller's buffer, which the DMA sends:
+/// from where they are when that is internal memory, else from a copy
+/// there for the one transaction.
+fn sendLong(instance: *Instance, cmd: i32, param: ?*const anyopaque, size: u32) i32 {
+    const from = @intFromPtr(param orelse return err.RTGERR_BAD_ARG);
+    if (from >= internal_lower and from + size <= internal_upper) {
+        return send(instance, instance.param_opcode, cmd, .write_one, param, size);
+    }
+    if (size > max_run) return err.RTGERR_BAD_ARG;
+    const sys = instance.sys;
+    const copy: [*]u8 = @ptrCast(sys.AllocVec(size, exec.MEMF_INTERNAL | exec.MEMF_DMA) orelse return err.RTGERR_NO_MEMORY);
+    defer sys.FreeVec(copy);
+    const bytes: [*]const u8 = @ptrFromInt(from);
+    @memcpy(copy[0..size], bytes[0..size]);
+    return send(instance, instance.param_opcode, cmd, .write_one, copy, size);
 }
 
 /// A command and `size` bytes read back on one line, in one transaction.

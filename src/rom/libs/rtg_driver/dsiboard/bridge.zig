@@ -38,7 +38,7 @@ const dma_flow_ctrl = brg + 0x88;
 const raw_buf_almost_empty_thrd = brg + 0x8C;
 
 /// Where the DMA engine writes the picture to: the bridge's FIFO.
-pub const fifo: u32 = 0x5010_5000;
+pub const fifo: u32 = sdk.hardware.map.DSI_BRG_MEM;
 /// The handshake line the bridge asks the DMA engine for more on.
 pub const dma_handshake: u32 = 0;
 

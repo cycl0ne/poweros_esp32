@@ -65,7 +65,7 @@ const held_above_at_80: u64 = 40_000_000;
 
 /// What a stream may take before it holds the engine back, with the PSRAM
 /// at `psram_mhz`.
-pub fn heldAbove(psram_mhz: u32) u64 {
+fn heldAbove(psram_mhz: u32) u64 {
     return held_above_at_80 * @max(psram_mhz, 80) / 80;
 }
 

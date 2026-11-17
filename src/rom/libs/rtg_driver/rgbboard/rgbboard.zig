@@ -48,7 +48,7 @@ const DRIVER_NAME = "rgb";
 /// The panel shows RGB565 and nothing else: two bytes a pixel.
 const bytes_per_pixel = 2;
 const VERSION = 1;
-const REVISION = 15;
+const REVISION = 16;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
@@ -277,18 +277,22 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
         },
         // Move the picture along the line, at the next blanking. The shift
         // is modulo the line, so a picture that has to go left past the
-        // sync pulse goes round the line instead.
+        // sync pulse goes round the line instead; a start that comes round
+        // to the pulse is the line's end. One the field cannot hold - on a
+        // line longer than it reaches - is refused.
         tags.RTGCTRL_RGB_SHIFT => blk: {
-            const line: i32 = @intCast(lcd.lineTotal());
+            const place = &panel.line_place;
+            const line: i64 = place.line_total;
             if (line == 0) break :blk err.RTGERR_NO_MODE;
-            const now: i32 = @intCast(lcd.active_start);
-            const start = @mod(now + @as(i32, @truncate(value)), line);
+            var start = @mod(@as(i64, place.active_start) + value, line);
+            if (start == 0) start = line;
+            if (start > lcd.max_active_start) break :blk err.RTGERR_BAD_ARG;
             panel.want_start = @intCast(start);
             panels.realign(panel);
             break :blk @intCast(start);
         },
-        tags.RTGCTRL_RGB_ACTIVE_START => @intCast(lcd.active_start),
-        tags.RTGCTRL_RGB_LINE_TOTAL => @intCast(lcd.lineTotal()),
+        tags.RTGCTRL_RGB_ACTIVE_START => @intCast(panel.line_place.active_start),
+        tags.RTGCTRL_RGB_LINE_TOTAL => @intCast(panel.line_place.line_total),
         rtg.boards.RTGCTRL_RESET_STATS => blk: {
             panels.resetStats(panel);
             break :blk err.RTGERR_OK;

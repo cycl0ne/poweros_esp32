@@ -106,8 +106,7 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     if (pins_at == 0 or setup.data_width == 0 or setup.data_width > setup.data_pins.len) return null;
     const pins: [*]const u8 = @ptrFromInt(pins_at);
     // Copied, not kept: the caller's array is the caller's.
-    var i: u32 = 0;
-    while (i < setup.data_width) : (i += 1) setup.data_pins[i] = pins[i];
+    @memcpy(setup.data_pins[0..setup.data_width], pins[0..setup.data_width]);
 
     // The four timing signals' pads, each needed: one left out is not
     // pad 0.

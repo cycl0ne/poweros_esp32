@@ -62,7 +62,7 @@ const has_pl = pl_channels != 0;
 
 pub const RESOURCE_NAME = types.DMANAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 5;
+const RESOURCE_REVISION = 6;
 const BUILD_DATE = "17.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++

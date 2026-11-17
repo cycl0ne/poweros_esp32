@@ -72,7 +72,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 14;
+const REVISION = 15;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -584,7 +584,7 @@ fn writeBand(
         if (set_rows != err.RTGERR_OK) return set_rows;
         const code = rb.TxColor(panel.io, RAMWR, band, bytes);
         if (code != err.RTGERR_UNDERRUN) return code;
-        panel.stats.underruns += 1;
+        panel.stats.underruns +%= 1;
         tries += 1;
         if (tries == underrun_tries) return code;
     }

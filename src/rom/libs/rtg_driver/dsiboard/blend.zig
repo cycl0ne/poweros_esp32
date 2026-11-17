@@ -118,10 +118,26 @@ pub fn blendPixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: 
     const middle = engine_file.middleOf(@intCast(area.x), width);
     if ((middle.end - middle.start) * height < engine.smallest_blend) return err.RTGERR_NOT_SUPPORTED;
     const picture = pictureOf(pixels, width, height, alpha) orelse return err.RTGERR_NOT_SUPPORTED;
+    if (overlapsDest(dest, area, picture)) return err.RTGERR_NOT_SUPPORTED;
 
     sys.ObtainSemaphore(&engine.lock);
     defer sys.ReleaseSemaphore(&engine.lock);
     return lay(engine, sys, dest, area, picture, watched);
+}
+
+/// Whether the memory the picture is read from and the rectangle it is
+/// laid on share a byte, from the first row's first pixel to the last
+/// row's last: the engine reads the one while it writes the other in an
+/// order of its own, so such a blend is the CPU's, row after row.
+fn overlapsDest(dest: *const rtg.RtgBitMap, area: *const rtg.RtgRect, picture: Picture) bool {
+    const height: u64 = @intCast(area.height);
+    const width: u64 = @intCast(area.width);
+    const picture_start: u64 = picture.first_row + @as(u64, picture.column) * picture.source.bytes;
+    const picture_end: u64 = picture.first_row + (height - 1) * picture.pitch + (picture.column + width) * picture.source.bytes;
+    const rows: u64 = @intFromPtr(dest.pixels.?) + @as(u64, @intCast(area.y)) * dest.pitch;
+    const dest_start = rows + @as(u64, @intCast(area.x)) * 2;
+    const dest_end = rows + (height - 1) * dest.pitch + (@as(u64, @intCast(area.x)) + width) * 2;
+    return picture_start < dest_end and dest_start < picture_end;
 }
 
 /// A picture over the rectangle, by the engine and the CPU; by the CPU
@@ -144,7 +160,7 @@ pub fn lay(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const r
 
     const parts = engine_file.descriptors(engine);
     ppa.reset();
-    if (!connect()) return engine_file.failed(engine);
+    if (!connect()) return engine_file.failed(engine, sys);
     dma2d.describe(parts.send, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, y, run, height, dma2d.pbyte_2);
     dma2d.describe(parts.over, picture.first_row, picture.width, height, picture.column + (middle.start - x), 0, run, height, picture.source.pbyte);
     dma2d.describe(parts.receive, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, y, run, height, dma2d.pbyte_2);
@@ -161,7 +177,6 @@ pub fn lay(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *const r
     // as well, over what memory holds now that its lines are out of the
     // cache.
     if (!done) layByCpu(dest, middle.start, middle.end, y, height, picture, x);
-    engine.blends +%= 1;
     return err.RTGERR_OK;
 }
 
@@ -186,7 +201,7 @@ pub fn blendRect(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *c
 
     const parts = engine_file.descriptors(engine);
     ppa.reset();
-    if (!connect()) return engine_file.failed(engine);
+    if (!connect()) return engine_file.failed(engine, sys);
     dma2d.describe(parts.send, @intFromPtr(dest.pixels.?), dest.pitch / 2, dest.height, middle.start, y, run, height, dma2d.pbyte_2);
     // The coverage block: any bytes of the buffer, a byte a pixel.
     dma2d.describe(parts.over, @intFromPtr(dest.pixels.?), dest.pitch, dest.height, middle.start, y, run, height, dma2d.pbyte_1);
@@ -203,7 +218,6 @@ pub fn blendRect(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: *c
     // As for a picture: the middle by the CPU where the engine did not
     // end it.
     if (!done) colorByCpu(dest, middle.start, middle.end, y, height, color);
-    engine.blends +%= 1;
     return err.RTGERR_OK;
 }
 
@@ -415,4 +429,30 @@ test "what a picture's pixel covers: its own coverage, the constant alpha, or th
     under[0] = 0x1234;
     layByCpu(&dest, 0, 1, 0, 1, .{ .first_row = @intFromPtr(&none), .pitch = 4, .width = 1, .column = 0, .source = covered, .alpha = 255 }, 0);
     try testing.expectEqual(@as(u16, 0x1234), under[0]);
+}
+
+test "a picture that shares memory with the rectangle it is laid on is the CPU's" {
+    // A buffer of 8 rows of 64 pixels; a picture of RGB565 read from its
+    // own rows.
+    var pixels: [8 * 64]u16 align(64) = @splat(0);
+    const dest = rtg.RtgBitMap{ .pixels = @ptrCast(&pixels), .width = 64, .height = 8, .pitch = 128, .size_bytes = 8 * 128, .format = .rgb565 };
+    const from_row = struct {
+        fn at(buffer: *[8 * 64]u16, row: usize) Picture {
+            return .{
+                .first_row = @intFromPtr(buffer) + row * 128,
+                .pitch = 128,
+                .width = 64,
+                .column = 0,
+                .source = .{ .cm = 0, .bytes = 2, .pbyte = 0 },
+                .alpha = 255,
+            };
+        }
+    };
+    const area = rtg.RtgRect{ .x = 0, .y = 4, .width = 64, .height = 2 };
+    // Rows 4 and 5 laid from rows 3 and 4, or from 5 and 6: shared.
+    try testing.expect(overlapsDest(&dest, &area, from_row.at(&pixels, 3)));
+    try testing.expect(overlapsDest(&dest, &area, from_row.at(&pixels, 5)));
+    // From rows 0 and 1, or 6 and 7: apart.
+    try testing.expect(!overlapsDest(&dest, &area, from_row.at(&pixels, 0)));
+    try testing.expect(!overlapsDest(&dest, &area, from_row.at(&pixels, 6)));
 }

@@ -205,19 +205,23 @@ pub fn start() void {
 
 /// 2D channel `channel` stopped and off whatever it was connected to,
 /// its interrupts off: what dma.resource does when it is given back.
-pub fn stopChannel(channel: u32) void {
+/// False if a side did not come to rest for its reset, which may then
+/// still be moving data.
+pub fn stopChannel(channel: u32) bool {
+    var rested = true;
     if (channel < send_channels) {
         const at = outChannel(channel);
         reg(at + link_conf).* |= out_link_stop;
-        _ = resetChannel(at, out_reset_avail);
+        if (!resetChannel(at, out_reset_avail)) rested = false;
         releaseOut(channel);
     }
     if (channel < receive_channels) {
         const at = inChannel(channel);
         reg(at + link_conf).* = in_link_stop;
-        _ = resetChannel(at, in_reset_avail);
+        if (!resetChannel(at, in_reset_avail)) rested = false;
         releaseIn(channel);
     }
+    return rested;
 }
 
 /// Send channel `channel` reset and connected to `peri`.

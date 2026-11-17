@@ -69,6 +69,10 @@ pub const CSI_HOST: usize = 0x5009_F000;
 pub const CSI_BRG: usize = 0x5009_F800;
 pub const DSI_HOST: usize = 0x500A_0000;
 pub const DSI_BRG: usize = 0x500A_0800;
+/// The bridges' FIFOs, which a DMA engine writes a picture to (DSI) or
+/// reads one from (CSI).
+pub const CSI_BRG_MEM: usize = 0x5010_4000;
+pub const DSI_BRG_MEM: usize = 0x5010_5000;
 pub const ISP: usize = 0x500A_1000;
 pub const RMT: usize = 0x500A_2000;
 pub const BITSCRAMBLER: usize = 0x500A_3000;

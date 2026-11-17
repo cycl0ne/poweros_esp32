@@ -16,8 +16,9 @@
 //!
 //! The DMA belongs to the caller: it needs dma.resource, and a resource
 //! needs exec. This file is registers and nothing else, so the driver
-//! allocates the channel and the chain and hands them over, the way
-//! flash.device drives `spiflash.zig`.
+//! allocates the channel and the chain and connects it to the peripheral
+//! (`DMAPERI_LCD`), and keeps where the picture sits in a line
+//! (`LinePlace`), which a shift moves.
 
 const hardware = @import("sdk").hardware;
 const reg = hardware.mmio.reg;
@@ -48,19 +49,15 @@ const clk_equ_sysclk: u32 = 1 << 6;
 const clk_ck_idle_edge: u32 = 1 << 7;
 const clk_ck_out_edge: u32 = 1 << 8;
 const clk_clkm_div_num_shift: u5 = 9;
-const clk_clkm_div_b_shift: u5 = 17;
 const clk_clkm_div_a_shift: u5 = 23;
 const clk_sel_shift: u5 = 29;
 const clk_en: u32 = 1 << 31;
 
 // LCD_USER
-const user_dout_cyclelen_shift: u5 = 0;
 const user_always_out_en: u32 = 1 << 13;
 const user_update: u32 = 1 << 20;
 const user_2byte_en: u32 = 1 << 23;
 const user_dout: u32 = 1 << 24;
-const user_dummy: u32 = 1 << 25;
-const user_cmd: u32 = 1 << 26;
 const user_start: u32 = 1 << 27;
 const user_reset: u32 = 1 << 28;
 
@@ -70,7 +67,6 @@ const misc_vbk_cyclelen_shift: u5 = 12;
 const misc_next_frame_en: u32 = 1 << 25;
 const misc_bk_en: u32 = 1 << 26;
 const misc_afifo_reset: u32 = 1 << 27;
-const misc_cd_idle_edge: u32 = 1 << 31;
 
 // LCD_CTRL: the back porch, the active height and the total height.
 const ctrl_hb_front_shift: u5 = 0; // 11 bits
@@ -103,10 +99,6 @@ const sig_pclk: u32 = signals.LCD_PCLK;
 /// 240 MHz PLL, which divides exactly to this panel's 30 MHz.
 const clk_sel_pll240: u32 = 2;
 const pll240_hz: u32 = 240_000_000;
-
-/// dma.resource's peripheral number for this one, which the caller
-/// connects its channel to.
-pub const dma_peripheral: u32 = 5;
 
 /// A panel, in the terms this peripheral needs it. Whoever drives the
 /// peripheral fills one in; where those numbers come from - a board's own
@@ -156,14 +148,13 @@ pub const Setup = extern struct {
 /// eleven. `timing` writes each under its field's mask, so a number past
 /// one would come out as another.
 pub fn fits(setup: *const Setup) bool {
-    const p = setup;
-    if (p.width == 0 or p.height == 0 or p.hsync_pulse == 0 or p.vsync_pulse == 0) return false;
-    const line = @as(u64, p.hsync_pulse) + p.hsync_back_porch + p.width + p.hsync_front_porch;
-    const lines = @as(u64, p.vsync_pulse) + p.vsync_back_porch + p.height + p.vsync_front_porch;
+    if (setup.width == 0 or setup.height == 0 or setup.hsync_pulse == 0 or setup.vsync_pulse == 0) return false;
+    const line = @as(u64, setup.hsync_pulse) + setup.hsync_back_porch + setup.width + setup.hsync_front_porch;
+    const lines = @as(u64, setup.vsync_pulse) + setup.vsync_back_porch + setup.height + setup.vsync_front_porch;
     if (line > 0x1000 or lines > 0x400) return false;
-    if (@as(u64, p.vsync_back_porch) + p.vsync_pulse > 0x100) return false;
-    const picture_at: u64 = if (p.active_start != 0) p.active_start else @as(u64, p.hsync_back_porch) + emittedPulse(p.hsync_pulse);
-    return picture_at >= 1 and picture_at <= 0x800;
+    if (@as(u64, setup.vsync_back_porch) + setup.vsync_pulse > 0x100) return false;
+    const picture_at: u64 = if (setup.active_start != 0) setup.active_start else @as(u64, setup.hsync_back_porch) + emittedPulse(setup.hsync_pulse);
+    return picture_at >= 1 and picture_at <= max_active_start;
 }
 
 /// The sync pulse the peripheral can actually emit. Its width field is
@@ -177,7 +168,7 @@ pub fn emittedPulse(want: u32) u32 {
     return ((want - 1) & 0x7F) + 1;
 }
 
-fn r(offset: usize) *volatile u32 {
+inline fn r(offset: usize) *volatile u32 {
     return reg(base + offset);
 }
 
@@ -204,9 +195,9 @@ fn divideFor(want_hz: u32) Divide {
 /// The pads the panel is on, routed out through the GPIO matrix: as many
 /// colour bits as it has, then the four timing signals.
 pub fn pins(setup: *const Setup) void {
-    var i: u32 = 0;
-    while (i < setup.data_width and i < setup.data_pins.len) : (i += 1) {
-        route(setup.data_pins[i], sig_data0 + i, @intCast(setup.drive_strength));
+    var bit: u32 = 0;
+    while (bit < setup.data_width and bit < setup.data_pins.len) : (bit += 1) {
+        route(setup.data_pins[bit], sig_data0 + bit, @intCast(setup.drive_strength));
     }
     route(setup.pclk_pin, sig_pclk, @intCast(setup.drive_strength));
     route(setup.hsync_pin, sig_hsync, @intCast(setup.drive_strength));
@@ -224,18 +215,17 @@ fn route(pin: u8, signal: u32, strength: u2) void {
     gpio.connectOut(pin, signal, false);
 }
 
-/// The peripheral, set up for the board's panel but not yet running. The
-/// DMA has to be pointed at a framebuffer and started before `start`.
-pub fn setUp(setup: *const Setup) void {
-    const p = setup;
-
+/// The peripheral, set up for the board's panel but not yet running, and
+/// `place` where the panel's numbers put the picture in a line. The DMA
+/// has to be pointed at a framebuffer and started before `start`.
+pub fn setUp(setup: *const Setup, place: *LinePlace) void {
     // What the panel amounts to in the peripheral's own terms, kept for
     // the calls that work in them afterwards.
-    line_total = p.hsync_pulse + p.hsync_back_porch + p.width + p.hsync_front_porch;
-    active_start = if (p.active_start != 0)
-        p.active_start
+    place.line_total = setup.hsync_pulse + setup.hsync_back_porch + setup.width + setup.hsync_front_porch;
+    place.active_start = if (setup.active_start != 0)
+        setup.active_start
     else
-        p.hsync_back_porch + emittedPulse(p.hsync_pulse);
+        setup.hsync_back_porch + emittedPulse(setup.hsync_pulse);
 
     enable();
 
@@ -244,19 +234,19 @@ pub fn setUp(setup: *const Setup) void {
     r(lcd_user).* |= user_reset; // self clearing
     r(lcd_misc).* |= misc_afifo_reset; // self clearing
 
-    const d = divideFor(p.pixel_clock_hz);
+    const divide = divideFor(setup.pixel_clock_hz);
     var clock: u32 = clk_en |
         (clk_sel_pll240 << clk_sel_shift) |
-        (d.group << clk_clkm_div_num_shift) |
+        (divide.group << clk_clkm_div_num_shift) |
         (1 << clk_clkm_div_a_shift); // a fraction of 0/1: none
-    if (d.prescale == 1) {
+    if (divide.prescale == 1) {
         clock |= clk_equ_sysclk;
     } else {
-        clock |= (d.prescale - 1) << clk_clkcnt_n_shift;
+        clock |= (divide.prescale - 1) << clk_clkcnt_n_shift;
     }
     // Which edge of the pixel clock the data is taken on. The panel's.
-    if (p.pclk_active_low) clock |= clk_ck_out_edge;
-    if (p.pclk_idle_high) clock |= clk_ck_idle_edge;
+    if (setup.pclk_active_low) clock |= clk_ck_out_edge;
+    if (setup.pclk_idle_high) clock |= clk_ck_idle_edge;
     r(lcd_clock).* = clock;
 
     // RGB mode, two bytes a pixel, the data phase only, and output that
@@ -269,28 +259,28 @@ pub fn setUp(setup: *const Setup) void {
     r(lcd_misc).* = misc_bk_en | misc_next_frame_en |
         (0 << misc_vfk_cyclelen_shift) | (0 << misc_vbk_cyclelen_shift);
 
-    timing(setup);
+    timing(setup, place.active_start);
 }
 
 /// The panel's blanking, in the peripheral's terms: it counts a back porch
-/// from the start of the sync pulse, and totals rather than front porches.
-fn timing(setup: *const Setup) void {
-    const p = setup;
+/// from the start of the sync pulse, and totals rather than front porches;
+/// the picture `active_start` clocks after the pulse's start.
+fn timing(setup: *const Setup, active_start: u32) void {
 
     // Where the active area starts, less one.
     const hb_front = active_start - 1;
-    const ht_width = p.hsync_pulse + p.hsync_back_porch + p.width + p.hsync_front_porch - 1;
-    const vb_front = p.vsync_back_porch + p.vsync_pulse - 1;
-    const vt_height = p.vsync_pulse + p.vsync_back_porch + p.height + p.vsync_front_porch - 1;
+    const ht_width = setup.hsync_pulse + setup.hsync_back_porch + setup.width + setup.hsync_front_porch - 1;
+    const vb_front = setup.vsync_back_porch + setup.vsync_pulse - 1;
+    const vt_height = setup.vsync_pulse + setup.vsync_back_porch + setup.height + setup.vsync_front_porch - 1;
 
     r(lcd_ctrl).* = ctrl_rgb_mode_en |
         ((hb_front & 0x7FF) << ctrl_hb_front_shift) |
-        (((p.height - 1) & 0x3FF) << ctrl_va_height_shift) |
+        (((setup.height - 1) & 0x3FF) << ctrl_va_height_shift) |
         ((vt_height & 0x3FF) << ctrl_vt_height_shift);
 
     r(lcd_ctrl1).* =
         ((vb_front & 0xFF) << ctrl1_vb_front_shift) |
-        (((p.width - 1) & 0xFFF) << ctrl1_ha_width_shift) |
+        (((setup.width - 1) & 0xFFF) << ctrl1_ha_width_shift) |
         ((ht_width & 0xFFF) << ctrl1_ht_width_shift);
 
     // The sync pulse widths are seven bits each. A pulse that does not fit
@@ -301,54 +291,50 @@ fn timing(setup: *const Setup) void {
     // pulse is inverted, so it measures each line and each frame from the
     // wrong edge and the picture sits sideways.
     var ctrl2: u32 =
-        (((p.vsync_pulse - 1) & 0x7F) << ctrl2_vsync_width_shift) |
-        (((p.hsync_pulse - 1) & 0x7F) << ctrl2_hsync_width_shift) |
+        (((setup.vsync_pulse - 1) & 0x7F) << ctrl2_vsync_width_shift) |
+        (((setup.hsync_pulse - 1) & 0x7F) << ctrl2_hsync_width_shift) |
         ctrl2_hs_blank_en | // HSYNC goes on through the porches
         (0 << ctrl2_hsync_position_shift); // at the start of the line
-    if (!p.hsync_idle_low) ctrl2 |= ctrl2_hsync_idle_pol;
-    if (!p.vsync_idle_low) ctrl2 |= ctrl2_vsync_idle_pol;
-    if (p.de_idle_high) ctrl2 |= ctrl2_de_idle_pol;
+    if (!setup.hsync_idle_low) ctrl2 |= ctrl2_hsync_idle_pol;
+    if (!setup.vsync_idle_low) ctrl2 |= ctrl2_vsync_idle_pol;
+    if (setup.de_idle_high) ctrl2 |= ctrl2_de_idle_pol;
     r(lcd_ctrl2).* = ctrl2;
 }
 
-/// Where the active area starts in the line, counted from the start of the
-/// sync pulse. The panel and the peripheral have to agree about this to the
-/// pixel: too small and the picture slides left with its left edge wrapping
-/// round to the right, too large and it slides right.
-///
-/// It starts as the figure the panel's own numbers give and may be moved
-/// afterwards, which is what a picture that sits sideways is measured and
-/// corrected with. The field is eleven bits and the line is shorter than
-/// that, so a shift either way can be taken round the line rather than run
-/// off the end of it.
-pub var active_start: u32 = 0;
+/// Where the picture sits in a line, in the peripheral's terms, and how
+/// long the line is: what `setUp` works out of the panel's numbers, kept
+/// in the driver's panel for the shift that moves it afterwards.
+pub const LinePlace = struct {
+    /// Where the active area starts in the line, counted from the start
+    /// of the sync pulse: 1 to `max_active_start`. The panel and the
+    /// peripheral have to agree about this to the pixel: too small and
+    /// the picture slides left with its left edge wrapping round to the
+    /// right, too large and it slides right. It starts as the figure the
+    /// panel's own numbers give and may be moved afterwards, which is
+    /// what a picture that sits sideways is measured and corrected with.
+    active_start: u32 = 0,
+    /// How long a line is, in pixel clocks: the whole of it, blanking
+    /// and all. A shift of the active area is modulo this. 0 until the
+    /// peripheral has been given a panel.
+    line_total: u32 = 0,
+};
 
-/// How long a line is, in pixel clocks: the whole of it, blanking and all.
-/// A shift of the active area is modulo this. Set by `setUp`, so it is 0
-/// until the peripheral has been given a panel.
-pub var line_total: u32 = 0;
+/// The furthest into a line the active area can start: its field is
+/// eleven bits and holds the start less one.
+pub const max_active_start: u32 = 0x800;
 
-pub fn lineTotal() u32 {
-    return line_total;
-}
-
-/// Move the active area to `start` pixels after the start of the sync
-/// pulse, taken modulo the line. The peripheral latches a timing change
-/// where `update` is set, so this belongs in the vertical blanking with the
-/// pixel stream's realignment: written into a running frame, the timing
-/// generator and the DMA part company for good.
-pub fn setActiveStart(pixels: u32) linksection(".iram.text") void {
+/// Move the active area to `pixels` after the start of the sync pulse,
+/// 1 to `max_active_start`, which the caller has seen to. The peripheral
+/// latches a timing change where `update` is set, so this belongs in the
+/// vertical blanking with the pixel stream's realignment: written into a
+/// running frame, the timing generator and the DMA part company for good.
+pub fn setActiveStart(place: *LinePlace, pixels: u32) linksection(".iram.text") void {
     @setRuntimeSafety(false);
-    if (line_total == 0) return;
-    active_start = pixels % line_total;
-    const c = r(lcd_ctrl).*;
-    r(lcd_ctrl).* = (c & ~@as(u32, 0x7FF << ctrl_hb_front_shift)) |
-        (((active_start - 1) & 0x7FF) << ctrl_hb_front_shift);
+    place.active_start = pixels;
+    const ctrl = r(lcd_ctrl).*;
+    r(lcd_ctrl).* = (ctrl & ~@as(u32, 0x7FF << ctrl_hb_front_shift)) |
+        (((pixels - 1) & 0x7FF) << ctrl_hb_front_shift);
     r(lcd_user).* |= user_update;
-}
-
-pub fn backPorch() u32 {
-    return ((r(lcd_ctrl).* >> ctrl_hb_front_shift) & 0x7FF) + 1;
 }
 
 pub fn intEnable(mask: u32) void {
@@ -367,24 +353,27 @@ pub fn intClear(mask: u32) void {
 /// whatever is at the head of this, so it has to be empty at the moment
 /// the DMA begins - anything left in it shifts the whole picture sideways
 /// by however many pixels it held.
-pub fn fifoReset() linksection(".iram.text") void {
+pub noinline fn fifoReset() linksection(".iram.text") void {
     @setRuntimeSafety(false);
     r(lcd_misc).* |= misc_afifo_reset; // self clearing
 }
 
 /// Let it run. The DMA must already be feeding it.
-pub fn start() linksection(".iram.text") void {
+pub noinline fn start() linksection(".iram.text") void {
     @setRuntimeSafety(false);
-    const u = r(lcd_user);
-    u.* |= user_update; // take the timings written above
-    u.* |= user_start;
+    const user = r(lcd_user);
+    user.* |= user_update; // take the timings written above
+    user.* |= user_start;
 }
 
-pub fn stop() linksection(".iram.text") void {
+/// Stop the timing generator. Like the two above, called from flash and
+/// from the realignment in internal memory: not inlined, so it runs from
+/// internal memory whoever calls it.
+pub noinline fn stop() linksection(".iram.text") void {
     @setRuntimeSafety(false);
-    const u = r(lcd_user);
-    u.* &= ~user_start;
-    u.* |= user_update;
+    const user = r(lcd_user);
+    user.* &= ~user_start;
+    user.* |= user_update;
 }
 
 /// The bus clock on and the peripheral out of reset. It comes up held in

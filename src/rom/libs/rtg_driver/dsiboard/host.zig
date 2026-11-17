@@ -120,8 +120,15 @@ const dt_dcs_long_write = 0x39;
 pub const coding_rgb565: u32 = 0;
 pub const coding_rgb888: u32 = 5;
 
-/// The reference the D-PHY's PLL multiplies.
-pub const pll_reference_hz: u32 = 20_000_000;
+/// The reference the D-PHY's PLL multiplies: the 20 MHz reference clock.
+/// A number here, which the host's tests of `pllFor` reach; on the chip
+/// it is held to the SDK's.
+const pll_reference_hz: u32 = 20_000_000;
+comptime {
+    if (sdk.hardware.chip == .esp32p4 and pll_reference_hz != sdk.hardware.system.REF_20M_HZ) {
+        @compileError("the D-PHY's PLL reference is not the 20 MHz reference clock");
+    }
+}
 
 /// How long the PHY's PLL and lanes, and a command's FIFO space, are
 /// waited for.

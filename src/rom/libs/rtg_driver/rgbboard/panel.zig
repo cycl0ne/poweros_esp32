@@ -22,7 +22,6 @@
 //! library allocated for the board: nothing is kept in this module's own
 //! image, so the interrupt servers are handed the panel as their data.
 
-const std = @import("std");
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -133,10 +132,13 @@ pub const Panel = struct {
     /// expander.resource, once it was asked for: the backlight's own
     /// brightness on it.
     expander_base: ?*sdk.interface.expander.ExpanderBase = null,
-    /// Whether it has been put in step since it was started, and where the
-    /// active area is to go at the next blanking.
+    /// Whether it has been put in step since it was started; where the
+    /// picture sits in a line (`lcd.LinePlace`), and where the active area
+    /// is to go at the next blanking, 0 for nowhere new - one word, which
+    /// the realignment on either core reads whole.
     aligned: bool = false,
-    want_start: ?u32 = null,
+    line_place: lcd.LinePlace = .{},
+    want_start: u32 = 0,
 
     /// What a frame and a line cost in CPU cycles, from the panel's own
     /// numbers, and what a microsecond is: the measurements below are made
@@ -291,7 +293,7 @@ pub fn bringUp(panel: *Panel) i32 {
     // block size; the copy's channel does. The panel cannot wait - twenty
     // pixels of blanking is no time to make up a shortfall - so it
     // outranks everything else on the bus.
-    if (!db.ConnectDMAChannel(ch, lcd.dma_peripheral, dmares.DMACF_LOOP | dmares.DMACF_BURST)) {
+    if (!db.ConnectDMAChannel(ch, dmares.DMAPERI_LCD, dmares.DMACF_LOOP | dmares.DMACF_BURST)) {
         return giveBack(panel, err.RTGERR_NO_DISPLAY);
     }
     _ = db.SetDMAPriority(ch, dmares.DMA_OUT, panel.config.dma_priority);
@@ -306,21 +308,22 @@ pub fn bringUp(panel: *Panel) i32 {
     _ = db.SetDMAPriority(copy_ch, dmares.DMA_IN, under);
 
     // The buffers, and the ring the panel's channel runs round them for
-    // ever.
-    const b = sys.AllocMem(bounce_count * panel.bounce_bytes, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse
+    // ever: in internal memory, since the panel is never fed from PSRAM
+    // (above).
+    const buffers = sys.AllocMem(bounce_count * panel.bounce_bytes, exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse
         return giveBack(panel, err.RTGERR_NO_MEMORY);
-    panel.bounce = @ptrCast(b);
-    for (0..bounce_count) |i| {
-        const at: *anyopaque = @ptrFromInt(@intFromPtr(b) + i * panel.bounce_bytes);
-        panel.bounce_chain[i] = db.AllocDMAChain(dmares.DMA_OUT, at, panel.bounce_bytes, 0) orelse
+    panel.bounce = @ptrCast(buffers);
+    for (0..bounce_count) |buffer| {
+        const at: *anyopaque = @ptrFromInt(@intFromPtr(buffers) + buffer * panel.bounce_bytes);
+        panel.bounce_chain[buffer] = db.AllocDMAChain(dmares.DMA_OUT, at, panel.bounce_bytes, 0) orelse
             return giveBack(panel, err.RTGERR_NO_MEMORY);
-        panel.fill_into[i] = db.AllocDMAChain(dmares.DMA_IN, at, panel.bounce_bytes, 0) orelse
+        panel.fill_into[buffer] = db.AllocDMAChain(dmares.DMA_IN, at, panel.bounce_bytes, 0) orelse
             return giveBack(panel, err.RTGERR_NO_MEMORY);
     }
-    for (0..bounce_count) |i| {
-        const last = lastOf(panel.bounce_chain[i].?);
-        last.next = panel.bounce_chain[(i + 1) % bounce_count];
-        panel.buffer_ends[i] = @intFromPtr(last);
+    for (0..bounce_count) |buffer| {
+        const last = lastOf(panel.bounce_chain[buffer].?);
+        last.next = panel.bounce_chain[(buffer + 1) % bounce_count];
+        panel.buffer_ends[buffer] = @intFromPtr(last);
     }
     panel.chain = panel.bounce_chain[0];
 
@@ -360,7 +363,7 @@ pub fn bringUp(panel: *Panel) i32 {
 /// mode is set through the library and may be set again.
 pub fn program(panel: *Panel) i32 {
     lcd.pins(&panel.config.setup);
-    lcd.setUp(&panel.config.setup);
+    lcd.setUp(&panel.config.setup, &panel.line_place);
     return err.RTGERR_OK;
 }
 
@@ -389,9 +392,9 @@ pub fn chainsFor(panel: *Panel, pixels: [*]u8) ?[*]?*dmares.DMADescriptor {
     // without waiting on the stream.
     const memory = panel.sys.AllocVec(panel.stretches * @sizeOf(?*dmares.DMADescriptor), exec.MEMF_INTERNAL | exec.MEMF_CLEAR) orelse return null;
     const chains: [*]?*dmares.DMADescriptor = @ptrCast(@alignCast(memory));
-    for (0..panel.stretches) |i| {
-        const from: *anyopaque = @ptrFromInt(at + i * panel.bounce_bytes);
-        chains[i] = db.AllocDMAChain(dmares.DMA_OUT, from, panel.bounce_bytes, 0) orelse {
+    for (0..panel.stretches) |stretch| {
+        const from: *anyopaque = @ptrFromInt(at + stretch * panel.bounce_bytes);
+        chains[stretch] = db.AllocDMAChain(dmares.DMA_OUT, from, panel.bounce_bytes, 0) orelse {
             freeChains(panel, chains);
             return null;
         };
@@ -402,8 +405,8 @@ pub fn chainsFor(panel: *Panel, pixels: [*]u8) ?[*]?*dmares.DMADescriptor {
 
 fn freeChains(panel: *Panel, chains: [*]?*dmares.DMADescriptor) void {
     if (panel.dma) |db| {
-        for (0..panel.stretches) |i| {
-            if (chains[i]) |c| db.FreeDMAChain(c);
+        for (chains[0..panel.stretches]) |one| {
+            if (one) |chain| db.FreeDMAChain(chain);
         }
     }
     panel.sys.FreeVec(@ptrCast(chains));
@@ -426,6 +429,8 @@ pub fn bandChains(panel: *Panel, bands: []const rtg.RtgBand) ?[*]?*dmares.DMADes
     const line_bytes = panel.bounce_bytes / lines;
     const heads = panel.stretches * @sizeOf(?*dmares.DMADescriptor);
     const count = panel.stretches * lines;
+    // The descriptors are the copy channel's to read, which reaches them
+    // in internal memory only.
     const memory = panel.sys.AllocVec(heads + count * @sizeOf(dmares.DMADescriptor), exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return null;
     const chains: [*]?*dmares.DMADescriptor = @ptrCast(@alignCast(memory));
     const descriptors: [*]dmares.DMADescriptor = @ptrFromInt(@intFromPtr(memory) + heads);
@@ -548,9 +553,14 @@ fn startOn(panel: *Panel, chains: [*]?*dmares.DMADescriptor) i32 {
     if (panel.streaming) stream.stopStream(panel);
     panel.fill_from = chains;
 
-    // Emptied here rather than in `program`: the FIFO must be empty at the
-    // instant the DMA begins, and that is a long way from the timings.
+    // The panel's channel says nothing while the buffers are primed: an
+    // end it signalled before it stopped would start a copy into one of
+    // them. Emptied here rather than in `program`: the FIFO must be empty
+    // at the instant the DMA begins, and that is a long way from the
+    // timings.
+    db.EnableDMAInts(panel.channel, dmares.DMA_OUT, 0);
     primeBuffers(panel);
+    db.EnableDMAInts(panel.channel, dmares.DMA_OUT, dmares.DMAINTF_OUT_EOF);
     lcd.fifoReset();
     if (!db.StartDMA(panel.channel, dmares.DMA_OUT, panel.chain.?)) {
         // Nothing reads the chains: the caller may free them.
@@ -618,8 +628,8 @@ pub fn giveBack(panel: *Panel, code: i32) i32 {
         }
     }
     panel.chain = null;
-    if (panel.bounce) |b| {
-        sys.FreeMem(@ptrCast(b), bounce_count * panel.bounce_bytes);
+    if (panel.bounce) |buffers| {
+        sys.FreeMem(@ptrCast(buffers), bounce_count * panel.bounce_bytes);
         panel.bounce = null;
     }
     // The panel itself goes dark and back into reset, while its lines are
@@ -693,11 +703,11 @@ fn takePads(panel: *Panel) bool {
 /// The last descriptor of a chain: the one the DMA reaches before the
 /// chain ends or starts again.
 fn lastOf(head: *dmares.DMADescriptor) *dmares.DMADescriptor {
-    var d = head;
-    while (d.next) |n| : (d = n) {
-        if (n == head) break;
+    var at = head;
+    while (at.next) |next| : (at = next) {
+        if (next == head) break;
     }
-    return d;
+    return at;
 }
 
 // --- feeding it -------------------------------------------------------------
@@ -749,8 +759,8 @@ pub fn waitCopy(panel: *Panel) void {
 pub fn primeBuffers(panel: *Panel) void {
     // A copy still running from before writes into a buffer filled here.
     waitCopy(panel);
-    for (0..bounce_count) |i| {
-        startCopy(panel, @intCast(i), @intCast(i % panel.stretches));
+    for (0..bounce_count) |buffer| {
+        startCopy(panel, @intCast(buffer), @intCast(buffer % panel.stretches));
         waitCopy(panel);
     }
     panel.next_buffer = 0;

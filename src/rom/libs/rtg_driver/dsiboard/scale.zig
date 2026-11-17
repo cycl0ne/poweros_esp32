@@ -72,9 +72,9 @@ pub fn scalePixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: 
 
     const parts = engine_file.descriptors(engine);
     ppa.resetScaler();
-    if (!dma2d.connectOut(engine_file.send_channel, dma2d.peri_ppa_srm)) return engine_file.failed(engine);
+    if (!dma2d.connectOut(engine_file.send_channel, dma2d.peri_ppa_srm)) return engine_file.failed(engine, sys);
     dma2d.portBlock(engine_file.send_channel, ppa.port_block, ppa.port_block);
-    if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_ppa_srm, .{})) return engine_file.failed(engine);
+    if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_ppa_srm, .{})) return engine_file.failed(engine, sys);
     dma2d.describe(parts.send, picture.first_row, picture.width, height, picture.column, 0, width, height, picture.source.pbyte);
     // The scaler says where each of its blocks goes; the descriptor only
     // names the picture they go into.
@@ -98,8 +98,10 @@ pub fn scalePixels(engine: *Engine, sys: *ExecBase, dest: *rtg.RtgBitMap, area: 
         .column = 0,
         .source = blend.sourceOf(.bgra32).?,
         .alpha = 255,
+        // A source with no coverage, or one said to cover fully, covers
+        // fully scaled: the block's alpha, which the scaler makes up for
+        // it, is not read.
+        .whole = picture.whole or !picture.source.covered,
     };
-    const laid = blend.lay(engine, sys, dest, area, scaled, watched);
-    if (laid == err.RTGERR_OK) engine.scales +%= 1;
-    return laid;
+    return blend.lay(engine, sys, dest, area, scaled, watched);
 }

@@ -74,9 +74,6 @@ pub const Link = struct {
     composed: rtg.RtgBitMap = .{},
     composed_memory: ?*anyopaque = null,
     composed_size: u32 = 0,
-    /// Rows put into the copy by the engine and by the CPU.
-    engine_rows: u32 = 0,
-    cpu_rows: u32 = 0,
 };
 
 /// The copy for a mode `width` x `height`, in `format` (`bgr24` or
@@ -141,7 +138,6 @@ pub fn fill(link: *Link, engine: *Engine, sys: *ExecBase, board: *rtg.RtgBoard, 
     if (link.format == .rgb565) {
         // Where it lies: out of the cache, for the stream to read.
         writeOut(link, sys, .{ .x0 = x, .y0 = y, .x1 = x + width, .y1 = y + rows });
-        link.cpu_rows +%= rows;
         return err.RTGERR_OK;
     }
     sys.ObtainSemaphore(&engine.lock);
@@ -161,24 +157,22 @@ fn widen(link: *Link, engine: *Engine, sys: *ExecBase, x: u32, y: u32, width: u3
         const first = @intFromPtr(link.composed.pixels.?) + @as(usize, y) * link.composed.pitch + @as(usize, x) * 2;
         var bytes: u32 = (rows - 1) * link.composed.pitch + width * 2;
         _ = sys.CachePreDMA(@ptrFromInt(first), &bytes, 0);
-        if (byEngine(link, engine, sys, &link.composed, y, y, rows, x, width, watched)) {
-            link.engine_rows +%= rows;
-            return;
-        }
+        if (byEngine(link, engine, sys, &link.composed, y, y, rows, x, width, watched)) return;
     }
     byCpu(link, &link.composed, y, y, rows, x, width);
     writeOut(link, sys, .{ .x0 = x, .y0 = y, .x1 = x + width, .y1 = y + rows });
-    link.cpu_rows +%= rows;
 }
 
 fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, width: u32, watched: bool) bool {
     if (!engine.ready or source.format != .rgb565 or source.pixels == null) return false;
     if (source.pitch % 2 != 0 or source.pitch / 2 > dma2d.field_max) return false;
     const parts = engine_file.descriptors(engine);
-    if (!dma2d.connectOut(engine_file.send_channel, dma2d.peri_memory_out)) return false;
+    // A channel that would not connect has the rest let go again, and the
+    // CPU does the rows.
+    if (!dma2d.connectOut(engine_file.send_channel, dma2d.peri_memory_out)) return engine_file.letGo(engine, sys);
     const wide = link.format == .bgr24;
     if (wide) dma2d.convertOut(engine_file.send_channel, .rgb565_to_rgb888);
-    if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return false;
+    if (!dma2d.connectIn(engine_file.receive_channel, dma2d.peri_memory_in, .{ .sibling = true })) return engine_file.letGo(engine, sys);
     dma2d.describe(parts.send, @intFromPtr(source.pixels.?), source.pitch / 2, source.height, x, row, width, rows, dma2d.pbyte_2);
     dma2d.describe(parts.receive, link.pixels, link.width, link.height, x, line, width, rows, if (wide) dma2d.pbyte_3 else dma2d.pbyte_2);
     const asleep = engine_file.prepare(engine, sys, watched);
@@ -190,10 +184,10 @@ fn byEngine(link: *Link, engine: *Engine, sys: *ExecBase, source: *const rtg.Rtg
 /// The CPU's conversion, through the data cache; `widen` writes it
 /// out.
 fn byCpu(link: *Link, source: *const rtg.RtgBitMap, row: u32, line: u32, rows: u32, x: u32, width: u32) void {
-    var r: u32 = 0;
-    while (r < rows) : (r += 1) {
-        const from: [*]const u16 = @ptrFromInt(@intFromPtr(source.pixels.?) + @as(usize, row + r) * source.pitch);
-        put(link, line + r, x, from + x, width);
+    var done: u32 = 0;
+    while (done < rows) : (done += 1) {
+        const from: [*]const u16 = @ptrFromInt(@intFromPtr(source.pixels.?) + @as(usize, row + done) * source.pitch);
+        put(link, line + done, x, from + x, width);
     }
 }
 
