@@ -22,10 +22,14 @@
 //!
 //! **Which partition** a tried start is from is autoboot.txt's
 //! `[tryboot]` section, which the bootloader in the module's EEPROM reads
-//! as a condition from its 2022-10-18 release on. Before that - this
-//! module's is of 2022-04-26 - it reads the section as if it were
-//! `[all]`, and starts from the last `boot_partition` the file names,
-//! tried or not; the tried start is told as one all the same.
+//! as a condition from its 2022-10-18 release on. Before that it reads
+//! the section as if it were `[all]`, and starts from the last
+//! `boot_partition` the file names, tried or not; the tried start is told
+//! as one all the same. A bootloader from 2022-03-10 on renews itself
+//! from the eMMC: pieeprom.upd, a release's image with the module's own
+//! configuration in it, and pieeprom.sig, its SHA-256 and time, in the
+//! partition it starts from - this module's went from 2022-04-26 to
+//! 2026-10-30 so.
 
 const sdk = @import("sdk");
 const reg = sdk.hardware.mmio.reg;

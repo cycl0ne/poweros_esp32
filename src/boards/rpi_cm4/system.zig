@@ -164,7 +164,7 @@ pub const root = [_]Tag{
     // The bootloader reads `autoboot.txt` and takes a tryboot flag, so a
     // new kernel is tried on the second boot partition for one start,
     // with the one that worked still on the first - a bootloader from
-    // 2022-10-18 on (`reset.zig`).
+    // 2022-10-18 on, as this module's now is (`reset.zig`).
     .value(st.SYSTAG_BootSlots, 2),
     .pointer(st.SYSTAG_BootStart, &boot_start),
     .pointer(st.SYSTAG_Part, &usb),
