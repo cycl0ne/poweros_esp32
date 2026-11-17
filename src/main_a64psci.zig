@@ -161,6 +161,40 @@ fn takeBoard(tree: device_tree.Facts) void {
         boards.system.boot_start = .{ .partition = tree.boot_partition, .tried = @intFromBool(tree.boot_tried) };
     }
     if (@hasDecl(boards.system, "boot_mode")) boards.system.boot_mode = tree.boot_mode;
+    // The memory the board's parts share with another master, kept from
+    // exec (the board's `shared`, PART_SharedMemory); mapped without
+    // caches once the map is finished (`uncacheShared`).
+    if (@hasDecl(boards.system, "shared")) {
+        inline for (boards.system.shared) |share| share.base = ram.keep(share.bytes, share.below) orelse 0;
+    }
+}
+
+/// The memory kept for the board's parts made normal memory without
+/// caches: written back from the caches and dropped from them before and
+/// after - a line read ahead in between would otherwise stay there to be
+/// written over the other master's writes. A block the map cannot change
+/// is given up: its part finds no memory.
+fn uncacheShared() void {
+    if (!@hasDecl(boards.system, "shared")) return;
+    inline for (boards.system.shared) |share| {
+        const base = share.base;
+        if (base != 0) {
+            const end = base + ((share.bytes + ram.block - 1) & ~@as(usize, ram.block - 1));
+            dropLines(base, end);
+            if (!mmu.uncached(.{ .start = base, .end = end })) share.base = 0;
+            dropLines(base, end);
+        }
+    }
+}
+
+/// Every cache line of `start` to `end` written back and dropped.
+fn dropLines(start: usize, end: usize) void {
+    var line = start;
+    while (line < end) : (line += 64) asm volatile ("dc civac, %[at]"
+        :
+        : [at] "r" (line),
+        : .{ .memory = true });
+    asm volatile ("dsb sy" ::: .{ .memory = true });
 }
 
 /// Each other core's stack, which its idle task goes on running on.
@@ -203,6 +237,7 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     // Address 0 unmapped, the kernel's code read-only, RAM as the tree
     // says normal memory.
     mmu.refine(ram.ranges());
+    uncacheShared();
     // The kernel's lines on the picture the firmware lit, on a board whose
     // firmware hands one over: from here, before exec, so a boot that stops
     // says where.
@@ -264,6 +299,13 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     note("%ld KiB free", .{@as(u64, sys.AvailMem(exec.MEMF_ANY) / 1024)});
     for (ram.reserved[0..ram.reserved_count]) |range| {
         note("reserved 0x%lx-0x%lx", .{ @as(u64, range.start), @as(u64, range.end) });
+    }
+    if (@hasDecl(boards.system, "shared")) {
+        inline for (boards.system.shared) |share| {
+            if (share.base != 0) {
+                note("kept 0x%lx-0x%lx without caches, shared with the firmware", .{ @as(u64, share.base), @as(u64, share.base + ((share.bytes + ram.block - 1) & ~@as(usize, ram.block - 1))) });
+            } else note("no memory kept to share with the firmware: %ld KiB below 0x%lx asked for", .{ @as(u64, share.bytes / 1024), @as(u64, share.below) });
+        }
     }
     if (hardware.ramdisk.size != 0) {
         note("disk image 0x%lx-0x%lx, %ld KiB", .{

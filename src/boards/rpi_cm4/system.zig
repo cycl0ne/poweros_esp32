@@ -153,6 +153,29 @@ const hevc = [_]Tag{
     .done,
 };
 
+/// The memory the VideoCore's message queue is in: a block of 2 MiB the
+/// kernel keeps in the first GiB, which the VideoCore reaches at
+/// 0xC000_0000 and above, mapped without caches.
+pub var vchiq_memory: st.SharedMemory = .{ .bytes = 2 * 1024 * 1024, .below = 0x4000_0000 };
+
+/// What the kernel keeps for the board's parts when it starts.
+pub const shared = .{&vchiq_memory};
+
+/// The VideoCore's message queue: its doorbells at 0xFE00_B840, beside
+/// the mailbox, the one the VideoCore rings the ARM with, GIC SPI 34, and
+/// its memory. The firmware runs the chip's H.264 and JPEG decoders
+/// behind it (vchiq.resource).
+const vchiq = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_FIRMWARE),
+    .value(st.PART_Chip, st.CHIP_BCM2711_VCHIQ),
+    .pointer(st.PART_ChipName, "vchiq"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0xFE00_B840),
+    .value(st.PART_Irq, 32 + 34),
+    .pointer(st.PART_SharedMemory, &vchiq_memory),
+    .done,
+};
+
 /// The VideoCore's firmware, start4.elf, through its mailbox (`mailbox`):
 /// where C:Reboot TRYBOOT and C:CpuClock find it.
 const firmware = [_]Tag{
@@ -202,6 +225,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &firmware),
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &hevc),
+    .pointer(st.SYSTAG_Part, &vchiq),
     .done,
 };
 

@@ -195,7 +195,7 @@ const tests = [_][]const u8{
     "filetest",    "speed2d",     "windraw",     "semtest",   "membench",
     "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
     "film",        "commodities", "filmdt",      "watchdog",  "gpu",
-    "dttime",      "names",       "axes",
+    "dttime",      "names",       "axes",        "vchiq",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "git" };
 
@@ -427,8 +427,8 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// a kernel from a partition - an ESP32's kernel is in its flash - and
 /// update.library, C:Update and SYS:System/Update, which bring such a
 /// system up to date from a package. And the
-/// dock in SYS:WBStartup, started with the desktop, the test of a chip's
-/// video decoder, DTS's module with its large tables, and the video codecs
+/// dock in SYS:WBStartup, started with the desktop, the tests of a chip's
+/// video decoder and of the VideoCore firmware's queue, DTS's module with its large tables, and the video codecs
 /// in software: the ESP32s have neither the room for them on their flash
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
 /// chip.vcodec goes with them: it drives videodec.resource, which no
@@ -436,7 +436,7 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// colours with - 60 KB for a chip that is not there. svg.datatype as
 /// well: what goes on an ESP32's flash disk is what that board is meant
 /// to do, and showing SVG files is not among it.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "System/SystemScan", "WBStartup/Dock", "videodec", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
 /// Drivers of what only the Raspberry Pi CM5's BCM2712 has among the
 /// AArch64 machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host, and its V3D 7.1 - the CM4's BCM2711 has neither

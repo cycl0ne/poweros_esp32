@@ -4,8 +4,9 @@
 //! SYSTAG_RamSize), less what is in use - the kernel's image with
 //! AbsExecBase's page below it, the disk image the loader put in RAM
 //! (sdk.hardware.ramdisk), the ranges the device tree reserves
-//! (`reserved`: the firmware's own), and page 0, which the map leaves out
-//! where RAM starts at 0 (start.S). A tree that reserves nothing gets
+//! (`reserved`: the firmware's own), the blocks kept for the board's
+//! parts to share with another master (`keep`), and page 0, which the
+//! map leaves out where RAM starts at 0 (start.S). A tree that reserves nothing gets
 //! nothing below the kernel handed out, as the firmware's boot code is
 //! there and has not said where (QEMU's).
 //!
@@ -39,6 +40,46 @@ pub var reserved_count: usize = 0;
 
 /// Where DMA stops reaching, which the kernel sets from the board.
 pub var dma_limit: usize = 1 << 32;
+
+/// The blocks kept for the board's parts (`keep`).
+pub const max_kept = 2;
+pub var kept: [max_kept]Range = undefined;
+pub var kept_count: usize = 0;
+
+/// The size the map's blocks are, and what is kept is made of.
+pub const block = 2 * 1024 * 1024;
+
+/// `bytes`, rounded up to whole 2 MiB blocks, kept from exec for a part
+/// that shares it: the highest such stretch of RAM that ends at or below
+/// `below` and holds nothing in use. Its address, or null where there is
+/// none, or no room to note it. Called before `regions`.
+pub fn keep(bytes: usize, below: usize) ?usize {
+    if (kept_count == max_kept or bytes == 0) return null;
+    const size = (bytes + block - 1) & ~@as(usize, block - 1);
+    var hole_buf: [max_reserved + 3 + max_kept]Range = undefined;
+    const in_use = holes(&hole_buf);
+    var best: ?usize = null;
+    for (ranges()) |range| {
+        const top = @min(range.end, below) & ~@as(usize, block - 1);
+        var at = top;
+        while (at >= range.start + size and at >= size) : (at -= block) {
+            const start = at - size;
+            if (start < range.start) break;
+            var clear = true;
+            for (in_use) |hole| {
+                if (hole.start < at and hole.end > start) clear = false;
+            }
+            if (clear) {
+                if (best == null or start > best.?) best = start;
+                break;
+            }
+        }
+    }
+    const start = best orelse return null;
+    kept[kept_count] = .{ .start = start, .end = start + size };
+    kept_count += 1;
+    return start;
+}
 
 /// RAM's ranges.
 pub fn ranges() []const Range {
@@ -74,8 +115,9 @@ const largest: usize = 1 << 31;
 const page = 4096;
 
 /// What is not free, each widened to whole pages: the kernel first, then
-/// page 0, the disk image and the reserved ranges, in no order.
-fn holes(buf: *[max_reserved + 3]Range) []const Range {
+/// page 0, the disk image, the reserved ranges and the kept blocks, in no
+/// order.
+fn holes(buf: *[max_reserved + 3 + max_kept]Range) []const Range {
     var count: usize = 0;
     buf[count] = .{ .start = @intFromPtr(sdk.exec.AbsExecBase) & ~@as(usize, page - 1), .end = layout.heapStart() };
     count += 1;
@@ -89,6 +131,10 @@ fn holes(buf: *[max_reserved + 3]Range) []const Range {
         buf[count] = range;
         count += 1;
     }
+    for (kept[0..kept_count]) |range| {
+        buf[count] = range;
+        count += 1;
+    }
     for (buf[0..count]) |*hole| {
         hole.start &= ~@as(usize, page - 1);
         hole.end = (hole.end +| (page - 1)) & ~@as(usize, page - 1);
@@ -98,7 +144,7 @@ fn holes(buf: *[max_reserved + 3]Range) []const Range {
 
 /// Regions for the bootstrap. The first one also holds SysBase.
 pub fn regions(buf: *[max_regions]exec.MemRegion) []const exec.MemRegion {
-    var hole_buf: [max_reserved + 3]Range = undefined;
+    var hole_buf: [max_reserved + 3 + max_kept]Range = undefined;
     const in_use = holes(&hole_buf);
     const kernel = in_use[0];
     var count: usize = 0;

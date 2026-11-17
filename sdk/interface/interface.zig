@@ -13,6 +13,7 @@ pub const expansion = @import("expansion.zig");
 pub const gpio = @import("gpio.zig");
 pub const jpeg = @import("jpeg.zig");
 pub const videodec = @import("videodec.zig");
+pub const vchiq = @import("vchiq.zig");
 pub const dos = @import("dos.zig");
 pub const rtg = @import("rtg.zig");
 pub const rta = @import("rta.zig");

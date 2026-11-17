@@ -378,6 +378,26 @@ pub const PART_PowerModeValue = PART_Dummy + 0x53;
 /// described some other way says nothing here, and nothing reads that
 /// description.
 pub const PART_PowerButton = PART_Dummy + 0x54;
+/// Memory the part shares with another master that reaches it past the
+/// cores' caches - the VideoCore's message queue: a `*SharedMemory`, in
+/// which the board says how much and below where, and the kernel where
+/// it kept it. The kernel keeps it from exec when it starts and maps it
+/// without caches, so that both sides' writes reach the other as they
+/// are made. On the AArch64 machines.
+pub const PART_SharedMemory = PART_Dummy + 0x55;
+
+/// What PART_SharedMemory points at.
+pub const SharedMemory = extern struct {
+    /// Where the kernel kept it, on a 2 MiB boundary; 0 where it could
+    /// not.
+    base: usize = 0,
+    /// How many bytes the part asks for. The kernel keeps whole blocks
+    /// of 2 MiB, the size it maps memory in.
+    bytes: usize,
+    /// The address it must end below: what the other master reaches (the
+    /// VideoCore, the first GiB).
+    below: usize,
+};
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -767,6 +787,13 @@ pub const CHIP_BCM2711_HDMI_AUDIO: u32 = 56;
 /// read by the host; its clock is the VideoCore firmware's, asked for
 /// through the board's CHIP_RPI_FIRMWARE.
 pub const CHIP_BCM2711_HEVC: u32 = 57;
+/// The VideoCore's message queue, VCHIQ (PARTKIND_FIRMWARE on
+/// BUS_MEMORY, PART_Address its doorbells, PART_Irq the VideoCore's
+/// doorbell to the ARM, PART_SharedMemory its memory): memory shared with
+/// the firmware, which runs the chip's H.264 and JPEG decoders and its
+/// ISP as MMAL components; the kernel keeps the memory, and it is handed
+/// to the firmware through the board's CHIP_RPI_FIRMWARE.
+pub const CHIP_BCM2711_VCHIQ: u32 = 58;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

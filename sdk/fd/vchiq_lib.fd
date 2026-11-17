@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: MIT
+//! vchiq.resource's functions: the message queue the VideoCore's firmware
+//! keeps with the ARM, its services opened by name, their messages and
+//! bulk transfers (sdk/resources/vchiq.zig). A resource: no Open or
+//! Close, its first function in the first slot. The base comes from
+//! OpenResource("vchiq.resource").
+##include resources/vchiq as vchiq
+##basetype VchiqBase
+##name vchiq.resource
+##bias 0
+##public
+/// The firmware's service `fourcc` (vchiq.fourcc), for a caller who
+/// speaks `version` of its protocol and nothing below `version_min`; the
+/// first connects with the firmware. Null, and why in `err` (VCHIQERR_*),
+/// when it failed.
+?*vchiq.VchiqService OpenService(u32 fourcc, u32 version, u32 version_min, ?*u32 err)
+/// The service closed, what came for it and was not received with it.
+void CloseService(?*vchiq.VchiqService service)
+/// `size` bytes sent as one message, after those sent before:
+/// VCHIQERR_OK, or why not. Waits while the queue is full.
+u32 SendMessage(*vchiq.VchiqService service, [*]const u8 data, u32 size)
+/// The next message from the firmware into `buffer`, `size` bytes of
+/// room, waiting up to `timeout_us` for one; its length in `length`, of
+/// which no more than `size` was copied. VCHIQERR_OK, VCHIQERR_TIMEOUT,
+/// or VCHIQERR_CLOSED once the service is closed and nothing is left.
+u32 ReceiveMessage(*vchiq.VchiqService service, [*]u8 buffer, u32 size, *u32 length, u64 timeout_us)
+/// `bulk` put out for the firmware, after those of its direction already
+/// out: VCHIQERR_OK, and `bulk.done` is signalled when it is done; or why
+/// not, and nothing was put out.
+u32 QueueBulk(*vchiq.VchiqService service, *vchiq.VchiqBulk bulk)
+/// Wait up to `timeout_us` for `bulk` to be done: its result
+/// (VCHIQERR_OK, VCHIQERR_ABORTED), or VCHIQERR_TIMEOUT - and then it is
+/// still out.
+u32 WaitBulk(*vchiq.VchiqBulk bulk, u64 timeout_us)
+##end

@@ -9,7 +9,8 @@
 //! VisionFive 2 has them for its card). And sound: rta.library, the HDMI
 //! port's sink (rta-hdmi) and audio.device, which plays through it, as
 //! the Compute Module 5 has them. And videodec.resource for the chip's
-//! H.265 block (CHIP_BCM2711_HEVC).
+//! H.265 block (CHIP_BCM2711_HEVC), and vchiq.resource, the queue to the
+//! VideoCore's firmware (CHIP_BCM2711_VCHIQ).
 
 const rom = @import("../../rom/modules.zig");
 
@@ -24,4 +25,5 @@ pub const modules = rom.core ++ rom.screen ++ rom.pipe ++ rom.motion ++ .{
     @import("../../rom/libs/rta_driver/hdmi/bcm2711.zig"),
     @import("../../rom/devs/audio/audio.zig"),
     @import("../../rom/resources/videodec/videodec.zig"),
+    @import("../../rom/resources/vchiq/vchiq.zig"),
 };

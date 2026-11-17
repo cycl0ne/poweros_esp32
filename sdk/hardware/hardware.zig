@@ -154,6 +154,9 @@ pub const acpi = @import("acpi.zig");
 /// asked for what only it reaches (the BCM2712's); its messages are the
 /// same anywhere, so it is built for every chip, and asked only there.
 pub const videocore = @import("videocore.zig");
+/// MMAL, the VideoCore firmware's media components behind vchiq.resource
+/// (the BCM2711's H.264 and JPEG decoders): its messages and a client.
+pub const mmal = @import("mmal.zig");
 
 /// The crystal: the clock the chip starts on, and the UARTs' clock.
 pub const XTAL_HZ = own.XTAL_HZ;
