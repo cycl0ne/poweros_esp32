@@ -59,6 +59,7 @@ const modes = @import("../mode/_mode.zig");
 const devices = @import("../device/_device.zig");
 const edid = @import("_edid.zig");
 const shows = @import("../display/_display.zig");
+const settings = @import("../settings/_settings.zig");
 
 /// What the library keeps of the monitor of a board with a connector: a
 /// block of its own behind the board, made as the board joins the list.
@@ -262,22 +263,56 @@ fn remake(rb: *RtgBase, board: *rtg.RtgBoard) void {
         // The monitor's modes are the board's: the driver's own stand by.
         state.names_modes = true;
         modes.withdraw(rb, board, .driver);
+        // The mode the monitor prefers is the default of its own; the
+        // board's line may name another.
         const usual = preferred orelse full_hd orelse modes.recordOf(private.modes.first().?);
-        modes.setDefault(board, usual);
+        usual.marked_default = true;
+        settings.chooseDefault(rb, board);
         return;
     }
-    // Nothing named that the board can make: its own modes, and where it
-    // has none the size its device's tags give, at 60 a second.
+    // Nothing named that the board can make: the timings its line gives
+    // by hand, with its own modes; without a line its own modes, and
+    // where it has none the size its device's tags give, at 60 a second.
     state.names_modes = false;
-    if (modes.restore(rb, board) != 0) return;
-    const device = board.device orelse return;
-    const ub = rb.utility_base;
-    const width: u32 = @truncate(ub.GetTagData(tags.RTGA_Width, 0, device.tags));
-    const height: u32 = @truncate(ub.GetTagData(tags.RTGA_Height, 0, device.tags));
-    const own = edid.knownMode(width, height, 60) orelse return;
-    const timings = timingsOf(&own);
-    if (!makes(board, &timings)) return;
-    _ = modes.add(rb, board, &timings, format, monitors.RTGMF_DEFAULT, .monitor);
+    const own_modes = modes.restore(rb, board);
+    var line: rtg.RtgSettings = .{};
+    _ = settings.lineOf(rb, board, &line);
+    if (line.flags & rtg.RTGSET_TIMINGS != 0 and makes(board, &line.timings)) {
+        _ = modes.add(rb, board, &line.timings, format, monitors.RTGMF_DEFAULT, .monitor);
+    } else if (own_modes == 0) {
+        if (board.device) |device| {
+            const ub = rb.utility_base;
+            const width: u32 = @truncate(ub.GetTagData(tags.RTGA_Width, 0, device.tags));
+            const height: u32 = @truncate(ub.GetTagData(tags.RTGA_Height, 0, device.tags));
+            if (edid.knownMode(width, height, 60)) |own| {
+                const timings = timingsOf(&own);
+                if (makes(board, &timings)) _ = modes.add(rb, board, &timings, format, monitors.RTGMF_DEFAULT, .monitor);
+            }
+        }
+    }
+    settings.chooseDefault(rb, board);
+}
+
+/// A board's modes made again of what its monitor named at the last look
+/// and what the settings say now - the default its line names, the
+/// timings it gives by hand - with nothing asked of the connector. A
+/// board left in a mode it no longer offers shows what it showed in its
+/// default mode, scaled, or nothing where it cannot.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board; its lock is held.
+pub fn renew(rb: *RtgBase, board: *rtg.RtgBoard) void {
+    const private = boards.privateOf(board);
+    if (private.monitor == null) {
+        // A panel's modes never go: only which is the default changes.
+        settings.chooseDefault(rb, board);
+        return;
+    }
+    remake(rb, board);
+    const current = private.mode orelse return;
+    if (current.offered) return;
+    if (!shows.elsewhere(rb, board)) _ = shows.clear(rb, board);
 }
 
 /// A board's connector looked at: `detect` asked, what the monitor says
@@ -419,7 +454,12 @@ pub fn service(rb: *RtgBase) void {
         }
         sys.ReleaseSemaphore(&rb.board_lock);
         const board = marked orelse return;
-        if (serve(rb, board)) boards.changed(rb, board);
+        if (serve(rb, board)) {
+            // Another monitor may have a line of its own: its mirror, its
+            // brightness, its range, its place.
+            settings.applyRest(rb, board);
+            boards.changed(rb, board);
+        }
     }
 }
 

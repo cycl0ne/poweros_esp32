@@ -587,6 +587,9 @@ pub const Sink = struct {
     hdmi: bool = false,
     quant_selectable: bool = false,
     forum: bool = false,
+    /// The range the settings ask for (`RTGRANGE_*`): the monitor's own
+    /// where they say nothing.
+    range: u8 = rtg.RTGRANGE_AUTO,
 
     /// What `GetBoardMonitor` answered, as the port reads it.
     pub fn of(said: *const rtg.RtgMonitorInfo) Sink {
@@ -600,13 +603,16 @@ pub const Sink = struct {
 
 /// How `mode` goes to the monitor `sink` says it is. A CEA mode but the
 /// first is taken as limited range unless the AVI infoframe says
-/// otherwise, which it may where the monitor lets it (QS).
+/// otherwise, which it may where the monitor lets it (QS). A range the
+/// settings ask for is sent as asked, and said to a monitor that takes
+/// infoframes, whatever the mode.
 fn outputFor(sink: Sink, mode: *const rtg.RtgTimings) Output {
     const cea_limited = sink.hdmi and mode.vic > 1;
+    const asked = sink.range != rtg.RTGRANGE_AUTO;
     return .{
         .hdmi = sink.hdmi,
-        .limited = cea_limited and !sink.quant_selectable,
-        .range_said = sink.hdmi and sink.quant_selectable,
+        .limited = if (asked) sink.range == rtg.RTGRANGE_LIMITED else cea_limited and !sink.quant_selectable,
+        .range_said = sink.hdmi and (asked or sink.quant_selectable),
         .scrambled = timing.khz(mode) > hdmi14_khz,
     };
 }
@@ -977,6 +983,19 @@ test "what a monitor is sent: HDMI with its range said, limited without QS, DVI 
     try testing.expectEqual(@as(u32, 0), aviFlags(plain, &full_hd, squashed));
     const vga: rtg.RtgTimings = .{ .pixel_clock_hz = 25_175_000, .h_active = 640, .v_active = 480, .vic = 1 };
     try testing.expect(!outputFor(plain, &vga).limited);
+
+    // A range the settings ask for: sent so and said, QS or not, and on
+    // a mode that would go out full by itself.
+    const asked_full: Sink = .{ .hdmi = true, .range = rtg.RTGRANGE_FULL };
+    const unsquashed = outputFor(asked_full, &full_hd);
+    try testing.expect(!unsquashed.limited and unsquashed.range_said);
+    try testing.expectEqual(rtg.RTGAVI_RANGE_FULL, aviFlags(asked_full, &full_hd, unsquashed));
+    const asked_limited: Sink = .{ .hdmi = true, .quant_selectable = true, .range = rtg.RTGRANGE_LIMITED };
+    try testing.expect(outputFor(asked_limited, &vga).limited);
+    try testing.expectEqual(rtg.RTGAVI_RANGE_LIMITED, aviFlags(asked_limited, &vga, outputFor(asked_limited, &vga)));
+    // A DVI monitor takes no infoframe: limited as asked, and not said.
+    const dvi_limited: Sink = .{ .range = rtg.RTGRANGE_LIMITED };
+    try testing.expect(outputFor(dvi_limited, &full_hd).limited and !outputFor(dvi_limited, &full_hd).range_said);
 
     // DVI: no infoframes, full range.
     const dvi: Sink = .{};

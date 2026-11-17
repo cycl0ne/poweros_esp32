@@ -120,8 +120,14 @@ pub const LIBRARY_VERSION = 1;
 /// carries the sound its board is told, so the sound's driver asks the
 /// board and reaches no register of the display's; BuildAviInfoFrame
 /// and HdmiAudioClock for the drivers of such links.
-pub const LIBRARY_REVISION = 33;
-const BUILD_DATE = "16.11.2026";
+/// 34: the settings (display.prefs): LoadBoardSettings,
+/// SaveBoardSettings, GetBoardSettings, SetBoardSettings and
+/// SetRtgDeviceDriver; an output's line names the mode it comes up in,
+/// its mirror, its brightness, its colour range (RtgBoardInfo.color_range,
+/// RTGBC_COLOR_RANGE), timings by hand and which board is the first, for
+/// the monitor it names; a device's line goes in front of its tags.
+pub const LIBRARY_REVISION = 34;
+const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
@@ -181,6 +187,10 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.NewList(&rb.notifies);
     sys_base.InitSemaphore(&rb.notify_lock);
     rb.monitor_task = null;
+    sys_base.NewList(&rb.output_lines);
+    sys_base.NewList(&rb.device_lines);
+    sys_base.InitSemaphore(&rb.settings_lock);
+    rb.dos_base = null;
     rb.timer_io = .{};
     rb.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys_base.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &rb.timer_io.node, 0) != 0) {

@@ -18,6 +18,8 @@ const Screen = _screen.Screen;
 const bar_border = _screen.bar_border;
 const default_pens = _screen.default_pens;
 const homeOf = _screen.homeOf;
+const frontOn = _screen.frontOn;
+const RtgBase = sdk.interface.rtg.RtgBase;
 const inUse = _screen.inUse;
 const showFront = _screen.showFront;
 const drawBar = _screen.drawBar;
@@ -370,6 +372,17 @@ fn findPlace(ib: *IntuitionBase) error{ NoMonitor, NotAvailable, NoMem }!Place {
         return error.NoMonitor;
     }
     const board: *rtg.RtgBoard = @ptrCast(@alignCast(showing.board.?));
+
+    // The first screen of a display opens in the mode the settings name
+    // for it: where that is not the mode of its first picture, the
+    // display is put in it now.
+    if (frontOn(ib, board) == null) {
+        gb.FreeRastPort(probe);
+        const picture = inSettingsMode(ib, board, showing);
+        const on = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(picture) }, .{} };
+        const rp = gb.CreateRastPortTagList(&on) orelse return error.NoMem;
+        return .{ .rp = rp, .board = board, .bitmap = picture, .home = picture, .own = false };
+    }
     const home = homeOf(ib, board, showing);
 
     if (!inUse(ib, home)) {
@@ -388,6 +401,65 @@ fn findPlace(ib: *IntuitionBase) error{ NoMonitor, NotAvailable, NoMem }!Place {
         return error.NoMem;
     };
     return .{ .rp = rp, .board = board, .bitmap = bitmap, .home = home, .own = true };
+}
+
+/// A buffer of a mode's size, black, shown in that mode. Null without
+/// room for it, and where the board refuses the show.
+fn pictureIn(rb: *RtgBase, board: *rtg.RtgBoard, mode: *const rtg.RtgMode) ?*rtg.RtgBitMap {
+    const picture = rb.AllocBitMap(board, mode.width, mode.height, @intFromEnum(mode.format), rtg.bitmaps.RTGBMF_DISPLAYABLE | rtg.bitmaps.PIXMAPF_SCREEN) orelse
+        return null;
+    if (picture.pixels) |memory| {
+        const pixels: [*]u8 = @ptrCast(memory);
+        @memset(pixels[0 .. @as(usize, picture.pitch) * picture.height], 0);
+    }
+    _ = rb.RefreshRect(picture, null);
+    const whole = [_]rtg.RtgBand{.{ .bitmap = picture }};
+    if (rb.ShowBoard(board, mode.id, &whole, whole.len) != rtg.errors.RTGERR_OK) {
+        rb.FreeBitMap(picture);
+        return null;
+    }
+    return picture;
+}
+
+/// A display no screen is on, put in the mode its settings line names:
+/// the buffer it shows then. That is `showing` where the line names no
+/// mode or one the board has not got, where the display is in that mode
+/// already, and where it cannot be put in it - the picture it has stays.
+/// Else a new buffer of the mode's size, black, and `showing` is given
+/// back. The mode the line names is the board's default
+/// (`SetBoardSettings`), which is how it is found.
+///
+/// A display with room for one picture goes dark for the change: its
+/// picture is given back before the new one is made, and made again in
+/// the mode it was in where the new one cannot be.
+fn inSettingsMode(ib: *IntuitionBase, board: *rtg.RtgBoard, showing: *rtg.RtgBitMap) *rtg.RtgBitMap {
+    const rb = ib.rtg_base.?;
+    const any = rtg.RTG_ANY;
+    var line: rtg.RtgSettings = .{};
+    if (rb.GetBoardSettings(board, &line, @sizeOf(rtg.RtgSettings)) != @sizeOf(rtg.RtgSettings)) return showing;
+    if (line.flags & rtg.RTGSET_MODE == 0) return showing;
+    var wanted: rtg.RtgMode = .{};
+    var info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    const id = rb.BestBoardMode(board, any, any, any, any, &wanted);
+    if (id == 0 or id == info.mode_id) return showing;
+    // A mode the board has not got leaves its default its own.
+    if (wanted.width != line.mode_width or wanted.height != line.mode_height) return showing;
+
+    if (pictureIn(rb, board, &wanted)) |picture| {
+        rb.FreeBitMap(showing);
+        return picture;
+    }
+    // No room for both: the old picture first. What it was is kept, to
+    // make it again.
+    const before: rtg.RtgMode = .{ .id = info.mode_id, .width = showing.width, .height = showing.height, .format = showing.format };
+    if (rb.ShowBitMap(board, null) != rtg.errors.RTGERR_OK) return showing;
+    rb.FreeBitMap(showing);
+    if (pictureIn(rb, board, &wanted)) |picture| return picture;
+    if (pictureIn(rb, board, &before)) |picture| return picture;
+    // Nothing shown and nothing to show: the screen opens on a buffer of
+    // the old size, which the display is asked to show with the screen.
+    return rb.AllocBitMap(board, before.width, before.height, @intFromEnum(before.format), rtg.bitmaps.RTGBMF_DISPLAYABLE | rtg.bitmaps.PIXMAPF_SCREEN) orelse showing;
 }
 
 /// What `findPlace` took, given back.

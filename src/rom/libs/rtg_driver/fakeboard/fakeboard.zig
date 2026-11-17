@@ -263,6 +263,9 @@ pub const State = struct {
     /// `RTGBC_MIRROR_Y`), on the boards that fill in `mirror`: both,
     /// unless a test says fewer.
     mirror_axes: u32 = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y,
+    /// Make the next board one whose driver sends the colours in the
+    /// range the settings ask for (`RTGBC_COLOR_RANGE`).
+    color_range: bool = false,
     /// How many levels the next board's backlight has, on the boards
     /// that fill in `set_brightness`: one for each per cent, unless a
     /// test says a line on or off (2) or none wired (0).
@@ -1287,7 +1290,7 @@ fn makeOutput(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, unit: u32) ?*rtg.R
             rtg.RTG_MAX_BANDS
         else
             1,
-        .caps = state.mirror_axes,
+        .caps = state.mirror_axes | (if (state.color_range) rtg.boards.RTGBC_COLOR_RANGE else 0),
         .brightness_steps = state.brightness_steps,
     }) orelse return null;
     const instance = instanceOf(board);

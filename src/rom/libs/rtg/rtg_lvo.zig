@@ -96,6 +96,11 @@ const MirrorBoard = @import("display/mirrorboard.zig").MirrorBoard;
 const SetBoardPointer = @import("pointer/setboardpointer.zig").SetBoardPointer;
 const MoveBoardPointer = @import("pointer/moveboardpointer.zig").MoveBoardPointer;
 const ShowBoardPointer = @import("pointer/showboardpointer.zig").ShowBoardPointer;
+const LoadBoardSettings = @import("settings/loadboardsettings.zig").LoadBoardSettings;
+const SaveBoardSettings = @import("settings/saveboardsettings.zig").SaveBoardSettings;
+const GetBoardSettings = @import("settings/getboardsettings.zig").GetBoardSettings;
+const SetBoardSettings = @import("settings/setboardsettings.zig").SetBoardSettings;
+const SetRtgDeviceDriver = @import("settings/setrtgdevicedriver.zig").SetRtgDeviceDriver;
 
 /// rtg.library's two interfaces, as the SDK generates them: the programs'
 /// from sdk/fd/rtg_lib.fd, the drivers' from sdk/fd/rtgdriver_lib.fd.
@@ -143,6 +148,11 @@ comptime {
 /// call of the table, of either interface, once. A call added gets its
 /// file here, or the build stops and names it.
 const contract_files = [_][]const u8{
+    @embedFile("settings/loadboardsettings.zig"),
+    @embedFile("settings/saveboardsettings.zig"),
+    @embedFile("settings/getboardsettings.zig"),
+    @embedFile("settings/setboardsettings.zig"),
+    @embedFile("settings/setrtgdevicedriver.zig"),
     @embedFile("driver/addrtgdriver.zig"),
     @embedFile("driver/remrtgdriver.zig"),
     @embedFile("driver/getrtgdrivers.zig"),
@@ -320,6 +330,21 @@ fn lvoSetBoardPower(rb: *RtgBase, board: *rtg.RtgBoard, state: u32) callconv(.c)
 fn lvoSetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
     return SetBoardBrightness(rb, board, percent);
 }
+fn lvoLoadBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) callconv(.c) i32 {
+    return LoadBoardSettings(rb, path);
+}
+fn lvoSaveBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) callconv(.c) i32 {
+    return SaveBoardSettings(rb, path);
+}
+fn lvoGetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, settings: *rtg.RtgSettings, size: u32) callconv(.c) u32 {
+    return GetBoardSettings(rb, board, settings, size);
+}
+fn lvoSetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, settings: *const rtg.RtgSettings) callconv(.c) i32 {
+    return SetBoardSettings(rb, board, settings);
+}
+fn lvoSetRtgDeviceDriver(rb: *RtgBase, device_name: [*:0]const u8, on: bool) callconv(.c) i32 {
+    return SetRtgDeviceDriver(rb, device_name, on);
+}
 fn lvoSetBoardAudio(rb: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
     return SetBoardAudio(rb, board, format);
 }
@@ -432,7 +457,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 28;
+const reserved_slots = 23;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -483,11 +508,11 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBlitPattern),
     vec(lvoLockBitMap),
     vec(lvoUnlockBitMap),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
+    vec(lvoLoadBoardSettings),
+    vec(lvoSaveBoardSettings),
+    vec(lvoGetBoardSettings),
+    vec(lvoSetBoardSettings),
+    vec(lvoSetRtgDeviceDriver),
     vec(reserved),
     vec(reserved),
     vec(reserved),

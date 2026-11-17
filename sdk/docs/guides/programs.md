@@ -488,9 +488,12 @@ FLASH=YES SOUND=BEEP VOLUME=80 TONE=880 DURATION=80
 FLASH=NO SOUND=SAMPLE SAMPLE=SYS:Sounds/ding.wav
 ```
 
-It also hands audio.prefs to audio.device, and makes the locale
+It also hands audio.prefs to audio.device, makes the locale
 locale.prefs describes the system's default
-([locale guide](locale.md#setting-the-default-envsyslocaleprefs)).
+([locale guide](locale.md#setting-the-default-envsyslocaleprefs)), and
+hands display.prefs to rtg.library, which reads it itself: the mode
+each output comes up in, its mirror, its brightness and which board is
+the first ([rtg guide](rtg.md#settings-displayprefs)).
 
 The keyboard is a window opened with `WA_NoActivate`: a press on it
 reaches its gadgets and leaves the active window - and the field being

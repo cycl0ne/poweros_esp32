@@ -370,6 +370,20 @@ fn sameIn(list: *exec.List, timings: *const rtg.RtgTimings, format: u32, refresh
     return null;
 }
 
+/// The default a board's modes have by themselves: the mode that was
+/// added as it, else the first of the list. Null on a board with none.
+///
+/// INPUTS:
+/// - `board` - the board.
+pub fn ownDefault(board: *rtg.RtgBoard) ?*Record {
+    const private = boards.privateOf(board);
+    var walk = private.modes.first();
+    while (walk) |n| : (walk = n.next()) {
+        if (recordOf(n).marked_default) return recordOf(n);
+    }
+    return if (private.modes.first()) |first| recordOf(first) else null;
+}
+
 /// The default put on one mode of the list and taken from the others.
 ///
 /// INPUTS:
@@ -492,12 +506,7 @@ pub fn restore(rb: *RtgBase, board: *rtg.RtgBoard) u32 {
         place(rb, board, record);
     }
     // The default of what is offered now: the one marked, else the first.
-    var marked: ?*Record = null;
-    var walk = private.modes.first();
-    while (walk) |n| : (walk = n.next()) {
-        if (recordOf(n).marked_default and marked == null) marked = recordOf(n);
-    }
-    if (marked orelse if (private.modes.first()) |first| recordOf(first) else null) |record| setDefault(board, record);
+    if (ownDefault(board)) |record| setDefault(board, record);
     nameAll(board);
     board.info.modes = count(board);
     return board.info.modes;

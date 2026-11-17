@@ -2,7 +2,9 @@
 //! Rtg: what displays this machine has, and what drives them. Built
 //! against the SDK only.
 //!
-//!   Rtg BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S
+//!   Rtg BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S,
+//!       SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,
+//!       DEVICE/K,DRIVER/K,SAVE/S
 //!
 //! With nothing asked for it prints the three lists: the display drivers
 //! on rtg.library's list, the devices the machine has for them - a panel
@@ -18,6 +20,22 @@
 //! board; DRIVERS, DEVICES and BOARDS print one list alone, which is what
 //! a script wants; FULL prints every section of every board.
 //!
+//! SET changes the settings (`display.prefs`) as rtg.library holds them.
+//! With a board it changes that board's line for the monitor on it now:
+//! CLEAR takes the line away first, and each of MODE (WIDTHxHEIGHT or
+//! WIDTHxHEIGHT@HZ, the mode the board comes up in), MIRROR (X, Y, XY or
+//! NONE), BRIGHTNESS (0 to 100), RANGE (FULL or LIMITED) and FIRST (YES
+//! or NO) changes that one key and leaves the others. Mirror, brightness,
+//! range and which board is first are in force at once; the mode with the
+//! display's next first screen. With DEVICE and DRIVER (ON or OFF) it
+//! says whether a driver from the disk is bound to that device from the
+//! next start on. SAVE writes the settings to ENV:Sys/display.prefs and
+//! ENVARC:Sys/display.prefs, after a SET on the same line; without it a
+//! change lasts until the machine restarts.
+//!
+//!   Rtg amd.0 SET MODE=1920x1080@60 FIRST=YES SAVE
+//!   Rtg SET DEVICE=pci.01:00.0 DRIVER=OFF SAVE
+//!
 //! Everything it prints comes from GetBoardInfo and GetBoardStats, which
 //! answer with the bytes they wrote, so a command older or newer than the
 //! ROM prints what the answer reached and no more. See sdk/docs/guides/rtg.md.
@@ -32,9 +50,10 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.10 (16.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.11 (17.11.2026)\r\n";
 
-const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S";
+const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S," ++
+    "SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,DEVICE/K,DRIVER/K,SAVE/S";
 const arg_board = 0;
 const arg_drivers = 1;
 const arg_devices = 2;
@@ -43,12 +62,32 @@ const arg_modes = 4;
 const arg_memory = 5;
 const arg_stats = 6;
 const arg_full = 7;
+const arg_set = 8;
+const arg_clear = 9;
+const arg_mode = 10;
+const arg_mirror = 11;
+const arg_brightness = 12;
+const arg_range = 13;
+const arg_first = 14;
+const arg_device = 15;
+const arg_driver = 16;
+const arg_save = 17;
+const arg_count = 18;
 
 const MSG_NOLIBRARY = "No %s - this machine has no display layer\n";
 const MSG_NOBOARD = "No board \"%s\"\n";
 const MSG_NOBOARDS = "No boards: no display driver found anything to drive\n";
 const MSG_NODRIVERS = "No display drivers\n";
 const MSG_NODEVICES = "No devices: the machine has no display rtg.library knows of\n";
+const MSG_SET_WHAT = "SET needs a board, or DEVICE and DRIVER\n";
+const MSG_BAD_MODE = "MODE is WIDTHxHEIGHT or WIDTHxHEIGHT@HZ\n";
+const MSG_BAD_MIRROR = "MIRROR is X, Y, XY or NONE\n";
+const MSG_BAD_BRIGHTNESS = "BRIGHTNESS is 0 to 100\n";
+const MSG_BAD_RANGE = "RANGE is FULL or LIMITED\n";
+const MSG_BAD_FIRST = "FIRST is YES or NO\n";
+const MSG_BAD_DRIVER = "DRIVER is ON or OFF\n";
+const MSG_NOT_SET = "The settings were not changed: %s\n";
+const MSG_NOT_SAVED = "%s was not written: %s\n";
 
 /// The most drivers and devices one list prints.
 const max_listed = 16;
@@ -60,7 +99,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
 
-    var argv: [8]usize = @splat(0);
+    var argv: [arg_count]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
@@ -73,6 +112,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(base);
     const rb: *RtgBase = @ptrCast(base);
+
+    // The settings changed, and written: nothing is printed but what went
+    // wrong.
+    if (argv[arg_set] != 0 or argv[arg_save] != 0) {
+        if (argv[arg_set] != 0) {
+            const code = set(dl, rb, &argv);
+            if (code != dos.RETURN_OK) return code;
+        }
+        if (argv[arg_save] != 0) return save(dl, rb);
+        return dos.RETURN_OK;
+    }
 
     // FULL is not "all three sections": it is the whole of every board,
     // which is what printBoard prints. A section switch asks for that
@@ -289,6 +339,7 @@ fn printBoard(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
         });
     }
     printMonitor(dl, rb, board);
+    printSettings(dl, rb, board);
     _ = Printf(dl, "%-12s %d at once\n", .{ "Buffers", info.buffers });
     _ = Printf(dl, "%-12s ", .{"State"});
     printFlags(dl, info.flags);
@@ -300,6 +351,191 @@ fn printBoard(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
     printModes(dl, rb, board);
     printMemory(dl, rb, board);
     if (info.flags & rtg.boards.RTGBF_STREAMING != 0) printStats(dl, rb, board);
+}
+
+/// Two words alike, whatever the case of their letters.
+fn sameWord(word: [*:0]const u8, other: []const u8) bool {
+    for (other, 0..) |char, at| {
+        const given = word[at];
+        if (given == 0) return false;
+        const upper = if (given >= 'a' and given <= 'z') given - ('a' - 'A') else given;
+        if (upper != char) return false;
+    }
+    return word[other.len] == 0;
+}
+
+/// A decimal number at `text[at.*]`, `at` moved past it; null where none
+/// starts there or it does not fit.
+fn numberAt(text: [*:0]const u8, at: *usize) ?u32 {
+    var value: u64 = 0;
+    const start = at.*;
+    while (text[at.*] >= '0' and text[at.*] <= '9') : (at.* += 1) {
+        value = value * 10 + (text[at.*] - '0');
+        if (value > 0xFFFF_FFFF) return null;
+    }
+    if (at.* == start) return null;
+    return @intCast(value);
+}
+
+/// "1920x1080" or "1920x1080@60" into a line's mode; false for anything
+/// else.
+fn readMode(text: [*:0]const u8, line: *rtg.RtgSettings) bool {
+    var at: usize = 0;
+    const width = numberAt(text, &at) orelse return false;
+    if (text[at] != 'x' and text[at] != 'X') return false;
+    at += 1;
+    const height = numberAt(text, &at) orelse return false;
+    var refresh: u32 = 0;
+    if (text[at] == '@') {
+        at += 1;
+        const hertz = numberAt(text, &at) orelse return false;
+        if (hertz == 0 or hertz > 1000) return false;
+        refresh = hertz * 1000;
+    }
+    if (text[at] != 0 or width == 0 or height == 0) return false;
+    line.flags |= rtg.RTGSET_MODE;
+    line.mode_width = width;
+    line.mode_height = height;
+    line.mode_refresh_mhz = refresh;
+    return true;
+}
+
+/// SET: a board's line changed key by key, or a device's driver switched.
+fn set(dl: *DosBase, rb: *RtgBase, argv: *const [arg_count]usize) i32 {
+    if (argv[arg_device] != 0 and argv[arg_driver] != 0) {
+        const device: [*:0]const u8 = @ptrFromInt(argv[arg_device]);
+        const word: [*:0]const u8 = @ptrFromInt(argv[arg_driver]);
+        const on = sameWord(word, "ON");
+        if (!on and !sameWord(word, "OFF")) {
+            _ = dl.PutStr(MSG_BAD_DRIVER);
+            return dos.RETURN_ERROR;
+        }
+        const code = rb.SetRtgDeviceDriver(device, on);
+        if (code != rtg.errors.RTGERR_OK) {
+            _ = Printf(dl, MSG_NOT_SET, .{rb.RtgErrorText(code)});
+            return dos.RETURN_ERROR;
+        }
+        if (argv[arg_board] == 0) return dos.RETURN_OK;
+    }
+    if (argv[arg_board] == 0) {
+        _ = dl.PutStr(MSG_SET_WHAT);
+        return dos.RETURN_ERROR;
+    }
+    const wanted: [*:0]const u8 = @ptrFromInt(argv[arg_board]);
+    const board = rb.FindBoard(wanted) orelse {
+        _ = Printf(dl, MSG_NOBOARD, .{wanted});
+        return dos.RETURN_ERROR;
+    };
+    var line: rtg.RtgSettings = .{};
+    if (argv[arg_clear] == 0) _ = rb.GetBoardSettings(board, &line, @sizeOf(rtg.RtgSettings));
+
+    if (argv[arg_mode] != 0 and !readMode(@ptrFromInt(argv[arg_mode]), &line)) {
+        _ = dl.PutStr(MSG_BAD_MODE);
+        return dos.RETURN_ERROR;
+    }
+    if (argv[arg_mirror] != 0) {
+        const word: [*:0]const u8 = @ptrFromInt(argv[arg_mirror]);
+        const axes: u32 = if (sameWord(word, "X"))
+            rtg.RTGSET_MIRROR_X
+        else if (sameWord(word, "Y"))
+            rtg.RTGSET_MIRROR_Y
+        else if (sameWord(word, "XY"))
+            rtg.RTGSET_MIRROR_X | rtg.RTGSET_MIRROR_Y
+        else if (sameWord(word, "NONE"))
+            0
+        else {
+            _ = dl.PutStr(MSG_BAD_MIRROR);
+            return dos.RETURN_ERROR;
+        };
+        line.flags &= ~@as(u32, rtg.RTGSET_MIRROR_X | rtg.RTGSET_MIRROR_Y);
+        line.flags |= rtg.RTGSET_MIRROR | axes;
+    }
+    if (argv[arg_brightness] != 0) {
+        const percent: *const i32 = @ptrFromInt(argv[arg_brightness]);
+        if (percent.* < 0 or percent.* > 100) {
+            _ = dl.PutStr(MSG_BAD_BRIGHTNESS);
+            return dos.RETURN_ERROR;
+        }
+        line.flags |= rtg.RTGSET_BRIGHTNESS;
+        line.brightness = @intCast(percent.*);
+    }
+    if (argv[arg_range] != 0) {
+        const word: [*:0]const u8 = @ptrFromInt(argv[arg_range]);
+        line.flags &= ~@as(u32, rtg.RTGSET_LIMITED_RANGE);
+        if (sameWord(word, "LIMITED")) {
+            line.flags |= rtg.RTGSET_RANGE | rtg.RTGSET_LIMITED_RANGE;
+        } else if (sameWord(word, "FULL")) {
+            line.flags |= rtg.RTGSET_RANGE;
+        } else {
+            _ = dl.PutStr(MSG_BAD_RANGE);
+            return dos.RETURN_ERROR;
+        }
+    }
+    if (argv[arg_first] != 0) {
+        const word: [*:0]const u8 = @ptrFromInt(argv[arg_first]);
+        if (sameWord(word, "YES")) {
+            line.flags |= rtg.RTGSET_FIRST;
+        } else if (sameWord(word, "NO")) {
+            line.flags &= ~@as(u32, rtg.RTGSET_FIRST);
+        } else {
+            _ = dl.PutStr(MSG_BAD_FIRST);
+            return dos.RETURN_ERROR;
+        }
+    }
+    const code = rb.SetBoardSettings(board, &line);
+    if (code != rtg.errors.RTGERR_OK) {
+        _ = Printf(dl, MSG_NOT_SET, .{rb.RtgErrorText(code)});
+        return dos.RETURN_ERROR;
+    }
+    return dos.RETURN_OK;
+}
+
+/// SAVE: the settings written for the running system and for the next
+/// start.
+fn save(dl: *DosBase, rb: *RtgBase) i32 {
+    var result: i32 = dos.RETURN_OK;
+    for ([_][*:0]const u8{ rtg.RTG_SETTINGS_ENV, rtg.RTG_SETTINGS_ENVARC }) |path| {
+        const code = rb.SaveBoardSettings(path);
+        if (code == rtg.errors.RTGERR_OK) continue;
+        _ = Printf(dl, MSG_NOT_SAVED, .{ path, rb.RtgErrorText(code) });
+        result = dos.RETURN_ERROR;
+    }
+    return result;
+}
+
+/// The board's settings line in force, as the file has its keys; nothing
+/// for a board with none.
+fn printSettings(dl: *DosBase, rb: *RtgBase, board: *rtg.RtgBoard) void {
+    var line: rtg.RtgSettings = .{};
+    if (rb.GetBoardSettings(board, &line, @sizeOf(rtg.RtgSettings)) != @sizeOf(rtg.RtgSettings)) return;
+    if (line.flags & ~@as(u32, rtg.RTGSET_MONITOR) == 0) return;
+    _ = Printf(dl, "%-12s", .{"Settings"});
+    if (line.flags & rtg.RTGSET_MODE != 0) {
+        _ = Printf(dl, " MODE=%dx%d", .{ line.mode_width, line.mode_height });
+        if (line.mode_refresh_mhz != 0) _ = Printf(dl, "@%d", .{(line.mode_refresh_mhz + 500) / 1000});
+    }
+    if (line.flags & rtg.RTGSET_FIRST != 0) _ = dl.PutStr(" FIRST=YES");
+    if (line.flags & rtg.RTGSET_MIRROR != 0) {
+        const both = rtg.RTGSET_MIRROR_X | rtg.RTGSET_MIRROR_Y;
+        const how: [*:0]const u8 = switch (line.flags & both) {
+            rtg.RTGSET_MIRROR_X => "X",
+            rtg.RTGSET_MIRROR_Y => "Y",
+            both => "XY",
+            else => "NONE",
+        };
+        _ = Printf(dl, " MIRROR=%s", .{how});
+    }
+    if (line.flags & rtg.RTGSET_BRIGHTNESS != 0) _ = Printf(dl, " BRIGHTNESS=%d", .{line.brightness});
+    if (line.flags & rtg.RTGSET_RANGE != 0) {
+        _ = dl.PutStr(if (line.flags & rtg.RTGSET_LIMITED_RANGE != 0) " RANGE=LIMITED" else " RANGE=FULL");
+    }
+    if (line.flags & rtg.RTGSET_TIMINGS != 0) {
+        _ = Printf(dl, " TIMINGS=%dx%d at %d Hz", .{ line.timings.h_active, line.timings.v_active, line.timings.pixel_clock_hz });
+    }
+    if (line.flags & rtg.RTGSET_MONITOR != 0) {
+        _ = Printf(dl, ", for %s:%04x:%08x", .{ @as([*:0]const u8, @ptrCast(&line.maker)), line.product, line.serial });
+    }
+    _ = dl.PutStr("\n");
 }
 
 /// Whether the picture is shown, black or the display asleep, and the

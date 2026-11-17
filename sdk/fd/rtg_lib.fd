@@ -104,8 +104,32 @@ void LockBitMap(*rtg.RtgBitMap bitmap)
 /// Let the board make pictures again. By the task that locked, once for
 /// each LockBitMap.
 void UnlockBitMap(*rtg.RtgBitMap bitmap)
-// Twelve slots kept free, so the slots after them stay where they are.
-##reserve 12
+/// Read the settings file - null: ENV:Sys/display.prefs - in place of
+/// what the library holds, and apply it to the boards there are. A line
+/// that cannot be read is passed over and said on the log, and the
+/// answer is then RTGERR_BAD_ARG; RTGERR_NO_FILE where the file is not
+/// there, which changes nothing. From a process.
+i32 LoadBoardSettings(?[*:0]const u8 path)
+/// Write the settings the library holds as a file - null:
+/// ENV:Sys/display.prefs. From a process.
+i32 SaveBoardSettings(?[*:0]const u8 path)
+/// The line in force for the board - the one for the monitor on it, else
+/// the one that names no monitor - into `settings`, of which `size`
+/// bytes are there: pass @sizeOf(RtgSettings). Returns the bytes
+/// written; a board with no line answers one whose flags are 0.
+u32 GetBoardSettings(*rtg.RtgBoard board, *rtg.RtgSettings settings, u32 size)
+/// Make `settings` the board's line for the monitor on it now, and apply
+/// at once what can be: brightness, mirror, the colour range, which
+/// board is first. The mode is the board's default from then on, which
+/// its display is put in when its first screen opens. RTGERR_BAD_ARG
+/// for a value out of its range.
+i32 SetBoardSettings(*rtg.RtgBoard board, *const rtg.RtgSettings settings)
+/// Whether a driver from the disk is bound to the device of that name
+/// (GetRtgDevices) from the next start on. RTGERR_NO_MEMORY without
+/// room for the line.
+i32 SetRtgDeviceDriver([*:0]const u8 device_name, bool on)
+// Seven slots kept free, so the slots after them stay where they are.
+##reserve 7
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis, or show it unturned: the

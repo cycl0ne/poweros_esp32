@@ -4,10 +4,10 @@
 //!
 //!   SetPrefs FROM/K,RESET/S,SHOW/S
 //!
-//! Reads the seven settings files from FROM, a directory - ENV:Sys unless
+//! Reads the eight settings files from FROM, a directory - ENV:Sys unless
 //! named; ENVARC:Sys for the ones kept over a restart - and hands five of
-//! them to intuition.library in one `SetPrefs`, one to audio.device and
-//! one to locale.library:
+//! them to intuition.library in one `SetPrefs`, one to audio.device, one
+//! to locale.library and one to rtg.library:
 //!
 //! - intuition.prefs: the double-click time, the height of a screen's
 //!   font when it is given none, when the keyboard on the screen comes up,
@@ -37,6 +37,14 @@
 //!   keymap (keymap.library's default); a name no keymap has is reported
 //!   and the keymap stays.
 //!
+//! - display.prefs: the displays - for each output the mode it comes up
+//!   in, how its picture is mirrored, its brightness, its colour range
+//!   and whether it is the first, and for a device whether a driver from
+//!   the disk is bound to it. rtg.library reads the file itself and
+//!   applies it; a line it cannot read is passed over and named on the
+//!   system's log (C:Log). A machine without rtg.library takes none of
+//!   it.
+//!
 //! A file that is not there changes nothing of its own. Every screen and
 //! window takes the pens, the style and the title bars' gadgets at once,
 //! those open too; the
@@ -47,7 +55,8 @@
 //! RESET puts every setting back to what the system starts with, and the
 //! style to the default - no output preferred, every output listed at
 //! full volume and flat; the files are not read. The locale stays as it
-//! is: the next start makes it again from locale.prefs. SHOW prints the settings in force
+//! is: the next start makes it again from locale.prefs. The displays'
+//! settings stay too. SHOW prints the settings in force
 //! - after setting them when FROM or RESET is given, and on its own
 //! changes nothing:
 //!
@@ -65,11 +74,13 @@
 //!   OUTPUT       QEMU USB Audio 40%
 //!   PREFERRED    QEMU USB Audio
 //!   LOCALE       deutschland, deutsch
+//!   DISPLAY      amd.0 2560x1440 MODE=1920x1080@60 FIRST=YES
 //!
 //! An OUTPUT line for each output there is, with its volume and its
 //! equalizer when it is not flat; PREFERRED names the one preferred, by
 //! its number when it is not there; LOCALE the default locale's country
-//! and language ("default" is the system's own, English).
+//! and language ("default" is the system's own, English); a DISPLAY line
+//! for each board, with the size it shows and what its settings line says.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -88,6 +99,8 @@ const audio_file = prefs.audio;
 const audiocontrol = sdk.devices.audiocontrol;
 const locale = sdk.locale;
 const locale_file = prefs.locale;
+const rtg = sdk.rtg;
+const RtgBase = sdk.interface.rtg.RtgBase;
 const keymap = sdk.keymap;
 const KeymapBase = sdk.interface.keymap.KeymapBase;
 const datatypes = sdk.datatypes;
@@ -107,7 +120,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "SetPrefs";
-const VERSION_STRING = "\x00$VER: SetPrefs 1.13 (12.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: SetPrefs 1.14 (17.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FROM/K,RESET/S,SHOW/S";
@@ -132,6 +145,7 @@ const MSG_NOSAMPLE = "%s: cannot be read as a sound - the tone plays instead\n";
 const MSG_OUTPUT = "%-12s %s %u%%\n";
 const MSG_OUTPUT_EQ = "%-12s %s %u%%, EQ %s\n";
 const MSG_PREFERRED = "%-12s %s\n";
+const MSG_DISPLAY_LINE = "%s: a line cannot be read - the system's log names it (C:Log)\n";
 const MSG_PREFERRED_GONE = "%-12s %s, not there\n";
 const MSG_LOCALE = "%-12s %s, %s\n";
 const MSG_KEYMAP = "%-12s %s\n";
@@ -433,6 +447,63 @@ fn makeLocale(l: Libs, from: [*:0]const u8) i32 {
     return dos.RETURN_OK;
 }
 
+/// display.prefs: handed to rtg.library, which reads the file itself and
+/// applies it to the boards. Without the file, and on a machine without
+/// rtg.library, nothing changes.
+fn readDisplay(l: Libs, dir: [*:0]const u8, _: *Gathered) i32 {
+    var path: [128:0]u8 = undefined;
+    const from = pathOf(&path, dir, "display.prefs");
+    const there = l.dl.Lock(from, dos.ACCESS_READ) orelse return dos.RETURN_OK;
+    l.dl.UnLock(there);
+    const library = l.sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse return dos.RETURN_OK;
+    defer l.sys.CloseLibrary(library);
+    const rb: *RtgBase = @ptrCast(library);
+    const code = rb.LoadBoardSettings(from);
+    if (code == rtg.errors.RTGERR_OK) return dos.RETURN_OK;
+    if (code == rtg.errors.RTGERR_BAD_ARG) {
+        _ = Printf(l.dl, MSG_DISPLAY_LINE, .{from});
+    } else {
+        _ = Printf(l.dl, MSG_BAD, .{ from, rb.RtgErrorText(code) });
+    }
+    return dos.RETURN_WARN;
+}
+
+/// Each board: the size it shows, and what its settings line says.
+fn showDisplay(l: Libs) void {
+    const library = l.sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION) orelse return;
+    defer l.sys.CloseLibrary(library);
+    const rb: *RtgBase = @ptrCast(library);
+    var board = rb.NextBoard(null);
+    while (board) |one| : (board = rb.NextBoard(one)) {
+        var info: rtg.RtgBoardInfo = .{};
+        var line: rtg.RtgSettings = .{};
+        _ = rb.GetBoardInfo(one, &info, @sizeOf(rtg.RtgBoardInfo));
+        _ = rb.GetBoardSettings(one, &line, @sizeOf(rtg.RtgSettings));
+        _ = Printf(l.dl, "%-12s %s %dx%d", .{ @as([*:0]const u8, "DISPLAY"), info.name orelse "?", info.width, info.height });
+        if (line.flags & rtg.RTGSET_MODE != 0) {
+            _ = Printf(l.dl, " MODE=%dx%d", .{ line.mode_width, line.mode_height });
+            if (line.mode_refresh_mhz != 0) _ = Printf(l.dl, "@%d", .{(line.mode_refresh_mhz + 500) / 1000});
+        }
+        if (line.flags & rtg.RTGSET_FIRST != 0) _ = l.dl.PutStr(" FIRST=YES");
+        if (line.flags & rtg.RTGSET_MIRROR != 0) {
+            const both = rtg.RTGSET_MIRROR_X | rtg.RTGSET_MIRROR_Y;
+            const how: [*:0]const u8 = switch (line.flags & both) {
+                rtg.RTGSET_MIRROR_X => "X",
+                rtg.RTGSET_MIRROR_Y => "Y",
+                both => "XY",
+                else => "NONE",
+            };
+            _ = Printf(l.dl, " MIRROR=%s", .{how});
+        }
+        if (line.flags & rtg.RTGSET_BRIGHTNESS != 0) _ = Printf(l.dl, " BRIGHTNESS=%d", .{line.brightness});
+        if (line.flags & rtg.RTGSET_RANGE != 0) {
+            _ = l.dl.PutStr(if (line.flags & rtg.RTGSET_LIMITED_RANGE != 0) " RANGE=LIMITED" else " RANGE=FULL");
+        }
+        if (line.flags & rtg.RTGSET_TIMINGS != 0) _ = l.dl.PutStr(" TIMINGS");
+        _ = l.dl.PutStr("\n");
+    }
+}
+
 /// The default locale's country and language, when there is
 /// locale.library.
 fn showLocale(l: Libs) void {
@@ -644,6 +715,7 @@ fn show(l: Libs) void {
     _ = Printf(l.dl, MSG_WORD, .{ @as([*:0]const u8, "BEEPFLASH"), @as([*:0]const u8, &flashes) });
     showAudio(l);
     showLocale(l);
+    showDisplay(l);
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -692,7 +764,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         resetAudio(l);
     } else {
         const dir = from orelse default_dir;
-        const steps = [_]*const fn (Libs, [*:0]const u8, *Gathered) i32{ readLocale, readAudio, readSettings, readFonts, readPens, readStyle, readSound };
+        const steps = [_]*const fn (Libs, [*:0]const u8, *Gathered) i32{ readLocale, readAudio, readDisplay, readSettings, readFonts, readPens, readStyle, readSound };
         for (steps) |step| result = @max(result, step(l, dir, &g));
         if (result == dos.RETURN_FAIL) return result;
     }

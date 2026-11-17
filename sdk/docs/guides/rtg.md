@@ -157,7 +157,8 @@ copy says in its flags whether it is the board's default
 picture a quarter turn round (`RTGMF_TURNED`) or interlaced.
 `FindBoardMode` answers the number of the mode of exactly that size,
 refresh and format - `RTG_ANY` leaves a figure open, so all four
-`RTG_ANY` is the board's default - or 0. `BestBoardMode` answers the
+`RTG_ANY` is the board's default, which the settings may name
+([Settings](#settings-displayprefs)) - or 0. `BestBoardMode` answers the
 mode nearest a wish and copies out what it is: of the size wished for
 where the board has it, else the smallest that holds it, else its
 largest. On a display of one mode that is always that mode, and the
@@ -869,6 +870,94 @@ The numbers say a lot about a picture that misbehaves. A part of the glass
 that is out of date while `refreshes` stands still was never handed on; one
 while `refreshes_dropped` climbs was handed on for the wrong buffer.
 
+## Settings: `display.prefs`
+
+What a user has chosen for the displays is kept in one file,
+`ENVARC:Sys/display.prefs`, and `ENV:Sys/display.prefs` for the running
+system. rtg.library reads and writes it itself; `C:SetPrefs` hands it
+over at boot with the other settings files. A line is for a device or
+for an output:
+
+```
+DEVICE=pci.01:00.0 DRIVER=OFF
+OUTPUT=amd.0 MONITOR=DEL:A0C4:00012345 MODE=2560x1440@60 FIRST=YES MIRROR=X BRIGHTNESS=80
+OUTPUT=jh7110.0 TIMINGS=148500000,1920,88,44,148,1080,4,5,36,+H,+V
+```
+
+| Key | Of | Means |
+|---|---|---|
+| `DEVICE` | device | the device's name, as `Rtg DEVICES` shows it |
+| `DRIVER` | device | `OFF`: no driver from the disk is bound to it |
+| `BUFFERS` | device | the most pictures at once on each of its boards (`RTGA_Buffers`) |
+| `COMPOSE` | device | `YES` or `NO`: whether each window draws into a buffer of its own (`RTGA_Compose`) |
+| `OUTPUT` | output | the board's name |
+| `MONITOR` | output | the monitor the line is for: maker, product and serial, as the monitor says them |
+| `MODE` | output | the mode the board comes up in: `WIDTHxHEIGHT` or `WIDTHxHEIGHT@HZ` |
+| `FIRST` | output | `YES`: this board is the first, the machine's display |
+| `MIRROR` | output | `X`, `Y`, `XY` or `NONE` |
+| `BRIGHTNESS` | output | 0 to 100 |
+| `RANGE` | output | `FULL` or `LIMITED`: the colour range sent, for a television |
+| `TIMINGS` | output | for a monitor that says nothing of itself: the pixel clock in Hz, the width, front porch, sync and back porch, the same four in lines, `+H` or `-H`, `+V` or `-V` |
+
+**A line is for the monitor it names.** With another monitor on that
+output the line is passed over, and that monitor comes up in the mode
+it prefers; when the first one is back, so is its line. An output may
+have a line for each monitor it was set up with. A line without
+`MONITOR` is a panel's, and on a connector it is for whatever is there
+that has no line of its own.
+
+**What a line does.**
+
+- `MODE` makes that mode the board's default where the board has it:
+  `FindBoardMode` and `BestBoardMode` with everything left open answer
+  it, and it is the mode the display is put in when its first screen
+  opens. The mode a board is in is not changed under what is shown.
+- `TIMINGS` are added as a mode, and the default, where the monitor
+  names no mode the board can make.
+- `MIRROR` and `BRIGHTNESS` are set at once, as `MirrorBoard` and
+  `SetBoardBrightness` set them.
+- `RANGE` is the board's `color_range` (`RTGRANGE_FULL`,
+  `RTGRANGE_LIMITED`; `RTGRANGE_AUTO` without the key: what the monitor
+  asks for). A board whose driver sends the range asked for says
+  `RTGBC_COLOR_RANGE`, and is shown again when it changes.
+- `FIRST` puts the board in front of every other on the library's
+  list, so `NextBoard(null)` answers it. One board is the first.
+
+What a board cannot do - a mode its monitor has not got, a brightness
+with no backlight to set - stays in its line and does nothing.
+
+A device's line is put in front of the device's tags for the driver the
+device is offered to next; a device a driver already has keeps the
+tags it was offered with.
+
+**The calls.**
+
+```zig
+// The file, in place of what the library holds, applied to the boards.
+_ = rb.LoadBoardSettings(null); // ENV:Sys/display.prefs
+
+// One output's line, read, changed and kept.
+var line: rtg.RtgSettings = .{};
+_ = rb.GetBoardSettings(board, &line, @sizeOf(rtg.RtgSettings));
+line.flags |= rtg.RTGSET_MIRROR | rtg.RTGSET_MIRROR_X;
+if (rb.SetBoardSettings(board, &line) == rtg.errors.RTGERR_OK) {
+    _ = rb.SaveBoardSettings(null);
+    _ = rb.SaveBoardSettings(rtg.RTG_SETTINGS_ENVARC);
+}
+```
+
+`GetBoardSettings` answers the line in force for the board - the one
+for the monitor on it now, else the one that names none - as an
+`RtgSettings`: a flag for each key the line has (`RTGSET_MODE`,
+`RTGSET_MIRROR`, ...), and the values. `SetBoardSettings` makes a
+structure the board's line for the monitor that is there and applies
+it; a structure whose flags are all clear takes the line away.
+`SetRtgDeviceDriver(name, on)` writes a device's `DRIVER`.
+`LoadBoardSettings` answers `RTGERR_BAD_ARG` where a line could not be
+read - that line is passed over and named on the system's log, the
+others are in force - and `RTGERR_NO_FILE` where there is no file.
+Both file calls need a Process.
+
 ## Errors
 
 The calls that answer with a status answer an `RTGERR_` code: 0 is
@@ -1245,7 +1334,14 @@ and frames lose their syncs.
   device, what it can do, its modes, its display memory cut into
   buffers, and how the stream is doing. `DRIVERS`, `DEVICES` and
   `BOARDS` print one list, `MODES`, `MEMORY` and `STATS` one section,
-  `FULL` everything.
+  `FULL` everything. `SET` changes a board's settings line key by key
+  (`Rtg amd.0 SET MODE=1920x1080@60 FIRST=YES`; `CLEAR` takes the line
+  away first) or a device's driver (`Rtg SET DEVICE=pci.01:00.0
+  DRIVER=OFF`), and `SAVE` writes `display.prefs` for the running
+  system and for the next start.
+- `C:SetPrefs` hands `ENV:Sys/display.prefs` to rtg.library with the
+  system's other settings files, at boot; `SetPrefs SHOW` prints a
+  `DISPLAY` line for each board.
 - `C:Backlight` sets the brightness through the board's IO expander
   (expander.resource), and says so on a board without one.
 - `C:test/Engine` checks the board's FillRect and CopyRect pixel for

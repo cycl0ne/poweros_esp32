@@ -42,6 +42,7 @@ pub const transport = @import("transport.zig");
 pub const errors = @import("errors.zig");
 pub const tags = @import("tags.zig");
 pub const video = @import("video.zig");
+pub const settings = @import("settings.zig");
 
 /// The library's base as a program calls it, and as a driver does: the
 /// two interfaces of the one jump table.
@@ -89,6 +90,22 @@ pub const RtgBoardSpec = boards.RtgBoardSpec;
 pub const RtgBoardInfo = boards.RtgBoardInfo;
 pub const RtgBoardStats = boards.RtgBoardStats;
 pub const RtgAudio = boards.RtgAudio;
+pub const RtgSettings = settings.RtgSettings;
+pub const RTG_SETTINGS_ENV = settings.RTG_SETTINGS_ENV;
+pub const RTG_SETTINGS_ENVARC = settings.RTG_SETTINGS_ENVARC;
+pub const RTGSET_MONITOR = settings.RTGSET_MONITOR;
+pub const RTGSET_MODE = settings.RTGSET_MODE;
+pub const RTGSET_FIRST = settings.RTGSET_FIRST;
+pub const RTGSET_MIRROR = settings.RTGSET_MIRROR;
+pub const RTGSET_MIRROR_X = settings.RTGSET_MIRROR_X;
+pub const RTGSET_MIRROR_Y = settings.RTGSET_MIRROR_Y;
+pub const RTGSET_BRIGHTNESS = settings.RTGSET_BRIGHTNESS;
+pub const RTGSET_RANGE = settings.RTGSET_RANGE;
+pub const RTGSET_LIMITED_RANGE = settings.RTGSET_LIMITED_RANGE;
+pub const RTGSET_TIMINGS = settings.RTGSET_TIMINGS;
+pub const RTGRANGE_AUTO = settings.RTGRANGE_AUTO;
+pub const RTGRANGE_FULL = settings.RTGRANGE_FULL;
+pub const RTGRANGE_LIMITED = settings.RTGRANGE_LIMITED;
 pub const RTGAVI_IT = boards.RTGAVI_IT;
 pub const RTGAVI_RANGE_LIMITED = boards.RTGAVI_RANGE_LIMITED;
 pub const RTGAVI_RANGE_FULL = boards.RTGAVI_RANGE_FULL;

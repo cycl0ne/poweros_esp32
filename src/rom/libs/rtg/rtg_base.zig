@@ -9,6 +9,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const PCIBase = sdk.interface.pci.PCIBase;
+const DosBase = sdk.interface.dos.DosBase;
 
 /// The base: the drivers, the devices they are offered, the boards they
 /// made of them, and the libraries it calls.
@@ -58,6 +59,15 @@ pub const RtgBase = extern struct {
     /// the monitor changed (`monitor/_monitor.zig`): made with the first
     /// board that has one, null until then.
     monitor_task: ?*exec.Task,
+    /// The settings (`settings/_settings.zig`): the outputs' lines and the
+    /// devices', as `display.prefs` has them, and the semaphore held
+    /// while they are read or changed. It is the last lock taken.
+    output_lines: exec.List,
+    device_lines: exec.List,
+    settings_lock: exec.SignalSemaphore,
+    /// dos.library, opened the first time a settings file is read or
+    /// written, and kept. Null until then.
+    dos_base: ?*DosBase,
     /// timer.device's request on its microsecond unit, opened by the init:
     /// what a wait with a time limit copies, with a reply port of the
     /// waiting task's own, so any task may wait. Its device is null where

@@ -136,7 +136,11 @@ pub const RtgBoardInfo = extern struct {
     /// each axis (MirrorBoard).
     mirror_x: u8 = 0,
     mirror_y: u8 = 0,
-    pad2: [2]u8 = .{ 0, 0 },
+    /// RTGRANGE_*: the range of the colours the output is asked to send,
+    /// as the settings say it; what the monitor asks for where they say
+    /// nothing. A driver with `RTGBC_COLOR_RANGE` reads it as it shows.
+    color_range: u8 = 0,
+    pad2: u8 = 0,
     /// What the output is called on the machine ("HDMI 0"), as its driver
     /// says it; null for one with no name of its own (rtg 18).
     label: ?[*:0]const u8 = null,
@@ -241,6 +245,9 @@ pub const RTGBC_STATS: u32 = 1 << 7;
 /// say (`GetBoardMonitor`, `RTGMON_AUDIO`).
 pub const RTGBC_AUDIO: u32 = 1 << 14;
 pub const RTGBC_CONTROL: u32 = 1 << 8;
+/// Its driver sends the colours in the range the settings ask for
+/// (`RtgBoardInfo.color_range`), full or limited. The driver says so.
+pub const RTGBC_COLOR_RANGE: u32 = 1 << 15;
 /// Its picture can be mirrored left to right (`MirrorBoard`): by the
 /// library where it composes the picture, or by the board's own
 /// hardware where its driver said so.
@@ -423,7 +430,9 @@ pub const RtgBoardSpec = extern struct {
     direct_bands: u32 = 0,
     /// RTGBC_*: what the driver says of its own hardware that its ops
     /// alone do not: `RTGBC_MIRROR_X` and `RTGBC_MIRROR_Y` for the axes
-    /// its `mirror` turns. Every other bit is the library's to work out.
+    /// its `mirror` turns, `RTGBC_COLOR_RANGE` where its `show` sends
+    /// the colours in the range the board's info asks for. Every other
+    /// bit is the library's to work out.
     caps: u32 = 0,
     /// How many levels the backlight its `set_brightness` drives has: 0
     /// for none - no line is wired - 2 for one that is on or off, 101 for

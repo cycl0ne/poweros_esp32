@@ -33,6 +33,7 @@ const monitors = @import("../monitor/_monitor.zig");
 const shows = @import("../display/_display.zig");
 const frames = @import("../frame/_frame.zig");
 const composer = @import("../compose/_compose.zig");
+const settings = @import("../settings/_settings.zig");
 
 /// What the library keeps for a board, beside the handle the caller sees.
 pub const Private = struct {
@@ -256,9 +257,23 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     board.region.alignment = private.arena.alignment;
     board.info.memory_total = private.arena.free_bytes;
 
+    // Named before its monitor is asked, so that the modes are made with
+    // the settings' line for an output of this name. Under the list's
+    // lock: the number is read and raised by one board at a time, and
+    // only a board that was made takes one.
+    sys.ObtainSemaphore(&rb.board_lock);
+    const of_driver = registry.privateOf(driver);
+    setName(rb, private, driver.spec.name, of_driver.board_serial);
+    of_driver.board_serial += 1;
+    sys.ReleaseSemaphore(&rb.board_lock);
+    board.info.name = board.node.name;
+
     // What is on its connector, and the modes that makes: before the board
-    // can be found, so no task meets one whose monitor was not asked.
+    // can be found, so no task meets one whose monitor was not asked. A
+    // panel's modes are its driver's, and the line says which it comes
+    // up in.
     monitors.firstLook(rb, board);
+    if (private.monitor == null) settings.chooseDefault(rb, board);
     // A monitor keeps a brightness of its own, and lights itself: the
     // first picture sets none, unless the device's tags ask one.
     if (board.info.flags & rtg.boards.RTGBF_CONNECTOR != 0 and request.brightness == null) private.lit = true;
@@ -276,14 +291,8 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
         private.band_count = 1;
     }
 
-    // Named as it joins the list, under the list's lock: the number is
-    // read and raised by one board at a time, and only a board that was
-    // made takes one.
+    // Onto the list.
     sys.ObtainSemaphore(&rb.board_lock);
-    const of_driver = registry.privateOf(driver);
-    setName(rb, private, driver.spec.name, of_driver.board_serial);
-    of_driver.board_serial += 1;
-    board.info.name = board.node.name;
     _ = rb.utility_base.Strlcpy(&private.device_name, private.device_name.len, device.node.name.?);
     board.info.device = @ptrCast(&private.device_name);
     board.node.pri = if (device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0) firmware_priority else 0;
@@ -293,9 +302,45 @@ pub fn list(rb: *RtgBase, board: *rtg.RtgBoard) void {
     // A row of each mode's buffers, now that the display memory says what
     // a buffer is aligned to.
     modes.setPitches(rb, board);
+    // What the settings say of an output of this name beside its modes:
+    // a board made after they were read starts with its line.
+    settings.applyRest(rb, board);
 
     // A board more: whoever asked is told.
     changed(rb, board);
+}
+
+/// Where a board the settings make the first stands: in front of every
+/// other.
+const first_priority = 100;
+
+/// A board put where it belongs on the library's list: in front of the
+/// others where the settings make it the first, else among them as they
+/// were made - behind those there already - and the firmware's picture
+/// last. The tasks that asked are told where it moved.
+///
+/// INPUTS:
+/// - `rb` - the library.
+/// - `board` - the board, on the list.
+/// - `first` - whether the settings make it the first.
+///
+/// CONTEXT:
+/// In a task: it takes the board list's lock, and the notifications'
+/// after it. The board's own lock is not held.
+pub fn setFirst(rb: *RtgBase, board: *rtg.RtgBoard, first: bool) void {
+    const sys = rb.sys_base;
+    const device = board.device;
+    const firmware = if (device) |of| of.flags & rtg.drivers.RTGDVF_FIRMWARE != 0 else board.info.flags & rtg.boards.RTGBF_FIRMWARE != 0;
+    const wanted: i8 = if (first) first_priority else if (firmware) firmware_priority else 0;
+    sys.ObtainSemaphore(&rb.board_lock);
+    const moved = privateOf(board).listed and board.node.pri != wanted;
+    if (moved) {
+        sys.Remove(&board.node);
+        board.node.pri = wanted;
+        sys.Enqueue(&rb.boards, &board.node);
+    }
+    sys.ReleaseSemaphore(&rb.board_lock);
+    if (moved) changed(rb, board);
 }
 
 /// What the library keeps for a task that asked to be told

@@ -42,6 +42,11 @@ pub const LVO = struct {
     pub const BlitPattern = libraries.lvo(35);
     pub const LockBitMap = libraries.lvo(36);
     pub const UnlockBitMap = libraries.lvo(37);
+    pub const LoadBoardSettings = libraries.lvo(38);
+    pub const SaveBoardSettings = libraries.lvo(39);
+    pub const GetBoardSettings = libraries.lvo(40);
+    pub const SetBoardSettings = libraries.lvo(41);
+    pub const SetRtgDeviceDriver = libraries.lvo(42);
     pub const RtgErrorText = libraries.lvo(50);
     pub const MirrorBoard = libraries.lvo(51);
     pub const SetBoardPointer = libraries.lvo(54);
@@ -97,6 +102,11 @@ pub const Fn = struct {
     pub const BlitPattern = *const fn (*RtgBase, *rtg.RtgBitMap, *const rtg.RtgRect, *const rtg.RtgPattern) callconv(.c) i32;
     pub const LockBitMap = *const fn (*RtgBase, *rtg.RtgBitMap) callconv(.c) void;
     pub const UnlockBitMap = *const fn (*RtgBase, *rtg.RtgBitMap) callconv(.c) void;
+    pub const LoadBoardSettings = *const fn (*RtgBase, ?[*:0]const u8) callconv(.c) i32;
+    pub const SaveBoardSettings = *const fn (*RtgBase, ?[*:0]const u8) callconv(.c) i32;
+    pub const GetBoardSettings = *const fn (*RtgBase, *rtg.RtgBoard, *rtg.RtgSettings, u32) callconv(.c) u32;
+    pub const SetBoardSettings = *const fn (*RtgBase, *rtg.RtgBoard, *const rtg.RtgSettings) callconv(.c) i32;
+    pub const SetRtgDeviceDriver = *const fn (*RtgBase, [*:0]const u8, bool) callconv(.c) i32;
     pub const RtgErrorText = *const fn (*RtgBase, i32) callconv(.c) [*:0]const u8;
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
@@ -277,6 +287,45 @@ pub const RtgBase = opaque {
     /// each LockBitMap.
     pub fn UnlockBitMap(self: *RtgBase, bitmap: *rtg.RtgBitMap) void {
         return libraries.call(self, LVO.UnlockBitMap, Fn.UnlockBitMap, .{bitmap});
+    }
+
+    /// Read the settings file - null: ENV:Sys/display.prefs - in place of
+    /// what the library holds, and apply it to the boards there are. A line
+    /// that cannot be read is passed over and said on the log, and the
+    /// answer is then RTGERR_BAD_ARG; RTGERR_NO_FILE where the file is not
+    /// there, which changes nothing. From a process.
+    pub fn LoadBoardSettings(self: *RtgBase, path: ?[*:0]const u8) i32 {
+        return libraries.call(self, LVO.LoadBoardSettings, Fn.LoadBoardSettings, .{path});
+    }
+
+    /// Write the settings the library holds as a file - null:
+    /// ENV:Sys/display.prefs. From a process.
+    pub fn SaveBoardSettings(self: *RtgBase, path: ?[*:0]const u8) i32 {
+        return libraries.call(self, LVO.SaveBoardSettings, Fn.SaveBoardSettings, .{path});
+    }
+
+    /// The line in force for the board - the one for the monitor on it, else
+    /// the one that names no monitor - into `settings`, of which `size`
+    /// bytes are there: pass @sizeOf(RtgSettings). Returns the bytes
+    /// written; a board with no line answers one whose flags are 0.
+    pub fn GetBoardSettings(self: *RtgBase, board: *rtg.RtgBoard, settings: *rtg.RtgSettings, size: u32) u32 {
+        return libraries.call(self, LVO.GetBoardSettings, Fn.GetBoardSettings, .{ board, settings, size });
+    }
+
+    /// Make `settings` the board's line for the monitor on it now, and apply
+    /// at once what can be: brightness, mirror, the colour range, which
+    /// board is first. The mode is the board's default from then on, which
+    /// its display is put in when its first screen opens. RTGERR_BAD_ARG
+    /// for a value out of its range.
+    pub fn SetBoardSettings(self: *RtgBase, board: *rtg.RtgBoard, settings: *const rtg.RtgSettings) i32 {
+        return libraries.call(self, LVO.SetBoardSettings, Fn.SetBoardSettings, .{ board, settings });
+    }
+
+    /// Whether a driver from the disk is bound to the device of that name
+    /// (GetRtgDevices) from the next start on. RTGERR_NO_MEMORY without
+    /// room for the line.
+    pub fn SetRtgDeviceDriver(self: *RtgBase, device_name: [*:0]const u8, on: bool) i32 {
+        return libraries.call(self, LVO.SetRtgDeviceDriver, Fn.SetRtgDeviceDriver, .{ device_name, on });
     }
 
     /// An error in words. Never null.

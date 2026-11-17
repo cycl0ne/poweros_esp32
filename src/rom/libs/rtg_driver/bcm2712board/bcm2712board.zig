@@ -94,7 +94,7 @@ const list = @import("list.zig");
 const MODULE_NAME = "rtg-bcm2712";
 const DRIVER_NAME = "bcm2712";
 const VERSION = 1;
-const REVISION = 4;
+const REVISION = 5;
 const BUILD_DATE = "16.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -596,7 +596,7 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
         .flags = rtg.boards.RTGBF_DIRECT_FLIP,
         // Its planes are read backwards either way, and the monitor on
         // its port takes a brightness.
-        .caps = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y,
+        .caps = rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y | rtg.boards.RTGBC_COLOR_RANGE,
         .brightness_steps = 101,
         // A monitor's modes are made in the format the board shows.
         .format = format,
@@ -819,6 +819,8 @@ fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     var monitor: rtg.RtgMonitorInfo = .{};
     _ = screen.rtg_base.GetBoardMonitor(board, &monitor, @sizeOf(rtg.RtgMonitorInfo));
     screen.sink = bcm2712.Sink.of(&monitor);
+    // The colour range the settings ask for, read with each mode.
+    screen.sink.range = board.info.color_range;
     // Room for as many pictures of the mode as the board may have.
     board.region.size = @as(usize, screen.buffers) * @as(usize, mode.pitch) * mode.height;
     // What it read until now says nothing about the new mode, nor to a

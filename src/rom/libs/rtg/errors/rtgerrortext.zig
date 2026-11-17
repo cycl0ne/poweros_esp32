@@ -62,6 +62,7 @@ pub fn RtgErrorText(_: *RtgBase, error_code: i32) [*:0]const u8 {
         err.RTGERR_NOT_DISPLAYABLE => "that buffer cannot be displayed",
         err.RTGERR_IO => "the bus did not answer",
         err.RTGERR_UNDERRUN => "the bus ran ahead of its data",
+        err.RTGERR_NO_FILE => "the file is not there",
         else => "unknown error",
     };
 }

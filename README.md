@@ -163,7 +163,11 @@ and plays:
 of the board, a display function on PCI - is offered to the drivers
 that say they take such a thing, and the one that takes it makes a board
 for each output; the first board is the machine's display (`C:Rtg`
-lists drivers, devices and boards). graphics.library, layers and
+lists drivers, devices and boards). What a user chose for an output -
+the mode it comes up in, its mirror, its brightness, its colour range,
+which board is the first - is kept a line a monitor in
+`ENVARC:Sys/display.prefs`, which the library reads and writes itself
+(`Rtg <board> SET ... SAVE`). graphics.library, layers and
 intuition draw into a board's buffers without
 knowing what panel is behind them, so one program draws on a 3.5" SPI
 panel and on a 1080p monitor alike. Where a display has a picture of

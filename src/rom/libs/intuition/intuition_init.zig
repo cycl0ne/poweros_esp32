@@ -276,8 +276,12 @@ pub const LIBRARY_VERSION = 0;
 /// 99: screens pulled down are shown as bands with ShowBoard, in the mode
 /// the board is in.
 /// 100: a screen's second buffer is handed on whole with RefreshRect.
-pub const LIBRARY_REVISION = 100;
-const BUILD_DATE = "16.11.2026";
+/// 101: the first screen of a display opens in the mode the display's
+/// settings line names (rtg.library, display.prefs): where that is not
+/// the mode of its first picture, the display is put in it, with a
+/// picture of that size.
+pub const LIBRARY_REVISION = 101;
+const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

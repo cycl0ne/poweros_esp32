@@ -28,7 +28,8 @@ const flips = @import("../compose/_flip.zig");
 ///   is called, how many bytes of its own it keeps with the board, what
 ///   is true of it from the start, where its buffers come from, which
 ///   output of the device it is, how many bands its display reads by
-///   itself (`direct_bands`), which axes its `mirror` turns (`caps`) and
+///   itself (`direct_bands`), which axes its `mirror` turns and whether
+///   it sends the colour range the settings ask for (`caps`), and
 ///   how many levels its backlight has (`brightness_steps`); for a board
 ///   with a connector, the pixel format its monitor's modes are made in.
 ///   Read during the call and not kept; the label's string stays the
@@ -117,6 +118,7 @@ pub fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice,
     board.info.flags = spec.flags;
     board.info.brightness_steps = spec.brightness_steps;
     private.compose.turns = spec.caps & (rtg.boards.RTGBC_MIRROR_X | rtg.boards.RTGBC_MIRROR_Y);
+    board.info.caps = spec.caps & rtg.boards.RTGBC_COLOR_RANGE;
     sys.NewList(&private.modes);
     private.monitor_format = spec.format;
     sys.NewList(&board.bitmaps);

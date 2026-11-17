@@ -55,6 +55,12 @@ pub const Private = struct {
     offered_to: ?*rtg.RtgDriver = null,
     /// It was made by `AddRtgDevice`, and may be taken away again.
     added: bool = false,
+    /// What its settings line says, as tags in front of its own
+    /// (`settings/_settings.zig`): the handle's `tags` point here while
+    /// `dressed`, and `own_tags` are the ones it was made with.
+    dress: [3]TagItem = @splat(.{}),
+    own_tags: ?[*]const TagItem = null,
+    dressed: bool = false,
 };
 
 /// The library's own record around a device's handle.

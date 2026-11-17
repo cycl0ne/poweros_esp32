@@ -38,7 +38,10 @@ pub const RTGERR_IO: i32 = -14;
 /// bus part way: the bus kept its clock and sent what its empty FIFO
 /// held, so some of the bytes that arrived are not the caller's.
 pub const RTGERR_UNDERRUN: i32 = -15;
+/// A file that was to be read is not there, or one that was to be
+/// written could not be made.
+pub const RTGERR_NO_FILE: i32 = -16;
 
 /// The lowest code that has a text. RtgErrorText answers "unknown error"
 /// below it.
-pub const RTGERR_LAST: i32 = RTGERR_UNDERRUN;
+pub const RTGERR_LAST: i32 = RTGERR_NO_FILE;
