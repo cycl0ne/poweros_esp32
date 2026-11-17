@@ -22,9 +22,11 @@
 //! sdk/libs/rtg/.
 //!
 //! Each call is a file of its own in the folder for its category -
-//! driver/, device/, board/, mode/, monitor/, bitmap/, display/, engine/,
-//! frame/, transport/, tag/, pointer/, video/ and errors/ - and memory/
-//! holds the arena display memory is cut from.
+//! driver/, device/, load/, board/, mode/, monitor/, bitmap/, display/,
+//! engine/, frame/, transport/, tag/, pointer/, video/, settings/ and
+//! errors/ - compose/ holds the picture the library makes for a board
+//! (in place, and flipped between two frames), and memory/ the arena
+//! display memory is cut from.
 //! The jump table is rtg_lvo.zig, the ROM tag and init rtg_init.zig, the
 //! base rtg_base.zig. This file holds the names the rest of the kernel
 //! reaches the library by, and the tests of calls working together; a
@@ -513,10 +515,17 @@ test "info and stats: as much as the caller has room for, whole fields" {
     try testing.expectEqual(@as(u32, whole), base(rb).GetBoardInfo(board, info, whole + 8));
     try testing.expectEqual(@as(u8, 0xA5), bytes[whole]);
 
+    // The driver's counters, and the library's beside them.
+    const fk = fakeOf(rb);
+    const picture = base(rb).AllocBitMap(board, 16, 8, @intFromEnum(rtg.PixelFormat.rgb565), 0).?;
     var stats: rtg.RtgBoardStats = .{};
     try testing.expectEqual(@as(u32, @sizeOf(rtg.RtgBoardStats)), base(rb).GetBoardStats(board, &stats, @sizeOf(rtg.RtgBoardStats)));
-    try testing.expectEqual(@as(u32, 42), stats.frames);
-    try testing.expectEqual(@as(u32, 1), stats.starved_frames);
+    const before = stats.refreshes;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).RefreshRect(picture, null));
+    _ = base(rb).GetBoardStats(board, &stats, @sizeOf(rtg.RtgBoardStats));
+    try testing.expectEqual(fk.log.refreshed, stats.refreshes);
+    try testing.expectEqual(before + 1, stats.refreshes);
+    base(rb).FreeBitMap(picture);
 
     driverBase(rb).DeleteBoard(board);
     try tearDown(rb);
@@ -578,6 +587,7 @@ test "pixels and a colour laid over a buffer: cut down, the picture moved with t
     _ = base(rb).ScalePixels(bitmap, &inside, &pixels, 4, 1);
     try testing.expectEqual(scales + 1, fk.log.scales);
     try testing.expectEqual(@as(u32, 4), fk.log.last_scale_width);
+    try testing.expectEqual(@as(u32, 1), fk.log.last_scale_height);
 
     base(rb).FreeBitMap(bitmap);
     driverBase(rb).DeleteBoard(board);

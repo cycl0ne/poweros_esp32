@@ -712,9 +712,13 @@ pub const RtgOverlayOps = extern struct {
 /// caller does itself. Each answers RTGERR_NOT_SUPPORTED for a job it
 /// does not take.
 pub const RtgEngineOps = extern struct {
+    /// Each slot answers RTGERR_NOT_SUPPORTED for a job its engine does
+    /// not take - a format, a size, memory it cannot reach - and the
+    /// caller does that job itself.
+    ///
     /// The rectangle has been clipped to the buffer before the call, and
     /// is never empty. The colour is in the buffer's format,
-    /// right-aligned. RTGERR_BAD_FORMAT for a format the engine cannot do.
+    /// right-aligned.
     fill_rect: ?*const fn (*RtgBoard, *RtgBitMap, *const bitmaps.RtgRect, u32) callconv(.c) i32 = null,
     /// Both rectangles are clipped before the call. The two buffers may be
     /// the same one and the rectangles may overlap.

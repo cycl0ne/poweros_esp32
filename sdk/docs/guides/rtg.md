@@ -594,8 +594,10 @@ gives them. Every job is done when its call returns.
 
 **The library never does these in software.** A board without the
 operation answers `RTGERR_NOT_SUPPORTED`, and the bit for it is clear in
-`RtgBoardInfo.caps`. A caller that finds the bit clear does the work
-itself, which is what graphics.library does. Every rectangle is cut down
+`RtgBoardInfo.caps`; so does a board whose engine does not take a job -
+a format, a size, memory it cannot reach. A caller that finds the bit
+clear, or is answered so, does the work itself, which is what
+graphics.library does. Every rectangle is cut down
 to the buffer before the board sees it; a rectangle with nothing inside
 is `RTGERR_OK` and no work. The colours are in the buffer's format, a
 blend's as 0xAARRGGBB. What a shape or a picture is drawn from moves

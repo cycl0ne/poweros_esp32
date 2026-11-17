@@ -333,7 +333,6 @@ pub const State = struct {
 /// What belongs to one board: the library allocates it beside the handle.
 pub const Instance = struct {
     pattern: u32 = 0,
-    calls: u32 = 0,
     /// The bus the board's device sits on, when the driver opened it.
     bus: ?*rtg.RtgTransport = null,
     /// What the board shows: its bands from the top - one from line 0 for
@@ -560,7 +559,6 @@ pub const mode_table = [_]ModeOf{
 
 fn destroyBoard(board: *rtg.RtgBoard) callconv(.c) void {
     const state = stateOfBoard(board);
-    instanceOf(board).calls += 1;
     state.log.destroyed += 1;
     if (instanceOf(board).picture) |picture| state.sys.FreeVec(picture);
     instanceOf(board).picture = null;
@@ -610,7 +608,6 @@ fn showAnswer(state: *State) i32 {
 /// changes once nothing of the show can fail any more.
 fn showOp(board: *rtg.RtgBoard, what: *const rtg.RtgShow) callconv(.c) i32 {
     const instance = instanceOf(board);
-    instance.calls += 1;
     const state = stateOfBoard(board);
     if (state.meanwhile) |look| look(board);
     const log = &state.log;
@@ -696,7 +693,6 @@ pub fn glassOf(board: *rtg.RtgBoard) ?*rtg.RtgBitMap {
 fn flipOp(board: *rtg.RtgBoard, frame: *rtg.RtgBitMap) callconv(.c) i32 {
     const state = stateOfBoard(board);
     const instance = instanceOf(board);
-    instance.calls += 1;
     if (state.while_handed) |look| look(board);
     if (state.while_flipping) |look| look(board);
     state.log.flips += 1;
@@ -737,7 +733,6 @@ fn framesOp(board: *rtg.RtgBoard, mode: *const rtg.RtgMode, into: *[2]?*rtg.RtgB
 fn updateOp(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
     const state = stateOfBoard(board);
     const instance = instanceOf(board);
-    instance.calls += 1;
     if (state.while_handed) |look| look(board);
     state.log.updates += 1;
     state.log.last_update = area.*;
@@ -749,7 +744,6 @@ fn updateOp(board: *rtg.RtgBoard, area: *const rtg.RtgRect) callconv(.c) i32 {
 }
 
 fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRect) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     if (stateOfBoard(board).while_handed) |look| look(board);
     const log = &stateOfBoard(board).log;
     log.refreshed += 1;
@@ -762,7 +756,6 @@ fn refresh(board: *rtg.RtgBoard, bitmap: *rtg.RtgBitMap, area: *const rtg.RtgRec
 /// the state it reached - what the test said for asleep - and on waking
 /// puts its backlight back at what the library keeps.
 fn power(board: *rtg.RtgBoard, wanted: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const state = stateOfBoard(board);
     if (state.meanwhile) |look| look(board);
     const log = &state.log;
@@ -779,7 +772,6 @@ fn power(board: *rtg.RtgBoard, wanted: u32) callconv(.c) i32 {
 /// The link's sound, logged; a rate the test board does not carry is
 /// refused.
 fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.audio_calls += 1;
     if (format) |one| {
@@ -790,7 +782,6 @@ fn audio(board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
 }
 
 fn setBrightness(board: *rtg.RtgBoard, percent: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const state = stateOfBoard(board);
     const log = &state.log;
     log.brightness_calls += 1;
@@ -808,13 +799,12 @@ fn brightnessNow(board: *rtg.RtgBoard) callconv(.c) i32 {
     return @intCast(state.own_brightness);
 }
 
+/// What it counted: the rectangles it was handed (`refresh`).
 fn stats(board: *rtg.RtgBoard, out: *rtg.RtgBoardStats) callconv(.c) void {
-    _ = board;
-    out.* = .{ .frames = 42, .starved_frames = 1, .worst_gap_us = 7 };
+    out.* = .{ .refreshes = stateOfBoard(board).log.refreshed };
 }
 
 fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.control_calls += 1;
     log.last_control = what;
@@ -822,7 +812,6 @@ fn control(board: *rtg.RtgBoard, what: u32, value: isize) callconv(.c) isize {
 }
 
 fn mirror(board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const state = stateOfBoard(board);
     const log = &state.log;
     log.mirrors += 1;
@@ -833,7 +822,6 @@ fn mirror(board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) callconv(.c) i32
 }
 
 fn setPointer(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.pointer_sets += 1;
     log.pointer_image = image;
@@ -848,13 +836,11 @@ fn movePointer(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
 }
 
 fn showPointer(board: *rtg.RtgBoard, show: bool) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     stateOfBoard(board).log.pointer_shown = show;
     return err.RTGERR_OK;
 }
 
 fn setOverlay(board: *rtg.RtgBoard, image: ?*const rtg.RtgPointerImage) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.overlay_sets += 1;
     log.overlay_image = image;
@@ -934,11 +920,10 @@ fn rows16(bitmap: *rtg.RtgBitMap, y: u32) []u16 {
 }
 
 fn fillRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.fills += 1;
     log.last_rect = area.*;
-    if (dest.format != .rgb565) return err.RTGERR_BAD_FORMAT;
+    if (dest.format != .rgb565) return err.RTGERR_NOT_SUPPORTED;
     var y: u32 = @intCast(area.y);
     const end: u32 = @intCast(area.y + area.height);
     while (y < end) : (y += 1) {
@@ -962,7 +947,6 @@ fn copyRects(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, co
 }
 
 fn copyRect(board: *rtg.RtgBoard, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const rtg.RtgCopy) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.copies += 1;
     log.last_copy = copy.*;
@@ -1009,7 +993,6 @@ fn mix(under: u16, over: u32, coverage: u32) u16 {
 }
 
 fn blendPixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.blends += 1;
     log.last_rect = area.*;
@@ -1055,7 +1038,6 @@ fn blendPixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgR
 }
 
 fn blendRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.blend_rects += 1;
     log.last_rect = area.*;
@@ -1074,7 +1056,6 @@ fn blendRect(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRec
 /// layer above sees the same pixels with and without a board.
 fn scalePixels(board: *rtg.RtgBoard, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) callconv(.c) i32 {
     _ = dest;
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.scales += 1;
     log.last_rect = area.*;
@@ -1118,7 +1099,6 @@ const flipped_hardware_ops = made: {
 /// driver has them.
 /// A one-bit shape: counted and kept, nothing drawn.
 fn blitTemplate(board: *rtg.RtgBoard, _: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.RtgTemplate) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.templates += 1;
     log.last_rect = area.*;
@@ -1128,7 +1108,6 @@ fn blitTemplate(board: *rtg.RtgBoard, _: *rtg.RtgBitMap, area: *const rtg.RtgRec
 
 /// A one-bit tile: counted and kept, nothing drawn.
 fn blitPattern(board: *rtg.RtgBoard, _: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) callconv(.c) i32 {
-    instanceOf(board).calls += 1;
     const log = &stateOfBoard(board).log;
     log.patterns += 1;
     log.last_rect = area.*;

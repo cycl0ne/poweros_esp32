@@ -189,7 +189,9 @@ test "video layers: one to a board, a picture needs its part, the limits kept, c
     try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowVideoFrame(layer, &picture, &.{ .x = far, .width = 8, .height = 4 }));
     try testing.expectEqual(rtg.errors.RTGERR_BAD_ARG, fixture.base(rb).ShowVideoFrame(layer, &picture, &.{ .y = far, .width = 4, .height = 8 }));
     try testing.expectEqual(@as(u32, 0), fk.log.video_shows);
+    const moves = fk.log.video_moves;
     try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).MoveVideoLayer(layer, &.{ .x = 10, .y = 20, .width = 12, .height = 12 }));
+    try testing.expectEqual(moves + 1, fk.log.video_moves);
     try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).ShowVideoFrame(layer, &picture, &all));
     try testing.expectEqual(&picture, fk.log.video_picture.?);
     try testing.expectEqual(all, fk.log.video_src);
