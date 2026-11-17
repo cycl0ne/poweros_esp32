@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! jpeg.resource: the chip's JPEG codec, decoding a file into pixels -
-//! the ESP32-P4's, or the JH7110's CODAJ12 (the VisionFive 2's); a machine
-//! without one has no jpeg.resource, and a program decodes in software
-//! there (jpeg.datatype does).
+//! the ESP32-P4's, the JH7110's CODAJ12 (the VisionFive 2's), an AMD
+//! graphics device's, or the BCM2711's VideoCore firmware (the Compute
+//! Module 4's, through vchiq.resource); a machine without one has no
+//! jpeg.resource, and a program decodes in software there (jpeg.datatype
+//! does).
 //!
 //! ExamineJPEG says what a file is and whether the codec takes it, and
 //! what the picture will need; DecodeJPEG decodes it into a picture the
@@ -12,10 +14,13 @@
 //! The codec takes baseline files (SOF0) of 8-bit samples, grey or in
 //! three components with their colour at full size or halved across, or
 //! across and down (4:4:4, 4:2:2, 4:2:0), up to 16383 pixels either way;
-//! two code tables of each kind and the quantization tables 0 to 3. The
+//! two code tables of each kind and the quantization tables 0 to 3 - the
+//! VideoCore's firmware 4:2:0 and grey ones only, since it gives every
+//! picture's colour halved across and down: DecodeJPEG answers a 4:2:2 or
+//! 4:4:4 file JPEGERR_UNSUPPORTED there, to be decoded in software. The
 //! colour is turned into red, green and blue with JFIF's full-range
 //! matrix - by the P4's 2D-DMA on the way to memory, by the CPU from the
-//! JH7110's codec's planes.
+//! planes of the JH7110's codec, an AMD device's and the VideoCore's.
 //!
 //! Get its base with OpenResource(JPEGNAME); its functions are in
 //! sdk/interface/jpeg.zig.

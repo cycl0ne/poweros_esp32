@@ -8,7 +8,9 @@
 //! the first decode, so its power domain stays off until a file is
 //! decoded. On an x86-64 machine: nothing - the AMD graphics device's
 //! decoder is found through amdgpu.resource, which starts after this, and
-//! started by the first decode that may start it.
+//! started by the first decode that may start it. On the BCM2711 (the
+//! Compute Module 4): nothing either - the decoder is the VideoCore's
+//! firmware, reached through vchiq.resource, which the first decode opens.
 //!
 //! On a chip or board without the codec (the host the tests run on) the
 //! resource is made all the same, without the codec: ExamineJPEG works,
@@ -27,8 +29,8 @@ const JpegBase = @import("jpeg_base.zig").JpegBase;
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.JPEGNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 2;
-const BUILD_DATE = "07.11.2026";
+pub const RESOURCE_REVISION = 3;
+const BUILD_DATE = "17.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -36,12 +38,14 @@ const RESOURCE_VERSION_STRING =
 
 /// The codec the chip may have: the ESP32-P4's, the JH7110's CODAJ12 -
 /// where the board lists it - an AMD graphics device's - where the machine
-/// has one - or none.
-pub const Engine = enum { none, esp32p4, codaj12, amdgpu };
+/// has one - the VideoCore's firmware's - where vchiq.resource is - or
+/// none.
+pub const Engine = enum { none, esp32p4, codaj12, amdgpu, videocore };
 pub const engine: Engine = switch (hardware.chip) {
     .esp32p4 => .esp32p4,
     .rv64sbi => .codaj12,
     .x64uefi => .amdgpu,
+    .a64psci, .a64v80 => .videocore,
     else => .none,
 };
 
@@ -73,10 +77,12 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     jb.jpu_awake = false;
     jb.jpu_dead = false;
     jb.gpu = .{};
+    jb.vchiq = null;
+    jb.vchiq_missing = false;
     switch (comptime engine) {
         .esp32p4 => startCodec(jb, sys_base),
         .codaj12 => findJpu(jb, sys_base),
-        .amdgpu, .none => {},
+        .amdgpu, .videocore, .none => {},
     }
     return lib;
 }

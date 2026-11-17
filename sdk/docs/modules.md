@@ -130,6 +130,7 @@ flowchart TB
     m_jpeg_resource --> m_dma_resource
     m_jpeg_resource --> m_ps2_resource
     m_jpeg_resource --> m_timer_device
+    m_jpeg_resource --> m_vchiq_resource
     m_jpeg_resource --> m_watchdog_resource
     m_keyboard_device --> m_timer_device
     m_keymap_library --> m_dos_library

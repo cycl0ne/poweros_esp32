@@ -13,6 +13,8 @@ const _header = @import("../header/_header.zig");
 const engine = @import("../jpeg_init.zig").engine;
 const codaj12 = @import("../codec/_codaj12.zig");
 const amd = @import("../codec/_amdgpu.zig");
+const videocore = @import("../codec/_videocore.zig");
+const vchiq = sdk.resources.vchiq;
 const ycc = @import("../codec/ycc.zig");
 const amdgpu = sdk.resources.amdgpu;
 const watchdog = sdk.resources.watchdog;
@@ -31,7 +33,8 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 /// INPUTS:
 /// - `file` - the file's bytes, from its start. On the ESP32-P4 in memory
 ///   the 2D-DMA reads: the PSRAM or the internal memory (what AllocVec
-///   gives); on the JH7110 and an AMD graphics device anywhere.
+///   gives); on the JH7110, an AMD graphics device and the BCM2711
+///   anywhere.
 /// - `length` - how many there are.
 /// - `picture` - filled in.
 ///
@@ -40,12 +43,13 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 /// them from `pixels` on, `pitch` bytes from one row to the next, in
 /// `format` (JPEGFMT_BGR24, or JPEGFMT_GREY8 for a grey file). Otherwise
 /// why not, and `picture` is all zero: what ExamineJPEG answers for the
-/// file, JPEGERR_UNSUPPORTED as well for a file the 2D-DMA cannot read
-/// or a picture less than 64 pixels across or down on an AMD graphics
-/// device, JPEGERR_NO_MEMORY, JPEGERR_FAILED when the codec stopped on
+/// file, JPEGERR_UNSUPPORTED as well for a file the 2D-DMA cannot read,
+/// a picture less than 64 pixels across or down on an AMD graphics
+/// device, or a 4:2:2 or 4:4:4 file on the BCM2711, JPEGERR_NO_MEMORY, JPEGERR_FAILED when the codec stopped on
 /// the file or did not finish in time, JPEGERR_NO_ENGINE when there is no
 /// codec, it would not wake, or an AMD device's decoder is not started
-/// yet and the watchdog is not armed.
+/// yet and the watchdog is not armed - on the BCM2711, when there is no
+/// vchiq.resource or the firmware makes no decoder.
 ///
 /// BEHAVIOR:
 /// The headers are read and their tables written into the codec, and the
@@ -66,7 +70,15 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 /// same matrix - a grey picture's rows copied as they are. The first
 /// decode there finds the decoder through amdgpu.resource and starts it,
 /// and starts it only while the watchdog is armed, so that a decoder
-/// which stops the machine as it starts has the machine reset. Each
+/// which stops the machine as it starts has the machine reset. On the
+/// BCM2711 the VideoCore's firmware decodes it (`codec/_videocore.zig`):
+/// the file goes to its "ril.image_decode" through vchiq.resource, read
+/// from where the caller has it, and the picture comes back as its
+/// samples in three planes, the colour halved across and down (I420),
+/// turned into blue, green and red with the same matrix - a grey one's
+/// brightness plane copied. The firmware gives its colour no other way,
+/// so it is given 4:2:0 and grey files only: a 4:2:2 or 4:4:4 one would
+/// lose colour, and is left to software. Each
 /// waits for at most a quarter of a second and a microsecond for each
 /// eight pixels; the CPU is free meanwhile. One decode at a time: a
 /// second caller waits for the first.
@@ -90,8 +102,10 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 ///
 /// NOTES:
 /// The codec brings the colour's halved samples to full size its own way
-/// - the 2D-DMA, the JH7110's format converter: the picture is close to
-/// a software decoder's, not equal.
+/// - the 2D-DMA, the JH7110's format converter, the CPU from an AMD
+/// device's and the VideoCore firmware's planes, each sample standing for
+/// the pixels it covers: the picture is close to a software decoder's,
+/// which may blend them, not equal.
 ///
 /// BUGS:
 /// An AMD device's decoder that does not finish a picture in time is not
@@ -120,6 +134,7 @@ pub fn DecodeJPEG(jb: *JpegBase, file: [*]const u8, length: u32, picture: *types
         .esp32p4 => decode(jb, file, length, h, picture),
         .codaj12 => decodeJpu(jb, file[0..length], h, picture),
         .amdgpu => decodeGpu(jb, file[0..length], h, picture),
+        .videocore => decodeVc(jb, file[0..length], h, picture),
         .none => types.JPEGERR_NO_ENGINE,
     };
 }
@@ -471,6 +486,45 @@ fn runGpu(jb: *JpegBase, h: *const _header.Header, copy: [*]const u8, stream_byt
     }
     amd.streamFromDevice(out, piece.cpu + target_at, layout.bytes);
     gpu.FreeGPUMemory(&piece);
+    return types.JPEGERR_OK;
+}
+
+/// The decode itself, by the VideoCore's firmware: under the lock, with
+/// vchiq.resource opened by the first.
+fn decodeVc(jb: *JpegBase, file: []const u8, h: *const _header.Header, picture: *types.JPEGPicture) u32 {
+    const sys = jb.sys_base;
+    const bytes: u32 = @intCast(lineUp(h.bytes()));
+    const memory_size = bytes + line;
+    const memory = sys.AllocMem(memory_size, exec.MEMF_ANY) orelse return types.JPEGERR_NO_MEMORY;
+    const pixels = lineUp(@intFromPtr(memory));
+    const answer = blk: {
+        sys.ObtainSemaphore(&jb.lock);
+        defer sys.ReleaseSemaphore(&jb.lock);
+        const vq = jb.vchiq orelse found: {
+            if (jb.vchiq_missing) break :blk types.JPEGERR_NO_ENGINE;
+            const opened = sys.OpenResource(vchiq.VCHIQNAME) orelse {
+                jb.vchiq_missing = true;
+                break :blk types.JPEGERR_NO_ENGINE;
+            };
+            jb.vchiq = @ptrCast(@alignCast(opened));
+            break :found jb.vchiq.?;
+        };
+        const time_us = 250_000 + @as(u64, h.padded_width) * h.padded_height / 8;
+        break :blk videocore.decode(sys, vq, file, h, @ptrFromInt(pixels), h.pitch(), time_us);
+    };
+    if (answer != types.JPEGERR_OK) {
+        sys.FreeMem(memory, memory_size);
+        return answer;
+    }
+    picture.* = .{
+        .pixels = @ptrFromInt(pixels),
+        .pitch = h.pitch(),
+        .width = h.width,
+        .height = h.height,
+        .format = h.format(),
+        .memory = memory,
+        .memory_size = memory_size,
+    };
     return types.JPEGERR_OK;
 }
 

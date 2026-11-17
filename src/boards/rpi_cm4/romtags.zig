@@ -11,7 +11,7 @@
 //! the Compute Module 5 has them. And videodec.resource for the chip's
 //! H.265 block (CHIP_BCM2711_HEVC), and vchiq.resource, the queue to the
 //! VideoCore's firmware (CHIP_BCM2711_VCHIQ), through which videodec.resource
-//! decodes H.264.
+//! decodes H.264 and jpeg.resource JPEG.
 
 const rom = @import("../../rom/modules.zig");
 
@@ -27,4 +27,5 @@ pub const modules = rom.core ++ rom.screen ++ rom.pipe ++ rom.motion ++ .{
     @import("../../rom/devs/audio/audio.zig"),
     @import("../../rom/resources/videodec/videodec.zig"),
     @import("../../rom/resources/vchiq/vchiq.zig"),
+    @import("../../rom/resources/jpeg/jpeg.zig"),
 };

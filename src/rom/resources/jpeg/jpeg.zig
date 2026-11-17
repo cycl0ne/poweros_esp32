@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: MPL-2.0
 //! jpeg.resource: the chip's JPEG codec, decoding a file into pixels -
-//! the ESP32-P4's, or the JH7110's CODAJ12 (the VisionFive 2's).
+//! the ESP32-P4's, the JH7110's CODAJ12 (the VisionFive 2's), an AMD
+//! graphics device's, or the BCM2711's VideoCore firmware (the Compute
+//! Module 4's).
 //!
 //! ExamineJPEG reads a file's headers and says whether the codec takes
 //! it; DecodeJPEG writes the tables into the codec, has it decode the
 //! file and waits for the end - on the P4 the 2D-DMA feeds it the scan
 //! and writes the picture back, turned into red, green and blue on the
 //! way; on the JH7110 the codec writes YCbCr planes, turned into blue,
-//! green and red after. FreeJPEGPicture gives the picture back. One
+//! green and red after, and the VideoCore's firmware the same through
+//! vchiq.resource. FreeJPEGPicture gives the picture back. One
 //! decode at a time, under the resource's semaphore.
 //!
 //! The headers are `header/_header.zig`; the P4's codec and its channel
 //! `codec/_codec.zig`, the JH7110's `codec/_codaj12.zig` and its colour
-//! `codec/ycc.zig`; each call is a file of its own under `picture/`.
+//! `codec/ycc.zig`, an AMD device's `codec/_amdgpu.zig`, the VideoCore
+//! firmware's `codec/_videocore.zig`; each call is a file of its own
+//! under `picture/`.
 //! The jump table is jpeg_lvo.zig, the ROM tag and init jpeg_init.zig,
 //! the base jpeg_base.zig. This file holds the names the rest of the
 //! kernel reaches the resource by, and the tests of it working as a
@@ -54,6 +59,7 @@ test {
     _ = @import("header/_header.zig");
     _ = @import("codec/_codaj12.zig");
     _ = @import("codec/_amdgpu.zig");
+    _ = @import("codec/_videocore.zig");
     _ = @import("codec/ycc.zig");
     _ = @import("picture/examinejpeg.zig");
     _ = @import("picture/decodejpeg.zig");
