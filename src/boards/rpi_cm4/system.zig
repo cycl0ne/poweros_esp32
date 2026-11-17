@@ -124,6 +124,22 @@ const emmc = [_]Tag{
     .done,
 };
 
+/// The first HDMI port's sound: channel 12 of the chip's 40-bit DMA4
+/// channels (the device tree's dma40, channels 11 to 14 at 0xFE00_7B00,
+/// 0x100 apart, of which 12 and 13 are the ARM's), its interrupt SPI 90,
+/// feeding the HDMI0 controller's MAI - in the mode the firmware lit, and
+/// only where it lit it as HDMI (rta_driver/hdmi/bcm2711.zig).
+const hdmi_sound = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_CODEC),
+    .value(st.PART_Chip, st.CHIP_BCM2711_HDMI_AUDIO),
+    .pointer(st.PART_ChipName, "bcm2711 hdmi0 audio"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0xFE00_7C00),
+    .value(st.PART_Irq, 32 + 90),
+    .pointer(st.PART_Label, "HDMI 0 sound"),
+    .done,
+};
+
 /// The VideoCore's firmware, start4.elf, through its mailbox (`mailbox`):
 /// where C:Reboot TRYBOOT and C:CpuClock find it.
 const firmware = [_]Tag{
@@ -171,6 +187,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &emmc),
     .pointer(st.SYSTAG_Part, &firmware),
+    .pointer(st.SYSTAG_Part, &hdmi_sound),
     .done,
 };
 

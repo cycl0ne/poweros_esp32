@@ -9,7 +9,10 @@
 //! the engine doing the reading is looked at where it is one this knows
 //! (`dcn.zig`, through amdgpu.resource, which holds the device), to say
 //! what it is, to switch on the sound the link it lit can carry, and to
-//! flip it between that buffer and a frame of the device's own.
+//! flip it between that buffer and a frame of the device's own. Behind
+//! the BCM2711's first HDMI port, which its firmware lit, the scaler that
+//! reads the firmware's framebuffer is told to read the driver's planes
+//! instead, in the firmware's mode (`bcm2711.zig`).
 //!
 //! A module of its own, on the same footing as the other drivers: it
 //! opens rtg.library at cold start and hands in a driver called "fb",
@@ -150,6 +153,16 @@
 //! writes back only its own pixels, a run a row, so tiles drawn on
 //! several cores can each hand on their own.
 //!
+//! The BCM2711's port is the BCM2712's but for what the firmware keeps:
+//! its HVS reads the driver's frames past the caches, a program's buffers
+//! itself, the cursor and the overlay as planes of their own, and pixel
+//! valve 2 raises the frame interrupt - in the one mode the firmware lit,
+//! which is the board's. A flip is waited for until the HVS has started a
+//! frame since (`bcm2711.taken`). The firmware writes a list of its own
+//! when it sets the mode again, as a monitor is plugged in: the task looks
+//! at the channel now and then and makes the driver's list again
+//! (`keepHvs`).
+//!
 //! An AMD display behind the firmware's framebuffer is shown two frames
 //! the same way, for a reason of its own: a picture copied into the one
 //! buffer it reads, while it reads it, shows the top of one picture and
@@ -186,6 +199,7 @@ const st = sdk.expansion.systemtags;
 const ramfb = @import("ramfb.zig");
 const jh7110 = @import("jh7110.zig");
 const bcm2712 = @import("bcm2712.zig");
+const bcm2711 = @import("bcm2711.zig");
 const virtio = @import("virtio.zig");
 const uefi = @import("uefi.zig");
 const dcn = @import("dcn.zig");
@@ -199,15 +213,15 @@ const timer = sdk.devices.timer;
 const MODULE_NAME = "rtg-fb";
 const DRIVER_NAME = "fb";
 const VERSION = 1;
-const REVISION = 29;
-const BUILD_DATE = "08.11.2026";
+const REVISION = 30;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The chips this drives, as the board's panel part names them.
-const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU, st.CHIP_BCM2712_HVS, st.CHIP_UEFI_FB };
+const chips = [_]u32{ st.CHIP_QEMU_RAMFB, st.CHIP_JH7110_DC8200, st.CHIP_VIRTIO_GPU, st.CHIP_BCM2712_HVS, st.CHIP_BCM2711_HVS, st.CHIP_UEFI_FB };
 
 /// What every row and every buffer starts on: whole cache lines, so a
 /// refresh writes back exactly the rows it names, and as wide as any
@@ -233,13 +247,20 @@ const Scanout = union(enum) {
     jh7110,
     virtio: virtio.Gpu,
     bcm2712,
+    bcm2711: bcm2711.Hvs,
     uefi: uefi.Framebuffer,
 };
 
-/// Whether the display is behind an HDMI port, whose monitor names its
-/// modes, and which reads past the caches with a cursor plane of its own.
-fn isHdmi(scanout: Scanout) bool {
+/// Whether the display is behind an HDMI port this driver sets the mode
+/// of, whose monitor names its modes.
+fn namesModes(scanout: Scanout) bool {
     return scanout == .jh7110 or scanout == .bcm2712;
+}
+
+/// Whether the display reads RAM past the caches, with a cursor plane of
+/// its own: the HDMI ports', the BCM2711's in the mode its firmware lit.
+fn readsPastCaches(scanout: Scanout) bool {
+    return namesModes(scanout) or scanout == .bcm2711;
 }
 
 /// Whether the display lays the pointer over the picture itself, in a
@@ -290,6 +311,10 @@ const Screen = struct {
     plugged: bool = false,
     settling: u32 = 0,
     watched_us: u64 = 0,
+    /// Behind the BCM2711's port: whether the firmware was found to have
+    /// the channel in a mode that is not the board's, said once
+    /// (`keepHvs`).
+    hvs_lost: bool = false,
     /// A picture of the largest mode: what the composed frame takes.
     frame_bytes: usize = 0,
     /// Where the display reads from; 0 before it has been told.
@@ -460,6 +485,7 @@ fn frameServer(data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     const screen: *Screen = @ptrCast(@alignCast(data.?));
     const raised: u32 = switch (screen.scanout) {
         .bcm2712 => bcm2712.takeInterrupts(),
+        .bcm2711 => bcm2711.takeInterrupts(),
         // The device's ring hands on the pipe's update alone.
         .uefi => taken: {
             dcn.takeFrame(screen.dcn.?);
@@ -629,6 +655,10 @@ fn scanFrom(screen: *Screen, address: usize) void {
         },
         .bcm2712 => done: {
             bcm2712.show(address);
+            break :done true;
+        },
+        .bcm2711 => |*hvs| done: {
+            bcm2711.show(hvs, address);
             break :done true;
         },
         .virtio => |*gpu| virtio.show(gpu, .{
@@ -1041,6 +1071,7 @@ const cursor_bytes = jh7110.cursor_side * jh7110.cursor_side * 4;
 comptime {
     std.debug.assert(virtio.cursor_side == jh7110.cursor_side);
     std.debug.assert(bcm2712.cursor_side == jh7110.cursor_side);
+    std.debug.assert(bcm2711.cursor_side == jh7110.cursor_side);
 }
 
 fn cursorBuffer(screen: *Screen, turn: u1) [*]u8 {
@@ -1065,6 +1096,16 @@ fn cursorPlane(screen: *Screen) void {
     switch (screen.scanout) {
         .virtio => |*gpu| virtio.moveCursor(gpu, at.x, at.y),
         .bcm2712 => bcm2712.cursor(
+            @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
+            screen.cursor_small,
+            screen.cursor_hot_x,
+            screen.cursor_hot_y,
+            at.x,
+            at.y,
+            screen.pointer_shown and screen.pointer != null,
+        ),
+        .bcm2711 => |*hvs| bcm2711.cursor(
+            hvs,
             @intFromPtr(cursorBuffer(screen, screen.cursor_turn)),
             screen.cursor_small,
             screen.cursor_hot_x,
@@ -1167,12 +1208,13 @@ fn moveOverlay(board: *rtg.RtgBoard, left: i32, top: i32) callconv(.c) void {
     }.apply, .{ left, top });
 }
 
-// --- the overlay, on the BCM2712's plane of its own ------------------------
+// --- the overlay, on the BCM2712's and the BCM2711's plane of its own -----
 
 /// The bytes of one of the overlay plane's buffers: rtg's largest image.
 const overlay_bytes = bcm2712.overlay_side * bcm2712.overlay_side * 4;
 comptime {
     std.debug.assert(bcm2712.overlay_side == rtg.boards.RTG_OVERLAY_MAX);
+    std.debug.assert(bcm2711.overlay_side == rtg.boards.RTG_OVERLAY_MAX);
 }
 
 fn overlayBuffer(screen: *Screen, turn: u1) [*]u8 {
@@ -1183,14 +1225,26 @@ fn overlayBuffer(screen: *Screen, turn: u1) [*]u8 {
 /// is seen.
 fn overlayPlane(screen: *Screen) void {
     if (screen.overlay_images == null) return;
-    bcm2712.overlay(
-        @intFromPtr(overlayBuffer(screen, screen.overlay_turn)),
-        screen.overlay_width,
-        screen.overlay_height,
-        screen.overlay_left,
-        screen.overlay_top,
-        screen.overlay_shown,
-    );
+    const address = @intFromPtr(overlayBuffer(screen, screen.overlay_turn));
+    switch (screen.scanout) {
+        .bcm2711 => |*hvs| bcm2711.overlay(
+            hvs,
+            address,
+            screen.overlay_width,
+            screen.overlay_height,
+            screen.overlay_left,
+            screen.overlay_top,
+            screen.overlay_shown,
+        ),
+        else => bcm2712.overlay(
+            address,
+            screen.overlay_width,
+            screen.overlay_height,
+            screen.overlay_left,
+            screen.overlay_top,
+            screen.overlay_shown,
+        ),
+    }
 }
 
 /// A new image into the buffer the plane is not reading - ARGB, opaque
@@ -1675,11 +1729,12 @@ fn flipperCode(sys: *ExecBase) callconv(.c) void {
 const watch_us: u64 = 500_000;
 const settle_looks = 2;
 
-/// Whether the task looks at the port now and then: the BCM2712's, whose
-/// hot-plug line has no interrupt of its own here, once the display
-/// runs. The JH7110's is not looked at.
+/// Whether the task looks at the port now and then, once the display
+/// runs: the BCM2712's, whose hot-plug line has no interrupt of its own
+/// here, and the BCM2711's channel, which its firmware may take back. The
+/// JH7110's is not looked at.
 fn watches(screen: *const Screen) bool {
-    return screen.scanout == .bcm2712 and screen.scanning != 0;
+    return (screen.scanout == .bcm2712 or screen.scanout == .bcm2711) and screen.scanning != 0;
 }
 
 /// How long the task waits for work before it looks at the port again;
@@ -1703,6 +1758,7 @@ fn watch(screen: *Screen) void {
     const now = sdk.hardware.systimer.uptimeUs();
     if (now -% screen.watched_us < watch_us - watch_us / 8) return;
     screen.watched_us = now;
+    if (screen.scanout == .bcm2711) return keepHvs(screen);
     const waiter = Waiter{ .screen = screen };
     const plugged = bcm2712.monitor();
     if (plugged == screen.plugged) {
@@ -1732,6 +1788,26 @@ fn watch(screen: *Screen) void {
         return;
     }
     putBack(screen);
+}
+
+/// The BCM2711's channel looked at: where the firmware has written a list
+/// of its own - set the mode again, as a monitor was plugged in - the
+/// driver's is made again, its picture the one shown and the cursor and
+/// the overlay as they are, where the firmware's picture is still the
+/// board's size; where it is not, the firmware's is left, and said once.
+/// Made holding `flip_lock`.
+fn keepHvs(screen: *Screen) void {
+    const hvs = &screen.scanout.bcm2711;
+    if (hvs.stopped or bcm2711.ours(hvs)) return;
+    const again = bcm2711.find(hvs.base, hvs.channel, hvs.width, hvs.height) orelse {
+        if (!screen.hvs_lost) exec.kprintf(screen.sys, "%s: the firmware set the HDMI port to a mode that is not %dx%d, so its picture is seen\n", .{ MODULE_NAME, hvs.width, hvs.height });
+        screen.hvs_lost = true;
+        return;
+    };
+    hvs.* = again;
+    screen.hvs_lost = false;
+    startHvs(screen, screen.scanning);
+    exec.kprintf(screen.sys, "%s: the firmware set the HDMI port's mode again, and the display is the driver's again\n", .{MODULE_NAME});
 }
 
 /// `box` of the display noted for the next picture. Made holding
@@ -1825,6 +1901,10 @@ fn flipFrames(screen: *Screen) bool {
 /// frames more: one made just as the pipe's update came is taken at the
 /// next. The frame it read until then is not written before.
 fn flipTaken(screen: *Screen) bool {
+    if (screen.scanout == .bcm2711) {
+        waitTaken(screen);
+        return true;
+    }
     if (!screen.amd_flipping) return true;
     const found = screen.dcn.?;
     var looks: u32 = 0;
@@ -1833,6 +1913,18 @@ fn flipTaken(screen: *Screen) bool {
         pace(screen, 1);
     }
     return true;
+}
+
+/// On the BCM2711's port: the frames after the one waited for, until the
+/// HVS has started one since the flip (`bcm2711.taken`) - two at the most,
+/// past which it is taken not to be running. A flip made just after it
+/// started a frame is read from the frame after that.
+fn waitTaken(screen: *Screen) void {
+    var looks: u32 = 0;
+    while (!bcm2711.taken(&screen.scanout.bcm2711)) : (looks += 1) {
+        if (looks == 2) return;
+        pace(screen, 1);
+    }
 }
 
 /// The AMD display's flips given up, once one was not taken: the fetcher
@@ -1916,9 +2008,10 @@ fn showFlipped(screen: *Screen, bands: []const rtg.RtgBand) void {
 /// that one (ChangeScreenBuffer, facet.library's swapchains): its buffers
 /// are read as they are, and nothing is copied. A screen drawn in while
 /// it is shown - intuition's windows - is shown frames as before. On the
-/// BCM2712's port. Asked holding `damage_lock`.
+/// BCM2712's port and the BCM2711's. Asked holding `damage_lock`.
 fn directOf(screen: *const Screen, bands: []const rtg.RtgBand) ?*const rtg.RtgBitMap {
-    if (screen.scanout != .bcm2712 or screen.overlay != null or screen.written) return null;
+    if (screen.scanout != .bcm2712 and screen.scanout != .bcm2711) return null;
+    if (screen.overlay != null or screen.written) return null;
     if (bands.len != 1 or screen.band_count != 1) return null;
     const new = bands[0];
     const old = screen.bands[0];
@@ -1943,6 +2036,7 @@ fn showDirect(screen: *Screen, bitmap: *const rtg.RtgBitMap) void {
     handOn(screen, bitmap, whole(screen));
     scanFrom(screen, address);
     pace(screen, 1);
+    if (screen.scanout == .bcm2711) waitTaken(screen);
     screen.updates +%= 1;
 }
 
@@ -2051,6 +2145,14 @@ fn findScanout(rb: *RtgBase, sys: *ExecBase, chip: u32, tag_list: ?[*]const TagI
         st.CHIP_JH7110_DC8200 => .jh7110,
         // Nor of the BCM2712's before the firmware has its clocks running.
         st.CHIP_BCM2712_HVS => .bcm2712,
+        // The BCM2711's is running: the firmware's list on the channel the
+        // board names shows the picture it lit.
+        st.CHIP_BCM2711_HVS => .{ .bcm2711 = bcm2711.find(
+            address,
+            @truncate(rb.GetRtgTagData(st.PART_BusUnit, 1, tag_list)),
+            @truncate(rb.GetRtgTagData(tags.RTGA_Width, 0, tag_list)),
+            @truncate(rb.GetRtgTagData(tags.RTGA_Height, 0, tag_list)),
+        ) orelse return null },
         // On PCI the driver finds the function itself and the part says
         // nothing about where it lies; on a memory-mapped transport the
         // board names the block, or the first of a row of them.
@@ -2129,7 +2231,13 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         // this on here is all that is wanted of this side.
         if (screen.dcn) |found| _ = dcn.soundUp(found);
     }
-    if (isHdmi(scanout)) {
+    if (scanout == .bcm2711) {
+        // The firmware's mode, and pixel valve 2's frame interrupt.
+        if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
+        screen.frame_irq = @truncate(rb.GetRtgTagData(st.PART_Irq, 0, tag_list));
+        exec.kprintf(sys, "%s: HDMI in the firmware's %dx%d, through the scaler's channel %d\n", .{ MODULE_NAME, screen.width, screen.height, screen.scanout.bcm2711.channel });
+    }
+    if (namesModes(scanout)) {
         // The modes the monitor takes, the part's size at 60 Hz without
         // one, and the display's frame interrupt.
         if (format != .bgra32) return err.RTGERR_BAD_FORMAT;
@@ -2143,7 +2251,8 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         }
         screen.current = screen.timings.default;
     } else {
-        // One mode: the picture the board was built for.
+        // One mode: the picture the board was built for - behind the
+        // BCM2711's port, the one its firmware lit.
         addMode(screen, board, 0, screen.width, screen.height);
     }
     screen.modes[screen.current].flags = rtg.boards.RTGMF_DEFAULT;
@@ -2166,7 +2275,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
         screen.cursor_memory = own.memory;
         screen.cursor = own.at;
     }
-    if (scanout == .bcm2712) {
+    if (scanout == .bcm2712 or scanout == .bcm2711) {
         if (takeOwn(screen, 2 * overlay_bytes)) |own| {
             screen.overlay_memory = own.memory;
             screen.overlay_images = own.at;
@@ -2174,7 +2283,7 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
     }
     // A display that reads past the caches is shown frames of the
     // driver's own, never a buffer drawn in.
-    if (isHdmi(scanout) and !startFlipping(screen)) {
+    if (readsPastCaches(scanout) and !startFlipping(screen)) {
         if (screen.cursor_memory) |memory| sys.FreeMem(memory, 2 * cursor_bytes + page);
         if (screen.overlay_memory) |memory| sys.FreeMem(memory, 2 * overlay_bytes + page);
         screen.cursor_memory = null;
@@ -2211,6 +2320,12 @@ fn createBoard(made_by: *rtg.RtgDriver, board: *rtg.RtgBoard, tag_list: ?[*]cons
 
 fn destroy(board: *rtg.RtgBoard) callconv(.c) void {
     const screen = screenOf(board);
+    // The BCM2711's channel reads the firmware's list again, from a frame
+    // that has started before the frames and the images go.
+    if (screen.scanout == .bcm2711 and screen.scanning != 0) {
+        bcm2711.stop(&screen.scanout.bcm2711);
+        sleep(screen, 2 * @as(u64, screen.frame_us));
+    }
     // The GPU lets go of the buffers before they are given back.
     if (screen.scanout == .virtio) virtio.stop(&screen.scanout.virtio);
     // The frames go before the frame interrupt, which giving the AMD
@@ -2373,8 +2488,20 @@ fn begin(screen: *Screen, address: usize) bool {
         .ramfb, .virtio, .uefi => scanFrom(screen, address),
         .jh7110 => startPort(jh7110, screen, address),
         .bcm2712 => startPort(bcm2712, screen, address),
+        .bcm2711 => startHvs(screen, address),
     }
     return screen.scanning == address;
+}
+
+/// `begin` on the BCM2711's port: the HVS's channel reading the driver's
+/// list, the picture at `address` in it and the cursor and the overlay as
+/// the board has them, and the frame interrupt hooked.
+fn startHvs(screen: *Screen, address: usize) void {
+    bcm2711.start(&screen.scanout.bcm2711, address, screen.pitch);
+    screen.scanning = address;
+    cursorPlane(screen);
+    overlayPlane(screen);
+    hookFrames(screen);
 }
 
 /// `begin` on the HDMI port `port` drives: the mode set - on the

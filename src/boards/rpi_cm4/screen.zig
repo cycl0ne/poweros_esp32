@@ -9,9 +9,17 @@
 //! framebuffer in its own memory through the mailbox's property channel:
 //! the size it lit, 32 bits a pixel, the buffer's address and the bytes
 //! between rows. The kernel writes its lines there (src/arch/screentext.zig)
-//! and declares it a panel part (CHIP_UEFI_FB, the framebuffer a firmware
-//! lit), which the display driver takes over from the kernel once the
-//! cold start is done (rtg_driver/fbboard/uefi.zig).
+//! and declares the display a panel part, which the display driver takes
+//! over from the kernel once the cold start is done.
+//!
+//! **Which part** is what the firmware shows it with. On the first HDMI
+//! port - pixel valve 2 running, and a channel of the hardware video
+//! scaler whose display list reads the framebuffer - it is that scaler
+//! (CHIP_BCM2711_HVS, rtg_driver/fbboard/bcm2711.zig): the driver gives
+//! the channel a list of its own and keeps the firmware's mode. Anywhere
+//! else - the second port - it is the framebuffer as the firmware lit it
+//! (CHIP_UEFI_FB, rtg_driver/fbboard/uefi.zig), which the picture is
+//! copied into.
 //!
 //! **Before exec, without it.** Nothing allocates yet, so the message is
 //! written into low RAM the firmware reaches - its first GiB, of which
@@ -62,6 +70,20 @@ const TAG_SET_VIRTUAL_OFFSET: u32 = 0x0004_8009;
 /// order, RGB (1), is red first in memory: the HVS's plane then reads the
 /// pixels as ABGR (its control word's order 3), not as ARGB (2).
 const ORDER_BGR: u32 = 0;
+
+/// The hardware video scaler: per channel its display list's head, and in
+/// its list memory a plane's control word, whose bit 30 says it is one,
+/// and its address word, the VideoCore's bus address of what it reads.
+const HVS: usize = 0xFE40_0000;
+const HVS_DISPLIST0: usize = 0x20;
+const HVS_DLIST: usize = 0x4000;
+const PLANE_VALID: u32 = 1 << 30;
+const PLANE_PTR0: usize = 5;
+/// Pixel valve 2, which times HDMI0: its control word, whose bit 0 says it
+/// runs, and its interrupt.
+const PV2: usize = 0xFE20_A000;
+const PV_CONTROL_EN: u32 = 1 << 0;
+const PV2_IRQ: u32 = 32 + 101;
 
 /// The size asked for where the firmware says it lit none: what a
 /// monitor that gives no EDID takes.
@@ -184,34 +206,77 @@ pub fn ask() ?Picture {
     };
 }
 
+/// The scaler's channel that shows `picture` on the first HDMI port:
+/// pixel valve 2 running, and a channel whose list's first plane reads
+/// the picture's buffer. The firmware may write the list a frame after it
+/// answered, so it is looked at for a tenth of a second. Null where it
+/// lit another port.
+fn hdmiChannel(picture: Picture) ?u32 {
+    const until = hwcpu.time() + hwcpu.counterFrequency() / 10;
+    while (true) {
+        if (reg(PV2).* & PV_CONTROL_EN != 0) {
+            var channel: u32 = 0;
+            while (channel < 3) : (channel += 1) {
+                const first: usize = reg(HVS + HVS_DISPLIST0 + channel * 4).* & 0xFFF;
+                const plane = HVS + HVS_DLIST + first * 4;
+                if (reg(plane).* & PLANE_VALID == 0) continue;
+                if (reg(plane + PLANE_PTR0 * 4).* & 0x3FFF_FFFF == picture.base) return channel;
+            }
+        }
+        if (hwcpu.time() > until) return null;
+    }
+}
+
 /// The picture as the board's panel part, for the display driver:
 /// filled in by `declare`.
-var panel: [12]Tag = @splat(.done);
+var panel: [13]Tag = @splat(.done);
 
 /// `picture` written into the board's description as the panel the
-/// firmware lit. Nothing where its pixels are in an order the display
-/// driver does not draw; the kernel's lines are drawn on it all the same,
-/// white on black.
+/// firmware lit: its scaler where it shows it on the first HDMI port, or
+/// else the framebuffer. Nothing where its pixels are in an order the
+/// display driver does not draw; the kernel's lines are drawn on it all
+/// the same, white on black.
 pub fn declare(picture: Picture) bool {
     if (!picture.bgra) return false;
-    panel = .{
-        .value(st.PART_Kind, st.PARTKIND_PANEL),
-        .value(st.PART_Chip, st.CHIP_UEFI_FB),
-        .pointer(st.PART_ChipName, "videocore framebuffer"),
-        .value(st.PART_Bus, st.BUS_MEMORY),
-        .value(st.PART_Address, picture.base),
-        .value(tags.RTGA_Width, picture.width),
-        .value(tags.RTGA_Height, picture.height),
-        .value(tags.RTGA_Pitch, picture.pitch),
-        .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
-        // At most sixteen pictures at once - screens, and the buffers
-        // behind them - each taken from memory as it is opened: a ceiling,
-        // not memory set aside.
-        .value(tags.RTGA_Buffers, 16),
-        // The windows of a screen each draw into a buffer of their own,
-        // and what can be seen of them is copied into the screen's.
-        .value(tags.RTGA_Compose, 1),
-        .done,
-    };
+    // At most sixteen pictures at once - screens, and the buffers behind
+    // them - each taken from memory as it is opened: a ceiling, not
+    // memory set aside. The windows of a screen each draw into a buffer
+    // of their own, and what can be seen of them is copied into the
+    // screen's.
+    const buffers: u32 = 16;
+    const format: u32 = @intFromEnum(rtg.PixelFormat.bgra32);
+    if (hdmiChannel(picture)) |channel| {
+        panel = .{
+            .value(st.PART_Kind, st.PARTKIND_PANEL),
+            .value(st.PART_Chip, st.CHIP_BCM2711_HVS),
+            .pointer(st.PART_ChipName, "bcm2711 hvs"),
+            .value(st.PART_Bus, st.BUS_MEMORY),
+            .value(st.PART_Address, HVS),
+            .value(st.PART_BusUnit, channel),
+            .value(st.PART_Irq, PV2_IRQ),
+            .value(tags.RTGA_Width, picture.width),
+            .value(tags.RTGA_Height, picture.height),
+            .value(tags.RTGA_PixelFormat, format),
+            .value(tags.RTGA_Buffers, buffers),
+            .value(tags.RTGA_Compose, 1),
+            .done,
+        };
+    } else {
+        panel = .{
+            .value(st.PART_Kind, st.PARTKIND_PANEL),
+            .value(st.PART_Chip, st.CHIP_UEFI_FB),
+            .pointer(st.PART_ChipName, "videocore framebuffer"),
+            .value(st.PART_Bus, st.BUS_MEMORY),
+            .value(st.PART_Address, picture.base),
+            .value(tags.RTGA_Width, picture.width),
+            .value(tags.RTGA_Height, picture.height),
+            .value(tags.RTGA_Pitch, picture.pitch),
+            .value(tags.RTGA_PixelFormat, format),
+            .value(tags.RTGA_Buffers, buffers),
+            .value(tags.RTGA_Compose, 1),
+            .done,
+            .done,
+        };
+    }
     return system.addPart(&panel);
 }

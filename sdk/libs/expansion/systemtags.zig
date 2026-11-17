@@ -744,6 +744,23 @@ pub const CHIP_BCM54213: u32 = 53;
 /// the other boot partition (`SET_REBOOT_FLAGS`) - and the cores' and the
 /// V3D's clocks.
 pub const CHIP_RPI_FIRMWARE: u32 = 54;
+/// The BCM2711's display behind its first HDMI port as the VideoCore
+/// firmware lit it (PARTKIND_PANEL on BUS_MEMORY, PART_Address the
+/// hardware video scaler, PART_BusUnit the scaler's channel the firmware
+/// feeds the port from, PART_Irq pixel valve 2's interrupt,
+/// RTGA_Width and RTGA_Height the mode it lit): the mode, the pixel valve
+/// and the port stay the firmware's, and the scaler reads the display
+/// driver's planes - the picture, the overlay and the cursor - in place
+/// of the firmware's one.
+pub const CHIP_BCM2711_HVS: u32 = 55;
+/// The BCM2711's first HDMI port as the machine's sound (PARTKIND_CODEC
+/// on BUS_MEMORY, PART_Address the DMA channel that feeds it - one of the
+/// chip's 40-bit DMA4 channels - PART_Irq that channel's interrupt): IEC
+/// 958 subframes into the HDMI0 controller's MAI FIFO, sent as HDMI's
+/// audio packets, in the mode the VideoCore firmware lit (CHIP_BCM2711_HVS
+/// or CHIP_UEFI_FB on the same board). Only where the firmware lit it as
+/// HDMI, to a monitor that takes sound.
+pub const CHIP_BCM2711_HDMI_AUDIO: u32 = 56;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
