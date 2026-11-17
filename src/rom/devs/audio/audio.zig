@@ -37,6 +37,19 @@
 //! the list it moves to it - once, on its coming, so an output a program
 //! chose since stays chosen while the preferred one stays plugged in.
 //!
+//! An output over a display's link starts only once the display's
+//! driver has the link up, and that driver may come after this device's
+//! first choice - loaded from the disk. So the first choice is made
+//! again (`firstChoiceAgain`) - an output that stands before the one
+//! played through and starts now is played through from then on - at two
+//! moments: when rtg.library, where the machine has it, tells the task
+//! that the boards changed, for an output that was on the list and would
+//! not start; and at the task's look, when an output has newly come onto
+//! the list before the one played through, as a codec's does a moment
+//! after its link is up. Once on its coming, and only while the output
+//! played through is the device's own choice: one a program chose stays
+//! chosen.
+//!
 //! The master is the output's: a table of numbers and volumes, the one
 //! played through's in force. Starting another output takes its volume
 //! from the table, or keeps the one in force when it has none there; a
@@ -115,8 +128,8 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 14;
-const BUILD_DATE = "09.11.2026";
+const DEVICE_REVISION = 15;
+const BUILD_DATE = "17.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -281,6 +294,19 @@ const AudioBase = extern struct {
     /// signal a filled buffer of it raises on the task.
     source: ?*rta.AudioSource = null,
     record_mask: u32 = 0,
+    /// rtg.library, where the machine has it; what it gave for asking to
+    /// be told when the boards change, and the signal it tells the task
+    /// with.
+    rtg_base: ?*sdk.interface.rtg.RtgBase = null,
+    boards_notify: ?*sdk.rtg.RtgNotify = null,
+    boards_mask: u32 = 0,
+    /// Whether the output played through is the device's own choice: a
+    /// program's choice (AUDIOCMD_SETOUTPUT) is left where it is when
+    /// the boards change.
+    own_choice: u8 = 1,
+    /// How many outputs stood on the list before the one played through
+    /// at the last look: one more than that is one that came.
+    sinks_before: u32 = 0,
     /// Buffers heard while no read waited, between two that did: each
     /// one a gap in the recording.
     dropped: u32 = 0,
@@ -331,6 +357,7 @@ fn attachSink(ab: *AudioBase, sink: *rta.AudioSink) bool {
     }
     const mode = rb.SinkMode(sink).?;
     ab.sink = sink;
+    ab.sinks_before = sinksBefore(ab, sink);
     ab.rate = mode.rate;
     ab.sides = sidesOf(mode);
     if (volumeOf(ab, sink.id)) |volume| ab.master = volume;
@@ -431,6 +458,7 @@ fn sinkOf(ab: *AudioBase, id: u32) ?*rta.AudioSink {
 /// a socket with nothing in it or a display link with no monitor at its
 /// end, is passed over for the next. False if none starts.
 fn attachFirstChoice(ab: *AudioBase) bool {
+    ab.own_choice = 1;
     const wanted = if (ab.preferred != 0) sinkOf(ab, ab.preferred) else null;
     if (wanted) |sink| {
         if (attachSink(ab, sink)) return true;
@@ -442,6 +470,34 @@ fn attachFirstChoice(ab: *AudioBase) bool {
         if (attachSink(ab, each)) return true;
     }
     return false;
+}
+
+/// The first choice made again, when the boards changed: a display's
+/// link may carry sound now that did not when the output was chosen. The
+/// outputs that stand before the one played through - the preferred one,
+/// then the list as far as it - are tried in that order, and the first
+/// that starts is played through, every stream going on where it was.
+/// One that will not start leaves the one before playing. Nothing where
+/// a program chose the output, and where the first choice plays. Under
+/// the device's lock.
+fn firstChoiceAgain(ab: *AudioBase) void {
+    if (ab.own_choice == 0) return;
+    const playing = ab.sink orelse {
+        _ = attachFirstChoice(ab);
+        return;
+    };
+    const wanted = if (ab.preferred != 0) sinkOf(ab, ab.preferred) else null;
+    if (wanted) |sink| {
+        if (sink == playing) return;
+        if (setOutput(ab, sink.id) == 0) return;
+    }
+    const rb = ab.rta_base;
+    var sink = rb.NextSink(null);
+    while (sink) |each| : (sink = rb.NextSink(each)) {
+        if (each == playing) return;
+        if (each == wanted) continue;
+        if (setOutput(ab, each.id) == 0) return;
+    }
 }
 
 /// The volume set for the output of that number, or null for none.
@@ -561,19 +617,42 @@ fn preferOutput(ab: *AudioBase, id: u32) void {
     _ = setOutput(ab, id);
 }
 
+/// How many outputs stand on the list before `playing`.
+fn sinksBefore(ab: *AudioBase, playing: *rta.AudioSink) u32 {
+    const rb = ab.rta_base;
+    var before: u32 = 0;
+    var sink = rb.NextSink(null);
+    while (sink) |each| : (sink = rb.NextSink(each)) {
+        if (each == playing) break;
+        before += 1;
+    }
+    return before;
+}
+
 /// A look for the preferred output, every `look_every` buffers: moved to
-/// once on its coming onto the list. Under the device's lock.
+/// once on its coming onto the list. And for an output that came onto
+/// the list before the one played through, while that is the device's
+/// own choice: the first choice is made again, once on its coming.
+/// Under the device's lock.
 fn lookForPreferred(ab: *AudioBase) void {
     ab.since_look += 1;
     if (ab.since_look < look_every) return;
     ab.since_look = 0;
-    if (ab.preferred == 0) return;
     const sink = ab.sink orelse return;
-    if (sink.id == ab.preferred) return;
-    const here = sinkOf(ab, ab.preferred) != null;
-    const came = here and ab.preferred_here == 0;
-    ab.preferred_here = @intFromBool(here);
-    if (came) _ = setOutput(ab, ab.preferred);
+    if (ab.preferred != 0) {
+        if (sink.id == ab.preferred) return;
+        const here = sinkOf(ab, ab.preferred) != null;
+        const came = here and ab.preferred_here == 0;
+        ab.preferred_here = @intFromBool(here);
+        if (came) {
+            _ = setOutput(ab, ab.preferred);
+            return;
+        }
+    }
+    const before = sinksBefore(ab, sink);
+    const came = before > ab.sinks_before;
+    ab.sinks_before = before;
+    if (came and ab.own_choice != 0) firstChoiceAgain(ab);
 }
 
 /// AUDIOCMD_SETOUTPUT, on the task: the output of that number played
@@ -678,7 +757,11 @@ fn serveCommands(ab: *AudioBase) void {
         }
         if (io.command == audio.AUDIOCMD_PREFEROUTPUT) {
             preferOutput(ab, ioa.output);
-        } else io.err = setOutput(ab, ioa.output);
+        } else {
+            io.err = setOutput(ab, ioa.output);
+            // A program's choice, which a change of the boards leaves.
+            if (io.err == 0) ab.own_choice = 0;
+        }
         ioa.output = if (ab.sink) |sink| sink.id else 0;
         sys.ReplyIO(io);
     }
@@ -1157,6 +1240,17 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
         // here would be started again by the next open on the stack it
         // is still ending on.
         _ = attachFirstChoice(ab);
+        // Told when the boards change: a display's link may carry sound
+        // from then on.
+        if (ab.rtg_base == null) ab.rtg_base = @ptrCast(sys.OpenLibrary(sdk.rtg.RTGNAME, sdk.rtg.RTG_VERSION));
+        if (ab.rtg_base) |rb| {
+            const told = sys.AllocSignal(-1);
+            if (told >= 0) {
+                ab.boards_mask = @as(u32, 1) << @intCast(told);
+                ab.boards_notify = rb.AddRtgNotify(&ab.task, ab.boards_mask);
+                if (ab.boards_notify == null) ab.boards_mask = 0;
+            }
+        }
     }
     if (ok) ab.ready = 1;
     if (ab.starter) |starter| {
@@ -1166,8 +1260,13 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
     if (!ok) return;
 
     while (true) {
-        const got = sys.Wait(ab.feed_mask | ab.quit_mask | ab.command_mask | ab.record_mask);
+        const got = sys.Wait(ab.feed_mask | ab.quit_mask | ab.command_mask | ab.record_mask | ab.boards_mask);
         if (got & ab.quit_mask != 0) break;
+        if (got & ab.boards_mask != 0) {
+            sys.ObtainSemaphore(&ab.lock);
+            firstChoiceAgain(ab);
+            sys.ReleaseSemaphore(&ab.lock);
+        }
         if (got & ab.command_mask != 0) serveCommands(ab);
         if (got & (ab.feed_mask | ab.record_mask) != 0) {
             sys.ObtainSemaphore(&ab.lock);
@@ -1176,7 +1275,11 @@ fn audioTask(sys: *ExecBase) callconv(.c) void {
             sys.ReleaseSemaphore(&ab.lock);
         }
     }
-    // Expunged: the way in and the output given back.
+    // Expunged: the way in and the output given back, and rtg.library
+    // told no more.
+    if (ab.rtg_base) |rb| rb.RemRtgNotify(ab.boards_notify);
+    ab.boards_notify = null;
+    ab.boards_mask = 0;
     stopRecording(ab);
     detachSink(ab);
 }

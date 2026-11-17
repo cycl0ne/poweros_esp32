@@ -90,8 +90,13 @@ pub fn follow(ib: *IntuitionBase) void {
     if (!had_screens) {
         const any = rtg.RTG_ANY;
         var mode: rtg.RtgMode = .{};
+        var info: rtg.RtgBoardInfo = .{};
+        _ = rb.GetBoardInfo(first, &info, @sizeOf(rtg.RtgBoardInfo));
         const id = rb.BestBoardMode(first, @intCast(moved.width), @intCast(moved.height), any, any, &mode);
-        if (id != 0) _ = rb.ShowBoard(first, id, null, 0);
+        // Put in it before its screens are shown: what a display shows is
+        // laid out by the mode's height, which a board in no mode has
+        // not got.
+        if (id != 0 and id != info.mode_id) _ = rb.ShowBoard(first, id, null, 0);
     }
     // Shown whatever was up before: the display's bands are other now.
     ib.banded = true;

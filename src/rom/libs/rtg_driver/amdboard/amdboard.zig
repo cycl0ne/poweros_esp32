@@ -5,11 +5,15 @@
 //! between that buffer and a frame of the device's own.
 //!
 //! A module of its own, on the same footing as the other drivers: a
-//! description of a driver called "amd" behind a ROM tag, which
-//! rtg.library puts on its list. It is offered the panel part that is
-//! the firmware's framebuffer before the driver that only copies into
-//! it, and takes it where the engine reading that buffer is one it
-//! knows; where it is not, it declines and the next driver is asked.
+//! description of a driver called "amd" behind a ROM tag, in a file of
+//! DEVS:gfxdrv/ or in a ROM, which rtg.library puts on its list. It is
+//! offered the device's display function on PCI, and takes it where the
+//! framebuffer the firmware lit - a panel part of the board's list -
+//! lies in that function's memory and the engine reading it is one it
+//! knows; where not, it declines, and the picture stays with the driver
+//! that only copies into the framebuffer. Once it has made its board,
+//! rtg.library retires that driver's: the framebuffer is this board's
+//! first frame from then on.
 //!
 //! **Flipped**, for a reason of its own: a picture copied into the one
 //! buffer the display reads, while it reads it, shows the top of one
@@ -65,8 +69,8 @@ const sound = @import("sound.zig");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 3;
-const BUILD_DATE = "16.11.2026";
+const REVISION = 4;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -311,12 +315,36 @@ fn giveAmdFrame(screen: *Screen) void {
 
 // --- the board -------------------------------------------------------------------
 
-/// The firmware's framebuffer is offered: taken where the engine reading
-/// it is one this knows, and a board made of it with the firmware's
-/// mode. Declined where it is not, so that the next driver is asked.
-fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const TagItem) callconv(.c) i32 {
+/// The framebuffer the firmware lit, where it lies in a memory range of
+/// a function on PCI: the tags of the board's part for it, which say
+/// its address, its size, its row and its format. Null on a machine
+/// whose firmware lit none, and where that one lies elsewhere.
+fn litBy(driver: *rtg.RtgDriver, function: *const sdk.pci.PCIDevice) ?[*]const TagItem {
+    const eb = driver.expansion_base orelse return null;
+    const part = eb.FindBoardPart(null, st.PARTKIND_PANEL, st.CHIP_UEFI_FB) orelse return null;
+    const address: u64 = driver.rtg_base.GetRtgTagData(st.PART_Address, 0, part.tags);
+    if (address == 0) return null;
+    for (function.bars) |bar| {
+        if (bar.size == 0 or bar.flags & sdk.pci.PCIBAR_IO != 0) continue;
+        if (address >= bar.address and address - bar.address < bar.size) return part.tags;
+    }
+    return null;
+}
+
+/// The device's display function is offered: taken where the framebuffer
+/// the firmware lit lies in its memory and the engine reading it is one
+/// this knows, and a board made of it with the firmware's mode. Declined
+/// where not, and the firmware's picture stays as it is shown.
+///
+/// What the picture is - its size, its row, its format, where it lies -
+/// is the board's part's to say, as the firmware said it; what the
+/// device's own tags add is the settings' (`RTGA_Buffers`), and that the
+/// display is lit (`RTGA_Adopt`).
+fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, device_tags: ?[*]const TagItem) callconv(.c) i32 {
     const rb = driver.rtg_base;
     const sys = driver.sys_base;
+    const function = device.pci orelse return err.RTGERR_NO_DISPLAY;
+    const tag_list = litBy(driver, function) orelse return err.RTGERR_NO_DISPLAY;
 
     // What the tags have to say, looked at before anything is taken.
     const format: rtg.PixelFormat = @enumFromInt(@as(u8, @truncate(rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32), tag_list))));
@@ -343,6 +371,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     const board = rb.CreateBoard(driver, device, &.{
         .ops = &ops,
         .instance_size = @sizeOf(Screen),
+        // The display runs as the firmware lit it: its mode is kept.
+        .flags = rtg.boards.RTGBF_ADOPTED,
         .format = format,
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
@@ -381,7 +411,9 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     // cleared before it is first shown. No band is read by the display
     // itself.
     const frame: usize = @as(usize, screen.pitch) * height;
-    screen.buffers = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list))), 1);
+    // As many as the settings say of the device, else as the part does.
+    const part_buffers = rb.GetRtgTagData(tags.RTGA_Buffers, 1, tag_list);
+    screen.buffers = @max(@as(u32, @truncate(rb.GetRtgTagData(tags.RTGA_Buffers, part_buffers, device_tags))), 1);
     board.direct_bands = 0;
     board.region = .{
         .size = screen.buffers * frame,
@@ -467,8 +499,10 @@ const driver_ops = rtg.RtgDriverOps{ .attach = &attach, .detach = &detach };
 
 /// What it takes: the panel part that is the firmware's framebuffer,
 /// before the driver that only copies into it.
+/// A display function of AMD's on PCI.
+const amd_vendor: u32 = 0x1002;
 const matches = [_]rtg.RtgMatch{
-    .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = st.CHIP_UEFI_FB, .priority = 1 },
+    .{ .fields = rtg.drivers.RTGMATCH_VENDOR | rtg.drivers.RTGMATCH_CLASS, .vendor = amd_vendor, .class_code = 0x03_0000, .class_mask = 0xFF_0000 },
     .{},
 };
 

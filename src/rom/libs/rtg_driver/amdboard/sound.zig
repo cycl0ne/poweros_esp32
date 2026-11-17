@@ -48,6 +48,8 @@ const dcn = @import("dcn.zig");
 const exec = sdk.exec;
 const reg = sdk.hardware.mmio.reg;
 const rtg = sdk.rtg;
+const timer = sdk.devices.timer;
+const TimerBase = sdk.interface.timer.TimerBase;
 
 const otg_frame_count = 0x1b4c;
 
@@ -531,20 +533,35 @@ fn wiredEndpoint(engine: dcn.Engine) ?u32 {
 /// which is a pipe to leave alone, and where the timing comes out as no
 /// display's: a frame shorter than `shortest_frame_us`, a clock faster
 /// than `fastest_pixel_khz`.
+///
+/// The machine's clock is timer.device's, asked through its own call:
+/// this file may be loaded from the disk, and a load file has no part in
+/// what the kernel keeps of its clock. Null too where timer.device
+/// cannot be opened.
 fn pixelClock(engine: dcn.Engine) ?u32 {
+    const sys = engine.sys;
     const h_total = engine.h_total + 1;
     const v_total = engine.v_total + 1;
-    const timer = sdk.hardware.systimer;
+    var clock_io: timer.TimeRequest = .{};
+    clock_io.node.message.length = @sizeOf(timer.TimeRequest);
+    if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &clock_io.node, 0) != 0) return null;
+    defer sys.CloseDevice(&clock_io.node);
+    const device: *TimerBase = @ptrCast(clock_io.node.device.?);
+    var read: timer.EClockVal = .{};
+    const ticks_a_second: u64 = device.ReadEClock(&read);
+    if (ticks_a_second == 0) return null;
+
     var periods: [frames_timed]u64 = undefined;
     var timed: usize = 0;
     var last = dcn.readPipe(engine, engine.pipe, otg_frame_count);
     var since: u64 = 0;
     var started = false;
-    const deadline = timer.uptimeUs() + timing_limit_us;
+    const deadline = read.toTicks() * 1_000_000 / ticks_a_second + timing_limit_us;
     // The first frame that begins starts the clock; each one after it
     // ends a period and begins the next.
     while (timed < frames_timed) {
-        const now = timer.uptimeUs();
+        _ = device.ReadEClock(&read);
+        const now = read.toTicks() * 1_000_000 / ticks_a_second;
         if (now > deadline) return null;
         const count = dcn.readPipe(engine, engine.pipe, otg_frame_count);
         if (count == last) continue;

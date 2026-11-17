@@ -78,6 +78,7 @@ flowchart TB
     m_amdgpu_resource --> m_platform_resource
     m_amdgpu_resource --> m_ps2_resource
     m_audio_device --> m_rta_library
+    m_audio_device --> m_rtg_library
     m_battclock_resource --> m_i2c_device
     m_battclock_resource --> m_ps2_resource
     m_battclock_resource --> m_timer_device

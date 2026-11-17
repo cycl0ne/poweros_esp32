@@ -203,7 +203,7 @@ and 2D-DMA - and where a display reads its picture out of RAM, on the
 | `bcm2712` | the Compute Module 5's first HDMI port, in the monitor's own mode |
 | `virtio` | QEMU's virtio GPU - on a memory-mapped transport (`virtio-gpu-device`) or on PCI (`virtio-gpu-pci`), the pointer the host's own; on `qemu_q35` loaded from the disk |
 | `fw` | the framebuffer a UEFI firmware lit, and QEMU's `ramfb` |
-| `amd` | an AMD display behind the framebuffer its firmware lit, flipped between that buffer and a frame of the device's own |
+| `amd` | an AMD display behind the framebuffer its firmware lit, flipped between that buffer and a frame of the device's own; loaded from the disk |
 | `qemu` | Espressif QEMU's display |
 
 **rta.library** keeps the sound outputs and ways in. Each is a sink or a

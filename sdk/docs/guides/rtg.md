@@ -136,6 +136,11 @@ lies behind - the card's function on PCI - finds `RTGA_Adopt` in the
 device's tags, and once it has made a board the firmware's board is
 gone: `RTGBF_GONE`, off the walk, its handle good.
 
+The sound a display's link carries follows: audio.device asks to be
+told when the boards change, and plays through the monitor's output
+once the link's driver has come, where that is the output it would
+have chosen at the start.
+
 A driver that hangs the machine as it is bound would hang every start.
 Before a file is loaded the driver's name is written to
 `ENVARC:Sys/display.trying`; `C:Rtg TRIED`, which the startup-sequence

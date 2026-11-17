@@ -217,6 +217,16 @@ an output picked with `AUDIOCMD_SETOUTPUT` after it plays until the
 next one comes or goes. Since a preferred output may be named before it
 is there, a prefs file can name a speaker that is plugged in later.
 
+With no output preferred, the device's own choice follows the list: an
+output that newly comes onto the list before the one played through -
+a monitor's, a moment after its display's driver has the link up -
+takes the sound over within half a second, and so does one that was on
+the list and would not start, when rtg.library says the boards changed
+(a display's driver was loaded from the disk, a monitor came). Each is
+tried once on its coming, and only while the output played through is
+one the device chose itself: one a program picked with
+`AUDIOCMD_SETOUTPUT` stays.
+
 `output` is a field at the end of `IOAudio` that 2.2 had not got.
 A request of that size still opens and does everything else; only the
 output commands refuse it, with `IOERR_BADLENGTH`.
