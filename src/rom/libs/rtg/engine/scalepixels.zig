@@ -18,7 +18,7 @@ const err = rtg.errors;
 /// fn ScalePixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) i32
 /// ```
 ///
-/// SINCE: 1.4. LVO -252.
+/// SINCE: 1.4. LVO -168.
 ///
 /// INPUTS:
 /// - `dest` - the buffer, of a board.

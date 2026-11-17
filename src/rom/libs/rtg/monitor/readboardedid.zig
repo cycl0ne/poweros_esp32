@@ -14,7 +14,7 @@ const boards = @import("../board/_board.zig");
 /// fn ReadBoardEDID(rb: *RtgBase, board: *rtg.RtgBoard, buffer: ?[*]u8, size: u32) u32
 /// ```
 ///
-/// SINCE: 1.20. LVO -316.
+/// SINCE: 1.20. LVO -232.
 ///
 /// INPUTS:
 /// - `board` - the board.

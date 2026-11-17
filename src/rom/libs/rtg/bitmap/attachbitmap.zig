@@ -16,7 +16,7 @@ const boards = @import("../board/_board.zig");
 /// fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.RtgBitMap) ?*rtg.RtgBitMap
 /// ```
 ///
-/// SINCE: 1.0. LVO -92.
+/// SINCE: 1.0. LVO -48.
 ///
 /// INPUTS:
 /// - `board` - the board it will belong to.

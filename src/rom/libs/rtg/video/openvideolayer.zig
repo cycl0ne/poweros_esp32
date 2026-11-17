@@ -18,7 +18,7 @@ const privateOf = @import("../board/_board.zig").privateOf;
 /// fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) ?*rtg.RtgVideoLayer
 /// ```
 ///
-/// SINCE: 1.10. LVO -264.
+/// SINCE: 1.10. LVO -180.
 ///
 /// INPUTS:
 /// - `board` - the board, a screen's (intuition's `SA_Board`) or one of

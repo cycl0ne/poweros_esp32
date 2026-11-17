@@ -16,7 +16,7 @@ const _edid = @import("_edid.zig");
 /// fn FindStandardTimings(_: *RtgBase, width: u32, height: u32, refresh_hz: u32, timings: *rtg.RtgTimings) bool
 /// ```
 ///
-/// SINCE: 1.20. LVO -396.
+/// SINCE: 1.20. LVO -312.
 ///
 /// INPUTS:
 /// - `width` - the picture's width in pixels.

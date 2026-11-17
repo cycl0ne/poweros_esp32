@@ -15,7 +15,7 @@ const _compose = @import("_compose.zig");
 /// fn ComposeLines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into: [*]u8, pitch: u32) i32
 /// ```
 ///
-/// SINCE: 1.24. LVO -400.
+/// SINCE: 1.24. LVO -316.
 ///
 /// INPUTS:
 /// - `board` - the board: one of the caller's own, whose display has a

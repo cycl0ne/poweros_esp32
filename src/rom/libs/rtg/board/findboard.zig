@@ -12,7 +12,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn FindBoard(rb: *RtgBase, board_name: [*:0]const u8) ?*rtg.RtgBoard
 /// ```
 ///
-/// SINCE: 1.0. LVO -56.
+/// SINCE: 1.0. LVO -24.
 ///
 /// INPUTS:
 /// - `board_name` - the name the library gave it: its driver's, a point

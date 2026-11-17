@@ -17,7 +17,7 @@ const _transport = @import("_transport.zig");
 /// fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?*rtg.RtgTransport
 /// ```
 ///
-/// SINCE: 1.18. LVO -376.
+/// SINCE: 1.18. LVO -292.
 ///
 /// INPUTS:
 /// - `driver` - the driver that asks: the one that has `device`, or is

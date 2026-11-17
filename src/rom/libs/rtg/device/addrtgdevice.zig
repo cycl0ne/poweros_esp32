@@ -15,7 +15,7 @@ const _device = @import("_device.zig");
 /// fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice
 /// ```
 ///
-/// SINCE: 1.18. LVO -368.
+/// SINCE: 1.18. LVO -284.
 ///
 /// INPUTS:
 /// - `tag_list` - what the device is, in the tags a panel part of the

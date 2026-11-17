@@ -16,7 +16,7 @@ const _board = @import("_board.zig");
 /// fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
 /// ```
 ///
-/// SINCE: 1.0. LVO -64.
+/// SINCE: 1.0. LVO -32.
 ///
 /// INPUTS:
 /// - `board` - the board.

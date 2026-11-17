@@ -12,7 +12,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn MoveVideoLayer(_: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) i32
 /// ```
 ///
-/// SINCE: 1.10. LVO -276.
+/// SINCE: 1.10. LVO -192.
 ///
 /// INPUTS:
 /// - `layer` - the layer.

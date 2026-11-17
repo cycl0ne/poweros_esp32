@@ -14,7 +14,7 @@ const bm_flags = rtg.bitmaps;
 /// fn FreeBitMap(rb: *RtgBase, bitmap: ?*rtg.RtgBitMap) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -96.
+/// SINCE: 1.0. LVO -52.
 ///
 /// INPUTS:
 /// - `bitmap` - the buffer. Null does nothing.

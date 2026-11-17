@@ -15,7 +15,7 @@ const settings = @import("_settings.zig");
 /// fn SetRtgDeviceDriver(rb: *RtgBase, device_name: [*:0]const u8, on: bool) i32
 /// ```
 ///
-/// SINCE: 1.34. LVO -172.
+/// SINCE: 1.34. LVO -120.
 ///
 /// INPUTS:
 /// - `device_name` - the device's name, as `GetRtgDevices` answers it

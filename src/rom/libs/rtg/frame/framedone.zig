@@ -14,7 +14,7 @@ const _frame = @import("_frame.zig");
 /// fn FrameDone(rb: *RtgBase, board: *rtg.RtgBoard) void
 /// ```
 ///
-/// SINCE: 1.22. LVO -340.
+/// SINCE: 1.22. LVO -256.
 ///
 /// INPUTS:
 /// - `board` - the board whose display ended a frame: one of the

@@ -18,7 +18,7 @@ const composer = @import("../compose/_compose.zig");
 /// fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32
 /// ```
 ///
-/// SINCE: 1.3. LVO -236.
+/// SINCE: 1.3. LVO -152.
 ///
 /// INPUTS:
 /// - `board` - the board.

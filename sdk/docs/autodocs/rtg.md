@@ -83,7 +83,7 @@ fn AddRtgNotify(rb: *RtgBase, task: *exec.Task, signals: u32) ?*rtg.RtgNotify
 
 **SINCE**
 
-1.20. LVO -320.
+1.20. LVO -236.
 
 **INPUTS**
 
@@ -146,7 +146,7 @@ fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, form
 
 **SINCE**
 
-1.0. LVO -88.
+1.0. LVO -44.
 
 **INPUTS**
 
@@ -214,7 +214,7 @@ fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.RtgBit
 
 **SINCE**
 
-1.0. LVO -92.
+1.0. LVO -48.
 
 **INPUTS**
 
@@ -274,7 +274,7 @@ fn BestBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, re
 
 **SINCE**
 
-1.19. LVO -308.
+1.19. LVO -224.
 
 **INPUTS**
 
@@ -344,7 +344,7 @@ fn BindRtgDrivers(rb: *RtgBase) u32
 
 **SINCE**
 
-1.18. LVO -292.
+1.18. LVO -208.
 
 **INPUTS**
 
@@ -416,7 +416,7 @@ fn BlendPixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixe
 
 **SINCE**
 
-1.4. LVO -244.
+1.4. LVO -160.
 
 **INPUTS**
 
@@ -490,7 +490,7 @@ fn BlendRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color:
 
 **SINCE**
 
-1.4. LVO -248.
+1.4. LVO -164.
 
 **INPUTS**
 
@@ -547,7 +547,7 @@ fn BlitPattern(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile
 
 **SINCE**
 
-1.0. LVO -144.
+1.0. LVO -92.
 
 **INPUTS**
 
@@ -602,7 +602,7 @@ fn BlitTemplate(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, sha
 
 **SINCE**
 
-1.0. LVO -140.
+1.0. LVO -88.
 
 **INPUTS**
 
@@ -656,7 +656,7 @@ fn BoardControl(_: *RtgBase, board: *rtg.RtgBoard, what: u32, value: isize) isiz
 
 **SINCE**
 
-1.0. LVO -68.
+1.0. LVO -36.
 
 **INPUTS**
 
@@ -714,7 +714,7 @@ fn BoardDisplayBitMap(_: *RtgBase, board: *rtg.RtgBoard) ?*rtg.RtgBitMap
 
 **SINCE**
 
-1.0. LVO -104.
+1.0. LVO -60.
 
 **INPUTS**
 
@@ -766,7 +766,7 @@ fn CloseVideoLayer(rb: *RtgBase, layer: ?*rtg.RtgVideoLayer) void
 
 **SINCE**
 
-1.10. LVO -268.
+1.10. LVO -184.
 
 **INPUTS**
 
@@ -822,7 +822,7 @@ fn CopyRect(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const
 
 **SINCE**
 
-1.0. LVO -136.
+1.0. LVO -84.
 
 **INPUTS**
 
@@ -885,7 +885,7 @@ fn CopyRects(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]
 
 **SINCE**
 
-1.9. LVO -260.
+1.9. LVO -176.
 
 **INPUTS**
 
@@ -958,7 +958,7 @@ fn FillRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: 
 
 **SINCE**
 
-1.0. LVO -128.
+1.0. LVO -80.
 
 **INPUTS**
 
@@ -1016,7 +1016,7 @@ fn FindBoard(rb: *RtgBase, board_name: [*:0]const u8) ?*rtg.RtgBoard
 
 **SINCE**
 
-1.0. LVO -56.
+1.0. LVO -24.
 
 **INPUTS**
 
@@ -1071,7 +1071,7 @@ fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, re
 
 **SINCE**
 
-1.0. LVO -76.
+1.0. LVO -40.
 
 **INPUTS**
 
@@ -1132,7 +1132,7 @@ fn FreeBitMap(rb: *RtgBase, bitmap: ?*rtg.RtgBitMap) void
 
 **SINCE**
 
-1.0. LVO -96.
+1.0. LVO -52.
 
 **INPUTS**
 
@@ -1188,7 +1188,7 @@ fn GetBoardInfo(_: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo, size
 
 **SINCE**
 
-1.0. LVO -60.
+1.0. LVO -28.
 
 **INPUTS**
 
@@ -1259,7 +1259,7 @@ fn GetBoardModes(rb: *RtgBase, board: *rtg.RtgBoard, into: ?[*]rtg.RtgMode, coun
 
 **SINCE**
 
-1.19. LVO -304.
+1.19. LVO -220.
 
 **INPUTS**
 
@@ -1320,7 +1320,7 @@ fn GetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo
 
 **SINCE**
 
-1.20. LVO -312.
+1.20. LVO -228.
 
 **INPUTS**
 
@@ -1387,7 +1387,7 @@ fn GetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, into: *rtg.RtgSettings, 
 
 **SINCE**
 
-1.34. LVO -164.
+1.34. LVO -112.
 
 **INPUTS**
 
@@ -1462,7 +1462,7 @@ fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, s
 
 **SINCE**
 
-1.0. LVO -64.
+1.0. LVO -32.
 
 **INPUTS**
 
@@ -1521,7 +1521,7 @@ fn GetRtgDevices(rb: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32
 
 **SINCE**
 
-1.18. LVO -300.
+1.18. LVO -216.
 
 **INPUTS**
 
@@ -1584,7 +1584,7 @@ fn GetRtgDrivers(rb: *RtgBase, into: ?[*]rtg.RtgDriverInfo, count: u32) u32
 
 **SINCE**
 
-1.18. LVO -296.
+1.18. LVO -212.
 
 **INPUTS**
 
@@ -1644,7 +1644,7 @@ fn LoadBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) i32
 
 **SINCE**
 
-1.34. LVO -156.
+1.34. LVO -104.
 
 **INPUTS**
 
@@ -1727,7 +1727,7 @@ fn LoadRtgDrivers(rb: *RtgBase) u32
 
 **SINCE**
 
-1.35. LVO -176.
+1.35. LVO -124.
 
 **INPUTS**
 
@@ -1813,7 +1813,7 @@ fn LockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
 
 **SINCE**
 
-1.32. LVO -148.
+1.32. LVO -96.
 
 **INPUTS**
 
@@ -1889,7 +1889,7 @@ fn MirrorBoard(rb: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: boo
 
 **SINCE**
 
-1.0. LVO -208.
+1.0. LVO -136.
 
 **INPUTS**
 
@@ -1963,7 +1963,7 @@ fn MoveBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
 
 **SINCE**
 
-1.3. LVO -240.
+1.3. LVO -156.
 
 **INPUTS**
 
@@ -2028,7 +2028,7 @@ fn MoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
 
 **SINCE**
 
-1.1. LVO -224.
+1.1. LVO -144.
 
 **INPUTS**
 
@@ -2100,7 +2100,7 @@ fn MoveVideoLayer(_: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgR
 
 **SINCE**
 
-1.10. LVO -276.
+1.10. LVO -192.
 
 **INPUTS**
 
@@ -2165,7 +2165,7 @@ fn NextBoard(rb: *RtgBase, after: ?*rtg.RtgBoard) ?*rtg.RtgBoard
 
 **SINCE**
 
-1.0. LVO -52.
+1.0. LVO -20.
 
 **INPUTS**
 
@@ -2223,7 +2223,7 @@ fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagIte
 
 **SINCE**
 
-1.10. LVO -264.
+1.10. LVO -180.
 
 **INPUTS**
 
@@ -2313,7 +2313,7 @@ fn ReadBoardEDID(rb: *RtgBase, board: *rtg.RtgBoard, buffer: ?[*]u8, size: u32) 
 
 **SINCE**
 
-1.20. LVO -316.
+1.20. LVO -232.
 
 **INPUTS**
 
@@ -2372,7 +2372,7 @@ fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) 
 
 **SINCE**
 
-1.5. LVO -256.
+1.5. LVO -172.
 
 **INPUTS**
 
@@ -2457,7 +2457,7 @@ fn RehomeBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, board: *rtg.RtgBoard) i32
 
 **SINCE**
 
-1.36. LVO -180.
+1.36. LVO -128.
 
 **INPUTS**
 
@@ -2540,7 +2540,7 @@ fn RemRtgNotify(rb: *RtgBase, notify: ?*rtg.RtgNotify) void
 
 **SINCE**
 
-1.20. LVO -324.
+1.20. LVO -240.
 
 **INPUTS**
 
@@ -2594,7 +2594,7 @@ fn RtgCicp(_: *RtgBase, kind: u32, value: u32) i32
 
 **SINCE**
 
-1.15. LVO -288.
+1.15. LVO -204.
 
 **INPUTS**
 
@@ -2664,7 +2664,7 @@ fn RtgErrorText(_: *RtgBase, error_code: i32) [*:0]const u8
 
 **SINCE**
 
-1.0. LVO -204.
+1.0. LVO -132.
 
 **INPUTS**
 
@@ -2716,7 +2716,7 @@ fn RtgFormatBits(_: *RtgBase, format: u32) u32
 
 **SINCE**
 
-1.15. LVO -280.
+1.15. LVO -196.
 
 **INPUTS**
 
@@ -2775,7 +2775,7 @@ fn RtgRowBytes(rb: *RtgBase, format: u32, width: u32) u32
 
 **SINCE**
 
-1.15. LVO -284.
+1.15. LVO -200.
 
 **INPUTS**
 
@@ -2832,7 +2832,7 @@ fn SaveBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) i32
 
 **SINCE**
 
-1.34. LVO -160.
+1.34. LVO -108.
 
 **INPUTS**
 
@@ -2897,7 +2897,7 @@ fn ScalePixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixe
 
 **SINCE**
 
-1.4. LVO -252.
+1.4. LVO -168.
 
 **INPUTS**
 
@@ -2967,7 +2967,7 @@ fn SetBoardAudio(rb: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.RtgAudi
 
 **SINCE**
 
-1.33. LVO -124.
+1.33. LVO -76.
 
 **INPUTS**
 
@@ -3039,7 +3039,7 @@ fn SetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32
 
 **SINCE**
 
-1.0. LVO -120.
+1.0. LVO -72.
 
 **INPUTS**
 
@@ -3115,7 +3115,7 @@ fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surfac
 
 **SINCE**
 
-1.3. LVO -236.
+1.3. LVO -152.
 
 **INPUTS**
 
@@ -3201,7 +3201,7 @@ fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surfac
 
 **SINCE**
 
-1.1. LVO -220.
+1.1. LVO -140.
 
 **INPUTS**
 
@@ -3294,7 +3294,7 @@ fn SetBoardPower(rb: *RtgBase, board: *rtg.RtgBoard, state: u32) i32
 
 **SINCE**
 
-1.29. LVO -116.
+1.29. LVO -68.
 
 **INPUTS**
 
@@ -3379,7 +3379,7 @@ fn SetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, line: *const rtg.RtgSett
 
 **SINCE**
 
-1.34. LVO -168.
+1.34. LVO -116.
 
 **INPUTS**
 
@@ -3482,7 +3482,7 @@ fn SetRtgDeviceDriver(rb: *RtgBase, device_name: [*:0]const u8, on: bool) i32
 
 **SINCE**
 
-1.34. LVO -172.
+1.34. LVO -120.
 
 **INPUTS**
 
@@ -3550,7 +3550,7 @@ fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32
 
 **SINCE**
 
-1.0. LVO -100.
+1.0. LVO -56.
 
 **INPUTS**
 
@@ -3624,7 +3624,7 @@ fn ShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const 
 
 **SINCE**
 
-1.21. LVO -328.
+1.21. LVO -244.
 
 **INPUTS**
 
@@ -3762,7 +3762,7 @@ fn ShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32
 
 **SINCE**
 
-1.1. LVO -228.
+1.1. LVO -148.
 
 **INPUTS**
 
@@ -3828,7 +3828,7 @@ fn ShowVideoFrame(_: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.R
 
 **SINCE**
 
-1.10. LVO -272.
+1.10. LVO -188.
 
 **INPUTS**
 
@@ -3901,7 +3901,7 @@ fn UnlockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
 
 **SINCE**
 
-1.32. LVO -152.
+1.32. LVO -100.
 
 **INPUTS**
 
@@ -3960,7 +3960,7 @@ fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32
 
 **SINCE**
 
-1.0. LVO -112.
+1.0. LVO -64.
 
 **INPUTS**
 

@@ -15,7 +15,7 @@ const _mode = @import("_mode.zig");
 /// fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32) u32
 /// ```
 ///
-/// SINCE: 1.0. LVO -76.
+/// SINCE: 1.0. LVO -40.
 ///
 /// INPUTS:
 /// - `board` - the board.

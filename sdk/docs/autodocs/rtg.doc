@@ -66,7 +66,7 @@ rtg.library/WaitVBlank
 	    fn AddRtgNotify(rb: *RtgBase, task: *exec.Task, signals: u32) ?*rtg.RtgNotify
 
    SINCE
-	1.20. LVO -320.
+	1.20. LVO -236.
 
    INPUTS
 	- `task` - the task to signal.
@@ -115,7 +115,7 @@ rtg.library/WaitVBlank
 	    fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32, flags: u32) ?*rtg.RtgBitMap
 
    SINCE
-	1.0. LVO -88.
+	1.0. LVO -44.
 
    INPUTS
 	- `board` - the board, in a mode or not: a buffer is the board's, not a
@@ -169,7 +169,7 @@ rtg.library/WaitVBlank
 	    fn AttachBitMap(rb: *RtgBase, board: *rtg.RtgBoard, described: *const rtg.RtgBitMap) ?*rtg.RtgBitMap
 
    SINCE
-	1.0. LVO -92.
+	1.0. LVO -48.
 
    INPUTS
 	- `board` - the board it will belong to.
@@ -215,7 +215,7 @@ rtg.library/WaitVBlank
 	    fn BestBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32, mode: ?*rtg.RtgMode) u32
 
    SINCE
-	1.19. LVO -308.
+	1.19. LVO -224.
 
    INPUTS
 	- `board` - the board.
@@ -271,7 +271,7 @@ rtg.library/WaitVBlank
 	    fn BindRtgDrivers(rb: *RtgBase) u32
 
    SINCE
-	1.18. LVO -292.
+	1.18. LVO -208.
 
    INPUTS
 	None.
@@ -329,7 +329,7 @@ rtg.library/WaitVBlank
 	    fn BlendPixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32
 
    SINCE
-	1.4. LVO -244.
+	1.4. LVO -160.
 
    INPUTS
 	- `dest` - the buffer, of a board.
@@ -389,7 +389,7 @@ rtg.library/WaitVBlank
 	    fn BlendRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) i32
 
    SINCE
-	1.4. LVO -248.
+	1.4. LVO -164.
 
    INPUTS
 	- `dest` - the buffer, of a board.
@@ -432,7 +432,7 @@ rtg.library/WaitVBlank
 	    fn BlitPattern(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) i32
 
    SINCE
-	1.0. LVO -144.
+	1.0. LVO -92.
 
    INPUTS
 	- `dest` - the buffer, of a board.
@@ -473,7 +473,7 @@ rtg.library/WaitVBlank
 	    fn BlitTemplate(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.RtgTemplate) i32
 
    SINCE
-	1.0. LVO -140.
+	1.0. LVO -88.
 
    INPUTS
 	- `dest` - the buffer, of a board.
@@ -513,7 +513,7 @@ rtg.library/WaitVBlank
 	    fn BoardControl(_: *RtgBase, board: *rtg.RtgBoard, what: u32, value: isize) isize
 
    SINCE
-	1.0. LVO -68.
+	1.0. LVO -36.
 
    INPUTS
 	- `board` - the board.
@@ -557,7 +557,7 @@ rtg.library/WaitVBlank
 	    fn BoardDisplayBitMap(_: *RtgBase, board: *rtg.RtgBoard) ?*rtg.RtgBitMap
 
    SINCE
-	1.0. LVO -104.
+	1.0. LVO -60.
 
    INPUTS
 	- `board` - the board.
@@ -595,7 +595,7 @@ rtg.library/WaitVBlank
 	    fn CloseVideoLayer(rb: *RtgBase, layer: ?*rtg.RtgVideoLayer) void
 
    SINCE
-	1.10. LVO -268.
+	1.10. LVO -184.
 
    INPUTS
 	- `layer` - what `OpenVideoLayer` answered, or null, which does
@@ -637,7 +637,7 @@ rtg.library/WaitVBlank
 	    fn CopyRect(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const rtg.RtgCopy) i32
 
    SINCE
-	1.0. LVO -136.
+	1.0. LVO -84.
 
    INPUTS
 	- `src` - the buffer copied from: one of a board's, or memory of the
@@ -686,7 +686,7 @@ rtg.library/WaitVBlank
 	    fn CopyRects(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32
 
    SINCE
-	1.9. LVO -260.
+	1.9. LVO -176.
 
    INPUTS
 	- `src` - the buffer copied from, as for `CopyRect`.
@@ -745,7 +745,7 @@ rtg.library/WaitVBlank
 	    fn FillRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) i32
 
    SINCE
-	1.0. LVO -128.
+	1.0. LVO -80.
 
    INPUTS
 	- `dest` - the buffer, of a board.
@@ -789,7 +789,7 @@ rtg.library/WaitVBlank
 	    fn FindBoard(rb: *RtgBase, board_name: [*:0]const u8) ?*rtg.RtgBoard
 
    SINCE
-	1.0. LVO -56.
+	1.0. LVO -24.
 
    INPUTS
 	- `board_name` - the name the library gave it: its driver's, a point
@@ -830,7 +830,7 @@ rtg.library/WaitVBlank
 	    fn FindBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, refresh_mhz: u32, format: u32) u32
 
    SINCE
-	1.0. LVO -76.
+	1.0. LVO -40.
 
    INPUTS
 	- `board` - the board.
@@ -877,7 +877,7 @@ rtg.library/WaitVBlank
 	    fn FreeBitMap(rb: *RtgBase, bitmap: ?*rtg.RtgBitMap) void
 
    SINCE
-	1.0. LVO -96.
+	1.0. LVO -52.
 
    INPUTS
 	- `bitmap` - the buffer. Null does nothing.
@@ -919,7 +919,7 @@ rtg.library/WaitVBlank
 	    fn GetBoardInfo(_: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgBoardInfo, size: u32) u32
 
    SINCE
-	1.0. LVO -60.
+	1.0. LVO -28.
 
    INPUTS
 	- `board` - the board.
@@ -976,7 +976,7 @@ rtg.library/WaitVBlank
 	    fn GetBoardModes(rb: *RtgBase, board: *rtg.RtgBoard, into: ?[*]rtg.RtgMode, count: u32) u32
 
    SINCE
-	1.19. LVO -304.
+	1.19. LVO -220.
 
    INPUTS
 	- `board` - the board.
@@ -1023,7 +1023,7 @@ rtg.library/WaitVBlank
 	    fn GetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo, size: u32) u32
 
    SINCE
-	1.20. LVO -312.
+	1.20. LVO -228.
 
    INPUTS
 	- `board` - the board.
@@ -1076,7 +1076,7 @@ rtg.library/WaitVBlank
 	    fn GetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, into: *rtg.RtgSettings, size: u32) u32
 
    SINCE
-	1.34. LVO -164.
+	1.34. LVO -112.
 
    INPUTS
 	- `board` - the board.
@@ -1137,7 +1137,7 @@ rtg.library/WaitVBlank
 	    fn GetBoardStats(_: *RtgBase, board: *rtg.RtgBoard, stats: *rtg.RtgBoardStats, size: u32) u32
 
    SINCE
-	1.0. LVO -64.
+	1.0. LVO -32.
 
    INPUTS
 	- `board` - the board.
@@ -1182,7 +1182,7 @@ rtg.library/WaitVBlank
 	    fn GetRtgDevices(rb: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32
 
    SINCE
-	1.18. LVO -300.
+	1.18. LVO -216.
 
    INPUTS
 	- `into` - where the devices go, or null to ask how many there are.
@@ -1231,7 +1231,7 @@ rtg.library/WaitVBlank
 	    fn GetRtgDrivers(rb: *RtgBase, into: ?[*]rtg.RtgDriverInfo, count: u32) u32
 
    SINCE
-	1.18. LVO -296.
+	1.18. LVO -212.
 
    INPUTS
 	- `into` - where the drivers go, or null to ask how many there are.
@@ -1277,7 +1277,7 @@ rtg.library/WaitVBlank
 	    fn LoadBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) i32
 
    SINCE
-	1.34. LVO -156.
+	1.34. LVO -104.
 
    INPUTS
 	- `path` - the file; null for `ENV:Sys/display.prefs`.
@@ -1346,7 +1346,7 @@ rtg.library/WaitVBlank
 	    fn LoadRtgDrivers(rb: *RtgBase) u32
 
    SINCE
-	1.35. LVO -176.
+	1.35. LVO -124.
 
    INPUTS
 	None.
@@ -1418,7 +1418,7 @@ rtg.library/WaitVBlank
 	    fn LockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
 
    SINCE
-	1.32. LVO -148.
+	1.32. LVO -96.
 
    INPUTS
 	- `bitmap` - the buffer about to be written in, of a board.
@@ -1479,7 +1479,7 @@ rtg.library/WaitVBlank
 	    fn MirrorBoard(rb: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) i32
 
    SINCE
-	1.0. LVO -208.
+	1.0. LVO -136.
 
    INPUTS
 	- `board` - the board.
@@ -1539,7 +1539,7 @@ rtg.library/WaitVBlank
 	    fn MoveBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
 
    SINCE
-	1.3. LVO -240.
+	1.3. LVO -156.
 
    INPUTS
 	- `board` - the board.
@@ -1589,7 +1589,7 @@ rtg.library/WaitVBlank
 	    fn MoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
 
    SINCE
-	1.1. LVO -224.
+	1.1. LVO -144.
 
    INPUTS
 	- `board` - the board.
@@ -1647,7 +1647,7 @@ rtg.library/WaitVBlank
 	    fn MoveVideoLayer(_: *RtgBase, layer: *rtg.RtgVideoLayer, place: *const rtg.RtgRect) i32
 
    SINCE
-	1.10. LVO -276.
+	1.10. LVO -192.
 
    INPUTS
 	- `layer` - the layer.
@@ -1698,7 +1698,7 @@ rtg.library/WaitVBlank
 	    fn NextBoard(rb: *RtgBase, after: ?*rtg.RtgBoard) ?*rtg.RtgBoard
 
    SINCE
-	1.0. LVO -52.
+	1.0. LVO -20.
 
    INPUTS
 	- `after` - the board to go on from, or null for the first.
@@ -1742,7 +1742,7 @@ rtg.library/WaitVBlank
 	    fn OpenVideoLayer(rb: *RtgBase, board: *rtg.RtgBoard, tag_list: ?[*]const TagItem) ?*rtg.RtgVideoLayer
 
    SINCE
-	1.10. LVO -264.
+	1.10. LVO -180.
 
    INPUTS
 	- `board` - the board, a screen's (intuition's `SA_Board`) or one of
@@ -1818,7 +1818,7 @@ rtg.library/WaitVBlank
 	    fn ReadBoardEDID(rb: *RtgBase, board: *rtg.RtgBoard, buffer: ?[*]u8, size: u32) u32
 
    SINCE
-	1.20. LVO -316.
+	1.20. LVO -232.
 
    INPUTS
 	- `board` - the board.
@@ -1863,7 +1863,7 @@ rtg.library/WaitVBlank
 	    fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) i32
 
    SINCE
-	1.5. LVO -256.
+	1.5. LVO -172.
 
    INPUTS
 	- `bitmap` - the buffer.
@@ -1934,7 +1934,7 @@ rtg.library/WaitVBlank
 	    fn RehomeBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, board: *rtg.RtgBoard) i32
 
    SINCE
-	1.36. LVO -180.
+	1.36. LVO -128.
 
    INPUTS
 	- `bitmap` - the buffer: one `AllocBitMap` or `AttachBitMap` made.
@@ -2003,7 +2003,7 @@ rtg.library/WaitVBlank
 	    fn RemRtgNotify(rb: *RtgBase, notify: ?*rtg.RtgNotify) void
 
    SINCE
-	1.20. LVO -324.
+	1.20. LVO -240.
 
    INPUTS
 	- `notify` - the notification. Null does nothing.
@@ -2043,7 +2043,7 @@ rtg.library/WaitVBlank
 	    fn RtgCicp(_: *RtgBase, kind: u32, value: u32) i32
 
    SINCE
-	1.15. LVO -288.
+	1.15. LVO -204.
 
    INPUTS
 	- `kind` - which of H.273's tables `value` is of: `RTGCICP_MATRIX`
@@ -2098,7 +2098,7 @@ rtg.library/WaitVBlank
 	    fn RtgErrorText(_: *RtgBase, error_code: i32) [*:0]const u8
 
    SINCE
-	1.0. LVO -204.
+	1.0. LVO -132.
 
    INPUTS
 	- `error_code` - the code.
@@ -2136,7 +2136,7 @@ rtg.library/WaitVBlank
 	    fn RtgFormatBits(_: *RtgBase, format: u32) u32
 
    SINCE
-	1.15. LVO -280.
+	1.15. LVO -196.
 
    INPUTS
 	- `format` - a `PixelFormat`, as a number.
@@ -2180,7 +2180,7 @@ rtg.library/WaitVBlank
 	    fn RtgRowBytes(rb: *RtgBase, format: u32, width: u32) u32
 
    SINCE
-	1.15. LVO -284.
+	1.15. LVO -200.
 
    INPUTS
 	- `format` - a `PixelFormat`, as a number.
@@ -2223,7 +2223,7 @@ rtg.library/WaitVBlank
 	    fn SaveBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) i32
 
    SINCE
-	1.34. LVO -160.
+	1.34. LVO -108.
 
    INPUTS
 	- `path` - the file; null for `ENV:Sys/display.prefs`.
@@ -2274,7 +2274,7 @@ rtg.library/WaitVBlank
 	    fn ScalePixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, width: u32, height: u32) i32
 
    SINCE
-	1.4. LVO -252.
+	1.4. LVO -168.
 
    INPUTS
 	- `dest` - the buffer, of a board.
@@ -2330,7 +2330,7 @@ rtg.library/WaitVBlank
 	    fn SetBoardAudio(rb: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) i32
 
    SINCE
-	1.33. LVO -124.
+	1.33. LVO -76.
 
    INPUTS
 	- `board` - the board whose link is to carry the sound.
@@ -2388,7 +2388,7 @@ rtg.library/WaitVBlank
 	    fn SetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32
 
    SINCE
-	1.0. LVO -120.
+	1.0. LVO -72.
 
    INPUTS
 	- `board` - the board.
@@ -2450,7 +2450,7 @@ rtg.library/WaitVBlank
 	    fn SetBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32
 
    SINCE
-	1.3. LVO -236.
+	1.3. LVO -152.
 
    INPUTS
 	- `board` - the board.
@@ -2521,7 +2521,7 @@ rtg.library/WaitVBlank
 	    fn SetBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, image: ?*const rtg.Surface, hot_x: u32, hot_y: u32) i32
 
    SINCE
-	1.1. LVO -220.
+	1.1. LVO -140.
 
    INPUTS
 	- `board` - the board.
@@ -2599,7 +2599,7 @@ rtg.library/WaitVBlank
 	    fn SetBoardPower(rb: *RtgBase, board: *rtg.RtgBoard, state: u32) i32
 
    SINCE
-	1.29. LVO -116.
+	1.29. LVO -68.
 
    INPUTS
 	- `board` - the board.
@@ -2670,7 +2670,7 @@ rtg.library/WaitVBlank
 	    fn SetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, line: *const rtg.RtgSettings) i32
 
    SINCE
-	1.34. LVO -168.
+	1.34. LVO -116.
 
    INPUTS
 	- `board` - the board.
@@ -2759,7 +2759,7 @@ rtg.library/WaitVBlank
 	    fn SetRtgDeviceDriver(rb: *RtgBase, device_name: [*:0]const u8, on: bool) i32
 
    SINCE
-	1.34. LVO -172.
+	1.34. LVO -120.
 
    INPUTS
 	- `device_name` - the device's name, as `GetRtgDevices` answers it
@@ -2813,7 +2813,7 @@ rtg.library/WaitVBlank
 	    fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32
 
    SINCE
-	1.0. LVO -100.
+	1.0. LVO -56.
 
    INPUTS
 	- `board` - the board.
@@ -2873,7 +2873,7 @@ rtg.library/WaitVBlank
 	    fn ShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const rtg.RtgBand, count: u32) i32
 
    SINCE
-	1.21. LVO -328.
+	1.21. LVO -244.
 
    INPUTS
 	- `board` - the board.
@@ -2996,7 +2996,7 @@ rtg.library/WaitVBlank
 	    fn ShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32
 
    SINCE
-	1.1. LVO -228.
+	1.1. LVO -148.
 
    INPUTS
 	- `board` - the board.
@@ -3048,7 +3048,7 @@ rtg.library/WaitVBlank
 	    fn ShowVideoFrame(_: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) i32
 
    SINCE
-	1.10. LVO -272.
+	1.10. LVO -188.
 
    INPUTS
 	- `layer` - the layer.
@@ -3107,7 +3107,7 @@ rtg.library/WaitVBlank
 	    fn UnlockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
 
    SINCE
-	1.32. LVO -152.
+	1.32. LVO -100.
 
    INPUTS
 	- `bitmap` - the buffer `LockBitMap` was called with.
@@ -3152,7 +3152,7 @@ rtg.library/WaitVBlank
 	    fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32
 
    SINCE
-	1.0. LVO -112.
+	1.0. LVO -64.
 
    INPUTS
 	- `board` - the board.

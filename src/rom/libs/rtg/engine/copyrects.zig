@@ -19,7 +19,7 @@ const flips = @import("../compose/_flip.zig");
 /// fn CopyRects(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copies: [*]const rtg.RtgCopy, count: u32) i32
 /// ```
 ///
-/// SINCE: 1.9. LVO -260.
+/// SINCE: 1.9. LVO -176.
 ///
 /// INPUTS:
 /// - `src` - the buffer copied from, as for `CopyRect`.

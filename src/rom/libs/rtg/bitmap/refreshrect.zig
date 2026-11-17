@@ -19,7 +19,7 @@ const composer = @import("../compose/_compose.zig");
 /// fn RefreshRect(rb: *RtgBase, bitmap: *rtg.RtgBitMap, area: ?*const rtg.RtgRect) i32
 /// ```
 ///
-/// SINCE: 1.5. LVO -256.
+/// SINCE: 1.5. LVO -172.
 ///
 /// INPUTS:
 /// - `bitmap` - the buffer.

@@ -13,7 +13,7 @@ const _board = @import("_board.zig");
 /// fn RemRtgNotify(rb: *RtgBase, notify: ?*rtg.RtgNotify) void
 /// ```
 ///
-/// SINCE: 1.20. LVO -324.
+/// SINCE: 1.20. LVO -240.
 ///
 /// INPUTS:
 /// - `notify` - the notification. Null does nothing.

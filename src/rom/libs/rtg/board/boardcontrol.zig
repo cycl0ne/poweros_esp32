@@ -16,7 +16,7 @@ const _board = @import("_board.zig");
 /// fn BoardControl(_: *RtgBase, board: *rtg.RtgBoard, what: u32, value: isize) isize
 /// ```
 ///
-/// SINCE: 1.0. LVO -68.
+/// SINCE: 1.0. LVO -36.
 ///
 /// INPUTS:
 /// - `board` - the board.

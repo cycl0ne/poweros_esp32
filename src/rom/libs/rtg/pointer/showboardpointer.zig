@@ -14,7 +14,7 @@ const composer = @import("../compose/_compose.zig");
 /// fn ShowBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, show: bool) i32
 /// ```
 ///
-/// SINCE: 1.1. LVO -228.
+/// SINCE: 1.1. LVO -148.
 ///
 /// INPUTS:
 /// - `board` - the board.

@@ -13,7 +13,7 @@ const err = rtg.errors;
 /// fn ShowVideoFrame(_: *RtgBase, layer: *rtg.RtgVideoLayer, picture: ?*const rtg.RtgYuv, src: ?*const rtg.RtgRect) i32
 /// ```
 ///
-/// SINCE: 1.10. LVO -272.
+/// SINCE: 1.10. LVO -188.
 ///
 /// INPUTS:
 /// - `layer` - the layer.

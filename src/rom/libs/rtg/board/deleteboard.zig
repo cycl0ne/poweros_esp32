@@ -20,7 +20,7 @@ const _board = @import("_board.zig");
 /// fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 /// ```
 ///
-/// SINCE: 1.0. LVO -364.
+/// SINCE: 1.0. LVO -280.
 ///
 /// INPUTS:
 /// - `board` - the board, as `CreateBoard` answered it. Null does nothing.

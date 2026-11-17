@@ -14,8 +14,6 @@
 ##name rtg.library
 ##bias 4
 ##public
-// Eight slots kept free, so the slots after them stay where they are.
-##reserve 8
 /// The next board after `after`, or the first for null: the machine's
 /// display. A board whose device has gone is passed over.
 ?*rtg.RtgBoard NextBoard(?*rtg.RtgBoard after)
@@ -32,14 +30,10 @@ u32 GetBoardStats(*rtg.RtgBoard board, *rtg.RtgBoardStats stats, u32 size)
 /// RTGCTRL_RESET_STATS, which every board takes. RTGERR_NOT_SUPPORTED for
 /// one it does not know.
 isize BoardControl(*rtg.RtgBoard board, u32 what, isize value)
-// A slot kept free, so the slots after it stay where they are.
-##reserve 1
 /// The number of the board's mode of exactly that size, refresh (in
 /// milli-Hertz) and format, or 0. RTG_ANY matches whatever, so all four
 /// RTG_ANY is the board's default mode.
 u32 FindBoardMode(*rtg.RtgBoard board, u32 width, u32 height, u32 refresh_mhz, u32 format)
-// Two slots kept free, so the slots after them stay where they are.
-##reserve 2
 /// A buffer in the board's display memory, its rows aligned as the board
 /// asks. RTGBMF_DISPLAYABLE makes one the board can be shown. Null: a
 /// size of 0, a format this build does not know, a board with no display
@@ -59,8 +53,6 @@ i32 ShowBitMap(*rtg.RtgBoard board, ?*rtg.RtgBitMap bitmap)
 /// The buffer the board is showing, or null. Its first seven fields are a
 /// drawing surface.
 ?*rtg.RtgBitMap BoardDisplayBitMap(*rtg.RtgBoard board)
-// A slot kept free, so the slots after it stay where they are.
-##reserve 1
 /// Wait for `frames` frames of the display to end; 0 is the next one.
 /// For the frames the board's driver says ended, RTGERR_TIMEOUT when
 /// they do not come within two frames' time each; by the clock on a
@@ -86,8 +78,6 @@ i32 SetBoardAudio(*rtg.RtgBoard board, ?*const rtg.RtgAudio format)
 /// no work. RTGERR_NOT_SUPPORTED unless the board's engine fills - the
 /// library does not draw.
 i32 FillRect(*rtg.RtgBitMap dest, *const rtg.RtgRect area, u32 color)
-// A slot kept free, so the slots after it stay where they are.
-##reserve 1
 /// Copy a rectangle. The two buffers may be one and the rectangles may
 /// overlap. Same rules as FillRect.
 i32 CopyRect(*rtg.RtgBitMap src, *rtg.RtgBitMap dest, *const rtg.RtgCopy copy)
@@ -142,8 +132,6 @@ u32 LoadRtgDrivers()
 /// the handle change - nothing may draw into it meanwhile. RTGERR_IN_USE
 /// while its board shows it, RTGERR_NO_MEMORY without room.
 i32 RehomeBitMap(*rtg.RtgBitMap bitmap, *rtg.RtgBoard board)
-// Five slots kept free, so the slots after them stay where they are.
-##reserve 5
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis, or show it unturned: the
@@ -151,8 +139,6 @@ i32 RehomeBitMap(*rtg.RtgBitMap bitmap, *rtg.RtgBoard board)
 /// RTGERR_NOT_SUPPORTED for an axis the board has no cap for
 /// (RTGBC_MIRROR_X, RTGBC_MIRROR_Y); nothing changes then.
 i32 MirrorBoard(*rtg.RtgBoard board, bool mirror_x, bool mirror_y)
-// Two slots kept free, so the slots after them stay where they are.
-##reserve 2
 /// The pointer's image: a surface with an alpha channel, whose pixel
 /// (hot_x, hot_y) is the point. Converted once, into the board's format
 /// with a mask. Null takes the image away. RTGERR_NOT_SUPPORTED unless
@@ -164,8 +150,6 @@ i32 SetBoardPointer(*rtg.RtgBoard board, ?*const rtg.Surface image, u32 hot_x, u
 void MoveBoardPointer(*rtg.RtgBoard board, i32 x, i32 y)
 /// Lay the pointer over the picture, or stop.
 i32 ShowBoardPointer(*rtg.RtgBoard board, bool show)
-// A slot kept free, so the slots after it stay where they are.
-##reserve 1
 /// A second image laid over the picture under the pointer - a dragged
 /// icon - converted once with its coverage dithered into a mask; it
 /// follows the pointer, its pixel (hot_x, hot_y) at the pointer's point.

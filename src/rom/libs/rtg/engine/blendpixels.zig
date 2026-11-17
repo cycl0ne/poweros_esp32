@@ -20,7 +20,7 @@ const err = rtg.errors;
 /// fn BlendPixels(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, pixels: *const rtg.RtgPixels, alpha: u32) i32
 /// ```
 ///
-/// SINCE: 1.4. LVO -244.
+/// SINCE: 1.4. LVO -160.
 ///
 /// INPUTS:
 /// - `dest` - the buffer, of a board.

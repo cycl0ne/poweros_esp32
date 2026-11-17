@@ -13,7 +13,7 @@ const _device = @import("_device.zig");
 /// fn GetRtgDevices(rb: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32
 /// ```
 ///
-/// SINCE: 1.18. LVO -300.
+/// SINCE: 1.18. LVO -216.
 ///
 /// INPUTS:
 /// - `into` - where the devices go, or null to ask how many there are.

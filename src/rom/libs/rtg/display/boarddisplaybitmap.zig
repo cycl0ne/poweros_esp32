@@ -12,7 +12,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn BoardDisplayBitMap(_: *RtgBase, board: *rtg.RtgBoard) ?*rtg.RtgBitMap
 /// ```
 ///
-/// SINCE: 1.0. LVO -104.
+/// SINCE: 1.0. LVO -60.
 ///
 /// INPUTS:
 /// - `board` - the board.

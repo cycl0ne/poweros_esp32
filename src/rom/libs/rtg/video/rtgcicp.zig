@@ -19,7 +19,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn RtgCicp(_: *RtgBase, kind: u32, value: u32) i32
 /// ```
 ///
-/// SINCE: 1.15. LVO -288.
+/// SINCE: 1.15. LVO -204.
 ///
 /// INPUTS:
 /// - `kind` - which of H.273's tables `value` is of: `RTGCICP_MATRIX`

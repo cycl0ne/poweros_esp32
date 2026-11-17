@@ -18,7 +18,7 @@ const flips = @import("../compose/_flip.zig");
 /// fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard
 /// ```
 ///
-/// SINCE: 1.18. LVO -360.
+/// SINCE: 1.18. LVO -276.
 ///
 /// INPUTS:
 /// - `driver` - the driver that makes it: the one whose `attach` is

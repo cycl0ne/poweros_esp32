@@ -15,7 +15,7 @@ const _board = @import("_board.zig");
 /// fn AddRtgNotify(rb: *RtgBase, task: *exec.Task, signals: u32) ?*rtg.RtgNotify
 /// ```
 ///
-/// SINCE: 1.20. LVO -320.
+/// SINCE: 1.20. LVO -236.
 ///
 /// INPUTS:
 /// - `task` - the task to signal.

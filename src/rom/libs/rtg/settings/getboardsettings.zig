@@ -14,7 +14,7 @@ const settings = @import("_settings.zig");
 /// fn GetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, into: *rtg.RtgSettings, size: u32) u32
 /// ```
 ///
-/// SINCE: 1.34. LVO -164.
+/// SINCE: 1.34. LVO -112.
 ///
 /// INPUTS:
 /// - `board` - the board.

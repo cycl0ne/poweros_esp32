@@ -134,7 +134,10 @@ pub const LIBRARY_VERSION = 1;
 /// 36: RehomeBitMap: a buffer given to another board, its handle the
 /// same - the memory along where the new board reads it there, the
 /// pixels copied where it does not.
-pub const LIBRARY_REVISION = 36;
+/// 37: the jump table packed - no slot is kept free any more, the
+/// programs' calls are 57 in a row and the drivers' 20 follow them, so
+/// every call but the first few has another LVO than it had.
+pub const LIBRARY_REVISION = 37;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

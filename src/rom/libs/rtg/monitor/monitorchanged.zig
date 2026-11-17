@@ -13,7 +13,7 @@ const _monitor = @import("_monitor.zig");
 /// fn MonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) void
 /// ```
 ///
-/// SINCE: 1.20. LVO -392.
+/// SINCE: 1.20. LVO -308.
 ///
 /// INPUTS:
 /// - `board` - the board at whose connector something happened: one of

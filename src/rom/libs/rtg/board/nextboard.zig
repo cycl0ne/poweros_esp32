@@ -12,7 +12,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn NextBoard(rb: *RtgBase, after: ?*rtg.RtgBoard) ?*rtg.RtgBoard
 /// ```
 ///
-/// SINCE: 1.0. LVO -52.
+/// SINCE: 1.0. LVO -20.
 ///
 /// INPUTS:
 /// - `after` - the board to go on from, or null for the first.

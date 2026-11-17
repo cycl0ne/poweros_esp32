@@ -17,7 +17,7 @@ const _engine = @import("_engine.zig");
 /// fn FillRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -128.
+/// SINCE: 1.0. LVO -80.
 ///
 /// INPUTS:
 /// - `dest` - the buffer, of a board.

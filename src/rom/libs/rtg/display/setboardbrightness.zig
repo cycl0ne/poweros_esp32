@@ -15,7 +15,7 @@ const boards = @import("../board/_board.zig");
 /// fn SetBoardBrightness(rb: *RtgBase, board: *rtg.RtgBoard, percent: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -120.
+/// SINCE: 1.0. LVO -72.
 ///
 /// INPUTS:
 /// - `board` - the board.

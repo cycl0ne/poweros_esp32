@@ -40,7 +40,7 @@ fn frameMicros(board: *const rtg.RtgBoard) u64 {
 /// fn WaitVBlank(rb: *RtgBase, board: *rtg.RtgBoard, frames: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -112.
+/// SINCE: 1.0. LVO -64.
 ///
 /// INPUTS:
 /// - `board` - the board.

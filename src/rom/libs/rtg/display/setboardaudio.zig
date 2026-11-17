@@ -14,7 +14,7 @@ const err = rtg.errors;
 /// fn SetBoardAudio(rb: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) i32
 /// ```
 ///
-/// SINCE: 1.33. LVO -124.
+/// SINCE: 1.33. LVO -76.
 ///
 /// INPUTS:
 /// - `board` - the board whose link is to carry the sound.

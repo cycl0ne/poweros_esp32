@@ -13,7 +13,7 @@ const privateOf = @import("../board/_board.zig").privateOf;
 /// fn CloseVideoLayer(rb: *RtgBase, layer: ?*rtg.RtgVideoLayer) void
 /// ```
 ///
-/// SINCE: 1.10. LVO -268.
+/// SINCE: 1.10. LVO -184.
 ///
 /// INPUTS:
 /// - `layer` - what `OpenVideoLayer` answered, or null, which does

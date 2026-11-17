@@ -11,7 +11,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn RtgRowBytes(rb: *RtgBase, format: u32, width: u32) u32
 /// ```
 ///
-/// SINCE: 1.15. LVO -284.
+/// SINCE: 1.15. LVO -200.
 ///
 /// INPUTS:
 /// - `format` - a `PixelFormat`, as a number.

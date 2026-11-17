@@ -19,7 +19,7 @@ const load = @import("_load.zig");
 /// fn LoadRtgDrivers(rb: *RtgBase) u32
 /// ```
 ///
-/// SINCE: 1.35. LVO -176.
+/// SINCE: 1.35. LVO -124.
 ///
 /// INPUTS:
 /// None.

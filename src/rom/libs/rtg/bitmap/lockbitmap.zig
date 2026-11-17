@@ -14,7 +14,7 @@ const flips = @import("../compose/_flip.zig");
 /// fn LockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
 /// ```
 ///
-/// SINCE: 1.32. LVO -148.
+/// SINCE: 1.32. LVO -96.
 ///
 /// INPUTS:
 /// - `bitmap` - the buffer about to be written in, of a board.

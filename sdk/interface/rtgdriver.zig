@@ -17,26 +17,26 @@ pub const NAME = "rtg.library";
 
 /// Each function's offset in the jump table (its LVO).
 pub const LVO = struct {
-    pub const AddRtgDriver = libraries.lvo(82);
-    pub const RemRtgDriver = libraries.lvo(83);
-    pub const FrameDone = libraries.lvo(84);
-    pub const TxParam = libraries.lvo(85);
-    pub const TxColor = libraries.lvo(86);
-    pub const RxParam = libraries.lvo(87);
-    pub const GetRtgTagData = libraries.lvo(88);
-    pub const CreateBoard = libraries.lvo(89);
-    pub const DeleteBoard = libraries.lvo(90);
-    pub const AddRtgDevice = libraries.lvo(91);
-    pub const RemRtgDevice = libraries.lvo(92);
-    pub const OpenTransport = libraries.lvo(93);
-    pub const CloseTransport = libraries.lvo(94);
-    pub const AddBoardMode = libraries.lvo(95);
-    pub const ReadTimingTags = libraries.lvo(96);
-    pub const MonitorChanged = libraries.lvo(97);
-    pub const FindStandardTimings = libraries.lvo(98);
-    pub const ComposeLines = libraries.lvo(99);
-    pub const BuildAviInfoFrame = libraries.lvo(100);
-    pub const HdmiAudioClock = libraries.lvo(101);
+    pub const AddRtgDriver = libraries.lvo(61);
+    pub const RemRtgDriver = libraries.lvo(62);
+    pub const FrameDone = libraries.lvo(63);
+    pub const TxParam = libraries.lvo(64);
+    pub const TxColor = libraries.lvo(65);
+    pub const RxParam = libraries.lvo(66);
+    pub const GetRtgTagData = libraries.lvo(67);
+    pub const CreateBoard = libraries.lvo(68);
+    pub const DeleteBoard = libraries.lvo(69);
+    pub const AddRtgDevice = libraries.lvo(70);
+    pub const RemRtgDevice = libraries.lvo(71);
+    pub const OpenTransport = libraries.lvo(72);
+    pub const CloseTransport = libraries.lvo(73);
+    pub const AddBoardMode = libraries.lvo(74);
+    pub const ReadTimingTags = libraries.lvo(75);
+    pub const MonitorChanged = libraries.lvo(76);
+    pub const FindStandardTimings = libraries.lvo(77);
+    pub const ComposeLines = libraries.lvo(78);
+    pub const BuildAviInfoFrame = libraries.lvo(79);
+    pub const HdmiAudioClock = libraries.lvo(80);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the

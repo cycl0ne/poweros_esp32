@@ -14,7 +14,7 @@ const _monitor = @import("_monitor.zig");
 /// fn GetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo, size: u32) u32
 /// ```
 ///
-/// SINCE: 1.20. LVO -312.
+/// SINCE: 1.20. LVO -228.
 ///
 /// INPUTS:
 /// - `board` - the board.

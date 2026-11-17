@@ -14,7 +14,7 @@ const boards = @import("../board/_board.zig");
 /// fn SetBoardPower(rb: *RtgBase, board: *rtg.RtgBoard, state: u32) i32
 /// ```
 ///
-/// SINCE: 1.29. LVO -116.
+/// SINCE: 1.29. LVO -68.
 ///
 /// INPUTS:
 /// - `board` - the board.

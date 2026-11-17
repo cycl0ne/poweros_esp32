@@ -17,7 +17,7 @@ const _engine = @import("_engine.zig");
 /// fn BlitPattern(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, tile: *const rtg.RtgPattern) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -144.
+/// SINCE: 1.0. LVO -92.
 ///
 /// INPUTS:
 /// - `dest` - the buffer, of a board.

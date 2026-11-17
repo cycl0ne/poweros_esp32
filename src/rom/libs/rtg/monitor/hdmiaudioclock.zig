@@ -14,7 +14,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn HdmiAudioClock(_: *RtgBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, cts: *u32) bool
 /// ```
 ///
-/// SINCE: 1.33. LVO -408.
+/// SINCE: 1.33. LVO -324.
 ///
 /// INPUTS:
 /// - `pixel_clock_hz` - the link's clock: the mode's pixel clock, with

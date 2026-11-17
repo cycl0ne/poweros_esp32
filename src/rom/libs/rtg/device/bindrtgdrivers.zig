@@ -12,7 +12,7 @@ const _device = @import("_device.zig");
 /// fn BindRtgDrivers(rb: *RtgBase) u32
 /// ```
 ///
-/// SINCE: 1.18. LVO -292.
+/// SINCE: 1.18. LVO -208.
 ///
 /// INPUTS:
 /// None.

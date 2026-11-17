@@ -17,7 +17,7 @@ const settings = @import("_settings.zig");
 /// fn LoadBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) i32
 /// ```
 ///
-/// SINCE: 1.34. LVO -156.
+/// SINCE: 1.34. LVO -104.
 ///
 /// INPUTS:
 /// - `path` - the file; null for `ENV:Sys/display.prefs`.

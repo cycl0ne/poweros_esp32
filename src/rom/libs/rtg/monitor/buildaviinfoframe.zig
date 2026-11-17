@@ -12,7 +12,7 @@ const RtgBase = @import("../rtg.zig").RtgBase;
 /// fn BuildAviInfoFrame(_: *RtgBase, timings: *const rtg.RtgTimings, flags: u32, into: [*]u8) u32
 /// ```
 ///
-/// SINCE: 1.33. LVO -404.
+/// SINCE: 1.33. LVO -320.
 ///
 /// INPUTS:
 /// - `timings` - the mode's timings: its picture's size and its number

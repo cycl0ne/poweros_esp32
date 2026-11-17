@@ -13,7 +13,7 @@ const composer = @import("../compose/_compose.zig");
 /// fn MoveBoardPointer(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
 /// ```
 ///
-/// SINCE: 1.1. LVO -224.
+/// SINCE: 1.1. LVO -144.
 ///
 /// INPUTS:
 /// - `board` - the board.

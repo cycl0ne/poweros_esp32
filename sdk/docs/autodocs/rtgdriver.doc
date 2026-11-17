@@ -29,7 +29,7 @@ rtg.library/TxParam
 	    fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimings, format: u32, flags: u32) u32
 
    SINCE
-	1.19. LVO -384.
+	1.19. LVO -300.
 
    INPUTS
 	- `board` - the board, one of the caller's own.
@@ -94,7 +94,7 @@ rtg.library/TxParam
 	    fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice
 
    SINCE
-	1.18. LVO -368.
+	1.18. LVO -284.
 
    INPUTS
 	- `tag_list` - what the device is, in the tags a panel part of the
@@ -141,7 +141,7 @@ rtg.library/TxParam
 	    fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopaque) ?*rtg.RtgDriver
 
    SINCE
-	1.0. LVO -332.
+	1.0. LVO -248.
 
    INPUTS
 	- `spec` - the driver's description: its name, what it makes and the
@@ -198,7 +198,7 @@ rtg.library/TxParam
 	    fn BuildAviInfoFrame(_: *RtgBase, timings: *const rtg.RtgTimings, flags: u32, into: [*]u8) u32
 
    SINCE
-	1.33. LVO -404.
+	1.33. LVO -320.
 
    INPUTS
 	- `timings` - the mode's timings: its picture's size and its number
@@ -256,7 +256,7 @@ rtg.library/TxParam
 	    fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
 
    SINCE
-	1.18. LVO -380.
+	1.18. LVO -296.
 
    INPUTS
 	- `io` - the bus, as `OpenTransport` answered it. Null does nothing.
@@ -297,7 +297,7 @@ rtg.library/TxParam
 	    fn ComposeLines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, into: [*]u8, pitch: u32) i32
 
    SINCE
-	1.24. LVO -400.
+	1.24. LVO -316.
 
    INPUTS
 	- `board` - the board: one of the caller's own, whose display has a
@@ -372,7 +372,7 @@ rtg.library/TxParam
 	    fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spec: *const rtg.RtgBoardSpec) ?*rtg.RtgBoard
 
    SINCE
-	1.18. LVO -360.
+	1.18. LVO -276.
 
    INPUTS
 	- `driver` - the driver that makes it: the one whose `attach` is
@@ -448,7 +448,7 @@ rtg.library/TxParam
 	    fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 
    SINCE
-	1.0. LVO -364.
+	1.0. LVO -280.
 
    INPUTS
 	- `board` - the board, as `CreateBoard` answered it. Null does nothing.
@@ -501,7 +501,7 @@ rtg.library/TxParam
 	    fn FindStandardTimings(_: *RtgBase, width: u32, height: u32, refresh_hz: u32, timings: *rtg.RtgTimings) bool
 
    SINCE
-	1.20. LVO -396.
+	1.20. LVO -312.
 
    INPUTS
 	- `width` - the picture's width in pixels.
@@ -549,7 +549,7 @@ rtg.library/TxParam
 	    fn FrameDone(rb: *RtgBase, board: *rtg.RtgBoard) void
 
    SINCE
-	1.22. LVO -340.
+	1.22. LVO -256.
 
    INPUTS
 	- `board` - the board whose display ended a frame: one of the
@@ -598,7 +598,7 @@ rtg.library/TxParam
 	    fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?[*]const TagItem) usize
 
    SINCE
-	1.0. LVO -356.
+	1.0. LVO -272.
 
    INPUTS
 	- `tag_value` - the tag.
@@ -638,7 +638,7 @@ rtg.library/TxParam
 	    fn HdmiAudioClock(_: *RtgBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, cts: *u32) bool
 
    SINCE
-	1.33. LVO -408.
+	1.33. LVO -324.
 
    INPUTS
 	- `pixel_clock_hz` - the link's clock: the mode's pixel clock, with
@@ -689,7 +689,7 @@ rtg.library/TxParam
 	    fn MonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) void
 
    SINCE
-	1.20. LVO -392.
+	1.20. LVO -308.
 
    INPUTS
 	- `board` - the board at whose connector something happened: one of
@@ -747,7 +747,7 @@ rtg.library/TxParam
 	    fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?*rtg.RtgTransport
 
    SINCE
-	1.18. LVO -376.
+	1.18. LVO -292.
 
    INPUTS
 	- `driver` - the driver that asks: the one that has `device`, or is
@@ -799,7 +799,7 @@ rtg.library/TxParam
 	    fn ReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTimings) bool
 
    SINCE
-	1.19. LVO -388.
+	1.19. LVO -304.
 
    INPUTS
 	- `tag_list` - a device's tags.
@@ -846,7 +846,7 @@ rtg.library/TxParam
 	    fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void
 
    SINCE
-	1.18. LVO -372.
+	1.18. LVO -288.
 
    INPUTS
 	- `device` - the device, as `AddRtgDevice` answered it. Null does
@@ -894,7 +894,7 @@ rtg.library/TxParam
 	    fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
    SINCE
-	1.0. LVO -336.
+	1.0. LVO -252.
 
    INPUTS
 	- `driver` - the driver's node, as `AddRtgDriver` answered it.
@@ -938,7 +938,7 @@ rtg.library/TxParam
 	    fn RxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -352.
+	1.0. LVO -268.
 
    INPUTS
 	- `io` - the transport.
@@ -979,7 +979,7 @@ rtg.library/TxParam
 	    fn TxColor(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -348.
+	1.0. LVO -264.
 
    INPUTS
 	- `io` - the transport.
@@ -1021,7 +1021,7 @@ rtg.library/TxParam
 	    fn TxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaque, size: u32) i32
 
    SINCE
-	1.0. LVO -344.
+	1.0. LVO -260.
 
    INPUTS
 	- `io` - the transport.

@@ -15,7 +15,7 @@ const boards = @import("../board/_board.zig");
 /// fn ShowBitMap(rb: *RtgBase, board: *rtg.RtgBoard, bitmap: ?*rtg.RtgBitMap) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -100.
+/// SINCE: 1.0. LVO -56.
 ///
 /// INPUTS:
 /// - `board` - the board.

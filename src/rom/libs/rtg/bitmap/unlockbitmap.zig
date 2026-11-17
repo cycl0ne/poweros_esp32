@@ -14,7 +14,7 @@ const flips = @import("../compose/_flip.zig");
 /// fn UnlockBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap) void
 /// ```
 ///
-/// SINCE: 1.32. LVO -152.
+/// SINCE: 1.32. LVO -100.
 ///
 /// INPUTS:
 /// - `bitmap` - the buffer `LockBitMap` was called with.

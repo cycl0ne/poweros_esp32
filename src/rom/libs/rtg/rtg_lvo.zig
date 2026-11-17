@@ -466,53 +466,30 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
     return RtgCicp(rb, kind, value);
 }
 
-/// How many slots of the table are kept free.
-const reserved_slots = 21;
-
-/// The slots kept free (`##reserve` in the `.fd`), so the slots after them
-/// stay where they are: each does nothing.
-///
-/// INPUTS:
-/// - `_` - the library's base, unused.
-fn reserved(_: *RtgBase) callconv(.c) void {}
-
 /// The jump table, in slot order: the standard vectors, then one
-/// `lvo<Name>` per `.fd` line and a `reserved` per slot kept free - the
-/// programs' calls first, the drivers' after them.
+/// `lvo<Name>` per `.fd` line - the programs' calls first, the drivers'
+/// after them.
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
     vec(exec.libClose),
     vec(rtg_base.expunge),
     vec(exec.libExtFunc),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
     vec(lvoNextBoard),
     vec(lvoFindBoard),
     vec(lvoGetBoardInfo),
     vec(lvoGetBoardStats),
     vec(lvoBoardControl),
-    vec(reserved),
     vec(lvoFindBoardMode),
-    vec(reserved),
-    vec(reserved),
     vec(lvoAllocBitMap),
     vec(lvoAttachBitMap),
     vec(lvoFreeBitMap),
     vec(lvoShowBitMap),
     vec(lvoBoardDisplayBitMap),
-    vec(reserved),
     vec(lvoWaitVBlank),
     vec(lvoSetBoardPower),
     vec(lvoSetBoardBrightness),
     vec(lvoSetBoardAudio),
     vec(lvoFillRect),
-    vec(reserved),
     vec(lvoCopyRect),
     vec(lvoBlitTemplate),
     vec(lvoBlitPattern),
@@ -525,19 +502,11 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoSetRtgDeviceDriver),
     vec(lvoLoadRtgDrivers),
     vec(lvoRehomeBitMap),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
-    vec(reserved),
     vec(lvoRtgErrorText),
     vec(lvoMirrorBoard),
-    vec(reserved),
-    vec(reserved),
     vec(lvoSetBoardPointer),
     vec(lvoMoveBoardPointer),
     vec(lvoShowBoardPointer),
-    vec(reserved),
     vec(lvoSetBoardOverlay),
     vec(lvoMoveBoardOverlay),
     vec(lvoBlendPixels),
@@ -593,9 +562,10 @@ const testing = std.testing;
 const call_count = @typeInfo(LVO).@"struct".decls.len + @typeInfo(DRIVER_LVO).@"struct".decls.len;
 
 test "the jump table: the ROM's slots, every LVO of both interfaces at its function" {
-    // The reserved slots are in the table but not in either LVO.
-    try testing.expectEqual(exec.libraries.standard_vectors + call_count + reserved_slots, vectors.len);
-    try testing.expectEqual(@as(usize, 102), vectors.len);
+    // No slot is kept free: the table is the standard vectors and the
+    // two interfaces' calls.
+    try testing.expectEqual(exec.libraries.standard_vectors + call_count, vectors.len);
+    try testing.expectEqual(@as(usize, 81), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

@@ -13,7 +13,7 @@ const err = rtg.errors;
 /// fn TxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaque, size: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -344.
+/// SINCE: 1.0. LVO -260.
 ///
 /// INPUTS:
 /// - `io` - the transport.

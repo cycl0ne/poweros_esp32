@@ -18,7 +18,7 @@ const flips = @import("../compose/_flip.zig");
 /// fn CopyRect(_: *RtgBase, src: *rtg.RtgBitMap, dest: *rtg.RtgBitMap, copy: *const rtg.RtgCopy) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -136.
+/// SINCE: 1.0. LVO -84.
 ///
 /// INPUTS:
 /// - `src` - the buffer copied from: one of a board's, or memory of the

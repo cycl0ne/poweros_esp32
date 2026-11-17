@@ -15,7 +15,7 @@ const boards = @import("../board/_board.zig");
 /// fn RehomeBitMap(rb: *RtgBase, bitmap: *rtg.RtgBitMap, board: *rtg.RtgBoard) i32
 /// ```
 ///
-/// SINCE: 1.36. LVO -180.
+/// SINCE: 1.36. LVO -128.
 ///
 /// INPUTS:
 /// - `bitmap` - the buffer: one `AllocBitMap` or `AttachBitMap` made.

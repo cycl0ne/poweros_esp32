@@ -14,7 +14,7 @@ const composer = @import("../compose/_compose.zig");
 /// fn MoveBoardOverlay(rb: *RtgBase, board: *rtg.RtgBoard, x: i32, y: i32) void
 /// ```
 ///
-/// SINCE: 1.3. LVO -240.
+/// SINCE: 1.3. LVO -156.
 ///
 /// INPUTS:
 /// - `board` - the board.

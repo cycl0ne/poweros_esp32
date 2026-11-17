@@ -13,7 +13,7 @@ const err = rtg.errors;
 /// fn TxColor(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaque, size: u32) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -348.
+/// SINCE: 1.0. LVO -264.
 ///
 /// INPUTS:
 /// - `io` - the transport.

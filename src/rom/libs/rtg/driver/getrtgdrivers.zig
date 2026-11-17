@@ -13,7 +13,7 @@ const _driver = @import("_driver.zig");
 /// fn GetRtgDrivers(rb: *RtgBase, into: ?[*]rtg.RtgDriverInfo, count: u32) u32
 /// ```
 ///
-/// SINCE: 1.18. LVO -296.
+/// SINCE: 1.18. LVO -212.
 ///
 /// INPUTS:
 /// - `into` - where the drivers go, or null to ask how many there are.

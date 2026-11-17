@@ -13,7 +13,7 @@ const composer = @import("../compose/_compose.zig");
 /// fn MirrorBoard(rb: *RtgBase, board: *rtg.RtgBoard, mirror_x: bool, mirror_y: bool) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -208.
+/// SINCE: 1.0. LVO -136.
 ///
 /// INPUTS:
 /// - `board` - the board.

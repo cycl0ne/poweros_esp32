@@ -17,7 +17,7 @@ const _engine = @import("_engine.zig");
 /// fn BlitTemplate(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, shape: *const rtg.RtgTemplate) i32
 /// ```
 ///
-/// SINCE: 1.0. LVO -140.
+/// SINCE: 1.0. LVO -88.
 ///
 /// INPUTS:
 /// - `dest` - the buffer, of a board.

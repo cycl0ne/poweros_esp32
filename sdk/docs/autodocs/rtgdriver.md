@@ -43,7 +43,7 @@ fn AddBoardMode(rb: *RtgBase, board: *rtg.RtgBoard, timings: *const rtg.RtgTimin
 
 **SINCE**
 
-1.19. LVO -384.
+1.19. LVO -300.
 
 **INPUTS**
 
@@ -122,7 +122,7 @@ fn AddRtgDevice(rb: *RtgBase, tag_list: ?[*]const TagItem) ?*rtg.RtgDevice
 
 **SINCE**
 
-1.18. LVO -368.
+1.18. LVO -284.
 
 **INPUTS**
 
@@ -183,7 +183,7 @@ fn AddRtgDriver(rb: *RtgBase, spec: *const rtg.RtgDriverSpec, seg_list: ?*anyopa
 
 **SINCE**
 
-1.0. LVO -332.
+1.0. LVO -248.
 
 **INPUTS**
 
@@ -254,7 +254,7 @@ fn BuildAviInfoFrame(_: *RtgBase, timings: *const rtg.RtgTimings, flags: u32, in
 
 **SINCE**
 
-1.33. LVO -404.
+1.33. LVO -320.
 
 **INPUTS**
 
@@ -326,7 +326,7 @@ fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
 
 **SINCE**
 
-1.18. LVO -380.
+1.18. LVO -296.
 
 **INPUTS**
 
@@ -381,7 +381,7 @@ fn ComposeLines(rb: *RtgBase, board: *rtg.RtgBoard, area: *const rtg.RtgRect, in
 
 **SINCE**
 
-1.24. LVO -400.
+1.24. LVO -316.
 
 **INPUTS**
 
@@ -470,7 +470,7 @@ fn CreateBoard(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice, spe
 
 **SINCE**
 
-1.18. LVO -360.
+1.18. LVO -276.
 
 **INPUTS**
 
@@ -560,7 +560,7 @@ fn DeleteBoard(rb: *RtgBase, board: ?*rtg.RtgBoard) void
 
 **SINCE**
 
-1.0. LVO -364.
+1.0. LVO -280.
 
 **INPUTS**
 
@@ -627,7 +627,7 @@ fn FindStandardTimings(_: *RtgBase, width: u32, height: u32, refresh_hz: u32, ti
 
 **SINCE**
 
-1.20. LVO -396.
+1.20. LVO -312.
 
 **INPUTS**
 
@@ -689,7 +689,7 @@ fn FrameDone(rb: *RtgBase, board: *rtg.RtgBoard) void
 
 **SINCE**
 
-1.22. LVO -340.
+1.22. LVO -256.
 
 **INPUTS**
 
@@ -752,7 +752,7 @@ fn GetRtgTagData(rb: *RtgBase, tag_value: Tag, default_value: usize, tag_list: ?
 
 **SINCE**
 
-1.0. LVO -356.
+1.0. LVO -272.
 
 **INPUTS**
 
@@ -806,7 +806,7 @@ fn HdmiAudioClock(_: *RtgBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, c
 
 **SINCE**
 
-1.33. LVO -408.
+1.33. LVO -324.
 
 **INPUTS**
 
@@ -871,7 +871,7 @@ fn MonitorChanged(rb: *RtgBase, board: *rtg.RtgBoard) void
 
 **SINCE**
 
-1.20. LVO -392.
+1.20. LVO -308.
 
 **INPUTS**
 
@@ -943,7 +943,7 @@ fn OpenTransport(rb: *RtgBase, driver: *rtg.RtgDriver, device: *rtg.RtgDevice) ?
 
 **SINCE**
 
-1.18. LVO -376.
+1.18. LVO -292.
 
 **INPUTS**
 
@@ -1009,7 +1009,7 @@ fn ReadTimingTags(rb: *RtgBase, tag_list: ?[*]const TagItem, timings: *rtg.RtgTi
 
 **SINCE**
 
-1.19. LVO -388.
+1.19. LVO -304.
 
 **INPUTS**
 
@@ -1070,7 +1070,7 @@ fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void
 
 **SINCE**
 
-1.18. LVO -372.
+1.18. LVO -288.
 
 **INPUTS**
 
@@ -1132,7 +1132,7 @@ fn RemRtgDriver(rb: *RtgBase, driver: *rtg.RtgDriver) bool
 
 **SINCE**
 
-1.0. LVO -336.
+1.0. LVO -252.
 
 **INPUTS**
 
@@ -1190,7 +1190,7 @@ fn RxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, buffer: ?*anyopaque, si
 
 **SINCE**
 
-1.0. LVO -352.
+1.0. LVO -268.
 
 **INPUTS**
 
@@ -1245,7 +1245,7 @@ fn TxColor(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, color: ?*const anyopaqu
 
 **SINCE**
 
-1.0. LVO -348.
+1.0. LVO -264.
 
 **INPUTS**
 
@@ -1301,7 +1301,7 @@ fn TxParam(_: *RtgBase, io: *rtg.RtgTransport, cmd: i32, param: ?*const anyopaqu
 
 **SINCE**
 
-1.0. LVO -344.
+1.0. LVO -260.
 
 **INPUTS**
 

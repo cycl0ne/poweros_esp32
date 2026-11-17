@@ -14,7 +14,7 @@ const _transport = @import("_transport.zig");
 /// fn CloseTransport(rb: *RtgBase, io: ?*rtg.RtgTransport) void
 /// ```
 ///
-/// SINCE: 1.18. LVO -380.
+/// SINCE: 1.18. LVO -296.
 ///
 /// INPUTS:
 /// - `io` - the bus, as `OpenTransport` answered it. Null does nothing.

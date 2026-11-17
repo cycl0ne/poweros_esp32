@@ -14,7 +14,7 @@ const _device = @import("_device.zig");
 /// fn RemRtgDevice(rb: *RtgBase, device: ?*rtg.RtgDevice) void
 /// ```
 ///
-/// SINCE: 1.18. LVO -372.
+/// SINCE: 1.18. LVO -288.
 ///
 /// INPUTS:
 /// - `device` - the device, as `AddRtgDevice` answered it. Null does

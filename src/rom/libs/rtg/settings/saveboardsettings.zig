@@ -16,7 +16,7 @@ const settings = @import("_settings.zig");
 /// fn SaveBoardSettings(rb: *RtgBase, path: ?[*:0]const u8) i32
 /// ```
 ///
-/// SINCE: 1.34. LVO -160.
+/// SINCE: 1.34. LVO -108.
 ///
 /// INPUTS:
 /// - `path` - the file; null for `ENV:Sys/display.prefs`.

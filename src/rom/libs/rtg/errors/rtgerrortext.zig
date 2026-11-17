@@ -13,7 +13,7 @@ const err = rtg.errors;
 /// fn RtgErrorText(_: *RtgBase, error_code: i32) [*:0]const u8
 /// ```
 ///
-/// SINCE: 1.0. LVO -204.
+/// SINCE: 1.0. LVO -132.
 ///
 /// INPUTS:
 /// - `error_code` - the code.

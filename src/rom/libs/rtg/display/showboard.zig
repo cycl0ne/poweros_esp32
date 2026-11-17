@@ -18,7 +18,7 @@ const modes = @import("../mode/_mode.zig");
 /// fn ShowBoard(rb: *RtgBase, board: *rtg.RtgBoard, mode_id: u32, bands: ?[*]const rtg.RtgBand, count: u32) i32
 /// ```
 ///
-/// SINCE: 1.21. LVO -328.
+/// SINCE: 1.21. LVO -244.
 ///
 /// INPUTS:
 /// - `board` - the board.

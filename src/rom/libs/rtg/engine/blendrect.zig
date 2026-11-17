@@ -18,7 +18,7 @@ const err = rtg.errors;
 /// fn BlendRect(_: *RtgBase, dest: *rtg.RtgBitMap, area: *const rtg.RtgRect, color: u32) i32
 /// ```
 ///
-/// SINCE: 1.4. LVO -248.
+/// SINCE: 1.4. LVO -164.
 ///
 /// INPUTS:
 /// - `dest` - the buffer, of a board.

@@ -16,7 +16,7 @@ const boards = @import("../board/_board.zig");
 /// fn AllocBitMap(rb: *RtgBase, board: *rtg.RtgBoard, width: u32, height: u32, format: u32, flags: u32) ?*rtg.RtgBitMap
 /// ```
 ///
-/// SINCE: 1.0. LVO -88.
+/// SINCE: 1.0. LVO -44.
 ///
 /// INPUTS:
 /// - `board` - the board, in a mode or not: a buffer is the board's, not a
