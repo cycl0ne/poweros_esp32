@@ -32,6 +32,15 @@ through the jump table: the loops the kernel has for the board's CPU
 ([Memory](exec.md#memory)). One whose root declares `own_memory_calls`
 keeps its own.
 
+A load file is built on its own, so nothing the kernel learns as it
+starts is in it. What `sdk.hardware` keeps in a variable - on the 64-bit
+machines the rate of the machine's counter, which
+`sdk.hardware.systimer.uptimeUs` and `spinUs` count with - holds its
+default in a file loaded from the disk, and time counted with it is
+wrong. Such a file asks exec once, `sys.GetTimeBase()`, and counts
+`sdk.hardware.systimer.read()` by the answer, or asks timer.device
+(`ReadEClock`).
+
 ## Hello, world - in the shell
 
 A command is a function `_program_entry` that gets exec's base. It opens

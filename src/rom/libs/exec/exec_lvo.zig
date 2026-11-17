@@ -70,6 +70,7 @@ comptime {
 /// call of the table.
 const contract_files = [_][]const u8{
     @embedFile("task/corecount.zig"),
+    @embedFile("time/gettimebase.zig"),
     @embedFile("task/lockcoretasks.zig"),
     @embedFile("task/unlockcoretasks.zig"),
     @embedFile("list/lockexeclist.zig"),
@@ -367,6 +368,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoLockCoreTasks),
     vec(lvoUnlockCoreTasks),
     vec(lvoCoreCount),
+    vec(lvoGetTimeBase),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -952,6 +954,9 @@ fn lvoUnlockCoreTasks(base: *ExecBase, core: u32) callconv(.c) void {
 fn lvoCoreCount(base: *ExecBase) callconv(.c) u32 {
     return exec.CoreCount(base);
 }
+fn lvoGetTimeBase(base: *ExecBase) callconv(.c) u64 {
+    return exec.GetTimeBase(base);
+}
 fn lvoPostWork(base: *ExecBase, job: *sdk.exec.WorkJob) callconv(.c) void {
     exec.PostWork(base, job);
 }
@@ -994,6 +999,10 @@ test "LockExecList hands back exec's own lists, and IntVector its own vectors" {
     // asks it and then walks what it said reaches every core and stops.
     try testing.expectEqual(base.cores_running, lvoCoreCount(base));
     try testing.expect(lvoCoreCount(base) >= 1);
+    // The counter's rate: the host tests' is the ESP32-S3's, and through
+    // the table it is what the function answers.
+    try testing.expectEqual(@as(u64, sdk.hardware.systimer.SYSTIMER_HZ), lvoGetTimeBase(base));
+    try testing.expectEqual(lvoGetTimeBase(base), @as(*sdk.interface.exec.ExecBase, @ptrCast(base)).GetTimeBase());
     var counted: u32 = 0;
     while (lvoLockCoreTasks(base, counted)) |_| {
         lvoUnlockCoreTasks(base, counted);

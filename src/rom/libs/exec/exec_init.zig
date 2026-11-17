@@ -122,8 +122,11 @@ pub const LIBRARY_VERSION = 1;
 /// 37: a `%s`'s width and limit, and a `%c`'s width, count the cells the
 /// text takes on a console, so a column lines up after a wide character
 /// or a marked one.
-pub const LIBRARY_REVISION = 40;
-const BUILD_DATE = "16.11.2026";
+/// 41: GetTimeBase - the rate of the machine's counter, for a module
+/// loaded from the disk, which has no part in what the kernel learned of
+/// it as it started.
+pub const LIBRARY_REVISION = 41;
+const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

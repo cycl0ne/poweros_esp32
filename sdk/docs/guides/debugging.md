@@ -278,7 +278,8 @@ found once can be watched early in the next run.
 - `libs`, `devs`, `resources`, `residents`, `segments`, `doslist`,
   `ints` - what is loaded, resident, mounted and hooked.
 - `info`, `uptime`, `eclock`, `date`, `systime` - the CPU and its
-  clocks, the time.
+  clocks, the time; `eclock` prints the rate of the machine's counter
+  too, as exec's `GetTimeBase` answers it.
 - `cache`, `wdt`, `reboot` - the caches, the watchdog, a restart.
 
 **Failures on purpose**

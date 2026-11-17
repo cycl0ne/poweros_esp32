@@ -157,6 +157,7 @@ pub const LVO = struct {
     pub const LockCoreTasks = libraries.lvo(145);
     pub const UnlockCoreTasks = libraries.lvo(146);
     pub const CoreCount = libraries.lvo(147);
+    pub const GetTimeBase = libraries.lvo(148);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -304,6 +305,7 @@ pub const Fn = struct {
     pub const LockCoreTasks = *const fn (*ExecBase, u32) callconv(.c) ?*exec.CoreTasks;
     pub const UnlockCoreTasks = *const fn (*ExecBase, u32) callconv(.c) void;
     pub const CoreCount = *const fn (*ExecBase) callconv(.c) u32;
+    pub const GetTimeBase = *const fn (*ExecBase) callconv(.c) u64;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1006,5 +1008,13 @@ pub const ExecBase = opaque {
     /// LockCoreTasks answer for. Never 0, and 1 on a machine with one core.
     pub fn CoreCount(self: *ExecBase) u32 {
         return libraries.call(self, LVO.CoreCount, Fn.CoreCount, .{});
+    }
+
+    /// How many times a second the machine's counter counts (SINCE 1.41): the
+    /// rate of what sdk.hardware.systimer reads, which the kernel knows and a
+    /// module loaded from the disk has to ask for. Never 0, and never other
+    /// while the machine runs.
+    pub fn GetTimeBase(self: *ExecBase) u64 {
+        return libraries.call(self, LVO.GetTimeBase, Fn.GetTimeBase, .{});
     }
 };

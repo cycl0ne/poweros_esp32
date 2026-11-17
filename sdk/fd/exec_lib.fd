@@ -299,4 +299,9 @@ void UnlockCoreTasks(u32 core)
 /// one less than this, which is what ReadCoreTimes, CoreTask and
 /// LockCoreTasks answer for. Never 0, and 1 on a machine with one core.
 u32 CoreCount()
+/// How many times a second the machine's counter counts (SINCE 1.41): the
+/// rate of what sdk.hardware.systimer reads, which the kernel knows and a
+/// module loaded from the disk has to ask for. Never 0, and never other
+/// while the machine runs.
+u64 GetTimeBase()
 ##end

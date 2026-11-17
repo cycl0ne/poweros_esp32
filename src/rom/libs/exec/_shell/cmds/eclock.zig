@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! eclock: timer.device's ReadEClock, the count and its rate.
+//! eclock: timer.device's ReadEClock, the count and its rate, and the
+//! rate of the machine's counter as exec answers it.
 
 const sdk = @import("sdk");
 const _shell = @import("../shell.zig");
@@ -10,7 +11,7 @@ const timer = sdk.devices.timer;
 pub const name = "eclock";
 pub const usage = "eclock";
 pub const help =
-    \\  eclock               timer.device ReadEClock
+    \\  eclock               timer.device ReadEClock, exec GetTimeBase
     \\
 ;
 
@@ -23,4 +24,5 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
     shell.print("ReadEClock: hi 0x%08x lo 0x%08x: %ld ticks at %d Hz, %ld ms\n", .{
         count.hi, count.lo, count.toTicks(), hz, count.toTicks() / (hz / 1000),
     });
+    shell.print("GetTimeBase: %ld Hz\n", .{shell.base.iface().GetTimeBase()});
 }
