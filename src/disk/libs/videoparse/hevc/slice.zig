@@ -15,6 +15,7 @@ pub const SliceType = syntax.HevcSliceType;
 pub const Weights = syntax.HevcWeights;
 pub const Header = syntax.HevcSliceHeader;
 pub const max_refs = syntax.max_refs;
+pub const max_entry_points = syntax.max_entry_points;
 
 /// Ceil( Log2( n ) ): the bits of a field that counts to n - 1.
 pub fn ceilLog2(n: u32) u5 {
@@ -30,9 +31,10 @@ pub fn peekPps(b: *Bits, unit: nal.Header) Error!struct { first: bool, pps: u8 }
     return .{ .first = first, .pps = @intCast(try b.ueMax(63)) };
 }
 
-/// A slice segment header (7.3.6.1) into `h`. A dependent segment takes
-/// everything but its address from `prev`, its slice's independent one.
-pub fn parse(b: *Bits, h: *Header, unit: nal.Header, sps: *const params.Sps, pps: *const params.Pps, prev: *const Header) Error!void {
+/// A slice segment header (7.3.6.1) into `h`, its entry points into
+/// `points`. A dependent segment takes everything but its address and
+/// its entry points from `prev`, its slice's independent one.
+pub fn parse(b: *Bits, h: *Header, points: *[max_entry_points]u32, unit: nal.Header, sps: *const params.Sps, pps: *const params.Pps, prev: *const Header) Error!void {
     const first = b.flag();
     var no_output = false;
     if (unit.isIrap()) no_output = b.flag();
@@ -57,13 +59,23 @@ pub fn parse(b: *Bits, h: *Header, unit: nal.Header, sps: *const params.Sps, pps
     h.dependent = dependent;
     h.segment_address = address;
     if (!dependent) try independent(b, h, unit, sps, pps);
+    h.num_entry_points = 0;
+    h.entry_points = null;
     if (pps.tiles or pps.entropy_coding_sync) {
         h.num_entry_points = try b.ueMax(ctbs);
         if (h.num_entry_points > 0) {
             const len: u6 = @intCast(try b.ueMax(31) + 1);
-            for (0..h.num_entry_points) |_| b.skip(len);
+            // Those past what `points` holds are passed over, and none
+            // are given.
+            const kept = h.num_entry_points <= points.len;
+            for (0..h.num_entry_points) |i| {
+                const minus1 = b.u(len);
+                if (minus1 == ~@as(u32, 0)) return error.Corrupt;
+                if (kept) points[i] = minus1 + 1;
+            }
+            if (kept) h.entry_points = points;
         }
-    } else h.num_entry_points = 0;
+    }
     if (pps.slice_header_extension_present) {
         const n = try b.ueMax(256);
         b.skip(8 * n);

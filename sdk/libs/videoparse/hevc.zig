@@ -23,6 +23,11 @@ pub const max_rps = 16;
 /// The most entries of a reference picture list.
 pub const max_refs = 16;
 
+/// The most entry points a slice segment header's `entry_points` holds:
+/// every one a row of CTBs can have (at most PicHeightInCtbsY - 1, 1055),
+/// or tiles (at most 64 x 64 - 1); more only with both.
+pub const max_entry_points = 4096;
+
 /// A short-term reference picture set (7.4.8): the pictures before the
 /// current one (S0, nearest first) and after it (S1), as differences of
 /// picture order count, and which of them the current picture uses.
@@ -363,7 +368,7 @@ pub const HevcSliceHeader = extern struct {
     loop_filter_across_slices: bool = false,
     /// SliceQpY.
     qp: i32 = 26,
-    /// num_entry_point_offsets.
+    /// num_entry_point_offsets: how many `entry_points` holds.
     num_entry_points: u32 = 0,
     /// Where the slice data starts, in bytes of the payload after the
     /// unit's header, the emulation prevention bytes taken out.
@@ -377,6 +382,16 @@ pub const HevcSliceHeader = extern struct {
     /// The header's own short-term set (when `st_rps_sps` is not set).
     st_rps: HevcStRps = .{},
     weights: HevcWeights = .{},
+    /// entry_point_offset_minus1[ i ] + 1 for each of the
+    /// `num_entry_points` (7.4.7.1): where each substream after the first
+    /// - a tile, or a row of CTBs under entropy_coding_sync - begins, in
+    /// bytes from where the one before it began, the first from where the
+    /// slice data begins. Counted in the unit as it came, its emulation
+    /// prevention bytes among them. The library's, as the header is; null
+    /// when there are none, or more than max_entry_points. From
+    /// videoparse.library 1.4 on, and last, so that the fields before it
+    /// stay where decoders built earlier read them.
+    entry_points: ?[*]const u32 = null,
 
     /// The short-term set the picture uses.
     pub fn rps(h: *const HevcSliceHeader, sps: *const HevcSps) *const HevcStRps {
