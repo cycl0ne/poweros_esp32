@@ -167,7 +167,11 @@ lists drivers, devices and boards). What a user chose for an output -
 the mode it comes up in, its mirror, its brightness, its colour range,
 which board is the first - is kept a line a monitor in
 `ENVARC:Sys/display.prefs`, which the library reads and writes itself
-(`Rtg <board> SET ... SAVE`). graphics.library, layers and
+(`Rtg <board> SET ... SAVE`). A driver need not be in the ROM: the
+64-bit machines' disks carry theirs in `DEVS:gfxdrv/` as well, and
+`C:BindDrivers` has the library load the ones for a display the ROM has
+no driver for - each file read for what it takes before it is loaded,
+and a driver that hung the machine not tried again until `Rtg RETRY`. graphics.library, layers and
 intuition draw into a board's buffers without
 knowing what panel is behind them, so one program draws on a 3.5" SPI
 panel and on a 1080p monitor alike. Where a display has a picture of
@@ -197,7 +201,7 @@ and 2D-DMA - and where a display reads its picture out of RAM, on the
 | `dsi` | the ESP32-P4's MIPI DSI panels, and HDMI through the Olimex's LT8912B |
 | `jh7110` | the VisionFive 2's HDMI port, in the monitor's own mode |
 | `bcm2712` | the Compute Module 5's first HDMI port, in the monitor's own mode |
-| `virtio` | QEMU's virtio GPU - on a memory-mapped transport (`virtio-gpu-device`) or on PCI (`virtio-gpu-pci`), the pointer the host's own |
+| `virtio` | QEMU's virtio GPU - on a memory-mapped transport (`virtio-gpu-device`) or on PCI (`virtio-gpu-pci`), the pointer the host's own; on `qemu_q35` loaded from the disk |
 | `fw` | the framebuffer a UEFI firmware lit, and QEMU's `ramfb` |
 | `amd` | an AMD display behind the framebuffer its firmware lit, flipped between that buffer and a frame of the device's own |
 | `qemu` | Espressif QEMU's display |

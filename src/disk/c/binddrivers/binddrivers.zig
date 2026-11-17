@@ -1,8 +1,16 @@
 // SPDX-License-Identifier: MIT
-//! BindDrivers: the block devices for this board's hardware started, so
-//! that each mounts its drives. Built against the SDK only.
+//! BindDrivers: the drivers this machine's hardware has on the disk
+//! started - its display drivers, then its block devices, so that each
+//! mounts its drives. Built against the SDK only.
 //!
 //!   BindDrivers
+//!
+//! rtg.library loads the display drivers in DEVS:gfxdrv/ that take a
+//! display no driver in the ROM has (LoadRtgDrivers), and binds them: a
+//! machine whose ROM has no driver for its display has its picture from
+//! here on, and one that was showing what its firmware lit has its own
+//! driver's. A machine without rtg.library, and one whose displays all
+//! have their drivers, loads none.
 //!
 //! expansion.library lists the units of every block device the board has
 //! (ObtainDeviceUnits with DEVIF_BLOCK): a device in DEVS: is listed only
@@ -27,10 +35,12 @@ const devices = sdk.expansion.devices;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const ExpansionBase = sdk.interface.expansion.ExpansionBase;
+const RtgBase = sdk.interface.rtg.RtgBase;
+const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "BindDrivers";
-const VERSION_STRING = "\x00$VER: BindDrivers 1.1 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: BindDrivers 1.2 (17.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -80,6 +90,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     };
     defer dl.FreeArgs(rda);
+
+    // The displays first: the desktop opens on what they made.
+    if (sys.OpenLibrary(rtg.RTGNAME, rtg.RTG_VERSION)) |rtg_lib| {
+        defer sys.CloseLibrary(rtg_lib);
+        const rb: *RtgBase = @ptrCast(rtg_lib);
+        _ = rb.LoadRtgDrivers();
+    }
 
     const expansion_lib = sys.OpenLibrary(sdk.expansion.EXPANSIONNAME, expansion_version) orelse {
         _ = Printf(dl, MSG_NOLIBRARY, .{sdk.expansion.EXPANSIONNAME});

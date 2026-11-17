@@ -72,6 +72,23 @@ const rom_on_disk = [_]RomOnDisk{
     .{ .root = "src/rom/libs/motion/motion.zig", .name = "motion.library", .disk = "libs/motion.library" },
 };
 
+/// A display driver as a file of `DEVS:gfxdrv/`: its root, the name it
+/// is a driver by, and the chips it is built for.
+const GfxOnDisk = struct { root: []const u8, name: []const u8, chips: []const Chip };
+
+/// The display drivers a disk carries. rtg.library reads each file for
+/// what it takes and loads the ones for a device of the machine that no
+/// driver in its ROM has (`LoadRtgDrivers`, from `C:BindDrivers`); what a
+/// board's ROM carries is its `romtags.zig`'s to say. The flash boards'
+/// drivers are all in their ROMs, and their disks carry none.
+const gfx_on_disk = [_]GfxOnDisk{
+    .{ .root = "src/rom/libs/rtg_driver/virtioboard/virtioboard.zig", .name = "virtio", .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
+    .{ .root = "src/rom/libs/rtg_driver/fwboard/fwboard.zig", .name = "fw", .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
+    .{ .root = "src/rom/libs/rtg_driver/amdboard/amdboard.zig", .name = "amd", .chips = &.{.x64uefi} },
+    .{ .root = "src/rom/libs/rtg_driver/jh7110board/jh7110board.zig", .name = "jh7110", .chips = &.{.rv64sbi} },
+    .{ .root = "src/rom/libs/rtg_driver/bcm2712board/bcm2712board.zig", .name = "bcm2712", .chips = &.{.a64psci} },
+};
+
 /// The ROM modules' strings in other languages: what dos.library's faults
 /// say once locale.library stands in front of Fault.
 const rom_catalogs = [_]poweros_userland.Catalog{
@@ -124,6 +141,9 @@ const image_dirs = [_][]const u8{
     // time a device they serve is used. What a device is, for Mount to
     // read, is DEVS:MountList.
     "devs/handlers",
+    // DEVS:gfxdrv - the display drivers rtg.library loads for a device
+    // its ROM has none for.
+    "devs/gfxdrv",
     // DEVS:Keymaps - the keymaps that are not in the ROM, a file each,
     // which keymap.library loads when one is asked for by name.
     "devs/keymaps",
@@ -999,6 +1019,20 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
             });
             disks.addChipFile(chip, module.disk, seg);
             if (chipOf(board) == chip) b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("{s}.seg", .{module.name})).step);
+        }
+    }
+    // The display drivers, each a file on the disks of the chips it is
+    // built for.
+    for (gfx_on_disk) |driver| {
+        for (driver.chips) |chip| {
+            const seg = poweros_sdk.addProgram(b, sdk_dep, .{
+                .name = b.fmt("gfxdrv-{s}", .{driver.name}),
+                .root = b.path(driver.root),
+                .optimize = optimize,
+                .chip = chip,
+            });
+            disks.addChipFile(chip, b.fmt("devs/gfxdrv/{s}", .{driver.name}), seg);
+            if (chipOf(board) == chip) b.getInstallStep().dependOn(&b.addInstallBinFile(seg, b.fmt("gfxdrv-{s}.seg", .{driver.name})).step);
         }
     }
     for (poweros_userland.files) |file| {

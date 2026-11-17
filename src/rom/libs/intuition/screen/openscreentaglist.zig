@@ -351,48 +351,43 @@ const Place = struct {
     own: bool,
 };
 
-/// The display graphics.library draws on by default, and a buffer of it for
-/// one more screen: its home when no screen draws there, else a new one.
+/// The machine's display - the first board rtg.library lists - and a
+/// buffer of it for one more screen: its home when no screen draws
+/// there, else a new one.
+///
+/// The first screen of a display opens on the picture the display shows,
+/// which is its home from then on. Where the display shows none - its
+/// driver came from the disk, after graphics.library looked for a
+/// display - graphics.library makes its first picture as it is asked
+/// for the display. Where its settings line names another mode than the
+/// one it is in, it is put in that.
 fn findPlace(ib: *IntuitionBase) error{ NoMonitor, NotAvailable, NoMem }!Place {
     const gb = ib.graphics_base;
     const rb = ib.rtg_base orelse return error.NoMonitor;
     // No board at all is no display, and nothing else that follows can
     // tell the difference.
-    if (rb.NextBoard(null) == null) return error.NoMonitor;
-    // A RastPort asked for nothing in particular is on the buffer the first
-    // display is showing, which says which display that is. With a board
-    // there, it failing is want of memory and not want of a display.
-    const probe = gb.CreateRastPortTagList(null) orelse return error.NoMem;
-    var shown_at: usize = 0;
-    const ask = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(&shown_at) }, .{} };
-    gb.GetRPAttrs(probe, &ask);
-    const showing: *rtg.RtgBitMap = @ptrFromInt(shown_at);
-    if (shown_at == 0 or showing.board == null) {
-        gb.FreeRastPort(probe);
-        return error.NoMonitor;
-    }
-    const board: *rtg.RtgBoard = @ptrCast(@alignCast(showing.board.?));
+    const board = rb.NextBoard(null) orelse return error.NoMonitor;
 
-    // The first screen of a display opens in the mode the settings name
-    // for it: where that is not the mode of its first picture, the
-    // display is put in it now.
-    if (frontOn(ib, board) == null) {
-        gb.FreeRastPort(probe);
+    const front = frontOn(ib, board) orelse {
+        // A display that shows nothing has its first picture from
+        // graphics.library, the first time the display is asked for.
+        const showing = rb.BoardDisplayBitMap(board) orelse lit: {
+            const probe = gb.CreateRastPortTagList(null) orelse return error.NoMonitor;
+            gb.FreeRastPort(probe);
+            break :lit rb.BoardDisplayBitMap(board) orelse return error.NoMonitor;
+        };
         const picture = inSettingsMode(ib, board, showing);
         const on = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(picture) }, .{} };
         const rp = gb.CreateRastPortTagList(&on) orelse return error.NoMem;
         return .{ .rp = rp, .board = board, .bitmap = picture, .home = picture, .own = false };
-    }
-    const home = homeOf(ib, board, showing);
+    };
+    const home = front.home;
 
     if (!inUse(ib, home)) {
-        if (home == showing) return .{ .rp = probe, .board = board, .bitmap = home, .home = home, .own = false };
-        gb.FreeRastPort(probe);
         const on = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(home) }, .{} };
         const rp = gb.CreateRastPortTagList(&on) orelse return error.NoMem;
         return .{ .rp = rp, .board = board, .bitmap = home, .home = home, .own = false };
     }
-    gb.FreeRastPort(probe);
     const bitmap = rb.AllocBitMap(board, home.width, home.height, @intFromEnum(home.format), rtg.bitmaps.RTGBMF_DISPLAYABLE | rtg.bitmaps.PIXMAPF_SCREEN) orelse
         return error.NotAvailable;
     const on = [_]TagItem{ .{ .tag = graphics.RPTAG_BitMap, .data = @intFromPtr(bitmap) }, .{} };

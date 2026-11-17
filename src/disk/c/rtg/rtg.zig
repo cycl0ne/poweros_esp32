@@ -4,7 +4,7 @@
 //!
 //!   Rtg BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S,
 //!       SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,
-//!       DEVICE/K,DRIVER/K,SAVE/S
+//!       DEVICE/K,DRIVER/K,SAVE/S,RETRY/S,TRIED/S
 //!
 //! With nothing asked for it prints the three lists: the display drivers
 //! on rtg.library's list, the devices the machine has for them - a panel
@@ -36,6 +36,15 @@
 //!   Rtg amd.0 SET MODE=1920x1080@60 FIRST=YES SAVE
 //!   Rtg SET DEVICE=pci.01:00.0 DRIVER=OFF SAVE
 //!
+//! ENVARC:Sys/display.trying names the display drivers that are being
+//! loaded from DEVS:gfxdrv: rtg.library writes a driver's name there
+//! before it loads it, and passes over a driver it finds named. TRIED
+//! says the drivers came back: the name of every driver that is on the
+//! list leaves the file, and a name that stays is a driver that hung the
+//! machine. The startup-sequence runs it once the desktop is up. RETRY
+//! deletes the file, loads the drivers again and then does what TRIED
+//! does.
+//!
 //! Everything it prints comes from GetBoardInfo and GetBoardStats, which
 //! answer with the bytes they wrote, so a command older or newer than the
 //! ROM prints what the answer reached and no more. See sdk/docs/guides/rtg.md.
@@ -50,10 +59,10 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.11 (17.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.12 (17.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S," ++
-    "SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,DEVICE/K,DRIVER/K,SAVE/S";
+    "SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,DEVICE/K,DRIVER/K,SAVE/S,RETRY/S,TRIED/S";
 const arg_board = 0;
 const arg_drivers = 1;
 const arg_devices = 2;
@@ -72,7 +81,9 @@ const arg_first = 14;
 const arg_device = 15;
 const arg_driver = 16;
 const arg_save = 17;
-const arg_count = 18;
+const arg_retry = 18;
+const arg_tried = 19;
+const arg_count = 20;
 
 const MSG_NOLIBRARY = "No %s - this machine has no display layer\n";
 const MSG_NOBOARD = "No board \"%s\"\n";
@@ -88,6 +99,10 @@ const MSG_BAD_FIRST = "FIRST is YES or NO\n";
 const MSG_BAD_DRIVER = "DRIVER is ON or OFF\n";
 const MSG_NOT_SET = "The settings were not changed: %s\n";
 const MSG_NOT_SAVED = "%s was not written: %s\n";
+const MSG_RETRIED = "%ld board(s) made\n";
+
+/// The file that names the display drivers being tried.
+const trying_file = "ENVARC:Sys/display.trying";
 
 /// The most drivers and devices one list prints.
 const max_listed = 16;
@@ -112,6 +127,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer sys.CloseLibrary(base);
     const rb: *RtgBase = @ptrCast(base);
+
+    // The drivers that did not come back tried again; those that came
+    // back, here or at the start, no longer named as being tried.
+    if (argv[arg_retry] != 0) {
+        _ = dl.DeleteFile(trying_file);
+        _ = Printf(dl, MSG_RETRIED, .{@as(u64, rb.LoadRtgDrivers())});
+        cameBack(dl, rb);
+        return dos.RETURN_OK;
+    }
+    if (argv[arg_tried] != 0) {
+        cameBack(dl, rb);
+        return dos.RETURN_OK;
+    }
 
     // The settings changed, and written: nothing is printed but what went
     // wrong.
@@ -488,6 +516,56 @@ fn set(dl: *DosBase, rb: *RtgBase, argv: *const [arg_count]usize) i32 {
         return dos.RETURN_ERROR;
     }
     return dos.RETURN_OK;
+}
+
+/// Whether a line of the file of drivers being tried names a driver on
+/// rtg.library's list.
+fn onList(listed: []const rtg.RtgDriverInfo, line: []const u8) bool {
+    for (listed) |*driver| {
+        var length: usize = 0;
+        while (length < driver.name.len and driver.name[length] != 0) length += 1;
+        if (length != line.len) continue;
+        var same = true;
+        for (driver.name[0..length], line) |one, other| {
+            if (one != other) same = false;
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+/// TRIED: the name of every driver on the list taken out of the file of
+/// drivers being tried; the file deleted when none is left.
+fn cameBack(dl: *DosBase, rb: *RtgBase) void {
+    var before: [1024]u8 = undefined;
+    const file = dl.Open(trying_file, dos.MODE_OLDFILE) orelse return;
+    const got = dl.Read(file, &before, before.len);
+    _ = dl.Close(file);
+    const names = before[0..if (got > 0) @intCast(got) else 0];
+    var drivers: [max_listed]rtg.RtgDriverInfo = undefined;
+    const listed = drivers[0..@min(rb.GetRtgDrivers(&drivers, max_listed), max_listed)];
+
+    var kept: [1024]u8 = undefined;
+    var length: usize = 0;
+    var at: usize = 0;
+    while (at < names.len) {
+        var end = at;
+        while (end < names.len and names[end] != '\n') end += 1;
+        var line = names[at..end];
+        if (line.len != 0 and line[line.len - 1] == '\r') line = line[0 .. line.len - 1];
+        at = end + 1;
+        if (line.len == 0 or onList(listed, line)) continue;
+        @memcpy(kept[length..][0..line.len], line);
+        kept[length + line.len] = '\n';
+        length += line.len + 1;
+    }
+    if (length == 0) {
+        _ = dl.DeleteFile(trying_file);
+        return;
+    }
+    const out = dl.Open(trying_file, dos.MODE_NEWFILE) orelse return;
+    _ = dl.Write(out, &kept, @intCast(length));
+    _ = dl.Close(out);
 }
 
 /// SAVE: the settings written for the running system and for the next

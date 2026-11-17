@@ -25,6 +25,7 @@ const PixelFormat = rtg.bitmaps.PixelFormat;
 const TagItem = sdk.utility.TagItem;
 const Pen = graphics.Pen;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
+const _display = @import("../display/_display.zig");
 const regions = @import("../region/_region.zig");
 const draw = @import("../draw/_draw.zig");
 const areas = @import("../area/_area.zig");
@@ -407,12 +408,16 @@ pub fn surfaceFor(gb: *GraphicsBase, tag_list: ?[*]const TagItem) ?struct { *Sur
     }
 
     const named_board = ub.GetTagData(graphics.RPTAG_Board, 0, tag_list);
-    const board: *RtgBoard = if (named_board != 0)
-        @ptrFromInt(named_board)
-    else
-        view(gb) orelse return null;
-
-    const bm = gb.rtg_base.BoardDisplayBitMap(board) orelse return null;
+    if (named_board != 0) {
+        const board: *RtgBoard = @ptrFromInt(named_board);
+        const bm = gb.rtg_base.BoardDisplayBitMap(board) orelse return null;
+        return .{ @ptrCast(bm), bm };
+    }
+    // The display: the first board, and what it shows - its first
+    // picture made now, where its driver came after this library's
+    // init and it shows none yet.
+    const board = view(gb) orelse return null;
+    const bm = gb.rtg_base.BoardDisplayBitMap(board) orelse (_display.light(gb, board) orelse return null);
     return .{ @ptrCast(bm), bm };
 }
 

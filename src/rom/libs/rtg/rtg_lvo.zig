@@ -101,6 +101,7 @@ const SaveBoardSettings = @import("settings/saveboardsettings.zig").SaveBoardSet
 const GetBoardSettings = @import("settings/getboardsettings.zig").GetBoardSettings;
 const SetBoardSettings = @import("settings/setboardsettings.zig").SetBoardSettings;
 const SetRtgDeviceDriver = @import("settings/setrtgdevicedriver.zig").SetRtgDeviceDriver;
+const LoadRtgDrivers = @import("load/loadrtgdrivers.zig").LoadRtgDrivers;
 
 /// rtg.library's two interfaces, as the SDK generates them: the programs'
 /// from sdk/fd/rtg_lib.fd, the drivers' from sdk/fd/rtgdriver_lib.fd.
@@ -153,6 +154,7 @@ const contract_files = [_][]const u8{
     @embedFile("settings/getboardsettings.zig"),
     @embedFile("settings/setboardsettings.zig"),
     @embedFile("settings/setrtgdevicedriver.zig"),
+    @embedFile("load/loadrtgdrivers.zig"),
     @embedFile("driver/addrtgdriver.zig"),
     @embedFile("driver/remrtgdriver.zig"),
     @embedFile("driver/getrtgdrivers.zig"),
@@ -345,6 +347,9 @@ fn lvoSetBoardSettings(rb: *RtgBase, board: *rtg.RtgBoard, settings: *const rtg.
 fn lvoSetRtgDeviceDriver(rb: *RtgBase, device_name: [*:0]const u8, on: bool) callconv(.c) i32 {
     return SetRtgDeviceDriver(rb, device_name, on);
 }
+fn lvoLoadRtgDrivers(rb: *RtgBase) callconv(.c) u32 {
+    return LoadRtgDrivers(rb);
+}
 fn lvoSetBoardAudio(rb: *RtgBase, board: *rtg.RtgBoard, format: ?*const rtg.RtgAudio) callconv(.c) i32 {
     return SetBoardAudio(rb, board, format);
 }
@@ -457,7 +462,7 @@ fn lvoRtgCicp(rb: *RtgBase, kind: u32, value: u32) callconv(.c) i32 {
 }
 
 /// How many slots of the table are kept free.
-const reserved_slots = 23;
+const reserved_slots = 22;
 
 /// The slots kept free (`##reserve` in the `.fd`), so the slots after them
 /// stay where they are: each does nothing.
@@ -513,7 +518,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetBoardSettings),
     vec(lvoSetBoardSettings),
     vec(lvoSetRtgDeviceDriver),
-    vec(reserved),
+    vec(lvoLoadRtgDrivers),
     vec(reserved),
     vec(reserved),
     vec(reserved),

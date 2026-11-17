@@ -128,8 +128,15 @@ i32 SetBoardSettings(*rtg.RtgBoard board, *const rtg.RtgSettings settings)
 /// (GetRtgDevices) from the next start on. RTGERR_NO_MEMORY without
 /// room for the line.
 i32 SetRtgDeviceDriver([*:0]const u8 device_name, bool on)
-// Seven slots kept free, so the slots after them stay where they are.
-##reserve 7
+/// Load the display drivers in DEVS:gfxdrv/ that take a device of this
+/// machine no driver has, then bind the drivers as BindRtgDrivers does.
+/// A file is read for what it takes before it is loaded; a driver whose
+/// name is in ENVARC:Sys/display.trying did not come back from its last
+/// try and is passed over. Answers how many boards were made. From a
+/// process.
+u32 LoadRtgDrivers()
+// Six slots kept free, so the slots after them stay where they are.
+##reserve 6
 /// An error in words. Never null.
 [*:0]const u8 RtgErrorText(i32 error_code)
 /// Mirror the picture about each axis, or show it unturned: the

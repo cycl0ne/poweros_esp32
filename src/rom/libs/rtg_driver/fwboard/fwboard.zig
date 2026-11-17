@@ -503,6 +503,32 @@ const matches = [_]rtg.RtgMatch{
 /// The driver's tag: a description and no init. rtg.library reads it at
 /// its own init and puts the driver on its list; nothing of this module
 /// runs until a board is asked for.
+/// Whether this is a ROM's copy: the kernel's root lists the ROM's
+/// modules, a file's does not.
+const in_rom = @hasDecl(@import("root"), "rom_modules");
+
+/// A driver is not a command. Whoever runs this file gets nothing done
+/// and a return code that says so.
+fn programEntry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
+    _ = args;
+    _ = len;
+    exec.kprintf(sys, "%s is a display driver, not a command\n", .{@as([*:0]const u8, DRIVER_NAME)});
+    return 20; // RETURN_FAIL, without opening dos.library to say it
+}
+
+/// The "$VER:" string, which `Version <file>` looks for.
+const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
+
+// The file's entry and its version string, which only the file in
+// DEVS:gfxdrv/ has: in a ROM there is no file, and the host tests build
+// this file beside the other modules.
+comptime {
+    if (!in_rom and !@import("builtin").is_test) {
+        @export(&programEntry, .{ .name = "_program_entry" });
+        @export(&version_tag, .{ .name = "version_tag" });
+    }
+}
+
 export const rtg_fw_tag: rtg.ResidentRtgDriver linksection(".resident") = .{
     .resident = .{
         .match_tag = @ptrCast(&rtg_fw_tag),

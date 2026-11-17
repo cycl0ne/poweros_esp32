@@ -47,6 +47,7 @@ pub const LVO = struct {
     pub const GetBoardSettings = libraries.lvo(40);
     pub const SetBoardSettings = libraries.lvo(41);
     pub const SetRtgDeviceDriver = libraries.lvo(42);
+    pub const LoadRtgDrivers = libraries.lvo(43);
     pub const RtgErrorText = libraries.lvo(50);
     pub const MirrorBoard = libraries.lvo(51);
     pub const SetBoardPointer = libraries.lvo(54);
@@ -107,6 +108,7 @@ pub const Fn = struct {
     pub const GetBoardSettings = *const fn (*RtgBase, *rtg.RtgBoard, *rtg.RtgSettings, u32) callconv(.c) u32;
     pub const SetBoardSettings = *const fn (*RtgBase, *rtg.RtgBoard, *const rtg.RtgSettings) callconv(.c) i32;
     pub const SetRtgDeviceDriver = *const fn (*RtgBase, [*:0]const u8, bool) callconv(.c) i32;
+    pub const LoadRtgDrivers = *const fn (*RtgBase) callconv(.c) u32;
     pub const RtgErrorText = *const fn (*RtgBase, i32) callconv(.c) [*:0]const u8;
     pub const MirrorBoard = *const fn (*RtgBase, *rtg.RtgBoard, bool, bool) callconv(.c) i32;
     pub const SetBoardPointer = *const fn (*RtgBase, *rtg.RtgBoard, ?*const rtg.Surface, u32, u32) callconv(.c) i32;
@@ -326,6 +328,16 @@ pub const RtgBase = opaque {
     /// room for the line.
     pub fn SetRtgDeviceDriver(self: *RtgBase, device_name: [*:0]const u8, on: bool) i32 {
         return libraries.call(self, LVO.SetRtgDeviceDriver, Fn.SetRtgDeviceDriver, .{ device_name, on });
+    }
+
+    /// Load the display drivers in DEVS:gfxdrv/ that take a device of this
+    /// machine no driver has, then bind the drivers as BindRtgDrivers does.
+    /// A file is read for what it takes before it is loaded; a driver whose
+    /// name is in ENVARC:Sys/display.trying did not come back from its last
+    /// try and is passed over. Answers how many boards were made. From a
+    /// process.
+    pub fn LoadRtgDrivers(self: *RtgBase) u32 {
+        return libraries.call(self, LVO.LoadRtgDrivers, Fn.LoadRtgDrivers, .{});
     }
 
     /// An error in words. Never null.

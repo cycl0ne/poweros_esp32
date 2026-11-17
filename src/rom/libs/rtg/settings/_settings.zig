@@ -300,6 +300,18 @@ pub fn needDevice(rb: *RtgBase, name: []const u8) ?*DeviceLine {
     return line;
 }
 
+/// Whether a device's line keeps drivers from the disk off it.
+///
+/// INPUTS:
+/// - `rb` - the library; the device list's lock may be held.
+/// - `device` - the device.
+pub fn driverOff(rb: *RtgBase, device: *rtg.RtgDevice) bool {
+    obtain(rb);
+    defer release(rb);
+    const line = findDevice(rb, text(&devices.privateOf(device).name_buf)) orelse return false;
+    return line.flags & DEVSET_DRIVER_OFF != 0;
+}
+
 /// A device's line that says nothing taken off the list.
 ///
 /// INPUTS:
@@ -857,8 +869,9 @@ pub fn applyAll(rb: *RtgBase) void {
 }
 
 /// A device's line put in front of its tags, for the driver it is
-/// offered to next; a device with no line, or one that says nothing a
-/// tag carries, gets its own tags back.
+/// offered to next, and `RTGA_Adopt` for a device a firmware's
+/// framebuffer lies behind: its driver comes to a display that is lit.
+/// A device with neither gets its own tags back.
 ///
 /// INPUTS:
 /// - `rb` - the library; the device list's lock is held.
@@ -868,18 +881,23 @@ pub fn dress(rb: *RtgBase, device: *rtg.RtgDevice) void {
     if (!private.dressed) private.own_tags = device.tags;
     private.dressed = false;
     device.tags = private.own_tags;
-    obtain(rb);
-    defer release(rb);
-    const line = findDevice(rb, text(&private.name_buf)) orelse return;
     var count: usize = 0;
-    if (line.flags & DEVSET_BUFFERS != 0) {
-        private.dress[count] = .{ .tag = tags.RTGA_Buffers, .data = line.buffers };
+    if (devices.hasFirmwareBehind(rb, device)) {
+        private.dress[count] = .{ .tag = tags.RTGA_Adopt, .data = 1 };
         count += 1;
     }
-    if (line.flags & DEVSET_COMPOSE != 0) {
-        private.dress[count] = .{ .tag = tags.RTGA_Compose, .data = @intFromBool(line.flags & DEVSET_COMPOSE_ON != 0) };
-        count += 1;
+    obtain(rb);
+    if (findDevice(rb, text(&private.name_buf))) |line| {
+        if (line.flags & DEVSET_BUFFERS != 0) {
+            private.dress[count] = .{ .tag = tags.RTGA_Buffers, .data = line.buffers };
+            count += 1;
+        }
+        if (line.flags & DEVSET_COMPOSE != 0) {
+            private.dress[count] = .{ .tag = tags.RTGA_Compose, .data = @intFromBool(line.flags & DEVSET_COMPOSE_ON != 0) };
+            count += 1;
+        }
     }
+    release(rb);
     if (count == 0) return;
     private.dress[count] = if (private.own_tags) |own|
         .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(own) }

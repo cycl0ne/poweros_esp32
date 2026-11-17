@@ -84,7 +84,9 @@ If EXISTS S:User-Startup
   Execute S:User-Startup
 EndIf
 
-; The block devices for this board's hardware, in DEVS: or in the ROM,
+; The display drivers in DEVS:gfxdrv for a display the ROM has no driver
+; for - a machine without one has its picture from here on - and then
+; the block devices for this board's hardware, in DEVS: or in the ROM,
 ; started before the desktop comes up so it shows their drives from the
 ; start: the card in the slot, as SD0: or as the partitions its table
 ; names. A card put in or taken out later is noticed within a second, and
@@ -104,6 +106,14 @@ C:USB >NIL: AUTO
 ; its own. A desktop that could not start leaves this shell where it is.
 C:LoadAnvil
 Set Desktop $RC
+
+; The desktop is up: every display driver loaded from the disk came back,
+; and its name leaves ENVARC:Sys/display.trying. A name left there is a
+; driver that hung the machine as it was bound or as it first showed a
+; picture: it is not loaded again until Rtg RETRY.
+If $Desktop EQ 0 VAL
+  C:Rtg >NIL: TRIED
+EndIf
 
 ; The network, from DEVS:NetInterfaces/, and then the clock from a time
 ; server: in a shell of its own, so the boot waits for neither. After the

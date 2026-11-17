@@ -2,7 +2,10 @@
 //! The ROM tags QEMU's q35 machine carries beyond the ones every image
 //! has: the display driver, for the framebuffer the firmware lit and
 //! handed over - the kernel declares it as the board's panel
-//! (`system.zig`), and the driver copies the picture into it.
+//! (`system.zig`), and the driver copies the picture into it. The
+//! driver of a virtio GPU is on the disk (DEVS:gfxdrv), and bound when
+//! `C:BindDrivers` runs: a machine with that display alone comes up dark
+//! and has its picture then.
 //!
 //! battclock.resource for the clock the machine keeps its date in, which
 //! every machine of this architecture has, and power.resource for turning
@@ -64,7 +67,6 @@ const rom = @import("../../rom/modules.zig");
 // and the drivers of this board's parts.
 pub const modules = rom.core ++ rom.screen ++ rom.pipe ++ rom.motion ++ .{
     @import("../../rom/libs/rtg_driver/fwboard/fwboard.zig"),
-    @import("../../rom/libs/rtg_driver/virtioboard/virtioboard.zig"),
     @import("../../rom/libs/rtg_driver/amdboard/amdboard.zig"),
     @import("../../rom/resources/battclock/battclock.zig"),
     @import("../../rom/resources/power/power.zig"),

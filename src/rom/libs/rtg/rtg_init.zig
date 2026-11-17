@@ -126,7 +126,12 @@ pub const LIBRARY_VERSION = 1;
 /// its mirror, its brightness, its colour range (RtgBoardInfo.color_range,
 /// RTGBC_COLOR_RANGE), timings by hand and which board is the first, for
 /// the monitor it names; a device's line goes in front of its tags.
-pub const LIBRARY_REVISION = 34;
+/// 35: LoadRtgDrivers: the drivers in DEVS:gfxdrv/ that take a device no
+/// driver has are loaded and bound, each read for what it takes first,
+/// and one named in display.trying passed over; a driver that takes the
+/// device a firmware's framebuffer lies behind is told so (RTGA_Adopt),
+/// and the firmware's board is gone once it has made its own.
+pub const LIBRARY_REVISION = 35;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

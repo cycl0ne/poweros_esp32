@@ -69,6 +69,7 @@ const monitors = @import("monitor/_monitor.zig");
 const edid = @import("monitor/_edid.zig");
 const flips = @import("compose/_flip.zig");
 const settings = @import("settings/_settings.zig");
+const load = @import("load/_load.zig");
 
 test {
     _ = rtg_base;
@@ -6006,5 +6007,182 @@ test "a device's line: in front of its tags for the driver it is offered to" {
     try testing.expectEqual(@as(u32, 0), readSettings(rb, ""));
     settings.dressAll(rb);
     try testing.expectEqual(@as(usize, 1), driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Compose, 0, device.tags));
+    try tearDown(rb);
+}
+
+// --- drivers from the disk ----------------------------------------------------
+
+/// A driver's load file made in memory: one data segment with a word of
+/// something, the driver's tag, its name and its table - each pointer an
+/// offset into the segment, as a file has them.
+fn driverFile(into: []u8, name: []const u8, kind: exec.NodeType, entries: []const rtg.RtgMatch) []const u8 {
+    const loadfile = sdk.dos.loadfile;
+    const tag_at: usize = 16;
+    const name_at = tag_at + @sizeOf(rtg.ResidentRtgDriver);
+    const table_at = std.mem.alignForward(usize, name_at + name.len + 1, 8);
+    const size = table_at + (entries.len + 1) * @sizeOf(rtg.RtgMatch);
+    const start = @sizeOf(loadfile.Header) + @sizeOf(loadfile.SegmentHeader);
+    @memset(into[0 .. start + size], 0);
+    const header: loadfile.Header = .{ .segments = 1, .entry_segment = 0, .entry_offset = 0 };
+    @memcpy(into[0..@sizeOf(loadfile.Header)], std.mem.asBytes(&header));
+    const segment: loadfile.SegmentHeader = .{ .kind = .data, .file_size = @intCast(size), .mem_size = @intCast(size), .reloc_groups = 0 };
+    @memcpy(into[@sizeOf(loadfile.Header)..][0..@sizeOf(loadfile.SegmentHeader)], std.mem.asBytes(&segment));
+
+    const bytes = into[start..][0..size];
+    const tag = bytes[tag_at..];
+    std.mem.writeInt(u16, tag[0..2], exec.RTC_MATCHWORD, .little);
+    // The tag's pointer to itself: its own offset, in the word after the
+    // match word's.
+    std.mem.writeInt(u32, tag[loadfile.native_word_size..][0..4], @intCast(tag_at), .little);
+    tag[@offsetOf(exec.Resident, "type")] = @intFromEnum(kind);
+    const spec = tag[@offsetOf(rtg.ResidentRtgDriver, "spec")..];
+    std.mem.writeInt(u32, spec[@offsetOf(rtg.RtgDriverSpec, "name")..][0..4], @intCast(name_at), .little);
+    std.mem.writeInt(u32, spec[@offsetOf(rtg.RtgDriverSpec, "kind")..][0..4], rtg.drivers.RTGDT_BOARD, .little);
+    std.mem.writeInt(u32, spec[@offsetOf(rtg.RtgDriverSpec, "matches")..][0..4], @intCast(table_at), .little);
+    @memcpy(bytes[name_at..][0..name.len], name);
+    @memcpy(bytes[table_at..][0 .. entries.len * @sizeOf(rtg.RtgMatch)], std.mem.sliceAsBytes(entries));
+    return into[0 .. start + size];
+}
+
+test "a driver's file: its name and what it takes read out of it, nothing loaded" {
+    const loadfile = sdk.dos.loadfile;
+    const entries = [_]rtg.RtgMatch{
+        .{ .fields = rtg.drivers.RTGMATCH_VENDOR | rtg.drivers.RTGMATCH_CLASS, .vendor = 0x1AF4, .class_code = 0x03_0000, .class_mask = 0xFF_0000, .priority = 3 },
+        .{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = fake.chip },
+    };
+    var room: [1024]u8 = undefined;
+    var file = loadfile.Bytes{ .data = driverFile(&room, "virtio", .rtg_driver, &entries) };
+    var described: load.Described = .{};
+    try testing.expect(load.describe(file.source(), &described));
+    try testing.expectEqualStrings("virtio", described.nameText());
+    try testing.expectEqual(rtg.drivers.RTGDT_BOARD, described.kind);
+    try testing.expectEqual(@as(u32, 2), described.count);
+    try testing.expectEqual(@as(u32, 0x1AF4), described.matches[0].vendor);
+    try testing.expectEqual(@as(i32, 3), described.matches[0].priority);
+    try testing.expectEqual(fake.chip, described.matches[1].chip);
+
+    // A library's file is no driver's, nor is a file cut short, nor one
+    // that is no load file.
+    file.data = driverFile(&room, "some.library", .library, &entries);
+    try testing.expect(!load.describe(file.source(), &described));
+    const whole = driverFile(&room, "virtio", .rtg_driver, &entries);
+    file.data = whole[0 .. whole.len - @sizeOf(rtg.RtgMatch) - 4];
+    try testing.expect(!load.describe(file.source(), &described));
+    file.data = "not a load file at all, whatever its name";
+    try testing.expect(!load.describe(file.source(), &described));
+    // An entry with a bit no driver's table has: bytes that are no table.
+    const odd = [_]rtg.RtgMatch{.{ .fields = 1 << 20 }};
+    file.data = driverFile(&room, "odd", .rtg_driver, &odd);
+    try testing.expect(!load.describe(file.source(), &described));
+}
+
+test "a driver on the disk is wanted for a device no driver has, unless its name is taken or the device's line says no" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const sys = rb.sys_base;
+    const takes = [_]rtg.RtgMatch{.{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = fake.chip }};
+    var room: [1024]u8 = undefined;
+    var file = sdk.dos.loadfile.Bytes{ .data = driverFile(&room, "other", .rtg_driver, &takes) };
+    var described: load.Described = .{};
+    try testing.expect(load.describe(file.source(), &described));
+
+    // No device at all: nothing to load it for.
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // A device the driver on the list declined.
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const device = fake.addDevice(fk, null).?;
+    try testing.expect(device.driver == null);
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // The name of a driver that is on the list: the one there is used.
+    var named: load.Described = .{};
+    file.data = driverFile(&room, fake.DRIVER_NAME, .rtg_driver, &takes);
+    try testing.expect(load.describe(file.source(), &named));
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!load.wanted(rb, &named));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // A table that names another chip.
+    const elsewhere = [_]rtg.RtgMatch{.{ .fields = rtg.drivers.RTGMATCH_CHIP, .chip = fake.chip + 1 }};
+    var stranger: load.Described = .{};
+    file.data = driverFile(&room, "stranger", .rtg_driver, &elsewhere);
+    try testing.expect(load.describe(file.source(), &stranger));
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!load.wanted(rb, &stranger));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // The device's line keeps drivers from the disk off it.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetRtgDeviceDriver("panel.0", false));
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).SetRtgDeviceDriver("panel.0", true));
+
+    // A device a driver has is nobody else's.
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 1), base(rb).BindRtgDrivers());
+    sys.ObtainSemaphore(&rb.device_lock);
+    try testing.expect(!load.wanted(rb, &described));
+    sys.ReleaseSemaphore(&rb.device_lock);
+
+    // The file of drivers being tried: a name a line.
+    try testing.expect(load.tried("virtio\namd\r\n", "amd"));
+    try testing.expect(load.tried("virtio\namd", "virtio"));
+    try testing.expect(!load.tried("virtio\namd\n", "am"));
+    try testing.expect(!load.tried("", "amd"));
+    try tearDown(rb);
+}
+
+test "the firmware's picture handed over: a driver takes the device it lies behind, and its board is gone, its handle good" {
+    const rb = try setUp();
+    defer kexec.deinit();
+    const fk = fakeOf(rb);
+    const format = @intFromEnum(rtg.PixelFormat.rgb565);
+
+    // The board the firmware's picture is shown by, and something on it.
+    const old = try makeDisplay(rb, 16, 16);
+    const lit = old.device.?;
+    lit.flags |= rtg.drivers.RTGDVF_FIRMWARE;
+    const picture = base(rb).AllocBitMap(old, 16, 16, format, rtg.bitmaps.RTGBMF_DISPLAYABLE).?;
+    try testing.expectEqual(rtg.errors.RTGERR_OK, base(rb).ShowBitMap(old, picture));
+
+    // The card it lies behind, which no driver has yet.
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    const card = fake.addDevice(fk, null).?;
+    // The machine's own devices are listed with the first bind, which
+    // works out what lies behind what: said by hand after it.
+    try testing.expectEqual(@as(u32, 0), base(rb).BindRtgDrivers());
+    lit.behind = card;
+    try testing.expect(card.driver == null);
+    try testing.expectEqual(old, base(rb).NextBoard(null).?);
+    const changes = infoOf(rb, old).changes;
+
+    // A driver takes the card: it is told the display is lit, its board
+    // is the machine's, and the firmware's is gone.
+    fk.create_answer = rtg.errors.RTGERR_OK;
+    try testing.expectEqual(@as(u32, 1), base(rb).BindRtgDrivers());
+    try testing.expectEqual(@as(usize, 1), driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Adopt, 0, card.tags));
+    try testing.expectEqual(@as(usize, 0), driverBase(rb).GetRtgTagData(rtg.tags.RTGA_Adopt, 0, lit.tags));
+    const new = base(rb).NextBoard(null).?;
+    try testing.expect(new != old);
+    try testing.expect(base(rb).NextBoard(new) == null);
+    try testing.expectEqual(card, new.device.?);
+
+    // Its handle is good: it says it is gone, shows nothing and takes no
+    // show, and what it showed may be freed.
+    const info = infoOf(rb, old);
+    try testing.expect(info.flags & rtg.boards.RTGBF_GONE != 0);
+    try testing.expect(info.flags & rtg.boards.RTGBF_NO_DISPLAY != 0);
+    try testing.expect(info.changes != changes);
+    try testing.expect(base(rb).BoardDisplayBitMap(old) == null);
+    try testing.expectEqual(rtg.errors.RTGERR_NO_DISPLAY, base(rb).ShowBitMap(old, picture));
+    try testing.expectEqual(old, base(rb).FindBoard("fake.0").?);
+    base(rb).FreeBitMap(picture);
     try tearDown(rb);
 }

@@ -39,6 +39,7 @@ const err = rtg.errors;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const boards = @import("../board/_board.zig");
 const drivers = @import("../driver/_driver.zig");
+const settings = @import("../settings/_settings.zig");
 
 /// What the library keeps for a device, beside the handle a driver sees.
 pub const Private = struct {
@@ -58,7 +59,7 @@ pub const Private = struct {
     /// What its settings line says, as tags in front of its own
     /// (`settings/_settings.zig`): the handle's `tags` point here while
     /// `dressed`, and `own_tags` are the ones it was made with.
-    dress: [3]TagItem = @splat(.{}),
+    dress: [4]TagItem = @splat(.{}),
     own_tags: ?[*]const TagItem = null,
     dressed: bool = false,
 };
@@ -242,6 +243,38 @@ fn functionAround(rb: *RtgBase, lit: *rtg.RtgDevice) ?*rtg.RtgDevice {
 
 // --- who takes a device -----------------------------------------------------
 
+/// The firmware's picture handed over: a driver has made a board of a
+/// device, and every board of a firmware device that lies behind it is
+/// retired - it says it is gone, shows nothing and leaves the walk; its
+/// handle stays good.
+///
+/// INPUTS:
+/// - `rb` - the library; the device list's lock is held.
+/// - `taken` - the device a driver just took.
+fn handOver(rb: *RtgBase, taken: *rtg.RtgDevice) void {
+    var node = rb.devices.first();
+    while (node) |one| : (node = one.next()) {
+        const lit = deviceOf(one);
+        if (lit.flags & rtg.drivers.RTGDVF_FIRMWARE == 0 or lit.behind != taken) continue;
+        // A retired board leaves its device's list.
+        while (privateOf(lit).boards.first()) |link| boards.retire(rb, boards.ofDeviceLink(link));
+    }
+}
+
+/// Whether a firmware's framebuffer lies behind a device.
+///
+/// INPUTS:
+/// - `rb` - the library; the device list's lock is held.
+/// - `device` - the device.
+pub fn hasFirmwareBehind(rb: *RtgBase, device: *const rtg.RtgDevice) bool {
+    var node = rb.devices.first();
+    while (node) |one| : (node = one.next()) {
+        const lit = deviceOf(one);
+        if (lit.flags & rtg.drivers.RTGDVF_FIRMWARE != 0 and lit.behind == device) return true;
+    }
+    return false;
+}
+
 /// How closely an entry names a device: 2 for a chip, or a vendor with a
 /// device; 1 for a bus, a vendor alone or a class; null when a field it
 /// counts is not the device's.
@@ -341,6 +374,9 @@ pub fn offer(rb: *RtgBase, device: *rtg.RtgDevice) u32 {
     const sys = rb.sys_base;
     const private = privateOf(device);
     if (device.driver != null) return 0;
+    // What its settings line says, and whether a firmware's picture lies
+    // behind it, in front of its tags.
+    settings.dress(rb, device);
     // Held through the drivers' attach: none leaves the list meanwhile.
     sys.ObtainSemaphore(&rb.driver_lock);
     defer sys.ReleaseSemaphore(&rb.driver_lock);
@@ -366,6 +402,7 @@ pub fn offer(rb: *RtgBase, device: *rtg.RtgDevice) u32 {
             boards.list(rb, boards.ofDeviceLink(one));
             made += 1;
         }
+        if (made != 0) handOver(rb, device);
         return made;
     }
     return 0;

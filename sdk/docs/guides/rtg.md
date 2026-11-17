@@ -116,6 +116,34 @@ clears a first buffer to black and shows it. The mode is what says which
 way up a panel that can be turned runs: the 3.5" board's default is
 upright, 320 by 480, and its screen 480 by 320.
 
+**A driver may come from the disk.** A machine's ROM need not hold the
+driver of every display it may be given. The drivers on the disk are
+files in `DEVS:gfxdrv/`, each a load file with the driver's ROM tag in
+it, and `LoadRtgDrivers` - which `C:BindDrivers` calls in the
+startup-sequence, before the desktop opens - reads each file for what
+it takes, loads the ones for a device of this machine that no driver
+has, and binds the drivers again. Nothing is loaded for a display the
+machine has not got, and a file whose driver's name is on the list
+already is passed over: the ROM's is the one used. A device whose
+settings line says `DRIVER=OFF` is left to the picture its firmware
+lit.
+
+A machine whose ROM has no driver for its display comes up dark, and
+has its picture when `C:BindDrivers` has run: graphics.library gives a
+board that is in no mode its first picture the first time the display
+is asked for. A driver that takes the device a firmware's framebuffer
+lies behind - the card's function on PCI - finds `RTGA_Adopt` in the
+device's tags, and once it has made a board the firmware's board is
+gone: `RTGBF_GONE`, off the walk, its handle good.
+
+A driver that hangs the machine as it is bound would hang every start.
+Before a file is loaded the driver's name is written to
+`ENVARC:Sys/display.trying`; `C:Rtg TRIED`, which the startup-sequence
+runs once the desktop is up, takes the names of the drivers that are on
+the list out of it again. A name left there is a driver that did not
+come back: it is passed over, the system's log says so, and
+`C:Rtg RETRY` tries it again.
+
 **The first board is the machine's display**, and that is how everything
 finds it:
 
@@ -1339,6 +1367,12 @@ and frames lose their syncs.
   away first) or a device's driver (`Rtg SET DEVICE=pci.01:00.0
   DRIVER=OFF`), and `SAVE` writes `display.prefs` for the running
   system and for the next start.
+  `RETRY` loads the drivers of `DEVS:gfxdrv/` again, those that did not
+  come back the last time among them; `TRIED` says the drivers that
+  were loaded came back.
+- `C:BindDrivers` has rtg.library load the display drivers on the disk
+  that this machine has a display for (`LoadRtgDrivers`), before it
+  starts the block devices.
 - `C:SetPrefs` hands `ENV:Sys/display.prefs` to rtg.library with the
   system's other settings files, at boot; `SetPrefs SHOW` prints a
   `DISPLAY` line for each board.

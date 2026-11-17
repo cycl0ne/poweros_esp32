@@ -31,6 +31,12 @@
 //!
 //! The board is rtg.library's, and found again as it was found here: the
 //! View (`rastport/_rastport.zig`) asks for the first board rtg lists.
+//!
+//! A machine whose ROM has no driver for its display has no board at
+//! this library's init: its driver is loaded from the disk later
+//! (rtg.library's `LoadRtgDrivers`), and the board it makes shows
+//! nothing. Such a display is brought up the same way the first time the
+//! display is asked for (`light`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -106,6 +112,49 @@ fn bringUp(rb: *RtgBase, which: *rtg.RtgBoard, screen: Screen) ?Shown {
         .height = mode.height,
         .bytes = @as(usize, picture.pitch) * picture.height,
     };
+}
+
+/// The machine's display given its first picture, where it shows none:
+/// the first board of rtg.library's walk, made after this library's
+/// init. What `openDisplay` does at the init, done when the display is
+/// first asked for.
+///
+/// INPUTS:
+/// - `gb` - the library's base.
+/// - `board` - the first board, which shows nothing.
+///
+/// RESULT:
+/// The buffer the board shows then, or null: for a board that is in a
+/// mode already - what it shows is somebody's - and where it could not
+/// be brought up: no mode, no room for a picture, or its driver
+/// refused.
+///
+/// CONTEXT:
+/// In a task: bringing a display up may wait. Nothing is held: two tasks
+/// that ask for a display for the first time at the same moment each
+/// make a picture, and the one shown last is the display's - the other
+/// stays its task's, unshown. The base has no lock for a thing done
+/// once a board.
+pub fn light(gb: *GraphicsBase, board: *rtg.RtgBoard) ?*rtg.RtgBitMap {
+    const sys = gb.sys_base;
+    const rb = gb.rtg_base;
+    if (rb.BoardDisplayBitMap(board)) |shown| return shown;
+    // Only a board that is in no mode was never brought up: one that is
+    // in a mode and shows no whole buffer - bands, or nothing for the
+    // moment - is somebody's, and is left as it is.
+    var info: rtg.RtgBoardInfo = .{};
+    _ = rb.GetBoardInfo(board, &info, @sizeOf(rtg.RtgBoardInfo));
+    if (info.mode_id != 0) return null;
+    // Where it cannot be brought up, another task may have done it
+    // meanwhile and taken the room.
+    const shown = bringUp(rb, board, readScreen(gb)) orelse return rb.BoardDisplayBitMap(board);
+    exec.kprintf(sys, "graphics.library: %dx%d on %s, %d KiB a picture\n", .{
+        shown.width,
+        shown.height,
+        board.node.name.?,
+        @as(u32, @intCast(shown.bytes / 1024)),
+    });
+    return rb.BoardDisplayBitMap(board);
 }
 
 /// Brings the machine's display up and shows a black picture on it.
