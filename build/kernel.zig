@@ -206,7 +206,7 @@ pub fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
             .esp32s3 => "src/main.zig",
             .esp32p4 => "src/main_esp32p4.zig",
             .rv64sbi => "src/main_rv64sbi.zig",
-            .a64psci => "src/main_a64psci.zig",
+            .a64psci, .a64v80 => "src/main_a64psci.zig",
             .x64uefi => "src/main_x64uefi.zig",
         }),
         .target = target,
@@ -224,7 +224,7 @@ pub fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
         // small model reaches 4 GiB around the code, PC-relatively.
         .code_model = switch (chip) {
             .rv64sbi => .medany,
-            .a64psci, .x64uefi => .small,
+            .a64psci, .a64v80, .x64uefi => .small,
             .esp32s3, .esp32p4 => .default,
         },
     });
@@ -245,7 +245,7 @@ pub fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
         },
         .esp32p4 => kernel_mod.addAssemblyFile(b.path("src/arch/esp32p4/start.S")),
         .rv64sbi => kernel_mod.addAssemblyFile(b.path("src/arch/rv64sbi/start.S")),
-        .a64psci => kernel_mod.addAssemblyFile(b.path("src/arch/a64psci/start.S")),
+        .a64psci, .a64v80 => kernel_mod.addAssemblyFile(b.path("src/arch/a64psci/start.S")),
         .x64uefi => kernel_mod.addAssemblyFile(b.path("src/arch/x64uefi/start.S")),
     }
 
@@ -257,7 +257,7 @@ pub fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
         .esp32s3 => "kernel.ld",
         .esp32p4 => "src/arch/esp32p4/kernel.ld",
         .rv64sbi => "src/arch/rv64sbi/kernel.ld",
-        .a64psci => "src/arch/a64psci/kernel.ld",
+        .a64psci, .a64v80 => "src/arch/a64psci/kernel.ld",
         .x64uefi => "src/arch/x64uefi/kernel.ld",
     }));
     kernel.entry = .{ .symbol_name = "_start" };
@@ -291,6 +291,7 @@ pub fn findEsptool(b: *std.Build) []const u8 {
 /// What `addFlashSteps` takes from the build so far.
 pub const FlashStepsWith = struct {
     a64_disk_bin: std.Build.LazyPath,
+    a64v80_disk_bin: std.Build.LazyPath,
     baud: []const u8,
     board: Board,
     built: Image,
@@ -306,6 +307,7 @@ pub const FlashStepsWith = struct {
 /// The `flash`, `flash-disk` and `flash-all` steps.
 pub fn addFlashSteps(b: *std.Build, with: FlashStepsWith) void {
     const a64_disk_bin = with.a64_disk_bin;
+    const a64v80_disk_bin = with.a64v80_disk_bin;
     const baud = with.baud;
     const board = with.board;
     const built = with.built;
@@ -325,6 +327,7 @@ pub fn addFlashSteps(b: *std.Build, with: FlashStepsWith) void {
         .esp32s3, .esp32p4 => flashDisk(flash_disks, board).?,
         .rv64sbi => rv64_disk_bin,
         .a64psci => a64_disk_bin,
+        .a64v80 => a64v80_disk_bin,
         .x64uefi => x64_disk_bin,
     };
     const flash = b.addSystemCommand(&.{ esptool, "--chip", chip_name, "--port", port, "--baud", baud, "write-flash" });

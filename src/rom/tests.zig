@@ -36,7 +36,9 @@ test {
     _ = @import("devs/audio/recorder.zig");
     _ = @import("libs/rta_driver/es8311/codec.zig");
     _ = @import("libs/rta_driver/i2s/divider.zig");
+    _ = @import("libs/rta_driver/hdmi/mai.zig");
     _ = @import("libs/rta_driver/hdmi/bcm2712.zig");
+    _ = @import("libs/rta_driver/hdmi/bcm2711.zig");
     _ = @import("libs/rta_driver/hdmi/dma40.zig");
     _ = @import("libs/rta_driver/hda/codec.zig");
     _ = @import("libs/rta_driver/hda/stream.zig");
@@ -55,6 +57,9 @@ test {
     _ = @import("libs/rtg_driver/bcm2712board/ddc.zig");
     _ = @import("libs/rtg_driver/bcm2712board/sound.zig");
     _ = @import("libs/rtg_driver/bcm2712board/list.zig");
+    _ = @import("libs/rtg_driver/bcm2711board/hvs.zig");
+    _ = @import("libs/rtg_driver/bcm2711board/sound.zig");
+    _ = @import("libs/rtg_driver/bcm2711board/bcm2711board.zig");
     _ = @import("libs/rtg_driver/virtioboard/virtio.zig");
     _ = @import("devs/keyboard/rawkey.zig");
     _ = @import("devs/mouse/events.zig");

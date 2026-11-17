@@ -83,10 +83,11 @@ const GfxOnDisk = struct { root: []const u8, name: []const u8, chips: []const Ch
 /// drivers are all in their ROMs, and their disks carry none.
 const gfx_on_disk = [_]GfxOnDisk{
     .{ .root = "src/rom/libs/rtg_driver/virtioboard/virtioboard.zig", .name = "virtio", .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
-    .{ .root = "src/rom/libs/rtg_driver/fwboard/fwboard.zig", .name = "fw", .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
+    .{ .root = "src/rom/libs/rtg_driver/fwboard/fwboard.zig", .name = "fw", .chips = &.{ .rv64sbi, .a64psci, .a64v80, .x64uefi } },
     .{ .root = "src/rom/libs/rtg_driver/amdboard/amdboard.zig", .name = "amd", .chips = &.{.x64uefi} },
     .{ .root = "src/rom/libs/rtg_driver/jh7110board/jh7110board.zig", .name = "jh7110", .chips = &.{.rv64sbi} },
     .{ .root = "src/rom/libs/rtg_driver/bcm2712board/bcm2712board.zig", .name = "bcm2712", .chips = &.{.a64psci} },
+    .{ .root = "src/rom/libs/rtg_driver/bcm2711board/bcm2711board.zig", .name = "bcm2711", .chips = &.{.a64v80} },
 };
 
 /// The ROM modules' strings in other languages: what dos.library's faults
@@ -677,7 +678,7 @@ fn flashDiskName(chip: Chip) []const u8 {
     return switch (chip) {
         .esp32s3 => "disk.bin",
         .esp32p4 => "disk-esp32p4.bin",
-        .rv64sbi, .a64psci, .x64uefi => unreachable,
+        .rv64sbi, .a64psci, .a64v80, .x64uefi => unreachable,
     };
 }
 
@@ -725,7 +726,7 @@ pub const DiskImages = struct {
         var list: [count]u32 = undefined;
         for (chips, 0..) |chip, i| list[i] = switch (chip) {
             .esp32s3, .esp32p4 => 4,
-            .rv64sbi, .a64psci, .x64uefi => 8,
+            .rv64sbi, .a64psci, .a64v80, .x64uefi => 8,
         };
         break :blk list;
     };
@@ -843,9 +844,12 @@ pub const MadeDiskImages = struct {
     a64_disk_bin: std.Build.LazyPath,
     a64_system_disk: std.Build.LazyPath,
     a64_tree: std.Build.LazyPath,
+    a64v80_disk_bin: std.Build.LazyPath,
+    a64v80_tree: std.Build.LazyPath,
     disks: DiskImages,
     flash_disks: [flash_boards.len]std.Build.LazyPath,
     make_a64_disk: *std.Build.Step.Run,
+    make_a64v80_disk: *std.Build.Step.Run,
     make_rv64_disk: *std.Build.Step.Run,
     make_x64_disk: *std.Build.Step.Run,
     rv64_disk_bin: std.Build.LazyPath,
@@ -921,6 +925,16 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     const a64_disk_made = make_a64_disk.addOutputFileArg("disk-a64-made.bin");
     const a64_system_disk = make_a64_disk.addPrefixedOutputFileArg("--gpt=", "system-a64.bin");
     make_a64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
+    // The disk of the AArch64 machines whose cores have ARMv8.0 alone,
+    // the CM4's: the same files, built for those cores
+    // (zig-out/disk-a64v80/, zig-out/bin/disk-a64v80.manifest). Its system
+    // disk is made as the others' are, for no QEMU machine yet.
+    const make_a64v80_disk = b.addRunArtifact(mkfs);
+    const a64v80_tree = make_a64v80_disk.addPrefixedOutputDirectoryArg("--tree=", "disk-a64v80");
+    const a64v80_manifest = make_a64v80_disk.addPrefixedOutputFileArg("--manifest=", "disk-a64v80.manifest");
+    const a64v80_disk_made = make_a64v80_disk.addOutputFileArg("disk-a64v80-made.bin");
+    _ = make_a64v80_disk.addPrefixedOutputFileArg("--gpt=", "system-a64v80.bin");
+    make_a64v80_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
     const make_x64_disk = b.addRunArtifact(mkfs);
     // The x86-64 disk's files as a tree and a list as well, as the other
     // 64-bit disks' (zig-out/disk-x64/, zig-out/bin/disk-x64.manifest).
@@ -932,7 +946,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     const x64_medium_made = make_x64_disk.addPrefixedOutputFileArg("--medium=", "disk-x64-medium-made.bin");
     const x64_system_disk = make_x64_disk.addPrefixedOutputFileArg("--gpt=", "system-x64.bin");
     make_x64_disk.addArg(b.fmt("--gpt-bytes={d}", .{virt_system_bytes}));
-    const disks: DiskImages = .{ .runs = flash_runs ++ .{ make_rv64_disk, make_a64_disk, make_x64_disk }, .sets = disk_sets };
+    const disks: DiskImages = .{ .runs = flash_runs ++ .{ make_rv64_disk, make_a64_disk, make_a64v80_disk, make_x64_disk }, .sets = disk_sets };
     const p4_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.esp32p4 });
     if (chipOf(board) == .esp32p4) {
         for (poweros_userland.programs) |program| {
@@ -944,12 +958,13 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     const rv64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.rv64sbi });
     const a64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.a64psci });
     const x64_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.x64uefi });
+    const a64v80_disk_dep = b.dependency("poweros_userland", .{ .optimize = optimize, .chip = Chip.a64v80 });
     // The ESP32s' disk is the flash past the kernel, the 64-bit machines'
     // a RAM disk of its own size.
     for (disks.runs, DiskImages.chips) |run, chip| {
         const size: u32 = switch (chip) {
             .esp32s3, .esp32p4 => disk_size,
-            .rv64sbi, .a64psci, .x64uefi => ram_disk_size,
+            .rv64sbi, .a64psci, .a64v80, .x64uefi => ram_disk_size,
         };
         run.addArgs(&.{
             "System",
@@ -967,7 +982,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         }
         switch (chip) {
             .esp32s3, .esp32p4 => {},
-            .rv64sbi, .a64psci => run.addArgs(&ram_disk_dirs),
+            .rv64sbi, .a64psci, .a64v80 => run.addArgs(&ram_disk_dirs),
             .x64uefi => {
                 run.addArgs(&ram_disk_dirs);
                 run.addArgs(&uefi_boot_dirs);
@@ -999,7 +1014,8 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     // them: mkfs takes its paths in the order they are given.
     disks.addArgs(tree.dirs);
     for (extras) |extra| disks.addArgs(extra.dirs);
-    const chip_deps = [_]*std.Build.Dependency{ disk_dep, p4_disk_dep, rv64_disk_dep, a64_disk_dep, x64_disk_dep };
+    // By the chip's place in `Chip`.
+    const chip_deps = [_]*std.Build.Dependency{ disk_dep, p4_disk_dep, rv64_disk_dep, a64_disk_dep, x64_disk_dep, a64v80_disk_dep };
     for (poweros_userland.programs) |program| {
         for (disks.runs, DiskImages.chips, disks.sets) |run, chip, sets| {
             if (!poweros_userland.builtFor(program, chip) or !poweros_userland.onDisk(sets, program.disk)) continue;
@@ -1060,6 +1076,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     }
     for (poweros_userland.a64_files) |file| {
         disks.addChipFile(.a64psci, file.disk, a64_disk_dep.namedLazyPath(file.source));
+        disks.addChipFile(.a64v80, file.disk, a64v80_disk_dep.namedLazyPath(file.source));
     }
     for (poweros_userland.x64_files) |file| {
         disks.addChipFile(.x64uefi, file.disk, x64_disk_dep.namedLazyPath(file.source));
@@ -1233,6 +1250,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     if (pciIdsFile(b)) |list| {
         make_rv64_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
         make_a64_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
+        make_a64v80_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
         make_x64_disk.addPrefixedFileArg("devs/pci.ids=", .{ .cwd_relative = list });
     }
     // The icons, from the pictures scripts/fetch-icons.sh drew at the
@@ -1361,6 +1379,19 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
             .install_subdir = "disk-a64",
         }).step);
     }
+    const pad_a64v80_disk = b.addRunArtifact(padimage);
+    pad_a64v80_disk.addFileArg(a64v80_disk_made);
+    const a64v80_disk_bin = pad_a64v80_disk.addOutputFileArg("disk-a64v80.bin");
+    pad_a64v80_disk.addArg(b.fmt("{d}", .{ram_disk_size}));
+    if (chipOf(board) == .a64v80) {
+        b.getInstallStep().dependOn(&b.addInstallBinFile(a64v80_disk_bin, "disk-a64v80.bin").step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(a64v80_manifest, "disk-a64v80.manifest").step);
+        b.getInstallStep().dependOn(&b.addInstallDirectory(.{
+            .source_dir = a64v80_tree,
+            .install_dir = .prefix,
+            .install_subdir = "disk-a64v80",
+        }).step);
+    }
     const pad_x64_disk = b.addRunArtifact(padimage);
     pad_x64_disk.addFileArg(x64_disk_made);
     const x64_disk_bin = pad_x64_disk.addOutputFileArg("disk-x64.bin");
@@ -1381,6 +1412,9 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     }
     return .{
         .a64_disk_bin = a64_disk_bin,
+        .a64v80_disk_bin = a64v80_disk_bin,
+        .a64v80_tree = a64v80_tree,
+        .make_a64v80_disk = make_a64v80_disk,
         .a64_system_disk = a64_system_disk,
         .a64_tree = a64_tree,
         .disks = disks,

@@ -5,8 +5,9 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
-const Session = @import("_session.zig").Session;
+const Session = @import("../videodec_init.zig").Session;
 const engine = @import("../videodec_init.zig").engine;
+const sessions = @import("../videodec_init.zig").sessions;
 const wave511 = @import("../codec/_wave511.zig");
 
 /// Says what a decoder's stream is, once its sequence is read.
@@ -65,7 +66,7 @@ pub fn GetVideoDecoderInfo(vb: *VideoDecBase, decoder: *types.VideoDecoder, info
     info.* = .{};
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
-    if (comptime engine == .vcn) return Session.of(decoder).info(info);
+    if (comptime sessions) return Session.of(decoder).info(info);
     const d = Decoder.of(decoder);
     const started = d.startSequence();
     if (started != types.VDERR_OK) return started;

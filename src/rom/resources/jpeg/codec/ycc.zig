@@ -11,10 +11,12 @@
 //! forms codecs write them: three planes at full size (`toBgr`, the
 //! JH7110's and an AMD device's for 4:4:4); the brightness plane and one
 //! of the two differences side by side at half size across and down
-//! (`halvedToBgr`, NV12, an AMD device's for 4:2:0); and brightness and
+//! (`halvedToBgr`, NV12, an AMD device's for 4:2:0); brightness and
 //! differences interleaved two pixels to four bytes (`pairsToBgr`, YUYV,
-//! an AMD device's for 4:2:2). A halved difference stands for each pixel
-//! it covers.
+//! an AMD device's for 4:2:2); and three planes with the differences
+//! halved across and down (`planarToBgr`, I420, the VideoCore firmware's),
+//! or across only (I422). A halved difference stands for each pixel it
+//! covers.
 
 /// The matrix's factors, times 65536, and a half for rounding.
 const cr_r: i32 = 91881;
@@ -93,6 +95,23 @@ pub fn pairsToBgr(rows: [*]const u8, stride: usize, out: [*]u8, pitch: usize, wi
     }
 }
 
+/// `width` x `height` pixels from three planes: brightness, `y_stride`
+/// bytes a row, and the two differences, `c_stride` bytes a row, halved
+/// across (`halved_down` false: I422) or across and down (true: I420),
+/// written to `out`, `pitch` bytes from one row to the next.
+pub fn planarToBgr(y: [*]const u8, y_stride: usize, cb: [*]const u8, cr: [*]const u8, c_stride: usize, halved_down: bool, out: [*]u8, pitch: usize, width: usize, height: usize) void {
+    var row: usize = 0;
+    while (row < height) : (row += 1) {
+        const l = y + row * y_stride;
+        const c_row = (if (halved_down) row / 2 else row) * c_stride;
+        const b = cb + c_row;
+        const r = cr + c_row;
+        const to = out + row * pitch;
+        var x: usize = 0;
+        while (x < width) : (x += 1) pixel(to + x * 3, l[x], b[x / 2], r[x / 2]);
+    }
+}
+
 // --- tests (host: ./zig build test) -----------------------------------------
 
 const testing = @import("std").testing;
@@ -146,4 +165,18 @@ test "pairs of pixels share their two differences" {
     try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 255, 255, 255 }, out[0..6]);
     try testing.expect(out[6] >= 253 and out[8] <= 2);
     try testing.expect(out[9] >= 253 and out[11] <= 2);
+}
+
+test "planar differences halved across, or across and down" {
+    // Two rows of four pixels: grey on the left, blue's differences on
+    // the right. I420: one row of two Cb and two Cr; I422: two rows.
+    const y = [_]u8{ 128, 128, 29, 29, 128, 128, 29, 29 };
+    const cb = [_]u8{ 128, 255, 128, 255 };
+    const cr = [_]u8{ 128, 107, 128, 107 };
+    for ([_]bool{ true, false }) |down| {
+        var out: [2 * 12]u8 = undefined;
+        planarToBgr(&y, 4, &cb, &cr, 2, down, &out, 12, 4, 2);
+        for ([_]usize{ 0, 1, 4, 5 }) |at| try testing.expectEqualSlices(u8, &.{ 128, 128, 128 }, out[at * 3 .. at * 3 + 3]);
+        for ([_]usize{ 2, 3, 6, 7 }) |at| try testing.expect(out[at * 3] >= 253 and out[at * 3 + 2] <= 2);
+    }
 }

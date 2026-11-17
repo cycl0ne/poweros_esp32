@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-//! One of the BCM2712's 40-bit DMA channels (the device tree's dma40:
-//! channels 6 to 11 of the controller at 0x10_0001_0000, 0x100 apart),
-//! as a ring of control blocks that feeds a peripheral's FIFO.
+//! One of the 40-bit DMA channels the BCM2712 and the BCM2711 have alike
+//! (the device tree's dma40: the BCM2712's channels 6 to 11 of the
+//! controller at 0x10_0001_0000, the BCM2711's DMA4 channels 11 to 14 at
+//! 0xFE00_7B00, 0x100 apart), as a ring of control blocks that feeds a
+//! peripheral's FIFO.
 //!
 //! A control block is eight words on 32 bytes of its own: what to do
 //! (TI), where from and where to - each address's low 32 bits, then its

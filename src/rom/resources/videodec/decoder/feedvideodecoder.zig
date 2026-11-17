@@ -5,8 +5,9 @@ const sdk = @import("sdk");
 const types = sdk.resources.videodec;
 const VideoDecBase = @import("../videodec_base.zig").VideoDecBase;
 const Decoder = @import("_decoder.zig").Decoder;
-const Session = @import("_session.zig").Session;
+const Session = @import("../videodec_init.zig").Session;
 const engine = @import("../videodec_init.zig").engine;
+const sessions = @import("../videodec_init.zig").sessions;
 
 /// Feeds a decoder one picture of its stream.
 ///
@@ -86,6 +87,6 @@ pub fn FeedVideoDecoder(vb: *VideoDecBase, decoder: *types.VideoDecoder, data: ?
     const sys = vb.sys_base;
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
-    if (comptime engine == .vcn) return Session.of(decoder).feed(data, length, time, flags);
+    if (comptime sessions) return Session.of(decoder).feed(data, length, time, flags);
     return Decoder.of(decoder).feed(data, length, time, flags);
 }

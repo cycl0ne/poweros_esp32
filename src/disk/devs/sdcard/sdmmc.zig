@@ -34,7 +34,8 @@ const chip_host = switch (hardware.chip) {
     .esp32s3 => @import("esp32s3/sdhost.zig"),
     .esp32p4 => @import("esp32p4/sdhost.zig"),
     .rv64sbi => @import("jh7110/sdhost.zig"),
-    .a64psci => @compileError("sdcard.device: the AArch64 machines' SD host is not driven yet"),
+    .a64psci => @compileError("sdcard.device: the Compute Module 5's SD host is not driven yet"),
+    .a64v80 => @compileError("sdcard.device: the BCM2711's host is an SDHCI, driven by sdhci.zig"),
     .x64uefi => @compileError("sdcard.device: a card reader on an x86-64 machine is behind PCI, not this host"),
 };
 

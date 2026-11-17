@@ -15,6 +15,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_options = @import("build_options");
 const alert = @import("arch/a64psci/alert.zig");
 const bootstrap = @import("bootstrap.zig");
 const clock = @import("arch/a64psci/clock.zig");
@@ -28,6 +29,7 @@ const gic = @import("arch/a64psci/gic.zig");
 const layout = @import("arch/a64psci/layout.zig");
 const mmu = @import("arch/a64psci/mmu.zig");
 const ram = @import("arch/a64psci/ram.zig");
+const screentext = @import("arch/screentext.zig");
 const timer = @import("arch/a64psci/timer.zig");
 const trap = @import("arch/a64psci/trap.zig");
 const shell = @import("rom/libs/exec/_shell/shell.zig");
@@ -86,6 +88,19 @@ export var a64_stack_high: usize = 0;
 /// for it, kept for the boot's lines.
 var counter_hz: u64 = 0;
 
+/// Whether the firmware is PSCI: the device tree says how it is called,
+/// or names no spin table, which a firmware without it would. The
+/// Raspberry Pi 4's has none, and an HVC there goes to whatever its
+/// armstub left at EL2.
+var psci_there = true;
+
+/// The picture the board's firmware lit, where it has one to hand over
+/// (`boards.firmware_screen`): whether the kernel's lines go on it, and
+/// whether it is the display driver's panel too.
+var firmware_picture: ?hardware.videocore.Picture = null;
+var screen_mine = false;
+var screen_declared = false;
+
 /// The machine's figures, from the board, into the SDK's and the arch
 /// layer's variables: before anything reads them. RAM as the device tree
 /// has it where it says, how PSCI is reached, and the disk image the
@@ -96,6 +111,8 @@ fn takeBoard(tree: device_tree.Facts) void {
         .clock_hz = @intCast(boards.fact(st.SYSTAG_ConsoleClock, 0)),
         .irq = @intCast(boards.fact(st.SYSTAG_ConsoleIrq, 0)),
     };
+    // Its pins, where the firmware gave them to something else.
+    if (boards.console_pins) |give| give();
     hardware.gic.dist_base = boards.fact(st.SYSTAG_GicDist, hardware.map.GICD);
     hardware.gic.cpu_base = boards.fact(st.SYSTAG_GicCpu, hardware.map.GICC);
     // The device tree says how the firmware is reached; without one, an
@@ -129,7 +146,8 @@ fn takeBoard(tree: device_tree.Facts) void {
     }
     a64_stack_low = ram.ramBase() + trap.frame_offset;
     a64_stack_high = ram.ramEnd();
-    cpu1.takeCores(tree.coreIds(), cpu.mpidrs[0]);
+    cpu1.takeCores(tree.coreIds(), tree.coreReleases(), cpu.mpidrs[0]);
+    psci_there = tree.psci != .unknown or !cpu1.spinTables();
     // The Ethernet ports' station addresses, into the bytes the board's
     // parts point at.
     if (@hasDecl(boards.system, "stations")) {
@@ -142,6 +160,41 @@ fn takeBoard(tree: device_tree.Facts) void {
     if (@hasDecl(boards.system, "boot_start")) {
         boards.system.boot_start = .{ .partition = tree.boot_partition, .tried = @intFromBool(tree.boot_tried) };
     }
+    if (@hasDecl(boards.system, "boot_mode")) boards.system.boot_mode = tree.boot_mode;
+    // The memory the board's parts share with another master, kept from
+    // exec (the board's `shared`, PART_SharedMemory); mapped without
+    // caches once the map is finished (`uncacheShared`).
+    if (@hasDecl(boards.system, "shared")) {
+        inline for (boards.system.shared) |share| share.base = ram.keep(share.bytes, share.below) orelse 0;
+    }
+}
+
+/// The memory kept for the board's parts made normal memory without
+/// caches: written back from the caches and dropped from them before and
+/// after - a line read ahead in between would otherwise stay there to be
+/// written over the other master's writes. A block the map cannot change
+/// is given up: its part finds no memory.
+fn uncacheShared() void {
+    if (!@hasDecl(boards.system, "shared")) return;
+    inline for (boards.system.shared) |share| {
+        const base = share.base;
+        if (base != 0) {
+            const end = base + ((share.bytes + ram.block - 1) & ~@as(usize, ram.block - 1));
+            dropLines(base, end);
+            if (!mmu.uncached(.{ .start = base, .end = end })) share.base = 0;
+            dropLines(base, end);
+        }
+    }
+}
+
+/// Every cache line of `start` to `end` written back and dropped.
+fn dropLines(start: usize, end: usize) void {
+    var line = start;
+    while (line < end) : (line += 64) asm volatile ("dc civac, %[at]"
+        :
+        : [at] "r" (line),
+        : .{ .memory = true });
+    asm volatile ("dsb sy" ::: .{ .memory = true });
 }
 
 /// Each other core's stack, which its idle task goes on running on.
@@ -184,6 +237,11 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     // Address 0 unmapped, the kernel's code read-only, RAM as the tree
     // says normal memory.
     mmu.refine(ram.ranges());
+    uncacheShared();
+    // The kernel's lines on the picture the firmware lit, on a board whose
+    // firmware hands one over: from here, before exec, so a boot that stops
+    // says where.
+    screenFromFirmware();
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
     exec.clock_hardware.* = .{ .timebase = &timer.timebase, .uptimeUs = &timer.uptimeUs, .spinUs = &timer.spinUs };
@@ -205,8 +263,19 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
         @tagName(builtin.mode),
     });
     note("MPIDR 0x%lx, device tree at 0x%lx, vectors at 0x%lx", .{ cpu.mpidrs[0], @as(u64, fdt), @as(u64, cpu.vecbase()) });
-    const psci_version = hardware.psci.version();
-    note("PSCI %d.%d by %s", .{ psci_version >> 16, psci_version & 0xFFFF, @as([*:0]const u8, if (hardware.psci.conduit == .smc) "SMC" else "HVC") });
+    if (psci_there) {
+        const psci_version = hardware.psci.version();
+        note("PSCI %d.%d by %s", .{ psci_version >> 16, psci_version & 0xFFFF, @as([*:0]const u8, if (hardware.psci.conduit == .smc) "SMC" else "HVC") });
+    } else note("no PSCI: the other cores wait on the firmware's spin table", .{});
+    if (firmware_picture) |picture| {
+        note("the firmware's picture: %dx%d at 0x%lx, %d bytes a row%s", .{
+            picture.width,
+            picture.height,
+            @as(u64, picture.base),
+            picture.pitch,
+            @as([*:0]const u8, if (screen_declared) "" else if (build_options.logdebug) ", kept for the log (-Dlogdebug)" else ", in an order the display driver does not draw"),
+        });
+    } else if (boards.firmware_screen != null) note("the firmware lit no picture", .{});
     if (@hasDecl(boards.system, "boot_start")) {
         const start = &boards.system.boot_start;
         if (start.partition != 0) {
@@ -232,6 +301,13 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     for (ram.reserved[0..ram.reserved_count]) |range| {
         note("reserved 0x%lx-0x%lx", .{ @as(u64, range.start), @as(u64, range.end) });
     }
+    if (@hasDecl(boards.system, "shared")) {
+        inline for (boards.system.shared) |share| {
+            if (share.base != 0) {
+                note("kept 0x%lx-0x%lx without caches, shared with the firmware", .{ @as(u64, share.base), @as(u64, share.base + ((share.bytes + ram.block - 1) & ~@as(usize, ram.block - 1))) });
+            } else note("no memory kept to share with the firmware: %ld KiB below 0x%lx asked for", .{ @as(u64, share.bytes / 1024), @as(u64, share.below) });
+        }
+    }
     if (hardware.ramdisk.size != 0) {
         note("disk image 0x%lx-0x%lx, %ld KiB", .{
             @as(u64, hardware.ramdisk.base),
@@ -249,6 +325,22 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     if (cpu_speed != 0) if (boards.cpu_clock) |ask| {
         if (ask(sys, cpu_speed) == 0) note("cpu clock not set to %ld MHz: the firmware does not answer", .{@as(u64, cpu_speed)});
     };
+    // The memory the board's reset tells the firmware of it in
+    // (`boards.reset_notice`).
+    if (boards.reset_notice) |keep| keep(sys);
+    // The blocks the board's parts are in, where its firmware powers them
+    // only when asked (`boards.firmware_power`).
+    if (boards.firmware_power) |power| power(sys);
+    // The display driver has the screen once the cold-start modules have
+    // run, which is when the exec task that starts them ends: a hook on
+    // that task (as on x86-64, main_x64uefi.zig).
+    var screen_hooked = false;
+    if (screen_mine and screen_declared) {
+        if (sys.FindTask("exec")) |exec_task| {
+            sys.AddTaskEndHook(exec_task, &screen_given);
+            screen_hooked = true;
+        }
+    }
     timer.init(100);
     clock.init();
     // The other cores, where the board has them: let go once exec and the
@@ -266,6 +358,7 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     // Multitasking starts. The exec task runs first: it starts the
     // RTF_COLDSTART residents and ends. This task goes on as the boot task.
     exec.startMultitasking(exec.SysBase);
+    if (screen_mine and screen_declared and !screen_hooked) exec.setBoardMirror(null);
     // Until here the other cores ran only their idle tasks; from here they
     // take any task that is not pinned.
     if (cpu1.isUp()) {
@@ -291,4 +384,35 @@ fn uptimeUs() u64 {
 /// A kernel status line; the raw port puts the uptime in front.
 fn note(comptime format: [:0]const u8, args: anytype) void {
     exec.kprintf(std.fmt.comptimePrint("{s}\n", .{format}), args);
+}
+
+/// The picture the board's firmware lit, asked for and taken: its blocks
+/// mapped without caches - the VideoCore reads it from memory - the
+/// kernel's lines mirrored onto it, and the picture written into the
+/// board's description for the display driver. With `-Dlogdebug` it stays
+/// the log's: no panel is declared, so nothing draws over the lines.
+fn screenFromFirmware() void {
+    const screen = boards.firmware_screen orelse return;
+    const picture = screen.ask() orelse return;
+    firmware_picture = picture;
+    _ = mmu.uncached(.{ .start = picture.base, .end = picture.base + picture.bytes });
+    screen_mine = screentext.take(.{
+        .base = picture.base,
+        .width = picture.width,
+        .height = picture.height,
+        .stride = picture.pitch / 4,
+    });
+    if (screen_mine) exec.setBoardMirror(&screentext.hardware);
+    if (!build_options.logdebug) screen_declared = screen.declare(picture);
+}
+
+/// The screen given back: what the kernel drew on it stops when the task
+/// that ran the cold-start modules has ended, since the display driver
+/// has the screen from then on. What was drawn is in the log as well,
+/// which `Log` shows.
+var screen_given: sdk.exec.TaskEndHook = .{ .code = &screenGiven };
+
+fn screenGiven(_: *sdk.interface.exec.ExecBase, _: *sdk.exec.Task, _: *sdk.exec.TaskEndHook) callconv(.c) void {
+    note("the screen is the display driver's", .{});
+    exec.setBoardMirror(null);
 }

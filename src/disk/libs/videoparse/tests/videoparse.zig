@@ -125,6 +125,9 @@ const Trace = struct {
     frees: u64 = 0,
     /// The sequence's slots, the caller's among them.
     slots: u32 = 0,
+    /// HEVC's entry points: how many, and the bytes they span.
+    entry_points: u32 = 0,
+    entry_bytes: u64 = 0,
 
     fn mix(t: *Trace, v: anytype) void {
         const bits: u64 = @bitCast(@as(i64, v));
@@ -143,6 +146,25 @@ const Trace = struct {
         if (uid == 0) return 0;
         if (t.first_uid == 0) t.first_uid = uid;
         return uid -% t.first_uid +% 1;
+    }
+
+    /// An HEVC segment's entry points: given when it has any, and each
+    /// substream they begin inside the data after the header.
+    fn takePoints(t: *Trace, s: *const vp.VideoSlice, h: *const vp.hevc.HevcSliceHeader) !void {
+        t.mix(h.num_entry_points);
+        if (h.num_entry_points == 0) return testing.expect(h.entry_points == null);
+        const points = h.entry_points.?[0..h.num_entry_points];
+        var spanned: u64 = 0;
+        for (points) |p| {
+            try testing.expect(p > 0);
+            spanned += p;
+            t.mix(p);
+        }
+        // The unit as it came is at least its header longer than the data
+        // without its escapes.
+        try testing.expect(spanned < s.unit_bytes - s.data_bit / 8);
+        t.entry_points += h.num_entry_points;
+        t.entry_bytes += spanned;
     }
 
     fn take(t: *Trace, e: *const vp.VideoEvent) !void {
@@ -191,6 +213,7 @@ const Trace = struct {
                 } else {
                     const h = s.hevc.?;
                     for ([_]i64{ @intFromEnum(h.slice_type), h.segment_address, @intFromBool(h.dependent) }) |v| t.mix(v);
+                    try t.takePoints(s, h);
                     if (s.collocated != vp.VP_NO_SLOT) t.mix(t.rel(t.uid_of[s.collocated]));
                 }
                 for (0..2) |l| {
@@ -423,6 +446,10 @@ test "rows.h265's events: its pictures, segments and reference picture sets, sho
     try testing.expectEqual(@as(u32, 24), whole.shown);
     // One IDR picture at the start: the order counts rise throughout.
     try testing.expectEqual(@as(u32, 0), whole.turns);
+    // Its rows of CTBs each a substream: the entry points to them as
+    // ffmpeg's trace_headers reads them, 120 spanning 6354 bytes.
+    try testing.expectEqual(@as(u32, 120), whole.entry_points);
+    try testing.expectEqual(@as(u64, 6354), whole.entry_bytes);
     try sameEveryWay(rig.vpb, vp.VPCODEC_HEVC, whole);
 }
 

@@ -13,9 +13,9 @@
 //! strong one, say - so this asks it now.
 //!
 //! The firmware is asked through its mailbox, which the board names as
-//! its RTC's address (CHIP_RPI_RTC): the RTC is read through it too. On a
-//! board with none - any but a CM5 - it says so, and returns WARN, so a
-//! script can ask `If WARN`.
+//! its firmware part (CHIP_RPI_FIRMWARE). On a board with none - any but
+//! a Compute Module 4 or 5 - it says so, and returns WARN, so a script
+//! can ask `If WARN`.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -30,7 +30,7 @@ const st = st_expansion.systemtags;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "CpuClock";
-const VERSION_STRING = "\x00$VER: CpuClock 1.2 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: CpuClock 1.3 (16.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "";
@@ -117,8 +117,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     return dos.RETURN_OK;
 }
 
-/// The firmware's mailbox, as the board's RTC part names it; null on a
-/// board without one.
+/// The firmware's mailbox, as the board's firmware part names it; null
+/// on a board without one.
 fn mailboxOf(sys: *ExecBase) ?usize {
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null;
     defer sys.CloseLibrary(utility_lib);
@@ -126,7 +126,7 @@ fn mailboxOf(sys: *ExecBase) ?usize {
     const expansion_lib = sys.OpenLibrary(st_expansion.EXPANSIONNAME, 1) orelse return null;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
-    const part = eb.FindBoardPart(null, st.PARTKIND_RTC, st.CHIP_RPI_RTC) orelse return null;
+    const part = eb.FindBoardPart(null, st.PARTKIND_FIRMWARE, st.CHIP_RPI_FIRMWARE) orelse return null;
     const address = utility.GetTagData(st.PART_Address, 0, part.tags);
     return if (address != 0) address else null;
 }

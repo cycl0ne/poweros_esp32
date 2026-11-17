@@ -3,11 +3,13 @@
 //! nothing else owns it.
 //!
 //! A machine started by UEFI need have no serial port at all - most
-//! machines made for the last ten years have none - and then the raw port
-//! writes into nothing and a boot that stops says nothing at all. The
-//! screen is the one output such a machine certainly has: the firmware
-//! lit it, the stub wrote the firmware's console on it, and the pixels
-//! stay where they are until something draws over them.
+//! machines made for the last ten years have none - and nor need a board
+//! a Raspberry Pi Compute Module 4 sits on; then the raw port writes into
+//! nothing and a boot that stops says nothing at all. The screen is the
+//! one output such a machine certainly has: the firmware lit it - UEFI's
+//! with the stub's console on it, or the VideoCore's when the kernel asked
+//! it for a picture (src/boards/rpi_cm4/screen.zig) - and the pixels stay
+//! where they are until something draws over them.
 //!
 //! So this is a second place for exec's raw output (`exec.RawIOHardware`,
 //! as a mirror): every line the kernel writes is drawn here as well as
@@ -44,10 +46,9 @@
 //! place a reader needs it: the line that says what went wrong is the
 //! line a core wrote while another was saying something else.
 
-const cpu = @import("cpu.zig");
-const exec = @import("../../rom/libs/exec/exec.zig");
-const font = @import("../../rom/libs/graphics/fonts/pospaz8.zig");
-const handover = @import("../../boot/uefi/handover.zig");
+const exec = @import("../rom/libs/exec/exec.zig");
+const exec_base = @import("../rom/libs/exec/exec_base.zig");
+const font = @import("../rom/libs/graphics/fonts/pospaz8.zig");
 
 /// A character's cell, in pixels. The font is eight wide and eight tall,
 /// and a row of pixels between lines keeps them apart.
@@ -81,14 +82,23 @@ var rows_used: u32 = 0;
 /// at the kernel's first line.
 var cleared = false;
 
-/// The screen the firmware lit, as the stub described it. A format the
-/// stub did not know is one nothing is drawn in: the pixels would be the
-/// wrong size.
-/// Whether there is one, which is whether anything is drawn.
-pub fn take(screen: handover.Framebuffer) bool {
-    if (screen.base == 0 or screen.format == .unknown) return false;
+/// A screen the firmware lit: where its pixels are, 32 bits each, and
+/// its size; `stride` is pixels from one row's start to the next.
+pub const Screen = struct {
+    base: usize,
+    width: u32,
+    height: u32,
+    stride: u32,
+};
+
+/// The screen the firmware lit, as the caller has it from the firmware:
+/// one of 32-bit pixels - the caller leaves out a format nothing can be
+/// drawn in, as the pixels would be the wrong size. Whether there is one,
+/// which is whether anything is drawn.
+pub fn take(screen: Screen) bool {
+    if (screen.base == 0) return false;
     if (screen.width < cell_wide or screen.height < cell_high) return false;
-    pixels = @ptrFromInt(@as(usize, @intCast(screen.base)));
+    pixels = @ptrFromInt(screen.base);
     wide = screen.width;
     high = screen.height;
     row_pixels = screen.stride;
@@ -172,7 +182,7 @@ fn unlock() void {
 /// or fills.
 fn put(character: u8) void {
     if (pixels == null) return;
-    const core = @min(cpu.coreId(), lines_most - 1);
+    const core = @min(exec_base.coreId(), lines_most - 1);
     switch (character) {
         // A line ends where the writer says it does; the carriage return
         // before it is the port's business, not a screen's.

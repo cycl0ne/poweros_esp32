@@ -100,9 +100,13 @@ fn divisor(clock_hz: u32, baud: u32) u32 {
 /// The UART stopped once its last character is out, its rate set when
 /// the clock is known, the frame and FIFOs set, and on again with both
 /// directions. The PL011 takes a new line only while it is off, and
-/// latches the divisor on the write to LCR_H after it.
+/// latches the divisor on the write to LCR_H after it. A UART whose
+/// characters never go out - its clock stopped, or flow control nobody
+/// answers - is waited for as long as a character at the slowest rate
+/// takes (`stuckAfter`), and then stopped all the same: what it held is
+/// lost, which a port that sends nothing loses anyway.
 fn reprogram(geometry: Geometry, baud: u32, lcr: u32) void {
-    while (at(geometry, FR).* & FR_BUSY != 0) {}
+    waitIdle(geometry);
     const keep = at(geometry, CR).* & (CR_DTR | CR_RTS);
     at(geometry, CR).* = 0;
     if (geometry.clock_hz != 0 and baud != 0) {
@@ -112,6 +116,16 @@ fn reprogram(geometry: Geometry, baud: u32, lcr: u32) void {
     }
     at(geometry, LCR_H).* = lcr;
     at(geometry, CR).* = keep | CR_UARTEN | CR_TXE | CR_RXE;
+}
+
+/// Until the UART has sent what it holds, or for `stuckAfter` at the most.
+fn waitIdle(geometry: Geometry) void {
+    if (at(geometry, FR).* & FR_BUSY == 0) return;
+    const cpu = @import("cpu.zig");
+    const until = cpu.time() + stuckAfter();
+    while (at(geometry, FR).* & FR_BUSY != 0) {
+        if (cpu.time() > until) return;
+    }
 }
 
 /// exec's raw port: the UART on with its FIFOs, as the firmware left it
@@ -126,8 +140,33 @@ pub fn consoleInit() void {
     reprogram(console, baud, frame | LCR_H_FEN);
 }
 
+/// Whether the console's FIFO stayed full for longer than a character
+/// takes at the slowest rate: a UART whose clock does not run, or one held
+/// by flow control nobody answers. Its characters are dropped from then
+/// on, without the wait, until it takes one again - a port nobody can
+/// read must not hold up a machine that says what it does elsewhere too
+/// (on the Compute Module 4's screen).
+var console_stuck = false;
+
+/// Ticks of the system counter a character is waited for: 10 ms, a
+/// character at 1200 baud.
+fn stuckAfter() u64 {
+    return @import("cpu.zig").counterFrequency() / 100;
+}
+
 pub fn consolePut(character: u8) void {
-    while (at(console, FR).* & FR_TXFF != 0) {}
+    if (at(console, FR).* & FR_TXFF != 0) {
+        if (console_stuck) return;
+        const cpu = @import("cpu.zig");
+        const until = cpu.time() + stuckAfter();
+        while (at(console, FR).* & FR_TXFF != 0) {
+            if (cpu.time() > until) {
+                console_stuck = true;
+                return;
+            }
+        }
+    }
+    console_stuck = false;
     at(console, DR).* = character;
 }
 
@@ -179,9 +218,22 @@ pub fn setUp(port: Port) void {
     set(port, CR, get(port, CR) | CR_DTR | CR_RTS);
 }
 
-/// One byte out. Waits while the transmit FIFO is full.
+/// One byte out. Waits while the transmit FIFO is full - but no longer
+/// than the console's raw port does, and not at all again once it gave
+/// up, until the UART takes a byte again (`console_stuck`).
 pub fn putTo(port: Port, c: u8) void {
-    while (get(port, FR) & FR_TXFF != 0) {}
+    if (get(port, FR) & FR_TXFF != 0) {
+        if (console_stuck) return;
+        const cpu = @import("cpu.zig");
+        const until = cpu.time() + stuckAfter();
+        while (get(port, FR) & FR_TXFF != 0) {
+            if (cpu.time() > until) {
+                console_stuck = true;
+                return;
+            }
+        }
+    }
+    console_stuck = false;
     set(port, DR, c);
 }
 
@@ -267,7 +319,7 @@ pub fn setLine(port: Port, line: Line) void {
 /// once the last byte has left.
 pub fn setBreak(port: Port, on: bool) void {
     if (on) {
-        while (get(port, FR) & FR_BUSY != 0) {}
+        waitIdle(geometryOf(port));
         set(port, LCR_H, get(port, LCR_H) | LCR_H_BRK);
     } else {
         set(port, LCR_H, get(port, LCR_H) & ~LCR_H_BRK);

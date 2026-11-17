@@ -7,8 +7,13 @@
 //! done before it does, has `reset.zig` too (`before_reset`), one that
 //! sets its cores' supply itself `power.zig` (`cpu_supply`), one whose
 //! firmware sets the cores' clock when asked `clock.zig` (`cpu_clock`),
-//! and one whose devices' interrupts come through a controller of its own
-//! the code for that (`interrupt_bridge`).
+//! one whose firmware powers its parts' blocks only when asked
+//! `domains.zig` (`firmware_power`) - and one whose reset tells the
+//! firmware first the memory for that in `reset.zig` (`reset_notice`) -
+//! one whose console's pins the
+//! firmware leaves to something else `pins.zig` (`console_pins`), and one
+//! whose devices' interrupts come through a controller of its own the
+//! code for that (`interrupt_bridge`).
 //!
 //! The kernel's own code reads the same list at compile time, through
 //! `fact` and `partFact`, so a fact is written once whoever reads it.
@@ -33,6 +38,7 @@ pub const system = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/system.zig"),
     .qemu_virt_a64 => @import("qemu_virt_a64/system.zig"),
     .rpi_cm5 => @import("rpi_cm5/system.zig"),
+    .rpi_cm4 => @import("rpi_cm4/system.zig"),
     .qemu_q35 => @import("qemu_q35/system.zig"),
 };
 
@@ -47,6 +53,7 @@ pub const romtags = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/romtags.zig"),
     .qemu_virt_a64 => @import("qemu_virt_a64/romtags.zig"),
     .rpi_cm5 => @import("rpi_cm5/romtags.zig"),
+    .rpi_cm4 => @import("rpi_cm4/romtags.zig"),
     .qemu_q35 => @import("qemu_q35/romtags.zig"),
 };
 
@@ -54,6 +61,7 @@ pub const romtags = switch (build_options.board) {
 /// reset, perhaps, which then does not return - or null.
 pub const before_reset: ?*const fn () void = switch (build_options.board) {
     .visionfive2 => @import("visionfive2/reset.zig").reset,
+    .rpi_cm4 => @import("rpi_cm4/reset.zig").reset,
     else => null,
 };
 
@@ -71,6 +79,49 @@ pub const cpu_supply: ?*const fn (microvolts: u32) bool = switch (build_options.
 /// the clock itself, or leaves it.
 pub const cpu_clock: ?*const fn (sys: *sdk.interface.exec.ExecBase, mhz: u32) u32 = switch (build_options.board) {
     .rpi_cm5 => @import("rpi_cm5/clock.zig").setCpuClock,
+    .rpi_cm4 => @import("rpi_cm4/clock.zig").setCpuClock,
+    else => null,
+};
+
+/// How the board's firmware is asked to power the blocks the board's
+/// parts are in, once exec is up and before any driver runs; a block it
+/// did not power is in the log, and why. Null where the firmware leaves
+/// them on, or there is no firmware to ask.
+pub const firmware_power: ?*const fn (sys: *sdk.interface.exec.ExecBase) void = switch (build_options.board) {
+    .rpi_cm4 => @import("rpi_cm4/domains.zig").powerUp,
+    else => null,
+};
+
+/// How the board's reset gets the memory it tells the firmware of the
+/// reset in, once exec is up: where the firmware has to be told (Linux's
+/// NOTIFY_REBOOT) and the reset has no exec to ask. Null elsewhere.
+pub const reset_notice: ?*const fn (sys: *sdk.interface.exec.ExecBase) void = switch (build_options.board) {
+    .rpi_cm4 => @import("rpi_cm4/reset.zig").keepNotice,
+    else => null,
+};
+
+/// How the console's pins are given to its UART (SYSTAG_ConsoleBase),
+/// before the kernel's first line: where the firmware gives them to
+/// another. Null where they are the console's already.
+pub const console_pins: ?*const fn () void = switch (build_options.board) {
+    .rpi_cm4 => @import("rpi_cm4/pins.zig").consolePins,
+    else => null,
+};
+
+/// How the board's firmware is asked for the picture it lit, before any
+/// driver runs: `ask` answers it (null where it lit none), `declare`
+/// writes it into the board's description as a panel part. The kernel
+/// writes its lines on it until the display driver has it - the one place
+/// they can be read on a board with no serial port.
+pub const FirmwareScreen = struct {
+    ask: *const fn () ?sdk.hardware.videocore.Picture,
+    declare: *const fn (sdk.hardware.videocore.Picture) bool,
+};
+
+/// The board's, or null where it has a display driver of its own, or no
+/// display.
+pub const firmware_screen: ?FirmwareScreen = switch (build_options.board) {
+    .rpi_cm4 => .{ .ask = @import("rpi_cm4/screen.zig").ask, .declare = @import("rpi_cm4/screen.zig").declare },
     else => null,
 };
 

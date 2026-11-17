@@ -31,7 +31,7 @@ fn drivePad(pad: u8, high: bool) bool {
             gpio.outputEnable(pad, true);
             return true;
         },
-        .rv64sbi, .a64psci, .x64uefi => return false,
+        .rv64sbi, .a64psci, .a64v80, .x64uefi => return false,
     }
 }
 

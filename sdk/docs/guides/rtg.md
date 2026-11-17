@@ -1408,6 +1408,7 @@ hardware.
 | Espressif QEMU | `qemu` | the emulator's display reads memory of its own: the shown buffer while nothing lies over the picture, else a frame rtg.library composes | composed by the library into that frame |
 | VisionFive 2 on HDMI, the monitor's mode | `jh7110` | the JH7110's display controller reads RAM every frame and sends it through the chip's HDMI transmitter; the driver switches on the display's power domain, its clocks and resets, reads the monitor's EDID over the transmitter's DDC, and sets the transmitter's PHY and the controller for the mode | composed by rtg.library into one of two frames, which the controller is flipped between |
 | Compute Module 5 on its first HDMI port, the monitor's mode | `bcm2712` | the BCM2712's video scaler reads RAM every frame wherever its display list says the picture is, and sends it out through the pixel valve and the HDMI controller | composed by rtg.library into one of two frames, which the scaler is flipped between |
+| Compute Module 4 on its first HDMI port, the firmware's mode | `bcm2711` | the BCM2711's video scaler reads RAM every frame through a display list of the driver's own on the channel the firmware feeds the port from; the pixel valve and the HDMI controller stay as the firmware set them | as the Compute Module 5's |
 | a PC with an AMD display, the firmware's mode | `amd` | the display engine that reads the framebuffer the firmware lit, flipped between that buffer and a frame of the device's own memory, both written through write-combining | composed by rtg.library into those two frames |
 | a PC's firmware framebuffer, QEMU's q35 | `fw` | the framebuffer the UEFI firmware lit, which reads the one buffer it was given | composed by rtg.library straight into it, at the firmware's row length |
 | QEMU's virt machines with `-device ramfb` | `fw` | the emulator reads the shown buffer out of RAM at every refresh of its window; the buffer's address, size, pitch and format are written to the file `etc/ramfb` of the machine's firmware configuration device | one whole buffer read by the emulator; else composed by rtg.library into a frame of the driver's |
@@ -1535,7 +1536,8 @@ only one that reorders blocks and converts colour, is the JPEG codec's
 Each of the 64-bit machines' displays has a driver of its own, which
 takes the panel part of its chip or the function on PCI: `jh7110` the
 JH7110's display controller (`CHIP_JH7110_DC8200`), `bcm2712` the
-BCM2712's video scaler (`CHIP_BCM2712_HVS`), `virtio` a virtio GPU
+BCM2712's video scaler (`CHIP_BCM2712_HVS`), `bcm2711` the BCM2711's
+(`CHIP_BCM2711_HVS`), `virtio` a virtio GPU
 (`CHIP_VIRTIO_GPU`) and a virtio GPU's function on PCI, `fw` QEMU's
 ramfb (`CHIP_QEMU_RAMFB`) and the framebuffer a firmware lit
 (`CHIP_UEFI_FB`), `amd` an AMD display's function on PCI behind such a
@@ -1557,7 +1559,7 @@ see the processor's caches, so the region is `RTGRF_CPU_CACHED` and
 out of the caches.
 
 **Flipped.** An HDMI port's display reads RAM past the caches
-(`jh7110`, `bcm2712`), the virtio GPU's pictures are copies the emulator
+(`jh7110`, `bcm2712`, `bcm2711`), the virtio GPU's pictures are copies the emulator
 keeps (`virtio`), and an AMD display's framebuffer would be copied into
 while it is read (`amd`): each is flipped between two frames the library
 makes its pictures in, and a drawing is seen a frame or two after it was
@@ -1580,6 +1582,23 @@ pictures the library makes, and on the Compute Module 5 is a plane of
 its own under the cursor's. The virtio GPU's pointer is the emulator's
 cursor; everywhere else the library lays it in the pictures it makes.
 The Compute Module 5's display mirrors in its planes.
+
+**The Compute Module 4's firmware keeps the mode.** It reads the
+monitor's EDID and lights a mode on the first HDMI port before the
+kernel starts; `bcm2711` has that one mode, the size the board's list
+names, and changes only the scaler's display list: a list of its own on
+the channel that feeds the port, with the picture, the overlay and the
+cursor as three planes, the cursor and the overlay each in two buffers
+that take turns as on the Compute Module 5. The firmware writes a list
+of its own again when it sets the mode again - a monitor plugged in -
+so the library looks at the board every thirty frames and the driver
+takes the channel back where the firmware's picture is still the
+board's size. The port's other blocks - the pixel valve whose interrupt
+marks each frame, the HDMI controller, its packet RAM - are in the
+table the part's `PART_Blocks` points at
+(`sdk.hardware.bcm2711.HdmiPort`). Where the firmware fed the port from
+no scaler channel, the board's list names its framebuffer instead, and
+`fw` drives that.
 
 **The firmware's picture and `amd`.** On a PC the firmware's
 framebuffer is `fw.0` from the start. `amd`, loaded from the disk, is

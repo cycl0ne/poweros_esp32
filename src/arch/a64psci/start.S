@@ -111,6 +111,9 @@
 /* How many 2 MiB of the kernel's code get pages of their own, read-only:
    past them it stays writable. */
 #define CODE_TABLES     8
+/* Level-2 tables for the GiBs that are RAM in part (mmu.zig): the
+   Raspberry Pi 4's peripherals share the GiB below 4 GiB with RAM. */
+#define SPARE_TABLES    2
 
 /* PSCI's CPU_OFF. */
 #define PSCI_CPU_OFF    0x84000002
@@ -462,6 +465,23 @@ _start_other:
     .ltorg
     .size _start_other, . - _start_other
 
+/*
+ * Where a core the firmware keeps on a spin table is sent (cpu1.zig):
+ * at EL2 with its MMU and caches off, like a core PSCI starts, but with
+ * nothing in x0 - the firmware's armstub hands every core the same 0. The
+ * core's number is the one being started, which core 0 wrote into
+ * a64_spin_core and pushed past its caches before it let the core go:
+ * cores are started one at a time.
+ */
+    .global _start_spin
+    .type _start_spin, %function
+_start_spin:
+    adrp    x0, a64_spin_core
+    add     x0, x0, :lo12:a64_spin_core
+    ldr     x0, [x0]
+    b       _start_other
+    .size _start_spin, . - _start_spin
+
     /* Set by the first core through _boot: in .data, which _start does
        not clear. */
     .section .data
@@ -469,6 +489,14 @@ _start_other:
 _boot_claimed:
     .word   0
     .word   0
+
+    /* The core a spin table's release sends to _start_spin: a cache line
+       of its own, read with the caches off. */
+    .balign 64
+    .global a64_spin_core
+a64_spin_core:
+    .quad   0
+    .balign 64
 
     /* The identity map's tables: the level-1 table, 512 blocks of
        1 GiB; the first GiB's level-2 and its first 2 MiB's level-3; the
@@ -481,6 +509,7 @@ a64_page_table:
     .global a64_low_l2
 a64_low_l2:
     .space  4096
+    .global a64_low_l3
 a64_low_l3:
     .space  4096
     .global a64_kernel_l2
@@ -488,6 +517,9 @@ a64_kernel_l2:
     .space  4096
 a64_code_l3:
     .space  CODE_TABLES * 4096
+    .global a64_spare_l2
+a64_spare_l2:
+    .space  SPARE_TABLES * 4096
 
 /*
  * The vectors: VBAR_EL1's table, 16 entries of 128 bytes on 2 KiB. Each

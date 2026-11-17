@@ -33,9 +33,9 @@ pub const help =
 pub fn run(shell: *Shell, args: *Args) anyerror!void {
     if (args.next()) |word| {
         if (!_shell.same(word, "tryboot")) return error.Usage;
-        // The firmware's mailbox, which the board names as its RTC's
-        // address, as C:Reboot finds it.
-        const mailbox = _shell.chipFact(shell, st.PARTKIND_RTC, st.CHIP_RPI_RTC, st.PART_Address, 0);
+        // The firmware's mailbox, which the board names as its firmware
+        // part's address, as C:Reboot finds it.
+        const mailbox = _shell.chipFact(shell, st.PARTKIND_FIRMWARE, st.CHIP_RPI_FIRMWARE, st.PART_Address, 0);
         if (mailbox == 0) {
             shell.print("this machine's firmware has no start it can be sent to for one time only\n", .{});
             return;

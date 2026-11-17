@@ -17,8 +17,10 @@ const Decoder = _decoder.Decoder;
 const Block = _decoder.Block;
 const wave511 = @import("../codec/_wave511.zig");
 const vcn = @import("../codec/_vcn.zig");
-const Session = @import("_session.zig").Session;
+const bcm = @import("../codec/_bcm2711.zig");
+const Session = @import("../videodec_init.zig").Session;
 const engine = @import("../videodec_init.zig").engine;
+const sessions = @import("../videodec_init.zig").sessions;
 const amdgpu = sdk.resources.amdgpu;
 const watchdog = sdk.resources.watchdog;
 const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
@@ -123,7 +125,7 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// ```
 pub fn OpenVideoDecoder(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.TagItem, err: ?*u32) ?*types.VideoDecoder {
     const sys = vb.sys_base;
-    if (comptime engine == .vcn) return openSession(vb, codec, tags, err);
+    if (comptime sessions) return openSession(vb, codec, tags, err);
     if (vb.vpu == 0) return failed(err, types.VDERR_NO_ENGINE);
     if (codec == 0 or codec & (codec - 1) != 0 or codec & vb.codecs == 0) return failed(err, types.VDERR_UNSUPPORTED);
 
@@ -240,9 +242,9 @@ fn start(vb: *VideoDecBase) void {
     vb.state = base.STATE_RUNNING;
 }
 
-/// A decoder on an AMD graphics device's decoder: the decoder started
-/// for the first, a parser opened for the stream, which is made on the
-/// decoder when its sequence is read.
+/// A decoder on an AMD graphics device's decoder, or on the BCM2711's
+/// H.265 block: the decoder started for the first, a parser opened for
+/// the stream, which is made on the decoder when its sequence is read.
 fn openSession(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.TagItem, err: ?*u32) ?*types.VideoDecoder {
     const sys = vb.sys_base;
     if (vb.codecs == 0) return failed(err, types.VDERR_NO_ENGINE);
@@ -256,7 +258,10 @@ fn openSession(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.TagItem, e
     }
     sys.ObtainSemaphore(&vb.lock);
     defer sys.ReleaseSemaphore(&vb.lock);
-    if (vb.state == base.STATE_ASLEEP) startVcn(vb);
+    if (vb.state == base.STATE_ASLEEP) {
+        if (comptime engine == .vcn) startVcn(vb);
+        if (comptime engine == .bcm2711) startHevc(vb);
+    }
     if (vb.state != base.STATE_RUNNING) return failed(err, types.VDERR_NO_ENGINE);
 
     const slot = for (vb.decoders, 0..) |d, n| {
@@ -274,6 +279,30 @@ fn openSession(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.TagItem, e
     vb.decoders[slot] = s;
     if (err) |e| e.* = types.VDERR_OK;
     return s.handle();
+}
+
+/// The BCM2711's H.265 block started - its clock at its most, its
+/// interrupt controller set and its server hooked: STATE_RUNNING, or
+/// STATE_DEAD when the firmware did not set its clock.
+fn startHevc(vb: *VideoDecBase) void {
+    if (comptime engine != .bcm2711) return;
+    const sys = vb.sys_base;
+    if (vb.vpu == 0) return;
+    const rate = bcm.start(sys, vb.vpu, vb.hevc.mailbox) orelse {
+        exec.kprintf(sys, "%s: the firmware does not set the H.265 block's clock\n", .{types.VIDEODECNAME});
+        vb.state = base.STATE_DEAD;
+        return;
+    };
+    vb.hevc.rate = rate;
+    vb.server = .{
+        .node = .{ .type = .interrupt, .pri = 0, .name = types.VIDEODECNAME },
+        .data = vb,
+        .code = &@import("../videodec_init.zig").hevcServer,
+    };
+    sys.AddIntServer(vb.vpu_irq, &vb.server);
+    vb.hooked = true;
+    vb.state = base.STATE_RUNNING;
+    exec.kprintf(sys, "%s: the H.265 block runs at %u MHz\n", .{ types.VIDEODECNAME, rate / 1_000_000 });
 }
 
 /// The AMD graphics device's decoder started: STATE_RUNNING, or

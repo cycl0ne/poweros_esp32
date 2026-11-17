@@ -213,7 +213,7 @@ pub const chip_cache: CacheHardware = switch (sdk.hardware.chip) {
     },
     .esp32p4 => p4.hardware,
     .rv64sbi => rv64.hardware,
-    .a64psci => a64.hardware,
+    .a64psci, .a64v80 => a64.hardware,
     .x64uefi => x64.hardware,
 };
 
@@ -240,13 +240,13 @@ pub const Range = struct {
 pub const data_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x3C00_0000, .end = 0x3E00_0000 },
     .esp32p4 => .{ .start = sdk.hardware.cache.CACHED_START, .end = sdk.hardware.cache.CACHED_END },
-    .rv64sbi, .a64psci, .x64uefi => .{ .start = sdk.hardware.map.DRAM_START, .end = sdk.hardware.map.DRAM_END },
+    .rv64sbi, .a64psci, .a64v80, .x64uefi => .{ .start = sdk.hardware.map.DRAM_START, .end = sdk.hardware.map.DRAM_END },
 };
 /// The instruction bus, through the ICache: on the P4 the same addresses.
 pub const instruction_bus: Range = switch (sdk.hardware.chip) {
     .esp32s3 => .{ .start = 0x4200_0000, .end = 0x4400_0000 },
     .esp32p4 => data_bus,
-    .rv64sbi, .a64psci, .x64uefi => data_bus,
+    .rv64sbi, .a64psci, .a64v80, .x64uefi => data_bus,
 };
 
 /// The start of the line holding `address`.
@@ -396,7 +396,7 @@ pub const chip_code_map: CodeMap = switch (sdk.hardware.chip) {
         .instruction_start = sdk.hardware.map.PSRAM_START,
         .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.PSRAM_START,
     },
-    .rv64sbi, .a64psci, .x64uefi => .{
+    .rv64sbi, .a64psci, .a64v80, .x64uefi => .{
         .data_start = sdk.hardware.map.DRAM_START,
         .instruction_start = sdk.hardware.map.DRAM_START,
         .size = sdk.hardware.map.DRAM_END - sdk.hardware.map.DRAM_START,

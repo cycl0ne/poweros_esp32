@@ -1,0 +1,389 @@
+# vchiq.resource
+
+vchiq.resource's functions: the message queue the VideoCore's firmware
+keeps with the ARM, its services opened by name, their messages and
+bulk transfers (sdk/resources/vchiq.zig). A resource: no Open or
+Close, its first function in the first slot. The base comes from
+OpenResource("vchiq.resource").
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [CloseService](#closeservice) - Closes a service.
+- [OpenService](#openservice) - Opens one of the firmware's services.
+- [QueueBulk](#queuebulk) - Puts out a bulk transfer, which the firmware does itself.
+- [ReceiveMessage](#receivemessage) - Takes the next message the service on the firmware's side sent.
+- [SendMessage](#sendmessage) - Sends a message to the service on the firmware's side.
+- [WaitBulk](#waitbulk) - Waits for a bulk transfer to be done.
+
+## CloseService
+
+Closes a service.
+
+**SYNOPSIS**
+
+```zig
+fn CloseService(vb: *VchiqBase, service: ?*VchiqService) void
+```
+
+**SINCE**
+
+1.0. LVO -8.
+
+**INPUTS**
+
+- `service` - as OpenService gave it; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A CLOSE goes to the firmware, unless it closed the service itself,
+and its answer is waited for, a second at most. Bulks still out are
+given up (VCHIQERR_ABORTED, their `done` signalled) and the messages
+not received are dropped.
+
+**CONTEXT**
+
+- Waits: yes, for the firmware's answer.
+- Interrupts: no.
+- Locks: the resource's start lock, for the call.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The service is gone. The bulks that were out are the caller's again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenService`
+
+**EXAMPLES**
+
+```zig
+vb.CloseService(mmal);
+```
+
+## OpenService
+
+Opens one of the firmware's services.
+
+**SYNOPSIS**
+
+```zig
+fn OpenService(vb: *VchiqBase, fourcc: u32, version: u32,
+    version_min: u32, err: ?*u32) ?*VchiqService
+```
+
+**SINCE**
+
+1.0. LVO -4.
+
+**INPUTS**
+
+- `fourcc` - the service's name, vchiq.fourcc("mmal").
+- `version` - the version of the service's protocol the caller
+  speaks, and `version_min` the oldest it still speaks: the firmware
+  refuses a caller whose versions do not meet its own.
+- `err` - VCHIQERR_OK, or why it failed; null if not wanted.
+
+**RESULT**
+
+The service, or null and in `err` why not: VCHIQERR_NO_FIRMWARE when
+there is no queue - no VCHIQ on the board, no memory kept for it, a
+firmware that does not take it or does not connect; VCHIQERR_REFUSED
+when the firmware has no such service, or not in those versions;
+VCHIQERR_TIMEOUT when it did not answer in a second; VCHIQERR_BUSY
+when seven services are open; VCHIQERR_NO_MEMORY.
+
+**BEHAVIOR**
+
+The first call starts the queue: it lays the queue out in the memory
+the kernel kept for it (PART_SharedMemory), starts the resource's
+task, hooks the doorbell's interrupt, hands the memory to the
+firmware through the mailbox and exchanges CONNECTs with it. A queue
+that would not start stays dead until the machine is restarted. Then
+an OPEN goes to the firmware, and its answer is waited for.
+
+**CONTEXT**
+
+- Waits: yes, for the firmware - a second at most for each step.
+- Interrupts: no.
+- Locks: the resource's start lock, for the call.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The service is the caller's until CloseService.
+
+**BUGS**
+
+An OPEN the firmware answers after the second is not closed again.
+
+**SEE ALSO**
+
+`CloseService`, `SendMessage`, `ReceiveMessage`
+
+**EXAMPLES**
+
+```zig
+var err: u32 = 0;
+const mmal = vb.OpenService(vchiq.fourcc("mmal"), 15, 10, &err) orelse return err;
+defer vb.CloseService(mmal);
+```
+
+## QueueBulk
+
+Puts out a bulk transfer, which the firmware does itself.
+
+**SYNOPSIS**
+
+```zig
+fn QueueBulk(vb: *VchiqBase, service: *VchiqService,
+    bulk: *VchiqBulk) u32
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `service` - as OpenService gave it.
+- `bulk` - its `data`, `size` and `direction` filled in: for
+  VCHIQBULK_TRANSMIT the bytes the firmware reads, for
+  VCHIQBULK_RECEIVE room for what it writes.
+
+**RESULT**
+
+VCHIQERR_OK, and `bulk.done` is signalled once it is done;
+VCHIQERR_SIZE for no bytes, more than 62 MiB, or memory above
+64 GiB; VCHIQERR_BUSY when four bulks of that direction are out on
+the service, or sixty-four on the queue; VCHIQERR_CLOSED;
+VCHIQERR_TIMEOUT when the queue was full - and then nothing went out.
+
+**BEHAVIOR**
+
+The memory is described to the firmware in a pagelist, its pages by
+their numbers - it must be one piece, as AllocMem gives it - and is
+written back from the caches; then a BULK_TX or BULK_RX message goes
+after the messages before it. The firmware matches it with a transfer
+of its own on the service: the order of a direction's bulks is the
+order its transfers come in, which the service's protocol says (an
+MMAL message, then its bulk). When the firmware is done the
+resource's task reads what it wrote past the caches and copies over
+the ends that were not whole cache lines (which the firmware hands
+over aside), sets `actual` and `result` and signals `done`.
+
+**CONTEXT**
+
+- Waits: only while the queue is full.
+- Interrupts: no.
+- Locks: the queue's send lock, for the call.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The memory is the firmware's until `done` is signalled: the caller
+neither reads nor writes it, nor anything else in its first and last
+64-byte lines.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WaitBulk`, `SendMessage`
+
+**EXAMPLES**
+
+```zig
+var bulk: vchiq.VchiqBulk = .{ .data = frame, .size = bytes, .direction = vchiq.VCHIQBULK_RECEIVE };
+if (vb.QueueBulk(mmal, &bulk) == vchiq.VCHIQERR_OK) _ = vb.WaitBulk(&bulk, 1_000_000);
+```
+
+## ReceiveMessage
+
+Takes the next message the service on the firmware's side sent.
+
+**SYNOPSIS**
+
+```zig
+fn ReceiveMessage(vb: *VchiqBase, service: *VchiqService,
+    buffer: [*]u8, size: u32, length: *u32, timeout_us: u64) u32
+```
+
+**SINCE**
+
+1.0. LVO -16.
+
+**INPUTS**
+
+- `service` - as OpenService gave it.
+- `buffer` - `size` bytes of room for it; VCHIQ_MAX_MESSAGE always
+  has room.
+- `length` - the message's length, of which no more than `size`
+  bytes were copied; 0 when there was none.
+- `timeout_us` - how long to wait for one: 0 only looks,
+  exec.WAIT_FOREVER has no limit.
+
+**RESULT**
+
+VCHIQERR_OK; VCHIQERR_TIMEOUT when none came in the time;
+VCHIQERR_CLOSED when the service is closed and every message it got
+was taken.
+
+**BEHAVIOR**
+
+The messages come in the order the firmware sent them. The
+resource's task copies each out of the firmware's slot as soon as it
+arrives, so they wait here however long the caller takes.
+
+**CONTEXT**
+
+- Waits: yes, up to `timeout_us`.
+- Interrupts: no.
+- Locks: the queue's list lock, briefly.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes are the caller's.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SendMessage`, `OpenService`
+
+**EXAMPLES**
+
+```zig
+var reply: [vchiq.VCHIQ_MAX_MESSAGE]u8 = undefined;
+var length: u32 = 0;
+if (vb.ReceiveMessage(mmal, &reply, reply.len, &length, 3_000_000) == vchiq.VCHIQERR_OK) use(reply[0..length]);
+```
+
+## SendMessage
+
+Sends a message to the service on the firmware's side.
+
+**SYNOPSIS**
+
+```zig
+fn SendMessage(vb: *VchiqBase, service: *VchiqService,
+    data: [*]const u8, size: u32) u32
+```
+
+**SINCE**
+
+1.0. LVO -12.
+
+**INPUTS**
+
+- `service` - as OpenService gave it.
+- `data` - the message: `size` bytes, 1 to VCHIQ_MAX_MESSAGE.
+
+**RESULT**
+
+VCHIQERR_OK; VCHIQERR_SIZE for an empty message or one too large,
+VCHIQERR_CLOSED when the service is closed, VCHIQERR_TIMEOUT when the
+firmware gave no room for it in two seconds - and then nothing went.
+
+**BEHAVIOR**
+
+The message goes after everything sent before it on the queue - by
+any task, on any service, bulks' messages too - and the firmware is
+told at once. When the ARM's slots are full the call waits for the
+firmware to give one back.
+
+**CONTEXT**
+
+- Waits: only while the queue is full, or the firmware paused it.
+- Interrupts: no.
+- Locks: the queue's send lock, for the call.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes are copied: `data` is the caller's again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReceiveMessage`, `QueueBulk`
+
+**EXAMPLES**
+
+```zig
+if (vb.SendMessage(mmal, &request, request.len) != vchiq.VCHIQERR_OK) return error.Failed;
+```
+
+## WaitBulk
+
+Waits for a bulk transfer to be done.
+
+**SYNOPSIS**
+
+```zig
+fn WaitBulk(vb: *VchiqBase, bulk: *VchiqBulk, timeout_us: u64) u32
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `bulk` - as QueueBulk put it out.
+- `timeout_us` - how long to wait: 0 only looks, exec.WAIT_FOREVER
+  has no limit.
+
+**RESULT**
+
+Its result: VCHIQERR_OK, and `bulk.actual` the bytes moved, or
+VCHIQERR_ABORTED when the firmware gave it up; VCHIQERR_TIMEOUT when
+it is still out.
+
+**BEHAVIOR**
+
+It waits on `bulk.done` alone; a caller with more to wait for waits
+on that among the rest (WaitForAny) and reads `bulk.result`.
+
+**CONTEXT**
+
+- Waits: yes, up to `timeout_us`.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Once it is done the bulk and its memory are the caller's again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`QueueBulk`
+
+**EXAMPLES**
+
+```zig
+if (vb.WaitBulk(&bulk, 1_000_000) != vchiq.VCHIQERR_OK) return error.Failed;
+```

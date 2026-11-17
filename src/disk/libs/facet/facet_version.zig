@@ -7031,4 +7031,8 @@ pub const LIBRARY_VERSION = 1;
 /// 212: **A window surface's rows by rtg.library's word.** How many bytes
 /// a row of the screen's pixels takes is asked of rtg.library
 /// (`RtgRowBytes`) when the surface's pictures are made.
-pub const LIBRARY_REVISION = 212;
+///
+/// 213: the V3D's driver finds the VideoCore firmware's mailbox as the
+/// board's firmware part (CHIP_RPI_FIRMWARE), not as its RTC's address;
+/// nothing it draws changes.
+pub const LIBRARY_REVISION = 213;

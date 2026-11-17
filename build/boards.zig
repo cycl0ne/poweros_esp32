@@ -51,10 +51,12 @@ pub const virt_work_dir = "work";
 /// `visionfive2` is StarFive's JH7110 board, booted from U-Boot.
 /// `qemu_virt_a64` is upstream QEMU's AArch64 `virt` machine with
 /// Cortex-A76 cores and a GICv2, which the `virt64` steps run;
-/// `rpi_cm5` is the Raspberry Pi Compute Module 5, booted from its eMMC.
+/// `rpi_cm5` is the Raspberry Pi Compute Module 5, booted from its eMMC;
+/// `rpi_cm4` the Compute Module 4 on Waveshare's CM4-NANO-B, from its
+/// eMMC or over USB.
 /// `qemu_q35` is upstream QEMU's x86-64 q35 machine started by UEFI
 /// firmware, which the `q35` step runs.
-pub const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64, rpi_cm5, qemu_q35 };
+pub const Board = enum { waveshare_7b, es3c35p, qemu, esp32p4_emu, olimex_p4pc, crowpanel_p4, qemu_virt, visionfive2, qemu_virt_a64, rpi_cm5, rpi_cm4, qemu_q35 };
 
 /// The chip a board is built on, which picks the kernel's target, its
 /// root, start code and linker script, and how its image is made.
@@ -70,7 +72,7 @@ pub const flash_boards = [_]Board{ .waveshare_7b, .es3c35p, .qemu, .olimex_p4pc,
 
 /// The chips whose disk is in RAM, or on a medium as large as one likes:
 /// one image each, for every board on that chip.
-pub const ram_chips = [_]Chip{ .rv64sbi, .a64psci, .x64uefi };
+pub const ram_chips = [_]Chip{ .rv64sbi, .a64psci, .a64v80, .x64uefi };
 
 /// The sets `board`'s disk holds, as its `disk.zig` names them.
 pub fn boardSets(board: Board) Sets {
@@ -85,6 +87,7 @@ pub fn boardSets(board: Board) Sets {
         .visionfive2 => @import("../src/boards/visionfive2/disk.zig").sets,
         .qemu_virt_a64 => @import("../src/boards/qemu_virt_a64/disk.zig").sets,
         .rpi_cm5 => @import("../src/boards/rpi_cm5/disk.zig").sets,
+        .rpi_cm4 => @import("../src/boards/rpi_cm4/disk.zig").sets,
         .qemu_q35 => @import("../src/boards/qemu_q35/disk.zig").sets,
     };
     return poweros_userland.parseSets(text) orelse std.debug.panic("src/boards/{s}/disk.zig names a set there is none of: {s}", .{ @tagName(board), text });
@@ -96,6 +99,7 @@ pub fn chipOf(board: Board) Chip {
         .esp32p4_emu, .olimex_p4pc, .crowpanel_p4 => .esp32p4,
         .qemu_virt, .visionfive2 => .rv64sbi,
         .qemu_virt_a64, .rpi_cm5 => .a64psci,
+        .rpi_cm4 => .a64v80,
         .qemu_q35 => .x64uefi,
     };
 }
@@ -111,7 +115,7 @@ pub fn iconSize(board: Board) u32 {
         // 480x320
         .es3c35p => 40,
         // No screen yet.
-        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64, .rpi_cm5, .qemu_q35 => 48,
+        .esp32p4_emu, .olimex_p4pc, .crowpanel_p4, .qemu_virt, .visionfive2, .qemu_virt_a64, .rpi_cm5, .rpi_cm4, .qemu_q35 => 48,
     };
 }
 
@@ -134,6 +138,7 @@ pub fn boardConsole(board: Board) []const u8 {
         .crowpanel_p4 => "UART0 through the board's CH340K at 115200 8N1",
         .visionfive2 => "the debug UART on pins 8 and 10 of the 40-pin header at 115200 8N1, through a 3.3 V serial adapter",
         .rpi_cm5 => "the RP1's UART0 on pins 8 and 10 of the 40-pin header at 115200 8N1",
+        .rpi_cm4 => "none on the CM4-NANO-B: the kernel's lines go on the HDMI port's picture, and the network is the way in",
         .qemu_virt, .qemu_virt_a64, .qemu_q35 => "the terminal QEMU is started in",
     };
 }

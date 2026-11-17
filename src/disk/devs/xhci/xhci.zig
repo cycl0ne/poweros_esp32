@@ -476,9 +476,19 @@ fn release(base: *XhciBase, function: ?*pci.PCIDevice) void {
     if (function) |claimed| base.pci_base.?.ReleasePCIDevice(claimed);
 }
 
-/// The board's own controllers - its CHIP_DWC3 parts that may be hosts -
-/// each at the unit its part names: where its registers are, and its
-/// interrupt.
+/// Whether `part` is a controller of the board's own this drives: a DWC3,
+/// or a plain xHCI in memory - not one on PCI, which is found there.
+fn boardHost(ub: *UtilityBase, part: *const expansion.BoardPart) bool {
+    const chip = ub.GetTagData(st.PART_Chip, 0, part.tags);
+    if (chip == st.CHIP_XHCI and ub.GetTagData(st.PART_Bus, st.BUS_NONE, part.tags) != st.BUS_MEMORY) return false;
+    if (chip != st.CHIP_DWC3 and chip != st.CHIP_XHCI) return false;
+    if (ub.GetTagData(st.PART_UsbRoles, st.USBROLE_HOST, part.tags) & st.USBROLE_HOST == 0) return false;
+    return ub.GetTagData(st.PART_Address, 0, part.tags) != 0;
+}
+
+/// The board's own controllers - its CHIP_DWC3 parts, and its CHIP_XHCI
+/// parts in memory, that may be hosts - each at the unit its part names:
+/// where its registers are, its interrupt, and whether it is a DWC3.
 fn findBoardControllers(base: *XhciBase) void {
     const sys = base.sys_base;
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return;
@@ -490,10 +500,9 @@ fn findBoardControllers(base: *XhciBase) void {
     // How many of them there are, which is the highest unit a part
     // names: the block below is allocated for that many.
     var count: u32 = 0;
-    var part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_DWC3);
-    while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_DWC3)) {
-        if (ub.GetTagData(st.PART_UsbRoles, st.USBROLE_HOST, it.tags) & st.USBROLE_HOST == 0) continue;
-        if (ub.GetTagData(st.PART_Address, 0, it.tags) == 0) continue;
+    var part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_ANY);
+    while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_ANY)) {
+        if (!boardHost(ub, it)) continue;
         const unit: u32 = @truncate(ub.GetTagData(st.PART_BusUnit, 0, it.tags));
         count = @max(count, unit + 1);
     }
@@ -501,13 +510,15 @@ fn findBoardControllers(base: *XhciBase) void {
     const memory = sys.AllocMem(count * @sizeOf(BoardController), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return;
     base.board = @ptrCast(@alignCast(memory));
     base.board_units = count;
-    part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_DWC3);
-    while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_DWC3)) {
-        if (ub.GetTagData(st.PART_UsbRoles, st.USBROLE_HOST, it.tags) & st.USBROLE_HOST == 0) continue;
-        const registers = ub.GetTagData(st.PART_Address, 0, it.tags);
-        if (registers == 0) continue;
+    part = eb.FindBoardPart(null, st.PARTKIND_USB, st.CHIP_ANY);
+    while (part) |it| : (part = eb.FindBoardPart(it, st.PARTKIND_USB, st.CHIP_ANY)) {
+        if (!boardHost(ub, it)) continue;
         const unit: u32 = @truncate(ub.GetTagData(st.PART_BusUnit, 0, it.tags));
-        base.board.?[unit] = .{ .regs = registers, .irq = @truncate(ub.GetTagData(st.PART_Irq, 0, it.tags)) };
+        base.board.?[unit] = .{
+            .regs = ub.GetTagData(st.PART_Address, 0, it.tags),
+            .irq = @truncate(ub.GetTagData(st.PART_Irq, 0, it.tags)),
+            .dwc3 = ub.GetTagData(st.PART_Chip, 0, it.tags) == st.CHIP_DWC3,
+        };
     }
 }
 

@@ -71,6 +71,7 @@ flowchart TB
     m_touch_device["touch.device"]
     m_usbport_resource["usbport.resource"]
     m_usbserial_device["usbserial.device"]
+    m_vchiq_resource["vchiq.resource"]
     m_videodec_resource["videodec.resource"]
     m_watchdog_resource["watchdog.resource"]
 
@@ -130,6 +131,7 @@ flowchart TB
     m_jpeg_resource --> m_dma_resource
     m_jpeg_resource --> m_ps2_resource
     m_jpeg_resource --> m_timer_device
+    m_jpeg_resource --> m_vchiq_resource
     m_jpeg_resource --> m_watchdog_resource
     m_keyboard_device --> m_timer_device
     m_keymap_library --> m_dos_library
@@ -166,10 +168,12 @@ flowchart TB
     m_touch_device --> m_timer_device
     m_usbport_resource --> m_ps2_resource
     m_usbserial_device --> m_usbport_resource
+    m_vchiq_resource --> m_ps2_resource
     m_videodec_resource --> m_amdgpu_resource
     m_videodec_resource --> m_dos_library
     m_videodec_resource --> m_ps2_resource
     m_videodec_resource --> m_timer_device
+    m_videodec_resource --> m_vchiq_resource
     m_videodec_resource --> m_watchdog_resource
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
@@ -177,7 +181,7 @@ flowchart TB
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
     class m_audio_device,m_console_device,m_flash_device,m_i2c_device,m_input_device,m_keyboard_device,m_mouse_device,m_serial_device,m_timer_device,m_touch_device,m_usbserial_device dev
     classDef res fill:#fef3c7,stroke:#d97706,color:#111827
-    class m_amdgpu_resource,m_battclock_resource,m_battery_resource,m_battmem_resource,m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource,m_platform_resource,m_power_resource,m_ps2_resource,m_thermal_resource,m_usbport_resource,m_videodec_resource,m_watchdog_resource res
+    class m_amdgpu_resource,m_battclock_resource,m_battery_resource,m_battmem_resource,m_dma_resource,m_expander_resource,m_gpio_resource,m_jpeg_resource,m_platform_resource,m_power_resource,m_ps2_resource,m_thermal_resource,m_usbport_resource,m_vchiq_resource,m_videodec_resource,m_watchdog_resource res
     classDef hand fill:#fce7f3,stroke:#db2777,color:#111827
     class m_Shell,m_con_handler,m_flashfs_handler,m_nil_handler,m_pipe_handler,m_ram_handler hand
 ```

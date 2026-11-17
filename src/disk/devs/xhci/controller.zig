@@ -124,11 +124,11 @@ pub fn bringUp(host: *Host) bool {
 }
 
 /// Where the controller's registers are: a board controller's where its
-/// part says, the DWC3 made a host first; a PCI function's in BAR0, its
+/// part says, a DWC3 made a host first; a PCI function's in BAR0, its
 /// memory decoding and bus mastering on. Null if they were not placed.
 fn registersOf(host: *Host) ?usize {
     const function = host.function orelse {
-        dwc3.asHost(host.board.regs);
+        if (host.board.dwc3) dwc3.asHost(host.board.regs);
         return host.board.regs;
     };
     const pb = host.dev_base.pci_base.?;

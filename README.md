@@ -201,6 +201,7 @@ and 2D-DMA - and where a display reads its picture out of RAM, on the
 | `dsi` | the ESP32-P4's MIPI DSI panels, and HDMI through the Olimex's LT8912B |
 | `jh7110` | the VisionFive 2's HDMI port, in the monitor's own mode |
 | `bcm2712` | the Compute Module 5's first HDMI port, in the monitor's own mode |
+| `bcm2711` | the Compute Module 4's first HDMI port, in the mode its firmware lit |
 | `virtio` | QEMU's virtio GPU - on a memory-mapped transport (`virtio-gpu-device`) or on PCI (`virtio-gpu-pci`), the pointer the host's own; on `qemu_q35` loaded from the disk |
 | `fw` | the framebuffer a UEFI firmware lit, and QEMU's `ramfb` |
 | `amd` | an AMD display behind the framebuffer its firmware lit, flipped between that buffer and a frame of the device's own; loaded from the disk |

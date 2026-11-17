@@ -45,7 +45,7 @@ const st = st_expansion.systemtags;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Reboot";
-const VERSION_STRING = "\x00$VER: Reboot 1.0 (02.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Reboot 1.1 (16.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TRYBOOT/S,FORCE/S,QUIET/S";
@@ -137,8 +137,8 @@ fn setFlags(sys: *ExecBase, mailbox: usize, flags: u32) bool {
     return videocore.call(sys, mailbox, buffer, TAG_SET_REBOOT_FLAGS, &value);
 }
 
-/// The firmware's mailbox, which the board names as its RTC's address;
-/// null on a board that has none.
+/// The firmware's mailbox, as the board's firmware part names it
+/// (CHIP_RPI_FIRMWARE); null on a board that has none.
 fn mailboxOf(sys: *ExecBase) ?usize {
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return null;
     defer sys.CloseLibrary(utility_lib);
@@ -146,7 +146,7 @@ fn mailboxOf(sys: *ExecBase) ?usize {
     const expansion_lib = sys.OpenLibrary(st_expansion.EXPANSIONNAME, 1) orelse return null;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
-    const part = eb.FindBoardPart(null, st.PARTKIND_RTC, st.CHIP_RPI_RTC) orelse return null;
+    const part = eb.FindBoardPart(null, st.PARTKIND_FIRMWARE, st.CHIP_RPI_FIRMWARE) orelse return null;
     const address = utility.GetTagData(st.PART_Address, 0, part.tags);
     return if (address != 0) address else null;
 }

@@ -2,7 +2,7 @@
 //! Jpeg: a JPEG file decoded by the machine's codec and by software, the
 //! two timed and compared. Built against the SDK only.
 //!
-//!   Jpeg FILE/A,ROUNDS/K/N,WATCHDOG/K/N
+//!   Jpeg FILE/A,ROUNDS/K/N,WATCHDOG/K/N,TO/K
 //!
 //! The file is read into memory and shown to jpeg.resource, which says
 //! what it is and whether its codec takes it; a codec that does decodes
@@ -18,6 +18,10 @@
 //!
 //! On a machine without a codec the resource is missing and only the
 //! software picture is made.
+//!
+//! TO writes the codec's picture of its last decode to that file, its rows
+//! packed one after the other: three bytes a pixel, blue first, or one for
+//! grey - to be compared on another machine.
 //!
 //! WATCHDOG arms the watchdog for that many milliseconds before the first
 //! decode, feeds it after each, and disarms it at the end: a codec that
@@ -46,13 +50,14 @@ const AMDGPUBase = sdk.interface.amdgpu.AMDGPUBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Jpeg";
-const VERSION_STRING = "\x00$VER: Jpeg 1.1 (07.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Jpeg 1.2 (17.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,ROUNDS/K/N,WATCHDOG/K/N";
+const template = "FILE/A,ROUNDS/K/N,WATCHDOG/K/N,TO/K";
 const arg_file = 0;
 const arg_rounds = 1;
 const arg_watchdog = 2;
+const arg_to = 3;
 
 /// A difference in a channel larger than this is counted as far apart.
 const far_apart = 24;
@@ -120,8 +125,9 @@ fn amdDevice(sys: *ExecBase) bool {
     return ab.GetGPUInfo(&info);
 }
 
-/// The codec on its own: what the file is, and one decode's time.
-fn codecAlone(sys: *ExecBase, dl: *DosBase, jb: *jpeg.JpegBase, tb: *TimerBase, file: []const u8, rounds: u32, guard: Guard) void {
+/// The codec on its own: what the file is, and one decode's time; its
+/// last picture written to `to` if that is given.
+fn codecAlone(sys: *ExecBase, dl: *DosBase, jb: *jpeg.JpegBase, tb: *TimerBase, file: []const u8, rounds: u32, guard: Guard, to: ?[*:0]const u8) void {
     const length: u32 = @intCast(file.len);
     var info: jpeg.JPEGInfo = .{};
     const examined = jb.ExamineJPEG(file.ptr, length, &info);
@@ -140,7 +146,10 @@ fn codecAlone(sys: *ExecBase, dl: *DosBase, jb: *jpeg.JpegBase, tb: *TimerBase, 
         const answer = jb.DecodeJPEG(file.ptr, length, &picture);
         const took = now(tb) - start;
         guard.feed();
-        jb.FreeJPEGPicture(&picture);
+        defer jb.FreeJPEGPicture(&picture);
+        if (answer == jpeg.JPEGERR_OK and round + 1 == rounds) {
+            if (to) |where| save(dl, where, &picture, if (info.sampling == jpeg.JPEGSAMP_GREY) 1 else 3);
+        }
         if (answer != jpeg.JPEGERR_OK) {
             _ = Printf(dl, "Codec: %s\n", .{answerName(answer)});
             if (answer == jpeg.JPEGERR_NO_ENGINE and guard.wb == null and amdDevice(sys)) _ = Printf(dl, "(an AMD graphics device's decoder starts only with WATCHDOG given)\n", .{});
@@ -149,6 +158,26 @@ fn codecAlone(sys: *ExecBase, dl: *DosBase, jb: *jpeg.JpegBase, tb: *TimerBase, 
         best = @min(best, took);
     }
     _ = Printf(dl, "Codec alone: %ld us a decode\n", .{best});
+}
+
+/// `picture`'s rows, `per_pixel` bytes a pixel, packed into the file
+/// `name`.
+fn save(dl: *DosBase, name: [*:0]const u8, picture: *const jpeg.JPEGPicture, per_pixel: u32) void {
+    const file = dl.Open(name, dos.MODE_NEWFILE) orelse {
+        _ = Printf(dl, "%s: cannot be written\n", .{name});
+        return;
+    };
+    defer _ = dl.Close(file);
+    const row_bytes: isize = @intCast(picture.width * per_pixel);
+    var row: u32 = 0;
+    while (row < picture.height) : (row += 1) {
+        const from = picture.pixels.? + @as(usize, row) * picture.pitch;
+        if (dl.Write(file, from, row_bytes) != row_bytes) {
+            _ = Printf(dl, "%s: writing failed\n", .{name});
+            return;
+        }
+    }
+    _ = Printf(dl, "Codec's picture written to %s\n", .{name});
 }
 
 /// A picture made by jpeg.datatype with the decoder `want` allows.
@@ -253,7 +282,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [3]usize = @splat(0);
+    var argv: [4]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -291,7 +320,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
     const codec_there = sys.OpenResource(jpeg.JPEGNAME) != null;
     if (sys.OpenResource(jpeg.JPEGNAME)) |found| {
-        codecAlone(sys, dl, @ptrCast(found), tb, file, rounds, guard);
+        const to: ?[*:0]const u8 = if (argv[arg_to] != 0) @ptrFromInt(argv[arg_to]) else null;
+        codecAlone(sys, dl, @ptrCast(found), tb, file, rounds, guard, to);
     } else {
         _ = Printf(dl, "No %s: software only\n", .{jpeg.JPEGNAME});
     }

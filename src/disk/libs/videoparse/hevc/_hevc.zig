@@ -60,8 +60,9 @@ pub const State = struct {
     /// The last picture was finished at the end of its access unit: a
     /// segment that does not begin another is passed over.
     ended_early: bool,
-    /// The segment being read.
+    /// The segment being read, and its entry points.
     hdr: Header,
+    entry_points: [slice_mod.max_entry_points]u32,
     rbsp: Buffer,
     /// What the events point at: each picture's by its slot, the slice.
     pictures: [dpb_mod.max_pics]vp.VideoPicture,
@@ -200,7 +201,7 @@ fn segment(p: *Parser, st: *State, u: []const u8, h: nal.Header) Error!Step {
         if (st.dpb.skipped(h)) return .done;
     } else if (pps != st.active_pps) return error.Corrupt;
     const hdr = &st.hdr;
-    try slice_mod.parse(&b, hdr, h, sps, pps, &st.indep);
+    try slice_mod.parse(&b, hdr, &st.entry_points, h, sps, pps, &st.indep);
     if (st.cur == null) {
         // A dependent segment needs the header of its slice.
         if (hdr.dependent) return error.Corrupt;

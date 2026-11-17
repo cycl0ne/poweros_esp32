@@ -23,8 +23,9 @@
 //! message goes and invalidated before the answer is read. It is where
 //! the firmware's DMA reaches - Linux keeps its buffers for it in the
 //! first GiB, and the board's DMA limit says as much (MEMF_DMA) - at the
-//! address the ARM has it at, as the device tree maps the firmware's
-//! DMA one to one.
+//! address the ARM has it at on the BCM2712, whose device tree maps the
+//! firmware's DMA one to one; the BCM2711's VideoCore names that GiB at
+//! 0xC000_0000, its view of it without its own caches (`busAddress`).
 //!
 //! **One at a time.** An answer is only the word its message was sent
 //! with, so two asking at once could each take the other's: everyone who
@@ -69,6 +70,31 @@ pub const REBOOT_TRYBOOT: u32 = 1 << 0;
 
 /// How long the firmware is given to answer.
 const answer_us: u64 = 100_000;
+
+/// A picture the firmware lit and handed over for the ARM to draw in
+/// (src/boards/rpi_cm4/screen.zig): where its pixels are, 32 bits each,
+/// and how many bytes they take; its size; the bytes from one row's start
+/// to the next; and whether a pixel's bytes are blue, green, red and a
+/// spare - what the firmware calls BGR order (its 0).
+pub const Picture = struct {
+    base: usize,
+    bytes: usize,
+    width: u32,
+    height: u32,
+    pitch: u32,
+    bgra: bool,
+};
+
+/// `address` in the ARM's first GiB as the VideoCore behind `mailbox`
+/// names it. The BCM2711's mailbox is below 4 GiB, at 0xFE00_B880, and
+/// its VideoCore reaches that GiB at 0xC000_0000 past its own caches -
+/// Linux's device tree for it says so (`dma-ranges`), and its firmware
+/// driver sends that address. The BCM2712's is above, and takes the ARM's
+/// address as it is.
+pub fn busAddress(mailbox: usize, address: usize) u32 {
+    const low: u32 = @intCast(address);
+    return if (mailbox < 1 << 32) low | 0xC000_0000 else low;
+}
 
 /// The message asking tag `tag` with `value` written into `into`: how
 /// many words it is.
@@ -124,7 +150,7 @@ pub fn call(sys: *ExecBase, mailbox: usize, buffer: *align(buffer_bytes) Buffer,
     defer if (lock) |held| sys.ReleaseSemaphore(held);
     var length: u32 = buffer_bytes;
     _ = sys.CachePreDMA(buffer, &length, 0);
-    const sent: u32 = @as(u32, @intCast(@intFromPtr(buffer))) | CHANNEL_PROPERTY;
+    const sent: u32 = busAddress(mailbox, @intFromPtr(buffer)) | CHANNEL_PROPERTY;
     const until = sys.UptimeUs() + answer_us;
     while (reg(mailbox + MAIL1_STATUS).* & STATUS_FULL != 0) {
         if (sys.UptimeUs() > until) return false;

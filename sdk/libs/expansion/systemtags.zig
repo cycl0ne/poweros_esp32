@@ -386,8 +386,30 @@ pub const PART_DataAddress = PART_Dummy + 0x55;
 pub const PART_DmaRequest = PART_Dummy + 0x56;
 /// A part made of several blocks of registers: a pointer to a table of
 /// where the ones beside PART_Address are. The table's shape is the
-/// chip's own (`sdk.hardware.bcm2712.HdmiPort` for CHIP_BCM2712_HVS).
+/// chip's own (`sdk.hardware.bcm2712.HdmiPort` for CHIP_BCM2712_HVS,
+/// `sdk.hardware.bcm2711.HdmiPort` for CHIP_BCM2711_HVS).
 pub const PART_Blocks = PART_Dummy + 0x57;
+
+/// Memory the part shares with another master that reaches it past the
+/// cores' caches - the VideoCore's message queue: a `*SharedMemory`, in
+/// which the board says how much and below where, and the kernel where
+/// it kept it. The kernel keeps it from exec when it starts and maps it
+/// without caches, so that both sides' writes reach the other as they
+/// are made. On the AArch64 machines.
+pub const PART_SharedMemory = PART_Dummy + 0x58;
+
+/// What PART_SharedMemory points at.
+pub const SharedMemory = extern struct {
+    /// Where the kernel kept it, on a 2 MiB boundary; 0 where it could
+    /// not.
+    base: usize = 0,
+    /// How many bytes the part asks for. The kernel keeps whole blocks
+    /// of 2 MiB, the size it maps memory in.
+    bytes: usize,
+    /// The address it must end below: what the other master reaches (the
+    /// VideoCore, the first GiB).
+    below: usize,
+};
 
 /// A line's role, short, for a listing: "RESET", "SCL", "D0". Null for a
 /// tag that is not a line.
@@ -521,6 +543,10 @@ pub const PARTKIND_GPU: u32 = 28;
 /// PART_Address and the PART_Power* tags where its registers are, and
 /// PART_Irq the line it raises. power.resource's.
 pub const PARTKIND_POWER: u32 = 29;
+/// The firmware that runs beside the CPUs and is asked things through a
+/// mailbox - the next start's flags, the cores' clocks, power to a
+/// block: PART_Chip which firmware, PART_Address its mailbox.
+pub const PARTKIND_FIRMWARE: u32 = 30;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -591,10 +617,15 @@ pub const CHIP_PCI_ECAM: u32 = 26;
 /// (PARTKIND_PCI on BUS_MEMORY): PART_BusUnit which one, PART_Address its
 /// bridge's registers; its INTA to INTD are gathered on PART_Irq.
 pub const CHIP_JH7110_PCIE: u32 = 27;
-/// An xHCI USB host controller, found on PCI (PARTKIND_USB on BUS_PCI):
+/// An xHCI USB host controller. Found on PCI (PARTKIND_USB on BUS_PCI):
 /// PART_BusUnit says which - xhci.device's unit, the PCI functions
 /// counted in the order pci.library has them, after the board's own
-/// controllers (CHIP_DWC3).
+/// controllers. Or a board's own that is no PCI function and needs
+/// nothing before its xHCI registers (PARTKIND_USB on BUS_MEMORY):
+/// PART_Address its registers, PART_Irq its first interrupter's
+/// interrupt, PART_BusUnit its xhci.device unit, as for CHIP_DWC3 - the
+/// BCM2711's, which the Compute Module 4's firmware gives the USB 2.0
+/// port with `otg_mode=1`.
 pub const CHIP_XHCI: u32 = 28;
 /// Motorcomm's YT8531, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET on
 /// BUS_RGMII): PART_BusUnit the MAC it is wired to, PART_Address its
@@ -671,7 +702,8 @@ pub const CHIP_BCM2712_PCIE: u32 = 41;
 /// host's lines - the data's four in a row from it.
 pub const CHIP_CYW43455: u32 = 42;
 /// The Raspberry Pi 5's and Compute Module 5's RTC (PARTKIND_RTC on
-/// BUS_MEMORY, PART_Address the VideoCore's mailbox): a count of seconds
+/// BUS_MEMORY, PART_Address the VideoCore's mailbox, as the board's
+/// CHIP_RPI_FIRMWARE has it): a count of seconds
 /// since 1970 in the board's power chip, which the VideoCore's firmware
 /// reads and sets for the ARM through its mailbox. It counts while the
 /// board has power, and through a power cut on a cell at the BAT
@@ -731,6 +763,52 @@ pub const CHIP_MC146818: u32 = 51;
 /// block, and PART_Irq the line it all comes in on. The firmware's tables
 /// are where these are written down, and the kernel puts them here.
 pub const CHIP_ACPI_PM: u32 = 52;
+/// Broadcom's BCM54213PE, a 10/100/1000 Mbit/s Ethernet PHY (PARTKIND_NET
+/// on BUS_RGMII), the Compute Module 4's, on the BCM2711's GENET:
+/// PART_Address its address on the MAC's management bus, PART_RxDelay and
+/// PART_TxDelay non-zero for the delays it adds itself.
+pub const CHIP_BCM54213: u32 = 53;
+/// The Raspberry Pi's VideoCore firmware (PARTKIND_FIRMWARE on
+/// BUS_MEMORY, PART_Address its mailbox - the BCM2835's, whose property
+/// channel the firmware answers on, `sdk/hardware/videocore.zig`): the
+/// Compute Module 4's start4.elf and the Compute Module 5's. What a
+/// program asks it for is how a start goes - the flag for one start from
+/// the other boot partition (`SET_REBOOT_FLAGS`) - and the cores' and the
+/// V3D's clocks.
+pub const CHIP_RPI_FIRMWARE: u32 = 54;
+/// The BCM2711's display behind its first HDMI port as the VideoCore
+/// firmware lit it (PARTKIND_PANEL on BUS_MEMORY, PART_Address the
+/// hardware video scaler, PART_BusUnit the scaler's channel the firmware
+/// feeds the port from, PART_Blocks the port's other blocks
+/// (`sdk.hardware.bcm2711.HdmiPort`), PART_Irq pixel valve 2's interrupt,
+/// RTGA_Width and RTGA_Height the mode it lit): the mode, the pixel valve
+/// and the port stay the firmware's, and the scaler reads the display
+/// driver's planes - the picture, the overlay and the cursor - in place
+/// of the firmware's one.
+pub const CHIP_BCM2711_HVS: u32 = 55;
+/// The BCM2711's first HDMI port as the machine's sound (PARTKIND_CODEC
+/// on BUS_MEMORY, PART_Address the DMA channel that feeds it - one of the
+/// chip's 40-bit DMA4 channels - PART_Irq that channel's interrupt,
+/// PART_DataAddress the MAI's FIFO as the channel reaches it and
+/// PART_DmaRequest the line it asks on): IEC
+/// 958 subframes into the HDMI0 controller's MAI FIFO, sent as HDMI's
+/// audio packets, in the mode the VideoCore firmware lit (CHIP_BCM2711_HVS
+/// or CHIP_UEFI_FB on the same board). Only where the firmware lit it as
+/// HDMI, to a monitor that takes sound.
+pub const CHIP_BCM2711_HDMI_AUDIO: u32 = 56;
+/// The BCM2711's H.265 decoder (PARTKIND_VIDEODEC on BUS_MEMORY,
+/// PART_Address its registers, PART_Irq its interrupt): Main and Main 10
+/// into frames of 128-byte columns, the parameter sets and slice headers
+/// read by the host; its clock is the VideoCore firmware's, asked for
+/// through the board's CHIP_RPI_FIRMWARE.
+pub const CHIP_BCM2711_HEVC: u32 = 57;
+/// The VideoCore's message queue, VCHIQ (PARTKIND_FIRMWARE on
+/// BUS_MEMORY, PART_Address its doorbells, PART_Irq the VideoCore's
+/// doorbell to the ARM, PART_SharedMemory its memory): memory shared with
+/// the firmware, which runs the chip's H.264 and JPEG decoders and its
+/// ISP as MMAL components; the kernel keeps the memory, and it is handed
+/// to the firmware through the board's CHIP_RPI_FIRMWARE.
+pub const CHIP_BCM2711_VCHIQ: u32 = 58;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;
