@@ -105,9 +105,9 @@ pub fn read(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?Config {
     config.bits_per_pixel = programs(rb).RtgFormatBits(format);
     config.lanes = u32At(rb, tags.RTGA_DSI_Lanes, 0, tag_list);
     config.lane_mbps = u32At(rb, tags.RTGA_DSI_LaneRate, 0, tag_list);
-    const sequence = rb.GetRtgTagData(tags.RTGA_DSI_InitSequence, 0, tag_list);
+    const sequence = rb.GetRtgTagData(tags.RTGA_InitSequence, 0, tag_list);
     if (sequence != 0) config.init_sequence = @ptrFromInt(sequence);
-    config.init_length = u32At(rb, tags.RTGA_DSI_InitLength, 0, tag_list);
+    config.init_length = u32At(rb, tags.RTGA_InitLength, 0, tag_list);
     config.phy_ldo = u32At(rb, tags.RTGA_DSI_PhyLdo, 0, tag_list);
     config.phy_millivolts = u32At(rb, tags.RTGA_DSI_PhyMillivolts, 2500, tag_list);
     config.reset_pin = BoardPin.of(rb.GetRtgTagData(st.PART_PinReset, 0, tag_list));

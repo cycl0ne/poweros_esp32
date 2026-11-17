@@ -148,6 +148,7 @@ test {
     _ = @import("display/_display.zig");
     _ = @import("display/boarddisplaybitmap.zig");
     _ = @import("display/mirrorboard.zig");
+    _ = @import("display/rtgdelay.zig");
     _ = @import("display/setboardaudio.zig");
     _ = @import("display/setboardbrightness.zig");
     _ = @import("display/setboardpower.zig");
@@ -205,6 +206,7 @@ test {
     _ = @import("transport/_transport.zig");
     _ = @import("transport/closetransport.zig");
     _ = @import("transport/opentransport.zig");
+    _ = @import("transport/runpanelsequence.zig");
     _ = @import("transport/rxparam.zig");
     _ = @import("transport/txcolor.zig");
     _ = @import("transport/txparam.zig");

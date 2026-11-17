@@ -1016,8 +1016,8 @@ comptime {
 
 A file is built against the SDK alone, so a driver keeps nothing in
 module variables either way, and reads a chip's facts through calls -
-exec's `UptimeUs` and `SpinUs` for time, not the SDK's copy of a
-register the kernel set up.
+exec's `UptimeUs` and `SpinUs` for time, the library's `RtgDelay` for
+a wait, not the SDK's copy of a register the kernel set up.
 
 `LoadRtgDrivers` - which `C:BindDrivers` calls in the startup-sequence,
 before the desktop opens - reads the ROM tag out of each file without
@@ -1109,6 +1109,19 @@ is then given (`RTGA_ResetMillis`, `RTGA_SettleMillis`) with its lines
 each driver has a block of 64 of its own, listed in
 `sdk/libs/rtg/tags.zig` so that two never claim one. `GetRtgTagData`
 reads a tag, so a driver need open nothing but the library.
+
+A panel's bring-up - the commands its maker gives - is
+`RTGA_InitSequence` and `RTGA_InitLength`, steps a board's list writes
+with `dcsStep` of `src/boards/panelsequence.zig`: the command, the
+number of its parameters, the milliseconds to wait after it, then the
+parameters. `RunPanelSequence(sequence, length, &hook)` looks at the
+whole sequence before anything is sent - one written wrong is
+`RTGERR_BAD_TAGS`, and the panel is never left half brought up by it -
+then calls the driver's hook for each step with an `RtgPanelStep` and
+waits the step's wait. The hook sends the step the driver's way, on a
+bus (`TxParam`) or through a DSI host. A driver's own waits while it
+brings its hardware up - a reset held, a part settling, a PLL locking -
+are `RtgDelay(micros)`, which gives the CPU to other tasks.
 
 ## Display memory
 
@@ -1412,10 +1425,9 @@ lies over the picture.
 (`RTGA_DSI_Lanes`, `RTGA_DSI_LaneRate`), the generic timing tags, the
 D-PHY's supply where the chip's LDO feeds it
 (`RTGA_DSI_PhyLdo`, `RTGA_DSI_PhyMillivolts`), and the panel's bring-up
-as DCS commands (`RTGA_DSI_InitSequence`, steps as the board's list
-writes them with `dcsStep` of `src/boards/panelsequence.zig`),
-which the driver sends in command mode after the panel's reset - its
-reset line, or its own soft reset where it has none. Another panel on the
+(`RTGA_InitSequence`), which the library walks and the driver sends as
+DCS commands in command mode after the panel's reset - its reset line,
+or its own soft reset where it has none. Another panel on the
 same host is another tag list. The lane rate is made by the D-PHY's PLL,
 in steps of 10 and of 13 1/3 Mbit/s: a rate between two runs at the
 nearest, the link's timings following the rate made, and a list whose

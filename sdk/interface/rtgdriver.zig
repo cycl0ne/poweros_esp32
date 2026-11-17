@@ -37,6 +37,8 @@ pub const LVO = struct {
     pub const ComposeLines = libraries.lvo(78);
     pub const BuildAviInfoFrame = libraries.lvo(79);
     pub const HdmiAudioClock = libraries.lvo(80);
+    pub const RunPanelSequence = libraries.lvo(81);
+    pub const RtgDelay = libraries.lvo(82);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -62,6 +64,8 @@ pub const Fn = struct {
     pub const ComposeLines = *const fn (*RtgDriverBase, *rtg.RtgBoard, *const rtg.RtgRect, [*]u8, u32) callconv(.c) i32;
     pub const BuildAviInfoFrame = *const fn (*RtgDriverBase, *const rtg.RtgTimings, u32, [*]u8) callconv(.c) u32;
     pub const HdmiAudioClock = *const fn (*RtgDriverBase, u32, u32, *u32, *u32) callconv(.c) bool;
+    pub const RunPanelSequence = *const fn (*RtgDriverBase, [*]const u8, u32, *utility.Hook) callconv(.c) i32;
+    pub const RtgDelay = *const fn (*RtgDriverBase, u32) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -219,5 +223,23 @@ pub const RtgDriverBase = opaque {
     /// of 0, and nothing is written.
     pub fn HdmiAudioClock(self: *RtgDriverBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, cts: *u32) bool {
         return libraries.call(self, LVO.HdmiAudioClock, Fn.HdmiAudioClock, .{ pixel_clock_hz, sample_rate, n, cts });
+    }
+
+    /// A panel's bring-up (RTGA_InitSequence's bytes: a step is the command,
+    /// the number of its parameters, the milliseconds to wait after it, then
+    /// the parameters) checked whole, then walked: `send` is called for each
+    /// step with an RtgPanelStep as its message, and the step's wait is
+    /// waited. RTGERR_BAD_TAGS for bytes that are not whole steps, before
+    /// anything is sent; the first answer of `send` that is not RTGERR_OK,
+    /// with no step after it sent. Not from interrupts.
+    pub fn RunPanelSequence(self: *RtgDriverBase, sequence: [*]const u8, length: u32, send: *utility.Hook) i32 {
+        return libraries.call(self, LVO.RunPanelSequence, Fn.RunPanelSequence, .{ sequence, length, send });
+    }
+
+    /// Wait `micros` microseconds, the CPU given to other tasks meanwhile:
+    /// on timer.device, or by the clock where there is none. Not from
+    /// interrupts.
+    pub fn RtgDelay(self: *RtgDriverBase, micros: u32) void {
+        return libraries.call(self, LVO.RtgDelay, Fn.RtgDelay, .{micros});
     }
 };

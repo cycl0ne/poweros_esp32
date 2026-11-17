@@ -89,6 +89,17 @@ pub const RTGA_VFrontPorch = RTGA_Dummy + 28;
 /// low, the data enable high, the pixels taken on the rising edge.
 pub const RTGA_TimingFlags = RTGA_Dummy + 29;
 
+// --- a panel's bring-up, walked with RunPanelSequence ---------------------
+
+/// *const u8 and u32: the commands a panel's controller is sent after its
+/// reset, before it is given a picture. Each step is the command, the
+/// number of its parameters, the milliseconds to wait after it, then the
+/// parameters (`dcsStep` of `src/boards/panelsequence.zig` writes one).
+/// Needed by a panel on a command bus and by one on a DSI link; a bridge
+/// its driver knows is brought up by the driver.
+pub const RTGA_InitSequence = RTGA_Dummy + 30;
+pub const RTGA_InitLength = RTGA_Dummy + 31;
+
 // --- the RGB board driver: RTGA_DriverBase + 0, 64 wide ------------------
 
 pub const RTGA_RGB_Dummy = RTGA_DriverBase + 0;
@@ -170,11 +181,8 @@ pub const RTGA_QSPI_ReadOpcode = RTGA_QSPI_Dummy + 7;
 // --- the DCS board driver: RTGA_DriverBase + 192, 64 wide ----------------
 
 pub const RTGA_DCS_Dummy = RTGA_DriverBase + 192;
-/// *const u8 and u32: the controller's bring-up, run after its reset. Each
-/// step is the command, the number of parameters, the milliseconds to wait
-/// after it, then the parameters. Needed.
-pub const RTGA_DCS_InitSequence = RTGA_DCS_Dummy + 1;
-pub const RTGA_DCS_InitLength = RTGA_DCS_Dummy + 2;
+// RTGA_DCS_Dummy + 1 and 2 are not used: the controller's bring-up is the
+// generic RTGA_InitSequence.
 
 /// u32: the MADCTL value of the upright mode. Absent: 0.
 pub const RTGA_DCS_Madctl = RTGA_DCS_Dummy + 3;
@@ -207,12 +215,9 @@ pub const RTGA_DSI_LaneRate = RTGA_DSI_Dummy + 2;
 // RTGA_DSI_Dummy + 3 to 9 are not used: the panel's timings are the
 // generic RTGA_PixelClock to RTGA_VFrontPorch. The chip makes the pixel
 // clock nearest the one asked for, and the timings stay in its clocks.
-/// *const u8 and u32: the panel's bring-up, sent as DCS commands before
-/// the picture streams; steps as RTGA_DCS_InitSequence's.
-/// Needed for a panel; a bridge the driver knows (CHIP_LT8912B) is
-/// brought up by the driver.
-pub const RTGA_DSI_InitSequence = RTGA_DSI_Dummy + 10;
-pub const RTGA_DSI_InitLength = RTGA_DSI_Dummy + 11;
+// RTGA_DSI_Dummy + 10 and 11 are not used: the panel's bring-up is the
+// generic RTGA_InitSequence, sent as DCS commands before the picture
+// streams.
 /// u32: the chip's LDO channel (1 to 4) that feeds the D-PHY, and its
 /// voltage in millivolts. Absent: the board feeds the PHY itself.
 pub const RTGA_DSI_PhyLdo = RTGA_DSI_Dummy + 12;

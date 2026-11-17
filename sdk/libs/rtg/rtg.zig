@@ -143,4 +143,5 @@ pub const RTGVA_Range = video.RTGVA_Range;
 pub const RTGVA_Depth = video.RTGVA_Depth;
 
 pub const RtgTransport = transport.RtgTransport;
+pub const RtgPanelStep = transport.RtgPanelStep;
 pub const RtgTransportOps = transport.RtgTransportOps;

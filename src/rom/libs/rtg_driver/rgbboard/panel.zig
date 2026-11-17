@@ -238,13 +238,6 @@ pub fn setDisplayLine(panel: *Panel, on: bool) bool {
     return setLine(panel, panel.config.display_pin, on);
 }
 
-/// A wait that does not Wait: the panel is brought up in one go at cold
-/// start, and a few milliseconds of spinning there cost nothing a timer
-/// request would save.
-fn sleep(sys: *ExecBase, ms: u32) void {
-    sys.SpinUs(@as(u64, ms) * 1000);
-}
-
 /// Everything but the pixels: the panel out of reset, its two DMA
 /// channels and the buffers it is fed from. The stream is not started
 /// here - the first picture is drawn and written back while nothing is
@@ -259,10 +252,10 @@ pub fn bringUp(panel: *Panel) i32 {
 
     // Out of reset and enabled before anything clocks it.
     _ = setLine(panel, panel.config.reset_pin, false);
-    sleep(sys, panel.config.reset_ms);
+    panel.rtg_base.RtgDelay(panel.config.reset_ms * 1000);
     _ = setLine(panel, panel.config.reset_pin, true);
     _ = setLine(panel, panel.config.display_pin, true);
-    sleep(sys, panel.config.settle_ms);
+    panel.rtg_base.RtgDelay(panel.config.settle_ms * 1000);
 
     // The pictures are the library's to take, as they are asked for; the
     // panel only says how large one is and how many there may be.

@@ -48,8 +48,8 @@ const DRIVER_NAME = "rgb";
 /// The panel shows RGB565 and nothing else: two bytes a pixel.
 const bytes_per_pixel = 2;
 const VERSION = 1;
-const REVISION = 13;
-const BUILD_DATE = "16.11.2026";
+const REVISION = 14;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ panels.MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++

@@ -27,6 +27,8 @@ Generated from the source by `./zig build autodoc`.
 - [ReadTimingTags](#readtimingtags) - Reads the generic timing tags of a list into a structure.
 - [RemRtgDevice](#remrtgdevice) - Takes away a device `AddRtgDevice` made.
 - [RemRtgDriver](#remrtgdriver) - Takes a driver off the library's list and frees it.
+- [RtgDelay](#rtgdelay) - Waits `micros` microseconds.
+- [RunPanelSequence](#runpanelsequence) - Sends a panel's bring-up, step by step, each with its wait.
 - [RxParam](#rxparam) - Sends a command and reads bytes back from the part on a bus.
 - [TxColor](#txcolor) - Sends a command and a run of pixels to the part on a bus.
 - [TxParam](#txparam) - Sends a command and its parameters to the part on a bus.
@@ -1176,6 +1178,146 @@ None known.
 
 ```zig
 if (rb.RemRtgDriver(driver)) unload();
+```
+
+## RtgDelay
+
+Waits `micros` microseconds.
+
+**SYNOPSIS**
+
+```zig
+fn RtgDelay(rb: *RtgBase, micros: u32) void
+```
+
+**SINCE**
+
+1.40. LVO -332.
+
+**INPUTS**
+
+- `micros` - how long, in microseconds; 0 comes back at once.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The task waits on timer.device's microsecond unit, and other tasks
+have the CPU meanwhile. Where the library could not open timer.device,
+and where no signal is free for the wait, the time is spun away by the
+clock instead (`SpinUs`): the call never comes back early.
+
+**CONTEXT**
+
+- Waits: yes.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+A signal is taken for the wait and given back. Nothing is allocated:
+the request and its reply port are on the caller's stack.
+
+**NOTES**
+
+What a driver waits for while it brings up its hardware: a reset held,
+a part settling, a link coming up. A wait for a frame is `WaitVBlank`.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RunPanelSequence`, `WaitVBlank`
+
+**EXAMPLES**
+
+```zig
+rb.RtgDelay(10 * 1000); // the reset held for 10 ms
+```
+
+## RunPanelSequence
+
+Sends a panel's bring-up, step by step, each with its wait.
+
+**SYNOPSIS**
+
+```zig
+fn RunPanelSequence(rb: *RtgBase, sequence: [*]const u8, length: u32, send: *utility.Hook) i32
+```
+
+**SINCE**
+
+1.40. LVO -328.
+
+**INPUTS**
+
+- `sequence` - the steps, as `RTGA_InitSequence` points at them: the
+  command, the number of its parameters, the milliseconds to wait
+  after it, then the parameters.
+- `length` - their bytes, `RTGA_InitLength`; 0 sends nothing.
+- `send` - the driver's hook, called for each step with null as its
+  object and an `RtgPanelStep` as its message. It answers
+  `RTGERR_OK` once the step has gone, or the error that stopped it.
+
+**RESULT**
+
+`RTGERR_OK`, every step sent and waited for. `RTGERR_BAD_TAGS` for
+bytes that are not whole steps - a step's parameters running past the
+end, a step cut short - and nothing is sent. Otherwise the first
+answer of `send` that is not `RTGERR_OK`.
+
+**BEHAVIOR**
+
+The whole sequence is looked at before its first step is sent, so a
+panel is never left half brought up by a sequence that is written
+wrong. Then each step is handed to `send` in order, and after each
+that has a wait the task waits that many milliseconds (`RtgDelay`).
+A step `send` refuses ends the walk: the steps after it are not sent,
+and its wait is not waited.
+
+**CONTEXT**
+
+- Waits: yes, for each step's wait, and as long as `send` does.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes are the caller's and only read. The step `send` is handed
+lives on this call's stack for the hook's call alone.
+
+**NOTES**
+
+A panel whose bring-up begins with a reset gets that from its driver
+first: the reset line, or the command where there is none, and the
+part's settling time (`RTGA_ResetMillis`, `RTGA_SettleMillis`).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RtgDelay`, `TxParam`
+
+**EXAMPLES**
+
+```zig
+fn sendStep(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const panel: *Panel = @ptrCast(@alignCast(hook.data.?));
+    const step: *const rtg.RtgPanelStep = @ptrCast(@alignCast(message.?));
+    const code = panel.rtg_base.TxParam(panel.io, @intCast(step.command), step.params, step.count);
+    return @bitCast(@as(isize, code));
+}
+
+var hook: utility.Hook = .{ .entry = &sendStep, .data = panel };
+const code = rb.RunPanelSequence(bring_up.ptr, @intCast(bring_up.len), &hook);
 ```
 
 ## RxParam

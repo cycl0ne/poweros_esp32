@@ -142,7 +142,9 @@ pub const LIBRARY_VERSION = 1;
 /// picture: the shape lay shifted where the rectangle was cut there.
 /// 39: GetRtgDevices' copies carry RTGDVF_DRIVER_OFF where the settings
 /// switched a device's drivers from the disk off.
-pub const LIBRARY_REVISION = 39;
+/// 40: RunPanelSequence and RtgDelay: a panel's bring-up checked and
+/// walked, and a wait that gives the CPU away, for every driver.
+pub const LIBRARY_REVISION = 40;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

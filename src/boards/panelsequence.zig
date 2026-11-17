@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A panel's bring-up sequence, as a board's list writes it down: the
-//! bytes of `RTGA_DCS_InitSequence` and `RTGA_DSI_InitSequence`, a step
-//! after another. A step is the command, the number of its parameters,
-//! the milliseconds to wait after it, then the parameters; the display
-//! drivers walk the bytes at bring-up.
+//! bytes of `RTGA_InitSequence`, a step after another. A step is the
+//! command, the number of its parameters, the milliseconds to wait after
+//! it, then the parameters; rtg.library walks the bytes for the panel's
+//! driver at bring-up (`RunPanelSequence`).
 
 /// One step of a bring-up sequence: the command, the milliseconds to wait
 /// after it, and its parameters. Steps join with `++`.

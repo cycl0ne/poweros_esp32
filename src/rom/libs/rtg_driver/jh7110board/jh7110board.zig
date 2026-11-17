@@ -60,8 +60,7 @@
 //! The controller raises an interrupt at each frame (the part's
 //! PART_Irq): its server says the frame to the library (`FrameDone`),
 //! and a flip and WaitVBlank wait for it. The port's own waits - a PLL,
-//! the DDC - are on timer.device, opened as the board is made and closed
-//! with it.
+//! the DDC - are the library's (`RtgDelay`).
 //!
 //! The module keeps nothing of its own: a ROM image is read only, so what
 //! changes is the library's to allocate - a `Screen` beside the board -
@@ -78,7 +77,6 @@ const TagItem = sdk.utility.TagItem;
 const err = rtg.errors;
 const st = sdk.expansion.systemtags;
 const tags = rtg.tags;
-const timer = sdk.devices.timer;
 const BoardPin = sdk.expansion.boardpin.BoardPin;
 
 const jh7110 = @import("jh7110.zig");
@@ -86,8 +84,8 @@ const jh7110 = @import("jh7110.zig");
 const MODULE_NAME = "rtg-jh7110";
 const DRIVER_NAME = "jh7110";
 const VERSION = 1;
-const REVISION = 3;
-const BUILD_DATE = "16.11.2026";
+const REVISION = 4;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -156,10 +154,6 @@ const Screen = struct {
     scanning: usize = 0,
     /// How many times the display has been handed a picture.
     updates: u32 = 0,
-    /// timer.device, opened as the board is made: the request each wait
-    /// copies.
-    timer_io: timer.TimeRequest = .{},
-    timer_open: bool = false,
     /// The cursor plane's two images, as AllocMem gave them and where they
     /// start; which of them is the plane's, whether it is the small size,
     /// and its image's hot spot.
@@ -249,27 +243,9 @@ const Waiter = struct {
     screen: *Screen,
 
     pub fn wait(waiter: Waiter, micros: u32) void {
-        sleep(waiter.screen, micros);
+        drivers(waiter.screen).RtgDelay(micros);
     }
 };
-
-/// Wait `micros` on timer.device, the CPU given away meanwhile. Nothing
-/// is waited for when timer.device could not be had.
-fn sleep(screen: *Screen, micros: u64) void {
-    const sys = screen.sys;
-    if (!screen.timer_open) return;
-    const bit = sys.AllocSignal(-1);
-    if (bit < 0) return;
-    defer sys.FreeSignal(bit);
-    // The waiting task's own port: any task may be the one showing.
-    var port: exec.MsgPort = .{ .sig_bit = @intCast(bit), .sig_task = sys.FindTask(null) };
-    port.msg_list.init(.message);
-    var io = screen.timer_io;
-    io.node.message.reply_port = &port;
-    io.node.command = timer.TR_ADDREQUEST;
-    io.time = timer.TimeVal.fromMicros(micros);
-    _ = sys.DoIO(&io.node);
-}
 
 /// The library as a program calls it, for a call that is not a driver's
 /// own.
@@ -653,14 +629,12 @@ fn videoPutBack(screen: *Screen) void {
 // --- the board -------------------------------------------------------------------
 
 /// Everything the screen took given back: the port stopped, its frame
-/// interrupt's server off, timer.device closed, the cursor's images
+/// interrupt's server off, the cursor's images
 /// freed. What it has not taken, or has given back already, is passed
 /// over.
 fn release(screen: *Screen) void {
     const sys = screen.sys;
     halt(screen);
-    if (screen.timer_open) sys.CloseDevice(&screen.timer_io.node);
-    screen.timer_open = false;
     if (screen.cursor_memory) |memory| sys.FreeMem(memory, 2 * cursor_bytes + page);
     screen.cursor_memory = null;
     screen.cursor = null;
@@ -729,9 +703,6 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     }) orelse return err.RTGERR_NO_MEMORY;
     const screen = screenOf(board);
     screen.* = .{ .sys = sys, .rtg_base = programs(rb), .port = port, .width = width, .height = height, .board = board };
-    // The port's waits are on timer.device.
-    screen.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
-    screen.timer_open = sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &screen.timer_io.node, 0) == 0;
     // The board's buffers start, and their rows are rounded, as its tags
     // say; whole cache lines where they say nothing.
     const asked_alignment: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_Alignment, 0, tag_list));

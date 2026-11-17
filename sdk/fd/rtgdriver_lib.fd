@@ -102,4 +102,16 @@ u32 BuildAviInfoFrame(*const rtg.RtgTimings timings, u32 flags, [*]u8 into)
 /// rate is the pixel clock times N over CTS. False for a rate or a clock
 /// of 0, and nothing is written.
 bool HdmiAudioClock(u32 pixel_clock_hz, u32 sample_rate, *u32 n, *u32 cts)
+/// A panel's bring-up (RTGA_InitSequence's bytes: a step is the command,
+/// the number of its parameters, the milliseconds to wait after it, then
+/// the parameters) checked whole, then walked: `send` is called for each
+/// step with an RtgPanelStep as its message, and the step's wait is
+/// waited. RTGERR_BAD_TAGS for bytes that are not whole steps, before
+/// anything is sent; the first answer of `send` that is not RTGERR_OK,
+/// with no step after it sent. Not from interrupts.
+i32 RunPanelSequence([*]const u8 sequence, u32 length, *utility.Hook send)
+/// Wait `micros` microseconds, the CPU given to other tasks meanwhile:
+/// on timer.device, or by the clock where there is none. Not from
+/// interrupts.
+void RtgDelay(u32 micros)
 ##end

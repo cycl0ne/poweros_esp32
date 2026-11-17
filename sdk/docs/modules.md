@@ -104,7 +104,6 @@ flowchart TB
     m_display_drivers --> m_gpio_resource
     m_display_drivers --> m_i2c_device
     m_display_drivers -.-> m_rtg_library
-    m_display_drivers --> m_timer_device
     m_dos_library --> m_intuition_library
     m_dos_library --> m_timer_device
     m_expander_resource --> m_i2c_device

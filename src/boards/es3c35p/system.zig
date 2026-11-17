@@ -158,8 +158,8 @@ const panel = [_]Tag{
     // Workbench. Each is taken from memory when it is opened.
     .value(tags.RTGA_Buffers, 3),
     .value(tags.RTGA_QSPI_ClockHz, 40_000_000),
-    .pointer(tags.RTGA_DCS_InitSequence, &panel_bring_up),
-    .value(tags.RTGA_DCS_InitLength, panel_bring_up.len),
+    .pointer(tags.RTGA_InitSequence, &panel_bring_up),
+    .value(tags.RTGA_InitLength, panel_bring_up.len),
     .value(tags.RTGA_DCS_Madctl, 0x00),
     // The controller drops MADCTL's MV bit, so a sideways screen is the
     // driver turning each band as it sends it.

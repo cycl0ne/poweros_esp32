@@ -17,6 +17,20 @@ const nodes = @import("../exec/nodes.zig");
 const Node = nodes.Node;
 const RtgBase = @import("../../interface/rtg.zig").RtgBase;
 
+/// One step of a panel's bring-up, as `RunPanelSequence` hands it to the
+/// driver's hook, whose message it is: a command and its parameters, to
+/// be sent the way the driver reaches the panel. The wait after it is the
+/// library's.
+pub const RtgPanelStep = extern struct {
+    /// The command.
+    command: u32 = 0,
+    /// How many parameter bytes there are, and where; null for none.
+    count: u32 = 0,
+    params: ?[*]const u8 = null,
+    /// The milliseconds the library waits once the hook has sent it.
+    delay_ms: u32 = 0,
+};
+
 /// A bus a board talks through.
 pub const RtgTransport = extern struct {
     /// ln_Name is the bus's name: its driver's.

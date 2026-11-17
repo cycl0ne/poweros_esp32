@@ -61,19 +61,19 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
-const TagItem = sdk.utility.TagItem;
+const utility = sdk.utility;
+const TagItem = utility.TagItem;
 const err = rtg.errors;
 const tags = rtg.tags;
 
 const sequence = @import("sequence.zig");
 const st = sdk.expansion.systemtags;
-const gpio = @import("sdk").hardware.gpio;
-const systimer = sdk.hardware.systimer;
+const gpio = sdk.hardware.gpio;
 
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 12;
+const REVISION = 13;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -167,9 +167,8 @@ fn attach(driver: *rtg.RtgDriver, device: *rtg.RtgDevice, tag_list: ?[*]const Ta
     const rb = driver.rtg_base;
     // What has to be there, looked at before anything is taken.
     const size = sizeOf(rb, tag_list);
-    const bring_up = sequenceOf(rb, tag_list) orelse return err.RTGERR_BAD_TAGS;
+    if (sequenceOf(rb, tag_list) == null) return err.RTGERR_BAD_TAGS;
     if (size.width == 0 or size.height == 0) return err.RTGERR_BAD_TAGS;
-    if (!sequence.valid(bring_up)) return err.RTGERR_BAD_TAGS;
     // The controller is sent RGB565 and nothing else.
     const format = rb.GetRtgTagData(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.rgb565), tag_list);
     if (format != @intFromEnum(rtg.PixelFormat.rgb565)) return err.RTGERR_BAD_FORMAT;
@@ -206,8 +205,8 @@ fn sizeOf(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) struct { width: u32, 
 /// The controller's bring-up, as its tags give it; null where they give
 /// none.
 fn sequenceOf(rb: *RtgDriverBase, tag_list: ?[*]const TagItem) ?[]const u8 {
-    const init_at = rb.GetRtgTagData(tags.RTGA_DCS_InitSequence, 0, tag_list);
-    const init_length = rb.GetRtgTagData(tags.RTGA_DCS_InitLength, 0, tag_list);
+    const init_at = rb.GetRtgTagData(tags.RTGA_InitSequence, 0, tag_list);
+    const init_length = rb.GetRtgTagData(tags.RTGA_InitLength, 0, tag_list);
     if (init_at == 0) return null;
     return @as([*]const u8, @ptrFromInt(init_at))[0..init_length];
 }
@@ -320,7 +319,8 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
 }
 
 /// The controller out of reset - its own line if it has one, the command
-/// if not - and every step of the bring-up, each with its wait.
+/// if not - and every step of the bring-up, each with its wait. The
+/// waits give the CPU away (`RtgDelay`): some 250 ms on the 3.5" board.
 fn bringUp(panel: *Panel, reset_pin: BoardPin, reset_ms: u32, settle_ms: u32, bring_up: []const u8) i32 {
     const rb = panel.rtg_base;
     if (reset_pin.kind == sdk.expansion.boardpin.BPIN_GPIO) {
@@ -329,22 +329,25 @@ fn bringUp(panel: *Panel, reset_pin: BoardPin, reset_ms: u32, settle_ms: u32, br
         gpio.connectOut(reset_pin.number, gpio.out_of_gpio, true);
         gpio.outputEnable(reset_pin.number, true);
         gpio.setLevel(reset_pin.number, asserted);
-        panel.sys.SpinUs(@as(u64, reset_ms) * 1000);
+        rb.RtgDelay(reset_ms * 1000);
         gpio.setLevel(reset_pin.number, !asserted);
     } else {
         const code = rb.TxParam(panel.io, SWRESET, null, 0);
         if (code != err.RTGERR_OK) return code;
     }
-    panel.sys.SpinUs(@as(u64, settle_ms) * 1000);
+    rb.RtgDelay(settle_ms * 1000);
 
-    var steps: sequence.Steps = .{ .bytes = bring_up };
-    while (steps.next()) |one| {
-        const params: ?*const anyopaque = if (one.params.len != 0) one.params.ptr else null;
-        const code = rb.TxParam(panel.io, one.cmd, params, @intCast(one.params.len));
-        if (code != err.RTGERR_OK) return code;
-        if (one.delay_ms != 0) panel.sys.SpinUs(@as(u64, one.delay_ms) * 1000);
-    }
-    return err.RTGERR_OK;
+    var hook: utility.Hook = .{ .entry = &sendStep, .data = panel };
+    return rb.RunPanelSequence(bring_up.ptr, @intCast(bring_up.len), &hook);
+}
+
+/// One step of the bring-up, sent on the panel's bus: `RunPanelSequence`'s
+/// hook, whose data is the panel.
+fn sendStep(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const panel: *Panel = @ptrCast(@alignCast(hook.data.?));
+    const step: *const rtg.RtgPanelStep = @ptrCast(@alignCast(message.?));
+    const code = panel.rtg_base.TxParam(panel.io, @intCast(step.command), step.params, step.count);
+    return @bitCast(@as(isize, code));
 }
 
 /// The panel's lines that are pads of the chip, taken from gpio.resource.

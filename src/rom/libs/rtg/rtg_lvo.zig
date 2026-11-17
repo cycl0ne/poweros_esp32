@@ -49,6 +49,8 @@ const MonitorChanged = @import("monitor/monitorchanged.zig").MonitorChanged;
 const FindStandardTimings = @import("monitor/findstandardtimings.zig").FindStandardTimings;
 const BuildAviInfoFrame = @import("monitor/buildaviinfoframe.zig").BuildAviInfoFrame;
 const HdmiAudioClock = @import("monitor/hdmiaudioclock.zig").HdmiAudioClock;
+const RunPanelSequence = @import("transport/runpanelsequence.zig").RunPanelSequence;
+const RtgDelay = @import("display/rtgdelay.zig").RtgDelay;
 const GetBoardMonitor = @import("monitor/getboardmonitor.zig").GetBoardMonitor;
 const ReadBoardEDID = @import("monitor/readboardedid.zig").ReadBoardEDID;
 const AddRtgNotify = @import("board/addrtgnotify.zig").AddRtgNotify;
@@ -180,6 +182,8 @@ const contract_files = [_][]const u8{
     @embedFile("monitor/findstandardtimings.zig"),
     @embedFile("monitor/buildaviinfoframe.zig"),
     @embedFile("monitor/hdmiaudioclock.zig"),
+    @embedFile("transport/runpanelsequence.zig"),
+    @embedFile("display/rtgdelay.zig"),
     @embedFile("monitor/getboardmonitor.zig"),
     @embedFile("monitor/readboardedid.zig"),
     @embedFile("board/addrtgnotify.zig"),
@@ -297,6 +301,12 @@ fn lvoBuildAviInfoFrame(rb: *RtgBase, timings: *const rtg.RtgTimings, flags: u32
 }
 fn lvoHdmiAudioClock(rb: *RtgBase, pixel_clock_hz: u32, sample_rate: u32, n: *u32, cts: *u32) callconv(.c) bool {
     return HdmiAudioClock(rb, pixel_clock_hz, sample_rate, n, cts);
+}
+fn lvoRunPanelSequence(rb: *RtgBase, sequence: [*]const u8, length: u32, send: *utility.Hook) callconv(.c) i32 {
+    return RunPanelSequence(rb, sequence, length, send);
+}
+fn lvoRtgDelay(rb: *RtgBase, micros: u32) callconv(.c) void {
+    RtgDelay(rb, micros);
 }
 fn lvoGetBoardMonitor(rb: *RtgBase, board: *rtg.RtgBoard, info: *rtg.RtgMonitorInfo, size: u32) callconv(.c) u32 {
     return GetBoardMonitor(rb, board, info, size);
@@ -552,6 +562,8 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoComposeLines),
     vec(lvoBuildAviInfoFrame),
     vec(lvoHdmiAudioClock),
+    vec(lvoRunPanelSequence),
+    vec(lvoRtgDelay),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -565,7 +577,7 @@ test "the jump table: the ROM's slots, every LVO of both interfaces at its funct
     // No slot is kept free: the table is the standard vectors and the
     // two interfaces' calls.
     try testing.expectEqual(exec.libraries.standard_vectors + call_count, vectors.len);
-    try testing.expectEqual(@as(usize, 81), vectors.len);
+    try testing.expectEqual(@as(usize, 83), vectors.len);
     inline for (interfaces) |one| {
         inline for (@typeInfo(one.lvo).@"struct".decls) |d| {
             const index: usize = @intCast(@divExact(-@field(one.lvo, d.name), exec.slot_size) - 1);

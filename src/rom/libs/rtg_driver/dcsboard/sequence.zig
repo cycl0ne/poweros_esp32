@@ -1,46 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! What the DCS board driver works out without touching a bus, so the host
-//! tests can hold it: the steps of a controller's bring-up, the window a
-//! rectangle of the picture is sent in, and the pixels turned the way the
-//! bus carries them and the way the panel lies.
-//!
-//! A bring-up is a run of bytes, step after step: the command, the number
-//! of parameters, the milliseconds to wait after it, then the parameters.
-//! Bytes are what a board's description can write down as they are in the
-//! maker's table, and what a tag can point at.
+//! tests can hold it: the window a rectangle of the picture is sent in,
+//! and the pixels turned the way the bus carries them and the way the
+//! panel lies. The controller's bring-up is walked by the library
+//! (`RunPanelSequence`).
 
 const std = @import("std");
-
-/// One step of a bring-up.
-pub const Step = struct {
-    cmd: u8,
-    delay_ms: u8,
-    params: []const u8,
-};
-
-/// The steps of `bytes`, in order.
-pub const Steps = struct {
-    bytes: []const u8,
-    at: usize = 0,
-
-    /// The next step, or null at the end - or at a step that runs past the
-    /// end, which `valid` refuses before anything is sent.
-    pub fn next(steps: *Steps) ?Step {
-        const rest = steps.bytes[steps.at..];
-        if (rest.len < 3) return null;
-        const count = rest[1];
-        if (rest.len < 3 + @as(usize, count)) return null;
-        steps.at += 3 + @as(usize, count);
-        return .{ .cmd = rest[0], .delay_ms = rest[2], .params = rest[3..][0..count] };
-    }
-};
-
-/// Whether `bytes` is whole steps and nothing else.
-pub fn valid(bytes: []const u8) bool {
-    var steps: Steps = .{ .bytes = bytes };
-    while (steps.next()) |_| {}
-    return steps.at == bytes.len;
-}
 
 /// A rectangle of the picture or of the panel: columns `left` up to
 /// `right`, rows `top` up to `end`.
@@ -165,27 +130,6 @@ pub fn turnInto(into: []u8, from: []const u8, width: u32, height: u32, turn: Tur
             into[at + 1] = row[x * 2];
         }
     }
-}
-
-test "steps: walked in order, and a short one refused" {
-    // Three steps as a board's list holds them: the command, how many
-    // parameters, the milliseconds to wait, the parameters.
-    const bytes = [_]u8{ 0xF1, 1, 0, 0x00 } ++ [_]u8{ 0x11, 0, 120 } ++ [_]u8{ 0x2A, 4, 0, 0x00, 0x00, 0x01, 0x3F };
-    try std.testing.expect(valid(&bytes));
-    var steps: Steps = .{ .bytes = &bytes };
-    const first = steps.next().?;
-    try std.testing.expectEqual(@as(u8, 0xF1), first.cmd);
-    try std.testing.expectEqualSlices(u8, &.{0x00}, first.params);
-    const second = steps.next().?;
-    try std.testing.expectEqual(@as(u8, 0x11), second.cmd);
-    try std.testing.expectEqual(@as(u8, 120), second.delay_ms);
-    try std.testing.expectEqual(@as(usize, 0), second.params.len);
-    const third = steps.next().?;
-    try std.testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0x01, 0x3F }, third.params);
-    try std.testing.expect(steps.next() == null);
-
-    // Four parameters promised, three there.
-    try std.testing.expect(!valid(&[_]u8{ 0x2A, 4, 0, 1, 2, 3 }));
 }
 
 test "a window: whole alignments around the rectangle, each way" {

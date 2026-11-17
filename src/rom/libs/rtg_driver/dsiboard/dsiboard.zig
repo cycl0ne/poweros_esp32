@@ -69,7 +69,8 @@ const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const RtgDriverBase = sdk.interface.rtgdriver.RtgDriverBase;
 const rtg = sdk.rtg;
-const TagItem = sdk.utility.TagItem;
+const utility = sdk.utility;
+const TagItem = utility.TagItem;
 const err = rtg.errors;
 const hardware = sdk.hardware;
 const gpio = hardware.gpio;
@@ -96,8 +97,8 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 21;
-const BUILD_DATE = "16.11.2026";
+const REVISION = 22;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -270,10 +271,11 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     panel.clocked = true;
 
     // The panel's reset, where the board wired one.
+    const rb = driverBase(panel.board);
     if (drive(wanted.reset_pin, true)) {
-        panel.sys.SpinUs(@as(u64, wanted.reset_ms) * 1000);
+        rb.RtgDelay(wanted.reset_ms * 1000);
         _ = drive(wanted.reset_pin, false);
-        panel.sys.SpinUs(@as(u64, wanted.settle_ms) * 1000);
+        rb.RtgDelay(wanted.settle_ms * 1000);
     }
 
     panel.lane_kbps = host.startPhy(panel.sys, wanted.lanes, lane);
@@ -314,11 +316,13 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
         // A panel without a reset line is reset by its own command.
         if (wanted.reset_pin.kind != boardpin.BPIN_GPIO) {
             if (!host.dcsWrite(panel.sys, SWRESET, &.{})) return err.RTGERR_NO_DISPLAY;
-            panel.sys.SpinUs(@as(u64, wanted.settle_ms) * 1000);
+            rb.RtgDelay(wanted.settle_ms * 1000);
         }
-        if (!sendSequence(panel.sys, wanted.init_sequence.?[0..wanted.init_length])) {
+        var hook: utility.Hook = .{ .entry = &sendStep, .data = panel };
+        const code = rb.RunPanelSequence(wanted.init_sequence.?, wanted.init_length, &hook);
+        if (code != err.RTGERR_OK) {
             sdk.exec.kprintf(sys, "%s: the panel did not take its bring-up\n", .{MODULE_NAME});
-            return err.RTGERR_NO_DISPLAY;
+            return code;
         }
     }
 
@@ -370,22 +374,15 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     return err.RTGERR_OK;
 }
 
-/// The panel's bring-up, step by step: false at a step that runs past the
-/// end or that the host could not send.
-fn sendSequence(sys: *ExecBase, bytes: []const u8) bool {
-    var at: usize = 0;
-    while (at < bytes.len) {
-        if (bytes.len - at < 3) return false;
-        const command = bytes[at];
-        const count = bytes[at + 1];
-        const delay_ms = bytes[at + 2];
-        if (bytes.len - at < 3 + @as(usize, count)) return false;
-        if (!host.dcsWrite(sys, command, bytes[at + 3 ..][0..count])) return false;
-        if (!host.commandsSent(sys)) return false;
-        if (delay_ms != 0) sys.SpinUs(@as(u64, delay_ms) * 1000);
-        at += 3 + @as(usize, count);
-    }
-    return true;
+/// One step of the panel's bring-up, sent by the host as a DCS command:
+/// `RunPanelSequence`'s hook, whose data is the panel. RTGERR_NO_DISPLAY
+/// where the host could not send it.
+fn sendStep(hook: *utility.Hook, _: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const panel: *Panel = @ptrCast(@alignCast(hook.data.?));
+    const step: *const rtg.RtgPanelStep = @ptrCast(@alignCast(message.?));
+    const params: []const u8 = if (step.params) |bytes| bytes[0..step.count] else &.{};
+    const sent = host.dcsWrite(panel.sys, @intCast(step.command), params) and host.commandsSent(panel.sys);
+    return @bitCast(@as(isize, if (sent) err.RTGERR_OK else err.RTGERR_NO_DISPLAY));
 }
 
 /// The stream started from `chain`.
