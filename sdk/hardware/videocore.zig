@@ -75,7 +75,7 @@ const answer_us: u64 = 100_000;
 /// (src/boards/rpi_cm4/screen.zig): where its pixels are, 32 bits each,
 /// and how many bytes they take; its size; the bytes from one row's start
 /// to the next; and whether a pixel's bytes are blue, green, red and a
-/// spare - what the firmware calls RGB order.
+/// spare - what the firmware calls BGR order (its 0).
 pub const Picture = struct {
     base: usize,
     bytes: usize,

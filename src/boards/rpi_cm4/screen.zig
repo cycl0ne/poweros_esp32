@@ -57,9 +57,11 @@ const TAG_SET_VIRTUAL_SIZE: u32 = 0x0004_8004;
 const TAG_SET_DEPTH: u32 = 0x0004_8005;
 const TAG_SET_PIXEL_ORDER: u32 = 0x0004_8006;
 const TAG_SET_VIRTUAL_OFFSET: u32 = 0x0004_8009;
-/// The firmware's word for blue, green, red in memory, as a 32-bit word
-/// 0x00RRGGBB.
-const ORDER_RGB: u32 = 1;
+/// The firmware's word for blue, green, red in memory - a 32-bit word
+/// 0x00RRGGBB, the library's bgra32 - which it calls BGR. Its other
+/// order, RGB (1), is red first in memory: the HVS's plane then reads the
+/// pixels as ABGR (its control word's order 3), not as ARGB (2).
+const ORDER_BGR: u32 = 0;
 
 /// The size asked for where the firmware says it lit none: what a
 /// monitor that gives no EDID takes.
@@ -157,7 +159,7 @@ pub fn ask() ?Picture {
     const depth_at = at + 3;
     at = put(at, TAG_SET_DEPTH, &.{32});
     const order_at = at + 3;
-    at = put(at, TAG_SET_PIXEL_ORDER, &.{ORDER_RGB});
+    at = put(at, TAG_SET_PIXEL_ORDER, &.{ORDER_BGR});
     const buffer_at = at + 3;
     at = put(at, TAG_ALLOCATE_BUFFER, &.{ 4096, 0 });
     const pitch_at = at + 3;
@@ -178,13 +180,13 @@ pub fn ask() ?Picture {
         .width = width,
         .height = height,
         .pitch = pitch,
-        .bgra = w[order_at] == ORDER_RGB,
+        .bgra = w[order_at] == ORDER_BGR,
     };
 }
 
 /// The picture as the board's panel part, for the display driver:
 /// filled in by `declare`.
-var panel: [10]Tag = @splat(.done);
+var panel: [12]Tag = @splat(.done);
 
 /// `picture` written into the board's description as the panel the
 /// firmware lit. Nothing where its pixels are in an order the display
@@ -202,6 +204,13 @@ pub fn declare(picture: Picture) bool {
         .value(tags.RTGA_Height, picture.height),
         .value(tags.RTGA_Pitch, picture.pitch),
         .value(tags.RTGA_PixelFormat, @intFromEnum(rtg.PixelFormat.bgra32)),
+        // At most sixteen pictures at once - screens, and the buffers
+        // behind them - each taken from memory as it is opened: a ceiling,
+        // not memory set aside.
+        .value(tags.RTGA_Buffers, 16),
+        // The windows of a screen each draw into a buffer of their own,
+        // and what can be seen of them is copied into the screen's.
+        .value(tags.RTGA_Compose, 1),
         .done,
     };
     return system.addPart(&panel);
