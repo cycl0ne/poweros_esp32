@@ -75,13 +75,39 @@ pub fn now() u64 {
     return systimer.read();
 }
 
+/// The rate the machine's counter counts at, in Hz. The kernel's root
+/// sets it as it starts, before anything is timed by it; exec answers it
+/// to whoever asks (`GetTimeBase`), and nothing outside the kernel reads
+/// it here.
+pub var timebase_hz: u64 = 1_000_000_000;
+
+/// The counter's rate.
+pub fn timebase() u64 {
+    return timebase_hz;
+}
+
+/// A count of the counter in microseconds. The rate need not be a whole
+/// number of MHz: the remainder is kept.
+pub fn toUs(count: u64) u64 {
+    const hz = timebase_hz;
+    return count / hz * 1_000_000 + count % hz * 1_000_000 / hz;
+}
+
+/// `us` microseconds in the counter's units.
+pub fn fromUs(us: u64) u64 {
+    const hz = timebase_hz;
+    return us / 1_000_000 * hz + us % 1_000_000 * hz / 1_000_000;
+}
+
+/// The time since the machine came up, in microseconds.
 pub fn uptimeUs() u64 {
-    return systimer.uptimeUs();
+    return toUs(now());
 }
 
 /// `us` microseconds waited out without giving the CPU away.
 pub fn spinUs(us: u64) void {
-    systimer.spinUs(us);
+    const until = now() + fromUs(us);
+    while (now() < until) hardware.cpu.relax();
 }
 
 pub fn tickCount() u32 {
@@ -105,7 +131,7 @@ pub fn coreTickCount(core: u32) u32 {
 ///
 /// It takes a twentieth of a second, and it is the only thing in the boot
 /// that does: everything timed after this is timed by the counter.
-pub fn measureTimebase(port: u16, bits: u8) u32 {
+pub fn measureTimebase(port: u16, bits: u8) u64 {
     if (port == 0 or bits < 24) return 0;
     const mask: u32 = if (bits >= 32) 0xFFFF_FFFF else (@as(u32, 1) << @intCast(bits)) - 1;
     const want: u32 = PM_TIMER_HZ / 20;
@@ -117,17 +143,20 @@ pub fn measureTimebase(port: u16, bits: u8) u32 {
     while (elapsed < want) elapsed = ((mmio.in32(port) & mask) -% first) & mask;
     const counted = cpu.cycles() -% began;
     const hz = counted * PM_TIMER_HZ / elapsed;
-    return @intCast(@min((hz + 500_000) / 1_000_000 * 1_000_000, 0xFFFF_FFFF));
+    return (hz + 500_000) / 1_000_000 * 1_000_000;
 }
 
 /// Core 0's tick at `hz` ticks a second. The counter's rate is already
 /// measured (`measureTimebase`), since the log is timed by it from the
 /// first line.
 pub fn init(hz: u32) void {
-    measured_cpu_hz = systimer.timebase_hz;
+    // The core's clock as the rest of the system is told it, which is a
+    // 32-bit figure: a counter faster than that holds is said at the most
+    // it holds. Time is counted by the rate itself.
+    measured_cpu_hz = @intCast(@min(timebase_hz, 0xFFFF_FFFF));
     cpu_hz = measured_cpu_hz;
     tick_hz = hz;
-    period = systimer.timebase_hz / hz;
+    period = timebase_hz / hz;
     systimer.rethink = &rethink;
     deadline_mode = hasDeadline();
     start();
@@ -170,7 +199,7 @@ fn start() void {
 fn measureLapicHz() u32 {
     lapic.write(lapic.LAPIC_LVT_TIMER, lapic.LVT_MASKED | lapic.TIMER_ONE_SHOT | apic.VECTOR_TICK);
     lapic.write(lapic.LAPIC_TIMER_INITIAL, 0xFFFF_FFFF);
-    const span = systimer.timebase_hz / 100;
+    const span = timebase_hz / 100;
     const began = now();
     while (now() -% began < span) {}
     const left = lapic.read(lapic.LAPIC_TIMER_CURRENT);
@@ -197,8 +226,8 @@ fn program(core: u32) void {
     // comparator that is set short only fires sooner and sets itself again.
     // The bound is a 32-bit figure and `@min` answers in the narrower of
     // the two types, so it is widened before it is multiplied.
-    const ahead: u64 = @min(if (soonest > at) soonest - at else 1, systimer.timebase_hz);
-    const count = ahead * @as(u64, lapic_hz) / systimer.timebase_hz;
+    const ahead: u64 = @min(if (soonest > at) soonest - at else 1, timebase_hz);
+    const count = ahead * @as(u64, lapic_hz) / timebase_hz;
     lapic.write(lapic.LAPIC_TIMER_INITIAL, @intCast(@max(1, @min(count, 0xFFFF_FFFE))));
 }
 

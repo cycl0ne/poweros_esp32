@@ -86,7 +86,7 @@ pub fn setSeconds(cb: *BattClockBase, seconds: u32) void {
         },
         _base.CLOCK_JH7110_RTC => if (comptime has_jh7110_rtc) {
             const ub = cb.utility_base orelse return;
-            jh7110rtc.write(cb.rtc_address, jh7110rtc.registersAt(ub, seconds));
+            jh7110rtc.write(cb.sys_base, cb.rtc_address, jh7110rtc.registersAt(ub, seconds));
         },
         _base.CLOCK_RPI_RTC => if (comptime has_rpi_rtc) {
             _ = rpirtc.write(cb.sys_base, cb.rtc_address, rpiBuffer(cb), rpirtc.countOf(seconds));

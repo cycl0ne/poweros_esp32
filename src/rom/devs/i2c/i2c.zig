@@ -453,10 +453,10 @@ fn submit(u: *I2CUnit, io: *exec.IORequest) void {
 
     // Nothing else can finish this request: the controller's interrupt is
     // off and this is the only one looking at it.
-    const deadline = systimer.uptimeUs() + spin_us;
+    const deadline = u.base.sys_base.UptimeUs() + spin_us;
     while (io.flags & exec.IOF_DONE == 0) {
         if (hw.intRaw(portOf(u)) & hw.INT_MASTER != 0) serve(u);
-        if (systimer.uptimeUs() >= deadline) break;
+        if (u.base.sys_base.UptimeUs() >= deadline) break;
     }
     sys.Disable();
     if (io.flags & exec.IOF_DONE == 0) {
@@ -552,8 +552,8 @@ fn clearBus(u: *I2CUnit, io: *exec.IORequest) void {
     // Nine pulses at the slowest speed this unit takes is well under a
     // millisecond; the deadline is there so a dead controller cannot hang
     // the caller.
-    const deadline = systimer.uptimeUs() + 20_000;
-    while (!hw.busClearDone(port) and systimer.uptimeUs() < deadline) {}
+    const deadline = u.base.sys_base.UptimeUs() + 20_000;
+    while (!hw.busClearDone(port) and u.base.sys_base.UptimeUs() < deadline) {}
     _ = hw.setUp(port, u.speed, u.scl_pin, u.sda_pin);
 }
 

@@ -132,9 +132,9 @@ fn pause(ab: *AMDGPUBase, us: u32) void {
 
 /// Whether the control register reads ready within `most_us`.
 fn ready(ab: *AMDGPUBase, most_us: u64) bool {
-    const until = systimer.uptimeUs() + most_us;
+    const until = ab.sys_base.UptimeUs() + most_us;
     while (word(ab, ring_control).* & CONTROL_STATE != CONTROL_READY) {
-        if (systimer.uptimeUs() > until) return false;
+        if (ab.sys_base.UptimeUs() > until) return false;
         pause(ab, 1000);
     }
     return true;
@@ -230,9 +230,9 @@ pub fn submit(ab: *AMDGPUBase, command: u32, arguments: []const Argument) ?Respo
     fence();
     word(ab, ring_write).* = (write + frame_words) % ring_words;
 
-    const until = systimer.uptimeUs() + command_most_us;
+    const until = ab.sys_base.UptimeUs() + command_most_us;
     while (at(ring.cpu, fence_at).* != number) {
-        if (systimer.uptimeUs() > until) {
+        if (ab.sys_base.UptimeUs() > until) {
             exec.kprintf(sys, "%s: the security processor does not answer command %x: control %x, write pointer %x, fence %x of %x\n", .{
                 owner, command, word(ab, ring_control).*, word(ab, ring_write).*, at(ring.cpu, fence_at).*, number,
             });

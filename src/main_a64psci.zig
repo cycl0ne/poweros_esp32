@@ -108,10 +108,10 @@ fn takeBoard(tree: device_tree.Facts) void {
     // The counter's rate is the firmware's; the board's figure stands in
     // only for a firmware that left CNTFRQ_EL0 unset.
     counter_hz = hardware.cpu.counterFrequency();
-    hardware.systimer.timebase_hz = if (counter_hz != 0 and counter_hz <= 0xFFFF_FFFF)
-        @intCast(counter_hz)
+    timer.timebase_hz = if (counter_hz != 0)
+        counter_hz
     else
-        @intCast(boards.fact(st.SYSTAG_Timebase, 62_500_000));
+        boards.fact(st.SYSTAG_Timebase, 62_500_000);
     hardware.system.before_reset = boards.before_reset;
     hardware.system.dma_coherent = boards.fact(st.SYSTAG_DmaCoherent, 0) != 0;
     for (tree.memoryRanges(), 0..) |range, index| ram.memory[index] = range;
@@ -186,6 +186,7 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     mmu.refine(ram.ranges());
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
+    exec.clock_hardware.* = .{ .timebase = &timer.timebase, .uptimeUs = &timer.uptimeUs, .spinUs = &timer.spinUs };
     exec.interrupt_hardware.* = gic.interrupt_hardware;
     exec.alert_hook.* = alert.show;
     exec.debug_hardware.* = &alert.debug_hardware;
@@ -254,10 +255,10 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
     // tick's rate exist.
     cpu1.cores = boards.cores;
     startOthers(sys);
-    note("cpu clock %d MHz (measured), system counter %d.%d MHz, tick %d Hz", .{
+    note("cpu clock %d MHz (measured), system counter %ld.%ld MHz, tick %d Hz", .{
         timer.measured_cpu_hz / 1_000_000,
-        hardware.systimer.timebase_hz / 1_000_000,
-        hardware.systimer.timebase_hz / 100_000 % 10,
+        timer.timebase_hz / 1_000_000,
+        timer.timebase_hz / 100_000 % 10,
         timer.tick_hz,
     });
     cpu.enableInterrupts();

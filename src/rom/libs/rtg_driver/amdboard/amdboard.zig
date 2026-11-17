@@ -69,7 +69,7 @@ const sound = @import("sound.zig");
 const MODULE_NAME = "rtg-amd";
 const DRIVER_NAME = "amd";
 const VERSION = 1;
-const REVISION = 4;
+const REVISION = 5;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++

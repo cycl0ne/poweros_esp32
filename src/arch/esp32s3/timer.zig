@@ -36,6 +36,17 @@ pub fn uptimeUs() u64 {
     return now() / (systimer_hz / 1_000_000);
 }
 
+/// The counter's rate.
+pub fn timebase() u64 {
+    return systimer_hz;
+}
+
+/// `us` microseconds waited out without giving the CPU away.
+pub fn spinUs(us: u64) void {
+    const until = uptimeUs() + us;
+    while (uptimeUs() < until) {}
+}
+
 pub fn tickCount() u32 {
     return @as(*volatile u32, &ticks).*;
 }

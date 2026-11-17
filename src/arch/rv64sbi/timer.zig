@@ -44,13 +44,39 @@ pub fn now() u64 {
     return systimer.read();
 }
 
+/// The rate the machine's counter counts at, in Hz. The kernel's root
+/// sets it as it starts, before anything is timed by it; exec answers it
+/// to whoever asks (`GetTimeBase`), and nothing outside the kernel reads
+/// it here.
+pub var timebase_hz: u64 = 10_000_000;
+
+/// The counter's rate.
+pub fn timebase() u64 {
+    return timebase_hz;
+}
+
+/// A count of the counter in microseconds. The rate need not be a whole
+/// number of MHz: the remainder is kept.
+pub fn toUs(count: u64) u64 {
+    const hz = timebase_hz;
+    return count / hz * 1_000_000 + count % hz * 1_000_000 / hz;
+}
+
+/// `us` microseconds in the counter's units.
+pub fn fromUs(us: u64) u64 {
+    const hz = timebase_hz;
+    return us / 1_000_000 * hz + us % 1_000_000 * hz / 1_000_000;
+}
+
+/// The time since the machine came up, in microseconds.
 pub fn uptimeUs() u64 {
-    return systimer.uptimeUs();
+    return toUs(now());
 }
 
 /// `us` microseconds waited out without giving the CPU away.
 pub fn spinUs(us: u64) void {
-    systimer.spinUs(us);
+    const until = now() + fromUs(us);
+    while (now() < until) {}
 }
 
 pub fn tickCount() u32 {
@@ -72,7 +98,7 @@ pub fn init(hz: u32) void {
     measured_cpu_hz = measureCpuHz();
     cpu_hz = measured_cpu_hz;
     tick_hz = hz;
-    period = systimer.timebase_hz / hz;
+    period = timebase_hz / hz;
     systimer.rethink = &rethink;
     start();
 }
@@ -117,7 +143,7 @@ pub fn rethinkIfAsked() void {
 /// The cycle counter measured against `time` for 10 ms, rounded to whole
 /// MHz.
 fn measureCpuHz() u32 {
-    const hz_time = systimer.timebase_hz;
+    const hz_time = timebase_hz;
     const t0 = now();
     const c0 = hardware.cpu.cycles();
     var t1 = t0;

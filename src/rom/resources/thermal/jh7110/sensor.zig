@@ -58,16 +58,16 @@ pub fn start(sys: *ExecBase, base: usize) bool {
     // Powered down first, then up: the analogue part takes 50
     // microseconds, its reset held 100 nanoseconds after that.
     register.* = SENSE_PD;
-    systimer.spinUs(1);
+    sys.SpinUs(1);
     register.* = 0;
-    systimer.spinUs(100);
+    sys.SpinUs(100);
     register.* = SENSE_RSTN;
-    systimer.spinUs(1);
+    sys.SpinUs(1);
     register.* = SENSE_RSTN | SENSE_RUN;
     // Its first conversion, so there is a reading from the start; Linux
     // reads without waiting, and gets none at first.
     var waited: u32 = 0;
-    while (read(base) == null and waited < first_conversion_us) : (waited += 100) systimer.spinUs(100);
+    while (read(base) == null and waited < first_conversion_us) : (waited += 100) sys.SpinUs(100);
     return true;
 }
 

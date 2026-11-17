@@ -21,8 +21,8 @@
 //! esp_lcd_mipi_dsi_bus.c.
 
 const sdk = @import("sdk");
+const ExecBase = sdk.interface.exec.ExecBase;
 const reg = sdk.hardware.mmio.reg;
-const systimer = sdk.hardware.systimer;
 
 const host = sdk.hardware.map.DSI_HOST;
 
@@ -224,7 +224,7 @@ fn testWrite(address: u8, value: u8) void {
 /// range the one that rate lies in, and waited for until it has locked
 /// and every lane rests in its stop state. The rate the PLL gives, in
 /// kbit/s; 0 if the PHY never got there.
-pub fn startPhy(lanes: u32, pll: Pll) u32 {
+pub fn startPhy(sys: *ExecBase, lanes: u32, pll: Pll) u32 {
     reg(phy_if_cfg).* = (reg(phy_if_cfg).* & ~@as(u32, 0x3)) | (lanes - 1);
     reg(pwr_up).* = 1;
     reg(phy_rstz).* = phy_shutdownz;
@@ -238,10 +238,10 @@ pub fn startPhy(lanes: u32, pll: Pll) u32 {
     testWrite(0x18, @intCast((pll.m - 1) & 0x1F));
     testWrite(0x18, @intCast(0x80 | (((pll.m - 1) >> 5) & 0x0F)));
 
-    if (!waitFor(phy_status, phy_lock, 0)) return 0;
+    if (!waitFor(sys, phy_status, phy_lock, 0)) return 0;
     var stopped = stopstate_clk | stopstate_0;
     if (lanes > 1) stopped |= stopstate_1;
-    if (!waitFor(phy_status, stopped, 0)) return 0;
+    if (!waitFor(sys, phy_status, stopped, 0)) return 0;
     return pll.kbps;
 }
 
@@ -269,9 +269,9 @@ pub fn commandMode(mbps: u32) void {
 }
 
 /// One DCS command with its parameters; false if the FIFO never had room.
-pub fn dcsWrite(command: u8, params: []const u8) bool {
+pub fn dcsWrite(sys: *ExecBase, command: u8, params: []const u8) bool {
     if (params.len <= 1) {
-        if (!waitFor(cmd_pkt_status, 0, gen_cmd_full)) return false;
+        if (!waitFor(sys, cmd_pkt_status, 0, gen_cmd_full)) return false;
         const param: u32 = if (params.len == 1) params[0] else 0;
         const dt: u32 = if (params.len == 1) dt_dcs_short_write_1 else dt_dcs_short_write_0;
         reg(gen_hdr).* = param << 16 | @as(u32, command) << 8 | dt;
@@ -290,17 +290,17 @@ pub fn dcsWrite(command: u8, params: []const u8) bool {
             const byte: u32 = if (index == 0) command else params[index - 1];
             word |= byte << (byte_lane * 8);
         }
-        if (!waitFor(cmd_pkt_status, 0, gen_pld_w_full)) return false;
+        if (!waitFor(sys, cmd_pkt_status, 0, gen_pld_w_full)) return false;
         reg(gen_pld_data).* = word;
     }
-    if (!waitFor(cmd_pkt_status, 0, gen_cmd_full)) return false;
+    if (!waitFor(sys, cmd_pkt_status, 0, gen_cmd_full)) return false;
     reg(gen_hdr).* = (count >> 8) << 16 | (count & 0xFF) << 8 | dt_dcs_long_write;
     return true;
 }
 
 /// Every command sent: both FIFOs empty.
-pub fn commandsSent() bool {
-    return waitFor(cmd_pkt_status, gen_cmd_empty | gen_pld_w_empty, 0);
+pub fn commandsSent(sys: *ExecBase) bool {
+    return waitFor(sys, cmd_pkt_status, gen_cmd_empty | gen_pld_w_empty, 0);
 }
 
 /// What video mode needs: the picture's size and its timings, in pixel
@@ -361,12 +361,12 @@ pub fn stop() void {
 
 /// Until the bits of `set` read 1 and those of `clear` 0 in `address`;
 /// false if they do not within `wait_us`.
-fn waitFor(address: usize, set: u32, clear: u32) bool {
-    const since = systimer.uptimeUs();
+fn waitFor(sys: *ExecBase, address: usize, set: u32, clear: u32) bool {
+    const since = sys.UptimeUs();
     while (true) {
         const value = reg(address).*;
         if (value & set == set and value & clear == 0) return true;
-        if (systimer.uptimeUs() - since > wait_us) return false;
+        if (sys.UptimeUs() - since > wait_us) return false;
     }
 }
 

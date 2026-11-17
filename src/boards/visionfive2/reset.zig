@@ -78,5 +78,8 @@ fn watchdogReset() void {
     reg(WDT + WDT_INTCLR).* = 1;
     reg(WDT + WDT_LOAD).* = wdt_count;
     reg(WDT + WDT_CONTROL).* = WDT_RESET_ENABLE | WDT_ENABLE;
-    systimer.spinUs(wdt_patience_us);
+    // On the board's counter, by the board's own rate: exec may be past
+    // asking by now.
+    const until = systimer.read() + wdt_patience_us * (power.counter_hz / 1_000_000);
+    while (systimer.read() < until) {}
 }

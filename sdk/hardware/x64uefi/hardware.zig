@@ -9,8 +9,8 @@
 //! What differs from machine to machine - where the controllers are, where
 //! the console is, how much memory there is and where, how many cores - is
 //! not written here: the stub gathers it from the firmware and the kernel
-//! sets it as it starts (`uart.console`, `systimer.timebase_hz`,
-//! `ramdisk`, `system.firmware_reset`), from the handover and the board's
+//! sets it as it starts (`uart.console`, `ramdisk`,
+//! `system.firmware_reset`), from the handover and the board's
 //! description. Almost nothing about this machine is fixed, which is why
 //! `map.zig` is as short as it is.
 

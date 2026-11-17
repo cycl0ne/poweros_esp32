@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! The machine's time as the drivers ask for it, under the ESP32s' name:
-//! RISC-V's `time` counter, which runs from the machine's start at the
-//! platform's timebase - 10 MHz on QEMU's virt, 4 MHz on the JH7110. The
-//! kernel sets `timebase_hz` from the board before anything reads it.
+//! The machine's counter, under the ESP32s' name: RISC-V's `time`
+//! counter, which runs from the machine's start at the platform's
+//! timebase - 10 MHz on QEMU's virt, 4 MHz on the JH7110. The kernel has
+//! the rate from the board and keeps it: exec answers it (`GetTimeBase`),
+//! and the time in microseconds (`UptimeUs`, `SpinUs`).
 //!
 //! **The alarms.** Each hart has one comparator on `time`, which the
 //! kernel's tick has; a driver's alarm (timer.device's micro timer and
@@ -15,30 +16,11 @@
 
 const cpu = @import("cpu.zig");
 
-/// The rate `time` counts at, in Hz: a whole number of MHz.
-pub var timebase_hz: u32 = 10_000_000;
-
-/// The time since the machine came up, in the timebase's units.
+/// The time since the machine came up, in the counter's units. How fast
+/// it counts is the kernel's to know: a module asks exec (`GetTimeBase`),
+/// or asks it for the time itself (`UptimeUs`, `SpinUs`).
 pub inline fn read() u64 {
     return cpu.time();
-}
-
-/// The time since the machine came up, in microseconds.
-pub inline fn uptimeUs() u64 {
-    return read() / (timebase_hz / 1_000_000);
-}
-
-/// `us` microseconds in the timebase's units.
-pub inline fn fromUs(us: u64) u64 {
-    return us * (timebase_hz / 1_000_000);
-}
-
-/// Wait `us` microseconds without giving the CPU away: the wait for code
-/// that may not Wait - holding a spinlock, before timer.device, in the
-/// boot.
-pub inline fn spinUs(us: u64) void {
-    const until = uptimeUs() + us;
-    while (uptimeUs() < until) {}
 }
 
 /// How many alarms there are.

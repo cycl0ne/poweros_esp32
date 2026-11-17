@@ -66,6 +66,6 @@ noinline fn deeper(arg: ?*anyopaque) callconv(.c) i32 {
     var frame: [256]u8 = undefined;
     const bytes: *volatile [256]u8 = &frame;
     for (bytes, 0..) |*byte, index| byte.* = @truncate(index);
-    sdk.hardware.systimer.spinUs(1000);
+    @import("../../../../../arch/arch.zig").timer.spinUs(1000);
     return deeper(arg) +% bytes[0];
 }

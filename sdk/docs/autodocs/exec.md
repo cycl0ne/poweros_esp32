@@ -145,8 +145,10 @@ Generated from the source by `./zig build autodoc`.
 - [ShareWork](#sharework) - Does a job in parts, at once on several cores.
 - [Signal](#signal) - Sends signals to a task, waking it if it was waiting for one of them.
 - [SignalWaitable](#signalwaitable) - Signals a waitable: it stays signalled until it is reset, and every task waiting on it in WaitForAny is woken.
+- [SpinUs](#spinus) - Waits a number of microseconds without giving the CPU away.
 - [UnlockCoreTasks](#unlockcoretasks) - Gives back the lock `LockCoreTasks` took on core `core`.
 - [UnlockExecList](#unlockexeclist) - Gives back the lock `LockExecList` took on list `which`.
+- [UptimeUs](#uptimeus) - Tells how long the machine has been up, in microseconds.
 - [Vacate](#vacate) - Withdraws a bid, or gives back the semaphore it won.
 - [Wait](#wait) - Sleeps until one of a set of signals arrives.
 - [WaitForAny](#waitforany) - Waits until one of several waitables is signalled, or a time has gone by.
@@ -4689,10 +4691,8 @@ The rate is the kernel's to know. On the ESP32s it is the chip's own
 and never other. On the 64-bit machines the kernel learns it as it
 starts - from the board's list, from the timer itself, or by timing
 the counter against another clock where the core does not say - and
-only its own modules share what it learned. A module loaded from the
-disk is built on its own, and what `sdk.hardware.systimer` keeps of
-the rate is not set in it: it asks here, once, and counts with the
-answer.
+keeps it. A module that reads the counter itself asks here, once, and
+counts with the answer; one that wants the time asks `UptimeUs`.
 
 **CONTEXT**
 
@@ -9416,6 +9416,78 @@ None known.
 sys.SignalWaitable(&job.done);
 ```
 
+## SpinUs
+
+Waits a number of microseconds without giving the CPU away.
+
+**SYNOPSIS**
+
+```zig
+fn SpinUs(base: *ExecBase, us: u64) void
+```
+
+**SINCE**
+
+1.42. LVO -604.
+
+**INPUTS**
+
+- `us` - how long, in microseconds. 0 returns at once.
+
+**RESULT**
+
+None. It returns when at least that long has passed.
+
+**BEHAVIOR**
+
+The machine's counter is read until it has moved on by that many
+microseconds: the caller's core does nothing else meanwhile, and no
+other task gets it. It is the wait for where no other is possible -
+with a spinlock held, in an interrupt, before timer.device is there -
+and for the few microseconds a part's datasheet asks between two
+writes, which are over before a task switch would be.
+
+Anything longer belongs to timer.device, in a task: a millisecond
+spun is a millisecond no task of that core runs, and with interrupts
+off it is one no interrupt is taken.
+
+**CONTEXT**
+
+- Waits: no - it spins.
+- Interrupts: yes.
+- Locks: none; a spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**NOTES**
+
+An interrupt taken meanwhile is served, and its time counts: the wait
+is never shorter than asked and may be longer.
+
+On the ESP32-S3 this call's code is in the flash: code that runs
+with the flash's cache off spins on the counter itself
+(`sdk.hardware.systimer`).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UptimeUs`, `GetTimeBase`
+
+**EXAMPLES**
+
+```zig
+// Reset held for ten microseconds, as the part asks.
+setReset(part, true);
+sys.SpinUs(10);
+setReset(part, false);
+```
+
 ## UnlockCoreTasks
 
 Gives back the lock `LockCoreTasks` took on core `core`.
@@ -9537,6 +9609,75 @@ None known.
 const list = sys.LockExecList(EXECLIST_PORTS) orelse return;
 const count = countNodes(list);
 sys.UnlockExecList(EXECLIST_PORTS);
+```
+
+## UptimeUs
+
+Tells how long the machine has been up, in microseconds.
+
+**SYNOPSIS**
+
+```zig
+fn UptimeUs(base: *ExecBase) u64
+```
+
+**SINCE**
+
+1.42. LVO -600.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+Microseconds since the machine came up. It only ever grows, and does
+not wrap while a machine can run.
+
+**BEHAVIOR**
+
+The machine's counter is read and divided by its rate, which the
+kernel knows (`GetTimeBase`). It is the clock a driver times a wait
+by: read once for a deadline, and again in the loop that waits for
+the hardware.
+
+It is not the time of day - timer.device keeps that, and its
+`GetSysTime` answers it - and it does not stop while the machine
+sleeps a core.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes.
+- Locks: none; a spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**NOTES**
+
+On the ESP32-S3 this call's code is in the flash, like every call of
+exec's: code that runs with the flash's cache off reads the counter
+itself (`sdk.hardware.systimer`).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SpinUs`, `GetTimeBase`, timer.device's `ReadEClock` and `GetSysTime`
+
+**EXAMPLES**
+
+```zig
+// Wait for the part to say it is ready, a tenth of a second at most.
+const until = sys.UptimeUs() + 100_000;
+while (!ready(part)) {
+    if (sys.UptimeUs() > until) return false;
+}
 ```
 
 ## Vacate

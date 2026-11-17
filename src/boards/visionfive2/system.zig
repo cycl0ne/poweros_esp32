@@ -308,7 +308,7 @@ pub const root = [_]Tag{
     .value(st.SYSTAG_RamBase, 0x4000_0000),
     .value(st.SYSTAG_RamSize, 4 * 1024 * 1024 * 1024),
     .value(st.SYSTAG_UnifiedMemory, 1),
-    .value(st.SYSTAG_Timebase, 4_000_000),
+    .value(st.SYSTAG_Timebase, @import("power.zig").counter_hz),
     .value(st.SYSTAG_Console, st.CONSOLE_UART0),
     .value(st.SYSTAG_ConsoleBase, 0x1000_0000),
     .value(st.SYSTAG_ConsoleShift, 2),

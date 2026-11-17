@@ -19,6 +19,10 @@ const system = hardware.system;
 const systimer = hardware.systimer;
 const dwi2c = hardware.dwi2c;
 
+/// The rate the JH7110's `time` counter counts at on this board, as its
+/// system list says it (`SYSTAG_Timebase`).
+pub const counter_hz: u64 = 4_000_000;
+
 /// I2C5, a DesignWare I2C controller, and the AXP15060's address on it.
 const I2C5: usize = 0x1205_0000;
 const AXP15060: u7 = 0x36;
@@ -43,6 +47,13 @@ pub fn bringUp() bool {
 /// The cores' supply at `microvolts` (`boards.cpu_supply`): written,
 /// read back and given time to get there. False if the controller did
 /// not answer, or DCDC2 has no such voltage.
+/// `us` microseconds waited out on the board's counter, by the board's
+/// own rate: this runs before exec is there to ask.
+fn spin(us: u64) void {
+    const until = systimer.read() + us * (counter_hz / 1_000_000);
+    while (systimer.read() < until) {}
+}
+
 pub fn setCpuSupply(microvolts: u32) bool {
     const code = dcdc2Code(microvolts) orelse return false;
     if (!bringUp()) return false;
@@ -52,7 +63,7 @@ pub fn setCpuSupply(microvolts: u32) bool {
     if (!dwi2c.writeRegister(I2C5, AXP15060, DCDC2_V_CTRL, wanted)) return false;
     const written = dwi2c.readRegister(I2C5, AXP15060, DCDC2_V_CTRL) orelse return false;
     if (written != wanted) return false;
-    systimer.spinUs(settle_us);
+    spin(settle_us);
     return true;
 }
 

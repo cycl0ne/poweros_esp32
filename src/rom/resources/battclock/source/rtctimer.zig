@@ -124,7 +124,7 @@ const edge_wait_us = 1_000;
 fn edge(sys: *ExecBase) ?Edge {
     sys.Disable();
     defer sys.Enable();
-    const until = systimer.uptimeUs() + edge_wait_us;
+    const until = sys.UptimeUs() + edge_wait_us;
     const before = rtc_timer.count();
     while (true) {
         const now = rtc_timer.count();
@@ -145,11 +145,11 @@ pub fn periodBetween(first: Edge, last: Edge) u32 {
 /// The slow clock timed over `cycles_measured` of its cycles: the period,
 /// and the edge it was timed from. Null when the timer does not count.
 pub fn measure(sys: *ExecBase) ?struct { period: u32, first: Edge } {
-    const until = systimer.uptimeUs() + give_up_us;
+    const until = sys.UptimeUs() + give_up_us;
     const first = edge(sys) orelse return null;
     // Wait with interrupts on, then catch the next edge.
     while (rtc_timer.count() -% first.count < cycles_measured - 1) {
-        if (systimer.uptimeUs() > until) return null;
+        if (sys.UptimeUs() > until) return null;
     }
     const last = edge(sys) orelse return null;
     return .{ .period = periodBetween(first, last), .first = first };

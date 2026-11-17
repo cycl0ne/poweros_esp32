@@ -104,6 +104,7 @@ pub fn powerUp(port: *const Port, base: *EmacBase) bool {
     const mac = &macs[port.unit];
     const sys = base.sys_base;
     eqos.registers = mac.registers;
+    eqos.exec_base = sys;
     sys.Disable();
     system.update(mac.mode, mode_rgmii << mac.mode_shift, mode_mask << mac.mode_shift);
     for (mac.aon_clocks) |clock| system.clockOn(.aon, clock);
@@ -115,9 +116,9 @@ pub fn powerUp(port: *const Port, base: *EmacBase) bool {
     sys.Disable();
     for (mac.resets) |reset| system.releaseReset(.aon, reset);
     sys.Enable();
-    const until = sdk.hardware.systimer.uptimeUs() + reset_wait_us;
+    const until = base.sys_base.UptimeUs() + reset_wait_us;
     while (!outOfReset(mac)) {
-        if (sdk.hardware.systimer.uptimeUs() > until) return false;
+        if (base.sys_base.UptimeUs() > until) return false;
     }
     return true;
 }

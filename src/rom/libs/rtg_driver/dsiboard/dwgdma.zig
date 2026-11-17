@@ -19,8 +19,8 @@
 //! dw_gdma.c, dw_gdma_ll.h and esp_lcd_panel_dpi.c.
 
 const sdk = @import("sdk");
+const ExecBase = sdk.interface.exec.ExecBase;
 const reg = sdk.hardware.mmio.reg;
-const systimer = sdk.hardware.systimer;
 
 const gdma = sdk.hardware.map.GDMA;
 
@@ -87,11 +87,11 @@ pub fn uncached(address: usize) usize {
 }
 
 /// The controller reset and on. False if the reset does not end.
-pub fn start() bool {
+pub fn start(sys: *ExecBase) bool {
     reg(reset0).* = 1;
-    const since = systimer.uptimeUs();
+    const since = sys.UptimeUs();
     while (reg(reset0).* & 1 != 0) {
-        if (systimer.uptimeUs() - since > 10_000) return false;
+        if (sys.UptimeUs() - since > 10_000) return false;
     }
     reg(cfg0).* = dmac_en | int_en;
     return true;

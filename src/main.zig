@@ -92,6 +92,7 @@ var log_ring: [boards.fact(st.SYSTAG_LogSize, 16 * 1024)]u8 = undefined;
 export fn kmain() callconv(.c) noreturn {
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = timer.uptimeUs;
+    exec.clock_hardware.* = .{ .timebase = &timer.timebase, .uptimeUs = &timer.uptimeUs, .spinUs = &timer.spinUs };
     exec.log_mirror.* = boards.fact(st.SYSTAG_LogMirror, 0) != 0;
     exec.setLogMirror();
     lastwords.restore();

@@ -68,7 +68,7 @@ fn idle() void {
     const cycles_before = exec_base.cycles();
     cpu.waitForInterrupt();
     const counted = exec_base.cycles() -% cycles_before;
-    const slept = (timer.now() -% time_before) * timer.cpu_hz / systimer.timebase_hz;
+    const slept = (timer.now() -% time_before) * timer.cpu_hz / timer.timebase_hz;
     if (slept > counted) exec.idleSlept(exec.SysBase, @intCast(@min(slept - counted, std.math.maxInt(u32))));
     cpu.enableInterrupts();
 }

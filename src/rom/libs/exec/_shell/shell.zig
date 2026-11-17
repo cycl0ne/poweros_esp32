@@ -395,11 +395,10 @@ const cold_start_wait_us = 10_000_000;
 /// its wait ends. True once it has ended, false after
 /// `cold_start_wait_us`.
 fn awaitColdStart(sys: *sdk.exec.ExecBase) bool {
-    const systimer = sdk.hardware.systimer;
-    const since = systimer.uptimeUs();
+    const since = sys.UptimeUs();
     while (sys.FindTask("exec") != null) {
-        if (systimer.uptimeUs() - since > cold_start_wait_us) return false;
-        systimer.spinUs(1000);
+        if (sys.UptimeUs() - since > cold_start_wait_us) return false;
+        sys.SpinUs(1000);
     }
     return true;
 }

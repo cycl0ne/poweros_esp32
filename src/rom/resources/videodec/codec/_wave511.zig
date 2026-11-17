@@ -323,46 +323,46 @@ pub fn halt(sys: *ExecBase) void {
 }
 
 /// Until `offset` reads `want` under `mask`, or `us` have gone by.
-fn waitFor(regs: usize, offset: usize, mask: u32, want: u32, us: u64) bool {
-    const until = hardware.systimer.uptimeUs() + us;
-    while (hardware.systimer.uptimeUs() < until) {
+fn waitFor(sys: *ExecBase, regs: usize, offset: usize, mask: u32, want: u32, us: u64) bool {
+    const until = sys.UptimeUs() + us;
+    while (sys.UptimeUs() < until) {
         if (at(regs, offset).* & mask == want) return true;
     }
     return at(regs, offset).* & mask == want;
 }
 
-fn fioRead(regs: usize, address: u32) ?u32 {
+fn fioRead(sys: *ExecBase, regs: usize, address: u32) ?u32 {
     at(regs, FIO_CTRL_ADDR).* = address & 0xFFFF;
-    if (!waitFor(regs, FIO_CTRL_ADDR, FIO_READY, FIO_READY, 100_000)) return null;
+    if (!waitFor(sys, regs, FIO_CTRL_ADDR, FIO_READY, FIO_READY, 100_000)) return null;
     return at(regs, FIO_DATA).*;
 }
 
-fn fioWrite(regs: usize, address: u32, data: u32) bool {
+fn fioWrite(sys: *ExecBase, regs: usize, address: u32, data: u32) bool {
     at(regs, FIO_DATA).* = data;
     at(regs, FIO_CTRL_ADDR).* = (address & 0xFFFF) | FIO_WRITE;
-    return waitFor(regs, FIO_CTRL_ADDR, FIO_READY, FIO_READY, 100_000);
+    return waitFor(sys, regs, FIO_CTRL_ADDR, FIO_READY, FIO_READY, 100_000);
 }
 
 /// The boot reset: the bus between the core and memory drained, every
 /// block reset. Only the one backbone for the whole core is known
 /// (VPU_CONFIG0 bit 16 set, 22 and 28 clear, as the JH7110's is).
-fn bootReset(regs: usize) bool {
+fn bootReset(sys: *ExecBase, regs: usize) bool {
     at(regs, BUSY_STATUS).* = 0;
     const config0 = at(regs, VPU_CONFIG0).*;
     if (config0 & (1 << 16) == 0 or config0 & (1 << 22 | 1 << 28) != 0) return false;
-    _ = fioWrite(regs, COMBINED_BUS_CTRL, 0x7);
-    const until = hardware.systimer.uptimeUs() + 500_000;
-    const drained = while (hardware.systimer.uptimeUs() < until) {
-        if (fioRead(regs, COMBINED_BUS_STATUS) == 0x3F) break true;
+    _ = fioWrite(sys, regs, COMBINED_BUS_CTRL, 0x7);
+    const until = sys.UptimeUs() + 500_000;
+    const drained = while (sys.UptimeUs() < until) {
+        if (fioRead(sys, regs, COMBINED_BUS_STATUS) == 0x3F) break true;
     } else false;
     if (!drained) {
-        _ = fioWrite(regs, COMBINED_BUS_CTRL, 0);
+        _ = fioWrite(sys, regs, COMBINED_BUS_CTRL, 0);
         return false;
     }
     at(regs, RESET_REQ).* = RST_BLOCK_ALL;
-    const reset_done = waitFor(regs, RESET_STATUS, 0xFFFF_FFFF, 0, 500_000);
+    const reset_done = waitFor(sys, regs, RESET_STATUS, 0xFFFF_FFFF, 0, 500_000);
     at(regs, RESET_REQ).* = 0;
-    _ = fioWrite(regs, COMBINED_BUS_CTRL, 0);
+    _ = fioWrite(sys, regs, COMBINED_BUS_CTRL, 0);
     return reset_done;
 }
 
@@ -370,9 +370,9 @@ fn bootReset(regs: usize) bool {
 /// after it, on a 1 MiB boundary below 4 GiB, the firmware in it and out
 /// of the caches - and its interrupts switched on: its version, or null
 /// if it did not start.
-pub fn boot(regs: usize, code: u32) ?u32 {
+pub fn boot(sys: *ExecBase, regs: usize, code: u32) ?u32 {
     if (at(regs, VCPU_CUR_PC).* == 0) clearCommands(regs);
-    if (!bootReset(regs)) return null;
+    if (!bootReset(sys, regs)) return null;
     at(regs, PO_CONF).* = 0;
     clearCommands(regs);
     var index: u32 = 0;
@@ -387,22 +387,22 @@ pub fn boot(regs: usize, code: u32) ?u32 {
     at(regs, ADDR_TEMP_BASE).* = code + code_size;
     at(regs, TEMP_SIZE).* = temp_size;
     at(regs, HW_OPTION).* = 0;
-    _ = fioWrite(regs, BACKBONE_PROC_EXT_ADDR, 0);
-    _ = fioWrite(regs, BACKBONE_AXI_PARAM, 0);
+    _ = fioWrite(sys, regs, BACKBONE_PROC_EXT_ADDR, 0);
+    _ = fioWrite(sys, regs, BACKBONE_AXI_PARAM, 0);
     at(regs, SEC_AXI_PARAM).* = 0;
-    _ = fioWrite(regs, BACKBONE_PROG_AXI_ID, 0);
+    _ = fioWrite(sys, regs, BACKBONE_PROG_AXI_ID, 0);
 
     at(regs, BUSY_STATUS).* = 1;
     at(regs, COMMAND).* = CMD_INIT_VPU;
     at(regs, REMAP_CORE_START).* = 1;
-    if (!waitFor(regs, BUSY_STATUS, 0xFFFF_FFFF, 0, 3_000_000)) return null;
+    if (!waitFor(sys, regs, BUSY_STATUS, 0xFFFF_FFFF, 0, 3_000_000)) return null;
     if (at(regs, RET_SUCCESS).* == 0) return null;
 
     at(regs, QUERY_OPTION).* = GET_VPU_INFO;
     at(regs, BUSY_STATUS).* = 1;
     at(regs, COMMAND).* = CMD_QUERY;
     at(regs, HOST_INT_REQ).* = 1;
-    if (!waitBusy(regs) or at(regs, RET_SUCCESS).* == 0) return null;
+    if (!waitBusy(sys, regs) or at(regs, RET_SUCCESS).* == 0) return null;
     const version = at(regs, RET_FW_VERSION).*;
     at(regs, VINT_ENABLE).* = interrupts;
     return version;
@@ -443,12 +443,14 @@ fn take(regs: usize, offset: usize) u32 {
 }
 
 /// Until the firmware has taken the command: false after a second.
-fn waitBusy(regs: usize) bool {
-    return waitFor(regs, BUSY_STATUS, 0xFFFF_FFFF, 0, 1_000_000);
+fn waitBusy(sys: *ExecBase, regs: usize) bool {
+    return waitFor(sys, regs, BUSY_STATUS, 0xFFFF_FFFF, 0, 1_000_000);
 }
 
 /// A decoder instance as the commands name it.
 pub const Instance = struct {
+    /// exec, for the waits.
+    sys: *ExecBase,
     regs: usize,
     id: u32,
     std: u32,
@@ -463,7 +465,7 @@ pub const Instance = struct {
     /// The command given and taken: whether it could be.
     fn send(i: Instance, command: u32) bool {
         i.issue(command);
-        return waitBusy(i.regs) and at(i.regs, RET_SUCCESS).* != 0;
+        return waitBusy(i.sys, i.regs) and at(i.regs, RET_SUCCESS).* != 0;
     }
 
     fn query(i: Instance, option: u32) bool {
@@ -492,7 +494,7 @@ pub const Instance = struct {
         while (tries < 20) : (tries += 1) {
             if (i.send(CMD_DESTROY_INSTANCE)) return true;
             if (at(i.regs, RET_FAIL_REASON).* != FAIL_STILL_RUNNING) return false;
-            hardware.systimer.spinUs(1000);
+            i.sys.SpinUs(1000);
         }
         return false;
     }
@@ -503,7 +505,7 @@ pub const Instance = struct {
         while (tries < 20) : (tries += 1) {
             if (i.send(CMD_FLUSH_INSTANCE)) return true;
             if (at(i.regs, RET_FAIL_REASON).* != FAIL_STILL_RUNNING) return false;
-            hardware.systimer.spinUs(1000);
+            i.sys.SpinUs(1000);
         }
         return false;
     }
@@ -639,7 +641,7 @@ pub const Instance = struct {
                 }
             }
             i.issue(CMD_SET_FB);
-            if (!waitBusy(i.regs)) return false;
+            if (!waitBusy(i.sys, i.regs)) return false;
         }
         return at(i.regs, RET_SUCCESS).* != 0;
     }

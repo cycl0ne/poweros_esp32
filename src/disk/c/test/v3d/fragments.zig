@@ -261,7 +261,7 @@ pub const Scene = struct {
         space.toGpu(&scene.lists);
         space.toGpu(&scene.objects);
         space.toGpu(&scene.vertices);
-        const began = sdk.hardware.systimer.uptimeUs();
+        const began = scene.engine.sys.UptimeUs();
         const engine = scene.engine;
         const binned = engine.bin(scene.bin.address, scene.bin.here(), &scene.tile_lists, &scene.tile_state);
         if (binned != .done) {
@@ -269,7 +269,7 @@ pub const Scene = struct {
             return false;
         }
         const rendered = engine.render(render.address, render.here());
-        scene.took_us = sdk.hardware.systimer.uptimeUs() - began;
+        scene.took_us = scene.engine.sys.UptimeUs() - began;
         space.fromGpu(&scene.image);
         if (rendered != .done) {
             lost(scene.dl, engine, rendered, "rendering");

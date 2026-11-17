@@ -361,9 +361,8 @@ fn takeBack(sb: *SdCardBase, blocks: Blocks) void {
 /// count is a last resort, so that a card which never lets go cannot hang
 /// the machine.
 fn waitIdle(sb: *SdCardBase) void {
-    _ = sb;
-    const until = systimer.uptimeUs() + busy_timeout_us;
-    while (sdmmc.busy() and systimer.uptimeUs() < until) {}
+    const until = sb.sys_base.UptimeUs() + busy_timeout_us;
+    while (sdmmc.busy() and sb.sys_base.UptimeUs() < until) {}
 }
 
 /// The longest a card may take over what it was given - programming the

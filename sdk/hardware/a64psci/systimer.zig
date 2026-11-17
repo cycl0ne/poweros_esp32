@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! The machine's time as the drivers ask for it, under the ESP32s' name:
-//! the generic timer's system counter, which runs from the machine's
-//! start at the rate CNTFRQ_EL0 gives - 62.5 MHz on QEMU's Cortex-A76,
-//! 54 MHz on the BCM2712. The kernel sets `timebase_hz` from it before
-//! anything reads it. The rate is not always a whole number of MHz, so
-//! microseconds are worked out with the remainder kept.
+//! The machine's counter, under the ESP32s' name: the generic timer's
+//! system counter, which runs from the machine's start at the rate
+//! CNTFRQ_EL0 gives - 62.5 MHz on QEMU's Cortex-A76, 54 MHz on the
+//! BCM2712. The kernel has the rate and keeps it: exec answers it
+//! (`GetTimeBase`), and the time in microseconds (`UptimeUs`, `SpinUs`).
 //!
 //! **The alarms.** Each core has one comparator on the counter (the
 //! virtual timer's), which the kernel's tick has; a driver's alarm
@@ -17,37 +16,11 @@
 
 const cpu = @import("cpu.zig");
 
-/// The rate the counter counts at, in Hz.
-pub var timebase_hz: u32 = 62_500_000;
-
-/// The time since the machine came up, in the timebase's units.
+/// The time since the machine came up, in the counter's units. How fast
+/// it counts is the kernel's to know: a module asks exec (`GetTimeBase`),
+/// or asks it for the time itself (`UptimeUs`, `SpinUs`).
 pub inline fn read() u64 {
     return cpu.time();
-}
-
-/// `ticks` of the timebase in microseconds.
-pub inline fn toUs(ticks: u64) u64 {
-    const hz: u64 = timebase_hz;
-    return ticks / hz * 1_000_000 + ticks % hz * 1_000_000 / hz;
-}
-
-/// `us` microseconds in the timebase's units.
-pub inline fn fromUs(us: u64) u64 {
-    const hz: u64 = timebase_hz;
-    return us / 1_000_000 * hz + us % 1_000_000 * hz / 1_000_000;
-}
-
-/// The time since the machine came up, in microseconds.
-pub inline fn uptimeUs() u64 {
-    return toUs(read());
-}
-
-/// Wait `us` microseconds without giving the CPU away: the wait for code
-/// that may not Wait - holding a spinlock, before timer.device, in the
-/// boot.
-pub inline fn spinUs(us: u64) void {
-    const until = read() + fromUs(us);
-    while (read() < until) {}
 }
 
 /// How many alarms there are.

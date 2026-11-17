@@ -436,6 +436,7 @@ fn findPart(sys: *ExecBase, utility: *UtilityBase, base: *CywBase) bool {
         say(sys, "the board's Wi-Fi is wired where this cannot drive it");
         return false;
     };
+    base.host.sys = sys;
     const station = utility.GetTagData(st.PART_StationAddress, 0, part.tags);
     if (station != 0) base.station = @as(*const [6]u8, @ptrFromInt(station)).*;
     base.irq = @truncate(utility.GetTagData(st.PART_Irq, 0, part.tags));

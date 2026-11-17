@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
-//! The machine's time as the drivers ask for it: the core's timestamp
-//! counter, which runs from the machine's start at a fixed rate whatever
-//! the core's clock does. The kernel measures that rate against another
-//! clock as it starts and sets `timebase_hz` before anything reads it,
-//! since most cores do not say what it is (`cpu.tscHz`).
+//! The machine's counter: the core's timestamp counter, which runs from
+//! the machine's start at a fixed rate whatever the core's clock does.
+//! The kernel measures that rate against another clock as it starts,
+//! since most cores do not say what it is (`cpu.tscHz`), and keeps it:
+//! exec answers it (`GetTimeBase`), and the time in microseconds
+//! (`UptimeUs`, `SpinUs`).
 //!
 //! **The alarms.** Each core has one comparator - its own interrupt
 //! controller's timer - which the kernel's tick has; a driver's alarm
@@ -16,31 +17,11 @@
 
 const cpu = @import("cpu.zig");
 
-/// The rate the counter counts at, in Hz: rounded to a whole number of
-/// MHz, which is what the division below wants.
-pub var timebase_hz: u32 = 1_000_000_000;
-
-/// The time since the machine came up, in the timebase's units.
+/// The time since the machine came up, in the counter's units. How fast
+/// it counts is the kernel's to know: a module asks exec (`GetTimeBase`),
+/// or asks it for the time itself (`UptimeUs`, `SpinUs`).
 pub inline fn read() u64 {
     return cpu.time();
-}
-
-/// The time since the machine came up, in microseconds.
-pub inline fn uptimeUs() u64 {
-    return read() / (timebase_hz / 1_000_000);
-}
-
-/// `us` microseconds in the timebase's units.
-pub inline fn fromUs(us: u64) u64 {
-    return us * (timebase_hz / 1_000_000);
-}
-
-/// Wait `us` microseconds without giving the CPU away: the wait for code
-/// that may not Wait - holding a spinlock, before timer.device, in the
-/// boot.
-pub inline fn spinUs(us: u64) void {
-    const until = uptimeUs() + us;
-    while (uptimeUs() < until) cpu.relax();
 }
 
 /// How many alarms there are.

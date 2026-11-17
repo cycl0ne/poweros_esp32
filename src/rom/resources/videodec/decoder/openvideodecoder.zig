@@ -153,6 +153,7 @@ pub fn OpenVideoDecoder(vb: *VideoDecBase, codec: u32, tags: ?[*]const utility.T
     d.* = .{
         .vb = vb,
         .instance = .{
+            .sys = sys,
             .regs = vb.vpu,
             .id = @intCast(slot),
             .std = if (codec == types.VDCODEC_H264) wave511.STD_AVC else wave511.STD_HEVC,
@@ -225,7 +226,7 @@ fn start(vb: *VideoDecBase) void {
         exec.kprintf(sys, "%s: the jh7110 vdec does not wake\n", .{types.VIDEODECNAME});
         return;
     }
-    const version = wave511.boot(vb.vpu, @intCast(code)) orelse {
+    const version = wave511.boot(sys, vb.vpu, @intCast(code)) orelse {
         wave511.halt(sys);
         sys.FreeMem(block, block_size);
         vb.state = base.STATE_DEAD;

@@ -328,20 +328,20 @@ fn bringUp(panel: *Panel, reset_pin: BoardPin, reset_ms: u32, bring_up: []const 
         gpio.connectOut(reset_pin.number, gpio.out_of_gpio, true);
         gpio.outputEnable(reset_pin.number, true);
         gpio.setLevel(reset_pin.number, asserted);
-        systimer.spinUs(10_000);
+        panel.sys.SpinUs(10_000);
         gpio.setLevel(reset_pin.number, !asserted);
     } else {
         const code = rb.TxParam(panel.io, SWRESET, null, 0);
         if (code != err.RTGERR_OK) return code;
     }
-    systimer.spinUs(@as(u64, reset_ms) * 1000);
+    panel.sys.SpinUs(@as(u64, reset_ms) * 1000);
 
     var steps: sequence.Steps = .{ .bytes = bring_up };
     while (steps.next()) |one| {
         const params: ?*const anyopaque = if (one.params.len != 0) one.params.ptr else null;
         const code = rb.TxParam(panel.io, one.cmd, params, @intCast(one.params.len));
         if (code != err.RTGERR_OK) return code;
-        if (one.delay_ms != 0) systimer.spinUs(@as(u64, one.delay_ms) * 1000);
+        if (one.delay_ms != 0) panel.sys.SpinUs(@as(u64, one.delay_ms) * 1000);
     }
     return err.RTGERR_OK;
 }

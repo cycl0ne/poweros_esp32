@@ -142,14 +142,14 @@ pub fn read(base: usize) Registers {
 
 /// The time and the date set, waited for until the RTC has them, and
 /// the RTC counting from them - stopped, for no date.
-pub fn write(base: usize, regs: Registers) void {
+pub fn write(sys: *ExecBase, base: usize, regs: Registers) void {
     const cfg = reg(base + CFG);
     cfg.* = cfg.* & ~CFG_ENABLE | CFG_HOURS_24;
     reg(base + CFG_TIME).* = regs.time;
     reg(base + CFG_DATE).* = regs.date;
     reg(base + IRQ_EVENT).* = EVENT_LOAD;
-    const until = systimer.uptimeUs() + load_us;
-    while (systimer.uptimeUs() < until) {
+    const until = sys.UptimeUs() + load_us;
+    while (sys.UptimeUs() < until) {
         if (reg(base + TIME).* == regs.time and reg(base + DATE).* == regs.date) break;
     }
     if (regs.date != no_date.date) cfg.* |= CFG_ENABLE;
@@ -163,11 +163,11 @@ pub fn start(sys: *ExecBase, ub: *UtilityBase, base: usize) bool {
     if (!wake(sys)) return false;
     if (counting(base)) return true;
     const kept = dateOf(read(base)) orelse {
-        write(base, no_date);
+        write(sys, base, no_date);
         return true;
     };
     // Half a second for the second the reset came in, half to round.
-    const since_reset: u32 = @intCast((systimer.uptimeUs() + 1_000_000) / 1_000_000);
-    write(base, registersAt(ub, ub.Date2Amiga(&kept) +| since_reset));
+    const since_reset: u32 = @intCast((sys.UptimeUs() + 1_000_000) / 1_000_000);
+    write(sys, base, registersAt(ub, ub.Date2Amiga(&kept) +| since_reset));
     return true;
 }

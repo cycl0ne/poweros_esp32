@@ -16,5 +16,5 @@ pub const pll_calibrated = true;
 /// The figures read once the tick has measured the CPU.
 pub fn init() void {
     cpu_hz = timer.measured_cpu_hz;
-    xtal_hz = systimer.timebase_hz;
+    xtal_hz = @intCast(@min(timer.timebase_hz, 0xFFFF_FFFF));
 }

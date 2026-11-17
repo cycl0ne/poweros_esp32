@@ -280,10 +280,10 @@ fn takeBoard(machine: *const handover.Handover) void {
     // architecture fixes. Everything timed after this is timed by the
     // counter, so this is the one measurement in the boot.
     const measured = timer.measureTimebase(tables.pm_timer_port, tables.pm_timer_bits);
-    hardware.systimer.timebase_hz = if (measured != 0)
+    timer.timebase_hz = if (measured != 0)
         measured
     else
-        @intCast(boards.fact(st.SYSTAG_Timebase, 1_000_000_000));
+        boards.fact(st.SYSTAG_Timebase, 1_000_000_000);
 
     for (machine.memoryRanges(), 0..) |range, index| ram.memory[index] = range;
     ram.memory_count = machine.memory_count;
@@ -401,6 +401,7 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     if (screen_mine) exec.setBoardMirror(&screentext.hardware);
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
+    exec.clock_hardware.* = .{ .timebase = &timer.timebase, .uptimeUs = &timer.uptimeUs, .spinUs = &timer.spinUs };
     exec.interrupt_hardware.* = apic.interrupt_hardware;
     exec.alert_hook.* = alert.show;
     exec.task_hardware.* = context.hardware;
@@ -501,9 +502,9 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // tick's rate exist.
     cpu1.cores = runCores();
     startOthers(sys);
-    note("counter %d.%d MHz (measured), tick %d Hz on vector %d, comparator %s", .{
-        hardware.systimer.timebase_hz / 1_000_000,
-        hardware.systimer.timebase_hz / 100_000 % 10,
+    note("counter %ld.%ld MHz (measured), tick %d Hz on vector %d, comparator %s", .{
+        timer.timebase_hz / 1_000_000,
+        timer.timebase_hz / 100_000 % 10,
         timer.tick_hz,
         timer.tick_irq,
         @as([*:0]const u8, if (timer.deadline_mode) "the counter's own deadline" else "the controller's timer, counted down"),
@@ -544,7 +545,7 @@ export fn kmain(at: usize) callconv(.c) noreturn {
     // set here and waited for, since a module that waits for a time
     // cannot say from where it waits that nothing ever comes.
     const systimer = hardware.systimer;
-    systimer.setAlarm(0, systimer.read() + systimer.fromUs(5_000), 0);
+    systimer.setAlarm(0, systimer.read() + timer.fromUs(5_000), 0);
     var alarm_ms: u32 = 0;
     while (!systimer.takeAlarm(0) and alarm_ms < 50) : (alarm_ms += 1) timer.spinUs(1000);
     systimer.setAlarm(0, systimer.never, 0);

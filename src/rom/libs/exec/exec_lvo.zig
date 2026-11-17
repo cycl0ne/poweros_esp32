@@ -71,6 +71,8 @@ comptime {
 const contract_files = [_][]const u8{
     @embedFile("task/corecount.zig"),
     @embedFile("time/gettimebase.zig"),
+    @embedFile("time/uptimeus.zig"),
+    @embedFile("time/spinus.zig"),
     @embedFile("task/lockcoretasks.zig"),
     @embedFile("task/unlockcoretasks.zig"),
     @embedFile("list/lockexeclist.zig"),
@@ -369,6 +371,8 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoUnlockCoreTasks),
     vec(lvoCoreCount),
     vec(lvoGetTimeBase),
+    vec(lvoUptimeUs),
+    vec(lvoSpinUs),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -957,6 +961,12 @@ fn lvoCoreCount(base: *ExecBase) callconv(.c) u32 {
 fn lvoGetTimeBase(base: *ExecBase) callconv(.c) u64 {
     return exec.GetTimeBase(base);
 }
+fn lvoUptimeUs(base: *ExecBase) callconv(.c) u64 {
+    return exec.UptimeUs(base);
+}
+fn lvoSpinUs(base: *ExecBase, us: u64) callconv(.c) void {
+    exec.SpinUs(base, us);
+}
 fn lvoPostWork(base: *ExecBase, job: *sdk.exec.WorkJob) callconv(.c) void {
     exec.PostWork(base, job);
 }
@@ -1003,6 +1013,8 @@ test "LockExecList hands back exec's own lists, and IntVector its own vectors" {
     // the table it is what the function answers.
     try testing.expectEqual(@as(u64, sdk.hardware.systimer.SYSTIMER_HZ), lvoGetTimeBase(base));
     try testing.expectEqual(lvoGetTimeBase(base), @as(*sdk.interface.exec.ExecBase, @ptrCast(base)).GetTimeBase());
+    // UptimeUs and SpinUs read the chip's counter, which the host has
+    // not got: that each is at its slot is the table's own test.
     var counted: u32 = 0;
     while (lvoLockCoreTasks(base, counted)) |_| {
         lvoUnlockCoreTasks(base, counted);

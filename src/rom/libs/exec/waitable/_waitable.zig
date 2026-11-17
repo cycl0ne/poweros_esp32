@@ -16,7 +16,7 @@
 
 const sdk = @import("sdk");
 const _interrupt = @import("../interrupt/_interrupt.zig");
-const systimer = sdk.hardware.systimer;
+const _time = @import("../time/_time.zig");
 const Task = sdk.exec.Task;
 const Waitable = sdk.exec.Waitable;
 
@@ -116,7 +116,7 @@ pub fn tickWaitables(base: *ExecBase) void {
     if (base.waiting == null) return;
     _interrupt.takeSystemInterrupts(base, @returnAddress());
     defer _interrupt.dropSystemInterrupts(base);
-    expire(base, systimer.uptimeUs());
+    expire(base, _time.clock.uptimeUs());
 }
 
 /// A task removed while it waits taken off the list: its record is on

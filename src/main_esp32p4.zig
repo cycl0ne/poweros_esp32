@@ -97,6 +97,7 @@ export fn kmain() callconv(.c) noreturn {
     const psram_result = psram.init(boards.fact(st.SYSTAG_PsramSpeed, 80));
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
+    exec.clock_hardware.* = .{ .timebase = &timer.timebase, .uptimeUs = &timer.uptimeUs, .spinUs = &timer.spinUs };
     exec.log_mirror.* = boards.fact(st.SYSTAG_LogMirror, 0) != 0;
     exec.setLogMirror();
     lastwords.restore();

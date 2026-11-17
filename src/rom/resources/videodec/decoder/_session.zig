@@ -674,7 +674,7 @@ pub const Session = struct {
 
         const timeout = Timeout.open(sys_base) orelse return s.fail(types.VDERR_NO_MEMORY);
         defer timeout.close(sys_base);
-        const started = systimer.uptimeUs();
+        const started = s.sys().UptimeUs();
         const buffers: vcn.Buffers = .{
             .flags = vcn.decode_buffers,
             .message = 0,
@@ -696,11 +696,11 @@ pub const Session = struct {
             vb.state = base.STATE_DEAD;
             return s.fail(types.VDERR_CORRUPT);
         }
-        const done = systimer.uptimeUs();
+        const done = s.sys().UptimeUs();
         f.decoded = true;
         s.readBack(f);
         s.decode_us += done - started;
-        s.read_us += systimer.uptimeUs() - done;
+        s.read_us += s.sys().UptimeUs() - done;
         s.decoded += 1;
     }
 

@@ -203,7 +203,7 @@ pub const Decoder = struct {
     fn waitFor(d: *Decoder, bit: u32) bool {
         const s = d.sys();
         const waitables = [_]*exec.Waitable{&d.done};
-        const until = sdk.hardware.systimer.uptimeUs() + patience_us;
+        const until = d.sys().UptimeUs() + patience_us;
         while (true) {
             s.Disable();
             const got = d.raised & bit != 0;
@@ -211,7 +211,7 @@ pub const Decoder = struct {
             s.ResetWaitable(&d.done);
             s.Enable();
             if (got) return true;
-            const now = sdk.hardware.systimer.uptimeUs();
+            const now = d.sys().UptimeUs();
             if (now >= until) return false;
             _ = s.WaitForAny(&waitables, 1, until - now);
         }

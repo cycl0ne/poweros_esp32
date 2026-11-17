@@ -76,6 +76,7 @@ pub fn powerUp(port: *const Port, base: *EmacBase) bool {
     _ = port;
     const sys = base.sys_base;
     gem.registers = mac_registers;
+    gem.exec_base = sys;
     const clock = reg(CLK_ETH_CTRL);
     if (clock.* & CLK_ENABLE == 0) {
         reg(CLK_ETH_DIV_INT).* = 1;

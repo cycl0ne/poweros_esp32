@@ -304,4 +304,12 @@ u32 CoreCount()
 /// module loaded from the disk has to ask for. Never 0, and never other
 /// while the machine runs.
 u64 GetTimeBase()
+/// Microseconds since the machine came up (SINCE 1.42): the clock a
+/// driver times a wait by. From any context.
+u64 UptimeUs()
+/// Wait `us` microseconds without giving the CPU away (SINCE 1.42): the
+/// wait for code that may not Wait - holding a spinlock, in an
+/// interrupt, before timer.device - and for a part's few microseconds
+/// between two writes.
+void SpinUs(u64 us)
 ##end

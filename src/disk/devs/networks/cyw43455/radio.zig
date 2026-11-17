@@ -61,7 +61,6 @@ const exec = sdk.exec;
 const net = sdk.devices.network;
 const wireless = sdk.devices.wireless;
 const timer = sdk.devices.timer;
-const systimer = sdk.hardware.systimer;
 const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const _cyw = @import("_cyw43455.zig");
@@ -310,14 +309,14 @@ fn service(work: *Work) void {
     if (work.leave_due) leave(work);
     if (work.join_due) joinStep(work);
     if (work.scan_due) startScan(work);
-    if (work.scanning and elapsed() -% work.scan_started > scan_ms) {
+    if (work.scanning and elapsed(work) -% work.scan_started > scan_ms) {
         say(base.sys_base, "the scan did not finish");
         endScan(work);
     }
     if (@atomicRmw(bool, &work.filter_due, .Xchg, false, .acquire)) giveFilter(work);
     sendWrites(work);
     handshakeDue(work);
-    if (work.state == .joining and reached(work.deadline)) {
+    if (work.state == .joining and reached(work, work.deadline)) {
         const progress: u32 = if (work.handshake) |handshake| work.wpa_base.?.HandshakeStatus(handshake) else 0;
         exec.kprintf(base.sys_base, "%s: the network was not joined in time: %s, handshake %s\n", .{
             @as([*:0]const u8, DEVICE_NAME),
@@ -466,20 +465,20 @@ fn cameOff(work: *Work) void {
     if (!work.wanted) return;
     work.join_due = true;
     work.join_scanned = false;
-    work.join_at = elapsed() +% work.pause_s * 1000;
+    work.join_at = elapsed(work) +% work.pause_s * 1000;
     work.pause_s = @min(work.pause_s * 2, pause_most_s);
 }
 
 /// Milliseconds since the system started, as the system timer counts
 /// them: not the system time, which is a date once battclock.resource
 /// or C:net/TimeSync has set it, and moves when it is set.
-fn elapsed() u32 {
-    return @truncate(systimer.uptimeUs() / 1000);
+fn elapsed(work: *const Work) u32 {
+    return @truncate(work.base.sys_base.UptimeUs() / 1000);
 }
 
 /// Whether the time `at` has come.
-fn reached(at: u32) bool {
-    return @as(i32, @bitCast(elapsed() -% at)) >= 0;
+fn reached(work: *const Work, at: u32) bool {
+    return @as(i32, @bitCast(elapsed(work) -% at)) >= 0;
 }
 
 // --- the unit's requests --------------------------------------------------
@@ -565,7 +564,7 @@ fn setOptions(work: *Work, req: *net.IOSana2Req) i8 {
     work.wanted = true;
     work.join_due = true;
     work.join_scanned = false;
-    work.join_at = elapsed();
+    work.join_at = elapsed(work);
     work.pause_s = pause_first_s;
     if (work.state != .idle) work.leave_due = true;
     return 0;
@@ -574,7 +573,7 @@ fn setOptions(work: *Work, req: *net.IOSana2Req) i8 {
 /// A join due: once its time has come and no scan runs, a scan for the
 /// network; after it, the join.
 fn joinStep(work: *Work) void {
-    if (work.scanning or work.scan_due or !reached(work.join_at)) return;
+    if (work.scanning or work.scan_due or !reached(work, work.join_at)) return;
     if (!work.join_scanned) {
         work.join_scanned = true;
         work.scan_due = true;
@@ -626,7 +625,7 @@ fn join(work: *Work) void {
         work.state = .idle;
         return cameOff(work);
     }
-    work.deadline = elapsed() +% join_ms;
+    work.deadline = elapsed(work) +% join_ms;
 }
 
 /// The firmware told the security and to join: false, said, if it
@@ -935,7 +934,7 @@ fn startScan(work: *Work) void {
         return answerScans(work, net.S2ERR_SOFTWARE);
     }
     work.scanning = true;
-    work.scan_started = elapsed();
+    work.scan_started = elapsed(work);
 }
 
 fn endScan(work: *Work) void {

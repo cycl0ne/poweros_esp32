@@ -271,12 +271,12 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
 
     // The panel's reset, where the board wired one.
     if (drive(wanted.reset_pin, true)) {
-        systimer.spinUs(@as(u64, wanted.reset_ms) * 1000);
+        panel.sys.SpinUs(@as(u64, wanted.reset_ms) * 1000);
         _ = drive(wanted.reset_pin, false);
-        systimer.spinUs(@as(u64, wanted.settle_ms) * 1000);
+        panel.sys.SpinUs(@as(u64, wanted.settle_ms) * 1000);
     }
 
-    panel.lane_kbps = host.startPhy(wanted.lanes, lane);
+    panel.lane_kbps = host.startPhy(panel.sys, wanted.lanes, lane);
     if (panel.lane_kbps == 0) {
         sdk.exec.kprintf(sys, "%s: the D-PHY did not come up\n", .{MODULE_NAME});
         return err.RTGERR_NO_DISPLAY;
@@ -313,10 +313,10 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     } else {
         // A panel without a reset line is reset by its own command.
         if (wanted.reset_pin.kind != boardpin.BPIN_GPIO) {
-            if (!host.dcsWrite(SWRESET, &.{})) return err.RTGERR_NO_DISPLAY;
-            systimer.spinUs(@as(u64, wanted.settle_ms) * 1000);
+            if (!host.dcsWrite(panel.sys, SWRESET, &.{})) return err.RTGERR_NO_DISPLAY;
+            panel.sys.SpinUs(@as(u64, wanted.settle_ms) * 1000);
         }
-        if (!sendSequence(wanted.init_sequence.?[0..wanted.init_length])) {
+        if (!sendSequence(panel.sys, wanted.init_sequence.?[0..wanted.init_length])) {
             sdk.exec.kprintf(sys, "%s: the panel did not take its bring-up\n", .{MODULE_NAME});
             return err.RTGERR_NO_DISPLAY;
         }
@@ -347,9 +347,9 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
         .raw_type = if (panel.hdmi) bridge.raw_rgb888 else bridge.raw_rgb565,
     });
 
-    if (!dwgdma.start()) return err.RTGERR_NO_DISPLAY;
+    if (!dwgdma.start(panel.sys)) return err.RTGERR_NO_DISPLAY;
     const psram_mhz = psramMhz(panel.board.driver.?);
-    bus.share(streamBytes(panel), psram_mhz);
+    bus.share(panel.sys, streamBytes(panel), psram_mhz);
     dwgdma.setUpChannel(channel);
 
     panel.dma_int = .{
@@ -372,7 +372,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
 
 /// The panel's bring-up, step by step: false at a step that runs past the
 /// end or that the host could not send.
-fn sendSequence(bytes: []const u8) bool {
+fn sendSequence(sys: *ExecBase, bytes: []const u8) bool {
     var at: usize = 0;
     while (at < bytes.len) {
         if (bytes.len - at < 3) return false;
@@ -380,9 +380,9 @@ fn sendSequence(bytes: []const u8) bool {
         const count = bytes[at + 1];
         const delay_ms = bytes[at + 2];
         if (bytes.len - at < 3 + @as(usize, count)) return false;
-        if (!host.dcsWrite(command, bytes[at + 3 ..][0..count])) return false;
-        if (!host.commandsSent()) return false;
-        if (delay_ms != 0) systimer.spinUs(@as(u64, delay_ms) * 1000);
+        if (!host.dcsWrite(sys, command, bytes[at + 3 ..][0..count])) return false;
+        if (!host.commandsSent(sys)) return false;
+        if (delay_ms != 0) sys.SpinUs(@as(u64, delay_ms) * 1000);
         at += 3 + @as(usize, count);
     }
     return true;
@@ -449,9 +449,9 @@ fn stream(panel: *Panel, bands: []const rtg.RtgBand) i32 {
     panel.pending = made;
     sys.Enable();
     const waiting: *volatile usize = &panel.pending.first;
-    const since = systimer.uptimeUs();
+    const since = panel.sys.UptimeUs();
     while (waiting.* != 0) {
-        if (systimer.uptimeUs() - since > flip_wait_us) break;
+        if (panel.sys.UptimeUs() - since > flip_wait_us) break;
     }
     sys.Disable();
     const timed_out = panel.pending.first == made.first;
@@ -829,7 +829,7 @@ fn power(board: *rtg.RtgBoard, state: u32) callconv(.c) i32 {
     const panel = panelOf(board);
     const asleep = state == rtg.boards.RTGPWR_ASLEEP;
     if (asleep) _ = drive(panel.config.backlight_pin, false);
-    if (!host.dcsWrite(if (asleep) DISPOFF else DISPON, &.{})) return err.RTGERR_NO_DISPLAY;
+    if (!host.dcsWrite(panel.sys, if (asleep) DISPOFF else DISPON, &.{})) return err.RTGERR_NO_DISPLAY;
     if (!asleep) _ = drive(panel.config.backlight_pin, board.info.brightness != 0);
     return @intCast(if (asleep) rtg.boards.RTGPWR_ASLEEP else rtg.boards.RTGPWR_ON);
 }

@@ -3,7 +3,7 @@
 //! time has gone by.
 
 const sdk = @import("sdk");
-const systimer = sdk.hardware.systimer;
+const _time = @import("../time/_time.zig");
 const _waitable = @import("_waitable.zig");
 const _locks = @import("../locks/_locks.zig");
 
@@ -78,7 +78,7 @@ pub fn WaitForAny(base: *ExecBase, waitables: [*]const *Waitable, count: u32, ti
         .task = sys.FindTask(null).?,
         .waitables = waitables,
         .count = count,
-        .deadline = if (timeout_us == WAIT_FOREVER) WAIT_FOREVER else systimer.uptimeUs() +| timeout_us,
+        .deadline = if (timeout_us == WAIT_FOREVER) WAIT_FOREVER else _time.clock.uptimeUs() +| timeout_us,
     };
     // Cleared before the record is seen, so a wake that comes after it
     // is kept for the Wait below.

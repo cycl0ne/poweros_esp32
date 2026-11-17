@@ -193,9 +193,9 @@ fn clearTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.Engin
     }
 
     step(sys, "rendering");
-    const began = sdk.hardware.systimer.uptimeUs();
+    const began = sys.UptimeUs();
     const finished = engine.render(render_list.address, render_list.here());
-    const took = sdk.hardware.systimer.uptimeUs() - began;
+    const took = sys.UptimeUs() - began;
     space.fromGpu(&image);
     if (finished != .done) return reportLost(dl, engine, finished);
 
@@ -341,18 +341,18 @@ fn triangleTest(sys: *ExecBase, dl: *DosBase, space: *v3d.Space, engine: *v3d.En
     }
 
     step(sys, "binning");
-    const began = sdk.hardware.systimer.uptimeUs();
+    const began = sys.UptimeUs();
     const binned = engine.bin(bin_list.address, bin_list.here(), &tile_lists, &tile_state);
-    const bin_took = sdk.hardware.systimer.uptimeUs() - began;
+    const bin_took = sys.UptimeUs() - began;
     if (binned != .done) {
         _ = Printf(dl, "binning: list at %lx, now at %lx\n", .{ @as(u64, bin_list.here()), @as(u64, engine.gpu.coreRead(v3d.regs.CLE_CT0CA)) });
         return reportLost(dl, engine, binned);
     }
     step(sys, "rendering");
     // Timed apart: that line takes the console longer than the frame.
-    const render_began = sdk.hardware.systimer.uptimeUs();
+    const render_began = sys.UptimeUs();
     const rendered = engine.render(render_list.address, render_list.here());
-    const took = bin_took + sdk.hardware.systimer.uptimeUs() - render_began;
+    const took = bin_took + sys.UptimeUs() - render_began;
     space.fromGpu(&image);
     if (how.unmapped_image) {
         if (rendered != .fault) {

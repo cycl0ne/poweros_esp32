@@ -2,7 +2,7 @@
 //! GetTimeBase: how fast the machine's counter counts, for a module that
 //! reads the counter itself.
 
-const sdk = @import("sdk");
+const _time = @import("_time.zig");
 const ExecBase = @import("../exec.zig").ExecBase;
 
 /// Tells how many times a second the machine's counter counts.
@@ -32,10 +32,8 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// and never other. On the 64-bit machines the kernel learns it as it
 /// starts - from the board's list, from the timer itself, or by timing
 /// the counter against another clock where the core does not say - and
-/// only its own modules share what it learned. A module loaded from the
-/// disk is built on its own, and what `sdk.hardware.systimer` keeps of
-/// the rate is not set in it: it asks here, once, and counts with the
-/// answer.
+/// keeps it. A module that reads the counter itself asks here, once, and
+/// counts with the answer; one that wants the time asks `UptimeUs`.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -67,6 +65,5 @@ const ExecBase = @import("../exec.zig").ExecBase;
 /// const micros = sdk.hardware.systimer.read() / (rate / 1_000_000);
 /// ```
 pub fn GetTimeBase(_: *ExecBase) u64 {
-    const systimer = sdk.hardware.systimer;
-    return if (@hasDecl(systimer, "timebase_hz")) systimer.timebase_hz else systimer.SYSTIMER_HZ;
+    return _time.clock.timebase();
 }

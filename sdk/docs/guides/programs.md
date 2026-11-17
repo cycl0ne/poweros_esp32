@@ -32,14 +32,15 @@ through the jump table: the loops the kernel has for the board's CPU
 ([Memory](exec.md#memory)). One whose root declares `own_memory_calls`
 keeps its own.
 
-A load file is built on its own, so nothing the kernel learns as it
-starts is in it. What `sdk.hardware` keeps in a variable - on the 64-bit
-machines the rate of the machine's counter, which
-`sdk.hardware.systimer.uptimeUs` and `spinUs` count with - holds its
-default in a file loaded from the disk, and time counted with it is
-wrong. Such a file asks exec once, `sys.GetTimeBase()`, and counts
-`sdk.hardware.systimer.read()` by the answer, or asks timer.device
-(`ReadEClock`).
+The time comes from exec: `sys.UptimeUs()` is microseconds since the
+machine came up, the clock a driver times a wait by, and
+`sys.SpinUs(us)` waits that long without giving the CPU away - with a
+spinlock held, in an interrupt, for a part's few microseconds between
+two writes. A module that reads the machine's counter itself
+(`sdk.hardware.systimer.read()`) asks `sys.GetTimeBase()` how fast it
+counts. The kernel knows the rate - on a PC it measures it as it starts
+- and a module is built on its own, whether it is in the ROM or loaded
+from the disk: nothing under `sdk.hardware` holds it.
 
 ## Hello, world - in the shell
 

@@ -118,7 +118,6 @@ fn lockOf(sys: *ExecBase) ?*exec.SignalSemaphore {
 /// when it did not answer in time.
 pub fn call(sys: *ExecBase, mailbox: usize, buffer: *align(buffer_bytes) Buffer, tag: u32, value: []u32) bool {
     const reg = hardware.mmio.reg;
-    const systimer = hardware.systimer;
     _ = message(buffer, tag, value);
     const lock = lockOf(sys);
     if (lock) |held| sys.ObtainSemaphore(held);
@@ -126,9 +125,9 @@ pub fn call(sys: *ExecBase, mailbox: usize, buffer: *align(buffer_bytes) Buffer,
     var length: u32 = buffer_bytes;
     _ = sys.CachePreDMA(buffer, &length, 0);
     const sent: u32 = @as(u32, @intCast(@intFromPtr(buffer))) | CHANNEL_PROPERTY;
-    const until = systimer.uptimeUs() + answer_us;
+    const until = sys.UptimeUs() + answer_us;
     while (reg(mailbox + MAIL1_STATUS).* & STATUS_FULL != 0) {
-        if (systimer.uptimeUs() > until) return false;
+        if (sys.UptimeUs() > until) return false;
     }
     reg(mailbox + MAIL1_WRITE).* = sent;
     while (true) {
@@ -137,7 +136,7 @@ pub fn call(sys: *ExecBase, mailbox: usize, buffer: *align(buffer_bytes) Buffer,
             if (reg(mailbox + MAIL0_READ).* == sent) break;
             continue;
         }
-        if (systimer.uptimeUs() > until) return false;
+        if (sys.UptimeUs() > until) return false;
     }
     sys.CachePostDMA(buffer, &length, 0);
     return answer(buffer, value);

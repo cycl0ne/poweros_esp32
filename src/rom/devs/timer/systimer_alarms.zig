@@ -5,6 +5,7 @@
 //! of its own.
 
 const sdk = @import("sdk");
+const ExecBase = sdk.interface.exec.ExecBase;
 const systimer = sdk.hardware.systimer;
 const reg = sdk.hardware.mmio.reg;
 
@@ -18,18 +19,22 @@ pub const parked: u64 = (1 << 52) - 1;
 /// How far ahead a micro timer target that is already past gets moved.
 const min_ahead_ticks: u64 = 2 * (eclock_hz / 1_000_000);
 
-/// The E-clock now.
-pub fn now() u64 {
+/// The E-clock now: the unit the alarms compare against, read as it is.
+pub fn now(_: *ExecBase) u64 {
     return systimer.readUnit0();
 }
 
-pub fn uptimeUs() u64 {
-    return systimer.uptimeUs();
+pub fn uptimeUs(sys: *ExecBase) u64 {
+    return sys.UptimeUs();
 }
 
 /// Set the micro timer to `ticks`. An alarm that is already past doesn't
 /// fire on the chip, so it moves to just after now (as ESP-IDF does).
-pub fn armMicro(ticks: u64) void {
+pub fn armMicro(_: *ExecBase, ticks: u64) void {
+    arm(ticks);
+}
+
+fn arm(ticks: u64) void {
     var target = ticks;
     while (true) {
         reg(systimer.TARGET0_HI).* = @as(u32, @truncate(target >> 32)) & systimer.VALUE_HI_MASK;
@@ -47,14 +52,14 @@ pub fn armMicro(ticks: u64) void {
 pub fn setUp(vblank_period: u32) void {
     reg(systimer.INT_ENA).* &= ~(systimer.INT_TARGET0 | systimer.INT_TARGET1);
     reg(systimer.TARGET0_CONF).* = 0; // one-shot, on unit 0
-    armMicro(parked);
+    arm(parked);
     reg(systimer.TARGET1_CONF).* = systimer.TARGET_PERIOD_MODE | vblank_period; // periodic, on unit 0
     reg(systimer.COMP1_LOAD).* = 1;
     reg(systimer.CONF).* |= systimer.CONF_TARGET0_WORK_EN | systimer.CONF_TARGET1_WORK_EN;
 }
 
 /// Both alarms' interrupts on, their servers in place.
-pub fn start() void {
+pub fn start(_: *ExecBase) void {
     reg(systimer.INT_CLR).* = systimer.INT_TARGET0 | systimer.INT_TARGET1;
     reg(systimer.INT_ENA).* |= systimer.INT_TARGET0 | systimer.INT_TARGET1;
 }

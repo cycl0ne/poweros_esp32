@@ -158,6 +158,8 @@ pub const LVO = struct {
     pub const UnlockCoreTasks = libraries.lvo(146);
     pub const CoreCount = libraries.lvo(147);
     pub const GetTimeBase = libraries.lvo(148);
+    pub const UptimeUs = libraries.lvo(149);
+    pub const SpinUs = libraries.lvo(150);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -306,6 +308,8 @@ pub const Fn = struct {
     pub const UnlockCoreTasks = *const fn (*ExecBase, u32) callconv(.c) void;
     pub const CoreCount = *const fn (*ExecBase) callconv(.c) u32;
     pub const GetTimeBase = *const fn (*ExecBase) callconv(.c) u64;
+    pub const UptimeUs = *const fn (*ExecBase) callconv(.c) u64;
+    pub const SpinUs = *const fn (*ExecBase, u64) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1016,5 +1020,19 @@ pub const ExecBase = opaque {
     /// while the machine runs.
     pub fn GetTimeBase(self: *ExecBase) u64 {
         return libraries.call(self, LVO.GetTimeBase, Fn.GetTimeBase, .{});
+    }
+
+    /// Microseconds since the machine came up (SINCE 1.42): the clock a
+    /// driver times a wait by. From any context.
+    pub fn UptimeUs(self: *ExecBase) u64 {
+        return libraries.call(self, LVO.UptimeUs, Fn.UptimeUs, .{});
+    }
+
+    /// Wait `us` microseconds without giving the CPU away (SINCE 1.42): the
+    /// wait for code that may not Wait - holding a spinlock, in an
+    /// interrupt, before timer.device - and for a part's few microseconds
+    /// between two writes.
+    pub fn SpinUs(self: *ExecBase, us: u64) void {
+        return libraries.call(self, LVO.SpinUs, Fn.SpinUs, .{us});
     }
 };

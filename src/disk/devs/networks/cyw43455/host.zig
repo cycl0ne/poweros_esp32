@@ -33,7 +33,6 @@
 
 const std = @import("std");
 const sdk = @import("sdk");
-const systimer = sdk.hardware.systimer;
 const st = sdk.expansion.systemtags;
 const boardpin = sdk.expansion.boardpin;
 const TagItem = sdk.utility.TagItem;
@@ -99,6 +98,8 @@ const no_pin: u8 = 0xFF;
 /// What the radio is wired to: the host, its clock line (the command and
 /// data lines follow it on the D0's pins), and WL_REG_ON.
 pub const Host = extern struct {
+    /// exec, for the waits; the device sets it as it takes the host.
+    sys: ?*ExecBase = null,
     /// The SDHCI's registers, and the configuration registers above them.
     regs: usize = 0,
     cfg: usize = 0,
@@ -360,7 +361,7 @@ pub fn setClock(host: *const Host, hz: u32) ?u32 {
     if (hz < host.base_hz) divider = @min((host.base_hz + 2 * hz - 1) / (2 * hz), 1023);
     const control: u32 = ((divider & 0xFF) << 8) | ((divider >> 8) << 6) | CLOCK_INT_EN;
     clock.* = @intCast(control);
-    if (!waitFor(clock, CLOCK_INT_STABLE, clock_us)) return null;
+    if (!waitFor(host.sys.?, clock, CLOCK_INT_STABLE, clock_us)) return null;
     clock.* = @intCast(control | CLOCK_CARD_EN);
     return if (divider == 0) host.base_hz else host.base_hz / (2 * divider);
 }
@@ -438,9 +439,9 @@ pub fn transfer(host: *const Host, index: u32, argument: u32, data: Data) Error!
 /// Until the lines in `inhibit` are free.
 fn idle(host: *const Host, inhibit: u32) Error!void {
     const present = reg32(host.regs + PRESENT);
-    const until = systimer.read() + systimer.fromUs(command_us);
+    const until = host.sys.?.UptimeUs() + command_us;
     while (present.* & inhibit != 0) {
-        if (systimer.read() > until) {
+        if (host.sys.?.UptimeUs() > until) {
             _ = resetLines(host, RESET_CMD | RESET_DATA);
             return error.Timeout;
         }
@@ -452,7 +453,7 @@ fn idle(host: *const Host, inhibit: u32) Error!void {
 /// returned.
 fn take(host: *const Host, bit: u32, timeout_us: u64, lines: u32) Error!void {
     const status = reg32(host.regs + INT_STATUS);
-    const until = systimer.read() + systimer.fromUs(timeout_us);
+    const until = host.sys.?.UptimeUs() + timeout_us;
     while (true) {
         const now = status.*;
         if (now & INT_ERROR != 0) {
@@ -466,7 +467,7 @@ fn take(host: *const Host, bit: u32, timeout_us: u64, lines: u32) Error!void {
             status.* = bit;
             return;
         }
-        if (systimer.read() > until) {
+        if (host.sys.?.UptimeUs() > until) {
             _ = resetLines(host, lines);
             return error.Timeout;
         }
@@ -479,18 +480,18 @@ fn resetLines(host: *const Host, lines: u32) bool {
     const word = reg32(host.regs + CLOCK);
     word.* = word.* | (lines << 24);
     const resets = reg8(host.regs + RESET);
-    const until = systimer.read() + systimer.fromUs(reset_us);
+    const until = host.sys.?.UptimeUs() + reset_us;
     while (resets.* & lines != 0) {
-        if (systimer.read() > until) return false;
+        if (host.sys.?.UptimeUs() > until) return false;
     }
     return true;
 }
 
 /// Until `bit` is set in a 16-bit register.
-fn waitFor(register: *volatile u16, bit: u32, timeout_us: u64) bool {
-    const until = systimer.read() + systimer.fromUs(timeout_us);
+fn waitFor(sys: *ExecBase, register: *volatile u16, bit: u32, timeout_us: u64) bool {
+    const until = sys.UptimeUs() + timeout_us;
     while (register.* & bit == 0) {
-        if (systimer.read() > until) return false;
+        if (sys.UptimeUs() > until) return false;
     }
     return true;
 }

@@ -499,9 +499,9 @@ pub fn wake(sys: *ExecBase, state: *State, firmware: u64) bool {
 
 /// Whether the read pointer moves off `from` within `most_us`.
 fn changes(sys: *ExecBase, state: *const State, from: u32, most_us: u64) bool {
-    const until = systimer.uptimeUs() + most_us;
+    const until = sys.UptimeUs() + most_us;
     while (word(state, RB_RPTR).* == from) {
-        if (systimer.uptimeUs() > until) return false;
+        if (sys.UptimeUs() > until) return false;
         pause(sys, 1000);
     }
     return true;
@@ -541,9 +541,9 @@ fn submit(state: *State, words: u32) void {
 
 /// Waits up to `most_us` for the last fence's number to be written.
 fn waitFence(sys: *ExecBase, state: *const State, most_us: u64) bool {
-    const until = systimer.uptimeUs() + most_us;
+    const until = sys.UptimeUs() + most_us;
     while (at(state.ring.cpu, fence_at).* != state.sequence) {
-        if (systimer.uptimeUs() > until) return false;
+        if (sys.UptimeUs() > until) return false;
         pause(sys, 1000);
     }
     return true;

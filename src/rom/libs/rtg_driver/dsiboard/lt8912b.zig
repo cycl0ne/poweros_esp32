@@ -260,7 +260,7 @@ fn infoframe(bus: I2c, main: u32, avi: u32, mode: Mode, frame: *const [sdk.rtg.R
 /// two frames, so the receiver has a stream to find.
 pub fn follow(bus: I2c, main: u32, pixel_hz: u32) bool {
     const dsi = main + 1;
-    systimer.spinUs(40_000);
+    bus.sys.SpinUs(40_000);
     const word = ddsWord(pixel_hz);
     if (!writeAll(bus, dsi, &.{ .{ 0x4E, @truncate(word) }, .{ 0x4F, @truncate(word >> 8) }, .{ 0x50, @truncate(word >> 16) }, .{ 0x51, 0x80 }, .{ 0x51, 0x00 } })) return false;
     return receiverReset(bus, main);
@@ -270,7 +270,7 @@ pub fn follow(bus: I2c, main: u32, pixel_hz: u32) bool {
 fn receiverReset(bus: I2c, main: u32) bool {
     for ([_]Write{ .{ 0x03, 0x7F }, .{ 0x03, 0xFF }, .{ 0x05, 0xFB }, .{ 0x05, 0xFF } }, 0..) |w, i| {
         if (!bus.write(main, w[0], w[1])) return false;
-        if (i % 2 == 0) systimer.spinUs(10_000);
+        if (i % 2 == 0) bus.sys.SpinUs(10_000);
     }
     return true;
 }

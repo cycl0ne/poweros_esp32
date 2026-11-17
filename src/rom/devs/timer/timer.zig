@@ -152,8 +152,8 @@ fn unitNumber(tb: *TimerBase, unit: *exec.Unit) u32 {
     return @intCast((@intFromPtr(timerUnit(unit)) - @intFromPtr(&tb.units[0])) / @sizeOf(TimerUnit));
 }
 
-fn sysTime() u64 {
-    return alarms.uptimeUs() +% systime_offset;
+fn sysTime(tb: *TimerBase) u64 {
+    return alarms.uptimeUs(tb.sys_base) +% systime_offset;
 }
 
 /// The system time as GetSysTime hands it out. As in the ROM it only ever
@@ -162,7 +162,7 @@ fn sysTime() u64 {
 fn uniqueSysTime(tb: *TimerBase) u64 {
     tb.sys_base.Disable();
     defer tb.sys_base.Enable();
-    const t = @max(sysTime(), last_systime + 1);
+    const t = @max(sysTime(tb), last_systime + 1);
     last_systime = t;
     return t;
 }
@@ -189,8 +189,8 @@ fn insertReq(tb: *TimerBase, list: *exec.List, req: *TimeRequest) void {
 /// RethinkMicroTimer: the micro timer to the first request on
 /// TD_ECLOCKLIST, or parked when there is none. Disable held.
 fn rethinkMicroTimer(tb: *TimerBase) void {
-    const node = tb.eclock_list.first() orelse return alarms.armMicro(parked);
-    alarms.armMicro(eclockOf(requestOf(node)).toTicks());
+    const node = tb.eclock_list.first() orelse return alarms.armMicro(tb.sys_base, parked);
+    alarms.armMicro(tb.sys_base, eclockOf(requestOf(node)).toTicks());
 }
 
 /// TermIO: reply, unless the caller asked for IOF_QUICK.
@@ -237,7 +237,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     };
     sys_base.AddIntServer(micro_source, &tb.micro_int);
     sys_base.AddIntServer(vblank_source, &tb.vblank_int);
-    alarms.start();
+    alarms.start(sys_base);
     return dev;
 }
 
@@ -304,7 +304,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
         },
         TR_SETSYSTIME => {
             tb.sys_base.Disable();
-            systime_offset = req.time.toMicros() -% alarms.uptimeUs();
+            systime_offset = req.time.toMicros() -% alarms.uptimeUs(tb.sys_base);
             last_systime = req.time.toMicros(); // may go backwards
             tb.sys_base.Enable();
             termIOC(tb, io);
@@ -321,7 +321,7 @@ fn beginIO(dev: *exec.Device, io: *exec.IORequest) callconv(.c) void {
 fn newTimer(tb: *TimerBase, req: *TimeRequest) void {
     req.node.flags &= ~exec.IOF_QUICK;
     const unit = unitNumber(tb, req.node.unit.?);
-    const now = alarms.now();
+    const now = alarms.now(tb.sys_base);
     switch (unit) {
         // CalcDelay0: relative time to an E-clock target.
         UNIT_MICROHZ, UNIT_VBLANK => eclockOf(req).* = EClockVal.fromTicks(now + req.time.toMicros() * ticks_per_us),
@@ -389,7 +389,7 @@ fn tick0(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     if (!alarms.takeMicro()) return 0; // not ours
     const tb: *TimerBase = @ptrCast(@alignCast(is_data.?));
     tb.sys_base.Disable();
-    intCommon(tb, &tb.eclock_list, alarms.now());
+    intCommon(tb, &tb.eclock_list, alarms.now(tb.sys_base));
     rethinkMicroTimer(tb);
     tb.sys_base.Enable();
     intEnd(tb);
@@ -402,8 +402,8 @@ fn tick1(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     if (!alarms.takeVblank()) return 0; // not ours
     const tb: *TimerBase = @ptrCast(@alignCast(is_data.?));
     tb.sys_base.Disable();
-    intCommon(tb, &tb.vblank_list, alarms.now());
-    intCommon(tb, &tb.systime_list, sysTime());
+    intCommon(tb, &tb.vblank_list, alarms.now(tb.sys_base));
+    intCommon(tb, &tb.systime_list, sysTime(tb));
     tb.sys_base.Enable();
     intEnd(tb);
     return 1;
@@ -422,8 +422,8 @@ fn lvoCmpTime(_: *TimerBase, dest: *const TimeVal, src: *const TimeVal) callconv
 }
 
 /// The E-clock count now; returns the E-clock's rate.
-fn lvoReadEClock(_: *TimerBase, dest: *EClockVal) callconv(.c) u32 {
-    dest.* = EClockVal.fromTicks(alarms.now());
+fn lvoReadEClock(tb: *TimerBase, dest: *EClockVal) callconv(.c) u32 {
+    dest.* = EClockVal.fromTicks(alarms.now(tb.sys_base));
     return eclock_hz;
 }
 

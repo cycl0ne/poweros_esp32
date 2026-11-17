@@ -27,9 +27,9 @@
 //! `map.AXI_ICM_QOS`.
 
 const sdk = @import("sdk");
+const ExecBase = sdk.interface.exec.ExecBase;
 const reg = sdk.hardware.mmio.reg;
 const map = sdk.hardware.map;
-const systimer = sdk.hardware.systimer;
 
 const mst_arb_priority = map.AXI_ICM + 0x1C;
 const mst_arqos = map.AXI_ICM + 0x28;
@@ -72,28 +72,28 @@ pub fn heldAbove(psram_mhz: u32) u64 {
 /// The panel's stream first; the 2D-DMA held back when the stream takes
 /// `stream_bytes` a second beyond what the PSRAM at `psram_mhz` leaves
 /// room for, else free to run.
-pub fn share(stream_bytes: u64, psram_mhz: u32) void {
+pub fn share(sys: *ExecBase, stream_bytes: u64, psram_mhz: u32) void {
     const mask = field_mask << gdma_memory_shift;
     reg(mst_arb_priority).* = (reg(mst_arb_priority).* & ~mask) | mask;
     reg(mst_arqos).* = (reg(mst_arqos).* & ~mask) | mask;
     const held = stream_bytes > heldAbove(psram_mhz);
     for ([_]u32{ 0, cmd_writes }) |direction| {
-        command(burstiness | (if (held) regulator_on else 0), cmd_burstiness | direction);
-        if (held) command(rates, cmd_rates | direction);
+        command(sys, burstiness | (if (held) regulator_on else 0), cmd_burstiness | direction);
+        if (held) command(sys, rates, cmd_rates | direction);
     }
 }
 
 /// One regulator command for the 2D-DMA, waited for.
-fn command(value: u32, what: u32) void {
-    waitIdle();
+fn command(sys: *ExecBase, value: u32, what: u32) void {
+    waitIdle(sys);
     reg(qos_data).* = value;
     reg(qos_cmd).* = cmd_go | cmd_write | master_dma2d << cmd_master_shift | what;
-    waitIdle();
+    waitIdle(sys);
 }
 
-fn waitIdle() void {
-    const since = systimer.uptimeUs();
+fn waitIdle(sys: *ExecBase) void {
+    const since = sys.UptimeUs();
     while (reg(qos_cmd).* & cmd_go != 0) {
-        if (systimer.uptimeUs() - since > 1000) return;
+        if (sys.UptimeUs() - since > 1000) return;
     }
 }

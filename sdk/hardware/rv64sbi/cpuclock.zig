@@ -118,8 +118,10 @@ pub const Error = error{
 /// board's - setting the voltage the point wants: before the clock when
 /// it rises, after it when it falls. Nothing is changed if a clock PLL0
 /// feeds could not be kept, or the supply could not be raised.
-/// Interrupts off, the other harts not started.
-pub fn set(mhz: u32, supply: ?*const fn (microvolts: u32) bool) Error!void {
+/// Interrupts off, the other harts not started. `wait` waits that many
+/// microseconds without giving the hart away - the kernel's, which
+/// knows the counter's rate - for the PLL to lock.
+pub fn set(mhz: u32, supply: ?*const fn (microvolts: u32) bool, wait: *const fn (us: u64) void) Error!void {
     const point = for (points) |candidate| {
         if (candidate.mhz == mhz) break candidate;
     } else return error.NoSuchSpeed;
@@ -146,7 +148,7 @@ pub fn set(mhz: u32, supply: ?*const fn (microvolts: u32) bool) Error!void {
     system.update(PLL0_PREDIV, point.prediv, PREDIV_MASK);
     system.update(PLL0_FBDIV, point.fbdiv, FBDIV_MASK);
     system.update(PLL0_FRAC, 0, POSTDIV1_MASK);
-    systimer.spinUs(lock_us);
+    wait(lock_us);
     setDivider(system.SYSCLK_CPU_CORE, 1);
     system.setClock(.sys, system.SYSCLK_CPU_ROOT, system.CLK_MUX, ROOT_PLL0);
     for (kept, dividers) |clock, divider| setDivider(clock.clock, divider);

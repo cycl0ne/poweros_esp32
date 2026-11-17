@@ -56,10 +56,12 @@
 const sdk = @import("sdk");
 const net = sdk.devices.network;
 const reg = sdk.hardware.mmio.reg;
-const systimer = sdk.hardware.systimer;
 
 /// Where the MAC's registers are; the device sets it from its port.
 pub var registers: usize = 0;
+
+/// exec, for the waits; the device sets it with `registers`.
+pub var exec_base: ?*sdk.interface.exec.ExecBase = null;
 /// Whether received frames' descriptors say what the checksum engine found.
 var checking: bool = false;
 
@@ -226,9 +228,9 @@ fn high(address: usize) u32 {
 
 /// Until `done` says so, or `us` have gone: false then.
 fn waitFor(us: u64, done: *const fn () bool) bool {
-    const until = systimer.uptimeUs() + us;
+    const until = exec_base.?.UptimeUs() + us;
     while (!done()) {
-        if (systimer.uptimeUs() > until) return false;
+        if (exec_base.?.UptimeUs() > until) return false;
     }
     return true;
 }

@@ -37,7 +37,6 @@ const intbits = sdk.hardware.intbits;
 
 const lcd = @import("lcd.zig");
 const cpu = @import("sdk").hardware.cpu;
-const systimer = sdk.hardware.systimer;
 const config = @import("config.zig");
 const stream = @import("stream.zig");
 const pointer = @import("pointer.zig");
@@ -242,8 +241,8 @@ pub fn setDisplayLine(panel: *Panel, on: bool) bool {
 /// A wait that does not Wait: the panel is brought up in one go at cold
 /// start, and a few milliseconds of spinning there cost nothing a timer
 /// request would save.
-fn sleep(ms: u32) void {
-    systimer.spinUs(@as(u64, ms) * 1000);
+fn sleep(sys: *ExecBase, ms: u32) void {
+    sys.SpinUs(@as(u64, ms) * 1000);
 }
 
 /// Everything but the pixels: the panel out of reset, its two DMA
@@ -260,10 +259,10 @@ pub fn bringUp(panel: *Panel) i32 {
 
     // Out of reset and enabled before anything clocks it.
     _ = setLine(panel, panel.config.reset_pin, false);
-    sleep(panel.config.reset_ms);
+    sleep(sys, panel.config.reset_ms);
     _ = setLine(panel, panel.config.reset_pin, true);
     _ = setLine(panel, panel.config.display_pin, true);
-    sleep(panel.config.settle_ms);
+    sleep(sys, panel.config.settle_ms);
 
     // The pictures are the library's to take, as they are asked for; the
     // panel only says how large one is and how many there may be.

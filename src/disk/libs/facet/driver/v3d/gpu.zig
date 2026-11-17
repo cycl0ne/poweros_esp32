@@ -129,8 +129,8 @@ pub const Gpu = struct {
 
     /// Whether `mask` of a hub register went clear in time.
     pub fn waitHubClear(gpu: *const Gpu, offset: usize, mask: u32, wait_us: u64) bool {
-        const until = hardware.systimer.uptimeUs() + wait_us;
-        while (hardware.systimer.uptimeUs() < until) {
+        const until = gpu.sys.UptimeUs() + wait_us;
+        while (gpu.sys.UptimeUs() < until) {
             if (gpu.hubRead(offset) & mask == 0) return true;
         }
         return false;
@@ -139,8 +139,8 @@ pub const Gpu = struct {
     /// Whether `mask` of a core register went clear in time (since
     /// 1.168).
     pub fn waitCoreClear(gpu: *const Gpu, offset: usize, mask: u32, wait_us: u64) bool {
-        const until = hardware.systimer.uptimeUs() + wait_us;
-        while (hardware.systimer.uptimeUs() < until) {
+        const until = gpu.sys.UptimeUs() + wait_us;
+        while (gpu.sys.UptimeUs() < until) {
             if (gpu.coreRead(offset) & mask == 0) return true;
         }
         return false;
@@ -220,8 +220,8 @@ pub const Gpu = struct {
     }
 
     fn waitSms(gpu: *const Gpu, offset: usize, comptime done: fn (u32) bool) bool {
-        const until = hardware.systimer.uptimeUs() + sms_wait_us;
-        while (hardware.systimer.uptimeUs() < until) {
+        const until = gpu.sys.UptimeUs() + sms_wait_us;
+        while (gpu.sys.UptimeUs() < until) {
             if (done(reg(gpu.sms + offset).* & regs.SMS_STATE_MASK)) return true;
         }
         return false;

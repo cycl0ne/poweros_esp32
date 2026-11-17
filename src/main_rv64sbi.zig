@@ -89,7 +89,7 @@ fn takeBoard(tree: device_tree.Facts) void {
     // No more than exec numbers: what is kept per source has room for those.
     const most_sources = hardware.intbits.INTB_PLIC_COUNT - 1;
     hardware.plic.sources = @intCast(@min(boards.fact(st.SYSTAG_PlicSources, most_sources), most_sources));
-    hardware.systimer.timebase_hz = @intCast(boards.fact(st.SYSTAG_Timebase, 10_000_000));
+    timer.timebase_hz = boards.fact(st.SYSTAG_Timebase, 10_000_000);
     hardware.system.before_reset = boards.before_reset;
     hardware.ccache.flush64 = boards.fact(st.SYSTAG_CacheFlush, 0);
     ram.ram_base = tree.ram_base orelse boards.fact(st.SYSTAG_RamBase, 0x8000_0000);
@@ -153,9 +153,10 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     // The cores' clock, before anything else runs on them and before it
     // is measured.
     const cpu_speed = comptime boards.fact(st.SYSTAG_CpuSpeed, 0);
-    const cpu_speed_set: hardware.cpuclock.Error!void = if (cpu_speed != 0) hardware.cpuclock.set(cpu_speed, boards.cpu_supply) else {};
+    const cpu_speed_set: hardware.cpuclock.Error!void = if (cpu_speed != 0) hardware.cpuclock.set(cpu_speed, boards.cpu_supply, &timer.spinUs) else {};
     exec.log_ring.* = &log_ring;
     exec.log_clock.* = uptimeUs;
+    exec.clock_hardware.* = .{ .timebase = &timer.timebase, .uptimeUs = &timer.uptimeUs, .spinUs = &timer.spinUs };
     exec.interrupt_hardware.* = plic.interrupt_hardware;
     exec.alert_hook.* = alert.show;
     exec.task_hardware.* = context.hardware;
@@ -210,9 +211,9 @@ export fn kmain(hartid: usize, fdt: usize) callconv(.c) noreturn {
     // tick's rate exist.
     cpu1.cores = boards.cores;
     startOthers(sys);
-    note("cpu clock %d MHz (measured), timebase %d MHz, tick %d Hz", .{
+    note("cpu clock %d MHz (measured), timebase %ld MHz, tick %d Hz", .{
         timer.measured_cpu_hz / 1_000_000,
-        hardware.systimer.timebase_hz / 1_000_000,
+        timer.timebase_hz / 1_000_000,
         timer.tick_hz,
     });
     if (cpu_speed_set) |_| {} else |err| note("cpu clock not set to %ld MHz: %s", .{ @as(u64, cpu_speed), @errorName(err).ptr });

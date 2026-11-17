@@ -125,7 +125,10 @@ pub const LIBRARY_VERSION = 1;
 /// 41: GetTimeBase - the rate of the machine's counter, for a module
 /// loaded from the disk, which has no part in what the kernel learned of
 /// it as it started.
-pub const LIBRARY_REVISION = 41;
+/// 42: UptimeUs and SpinUs - the time since the machine came up and the
+/// wait that does not give the CPU away, as calls, so that a module
+/// counts by the kernel's rate wherever it was loaded from.
+pub const LIBRARY_REVISION = 42;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

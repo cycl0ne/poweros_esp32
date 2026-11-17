@@ -106,6 +106,9 @@ pub const tickLog = _log.tickLog;
 pub const tickWaitables = @import("waitable/_waitable.zig").tickWaitables;
 /// The log's clock, microseconds since the boot; the kernel sets it.
 pub const log_clock = &_log.clock;
+/// The machine's clock, which the kernel's root sets before exec is made
+/// (`time/_time.zig`).
+pub const clock_hardware = &@import("time/_time.zig").clock;
 pub const log_ring = &_log.ring;
 pub const log_mirror = &_log.mirror_wanted;
 pub const setLogMirror = _rawio.setMirror;
@@ -172,6 +175,8 @@ pub const ShareWork = @import("task/sharework.zig").ShareWork;
 pub const PostWork = @import("task/postwork.zig").PostWork;
 pub const CoreCount = @import("task/corecount.zig").CoreCount;
 pub const GetTimeBase = @import("time/gettimebase.zig").GetTimeBase;
+pub const UptimeUs = @import("time/uptimeus.zig").UptimeUs;
+pub const SpinUs = @import("time/spinus.zig").SpinUs;
 pub const LockCoreTasks = @import("task/lockcoretasks.zig").LockCoreTasks;
 pub const UnlockCoreTasks = @import("task/unlockcoretasks.zig").UnlockCoreTasks;
 pub const CreateTask = @import("task/createtask.zig").CreateTask;

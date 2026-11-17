@@ -54,7 +54,6 @@ const net = sdk.devices.network;
 const ethernet = net.ethernet;
 const wireless = sdk.devices.wireless;
 const timer = sdk.devices.timer;
-const systimer = sdk.hardware.systimer;
 const usbhc = sdk.devices.usbhc;
 const wpa = sdk.wpa;
 const utility = sdk.utility;
@@ -635,7 +634,7 @@ pub fn due(work: *Work) bool {
         join(work);
         return true;
     }
-    if ((work.state == .connecting or work.state == .keying) and elapsed() > work.deadline) {
+    if ((work.state == .connecting or work.state == .keying) and elapsed(work) > work.deadline) {
         say(work.base.sys_base, "the network was not joined in time");
         leave(work, 1);
         cameOff(work);
@@ -647,8 +646,8 @@ pub fn due(work: *Work) bool {
 /// Milliseconds since the system started, as the system timer counts
 /// them: not the system time, which is a date once battclock.resource
 /// or C:net/TimeSync has set it, and moves when it is set.
-fn elapsed() u32 {
-    return @truncate(systimer.uptimeUs() / 1000);
+fn elapsed(work: *const Work) u32 {
+    return @truncate(work.base.sys_base.UptimeUs() / 1000);
 }
 
 // --- the unit's wireless requests ------------------------------------------------
@@ -858,7 +857,7 @@ fn join(work: *Work) void {
         return cameOff(work);
     }
     work.state = .connecting;
-    work.deadline = elapsed() +% join_ms;
+    work.deadline = elapsed(work) +% join_ms;
     // Woken at the deadline, to see that it was kept.
     pauseFor(work, join_ms / 1000 + 1);
 }

@@ -83,9 +83,9 @@ pub fn send(ab: *AMDGPUBase, manager: amdgpu.GPUBlock, message: u32, argument: u
 /// The time is the machine's clock, not the steps counted: a wait is
 /// woken by the system's tick, so a step lasts longer than it asks for.
 fn answered(ab: *AMDGPUBase, at: usize) bool {
-    const until = systimer.uptimeUs() + answer_most_us;
+    const until = ab.sys_base.UptimeUs() + answer_most_us;
     while (reg(at + mailbox_answer * 4).* == 0) {
-        if (systimer.uptimeUs() > until) return false;
+        if (ab.sys_base.UptimeUs() > until) return false;
         pause(ab, answer_step_us);
     }
     return true;
