@@ -27,6 +27,10 @@ pub const FLASH_START: usize = 0x4000_0000;
 pub const FLASH_END: usize = 0x4400_0000;
 pub const PSRAM_START: usize = 0x4800_0000;
 pub const PSRAM_END: usize = 0x4C00_0000;
+/// L2MEM and PSRAM again this much higher, without the data cache in
+/// front of them: a write there reaches the memory at once, and a read
+/// comes from it.
+pub const NON_CACHEABLE_OFFSET: usize = 0x4000_0000;
 
 pub const HPCPUTCP: usize = 0x3FF0_0000;
 pub const HPPERIPH0: usize = 0x5000_0000;

@@ -18,9 +18,11 @@
 //!
 //! **The DesignWare AXI DMA's channels**, DWDMA_CHANNELS of them from
 //! DWDMA_CHANNEL0 on (the JH7110's four, where the board lists the
-//! controller; the ESP32s and QEMU's virt have none): claimed, given back
-//! and asked about like the others; their owner sets them up and starts
-//! them through `sdk.hardware.dwdma`, and the general calls refuse them.
+//! controller, and the four of the ESP32-P4's DW-GDMA, which feeds its
+//! DSI and CSI bridges; the ESP32-S3 and QEMU's virt have none): claimed,
+//! given back and asked about like the others; their owner sets them up
+//! and starts them through `sdk.hardware.dwdma`, and the general calls
+//! refuse them.
 //!
 //! **The PL080's channels**, PL080_CHANNELS of them from PL080_CHANNEL0
 //! on (the eight of the JH7110's security block, which feed its crypto
@@ -54,8 +56,8 @@ pub const DMA2D_CHANNELS: u32 = switch (hardware.chip) {
 pub const DMA2D_CHANNEL0: u32 = DMA_CHANNELS;
 /// The DesignWare AXI DMA's channels, numbered from DWDMA_CHANNEL0.
 pub const DWDMA_CHANNELS: u32 = switch (hardware.chip) {
-    .esp32s3, .esp32p4, .a64psci, .x64uefi => 0,
-    .rv64sbi => hardware.dwdma.channels,
+    .esp32s3, .a64psci, .x64uefi => 0,
+    .esp32p4, .rv64sbi => hardware.dwdma.channels,
 };
 pub const DWDMA_CHANNEL0: u32 = DMA2D_CHANNEL0 + DMA2D_CHANNELS;
 /// The PL080's channels, numbered from PL080_CHANNEL0.
@@ -230,6 +232,11 @@ pub fn dmaIntNumber(channel: u32, side: u32) u32 {
     switch (hardware.chip) {
         .esp32s3 => return (if (in) intbits.INTB_DMA_IN_CH0 else intbits.INTB_DMA_OUT_CH0) + channel,
         .esp32p4 => {
+            if (channel >= DWDMA_CHANNEL0) {
+                if (channel >= PL080_CHANNEL0) return DMA_NOINT;
+                const controller = hardware.dwdma.find() orelse return DMA_NOINT;
+                return controller.irq;
+            }
             if (channel >= DMA2D_CHANNEL0) {
                 const n = channel - DMA2D_CHANNEL0;
                 if (!in) return intbits.INTB_DMA2D_OUT_CH0 + n;

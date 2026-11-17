@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 //! dma.resource's channels on the ESP32-P4: the general channels of its
 //! two engines numbered as one - the AHB engine's 0-2, the AXI engine's
-//! 3-5 (`sdk.hardware.gdma`) - and the 2D-DMA's three after them
-//! (`sdk.hardware.dma2d`), which the resource only hands out, starts and
-//! stops.
+//! 3-5 (`sdk.hardware.gdma`) - the 2D-DMA's three after them
+//! (`sdk.hardware.dma2d`), and the four of the DW-GDMA, the DesignWare
+//! controller that feeds the DSI and CSI bridges (`sdk.hardware.dwdma`),
+//! after those. The resource only hands out, starts and stops the last
+//! two kinds.
 //!
 //! A peripheral is on one engine: a DMAPERI_ value carries the engine in
 //! bit 8 (DMAPERI_AXI), and a channel connects only to its own engine's.
@@ -16,6 +18,8 @@ const sdk = @import("sdk");
 const hardware = sdk.hardware;
 const gdma = hardware.gdma;
 const dma2d = hardware.dma2d;
+const dwdma = hardware.dwdma;
+const ExecBase = sdk.interface.exec.ExecBase;
 const system = hardware.system;
 const map = hardware.map;
 const types = sdk.resources.dma;
@@ -25,6 +29,7 @@ pub const Side = gdma.Side;
 /// The general channels, and the 2D-DMA's after them.
 pub const general = 2 * gdma.channels;
 pub const dma2d_channels = dma2d.send_channels;
+pub const dw_channels = dwdma.channels;
 pub const max_priority = gdma.max_priority;
 pub const no_peripheral = gdma.no_peripheral;
 
@@ -53,6 +58,24 @@ pub fn init() void {
     var channel: u32 = 0;
     while (channel < dma2d_channels) : (channel += 1) dma2d.stopChannel(channel);
 }
+
+/// The DW-GDMA clocked, out of reset and on, its channels stopped: where
+/// its registers are, or 0 if its reset does not end. The clock and reset
+/// words are shared with other peripherals, so they change under Disable.
+pub fn controller(sys: *ExecBase) usize {
+    const found = dwdma.find() orelse return 0;
+    sys.Disable();
+    system.enable(.dw_gdma);
+    sys.Enable();
+    if (!dwdma.reset(found.base)) return 0;
+    dwdma.enable(found.base);
+    for (0..dw_channels) |channel| dwdma.stop(found.base, @intCast(channel));
+    return found.base;
+}
+
+/// Channel `channel` of the DW-GDMA at `base` stopped, its interrupts
+/// off.
+pub const stopChannel = dwdma.stop;
 
 pub fn disconnect(channel: u32) void {
     gdma.disconnect(engineOf(channel), numberOf(channel));

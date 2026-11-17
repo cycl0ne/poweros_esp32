@@ -39,6 +39,8 @@ const raw_buf_almost_empty_thrd = brg + 0x8C;
 
 /// Where the DMA engine writes the picture to: the bridge's FIFO.
 pub const fifo: u32 = 0x5010_5000;
+/// The handshake line the bridge asks the DMA engine for more on.
+pub const dma_handshake: u32 = 0;
 
 /// PIXEL_TYPE's RAW_TYPE: the pixel format in memory and on the link.
 pub const raw_rgb565: u32 = 2;

@@ -109,9 +109,10 @@ pub const trng = if (chip == .rv64sbi) own.trng else struct {};
 /// `cache`'s, so there it is empty.
 pub const ccache = if (chip == .rv64sbi) own.ccache else struct {};
 /// The DesignWare AXI DMA controller's channels, as their owners drive
-/// them (the JH7110's; dma.resource hands them out). The ESP32s' DMA is
-/// `gdma`'s and `dma2d`'s, so there it is empty.
-pub const dwdma = if (chip == .rv64sbi) own.dwdma else struct {};
+/// them: the JH7110's and the ESP32-P4's DW-GDMA, one file for both
+/// (dma.resource hands them out). The ESP32-S3's DMA is `gdma`'s, so
+/// there it is empty.
+pub const dwdma = if (chip == .rv64sbi or chip == .esp32p4) @import("dwdma.zig") else struct {};
 pub const pl080 = if (chip == .rv64sbi) own.pl080 else struct {};
 /// The DesignWare I2C controller as a bus master that waits for its own
 /// transfers (the JH7110's; its power controller is on one). The ESP32s'

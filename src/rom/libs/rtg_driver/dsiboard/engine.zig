@@ -154,7 +154,7 @@ pub fn setUp(engine: *Engine, sys: *ExecBase, psram_mhz: u32) void {
     _ = sys.CachePreDMA(@ptrFromInt(engine.line), &bytes, 0);
     sys.CachePostDMA(@ptrFromInt(engine.line), &bytes, 0);
     engine.int = .{
-        .node = .{ .type = .interrupt, .pri = 0, .name = "rtg-dsi engine" },
+        .node = .{ .type = .interrupt, .pri = 0, .name = owner_name },
         .data = engine,
         .code = &endServer,
     };
@@ -316,7 +316,7 @@ pub const Descriptors = struct {
 };
 
 pub fn descriptors(engine: *Engine) Descriptors {
-    const uncached = engine.line + 0x4000_0000;
+    const uncached = engine.line + map.NON_CACHEABLE_OFFSET;
     return .{
         .send = @ptrFromInt(uncached),
         .over = @ptrFromInt(uncached + 32),

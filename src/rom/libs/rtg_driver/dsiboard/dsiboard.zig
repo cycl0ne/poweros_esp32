@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
 //! A MIPI-DSI panel as a display board: the ESP32-P4's DSI host and
 //! D-PHY, the bridge in front of it, and the DMA channel that keeps it
-//! fed from a picture in PSRAM.
+//! fed from a picture in PSRAM - one of the DW-GDMA's, which dma.resource
+//! hands out.
 //!
 //! A module of its own: a description of a driver called "dsi" behind a
 //! ROM tag, which rtg.library puts on its list. It takes what is on the
 //! DSI host (`BUS_MIPI_DSI`): offered such a part, it makes a board from
-//! the part's tags: the
-//! link (lanes and lane rate), the pixel clock and timings, and the
-//! panel's bring-up as DCS commands - so another panel on this host is
-//! another tag list and not another driver.
+//! the part's tags: the link (lanes and lane rate), the pixel clock and
+//! timings, and the panel's bring-up as DCS commands - so another panel
+//! on this host is another tag list and not another driver.
 //!
 //! **Bringing it up** is all of create: the D-PHY's supply, the clocks,
 //! the panel's reset, the PHY and its PLL, the bring-up sent in command
@@ -79,11 +79,12 @@ const intbits = hardware.intbits;
 const boardpin = sdk.expansion.boardpin;
 const BoardPin = sdk.expansion.BoardPin;
 const ExpansionBase = sdk.interface.expansion.ExpansionBase;
+const dwdma = hardware.dwdma;
+const dmares = sdk.resources.dma;
 
 const config = @import("config.zig");
 const host = @import("host.zig");
 const bridge = @import("bridge.zig");
-const dwgdma = @import("dwgdma.zig");
 const engine_file = @import("engine.zig");
 const blend_file = @import("blend.zig");
 const scale_file = @import("scale.zig");
@@ -98,7 +99,7 @@ const st = sdk.expansion.systemtags;
 const MODULE_NAME = "rtg-dsi";
 const DRIVER_NAME = "dsi";
 const VERSION = 1;
-const REVISION = 23;
+const REVISION = 24;
 const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
@@ -114,8 +115,9 @@ const DISPON = 0x29;
 /// source number.
 const pixel_source_hz: u32 = 240_000_000;
 const pixel_source: u32 = 1;
-/// The DMA controller's channel the stream runs on.
-const channel = 0;
+/// How the stream's channel feeds the bridge: on the bridge's handshake,
+/// at priority 1, with five reads and two writes outstanding at most.
+const stream_route: dwdma.Route = .{ .handshake = bridge.dma_handshake, .priority = 1, .reads = 5, .writes = 2 };
 /// How long a flip waits for the frame it lands on.
 const flip_wait_us = 100_000;
 /// How many frames go by between two looks at the bridge's connector:
@@ -163,17 +165,25 @@ const Panel = struct {
     chain: Chain = .{},
     pending: Chain = .{},
     retired: Chain = .{},
+    /// The stream's channel, from dma.resource for as long as the link is
+    /// up (`takeChannel`): the controller's registers, the channel's
+    /// number on it, and its interrupt.
+    dma: ?*dmares.DmaBase = null,
+    dma_base: usize = 0,
+    dma_channel: u32 = 0,
+    dma_irq: u32 = 0,
     dma_int: exec.Interrupt = .{},
     bridge_int: exec.Interrupt = .{},
     hooked: bool = false,
-    /// The DSI host's and the DMA controller's clocks are on (`bringUp`).
+    /// The DSI host's clock is on (`bringUp`).
     clocked: bool = false,
     /// The part's reset and backlight, taken through expansion.library for
     /// as long as the board is (`takeLines`).
     expansion_base: ?*ExpansionBase = null,
     lines_held: bool = false,
     stats: rtg.RtgBoardStats = .{},
-    /// The PPA and the 2D-DMA: FillRect and CopyRect.
+    /// The PPA and the 2D-DMA: the board's fill, copy, blend and scale
+    /// (`engine_ops`).
     engine: engine_file.Engine = .{},
 };
 
@@ -190,20 +200,27 @@ fn driverBase(board: *rtg.RtgBoard) *RtgDriverBase {
 
 /// A picture has gone: send the next one, from the chain shown meanwhile
 /// if there is one. The next frame has begun with it, which is counted
-/// and said to whoever waits for a blanking (WaitVBlank).
+/// and said to whoever waits for a blanking (WaitVBlank). A block the
+/// bus would not carry stops the channel: counted as a failed send, and
+/// the next picture sent the same way. The controller's other channels
+/// share the interrupt, so the server answers for its own alone.
 fn dmaServer(is_data: ?*anyopaque, int_number: u32) callconv(.c) i32 {
     _ = int_number;
     const panel: *Panel = @ptrCast(@alignCast(is_data.?));
-    const raised = dwgdma.takeInterrupts(channel);
+    const raised = dwdma.takeInterrupts(panel.dma_base, panel.dma_channel);
     if (raised == 0) return 0;
-    if (raised & dwgdma.int_transfer_done != 0 and panel.streaming) {
+    if (raised & (dwdma.INT_DONE | dwdma.INT_ERRORS) != 0 and panel.streaming) {
+        if (raised & dwdma.INT_ERRORS != 0) {
+            panel.stats.failed_sends +%= 1;
+            dwdma.halt(panel.dma_base, panel.dma_channel);
+        }
         if (panel.pending.first != 0) {
             panel.retired = panel.chain;
             panel.chain = panel.pending;
             panel.pending = .{};
         }
         chain_file.rearm(panel.chain);
-        dwgdma.run(channel, panel.chain.first);
+        dwdma.go(panel.dma_base, panel.dma_channel, panel.chain.first);
         panel.stats.frames +%= 1;
         engine_file.frameTick(&panel.engine);
         driverBase(panel.board).FrameDone(panel.board);
@@ -238,12 +255,12 @@ fn takeLines(panel: *Panel) bool {
     const eb = panel.expansion_base orelse return true;
     const reset = panel.config.reset_pin.data();
     if (eb.ClaimBoardPin(reset, MODULE_NAME)) |holder| {
-        sdk.exec.kprintf(panel.sys, "%s: its panel's reset line is %s's\n", .{ MODULE_NAME, holder });
+        exec.kprintf(panel.sys, "%s: its panel's reset line is %s's\n", .{ MODULE_NAME, holder });
         return false;
     }
     if (eb.ClaimBoardPin(panel.config.backlight_pin.data(), MODULE_NAME)) |holder| {
         eb.ReleaseBoardPin(reset);
-        sdk.exec.kprintf(panel.sys, "%s: its panel's backlight is %s's\n", .{ MODULE_NAME, holder });
+        exec.kprintf(panel.sys, "%s: its panel's backlight is %s's\n", .{ MODULE_NAME, holder });
         return false;
     }
     panel.lines_held = true;
@@ -294,7 +311,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     }
 
     // The clocks: the D-PHY's from the 20 MHz reference clock, the pixel
-    // clock from the 240 MHz one; the DMA controller's.
+    // clock from the 240 MHz one.
     const divider = pixelDivider(wanted.pixel_hz);
     panel.pixel_hz = pixel_source_hz / divider;
     sys.Disable();
@@ -303,7 +320,6 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
     system.update(system.PERI_CLK_CTRL02, 0, @as(u32, 0x3) << 30);
     system.setFunctionClock(.dsi, .{ .source = pixel_source, .divider = divider });
     system.enable(.dsi);
-    system.enable(.dw_gdma);
     sys.Enable();
     panel.clocked = true;
 
@@ -318,7 +334,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
 
     panel.lane_kbps = host.startPhy(panel.sys, wanted.lanes, lane);
     if (panel.lane_kbps == 0) {
-        sdk.exec.kprintf(sys, "%s: the D-PHY did not come up\n", .{MODULE_NAME});
+        exec.kprintf(sys, "%s: the D-PHY did not come up\n", .{MODULE_NAME});
         return err.RTGERR_NO_DISPLAY;
     }
     // The rate the lanes run at, which is the one asked for wherever the
@@ -347,7 +363,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
         const shown: rtg.RtgTimings = .{ .h_active = wanted.width, .v_active = wanted.height };
         _ = driverBase(panel.board).BuildAviInfoFrame(&shown, rtg.RTGAVI_IT | rtg.RTGAVI_RANGE_FULL | rtg.RTGAVI_NO_VIC, &avi);
         if (!lt8912b.setUp(bridge_bus, wanted.i2c_address, wanted.lanes, lane_mbps, mode, &avi)) {
-            sdk.exec.kprintf(sys, "%s: the HDMI bridge did not take its bring-up\n", .{MODULE_NAME});
+            exec.kprintf(sys, "%s: the HDMI bridge did not take its bring-up\n", .{MODULE_NAME});
             return err.RTGERR_NO_DISPLAY;
         }
     } else {
@@ -359,7 +375,7 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
         var hook: utility.Hook = .{ .entry = &sendStep, .data = panel };
         const code = rb.RunPanelSequence(wanted.init_sequence.?, wanted.init_length, &hook);
         if (code != err.RTGERR_OK) {
-            sdk.exec.kprintf(sys, "%s: the panel did not take its bring-up\n", .{MODULE_NAME});
+            exec.kprintf(sys, "%s: the panel did not take its bring-up\n", .{MODULE_NAME});
             return code;
         }
     }
@@ -389,10 +405,10 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
         .raw_type = if (panel.hdmi) bridge.raw_rgb888 else bridge.raw_rgb565,
     });
 
-    if (!dwgdma.start(panel.sys)) return err.RTGERR_NO_DISPLAY;
+    const taken = takeChannel(panel);
+    if (taken != err.RTGERR_OK) return taken;
     const psram_mhz = psramMhz(panel.board.driver.?);
     bus.share(panel.sys, streamBytes(panel), psram_mhz);
-    dwgdma.setUpChannel(channel);
 
     panel.dma_int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = MODULE_NAME },
@@ -404,11 +420,35 @@ fn bringUp(panel: *Panel, bus_to_bridge: ?lt8912b.I2c, lane: host.Pll) i32 {
         .data = panel,
         .code = &bridgeServer,
     };
-    sys.AddIntServer(intbits.INTB_DW_GDMA, &panel.dma_int);
+    sys.AddIntServer(panel.dma_irq, &panel.dma_int);
     sys.AddIntServer(intbits.INTB_DSI_BRIDGE, &panel.bridge_int);
     panel.hooked = true;
 
     _ = drive(panel, wanted.backlight_pin, true);
+    return err.RTGERR_OK;
+}
+
+/// The stream's channel: the first of the DW-GDMA's that dma.resource
+/// hands over, set to feed the bridge. RTGERR_IN_USE, said on the raw
+/// port, when every one is another's; RTGERR_NO_DISPLAY without
+/// dma.resource.
+fn takeChannel(panel: *Panel) i32 {
+    const sys = panel.sys;
+    const db: *dmares.DmaBase = @ptrCast(@alignCast(sys.OpenResource(dmares.DMANAME) orelse return err.RTGERR_NO_DISPLAY));
+    const controller = dwdma.find() orelse return err.RTGERR_NO_DISPLAY;
+    var number: u32 = 0;
+    while (number < dmares.DWDMA_CHANNELS) : (number += 1) {
+        const holder = db.AllocDMAChannel(dmares.DWDMA_CHANNEL0 + number, MODULE_NAME) orelse break;
+        if (number + 1 == dmares.DWDMA_CHANNELS) {
+            exec.kprintf(sys, "%s: no DMA channel for the stream, the last is %s's\n", .{ MODULE_NAME, holder });
+            return err.RTGERR_IN_USE;
+        }
+    }
+    panel.dma = db;
+    panel.dma_base = controller.base;
+    panel.dma_channel = number;
+    panel.dma_irq = dmares.dmaIntNumber(dmares.DWDMA_CHANNEL0 + number, dmares.DMA_OUT);
+    dwdma.toPeripheral(controller.base, number, stream_route);
     return err.RTGERR_OK;
 }
 
@@ -428,7 +468,7 @@ fn startStream(panel: *Panel, chain: Chain) void {
     panel.chain = chain;
     // Before the channel runs: its first end is a frame's like any other.
     panel.streaming = true;
-    dwgdma.run(channel, chain.first);
+    dwdma.go(panel.dma_base, panel.dma_channel, chain.first);
     host.videoMode(true);
     bridge.dpi(true);
     bridge.underrunInterrupt(true);
@@ -442,7 +482,7 @@ fn settleBridge(panel: *Panel) bool {
     const bus_to_bridge = lt8912b.I2c.open(panel.sys, wanted.i2c_unit) orelse return false;
     defer bus_to_bridge.close();
     if (lt8912b.follow(bus_to_bridge, wanted.i2c_address, panel.pixel_hz)) return true;
-    sdk.exec.kprintf(panel.sys, "%s: the HDMI bridge did not take the stream\n", .{MODULE_NAME});
+    exec.kprintf(panel.sys, "%s: the HDMI bridge did not take the stream\n", .{MODULE_NAME});
     return false;
 }
 
@@ -455,7 +495,8 @@ fn stopStream(panel: *Panel) void {
     bridge.underrunInterrupt(false);
     bridge.dpi(false);
     host.videoMode(false);
-    dwgdma.halt(channel);
+    // The chains are freed only once the channel has stopped reading them.
+    dwdma.halt(panel.dma_base, panel.dma_channel);
     for ([_]*Chain{ &panel.chain, &panel.pending, &panel.retired }) |one| {
         chain_file.free(sys, one.*);
         one.* = .{};
@@ -508,9 +549,13 @@ fn giveBack(panel: *Panel) void {
     if (panel.streaming) stopStream(panel);
     panel.from_copy = false;
     if (panel.hooked) {
-        sys.RemIntServer(intbits.INTB_DW_GDMA, &panel.dma_int);
+        sys.RemIntServer(panel.dma_irq, &panel.dma_int);
         sys.RemIntServer(intbits.INTB_DSI_BRIDGE, &panel.bridge_int);
         panel.hooked = false;
+    }
+    if (panel.dma) |db| {
+        db.FreeDMAChannel(dmares.DWDMA_CHANNEL0 + panel.dma_channel);
+        panel.dma = null;
     }
     link_file.free(&panel.link, sys);
     // The bridge's and the host's registers answer only with their clock
@@ -708,7 +753,7 @@ fn take(wanted: *config.Config, mode: *const sends.Mode) void {
 fn psramMhz(driver: *rtg.RtgDriver) u32 {
     const default_mhz = 80;
     const eb = driver.expansion_base orelse return default_mhz;
-    return @truncate(driver.rtg_base.GetRtgTagData(sdk.expansion.systemtags.SYSTAG_PsramSpeed, default_mhz, eb.SystemTags()));
+    return @truncate(driver.rtg_base.GetRtgTagData(st.SYSTAG_PsramSpeed, default_mhz, eb.SystemTags()));
 }
 
 /// What the stream reads a second, on average: a frame's bytes, as often

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! What the DSI board streams, frame after frame: a chain of the
-//! DW-GDMA's items, made from the bands the picture is shown in.
+//! DW-GDMA's items (`sdk.hardware.dwdma`), made from the bands the
+//! picture is shown in.
 //!
 //! A band shows a buffer's rows on a run of display lines; the lines of
 //! one band come from consecutive rows, and a buffer's rows are its pitch
@@ -16,16 +17,46 @@
 //! are written back and dropped from the cache first, so no stale line of
 //! a previous owner lands on them later - and the transfer-done interrupt
 //! sets them valid again for every frame (`rearm`).
+//!
+//! Each item sends its block from memory, read through the controller's
+//! memory master and stepped through, to the bridge's FIFO, written
+//! through master 0 at its one address; 64 bits at a time, in bursts of
+//! 512 reads and 256 writes, AXI bursts of 16 - ESP-IDF v6.1's values
+//! for a DPI panel (esp_lcd_panel_dpi.c).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const rtg = sdk.rtg;
 const ExecBase = sdk.interface.exec.ExecBase;
-const dwgdma = @import("dwgdma.zig");
+const dwdma = sdk.hardware.dwdma;
+const Item = dwdma.Item;
+const map = sdk.hardware.map;
 const bridge = @import("bridge.zig");
 
 /// An item's size and alignment.
-const item_bytes = @sizeOf(dwgdma.Item);
+const item_bytes = @sizeOf(Item);
+
+/// An item's CTL words for a block to the bridge, and the bytes it reads
+/// at a time, which a block counts.
+const ctl_lo: u32 = dwdma.memory_master << dwdma.CTL_L_SMS_SHIFT | dwdma.CTL_L_DST_NOINC |
+    dwdma.WIDTH_64 << dwdma.CTL_L_SRC_WIDTH_SHIFT | dwdma.WIDTH_64 << dwdma.CTL_L_DST_WIDTH_SHIFT |
+    dwdma.MSIZE_512 << dwdma.CTL_L_SRC_MSIZE_SHIFT | dwdma.MSIZE_256 << dwdma.CTL_L_DST_MSIZE_SHIFT;
+const axi_burst: u32 = 16;
+const ctl_hi: u32 = dwdma.CTL_H_ARLEN_EN | axi_burst << dwdma.CTL_H_ARLEN_SHIFT |
+    dwdma.CTL_H_AWLEN_EN | axi_burst << dwdma.CTL_H_AWLEN_SHIFT;
+const read_bytes = 8;
+
+/// The item at `at` as the CPU writes it: through the uncached view, so
+/// the channel reads what was written last.
+fn itemAt(at: usize) *volatile Item {
+    return @ptrFromInt(at + map.NON_CACHEABLE_OFFSET);
+}
+
+/// An item's CTL high word, handed to the channel: valid, and whether it
+/// is the chain's last.
+fn armed(last: bool) u32 {
+    return ctl_hi | dwdma.CTL_H_LLI_VALID | (if (last) dwdma.CTL_H_LLI_LAST else 0);
+}
 
 /// A chain: its first item's cached address (0 for none), how many items,
 /// and the block they are in.
@@ -94,7 +125,14 @@ pub fn build(sys: *ExecBase, bands: []const rtg.RtgBand, height: u32, line_bytes
 fn put(first: usize, count: u32, index: u32, source: usize, bytes: u32) void {
     const at = first + @as(usize, index) * item_bytes;
     const next: usize = if (index + 1 < count) at + item_bytes else 0;
-    dwgdma.fill(@ptrFromInt(dwgdma.uncached(at)), source, bridge.fifo, bytes, next);
+    itemAt(at).* = .{
+        .sar = source,
+        .dar = bridge.fifo,
+        .block_ts = bytes / read_bytes - 1,
+        .llp = next | dwdma.memory_master,
+        .ctl_lo = ctl_lo,
+        .ctl_hi = armed(next == 0),
+    };
 }
 
 /// Every item of the chain handed back to the channel, for the next frame.
@@ -102,7 +140,7 @@ pub fn rearm(chain: Chain) void {
     var index: u32 = 0;
     while (index < chain.count) : (index += 1) {
         const at = chain.first + @as(usize, index) * item_bytes;
-        dwgdma.rearm(@ptrFromInt(dwgdma.uncached(at)), index + 1 == chain.count);
+        itemAt(at).ctl_hi = armed(index + 1 == chain.count);
     }
 }
 

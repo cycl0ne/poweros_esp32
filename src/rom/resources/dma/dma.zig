@@ -21,10 +21,11 @@
 //! and the general calls refuse it.
 //!
 //! **The DesignWare AXI DMA's channels** (the JH7110's four,
-//! `jh7110/channels.zig`) are numbered after those, the same way: the
-//! resource finds the controller in the board's parts and brings it up
-//! when it is made, hands its channels out and stops one given back; its
-//! owner drives it through `sdk.hardware.dwdma`. **The PL080's channels**
+//! `jh7110/channels.zig`, and the four of the ESP32-P4's DW-GDMA) are
+//! numbered after those, the same way: the resource finds the controller
+//! - the chip's own, or in the board's parts - and brings it up when it
+//! is made, hands its channels out and stops one given back; its owner
+//! drives it through `sdk.hardware.dwdma`. **The PL080's channels**
 //! (the eight of the JH7110's security block) come after them, the same
 //! way, driven through `sdk.hardware.pl080`. A chip without general
 //! channels has the general calls refuse every channel.
@@ -61,8 +62,8 @@ const has_pl = pl_channels != 0;
 
 pub const RESOURCE_NAME = types.DMANAME;
 const RESOURCE_VERSION = 1;
-const RESOURCE_REVISION = 4;
-const BUILD_DATE = "26.10.2026";
+const RESOURCE_REVISION = 5;
+const BUILD_DATE = "17.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++
@@ -301,8 +302,8 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     db.sys_base = sys_base;
     sys_base.InitLock(&db.lock, RESOURCE_NAME, exec.LOCKORDER_DRIVER, 0);
     db.owner = @splat(null);
-    // The chip's engines up: the general ones and the 2D-DMA, or the
-    // DesignWare controller and the PL080.
+    // The chip's engines up: the general ones and the 2D-DMA, the
+    // DesignWare controller and the PL080, whichever the chip has.
     if (comptime has_general) {
         db.peri = @splat(chip.no_peripheral);
         chip.init();
