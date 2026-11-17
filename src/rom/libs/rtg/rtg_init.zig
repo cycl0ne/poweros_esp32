@@ -140,7 +140,9 @@ pub const LIBRARY_VERSION = 1;
 /// 38: BlitTemplate moves the shape's start in its bits by what a cut
 /// took off the rectangle's left and top, as BlendPixels moves its
 /// picture: the shape lay shifted where the rectangle was cut there.
-pub const LIBRARY_REVISION = 38;
+/// 39: GetRtgDevices' copies carry RTGDVF_DRIVER_OFF where the settings
+/// switched a device's drivers from the disk off.
+pub const LIBRARY_REVISION = 39;
 const BUILD_DATE = "17.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

@@ -48,9 +48,11 @@ pub const RTGA_Buffers = RTGA_Dummy + 10;
 // and backlight are its part's PART_PinReset, PART_PinEnable and
 // PART_PinBacklight (sdk/libs/expansion/systemtags.zig), which come with
 // the part's tags.
-/// u32: how long reset is held and how long the part is then given, in
-/// milliseconds. Absent: 10 and 20.
+/// u32: how long the part's reset is held, in milliseconds. Absent: 10.
 pub const RTGA_ResetMillis = RTGA_Dummy + 14;
+/// u32: how long the part is given once out of reset, before anything is
+/// sent to it or clocks it, in milliseconds. Absent: 20; 120 for a part
+/// on a command bus (SPI, QSPI), whose controller wakes no sooner.
 pub const RTGA_SettleMillis = RTGA_Dummy + 15;
 /// u32, 0 to 100: the brightness set with the board's first picture.
 /// Absent: a panel's backlight is lit in full, and a monitor's
@@ -109,8 +111,9 @@ pub const RTGA_RGB_PclkPin = RTGA_RGB_Dummy + 12;
 pub const RTGA_RGB_HSyncPin = RTGA_RGB_Dummy + 13;
 pub const RTGA_RGB_VSyncPin = RTGA_RGB_Dummy + 14;
 pub const RTGA_RGB_DePin = RTGA_RGB_Dummy + 15;
-/// u32: lines in each of the two buffers the panel is really fed from. The
-/// height must divide by it. Absent: the driver's own choice.
+/// u32: lines in each of the three buffers the panel is really fed from,
+/// each filled from the shown buffer while the panel reads another. The
+/// height must divide by it. Absent: 10.
 pub const RTGA_RGB_BounceLines = RTGA_RGB_Dummy + 16;
 /// u32: where the stream sits on the bus. Absent: the highest there is.
 pub const RTGA_RGB_DmaPriority = RTGA_RGB_Dummy + 17;

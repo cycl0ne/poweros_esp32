@@ -73,8 +73,8 @@ const systimer = sdk.hardware.systimer;
 const MODULE_NAME = "rtg-dcs";
 const DRIVER_NAME = "dcs";
 const VERSION = 1;
-const REVISION = 11;
-const BUILD_DATE = "16.11.2026";
+const REVISION = 12;
+const BUILD_DATE = "17.11.2026";
 const VERSION_STRING =
     "\x00$VER: " ++ MODULE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ VERSION, REVISION }) ++
@@ -254,7 +254,8 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
     // to set, and the board says it has none.
     board.info.brightness_steps = if (panel.backlight.kind == sdk.expansion.boardpin.BPIN_GPIO) 2 else 0;
     const reset_pin = BoardPin.of(rb.GetRtgTagData(st.PART_PinReset, 0, tag_list));
-    const reset_ms: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_ResetMillis, 120, tag_list));
+    const reset_ms: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_ResetMillis, 10, tag_list));
+    const settle_ms: u32 = @truncate(rb.GetRtgTagData(tags.RTGA_SettleMillis, 120, tag_list));
     if (!takePads(panel, reset_pin)) return err.RTGERR_IN_USE;
 
     // The memory first: a panel brought up with nowhere to draw is no use.
@@ -286,7 +287,7 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
     // Dark until there is a picture, then out of reset and through the
     // maker's bring-up.
     setBacklight(panel, false);
-    const code = bringUp(panel, reset_pin, reset_ms, bring_up);
+    const code = bringUp(panel, reset_pin, reset_ms, settle_ms, bring_up);
     if (code != err.RTGERR_OK) {
         giveBack(panel);
         return code;
@@ -320,7 +321,7 @@ fn bringUpBoard(driver: *rtg.RtgDriver, board: *rtg.RtgBoard, io: *rtg.RtgTransp
 
 /// The controller out of reset - its own line if it has one, the command
 /// if not - and every step of the bring-up, each with its wait.
-fn bringUp(panel: *Panel, reset_pin: BoardPin, reset_ms: u32, bring_up: []const u8) i32 {
+fn bringUp(panel: *Panel, reset_pin: BoardPin, reset_ms: u32, settle_ms: u32, bring_up: []const u8) i32 {
     const rb = panel.rtg_base;
     if (reset_pin.kind == sdk.expansion.boardpin.BPIN_GPIO) {
         const asserted = reset_pin.active_low == 0;
@@ -328,13 +329,13 @@ fn bringUp(panel: *Panel, reset_pin: BoardPin, reset_ms: u32, bring_up: []const 
         gpio.connectOut(reset_pin.number, gpio.out_of_gpio, true);
         gpio.outputEnable(reset_pin.number, true);
         gpio.setLevel(reset_pin.number, asserted);
-        panel.sys.SpinUs(10_000);
+        panel.sys.SpinUs(@as(u64, reset_ms) * 1000);
         gpio.setLevel(reset_pin.number, !asserted);
     } else {
         const code = rb.TxParam(panel.io, SWRESET, null, 0);
         if (code != err.RTGERR_OK) return code;
     }
-    panel.sys.SpinUs(@as(u64, reset_ms) * 1000);
+    panel.sys.SpinUs(@as(u64, settle_ms) * 1000);
 
     var steps: sequence.Steps = .{ .bytes = bring_up };
     while (steps.next()) |one| {

@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const rtg = sdk.rtg;
 const RtgBase = @import("../rtg.zig").RtgBase;
 const _device = @import("_device.zig");
+const settings = @import("../settings/_settings.zig");
 
 /// Copies out the devices on the library's list.
 ///
@@ -28,15 +29,18 @@ const _device = @import("_device.zig");
 /// by `AddRtgDevice`. Each says its name, what the hardware is called,
 /// what it is - its kind, its chip and bus, a function's vendor, device
 /// and class - the driver that has it, how many boards that made of it,
-/// and for the firmware's framebuffer the device it lies behind. The
+/// and for the firmware's framebuffer the device it lies behind. Its
+/// flags carry `RTGDVF_DRIVER_OFF` where the settings switched off the
+/// drivers from the disk for it. The
 /// machine's own devices are on the list from the first
 /// `BindRtgDrivers`; before it the answer is those that were added.
 ///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the device list - through a
-///   bind, which lasts as long as a driver's bring-up.
+///   bind, which lasts as long as a driver's bring-up - or the settings.
 /// - Interrupts: no.
-/// - Locks: takes the device list's lock. No spinlock may be held.
+/// - Locks: takes the device list's lock, and under it the settings'.
+///   No spinlock may be held.
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
@@ -69,7 +73,7 @@ pub fn GetRtgDevices(rb: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32 
             const info = &into.?[there];
             info.* = .{
                 .kind = device.kind,
-                .flags = device.flags,
+                .flags = device.flags | (if (settings.driverOff(rb, device)) rtg.drivers.RTGDVF_DRIVER_OFF else 0),
                 .chip = device.chip,
                 .bus = device.bus,
             };
@@ -88,4 +92,31 @@ pub fn GetRtgDevices(rb: *RtgBase, into: ?[*]rtg.RtgDeviceInfo, count: u32) u32 
         there += 1;
     }
     return there;
+}
+
+// --- tests (host: ./zig build test) -----------------------------------------
+
+const fixture = @import("../_testing.zig");
+const testing = fixture.testing;
+
+test "GetRtgDevices: a device whose drivers from the disk are off says so, and no more once they are on" {
+    const rb = try fixture.setUp();
+    defer fixture.kexec.deinit();
+    const fk = fixture.fakeOf(rb);
+    fk.create_answer = rtg.errors.RTGERR_NO_DISPLAY;
+    _ = fixture.fake.addDevice(fk, null).?;
+    var found: [4]rtg.RtgDeviceInfo = undefined;
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetRtgDevices(&found, found.len));
+    try testing.expectEqual(@as(u32, 0), found[0].flags & rtg.drivers.RTGDVF_DRIVER_OFF);
+
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("panel.0", false));
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetRtgDevices(&found, found.len));
+    try testing.expect(found[0].flags & rtg.drivers.RTGDVF_DRIVER_OFF != 0);
+    // Another device's line says nothing of this one.
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("panel.0", true));
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("pci.01:00.0", false));
+    try testing.expectEqual(@as(u32, 1), fixture.base(rb).GetRtgDevices(&found, found.len));
+    try testing.expectEqual(@as(u32, 0), found[0].flags & rtg.drivers.RTGDVF_DRIVER_OFF);
+    try testing.expectEqual(rtg.errors.RTGERR_OK, fixture.base(rb).SetRtgDeviceDriver("pci.01:00.0", true));
+    try fixture.tearDown(rb);
 }

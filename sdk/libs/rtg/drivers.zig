@@ -189,10 +189,12 @@ pub const RtgDriver = extern struct {
 pub const RTGDEV_PART: u32 = 1;
 pub const RTGDEV_PCI: u32 = 2;
 
-/// RtgDevice.flags
+/// RtgDevice.flags, and RtgDeviceInfo.flags
 /// The firmware lit it: its picture is there before any driver.
 pub const RTGDVF_FIRMWARE: u32 = 1 << 0;
-/// No driver from the disk is bound to it.
+/// The settings say no driver from the disk is bound to it (`DRIVER=OFF`,
+/// `SetRtgDeviceDriver`). Only in the copies `GetRtgDevices` makes: the
+/// settings are asked as the copy is made.
 pub const RTGDVF_DRIVER_OFF: u32 = 1 << 1;
 
 /// Hardware a driver can drive, as the library keeps it. The library's: a

@@ -59,7 +59,7 @@ const rtg = sdk.rtg;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Rtg";
-const VERSION_STRING = "\x00$VER: Rtg 1.12 (17.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Rtg 1.13 (17.11.2026)\r\n";
 
 const template = "BOARD,DRIVERS/S,DEVICES/S,BOARDS/S,MODES/S,MEMORY/S,STATS/S,FULL/S," ++
     "SET/S,CLEAR/S,MODE/K,MIRROR/K,BRIGHTNESS/K/N,RANGE/K,FIRST/K,DEVICE/K,DRIVER/K,SAVE/S,RETRY/S,TRIED/S";
@@ -271,11 +271,24 @@ fn printDevices(dl: *DosBase, rb: *RtgBase) i32 {
             if (device.driver[0] != 0) stringOf(&device.driver) else "-",
             device.boards,
         });
-        if (device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0) _ = dl.PutStr("lit by the firmware");
-        if (device.behind[0] != 0) _ = Printf(dl, ", behind %s", .{stringOf(&device.behind)});
+        var noted = false;
+        if (device.flags & rtg.drivers.RTGDVF_FIRMWARE != 0) noted = note(dl, noted, "lit by the firmware");
+        if (device.behind[0] != 0) {
+            noted = note(dl, noted, "behind ");
+            _ = dl.PutStr(stringOf(&device.behind));
+        }
+        if (device.flags & rtg.drivers.RTGDVF_DRIVER_OFF != 0) _ = note(dl, noted, "drivers from the disk off");
         _ = dl.PutStr("\n");
     }
     return dos.RETURN_OK;
+}
+
+/// One of a device's notes, after a comma where one came before. Answers
+/// that one has been printed.
+fn note(dl: *DosBase, noted: bool, words: [*:0]const u8) bool {
+    if (noted) _ = dl.PutStr(", ");
+    _ = dl.PutStr(words);
+    return true;
 }
 
 /// A name `GetRtgDrivers` or `GetRtgDevices` copied out, as a string.
@@ -788,6 +801,8 @@ const state_words = [_]Named{
     .{ .bit = rtg.boards.RTGBF_GONE, .word = "gone" },
     .{ .bit = rtg.boards.RTGBF_FIRMWARE, .word = "firmware" },
     .{ .bit = rtg.boards.RTGBF_CONNECTOR, .word = "connector" },
+    .{ .bit = rtg.boards.RTGBF_DIRECT_FLIP, .word = "direct-flip" },
+    .{ .bit = rtg.boards.RTGBF_SCALES, .word = "scaling-planes" },
 };
 
 const monitor_words = [_]Named{
@@ -814,15 +829,22 @@ const cap_words = [_]Named{
     .{ .bit = rtg.boards.RTGBC_POWER, .word = "sleep" },
     .{ .bit = rtg.boards.RTGBC_BRIGHTNESS, .word = "brightness" },
     .{ .bit = rtg.boards.RTGBC_STATS, .word = "stats" },
+    .{ .bit = rtg.boards.RTGBC_AUDIO, .word = "sound" },
+    .{ .bit = rtg.boards.RTGBC_COLOR_RANGE, .word = "range" },
     .{ .bit = rtg.boards.RTGBC_CONTROL, .word = "control" },
     .{ .bit = rtg.boards.RTGBC_MIRROR_X, .word = "mirror-x" },
     .{ .bit = rtg.boards.RTGBC_MIRROR_Y, .word = "mirror-y" },
     .{ .bit = rtg.boards.RTGBC_MONITOR, .word = "monitor" },
     .{ .bit = rtg.boards.RTGBC_POINTER, .word = "pointer" },
+    .{ .bit = rtg.boards.RTGBC_OVERLAY, .word = "overlay" },
     .{ .bit = rtg.boards.RTGBC_FILL_RECT, .word = "fill" },
     .{ .bit = rtg.boards.RTGBC_COPY_RECT, .word = "copy" },
     .{ .bit = rtg.boards.RTGBC_BLIT_TEMPLATE, .word = "template" },
     .{ .bit = rtg.boards.RTGBC_BLIT_PATTERN, .word = "pattern" },
+    .{ .bit = rtg.boards.RTGBC_BLEND_PIXELS, .word = "blend" },
+    .{ .bit = rtg.boards.RTGBC_BLEND_RECT, .word = "blend-fill" },
+    .{ .bit = rtg.boards.RTGBC_SCALE_PIXELS, .word = "scale" },
+    .{ .bit = rtg.boards.RTGBC_VIDEO, .word = "video" },
 };
 
 fn printWords(dl: *DosBase, bits: u32, words: []const Named, none: [*:0]const u8) void {
