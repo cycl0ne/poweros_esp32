@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; Clock's strings in Finnish.
+MSG_WINDOW_TITLE
+Kello
+MSG_MENU_PROJECT
+Projekti
+MSG_MENU_ANALOG
+Analoginen
+MSG_MENU_DIGITAL
+Digitaalinen
+MSG_MENU_ABOUT
+Tietoja...
+MSG_MENU_QUIT
+Lopeta
+MSG_MENU_SETTINGS
+Asetukset
+MSG_MENU_SECONDS
+Sekunnit
+MSG_MENU_DATE
+Päivämäärä
+MSG_MENU_24_HOURS
+24 tuntia
+MSG_MENU_SAVE
+Tallenna asetukset
+MSG_ABOUT_TITLE
+Tietoja: Kello
+MSG_ABOUT
+%s\n\nAika kellotaululla tai numeroina.\nKaksoisnapsautus ikkunassa vaihtaa niiden välillä.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Asetuksia ei voitu tallentaa kohteeseen\n%s.
+MSG_NOLIBRARY
+%s: kirjastoa %s ei voi avata\n
+MSG_NOMEMORY
+%s: muisti ei riitä\n
+MSG_NOWINDOW
+%s: ikkunaa ei voi avata\n

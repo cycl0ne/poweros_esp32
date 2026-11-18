@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language portugues
+## codeset 106
+; Clock's strings in Portuguese.
+MSG_WINDOW_TITLE
+Relógio
+MSG_MENU_PROJECT
+Projeto
+MSG_MENU_ANALOG
+Analógico
+MSG_MENU_DIGITAL
+Digital
+MSG_MENU_ABOUT
+Acerca de...
+MSG_MENU_QUIT
+Sair
+MSG_MENU_SETTINGS
+Definições
+MSG_MENU_SECONDS
+Segundos
+MSG_MENU_DATE
+Data
+MSG_MENU_24_HOURS
+24 horas
+MSG_MENU_SAVE
+Guardar definições
+MSG_ABOUT_TITLE
+Acerca do Relógio
+MSG_ABOUT
+%s\n\nAs horas, num mostrador ou em algarismos.\nUm duplo clique na janela alterna entre os dois.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Não foi possível guardar as definições em\n%s.
+MSG_NOLIBRARY
+%s: não é possível abrir %s\n
+MSG_NOMEMORY
+%s: memória insuficiente\n
+MSG_NOWINDOW
+%s: não é possível abrir a sua janela\n

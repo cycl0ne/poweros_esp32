@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; The Player's strings in Polish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Otwórz...
+MSG_MENU_OPEN_DRAWER
+Otwórz folder...
+MSG_MENU_OPEN_URL
+Otwórz URL...
+MSG_MENU_SAVE_PLAYLIST
+Zapisz listę odtwarzania...
+MSG_MENU_ABOUT
+O programie
+MSG_MENU_QUIT
+Zakończ
+MSG_MENU_PLAYLIST
+Lista odtwarzania
+MSG_MENU_ADD
+Dodaj...
+MSG_MENU_REMOVE
+Usuń
+MSG_MENU_CLEAR
+Wyczyść
+MSG_MENU_SHUFFLE
+Losowo
+MSG_MENU_REPEAT
+Powtarzaj
+MSG_MENU_REPEAT_OFF
+Wyłączone
+MSG_MENU_REPEAT_ALL
+Wszystkie
+MSG_MENU_REPEAT_ONE
+Jeden
+MSG_MENU_PICTURE
+Obraz
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Fala
+MSG_MENU_BARS
+Słupki
+MSG_MENU_SETTINGS
+Ustawienia
+MSG_MENU_REMEMBER
+Pamiętaj miejsce odtwarzania
+MSG_PAGE_PLAYING
+Teraz odtwarzane
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Twoje stacje
+MSG_VIEW_FOUND
+Znalezione
+MSG_NAME
+Nazwa
+MSG_GENRE
+Gatunek
+MSG_COUNTRY
+Kraj
+MSG_COLUMN_TITLE
+Tytuł
+MSG_COLUMN_ARTIST
+Wykonawca
+MSG_COLUMN_TIME
+Czas
+MSG_COLUMN_STATION
+Stacja
+MSG_COLUMN_ADDRESS
+Adres
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Gatunki
+MSG_SHUFFLE_BUTTON
+_Losowo
+MSG_SHUFFLE_HINT
+Odtwarzaj utwory we własnej kolejności
+MSG_REPEAT_BUTTON
+_Powtarzaj
+MSG_REPEAT_HINT
+Odtwarzaj listę od nowa albo jeden utwór
+MSG_MUTE_BUTTON
+Wy_cisz
+MSG_MUTE_HINT
+Wyłącz dźwięk i włącz go ponownie
+MSG_LENGTH_HINT
+Długość utworu albo to, co z niego zostało
+MSG_ADD_BUTTON
+_Dodaj...
+MSG_REMOVE_BUTTON
+_Usuń
+MSG_CLEAR_BUTTON
+W_yczyść
+MSG_OUTPUT_LABEL
+Wy_jście
+MSG_SEARCH_BUTTON
+Szu_kaj
+MSG_KEEP_BUTTON
+_Zapamiętaj
+MSG_FORGET_BUTTON
+U_suń
+MSG_FIND_LABEL
+Z_najdź
+MSG_BY_LABEL
+_w
+MSG_URL_TITLE
+Otwórz URL
+MSG_URL_ADDRESS
+_Adres
+MSG_URL_OPEN
+_Otwórz
+MSG_URL_CANCEL
+A_nuluj
+MSG_ASK_PLAY
+Które utwory?
+MSG_ASK_ADD
+Które utwory dodać?
+MSG_ASK_DRAWER
+Który folder?
+MSG_ASK_SAVE
+Zapisz listę odtwarzania jako
+MSG_ABOUT_TITLE
+O programie Player
+MSG_ABOUT
+%s\n\nUtwory z plików WAV, MP3, FLAC, Ogg Vorbis, AAC i AC-3,\njeden po drugim, z okładkami,\nstacje z sieci\ni obraz dźwięku.
+MSG_OK
+OK
+MSG_NO_SONG
+Brak utworu
+MSG_TRACK_OF
+utwór %u z %u
+MSG_TRACK
+utwór %u
+MSG_COMPOSED_BY
+kompozytor: %s
+MSG_CHAPTER
+Rozdział %u z %u
+MSG_SOUND
+Dźwięk
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+utwór %u z %u
+MSG_NO_SOUND
+brak dźwięku
+MSG_NO_STREAM_FREE
+brak wolnego strumienia
+MSG_LIVE
+na żywo
+MSG_BUFFERING
+buforowanie
+MSG_BUFFERING_PERCENT
+Buforowanie %u%%
+MSG_STATION_IDLE
+Stacja: odtwarzanie włączy jej słuchanie
+MSG_CALLING
+Łączenie ze stacją
+MSG_NO_MEMORY_STATION
+Brak pamięci na stację
+MSG_ALL_STREAMS_USED
+Wszystkie strumienie dźwięku są zajęte
+MSG_NO_SOUND_HERE
+To urządzenie nie ma dźwięku
+MSG_NO_AUDIO_STREAM
+audio.device nie otworzył strumienia
+MSG_KEPT_ALREADY
+Już zapamiętana: %s
+MSG_KEPT
+Zapamiętano: %s
+MSG_NO_MEMORY_KEEP
+Brak pamięci, aby zapamiętać stację
+MSG_NO_MEMORY_SEARCH
+Brak pamięci na wyszukiwanie
+MSG_SEARCHING
+Wyszukiwanie
+MSG_ASKING
+Odpytywanie %s
+MSG_NONE_FOUND
+Nie znaleziono stacji
+MSG_ONE_FOUND
+Znaleziono jedną stację
+MSG_COUNT_FOUND
+Znalezione stacje: %u
+MSG_NO_NETWORK
+Brak sieci: nie ma bsdsocket.library
+MSG_NO_HTTP
+Nie ma http.library
+MSG_NO_MEMORY_CONNECTION
+Brak pamięci na połączenie
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info nie ma adresu
+MSG_SERVICE_NO_ANSWER
+radio-browser.info nie odpowiedział na wyszukiwanie
+MSG_SERVICE_UNREACHED
+Nie udało się połączyć z radio-browser.info
+MSG_SERVICE_NONSENSE
+Odpowiedź radio-browser.info nie ma sensu
+MSG_SEARCH_FAILED
+Wyszukiwanie nie powiodło się
+MSG_NO_SIGNAL
+Brak wolnego sygnału dla stacji
+MSG_NO_TIMER
+Nie udało się otworzyć timer.device
+MSG_LISTS_ONLY
+Listy stacji prowadzą tylko do kolejnych list
+MSG_STATION_STOPPED
+Stacja przestała nadawać
+MSG_STATION_ANSWERED
+Stacja odpowiedziała
+MSG_SENDS_AAC
+Stacja nadaje w AAC, który nie jest odtwarzany
+MSG_STATION_ENDED
+Stacja zakończyła połączenie
+MSG_SENDS_HLS
+Stacja nadaje w HLS, który nie jest odtwarzany
+MSG_LIST_EMPTY
+Lista stacji nie zawiera żadnej stacji
+MSG_LIST_TOO_LONG
+Lista stacji podaje za długi adres
+MSG_NOT_AN_ADDRESS
+To nie jest adres do słuchania
+MSG_NONSENSE
+Odpowiedź stacji nie ma sensu
+MSG_NOLIBRARY
+%s: nie można otworzyć %s\n
+MSG_NOMEMORY
+%s: brak pamięci na okno\n
+MSG_NOBUFFERS
+%s: brak pamięci na dźwięk\n
+MSG_NOWINDOW
+%s: brak okna\n
+MSG_MENU_EQUALIZER
+Korektor
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Goniometr
+MSG_MENU_METERS
+Poziomy
+MSG_MENU_WHOLE_SCREEN
+Pełny ekran

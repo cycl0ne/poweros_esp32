@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; Movie's strings in Norwegian (Bokmål).
+MSG_MENU_PROJECT
+Prosjekt
+MSG_MENU_OPEN
+Åpne...
+MSG_MENU_WHOLE_SCREEN
+Fullskjerm
+MSG_MENU_ABOUT
+Om
+MSG_MENU_QUIT
+Avslutt
+MSG_MENU_SOUND
+Lyd
+MSG_MENU_NO_SOUND
+Ingen
+MSG_MENU_SUBTITLES
+Undertekster
+MSG_MENU_SUBTITLES_OFF
+Av
+MSG_MENU_TRACK
+Spor
+MSG_MENU_FRAME_RATE
+Bildefrekvens
+MSG_MENU_INFO
+Filminformasjon...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u hoppet over
+MSG_ASK_OPEN
+Spill av en film
+MSG_ABOUT_TITLE
+Om Movie
+MSG_ABOUT
+%s\n\nSpiller av filmer - MP4, QuickTimes MOV og Matroskas MKV:\nbilde i H.264, H.265 og Motion JPEG,\nlyd i AAC, AC-3, MP3, FLAC og Vorbis, og undertekster.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nkan ikke spilles av:\n%s
+MSG_INFO_TITLE
+Filminformasjon
+MSG_INFO_FILE
+Fil
+MSG_INFO_NAMED
+Tittel
+MSG_INFO_CONTAINER
+Container
+MSG_INFO_LENGTH
+Lengde
+MSG_INFO_PICTURES
+Bilde
+MSG_INFO_COLOURS
+Farger
+MSG_INFO_BITS
+%u biter
+MSG_INFO_LIMITED
+begrenset område
+MSG_INFO_FULL
+fullt område
+MSG_INFO_SHOWN
+Visning
+MSG_INFO_ON_LAYER
+på skjermens videolag
+MSG_INFO_BY_GRAPHICS
+tegnet av graphics.library
+MSG_INFO_DECODED
+Dekodet
+MSG_INFO_BY_CHIP
+av videodekoderen
+MSG_INFO_BY_PROCESSOR
+av prosessoren
+MSG_INFO_SOUND
+Lyd
+MSG_INFO_NONE
+ingen
+MSG_INFO_CHANNELS
+%u kanaler
+MSG_INFO_TRACKS
+Spor
+MSG_INFO_TRACK_COUNTS
+%u lyd, %u undertekster
+MSG_VOLUME_HINT
+Volum
+MSG_NOLIBRARY
+%s: kan ikke åpne %s\n
+MSG_NOMEMORY
+%s: ikke nok minne\n
+MSG_NOWINDOW
+%s: kan ikke åpne vinduet sitt\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

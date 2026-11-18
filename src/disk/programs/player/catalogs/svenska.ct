@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; The Player's strings in Swedish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Öppna...
+MSG_MENU_OPEN_DRAWER
+Öppna mapp...
+MSG_MENU_OPEN_URL
+Öppna URL...
+MSG_MENU_SAVE_PLAYLIST
+Spara spellista...
+MSG_MENU_ABOUT
+Om
+MSG_MENU_QUIT
+Avsluta
+MSG_MENU_PLAYLIST
+Spellista
+MSG_MENU_ADD
+Lägg till...
+MSG_MENU_REMOVE
+Ta bort
+MSG_MENU_CLEAR
+Rensa
+MSG_MENU_SHUFFLE
+Blanda
+MSG_MENU_REPEAT
+Upprepa
+MSG_MENU_REPEAT_OFF
+Av
+MSG_MENU_REPEAT_ALL
+Alla
+MSG_MENU_REPEAT_ONE
+En
+MSG_MENU_PICTURE
+Bild
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Våg
+MSG_MENU_BARS
+Staplar
+MSG_MENU_SETTINGS
+Inställningar
+MSG_MENU_REMEMBER
+Kom ihåg var det var
+MSG_PAGE_PLAYING
+Spelas nu
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Dina stationer
+MSG_VIEW_FOUND
+Hittade
+MSG_NAME
+Namn
+MSG_GENRE
+Genre
+MSG_COUNTRY
+Land
+MSG_COLUMN_TITLE
+Titel
+MSG_COLUMN_ARTIST
+Artist
+MSG_COLUMN_TIME
+Tid
+MSG_COLUMN_STATION
+Station
+MSG_COLUMN_ADDRESS
+Adress
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Genrer
+MSG_SHUFFLE_BUTTON
+_Blanda
+MSG_SHUFFLE_HINT
+Spela låtarna i en egen ordning
+MSG_REPEAT_BUTTON
+_Upprepa
+MSG_REPEAT_HINT
+Spela listan igen, eller den enda låten
+MSG_MUTE_BUTTON
+_Tyst
+MSG_MUTE_HINT
+Ljudet av, och på igen
+MSG_LENGTH_HINT
+Låtens längd, eller det som återstår av den
+MSG_ADD_BUTTON
+_Lägg till...
+MSG_REMOVE_BUTTON
+Ta b_ort
+MSG_CLEAR_BUTTON
+_Rensa
+MSG_OUTPUT_LABEL
+Ut_gång
+MSG_SEARCH_BUTTON
+_Sök
+MSG_KEEP_BUTTON
+S_para
+MSG_FORGET_BUTTON
+T_a bort
+MSG_FIND_LABEL
+Sö_kord
+MSG_BY_LABEL
+_i
+MSG_URL_TITLE
+Öppna URL
+MSG_URL_ADDRESS
+A_dress
+MSG_URL_OPEN
+Ö_ppna
+MSG_URL_CANCEL
+_Avbryt
+MSG_ASK_PLAY
+Vilka låtar?
+MSG_ASK_ADD
+Vilka låtar ska läggas till?
+MSG_ASK_DRAWER
+Vilken mapp?
+MSG_ASK_SAVE
+Spara spellistan som
+MSG_ABOUT_TITLE
+Om Player
+MSG_ABOUT
+%s\n\nLåtar från WAV-, MP3-, FLAC-, Ogg Vorbis-, AAC- och AC-3-filer,\nden ena efter den andra, med sina omslag,\nstationer från nätverket\noch en bild av ljudet.
+MSG_OK
+OK
+MSG_NO_SONG
+Ingen låt
+MSG_TRACK_OF
+spår %u av %u
+MSG_TRACK
+spår %u
+MSG_COMPOSED_BY
+komponerad av %s
+MSG_CHAPTER
+Kapitel %u av %u
+MSG_SOUND
+Ljud
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+låt %u av %u
+MSG_NO_SOUND
+inget ljud
+MSG_NO_STREAM_FREE
+ingen ledig ström
+MSG_LIVE
+live
+MSG_BUFFERING
+buffrar
+MSG_BUFFERING_PERCENT
+Buffrar %u%%
+MSG_STATION_IDLE
+En station: spela lyssnar på den
+MSG_CALLING
+Ansluter till stationen
+MSG_NO_MEMORY_STATION
+Inget minne för stationen
+MSG_ALL_STREAMS_USED
+Alla ljudströmmar används
+MSG_NO_SOUND_HERE
+Den här maskinen har inget ljud
+MSG_NO_AUDIO_STREAM
+audio.device ville inte öppna en ström
+MSG_KEPT_ALREADY
+Redan sparad: %s
+MSG_KEPT
+Sparad: %s
+MSG_NO_MEMORY_KEEP
+Inget minne för att spara stationen
+MSG_NO_MEMORY_SEARCH
+Inget minne för sökningen
+MSG_SEARCHING
+Söker
+MSG_ASKING
+Frågar %s
+MSG_NONE_FOUND
+Ingen station hittades
+MSG_ONE_FOUND
+En station hittades
+MSG_COUNT_FOUND
+%u stationer hittades
+MSG_NO_NETWORK
+Inget nätverk: bsdsocket.library finns inte
+MSG_NO_HTTP
+http.library finns inte
+MSG_NO_MEMORY_CONNECTION
+Inget minne för anslutningen
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info har ingen adress
+MSG_SERVICE_NO_ANSWER
+radio-browser.info besvarade inte sökningen
+MSG_SERVICE_UNREACHED
+radio-browser.info gick inte att nå
+MSG_SERVICE_NONSENSE
+Svaret från radio-browser.info är obegripligt
+MSG_SEARCH_FAILED
+Sökningen misslyckades
+MSG_NO_SIGNAL
+Ingen ledig signal för stationen
+MSG_NO_TIMER
+timer.device ville inte öppnas
+MSG_LISTS_ONLY
+Stationens listor leder bara till fler listor
+MSG_STATION_STOPPED
+Stationen slutade sända
+MSG_STATION_ANSWERED
+Stationen svarade
+MSG_SENDS_AAC
+Stationen sänder AAC, som inte spelas
+MSG_STATION_ENDED
+Stationen avslutade anslutningen
+MSG_SENDS_HLS
+Stationen sänder HLS, som inte spelas
+MSG_LIST_EMPTY
+Stationens lista nämner ingen station
+MSG_LIST_TOO_LONG
+Stationens lista nämner en för lång adress
+MSG_NOT_AN_ADDRESS
+Det här är ingen adress att lyssna på
+MSG_NONSENSE
+Stationens svar är obegripligt
+MSG_NOLIBRARY
+%s: kan inte öppna %s\n
+MSG_NOMEMORY
+%s: inget minne för fönstret\n
+MSG_NOBUFFERS
+%s: inget minne för ljudet\n
+MSG_NOWINDOW
+%s: inget fönster\n
+MSG_MENU_EQUALIZER
+Equalizer
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Stereobild
+MSG_MENU_METERS
+Nivåmätare
+MSG_MENU_WHOLE_SCREEN
+Helskärm

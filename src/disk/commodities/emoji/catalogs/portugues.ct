@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language portugues
+## codeset 106
+; Emoji's strings in Portuguese.
+MSG_SEARCH
+Procurar
+MSG_USED
+Usados recentemente
+MSG_NONE_USED
+Ainda nenhum usado
+MSG_NOT_FOUND
+Nenhum encontrado
+MSG_TONE_NONE
+Sem tom
+MSG_TONE_LIGHT
+Claro
+MSG_TONE_MEDIUM_LIGHT
+Médio-claro
+MSG_TONE_MEDIUM
+Médio
+MSG_TONE_MEDIUM_DARK
+Médio-escuro
+MSG_TONE_DARK
+Escuro
+MSG_GROUP_SMILEYS
+Smileys e emoções
+MSG_GROUP_PEOPLE
+Pessoas e corpo
+MSG_GROUP_ANIMALS
+Animais e natureza
+MSG_GROUP_FOOD
+Comida e bebida
+MSG_GROUP_TRAVEL
+Viagens e locais
+MSG_GROUP_ACTIVITIES
+Atividades
+MSG_GROUP_OBJECTS
+Objetos
+MSG_GROUP_SYMBOLS
+Símbolos
+MSG_GROUP_FLAGS
+Bandeiras

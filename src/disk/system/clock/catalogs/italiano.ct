@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language italiano
+## codeset 106
+; Clock's strings in Italian.
+MSG_WINDOW_TITLE
+Orologio
+MSG_MENU_PROJECT
+Progetto
+MSG_MENU_ANALOG
+Analogico
+MSG_MENU_DIGITAL
+Digitale
+MSG_MENU_ABOUT
+Informazioni su Orologio...
+MSG_MENU_QUIT
+Esci
+MSG_MENU_SETTINGS
+Impostazioni
+MSG_MENU_SECONDS
+Secondi
+MSG_MENU_DATE
+Data
+MSG_MENU_24_HOURS
+24 ore
+MSG_MENU_SAVE
+Salva impostazioni
+MSG_ABOUT_TITLE
+Informazioni su Orologio
+MSG_ABOUT
+%s\n\nL'ora, su un quadrante o in cifre.\nUn doppio clic nella finestra passa dall'uno all'altro.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Impossibile salvare le impostazioni in\n%s.
+MSG_NOLIBRARY
+%s: impossibile aprire %s\n
+MSG_NOMEMORY
+%s: memoria insufficiente\n
+MSG_NOWINDOW
+%s: impossibile aprire la sua finestra\n

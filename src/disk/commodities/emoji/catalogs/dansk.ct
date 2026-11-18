@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; Emoji's strings in Danish.
+MSG_SEARCH
+Søg
+MSG_USED
+Senest brugt
+MSG_NONE_USED
+Ingen brugt endnu
+MSG_NOT_FOUND
+Ingen fundet
+MSG_TONE_NONE
+Ingen hudfarve
+MSG_TONE_LIGHT
+Lys
+MSG_TONE_MEDIUM_LIGHT
+Mellemlys
+MSG_TONE_MEDIUM
+Mellem
+MSG_TONE_MEDIUM_DARK
+Mellemmørk
+MSG_TONE_DARK
+Mørk
+MSG_GROUP_SMILEYS
+Smileys & følelser
+MSG_GROUP_PEOPLE
+Mennesker & krop
+MSG_GROUP_ANIMALS
+Dyr & natur
+MSG_GROUP_FOOD
+Mad & drikke
+MSG_GROUP_TRAVEL
+Rejser & steder
+MSG_GROUP_ACTIVITIES
+Aktiviteter
+MSG_GROUP_OBJECTS
+Objekter
+MSG_GROUP_SYMBOLS
+Symboler
+MSG_GROUP_FLAGS
+Flag

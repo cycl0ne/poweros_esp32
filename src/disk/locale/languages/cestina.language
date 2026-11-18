@@ -1,0 +1,27 @@
+# LOCALE:Languages/cestina.language - Czech: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=neděle DAY_2=pondělí DAY_3=úterý DAY_4=středa DAY_5=čtvrtek
+DAY_6=pátek DAY_7=sobota
+ABDAY_1=ne ABDAY_2=po ABDAY_3=út ABDAY_4=st ABDAY_5=čt ABDAY_6=pá
+ABDAY_7=so
+# The months, then their short names; a month is named as in a date,
+# "18. listopadu".
+MON_1=ledna MON_2=února MON_3=března MON_4=dubna MON_5=května
+MON_6=června MON_7=července MON_8=srpna MON_9=září MON_10=října
+MON_11=listopadu MON_12=prosince
+ABMON_1=led ABMON_2=úno ABMON_3=bře ABMON_4=dub ABMON_5=kvě
+ABMON_6=čvn ABMON_7=čvc ABMON_8=srp ABMON_9=zář ABMON_10=říj
+ABMON_11=lis ABMON_12=pro
+# Yes and no, before and after noon.
+YESSTR=Ano NOSTR=Ne AM_STR=dop. PM_STR=odp.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Včera TODAYSTR=Dnes TOMORROWSTR=Zítra
+FUTURESTR=Budoucnost
+# The order of the letters: Č after C, Ř after R, Š after S and Ž after Z;
+# CH, a letter of its own after H, sorts as C and H.
+AFTER_C=Č AFTER_R=Ř AFTER_S=Š AFTER_Z=Ž

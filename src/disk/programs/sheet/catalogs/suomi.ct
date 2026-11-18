@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; Sheet's strings in Finnish.
+MSG_MENU_PROJECT
+Projekti
+MSG_MENU_NEW
+Uusi
+MSG_MENU_OPEN
+Avaa...
+MSG_MENU_SAVE
+Tallenna
+MSG_MENU_SAVE_AS
+Tallenna nimellä...
+MSG_MENU_QUIT
+Lopeta
+MSG_MENU_EDIT
+Muokkaa
+MSG_MENU_UNDO
+Kumoa
+MSG_MENU_REDO
+Tee uudelleen
+MSG_MENU_CUT
+Leikkaa
+MSG_MENU_COPY
+Kopioi
+MSG_MENU_PASTE
+Liitä
+MSG_MENU_CLEAR
+Tyhjennä
+MSG_MENU_FILL_DOWN
+Täytä alas
+MSG_MENU_FILL_RIGHT
+Täytä oikealle
+MSG_MENU_SELECT_ALL
+Valitse kaikki
+MSG_MENU_FIND
+Etsi...
+MSG_MENU_FIND_NEXT
+Etsi seuraava
+MSG_MENU_SHEET
+Taulukko
+MSG_MENU_INSERT_ROWS
+Lisää rivejä
+MSG_MENU_DELETE_ROWS
+Poista rivejä
+MSG_MENU_INSERT_COLUMNS
+Lisää sarakkeita
+MSG_MENU_DELETE_COLUMNS
+Poista sarakkeita
+MSG_MENU_WIDER
+Levennä saraketta
+MSG_MENU_NARROWER
+Kavenna saraketta
+MSG_MENU_SUM
+Automaattinen summa
+MSG_MENU_SORT_ASCENDING
+Lajittele nousevasti
+MSG_MENU_SORT_DESCENDING
+Lajittele laskevasti
+MSG_MENU_FORMAT
+Muotoilu
+MSG_MENU_GENERAL
+Yleinen
+MSG_MENU_NUMBER
+Luku
+MSG_MENU_PERCENT
+Prosentti
+MSG_MENU_CURRENCY
+Valuutta
+MSG_MENU_DECIMALS_MORE
+Lisää desimaaleja
+MSG_MENU_DECIMALS_LESS
+Vähennä desimaaleja
+MSG_MENU_VIEW
+Näytä
+MSG_MENU_RIBBON
+Valintanauha
+MSG_RIBBON_HOME
+Aloitus
+MSG_RIBBON_CLIPBOARD
+Leikepöytä
+MSG_RIBBON_PASTE_HINT
+Liitä se, mikä leikattiin tai kopioitiin
+MSG_RIBBON_NUMBER_HINT
+Näytä luvut desimaaleineen ja tuhaterottimin
+MSG_RIBBON_PERCENT_HINT
+Näytä luvut prosentteina
+MSG_RIBBON_CURRENCY_HINT
+Näytä luvut rahana
+MSG_RIBBON_DECIMALS_MORE_HINT
+Näytä yksi desimaali enemmän
+MSG_RIBBON_DECIMALS_LESS_HINT
+Näytä yksi desimaali vähemmän
+MSG_RIBBON_CELLS
+Solut
+MSG_RIBBON_INSERT
+Lisää
+MSG_RIBBON_INSERT_HINT
+Lisää rivejä tai sarakkeita valittujen solujen kohdalle
+MSG_RIBBON_DELETE
+Poista
+MSG_RIBBON_DELETE_HINT
+Poista valittujen solujen rivit tai sarakkeet
+MSG_RIBBON_EDITING
+Muokkaaminen
+MSG_RIBBON_SUM_HINT
+Laske yhteen yllä tai vasemmalla olevat luvut
+MSG_RIBBON_SORT
+Lajittele
+MSG_RIBBON_SORT_HINT
+Järjestä rivit nykyisen solun sarakkeen mukaan
+MSG_RIBBON_FIND
+Etsi
+MSG_RIBBON_FIND_HINT
+Etsi solu sen sisällön perusteella
+MSG_RIBBON_FILL
+Täytä
+MSG_RIBBON_FILL_HINT
+Kopioi ensimmäinen rivi tai sarake muiden yli
+MSG_RIBBON_CLEAR_HINT
+Tyhjennä valitut solut
+MSG_ROWS
+Rivit
+MSG_COLUMNS
+Sarakkeet
+MSG_SUM
+Summa
+MSG_AVERAGE
+Keskiarvo
+MSG_COUNT
+Määrä
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Nouseva
+MSG_DESCENDING
+Laskeva
+MSG_DOWN
+Alas
+MSG_RIGHT
+Oikealle
+MSG_PROBLEM_NAME
+Tuntematon funktio tai nimi
+MSG_PROBLEM_ARGUMENTS
+Väärä määrä argumentteja
+MSG_PROBLEM_PARENTHESES
+Sululla ei ole paria
+MSG_PROBLEM_TOO_LONG
+Kaava on liian pitkä
+MSG_PROBLEM_UNREADABLE
+Kaavaa ei voi lukea
+MSG_PROBLEM_AT
+%s, merkin %u kohdalla
+MSG_NO_MEMORY_KEEP
+Muisti ei riitä kaiken säilyttämiseen
+MSG_NO_MEMORY_FILE
+Muisti ei riitä koko tiedostolle
+MSG_LEFT_OUT
+Rivin 9999 tai sarakkeen IV jälkeiset solut jätettiin pois
+MSG_NO_MEMORY_COPY
+Muisti ei riitä näin suuren määrän kopioimiseen
+MSG_NO_MEMORY_CLEAR
+Muisti ei riitä kaiken tyhjentämiseen
+MSG_NO_MEMORY_PASTE
+Muisti ei riitä kaiken liittämiseen
+MSG_NO_ROOM_COLUMNS
+Ei tilaa: viimeisissä sarakkeissa on jotain
+MSG_NO_ROOM_ROWS
+Ei tilaa: viimeisillä riveillä on jotain
+MSG_NO_MEMORY_THAT
+Muisti ei riitä siihen
+MSG_NO_MEMORY_FORMAT
+Muisti ei riitä kaiken muotoiluun
+MSG_NOTHING_TO_ADD
+Yllä tai vasemmalla ei ole lukuja laskettavaksi yhteen
+MSG_NO_MEMORY_ALL
+Muisti ei riitä kaikkeen siihen
+MSG_NO_MEMORY_SORT
+Muisti ei riitä kaiken lajitteluun
+MSG_NO_MEMORY_FILL
+Muisti ei riitä kaiken täyttämiseen
+MSG_NOT_FOUND
+Mikään solu ei sisällä sitä
+MSG_UNTITLED
+Nimetön
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Ei voi avata: %s
+MSG_CANNOT_READ
+Ei voi lukea: %s
+MSG_TOO_BIG
+%s on liian suuri
+MSG_NO_MEMORY_FOR
+Muisti ei riitä: %s
+MSG_NO_MEMORY_TO_SAVE
+Muisti ei riitä tallentamiseen: %s
+MSG_CANNOT_WRITE
+Ei voi kirjoittaa: %s
+MSG_NO_REQUESTER
+%s puuttuu
+MSG_CHANGED
+Taulukkoa on muutettu.\nTallennetaanko ensin?
+MSG_CHANGED_BUTTONS
+Tallenna|Älä tallenna|Peruuta
+MSG_OPEN_TITLE
+Avaa taulukko
+MSG_SAVE_AS_TITLE
+Tallenna taulukko nimellä
+MSG_FIND_LABEL
+Etsi
+MSG_FIND_NEXT_BUTTON
+Seuraava
+MSG_FIND_PREVIOUS_BUTTON
+Edellinen
+MSG_FIND_CLOSE_BUTTON
+Sulje
+MSG_NOLIBRARY
+%s puuttuu\n
+MSG_NOSCREEN
+Ei oletusruutua - ei näyttöä\n
+MSG_NOMEMORY
+Muisti ei riitä ikkunalle\n

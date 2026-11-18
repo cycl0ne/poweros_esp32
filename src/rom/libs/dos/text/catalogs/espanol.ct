@@ -1,0 +1,380 @@
+## version $VER: sys/dos.catalog 1.0 (18.11.2026)
+## language espanol
+## codeset 106
+; dos.library's messages in Spanish.
+;
+SOFTWARE_FAILURE
+Fallo de software
+;
+RUN_FAILED
+%s ha fallado, código de retorno %ld\n
+;
+USE_COUNT
+%TH USOS\n\n
+;
+NAME
+NOMBRE
+;
+DISABLED
+%TH DESACTIVADO\n
+;
+INTERNAL
+%TH INTERNO\n
+;
+SYSTEM
+%TH SISTEMA\n
+;
+FAULT
+Error %3ld
+;
+FAIL_LIMIT
+Límite de fallo: %ld\n
+;
+BAD_RETURN_CODE
+Se indicó un código de retorno incorrecto
+;
+CURRENT_DIR
+Directorio actual
+;
+NO_RETURN_CODE
+El último comando no fijó ningún código de retorno
+;
+LAST_CMD_FAILED
+El último comando falló porque\x20
+;
+PROCESS_ENDING
+Terminando el proceso %N
+;
+REQUESTED_SIZE_TOO_SMALL
+El tamaño pedido es demasiado pequeño
+;
+REQUESTED_SIZE_TOO_LARGE
+El tamaño pedido es demasiado grande
+;
+CURRENT_STACK_SIZE
+El tamaño de pila actual es de %ld bytes\n
+;
+NEWSHELL_FAILED
+NewShell ha fallado
+;
+MISSING_ELSE_OR_ENDIF
+Falta ELSE o ENDIF
+;
+MUST_BE_IN_CMD_FILE
+Debe estar en un archivo de comandos
+;
+MORE_THAN_ONE_DIR
+Coincide más de un directorio
+;
+CANT_SET
+No se puede fijar %s\n
+;
+BLOCK_CORRUPT_DIR
+Bloque %ld: directorio dañado
+;
+BLOCK_CORRUPT_FILE
+Bloque %ld: archivo dañado
+;
+BLOCK_BAD_HEADER
+Bloque %ld: tipo de cabecera incorrecto
+;
+BLOCK_OUT_OF_RANGE
+Bloque %ld fuera de rango
+;
+BLOCK_USED_TWICE
+Bloque %ld usado dos veces
+;
+VALIDATION_ERROR
+Error al validar %b
+;
+ON_DISK_BLOCK
+en el bloque %ld del disco
+;
+CHECKSUM_ERROR
+tiene un error de suma de comprobación
+;
+WRITE_ERROR
+tiene un error de escritura
+;
+READ_ERROR
+tiene un error de lectura
+;
+UNABLE_CREATE_PROC
+No se puede crear el proceso\n
+;
+NEW_SHELL_PROCESS
+Nuevo proceso de Shell %ld\n
+;
+CANT_OPEN_FROM_FILE
+No se puede abrir el archivo FROM %s\n
+;
+SUSPEND_REBOOT
+Suspender|Reiniciar
+;
+RETRY_CANCEL
+Reintentar|Cancelar
+;
+NO_ROOM_FOR_BITMAP
+No hay sitio para el mapa de bits
+;
+CMD_TOO_LONG
+Comando demasiado largo
+;
+SHELL_ERROR
+Error del shell:
+;
+CMDNAME_ERROR
+Error en el nombre del comando
+;
+UNKNOWN_COMMAND
+Comando desconocido
+;
+LOAD_ERROR
+No se puede cargar
+;
+SYNTAX_ERROR
+error de sintaxis
+;
+REDIRECT_ERROR
+no se puede abrir el archivo de redirección
+;
+ERROR
+Error\x20
+;
+EMPTY_STRING
+
+;
+DISK_CORRUPT
+Disco dañado - tarea detenida
+;
+PROGRAM_FAILED
+El programa ha fallado (error #
+;
+WAIT_FOR_ACTIVITY
+Espere a que termine la actividad del disco.
+;
+IN_DEVICE
+en el dispositivo %s%s
+;
+IN_UNIT
+en la unidad %ld%s
+;
+YOU_MUST_REPLACE
+DEBE volver a poner el volumen
+;
+READ_WRITE_ERROR
+tiene un error de lectura/escritura
+;
+NO_DISK_PRESENT
+No hay ningún disco
+;
+NOT_A_DOS_DISK
+No es un disco DOS
+;
+ANY_DRIVE
+en cualquier unidad
+;
+REPLACE_VOLUME
+Vuelva a poner el volumen
+;
+INSERT_VOLUME
+Inserte el volumen
+;
+IS_FULL
+está lleno
+;
+IS_PROTECTED
+está protegido contra escritura
+;
+IS_NOT_VALIDATED
+no está validado
+;
+VOLUME
+Volumen
+;
+ERROR_NO_FREE_STORE
+no hay suficiente memoria disponible
+;
+ERROR_TASK_TABLE_FULL
+tabla de procesos llena
+;
+ERROR_BAD_TEMPLATE
+plantilla incorrecta
+;
+ERROR_BAD_NUMBER
+número incorrecto
+;
+ERROR_REQUIRED_ARG_MISSING
+falta un argumento obligatorio
+;
+ERROR_KEY_NEEDS_ARG
+falta el valor tras la palabra clave
+;
+ERROR_TOO_MANY_ARGS
+número de argumentos incorrecto
+;
+ERROR_UNMATCHED_QUOTES
+comillas sin cerrar
+;
+ERROR_LINE_TOO_LONG
+línea de argumentos no válida o demasiado larga
+;
+ERROR_FILE_NOT_OBJECT
+el archivo no es ejecutable
+;
+ERROR_INVALID_RESIDENT_LIBRARY
+biblioteca residente no válida
+;
+ERROR_OBJECT_IN_USE
+el objeto está en uso
+;
+ERROR_OBJECT_EXISTS
+el objeto ya existe
+;
+ERROR_DIR_NOT_FOUND
+no se encuentra el directorio
+;
+ERROR_OBJECT_NOT_FOUND
+no se encuentra el objeto
+;
+ERROR_BAD_STREAM_NAME
+descripción de ventana no válida
+;
+ERROR_OBJECT_TOO_LARGE
+objeto demasiado grande
+;
+ERROR_ACTION_NOT_KNOWN
+tipo de petición de paquete desconocido
+;
+ERROR_INVALID_COMPONENT_NAME
+nombre de objeto no válido
+;
+ERROR_INVALID_LOCK
+bloqueo de objeto no válido
+;
+ERROR_OBJECT_WRONG_TYPE
+el objeto no es del tipo requerido
+;
+ERROR_DISK_NOT_VALIDATED
+disco no validado
+;
+ERROR_DISK_WRITE_PROTECTED
+el disco está protegido contra escritura
+;
+ERROR_RENAME_ACROSS_DEVICES
+se intentó cambiar el nombre entre dispositivos
+;
+ERROR_DIRECTORY_NOT_EMPTY
+el directorio no está vacío
+;
+ERROR_TOO_MANY_LEVELS
+demasiados niveles
+;
+ERROR_DEVICE_NOT_MOUNTED
+el dispositivo (o volumen) no está montado
+;
+ERROR_SEEK_ERROR
+fallo de posicionamiento
+;
+ERROR_COMMENT_TOO_BIG
+el comentario es demasiado largo
+;
+ERROR_DISK_FULL
+el disco está lleno
+;
+ERROR_DELETE_PROTECTED
+el objeto está protegido contra borrado
+;
+ERROR_WRITE_PROTECTED
+el archivo está protegido contra escritura
+;
+ERROR_READ_PROTECTED
+el archivo está protegido contra lectura
+;
+ERROR_NOT_A_DOS_DISK
+no es un disco DOS válido
+;
+ERROR_NO_DISK
+no hay disco en la unidad
+;
+ERROR_NO_MORE_ENTRIES
+no hay más entradas en el directorio
+;
+ERROR_IS_SOFT_LINK
+el objeto es un enlace simbólico
+;
+ERROR_OBJECT_LINKED
+el objeto está enlazado
+;
+ERROR_BAD_HUNK
+hunk incorrecto en el archivo a cargar
+;
+ERROR_NOT_IMPLEMENTED
+función no implementada
+;
+ERROR_RECORD_NOT_LOCKED
+registro no bloqueado
+;
+ERROR_LOCK_COLLISION
+conflicto de bloqueo de registro
+;
+ERROR_LOCK_TIMEOUT
+tiempo de bloqueo de registro agotado
+;
+ERROR_UNLOCK_ERROR
+error al desbloquear el registro
+;
+ABORT_BUSY
+no se debía preguntar al llamante
+;
+ABORT_DISK_ERROR
+error de lectura o escritura en el volumen
+;
+ERROR_BUFFER_OVERFLOW
+desbordamiento del búfer
+;
+ERROR_BREAK
+***Interrupción
+;
+ERROR_NOT_EXECUTABLE
+archivo no ejecutable
+;
+ERROR_INVALID_ARGUMENT
+argumento no válido
+;
+ERROR_INVALID_DOS_ENTRY
+entrada de la lista de dispositivos no válida
+;
+ERROR_NO_INPUT_STREAM
+no hay flujo de entrada
+;
+ERROR_BUFFER_TOO_SMALL
+búfer demasiado pequeño
+;
+ERROR_NO_PROCESS
+no es un proceso
+;
+ERROR_NO_HANDLER
+no hay gestor
+;
+ERROR_PACKET_ASYNC
+paquete fuera de turno
+;
+ERROR_ERROR_IN_PACKET
+error en el paquete
+;
+ERROR_NO_CURRENT_DIRECTORY
+no hay directorio actual
+;
+ERROR_HANDLER_NOT_LOADED
+gestor no cargado
+;
+ERROR_HANDLER_START_ERROR
+el gestor no pudo arrancar
+;
+ERROR_BROKEN_PIPE
+el otro extremo de la tubería ya no está
+;
+ERROR_BAD_CHECKSUM
+error de suma de comprobación: los datos leídos no son los que se escribieron
+;

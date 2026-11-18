@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; The Player's strings in Norwegian (Bokmål).
+MSG_MENU_PROJECT
+Prosjekt
+MSG_MENU_OPEN
+Åpne...
+MSG_MENU_OPEN_DRAWER
+Åpne mappe...
+MSG_MENU_OPEN_URL
+Åpne URL...
+MSG_MENU_SAVE_PLAYLIST
+Lagre spilleliste...
+MSG_MENU_ABOUT
+Om
+MSG_MENU_QUIT
+Avslutt
+MSG_MENU_PLAYLIST
+Spilleliste
+MSG_MENU_ADD
+Legg til...
+MSG_MENU_REMOVE
+Fjern
+MSG_MENU_CLEAR
+Tøm
+MSG_MENU_SHUFFLE
+Tilfeldig
+MSG_MENU_REPEAT
+Gjenta
+MSG_MENU_REPEAT_OFF
+Av
+MSG_MENU_REPEAT_ALL
+Alle
+MSG_MENU_REPEAT_ONE
+Én
+MSG_MENU_PICTURE
+Bilde
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Bølge
+MSG_MENU_BARS
+Stolper
+MSG_MENU_SETTINGS
+Innstillinger
+MSG_MENU_REMEMBER
+Husk hvor det var
+MSG_PAGE_PLAYING
+Spilles nå
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Dine stasjoner
+MSG_VIEW_FOUND
+Funnet
+MSG_NAME
+Navn
+MSG_GENRE
+Sjanger
+MSG_COUNTRY
+Land
+MSG_COLUMN_TITLE
+Tittel
+MSG_COLUMN_ARTIST
+Artist
+MSG_COLUMN_TIME
+Tid
+MSG_COLUMN_STATION
+Stasjon
+MSG_COLUMN_ADDRESS
+Adresse
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Sjangere
+MSG_SHUFFLE_BUTTON
+_Tilfeldig
+MSG_SHUFFLE_HINT
+Spill sangene i en egen rekkefølge
+MSG_REPEAT_BUTTON
+_Gjenta
+MSG_REPEAT_HINT
+Spill listen på nytt, eller den ene sangen
+MSG_MUTE_BUTTON
+_Demp
+MSG_MUTE_HINT
+Lyden av, og på igjen
+MSG_LENGTH_HINT
+Sangens lengde, eller det som er igjen av den
+MSG_ADD_BUTTON
+_Legg til...
+MSG_REMOVE_BUTTON
+_Fjern
+MSG_CLEAR_BUTTON
+Tø_m
+MSG_OUTPUT_LABEL
+_Utgang
+MSG_SEARCH_BUTTON
+_Søk
+MSG_KEEP_BUTTON
+_Husk
+MSG_FORGET_BUTTON
+Fj_ern
+MSG_FIND_LABEL
+Søke_ord
+MSG_BY_LABEL
+_i
+MSG_URL_TITLE
+Åpne URL
+MSG_URL_ADDRESS
+A_dresse
+MSG_URL_OPEN
+Å_pne
+MSG_URL_CANCEL
+_Avbryt
+MSG_ASK_PLAY
+Hvilke sanger?
+MSG_ASK_ADD
+Hvilke sanger skal legges til?
+MSG_ASK_DRAWER
+Hvilken mappe?
+MSG_ASK_SAVE
+Lagre spillelisten som
+MSG_ABOUT_TITLE
+Om Player
+MSG_ABOUT
+%s\n\nSanger fra WAV-, MP3-, FLAC-, Ogg Vorbis-, AAC- og AC-3-filer,\nden ene etter den andre, med omslagene sine,\nstasjoner fra nettverket\nog et bilde av lyden.
+MSG_OK
+OK
+MSG_NO_SONG
+Ingen sang
+MSG_TRACK_OF
+spor %u av %u
+MSG_TRACK
+spor %u
+MSG_COMPOSED_BY
+komponert av %s
+MSG_CHAPTER
+Kapittel %u av %u
+MSG_SOUND
+Lyd
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+sang %u av %u
+MSG_NO_SOUND
+ingen lyd
+MSG_NO_STREAM_FREE
+ingen ledig strøm
+MSG_LIVE
+direkte
+MSG_BUFFERING
+bufrer
+MSG_BUFFERING_PERCENT
+Bufrer %u%%
+MSG_STATION_IDLE
+En stasjon: spill lytter til den
+MSG_CALLING
+Kobler til stasjonen
+MSG_NO_MEMORY_STATION
+Ikke minne til stasjonen
+MSG_ALL_STREAMS_USED
+Alle lydstrømmer er i bruk
+MSG_NO_SOUND_HERE
+Denne maskinen har ikke lyd
+MSG_NO_AUDIO_STREAM
+audio.device ville ikke åpne en strøm
+MSG_KEPT_ALREADY
+Allerede husket: %s
+MSG_KEPT
+Husket: %s
+MSG_NO_MEMORY_KEEP
+Ikke minne til å huske stasjonen
+MSG_NO_MEMORY_SEARCH
+Ikke minne til søket
+MSG_SEARCHING
+Søker
+MSG_ASKING
+Spør %s
+MSG_NONE_FOUND
+Ingen stasjon funnet
+MSG_ONE_FOUND
+Én stasjon funnet
+MSG_COUNT_FOUND
+%u stasjoner funnet
+MSG_NO_NETWORK
+Ikke noe nettverk: bsdsocket.library finnes ikke
+MSG_NO_HTTP
+http.library finnes ikke
+MSG_NO_MEMORY_CONNECTION
+Ikke minne til tilkoblingen
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info har ingen adresse
+MSG_SERVICE_NO_ANSWER
+radio-browser.info besvarte ikke søket
+MSG_SERVICE_UNREACHED
+radio-browser.info kunne ikke nås
+MSG_SERVICE_NONSENSE
+Svaret fra radio-browser.info gir ingen mening
+MSG_SEARCH_FAILED
+Søket mislyktes
+MSG_NO_SIGNAL
+Ikke noe ledig signal til stasjonen
+MSG_NO_TIMER
+timer.device ville ikke åpnes
+MSG_LISTS_ONLY
+Stasjonens lister fører bare til flere lister
+MSG_STATION_STOPPED
+Stasjonen sluttet å sende
+MSG_STATION_ANSWERED
+Stasjonen svarte
+MSG_SENDS_AAC
+Stasjonen sender AAC, som ikke spilles av
+MSG_STATION_ENDED
+Stasjonen avsluttet tilkoblingen
+MSG_SENDS_HLS
+Stasjonen sender HLS, som ikke spilles av
+MSG_LIST_EMPTY
+Stasjonens liste nevner ingen stasjon
+MSG_LIST_TOO_LONG
+Stasjonens liste nevner en for lang adresse
+MSG_NOT_AN_ADDRESS
+Dette er ikke en adresse å lytte til
+MSG_NONSENSE
+Stasjonens svar gir ingen mening
+MSG_NOLIBRARY
+%s: kan ikke åpne %s\n
+MSG_NOMEMORY
+%s: ikke minne til vinduet\n
+MSG_NOBUFFERS
+%s: ikke minne til lyden\n
+MSG_NOWINDOW
+%s: ikke noe vindu\n
+MSG_MENU_EQUALIZER
+Equalizer
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Stereobilde
+MSG_MENU_METERS
+Nivåmålere
+MSG_MENU_WHOLE_SCREEN
+Fullskjerm

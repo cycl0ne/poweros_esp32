@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language russkij
+## codeset 106
+; Clock's strings in Russian.
+MSG_WINDOW_TITLE
+Часы
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_ANALOG
+Стрелки
+MSG_MENU_DIGITAL
+Цифры
+MSG_MENU_ABOUT
+О программе...
+MSG_MENU_QUIT
+Выход
+MSG_MENU_SETTINGS
+Настройки
+MSG_MENU_SECONDS
+Секунды
+MSG_MENU_DATE
+Дата
+MSG_MENU_24_HOURS
+24 часа
+MSG_MENU_SAVE
+Сохранить настройки
+MSG_ABOUT_TITLE
+О программе «Часы»
+MSG_ABOUT
+%s\n\nВремя на циферблате или цифрами.\nДвойной щелчок в окне переключает их.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Не удалось сохранить настройки в\n%s.
+MSG_NOLIBRARY
+%s: не удаётся открыть %s\n
+MSG_NOMEMORY
+%s: недостаточно памяти\n
+MSG_NOWINDOW
+%s: не удаётся открыть окно\n

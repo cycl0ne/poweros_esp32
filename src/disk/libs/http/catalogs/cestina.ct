@@ -1,0 +1,75 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; http.library's words for a request that failed, in Czech: a clause
+; that starts in lower case, without its full stop.
+MSG_NOMEM
+nedostatek paměti
+MSG_IO
+spojení selhalo
+MSG_IO_BECAUSE
+spojení selhalo: %s
+MSG_STOPPED
+zastaveno
+MSG_TIMEOUT
+server neodpověděl včas
+MSG_URL
+nejde o adresu URL http:// ani https://, nebo je příliš dlouhá
+MSG_HOST
+hostitel nemá adresu
+MSG_HOST_NAMED
+%s nemá adresu
+MSG_TLS
+relace TLS selhala
+MSG_TLS_CERTIFICATE
+certifikát serveru není důvěryhodný: %s
+MSG_TLS_CLOCK
+hodiny nejsou nastaveny, takže nelze ověřit žádný certifikát (TimeSync)
+MSG_TLS_ALERT
+server odmítl relaci TLS (výstraha %u)
+MSG_TLS_HANDSHAKE
+handshake TLS selhal
+MSG_PROTOCOL
+odpověď není HTTP
+MSG_REDIRECT
+více přesměrování, než je povoleno, nebo přesměrování nikam
+MSG_TRUNCATED
+spojení skončilo dřív než odpověď
+MSG_STATE
+volání mimo pořadí nebo požadavek, který nelze provést
+MSG_LIBRARY
+chybí knihovna, kterou požadavek potřebuje
+MSG_LIBRARY_NAMED
+%s chybí
+MSG_DATA
+zabalenou odpověď serveru nelze rozbalit
+MSG_CLOSED
+server ukončil spojení bez odpovědi
+MSG_UNKNOWN
+požadavek selhal (%d)
+MSG_VERDICT_MALFORMED
+jeden z jeho certifikátů nelze přečíst
+MSG_VERDICT_UNKNOWN_ISSUER
+nepodepsal ho žádný důvěryhodný kořenový certifikát
+MSG_VERDICT_BAD_SIGNATURE
+podpis v jeho řetězu je chybný
+MSG_VERDICT_UNSUPPORTED
+je podepsán způsobem, který nelze ověřit
+MSG_VERDICT_EXPIRED
+jeho platnost vypršela
+MSG_VERDICT_NOT_YET_VALID
+ještě není platný
+MSG_VERDICT_NOT_CA
+vydal ho certifikát, který nesmí vydávat certifikáty
+MSG_VERDICT_PATH_LENGTH
+jeho řetěz je delší, než jeho certifikační autority dovolují
+MSG_VERDICT_NAME_CONSTRAINTS
+certifikační autorita v jeho řetězu má omezení názvů
+MSG_VERDICT_WRONG_USAGE
+není určen pro server
+MSG_VERDICT_WRONG_NAME
+je pro jiného hostitele
+MSG_VERDICT_TOO_LONG
+jeho řetěz je příliš dlouhý
+MSG_VERDICT_OTHER
+bez udaného důvodu

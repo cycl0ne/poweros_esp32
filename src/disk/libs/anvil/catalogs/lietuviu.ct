@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; The desktop's strings in Lithuanian.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Fonas
+MSG_MENU_EXECUTE
+Vykdyti komandą...
+MSG_MENU_REDRAW_ALL
+Perpiešti viską
+MSG_MENU_UPDATE_ALL
+Atnaujinti viską
+MSG_MENU_LAST_MESSAGE
+Paskutinis pranešimas
+MSG_MENU_VOLUME
+Garsumas...
+MSG_MENU_ABOUT
+Apie...
+MSG_MENU_QUIT
+Išeiti...
+MSG_MENU_REBOOT
+Paleisti iš naujo...
+MSG_MENU_WINDOW
+Langas
+MSG_MENU_NEW_DRAWER
+Naujas aplankas
+MSG_MENU_OPEN_PARENT
+Atidaryti aukštesnį aplanką
+MSG_MENU_BACK
+Atgal
+MSG_MENU_FORWARD
+Pirmyn
+MSG_MENU_CLOSE
+Uždaryti
+MSG_MENU_UPDATE
+Atnaujinti
+MSG_MENU_SHELL
+Apvalkalas
+MSG_MENU_SELECT_CONTENTS
+Žymėti turinį
+MSG_MENU_CLEAN_UP
+Sutvarkyti
+MSG_MENU_CLEAN_UP_BY
+Sutvarkyti pagal
+MSG_MENU_BY_NAME
+Pavadinimas
+MSG_MENU_BY_DATE
+Data
+MSG_MENU_BY_SIZE
+Dydis
+MSG_MENU_SNAP
+Lygiuoti pagal tinklelį
+MSG_MENU_ARRANGE
+Tvarkyti keičiant dydį
+MSG_MENU_SNAPSHOT
+Įsiminti padėtį
+MSG_MENU_SNAPSHOT_WINDOW
+Langą
+MSG_MENU_SNAPSHOT_ALL
+Viską
+MSG_MENU_SHOW
+Rodyti
+MSG_MENU_ONLY_ICONS
+Tik piktogramas
+MSG_MENU_ALL_FILES
+Visus failus
+MSG_MENU_VIEW_BY
+Rodinys
+MSG_MENU_BY_ICON
+Piktograma
+MSG_MENU_RIBBON
+Juostelė
+MSG_MENU_ICONS
+Piktogramos
+MSG_MENU_OPEN
+Atidaryti
+MSG_MENU_COPY
+Kopijuoti
+MSG_MENU_RENAME
+Pervardyti...
+MSG_MENU_INFORMATION
+Informacija...
+MSG_MENU_UNSNAPSHOT
+Pamiršti padėtį
+MSG_MENU_LEAVE_OUT
+Padėti darbalaukyje
+MSG_MENU_PUT_AWAY
+Padėti atgal
+MSG_MENU_DELETE
+Naikinti...
+MSG_MENU_FORMAT
+Formatuoti diską...
+MSG_MENU_EMPTY_TRASH
+Išvalyti šiukšlinę
+MSG_MENU_TOOLS
+Įrankiai
+MSG_RIBBON_HOME
+Pagrindinis
+MSG_RIBBON_GO
+Eiti
+MSG_RIBBON_PARENT
+Aukštyn
+MSG_RIBBON_DRAWER
+Aplankas
+MSG_RIBBON_RENAME
+Pervardyti
+MSG_RIBBON_DELETE
+Naikinti
+MSG_RIBBON_INFORMATION
+Informacija
+MSG_RIBBON_VIEW
+Rodinys
+MSG_RIBBON_ARRANGE
+Tvarkyti
+MSG_LIST_PROTECTION
+Apsauga
+MSG_LIST_DRAWER
+Aplankas
+MSG_TITLE_MEMORY
+Atmintis
+MSG_TITLE_INTERNAL
+Vidinė
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+laisva
+MSG_TITLE_BATTERY
+Akumuliatorius
+MSG_TITLE_CHARGING
+kraunamas
+MSG_TITLE_EXTERNAL_POWER
+išorinis maitinimas
+MSG_DISK_FULL
+užpildyta
+MSG_DISK_IN_USE
+naudojama
+MSG_NOTHING_SAID
+Pranešimų nebuvo
+MSG_NOT_EVERY_FILE
+Ne visus pasirinktus failus pavyko priimti
+MSG_DISK_NOT_RENAMED
+Disko pervardyti nepavyko
+MSG_NOT_RENAMED
+Pervardyti nepavyko
+MSG_ICON_NOT_WRITTEN
+Piktogramos įrašyti nepavyko
+MSG_DISK_NOT_THERE
+Disko nėra
+MSG_DISK_BUSY
+Diskas naudojamas
+MSG_DISK_NOT_FORMATTED
+Disko suformatuoti nepavyko
+MSG_DRAWER_NOT_MADE
+Aplanko sukurti nepavyko
+MSG_SETTING_NOT_KEPT
+%s: įsiminti nepavyko
+MSG_SETTING_NOT_WRITTEN
+%s: įrašyti į anvil.prefs nepavyko
+MSG_DRAWER_ICON_NOT_WRITTEN
+Aplanko piktogramos įrašyti nepavyko
+MSG_NO_MEMORY_REBOOT
+Nėra atminties paleisti iš naujo
+MSG_NO_MEMORY_ABOUT
+Nėra atminties langui „Apie“
+MSG_NO_TOOL
+Nėra programos, kuria atidaryti %s
+MSG_NOT_STARTED
+%s paleisti nepavyko
+MSG_COMMAND_NOT_STARTED
+Komandos paleisti nepavyko
+MSG_SHELL_DRAWER_NOT_FOUND
+Apvalkalo aplanko rasti nepavyko
+MSG_SHELL_NOT_STARTED
+Apvalkalo paleisti nepavyko
+MSG_TRASH_OWN_DISK
+Į šiukšlinę patenka tik jos pačios disko failai
+MSG_NOT_MOVED
+Failo ten perkelti nepavyko
+MSG_LEFT_OUT_NOT_KEPT
+Diskas neišsaugos to, kas padėta darbalaukyje
+MSG_NO_MEMORY_WORK
+Nėra atminties darbui pradėti
+MSG_QUIT_RUNNING_ADDED
+Iš darbalaukio paleistos programos dar veikia (%lu).\nJos veiks toliau. Langai, piktogramos ir\nmeniu punktai, kuriuos pridėjo programos (%lu),\ndings kartu su juo.\n\nIšeiti iš darbalaukio?
+MSG_QUIT_RUNNING
+Iš darbalaukio paleistos programos dar veikia (%lu).\nJos veiks toliau.\n\nIšeiti iš darbalaukio?
+MSG_QUIT_ADDED
+Langai, piktogramos ir meniu punktai, kuriuos programos\npridėjo prie darbalaukio (%lu), dings kartu su juo.\n\nIšeiti iš darbalaukio?
+MSG_QUIT_ASK
+Išeiti iš darbalaukio?
+MSG_QUIT_BUTTONS
+Išeiti|Atšaukti
+MSG_DELETE_ASK
+Negrįžtamai naikinti pasirinktus (%lu)?\nAplankas naikinamas su visu turiniu.
+MSG_DELETE_BUTTONS
+Naikinti|Atšaukti
+MSG_RENAME_PROMPT
+Naujas pavadinimas:
+MSG_FORMAT_TITLE
+Formatuoti diską
+MSG_FORMAT_ASK
+Formatuoti %s?\nViskas, kas jame yra, bus prarasta.
+MSG_FORMAT_BUTTONS
+Formatuoti|Atšaukti
+MSG_NEW_DRAWER_PROMPT
+Naujo aplanko pavadinimas:
+MSG_UNNAMED
+Be pavadinimo
+MSG_EXECUTE_TITLE
+Vykdyti komandą
+MSG_EXECUTE_PROMPT
+Vykdoma komanda:
+MSG_OUTPUT
+Išvestis
+MSG_REBOOT_TITLE
+Paleisti iš naujo
+MSG_REBOOT_ASK
+Paleisti kompiuterį iš naujo?\nTai, ko programos neįrašė, bus prarasta.
+MSG_REBOOT_BUTTONS
+Paleisti iš naujo|Atšaukti
+MSG_REBOOT_IN_USE
+Naudojami, todėl jų turinys gali būti neįrašytas:\n%s\n\nVis tiek paleisti iš naujo?
+MSG_STARTUP_WAIT
+Programa „%s“\ndar nebaigė darbo.\nLaukti ilgiau?
+MSG_STARTUP_BUTTONS
+Laukti|Tęsti
+MSG_OK
+_Gerai
+MSG_CANCEL
+_Atšaukti
+MSG_ABOUT_TITLE
+Apie Anvil
+MSG_ABOUT_WHAT
+PowerOS darbalaukis
+MSG_ABOUT_RELEASE
+Leidimas
+MSG_ABOUT_KERNEL
+Branduolys
+MSG_ABOUT_BOARD
+Plokštė
+MSG_ABOUT_PROCESSOR
+Procesorius
+MSG_ABOUT_CORES
+Branduoliai
+MSG_ABOUT_CLOCK
+Dažnis
+MSG_ABOUT_SCREEN
+Ekranas
+MSG_ABOUT_SYSTEM_DISK
+Sistemos diskas
+MSG_ABOUT_UP_FOR
+Veikia
+MSG_ABOUT_IN_USE
+Naudojama
+MSG_ABOUT_OF
+iš
+MSG_ABOUT_BITS
+bitų pikseliui
+MSG_ABOUT_DAY
+d.
+MSG_ABOUT_DAYS
+d.
+MSG_INFO_TITLE
+Informacija
+MSG_INFO_STATE
+Būsena
+MSG_INFO_READ_ONLY
+Tik skaityti
+MSG_INFO_VALIDATING
+Tikrinamas
+MSG_INFO_READ_WRITE
+Skaityti ir rašyti
+MSG_INFO_UNKNOWN
+Nežinoma
+MSG_INFO_BLOCKS
+Blokai
+MSG_INFO_USED
+Naudojama
+MSG_INFO_FREE
+Laisva
+MSG_INFO_BLOCK_SIZE
+Bloko dydis
+MSG_INFO_BYTES
+B
+MSG_INFO_BLOCKS_COUNTED
+blok.
+MSG_INFO_CREATED
+Sukurta
+MSG_INFO_LAST_CHANGED
+Paskutinį kartą keista
+MSG_INFO_SCRIPT
+Scenarijus
+MSG_INFO_ARCHIVED
+Archyvuotas
+MSG_INFO_READABLE
+Skaitomas
+MSG_INFO_WRITABLE
+Rašomas
+MSG_INFO_EXECUTABLE
+Vykdomas
+MSG_INFO_DELETABLE
+Naikinamas
+MSG_INFO_COMMENT
+Komentaras
+MSG_INFO_STACK
+Dėklas
+MSG_INFO_DEFAULT_TOOL
+Numatytoji programa
+MSG_INFO_TOOL_TYPES
+Parametrai
+MSG_INFO_SAVE
+Į_rašyti
+MSG_INFO_NOT_WRITTEN
+Piktogramos įrašyti nepavyko.
+MSG_INFO_OK
+Gerai
+MSG_WORK_COPYING
+Kopijuojama
+MSG_WORK_DELETING
+Naikinama
+MSG_WORK_STOP
+_Stabdyti
+MSG_WORK_WAITING
+Dar %lu laukia
+MSG_WORK_REPLACE_ASK
+%s jau yra.\nPakeisti?
+MSG_WORK_REPLACE_BUTTONS
+Pakeisti|Pakeisti visus|Praleisti|Stabdyti

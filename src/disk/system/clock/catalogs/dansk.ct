@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; Clock's strings in Danish.
+MSG_WINDOW_TITLE
+Ur
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analog
+MSG_MENU_DIGITAL
+Digital
+MSG_MENU_ABOUT
+Om...
+MSG_MENU_QUIT
+Afslut
+MSG_MENU_SETTINGS
+Indstillinger
+MSG_MENU_SECONDS
+Sekunder
+MSG_MENU_DATE
+Dato
+MSG_MENU_24_HOURS
+24 timer
+MSG_MENU_SAVE
+Gem indstillinger
+MSG_ABOUT_TITLE
+Om Ur
+MSG_ABOUT
+%s\n\nTiden, på en urskive eller i tal.\nEt dobbeltklik i vinduet skifter mellem dem.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Indstillingerne kunne ikke gemmes i\n%s.
+MSG_NOLIBRARY
+%s: kan ikke åbne %s\n
+MSG_NOMEMORY
+%s: ikke nok hukommelse\n
+MSG_NOWINDOW
+%s: kan ikke åbne sit vindue\n

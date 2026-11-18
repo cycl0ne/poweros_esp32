@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; The Player's strings in Finnish.
+MSG_MENU_PROJECT
+Projekti
+MSG_MENU_OPEN
+Avaa...
+MSG_MENU_OPEN_DRAWER
+Avaa kansio...
+MSG_MENU_OPEN_URL
+Avaa URL...
+MSG_MENU_SAVE_PLAYLIST
+Tallenna soittolista...
+MSG_MENU_ABOUT
+Tietoja
+MSG_MENU_QUIT
+Lopeta
+MSG_MENU_PLAYLIST
+Soittolista
+MSG_MENU_ADD
+Lisää...
+MSG_MENU_REMOVE
+Poista
+MSG_MENU_CLEAR
+Tyhjennä
+MSG_MENU_SHUFFLE
+Sekoita
+MSG_MENU_REPEAT
+Toista uudelleen
+MSG_MENU_REPEAT_OFF
+Pois
+MSG_MENU_REPEAT_ALL
+Kaikki
+MSG_MENU_REPEAT_ONE
+Yksi
+MSG_MENU_PICTURE
+Kuva
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Aalto
+MSG_MENU_BARS
+Palkit
+MSG_MENU_SETTINGS
+Asetukset
+MSG_MENU_REMEMBER
+Muista, missä se oli
+MSG_PAGE_PLAYING
+Nyt soi
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Omat asemat
+MSG_VIEW_FOUND
+Löydetyt
+MSG_NAME
+Nimi
+MSG_GENRE
+Tyylilaji
+MSG_COUNTRY
+Maa
+MSG_COLUMN_TITLE
+Nimi
+MSG_COLUMN_ARTIST
+Esittäjä
+MSG_COLUMN_TIME
+Aika
+MSG_COLUMN_STATION
+Asema
+MSG_COLUMN_ADDRESS
+Osoite
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Tyylilajit
+MSG_SHUFFLE_BUTTON
+_Sekoita
+MSG_SHUFFLE_HINT
+Soita kappaleet omassa järjestyksessään
+MSG_REPEAT_BUTTON
+_Uudelleen
+MSG_REPEAT_HINT
+Soita luettelo uudelleen, tai yksi kappale
+MSG_MUTE_BUTTON
+_Mykistä
+MSG_MUTE_HINT
+Ääni pois, ja taas päälle
+MSG_LENGTH_HINT
+Kappaleen pituus, tai mitä siitä on jäljellä
+MSG_ADD_BUTTON
+_Lisää...
+MSG_REMOVE_BUTTON
+_Poista
+MSG_CLEAR_BUTTON
+T_yhjennä
+MSG_OUTPUT_LABEL
+Lä_htö
+MSG_SEARCH_BUTTON
+Ha_e
+MSG_KEEP_BUTTON
+_Tallenna
+MSG_FORGET_BUTTON
+Poist_a
+MSG_FIND_LABEL
+Hakusa_na
+MSG_BY_LABEL
+_kentässä
+MSG_URL_TITLE
+Avaa URL
+MSG_URL_ADDRESS
+_Osoite
+MSG_URL_OPEN
+_Avaa
+MSG_URL_CANCEL
+_Peruuta
+MSG_ASK_PLAY
+Mitkä kappaleet?
+MSG_ASK_ADD
+Mitkä kappaleet lisätään?
+MSG_ASK_DRAWER
+Mikä kansio?
+MSG_ASK_SAVE
+Tallenna soittolista nimellä
+MSG_ABOUT_TITLE
+Tietoja: Player
+MSG_ABOUT
+%s\n\nKappaleet WAV-, MP3-, FLAC-, Ogg Vorbis-, AAC- ja AC-3-tiedostoista,\nyksi toisensa perään, kansikuvineen,\nasemat verkosta\nja kuva äänestä.
+MSG_OK
+OK
+MSG_NO_SONG
+Ei kappaletta
+MSG_TRACK_OF
+raita %u/%u
+MSG_TRACK
+raita %u
+MSG_COMPOSED_BY
+säveltänyt %s
+MSG_CHAPTER
+Luku %u/%u
+MSG_SOUND
+Ääni
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+kappale %u/%u
+MSG_NO_SOUND
+ei ääntä
+MSG_NO_STREAM_FREE
+ei vapaata virtaa
+MSG_LIVE
+suora
+MSG_BUFFERING
+puskuroidaan
+MSG_BUFFERING_PERCENT
+Puskuroidaan %u%%
+MSG_STATION_IDLE
+Asema: toisto kuuntelee sitä
+MSG_CALLING
+Yhdistetään asemaan
+MSG_NO_MEMORY_STATION
+Muisti ei riitä asemalle
+MSG_ALL_STREAMS_USED
+Kaikki äänivirrat ovat käytössä
+MSG_NO_SOUND_HERE
+Tässä koneessa ei ole ääntä
+MSG_NO_AUDIO_STREAM
+audio.device ei avannut virtaa
+MSG_KEPT_ALREADY
+Jo tallennettu: %s
+MSG_KEPT
+Tallennettu: %s
+MSG_NO_MEMORY_KEEP
+Muisti ei riitä aseman tallentamiseen
+MSG_NO_MEMORY_SEARCH
+Muisti ei riitä hakuun
+MSG_SEARCHING
+Haetaan
+MSG_ASKING
+Kysytään: %s
+MSG_NONE_FOUND
+Asemia ei löytynyt
+MSG_ONE_FOUND
+Yksi asema löytyi
+MSG_COUNT_FOUND
+%u asemaa löytyi
+MSG_NO_NETWORK
+Ei verkkoa: bsdsocket.library puuttuu
+MSG_NO_HTTP
+http.library puuttuu
+MSG_NO_MEMORY_CONNECTION
+Muisti ei riitä yhteydelle
+MSG_SERVICE_NO_ADDRESS
+Palvelulla radio-browser.info ei ole osoitetta
+MSG_SERVICE_NO_ANSWER
+radio-browser.info ei vastannut hakuun
+MSG_SERVICE_UNREACHED
+radio-browser.info ei ole tavoitettavissa
+MSG_SERVICE_NONSENSE
+Palvelun radio-browser.info vastaus on käsittämätön
+MSG_SEARCH_FAILED
+Haku epäonnistui
+MSG_NO_SIGNAL
+Ei vapaata signaalia asemalle
+MSG_NO_TIMER
+timer.device ei avautunut
+MSG_LISTS_ONLY
+Aseman luettelot johtavat vain uusiin luetteloihin
+MSG_STATION_STOPPED
+Asema lopetti lähetyksen
+MSG_STATION_ANSWERED
+Asema vastasi
+MSG_SENDS_AAC
+Asema lähettää AAC:tä, jota ei soiteta
+MSG_STATION_ENDED
+Asema katkaisi yhteyden
+MSG_SENDS_HLS
+Asema lähettää HLS:ää, jota ei soiteta
+MSG_LIST_EMPTY
+Aseman luettelossa ei ole asemaa
+MSG_LIST_TOO_LONG
+Aseman luettelossa on liian pitkä osoite
+MSG_NOT_AN_ADDRESS
+Tämä ei ole kuunneltava osoite
+MSG_NONSENSE
+Aseman vastaus on käsittämätön
+MSG_NOLIBRARY
+%s: kirjastoa %s ei voi avata\n
+MSG_NOMEMORY
+%s: muisti ei riitä ikkunalle\n
+MSG_NOBUFFERS
+%s: muisti ei riitä äänelle\n
+MSG_NOWINDOW
+%s: ei ikkunaa\n
+MSG_MENU_EQUALIZER
+Taajuuskorjain
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Stereokuva
+MSG_MENU_METERS
+Tasomittarit
+MSG_MENU_WHOLE_SCREEN
+Koko näyttö

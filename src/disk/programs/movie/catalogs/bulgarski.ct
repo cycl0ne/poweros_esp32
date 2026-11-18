@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; Movie's strings in Bulgarian.
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_OPEN
+Отвори...
+MSG_MENU_WHOLE_SCREEN
+Цял екран
+MSG_MENU_ABOUT
+Относно
+MSG_MENU_QUIT
+Изход
+MSG_MENU_SOUND
+Звук
+MSG_MENU_NO_SOUND
+Без
+MSG_MENU_SUBTITLES
+Субтитри
+MSG_MENU_SUBTITLES_OFF
+Изкл.
+MSG_MENU_TRACK
+Пътечка
+MSG_MENU_FRAME_RATE
+Кадрова честота
+MSG_MENU_INFO
+Информация за филма...
+MSG_FRAME_RATE
+%u,%u / %u,%u кадъра/с
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u кадъра/с, пропуснати %u
+MSG_ASK_OPEN
+Пусни филм
+MSG_ABOUT_TITLE
+Относно Movie
+MSG_ABOUT
+%s\n\nПуска филми - MP4, MOV на QuickTime и MKV на Matroska:\nкартина в H.264, H.265 и Motion JPEG,\nзвук в AAC, AC-3, MP3, FLAC и Vorbis, и субтитри.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nне може да бъде пуснат:\n%s
+MSG_INFO_TITLE
+Информация за филма
+MSG_INFO_FILE
+Файл
+MSG_INFO_NAMED
+Заглавие
+MSG_INFO_CONTAINER
+Контейнер
+MSG_INFO_LENGTH
+Продължителност
+MSG_INFO_PICTURES
+Картина
+MSG_INFO_COLOURS
+Цветове
+MSG_INFO_BITS
+%u бита
+MSG_INFO_LIMITED
+ограничен обхват
+MSG_INFO_FULL
+пълен обхват
+MSG_INFO_SHOWN
+Показване
+MSG_INFO_ON_LAYER
+във видеослоя на дисплея
+MSG_INFO_BY_GRAPHICS
+от graphics.library
+MSG_INFO_DECODED
+Декодиране
+MSG_INFO_BY_CHIP
+от видеодекодера
+MSG_INFO_BY_PROCESSOR
+от процесора
+MSG_INFO_SOUND
+Звук
+MSG_INFO_NONE
+няма
+MSG_INFO_CHANNELS
+%u канала
+MSG_INFO_TRACKS
+Пътечки
+MSG_INFO_TRACK_COUNTS
+%u звук, %u субтитри
+MSG_VOLUME_HINT
+Сила на звука
+MSG_NOLIBRARY
+%s: %s не може да бъде отворена\n
+MSG_NOMEMORY
+%s: няма достатъчно памет\n
+MSG_NOWINDOW
+%s: прозорецът не може да бъде отворен\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

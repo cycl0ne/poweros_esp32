@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; The desktop's strings in Turkish.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Arka plan
+MSG_MENU_EXECUTE
+Komut çalıştır...
+MSG_MENU_REDRAW_ALL
+Tümünü yeniden çiz
+MSG_MENU_UPDATE_ALL
+Tümünü güncelle
+MSG_MENU_LAST_MESSAGE
+Son ileti
+MSG_MENU_VOLUME
+Ses düzeyi...
+MSG_MENU_ABOUT
+Hakkında...
+MSG_MENU_QUIT
+Çıkış...
+MSG_MENU_REBOOT
+Yeniden başlat...
+MSG_MENU_WINDOW
+Pencere
+MSG_MENU_NEW_DRAWER
+Yeni klasör
+MSG_MENU_OPEN_PARENT
+Üst klasörü aç
+MSG_MENU_BACK
+Geri
+MSG_MENU_FORWARD
+İleri
+MSG_MENU_CLOSE
+Kapat
+MSG_MENU_UPDATE
+Güncelle
+MSG_MENU_SHELL
+Kabuk
+MSG_MENU_SELECT_CONTENTS
+İçeriği seç
+MSG_MENU_CLEAN_UP
+Düzenle
+MSG_MENU_CLEAN_UP_BY
+Düzenleme ölçütü
+MSG_MENU_BY_NAME
+Ad
+MSG_MENU_BY_DATE
+Tarih
+MSG_MENU_BY_SIZE
+Boyut
+MSG_MENU_SNAP
+Kılavuza hizala
+MSG_MENU_ARRANGE
+Boyut değişince düzenle
+MSG_MENU_SNAPSHOT
+Konumu hatırla
+MSG_MENU_SNAPSHOT_WINDOW
+Pencere
+MSG_MENU_SNAPSHOT_ALL
+Tümü
+MSG_MENU_SHOW
+Göster
+MSG_MENU_ONLY_ICONS
+Yalnızca simgeler
+MSG_MENU_ALL_FILES
+Tüm dosyalar
+MSG_MENU_VIEW_BY
+Görünüm
+MSG_MENU_BY_ICON
+Simge
+MSG_MENU_RIBBON
+Şerit
+MSG_MENU_ICONS
+Simgeler
+MSG_MENU_OPEN
+Aç
+MSG_MENU_COPY
+Kopyala
+MSG_MENU_RENAME
+Yeniden adlandır...
+MSG_MENU_INFORMATION
+Bilgi...
+MSG_MENU_UNSNAPSHOT
+Konumu unut
+MSG_MENU_LEAVE_OUT
+Masaüstüne bırak
+MSG_MENU_PUT_AWAY
+Yerine koy
+MSG_MENU_DELETE
+Sil...
+MSG_MENU_FORMAT
+Diski biçimlendir...
+MSG_MENU_EMPTY_TRASH
+Çöp kutusunu boşalt
+MSG_MENU_TOOLS
+Araçlar
+MSG_RIBBON_HOME
+Giriş
+MSG_RIBBON_GO
+Git
+MSG_RIBBON_PARENT
+Yukarı
+MSG_RIBBON_DRAWER
+Klasör
+MSG_RIBBON_RENAME
+Yeniden adlandır
+MSG_RIBBON_DELETE
+Sil
+MSG_RIBBON_INFORMATION
+Bilgi
+MSG_RIBBON_VIEW
+Görünüm
+MSG_RIBBON_ARRANGE
+Düzenle
+MSG_LIST_PROTECTION
+Koruma
+MSG_LIST_DRAWER
+Klasör
+MSG_TITLE_MEMORY
+Bellek
+MSG_TITLE_INTERNAL
+Dahili
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+boş
+MSG_TITLE_BATTERY
+Pil
+MSG_TITLE_CHARGING
+şarj oluyor
+MSG_TITLE_EXTERNAL_POWER
+harici güç
+MSG_DISK_FULL
+dolu
+MSG_DISK_IN_USE
+kullanımda
+MSG_NOTHING_SAID
+Henüz bir ileti yok
+MSG_NOT_EVERY_FILE
+Seçilen dosyaların hepsi alınamadı
+MSG_DISK_NOT_RENAMED
+Disk yeniden adlandırılamadı
+MSG_NOT_RENAMED
+Yeniden adlandırılamadı
+MSG_ICON_NOT_WRITTEN
+Bir simge yazılamadı
+MSG_DISK_NOT_THERE
+Disk yok
+MSG_DISK_BUSY
+Disk kullanımda
+MSG_DISK_NOT_FORMATTED
+Disk biçimlendirilemedi
+MSG_DRAWER_NOT_MADE
+Klasör oluşturulamadı
+MSG_SETTING_NOT_KEPT
+%s saklanamadı
+MSG_SETTING_NOT_WRITTEN
+%s anvil.prefs dosyasına yazılamadı
+MSG_DRAWER_ICON_NOT_WRITTEN
+Klasörün simgesi yazılamadı
+MSG_NO_MEMORY_REBOOT
+Yeniden başlatmak için bellek yok
+MSG_NO_MEMORY_ABOUT
+Hakkında için bellek yok
+MSG_NO_TOOL
+%s için onu açacak bir program yok
+MSG_NOT_STARTED
+%s başlatılamadı
+MSG_COMMAND_NOT_STARTED
+Komut başlatılamadı
+MSG_SHELL_DRAWER_NOT_FOUND
+Kabuğun klasörü bulunamadı
+MSG_SHELL_NOT_STARTED
+Kabuk başlatılamadı
+MSG_TRASH_OWN_DISK
+Çöp kutusuna yalnızca kendi diskindeki dosyalar girer
+MSG_NOT_MOVED
+Bir dosya oraya taşınamadı
+MSG_LEFT_OUT_NOT_KEPT
+Disk, masaüstüne bırakılanları saklamayacak
+MSG_NO_MEMORY_WORK
+İşi başlatmak için bellek yok
+MSG_QUIT_RUNNING_ADDED
+Masaüstünden başlatılan programlar hâlâ çalışıyor (%lu).\nÇalışmaya devam edecekler. Programların eklediği\npencereler, simgeler ve menü öğeleri (%lu)\nonunla birlikte gider.\n\nMasaüstünden çıkılsın mı?
+MSG_QUIT_RUNNING
+Masaüstünden başlatılan programlar hâlâ çalışıyor (%lu).\nÇalışmaya devam edecekler.\n\nMasaüstünden çıkılsın mı?
+MSG_QUIT_ADDED
+Programların masaüstüne eklediği pencereler, simgeler\nve menü öğeleri (%lu) onunla birlikte gider.\n\nMasaüstünden çıkılsın mı?
+MSG_QUIT_ASK
+Masaüstünden çıkılsın mı?
+MSG_QUIT_BUTTONS
+Çık|İptal
+MSG_DELETE_ASK
+Seçilenler (%lu) kalıcı olarak silinsin mi?\nBir klasör tüm içeriğiyle birlikte silinir.
+MSG_DELETE_BUTTONS
+Sil|İptal
+MSG_RENAME_PROMPT
+Yeni ad:
+MSG_FORMAT_TITLE
+Diski biçimlendir
+MSG_FORMAT_ASK
+%s biçimlendirilsin mi?\nÜzerindeki her şey kaybolur.
+MSG_FORMAT_BUTTONS
+Biçimlendir|İptal
+MSG_NEW_DRAWER_PROMPT
+Yeni klasörün adı:
+MSG_UNNAMED
+Adsız
+MSG_EXECUTE_TITLE
+Komut çalıştır
+MSG_EXECUTE_PROMPT
+Çalıştırılacak komut:
+MSG_OUTPUT
+Çıktı
+MSG_REBOOT_TITLE
+Yeniden başlat
+MSG_REBOOT_ASK
+Bilgisayar yeniden başlatılsın mı?\nProgramların kaydetmediği her şey kaybolur.
+MSG_REBOOT_BUTTONS
+Yeniden başlat|İptal
+MSG_REBOOT_IN_USE
+Kullanımda, bu yüzden içerdikleri yazılmamış olabilir:\n%s\n\nYine de yeniden başlatılsın mı?
+MSG_STARTUP_WAIT
+'%s' programı\nhenüz sona ermedi.\nBiraz daha beklensin mi?
+MSG_STARTUP_BUTTONS
+Bekle|Devam et
+MSG_OK
+_Tamam
+MSG_CANCEL
+İ_ptal
+MSG_ABOUT_TITLE
+Anvil hakkında
+MSG_ABOUT_WHAT
+PowerOS masaüstü
+MSG_ABOUT_RELEASE
+Sürüm
+MSG_ABOUT_KERNEL
+Çekirdek
+MSG_ABOUT_BOARD
+Kart
+MSG_ABOUT_PROCESSOR
+İşlemci
+MSG_ABOUT_CORES
+Çekirdekler
+MSG_ABOUT_CLOCK
+Saat hızı
+MSG_ABOUT_SCREEN
+Ekran
+MSG_ABOUT_SYSTEM_DISK
+Sistem diski
+MSG_ABOUT_UP_FOR
+Çalışma süresi
+MSG_ABOUT_IN_USE
+Kullanılan
+MSG_ABOUT_OF
+/
+MSG_ABOUT_BITS
+bit/piksel
+MSG_ABOUT_DAY
+gün
+MSG_ABOUT_DAYS
+gün
+MSG_INFO_TITLE
+Bilgi
+MSG_INFO_STATE
+Durum
+MSG_INFO_READ_ONLY
+Salt okunur
+MSG_INFO_VALIDATING
+Doğrulanıyor
+MSG_INFO_READ_WRITE
+Okunur ve yazılır
+MSG_INFO_UNKNOWN
+Bilinmiyor
+MSG_INFO_BLOCKS
+Bloklar
+MSG_INFO_USED
+Kullanılan
+MSG_INFO_FREE
+Boş
+MSG_INFO_BLOCK_SIZE
+Blok boyutu
+MSG_INFO_BYTES
+bayt
+MSG_INFO_BLOCKS_COUNTED
+blok
+MSG_INFO_CREATED
+Oluşturulma
+MSG_INFO_LAST_CHANGED
+Son değişiklik
+MSG_INFO_SCRIPT
+Betik
+MSG_INFO_ARCHIVED
+Arşivlendi
+MSG_INFO_READABLE
+Okunabilir
+MSG_INFO_WRITABLE
+Yazılabilir
+MSG_INFO_EXECUTABLE
+Çalıştırılabilir
+MSG_INFO_DELETABLE
+Silinebilir
+MSG_INFO_COMMENT
+Açıklama
+MSG_INFO_STACK
+Yığın
+MSG_INFO_DEFAULT_TOOL
+Varsayılan program
+MSG_INFO_TOOL_TYPES
+Parametreler
+MSG_INFO_SAVE
+_Kaydet
+MSG_INFO_NOT_WRITTEN
+Simge yazılamadı.
+MSG_INFO_OK
+Tamam
+MSG_WORK_COPYING
+Kopyalanıyor
+MSG_WORK_DELETING
+Siliniyor
+MSG_WORK_STOP
+_Durdur
+MSG_WORK_WAITING
+%lu tane daha bekliyor
+MSG_WORK_REPLACE_ASK
+%s zaten var.\nDeğiştirilsin mi?
+MSG_WORK_REPLACE_BUTTONS
+Değiştir|Tümünü değiştir|Atla|Durdur

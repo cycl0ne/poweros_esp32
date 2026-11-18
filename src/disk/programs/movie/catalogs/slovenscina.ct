@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; Movie's strings in Slovene.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Odpri...
+MSG_MENU_WHOLE_SCREEN
+Celoten zaslon
+MSG_MENU_ABOUT
+O programu
+MSG_MENU_QUIT
+Končaj
+MSG_MENU_SOUND
+Zvok
+MSG_MENU_NO_SOUND
+Brez
+MSG_MENU_SUBTITLES
+Podnapisi
+MSG_MENU_SUBTITLES_OFF
+Izklopljeno
+MSG_MENU_TRACK
+Sled
+MSG_MENU_FRAME_RATE
+Hitrost sličic
+MSG_MENU_INFO
+Informacije o filmu...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, izpuščene: %u
+MSG_ASK_OPEN
+Predvajaj film
+MSG_ABOUT_TITLE
+O programu Movie
+MSG_ABOUT
+%s\n\nPredvaja filme - MP4, MOV iz QuickTime in MKV iz Matroska:\nslika H.264, H.265 in Motion JPEG,\nzvok AAC, AC-3, MP3, FLAC in Vorbis ter podnapisi.
+MSG_OK
+V redu
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nni mogoče predvajati:\n%s
+MSG_INFO_TITLE
+Informacije o filmu
+MSG_INFO_FILE
+Datoteka
+MSG_INFO_NAMED
+Naslov
+MSG_INFO_CONTAINER
+Vsebnik
+MSG_INFO_LENGTH
+Dolžina
+MSG_INFO_PICTURES
+Slika
+MSG_INFO_COLOURS
+Barve
+MSG_INFO_BITS
+%u bitov
+MSG_INFO_LIMITED
+omejen obseg
+MSG_INFO_FULL
+poln obseg
+MSG_INFO_SHOWN
+Prikaz
+MSG_INFO_ON_LAYER
+na video plasti zaslona
+MSG_INFO_BY_GRAPHICS
+izriše graphics.library
+MSG_INFO_DECODED
+Dekodiranje
+MSG_INFO_BY_CHIP
+z video dekodirnikom
+MSG_INFO_BY_PROCESSOR
+s procesorjem
+MSG_INFO_SOUND
+Zvok
+MSG_INFO_NONE
+brez
+MSG_INFO_CHANNELS
+kanali: %u
+MSG_INFO_TRACKS
+Sledi
+MSG_INFO_TRACK_COUNTS
+zvok: %u, podnapisi: %u
+MSG_VOLUME_HINT
+Glasnost
+MSG_NOLIBRARY
+%s: ni mogoče odpreti %s\n
+MSG_NOMEMORY
+%s: premalo pomnilnika\n
+MSG_NOWINDOW
+%s: ni mogoče odpreti okna\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

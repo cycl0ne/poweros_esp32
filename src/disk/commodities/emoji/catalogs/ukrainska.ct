@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language ukrainska
+## codeset 106
+; Emoji's strings in Ukrainian.
+MSG_SEARCH
+Пошук
+MSG_USED
+Нещодавні
+MSG_NONE_USED
+Ще нічого не використано
+MSG_NOT_FOUND
+Нічого не знайдено
+MSG_TONE_NONE
+Без відтінку шкіри
+MSG_TONE_LIGHT
+Світлий
+MSG_TONE_MEDIUM_LIGHT
+Середньо-світлий
+MSG_TONE_MEDIUM
+Середній
+MSG_TONE_MEDIUM_DARK
+Середньо-темний
+MSG_TONE_DARK
+Темний
+MSG_GROUP_SMILEYS
+Смайлики & емоції
+MSG_GROUP_PEOPLE
+Люди & тіло
+MSG_GROUP_ANIMALS
+Тварини & природа
+MSG_GROUP_FOOD
+Їжа & напої
+MSG_GROUP_TRAVEL
+Подорожі & місця
+MSG_GROUP_ACTIVITIES
+Заняття
+MSG_GROUP_OBJECTS
+Предмети
+MSG_GROUP_SYMBOLS
+Символи
+MSG_GROUP_FLAGS
+Прапори

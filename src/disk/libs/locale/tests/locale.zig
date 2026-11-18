@@ -1182,46 +1182,97 @@ const shipped_countries = [_][]const u8{
     "australia",
     "belgie",
     "belgique",
+    "bulgaria",
     "canada",
     "canada_francais",
+    "cesko",
     "danmark",
     "deutschland",
+    "eesti",
+    "eire",
+    "ellada",
     "espana",
     "france",
     "great_britain",
     "hanguk",
+    "hrvatska",
     "india",
+    "island",
     "italia",
+    "kypros",
+    "latvija",
+    "lietuva",
+    "luxembourg",
+    "magyarorszag",
+    "malta",
     "nederland",
     "nihon",
     "norge",
     "osterreich",
+    "polska",
     "portugal",
+    "romania",
+    "rossija",
     "schweiz",
+    "slovenija",
+    "slovensko",
     "suisse",
+    "suomi",
     "sverige",
     "svizzera",
     "taiwan",
+    "turkiye",
+    "ukrajina",
     "united_kingdom",
     "united_states",
     "zhongguo",
 };
 const shipped_languages = [_][]const u8{
+    "bulgarski",
+    "cestina",
     "dansk",
     "deutsch",
+    "eesti",
+    "ellinika",
     "espanol",
     "francais",
+    "gaeilge",
     "hangugeo",
     "hindi",
+    "hrvatski",
+    "islenska",
     "italiano",
+    "latviesu",
+    "lietuviu",
+    "magyar",
+    "malti",
     "nederlands",
     "nihongo",
     "norsk",
+    "polski",
     "portugues",
+    "romana",
+    "russkij",
+    "slovencina",
+    "slovenscina",
+    "suomi",
     "svenska",
+    "turkce",
+    "ukrainska",
     "zhongwen",
     "zhongwen-fanti",
 };
+
+/// The language a country's file names (`LANGUAGE=`), English where it
+/// names none.
+fn languageOf(comptime text: []const u8) []const u8 {
+    @setEvalBranchQuota(100_000);
+    const key = "\nLANGUAGE=";
+    const at = std.mem.indexOf(u8, text, key) orelse return "english";
+    const rest = text[at + key.len ..];
+    const end = std.mem.indexOfAny(u8, rest, " \t\r\n") orelse rest.len;
+    return rest[0..end];
+}
 
 test "the countries and languages shipped: each read whole, in a language shipped, its short forms fitting dos's strings" {
     var rig: Rig = undefined;
@@ -1229,14 +1280,35 @@ test "the countries and languages shipped: each read whole, in a language shippe
     defer rig.deinit() catch unreachable;
     const lb = rig.lb;
     var path: [80]u8 = undefined;
+    var language_path: [80]u8 = undefined;
+    // Each language alone, then each country with its language: the
+    // test's memory holds a few files, not all of them.
     inline for (shipped_languages) |name| {
-        try rig.write(try std.fmt.bufPrintZ(&path, "LOCALE:Languages/{s}.language", .{name}), @embedFile("../../../locale/languages/" ++ name ++ ".language"));
+        const file = try std.fmt.bufPrintZ(&language_path, "LOCALE:Languages/{s}.language", .{name});
+        try rig.write(file, @embedFile("../../../locale/languages/" ++ name ++ ".language"));
+        defer _ = rig.dosLib().DeleteFile(file);
+        try rig.write("LOCALE:shipped.prefs", "LANGUAGES=" ++ name ++ "\n");
+        const loc = lb.OpenLocale("LOCALE:shipped.prefs") orelse {
+            std.debug.print("{s}: IoErr {d}\n", .{ name, rig.dosLib().IoErr() });
+            return error.NoLocale;
+        };
+        defer lb.CloseLocale(loc);
+        try testing.expectEqualStrings(name, span(loc.language_name));
     }
-    // One country at a time: the test's memory holds the languages and one.
     inline for (shipped_countries) |name| {
+        const country_text = @embedFile("../../../locale/countries/" ++ name ++ ".country");
         const country = try std.fmt.bufPrintZ(&path, "LOCALE:Countries/{s}.country", .{name});
-        try rig.write(country, @embedFile("../../../locale/countries/" ++ name ++ ".country"));
+        try rig.write(country, country_text);
         defer _ = rig.dosLib().DeleteFile(country);
+        const own = comptime languageOf(country_text);
+        const english = comptime std.mem.eql(u8, own, "english");
+        if (!english) {
+            const file = try std.fmt.bufPrintZ(&language_path, "LOCALE:Languages/{s}.language", .{own});
+            try rig.write(file, @embedFile("../../../locale/languages/" ++ own ++ ".language"));
+        }
+        defer if (!english) {
+            _ = rig.dosLib().DeleteFile(@ptrCast(&language_path));
+        };
         try rig.write("LOCALE:shipped.prefs", "COUNTRY=" ++ name ++ "\n");
         const loc = lb.OpenLocale("LOCALE:shipped.prefs") orelse {
             std.debug.print("{s}: IoErr {d}\n", .{ name, rig.dosLib().IoErr() });
@@ -1257,6 +1329,7 @@ test "the countries and languages shipped: each read whole, in a language shippe
     }
     // The euro sign and the German quotes, as the files have them.
     try rig.write("LOCALE:Countries/deutschland.country", @embedFile("../../../locale/countries/deutschland.country"));
+    try rig.write("LOCALE:Languages/deutsch.language", @embedFile("../../../locale/languages/deutsch.language"));
     try rig.write("LOCALE:shipped.prefs", "COUNTRY=deutschland\n");
     const german = lb.OpenLocale("LOCALE:shipped.prefs") orelse return error.NoLocale;
     defer lb.CloseLocale(german);

@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; Movie's strings in Maltese.
+MSG_MENU_PROJECT
+Proġett
+MSG_MENU_OPEN
+Iftaħ...
+MSG_MENU_WHOLE_SCREEN
+Skrin sħiħ
+MSG_MENU_ABOUT
+Dwar
+MSG_MENU_QUIT
+Oħroġ
+MSG_MENU_SOUND
+Ħoss
+MSG_MENU_NO_SOUND
+Xejn
+MSG_MENU_SUBTITLES
+Sottotitoli
+MSG_MENU_SUBTITLES_OFF
+Mitfija
+MSG_MENU_TRACK
+Korsa
+MSG_MENU_FRAME_RATE
+Rata tal-frejms
+MSG_MENU_INFO
+Informazzjoni dwar il-film...
+MSG_FRAME_RATE
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED
+%u.%u / %u.%u fps, mitlufa: %u
+MSG_ASK_OPEN
+Daqq film
+MSG_ABOUT_TITLE
+Dwar Movie
+MSG_ABOUT
+%s\n\nIdoqq films - MP4, MOV ta' QuickTime u MKV ta' Matroska:\nstampi H.264, H.265 u Motion JPEG,\nħoss AAC, AC-3, MP3, FLAC u Vorbis, u sottotitoli.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nma jistax jindaqq:\n%s
+MSG_INFO_TITLE
+Informazzjoni dwar il-film
+MSG_INFO_FILE
+Fajl
+MSG_INFO_NAMED
+Titlu
+MSG_INFO_CONTAINER
+Kontenitur
+MSG_INFO_LENGTH
+Tul
+MSG_INFO_PICTURES
+Stampi
+MSG_INFO_COLOURS
+Kuluri
+MSG_INFO_BITS
+%u bits
+MSG_INFO_LIMITED
+medda limitata
+MSG_INFO_FULL
+medda sħiħa
+MSG_INFO_SHOWN
+Muri
+MSG_INFO_ON_LAYER
+fuq is-saff tal-vidjo tal-iskrin
+MSG_INFO_BY_GRAPHICS
+imfassal minn graphics.library
+MSG_INFO_DECODED
+Dekodifikat
+MSG_INFO_BY_CHIP
+mid-dekoder tal-vidjo
+MSG_INFO_BY_PROCESSOR
+mill-proċessur
+MSG_INFO_SOUND
+Ħoss
+MSG_INFO_NONE
+xejn
+MSG_INFO_CHANNELS
+%u kanali
+MSG_INFO_TRACKS
+Korsiet
+MSG_INFO_TRACK_COUNTS
+ħoss: %u, sottotitoli: %u
+MSG_VOLUME_HINT
+Volum
+MSG_NOLIBRARY
+%s: ma jistax jiftaħ %s\n
+MSG_NOMEMORY
+%s: m'hemmx biżżejjed memorja\n
+MSG_NOWINDOW
+%s: ma jistax jiftaħ it-tieqa tiegħu\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

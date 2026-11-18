@@ -1,0 +1,26 @@
+# LOCALE:Languages/turkce.language - Turkish: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=Pazar DAY_2=Pazartesi DAY_3=Salı DAY_4=Çarşamba DAY_5=Perşembe
+DAY_6=Cuma DAY_7=Cumartesi
+ABDAY_1=Paz ABDAY_2=Pzt ABDAY_3=Sal ABDAY_4=Çar ABDAY_5=Per
+ABDAY_6=Cum ABDAY_7=Cmt
+# The months, then their short names.
+MON_1=Ocak MON_2=Şubat MON_3=Mart MON_4=Nisan MON_5=Mayıs
+MON_6=Haziran MON_7=Temmuz MON_8=Ağustos MON_9=Eylül MON_10=Ekim
+MON_11=Kasım MON_12=Aralık
+ABMON_1=Oca ABMON_2=Şub ABMON_3=Mar ABMON_4=Nis ABMON_5=May
+ABMON_6=Haz ABMON_7=Tem ABMON_8=Ağu ABMON_9=Eyl ABMON_10=Eki
+ABMON_11=Kas ABMON_12=Ara
+# Yes and no, before and after noon.
+YESSTR=Evet NOSTR=Hayır AM_STR=ÖÖ PM_STR=ÖS
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=“ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Dün TODAYSTR=Bugün TOMORROWSTR=Yarın
+FUTURESTR=Gelecek
+# The order of the letters: Ç after C, Ğ after G, the dotless ı after H
+# (before i), Ö after O, Ş after S and Ü after U.
+AFTER_C=Ç AFTER_G=Ğ AFTER_H=ı AFTER_O=Ö AFTER_S=Ş AFTER_U=Ü

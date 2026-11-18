@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language ukrainska
+## codeset 106
+; Movie's strings in Ukrainian.
+MSG_MENU_PROJECT
+Проєкт
+MSG_MENU_OPEN
+Відкрити...
+MSG_MENU_WHOLE_SCREEN
+На весь екран
+MSG_MENU_ABOUT
+Про програму
+MSG_MENU_QUIT
+Вихід
+MSG_MENU_SOUND
+Звук
+MSG_MENU_NO_SOUND
+Немає
+MSG_MENU_SUBTITLES
+Субтитри
+MSG_MENU_SUBTITLES_OFF
+Вимк.
+MSG_MENU_TRACK
+Доріжка
+MSG_MENU_FRAME_RATE
+Частота кадрів
+MSG_MENU_INFO
+Відомості про фільм...
+MSG_FRAME_RATE
+%u,%u / %u,%u кадр/с
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u кадр/с, пропущено: %u
+MSG_ASK_OPEN
+Відтворити фільм
+MSG_ABOUT_TITLE
+Про Movie
+MSG_ABOUT
+%s\n\nВідтворює фільми - MP4, MOV QuickTime і MKV Matroska:\nзображення H.264, H.265 і Motion JPEG,\nзвук AAC, AC-3, MP3, FLAC і Vorbis, а також субтитри.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nнеможливо відтворити:\n%s
+MSG_INFO_TITLE
+Відомості про фільм
+MSG_INFO_FILE
+Файл
+MSG_INFO_NAMED
+Назва
+MSG_INFO_CONTAINER
+Контейнер
+MSG_INFO_LENGTH
+Тривалість
+MSG_INFO_PICTURES
+Зображення
+MSG_INFO_COLOURS
+Кольори
+MSG_INFO_BITS
+%u біт
+MSG_INFO_LIMITED
+обмежений діапазон
+MSG_INFO_FULL
+повний діапазон
+MSG_INFO_SHOWN
+Показ
+MSG_INFO_ON_LAYER
+на відеошарі дисплея
+MSG_INFO_BY_GRAPHICS
+малює graphics.library
+MSG_INFO_DECODED
+Декодування
+MSG_INFO_BY_CHIP
+відеодекодером
+MSG_INFO_BY_PROCESSOR
+процесором
+MSG_INFO_SOUND
+Звук
+MSG_INFO_NONE
+немає
+MSG_INFO_CHANNELS
+каналів: %u
+MSG_INFO_TRACKS
+Доріжки
+MSG_INFO_TRACK_COUNTS
+звук: %u, субтитри: %u
+MSG_VOLUME_HINT
+Гучність
+MSG_NOLIBRARY
+%s: не вдається відкрити %s\n
+MSG_NOMEMORY
+%s: недостатньо пам'яті\n
+MSG_NOWINDOW
+%s: не вдається відкрити вікно\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

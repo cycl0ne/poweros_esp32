@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; Sheet's strings in Danish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Ny
+MSG_MENU_OPEN
+Åbn...
+MSG_MENU_SAVE
+Gem
+MSG_MENU_SAVE_AS
+Gem som...
+MSG_MENU_QUIT
+Afslut
+MSG_MENU_EDIT
+Rediger
+MSG_MENU_UNDO
+Fortryd
+MSG_MENU_REDO
+Gentag
+MSG_MENU_CUT
+Klip
+MSG_MENU_COPY
+Kopiér
+MSG_MENU_PASTE
+Sæt ind
+MSG_MENU_CLEAR
+Ryd
+MSG_MENU_FILL_DOWN
+Udfyld nedad
+MSG_MENU_FILL_RIGHT
+Udfyld til højre
+MSG_MENU_SELECT_ALL
+Markér alt
+MSG_MENU_FIND
+Søg...
+MSG_MENU_FIND_NEXT
+Søg næste
+MSG_MENU_SHEET
+Ark
+MSG_MENU_INSERT_ROWS
+Indsæt rækker
+MSG_MENU_DELETE_ROWS
+Slet rækker
+MSG_MENU_INSERT_COLUMNS
+Indsæt kolonner
+MSG_MENU_DELETE_COLUMNS
+Slet kolonner
+MSG_MENU_WIDER
+Bredere kolonne
+MSG_MENU_NARROWER
+Smallere kolonne
+MSG_MENU_SUM
+AutoSum
+MSG_MENU_SORT_ASCENDING
+Sortér stigende
+MSG_MENU_SORT_DESCENDING
+Sortér faldende
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+Standard
+MSG_MENU_NUMBER
+Tal
+MSG_MENU_PERCENT
+Procent
+MSG_MENU_CURRENCY
+Valuta
+MSG_MENU_DECIMALS_MORE
+Flere decimaler
+MSG_MENU_DECIMALS_LESS
+Færre decimaler
+MSG_MENU_VIEW
+Vis
+MSG_MENU_RIBBON
+Bånd
+MSG_RIBBON_HOME
+Hjem
+MSG_RIBBON_CLIPBOARD
+Udklipsholder
+MSG_RIBBON_PASTE_HINT
+Indsæt det, der blev klippet eller kopieret
+MSG_RIBBON_NUMBER_HINT
+Vis tallene med decimaler, i tusinder
+MSG_RIBBON_PERCENT_HINT
+Vis tallene som procent
+MSG_RIBBON_CURRENCY_HINT
+Vis tallene som beløb
+MSG_RIBBON_DECIMALS_MORE_HINT
+Vis én decimal mere
+MSG_RIBBON_DECIMALS_LESS_HINT
+Vis én decimal mindre
+MSG_RIBBON_CELLS
+Celler
+MSG_RIBBON_INSERT
+Indsæt
+MSG_RIBBON_INSERT_HINT
+Indsæt rækker eller kolonner, hvor cellerne er markeret
+MSG_RIBBON_DELETE
+Slet
+MSG_RIBBON_DELETE_HINT
+Fjern rækkerne eller kolonnerne for de markerede celler
+MSG_RIBBON_EDITING
+Redigering
+MSG_RIBBON_SUM_HINT
+Læg tallene ovenover eller til venstre sammen
+MSG_RIBBON_SORT
+Sortér
+MSG_RIBBON_SORT_HINT
+Sæt rækkerne i rækkefølge efter den aktuelle celles kolonne
+MSG_RIBBON_FIND
+Søg
+MSG_RIBBON_FIND_HINT
+Find en celle ud fra dens indhold
+MSG_RIBBON_FILL
+Udfyld
+MSG_RIBBON_FILL_HINT
+Kopiér den første række eller kolonne over resten
+MSG_RIBBON_CLEAR_HINT
+Tøm de markerede celler
+MSG_ROWS
+Rækker
+MSG_COLUMNS
+Kolonner
+MSG_SUM
+Sum
+MSG_AVERAGE
+Gennemsnit
+MSG_COUNT
+Antal
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Stigende
+MSG_DESCENDING
+Faldende
+MSG_DOWN
+Nedad
+MSG_RIGHT
+Til højre
+MSG_PROBLEM_NAME
+Ingen sådan funktion eller navn
+MSG_PROBLEM_ARGUMENTS
+Forkert antal argumenter
+MSG_PROBLEM_PARENTHESES
+En parentes mangler sin partner
+MSG_PROBLEM_TOO_LONG
+Formlen er for lang
+MSG_PROBLEM_UNREADABLE
+Formlen kan ikke læses
+MSG_PROBLEM_AT
+%s, ved tegn %u
+MSG_NO_MEMORY_KEEP
+Ikke nok hukommelse til at beholde det hele
+MSG_NO_MEMORY_FILE
+Ikke nok hukommelse til hele filen
+MSG_LEFT_OUT
+Celler efter række 9999 eller kolonne IV blev udeladt
+MSG_NO_MEMORY_COPY
+Ingen hukommelse til at kopiere så meget
+MSG_NO_MEMORY_CLEAR
+Ikke nok hukommelse til at rydde det hele
+MSG_NO_MEMORY_PASTE
+Ikke nok hukommelse til at indsætte det hele
+MSG_NO_ROOM_COLUMNS
+Ingen plads: de sidste kolonner indeholder noget
+MSG_NO_ROOM_ROWS
+Ingen plads: de sidste rækker indeholder noget
+MSG_NO_MEMORY_THAT
+Ikke nok hukommelse til det
+MSG_NO_MEMORY_FORMAT
+Ikke nok hukommelse til at formatere det hele
+MSG_NOTHING_TO_ADD
+Ingen tal ovenover eller til venstre at lægge sammen
+MSG_NO_MEMORY_ALL
+Ikke nok hukommelse til alt det
+MSG_NO_MEMORY_SORT
+Ikke nok hukommelse til at sortere det hele
+MSG_NO_MEMORY_FILL
+Ikke nok hukommelse til at udfylde det hele
+MSG_NOT_FOUND
+Ingen celle indeholder det
+MSG_UNTITLED
+Unavngivet
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan ikke åbne %s
+MSG_CANNOT_READ
+Kan ikke læse %s
+MSG_TOO_BIG
+%s er for stor
+MSG_NO_MEMORY_FOR
+Ingen hukommelse til %s
+MSG_NO_MEMORY_TO_SAVE
+Ingen hukommelse til at gemme %s
+MSG_CANNOT_WRITE
+Kan ikke skrive %s
+MSG_NO_REQUESTER
+Ingen %s
+MSG_CHANGED
+Arket er ændret.\nGem det først?
+MSG_CHANGED_BUTTONS
+Gem|Gem ikke|Annuller
+MSG_OPEN_TITLE
+Åbn et ark
+MSG_SAVE_AS_TITLE
+Gem arket som
+MSG_FIND_LABEL
+Søg
+MSG_FIND_NEXT_BUTTON
+Næste
+MSG_FIND_PREVIOUS_BUTTON
+Forrige
+MSG_FIND_CLOSE_BUTTON
+Luk
+MSG_NOLIBRARY
+Ingen %s\n
+MSG_NOSCREEN
+Ingen standardskærm - ingen visning\n
+MSG_NOMEMORY
+Ingen hukommelse til vinduet\n

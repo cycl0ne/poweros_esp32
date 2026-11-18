@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; Sheet's strings in Irish.
+MSG_MENU_PROJECT
+Tionscadal
+MSG_MENU_NEW
+Nua
+MSG_MENU_OPEN
+Oscail...
+MSG_MENU_SAVE
+Sábháil
+MSG_MENU_SAVE_AS
+Sábháil Mar...
+MSG_MENU_QUIT
+Scoir
+MSG_MENU_EDIT
+Eagar
+MSG_MENU_UNDO
+Cealaigh
+MSG_MENU_REDO
+Athdhéan
+MSG_MENU_CUT
+Gearr
+MSG_MENU_COPY
+Cóipeáil
+MSG_MENU_PASTE
+Greamaigh
+MSG_MENU_CLEAR
+Glan
+MSG_MENU_FILL_DOWN
+Líon Síos
+MSG_MENU_FILL_RIGHT
+Líon ar Dheis
+MSG_MENU_SELECT_ALL
+Roghnaigh Gach Rud
+MSG_MENU_FIND
+Aimsigh...
+MSG_MENU_FIND_NEXT
+Aimsigh an Chéad Cheann Eile
+MSG_MENU_SHEET
+Bileog
+MSG_MENU_INSERT_ROWS
+Ionsáigh Rónna
+MSG_MENU_DELETE_ROWS
+Scrios Rónna
+MSG_MENU_INSERT_COLUMNS
+Ionsáigh Colúin
+MSG_MENU_DELETE_COLUMNS
+Scrios Colúin
+MSG_MENU_WIDER
+Colún Níos Leithne
+MSG_MENU_NARROWER
+Colún Níos Cúinge
+MSG_MENU_SUM
+UathShuim
+MSG_MENU_SORT_ASCENDING
+Sórtáil in Ord Ardaitheach
+MSG_MENU_SORT_DESCENDING
+Sórtáil in Ord Íslitheach
+MSG_MENU_FORMAT
+Formáid
+MSG_MENU_GENERAL
+Ginearálta
+MSG_MENU_NUMBER
+Uimhir
+MSG_MENU_PERCENT
+Céatadán
+MSG_MENU_CURRENCY
+Airgeadra
+MSG_MENU_DECIMALS_MORE
+Tuilleadh Deachúlach
+MSG_MENU_DECIMALS_LESS
+Níos Lú Deachúlach
+MSG_MENU_VIEW
+Amharc
+MSG_MENU_RIBBON
+Ribín
+MSG_RIBBON_HOME
+Baile
+MSG_RIBBON_CLIPBOARD
+Gearrthaisce
+MSG_RIBBON_PASTE_HINT
+Cuir isteach a gearradh nó a cóipeáladh
+MSG_RIBBON_NUMBER_HINT
+Taispeáin na huimhreacha le deachúlacha, i míleanna
+MSG_RIBBON_PERCENT_HINT
+Taispeáin na huimhreacha mar chéatadán
+MSG_RIBBON_CURRENCY_HINT
+Taispeáin na huimhreacha mar airgead
+MSG_RIBBON_DECIMALS_MORE_HINT
+Taispeáin deachúlach amháin níos mó
+MSG_RIBBON_DECIMALS_LESS_HINT
+Taispeáin deachúlach amháin níos lú
+MSG_RIBBON_CELLS
+Cealla
+MSG_RIBBON_INSERT
+Ionsáigh
+MSG_RIBBON_INSERT_HINT
+Cuir isteach rónna nó colúin san áit a bhfuil cealla roghnaithe
+MSG_RIBBON_DELETE
+Scrios
+MSG_RIBBON_DELETE_HINT
+Bain amach rónna nó colúin na gceall roghnaithe
+MSG_RIBBON_EDITING
+Eagarthóireacht
+MSG_RIBBON_SUM_HINT
+Suimigh na huimhreacha thuas nó ar chlé
+MSG_RIBBON_SORT
+Sórtáil
+MSG_RIBBON_SORT_HINT
+Cuir na rónna in ord de réir cholún na cille reatha
+MSG_RIBBON_FIND
+Aimsigh
+MSG_RIBBON_FIND_HINT
+Aimsigh cill de réir a bhfuil inti
+MSG_RIBBON_FILL
+Líon
+MSG_RIBBON_FILL_HINT
+Cóipeáil an chéad ró nó colún thar an gcuid eile
+MSG_RIBBON_CLEAR_HINT
+Folmhaigh na cealla roghnaithe
+MSG_ROWS
+Rónna
+MSG_COLUMNS
+Colúin
+MSG_SUM
+Suim
+MSG_AVERAGE
+Meán
+MSG_COUNT
+Comhaireamh
+MSG_MIN
+Íos
+MSG_MAX
+Uas
+MSG_ASCENDING
+Ardaitheach
+MSG_DESCENDING
+Íslitheach
+MSG_DOWN
+Síos
+MSG_RIGHT
+Ar Dheis
+MSG_PROBLEM_NAME
+Níl a leithéid d'fheidhm ná d'ainm ann
+MSG_PROBLEM_ARGUMENTS
+Líon mícheart argóintí
+MSG_PROBLEM_PARENTHESES
+Níl páirtí ag lúibín
+MSG_PROBLEM_TOO_LONG
+Tá an fhoirmle rófhada
+MSG_PROBLEM_UNREADABLE
+Ní féidir an fhoirmle a léamh
+MSG_PROBLEM_AT
+%s, ag carachtar %u
+MSG_NO_MEMORY_KEEP
+Níl dóthain cuimhne chun é sin go léir a choinneáil
+MSG_NO_MEMORY_FILE
+Níl dóthain cuimhne don chomhad ar fad
+MSG_LEFT_OUT
+Fágadh amach cealla thar ró 9999 nó colún IV
+MSG_NO_MEMORY_COPY
+Níl dóthain cuimhne chun an méid sin a chóipeáil
+MSG_NO_MEMORY_CLEAR
+Níl dóthain cuimhne chun é ar fad a ghlanadh
+MSG_NO_MEMORY_PASTE
+Níl dóthain cuimhne chun é ar fad a ghreamú
+MSG_NO_ROOM_COLUMNS
+Níl spás ann: tá rud éigin sna colúin dheireanacha
+MSG_NO_ROOM_ROWS
+Níl spás ann: tá rud éigin sna rónna deireanacha
+MSG_NO_MEMORY_THAT
+Níl dóthain cuimhne chuige sin
+MSG_NO_MEMORY_FORMAT
+Níl dóthain cuimhne chun é ar fad a fhormáidiú
+MSG_NOTHING_TO_ADD
+Níl aon uimhreacha thuas nó ar chlé le suimiú
+MSG_NO_MEMORY_ALL
+Níl dóthain cuimhne dó sin go léir
+MSG_NO_MEMORY_SORT
+Níl dóthain cuimhne chun é sin go léir a shórtáil
+MSG_NO_MEMORY_FILL
+Níl dóthain cuimhne chun é ar fad a líonadh
+MSG_NOT_FOUND
+Níl sé sin in aon chill
+MSG_UNTITLED
+Gan Teideal
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Ní féidir %s a oscailt
+MSG_CANNOT_READ
+Ní féidir %s a léamh
+MSG_TOO_BIG
+Tá %s rómhór
+MSG_NO_MEMORY_FOR
+Níl dóthain cuimhne do %s
+MSG_NO_MEMORY_TO_SAVE
+Níl dóthain cuimhne chun %s a shábháil
+MSG_CANNOT_WRITE
+Ní féidir %s a scríobh
+MSG_NO_REQUESTER
+Níl %s ann
+MSG_CHANGED
+Athraíodh an bhileog.\nÍ a shábháil ar dtús?
+MSG_CHANGED_BUTTONS
+Sábháil|Ná Sábháil|Cealaigh
+MSG_OPEN_TITLE
+Oscail bileog
+MSG_SAVE_AS_TITLE
+Sábháil an bhileog mar
+MSG_FIND_LABEL
+Aimsigh
+MSG_FIND_NEXT_BUTTON
+Ar Aghaidh
+MSG_FIND_PREVIOUS_BUTTON
+Siar
+MSG_FIND_CLOSE_BUTTON
+Dún
+MSG_NOLIBRARY
+Níl %s ann\n
+MSG_NOSCREEN
+Níl scáileán réamhshocraithe ann - níl taispeáint ann\n
+MSG_NOMEMORY
+Níl dóthain cuimhne don fhuinneog\n

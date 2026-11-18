@@ -1,0 +1,75 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; http.library's words for a request that failed, in Slovak: a clause
+; that starts in lower case, without its full stop.
+MSG_NOMEM
+nedostatok pamäte
+MSG_IO
+spojenie zlyhalo
+MSG_IO_BECAUSE
+spojenie zlyhalo: %s
+MSG_STOPPED
+zastavené
+MSG_TIMEOUT
+server neodpovedal včas
+MSG_URL
+nie je to adresa URL http:// ani https://, alebo je príliš dlhá
+MSG_HOST
+hostiteľ nemá adresu
+MSG_HOST_NAMED
+%s nemá adresu
+MSG_TLS
+relácia TLS zlyhala
+MSG_TLS_CERTIFICATE
+certifikát servera nie je dôveryhodný: %s
+MSG_TLS_CLOCK
+hodiny nie sú nastavené, takže nemožno overiť žiadny certifikát (TimeSync)
+MSG_TLS_ALERT
+server odmietol reláciu TLS (výstraha %u)
+MSG_TLS_HANDSHAKE
+handshake TLS zlyhal
+MSG_PROTOCOL
+odpoveď nie je HTTP
+MSG_REDIRECT
+viac presmerovaní, než je povolené, alebo presmerovanie nikam
+MSG_TRUNCATED
+spojenie skončilo skôr než odpoveď
+MSG_STATE
+volanie mimo poradia alebo požiadavka, ktorú nemožno vykonať
+MSG_LIBRARY
+chýba knižnica, ktorú požiadavka potrebuje
+MSG_LIBRARY_NAMED
+%s chýba
+MSG_DATA
+zbalenú odpoveď servera nemožno rozbaliť
+MSG_CLOSED
+server zatvoril spojenie bez odpovede
+MSG_UNKNOWN
+požiadavka zlyhala (%d)
+MSG_VERDICT_MALFORMED
+jeden z jeho certifikátov nemožno prečítať
+MSG_VERDICT_UNKNOWN_ISSUER
+nepodpísal ho žiadny dôveryhodný koreňový certifikát
+MSG_VERDICT_BAD_SIGNATURE
+podpis v jeho reťazi je chybný
+MSG_VERDICT_UNSUPPORTED
+je podpísaný spôsobom, ktorý nemožno overiť
+MSG_VERDICT_EXPIRED
+jeho platnosť vypršala
+MSG_VERDICT_NOT_YET_VALID
+ešte nie je platný
+MSG_VERDICT_NOT_CA
+vydal ho certifikát, ktorý nesmie vydávať certifikáty
+MSG_VERDICT_PATH_LENGTH
+jeho reťaz je dlhšia, než jeho certifikačné autority dovoľujú
+MSG_VERDICT_NAME_CONSTRAINTS
+certifikačná autorita v jeho reťazi má obmedzenia názvov
+MSG_VERDICT_WRONG_USAGE
+nie je určený pre server
+MSG_VERDICT_WRONG_NAME
+je pre iného hostiteľa
+MSG_VERDICT_TOO_LONG
+jeho reťaz je príliš dlhá
+MSG_VERDICT_OTHER
+bez uvedeného dôvodu

@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; Notepad's strings in Greek.
+MSG_MENU_PROJECT
+Έργο
+MSG_MENU_NEW
+Δημιουργία
+MSG_MENU_OPEN
+Άνοιγμα...
+MSG_MENU_SAVE
+Αποθήκευση
+MSG_MENU_SAVE_AS
+Αποθήκευση ως...
+MSG_MENU_QUIT
+Έξοδος
+MSG_MENU_EDIT
+Επεξεργασία
+MSG_MENU_UNDO
+Αναίρεση
+MSG_MENU_REDO
+Επανάληψη
+MSG_MENU_CUT
+Αποκοπή
+MSG_MENU_COPY
+Αντιγραφή
+MSG_MENU_PASTE
+Επικόλληση
+MSG_MENU_SELECT_ALL
+Επιλογή όλων
+MSG_MENU_SEARCH
+Αναζήτηση
+MSG_MENU_FIND
+Εύρεση...
+MSG_MENU_FIND_NEXT
+Εύρεση επόμενου
+MSG_MENU_FIND_PREVIOUS
+Εύρεση προηγούμενου
+MSG_MENU_REPLACE
+Αντικατάσταση...
+MSG_MENU_VIEW
+Προβολή
+MSG_MENU_WRAP
+Αναδίπλωση λέξεων
+MSG_MENU_NUMBERS
+Αριθμοί γραμμών
+MSG_MENU_ZIG
+Επισήμανση Zig
+MSG_MENU_RIBBON
+Κορδέλα
+MSG_RIBBON_HOME
+Αρχική
+MSG_RIBBON_CLIPBOARD
+Πρόχειρο
+MSG_RIBBON_PASTE_HINT
+Επικόλληση όσων αποκόπηκαν ή αντιγράφηκαν
+MSG_RIBBON_EDITING
+Επεξεργασία
+MSG_RIBBON_FIND
+Εύρεση
+MSG_RIBBON_FIND_HINT
+Εύρεση κειμένου· η λίστα βρίσκει ξανά το επόμενο ή το προηγούμενο
+MSG_RIBBON_REPLACE
+Αντικατάσταση
+MSG_RIBBON_REPLACE_HINT
+Αντικατάσταση ενός κειμένου που βρέθηκε με άλλο
+MSG_RIBBON_SELECT_ALL_HINT
+Επιλογή όλου του κειμένου
+MSG_RIBBON_LINES
+Γραμμές
+MSG_RIBBON_WRAP_HINT
+Συνέχεια στην επόμενη γραμμή αντί για πέρα από την άκρη του παραθύρου
+MSG_RIBBON_NUMBERS_HINT
+Αρίθμηση κάθε γραμμής στα αριστερά
+MSG_RIBBON_HIGHLIGHTING
+Επισήμανση
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Εμφάνιση λέξεων-κλειδιών, συμβολοσειρών και σχολίων της Zig, το καθένα με δικό του χρώμα
+MSG_UNTITLED
+Χωρίς τίτλο
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Δεν ανοίγει το %s
+MSG_CANNOT_READ
+Δεν διαβάζεται το %s
+MSG_TOO_BIG
+Το %s είναι πολύ μεγάλο
+MSG_NO_MEMORY_FOR
+Δεν υπάρχει μνήμη για το %s
+MSG_NO_MEMORY_TO_SAVE
+Δεν υπάρχει μνήμη για την αποθήκευση του %s
+MSG_CANNOT_WRITE
+Δεν γράφεται το %s
+MSG_NO_REQUESTER
+Δεν υπάρχει %s
+MSG_CHANGED
+Το κείμενο άλλαξε.\nΑποθήκευση πρώτα;
+MSG_CHANGED_BUTTONS
+Αποθήκευση|Χωρίς αποθήκευση|Άκυρο
+MSG_OPEN_TITLE
+Άνοιγμα κειμένου
+MSG_SAVE_AS_TITLE
+Αποθήκευση του κειμένου ως
+MSG_FIND_TITLE
+Εύρεση και αντικατάσταση
+MSG_FIND_LABEL
+Εύρεση
+MSG_REPLACE_WITH
+Αντικατάσταση με
+MSG_ANY_CASE
+Χωρίς διάκριση πεζών-κεφαλαίων
+MSG_FIND_NEXT_BUTTON
+Εύρεση επόμενου
+MSG_REPLACE_BUTTON
+Αντικατάσταση
+MSG_REPLACE_ALL_BUTTON
+Αντικατάσταση όλων
+MSG_NOLIBRARY
+Δεν υπάρχει %s\n
+MSG_NOSCREEN
+Δεν υπάρχει προεπιλεγμένη οθόνη - καμία απεικόνιση\n
+MSG_NOMEMORY
+Δεν υπάρχει μνήμη για το παράθυρο\n

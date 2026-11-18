@@ -1,0 +1,26 @@
+# LOCALE:Languages/romana.language - Romanian: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=duminică DAY_2=luni DAY_3=marți DAY_4=miercuri DAY_5=joi
+DAY_6=vineri DAY_7=sâmbătă
+ABDAY_1=dum ABDAY_2=lun ABDAY_3=mar ABDAY_4=mie ABDAY_5=joi
+ABDAY_6=vin ABDAY_7=sâm
+# The months, then their short names.
+MON_1=ianuarie MON_2=februarie MON_3=martie MON_4=aprilie MON_5=mai
+MON_6=iunie MON_7=iulie MON_8=august MON_9=septembrie MON_10=octombrie
+MON_11=noiembrie MON_12=decembrie
+ABMON_1=ian ABMON_2=feb ABMON_3=mar ABMON_4=apr ABMON_5=mai
+ABMON_6=iun ABMON_7=iul ABMON_8=aug ABMON_9=sep ABMON_10=oct
+ABMON_11=nov ABMON_12=dec
+# Yes and no, before and after noon.
+YESSTR=Da NOSTR=Nu AM_STR=a.m. PM_STR=p.m.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Ieri TODAYSTR=Azi TOMORROWSTR=Mâine
+FUTURESTR=Viitor
+# The order of the letters: Ă then Â after A, Î after I, Ș after S and
+# Ț after T, the forms with a cedilla (Ş, Ţ) taken for those with a comma.
+AFTER_A=Ă,Â AFTER_I=Î AFTER_S=ȘŞ AFTER_T=ȚŢ

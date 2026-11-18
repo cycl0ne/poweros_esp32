@@ -1,0 +1,350 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; The desktop's strings in Maltese.
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Sfond
+MSG_MENU_EXECUTE
+Eżegwixxi kmand...
+MSG_MENU_REDRAW_ALL
+Erġa' pinġi kollox
+MSG_MENU_UPDATE_ALL
+Aġġorna kollox
+MSG_MENU_LAST_MESSAGE
+L-aħħar messaġġ
+MSG_MENU_VOLUME
+Volum...
+MSG_MENU_ABOUT
+Dwar...
+MSG_MENU_QUIT
+Oħroġ...
+MSG_MENU_REBOOT
+Erġa' ibda...
+MSG_MENU_WINDOW
+Tieqa
+MSG_MENU_NEW_DRAWER
+Folder ġdid
+MSG_MENU_OPEN_PARENT
+Iftaħ il-folder ta' fuq
+MSG_MENU_BACK
+Lura
+MSG_MENU_FORWARD
+'Il quddiem
+MSG_MENU_CLOSE
+Agħlaq
+MSG_MENU_UPDATE
+Aġġorna
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Agħżel il-kontenut
+MSG_MENU_CLEAN_UP
+Irranġa
+MSG_MENU_CLEAN_UP_BY
+Irranġa skont
+MSG_MENU_BY_NAME
+Isem
+MSG_MENU_BY_DATE
+Data
+MSG_MENU_BY_SIZE
+Daqs
+MSG_MENU_SNAP
+Allinja mal-grilja
+MSG_MENU_ARRANGE
+Irranġa meta jinbidel id-daqs
+MSG_MENU_SNAPSHOT
+Żomm il-pożizzjoni
+MSG_MENU_SNAPSHOT_WINDOW
+Tieqa
+MSG_MENU_SNAPSHOT_ALL
+Kollox
+MSG_MENU_SHOW
+Uri
+MSG_MENU_ONLY_ICONS
+Ikoni biss
+MSG_MENU_ALL_FILES
+Il-fajls kollha
+MSG_MENU_VIEW_BY
+Ara skont
+MSG_MENU_BY_ICON
+Ikona
+MSG_MENU_RIBBON
+Żigarella
+MSG_MENU_ICONS
+Ikoni
+MSG_MENU_OPEN
+Iftaħ
+MSG_MENU_COPY
+Ikkopja
+MSG_MENU_RENAME
+Semmi mill-ġdid...
+MSG_MENU_INFORMATION
+Informazzjoni...
+MSG_MENU_UNSNAPSHOT
+Insa l-pożizzjoni
+MSG_MENU_LEAVE_OUT
+Ħalli fuq id-desktop
+MSG_MENU_PUT_AWAY
+Erġa' qiegħed f'postu
+MSG_MENU_DELETE
+Ħassar...
+MSG_MENU_FORMAT
+Ifformattja d-diska...
+MSG_MENU_EMPTY_TRASH
+Battal il-barmil
+MSG_MENU_TOOLS
+Għodod
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+Dar
+MSG_RIBBON_GO
+Mur
+MSG_RIBBON_PARENT
+Ta' fuq
+MSG_RIBBON_DRAWER
+Folder
+MSG_RIBBON_RENAME
+Semmi mill-ġdid
+MSG_RIBBON_DELETE
+Ħassar
+MSG_RIBBON_INFORMATION
+Informazzjoni
+MSG_RIBBON_VIEW
+Dehra
+MSG_RIBBON_ARRANGE
+Irranġa
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+Protezzjoni
+MSG_LIST_DRAWER
+Folder
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+Memorja
+MSG_TITLE_INTERNAL
+Interna
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+ħielsa
+MSG_TITLE_BATTERY
+Batterija
+MSG_TITLE_CHARGING
+qed tiċċarġja
+MSG_TITLE_EXTERNAL_POWER
+imqabbda mal-elettriku
+;
+; A disk's window title.
+MSG_DISK_FULL
+mimlija
+MSG_DISK_IN_USE
+użati
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+Għad m'hemm l-ebda messaġġ
+MSG_NOT_EVERY_FILE
+Mhux kull fajl magħżul seta' jittieħed
+MSG_DISK_NOT_RENAMED
+Id-diska ma setgħetx tissemma mill-ġdid
+MSG_NOT_RENAMED
+Ma setax jissemma mill-ġdid
+MSG_ICON_NOT_WRITTEN
+Ikona ma setgħetx tinkiteb
+MSG_DISK_NOT_THERE
+Id-diska mhix hemm
+MSG_DISK_BUSY
+Id-diska qed tintuża
+MSG_DISK_NOT_FORMATTED
+Id-diska ma setgħetx tiġi fformattjata
+MSG_DRAWER_NOT_MADE
+Il-folder ma setax jinħoloq
+MSG_SETTING_NOT_KEPT
+%s ma setax jinżamm
+MSG_SETTING_NOT_WRITTEN
+%s ma setax jinkiteb f'anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+L-ikona tal-folder ma setgħetx tinkiteb
+MSG_NO_MEMORY_REBOOT
+M'hemmx memorja biex terġa' tibda
+MSG_NO_MEMORY_ABOUT
+M'hemmx memorja għal Dwar
+MSG_NO_TOOL
+%s m'għandux programm li jiftħu
+MSG_NOT_STARTED
+%s ma setax jinbeda
+MSG_COMMAND_NOT_STARTED
+Il-kmand ma setax jinbeda
+MSG_SHELL_DRAWER_NOT_FOUND
+Il-folder tax-shell ma nstabx
+MSG_SHELL_NOT_STARTED
+Ix-shell ma setax jinbeda
+MSG_TRASH_OWN_DISK
+F'barmil jidħlu biss il-fajls tad-diska tiegħu stess
+MSG_NOT_MOVED
+Fajl ma setax jitmexxa hemmhekk
+MSG_LEFT_OUT_NOT_KEPT
+Id-diska ma żżommx dak li jitħalla fuq id-desktop
+MSG_NO_MEMORY_WORK
+M'hemmx memorja biex jibda x-xogħol
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+Programmi mibdija mid-desktop għadhom għaddejjin (%lu).\nJibqgħu għaddejjin. It-twieqi, l-ikoni u\nl-elementi tal-menu li żiedulu l-programmi (%lu)\njisparixxu miegħu.\n\nToħroġ mid-desktop?
+MSG_QUIT_RUNNING
+Programmi mibdija mid-desktop għadhom għaddejjin (%lu).\nJibqgħu għaddejjin.\n\nToħroġ mid-desktop?
+MSG_QUIT_ADDED
+It-twieqi, l-ikoni u l-elementi tal-menu li l-programmi\nżiedu mad-desktop (%lu) jisparixxu miegħu.\n\nToħroġ mid-desktop?
+MSG_QUIT_ASK
+Toħroġ mid-desktop?
+MSG_QUIT_BUTTONS
+Oħroġ|Ikkanċella
+MSG_DELETE_ASK
+Tħassar għal kollox dak li hu magħżul (%lu)?\nFolder imur b'kull ma fih.
+MSG_DELETE_BUTTONS
+Ħassar|Ikkanċella
+MSG_RENAME_PROMPT
+Isem ġdid:
+MSG_FORMAT_TITLE
+Ifformattja d-diska
+MSG_FORMAT_ASK
+Tifformattja %s?\nKull ma fiha jintilef.
+MSG_FORMAT_BUTTONS
+Ifformattja|Ikkanċella
+MSG_NEW_DRAWER_PROMPT
+Isem għall-folder il-ġdid:
+MSG_UNNAMED
+Bla isem
+MSG_EXECUTE_TITLE
+Eżegwixxi kmand
+MSG_EXECUTE_PROMPT
+Kmand li għandu jitħaddem:
+MSG_OUTPUT
+Output
+MSG_REBOOT_TITLE
+Erġa' ibda
+MSG_REBOOT_ASK
+Terġa' tibda l-magna?\nDak li l-programmi ma ssejvjawx jintilef.
+MSG_REBOOT_BUTTONS
+Erġa' ibda|Ikkanċella
+MSG_REBOOT_IN_USE
+Qed jintużaw, għalhekk dak li fihom jista' ma jinkitibx:\n%s\n\nTerġa' tibda xorta waħda?
+MSG_STARTUP_WAIT
+Il-programm '%s'\ngħadu ma spiċċax.\nTistenna aktar?
+MSG_STARTUP_BUTTONS
+Stenna|Kompli
+MSG_OK
+_OK
+MSG_CANCEL
+_Ikkanċella
+;
+; About.
+MSG_ABOUT_TITLE
+Dwar Anvil
+MSG_ABOUT_WHAT
+Id-desktop ta' PowerOS
+MSG_ABOUT_RELEASE
+Ħarġa
+MSG_ABOUT_KERNEL
+Kernel
+MSG_ABOUT_BOARD
+Bord
+MSG_ABOUT_PROCESSOR
+Proċessur
+MSG_ABOUT_CORES
+Cores
+MSG_ABOUT_CLOCK
+Frekwenza
+MSG_ABOUT_SCREEN
+Skrin
+MSG_ABOUT_SYSTEM_DISK
+Diska tas-sistema
+MSG_ABOUT_UP_FOR
+Mixgħula minn
+MSG_ABOUT_IN_USE
+Użata
+MSG_ABOUT_OF
+minn
+MSG_ABOUT_BITS
+bits għal kull pixel
+MSG_ABOUT_DAY
+jum
+MSG_ABOUT_DAYS
+jiem
+;
+; Information.
+MSG_INFO_TITLE
+Informazzjoni
+MSG_INFO_STATE
+Stat
+MSG_INFO_READ_ONLY
+Qari biss
+MSG_INFO_VALIDATING
+Qed tiġi vvalidata
+MSG_INFO_READ_WRITE
+Qari u kitba
+MSG_INFO_UNKNOWN
+Mhux magħruf
+MSG_INFO_BLOCKS
+Blokki
+MSG_INFO_USED
+Użati
+MSG_INFO_FREE
+Ħielsa
+MSG_INFO_BLOCK_SIZE
+Daqs tal-blokk
+MSG_INFO_BYTES
+bytes
+MSG_INFO_BLOCKS_COUNTED
+blokki
+MSG_INFO_CREATED
+Maħluq
+MSG_INFO_LAST_CHANGED
+L-aħħar bidla
+MSG_INFO_SCRIPT
+Skript
+MSG_INFO_ARCHIVED
+Arkivjat
+MSG_INFO_READABLE
+Jinqara
+MSG_INFO_WRITABLE
+Jinkiteb
+MSG_INFO_EXECUTABLE
+Jitħaddem
+MSG_INFO_DELETABLE
+Jitħassar
+MSG_INFO_COMMENT
+Kumment
+MSG_INFO_STACK
+Stack
+MSG_INFO_DEFAULT_TOOL
+Programm prestabbilit
+MSG_INFO_TOOL_TYPES
+Tipi ta' għodda
+MSG_INFO_SAVE
+_Issejvja
+MSG_INFO_NOT_WRITTEN
+L-ikona ma setgħetx tinkiteb.
+MSG_INFO_OK
+OK
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+Ikkupjar
+MSG_WORK_DELETING
+Tħassir
+MSG_WORK_STOP
+_Waqqaf
+MSG_WORK_WAITING
+%lu oħra jistennew
+MSG_WORK_REPLACE_ASK
+%s diġà jeżisti.\nTibdlu?
+MSG_WORK_REPLACE_BUTTONS
+Ibdel|Ibdel kollox|Aqbeż|Waqqaf

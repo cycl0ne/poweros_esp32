@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; Movie's strings in Latvian.
+MSG_MENU_PROJECT
+Projekts
+MSG_MENU_OPEN
+Atvērt...
+MSG_MENU_WHOLE_SCREEN
+Pilnekrāns
+MSG_MENU_ABOUT
+Par
+MSG_MENU_QUIT
+Iziet
+MSG_MENU_SOUND
+Skaņa
+MSG_MENU_NO_SOUND
+Nav
+MSG_MENU_SUBTITLES
+Subtitri
+MSG_MENU_SUBTITLES_OFF
+Izslēgti
+MSG_MENU_TRACK
+Celiņš
+MSG_MENU_FRAME_RATE
+Kadru nomaiņas ātrums
+MSG_MENU_INFO
+Informācija par filmu...
+MSG_FRAME_RATE
+%u,%u / %u,%u kadri/s
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u kadri/s, izlaisti: %u
+MSG_ASK_OPEN
+Atskaņot filmu
+MSG_ABOUT_TITLE
+Par Movie
+MSG_ABOUT
+%s\n\nAtskaņo filmas - MP4, QuickTime MOV un Matroska MKV:\nattēlu H.264, H.265 un Motion JPEG,\nskaņu AAC, AC-3, MP3, FLAC un Vorbis, un subtitrus.
+MSG_OK
+Labi
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nnevar atskaņot:\n%s
+MSG_INFO_TITLE
+Informācija par filmu
+MSG_INFO_FILE
+Fails
+MSG_INFO_NAMED
+Nosaukums
+MSG_INFO_CONTAINER
+Konteiners
+MSG_INFO_LENGTH
+Ilgums
+MSG_INFO_PICTURES
+Attēls
+MSG_INFO_COLOURS
+Krāsas
+MSG_INFO_BITS
+%u biti
+MSG_INFO_LIMITED
+ierobežots diapazons
+MSG_INFO_FULL
+pilns diapazons
+MSG_INFO_SHOWN
+Rāda
+MSG_INFO_ON_LAYER
+displeja video slānī
+MSG_INFO_BY_GRAPHICS
+zīmē graphics.library
+MSG_INFO_DECODED
+Dekodē
+MSG_INFO_BY_CHIP
+video dekodētājs
+MSG_INFO_BY_PROCESSOR
+procesors
+MSG_INFO_SOUND
+Skaņa
+MSG_INFO_NONE
+nav
+MSG_INFO_CHANNELS
+kanāli: %u
+MSG_INFO_TRACKS
+Celiņi
+MSG_INFO_TRACK_COUNTS
+skaņa: %u, subtitri: %u
+MSG_VOLUME_HINT
+Skaļums
+MSG_NOLIBRARY
+%s: nevar atvērt %s\n
+MSG_NOMEMORY
+%s: nepietiek atmiņas\n
+MSG_NOWINDOW
+%s: nevar atvērt savu logu\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

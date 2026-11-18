@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; Emoji's strings in Dutch.
+MSG_SEARCH
+Zoeken
+MSG_USED
+Laatst gebruikt
+MSG_NONE_USED
+Nog geen gebruikt
+MSG_NOT_FOUND
+Geen gevonden
+MSG_TONE_NONE
+Geen huidskleur
+MSG_TONE_LIGHT
+Licht
+MSG_TONE_MEDIUM_LIGHT
+Middellicht
+MSG_TONE_MEDIUM
+Middel
+MSG_TONE_MEDIUM_DARK
+Middeldonker
+MSG_TONE_DARK
+Donker
+MSG_GROUP_SMILEYS
+Smileys & emoties
+MSG_GROUP_PEOPLE
+Mensen & lichaam
+MSG_GROUP_ANIMALS
+Dieren & natuur
+MSG_GROUP_FOOD
+Eten & drinken
+MSG_GROUP_TRAVEL
+Reizen & plaatsen
+MSG_GROUP_ACTIVITIES
+Activiteiten
+MSG_GROUP_OBJECTS
+Objecten
+MSG_GROUP_SYMBOLS
+Symbolen
+MSG_GROUP_FLAGS
+Vlaggen

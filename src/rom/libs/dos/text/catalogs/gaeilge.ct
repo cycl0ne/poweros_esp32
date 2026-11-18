@@ -1,0 +1,380 @@
+## version $VER: sys/dos.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; dos.library's strings in Irish.
+;
+SOFTWARE_FAILURE
+Teip Bogearraí
+;
+RUN_FAILED
+Theip ar %s, cód fillte %ld\n
+;
+USE_COUNT
+%TH LÍON ÚSÁIDE\n\n
+;
+NAME
+AINM
+;
+DISABLED
+%TH DÍCHUMASAITHE\n
+;
+INTERNAL
+%TH INMHEÁNACH\n
+;
+SYSTEM
+%TH CÓRAIS\n
+;
+FAULT
+Earráid %3ld
+;
+FAIL_LIMIT
+Teorainn teipe: %ld\n
+;
+BAD_RETURN_CODE
+Sonraíodh drochchód fillte
+;
+CURRENT_DIR
+Comhadlann reatha
+;
+NO_RETURN_CODE
+Níor shocraigh an t-ordú deireanach cód fillte
+;
+LAST_CMD_FAILED
+Theip ar an ordú deireanach mar\x20
+;
+PROCESS_ENDING
+Próiseas %N ag críochnú
+;
+REQUESTED_SIZE_TOO_SMALL
+Tá an méid a iarradh róbheag
+;
+REQUESTED_SIZE_TOO_LARGE
+Tá an méid a iarradh rómhór
+;
+CURRENT_STACK_SIZE
+Is é %ld beart méid reatha na cruaiche\n
+;
+NEWSHELL_FAILED
+Theip ar NewShell
+;
+MISSING_ELSE_OR_ENDIF
+ELSE nó ENDIF ar iarraidh
+;
+MUST_BE_IN_CMD_FILE
+Caithfidh sé a bheith i gcomhad orduithe
+;
+MORE_THAN_ONE_DIR
+Meaitseálann níos mó ná comhadlann amháin
+;
+CANT_SET
+Ní féidir %s a shocrú\n
+;
+BLOCK_CORRUPT_DIR
+Bloc %ld: comhadlann truaillithe
+;
+BLOCK_CORRUPT_FILE
+Bloc %ld: comhad truaillithe
+;
+BLOCK_BAD_HEADER
+Bloc %ld: droch-chineál ceanntáisc
+;
+BLOCK_OUT_OF_RANGE
+Bloc %ld as raon
+;
+BLOCK_USED_TWICE
+Bloc %ld in úsáid faoi dhó
+;
+VALIDATION_ERROR
+Earráid agus %b á bhailíochtú
+;
+ON_DISK_BLOCK
+ar bhloc diosca %ld
+;
+CHECKSUM_ERROR
+tá earráid seiceála suime air
+;
+WRITE_ERROR
+tá earráid scríofa air
+;
+READ_ERROR
+tá earráid léite air
+;
+UNABLE_CREATE_PROC
+Ní féidir próiseas a chruthú\n
+;
+NEW_SHELL_PROCESS
+Próiseas nua Shell %ld\n
+;
+CANT_OPEN_FROM_FILE
+Ní féidir comhad FROM %s a oscailt\n
+;
+SUSPEND_REBOOT
+Cuir ar Fionraí|Atosaigh
+;
+RETRY_CANCEL
+Bain Triail Eile As|Cealaigh
+;
+NO_ROOM_FOR_BITMAP
+Níl spás don mhapa giotán
+;
+CMD_TOO_LONG
+Tá an t-ordú rófhada
+;
+SHELL_ERROR
+Earráid bhlaoisc:
+;
+CMDNAME_ERROR
+Earráid in ainm an ordaithe
+;
+UNKNOWN_COMMAND
+Ordú anaithnid
+;
+LOAD_ERROR
+Ní féidir é a lódáil
+;
+SYNTAX_ERROR
+earráid chomhréire
+;
+REDIRECT_ERROR
+ní féidir an comhad atreoraithe a oscailt
+;
+ERROR
+Earráid\x20
+;
+EMPTY_STRING
+
+;
+DISK_CORRUPT
+Diosca truaillithe - stopadh an tasc
+;
+PROGRAM_FAILED
+Theip ar an ríomhchlár (earráid #
+;
+WAIT_FOR_ACTIVITY
+Fan go gcríochnóidh gníomhaíocht an diosca.
+;
+IN_DEVICE
+i ngléas %s%s
+;
+IN_UNIT
+in aonad %ld%s
+;
+YOU_MUST_REPLACE
+CAITHFIDH tú an t-imleabhar a chur ar ais
+;
+READ_WRITE_ERROR
+tá earráid léite/scríofa air
+;
+NO_DISK_PRESENT
+Níl diosca ann
+;
+NOT_A_DOS_DISK
+Ní diosca DOS é
+;
+ANY_DRIVE
+in aon tiomántán
+;
+REPLACE_VOLUME
+Cuir an t-imleabhar ar ais
+;
+INSERT_VOLUME
+Cuir isteach an t-imleabhar
+;
+IS_FULL
+lán
+;
+IS_PROTECTED
+cosanta ar scríobh
+;
+IS_NOT_VALIDATED
+gan bhailíochtú
+;
+VOLUME
+Imleabhar
+;
+ERROR_NO_FREE_STORE
+níl dóthain cuimhne ar fáil
+;
+ERROR_TASK_TABLE_FULL
+tá tábla na bpróiseas lán
+;
+ERROR_BAD_TEMPLATE
+droch-theimpléad
+;
+ERROR_BAD_NUMBER
+drochuimhir
+;
+ERROR_REQUIRED_ARG_MISSING
+argóint riachtanach ar iarraidh
+;
+ERROR_KEY_NEEDS_ARG
+luach i ndiaidh eochairfhocail ar iarraidh
+;
+ERROR_TOO_MANY_ARGS
+líon mícheart argóintí
+;
+ERROR_UNMATCHED_QUOTES
+comharthaí athfhriotail gan mheaitseáil
+;
+ERROR_LINE_TOO_LONG
+líne argóintí neamhbhailí nó rófhada
+;
+ERROR_FILE_NOT_OBJECT
+ní comhad inrite é
+;
+ERROR_INVALID_RESIDENT_LIBRARY
+leabharlann chónaitheach neamhbhailí
+;
+ERROR_OBJECT_IN_USE
+tá an réad in úsáid
+;
+ERROR_OBJECT_EXISTS
+tá an réad ann cheana
+;
+ERROR_DIR_NOT_FOUND
+níor aimsíodh an chomhadlann
+;
+ERROR_OBJECT_NOT_FOUND
+níor aimsíodh an réad
+;
+ERROR_BAD_STREAM_NAME
+cur síos neamhbhailí ar fhuinneog
+;
+ERROR_OBJECT_TOO_LARGE
+tá an réad rómhór
+;
+ERROR_ACTION_NOT_KNOWN
+cineál iarratais paicéid anaithnid
+;
+ERROR_INVALID_COMPONENT_NAME
+ainm réada neamhbhailí
+;
+ERROR_INVALID_LOCK
+glas réada neamhbhailí
+;
+ERROR_OBJECT_WRONG_TYPE
+níl an réad den chineál riachtanach
+;
+ERROR_DISK_NOT_VALIDATED
+diosca gan bhailíochtú
+;
+ERROR_DISK_WRITE_PROTECTED
+tá an diosca cosanta ar scríobh
+;
+ERROR_RENAME_ACROSS_DEVICES
+iarracht athainmnithe idir ghléasanna
+;
+ERROR_DIRECTORY_NOT_EMPTY
+níl an chomhadlann folamh
+;
+ERROR_TOO_MANY_LEVELS
+an iomarca leibhéal
+;
+ERROR_DEVICE_NOT_MOUNTED
+níl an gléas (nó an t-imleabhar) feistithe
+;
+ERROR_SEEK_ERROR
+teip cuardaigh
+;
+ERROR_COMMENT_TOO_BIG
+tá an nóta rófhada
+;
+ERROR_DISK_FULL
+tá an diosca lán
+;
+ERROR_DELETE_PROTECTED
+tá an réad cosanta ar scriosadh
+;
+ERROR_WRITE_PROTECTED
+tá an comhad cosanta ar scríobh
+;
+ERROR_READ_PROTECTED
+tá an comhad cosanta ar léamh
+;
+ERROR_NOT_A_DOS_DISK
+ní diosca DOS bailí é
+;
+ERROR_NO_DISK
+níl diosca sa tiomántán
+;
+ERROR_NO_MORE_ENTRIES
+níl a thuilleadh iontrálacha sa chomhadlann
+;
+ERROR_IS_SOFT_LINK
+is nasc bog é an réad
+;
+ERROR_OBJECT_LINKED
+tá naisc chuig an réad
+;
+ERROR_BAD_HUNK
+droch-hunk sa chomhad lódála
+;
+ERROR_NOT_IMPLEMENTED
+níl an fheidhm curtha i bhfeidhm
+;
+ERROR_RECORD_NOT_LOCKED
+níl an taifead faoi ghlas
+;
+ERROR_LOCK_COLLISION
+imbhualadh glas taifid
+;
+ERROR_LOCK_TIMEOUT
+teorainn ama glas taifid
+;
+ERROR_UNLOCK_ERROR
+earráid díghlasála taifid
+;
+ABORT_BUSY
+ní raibh an glaoiteoir le ceistiú
+;
+ABORT_DISK_ERROR
+earráid léite nó scríofa ar an imleabhar
+;
+ERROR_BUFFER_OVERFLOW
+maolán ag cur thar maoil
+;
+ERROR_BREAK
+***Briseadh
+;
+ERROR_NOT_EXECUTABLE
+ní comhad inrite é
+;
+ERROR_INVALID_ARGUMENT
+argóint neamhbhailí
+;
+ERROR_INVALID_DOS_ENTRY
+iontráil neamhbhailí i liosta na ngléasanna
+;
+ERROR_NO_INPUT_STREAM
+níl sruth ionchuir ann
+;
+ERROR_BUFFER_TOO_SMALL
+tá an maolán róbheag
+;
+ERROR_NO_PROCESS
+ní próiseas é
+;
+ERROR_NO_HANDLER
+níl láimhseálaí ann
+;
+ERROR_PACKET_ASYNC
+paicéad as a sheal
+;
+ERROR_ERROR_IN_PACKET
+earráid sa phaicéad
+;
+ERROR_NO_CURRENT_DIRECTORY
+níl comhadlann reatha ann
+;
+ERROR_HANDLER_NOT_LOADED
+níor lódáladh an láimhseálaí
+;
+ERROR_HANDLER_START_ERROR
+theip ar an láimhseálaí tosú
+;
+ERROR_BROKEN_PIPE
+tá an taobh eile den phíopa imithe
+;
+ERROR_BAD_CHECKSUM
+earráid seiceála suime: ní hé an rud a léadh an rud a scríobhadh
+;

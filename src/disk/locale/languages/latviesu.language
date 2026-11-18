@@ -1,0 +1,26 @@
+# LOCALE:Languages/latviesu.language - Latvian: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=svētdiena DAY_2=pirmdiena DAY_3=otrdiena DAY_4=trešdiena
+DAY_5=ceturtdiena DAY_6=piektdiena DAY_7=sestdiena
+ABDAY_1=Sv ABDAY_2=Pr ABDAY_3=Ot ABDAY_4=Tr ABDAY_5=Ce ABDAY_6=Pk
+ABDAY_7=Se
+# The months, then their short names.
+MON_1=janvāris MON_2=februāris MON_3=marts MON_4=aprīlis MON_5=maijs
+MON_6=jūnijs MON_7=jūlijs MON_8=augusts MON_9=septembris
+MON_10=oktobris MON_11=novembris MON_12=decembris
+ABMON_1=jan ABMON_2=feb ABMON_3=mar ABMON_4=apr ABMON_5=mai
+ABMON_6=jūn ABMON_7=jūl ABMON_8=aug ABMON_9=sep ABMON_10=okt
+ABMON_11=nov ABMON_12=dec
+# Yes and no, before and after noon.
+YESSTR=Jā NOSTR=Nē AM_STR=priekšp. PM_STR=pēcp.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Vakar TODAYSTR=Šodien TOMORROWSTR=Rīt
+FUTURESTR=Nākotne
+# The order of the letters: Č after C, Ģ after G, Ķ after K, Ļ after L,
+# Ņ after N, Š after S and Ž after Z; the long vowels with their own.
+AFTER_C=Č AFTER_G=Ģ AFTER_K=Ķ AFTER_L=Ļ AFTER_N=Ņ AFTER_S=Š AFTER_Z=Ž

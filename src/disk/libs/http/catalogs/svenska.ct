@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; http.library's words for a request that failed, in Swedish.
+MSG_NOMEM
+inget minne
+MSG_IO
+anslutningen misslyckades
+MSG_IO_BECAUSE
+anslutningen misslyckades: %s
+MSG_STOPPED
+stoppad
+MSG_TIMEOUT
+servern svarade inte i tid
+MSG_URL
+ingen http://- eller https://-URL, eller en för lång
+MSG_HOST
+värden har ingen adress
+MSG_HOST_NAMED
+%s har ingen adress
+MSG_TLS
+TLS-sessionen misslyckades
+MSG_TLS_CERTIFICATE
+serverns certifikat är inte betrott: %s
+MSG_TLS_CLOCK
+klockan är inte ställd, så inget certifikat kan kontrolleras (TimeSync)
+MSG_TLS_ALERT
+servern vägrade TLS-sessionen (alert %u)
+MSG_TLS_HANDSHAKE
+TLS-handskakningen misslyckades
+MSG_PROTOCOL
+svaret är inte HTTP
+MSG_REDIRECT
+fler omdirigeringar än tillåtet, eller en till ingenstans
+MSG_TRUNCATED
+anslutningen tog slut före svaret
+MSG_STATE
+ett anrop i fel ordning, eller en begäran som inte kan göras
+MSG_LIBRARY
+ett bibliotek som begäran behöver finns inte
+MSG_LIBRARY_NAMED
+%s finns inte
+MSG_DATA
+serverns packade svar går inte att packa upp
+MSG_CLOSED
+servern stängde anslutningen utan att svara
+MSG_UNKNOWN
+begäran misslyckades (%d)
+MSG_VERDICT_MALFORMED
+ett av dess certifikat kan inte läsas
+MSG_VERDICT_UNKNOWN_ISSUER
+ingen betrodd rot har signerat det
+MSG_VERDICT_BAD_SIGNATURE
+en signatur i dess kedja är fel
+MSG_VERDICT_UNSUPPORTED
+det är signerat på ett sätt som inte kan kontrolleras
+MSG_VERDICT_EXPIRED
+det har gått ut
+MSG_VERDICT_NOT_YET_VALID
+det är inte giltigt än
+MSG_VERDICT_NOT_CA
+det utfärdades av ett certifikat som inte får utfärda
+MSG_VERDICT_PATH_LENGTH
+dess kedja är längre än dess CA:er tillåter
+MSG_VERDICT_NAME_CONSTRAINTS
+en CA i dess kedja har namnbegränsningar
+MSG_VERDICT_WRONG_USAGE
+det är inte för en server
+MSG_VERDICT_WRONG_NAME
+det är för en annan värd
+MSG_VERDICT_TOO_LONG
+dess kedja är för lång
+MSG_VERDICT_OTHER
+utan angiven anledning

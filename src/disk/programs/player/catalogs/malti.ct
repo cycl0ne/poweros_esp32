@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; The Player's strings in Maltese.
+MSG_MENU_PROJECT
+Proġett
+MSG_MENU_OPEN
+Iftaħ...
+MSG_MENU_OPEN_DRAWER
+Iftaħ folder...
+MSG_MENU_OPEN_URL
+Iftaħ URL...
+MSG_MENU_SAVE_PLAYLIST
+Issejvja l-playlist...
+MSG_MENU_ABOUT
+Dwar
+MSG_MENU_QUIT
+Oħroġ
+MSG_MENU_PLAYLIST
+Playlist
+MSG_MENU_ADD
+Żid...
+MSG_MENU_REMOVE
+Neħħi
+MSG_MENU_CLEAR
+Battal
+MSG_MENU_SHUFFLE
+Ħawwad
+MSG_MENU_REPEAT
+Irrepeti
+MSG_MENU_REPEAT_OFF
+Mitfi
+MSG_MENU_REPEAT_ALL
+Kollox
+MSG_MENU_REPEAT_ONE
+Waħda
+MSG_MENU_PICTURE
+Stampa
+MSG_MENU_PLASMA
+Plażma
+MSG_MENU_WAVE
+Mewġa
+MSG_MENU_BARS
+Vireg
+MSG_MENU_SETTINGS
+Impostazzjonijiet
+MSG_MENU_REMEMBER
+Ftakar fejn kien
+MSG_PAGE_PLAYING
+Qed jindaqq
+MSG_PAGE_RADIO
+Radju
+MSG_VIEW_KEPT
+L-istazzjonijiet tiegħek
+MSG_VIEW_FOUND
+Misjuba
+MSG_NAME
+Isem
+MSG_GENRE
+Ġeneru
+MSG_COUNTRY
+Pajjiż
+MSG_COLUMN_TITLE
+Titlu
+MSG_COLUMN_ARTIST
+Artist
+MSG_COLUMN_TIME
+Ħin
+MSG_COLUMN_STATION
+Stazzjon
+MSG_COLUMN_ADDRESS
+Indirizz
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Ġeneri
+MSG_SHUFFLE_BUTTON
+Ħ_awwad
+MSG_SHUFFLE_HINT
+Daqq il-kanzunetti f'ordni tagħhom
+MSG_REPEAT_BUTTON
+Irre_peti
+MSG_REPEAT_HINT
+Erġa' daqq il-lista, jew il-kanzunetta waħedha
+MSG_MUTE_BUTTON
+_Bla ħoss
+MSG_MUTE_HINT
+Itfi l-ħoss, u erġa' ixgħlu
+MSG_LENGTH_HINT
+It-tul tal-kanzunetta, jew kemm fadal minnha
+MSG_ADD_BUTTON
+Żi_d...
+MSG_REMOVE_BUTTON
+_Neħħi
+MSG_CLEAR_BUTTON
+Ba_ttal
+MSG_OUTPUT_LABEL
+Ħ_ruġ
+MSG_SEARCH_BUTTON
+_Fittex
+MSG_KEEP_BUTTON
+Żo_mm
+MSG_FORGET_BUTTON
+N_eħħi
+MSG_FIND_LABEL
+_Sib
+MSG_BY_LABEL
+f_i
+MSG_URL_TITLE
+Iftaħ URL
+MSG_URL_ADDRESS
+_Indirizz
+MSG_URL_OPEN
+I_ftaħ
+MSG_URL_CANCEL
+Ikk_anċella
+MSG_ASK_PLAY
+Liema kanzunetti?
+MSG_ASK_ADD
+Liema kanzunetti tżid?
+MSG_ASK_DRAWER
+Liema folder?
+MSG_ASK_SAVE
+Issejvja l-playlist bħala
+MSG_ABOUT_TITLE
+Dwar Player
+MSG_ABOUT
+%s\n\nKanzunetti minn fajls WAV, MP3, FLAC, Ogg Vorbis, AAC u AC-3,\nwaħda wara l-oħra, bil-qoxriet tagħhom,\nstazzjonijiet min-netwerk\nu stampa tal-ħoss.
+MSG_OK
+OK
+MSG_NO_SONG
+L-ebda kanzunetta
+MSG_TRACK_OF
+korsa %u minn %u
+MSG_TRACK
+korsa %u
+MSG_COMPOSED_BY
+komposta minn %s
+MSG_CHAPTER
+Kapitlu %u minn %u
+MSG_SOUND
+Ħoss
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+kanzunetta %u minn %u
+MSG_NO_SOUND
+l-ebda ħoss
+MSG_NO_STREAM_FREE
+l-ebda fluss ħieles
+MSG_LIVE
+dirett
+MSG_BUFFERING
+buffering
+MSG_BUFFERING_PERCENT
+Buffering %u%%
+MSG_STATION_IDLE
+Stazzjon: ibda d-daqq biex tisimgħu
+MSG_CALLING
+Qed isejjaħ lill-istazzjon
+MSG_NO_MEMORY_STATION
+M'hemmx memorja għall-istazzjon
+MSG_ALL_STREAMS_USED
+Il-flussi kollha tal-ħoss qed jintużaw
+MSG_NO_SOUND_HERE
+Din il-magna m'għandhiex ħoss
+MSG_NO_AUDIO_STREAM
+audio.device ma fetaħx fluss
+MSG_KEPT_ALREADY
+Diġà miżmum: %s
+MSG_KEPT
+Miżmum: %s
+MSG_NO_MEMORY_KEEP
+M'hemmx memorja biex jinżamm l-istazzjon
+MSG_NO_MEMORY_SEARCH
+M'hemmx memorja għat-tfittxija
+MSG_SEARCHING
+Qed ifittex
+MSG_ASKING
+Qed jistaqsi lil %s
+MSG_NONE_FOUND
+Ma nstab l-ebda stazzjon
+MSG_ONE_FOUND
+Instab stazzjon wieħed
+MSG_COUNT_FOUND
+Stazzjonijiet misjuba: %u
+MSG_NO_NETWORK
+L-ebda netwerk: bsdsocket.library mhix hemm
+MSG_NO_HTTP
+http.library mhix hemm
+MSG_NO_MEMORY_CONNECTION
+M'hemmx memorja għall-konnessjoni
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info m'għandux indirizz
+MSG_SERVICE_NO_ANSWER
+radio-browser.info ma weġibx it-tfittxija
+MSG_SERVICE_UNREACHED
+radio-browser.info ma setax jintlaħaq
+MSG_SERVICE_NONSENSE
+It-tweġiba ta' radio-browser.info ma tagħmilx sens
+MSG_SEARCH_FAILED
+It-tfittxija falliet
+MSG_NO_SIGNAL
+L-ebda sinjal ħieles għall-istazzjon
+MSG_NO_TIMER
+timer.device ma setax jinfetaħ
+MSG_LISTS_ONLY
+Il-listi tal-istazzjon iwasslu biss għal aktar listi
+MSG_STATION_STOPPED
+L-istazzjon waqaf jibgħat
+MSG_STATION_ANSWERED
+L-istazzjon wieġeb
+MSG_SENDS_AAC
+L-istazzjon jibgħat AAC, li ma jindaqqx
+MSG_STATION_ENDED
+L-istazzjon temm il-konnessjoni
+MSG_SENDS_HLS
+L-istazzjon jibgħat HLS, li ma jindaqqx
+MSG_LIST_EMPTY
+Il-lista tal-istazzjon ma ssemmi l-ebda stazzjon
+MSG_LIST_TOO_LONG
+Il-lista tal-istazzjon issemmi indirizz twil wisq
+MSG_NOT_AN_ADDRESS
+Dan mhux indirizz biex tisma' minnu
+MSG_NONSENSE
+It-tweġiba tal-istazzjon ma tagħmilx sens
+MSG_NOLIBRARY
+%s: ma jistax jiftaħ %s\n
+MSG_NOMEMORY
+%s: m'hemmx memorja għat-tieqa\n
+MSG_NOBUFFERS
+%s: m'hemmx memorja għall-ħoss\n
+MSG_NOWINDOW
+%s: l-ebda tieqa\n
+MSG_MENU_EQUALIZER
+Ekwalizzatur
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Oxxilloskopju
+MSG_MENU_METERS
+Indikaturi tal-livell
+MSG_MENU_WHOLE_SCREEN
+Skrin sħiħ

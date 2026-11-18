@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; The Player's strings in Irish.
+MSG_MENU_PROJECT
+Tionscadal
+MSG_MENU_OPEN
+Oscail...
+MSG_MENU_OPEN_DRAWER
+Oscail fillteán...
+MSG_MENU_OPEN_URL
+Oscail URL...
+MSG_MENU_SAVE_PLAYLIST
+Sábháil seinnliosta...
+MSG_MENU_ABOUT
+Maidir Leis
+MSG_MENU_QUIT
+Scoir
+MSG_MENU_PLAYLIST
+Seinnliosta
+MSG_MENU_ADD
+Cuir Leis...
+MSG_MENU_REMOVE
+Bain
+MSG_MENU_CLEAR
+Glan
+MSG_MENU_SHUFFLE
+Measc
+MSG_MENU_REPEAT
+Athsheinn
+MSG_MENU_REPEAT_OFF
+As
+MSG_MENU_REPEAT_ALL
+Gach Ceann
+MSG_MENU_REPEAT_ONE
+Ceann Amháin
+MSG_MENU_PICTURE
+Pictiúr
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Tonn
+MSG_MENU_BARS
+Barraí
+MSG_MENU_SETTINGS
+Socruithe
+MSG_MENU_REMEMBER
+Cuimhnigh ar an áit a raibh sé
+MSG_PAGE_PLAYING
+Á Sheinm Anois
+MSG_PAGE_RADIO
+Raidió
+MSG_VIEW_KEPT
+Do Stáisiúin
+MSG_VIEW_FOUND
+Aimsithe
+MSG_NAME
+Ainm
+MSG_GENRE
+Seánra
+MSG_COUNTRY
+Tír
+MSG_COLUMN_TITLE
+Teideal
+MSG_COLUMN_ARTIST
+Ealaíontóir
+MSG_COLUMN_TIME
+Am
+MSG_COLUMN_STATION
+Stáisiún
+MSG_COLUMN_ADDRESS
+Seoladh
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Seánraí
+MSG_SHUFFLE_BUTTON
+_Measc
+MSG_SHUFFLE_HINT
+Seinn na hamhráin in ord dá gcuid féin
+MSG_REPEAT_BUTTON
+_Athsheinn
+MSG_REPEAT_HINT
+Seinn an liosta arís, nó an t-amhrán amháin
+MSG_MUTE_BUTTON
+_Balbhaigh
+MSG_MUTE_HINT
+An fhuaim as, agus air arís
+MSG_LENGTH_HINT
+Fad an amhráin, nó a bhfuil fágtha de
+MSG_ADD_BUTTON
+_Cuir Leis...
+MSG_REMOVE_BUTTON
+Ba_in
+MSG_CLEAR_BUTTON
+_Glan
+MSG_OUTPUT_LABEL
+Asch_ur
+MSG_SEARCH_BUTTON
+Cuar_daigh
+MSG_KEEP_BUTTON
+C_oinnigh
+MSG_FORGET_BUTTON
+_Lig i nDearmad
+MSG_FIND_LABEL
+Aim_sigh
+MSG_BY_LABEL
+de _réir
+MSG_URL_TITLE
+Oscail URL
+MSG_URL_ADDRESS
+_Seoladh
+MSG_URL_OPEN
+_Oscail
+MSG_URL_CANCEL
+_Cealaigh
+MSG_ASK_PLAY
+Cé na hamhráin?
+MSG_ASK_ADD
+Cé na hamhráin le cur leis?
+MSG_ASK_DRAWER
+Cén fillteán?
+MSG_ASK_SAVE
+Sábháil an seinnliosta mar
+MSG_ABOUT_TITLE
+Maidir le Player
+MSG_ABOUT
+%s\n\nAmhráin ó chomhaid WAV, MP3, FLAC, Ogg Vorbis, AAC agus AC-3,\nceann i ndiaidh a chéile, lena gclúdaigh,\nstáisiúin ón líonra\nagus pictiúr den fhuaim.
+MSG_OK
+OK
+MSG_NO_SONG
+Gan amhrán
+MSG_TRACK_OF
+rian %u as %u
+MSG_TRACK
+rian %u
+MSG_COMPOSED_BY
+cumtha ag %s
+MSG_CHAPTER
+Caibidil %u as %u
+MSG_SOUND
+Fuaim
+MSG_MONO
+monafónach
+MSG_STEREO
+steiréafónach
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+amhrán %u as %u
+MSG_NO_SOUND
+gan fuaim
+MSG_NO_STREAM_FREE
+níl sruth saor
+MSG_LIVE
+beo
+MSG_BUFFERING
+á mhaolánú
+MSG_BUFFERING_PERCENT
+Á mhaolánú %u%%
+MSG_STATION_IDLE
+Stáisiún: éisteann seinn leis
+MSG_CALLING
+Ag glaoch ar an stáisiún
+MSG_NO_MEMORY_STATION
+Níl dóthain cuimhne don stáisiún
+MSG_ALL_STREAMS_USED
+Tá gach sruth fuaime in úsáid
+MSG_NO_SOUND_HERE
+Níl fuaim ag an meaisín seo
+MSG_NO_AUDIO_STREAM
+Níor oscail audio.device sruth
+MSG_KEPT_ALREADY
+Coinnithe cheana: %s
+MSG_KEPT
+Coinnithe: %s
+MSG_NO_MEMORY_KEEP
+Níl dóthain cuimhne chun an stáisiún a choinneáil
+MSG_NO_MEMORY_SEARCH
+Níl dóthain cuimhne don chuardach
+MSG_SEARCHING
+Ag cuardach
+MSG_ASKING
+Ag fiafraí de %s
+MSG_NONE_FOUND
+Níor aimsíodh stáisiún
+MSG_ONE_FOUND
+Aimsíodh stáisiún amháin
+MSG_COUNT_FOUND
+Stáisiúin aimsithe: %u
+MSG_NO_NETWORK
+Gan líonra: níl bsdsocket.library ann
+MSG_NO_HTTP
+Níl http.library ann
+MSG_NO_MEMORY_CONNECTION
+Níl dóthain cuimhne don cheangal
+MSG_SERVICE_NO_ADDRESS
+Níl seoladh ag radio-browser.info
+MSG_SERVICE_NO_ANSWER
+Níor fhreagair radio-browser.info an cuardach
+MSG_SERVICE_UNREACHED
+Níorbh fhéidir radio-browser.info a bhaint amach
+MSG_SERVICE_NONSENSE
+Níl ciall le freagra radio-browser.info
+MSG_SEARCH_FAILED
+Theip ar an gcuardach
+MSG_NO_SIGNAL
+Níl comhartha saor don stáisiún
+MSG_NO_TIMER
+Níor oscail timer.device
+MSG_LISTS_ONLY
+Ní théann liostaí an stáisiúin ach chuig tuilleadh liostaí
+MSG_STATION_STOPPED
+Stop an stáisiún ag craoladh
+MSG_STATION_ANSWERED
+D'fhreagair an stáisiún
+MSG_SENDS_AAC
+Craolann an stáisiún AAC, nach seinntear
+MSG_STATION_ENDED
+Chríochnaigh an stáisiún an ceangal
+MSG_SENDS_HLS
+Craolann an stáisiún HLS, nach seinntear
+MSG_LIST_EMPTY
+Ní ainmníonn liosta an stáisiúin aon stáisiún
+MSG_LIST_TOO_LONG
+Ainmníonn liosta an stáisiúin seoladh atá rófhada
+MSG_NOT_AN_ADDRESS
+Ní seoladh le héisteacht leis é seo
+MSG_NONSENSE
+Níl ciall le freagra an stáisiúin
+MSG_NOLIBRARY
+%s: ní féidir %s a oscailt\n
+MSG_NOMEMORY
+%s: níl dóthain cuimhne don fhuinneog\n
+MSG_NOBUFFERS
+%s: níl dóthain cuimhne don fhuaim\n
+MSG_NOWINDOW
+%s: gan fhuinneog\n
+MSG_MENU_EQUALIZER
+Cothromóir
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Scóp
+MSG_MENU_METERS
+Méadair
+MSG_MENU_WHOLE_SCREEN
+Scáileán Iomlán

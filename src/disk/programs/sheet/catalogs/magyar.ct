@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; Sheet's strings in Hungarian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Új
+MSG_MENU_OPEN
+Megnyitás...
+MSG_MENU_SAVE
+Mentés
+MSG_MENU_SAVE_AS
+Mentés másként...
+MSG_MENU_QUIT
+Kilépés
+MSG_MENU_EDIT
+Szerkesztés
+MSG_MENU_UNDO
+Visszavonás
+MSG_MENU_REDO
+Ismétlés
+MSG_MENU_CUT
+Kivágás
+MSG_MENU_COPY
+Másolás
+MSG_MENU_PASTE
+Beillesztés
+MSG_MENU_CLEAR
+Törlés
+MSG_MENU_FILL_DOWN
+Kitöltés lefelé
+MSG_MENU_FILL_RIGHT
+Kitöltés jobbra
+MSG_MENU_SELECT_ALL
+Az összes kijelölése
+MSG_MENU_FIND
+Keresés...
+MSG_MENU_FIND_NEXT
+Következő keresése
+MSG_MENU_SHEET
+Táblázat
+MSG_MENU_INSERT_ROWS
+Sorok beszúrása
+MSG_MENU_DELETE_ROWS
+Sorok törlése
+MSG_MENU_INSERT_COLUMNS
+Oszlopok beszúrása
+MSG_MENU_DELETE_COLUMNS
+Oszlopok törlése
+MSG_MENU_WIDER
+Szélesebb oszlop
+MSG_MENU_NARROWER
+Keskenyebb oszlop
+MSG_MENU_SUM
+Automatikus összeg
+MSG_MENU_SORT_ASCENDING
+Rendezés növekvő sorrendben
+MSG_MENU_SORT_DESCENDING
+Rendezés csökkenő sorrendben
+MSG_MENU_FORMAT
+Formátum
+MSG_MENU_GENERAL
+Általános
+MSG_MENU_NUMBER
+Szám
+MSG_MENU_PERCENT
+Százalék
+MSG_MENU_CURRENCY
+Pénznem
+MSG_MENU_DECIMALS_MORE
+Több tizedesjegy
+MSG_MENU_DECIMALS_LESS
+Kevesebb tizedesjegy
+MSG_MENU_VIEW
+Nézet
+MSG_MENU_RIBBON
+Szalag
+MSG_RIBBON_HOME
+Kezdőlap
+MSG_RIBBON_CLIPBOARD
+Vágólap
+MSG_RIBBON_PASTE_HINT
+A kivágott vagy másolt tartalom beillesztése
+MSG_RIBBON_NUMBER_HINT
+Számok megjelenítése tizedesjegyekkel és ezreselválasztóval
+MSG_RIBBON_PERCENT_HINT
+Számok megjelenítése százalékként
+MSG_RIBBON_CURRENCY_HINT
+Számok megjelenítése pénzösszegként
+MSG_RIBBON_DECIMALS_MORE_HINT
+Eggyel több tizedesjegy megjelenítése
+MSG_RIBBON_DECIMALS_LESS_HINT
+Eggyel kevesebb tizedesjegy megjelenítése
+MSG_RIBBON_CELLS
+Cellák
+MSG_RIBBON_INSERT
+Beszúrás
+MSG_RIBBON_INSERT_HINT
+Sorok vagy oszlopok beszúrása a kijelölt cellák helyére
+MSG_RIBBON_DELETE
+Törlés
+MSG_RIBBON_DELETE_HINT
+A kijelölt cellák sorainak vagy oszlopainak törlése
+MSG_RIBBON_EDITING
+Szerkesztés
+MSG_RIBBON_SUM_HINT
+A felette vagy tőle balra lévő számok összeadása
+MSG_RIBBON_SORT
+Rendezés
+MSG_RIBBON_SORT_HINT
+A sorok rendezése az aktuális cella oszlopa szerint
+MSG_RIBBON_FIND
+Keresés
+MSG_RIBBON_FIND_HINT
+Cella keresése a tartalma alapján
+MSG_RIBBON_FILL
+Kitöltés
+MSG_RIBBON_FILL_HINT
+Az első sor vagy oszlop másolása a többire
+MSG_RIBBON_CLEAR_HINT
+A kijelölt cellák kiürítése
+MSG_ROWS
+Sorok
+MSG_COLUMNS
+Oszlopok
+MSG_SUM
+Összeg
+MSG_AVERAGE
+Átlag
+MSG_COUNT
+Darab
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Növekvő
+MSG_DESCENDING
+Csökkenő
+MSG_DOWN
+Lefelé
+MSG_RIGHT
+Jobbra
+MSG_PROBLEM_NAME
+Nincs ilyen függvény vagy név
+MSG_PROBLEM_ARGUMENTS
+Hibás az argumentumok száma
+MSG_PROBLEM_PARENTHESES
+A zárójelnek nincs párja
+MSG_PROBLEM_TOO_LONG
+A képlet túl hosszú
+MSG_PROBLEM_UNREADABLE
+A képlet nem olvasható
+MSG_PROBLEM_AT
+%s, a(z) %u. karakternél
+MSG_NO_MEMORY_KEEP
+Nincs elég memória mindennek a megtartásához
+MSG_NO_MEMORY_FILE
+Nincs elég memória a teljes fájlhoz
+MSG_LEFT_OUT
+A 9999. sor vagy az IV oszlop utáni cellák kimaradtak
+MSG_NO_MEMORY_COPY
+Nincs elég memória ennyi másolásához
+MSG_NO_MEMORY_CLEAR
+Nincs elég memória mindennek a törléséhez
+MSG_NO_MEMORY_PASTE
+Nincs elég memória mindennek a beillesztéséhez
+MSG_NO_ROOM_COLUMNS
+Nincs hely: az utolsó oszlopok nem üresek
+MSG_NO_ROOM_ROWS
+Nincs hely: az utolsó sorok nem üresek
+MSG_NO_MEMORY_THAT
+Ehhez nincs elég memória
+MSG_NO_MEMORY_FORMAT
+Nincs elég memória mindennek a formázásához
+MSG_NOTHING_TO_ADD
+Felette vagy tőle balra nincs összeadható szám
+MSG_NO_MEMORY_ALL
+Nincs elég memória mindehhez
+MSG_NO_MEMORY_SORT
+Nincs elég memória mindennek a rendezéséhez
+MSG_NO_MEMORY_FILL
+Nincs elég memória mindennek a kitöltéséhez
+MSG_NOT_FOUND
+Egyik cella sem tartalmazza
+MSG_UNTITLED
+Névtelen
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s nem nyitható meg
+MSG_CANNOT_READ
+%s nem olvasható
+MSG_TOO_BIG
+%s túl nagy
+MSG_NO_MEMORY_FOR
+Nincs elég memória ehhez: %s
+MSG_NO_MEMORY_TO_SAVE
+Nincs elég memória a mentéshez: %s
+MSG_CANNOT_WRITE
+%s nem írható
+MSG_NO_REQUESTER
+%s hiányzik
+MSG_CHANGED
+A táblázat megváltozott.\nElőbb menti?
+MSG_CHANGED_BUTTONS
+Mentés|Nem mentem|Mégse
+MSG_OPEN_TITLE
+Táblázat megnyitása
+MSG_SAVE_AS_TITLE
+Táblázat mentése másként
+MSG_FIND_LABEL
+Keresés
+MSG_FIND_NEXT_BUTTON
+Következő
+MSG_FIND_PREVIOUS_BUTTON
+Előző
+MSG_FIND_CLOSE_BUTTON
+Bezárás
+MSG_NOLIBRARY
+%s hiányzik\n
+MSG_NOSCREEN
+Nincs alapértelmezett képernyő - nincs megjelenítés\n
+MSG_NOMEMORY
+Nincs elég memória az ablakhoz\n

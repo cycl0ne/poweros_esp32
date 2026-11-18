@@ -1,0 +1,338 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language hrvatski
+## codeset 106
+; The desktop's strings in Croatian.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Pozadina
+MSG_MENU_EXECUTE
+Izvrši naredbu...
+MSG_MENU_REDRAW_ALL
+Ponovno iscrtaj sve
+MSG_MENU_UPDATE_ALL
+Osvježi sve
+MSG_MENU_LAST_MESSAGE
+Posljednja poruka
+MSG_MENU_VOLUME
+Glasnoća...
+MSG_MENU_ABOUT
+O programu...
+MSG_MENU_QUIT
+Izlaz...
+MSG_MENU_REBOOT
+Ponovno pokreni...
+MSG_MENU_WINDOW
+Prozor
+MSG_MENU_NEW_DRAWER
+Nova mapa
+MSG_MENU_OPEN_PARENT
+Otvori nadređenu
+MSG_MENU_BACK
+Natrag
+MSG_MENU_FORWARD
+Naprijed
+MSG_MENU_CLOSE
+Zatvori
+MSG_MENU_UPDATE
+Osvježi
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Odaberi sadržaj
+MSG_MENU_CLEAN_UP
+Posloži
+MSG_MENU_CLEAN_UP_BY
+Posloži po
+MSG_MENU_BY_NAME
+Naziv
+MSG_MENU_BY_DATE
+Datum
+MSG_MENU_BY_SIZE
+Veličina
+MSG_MENU_SNAP
+Poravnaj s rešetkom
+MSG_MENU_ARRANGE
+Rasporedi pri promjeni veličine
+MSG_MENU_SNAPSHOT
+Zapamti položaj
+MSG_MENU_SNAPSHOT_WINDOW
+Prozor
+MSG_MENU_SNAPSHOT_ALL
+Sve
+MSG_MENU_SHOW
+Prikaži
+MSG_MENU_ONLY_ICONS
+Samo ikone
+MSG_MENU_ALL_FILES
+Sve datoteke
+MSG_MENU_VIEW_BY
+Prikaži po
+MSG_MENU_BY_ICON
+Ikona
+MSG_MENU_RIBBON
+Vrpca
+MSG_MENU_ICONS
+Ikone
+MSG_MENU_OPEN
+Otvori
+MSG_MENU_COPY
+Kopiraj
+MSG_MENU_RENAME
+Preimenuj...
+MSG_MENU_INFORMATION
+Informacije...
+MSG_MENU_UNSNAPSHOT
+Zaboravi položaj
+MSG_MENU_LEAVE_OUT
+Stavi na radnu površinu
+MSG_MENU_PUT_AWAY
+Vrati na mjesto
+MSG_MENU_DELETE
+Izbriši...
+MSG_MENU_FORMAT
+Formatiraj disk...
+MSG_MENU_EMPTY_TRASH
+Isprazni koš za smeće
+MSG_MENU_TOOLS
+Alati
+MSG_RIBBON_HOME
+Polazno
+MSG_RIBBON_GO
+Idi
+MSG_RIBBON_PARENT
+Nadređena
+MSG_RIBBON_DRAWER
+Mapa
+MSG_RIBBON_RENAME
+Preimenuj
+MSG_RIBBON_DELETE
+Izbriši
+MSG_RIBBON_INFORMATION
+Informacije
+MSG_RIBBON_VIEW
+Prikaz
+MSG_RIBBON_ARRANGE
+Raspored
+MSG_LIST_PROTECTION
+Zaštita
+MSG_LIST_DRAWER
+Mapa
+MSG_TITLE_MEMORY
+Memorija
+MSG_TITLE_INTERNAL
+Interna
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+slobodno
+MSG_TITLE_BATTERY
+Baterija
+MSG_TITLE_CHARGING
+punjenje
+MSG_TITLE_EXTERNAL_POWER
+vanjsko napajanje
+MSG_DISK_FULL
+zauzeto
+MSG_DISK_IN_USE
+u upotrebi
+MSG_NOTHING_SAID
+Još nema nijedne poruke
+MSG_NOT_EVERY_FILE
+Nije bilo moguće preuzeti sve odabrane datoteke
+MSG_DISK_NOT_RENAMED
+Disk nije bilo moguće preimenovati
+MSG_NOT_RENAMED
+Preimenovanje nije uspjelo
+MSG_ICON_NOT_WRITTEN
+Ikonu nije bilo moguće zapisati
+MSG_DISK_NOT_THERE
+Disk nije prisutan
+MSG_DISK_BUSY
+Disk je u upotrebi
+MSG_DISK_NOT_FORMATTED
+Disk nije bilo moguće formatirati
+MSG_DRAWER_NOT_MADE
+Mapu nije bilo moguće stvoriti
+MSG_SETTING_NOT_KEPT
+Postavku %s nije bilo moguće zadržati
+MSG_SETTING_NOT_WRITTEN
+Postavku %s nije bilo moguće zapisati u anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Ikonu mape nije bilo moguće zapisati
+MSG_NO_MEMORY_REBOOT
+Nema memorije za ponovno pokretanje
+MSG_NO_MEMORY_ABOUT
+Nema memorije za prozor O programu
+MSG_NO_TOOL
+Za %s nema programa koji bi ga otvorio
+MSG_NOT_STARTED
+%s nije bilo moguće pokrenuti
+MSG_COMMAND_NOT_STARTED
+Naredbu nije bilo moguće pokrenuti
+MSG_SHELL_DRAWER_NOT_FOUND
+Mapa za Shell nije pronađena
+MSG_SHELL_NOT_STARTED
+Shell nije bilo moguće pokrenuti
+MSG_TRASH_OWN_DISK
+U koš za smeće idu samo datoteke s njegova vlastitog diska
+MSG_NOT_MOVED
+Datoteku nije bilo moguće premjestiti onamo
+MSG_LEFT_OUT_NOT_KEPT
+Disk neće zadržati ono što je stavljeno na radnu površinu
+MSG_NO_MEMORY_WORK
+Nema memorije za početak rada
+MSG_QUIT_RUNNING_ADDED
+Programi pokrenuti s radne površine još rade (%lu).\n\
+Nastavit će raditi. Prozori, ikone i stavke\n\
+izbornika koje su programi dodali (%lu)\n\
+nestaju s njom.\n\nZatvoriti radnu površinu?
+MSG_QUIT_RUNNING
+Programi pokrenuti s radne površine još rade (%lu).\n\
+Nastavit će raditi.\n\nZatvoriti radnu površinu?
+MSG_QUIT_ADDED
+Prozori, ikone i stavke izbornika koje su programi\n\
+dodali na radnu površinu (%lu) nestaju s njom.\n\n\
+Zatvoriti radnu površinu?
+MSG_QUIT_ASK
+Zatvoriti radnu površinu?
+MSG_QUIT_BUTTONS
+Izlaz|Odustani
+MSG_DELETE_ASK
+Trajno izbrisati odabrano (%lu)?\n\
+Mapa se briše sa svim sadržajem.
+MSG_DELETE_BUTTONS
+Izbriši|Odustani
+MSG_RENAME_PROMPT
+Novi naziv:
+MSG_FORMAT_TITLE
+Formatiraj disk
+MSG_FORMAT_ASK
+Formatirati %s?\nSve na njemu bit će izgubljeno.
+MSG_FORMAT_BUTTONS
+Formatiraj|Odustani
+MSG_NEW_DRAWER_PROMPT
+Naziv nove mape:
+MSG_UNNAMED
+Bez naziva
+MSG_EXECUTE_TITLE
+Izvrši naredbu
+MSG_EXECUTE_PROMPT
+Naredba za izvršavanje:
+MSG_OUTPUT
+Ispis
+MSG_REBOOT_TITLE
+Ponovno pokreni
+MSG_REBOOT_ASK
+Ponovno pokrenuti računalo?\nŠto programi nisu spremili, bit će izgubljeno.
+MSG_REBOOT_BUTTONS
+Ponovno pokreni|Odustani
+MSG_REBOOT_IN_USE
+U upotrebi, pa njihov sadržaj možda neće biti zapisan:\n%s\n\n\
+Svejedno ponovno pokrenuti?
+MSG_STARTUP_WAIT
+Program '%s'\njoš nije završio.\nČekati još?
+MSG_STARTUP_BUTTONS
+Čekaj|Nastavi
+MSG_OK
+_U redu
+MSG_CANCEL
+_Odustani
+MSG_ABOUT_TITLE
+O programu Anvil
+MSG_ABOUT_WHAT
+Radna površina sustava PowerOS
+MSG_ABOUT_RELEASE
+Izdanje
+MSG_ABOUT_KERNEL
+Jezgra
+MSG_ABOUT_BOARD
+Ploča
+MSG_ABOUT_PROCESSOR
+Procesor
+MSG_ABOUT_CORES
+Jezgre
+MSG_ABOUT_CLOCK
+Takt
+MSG_ABOUT_SCREEN
+Zaslon
+MSG_ABOUT_SYSTEM_DISK
+Sistemski disk
+MSG_ABOUT_UP_FOR
+Vrijeme rada
+MSG_ABOUT_IN_USE
+U upotrebi
+MSG_ABOUT_OF
+od
+MSG_ABOUT_BITS
+bpp
+MSG_ABOUT_DAY
+dan
+MSG_ABOUT_DAYS
+dana
+MSG_INFO_TITLE
+Informacije
+MSG_INFO_STATE
+Stanje
+MSG_INFO_READ_ONLY
+Samo za čitanje
+MSG_INFO_VALIDATING
+Provjerava se
+MSG_INFO_READ_WRITE
+Čitanje i pisanje
+MSG_INFO_UNKNOWN
+Nepoznato
+MSG_INFO_BLOCKS
+Blokovi
+MSG_INFO_USED
+Zauzeto
+MSG_INFO_FREE
+Slobodno
+MSG_INFO_BLOCK_SIZE
+Veličina bloka
+MSG_INFO_BYTES
+bajtova
+MSG_INFO_BLOCKS_COUNTED
+blokova
+MSG_INFO_CREATED
+Stvoreno
+MSG_INFO_LAST_CHANGED
+Posljednja promjena
+MSG_INFO_SCRIPT
+Skripta
+MSG_INFO_ARCHIVED
+Arhivirano
+MSG_INFO_READABLE
+Čitljivo
+MSG_INFO_WRITABLE
+Zapisivo
+MSG_INFO_EXECUTABLE
+Izvršno
+MSG_INFO_DELETABLE
+Izbrisivo
+MSG_INFO_COMMENT
+Komentar
+MSG_INFO_STACK
+Stog
+MSG_INFO_DEFAULT_TOOL
+Zadani program
+MSG_INFO_TOOL_TYPES
+Vrste alata
+MSG_INFO_SAVE
+_Spremi
+MSG_INFO_NOT_WRITTEN
+Ikonu nije bilo moguće zapisati.
+MSG_INFO_OK
+U redu
+MSG_WORK_COPYING
+Kopiranje
+MSG_WORK_DELETING
+Brisanje
+MSG_WORK_STOP
+_Zaustavi
+MSG_WORK_WAITING
+Na čekanju još %lu
+MSG_WORK_REPLACE_ASK
+%s već postoji.\nZamijeniti?
+MSG_WORK_REPLACE_BUTTONS
+Zamijeni|Zamijeni sve|Preskoči|Zaustavi

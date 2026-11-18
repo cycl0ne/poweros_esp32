@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; The Player's strings in Czech.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Otevřít...
+MSG_MENU_OPEN_DRAWER
+Otevřít složku...
+MSG_MENU_OPEN_URL
+Otevřít URL...
+MSG_MENU_SAVE_PLAYLIST
+Uložit seznam skladeb...
+MSG_MENU_ABOUT
+O aplikaci
+MSG_MENU_QUIT
+Ukončit
+MSG_MENU_PLAYLIST
+Seznam skladeb
+MSG_MENU_ADD
+Přidat...
+MSG_MENU_REMOVE
+Odebrat
+MSG_MENU_CLEAR
+Vymazat
+MSG_MENU_SHUFFLE
+Náhodně
+MSG_MENU_REPEAT
+Opakovat
+MSG_MENU_REPEAT_OFF
+Vypnuto
+MSG_MENU_REPEAT_ALL
+Vše
+MSG_MENU_REPEAT_ONE
+Jednu
+MSG_MENU_PICTURE
+Obraz
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Vlna
+MSG_MENU_BARS
+Sloupce
+MSG_MENU_SETTINGS
+Nastavení
+MSG_MENU_REMEMBER
+Pamatovat si pozici
+MSG_PAGE_PLAYING
+Právě hraje
+MSG_PAGE_RADIO
+Rádio
+MSG_VIEW_KEPT
+Vaše stanice
+MSG_VIEW_FOUND
+Nalezené
+MSG_NAME
+Název
+MSG_GENRE
+Žánr
+MSG_COUNTRY
+Země
+MSG_COLUMN_TITLE
+Název
+MSG_COLUMN_ARTIST
+Interpret
+MSG_COLUMN_TIME
+Čas
+MSG_COLUMN_STATION
+Stanice
+MSG_COLUMN_ADDRESS
+Adresa
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Žánry
+MSG_SHUFFLE_BUTTON
+_Náhodně
+MSG_SHUFFLE_HINT
+Přehrávat skladby ve vlastním pořadí
+MSG_REPEAT_BUTTON
+_Opakovat
+MSG_REPEAT_HINT
+Přehrát seznam znovu, nebo jednu skladbu
+MSG_MUTE_BUTTON
+_Ztlumit
+MSG_MUTE_HINT
+Vypnout zvuk a zase zapnout
+MSG_LENGTH_HINT
+Délka skladby, nebo kolik z ní zbývá
+MSG_ADD_BUTTON
+_Přidat...
+MSG_REMOVE_BUTTON
+Ode_brat
+MSG_CLEAR_BUTTON
+Vy_mazat
+MSG_OUTPUT_LABEL
+Výs_tup
+MSG_SEARCH_BUTTON
+_Hledat
+MSG_KEEP_BUTTON
+_Uložit
+MSG_FORGET_BUTTON
+Odeb_rat
+MSG_FIND_LABEL
+Na_jít
+MSG_BY_LABEL
+_v
+MSG_URL_TITLE
+Otevřít URL
+MSG_URL_ADDRESS
+_Adresa
+MSG_URL_OPEN
+_Otevřít
+MSG_URL_CANCEL
+_Zrušit
+MSG_ASK_PLAY
+Které skladby?
+MSG_ASK_ADD
+Které skladby přidat?
+MSG_ASK_DRAWER
+Kterou složku?
+MSG_ASK_SAVE
+Uložit seznam skladeb jako
+MSG_ABOUT_TITLE
+O aplikaci Player
+MSG_ABOUT
+%s\n\nSkladby ze souborů WAV, MP3, FLAC, Ogg Vorbis, AAC a AC-3,\njedna za druhou, s obaly,\nstanice ze sítě\na obraz zvuku.
+MSG_OK
+OK
+MSG_NO_SONG
+Žádná skladba
+MSG_TRACK_OF
+stopa %u z %u
+MSG_TRACK
+stopa %u
+MSG_COMPOSED_BY
+skladatel: %s
+MSG_CHAPTER
+Kapitola %u z %u
+MSG_SOUND
+Zvuk
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+skladba %u z %u
+MSG_NO_SOUND
+bez zvuku
+MSG_NO_STREAM_FREE
+žádný volný proud
+MSG_LIVE
+živě
+MSG_BUFFERING
+načítání
+MSG_BUFFERING_PERCENT
+Načítání %u%%
+MSG_STATION_IDLE
+Stanice: přehrávání ji pustí
+MSG_CALLING
+Připojování ke stanici
+MSG_NO_MEMORY_STATION
+Nedostatek paměti pro stanici
+MSG_ALL_STREAMS_USED
+Všechny zvukové proudy se používají
+MSG_NO_SOUND_HERE
+Tento počítač nemá zvuk
+MSG_NO_AUDIO_STREAM
+audio.device neotevřel proud
+MSG_KEPT_ALREADY
+Již uloženo: %s
+MSG_KEPT
+Uloženo: %s
+MSG_NO_MEMORY_KEEP
+Nedostatek paměti pro uložení stanice
+MSG_NO_MEMORY_SEARCH
+Nedostatek paměti pro hledání
+MSG_SEARCHING
+Hledání
+MSG_ASKING
+Dotaz na %s
+MSG_NONE_FOUND
+Nenalezena žádná stanice
+MSG_ONE_FOUND
+Nalezena jedna stanice
+MSG_COUNT_FOUND
+Nalezené stanice: %u
+MSG_NO_NETWORK
+Žádná síť: chybí bsdsocket.library
+MSG_NO_HTTP
+Chybí http.library
+MSG_NO_MEMORY_CONNECTION
+Nedostatek paměti pro spojení
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info nemá adresu
+MSG_SERVICE_NO_ANSWER
+radio-browser.info neodpověděl na hledání
+MSG_SERVICE_UNREACHED
+radio-browser.info není dostupný
+MSG_SERVICE_NONSENSE
+Odpověď radio-browser.info nedává smysl
+MSG_SEARCH_FAILED
+Hledání selhalo
+MSG_NO_SIGNAL
+Pro stanici není volný signál
+MSG_NO_TIMER
+timer.device nelze otevřít
+MSG_LISTS_ONLY
+Seznamy stanice vedou jen k dalším seznamům
+MSG_STATION_STOPPED
+Stanice přestala vysílat
+MSG_STATION_ANSWERED
+Stanice odpověděla
+MSG_SENDS_AAC
+Stanice vysílá AAC, které se nepřehrává
+MSG_STATION_ENDED
+Stanice ukončila spojení
+MSG_SENDS_HLS
+Stanice vysílá HLS, které se nepřehrává
+MSG_LIST_EMPTY
+Seznam stanice neuvádí žádnou stanici
+MSG_LIST_TOO_LONG
+Seznam stanice uvádí příliš dlouhou adresu
+MSG_NOT_AN_ADDRESS
+Toto není adresa k poslechu
+MSG_NONSENSE
+Odpověď stanice nedává smysl
+MSG_NOLIBRARY
+%s: nelze otevřít %s\n
+MSG_NOMEMORY
+%s: nedostatek paměti pro okno\n
+MSG_NOBUFFERS
+%s: nedostatek paměti pro zvuk\n
+MSG_NOWINDOW
+%s: žádné okno\n
+MSG_MENU_EQUALIZER
+Ekvalizér
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Goniometr
+MSG_MENU_METERS
+Úrovně
+MSG_MENU_WHOLE_SCREEN
+Celá obrazovka

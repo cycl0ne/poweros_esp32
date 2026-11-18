@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; Clock's strings in Maltese.
+MSG_WINDOW_TITLE
+Arloġġ
+MSG_MENU_PROJECT
+Proġett
+MSG_MENU_ANALOG
+Analogu
+MSG_MENU_DIGITAL
+Diġitali
+MSG_MENU_ABOUT
+Dwar...
+MSG_MENU_QUIT
+Oħroġ
+MSG_MENU_SETTINGS
+Impostazzjonijiet
+MSG_MENU_SECONDS
+Sekondi
+MSG_MENU_DATE
+Data
+MSG_MENU_24_HOURS
+24 siegħa
+MSG_MENU_SAVE
+Issejvja l-impostazzjonijiet
+MSG_ABOUT_TITLE
+Dwar l-Arloġġ
+MSG_ABOUT
+%s\n\nIl-ħin, fuq wiċċ ta' arloġġ jew f'numri.\nKlikk doppju fit-tieqa jaqleb bejniethom.
+MSG_OK
+OK
+MSG_NOT_SAVED
+L-impostazzjonijiet ma setgħux jinżammu fi\n%s.
+MSG_NOLIBRARY
+%s: ma jistax jiftaħ %s\n
+MSG_NOMEMORY
+%s: m'hemmx biżżejjed memorja\n
+MSG_NOWINDOW
+%s: ma jistax jiftaħ it-tieqa tiegħu\n

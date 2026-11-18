@@ -1,0 +1,79 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language portugues
+## codeset 106
+; http.library's words for a request that failed, in Portuguese: a
+; clause that starts in lower case, without its full stop.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+sem memória
+MSG_IO
+a ligação falhou
+MSG_IO_BECAUSE
+a ligação falhou: %s
+MSG_STOPPED
+interrompido
+MSG_TIMEOUT
+o servidor não respondeu a tempo
+MSG_URL
+não é um URL http:// ou https://, ou é demasiado longo
+MSG_HOST
+o anfitrião não tem endereço
+MSG_HOST_NAMED
+%s não tem endereço
+MSG_TLS
+a sessão TLS falhou
+MSG_TLS_CERTIFICATE
+o certificado do servidor não é fidedigno: %s
+MSG_TLS_CLOCK
+o relógio não está acertado, por isso nenhum certificado pode ser verificado (TimeSync)
+MSG_TLS_ALERT
+o servidor recusou a sessão TLS (alerta %u)
+MSG_TLS_HANDSHAKE
+o handshake TLS falhou
+MSG_PROTOCOL
+a resposta não é HTTP
+MSG_REDIRECT
+mais redirecionamentos do que os permitidos, ou um para lado nenhum
+MSG_TRUNCATED
+a ligação terminou antes da resposta
+MSG_STATE
+uma chamada fora de vez, ou um pedido que não pode ser feito
+MSG_LIBRARY
+falta uma biblioteca de que o pedido precisa
+MSG_LIBRARY_NAMED
+falta %s
+MSG_DATA
+a resposta comprimida do servidor não se descomprime
+MSG_CLOSED
+o servidor fechou a ligação sem responder
+MSG_UNKNOWN
+o pedido falhou (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+um dos seus certificados não pode ser lido
+MSG_VERDICT_UNKNOWN_ISSUER
+nenhuma raiz fidedigna o assinou
+MSG_VERDICT_BAD_SIGNATURE
+uma assinatura da sua cadeia está errada
+MSG_VERDICT_UNSUPPORTED
+está assinado de uma forma que não pode ser verificada
+MSG_VERDICT_EXPIRED
+expirou
+MSG_VERDICT_NOT_YET_VALID
+ainda não é válido
+MSG_VERDICT_NOT_CA
+foi emitido por um certificado que não pode emitir outros
+MSG_VERDICT_PATH_LENGTH
+a sua cadeia é mais longa do que as suas AC permitem
+MSG_VERDICT_NAME_CONSTRAINTS
+uma AC da sua cadeia tem restrições de nome
+MSG_VERDICT_WRONG_USAGE
+não é para um servidor
+MSG_VERDICT_WRONG_NAME
+é para outro anfitrião
+MSG_VERDICT_TOO_LONG
+a sua cadeia é demasiado longa
+MSG_VERDICT_OTHER
+sem motivo indicado

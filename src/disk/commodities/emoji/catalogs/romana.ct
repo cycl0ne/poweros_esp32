@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; Emoji's strings in Romanian.
+MSG_SEARCH
+Căutare
+MSG_USED
+Folosite recent
+MSG_NONE_USED
+Niciunul folosit încă
+MSG_NOT_FOUND
+Niciunul găsit
+MSG_TONE_NONE
+Fără ton
+MSG_TONE_LIGHT
+Deschis
+MSG_TONE_MEDIUM_LIGHT
+Mediu-deschis
+MSG_TONE_MEDIUM
+Mediu
+MSG_TONE_MEDIUM_DARK
+Mediu-închis
+MSG_TONE_DARK
+Închis
+MSG_GROUP_SMILEYS
+Fețe zâmbitoare și emoții
+MSG_GROUP_PEOPLE
+Oameni și corp
+MSG_GROUP_ANIMALS
+Animale și natură
+MSG_GROUP_FOOD
+Mâncare și băutură
+MSG_GROUP_TRAVEL
+Călătorii și locuri
+MSG_GROUP_ACTIVITIES
+Activități
+MSG_GROUP_OBJECTS
+Obiecte
+MSG_GROUP_SYMBOLS
+Simboluri
+MSG_GROUP_FLAGS
+Steaguri

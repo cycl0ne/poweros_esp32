@@ -299,14 +299,16 @@ Beside them:
   a copy -,
   files hashed and checked against a list of digests
   ([dos guide](sdk/docs/guides/dos.md)).
-- **Languages:** 26 countries and 14 languages besides English in
-  `LOCALE:` (India and Hindi, Japan and Japanese, Korea and Korean,
-  China and Taiwan with Chinese in the simplified and the traditional
-  characters on the 64-bit machines' disks), the one chosen on Prefs'
-  Region page with the time zone, or in `ENV:Sys/locale.prefs`; dates
-  as the country writes them (`2026年11月12日木曜日`), dos's
-  error texts and the shell's messages in it - German shipped, and
-  Hindi, Japanese, Korean and Simplified Chinese as drafts - its
+- **Languages:** 47 countries and 33 languages besides English in
+  `LOCALE:` - every country of the European Union, with Norway,
+  Iceland, Switzerland, the United Kingdom, Turkey, Russia and Ukraine,
+  and India and Hindi, Japan and Japanese, Korea and Korean, China and
+  Taiwan with Chinese in the simplified and the traditional characters
+  on the 64-bit machines' disks - the one chosen on Prefs' Region page
+  with the time zone, or in `ENV:Sys/locale.prefs`; dates as the
+  country writes them (`2026年11月12日木曜日`), dos's error texts and the
+  shell's messages in it - German shipped, the other 31 languages as
+  drafts - its
   money and quotes as the files write them (`€`, `„“`, `₹`), digits
   grouped as the country groups them (`12,34,567`), the characters
   of every script classed and sorted by Unicode with a language's own
@@ -316,8 +318,8 @@ Beside them:
   program's own texts from its catalog, built from a descriptor and
   checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
   the Player's, Movie's and the Clock's in German and, as drafts, in
-  Hindi, Japanese, Korean and Simplified Chinese
-  ([locale guide](sdk/docs/guides/locale.md)).
+  the other languages of Europe and in Hindi, Japanese, Korean and
+  Simplified Chinese ([locale guide](sdk/docs/guides/locale.md)).
 - **Programs:** in `SYS:Programs` MultiView - any file the datatypes
   know, a page's links followed to files and to the web - Notepad,
   Sheet, Terminal, Player, Movie, which plays films in a window,

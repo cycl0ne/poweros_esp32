@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; Movie's strings in Estonian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Ava...
+MSG_MENU_WHOLE_SCREEN
+Täisekraan
+MSG_MENU_ABOUT
+Teave
+MSG_MENU_QUIT
+Välju
+MSG_MENU_SOUND
+Heli
+MSG_MENU_NO_SOUND
+Puudub
+MSG_MENU_SUBTITLES
+Subtiitrid
+MSG_MENU_SUBTITLES_OFF
+Väljas
+MSG_MENU_TRACK
+Rada
+MSG_MENU_FRAME_RATE
+Kaadrisagedus
+MSG_MENU_INFO
+Filmi teave...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u vahele jäetud
+MSG_ASK_OPEN
+Esita film
+MSG_ABOUT_TITLE
+Teave: Movie
+MSG_ABOUT
+%s\n\nEsitab filme - MP4, QuickTime'i MOV ja Matroska MKV:\npilt H.264-, H.265- ja Motion JPEG-vormingus,\nheli AAC-, AC-3-, MP3-, FLAC- ja Vorbis-vormingus, ning subtiitrid.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nei saa esitada:\n%s
+MSG_INFO_TITLE
+Filmi teave
+MSG_INFO_FILE
+Fail
+MSG_INFO_NAMED
+Pealkiri
+MSG_INFO_CONTAINER
+Konteiner
+MSG_INFO_LENGTH
+Kestus
+MSG_INFO_PICTURES
+Pilt
+MSG_INFO_COLOURS
+Värvid
+MSG_INFO_BITS
+%u bitti
+MSG_INFO_LIMITED
+piiratud vahemik
+MSG_INFO_FULL
+täisvahemik
+MSG_INFO_SHOWN
+Kuvamine
+MSG_INFO_ON_LAYER
+ekraani videokihil
+MSG_INFO_BY_GRAPHICS
+joonistab graphics.library
+MSG_INFO_DECODED
+Dekodeerimine
+MSG_INFO_BY_CHIP
+videodekoodriga
+MSG_INFO_BY_PROCESSOR
+protsessoriga
+MSG_INFO_SOUND
+Heli
+MSG_INFO_NONE
+puudub
+MSG_INFO_CHANNELS
+%u kanalit
+MSG_INFO_TRACKS
+Rajad
+MSG_INFO_TRACK_COUNTS
+%u heli, %u subtiitrit
+MSG_VOLUME_HINT
+Helitugevus
+MSG_NOLIBRARY
+%s: ei saa avada teeki %s\n
+MSG_NOMEMORY
+%s: mälu ei jätku\n
+MSG_NOWINDOW
+%s: ei saa oma akent avada\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

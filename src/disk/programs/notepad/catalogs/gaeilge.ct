@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; Notepad's strings in Irish.
+MSG_MENU_PROJECT
+Tionscadal
+MSG_MENU_NEW
+Nua
+MSG_MENU_OPEN
+Oscail...
+MSG_MENU_SAVE
+Sábháil
+MSG_MENU_SAVE_AS
+Sábháil Mar...
+MSG_MENU_QUIT
+Scoir
+MSG_MENU_EDIT
+Eagar
+MSG_MENU_UNDO
+Cealaigh
+MSG_MENU_REDO
+Athdhéan
+MSG_MENU_CUT
+Gearr
+MSG_MENU_COPY
+Cóipeáil
+MSG_MENU_PASTE
+Greamaigh
+MSG_MENU_SELECT_ALL
+Roghnaigh Gach Rud
+MSG_MENU_SEARCH
+Cuardach
+MSG_MENU_FIND
+Aimsigh...
+MSG_MENU_FIND_NEXT
+Aimsigh an Chéad Cheann Eile
+MSG_MENU_FIND_PREVIOUS
+Aimsigh an Ceann Roimhe
+MSG_MENU_REPLACE
+Ionadaigh...
+MSG_MENU_VIEW
+Amharc
+MSG_MENU_WRAP
+Timfhilleadh Focal
+MSG_MENU_NUMBERS
+Uimhreacha Línte
+MSG_MENU_ZIG
+Aibhsiú Zig
+MSG_MENU_RIBBON
+Ribín
+MSG_RIBBON_HOME
+Baile
+MSG_RIBBON_CLIPBOARD
+Gearrthaisce
+MSG_RIBBON_PASTE_HINT
+Cuir isteach a gearradh nó a cóipeáladh
+MSG_RIBBON_EDITING
+Eagarthóireacht
+MSG_RIBBON_FIND
+Aimsigh
+MSG_RIBBON_FIND_HINT
+Aimsigh téacs; aimsíonn an liosta an chéad cheann eile arís, nó an ceann roimhe
+MSG_RIBBON_REPLACE
+Ionadaigh
+MSG_RIBBON_REPLACE_HINT
+Cuir téacs eile in áit téacs a aimsíodh
+MSG_RIBBON_SELECT_ALL_HINT
+Roghnaigh an téacs ar fad
+MSG_RIBBON_LINES
+Línte
+MSG_RIBBON_WRAP_HINT
+Lean ar aghaidh sa chéad líne eile seachas thar imeall na fuinneoige
+MSG_RIBBON_NUMBERS_HINT
+Uimhrigh gach líne ar chlé
+MSG_RIBBON_HIGHLIGHTING
+Aibhsiú
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Taispeáin eochairfhocail, teaghráin agus nótaí Zig, gach ceann i ndath
+MSG_UNTITLED
+Gan Teideal
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Ní féidir %s a oscailt
+MSG_CANNOT_READ
+Ní féidir %s a léamh
+MSG_TOO_BIG
+Tá %s rómhór
+MSG_NO_MEMORY_FOR
+Níl dóthain cuimhne do %s
+MSG_NO_MEMORY_TO_SAVE
+Níl dóthain cuimhne chun %s a shábháil
+MSG_CANNOT_WRITE
+Ní féidir %s a scríobh
+MSG_NO_REQUESTER
+Níl %s ann
+MSG_CHANGED
+Athraíodh an téacs.\nÉ a shábháil ar dtús?
+MSG_CHANGED_BUTTONS
+Sábháil|Ná Sábháil|Cealaigh
+MSG_OPEN_TITLE
+Oscail téacs
+MSG_SAVE_AS_TITLE
+Sábháil an téacs mar
+MSG_FIND_TITLE
+Aimsigh agus Ionadaigh
+MSG_FIND_LABEL
+Aimsigh
+MSG_REPLACE_WITH
+Ionadaigh le
+MSG_ANY_CASE
+Cás ar bith
+MSG_FIND_NEXT_BUTTON
+Aimsigh an chéad cheann eile
+MSG_REPLACE_BUTTON
+Ionadaigh
+MSG_REPLACE_ALL_BUTTON
+Ionadaigh gach ceann
+MSG_NOLIBRARY
+Níl %s ann\n
+MSG_NOSCREEN
+Níl scáileán réamhshocraithe ann - níl taispeáint ann\n
+MSG_NOMEMORY
+Níl dóthain cuimhne don fhuinneog\n

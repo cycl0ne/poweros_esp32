@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; http.library's words for a request that failed, in Danish.
+MSG_NOMEM
+ingen hukommelse
+MSG_IO
+forbindelsen mislykkedes
+MSG_IO_BECAUSE
+forbindelsen mislykkedes: %s
+MSG_STOPPED
+stoppet
+MSG_TIMEOUT
+serveren svarede ikke i tide
+MSG_URL
+ikke en http://- eller https://-URL, eller en for lang
+MSG_HOST
+værten har ingen adresse
+MSG_HOST_NAMED
+%s har ingen adresse
+MSG_TLS
+TLS-sessionen mislykkedes
+MSG_TLS_CERTIFICATE
+serverens certifikat er ikke betroet: %s
+MSG_TLS_CLOCK
+uret er ikke stillet, så intet certifikat kan kontrolleres (TimeSync)
+MSG_TLS_ALERT
+serveren afviste TLS-sessionen (alert %u)
+MSG_TLS_HANDSHAKE
+TLS-handshaket mislykkedes
+MSG_PROTOCOL
+svaret er ikke HTTP
+MSG_REDIRECT
+flere omdirigeringer end tilladt, eller en til ingenting
+MSG_TRUNCATED
+forbindelsen sluttede før svaret
+MSG_STATE
+et kald på det forkerte tidspunkt, eller en anmodning, der ikke kan foretages
+MSG_LIBRARY
+et bibliotek, som anmodningen kræver, findes ikke
+MSG_LIBRARY_NAMED
+%s findes ikke
+MSG_DATA
+serverens pakkede svar kan ikke pakkes ud
+MSG_CLOSED
+serveren lukkede forbindelsen uden at svare
+MSG_UNKNOWN
+anmodningen mislykkedes (%d)
+MSG_VERDICT_MALFORMED
+et af dets certifikater kan ikke læses
+MSG_VERDICT_UNKNOWN_ISSUER
+ingen betroet rod har signeret det
+MSG_VERDICT_BAD_SIGNATURE
+en signatur i dets kæde er forkert
+MSG_VERDICT_UNSUPPORTED
+det er signeret på en måde, der ikke kan kontrolleres
+MSG_VERDICT_EXPIRED
+det er udløbet
+MSG_VERDICT_NOT_YET_VALID
+det er ikke gyldigt endnu
+MSG_VERDICT_NOT_CA
+det er udstedt af et certifikat, der ikke må udstede
+MSG_VERDICT_PATH_LENGTH
+dets kæde er længere, end dets CA'er tillader
+MSG_VERDICT_NAME_CONSTRAINTS
+en CA i dets kæde har navnebegrænsninger
+MSG_VERDICT_WRONG_USAGE
+det er ikke til en server
+MSG_VERDICT_WRONG_NAME
+det er til en anden vært
+MSG_VERDICT_TOO_LONG
+dets kæde er for lang
+MSG_VERDICT_OTHER
+uden angivet grund

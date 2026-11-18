@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; Emoji's strings in Polish.
+MSG_SEARCH
+Szukaj
+MSG_USED
+Ostatnio używane
+MSG_NONE_USED
+Jeszcze nic nie użyto
+MSG_NOT_FOUND
+Nic nie znaleziono
+MSG_TONE_NONE
+Bez odcienia skóry
+MSG_TONE_LIGHT
+Jasny
+MSG_TONE_MEDIUM_LIGHT
+Średnio jasny
+MSG_TONE_MEDIUM
+Średni
+MSG_TONE_MEDIUM_DARK
+Średnio ciemny
+MSG_TONE_DARK
+Ciemny
+MSG_GROUP_SMILEYS
+Buźki & emocje
+MSG_GROUP_PEOPLE
+Ludzie & ciało
+MSG_GROUP_ANIMALS
+Zwierzęta & natura
+MSG_GROUP_FOOD
+Jedzenie & picie
+MSG_GROUP_TRAVEL
+Podróże & miejsca
+MSG_GROUP_ACTIVITIES
+Aktywności
+MSG_GROUP_OBJECTS
+Przedmioty
+MSG_GROUP_SYMBOLS
+Symbole
+MSG_GROUP_FLAGS
+Flagi

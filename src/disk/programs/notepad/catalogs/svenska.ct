@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; Notepad's strings in Swedish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Ny
+MSG_MENU_OPEN
+Öppna...
+MSG_MENU_SAVE
+Spara
+MSG_MENU_SAVE_AS
+Spara som...
+MSG_MENU_QUIT
+Avsluta
+MSG_MENU_EDIT
+Redigera
+MSG_MENU_UNDO
+Ångra
+MSG_MENU_REDO
+Gör om
+MSG_MENU_CUT
+Klipp ut
+MSG_MENU_COPY
+Kopiera
+MSG_MENU_PASTE
+Klistra in
+MSG_MENU_SELECT_ALL
+Markera allt
+MSG_MENU_SEARCH
+Sök
+MSG_MENU_FIND
+Sök...
+MSG_MENU_FIND_NEXT
+Sök nästa
+MSG_MENU_FIND_PREVIOUS
+Sök föregående
+MSG_MENU_REPLACE
+Ersätt...
+MSG_MENU_VIEW
+Visa
+MSG_MENU_WRAP
+Radbrytning
+MSG_MENU_NUMBERS
+Radnummer
+MSG_MENU_ZIG
+Zig-markering
+MSG_MENU_RIBBON
+Menyfliksområde
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_CLIPBOARD
+Urklipp
+MSG_RIBBON_PASTE_HINT
+Klistra in det som klipptes ut eller kopierades
+MSG_RIBBON_EDITING
+Redigering
+MSG_RIBBON_FIND
+Sök
+MSG_RIBBON_FIND_HINT
+Sök efter en text; listan hittar nästa igen, eller föregående
+MSG_RIBBON_REPLACE
+Ersätt
+MSG_RIBBON_REPLACE_HINT
+Sätt en annan text i stället för en som hittats
+MSG_RIBBON_SELECT_ALL_HINT
+Markera hela texten
+MSG_RIBBON_LINES
+Rader
+MSG_RIBBON_WRAP_HINT
+Fortsätt på nästa rad i stället för förbi fönstrets kant
+MSG_RIBBON_NUMBERS_HINT
+Numrera varje rad till vänster
+MSG_RIBBON_HIGHLIGHTING
+Markering
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Visa Zigs nyckelord, strängar och kommentarer var i sin färg
+MSG_UNTITLED
+Namnlös
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan inte öppna %s
+MSG_CANNOT_READ
+Kan inte läsa %s
+MSG_TOO_BIG
+%s är för stor
+MSG_NO_MEMORY_FOR
+Inget minne för %s
+MSG_NO_MEMORY_TO_SAVE
+Inget minne för att spara %s
+MSG_CANNOT_WRITE
+Kan inte skriva %s
+MSG_NO_REQUESTER
+Inget %s
+MSG_CHANGED
+Texten har ändrats.\nSpara den först?
+MSG_CHANGED_BUTTONS
+Spara|Spara inte|Avbryt
+MSG_OPEN_TITLE
+Öppna en text
+MSG_SAVE_AS_TITLE
+Spara texten som
+MSG_FIND_TITLE
+Sök och ersätt
+MSG_FIND_LABEL
+Sök
+MSG_REPLACE_WITH
+Ersätt med
+MSG_ANY_CASE
+Ignorera skiftläge
+MSG_FIND_NEXT_BUTTON
+Sök nästa
+MSG_REPLACE_BUTTON
+Ersätt
+MSG_REPLACE_ALL_BUTTON
+Ersätt alla
+MSG_NOLIBRARY
+Inget %s\n
+MSG_NOSCREEN
+Ingen standardskärm - ingen visning\n
+MSG_NOMEMORY
+Inget minne för fönstret\n

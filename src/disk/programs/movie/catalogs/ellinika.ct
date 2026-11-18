@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; Movie's strings in Greek.
+MSG_MENU_PROJECT
+Έργο
+MSG_MENU_OPEN
+Άνοιγμα...
+MSG_MENU_WHOLE_SCREEN
+Πλήρης οθόνη
+MSG_MENU_ABOUT
+Σχετικά
+MSG_MENU_QUIT
+Έξοδος
+MSG_MENU_SOUND
+Ήχος
+MSG_MENU_NO_SOUND
+Κανένας
+MSG_MENU_SUBTITLES
+Υπότιτλοι
+MSG_MENU_SUBTITLES_OFF
+Ανενεργοί
+MSG_MENU_TRACK
+Κομμάτι
+MSG_MENU_FRAME_RATE
+Ρυθμός καρέ
+MSG_MENU_INFO
+Πληροφορίες ταινίας...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u απορρίφθηκαν
+MSG_ASK_OPEN
+Αναπαραγωγή ταινίας
+MSG_ABOUT_TITLE
+Σχετικά με το Movie
+MSG_ABOUT
+%s\n\nΑναπαράγει ταινίες - MP4, MOV του QuickTime και MKV του Matroska:\nεικόνα H.264, H.265 και Motion JPEG,\nήχο AAC, AC-3, MP3, FLAC και Vorbis, και υπότιτλους.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+Το %s\nδεν μπορεί να αναπαραχθεί:\n%s
+MSG_INFO_TITLE
+Πληροφορίες ταινίας
+MSG_INFO_FILE
+Αρχείο
+MSG_INFO_NAMED
+Τίτλος
+MSG_INFO_CONTAINER
+Περιέκτης
+MSG_INFO_LENGTH
+Διάρκεια
+MSG_INFO_PICTURES
+Εικόνα
+MSG_INFO_COLOURS
+Χρώματα
+MSG_INFO_BITS
+%u bit
+MSG_INFO_LIMITED
+περιορισμένο εύρος
+MSG_INFO_FULL
+πλήρες εύρος
+MSG_INFO_SHOWN
+Προβολή
+MSG_INFO_ON_LAYER
+στο επίπεδο βίντεο της οθόνης
+MSG_INFO_BY_GRAPHICS
+σχεδίαση από τη graphics.library
+MSG_INFO_DECODED
+Αποκωδικοποίηση
+MSG_INFO_BY_CHIP
+από τον αποκωδικοποιητή βίντεο
+MSG_INFO_BY_PROCESSOR
+από τον επεξεργαστή
+MSG_INFO_SOUND
+Ήχος
+MSG_INFO_NONE
+κανένας
+MSG_INFO_CHANNELS
+%u κανάλια
+MSG_INFO_TRACKS
+Κομμάτια
+MSG_INFO_TRACK_COUNTS
+%u ήχου, %u υπότιτλων
+MSG_VOLUME_HINT
+Ένταση ήχου
+MSG_NOLIBRARY
+%s: δεν ανοίγει το %s\n
+MSG_NOMEMORY
+%s: δεν υπάρχει αρκετή μνήμη\n
+MSG_NOWINDOW
+%s: δεν ανοίγει το παράθυρό του\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

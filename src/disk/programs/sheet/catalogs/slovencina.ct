@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; Sheet's strings in Slovak.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Nový
+MSG_MENU_OPEN
+Otvoriť...
+MSG_MENU_SAVE
+Uložiť
+MSG_MENU_SAVE_AS
+Uložiť ako...
+MSG_MENU_QUIT
+Ukončiť
+MSG_MENU_EDIT
+Upraviť
+MSG_MENU_UNDO
+Späť
+MSG_MENU_REDO
+Znova
+MSG_MENU_CUT
+Vystrihnúť
+MSG_MENU_COPY
+Kopírovať
+MSG_MENU_PASTE
+Prilepiť
+MSG_MENU_CLEAR
+Vymazať
+MSG_MENU_FILL_DOWN
+Vyplniť nadol
+MSG_MENU_FILL_RIGHT
+Vyplniť doprava
+MSG_MENU_SELECT_ALL
+Vybrať všetko
+MSG_MENU_FIND
+Nájsť...
+MSG_MENU_FIND_NEXT
+Nájsť ďalšie
+MSG_MENU_SHEET
+Tabuľka
+MSG_MENU_INSERT_ROWS
+Vložiť riadky
+MSG_MENU_DELETE_ROWS
+Odstrániť riadky
+MSG_MENU_INSERT_COLUMNS
+Vložiť stĺpce
+MSG_MENU_DELETE_COLUMNS
+Odstrániť stĺpce
+MSG_MENU_WIDER
+Širší stĺpec
+MSG_MENU_NARROWER
+Užší stĺpec
+MSG_MENU_SUM
+Automatický súčet
+MSG_MENU_SORT_ASCENDING
+Zoradiť vzostupne
+MSG_MENU_SORT_DESCENDING
+Zoradiť zostupne
+MSG_MENU_FORMAT
+Formát
+MSG_MENU_GENERAL
+Všeobecné
+MSG_MENU_NUMBER
+Číslo
+MSG_MENU_PERCENT
+Percentá
+MSG_MENU_CURRENCY
+Mena
+MSG_MENU_DECIMALS_MORE
+Viac desatinných miest
+MSG_MENU_DECIMALS_LESS
+Menej desatinných miest
+MSG_MENU_VIEW
+Zobraziť
+MSG_MENU_RIBBON
+Pás s nástrojmi
+MSG_RIBBON_HOME
+Domov
+MSG_RIBBON_CLIPBOARD
+Schránka
+MSG_RIBBON_PASTE_HINT
+Prilepiť, čo bolo vystrihnuté alebo skopírované
+MSG_RIBBON_NUMBER_HINT
+Zobraziť čísla s desatinnými miestami a oddeľovačom tisícov
+MSG_RIBBON_PERCENT_HINT
+Zobraziť čísla ako percentá
+MSG_RIBBON_CURRENCY_HINT
+Zobraziť čísla ako peňažné sumy
+MSG_RIBBON_DECIMALS_MORE_HINT
+Zobraziť o desatinné miesto viac
+MSG_RIBBON_DECIMALS_LESS_HINT
+Zobraziť o desatinné miesto menej
+MSG_RIBBON_CELLS
+Bunky
+MSG_RIBBON_INSERT
+Vložiť
+MSG_RIBBON_INSERT_HINT
+Vložiť riadky alebo stĺpce tam, kde sú vybrané bunky
+MSG_RIBBON_DELETE
+Odstrániť
+MSG_RIBBON_DELETE_HINT
+Odstrániť riadky alebo stĺpce vybraných buniek
+MSG_RIBBON_EDITING
+Úpravy
+MSG_RIBBON_SUM_HINT
+Sčítať čísla nad alebo vľavo
+MSG_RIBBON_SORT
+Zoradiť
+MSG_RIBBON_SORT_HINT
+Zoradiť riadky podľa stĺpca aktuálnej bunky
+MSG_RIBBON_FIND
+Nájsť
+MSG_RIBBON_FIND_HINT
+Nájsť bunku podľa jej obsahu
+MSG_RIBBON_FILL
+Vyplniť
+MSG_RIBBON_FILL_HINT
+Skopírovať prvý riadok alebo stĺpec do ostatných
+MSG_RIBBON_CLEAR_HINT
+Vyprázdniť vybrané bunky
+MSG_ROWS
+Riadky
+MSG_COLUMNS
+Stĺpce
+MSG_SUM
+Súčet
+MSG_AVERAGE
+Priemer
+MSG_COUNT
+Počet
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Vzostupne
+MSG_DESCENDING
+Zostupne
+MSG_DOWN
+Nadol
+MSG_RIGHT
+Doprava
+MSG_PROBLEM_NAME
+Taká funkcia ani názov neexistuje
+MSG_PROBLEM_ARGUMENTS
+Nesprávny počet argumentov
+MSG_PROBLEM_PARENTHESES
+Zátvorka nemá náprotivok
+MSG_PROBLEM_TOO_LONG
+Vzorec je príliš dlhý
+MSG_PROBLEM_UNREADABLE
+Vzorec nemožno prečítať
+MSG_PROBLEM_AT
+%s, na znaku %u
+MSG_NO_MEMORY_KEEP
+Nedostatok pamäte na uchovanie toho všetkého
+MSG_NO_MEMORY_FILE
+Nedostatok pamäte pre celý súbor
+MSG_LEFT_OUT
+Bunky za riadkom 9999 alebo stĺpcom IV sa vynechali
+MSG_NO_MEMORY_COPY
+Nedostatok pamäte na skopírovanie takého množstva
+MSG_NO_MEMORY_CLEAR
+Nedostatok pamäte na vymazanie všetkého
+MSG_NO_MEMORY_PASTE
+Nedostatok pamäte na prilepenie všetkého
+MSG_NO_ROOM_COLUMNS
+Nie je miesto: posledné stĺpce nie sú prázdne
+MSG_NO_ROOM_ROWS
+Nie je miesto: posledné riadky nie sú prázdne
+MSG_NO_MEMORY_THAT
+Na to nie je dosť pamäte
+MSG_NO_MEMORY_FORMAT
+Nedostatok pamäte na formátovanie všetkého
+MSG_NOTHING_TO_ADD
+Nad ani vľavo nie sú čísla na sčítanie
+MSG_NO_MEMORY_ALL
+Nedostatok pamäte na to všetko
+MSG_NO_MEMORY_SORT
+Nedostatok pamäte na zoradenie všetkého
+MSG_NO_MEMORY_FILL
+Nedostatok pamäte na vyplnenie všetkého
+MSG_NOT_FOUND
+Žiadna bunka to neobsahuje
+MSG_UNTITLED
+Bez názvu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s nemožno otvoriť
+MSG_CANNOT_READ
+%s nemožno prečítať
+MSG_TOO_BIG
+%s je príliš veľký
+MSG_NO_MEMORY_FOR
+Nedostatok pamäte pre %s
+MSG_NO_MEMORY_TO_SAVE
+Nedostatok pamäte na uloženie %s
+MSG_CANNOT_WRITE
+%s nemožno zapísať
+MSG_NO_REQUESTER
+Chýba %s
+MSG_CHANGED
+Tabuľka sa zmenila.\nNajskôr ju uložiť?
+MSG_CHANGED_BUTTONS
+Uložiť|Neukladať|Zrušiť
+MSG_OPEN_TITLE
+Otvoriť tabuľku
+MSG_SAVE_AS_TITLE
+Uložiť tabuľku ako
+MSG_FIND_LABEL
+Nájsť
+MSG_FIND_NEXT_BUTTON
+Ďalšie
+MSG_FIND_PREVIOUS_BUTTON
+Predchádzajúce
+MSG_FIND_CLOSE_BUTTON
+Zavrieť
+MSG_NOLIBRARY
+Chýba %s\n
+MSG_NOSCREEN
+Chýba predvolená obrazovka - žiadne zobrazenie\n
+MSG_NOMEMORY
+Nedostatok pamäte pre okno\n

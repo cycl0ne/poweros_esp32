@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; http.library's words for a request that failed, in Irish: a clause in lower case, without its full stop.
+MSG_NOMEM
+níl aon chuimhne ann
+MSG_IO
+theip ar an gceangal
+MSG_IO_BECAUSE
+theip ar an gceangal: %s
+MSG_STOPPED
+stoptha
+MSG_TIMEOUT
+níor fhreagair an freastalaí in am
+MSG_URL
+ní URL http:// ná https:// é, nó tá sé rófhada
+MSG_HOST
+níl seoladh ag an óstríomhaire
+MSG_HOST_NAMED
+níl seoladh ag %s
+MSG_TLS
+theip ar an seisiún TLS
+MSG_TLS_CERTIFICATE
+níl muinín as teastas an fhreastalaí: %s
+MSG_TLS_CLOCK
+níl an clog socraithe, mar sin ní féidir aon teastas a sheiceáil (TimeSync)
+MSG_TLS_ALERT
+dhiúltaigh an freastalaí don seisiún TLS (alert %u)
+MSG_TLS_HANDSHAKE
+theip ar chroitheadh láimhe TLS
+MSG_PROTOCOL
+ní HTTP é an freagra
+MSG_REDIRECT
+níos mó atreoruithe ná mar a ceadaíodh, nó atreorú go dtí áit nach bhfuil ann
+MSG_TRUNCATED
+chríochnaigh an ceangal roimh an bhfreagra
+MSG_STATE
+glao as a sheal, nó iarratas nach féidir a dhéanamh
+MSG_LIBRARY
+níl leabharlann a theastaíonn ón iarratas ann
+MSG_LIBRARY_NAMED
+níl %s ann
+MSG_DATA
+ní féidir freagra pacáilte an fhreastalaí a dhíphacáil
+MSG_CLOSED
+dhún an freastalaí an ceangal gan freagra a thabhairt
+MSG_UNKNOWN
+theip ar an iarratas (%d)
+MSG_VERDICT_MALFORMED
+ní féidir ceann dá theastais a léamh
+MSG_VERDICT_UNKNOWN_ISSUER
+níor shínigh aon fhréamh iontaofa é
+MSG_VERDICT_BAD_SIGNATURE
+tá síniú ina shlabhra mícheart
+MSG_VERDICT_UNSUPPORTED
+síníodh é ar bhealach nach féidir a sheiceáil
+MSG_VERDICT_EXPIRED
+tá sé imithe in éag
+MSG_VERDICT_NOT_YET_VALID
+níl sé bailí fós
+MSG_VERDICT_NOT_CA
+d'eisigh teastas é nach bhfuil cead aige eisiúint
+MSG_VERDICT_PATH_LENGTH
+tá a shlabhra níos faide ná mar a cheadaíonn a CAnna
+MSG_VERDICT_NAME_CONSTRAINTS
+tá srianta ainmneacha ar CA ina shlabhra
+MSG_VERDICT_WRONG_USAGE
+ní d'fhreastalaí é
+MSG_VERDICT_WRONG_NAME
+is d'óstríomhaire eile é
+MSG_VERDICT_TOO_LONG
+tá a shlabhra rófhada
+MSG_VERDICT_OTHER
+gan aon chúis a lua

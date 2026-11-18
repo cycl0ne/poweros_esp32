@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language italiano
+## codeset 106
+; Emoji's strings in Italian.
+MSG_SEARCH
+Cerca
+MSG_USED
+Usati di recente
+MSG_NONE_USED
+Nessuno usato finora
+MSG_NOT_FOUND
+Nessuno trovato
+MSG_TONE_NONE
+Nessun tono
+MSG_TONE_LIGHT
+Chiaro
+MSG_TONE_MEDIUM_LIGHT
+Medio-chiaro
+MSG_TONE_MEDIUM
+Medio
+MSG_TONE_MEDIUM_DARK
+Medio-scuro
+MSG_TONE_DARK
+Scuro
+MSG_GROUP_SMILEYS
+Faccine ed emozioni
+MSG_GROUP_PEOPLE
+Persone e corpo
+MSG_GROUP_ANIMALS
+Animali e natura
+MSG_GROUP_FOOD
+Cibo e bevande
+MSG_GROUP_TRAVEL
+Viaggi e luoghi
+MSG_GROUP_ACTIVITIES
+Attività
+MSG_GROUP_OBJECTS
+Oggetti
+MSG_GROUP_SYMBOLS
+Simboli
+MSG_GROUP_FLAGS
+Bandiere

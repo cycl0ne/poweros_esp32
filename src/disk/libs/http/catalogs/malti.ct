@@ -1,0 +1,79 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; http.library's words for a request that failed, in Maltese: a clause
+; that starts in lower case, without its full stop.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+m'hemmx memorja
+MSG_IO
+il-konnessjoni falliet
+MSG_IO_BECAUSE
+il-konnessjoni falliet: %s
+MSG_STOPPED
+imwaqqaf
+MSG_TIMEOUT
+is-server ma weġibx fil-ħin
+MSG_URL
+mhux URL http:// jew https://, jew wieħed twil wisq
+MSG_HOST
+il-host m'għandux indirizz
+MSG_HOST_NAMED
+%s m'għandux indirizz
+MSG_TLS
+is-sessjoni TLS falliet
+MSG_TLS_CERTIFICATE
+iċ-ċertifikat tas-server mhux affidabbli: %s
+MSG_TLS_CLOCK
+l-arloġġ mhux issettjat, għalhekk l-ebda ċertifikat ma jista' jiġi ċċekkjat (TimeSync)
+MSG_TLS_ALERT
+is-server irrifjuta s-sessjoni TLS (twissija %u)
+MSG_TLS_HANDSHAKE
+il-handshake TLS falla
+MSG_PROTOCOL
+it-tweġiba mhix HTTP
+MSG_REDIRECT
+aktar ridirezzjonijiet milli huwa permess, jew waħda lejn imkien
+MSG_TRUNCATED
+il-konnessjoni spiċċat qabel it-tweġiba
+MSG_STATE
+sejħa barra minn waqtha, jew talba li ma tistax issir
+MSG_LIBRARY
+librerija li t-talba għandha bżonn mhix hemm
+MSG_LIBRARY_NAMED
+%s mhix hemm
+MSG_DATA
+it-tweġiba kkompressata tas-server ma tiddekomprimix
+MSG_CLOSED
+is-server għalaq il-konnessjoni mingħajr ma wieġeb
+MSG_UNKNOWN
+it-talba falliet (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+wieħed miċ-ċertifikati tiegħu ma jistax jinqara
+MSG_VERDICT_UNKNOWN_ISSUER
+l-ebda għerq affidabbli ma ffirmah
+MSG_VERDICT_BAD_SIGNATURE
+firma fil-katina tiegħu hija ħażina
+MSG_VERDICT_UNSUPPORTED
+huwa ffirmat b'mod li ma jistax jiġi ċċekkjat
+MSG_VERDICT_EXPIRED
+skada
+MSG_VERDICT_NOT_YET_VALID
+għadu mhux validu
+MSG_VERDICT_NOT_CA
+inħareġ minn ċertifikat li ma jistax joħroġ oħrajn
+MSG_VERDICT_PATH_LENGTH
+il-katina tiegħu hija itwal milli jippermettu s-CAs tiegħu
+MSG_VERDICT_NAME_CONSTRAINTS
+CA fil-katina tiegħu għandha restrizzjonijiet fuq l-ismijiet
+MSG_VERDICT_WRONG_USAGE
+mhux għal server
+MSG_VERDICT_WRONG_NAME
+huwa għal host ieħor
+MSG_VERDICT_TOO_LONG
+il-katina tiegħu hija twila wisq
+MSG_VERDICT_OTHER
+mingħajr raġuni mogħtija

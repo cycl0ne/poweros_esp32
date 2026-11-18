@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; Notepad's strings in Turkish.
+MSG_MENU_PROJECT
+Proje
+MSG_MENU_NEW
+Yeni
+MSG_MENU_OPEN
+Aç...
+MSG_MENU_SAVE
+Kaydet
+MSG_MENU_SAVE_AS
+Farklı kaydet...
+MSG_MENU_QUIT
+Çıkış
+MSG_MENU_EDIT
+Düzen
+MSG_MENU_UNDO
+Geri al
+MSG_MENU_REDO
+Yinele
+MSG_MENU_CUT
+Kes
+MSG_MENU_COPY
+Kopyala
+MSG_MENU_PASTE
+Yapıştır
+MSG_MENU_SELECT_ALL
+Tümünü seç
+MSG_MENU_SEARCH
+Ara
+MSG_MENU_FIND
+Bul...
+MSG_MENU_FIND_NEXT
+Sonrakini bul
+MSG_MENU_FIND_PREVIOUS
+Öncekini bul
+MSG_MENU_REPLACE
+Değiştir...
+MSG_MENU_VIEW
+Görünüm
+MSG_MENU_WRAP
+Sözcük kaydırma
+MSG_MENU_NUMBERS
+Satır numaraları
+MSG_MENU_ZIG
+Zig vurgulama
+MSG_MENU_RIBBON
+Şerit
+MSG_RIBBON_HOME
+Giriş
+MSG_RIBBON_CLIPBOARD
+Pano
+MSG_RIBBON_PASTE_HINT
+Kesilen ya da kopyalananı yapıştır
+MSG_RIBBON_EDITING
+Düzenleme
+MSG_RIBBON_FIND
+Bul
+MSG_RIBBON_FIND_HINT
+Bir metin bul; liste sonrakini ya da öncekini yeniden bulur
+MSG_RIBBON_REPLACE
+Değiştir
+MSG_RIBBON_REPLACE_HINT
+Bulunan metnin yerine başka bir metin koy
+MSG_RIBBON_SELECT_ALL_HINT
+Tüm metni seç
+MSG_RIBBON_LINES
+Satırlar
+MSG_RIBBON_WRAP_HINT
+Pencerenin kenarını aşmak yerine sonraki satırda devam et
+MSG_RIBBON_NUMBERS_HINT
+Her satırı solda numaralandır
+MSG_RIBBON_HIGHLIGHTING
+Vurgulama
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Zig'in anahtar sözcüklerini, dizgilerini ve açıklamalarını ayrı renklerde göster
+MSG_UNTITLED
+Adsız
+MSG_OK
+Tamam
+MSG_CANNOT_OPEN
+%s açılamıyor
+MSG_CANNOT_READ
+%s okunamıyor
+MSG_TOO_BIG
+%s çok büyük
+MSG_NO_MEMORY_FOR
+%s için bellek yok
+MSG_NO_MEMORY_TO_SAVE
+%s kaydedilecek bellek yok
+MSG_CANNOT_WRITE
+%s yazılamıyor
+MSG_NO_REQUESTER
+%s yok
+MSG_CHANGED
+Metin değişti.\nÖnce kaydedilsin mi?
+MSG_CHANGED_BUTTONS
+Kaydet|Kaydetme|İptal
+MSG_OPEN_TITLE
+Bir metin aç
+MSG_SAVE_AS_TITLE
+Metni farklı kaydet
+MSG_FIND_TITLE
+Bul ve değiştir
+MSG_FIND_LABEL
+Bul
+MSG_REPLACE_WITH
+Yeni metin
+MSG_ANY_CASE
+Büyük/küçük harf fark etmez
+MSG_FIND_NEXT_BUTTON
+Sonrakini bul
+MSG_REPLACE_BUTTON
+Değiştir
+MSG_REPLACE_ALL_BUTTON
+Tümünü değiştir
+MSG_NOLIBRARY
+%s yok\n
+MSG_NOSCREEN
+Varsayılan ekran yok - görüntü yok\n
+MSG_NOMEMORY
+Pencere için bellek yok\n

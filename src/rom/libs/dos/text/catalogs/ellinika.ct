@@ -1,0 +1,380 @@
+## version $VER: sys/dos.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; dos.library's strings in Greek.
+;
+SOFTWARE_FAILURE
+Σφάλμα λογισμικού
+;
+RUN_FAILED
+%s: απέτυχε, κωδικός επιστροφής %ld\n
+;
+USE_COUNT
+%TH ΜΕΤΡΗΤΗΣ ΧΡΗΣΗΣ\n\n
+;
+NAME
+ΟΝΟΜΑ
+;
+DISABLED
+%TH ΑΠΕΝΕΡΓΟΠΟΙΗΜΕΝΗ\n
+;
+INTERNAL
+%TH ΕΣΩΤΕΡΙΚΗ\n
+;
+SYSTEM
+%TH ΣΥΣΤΗΜΑΤΟΣ\n
+;
+FAULT
+Σφάλμα %3ld
+;
+FAIL_LIMIT
+Όριο αποτυχίας: %ld\n
+;
+BAD_RETURN_CODE
+Δόθηκε λάθος κωδικός επιστροφής
+;
+CURRENT_DIR
+Τρέχων κατάλογος
+;
+NO_RETURN_CODE
+Η τελευταία εντολή δεν όρισε κωδικό επιστροφής
+;
+LAST_CMD_FAILED
+Η τελευταία εντολή απέτυχε επειδή\x20
+;
+PROCESS_ENDING
+Η διεργασία %N τερματίζεται
+;
+REQUESTED_SIZE_TOO_SMALL
+Το ζητούμενο μέγεθος είναι πολύ μικρό
+;
+REQUESTED_SIZE_TOO_LARGE
+Το ζητούμενο μέγεθος είναι πολύ μεγάλο
+;
+CURRENT_STACK_SIZE
+Το τρέχον μέγεθος στοίβας είναι %ld byte\n
+;
+NEWSHELL_FAILED
+Το NewShell απέτυχε
+;
+MISSING_ELSE_OR_ENDIF
+Λείπει ELSE ή ENDIF
+;
+MUST_BE_IN_CMD_FILE
+Πρέπει να είναι σε αρχείο εντολών
+;
+MORE_THAN_ONE_DIR
+Ταιριάζουν περισσότεροι από ένας κατάλογοι
+;
+CANT_SET
+Δεν ορίζεται το %s\n
+;
+BLOCK_CORRUPT_DIR
+Μπλοκ %ld: κατεστραμμένος κατάλογος
+;
+BLOCK_CORRUPT_FILE
+Μπλοκ %ld: κατεστραμμένο αρχείο
+;
+BLOCK_BAD_HEADER
+Μπλοκ %ld: λάθος τύπος κεφαλίδας
+;
+BLOCK_OUT_OF_RANGE
+Μπλοκ %ld εκτός ορίων
+;
+BLOCK_USED_TWICE
+Μπλοκ %ld σε χρήση δύο φορές
+;
+VALIDATION_ERROR
+Σφάλμα στον έλεγχο του %b
+;
+ON_DISK_BLOCK
+στο μπλοκ δίσκου %ld
+;
+CHECKSUM_ERROR
+έχει σφάλμα αθροίσματος ελέγχου
+;
+WRITE_ERROR
+έχει σφάλμα εγγραφής
+;
+READ_ERROR
+έχει σφάλμα ανάγνωσης
+;
+UNABLE_CREATE_PROC
+Δεν δημιουργείται διεργασία\n
+;
+NEW_SHELL_PROCESS
+Νέα διεργασία Shell %ld\n
+;
+CANT_OPEN_FROM_FILE
+Δεν ανοίγει το αρχείο FROM %s\n
+;
+SUSPEND_REBOOT
+Αναστολή|Επανεκκίνηση
+;
+RETRY_CANCEL
+Επανάληψη|Άκυρο
+;
+NO_ROOM_FOR_BITMAP
+Δεν υπάρχει χώρος για bitmap
+;
+CMD_TOO_LONG
+Η εντολή είναι πολύ μεγάλη
+;
+SHELL_ERROR
+Σφάλμα φλοιού:
+;
+CMDNAME_ERROR
+Σφάλμα στο όνομα εντολής
+;
+UNKNOWN_COMMAND
+Άγνωστη εντολή
+;
+LOAD_ERROR
+Δεν φορτώνεται
+;
+SYNTAX_ERROR
+συντακτικό σφάλμα
+;
+REDIRECT_ERROR
+δεν ανοίγει το αρχείο ανακατεύθυνσης
+;
+ERROR
+Σφάλμα\x20
+;
+EMPTY_STRING
+
+;
+DISK_CORRUPT
+Ο δίσκος είναι κατεστραμμένος - η εργασία σταμάτησε
+;
+PROGRAM_FAILED
+Το πρόγραμμα απέτυχε (σφάλμα #
+;
+WAIT_FOR_ACTIVITY
+Περιμένετε να τελειώσει η δραστηριότητα του δίσκου.
+;
+IN_DEVICE
+στη συσκευή %s%s
+;
+IN_UNIT
+στη μονάδα %ld%s
+;
+YOU_MUST_REPLACE
+ΠΡΕΠΕΙ να τοποθετήσετε ξανά τον τόμο
+;
+READ_WRITE_ERROR
+έχει σφάλμα ανάγνωσης/εγγραφής
+;
+NO_DISK_PRESENT
+Δεν υπάρχει δίσκος
+;
+NOT_A_DOS_DISK
+Δεν είναι δίσκος DOS
+;
+ANY_DRIVE
+σε οποιαδήποτε μονάδα
+;
+REPLACE_VOLUME
+Τοποθετήστε ξανά τον τόμο
+;
+INSERT_VOLUME
+Τοποθετήστε τον τόμο
+;
+IS_FULL
+είναι πλήρης
+;
+IS_PROTECTED
+προστατεύεται από εγγραφή
+;
+IS_NOT_VALIDATED
+δεν έχει ελεγχθεί
+;
+VOLUME
+Τόμος
+;
+ERROR_NO_FREE_STORE
+δεν υπάρχει αρκετή μνήμη
+;
+ERROR_TASK_TABLE_FULL
+ο πίνακας διεργασιών είναι πλήρης
+;
+ERROR_BAD_TEMPLATE
+λάθος πρότυπο
+;
+ERROR_BAD_NUMBER
+λάθος αριθμός
+;
+ERROR_REQUIRED_ARG_MISSING
+λείπει απαιτούμενο όρισμα
+;
+ERROR_KEY_NEEDS_ARG
+λείπει τιμή μετά τη λέξη-κλειδί
+;
+ERROR_TOO_MANY_ARGS
+λάθος αριθμός ορισμάτων
+;
+ERROR_UNMATCHED_QUOTES
+ασύζευκτα εισαγωγικά
+;
+ERROR_LINE_TOO_LONG
+η γραμμή ορισμάτων είναι άκυρη ή πολύ μεγάλη
+;
+ERROR_FILE_NOT_OBJECT
+το αρχείο δεν είναι εκτελέσιμο
+;
+ERROR_INVALID_RESIDENT_LIBRARY
+άκυρη μόνιμη βιβλιοθήκη
+;
+ERROR_OBJECT_IN_USE
+το αντικείμενο είναι σε χρήση
+;
+ERROR_OBJECT_EXISTS
+το αντικείμενο υπάρχει ήδη
+;
+ERROR_DIR_NOT_FOUND
+ο κατάλογος δεν βρέθηκε
+;
+ERROR_OBJECT_NOT_FOUND
+το αντικείμενο δεν βρέθηκε
+;
+ERROR_BAD_STREAM_NAME
+άκυρη περιγραφή παραθύρου
+;
+ERROR_OBJECT_TOO_LARGE
+το αντικείμενο είναι πολύ μεγάλο
+;
+ERROR_ACTION_NOT_KNOWN
+άγνωστος τύπος αιτήματος πακέτου
+;
+ERROR_INVALID_COMPONENT_NAME
+άκυρο όνομα αντικειμένου
+;
+ERROR_INVALID_LOCK
+άκυρο κλείδωμα αντικειμένου
+;
+ERROR_OBJECT_WRONG_TYPE
+το αντικείμενο δεν είναι του απαιτούμενου τύπου
+;
+ERROR_DISK_NOT_VALIDATED
+ο δίσκος δεν έχει ελεγχθεί
+;
+ERROR_DISK_WRITE_PROTECTED
+ο δίσκος προστατεύεται από εγγραφή
+;
+ERROR_RENAME_ACROSS_DEVICES
+απόπειρα μετονομασίας μεταξύ συσκευών
+;
+ERROR_DIRECTORY_NOT_EMPTY
+ο κατάλογος δεν είναι άδειος
+;
+ERROR_TOO_MANY_LEVELS
+πάρα πολλά επίπεδα
+;
+ERROR_DEVICE_NOT_MOUNTED
+η συσκευή (ή ο τόμος) δεν έχει προσαρτηθεί
+;
+ERROR_SEEK_ERROR
+σφάλμα αναζήτησης θέσης
+;
+ERROR_COMMENT_TOO_BIG
+το σχόλιο είναι πολύ μεγάλο
+;
+ERROR_DISK_FULL
+ο δίσκος είναι πλήρης
+;
+ERROR_DELETE_PROTECTED
+το αντικείμενο προστατεύεται από διαγραφή
+;
+ERROR_WRITE_PROTECTED
+το αρχείο προστατεύεται από εγγραφή
+;
+ERROR_READ_PROTECTED
+το αρχείο προστατεύεται από ανάγνωση
+;
+ERROR_NOT_A_DOS_DISK
+δεν είναι έγκυρος δίσκος DOS
+;
+ERROR_NO_DISK
+δεν υπάρχει δίσκος στη μονάδα
+;
+ERROR_NO_MORE_ENTRIES
+δεν υπάρχουν άλλες καταχωρίσεις στον κατάλογο
+;
+ERROR_IS_SOFT_LINK
+το αντικείμενο είναι συμβολικός σύνδεσμος
+;
+ERROR_OBJECT_LINKED
+το αντικείμενο έχει συνδέσμους
+;
+ERROR_BAD_HUNK
+λάθος τμήμα αρχείου φόρτωσης
+;
+ERROR_NOT_IMPLEMENTED
+η συνάρτηση δεν έχει υλοποιηθεί
+;
+ERROR_RECORD_NOT_LOCKED
+η εγγραφή δεν είναι κλειδωμένη
+;
+ERROR_LOCK_COLLISION
+σύγκρουση κλειδωμάτων εγγραφής
+;
+ERROR_LOCK_TIMEOUT
+λήξη χρόνου κλειδώματος εγγραφής
+;
+ERROR_UNLOCK_ERROR
+σφάλμα ξεκλειδώματος εγγραφής
+;
+ABORT_BUSY
+ο καλών δεν έπρεπε να ερωτηθεί
+;
+ABORT_DISK_ERROR
+σφάλμα ανάγνωσης ή εγγραφής στον τόμο
+;
+ERROR_BUFFER_OVERFLOW
+υπερχείλιση προσωρινής μνήμης
+;
+ERROR_BREAK
+***Διακοπή
+;
+ERROR_NOT_EXECUTABLE
+το αρχείο δεν είναι εκτελέσιμο
+;
+ERROR_INVALID_ARGUMENT
+άκυρο όρισμα
+;
+ERROR_INVALID_DOS_ENTRY
+άκυρη καταχώριση στη λίστα συσκευών
+;
+ERROR_NO_INPUT_STREAM
+δεν υπάρχει ροή εισόδου
+;
+ERROR_BUFFER_TOO_SMALL
+η προσωρινή μνήμη είναι πολύ μικρή
+;
+ERROR_NO_PROCESS
+δεν είναι διεργασία
+;
+ERROR_NO_HANDLER
+δεν υπάρχει χειριστής
+;
+ERROR_PACKET_ASYNC
+πακέτο εκτός σειράς
+;
+ERROR_ERROR_IN_PACKET
+σφάλμα στο πακέτο
+;
+ERROR_NO_CURRENT_DIRECTORY
+δεν υπάρχει τρέχων κατάλογος
+;
+ERROR_HANDLER_NOT_LOADED
+ο χειριστής δεν φορτώθηκε
+;
+ERROR_HANDLER_START_ERROR
+ο χειριστής δεν ξεκίνησε
+;
+ERROR_BROKEN_PIPE
+η άλλη άκρη της σωλήνωσης χάθηκε
+;
+ERROR_BAD_CHECKSUM
+σφάλμα αθροίσματος ελέγχου: τα δεδομένα που διαβάστηκαν δεν είναι αυτά που γράφτηκαν
+;

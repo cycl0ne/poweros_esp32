@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; Emoji's strings in Czech.
+MSG_SEARCH
+Hledat
+MSG_USED
+Naposledy použité
+MSG_NONE_USED
+Zatím nic nepoužito
+MSG_NOT_FOUND
+Nic nenalezeno
+MSG_TONE_NONE
+Bez odstínu pleti
+MSG_TONE_LIGHT
+Světlý
+MSG_TONE_MEDIUM_LIGHT
+Středně světlý
+MSG_TONE_MEDIUM
+Střední
+MSG_TONE_MEDIUM_DARK
+Středně tmavý
+MSG_TONE_DARK
+Tmavý
+MSG_GROUP_SMILEYS
+Smajlíci & emoce
+MSG_GROUP_PEOPLE
+Lidé & tělo
+MSG_GROUP_ANIMALS
+Zvířata & příroda
+MSG_GROUP_FOOD
+Jídlo & pití
+MSG_GROUP_TRAVEL
+Cestování & místa
+MSG_GROUP_ACTIVITIES
+Aktivity
+MSG_GROUP_OBJECTS
+Předměty
+MSG_GROUP_SYMBOLS
+Symboly
+MSG_GROUP_FLAGS
+Vlajky

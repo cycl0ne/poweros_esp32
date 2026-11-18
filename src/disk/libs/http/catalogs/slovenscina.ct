@@ -1,0 +1,75 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; http.library's words for a request that failed, in Slovene: a clause
+; that starts in lower case, without its full stop.
+MSG_NOMEM
+ni pomnilnika
+MSG_IO
+povezava ni uspela
+MSG_IO_BECAUSE
+povezava ni uspela: %s
+MSG_STOPPED
+ustavljeno
+MSG_TIMEOUT
+strežnik ni odgovoril pravočasno
+MSG_URL
+ni naslov URL http:// ali https://, ali pa je predolg
+MSG_HOST
+gostitelj nima naslova
+MSG_HOST_NAMED
+%s nima naslova
+MSG_TLS
+seja TLS ni uspela
+MSG_TLS_CERTIFICATE
+potrdilu strežnika ni mogoče zaupati: %s
+MSG_TLS_CLOCK
+ura ni nastavljena, zato ni mogoče preveriti nobenega potrdila (TimeSync)
+MSG_TLS_ALERT
+strežnik je zavrnil sejo TLS (opozorilo %u)
+MSG_TLS_HANDSHAKE
+rokovanje TLS ni uspelo
+MSG_PROTOCOL
+odgovor ni HTTP
+MSG_REDIRECT
+več preusmeritev, kot je dovoljeno, ali preusmeritev v prazno
+MSG_TRUNCATED
+povezava se je končala pred koncem odgovora
+MSG_STATE
+klic ob napačnem času ali zahteva, ki je ni mogoče izvesti
+MSG_LIBRARY
+ni knjižnice, ki jo zahteva potrebuje
+MSG_LIBRARY_NAMED
+%s ni na voljo
+MSG_DATA
+stisnjenega odgovora strežnika ni mogoče razširiti
+MSG_CLOSED
+strežnik je zaprl povezavo brez odgovora
+MSG_UNKNOWN
+zahteva ni uspela (%d)
+MSG_VERDICT_MALFORMED
+enega od njegovih potrdil ni mogoče prebrati
+MSG_VERDICT_UNKNOWN_ISSUER
+podpisal ga ni noben zaupanja vreden korenski overitelj
+MSG_VERDICT_BAD_SIGNATURE
+podpis v njegovi verigi je napačen
+MSG_VERDICT_UNSUPPORTED
+podpisano je na način, ki ga ni mogoče preveriti
+MSG_VERDICT_EXPIRED
+poteklo je
+MSG_VERDICT_NOT_YET_VALID
+še ni veljavno
+MSG_VERDICT_NOT_CA
+izdalo ga je potrdilo, ki ne sme izdajati potrdil
+MSG_VERDICT_PATH_LENGTH
+njegova veriga je daljša, kot dovoljujejo njeni overitelji
+MSG_VERDICT_NAME_CONSTRAINTS
+overitelj v njegovi verigi ima omejitve imen
+MSG_VERDICT_WRONG_USAGE
+ni namenjeno strežniku
+MSG_VERDICT_WRONG_NAME
+namenjeno je drugemu gostitelju
+MSG_VERDICT_TOO_LONG
+njegova veriga je predolga
+MSG_VERDICT_OTHER
+brez navedenega razloga

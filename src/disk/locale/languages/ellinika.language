@@ -1,0 +1,26 @@
+# LOCALE:Languages/ellinika.language - Greek: the words locale.library
+# writes and reads dates in. Its letters sort in the order of their
+# codes, folded and without their accents, which the library has for
+# every Greek letter. A word left out is the English one; a word with a
+# blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=Κυριακή DAY_2=Δευτέρα DAY_3=Τρίτη DAY_4=Τετάρτη DAY_5=Πέμπτη
+DAY_6=Παρασκευή DAY_7=Σάββατο
+ABDAY_1=Κυρ ABDAY_2=Δευ ABDAY_3=Τρί ABDAY_4=Τετ ABDAY_5=Πέμ
+ABDAY_6=Παρ ABDAY_7=Σάβ
+# The months, then their short names.
+MON_1=Ιανουάριος MON_2=Φεβρουάριος MON_3=Μάρτιος MON_4=Απρίλιος
+MON_5=Μάιος MON_6=Ιούνιος MON_7=Ιούλιος MON_8=Αύγουστος
+MON_9=Σεπτέμβριος MON_10=Οκτώβριος MON_11=Νοέμβριος
+MON_12=Δεκέμβριος
+ABMON_1=Ιαν ABMON_2=Φεβ ABMON_3=Μάρ ABMON_4=Απρ ABMON_5=Μάι
+ABMON_6=Ιούν ABMON_7=Ιούλ ABMON_8=Αύγ ABMON_9=Σεπ ABMON_10=Οκτ
+ABMON_11=Νοέ ABMON_12=Δεκ
+# Yes and no, before and after noon.
+YESSTR=Ναι NOSTR=Όχι AM_STR=π.μ. PM_STR=μ.μ.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=« CLOSEQUOTE=»
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Χθες TODAYSTR=Σήμερα TOMORROWSTR=Αύριο
+FUTURESTR=Μέλλον

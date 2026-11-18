@@ -1,0 +1,25 @@
+# LOCALE:Languages/russkij.language - Russian: the words locale.library
+# writes and reads dates in. Its letters sort in the order of their
+# codes, without their marks, which the library has for every Cyrillic
+# letter. A word left out is the English one; a word with a blank is in
+# quotes.
+#
+# The days, then their short names.
+DAY_1=воскресенье DAY_2=понедельник DAY_3=вторник DAY_4=среда
+DAY_5=четверг DAY_6=пятница DAY_7=суббота
+ABDAY_1=вс ABDAY_2=пн ABDAY_3=вт ABDAY_4=ср ABDAY_5=чт ABDAY_6=пт
+ABDAY_7=сб
+# The months, then their short names.
+MON_1=январь MON_2=февраль MON_3=март MON_4=апрель MON_5=май
+MON_6=июнь MON_7=июль MON_8=август MON_9=сентябрь MON_10=октябрь
+MON_11=ноябрь MON_12=декабрь
+ABMON_1=янв ABMON_2=фев ABMON_3=мар ABMON_4=апр ABMON_5=май
+ABMON_6=июн ABMON_7=июл ABMON_8=авг ABMON_9=сен ABMON_10=окт
+ABMON_11=ноя ABMON_12=дек
+# Yes and no, before and after noon.
+YESSTR=Да NOSTR=Нет AM_STR=ДП PM_STR=ПП
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=« CLOSEQUOTE=»
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Вчера TODAYSTR=Сегодня TOMORROWSTR=Завтра
+FUTURESTR=Будущее

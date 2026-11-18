@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; Movie's strings in Slovak.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Otvoriť...
+MSG_MENU_WHOLE_SCREEN
+Celá obrazovka
+MSG_MENU_ABOUT
+O programe
+MSG_MENU_QUIT
+Ukončiť
+MSG_MENU_SOUND
+Zvuk
+MSG_MENU_NO_SOUND
+Žiadny
+MSG_MENU_SUBTITLES
+Titulky
+MSG_MENU_SUBTITLES_OFF
+Vypnuté
+MSG_MENU_TRACK
+Stopa
+MSG_MENU_FRAME_RATE
+Snímková frekvencia
+MSG_MENU_INFO
+Informácie o filme...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, zahodené: %u
+MSG_ASK_OPEN
+Prehrať film
+MSG_ABOUT_TITLE
+O programe Movie
+MSG_ABOUT
+%s\n\nPrehráva filmy - MP4, MOV z QuickTime a MKV z Matroska:\nobraz H.264, H.265 a Motion JPEG,\nzvuk AAC, AC-3, MP3, FLAC a Vorbis a titulky.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nnemožno prehrať:\n%s
+MSG_INFO_TITLE
+Informácie o filme
+MSG_INFO_FILE
+Súbor
+MSG_INFO_NAMED
+Názov
+MSG_INFO_CONTAINER
+Kontajner
+MSG_INFO_LENGTH
+Dĺžka
+MSG_INFO_PICTURES
+Obraz
+MSG_INFO_COLOURS
+Farby
+MSG_INFO_BITS
+%u bitov
+MSG_INFO_LIMITED
+obmedzený rozsah
+MSG_INFO_FULL
+plný rozsah
+MSG_INFO_SHOWN
+Zobrazenie
+MSG_INFO_ON_LAYER
+na video vrstve displeja
+MSG_INFO_BY_GRAPHICS
+kreslí graphics.library
+MSG_INFO_DECODED
+Dekódovanie
+MSG_INFO_BY_CHIP
+videodekodérom
+MSG_INFO_BY_PROCESSOR
+procesorom
+MSG_INFO_SOUND
+Zvuk
+MSG_INFO_NONE
+žiadny
+MSG_INFO_CHANNELS
+kanály: %u
+MSG_INFO_TRACKS
+Stopy
+MSG_INFO_TRACK_COUNTS
+zvuk: %u, titulky: %u
+MSG_VOLUME_HINT
+Hlasitosť
+MSG_NOLIBRARY
+%s: nemožno otvoriť %s\n
+MSG_NOMEMORY
+%s: nedostatok pamäte\n
+MSG_NOWINDOW
+%s: nemožno otvoriť okno\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; http.library's words for a request that failed, in Norwegian (Bokmål).
+MSG_NOMEM
+ikke noe minne
+MSG_IO
+tilkoblingen mislyktes
+MSG_IO_BECAUSE
+tilkoblingen mislyktes: %s
+MSG_STOPPED
+stoppet
+MSG_TIMEOUT
+serveren svarte ikke i tide
+MSG_URL
+ikke en http://- eller https://-URL, eller en for lang
+MSG_HOST
+verten har ingen adresse
+MSG_HOST_NAMED
+%s har ingen adresse
+MSG_TLS
+TLS-økten mislyktes
+MSG_TLS_CERTIFICATE
+serverens sertifikat er ikke klarert: %s
+MSG_TLS_CLOCK
+klokken er ikke stilt, så ingen sertifikater kan kontrolleres (TimeSync)
+MSG_TLS_ALERT
+serveren avviste TLS-økten (alert %u)
+MSG_TLS_HANDSHAKE
+TLS-håndtrykket mislyktes
+MSG_PROTOCOL
+svaret er ikke HTTP
+MSG_REDIRECT
+flere omdirigeringer enn tillatt, eller en til ingensteds
+MSG_TRUNCATED
+tilkoblingen ble avsluttet før svaret
+MSG_STATE
+et kall i feil rekkefølge, eller en forespørsel som ikke kan gjøres
+MSG_LIBRARY
+et bibliotek som forespørselen trenger, finnes ikke
+MSG_LIBRARY_NAMED
+%s finnes ikke
+MSG_DATA
+serverens pakkede svar kan ikke pakkes ut
+MSG_CLOSED
+serveren lukket tilkoblingen uten å svare
+MSG_UNKNOWN
+forespørselen mislyktes (%d)
+MSG_VERDICT_MALFORMED
+ett av sertifikatene kan ikke leses
+MSG_VERDICT_UNKNOWN_ISSUER
+ingen klarert rot har signert det
+MSG_VERDICT_BAD_SIGNATURE
+en signatur i kjeden er feil
+MSG_VERDICT_UNSUPPORTED
+det er signert på en måte som ikke kan kontrolleres
+MSG_VERDICT_EXPIRED
+det er utløpt
+MSG_VERDICT_NOT_YET_VALID
+det er ikke gyldig ennå
+MSG_VERDICT_NOT_CA
+det er utstedt av et sertifikat som ikke har lov til å utstede
+MSG_VERDICT_PATH_LENGTH
+kjeden er lengre enn CA-ene tillater
+MSG_VERDICT_NAME_CONSTRAINTS
+en CA i kjeden har navnebegrensninger
+MSG_VERDICT_WRONG_USAGE
+det er ikke for en server
+MSG_VERDICT_WRONG_NAME
+det er for en annen vert
+MSG_VERDICT_TOO_LONG
+kjeden er for lang
+MSG_VERDICT_OTHER
+uten oppgitt grunn

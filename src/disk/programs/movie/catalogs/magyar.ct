@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; Movie's strings in Hungarian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Megnyitás...
+MSG_MENU_WHOLE_SCREEN
+Teljes képernyő
+MSG_MENU_ABOUT
+Névjegy
+MSG_MENU_QUIT
+Kilépés
+MSG_MENU_SOUND
+Hang
+MSG_MENU_NO_SOUND
+Nincs
+MSG_MENU_SUBTITLES
+Feliratok
+MSG_MENU_SUBTITLES_OFF
+Ki
+MSG_MENU_TRACK
+Sáv
+MSG_MENU_FRAME_RATE
+Képkockasebesség
+MSG_MENU_INFO
+Filminformáció...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, kihagyva: %u
+MSG_ASK_OPEN
+Film lejátszása
+MSG_ABOUT_TITLE
+A Movie névjegye
+MSG_ABOUT
+%s\n\nFilmeket játszik le - MP4, QuickTime MOV és Matroska MKV:\nH.264, H.265 és Motion JPEG kép,\nAAC, AC-3, MP3, FLAC és Vorbis hang, valamint feliratok.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nnem játszható le:\n%s
+MSG_INFO_TITLE
+Filminformáció
+MSG_INFO_FILE
+Fájl
+MSG_INFO_NAMED
+Cím
+MSG_INFO_CONTAINER
+Tároló
+MSG_INFO_LENGTH
+Hossz
+MSG_INFO_PICTURES
+Kép
+MSG_INFO_COLOURS
+Színek
+MSG_INFO_BITS
+%u bit
+MSG_INFO_LIMITED
+korlátozott tartomány
+MSG_INFO_FULL
+teljes tartomány
+MSG_INFO_SHOWN
+Megjelenítés
+MSG_INFO_ON_LAYER
+a kijelző videorétegén
+MSG_INFO_BY_GRAPHICS
+a graphics.library rajzolja
+MSG_INFO_DECODED
+Dekódolás
+MSG_INFO_BY_CHIP
+videodekóderrel
+MSG_INFO_BY_PROCESSOR
+processzorral
+MSG_INFO_SOUND
+Hang
+MSG_INFO_NONE
+nincs
+MSG_INFO_CHANNELS
+csatornák: %u
+MSG_INFO_TRACKS
+Sávok
+MSG_INFO_TRACK_COUNTS
+hang: %u, felirat: %u
+MSG_VOLUME_HINT
+Hangerő
+MSG_NOLIBRARY
+%s: %s nem nyitható meg\n
+MSG_NOMEMORY
+%s: nincs elég memória\n
+MSG_NOWINDOW
+%s: az ablak nem nyitható meg\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

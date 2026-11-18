@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; Emoji's strings in Estonian.
+MSG_SEARCH
+Otsi
+MSG_USED
+Viimati kasutatud
+MSG_NONE_USED
+Veel pole midagi kasutatud
+MSG_NOT_FOUND
+Midagi ei leitud
+MSG_TONE_NONE
+Ilma nahatoonita
+MSG_TONE_LIGHT
+Hele
+MSG_TONE_MEDIUM_LIGHT
+Keskmiselt hele
+MSG_TONE_MEDIUM
+Keskmine
+MSG_TONE_MEDIUM_DARK
+Keskmiselt tume
+MSG_TONE_DARK
+Tume
+MSG_GROUP_SMILEYS
+Naerunäod & emotsioonid
+MSG_GROUP_PEOPLE
+Inimesed & keha
+MSG_GROUP_ANIMALS
+Loomad & loodus
+MSG_GROUP_FOOD
+Toit & jook
+MSG_GROUP_TRAVEL
+Reisimine & kohad
+MSG_GROUP_ACTIVITIES
+Tegevused
+MSG_GROUP_OBJECTS
+Objektid
+MSG_GROUP_SYMBOLS
+Sümbolid
+MSG_GROUP_FLAGS
+Lipud

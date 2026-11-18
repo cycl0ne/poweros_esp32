@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; Movie's strings in Romanian.
+MSG_MENU_PROJECT
+Proiect
+MSG_MENU_OPEN
+Deschidere...
+MSG_MENU_WHOLE_SCREEN
+Ecran complet
+MSG_MENU_ABOUT
+Despre
+MSG_MENU_QUIT
+Ieșire
+MSG_MENU_SOUND
+Sunet
+MSG_MENU_NO_SOUND
+Niciunul
+MSG_MENU_SUBTITLES
+Subtitrări
+MSG_MENU_SUBTITLES_OFF
+Dezactivate
+MSG_MENU_TRACK
+Pistă
+MSG_MENU_FRAME_RATE
+Rată de cadre
+MSG_MENU_INFO
+Informații despre film...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, pierdute: %u
+MSG_ASK_OPEN
+Redați un film
+MSG_ABOUT_TITLE
+Despre Movie
+MSG_ABOUT
+%s\n\nRedă filme - MP4, MOV de la QuickTime și MKV de la Matroska:\nimagine H.264, H.265 și Motion JPEG,\nsunet AAC, AC-3, MP3, FLAC și Vorbis, și subtitrări.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nnu poate fi redat:\n%s
+MSG_INFO_TITLE
+Informații despre film
+MSG_INFO_FILE
+Fișier
+MSG_INFO_NAMED
+Titlu
+MSG_INFO_CONTAINER
+Container
+MSG_INFO_LENGTH
+Durată
+MSG_INFO_PICTURES
+Imagine
+MSG_INFO_COLOURS
+Culori
+MSG_INFO_BITS
+%u biți
+MSG_INFO_LIMITED
+interval limitat
+MSG_INFO_FULL
+interval complet
+MSG_INFO_SHOWN
+Afișare
+MSG_INFO_ON_LAYER
+pe stratul video al ecranului
+MSG_INFO_BY_GRAPHICS
+desenat de graphics.library
+MSG_INFO_DECODED
+Decodare
+MSG_INFO_BY_CHIP
+de decodorul video
+MSG_INFO_BY_PROCESSOR
+de procesor
+MSG_INFO_SOUND
+Sunet
+MSG_INFO_NONE
+niciunul
+MSG_INFO_CHANNELS
+%u canale
+MSG_INFO_TRACKS
+Piste
+MSG_INFO_TRACK_COUNTS
+sunet: %u, subtitrări: %u
+MSG_VOLUME_HINT
+Volum
+MSG_NOLIBRARY
+%s: nu se poate deschide %s\n
+MSG_NOMEMORY
+%s: memorie insuficientă\n
+MSG_NOWINDOW
+%s: nu își poate deschide fereastra\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

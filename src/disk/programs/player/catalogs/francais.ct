@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; The Player's strings in French.
+MSG_MENU_PROJECT
+Projet
+MSG_MENU_OPEN
+Ouvrir...
+MSG_MENU_OPEN_DRAWER
+Ouvrir un dossier...
+MSG_MENU_OPEN_URL
+Ouvrir une URL...
+MSG_MENU_SAVE_PLAYLIST
+Enregistrer la liste de lecture...
+MSG_MENU_ABOUT
+À propos
+MSG_MENU_QUIT
+Quitter
+MSG_MENU_PLAYLIST
+Liste de lecture
+MSG_MENU_ADD
+Ajouter...
+MSG_MENU_REMOVE
+Enlever
+MSG_MENU_CLEAR
+Vider
+MSG_MENU_SHUFFLE
+Aléatoire
+MSG_MENU_REPEAT
+Répéter
+MSG_MENU_REPEAT_OFF
+Désactivé
+MSG_MENU_REPEAT_ALL
+Tout
+MSG_MENU_REPEAT_ONE
+Un seul
+MSG_MENU_PICTURE
+Image
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Onde
+MSG_MENU_BARS
+Barres
+MSG_MENU_SETTINGS
+Paramètres
+MSG_MENU_REMEMBER
+Reprendre là où il en était
+MSG_PAGE_PLAYING
+En cours de lecture
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Vos stations
+MSG_VIEW_FOUND
+Trouvées
+MSG_NAME
+Nom
+MSG_GENRE
+Genre
+MSG_COUNTRY
+Pays
+MSG_COLUMN_TITLE
+Titre
+MSG_COLUMN_ARTIST
+Artiste
+MSG_COLUMN_TIME
+Durée
+MSG_COLUMN_STATION
+Station
+MSG_COLUMN_ADDRESS
+Adresse
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Genres
+MSG_SHUFFLE_BUTTON
+_Aléatoire
+MSG_SHUFFLE_HINT
+Lire les morceaux dans un ordre au hasard
+MSG_REPEAT_BUTTON
+_Répéter
+MSG_REPEAT_HINT
+Relire la liste, ou le morceau seul
+MSG_MUTE_BUTTON
+_Muet
+MSG_MUTE_HINT
+Couper le son, puis le remettre
+MSG_LENGTH_HINT
+La durée du morceau, ou ce qu'il en reste
+MSG_ADD_BUTTON
+A_jouter...
+MSG_REMOVE_BUTTON
+_Enlever
+MSG_CLEAR_BUTTON
+_Vider
+MSG_OUTPUT_LABEL
+_Sortie
+MSG_SEARCH_BUTTON
+C_hercher
+MSG_KEEP_BUTTON
+_Garder
+MSG_FORGET_BUTTON
+Re_tirer
+MSG_FIND_LABEL
+Tr_ouver
+MSG_BY_LABEL
+_dans
+MSG_URL_TITLE
+Ouvrir une URL
+MSG_URL_ADDRESS
+_Adresse
+MSG_URL_OPEN
+_Ouvrir
+MSG_URL_CANCEL
+A_nnuler
+MSG_ASK_PLAY
+Quels morceaux ?
+MSG_ASK_ADD
+Ajouter quels morceaux ?
+MSG_ASK_DRAWER
+Quel dossier ?
+MSG_ASK_SAVE
+Enregistrer la liste de lecture sous
+MSG_ABOUT_TITLE
+À propos de Player
+MSG_ABOUT
+%s\n\nDes morceaux en fichiers WAV, MP3, FLAC, Ogg Vorbis, AAC et AC-3,\nl'un après l'autre, avec leurs pochettes,\ndes stations du réseau\net une image du son.
+MSG_OK
+OK
+MSG_NO_SONG
+Aucun morceau
+MSG_TRACK_OF
+piste %u sur %u
+MSG_TRACK
+piste %u
+MSG_COMPOSED_BY
+composé par %s
+MSG_CHAPTER
+Chapitre %u sur %u
+MSG_SOUND
+Son
+MSG_MONO
+mono
+MSG_STEREO
+stéréo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+morceau %u sur %u
+MSG_NO_SOUND
+pas de son
+MSG_NO_STREAM_FREE
+aucun flux libre
+MSG_LIVE
+en direct
+MSG_BUFFERING
+mise en mémoire tampon
+MSG_BUFFERING_PERCENT
+Mise en mémoire tampon %u%%
+MSG_STATION_IDLE
+Une station : lancez la lecture pour l'écouter
+MSG_CALLING
+Appel de la station
+MSG_NO_MEMORY_STATION
+Pas assez de mémoire pour la station
+MSG_ALL_STREAMS_USED
+Tous les flux audio sont utilisés
+MSG_NO_SOUND_HERE
+Cette machine n'a pas de son
+MSG_NO_AUDIO_STREAM
+audio.device n'a pas ouvert de flux
+MSG_KEPT_ALREADY
+Déjà gardée : %s
+MSG_KEPT
+Gardée : %s
+MSG_NO_MEMORY_KEEP
+Pas assez de mémoire pour garder la station
+MSG_NO_MEMORY_SEARCH
+Pas assez de mémoire pour la recherche
+MSG_SEARCHING
+Recherche en cours
+MSG_ASKING
+Interrogation de %s
+MSG_NONE_FOUND
+Aucune station trouvée
+MSG_ONE_FOUND
+Une station trouvée
+MSG_COUNT_FOUND
+%u stations trouvées
+MSG_NO_NETWORK
+Pas de réseau : bsdsocket.library est absente
+MSG_NO_HTTP
+http.library est absente
+MSG_NO_MEMORY_CONNECTION
+Pas assez de mémoire pour la connexion
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info n'a pas d'adresse
+MSG_SERVICE_NO_ANSWER
+radio-browser.info n'a pas répondu à la recherche
+MSG_SERVICE_UNREACHED
+radio-browser.info est injoignable
+MSG_SERVICE_NONSENSE
+La réponse de radio-browser.info n'a pas de sens
+MSG_SEARCH_FAILED
+La recherche a échoué
+MSG_NO_SIGNAL
+Pas de signal libre pour la station
+MSG_NO_TIMER
+timer.device n'a pas pu être ouvert
+MSG_LISTS_ONLY
+Les listes de la station ne mènent qu'à d'autres listes
+MSG_STATION_STOPPED
+La station a cessé d'émettre
+MSG_STATION_ANSWERED
+La station a répondu
+MSG_SENDS_AAC
+La station émet en AAC, qui n'est pas lu
+MSG_STATION_ENDED
+La station a mis fin à la connexion
+MSG_SENDS_HLS
+La station émet en HLS, qui n'est pas lu
+MSG_LIST_EMPTY
+La liste de la station ne nomme aucune station
+MSG_LIST_TOO_LONG
+La liste de la station nomme une adresse trop longue
+MSG_NOT_AN_ADDRESS
+Ce n'est pas une adresse à écouter
+MSG_NONSENSE
+La réponse de la station n'a pas de sens
+MSG_NOLIBRARY
+%s : impossible d'ouvrir %s\n
+MSG_NOMEMORY
+%s : pas assez de mémoire pour la fenêtre\n
+MSG_NOBUFFERS
+%s : pas assez de mémoire pour le son\n
+MSG_NOWINDOW
+%s : pas de fenêtre\n
+MSG_MENU_EQUALIZER
+Égaliseur
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Oscilloscope
+MSG_MENU_METERS
+VU-mètres
+MSG_MENU_WHOLE_SCREEN
+Plein écran

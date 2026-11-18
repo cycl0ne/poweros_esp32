@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; Sheet's strings in French.
+MSG_MENU_PROJECT
+Projet
+MSG_MENU_NEW
+Nouveau
+MSG_MENU_OPEN
+Ouvrir...
+MSG_MENU_SAVE
+Enregistrer
+MSG_MENU_SAVE_AS
+Enregistrer sous...
+MSG_MENU_QUIT
+Quitter
+MSG_MENU_EDIT
+Édition
+MSG_MENU_UNDO
+Annuler
+MSG_MENU_REDO
+Rétablir
+MSG_MENU_CUT
+Couper
+MSG_MENU_COPY
+Copier
+MSG_MENU_PASTE
+Coller
+MSG_MENU_CLEAR
+Effacer
+MSG_MENU_FILL_DOWN
+Recopier vers le bas
+MSG_MENU_FILL_RIGHT
+Recopier à droite
+MSG_MENU_SELECT_ALL
+Tout sélectionner
+MSG_MENU_FIND
+Rechercher...
+MSG_MENU_FIND_NEXT
+Rechercher le suivant
+MSG_MENU_SHEET
+Feuille
+MSG_MENU_INSERT_ROWS
+Insérer des lignes
+MSG_MENU_DELETE_ROWS
+Supprimer des lignes
+MSG_MENU_INSERT_COLUMNS
+Insérer des colonnes
+MSG_MENU_DELETE_COLUMNS
+Supprimer des colonnes
+MSG_MENU_WIDER
+Colonne plus large
+MSG_MENU_NARROWER
+Colonne plus étroite
+MSG_MENU_SUM
+Somme automatique
+MSG_MENU_SORT_ASCENDING
+Trier par ordre croissant
+MSG_MENU_SORT_DESCENDING
+Trier par ordre décroissant
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+Standard
+MSG_MENU_NUMBER
+Nombre
+MSG_MENU_PERCENT
+Pourcentage
+MSG_MENU_CURRENCY
+Monétaire
+MSG_MENU_DECIMALS_MORE
+Ajouter une décimale
+MSG_MENU_DECIMALS_LESS
+Réduire les décimales
+MSG_MENU_VIEW
+Affichage
+MSG_MENU_RIBBON
+Ruban
+MSG_RIBBON_HOME
+Accueil
+MSG_RIBBON_CLIPBOARD
+Presse-papiers
+MSG_RIBBON_PASTE_HINT
+Insérer ce qui a été coupé ou copié
+MSG_RIBBON_NUMBER_HINT
+Afficher les nombres avec décimales et séparateur de milliers
+MSG_RIBBON_PERCENT_HINT
+Afficher les nombres en pourcentage
+MSG_RIBBON_CURRENCY_HINT
+Afficher les nombres en montant monétaire
+MSG_RIBBON_DECIMALS_MORE_HINT
+Afficher une décimale de plus
+MSG_RIBBON_DECIMALS_LESS_HINT
+Afficher une décimale de moins
+MSG_RIBBON_CELLS
+Cellules
+MSG_RIBBON_INSERT
+Insérer
+MSG_RIBBON_INSERT_HINT
+Insérer des lignes ou des colonnes là où les cellules sont sélectionnées
+MSG_RIBBON_DELETE
+Supprimer
+MSG_RIBBON_DELETE_HINT
+Retirer les lignes ou les colonnes des cellules sélectionnées
+MSG_RIBBON_EDITING
+Modification
+MSG_RIBBON_SUM_HINT
+Additionner les nombres au-dessus ou à gauche
+MSG_RIBBON_SORT
+Trier
+MSG_RIBBON_SORT_HINT
+Ranger les lignes selon la colonne de la cellule active
+MSG_RIBBON_FIND
+Rechercher
+MSG_RIBBON_FIND_HINT
+Rechercher une cellule d'après son contenu
+MSG_RIBBON_FILL
+Recopier
+MSG_RIBBON_FILL_HINT
+Copier la première ligne ou colonne sur les autres
+MSG_RIBBON_CLEAR_HINT
+Vider les cellules sélectionnées
+MSG_ROWS
+Lignes
+MSG_COLUMNS
+Colonnes
+MSG_SUM
+Somme
+MSG_AVERAGE
+Moyenne
+MSG_COUNT
+Nombre
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Croissant
+MSG_DESCENDING
+Décroissant
+MSG_DOWN
+Vers le bas
+MSG_RIGHT
+À droite
+MSG_PROBLEM_NAME
+Fonction ou nom inconnu
+MSG_PROBLEM_ARGUMENTS
+Nombre d'arguments incorrect
+MSG_PROBLEM_PARENTHESES
+Une parenthèse n'a pas sa correspondante
+MSG_PROBLEM_TOO_LONG
+La formule est trop longue
+MSG_PROBLEM_UNREADABLE
+La formule est illisible
+MSG_PROBLEM_AT
+%s, au caractère %u
+MSG_NO_MEMORY_KEEP
+Pas assez de mémoire pour garder tout cela
+MSG_NO_MEMORY_FILE
+Pas assez de mémoire pour tout le fichier
+MSG_LEFT_OUT
+Les cellules au-delà de la ligne 9999 ou de la colonne IV ont été omises
+MSG_NO_MEMORY_COPY
+Pas assez de mémoire pour copier autant
+MSG_NO_MEMORY_CLEAR
+Pas assez de mémoire pour tout effacer
+MSG_NO_MEMORY_PASTE
+Pas assez de mémoire pour tout coller
+MSG_NO_ROOM_COLUMNS
+Pas de place : les dernières colonnes contiennent quelque chose
+MSG_NO_ROOM_ROWS
+Pas de place : les dernières lignes contiennent quelque chose
+MSG_NO_MEMORY_THAT
+Pas assez de mémoire pour cela
+MSG_NO_MEMORY_FORMAT
+Pas assez de mémoire pour tout mettre en forme
+MSG_NOTHING_TO_ADD
+Aucun nombre à additionner au-dessus ou à gauche
+MSG_NO_MEMORY_ALL
+Pas assez de mémoire pour tout cela
+MSG_NO_MEMORY_SORT
+Pas assez de mémoire pour tout trier
+MSG_NO_MEMORY_FILL
+Pas assez de mémoire pour tout recopier
+MSG_NOT_FOUND
+Aucune cellule ne contient cela
+MSG_UNTITLED
+Sans titre
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Impossible d'ouvrir %s
+MSG_CANNOT_READ
+Impossible de lire %s
+MSG_TOO_BIG
+%s est trop volumineux
+MSG_NO_MEMORY_FOR
+Pas assez de mémoire pour %s
+MSG_NO_MEMORY_TO_SAVE
+Pas assez de mémoire pour enregistrer %s
+MSG_CANNOT_WRITE
+Impossible d'écrire %s
+MSG_NO_REQUESTER
+Pas de %s
+MSG_CHANGED
+La feuille a été modifiée.\nL'enregistrer d'abord ?
+MSG_CHANGED_BUTTONS
+Enregistrer|Ne pas enregistrer|Annuler
+MSG_OPEN_TITLE
+Ouvrir une feuille
+MSG_SAVE_AS_TITLE
+Enregistrer la feuille sous
+MSG_FIND_LABEL
+Rechercher
+MSG_FIND_NEXT_BUTTON
+Suivant
+MSG_FIND_PREVIOUS_BUTTON
+Précédent
+MSG_FIND_CLOSE_BUTTON
+Fermer
+MSG_NOLIBRARY
+Pas de %s\n
+MSG_NOSCREEN
+Pas d'écran par défaut - pas d'affichage\n
+MSG_NOMEMORY
+Pas assez de mémoire pour la fenêtre\n

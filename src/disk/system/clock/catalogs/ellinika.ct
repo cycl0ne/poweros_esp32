@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; Clock's strings in Greek.
+MSG_WINDOW_TITLE
+Ρολόι
+MSG_MENU_PROJECT
+Έργο
+MSG_MENU_ANALOG
+Αναλογικό
+MSG_MENU_DIGITAL
+Ψηφιακό
+MSG_MENU_ABOUT
+Σχετικά...
+MSG_MENU_QUIT
+Έξοδος
+MSG_MENU_SETTINGS
+Ρυθμίσεις
+MSG_MENU_SECONDS
+Δευτερόλεπτα
+MSG_MENU_DATE
+Ημερομηνία
+MSG_MENU_24_HOURS
+24ωρη μορφή
+MSG_MENU_SAVE
+Αποθήκευση ρυθμίσεων
+MSG_ABOUT_TITLE
+Σχετικά με το Ρολόι
+MSG_ABOUT
+%s\n\nΗ ώρα, σε καντράν ή σε ψηφία.\nΈνα διπλό κλικ στο παράθυρο εναλλάσσει τα δύο.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Δεν ήταν δυνατή η αποθήκευση των ρυθμίσεων στο\n%s.
+MSG_NOLIBRARY
+%s: δεν ανοίγει το %s\n
+MSG_NOMEMORY
+%s: δεν υπάρχει αρκετή μνήμη\n
+MSG_NOWINDOW
+%s: δεν ανοίγει το παράθυρό του\n

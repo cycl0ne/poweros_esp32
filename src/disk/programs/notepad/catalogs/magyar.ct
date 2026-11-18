@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; Notepad's strings in Hungarian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Új
+MSG_MENU_OPEN
+Megnyitás...
+MSG_MENU_SAVE
+Mentés
+MSG_MENU_SAVE_AS
+Mentés másként...
+MSG_MENU_QUIT
+Kilépés
+MSG_MENU_EDIT
+Szerkesztés
+MSG_MENU_UNDO
+Visszavonás
+MSG_MENU_REDO
+Ismétlés
+MSG_MENU_CUT
+Kivágás
+MSG_MENU_COPY
+Másolás
+MSG_MENU_PASTE
+Beillesztés
+MSG_MENU_SELECT_ALL
+Az összes kijelölése
+MSG_MENU_SEARCH
+Keresés
+MSG_MENU_FIND
+Keresés...
+MSG_MENU_FIND_NEXT
+Következő keresése
+MSG_MENU_FIND_PREVIOUS
+Előző keresése
+MSG_MENU_REPLACE
+Csere...
+MSG_MENU_VIEW
+Nézet
+MSG_MENU_WRAP
+Sortörés
+MSG_MENU_NUMBERS
+Sorszámok
+MSG_MENU_ZIG
+Zig szintaxiskiemelés
+MSG_MENU_RIBBON
+Szalag
+MSG_RIBBON_HOME
+Kezdőlap
+MSG_RIBBON_CLIPBOARD
+Vágólap
+MSG_RIBBON_PASTE_HINT
+A kivágott vagy másolt tartalom beillesztése
+MSG_RIBBON_EDITING
+Szerkesztés
+MSG_RIBBON_FIND
+Keresés
+MSG_RIBBON_FIND_HINT
+Szöveg keresése; a lista a következőt vagy az előzőt keresi meg
+MSG_RIBBON_REPLACE
+Csere
+MSG_RIBBON_REPLACE_HINT
+A talált szöveg cseréje másikra
+MSG_RIBBON_SELECT_ALL_HINT
+A teljes szöveg kijelölése
+MSG_RIBBON_LINES
+Sorok
+MSG_RIBBON_WRAP_HINT
+Folytatás a következő sorban az ablak szélén túl helyett
+MSG_RIBBON_NUMBERS_HINT
+Minden sor számozása a bal oldalon
+MSG_RIBBON_HIGHLIGHTING
+Kiemelés
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+A Zig kulcsszavainak, karakterláncainak és megjegyzéseinek kiemelése, mindegyik a saját színében
+MSG_UNTITLED
+Névtelen
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s nem nyitható meg
+MSG_CANNOT_READ
+%s nem olvasható
+MSG_TOO_BIG
+%s túl nagy
+MSG_NO_MEMORY_FOR
+Nincs elég memória ehhez: %s
+MSG_NO_MEMORY_TO_SAVE
+Nincs elég memória a mentéshez: %s
+MSG_CANNOT_WRITE
+%s nem írható
+MSG_NO_REQUESTER
+%s hiányzik
+MSG_CHANGED
+A szöveg megváltozott.\nElőbb menti?
+MSG_CHANGED_BUTTONS
+Mentés|Nem mentem|Mégse
+MSG_OPEN_TITLE
+Szöveg megnyitása
+MSG_SAVE_AS_TITLE
+Szöveg mentése másként
+MSG_FIND_TITLE
+Keresés és csere
+MSG_FIND_LABEL
+Keresés
+MSG_REPLACE_WITH
+Csere erre
+MSG_ANY_CASE
+Kis- és nagybetűk nem számítanak
+MSG_FIND_NEXT_BUTTON
+Következő keresése
+MSG_REPLACE_BUTTON
+Csere
+MSG_REPLACE_ALL_BUTTON
+Összes cseréje
+MSG_NOLIBRARY
+%s hiányzik\n
+MSG_NOSCREEN
+Nincs alapértelmezett képernyő - nincs megjelenítés\n
+MSG_NOMEMORY
+Nincs elég memória az ablakhoz\n

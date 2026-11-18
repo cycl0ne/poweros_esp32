@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; Clock's strings in Slovene.
+MSG_WINDOW_TITLE
+Ura
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analogna
+MSG_MENU_DIGITAL
+Digitalna
+MSG_MENU_ABOUT
+O programu...
+MSG_MENU_QUIT
+Končaj
+MSG_MENU_SETTINGS
+Nastavitve
+MSG_MENU_SECONDS
+Sekunde
+MSG_MENU_DATE
+Datum
+MSG_MENU_24_HOURS
+24 ur
+MSG_MENU_SAVE
+Shrani nastavitve
+MSG_ABOUT_TITLE
+O programu Ura
+MSG_ABOUT
+%s\n\nČas na številčnici ali v številkah.\nDvoklik v oknu preklaplja med njima.
+MSG_OK
+V redu
+MSG_NOT_SAVED
+Nastavitev ni bilo mogoče shraniti v\n%s.
+MSG_NOLIBRARY
+%s: ni mogoče odpreti %s\n
+MSG_NOMEMORY
+%s: premalo pomnilnika\n
+MSG_NOWINDOW
+%s: ni mogoče odpreti okna\n

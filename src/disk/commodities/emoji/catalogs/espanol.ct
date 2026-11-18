@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language espanol
+## codeset 106
+; Emoji's strings in Spanish.
+MSG_SEARCH
+Buscar
+MSG_USED
+Usados recientemente
+MSG_NONE_USED
+Todavía no se ha usado ninguno
+MSG_NOT_FOUND
+No se encontró ninguno
+MSG_TONE_NONE
+Sin tono
+MSG_TONE_LIGHT
+Claro
+MSG_TONE_MEDIUM_LIGHT
+Medio claro
+MSG_TONE_MEDIUM
+Medio
+MSG_TONE_MEDIUM_DARK
+Medio oscuro
+MSG_TONE_DARK
+Oscuro
+MSG_GROUP_SMILEYS
+Emoticonos y emociones
+MSG_GROUP_PEOPLE
+Personas y cuerpo
+MSG_GROUP_ANIMALS
+Animales y naturaleza
+MSG_GROUP_FOOD
+Comida y bebida
+MSG_GROUP_TRAVEL
+Viajes y lugares
+MSG_GROUP_ACTIVITIES
+Actividades
+MSG_GROUP_OBJECTS
+Objetos
+MSG_GROUP_SYMBOLS
+Símbolos
+MSG_GROUP_FLAGS
+Banderas

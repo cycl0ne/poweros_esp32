@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language russkij
+## codeset 106
+; Sheet's strings in Russian.
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_NEW
+Создать
+MSG_MENU_OPEN
+Открыть...
+MSG_MENU_SAVE
+Сохранить
+MSG_MENU_SAVE_AS
+Сохранить как...
+MSG_MENU_QUIT
+Выход
+MSG_MENU_EDIT
+Правка
+MSG_MENU_UNDO
+Отменить
+MSG_MENU_REDO
+Повторить
+MSG_MENU_CUT
+Вырезать
+MSG_MENU_COPY
+Копировать
+MSG_MENU_PASTE
+Вставить
+MSG_MENU_CLEAR
+Очистить
+MSG_MENU_FILL_DOWN
+Заполнить вниз
+MSG_MENU_FILL_RIGHT
+Заполнить вправо
+MSG_MENU_SELECT_ALL
+Выделить всё
+MSG_MENU_FIND
+Найти...
+MSG_MENU_FIND_NEXT
+Найти далее
+MSG_MENU_SHEET
+Таблица
+MSG_MENU_INSERT_ROWS
+Вставить строки
+MSG_MENU_DELETE_ROWS
+Удалить строки
+MSG_MENU_INSERT_COLUMNS
+Вставить столбцы
+MSG_MENU_DELETE_COLUMNS
+Удалить столбцы
+MSG_MENU_WIDER
+Столбец шире
+MSG_MENU_NARROWER
+Столбец уже
+MSG_MENU_SUM
+Автосумма
+MSG_MENU_SORT_ASCENDING
+Сортировка по возрастанию
+MSG_MENU_SORT_DESCENDING
+Сортировка по убыванию
+MSG_MENU_FORMAT
+Формат
+MSG_MENU_GENERAL
+Общий
+MSG_MENU_NUMBER
+Числовой
+MSG_MENU_PERCENT
+Процентный
+MSG_MENU_CURRENCY
+Денежный
+MSG_MENU_DECIMALS_MORE
+Увеличить разрядность
+MSG_MENU_DECIMALS_LESS
+Уменьшить разрядность
+MSG_MENU_VIEW
+Вид
+MSG_MENU_RIBBON
+Лента
+MSG_RIBBON_HOME
+Главная
+MSG_RIBBON_CLIPBOARD
+Буфер обмена
+MSG_RIBBON_PASTE_HINT
+Вставить то, что было вырезано или скопировано
+MSG_RIBBON_NUMBER_HINT
+Показывать числа с десятичными знаками и разделителем разрядов
+MSG_RIBBON_PERCENT_HINT
+Показывать числа в процентах
+MSG_RIBBON_CURRENCY_HINT
+Показывать числа как денежные суммы
+MSG_RIBBON_DECIMALS_MORE_HINT
+Показывать на один десятичный знак больше
+MSG_RIBBON_DECIMALS_LESS_HINT
+Показывать на один десятичный знак меньше
+MSG_RIBBON_CELLS
+Ячейки
+MSG_RIBBON_INSERT
+Вставить
+MSG_RIBBON_INSERT_HINT
+Вставить строки или столбцы там, где выделены ячейки
+MSG_RIBBON_DELETE
+Удалить
+MSG_RIBBON_DELETE_HINT
+Удалить строки или столбцы выделенных ячеек
+MSG_RIBBON_EDITING
+Правка
+MSG_RIBBON_SUM_HINT
+Сложить числа сверху или слева
+MSG_RIBBON_SORT
+Сортировка
+MSG_RIBBON_SORT_HINT
+Упорядочить строки по столбцу текущей ячейки
+MSG_RIBBON_FIND
+Найти
+MSG_RIBBON_FIND_HINT
+Найти ячейку по её содержимому
+MSG_RIBBON_FILL
+Заполнить
+MSG_RIBBON_FILL_HINT
+Скопировать первую строку или столбец на остальные
+MSG_RIBBON_CLEAR_HINT
+Очистить выделенные ячейки
+MSG_ROWS
+Строки
+MSG_COLUMNS
+Столбцы
+MSG_SUM
+Сумма
+MSG_AVERAGE
+Среднее
+MSG_COUNT
+Количество
+MSG_MIN
+Мин
+MSG_MAX
+Макс
+MSG_ASCENDING
+По возрастанию
+MSG_DESCENDING
+По убыванию
+MSG_DOWN
+Вниз
+MSG_RIGHT
+Вправо
+MSG_PROBLEM_NAME
+Нет такой функции или имени
+MSG_PROBLEM_ARGUMENTS
+Неверное число аргументов
+MSG_PROBLEM_PARENTHESES
+У скобки нет пары
+MSG_PROBLEM_TOO_LONG
+Формула слишком длинная
+MSG_PROBLEM_UNREADABLE
+Формулу невозможно прочитать
+MSG_PROBLEM_AT
+%s, в символе %u
+MSG_NO_MEMORY_KEEP
+Недостаточно памяти, чтобы сохранить всё это
+MSG_NO_MEMORY_FILE
+Недостаточно памяти для всего файла
+MSG_LEFT_OUT
+Ячейки за строкой 9999 или столбцом IV пропущены
+MSG_NO_MEMORY_COPY
+Недостаточно памяти, чтобы скопировать столько
+MSG_NO_MEMORY_CLEAR
+Недостаточно памяти, чтобы очистить всё
+MSG_NO_MEMORY_PASTE
+Недостаточно памяти, чтобы вставить всё
+MSG_NO_ROOM_COLUMNS
+Нет места: в последних столбцах есть данные
+MSG_NO_ROOM_ROWS
+Нет места: в последних строках есть данные
+MSG_NO_MEMORY_THAT
+Недостаточно памяти для этого
+MSG_NO_MEMORY_FORMAT
+Недостаточно памяти, чтобы отформатировать всё
+MSG_NOTHING_TO_ADD
+Нет чисел сверху или слева для сложения
+MSG_NO_MEMORY_ALL
+Недостаточно памяти для всего этого
+MSG_NO_MEMORY_SORT
+Недостаточно памяти, чтобы отсортировать всё
+MSG_NO_MEMORY_FILL
+Недостаточно памяти, чтобы заполнить всё
+MSG_NOT_FOUND
+Ни одна ячейка этого не содержит
+MSG_UNTITLED
+Без имени
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Не удаётся открыть %s
+MSG_CANNOT_READ
+Не удаётся прочитать %s
+MSG_TOO_BIG
+%s слишком большой
+MSG_NO_MEMORY_FOR
+Недостаточно памяти для %s
+MSG_NO_MEMORY_TO_SAVE
+Недостаточно памяти, чтобы сохранить %s
+MSG_CANNOT_WRITE
+Не удаётся записать %s
+MSG_NO_REQUESTER
+Нет %s
+MSG_CHANGED
+Таблица изменена.\nСохранить её сначала?
+MSG_CHANGED_BUTTONS
+Сохранить|Не сохранять|Отмена
+MSG_OPEN_TITLE
+Открыть таблицу
+MSG_SAVE_AS_TITLE
+Сохранить таблицу как
+MSG_FIND_LABEL
+Найти
+MSG_FIND_NEXT_BUTTON
+Далее
+MSG_FIND_PREVIOUS_BUTTON
+Назад
+MSG_FIND_CLOSE_BUTTON
+Закрыть
+MSG_NOLIBRARY
+Нет %s\n
+MSG_NOSCREEN
+Нет экрана по умолчанию - нет дисплея\n
+MSG_NOMEMORY
+Недостаточно памяти для окна\n

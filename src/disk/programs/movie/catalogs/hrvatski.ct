@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language hrvatski
+## codeset 106
+; Movie's strings in Croatian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Otvori...
+MSG_MENU_WHOLE_SCREEN
+Cijeli zaslon
+MSG_MENU_ABOUT
+O programu
+MSG_MENU_QUIT
+Izlaz
+MSG_MENU_SOUND
+Zvuk
+MSG_MENU_NO_SOUND
+Nijedan
+MSG_MENU_SUBTITLES
+Titlovi
+MSG_MENU_SUBTITLES_OFF
+Isključeno
+MSG_MENU_TRACK
+Zapis
+MSG_MENU_FRAME_RATE
+Broj sličica u sekundi
+MSG_MENU_INFO
+Informacije o filmu...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, odbačeno: %u
+MSG_ASK_OPEN
+Reproduciraj film
+MSG_ABOUT_TITLE
+O programu Movie
+MSG_ABOUT
+%s\n\nReproducira filmove - MP4, QuickTime MOV i Matroska MKV:\nslika H.264, H.265 i Motion JPEG,\nzvuk AAC, AC-3, MP3, FLAC i Vorbis te titlovi.
+MSG_OK
+U redu
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nnije moguće reproducirati:\n%s
+MSG_INFO_TITLE
+Informacije o filmu
+MSG_INFO_FILE
+Datoteka
+MSG_INFO_NAMED
+Naslov
+MSG_INFO_CONTAINER
+Spremnik
+MSG_INFO_LENGTH
+Trajanje
+MSG_INFO_PICTURES
+Slika
+MSG_INFO_COLOURS
+Boje
+MSG_INFO_BITS
+%u bitova
+MSG_INFO_LIMITED
+ograničeni raspon
+MSG_INFO_FULL
+puni raspon
+MSG_INFO_SHOWN
+Prikaz
+MSG_INFO_ON_LAYER
+na video sloju zaslona
+MSG_INFO_BY_GRAPHICS
+iscrtava graphics.library
+MSG_INFO_DECODED
+Dekodiranje
+MSG_INFO_BY_CHIP
+video dekoderom
+MSG_INFO_BY_PROCESSOR
+procesorom
+MSG_INFO_SOUND
+Zvuk
+MSG_INFO_NONE
+nema
+MSG_INFO_CHANNELS
+kanali: %u
+MSG_INFO_TRACKS
+Zapisi
+MSG_INFO_TRACK_COUNTS
+zvuk: %u, titlovi: %u
+MSG_VOLUME_HINT
+Glasnoća
+MSG_NOLIBRARY
+%s: nije moguće otvoriti %s\n
+MSG_NOMEMORY
+%s: nema dovoljno memorije\n
+MSG_NOWINDOW
+%s: nije moguće otvoriti prozor\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

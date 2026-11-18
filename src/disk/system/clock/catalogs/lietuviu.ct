@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; Clock's strings in Lithuanian.
+MSG_WINDOW_TITLE
+Laikrodis
+MSG_MENU_PROJECT
+Projektas
+MSG_MENU_ANALOG
+Analoginis
+MSG_MENU_DIGITAL
+Skaitmeninis
+MSG_MENU_ABOUT
+Apie...
+MSG_MENU_QUIT
+Išeiti
+MSG_MENU_SETTINGS
+Nuostatos
+MSG_MENU_SECONDS
+Sekundės
+MSG_MENU_DATE
+Data
+MSG_MENU_24_HOURS
+24 valandos
+MSG_MENU_SAVE
+Įrašyti nuostatas
+MSG_ABOUT_TITLE
+Apie Laikrodį
+MSG_ABOUT
+%s\n\nLaikas ciferblate arba skaitmenimis.\nDukart spustelėjus lange, jie keičiami.
+MSG_OK
+Gerai
+MSG_NOT_SAVED
+Nuostatų nepavyko įrašyti į\n%s.
+MSG_NOLIBRARY
+%s: nepavyksta atidaryti %s\n
+MSG_NOMEMORY
+%s: nepakanka atminties\n
+MSG_NOWINDOW
+%s: nepavyksta atidaryti lango\n

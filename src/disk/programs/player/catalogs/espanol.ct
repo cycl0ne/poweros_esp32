@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language espanol
+## codeset 106
+; The Player's strings in Spanish.
+MSG_MENU_PROJECT
+Proyecto
+MSG_MENU_OPEN
+Abrir...
+MSG_MENU_OPEN_DRAWER
+Abrir carpeta...
+MSG_MENU_OPEN_URL
+Abrir URL...
+MSG_MENU_SAVE_PLAYLIST
+Guardar lista de reproducción...
+MSG_MENU_ABOUT
+Acerca de
+MSG_MENU_QUIT
+Salir
+MSG_MENU_PLAYLIST
+Lista de reproducción
+MSG_MENU_ADD
+Añadir...
+MSG_MENU_REMOVE
+Quitar
+MSG_MENU_CLEAR
+Vaciar
+MSG_MENU_SHUFFLE
+Aleatorio
+MSG_MENU_REPEAT
+Repetir
+MSG_MENU_REPEAT_OFF
+Desactivado
+MSG_MENU_REPEAT_ALL
+Todo
+MSG_MENU_REPEAT_ONE
+Una
+MSG_MENU_PICTURE
+Imagen
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Onda
+MSG_MENU_BARS
+Barras
+MSG_MENU_SETTINGS
+Ajustes
+MSG_MENU_REMEMBER
+Recordar dónde estaba
+MSG_PAGE_PLAYING
+Reproduciendo
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Tus emisoras
+MSG_VIEW_FOUND
+Encontradas
+MSG_NAME
+Nombre
+MSG_GENRE
+Género
+MSG_COUNTRY
+País
+MSG_COLUMN_TITLE
+Título
+MSG_COLUMN_ARTIST
+Artista
+MSG_COLUMN_TIME
+Duración
+MSG_COLUMN_STATION
+Emisora
+MSG_COLUMN_ADDRESS
+Dirección
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Géneros
+MSG_SHUFFLE_BUTTON
+_Aleatorio
+MSG_SHUFFLE_HINT
+Reproducir las canciones en un orden propio
+MSG_REPEAT_BUTTON
+_Repetir
+MSG_REPEAT_HINT
+Volver a reproducir la lista, o la canción sola
+MSG_MUTE_BUTTON
+_Silenciar
+MSG_MUTE_HINT
+Quitar el sonido, y volver a ponerlo
+MSG_LENGTH_HINT
+La duración de la canción, o lo que queda de ella
+MSG_ADD_BUTTON
+Aña_dir...
+MSG_REMOVE_BUTTON
+Q_uitar
+MSG_CLEAR_BUTTON
+_Vaciar
+MSG_OUTPUT_LABEL
+Sa_lida
+MSG_SEARCH_BUTTON
+Bus_car
+MSG_KEEP_BUTTON
+_Guardar
+MSG_FORGET_BUTTON
+Qu_itar
+MSG_FIND_LABEL
+_Buscar
+MSG_BY_LABEL
+_en
+MSG_URL_TITLE
+Abrir URL
+MSG_URL_ADDRESS
+_Dirección
+MSG_URL_OPEN
+_Abrir
+MSG_URL_CANCEL
+_Cancelar
+MSG_ASK_PLAY
+¿Qué canciones?
+MSG_ASK_ADD
+¿Añadir qué canciones?
+MSG_ASK_DRAWER
+¿Qué carpeta?
+MSG_ASK_SAVE
+Guardar la lista de reproducción como
+MSG_ABOUT_TITLE
+Acerca de Player
+MSG_ABOUT
+%s\n\nCanciones de archivos WAV, MP3, FLAC, Ogg Vorbis, AAC y AC-3,\nuna tras otra, con sus portadas,\nemisoras de la red\ny una imagen del sonido.
+MSG_OK
+Aceptar
+MSG_NO_SONG
+Ninguna canción
+MSG_TRACK_OF
+pista %u de %u
+MSG_TRACK
+pista %u
+MSG_COMPOSED_BY
+compuesta por %s
+MSG_CHAPTER
+Capítulo %u de %u
+MSG_SOUND
+Sonido
+MSG_MONO
+mono
+MSG_STEREO
+estéreo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+canción %u de %u
+MSG_NO_SOUND
+sin sonido
+MSG_NO_STREAM_FREE
+ningún flujo libre
+MSG_LIVE
+en directo
+MSG_BUFFERING
+almacenando en búfer
+MSG_BUFFERING_PERCENT
+Almacenando en búfer %u%%
+MSG_STATION_IDLE
+Una emisora: reproducir para escucharla
+MSG_CALLING
+Llamando a la emisora
+MSG_NO_MEMORY_STATION
+No hay memoria para la emisora
+MSG_ALL_STREAMS_USED
+Todos los flujos de sonido están en uso
+MSG_NO_SOUND_HERE
+Esta máquina no tiene sonido
+MSG_NO_AUDIO_STREAM
+audio.device no quiso abrir un flujo
+MSG_KEPT_ALREADY
+Ya guardada: %s
+MSG_KEPT
+Guardada: %s
+MSG_NO_MEMORY_KEEP
+No hay memoria para guardar la emisora
+MSG_NO_MEMORY_SEARCH
+No hay memoria para la búsqueda
+MSG_SEARCHING
+Buscando
+MSG_ASKING
+Preguntando a %s
+MSG_NONE_FOUND
+No se encontró ninguna emisora
+MSG_ONE_FOUND
+Se encontró una emisora
+MSG_COUNT_FOUND
+Se encontraron %u emisoras
+MSG_NO_NETWORK
+Sin red: falta bsdsocket.library
+MSG_NO_HTTP
+Falta http.library
+MSG_NO_MEMORY_CONNECTION
+No hay memoria para la conexión
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info no tiene dirección
+MSG_SERVICE_NO_ANSWER
+radio-browser.info no respondió a la búsqueda
+MSG_SERVICE_UNREACHED
+No se pudo contactar con radio-browser.info
+MSG_SERVICE_NONSENSE
+La respuesta de radio-browser.info no tiene sentido
+MSG_SEARCH_FAILED
+La búsqueda ha fallado
+MSG_NO_SIGNAL
+No queda ninguna señal libre para la emisora
+MSG_NO_TIMER
+No se pudo abrir timer.device
+MSG_LISTS_ONLY
+Las listas de la emisora solo llevan a más listas
+MSG_STATION_STOPPED
+La emisora dejó de emitir
+MSG_STATION_ANSWERED
+La emisora respondió
+MSG_SENDS_AAC
+La emisora emite en AAC, que no se reproduce
+MSG_STATION_ENDED
+La emisora terminó la conexión
+MSG_SENDS_HLS
+La emisora emite en HLS, que no se reproduce
+MSG_LIST_EMPTY
+La lista de la emisora no nombra ninguna emisora
+MSG_LIST_TOO_LONG
+La lista de la emisora nombra una dirección demasiado larga
+MSG_NOT_AN_ADDRESS
+Esta no es una dirección que se pueda escuchar
+MSG_NONSENSE
+La respuesta de la emisora no tiene sentido
+MSG_NOLIBRARY
+%s: no se puede abrir %s\n
+MSG_NOMEMORY
+%s: no hay memoria para la ventana\n
+MSG_NOBUFFERS
+%s: no hay memoria para el sonido\n
+MSG_NOWINDOW
+%s: no hay ventana\n
+MSG_MENU_EQUALIZER
+Ecualizador
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Osciloscopio
+MSG_MENU_METERS
+Vúmetros
+MSG_MENU_WHOLE_SCREEN
+Pantalla completa

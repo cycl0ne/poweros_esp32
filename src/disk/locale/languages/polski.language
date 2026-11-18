@@ -1,0 +1,28 @@
+# LOCALE:Languages/polski.language - Polish: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=niedziela DAY_2=poniedziałek DAY_3=wtorek DAY_4=środa
+DAY_5=czwartek DAY_6=piątek DAY_7=sobota
+ABDAY_1=niedz ABDAY_2=pon ABDAY_3=wt ABDAY_4=śr ABDAY_5=czw
+ABDAY_6=pt ABDAY_7=sob
+# The months, then their short names; a month is named as in a date,
+# "18 listopada".
+MON_1=stycznia MON_2=lutego MON_3=marca MON_4=kwietnia MON_5=maja
+MON_6=czerwca MON_7=lipca MON_8=sierpnia MON_9=września
+MON_10=października MON_11=listopada MON_12=grudnia
+ABMON_1=sty ABMON_2=lut ABMON_3=mar ABMON_4=kwi ABMON_5=maj
+ABMON_6=cze ABMON_7=lip ABMON_8=sie ABMON_9=wrz ABMON_10=paź
+ABMON_11=lis ABMON_12=gru
+# Yes and no, before and after noon.
+YESSTR=Tak NOSTR=Nie AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Wczoraj TODAYSTR=Dzisiaj TOMORROWSTR=Jutro
+FUTURESTR=Przyszłość
+# The order of the letters: Ą after A, Ć after C, Ę after E, Ł after L,
+# Ń after N, Ó after O, Ś after S, and Ź then Ż after Z.
+AFTER_A=Ą AFTER_C=Ć AFTER_E=Ę AFTER_L=Ł AFTER_N=Ń AFTER_O=Ó AFTER_S=Ś
+AFTER_Z=Ź,Ż

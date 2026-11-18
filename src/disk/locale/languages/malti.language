@@ -1,0 +1,26 @@
+# LOCALE:Languages/malti.language - Maltese: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=Il-Ħadd DAY_2=It-Tnejn DAY_3=It-Tlieta DAY_4=L-Erbgħa
+DAY_5=Il-Ħamis DAY_6=Il-Ġimgħa DAY_7=Is-Sibt
+ABDAY_1=Ħad ABDAY_2=Tne ABDAY_3=Tli ABDAY_4=Erb ABDAY_5=Ħam
+ABDAY_6=Ġim ABDAY_7=Sib
+# The months, then their short names.
+MON_1=Jannar MON_2=Frar MON_3=Marzu MON_4=April MON_5=Mejju
+MON_6=Ġunju MON_7=Lulju MON_8=Awwissu MON_9=Settembru MON_10=Ottubru
+MON_11=Novembru MON_12=Diċembru
+ABMON_1=Jan ABMON_2=Fra ABMON_3=Mar ABMON_4=Apr ABMON_5=Mej
+ABMON_6=Ġun ABMON_7=Lul ABMON_8=Aww ABMON_9=Set ABMON_10=Ott
+ABMON_11=Nov ABMON_12=Diċ
+# Yes and no, before and after noon.
+YESSTR=Iva NOSTR=Le AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=“ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Ilbieraħ TODAYSTR=Illum TOMORROWSTR=Għada
+FUTURESTR=Futur
+# The order of the letters: Ċ before C, Ġ before G, Ħ after H and Ż
+# before Z. The digraphs GĦ and IE sort as their two letters.
+AFTER_B=Ċ AFTER_F=Ġ AFTER_H=Ħ AFTER_Y=Ż

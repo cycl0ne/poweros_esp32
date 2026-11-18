@@ -1,0 +1,254 @@
+## version $VER: sys/dos.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; dos.library's messages in Dutch.
+SOFTWARE_FAILURE
+Softwarefout
+RUN_FAILED
+%s mislukt, returncode %ld\n
+USE_COUNT
+%TH GEBRUIKSTELLER\n\n
+NAME
+NAAM
+DISABLED
+%TH UITGESCHAKELD\n
+INTERNAL
+%TH INTERN\n
+SYSTEM
+%TH SYSTEEM\n
+FAULT
+Fout %3ld
+FAIL_LIMIT
+Foutgrens: %ld\n
+BAD_RETURN_CODE
+Ongeldige returncode opgegeven
+CURRENT_DIR
+Huidige_map
+NO_RETURN_CODE
+De laatste opdracht heeft geen returncode gezet
+LAST_CMD_FAILED
+De laatste opdracht mislukte omdat\x20
+PROCESS_ENDING
+Proces %N wordt beëindigd
+REQUESTED_SIZE_TOO_SMALL
+Gevraagde grootte te klein
+REQUESTED_SIZE_TOO_LARGE
+Gevraagde grootte te groot
+CURRENT_STACK_SIZE
+Huidige stackgrootte is %ld bytes\n
+NEWSHELL_FAILED
+NewShell mislukt
+MISSING_ELSE_OR_ENDIF
+ELSE of ENDIF ontbreekt
+MUST_BE_IN_CMD_FILE
+Moet in een opdrachtbestand staan
+MORE_THAN_ONE_DIR
+Meer dan één map past
+CANT_SET
+Kan %s niet instellen\n
+BLOCK_CORRUPT_DIR
+Blok %ld beschadigde map
+BLOCK_CORRUPT_FILE
+Blok %ld beschadigd bestand
+BLOCK_BAD_HEADER
+Blok %ld ongeldig koptype
+BLOCK_OUT_OF_RANGE
+Blok %ld buiten bereik
+BLOCK_USED_TWICE
+Blok %ld dubbel gebruikt
+VALIDATION_ERROR
+Fout bij valideren van %b
+ON_DISK_BLOCK
+op schijfblok %ld
+CHECKSUM_ERROR
+heeft een checksumfout
+WRITE_ERROR
+heeft een schrijffout
+READ_ERROR
+heeft een leesfout
+UNABLE_CREATE_PROC
+Kan geen proces aanmaken\n
+NEW_SHELL_PROCESS
+Nieuw shellproces %ld\n
+CANT_OPEN_FROM_FILE
+Kan FROM-bestand %s niet openen\n
+SUSPEND_REBOOT
+Onderbreken|Opnieuw opstarten
+RETRY_CANCEL
+Opnieuw|Annuleren
+NO_ROOM_FOR_BITMAP
+Geen ruimte voor bitmap
+CMD_TOO_LONG
+Opdracht te lang
+SHELL_ERROR
+Shellfout:
+CMDNAME_ERROR
+Fout in opdrachtnaam
+UNKNOWN_COMMAND
+Onbekende opdracht
+LOAD_ERROR
+Kan niet laden
+SYNTAX_ERROR
+syntaxfout
+REDIRECT_ERROR
+kan omleidingsbestand niet openen
+ERROR
+Fout\x20
+EMPTY_STRING
+
+DISK_CORRUPT
+Schijf beschadigd - taak gestopt
+PROGRAM_FAILED
+Programma mislukt (fout #
+WAIT_FOR_ACTIVITY
+Wacht tot de schijfactiviteit klaar is.
+IN_DEVICE
+in apparaat %s%s
+IN_UNIT
+in eenheid %ld%s
+YOU_MUST_REPLACE
+U MOET dit volume terugplaatsen
+READ_WRITE_ERROR
+heeft een lees-/schrijffout
+NO_DISK_PRESENT
+Geen schijf aanwezig
+NOT_A_DOS_DISK
+Geen DOS-schijf
+ANY_DRIVE
+in een willekeurig station
+REPLACE_VOLUME
+Plaats dit volume terug
+INSERT_VOLUME
+Plaats volume
+IS_FULL
+is vol
+IS_PROTECTED
+is tegen schrijven beveiligd
+IS_NOT_VALIDATED
+is niet gevalideerd
+VOLUME
+Volume
+ERROR_NO_FREE_STORE
+onvoldoende geheugen beschikbaar
+ERROR_TASK_TABLE_FULL
+procestabel vol
+ERROR_BAD_TEMPLATE
+ongeldig sjabloon
+ERROR_BAD_NUMBER
+ongeldig getal
+ERROR_REQUIRED_ARG_MISSING
+vereist argument ontbreekt
+ERROR_KEY_NEEDS_ARG
+waarde na sleutelwoord ontbreekt
+ERROR_TOO_MANY_ARGS
+verkeerd aantal argumenten
+ERROR_UNMATCHED_QUOTES
+aanhalingstekens niet gesloten
+ERROR_LINE_TOO_LONG
+argumentregel ongeldig of te lang
+ERROR_FILE_NOT_OBJECT
+bestand is niet uitvoerbaar
+ERROR_INVALID_RESIDENT_LIBRARY
+ongeldige residente bibliotheek
+ERROR_OBJECT_IN_USE
+object is in gebruik
+ERROR_OBJECT_EXISTS
+object bestaat al
+ERROR_DIR_NOT_FOUND
+map niet gevonden
+ERROR_OBJECT_NOT_FOUND
+object niet gevonden
+ERROR_BAD_STREAM_NAME
+ongeldige vensterbeschrijving
+ERROR_OBJECT_TOO_LARGE
+object te groot
+ERROR_ACTION_NOT_KNOWN
+onbekend type pakketverzoek
+ERROR_INVALID_COMPONENT_NAME
+ongeldige objectnaam
+ERROR_INVALID_LOCK
+ongeldige objectvergrendeling
+ERROR_OBJECT_WRONG_TYPE
+object is niet van het vereiste type
+ERROR_DISK_NOT_VALIDATED
+schijf niet gevalideerd
+ERROR_DISK_WRITE_PROTECTED
+schijf is tegen schrijven beveiligd
+ERROR_RENAME_ACROSS_DEVICES
+hernoemen naar een ander apparaat geprobeerd
+ERROR_DIRECTORY_NOT_EMPTY
+map is niet leeg
+ERROR_TOO_MANY_LEVELS
+te veel niveaus
+ERROR_DEVICE_NOT_MOUNTED
+apparaat (of volume) is niet aangekoppeld
+ERROR_SEEK_ERROR
+zoekfout
+ERROR_COMMENT_TOO_BIG
+opmerking is te lang
+ERROR_DISK_FULL
+schijf is vol
+ERROR_DELETE_PROTECTED
+object is beveiligd tegen verwijderen
+ERROR_WRITE_PROTECTED
+bestand is tegen schrijven beveiligd
+ERROR_READ_PROTECTED
+bestand is tegen lezen beveiligd
+ERROR_NOT_A_DOS_DISK
+geen geldige DOS-schijf
+ERROR_NO_DISK
+geen schijf in het station
+ERROR_NO_MORE_ENTRIES
+geen items meer in de map
+ERROR_IS_SOFT_LINK
+object is een soft link
+ERROR_OBJECT_LINKED
+object is gekoppeld
+ERROR_BAD_HUNK
+ongeldige hunk in laadbestand
+ERROR_NOT_IMPLEMENTED
+functie niet geïmplementeerd
+ERROR_RECORD_NOT_LOCKED
+record niet vergrendeld
+ERROR_LOCK_COLLISION
+conflict bij recordvergrendeling
+ERROR_LOCK_TIMEOUT
+time-out bij recordvergrendeling
+ERROR_UNLOCK_ERROR
+fout bij ontgrendelen van record
+ABORT_BUSY
+de aanroeper mocht niets gevraagd worden
+ABORT_DISK_ERROR
+lees- of schrijffout op het volume
+ERROR_BUFFER_OVERFLOW
+bufferoverloop
+ERROR_BREAK
+***Onderbreking
+ERROR_NOT_EXECUTABLE
+bestand niet uitvoerbaar
+ERROR_INVALID_ARGUMENT
+ongeldig argument
+ERROR_INVALID_DOS_ENTRY
+ongeldig item in de apparatenlijst
+ERROR_NO_INPUT_STREAM
+geen invoerstroom
+ERROR_BUFFER_TOO_SMALL
+buffer te klein
+ERROR_NO_PROCESS
+geen proces
+ERROR_NO_HANDLER
+geen handler
+ERROR_PACKET_ASYNC
+pakket buiten de beurt
+ERROR_ERROR_IN_PACKET
+fout in pakket
+ERROR_NO_CURRENT_DIRECTORY
+geen huidige map
+ERROR_HANDLER_NOT_LOADED
+handler niet geladen
+ERROR_HANDLER_START_ERROR
+handler kon niet starten
+ERROR_BROKEN_PIPE
+het andere eind van de pipe is weg
+ERROR_BAD_CHECKSUM
+checksumfout: de gelezen gegevens zijn niet wat geschreven is

@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; Sheet's strings in Norwegian (Bokmål).
+MSG_MENU_PROJECT
+Prosjekt
+MSG_MENU_NEW
+Ny
+MSG_MENU_OPEN
+Åpne...
+MSG_MENU_SAVE
+Lagre
+MSG_MENU_SAVE_AS
+Lagre som...
+MSG_MENU_QUIT
+Avslutt
+MSG_MENU_EDIT
+Rediger
+MSG_MENU_UNDO
+Angre
+MSG_MENU_REDO
+Gjør om
+MSG_MENU_CUT
+Klipp ut
+MSG_MENU_COPY
+Kopier
+MSG_MENU_PASTE
+Lim inn
+MSG_MENU_CLEAR
+Tøm
+MSG_MENU_FILL_DOWN
+Fyll ned
+MSG_MENU_FILL_RIGHT
+Fyll mot høyre
+MSG_MENU_SELECT_ALL
+Merk alt
+MSG_MENU_FIND
+Søk...
+MSG_MENU_FIND_NEXT
+Søk etter neste
+MSG_MENU_SHEET
+Ark
+MSG_MENU_INSERT_ROWS
+Sett inn rader
+MSG_MENU_DELETE_ROWS
+Slett rader
+MSG_MENU_INSERT_COLUMNS
+Sett inn kolonner
+MSG_MENU_DELETE_COLUMNS
+Slett kolonner
+MSG_MENU_WIDER
+Bredere kolonne
+MSG_MENU_NARROWER
+Smalere kolonne
+MSG_MENU_SUM
+Autosummer
+MSG_MENU_SORT_ASCENDING
+Sorter stigende
+MSG_MENU_SORT_DESCENDING
+Sorter synkende
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+Standard
+MSG_MENU_NUMBER
+Tall
+MSG_MENU_PERCENT
+Prosent
+MSG_MENU_CURRENCY
+Valuta
+MSG_MENU_DECIMALS_MORE
+Flere desimaler
+MSG_MENU_DECIMALS_LESS
+Færre desimaler
+MSG_MENU_VIEW
+Vis
+MSG_MENU_RIBBON
+Bånd
+MSG_RIBBON_HOME
+Hjem
+MSG_RIBBON_CLIPBOARD
+Utklippstavle
+MSG_RIBBON_PASTE_HINT
+Lim inn det som ble klippet ut eller kopiert
+MSG_RIBBON_NUMBER_HINT
+Vis tallene med desimaler, i tusener
+MSG_RIBBON_PERCENT_HINT
+Vis tallene som prosent
+MSG_RIBBON_CURRENCY_HINT
+Vis tallene som beløp
+MSG_RIBBON_DECIMALS_MORE_HINT
+Vis én desimal til
+MSG_RIBBON_DECIMALS_LESS_HINT
+Vis én desimal mindre
+MSG_RIBBON_CELLS
+Celler
+MSG_RIBBON_INSERT
+Sett inn
+MSG_RIBBON_INSERT_HINT
+Sett inn rader eller kolonner der cellene er merket
+MSG_RIBBON_DELETE
+Slett
+MSG_RIBBON_DELETE_HINT
+Fjern radene eller kolonnene til de merkede cellene
+MSG_RIBBON_EDITING
+Redigering
+MSG_RIBBON_SUM_HINT
+Legg sammen tallene over eller til venstre
+MSG_RIBBON_SORT
+Sorter
+MSG_RIBBON_SORT_HINT
+Ordne radene etter kolonnen til den gjeldende cellen
+MSG_RIBBON_FIND
+Søk
+MSG_RIBBON_FIND_HINT
+Finn en celle etter hva den inneholder
+MSG_RIBBON_FILL
+Fyll
+MSG_RIBBON_FILL_HINT
+Kopier den første raden eller kolonnen over resten
+MSG_RIBBON_CLEAR_HINT
+Tøm de merkede cellene
+MSG_ROWS
+Rader
+MSG_COLUMNS
+Kolonner
+MSG_SUM
+Sum
+MSG_AVERAGE
+Gjennomsnitt
+MSG_COUNT
+Antall
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Stigende
+MSG_DESCENDING
+Synkende
+MSG_DOWN
+Ned
+MSG_RIGHT
+Mot høyre
+MSG_PROBLEM_NAME
+Ingen slik funksjon eller navn
+MSG_PROBLEM_ARGUMENTS
+Feil antall argumenter
+MSG_PROBLEM_PARENTHESES
+En parentes mangler motstykke
+MSG_PROBLEM_TOO_LONG
+Formelen er for lang
+MSG_PROBLEM_UNREADABLE
+Formelen kan ikke leses
+MSG_PROBLEM_AT
+%s, ved tegn %u
+MSG_NO_MEMORY_KEEP
+Ikke nok minne til å beholde alt det
+MSG_NO_MEMORY_FILE
+Ikke nok minne til hele filen
+MSG_LEFT_OUT
+Celler etter rad 9999 eller kolonne IV ble utelatt
+MSG_NO_MEMORY_COPY
+Ikke minne til å kopiere så mye
+MSG_NO_MEMORY_CLEAR
+Ikke nok minne til å tømme alt
+MSG_NO_MEMORY_PASTE
+Ikke nok minne til å lime inn alt
+MSG_NO_ROOM_COLUMNS
+Ikke plass: de siste kolonnene inneholder noe
+MSG_NO_ROOM_ROWS
+Ikke plass: de siste radene inneholder noe
+MSG_NO_MEMORY_THAT
+Ikke nok minne til det
+MSG_NO_MEMORY_FORMAT
+Ikke nok minne til å formatere alt
+MSG_NOTHING_TO_ADD
+Ingen tall over eller til venstre å legge sammen
+MSG_NO_MEMORY_ALL
+Ikke nok minne til alt det
+MSG_NO_MEMORY_SORT
+Ikke nok minne til å sortere alt det
+MSG_NO_MEMORY_FILL
+Ikke nok minne til å fylle alt
+MSG_NOT_FOUND
+Ingen celle inneholder det
+MSG_UNTITLED
+Uten navn
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan ikke åpne %s
+MSG_CANNOT_READ
+Kan ikke lese %s
+MSG_TOO_BIG
+%s er for stor
+MSG_NO_MEMORY_FOR
+Ikke minne til %s
+MSG_NO_MEMORY_TO_SAVE
+Ikke minne til å lagre %s
+MSG_CANNOT_WRITE
+Kan ikke skrive %s
+MSG_NO_REQUESTER
+Ingen %s
+MSG_CHANGED
+Arket er endret.\nLagre det først?
+MSG_CHANGED_BUTTONS
+Lagre|Ikke lagre|Avbryt
+MSG_OPEN_TITLE
+Åpne et ark
+MSG_SAVE_AS_TITLE
+Lagre arket som
+MSG_FIND_LABEL
+Søk
+MSG_FIND_NEXT_BUTTON
+Neste
+MSG_FIND_PREVIOUS_BUTTON
+Forrige
+MSG_FIND_CLOSE_BUTTON
+Lukk
+MSG_NOLIBRARY
+Ingen %s\n
+MSG_NOSCREEN
+Ingen standardskjerm - ingen visning\n
+MSG_NOMEMORY
+Ikke minne til vinduet\n

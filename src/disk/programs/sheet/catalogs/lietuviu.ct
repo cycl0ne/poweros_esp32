@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; Sheet's strings in Lithuanian.
+MSG_MENU_PROJECT
+Projektas
+MSG_MENU_NEW
+Naujas
+MSG_MENU_OPEN
+Atidaryti...
+MSG_MENU_SAVE
+Įrašyti
+MSG_MENU_SAVE_AS
+Įrašyti kaip...
+MSG_MENU_QUIT
+Išeiti
+MSG_MENU_EDIT
+Taisa
+MSG_MENU_UNDO
+Anuliuoti
+MSG_MENU_REDO
+Perdaryti
+MSG_MENU_CUT
+Iškirpti
+MSG_MENU_COPY
+Kopijuoti
+MSG_MENU_PASTE
+Įklijuoti
+MSG_MENU_CLEAR
+Valyti
+MSG_MENU_FILL_DOWN
+Užpildyti žemyn
+MSG_MENU_FILL_RIGHT
+Užpildyti dešinėn
+MSG_MENU_SELECT_ALL
+Žymėti viską
+MSG_MENU_FIND
+Rasti...
+MSG_MENU_FIND_NEXT
+Rasti kitą
+MSG_MENU_SHEET
+Lentelė
+MSG_MENU_INSERT_ROWS
+Įterpti eilutes
+MSG_MENU_DELETE_ROWS
+Naikinti eilutes
+MSG_MENU_INSERT_COLUMNS
+Įterpti stulpelius
+MSG_MENU_DELETE_COLUMNS
+Naikinti stulpelius
+MSG_MENU_WIDER
+Platesnis stulpelis
+MSG_MENU_NARROWER
+Siauresnis stulpelis
+MSG_MENU_SUM
+Automatinė suma
+MSG_MENU_SORT_ASCENDING
+Rikiuoti didėjimo tvarka
+MSG_MENU_SORT_DESCENDING
+Rikiuoti mažėjimo tvarka
+MSG_MENU_FORMAT
+Formatas
+MSG_MENU_GENERAL
+Bendrasis
+MSG_MENU_NUMBER
+Skaičius
+MSG_MENU_PERCENT
+Procentai
+MSG_MENU_CURRENCY
+Valiuta
+MSG_MENU_DECIMALS_MORE
+Daugiau dešimtainių skaitmenų
+MSG_MENU_DECIMALS_LESS
+Mažiau dešimtainių skaitmenų
+MSG_MENU_VIEW
+Rodinys
+MSG_MENU_RIBBON
+Juostelė
+MSG_RIBBON_HOME
+Pagrindinis
+MSG_RIBBON_CLIPBOARD
+Mainų sritis
+MSG_RIBBON_PASTE_HINT
+Įklijuoti tai, kas iškirpta ar nukopijuota
+MSG_RIBBON_NUMBER_HINT
+Rodyti skaičius su dešimtainiais ir tūkstančių skyrikliu
+MSG_RIBBON_PERCENT_HINT
+Rodyti skaičius procentais
+MSG_RIBBON_CURRENCY_HINT
+Rodyti skaičius kaip pinigus
+MSG_RIBBON_DECIMALS_MORE_HINT
+Rodyti vienu dešimtainiu skaitmeniu daugiau
+MSG_RIBBON_DECIMALS_LESS_HINT
+Rodyti vienu dešimtainiu skaitmeniu mažiau
+MSG_RIBBON_CELLS
+Langeliai
+MSG_RIBBON_INSERT
+Įterpti
+MSG_RIBBON_INSERT_HINT
+Įterpti eilutes ar stulpelius ten, kur pažymėti langeliai
+MSG_RIBBON_DELETE
+Naikinti
+MSG_RIBBON_DELETE_HINT
+Išimti pažymėtų langelių eilutes ar stulpelius
+MSG_RIBBON_EDITING
+Taisa
+MSG_RIBBON_SUM_HINT
+Sudėti skaičius viršuje arba kairėje
+MSG_RIBBON_SORT
+Rikiuoti
+MSG_RIBBON_SORT_HINT
+Surikiuoti eilutes pagal dabartinio langelio stulpelį
+MSG_RIBBON_FIND
+Rasti
+MSG_RIBBON_FIND_HINT
+Rasti langelį pagal jo turinį
+MSG_RIBBON_FILL
+Užpildyti
+MSG_RIBBON_FILL_HINT
+Kopijuoti pirmą eilutę ar stulpelį ant likusių
+MSG_RIBBON_CLEAR_HINT
+Išvalyti pažymėtus langelius
+MSG_ROWS
+Eilutės
+MSG_COLUMNS
+Stulpeliai
+MSG_SUM
+Suma
+MSG_AVERAGE
+Vidurkis
+MSG_COUNT
+Kiekis
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Didėjančiai
+MSG_DESCENDING
+Mažėjančiai
+MSG_DOWN
+Žemyn
+MSG_RIGHT
+Dešinėn
+MSG_PROBLEM_NAME
+Tokios funkcijos ar vardo nėra
+MSG_PROBLEM_ARGUMENTS
+Neteisingas argumentų skaičius
+MSG_PROBLEM_PARENTHESES
+Skliaustas neturi poros
+MSG_PROBLEM_TOO_LONG
+Formulė per ilga
+MSG_PROBLEM_UNREADABLE
+Formulės negalima perskaityti
+MSG_PROBLEM_AT
+%s, ties simboliu %u
+MSG_NO_MEMORY_KEEP
+Nepakanka atminties viskam išlaikyti
+MSG_NO_MEMORY_FILE
+Nepakanka atminties visam failui
+MSG_LEFT_OUT
+Langeliai už 9999 eilutės ar IV stulpelio praleisti
+MSG_NO_MEMORY_COPY
+Nėra atminties tiek nukopijuoti
+MSG_NO_MEMORY_CLEAR
+Nepakanka atminties viskam išvalyti
+MSG_NO_MEMORY_PASTE
+Nepakanka atminties viskam įklijuoti
+MSG_NO_ROOM_COLUMNS
+Nėra vietos: paskutiniuose stulpeliuose kažkas yra
+MSG_NO_ROOM_ROWS
+Nėra vietos: paskutinėse eilutėse kažkas yra
+MSG_NO_MEMORY_THAT
+Tam nepakanka atminties
+MSG_NO_MEMORY_FORMAT
+Nepakanka atminties viskam suformatuoti
+MSG_NOTHING_TO_ADD
+Viršuje ar kairėje nėra skaičių sudėti
+MSG_NO_MEMORY_ALL
+Viskam tam nepakanka atminties
+MSG_NO_MEMORY_SORT
+Nepakanka atminties viskam surikiuoti
+MSG_NO_MEMORY_FILL
+Nepakanka atminties viskam užpildyti
+MSG_NOT_FOUND
+Nė viename langelyje to nėra
+MSG_UNTITLED
+Be pavadinimo
+MSG_OK
+Gerai
+MSG_CANNOT_OPEN
+Nepavyksta atidaryti %s
+MSG_CANNOT_READ
+Nepavyksta perskaityti %s
+MSG_TOO_BIG
+%s per didelis
+MSG_NO_MEMORY_FOR
+Nėra atminties failui %s
+MSG_NO_MEMORY_TO_SAVE
+Nėra atminties įrašyti %s
+MSG_CANNOT_WRITE
+Nepavyksta įrašyti %s
+MSG_NO_REQUESTER
+Nėra %s
+MSG_CHANGED
+Lentelė pakeista.\nPirmiausia ją įrašyti?
+MSG_CHANGED_BUTTONS
+Įrašyti|Neįrašyti|Atšaukti
+MSG_OPEN_TITLE
+Atidaryti lentelę
+MSG_SAVE_AS_TITLE
+Įrašyti lentelę kaip
+MSG_FIND_LABEL
+Rasti
+MSG_FIND_NEXT_BUTTON
+Kitas
+MSG_FIND_PREVIOUS_BUTTON
+Ankstesnis
+MSG_FIND_CLOSE_BUTTON
+Uždaryti
+MSG_NOLIBRARY
+Nėra %s\n
+MSG_NOSCREEN
+Nėra numatytojo ekrano - nėra vaizduoklio\n
+MSG_NOMEMORY
+Nėra atminties langui\n

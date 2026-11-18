@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; http.library's words for a request that failed, in Lithuanian: a clause in lower case, without its full stop.
+MSG_NOMEM
+nėra atminties
+MSG_IO
+ryšys nepavyko
+MSG_IO_BECAUSE
+ryšys nepavyko: %s
+MSG_STOPPED
+sustabdyta
+MSG_TIMEOUT
+serveris neatsakė laiku
+MSG_URL
+ne http:// ar https:// URL, arba per ilgas
+MSG_HOST
+mazgas neturi adreso
+MSG_HOST_NAMED
+%s neturi adreso
+MSG_TLS
+TLS seansas nepavyko
+MSG_TLS_CERTIFICATE
+serverio sertifikatu nepasitikima: %s
+MSG_TLS_CLOCK
+laikrodis nenustatytas, todėl jokio sertifikato patikrinti negalima (TimeSync)
+MSG_TLS_ALERT
+serveris atmetė TLS seansą (alert %u)
+MSG_TLS_HANDSHAKE
+TLS ryšio užmezgimas nepavyko
+MSG_PROTOCOL
+atsakymas nėra HTTP
+MSG_REDIRECT
+daugiau peradresavimų nei leista, arba peradresavimas į niekur
+MSG_TRUNCATED
+ryšys baigėsi anksčiau už atsakymą
+MSG_STATE
+iškvietimas ne laiku arba užklausa, kurios negalima pateikti
+MSG_LIBRARY
+nėra bibliotekos, kurios reikia užklausai
+MSG_LIBRARY_NAMED
+%s nėra
+MSG_DATA
+suglaudinto serverio atsakymo nepavyksta išskleisti
+MSG_CLOSED
+serveris uždarė ryšį neatsakęs
+MSG_UNKNOWN
+užklausa nepavyko (%d)
+MSG_VERDICT_MALFORMED
+vieno iš jo sertifikatų negalima perskaityti
+MSG_VERDICT_UNKNOWN_ISSUER
+jo nepasirašė joks patikimas šakninis sertifikatas
+MSG_VERDICT_BAD_SIGNATURE
+parašas jo grandinėje neteisingas
+MSG_VERDICT_UNSUPPORTED
+jis pasirašytas būdu, kurio negalima patikrinti
+MSG_VERDICT_EXPIRED
+jo galiojimas baigėsi
+MSG_VERDICT_NOT_YET_VALID
+jis dar negalioja
+MSG_VERDICT_NOT_CA
+jį išdavė sertifikatas, kuris neturi teisės išduoti
+MSG_VERDICT_PATH_LENGTH
+jo grandinė ilgesnė, nei leidžia jos CA
+MSG_VERDICT_NAME_CONSTRAINTS
+CA jo grandinėje turi vardų apribojimų
+MSG_VERDICT_WRONG_USAGE
+jis skirtas ne serveriui
+MSG_VERDICT_WRONG_NAME
+jis skirtas kitam mazgui
+MSG_VERDICT_TOO_LONG
+jo grandinė per ilga
+MSG_VERDICT_OTHER
+be nurodytos priežasties

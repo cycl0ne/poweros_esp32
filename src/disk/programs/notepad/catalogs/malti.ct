@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; Notepad's strings in Maltese.
+MSG_MENU_PROJECT
+Proġett
+MSG_MENU_NEW
+Ġdid
+MSG_MENU_OPEN
+Iftaħ...
+MSG_MENU_SAVE
+Issejvja
+MSG_MENU_SAVE_AS
+Issejvja bħala...
+MSG_MENU_QUIT
+Oħroġ
+MSG_MENU_EDIT
+Editja
+MSG_MENU_UNDO
+Erġa' lura
+MSG_MENU_REDO
+Erġa' agħmel
+MSG_MENU_CUT
+Aqta'
+MSG_MENU_COPY
+Ikkopja
+MSG_MENU_PASTE
+Waħħal
+MSG_MENU_SELECT_ALL
+Agħżel kollox
+MSG_MENU_SEARCH
+Fittex
+MSG_MENU_FIND
+Sib...
+MSG_MENU_FIND_NEXT
+Sib li jmiss
+MSG_MENU_FIND_PREVIOUS
+Sib ta' qabel
+MSG_MENU_REPLACE
+Ibdel...
+MSG_MENU_VIEW
+Dehra
+MSG_MENU_WRAP
+Tgeżwir tal-kliem
+MSG_MENU_NUMBERS
+Numri tal-linji
+MSG_MENU_ZIG
+Enfasi ta' Zig
+MSG_MENU_RIBBON
+Żigarella
+MSG_RIBBON_HOME
+Dar
+MSG_RIBBON_CLIPBOARD
+Clipboard
+MSG_RIBBON_PASTE_HINT
+Waħħal dak li nqata' jew ġie kkupjat
+MSG_RIBBON_EDITING
+Editjar
+MSG_RIBBON_FIND
+Sib
+MSG_RIBBON_FIND_HINT
+Sib test; il-lista terġa' ssib dak li jmiss, jew dak ta' qabel
+MSG_RIBBON_REPLACE
+Ibdel
+MSG_RIBBON_REPLACE_HINT
+Poġġi test ieħor minflok wieħed misjub
+MSG_RIBBON_SELECT_ALL_HINT
+Agħżel it-test kollu
+MSG_RIBBON_LINES
+Linji
+MSG_RIBBON_WRAP_HINT
+Kompli fil-linja ta' wara minflok tgħaddi t-tarf tat-tieqa
+MSG_RIBBON_NUMBERS_HINT
+Innumera kull linja fuq ix-xellug
+MSG_RIBBON_HIGHLIGHTING
+Enfasi
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Uri l-kliem ewlieni, is-sekwenzi u l-kummenti ta' Zig kull wieħed b'kulur
+MSG_UNTITLED
+Bla titlu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s ma jistax jinfetaħ
+MSG_CANNOT_READ
+%s ma jistax jinqara
+MSG_TOO_BIG
+%s kbir wisq
+MSG_NO_MEMORY_FOR
+M'hemmx memorja għal %s
+MSG_NO_MEMORY_TO_SAVE
+M'hemmx memorja biex jiġi ssejvjat %s
+MSG_CANNOT_WRITE
+%s ma jistax jinkiteb
+MSG_NO_REQUESTER
+M'hemmx %s
+MSG_CHANGED
+It-test inbidel.\nTissejvjah l-ewwel?
+MSG_CHANGED_BUTTONS
+Issejvja|Tissejvjax|Ikkanċella
+MSG_OPEN_TITLE
+Iftaħ test
+MSG_SAVE_AS_TITLE
+Issejvja t-test bħala
+MSG_FIND_TITLE
+Sib u ibdel
+MSG_FIND_LABEL
+Sib
+MSG_REPLACE_WITH
+Ibdel b'
+MSG_ANY_CASE
+Injora l-ittri kbar
+MSG_FIND_NEXT_BUTTON
+Sib li jmiss
+MSG_REPLACE_BUTTON
+Ibdel
+MSG_REPLACE_ALL_BUTTON
+Ibdel kollox
+MSG_NOLIBRARY
+M'hemmx %s\n
+MSG_NOSCREEN
+M'hemmx skrin prestabbilit - l-ebda wiri\n
+MSG_NOMEMORY
+M'hemmx memorja għat-tieqa\n

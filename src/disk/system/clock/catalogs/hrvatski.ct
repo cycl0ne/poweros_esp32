@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language hrvatski
+## codeset 106
+; Clock's strings in Croatian.
+MSG_WINDOW_TITLE
+Sat
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analogni
+MSG_MENU_DIGITAL
+Digitalni
+MSG_MENU_ABOUT
+O programu...
+MSG_MENU_QUIT
+Izlaz
+MSG_MENU_SETTINGS
+Postavke
+MSG_MENU_SECONDS
+Sekunde
+MSG_MENU_DATE
+Datum
+MSG_MENU_24_HOURS
+24 sata
+MSG_MENU_SAVE
+Spremi postavke
+MSG_ABOUT_TITLE
+O programu Sat
+MSG_ABOUT
+%s\n\nVrijeme na brojčaniku ili u znamenkama.\nDvoklik u prozoru prebacuje između njih.
+MSG_OK
+U redu
+MSG_NOT_SAVED
+Postavke nije bilo moguće spremiti u\n%s.
+MSG_NOLIBRARY
+%s: nije moguće otvoriti %s\n
+MSG_NOMEMORY
+%s: nema dovoljno memorije\n
+MSG_NOWINDOW
+%s: nije moguće otvoriti prozor\n

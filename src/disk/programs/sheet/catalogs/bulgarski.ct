@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; Sheet's strings in Bulgarian.
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_NEW
+Нов
+MSG_MENU_OPEN
+Отвори...
+MSG_MENU_SAVE
+Запиши
+MSG_MENU_SAVE_AS
+Запиши като...
+MSG_MENU_QUIT
+Изход
+MSG_MENU_EDIT
+Редактиране
+MSG_MENU_UNDO
+Отмени
+MSG_MENU_REDO
+Повтори
+MSG_MENU_CUT
+Изрежи
+MSG_MENU_COPY
+Копирай
+MSG_MENU_PASTE
+Постави
+MSG_MENU_CLEAR
+Изчисти
+MSG_MENU_FILL_DOWN
+Попълни надолу
+MSG_MENU_FILL_RIGHT
+Попълни надясно
+MSG_MENU_SELECT_ALL
+Избери всичко
+MSG_MENU_FIND
+Намери...
+MSG_MENU_FIND_NEXT
+Намери следващ
+MSG_MENU_SHEET
+Таблица
+MSG_MENU_INSERT_ROWS
+Вмъкни редове
+MSG_MENU_DELETE_ROWS
+Изтрий редове
+MSG_MENU_INSERT_COLUMNS
+Вмъкни колони
+MSG_MENU_DELETE_COLUMNS
+Изтрий колони
+MSG_MENU_WIDER
+По-широка колона
+MSG_MENU_NARROWER
+По-тясна колона
+MSG_MENU_SUM
+Автосума
+MSG_MENU_SORT_ASCENDING
+Сортирай във възходящ ред
+MSG_MENU_SORT_DESCENDING
+Сортирай в низходящ ред
+MSG_MENU_FORMAT
+Формат
+MSG_MENU_GENERAL
+Общ
+MSG_MENU_NUMBER
+Число
+MSG_MENU_PERCENT
+Процент
+MSG_MENU_CURRENCY
+Валута
+MSG_MENU_DECIMALS_MORE
+Повече десетични знаци
+MSG_MENU_DECIMALS_LESS
+По-малко десетични знаци
+MSG_MENU_VIEW
+Изглед
+MSG_MENU_RIBBON
+Лента
+MSG_RIBBON_HOME
+Начало
+MSG_RIBBON_CLIPBOARD
+Клипборд
+MSG_RIBBON_PASTE_HINT
+Поставя изрязаното или копираното
+MSG_RIBBON_NUMBER_HINT
+Показва числата с десетични знаци и разделител за хилядите
+MSG_RIBBON_PERCENT_HINT
+Показва числата като процент
+MSG_RIBBON_CURRENCY_HINT
+Показва числата като пари
+MSG_RIBBON_DECIMALS_MORE_HINT
+Показва един десетичен знак повече
+MSG_RIBBON_DECIMALS_LESS_HINT
+Показва един десетичен знак по-малко
+MSG_RIBBON_CELLS
+Клетки
+MSG_RIBBON_INSERT
+Вмъкни
+MSG_RIBBON_INSERT_HINT
+Вмъква редове или колони там, където са избраните клетки
+MSG_RIBBON_DELETE
+Изтрий
+MSG_RIBBON_DELETE_HINT
+Изтрива редовете или колоните на избраните клетки
+MSG_RIBBON_EDITING
+Редактиране
+MSG_RIBBON_SUM_HINT
+Събира числата отгоре или отляво
+MSG_RIBBON_SORT
+Сортирай
+MSG_RIBBON_SORT_HINT
+Подрежда редовете по колоната на текущата клетка
+MSG_RIBBON_FIND
+Намери
+MSG_RIBBON_FIND_HINT
+Намира клетка по съдържанието ѝ
+MSG_RIBBON_FILL
+Попълни
+MSG_RIBBON_FILL_HINT
+Копира първия ред или колона върху останалите
+MSG_RIBBON_CLEAR_HINT
+Изчиства избраните клетки
+MSG_ROWS
+Редове
+MSG_COLUMNS
+Колони
+MSG_SUM
+Сума
+MSG_AVERAGE
+Средно
+MSG_COUNT
+Брой
+MSG_MIN
+Мин
+MSG_MAX
+Макс
+MSG_ASCENDING
+Възходящо
+MSG_DESCENDING
+Низходящо
+MSG_DOWN
+Надолу
+MSG_RIGHT
+Надясно
+MSG_PROBLEM_NAME
+Няма такава функция или име
+MSG_PROBLEM_ARGUMENTS
+Грешен брой аргументи
+MSG_PROBLEM_PARENTHESES
+Скоба без съответна скоба
+MSG_PROBLEM_TOO_LONG
+Формулата е твърде дълга
+MSG_PROBLEM_UNREADABLE
+Формулата не може да бъде прочетена
+MSG_PROBLEM_AT
+%s, при знак %u
+MSG_NO_MEMORY_KEEP
+Няма достатъчно памет, за да се запази всичко
+MSG_NO_MEMORY_FILE
+Няма достатъчно памет за целия файл
+MSG_LEFT_OUT
+Клетките след ред 9999 или колона IV са пропуснати
+MSG_NO_MEMORY_COPY
+Няма памет за копиране на толкова много
+MSG_NO_MEMORY_CLEAR
+Няма достатъчно памет, за да се изчисти всичко
+MSG_NO_MEMORY_PASTE
+Няма достатъчно памет, за да се постави всичко
+MSG_NO_ROOM_COLUMNS
+Няма място: последните колони съдържат нещо
+MSG_NO_ROOM_ROWS
+Няма място: последните редове съдържат нещо
+MSG_NO_MEMORY_THAT
+Няма достатъчно памет за това
+MSG_NO_MEMORY_FORMAT
+Няма достатъчно памет, за да се форматира всичко
+MSG_NOTHING_TO_ADD
+Няма числа отгоре или отляво за събиране
+MSG_NO_MEMORY_ALL
+Няма достатъчно памет за всичко това
+MSG_NO_MEMORY_SORT
+Няма достатъчно памет, за да се сортира всичко
+MSG_NO_MEMORY_FILL
+Няма достатъчно памет, за да се попълни всичко
+MSG_NOT_FOUND
+Никоя клетка не съдържа това
+MSG_UNTITLED
+Без име
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s не може да бъде отворен
+MSG_CANNOT_READ
+%s не може да бъде прочетен
+MSG_TOO_BIG
+%s е твърде голям
+MSG_NO_MEMORY_FOR
+Няма памет за %s
+MSG_NO_MEMORY_TO_SAVE
+Няма памет за записване на %s
+MSG_CANNOT_WRITE
+%s не може да бъде записан
+MSG_NO_REQUESTER
+Няма %s
+MSG_CHANGED
+Таблицата е променена.\nДа бъде ли записана първо?
+MSG_CHANGED_BUTTONS
+Запиши|Не записвай|Отказ
+MSG_OPEN_TITLE
+Отваряне на таблица
+MSG_SAVE_AS_TITLE
+Записване на таблицата като
+MSG_FIND_LABEL
+Намери
+MSG_FIND_NEXT_BUTTON
+Следващ
+MSG_FIND_PREVIOUS_BUTTON
+Предишен
+MSG_FIND_CLOSE_BUTTON
+Затвори
+MSG_NOLIBRARY
+Няма %s\n
+MSG_NOSCREEN
+Няма екран по подразбиране - няма дисплей\n
+MSG_NOMEMORY
+Няма памет за прозореца\n

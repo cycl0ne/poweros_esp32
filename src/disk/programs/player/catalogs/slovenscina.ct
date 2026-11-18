@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; The Player's strings in Slovene.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Odpri...
+MSG_MENU_OPEN_DRAWER
+Odpri mapo...
+MSG_MENU_OPEN_URL
+Odpri URL...
+MSG_MENU_SAVE_PLAYLIST
+Shrani seznam predvajanja...
+MSG_MENU_ABOUT
+O programu
+MSG_MENU_QUIT
+Končaj
+MSG_MENU_PLAYLIST
+Seznam predvajanja
+MSG_MENU_ADD
+Dodaj...
+MSG_MENU_REMOVE
+Odstrani
+MSG_MENU_CLEAR
+Počisti
+MSG_MENU_SHUFFLE
+Naključno
+MSG_MENU_REPEAT
+Ponavljaj
+MSG_MENU_REPEAT_OFF
+Izklopljeno
+MSG_MENU_REPEAT_ALL
+Vse
+MSG_MENU_REPEAT_ONE
+Eno
+MSG_MENU_PICTURE
+Slika
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Valovanje
+MSG_MENU_BARS
+Stolpci
+MSG_MENU_SETTINGS
+Nastavitve
+MSG_MENU_REMEMBER
+Zapomni si mesto
+MSG_PAGE_PLAYING
+Zdaj se predvaja
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Vaše postaje
+MSG_VIEW_FOUND
+Najdeno
+MSG_NAME
+Ime
+MSG_GENRE
+Zvrst
+MSG_COUNTRY
+Država
+MSG_COLUMN_TITLE
+Naslov
+MSG_COLUMN_ARTIST
+Izvajalec
+MSG_COLUMN_TIME
+Čas
+MSG_COLUMN_STATION
+Postaja
+MSG_COLUMN_ADDRESS
+URL
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Zvrsti
+MSG_SHUFFLE_BUTTON
+_Naključno
+MSG_SHUFFLE_HINT
+Predvajaj skladbe v lastnem vrstnem redu
+MSG_REPEAT_BUTTON
+_Ponavljaj
+MSG_REPEAT_HINT
+Predvajaj seznam znova ali eno skladbo
+MSG_MUTE_BUTTON
+_Utišaj
+MSG_MUTE_HINT
+Izklopi zvok in ga znova vklopi
+MSG_LENGTH_HINT
+Dolžina skladbe ali koliko je je še ostalo
+MSG_ADD_BUTTON
+_Dodaj...
+MSG_REMOVE_BUTTON
+_Odstrani
+MSG_CLEAR_BUTTON
+Počis_ti
+MSG_OUTPUT_LABEL
+Iz_hod
+MSG_SEARCH_BUTTON
+_Išči
+MSG_KEEP_BUTTON
+_Zapomni
+MSG_FORGET_BUTTON
+Odst_rani
+MSG_FIND_LABEL
+Na_jdi
+MSG_BY_LABEL
+_v
+MSG_URL_TITLE
+Odpri URL
+MSG_URL_ADDRESS
+_Naslov
+MSG_URL_OPEN
+_Odpri
+MSG_URL_CANCEL
+_Prekliči
+MSG_ASK_PLAY
+Katere skladbe?
+MSG_ASK_ADD
+Katere skladbe želite dodati?
+MSG_ASK_DRAWER
+Katero mapo?
+MSG_ASK_SAVE
+Shrani seznam predvajanja kot
+MSG_ABOUT_TITLE
+O programu Player
+MSG_ABOUT
+%s\n\nSkladbe iz datotek WAV, MP3, FLAC, Ogg Vorbis, AAC in AC-3,\nena za drugo, z ovitki,\npostaje iz omrežja\nin slika zvoka.
+MSG_OK
+V redu
+MSG_NO_SONG
+Ni skladbe
+MSG_TRACK_OF
+posnetek %u od %u
+MSG_TRACK
+posnetek %u
+MSG_COMPOSED_BY
+skladatelj: %s
+MSG_CHAPTER
+Poglavje %u od %u
+MSG_SOUND
+Zvok
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+skladba %u od %u
+MSG_NO_SOUND
+brez zvoka
+MSG_NO_STREAM_FREE
+ni prostega toka
+MSG_LIVE
+v živo
+MSG_BUFFERING
+medpomnjenje
+MSG_BUFFERING_PERCENT
+Medpomnjenje %u%%
+MSG_STATION_IDLE
+Postaja: za poslušanje pritisnite predvajanje
+MSG_CALLING
+Povezovanje s postajo
+MSG_NO_MEMORY_STATION
+Ni pomnilnika za postajo
+MSG_ALL_STREAMS_USED
+Vsi zvočni tokovi so v uporabi
+MSG_NO_SOUND_HERE
+Ta računalnik nima zvoka
+MSG_NO_AUDIO_STREAM
+audio.device ni odprl toka
+MSG_KEPT_ALREADY
+Že shranjeno: %s
+MSG_KEPT
+Shranjeno: %s
+MSG_NO_MEMORY_KEEP
+Ni pomnilnika za shranjevanje postaje
+MSG_NO_MEMORY_SEARCH
+Ni pomnilnika za iskanje
+MSG_SEARCHING
+Iskanje
+MSG_ASKING
+Poizvedovanje pri %s
+MSG_NONE_FOUND
+Ni najdenih postaj
+MSG_ONE_FOUND
+Najdena je ena postaja
+MSG_COUNT_FOUND
+Najdene postaje: %u
+MSG_NO_NETWORK
+Ni omrežja: bsdsocket.library ni na voljo
+MSG_NO_HTTP
+http.library ni na voljo
+MSG_NO_MEMORY_CONNECTION
+Ni pomnilnika za povezavo
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info nima naslova
+MSG_SERVICE_NO_ANSWER
+radio-browser.info ni odgovoril na iskanje
+MSG_SERVICE_UNREACHED
+radio-browser.info ni dosegljiv
+MSG_SERVICE_NONSENSE
+Odgovor radio-browser.info nima smisla
+MSG_SEARCH_FAILED
+Iskanje ni uspelo
+MSG_NO_SIGNAL
+Ni prostega signala za postajo
+MSG_NO_TIMER
+timer.device ni bilo mogoče odpreti
+MSG_LISTS_ONLY
+Seznami postaje vodijo le do novih seznamov
+MSG_STATION_STOPPED
+Postaja je prenehala oddajati
+MSG_STATION_ANSWERED
+Postaja je odgovorila
+MSG_SENDS_AAC
+Postaja oddaja AAC, ki se ne predvaja
+MSG_STATION_ENDED
+Postaja je končala povezavo
+MSG_SENDS_HLS
+Postaja oddaja HLS, ki se ne predvaja
+MSG_LIST_EMPTY
+Seznam postaje ne navaja nobene postaje
+MSG_LIST_TOO_LONG
+Seznam postaje navaja predolg naslov
+MSG_NOT_AN_ADDRESS
+To ni naslov za poslušanje
+MSG_NONSENSE
+Odgovor postaje nima smisla
+MSG_NOLIBRARY
+%s: ni mogoče odpreti %s\n
+MSG_NOMEMORY
+%s: ni pomnilnika za okno\n
+MSG_NOBUFFERS
+%s: ni pomnilnika za zvok\n
+MSG_NOWINDOW
+%s: ni okna\n
+MSG_MENU_EQUALIZER
+Izenačevalnik
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Goniometer
+MSG_MENU_METERS
+Ravni
+MSG_MENU_WHOLE_SCREEN
+Celoten zaslon

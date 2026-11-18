@@ -1,0 +1,380 @@
+## version $VER: sys/dos.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; dos.library's strings in Bulgarian.
+;
+SOFTWARE_FAILURE
+Програмна грешка
+;
+RUN_FAILED
+%s: неуспех, код за връщане %ld\n
+;
+USE_COUNT
+%TH БРОЯЧ НА ИЗПОЛЗВАНИЯТА\n\n
+;
+NAME
+ИМЕ
+;
+DISABLED
+%TH ИЗКЛЮЧЕНА\n
+;
+INTERNAL
+%TH ВЪТРЕШНА\n
+;
+SYSTEM
+%TH СИСТЕМНА\n
+;
+FAULT
+Грешка %3ld
+;
+FAIL_LIMIT
+Праг на неуспех: %ld\n
+;
+BAD_RETURN_CODE
+Зададен е грешен код за връщане
+;
+CURRENT_DIR
+Текуща директория
+;
+NO_RETURN_CODE
+Последната команда не зададе код за връщане
+;
+LAST_CMD_FAILED
+Последната команда е неуспешна, защото\x20
+;
+PROCESS_ENDING
+Процес %N приключва
+;
+REQUESTED_SIZE_TOO_SMALL
+Исканият размер е твърде малък
+;
+REQUESTED_SIZE_TOO_LARGE
+Исканият размер е твърде голям
+;
+CURRENT_STACK_SIZE
+Текущият размер на стека е %ld байта\n
+;
+NEWSHELL_FAILED
+NewShell е неуспешна
+;
+MISSING_ELSE_OR_ENDIF
+Липсва ELSE или ENDIF
+;
+MUST_BE_IN_CMD_FILE
+Трябва да е в команден файл
+;
+MORE_THAN_ONE_DIR
+Повече от една директория съвпада
+;
+CANT_SET
+%s не може да бъде зададено\n
+;
+BLOCK_CORRUPT_DIR
+Блок %ld: повредена директория
+;
+BLOCK_CORRUPT_FILE
+Блок %ld: повреден файл
+;
+BLOCK_BAD_HEADER
+Блок %ld: грешен тип заглавие
+;
+BLOCK_OUT_OF_RANGE
+Блок %ld извън обхвата
+;
+BLOCK_USED_TWICE
+Блок %ld използван два пъти
+;
+VALIDATION_ERROR
+Грешка при проверката на %b
+;
+ON_DISK_BLOCK
+в блок %ld на диска
+;
+CHECKSUM_ERROR
+има грешка в контролната сума
+;
+WRITE_ERROR
+има грешка при запис
+;
+READ_ERROR
+има грешка при четене
+;
+UNABLE_CREATE_PROC
+Процесът не може да бъде създаден\n
+;
+NEW_SHELL_PROCESS
+Нов процес Shell %ld\n
+;
+CANT_OPEN_FROM_FILE
+FROM файлът %s не може да бъде отворен\n
+;
+SUSPEND_REBOOT
+Спри|Рестартирай
+;
+RETRY_CANCEL
+Опитай пак|Отказ
+;
+NO_ROOM_FOR_BITMAP
+Няма място за растер
+;
+CMD_TOO_LONG
+Командата е твърде дълга
+;
+SHELL_ERROR
+Грешка в обвивката:
+;
+CMDNAME_ERROR
+Грешка в името на командата
+;
+UNKNOWN_COMMAND
+Непозната команда
+;
+LOAD_ERROR
+Не може да бъде заредена
+;
+SYNTAX_ERROR
+синтактична грешка
+;
+REDIRECT_ERROR
+файлът за пренасочване не може да бъде отворен
+;
+ERROR
+Грешка\x20
+;
+EMPTY_STRING
+
+;
+DISK_CORRUPT
+Дискът е повреден - задачата е спряна
+;
+PROGRAM_FAILED
+Програмата е неуспешна (грешка #
+;
+WAIT_FOR_ACTIVITY
+Изчакайте дискът да приключи работа.
+;
+IN_DEVICE
+в устройство %s%s
+;
+IN_UNIT
+в единица %ld%s
+;
+YOU_MUST_REPLACE
+ЗАДЪЛЖИТЕЛНО поставете отново тома
+;
+READ_WRITE_ERROR
+има грешка при четене/запис
+;
+NO_DISK_PRESENT
+Няма диск
+;
+NOT_A_DOS_DISK
+Не е DOS диск
+;
+ANY_DRIVE
+в което и да е устройство
+;
+REPLACE_VOLUME
+Поставете отново тома
+;
+INSERT_VOLUME
+Поставете тома
+;
+IS_FULL
+е пълен
+;
+IS_PROTECTED
+е защитен срещу запис
+;
+IS_NOT_VALIDATED
+не е проверен
+;
+VOLUME
+Том
+;
+ERROR_NO_FREE_STORE
+няма достатъчно памет
+;
+ERROR_TASK_TABLE_FULL
+таблицата с процеси е пълна
+;
+ERROR_BAD_TEMPLATE
+грешен шаблон
+;
+ERROR_BAD_NUMBER
+грешно число
+;
+ERROR_REQUIRED_ARG_MISSING
+липсва задължителен аргумент
+;
+ERROR_KEY_NEEDS_ARG
+липсва стойност след ключовата дума
+;
+ERROR_TOO_MANY_ARGS
+грешен брой аргументи
+;
+ERROR_UNMATCHED_QUOTES
+незатворени кавички
+;
+ERROR_LINE_TOO_LONG
+редът с аргументи е грешен или твърде дълъг
+;
+ERROR_FILE_NOT_OBJECT
+файлът не е изпълним
+;
+ERROR_INVALID_RESIDENT_LIBRARY
+грешна резидентна библиотека
+;
+ERROR_OBJECT_IN_USE
+обектът се използва
+;
+ERROR_OBJECT_EXISTS
+обектът вече съществува
+;
+ERROR_DIR_NOT_FOUND
+директорията не е намерена
+;
+ERROR_OBJECT_NOT_FOUND
+обектът не е намерен
+;
+ERROR_BAD_STREAM_NAME
+грешно описание на прозорец
+;
+ERROR_OBJECT_TOO_LARGE
+обектът е твърде голям
+;
+ERROR_ACTION_NOT_KNOWN
+непознат тип заявка в пакет
+;
+ERROR_INVALID_COMPONENT_NAME
+грешно име на обект
+;
+ERROR_INVALID_LOCK
+грешно заключване на обект
+;
+ERROR_OBJECT_WRONG_TYPE
+обектът не е от нужния тип
+;
+ERROR_DISK_NOT_VALIDATED
+дискът не е проверен
+;
+ERROR_DISK_WRITE_PROTECTED
+дискът е защитен срещу запис
+;
+ERROR_RENAME_ACROSS_DEVICES
+опит за преименуване между устройства
+;
+ERROR_DIRECTORY_NOT_EMPTY
+директорията не е празна
+;
+ERROR_TOO_MANY_LEVELS
+твърде много нива
+;
+ERROR_DEVICE_NOT_MOUNTED
+устройството (или томът) не е монтирано
+;
+ERROR_SEEK_ERROR
+грешка при позициониране
+;
+ERROR_COMMENT_TOO_BIG
+коментарът е твърде дълъг
+;
+ERROR_DISK_FULL
+дискът е пълен
+;
+ERROR_DELETE_PROTECTED
+обектът е защитен срещу изтриване
+;
+ERROR_WRITE_PROTECTED
+файлът е защитен срещу запис
+;
+ERROR_READ_PROTECTED
+файлът е защитен срещу четене
+;
+ERROR_NOT_A_DOS_DISK
+не е валиден DOS диск
+;
+ERROR_NO_DISK
+няма диск в устройството
+;
+ERROR_NO_MORE_ENTRIES
+няма повече записи в директорията
+;
+ERROR_IS_SOFT_LINK
+обектът е символна връзка
+;
+ERROR_OBJECT_LINKED
+към обекта има връзки
+;
+ERROR_BAD_HUNK
+грешен блок в зареждания файл
+;
+ERROR_NOT_IMPLEMENTED
+функцията не е реализирана
+;
+ERROR_RECORD_NOT_LOCKED
+записът не е заключен
+;
+ERROR_LOCK_COLLISION
+конфликт при заключване на запис
+;
+ERROR_LOCK_TIMEOUT
+изтекло време при заключване на запис
+;
+ERROR_UNLOCK_ERROR
+грешка при отключване на запис
+;
+ABORT_BUSY
+извикващият не трябваше да бъде питан
+;
+ABORT_DISK_ERROR
+грешка при четене или запис на тома
+;
+ERROR_BUFFER_OVERFLOW
+препълване на буфер
+;
+ERROR_BREAK
+***Прекъсване
+;
+ERROR_NOT_EXECUTABLE
+файлът не е изпълним
+;
+ERROR_INVALID_ARGUMENT
+грешен аргумент
+;
+ERROR_INVALID_DOS_ENTRY
+грешен запис в списъка с устройства
+;
+ERROR_NO_INPUT_STREAM
+няма входен поток
+;
+ERROR_BUFFER_TOO_SMALL
+буферът е твърде малък
+;
+ERROR_NO_PROCESS
+не е процес
+;
+ERROR_NO_HANDLER
+няма манипулатор
+;
+ERROR_PACKET_ASYNC
+пакет не на ред
+;
+ERROR_ERROR_IN_PACKET
+грешка в пакета
+;
+ERROR_NO_CURRENT_DIRECTORY
+няма текуща директория
+;
+ERROR_HANDLER_NOT_LOADED
+манипулаторът не е зареден
+;
+ERROR_HANDLER_START_ERROR
+манипулаторът не успя да стартира
+;
+ERROR_BROKEN_PIPE
+другият край на канала го няма
+;
+ERROR_BAD_CHECKSUM
+грешка в контролната сума: прочетените данни не са записаните
+;

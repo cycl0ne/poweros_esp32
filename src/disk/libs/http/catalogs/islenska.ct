@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; http.library's words for a request that failed, in Icelandic.
+MSG_NOMEM
+ekkert minni
+MSG_IO
+tengingin mistókst
+MSG_IO_BECAUSE
+tengingin mistókst: %s
+MSG_STOPPED
+stöðvað
+MSG_TIMEOUT
+þjónninn svaraði ekki í tæka tíð
+MSG_URL
+ekki http://- eða https://-slóð, eða of löng
+MSG_HOST
+hýsillinn hefur ekkert vistfang
+MSG_HOST_NAMED
+%s hefur ekkert vistfang
+MSG_TLS
+TLS-lotan mistókst
+MSG_TLS_CERTIFICATE
+skilríki þjónsins er ekki treyst: %s
+MSG_TLS_CLOCK
+klukkan er ekki stillt, svo ekki er hægt að sannreyna nein skilríki (TimeSync)
+MSG_TLS_ALERT
+þjónninn hafnaði TLS-lotunni (alert %u)
+MSG_TLS_HANDSHAKE
+TLS-handabandið mistókst
+MSG_PROTOCOL
+svarið er ekki HTTP
+MSG_REDIRECT
+fleiri tilvísanir en leyft er, eða ein sem vísar hvergi
+MSG_TRUNCATED
+tengingin rofnaði áður en svarinu lauk
+MSG_STATE
+kall á röngum tíma, eða beiðni sem ekki er hægt að gera
+MSG_LIBRARY
+safn sem beiðnin þarf vantar
+MSG_LIBRARY_NAMED
+%s vantar
+MSG_DATA
+ekki er hægt að afþjappa pakkað svar þjónsins
+MSG_CLOSED
+þjónninn lokaði tengingunni án þess að svara
+MSG_UNKNOWN
+beiðnin mistókst (%d)
+MSG_VERDICT_MALFORMED
+ekki er hægt að lesa eitt af skilríkjum þess
+MSG_VERDICT_UNKNOWN_ISSUER
+engin traust rót undirritaði það
+MSG_VERDICT_BAD_SIGNATURE
+undirskrift í keðju þess er röng
+MSG_VERDICT_UNSUPPORTED
+það er undirritað á hátt sem ekki er hægt að sannreyna
+MSG_VERDICT_EXPIRED
+það er útrunnið
+MSG_VERDICT_NOT_YET_VALID
+það er ekki gilt enn
+MSG_VERDICT_NOT_CA
+það var gefið út af skilríki sem má ekki gefa út
+MSG_VERDICT_PATH_LENGTH
+keðja þess er lengri en vottunarstöðvar hennar leyfa
+MSG_VERDICT_NAME_CONSTRAINTS
+vottunarstöð í keðju þess hefur nafnatakmarkanir
+MSG_VERDICT_WRONG_USAGE
+það er ekki fyrir þjón
+MSG_VERDICT_WRONG_NAME
+það er fyrir annan hýsil
+MSG_VERDICT_TOO_LONG
+keðja þess er of löng
+MSG_VERDICT_OTHER
+án tilgreindrar ástæðu

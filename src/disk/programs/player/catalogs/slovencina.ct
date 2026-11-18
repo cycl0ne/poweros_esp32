@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; The Player's strings in Slovak.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Otvoriť...
+MSG_MENU_OPEN_DRAWER
+Otvoriť priečinok...
+MSG_MENU_OPEN_URL
+Otvoriť URL...
+MSG_MENU_SAVE_PLAYLIST
+Uložiť zoznam skladieb...
+MSG_MENU_ABOUT
+O programe
+MSG_MENU_QUIT
+Ukončiť
+MSG_MENU_PLAYLIST
+Zoznam skladieb
+MSG_MENU_ADD
+Pridať...
+MSG_MENU_REMOVE
+Odobrať
+MSG_MENU_CLEAR
+Vymazať
+MSG_MENU_SHUFFLE
+Náhodne
+MSG_MENU_REPEAT
+Opakovať
+MSG_MENU_REPEAT_OFF
+Vypnuté
+MSG_MENU_REPEAT_ALL
+Všetky
+MSG_MENU_REPEAT_ONE
+Jednu
+MSG_MENU_PICTURE
+Obraz
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Vlna
+MSG_MENU_BARS
+Stĺpce
+MSG_MENU_SETTINGS
+Nastavenia
+MSG_MENU_REMEMBER
+Pamätať si pozíciu
+MSG_PAGE_PLAYING
+Práve hrá
+MSG_PAGE_RADIO
+Rádio
+MSG_VIEW_KEPT
+Vaše stanice
+MSG_VIEW_FOUND
+Nájdené
+MSG_NAME
+Názov
+MSG_GENRE
+Žáner
+MSG_COUNTRY
+Krajina
+MSG_COLUMN_TITLE
+Názov
+MSG_COLUMN_ARTIST
+Interpret
+MSG_COLUMN_TIME
+Čas
+MSG_COLUMN_STATION
+Stanica
+MSG_COLUMN_ADDRESS
+Adresa
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Žánre
+MSG_SHUFFLE_BUTTON
+_Náhodne
+MSG_SHUFFLE_HINT
+Prehrávať skladby vo vlastnom poradí
+MSG_REPEAT_BUTTON
+_Opakovať
+MSG_REPEAT_HINT
+Prehrať zoznam znova, alebo jednu skladbu
+MSG_MUTE_BUTTON
+_Stlmiť
+MSG_MUTE_HINT
+Vypnúť zvuk a znova zapnúť
+MSG_LENGTH_HINT
+Dĺžka skladby, alebo koľko z nej zostáva
+MSG_ADD_BUTTON
+_Pridať...
+MSG_REMOVE_BUTTON
+Odo_brať
+MSG_CLEAR_BUTTON
+Vy_mazať
+MSG_OUTPUT_LABEL
+Výs_tup
+MSG_SEARCH_BUTTON
+_Hľadať
+MSG_KEEP_BUTTON
+_Uložiť
+MSG_FORGET_BUTTON
+Odob_rať
+MSG_FIND_LABEL
+Ná_jsť
+MSG_BY_LABEL
+_v
+MSG_URL_TITLE
+Otvoriť URL
+MSG_URL_ADDRESS
+_Adresa
+MSG_URL_OPEN
+_Otvoriť
+MSG_URL_CANCEL
+_Zrušiť
+MSG_ASK_PLAY
+Ktoré skladby?
+MSG_ASK_ADD
+Ktoré skladby pridať?
+MSG_ASK_DRAWER
+Ktorý priečinok?
+MSG_ASK_SAVE
+Uložiť zoznam skladieb ako
+MSG_ABOUT_TITLE
+O programe Player
+MSG_ABOUT
+%s\n\nSkladby zo súborov WAV, MP3, FLAC, Ogg Vorbis, AAC a AC-3,\njedna za druhou, s obalmi,\nstanice zo siete\na obraz zvuku.
+MSG_OK
+OK
+MSG_NO_SONG
+Žiadna skladba
+MSG_TRACK_OF
+stopa %u z %u
+MSG_TRACK
+stopa %u
+MSG_COMPOSED_BY
+skladateľ: %s
+MSG_CHAPTER
+Kapitola %u z %u
+MSG_SOUND
+Zvuk
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+skladba %u z %u
+MSG_NO_SOUND
+bez zvuku
+MSG_NO_STREAM_FREE
+žiadny voľný prúd
+MSG_LIVE
+naživo
+MSG_BUFFERING
+načítavanie
+MSG_BUFFERING_PERCENT
+Načítavanie %u%%
+MSG_STATION_IDLE
+Stanica: prehrávanie ju pustí
+MSG_CALLING
+Pripájanie k stanici
+MSG_NO_MEMORY_STATION
+Nedostatok pamäte pre stanicu
+MSG_ALL_STREAMS_USED
+Všetky zvukové prúdy sa používajú
+MSG_NO_SOUND_HERE
+Tento počítač nemá zvuk
+MSG_NO_AUDIO_STREAM
+audio.device neotvoril prúd
+MSG_KEPT_ALREADY
+Už uložené: %s
+MSG_KEPT
+Uložené: %s
+MSG_NO_MEMORY_KEEP
+Nedostatok pamäte na uloženie stanice
+MSG_NO_MEMORY_SEARCH
+Nedostatok pamäte na hľadanie
+MSG_SEARCHING
+Hľadá sa
+MSG_ASKING
+Dopyt na %s
+MSG_NONE_FOUND
+Nenašla sa žiadna stanica
+MSG_ONE_FOUND
+Našla sa jedna stanica
+MSG_COUNT_FOUND
+Nájdené stanice: %u
+MSG_NO_NETWORK
+Žiadna sieť: chýba bsdsocket.library
+MSG_NO_HTTP
+Chýba http.library
+MSG_NO_MEMORY_CONNECTION
+Nedostatok pamäte pre spojenie
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info nemá adresu
+MSG_SERVICE_NO_ANSWER
+radio-browser.info neodpovedal na hľadanie
+MSG_SERVICE_UNREACHED
+radio-browser.info nie je dostupný
+MSG_SERVICE_NONSENSE
+Odpoveď radio-browser.info nedáva zmysel
+MSG_SEARCH_FAILED
+Hľadanie zlyhalo
+MSG_NO_SIGNAL
+Pre stanicu nie je voľný signál
+MSG_NO_TIMER
+timer.device sa nepodarilo otvoriť
+MSG_LISTS_ONLY
+Zoznamy stanice vedú iba k ďalším zoznamom
+MSG_STATION_STOPPED
+Stanica prestala vysielať
+MSG_STATION_ANSWERED
+Stanica odpovedala
+MSG_SENDS_AAC
+Stanica vysiela AAC, ktoré sa neprehráva
+MSG_STATION_ENDED
+Stanica ukončila spojenie
+MSG_SENDS_HLS
+Stanica vysiela HLS, ktoré sa neprehráva
+MSG_LIST_EMPTY
+Zoznam stanice neuvádza žiadnu stanicu
+MSG_LIST_TOO_LONG
+Zoznam stanice uvádza príliš dlhú adresu
+MSG_NOT_AN_ADDRESS
+Toto nie je adresa na počúvanie
+MSG_NONSENSE
+Odpoveď stanice nedáva zmysel
+MSG_NOLIBRARY
+%s: nemožno otvoriť %s\n
+MSG_NOMEMORY
+%s: nedostatok pamäte pre okno\n
+MSG_NOBUFFERS
+%s: nedostatok pamäte pre zvuk\n
+MSG_NOWINDOW
+%s: žiadne okno\n
+MSG_MENU_EQUALIZER
+Ekvalizér
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Goniometer
+MSG_MENU_METERS
+Úrovne
+MSG_MENU_WHOLE_SCREEN
+Celá obrazovka

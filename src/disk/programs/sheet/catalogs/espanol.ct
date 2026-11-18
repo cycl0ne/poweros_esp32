@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language espanol
+## codeset 106
+; Sheet's strings in Spanish.
+MSG_MENU_PROJECT
+Proyecto
+MSG_MENU_NEW
+Nuevo
+MSG_MENU_OPEN
+Abrir...
+MSG_MENU_SAVE
+Guardar
+MSG_MENU_SAVE_AS
+Guardar como...
+MSG_MENU_QUIT
+Salir
+MSG_MENU_EDIT
+Edición
+MSG_MENU_UNDO
+Deshacer
+MSG_MENU_REDO
+Rehacer
+MSG_MENU_CUT
+Cortar
+MSG_MENU_COPY
+Copiar
+MSG_MENU_PASTE
+Pegar
+MSG_MENU_CLEAR
+Borrar
+MSG_MENU_FILL_DOWN
+Rellenar hacia abajo
+MSG_MENU_FILL_RIGHT
+Rellenar hacia la derecha
+MSG_MENU_SELECT_ALL
+Seleccionar todo
+MSG_MENU_FIND
+Buscar...
+MSG_MENU_FIND_NEXT
+Buscar siguiente
+MSG_MENU_SHEET
+Hoja
+MSG_MENU_INSERT_ROWS
+Insertar filas
+MSG_MENU_DELETE_ROWS
+Eliminar filas
+MSG_MENU_INSERT_COLUMNS
+Insertar columnas
+MSG_MENU_DELETE_COLUMNS
+Eliminar columnas
+MSG_MENU_WIDER
+Columna más ancha
+MSG_MENU_NARROWER
+Columna más estrecha
+MSG_MENU_SUM
+Autosuma
+MSG_MENU_SORT_ASCENDING
+Orden ascendente
+MSG_MENU_SORT_DESCENDING
+Orden descendente
+MSG_MENU_FORMAT
+Formato
+MSG_MENU_GENERAL
+General
+MSG_MENU_NUMBER
+Número
+MSG_MENU_PERCENT
+Porcentaje
+MSG_MENU_CURRENCY
+Moneda
+MSG_MENU_DECIMALS_MORE
+Más decimales
+MSG_MENU_DECIMALS_LESS
+Menos decimales
+MSG_MENU_VIEW
+Ver
+MSG_MENU_RIBBON
+Cinta
+MSG_RIBBON_HOME
+Inicio
+MSG_RIBBON_CLIPBOARD
+Portapapeles
+MSG_RIBBON_PASTE_HINT
+Pegar lo que se cortó o copió
+MSG_RIBBON_NUMBER_HINT
+Mostrar los números con decimales y separador de miles
+MSG_RIBBON_PERCENT_HINT
+Mostrar los números como porcentaje
+MSG_RIBBON_CURRENCY_HINT
+Mostrar los números como dinero
+MSG_RIBBON_DECIMALS_MORE_HINT
+Mostrar un decimal más
+MSG_RIBBON_DECIMALS_LESS_HINT
+Mostrar un decimal menos
+MSG_RIBBON_CELLS
+Celdas
+MSG_RIBBON_INSERT
+Insertar
+MSG_RIBBON_INSERT_HINT
+Insertar filas o columnas donde están las celdas seleccionadas
+MSG_RIBBON_DELETE
+Eliminar
+MSG_RIBBON_DELETE_HINT
+Quitar las filas o columnas de las celdas seleccionadas
+MSG_RIBBON_EDITING
+Edición
+MSG_RIBBON_SUM_HINT
+Sumar los números de arriba o de la izquierda
+MSG_RIBBON_SORT
+Ordenar
+MSG_RIBBON_SORT_HINT
+Ordenar las filas por la columna de la celda actual
+MSG_RIBBON_FIND
+Buscar
+MSG_RIBBON_FIND_HINT
+Buscar una celda por lo que contiene
+MSG_RIBBON_FILL
+Rellenar
+MSG_RIBBON_FILL_HINT
+Copiar la primera fila o columna sobre las demás
+MSG_RIBBON_CLEAR_HINT
+Vaciar las celdas seleccionadas
+MSG_ROWS
+Filas
+MSG_COLUMNS
+Columnas
+MSG_SUM
+Suma
+MSG_AVERAGE
+Promedio
+MSG_COUNT
+Recuento
+MSG_MIN
+Mín
+MSG_MAX
+Máx
+MSG_ASCENDING
+Ascendente
+MSG_DESCENDING
+Descendente
+MSG_DOWN
+Hacia abajo
+MSG_RIGHT
+Hacia la derecha
+MSG_PROBLEM_NAME
+No existe esa función o nombre
+MSG_PROBLEM_ARGUMENTS
+Número de argumentos incorrecto
+MSG_PROBLEM_PARENTHESES
+A un paréntesis le falta su pareja
+MSG_PROBLEM_TOO_LONG
+La fórmula es demasiado larga
+MSG_PROBLEM_UNREADABLE
+La fórmula no se puede leer
+MSG_PROBLEM_AT
+%s, en el carácter %u
+MSG_NO_MEMORY_KEEP
+No hay memoria suficiente para conservar todo eso
+MSG_NO_MEMORY_FILE
+No hay memoria suficiente para todo el archivo
+MSG_LEFT_OUT
+Se omitieron las celdas más allá de la fila 9999 o de la columna IV
+MSG_NO_MEMORY_COPY
+No hay memoria para copiar tanto
+MSG_NO_MEMORY_CLEAR
+No hay memoria suficiente para borrarlo todo
+MSG_NO_MEMORY_PASTE
+No hay memoria suficiente para pegarlo todo
+MSG_NO_ROOM_COLUMNS
+No hay sitio: las últimas columnas contienen algo
+MSG_NO_ROOM_ROWS
+No hay sitio: las últimas filas contienen algo
+MSG_NO_MEMORY_THAT
+No hay memoria suficiente para eso
+MSG_NO_MEMORY_FORMAT
+No hay memoria suficiente para darle formato a todo
+MSG_NOTHING_TO_ADD
+No hay números arriba o a la izquierda que sumar
+MSG_NO_MEMORY_ALL
+No hay memoria suficiente para todo eso
+MSG_NO_MEMORY_SORT
+No hay memoria suficiente para ordenarlo todo
+MSG_NO_MEMORY_FILL
+No hay memoria suficiente para rellenarlo todo
+MSG_NOT_FOUND
+Ninguna celda contiene eso
+MSG_UNTITLED
+Sin título
+MSG_OK
+Aceptar
+MSG_CANNOT_OPEN
+No se puede abrir %s
+MSG_CANNOT_READ
+No se puede leer %s
+MSG_TOO_BIG
+%s es demasiado grande
+MSG_NO_MEMORY_FOR
+No hay memoria para %s
+MSG_NO_MEMORY_TO_SAVE
+No hay memoria para guardar %s
+MSG_CANNOT_WRITE
+No se puede escribir %s
+MSG_NO_REQUESTER
+Falta %s
+MSG_CHANGED
+La hoja ha cambiado.\n¿Guardarla primero?
+MSG_CHANGED_BUTTONS
+Guardar|No guardar|Cancelar
+MSG_OPEN_TITLE
+Abrir una hoja
+MSG_SAVE_AS_TITLE
+Guardar la hoja como
+MSG_FIND_LABEL
+Buscar
+MSG_FIND_NEXT_BUTTON
+Siguiente
+MSG_FIND_PREVIOUS_BUTTON
+Anterior
+MSG_FIND_CLOSE_BUTTON
+Cerrar
+MSG_NOLIBRARY
+Falta %s\n
+MSG_NOSCREEN
+No hay pantalla predeterminada - no hay imagen\n
+MSG_NOMEMORY
+No hay memoria para la ventana\n

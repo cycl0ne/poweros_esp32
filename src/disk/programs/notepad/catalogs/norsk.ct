@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; Notepad's strings in Norwegian (Bokmål).
+MSG_MENU_PROJECT
+Prosjekt
+MSG_MENU_NEW
+Ny
+MSG_MENU_OPEN
+Åpne...
+MSG_MENU_SAVE
+Lagre
+MSG_MENU_SAVE_AS
+Lagre som...
+MSG_MENU_QUIT
+Avslutt
+MSG_MENU_EDIT
+Rediger
+MSG_MENU_UNDO
+Angre
+MSG_MENU_REDO
+Gjør om
+MSG_MENU_CUT
+Klipp ut
+MSG_MENU_COPY
+Kopier
+MSG_MENU_PASTE
+Lim inn
+MSG_MENU_SELECT_ALL
+Merk alt
+MSG_MENU_SEARCH
+Søk
+MSG_MENU_FIND
+Søk...
+MSG_MENU_FIND_NEXT
+Søk etter neste
+MSG_MENU_FIND_PREVIOUS
+Søk etter forrige
+MSG_MENU_REPLACE
+Erstatt...
+MSG_MENU_VIEW
+Vis
+MSG_MENU_WRAP
+Tekstbryting
+MSG_MENU_NUMBERS
+Linjenumre
+MSG_MENU_ZIG
+Zig-utheving
+MSG_MENU_RIBBON
+Bånd
+MSG_RIBBON_HOME
+Hjem
+MSG_RIBBON_CLIPBOARD
+Utklippstavle
+MSG_RIBBON_PASTE_HINT
+Lim inn det som ble klippet ut eller kopiert
+MSG_RIBBON_EDITING
+Redigering
+MSG_RIBBON_FIND
+Søk
+MSG_RIBBON_FIND_HINT
+Søk etter en tekst; listen finner neste igjen, eller den forrige
+MSG_RIBBON_REPLACE
+Erstatt
+MSG_RIBBON_REPLACE_HINT
+Sett en annen tekst i stedet for en som ble funnet
+MSG_RIBBON_SELECT_ALL_HINT
+Merk hele teksten
+MSG_RIBBON_LINES
+Linjer
+MSG_RIBBON_WRAP_HINT
+Fortsett på neste linje i stedet for forbi vinduskanten
+MSG_RIBBON_NUMBERS_HINT
+Nummerer hver linje til venstre
+MSG_RIBBON_HIGHLIGHTING
+Utheving
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Vis Zigs nøkkelord, strenger og kommentarer i hver sin farge
+MSG_UNTITLED
+Uten navn
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan ikke åpne %s
+MSG_CANNOT_READ
+Kan ikke lese %s
+MSG_TOO_BIG
+%s er for stor
+MSG_NO_MEMORY_FOR
+Ikke minne til %s
+MSG_NO_MEMORY_TO_SAVE
+Ikke minne til å lagre %s
+MSG_CANNOT_WRITE
+Kan ikke skrive %s
+MSG_NO_REQUESTER
+Ingen %s
+MSG_CHANGED
+Teksten er endret.\nLagre den først?
+MSG_CHANGED_BUTTONS
+Lagre|Ikke lagre|Avbryt
+MSG_OPEN_TITLE
+Åpne en tekst
+MSG_SAVE_AS_TITLE
+Lagre teksten som
+MSG_FIND_TITLE
+Søk og erstatt
+MSG_FIND_LABEL
+Søk
+MSG_REPLACE_WITH
+Erstatt med
+MSG_ANY_CASE
+Ignorer store/små bokstaver
+MSG_FIND_NEXT_BUTTON
+Søk etter neste
+MSG_REPLACE_BUTTON
+Erstatt
+MSG_REPLACE_ALL_BUTTON
+Erstatt alle
+MSG_NOLIBRARY
+Ingen %s\n
+MSG_NOSCREEN
+Ingen standardskjerm - ingen visning\n
+MSG_NOMEMORY
+Ikke minne til vinduet\n

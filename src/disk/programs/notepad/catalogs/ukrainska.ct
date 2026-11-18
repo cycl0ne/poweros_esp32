@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language ukrainska
+## codeset 106
+; Notepad's strings in Ukrainian.
+MSG_MENU_PROJECT
+Проєкт
+MSG_MENU_NEW
+Створити
+MSG_MENU_OPEN
+Відкрити...
+MSG_MENU_SAVE
+Зберегти
+MSG_MENU_SAVE_AS
+Зберегти як...
+MSG_MENU_QUIT
+Вихід
+MSG_MENU_EDIT
+Редагування
+MSG_MENU_UNDO
+Скасувати
+MSG_MENU_REDO
+Повторити
+MSG_MENU_CUT
+Вирізати
+MSG_MENU_COPY
+Копіювати
+MSG_MENU_PASTE
+Вставити
+MSG_MENU_SELECT_ALL
+Виділити все
+MSG_MENU_SEARCH
+Пошук
+MSG_MENU_FIND
+Знайти...
+MSG_MENU_FIND_NEXT
+Знайти далі
+MSG_MENU_FIND_PREVIOUS
+Знайти попереднє
+MSG_MENU_REPLACE
+Замінити...
+MSG_MENU_VIEW
+Вигляд
+MSG_MENU_WRAP
+Перенесення слів
+MSG_MENU_NUMBERS
+Номери рядків
+MSG_MENU_ZIG
+Підсвічування Zig
+MSG_MENU_RIBBON
+Стрічка
+MSG_RIBBON_HOME
+Основне
+MSG_RIBBON_CLIPBOARD
+Буфер обміну
+MSG_RIBBON_PASTE_HINT
+Вставити те, що було вирізано або скопійовано
+MSG_RIBBON_EDITING
+Редагування
+MSG_RIBBON_FIND
+Знайти
+MSG_RIBBON_FIND_HINT
+Знайти текст; список шукає наступне або попереднє
+MSG_RIBBON_REPLACE
+Замінити
+MSG_RIBBON_REPLACE_HINT
+Замінити знайдений текст іншим
+MSG_RIBBON_SELECT_ALL_HINT
+Виділити весь текст
+MSG_RIBBON_LINES
+Рядки
+MSG_RIBBON_WRAP_HINT
+Переносити на наступний рядок, а не за край вікна
+MSG_RIBBON_NUMBERS_HINT
+Нумерувати кожен рядок ліворуч
+MSG_RIBBON_HIGHLIGHTING
+Підсвічування
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Показувати ключові слова, рядки й коментарі Zig різними кольорами
+MSG_UNTITLED
+Без назви
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Не вдається відкрити %s
+MSG_CANNOT_READ
+Не вдається прочитати %s
+MSG_TOO_BIG
+%s завеликий
+MSG_NO_MEMORY_FOR
+Недостатньо пам'яті для %s
+MSG_NO_MEMORY_TO_SAVE
+Недостатньо пам'яті, щоб зберегти %s
+MSG_CANNOT_WRITE
+Не вдається записати %s
+MSG_NO_REQUESTER
+Немає %s
+MSG_CHANGED
+Текст змінено.\nСпочатку зберегти його?
+MSG_CHANGED_BUTTONS
+Зберегти|Не зберігати|Скасувати
+MSG_OPEN_TITLE
+Відкрити текст
+MSG_SAVE_AS_TITLE
+Зберегти текст як
+MSG_FIND_TITLE
+Знайти й замінити
+MSG_FIND_LABEL
+Знайти
+MSG_REPLACE_WITH
+Замінити на
+MSG_ANY_CASE
+Без урахування регістру
+MSG_FIND_NEXT_BUTTON
+Знайти далі
+MSG_REPLACE_BUTTON
+Замінити
+MSG_REPLACE_ALL_BUTTON
+Замінити всі
+MSG_NOLIBRARY
+Немає %s\n
+MSG_NOSCREEN
+Немає типового екрана - немає дисплея\n
+MSG_NOMEMORY
+Недостатньо пам'яті для вікна\n

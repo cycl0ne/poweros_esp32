@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; Sheet's strings in Swedish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Ny
+MSG_MENU_OPEN
+Öppna...
+MSG_MENU_SAVE
+Spara
+MSG_MENU_SAVE_AS
+Spara som...
+MSG_MENU_QUIT
+Avsluta
+MSG_MENU_EDIT
+Redigera
+MSG_MENU_UNDO
+Ångra
+MSG_MENU_REDO
+Gör om
+MSG_MENU_CUT
+Klipp ut
+MSG_MENU_COPY
+Kopiera
+MSG_MENU_PASTE
+Klistra in
+MSG_MENU_CLEAR
+Rensa
+MSG_MENU_FILL_DOWN
+Fyll nedåt
+MSG_MENU_FILL_RIGHT
+Fyll åt höger
+MSG_MENU_SELECT_ALL
+Markera allt
+MSG_MENU_FIND
+Sök...
+MSG_MENU_FIND_NEXT
+Sök nästa
+MSG_MENU_SHEET
+Blad
+MSG_MENU_INSERT_ROWS
+Infoga rader
+MSG_MENU_DELETE_ROWS
+Ta bort rader
+MSG_MENU_INSERT_COLUMNS
+Infoga kolumner
+MSG_MENU_DELETE_COLUMNS
+Ta bort kolumner
+MSG_MENU_WIDER
+Bredare kolumn
+MSG_MENU_NARROWER
+Smalare kolumn
+MSG_MENU_SUM
+Autosumma
+MSG_MENU_SORT_ASCENDING
+Sortera stigande
+MSG_MENU_SORT_DESCENDING
+Sortera fallande
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+Allmänt
+MSG_MENU_NUMBER
+Tal
+MSG_MENU_PERCENT
+Procent
+MSG_MENU_CURRENCY
+Valuta
+MSG_MENU_DECIMALS_MORE
+Fler decimaler
+MSG_MENU_DECIMALS_LESS
+Färre decimaler
+MSG_MENU_VIEW
+Visa
+MSG_MENU_RIBBON
+Menyfliksområde
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_CLIPBOARD
+Urklipp
+MSG_RIBBON_PASTE_HINT
+Klistra in det som klipptes ut eller kopierades
+MSG_RIBBON_NUMBER_HINT
+Visa talen med decimaler, i tusental
+MSG_RIBBON_PERCENT_HINT
+Visa talen som procent
+MSG_RIBBON_CURRENCY_HINT
+Visa talen som belopp
+MSG_RIBBON_DECIMALS_MORE_HINT
+Visa en decimal till
+MSG_RIBBON_DECIMALS_LESS_HINT
+Visa en decimal mindre
+MSG_RIBBON_CELLS
+Celler
+MSG_RIBBON_INSERT
+Infoga
+MSG_RIBBON_INSERT_HINT
+Infoga rader eller kolumner där cellerna är markerade
+MSG_RIBBON_DELETE
+Ta bort
+MSG_RIBBON_DELETE_HINT
+Ta bort raderna eller kolumnerna för de markerade cellerna
+MSG_RIBBON_EDITING
+Redigering
+MSG_RIBBON_SUM_HINT
+Summera talen ovanför eller till vänster
+MSG_RIBBON_SORT
+Sortera
+MSG_RIBBON_SORT_HINT
+Ordna raderna efter den aktuella cellens kolumn
+MSG_RIBBON_FIND
+Sök
+MSG_RIBBON_FIND_HINT
+Sök efter en cell utifrån vad den innehåller
+MSG_RIBBON_FILL
+Fyll
+MSG_RIBBON_FILL_HINT
+Kopiera den första raden eller kolumnen över resten
+MSG_RIBBON_CLEAR_HINT
+Töm de markerade cellerna
+MSG_ROWS
+Rader
+MSG_COLUMNS
+Kolumner
+MSG_SUM
+Summa
+MSG_AVERAGE
+Medel
+MSG_COUNT
+Antal
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Stigande
+MSG_DESCENDING
+Fallande
+MSG_DOWN
+Nedåt
+MSG_RIGHT
+Åt höger
+MSG_PROBLEM_NAME
+Ingen sådan funktion eller namn
+MSG_PROBLEM_ARGUMENTS
+Fel antal argument
+MSG_PROBLEM_PARENTHESES
+En parentes saknar sin motsvarighet
+MSG_PROBLEM_TOO_LONG
+Formeln är för lång
+MSG_PROBLEM_UNREADABLE
+Formeln kan inte läsas
+MSG_PROBLEM_AT
+%s, vid tecken %u
+MSG_NO_MEMORY_KEEP
+Inte tillräckligt med minne för att behålla allt det
+MSG_NO_MEMORY_FILE
+Inte tillräckligt med minne för hela filen
+MSG_LEFT_OUT
+Celler efter rad 9999 eller kolumn IV utelämnades
+MSG_NO_MEMORY_COPY
+Inget minne för att kopiera så mycket
+MSG_NO_MEMORY_CLEAR
+Inte tillräckligt med minne för att rensa allt
+MSG_NO_MEMORY_PASTE
+Inte tillräckligt med minne för att klistra in allt
+MSG_NO_ROOM_COLUMNS
+Inget utrymme: de sista kolumnerna innehåller något
+MSG_NO_ROOM_ROWS
+Inget utrymme: de sista raderna innehåller något
+MSG_NO_MEMORY_THAT
+Inte tillräckligt med minne för det
+MSG_NO_MEMORY_FORMAT
+Inte tillräckligt med minne för att formatera allt
+MSG_NOTHING_TO_ADD
+Inga tal ovanför eller till vänster att summera
+MSG_NO_MEMORY_ALL
+Inte tillräckligt med minne för allt det
+MSG_NO_MEMORY_SORT
+Inte tillräckligt med minne för att sortera allt det
+MSG_NO_MEMORY_FILL
+Inte tillräckligt med minne för att fylla allt
+MSG_NOT_FOUND
+Ingen cell innehåller det
+MSG_UNTITLED
+Namnlös
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan inte öppna %s
+MSG_CANNOT_READ
+Kan inte läsa %s
+MSG_TOO_BIG
+%s är för stor
+MSG_NO_MEMORY_FOR
+Inget minne för %s
+MSG_NO_MEMORY_TO_SAVE
+Inget minne för att spara %s
+MSG_CANNOT_WRITE
+Kan inte skriva %s
+MSG_NO_REQUESTER
+Inget %s
+MSG_CHANGED
+Bladet har ändrats.\nSpara det först?
+MSG_CHANGED_BUTTONS
+Spara|Spara inte|Avbryt
+MSG_OPEN_TITLE
+Öppna ett blad
+MSG_SAVE_AS_TITLE
+Spara bladet som
+MSG_FIND_LABEL
+Sök
+MSG_FIND_NEXT_BUTTON
+Nästa
+MSG_FIND_PREVIOUS_BUTTON
+Föregående
+MSG_FIND_CLOSE_BUTTON
+Stäng
+MSG_NOLIBRARY
+Inget %s\n
+MSG_NOSCREEN
+Ingen standardskärm - ingen visning\n
+MSG_NOMEMORY
+Inget minne för fönstret\n

@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; http.library's words for a request that failed, in Finnish.
+MSG_NOMEM
+muisti ei riitä
+MSG_IO
+yhteys epäonnistui
+MSG_IO_BECAUSE
+yhteys epäonnistui: %s
+MSG_STOPPED
+pysäytetty
+MSG_TIMEOUT
+palvelin ei vastannut ajoissa
+MSG_URL
+ei http://- tai https://-osoite, tai liian pitkä
+MSG_HOST
+isännällä ei ole osoitetta
+MSG_HOST_NAMED
+isännällä %s ei ole osoitetta
+MSG_TLS
+TLS-istunto epäonnistui
+MSG_TLS_CERTIFICATE
+palvelimen varmenteeseen ei luoteta: %s
+MSG_TLS_CLOCK
+kelloa ei ole asetettu, joten varmenteita ei voi tarkistaa (TimeSync)
+MSG_TLS_ALERT
+palvelin hylkäsi TLS-istunnon (hälytys %u)
+MSG_TLS_HANDSHAKE
+TLS-kättely epäonnistui
+MSG_PROTOCOL
+vastaus ei ole HTTP:tä
+MSG_REDIRECT
+enemmän uudelleenohjauksia kuin sallittu, tai ohjaus ei minnekään
+MSG_TRUNCATED
+yhteys katkesi ennen vastauksen loppua
+MSG_STATE
+kutsu väärään aikaan, tai pyyntö, jota ei voi tehdä
+MSG_LIBRARY
+pyynnön tarvitsemaa kirjastoa ei ole
+MSG_LIBRARY_NAMED
+kirjastoa %s ei ole
+MSG_DATA
+palvelimen pakattua vastausta ei voi purkaa
+MSG_CLOSED
+palvelin sulki yhteyden vastaamatta
+MSG_UNKNOWN
+pyyntö epäonnistui (%d)
+MSG_VERDICT_MALFORMED
+yhtä sen varmenteista ei voi lukea
+MSG_VERDICT_UNKNOWN_ISSUER
+mikään luotettu juuri ei ole allekirjoittanut sitä
+MSG_VERDICT_BAD_SIGNATURE
+sen ketjussa on virheellinen allekirjoitus
+MSG_VERDICT_UNSUPPORTED
+se on allekirjoitettu tavalla, jota ei voi tarkistaa
+MSG_VERDICT_EXPIRED
+se on vanhentunut
+MSG_VERDICT_NOT_YET_VALID
+se ei ole vielä voimassa
+MSG_VERDICT_NOT_CA
+sen myönsi varmenne, joka ei saa myöntää varmenteita
+MSG_VERDICT_PATH_LENGTH
+sen ketju on pidempi kuin sen varmentajat sallivat
+MSG_VERDICT_NAME_CONSTRAINTS
+sen ketjun varmentajalla on nimirajoituksia
+MSG_VERDICT_WRONG_USAGE
+se ei ole palvelinta varten
+MSG_VERDICT_WRONG_NAME
+se on toiselle isännälle
+MSG_VERDICT_TOO_LONG
+sen ketju on liian pitkä
+MSG_VERDICT_OTHER
+syytä ei annettu

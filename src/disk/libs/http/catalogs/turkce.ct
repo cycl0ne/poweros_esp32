@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; http.library's words for a request that failed, in Turkish: a clause in lower case, without its full stop.
+MSG_NOMEM
+bellek yok
+MSG_IO
+bağlantı başarısız oldu
+MSG_IO_BECAUSE
+bağlantı başarısız oldu: %s
+MSG_STOPPED
+durduruldu
+MSG_TIMEOUT
+sunucu zamanında yanıt vermedi
+MSG_URL
+http:// ya da https:// URL'si değil veya çok uzun
+MSG_HOST
+ana bilgisayarın adresi yok
+MSG_HOST_NAMED
+%s için adres yok
+MSG_TLS
+TLS oturumu başarısız oldu
+MSG_TLS_CERTIFICATE
+sunucunun sertifikasına güvenilmiyor: %s
+MSG_TLS_CLOCK
+saat ayarlı değil, bu yüzden hiçbir sertifika denetlenemiyor (TimeSync)
+MSG_TLS_ALERT
+sunucu TLS oturumunu reddetti (alert %u)
+MSG_TLS_HANDSHAKE
+TLS el sıkışması başarısız oldu
+MSG_PROTOCOL
+yanıt HTTP değil
+MSG_REDIRECT
+izin verilenden fazla yönlendirme ya da hiçbir yere yönlendirme
+MSG_TRUNCATED
+bağlantı, yanıt bitmeden kesildi
+MSG_STATE
+sırası olmayan bir çağrı ya da yapılamayan bir istek
+MSG_LIBRARY
+isteğin gerektirdiği bir kitaplık yok
+MSG_LIBRARY_NAMED
+%s yok
+MSG_DATA
+sunucunun sıkıştırılmış yanıtı açılamıyor
+MSG_CLOSED
+sunucu yanıt vermeden bağlantıyı kapattı
+MSG_UNKNOWN
+istek başarısız oldu (%d)
+MSG_VERDICT_MALFORMED
+sertifikalarından biri okunamıyor
+MSG_VERDICT_UNKNOWN_ISSUER
+güvenilen hiçbir kök tarafından imzalanmamış
+MSG_VERDICT_BAD_SIGNATURE
+zincirindeki bir imza yanlış
+MSG_VERDICT_UNSUPPORTED
+denetlenemeyen bir yolla imzalanmış
+MSG_VERDICT_EXPIRED
+süresi dolmuş
+MSG_VERDICT_NOT_YET_VALID
+henüz geçerli değil
+MSG_VERDICT_NOT_CA
+sertifika vermeye yetkisi olmayan bir sertifika tarafından verilmiş
+MSG_VERDICT_PATH_LENGTH
+zinciri, CA'larının izin verdiğinden uzun
+MSG_VERDICT_NAME_CONSTRAINTS
+zincirindeki bir CA'nın ad kısıtlamaları var
+MSG_VERDICT_WRONG_USAGE
+bir sunucu için değil
+MSG_VERDICT_WRONG_NAME
+başka bir ana bilgisayar için
+MSG_VERDICT_TOO_LONG
+zinciri çok uzun
+MSG_VERDICT_OTHER
+bir neden belirtilmeden

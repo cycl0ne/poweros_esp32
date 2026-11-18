@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; Clock's strings in French.
+MSG_WINDOW_TITLE
+Horloge
+MSG_MENU_PROJECT
+Projet
+MSG_MENU_ANALOG
+Analogique
+MSG_MENU_DIGITAL
+Numérique
+MSG_MENU_ABOUT
+À propos...
+MSG_MENU_QUIT
+Quitter
+MSG_MENU_SETTINGS
+Paramètres
+MSG_MENU_SECONDS
+Secondes
+MSG_MENU_DATE
+Date
+MSG_MENU_24_HOURS
+24 heures
+MSG_MENU_SAVE
+Enregistrer les paramètres
+MSG_ABOUT_TITLE
+À propos d'Horloge
+MSG_ABOUT
+%s\n\nL'heure, sur un cadran ou en chiffres.\nUn double-clic dans la fenêtre passe de l'un à l'autre.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Les paramètres n'ont pas pu être enregistrés dans\n%s.
+MSG_NOLIBRARY
+%s : impossible d'ouvrir %s\n
+MSG_NOMEMORY
+%s : mémoire insuffisante\n
+MSG_NOWINDOW
+%s : impossible d'ouvrir sa fenêtre\n

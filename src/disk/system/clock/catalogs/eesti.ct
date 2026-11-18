@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; Clock's strings in Estonian.
+MSG_WINDOW_TITLE
+Kell
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analoog
+MSG_MENU_DIGITAL
+Digitaalne
+MSG_MENU_ABOUT
+Teave...
+MSG_MENU_QUIT
+Välju
+MSG_MENU_SETTINGS
+Sätted
+MSG_MENU_SECONDS
+Sekundid
+MSG_MENU_DATE
+Kuupäev
+MSG_MENU_24_HOURS
+24 tundi
+MSG_MENU_SAVE
+Salvesta sätted
+MSG_ABOUT_TITLE
+Teave: Kell
+MSG_ABOUT
+%s\n\nKellaaeg sihverplaadil või numbritena.\nTopeltklõps aknas vahetab nende vahel.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Sätteid ei saanud salvestada asukohta\n%s.
+MSG_NOLIBRARY
+%s: ei saa avada teeki %s\n
+MSG_NOMEMORY
+%s: mälu ei jätku\n
+MSG_NOWINDOW
+%s: ei saa oma akent avada\n

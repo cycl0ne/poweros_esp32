@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language italiano
+## codeset 106
+; Sheet's strings in Italian.
+MSG_MENU_PROJECT
+Progetto
+MSG_MENU_NEW
+Nuovo
+MSG_MENU_OPEN
+Apri...
+MSG_MENU_SAVE
+Salva
+MSG_MENU_SAVE_AS
+Salva con nome...
+MSG_MENU_QUIT
+Esci
+MSG_MENU_EDIT
+Modifica
+MSG_MENU_UNDO
+Annulla
+MSG_MENU_REDO
+Ripeti
+MSG_MENU_CUT
+Taglia
+MSG_MENU_COPY
+Copia
+MSG_MENU_PASTE
+Incolla
+MSG_MENU_CLEAR
+Cancella
+MSG_MENU_FILL_DOWN
+Riempi in basso
+MSG_MENU_FILL_RIGHT
+Riempi a destra
+MSG_MENU_SELECT_ALL
+Seleziona tutto
+MSG_MENU_FIND
+Trova...
+MSG_MENU_FIND_NEXT
+Trova successivo
+MSG_MENU_SHEET
+Foglio
+MSG_MENU_INSERT_ROWS
+Inserisci righe
+MSG_MENU_DELETE_ROWS
+Elimina righe
+MSG_MENU_INSERT_COLUMNS
+Inserisci colonne
+MSG_MENU_DELETE_COLUMNS
+Elimina colonne
+MSG_MENU_WIDER
+Colonna più larga
+MSG_MENU_NARROWER
+Colonna più stretta
+MSG_MENU_SUM
+Somma automatica
+MSG_MENU_SORT_ASCENDING
+Ordina in modo crescente
+MSG_MENU_SORT_DESCENDING
+Ordina in modo decrescente
+MSG_MENU_FORMAT
+Formato
+MSG_MENU_GENERAL
+Generale
+MSG_MENU_NUMBER
+Numero
+MSG_MENU_PERCENT
+Percentuale
+MSG_MENU_CURRENCY
+Valuta
+MSG_MENU_DECIMALS_MORE
+Aumenta decimali
+MSG_MENU_DECIMALS_LESS
+Diminuisci decimali
+MSG_MENU_VIEW
+Visualizza
+MSG_MENU_RIBBON
+Barra multifunzione
+MSG_RIBBON_HOME
+Home
+MSG_RIBBON_CLIPBOARD
+Appunti
+MSG_RIBBON_PASTE_HINT
+Incolla ciò che è stato tagliato o copiato
+MSG_RIBBON_NUMBER_HINT
+Mostra i numeri con i decimali e il separatore delle migliaia
+MSG_RIBBON_PERCENT_HINT
+Mostra i numeri come percentuale
+MSG_RIBBON_CURRENCY_HINT
+Mostra i numeri come importi in valuta
+MSG_RIBBON_DECIMALS_MORE_HINT
+Mostra un decimale in più
+MSG_RIBBON_DECIMALS_LESS_HINT
+Mostra un decimale in meno
+MSG_RIBBON_CELLS
+Celle
+MSG_RIBBON_INSERT
+Inserisci
+MSG_RIBBON_INSERT_HINT
+Inserisci righe o colonne dove sono selezionate le celle
+MSG_RIBBON_DELETE
+Elimina
+MSG_RIBBON_DELETE_HINT
+Togli le righe o le colonne delle celle selezionate
+MSG_RIBBON_EDITING
+Modifica
+MSG_RIBBON_SUM_HINT
+Somma i numeri sopra o a sinistra
+MSG_RIBBON_SORT
+Ordina
+MSG_RIBBON_SORT_HINT
+Ordina le righe secondo la colonna della cella corrente
+MSG_RIBBON_FIND
+Trova
+MSG_RIBBON_FIND_HINT
+Trova una cella in base al suo contenuto
+MSG_RIBBON_FILL
+Riempi
+MSG_RIBBON_FILL_HINT
+Copia la prima riga o colonna sulle altre
+MSG_RIBBON_CLEAR_HINT
+Svuota le celle selezionate
+MSG_ROWS
+Righe
+MSG_COLUMNS
+Colonne
+MSG_SUM
+Somma
+MSG_AVERAGE
+Media
+MSG_COUNT
+Conteggio
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Crescente
+MSG_DESCENDING
+Decrescente
+MSG_DOWN
+In basso
+MSG_RIGHT
+A destra
+MSG_PROBLEM_NAME
+Funzione o nome inesistente
+MSG_PROBLEM_ARGUMENTS
+Numero di argomenti errato
+MSG_PROBLEM_PARENTHESES
+Una parentesi non ha la sua corrispondente
+MSG_PROBLEM_TOO_LONG
+La formula è troppo lunga
+MSG_PROBLEM_UNREADABLE
+La formula non si può leggere
+MSG_PROBLEM_AT
+%s, al carattere %u
+MSG_NO_MEMORY_KEEP
+Memoria insufficiente per conservare tutto ciò
+MSG_NO_MEMORY_FILE
+Memoria insufficiente per l'intero file
+MSG_LEFT_OUT
+Le celle oltre la riga 9999 o la colonna IV sono state tralasciate
+MSG_NO_MEMORY_COPY
+Memoria insufficiente per copiare così tanto
+MSG_NO_MEMORY_CLEAR
+Memoria insufficiente per cancellare tutto
+MSG_NO_MEMORY_PASTE
+Memoria insufficiente per incollare tutto
+MSG_NO_ROOM_COLUMNS
+Spazio esaurito: le ultime colonne contengono qualcosa
+MSG_NO_ROOM_ROWS
+Spazio esaurito: le ultime righe contengono qualcosa
+MSG_NO_MEMORY_THAT
+Memoria insufficiente per questo
+MSG_NO_MEMORY_FORMAT
+Memoria insufficiente per formattare tutto
+MSG_NOTHING_TO_ADD
+Nessun numero da sommare sopra o a sinistra
+MSG_NO_MEMORY_ALL
+Memoria insufficiente per tutto ciò
+MSG_NO_MEMORY_SORT
+Memoria insufficiente per ordinare tutto
+MSG_NO_MEMORY_FILL
+Memoria insufficiente per riempire tutto
+MSG_NOT_FOUND
+Nessuna cella contiene questo
+MSG_UNTITLED
+Senza titolo
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Impossibile aprire %s
+MSG_CANNOT_READ
+Impossibile leggere %s
+MSG_TOO_BIG
+%s è troppo grande
+MSG_NO_MEMORY_FOR
+Memoria insufficiente per %s
+MSG_NO_MEMORY_TO_SAVE
+Memoria insufficiente per salvare %s
+MSG_CANNOT_WRITE
+Impossibile scrivere %s
+MSG_NO_REQUESTER
+Manca %s
+MSG_CHANGED
+Il foglio è cambiato.\nSalvarlo prima?
+MSG_CHANGED_BUTTONS
+Salva|Non salvare|Annulla
+MSG_OPEN_TITLE
+Apri un foglio
+MSG_SAVE_AS_TITLE
+Salva il foglio con nome
+MSG_FIND_LABEL
+Trova
+MSG_FIND_NEXT_BUTTON
+Successivo
+MSG_FIND_PREVIOUS_BUTTON
+Precedente
+MSG_FIND_CLOSE_BUTTON
+Chiudi
+MSG_NOLIBRARY
+Manca %s\n
+MSG_NOSCREEN
+Nessuno schermo predefinito - nessuna visualizzazione\n
+MSG_NOMEMORY
+Memoria insufficiente per la finestra\n

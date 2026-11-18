@@ -1,0 +1,27 @@
+# LOCALE:Languages/lietuviu.language - Lithuanian: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=sekmadienis DAY_2=pirmadienis DAY_3=antradienis
+DAY_4=trečiadienis DAY_5=ketvirtadienis DAY_6=penktadienis
+DAY_7=šeštadienis
+ABDAY_1=Sk ABDAY_2=Pr ABDAY_3=An ABDAY_4=Tr ABDAY_5=Kt ABDAY_6=Pn
+ABDAY_7=Št
+# The months, then their short names.
+MON_1=sausis MON_2=vasaris MON_3=kovas MON_4=balandis MON_5=gegužė
+MON_6=birželis MON_7=liepa MON_8=rugpjūtis MON_9=rugsėjis
+MON_10=spalis MON_11=lapkritis MON_12=gruodis
+ABMON_1=sau ABMON_2=vas ABMON_3=kov ABMON_4=bal ABMON_5=geg
+ABMON_6=bir ABMON_7=lie ABMON_8=rgp ABMON_9=rgs ABMON_10=spa
+ABMON_11=lap ABMON_12=grd
+# Yes and no, before and after noon.
+YESSTR=Taip NOSTR=Ne AM_STR=priešpiet PM_STR=popiet
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Vakar TODAYSTR=Šiandien TOMORROWSTR=Rytoj
+FUTURESTR=Ateitis
+# The order of the letters: Č after C, Y after I (before J), Š after S
+# and Ž after Z; the letters with an ogonek or a dot with their own.
+AFTER_C=Č AFTER_I=Y AFTER_S=Š AFTER_Z=Ž

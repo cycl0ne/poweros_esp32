@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; Emoji's strings in Greek.
+MSG_SEARCH
+Αναζήτηση
+MSG_USED
+Πρόσφατα
+MSG_NONE_USED
+Δεν έχει χρησιμοποιηθεί κανένα ακόμη
+MSG_NOT_FOUND
+Δεν βρέθηκε κανένα
+MSG_TONE_NONE
+Χωρίς τόνο δέρματος
+MSG_TONE_LIGHT
+Ανοιχτός
+MSG_TONE_MEDIUM_LIGHT
+Μεσαία ανοιχτός
+MSG_TONE_MEDIUM
+Μεσαίος
+MSG_TONE_MEDIUM_DARK
+Μεσαία σκούρος
+MSG_TONE_DARK
+Σκούρος
+MSG_GROUP_SMILEYS
+Φατσούλες & συναισθήματα
+MSG_GROUP_PEOPLE
+Άνθρωποι & σώμα
+MSG_GROUP_ANIMALS
+Ζώα & φύση
+MSG_GROUP_FOOD
+Φαγητό & ποτό
+MSG_GROUP_TRAVEL
+Ταξίδια & μέρη
+MSG_GROUP_ACTIVITIES
+Δραστηριότητες
+MSG_GROUP_OBJECTS
+Αντικείμενα
+MSG_GROUP_SYMBOLS
+Σύμβολα
+MSG_GROUP_FLAGS
+Σημαίες

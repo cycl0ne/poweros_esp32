@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language hrvatski
+## codeset 106
+; Notepad's strings in Croatian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Novo
+MSG_MENU_OPEN
+Otvori...
+MSG_MENU_SAVE
+Spremi
+MSG_MENU_SAVE_AS
+Spremi kao...
+MSG_MENU_QUIT
+Izlaz
+MSG_MENU_EDIT
+Uređivanje
+MSG_MENU_UNDO
+Poništi
+MSG_MENU_REDO
+Ponovi
+MSG_MENU_CUT
+Izreži
+MSG_MENU_COPY
+Kopiraj
+MSG_MENU_PASTE
+Zalijepi
+MSG_MENU_SELECT_ALL
+Odaberi sve
+MSG_MENU_SEARCH
+Pretraživanje
+MSG_MENU_FIND
+Pronađi...
+MSG_MENU_FIND_NEXT
+Pronađi sljedeće
+MSG_MENU_FIND_PREVIOUS
+Pronađi prethodno
+MSG_MENU_REPLACE
+Zamijeni...
+MSG_MENU_VIEW
+Prikaz
+MSG_MENU_WRAP
+Prijelom redaka
+MSG_MENU_NUMBERS
+Brojevi redaka
+MSG_MENU_ZIG
+Isticanje jezika Zig
+MSG_MENU_RIBBON
+Vrpca
+MSG_RIBBON_HOME
+Polazno
+MSG_RIBBON_CLIPBOARD
+Međuspremnik
+MSG_RIBBON_PASTE_HINT
+Umetni ono što je izrezano ili kopirano
+MSG_RIBBON_EDITING
+Uređivanje
+MSG_RIBBON_FIND
+Pronađi
+MSG_RIBBON_FIND_HINT
+Pronađi tekst; popis pronalazi sljedeće ili prethodno pojavljivanje
+MSG_RIBBON_REPLACE
+Zamijeni
+MSG_RIBBON_REPLACE_HINT
+Zamijeni pronađeni tekst drugim
+MSG_RIBBON_SELECT_ALL_HINT
+Odaberi cijeli tekst
+MSG_RIBBON_LINES
+Retci
+MSG_RIBBON_WRAP_HINT
+Nastavi u sljedećem retku umjesto preko ruba prozora
+MSG_RIBBON_NUMBERS_HINT
+Numeriraj svaki redak slijeva
+MSG_RIBBON_HIGHLIGHTING
+Isticanje
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Prikaži ključne riječi, nizove i komentare jezika Zig, svaki u svojoj boji
+MSG_UNTITLED
+Bez naslova
+MSG_OK
+U redu
+MSG_CANNOT_OPEN
+Nije moguće otvoriti %s
+MSG_CANNOT_READ
+Nije moguće pročitati %s
+MSG_TOO_BIG
+%s je prevelik
+MSG_NO_MEMORY_FOR
+Nema memorije za %s
+MSG_NO_MEMORY_TO_SAVE
+Nema memorije za spremanje %s
+MSG_CANNOT_WRITE
+Nije moguće zapisati %s
+MSG_NO_REQUESTER
+Nema %s
+MSG_CHANGED
+Tekst je promijenjen.\nSpremiti ga najprije?
+MSG_CHANGED_BUTTONS
+Spremi|Nemoj spremiti|Odustani
+MSG_OPEN_TITLE
+Otvori tekst
+MSG_SAVE_AS_TITLE
+Spremi tekst kao
+MSG_FIND_TITLE
+Pronađi i zamijeni
+MSG_FIND_LABEL
+Pronađi
+MSG_REPLACE_WITH
+Zamijeni s
+MSG_ANY_CASE
+Bez obzira na veličinu slova
+MSG_FIND_NEXT_BUTTON
+Pronađi sljedeće
+MSG_REPLACE_BUTTON
+Zamijeni
+MSG_REPLACE_ALL_BUTTON
+Zamijeni sve
+MSG_NOLIBRARY
+Nema %s\n
+MSG_NOSCREEN
+Nema zadanog zaslona - nema prikaza\n
+MSG_NOMEMORY
+Nema memorije za prozor\n

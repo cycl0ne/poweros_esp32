@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; Sheet's strings in Estonian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Uus
+MSG_MENU_OPEN
+Ava...
+MSG_MENU_SAVE
+Salvesta
+MSG_MENU_SAVE_AS
+Salvesta nimega...
+MSG_MENU_QUIT
+Välju
+MSG_MENU_EDIT
+Redigeeri
+MSG_MENU_UNDO
+Võta tagasi
+MSG_MENU_REDO
+Tee uuesti
+MSG_MENU_CUT
+Lõika
+MSG_MENU_COPY
+Kopeeri
+MSG_MENU_PASTE
+Kleebi
+MSG_MENU_CLEAR
+Tühjenda
+MSG_MENU_FILL_DOWN
+Täida alla
+MSG_MENU_FILL_RIGHT
+Täida paremale
+MSG_MENU_SELECT_ALL
+Vali kõik
+MSG_MENU_FIND
+Otsi...
+MSG_MENU_FIND_NEXT
+Otsi järgmine
+MSG_MENU_SHEET
+Leht
+MSG_MENU_INSERT_ROWS
+Lisa ridu
+MSG_MENU_DELETE_ROWS
+Kustuta read
+MSG_MENU_INSERT_COLUMNS
+Lisa veerge
+MSG_MENU_DELETE_COLUMNS
+Kustuta veerud
+MSG_MENU_WIDER
+Laiem veerg
+MSG_MENU_NARROWER
+Kitsam veerg
+MSG_MENU_SUM
+Automaatsumma
+MSG_MENU_SORT_ASCENDING
+Sordi kasvavalt
+MSG_MENU_SORT_DESCENDING
+Sordi kahanevalt
+MSG_MENU_FORMAT
+Vorming
+MSG_MENU_GENERAL
+Üldine
+MSG_MENU_NUMBER
+Arv
+MSG_MENU_PERCENT
+Protsent
+MSG_MENU_CURRENCY
+Valuuta
+MSG_MENU_DECIMALS_MORE
+Rohkem kümnendkohti
+MSG_MENU_DECIMALS_LESS
+Vähem kümnendkohti
+MSG_MENU_VIEW
+Vaade
+MSG_MENU_RIBBON
+Lint
+MSG_RIBBON_HOME
+Avaleht
+MSG_RIBBON_CLIPBOARD
+Lõikelaud
+MSG_RIBBON_PASTE_HINT
+Kleebi see, mis lõigati või kopeeriti
+MSG_RIBBON_NUMBER_HINT
+Näita arve kümnendkohtadega, tuhandete kaupa
+MSG_RIBBON_PERCENT_HINT
+Näita arve protsentidena
+MSG_RIBBON_CURRENCY_HINT
+Näita arve rahasummana
+MSG_RIBBON_DECIMALS_MORE_HINT
+Näita üks kümnendkoht rohkem
+MSG_RIBBON_DECIMALS_LESS_HINT
+Näita üks kümnendkoht vähem
+MSG_RIBBON_CELLS
+Lahtrid
+MSG_RIBBON_INSERT
+Lisa
+MSG_RIBBON_INSERT_HINT
+Lisa ridu või veerge valitud lahtrite kohale
+MSG_RIBBON_DELETE
+Kustuta
+MSG_RIBBON_DELETE_HINT
+Eemalda valitud lahtrite read või veerud
+MSG_RIBBON_EDITING
+Redigeerimine
+MSG_RIBBON_SUM_HINT
+Liida kokku ülal või vasakul olevad arvud
+MSG_RIBBON_SORT
+Sordi
+MSG_RIBBON_SORT_HINT
+Järjesta read praeguse lahtri veeru järgi
+MSG_RIBBON_FIND
+Otsi
+MSG_RIBBON_FIND_HINT
+Leia lahter selle sisu järgi
+MSG_RIBBON_FILL
+Täida
+MSG_RIBBON_FILL_HINT
+Kopeeri esimene rida või veerg ülejäänutele
+MSG_RIBBON_CLEAR_HINT
+Tühjenda valitud lahtrid
+MSG_ROWS
+Read
+MSG_COLUMNS
+Veerud
+MSG_SUM
+Summa
+MSG_AVERAGE
+Keskmine
+MSG_COUNT
+Loendus
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Kasvav
+MSG_DESCENDING
+Kahanev
+MSG_DOWN
+Alla
+MSG_RIGHT
+Paremale
+MSG_PROBLEM_NAME
+Sellist funktsiooni või nime pole
+MSG_PROBLEM_ARGUMENTS
+Vale arv argumente
+MSG_PROBLEM_PARENTHESES
+Sulul pole paarilist
+MSG_PROBLEM_TOO_LONG
+Valem on liiga pikk
+MSG_PROBLEM_UNREADABLE
+Valemit ei saa lugeda
+MSG_PROBLEM_AT
+%s, märgi %u juures
+MSG_NO_MEMORY_KEEP
+Kõige selle hoidmiseks pole piisavalt mälu
+MSG_NO_MEMORY_FILE
+Kogu faili jaoks pole piisavalt mälu
+MSG_LEFT_OUT
+Lahtrid pärast rida 9999 või veergu IV jäeti välja
+MSG_NO_MEMORY_COPY
+Nii palju kopeerimiseks pole mälu
+MSG_NO_MEMORY_CLEAR
+Kõige tühjendamiseks pole piisavalt mälu
+MSG_NO_MEMORY_PASTE
+Kõige kleepimiseks pole piisavalt mälu
+MSG_NO_ROOM_COLUMNS
+Ruumi pole: viimastes veergudes on midagi
+MSG_NO_ROOM_ROWS
+Ruumi pole: viimastes ridades on midagi
+MSG_NO_MEMORY_THAT
+Selleks pole piisavalt mälu
+MSG_NO_MEMORY_FORMAT
+Kõige vormindamiseks pole piisavalt mälu
+MSG_NOTHING_TO_ADD
+Ülal või vasakul pole arve, mida liita
+MSG_NO_MEMORY_ALL
+Kõige selle jaoks pole piisavalt mälu
+MSG_NO_MEMORY_SORT
+Kõige selle sortimiseks pole piisavalt mälu
+MSG_NO_MEMORY_FILL
+Kõige täitmiseks pole piisavalt mälu
+MSG_NOT_FOUND
+Ükski lahter ei sisalda seda
+MSG_UNTITLED
+Nimetu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Ei saa avada: %s
+MSG_CANNOT_READ
+Ei saa lugeda: %s
+MSG_TOO_BIG
+%s on liiga suur
+MSG_NO_MEMORY_FOR
+Mälu ei jätku: %s
+MSG_NO_MEMORY_TO_SAVE
+Salvestamiseks pole mälu: %s
+MSG_CANNOT_WRITE
+Ei saa kirjutada: %s
+MSG_NO_REQUESTER
+%s puudub
+MSG_CHANGED
+Lehte on muudetud.\nKas salvestada see enne?
+MSG_CHANGED_BUTTONS
+Salvesta|Ära salvesta|Loobu
+MSG_OPEN_TITLE
+Ava leht
+MSG_SAVE_AS_TITLE
+Salvesta leht nimega
+MSG_FIND_LABEL
+Otsi
+MSG_FIND_NEXT_BUTTON
+Järgmine
+MSG_FIND_PREVIOUS_BUTTON
+Eelmine
+MSG_FIND_CLOSE_BUTTON
+Sulge
+MSG_NOLIBRARY
+%s puudub\n
+MSG_NOSCREEN
+Vaikeekraani pole - pole kuva\n
+MSG_NOMEMORY
+Aknale pole mälu\n

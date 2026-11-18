@@ -1,0 +1,350 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; The desktop's strings in Romanian.
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Fundal
+MSG_MENU_EXECUTE
+Executare comandă...
+MSG_MENU_REDRAW_ALL
+Redesenare totală
+MSG_MENU_UPDATE_ALL
+Actualizare totală
+MSG_MENU_LAST_MESSAGE
+Ultimul mesaj
+MSG_MENU_VOLUME
+Volum...
+MSG_MENU_ABOUT
+Despre...
+MSG_MENU_QUIT
+Ieșire...
+MSG_MENU_REBOOT
+Repornire...
+MSG_MENU_WINDOW
+Fereastră
+MSG_MENU_NEW_DRAWER
+Folder nou
+MSG_MENU_OPEN_PARENT
+Deschidere folder părinte
+MSG_MENU_BACK
+Înapoi
+MSG_MENU_FORWARD
+Înainte
+MSG_MENU_CLOSE
+Închidere
+MSG_MENU_UPDATE
+Actualizare
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Selectare conținut
+MSG_MENU_CLEAN_UP
+Aranjare
+MSG_MENU_CLEAN_UP_BY
+Aranjare după
+MSG_MENU_BY_NAME
+Nume
+MSG_MENU_BY_DATE
+Dată
+MSG_MENU_BY_SIZE
+Dimensiune
+MSG_MENU_SNAP
+Aliniere la grilă
+MSG_MENU_ARRANGE
+Aranjare la redimensionare
+MSG_MENU_SNAPSHOT
+Memorare poziție
+MSG_MENU_SNAPSHOT_WINDOW
+Fereastră
+MSG_MENU_SNAPSHOT_ALL
+Tot
+MSG_MENU_SHOW
+Afișare
+MSG_MENU_ONLY_ICONS
+Doar pictograme
+MSG_MENU_ALL_FILES
+Toate fișierele
+MSG_MENU_VIEW_BY
+Vizualizare după
+MSG_MENU_BY_ICON
+Pictogramă
+MSG_MENU_RIBBON
+Panglică
+MSG_MENU_ICONS
+Pictograme
+MSG_MENU_OPEN
+Deschidere
+MSG_MENU_COPY
+Copiere
+MSG_MENU_RENAME
+Redenumire...
+MSG_MENU_INFORMATION
+Informații...
+MSG_MENU_UNSNAPSHOT
+Uitare poziție
+MSG_MENU_LEAVE_OUT
+Lăsare pe desktop
+MSG_MENU_PUT_AWAY
+Punere la loc
+MSG_MENU_DELETE
+Ștergere...
+MSG_MENU_FORMAT
+Formatare disc...
+MSG_MENU_EMPTY_TRASH
+Golire coș de gunoi
+MSG_MENU_TOOLS
+Instrumente
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+Pornire
+MSG_RIBBON_GO
+Navigare
+MSG_RIBBON_PARENT
+Părinte
+MSG_RIBBON_DRAWER
+Folder
+MSG_RIBBON_RENAME
+Redenumire
+MSG_RIBBON_DELETE
+Ștergere
+MSG_RIBBON_INFORMATION
+Informații
+MSG_RIBBON_VIEW
+Vizualizare
+MSG_RIBBON_ARRANGE
+Aranjare
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+Protecție
+MSG_LIST_DRAWER
+Folder
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+Memorie
+MSG_TITLE_INTERNAL
+Internă
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+liberi
+MSG_TITLE_BATTERY
+Baterie
+MSG_TITLE_CHARGING
+se încarcă
+MSG_TITLE_EXTERNAL_POWER
+alimentare externă
+;
+; A disk's window title.
+MSG_DISK_FULL
+plin
+MSG_DISK_IN_USE
+ocupați
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+Niciun mesaj deocamdată
+MSG_NOT_EVERY_FILE
+Nu toate fișierele alese au putut fi preluate
+MSG_DISK_NOT_RENAMED
+Discul nu a putut fi redenumit
+MSG_NOT_RENAMED
+Nu a putut fi redenumit
+MSG_ICON_NOT_WRITTEN
+O pictogramă nu a putut fi scrisă
+MSG_DISK_NOT_THERE
+Discul nu este prezent
+MSG_DISK_BUSY
+Discul este în uz
+MSG_DISK_NOT_FORMATTED
+Discul nu a putut fi formatat
+MSG_DRAWER_NOT_MADE
+Folderul nu a putut fi creat
+MSG_SETTING_NOT_KEPT
+%s nu a putut fi memorat
+MSG_SETTING_NOT_WRITTEN
+%s nu a putut fi scris în anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Pictograma folderului nu a putut fi scrisă
+MSG_NO_MEMORY_REBOOT
+Memorie insuficientă pentru repornire
+MSG_NO_MEMORY_ABOUT
+Memorie insuficientă pentru Despre
+MSG_NO_TOOL
+Niciun program nu poate deschide %s
+MSG_NOT_STARTED
+%s nu a putut fi pornit
+MSG_COMMAND_NOT_STARTED
+Comanda nu a putut fi pornită
+MSG_SHELL_DRAWER_NOT_FOUND
+Folderul shell-ului nu a fost găsit
+MSG_SHELL_NOT_STARTED
+Shell-ul nu a putut fi pornit
+MSG_TRASH_OWN_DISK
+Într-un coș de gunoi intră doar fișierele de pe discul lui
+MSG_NOT_MOVED
+Un fișier nu a putut fi mutat acolo
+MSG_LEFT_OUT_NOT_KEPT
+Discul nu va păstra ce este lăsat pe desktop
+MSG_NO_MEMORY_WORK
+Memorie insuficientă pentru a începe lucrul
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+Programe pornite de pe desktop încă rulează (%lu).\nVor continua să ruleze. Ferestrele, pictogramele și\nelementele de meniu adăugate de programe (%lu)\ndispar odată cu el.\n\nIeșiți din desktop?
+MSG_QUIT_RUNNING
+Programe pornite de pe desktop încă rulează (%lu).\nVor continua să ruleze.\n\nIeșiți din desktop?
+MSG_QUIT_ADDED
+Ferestrele, pictogramele și elementele de meniu adăugate\nde programe pe desktop (%lu) dispar odată cu el.\n\nIeșiți din desktop?
+MSG_QUIT_ASK
+Ieșiți din desktop?
+MSG_QUIT_BUTTONS
+Ieșire|Anulare
+MSG_DELETE_ASK
+Ștergeți definitiv ce este selectat (%lu)?\nUn folder dispare cu tot ce conține.
+MSG_DELETE_BUTTONS
+Ștergere|Anulare
+MSG_RENAME_PROMPT
+Un nume nou:
+MSG_FORMAT_TITLE
+Formatare disc
+MSG_FORMAT_ASK
+Formatați %s?\nTot ce conține se pierde.
+MSG_FORMAT_BUTTONS
+Formatare|Anulare
+MSG_NEW_DRAWER_PROMPT
+Un nume pentru folderul nou:
+MSG_UNNAMED
+Fără nume
+MSG_EXECUTE_TITLE
+Executare comandă
+MSG_EXECUTE_PROMPT
+O comandă de executat:
+MSG_OUTPUT
+Rezultat
+MSG_REBOOT_TITLE
+Repornire
+MSG_REBOOT_ASK
+Reporniți mașina?\nCe nu au salvat programele se pierde.
+MSG_REBOOT_BUTTONS
+Repornire|Anulare
+MSG_REBOOT_IN_USE
+În uz, așa că ce conțin s-ar putea să nu fie scris:\n%s\n\nReporniți totuși?
+MSG_STARTUP_WAIT
+Programul '%s'\nnu s-a terminat încă.\nMai așteptați?
+MSG_STARTUP_BUTTONS
+Așteptare|Continuare
+MSG_OK
+_OK
+MSG_CANCEL
+_Anulare
+;
+; About.
+MSG_ABOUT_TITLE
+Despre Anvil
+MSG_ABOUT_WHAT
+Desktopul PowerOS
+MSG_ABOUT_RELEASE
+Versiune
+MSG_ABOUT_KERNEL
+Kernel
+MSG_ABOUT_BOARD
+Placă
+MSG_ABOUT_PROCESSOR
+Procesor
+MSG_ABOUT_CORES
+Nuclee
+MSG_ABOUT_CLOCK
+Frecvență
+MSG_ABOUT_SCREEN
+Ecran
+MSG_ABOUT_SYSTEM_DISK
+Disc de sistem
+MSG_ABOUT_UP_FOR
+Pornit de
+MSG_ABOUT_IN_USE
+În uz
+MSG_ABOUT_OF
+din
+MSG_ABOUT_BITS
+biți pe pixel
+MSG_ABOUT_DAY
+zi
+MSG_ABOUT_DAYS
+zile
+;
+; Information.
+MSG_INFO_TITLE
+Informații
+MSG_INFO_STATE
+Stare
+MSG_INFO_READ_ONLY
+Doar citire
+MSG_INFO_VALIDATING
+În curs de validare
+MSG_INFO_READ_WRITE
+Citire și scriere
+MSG_INFO_UNKNOWN
+Necunoscută
+MSG_INFO_BLOCKS
+Blocuri
+MSG_INFO_USED
+Ocupate
+MSG_INFO_FREE
+Libere
+MSG_INFO_BLOCK_SIZE
+Dimensiune bloc
+MSG_INFO_BYTES
+octeți
+MSG_INFO_BLOCKS_COUNTED
+blocuri
+MSG_INFO_CREATED
+Creat
+MSG_INFO_LAST_CHANGED
+Ultima modificare
+MSG_INFO_SCRIPT
+Script
+MSG_INFO_ARCHIVED
+Arhivat
+MSG_INFO_READABLE
+Citibil
+MSG_INFO_WRITABLE
+Inscriptibil
+MSG_INFO_EXECUTABLE
+Executabil
+MSG_INFO_DELETABLE
+Ștergibil
+MSG_INFO_COMMENT
+Comentariu
+MSG_INFO_STACK
+Stivă
+MSG_INFO_DEFAULT_TOOL
+Program implicit
+MSG_INFO_TOOL_TYPES
+Tipuri de instrument
+MSG_INFO_SAVE
+_Salvare
+MSG_INFO_NOT_WRITTEN
+Pictograma nu a putut fi scrisă.
+MSG_INFO_OK
+OK
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+Copiere
+MSG_WORK_DELETING
+Ștergere
+MSG_WORK_STOP
+_Oprire
+MSG_WORK_WAITING
+Încă %lu în așteptare
+MSG_WORK_REPLACE_ASK
+%s există deja.\nÎl înlocuiți?
+MSG_WORK_REPLACE_BUTTONS
+Înlocuire|Înlocuire toate|Omitere|Oprire

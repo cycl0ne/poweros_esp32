@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; The desktop's strings in Dutch.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Achtergrond
+MSG_MENU_EXECUTE
+Opdracht uitvoeren...
+MSG_MENU_REDRAW_ALL
+Alles opnieuw tekenen
+MSG_MENU_UPDATE_ALL
+Alles bijwerken
+MSG_MENU_LAST_MESSAGE
+Laatste melding
+MSG_MENU_VOLUME
+Volume...
+MSG_MENU_ABOUT
+Over...
+MSG_MENU_QUIT
+Afsluiten...
+MSG_MENU_REBOOT
+Opnieuw opstarten...
+MSG_MENU_WINDOW
+Venster
+MSG_MENU_NEW_DRAWER
+Nieuwe map
+MSG_MENU_OPEN_PARENT
+Bovenliggende map openen
+MSG_MENU_BACK
+Terug
+MSG_MENU_FORWARD
+Vooruit
+MSG_MENU_CLOSE
+Sluiten
+MSG_MENU_UPDATE
+Bijwerken
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Inhoud selecteren
+MSG_MENU_CLEAN_UP
+Opruimen
+MSG_MENU_CLEAN_UP_BY
+Opruimen op
+MSG_MENU_BY_NAME
+Naam
+MSG_MENU_BY_DATE
+Datum
+MSG_MENU_BY_SIZE
+Grootte
+MSG_MENU_SNAP
+Uitlijnen op raster
+MSG_MENU_ARRANGE
+Schikken bij formaatwijziging
+MSG_MENU_SNAPSHOT
+Positie onthouden
+MSG_MENU_SNAPSHOT_WINDOW
+Venster
+MSG_MENU_SNAPSHOT_ALL
+Alles
+MSG_MENU_SHOW
+Tonen
+MSG_MENU_ONLY_ICONS
+Alleen pictogrammen
+MSG_MENU_ALL_FILES
+Alle bestanden
+MSG_MENU_VIEW_BY
+Weergeven als
+MSG_MENU_BY_ICON
+Pictogram
+MSG_MENU_RIBBON
+Lint
+MSG_MENU_ICONS
+Pictogrammen
+MSG_MENU_OPEN
+Openen
+MSG_MENU_COPY
+Kopiëren
+MSG_MENU_RENAME
+Naam wijzigen...
+MSG_MENU_INFORMATION
+Informatie...
+MSG_MENU_UNSNAPSHOT
+Positie vergeten
+MSG_MENU_LEAVE_OUT
+Op bureaublad leggen
+MSG_MENU_PUT_AWAY
+Terugleggen
+MSG_MENU_DELETE
+Verwijderen...
+MSG_MENU_FORMAT
+Schijf formatteren...
+MSG_MENU_EMPTY_TRASH
+Prullenbak legen
+MSG_MENU_TOOLS
+Extra
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_GO
+Ga naar
+MSG_RIBBON_PARENT
+Omhoog
+MSG_RIBBON_DRAWER
+Map
+MSG_RIBBON_RENAME
+Naam wijzigen
+MSG_RIBBON_DELETE
+Verwijderen
+MSG_RIBBON_INFORMATION
+Informatie
+MSG_RIBBON_VIEW
+Beeld
+MSG_RIBBON_ARRANGE
+Schikken
+MSG_LIST_PROTECTION
+Bescherming
+MSG_LIST_DRAWER
+Map
+MSG_TITLE_MEMORY
+Geheugen
+MSG_TITLE_INTERNAL
+Intern
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+vrij
+MSG_TITLE_BATTERY
+Accu
+MSG_TITLE_CHARGING
+laadt op
+MSG_TITLE_EXTERNAL_POWER
+netstroom
+MSG_DISK_FULL
+vol
+MSG_DISK_IN_USE
+in gebruik
+MSG_NOTHING_SAID
+Er is nog niets gemeld
+MSG_NOT_EVERY_FILE
+Niet elk gekozen bestand kon worden overgenomen
+MSG_DISK_NOT_RENAMED
+De naam van de schijf kon niet worden gewijzigd
+MSG_NOT_RENAMED
+De naam kon niet worden gewijzigd
+MSG_ICON_NOT_WRITTEN
+Een pictogram kon niet worden geschreven
+MSG_DISK_NOT_THERE
+De schijf is er niet
+MSG_DISK_BUSY
+De schijf is in gebruik
+MSG_DISK_NOT_FORMATTED
+De schijf kon niet worden geformatteerd
+MSG_DRAWER_NOT_MADE
+De map kon niet worden gemaakt
+MSG_SETTING_NOT_KEPT
+%s kon niet worden onthouden
+MSG_SETTING_NOT_WRITTEN
+%s kon niet naar anvil.prefs worden geschreven
+MSG_DRAWER_ICON_NOT_WRITTEN
+Het pictogram van de map kon niet worden geschreven
+MSG_NO_MEMORY_REBOOT
+Geen geheugen om opnieuw op te starten
+MSG_NO_MEMORY_ABOUT
+Geen geheugen voor Over
+MSG_NO_TOOL
+%s heeft geen programma om het te openen
+MSG_NOT_STARTED
+%s kon niet worden gestart
+MSG_COMMAND_NOT_STARTED
+De opdracht kon niet worden gestart
+MSG_SHELL_DRAWER_NOT_FOUND
+De map van de shell is niet gevonden
+MSG_SHELL_NOT_STARTED
+De shell kon niet worden gestart
+MSG_TRASH_OWN_DISK
+In een prullenbak gaan alleen bestanden van de eigen schijf
+MSG_NOT_MOVED
+Een bestand kon niet daarheen worden verplaatst
+MSG_LEFT_OUT_NOT_KEPT
+De schijf onthoudt niet wat op het bureaublad ligt
+MSG_NO_MEMORY_WORK
+Geen geheugen om het werk te beginnen
+MSG_QUIT_RUNNING_ADDED
+Vanaf het bureaublad gestarte programma's draaien nog (%lu).\nZe blijven draaien. Vensters, pictogrammen en\nmenu-items die programma's eraan toevoegden (%lu),\nverdwijnen mee.\n\nHet bureaublad afsluiten?
+MSG_QUIT_RUNNING
+Vanaf het bureaublad gestarte programma's draaien nog (%lu).\nZe blijven draaien.\n\nHet bureaublad afsluiten?
+MSG_QUIT_ADDED
+Vensters, pictogrammen en menu-items die programma's\naan het bureaublad toevoegden (%lu), verdwijnen mee.\n\nHet bureaublad afsluiten?
+MSG_QUIT_ASK
+Het bureaublad afsluiten?
+MSG_QUIT_BUTTONS
+Afsluiten|Annuleren
+MSG_DELETE_ASK
+De selectie (%lu) definitief verwijderen?\nEen map gaat met al zijn inhoud mee.
+MSG_DELETE_BUTTONS
+Verwijderen|Annuleren
+MSG_RENAME_PROMPT
+Een nieuwe naam ervoor:
+MSG_FORMAT_TITLE
+Schijf formatteren
+MSG_FORMAT_ASK
+%s formatteren?\nAlles wat erop staat gaat verloren.
+MSG_FORMAT_BUTTONS
+Formatteren|Annuleren
+MSG_NEW_DRAWER_PROMPT
+Een naam voor de nieuwe map:
+MSG_UNNAMED
+Naamloos
+MSG_EXECUTE_TITLE
+Opdracht uitvoeren
+MSG_EXECUTE_PROMPT
+Een opdracht om uit te voeren:
+MSG_OUTPUT
+Uitvoer
+MSG_REBOOT_TITLE
+Opnieuw opstarten
+MSG_REBOOT_ASK
+De machine opnieuw starten?\nWat programma's niet hebben opgeslagen, gaat verloren.
+MSG_REBOOT_BUTTONS
+Opnieuw opstarten|Annuleren
+MSG_REBOOT_IN_USE
+In gebruik, dus wat ze bevatten wordt misschien niet weggeschreven:\n%s\n\nToch opnieuw opstarten?
+MSG_STARTUP_WAIT
+Programma '%s'\nis nog niet beëindigd.\nNog langer wachten?
+MSG_STARTUP_BUTTONS
+Wachten|Doorgaan
+MSG_OK
+_OK
+MSG_CANCEL
+_Annuleren
+MSG_ABOUT_TITLE
+Over Anvil
+MSG_ABOUT_WHAT
+Het bureaublad van PowerOS
+MSG_ABOUT_RELEASE
+Release
+MSG_ABOUT_KERNEL
+Kernel
+MSG_ABOUT_BOARD
+Bord
+MSG_ABOUT_PROCESSOR
+Processor
+MSG_ABOUT_CORES
+Kernen
+MSG_ABOUT_CLOCK
+Kloksnelheid
+MSG_ABOUT_SCREEN
+Scherm
+MSG_ABOUT_SYSTEM_DISK
+Systeemschijf
+MSG_ABOUT_UP_FOR
+Actief
+MSG_ABOUT_IN_USE
+In gebruik
+MSG_ABOUT_OF
+van
+MSG_ABOUT_BITS
+bits per pixel
+MSG_ABOUT_DAY
+dag
+MSG_ABOUT_DAYS
+dagen
+MSG_INFO_TITLE
+Informatie
+MSG_INFO_STATE
+Status
+MSG_INFO_READ_ONLY
+Alleen-lezen
+MSG_INFO_VALIDATING
+Wordt gevalideerd
+MSG_INFO_READ_WRITE
+Lezen en schrijven
+MSG_INFO_UNKNOWN
+Onbekend
+MSG_INFO_BLOCKS
+Blokken
+MSG_INFO_USED
+Gebruikt
+MSG_INFO_FREE
+Vrij
+MSG_INFO_BLOCK_SIZE
+Blokgrootte
+MSG_INFO_BYTES
+bytes
+MSG_INFO_BLOCKS_COUNTED
+blokken
+MSG_INFO_CREATED
+Gemaakt
+MSG_INFO_LAST_CHANGED
+Laatst gewijzigd
+MSG_INFO_SCRIPT
+Script
+MSG_INFO_ARCHIVED
+Gearchiveerd
+MSG_INFO_READABLE
+Leesbaar
+MSG_INFO_WRITABLE
+Schrijfbaar
+MSG_INFO_EXECUTABLE
+Uitvoerbaar
+MSG_INFO_DELETABLE
+Verwijderbaar
+MSG_INFO_COMMENT
+Opmerking
+MSG_INFO_STACK
+Stack
+MSG_INFO_DEFAULT_TOOL
+Standaardprogramma
+MSG_INFO_TOOL_TYPES
+Gereedschapstypen
+MSG_INFO_SAVE
+_Opslaan
+MSG_INFO_NOT_WRITTEN
+Het pictogram kon niet worden geschreven.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Kopiëren
+MSG_WORK_DELETING
+Verwijderen
+MSG_WORK_STOP
+_Stoppen
+MSG_WORK_WAITING
+Nog %lu in de wachtrij
+MSG_WORK_REPLACE_ASK
+%s bestaat al.\nVervangen?
+MSG_WORK_REPLACE_BUTTONS
+Vervangen|Alles vervangen|Overslaan|Stoppen

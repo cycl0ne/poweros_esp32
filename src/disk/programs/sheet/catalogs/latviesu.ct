@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; Sheet's strings in Latvian.
+MSG_MENU_PROJECT
+Projekts
+MSG_MENU_NEW
+Jauns
+MSG_MENU_OPEN
+Atvērt...
+MSG_MENU_SAVE
+Saglabāt
+MSG_MENU_SAVE_AS
+Saglabāt kā...
+MSG_MENU_QUIT
+Iziet
+MSG_MENU_EDIT
+Rediģēt
+MSG_MENU_UNDO
+Atsaukt
+MSG_MENU_REDO
+Atcelt atsaukšanu
+MSG_MENU_CUT
+Izgriezt
+MSG_MENU_COPY
+Kopēt
+MSG_MENU_PASTE
+Ielīmēt
+MSG_MENU_CLEAR
+Notīrīt
+MSG_MENU_FILL_DOWN
+Aizpildīt uz leju
+MSG_MENU_FILL_RIGHT
+Aizpildīt pa labi
+MSG_MENU_SELECT_ALL
+Atlasīt visu
+MSG_MENU_FIND
+Atrast...
+MSG_MENU_FIND_NEXT
+Atrast nākamo
+MSG_MENU_SHEET
+Tabula
+MSG_MENU_INSERT_ROWS
+Ievietot rindas
+MSG_MENU_DELETE_ROWS
+Dzēst rindas
+MSG_MENU_INSERT_COLUMNS
+Ievietot kolonnas
+MSG_MENU_DELETE_COLUMNS
+Dzēst kolonnas
+MSG_MENU_WIDER
+Platāka kolonna
+MSG_MENU_NARROWER
+Šaurāka kolonna
+MSG_MENU_SUM
+Automātiskā summa
+MSG_MENU_SORT_ASCENDING
+Kārtot augošā secībā
+MSG_MENU_SORT_DESCENDING
+Kārtot dilstošā secībā
+MSG_MENU_FORMAT
+Formāts
+MSG_MENU_GENERAL
+Vispārīgs
+MSG_MENU_NUMBER
+Skaitlis
+MSG_MENU_PERCENT
+Procenti
+MSG_MENU_CURRENCY
+Valūta
+MSG_MENU_DECIMALS_MORE
+Vairāk decimālzīmju
+MSG_MENU_DECIMALS_LESS
+Mazāk decimālzīmju
+MSG_MENU_VIEW
+Skats
+MSG_MENU_RIBBON
+Lente
+MSG_RIBBON_HOME
+Sākums
+MSG_RIBBON_CLIPBOARD
+Starpliktuve
+MSG_RIBBON_PASTE_HINT
+Ielīmēt to, kas izgriezts vai kopēts
+MSG_RIBBON_NUMBER_HINT
+Rādīt skaitļus ar decimālzīmēm un tūkstošu atdalītāju
+MSG_RIBBON_PERCENT_HINT
+Rādīt skaitļus procentos
+MSG_RIBBON_CURRENCY_HINT
+Rādīt skaitļus kā naudu
+MSG_RIBBON_DECIMALS_MORE_HINT
+Rādīt par vienu decimālzīmi vairāk
+MSG_RIBBON_DECIMALS_LESS_HINT
+Rādīt par vienu decimālzīmi mazāk
+MSG_RIBBON_CELLS
+Šūnas
+MSG_RIBBON_INSERT
+Ievietot
+MSG_RIBBON_INSERT_HINT
+Ievietot rindas vai kolonnas tur, kur atlasītas šūnas
+MSG_RIBBON_DELETE
+Dzēst
+MSG_RIBBON_DELETE_HINT
+Izņemt atlasīto šūnu rindas vai kolonnas
+MSG_RIBBON_EDITING
+Rediģēšana
+MSG_RIBBON_SUM_HINT
+Saskaitīt skaitļus virs vai pa kreisi
+MSG_RIBBON_SORT
+Kārtot
+MSG_RIBBON_SORT_HINT
+Sakārtot rindas pēc pašreizējās šūnas kolonnas
+MSG_RIBBON_FIND
+Atrast
+MSG_RIBBON_FIND_HINT
+Atrast šūnu pēc tās satura
+MSG_RIBBON_FILL
+Aizpildīt
+MSG_RIBBON_FILL_HINT
+Kopēt pirmo rindu vai kolonnu pār pārējām
+MSG_RIBBON_CLEAR_HINT
+Iztukšot atlasītās šūnas
+MSG_ROWS
+Rindas
+MSG_COLUMNS
+Kolonnas
+MSG_SUM
+Summa
+MSG_AVERAGE
+Vidējais
+MSG_COUNT
+Skaits
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Augoši
+MSG_DESCENDING
+Dilstoši
+MSG_DOWN
+Uz leju
+MSG_RIGHT
+Pa labi
+MSG_PROBLEM_NAME
+Nav tādas funkcijas vai nosaukuma
+MSG_PROBLEM_ARGUMENTS
+Nepareizs argumentu skaits
+MSG_PROBLEM_PARENTHESES
+Iekavai nav pāra
+MSG_PROBLEM_TOO_LONG
+Formula ir pārāk gara
+MSG_PROBLEM_UNREADABLE
+Formulu nevar nolasīt
+MSG_PROBLEM_AT
+%s, pie rakstzīmes %u
+MSG_NO_MEMORY_KEEP
+Nepietiek atmiņas, lai to visu paturētu
+MSG_NO_MEMORY_FILE
+Nepietiek atmiņas visam failam
+MSG_LEFT_OUT
+Šūnas aiz rindas 9999 vai kolonnas IV tika izlaistas
+MSG_NO_MEMORY_COPY
+Nav atmiņas, lai kopētu tik daudz
+MSG_NO_MEMORY_CLEAR
+Nepietiek atmiņas, lai to visu notīrītu
+MSG_NO_MEMORY_PASTE
+Nepietiek atmiņas, lai to visu ielīmētu
+MSG_NO_ROOM_COLUMNS
+Nav vietas: pēdējās kolonnās kaut kas ir
+MSG_NO_ROOM_ROWS
+Nav vietas: pēdējās rindās kaut kas ir
+MSG_NO_MEMORY_THAT
+Tam nepietiek atmiņas
+MSG_NO_MEMORY_FORMAT
+Nepietiek atmiņas, lai to visu formatētu
+MSG_NOTHING_TO_ADD
+Nav skaitļu virs vai pa kreisi, ko saskaitīt
+MSG_NO_MEMORY_ALL
+Tam visam nepietiek atmiņas
+MSG_NO_MEMORY_SORT
+Nepietiek atmiņas, lai to visu kārtotu
+MSG_NO_MEMORY_FILL
+Nepietiek atmiņas, lai to visu aizpildītu
+MSG_NOT_FOUND
+Nevienā šūnā tā nav
+MSG_UNTITLED
+Bez nosaukuma
+MSG_OK
+Labi
+MSG_CANNOT_OPEN
+Nevar atvērt %s
+MSG_CANNOT_READ
+Nevar nolasīt %s
+MSG_TOO_BIG
+%s ir pārāk liels
+MSG_NO_MEMORY_FOR
+Nav atmiņas failam %s
+MSG_NO_MEMORY_TO_SAVE
+Nav atmiņas, lai saglabātu %s
+MSG_CANNOT_WRITE
+Nevar ierakstīt %s
+MSG_NO_REQUESTER
+Nav %s
+MSG_CHANGED
+Tabula ir mainīta.\nVispirms to saglabāt?
+MSG_CHANGED_BUTTONS
+Saglabāt|Nesaglabāt|Atcelt
+MSG_OPEN_TITLE
+Atvērt tabulu
+MSG_SAVE_AS_TITLE
+Saglabāt tabulu kā
+MSG_FIND_LABEL
+Atrast
+MSG_FIND_NEXT_BUTTON
+Nākamais
+MSG_FIND_PREVIOUS_BUTTON
+Iepriekšējais
+MSG_FIND_CLOSE_BUTTON
+Aizvērt
+MSG_NOLIBRARY
+Nav %s\n
+MSG_NOSCREEN
+Nav noklusējuma ekrāna - nav displeja\n
+MSG_NOMEMORY
+Nav atmiņas logam\n

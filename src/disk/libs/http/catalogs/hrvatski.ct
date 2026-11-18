@@ -1,0 +1,75 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language hrvatski
+## codeset 106
+; http.library's words for a request that failed, in Croatian: a clause
+; that starts in lower case, without its full stop.
+MSG_NOMEM
+nema memorije
+MSG_IO
+veza nije uspjela
+MSG_IO_BECAUSE
+veza nije uspjela: %s
+MSG_STOPPED
+zaustavljeno
+MSG_TIMEOUT
+poslužitelj nije odgovorio na vrijeme
+MSG_URL
+nije URL http:// ili https://, ili je predug
+MSG_HOST
+računalo nema adresu
+MSG_HOST_NAMED
+%s nema adresu
+MSG_TLS
+TLS sesija nije uspjela
+MSG_TLS_CERTIFICATE
+certifikat poslužitelja nije pouzdan: %s
+MSG_TLS_CLOCK
+sat nije namješten, pa se nijedan certifikat ne može provjeriti (TimeSync)
+MSG_TLS_ALERT
+poslužitelj je odbio TLS sesiju (upozorenje %u)
+MSG_TLS_HANDSHAKE
+TLS rukovanje nije uspjelo
+MSG_PROTOCOL
+odgovor nije HTTP
+MSG_REDIRECT
+više preusmjeravanja nego što je dopušteno, ili preusmjeravanje nikamo
+MSG_TRUNCATED
+veza je završila prije kraja odgovora
+MSG_STATE
+poziv u krivo vrijeme ili zahtjev koji se ne može postaviti
+MSG_LIBRARY
+nema biblioteke koja je potrebna zahtjevu
+MSG_LIBRARY_NAMED
+nema %s
+MSG_DATA
+zapakirani odgovor poslužitelja ne može se raspakirati
+MSG_CLOSED
+poslužitelj je zatvorio vezu bez odgovora
+MSG_UNKNOWN
+zahtjev nije uspio (%d)
+MSG_VERDICT_MALFORMED
+jedan od njegovih certifikata ne može se pročitati
+MSG_VERDICT_UNKNOWN_ISSUER
+nije ga potpisao nijedan pouzdani korijenski certifikat
+MSG_VERDICT_BAD_SIGNATURE
+potpis u njegovu lancu nije ispravan
+MSG_VERDICT_UNSUPPORTED
+potpisan je na način koji se ne može provjeriti
+MSG_VERDICT_EXPIRED
+istekao je
+MSG_VERDICT_NOT_YET_VALID
+još nije valjan
+MSG_VERDICT_NOT_CA
+izdao ga je certifikat koji ne smije izdavati certifikate
+MSG_VERDICT_PATH_LENGTH
+njegov je lanac dulji nego što njegova tijela za izdavanje certifikata dopuštaju
+MSG_VERDICT_NAME_CONSTRAINTS
+tijelo za izdavanje certifikata u njegovu lancu ima ograničenja naziva
+MSG_VERDICT_WRONG_USAGE
+nije namijenjen poslužitelju
+MSG_VERDICT_WRONG_NAME
+namijenjen je drugom računalu
+MSG_VERDICT_TOO_LONG
+njegov je lanac predug
+MSG_VERDICT_OTHER
+bez navedenog razloga

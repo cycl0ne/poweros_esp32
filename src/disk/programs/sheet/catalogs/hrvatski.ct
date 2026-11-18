@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language hrvatski
+## codeset 106
+; Sheet's strings in Croatian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Novo
+MSG_MENU_OPEN
+Otvori...
+MSG_MENU_SAVE
+Spremi
+MSG_MENU_SAVE_AS
+Spremi kao...
+MSG_MENU_QUIT
+Izlaz
+MSG_MENU_EDIT
+Uređivanje
+MSG_MENU_UNDO
+Poništi
+MSG_MENU_REDO
+Ponovi
+MSG_MENU_CUT
+Izreži
+MSG_MENU_COPY
+Kopiraj
+MSG_MENU_PASTE
+Zalijepi
+MSG_MENU_CLEAR
+Očisti
+MSG_MENU_FILL_DOWN
+Ispuni prema dolje
+MSG_MENU_FILL_RIGHT
+Ispuni udesno
+MSG_MENU_SELECT_ALL
+Odaberi sve
+MSG_MENU_FIND
+Pronađi...
+MSG_MENU_FIND_NEXT
+Pronađi sljedeće
+MSG_MENU_SHEET
+Tablica
+MSG_MENU_INSERT_ROWS
+Umetni retke
+MSG_MENU_DELETE_ROWS
+Izbriši retke
+MSG_MENU_INSERT_COLUMNS
+Umetni stupce
+MSG_MENU_DELETE_COLUMNS
+Izbriši stupce
+MSG_MENU_WIDER
+Širi stupac
+MSG_MENU_NARROWER
+Uži stupac
+MSG_MENU_SUM
+Automatski zbroj
+MSG_MENU_SORT_ASCENDING
+Sortiraj uzlazno
+MSG_MENU_SORT_DESCENDING
+Sortiraj silazno
+MSG_MENU_FORMAT
+Oblik
+MSG_MENU_GENERAL
+Općenito
+MSG_MENU_NUMBER
+Broj
+MSG_MENU_PERCENT
+Postotak
+MSG_MENU_CURRENCY
+Valuta
+MSG_MENU_DECIMALS_MORE
+Više decimalnih mjesta
+MSG_MENU_DECIMALS_LESS
+Manje decimalnih mjesta
+MSG_MENU_VIEW
+Prikaz
+MSG_MENU_RIBBON
+Vrpca
+MSG_RIBBON_HOME
+Polazno
+MSG_RIBBON_CLIPBOARD
+Međuspremnik
+MSG_RIBBON_PASTE_HINT
+Umetni ono što je izrezano ili kopirano
+MSG_RIBBON_NUMBER_HINT
+Prikaži brojeve s decimalama i razdjelnikom tisućica
+MSG_RIBBON_PERCENT_HINT
+Prikaži brojeve kao postotke
+MSG_RIBBON_CURRENCY_HINT
+Prikaži brojeve kao novčane iznose
+MSG_RIBBON_DECIMALS_MORE_HINT
+Prikaži jedno decimalno mjesto više
+MSG_RIBBON_DECIMALS_LESS_HINT
+Prikaži jedno decimalno mjesto manje
+MSG_RIBBON_CELLS
+Ćelije
+MSG_RIBBON_INSERT
+Umetni
+MSG_RIBBON_INSERT_HINT
+Umetni retke ili stupce gdje su odabrane ćelije
+MSG_RIBBON_DELETE
+Izbriši
+MSG_RIBBON_DELETE_HINT
+Izbriši retke ili stupce odabranih ćelija
+MSG_RIBBON_EDITING
+Uređivanje
+MSG_RIBBON_SUM_HINT
+Zbroji brojeve iznad ili slijeva
+MSG_RIBBON_SORT
+Sortiraj
+MSG_RIBBON_SORT_HINT
+Poredaj retke po stupcu trenutne ćelije
+MSG_RIBBON_FIND
+Pronađi
+MSG_RIBBON_FIND_HINT
+Pronađi ćeliju po njezinu sadržaju
+MSG_RIBBON_FILL
+Ispuni
+MSG_RIBBON_FILL_HINT
+Kopiraj prvi redak ili stupac preko ostalih
+MSG_RIBBON_CLEAR_HINT
+Isprazni odabrane ćelije
+MSG_ROWS
+Retci
+MSG_COLUMNS
+Stupci
+MSG_SUM
+Zbroj
+MSG_AVERAGE
+Prosjek
+MSG_COUNT
+Broj
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Uzlazno
+MSG_DESCENDING
+Silazno
+MSG_DOWN
+Prema dolje
+MSG_RIGHT
+Udesno
+MSG_PROBLEM_NAME
+Nema takve funkcije ni naziva
+MSG_PROBLEM_ARGUMENTS
+Pogrešan broj argumenata
+MSG_PROBLEM_PARENTHESES
+Zagrada nema para
+MSG_PROBLEM_TOO_LONG
+Formula je preduga
+MSG_PROBLEM_UNREADABLE
+Formulu nije moguće pročitati
+MSG_PROBLEM_AT
+%s, kod znaka %u
+MSG_NO_MEMORY_KEEP
+Nema dovoljno memorije da se sve to zadrži
+MSG_NO_MEMORY_FILE
+Nema dovoljno memorije za cijelu datoteku
+MSG_LEFT_OUT
+Ćelije iza retka 9999 ili stupca IV izostavljene su
+MSG_NO_MEMORY_COPY
+Nema memorije za kopiranje toliko podataka
+MSG_NO_MEMORY_CLEAR
+Nema dovoljno memorije da se sve očisti
+MSG_NO_MEMORY_PASTE
+Nema dovoljno memorije da se sve zalijepi
+MSG_NO_ROOM_COLUMNS
+Nema mjesta: posljednji stupci nisu prazni
+MSG_NO_ROOM_ROWS
+Nema mjesta: posljednji retci nisu prazni
+MSG_NO_MEMORY_THAT
+Nema dovoljno memorije za to
+MSG_NO_MEMORY_FORMAT
+Nema dovoljno memorije da se sve oblikuje
+MSG_NOTHING_TO_ADD
+Iznad ili slijeva nema brojeva za zbrajanje
+MSG_NO_MEMORY_ALL
+Nema dovoljno memorije za sve to
+MSG_NO_MEMORY_SORT
+Nema dovoljno memorije da se sve to sortira
+MSG_NO_MEMORY_FILL
+Nema dovoljno memorije da se sve ispuni
+MSG_NOT_FOUND
+Nijedna ćelija to ne sadrži
+MSG_UNTITLED
+Bez naslova
+MSG_OK
+U redu
+MSG_CANNOT_OPEN
+Nije moguće otvoriti %s
+MSG_CANNOT_READ
+Nije moguće pročitati %s
+MSG_TOO_BIG
+%s je prevelik
+MSG_NO_MEMORY_FOR
+Nema memorije za %s
+MSG_NO_MEMORY_TO_SAVE
+Nema memorije za spremanje %s
+MSG_CANNOT_WRITE
+Nije moguće zapisati %s
+MSG_NO_REQUESTER
+Nema %s
+MSG_CHANGED
+Tablica je promijenjena.\nSpremiti je najprije?
+MSG_CHANGED_BUTTONS
+Spremi|Nemoj spremiti|Odustani
+MSG_OPEN_TITLE
+Otvori tablicu
+MSG_SAVE_AS_TITLE
+Spremi tablicu kao
+MSG_FIND_LABEL
+Pronađi
+MSG_FIND_NEXT_BUTTON
+Sljedeće
+MSG_FIND_PREVIOUS_BUTTON
+Prethodno
+MSG_FIND_CLOSE_BUTTON
+Zatvori
+MSG_NOLIBRARY
+Nema %s\n
+MSG_NOSCREEN
+Nema zadanog zaslona - nema prikaza\n
+MSG_NOMEMORY
+Nema memorije za prozor\n

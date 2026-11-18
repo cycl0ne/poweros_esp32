@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; The desktop's strings in Icelandic.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Bakgrunnur
+MSG_MENU_EXECUTE
+Keyra skipun...
+MSG_MENU_REDRAW_ALL
+Teikna allt aftur
+MSG_MENU_UPDATE_ALL
+Uppfæra allt
+MSG_MENU_LAST_MESSAGE
+Síðustu skilaboð
+MSG_MENU_VOLUME
+Hljóðstyrkur...
+MSG_MENU_ABOUT
+Um...
+MSG_MENU_QUIT
+Hætta...
+MSG_MENU_REBOOT
+Endurræsa...
+MSG_MENU_WINDOW
+Gluggi
+MSG_MENU_NEW_DRAWER
+Ný mappa
+MSG_MENU_OPEN_PARENT
+Opna yfirmöppu
+MSG_MENU_BACK
+Til baka
+MSG_MENU_FORWARD
+Áfram
+MSG_MENU_CLOSE
+Loka
+MSG_MENU_UPDATE
+Uppfæra
+MSG_MENU_SHELL
+Skel
+MSG_MENU_SELECT_CONTENTS
+Velja innihald
+MSG_MENU_CLEAN_UP
+Taka til
+MSG_MENU_CLEAN_UP_BY
+Taka til eftir
+MSG_MENU_BY_NAME
+Heiti
+MSG_MENU_BY_DATE
+Dagsetning
+MSG_MENU_BY_SIZE
+Stærð
+MSG_MENU_SNAP
+Jafna að hnitaneti
+MSG_MENU_ARRANGE
+Raða við stærðarbreytingu
+MSG_MENU_SNAPSHOT
+Muna staðsetningu
+MSG_MENU_SNAPSHOT_WINDOW
+Gluggi
+MSG_MENU_SNAPSHOT_ALL
+Allt
+MSG_MENU_SHOW
+Sýna
+MSG_MENU_ONLY_ICONS
+Aðeins tákn
+MSG_MENU_ALL_FILES
+Allar skrár
+MSG_MENU_VIEW_BY
+Skoða sem
+MSG_MENU_BY_ICON
+Tákn
+MSG_MENU_RIBBON
+Borði
+MSG_MENU_ICONS
+Tákn
+MSG_MENU_OPEN
+Opna
+MSG_MENU_COPY
+Afrita
+MSG_MENU_RENAME
+Endurnefna...
+MSG_MENU_INFORMATION
+Upplýsingar...
+MSG_MENU_UNSNAPSHOT
+Gleyma staðsetningu
+MSG_MENU_LEAVE_OUT
+Setja á skjáborð
+MSG_MENU_PUT_AWAY
+Setja til baka
+MSG_MENU_DELETE
+Eyða...
+MSG_MENU_FORMAT
+Forsníða disk...
+MSG_MENU_EMPTY_TRASH
+Tæma ruslakörfu
+MSG_MENU_TOOLS
+Verkfæri
+MSG_RIBBON_HOME
+Heim
+MSG_RIBBON_GO
+Fara
+MSG_RIBBON_PARENT
+Upp
+MSG_RIBBON_DRAWER
+Mappa
+MSG_RIBBON_RENAME
+Endurnefna
+MSG_RIBBON_DELETE
+Eyða
+MSG_RIBBON_INFORMATION
+Upplýsingar
+MSG_RIBBON_VIEW
+Skoða
+MSG_RIBBON_ARRANGE
+Raða
+MSG_LIST_PROTECTION
+Vernd
+MSG_LIST_DRAWER
+Mappa
+MSG_TITLE_MEMORY
+Minni
+MSG_TITLE_INTERNAL
+Innra
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+laust
+MSG_TITLE_BATTERY
+Rafhlaða
+MSG_TITLE_CHARGING
+í hleðslu
+MSG_TITLE_EXTERNAL_POWER
+á rafmagni
+MSG_DISK_FULL
+fullt
+MSG_DISK_IN_USE
+í notkun
+MSG_NOTHING_SAID
+Ekkert hefur verið tilkynnt
+MSG_NOT_EVERY_FILE
+Ekki var hægt að taka allar valdar skrár
+MSG_DISK_NOT_RENAMED
+Ekki var hægt að endurnefna diskinn
+MSG_NOT_RENAMED
+Ekki var hægt að endurnefna það
+MSG_ICON_NOT_WRITTEN
+Ekki var hægt að skrifa tákn
+MSG_DISK_NOT_THERE
+Diskurinn er ekki til staðar
+MSG_DISK_BUSY
+Diskurinn er í notkun
+MSG_DISK_NOT_FORMATTED
+Ekki var hægt að forsníða diskinn
+MSG_DRAWER_NOT_MADE
+Ekki var hægt að búa til möppuna
+MSG_SETTING_NOT_KEPT
+Ekki var hægt að muna %s
+MSG_SETTING_NOT_WRITTEN
+Ekki var hægt að skrifa %s í anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Ekki var hægt að skrifa tákn möppunnar
+MSG_NO_MEMORY_REBOOT
+Ekkert minni til að endurræsa
+MSG_NO_MEMORY_ABOUT
+Ekkert minni fyrir Um
+MSG_NO_TOOL
+%s hefur ekkert forrit til að opna það
+MSG_NOT_STARTED
+Ekki var hægt að ræsa %s
+MSG_COMMAND_NOT_STARTED
+Ekki var hægt að ræsa skipunina
+MSG_SHELL_DRAWER_NOT_FOUND
+Mappa skeljarinnar fannst ekki
+MSG_SHELL_NOT_STARTED
+Ekki var hægt að ræsa skelina
+MSG_TRASH_OWN_DISK
+Aðeins skrár af diski ruslakörfunnar fara í þá ruslakörfu
+MSG_NOT_MOVED
+Ekki var hægt að færa skrá þangað
+MSG_LEFT_OUT_NOT_KEPT
+Diskurinn man ekki hvað liggur á skjáborðinu
+MSG_NO_MEMORY_WORK
+Ekkert minni til að hefja verkið
+MSG_QUIT_RUNNING_ADDED
+Forrit ræst af skjáborðinu eru enn í gangi (%lu).\nÞau halda áfram að keyra. Gluggar, tákn og\nvalmyndaratriði sem forrit bættu við það (%lu)\nhverfa með því.\n\nHætta í skjáborðinu?
+MSG_QUIT_RUNNING
+Forrit ræst af skjáborðinu eru enn í gangi (%lu).\nÞau halda áfram að keyra.\n\nHætta í skjáborðinu?
+MSG_QUIT_ADDED
+Gluggar, tákn og valmyndaratriði sem forrit\nbættu við skjáborðið (%lu) hverfa með því.\n\nHætta í skjáborðinu?
+MSG_QUIT_ASK
+Hætta í skjáborðinu?
+MSG_QUIT_BUTTONS
+Hætta|Hætta við
+MSG_DELETE_ASK
+Eyða því sem er valið (%lu) endanlega?\nMappa fer með öllu sem í henni er.
+MSG_DELETE_BUTTONS
+Eyða|Hætta við
+MSG_RENAME_PROMPT
+Nýtt heiti á það:
+MSG_FORMAT_TITLE
+Forsníða disk
+MSG_FORMAT_ASK
+Forsníða %s?\nAllt sem á honum er glatast.
+MSG_FORMAT_BUTTONS
+Forsníða|Hætta við
+MSG_NEW_DRAWER_PROMPT
+Heiti á nýju möppuna:
+MSG_UNNAMED
+Ónefnt
+MSG_EXECUTE_TITLE
+Keyra skipun
+MSG_EXECUTE_PROMPT
+Skipun til að keyra:
+MSG_OUTPUT
+Úttak
+MSG_REBOOT_TITLE
+Endurræsa
+MSG_REBOOT_ASK
+Ræsa vélina aftur?\nÞað sem forrit hafa ekki vistað glatast.
+MSG_REBOOT_BUTTONS
+Endurræsa|Hætta við
+MSG_REBOOT_IN_USE
+Í notkun, svo það sem þau geyma er hugsanlega ekki skrifað út:\n%s\n\nEndurræsa samt?
+MSG_STARTUP_WAIT
+Forritið '%s'\nhefur ekki lokið keyrslu.\nBíða lengur?
+MSG_STARTUP_BUTTONS
+Bíða|Halda áfram
+MSG_OK
+Í _lagi
+MSG_CANCEL
+_Hætta við
+MSG_ABOUT_TITLE
+Um Anvil
+MSG_ABOUT_WHAT
+Skjáborð PowerOS
+MSG_ABOUT_RELEASE
+Útgáfa
+MSG_ABOUT_KERNEL
+Kjarni
+MSG_ABOUT_BOARD
+Borð
+MSG_ABOUT_PROCESSOR
+Örgjörvi
+MSG_ABOUT_CORES
+Kjarnar
+MSG_ABOUT_CLOCK
+Klukkutíðni
+MSG_ABOUT_SCREEN
+Skjár
+MSG_ABOUT_SYSTEM_DISK
+Kerfisdiskur
+MSG_ABOUT_UP_FOR
+Uppitími
+MSG_ABOUT_IN_USE
+Í notkun
+MSG_ABOUT_OF
+af
+MSG_ABOUT_BITS
+bitar á pixil
+MSG_ABOUT_DAY
+dagur
+MSG_ABOUT_DAYS
+dagar
+MSG_INFO_TITLE
+Upplýsingar
+MSG_INFO_STATE
+Staða
+MSG_INFO_READ_ONLY
+Aðeins lestur
+MSG_INFO_VALIDATING
+Verið að sannprófa
+MSG_INFO_READ_WRITE
+Lestur og skrift
+MSG_INFO_UNKNOWN
+Óþekkt
+MSG_INFO_BLOCKS
+Blokkir
+MSG_INFO_USED
+Notað
+MSG_INFO_FREE
+Laust
+MSG_INFO_BLOCK_SIZE
+Blokkastærð
+MSG_INFO_BYTES
+bæti
+MSG_INFO_BLOCKS_COUNTED
+blokkir
+MSG_INFO_CREATED
+Búið til
+MSG_INFO_LAST_CHANGED
+Síðast breytt
+MSG_INFO_SCRIPT
+Skrifta
+MSG_INFO_ARCHIVED
+Safnvistað
+MSG_INFO_READABLE
+Lesanlegt
+MSG_INFO_WRITABLE
+Skrifanlegt
+MSG_INFO_EXECUTABLE
+Keyranlegt
+MSG_INFO_DELETABLE
+Eyðanlegt
+MSG_INFO_COMMENT
+Athugasemd
+MSG_INFO_STACK
+Hlaði
+MSG_INFO_DEFAULT_TOOL
+Sjálfgefið forrit
+MSG_INFO_TOOL_TYPES
+Tólagerðir
+MSG_INFO_SAVE
+_Vista
+MSG_INFO_NOT_WRITTEN
+Ekki var hægt að skrifa táknið.
+MSG_INFO_OK
+Í lagi
+MSG_WORK_COPYING
+Afritar
+MSG_WORK_DELETING
+Eyðir
+MSG_WORK_STOP
+_Stöðva
+MSG_WORK_WAITING
+%lu í viðbót bíða
+MSG_WORK_REPLACE_ASK
+%s er þegar til.\nSkipta því út?
+MSG_WORK_REPLACE_BUTTONS
+Skipta út|Skipta út öllum|Sleppa|Stöðva

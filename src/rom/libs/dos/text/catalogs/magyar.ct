@@ -1,0 +1,254 @@
+## version $VER: sys/dos.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; dos.library's strings in Hungarian.
+SOFTWARE_FAILURE
+Szoftverhiba
+RUN_FAILED
+%s sikertelen, visszatérési kód: %ld\n
+USE_COUNT
+%TH HASZNÁLATOK\n\n
+NAME
+NÉV
+DISABLED
+%TH LETILTVA\n
+INTERNAL
+%TH BELSŐ\n
+SYSTEM
+%TH RENDSZER\n
+FAULT
+Hiba %3ld
+FAIL_LIMIT
+Hibahatár: %ld\n
+BAD_RETURN_CODE
+Hibás visszatérési kódot adott meg
+CURRENT_DIR
+Aktuális könyvtár
+NO_RETURN_CODE
+Az utolsó parancs nem állított be visszatérési kódot
+LAST_CMD_FAILED
+Az utolsó parancs sikertelen, mert\x20
+PROCESS_ENDING
+A(z) %N folyamat befejeződik
+REQUESTED_SIZE_TOO_SMALL
+A kért méret túl kicsi
+REQUESTED_SIZE_TOO_LARGE
+A kért méret túl nagy
+CURRENT_STACK_SIZE
+Az aktuális veremméret %ld bájt\n
+NEWSHELL_FAILED
+A NewShell sikertelen
+MISSING_ELSE_OR_ENDIF
+Hiányzik az ELSE vagy az ENDIF
+MUST_BE_IN_CMD_FILE
+Parancsfájlban kell lennie
+MORE_THAN_ONE_DIR
+Több könyvtár is illeszkedik
+CANT_SET
+%s nem állítható be\n
+BLOCK_CORRUPT_DIR
+Blokk %ld: sérült könyvtár
+BLOCK_CORRUPT_FILE
+Blokk %ld: sérült fájl
+BLOCK_BAD_HEADER
+Blokk %ld: hibás fejléctípus
+BLOCK_OUT_OF_RANGE
+Blokk %ld a tartományon kívül
+BLOCK_USED_TWICE
+Blokk %ld kétszer használva
+VALIDATION_ERROR
+Ellenőrzési hiba: %b
+ON_DISK_BLOCK
+a lemez %ld. blokkján
+CHECKSUM_ERROR
+ellenőrzőösszeg-hibát tartalmaz
+WRITE_ERROR
+írási hibát tartalmaz
+READ_ERROR
+olvasási hibát tartalmaz
+UNABLE_CREATE_PROC
+A folyamat nem hozható létre\n
+NEW_SHELL_PROCESS
+Új Shell-folyamat: %ld\n
+CANT_OPEN_FROM_FILE
+A FROM fájl nem nyitható meg: %s\n
+SUSPEND_REBOOT
+Felfüggesztés|Újraindítás
+RETRY_CANCEL
+Újra|Mégse
+NO_ROOM_FOR_BITMAP
+Nincs hely a bittérképnek
+CMD_TOO_LONG
+A parancs túl hosszú
+SHELL_ERROR
+Shell-hiba:
+CMDNAME_ERROR
+Hiba a parancsnévben
+UNKNOWN_COMMAND
+Ismeretlen parancs
+LOAD_ERROR
+Nem tölthető be
+SYNTAX_ERROR
+szintaktikai hiba
+REDIRECT_ERROR
+az átirányítási fájl nem nyitható meg
+ERROR
+Hiba\x20
+EMPTY_STRING
+
+DISK_CORRUPT
+A lemez sérült - a feladat leállítva
+PROGRAM_FAILED
+A program sikertelen (hiba #
+WAIT_FOR_ACTIVITY
+Várjon, amíg a lemez befejezi a műveletet.
+IN_DEVICE
+ebben az eszközben: %s%s
+IN_UNIT
+ebben az egységben: %ld%s
+YOU_MUST_REPLACE
+A kötetet VISSZA KELL helyeznie
+READ_WRITE_ERROR
+olvasási/írási hibát tartalmaz
+NO_DISK_PRESENT
+Nincs lemez
+NOT_A_DOS_DISK
+Nem DOS-lemez
+ANY_DRIVE
+bármelyik meghajtóba
+REPLACE_VOLUME
+Helyezze vissza a kötetet
+INSERT_VOLUME
+Helyezze be a kötetet
+IS_FULL
+megtelt
+IS_PROTECTED
+írásvédett
+IS_NOT_VALIDATED
+nincs ellenőrizve
+VOLUME
+Kötet
+ERROR_NO_FREE_STORE
+nincs elég szabad memória
+ERROR_TASK_TABLE_FULL
+a folyamattábla megtelt
+ERROR_BAD_TEMPLATE
+hibás sablon
+ERROR_BAD_NUMBER
+hibás szám
+ERROR_REQUIRED_ARG_MISSING
+hiányzik egy kötelező argumentum
+ERROR_KEY_NEEDS_ARG
+hiányzik a kulcsszó utáni érték
+ERROR_TOO_MANY_ARGS
+hibás az argumentumok száma
+ERROR_UNMATCHED_QUOTES
+páratlan idézőjelek
+ERROR_LINE_TOO_LONG
+az argumentumsor érvénytelen vagy túl hosszú
+ERROR_FILE_NOT_OBJECT
+a fájl nem végrehajtható
+ERROR_INVALID_RESIDENT_LIBRARY
+érvénytelen rezidens függvénytár
+ERROR_OBJECT_IN_USE
+az objektum használatban van
+ERROR_OBJECT_EXISTS
+az objektum már létezik
+ERROR_DIR_NOT_FOUND
+a könyvtár nem található
+ERROR_OBJECT_NOT_FOUND
+az objektum nem található
+ERROR_BAD_STREAM_NAME
+érvénytelen ablakleírás
+ERROR_OBJECT_TOO_LARGE
+az objektum túl nagy
+ERROR_ACTION_NOT_KNOWN
+ismeretlen csomagkérés-típus
+ERROR_INVALID_COMPONENT_NAME
+érvénytelen objektumnév
+ERROR_INVALID_LOCK
+érvénytelen objektumzárolás
+ERROR_OBJECT_WRONG_TYPE
+az objektum nem a kért típusú
+ERROR_DISK_NOT_VALIDATED
+a lemez nincs ellenőrizve
+ERROR_DISK_WRITE_PROTECTED
+a lemez írásvédett
+ERROR_RENAME_ACROSS_DEVICES
+átnevezési kísérlet eszközök között
+ERROR_DIRECTORY_NOT_EMPTY
+a könyvtár nem üres
+ERROR_TOO_MANY_LEVELS
+túl sok szint
+ERROR_DEVICE_NOT_MOUNTED
+az eszköz (vagy kötet) nincs csatolva
+ERROR_SEEK_ERROR
+pozicionálási hiba
+ERROR_COMMENT_TOO_BIG
+a megjegyzés túl hosszú
+ERROR_DISK_FULL
+a lemez megtelt
+ERROR_DELETE_PROTECTED
+az objektum törlésvédett
+ERROR_WRITE_PROTECTED
+a fájl írásvédett
+ERROR_READ_PROTECTED
+a fájl olvasásvédett
+ERROR_NOT_A_DOS_DISK
+nem érvényes DOS-lemez
+ERROR_NO_DISK
+nincs lemez a meghajtóban
+ERROR_NO_MORE_ENTRIES
+nincs több bejegyzés a könyvtárban
+ERROR_IS_SOFT_LINK
+az objektum szimbolikus hivatkozás
+ERROR_OBJECT_LINKED
+az objektum csatolva van
+ERROR_BAD_HUNK
+a betölthető fájl hunkja hibás
+ERROR_NOT_IMPLEMENTED
+a funkció nincs megvalósítva
+ERROR_RECORD_NOT_LOCKED
+a rekord nincs zárolva
+ERROR_LOCK_COLLISION
+rekordzárolási ütközés
+ERROR_LOCK_TIMEOUT
+a rekordzárolás ideje lejárt
+ERROR_UNLOCK_ERROR
+rekordfeloldási hiba
+ABORT_BUSY
+a hívót nem volt szabad megkérdezni
+ABORT_DISK_ERROR
+olvasási vagy írási hiba a köteten
+ERROR_BUFFER_OVERFLOW
+puffertúlcsordulás
+ERROR_BREAK
+***Megszakítás
+ERROR_NOT_EXECUTABLE
+a fájl nem végrehajtható
+ERROR_INVALID_ARGUMENT
+érvénytelen argumentum
+ERROR_INVALID_DOS_ENTRY
+érvénytelen eszközlista-bejegyzés
+ERROR_NO_INPUT_STREAM
+nincs bemeneti adatfolyam
+ERROR_BUFFER_TOO_SMALL
+a puffer túl kicsi
+ERROR_NO_PROCESS
+nem folyamat
+ERROR_NO_HANDLER
+nincs kezelő
+ERROR_PACKET_ASYNC
+a csomag sorrenden kívül érkezett
+ERROR_ERROR_IN_PACKET
+hiba a csomagban
+ERROR_NO_CURRENT_DIRECTORY
+nincs aktuális könyvtár
+ERROR_HANDLER_NOT_LOADED
+a kezelő nincs betöltve
+ERROR_HANDLER_START_ERROR
+a kezelő nem indult el
+ERROR_BROKEN_PIPE
+a cső másik vége eltűnt
+ERROR_BAD_CHECKSUM
+ellenőrzőösszeg-hiba: a beolvasott adat nem az, ami ki lett írva

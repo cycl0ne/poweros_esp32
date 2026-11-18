@@ -1,0 +1,338 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; The desktop's strings in Polish.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Tło
+MSG_MENU_EXECUTE
+Wykonaj polecenie...
+MSG_MENU_REDRAW_ALL
+Przerysuj wszystko
+MSG_MENU_UPDATE_ALL
+Odśwież wszystko
+MSG_MENU_LAST_MESSAGE
+Ostatni komunikat
+MSG_MENU_VOLUME
+Głośność...
+MSG_MENU_ABOUT
+O programie...
+MSG_MENU_QUIT
+Zakończ...
+MSG_MENU_REBOOT
+Uruchom ponownie...
+MSG_MENU_WINDOW
+Okno
+MSG_MENU_NEW_DRAWER
+Nowy folder
+MSG_MENU_OPEN_PARENT
+Otwórz nadrzędny
+MSG_MENU_BACK
+Wstecz
+MSG_MENU_FORWARD
+Dalej
+MSG_MENU_CLOSE
+Zamknij
+MSG_MENU_UPDATE
+Odśwież
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Zaznacz zawartość
+MSG_MENU_CLEAN_UP
+Uporządkuj
+MSG_MENU_CLEAN_UP_BY
+Uporządkuj według
+MSG_MENU_BY_NAME
+Nazwa
+MSG_MENU_BY_DATE
+Data
+MSG_MENU_BY_SIZE
+Rozmiar
+MSG_MENU_SNAP
+Przyciągaj do siatki
+MSG_MENU_ARRANGE
+Rozmieszczaj po zmianie rozmiaru
+MSG_MENU_SNAPSHOT
+Zapamiętaj położenie
+MSG_MENU_SNAPSHOT_WINDOW
+Okno
+MSG_MENU_SNAPSHOT_ALL
+Wszystko
+MSG_MENU_SHOW
+Pokaż
+MSG_MENU_ONLY_ICONS
+Tylko ikony
+MSG_MENU_ALL_FILES
+Wszystkie pliki
+MSG_MENU_VIEW_BY
+Widok według
+MSG_MENU_BY_ICON
+Ikona
+MSG_MENU_RIBBON
+Wstążka
+MSG_MENU_ICONS
+Ikony
+MSG_MENU_OPEN
+Otwórz
+MSG_MENU_COPY
+Kopiuj
+MSG_MENU_RENAME
+Zmień nazwę...
+MSG_MENU_INFORMATION
+Informacje...
+MSG_MENU_UNSNAPSHOT
+Zapomnij położenie
+MSG_MENU_LEAVE_OUT
+Umieść na pulpicie
+MSG_MENU_PUT_AWAY
+Odłóż na miejsce
+MSG_MENU_DELETE
+Usuń...
+MSG_MENU_FORMAT
+Formatuj dysk...
+MSG_MENU_EMPTY_TRASH
+Opróżnij kosz
+MSG_MENU_TOOLS
+Narzędzia
+MSG_RIBBON_HOME
+Narzędzia główne
+MSG_RIBBON_GO
+Przejdź
+MSG_RIBBON_PARENT
+Nadrzędny
+MSG_RIBBON_DRAWER
+Folder
+MSG_RIBBON_RENAME
+Zmień nazwę
+MSG_RIBBON_DELETE
+Usuń
+MSG_RIBBON_INFORMATION
+Informacje
+MSG_RIBBON_VIEW
+Widok
+MSG_RIBBON_ARRANGE
+Rozmieść
+MSG_LIST_PROTECTION
+Ochrona
+MSG_LIST_DRAWER
+Folder
+MSG_TITLE_MEMORY
+Pamięć
+MSG_TITLE_INTERNAL
+Wewnętrzna
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+wolne
+MSG_TITLE_BATTERY
+Bateria
+MSG_TITLE_CHARGING
+ładowanie
+MSG_TITLE_EXTERNAL_POWER
+zasilanie zewnętrzne
+MSG_DISK_FULL
+zajęte
+MSG_DISK_IN_USE
+w użyciu
+MSG_NOTHING_SAID
+Nie było jeszcze żadnego komunikatu
+MSG_NOT_EVERY_FILE
+Nie wszystkie wybrane pliki udało się przyjąć
+MSG_DISK_NOT_RENAMED
+Nie udało się zmienić nazwy dysku
+MSG_NOT_RENAMED
+Nie udało się zmienić nazwy
+MSG_ICON_NOT_WRITTEN
+Nie udało się zapisać ikony
+MSG_DISK_NOT_THERE
+Dysk jest niedostępny
+MSG_DISK_BUSY
+Dysk jest w użyciu
+MSG_DISK_NOT_FORMATTED
+Nie udało się sformatować dysku
+MSG_DRAWER_NOT_MADE
+Nie udało się utworzyć folderu
+MSG_SETTING_NOT_KEPT
+Nie udało się zapamiętać ustawienia %s
+MSG_SETTING_NOT_WRITTEN
+Nie udało się zapisać ustawienia %s w anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Nie udało się zapisać ikony folderu
+MSG_NO_MEMORY_REBOOT
+Brak pamięci na ponowne uruchomienie
+MSG_NO_MEMORY_ABOUT
+Brak pamięci na okno O programie
+MSG_NO_TOOL
+Brak programu, który otworzy %s
+MSG_NOT_STARTED
+Nie udało się uruchomić %s
+MSG_COMMAND_NOT_STARTED
+Nie udało się uruchomić polecenia
+MSG_SHELL_DRAWER_NOT_FOUND
+Nie znaleziono folderu dla Shella
+MSG_SHELL_NOT_STARTED
+Nie udało się uruchomić Shella
+MSG_TRASH_OWN_DISK
+Do kosza trafiają tylko pliki z jego własnego dysku
+MSG_NOT_MOVED
+Nie udało się przenieść tam pliku
+MSG_LEFT_OUT_NOT_KEPT
+Dysk nie zachowa tego, co umieszczono na pulpicie
+MSG_NO_MEMORY_WORK
+Brak pamięci, aby rozpocząć pracę
+MSG_QUIT_RUNNING_ADDED
+Programy uruchomione z pulpitu nadal działają (%lu).\n\
+Będą działać dalej. Okna, ikony i\n\
+pozycje menu dodane przez programy (%lu)\n\
+znikną razem z nim.\n\nZakończyć pracę pulpitu?
+MSG_QUIT_RUNNING
+Programy uruchomione z pulpitu nadal działają (%lu).\n\
+Będą działać dalej.\n\nZakończyć pracę pulpitu?
+MSG_QUIT_ADDED
+Okna, ikony i pozycje menu dodane do pulpitu\n\
+przez programy (%lu) znikną razem z nim.\n\n\
+Zakończyć pracę pulpitu?
+MSG_QUIT_ASK
+Zakończyć pracę pulpitu?
+MSG_QUIT_BUTTONS
+Zakończ|Anuluj
+MSG_DELETE_ASK
+Trwale usunąć wybrane elementy (%lu)?\n\
+Folder zostanie usunięty razem z całą zawartością.
+MSG_DELETE_BUTTONS
+Usuń|Anuluj
+MSG_RENAME_PROMPT
+Nowa nazwa:
+MSG_FORMAT_TITLE
+Formatuj dysk
+MSG_FORMAT_ASK
+Sformatować %s?\nWszystko, co się na nim znajduje, zostanie utracone.
+MSG_FORMAT_BUTTONS
+Formatuj|Anuluj
+MSG_NEW_DRAWER_PROMPT
+Nazwa nowego folderu:
+MSG_UNNAMED
+Bez nazwy
+MSG_EXECUTE_TITLE
+Wykonaj polecenie
+MSG_EXECUTE_PROMPT
+Polecenie do wykonania:
+MSG_OUTPUT
+Wyjście
+MSG_REBOOT_TITLE
+Uruchom ponownie
+MSG_REBOOT_ASK
+Uruchomić komputer ponownie?\nTo, czego programy nie zapisały, zostanie utracone.
+MSG_REBOOT_BUTTONS
+Uruchom ponownie|Anuluj
+MSG_REBOOT_IN_USE
+W użyciu, więc ich zawartość może nie zostać zapisana:\n%s\n\n\
+Uruchomić ponownie mimo to?
+MSG_STARTUP_WAIT
+Program '%s'\njeszcze się nie zakończył.\nCzekać dłużej?
+MSG_STARTUP_BUTTONS
+Czekaj|Kontynuuj
+MSG_OK
+_OK
+MSG_CANCEL
+_Anuluj
+MSG_ABOUT_TITLE
+O programie Anvil
+MSG_ABOUT_WHAT
+Pulpit systemu PowerOS
+MSG_ABOUT_RELEASE
+Wydanie
+MSG_ABOUT_KERNEL
+Jądro
+MSG_ABOUT_BOARD
+Płyta
+MSG_ABOUT_PROCESSOR
+Procesor
+MSG_ABOUT_CORES
+Rdzenie
+MSG_ABOUT_CLOCK
+Taktowanie
+MSG_ABOUT_SCREEN
+Ekran
+MSG_ABOUT_SYSTEM_DISK
+Dysk systemowy
+MSG_ABOUT_UP_FOR
+Czas pracy
+MSG_ABOUT_IN_USE
+W użyciu
+MSG_ABOUT_OF
+z
+MSG_ABOUT_BITS
+bpp
+MSG_ABOUT_DAY
+dzień
+MSG_ABOUT_DAYS
+dni
+MSG_INFO_TITLE
+Informacje
+MSG_INFO_STATE
+Stan
+MSG_INFO_READ_ONLY
+Tylko do odczytu
+MSG_INFO_VALIDATING
+Trwa sprawdzanie
+MSG_INFO_READ_WRITE
+Odczyt i zapis
+MSG_INFO_UNKNOWN
+Nieznany
+MSG_INFO_BLOCKS
+Bloki
+MSG_INFO_USED
+Zajęte
+MSG_INFO_FREE
+Wolne
+MSG_INFO_BLOCK_SIZE
+Rozmiar bloku
+MSG_INFO_BYTES
+bajtów
+MSG_INFO_BLOCKS_COUNTED
+bloków
+MSG_INFO_CREATED
+Utworzono
+MSG_INFO_LAST_CHANGED
+Zmodyfikowano
+MSG_INFO_SCRIPT
+Skrypt
+MSG_INFO_ARCHIVED
+Zarchiwizowany
+MSG_INFO_READABLE
+Do odczytu
+MSG_INFO_WRITABLE
+Do zapisu
+MSG_INFO_EXECUTABLE
+Wykonywalny
+MSG_INFO_DELETABLE
+Usuwalny
+MSG_INFO_COMMENT
+Komentarz
+MSG_INFO_STACK
+Stos
+MSG_INFO_DEFAULT_TOOL
+Domyślny program
+MSG_INFO_TOOL_TYPES
+Typy narzędzi
+MSG_INFO_SAVE
+_Zapisz
+MSG_INFO_NOT_WRITTEN
+Nie udało się zapisać ikony.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Kopiowanie
+MSG_WORK_DELETING
+Usuwanie
+MSG_WORK_STOP
+_Zatrzymaj
+MSG_WORK_WAITING
+Jeszcze %lu w kolejce
+MSG_WORK_REPLACE_ASK
+%s już istnieje.\nZastąpić?
+MSG_WORK_REPLACE_BUTTONS
+Zastąp|Zastąp wszystkie|Pomiń|Zatrzymaj

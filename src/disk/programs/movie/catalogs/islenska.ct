@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; Movie's strings in Icelandic.
+MSG_MENU_PROJECT
+Verkefni
+MSG_MENU_OPEN
+Opna...
+MSG_MENU_WHOLE_SCREEN
+Allur skjárinn
+MSG_MENU_ABOUT
+Um
+MSG_MENU_QUIT
+Hætta
+MSG_MENU_SOUND
+Hljóð
+MSG_MENU_NO_SOUND
+Ekkert
+MSG_MENU_SUBTITLES
+Skjátextar
+MSG_MENU_SUBTITLES_OFF
+Af
+MSG_MENU_TRACK
+Rás
+MSG_MENU_FRAME_RATE
+Rammatíðni
+MSG_MENU_INFO
+Upplýsingar um mynd...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u sleppt
+MSG_ASK_OPEN
+Spila kvikmynd
+MSG_ABOUT_TITLE
+Um Movie
+MSG_ABOUT
+%s\n\nSpilar kvikmyndir - MP4, MOV frá QuickTime og MKV frá Matroska:\nmyndir í H.264, H.265 og Motion JPEG,\nhljóð í AAC, AC-3, MP3, FLAC og Vorbis, og skjátexta.
+MSG_OK
+Í lagi
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nverður ekki spilað:\n%s
+MSG_INFO_TITLE
+Upplýsingar um mynd
+MSG_INFO_FILE
+Skrá
+MSG_INFO_NAMED
+Titill
+MSG_INFO_CONTAINER
+Skráarsnið
+MSG_INFO_LENGTH
+Lengd
+MSG_INFO_PICTURES
+Mynd
+MSG_INFO_COLOURS
+Litir
+MSG_INFO_BITS
+%u bitar
+MSG_INFO_LIMITED
+takmarkað svið
+MSG_INFO_FULL
+fullt svið
+MSG_INFO_SHOWN
+Birting
+MSG_INFO_ON_LAYER
+á myndlagi skjásins
+MSG_INFO_BY_GRAPHICS
+teiknað af graphics.library
+MSG_INFO_DECODED
+Afkóðað
+MSG_INFO_BY_CHIP
+af myndafkóðaranum
+MSG_INFO_BY_PROCESSOR
+af örgjörvanum
+MSG_INFO_SOUND
+Hljóð
+MSG_INFO_NONE
+ekkert
+MSG_INFO_CHANNELS
+%u rásir
+MSG_INFO_TRACKS
+Rásir
+MSG_INFO_TRACK_COUNTS
+%u hljóð, %u skjátextar
+MSG_VOLUME_HINT
+Hljóðstyrkur
+MSG_NOLIBRARY
+%s: get ekki opnað %s\n
+MSG_NOMEMORY
+%s: ekki nóg minni\n
+MSG_NOWINDOW
+%s: get ekki opnað gluggann sinn\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

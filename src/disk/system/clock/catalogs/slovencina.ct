@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; Clock's strings in Slovak.
+MSG_WINDOW_TITLE
+Hodiny
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analógové
+MSG_MENU_DIGITAL
+Digitálne
+MSG_MENU_ABOUT
+O programe...
+MSG_MENU_QUIT
+Ukončiť
+MSG_MENU_SETTINGS
+Nastavenia
+MSG_MENU_SECONDS
+Sekundy
+MSG_MENU_DATE
+Dátum
+MSG_MENU_24_HOURS
+24 hodín
+MSG_MENU_SAVE
+Uložiť nastavenia
+MSG_ABOUT_TITLE
+O programe Hodiny
+MSG_ABOUT
+%s\n\nČas na ciferníku alebo v číslach.\nDvojité kliknutie do okna medzi nimi prepína.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Nastavenia sa nepodarilo uložiť do\n%s.
+MSG_NOLIBRARY
+%s: nemožno otvoriť %s\n
+MSG_NOMEMORY
+%s: nedostatok pamäte\n
+MSG_NOWINDOW
+%s: nemožno otvoriť okno\n

@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; The Player's strings in Hungarian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Megnyitás...
+MSG_MENU_OPEN_DRAWER
+Mappa megnyitása...
+MSG_MENU_OPEN_URL
+URL megnyitása...
+MSG_MENU_SAVE_PLAYLIST
+Lejátszási lista mentése...
+MSG_MENU_ABOUT
+Névjegy
+MSG_MENU_QUIT
+Kilépés
+MSG_MENU_PLAYLIST
+Lejátszási lista
+MSG_MENU_ADD
+Hozzáadás...
+MSG_MENU_REMOVE
+Eltávolítás
+MSG_MENU_CLEAR
+Kiürítés
+MSG_MENU_SHUFFLE
+Keverés
+MSG_MENU_REPEAT
+Ismétlés
+MSG_MENU_REPEAT_OFF
+Ki
+MSG_MENU_REPEAT_ALL
+Mind
+MSG_MENU_REPEAT_ONE
+Egy
+MSG_MENU_PICTURE
+Kép
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Hullám
+MSG_MENU_BARS
+Oszlopok
+MSG_MENU_SETTINGS
+Beállítások
+MSG_MENU_REMEMBER
+Pozíció megjegyzése
+MSG_PAGE_PLAYING
+Most szól
+MSG_PAGE_RADIO
+Rádió
+MSG_VIEW_KEPT
+Az Ön állomásai
+MSG_VIEW_FOUND
+Találatok
+MSG_NAME
+Név
+MSG_GENRE
+Műfaj
+MSG_COUNTRY
+Ország
+MSG_COLUMN_TITLE
+Cím
+MSG_COLUMN_ARTIST
+Előadó
+MSG_COLUMN_TIME
+Idő
+MSG_COLUMN_STATION
+Állomás
+MSG_COLUMN_ADDRESS
+Webcím
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Műfajok
+MSG_SHUFFLE_BUTTON
+_Keverés
+MSG_SHUFFLE_HINT
+A számok lejátszása saját sorrendben
+MSG_REPEAT_BUTTON
+_Ismétlés
+MSG_REPEAT_HINT
+A lista vagy egyetlen szám újbóli lejátszása
+MSG_MUTE_BUTTON
+_Némítás
+MSG_MUTE_HINT
+A hang ki- és visszakapcsolása
+MSG_LENGTH_HINT
+A szám hossza, vagy mennyi van még hátra belőle
+MSG_ADD_BUTTON
+_Hozzáadás...
+MSG_REMOVE_BUTTON
+_Eltávolítás
+MSG_CLEAR_BUTTON
+Kiürí_tés
+MSG_OUTPUT_LABEL
+Ki_menet
+MSG_SEARCH_BUTTON
+Ke_resés
+MSG_KEEP_BUTTON
+Me_gtartás
+MSG_FORGET_BUTTON
+Eltá_volítás
+MSG_FIND_LABEL
+_Szöveg
+MSG_BY_LABEL
+e_bben
+MSG_URL_TITLE
+URL megnyitása
+MSG_URL_ADDRESS
+_Webcím
+MSG_URL_OPEN
+_Megnyitás
+MSG_URL_CANCEL
+Mé_gse
+MSG_ASK_PLAY
+Mely számok?
+MSG_ASK_ADD
+Mely számokat adja hozzá?
+MSG_ASK_DRAWER
+Melyik mappa?
+MSG_ASK_SAVE
+Lejátszási lista mentése másként
+MSG_ABOUT_TITLE
+A Player névjegye
+MSG_ABOUT
+%s\n\nSzámok WAV, MP3, FLAC, Ogg Vorbis, AAC és AC-3 fájlokból,\negymás után, borítókkal,\nállomások a hálózatról\nés a hang képe.
+MSG_OK
+OK
+MSG_NO_SONG
+Nincs szám
+MSG_TRACK_OF
+%u. sáv (összesen %u)
+MSG_TRACK
+%u. sáv
+MSG_COMPOSED_BY
+zeneszerző: %s
+MSG_CHAPTER
+%u. fejezet (összesen %u)
+MSG_SOUND
+Hang
+MSG_MONO
+monó
+MSG_STEREO
+sztereó
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+%u. szám (összesen %u)
+MSG_NO_SOUND
+nincs hang
+MSG_NO_STREAM_FREE
+nincs szabad adatfolyam
+MSG_LIVE
+élő
+MSG_BUFFERING
+pufferelés
+MSG_BUFFERING_PERCENT
+Pufferelés: %u%%
+MSG_STATION_IDLE
+Állomás: a lejátszás elindítja
+MSG_CALLING
+Kapcsolódás az állomáshoz
+MSG_NO_MEMORY_STATION
+Nincs elég memória az állomáshoz
+MSG_ALL_STREAMS_USED
+Minden hang-adatfolyam foglalt
+MSG_NO_SOUND_HERE
+Ennek a számítógépnek nincs hangja
+MSG_NO_AUDIO_STREAM
+Az audio.device nem nyitott adatfolyamot
+MSG_KEPT_ALREADY
+Már megtartva: %s
+MSG_KEPT
+Megtartva: %s
+MSG_NO_MEMORY_KEEP
+Nincs elég memória az állomás megtartásához
+MSG_NO_MEMORY_SEARCH
+Nincs elég memória a kereséshez
+MSG_SEARCHING
+Keresés
+MSG_ASKING
+Lekérdezés: %s
+MSG_NONE_FOUND
+Nem található állomás
+MSG_ONE_FOUND
+Egy állomás található
+MSG_COUNT_FOUND
+Talált állomások: %u
+MSG_NO_NETWORK
+Nincs hálózat: hiányzik a bsdsocket.library
+MSG_NO_HTTP
+Hiányzik a http.library
+MSG_NO_MEMORY_CONNECTION
+Nincs elég memória a kapcsolathoz
+MSG_SERVICE_NO_ADDRESS
+A radio-browser.info nem rendelkezik címmel
+MSG_SERVICE_NO_ANSWER
+A radio-browser.info nem válaszolt a keresésre
+MSG_SERVICE_UNREACHED
+A radio-browser.info nem érhető el
+MSG_SERVICE_NONSENSE
+A radio-browser.info válasza értelmetlen
+MSG_SEARCH_FAILED
+A keresés sikertelen
+MSG_NO_SIGNAL
+Nincs szabad jelzés az állomáshoz
+MSG_NO_TIMER
+A timer.device nem nyitható meg
+MSG_LISTS_ONLY
+Az állomás listái csak újabb listákra mutatnak
+MSG_STATION_STOPPED
+Az állomás leállt
+MSG_STATION_ANSWERED
+Az állomás válaszolt
+MSG_SENDS_AAC
+Az állomás AAC-t sugároz, ami nem játszható le
+MSG_STATION_ENDED
+Az állomás bontotta a kapcsolatot
+MSG_SENDS_HLS
+Az állomás HLS-t sugároz, ami nem játszható le
+MSG_LIST_EMPTY
+Az állomás listája nem tartalmaz állomást
+MSG_LIST_TOO_LONG
+Az állomás listája túl hosszú címet tartalmaz
+MSG_NOT_AN_ADDRESS
+Ez nem hallgatható cím
+MSG_NONSENSE
+Az állomás válasza értelmetlen
+MSG_NOLIBRARY
+%s: %s nem nyitható meg\n
+MSG_NOMEMORY
+%s: nincs elég memória az ablakhoz\n
+MSG_NOBUFFERS
+%s: nincs elég memória a hanghoz\n
+MSG_NOWINDOW
+%s: nincs ablak\n
+MSG_MENU_EQUALIZER
+Hangszínszabályzó
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Goniométer
+MSG_MENU_METERS
+Szintjelzők
+MSG_MENU_WHOLE_SCREEN
+Teljes képernyő

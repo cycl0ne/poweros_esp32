@@ -1,0 +1,79 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; http.library's words for a request that failed, in French: a clause
+; that starts in lower case, without its full stop.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+plus de mémoire libre
+MSG_IO
+la connexion a échoué
+MSG_IO_BECAUSE
+la connexion a échoué : %s
+MSG_STOPPED
+interrompu
+MSG_TIMEOUT
+le serveur n'a pas répondu à temps
+MSG_URL
+pas une URL http:// ou https://, ou une URL trop longue
+MSG_HOST
+l'hôte n'a pas d'adresse
+MSG_HOST_NAMED
+%s n'a pas d'adresse
+MSG_TLS
+la session TLS a échoué
+MSG_TLS_CERTIFICATE
+le certificat du serveur n'est pas digne de confiance : %s
+MSG_TLS_CLOCK
+l'horloge n'est pas réglée, aucun certificat ne peut donc être vérifié (TimeSync)
+MSG_TLS_ALERT
+le serveur a refusé la session TLS (alerte %u)
+MSG_TLS_HANDSHAKE
+la négociation TLS a échoué
+MSG_PROTOCOL
+la réponse n'est pas du HTTP
+MSG_REDIRECT
+plus de redirections que permis, ou une redirection vers nulle part
+MSG_TRUNCATED
+la connexion s'est terminée avant la réponse
+MSG_STATE
+un appel hors de son tour, ou une requête impossible à faire
+MSG_LIBRARY
+une bibliothèque dont la requête a besoin est absente
+MSG_LIBRARY_NAMED
+%s est introuvable
+MSG_DATA
+la réponse compressée du serveur ne se décompresse pas
+MSG_CLOSED
+le serveur a fermé la connexion sans répondre
+MSG_UNKNOWN
+la requête a échoué (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+un de ses certificats est illisible
+MSG_VERDICT_UNKNOWN_ISSUER
+aucune racine de confiance ne l'a signé
+MSG_VERDICT_BAD_SIGNATURE
+une signature de sa chaîne est fausse
+MSG_VERDICT_UNSUPPORTED
+il est signé d'une façon qui ne peut pas être vérifiée
+MSG_VERDICT_EXPIRED
+il a expiré
+MSG_VERDICT_NOT_YET_VALID
+il n'est pas encore valide
+MSG_VERDICT_NOT_CA
+il a été émis par un certificat qui n'a pas le droit d'en émettre
+MSG_VERDICT_PATH_LENGTH
+sa chaîne est plus longue que ses AC ne le permettent
+MSG_VERDICT_NAME_CONSTRAINTS
+une AC de sa chaîne a des contraintes de nom
+MSG_VERDICT_WRONG_USAGE
+il n'est pas destiné à un serveur
+MSG_VERDICT_WRONG_NAME
+il est destiné à un autre hôte
+MSG_VERDICT_TOO_LONG
+sa chaîne est trop longue
+MSG_VERDICT_OTHER
+sans raison donnée

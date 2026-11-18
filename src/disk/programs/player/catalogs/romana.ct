@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; The Player's strings in Romanian.
+MSG_MENU_PROJECT
+Proiect
+MSG_MENU_OPEN
+Deschidere...
+MSG_MENU_OPEN_DRAWER
+Deschidere folder...
+MSG_MENU_OPEN_URL
+Deschidere URL...
+MSG_MENU_SAVE_PLAYLIST
+Salvare listă de redare...
+MSG_MENU_ABOUT
+Despre
+MSG_MENU_QUIT
+Ieșire
+MSG_MENU_PLAYLIST
+Listă de redare
+MSG_MENU_ADD
+Adăugare...
+MSG_MENU_REMOVE
+Eliminare
+MSG_MENU_CLEAR
+Golire
+MSG_MENU_SHUFFLE
+Amestecare
+MSG_MENU_REPEAT
+Repetare
+MSG_MENU_REPEAT_OFF
+Dezactivată
+MSG_MENU_REPEAT_ALL
+Toate
+MSG_MENU_REPEAT_ONE
+Una
+MSG_MENU_PICTURE
+Imagine
+MSG_MENU_PLASMA
+Plasmă
+MSG_MENU_WAVE
+Undă
+MSG_MENU_BARS
+Bare
+MSG_MENU_SETTINGS
+Setări
+MSG_MENU_REMEMBER
+Reluare de unde a rămas
+MSG_PAGE_PLAYING
+Se redă acum
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Posturile tale
+MSG_VIEW_FOUND
+Găsite
+MSG_NAME
+Nume
+MSG_GENRE
+Gen
+MSG_COUNTRY
+Țară
+MSG_COLUMN_TITLE
+Titlu
+MSG_COLUMN_ARTIST
+Artist
+MSG_COLUMN_TIME
+Durată
+MSG_COLUMN_STATION
+Post
+MSG_COLUMN_ADDRESS
+Adresă
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Genuri
+MSG_SHUFFLE_BUTTON
+_Amestecare
+MSG_SHUFFLE_HINT
+Redă melodiile într-o ordine proprie
+MSG_REPEAT_BUTTON
+_Repetare
+MSG_REPEAT_HINT
+Redă lista din nou, sau doar melodia
+MSG_MUTE_BUTTON
+_Mut
+MSG_MUTE_HINT
+Oprește sunetul și îl pornește din nou
+MSG_LENGTH_HINT
+Durata melodiei, sau cât a mai rămas din ea
+MSG_ADD_BUTTON
+A_dăugare...
+MSG_REMOVE_BUTTON
+_Eliminare
+MSG_CLEAR_BUTTON
+Go_lire
+MSG_OUTPUT_LABEL
+_Ieșire
+MSG_SEARCH_BUTTON
+_Căutare
+MSG_KEEP_BUTTON
+_Păstrare
+MSG_FORGET_BUTTON
+_Scoatere
+MSG_FIND_LABEL
+_Găsește
+MSG_BY_LABEL
+î_n
+MSG_URL_TITLE
+Deschidere URL
+MSG_URL_ADDRESS
+_Adresă
+MSG_URL_OPEN
+_Deschidere
+MSG_URL_CANCEL
+A_nulare
+MSG_ASK_PLAY
+Ce melodii?
+MSG_ASK_ADD
+Ce melodii adăugați?
+MSG_ASK_DRAWER
+Ce folder?
+MSG_ASK_SAVE
+Salvați lista de redare ca
+MSG_ABOUT_TITLE
+Despre Player
+MSG_ABOUT
+%s\n\nMelodii din fișiere WAV, MP3, FLAC, Ogg Vorbis, AAC și AC-3,\nuna după alta, cu copertele lor,\nposturi din rețea\nși o imagine a sunetului.
+MSG_OK
+OK
+MSG_NO_SONG
+Nicio melodie
+MSG_TRACK_OF
+piesa %u din %u
+MSG_TRACK
+piesa %u
+MSG_COMPOSED_BY
+compusă de %s
+MSG_CHAPTER
+Capitolul %u din %u
+MSG_SOUND
+Sunet
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+melodia %u din %u
+MSG_NO_SOUND
+fără sunet
+MSG_NO_STREAM_FREE
+niciun flux liber
+MSG_LIVE
+în direct
+MSG_BUFFERING
+încărcare în buffer
+MSG_BUFFERING_PERCENT
+Încărcare în buffer %u%%
+MSG_STATION_IDLE
+Un post: porniți redarea pentru a-l asculta
+MSG_CALLING
+Se apelează postul
+MSG_NO_MEMORY_STATION
+Memorie insuficientă pentru post
+MSG_ALL_STREAMS_USED
+Toate fluxurile de sunet sunt ocupate
+MSG_NO_SOUND_HERE
+Această mașină nu are sunet
+MSG_NO_AUDIO_STREAM
+audio.device nu a deschis un flux
+MSG_KEPT_ALREADY
+Deja păstrat: %s
+MSG_KEPT
+Păstrat: %s
+MSG_NO_MEMORY_KEEP
+Memorie insuficientă pentru a păstra postul
+MSG_NO_MEMORY_SEARCH
+Memorie insuficientă pentru căutare
+MSG_SEARCHING
+Se caută
+MSG_ASKING
+Se întreabă %s
+MSG_NONE_FOUND
+Niciun post găsit
+MSG_ONE_FOUND
+Un post găsit
+MSG_COUNT_FOUND
+Posturi găsite: %u
+MSG_NO_NETWORK
+Fără rețea: lipsește bsdsocket.library
+MSG_NO_HTTP
+Lipsește http.library
+MSG_NO_MEMORY_CONNECTION
+Memorie insuficientă pentru conexiune
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info nu are adresă
+MSG_SERVICE_NO_ANSWER
+radio-browser.info nu a răspuns la căutare
+MSG_SERVICE_UNREACHED
+radio-browser.info nu a putut fi contactat
+MSG_SERVICE_NONSENSE
+Răspunsul de la radio-browser.info nu are sens
+MSG_SEARCH_FAILED
+Căutarea a eșuat
+MSG_NO_SIGNAL
+Niciun semnal liber pentru post
+MSG_NO_TIMER
+timer.device nu a putut fi deschis
+MSG_LISTS_ONLY
+Listele postului duc doar la alte liste
+MSG_STATION_STOPPED
+Postul a încetat să emită
+MSG_STATION_ANSWERED
+Postul a răspuns
+MSG_SENDS_AAC
+Postul emite AAC, care nu este redat
+MSG_STATION_ENDED
+Postul a încheiat conexiunea
+MSG_SENDS_HLS
+Postul emite HLS, care nu este redat
+MSG_LIST_EMPTY
+Lista postului nu numește niciun post
+MSG_LIST_TOO_LONG
+Lista postului numește o adresă prea lungă
+MSG_NOT_AN_ADDRESS
+Aceasta nu este o adresă de ascultat
+MSG_NONSENSE
+Răspunsul postului nu are sens
+MSG_NOLIBRARY
+%s: nu se poate deschide %s\n
+MSG_NOMEMORY
+%s: memorie insuficientă pentru fereastră\n
+MSG_NOBUFFERS
+%s: memorie insuficientă pentru sunet\n
+MSG_NOWINDOW
+%s: nicio fereastră\n
+MSG_MENU_EQUALIZER
+Egalizator
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Osciloscop
+MSG_MENU_METERS
+Indicatoare de nivel
+MSG_MENU_WHOLE_SCREEN
+Ecran complet

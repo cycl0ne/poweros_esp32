@@ -1,0 +1,25 @@
+# LOCALE:Languages/bulgarski.language - Bulgarian: the words locale.library
+# writes and reads dates in. Its letters sort in the order of their
+# codes, without their marks, which the library has for every Cyrillic
+# letter. A word left out is the English one; a word with a blank is in
+# quotes.
+#
+# The days, then their short names.
+DAY_1=неделя DAY_2=понеделник DAY_3=вторник DAY_4=сряда
+DAY_5=четвъртък DAY_6=петък DAY_7=събота
+ABDAY_1=нд ABDAY_2=пн ABDAY_3=вт ABDAY_4=ср ABDAY_5=чт ABDAY_6=пт
+ABDAY_7=сб
+# The months, then their short names.
+MON_1=януари MON_2=февруари MON_3=март MON_4=април MON_5=май
+MON_6=юни MON_7=юли MON_8=август MON_9=септември MON_10=октомври
+MON_11=ноември MON_12=декември
+ABMON_1=яну ABMON_2=фев ABMON_3=мар ABMON_4=апр ABMON_5=май
+ABMON_6=юни ABMON_7=юли ABMON_8=авг ABMON_9=сеп ABMON_10=окт
+ABMON_11=ное ABMON_12=дек
+# Yes and no, before and after noon.
+YESSTR=Да NOSTR=Не AM_STR=пр.об. PM_STR=сл.об.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Вчера TODAYSTR=Днес TOMORROWSTR=Утре
+FUTURESTR=Бъдеще

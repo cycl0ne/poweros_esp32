@@ -57,14 +57,20 @@ English needs none. The whole list stays the order a catalog is looked
 for in (below). `sdk.prefs.locale` reads the file and writes it, as the
 Region page does.
 
-The countries there are: australia, belgie, belgique, canada,
-canada_francais, danmark, deutschland, espana, france, great_britain,
-hanguk, india, italia, nederland, nihon, norge, osterreich, portugal,
-schweiz, suisse, sverige, svizzera, taiwan, united_kingdom,
-united_states and zhongguo. The languages: dansk, deutsch, espanol,
-francais, hangugeo, hindi, italiano, nederlands, nihongo, norsk,
-portugues, svenska, zhongwen and zhongwen-fanti, and english, which is
-built in. A file is named by the language's own word for itself, in
+The countries there are: australia, belgie, belgique, bulgaria,
+canada, canada_francais, cesko, danmark, deutschland, eesti, eire,
+ellada, espana, france, great_britain, hanguk, hrvatska, india,
+island, italia, kypros, latvija, lietuva, luxembourg, magyarorszag,
+malta, nederland, nihon, norge, osterreich, polska, portugal, romania,
+rossija, schweiz, slovenija, slovensko, suisse, suomi, sverige,
+svizzera, taiwan, turkiye, ukrajina, united_kingdom, united_states and
+zhongguo. The languages: bulgarski, cestina, dansk, deutsch, eesti,
+ellinika, espanol, francais, gaeilge, hangugeo, hindi, hrvatski,
+islenska, italiano, latviesu, lietuviu, magyar, malti, nederlands,
+nihongo, norsk, polski, portugues, romana, russkij, slovencina,
+slovenscina, suomi, svenska, turkce, ukrainska, zhongwen,
+zhongwen-fanti, and english, which is built in.
+A file is named by the language's own word for itself, in
 ASCII, so that any keyboard types it. India and Hindi are on the
 64-bit machines' disks only, where `FONTS:devanagari` is, the font
 their words are drawn in: `COUNTRY=india` writes
@@ -340,17 +346,24 @@ keeps them open.
 
 Notepad, Sheet, the Player and Movie have their texts in catalogs,
 German on the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`),
-and so have the Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`)
-and the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`); their
-descriptors and translations are beside their sources. The same
-catalogs are there in Hindi (`LOCALE:Catalogs/hindi/`), Japanese
-(`nihongo/`), Korean (`hangugeo/`) and Chinese in the simplified
-characters (`zhongwen/`) on the 64-bit machines' disks - a `Catalog`
-that is `.wide = true` in the build goes on those only. These
-translations are drafts that no reader of the language has gone
-through yet, as each one's first lines say. A gadget's shortcut in the
-Hindi ones is a Devanagari letter, which a keyboard reaches with the
-`inscript` keymap ([Keymaps](#keymaps)). In the Japanese, Korean and Chinese ones it is the
+and so have the Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`),
+the Emoji commodity, the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`)
+and http.library; their descriptors and translations are beside their
+sources. The same catalogs are there in every other language of
+`LOCALE:Languages` but zhongwen-fanti: the languages of Europe on every
+disk, Hindi (`LOCALE:Catalogs/hindi/`), Japanese (`nihongo/`), Korean
+(`hangugeo/`) and Chinese in the simplified characters (`zhongwen/`) on
+the 64-bit machines' disks, without the Emoji commodity's. The build
+makes them from two lists in `src/disk/build.zig`: `languages`, each
+`wide` when its script's fonts are on the 64-bit disks alone, and
+`translated_strings`, each descriptor with the drawer of its `.ct`
+files - a translation for every language, or the ones `only` names.
+Every translation but the German is a draft that no reader of the
+language has gone through yet, as each one's first lines say. A
+gadget's shortcut in the Hindi ones is a Devanagari letter, which a
+keyboard reaches with the `inscript` keymap ([Keymaps](#keymaps)); in
+the Greek and Cyrillic ones a letter of that script, which the `gr`,
+`bg`, `ru`, `ua`, `rs` and `mk` keymaps type. In the Japanese, Korean and Chinese ones it is the
 English text's letter in parentheses behind the label (`保存(_S)`,
 `열기(_O)...`): a keymap types none of these scripts' characters, and
 the key stays the one the English label has.
@@ -389,9 +402,8 @@ dos.library's calls, and keeps the library in memory from then on:
 dos's texts are described in `src/rom/libs/dos/text/dos.cd`, each by its
 code; a ROM test keeps the descriptor and dos's table the same. The
 German translation beside it is built into the disk's
-`LOCALE:Catalogs/deutsch/sys/dos.catalog`, the Hindi, Japanese, Korean
-and Chinese ones into their languages' drawers
-(`LOCALE:Catalogs/hindi/sys/dos.catalog`).
+`LOCALE:Catalogs/deutsch/sys/dos.catalog`, the other languages' into
+their drawers (`LOCALE:Catalogs/francais/sys/dos.catalog`).
 
 ## The code set
 

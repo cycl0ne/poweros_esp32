@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; Sheet's strings in Maltese.
+MSG_MENU_PROJECT
+Proġett
+MSG_MENU_NEW
+Ġdid
+MSG_MENU_OPEN
+Iftaħ...
+MSG_MENU_SAVE
+Issejvja
+MSG_MENU_SAVE_AS
+Issejvja bħala...
+MSG_MENU_QUIT
+Oħroġ
+MSG_MENU_EDIT
+Editja
+MSG_MENU_UNDO
+Erġa' lura
+MSG_MENU_REDO
+Erġa' agħmel
+MSG_MENU_CUT
+Aqta'
+MSG_MENU_COPY
+Ikkopja
+MSG_MENU_PASTE
+Waħħal
+MSG_MENU_CLEAR
+Battal
+MSG_MENU_FILL_DOWN
+Imla 'l isfel
+MSG_MENU_FILL_RIGHT
+Imla lejn il-lemin
+MSG_MENU_SELECT_ALL
+Agħżel kollox
+MSG_MENU_FIND
+Sib...
+MSG_MENU_FIND_NEXT
+Sib li jmiss
+MSG_MENU_SHEET
+Folja
+MSG_MENU_INSERT_ROWS
+Daħħal ringieli
+MSG_MENU_DELETE_ROWS
+Ħassar ringieli
+MSG_MENU_INSERT_COLUMNS
+Daħħal kolonni
+MSG_MENU_DELETE_COLUMNS
+Ħassar kolonni
+MSG_MENU_WIDER
+Kolonna usa'
+MSG_MENU_NARROWER
+Kolonna idjaq
+MSG_MENU_SUM
+Somma awtomatika
+MSG_MENU_SORT_ASCENDING
+Issortja axxendenti
+MSG_MENU_SORT_DESCENDING
+Issortja dixxendenti
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+Ġenerali
+MSG_MENU_NUMBER
+Numru
+MSG_MENU_PERCENT
+Persentaġġ
+MSG_MENU_CURRENCY
+Munita
+MSG_MENU_DECIMALS_MORE
+Aktar deċimali
+MSG_MENU_DECIMALS_LESS
+Inqas deċimali
+MSG_MENU_VIEW
+Dehra
+MSG_MENU_RIBBON
+Żigarella
+MSG_RIBBON_HOME
+Dar
+MSG_RIBBON_CLIPBOARD
+Clipboard
+MSG_RIBBON_PASTE_HINT
+Waħħal dak li nqata' jew ġie kkupjat
+MSG_RIBBON_NUMBER_HINT
+Uri n-numri b'deċimali u separatur tal-eluf
+MSG_RIBBON_PERCENT_HINT
+Uri n-numri bħala persentaġġ
+MSG_RIBBON_CURRENCY_HINT
+Uri n-numri bħala flus
+MSG_RIBBON_DECIMALS_MORE_HINT
+Uri deċimali waħda aktar
+MSG_RIBBON_DECIMALS_LESS_HINT
+Uri deċimali waħda inqas
+MSG_RIBBON_CELLS
+Ċelloli
+MSG_RIBBON_INSERT
+Daħħal
+MSG_RIBBON_INSERT_HINT
+Daħħal ringieli jew kolonni fejn huma magħżula ċ-ċelloli
+MSG_RIBBON_DELETE
+Ħassar
+MSG_RIBBON_DELETE_HINT
+Neħħi r-ringieli jew il-kolonni taċ-ċelloli magħżula
+MSG_RIBBON_EDITING
+Editjar
+MSG_RIBBON_SUM_HINT
+Żid flimkien in-numri ta' fuq jew fuq ix-xellug
+MSG_RIBBON_SORT
+Issortja
+MSG_RIBBON_SORT_HINT
+Poġġi r-ringieli f'ordni skont il-kolonna taċ-ċellola attwali
+MSG_RIBBON_FIND
+Sib
+MSG_RIBBON_FIND_HINT
+Sib ċellola skont x'fiha
+MSG_RIBBON_FILL
+Imla
+MSG_RIBBON_FILL_HINT
+Ikkopja l-ewwel ringiela jew kolonna fuq il-bqija
+MSG_RIBBON_CLEAR_HINT
+Battal iċ-ċelloli magħżula
+MSG_ROWS
+Ringieli
+MSG_COLUMNS
+Kolonni
+MSG_SUM
+Somma
+MSG_AVERAGE
+Medja
+MSG_COUNT
+Għadd
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Axxendenti
+MSG_DESCENDING
+Dixxendenti
+MSG_DOWN
+'L isfel
+MSG_RIGHT
+Lejn il-lemin
+MSG_PROBLEM_NAME
+L-ebda funzjoni jew isem bħal dan
+MSG_PROBLEM_ARGUMENTS
+Numru ħażin ta' argumenti
+MSG_PROBLEM_PARENTHESES
+Parentesi m'għandhiex sieħba
+MSG_PROBLEM_TOO_LONG
+Il-formula twila wisq
+MSG_PROBLEM_UNREADABLE
+Il-formula ma tistax tinqara
+MSG_PROBLEM_AT
+%s, fil-karattru %u
+MSG_NO_MEMORY_KEEP
+M'hemmx biżżejjed memorja biex jinżamm dan kollu
+MSG_NO_MEMORY_FILE
+M'hemmx biżżejjed memorja għall-fajl kollu
+MSG_LEFT_OUT
+Iċ-ċelloli lil hinn mir-ringiela 9999 jew mill-kolonna IV tħallew barra
+MSG_NO_MEMORY_COPY
+M'hemmx memorja biex jiġi kkupjat daqshekk
+MSG_NO_MEMORY_CLEAR
+M'hemmx biżżejjed memorja biex jitbattal kollox
+MSG_NO_MEMORY_PASTE
+M'hemmx biżżejjed memorja biex jitwaħħal kollox
+MSG_NO_ROOM_COLUMNS
+M'hemmx spazju: l-aħħar kolonni fihom xi ħaġa
+MSG_NO_ROOM_ROWS
+M'hemmx spazju: l-aħħar ringieli fihom xi ħaġa
+MSG_NO_MEMORY_THAT
+M'hemmx biżżejjed memorja għal dan
+MSG_NO_MEMORY_FORMAT
+M'hemmx biżżejjed memorja biex jiġi fformattjat kollox
+MSG_NOTHING_TO_ADD
+M'hemmx numri x'jinżiedu fuq jew fuq ix-xellug
+MSG_NO_MEMORY_ALL
+M'hemmx biżżejjed memorja għal dan kollu
+MSG_NO_MEMORY_SORT
+M'hemmx biżżejjed memorja biex jiġi sortjat kollox
+MSG_NO_MEMORY_FILL
+M'hemmx biżżejjed memorja biex jimtela kollox
+MSG_NOT_FOUND
+L-ebda ċellola ma fiha dan
+MSG_UNTITLED
+Bla titlu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s ma jistax jinfetaħ
+MSG_CANNOT_READ
+%s ma jistax jinqara
+MSG_TOO_BIG
+%s kbir wisq
+MSG_NO_MEMORY_FOR
+M'hemmx memorja għal %s
+MSG_NO_MEMORY_TO_SAVE
+M'hemmx memorja biex jiġi ssejvjat %s
+MSG_CANNOT_WRITE
+%s ma jistax jinkiteb
+MSG_NO_REQUESTER
+M'hemmx %s
+MSG_CHANGED
+Il-folja nbidlet.\nTissejvjaha l-ewwel?
+MSG_CHANGED_BUTTONS
+Issejvja|Tissejvjax|Ikkanċella
+MSG_OPEN_TITLE
+Iftaħ folja
+MSG_SAVE_AS_TITLE
+Issejvja l-folja bħala
+MSG_FIND_LABEL
+Sib
+MSG_FIND_NEXT_BUTTON
+Li jmiss
+MSG_FIND_PREVIOUS_BUTTON
+Ta' qabel
+MSG_FIND_CLOSE_BUTTON
+Agħlaq
+MSG_NOLIBRARY
+M'hemmx %s\n
+MSG_NOSCREEN
+M'hemmx skrin prestabbilit - l-ebda wiri\n
+MSG_NOMEMORY
+M'hemmx memorja għat-tieqa\n

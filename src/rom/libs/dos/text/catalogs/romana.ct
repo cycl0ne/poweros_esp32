@@ -1,0 +1,380 @@
+## version $VER: sys/dos.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; dos.library's messages in Romanian.
+;
+SOFTWARE_FAILURE
+Eroare software
+;
+RUN_FAILED
+%s a eșuat, cod de retur %ld\n
+;
+USE_COUNT
+%TH UTILIZĂRI\n\n
+;
+NAME
+NUME
+;
+DISABLED
+%TH DEZACTIVAT\n
+;
+INTERNAL
+%TH INTERN\n
+;
+SYSTEM
+%TH SISTEM\n
+;
+FAULT
+Eroare %3ld
+;
+FAIL_LIMIT
+Limită de eșec: %ld\n
+;
+BAD_RETURN_CODE
+S-a indicat un cod de retur greșit
+;
+CURRENT_DIR
+Directorul curent
+;
+NO_RETURN_CODE
+Ultima comandă nu a setat un cod de retur
+;
+LAST_CMD_FAILED
+Ultima comandă a eșuat deoarece\x20
+;
+PROCESS_ENDING
+Procesul %N se încheie
+;
+REQUESTED_SIZE_TOO_SMALL
+Dimensiunea cerută este prea mică
+;
+REQUESTED_SIZE_TOO_LARGE
+Dimensiunea cerută este prea mare
+;
+CURRENT_STACK_SIZE
+Dimensiunea curentă a stivei este de %ld octeți\n
+;
+NEWSHELL_FAILED
+NewShell a eșuat
+;
+MISSING_ELSE_OR_ENDIF
+Lipsește ELSE sau ENDIF
+;
+MUST_BE_IN_CMD_FILE
+Trebuie să fie într-un fișier de comenzi
+;
+MORE_THAN_ONE_DIR
+Se potrivește mai mult de un director
+;
+CANT_SET
+Nu se poate seta %s\n
+;
+BLOCK_CORRUPT_DIR
+Blocul %ld: director deteriorat
+;
+BLOCK_CORRUPT_FILE
+Blocul %ld: fișier deteriorat
+;
+BLOCK_BAD_HEADER
+Blocul %ld: tip de antet greșit
+;
+BLOCK_OUT_OF_RANGE
+Blocul %ld este în afara intervalului
+;
+BLOCK_USED_TWICE
+Blocul %ld este folosit de două ori
+;
+VALIDATION_ERROR
+Eroare la validarea %b
+;
+ON_DISK_BLOCK
+în blocul %ld al discului
+;
+CHECKSUM_ERROR
+are o eroare de sumă de control
+;
+WRITE_ERROR
+are o eroare de scriere
+;
+READ_ERROR
+are o eroare de citire
+;
+UNABLE_CREATE_PROC
+Procesul nu poate fi creat\n
+;
+NEW_SHELL_PROCESS
+Proces Shell nou %ld\n
+;
+CANT_OPEN_FROM_FILE
+Nu se poate deschide fișierul FROM %s\n
+;
+SUSPEND_REBOOT
+Suspendare|Repornire
+;
+RETRY_CANCEL
+Reîncercare|Anulare
+;
+NO_ROOM_FOR_BITMAP
+Nu e loc pentru bitmap
+;
+CMD_TOO_LONG
+Comandă prea lungă
+;
+SHELL_ERROR
+Eroare shell:
+;
+CMDNAME_ERROR
+Eroare în numele comenzii
+;
+UNKNOWN_COMMAND
+Comandă necunoscută
+;
+LOAD_ERROR
+Nu se poate încărca
+;
+SYNTAX_ERROR
+eroare de sintaxă
+;
+REDIRECT_ERROR
+nu se poate deschide fișierul de redirecționare
+;
+ERROR
+Eroare\x20
+;
+EMPTY_STRING
+
+;
+DISK_CORRUPT
+Disc deteriorat - sarcină oprită
+;
+PROGRAM_FAILED
+Programul a eșuat (eroarea #
+;
+WAIT_FOR_ACTIVITY
+Așteptați terminarea activității discului.
+;
+IN_DEVICE
+în dispozitivul %s%s
+;
+IN_UNIT
+în unitatea %ld%s
+;
+YOU_MUST_REPLACE
+TREBUIE să puneți la loc volumul
+;
+READ_WRITE_ERROR
+are o eroare de citire/scriere
+;
+NO_DISK_PRESENT
+Niciun disc prezent
+;
+NOT_A_DOS_DISK
+Nu este un disc DOS
+;
+ANY_DRIVE
+în orice unitate
+;
+REPLACE_VOLUME
+Puneți la loc volumul
+;
+INSERT_VOLUME
+Introduceți volumul
+;
+IS_FULL
+este plin
+;
+IS_PROTECTED
+este protejat la scriere
+;
+IS_NOT_VALIDATED
+nu este validat
+;
+VOLUME
+Volumul
+;
+ERROR_NO_FREE_STORE
+nu este destulă memorie disponibilă
+;
+ERROR_TASK_TABLE_FULL
+tabela de procese este plină
+;
+ERROR_BAD_TEMPLATE
+șablon greșit
+;
+ERROR_BAD_NUMBER
+număr greșit
+;
+ERROR_REQUIRED_ARG_MISSING
+lipsește un argument obligatoriu
+;
+ERROR_KEY_NEEDS_ARG
+lipsește valoarea după cuvântul cheie
+;
+ERROR_TOO_MANY_ARGS
+număr greșit de argumente
+;
+ERROR_UNMATCHED_QUOTES
+ghilimele fără pereche
+;
+ERROR_LINE_TOO_LONG
+linie de argumente nevalidă sau prea lungă
+;
+ERROR_FILE_NOT_OBJECT
+fișierul nu este executabil
+;
+ERROR_INVALID_RESIDENT_LIBRARY
+bibliotecă rezidentă nevalidă
+;
+ERROR_OBJECT_IN_USE
+obiectul este în uz
+;
+ERROR_OBJECT_EXISTS
+obiectul există deja
+;
+ERROR_DIR_NOT_FOUND
+directorul nu a fost găsit
+;
+ERROR_OBJECT_NOT_FOUND
+obiectul nu a fost găsit
+;
+ERROR_BAD_STREAM_NAME
+descriere de fereastră nevalidă
+;
+ERROR_OBJECT_TOO_LARGE
+obiect prea mare
+;
+ERROR_ACTION_NOT_KNOWN
+tip de cerere de pachet necunoscut
+;
+ERROR_INVALID_COMPONENT_NAME
+nume de obiect nevalid
+;
+ERROR_INVALID_LOCK
+blocare de obiect nevalidă
+;
+ERROR_OBJECT_WRONG_TYPE
+obiectul nu este de tipul cerut
+;
+ERROR_DISK_NOT_VALIDATED
+discul nu este validat
+;
+ERROR_DISK_WRITE_PROTECTED
+discul este protejat la scriere
+;
+ERROR_RENAME_ACROSS_DEVICES
+s-a încercat redenumirea între dispozitive
+;
+ERROR_DIRECTORY_NOT_EMPTY
+directorul nu este gol
+;
+ERROR_TOO_MANY_LEVELS
+prea multe niveluri
+;
+ERROR_DEVICE_NOT_MOUNTED
+dispozitivul (sau volumul) nu este montat
+;
+ERROR_SEEK_ERROR
+eroare de poziționare
+;
+ERROR_COMMENT_TOO_BIG
+comentariul este prea lung
+;
+ERROR_DISK_FULL
+discul este plin
+;
+ERROR_DELETE_PROTECTED
+obiectul este protejat la ștergere
+;
+ERROR_WRITE_PROTECTED
+fișierul este protejat la scriere
+;
+ERROR_READ_PROTECTED
+fișierul este protejat la citire
+;
+ERROR_NOT_A_DOS_DISK
+nu este un disc DOS valid
+;
+ERROR_NO_DISK
+niciun disc în unitate
+;
+ERROR_NO_MORE_ENTRIES
+nu mai sunt intrări în director
+;
+ERROR_IS_SOFT_LINK
+obiectul este o legătură simbolică
+;
+ERROR_OBJECT_LINKED
+obiectul este legat
+;
+ERROR_BAD_HUNK
+hunk greșit în fișierul de încărcat
+;
+ERROR_NOT_IMPLEMENTED
+funcție neimplementată
+;
+ERROR_RECORD_NOT_LOCKED
+înregistrarea nu este blocată
+;
+ERROR_LOCK_COLLISION
+conflict la blocarea înregistrării
+;
+ERROR_LOCK_TIMEOUT
+timpul de blocare a înregistrării a expirat
+;
+ERROR_UNLOCK_ERROR
+eroare la deblocarea înregistrării
+;
+ABORT_BUSY
+apelantul nu trebuia întrebat
+;
+ABORT_DISK_ERROR
+eroare de citire sau scriere pe volum
+;
+ERROR_BUFFER_OVERFLOW
+depășire de buffer
+;
+ERROR_BREAK
+***Întrerupere
+;
+ERROR_NOT_EXECUTABLE
+fișierul nu este executabil
+;
+ERROR_INVALID_ARGUMENT
+argument nevalid
+;
+ERROR_INVALID_DOS_ENTRY
+intrare nevalidă în lista de dispozitive
+;
+ERROR_NO_INPUT_STREAM
+niciun flux de intrare
+;
+ERROR_BUFFER_TOO_SMALL
+buffer prea mic
+;
+ERROR_NO_PROCESS
+nu este un proces
+;
+ERROR_NO_HANDLER
+niciun handler
+;
+ERROR_PACKET_ASYNC
+pachet în afara rândului
+;
+ERROR_ERROR_IN_PACKET
+eroare în pachet
+;
+ERROR_NO_CURRENT_DIRECTORY
+niciun director curent
+;
+ERROR_HANDLER_NOT_LOADED
+handlerul nu este încărcat
+;
+ERROR_HANDLER_START_ERROR
+handlerul nu a putut porni
+;
+ERROR_BROKEN_PIPE
+celălalt capăt al pipe-ului a dispărut
+;
+ERROR_BAD_CHECKSUM
+eroare de sumă de control: datele citite nu sunt cele scrise
+;

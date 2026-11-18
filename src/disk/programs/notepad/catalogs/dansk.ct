@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; Notepad's strings in Danish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Ny
+MSG_MENU_OPEN
+Åbn...
+MSG_MENU_SAVE
+Gem
+MSG_MENU_SAVE_AS
+Gem som...
+MSG_MENU_QUIT
+Afslut
+MSG_MENU_EDIT
+Rediger
+MSG_MENU_UNDO
+Fortryd
+MSG_MENU_REDO
+Gentag
+MSG_MENU_CUT
+Klip
+MSG_MENU_COPY
+Kopiér
+MSG_MENU_PASTE
+Sæt ind
+MSG_MENU_SELECT_ALL
+Markér alt
+MSG_MENU_SEARCH
+Søg
+MSG_MENU_FIND
+Søg...
+MSG_MENU_FIND_NEXT
+Søg næste
+MSG_MENU_FIND_PREVIOUS
+Søg forrige
+MSG_MENU_REPLACE
+Erstat...
+MSG_MENU_VIEW
+Vis
+MSG_MENU_WRAP
+Automatisk linjeskift
+MSG_MENU_NUMBERS
+Linjenumre
+MSG_MENU_ZIG
+Zig-fremhævning
+MSG_MENU_RIBBON
+Bånd
+MSG_RIBBON_HOME
+Hjem
+MSG_RIBBON_CLIPBOARD
+Udklipsholder
+MSG_RIBBON_PASTE_HINT
+Indsæt det, der blev klippet eller kopieret
+MSG_RIBBON_EDITING
+Redigering
+MSG_RIBBON_FIND
+Søg
+MSG_RIBBON_FIND_HINT
+Søg efter en tekst; listen finder den næste igen, eller den forrige
+MSG_RIBBON_REPLACE
+Erstat
+MSG_RIBBON_REPLACE_HINT
+Sæt en anden tekst i stedet for en fundet
+MSG_RIBBON_SELECT_ALL_HINT
+Markér hele teksten
+MSG_RIBBON_LINES
+Linjer
+MSG_RIBBON_WRAP_HINT
+Fortsæt på næste linje i stedet for forbi vinduets kant
+MSG_RIBBON_NUMBERS_HINT
+Nummerér hver linje til venstre
+MSG_RIBBON_HIGHLIGHTING
+Fremhævning
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Vis Zigs nøgleord, strenge og kommentarer hver i sin farve
+MSG_UNTITLED
+Unavngivet
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan ikke åbne %s
+MSG_CANNOT_READ
+Kan ikke læse %s
+MSG_TOO_BIG
+%s er for stor
+MSG_NO_MEMORY_FOR
+Ingen hukommelse til %s
+MSG_NO_MEMORY_TO_SAVE
+Ingen hukommelse til at gemme %s
+MSG_CANNOT_WRITE
+Kan ikke skrive %s
+MSG_NO_REQUESTER
+Ingen %s
+MSG_CHANGED
+Teksten er ændret.\nGem den først?
+MSG_CHANGED_BUTTONS
+Gem|Gem ikke|Annuller
+MSG_OPEN_TITLE
+Åbn en tekst
+MSG_SAVE_AS_TITLE
+Gem teksten som
+MSG_FIND_TITLE
+Søg og erstat
+MSG_FIND_LABEL
+Søg
+MSG_REPLACE_WITH
+Erstat med
+MSG_ANY_CASE
+Ignorer store/små bogstaver
+MSG_FIND_NEXT_BUTTON
+Søg næste
+MSG_REPLACE_BUTTON
+Erstat
+MSG_REPLACE_ALL_BUTTON
+Erstat alle
+MSG_NOLIBRARY
+Ingen %s\n
+MSG_NOSCREEN
+Ingen standardskærm - ingen visning\n
+MSG_NOMEMORY
+Ingen hukommelse til vinduet\n

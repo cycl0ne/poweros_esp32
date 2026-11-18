@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; http.library's words for a request that failed, in Greek: a clause in lower case, without its full stop.
+MSG_NOMEM
+δεν υπάρχει μνήμη
+MSG_IO
+η σύνδεση απέτυχε
+MSG_IO_BECAUSE
+η σύνδεση απέτυχε: %s
+MSG_STOPPED
+διακόπηκε
+MSG_TIMEOUT
+ο διακομιστής δεν απάντησε εγκαίρως
+MSG_URL
+δεν είναι URL http:// ή https://, ή είναι πολύ μεγάλο
+MSG_HOST
+ο υπολογιστής δεν έχει διεύθυνση
+MSG_HOST_NAMED
+το %s δεν έχει διεύθυνση
+MSG_TLS
+η περίοδος λειτουργίας TLS απέτυχε
+MSG_TLS_CERTIFICATE
+το πιστοποιητικό του διακομιστή δεν είναι αξιόπιστο: %s
+MSG_TLS_CLOCK
+το ρολόι δεν έχει ρυθμιστεί, οπότε δεν μπορεί να ελεγχθεί κανένα πιστοποιητικό (TimeSync)
+MSG_TLS_ALERT
+ο διακομιστής απέρριψε την περίοδο λειτουργίας TLS (alert %u)
+MSG_TLS_HANDSHAKE
+η χειραψία TLS απέτυχε
+MSG_PROTOCOL
+η απάντηση δεν είναι HTTP
+MSG_REDIRECT
+περισσότερες ανακατευθύνσεις από όσες επιτρέπονται, ή μία προς το πουθενά
+MSG_TRUNCATED
+η σύνδεση έκλεισε πριν τελειώσει η απάντηση
+MSG_STATE
+μια κλήση εκτός σειράς, ή ένα αίτημα που δεν μπορεί να γίνει
+MSG_LIBRARY
+λείπει μια βιβλιοθήκη που χρειάζεται το αίτημα
+MSG_LIBRARY_NAMED
+το %s λείπει
+MSG_DATA
+η συμπιεσμένη απάντηση του διακομιστή δεν αποσυμπιέζεται
+MSG_CLOSED
+ο διακομιστής έκλεισε τη σύνδεση χωρίς να απαντήσει
+MSG_UNKNOWN
+το αίτημα απέτυχε (%d)
+MSG_VERDICT_MALFORMED
+ένα από τα πιστοποιητικά του δεν διαβάζεται
+MSG_VERDICT_UNKNOWN_ISSUER
+δεν το υπέγραψε καμία αξιόπιστη ρίζα
+MSG_VERDICT_BAD_SIGNATURE
+μια υπογραφή στην αλυσίδα του είναι λάθος
+MSG_VERDICT_UNSUPPORTED
+είναι υπογεγραμμένο με τρόπο που δεν μπορεί να ελεγχθεί
+MSG_VERDICT_EXPIRED
+έχει λήξει
+MSG_VERDICT_NOT_YET_VALID
+δεν ισχύει ακόμη
+MSG_VERDICT_NOT_CA
+εκδόθηκε από πιστοποιητικό που δεν επιτρέπεται να εκδίδει
+MSG_VERDICT_PATH_LENGTH
+η αλυσίδα του είναι μεγαλύτερη από όσο επιτρέπουν οι αρχές της
+MSG_VERDICT_NAME_CONSTRAINTS
+μια αρχή στην αλυσίδα του έχει περιορισμούς ονομάτων
+MSG_VERDICT_WRONG_USAGE
+δεν προορίζεται για διακομιστή
+MSG_VERDICT_WRONG_NAME
+είναι για άλλον υπολογιστή
+MSG_VERDICT_TOO_LONG
+η αλυσίδα του είναι πολύ μεγάλη
+MSG_VERDICT_OTHER
+χωρίς να δοθεί λόγος

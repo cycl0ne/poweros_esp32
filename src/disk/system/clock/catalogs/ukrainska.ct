@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language ukrainska
+## codeset 106
+; Clock's strings in Ukrainian.
+MSG_WINDOW_TITLE
+Годинник
+MSG_MENU_PROJECT
+Проєкт
+MSG_MENU_ANALOG
+Стрілки
+MSG_MENU_DIGITAL
+Цифри
+MSG_MENU_ABOUT
+Про програму...
+MSG_MENU_QUIT
+Вихід
+MSG_MENU_SETTINGS
+Налаштування
+MSG_MENU_SECONDS
+Секунди
+MSG_MENU_DATE
+Дата
+MSG_MENU_24_HOURS
+24 години
+MSG_MENU_SAVE
+Зберегти налаштування
+MSG_ABOUT_TITLE
+Про «Годинник»
+MSG_ABOUT
+%s\n\nЧас на циферблаті або цифрами.\nПодвійне клацання у вікні перемикає їх.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Не вдалося зберегти налаштування в\n%s.
+MSG_NOLIBRARY
+%s: не вдається відкрити %s\n
+MSG_NOMEMORY
+%s: недостатньо пам'яті\n
+MSG_NOWINDOW
+%s: не вдається відкрити вікно\n

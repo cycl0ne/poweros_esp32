@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; Emoji's strings in Irish.
+MSG_SEARCH
+Cuardaigh
+MSG_USED
+Úsáidte le déanaí
+MSG_NONE_USED
+Níor úsáideadh aon cheann fós
+MSG_NOT_FOUND
+Níor aimsíodh aon cheann
+MSG_TONE_NONE
+Gan ton craicinn
+MSG_TONE_LIGHT
+Éadrom
+MSG_TONE_MEDIUM_LIGHT
+Meánéadrom
+MSG_TONE_MEDIUM
+Meánach
+MSG_TONE_MEDIUM_DARK
+Meándorcha
+MSG_TONE_DARK
+Dorcha
+MSG_GROUP_SMILEYS
+Straoiseoga & mothúcháin
+MSG_GROUP_PEOPLE
+Daoine & an corp
+MSG_GROUP_ANIMALS
+Ainmhithe & an dúlra
+MSG_GROUP_FOOD
+Bia & deoch
+MSG_GROUP_TRAVEL
+Taisteal & áiteanna
+MSG_GROUP_ACTIVITIES
+Gníomhaíochtaí
+MSG_GROUP_OBJECTS
+Rudaí
+MSG_GROUP_SYMBOLS
+Siombailí
+MSG_GROUP_FLAGS
+Bratacha

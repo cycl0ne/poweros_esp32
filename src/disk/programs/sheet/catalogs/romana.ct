@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; Sheet's strings in Romanian.
+MSG_MENU_PROJECT
+Proiect
+MSG_MENU_NEW
+Nou
+MSG_MENU_OPEN
+Deschidere...
+MSG_MENU_SAVE
+Salvare
+MSG_MENU_SAVE_AS
+Salvare ca...
+MSG_MENU_QUIT
+Ieșire
+MSG_MENU_EDIT
+Editare
+MSG_MENU_UNDO
+Anulare
+MSG_MENU_REDO
+Refacere
+MSG_MENU_CUT
+Decupare
+MSG_MENU_COPY
+Copiere
+MSG_MENU_PASTE
+Lipire
+MSG_MENU_CLEAR
+Golire
+MSG_MENU_FILL_DOWN
+Umplere în jos
+MSG_MENU_FILL_RIGHT
+Umplere la dreapta
+MSG_MENU_SELECT_ALL
+Selectare totală
+MSG_MENU_FIND
+Găsire...
+MSG_MENU_FIND_NEXT
+Găsire următor
+MSG_MENU_SHEET
+Foaie
+MSG_MENU_INSERT_ROWS
+Inserare rânduri
+MSG_MENU_DELETE_ROWS
+Ștergere rânduri
+MSG_MENU_INSERT_COLUMNS
+Inserare coloane
+MSG_MENU_DELETE_COLUMNS
+Ștergere coloane
+MSG_MENU_WIDER
+Coloană mai lată
+MSG_MENU_NARROWER
+Coloană mai îngustă
+MSG_MENU_SUM
+Însumare automată
+MSG_MENU_SORT_ASCENDING
+Sortare ascendentă
+MSG_MENU_SORT_DESCENDING
+Sortare descendentă
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+General
+MSG_MENU_NUMBER
+Număr
+MSG_MENU_PERCENT
+Procentaj
+MSG_MENU_CURRENCY
+Monedă
+MSG_MENU_DECIMALS_MORE
+Mai multe zecimale
+MSG_MENU_DECIMALS_LESS
+Mai puține zecimale
+MSG_MENU_VIEW
+Vizualizare
+MSG_MENU_RIBBON
+Panglică
+MSG_RIBBON_HOME
+Pornire
+MSG_RIBBON_CLIPBOARD
+Clipboard
+MSG_RIBBON_PASTE_HINT
+Lipește ce a fost decupat sau copiat
+MSG_RIBBON_NUMBER_HINT
+Afișează numerele cu zecimale și separator de mii
+MSG_RIBBON_PERCENT_HINT
+Afișează numerele ca procent
+MSG_RIBBON_CURRENCY_HINT
+Afișează numerele ca sume de bani
+MSG_RIBBON_DECIMALS_MORE_HINT
+Afișează o zecimală în plus
+MSG_RIBBON_DECIMALS_LESS_HINT
+Afișează o zecimală în minus
+MSG_RIBBON_CELLS
+Celule
+MSG_RIBBON_INSERT
+Inserare
+MSG_RIBBON_INSERT_HINT
+Inserează rânduri sau coloane unde sunt selectate celulele
+MSG_RIBBON_DELETE
+Ștergere
+MSG_RIBBON_DELETE_HINT
+Scoate rândurile sau coloanele celulelor selectate
+MSG_RIBBON_EDITING
+Editare
+MSG_RIBBON_SUM_HINT
+Adună numerele de deasupra sau din stânga
+MSG_RIBBON_SORT
+Sortare
+MSG_RIBBON_SORT_HINT
+Ordonează rândurile după coloana celulei curente
+MSG_RIBBON_FIND
+Găsire
+MSG_RIBBON_FIND_HINT
+Găsește o celulă după ce conține
+MSG_RIBBON_FILL
+Umplere
+MSG_RIBBON_FILL_HINT
+Copiază primul rând sau prima coloană peste celelalte
+MSG_RIBBON_CLEAR_HINT
+Golește celulele selectate
+MSG_ROWS
+Rânduri
+MSG_COLUMNS
+Coloane
+MSG_SUM
+Sumă
+MSG_AVERAGE
+Medie
+MSG_COUNT
+Număr
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Ascendent
+MSG_DESCENDING
+Descendent
+MSG_DOWN
+În jos
+MSG_RIGHT
+La dreapta
+MSG_PROBLEM_NAME
+Nu există o astfel de funcție sau nume
+MSG_PROBLEM_ARGUMENTS
+Număr greșit de argumente
+MSG_PROBLEM_PARENTHESES
+O paranteză nu are pereche
+MSG_PROBLEM_TOO_LONG
+Formula este prea lungă
+MSG_PROBLEM_UNREADABLE
+Formula nu poate fi citită
+MSG_PROBLEM_AT
+%s, la caracterul %u
+MSG_NO_MEMORY_KEEP
+Memorie insuficientă pentru a păstra toate acestea
+MSG_NO_MEMORY_FILE
+Memorie insuficientă pentru tot fișierul
+MSG_LEFT_OUT
+Celulele de după rândul 9999 sau coloana IV au fost omise
+MSG_NO_MEMORY_COPY
+Memorie insuficientă pentru a copia atât de mult
+MSG_NO_MEMORY_CLEAR
+Memorie insuficientă pentru a goli tot
+MSG_NO_MEMORY_PASTE
+Memorie insuficientă pentru a lipi tot
+MSG_NO_ROOM_COLUMNS
+Nu e loc: ultimele coloane conțin ceva
+MSG_NO_ROOM_ROWS
+Nu e loc: ultimele rânduri conțin ceva
+MSG_NO_MEMORY_THAT
+Memorie insuficientă pentru aceasta
+MSG_NO_MEMORY_FORMAT
+Memorie insuficientă pentru a formata tot
+MSG_NOTHING_TO_ADD
+Nu există numere de adunat deasupra sau în stânga
+MSG_NO_MEMORY_ALL
+Memorie insuficientă pentru toate acestea
+MSG_NO_MEMORY_SORT
+Memorie insuficientă pentru a sorta tot
+MSG_NO_MEMORY_FILL
+Memorie insuficientă pentru a umple tot
+MSG_NOT_FOUND
+Nicio celulă nu conține asta
+MSG_UNTITLED
+Fără titlu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Nu se poate deschide %s
+MSG_CANNOT_READ
+Nu se poate citi %s
+MSG_TOO_BIG
+%s este prea mare
+MSG_NO_MEMORY_FOR
+Memorie insuficientă pentru %s
+MSG_NO_MEMORY_TO_SAVE
+Memorie insuficientă pentru a salva %s
+MSG_CANNOT_WRITE
+Nu se poate scrie %s
+MSG_NO_REQUESTER
+Lipsește %s
+MSG_CHANGED
+Foaia s-a modificat.\nO salvați mai întâi?
+MSG_CHANGED_BUTTONS
+Salvare|Nu salvați|Anulare
+MSG_OPEN_TITLE
+Deschideți o foaie
+MSG_SAVE_AS_TITLE
+Salvați foaia ca
+MSG_FIND_LABEL
+Găsire
+MSG_FIND_NEXT_BUTTON
+Următor
+MSG_FIND_PREVIOUS_BUTTON
+Anterior
+MSG_FIND_CLOSE_BUTTON
+Închidere
+MSG_NOLIBRARY
+Lipsește %s\n
+MSG_NOSCREEN
+Niciun ecran implicit - nicio afișare\n
+MSG_NOMEMORY
+Memorie insuficientă pentru fereastră\n

@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; Emoji's strings in Icelandic.
+MSG_SEARCH
+Leita
+MSG_USED
+Síðast notað
+MSG_NONE_USED
+Ekkert notað enn
+MSG_NOT_FOUND
+Ekkert fannst
+MSG_TONE_NONE
+Enginn húðlitur
+MSG_TONE_LIGHT
+Ljós
+MSG_TONE_MEDIUM_LIGHT
+Meðalljós
+MSG_TONE_MEDIUM
+Meðal
+MSG_TONE_MEDIUM_DARK
+Meðaldökk
+MSG_TONE_DARK
+Dökk
+MSG_GROUP_SMILEYS
+Broskallar & tilfinningar
+MSG_GROUP_PEOPLE
+Fólk & líkami
+MSG_GROUP_ANIMALS
+Dýr & náttúra
+MSG_GROUP_FOOD
+Matur & drykkur
+MSG_GROUP_TRAVEL
+Ferðalög & staðir
+MSG_GROUP_ACTIVITIES
+Afþreying
+MSG_GROUP_OBJECTS
+Hlutir
+MSG_GROUP_SYMBOLS
+Tákn
+MSG_GROUP_FLAGS
+Fánar

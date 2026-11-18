@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language espanol
+## codeset 106
+; Clock's strings in Spanish.
+MSG_WINDOW_TITLE
+Reloj
+MSG_MENU_PROJECT
+Proyecto
+MSG_MENU_ANALOG
+Analógico
+MSG_MENU_DIGITAL
+Digital
+MSG_MENU_ABOUT
+Acerca de...
+MSG_MENU_QUIT
+Salir
+MSG_MENU_SETTINGS
+Ajustes
+MSG_MENU_SECONDS
+Segundos
+MSG_MENU_DATE
+Fecha
+MSG_MENU_24_HOURS
+24 horas
+MSG_MENU_SAVE
+Guardar ajustes
+MSG_ABOUT_TITLE
+Acerca de Reloj
+MSG_ABOUT
+%s\n\nLa hora, en una esfera o en cifras.\nUn doble clic en la ventana cambia de una a otra.
+MSG_OK
+Aceptar
+MSG_NOT_SAVED
+No se pudieron guardar los ajustes en\n%s.
+MSG_NOLIBRARY
+%s: no se puede abrir %s\n
+MSG_NOMEMORY
+%s: no hay memoria suficiente\n
+MSG_NOWINDOW
+%s: no se puede abrir su ventana\n

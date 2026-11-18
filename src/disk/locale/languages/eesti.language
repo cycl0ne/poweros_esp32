@@ -1,0 +1,25 @@
+# LOCALE:Languages/eesti.language - Estonian: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=pühapäev DAY_2=esmaspäev DAY_3=teisipäev DAY_4=kolmapäev
+DAY_5=neljapäev DAY_6=reede DAY_7=laupäev
+ABDAY_1=P ABDAY_2=E ABDAY_3=T ABDAY_4=K ABDAY_5=N
+ABDAY_6=R ABDAY_7=L
+# The months, then their short names.
+MON_1=jaanuar MON_2=veebruar MON_3=märts MON_4=aprill MON_5=mai
+MON_6=juuni MON_7=juuli MON_8=august MON_9=september MON_10=oktoober
+MON_11=november MON_12=detsember
+ABMON_1=jaan ABMON_2=veebr ABMON_3=märts ABMON_4=apr ABMON_5=mai
+ABMON_6=juuni ABMON_7=juuli ABMON_8=aug ABMON_9=sept ABMON_10=okt
+ABMON_11=nov ABMON_12=dets
+# Yes and no, before and after noon.
+YESSTR=Jah NOSTR=Ei AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Eile TODAYSTR=Täna TOMORROWSTR=Homme
+FUTURESTR=Tulevik
+# The order of the letters: Š, Z and Ž after S, and Õ, Ä, Ö and Ü after W.
+AFTER_S=Š,Z,Ž AFTER_W=Õ,Ä,Ö,Ü

@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; The Player's strings in Latvian.
+MSG_MENU_PROJECT
+Projekts
+MSG_MENU_OPEN
+Atvērt...
+MSG_MENU_OPEN_DRAWER
+Atvērt mapi...
+MSG_MENU_OPEN_URL
+Atvērt URL...
+MSG_MENU_SAVE_PLAYLIST
+Saglabāt atskaņošanas sarakstu...
+MSG_MENU_ABOUT
+Par
+MSG_MENU_QUIT
+Iziet
+MSG_MENU_PLAYLIST
+Atskaņošanas saraksts
+MSG_MENU_ADD
+Pievienot...
+MSG_MENU_REMOVE
+Noņemt
+MSG_MENU_CLEAR
+Notīrīt
+MSG_MENU_SHUFFLE
+Jaukt
+MSG_MENU_REPEAT
+Atkārtot
+MSG_MENU_REPEAT_OFF
+Izslēgts
+MSG_MENU_REPEAT_ALL
+Visus
+MSG_MENU_REPEAT_ONE
+Vienu
+MSG_MENU_PICTURE
+Attēls
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Vilnis
+MSG_MENU_BARS
+Stabiņi
+MSG_MENU_SETTINGS
+Iestatījumi
+MSG_MENU_REMEMBER
+Atcerēties, kur palika
+MSG_PAGE_PLAYING
+Pašlaik skan
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Jūsu stacijas
+MSG_VIEW_FOUND
+Atrastās
+MSG_NAME
+Nosaukums
+MSG_GENRE
+Žanrs
+MSG_COUNTRY
+Valsts
+MSG_COLUMN_TITLE
+Nosaukums
+MSG_COLUMN_ARTIST
+Izpildītājs
+MSG_COLUMN_TIME
+Laiks
+MSG_COLUMN_STATION
+Stacija
+MSG_COLUMN_ADDRESS
+Adrese
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Žanri
+MSG_SHUFFLE_BUTTON
+_Jaukt
+MSG_SHUFFLE_HINT
+Atskaņot dziesmas jauktā secībā
+MSG_REPEAT_BUTTON
+_Atkārtot
+MSG_REPEAT_HINT
+Atskaņot sarakstu vēlreiz vai vienu dziesmu
+MSG_MUTE_BUTTON
+_Klusināt
+MSG_MUTE_HINT
+Izslēgt skaņu un ieslēgt atkal
+MSG_LENGTH_HINT
+Dziesmas garums vai tas, cik no tās atlicis
+MSG_ADD_BUTTON
+_Pievienot...
+MSG_REMOVE_BUTTON
+_Noņemt
+MSG_CLEAR_BUTTON
+No_tīrīt
+MSG_OUTPUT_LABEL
+_Izvade
+MSG_SEARCH_BUTTON
+_Meklēt
+MSG_KEEP_BUTTON
+_Saglabāt
+MSG_FORGET_BUTTON
+Ai_zmirst
+MSG_FIND_LABEL
+At_rast
+MSG_BY_LABEL
+_laukā
+MSG_URL_TITLE
+Atvērt URL
+MSG_URL_ADDRESS
+A_drese
+MSG_URL_OPEN
+_Atvērt
+MSG_URL_CANCEL
+At_celt
+MSG_ASK_PLAY
+Kuras dziesmas?
+MSG_ASK_ADD
+Kuras dziesmas pievienot?
+MSG_ASK_DRAWER
+Kuru mapi?
+MSG_ASK_SAVE
+Saglabāt atskaņošanas sarakstu kā
+MSG_ABOUT_TITLE
+Par Player
+MSG_ABOUT
+%s\n\nDziesmas no WAV, MP3, FLAC, Ogg Vorbis, AAC un AC-3 failiem,\nviena pēc otras, ar to vāciņiem,\nstacijas no tīkla\nun skaņas attēls.
+MSG_OK
+Labi
+MSG_NO_SONG
+Nav dziesmas
+MSG_TRACK_OF
+celiņš %u no %u
+MSG_TRACK
+celiņš %u
+MSG_COMPOSED_BY
+komponists: %s
+MSG_CHAPTER
+Nodaļa %u no %u
+MSG_SOUND
+Skaņa
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+dziesma %u no %u
+MSG_NO_SOUND
+nav skaņas
+MSG_NO_STREAM_FREE
+nav brīvas plūsmas
+MSG_LIVE
+tiešraide
+MSG_BUFFERING
+buferizē
+MSG_BUFFERING_PERCENT
+Buferizē %u%%
+MSG_STATION_IDLE
+Stacija: atskaņošana to ieslēdz
+MSG_CALLING
+Savienojas ar staciju
+MSG_NO_MEMORY_STATION
+Nav atmiņas stacijai
+MSG_ALL_STREAMS_USED
+Visas skaņas plūsmas ir aizņemtas
+MSG_NO_SOUND_HERE
+Šim datoram nav skaņas
+MSG_NO_AUDIO_STREAM
+audio.device neatvēra plūsmu
+MSG_KEPT_ALREADY
+Jau saglabāta: %s
+MSG_KEPT
+Saglabāta: %s
+MSG_NO_MEMORY_KEEP
+Nav atmiņas, lai saglabātu staciju
+MSG_NO_MEMORY_SEARCH
+Nav atmiņas meklēšanai
+MSG_SEARCHING
+Meklē
+MSG_ASKING
+Vaicā %s
+MSG_NONE_FOUND
+Neviena stacija nav atrasta
+MSG_ONE_FOUND
+Atrasta viena stacija
+MSG_COUNT_FOUND
+Atrastas stacijas: %u
+MSG_NO_NETWORK
+Nav tīkla: nav bsdsocket.library
+MSG_NO_HTTP
+Nav http.library
+MSG_NO_MEMORY_CONNECTION
+Nav atmiņas savienojumam
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info nav adreses
+MSG_SERVICE_NO_ANSWER
+radio-browser.info neatbildēja uz meklēšanu
+MSG_SERVICE_UNREACHED
+radio-browser.info nebija sasniedzams
+MSG_SERVICE_NONSENSE
+radio-browser.info atbildei nav jēgas
+MSG_SEARCH_FAILED
+Meklēšana neizdevās
+MSG_NO_SIGNAL
+Stacijai nav brīva signāla
+MSG_NO_TIMER
+timer.device neatvērās
+MSG_LISTS_ONLY
+Stacijas saraksti ved tikai uz citiem sarakstiem
+MSG_STATION_STOPPED
+Stacija pārtrauca raidīt
+MSG_STATION_ANSWERED
+Stacija atbildēja
+MSG_SENDS_AAC
+Stacija raida AAC, kas netiek atskaņots
+MSG_STATION_ENDED
+Stacija beidza savienojumu
+MSG_SENDS_HLS
+Stacija raida HLS, kas netiek atskaņots
+MSG_LIST_EMPTY
+Stacijas saraksts nenosauc nevienu staciju
+MSG_LIST_TOO_LONG
+Stacijas saraksts nosauc pārāk garu adresi
+MSG_NOT_AN_ADDRESS
+Šī nav adrese, ko klausīties
+MSG_NONSENSE
+Stacijas atbildei nav jēgas
+MSG_NOLIBRARY
+%s: nevar atvērt %s\n
+MSG_NOMEMORY
+%s: nav atmiņas logam\n
+MSG_NOBUFFERS
+%s: nav atmiņas skaņai\n
+MSG_NOWINDOW
+%s: nav loga\n
+MSG_MENU_EQUALIZER
+Ekvalaizers
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Osciloskops
+MSG_MENU_METERS
+Līmeņa mērītāji
+MSG_MENU_WHOLE_SCREEN
+Pilnekrāns

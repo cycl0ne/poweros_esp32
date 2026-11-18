@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; Movie's strings in Dutch.
+MSG_MENU_PROJECT
+Project
+MSG_MENU_OPEN
+Openen...
+MSG_MENU_WHOLE_SCREEN
+Volledig scherm
+MSG_MENU_ABOUT
+Over
+MSG_MENU_QUIT
+Afsluiten
+MSG_MENU_SOUND
+Geluid
+MSG_MENU_NO_SOUND
+Geen
+MSG_MENU_SUBTITLES
+Ondertitels
+MSG_MENU_SUBTITLES_OFF
+Uit
+MSG_MENU_TRACK
+Spoor
+MSG_MENU_FRAME_RATE
+Beeldsnelheid
+MSG_MENU_INFO
+Filminformatie...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u overgeslagen
+MSG_ASK_OPEN
+Een film afspelen
+MSG_ABOUT_TITLE
+Over Movie
+MSG_ABOUT
+%s\n\nSpeelt films af - MP4, MOV van QuickTime en MKV van Matroska:\nbeeld in H.264, H.265 en Motion JPEG,\ngeluid in AAC, AC-3, MP3, FLAC en Vorbis, en ondertitels.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nkan niet worden afgespeeld:\n%s
+MSG_INFO_TITLE
+Filminformatie
+MSG_INFO_FILE
+Bestand
+MSG_INFO_NAMED
+Titel
+MSG_INFO_CONTAINER
+Container
+MSG_INFO_LENGTH
+Lengte
+MSG_INFO_PICTURES
+Beeld
+MSG_INFO_COLOURS
+Kleuren
+MSG_INFO_BITS
+%u bits
+MSG_INFO_LIMITED
+beperkt bereik
+MSG_INFO_FULL
+volledig bereik
+MSG_INFO_SHOWN
+Weergave
+MSG_INFO_ON_LAYER
+op de videolaag van het scherm
+MSG_INFO_BY_GRAPHICS
+getekend door graphics.library
+MSG_INFO_DECODED
+Gedecodeerd
+MSG_INFO_BY_CHIP
+door de videodecoder
+MSG_INFO_BY_PROCESSOR
+door de processor
+MSG_INFO_SOUND
+Geluid
+MSG_INFO_NONE
+geen
+MSG_INFO_CHANNELS
+%u kanalen
+MSG_INFO_TRACKS
+Sporen
+MSG_INFO_TRACK_COUNTS
+%u geluid, %u ondertitels
+MSG_VOLUME_HINT
+Volume
+MSG_NOLIBRARY
+%s: kan %s niet openen\n
+MSG_NOMEMORY
+%s: niet genoeg geheugen\n
+MSG_NOWINDOW
+%s: kan zijn venster niet openen\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

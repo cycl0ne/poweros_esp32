@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; Clock's strings in Hungarian.
+MSG_WINDOW_TITLE
+Óra
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analóg
+MSG_MENU_DIGITAL
+Digitális
+MSG_MENU_ABOUT
+Névjegy...
+MSG_MENU_QUIT
+Kilépés
+MSG_MENU_SETTINGS
+Beállítások
+MSG_MENU_SECONDS
+Másodpercek
+MSG_MENU_DATE
+Dátum
+MSG_MENU_24_HOURS
+24 órás
+MSG_MENU_SAVE
+Beállítások mentése
+MSG_ABOUT_TITLE
+Az Óra névjegye
+MSG_ABOUT
+%s\n\nAz idő számlapon vagy számokkal.\nDupla kattintás az ablakban vált a kettő között.
+MSG_OK
+OK
+MSG_NOT_SAVED
+A beállításokat nem lehetett menteni ide:\n%s.
+MSG_NOLIBRARY
+%s: %s nem nyitható meg\n
+MSG_NOMEMORY
+%s: nincs elég memória\n
+MSG_NOWINDOW
+%s: az ablak nem nyitható meg\n

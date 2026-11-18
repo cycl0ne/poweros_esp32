@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language italiano
+## codeset 106
+; Notepad's strings in Italian.
+MSG_MENU_PROJECT
+Progetto
+MSG_MENU_NEW
+Nuovo
+MSG_MENU_OPEN
+Apri...
+MSG_MENU_SAVE
+Salva
+MSG_MENU_SAVE_AS
+Salva con nome...
+MSG_MENU_QUIT
+Esci
+MSG_MENU_EDIT
+Modifica
+MSG_MENU_UNDO
+Annulla
+MSG_MENU_REDO
+Ripeti
+MSG_MENU_CUT
+Taglia
+MSG_MENU_COPY
+Copia
+MSG_MENU_PASTE
+Incolla
+MSG_MENU_SELECT_ALL
+Seleziona tutto
+MSG_MENU_SEARCH
+Cerca
+MSG_MENU_FIND
+Trova...
+MSG_MENU_FIND_NEXT
+Trova successivo
+MSG_MENU_FIND_PREVIOUS
+Trova precedente
+MSG_MENU_REPLACE
+Sostituisci...
+MSG_MENU_VIEW
+Visualizza
+MSG_MENU_WRAP
+A capo automatico
+MSG_MENU_NUMBERS
+Numeri di riga
+MSG_MENU_ZIG
+Evidenziazione Zig
+MSG_MENU_RIBBON
+Barra multifunzione
+MSG_RIBBON_HOME
+Home
+MSG_RIBBON_CLIPBOARD
+Appunti
+MSG_RIBBON_PASTE_HINT
+Incolla ciò che è stato tagliato o copiato
+MSG_RIBBON_EDITING
+Modifica
+MSG_RIBBON_FIND
+Trova
+MSG_RIBBON_FIND_HINT
+Trova un testo; l'elenco trova di nuovo il successivo, o il precedente
+MSG_RIBBON_REPLACE
+Sostituisci
+MSG_RIBBON_REPLACE_HINT
+Metti un altro testo al posto di quello trovato
+MSG_RIBBON_SELECT_ALL_HINT
+Seleziona tutto il testo
+MSG_RIBBON_LINES
+Righe
+MSG_RIBBON_WRAP_HINT
+Continua nella riga successiva invece che oltre il bordo della finestra
+MSG_RIBBON_NUMBERS_HINT
+Numera ogni riga a sinistra
+MSG_RIBBON_HIGHLIGHTING
+Evidenziazione
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Mostra parole chiave, stringhe e commenti di Zig ciascuno in un colore
+MSG_UNTITLED
+Senza titolo
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Impossibile aprire %s
+MSG_CANNOT_READ
+Impossibile leggere %s
+MSG_TOO_BIG
+%s è troppo grande
+MSG_NO_MEMORY_FOR
+Memoria insufficiente per %s
+MSG_NO_MEMORY_TO_SAVE
+Memoria insufficiente per salvare %s
+MSG_CANNOT_WRITE
+Impossibile scrivere %s
+MSG_NO_REQUESTER
+Manca %s
+MSG_CHANGED
+Il testo è cambiato.\nSalvarlo prima?
+MSG_CHANGED_BUTTONS
+Salva|Non salvare|Annulla
+MSG_OPEN_TITLE
+Apri un testo
+MSG_SAVE_AS_TITLE
+Salva il testo con nome
+MSG_FIND_TITLE
+Trova e sostituisci
+MSG_FIND_LABEL
+Trova
+MSG_REPLACE_WITH
+Sostituisci con
+MSG_ANY_CASE
+Maiuscole/minuscole indifferenti
+MSG_FIND_NEXT_BUTTON
+Trova successivo
+MSG_REPLACE_BUTTON
+Sostituisci
+MSG_REPLACE_ALL_BUTTON
+Sostituisci tutto
+MSG_NOLIBRARY
+Manca %s\n
+MSG_NOSCREEN
+Nessuno schermo predefinito - nessuna visualizzazione\n
+MSG_NOMEMORY
+Memoria insufficiente per la finestra\n

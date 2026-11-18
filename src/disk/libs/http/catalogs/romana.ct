@@ -1,0 +1,79 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; http.library's words for a request that failed, in Romanian: a clause
+; that starts in lower case, without its full stop.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+memorie insuficientă
+MSG_IO
+conexiunea a eșuat
+MSG_IO_BECAUSE
+conexiunea a eșuat: %s
+MSG_STOPPED
+oprit
+MSG_TIMEOUT
+serverul nu a răspuns la timp
+MSG_URL
+nu este un URL http:// sau https://, ori este prea lung
+MSG_HOST
+gazda nu are adresă
+MSG_HOST_NAMED
+%s nu are adresă
+MSG_TLS
+sesiunea TLS a eșuat
+MSG_TLS_CERTIFICATE
+certificatul serverului nu este de încredere: %s
+MSG_TLS_CLOCK
+ceasul nu este potrivit, deci niciun certificat nu poate fi verificat (TimeSync)
+MSG_TLS_ALERT
+serverul a refuzat sesiunea TLS (alertă %u)
+MSG_TLS_HANDSHAKE
+negocierea TLS a eșuat
+MSG_PROTOCOL
+răspunsul nu este HTTP
+MSG_REDIRECT
+mai multe redirecționări decât sunt permise, sau una către nicăieri
+MSG_TRUNCATED
+conexiunea s-a încheiat înaintea răspunsului
+MSG_STATE
+un apel făcut când nu îi era rândul, sau o cerere care nu poate fi făcută
+MSG_LIBRARY
+lipsește o bibliotecă de care are nevoie cererea
+MSG_LIBRARY_NAMED
+lipsește %s
+MSG_DATA
+răspunsul comprimat al serverului nu poate fi decomprimat
+MSG_CLOSED
+serverul a închis conexiunea fără să răspundă
+MSG_UNKNOWN
+cererea a eșuat (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+unul dintre certificatele sale nu poate fi citit
+MSG_VERDICT_UNKNOWN_ISSUER
+nicio rădăcină de încredere nu l-a semnat
+MSG_VERDICT_BAD_SIGNATURE
+o semnătură din lanțul său este greșită
+MSG_VERDICT_UNSUPPORTED
+este semnat într-un mod care nu poate fi verificat
+MSG_VERDICT_EXPIRED
+a expirat
+MSG_VERDICT_NOT_YET_VALID
+nu este încă valabil
+MSG_VERDICT_NOT_CA
+a fost emis de un certificat care nu are voie să emită
+MSG_VERDICT_PATH_LENGTH
+lanțul său este mai lung decât permit CA-urile sale
+MSG_VERDICT_NAME_CONSTRAINTS
+o CA din lanțul său are restricții de nume
+MSG_VERDICT_WRONG_USAGE
+nu este pentru un server
+MSG_VERDICT_WRONG_NAME
+este pentru altă gazdă
+MSG_VERDICT_TOO_LONG
+lanțul său este prea lung
+MSG_VERDICT_OTHER
+fără vreun motiv dat

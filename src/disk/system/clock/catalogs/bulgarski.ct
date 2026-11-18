@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; Clock's strings in Bulgarian.
+MSG_WINDOW_TITLE
+Часовник
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_ANALOG
+Аналогов
+MSG_MENU_DIGITAL
+Цифров
+MSG_MENU_ABOUT
+Относно...
+MSG_MENU_QUIT
+Изход
+MSG_MENU_SETTINGS
+Настройки
+MSG_MENU_SECONDS
+Секунди
+MSG_MENU_DATE
+Дата
+MSG_MENU_24_HOURS
+24 часа
+MSG_MENU_SAVE
+Запиши настройките
+MSG_ABOUT_TITLE
+Относно Часовник
+MSG_ABOUT
+%s\n\nЧасът – върху циферблат или с цифри.\nДвойно щракване в прозореца превключва между тях.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Настройките не можаха да бъдат запазени в\n%s.
+MSG_NOLIBRARY
+%s: %s не може да бъде отворена\n
+MSG_NOMEMORY
+%s: няма достатъчно памет\n
+MSG_NOWINDOW
+%s: прозорецът не може да бъде отворен\n

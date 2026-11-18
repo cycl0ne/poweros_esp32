@@ -1,0 +1,25 @@
+# LOCALE:Languages/slovenscina.language - Slovene: the words
+# locale.library writes and reads dates in, and the order letters sort
+# in. A word left out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=nedelja DAY_2=ponedeljek DAY_3=torek DAY_4=sreda DAY_5=četrtek
+DAY_6=petek DAY_7=sobota
+ABDAY_1=ned ABDAY_2=pon ABDAY_3=tor ABDAY_4=sre ABDAY_5=čet ABDAY_6=pet
+ABDAY_7=sob
+# The months, then their short names.
+MON_1=januar MON_2=februar MON_3=marec MON_4=april MON_5=maj
+MON_6=junij MON_7=julij MON_8=avgust MON_9=september MON_10=oktober
+MON_11=november MON_12=december
+ABMON_1=jan ABMON_2=feb ABMON_3=mar ABMON_4=apr ABMON_5=maj
+ABMON_6=jun ABMON_7=jul ABMON_8=avg ABMON_9=sep ABMON_10=okt
+ABMON_11=nov ABMON_12=dec
+# Yes and no, before and after noon.
+YESSTR=Da NOSTR=Ne AM_STR=dop. PM_STR=pop.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Včeraj TODAYSTR=Danes TOMORROWSTR=Jutri
+FUTURESTR=Prihodnost
+# The order of the letters: Č after C, Š after S and Ž after Z.
+AFTER_C=Č AFTER_S=Š AFTER_Z=Ž

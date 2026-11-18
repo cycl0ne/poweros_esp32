@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; Movie's strings in Turkish.
+MSG_MENU_PROJECT
+Proje
+MSG_MENU_OPEN
+Aç...
+MSG_MENU_WHOLE_SCREEN
+Tam ekran
+MSG_MENU_ABOUT
+Hakkında
+MSG_MENU_QUIT
+Çıkış
+MSG_MENU_SOUND
+Ses
+MSG_MENU_NO_SOUND
+Yok
+MSG_MENU_SUBTITLES
+Altyazılar
+MSG_MENU_SUBTITLES_OFF
+Kapalı
+MSG_MENU_TRACK
+Parça
+MSG_MENU_FRAME_RATE
+Kare hızı
+MSG_MENU_INFO
+Film bilgileri...
+MSG_FRAME_RATE
+%u,%u / %u,%u kare/sn
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u kare/sn, %u atlandı
+MSG_ASK_OPEN
+Bir film oynat
+MSG_ABOUT_TITLE
+Movie hakkında
+MSG_ABOUT
+%s\n\nFilm oynatır - MP4, QuickTime MOV ve Matroska MKV:\nH.264, H.265 ve Motion JPEG görüntü,\nAAC, AC-3, MP3, FLAC ve Vorbis ses ve altyazılar.
+MSG_OK
+Tamam
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\noynatılamıyor:\n%s
+MSG_INFO_TITLE
+Film bilgileri
+MSG_INFO_FILE
+Dosya
+MSG_INFO_NAMED
+Başlık
+MSG_INFO_CONTAINER
+Kapsayıcı
+MSG_INFO_LENGTH
+Süre
+MSG_INFO_PICTURES
+Görüntü
+MSG_INFO_COLOURS
+Renkler
+MSG_INFO_BITS
+%u bit
+MSG_INFO_LIMITED
+sınırlı aralık
+MSG_INFO_FULL
+tam aralık
+MSG_INFO_SHOWN
+Gösterim
+MSG_INFO_ON_LAYER
+ekranın video katmanında
+MSG_INFO_BY_GRAPHICS
+graphics.library çiziyor
+MSG_INFO_DECODED
+Kod çözme
+MSG_INFO_BY_CHIP
+video kod çözücü ile
+MSG_INFO_BY_PROCESSOR
+işlemci ile
+MSG_INFO_SOUND
+Ses
+MSG_INFO_NONE
+yok
+MSG_INFO_CHANNELS
+%u kanal
+MSG_INFO_TRACKS
+Parçalar
+MSG_INFO_TRACK_COUNTS
+%u ses, %u altyazı
+MSG_VOLUME_HINT
+Ses düzeyi
+MSG_NOLIBRARY
+%s: %s açılamıyor\n
+MSG_NOMEMORY
+%s: yeterli bellek yok\n
+MSG_NOWINDOW
+%s: penceresi açılamıyor\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

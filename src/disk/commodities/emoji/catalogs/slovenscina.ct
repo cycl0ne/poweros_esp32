@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; Emoji's strings in Slovene.
+MSG_SEARCH
+Iskanje
+MSG_USED
+Nazadnje uporabljeno
+MSG_NONE_USED
+Nič še ni uporabljeno
+MSG_NOT_FOUND
+Nič ni najdeno
+MSG_TONE_NONE
+Brez barve kože
+MSG_TONE_LIGHT
+Svetla
+MSG_TONE_MEDIUM_LIGHT
+Srednje svetla
+MSG_TONE_MEDIUM
+Srednja
+MSG_TONE_MEDIUM_DARK
+Srednje temna
+MSG_TONE_DARK
+Temna
+MSG_GROUP_SMILEYS
+Smeški & čustva
+MSG_GROUP_PEOPLE
+Ljudje & telo
+MSG_GROUP_ANIMALS
+Živali & narava
+MSG_GROUP_FOOD
+Hrana & pijača
+MSG_GROUP_TRAVEL
+Potovanja & kraji
+MSG_GROUP_ACTIVITIES
+Dejavnosti
+MSG_GROUP_OBJECTS
+Predmeti
+MSG_GROUP_SYMBOLS
+Simboli
+MSG_GROUP_FLAGS
+Zastave

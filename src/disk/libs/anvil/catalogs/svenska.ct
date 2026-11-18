@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; The desktop's strings in Swedish.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Bakgrund
+MSG_MENU_EXECUTE
+Kör kommando...
+MSG_MENU_REDRAW_ALL
+Rita om allt
+MSG_MENU_UPDATE_ALL
+Uppdatera allt
+MSG_MENU_LAST_MESSAGE
+Senaste meddelande
+MSG_MENU_VOLUME
+Volym...
+MSG_MENU_ABOUT
+Om...
+MSG_MENU_QUIT
+Avsluta...
+MSG_MENU_REBOOT
+Starta om...
+MSG_MENU_WINDOW
+Fönster
+MSG_MENU_NEW_DRAWER
+Ny mapp
+MSG_MENU_OPEN_PARENT
+Öppna överordnad mapp
+MSG_MENU_BACK
+Bakåt
+MSG_MENU_FORWARD
+Framåt
+MSG_MENU_CLOSE
+Stäng
+MSG_MENU_UPDATE
+Uppdatera
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Markera innehåll
+MSG_MENU_CLEAN_UP
+Städa upp
+MSG_MENU_CLEAN_UP_BY
+Städa upp efter
+MSG_MENU_BY_NAME
+Namn
+MSG_MENU_BY_DATE
+Datum
+MSG_MENU_BY_SIZE
+Storlek
+MSG_MENU_SNAP
+Fäst vid rutnät
+MSG_MENU_ARRANGE
+Ordna vid storleksändring
+MSG_MENU_SNAPSHOT
+Spara position
+MSG_MENU_SNAPSHOT_WINDOW
+Fönster
+MSG_MENU_SNAPSHOT_ALL
+Allt
+MSG_MENU_SHOW
+Visa
+MSG_MENU_ONLY_ICONS
+Endast ikoner
+MSG_MENU_ALL_FILES
+Alla filer
+MSG_MENU_VIEW_BY
+Visa som
+MSG_MENU_BY_ICON
+Ikon
+MSG_MENU_RIBBON
+Menyfliksområde
+MSG_MENU_ICONS
+Ikoner
+MSG_MENU_OPEN
+Öppna
+MSG_MENU_COPY
+Kopiera
+MSG_MENU_RENAME
+Byt namn...
+MSG_MENU_INFORMATION
+Information...
+MSG_MENU_UNSNAPSHOT
+Glöm position
+MSG_MENU_LEAVE_OUT
+Lägg på skrivbordet
+MSG_MENU_PUT_AWAY
+Lägg tillbaka
+MSG_MENU_DELETE
+Ta bort...
+MSG_MENU_FORMAT
+Formatera disk...
+MSG_MENU_EMPTY_TRASH
+Töm papperskorgen
+MSG_MENU_TOOLS
+Verktyg
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_GO
+Gå till
+MSG_RIBBON_PARENT
+Upp
+MSG_RIBBON_DRAWER
+Mapp
+MSG_RIBBON_RENAME
+Byt namn
+MSG_RIBBON_DELETE
+Ta bort
+MSG_RIBBON_INFORMATION
+Information
+MSG_RIBBON_VIEW
+Visa
+MSG_RIBBON_ARRANGE
+Ordna
+MSG_LIST_PROTECTION
+Skydd
+MSG_LIST_DRAWER
+Mapp
+MSG_TITLE_MEMORY
+Minne
+MSG_TITLE_INTERNAL
+Internt
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+ledigt
+MSG_TITLE_BATTERY
+Batteri
+MSG_TITLE_CHARGING
+laddas
+MSG_TITLE_EXTERNAL_POWER
+extern ström
+MSG_DISK_FULL
+full
+MSG_DISK_IN_USE
+används
+MSG_NOTHING_SAID
+Inget har meddelats än
+MSG_NOT_EVERY_FILE
+Alla valda filer kunde inte tas med
+MSG_DISK_NOT_RENAMED
+Disken kunde inte byta namn
+MSG_NOT_RENAMED
+Det gick inte att byta namn
+MSG_ICON_NOT_WRITTEN
+En ikon kunde inte skrivas
+MSG_DISK_NOT_THERE
+Disken finns inte
+MSG_DISK_BUSY
+Disken används
+MSG_DISK_NOT_FORMATTED
+Disken kunde inte formateras
+MSG_DRAWER_NOT_MADE
+Mappen kunde inte skapas
+MSG_SETTING_NOT_KEPT
+%s kunde inte behållas
+MSG_SETTING_NOT_WRITTEN
+%s kunde inte skrivas till anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Mappens ikon kunde inte skrivas
+MSG_NO_MEMORY_REBOOT
+Inget minne för att starta om
+MSG_NO_MEMORY_ABOUT
+Inget minne för Om
+MSG_NO_TOOL
+%s har inget program som kan öppna den
+MSG_NOT_STARTED
+%s kunde inte startas
+MSG_COMMAND_NOT_STARTED
+Kommandot kunde inte startas
+MSG_SHELL_DRAWER_NOT_FOUND
+Shellens mapp hittades inte
+MSG_SHELL_NOT_STARTED
+Shellen kunde inte startas
+MSG_TRASH_OWN_DISK
+Bara filer från papperskorgens egen disk hamnar i dess papperskorg
+MSG_NOT_MOVED
+En fil kunde inte flyttas dit
+MSG_LEFT_OUT_NOT_KEPT
+Disken kommer inte ihåg vad som ligger på skrivbordet
+MSG_NO_MEMORY_WORK
+Inget minne för att påbörja arbetet
+MSG_QUIT_RUNNING_ADDED
+Program som startats från skrivbordet körs fortfarande (%lu).\nDe fortsätter att köras. Fönster, ikoner och\nmenyalternativ som program har lagt till (%lu)\nförsvinner med det.\n\nAvsluta skrivbordet?
+MSG_QUIT_RUNNING
+Program som startats från skrivbordet körs fortfarande (%lu).\nDe fortsätter att köras.\n\nAvsluta skrivbordet?
+MSG_QUIT_ADDED
+Fönster, ikoner och menyalternativ som program\nhar lagt till på skrivbordet (%lu) försvinner med det.\n\nAvsluta skrivbordet?
+MSG_QUIT_ASK
+Avsluta skrivbordet?
+MSG_QUIT_BUTTONS
+Avsluta|Avbryt
+MSG_DELETE_ASK
+Ta bort det markerade (%lu) för gott?\nEn mapp försvinner med allt sitt innehåll.
+MSG_DELETE_BUTTONS
+Ta bort|Avbryt
+MSG_RENAME_PROMPT
+Ett nytt namn:
+MSG_FORMAT_TITLE
+Formatera disk
+MSG_FORMAT_ASK
+Formatera %s?\nAllt på den går förlorat.
+MSG_FORMAT_BUTTONS
+Formatera|Avbryt
+MSG_NEW_DRAWER_PROMPT
+Ett namn på den nya mappen:
+MSG_UNNAMED
+Namnlös
+MSG_EXECUTE_TITLE
+Kör kommando
+MSG_EXECUTE_PROMPT
+Ett kommando att köra:
+MSG_OUTPUT
+Utdata
+MSG_REBOOT_TITLE
+Starta om
+MSG_REBOOT_ASK
+Starta om maskinen?\nDet som program inte har sparat går förlorat.
+MSG_REBOOT_BUTTONS
+Starta om|Avbryt
+MSG_REBOOT_IN_USE
+Används, så det de innehåller kanske inte skrivs ut:\n%s\n\nStarta om ändå?
+MSG_STARTUP_WAIT
+Programmet '%s'\nhar inte avslutats än.\nVänta lite till?
+MSG_STARTUP_BUTTONS
+Vänta|Fortsätt
+MSG_OK
+_OK
+MSG_CANCEL
+_Avbryt
+MSG_ABOUT_TITLE
+Om Anvil
+MSG_ABOUT_WHAT
+Skrivbordet i PowerOS
+MSG_ABOUT_RELEASE
+Utgåva
+MSG_ABOUT_KERNEL
+Kärna
+MSG_ABOUT_BOARD
+Kort
+MSG_ABOUT_PROCESSOR
+Processor
+MSG_ABOUT_CORES
+Kärnor
+MSG_ABOUT_CLOCK
+Klockfrekvens
+MSG_ABOUT_SCREEN
+Skärm
+MSG_ABOUT_SYSTEM_DISK
+Systemdisk
+MSG_ABOUT_UP_FOR
+Drifttid
+MSG_ABOUT_IN_USE
+Används
+MSG_ABOUT_OF
+av
+MSG_ABOUT_BITS
+bitar per pixel
+MSG_ABOUT_DAY
+dag
+MSG_ABOUT_DAYS
+dagar
+MSG_INFO_TITLE
+Information
+MSG_INFO_STATE
+Tillstånd
+MSG_INFO_READ_ONLY
+Skrivskyddad
+MSG_INFO_VALIDATING
+Valideras
+MSG_INFO_READ_WRITE
+Läsa och skriva
+MSG_INFO_UNKNOWN
+Okänd
+MSG_INFO_BLOCKS
+Block
+MSG_INFO_USED
+Använt
+MSG_INFO_FREE
+Ledigt
+MSG_INFO_BLOCK_SIZE
+Blockstorlek
+MSG_INFO_BYTES
+byte
+MSG_INFO_BLOCKS_COUNTED
+block
+MSG_INFO_CREATED
+Skapad
+MSG_INFO_LAST_CHANGED
+Senast ändrad
+MSG_INFO_SCRIPT
+Skript
+MSG_INFO_ARCHIVED
+Arkiverad
+MSG_INFO_READABLE
+Läsbar
+MSG_INFO_WRITABLE
+Skrivbar
+MSG_INFO_EXECUTABLE
+Körbar
+MSG_INFO_DELETABLE
+Borttagbar
+MSG_INFO_COMMENT
+Kommentar
+MSG_INFO_STACK
+Stack
+MSG_INFO_DEFAULT_TOOL
+Standardprogram
+MSG_INFO_TOOL_TYPES
+Verktygstyper
+MSG_INFO_SAVE
+_Spara
+MSG_INFO_NOT_WRITTEN
+Ikonen kunde inte skrivas.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Kopierar
+MSG_WORK_DELETING
+Tar bort
+MSG_WORK_STOP
+_Stoppa
+MSG_WORK_WAITING
+%lu till väntar
+MSG_WORK_REPLACE_ASK
+%s finns redan.\nErsätta den?
+MSG_WORK_REPLACE_BUTTONS
+Ersätt|Ersätt alla|Hoppa över|Stoppa

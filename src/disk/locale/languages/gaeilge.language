@@ -1,0 +1,24 @@
+# LOCALE:Languages/gaeilge.language - Irish: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1="Dé Domhnaigh" DAY_2="Dé Luain" DAY_3="Dé Máirt"
+DAY_4="Dé Céadaoin" DAY_5=Déardaoin DAY_6="Dé hAoine"
+DAY_7="Dé Sathairn"
+ABDAY_1=Domh ABDAY_2=Luan ABDAY_3=Máirt ABDAY_4=Céad ABDAY_5=Déar
+ABDAY_6=Aoine ABDAY_7=Sath
+# The months, then their short names.
+MON_1=Eanáir MON_2=Feabhra MON_3=Márta MON_4=Aibreán MON_5=Bealtaine
+MON_6=Meitheamh MON_7=Iúil MON_8=Lúnasa MON_9="Meán Fómhair"
+MON_10="Deireadh Fómhair" MON_11=Samhain MON_12=Nollaig
+ABMON_1=Ean ABMON_2=Feabh ABMON_3=Márta ABMON_4=Aib ABMON_5=Beal
+ABMON_6=Meith ABMON_7=Iúil ABMON_8=Lún ABMON_9=MFómh ABMON_10=DFómh
+ABMON_11=Samh ABMON_12=Noll
+# Yes and no, before and after noon.
+YESSTR=Tá NOSTR=Níl AM_STR=a.m. PM_STR=p.m.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=“ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Inné TODAYSTR=Inniu TOMORROWSTR=Amárach
+FUTURESTR=Todhchaí

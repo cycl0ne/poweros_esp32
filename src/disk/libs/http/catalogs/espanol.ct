@@ -1,0 +1,79 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language espanol
+## codeset 106
+; http.library's words for a request that failed, in Spanish: a clause
+; that starts in lower case, without its full stop.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+no hay memoria
+MSG_IO
+la conexión ha fallado
+MSG_IO_BECAUSE
+la conexión ha fallado: %s
+MSG_STOPPED
+detenido
+MSG_TIMEOUT
+el servidor no respondió a tiempo
+MSG_URL
+no es una URL http:// o https://, o es demasiado larga
+MSG_HOST
+el host no tiene dirección
+MSG_HOST_NAMED
+%s no tiene dirección
+MSG_TLS
+la sesión TLS ha fallado
+MSG_TLS_CERTIFICATE
+el certificado del servidor no es de confianza: %s
+MSG_TLS_CLOCK
+el reloj no está en hora, así que no se puede comprobar ningún certificado (TimeSync)
+MSG_TLS_ALERT
+el servidor rechazó la sesión TLS (alerta %u)
+MSG_TLS_HANDSHAKE
+la negociación TLS ha fallado
+MSG_PROTOCOL
+la respuesta no es HTTP
+MSG_REDIRECT
+más redirecciones de las permitidas, o una hacia ninguna parte
+MSG_TRUNCATED
+la conexión terminó antes que la respuesta
+MSG_STATE
+una llamada fuera de turno, o una petición que no se puede hacer
+MSG_LIBRARY
+falta una biblioteca que necesita la petición
+MSG_LIBRARY_NAMED
+falta %s
+MSG_DATA
+la respuesta comprimida del servidor no se puede descomprimir
+MSG_CLOSED
+el servidor cerró la conexión sin responder
+MSG_UNKNOWN
+la petición ha fallado (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+uno de sus certificados no se puede leer
+MSG_VERDICT_UNKNOWN_ISSUER
+ninguna raíz de confianza lo ha firmado
+MSG_VERDICT_BAD_SIGNATURE
+una firma de su cadena es incorrecta
+MSG_VERDICT_UNSUPPORTED
+está firmado de una forma que no se puede comprobar
+MSG_VERDICT_EXPIRED
+ha caducado
+MSG_VERDICT_NOT_YET_VALID
+aún no es válido
+MSG_VERDICT_NOT_CA
+lo emitió un certificado que no puede emitir otros
+MSG_VERDICT_PATH_LENGTH
+su cadena es más larga de lo que permiten sus CA
+MSG_VERDICT_NAME_CONSTRAINTS
+una CA de su cadena tiene restricciones de nombre
+MSG_VERDICT_WRONG_USAGE
+no es para un servidor
+MSG_VERDICT_WRONG_NAME
+es para otro host
+MSG_VERDICT_TOO_LONG
+su cadena es demasiado larga
+MSG_VERDICT_OTHER
+sin motivo indicado

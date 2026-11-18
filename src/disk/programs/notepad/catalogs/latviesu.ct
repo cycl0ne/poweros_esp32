@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; Notepad's strings in Latvian.
+MSG_MENU_PROJECT
+Projekts
+MSG_MENU_NEW
+Jauns
+MSG_MENU_OPEN
+Atvērt...
+MSG_MENU_SAVE
+Saglabāt
+MSG_MENU_SAVE_AS
+Saglabāt kā...
+MSG_MENU_QUIT
+Iziet
+MSG_MENU_EDIT
+Rediģēt
+MSG_MENU_UNDO
+Atsaukt
+MSG_MENU_REDO
+Atcelt atsaukšanu
+MSG_MENU_CUT
+Izgriezt
+MSG_MENU_COPY
+Kopēt
+MSG_MENU_PASTE
+Ielīmēt
+MSG_MENU_SELECT_ALL
+Atlasīt visu
+MSG_MENU_SEARCH
+Meklēšana
+MSG_MENU_FIND
+Atrast...
+MSG_MENU_FIND_NEXT
+Atrast nākamo
+MSG_MENU_FIND_PREVIOUS
+Atrast iepriekšējo
+MSG_MENU_REPLACE
+Aizstāt...
+MSG_MENU_VIEW
+Skats
+MSG_MENU_WRAP
+Teksta aplaušana
+MSG_MENU_NUMBERS
+Rindu numuri
+MSG_MENU_ZIG
+Zig iekrāsošana
+MSG_MENU_RIBBON
+Lente
+MSG_RIBBON_HOME
+Sākums
+MSG_RIBBON_CLIPBOARD
+Starpliktuve
+MSG_RIBBON_PASTE_HINT
+Ielīmēt to, kas izgriezts vai kopēts
+MSG_RIBBON_EDITING
+Rediģēšana
+MSG_RIBBON_FIND
+Atrast
+MSG_RIBBON_FIND_HINT
+Atrast tekstu; saraksts atrod nākamo vai iepriekšējo
+MSG_RIBBON_REPLACE
+Aizstāt
+MSG_RIBBON_REPLACE_HINT
+Aizstāt atrasto tekstu ar citu
+MSG_RIBBON_SELECT_ALL_HINT
+Atlasīt visu tekstu
+MSG_RIBBON_LINES
+Rindas
+MSG_RIBBON_WRAP_HINT
+Turpināt nākamajā rindā, nevis aiz loga malas
+MSG_RIBBON_NUMBERS_HINT
+Numurēt katru rindu kreisajā pusē
+MSG_RIBBON_HIGHLIGHTING
+Iekrāsošana
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Rādīt Zig atslēgvārdus, virknes un komentārus katru savā krāsā
+MSG_UNTITLED
+Bez nosaukuma
+MSG_OK
+Labi
+MSG_CANNOT_OPEN
+Nevar atvērt %s
+MSG_CANNOT_READ
+Nevar nolasīt %s
+MSG_TOO_BIG
+%s ir pārāk liels
+MSG_NO_MEMORY_FOR
+Nav atmiņas failam %s
+MSG_NO_MEMORY_TO_SAVE
+Nav atmiņas, lai saglabātu %s
+MSG_CANNOT_WRITE
+Nevar ierakstīt %s
+MSG_NO_REQUESTER
+Nav %s
+MSG_CHANGED
+Teksts ir mainīts.\nVispirms to saglabāt?
+MSG_CHANGED_BUTTONS
+Saglabāt|Nesaglabāt|Atcelt
+MSG_OPEN_TITLE
+Atvērt tekstu
+MSG_SAVE_AS_TITLE
+Saglabāt tekstu kā
+MSG_FIND_TITLE
+Atrast un aizstāt
+MSG_FIND_LABEL
+Atrast
+MSG_REPLACE_WITH
+Aizstāt ar
+MSG_ANY_CASE
+Neatkarīgi no reģistra
+MSG_FIND_NEXT_BUTTON
+Atrast nākamo
+MSG_REPLACE_BUTTON
+Aizstāt
+MSG_REPLACE_ALL_BUTTON
+Aizstāt visus
+MSG_NOLIBRARY
+Nav %s\n
+MSG_NOSCREEN
+Nav noklusējuma ekrāna - nav displeja\n
+MSG_NOMEMORY
+Nav atmiņas logam\n

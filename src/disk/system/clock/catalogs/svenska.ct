@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; Clock's strings in Swedish.
+MSG_WINDOW_TITLE
+Klocka
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analog
+MSG_MENU_DIGITAL
+Digital
+MSG_MENU_ABOUT
+Om...
+MSG_MENU_QUIT
+Avsluta
+MSG_MENU_SETTINGS
+Inställningar
+MSG_MENU_SECONDS
+Sekunder
+MSG_MENU_DATE
+Datum
+MSG_MENU_24_HOURS
+24 timmar
+MSG_MENU_SAVE
+Spara inställningar
+MSG_ABOUT_TITLE
+Om Klocka
+MSG_ABOUT
+%s\n\nTiden, på en urtavla eller i siffror.\nEtt dubbelklick i fönstret växlar mellan dem.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Inställningarna kunde inte sparas i\n%s.
+MSG_NOLIBRARY
+%s: kan inte öppna %s\n
+MSG_NOMEMORY
+%s: inte tillräckligt med minne\n
+MSG_NOWINDOW
+%s: kan inte öppna sitt fönster\n

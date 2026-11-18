@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; Notepad's strings in Bulgarian.
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_NEW
+Нов
+MSG_MENU_OPEN
+Отвори...
+MSG_MENU_SAVE
+Запиши
+MSG_MENU_SAVE_AS
+Запиши като...
+MSG_MENU_QUIT
+Изход
+MSG_MENU_EDIT
+Редактиране
+MSG_MENU_UNDO
+Отмени
+MSG_MENU_REDO
+Повтори
+MSG_MENU_CUT
+Изрежи
+MSG_MENU_COPY
+Копирай
+MSG_MENU_PASTE
+Постави
+MSG_MENU_SELECT_ALL
+Избери всичко
+MSG_MENU_SEARCH
+Търсене
+MSG_MENU_FIND
+Намери...
+MSG_MENU_FIND_NEXT
+Намери следващ
+MSG_MENU_FIND_PREVIOUS
+Намери предишен
+MSG_MENU_REPLACE
+Замени...
+MSG_MENU_VIEW
+Изглед
+MSG_MENU_WRAP
+Пренасяне на думи
+MSG_MENU_NUMBERS
+Номера на редовете
+MSG_MENU_ZIG
+Оцветяване на Zig
+MSG_MENU_RIBBON
+Лента
+MSG_RIBBON_HOME
+Начало
+MSG_RIBBON_CLIPBOARD
+Клипборд
+MSG_RIBBON_PASTE_HINT
+Поставя изрязаното или копираното
+MSG_RIBBON_EDITING
+Редактиране
+MSG_RIBBON_FIND
+Намери
+MSG_RIBBON_FIND_HINT
+Търси текст; списъкът намира следващия или предишния
+MSG_RIBBON_REPLACE
+Замени
+MSG_RIBBON_REPLACE_HINT
+Заменя намерения текст с друг
+MSG_RIBBON_SELECT_ALL_HINT
+Избира целия текст
+MSG_RIBBON_LINES
+Редове
+MSG_RIBBON_WRAP_HINT
+Продължава на следващия ред, вместо зад ръба на прозореца
+MSG_RIBBON_NUMBERS_HINT
+Номерира всеки ред отляво
+MSG_RIBBON_HIGHLIGHTING
+Оцветяване
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Показва ключовите думи, низовете и коментарите на Zig в различни цветове
+MSG_UNTITLED
+Без име
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s не може да бъде отворен
+MSG_CANNOT_READ
+%s не може да бъде прочетен
+MSG_TOO_BIG
+%s е твърде голям
+MSG_NO_MEMORY_FOR
+Няма памет за %s
+MSG_NO_MEMORY_TO_SAVE
+Няма памет за записване на %s
+MSG_CANNOT_WRITE
+%s не може да бъде записан
+MSG_NO_REQUESTER
+Няма %s
+MSG_CHANGED
+Текстът е променен.\nДа бъде ли записан първо?
+MSG_CHANGED_BUTTONS
+Запиши|Не записвай|Отказ
+MSG_OPEN_TITLE
+Отваряне на текст
+MSG_SAVE_AS_TITLE
+Записване на текста като
+MSG_FIND_TITLE
+Търсене и замяна
+MSG_FIND_LABEL
+Намери
+MSG_REPLACE_WITH
+Замени с
+MSG_ANY_CASE
+Без значение от регистъра
+MSG_FIND_NEXT_BUTTON
+Намери следващ
+MSG_REPLACE_BUTTON
+Замени
+MSG_REPLACE_ALL_BUTTON
+Замени всички
+MSG_NOLIBRARY
+Няма %s\n
+MSG_NOSCREEN
+Няма екран по подразбиране - няма дисплей\n
+MSG_NOMEMORY
+Няма памет за прозореца\n

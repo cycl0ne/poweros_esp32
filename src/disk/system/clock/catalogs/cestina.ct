@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; Clock's strings in Czech.
+MSG_WINDOW_TITLE
+Hodiny
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analogové
+MSG_MENU_DIGITAL
+Digitální
+MSG_MENU_ABOUT
+O aplikaci...
+MSG_MENU_QUIT
+Ukončit
+MSG_MENU_SETTINGS
+Nastavení
+MSG_MENU_SECONDS
+Sekundy
+MSG_MENU_DATE
+Datum
+MSG_MENU_24_HOURS
+24 hodin
+MSG_MENU_SAVE
+Uložit nastavení
+MSG_ABOUT_TITLE
+O aplikaci Hodiny
+MSG_ABOUT
+%s\n\nČas na ciferníku nebo v číslicích.\nDvojité kliknutí do okna mezi nimi přepíná.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Nastavení nelze uložit do\n%s.
+MSG_NOLIBRARY
+%s: nelze otevřít %s\n
+MSG_NOMEMORY
+%s: nedostatek paměti\n
+MSG_NOWINDOW
+%s: nelze otevřít okno\n

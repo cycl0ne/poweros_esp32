@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; Movie's strings in Lithuanian.
+MSG_MENU_PROJECT
+Projektas
+MSG_MENU_OPEN
+Atidaryti...
+MSG_MENU_WHOLE_SCREEN
+Visas ekranas
+MSG_MENU_ABOUT
+Apie
+MSG_MENU_QUIT
+Išeiti
+MSG_MENU_SOUND
+Garsas
+MSG_MENU_NO_SOUND
+Nėra
+MSG_MENU_SUBTITLES
+Subtitrai
+MSG_MENU_SUBTITLES_OFF
+Išjungti
+MSG_MENU_TRACK
+Takelis
+MSG_MENU_FRAME_RATE
+Kadrų dažnis
+MSG_MENU_INFO
+Informacija apie filmą...
+MSG_FRAME_RATE
+%u,%u / %u,%u kadr./s
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u kadr./s, praleista: %u
+MSG_ASK_OPEN
+Leisti filmą
+MSG_ABOUT_TITLE
+Apie Movie
+MSG_ABOUT
+%s\n\nLeidžia filmus - MP4, QuickTime MOV ir Matroska MKV:\nvaizdą H.264, H.265 ir Motion JPEG,\ngarsą AAC, AC-3, MP3, FLAC ir Vorbis, ir subtitrus.
+MSG_OK
+Gerai
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nnegalima paleisti:\n%s
+MSG_INFO_TITLE
+Informacija apie filmą
+MSG_INFO_FILE
+Failas
+MSG_INFO_NAMED
+Pavadinimas
+MSG_INFO_CONTAINER
+Konteineris
+MSG_INFO_LENGTH
+Trukmė
+MSG_INFO_PICTURES
+Vaizdas
+MSG_INFO_COLOURS
+Spalvos
+MSG_INFO_BITS
+%u bitų
+MSG_INFO_LIMITED
+ribotas diapazonas
+MSG_INFO_FULL
+visas diapazonas
+MSG_INFO_SHOWN
+Rodoma
+MSG_INFO_ON_LAYER
+ekrano vaizdo sluoksnyje
+MSG_INFO_BY_GRAPHICS
+piešia graphics.library
+MSG_INFO_DECODED
+Dekoduoja
+MSG_INFO_BY_CHIP
+vaizdo dekoderis
+MSG_INFO_BY_PROCESSOR
+procesorius
+MSG_INFO_SOUND
+Garsas
+MSG_INFO_NONE
+nėra
+MSG_INFO_CHANNELS
+kanalų: %u
+MSG_INFO_TRACKS
+Takeliai
+MSG_INFO_TRACK_COUNTS
+garso: %u, subtitrų: %u
+MSG_VOLUME_HINT
+Garsumas
+MSG_NOLIBRARY
+%s: nepavyksta atidaryti %s\n
+MSG_NOMEMORY
+%s: nepakanka atminties\n
+MSG_NOWINDOW
+%s: nepavyksta atidaryti lango\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

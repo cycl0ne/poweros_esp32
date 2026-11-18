@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language portugues
+## codeset 106
+; Movie's strings in Portuguese.
+MSG_MENU_PROJECT
+Projeto
+MSG_MENU_OPEN
+Abrir...
+MSG_MENU_WHOLE_SCREEN
+Ecrã inteiro
+MSG_MENU_ABOUT
+Acerca de
+MSG_MENU_QUIT
+Sair
+MSG_MENU_SOUND
+Som
+MSG_MENU_NO_SOUND
+Nenhum
+MSG_MENU_SUBTITLES
+Legendas
+MSG_MENU_SUBTITLES_OFF
+Desligadas
+MSG_MENU_TRACK
+Faixa
+MSG_MENU_FRAME_RATE
+Fotogramas por segundo
+MSG_MENU_INFO
+Informações do filme...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u perdidos
+MSG_ASK_OPEN
+Reproduzir um filme
+MSG_ABOUT_TITLE
+Acerca do Movie
+MSG_ABOUT
+%s\n\nReproduz filmes - MP4, MOV do QuickTime e MKV do Matroska:\nimagem H.264, H.265 e Motion JPEG,\nsom AAC, AC-3, MP3, FLAC e Vorbis, e legendas.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nnão pode ser reproduzido:\n%s
+MSG_INFO_TITLE
+Informações do filme
+MSG_INFO_FILE
+Ficheiro
+MSG_INFO_NAMED
+Título
+MSG_INFO_CONTAINER
+Contentor
+MSG_INFO_LENGTH
+Duração
+MSG_INFO_PICTURES
+Imagem
+MSG_INFO_COLOURS
+Cores
+MSG_INFO_BITS
+%u bits
+MSG_INFO_LIMITED
+gama limitada
+MSG_INFO_FULL
+gama completa
+MSG_INFO_SHOWN
+Apresentação
+MSG_INFO_ON_LAYER
+na camada de vídeo do ecrã
+MSG_INFO_BY_GRAPHICS
+desenhado pela graphics.library
+MSG_INFO_DECODED
+Descodificação
+MSG_INFO_BY_CHIP
+pelo descodificador de vídeo
+MSG_INFO_BY_PROCESSOR
+pelo processador
+MSG_INFO_SOUND
+Som
+MSG_INFO_NONE
+nenhum
+MSG_INFO_CHANNELS
+%u canais
+MSG_INFO_TRACKS
+Faixas
+MSG_INFO_TRACK_COUNTS
+%u de som, %u de legendas
+MSG_VOLUME_HINT
+Volume
+MSG_NOLIBRARY
+%s: não é possível abrir %s\n
+MSG_NOMEMORY
+%s: memória insuficiente\n
+MSG_NOWINDOW
+%s: não é possível abrir a sua janela\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

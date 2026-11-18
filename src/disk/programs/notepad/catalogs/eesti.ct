@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; Notepad's strings in Estonian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Uus
+MSG_MENU_OPEN
+Ava...
+MSG_MENU_SAVE
+Salvesta
+MSG_MENU_SAVE_AS
+Salvesta nimega...
+MSG_MENU_QUIT
+Välju
+MSG_MENU_EDIT
+Redigeeri
+MSG_MENU_UNDO
+Võta tagasi
+MSG_MENU_REDO
+Tee uuesti
+MSG_MENU_CUT
+Lõika
+MSG_MENU_COPY
+Kopeeri
+MSG_MENU_PASTE
+Kleebi
+MSG_MENU_SELECT_ALL
+Vali kõik
+MSG_MENU_SEARCH
+Otsing
+MSG_MENU_FIND
+Otsi...
+MSG_MENU_FIND_NEXT
+Otsi järgmine
+MSG_MENU_FIND_PREVIOUS
+Otsi eelmine
+MSG_MENU_REPLACE
+Asenda...
+MSG_MENU_VIEW
+Vaade
+MSG_MENU_WRAP
+Reamurdmine
+MSG_MENU_NUMBERS
+Reanumbrid
+MSG_MENU_ZIG
+Zigi esiletõst
+MSG_MENU_RIBBON
+Lint
+MSG_RIBBON_HOME
+Avaleht
+MSG_RIBBON_CLIPBOARD
+Lõikelaud
+MSG_RIBBON_PASTE_HINT
+Kleebi see, mis lõigati või kopeeriti
+MSG_RIBBON_EDITING
+Redigeerimine
+MSG_RIBBON_FIND
+Otsi
+MSG_RIBBON_FIND_HINT
+Otsi teksti; loend otsib uuesti järgmise, või eelmise
+MSG_RIBBON_REPLACE
+Asenda
+MSG_RIBBON_REPLACE_HINT
+Pane leitu asemele muu tekst
+MSG_RIBBON_SELECT_ALL_HINT
+Vali kogu tekst
+MSG_RIBBON_LINES
+Read
+MSG_RIBBON_WRAP_HINT
+Jätka järgmisel real, selle asemel et minna aknast välja
+MSG_RIBBON_NUMBERS_HINT
+Nummerda iga rida vasakul
+MSG_RIBBON_HIGHLIGHTING
+Esiletõst
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Näita Zigi võtmesõnu, stringe ja kommentaare igaüht oma värviga
+MSG_UNTITLED
+Nimetu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Ei saa avada: %s
+MSG_CANNOT_READ
+Ei saa lugeda: %s
+MSG_TOO_BIG
+%s on liiga suur
+MSG_NO_MEMORY_FOR
+Mälu ei jätku: %s
+MSG_NO_MEMORY_TO_SAVE
+Salvestamiseks pole mälu: %s
+MSG_CANNOT_WRITE
+Ei saa kirjutada: %s
+MSG_NO_REQUESTER
+%s puudub
+MSG_CHANGED
+Teksti on muudetud.\nKas salvestada see enne?
+MSG_CHANGED_BUTTONS
+Salvesta|Ära salvesta|Loobu
+MSG_OPEN_TITLE
+Ava tekst
+MSG_SAVE_AS_TITLE
+Salvesta tekst nimega
+MSG_FIND_TITLE
+Otsi ja asenda
+MSG_FIND_LABEL
+Otsi
+MSG_REPLACE_WITH
+Asenda tekstiga
+MSG_ANY_CASE
+Tõstutundetu
+MSG_FIND_NEXT_BUTTON
+Otsi järgmine
+MSG_REPLACE_BUTTON
+Asenda
+MSG_REPLACE_ALL_BUTTON
+Asenda kõik
+MSG_NOLIBRARY
+%s puudub\n
+MSG_NOSCREEN
+Vaikeekraani pole - pole kuva\n
+MSG_NOMEMORY
+Aknale pole mälu\n

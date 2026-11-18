@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; Notepad's strings in Romanian.
+MSG_MENU_PROJECT
+Proiect
+MSG_MENU_NEW
+Nou
+MSG_MENU_OPEN
+Deschidere...
+MSG_MENU_SAVE
+Salvare
+MSG_MENU_SAVE_AS
+Salvare ca...
+MSG_MENU_QUIT
+Ieșire
+MSG_MENU_EDIT
+Editare
+MSG_MENU_UNDO
+Anulare
+MSG_MENU_REDO
+Refacere
+MSG_MENU_CUT
+Decupare
+MSG_MENU_COPY
+Copiere
+MSG_MENU_PASTE
+Lipire
+MSG_MENU_SELECT_ALL
+Selectare totală
+MSG_MENU_SEARCH
+Căutare
+MSG_MENU_FIND
+Găsire...
+MSG_MENU_FIND_NEXT
+Găsire următor
+MSG_MENU_FIND_PREVIOUS
+Găsire anterior
+MSG_MENU_REPLACE
+Înlocuire...
+MSG_MENU_VIEW
+Vizualizare
+MSG_MENU_WRAP
+Încadrare text
+MSG_MENU_NUMBERS
+Numere de linie
+MSG_MENU_ZIG
+Evidențiere Zig
+MSG_MENU_RIBBON
+Panglică
+MSG_RIBBON_HOME
+Pornire
+MSG_RIBBON_CLIPBOARD
+Clipboard
+MSG_RIBBON_PASTE_HINT
+Lipește ce a fost decupat sau copiat
+MSG_RIBBON_EDITING
+Editare
+MSG_RIBBON_FIND
+Găsire
+MSG_RIBBON_FIND_HINT
+Găsește un text; lista îl găsește din nou pe următorul, sau pe cel dinainte
+MSG_RIBBON_REPLACE
+Înlocuire
+MSG_RIBBON_REPLACE_HINT
+Pune alt text în locul celui găsit
+MSG_RIBBON_SELECT_ALL_HINT
+Selectează tot textul
+MSG_RIBBON_LINES
+Linii
+MSG_RIBBON_WRAP_HINT
+Continuă pe rândul următor în loc să treacă de marginea ferestrei
+MSG_RIBBON_NUMBERS_HINT
+Numerotează fiecare linie în stânga
+MSG_RIBBON_HIGHLIGHTING
+Evidențiere
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Afișează cuvintele cheie, șirurile și comentariile Zig, fiecare în altă culoare
+MSG_UNTITLED
+Fără titlu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Nu se poate deschide %s
+MSG_CANNOT_READ
+Nu se poate citi %s
+MSG_TOO_BIG
+%s este prea mare
+MSG_NO_MEMORY_FOR
+Memorie insuficientă pentru %s
+MSG_NO_MEMORY_TO_SAVE
+Memorie insuficientă pentru a salva %s
+MSG_CANNOT_WRITE
+Nu se poate scrie %s
+MSG_NO_REQUESTER
+Lipsește %s
+MSG_CHANGED
+Textul s-a modificat.\nÎl salvați mai întâi?
+MSG_CHANGED_BUTTONS
+Salvare|Nu salvați|Anulare
+MSG_OPEN_TITLE
+Deschideți un text
+MSG_SAVE_AS_TITLE
+Salvați textul ca
+MSG_FIND_TITLE
+Găsire și înlocuire
+MSG_FIND_LABEL
+Găsire
+MSG_REPLACE_WITH
+Înlocuire cu
+MSG_ANY_CASE
+Ignorare majuscule
+MSG_FIND_NEXT_BUTTON
+Găsire următor
+MSG_REPLACE_BUTTON
+Înlocuire
+MSG_REPLACE_ALL_BUTTON
+Înlocuire totală
+MSG_NOLIBRARY
+Lipsește %s\n
+MSG_NOSCREEN
+Niciun ecran implicit - nicio afișare\n
+MSG_NOMEMORY
+Memorie insuficientă pentru fereastră\n

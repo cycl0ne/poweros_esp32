@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; Sheet's strings in Czech.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Nový
+MSG_MENU_OPEN
+Otevřít...
+MSG_MENU_SAVE
+Uložit
+MSG_MENU_SAVE_AS
+Uložit jako...
+MSG_MENU_QUIT
+Ukončit
+MSG_MENU_EDIT
+Úpravy
+MSG_MENU_UNDO
+Zpět
+MSG_MENU_REDO
+Znovu
+MSG_MENU_CUT
+Vyjmout
+MSG_MENU_COPY
+Kopírovat
+MSG_MENU_PASTE
+Vložit
+MSG_MENU_CLEAR
+Vymazat
+MSG_MENU_FILL_DOWN
+Vyplnit dolů
+MSG_MENU_FILL_RIGHT
+Vyplnit doprava
+MSG_MENU_SELECT_ALL
+Vybrat vše
+MSG_MENU_FIND
+Najít...
+MSG_MENU_FIND_NEXT
+Najít další
+MSG_MENU_SHEET
+Tabulka
+MSG_MENU_INSERT_ROWS
+Vložit řádky
+MSG_MENU_DELETE_ROWS
+Odstranit řádky
+MSG_MENU_INSERT_COLUMNS
+Vložit sloupce
+MSG_MENU_DELETE_COLUMNS
+Odstranit sloupce
+MSG_MENU_WIDER
+Širší sloupec
+MSG_MENU_NARROWER
+Užší sloupec
+MSG_MENU_SUM
+Automatické shrnutí
+MSG_MENU_SORT_ASCENDING
+Seřadit vzestupně
+MSG_MENU_SORT_DESCENDING
+Seřadit sestupně
+MSG_MENU_FORMAT
+Formát
+MSG_MENU_GENERAL
+Obecný
+MSG_MENU_NUMBER
+Číslo
+MSG_MENU_PERCENT
+Procenta
+MSG_MENU_CURRENCY
+Měna
+MSG_MENU_DECIMALS_MORE
+Přidat desetinné místo
+MSG_MENU_DECIMALS_LESS
+Odebrat desetinné místo
+MSG_MENU_VIEW
+Zobrazení
+MSG_MENU_RIBBON
+Pás karet
+MSG_RIBBON_HOME
+Domů
+MSG_RIBBON_CLIPBOARD
+Schránka
+MSG_RIBBON_PASTE_HINT
+Vložit, co bylo vyjmuto nebo zkopírováno
+MSG_RIBBON_NUMBER_HINT
+Zobrazit čísla s desetinnými místy a oddělovačem tisíců
+MSG_RIBBON_PERCENT_HINT
+Zobrazit čísla jako procenta
+MSG_RIBBON_CURRENCY_HINT
+Zobrazit čísla jako peněžní částky
+MSG_RIBBON_DECIMALS_MORE_HINT
+Zobrazit o desetinné místo více
+MSG_RIBBON_DECIMALS_LESS_HINT
+Zobrazit o desetinné místo méně
+MSG_RIBBON_CELLS
+Buňky
+MSG_RIBBON_INSERT
+Vložit
+MSG_RIBBON_INSERT_HINT
+Vložit řádky nebo sloupce tam, kde jsou vybrané buňky
+MSG_RIBBON_DELETE
+Odstranit
+MSG_RIBBON_DELETE_HINT
+Odstranit řádky nebo sloupce vybraných buněk
+MSG_RIBBON_EDITING
+Úpravy
+MSG_RIBBON_SUM_HINT
+Sečíst čísla nad nebo vlevo
+MSG_RIBBON_SORT
+Seřadit
+MSG_RIBBON_SORT_HINT
+Seřadit řádky podle sloupce aktuální buňky
+MSG_RIBBON_FIND
+Najít
+MSG_RIBBON_FIND_HINT
+Najít buňku podle jejího obsahu
+MSG_RIBBON_FILL
+Vyplnit
+MSG_RIBBON_FILL_HINT
+Zkopírovat první řádek nebo sloupec do ostatních
+MSG_RIBBON_CLEAR_HINT
+Vyprázdnit vybrané buňky
+MSG_ROWS
+Řádky
+MSG_COLUMNS
+Sloupce
+MSG_SUM
+Součet
+MSG_AVERAGE
+Průměr
+MSG_COUNT
+Počet
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Vzestupně
+MSG_DESCENDING
+Sestupně
+MSG_DOWN
+Dolů
+MSG_RIGHT
+Doprava
+MSG_PROBLEM_NAME
+Taková funkce ani název neexistuje
+MSG_PROBLEM_ARGUMENTS
+Chybný počet argumentů
+MSG_PROBLEM_PARENTHESES
+Závorka nemá protějšek
+MSG_PROBLEM_TOO_LONG
+Vzorec je příliš dlouhý
+MSG_PROBLEM_UNREADABLE
+Vzorec nelze přečíst
+MSG_PROBLEM_AT
+%s, na znaku %u
+MSG_NO_MEMORY_KEEP
+Nedostatek paměti k uchování toho všeho
+MSG_NO_MEMORY_FILE
+Nedostatek paměti pro celý soubor
+MSG_LEFT_OUT
+Buňky za řádkem 9999 nebo sloupcem IV byly vynechány
+MSG_NO_MEMORY_COPY
+Nedostatek paměti ke zkopírování takového množství
+MSG_NO_MEMORY_CLEAR
+Nedostatek paměti k vymazání všeho
+MSG_NO_MEMORY_PASTE
+Nedostatek paměti k vložení všeho
+MSG_NO_ROOM_COLUMNS
+Není místo: poslední sloupce nejsou prázdné
+MSG_NO_ROOM_ROWS
+Není místo: poslední řádky nejsou prázdné
+MSG_NO_MEMORY_THAT
+Na to není dost paměti
+MSG_NO_MEMORY_FORMAT
+Nedostatek paměti k formátování všeho
+MSG_NOTHING_TO_ADD
+Nad ani vlevo nejsou čísla k sečtení
+MSG_NO_MEMORY_ALL
+Nedostatek paměti na to všechno
+MSG_NO_MEMORY_SORT
+Nedostatek paměti k seřazení všeho
+MSG_NO_MEMORY_FILL
+Nedostatek paměti k vyplnění všeho
+MSG_NOT_FOUND
+Žádná buňka to neobsahuje
+MSG_UNTITLED
+Bez názvu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s nelze otevřít
+MSG_CANNOT_READ
+%s nelze přečíst
+MSG_TOO_BIG
+%s je příliš velký
+MSG_NO_MEMORY_FOR
+Nedostatek paměti pro %s
+MSG_NO_MEMORY_TO_SAVE
+Nedostatek paměti pro uložení %s
+MSG_CANNOT_WRITE
+%s nelze zapsat
+MSG_NO_REQUESTER
+Chybí %s
+MSG_CHANGED
+Tabulka byla změněna.\nNejprve ji uložit?
+MSG_CHANGED_BUTTONS
+Uložit|Neukládat|Zrušit
+MSG_OPEN_TITLE
+Otevřít tabulku
+MSG_SAVE_AS_TITLE
+Uložit tabulku jako
+MSG_FIND_LABEL
+Najít
+MSG_FIND_NEXT_BUTTON
+Další
+MSG_FIND_PREVIOUS_BUTTON
+Předchozí
+MSG_FIND_CLOSE_BUTTON
+Zavřít
+MSG_NOLIBRARY
+Chybí %s\n
+MSG_NOSCREEN
+Chybí výchozí obrazovka - žádné zobrazení\n
+MSG_NOMEMORY
+Nedostatek paměti pro okno\n

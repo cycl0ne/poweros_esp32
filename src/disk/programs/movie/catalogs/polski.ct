@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; Movie's strings in Polish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Otwórz...
+MSG_MENU_WHOLE_SCREEN
+Pełny ekran
+MSG_MENU_ABOUT
+O programie
+MSG_MENU_QUIT
+Zakończ
+MSG_MENU_SOUND
+Dźwięk
+MSG_MENU_NO_SOUND
+Brak
+MSG_MENU_SUBTITLES
+Napisy
+MSG_MENU_SUBTITLES_OFF
+Wyłączone
+MSG_MENU_TRACK
+Ścieżka
+MSG_MENU_FRAME_RATE
+Klatki na sekundę
+MSG_MENU_INFO
+Informacje o filmie...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, pominięte: %u
+MSG_ASK_OPEN
+Odtwórz film
+MSG_ABOUT_TITLE
+O programie Movie
+MSG_ABOUT
+%s\n\nOdtwarza filmy - MP4, MOV z QuickTime i MKV z Matroska:\nobraz H.264, H.265 i Motion JPEG,\ndźwięk AAC, AC-3, MP3, FLAC i Vorbis oraz napisy.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+Nie można odtworzyć\n%s:\n%s
+MSG_INFO_TITLE
+Informacje o filmie
+MSG_INFO_FILE
+Plik
+MSG_INFO_NAMED
+Tytuł
+MSG_INFO_CONTAINER
+Kontener
+MSG_INFO_LENGTH
+Długość
+MSG_INFO_PICTURES
+Obraz
+MSG_INFO_COLOURS
+Kolory
+MSG_INFO_BITS
+%u bitów
+MSG_INFO_LIMITED
+zakres ograniczony
+MSG_INFO_FULL
+pełny zakres
+MSG_INFO_SHOWN
+Wyświetlanie
+MSG_INFO_ON_LAYER
+na warstwie wideo ekranu
+MSG_INFO_BY_GRAPHICS
+rysowane przez graphics.library
+MSG_INFO_DECODED
+Dekodowanie
+MSG_INFO_BY_CHIP
+przez dekoder wideo
+MSG_INFO_BY_PROCESSOR
+przez procesor
+MSG_INFO_SOUND
+Dźwięk
+MSG_INFO_NONE
+brak
+MSG_INFO_CHANNELS
+kanały: %u
+MSG_INFO_TRACKS
+Ścieżki
+MSG_INFO_TRACK_COUNTS
+dźwięk: %u, napisy: %u
+MSG_VOLUME_HINT
+Głośność
+MSG_NOLIBRARY
+%s: nie można otworzyć %s\n
+MSG_NOMEMORY
+%s: za mało pamięci\n
+MSG_NOWINDOW
+%s: nie można otworzyć okna\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

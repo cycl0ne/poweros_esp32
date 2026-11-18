@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; Sheet's strings in Turkish.
+MSG_MENU_PROJECT
+Proje
+MSG_MENU_NEW
+Yeni
+MSG_MENU_OPEN
+Aç...
+MSG_MENU_SAVE
+Kaydet
+MSG_MENU_SAVE_AS
+Farklı kaydet...
+MSG_MENU_QUIT
+Çıkış
+MSG_MENU_EDIT
+Düzen
+MSG_MENU_UNDO
+Geri al
+MSG_MENU_REDO
+Yinele
+MSG_MENU_CUT
+Kes
+MSG_MENU_COPY
+Kopyala
+MSG_MENU_PASTE
+Yapıştır
+MSG_MENU_CLEAR
+Temizle
+MSG_MENU_FILL_DOWN
+Aşağı doldur
+MSG_MENU_FILL_RIGHT
+Sağa doldur
+MSG_MENU_SELECT_ALL
+Tümünü seç
+MSG_MENU_FIND
+Bul...
+MSG_MENU_FIND_NEXT
+Sonrakini bul
+MSG_MENU_SHEET
+Tablo
+MSG_MENU_INSERT_ROWS
+Satır ekle
+MSG_MENU_DELETE_ROWS
+Satır sil
+MSG_MENU_INSERT_COLUMNS
+Sütun ekle
+MSG_MENU_DELETE_COLUMNS
+Sütun sil
+MSG_MENU_WIDER
+Sütunu genişlet
+MSG_MENU_NARROWER
+Sütunu daralt
+MSG_MENU_SUM
+Otomatik toplam
+MSG_MENU_SORT_ASCENDING
+Artan sırala
+MSG_MENU_SORT_DESCENDING
+Azalan sırala
+MSG_MENU_FORMAT
+Biçim
+MSG_MENU_GENERAL
+Genel
+MSG_MENU_NUMBER
+Sayı
+MSG_MENU_PERCENT
+Yüzde
+MSG_MENU_CURRENCY
+Para birimi
+MSG_MENU_DECIMALS_MORE
+Ondalık artır
+MSG_MENU_DECIMALS_LESS
+Ondalık azalt
+MSG_MENU_VIEW
+Görünüm
+MSG_MENU_RIBBON
+Şerit
+MSG_RIBBON_HOME
+Giriş
+MSG_RIBBON_CLIPBOARD
+Pano
+MSG_RIBBON_PASTE_HINT
+Kesilen ya da kopyalananı yapıştır
+MSG_RIBBON_NUMBER_HINT
+Sayıları ondalıklı ve binlik ayırıcıyla göster
+MSG_RIBBON_PERCENT_HINT
+Sayıları yüzde olarak göster
+MSG_RIBBON_CURRENCY_HINT
+Sayıları para olarak göster
+MSG_RIBBON_DECIMALS_MORE_HINT
+Bir ondalık basamak fazla göster
+MSG_RIBBON_DECIMALS_LESS_HINT
+Bir ondalık basamak az göster
+MSG_RIBBON_CELLS
+Hücreler
+MSG_RIBBON_INSERT
+Ekle
+MSG_RIBBON_INSERT_HINT
+Hücrelerin seçildiği yere satır ya da sütun ekle
+MSG_RIBBON_DELETE
+Sil
+MSG_RIBBON_DELETE_HINT
+Seçilen hücrelerin satırlarını ya da sütunlarını çıkar
+MSG_RIBBON_EDITING
+Düzenleme
+MSG_RIBBON_SUM_HINT
+Üstteki ya da soldaki sayıları topla
+MSG_RIBBON_SORT
+Sırala
+MSG_RIBBON_SORT_HINT
+Satırları geçerli hücrenin sütununa göre sırala
+MSG_RIBBON_FIND
+Bul
+MSG_RIBBON_FIND_HINT
+Bir hücreyi içeriğine göre bul
+MSG_RIBBON_FILL
+Doldur
+MSG_RIBBON_FILL_HINT
+İlk satırı ya da sütunu diğerlerinin üzerine kopyala
+MSG_RIBBON_CLEAR_HINT
+Seçilen hücreleri boşalt
+MSG_ROWS
+Satırlar
+MSG_COLUMNS
+Sütunlar
+MSG_SUM
+Toplam
+MSG_AVERAGE
+Ortalama
+MSG_COUNT
+Sayı
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Artan
+MSG_DESCENDING
+Azalan
+MSG_DOWN
+Aşağı
+MSG_RIGHT
+Sağa
+MSG_PROBLEM_NAME
+Böyle bir işlev ya da ad yok
+MSG_PROBLEM_ARGUMENTS
+Yanlış sayıda bağımsız değişken
+MSG_PROBLEM_PARENTHESES
+Bir parantezin eşi yok
+MSG_PROBLEM_TOO_LONG
+Formül çok uzun
+MSG_PROBLEM_UNREADABLE
+Formül okunamıyor
+MSG_PROBLEM_AT
+%s, %u. karakterde
+MSG_NO_MEMORY_KEEP
+Bunların hepsini tutmaya yetecek bellek yok
+MSG_NO_MEMORY_FILE
+Dosyanın tamamı için yeterli bellek yok
+MSG_LEFT_OUT
+9999. satırdan ya da IV sütunundan sonraki hücreler dışarıda bırakıldı
+MSG_NO_MEMORY_COPY
+Bu kadarını kopyalamak için bellek yok
+MSG_NO_MEMORY_CLEAR
+Hepsini temizlemeye yetecek bellek yok
+MSG_NO_MEMORY_PASTE
+Hepsini yapıştırmaya yetecek bellek yok
+MSG_NO_ROOM_COLUMNS
+Yer yok: son sütunlarda bir şey var
+MSG_NO_ROOM_ROWS
+Yer yok: son satırlarda bir şey var
+MSG_NO_MEMORY_THAT
+Bunun için yeterli bellek yok
+MSG_NO_MEMORY_FORMAT
+Hepsini biçimlendirmeye yetecek bellek yok
+MSG_NOTHING_TO_ADD
+Üstte ya da solda toplanacak sayı yok
+MSG_NO_MEMORY_ALL
+Bunların hepsi için yeterli bellek yok
+MSG_NO_MEMORY_SORT
+Hepsini sıralamaya yetecek bellek yok
+MSG_NO_MEMORY_FILL
+Hepsini doldurmaya yetecek bellek yok
+MSG_NOT_FOUND
+Hiçbir hücre bunu içermiyor
+MSG_UNTITLED
+Adsız
+MSG_OK
+Tamam
+MSG_CANNOT_OPEN
+%s açılamıyor
+MSG_CANNOT_READ
+%s okunamıyor
+MSG_TOO_BIG
+%s çok büyük
+MSG_NO_MEMORY_FOR
+%s için bellek yok
+MSG_NO_MEMORY_TO_SAVE
+%s kaydedilecek bellek yok
+MSG_CANNOT_WRITE
+%s yazılamıyor
+MSG_NO_REQUESTER
+%s yok
+MSG_CHANGED
+Tablo değişti.\nÖnce kaydedilsin mi?
+MSG_CHANGED_BUTTONS
+Kaydet|Kaydetme|İptal
+MSG_OPEN_TITLE
+Bir tablo aç
+MSG_SAVE_AS_TITLE
+Tabloyu farklı kaydet
+MSG_FIND_LABEL
+Bul
+MSG_FIND_NEXT_BUTTON
+Sonraki
+MSG_FIND_PREVIOUS_BUTTON
+Önceki
+MSG_FIND_CLOSE_BUTTON
+Kapat
+MSG_NOLIBRARY
+%s yok\n
+MSG_NOSCREEN
+Varsayılan ekran yok - görüntü yok\n
+MSG_NOMEMORY
+Pencere için bellek yok\n

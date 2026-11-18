@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; Clock's strings in Latvian.
+MSG_WINDOW_TITLE
+Pulkstenis
+MSG_MENU_PROJECT
+Projekts
+MSG_MENU_ANALOG
+Analogs
+MSG_MENU_DIGITAL
+Digitāls
+MSG_MENU_ABOUT
+Par...
+MSG_MENU_QUIT
+Iziet
+MSG_MENU_SETTINGS
+Iestatījumi
+MSG_MENU_SECONDS
+Sekundes
+MSG_MENU_DATE
+Datums
+MSG_MENU_24_HOURS
+24 stundas
+MSG_MENU_SAVE
+Saglabāt iestatījumus
+MSG_ABOUT_TITLE
+Par Pulksteni
+MSG_ABOUT
+%s\n\nLaiks uz ciparnīcas vai cipariem.\nDubultklikšķis logā pārslēdz starp tiem.
+MSG_OK
+Labi
+MSG_NOT_SAVED
+Iestatījumus nevarēja saglabāt\n%s.
+MSG_NOLIBRARY
+%s: nevar atvērt %s\n
+MSG_NOMEMORY
+%s: nepietiek atmiņas\n
+MSG_NOWINDOW
+%s: nevar atvērt savu logu\n

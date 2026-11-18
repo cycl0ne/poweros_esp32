@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; Notepad's strings in Slovak.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Nový
+MSG_MENU_OPEN
+Otvoriť...
+MSG_MENU_SAVE
+Uložiť
+MSG_MENU_SAVE_AS
+Uložiť ako...
+MSG_MENU_QUIT
+Ukončiť
+MSG_MENU_EDIT
+Upraviť
+MSG_MENU_UNDO
+Späť
+MSG_MENU_REDO
+Znova
+MSG_MENU_CUT
+Vystrihnúť
+MSG_MENU_COPY
+Kopírovať
+MSG_MENU_PASTE
+Prilepiť
+MSG_MENU_SELECT_ALL
+Vybrať všetko
+MSG_MENU_SEARCH
+Hľadať
+MSG_MENU_FIND
+Nájsť...
+MSG_MENU_FIND_NEXT
+Nájsť ďalšie
+MSG_MENU_FIND_PREVIOUS
+Nájsť predchádzajúce
+MSG_MENU_REPLACE
+Nahradiť...
+MSG_MENU_VIEW
+Zobraziť
+MSG_MENU_WRAP
+Zalamovať riadky
+MSG_MENU_NUMBERS
+Čísla riadkov
+MSG_MENU_ZIG
+Zvýrazňovanie jazyka Zig
+MSG_MENU_RIBBON
+Pás s nástrojmi
+MSG_RIBBON_HOME
+Domov
+MSG_RIBBON_CLIPBOARD
+Schránka
+MSG_RIBBON_PASTE_HINT
+Prilepiť, čo bolo vystrihnuté alebo skopírované
+MSG_RIBBON_EDITING
+Úpravy
+MSG_RIBBON_FIND
+Nájsť
+MSG_RIBBON_FIND_HINT
+Nájsť text; zoznam nájde ďalší alebo predchádzajúci výskyt
+MSG_RIBBON_REPLACE
+Nahradiť
+MSG_RIBBON_REPLACE_HINT
+Nahradiť nájdený text iným
+MSG_RIBBON_SELECT_ALL_HINT
+Vybrať celý text
+MSG_RIBBON_LINES
+Riadky
+MSG_RIBBON_WRAP_HINT
+Pokračovať na ďalšom riadku namiesto za okrajom okna
+MSG_RIBBON_NUMBERS_HINT
+Očíslovať každý riadok vľavo
+MSG_RIBBON_HIGHLIGHTING
+Zvýrazňovanie
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Zobraziť kľúčové slová, reťazce a komentáre jazyka Zig, každé inou farbou
+MSG_UNTITLED
+Bez názvu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s nemožno otvoriť
+MSG_CANNOT_READ
+%s nemožno prečítať
+MSG_TOO_BIG
+%s je príliš veľký
+MSG_NO_MEMORY_FOR
+Nedostatok pamäte pre %s
+MSG_NO_MEMORY_TO_SAVE
+Nedostatok pamäte na uloženie %s
+MSG_CANNOT_WRITE
+%s nemožno zapísať
+MSG_NO_REQUESTER
+Chýba %s
+MSG_CHANGED
+Text sa zmenil.\nNajskôr ho uložiť?
+MSG_CHANGED_BUTTONS
+Uložiť|Neukladať|Zrušiť
+MSG_OPEN_TITLE
+Otvoriť text
+MSG_SAVE_AS_TITLE
+Uložiť text ako
+MSG_FIND_TITLE
+Nájsť a nahradiť
+MSG_FIND_LABEL
+Nájsť
+MSG_REPLACE_WITH
+Nahradiť čím
+MSG_ANY_CASE
+Nerozlišovať veľkosť písmen
+MSG_FIND_NEXT_BUTTON
+Nájsť ďalšie
+MSG_REPLACE_BUTTON
+Nahradiť
+MSG_REPLACE_ALL_BUTTON
+Nahradiť všetko
+MSG_NOLIBRARY
+Chýba %s\n
+MSG_NOSCREEN
+Chýba predvolená obrazovka - žiadne zobrazenie\n
+MSG_NOMEMORY
+Nedostatok pamäte pre okno\n

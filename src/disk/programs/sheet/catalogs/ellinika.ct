@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; Sheet's strings in Greek.
+MSG_MENU_PROJECT
+Έργο
+MSG_MENU_NEW
+Δημιουργία
+MSG_MENU_OPEN
+Άνοιγμα...
+MSG_MENU_SAVE
+Αποθήκευση
+MSG_MENU_SAVE_AS
+Αποθήκευση ως...
+MSG_MENU_QUIT
+Έξοδος
+MSG_MENU_EDIT
+Επεξεργασία
+MSG_MENU_UNDO
+Αναίρεση
+MSG_MENU_REDO
+Επανάληψη
+MSG_MENU_CUT
+Αποκοπή
+MSG_MENU_COPY
+Αντιγραφή
+MSG_MENU_PASTE
+Επικόλληση
+MSG_MENU_CLEAR
+Απαλοιφή
+MSG_MENU_FILL_DOWN
+Συμπλήρωση προς τα κάτω
+MSG_MENU_FILL_RIGHT
+Συμπλήρωση προς τα δεξιά
+MSG_MENU_SELECT_ALL
+Επιλογή όλων
+MSG_MENU_FIND
+Εύρεση...
+MSG_MENU_FIND_NEXT
+Εύρεση επόμενου
+MSG_MENU_SHEET
+Φύλλο
+MSG_MENU_INSERT_ROWS
+Εισαγωγή γραμμών
+MSG_MENU_DELETE_ROWS
+Διαγραφή γραμμών
+MSG_MENU_INSERT_COLUMNS
+Εισαγωγή στηλών
+MSG_MENU_DELETE_COLUMNS
+Διαγραφή στηλών
+MSG_MENU_WIDER
+Φαρδύτερη στήλη
+MSG_MENU_NARROWER
+Στενότερη στήλη
+MSG_MENU_SUM
+Αυτόματη άθροιση
+MSG_MENU_SORT_ASCENDING
+Αύξουσα ταξινόμηση
+MSG_MENU_SORT_DESCENDING
+Φθίνουσα ταξινόμηση
+MSG_MENU_FORMAT
+Μορφή
+MSG_MENU_GENERAL
+Γενική
+MSG_MENU_NUMBER
+Αριθμός
+MSG_MENU_PERCENT
+Ποσοστό
+MSG_MENU_CURRENCY
+Νομισματική
+MSG_MENU_DECIMALS_MORE
+Αύξηση δεκαδικών
+MSG_MENU_DECIMALS_LESS
+Μείωση δεκαδικών
+MSG_MENU_VIEW
+Προβολή
+MSG_MENU_RIBBON
+Κορδέλα
+MSG_RIBBON_HOME
+Αρχική
+MSG_RIBBON_CLIPBOARD
+Πρόχειρο
+MSG_RIBBON_PASTE_HINT
+Επικόλληση όσων αποκόπηκαν ή αντιγράφηκαν
+MSG_RIBBON_NUMBER_HINT
+Εμφάνιση των αριθμών με δεκαδικά και διαχωριστικό χιλιάδων
+MSG_RIBBON_PERCENT_HINT
+Εμφάνιση των αριθμών ως ποσοστό
+MSG_RIBBON_CURRENCY_HINT
+Εμφάνιση των αριθμών ως χρηματικών ποσών
+MSG_RIBBON_DECIMALS_MORE_HINT
+Εμφάνιση ενός δεκαδικού ψηφίου περισσότερο
+MSG_RIBBON_DECIMALS_LESS_HINT
+Εμφάνιση ενός δεκαδικού ψηφίου λιγότερο
+MSG_RIBBON_CELLS
+Κελιά
+MSG_RIBBON_INSERT
+Εισαγωγή
+MSG_RIBBON_INSERT_HINT
+Εισαγωγή γραμμών ή στηλών όπου είναι επιλεγμένα τα κελιά
+MSG_RIBBON_DELETE
+Διαγραφή
+MSG_RIBBON_DELETE_HINT
+Αφαίρεση των γραμμών ή στηλών των επιλεγμένων κελιών
+MSG_RIBBON_EDITING
+Επεξεργασία
+MSG_RIBBON_SUM_HINT
+Άθροιση των αριθμών από πάνω ή στα αριστερά
+MSG_RIBBON_SORT
+Ταξινόμηση
+MSG_RIBBON_SORT_HINT
+Ταξινόμηση των γραμμών κατά τη στήλη του τρέχοντος κελιού
+MSG_RIBBON_FIND
+Εύρεση
+MSG_RIBBON_FIND_HINT
+Εύρεση ενός κελιού από το περιεχόμενό του
+MSG_RIBBON_FILL
+Συμπλήρωση
+MSG_RIBBON_FILL_HINT
+Αντιγραφή της πρώτης γραμμής ή στήλης στις υπόλοιπες
+MSG_RIBBON_CLEAR_HINT
+Απαλοιφή των επιλεγμένων κελιών
+MSG_ROWS
+Γραμμές
+MSG_COLUMNS
+Στήλες
+MSG_SUM
+Άθροισμα
+MSG_AVERAGE
+Μέσος όρος
+MSG_COUNT
+Πλήθος
+MSG_MIN
+Ελάχ.
+MSG_MAX
+Μέγ.
+MSG_ASCENDING
+Αύξουσα
+MSG_DESCENDING
+Φθίνουσα
+MSG_DOWN
+Κάτω
+MSG_RIGHT
+Δεξιά
+MSG_PROBLEM_NAME
+Δεν υπάρχει τέτοια συνάρτηση ή όνομα
+MSG_PROBLEM_ARGUMENTS
+Λάθος αριθμός ορισμάτων
+MSG_PROBLEM_PARENTHESES
+Μια παρένθεση δεν έχει ζευγάρι
+MSG_PROBLEM_TOO_LONG
+Ο τύπος είναι πολύ μεγάλος
+MSG_PROBLEM_UNREADABLE
+Ο τύπος δεν μπορεί να διαβαστεί
+MSG_PROBLEM_AT
+%s, στον χαρακτήρα %u
+MSG_NO_MEMORY_KEEP
+Δεν υπάρχει αρκετή μνήμη για να κρατηθούν όλα αυτά
+MSG_NO_MEMORY_FILE
+Δεν υπάρχει αρκετή μνήμη για όλο το αρχείο
+MSG_LEFT_OUT
+Παραλείφθηκαν κελιά μετά τη γραμμή 9999 ή τη στήλη IV
+MSG_NO_MEMORY_COPY
+Δεν υπάρχει μνήμη για αντιγραφή τόσων πολλών
+MSG_NO_MEMORY_CLEAR
+Δεν υπάρχει αρκετή μνήμη για την απαλοιφή όλων
+MSG_NO_MEMORY_PASTE
+Δεν υπάρχει αρκετή μνήμη για την επικόλληση όλων
+MSG_NO_ROOM_COLUMNS
+Δεν υπάρχει χώρος: οι τελευταίες στήλες έχουν περιεχόμενο
+MSG_NO_ROOM_ROWS
+Δεν υπάρχει χώρος: οι τελευταίες γραμμές έχουν περιεχόμενο
+MSG_NO_MEMORY_THAT
+Δεν υπάρχει αρκετή μνήμη γι' αυτό
+MSG_NO_MEMORY_FORMAT
+Δεν υπάρχει αρκετή μνήμη για τη μορφοποίηση όλων
+MSG_NOTHING_TO_ADD
+Δεν υπάρχουν αριθμοί από πάνω ή στα αριστερά για άθροιση
+MSG_NO_MEMORY_ALL
+Δεν υπάρχει αρκετή μνήμη για όλα αυτά
+MSG_NO_MEMORY_SORT
+Δεν υπάρχει αρκετή μνήμη για την ταξινόμηση όλων
+MSG_NO_MEMORY_FILL
+Δεν υπάρχει αρκετή μνήμη για τη συμπλήρωση όλων
+MSG_NOT_FOUND
+Κανένα κελί δεν το περιέχει
+MSG_UNTITLED
+Χωρίς τίτλο
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Δεν ανοίγει το %s
+MSG_CANNOT_READ
+Δεν διαβάζεται το %s
+MSG_TOO_BIG
+Το %s είναι πολύ μεγάλο
+MSG_NO_MEMORY_FOR
+Δεν υπάρχει μνήμη για το %s
+MSG_NO_MEMORY_TO_SAVE
+Δεν υπάρχει μνήμη για την αποθήκευση του %s
+MSG_CANNOT_WRITE
+Δεν γράφεται το %s
+MSG_NO_REQUESTER
+Δεν υπάρχει %s
+MSG_CHANGED
+Το φύλλο άλλαξε.\nΑποθήκευση πρώτα;
+MSG_CHANGED_BUTTONS
+Αποθήκευση|Χωρίς αποθήκευση|Άκυρο
+MSG_OPEN_TITLE
+Άνοιγμα φύλλου
+MSG_SAVE_AS_TITLE
+Αποθήκευση του φύλλου ως
+MSG_FIND_LABEL
+Εύρεση
+MSG_FIND_NEXT_BUTTON
+Επόμενο
+MSG_FIND_PREVIOUS_BUTTON
+Προηγούμενο
+MSG_FIND_CLOSE_BUTTON
+Κλείσιμο
+MSG_NOLIBRARY
+Δεν υπάρχει %s\n
+MSG_NOSCREEN
+Δεν υπάρχει προεπιλεγμένη οθόνη - καμία απεικόνιση\n
+MSG_NOMEMORY
+Δεν υπάρχει μνήμη για το παράθυρο\n

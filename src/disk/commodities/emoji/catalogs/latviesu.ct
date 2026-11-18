@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; Emoji's strings in Latvian.
+MSG_SEARCH
+Meklēt
+MSG_USED
+Nesen lietotās
+MSG_NONE_USED
+Vēl neviena nav lietota
+MSG_NOT_FOUND
+Neviena nav atrasta
+MSG_TONE_NONE
+Bez ādas toņa
+MSG_TONE_LIGHT
+Gaišs
+MSG_TONE_MEDIUM_LIGHT
+Vidēji gaišs
+MSG_TONE_MEDIUM
+Vidējs
+MSG_TONE_MEDIUM_DARK
+Vidēji tumšs
+MSG_TONE_DARK
+Tumšs
+MSG_GROUP_SMILEYS
+Smaidiņi & emocijas
+MSG_GROUP_PEOPLE
+Cilvēki & ķermenis
+MSG_GROUP_ANIMALS
+Dzīvnieki & daba
+MSG_GROUP_FOOD
+Ēdieni & dzērieni
+MSG_GROUP_TRAVEL
+Ceļojumi & vietas
+MSG_GROUP_ACTIVITIES
+Aktivitātes
+MSG_GROUP_OBJECTS
+Objekti
+MSG_GROUP_SYMBOLS
+Simboli
+MSG_GROUP_FLAGS
+Karogi

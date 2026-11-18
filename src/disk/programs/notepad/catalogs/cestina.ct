@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; Notepad's strings in Czech.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Nový
+MSG_MENU_OPEN
+Otevřít...
+MSG_MENU_SAVE
+Uložit
+MSG_MENU_SAVE_AS
+Uložit jako...
+MSG_MENU_QUIT
+Ukončit
+MSG_MENU_EDIT
+Úpravy
+MSG_MENU_UNDO
+Zpět
+MSG_MENU_REDO
+Znovu
+MSG_MENU_CUT
+Vyjmout
+MSG_MENU_COPY
+Kopírovat
+MSG_MENU_PASTE
+Vložit
+MSG_MENU_SELECT_ALL
+Vybrat vše
+MSG_MENU_SEARCH
+Hledat
+MSG_MENU_FIND
+Najít...
+MSG_MENU_FIND_NEXT
+Najít další
+MSG_MENU_FIND_PREVIOUS
+Najít předchozí
+MSG_MENU_REPLACE
+Nahradit...
+MSG_MENU_VIEW
+Zobrazení
+MSG_MENU_WRAP
+Zalamovat řádky
+MSG_MENU_NUMBERS
+Čísla řádků
+MSG_MENU_ZIG
+Zvýraznění jazyka Zig
+MSG_MENU_RIBBON
+Pás karet
+MSG_RIBBON_HOME
+Domů
+MSG_RIBBON_CLIPBOARD
+Schránka
+MSG_RIBBON_PASTE_HINT
+Vložit, co bylo vyjmuto nebo zkopírováno
+MSG_RIBBON_EDITING
+Úpravy
+MSG_RIBBON_FIND
+Najít
+MSG_RIBBON_FIND_HINT
+Najít text; seznam najde další nebo předchozí výskyt
+MSG_RIBBON_REPLACE
+Nahradit
+MSG_RIBBON_REPLACE_HINT
+Nahradit nalezený text jiným
+MSG_RIBBON_SELECT_ALL_HINT
+Vybrat celý text
+MSG_RIBBON_LINES
+Řádky
+MSG_RIBBON_WRAP_HINT
+Pokračovat na dalším řádku místo za okrajem okna
+MSG_RIBBON_NUMBERS_HINT
+Očíslovat každý řádek vlevo
+MSG_RIBBON_HIGHLIGHTING
+Zvýraznění
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Zobrazit klíčová slova, řetězce a komentáře jazyka Zig, každé jinou barvou
+MSG_UNTITLED
+Bez názvu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+%s nelze otevřít
+MSG_CANNOT_READ
+%s nelze přečíst
+MSG_TOO_BIG
+%s je příliš velký
+MSG_NO_MEMORY_FOR
+Nedostatek paměti pro %s
+MSG_NO_MEMORY_TO_SAVE
+Nedostatek paměti pro uložení %s
+MSG_CANNOT_WRITE
+%s nelze zapsat
+MSG_NO_REQUESTER
+Chybí %s
+MSG_CHANGED
+Text byl změněn.\nNejprve jej uložit?
+MSG_CHANGED_BUTTONS
+Uložit|Neukládat|Zrušit
+MSG_OPEN_TITLE
+Otevřít text
+MSG_SAVE_AS_TITLE
+Uložit text jako
+MSG_FIND_TITLE
+Najít a nahradit
+MSG_FIND_LABEL
+Najít
+MSG_REPLACE_WITH
+Nahradit čím
+MSG_ANY_CASE
+Nerozlišovat velikost písmen
+MSG_FIND_NEXT_BUTTON
+Najít další
+MSG_REPLACE_BUTTON
+Nahradit
+MSG_REPLACE_ALL_BUTTON
+Nahradit vše
+MSG_NOLIBRARY
+Chybí %s\n
+MSG_NOSCREEN
+Chybí výchozí obrazovka - žádné zobrazení\n
+MSG_NOMEMORY
+Nedostatek paměti pro okno\n

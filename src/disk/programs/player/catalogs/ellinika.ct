@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; The Player's strings in Greek.
+MSG_MENU_PROJECT
+Έργο
+MSG_MENU_OPEN
+Άνοιγμα...
+MSG_MENU_OPEN_DRAWER
+Άνοιγμα φακέλου...
+MSG_MENU_OPEN_URL
+Άνοιγμα URL...
+MSG_MENU_SAVE_PLAYLIST
+Αποθήκευση λίστας...
+MSG_MENU_ABOUT
+Σχετικά
+MSG_MENU_QUIT
+Έξοδος
+MSG_MENU_PLAYLIST
+Λίστα αναπαραγωγής
+MSG_MENU_ADD
+Προσθήκη...
+MSG_MENU_REMOVE
+Αφαίρεση
+MSG_MENU_CLEAR
+Καθαρισμός
+MSG_MENU_SHUFFLE
+Τυχαία σειρά
+MSG_MENU_REPEAT
+Επανάληψη
+MSG_MENU_REPEAT_OFF
+Ανενεργή
+MSG_MENU_REPEAT_ALL
+Όλα
+MSG_MENU_REPEAT_ONE
+Ένα
+MSG_MENU_PICTURE
+Εικόνα
+MSG_MENU_PLASMA
+Πλάσμα
+MSG_MENU_WAVE
+Κύμα
+MSG_MENU_BARS
+Μπάρες
+MSG_MENU_SETTINGS
+Ρυθμίσεις
+MSG_MENU_REMEMBER
+Συνέχεια από εκεί που ήταν
+MSG_PAGE_PLAYING
+Παίζει τώρα
+MSG_PAGE_RADIO
+Ραδιόφωνο
+MSG_VIEW_KEPT
+Οι σταθμοί σας
+MSG_VIEW_FOUND
+Βρέθηκαν
+MSG_NAME
+Όνομα
+MSG_GENRE
+Είδος
+MSG_COUNTRY
+Χώρα
+MSG_COLUMN_TITLE
+Τίτλος
+MSG_COLUMN_ARTIST
+Καλλιτέχνης
+MSG_COLUMN_TIME
+Χρόνος
+MSG_COLUMN_STATION
+Σταθμός
+MSG_COLUMN_ADDRESS
+Διεύθυνση
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Είδη
+MSG_SHUFFLE_BUTTON
+_Τυχαία
+MSG_SHUFFLE_HINT
+Αναπαραγωγή των τραγουδιών με δική τους σειρά
+MSG_REPEAT_BUTTON
+_Επανάληψη
+MSG_REPEAT_HINT
+Αναπαραγωγή της λίστας ξανά, ή του ενός τραγουδιού
+MSG_MUTE_BUTTON
+_Σίγαση
+MSG_MUTE_HINT
+Ο ήχος κλειστός, και ξανά ανοιχτός
+MSG_LENGTH_HINT
+Η διάρκεια του τραγουδιού, ή όσο απομένει
+MSG_ADD_BUTTON
+_Προσθήκη...
+MSG_REMOVE_BUTTON
+_Αφαίρεση
+MSG_CLEAR_BUTTON
+_Καθαρισμός
+MSG_OUTPUT_LABEL
+Έξ_οδος
+MSG_SEARCH_BUTTON
+Ανα_ζήτηση
+MSG_KEEP_BUTTON
+Απο_θήκευση
+MSG_FORGET_BUTTON
+_Διαγραφή
+MSG_FIND_LABEL
+Εύ_ρεση
+MSG_BY_LABEL
+_βάσει
+MSG_URL_TITLE
+Άνοιγμα URL
+MSG_URL_ADDRESS
+_Διεύθυνση
+MSG_URL_OPEN
+Άν_οιγμα
+MSG_URL_CANCEL
+Ά_κυρο
+MSG_ASK_PLAY
+Ποια τραγούδια;
+MSG_ASK_ADD
+Ποια τραγούδια να προστεθούν;
+MSG_ASK_DRAWER
+Ποιος φάκελος;
+MSG_ASK_SAVE
+Αποθήκευση της λίστας ως
+MSG_ABOUT_TITLE
+Σχετικά με το Player
+MSG_ABOUT
+%s\n\nΤραγούδια από αρχεία WAV, MP3, FLAC, Ogg Vorbis, AAC και AC-3,\nτο ένα μετά το άλλο, με τα εξώφυλλά τους,\nσταθμοί από το δίκτυο\nκαι μια εικόνα του ήχου.
+MSG_OK
+OK
+MSG_NO_SONG
+Κανένα τραγούδι
+MSG_TRACK_OF
+κομμάτι %u από %u
+MSG_TRACK
+κομμάτι %u
+MSG_COMPOSED_BY
+σύνθεση: %s
+MSG_CHAPTER
+Κεφάλαιο %u από %u
+MSG_SOUND
+Ήχος
+MSG_MONO
+μονοφωνικό
+MSG_STEREO
+στερεοφωνικό
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+τραγούδι %u από %u
+MSG_NO_SOUND
+χωρίς ήχο
+MSG_NO_STREAM_FREE
+καμία ελεύθερη ροή
+MSG_LIVE
+ζωντανά
+MSG_BUFFERING
+προσωρινή αποθήκευση
+MSG_BUFFERING_PERCENT
+Προσωρινή αποθήκευση %u%%
+MSG_STATION_IDLE
+Ένας σταθμός: η αναπαραγωγή τον ακούει
+MSG_CALLING
+Κλήση του σταθμού
+MSG_NO_MEMORY_STATION
+Δεν υπάρχει μνήμη για τον σταθμό
+MSG_ALL_STREAMS_USED
+Όλες οι ροές ήχου είναι σε χρήση
+MSG_NO_SOUND_HERE
+Αυτός ο υπολογιστής δεν έχει ήχο
+MSG_NO_AUDIO_STREAM
+Το audio.device δεν άνοιξε ροή
+MSG_KEPT_ALREADY
+Υπάρχει ήδη: %s
+MSG_KEPT
+Κρατήθηκε: %s
+MSG_NO_MEMORY_KEEP
+Δεν υπάρχει μνήμη για να κρατηθεί ο σταθμός
+MSG_NO_MEMORY_SEARCH
+Δεν υπάρχει μνήμη για την αναζήτηση
+MSG_SEARCHING
+Αναζήτηση
+MSG_ASKING
+Ερώτηση στο %s
+MSG_NONE_FOUND
+Δεν βρέθηκε σταθμός
+MSG_ONE_FOUND
+Βρέθηκε ένας σταθμός
+MSG_COUNT_FOUND
+Βρέθηκαν %u σταθμοί
+MSG_NO_NETWORK
+Χωρίς δίκτυο: λείπει η bsdsocket.library
+MSG_NO_HTTP
+Λείπει η http.library
+MSG_NO_MEMORY_CONNECTION
+Δεν υπάρχει μνήμη για τη σύνδεση
+MSG_SERVICE_NO_ADDRESS
+Το radio-browser.info δεν έχει διεύθυνση
+MSG_SERVICE_NO_ANSWER
+Το radio-browser.info δεν απάντησε στην αναζήτηση
+MSG_SERVICE_UNREACHED
+Το radio-browser.info δεν ήταν προσβάσιμο
+MSG_SERVICE_NONSENSE
+Η απάντηση του radio-browser.info δεν έχει νόημα
+MSG_SEARCH_FAILED
+Η αναζήτηση απέτυχε
+MSG_NO_SIGNAL
+Κανένα ελεύθερο σήμα για τον σταθμό
+MSG_NO_TIMER
+Το timer.device δεν άνοιξε
+MSG_LISTS_ONLY
+Οι λίστες του σταθμού οδηγούν μόνο σε άλλες λίστες
+MSG_STATION_STOPPED
+Ο σταθμός σταμάτησε να εκπέμπει
+MSG_STATION_ANSWERED
+Ο σταθμός απάντησε
+MSG_SENDS_AAC
+Ο σταθμός εκπέμπει AAC, που δεν αναπαράγεται
+MSG_STATION_ENDED
+Ο σταθμός τερμάτισε τη σύνδεση
+MSG_SENDS_HLS
+Ο σταθμός εκπέμπει HLS, που δεν αναπαράγεται
+MSG_LIST_EMPTY
+Η λίστα του σταθμού δεν αναφέρει κανέναν σταθμό
+MSG_LIST_TOO_LONG
+Η λίστα του σταθμού αναφέρει πολύ μεγάλη διεύθυνση
+MSG_NOT_AN_ADDRESS
+Αυτή δεν είναι διεύθυνση για ακρόαση
+MSG_NONSENSE
+Η απάντηση του σταθμού δεν έχει νόημα
+MSG_NOLIBRARY
+%s: δεν ανοίγει το %s\n
+MSG_NOMEMORY
+%s: δεν υπάρχει μνήμη για το παράθυρο\n
+MSG_NOBUFFERS
+%s: δεν υπάρχει μνήμη για τον ήχο\n
+MSG_NOWINDOW
+%s: κανένα παράθυρο\n
+MSG_MENU_EQUALIZER
+Ισοσταθμιστής
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Παλμογράφος
+MSG_MENU_METERS
+Μετρητές στάθμης
+MSG_MENU_WHOLE_SCREEN
+Πλήρης οθόνη

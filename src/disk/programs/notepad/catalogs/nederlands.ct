@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; Notepad's strings in Dutch.
+MSG_MENU_PROJECT
+Project
+MSG_MENU_NEW
+Nieuw
+MSG_MENU_OPEN
+Openen...
+MSG_MENU_SAVE
+Opslaan
+MSG_MENU_SAVE_AS
+Opslaan als...
+MSG_MENU_QUIT
+Afsluiten
+MSG_MENU_EDIT
+Bewerken
+MSG_MENU_UNDO
+Ongedaan maken
+MSG_MENU_REDO
+Opnieuw
+MSG_MENU_CUT
+Knippen
+MSG_MENU_COPY
+Kopiëren
+MSG_MENU_PASTE
+Plakken
+MSG_MENU_SELECT_ALL
+Alles selecteren
+MSG_MENU_SEARCH
+Zoeken
+MSG_MENU_FIND
+Zoeken...
+MSG_MENU_FIND_NEXT
+Volgende zoeken
+MSG_MENU_FIND_PREVIOUS
+Vorige zoeken
+MSG_MENU_REPLACE
+Vervangen...
+MSG_MENU_VIEW
+Beeld
+MSG_MENU_WRAP
+Automatische terugloop
+MSG_MENU_NUMBERS
+Regelnummers
+MSG_MENU_ZIG
+Zig-markering
+MSG_MENU_RIBBON
+Lint
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_CLIPBOARD
+Klembord
+MSG_RIBBON_PASTE_HINT
+Invoegen wat geknipt of gekopieerd is
+MSG_RIBBON_EDITING
+Bewerken
+MSG_RIBBON_FIND
+Zoeken
+MSG_RIBBON_FIND_HINT
+Een tekst zoeken; de lijst zoekt de volgende opnieuw, of de vorige
+MSG_RIBBON_REPLACE
+Vervangen
+MSG_RIBBON_REPLACE_HINT
+Een gevonden tekst door een andere vervangen
+MSG_RIBBON_SELECT_ALL_HINT
+De hele tekst selecteren
+MSG_RIBBON_LINES
+Regels
+MSG_RIBBON_WRAP_HINT
+Verder op de volgende regel in plaats van voorbij de rand van het venster
+MSG_RIBBON_NUMBERS_HINT
+Elke regel links nummeren
+MSG_RIBBON_HIGHLIGHTING
+Markering
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+De sleutelwoorden, strings en opmerkingen van Zig elk in een eigen kleur tonen
+MSG_UNTITLED
+Naamloos
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan %s niet openen
+MSG_CANNOT_READ
+Kan %s niet lezen
+MSG_TOO_BIG
+%s is te groot
+MSG_NO_MEMORY_FOR
+Geen geheugen voor %s
+MSG_NO_MEMORY_TO_SAVE
+Geen geheugen om %s op te slaan
+MSG_CANNOT_WRITE
+Kan %s niet schrijven
+MSG_NO_REQUESTER
+Geen %s
+MSG_CHANGED
+De tekst is gewijzigd.\nEerst opslaan?
+MSG_CHANGED_BUTTONS
+Opslaan|Niet opslaan|Annuleren
+MSG_OPEN_TITLE
+Een tekst openen
+MSG_SAVE_AS_TITLE
+De tekst opslaan als
+MSG_FIND_TITLE
+Zoeken en vervangen
+MSG_FIND_LABEL
+Zoeken
+MSG_REPLACE_WITH
+Vervangen door
+MSG_ANY_CASE
+Hoofdletters negeren
+MSG_FIND_NEXT_BUTTON
+Volgende zoeken
+MSG_REPLACE_BUTTON
+Vervangen
+MSG_REPLACE_ALL_BUTTON
+Alles vervangen
+MSG_NOLIBRARY
+Geen %s\n
+MSG_NOSCREEN
+Geen standaardscherm - geen beeld\n
+MSG_NOMEMORY
+Geen geheugen voor het venster\n

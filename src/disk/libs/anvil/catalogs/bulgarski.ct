@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; The desktop's strings in Bulgarian.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Фон
+MSG_MENU_EXECUTE
+Изпълни команда...
+MSG_MENU_REDRAW_ALL
+Прерисувай всичко
+MSG_MENU_UPDATE_ALL
+Обнови всичко
+MSG_MENU_LAST_MESSAGE
+Последно съобщение
+MSG_MENU_VOLUME
+Сила на звука...
+MSG_MENU_ABOUT
+Относно...
+MSG_MENU_QUIT
+Изход...
+MSG_MENU_REBOOT
+Рестартиране...
+MSG_MENU_WINDOW
+Прозорец
+MSG_MENU_NEW_DRAWER
+Нова папка
+MSG_MENU_OPEN_PARENT
+Отвори горната папка
+MSG_MENU_BACK
+Назад
+MSG_MENU_FORWARD
+Напред
+MSG_MENU_CLOSE
+Затвори
+MSG_MENU_UPDATE
+Обнови
+MSG_MENU_SHELL
+Обвивка
+MSG_MENU_SELECT_CONTENTS
+Избери съдържанието
+MSG_MENU_CLEAN_UP
+Подреди
+MSG_MENU_CLEAN_UP_BY
+Подреди по
+MSG_MENU_BY_NAME
+Име
+MSG_MENU_BY_DATE
+Дата
+MSG_MENU_BY_SIZE
+Размер
+MSG_MENU_SNAP
+Подравни към мрежата
+MSG_MENU_ARRANGE
+Подреждай при преоразмеряване
+MSG_MENU_SNAPSHOT
+Запомни позицията
+MSG_MENU_SNAPSHOT_WINDOW
+Прозорец
+MSG_MENU_SNAPSHOT_ALL
+Всичко
+MSG_MENU_SHOW
+Покажи
+MSG_MENU_ONLY_ICONS
+Само икони
+MSG_MENU_ALL_FILES
+Всички файлове
+MSG_MENU_VIEW_BY
+Изглед
+MSG_MENU_BY_ICON
+Икона
+MSG_MENU_RIBBON
+Лента
+MSG_MENU_ICONS
+Икони
+MSG_MENU_OPEN
+Отвори
+MSG_MENU_COPY
+Копирай
+MSG_MENU_RENAME
+Преименувай...
+MSG_MENU_INFORMATION
+Информация...
+MSG_MENU_UNSNAPSHOT
+Забрави позицията
+MSG_MENU_LEAVE_OUT
+Изнеси на работния плот
+MSG_MENU_PUT_AWAY
+Върни обратно
+MSG_MENU_DELETE
+Изтрий...
+MSG_MENU_FORMAT
+Форматирай диска...
+MSG_MENU_EMPTY_TRASH
+Изпразни кошчето
+MSG_MENU_TOOLS
+Инструменти
+MSG_RIBBON_HOME
+Начало
+MSG_RIBBON_GO
+Отиди
+MSG_RIBBON_PARENT
+Нагоре
+MSG_RIBBON_DRAWER
+Папка
+MSG_RIBBON_RENAME
+Преименувай
+MSG_RIBBON_DELETE
+Изтрий
+MSG_RIBBON_INFORMATION
+Информация
+MSG_RIBBON_VIEW
+Изглед
+MSG_RIBBON_ARRANGE
+Подреди
+MSG_LIST_PROTECTION
+Защита
+MSG_LIST_DRAWER
+Папка
+MSG_TITLE_MEMORY
+Памет
+MSG_TITLE_INTERNAL
+Вътрешна
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+свободни
+MSG_TITLE_BATTERY
+Батерия
+MSG_TITLE_CHARGING
+зарежда се
+MSG_TITLE_EXTERNAL_POWER
+външно захранване
+MSG_DISK_FULL
+запълнен
+MSG_DISK_IN_USE
+заети
+MSG_NOTHING_SAID
+Няма съобщения
+MSG_NOT_EVERY_FILE
+Не всички избрани файлове можаха да бъдат приети
+MSG_DISK_NOT_RENAMED
+Дискът не можа да бъде преименуван
+MSG_NOT_RENAMED
+Не можа да бъде преименувано
+MSG_ICON_NOT_WRITTEN
+Една икона не можа да бъде записана
+MSG_DISK_NOT_THERE
+Дискът липсва
+MSG_DISK_BUSY
+Дискът се използва
+MSG_DISK_NOT_FORMATTED
+Дискът не можа да бъде форматиран
+MSG_DRAWER_NOT_MADE
+Папката не можа да бъде създадена
+MSG_SETTING_NOT_KEPT
+%s не можа да бъде запомнено
+MSG_SETTING_NOT_WRITTEN
+%s не можа да бъде записано в anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Иконата на папката не можа да бъде записана
+MSG_NO_MEMORY_REBOOT
+Няма памет за рестартиране
+MSG_NO_MEMORY_ABOUT
+Няма памет за „Относно“
+MSG_NO_TOOL
+За %s няма програма, която да го отвори
+MSG_NOT_STARTED
+%s не можа да бъде стартирано
+MSG_COMMAND_NOT_STARTED
+Командата не можа да бъде стартирана
+MSG_SHELL_DRAWER_NOT_FOUND
+Папката на обвивката не беше намерена
+MSG_SHELL_NOT_STARTED
+Обвивката не можа да бъде стартирана
+MSG_TRASH_OWN_DISK
+В кошчето отиват само файлове от неговия собствен диск
+MSG_NOT_MOVED
+Един файл не можа да бъде преместен там
+MSG_LEFT_OUT_NOT_KEPT
+Дискът няма да запази изнесеното на работния плот
+MSG_NO_MEMORY_WORK
+Няма памет, за да започне работата
+MSG_QUIT_RUNNING_ADDED
+Програми, стартирани от работния плот, още работят (%lu).\nТе ще продължат да работят. Прозорци, икони и\nменюта, добавени от програми (%lu),\nизчезват заедно с него.\n\nИзход от работния плот?
+MSG_QUIT_RUNNING
+Програми, стартирани от работния плот, още работят (%lu).\nТе ще продължат да работят.\n\nИзход от работния плот?
+MSG_QUIT_ADDED
+Прозорци, икони и менюта, добавени от програми\nкъм работния плот (%lu), изчезват заедно с него.\n\nИзход от работния плот?
+MSG_QUIT_ASK
+Изход от работния плот?
+MSG_QUIT_BUTTONS
+Изход|Отказ
+MSG_DELETE_ASK
+Избраното (%lu) да бъде изтрито окончателно?\nПапката се изтрива с цялото си съдържание.
+MSG_DELETE_BUTTONS
+Изтрий|Отказ
+MSG_RENAME_PROMPT
+Ново име:
+MSG_FORMAT_TITLE
+Форматиране на диск
+MSG_FORMAT_ASK
+Да се форматира ли %s?\nВсичко на него ще бъде загубено.
+MSG_FORMAT_BUTTONS
+Форматирай|Отказ
+MSG_NEW_DRAWER_PROMPT
+Име на новата папка:
+MSG_UNNAMED
+Без име
+MSG_EXECUTE_TITLE
+Изпълни команда
+MSG_EXECUTE_PROMPT
+Команда за изпълнение:
+MSG_OUTPUT
+Изход от командата
+MSG_REBOOT_TITLE
+Рестартиране
+MSG_REBOOT_ASK
+Да се рестартира ли компютърът?\nНезаписаното в програмите ще бъде загубено.
+MSG_REBOOT_BUTTONS
+Рестартирай|Отказ
+MSG_REBOOT_IN_USE
+Използват се, затова съдържанието им може да не бъде записано:\n%s\n\nРестартиране въпреки това?
+MSG_STARTUP_WAIT
+Програмата „%s“\nоще не е приключила.\nДа се чака ли още?
+MSG_STARTUP_BUTTONS
+Чакай|Продължи
+MSG_OK
+_OK
+MSG_CANCEL
+_Отказ
+MSG_ABOUT_TITLE
+Относно Anvil
+MSG_ABOUT_WHAT
+Работният плот на PowerOS
+MSG_ABOUT_RELEASE
+Издание
+MSG_ABOUT_KERNEL
+Ядро
+MSG_ABOUT_BOARD
+Платка
+MSG_ABOUT_PROCESSOR
+Процесор
+MSG_ABOUT_CORES
+Ядра
+MSG_ABOUT_CLOCK
+Честота
+MSG_ABOUT_SCREEN
+Екран
+MSG_ABOUT_SYSTEM_DISK
+Системен диск
+MSG_ABOUT_UP_FOR
+Работи от
+MSG_ABOUT_IN_USE
+Заети
+MSG_ABOUT_OF
+от
+MSG_ABOUT_BITS
+бита на пиксел
+MSG_ABOUT_DAY
+ден
+MSG_ABOUT_DAYS
+дни
+MSG_INFO_TITLE
+Информация
+MSG_INFO_STATE
+Състояние
+MSG_INFO_READ_ONLY
+Само за четене
+MSG_INFO_VALIDATING
+Проверява се
+MSG_INFO_READ_WRITE
+Четене и запис
+MSG_INFO_UNKNOWN
+Неизвестно
+MSG_INFO_BLOCKS
+Блокове
+MSG_INFO_USED
+Заети
+MSG_INFO_FREE
+Свободни
+MSG_INFO_BLOCK_SIZE
+Размер на блока
+MSG_INFO_BYTES
+байта
+MSG_INFO_BLOCKS_COUNTED
+блока
+MSG_INFO_CREATED
+Създаден
+MSG_INFO_LAST_CHANGED
+Последна промяна
+MSG_INFO_SCRIPT
+Скрипт
+MSG_INFO_ARCHIVED
+Архивиран
+MSG_INFO_READABLE
+Четене
+MSG_INFO_WRITABLE
+Запис
+MSG_INFO_EXECUTABLE
+Изпълнение
+MSG_INFO_DELETABLE
+Изтриване
+MSG_INFO_COMMENT
+Коментар
+MSG_INFO_STACK
+Стек
+MSG_INFO_DEFAULT_TOOL
+Програма по подразбиране
+MSG_INFO_TOOL_TYPES
+Параметри
+MSG_INFO_SAVE
+_Запиши
+MSG_INFO_NOT_WRITTEN
+Иконата не можа да бъде записана.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Копиране
+MSG_WORK_DELETING
+Изтриване
+MSG_WORK_STOP
+_Спри
+MSG_WORK_WAITING
+Още %lu чакат
+MSG_WORK_REPLACE_ASK
+%s вече съществува.\nДа бъде ли заменен?
+MSG_WORK_REPLACE_BUTTONS
+Замени|Замени всички|Пропусни|Спри

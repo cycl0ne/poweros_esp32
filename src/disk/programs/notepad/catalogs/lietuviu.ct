@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; Notepad's strings in Lithuanian.
+MSG_MENU_PROJECT
+Projektas
+MSG_MENU_NEW
+Naujas
+MSG_MENU_OPEN
+Atidaryti...
+MSG_MENU_SAVE
+Įrašyti
+MSG_MENU_SAVE_AS
+Įrašyti kaip...
+MSG_MENU_QUIT
+Išeiti
+MSG_MENU_EDIT
+Taisa
+MSG_MENU_UNDO
+Anuliuoti
+MSG_MENU_REDO
+Perdaryti
+MSG_MENU_CUT
+Iškirpti
+MSG_MENU_COPY
+Kopijuoti
+MSG_MENU_PASTE
+Įklijuoti
+MSG_MENU_SELECT_ALL
+Žymėti viską
+MSG_MENU_SEARCH
+Ieška
+MSG_MENU_FIND
+Rasti...
+MSG_MENU_FIND_NEXT
+Rasti kitą
+MSG_MENU_FIND_PREVIOUS
+Rasti ankstesnį
+MSG_MENU_REPLACE
+Pakeisti...
+MSG_MENU_VIEW
+Rodinys
+MSG_MENU_WRAP
+Teksto laužymas
+MSG_MENU_NUMBERS
+Eilučių numeriai
+MSG_MENU_ZIG
+Zig paryškinimas
+MSG_MENU_RIBBON
+Juostelė
+MSG_RIBBON_HOME
+Pagrindinis
+MSG_RIBBON_CLIPBOARD
+Mainų sritis
+MSG_RIBBON_PASTE_HINT
+Įklijuoti tai, kas iškirpta ar nukopijuota
+MSG_RIBBON_EDITING
+Taisa
+MSG_RIBBON_FIND
+Rasti
+MSG_RIBBON_FIND_HINT
+Rasti tekstą; sąrašas randa kitą arba ankstesnį
+MSG_RIBBON_REPLACE
+Pakeisti
+MSG_RIBBON_REPLACE_HINT
+Pakeisti rastą tekstą kitu
+MSG_RIBBON_SELECT_ALL_HINT
+Pažymėti visą tekstą
+MSG_RIBBON_LINES
+Eilutės
+MSG_RIBBON_WRAP_HINT
+Tęsti kitoje eilutėje, o ne už lango krašto
+MSG_RIBBON_NUMBERS_HINT
+Numeruoti kiekvieną eilutę kairėje
+MSG_RIBBON_HIGHLIGHTING
+Paryškinimas
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Rodyti Zig raktažodžius, eilutes ir komentarus skirtingomis spalvomis
+MSG_UNTITLED
+Be pavadinimo
+MSG_OK
+Gerai
+MSG_CANNOT_OPEN
+Nepavyksta atidaryti %s
+MSG_CANNOT_READ
+Nepavyksta perskaityti %s
+MSG_TOO_BIG
+%s per didelis
+MSG_NO_MEMORY_FOR
+Nėra atminties failui %s
+MSG_NO_MEMORY_TO_SAVE
+Nėra atminties įrašyti %s
+MSG_CANNOT_WRITE
+Nepavyksta įrašyti %s
+MSG_NO_REQUESTER
+Nėra %s
+MSG_CHANGED
+Tekstas pakeistas.\nPirmiausia jį įrašyti?
+MSG_CHANGED_BUTTONS
+Įrašyti|Neįrašyti|Atšaukti
+MSG_OPEN_TITLE
+Atidaryti tekstą
+MSG_SAVE_AS_TITLE
+Įrašyti tekstą kaip
+MSG_FIND_TITLE
+Rasti ir pakeisti
+MSG_FIND_LABEL
+Rasti
+MSG_REPLACE_WITH
+Pakeisti į
+MSG_ANY_CASE
+Neskirti raidžių dydžio
+MSG_FIND_NEXT_BUTTON
+Rasti kitą
+MSG_REPLACE_BUTTON
+Pakeisti
+MSG_REPLACE_ALL_BUTTON
+Pakeisti visus
+MSG_NOLIBRARY
+Nėra %s\n
+MSG_NOSCREEN
+Nėra numatytojo ekrano - nėra vaizduoklio\n
+MSG_NOMEMORY
+Nėra atminties langui\n

@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; Movie's strings in Swedish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Öppna...
+MSG_MENU_WHOLE_SCREEN
+Helskärm
+MSG_MENU_ABOUT
+Om
+MSG_MENU_QUIT
+Avsluta
+MSG_MENU_SOUND
+Ljud
+MSG_MENU_NO_SOUND
+Inget
+MSG_MENU_SUBTITLES
+Undertexter
+MSG_MENU_SUBTITLES_OFF
+Av
+MSG_MENU_TRACK
+Spår
+MSG_MENU_FRAME_RATE
+Bildfrekvens
+MSG_MENU_INFO
+Filminformation...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u tappade
+MSG_ASK_OPEN
+Spela en film
+MSG_ABOUT_TITLE
+Om Movie
+MSG_ABOUT
+%s\n\nSpelar filmer - MP4, QuickTimes MOV och Matroskas MKV:\nbild i H.264, H.265 och Motion JPEG,\nljud i AAC, AC-3, MP3, FLAC och Vorbis, och undertexter.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nkan inte spelas:\n%s
+MSG_INFO_TITLE
+Filminformation
+MSG_INFO_FILE
+Fil
+MSG_INFO_NAMED
+Titel
+MSG_INFO_CONTAINER
+Container
+MSG_INFO_LENGTH
+Längd
+MSG_INFO_PICTURES
+Bild
+MSG_INFO_COLOURS
+Färger
+MSG_INFO_BITS
+%u bitar
+MSG_INFO_LIMITED
+begränsat omfång
+MSG_INFO_FULL
+fullt omfång
+MSG_INFO_SHOWN
+Visning
+MSG_INFO_ON_LAYER
+på skärmens videolager
+MSG_INFO_BY_GRAPHICS
+ritad av graphics.library
+MSG_INFO_DECODED
+Avkodad
+MSG_INFO_BY_CHIP
+av videoavkodaren
+MSG_INFO_BY_PROCESSOR
+av processorn
+MSG_INFO_SOUND
+Ljud
+MSG_INFO_NONE
+inget
+MSG_INFO_CHANNELS
+%u kanaler
+MSG_INFO_TRACKS
+Spår
+MSG_INFO_TRACK_COUNTS
+%u ljud, %u undertexter
+MSG_VOLUME_HINT
+Volym
+MSG_NOLIBRARY
+%s: kan inte öppna %s\n
+MSG_NOMEMORY
+%s: inte tillräckligt med minne\n
+MSG_NOWINDOW
+%s: kan inte öppna sitt fönster\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

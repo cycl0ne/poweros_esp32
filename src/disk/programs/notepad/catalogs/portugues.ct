@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language portugues
+## codeset 106
+; Notepad's strings in Portuguese.
+MSG_MENU_PROJECT
+Projeto
+MSG_MENU_NEW
+Novo
+MSG_MENU_OPEN
+Abrir...
+MSG_MENU_SAVE
+Guardar
+MSG_MENU_SAVE_AS
+Guardar como...
+MSG_MENU_QUIT
+Sair
+MSG_MENU_EDIT
+Editar
+MSG_MENU_UNDO
+Anular
+MSG_MENU_REDO
+Refazer
+MSG_MENU_CUT
+Cortar
+MSG_MENU_COPY
+Copiar
+MSG_MENU_PASTE
+Colar
+MSG_MENU_SELECT_ALL
+Selecionar tudo
+MSG_MENU_SEARCH
+Procurar
+MSG_MENU_FIND
+Localizar...
+MSG_MENU_FIND_NEXT
+Localizar seguinte
+MSG_MENU_FIND_PREVIOUS
+Localizar anterior
+MSG_MENU_REPLACE
+Substituir...
+MSG_MENU_VIEW
+Ver
+MSG_MENU_WRAP
+Moldar texto
+MSG_MENU_NUMBERS
+Números de linha
+MSG_MENU_ZIG
+Realce de Zig
+MSG_MENU_RIBBON
+Friso
+MSG_RIBBON_HOME
+Início
+MSG_RIBBON_CLIPBOARD
+Área de transferência
+MSG_RIBBON_PASTE_HINT
+Colar o que foi cortado ou copiado
+MSG_RIBBON_EDITING
+Edição
+MSG_RIBBON_FIND
+Localizar
+MSG_RIBBON_FIND_HINT
+Localizar um texto; a lista encontra de novo o seguinte, ou o anterior
+MSG_RIBBON_REPLACE
+Substituir
+MSG_RIBBON_REPLACE_HINT
+Pôr outro texto no lugar do que foi encontrado
+MSG_RIBBON_SELECT_ALL_HINT
+Selecionar todo o texto
+MSG_RIBBON_LINES
+Linhas
+MSG_RIBBON_WRAP_HINT
+Continuar na linha seguinte em vez de passar a margem da janela
+MSG_RIBBON_NUMBERS_HINT
+Numerar cada linha à esquerda
+MSG_RIBBON_HIGHLIGHTING
+Realce
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Mostrar as palavras-chave, cadeias e comentários de Zig, cada um numa cor
+MSG_UNTITLED
+Sem título
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Não é possível abrir %s
+MSG_CANNOT_READ
+Não é possível ler %s
+MSG_TOO_BIG
+%s é demasiado grande
+MSG_NO_MEMORY_FOR
+Sem memória para %s
+MSG_NO_MEMORY_TO_SAVE
+Sem memória para guardar %s
+MSG_CANNOT_WRITE
+Não é possível escrever %s
+MSG_NO_REQUESTER
+Falta %s
+MSG_CHANGED
+O texto foi alterado.\nGuardá-lo primeiro?
+MSG_CHANGED_BUTTONS
+Guardar|Não guardar|Cancelar
+MSG_OPEN_TITLE
+Abrir um texto
+MSG_SAVE_AS_TITLE
+Guardar o texto como
+MSG_FIND_TITLE
+Localizar e substituir
+MSG_FIND_LABEL
+Localizar
+MSG_REPLACE_WITH
+Substituir por
+MSG_ANY_CASE
+Ignorar maiúsculas/minúsculas
+MSG_FIND_NEXT_BUTTON
+Localizar seguinte
+MSG_REPLACE_BUTTON
+Substituir
+MSG_REPLACE_ALL_BUTTON
+Substituir tudo
+MSG_NOLIBRARY
+Falta %s\n
+MSG_NOSCREEN
+Sem ecrã predefinido - sem imagem\n
+MSG_NOMEMORY
+Sem memória para a janela\n

@@ -1,0 +1,75 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; http.library's words for a request that failed, in Hungarian: a clause
+; that starts in lower case, without its full stop.
+MSG_NOMEM
+nincs elég memória
+MSG_IO
+a kapcsolat sikertelen
+MSG_IO_BECAUSE
+a kapcsolat sikertelen: %s
+MSG_STOPPED
+leállítva
+MSG_TIMEOUT
+a kiszolgáló nem válaszolt időben
+MSG_URL
+nem http:// vagy https:// URL, vagy túl hosszú
+MSG_HOST
+a gép nem rendelkezik címmel
+MSG_HOST_NAMED
+%s nem rendelkezik címmel
+MSG_TLS
+a TLS-munkamenet sikertelen
+MSG_TLS_CERTIFICATE
+a kiszolgáló tanúsítványa nem megbízható: %s
+MSG_TLS_CLOCK
+az óra nincs beállítva, így egyetlen tanúsítvány sem ellenőrizhető (TimeSync)
+MSG_TLS_ALERT
+a kiszolgáló elutasította a TLS-munkamenetet (figyelmeztetés: %u)
+MSG_TLS_HANDSHAKE
+a TLS-kézfogás sikertelen
+MSG_PROTOCOL
+a válasz nem HTTP
+MSG_REDIRECT
+több átirányítás a megengedettnél, vagy átirányítás a semmibe
+MSG_TRUNCATED
+a kapcsolat a válasz vége előtt megszakadt
+MSG_STATE
+rossz időben érkezett hívás, vagy nem összeállítható kérés
+MSG_LIBRARY
+hiányzik egy függvénytár, amelyre a kérésnek szüksége van
+MSG_LIBRARY_NAMED
+%s hiányzik
+MSG_DATA
+a kiszolgáló tömörített válasza nem bontható ki
+MSG_CLOSED
+a kiszolgáló válasz nélkül bontotta a kapcsolatot
+MSG_UNKNOWN
+a kérés sikertelen (%d)
+MSG_VERDICT_MALFORMED
+az egyik tanúsítványa nem olvasható
+MSG_VERDICT_UNKNOWN_ISSUER
+egyetlen megbízható főtanúsítvány sem írta alá
+MSG_VERDICT_BAD_SIGNATURE
+a láncában lévő aláírás hibás
+MSG_VERDICT_UNSUPPORTED
+olyan módon van aláírva, amely nem ellenőrizhető
+MSG_VERDICT_EXPIRED
+lejárt
+MSG_VERDICT_NOT_YET_VALID
+még nem érvényes
+MSG_VERDICT_NOT_CA
+olyan tanúsítvány adta ki, amely nem adhat ki tanúsítványokat
+MSG_VERDICT_PATH_LENGTH
+a lánca hosszabb, mint amit a hitelesítésszolgáltatói megengednek
+MSG_VERDICT_NAME_CONSTRAINTS
+a láncában lévő hitelesítésszolgáltató névkorlátozásokat tartalmaz
+MSG_VERDICT_WRONG_USAGE
+nem kiszolgálóhoz készült
+MSG_VERDICT_WRONG_NAME
+másik géphez készült
+MSG_VERDICT_TOO_LONG
+a lánca túl hosszú
+MSG_VERDICT_OTHER
+megadott ok nélkül

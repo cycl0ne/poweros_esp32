@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; Emoji's strings in Norwegian (Bokmål).
+MSG_SEARCH
+Søk
+MSG_USED
+Sist brukt
+MSG_NONE_USED
+Ingen brukt ennå
+MSG_NOT_FOUND
+Ingen funnet
+MSG_TONE_NONE
+Ingen hudtone
+MSG_TONE_LIGHT
+Lys
+MSG_TONE_MEDIUM_LIGHT
+Middels lys
+MSG_TONE_MEDIUM
+Middels
+MSG_TONE_MEDIUM_DARK
+Middels mørk
+MSG_TONE_DARK
+Mørk
+MSG_GROUP_SMILEYS
+Smilefjes & følelser
+MSG_GROUP_PEOPLE
+Mennesker & kropp
+MSG_GROUP_ANIMALS
+Dyr & natur
+MSG_GROUP_FOOD
+Mat & drikke
+MSG_GROUP_TRAVEL
+Reise & steder
+MSG_GROUP_ACTIVITIES
+Aktiviteter
+MSG_GROUP_OBJECTS
+Objekter
+MSG_GROUP_SYMBOLS
+Symboler
+MSG_GROUP_FLAGS
+Flagg

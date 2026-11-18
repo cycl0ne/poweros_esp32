@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; Emoji's strings in Hungarian.
+MSG_SEARCH
+Keresés
+MSG_USED
+Legutóbb használt
+MSG_NONE_USED
+Még semmi sincs használva
+MSG_NOT_FOUND
+Nincs találat
+MSG_TONE_NONE
+Bőrszín nélkül
+MSG_TONE_LIGHT
+Világos
+MSG_TONE_MEDIUM_LIGHT
+Közepesen világos
+MSG_TONE_MEDIUM
+Közepes
+MSG_TONE_MEDIUM_DARK
+Közepesen sötét
+MSG_TONE_DARK
+Sötét
+MSG_GROUP_SMILEYS
+Hangulatjelek & érzelmek
+MSG_GROUP_PEOPLE
+Emberek & test
+MSG_GROUP_ANIMALS
+Állatok & természet
+MSG_GROUP_FOOD
+Étel & ital
+MSG_GROUP_TRAVEL
+Utazás & helyek
+MSG_GROUP_ACTIVITIES
+Tevékenységek
+MSG_GROUP_OBJECTS
+Tárgyak
+MSG_GROUP_SYMBOLS
+Szimbólumok
+MSG_GROUP_FLAGS
+Zászlók

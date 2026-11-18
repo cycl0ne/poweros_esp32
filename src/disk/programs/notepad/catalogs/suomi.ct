@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; Notepad's strings in Finnish.
+MSG_MENU_PROJECT
+Projekti
+MSG_MENU_NEW
+Uusi
+MSG_MENU_OPEN
+Avaa...
+MSG_MENU_SAVE
+Tallenna
+MSG_MENU_SAVE_AS
+Tallenna nimellä...
+MSG_MENU_QUIT
+Lopeta
+MSG_MENU_EDIT
+Muokkaa
+MSG_MENU_UNDO
+Kumoa
+MSG_MENU_REDO
+Tee uudelleen
+MSG_MENU_CUT
+Leikkaa
+MSG_MENU_COPY
+Kopioi
+MSG_MENU_PASTE
+Liitä
+MSG_MENU_SELECT_ALL
+Valitse kaikki
+MSG_MENU_SEARCH
+Haku
+MSG_MENU_FIND
+Etsi...
+MSG_MENU_FIND_NEXT
+Etsi seuraava
+MSG_MENU_FIND_PREVIOUS
+Etsi edellinen
+MSG_MENU_REPLACE
+Korvaa...
+MSG_MENU_VIEW
+Näytä
+MSG_MENU_WRAP
+Automaattinen rivitys
+MSG_MENU_NUMBERS
+Rivinumerot
+MSG_MENU_ZIG
+Zig-korostus
+MSG_MENU_RIBBON
+Valintanauha
+MSG_RIBBON_HOME
+Aloitus
+MSG_RIBBON_CLIPBOARD
+Leikepöytä
+MSG_RIBBON_PASTE_HINT
+Liitä se, mikä leikattiin tai kopioitiin
+MSG_RIBBON_EDITING
+Muokkaaminen
+MSG_RIBBON_FIND
+Etsi
+MSG_RIBBON_FIND_HINT
+Etsi tekstiä; luettelo etsii seuraavan uudelleen, tai edellisen
+MSG_RIBBON_REPLACE
+Korvaa
+MSG_RIBBON_REPLACE_HINT
+Korvaa löydetty teksti toisella
+MSG_RIBBON_SELECT_ALL_HINT
+Valitse koko teksti
+MSG_RIBBON_LINES
+Rivit
+MSG_RIBBON_WRAP_HINT
+Jatka seuraavalle riville ikkunan reunan yli menemisen sijaan
+MSG_RIBBON_NUMBERS_HINT
+Numeroi jokainen rivi vasemmalla
+MSG_RIBBON_HIGHLIGHTING
+Korostus
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Näytä Zigin avainsanat, merkkijonot ja kommentit kukin omalla värillään
+MSG_UNTITLED
+Nimetön
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Ei voi avata: %s
+MSG_CANNOT_READ
+Ei voi lukea: %s
+MSG_TOO_BIG
+%s on liian suuri
+MSG_NO_MEMORY_FOR
+Muisti ei riitä: %s
+MSG_NO_MEMORY_TO_SAVE
+Muisti ei riitä tallentamiseen: %s
+MSG_CANNOT_WRITE
+Ei voi kirjoittaa: %s
+MSG_NO_REQUESTER
+%s puuttuu
+MSG_CHANGED
+Tekstiä on muutettu.\nTallennetaanko ensin?
+MSG_CHANGED_BUTTONS
+Tallenna|Älä tallenna|Peruuta
+MSG_OPEN_TITLE
+Avaa teksti
+MSG_SAVE_AS_TITLE
+Tallenna teksti nimellä
+MSG_FIND_TITLE
+Etsi ja korvaa
+MSG_FIND_LABEL
+Etsi
+MSG_REPLACE_WITH
+Korvaava teksti
+MSG_ANY_CASE
+Ohita kirjainkoko
+MSG_FIND_NEXT_BUTTON
+Etsi seuraava
+MSG_REPLACE_BUTTON
+Korvaa
+MSG_REPLACE_ALL_BUTTON
+Korvaa kaikki
+MSG_NOLIBRARY
+%s puuttuu\n
+MSG_NOSCREEN
+Ei oletusruutua - ei näyttöä\n
+MSG_NOMEMORY
+Muisti ei riitä ikkunalle\n

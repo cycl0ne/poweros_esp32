@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; Sheet's strings in Slovene.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Novo
+MSG_MENU_OPEN
+Odpri...
+MSG_MENU_SAVE
+Shrani
+MSG_MENU_SAVE_AS
+Shrani kot...
+MSG_MENU_QUIT
+Končaj
+MSG_MENU_EDIT
+Uredi
+MSG_MENU_UNDO
+Razveljavi
+MSG_MENU_REDO
+Uveljavi
+MSG_MENU_CUT
+Izreži
+MSG_MENU_COPY
+Kopiraj
+MSG_MENU_PASTE
+Prilepi
+MSG_MENU_CLEAR
+Počisti
+MSG_MENU_FILL_DOWN
+Zapolni navzdol
+MSG_MENU_FILL_RIGHT
+Zapolni desno
+MSG_MENU_SELECT_ALL
+Izberi vse
+MSG_MENU_FIND
+Najdi...
+MSG_MENU_FIND_NEXT
+Najdi naslednje
+MSG_MENU_SHEET
+Preglednica
+MSG_MENU_INSERT_ROWS
+Vstavi vrstice
+MSG_MENU_DELETE_ROWS
+Izbriši vrstice
+MSG_MENU_INSERT_COLUMNS
+Vstavi stolpce
+MSG_MENU_DELETE_COLUMNS
+Izbriši stolpce
+MSG_MENU_WIDER
+Širši stolpec
+MSG_MENU_NARROWER
+Ožji stolpec
+MSG_MENU_SUM
+Samodejna vsota
+MSG_MENU_SORT_ASCENDING
+Razvrsti naraščajoče
+MSG_MENU_SORT_DESCENDING
+Razvrsti padajoče
+MSG_MENU_FORMAT
+Oblika
+MSG_MENU_GENERAL
+Splošno
+MSG_MENU_NUMBER
+Število
+MSG_MENU_PERCENT
+Odstotek
+MSG_MENU_CURRENCY
+Valuta
+MSG_MENU_DECIMALS_MORE
+Več decimalnih mest
+MSG_MENU_DECIMALS_LESS
+Manj decimalnih mest
+MSG_MENU_VIEW
+Pogled
+MSG_MENU_RIBBON
+Trak
+MSG_RIBBON_HOME
+Osnovno
+MSG_RIBBON_CLIPBOARD
+Odložišče
+MSG_RIBBON_PASTE_HINT
+Vstavi, kar je bilo izrezano ali kopirano
+MSG_RIBBON_NUMBER_HINT
+Prikaži števila z decimalnimi mesti in ločilom tisočic
+MSG_RIBBON_PERCENT_HINT
+Prikaži števila kot odstotke
+MSG_RIBBON_CURRENCY_HINT
+Prikaži števila kot denarne zneske
+MSG_RIBBON_DECIMALS_MORE_HINT
+Prikaži eno decimalno mesto več
+MSG_RIBBON_DECIMALS_LESS_HINT
+Prikaži eno decimalno mesto manj
+MSG_RIBBON_CELLS
+Celice
+MSG_RIBBON_INSERT
+Vstavi
+MSG_RIBBON_INSERT_HINT
+Vstavi vrstice ali stolpce, kjer so izbrane celice
+MSG_RIBBON_DELETE
+Izbriši
+MSG_RIBBON_DELETE_HINT
+Izbriši vrstice ali stolpce izbranih celic
+MSG_RIBBON_EDITING
+Urejanje
+MSG_RIBBON_SUM_HINT
+Seštej števila zgoraj ali levo
+MSG_RIBBON_SORT
+Razvrsti
+MSG_RIBBON_SORT_HINT
+Razvrsti vrstice po stolpcu trenutne celice
+MSG_RIBBON_FIND
+Najdi
+MSG_RIBBON_FIND_HINT
+Najdi celico po njeni vsebini
+MSG_RIBBON_FILL
+Zapolni
+MSG_RIBBON_FILL_HINT
+Kopiraj prvo vrstico ali stolpec čez ostale
+MSG_RIBBON_CLEAR_HINT
+Izprazni izbrane celice
+MSG_ROWS
+Vrstice
+MSG_COLUMNS
+Stolpci
+MSG_SUM
+Vsota
+MSG_AVERAGE
+Povprečje
+MSG_COUNT
+Število
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Naraščajoče
+MSG_DESCENDING
+Padajoče
+MSG_DOWN
+Navzdol
+MSG_RIGHT
+Desno
+MSG_PROBLEM_NAME
+Take funkcije ali imena ni
+MSG_PROBLEM_ARGUMENTS
+Napačno število argumentov
+MSG_PROBLEM_PARENTHESES
+Oklepaj nima para
+MSG_PROBLEM_TOO_LONG
+Formula je predolga
+MSG_PROBLEM_UNREADABLE
+Formule ni mogoče prebrati
+MSG_PROBLEM_AT
+%s, pri znaku %u
+MSG_NO_MEMORY_KEEP
+Premalo pomnilnika, da bi ohranili vse to
+MSG_NO_MEMORY_FILE
+Premalo pomnilnika za celotno datoteko
+MSG_LEFT_OUT
+Celice za vrstico 9999 ali stolpcem IV so bile izpuščene
+MSG_NO_MEMORY_COPY
+Ni pomnilnika za kopiranje toliko
+MSG_NO_MEMORY_CLEAR
+Premalo pomnilnika, da bi počistili vse
+MSG_NO_MEMORY_PASTE
+Premalo pomnilnika, da bi prilepili vse
+MSG_NO_ROOM_COLUMNS
+Ni prostora: zadnji stolpci niso prazni
+MSG_NO_ROOM_ROWS
+Ni prostora: zadnje vrstice niso prazne
+MSG_NO_MEMORY_THAT
+Premalo pomnilnika za to
+MSG_NO_MEMORY_FORMAT
+Premalo pomnilnika, da bi oblikovali vse
+MSG_NOTHING_TO_ADD
+Zgoraj ali levo ni števil za seštevanje
+MSG_NO_MEMORY_ALL
+Premalo pomnilnika za vse to
+MSG_NO_MEMORY_SORT
+Premalo pomnilnika, da bi razvrstili vse to
+MSG_NO_MEMORY_FILL
+Premalo pomnilnika, da bi zapolnili vse
+MSG_NOT_FOUND
+Nobena celica tega ne vsebuje
+MSG_UNTITLED
+Neimenovano
+MSG_OK
+V redu
+MSG_CANNOT_OPEN
+%s ni mogoče odpreti
+MSG_CANNOT_READ
+%s ni mogoče prebrati
+MSG_TOO_BIG
+%s je prevelik
+MSG_NO_MEMORY_FOR
+Ni pomnilnika za %s
+MSG_NO_MEMORY_TO_SAVE
+Ni pomnilnika za shranjevanje %s
+MSG_CANNOT_WRITE
+%s ni mogoče zapisati
+MSG_NO_REQUESTER
+Ni %s
+MSG_CHANGED
+Preglednica je bila spremenjena.\nJo želite najprej shraniti?
+MSG_CHANGED_BUTTONS
+Shrani|Ne shrani|Prekliči
+MSG_OPEN_TITLE
+Odpri preglednico
+MSG_SAVE_AS_TITLE
+Shrani preglednico kot
+MSG_FIND_LABEL
+Najdi
+MSG_FIND_NEXT_BUTTON
+Naslednje
+MSG_FIND_PREVIOUS_BUTTON
+Prejšnje
+MSG_FIND_CLOSE_BUTTON
+Zapri
+MSG_NOLIBRARY
+Ni %s\n
+MSG_NOSCREEN
+Ni privzetega zaslona - ni prikaza\n
+MSG_NOMEMORY
+Ni pomnilnika za okno\n

@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; Sheet's strings in Icelandic.
+MSG_MENU_PROJECT
+Verkefni
+MSG_MENU_NEW
+Nýtt
+MSG_MENU_OPEN
+Opna...
+MSG_MENU_SAVE
+Vista
+MSG_MENU_SAVE_AS
+Vista sem...
+MSG_MENU_QUIT
+Hætta
+MSG_MENU_EDIT
+Breyta
+MSG_MENU_UNDO
+Afturkalla
+MSG_MENU_REDO
+Endurgera
+MSG_MENU_CUT
+Klippa
+MSG_MENU_COPY
+Afrita
+MSG_MENU_PASTE
+Líma
+MSG_MENU_CLEAR
+Hreinsa
+MSG_MENU_FILL_DOWN
+Fylla niður
+MSG_MENU_FILL_RIGHT
+Fylla til hægri
+MSG_MENU_SELECT_ALL
+Velja allt
+MSG_MENU_FIND
+Finna...
+MSG_MENU_FIND_NEXT
+Finna næsta
+MSG_MENU_SHEET
+Blað
+MSG_MENU_INSERT_ROWS
+Setja inn raðir
+MSG_MENU_DELETE_ROWS
+Eyða röðum
+MSG_MENU_INSERT_COLUMNS
+Setja inn dálka
+MSG_MENU_DELETE_COLUMNS
+Eyða dálkum
+MSG_MENU_WIDER
+Breiðari dálkur
+MSG_MENU_NARROWER
+Mjórri dálkur
+MSG_MENU_SUM
+Sjálfvirk summa
+MSG_MENU_SORT_ASCENDING
+Raða í hækkandi röð
+MSG_MENU_SORT_DESCENDING
+Raða í lækkandi röð
+MSG_MENU_FORMAT
+Snið
+MSG_MENU_GENERAL
+Almennt
+MSG_MENU_NUMBER
+Tala
+MSG_MENU_PERCENT
+Prósent
+MSG_MENU_CURRENCY
+Gjaldmiðill
+MSG_MENU_DECIMALS_MORE
+Fleiri aukastafir
+MSG_MENU_DECIMALS_LESS
+Færri aukastafir
+MSG_MENU_VIEW
+Skoða
+MSG_MENU_RIBBON
+Borði
+MSG_RIBBON_HOME
+Heim
+MSG_RIBBON_CLIPBOARD
+Klippiborð
+MSG_RIBBON_PASTE_HINT
+Líma inn það sem var klippt eða afritað
+MSG_RIBBON_NUMBER_HINT
+Sýna tölurnar með aukastöfum, í þúsundum
+MSG_RIBBON_PERCENT_HINT
+Sýna tölurnar sem prósent
+MSG_RIBBON_CURRENCY_HINT
+Sýna tölurnar sem fjárhæð
+MSG_RIBBON_DECIMALS_MORE_HINT
+Sýna einum aukastaf fleiri
+MSG_RIBBON_DECIMALS_LESS_HINT
+Sýna einum aukastaf færri
+MSG_RIBBON_CELLS
+Hólf
+MSG_RIBBON_INSERT
+Setja inn
+MSG_RIBBON_INSERT_HINT
+Setja inn raðir eða dálka þar sem hólfin eru valin
+MSG_RIBBON_DELETE
+Eyða
+MSG_RIBBON_DELETE_HINT
+Fjarlægja raðir eða dálka valinna hólfa
+MSG_RIBBON_EDITING
+Breytingar
+MSG_RIBBON_SUM_HINT
+Leggja saman tölurnar fyrir ofan eða til vinstri
+MSG_RIBBON_SORT
+Raða
+MSG_RIBBON_SORT_HINT
+Raða röðunum eftir dálki núverandi hólfs
+MSG_RIBBON_FIND
+Finna
+MSG_RIBBON_FIND_HINT
+Finna hólf eftir innihaldi þess
+MSG_RIBBON_FILL
+Fylla
+MSG_RIBBON_FILL_HINT
+Afrita fyrstu röðina eða dálkinn yfir afganginn
+MSG_RIBBON_CLEAR_HINT
+Tæma valin hólf
+MSG_ROWS
+Raðir
+MSG_COLUMNS
+Dálkar
+MSG_SUM
+Summa
+MSG_AVERAGE
+Meðaltal
+MSG_COUNT
+Fjöldi
+MSG_MIN
+Lágmark
+MSG_MAX
+Hámark
+MSG_ASCENDING
+Hækkandi
+MSG_DESCENDING
+Lækkandi
+MSG_DOWN
+Niður
+MSG_RIGHT
+Til hægri
+MSG_PROBLEM_NAME
+Ekkert slíkt fall eða heiti
+MSG_PROBLEM_ARGUMENTS
+Rangur fjöldi viðfanga
+MSG_PROBLEM_PARENTHESES
+Svigi hefur engan mótsvig
+MSG_PROBLEM_TOO_LONG
+Formúlan er of löng
+MSG_PROBLEM_UNREADABLE
+Ekki er hægt að lesa formúluna
+MSG_PROBLEM_AT
+%s, við staf %u
+MSG_NO_MEMORY_KEEP
+Ekki nóg minni til að geyma allt þetta
+MSG_NO_MEMORY_FILE
+Ekki nóg minni fyrir alla skrána
+MSG_LEFT_OUT
+Hólfum handan raðar 9999 eða dálks IV var sleppt
+MSG_NO_MEMORY_COPY
+Ekkert minni til að afrita svona mikið
+MSG_NO_MEMORY_CLEAR
+Ekki nóg minni til að hreinsa allt
+MSG_NO_MEMORY_PASTE
+Ekki nóg minni til að líma allt
+MSG_NO_ROOM_COLUMNS
+Ekkert pláss: eitthvað er í síðustu dálkunum
+MSG_NO_ROOM_ROWS
+Ekkert pláss: eitthvað er í síðustu röðunum
+MSG_NO_MEMORY_THAT
+Ekki nóg minni fyrir það
+MSG_NO_MEMORY_FORMAT
+Ekki nóg minni til að sníða allt
+MSG_NOTHING_TO_ADD
+Engar tölur fyrir ofan eða til vinstri til að leggja saman
+MSG_NO_MEMORY_ALL
+Ekki nóg minni fyrir allt þetta
+MSG_NO_MEMORY_SORT
+Ekki nóg minni til að raða öllu þessu
+MSG_NO_MEMORY_FILL
+Ekki nóg minni til að fylla allt
+MSG_NOT_FOUND
+Ekkert hólf inniheldur þetta
+MSG_UNTITLED
+Ónefnt
+MSG_OK
+Í lagi
+MSG_CANNOT_OPEN
+Get ekki opnað %s
+MSG_CANNOT_READ
+Get ekki lesið %s
+MSG_TOO_BIG
+%s er of stór
+MSG_NO_MEMORY_FOR
+Ekkert minni fyrir %s
+MSG_NO_MEMORY_TO_SAVE
+Ekkert minni til að vista %s
+MSG_CANNOT_WRITE
+Get ekki skrifað %s
+MSG_NO_REQUESTER
+Ekkert %s
+MSG_CHANGED
+Blaðinu hefur verið breytt.\nVista það fyrst?
+MSG_CHANGED_BUTTONS
+Vista|Ekki vista|Hætta við
+MSG_OPEN_TITLE
+Opna blað
+MSG_SAVE_AS_TITLE
+Vista blaðið sem
+MSG_FIND_LABEL
+Finna
+MSG_FIND_NEXT_BUTTON
+Næsta
+MSG_FIND_PREVIOUS_BUTTON
+Fyrra
+MSG_FIND_CLOSE_BUTTON
+Loka
+MSG_NOLIBRARY
+Ekkert %s\n
+MSG_NOSCREEN
+Enginn sjálfgefinn skjár - engin birting\n
+MSG_NOMEMORY
+Ekkert minni fyrir gluggann\n

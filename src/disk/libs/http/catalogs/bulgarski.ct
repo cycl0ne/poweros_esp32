@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; http.library's words for a request that failed, in Bulgarian: a clause in lower case, without its full stop.
+MSG_NOMEM
+няма памет
+MSG_IO
+връзката е неуспешна
+MSG_IO_BECAUSE
+връзката е неуспешна: %s
+MSG_STOPPED
+спряно
+MSG_TIMEOUT
+сървърът не отговори навреме
+MSG_URL
+не е http:// или https:// URL адрес, или е твърде дълъг
+MSG_HOST
+хостът няма адрес
+MSG_HOST_NAMED
+%s няма адрес
+MSG_TLS
+TLS сесията е неуспешна
+MSG_TLS_CERTIFICATE
+сертификатът на сървъра не е доверен: %s
+MSG_TLS_CLOCK
+часовникът не е сверен, затова сертификат не може да бъде проверен (TimeSync)
+MSG_TLS_ALERT
+сървърът отказа TLS сесията (alert %u)
+MSG_TLS_HANDSHAKE
+TLS ръкостискането е неуспешно
+MSG_PROTOCOL
+отговорът не е HTTP
+MSG_REDIRECT
+повече пренасочвания от позволеното, или пренасочване за никъде
+MSG_TRUNCATED
+връзката прекъсна преди края на отговора
+MSG_STATE
+извикване не на ред, или заявка, която не може да бъде направена
+MSG_LIBRARY
+липсва библиотека, нужна за заявката
+MSG_LIBRARY_NAMED
+%s липсва
+MSG_DATA
+компресираният отговор на сървъра не може да бъде разкомпресиран
+MSG_CLOSED
+сървърът затвори връзката, без да отговори
+MSG_UNKNOWN
+заявката е неуспешна (%d)
+MSG_VERDICT_MALFORMED
+един от сертификатите му не може да бъде прочетен
+MSG_VERDICT_UNKNOWN_ISSUER
+не е подписан от доверен главен сертификат
+MSG_VERDICT_BAD_SIGNATURE
+подпис във веригата му е грешен
+MSG_VERDICT_UNSUPPORTED
+подписан е по начин, който не може да бъде проверен
+MSG_VERDICT_EXPIRED
+изтекъл е
+MSG_VERDICT_NOT_YET_VALID
+още не е валиден
+MSG_VERDICT_NOT_CA
+издаден е от сертификат, който няма право да издава
+MSG_VERDICT_PATH_LENGTH
+веригата му е по-дълга, отколкото позволяват удостоверителите ѝ
+MSG_VERDICT_NAME_CONSTRAINTS
+удостоверител във веригата му има ограничения за имената
+MSG_VERDICT_WRONG_USAGE
+не е предназначен за сървър
+MSG_VERDICT_WRONG_NAME
+издаден е за друг хост
+MSG_VERDICT_TOO_LONG
+веригата му е твърде дълга
+MSG_VERDICT_OTHER
+без посочена причина

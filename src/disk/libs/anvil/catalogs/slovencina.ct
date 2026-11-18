@@ -1,0 +1,338 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; The desktop's strings in Slovak.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Pozadie
+MSG_MENU_EXECUTE
+Spustiť príkaz...
+MSG_MENU_REDRAW_ALL
+Prekresliť všetko
+MSG_MENU_UPDATE_ALL
+Obnoviť všetko
+MSG_MENU_LAST_MESSAGE
+Posledná správa
+MSG_MENU_VOLUME
+Hlasitosť...
+MSG_MENU_ABOUT
+O programe...
+MSG_MENU_QUIT
+Ukončiť...
+MSG_MENU_REBOOT
+Reštartovať...
+MSG_MENU_WINDOW
+Okno
+MSG_MENU_NEW_DRAWER
+Nový priečinok
+MSG_MENU_OPEN_PARENT
+Otvoriť nadradený
+MSG_MENU_BACK
+Späť
+MSG_MENU_FORWARD
+Dopredu
+MSG_MENU_CLOSE
+Zavrieť
+MSG_MENU_UPDATE
+Obnoviť
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Vybrať obsah
+MSG_MENU_CLEAN_UP
+Usporiadať
+MSG_MENU_CLEAN_UP_BY
+Usporiadať podľa
+MSG_MENU_BY_NAME
+Názov
+MSG_MENU_BY_DATE
+Dátum
+MSG_MENU_BY_SIZE
+Veľkosť
+MSG_MENU_SNAP
+Zarovnať do mriežky
+MSG_MENU_ARRANGE
+Rozmiestniť pri zmene veľkosti
+MSG_MENU_SNAPSHOT
+Zapamätať polohu
+MSG_MENU_SNAPSHOT_WINDOW
+Okno
+MSG_MENU_SNAPSHOT_ALL
+Všetko
+MSG_MENU_SHOW
+Zobraziť
+MSG_MENU_ONLY_ICONS
+Iba ikony
+MSG_MENU_ALL_FILES
+Všetky súbory
+MSG_MENU_VIEW_BY
+Zobraziť podľa
+MSG_MENU_BY_ICON
+Ikona
+MSG_MENU_RIBBON
+Pás s nástrojmi
+MSG_MENU_ICONS
+Ikony
+MSG_MENU_OPEN
+Otvoriť
+MSG_MENU_COPY
+Kopírovať
+MSG_MENU_RENAME
+Premenovať...
+MSG_MENU_INFORMATION
+Informácie...
+MSG_MENU_UNSNAPSHOT
+Zabudnúť polohu
+MSG_MENU_LEAVE_OUT
+Umiestniť na plochu
+MSG_MENU_PUT_AWAY
+Vrátiť späť
+MSG_MENU_DELETE
+Odstrániť...
+MSG_MENU_FORMAT
+Formátovať disk...
+MSG_MENU_EMPTY_TRASH
+Vyprázdniť kôš
+MSG_MENU_TOOLS
+Nástroje
+MSG_RIBBON_HOME
+Domov
+MSG_RIBBON_GO
+Prejsť
+MSG_RIBBON_PARENT
+Nadradený
+MSG_RIBBON_DRAWER
+Priečinok
+MSG_RIBBON_RENAME
+Premenovať
+MSG_RIBBON_DELETE
+Odstrániť
+MSG_RIBBON_INFORMATION
+Informácie
+MSG_RIBBON_VIEW
+Zobrazenie
+MSG_RIBBON_ARRANGE
+Rozmiestnenie
+MSG_LIST_PROTECTION
+Ochrana
+MSG_LIST_DRAWER
+Priečinok
+MSG_TITLE_MEMORY
+Pamäť
+MSG_TITLE_INTERNAL
+Interná
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+voľných
+MSG_TITLE_BATTERY
+Batéria
+MSG_TITLE_CHARGING
+nabíja sa
+MSG_TITLE_EXTERNAL_POWER
+externé napájanie
+MSG_DISK_FULL
+zaplnené
+MSG_DISK_IN_USE
+použité
+MSG_NOTHING_SAID
+Zatiaľ nebola žiadna správa
+MSG_NOT_EVERY_FILE
+Nie všetky vybrané súbory bolo možné prevziať
+MSG_DISK_NOT_RENAMED
+Disk sa nepodarilo premenovať
+MSG_NOT_RENAMED
+Nepodarilo sa premenovať
+MSG_ICON_NOT_WRITTEN
+Ikonu sa nepodarilo zapísať
+MSG_DISK_NOT_THERE
+Disk nie je k dispozícii
+MSG_DISK_BUSY
+Disk sa používa
+MSG_DISK_NOT_FORMATTED
+Disk sa nepodarilo naformátovať
+MSG_DRAWER_NOT_MADE
+Priečinok sa nepodarilo vytvoriť
+MSG_SETTING_NOT_KEPT
+Nastavenie %s sa nepodarilo uchovať
+MSG_SETTING_NOT_WRITTEN
+Nastavenie %s sa nepodarilo zapísať do anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Ikonu priečinka sa nepodarilo zapísať
+MSG_NO_MEMORY_REBOOT
+Nedostatok pamäte na reštart
+MSG_NO_MEMORY_ABOUT
+Nedostatok pamäte na okno O programe
+MSG_NO_TOOL
+Pre %s nie je program, ktorý by ho otvoril
+MSG_NOT_STARTED
+%s sa nepodarilo spustiť
+MSG_COMMAND_NOT_STARTED
+Príkaz sa nepodarilo spustiť
+MSG_SHELL_DRAWER_NOT_FOUND
+Priečinok pre Shell sa nenašiel
+MSG_SHELL_NOT_STARTED
+Shell sa nepodarilo spustiť
+MSG_TRASH_OWN_DISK
+Do koša patria iba súbory z jeho vlastného disku
+MSG_NOT_MOVED
+Súbor sa tam nepodarilo presunúť
+MSG_LEFT_OUT_NOT_KEPT
+Disk neuchová, čo je umiestnené na ploche
+MSG_NO_MEMORY_WORK
+Nedostatok pamäte na začatie práce
+MSG_QUIT_RUNNING_ADDED
+Programy spustené z plochy stále bežia (%lu).\n\
+Budú bežať ďalej. Okná, ikony a položky\n\
+ponúk pridané programami (%lu)\n\
+zmiznú s ňou.\n\nUkončiť plochu?
+MSG_QUIT_RUNNING
+Programy spustené z plochy stále bežia (%lu).\n\
+Budú bežať ďalej.\n\nUkončiť plochu?
+MSG_QUIT_ADDED
+Okná, ikony a položky ponúk, ktoré programy\n\
+pridali na plochu (%lu), zmiznú s ňou.\n\n\
+Ukončiť plochu?
+MSG_QUIT_ASK
+Ukončiť plochu?
+MSG_QUIT_BUTTONS
+Ukončiť|Zrušiť
+MSG_DELETE_ASK
+Natrvalo odstrániť vybrané položky (%lu)?\n\
+Priečinok zmizne aj s celým obsahom.
+MSG_DELETE_BUTTONS
+Odstrániť|Zrušiť
+MSG_RENAME_PROMPT
+Nový názov:
+MSG_FORMAT_TITLE
+Formátovať disk
+MSG_FORMAT_ASK
+Formátovať %s?\nVšetko, čo je na ňom, sa stratí.
+MSG_FORMAT_BUTTONS
+Formátovať|Zrušiť
+MSG_NEW_DRAWER_PROMPT
+Názov nového priečinka:
+MSG_UNNAMED
+Bez názvu
+MSG_EXECUTE_TITLE
+Spustiť príkaz
+MSG_EXECUTE_PROMPT
+Príkaz na spustenie:
+MSG_OUTPUT
+Výstup
+MSG_REBOOT_TITLE
+Reštartovať
+MSG_REBOOT_ASK
+Spustiť počítač znova?\nČo programy neuložili, sa stratí.
+MSG_REBOOT_BUTTONS
+Reštartovať|Zrušiť
+MSG_REBOOT_IN_USE
+Používajú sa, takže ich obsah nemusí byť zapísaný:\n%s\n\n\
+Napriek tomu reštartovať?
+MSG_STARTUP_WAIT
+Program '%s'\nešte neskončil.\nČakať dlhšie?
+MSG_STARTUP_BUTTONS
+Čakať|Pokračovať
+MSG_OK
+_OK
+MSG_CANCEL
+_Zrušiť
+MSG_ABOUT_TITLE
+O programe Anvil
+MSG_ABOUT_WHAT
+Pracovná plocha systému PowerOS
+MSG_ABOUT_RELEASE
+Vydanie
+MSG_ABOUT_KERNEL
+Jadro
+MSG_ABOUT_BOARD
+Doska
+MSG_ABOUT_PROCESSOR
+Procesor
+MSG_ABOUT_CORES
+Jadrá
+MSG_ABOUT_CLOCK
+Takt
+MSG_ABOUT_SCREEN
+Obrazovka
+MSG_ABOUT_SYSTEM_DISK
+Systémový disk
+MSG_ABOUT_UP_FOR
+Doba behu
+MSG_ABOUT_IN_USE
+Použité
+MSG_ABOUT_OF
+z
+MSG_ABOUT_BITS
+bitov na pixel
+MSG_ABOUT_DAY
+deň
+MSG_ABOUT_DAYS
+dní
+MSG_INFO_TITLE
+Informácie
+MSG_INFO_STATE
+Stav
+MSG_INFO_READ_ONLY
+Iba na čítanie
+MSG_INFO_VALIDATING
+Prebieha kontrola
+MSG_INFO_READ_WRITE
+Čítanie a zápis
+MSG_INFO_UNKNOWN
+Neznámy
+MSG_INFO_BLOCKS
+Bloky
+MSG_INFO_USED
+Použité
+MSG_INFO_FREE
+Voľné
+MSG_INFO_BLOCK_SIZE
+Veľkosť bloku
+MSG_INFO_BYTES
+bajtov
+MSG_INFO_BLOCKS_COUNTED
+blokov
+MSG_INFO_CREATED
+Vytvorené
+MSG_INFO_LAST_CHANGED
+Naposledy zmenené
+MSG_INFO_SCRIPT
+Skript
+MSG_INFO_ARCHIVED
+Archivované
+MSG_INFO_READABLE
+Čitateľný
+MSG_INFO_WRITABLE
+Zapisovateľný
+MSG_INFO_EXECUTABLE
+Spustiteľný
+MSG_INFO_DELETABLE
+Odstrániteľný
+MSG_INFO_COMMENT
+Komentár
+MSG_INFO_STACK
+Zásobník
+MSG_INFO_DEFAULT_TOOL
+Predvolený program
+MSG_INFO_TOOL_TYPES
+Typy nástroja
+MSG_INFO_SAVE
+_Uložiť
+MSG_INFO_NOT_WRITTEN
+Ikonu sa nepodarilo zapísať.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Kopírovanie
+MSG_WORK_DELETING
+Odstraňovanie
+MSG_WORK_STOP
+_Zastaviť
+MSG_WORK_WAITING
+V poradí ešte %lu
+MSG_WORK_REPLACE_ASK
+%s už existuje.\nNahradiť?
+MSG_WORK_REPLACE_BUTTONS
+Nahradiť|Nahradiť všetko|Preskočiť|Zastaviť

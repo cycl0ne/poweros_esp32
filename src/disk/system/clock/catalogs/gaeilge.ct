@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; Clock's strings in Irish.
+MSG_WINDOW_TITLE
+Clog
+MSG_MENU_PROJECT
+Tionscadal
+MSG_MENU_ANALOG
+Analógach
+MSG_MENU_DIGITAL
+Digiteach
+MSG_MENU_ABOUT
+Maidir Leis...
+MSG_MENU_QUIT
+Scoir
+MSG_MENU_SETTINGS
+Socruithe
+MSG_MENU_SECONDS
+Soicindí
+MSG_MENU_DATE
+Dáta
+MSG_MENU_24_HOURS
+24 Uair
+MSG_MENU_SAVE
+Sábháil na Socruithe
+MSG_ABOUT_TITLE
+Maidir le Clog
+MSG_ABOUT
+%s\n\nAn t-am, ar dhiail nó i bhfigiúirí.\nAthraíonn cliceáil dhúbailte san fhuinneog eatarthu.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Níorbh fhéidir na socruithe a choinneáil i\n%s.
+MSG_NOLIBRARY
+%s: ní féidir %s a oscailt\n
+MSG_NOMEMORY
+%s: níl dóthain cuimhne ann\n
+MSG_NOWINDOW
+%s: ní féidir a fhuinneog a oscailt\n

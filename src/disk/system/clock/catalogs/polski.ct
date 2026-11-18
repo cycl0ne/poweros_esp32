@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; Clock's strings in Polish.
+MSG_WINDOW_TITLE
+Zegar
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_ANALOG
+Analogowy
+MSG_MENU_DIGITAL
+Cyfrowy
+MSG_MENU_ABOUT
+O programie...
+MSG_MENU_QUIT
+Zakończ
+MSG_MENU_SETTINGS
+Ustawienia
+MSG_MENU_SECONDS
+Sekundy
+MSG_MENU_DATE
+Data
+MSG_MENU_24_HOURS
+24 godziny
+MSG_MENU_SAVE
+Zapisz ustawienia
+MSG_ABOUT_TITLE
+O programie Zegar
+MSG_ABOUT
+%s\n\nCzas na tarczy lub w cyfrach.\nDwukrotne kliknięcie w oknie przełącza między nimi.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Nie udało się zapisać ustawień w\n%s.
+MSG_NOLIBRARY
+%s: nie można otworzyć %s\n
+MSG_NOMEMORY
+%s: za mało pamięci\n
+MSG_NOWINDOW
+%s: nie można otworzyć okna\n

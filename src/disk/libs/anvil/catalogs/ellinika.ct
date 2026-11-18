@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; The desktop's strings in Greek.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Φόντο
+MSG_MENU_EXECUTE
+Εκτέλεση εντολής...
+MSG_MENU_REDRAW_ALL
+Επανασχεδίαση όλων
+MSG_MENU_UPDATE_ALL
+Ενημέρωση όλων
+MSG_MENU_LAST_MESSAGE
+Τελευταίο μήνυμα
+MSG_MENU_VOLUME
+Ένταση ήχου...
+MSG_MENU_ABOUT
+Σχετικά...
+MSG_MENU_QUIT
+Έξοδος...
+MSG_MENU_REBOOT
+Επανεκκίνηση...
+MSG_MENU_WINDOW
+Παράθυρο
+MSG_MENU_NEW_DRAWER
+Νέος φάκελος
+MSG_MENU_OPEN_PARENT
+Άνοιγμα γονικού φακέλου
+MSG_MENU_BACK
+Πίσω
+MSG_MENU_FORWARD
+Εμπρός
+MSG_MENU_CLOSE
+Κλείσιμο
+MSG_MENU_UPDATE
+Ενημέρωση
+MSG_MENU_SHELL
+Φλοιός
+MSG_MENU_SELECT_CONTENTS
+Επιλογή περιεχομένων
+MSG_MENU_CLEAN_UP
+Τακτοποίηση
+MSG_MENU_CLEAN_UP_BY
+Τακτοποίηση κατά
+MSG_MENU_BY_NAME
+Όνομα
+MSG_MENU_BY_DATE
+Ημερομηνία
+MSG_MENU_BY_SIZE
+Μέγεθος
+MSG_MENU_SNAP
+Στοίχιση στο πλέγμα
+MSG_MENU_ARRANGE
+Τακτοποίηση κατά την αλλαγή μεγέθους
+MSG_MENU_SNAPSHOT
+Απομνημόνευση θέσης
+MSG_MENU_SNAPSHOT_WINDOW
+Παράθυρο
+MSG_MENU_SNAPSHOT_ALL
+Όλα
+MSG_MENU_SHOW
+Εμφάνιση
+MSG_MENU_ONLY_ICONS
+Μόνο εικονίδια
+MSG_MENU_ALL_FILES
+Όλα τα αρχεία
+MSG_MENU_VIEW_BY
+Προβολή
+MSG_MENU_BY_ICON
+Εικονίδιο
+MSG_MENU_RIBBON
+Κορδέλα
+MSG_MENU_ICONS
+Εικονίδια
+MSG_MENU_OPEN
+Άνοιγμα
+MSG_MENU_COPY
+Αντιγραφή
+MSG_MENU_RENAME
+Μετονομασία...
+MSG_MENU_INFORMATION
+Πληροφορίες...
+MSG_MENU_UNSNAPSHOT
+Λήθη θέσης
+MSG_MENU_LEAVE_OUT
+Τοποθέτηση στην επιφάνεια
+MSG_MENU_PUT_AWAY
+Επαναφορά στη θέση του
+MSG_MENU_DELETE
+Διαγραφή...
+MSG_MENU_FORMAT
+Διαμόρφωση δίσκου...
+MSG_MENU_EMPTY_TRASH
+Άδειασμα κάδου
+MSG_MENU_TOOLS
+Εργαλεία
+MSG_RIBBON_HOME
+Αρχική
+MSG_RIBBON_GO
+Μετάβαση
+MSG_RIBBON_PARENT
+Επάνω
+MSG_RIBBON_DRAWER
+Φάκελος
+MSG_RIBBON_RENAME
+Μετονομασία
+MSG_RIBBON_DELETE
+Διαγραφή
+MSG_RIBBON_INFORMATION
+Πληροφορίες
+MSG_RIBBON_VIEW
+Προβολή
+MSG_RIBBON_ARRANGE
+Τακτοποίηση
+MSG_LIST_PROTECTION
+Προστασία
+MSG_LIST_DRAWER
+Φάκελος
+MSG_TITLE_MEMORY
+Μνήμη
+MSG_TITLE_INTERNAL
+Εσωτερική
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+ελεύθερα
+MSG_TITLE_BATTERY
+Μπαταρία
+MSG_TITLE_CHARGING
+φορτίζει
+MSG_TITLE_EXTERNAL_POWER
+εξωτερική τροφοδοσία
+MSG_DISK_FULL
+πλήρης
+MSG_DISK_IN_USE
+σε χρήση
+MSG_NOTHING_SAID
+Δεν υπάρχει κανένα μήνυμα
+MSG_NOT_EVERY_FILE
+Δεν ήταν δυνατή η λήψη όλων των επιλεγμένων αρχείων
+MSG_DISK_NOT_RENAMED
+Δεν ήταν δυνατή η μετονομασία του δίσκου
+MSG_NOT_RENAMED
+Δεν ήταν δυνατή η μετονομασία
+MSG_ICON_NOT_WRITTEN
+Δεν ήταν δυνατή η εγγραφή ενός εικονιδίου
+MSG_DISK_NOT_THERE
+Ο δίσκος δεν υπάρχει
+MSG_DISK_BUSY
+Ο δίσκος είναι σε χρήση
+MSG_DISK_NOT_FORMATTED
+Δεν ήταν δυνατή η διαμόρφωση του δίσκου
+MSG_DRAWER_NOT_MADE
+Δεν ήταν δυνατή η δημιουργία του φακέλου
+MSG_SETTING_NOT_KEPT
+%s: δεν ήταν δυνατή η απομνημόνευση
+MSG_SETTING_NOT_WRITTEN
+%s: δεν ήταν δυνατή η εγγραφή στο anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Δεν ήταν δυνατή η εγγραφή του εικονιδίου του φακέλου
+MSG_NO_MEMORY_REBOOT
+Δεν υπάρχει μνήμη για επανεκκίνηση
+MSG_NO_MEMORY_ABOUT
+Δεν υπάρχει μνήμη για τα «Σχετικά»
+MSG_NO_TOOL
+Δεν υπάρχει πρόγραμμα για το άνοιγμα του %s
+MSG_NOT_STARTED
+Δεν ήταν δυνατή η εκκίνηση του %s
+MSG_COMMAND_NOT_STARTED
+Δεν ήταν δυνατή η εκκίνηση της εντολής
+MSG_SHELL_DRAWER_NOT_FOUND
+Δεν βρέθηκε ο φάκελος του φλοιού
+MSG_SHELL_NOT_STARTED
+Δεν ήταν δυνατή η εκκίνηση του φλοιού
+MSG_TRASH_OWN_DISK
+Στον κάδο μπαίνουν μόνο αρχεία του δικού του δίσκου
+MSG_NOT_MOVED
+Δεν ήταν δυνατή η μετακίνηση ενός αρχείου εκεί
+MSG_LEFT_OUT_NOT_KEPT
+Ο δίσκος δεν θα κρατήσει ό,τι τοποθετήθηκε στην επιφάνεια
+MSG_NO_MEMORY_WORK
+Δεν υπάρχει μνήμη για να ξεκινήσει η εργασία
+MSG_QUIT_RUNNING_ADDED
+Προγράμματα που ξεκίνησαν από την επιφάνεια εργασίας εκτελούνται ακόμη (%lu).\nΘα συνεχίσουν να εκτελούνται. Παράθυρα, εικονίδια και\nστοιχεία μενού που πρόσθεσαν προγράμματα (%lu)\nφεύγουν μαζί της.\n\nΈξοδος από την επιφάνεια εργασίας;
+MSG_QUIT_RUNNING
+Προγράμματα που ξεκίνησαν από την επιφάνεια εργασίας εκτελούνται ακόμη (%lu).\nΘα συνεχίσουν να εκτελούνται.\n\nΈξοδος από την επιφάνεια εργασίας;
+MSG_QUIT_ADDED
+Παράθυρα, εικονίδια και στοιχεία μενού που πρόσθεσαν προγράμματα\nστην επιφάνεια εργασίας (%lu) φεύγουν μαζί της.\n\nΈξοδος από την επιφάνεια εργασίας;
+MSG_QUIT_ASK
+Έξοδος από την επιφάνεια εργασίας;
+MSG_QUIT_BUTTONS
+Έξοδος|Άκυρο
+MSG_DELETE_ASK
+Οριστική διαγραφή των επιλεγμένων (%lu);\nΈνας φάκελος διαγράφεται μαζί με όλο το περιεχόμενό του.
+MSG_DELETE_BUTTONS
+Διαγραφή|Άκυρο
+MSG_RENAME_PROMPT
+Νέο όνομα:
+MSG_FORMAT_TITLE
+Διαμόρφωση δίσκου
+MSG_FORMAT_ASK
+Διαμόρφωση του %s;\nΌλα τα δεδομένα του θα χαθούν.
+MSG_FORMAT_BUTTONS
+Διαμόρφωση|Άκυρο
+MSG_NEW_DRAWER_PROMPT
+Όνομα του νέου φακέλου:
+MSG_UNNAMED
+Χωρίς όνομα
+MSG_EXECUTE_TITLE
+Εκτέλεση εντολής
+MSG_EXECUTE_PROMPT
+Εντολή για εκτέλεση:
+MSG_OUTPUT
+Έξοδος εντολής
+MSG_REBOOT_TITLE
+Επανεκκίνηση
+MSG_REBOOT_ASK
+Επανεκκίνηση του υπολογιστή;\nΌ,τι δεν αποθήκευσαν τα προγράμματα θα χαθεί.
+MSG_REBOOT_BUTTONS
+Επανεκκίνηση|Άκυρο
+MSG_REBOOT_IN_USE
+Σε χρήση, οπότε τα δεδομένα τους ίσως δεν γραφτούν:\n%s\n\nΕπανεκκίνηση παρ' όλα αυτά;
+MSG_STARTUP_WAIT
+Το πρόγραμμα «%s»\nδεν έχει τερματιστεί ακόμη.\nΑναμονή για λίγο ακόμη;
+MSG_STARTUP_BUTTONS
+Αναμονή|Συνέχεια
+MSG_OK
+_OK
+MSG_CANCEL
+_Άκυρο
+MSG_ABOUT_TITLE
+Σχετικά με το Anvil
+MSG_ABOUT_WHAT
+Η επιφάνεια εργασίας του PowerOS
+MSG_ABOUT_RELEASE
+Έκδοση
+MSG_ABOUT_KERNEL
+Πυρήνας
+MSG_ABOUT_BOARD
+Πλακέτα
+MSG_ABOUT_PROCESSOR
+Επεξεργαστής
+MSG_ABOUT_CORES
+Πυρήνες
+MSG_ABOUT_CLOCK
+Συχνότητα
+MSG_ABOUT_SCREEN
+Οθόνη
+MSG_ABOUT_SYSTEM_DISK
+Δίσκος συστήματος
+MSG_ABOUT_UP_FOR
+Σε λειτουργία για
+MSG_ABOUT_IN_USE
+Σε χρήση
+MSG_ABOUT_OF
+από
+MSG_ABOUT_BITS
+bit ανά pixel
+MSG_ABOUT_DAY
+ημέρα
+MSG_ABOUT_DAYS
+ημέρες
+MSG_INFO_TITLE
+Πληροφορίες
+MSG_INFO_STATE
+Κατάσταση
+MSG_INFO_READ_ONLY
+Μόνο ανάγνωση
+MSG_INFO_VALIDATING
+Γίνεται έλεγχος
+MSG_INFO_READ_WRITE
+Ανάγνωση και εγγραφή
+MSG_INFO_UNKNOWN
+Άγνωστη
+MSG_INFO_BLOCKS
+Μπλοκ
+MSG_INFO_USED
+Σε χρήση
+MSG_INFO_FREE
+Ελεύθερα
+MSG_INFO_BLOCK_SIZE
+Μέγεθος μπλοκ
+MSG_INFO_BYTES
+byte
+MSG_INFO_BLOCKS_COUNTED
+μπλοκ
+MSG_INFO_CREATED
+Δημιουργία
+MSG_INFO_LAST_CHANGED
+Τελευταία αλλαγή
+MSG_INFO_SCRIPT
+Σενάριο
+MSG_INFO_ARCHIVED
+Αρχειοθετημένο
+MSG_INFO_READABLE
+Ανάγνωση
+MSG_INFO_WRITABLE
+Εγγραφή
+MSG_INFO_EXECUTABLE
+Εκτέλεση
+MSG_INFO_DELETABLE
+Διαγραφή
+MSG_INFO_COMMENT
+Σχόλιο
+MSG_INFO_STACK
+Στοίβα
+MSG_INFO_DEFAULT_TOOL
+Προεπιλεγμένο πρόγραμμα
+MSG_INFO_TOOL_TYPES
+Παράμετροι
+MSG_INFO_SAVE
+_Αποθήκευση
+MSG_INFO_NOT_WRITTEN
+Δεν ήταν δυνατή η εγγραφή του εικονιδίου.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Αντιγραφή
+MSG_WORK_DELETING
+Διαγραφή
+MSG_WORK_STOP
+_Διακοπή
+MSG_WORK_WAITING
+Ακόμη %lu σε αναμονή
+MSG_WORK_REPLACE_ASK
+Το %s υπάρχει ήδη.\nΑντικατάσταση;
+MSG_WORK_REPLACE_BUTTONS
+Αντικατάσταση|Αντικατάσταση όλων|Παράλειψη|Διακοπή

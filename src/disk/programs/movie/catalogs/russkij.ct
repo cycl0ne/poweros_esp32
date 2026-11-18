@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language russkij
+## codeset 106
+; Movie's strings in Russian.
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_OPEN
+Открыть...
+MSG_MENU_WHOLE_SCREEN
+Во весь экран
+MSG_MENU_ABOUT
+О программе
+MSG_MENU_QUIT
+Выход
+MSG_MENU_SOUND
+Звук
+MSG_MENU_NO_SOUND
+Нет
+MSG_MENU_SUBTITLES
+Субтитры
+MSG_MENU_SUBTITLES_OFF
+Выкл.
+MSG_MENU_TRACK
+Дорожка
+MSG_MENU_FRAME_RATE
+Частота кадров
+MSG_MENU_INFO
+Сведения о фильме...
+MSG_FRAME_RATE
+%u,%u / %u,%u кадр/с
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u кадр/с, пропущено: %u
+MSG_ASK_OPEN
+Воспроизвести фильм
+MSG_ABOUT_TITLE
+О программе Movie
+MSG_ABOUT
+%s\n\nВоспроизводит фильмы - MP4, MOV QuickTime и MKV Matroska:\nизображение H.264, H.265 и Motion JPEG,\nзвук AAC, AC-3, MP3, FLAC и Vorbis, а также субтитры.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nнельзя воспроизвести:\n%s
+MSG_INFO_TITLE
+Сведения о фильме
+MSG_INFO_FILE
+Файл
+MSG_INFO_NAMED
+Название
+MSG_INFO_CONTAINER
+Контейнер
+MSG_INFO_LENGTH
+Длительность
+MSG_INFO_PICTURES
+Изображение
+MSG_INFO_COLOURS
+Цвета
+MSG_INFO_BITS
+%u бит
+MSG_INFO_LIMITED
+ограниченный диапазон
+MSG_INFO_FULL
+полный диапазон
+MSG_INFO_SHOWN
+Показ
+MSG_INFO_ON_LAYER
+на видеослое дисплея
+MSG_INFO_BY_GRAPHICS
+рисует graphics.library
+MSG_INFO_DECODED
+Декодирование
+MSG_INFO_BY_CHIP
+видеодекодером
+MSG_INFO_BY_PROCESSOR
+процессором
+MSG_INFO_SOUND
+Звук
+MSG_INFO_NONE
+нет
+MSG_INFO_CHANNELS
+каналов: %u
+MSG_INFO_TRACKS
+Дорожки
+MSG_INFO_TRACK_COUNTS
+звук: %u, субтитры: %u
+MSG_VOLUME_HINT
+Громкость
+MSG_NOLIBRARY
+%s: не удаётся открыть %s\n
+MSG_NOMEMORY
+%s: недостаточно памяти\n
+MSG_NOWINDOW
+%s: не удаётся открыть окно\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

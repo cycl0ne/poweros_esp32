@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language ukrainska
+## codeset 106
+; The desktop's strings in Ukrainian.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Тло
+MSG_MENU_EXECUTE
+Виконати команду...
+MSG_MENU_REDRAW_ALL
+Перемалювати все
+MSG_MENU_UPDATE_ALL
+Оновити все
+MSG_MENU_LAST_MESSAGE
+Останнє повідомлення
+MSG_MENU_VOLUME
+Гучність...
+MSG_MENU_ABOUT
+Про програму...
+MSG_MENU_QUIT
+Вихід...
+MSG_MENU_REBOOT
+Перезавантаження...
+MSG_MENU_WINDOW
+Вікно
+MSG_MENU_NEW_DRAWER
+Нова папка
+MSG_MENU_OPEN_PARENT
+Відкрити батьківську папку
+MSG_MENU_BACK
+Назад
+MSG_MENU_FORWARD
+Вперед
+MSG_MENU_CLOSE
+Закрити
+MSG_MENU_UPDATE
+Оновити
+MSG_MENU_SHELL
+Оболонка
+MSG_MENU_SELECT_CONTENTS
+Виділити вміст
+MSG_MENU_CLEAN_UP
+Упорядкувати
+MSG_MENU_CLEAN_UP_BY
+Упорядкувати за
+MSG_MENU_BY_NAME
+Ім'я
+MSG_MENU_BY_DATE
+Дата
+MSG_MENU_BY_SIZE
+Розмір
+MSG_MENU_SNAP
+Вирівнювати за сіткою
+MSG_MENU_ARRANGE
+Упорядковувати при зміні розміру
+MSG_MENU_SNAPSHOT
+Запам'ятати положення
+MSG_MENU_SNAPSHOT_WINDOW
+Вікно
+MSG_MENU_SNAPSHOT_ALL
+Усе
+MSG_MENU_SHOW
+Показати
+MSG_MENU_ONLY_ICONS
+Лише значки
+MSG_MENU_ALL_FILES
+Усі файли
+MSG_MENU_VIEW_BY
+Вигляд
+MSG_MENU_BY_ICON
+Значок
+MSG_MENU_RIBBON
+Стрічка
+MSG_MENU_ICONS
+Значки
+MSG_MENU_OPEN
+Відкрити
+MSG_MENU_COPY
+Копіювати
+MSG_MENU_RENAME
+Перейменувати...
+MSG_MENU_INFORMATION
+Відомості...
+MSG_MENU_UNSNAPSHOT
+Забути положення
+MSG_MENU_LEAVE_OUT
+Винести на стіл
+MSG_MENU_PUT_AWAY
+Повернути назад
+MSG_MENU_DELETE
+Видалити...
+MSG_MENU_FORMAT
+Форматувати диск...
+MSG_MENU_EMPTY_TRASH
+Очистити кошик
+MSG_MENU_TOOLS
+Знаряддя
+MSG_RIBBON_HOME
+Основне
+MSG_RIBBON_GO
+Перехід
+MSG_RIBBON_PARENT
+Вгору
+MSG_RIBBON_DRAWER
+Папка
+MSG_RIBBON_RENAME
+Перейменувати
+MSG_RIBBON_DELETE
+Видалити
+MSG_RIBBON_INFORMATION
+Відомості
+MSG_RIBBON_VIEW
+Вигляд
+MSG_RIBBON_ARRANGE
+Упорядкувати
+MSG_LIST_PROTECTION
+Захист
+MSG_LIST_DRAWER
+Папка
+MSG_TITLE_MEMORY
+Пам'ять
+MSG_TITLE_INTERNAL
+Внутрішня
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+вільно
+MSG_TITLE_BATTERY
+Акумулятор
+MSG_TITLE_CHARGING
+заряджається
+MSG_TITLE_EXTERNAL_POWER
+зовнішнє живлення
+MSG_DISK_FULL
+заповнено
+MSG_DISK_IN_USE
+зайнято
+MSG_NOTHING_SAID
+Повідомлень не було
+MSG_NOT_EVERY_FILE
+Не всі вибрані файли вдалося прийняти
+MSG_DISK_NOT_RENAMED
+Не вдалося перейменувати диск
+MSG_NOT_RENAMED
+Не вдалося перейменувати
+MSG_ICON_NOT_WRITTEN
+Не вдалося записати значок
+MSG_DISK_NOT_THERE
+Диска немає
+MSG_DISK_BUSY
+Диск зайнятий
+MSG_DISK_NOT_FORMATTED
+Не вдалося відформатувати диск
+MSG_DRAWER_NOT_MADE
+Не вдалося створити папку
+MSG_SETTING_NOT_KEPT
+%s: не вдалося зберегти
+MSG_SETTING_NOT_WRITTEN
+%s: не вдалося записати в anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Не вдалося записати значок папки
+MSG_NO_MEMORY_REBOOT
+Недостатньо пам'яті для перезавантаження
+MSG_NO_MEMORY_ABOUT
+Недостатньо пам'яті для вікна «Про програму»
+MSG_NO_TOOL
+Немає програми, щоб відкрити %s
+MSG_NOT_STARTED
+Не вдалося запустити %s
+MSG_COMMAND_NOT_STARTED
+Не вдалося запустити команду
+MSG_SHELL_DRAWER_NOT_FOUND
+Не вдалося знайти папку оболонки
+MSG_SHELL_NOT_STARTED
+Не вдалося запустити оболонку
+MSG_TRASH_OWN_DISK
+До кошика потрапляють лише файли з його власного диска
+MSG_NOT_MOVED
+Не вдалося перемістити туди файл
+MSG_LEFT_OUT_NOT_KEPT
+Диск не збереже те, що винесено на стіл
+MSG_NO_MEMORY_WORK
+Недостатньо пам'яті, щоб почати роботу
+MSG_QUIT_RUNNING_ADDED
+Програми, запущені з робочого столу, ще працюють (%lu).\nВони працюватимуть далі. Вікна, значки й\nпункти меню, які додали програми (%lu),\nзникнуть разом із ним.\n\nВийти з робочого столу?
+MSG_QUIT_RUNNING
+Програми, запущені з робочого столу, ще працюють (%lu).\nВони працюватимуть далі.\n\nВийти з робочого столу?
+MSG_QUIT_ADDED
+Вікна, значки й пункти меню, які програми\nдодали на робочий стіл (%lu), зникнуть разом із ним.\n\nВийти з робочого столу?
+MSG_QUIT_ASK
+Вийти з робочого столу?
+MSG_QUIT_BUTTONS
+Вийти|Скасувати
+MSG_DELETE_ASK
+Видалити вибране (%lu) остаточно?\nПапка видаляється разом з усім вмістом.
+MSG_DELETE_BUTTONS
+Видалити|Скасувати
+MSG_RENAME_PROMPT
+Нове ім'я:
+MSG_FORMAT_TITLE
+Форматування диска
+MSG_FORMAT_ASK
+Форматувати %s?\nУсе, що на ньому є, буде втрачено.
+MSG_FORMAT_BUTTONS
+Форматувати|Скасувати
+MSG_NEW_DRAWER_PROMPT
+Ім'я нової папки:
+MSG_UNNAMED
+Без назви
+MSG_EXECUTE_TITLE
+Виконати команду
+MSG_EXECUTE_PROMPT
+Команда для запуску:
+MSG_OUTPUT
+Вивід
+MSG_REBOOT_TITLE
+Перезавантаження
+MSG_REBOOT_ASK
+Перезапустити комп'ютер?\nУсе, що програми не зберегли, буде втрачено.
+MSG_REBOOT_BUTTONS
+Перезавантажити|Скасувати
+MSG_REBOOT_IN_USE
+Використовуються, тож їхні дані можуть бути не записані:\n%s\n\nУсе одно перезавантажити?
+MSG_STARTUP_WAIT
+Програма «%s»\nще не завершилася.\nЗачекати ще?
+MSG_STARTUP_BUTTONS
+Чекати|Продовжити
+MSG_OK
+_OK
+MSG_CANCEL
+_Скасувати
+MSG_ABOUT_TITLE
+Про Anvil
+MSG_ABOUT_WHAT
+Робочий стіл PowerOS
+MSG_ABOUT_RELEASE
+Випуск
+MSG_ABOUT_KERNEL
+Ядро
+MSG_ABOUT_BOARD
+Плата
+MSG_ABOUT_PROCESSOR
+Процесор
+MSG_ABOUT_CORES
+Ядра
+MSG_ABOUT_CLOCK
+Частота
+MSG_ABOUT_SCREEN
+Екран
+MSG_ABOUT_SYSTEM_DISK
+Системний диск
+MSG_ABOUT_UP_FOR
+Час роботи
+MSG_ABOUT_IN_USE
+Зайнято
+MSG_ABOUT_OF
+з
+MSG_ABOUT_BITS
+біт на піксель
+MSG_ABOUT_DAY
+день
+MSG_ABOUT_DAYS
+дн.
+MSG_INFO_TITLE
+Відомості
+MSG_INFO_STATE
+Стан
+MSG_INFO_READ_ONLY
+Лише читання
+MSG_INFO_VALIDATING
+Перевіряється
+MSG_INFO_READ_WRITE
+Читання й запис
+MSG_INFO_UNKNOWN
+Невідомо
+MSG_INFO_BLOCKS
+Блоки
+MSG_INFO_USED
+Зайнято
+MSG_INFO_FREE
+Вільно
+MSG_INFO_BLOCK_SIZE
+Розмір блока
+MSG_INFO_BYTES
+байт
+MSG_INFO_BLOCKS_COUNTED
+блоків
+MSG_INFO_CREATED
+Створено
+MSG_INFO_LAST_CHANGED
+Змінено
+MSG_INFO_SCRIPT
+Сценарій
+MSG_INFO_ARCHIVED
+Архівний
+MSG_INFO_READABLE
+Читання
+MSG_INFO_WRITABLE
+Запис
+MSG_INFO_EXECUTABLE
+Виконання
+MSG_INFO_DELETABLE
+Видалення
+MSG_INFO_COMMENT
+Коментар
+MSG_INFO_STACK
+Стек
+MSG_INFO_DEFAULT_TOOL
+Програма за замовчуванням
+MSG_INFO_TOOL_TYPES
+Параметри
+MSG_INFO_SAVE
+_Зберегти
+MSG_INFO_NOT_WRITTEN
+Не вдалося записати значок.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Копіювання
+MSG_WORK_DELETING
+Видалення
+MSG_WORK_STOP
+_Стоп
+MSG_WORK_WAITING
+Ще %lu в черзі
+MSG_WORK_REPLACE_ASK
+%s уже існує.\nЗамінити?
+MSG_WORK_REPLACE_BUTTONS
+Замінити|Замінити всі|Пропустити|Стоп

@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; Sheet's strings in Polish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Nowy
+MSG_MENU_OPEN
+Otwórz...
+MSG_MENU_SAVE
+Zapisz
+MSG_MENU_SAVE_AS
+Zapisz jako...
+MSG_MENU_QUIT
+Zakończ
+MSG_MENU_EDIT
+Edycja
+MSG_MENU_UNDO
+Cofnij
+MSG_MENU_REDO
+Ponów
+MSG_MENU_CUT
+Wytnij
+MSG_MENU_COPY
+Kopiuj
+MSG_MENU_PASTE
+Wklej
+MSG_MENU_CLEAR
+Wyczyść
+MSG_MENU_FILL_DOWN
+Wypełnij w dół
+MSG_MENU_FILL_RIGHT
+Wypełnij w prawo
+MSG_MENU_SELECT_ALL
+Zaznacz wszystko
+MSG_MENU_FIND
+Znajdź...
+MSG_MENU_FIND_NEXT
+Znajdź następny
+MSG_MENU_SHEET
+Arkusz
+MSG_MENU_INSERT_ROWS
+Wstaw wiersze
+MSG_MENU_DELETE_ROWS
+Usuń wiersze
+MSG_MENU_INSERT_COLUMNS
+Wstaw kolumny
+MSG_MENU_DELETE_COLUMNS
+Usuń kolumny
+MSG_MENU_WIDER
+Szersza kolumna
+MSG_MENU_NARROWER
+Węższa kolumna
+MSG_MENU_SUM
+Autosumowanie
+MSG_MENU_SORT_ASCENDING
+Sortuj rosnąco
+MSG_MENU_SORT_DESCENDING
+Sortuj malejąco
+MSG_MENU_FORMAT
+Format
+MSG_MENU_GENERAL
+Ogólne
+MSG_MENU_NUMBER
+Liczbowe
+MSG_MENU_PERCENT
+Procentowe
+MSG_MENU_CURRENCY
+Walutowe
+MSG_MENU_DECIMALS_MORE
+Zwiększ dziesiętne
+MSG_MENU_DECIMALS_LESS
+Zmniejsz dziesiętne
+MSG_MENU_VIEW
+Widok
+MSG_MENU_RIBBON
+Wstążka
+MSG_RIBBON_HOME
+Narzędzia główne
+MSG_RIBBON_CLIPBOARD
+Schowek
+MSG_RIBBON_PASTE_HINT
+Wstaw to, co wycięto lub skopiowano
+MSG_RIBBON_NUMBER_HINT
+Pokaż liczby z miejscami dziesiętnymi i separatorem tysięcy
+MSG_RIBBON_PERCENT_HINT
+Pokaż liczby jako procenty
+MSG_RIBBON_CURRENCY_HINT
+Pokaż liczby jako kwoty pieniężne
+MSG_RIBBON_DECIMALS_MORE_HINT
+Pokaż o jedno miejsce dziesiętne więcej
+MSG_RIBBON_DECIMALS_LESS_HINT
+Pokaż o jedno miejsce dziesiętne mniej
+MSG_RIBBON_CELLS
+Komórki
+MSG_RIBBON_INSERT
+Wstaw
+MSG_RIBBON_INSERT_HINT
+Wstaw wiersze lub kolumny w miejscu zaznaczonych komórek
+MSG_RIBBON_DELETE
+Usuń
+MSG_RIBBON_DELETE_HINT
+Usuń wiersze lub kolumny zaznaczonych komórek
+MSG_RIBBON_EDITING
+Edytowanie
+MSG_RIBBON_SUM_HINT
+Zsumuj liczby powyżej lub po lewej
+MSG_RIBBON_SORT
+Sortuj
+MSG_RIBBON_SORT_HINT
+Uporządkuj wiersze według kolumny bieżącej komórki
+MSG_RIBBON_FIND
+Znajdź
+MSG_RIBBON_FIND_HINT
+Znajdź komórkę według jej zawartości
+MSG_RIBBON_FILL
+Wypełnij
+MSG_RIBBON_FILL_HINT
+Skopiuj pierwszy wiersz lub kolumnę na pozostałe
+MSG_RIBBON_CLEAR_HINT
+Opróżnij zaznaczone komórki
+MSG_ROWS
+Wiersze
+MSG_COLUMNS
+Kolumny
+MSG_SUM
+Suma
+MSG_AVERAGE
+Średnia
+MSG_COUNT
+Licznik
+MSG_MIN
+Min
+MSG_MAX
+Maks
+MSG_ASCENDING
+Rosnąco
+MSG_DESCENDING
+Malejąco
+MSG_DOWN
+W dół
+MSG_RIGHT
+W prawo
+MSG_PROBLEM_NAME
+Nie ma takiej funkcji ani nazwy
+MSG_PROBLEM_ARGUMENTS
+Nieprawidłowa liczba argumentów
+MSG_PROBLEM_PARENTHESES
+Nawias nie ma pary
+MSG_PROBLEM_TOO_LONG
+Formuła jest za długa
+MSG_PROBLEM_UNREADABLE
+Nie można odczytać formuły
+MSG_PROBLEM_AT
+%s, przy znaku %u
+MSG_NO_MEMORY_KEEP
+Za mało pamięci, aby to wszystko zachować
+MSG_NO_MEMORY_FILE
+Za mało pamięci na cały plik
+MSG_LEFT_OUT
+Pominięto komórki poza wierszem 9999 lub kolumną IV
+MSG_NO_MEMORY_COPY
+Brak pamięci, aby skopiować tak dużo
+MSG_NO_MEMORY_CLEAR
+Za mało pamięci, aby wyczyścić wszystko
+MSG_NO_MEMORY_PASTE
+Za mało pamięci, aby wkleić wszystko
+MSG_NO_ROOM_COLUMNS
+Brak miejsca: ostatnie kolumny nie są puste
+MSG_NO_ROOM_ROWS
+Brak miejsca: ostatnie wiersze nie są puste
+MSG_NO_MEMORY_THAT
+Za mało pamięci na to
+MSG_NO_MEMORY_FORMAT
+Za mało pamięci, aby sformatować wszystko
+MSG_NOTHING_TO_ADD
+Brak liczb powyżej lub po lewej do zsumowania
+MSG_NO_MEMORY_ALL
+Za mało pamięci na to wszystko
+MSG_NO_MEMORY_SORT
+Za mało pamięci, aby to wszystko posortować
+MSG_NO_MEMORY_FILL
+Za mało pamięci, aby wypełnić wszystko
+MSG_NOT_FOUND
+Żadna komórka tego nie zawiera
+MSG_UNTITLED
+Bez tytułu
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Nie można otworzyć %s
+MSG_CANNOT_READ
+Nie można odczytać %s
+MSG_TOO_BIG
+%s jest za duży
+MSG_NO_MEMORY_FOR
+Brak pamięci na %s
+MSG_NO_MEMORY_TO_SAVE
+Brak pamięci, aby zapisać %s
+MSG_CANNOT_WRITE
+Nie można zapisać %s
+MSG_NO_REQUESTER
+Brak %s
+MSG_CHANGED
+Arkusz został zmieniony.\nNajpierw go zapisać?
+MSG_CHANGED_BUTTONS
+Zapisz|Nie zapisuj|Anuluj
+MSG_OPEN_TITLE
+Otwórz arkusz
+MSG_SAVE_AS_TITLE
+Zapisz arkusz jako
+MSG_FIND_LABEL
+Znajdź
+MSG_FIND_NEXT_BUTTON
+Następny
+MSG_FIND_PREVIOUS_BUTTON
+Poprzedni
+MSG_FIND_CLOSE_BUTTON
+Zamknij
+MSG_NOLIBRARY
+Brak %s\n
+MSG_NOSCREEN
+Brak domyślnego ekranu - brak wyświetlacza\n
+MSG_NOMEMORY
+Brak pamięci na okno\n

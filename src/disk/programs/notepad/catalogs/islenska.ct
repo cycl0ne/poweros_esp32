@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; Notepad's strings in Icelandic.
+MSG_MENU_PROJECT
+Verkefni
+MSG_MENU_NEW
+Nýtt
+MSG_MENU_OPEN
+Opna...
+MSG_MENU_SAVE
+Vista
+MSG_MENU_SAVE_AS
+Vista sem...
+MSG_MENU_QUIT
+Hætta
+MSG_MENU_EDIT
+Breyta
+MSG_MENU_UNDO
+Afturkalla
+MSG_MENU_REDO
+Endurgera
+MSG_MENU_CUT
+Klippa
+MSG_MENU_COPY
+Afrita
+MSG_MENU_PASTE
+Líma
+MSG_MENU_SELECT_ALL
+Velja allt
+MSG_MENU_SEARCH
+Leita
+MSG_MENU_FIND
+Finna...
+MSG_MENU_FIND_NEXT
+Finna næsta
+MSG_MENU_FIND_PREVIOUS
+Finna fyrra
+MSG_MENU_REPLACE
+Skipta út...
+MSG_MENU_VIEW
+Skoða
+MSG_MENU_WRAP
+Línuskil
+MSG_MENU_NUMBERS
+Línunúmer
+MSG_MENU_ZIG
+Zig-litun
+MSG_MENU_RIBBON
+Borði
+MSG_RIBBON_HOME
+Heim
+MSG_RIBBON_CLIPBOARD
+Klippiborð
+MSG_RIBBON_PASTE_HINT
+Líma inn það sem var klippt eða afritað
+MSG_RIBBON_EDITING
+Breytingar
+MSG_RIBBON_FIND
+Finna
+MSG_RIBBON_FIND_HINT
+Finna texta; listinn finnur þann næsta aftur, eða þann á undan
+MSG_RIBBON_REPLACE
+Skipta út
+MSG_RIBBON_REPLACE_HINT
+Setja annan texta í stað þess sem fannst
+MSG_RIBBON_SELECT_ALL_HINT
+Velja allan textann
+MSG_RIBBON_LINES
+Línur
+MSG_RIBBON_WRAP_HINT
+Halda áfram í næstu línu í stað þess að fara út fyrir gluggann
+MSG_RIBBON_NUMBERS_HINT
+Númera hverja línu vinstra megin
+MSG_RIBBON_HIGHLIGHTING
+Litun
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Sýna lykilorð, strengi og athugasemdir Zig hvert í sínum lit
+MSG_UNTITLED
+Ónefnt
+MSG_OK
+Í lagi
+MSG_CANNOT_OPEN
+Get ekki opnað %s
+MSG_CANNOT_READ
+Get ekki lesið %s
+MSG_TOO_BIG
+%s er of stór
+MSG_NO_MEMORY_FOR
+Ekkert minni fyrir %s
+MSG_NO_MEMORY_TO_SAVE
+Ekkert minni til að vista %s
+MSG_CANNOT_WRITE
+Get ekki skrifað %s
+MSG_NO_REQUESTER
+Ekkert %s
+MSG_CHANGED
+Textanum hefur verið breytt.\nVista hann fyrst?
+MSG_CHANGED_BUTTONS
+Vista|Ekki vista|Hætta við
+MSG_OPEN_TITLE
+Opna texta
+MSG_SAVE_AS_TITLE
+Vista textann sem
+MSG_FIND_TITLE
+Finna og skipta út
+MSG_FIND_LABEL
+Finna
+MSG_REPLACE_WITH
+Skipta út fyrir
+MSG_ANY_CASE
+Hunsa há-/lágstafi
+MSG_FIND_NEXT_BUTTON
+Finna næsta
+MSG_REPLACE_BUTTON
+Skipta út
+MSG_REPLACE_ALL_BUTTON
+Skipta út öllu
+MSG_NOLIBRARY
+Ekkert %s\n
+MSG_NOSCREEN
+Enginn sjálfgefinn skjár - engin birting\n
+MSG_NOMEMORY
+Ekkert minni fyrir gluggann\n

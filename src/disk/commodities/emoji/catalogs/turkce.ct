@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; Emoji's strings in Turkish.
+MSG_SEARCH
+Ara
+MSG_USED
+Son kullanılanlar
+MSG_NONE_USED
+Henüz hiçbiri kullanılmadı
+MSG_NOT_FOUND
+Hiçbiri bulunamadı
+MSG_TONE_NONE
+Ten rengi yok
+MSG_TONE_LIGHT
+Açık
+MSG_TONE_MEDIUM_LIGHT
+Orta açık
+MSG_TONE_MEDIUM
+Orta
+MSG_TONE_MEDIUM_DARK
+Orta koyu
+MSG_TONE_DARK
+Koyu
+MSG_GROUP_SMILEYS
+Gülen yüzler & duygular
+MSG_GROUP_PEOPLE
+İnsanlar & vücut
+MSG_GROUP_ANIMALS
+Hayvanlar & doğa
+MSG_GROUP_FOOD
+Yiyecek & içecek
+MSG_GROUP_TRAVEL
+Seyahat & yerler
+MSG_GROUP_ACTIVITIES
+Etkinlikler
+MSG_GROUP_OBJECTS
+Nesneler
+MSG_GROUP_SYMBOLS
+Semboller
+MSG_GROUP_FLAGS
+Bayraklar

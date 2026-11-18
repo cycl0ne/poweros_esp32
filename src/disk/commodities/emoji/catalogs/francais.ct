@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; Emoji's strings in French.
+MSG_SEARCH
+Rechercher
+MSG_USED
+Récemment utilisés
+MSG_NONE_USED
+Aucun utilisé pour l'instant
+MSG_NOT_FOUND
+Aucun trouvé
+MSG_TONE_NONE
+Sans teinte
+MSG_TONE_LIGHT
+Clair
+MSG_TONE_MEDIUM_LIGHT
+Moyennement clair
+MSG_TONE_MEDIUM
+Moyen
+MSG_TONE_MEDIUM_DARK
+Moyennement foncé
+MSG_TONE_DARK
+Foncé
+MSG_GROUP_SMILEYS
+Smileys et émotions
+MSG_GROUP_PEOPLE
+Personnes et corps
+MSG_GROUP_ANIMALS
+Animaux et nature
+MSG_GROUP_FOOD
+Nourriture et boissons
+MSG_GROUP_TRAVEL
+Voyages et lieux
+MSG_GROUP_ACTIVITIES
+Activités
+MSG_GROUP_OBJECTS
+Objets
+MSG_GROUP_SYMBOLS
+Symboles
+MSG_GROUP_FLAGS
+Drapeaux

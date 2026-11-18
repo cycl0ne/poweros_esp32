@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; Clock's strings in Turkish.
+MSG_WINDOW_TITLE
+Saat
+MSG_MENU_PROJECT
+Proje
+MSG_MENU_ANALOG
+Analog
+MSG_MENU_DIGITAL
+Dijital
+MSG_MENU_ABOUT
+Hakkında...
+MSG_MENU_QUIT
+Çıkış
+MSG_MENU_SETTINGS
+Ayarlar
+MSG_MENU_SECONDS
+Saniye
+MSG_MENU_DATE
+Tarih
+MSG_MENU_24_HOURS
+24 saat
+MSG_MENU_SAVE
+Ayarları kaydet
+MSG_ABOUT_TITLE
+Saat hakkında
+MSG_ABOUT
+%s\n\nZaman, kadranda ya da rakamlarla.\nPencereye çift tıklamak ikisi arasında geçiş yapar.
+MSG_OK
+Tamam
+MSG_NOT_SAVED
+Ayarlar şuraya kaydedilemedi:\n%s.
+MSG_NOLIBRARY
+%s: %s açılamıyor\n
+MSG_NOMEMORY
+%s: yeterli bellek yok\n
+MSG_NOWINDOW
+%s: penceresi açılamıyor\n

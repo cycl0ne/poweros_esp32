@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; Movie's strings in Irish.
+MSG_MENU_PROJECT
+Tionscadal
+MSG_MENU_OPEN
+Oscail...
+MSG_MENU_WHOLE_SCREEN
+Scáileán Iomlán
+MSG_MENU_ABOUT
+Maidir Leis
+MSG_MENU_QUIT
+Scoir
+MSG_MENU_SOUND
+Fuaim
+MSG_MENU_NO_SOUND
+Dada
+MSG_MENU_SUBTITLES
+Fotheidil
+MSG_MENU_SUBTITLES_OFF
+Múchta
+MSG_MENU_TRACK
+Rian
+MSG_MENU_FRAME_RATE
+Ráta Fráma
+MSG_MENU_INFO
+Eolas faoin Scannán...
+MSG_FRAME_RATE
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED
+%u.%u / %u.%u fps, %u caillte
+MSG_ASK_OPEN
+Seinn scannán
+MSG_ABOUT_TITLE
+Maidir le Movie
+MSG_ABOUT
+%s\n\nSeinneann sé scannáin - MP4, MOV QuickTime agus MKV Matroska:\npictiúir H.264, H.265 agus Motion JPEG,\nfuaim AAC, AC-3, MP3, FLAC agus Vorbis, agus fotheidil.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+Ní féidir\n%s\na sheinm:\n%s
+MSG_INFO_TITLE
+Eolas faoin Scannán
+MSG_INFO_FILE
+Comhad
+MSG_INFO_NAMED
+Teideal
+MSG_INFO_CONTAINER
+Coimeádán
+MSG_INFO_LENGTH
+Fad
+MSG_INFO_PICTURES
+Pictiúir
+MSG_INFO_COLOURS
+Dathanna
+MSG_INFO_BITS
+%u giotán
+MSG_INFO_LIMITED
+raon teoranta
+MSG_INFO_FULL
+raon iomlán
+MSG_INFO_SHOWN
+Taispeántas
+MSG_INFO_ON_LAYER
+ar shraith físe an taispeáin
+MSG_INFO_BY_GRAPHICS
+tarraingthe ag graphics.library
+MSG_INFO_DECODED
+Díchódaithe
+MSG_INFO_BY_CHIP
+ag an díchódóir físe
+MSG_INFO_BY_PROCESSOR
+ag an bpróiseálaí
+MSG_INFO_SOUND
+Fuaim
+MSG_INFO_NONE
+dada
+MSG_INFO_CHANNELS
+%u cainéal
+MSG_INFO_TRACKS
+Rianta
+MSG_INFO_TRACK_COUNTS
+%u fuaime, %u fotheideal
+MSG_VOLUME_HINT
+Airde Fuaime
+MSG_NOLIBRARY
+%s: ní féidir %s a oscailt\n
+MSG_NOMEMORY
+%s: níl dóthain cuimhne ann\n
+MSG_NOWINDOW
+%s: ní féidir a fhuinneog a oscailt\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

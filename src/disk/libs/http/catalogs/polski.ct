@@ -1,0 +1,75 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; http.library's words for a request that failed, in Polish: a clause
+; that starts in lower case, without its full stop.
+MSG_NOMEM
+brak pamięci
+MSG_IO
+połączenie nie powiodło się
+MSG_IO_BECAUSE
+połączenie nie powiodło się: %s
+MSG_STOPPED
+przerwano
+MSG_TIMEOUT
+serwer nie odpowiedział na czas
+MSG_URL
+to nie jest adres URL http:// ani https:// albo jest za długi
+MSG_HOST
+host nie ma adresu
+MSG_HOST_NAMED
+%s nie ma adresu
+MSG_TLS
+sesja TLS nie powiodła się
+MSG_TLS_CERTIFICATE
+certyfikat serwera nie jest zaufany: %s
+MSG_TLS_CLOCK
+zegar nie jest ustawiony, więc nie można sprawdzić żadnego certyfikatu (TimeSync)
+MSG_TLS_ALERT
+serwer odrzucił sesję TLS (alert %u)
+MSG_TLS_HANDSHAKE
+uzgadnianie TLS nie powiodło się
+MSG_PROTOCOL
+odpowiedź nie jest odpowiedzią HTTP
+MSG_REDIRECT
+więcej przekierowań, niż dozwolono, albo przekierowanie donikąd
+MSG_TRUNCATED
+połączenie zakończyło się przed końcem odpowiedzi
+MSG_STATE
+wywołanie poza kolejnością albo żądanie, którego nie można wysłać
+MSG_LIBRARY
+brak biblioteki potrzebnej do żądania
+MSG_LIBRARY_NAMED
+brak %s
+MSG_DATA
+spakowanej odpowiedzi serwera nie da się rozpakować
+MSG_CLOSED
+serwer zamknął połączenie bez odpowiedzi
+MSG_UNKNOWN
+żądanie nie powiodło się (%d)
+MSG_VERDICT_MALFORMED
+jednego z jego certyfikatów nie da się odczytać
+MSG_VERDICT_UNKNOWN_ISSUER
+nie podpisał go żaden zaufany certyfikat główny
+MSG_VERDICT_BAD_SIGNATURE
+podpis w jego łańcuchu jest nieprawidłowy
+MSG_VERDICT_UNSUPPORTED
+jest podpisany w sposób, którego nie można sprawdzić
+MSG_VERDICT_EXPIRED
+wygasł
+MSG_VERDICT_NOT_YET_VALID
+nie jest jeszcze ważny
+MSG_VERDICT_NOT_CA
+wystawił go certyfikat, który nie może wystawiać certyfikatów
+MSG_VERDICT_PATH_LENGTH
+jego łańcuch jest dłuższy, niż pozwalają jego urzędy certyfikacji
+MSG_VERDICT_NAME_CONSTRAINTS
+urząd certyfikacji w jego łańcuchu ma ograniczenia nazw
+MSG_VERDICT_WRONG_USAGE
+nie jest przeznaczony dla serwera
+MSG_VERDICT_WRONG_NAME
+jest wystawiony dla innego hosta
+MSG_VERDICT_TOO_LONG
+jego łańcuch jest za długi
+MSG_VERDICT_OTHER
+bez podanego powodu

@@ -1,0 +1,27 @@
+# LOCALE:Languages/islenska.language - Icelandic: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=sunnudagur DAY_2=mánudagur DAY_3=þriðjudagur DAY_4=miðvikudagur
+DAY_5=fimmtudagur DAY_6=föstudagur DAY_7=laugardagur
+ABDAY_1=sun ABDAY_2=mán ABDAY_3=þri ABDAY_4=mið ABDAY_5=fim
+ABDAY_6=fös ABDAY_7=lau
+# The months, then their short names.
+MON_1=janúar MON_2=febrúar MON_3=mars MON_4=apríl MON_5=maí
+MON_6=júní MON_7=júlí MON_8=ágúst MON_9=september MON_10=október
+MON_11=nóvember MON_12=desember
+ABMON_1=jan ABMON_2=feb ABMON_3=mar ABMON_4=apr ABMON_5=maí
+ABMON_6=jún ABMON_7=júl ABMON_8=ágú ABMON_9=sep ABMON_10=okt
+ABMON_11=nóv ABMON_12=des
+# Yes and no, before and after noon.
+YESSTR=Já NOSTR=Nei AM_STR=f.h. PM_STR=e.h.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR="Í gær" TODAYSTR="Í dag" TOMORROWSTR="Á morgun"
+FUTURESTR=Framtíð
+# The order of the letters: Á, Ð, É, Í, Ó, Ú and Ý each after its own
+# letter, then Þ, Æ and Ö after Z, Ä taken for Æ and Ø for Ö.
+AFTER_A=Á AFTER_D=Ð AFTER_E=É AFTER_I=Í AFTER_O=Ó AFTER_U=Ú AFTER_Y=Ý
+AFTER_Z=Þ,ÆÄ,ÖØ

@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; Notepad's strings in Slovene.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_NEW
+Novo
+MSG_MENU_OPEN
+Odpri...
+MSG_MENU_SAVE
+Shrani
+MSG_MENU_SAVE_AS
+Shrani kot...
+MSG_MENU_QUIT
+Končaj
+MSG_MENU_EDIT
+Uredi
+MSG_MENU_UNDO
+Razveljavi
+MSG_MENU_REDO
+Uveljavi
+MSG_MENU_CUT
+Izreži
+MSG_MENU_COPY
+Kopiraj
+MSG_MENU_PASTE
+Prilepi
+MSG_MENU_SELECT_ALL
+Izberi vse
+MSG_MENU_SEARCH
+Iskanje
+MSG_MENU_FIND
+Najdi...
+MSG_MENU_FIND_NEXT
+Najdi naslednje
+MSG_MENU_FIND_PREVIOUS
+Najdi prejšnje
+MSG_MENU_REPLACE
+Zamenjaj...
+MSG_MENU_VIEW
+Pogled
+MSG_MENU_WRAP
+Prelom vrstic
+MSG_MENU_NUMBERS
+Številke vrstic
+MSG_MENU_ZIG
+Poudarjanje jezika Zig
+MSG_MENU_RIBBON
+Trak
+MSG_RIBBON_HOME
+Osnovno
+MSG_RIBBON_CLIPBOARD
+Odložišče
+MSG_RIBBON_PASTE_HINT
+Vstavi, kar je bilo izrezano ali kopirano
+MSG_RIBBON_EDITING
+Urejanje
+MSG_RIBBON_FIND
+Najdi
+MSG_RIBBON_FIND_HINT
+Najdi besedilo; seznam najde naslednje ali prejšnje
+MSG_RIBBON_REPLACE
+Zamenjaj
+MSG_RIBBON_REPLACE_HINT
+Na mesto najdenega besedila postavi drugo
+MSG_RIBBON_SELECT_ALL_HINT
+Izberi vse besedilo
+MSG_RIBBON_LINES
+Vrstice
+MSG_RIBBON_WRAP_HINT
+Nadaljuj v naslednji vrstici namesto čez rob okna
+MSG_RIBBON_NUMBERS_HINT
+Oštevilči vsako vrstico na levi
+MSG_RIBBON_HIGHLIGHTING
+Poudarjanje
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Prikaži ključne besede, nize in komentarje jezika Zig, vsake v svoji barvi
+MSG_UNTITLED
+Neimenovano
+MSG_OK
+V redu
+MSG_CANNOT_OPEN
+%s ni mogoče odpreti
+MSG_CANNOT_READ
+%s ni mogoče prebrati
+MSG_TOO_BIG
+%s je prevelik
+MSG_NO_MEMORY_FOR
+Ni pomnilnika za %s
+MSG_NO_MEMORY_TO_SAVE
+Ni pomnilnika za shranjevanje %s
+MSG_CANNOT_WRITE
+%s ni mogoče zapisati
+MSG_NO_REQUESTER
+Ni %s
+MSG_CHANGED
+Besedilo je bilo spremenjeno.\nGa želite najprej shraniti?
+MSG_CHANGED_BUTTONS
+Shrani|Ne shrani|Prekliči
+MSG_OPEN_TITLE
+Odpri besedilo
+MSG_SAVE_AS_TITLE
+Shrani besedilo kot
+MSG_FIND_TITLE
+Najdi in zamenjaj
+MSG_FIND_LABEL
+Najdi
+MSG_REPLACE_WITH
+Zamenjaj z
+MSG_ANY_CASE
+Ne glede na velikost črk
+MSG_FIND_NEXT_BUTTON
+Najdi naslednje
+MSG_REPLACE_BUTTON
+Zamenjaj
+MSG_REPLACE_ALL_BUTTON
+Zamenjaj vse
+MSG_NOLIBRARY
+Ni %s\n
+MSG_NOSCREEN
+Ni privzetega zaslona - ni prikaza\n
+MSG_NOMEMORY
+Ni pomnilnika za okno\n

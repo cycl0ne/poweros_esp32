@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; The Player's strings in Lithuanian.
+MSG_MENU_PROJECT
+Projektas
+MSG_MENU_OPEN
+Atidaryti...
+MSG_MENU_OPEN_DRAWER
+Atidaryti aplanką...
+MSG_MENU_OPEN_URL
+Atidaryti URL...
+MSG_MENU_SAVE_PLAYLIST
+Įrašyti grojaraštį...
+MSG_MENU_ABOUT
+Apie
+MSG_MENU_QUIT
+Išeiti
+MSG_MENU_PLAYLIST
+Grojaraštis
+MSG_MENU_ADD
+Pridėti...
+MSG_MENU_REMOVE
+Pašalinti
+MSG_MENU_CLEAR
+Išvalyti
+MSG_MENU_SHUFFLE
+Maišyti
+MSG_MENU_REPEAT
+Kartoti
+MSG_MENU_REPEAT_OFF
+Išjungta
+MSG_MENU_REPEAT_ALL
+Visus
+MSG_MENU_REPEAT_ONE
+Vieną
+MSG_MENU_PICTURE
+Vaizdas
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Banga
+MSG_MENU_BARS
+Stulpeliai
+MSG_MENU_SETTINGS
+Nuostatos
+MSG_MENU_REMEMBER
+Įsiminti, kur sustota
+MSG_PAGE_PLAYING
+Dabar groja
+MSG_PAGE_RADIO
+Radijas
+MSG_VIEW_KEPT
+Jūsų stotys
+MSG_VIEW_FOUND
+Rasta
+MSG_NAME
+Pavadinimas
+MSG_GENRE
+Žanras
+MSG_COUNTRY
+Šalis
+MSG_COLUMN_TITLE
+Pavadinimas
+MSG_COLUMN_ARTIST
+Atlikėjas
+MSG_COLUMN_TIME
+Laikas
+MSG_COLUMN_STATION
+Stotis
+MSG_COLUMN_ADDRESS
+Adresas
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Žanrai
+MSG_SHUFFLE_BUTTON
+_Maišyti
+MSG_SHUFFLE_HINT
+Groti dainas atsitiktine tvarka
+MSG_REPEAT_BUTTON
+_Kartoti
+MSG_REPEAT_HINT
+Groti sąrašą dar kartą arba vieną dainą
+MSG_MUTE_BUTTON
+_Nutildyti
+MSG_MUTE_HINT
+Išjungti garsą ir vėl įjungti
+MSG_LENGTH_HINT
+Dainos trukmė arba kiek jos liko
+MSG_ADD_BUTTON
+_Pridėti...
+MSG_REMOVE_BUTTON
+Ša_linti
+MSG_CLEAR_BUTTON
+_Valyti
+MSG_OUTPUT_LABEL
+_Išvestis
+MSG_SEARCH_BUTTON
+I_eškoti
+MSG_KEEP_BUTTON
+_Saugoti
+MSG_FORGET_BUTTON
+Pami_ršti
+MSG_FIND_LABEL
+Ras_ti
+MSG_BY_LABEL
+pa_gal
+MSG_URL_TITLE
+Atidaryti URL
+MSG_URL_ADDRESS
+A_dresas
+MSG_URL_OPEN
+_Atidaryti
+MSG_URL_CANCEL
+A_tšaukti
+MSG_ASK_PLAY
+Kurias dainas?
+MSG_ASK_ADD
+Kurias dainas pridėti?
+MSG_ASK_DRAWER
+Kurį aplanką?
+MSG_ASK_SAVE
+Įrašyti grojaraštį kaip
+MSG_ABOUT_TITLE
+Apie Player
+MSG_ABOUT
+%s\n\nDainos iš WAV, MP3, FLAC, Ogg Vorbis, AAC ir AC-3 failų,\nviena po kitos, su viršeliais,\nstotys iš tinklo\nir garso vaizdas.
+MSG_OK
+Gerai
+MSG_NO_SONG
+Nėra dainos
+MSG_TRACK_OF
+takelis %u iš %u
+MSG_TRACK
+takelis %u
+MSG_COMPOSED_BY
+kompozitorius: %s
+MSG_CHAPTER
+Skyrius %u iš %u
+MSG_SOUND
+Garsas
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+daina %u iš %u
+MSG_NO_SOUND
+nėra garso
+MSG_NO_STREAM_FREE
+nėra laisvo srauto
+MSG_LIVE
+tiesiogiai
+MSG_BUFFERING
+buferizuojama
+MSG_BUFFERING_PERCENT
+Buferizuojama %u%%
+MSG_STATION_IDLE
+Stotis: grojimas ją įjungia
+MSG_CALLING
+Jungiamasi prie stoties
+MSG_NO_MEMORY_STATION
+Nėra atminties stočiai
+MSG_ALL_STREAMS_USED
+Visi garso srautai užimti
+MSG_NO_SOUND_HERE
+Šis kompiuteris neturi garso
+MSG_NO_AUDIO_STREAM
+audio.device neatidarė srauto
+MSG_KEPT_ALREADY
+Jau įsiminta: %s
+MSG_KEPT
+Įsiminta: %s
+MSG_NO_MEMORY_KEEP
+Nėra atminties stočiai įsiminti
+MSG_NO_MEMORY_SEARCH
+Nėra atminties paieškai
+MSG_SEARCHING
+Ieškoma
+MSG_ASKING
+Klausiama %s
+MSG_NONE_FOUND
+Stočių nerasta
+MSG_ONE_FOUND
+Rasta viena stotis
+MSG_COUNT_FOUND
+Rasta stočių: %u
+MSG_NO_NETWORK
+Nėra tinklo: nėra bsdsocket.library
+MSG_NO_HTTP
+Nėra http.library
+MSG_NO_MEMORY_CONNECTION
+Nėra atminties ryšiui
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info neturi adreso
+MSG_SERVICE_NO_ANSWER
+radio-browser.info neatsakė į paiešką
+MSG_SERVICE_UNREACHED
+radio-browser.info nepasiekiamas
+MSG_SERVICE_NONSENSE
+radio-browser.info atsakymas beprasmis
+MSG_SEARCH_FAILED
+Paieška nepavyko
+MSG_NO_SIGNAL
+Nėra laisvo signalo stočiai
+MSG_NO_TIMER
+timer.device neatsidarė
+MSG_LISTS_ONLY
+Stoties sąrašai veda tik į kitus sąrašus
+MSG_STATION_STOPPED
+Stotis nustojo transliuoti
+MSG_STATION_ANSWERED
+Stotis atsakė
+MSG_SENDS_AAC
+Stotis transliuoja AAC, kuris negrojamas
+MSG_STATION_ENDED
+Stotis nutraukė ryšį
+MSG_SENDS_HLS
+Stotis transliuoja HLS, kuris negrojamas
+MSG_LIST_EMPTY
+Stoties sąraše nenurodyta jokia stotis
+MSG_LIST_TOO_LONG
+Stoties sąraše nurodytas per ilgas adresas
+MSG_NOT_AN_ADDRESS
+Tai ne adresas klausytis
+MSG_NONSENSE
+Stoties atsakymas beprasmis
+MSG_NOLIBRARY
+%s: nepavyksta atidaryti %s\n
+MSG_NOMEMORY
+%s: nėra atminties langui\n
+MSG_NOBUFFERS
+%s: nėra atminties garsui\n
+MSG_NOWINDOW
+%s: nėra lango\n
+MSG_MENU_EQUALIZER
+Glodintuvas
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Osciloskopas
+MSG_MENU_METERS
+Lygio matuokliai
+MSG_MENU_WHOLE_SCREEN
+Visas ekranas

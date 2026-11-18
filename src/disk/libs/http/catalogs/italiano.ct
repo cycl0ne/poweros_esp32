@@ -1,0 +1,79 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language italiano
+## codeset 106
+; http.library's words for a request that failed, in Italian: a clause
+; that starts in lower case, without its full stop.
+;
+; What each HTTPERR_* means.
+MSG_NOMEM
+memoria esaurita
+MSG_IO
+la connessione non è riuscita
+MSG_IO_BECAUSE
+la connessione non è riuscita: %s
+MSG_STOPPED
+interrotto
+MSG_TIMEOUT
+il server non ha risposto in tempo
+MSG_URL
+non è un URL http:// o https://, oppure è troppo lungo
+MSG_HOST
+l'host non ha un indirizzo
+MSG_HOST_NAMED
+%s non ha un indirizzo
+MSG_TLS
+la sessione TLS non è riuscita
+MSG_TLS_CERTIFICATE
+il certificato del server non è attendibile: %s
+MSG_TLS_CLOCK
+l'orologio non è impostato, quindi nessun certificato può essere verificato (TimeSync)
+MSG_TLS_ALERT
+il server ha rifiutato la sessione TLS (avviso %u)
+MSG_TLS_HANDSHAKE
+l'handshake TLS non è riuscito
+MSG_PROTOCOL
+la risposta non è HTTP
+MSG_REDIRECT
+più reindirizzamenti di quelli consentiti, o uno verso il nulla
+MSG_TRUNCATED
+la connessione si è chiusa prima della risposta
+MSG_STATE
+una chiamata fuori turno, o una richiesta che non si può fare
+MSG_LIBRARY
+manca una libreria necessaria alla richiesta
+MSG_LIBRARY_NAMED
+manca %s
+MSG_DATA
+la risposta compressa del server non si decomprime
+MSG_CLOSED
+il server ha chiuso la connessione senza rispondere
+MSG_UNKNOWN
+la richiesta non è riuscita (%d)
+;
+; Why a server's certificate is not trusted.
+MSG_VERDICT_MALFORMED
+uno dei suoi certificati non si può leggere
+MSG_VERDICT_UNKNOWN_ISSUER
+nessuna radice attendibile lo ha firmato
+MSG_VERDICT_BAD_SIGNATURE
+una firma nella sua catena è errata
+MSG_VERDICT_UNSUPPORTED
+è firmato in un modo che non si può verificare
+MSG_VERDICT_EXPIRED
+è scaduto
+MSG_VERDICT_NOT_YET_VALID
+non è ancora valido
+MSG_VERDICT_NOT_CA
+è stato emesso da un certificato che non può emetterne
+MSG_VERDICT_PATH_LENGTH
+la sua catena è più lunga di quanto consentano le sue CA
+MSG_VERDICT_NAME_CONSTRAINTS
+una CA nella sua catena ha vincoli sui nomi
+MSG_VERDICT_WRONG_USAGE
+non è per un server
+MSG_VERDICT_WRONG_NAME
+è per un altro host
+MSG_VERDICT_TOO_LONG
+la sua catena è troppo lunga
+MSG_VERDICT_OTHER
+senza un motivo indicato

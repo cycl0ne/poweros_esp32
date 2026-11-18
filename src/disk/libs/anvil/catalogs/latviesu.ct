@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; The desktop's strings in Latvian.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Fons
+MSG_MENU_EXECUTE
+Izpildīt komandu...
+MSG_MENU_REDRAW_ALL
+Pārzīmēt visu
+MSG_MENU_UPDATE_ALL
+Atjaunināt visu
+MSG_MENU_LAST_MESSAGE
+Pēdējais ziņojums
+MSG_MENU_VOLUME
+Skaļums...
+MSG_MENU_ABOUT
+Par...
+MSG_MENU_QUIT
+Iziet...
+MSG_MENU_REBOOT
+Restartēt...
+MSG_MENU_WINDOW
+Logs
+MSG_MENU_NEW_DRAWER
+Jauna mape
+MSG_MENU_OPEN_PARENT
+Atvērt vecākmapi
+MSG_MENU_BACK
+Atpakaļ
+MSG_MENU_FORWARD
+Uz priekšu
+MSG_MENU_CLOSE
+Aizvērt
+MSG_MENU_UPDATE
+Atjaunināt
+MSG_MENU_SHELL
+Čaula
+MSG_MENU_SELECT_CONTENTS
+Atlasīt saturu
+MSG_MENU_CLEAN_UP
+Sakārtot
+MSG_MENU_CLEAN_UP_BY
+Sakārtot pēc
+MSG_MENU_BY_NAME
+Nosaukums
+MSG_MENU_BY_DATE
+Datums
+MSG_MENU_BY_SIZE
+Lielums
+MSG_MENU_SNAP
+Līdzināt pēc režģa
+MSG_MENU_ARRANGE
+Sakārtot, mainot izmēru
+MSG_MENU_SNAPSHOT
+Atcerēties novietojumu
+MSG_MENU_SNAPSHOT_WINDOW
+Logs
+MSG_MENU_SNAPSHOT_ALL
+Visu
+MSG_MENU_SHOW
+Rādīt
+MSG_MENU_ONLY_ICONS
+Tikai ikonas
+MSG_MENU_ALL_FILES
+Visus failus
+MSG_MENU_VIEW_BY
+Skats
+MSG_MENU_BY_ICON
+Ikona
+MSG_MENU_RIBBON
+Lente
+MSG_MENU_ICONS
+Ikonas
+MSG_MENU_OPEN
+Atvērt
+MSG_MENU_COPY
+Kopēt
+MSG_MENU_RENAME
+Pārdēvēt...
+MSG_MENU_INFORMATION
+Informācija...
+MSG_MENU_UNSNAPSHOT
+Aizmirst novietojumu
+MSG_MENU_LEAVE_OUT
+Novietot uz darbvirsmas
+MSG_MENU_PUT_AWAY
+Novietot atpakaļ
+MSG_MENU_DELETE
+Dzēst...
+MSG_MENU_FORMAT
+Formatēt disku...
+MSG_MENU_EMPTY_TRASH
+Iztukšot atkritni
+MSG_MENU_TOOLS
+Rīki
+MSG_RIBBON_HOME
+Sākums
+MSG_RIBBON_GO
+Pāriet
+MSG_RIBBON_PARENT
+Augšup
+MSG_RIBBON_DRAWER
+Mape
+MSG_RIBBON_RENAME
+Pārdēvēt
+MSG_RIBBON_DELETE
+Dzēst
+MSG_RIBBON_INFORMATION
+Informācija
+MSG_RIBBON_VIEW
+Skats
+MSG_RIBBON_ARRANGE
+Sakārtot
+MSG_LIST_PROTECTION
+Aizsardzība
+MSG_LIST_DRAWER
+Mape
+MSG_TITLE_MEMORY
+Atmiņa
+MSG_TITLE_INTERNAL
+Iekšējā
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+brīvi
+MSG_TITLE_BATTERY
+Akumulators
+MSG_TITLE_CHARGING
+uzlādējas
+MSG_TITLE_EXTERNAL_POWER
+ārējā barošana
+MSG_DISK_FULL
+aizpildīts
+MSG_DISK_IN_USE
+aizņemti
+MSG_NOTHING_SAID
+Ziņojumu nav bijis
+MSG_NOT_EVERY_FILE
+Ne visus atlasītos failus varēja pieņemt
+MSG_DISK_NOT_RENAMED
+Disku nevarēja pārdēvēt
+MSG_NOT_RENAMED
+To nevarēja pārdēvēt
+MSG_ICON_NOT_WRITTEN
+Ikonu nevarēja ierakstīt
+MSG_DISK_NOT_THERE
+Diska nav
+MSG_DISK_BUSY
+Disks ir aizņemts
+MSG_DISK_NOT_FORMATTED
+Disku nevarēja formatēt
+MSG_DRAWER_NOT_MADE
+Mapi nevarēja izveidot
+MSG_SETTING_NOT_KEPT
+%s: nevarēja saglabāt
+MSG_SETTING_NOT_WRITTEN
+%s: nevarēja ierakstīt anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Mapes ikonu nevarēja ierakstīt
+MSG_NO_MEMORY_REBOOT
+Nav atmiņas restartēšanai
+MSG_NO_MEMORY_ABOUT
+Nav atmiņas logam „Par“
+MSG_NO_TOOL
+Nav programmas, ar ko atvērt %s
+MSG_NOT_STARTED
+%s nevarēja palaist
+MSG_COMMAND_NOT_STARTED
+Komandu nevarēja palaist
+MSG_SHELL_DRAWER_NOT_FOUND
+Čaulas mapi nevarēja atrast
+MSG_SHELL_NOT_STARTED
+Čaulu nevarēja palaist
+MSG_TRASH_OWN_DISK
+Atkritnē nonāk tikai tās paša diska faili
+MSG_NOT_MOVED
+Failu nevarēja pārvietot uz turieni
+MSG_LEFT_OUT_NOT_KEPT
+Disks nesaglabās to, kas novietots uz darbvirsmas
+MSG_NO_MEMORY_WORK
+Nav atmiņas, lai sāktu darbu
+MSG_QUIT_RUNNING_ADDED
+No darbvirsmas palaistas programmas vēl darbojas (%lu).\nTās turpinās darboties. Logi, ikonas un\nizvēlņu vienumi, ko pievienojušas programmas (%lu),\npazudīs kopā ar to.\n\nIziet no darbvirsmas?
+MSG_QUIT_RUNNING
+No darbvirsmas palaistas programmas vēl darbojas (%lu).\nTās turpinās darboties.\n\nIziet no darbvirsmas?
+MSG_QUIT_ADDED
+Logi, ikonas un izvēlņu vienumi, ko programmas\npievienojušas darbvirsmai (%lu), pazudīs kopā ar to.\n\nIziet no darbvirsmas?
+MSG_QUIT_ASK
+Iziet no darbvirsmas?
+MSG_QUIT_BUTTONS
+Iziet|Atcelt
+MSG_DELETE_ASK
+Neatgriezeniski dzēst atlasīto (%lu)?\nMape tiek dzēsta kopā ar visu tās saturu.
+MSG_DELETE_BUTTONS
+Dzēst|Atcelt
+MSG_RENAME_PROMPT
+Jauns nosaukums:
+MSG_FORMAT_TITLE
+Formatēt disku
+MSG_FORMAT_ASK
+Formatēt %s?\nViss, kas tajā ir, tiks zaudēts.
+MSG_FORMAT_BUTTONS
+Formatēt|Atcelt
+MSG_NEW_DRAWER_PROMPT
+Jaunās mapes nosaukums:
+MSG_UNNAMED
+Bez nosaukuma
+MSG_EXECUTE_TITLE
+Izpildīt komandu
+MSG_EXECUTE_PROMPT
+Palaižamā komanda:
+MSG_OUTPUT
+Izvade
+MSG_REBOOT_TITLE
+Restartēt
+MSG_REBOOT_ASK
+Restartēt datoru?\nViss, ko programmas nav saglabājušas, tiks zaudēts.
+MSG_REBOOT_BUTTONS
+Restartēt|Atcelt
+MSG_REBOOT_IN_USE
+Tiek izmantoti, tāpēc to saturs var netikt ierakstīts:\n%s\n\nTomēr restartēt?
+MSG_STARTUP_WAIT
+Programma „%s“\nvēl nav beigusies.\nGaidīt vēl?
+MSG_STARTUP_BUTTONS
+Gaidīt|Turpināt
+MSG_OK
+_Labi
+MSG_CANCEL
+_Atcelt
+MSG_ABOUT_TITLE
+Par Anvil
+MSG_ABOUT_WHAT
+PowerOS darbvirsma
+MSG_ABOUT_RELEASE
+Laidiens
+MSG_ABOUT_KERNEL
+Kodols
+MSG_ABOUT_BOARD
+Plate
+MSG_ABOUT_PROCESSOR
+Procesors
+MSG_ABOUT_CORES
+Kodoli
+MSG_ABOUT_CLOCK
+Frekvence
+MSG_ABOUT_SCREEN
+Ekrāns
+MSG_ABOUT_SYSTEM_DISK
+Sistēmas disks
+MSG_ABOUT_UP_FOR
+Darbojas
+MSG_ABOUT_IN_USE
+Aizņemti
+MSG_ABOUT_OF
+no
+MSG_ABOUT_BITS
+biti pikselī
+MSG_ABOUT_DAY
+diena
+MSG_ABOUT_DAYS
+dienas
+MSG_INFO_TITLE
+Informācija
+MSG_INFO_STATE
+Stāvoklis
+MSG_INFO_READ_ONLY
+Tikai lasāms
+MSG_INFO_VALIDATING
+Tiek pārbaudīts
+MSG_INFO_READ_WRITE
+Lasāms un rakstāms
+MSG_INFO_UNKNOWN
+Nezināms
+MSG_INFO_BLOCKS
+Bloki
+MSG_INFO_USED
+Aizņemti
+MSG_INFO_FREE
+Brīvi
+MSG_INFO_BLOCK_SIZE
+Bloka lielums
+MSG_INFO_BYTES
+baiti
+MSG_INFO_BLOCKS_COUNTED
+bloki
+MSG_INFO_CREATED
+Izveidots
+MSG_INFO_LAST_CHANGED
+Pēdējoreiz mainīts
+MSG_INFO_SCRIPT
+Skripts
+MSG_INFO_ARCHIVED
+Arhivēts
+MSG_INFO_READABLE
+Lasāms
+MSG_INFO_WRITABLE
+Rakstāms
+MSG_INFO_EXECUTABLE
+Izpildāms
+MSG_INFO_DELETABLE
+Dzēšams
+MSG_INFO_COMMENT
+Komentārs
+MSG_INFO_STACK
+Steks
+MSG_INFO_DEFAULT_TOOL
+Noklusējuma programma
+MSG_INFO_TOOL_TYPES
+Parametri
+MSG_INFO_SAVE
+_Saglabāt
+MSG_INFO_NOT_WRITTEN
+Ikonu nevarēja ierakstīt.
+MSG_INFO_OK
+Labi
+MSG_WORK_COPYING
+Kopē
+MSG_WORK_DELETING
+Dzēš
+MSG_WORK_STOP
+_Apturēt
+MSG_WORK_WAITING
+Vēl %lu gaida
+MSG_WORK_REPLACE_ASK
+%s jau ir.\nAizstāt?
+MSG_WORK_REPLACE_BUTTONS
+Aizstāt|Aizstāt visus|Izlaist|Apturēt

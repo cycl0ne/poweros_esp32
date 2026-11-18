@@ -1,0 +1,27 @@
+# LOCALE:Languages/slovencina.language - Slovak: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=nedeľa DAY_2=pondelok DAY_3=utorok DAY_4=streda DAY_5=štvrtok
+DAY_6=piatok DAY_7=sobota
+ABDAY_1=ne ABDAY_2=po ABDAY_3=ut ABDAY_4=st ABDAY_5=št ABDAY_6=pi
+ABDAY_7=so
+# The months, then their short names; a month is named as in a date,
+# "18. novembra".
+MON_1=januára MON_2=februára MON_3=marca MON_4=apríla MON_5=mája
+MON_6=júna MON_7=júla MON_8=augusta MON_9=septembra MON_10=októbra
+MON_11=novembra MON_12=decembra
+ABMON_1=jan ABMON_2=feb ABMON_3=mar ABMON_4=apr ABMON_5=máj
+ABMON_6=jún ABMON_7=júl ABMON_8=aug ABMON_9=sep ABMON_10=okt
+ABMON_11=nov ABMON_12=dec
+# Yes and no, before and after noon.
+YESSTR=Áno NOSTR=Nie AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Včera TODAYSTR=Dnes TOMORROWSTR=Zajtra
+FUTURESTR=Budúcnosť
+# The order of the letters: Ä after A, Č after C, Ô after O, Š after S
+# and Ž after Z; CH, a letter of its own after H, sorts as C and H.
+AFTER_A=Ä AFTER_C=Č AFTER_O=Ô AFTER_S=Š AFTER_Z=Ž

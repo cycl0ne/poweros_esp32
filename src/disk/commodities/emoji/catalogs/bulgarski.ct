@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; Emoji's strings in Bulgarian.
+MSG_SEARCH
+Търсене
+MSG_USED
+Последно използвани
+MSG_NONE_USED
+Още няма използвани
+MSG_NOT_FOUND
+Нищо не е намерено
+MSG_TONE_NONE
+Без тон на кожата
+MSG_TONE_LIGHT
+Светъл
+MSG_TONE_MEDIUM_LIGHT
+Средно светъл
+MSG_TONE_MEDIUM
+Среден
+MSG_TONE_MEDIUM_DARK
+Средно тъмен
+MSG_TONE_DARK
+Тъмен
+MSG_GROUP_SMILEYS
+Емотикони & емоции
+MSG_GROUP_PEOPLE
+Хора & тяло
+MSG_GROUP_ANIMALS
+Животни & природа
+MSG_GROUP_FOOD
+Храна & напитки
+MSG_GROUP_TRAVEL
+Пътуване & места
+MSG_GROUP_ACTIVITIES
+Дейности
+MSG_GROUP_OBJECTS
+Предмети
+MSG_GROUP_SYMBOLS
+Символи
+MSG_GROUP_FLAGS
+Знамена

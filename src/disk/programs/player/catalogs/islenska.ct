@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; The Player's strings in Icelandic.
+MSG_MENU_PROJECT
+Verkefni
+MSG_MENU_OPEN
+Opna...
+MSG_MENU_OPEN_DRAWER
+Opna möppu...
+MSG_MENU_OPEN_URL
+Opna slóð...
+MSG_MENU_SAVE_PLAYLIST
+Vista spilunarlista...
+MSG_MENU_ABOUT
+Um
+MSG_MENU_QUIT
+Hætta
+MSG_MENU_PLAYLIST
+Spilunarlisti
+MSG_MENU_ADD
+Bæta við...
+MSG_MENU_REMOVE
+Fjarlægja
+MSG_MENU_CLEAR
+Hreinsa
+MSG_MENU_SHUFFLE
+Stokka
+MSG_MENU_REPEAT
+Endurtaka
+MSG_MENU_REPEAT_OFF
+Af
+MSG_MENU_REPEAT_ALL
+Allt
+MSG_MENU_REPEAT_ONE
+Eitt
+MSG_MENU_PICTURE
+Mynd
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Bylgja
+MSG_MENU_BARS
+Súlur
+MSG_MENU_SETTINGS
+Stillingar
+MSG_MENU_REMEMBER
+Muna hvar það var
+MSG_PAGE_PLAYING
+Í spilun
+MSG_PAGE_RADIO
+Útvarp
+MSG_VIEW_KEPT
+Þínar stöðvar
+MSG_VIEW_FOUND
+Fundið
+MSG_NAME
+Heiti
+MSG_GENRE
+Tegund
+MSG_COUNTRY
+Land
+MSG_COLUMN_TITLE
+Titill
+MSG_COLUMN_ARTIST
+Flytjandi
+MSG_COLUMN_TIME
+Tími
+MSG_COLUMN_STATION
+Stöð
+MSG_COLUMN_ADDRESS
+Slóð
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Tegundir
+MSG_SHUFFLE_BUTTON
+_Stokka
+MSG_SHUFFLE_HINT
+Spila lögin í eigin röð
+MSG_REPEAT_BUTTON
+_Endurtaka
+MSG_REPEAT_HINT
+Spila listann aftur, eða eina lagið
+MSG_MUTE_BUTTON
+_Hljóðlaust
+MSG_MUTE_HINT
+Hljóðið af, og á aftur
+MSG_LENGTH_HINT
+Lengd lagsins, eða það sem eftir er af því
+MSG_ADD_BUTTON
+_Bæta við...
+MSG_REMOVE_BUTTON
+_Fjarlægja
+MSG_CLEAR_BUTTON
+Hrei_nsa
+MSG_OUTPUT_LABEL
+Út_tak
+MSG_SEARCH_BUTTON
+_Leita
+MSG_KEEP_BUTTON
+_Muna
+MSG_FORGET_BUTTON
+Fjarlæ_gja
+MSG_FIND_LABEL
+Leitar_orð
+MSG_BY_LABEL
+eft_ir
+MSG_URL_TITLE
+Opna slóð
+MSG_URL_ADDRESS
+_Slóð
+MSG_URL_OPEN
+_Opna
+MSG_URL_CANCEL
+_Hætta við
+MSG_ASK_PLAY
+Hvaða lög?
+MSG_ASK_ADD
+Bæta við hvaða lögum?
+MSG_ASK_DRAWER
+Hvaða mappa?
+MSG_ASK_SAVE
+Vista spilunarlistann sem
+MSG_ABOUT_TITLE
+Um Player
+MSG_ABOUT
+%s\n\nLög úr WAV-, MP3-, FLAC-, Ogg Vorbis-, AAC- og AC-3-skrám,\nhvert á eftir öðru, með umslögum sínum,\nstöðvar af netinu\nog mynd af hljóðinu.
+MSG_OK
+Í lagi
+MSG_NO_SONG
+Ekkert lag
+MSG_TRACK_OF
+lag nr. %u af %u
+MSG_TRACK
+lag nr. %u
+MSG_COMPOSED_BY
+samið af %s
+MSG_CHAPTER
+Kafli %u af %u
+MSG_SOUND
+Hljóð
+MSG_MONO
+einóma
+MSG_STEREO
+víðóma
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+lag %u af %u
+MSG_NO_SOUND
+ekkert hljóð
+MSG_NO_STREAM_FREE
+enginn straumur laus
+MSG_LIVE
+beint
+MSG_BUFFERING
+hleður í biðminni
+MSG_BUFFERING_PERCENT
+Hleður í biðminni %u%%
+MSG_STATION_IDLE
+Stöð: spila hlustar á hana
+MSG_CALLING
+Tengist stöðinni
+MSG_NO_MEMORY_STATION
+Ekkert minni fyrir stöðina
+MSG_ALL_STREAMS_USED
+Allir hljóðstraumar eru í notkun
+MSG_NO_SOUND_HERE
+Þessi vél hefur ekkert hljóð
+MSG_NO_AUDIO_STREAM
+audio.device vildi ekki opna straum
+MSG_KEPT_ALREADY
+Þegar munað: %s
+MSG_KEPT
+Munað: %s
+MSG_NO_MEMORY_KEEP
+Ekkert minni til að muna stöðina
+MSG_NO_MEMORY_SEARCH
+Ekkert minni fyrir leitina
+MSG_SEARCHING
+Leitar
+MSG_ASKING
+Spyr %s
+MSG_NONE_FOUND
+Engin stöð fannst
+MSG_ONE_FOUND
+Ein stöð fannst
+MSG_COUNT_FOUND
+%u stöðvar fundust
+MSG_NO_NETWORK
+Ekkert net: bsdsocket.library vantar
+MSG_NO_HTTP
+http.library vantar
+MSG_NO_MEMORY_CONNECTION
+Ekkert minni fyrir tenginguna
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info hefur ekkert vistfang
+MSG_SERVICE_NO_ANSWER
+radio-browser.info svaraði ekki leitinni
+MSG_SERVICE_UNREACHED
+Ekki náðist í radio-browser.info
+MSG_SERVICE_NONSENSE
+Svar radio-browser.info er óskiljanlegt
+MSG_SEARCH_FAILED
+Leitin mistókst
+MSG_NO_SIGNAL
+Ekkert merki laust fyrir stöðina
+MSG_NO_TIMER
+timer.device vildi ekki opnast
+MSG_LISTS_ONLY
+Listar stöðvarinnar vísa aðeins á fleiri lista
+MSG_STATION_STOPPED
+Stöðin hætti að senda
+MSG_STATION_ANSWERED
+Stöðin svaraði
+MSG_SENDS_AAC
+Stöðin sendir AAC, sem er ekki spilað
+MSG_STATION_ENDED
+Stöðin sleit tengingunni
+MSG_SENDS_HLS
+Stöðin sendir HLS, sem er ekki spilað
+MSG_LIST_EMPTY
+Listi stöðvarinnar nefnir enga stöð
+MSG_LIST_TOO_LONG
+Listi stöðvarinnar nefnir of langa slóð
+MSG_NOT_AN_ADDRESS
+Þetta er ekki slóð til að hlusta á
+MSG_NONSENSE
+Svar stöðvarinnar er óskiljanlegt
+MSG_NOLIBRARY
+%s: get ekki opnað %s\n
+MSG_NOMEMORY
+%s: ekkert minni fyrir gluggann\n
+MSG_NOBUFFERS
+%s: ekkert minni fyrir hljóðið\n
+MSG_NOWINDOW
+%s: enginn gluggi\n
+MSG_MENU_EQUALIZER
+Tónjafnari
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Steríómynd
+MSG_MENU_METERS
+Styrkmælar
+MSG_MENU_WHOLE_SCREEN
+Allur skjárinn

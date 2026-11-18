@@ -74,50 +74,97 @@ pub const Program = struct { disk: []const u8, source: []const u8, name: []const
 /// they have.
 pub const Catalog = struct { disk: []const u8, descriptor: []const u8, translation: []const u8, name: []const u8, wide: bool = false };
 
-/// The programs' translations.
-pub const catalogs = [_]Catalog{
-    .{ .disk = "locale/Catalogs/deutsch/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/deutsch.ct", .name = "c/test/locale.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/deutsch.ct", .name = "programs/Notepad.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/deutsch.ct", .name = "programs/Sheet.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/deutsch.ct", .name = "programs/Player.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/deutsch.ct", .name = "programs/Movie.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/deutsch.ct", .name = "System/Clock.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/Commodities/Emoji.catalog", .descriptor = "commodities/emoji/emoji.cd", .translation = "commodities/emoji/catalogs/deutsch.ct", .name = "Commodities/Emoji.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/deutsch.ct", .name = "sys/anvil.catalog" },
-    .{ .disk = "locale/Catalogs/deutsch/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/deutsch.ct", .name = "sys/http.catalog" },
-    .{ .disk = "locale/Catalogs/hindi/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/hindi.ct", .name = "c/test/locale.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hindi/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/hindi.ct", .name = "programs/Notepad.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hindi/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/hindi.ct", .name = "programs/Sheet.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hindi/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/hindi.ct", .name = "programs/Player.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hindi/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/hindi.ct", .name = "programs/Movie.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hindi/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/hindi.ct", .name = "System/Clock.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hindi/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/hindi.ct", .name = "sys/anvil.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hindi/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/hindi.ct", .name = "sys/http.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/nihongo.ct", .name = "c/test/locale.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/nihongo.ct", .name = "programs/Notepad.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/nihongo.ct", .name = "programs/Sheet.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/nihongo.ct", .name = "programs/Player.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/nihongo.ct", .name = "programs/Movie.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/nihongo.ct", .name = "System/Clock.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/nihongo.ct", .name = "sys/anvil.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/nihongo.ct", .name = "sys/http.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/hangugeo.ct", .name = "c/test/locale.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/hangugeo.ct", .name = "programs/Notepad.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/hangugeo.ct", .name = "programs/Sheet.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/hangugeo.ct", .name = "programs/Player.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/hangugeo.ct", .name = "programs/Movie.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/hangugeo.ct", .name = "System/Clock.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/hangugeo.ct", .name = "sys/anvil.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/hangugeo.ct", .name = "sys/http.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/c/test/locale.catalog", .descriptor = "c/test/locale/locale.cd", .translation = "c/test/locale/catalogs/zhongwen.ct", .name = "c/test/locale.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/programs/Notepad.catalog", .descriptor = "programs/notepad/notepad.cd", .translation = "programs/notepad/catalogs/zhongwen.ct", .name = "programs/Notepad.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/programs/Sheet.catalog", .descriptor = "programs/sheet/sheet.cd", .translation = "programs/sheet/catalogs/zhongwen.ct", .name = "programs/Sheet.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/programs/Player.catalog", .descriptor = "programs/player/player.cd", .translation = "programs/player/catalogs/zhongwen.ct", .name = "programs/Player.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/programs/Movie.catalog", .descriptor = "programs/movie/movie.cd", .translation = "programs/movie/catalogs/zhongwen.ct", .name = "programs/Movie.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/System/Clock.catalog", .descriptor = "system/clock/clock.cd", .translation = "system/clock/catalogs/zhongwen.ct", .name = "System/Clock.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/sys/anvil.catalog", .descriptor = "libs/anvil/anvil.cd", .translation = "libs/anvil/catalogs/zhongwen.ct", .name = "sys/anvil.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/sys/http.catalog", .descriptor = "libs/http/http.cd", .translation = "libs/http/catalogs/zhongwen.ct", .name = "sys/http.catalog", .wide = true },
+/// A language the system is translated into: its name - its file in
+/// LOCALE:Languages and its drawer of LOCALE:Catalogs - and whether it
+/// is `wide`, written in a script only the fonts of the 64-bit machines'
+/// disks have (Devanagari, kana, Hangul, Han): its catalogs are on those
+/// disks alone (`wide_only_files` names its language's and countries'
+/// files). Latin, Greek and Cyrillic are in every disk's fonts.
+pub const Language = struct { name: []const u8, wide: bool = false };
+
+/// Every language there are translations into.
+pub const languages = [_]Language{
+    .{ .name = "deutsch" },             .{ .name = "francais" },              .{ .name = "espanol" },                .{ .name = "italiano" },
+    .{ .name = "portugues" },           .{ .name = "romana" },                .{ .name = "malti" },                  .{ .name = "nederlands" },
+    .{ .name = "dansk" },               .{ .name = "svenska" },               .{ .name = "norsk" },                  .{ .name = "islenska" },
+    .{ .name = "suomi" },               .{ .name = "eesti" },                 .{ .name = "polski" },                 .{ .name = "cestina" },
+    .{ .name = "slovencina" },          .{ .name = "slovenscina" },           .{ .name = "hrvatski" },               .{ .name = "magyar" },
+    .{ .name = "latviesu" },            .{ .name = "lietuviu" },              .{ .name = "turkce" },                 .{ .name = "gaeilge" },
+    .{ .name = "ellinika" },            .{ .name = "bulgarski" },             .{ .name = "russkij" },                .{ .name = "ukrainska" },
+    .{ .name = "hindi", .wide = true }, .{ .name = "nihongo", .wide = true }, .{ .name = "hangugeo", .wide = true }, .{ .name = "zhongwen", .wide = true },
 };
+
+/// Whether the language `name` is one of the wide ones.
+pub fn wideLanguage(name: []const u8) bool {
+    for (languages) |language| {
+        if (std.mem.eql(u8, language.name, name)) return language.wide;
+    }
+    return false;
+}
+
+/// What is translated: the descriptor, the drawer its translations are
+/// in - `<language>.ct` each - and the catalog's name under a language's
+/// drawer. It has a translation into every language unless `only` names
+/// the ones it has, or `except` those it has not.
+pub const Translated = struct {
+    descriptor: []const u8,
+    translations: []const u8,
+    name: []const u8,
+    only: ?[]const []const u8 = null,
+    except: []const []const u8 = &.{},
+
+    /// Whether it has a translation into `language`.
+    pub fn has(strings: Translated, language: []const u8) bool {
+        for (strings.except) |name| {
+            if (std.mem.eql(u8, name, language)) return false;
+        }
+        const named = strings.only orelse return true;
+        for (named) |name| {
+            if (std.mem.eql(u8, name, language)) return true;
+        }
+        return false;
+    }
+};
+
+/// The languages written in scripts the emoji's names were not put
+/// into yet, and the ones C:test/Locale's strings were.
+const not_emoji = [_][]const u8{ "hindi", "nihongo", "hangugeo", "zhongwen" };
+const locale_test_languages = [_][]const u8{ "deutsch", "hindi", "nihongo", "hangugeo", "zhongwen" };
+
+/// The programs' and libraries' strings that are translated.
+pub const translated_strings = [_]Translated{
+    .{ .descriptor = "c/test/locale/locale.cd", .translations = "c/test/locale/catalogs", .name = "c/test/locale.catalog", .only = &locale_test_languages },
+    .{ .descriptor = "programs/notepad/notepad.cd", .translations = "programs/notepad/catalogs", .name = "programs/Notepad.catalog" },
+    .{ .descriptor = "programs/sheet/sheet.cd", .translations = "programs/sheet/catalogs", .name = "programs/Sheet.catalog" },
+    .{ .descriptor = "programs/player/player.cd", .translations = "programs/player/catalogs", .name = "programs/Player.catalog" },
+    .{ .descriptor = "programs/movie/movie.cd", .translations = "programs/movie/catalogs", .name = "programs/Movie.catalog" },
+    .{ .descriptor = "system/clock/clock.cd", .translations = "system/clock/catalogs", .name = "System/Clock.catalog" },
+    .{ .descriptor = "commodities/emoji/emoji.cd", .translations = "commodities/emoji/catalogs", .name = "Commodities/Emoji.catalog", .except = &not_emoji },
+    .{ .descriptor = "libs/anvil/anvil.cd", .translations = "libs/anvil/catalogs", .name = "sys/anvil.catalog" },
+    .{ .descriptor = "libs/http/http.cd", .translations = "libs/http/catalogs", .name = "sys/http.catalog" },
+};
+
+/// The catalogs `translated` comes to: one for each of its languages.
+pub fn catalogsOf(comptime all: []const Translated) []const Catalog {
+    @setEvalBranchQuota(100_000);
+    comptime var made: []const Catalog = &.{};
+    inline for (languages) |language| {
+        inline for (all) |one| {
+            if (comptime !one.has(language.name)) continue;
+            made = made ++ [_]Catalog{.{
+                .disk = "locale/Catalogs/" ++ language.name ++ "/" ++ one.name,
+                .descriptor = one.descriptor,
+                .translation = one.translations ++ "/" ++ language.name ++ ".ct",
+                .name = one.name,
+                .wide = language.wide,
+            }};
+        }
+    }
+    return made;
+}
+
+/// The programs' translations.
+pub const catalogs = catalogsOf(&translated_strings);
 
 /// Code compiled into each program that imports it, by name, rather than
 /// loaded: a library's inner part that its test programs build in as well.
@@ -829,43 +876,83 @@ pub const files = [_]File{
     .{ .disk = "locale/Countries/australia.country", .source = "locale/countries/australia.country" },
     .{ .disk = "locale/Countries/belgie.country", .source = "locale/countries/belgie.country" },
     .{ .disk = "locale/Countries/belgique.country", .source = "locale/countries/belgique.country" },
+    .{ .disk = "locale/Countries/bulgaria.country", .source = "locale/countries/bulgaria.country" },
     .{ .disk = "locale/Countries/canada.country", .source = "locale/countries/canada.country" },
     .{ .disk = "locale/Countries/canada_francais.country", .source = "locale/countries/canada_francais.country" },
+    .{ .disk = "locale/Countries/cesko.country", .source = "locale/countries/cesko.country" },
     .{ .disk = "locale/Countries/danmark.country", .source = "locale/countries/danmark.country" },
     .{ .disk = "locale/Countries/deutschland.country", .source = "locale/countries/deutschland.country" },
+    .{ .disk = "locale/Countries/eesti.country", .source = "locale/countries/eesti.country" },
+    .{ .disk = "locale/Countries/eire.country", .source = "locale/countries/eire.country" },
+    .{ .disk = "locale/Countries/ellada.country", .source = "locale/countries/ellada.country" },
     .{ .disk = "locale/Countries/espana.country", .source = "locale/countries/espana.country" },
     .{ .disk = "locale/Countries/france.country", .source = "locale/countries/france.country" },
     .{ .disk = "locale/Countries/great_britain.country", .source = "locale/countries/great_britain.country" },
     .{ .disk = "locale/Countries/hanguk.country", .source = "locale/countries/hanguk.country" },
+    .{ .disk = "locale/Countries/hrvatska.country", .source = "locale/countries/hrvatska.country" },
     .{ .disk = "locale/Countries/india.country", .source = "locale/countries/india.country" },
+    .{ .disk = "locale/Countries/island.country", .source = "locale/countries/island.country" },
     .{ .disk = "locale/Countries/italia.country", .source = "locale/countries/italia.country" },
+    .{ .disk = "locale/Countries/kypros.country", .source = "locale/countries/kypros.country" },
+    .{ .disk = "locale/Countries/latvija.country", .source = "locale/countries/latvija.country" },
+    .{ .disk = "locale/Countries/lietuva.country", .source = "locale/countries/lietuva.country" },
+    .{ .disk = "locale/Countries/luxembourg.country", .source = "locale/countries/luxembourg.country" },
+    .{ .disk = "locale/Countries/magyarorszag.country", .source = "locale/countries/magyarorszag.country" },
+    .{ .disk = "locale/Countries/malta.country", .source = "locale/countries/malta.country" },
     .{ .disk = "locale/Countries/nederland.country", .source = "locale/countries/nederland.country" },
     .{ .disk = "locale/Countries/nihon.country", .source = "locale/countries/nihon.country" },
     .{ .disk = "locale/Countries/norge.country", .source = "locale/countries/norge.country" },
     .{ .disk = "locale/Countries/osterreich.country", .source = "locale/countries/osterreich.country" },
+    .{ .disk = "locale/Countries/polska.country", .source = "locale/countries/polska.country" },
     .{ .disk = "locale/Countries/portugal.country", .source = "locale/countries/portugal.country" },
+    .{ .disk = "locale/Countries/romania.country", .source = "locale/countries/romania.country" },
+    .{ .disk = "locale/Countries/rossija.country", .source = "locale/countries/rossija.country" },
     .{ .disk = "locale/Countries/schweiz.country", .source = "locale/countries/schweiz.country" },
+    .{ .disk = "locale/Countries/slovenija.country", .source = "locale/countries/slovenija.country" },
+    .{ .disk = "locale/Countries/slovensko.country", .source = "locale/countries/slovensko.country" },
     .{ .disk = "locale/Countries/suisse.country", .source = "locale/countries/suisse.country" },
+    .{ .disk = "locale/Countries/suomi.country", .source = "locale/countries/suomi.country" },
     .{ .disk = "locale/Countries/sverige.country", .source = "locale/countries/sverige.country" },
     .{ .disk = "locale/Countries/svizzera.country", .source = "locale/countries/svizzera.country" },
     .{ .disk = "locale/Countries/taiwan.country", .source = "locale/countries/taiwan.country" },
+    .{ .disk = "locale/Countries/turkiye.country", .source = "locale/countries/turkiye.country" },
+    .{ .disk = "locale/Countries/ukrajina.country", .source = "locale/countries/ukrajina.country" },
     .{ .disk = "locale/Countries/united_kingdom.country", .source = "locale/countries/united_kingdom.country" },
     .{ .disk = "locale/Countries/united_states.country", .source = "locale/countries/united_states.country" },
     .{ .disk = "locale/Countries/zhongguo.country", .source = "locale/countries/zhongguo.country" },
+    .{ .disk = "locale/Languages/bulgarski.language", .source = "locale/languages/bulgarski.language" },
+    .{ .disk = "locale/Languages/cestina.language", .source = "locale/languages/cestina.language" },
     .{ .disk = "locale/Languages/dansk.language", .source = "locale/languages/dansk.language" },
     .{ .disk = "locale/Languages/deutsch.language", .source = "locale/languages/deutsch.language" },
+    .{ .disk = "locale/Languages/eesti.language", .source = "locale/languages/eesti.language" },
+    .{ .disk = "locale/Languages/ellinika.language", .source = "locale/languages/ellinika.language" },
     .{ .disk = "locale/Languages/espanol.language", .source = "locale/languages/espanol.language" },
     .{ .disk = "locale/Languages/francais.language", .source = "locale/languages/francais.language" },
+    .{ .disk = "locale/Languages/gaeilge.language", .source = "locale/languages/gaeilge.language" },
     .{ .disk = "locale/Languages/hangugeo.language", .source = "locale/languages/hangugeo.language" },
     .{ .disk = "locale/Languages/hindi.language", .source = "locale/languages/hindi.language" },
+    .{ .disk = "locale/Languages/hrvatski.language", .source = "locale/languages/hrvatski.language" },
+    .{ .disk = "locale/Languages/islenska.language", .source = "locale/languages/islenska.language" },
     .{ .disk = "locale/Languages/italiano.language", .source = "locale/languages/italiano.language" },
+    .{ .disk = "locale/Languages/latviesu.language", .source = "locale/languages/latviesu.language" },
+    .{ .disk = "locale/Languages/lietuviu.language", .source = "locale/languages/lietuviu.language" },
+    .{ .disk = "locale/Languages/magyar.language", .source = "locale/languages/magyar.language" },
+    .{ .disk = "locale/Languages/malti.language", .source = "locale/languages/malti.language" },
     .{ .disk = "locale/Languages/nederlands.language", .source = "locale/languages/nederlands.language" },
     .{ .disk = "locale/Languages/nihongo.language", .source = "locale/languages/nihongo.language" },
     .{ .disk = "locale/Languages/norsk.language", .source = "locale/languages/norsk.language" },
+    .{ .disk = "locale/Languages/polski.language", .source = "locale/languages/polski.language" },
     .{ .disk = "locale/Languages/portugues.language", .source = "locale/languages/portugues.language" },
+    .{ .disk = "locale/Languages/romana.language", .source = "locale/languages/romana.language" },
+    .{ .disk = "locale/Languages/russkij.language", .source = "locale/languages/russkij.language" },
+    .{ .disk = "locale/Languages/slovencina.language", .source = "locale/languages/slovencina.language" },
+    .{ .disk = "locale/Languages/slovenscina.language", .source = "locale/languages/slovenscina.language" },
+    .{ .disk = "locale/Languages/suomi.language", .source = "locale/languages/suomi.language" },
     .{ .disk = "locale/Languages/svenska.language", .source = "locale/languages/svenska.language" },
-    .{ .disk = "locale/Languages/zhongwen.language", .source = "locale/languages/zhongwen.language" },
+    .{ .disk = "locale/Languages/turkce.language", .source = "locale/languages/turkce.language" },
+    .{ .disk = "locale/Languages/ukrainska.language", .source = "locale/languages/ukrainska.language" },
     .{ .disk = "locale/Languages/zhongwen-fanti.language", .source = "locale/languages/zhongwen-fanti.language" },
+    .{ .disk = "locale/Languages/zhongwen.language", .source = "locale/languages/zhongwen.language" },
     // The looks the preferences editor offers, a style file each.
     .{ .disk = "prefs/presets/styles/Classic.prefs", .source = "prefs/presets/styles/Classic.prefs" },
     .{ .disk = "prefs/presets/styles/Rounded.prefs", .source = "prefs/presets/styles/Rounded.prefs" },

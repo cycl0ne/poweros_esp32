@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; Emoji's strings in Slovak.
+MSG_SEARCH
+Hľadať
+MSG_USED
+Naposledy použité
+MSG_NONE_USED
+Zatiaľ nič nepoužité
+MSG_NOT_FOUND
+Nič sa nenašlo
+MSG_TONE_NONE
+Bez odtieňa pleti
+MSG_TONE_LIGHT
+Svetlý
+MSG_TONE_MEDIUM_LIGHT
+Stredne svetlý
+MSG_TONE_MEDIUM
+Stredný
+MSG_TONE_MEDIUM_DARK
+Stredne tmavý
+MSG_TONE_DARK
+Tmavý
+MSG_GROUP_SMILEYS
+Smajlíky & emócie
+MSG_GROUP_PEOPLE
+Ľudia & telo
+MSG_GROUP_ANIMALS
+Zvieratá & príroda
+MSG_GROUP_FOOD
+Jedlo & nápoje
+MSG_GROUP_TRAVEL
+Cestovanie & miesta
+MSG_GROUP_ACTIVITIES
+Aktivity
+MSG_GROUP_OBJECTS
+Predmety
+MSG_GROUP_SYMBOLS
+Symboly
+MSG_GROUP_FLAGS
+Vlajky

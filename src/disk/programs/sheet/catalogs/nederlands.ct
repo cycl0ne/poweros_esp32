@@ -1,0 +1,226 @@
+## version $VER: programs/Sheet.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; Sheet's strings in Dutch.
+MSG_MENU_PROJECT
+Project
+MSG_MENU_NEW
+Nieuw
+MSG_MENU_OPEN
+Openen...
+MSG_MENU_SAVE
+Opslaan
+MSG_MENU_SAVE_AS
+Opslaan als...
+MSG_MENU_QUIT
+Afsluiten
+MSG_MENU_EDIT
+Bewerken
+MSG_MENU_UNDO
+Ongedaan maken
+MSG_MENU_REDO
+Opnieuw
+MSG_MENU_CUT
+Knippen
+MSG_MENU_COPY
+Kopiëren
+MSG_MENU_PASTE
+Plakken
+MSG_MENU_CLEAR
+Wissen
+MSG_MENU_FILL_DOWN
+Omlaag doorvoeren
+MSG_MENU_FILL_RIGHT
+Naar rechts doorvoeren
+MSG_MENU_SELECT_ALL
+Alles selecteren
+MSG_MENU_FIND
+Zoeken...
+MSG_MENU_FIND_NEXT
+Volgende zoeken
+MSG_MENU_SHEET
+Blad
+MSG_MENU_INSERT_ROWS
+Rijen invoegen
+MSG_MENU_DELETE_ROWS
+Rijen verwijderen
+MSG_MENU_INSERT_COLUMNS
+Kolommen invoegen
+MSG_MENU_DELETE_COLUMNS
+Kolommen verwijderen
+MSG_MENU_WIDER
+Kolom breder
+MSG_MENU_NARROWER
+Kolom smaller
+MSG_MENU_SUM
+AutoSom
+MSG_MENU_SORT_ASCENDING
+Oplopend sorteren
+MSG_MENU_SORT_DESCENDING
+Aflopend sorteren
+MSG_MENU_FORMAT
+Opmaak
+MSG_MENU_GENERAL
+Standaard
+MSG_MENU_NUMBER
+Getal
+MSG_MENU_PERCENT
+Percentage
+MSG_MENU_CURRENCY
+Valuta
+MSG_MENU_DECIMALS_MORE
+Meer decimalen
+MSG_MENU_DECIMALS_LESS
+Minder decimalen
+MSG_MENU_VIEW
+Beeld
+MSG_MENU_RIBBON
+Lint
+MSG_RIBBON_HOME
+Start
+MSG_RIBBON_CLIPBOARD
+Klembord
+MSG_RIBBON_PASTE_HINT
+Invoegen wat geknipt of gekopieerd is
+MSG_RIBBON_NUMBER_HINT
+De getallen met decimalen tonen, in duizendtallen
+MSG_RIBBON_PERCENT_HINT
+De getallen als percentage tonen
+MSG_RIBBON_CURRENCY_HINT
+De getallen als geldbedrag tonen
+MSG_RIBBON_DECIMALS_MORE_HINT
+Een decimaal meer tonen
+MSG_RIBBON_DECIMALS_LESS_HINT
+Een decimaal minder tonen
+MSG_RIBBON_CELLS
+Cellen
+MSG_RIBBON_INSERT
+Invoegen
+MSG_RIBBON_INSERT_HINT
+Rijen of kolommen invoegen waar de cellen geselecteerd zijn
+MSG_RIBBON_DELETE
+Verwijderen
+MSG_RIBBON_DELETE_HINT
+De rijen of kolommen van de geselecteerde cellen verwijderen
+MSG_RIBBON_EDITING
+Bewerken
+MSG_RIBBON_SUM_HINT
+De getallen erboven of links ervan optellen
+MSG_RIBBON_SORT
+Sorteren
+MSG_RIBBON_SORT_HINT
+De rijen ordenen op de kolom van de huidige cel
+MSG_RIBBON_FIND
+Zoeken
+MSG_RIBBON_FIND_HINT
+Een cel zoeken op wat erin staat
+MSG_RIBBON_FILL
+Doorvoeren
+MSG_RIBBON_FILL_HINT
+De eerste rij of kolom over de rest kopiëren
+MSG_RIBBON_CLEAR_HINT
+De geselecteerde cellen leegmaken
+MSG_ROWS
+Rijen
+MSG_COLUMNS
+Kolommen
+MSG_SUM
+Som
+MSG_AVERAGE
+Gemiddelde
+MSG_COUNT
+Aantal
+MSG_MIN
+Min
+MSG_MAX
+Max
+MSG_ASCENDING
+Oplopend
+MSG_DESCENDING
+Aflopend
+MSG_DOWN
+Omlaag
+MSG_RIGHT
+Rechts
+MSG_PROBLEM_NAME
+Onbekende functie of naam
+MSG_PROBLEM_ARGUMENTS
+Verkeerd aantal argumenten
+MSG_PROBLEM_PARENTHESES
+Een haakje heeft geen tegenhanger
+MSG_PROBLEM_TOO_LONG
+De formule is te lang
+MSG_PROBLEM_UNREADABLE
+De formule kan niet worden gelezen
+MSG_PROBLEM_AT
+%s, bij teken %u
+MSG_NO_MEMORY_KEEP
+Niet genoeg geheugen om dat allemaal te bewaren
+MSG_NO_MEMORY_FILE
+Niet genoeg geheugen voor het hele bestand
+MSG_LEFT_OUT
+Cellen voorbij rij 9999 of kolom IV zijn weggelaten
+MSG_NO_MEMORY_COPY
+Geen geheugen om zoveel te kopiëren
+MSG_NO_MEMORY_CLEAR
+Niet genoeg geheugen om alles te wissen
+MSG_NO_MEMORY_PASTE
+Niet genoeg geheugen om alles te plakken
+MSG_NO_ROOM_COLUMNS
+Geen ruimte: in de laatste kolommen staat iets
+MSG_NO_ROOM_ROWS
+Geen ruimte: in de laatste rijen staat iets
+MSG_NO_MEMORY_THAT
+Niet genoeg geheugen daarvoor
+MSG_NO_MEMORY_FORMAT
+Niet genoeg geheugen om alles op te maken
+MSG_NOTHING_TO_ADD
+Geen getallen erboven of links ervan om op te tellen
+MSG_NO_MEMORY_ALL
+Niet genoeg geheugen voor dat alles
+MSG_NO_MEMORY_SORT
+Niet genoeg geheugen om dat allemaal te sorteren
+MSG_NO_MEMORY_FILL
+Niet genoeg geheugen om alles door te voeren
+MSG_NOT_FOUND
+Geen cel bevat dat
+MSG_UNTITLED
+Naamloos
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Kan %s niet openen
+MSG_CANNOT_READ
+Kan %s niet lezen
+MSG_TOO_BIG
+%s is te groot
+MSG_NO_MEMORY_FOR
+Geen geheugen voor %s
+MSG_NO_MEMORY_TO_SAVE
+Geen geheugen om %s op te slaan
+MSG_CANNOT_WRITE
+Kan %s niet schrijven
+MSG_NO_REQUESTER
+Geen %s
+MSG_CHANGED
+Het blad is gewijzigd.\nEerst opslaan?
+MSG_CHANGED_BUTTONS
+Opslaan|Niet opslaan|Annuleren
+MSG_OPEN_TITLE
+Een blad openen
+MSG_SAVE_AS_TITLE
+Het blad opslaan als
+MSG_FIND_LABEL
+Zoeken
+MSG_FIND_NEXT_BUTTON
+Volgende
+MSG_FIND_PREVIOUS_BUTTON
+Vorige
+MSG_FIND_CLOSE_BUTTON
+Sluiten
+MSG_NOLIBRARY
+Geen %s\n
+MSG_NOSCREEN
+Geen standaardscherm - geen beeld\n
+MSG_NOMEMORY
+Geen geheugen voor het venster\n

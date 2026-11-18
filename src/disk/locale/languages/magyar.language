@@ -1,0 +1,27 @@
+# LOCALE:Languages/magyar.language - Hungarian: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=vasárnap DAY_2=hétfő DAY_3=kedd DAY_4=szerda DAY_5=csütörtök
+DAY_6=péntek DAY_7=szombat
+ABDAY_1=v ABDAY_2=h ABDAY_3=k ABDAY_4=sze ABDAY_5=cs ABDAY_6=p
+ABDAY_7=szo
+# The months, then their short names.
+MON_1=január MON_2=február MON_3=március MON_4=április MON_5=május
+MON_6=június MON_7=július MON_8=augusztus MON_9=szeptember
+MON_10=október MON_11=november MON_12=december
+ABMON_1=jan ABMON_2=febr ABMON_3=márc ABMON_4=ápr ABMON_5=máj
+ABMON_6=jún ABMON_7=júl ABMON_8=aug ABMON_9=szept ABMON_10=okt
+ABMON_11=nov ABMON_12=dec
+# Yes and no, before and after noon.
+YESSTR=Igen NOSTR=Nem AM_STR=de. PM_STR=du.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Tegnap TODAYSTR=Ma TOMORROWSTR=Holnap
+FUTURESTR=Jövő
+# The order of the letters: Ö and Ő after O, Ü and Ű after U, each pair
+# as one; CS, GY, LY, NY, SZ, TY, ZS and the other letters of two or
+# three sort as the letters they are written with.
+AFTER_O=ÖŐ AFTER_U=ÜŰ

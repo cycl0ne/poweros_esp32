@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; The Player's strings in Turkish.
+MSG_MENU_PROJECT
+Proje
+MSG_MENU_OPEN
+Aç...
+MSG_MENU_OPEN_DRAWER
+Klasör aç...
+MSG_MENU_OPEN_URL
+URL aç...
+MSG_MENU_SAVE_PLAYLIST
+Çalma listesini kaydet...
+MSG_MENU_ABOUT
+Hakkında
+MSG_MENU_QUIT
+Çıkış
+MSG_MENU_PLAYLIST
+Çalma listesi
+MSG_MENU_ADD
+Ekle...
+MSG_MENU_REMOVE
+Kaldır
+MSG_MENU_CLEAR
+Temizle
+MSG_MENU_SHUFFLE
+Karıştır
+MSG_MENU_REPEAT
+Tekrarla
+MSG_MENU_REPEAT_OFF
+Kapalı
+MSG_MENU_REPEAT_ALL
+Tümü
+MSG_MENU_REPEAT_ONE
+Bir tane
+MSG_MENU_PICTURE
+Resim
+MSG_MENU_PLASMA
+Plazma
+MSG_MENU_WAVE
+Dalga
+MSG_MENU_BARS
+Çubuklar
+MSG_MENU_SETTINGS
+Ayarlar
+MSG_MENU_REMEMBER
+Kaldığı yeri hatırla
+MSG_PAGE_PLAYING
+Şimdi çalan
+MSG_PAGE_RADIO
+Radyo
+MSG_VIEW_KEPT
+İstasyonlarınız
+MSG_VIEW_FOUND
+Bulunanlar
+MSG_NAME
+Ad
+MSG_GENRE
+Tür
+MSG_COUNTRY
+Ülke
+MSG_COLUMN_TITLE
+Başlık
+MSG_COLUMN_ARTIST
+Sanatçı
+MSG_COLUMN_TIME
+Süre
+MSG_COLUMN_STATION
+İstasyon
+MSG_COLUMN_ADDRESS
+Adres
+MSG_COLUMN_BITRATE
+kbit/sn
+MSG_COLUMN_GENRES
+Türler
+MSG_SHUFFLE_BUTTON
+_Karıştır
+MSG_SHUFFLE_HINT
+Şarkıları kendi sıralarında çal
+MSG_REPEAT_BUTTON
+_Tekrarla
+MSG_REPEAT_HINT
+Listeyi ya da tek şarkıyı yeniden çal
+MSG_MUTE_BUTTON
+_Sessiz
+MSG_MUTE_HINT
+Sesi kapat ve yeniden aç
+MSG_LENGTH_HINT
+Şarkının uzunluğu ya da kalanı
+MSG_ADD_BUTTON
+_Ekle...
+MSG_REMOVE_BUTTON
+Ka_ldır
+MSG_CLEAR_BUTTON
+Te_mizle
+MSG_OUTPUT_LABEL
+_Çıkış
+MSG_SEARCH_BUTTON
+A_ra
+MSG_KEEP_BUTTON
+Ka_ydet
+MSG_FORGET_BUTTON
+_Unut
+MSG_FIND_LABEL
+_Bul
+MSG_BY_LABEL
+_Alan
+MSG_URL_TITLE
+URL aç
+MSG_URL_ADDRESS
+A_dres
+MSG_URL_OPEN
+_Aç
+MSG_URL_CANCEL
+İ_ptal
+MSG_ASK_PLAY
+Hangi şarkılar?
+MSG_ASK_ADD
+Hangi şarkılar eklensin?
+MSG_ASK_DRAWER
+Hangi klasör?
+MSG_ASK_SAVE
+Çalma listesini farklı kaydet
+MSG_ABOUT_TITLE
+Player hakkında
+MSG_ABOUT
+%s\n\nWAV, MP3, FLAC, Ogg Vorbis, AAC ve AC-3 dosyalarından şarkılar,\nbiri ötekinin ardından, kapaklarıyla,\nağdan istasyonlar\nve sesin bir resmi.
+MSG_OK
+Tamam
+MSG_NO_SONG
+Şarkı yok
+MSG_TRACK_OF
+parça %u / %u
+MSG_TRACK
+parça %u
+MSG_COMPOSED_BY
+besteci: %s
+MSG_CHAPTER
+Bölüm %u / %u
+MSG_SOUND
+Ses
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/sn
+MSG_SONG_OF
+şarkı %u / %u
+MSG_NO_SOUND
+ses yok
+MSG_NO_STREAM_FREE
+boş akış yok
+MSG_LIVE
+canlı
+MSG_BUFFERING
+arabelleğe alınıyor
+MSG_BUFFERING_PERCENT
+Arabelleğe alınıyor %%%u
+MSG_STATION_IDLE
+Bir istasyon: dinlemek için çal
+MSG_CALLING
+İstasyon aranıyor
+MSG_NO_MEMORY_STATION
+İstasyon için bellek yok
+MSG_ALL_STREAMS_USED
+Tüm ses akışları kullanımda
+MSG_NO_SOUND_HERE
+Bu bilgisayarda ses yok
+MSG_NO_AUDIO_STREAM
+audio.device bir akış açmadı
+MSG_KEPT_ALREADY
+Zaten kayıtlı: %s
+MSG_KEPT
+Kaydedildi: %s
+MSG_NO_MEMORY_KEEP
+İstasyonu kaydetmek için bellek yok
+MSG_NO_MEMORY_SEARCH
+Arama için bellek yok
+MSG_SEARCHING
+Aranıyor
+MSG_ASKING
+Soruluyor: %s
+MSG_NONE_FOUND
+İstasyon bulunamadı
+MSG_ONE_FOUND
+Bir istasyon bulundu
+MSG_COUNT_FOUND
+%u istasyon bulundu
+MSG_NO_NETWORK
+Ağ yok: bsdsocket.library yok
+MSG_NO_HTTP
+http.library yok
+MSG_NO_MEMORY_CONNECTION
+Bağlantı için bellek yok
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info'nun adresi yok
+MSG_SERVICE_NO_ANSWER
+radio-browser.info aramayı yanıtlamadı
+MSG_SERVICE_UNREACHED
+radio-browser.info'ya ulaşılamadı
+MSG_SERVICE_NONSENSE
+radio-browser.info'nun yanıtı anlamsız
+MSG_SEARCH_FAILED
+Arama başarısız oldu
+MSG_NO_SIGNAL
+İstasyon için boş sinyal yok
+MSG_NO_TIMER
+timer.device açılmadı
+MSG_LISTS_ONLY
+İstasyonun listeleri yalnızca başka listelere çıkıyor
+MSG_STATION_STOPPED
+İstasyon yayını kesti
+MSG_STATION_ANSWERED
+İstasyon yanıt verdi
+MSG_SENDS_AAC
+İstasyon AAC gönderiyor, bu çalınmıyor
+MSG_STATION_ENDED
+İstasyon bağlantıyı sonlandırdı
+MSG_SENDS_HLS
+İstasyon HLS gönderiyor, bu çalınmıyor
+MSG_LIST_EMPTY
+İstasyonun listesi hiçbir istasyon belirtmiyor
+MSG_LIST_TOO_LONG
+İstasyonun listesi çok uzun bir adres belirtiyor
+MSG_NOT_AN_ADDRESS
+Bu, dinlenecek bir adres değil
+MSG_NONSENSE
+İstasyonun yanıtı anlamsız
+MSG_NOLIBRARY
+%s: %s açılamıyor\n
+MSG_NOMEMORY
+%s: pencere için bellek yok\n
+MSG_NOBUFFERS
+%s: ses için bellek yok\n
+MSG_NOWINDOW
+%s: pencere yok\n
+MSG_MENU_EQUALIZER
+Ekolayzer
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Osiloskop
+MSG_MENU_METERS
+Seviye göstergeleri
+MSG_MENU_WHOLE_SCREEN
+Tam ekran

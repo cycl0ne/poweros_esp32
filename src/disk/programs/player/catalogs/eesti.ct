@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; The Player's strings in Estonian.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Ava...
+MSG_MENU_OPEN_DRAWER
+Ava kaust...
+MSG_MENU_OPEN_URL
+Ava URL...
+MSG_MENU_SAVE_PLAYLIST
+Salvesta esitusloend...
+MSG_MENU_ABOUT
+Teave
+MSG_MENU_QUIT
+Välju
+MSG_MENU_PLAYLIST
+Esitusloend
+MSG_MENU_ADD
+Lisa...
+MSG_MENU_REMOVE
+Eemalda
+MSG_MENU_CLEAR
+Tühjenda
+MSG_MENU_SHUFFLE
+Juhuslik järjekord
+MSG_MENU_REPEAT
+Kordus
+MSG_MENU_REPEAT_OFF
+Väljas
+MSG_MENU_REPEAT_ALL
+Kõik
+MSG_MENU_REPEAT_ONE
+Üks
+MSG_MENU_PICTURE
+Pilt
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Laine
+MSG_MENU_BARS
+Tulbad
+MSG_MENU_SETTINGS
+Sätted
+MSG_MENU_REMEMBER
+Jäta meelde, kus see oli
+MSG_PAGE_PLAYING
+Praegu mängib
+MSG_PAGE_RADIO
+Raadio
+MSG_VIEW_KEPT
+Sinu jaamad
+MSG_VIEW_FOUND
+Leitud
+MSG_NAME
+Nimi
+MSG_GENRE
+Žanr
+MSG_COUNTRY
+Riik
+MSG_COLUMN_TITLE
+Pealkiri
+MSG_COLUMN_ARTIST
+Esitaja
+MSG_COLUMN_TIME
+Aeg
+MSG_COLUMN_STATION
+Jaam
+MSG_COLUMN_ADDRESS
+Aadress
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Žanrid
+MSG_SHUFFLE_BUTTON
+_Juhuslik
+MSG_SHUFFLE_HINT
+Mängi lugusid omas järjekorras
+MSG_REPEAT_BUTTON
+_Kordus
+MSG_REPEAT_HINT
+Mängi loendit uuesti, või ühte lugu
+MSG_MUTE_BUTTON
+_Vaigista
+MSG_MUTE_HINT
+Heli välja, ja jälle sisse
+MSG_LENGTH_HINT
+Loo pikkus, või mis sellest on jäänud
+MSG_ADD_BUTTON
+_Lisa...
+MSG_REMOVE_BUTTON
+_Eemalda
+MSG_CLEAR_BUTTON
+_Tühjenda
+MSG_OUTPUT_LABEL
+Väljun_d
+MSG_SEARCH_BUTTON
+_Otsi
+MSG_KEEP_BUTTON
+_Salvesta
+MSG_FORGET_BUTTON
+_Unusta
+MSG_FIND_LABEL
+Otsi_ngusõna
+MSG_BY_LABEL
+järg_i
+MSG_URL_TITLE
+Ava URL
+MSG_URL_ADDRESS
+Aa_dress
+MSG_URL_OPEN
+_Ava
+MSG_URL_CANCEL
+_Loobu
+MSG_ASK_PLAY
+Millised lood?
+MSG_ASK_ADD
+Milliseid lugusid lisada?
+MSG_ASK_DRAWER
+Milline kaust?
+MSG_ASK_SAVE
+Salvesta esitusloend nimega
+MSG_ABOUT_TITLE
+Teave: Player
+MSG_ABOUT
+%s\n\nLood WAV-, MP3-, FLAC-, Ogg Vorbis-, AAC- ja AC-3-failidest,\nüksteise järel, koos kaanepiltidega,\njaamad võrgust\nja pilt helist.
+MSG_OK
+OK
+MSG_NO_SONG
+Lugu pole
+MSG_TRACK_OF
+rada %u/%u
+MSG_TRACK
+rada %u
+MSG_COMPOSED_BY
+helilooja %s
+MSG_CHAPTER
+Peatükk %u/%u
+MSG_SOUND
+Heli
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+lugu %u/%u
+MSG_NO_SOUND
+heli pole
+MSG_NO_STREAM_FREE
+vaba voogu pole
+MSG_LIVE
+otse
+MSG_BUFFERING
+puhverdamine
+MSG_BUFFERING_PERCENT
+Puhverdamine %u%%
+MSG_STATION_IDLE
+Jaam: esitus kuulab seda
+MSG_CALLING
+Ühendumine jaamaga
+MSG_NO_MEMORY_STATION
+Jaama jaoks pole mälu
+MSG_ALL_STREAMS_USED
+Kõik helivood on kasutusel
+MSG_NO_SOUND_HERE
+Sellel masinal pole heli
+MSG_NO_AUDIO_STREAM
+audio.device ei avanud voogu
+MSG_KEPT_ALREADY
+Juba salvestatud: %s
+MSG_KEPT
+Salvestatud: %s
+MSG_NO_MEMORY_KEEP
+Jaama salvestamiseks pole mälu
+MSG_NO_MEMORY_SEARCH
+Otsingu jaoks pole mälu
+MSG_SEARCHING
+Otsimine
+MSG_ASKING
+Küsimine: %s
+MSG_NONE_FOUND
+Ühtki jaama ei leitud
+MSG_ONE_FOUND
+Leiti üks jaam
+MSG_COUNT_FOUND
+Leiti %u jaama
+MSG_NO_NETWORK
+Võrku pole: bsdsocket.library puudub
+MSG_NO_HTTP
+http.library puudub
+MSG_NO_MEMORY_CONNECTION
+Ühenduse jaoks pole mälu
+MSG_SERVICE_NO_ADDRESS
+Teenusel radio-browser.info pole aadressi
+MSG_SERVICE_NO_ANSWER
+radio-browser.info ei vastanud otsingule
+MSG_SERVICE_UNREACHED
+radio-browser.info pole kättesaadav
+MSG_SERVICE_NONSENSE
+Teenuse radio-browser.info vastus on arusaamatu
+MSG_SEARCH_FAILED
+Otsing nurjus
+MSG_NO_SIGNAL
+Jaama jaoks pole vaba signaali
+MSG_NO_TIMER
+timer.device ei avanenud
+MSG_LISTS_ONLY
+Jaama loendid viitavad ainult uutele loenditele
+MSG_STATION_STOPPED
+Jaam lõpetas saatmise
+MSG_STATION_ANSWERED
+Jaam vastas
+MSG_SENDS_AAC
+Jaam saadab AAC-d, mida ei esitata
+MSG_STATION_ENDED
+Jaam katkestas ühenduse
+MSG_SENDS_HLS
+Jaam saadab HLS-i, mida ei esitata
+MSG_LIST_EMPTY
+Jaama loend ei nimeta ühtki jaama
+MSG_LIST_TOO_LONG
+Jaama loendis on liiga pikk aadress
+MSG_NOT_AN_ADDRESS
+See pole aadress, mida kuulata
+MSG_NONSENSE
+Jaama vastus on arusaamatu
+MSG_NOLIBRARY
+%s: ei saa avada teeki %s\n
+MSG_NOMEMORY
+%s: aknale pole mälu\n
+MSG_NOBUFFERS
+%s: helile pole mälu\n
+MSG_NOWINDOW
+%s: akent pole\n
+MSG_MENU_EQUALIZER
+Ekvalaiser
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Stereopilt
+MSG_MENU_METERS
+Tasememõõdikud
+MSG_MENU_WHOLE_SCREEN
+Täisekraan

@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; The desktop's strings in Norwegian (Bokmål).
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Bakgrunn
+MSG_MENU_EXECUTE
+Kjør kommando...
+MSG_MENU_REDRAW_ALL
+Tegn alt på nytt
+MSG_MENU_UPDATE_ALL
+Oppdater alt
+MSG_MENU_LAST_MESSAGE
+Siste melding
+MSG_MENU_VOLUME
+Volum...
+MSG_MENU_ABOUT
+Om...
+MSG_MENU_QUIT
+Avslutt...
+MSG_MENU_REBOOT
+Start på nytt...
+MSG_MENU_WINDOW
+Vindu
+MSG_MENU_NEW_DRAWER
+Ny mappe
+MSG_MENU_OPEN_PARENT
+Åpne overordnet mappe
+MSG_MENU_BACK
+Tilbake
+MSG_MENU_FORWARD
+Fremover
+MSG_MENU_CLOSE
+Lukk
+MSG_MENU_UPDATE
+Oppdater
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Merk innhold
+MSG_MENU_CLEAN_UP
+Rydd opp
+MSG_MENU_CLEAN_UP_BY
+Rydd opp etter
+MSG_MENU_BY_NAME
+Navn
+MSG_MENU_BY_DATE
+Dato
+MSG_MENU_BY_SIZE
+Størrelse
+MSG_MENU_SNAP
+Juster til rutenett
+MSG_MENU_ARRANGE
+Ordne ved endret størrelse
+MSG_MENU_SNAPSHOT
+Husk plassering
+MSG_MENU_SNAPSHOT_WINDOW
+Vindu
+MSG_MENU_SNAPSHOT_ALL
+Alt
+MSG_MENU_SHOW
+Vis
+MSG_MENU_ONLY_ICONS
+Bare ikoner
+MSG_MENU_ALL_FILES
+Alle filer
+MSG_MENU_VIEW_BY
+Vis som
+MSG_MENU_BY_ICON
+Ikon
+MSG_MENU_RIBBON
+Bånd
+MSG_MENU_ICONS
+Ikoner
+MSG_MENU_OPEN
+Åpne
+MSG_MENU_COPY
+Kopier
+MSG_MENU_RENAME
+Gi nytt navn...
+MSG_MENU_INFORMATION
+Informasjon...
+MSG_MENU_UNSNAPSHOT
+Glem plassering
+MSG_MENU_LEAVE_OUT
+Legg på skrivebordet
+MSG_MENU_PUT_AWAY
+Legg tilbake
+MSG_MENU_DELETE
+Slett...
+MSG_MENU_FORMAT
+Formater disk...
+MSG_MENU_EMPTY_TRASH
+Tøm papirkurven
+MSG_MENU_TOOLS
+Verktøy
+MSG_RIBBON_HOME
+Hjem
+MSG_RIBBON_GO
+Gå til
+MSG_RIBBON_PARENT
+Opp
+MSG_RIBBON_DRAWER
+Mappe
+MSG_RIBBON_RENAME
+Gi nytt navn
+MSG_RIBBON_DELETE
+Slett
+MSG_RIBBON_INFORMATION
+Informasjon
+MSG_RIBBON_VIEW
+Vis
+MSG_RIBBON_ARRANGE
+Ordne
+MSG_LIST_PROTECTION
+Beskyttelse
+MSG_LIST_DRAWER
+Mappe
+MSG_TITLE_MEMORY
+Minne
+MSG_TITLE_INTERNAL
+Internt
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+ledig
+MSG_TITLE_BATTERY
+Batteri
+MSG_TITLE_CHARGING
+lader
+MSG_TITLE_EXTERNAL_POWER
+ekstern strøm
+MSG_DISK_FULL
+full
+MSG_DISK_IN_USE
+i bruk
+MSG_NOTHING_SAID
+Ingenting er meldt ennå
+MSG_NOT_EVERY_FILE
+Ikke alle valgte filer kunne tas med
+MSG_DISK_NOT_RENAMED
+Disken kunne ikke få nytt navn
+MSG_NOT_RENAMED
+Det kunne ikke få nytt navn
+MSG_ICON_NOT_WRITTEN
+Et ikon kunne ikke skrives
+MSG_DISK_NOT_THERE
+Disken er ikke der
+MSG_DISK_BUSY
+Disken er i bruk
+MSG_DISK_NOT_FORMATTED
+Disken kunne ikke formateres
+MSG_DRAWER_NOT_MADE
+Mappen kunne ikke opprettes
+MSG_SETTING_NOT_KEPT
+%s kunne ikke huskes
+MSG_SETTING_NOT_WRITTEN
+%s kunne ikke skrives til anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Mappens ikon kunne ikke skrives
+MSG_NO_MEMORY_REBOOT
+Ikke minne til å starte på nytt
+MSG_NO_MEMORY_ABOUT
+Ikke minne til Om
+MSG_NO_TOOL
+%s har ikke noe program som kan åpne den
+MSG_NOT_STARTED
+%s kunne ikke startes
+MSG_COMMAND_NOT_STARTED
+Kommandoen kunne ikke startes
+MSG_SHELL_DRAWER_NOT_FOUND
+Shellens mappe ble ikke funnet
+MSG_SHELL_NOT_STARTED
+Shellen kunne ikke startes
+MSG_TRASH_OWN_DISK
+Bare filer fra papirkurvens egen disk havner i dens papirkurv
+MSG_NOT_MOVED
+En fil kunne ikke flyttes dit
+MSG_LEFT_OUT_NOT_KEPT
+Disken husker ikke det som ligger på skrivebordet
+MSG_NO_MEMORY_WORK
+Ikke minne til å begynne arbeidet
+MSG_QUIT_RUNNING_ADDED
+Programmer startet fra skrivebordet kjører fortsatt (%lu).\nDe fortsetter å kjøre. Vinduer, ikoner og\nmenyelementer som programmer har lagt til (%lu),\nforsvinner sammen med det.\n\nAvslutte skrivebordet?
+MSG_QUIT_RUNNING
+Programmer startet fra skrivebordet kjører fortsatt (%lu).\nDe fortsetter å kjøre.\n\nAvslutte skrivebordet?
+MSG_QUIT_ADDED
+Vinduer, ikoner og menyelementer som programmer\nhar lagt til på skrivebordet (%lu), forsvinner sammen med det.\n\nAvslutte skrivebordet?
+MSG_QUIT_ASK
+Avslutte skrivebordet?
+MSG_QUIT_BUTTONS
+Avslutt|Avbryt
+MSG_DELETE_ASK
+Slette det valgte (%lu) for godt?\nEn mappe forsvinner med alt innholdet.
+MSG_DELETE_BUTTONS
+Slett|Avbryt
+MSG_RENAME_PROMPT
+Et nytt navn:
+MSG_FORMAT_TITLE
+Formater disk
+MSG_FORMAT_ASK
+Formatere %s?\nAlt på den går tapt.
+MSG_FORMAT_BUTTONS
+Formater|Avbryt
+MSG_NEW_DRAWER_PROMPT
+Et navn på den nye mappen:
+MSG_UNNAMED
+Uten navn
+MSG_EXECUTE_TITLE
+Kjør kommando
+MSG_EXECUTE_PROMPT
+En kommando som skal kjøres:
+MSG_OUTPUT
+Utdata
+MSG_REBOOT_TITLE
+Start på nytt
+MSG_REBOOT_ASK
+Starte maskinen på nytt?\nDet programmer ikke har lagret, går tapt.
+MSG_REBOOT_BUTTONS
+Start på nytt|Avbryt
+MSG_REBOOT_IN_USE
+I bruk, så det de inneholder, blir kanskje ikke skrevet ut:\n%s\n\nStarte på nytt likevel?
+MSG_STARTUP_WAIT
+Programmet '%s'\ner ikke avsluttet ennå.\nVente litt til?
+MSG_STARTUP_BUTTONS
+Vent|Fortsett
+MSG_OK
+_OK
+MSG_CANCEL
+_Avbryt
+MSG_ABOUT_TITLE
+Om Anvil
+MSG_ABOUT_WHAT
+Skrivebordet i PowerOS
+MSG_ABOUT_RELEASE
+Utgave
+MSG_ABOUT_KERNEL
+Kjerne
+MSG_ABOUT_BOARD
+Kort
+MSG_ABOUT_PROCESSOR
+Prosessor
+MSG_ABOUT_CORES
+Kjerner
+MSG_ABOUT_CLOCK
+Klokkefrekvens
+MSG_ABOUT_SCREEN
+Skjerm
+MSG_ABOUT_SYSTEM_DISK
+Systemdisk
+MSG_ABOUT_UP_FOR
+Oppetid
+MSG_ABOUT_IN_USE
+I bruk
+MSG_ABOUT_OF
+av
+MSG_ABOUT_BITS
+biter per piksel
+MSG_ABOUT_DAY
+dag
+MSG_ABOUT_DAYS
+dager
+MSG_INFO_TITLE
+Informasjon
+MSG_INFO_STATE
+Tilstand
+MSG_INFO_READ_ONLY
+Skrivebeskyttet
+MSG_INFO_VALIDATING
+Valideres
+MSG_INFO_READ_WRITE
+Lese og skrive
+MSG_INFO_UNKNOWN
+Ukjent
+MSG_INFO_BLOCKS
+Blokker
+MSG_INFO_USED
+Brukt
+MSG_INFO_FREE
+Ledig
+MSG_INFO_BLOCK_SIZE
+Blokkstørrelse
+MSG_INFO_BYTES
+byte
+MSG_INFO_BLOCKS_COUNTED
+blokker
+MSG_INFO_CREATED
+Opprettet
+MSG_INFO_LAST_CHANGED
+Sist endret
+MSG_INFO_SCRIPT
+Skript
+MSG_INFO_ARCHIVED
+Arkivert
+MSG_INFO_READABLE
+Lesbar
+MSG_INFO_WRITABLE
+Skrivbar
+MSG_INFO_EXECUTABLE
+Kjørbar
+MSG_INFO_DELETABLE
+Kan slettes
+MSG_INFO_COMMENT
+Kommentar
+MSG_INFO_STACK
+Stakk
+MSG_INFO_DEFAULT_TOOL
+Standardprogram
+MSG_INFO_TOOL_TYPES
+Verktøytyper
+MSG_INFO_SAVE
+_Lagre
+MSG_INFO_NOT_WRITTEN
+Ikonet kunne ikke skrives.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Kopierer
+MSG_WORK_DELETING
+Sletter
+MSG_WORK_STOP
+_Stopp
+MSG_WORK_WAITING
+%lu til venter
+MSG_WORK_REPLACE_ASK
+%s finnes allerede.\nErstatte den?
+MSG_WORK_REPLACE_BUTTONS
+Erstatt|Erstatt alle|Hopp over|Stopp

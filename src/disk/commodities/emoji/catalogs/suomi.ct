@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; Emoji's strings in Finnish.
+MSG_SEARCH
+Haku
+MSG_USED
+Viimeksi käytetyt
+MSG_NONE_USED
+Ei vielä käytettyjä
+MSG_NOT_FOUND
+Ei löytynyt
+MSG_TONE_NONE
+Ei ihonväriä
+MSG_TONE_LIGHT
+Vaalea
+MSG_TONE_MEDIUM_LIGHT
+Keskivaalea
+MSG_TONE_MEDIUM
+Keskimmäinen
+MSG_TONE_MEDIUM_DARK
+Keskitumma
+MSG_TONE_DARK
+Tumma
+MSG_GROUP_SMILEYS
+Hymiöt & tunteet
+MSG_GROUP_PEOPLE
+Ihmiset & keho
+MSG_GROUP_ANIMALS
+Eläimet & luonto
+MSG_GROUP_FOOD
+Ruoka & juoma
+MSG_GROUP_TRAVEL
+Matkailu & paikat
+MSG_GROUP_ACTIVITIES
+Aktiviteetit
+MSG_GROUP_OBJECTS
+Esineet
+MSG_GROUP_SYMBOLS
+Symbolit
+MSG_GROUP_FLAGS
+Liput

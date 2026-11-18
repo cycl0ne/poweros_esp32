@@ -91,14 +91,11 @@ const gfx_on_disk = [_]GfxOnDisk{
 };
 
 /// The ROM modules' strings in other languages: what dos.library's faults
-/// say once locale.library stands in front of Fault.
-const rom_catalogs = [_]poweros_userland.Catalog{
-    .{ .disk = "locale/Catalogs/deutsch/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/deutsch.ct", .name = "sys/dos.catalog" },
-    .{ .disk = "locale/Catalogs/hindi/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/hindi.ct", .name = "sys/dos.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/nihongo/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/nihongo.ct", .name = "sys/dos.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/hangugeo/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/hangugeo.ct", .name = "sys/dos.catalog", .wide = true },
-    .{ .disk = "locale/Catalogs/zhongwen/sys/dos.catalog", .descriptor = "src/rom/libs/dos/text/dos.cd", .translation = "src/rom/libs/dos/text/catalogs/zhongwen.ct", .name = "sys/dos.catalog", .wide = true },
-};
+/// say once locale.library stands in front of Fault, in every language
+/// there are translations into.
+const rom_catalogs = poweros_userland.catalogsOf(&.{
+    .{ .descriptor = "src/rom/libs/dos/text/dos.cd", .translations = "src/rom/libs/dos/text/catalogs", .name = "sys/dos.catalog" },
+});
 
 /// The directories every disk image has, parents before what is in them.
 const image_dirs = [_][]const u8{
@@ -193,37 +190,26 @@ const image_dirs = [_][]const u8{
     "locale/Countries",
     "locale/Languages",
     "locale/Catalogs",
-    "locale/Catalogs/deutsch",
-    "locale/Catalogs/deutsch/sys",
-    "locale/Catalogs/deutsch/c",
-    "locale/Catalogs/deutsch/c/test",
-    "locale/Catalogs/deutsch/programs",
-    "locale/Catalogs/deutsch/System",
-    "locale/Catalogs/deutsch/Commodities",
-    "locale/Catalogs/hindi",
-    "locale/Catalogs/hindi/sys",
-    "locale/Catalogs/hindi/c",
-    "locale/Catalogs/hindi/c/test",
-    "locale/Catalogs/hindi/programs",
-    "locale/Catalogs/hindi/System",
-    "locale/Catalogs/nihongo",
-    "locale/Catalogs/nihongo/sys",
-    "locale/Catalogs/nihongo/c",
-    "locale/Catalogs/nihongo/c/test",
-    "locale/Catalogs/nihongo/programs",
-    "locale/Catalogs/nihongo/System",
-    "locale/Catalogs/hangugeo",
-    "locale/Catalogs/hangugeo/sys",
-    "locale/Catalogs/hangugeo/c",
-    "locale/Catalogs/hangugeo/c/test",
-    "locale/Catalogs/hangugeo/programs",
-    "locale/Catalogs/hangugeo/System",
-    "locale/Catalogs/zhongwen",
-    "locale/Catalogs/zhongwen/sys",
-    "locale/Catalogs/zhongwen/c",
-    "locale/Catalogs/zhongwen/c/test",
-    "locale/Catalogs/zhongwen/programs",
-    "locale/Catalogs/zhongwen/System",
+} ++ catalog_dirs;
+
+/// LOCALE:Catalogs' drawers: one for each language, and in it the
+/// drawers its catalogs are in, parents first.
+const catalog_dirs = dirs: {
+    @setEvalBranchQuota(1_000_000);
+    const places = [_][]const u8{ "sys", "c", "c/test", "programs", "System", "Commodities" };
+    var made: []const []const u8 = &.{};
+    for (poweros_userland.languages) |language| {
+        const drawer = "locale/Catalogs/" ++ language.name;
+        made = made ++ [_][]const u8{drawer};
+        for (places) |place| {
+            const prefix = drawer ++ "/" ++ place ++ "/";
+            const used = for (poweros_userland.catalogs ++ rom_catalogs) |catalog| {
+                if (std.mem.startsWith(u8, catalog.disk, prefix)) break true;
+            } else false;
+            if (used) made = made ++ [_][]const u8{drawer ++ "/" ++ place};
+        }
+    }
+    break :dirs made[0..made.len].*;
 };
 
 /// An icon the build writes onto the image: where it goes, the picture
@@ -391,23 +377,17 @@ const uefi_boot_dirs = [_][]const u8{ "Storage/Boot/EFI", "Storage/Boot/EFI/BOOT
 pub const uefi_loader_path = "EFI/BOOT/BOOTX64.EFI";
 
 /// Whether the directory `dir` is made on `chip`'s image: the catalogs
-/// of `wide_languages` are on the 64-bit machines' disks only, with the
-/// fonts they are written in. Whether a board's sets have it is asked
-/// apart (`poweros_userland.onDisk`).
+/// of a wide language (`poweros_userland.Language`) are on the 64-bit
+/// machines' disks only, with the fonts they are written in. Whether a
+/// board's sets have it is asked apart (`poweros_userland.onDisk`).
 fn dirFor(dir: []const u8, chip: Chip) bool {
     const catalogs = "locale/Catalogs/";
     if (std.mem.startsWith(u8, dir, catalogs)) {
         const language = std.mem.sliceTo(dir[catalogs.len..], '/');
-        for (wide_languages) |wide| {
-            if (std.mem.eql(u8, language, wide)) return chip != .esp32s3 and chip != .esp32p4;
-        }
+        if (poweros_userland.wideLanguage(language)) return chip != .esp32s3 and chip != .esp32p4;
     }
     return true;
 }
-
-/// The languages whose script needs a font the ESP32s' flash has no room
-/// for.
-const wide_languages = [_][]const u8{ "hindi", "nihongo", "hangugeo", "zhongwen" };
 
 /// One `-Dextra` file: where it goes on the disk image, which file on
 /// the host it is, the chips whose images take it, and the directories

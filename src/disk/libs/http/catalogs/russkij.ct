@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language russkij
+## codeset 106
+; http.library's words for a request that failed, in Russian: a clause in lower case, without its full stop.
+MSG_NOMEM
+нет памяти
+MSG_IO
+сбой соединения
+MSG_IO_BECAUSE
+сбой соединения: %s
+MSG_STOPPED
+остановлено
+MSG_TIMEOUT
+сервер не ответил вовремя
+MSG_URL
+не URL вида http:// или https://, или слишком длинный URL
+MSG_HOST
+у узла нет адреса
+MSG_HOST_NAMED
+у %s нет адреса
+MSG_TLS
+сбой сеанса TLS
+MSG_TLS_CERTIFICATE
+сертификат сервера не вызывает доверия: %s
+MSG_TLS_CLOCK
+часы не установлены, поэтому сертификат нельзя проверить (TimeSync)
+MSG_TLS_ALERT
+сервер отклонил сеанс TLS (alert %u)
+MSG_TLS_HANDSHAKE
+сбой подтверждения связи TLS
+MSG_PROTOCOL
+ответ не является HTTP
+MSG_REDIRECT
+перенаправлений больше, чем разрешено, или перенаправление в никуда
+MSG_TRUNCATED
+соединение прервалось раньше, чем закончился ответ
+MSG_STATE
+вызов не в свою очередь или запрос, который нельзя выполнить
+MSG_LIBRARY
+нет библиотеки, нужной для запроса
+MSG_LIBRARY_NAMED
+нет %s
+MSG_DATA
+сжатый ответ сервера не распаковывается
+MSG_CLOSED
+сервер закрыл соединение, не ответив
+MSG_UNKNOWN
+сбой запроса (%d)
+MSG_VERDICT_MALFORMED
+один из его сертификатов не читается
+MSG_VERDICT_UNKNOWN_ISSUER
+его не подписал ни один доверенный корневой сертификат
+MSG_VERDICT_BAD_SIGNATURE
+подпись в его цепочке неверна
+MSG_VERDICT_UNSUPPORTED
+он подписан способом, который нельзя проверить
+MSG_VERDICT_EXPIRED
+срок его действия истёк
+MSG_VERDICT_NOT_YET_VALID
+он ещё не действителен
+MSG_VERDICT_NOT_CA
+его выдал сертификат, которому нельзя выдавать сертификаты
+MSG_VERDICT_PATH_LENGTH
+его цепочка длиннее, чем позволяют её ЦС
+MSG_VERDICT_NAME_CONSTRAINTS
+у ЦС в его цепочке есть ограничения имён
+MSG_VERDICT_WRONG_USAGE
+он не предназначен для сервера
+MSG_VERDICT_WRONG_NAME
+он выдан для другого узла
+MSG_VERDICT_TOO_LONG
+его цепочка слишком длинная
+MSG_VERDICT_OTHER
+без указания причины

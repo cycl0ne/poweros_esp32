@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; Emoji's strings in Swedish.
+MSG_SEARCH
+Sök
+MSG_USED
+Senast använda
+MSG_NONE_USED
+Inga använda än
+MSG_NOT_FOUND
+Inga hittades
+MSG_TONE_NONE
+Ingen hudton
+MSG_TONE_LIGHT
+Ljus
+MSG_TONE_MEDIUM_LIGHT
+Mellanljus
+MSG_TONE_MEDIUM
+Mellan
+MSG_TONE_MEDIUM_DARK
+Mellanmörk
+MSG_TONE_DARK
+Mörk
+MSG_GROUP_SMILEYS
+Smileys & känslor
+MSG_GROUP_PEOPLE
+Människor & kropp
+MSG_GROUP_ANIMALS
+Djur & natur
+MSG_GROUP_FOOD
+Mat & dryck
+MSG_GROUP_TRAVEL
+Resor & platser
+MSG_GROUP_ACTIVITIES
+Aktiviteter
+MSG_GROUP_OBJECTS
+Föremål
+MSG_GROUP_SYMBOLS
+Symboler
+MSG_GROUP_FLAGS
+Flaggor

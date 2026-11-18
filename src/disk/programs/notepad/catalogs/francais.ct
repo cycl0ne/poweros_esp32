@@ -1,0 +1,126 @@
+## version $VER: programs/Notepad.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; Notepad's strings in French.
+MSG_MENU_PROJECT
+Projet
+MSG_MENU_NEW
+Nouveau
+MSG_MENU_OPEN
+Ouvrir...
+MSG_MENU_SAVE
+Enregistrer
+MSG_MENU_SAVE_AS
+Enregistrer sous...
+MSG_MENU_QUIT
+Quitter
+MSG_MENU_EDIT
+Édition
+MSG_MENU_UNDO
+Annuler
+MSG_MENU_REDO
+Rétablir
+MSG_MENU_CUT
+Couper
+MSG_MENU_COPY
+Copier
+MSG_MENU_PASTE
+Coller
+MSG_MENU_SELECT_ALL
+Tout sélectionner
+MSG_MENU_SEARCH
+Recherche
+MSG_MENU_FIND
+Rechercher...
+MSG_MENU_FIND_NEXT
+Rechercher le suivant
+MSG_MENU_FIND_PREVIOUS
+Rechercher le précédent
+MSG_MENU_REPLACE
+Remplacer...
+MSG_MENU_VIEW
+Affichage
+MSG_MENU_WRAP
+Retour automatique à la ligne
+MSG_MENU_NUMBERS
+Numéros de ligne
+MSG_MENU_ZIG
+Coloration Zig
+MSG_MENU_RIBBON
+Ruban
+MSG_RIBBON_HOME
+Accueil
+MSG_RIBBON_CLIPBOARD
+Presse-papiers
+MSG_RIBBON_PASTE_HINT
+Insérer ce qui a été coupé ou copié
+MSG_RIBBON_EDITING
+Modification
+MSG_RIBBON_FIND
+Rechercher
+MSG_RIBBON_FIND_HINT
+Rechercher un texte ; la liste trouve le suivant ou le précédent
+MSG_RIBBON_REPLACE
+Remplacer
+MSG_RIBBON_REPLACE_HINT
+Remplacer un texte trouvé par un autre
+MSG_RIBBON_SELECT_ALL_HINT
+Sélectionner tout le texte
+MSG_RIBBON_LINES
+Lignes
+MSG_RIBBON_WRAP_HINT
+Continuer à la ligne suivante plutôt qu'au-delà du bord de la fenêtre
+MSG_RIBBON_NUMBERS_HINT
+Numéroter chaque ligne à gauche
+MSG_RIBBON_HIGHLIGHTING
+Coloration
+MSG_RIBBON_ZIG
+Zig
+MSG_RIBBON_ZIG_HINT
+Afficher les mots-clés, chaînes et commentaires de Zig chacun dans une couleur
+MSG_UNTITLED
+Sans titre
+MSG_OK
+OK
+MSG_CANNOT_OPEN
+Impossible d'ouvrir %s
+MSG_CANNOT_READ
+Impossible de lire %s
+MSG_TOO_BIG
+%s est trop volumineux
+MSG_NO_MEMORY_FOR
+Pas assez de mémoire pour %s
+MSG_NO_MEMORY_TO_SAVE
+Pas assez de mémoire pour enregistrer %s
+MSG_CANNOT_WRITE
+Impossible d'écrire %s
+MSG_NO_REQUESTER
+Pas de %s
+MSG_CHANGED
+Le texte a été modifié.\nL'enregistrer d'abord ?
+MSG_CHANGED_BUTTONS
+Enregistrer|Ne pas enregistrer|Annuler
+MSG_OPEN_TITLE
+Ouvrir un texte
+MSG_SAVE_AS_TITLE
+Enregistrer le texte sous
+MSG_FIND_TITLE
+Rechercher et remplacer
+MSG_FIND_LABEL
+Rechercher
+MSG_REPLACE_WITH
+Remplacer par
+MSG_ANY_CASE
+Ignorer la casse
+MSG_FIND_NEXT_BUTTON
+Suivant
+MSG_REPLACE_BUTTON
+Remplacer
+MSG_REPLACE_ALL_BUTTON
+Tout remplacer
+MSG_NOLIBRARY
+Pas de %s\n
+MSG_NOSCREEN
+Pas d'écran par défaut - pas d'affichage\n
+MSG_NOMEMORY
+Pas assez de mémoire pour la fenêtre\n

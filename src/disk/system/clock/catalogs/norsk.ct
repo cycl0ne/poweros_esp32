@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; Clock's strings in Norwegian (Bokmål).
+MSG_WINDOW_TITLE
+Klokke
+MSG_MENU_PROJECT
+Prosjekt
+MSG_MENU_ANALOG
+Analog
+MSG_MENU_DIGITAL
+Digital
+MSG_MENU_ABOUT
+Om...
+MSG_MENU_QUIT
+Avslutt
+MSG_MENU_SETTINGS
+Innstillinger
+MSG_MENU_SECONDS
+Sekunder
+MSG_MENU_DATE
+Dato
+MSG_MENU_24_HOURS
+24 timer
+MSG_MENU_SAVE
+Lagre innstillinger
+MSG_ABOUT_TITLE
+Om Klokke
+MSG_ABOUT
+%s\n\nTiden, på en urskive eller i tall.\nEt dobbeltklikk i vinduet bytter mellom dem.
+MSG_OK
+OK
+MSG_NOT_SAVED
+Innstillingene kunne ikke lagres i\n%s.
+MSG_NOLIBRARY
+%s: kan ikke åpne %s\n
+MSG_NOMEMORY
+%s: ikke nok minne\n
+MSG_NOWINDOW
+%s: kan ikke åpne vinduet sitt\n

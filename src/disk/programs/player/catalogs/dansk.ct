@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; The Player's strings in Danish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Åbn...
+MSG_MENU_OPEN_DRAWER
+Åbn mappe...
+MSG_MENU_OPEN_URL
+Åbn URL...
+MSG_MENU_SAVE_PLAYLIST
+Gem afspilningsliste...
+MSG_MENU_ABOUT
+Om
+MSG_MENU_QUIT
+Afslut
+MSG_MENU_PLAYLIST
+Afspilningsliste
+MSG_MENU_ADD
+Tilføj...
+MSG_MENU_REMOVE
+Fjern
+MSG_MENU_CLEAR
+Ryd
+MSG_MENU_SHUFFLE
+Bland
+MSG_MENU_REPEAT
+Gentag
+MSG_MENU_REPEAT_OFF
+Fra
+MSG_MENU_REPEAT_ALL
+Alle
+MSG_MENU_REPEAT_ONE
+Én
+MSG_MENU_PICTURE
+Billede
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Bølge
+MSG_MENU_BARS
+Søjler
+MSG_MENU_SETTINGS
+Indstillinger
+MSG_MENU_REMEMBER
+Husk, hvor det var
+MSG_PAGE_PLAYING
+Afspilles nu
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Dine stationer
+MSG_VIEW_FOUND
+Fundet
+MSG_NAME
+Navn
+MSG_GENRE
+Genre
+MSG_COUNTRY
+Land
+MSG_COLUMN_TITLE
+Titel
+MSG_COLUMN_ARTIST
+Kunstner
+MSG_COLUMN_TIME
+Tid
+MSG_COLUMN_STATION
+Station
+MSG_COLUMN_ADDRESS
+Adresse
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Genrer
+MSG_SHUFFLE_BUTTON
+_Bland
+MSG_SHUFFLE_HINT
+Afspil sangene i en rækkefølge for sig
+MSG_REPEAT_BUTTON
+_Gentag
+MSG_REPEAT_HINT
+Afspil listen igen, eller den ene sang
+MSG_MUTE_BUTTON
+_Lydløs
+MSG_MUTE_HINT
+Lyden fra, og til igen
+MSG_LENGTH_HINT
+Sangens længde, eller hvad der er tilbage af den
+MSG_ADD_BUTTON
+_Tilføj...
+MSG_REMOVE_BUTTON
+_Fjern
+MSG_CLEAR_BUTTON
+_Ryd
+MSG_OUTPUT_LABEL
+_Udgang
+MSG_SEARCH_BUTTON
+_Søg
+MSG_KEEP_BUTTON
+_Husk
+MSG_FORGET_BUTTON
+Fj_ern
+MSG_FIND_LABEL
+Søge_ord
+MSG_BY_LABEL
+_i
+MSG_URL_TITLE
+Åbn URL
+MSG_URL_ADDRESS
+A_dresse
+MSG_URL_OPEN
+Å_bn
+MSG_URL_CANCEL
+_Annuller
+MSG_ASK_PLAY
+Hvilke sange?
+MSG_ASK_ADD
+Hvilke sange skal tilføjes?
+MSG_ASK_DRAWER
+Hvilken mappe?
+MSG_ASK_SAVE
+Gem afspilningslisten som
+MSG_ABOUT_TITLE
+Om Player
+MSG_ABOUT
+%s\n\nSange fra WAV-, MP3-, FLAC-, Ogg Vorbis-, AAC- og AC-3-filer,\nden ene efter den anden, med deres covers,\nstationer fra netværket\nog et billede af lyden.
+MSG_OK
+OK
+MSG_NO_SONG
+Ingen sang
+MSG_TRACK_OF
+nummer %u af %u
+MSG_TRACK
+nummer %u
+MSG_COMPOSED_BY
+komponeret af %s
+MSG_CHAPTER
+Kapitel %u af %u
+MSG_SOUND
+Lyd
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+sang %u af %u
+MSG_NO_SOUND
+ingen lyd
+MSG_NO_STREAM_FREE
+ingen ledig stream
+MSG_LIVE
+live
+MSG_BUFFERING
+bufferer
+MSG_BUFFERING_PERCENT
+Bufferer %u%%
+MSG_STATION_IDLE
+En station: afspil lytter til den
+MSG_CALLING
+Forbinder til stationen
+MSG_NO_MEMORY_STATION
+Ingen hukommelse til stationen
+MSG_ALL_STREAMS_USED
+Alle lydstreams er i brug
+MSG_NO_SOUND_HERE
+Denne maskine har ingen lyd
+MSG_NO_AUDIO_STREAM
+audio.device ville ikke åbne en stream
+MSG_KEPT_ALREADY
+Allerede husket: %s
+MSG_KEPT
+Husket: %s
+MSG_NO_MEMORY_KEEP
+Ingen hukommelse til at huske stationen
+MSG_NO_MEMORY_SEARCH
+Ingen hukommelse til søgningen
+MSG_SEARCHING
+Søger
+MSG_ASKING
+Spørger %s
+MSG_NONE_FOUND
+Ingen station fundet
+MSG_ONE_FOUND
+Én station fundet
+MSG_COUNT_FOUND
+%u stationer fundet
+MSG_NO_NETWORK
+Intet netværk: bsdsocket.library findes ikke
+MSG_NO_HTTP
+http.library findes ikke
+MSG_NO_MEMORY_CONNECTION
+Ingen hukommelse til forbindelsen
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info har ingen adresse
+MSG_SERVICE_NO_ANSWER
+radio-browser.info besvarede ikke søgningen
+MSG_SERVICE_UNREACHED
+radio-browser.info kunne ikke nås
+MSG_SERVICE_NONSENSE
+Svaret fra radio-browser.info giver ingen mening
+MSG_SEARCH_FAILED
+Søgningen mislykkedes
+MSG_NO_SIGNAL
+Intet ledigt signal til stationen
+MSG_NO_TIMER
+timer.device ville ikke åbne
+MSG_LISTS_ONLY
+Stationens lister fører kun til flere lister
+MSG_STATION_STOPPED
+Stationen holdt op med at sende
+MSG_STATION_ANSWERED
+Stationen svarede
+MSG_SENDS_AAC
+Stationen sender AAC, som ikke afspilles
+MSG_STATION_ENDED
+Stationen afsluttede forbindelsen
+MSG_SENDS_HLS
+Stationen sender HLS, som ikke afspilles
+MSG_LIST_EMPTY
+Stationens liste nævner ingen station
+MSG_LIST_TOO_LONG
+Stationens liste nævner en for lang adresse
+MSG_NOT_AN_ADDRESS
+Dette er ikke en adresse at lytte til
+MSG_NONSENSE
+Stationens svar giver ingen mening
+MSG_NOLIBRARY
+%s: kan ikke åbne %s\n
+MSG_NOMEMORY
+%s: ingen hukommelse til vinduet\n
+MSG_NOBUFFERS
+%s: ingen hukommelse til lyden\n
+MSG_NOWINDOW
+%s: intet vindue\n
+MSG_MENU_EQUALIZER
+Equalizer
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Stereobillede
+MSG_MENU_METERS
+Niveaumålere
+MSG_MENU_WHOLE_SCREEN
+Fuld skærm

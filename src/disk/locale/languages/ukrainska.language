@@ -1,0 +1,25 @@
+# LOCALE:Languages/ukrainska.language - Ukrainian: the words locale.library
+# writes and reads dates in. Its letters sort in the order of their
+# codes, without their marks, which the library has for every Cyrillic
+# letter: Ґ, Є, І and Ї, whose codes lie past Я, come after it. A word
+# left out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=неділя DAY_2=понеділок DAY_3=вівторок DAY_4=середа
+DAY_5=четвер DAY_6=п'ятниця DAY_7=субота
+ABDAY_1=нд ABDAY_2=пн ABDAY_3=вт ABDAY_4=ср ABDAY_5=чт ABDAY_6=пт
+ABDAY_7=сб
+# The months, then their short names.
+MON_1=січень MON_2=лютий MON_3=березень MON_4=квітень MON_5=травень
+MON_6=червень MON_7=липень MON_8=серпень MON_9=вересень
+MON_10=жовтень MON_11=листопад MON_12=грудень
+ABMON_1=січ ABMON_2=лют ABMON_3=бер ABMON_4=кві ABMON_5=тра
+ABMON_6=чер ABMON_7=лип ABMON_8=сер ABMON_9=вер ABMON_10=жов
+ABMON_11=лис ABMON_12=гру
+# Yes and no, before and after noon.
+YESSTR=Так NOSTR=Ні AM_STR=дп PM_STR=пп
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=« CLOSEQUOTE=»
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Вчора TODAYSTR=Сьогодні TOMORROWSTR=Завтра
+FUTURESTR=Майбутнє

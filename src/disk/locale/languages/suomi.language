@@ -1,0 +1,25 @@
+# LOCALE:Languages/suomi.language - Finnish: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=sunnuntai DAY_2=maanantai DAY_3=tiistai DAY_4=keskiviikko
+DAY_5=torstai DAY_6=perjantai DAY_7=lauantai
+ABDAY_1=su ABDAY_2=ma ABDAY_3=ti ABDAY_4=ke ABDAY_5=to
+ABDAY_6=pe ABDAY_7=la
+# The months, then their short names.
+MON_1=tammikuu MON_2=helmikuu MON_3=maaliskuu MON_4=huhtikuu
+MON_5=toukokuu MON_6=kesäkuu MON_7=heinäkuu MON_8=elokuu
+MON_9=syyskuu MON_10=lokakuu MON_11=marraskuu MON_12=joulukuu
+ABMON_1=tammi ABMON_2=helmi ABMON_3=maalis ABMON_4=huhti ABMON_5=touko
+ABMON_6=kesä ABMON_7=heinä ABMON_8=elo ABMON_9=syys ABMON_10=loka
+ABMON_11=marras ABMON_12=joulu
+# Yes and no, before and after noon.
+YESSTR=Kyllä NOSTR=Ei AM_STR=ap. PM_STR=ip.
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=” CLOSEQUOTE=”
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Eilen TODAYSTR=Tänään TOMORROWSTR=Huomenna
+FUTURESTR=Tulevaisuus
+# The order of the letters: Å, Ä and Ö after Z, Æ taken for Ä and Ø for Ö.
+AFTER_Z=Å,ÄÆ,ÖØ

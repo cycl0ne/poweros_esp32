@@ -1,0 +1,42 @@
+## version $VER: Commodities/Emoji.catalog 1.0 (18.11.2026)
+## language lietuviu
+## codeset 106
+; Emoji's strings in Lithuanian.
+MSG_SEARCH
+Ieškoti
+MSG_USED
+Naudoti neseniai
+MSG_NONE_USED
+Dar nė vienas nenaudotas
+MSG_NOT_FOUND
+Nieko nerasta
+MSG_TONE_NONE
+Be odos atspalvio
+MSG_TONE_LIGHT
+Šviesus
+MSG_TONE_MEDIUM_LIGHT
+Vidutiniškai šviesus
+MSG_TONE_MEDIUM
+Vidutinis
+MSG_TONE_MEDIUM_DARK
+Vidutiniškai tamsus
+MSG_TONE_DARK
+Tamsus
+MSG_GROUP_SMILEYS
+Šypsenėlės & emocijos
+MSG_GROUP_PEOPLE
+Žmonės & kūnas
+MSG_GROUP_ANIMALS
+Gyvūnai & gamta
+MSG_GROUP_FOOD
+Maistas & gėrimai
+MSG_GROUP_TRAVEL
+Kelionės & vietos
+MSG_GROUP_ACTIVITIES
+Veikla
+MSG_GROUP_OBJECTS
+Objektai
+MSG_GROUP_SYMBOLS
+Simboliai
+MSG_GROUP_FLAGS
+Vėliavos

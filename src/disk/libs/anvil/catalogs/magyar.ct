@@ -1,0 +1,338 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; The desktop's strings in Hungarian.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Háttér
+MSG_MENU_EXECUTE
+Parancs végrehajtása...
+MSG_MENU_REDRAW_ALL
+Összes újrarajzolása
+MSG_MENU_UPDATE_ALL
+Összes frissítése
+MSG_MENU_LAST_MESSAGE
+Utolsó üzenet
+MSG_MENU_VOLUME
+Hangerő...
+MSG_MENU_ABOUT
+Névjegy...
+MSG_MENU_QUIT
+Kilépés...
+MSG_MENU_REBOOT
+Újraindítás...
+MSG_MENU_WINDOW
+Ablak
+MSG_MENU_NEW_DRAWER
+Új mappa
+MSG_MENU_OPEN_PARENT
+Szülőmappa megnyitása
+MSG_MENU_BACK
+Vissza
+MSG_MENU_FORWARD
+Előre
+MSG_MENU_CLOSE
+Bezárás
+MSG_MENU_UPDATE
+Frissítés
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Tartalom kijelölése
+MSG_MENU_CLEAN_UP
+Rendezés
+MSG_MENU_CLEAN_UP_BY
+Rendezés szempontja
+MSG_MENU_BY_NAME
+Név
+MSG_MENU_BY_DATE
+Dátum
+MSG_MENU_BY_SIZE
+Méret
+MSG_MENU_SNAP
+Rácshoz igazítás
+MSG_MENU_ARRANGE
+Elrendezés átméretezéskor
+MSG_MENU_SNAPSHOT
+Helyzet megjegyzése
+MSG_MENU_SNAPSHOT_WINDOW
+Ablak
+MSG_MENU_SNAPSHOT_ALL
+Mind
+MSG_MENU_SHOW
+Megjelenítés
+MSG_MENU_ONLY_ICONS
+Csak ikonok
+MSG_MENU_ALL_FILES
+Minden fájl
+MSG_MENU_VIEW_BY
+Nézet
+MSG_MENU_BY_ICON
+Ikon
+MSG_MENU_RIBBON
+Szalag
+MSG_MENU_ICONS
+Ikonok
+MSG_MENU_OPEN
+Megnyitás
+MSG_MENU_COPY
+Másolás
+MSG_MENU_RENAME
+Átnevezés...
+MSG_MENU_INFORMATION
+Információ...
+MSG_MENU_UNSNAPSHOT
+Helyzet elfelejtése
+MSG_MENU_LEAVE_OUT
+Kitétel az asztalra
+MSG_MENU_PUT_AWAY
+Visszahelyezés
+MSG_MENU_DELETE
+Törlés...
+MSG_MENU_FORMAT
+Lemez formázása...
+MSG_MENU_EMPTY_TRASH
+Lomtár ürítése
+MSG_MENU_TOOLS
+Eszközök
+MSG_RIBBON_HOME
+Kezdőlap
+MSG_RIBBON_GO
+Ugrás
+MSG_RIBBON_PARENT
+Szülő
+MSG_RIBBON_DRAWER
+Mappa
+MSG_RIBBON_RENAME
+Átnevezés
+MSG_RIBBON_DELETE
+Törlés
+MSG_RIBBON_INFORMATION
+Információ
+MSG_RIBBON_VIEW
+Nézet
+MSG_RIBBON_ARRANGE
+Elrendezés
+MSG_LIST_PROTECTION
+Védelem
+MSG_LIST_DRAWER
+Mappa
+MSG_TITLE_MEMORY
+Memória
+MSG_TITLE_INTERNAL
+Belső
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+szabad
+MSG_TITLE_BATTERY
+Akkumulátor
+MSG_TITLE_CHARGING
+töltés
+MSG_TITLE_EXTERNAL_POWER
+külső tápellátás
+MSG_DISK_FULL
+foglalt
+MSG_DISK_IN_USE
+használt
+MSG_NOTHING_SAID
+Még nem volt üzenet
+MSG_NOT_EVERY_FILE
+Nem minden kijelölt fájlt lehetett átvenni
+MSG_DISK_NOT_RENAMED
+A lemezt nem lehetett átnevezni
+MSG_NOT_RENAMED
+Az átnevezés nem sikerült
+MSG_ICON_NOT_WRITTEN
+Az ikont nem lehetett kiírni
+MSG_DISK_NOT_THERE
+A lemez nincs jelen
+MSG_DISK_BUSY
+A lemez használatban van
+MSG_DISK_NOT_FORMATTED
+A lemezt nem lehetett formázni
+MSG_DRAWER_NOT_MADE
+A mappát nem lehetett létrehozni
+MSG_SETTING_NOT_KEPT
+A(z) %s beállítást nem lehetett megőrizni
+MSG_SETTING_NOT_WRITTEN
+A(z) %s beállítást nem lehetett az anvil.prefs fájlba írni
+MSG_DRAWER_ICON_NOT_WRITTEN
+A mappa ikonját nem lehetett kiírni
+MSG_NO_MEMORY_REBOOT
+Nincs elég memória az újraindításhoz
+MSG_NO_MEMORY_ABOUT
+Nincs elég memória a Névjegy ablakhoz
+MSG_NO_TOOL
+Nincs program, amely megnyitná ezt: %s
+MSG_NOT_STARTED
+%s nem indítható el
+MSG_COMMAND_NOT_STARTED
+A parancsot nem lehetett elindítani
+MSG_SHELL_DRAWER_NOT_FOUND
+A Shell mappája nem található
+MSG_SHELL_NOT_STARTED
+A Shellt nem lehetett elindítani
+MSG_TRASH_OWN_DISK
+A lomtárba csak a saját lemezén lévő fájlok kerülhetnek
+MSG_NOT_MOVED
+A fájlt nem lehetett oda áthelyezni
+MSG_LEFT_OUT_NOT_KEPT
+A lemez nem őrzi meg, ami az asztalra van kitéve
+MSG_NO_MEMORY_WORK
+Nincs elég memória a munka megkezdéséhez
+MSG_QUIT_RUNNING_ADDED
+Az asztalról indított programok még futnak (%lu).\n\
+Tovább futnak. A programok által hozzáadott\n\
+ablakok, ikonok és menüpontok (%lu)\n\
+vele együtt eltűnnek.\n\nKilép az asztalból?
+MSG_QUIT_RUNNING
+Az asztalról indított programok még futnak (%lu).\n\
+Tovább futnak.\n\nKilép az asztalból?
+MSG_QUIT_ADDED
+A programok által az asztalhoz hozzáadott ablakok,\n\
+ikonok és menüpontok (%lu) vele együtt eltűnnek.\n\n\
+Kilép az asztalból?
+MSG_QUIT_ASK
+Kilép az asztalból?
+MSG_QUIT_BUTTONS
+Kilépés|Mégse
+MSG_DELETE_ASK
+Véglegesen törli a kijelölt elemeket (%lu)?\n\
+A mappa a teljes tartalmával együtt törlődik.
+MSG_DELETE_BUTTONS
+Törlés|Mégse
+MSG_RENAME_PROMPT
+Új név:
+MSG_FORMAT_TITLE
+Lemez formázása
+MSG_FORMAT_ASK
+Formázza a(z) %s lemezt?\nMinden, ami rajta van, elvész.
+MSG_FORMAT_BUTTONS
+Formázás|Mégse
+MSG_NEW_DRAWER_PROMPT
+Az új mappa neve:
+MSG_UNNAMED
+Névtelen
+MSG_EXECUTE_TITLE
+Parancs végrehajtása
+MSG_EXECUTE_PROMPT
+Végrehajtandó parancs:
+MSG_OUTPUT
+Kimenet
+MSG_REBOOT_TITLE
+Újraindítás
+MSG_REBOOT_ASK
+Újraindítja a számítógépet?\nAmit a programok nem mentettek, elvész.
+MSG_REBOOT_BUTTONS
+Újraindítás|Mégse
+MSG_REBOOT_IN_USE
+Használatban vannak, ezért tartalmuk talán nincs kiírva:\n%s\n\n\
+Mégis újraindítja?
+MSG_STARTUP_WAIT
+A(z) '%s' program\nmég nem fejeződött be.\nVár még?
+MSG_STARTUP_BUTTONS
+Várakozás|Folytatás
+MSG_OK
+_OK
+MSG_CANCEL
+Mé_gse
+MSG_ABOUT_TITLE
+Az Anvil névjegye
+MSG_ABOUT_WHAT
+A PowerOS asztala
+MSG_ABOUT_RELEASE
+Kiadás
+MSG_ABOUT_KERNEL
+Rendszermag
+MSG_ABOUT_BOARD
+Alaplap
+MSG_ABOUT_PROCESSOR
+Processzor
+MSG_ABOUT_CORES
+Magok
+MSG_ABOUT_CLOCK
+Órajel
+MSG_ABOUT_SCREEN
+Képernyő
+MSG_ABOUT_SYSTEM_DISK
+Rendszerlemez
+MSG_ABOUT_UP_FOR
+Üzemidő
+MSG_ABOUT_IN_USE
+Használt
+MSG_ABOUT_OF
+/
+MSG_ABOUT_BITS
+bit/képpont
+MSG_ABOUT_DAY
+nap
+MSG_ABOUT_DAYS
+nap
+MSG_INFO_TITLE
+Információ
+MSG_INFO_STATE
+Állapot
+MSG_INFO_READ_ONLY
+Csak olvasható
+MSG_INFO_VALIDATING
+Ellenőrzés alatt
+MSG_INFO_READ_WRITE
+Olvasható és írható
+MSG_INFO_UNKNOWN
+Ismeretlen
+MSG_INFO_BLOCKS
+Blokkok
+MSG_INFO_USED
+Foglalt
+MSG_INFO_FREE
+Szabad
+MSG_INFO_BLOCK_SIZE
+Blokkméret
+MSG_INFO_BYTES
+bájt
+MSG_INFO_BLOCKS_COUNTED
+blokk
+MSG_INFO_CREATED
+Létrehozva
+MSG_INFO_LAST_CHANGED
+Utolsó módosítás
+MSG_INFO_SCRIPT
+Parancsfájl
+MSG_INFO_ARCHIVED
+Archivált
+MSG_INFO_READABLE
+Olvasható
+MSG_INFO_WRITABLE
+Írható
+MSG_INFO_EXECUTABLE
+Végrehajtható
+MSG_INFO_DELETABLE
+Törölhető
+MSG_INFO_COMMENT
+Megjegyzés
+MSG_INFO_STACK
+Verem
+MSG_INFO_DEFAULT_TOOL
+Alapértelmezett program
+MSG_INFO_TOOL_TYPES
+Eszköztípusok
+MSG_INFO_SAVE
+_Mentés
+MSG_INFO_NOT_WRITTEN
+Az ikont nem lehetett kiírni.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Másolás
+MSG_WORK_DELETING
+Törlés
+MSG_WORK_STOP
+_Leállítás
+MSG_WORK_WAITING
+Még %lu várakozik
+MSG_WORK_REPLACE_ASK
+%s már létezik.\nLecseréli?
+MSG_WORK_REPLACE_BUTTONS
+Csere|Összes cseréje|Kihagyás|Leállítás

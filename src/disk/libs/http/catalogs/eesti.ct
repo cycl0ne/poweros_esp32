@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; http.library's words for a request that failed, in Estonian.
+MSG_NOMEM
+mälu pole
+MSG_IO
+ühendus nurjus
+MSG_IO_BECAUSE
+ühendus nurjus: %s
+MSG_STOPPED
+peatatud
+MSG_TIMEOUT
+server ei vastanud õigel ajal
+MSG_URL
+pole http://- ega https://-aadress, või on liiga pikk
+MSG_HOST
+hostil pole aadressi
+MSG_HOST_NAMED
+hostil %s pole aadressi
+MSG_TLS
+TLS-seanss nurjus
+MSG_TLS_CERTIFICATE
+serveri sertifikaati ei usaldata: %s
+MSG_TLS_CLOCK
+kell pole seatud, seega ei saa ühtki sertifikaati kontrollida (TimeSync)
+MSG_TLS_ALERT
+server lükkas TLS-seansi tagasi (hoiatus %u)
+MSG_TLS_HANDSHAKE
+TLS-kätlus nurjus
+MSG_PROTOCOL
+vastus pole HTTP
+MSG_REDIRECT
+rohkem ümbersuunamisi kui lubatud, või üks, mis ei vii kuhugi
+MSG_TRUNCATED
+ühendus katkes enne vastuse lõppu
+MSG_STATE
+väljakutse valel ajal, või päring, mida ei saa teha
+MSG_LIBRARY
+päringuks vajalik teek puudub
+MSG_LIBRARY_NAMED
+%s puudub
+MSG_DATA
+serveri pakitud vastust ei saa lahti pakkida
+MSG_CLOSED
+server sulges ühenduse vastamata
+MSG_UNKNOWN
+päring nurjus (%d)
+MSG_VERDICT_MALFORMED
+üht selle sertifikaatidest ei saa lugeda
+MSG_VERDICT_UNKNOWN_ISSUER
+ükski usaldatud juur pole seda allkirjastanud
+MSG_VERDICT_BAD_SIGNATURE
+selle ahelas on vale allkiri
+MSG_VERDICT_UNSUPPORTED
+see on allkirjastatud viisil, mida ei saa kontrollida
+MSG_VERDICT_EXPIRED
+see on aegunud
+MSG_VERDICT_NOT_YET_VALID
+see pole veel kehtiv
+MSG_VERDICT_NOT_CA
+selle väljastas sertifikaat, mis ei tohi sertifikaate väljastada
+MSG_VERDICT_PATH_LENGTH
+selle ahel on pikem, kui selle sertifitseerijad lubavad
+MSG_VERDICT_NAME_CONSTRAINTS
+selle ahela sertifitseerijal on nimepiirangud
+MSG_VERDICT_WRONG_USAGE
+see pole serveri jaoks
+MSG_VERDICT_WRONG_NAME
+see on teise hosti jaoks
+MSG_VERDICT_TOO_LONG
+selle ahel on liiga pikk
+MSG_VERDICT_OTHER
+põhjust pole antud

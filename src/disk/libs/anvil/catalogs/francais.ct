@@ -1,0 +1,350 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; The desktop's strings in French.
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Arrière-plan
+MSG_MENU_EXECUTE
+Exécuter une commande...
+MSG_MENU_REDRAW_ALL
+Tout redessiner
+MSG_MENU_UPDATE_ALL
+Tout actualiser
+MSG_MENU_LAST_MESSAGE
+Dernier message
+MSG_MENU_VOLUME
+Volume...
+MSG_MENU_ABOUT
+À propos...
+MSG_MENU_QUIT
+Quitter...
+MSG_MENU_REBOOT
+Redémarrer...
+MSG_MENU_WINDOW
+Fenêtre
+MSG_MENU_NEW_DRAWER
+Nouveau dossier
+MSG_MENU_OPEN_PARENT
+Ouvrir le dossier parent
+MSG_MENU_BACK
+Précédent
+MSG_MENU_FORWARD
+Suivant
+MSG_MENU_CLOSE
+Fermer
+MSG_MENU_UPDATE
+Actualiser
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Sélectionner le contenu
+MSG_MENU_CLEAN_UP
+Nettoyer
+MSG_MENU_CLEAN_UP_BY
+Nettoyer par
+MSG_MENU_BY_NAME
+Nom
+MSG_MENU_BY_DATE
+Date
+MSG_MENU_BY_SIZE
+Taille
+MSG_MENU_SNAP
+Aligner sur la grille
+MSG_MENU_ARRANGE
+Réorganiser au redimensionnement
+MSG_MENU_SNAPSHOT
+Mémoriser la position
+MSG_MENU_SNAPSHOT_WINDOW
+Fenêtre
+MSG_MENU_SNAPSHOT_ALL
+Tout
+MSG_MENU_SHOW
+Afficher
+MSG_MENU_ONLY_ICONS
+Icônes seulement
+MSG_MENU_ALL_FILES
+Tous les fichiers
+MSG_MENU_VIEW_BY
+Présentation par
+MSG_MENU_BY_ICON
+Icône
+MSG_MENU_RIBBON
+Ruban
+MSG_MENU_ICONS
+Icônes
+MSG_MENU_OPEN
+Ouvrir
+MSG_MENU_COPY
+Copier
+MSG_MENU_RENAME
+Renommer...
+MSG_MENU_INFORMATION
+Informations...
+MSG_MENU_UNSNAPSHOT
+Oublier la position
+MSG_MENU_LEAVE_OUT
+Poser sur le bureau
+MSG_MENU_PUT_AWAY
+Ranger
+MSG_MENU_DELETE
+Supprimer...
+MSG_MENU_FORMAT
+Formater le disque...
+MSG_MENU_EMPTY_TRASH
+Vider la corbeille
+MSG_MENU_TOOLS
+Outils
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+Accueil
+MSG_RIBBON_GO
+Aller
+MSG_RIBBON_PARENT
+Parent
+MSG_RIBBON_DRAWER
+Dossier
+MSG_RIBBON_RENAME
+Renommer
+MSG_RIBBON_DELETE
+Supprimer
+MSG_RIBBON_INFORMATION
+Informations
+MSG_RIBBON_VIEW
+Affichage
+MSG_RIBBON_ARRANGE
+Organiser
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+Protection
+MSG_LIST_DRAWER
+Dossier
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+Mémoire
+MSG_TITLE_INTERNAL
+Interne
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+libres
+MSG_TITLE_BATTERY
+Batterie
+MSG_TITLE_CHARGING
+en charge
+MSG_TITLE_EXTERNAL_POWER
+sur secteur
+;
+; A disk's window title.
+MSG_DISK_FULL
+plein
+MSG_DISK_IN_USE
+utilisés
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+Aucun message pour l'instant
+MSG_NOT_EVERY_FILE
+Certains des fichiers choisis n'ont pas pu être pris
+MSG_DISK_NOT_RENAMED
+Le disque n'a pas pu être renommé
+MSG_NOT_RENAMED
+Le renommage a échoué
+MSG_ICON_NOT_WRITTEN
+Une icône n'a pas pu être écrite
+MSG_DISK_NOT_THERE
+Le disque est absent
+MSG_DISK_BUSY
+Le disque est en cours d'utilisation
+MSG_DISK_NOT_FORMATTED
+Le disque n'a pas pu être formaté
+MSG_DRAWER_NOT_MADE
+Le dossier n'a pas pu être créé
+MSG_SETTING_NOT_KEPT
+%s n'a pas pu être mémorisé
+MSG_SETTING_NOT_WRITTEN
+%s n'a pas pu être écrit dans anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+L'icône du dossier n'a pas pu être écrite
+MSG_NO_MEMORY_REBOOT
+Pas assez de mémoire pour redémarrer
+MSG_NO_MEMORY_ABOUT
+Pas assez de mémoire pour À propos
+MSG_NO_TOOL
+Aucun programme ne sait ouvrir %s
+MSG_NOT_STARTED
+%s n'a pas pu être lancé
+MSG_COMMAND_NOT_STARTED
+La commande n'a pas pu être lancée
+MSG_SHELL_DRAWER_NOT_FOUND
+Le dossier du shell est introuvable
+MSG_SHELL_NOT_STARTED
+Le shell n'a pas pu être lancé
+MSG_TRASH_OWN_DISK
+Une corbeille ne prend que les fichiers de son propre disque
+MSG_NOT_MOVED
+Un fichier n'a pas pu y être déplacé
+MSG_LEFT_OUT_NOT_KEPT
+Le disque ne gardera pas ce qui est posé sur le bureau
+MSG_NO_MEMORY_WORK
+Pas assez de mémoire pour commencer le travail
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+Des programmes lancés depuis le bureau tournent encore (%lu).\nIls continuent de tourner. Les fenêtres, icônes et\néléments de menu que des programmes y ont ajoutés (%lu)\ndisparaissent avec lui.\n\nQuitter le bureau ?
+MSG_QUIT_RUNNING
+Des programmes lancés depuis le bureau tournent encore (%lu).\nIls continuent de tourner.\n\nQuitter le bureau ?
+MSG_QUIT_ADDED
+Les fenêtres, icônes et éléments de menu que des programmes\nont ajoutés au bureau (%lu) disparaissent avec lui.\n\nQuitter le bureau ?
+MSG_QUIT_ASK
+Quitter le bureau ?
+MSG_QUIT_BUTTONS
+Quitter|Annuler
+MSG_DELETE_ASK
+Supprimer définitivement la sélection (%lu) ?\nUn dossier part avec tout son contenu.
+MSG_DELETE_BUTTONS
+Supprimer|Annuler
+MSG_RENAME_PROMPT
+Nouveau nom :
+MSG_FORMAT_TITLE
+Formater le disque
+MSG_FORMAT_ASK
+Formater %s ?\nTout ce qu'il contient sera perdu.
+MSG_FORMAT_BUTTONS
+Formater|Annuler
+MSG_NEW_DRAWER_PROMPT
+Nom du nouveau dossier :
+MSG_UNNAMED
+Sans nom
+MSG_EXECUTE_TITLE
+Exécuter une commande
+MSG_EXECUTE_PROMPT
+Commande à exécuter :
+MSG_OUTPUT
+Sortie
+MSG_REBOOT_TITLE
+Redémarrer
+MSG_REBOOT_ASK
+Redémarrer la machine ?\nCe que les programmes n'ont pas enregistré sera perdu.
+MSG_REBOOT_BUTTONS
+Redémarrer|Annuler
+MSG_REBOOT_IN_USE
+En cours d'utilisation, leur contenu risque de ne pas être écrit :\n%s\n\nRedémarrer quand même ?
+MSG_STARTUP_WAIT
+Le programme '%s'\nn'est pas encore terminé.\nAttendre encore ?
+MSG_STARTUP_BUTTONS
+Attendre|Continuer
+MSG_OK
+_OK
+MSG_CANCEL
+_Annuler
+;
+; About.
+MSG_ABOUT_TITLE
+À propos d'Anvil
+MSG_ABOUT_WHAT
+Le bureau de PowerOS
+MSG_ABOUT_RELEASE
+Version
+MSG_ABOUT_KERNEL
+Noyau
+MSG_ABOUT_BOARD
+Carte
+MSG_ABOUT_PROCESSOR
+Processeur
+MSG_ABOUT_CORES
+Cœurs
+MSG_ABOUT_CLOCK
+Fréquence
+MSG_ABOUT_SCREEN
+Écran
+MSG_ABOUT_SYSTEM_DISK
+Disque système
+MSG_ABOUT_UP_FOR
+En marche depuis
+MSG_ABOUT_IN_USE
+Utilisée
+MSG_ABOUT_OF
+sur
+MSG_ABOUT_BITS
+bits par pixel
+MSG_ABOUT_DAY
+jour
+MSG_ABOUT_DAYS
+jours
+;
+; Information.
+MSG_INFO_TITLE
+Informations
+MSG_INFO_STATE
+État
+MSG_INFO_READ_ONLY
+Lecture seule
+MSG_INFO_VALIDATING
+En cours de validation
+MSG_INFO_READ_WRITE
+Lecture et écriture
+MSG_INFO_UNKNOWN
+Inconnu
+MSG_INFO_BLOCKS
+Blocs
+MSG_INFO_USED
+Utilisés
+MSG_INFO_FREE
+Libres
+MSG_INFO_BLOCK_SIZE
+Taille de bloc
+MSG_INFO_BYTES
+octets
+MSG_INFO_BLOCKS_COUNTED
+blocs
+MSG_INFO_CREATED
+Créé le
+MSG_INFO_LAST_CHANGED
+Modifié le
+MSG_INFO_SCRIPT
+Script
+MSG_INFO_ARCHIVED
+Archivé
+MSG_INFO_READABLE
+Lisible
+MSG_INFO_WRITABLE
+Modifiable
+MSG_INFO_EXECUTABLE
+Exécutable
+MSG_INFO_DELETABLE
+Supprimable
+MSG_INFO_COMMENT
+Commentaire
+MSG_INFO_STACK
+Pile
+MSG_INFO_DEFAULT_TOOL
+Outil par défaut
+MSG_INFO_TOOL_TYPES
+Types d'outil
+MSG_INFO_SAVE
+_Enregistrer
+MSG_INFO_NOT_WRITTEN
+L'icône n'a pas pu être écrite.
+MSG_INFO_OK
+OK
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+Copie
+MSG_WORK_DELETING
+Suppression
+MSG_WORK_STOP
+_Arrêter
+MSG_WORK_WAITING
+%lu autres en attente
+MSG_WORK_REPLACE_ASK
+%s existe déjà.\nLe remplacer ?
+MSG_WORK_REPLACE_BUTTONS
+Remplacer|Tout remplacer|Ignorer|Arrêter

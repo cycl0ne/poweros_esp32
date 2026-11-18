@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; http.library's words for a request that failed, in Dutch.
+MSG_NOMEM
+geen geheugen
+MSG_IO
+de verbinding is mislukt
+MSG_IO_BECAUSE
+de verbinding is mislukt: %s
+MSG_STOPPED
+gestopt
+MSG_TIMEOUT
+de server antwoordde niet op tijd
+MSG_URL
+geen http://- of https://-URL, of een te lange
+MSG_HOST
+de host heeft geen adres
+MSG_HOST_NAMED
+%s heeft geen adres
+MSG_TLS
+de TLS-sessie is mislukt
+MSG_TLS_CERTIFICATE
+het certificaat van de server wordt niet vertrouwd: %s
+MSG_TLS_CLOCK
+de klok is niet gezet, dus kan geen certificaat worden gecontroleerd (TimeSync)
+MSG_TLS_ALERT
+de server weigerde de TLS-sessie (alert %u)
+MSG_TLS_HANDSHAKE
+de TLS-handshake is mislukt
+MSG_PROTOCOL
+het antwoord is geen HTTP
+MSG_REDIRECT
+meer omleidingen dan toegestaan, of een naar nergens
+MSG_TRUNCATED
+de verbinding eindigde voor het antwoord
+MSG_STATE
+een aanroep op het verkeerde moment, of een verzoek dat niet kan worden gedaan
+MSG_LIBRARY
+een bibliotheek die het verzoek nodig heeft, ontbreekt
+MSG_LIBRARY_NAMED
+%s ontbreekt
+MSG_DATA
+het ingepakte antwoord van de server laat zich niet uitpakken
+MSG_CLOSED
+de server sloot de verbinding zonder te antwoorden
+MSG_UNKNOWN
+het verzoek is mislukt (%d)
+MSG_VERDICT_MALFORMED
+een van zijn certificaten kan niet worden gelezen
+MSG_VERDICT_UNKNOWN_ISSUER
+geen vertrouwde root heeft het ondertekend
+MSG_VERDICT_BAD_SIGNATURE
+een handtekening in zijn keten klopt niet
+MSG_VERDICT_UNSUPPORTED
+het is ondertekend op een manier die niet kan worden gecontroleerd
+MSG_VERDICT_EXPIRED
+het is verlopen
+MSG_VERDICT_NOT_YET_VALID
+het is nog niet geldig
+MSG_VERDICT_NOT_CA
+het is uitgegeven door een certificaat dat niet mag uitgeven
+MSG_VERDICT_PATH_LENGTH
+zijn keten is langer dan zijn CA's toestaan
+MSG_VERDICT_NAME_CONSTRAINTS
+een CA in zijn keten heeft naambeperkingen
+MSG_VERDICT_WRONG_USAGE
+het is niet voor een server
+MSG_VERDICT_WRONG_NAME
+het is voor een andere host
+MSG_VERDICT_TOO_LONG
+zijn keten is te lang
+MSG_VERDICT_OTHER
+zonder opgegeven reden

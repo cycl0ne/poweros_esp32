@@ -1,0 +1,40 @@
+## version $VER: System/Clock.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; Clock's strings in Icelandic.
+MSG_WINDOW_TITLE
+Klukka
+MSG_MENU_PROJECT
+Verkefni
+MSG_MENU_ANALOG
+Hliðræn
+MSG_MENU_DIGITAL
+Stafræn
+MSG_MENU_ABOUT
+Um...
+MSG_MENU_QUIT
+Hætta
+MSG_MENU_SETTINGS
+Stillingar
+MSG_MENU_SECONDS
+Sekúndur
+MSG_MENU_DATE
+Dagsetning
+MSG_MENU_24_HOURS
+24 tímar
+MSG_MENU_SAVE
+Vista stillingar
+MSG_ABOUT_TITLE
+Um Klukku
+MSG_ABOUT
+%s\n\nTíminn, á skífu eða í tölum.\nTvísmellur í glugganum skiptir á milli.
+MSG_OK
+Í lagi
+MSG_NOT_SAVED
+Ekki var hægt að geyma stillingarnar í\n%s.
+MSG_NOLIBRARY
+%s: get ekki opnað %s\n
+MSG_NOMEMORY
+%s: ekki nóg minni\n
+MSG_NOWINDOW
+%s: get ekki opnað gluggann sinn\n

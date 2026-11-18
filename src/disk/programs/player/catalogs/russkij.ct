@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language russkij
+## codeset 106
+; The Player's strings in Russian.
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_OPEN
+Открыть...
+MSG_MENU_OPEN_DRAWER
+Открыть папку...
+MSG_MENU_OPEN_URL
+Открыть URL...
+MSG_MENU_SAVE_PLAYLIST
+Сохранить плейлист...
+MSG_MENU_ABOUT
+О программе
+MSG_MENU_QUIT
+Выход
+MSG_MENU_PLAYLIST
+Плейлист
+MSG_MENU_ADD
+Добавить...
+MSG_MENU_REMOVE
+Удалить
+MSG_MENU_CLEAR
+Очистить
+MSG_MENU_SHUFFLE
+Перемешать
+MSG_MENU_REPEAT
+Повтор
+MSG_MENU_REPEAT_OFF
+Выкл.
+MSG_MENU_REPEAT_ALL
+Все
+MSG_MENU_REPEAT_ONE
+Одну
+MSG_MENU_PICTURE
+Изображение
+MSG_MENU_PLASMA
+Плазма
+MSG_MENU_WAVE
+Волна
+MSG_MENU_BARS
+Столбики
+MSG_MENU_SETTINGS
+Настройки
+MSG_MENU_REMEMBER
+Запоминать место
+MSG_PAGE_PLAYING
+Сейчас играет
+MSG_PAGE_RADIO
+Радио
+MSG_VIEW_KEPT
+Ваши станции
+MSG_VIEW_FOUND
+Найдено
+MSG_NAME
+Название
+MSG_GENRE
+Жанр
+MSG_COUNTRY
+Страна
+MSG_COLUMN_TITLE
+Название
+MSG_COLUMN_ARTIST
+Исполнитель
+MSG_COLUMN_TIME
+Время
+MSG_COLUMN_STATION
+Станция
+MSG_COLUMN_ADDRESS
+Адрес
+MSG_COLUMN_BITRATE
+кбит/с
+MSG_COLUMN_GENRES
+Жанры
+MSG_SHUFFLE_BUTTON
+_Перемешать
+MSG_SHUFFLE_HINT
+Воспроизводить песни в случайном порядке
+MSG_REPEAT_BUTTON
+Пов_тор
+MSG_REPEAT_HINT
+Повторять список или одну песню
+MSG_MUTE_BUTTON
+_Без звука
+MSG_MUTE_HINT
+Выключить звук и включить снова
+MSG_LENGTH_HINT
+Длина песни или сколько от неё осталось
+MSG_ADD_BUTTON
+_Добавить...
+MSG_REMOVE_BUTTON
+_Удалить
+MSG_CLEAR_BUTTON
+_Очистить
+MSG_OUTPUT_LABEL
+_Вывод
+MSG_SEARCH_BUTTON
+_Искать
+MSG_KEEP_BUTTON
+_Сохранить
+MSG_FORGET_BUTTON
+_Забыть
+MSG_FIND_LABEL
+Поис_к
+MSG_BY_LABEL
+в _графе
+MSG_URL_TITLE
+Открыть URL
+MSG_URL_ADDRESS
+_Адрес
+MSG_URL_OPEN
+От_крыть
+MSG_URL_CANCEL
+_Отмена
+MSG_ASK_PLAY
+Какие песни?
+MSG_ASK_ADD
+Какие песни добавить?
+MSG_ASK_DRAWER
+Какую папку?
+MSG_ASK_SAVE
+Сохранить плейлист как
+MSG_ABOUT_TITLE
+О программе Player
+MSG_ABOUT
+%s\n\nПесни из файлов WAV, MP3, FLAC, Ogg Vorbis, AAC и AC-3,\nодна за другой, с обложками,\nстанции из сети\nи изображение звука.
+MSG_OK
+OK
+MSG_NO_SONG
+Нет песни
+MSG_TRACK_OF
+трек %u из %u
+MSG_TRACK
+трек %u
+MSG_COMPOSED_BY
+композитор: %s
+MSG_CHAPTER
+Глава %u из %u
+MSG_SOUND
+Звук
+MSG_MONO
+моно
+MSG_STEREO
+стерео
+MSG_SOUND_LINE
+%s, %u Гц, %s, %u кбит/с
+MSG_SONG_OF
+песня %u из %u
+MSG_NO_SOUND
+нет звука
+MSG_NO_STREAM_FREE
+нет свободного потока
+MSG_LIVE
+прямой эфир
+MSG_BUFFERING
+буферизация
+MSG_BUFFERING_PERCENT
+Буферизация %u%%
+MSG_STATION_IDLE
+Станция: воспроизведение включает её
+MSG_CALLING
+Подключение к станции
+MSG_NO_MEMORY_STATION
+Недостаточно памяти для станции
+MSG_ALL_STREAMS_USED
+Все звуковые потоки заняты
+MSG_NO_SOUND_HERE
+На этом компьютере нет звука
+MSG_NO_AUDIO_STREAM
+audio.device не открыл поток
+MSG_KEPT_ALREADY
+Уже сохранена: %s
+MSG_KEPT
+Сохранена: %s
+MSG_NO_MEMORY_KEEP
+Недостаточно памяти, чтобы сохранить станцию
+MSG_NO_MEMORY_SEARCH
+Недостаточно памяти для поиска
+MSG_SEARCHING
+Поиск
+MSG_ASKING
+Запрос к %s
+MSG_NONE_FOUND
+Станции не найдены
+MSG_ONE_FOUND
+Найдена одна станция
+MSG_COUNT_FOUND
+Найдено станций: %u
+MSG_NO_NETWORK
+Нет сети: bsdsocket.library отсутствует
+MSG_NO_HTTP
+http.library отсутствует
+MSG_NO_MEMORY_CONNECTION
+Недостаточно памяти для соединения
+MSG_SERVICE_NO_ADDRESS
+У radio-browser.info нет адреса
+MSG_SERVICE_NO_ANSWER
+radio-browser.info не ответил на поиск
+MSG_SERVICE_UNREACHED
+radio-browser.info недоступен
+MSG_SERVICE_NONSENSE
+Ответ radio-browser.info не имеет смысла
+MSG_SEARCH_FAILED
+Поиск не удался
+MSG_NO_SIGNAL
+Нет свободного сигнала для станции
+MSG_NO_TIMER
+timer.device не открылся
+MSG_LISTS_ONLY
+Списки станции ведут только к другим спискам
+MSG_STATION_STOPPED
+Станция перестала передавать
+MSG_STATION_ANSWERED
+Станция ответила
+MSG_SENDS_AAC
+Станция передаёт AAC, который не воспроизводится
+MSG_STATION_ENDED
+Станция закрыла соединение
+MSG_SENDS_HLS
+Станция передаёт HLS, который не воспроизводится
+MSG_LIST_EMPTY
+Список станции не называет ни одной станции
+MSG_LIST_TOO_LONG
+Список станции содержит слишком длинный адрес
+MSG_NOT_AN_ADDRESS
+Это не адрес для прослушивания
+MSG_NONSENSE
+Ответ станции не имеет смысла
+MSG_NOLIBRARY
+%s: не удаётся открыть %s\n
+MSG_NOMEMORY
+%s: недостаточно памяти для окна\n
+MSG_NOBUFFERS
+%s: недостаточно памяти для звука\n
+MSG_NOWINDOW
+%s: нет окна\n
+MSG_MENU_EQUALIZER
+Эквалайзер
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Осциллограф
+MSG_MENU_METERS
+Индикаторы уровня
+MSG_MENU_WHOLE_SCREEN
+Во весь экран

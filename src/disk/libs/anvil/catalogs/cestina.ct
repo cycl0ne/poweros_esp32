@@ -1,0 +1,338 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; The desktop's strings in Czech.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Pozadí
+MSG_MENU_EXECUTE
+Spustit příkaz...
+MSG_MENU_REDRAW_ALL
+Překreslit vše
+MSG_MENU_UPDATE_ALL
+Obnovit vše
+MSG_MENU_LAST_MESSAGE
+Poslední zpráva
+MSG_MENU_VOLUME
+Hlasitost...
+MSG_MENU_ABOUT
+O aplikaci...
+MSG_MENU_QUIT
+Ukončit...
+MSG_MENU_REBOOT
+Restartovat...
+MSG_MENU_WINDOW
+Okno
+MSG_MENU_NEW_DRAWER
+Nová složka
+MSG_MENU_OPEN_PARENT
+Otevřít nadřazenou
+MSG_MENU_BACK
+Zpět
+MSG_MENU_FORWARD
+Vpřed
+MSG_MENU_CLOSE
+Zavřít
+MSG_MENU_UPDATE
+Obnovit
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Vybrat obsah
+MSG_MENU_CLEAN_UP
+Uspořádat
+MSG_MENU_CLEAN_UP_BY
+Uspořádat podle
+MSG_MENU_BY_NAME
+Název
+MSG_MENU_BY_DATE
+Datum
+MSG_MENU_BY_SIZE
+Velikost
+MSG_MENU_SNAP
+Zarovnat do mřížky
+MSG_MENU_ARRANGE
+Rozmístit při změně velikosti
+MSG_MENU_SNAPSHOT
+Zapamatovat polohu
+MSG_MENU_SNAPSHOT_WINDOW
+Okno
+MSG_MENU_SNAPSHOT_ALL
+Vše
+MSG_MENU_SHOW
+Zobrazit
+MSG_MENU_ONLY_ICONS
+Pouze ikony
+MSG_MENU_ALL_FILES
+Všechny soubory
+MSG_MENU_VIEW_BY
+Zobrazit podle
+MSG_MENU_BY_ICON
+Ikona
+MSG_MENU_RIBBON
+Pás karet
+MSG_MENU_ICONS
+Ikony
+MSG_MENU_OPEN
+Otevřít
+MSG_MENU_COPY
+Kopírovat
+MSG_MENU_RENAME
+Přejmenovat...
+MSG_MENU_INFORMATION
+Informace...
+MSG_MENU_UNSNAPSHOT
+Zapomenout polohu
+MSG_MENU_LEAVE_OUT
+Umístit na plochu
+MSG_MENU_PUT_AWAY
+Vrátit zpět
+MSG_MENU_DELETE
+Odstranit...
+MSG_MENU_FORMAT
+Formátovat disk...
+MSG_MENU_EMPTY_TRASH
+Vysypat koš
+MSG_MENU_TOOLS
+Nástroje
+MSG_RIBBON_HOME
+Domů
+MSG_RIBBON_GO
+Přejít
+MSG_RIBBON_PARENT
+Nadřazená
+MSG_RIBBON_DRAWER
+Složka
+MSG_RIBBON_RENAME
+Přejmenovat
+MSG_RIBBON_DELETE
+Odstranit
+MSG_RIBBON_INFORMATION
+Informace
+MSG_RIBBON_VIEW
+Zobrazení
+MSG_RIBBON_ARRANGE
+Rozmístění
+MSG_LIST_PROTECTION
+Ochrana
+MSG_LIST_DRAWER
+Složka
+MSG_TITLE_MEMORY
+Paměť
+MSG_TITLE_INTERNAL
+Interní
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+volných
+MSG_TITLE_BATTERY
+Baterie
+MSG_TITLE_CHARGING
+nabíjí se
+MSG_TITLE_EXTERNAL_POWER
+externí napájení
+MSG_DISK_FULL
+zaplněno
+MSG_DISK_IN_USE
+použito
+MSG_NOTHING_SAID
+Zatím nebyla žádná zpráva
+MSG_NOT_EVERY_FILE
+Ne všechny vybrané soubory bylo možné převzít
+MSG_DISK_NOT_RENAMED
+Disk nelze přejmenovat
+MSG_NOT_RENAMED
+Nelze přejmenovat
+MSG_ICON_NOT_WRITTEN
+Ikonu nelze zapsat
+MSG_DISK_NOT_THERE
+Disk není k dispozici
+MSG_DISK_BUSY
+Disk se používá
+MSG_DISK_NOT_FORMATTED
+Disk nelze naformátovat
+MSG_DRAWER_NOT_MADE
+Složku nelze vytvořit
+MSG_SETTING_NOT_KEPT
+Nastavení %s nelze uchovat
+MSG_SETTING_NOT_WRITTEN
+Nastavení %s nelze zapsat do anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Ikonu složky nelze zapsat
+MSG_NO_MEMORY_REBOOT
+Nedostatek paměti pro restart
+MSG_NO_MEMORY_ABOUT
+Nedostatek paměti pro okno O aplikaci
+MSG_NO_TOOL
+Pro %s není program, který by jej otevřel
+MSG_NOT_STARTED
+%s nelze spustit
+MSG_COMMAND_NOT_STARTED
+Příkaz nelze spustit
+MSG_SHELL_DRAWER_NOT_FOUND
+Složku pro Shell nelze najít
+MSG_SHELL_NOT_STARTED
+Shell nelze spustit
+MSG_TRASH_OWN_DISK
+Do koše patří jen soubory z jeho vlastního disku
+MSG_NOT_MOVED
+Soubor tam nelze přesunout
+MSG_LEFT_OUT_NOT_KEPT
+Disk neuchová, co je umístěno na ploše
+MSG_NO_MEMORY_WORK
+Nedostatek paměti pro zahájení práce
+MSG_QUIT_RUNNING_ADDED
+Programy spuštěné z plochy stále běží (%lu).\n\
+Poběží dál. Okna, ikony a položky\n\
+nabídek přidané programy (%lu)\n\
+zmizí s ní.\n\nUkončit plochu?
+MSG_QUIT_RUNNING
+Programy spuštěné z plochy stále běží (%lu).\n\
+Poběží dál.\n\nUkončit plochu?
+MSG_QUIT_ADDED
+Okna, ikony a položky nabídek, které programy\n\
+přidaly na plochu (%lu), zmizí s ní.\n\n\
+Ukončit plochu?
+MSG_QUIT_ASK
+Ukončit plochu?
+MSG_QUIT_BUTTONS
+Ukončit|Zrušit
+MSG_DELETE_ASK
+Trvale odstranit vybrané položky (%lu)?\n\
+Složka zmizí i s celým obsahem.
+MSG_DELETE_BUTTONS
+Odstranit|Zrušit
+MSG_RENAME_PROMPT
+Nový název:
+MSG_FORMAT_TITLE
+Formátovat disk
+MSG_FORMAT_ASK
+Formátovat %s?\nVše, co je na něm, bude ztraceno.
+MSG_FORMAT_BUTTONS
+Formátovat|Zrušit
+MSG_NEW_DRAWER_PROMPT
+Název nové složky:
+MSG_UNNAMED
+Bez názvu
+MSG_EXECUTE_TITLE
+Spustit příkaz
+MSG_EXECUTE_PROMPT
+Příkaz ke spuštění:
+MSG_OUTPUT
+Výstup
+MSG_REBOOT_TITLE
+Restartovat
+MSG_REBOOT_ASK
+Spustit počítač znovu?\nCo programy neuložily, bude ztraceno.
+MSG_REBOOT_BUTTONS
+Restartovat|Zrušit
+MSG_REBOOT_IN_USE
+Používají se, takže jejich obsah nemusí být zapsán:\n%s\n\n\
+Přesto restartovat?
+MSG_STARTUP_WAIT
+Program '%s'\nještě neskončil.\nČekat déle?
+MSG_STARTUP_BUTTONS
+Čekat|Pokračovat
+MSG_OK
+_OK
+MSG_CANCEL
+_Zrušit
+MSG_ABOUT_TITLE
+O aplikaci Anvil
+MSG_ABOUT_WHAT
+Pracovní plocha systému PowerOS
+MSG_ABOUT_RELEASE
+Vydání
+MSG_ABOUT_KERNEL
+Jádro
+MSG_ABOUT_BOARD
+Deska
+MSG_ABOUT_PROCESSOR
+Procesor
+MSG_ABOUT_CORES
+Jádra
+MSG_ABOUT_CLOCK
+Takt
+MSG_ABOUT_SCREEN
+Obrazovka
+MSG_ABOUT_SYSTEM_DISK
+Systémový disk
+MSG_ABOUT_UP_FOR
+Doba běhu
+MSG_ABOUT_IN_USE
+Použito
+MSG_ABOUT_OF
+z
+MSG_ABOUT_BITS
+bitů na pixel
+MSG_ABOUT_DAY
+den
+MSG_ABOUT_DAYS
+dní
+MSG_INFO_TITLE
+Informace
+MSG_INFO_STATE
+Stav
+MSG_INFO_READ_ONLY
+Jen pro čtení
+MSG_INFO_VALIDATING
+Probíhá kontrola
+MSG_INFO_READ_WRITE
+Čtení a zápis
+MSG_INFO_UNKNOWN
+Neznámý
+MSG_INFO_BLOCKS
+Bloky
+MSG_INFO_USED
+Použito
+MSG_INFO_FREE
+Volné
+MSG_INFO_BLOCK_SIZE
+Velikost bloku
+MSG_INFO_BYTES
+bajtů
+MSG_INFO_BLOCKS_COUNTED
+bloků
+MSG_INFO_CREATED
+Vytvořeno
+MSG_INFO_LAST_CHANGED
+Naposledy změněno
+MSG_INFO_SCRIPT
+Skript
+MSG_INFO_ARCHIVED
+Archivováno
+MSG_INFO_READABLE
+Čitelný
+MSG_INFO_WRITABLE
+Zapisovatelný
+MSG_INFO_EXECUTABLE
+Spustitelný
+MSG_INFO_DELETABLE
+Odstranitelný
+MSG_INFO_COMMENT
+Komentář
+MSG_INFO_STACK
+Zásobník
+MSG_INFO_DEFAULT_TOOL
+Výchozí program
+MSG_INFO_TOOL_TYPES
+Typy nástroje
+MSG_INFO_SAVE
+_Uložit
+MSG_INFO_NOT_WRITTEN
+Ikonu nelze zapsat.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Kopírování
+MSG_WORK_DELETING
+Odstraňování
+MSG_WORK_STOP
+_Zastavit
+MSG_WORK_WAITING
+Ve frontě ještě %lu
+MSG_WORK_REPLACE_ASK
+%s již existuje.\nNahradit?
+MSG_WORK_REPLACE_BUTTONS
+Nahradit|Nahradit vše|Přeskočit|Zastavit

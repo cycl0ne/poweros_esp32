@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; Movie's strings in Finnish.
+MSG_MENU_PROJECT
+Projekti
+MSG_MENU_OPEN
+Avaa...
+MSG_MENU_WHOLE_SCREEN
+Koko näyttö
+MSG_MENU_ABOUT
+Tietoja
+MSG_MENU_QUIT
+Lopeta
+MSG_MENU_SOUND
+Ääni
+MSG_MENU_NO_SOUND
+Ei mitään
+MSG_MENU_SUBTITLES
+Tekstitys
+MSG_MENU_SUBTITLES_OFF
+Pois
+MSG_MENU_TRACK
+Raita
+MSG_MENU_FRAME_RATE
+Kuvataajuus
+MSG_MENU_INFO
+Elokuvan tiedot...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u pudotettu
+MSG_ASK_OPEN
+Toista elokuva
+MSG_ABOUT_TITLE
+Tietoja: Movie
+MSG_ABOUT
+%s\n\nToistaa elokuvia - MP4, QuickTimen MOV ja Matroskan MKV:\nkuva H.264-, H.265- ja Motion JPEG -muodossa,\nääni AAC-, AC-3-, MP3-, FLAC- ja Vorbis-muodossa, sekä tekstitykset.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nei voi toistaa:\n%s
+MSG_INFO_TITLE
+Elokuvan tiedot
+MSG_INFO_FILE
+Tiedosto
+MSG_INFO_NAMED
+Nimi
+MSG_INFO_CONTAINER
+Säiliömuoto
+MSG_INFO_LENGTH
+Kesto
+MSG_INFO_PICTURES
+Kuva
+MSG_INFO_COLOURS
+Värit
+MSG_INFO_BITS
+%u bittiä
+MSG_INFO_LIMITED
+rajoitettu alue
+MSG_INFO_FULL
+täysi alue
+MSG_INFO_SHOWN
+Esitys
+MSG_INFO_ON_LAYER
+näytön videotasolla
+MSG_INFO_BY_GRAPHICS
+graphics.libraryn piirtämänä
+MSG_INFO_DECODED
+Purku
+MSG_INFO_BY_CHIP
+videodekooderilla
+MSG_INFO_BY_PROCESSOR
+suorittimella
+MSG_INFO_SOUND
+Ääni
+MSG_INFO_NONE
+ei mitään
+MSG_INFO_CHANNELS
+%u kanavaa
+MSG_INFO_TRACKS
+Raidat
+MSG_INFO_TRACK_COUNTS
+%u ääni, %u tekstitys
+MSG_VOLUME_HINT
+Äänenvoimakkuus
+MSG_NOLIBRARY
+%s: kirjastoa %s ei voi avata\n
+MSG_NOMEMORY
+%s: muisti ei riitä\n
+MSG_NOWINDOW
+%s: ikkunaa ei voi avata\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

@@ -1,0 +1,96 @@
+## version $VER: programs/Movie.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; Movie's strings in Danish.
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_OPEN
+Åbn...
+MSG_MENU_WHOLE_SCREEN
+Fuld skærm
+MSG_MENU_ABOUT
+Om
+MSG_MENU_QUIT
+Afslut
+MSG_MENU_SOUND
+Lyd
+MSG_MENU_NO_SOUND
+Ingen
+MSG_MENU_SUBTITLES
+Undertekster
+MSG_MENU_SUBTITLES_OFF
+Fra
+MSG_MENU_TRACK
+Spor
+MSG_MENU_FRAME_RATE
+Billedhastighed
+MSG_MENU_INFO
+Filminformation...
+MSG_FRAME_RATE
+%u,%u / %u,%u fps
+MSG_FRAME_RATE_DROPPED
+%u,%u / %u,%u fps, %u sprunget over
+MSG_ASK_OPEN
+Afspil en film
+MSG_ABOUT_TITLE
+Om Movie
+MSG_ABOUT
+%s\n\nAfspiller film - MP4, QuickTimes MOV og Matroskas MKV:\nbilleder i H.264, H.265 og Motion JPEG,\nlyd i AAC, AC-3, MP3, FLAC og Vorbis, og undertekster.
+MSG_OK
+OK
+MSG_CANNOT_PLAY_TITLE
+Movie
+MSG_CANNOT_PLAY
+%s\nkan ikke afspilles:\n%s
+MSG_INFO_TITLE
+Filminformation
+MSG_INFO_FILE
+Fil
+MSG_INFO_NAMED
+Titel
+MSG_INFO_CONTAINER
+Container
+MSG_INFO_LENGTH
+Længde
+MSG_INFO_PICTURES
+Billede
+MSG_INFO_COLOURS
+Farver
+MSG_INFO_BITS
+%u bit
+MSG_INFO_LIMITED
+begrænset område
+MSG_INFO_FULL
+fuldt område
+MSG_INFO_SHOWN
+Visning
+MSG_INFO_ON_LAYER
+på skærmens videolag
+MSG_INFO_BY_GRAPHICS
+tegnet af graphics.library
+MSG_INFO_DECODED
+Afkodet
+MSG_INFO_BY_CHIP
+af videodekoderen
+MSG_INFO_BY_PROCESSOR
+af processoren
+MSG_INFO_SOUND
+Lyd
+MSG_INFO_NONE
+ingen
+MSG_INFO_CHANNELS
+%u kanaler
+MSG_INFO_TRACKS
+Spor
+MSG_INFO_TRACK_COUNTS
+%u lyd, %u undertekster
+MSG_VOLUME_HINT
+Lydstyrke
+MSG_NOLIBRARY
+%s: kan ikke åbne %s\n
+MSG_NOMEMORY
+%s: ikke nok hukommelse\n
+MSG_NOWINDOW
+%s: kan ikke åbne sit vindue\n
+MSG_CANNOT_OPEN
+%s: %s: %s\n

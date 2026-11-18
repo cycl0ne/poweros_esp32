@@ -1,0 +1,248 @@
+## version $VER: programs/Player.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; The Player's strings in Dutch.
+MSG_MENU_PROJECT
+Project
+MSG_MENU_OPEN
+Openen...
+MSG_MENU_OPEN_DRAWER
+Map openen...
+MSG_MENU_OPEN_URL
+URL openen...
+MSG_MENU_SAVE_PLAYLIST
+Afspeellijst opslaan...
+MSG_MENU_ABOUT
+Over
+MSG_MENU_QUIT
+Afsluiten
+MSG_MENU_PLAYLIST
+Afspeellijst
+MSG_MENU_ADD
+Toevoegen...
+MSG_MENU_REMOVE
+Verwijderen
+MSG_MENU_CLEAR
+Leegmaken
+MSG_MENU_SHUFFLE
+Willekeurig
+MSG_MENU_REPEAT
+Herhalen
+MSG_MENU_REPEAT_OFF
+Uit
+MSG_MENU_REPEAT_ALL
+Alles
+MSG_MENU_REPEAT_ONE
+Eén
+MSG_MENU_PICTURE
+Beeld
+MSG_MENU_PLASMA
+Plasma
+MSG_MENU_WAVE
+Golf
+MSG_MENU_BARS
+Balken
+MSG_MENU_SETTINGS
+Instellingen
+MSG_MENU_REMEMBER
+Onthouden waar het was
+MSG_PAGE_PLAYING
+Speelt nu
+MSG_PAGE_RADIO
+Radio
+MSG_VIEW_KEPT
+Je zenders
+MSG_VIEW_FOUND
+Gevonden
+MSG_NAME
+Naam
+MSG_GENRE
+Genre
+MSG_COUNTRY
+Land
+MSG_COLUMN_TITLE
+Titel
+MSG_COLUMN_ARTIST
+Artiest
+MSG_COLUMN_TIME
+Tijd
+MSG_COLUMN_STATION
+Zender
+MSG_COLUMN_ADDRESS
+Adres
+MSG_COLUMN_BITRATE
+kbit/s
+MSG_COLUMN_GENRES
+Genres
+MSG_SHUFFLE_BUTTON
+_Willekeurig
+MSG_SHUFFLE_HINT
+De nummers in een eigen volgorde afspelen
+MSG_REPEAT_BUTTON
+_Herhalen
+MSG_REPEAT_HINT
+De lijst opnieuw afspelen, of het ene nummer
+MSG_MUTE_BUTTON
+_Dempen
+MSG_MUTE_HINT
+Het geluid uit, en weer aan
+MSG_LENGTH_HINT
+De lengte van het nummer, of wat er nog van over is
+MSG_ADD_BUTTON
+_Toevoegen...
+MSG_REMOVE_BUTTON
+_Verwijderen
+MSG_CLEAR_BUTTON
+_Leegmaken
+MSG_OUTPUT_LABEL
+_Uitvoer
+MSG_SEARCH_BUTTON
+_Zoeken
+MSG_KEEP_BUTTON
+_Bewaren
+MSG_FORGET_BUTTON
+Verwijde_ren
+MSG_FIND_LABEL
+Zoe_k
+MSG_BY_LABEL
+_in
+MSG_URL_TITLE
+URL openen
+MSG_URL_ADDRESS
+A_dres
+MSG_URL_OPEN
+_Openen
+MSG_URL_CANCEL
+_Annuleren
+MSG_ASK_PLAY
+Welke nummers?
+MSG_ASK_ADD
+Welke nummers toevoegen?
+MSG_ASK_DRAWER
+Welke map?
+MSG_ASK_SAVE
+De afspeellijst opslaan als
+MSG_ABOUT_TITLE
+Over Player
+MSG_ABOUT
+%s\n\nNummers uit WAV-, MP3-, FLAC-, Ogg Vorbis-, AAC- en AC-3-bestanden,\nhet ene na het andere, met hun hoezen,\nzenders van het netwerk\nen een beeld van het geluid.
+MSG_OK
+OK
+MSG_NO_SONG
+Geen nummer
+MSG_TRACK_OF
+nummer %u van %u
+MSG_TRACK
+nummer %u
+MSG_COMPOSED_BY
+gecomponeerd door %s
+MSG_CHAPTER
+Hoofdstuk %u van %u
+MSG_SOUND
+Geluid
+MSG_MONO
+mono
+MSG_STEREO
+stereo
+MSG_SOUND_LINE
+%s, %u Hz, %s, %u kbit/s
+MSG_SONG_OF
+nummer %u van %u
+MSG_NO_SOUND
+geen geluid
+MSG_NO_STREAM_FREE
+geen stream vrij
+MSG_LIVE
+live
+MSG_BUFFERING
+bufferen
+MSG_BUFFERING_PERCENT
+Bufferen %u%%
+MSG_STATION_IDLE
+Een zender: afspelen luistert ernaar
+MSG_CALLING
+Verbinden met de zender
+MSG_NO_MEMORY_STATION
+Geen geheugen voor de zender
+MSG_ALL_STREAMS_USED
+Elke geluidsstream is in gebruik
+MSG_NO_SOUND_HERE
+Deze machine heeft geen geluid
+MSG_NO_AUDIO_STREAM
+audio.device wilde geen stream openen
+MSG_KEPT_ALREADY
+Al bewaard: %s
+MSG_KEPT
+Bewaard: %s
+MSG_NO_MEMORY_KEEP
+Geen geheugen om de zender te bewaren
+MSG_NO_MEMORY_SEARCH
+Geen geheugen voor de zoekopdracht
+MSG_SEARCHING
+Zoeken
+MSG_ASKING
+Vraag aan %s
+MSG_NONE_FOUND
+Geen zender gevonden
+MSG_ONE_FOUND
+Eén zender gevonden
+MSG_COUNT_FOUND
+%u zenders gevonden
+MSG_NO_NETWORK
+Geen netwerk: bsdsocket.library ontbreekt
+MSG_NO_HTTP
+http.library ontbreekt
+MSG_NO_MEMORY_CONNECTION
+Geen geheugen voor de verbinding
+MSG_SERVICE_NO_ADDRESS
+radio-browser.info heeft geen adres
+MSG_SERVICE_NO_ANSWER
+radio-browser.info beantwoordde de zoekopdracht niet
+MSG_SERVICE_UNREACHED
+radio-browser.info was niet bereikbaar
+MSG_SERVICE_NONSENSE
+Het antwoord van radio-browser.info slaat nergens op
+MSG_SEARCH_FAILED
+De zoekopdracht is mislukt
+MSG_NO_SIGNAL
+Geen signaal vrij voor de zender
+MSG_NO_TIMER
+timer.device wilde niet openen
+MSG_LISTS_ONLY
+De lijsten van de zender leiden alleen naar meer lijsten
+MSG_STATION_STOPPED
+De zender is gestopt met uitzenden
+MSG_STATION_ANSWERED
+De zender antwoordde
+MSG_SENDS_AAC
+De zender stuurt AAC, dat niet wordt afgespeeld
+MSG_STATION_ENDED
+De zender heeft de verbinding beëindigd
+MSG_SENDS_HLS
+De zender stuurt HLS, dat niet wordt afgespeeld
+MSG_LIST_EMPTY
+De lijst van de zender noemt geen zender
+MSG_LIST_TOO_LONG
+De lijst van de zender noemt een te lang adres
+MSG_NOT_AN_ADDRESS
+Dit is geen adres om naar te luisteren
+MSG_NONSENSE
+Het antwoord van de zender slaat nergens op
+MSG_NOLIBRARY
+%s: kan %s niet openen\n
+MSG_NOMEMORY
+%s: geen geheugen voor het venster\n
+MSG_NOBUFFERS
+%s: geen geheugen voor het geluid\n
+MSG_NOWINDOW
+%s: geen venster\n
+MSG_MENU_EQUALIZER
+Equalizer
+MSG_PRESET_LABEL
+E_Q
+MSG_MENU_SCOPE
+Stereobeeld
+MSG_MENU_METERS
+Niveaumeters
+MSG_MENU_WHOLE_SCREEN
+Volledig scherm

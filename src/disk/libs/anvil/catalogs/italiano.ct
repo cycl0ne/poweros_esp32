@@ -1,0 +1,350 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language italiano
+## codeset 106
+; The desktop's strings in Italian.
+;
+; The menus.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Sfondo
+MSG_MENU_EXECUTE
+Esegui comando...
+MSG_MENU_REDRAW_ALL
+Ridisegna tutto
+MSG_MENU_UPDATE_ALL
+Aggiorna tutto
+MSG_MENU_LAST_MESSAGE
+Ultimo messaggio
+MSG_MENU_VOLUME
+Volume...
+MSG_MENU_ABOUT
+Informazioni su Anvil...
+MSG_MENU_QUIT
+Esci...
+MSG_MENU_REBOOT
+Riavvia...
+MSG_MENU_WINDOW
+Finestra
+MSG_MENU_NEW_DRAWER
+Nuova cartella
+MSG_MENU_OPEN_PARENT
+Apri cartella superiore
+MSG_MENU_BACK
+Indietro
+MSG_MENU_FORWARD
+Avanti
+MSG_MENU_CLOSE
+Chiudi
+MSG_MENU_UPDATE
+Aggiorna
+MSG_MENU_SHELL
+Shell
+MSG_MENU_SELECT_CONTENTS
+Seleziona contenuto
+MSG_MENU_CLEAN_UP
+Riordina
+MSG_MENU_CLEAN_UP_BY
+Riordina per
+MSG_MENU_BY_NAME
+Nome
+MSG_MENU_BY_DATE
+Data
+MSG_MENU_BY_SIZE
+Dimensione
+MSG_MENU_SNAP
+Allinea alla griglia
+MSG_MENU_ARRANGE
+Disponi al ridimensionamento
+MSG_MENU_SNAPSHOT
+Memorizza posizione
+MSG_MENU_SNAPSHOT_WINDOW
+Finestra
+MSG_MENU_SNAPSHOT_ALL
+Tutto
+MSG_MENU_SHOW
+Mostra
+MSG_MENU_ONLY_ICONS
+Solo icone
+MSG_MENU_ALL_FILES
+Tutti i file
+MSG_MENU_VIEW_BY
+Vista per
+MSG_MENU_BY_ICON
+Icona
+MSG_MENU_RIBBON
+Barra multifunzione
+MSG_MENU_ICONS
+Icone
+MSG_MENU_OPEN
+Apri
+MSG_MENU_COPY
+Copia
+MSG_MENU_RENAME
+Rinomina...
+MSG_MENU_INFORMATION
+Informazioni...
+MSG_MENU_UNSNAPSHOT
+Dimentica posizione
+MSG_MENU_LEAVE_OUT
+Lascia sulla scrivania
+MSG_MENU_PUT_AWAY
+Rimetti a posto
+MSG_MENU_DELETE
+Elimina...
+MSG_MENU_FORMAT
+Formatta disco...
+MSG_MENU_EMPTY_TRASH
+Svuota il cestino
+MSG_MENU_TOOLS
+Strumenti
+;
+; A drawer's ribbon.
+MSG_RIBBON_HOME
+Home
+MSG_RIBBON_GO
+Vai
+MSG_RIBBON_PARENT
+Superiore
+MSG_RIBBON_DRAWER
+Cartella
+MSG_RIBBON_RENAME
+Rinomina
+MSG_RIBBON_DELETE
+Elimina
+MSG_RIBBON_INFORMATION
+Informazioni
+MSG_RIBBON_VIEW
+Visualizza
+MSG_RIBBON_ARRANGE
+Disponi
+;
+; A drawer shown as a list.
+MSG_LIST_PROTECTION
+Protezione
+MSG_LIST_DRAWER
+Cartella
+;
+; The screen's title.
+MSG_TITLE_MEMORY
+Memoria
+MSG_TITLE_INTERNAL
+Interna
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+liberi
+MSG_TITLE_BATTERY
+Batteria
+MSG_TITLE_CHARGING
+in carica
+MSG_TITLE_EXTERNAL_POWER
+alimentazione esterna
+;
+; A disk's window title.
+MSG_DISK_FULL
+pieno
+MSG_DISK_IN_USE
+in uso
+;
+; What the desktop says in the screen's title.
+MSG_NOTHING_SAID
+Ancora nessun messaggio
+MSG_NOT_EVERY_FILE
+Non tutti i file scelti sono stati presi
+MSG_DISK_NOT_RENAMED
+Impossibile rinominare il disco
+MSG_NOT_RENAMED
+Impossibile rinominarlo
+MSG_ICON_NOT_WRITTEN
+Impossibile scrivere un'icona
+MSG_DISK_NOT_THERE
+Il disco non è presente
+MSG_DISK_BUSY
+Il disco è in uso
+MSG_DISK_NOT_FORMATTED
+Impossibile formattare il disco
+MSG_DRAWER_NOT_MADE
+Impossibile creare la cartella
+MSG_SETTING_NOT_KEPT
+Impossibile memorizzare %s
+MSG_SETTING_NOT_WRITTEN
+Impossibile scrivere %s in anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Impossibile scrivere l'icona della cartella
+MSG_NO_MEMORY_REBOOT
+Memoria insufficiente per riavviare
+MSG_NO_MEMORY_ABOUT
+Memoria insufficiente per Informazioni su Anvil
+MSG_NO_TOOL
+Nessun programma può aprire %s
+MSG_NOT_STARTED
+Impossibile avviare %s
+MSG_COMMAND_NOT_STARTED
+Impossibile avviare il comando
+MSG_SHELL_DRAWER_NOT_FOUND
+Impossibile trovare la cartella della shell
+MSG_SHELL_NOT_STARTED
+Impossibile avviare la shell
+MSG_TRASH_OWN_DISK
+In un cestino vanno solo i file del suo stesso disco
+MSG_NOT_MOVED
+Impossibile spostarvi un file
+MSG_LEFT_OUT_NOT_KEPT
+Il disco non conserverà ciò che è lasciato sulla scrivania
+MSG_NO_MEMORY_WORK
+Memoria insufficiente per iniziare il lavoro
+;
+; The questions asked, with their buttons.
+MSG_QUIT_RUNNING_ADDED
+Programmi avviati dalla scrivania sono ancora in esecuzione (%lu).\nContinueranno a funzionare. Finestre, icone e\nvoci di menu che i programmi vi hanno aggiunto (%lu)\nspariscono con essa.\n\nUscire dalla scrivania?
+MSG_QUIT_RUNNING
+Programmi avviati dalla scrivania sono ancora in esecuzione (%lu).\nContinueranno a funzionare.\n\nUscire dalla scrivania?
+MSG_QUIT_ADDED
+Finestre, icone e voci di menu che i programmi\nhanno aggiunto alla scrivania (%lu) spariscono con essa.\n\nUscire dalla scrivania?
+MSG_QUIT_ASK
+Uscire dalla scrivania?
+MSG_QUIT_BUTTONS
+Esci|Annulla
+MSG_DELETE_ASK
+Eliminare definitivamente la selezione (%lu)?\nUna cartella se ne va con tutto il suo contenuto.
+MSG_DELETE_BUTTONS
+Elimina|Annulla
+MSG_RENAME_PROMPT
+Nuovo nome:
+MSG_FORMAT_TITLE
+Formatta disco
+MSG_FORMAT_ASK
+Formattare %s?\nTutto il suo contenuto andrà perso.
+MSG_FORMAT_BUTTONS
+Formatta|Annulla
+MSG_NEW_DRAWER_PROMPT
+Nome della nuova cartella:
+MSG_UNNAMED
+Senza nome
+MSG_EXECUTE_TITLE
+Esegui comando
+MSG_EXECUTE_PROMPT
+Comando da eseguire:
+MSG_OUTPUT
+Output
+MSG_REBOOT_TITLE
+Riavvia
+MSG_REBOOT_ASK
+Riavviare la macchina?\nCiò che i programmi non hanno salvato andrà perso.
+MSG_REBOOT_BUTTONS
+Riavvia|Annulla
+MSG_REBOOT_IN_USE
+In uso, quindi ciò che contengono potrebbe non essere scritto:\n%s\n\nRiavviare comunque?
+MSG_STARTUP_WAIT
+Il programma '%s'\nnon è ancora terminato.\nAttendere ancora?
+MSG_STARTUP_BUTTONS
+Attendi|Continua
+MSG_OK
+_OK
+MSG_CANCEL
+_Annulla
+;
+; About.
+MSG_ABOUT_TITLE
+Informazioni su Anvil
+MSG_ABOUT_WHAT
+La scrivania di PowerOS
+MSG_ABOUT_RELEASE
+Versione
+MSG_ABOUT_KERNEL
+Kernel
+MSG_ABOUT_BOARD
+Scheda
+MSG_ABOUT_PROCESSOR
+Processore
+MSG_ABOUT_CORES
+Core
+MSG_ABOUT_CLOCK
+Frequenza
+MSG_ABOUT_SCREEN
+Schermo
+MSG_ABOUT_SYSTEM_DISK
+Disco di sistema
+MSG_ABOUT_UP_FOR
+Acceso da
+MSG_ABOUT_IN_USE
+In uso
+MSG_ABOUT_OF
+di
+MSG_ABOUT_BITS
+bit per pixel
+MSG_ABOUT_DAY
+giorno
+MSG_ABOUT_DAYS
+giorni
+;
+; Information.
+MSG_INFO_TITLE
+Informazioni
+MSG_INFO_STATE
+Stato
+MSG_INFO_READ_ONLY
+Sola lettura
+MSG_INFO_VALIDATING
+In convalida
+MSG_INFO_READ_WRITE
+Lettura e scrittura
+MSG_INFO_UNKNOWN
+Sconosciuto
+MSG_INFO_BLOCKS
+Blocchi
+MSG_INFO_USED
+Usati
+MSG_INFO_FREE
+Liberi
+MSG_INFO_BLOCK_SIZE
+Dimensione blocco
+MSG_INFO_BYTES
+byte
+MSG_INFO_BLOCKS_COUNTED
+blocchi
+MSG_INFO_CREATED
+Creato
+MSG_INFO_LAST_CHANGED
+Ultima modifica
+MSG_INFO_SCRIPT
+Script
+MSG_INFO_ARCHIVED
+Archiviato
+MSG_INFO_READABLE
+Leggibile
+MSG_INFO_WRITABLE
+Scrivibile
+MSG_INFO_EXECUTABLE
+Eseguibile
+MSG_INFO_DELETABLE
+Eliminabile
+MSG_INFO_COMMENT
+Commento
+MSG_INFO_STACK
+Stack
+MSG_INFO_DEFAULT_TOOL
+Strumento predefinito
+MSG_INFO_TOOL_TYPES
+Tipi di strumento
+MSG_INFO_SAVE
+_Salva
+MSG_INFO_NOT_WRITTEN
+Impossibile scrivere l'icona.
+MSG_INFO_OK
+OK
+;
+; The window copying and deleting.
+MSG_WORK_COPYING
+Copia in corso
+MSG_WORK_DELETING
+Eliminazione in corso
+MSG_WORK_STOP
+_Interrompi
+MSG_WORK_WAITING
+Altri %lu in attesa
+MSG_WORK_REPLACE_ASK
+%s esiste già.\nSostituirlo?
+MSG_WORK_REPLACE_BUTTONS
+Sostituisci|Sostituisci tutto|Salta|Interrompi

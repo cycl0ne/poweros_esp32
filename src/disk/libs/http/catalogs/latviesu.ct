@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; http.library's words for a request that failed, in Latvian: a clause in lower case, without its full stop.
+MSG_NOMEM
+nav atmiņas
+MSG_IO
+savienojums neizdevās
+MSG_IO_BECAUSE
+savienojums neizdevās: %s
+MSG_STOPPED
+apturēts
+MSG_TIMEOUT
+serveris neatbildēja laikā
+MSG_URL
+nav http:// vai https:// URL, vai arī tas ir pārāk garš
+MSG_HOST
+resursdatoram nav adreses
+MSG_HOST_NAMED
+%s nav adreses
+MSG_TLS
+TLS sesija neizdevās
+MSG_TLS_CERTIFICATE
+servera sertifikāts nav uzticams: %s
+MSG_TLS_CLOCK
+pulkstenis nav iestatīts, tāpēc nevienu sertifikātu nevar pārbaudīt (TimeSync)
+MSG_TLS_ALERT
+serveris atteica TLS sesiju (alert %u)
+MSG_TLS_HANDSHAKE
+TLS rokasspiediens neizdevās
+MSG_PROTOCOL
+atbilde nav HTTP
+MSG_REDIRECT
+vairāk pāradresāciju, nekā atļauts, vai pāradresācija uz nekurieni
+MSG_TRUNCATED
+savienojums beidzās pirms atbildes beigām
+MSG_STATE
+izsaukums ne savā kārtā vai pieprasījums, ko nevar veikt
+MSG_LIBRARY
+nav bibliotēkas, kas vajadzīga pieprasījumam
+MSG_LIBRARY_NAMED
+%s nav
+MSG_DATA
+servera saspiesto atbildi nevar atspiest
+MSG_CLOSED
+serveris aizvēra savienojumu, neatbildējis
+MSG_UNKNOWN
+pieprasījums neizdevās (%d)
+MSG_VERDICT_MALFORMED
+vienu no tā sertifikātiem nevar nolasīt
+MSG_VERDICT_UNKNOWN_ISSUER
+to nav parakstījusi neviena uzticama sakne
+MSG_VERDICT_BAD_SIGNATURE
+paraksts tā ķēdē ir nepareizs
+MSG_VERDICT_UNSUPPORTED
+tas ir parakstīts veidā, ko nevar pārbaudīt
+MSG_VERDICT_EXPIRED
+tā derīgums ir beidzies
+MSG_VERDICT_NOT_YET_VALID
+tas vēl nav derīgs
+MSG_VERDICT_NOT_CA
+to izdevis sertifikāts, kam nav tiesību izdot
+MSG_VERDICT_PATH_LENGTH
+tā ķēde ir garāka, nekā atļauj tās CA
+MSG_VERDICT_NAME_CONSTRAINTS
+CA tā ķēdē ir nosaukumu ierobežojumi
+MSG_VERDICT_WRONG_USAGE
+tas nav paredzēts serverim
+MSG_VERDICT_WRONG_NAME
+tas ir paredzēts citam resursdatoram
+MSG_VERDICT_TOO_LONG
+tā ķēde ir pārāk gara
+MSG_VERDICT_OTHER
+bez norādīta iemesla

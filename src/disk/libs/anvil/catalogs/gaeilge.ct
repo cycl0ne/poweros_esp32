@@ -1,0 +1,330 @@
+## version $VER: sys/anvil.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; The desktop's strings in Irish.
+MSG_MENU_ANVIL
+Anvil
+MSG_MENU_BACKDROP
+Cúlra
+MSG_MENU_EXECUTE
+Rith Ordú...
+MSG_MENU_REDRAW_ALL
+Athdhearadh Gach Rud
+MSG_MENU_UPDATE_ALL
+Nuashonraigh Gach Rud
+MSG_MENU_LAST_MESSAGE
+An Teachtaireacht Dheireanach
+MSG_MENU_VOLUME
+Airde Fuaime...
+MSG_MENU_ABOUT
+Maidir Leis...
+MSG_MENU_QUIT
+Scoir...
+MSG_MENU_REBOOT
+Atosaigh...
+MSG_MENU_WINDOW
+Fuinneog
+MSG_MENU_NEW_DRAWER
+Fillteán Nua
+MSG_MENU_OPEN_PARENT
+Oscail an Máthairfhillteán
+MSG_MENU_BACK
+Siar
+MSG_MENU_FORWARD
+Ar Aghaidh
+MSG_MENU_CLOSE
+Dún
+MSG_MENU_UPDATE
+Nuashonraigh
+MSG_MENU_SHELL
+Blaosc
+MSG_MENU_SELECT_CONTENTS
+Roghnaigh an tÁbhar
+MSG_MENU_CLEAN_UP
+Cuir in Ord
+MSG_MENU_CLEAN_UP_BY
+Cuir in Ord de Réir
+MSG_MENU_BY_NAME
+Ainm
+MSG_MENU_BY_DATE
+Dáta
+MSG_MENU_BY_SIZE
+Méid
+MSG_MENU_SNAP
+Ailínigh leis an nGreille
+MSG_MENU_ARRANGE
+Socraigh ar Athrú Méide
+MSG_MENU_SNAPSHOT
+Cuimhnigh ar an Áit
+MSG_MENU_SNAPSHOT_WINDOW
+Fuinneog
+MSG_MENU_SNAPSHOT_ALL
+Gach Rud
+MSG_MENU_SHOW
+Taispeáin
+MSG_MENU_ONLY_ICONS
+Deilbhíní Amháin
+MSG_MENU_ALL_FILES
+Gach Comhad
+MSG_MENU_VIEW_BY
+Amharc
+MSG_MENU_BY_ICON
+Deilbhín
+MSG_MENU_RIBBON
+Ribín
+MSG_MENU_ICONS
+Deilbhíní
+MSG_MENU_OPEN
+Oscail
+MSG_MENU_COPY
+Cóipeáil
+MSG_MENU_RENAME
+Athainmnigh...
+MSG_MENU_INFORMATION
+Eolas...
+MSG_MENU_UNSNAPSHOT
+Déan Dearmad ar an Áit
+MSG_MENU_LEAVE_OUT
+Fág ar an Deasc
+MSG_MENU_PUT_AWAY
+Cuir ar Ais
+MSG_MENU_DELETE
+Scrios...
+MSG_MENU_FORMAT
+Formáidigh Diosca...
+MSG_MENU_EMPTY_TRASH
+Folmhaigh an Bruscar
+MSG_MENU_TOOLS
+Uirlisí
+MSG_RIBBON_HOME
+Baile
+MSG_RIBBON_GO
+Téigh
+MSG_RIBBON_PARENT
+Suas
+MSG_RIBBON_DRAWER
+Fillteán
+MSG_RIBBON_RENAME
+Athainmnigh
+MSG_RIBBON_DELETE
+Scrios
+MSG_RIBBON_INFORMATION
+Eolas
+MSG_RIBBON_VIEW
+Amharc
+MSG_RIBBON_ARRANGE
+Socraigh
+MSG_LIST_PROTECTION
+Cosaint
+MSG_LIST_DRAWER
+Fillteán
+MSG_TITLE_MEMORY
+Cuimhne
+MSG_TITLE_INTERNAL
+Inmheánach
+MSG_TITLE_PSRAM
+PSRAM
+MSG_TITLE_FREE
+saor
+MSG_TITLE_BATTERY
+Ceallra
+MSG_TITLE_CHARGING
+á luchtú
+MSG_TITLE_EXTERNAL_POWER
+cumhacht sheachtrach
+MSG_DISK_FULL
+lán
+MSG_DISK_IN_USE
+in úsáid
+MSG_NOTHING_SAID
+Níor dúradh aon rud fós
+MSG_NOT_EVERY_FILE
+Níorbh fhéidir gach comhad a roghnaíodh a ghlacadh
+MSG_DISK_NOT_RENAMED
+Níorbh fhéidir an diosca a athainmniú
+MSG_NOT_RENAMED
+Níorbh fhéidir é a athainmniú
+MSG_ICON_NOT_WRITTEN
+Níorbh fhéidir deilbhín a scríobh
+MSG_DISK_NOT_THERE
+Níl an diosca ann
+MSG_DISK_BUSY
+Tá an diosca in úsáid
+MSG_DISK_NOT_FORMATTED
+Níorbh fhéidir an diosca a fhormáidiú
+MSG_DRAWER_NOT_MADE
+Níorbh fhéidir an fillteán a chruthú
+MSG_SETTING_NOT_KEPT
+%s: níorbh fhéidir é a choinneáil
+MSG_SETTING_NOT_WRITTEN
+%s: níorbh fhéidir é a scríobh chuig anvil.prefs
+MSG_DRAWER_ICON_NOT_WRITTEN
+Níorbh fhéidir deilbhín an fhillteáin a scríobh
+MSG_NO_MEMORY_REBOOT
+Níl dóthain cuimhne chun atosú
+MSG_NO_MEMORY_ABOUT
+Níl dóthain cuimhne do Maidir Leis
+MSG_NO_TOOL
+Níl aon uirlis ann chun %s a oscailt
+MSG_NOT_STARTED
+Níorbh fhéidir %s a thosú
+MSG_COMMAND_NOT_STARTED
+Níorbh fhéidir an t-ordú a thosú
+MSG_SHELL_DRAWER_NOT_FOUND
+Níorbh fhéidir fillteán an bhlaoisc a aimsiú
+MSG_SHELL_NOT_STARTED
+Níorbh fhéidir an blaosc a thosú
+MSG_TRASH_OWN_DISK
+Ní théann isteach sa bhruscar ach comhaid óna dhiosca féin
+MSG_NOT_MOVED
+Níorbh fhéidir comhad a bhogadh ansin
+MSG_LEFT_OUT_NOT_KEPT
+Ní choinneoidh an diosca a bhfuil fágtha ar an deasc
+MSG_NO_MEMORY_WORK
+Níl dóthain cuimhne chun an obair a thosú
+MSG_QUIT_RUNNING_ADDED
+Tá ríomhchláir a tosaíodh ón deasc fós ag rith (%lu).\nLeanfaidh siad ar aghaidh ag rith. Imeoidh fuinneoga, deilbhíní agus\nmíreanna roghchláir a chuir ríomhchláir leis (%lu)\nleis an deasc.\n\nScoir den deasc?
+MSG_QUIT_RUNNING
+Tá ríomhchláir a tosaíodh ón deasc fós ag rith (%lu).\nLeanfaidh siad ar aghaidh ag rith.\n\nScoir den deasc?
+MSG_QUIT_ADDED
+Imeoidh fuinneoga, deilbhíní agus míreanna roghchláir\na chuir ríomhchláir leis an deasc (%lu) in éineacht leis.\n\nScoir den deasc?
+MSG_QUIT_ASK
+Scoir den deasc?
+MSG_QUIT_BUTTONS
+Scoir|Cealaigh
+MSG_DELETE_ASK
+An rogha (%lu) a scriosadh go buan?\nScriostar fillteán agus gach a bhfuil ann.
+MSG_DELETE_BUTTONS
+Scrios|Cealaigh
+MSG_RENAME_PROMPT
+Ainm nua dó:
+MSG_FORMAT_TITLE
+Formáidigh Diosca
+MSG_FORMAT_ASK
+%s a fhormáidiú?\nCaillfear gach a bhfuil air.
+MSG_FORMAT_BUTTONS
+Formáidigh|Cealaigh
+MSG_NEW_DRAWER_PROMPT
+Ainm don fhillteán nua:
+MSG_UNNAMED
+Gan Ainm
+MSG_EXECUTE_TITLE
+Rith Ordú
+MSG_EXECUTE_PROMPT
+Ordú le rith:
+MSG_OUTPUT
+Aschur
+MSG_REBOOT_TITLE
+Atosaigh
+MSG_REBOOT_ASK
+An meaisín a atosú?\nCaillfear a bhfuil gan sábháil ag ríomhchláir.
+MSG_REBOOT_BUTTONS
+Atosaigh|Cealaigh
+MSG_REBOOT_IN_USE
+In úsáid, mar sin b'fhéidir nach scríobhfar a bhfuil iontu:\n%s\n\nAtosaigh mar sin féin?
+MSG_STARTUP_WAIT
+Níor chríochnaigh\nan ríomhchlár '%s' fós.\nFanacht tamall eile?
+MSG_STARTUP_BUTTONS
+Fan|Lean Ar Aghaidh
+MSG_OK
+_OK
+MSG_CANCEL
+_Cealaigh
+MSG_ABOUT_TITLE
+Maidir le Anvil
+MSG_ABOUT_WHAT
+Deasc PowerOS
+MSG_ABOUT_RELEASE
+Eisiúint
+MSG_ABOUT_KERNEL
+Eithne
+MSG_ABOUT_BOARD
+Bord
+MSG_ABOUT_PROCESSOR
+Próiseálaí
+MSG_ABOUT_CORES
+Croíleacáin
+MSG_ABOUT_CLOCK
+Clog
+MSG_ABOUT_SCREEN
+Scáileán
+MSG_ABOUT_SYSTEM_DISK
+Diosca an chórais
+MSG_ABOUT_UP_FOR
+Ag rith le
+MSG_ABOUT_IN_USE
+In úsáid
+MSG_ABOUT_OF
+as
+MSG_ABOUT_BITS
+giotán sa phicteilín
+MSG_ABOUT_DAY
+lá
+MSG_ABOUT_DAYS
+lá
+MSG_INFO_TITLE
+Eolas
+MSG_INFO_STATE
+Staid
+MSG_INFO_READ_ONLY
+Inléite amháin
+MSG_INFO_VALIDATING
+Á bhailíochtú
+MSG_INFO_READ_WRITE
+Léamh agus scríobh
+MSG_INFO_UNKNOWN
+Anaithnid
+MSG_INFO_BLOCKS
+Bloic
+MSG_INFO_USED
+In úsáid
+MSG_INFO_FREE
+Saor
+MSG_INFO_BLOCK_SIZE
+Méid bloic
+MSG_INFO_BYTES
+beart
+MSG_INFO_BLOCKS_COUNTED
+bloc
+MSG_INFO_CREATED
+Cruthaithe
+MSG_INFO_LAST_CHANGED
+Athraithe go deireanach
+MSG_INFO_SCRIPT
+Script
+MSG_INFO_ARCHIVED
+Cartlannaithe
+MSG_INFO_READABLE
+Inléite
+MSG_INFO_WRITABLE
+Inscríofa
+MSG_INFO_EXECUTABLE
+Inrite
+MSG_INFO_DELETABLE
+Inscriosta
+MSG_INFO_COMMENT
+Nóta
+MSG_INFO_STACK
+Cruach
+MSG_INFO_DEFAULT_TOOL
+Uirlis réamhshocraithe
+MSG_INFO_TOOL_TYPES
+Paraiméadair
+MSG_INFO_SAVE
+_Sábháil
+MSG_INFO_NOT_WRITTEN
+Níorbh fhéidir an deilbhín a scríobh.
+MSG_INFO_OK
+OK
+MSG_WORK_COPYING
+Á chóipeáil
+MSG_WORK_DELETING
+Á scriosadh
+MSG_WORK_STOP
+_Stad
+MSG_WORK_WAITING
+%lu eile ag fanacht
+MSG_WORK_REPLACE_ASK
+Tá %s ann cheana.\nIonadaigh é?
+MSG_WORK_REPLACE_BUTTONS
+Ionadaigh|Ionadaigh Gach Ceann|Léim Thar|Stad

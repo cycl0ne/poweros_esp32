@@ -1,0 +1,74 @@
+## version $VER: sys/http.catalog 1.0 (18.11.2026)
+## language ukrainska
+## codeset 106
+; http.library's words for a request that failed, in Ukrainian: a clause in lower case, without its full stop.
+MSG_NOMEM
+немає пам'яті
+MSG_IO
+збій з'єднання
+MSG_IO_BECAUSE
+збій з'єднання: %s
+MSG_STOPPED
+зупинено
+MSG_TIMEOUT
+сервер не відповів вчасно
+MSG_URL
+не URL виду http:// або https://, або задовгий URL
+MSG_HOST
+вузол не має адреси
+MSG_HOST_NAMED
+%s не має адреси
+MSG_TLS
+збій сеансу TLS
+MSG_TLS_CERTIFICATE
+сертифікат сервера не викликає довіри: %s
+MSG_TLS_CLOCK
+годинник не встановлено, тож сертифікат неможливо перевірити (TimeSync)
+MSG_TLS_ALERT
+сервер відхилив сеанс TLS (alert %u)
+MSG_TLS_HANDSHAKE
+збій рукостискання TLS
+MSG_PROTOCOL
+відповідь не є HTTP
+MSG_REDIRECT
+переспрямувань більше, ніж дозволено, або переспрямування в нікуди
+MSG_TRUNCATED
+з'єднання обірвалося раніше, ніж закінчилася відповідь
+MSG_STATE
+виклик не в свою чергу або запит, який неможливо виконати
+MSG_LIBRARY
+немає бібліотеки, потрібної для запиту
+MSG_LIBRARY_NAMED
+немає %s
+MSG_DATA
+стиснута відповідь сервера не розпаковується
+MSG_CLOSED
+сервер закрив з'єднання, не відповівши
+MSG_UNKNOWN
+збій запиту (%d)
+MSG_VERDICT_MALFORMED
+один з його сертифікатів неможливо прочитати
+MSG_VERDICT_UNKNOWN_ISSUER
+його не підписав жоден довірений кореневий сертифікат
+MSG_VERDICT_BAD_SIGNATURE
+підпис у його ланцюжку неправильний
+MSG_VERDICT_UNSUPPORTED
+його підписано способом, який неможливо перевірити
+MSG_VERDICT_EXPIRED
+термін його дії минув
+MSG_VERDICT_NOT_YET_VALID
+він ще не чинний
+MSG_VERDICT_NOT_CA
+його видав сертифікат, якому не дозволено видавати сертифікати
+MSG_VERDICT_PATH_LENGTH
+його ланцюжок довший, ніж дозволяють його ЦС
+MSG_VERDICT_NAME_CONSTRAINTS
+ЦС у його ланцюжку має обмеження імен
+MSG_VERDICT_WRONG_USAGE
+він не призначений для сервера
+MSG_VERDICT_WRONG_NAME
+він виданий для іншого вузла
+MSG_VERDICT_TOO_LONG
+його ланцюжок задовгий
+MSG_VERDICT_OTHER
+без зазначення причини

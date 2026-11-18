@@ -1,0 +1,27 @@
+# LOCALE:Languages/hrvatski.language - Croatian: the words locale.library
+# writes and reads dates in, and the order letters sort in. A word left
+# out is the English one; a word with a blank is in quotes.
+#
+# The days, then their short names.
+DAY_1=nedjelja DAY_2=ponedjeljak DAY_3=utorak DAY_4=srijeda
+DAY_5=četvrtak DAY_6=petak DAY_7=subota
+ABDAY_1=ned ABDAY_2=pon ABDAY_3=uto ABDAY_4=sri ABDAY_5=čet ABDAY_6=pet
+ABDAY_7=sub
+# The months, then their short names; a month is named as in a date,
+# "18. studenoga".
+MON_1=siječnja MON_2=veljače MON_3=ožujka MON_4=travnja MON_5=svibnja
+MON_6=lipnja MON_7=srpnja MON_8=kolovoza MON_9=rujna MON_10=listopada
+MON_11=studenoga MON_12=prosinca
+ABMON_1=sij ABMON_2=velj ABMON_3=ožu ABMON_4=tra ABMON_5=svi
+ABMON_6=lip ABMON_7=srp ABMON_8=kol ABMON_9=ruj ABMON_10=lis
+ABMON_11=stu ABMON_12=pro
+# Yes and no, before and after noon.
+YESSTR=Da NOSTR=Ne AM_STR=AM PM_STR=PM
+# The hyphens and the quotes.
+SOFTHYPHEN=- HARDHYPHEN=- OPENQUOTE=„ CLOSEQUOTE=“
+# The days near today, and any day after tomorrow.
+YESTERDAYSTR=Jučer TODAYSTR=Danas TOMORROWSTR=Sutra
+FUTURESTR=Budućnost
+# The order of the letters: Č then Ć after C, Đ after D, Š after S and
+# Ž after Z; DŽ, LJ and NJ, letters of their own, sort as their two.
+AFTER_C=Č,Ć AFTER_D=Đ AFTER_S=Š AFTER_Z=Ž
