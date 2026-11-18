@@ -389,7 +389,8 @@ fn close(dev: *exec.Device, io: *exec.IORequest) callconv(.c) ?*anyopaque {
 /// Otherwise it stops the receive interrupts, takes out its servers (exec
 /// releases the sources), leaves the device list and frees its base.
 /// InitResident can make it again from the ROM tag. The UARTs stay set up,
-/// and kernel output goes on.
+/// and kernel output goes on. A unit whose port did not answer had no
+/// server put in, so none is taken out: its node is on no list.
 fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     if (dev.open_cnt != 0) {
         dev.flags |= exec.LIBF_DELEXP;
@@ -397,7 +398,8 @@ fn expunge(dev: *exec.Device) callconv(.c) ?*anyopaque {
     }
     const sb = serialBase(dev);
     const sys = sb.sys_base;
-    for (unitsOf(sb)) |*pu| {
+    for (unitsOf(sb), 0..) |*pu, number| {
+        if (sb.absent & (@as(u32, 1) << @intCast(number)) != 0) continue;
         sys.Disable();
         pu.serial.line.port.disableRx();
         sys.Enable();
