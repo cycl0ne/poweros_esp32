@@ -187,6 +187,7 @@ pub const catalogs = catalogsOf(&translated_strings);
 /// settings and the broker loop of every commodity in SYS:Commodities are
 /// written once.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
+    .{ .name = "install", .source = "c/install/parts.zig" },
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
     .{ .name = "vector", .source = "libs/vector/draw/draw.zig" },
     .{ .name = "v3d", .source = "libs/facet/driver/v3d/v3d.zig" },
@@ -276,6 +277,7 @@ const window_programs = [_]Program{
     .{ .disk = "System/Clock", .source = "system/clock/clock.zig", .name = "clock", .set = .gui, .strings = "system/clock/clock.cd" },
     .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .set = .net, .imports = &.{"smbclient"} },
     .{ .disk = "System/Update", .source = "system/update/update.zig", .name = "sysupdate", .set = .storage },
+    .{ .disk = "Installer", .source = "installer/installer.zig", .name = "installer", .set = .storage, .imports = &.{"install"}, .strings = "installer/installer.cd" },
     .{ .disk = "System/SystemScan", .source = "system/systemscan/systemscan.zig", .name = "systemscan", .set = .gui },
     .{ .disk = "Commodities/Exchange", .source = "commodities/exchange/exchange.zig", .name = "exchange", .set = .commodities },
     .{ .disk = "Commodities/NoCapsLock", .source = "commodities/nocapslock/nocapslock.zig", .name = "nocapslock", .set = .commodities, .imports = &.{"commodity"} },
@@ -517,7 +519,7 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// colours with - 60 KB for a chip that is not there. svg.datatype as
 /// well: what goes on an ESP32's flash disk is what that board is meant
 /// to do, and showing SVG files is not among it.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
 /// Drivers of what only the Raspberry Pi CM5's BCM2712 has among the
 /// AArch64 machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host, and its V3D 7.1 - the CM4's BCM2711 has neither

@@ -10,7 +10,10 @@ is done with it, every file copied in, and the partition the machine's
 firmware reads filled with the kernel so that the machine starts from it.
 
 `C:Install` does all of that in one command, on a machine with nothing
-but a console, from the running system itself or from a release package.
+but a console, from the running system itself or from a release package;
+`SYS:Installer` does it in a window, from the running system - a machine
+started from a stick, its icon in the stick's root - with the language
+and the keyboard chosen first.
 It is on the 64-bit machines' disks - the VisionFive 2, the Compute
 Module 5, the x86-64 machine and the two `virt` machines; the ESP32
 boards' system lives in their flash and is written from the host
@@ -19,7 +22,8 @@ boards' system lives in their flash and is written from the host
 This guide is the medium a machine is first reached with, what an install
 leaves on the disk, the command and each of its keywords, the two sources
 it copies from, the release package's form, what it writes down about
-itself, what the machine then starts from, how a system that is installed
+itself, what the machine then starts from, the Installer's window, how
+a system that is installed
 already is brought up to date from a later package (`C:Update`, or
 `SYS:System/Update` in a window), how its
 kernel is replaced with a way back from one that does not come up, and
@@ -371,6 +375,43 @@ well. An install copies what is there and nothing it has not got, so a
 boot partition written from an image built without it is short of that
 file, and the machine goes on starting from wherever it started before
 until the file is put there.
+
+## The Installer
+
+`SYS:Installer` is C:Install in a window, a page for each thing it asks,
+for a machine started from a stick whose system is to go onto its card
+or SSD:
+
+1. **Language** - the languages and countries `LOCALE:` has files for,
+   each in its own words ("Deutsch (Österreich)", "Ελληνικά (Κύπρος)").
+   Next makes the one chosen the running system's - `ENV:Sys/locale.prefs`
+   written and `C:SetPrefs` run, as Prefs' Region page does - and the
+   window comes back in it.
+2. **Keyboard** - every keymap keymap.library knows and every file of
+   `DEVS:Keymaps`, with what each is for, the language's own chosen to
+   start with. A keymap chosen is the running system's at once; the
+   field under the list is there to try it.
+3. **Disk** - every unit of every block device with a medium in it, its
+   size and what it holds, as `Install` with no device lists them. The
+   unit the running system is on cannot be chosen, nor one too small
+   for the board's partitions and a container worth having; **Look
+   again** lists them once more, for a card or a stick put in since.
+4. **Ready** - the disk, the language and the keymap, and that
+   everything on the disk is lost. **Install** starts it.
+5. **Installing** - what it is doing and how many files are written, the
+   gauge filling by the bytes against what `SYS:` holds. **Stop** ends it
+   between two files, with a disk that does not start.
+6. **Done** - what was written; **Restart** starts the machine again
+   through `C:Reboot`. **Back**, after an install that could not finish,
+   goes to the disks again, with C:Install's own words for why.
+
+The install is C:Install's own code (`src/disk/c/install/parts.zig`
+shares it) with C:Install's defaults - the running system as the source,
+a GPT with the firmware's partitions, `DH0:` "System" and `DH1:` "Work"
+in a container - run on a process of its own while the window answers.
+The language, the country and the keymap go into the new system's
+`ENVARC:Sys/locale.prefs`, so it starts as the running one was left.
+The Installer is on the 64-bit machines' disks, as C:Install is.
 
 ## By hand
 

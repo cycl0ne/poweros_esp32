@@ -273,6 +273,9 @@ const disk_icons = [_]DiskIcon{
     // system's own (C:, S:, LIBS:, DEVS:, ...) left to the shell.
     .{ .path = "Disk.info", .picture = "drive-harddisk", .fields = &.{ "KIND=DISK", "SHOW=ICONS" } },
     .{ .path = "Trashcan.info", .picture = "user-trash", .fields = &.{"KIND=TRASHCAN"} },
+    // The system put onto a disk of the machine, in the volume's own
+    // window: where one started from a stick looks first.
+    .{ .path = "Installer.info", .picture = "system-installer", .fields = &.{ "KIND=TOOL", icon_stack }, .pointer_bytes = 8 },
     .{ .path = "programs.info", .picture = "applications-other", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "prefs.info", .picture = "preferences-desktop", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System.info", .picture = "applications-system", .fields = &.{"KIND=DRAWER"} },
@@ -324,7 +327,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/MemMap.info", .picture = "computer", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Clock.info", .picture = "appointment-new", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=MODE=ANALOG", "TYPE=SECONDS=YES", "TYPE=DATE=YES" } },
     .{ .path = "System/Shares.info", .picture = "folder-remote", .fields = &.{ "KIND=TOOL", icon_stack } },
-    .{ .path = "System/Update.info", .picture = "system-software-update", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
+    .{ .path = "System/Update.info", .picture = "system-software-update", .fields = &.{ "KIND=TOOL", icon_stack }, .pointer_bytes = 8 },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/NetLoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
@@ -332,7 +335,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Clock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Shares.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
-    .{ .path = "System/Docs/Update.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .rv64sbi, .a64psci, .x64uefi } },
+    .{ .path = "System/Docs/Update.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .pointer_bytes = 8 },
     // The commodities, each icon with the tool types it reads, and what
     // each is in SYS:Commodities/Docs. The pictures are the ones the
     // fetch drew, so the ones that work on the same thing share a

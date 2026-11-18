@@ -390,6 +390,7 @@ fn walk(run: *Run, list: *List, buffer: []u8, from: []const u8, half: install.Ha
             run.files += 1;
             run.bytes += length;
         }
+        shared.wrote(run, length);
         err = dl.MatchNext(ap);
     }
     if (err != 0 and err != dos.ERROR_NO_MORE_ENTRIES) return shared.failed(run, named, err);
@@ -453,6 +454,7 @@ fn fromPackage(run: *Run, buffer: []u8) i32 {
                             source, entry.crc, entry.size, sum, length,
                         });
                     }
+                    shared.wrote(run, length);
                 },
             }
         }
@@ -469,6 +471,17 @@ fn fromPackage(run: *Run, buffer: []u8) i32 {
 /// The list onto the new system volume, where an update reads it.
 fn saveList(run: *Run, text: []const u8) i32 {
     const where = Path.of(&run.system, afterColon(install.installed_manifest));
+    if (!drawersOf(run, &where)) return dos.RETURN_FAIL;
+    if (!prefs.save(run.dl, where.text(), text)) return shared.failed(run, where.text(), run.dl.IoErr());
+    shared.say(run, "  %s\n", .{where.text()});
+    return dos.RETURN_OK;
+}
+
+/// `text` as the file `name` of the new volume's `ENVARC:` - its
+/// settings kept over a start, `Sys/locale.prefs` say - the drawers on
+/// the way made.
+pub fn leaveSetting(run: *Run, comptime name: []const u8, text: []const u8) i32 {
+    const where = Path.of(&run.system, envarc_drawer ++ name);
     if (!drawersOf(run, &where)) return dos.RETURN_FAIL;
     if (!prefs.save(run.dl, where.text(), text)) return shared.failed(run, where.text(), run.dl.IoErr());
     shared.say(run, "  %s\n", .{where.text()});

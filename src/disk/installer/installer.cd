@@ -1,0 +1,137 @@
+; Installer's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/Installer.catalog stands in
+; for them. A text with values is written by RawDoFmt, which takes them
+; in order: a translation keeps them so. A text a page shows goes through
+; text.gadget, which reads < as the start of a mark: a translation writes
+; << for one.
+#version 1
+;
+; The window.
+MSG_WINDOW_TITLE (1//)
+Install the system
+MSG_BACK (//)
+_Back
+MSG_NEXT (//)
+_Next
+;
+; The first page: the language.
+MSG_LANGUAGE_TITLE (//)
+Language
+MSG_LANGUAGE_INTRO (//)
+Choose the language the system speaks. It is used as you go on, and the installed system starts in it.
+MSG_COLUMN_LANGUAGE (//)
+Language and country
+;
+; The second page: the keyboard.
+MSG_KEYBOARD_TITLE (//)
+Keyboard
+MSG_KEYBOARD_INTRO (//)
+Choose the keyboard's layout. It is used at once: try it in the field below.
+MSG_COLUMN_KEYMAP (//)
+Keymap
+MSG_COLUMN_LAYOUT (//)
+Layout
+MSG_TRY (//)
+_Try it
+;
+; The third page: the disk.
+MSG_TARGET_TITLE (//)
+Disk
+MSG_TARGET_INTRO (//)
+Choose the disk the system goes onto. Everything on it is lost.
+MSG_COLUMN_DEVICE (//)
+Device
+MSG_COLUMN_UNIT (//)
+Unit
+MSG_COLUMN_SIZE (//)
+Size
+MSG_COLUMN_HOLDS (//)
+What it holds
+MSG_HOLDS_CONTAINER (//)
+GPT with a PowerOS container
+MSG_HOLDS_GPT (//)
+GPT
+MSG_HOLDS_TABLE (//)
+PowerOS table
+MSG_HOLDS_FOREIGN (//)
+a table for another block size
+MSG_HOLDS_NOTHING (//)
+nothing
+MSG_HOLDS_UNREADABLE (//)
+cannot be read
+MSG_HOLDS_RUNNING (//)
+%s - the running system
+MSG_LOOK_AGAIN (//)
+_Look again
+MSG_TARGET_NONE (//)
+There is no disk to install onto. Put in a card, an SSD or a stick, then press Look again.
+MSG_TARGET_CHOOSE (//)
+Choose a disk.
+MSG_TARGET_RUNNING (//)
+The running system is on this disk: it cannot be installed over.
+MSG_TARGET_SMALL (//)
+This disk holds %s, and the system needs %s at least.
+MSG_TARGET_UNREADABLE (//)
+This disk cannot be read.
+MSG_TARGET_FITS (//)
+%s on %s unit %d.
+;
+; The fourth page: the last look.
+MSG_CONFIRM_TITLE (//)
+Ready
+MSG_CONFIRM_DISK (//)
+Disk: %s unit %d, %s
+MSG_CONFIRM_LANGUAGE (//)
+Language: %s
+MSG_CONFIRM_KEYMAP (//)
+Keyboard: %s
+MSG_CONFIRM_LOST (//)
+Everything on this disk is lost.
+MSG_INSTALL (//)
+_Install
+;
+; The fifth page: the install going.
+MSG_PROGRESS_TITLE (//)
+Installing
+MSG_PHASE_LOOKING (//)
+Looking at the system ...
+MSG_PHASE_PREPARING (//)
+Making the partitions ...
+MSG_PHASE_COPYING (//)
+Copying the system ...
+MSG_PHASE_SETTINGS (//)
+Writing the settings ...
+MSG_COPIED (//)
+%d files copied (%s)
+MSG_STOP (//)
+_Stop
+MSG_STOPPING (//)
+Stopping ...
+MSG_NO_PROCESS (//)
+There is no process to run the install on.
+;
+; The last page: what it came to.
+MSG_DONE_TITLE (//)
+Done
+MSG_DONE (//)
+The system is installed: %d files (%s).
+MSG_DONE_NEXT (//)
+Take the stick out and restart the machine: it starts from the disk.
+MSG_FAILED (//)
+The install could not finish.
+MSG_STOPPED (//)
+The install was stopped.
+MSG_NOT_BOOTABLE (//)
+The disk holds no system that starts. Back leads to the disks again.
+MSG_RESTART (//)
+_Restart
+MSG_RESTART_FAILED (//)
+C:Reboot could not restart the machine.
+;
+; Said on the console when the window cannot open.
+MSG_NOLIBRARY (//)
+%s: can't open %s\n
+MSG_NOMEMORY (//)
+%s: no memory\n
+MSG_NOWINDOW (//)
+%s: no window\n

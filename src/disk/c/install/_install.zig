@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: MIT
 //! What the install's parts share: the run it all hangs off, the drives
 //! it makes, and the small helpers the parts print and ask through.
+//!
+//! What a run says goes to the console - `C:Install`'s - unless the run
+//! has a `Watcher`: then each line, and each file written, is handed to
+//! it instead, which is how SYS:Installer's window shows an install
+//! going on its own process.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -79,6 +84,17 @@ pub const Kind = enum {
     directory,
 };
 
+/// Who is told what a run says, where that is not the console: each
+/// line said or gone wrong, without its newline and the blanks before
+/// it, and each file written.
+pub const Watcher = struct {
+    said: *const fn (watcher: *Watcher, text: [*:0]const u8, failure: bool) void,
+    wrote: *const fn (watcher: *Watcher, bytes: u64) void,
+};
+
+/// The longest line handed to a watcher, its NUL aside.
+pub const line_max = 255;
+
 /// The install, from its arguments to the disk it leaves.
 pub const Run = struct {
     sys: *ExecBase,
@@ -118,6 +134,10 @@ pub const Run = struct {
     /// How many files and bytes went over, for the last word.
     files: u32 = 0,
     bytes: u64 = 0,
+
+    /// Told what the run says in place of the console; null for the
+    /// console.
+    watcher: ?*Watcher = null,
 };
 
 /// A byte count as a person reads it: "14.9M", "4096" for something
@@ -184,15 +204,48 @@ pub fn mountedName(into: *DriveName, name: *const rdb.MountName) void {
     into[at + 1] = 0;
 }
 
+/// A line made for a watcher.
+const Said = struct {
+    text: [line_max:0]u8 = @splat(0),
+    length: usize = 0,
+
+    fn putChar(char: u8, data: ?*anyopaque) callconv(.c) void {
+        const line: *Said = @ptrCast(@alignCast(data.?));
+        if (char == 0 or line.length >= line.text.len) return;
+        line.text[line.length] = char;
+        line.length += 1;
+    }
+
+    /// The text without the blanks it starts with and the newline it
+    /// ends with.
+    fn trimmed(line: *Said) [*:0]const u8 {
+        while (line.length > 0 and line.text[line.length - 1] == '\n') : (line.length -= 1) line.text[line.length - 1] = 0;
+        var at: usize = 0;
+        while (line.text[at] == ' ') at += 1;
+        return @ptrCast(line.text[at..].ptr);
+    }
+};
+
+/// `format` with `args` handed to the run's watcher.
+fn hand(run: *Run, watcher: *Watcher, comptime format: [:0]const u8, args: anytype, failure: bool) void {
+    comptime exec.checkFormat(format, @TypeOf(args));
+    var line: Said = .{};
+    const stream = exec.fmtStream(args);
+    _ = run.sys.RawDoFmt(format, &stream, &Said.putChar, &line);
+    watcher.said(watcher, line.trimmed(), failure);
+}
+
 /// A line said unless QUIET.
 pub fn say(run: *Run, comptime format: [:0]const u8, args: anytype) void {
     if (run.quiet) return;
+    if (run.watcher) |watcher| return hand(run, watcher, format, args, false);
     _ = Printf(run.dl, format, args);
 }
 
 /// A line always said, and the output flushed: what the person is waited
 /// on for comes after it.
 pub fn tell(run: *Run, comptime format: [:0]const u8, args: anytype) void {
+    if (run.watcher) |watcher| return hand(run, watcher, format, args, false);
     _ = Printf(run.dl, format, args);
     _ = run.dl.Flush(run.dl.Output());
 }
@@ -200,6 +253,10 @@ pub fn tell(run: *Run, comptime format: [:0]const u8, args: anytype) void {
 /// What went wrong, with the command's name in front of it, and the code
 /// a failed install answers.
 pub fn fail(run: *Run, comptime format: [:0]const u8, args: anytype) i32 {
+    if (run.watcher) |watcher| {
+        hand(run, watcher, format, args, true);
+        return dos.RETURN_FAIL;
+    }
     _ = run.dl.PutStr(COMMAND_NAME ++ ": ");
     _ = Printf(run.dl, format, args);
     return dos.RETURN_FAIL;
@@ -207,8 +264,19 @@ pub fn fail(run: *Run, comptime format: [:0]const u8, args: anytype) i32 {
 
 /// What dos said went wrong, and the same code.
 pub fn failed(run: *Run, what: [*:0]const u8, code: i32) i32 {
+    if (run.watcher) |watcher| {
+        var line: Said = .{};
+        _ = run.dl.Fault(code, what, &line.text, line_max);
+        watcher.said(watcher, @ptrCast(&line.text), true);
+        return dos.RETURN_FAIL;
+    }
     _ = run.dl.PrintFault(code, what);
     return dos.RETURN_FAIL;
+}
+
+/// A file of `bytes` written, told to the watcher.
+pub fn wrote(run: *Run, bytes: u64) void {
+    if (run.watcher) |watcher| watcher.wrote(watcher, bytes);
 }
 
 /// RETURN to go on, or Ctrl-C. A line is read rather than a character, so
@@ -228,6 +296,12 @@ pub fn confirm(run: *Run) bool {
 /// Whether Ctrl-C was typed; it is said once where it was.
 pub fn stopped(run: *Run) bool {
     if (run.dl.CheckSignal(exec.SIGBREAKF_CTRL_C) == 0) return false;
+    if (run.watcher) |watcher| {
+        var line: Said = .{};
+        _ = run.dl.Fault(dos.ERROR_BREAK, null, &line.text, line_max);
+        watcher.said(watcher, line.trimmed(), true);
+        return true;
+    }
     _ = run.dl.PrintFault(dos.ERROR_BREAK, null);
     return true;
 }

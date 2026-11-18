@@ -268,7 +268,9 @@ Beside them:
   partitions from an RDB or a GPT on any drive, laid out in
   `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)); a
   system put onto a card or an SSD by one command, from the running
-  system or from a release package (`C:Install`), and brought up to date
+  system or from a release package (`C:Install`), or in a window from
+  the disk's root, the language and the keyboard chosen first
+  (`SYS:Installer`), and brought up to date
   from a package afterwards, only what differs fetched, the kernel with a
   way back from one that does not come up (`C:Update`,
   `SYS:System/Update`, `C:Reboot`).
@@ -325,7 +327,11 @@ Beside them:
   Sheet, Terminal, Player, Movie, which plays films in a window,
   FontView, Battery, Prefs, Volume, and Boing and Cobra, a bouncing
   ball and a ship in space on a screen of their own or in a window,
-  on the disks that hold facet.library; in
+  on the disks that hold facet.library; in the disk's root, on the
+  64-bit machines, the Installer, which puts the running system onto a
+  disk of the machine in a window - the language, the country and the
+  keyboard chosen first and used at once, the disk the running system
+  is on refused; in
   `SYS:System` the Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
   MemMap, Clock - the time on a dial or in figures, which the dock's clock opens - and,
   on the 64-bit machines, SystemScan, which writes down what a machine is made of and
@@ -1136,8 +1142,10 @@ the written blocks take room, and written to a card or an SSD with `dd` it
 is a system to start. It carries the icons and the sound setting of the
 build that made it, so a board gets its own from the second way.
 
-**From the machine.** `C:Install` does the whole of it in one command,
-on a machine with nothing but a console:
+**From the machine.** `SYS:Installer`, its icon in the disk's root, does
+it in a window: the language, the keyboard, the disk, a last look, the
+install with a gauge, and a restart. `C:Install` does the whole of it in
+one command, on a machine with nothing but a console:
 
 ```
 Install                            the units it can go onto, and what each holds
