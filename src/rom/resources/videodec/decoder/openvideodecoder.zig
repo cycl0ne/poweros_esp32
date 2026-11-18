@@ -22,8 +22,6 @@ const Session = @import("../videodec_init.zig").Session;
 const engine = @import("../videodec_init.zig").engine;
 const sessions = @import("../videodec_init.zig").sessions;
 const amdgpu = sdk.resources.amdgpu;
-const watchdog = sdk.resources.watchdog;
-const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 
 /// Where the firmware is read from.
 pub const FIRMWARE = "DEVS:firmware/wave511_dec_fw.bin";
@@ -53,8 +51,8 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// The decoder, or null and in `err` why not: VDERR_NO_ENGINE when the
 /// board has no decoder, its firmware is not in
 /// DEVS:firmware/wave511_dec_fw.bin, or it would not wake or start - and
-/// on an AMD graphics device while the watchdog is not armed, where its
-/// firmware or the security processor's table of contents is not in
+/// on an AMD graphics device where its firmware or the security
+/// processor's table of contents is not in
 /// DEVS:firmware/amdgpu/, or without videoparse.library; VDERR_UNSUPPORTED
 /// for a codec it does not take; VDERR_BUSY when eight decoders are open;
 /// VDERR_NO_MEMORY.
@@ -70,8 +68,8 @@ const ring_most: u32 = 64 * 1024 * 1024;
 /// and one, as many shown frames as that and VDA_HeldFrames (2 by
 /// default, at most 16) - about 3 MiB each at 1080p.
 ///
-/// On an AMD graphics device the first decoder, opened while the
-/// watchdog is armed, has amdgpu.resource power the decoder up, start
+/// On an AMD graphics device the first decoder has amdgpu.resource
+/// power the decoder up, start
 /// the security processor with its table of contents and load the
 /// decoder's firmware - both files read from DEVS:firmware/amdgpu/,
 /// named for the blocks' versions - then has the security processor
@@ -308,13 +306,11 @@ fn startHevc(vb: *VideoDecBase) void {
 /// The AMD graphics device's decoder started: STATE_RUNNING, or
 /// STATE_DEAD when the security processor, the firmware or the decoder
 /// failed - or STATE_ASLEEP still when it may not be started yet: the
-/// watchdog not armed, the caller a Task, a file missing.
+/// caller a Task, a file missing.
 fn startVcn(vb: *VideoDecBase) void {
     if (comptime engine != .vcn) return;
     const sys = vb.sys_base;
     const gpu = vb.vcn.gpu orelse return;
-    const wb: *WatchdogBase = @ptrCast(@alignCast(sys.OpenResource(watchdog.WATCHDOGNAME) orelse return));
-    if (wb.ReadWatchdog() == 0) return;
     const task = sys.FindTask(null) orelse return;
     if (task.node.type != .process) return;
     const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return;
