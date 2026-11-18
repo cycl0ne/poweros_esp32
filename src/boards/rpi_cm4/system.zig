@@ -181,6 +181,19 @@ const vchiq = [_]Tag{
     .done,
 };
 
+/// The BCM2711's random number generator, the RNG200 at 0xFE10_4000
+/// (the device tree's rng@7e104000), which the firmware has running when
+/// the kernel starts; the kernel starts it where it has not, and
+/// sdk.hardware.rng takes its words.
+const rng = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_RNG),
+    .value(st.PART_Chip, st.CHIP_BCM2711_RNG200),
+    .pointer(st.PART_ChipName, "bcm2711 rng200"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0xFE10_4000),
+    .done,
+};
+
 /// The VideoCore's firmware, start4.elf, through its mailbox (`mailbox`):
 /// where C:Reboot TRYBOOT and C:CpuClock find it.
 const firmware = [_]Tag{
@@ -231,6 +244,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &hdmi_sound),
     .pointer(st.SYSTAG_Part, &hevc),
     .pointer(st.SYSTAG_Part, &vchiq),
+    .pointer(st.SYSTAG_Part, &rng),
     .done,
 };
 

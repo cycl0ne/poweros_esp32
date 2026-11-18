@@ -315,7 +315,7 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
             @as(u64, hardware.ramdisk.size / 1024),
         });
     } else note("no disk image", .{});
-    note("random numbers from timing jitter: no generator", .{});
+    startGenerator();
     if (exec.SysBase.mem_debug.on) note("memory debugging on since exec started (-Dmemdebug)", .{});
     // Who asks about a task that failed, so the machine need not stop.
     exec.failure.startHelper(exec.SysBase);
@@ -379,6 +379,23 @@ export fn kmain(mpidr: u64, fdt: usize) callconv(.c) noreturn {
 /// log's clock.
 fn uptimeUs() u64 {
     return timer.uptimeUs();
+}
+
+/// The board's random number generator started, where it has one that
+/// the kernel drives - the RNG200, which the firmware has usually started
+/// already; sdk.hardware.rng finds it in the board's list. Before the
+/// other cores take tasks.
+fn startGenerator() void {
+    const base = comptime boards.partFact(st.PARTKIND_RNG, st.PART_Address, 0);
+    if (comptime base == 0 or boards.partFact(st.PARTKIND_RNG, st.PART_Chip, 0) != st.CHIP_BCM2711_RNG200) {
+        note("random numbers from timing jitter: no generator", .{});
+        return;
+    }
+    switch (hardware.rng200.start(base)) {
+        .found => note("random number generator at 0x%lx, started by the firmware", .{@as(u64, base)}),
+        .started => note("random number generator at 0x%lx", .{@as(u64, base)}),
+        .failed => note("random number generator at 0x%lx makes nothing: random numbers from timing jitter", .{@as(u64, base)}),
+    }
 }
 
 /// A kernel status line; the raw port puts the uptime in front.

@@ -23,6 +23,7 @@ pub const gic = @import("gic.zig");
 pub const systimer = @import("systimer.zig");
 pub const ramdisk = @import("ramdisk.zig");
 pub const rng = @import("rng.zig");
+pub const rng200 = @import("rng200.zig");
 
 /// A data cache line, in bytes: the Cortex-A76's, and QEMU's as CTR_EL0
 /// reports it. The kernel checks it against CTR_EL0 as it starts.

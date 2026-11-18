@@ -184,6 +184,19 @@ const rtc = [_]Tag{
     .done,
 };
 
+/// The BCM2712's random number generator, the RNG200 at 0x10_7D20_8000
+/// (the SoC's bus at 0x7D20_8000, the device tree's rng@7d208000) - the
+/// BCM2711's block; the kernel starts it where the firmware has not, and
+/// sdk.hardware.rng takes its words.
+const rng = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_RNG),
+    .value(st.PART_Chip, st.CHIP_BCM2711_RNG200),
+    .pointer(st.PART_ChipName, "bcm2712 rng200"),
+    .value(st.PART_Bus, st.BUS_MEMORY),
+    .value(st.PART_Address, 0x10_7D20_8000),
+    .done,
+};
+
 /// The BCM2712's own temperature sensor, in its AVS monitor at
 /// 0x10_7D54_2000 (the SoC's bus at 0x7D54_2000).
 const temperature = [_]Tag{
@@ -346,6 +359,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &temperature),
     .pointer(st.SYSTAG_Part, &fan),
     .pointer(st.SYSTAG_Part, &gpu),
+    .pointer(st.SYSTAG_Part, &rng),
     .done,
 };
 

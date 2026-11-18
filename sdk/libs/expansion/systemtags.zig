@@ -809,6 +809,12 @@ pub const CHIP_BCM2711_HEVC: u32 = 57;
 /// ISP as MMAL components; the kernel keeps the memory, and it is handed
 /// to the firmware through the board's CHIP_RPI_FIRMWARE.
 pub const CHIP_BCM2711_VCHIQ: u32 = 58;
+/// Broadcom's RNG200 true random number generator (PARTKIND_RNG on
+/// BUS_MEMORY, PART_Address its registers): noise sampled into a FIFO of
+/// 32-bit words, which the kernel starts where the firmware has not.
+/// The BCM2711's at 0xFE10_4000 and the BCM2712's at 0x10_7D20_8000 are
+/// the same block (the device tree's `brcm,bcm2711-rng200`).
+pub const CHIP_BCM2711_RNG200: u32 = 59;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

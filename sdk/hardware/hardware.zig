@@ -114,6 +114,9 @@ pub const plic = if (chip == .rv64sbi) own.plic else struct {};
 /// boot partition. The ESP32s have flash, so there it is empty.
 pub const ramdisk = if (chip == .rv64sbi or aarch64 or chip == .x64uefi) own.ramdisk else struct {};
 pub const trng = if (chip == .rv64sbi) own.trng else struct {};
+/// Broadcom's RNG200, the BCM2711's and the BCM2712's generator, which
+/// the kernel of an AArch64 machine starts where the board lists it.
+pub const rng200 = if (aarch64) own.rng200 else struct {};
 /// The L2 cache controller's flush, on a machine under SBI firmware whose
 /// devices do not see the caches (the JH7110). The ESP32s' caches are
 /// `cache`'s, so there it is empty.
