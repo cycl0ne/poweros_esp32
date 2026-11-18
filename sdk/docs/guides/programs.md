@@ -1019,10 +1019,12 @@ running task is on neither list. That is how `ShowInfo TASKS` lists every
 task once, with the core it is on and the core it is pinned to. A task
 that moves between cores while such a walk is made may be seen twice or
 not at all: one core's lists are held at a time, so a listing of the
-machine is a sweep and not one moment. `CoreCount()` answers how many
-cores the machine runs - the numbers 0 to one less than it are the ones
-those calls take - so a program keeps room per core by what the machine
-says rather than by a number of its own.
+machine is a sweep and not one moment. `FindTask(name)` makes the same
+walk but never misses a task that exists: a search that found nothing
+while a task was moving between cores searches again. `CoreCount()`
+answers how many cores the machine runs - the numbers 0 to one less than
+it are the ones those calls take - so a program keeps room per core by
+what the machine says rather than by a number of its own.
 `ReadCoreTimes(core, &times)` answers how a core has spent its time since
 it started - in tasks, idle, in interrupts, in cycles of its clock, counted
 at every exception rather than sampled (the VisionFive 2's U74s stop
@@ -1042,7 +1044,9 @@ tasks, which is how a fault is told from one that only shows with
 several cores.
 `C:test/Cores` sets tasks on each other through all of the above - FREE
 lets them run flat out, PIN shares them out over the cores in turn - and
-checks that nothing overlapped and nothing was lost.
+checks that nothing overlapped and nothing was lost, and on a machine of
+more than one core looks the tasks up by name the whole time, each of
+which `FindTask` has to find.
 
 A program with more to do than one core gets through hands some of it to
 the others - a task of its own, a job in parts, a job beside it: [Work on

@@ -25,6 +25,11 @@
 //! which has to find it every time however the others' puts and takes
 //! come in between.
 //!
+//! And while they run, on a machine of more than one core, the program
+//! looks each of them up by name (FindTask) as fast as it can: every
+//! worker is there from its making to its end, so FindTask has to find
+//! it every time, whichever core it is moving to or from.
+//!
 //! The workers are made first and started together: each waits for the
 //! go before it looks at the run, so none starts before all are counted
 //! in and pinned. Each one's end comes back as a message once it is gone
@@ -40,7 +45,7 @@ const Task = exec.Task;
 const Printf = dos.stdio.Printf;
 
 const NAME = "Cores";
-const VERSION_STRING = "\x00$VER: Cores 1.4 (05.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Cores 1.5 (18.11.2026)\r\n";
 const TEMPLATE = "SECONDS/N,TASKS/N,PIN/S,FREE/S";
 
 /// The library every worker opens and closes. It has to be one that
@@ -110,8 +115,24 @@ const Run = struct {
     token_signal: u32 = 0,
     ring: bool = true,
     stop: bool = false,
+    /// The program's lookups of the workers by name, and those that
+    /// found none.
+    lookups: u32 = 0,
+    misses: u32 = 0,
 };
 var run: Run = .{};
+
+/// Each of the workers looked up by name for `us` microseconds, as fast
+/// as it goes: a lookup that finds nothing is counted.
+fn lookUp(sys: *ExecBase, names: []const [16:0]u8, us: u64) void {
+    const until = sys.UptimeUs() + us;
+    while (sys.UptimeUs() < until) {
+        for (names) |*name| {
+            run.lookups += 1;
+            if (sys.FindTask(name) == null) run.misses += 1;
+        }
+    }
+}
 
 /// `section` entered by worker `number`: alone, it says so, looks again
 /// and again that nobody else came in, counts and leaves.
@@ -288,7 +309,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var stalled = false;
     var last_tokens: u32 = 0;
     for (0..seconds) |_| {
-        dl.Delay(50);
+        if (cores > 1) lookUp(sys, names[0..run.count], 1_000_000) else dl.Delay(50);
         var tokens: u32 = 0;
         for (run.workers[0..run.count]) |*worker| {
             tokens +%= if (run.ring) @as(*volatile u32, &worker.tokens).* else @as(*volatile u32, &worker.entered[disable]).*;
@@ -356,6 +377,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = Printf(dl, "%-10s %8u put and taken back, %u lost  %s\n", .{
         @as([*:0]const u8, "Port"), messages, lost, @as([*:0]const u8, if (lost == 0) "ok" else "FAILED"),
     });
+    if (run.lookups != 0) {
+        if (run.misses != 0) failed = true;
+        _ = Printf(dl, "%-10s %8u looked up, %u not found  %s\n", .{
+            @as([*:0]const u8, "Names"), run.lookups, run.misses, @as([*:0]const u8, if (run.misses == 0) "ok" else "FAILED"),
+        });
+    }
     if (run.ring) {
         _ = Printf(dl, "%-10s %8u tokens passed  %s\n", .{
             @as([*:0]const u8, "Signals"), tokens, @as([*:0]const u8, if (stalled) "FAILED: the ring stopped" else "ok"),

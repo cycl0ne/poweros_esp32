@@ -128,7 +128,7 @@ pub const LIBRARY_VERSION = 1;
 /// 42: UptimeUs and SpinUs - the time since the machine came up and the
 /// wait that does not give the CPU away, as calls, so that a module
 /// counts by the kernel's rate wherever it was loaded from.
-pub const LIBRARY_REVISION = 44;
+pub const LIBRARY_REVISION = 45;
 const BUILD_DATE = "18.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

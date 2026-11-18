@@ -1599,6 +1599,9 @@ fn stealReady(base: *ExecBase, core: u32, above: i32) ?*Task {
         if (task.node.pri <= above) break; // by priority: nothing below is better
         if (!runnableOn(base, task, core)) continue;
         if (leavingNow(task, core)) continue; // its own core has not let go of it
+        // Counted before it leaves the list, under the list's lock: a
+        // walk that misses it from here walks again (`FindTask`).
+        _ = @atomicRmw(u32, &base.task_moves_begun, .Add, 1, .seq_cst);
         Remove(base, node);
         @atomicStore(u32, &task.owner, core, .release);
         taken = task;
@@ -1607,6 +1610,9 @@ fn stealReady(base: *ExecBase, core: u32, above: i32) ?*Task {
     noteReady(&base.cpus_at[victim]);
     dropTaskLists(base);
     takeTaskLists(base, 5);
+    // This core's lists held again, and kept until the task is the running
+    // one: whoever takes them next finds it there, so the move is done.
+    if (taken != null) _ = @atomicRmw(u32, &base.task_moves_done, .Add, 1, .seq_cst);
     return taken;
 }
 

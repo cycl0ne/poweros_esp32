@@ -340,6 +340,14 @@ pub const ExecBase = extern struct {
     /// lets the others share once the system has started.
     cores_running: u32 = 1,
     share_cores: u32 = 0,
+    /// Tasks one core takes from another's ready list (`stealReady`): the
+    /// moves begun, counted before the task leaves that list, and the
+    /// moves done, counted once the taking core holds its own lists again
+    /// - from which the task is its running one to whoever takes them
+    /// next. In between the task is on no core's lists, and a walk of
+    /// them that met it there walks again (`FindTask`).
+    task_moves_begun: u32 = 0,
+    task_moves_done: u32 = 0,
     /// The word a lock in PSRAM is taken under, where this chip has no
     /// atomic store (locks/_locks.zig). In internal memory, as the base
     /// is.

@@ -3390,8 +3390,13 @@ exec.library/WaitPort
    BEHAVIOR
 	The running task is checked first, then the ready and waiting lists -
 	which is what makes the null case free and the named case a search of
-	every task there is. A named search looks at what runs on the other
-	core too.
+	every task there is. A named search looks at what runs on every other
+	core, and at each core's lists in turn.
+
+	A task one core takes over from another is on neither core's lists for
+	a moment. A search that finds nothing while such a move was under way
+	searches again, so a task that exists is always found, whichever core
+	it is moving to.
 
    CONTEXT
 	- Waits: no.

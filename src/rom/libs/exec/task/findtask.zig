@@ -29,8 +29,13 @@ const Task = sdk.exec.Task;
 /// BEHAVIOR:
 /// The running task is checked first, then the ready and waiting lists -
 /// which is what makes the null case free and the named case a search of
-/// every task there is. A named search looks at what runs on the other
-/// core too.
+/// every task there is. A named search looks at what runs on every other
+/// core, and at each core's lists in turn.
+///
+/// A task one core takes over from another is on neither core's lists for
+/// a moment. A search that finds nothing while such a move was under way
+/// searches again, so a task that exists is always found, whichever core
+/// it is moving to.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -63,6 +68,26 @@ const Task = sdk.exec.Task;
 /// ```
 pub fn FindTask(base: *ExecBase, name: ?[*:0]const u8) ?*Task {
     const wanted = name orelse return running(base);
+    // A task is on no core's lists between a move's two counts, and a walk
+    // may have passed both cores while it was: nothing found is believed
+    // only when no move was under way at the start or begun since.
+    while (true) {
+        const done = @atomicLoad(u32, &base.task_moves_done, .seq_cst);
+        if (walk(base, wanted)) |task| return task;
+        if (@atomicLoad(u32, &base.task_moves_begun, .seq_cst) == done) return null;
+    }
+}
+
+/// One walk of the cores for `wanted`: the caller's own task, then each
+/// core's running task and its lists.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' states.
+/// - `wanted` - the name.
+///
+/// RESULT:
+/// The task, or null when the walk met none of that name.
+fn walk(base: *ExecBase, wanted: [*:0]const u8) ?*Task {
     const sys = base.iface();
     // The caller's interrupts masked for the whole walk - it keeps its
     // core, and the core it is on cannot take an exception in the middle
