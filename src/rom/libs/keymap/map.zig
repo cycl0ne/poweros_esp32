@@ -45,8 +45,10 @@ const Prev = struct {
     }
 };
 
-/// The character `char` in UTF-8 into `out`.
+/// The character `char` in UTF-8 into `out`. A table's 0 is no
+/// character: a key, or a combination of one, that types nothing.
 fn emit(out: ?[]u8, char: u32) Conv {
+    if (char == 0) return .{};
     return emitAll(out, (&char)[0..1]);
 }
 
@@ -143,7 +145,8 @@ fn convert(map: *const KeyMap, raw: u32, qualifier: u32, prev1: i32, prev2: i32,
         var k: u32 = 0;
         while (k < 4) : (k += 1) {
             const cand = entry.chars[(index + k) & 3];
-            if (cand >= 0x40 and cand <= 0x7F) return emit(out, cand & 0x1F);
+            // Control with @ or ` is NUL, which is a character here.
+            if (cand >= 0x40 and cand <= 0x7F) return emitAll(out, &[1]u32{cand & 0x1F});
         }
         return emit(out, c);
     }

@@ -19,8 +19,8 @@ pub const LIBRARY_VERSION = 0;
 /// 3: a keymap from a file of DEVS:Keymaps, the list under a lock,
 /// KeyMapName. 4: NextKeyMap, the list walked. 5: a name finds its
 /// keymap whatever the case of its letters.
-pub const LIBRARY_REVISION = 5;
-const BUILD_DATE = "12.11.2026";
+pub const LIBRARY_REVISION = 6;
+const BUILD_DATE = "18.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

@@ -440,6 +440,50 @@ English text's, and the two keys that send a screen to the back and
 bring the desktop's to the front - takes alt as well while the keymap
 is set, and a Devanagari letter's is typed as it is.
 
+### The layouts of Europe
+
+`DEVS:Keymaps` has a keymap for the layout of each country of Europe,
+named by the country's code:
+
+| Keymap | Layout | Keymap | Layout |
+|---|---|---|---|
+| `gb` | United Kingdom | `pl` | Poland: US, the Polish letters on alt |
+| `ie` | Ireland | `cz` | Czech QWERTZ |
+| `fr` | France, AZERTY | `sk` | Slovak QWERTZ |
+| `be` | Belgium, AZERTY | `hu` | Hungarian QWERTZ |
+| `ch-de` | Switzerland, German on the keys | `si` | Slovenia |
+| `ch-fr` | Switzerland, French on the keys | `hr` | Croatia |
+| `es` | Spain | `ro` | Romania: US, ă â î ș ț on alt |
+| `pt` | Portugal | `ee` | Estonia |
+| `it` | Italy | `lv` | Latvia: US, the Latvian letters on alt |
+| `nl` | the Netherlands: US, the accents on alt | `lt` | Lithuania |
+| `dk` | Denmark | `mt` | Malta |
+| `no` | Norway | `tr` | Turkey, Q |
+| `se` | Sweden | `gr` | Greece |
+| `fi` | Finland | `bg` | Bulgaria (BDS) |
+| `is` | Iceland | `ru` | Russia (ЙЦУКЕН) |
+| | | `ua` | Ukraine |
+| | | `rs` | Serbia, Cyrillic |
+| | | `mk` | North Macedonia |
+
+`deutsch` in the ROM is Germany's and Austria's. Each key types what
+its layout has plain, with shift, with alt - AltGr, the key right of
+the space bar - and with shift and alt. A dead key types nothing and
+changes the key after it: `^` then `e` is `ê`, the space bar after it
+types the accent itself, and a key it does not change types its own
+character. There are fifteen: acute, grave, circumflex, tilde,
+diaeresis, caron (`č`), ogonek (`ą`), double acute (`ő`), breve (`ă`),
+dot above (`ż`), cedilla (`ç`), ring (`å`), macron (`ā`), comma below
+(`ș`) and dot below. Caps Lock gives a letter key's capital, control
+with a key the control character of the letter on it.
+
+`gr`, `bg`, `ru`, `ua`, `rs` and `mk` are written in their own script
+plain and with shift; alt gives the US layout's characters, with
+shift too, and control the control character of that Latin letter -
+for the same reason as `inscript`'s: a command, a path and the line
+that goes back are typed while the keymap is set. Their letters are
+drawn by the fonts of the 64-bit machines.
+
 ### A keymap's file
 
 The file is a program's load file that holds a ROM tag of the type
@@ -487,6 +531,30 @@ the dead keys' forms.
 `src/disk/devs/keymaps/inscript/inscript.zig` is the worked example;
 `src/disk/build.zig` lists it among the modules, which puts it into
 `DEVS:Keymaps`.
+
+The layouts of Europe are written as their keys' characters, a string
+of up to four for each key - plain, shift, alt, shift and alt - with a
+combining mark (U+0302 for the circumflex) for a dead key, and
+`src/disk/devs/keymaps/europe/_europe.zig` makes the tables, the tag
+and the version string of them when the file is compiled:
+
+```zig
+const europe = @import("_europe.zig");
+
+pub const keymap = europe.Keymap("fr", .{
+    .numbers = .{ "²~¬¬", "&1¹¡", "é2~⅛", ... },
+    .top = .{ "aAæÆ", "zZ«<", "eE€¢", ..., "\u{302}\u{308}\u{308}\u{30A}", "$£¤\u{304}" },
+    ...
+});
+
+comptime {
+    europe.publish(keymap);
+}
+```
+
+A letter that a dead key changes gets a table of what each of the
+fifteen makes of it; any other key keeps its four characters in its
+entry.
 
 ## Emoji: `LOCALE:Emoji`
 
@@ -571,7 +639,7 @@ worked in ([commodities guide](commodities.md)).
 
 | Command | What it does |
 |---|---|
-| `C:SetMap [<keymap>]` | makes the keymap of that name the machine's - `deutsch`, `usa` or a file of `DEVS:Keymaps` such as `inscript` -, or says which it is |
+| `C:SetMap [<keymap>]` | makes the keymap of that name the machine's - `deutsch`, `usa` or a file of `DEVS:Keymaps` such as `fr` or `inscript` -, or says which it is |
 | `C:SetPrefs` | makes the locale `ENV:Sys/locale.prefs` describes the default, with the rest of the system's settings; `SHOW` prints the country and language |
 | `C:test/Locale [DATE <date>] [WORDS <words>...]` | prints the default locale - its country, languages, time zone and catalog, now in each of its formats, a number and its money - in the words of its own catalog; reads DATE by the short date and sorts WORDS in the language's order |
 

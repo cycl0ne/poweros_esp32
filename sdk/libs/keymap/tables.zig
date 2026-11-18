@@ -31,12 +31,40 @@ pub const DEAD_SHIFT = km.KCF_DEAD | km.KCF_SHIFT;
 /// The space bar: changed by dead keys, and alt.
 pub const DEAD_ALT = km.KCF_DEAD | km.KCF_ALT;
 
-/// The dead indexes, the order a changed key's characters follow.
+/// The dead indexes, the order a changed key's characters follow. The
+/// ROM's keymaps have the first five, and their letters a character for
+/// each of those; a keymap that has any of the others gives each letter
+/// it changes a character for every one, `DEAD_COUNT` after the plain
+/// one. An index is four bits (`DP_2DINDEXMASK`): fifteen is the most.
 pub const ACUTE = 1;
 pub const GRAVE = 2;
 pub const CIRCUMFLEX = 3;
 pub const TILDE = 4;
 pub const DIAERESIS = 5;
+pub const CARON = 6;
+pub const OGONEK = 7;
+pub const DOUBLE_ACUTE = 8;
+pub const BREVE = 9;
+pub const DOT_ABOVE = 10;
+pub const CEDILLA = 11;
+pub const RING = 12;
+pub const MACRON = 13;
+pub const COMMA_BELOW = 14;
+pub const DOT_BELOW = 15;
+/// How many dead indexes there are.
+pub const DEAD_COUNT = 15;
+/// Each index's combining mark (0 for none): what a letter is put
+/// together with to make the one the dead key changes it into.
+pub const dead_marks = [DEAD_COUNT + 1]u32{ 0, 0x301, 0x300, 0x302, 0x303, 0x308, 0x30C, 0x328, 0x30B, 0x306, 0x307, 0x327, 0x30A, 0x304, 0x326, 0x323 };
+
+/// The dead index of the combining mark `mark`, or null for a mark no
+/// dead key has.
+pub fn deadIndex(comptime mark: u32) ?u32 {
+    for (dead_marks[1..], 1..) |each, index| {
+        if (each == mark) return @intCast(index);
+    }
+    return null;
+}
 
 /// How many characters the UTF-8 string `text` holds.
 fn countOf(comptime text: []const u8) usize {
@@ -149,8 +177,9 @@ pub fn deadShift(comptime dead_plain: u32, comptime plain: u32, comptime dead_sh
 }
 
 /// The space bar (DEAD_ALT): a space changed by dead keys into the accent
-/// itself, and a no-break space with alt.
+/// itself - the spacing form of each dead index's mark - and a no-break
+/// space with alt.
 pub const space: KeyMapEntry = blk: {
-    const words = [_]u32{ km.DPF_MOD, 4, 0, 0xA0, ' ' } ++ points("´`^~¨");
+    const words = [_]u32{ km.DPF_MOD, 4, 0, 0xA0, ' ' } ++ points("´`^~¨ˇ˛˝˘˙¸˚¯,.");
     break :blk .{ .data = &words };
 };
