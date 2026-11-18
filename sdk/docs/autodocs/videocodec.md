@@ -13,6 +13,7 @@ Generated from the source by `./zig build autodoc`.
 - [CloseVideoStream](#closevideostream) - Closes a stream.
 - [DecodeVideoFrame](#decodevideoframe) - Hands out the next frame in the order frames are shown.
 - [DecodeVideoSound](#decodevideosound) - Hands out the film's sound as 16-bit samples, as DecodeAudio does.
+- [GetVideoDecoder](#getvideodecoder) - Says which codec module decodes a film's pictures: the machine's video decoder or the processor, and the module by name and version.
 - [GetVideoStreamAttrs](#getvideostreamattrs) - Answers media.library's tags for a film: its names, its cover, its chapters.
 - [GetVideoStreamInfo](#getvideostreaminfo) - Says what a film is: its pictures, its length, its sound, its title.
 - [GetVideoSubtitle](#getvideosubtitle) - Says what the chosen subtitles show at a time: lines of text, or a picture.
@@ -48,8 +49,9 @@ None.
 
 **BEHAVIOR**
 
-The subtitles' process is told to end and waited for (SINCE 1.3), the
-sound's stream is closed, the decoder of the pictures with every
+The process decoding the pictures ahead (SINCE 1.14) and the
+subtitles' (SINCE 1.3) are told to end and waited for, the sound's
+stream is closed, the decoder of the pictures with every
 frame still lent, the film - and the file, when the stream opened it
 (VCA_Name) - and the libraries the stream opened.
 
@@ -127,25 +129,36 @@ when it refuses a packet sent; not for a film read through a
 function). The frame's `time` is when it is due, and `number`
 counts the frames handed out since the stream was opened or moved.
 
+A stream opened with VCA_DecodeAhead (SINCE 1.14) has its pictures
+decoded by a process of the library's into a queue: the frame is
+taken from its front, and the call waits only while it is empty - for
+the frame being decoded. The process decodes the next as soon as there
+is room. What the decoder said instead of a frame - the end, an error -
+comes through the queue in its place; after the end, or an error the
+decoder does not go past, the call says it again until a seek.
+
 **CONTEXT**
 
-- Waits: yes, on the file and the chip.
+- Waits: yes, on the file and the chip - decoded ahead, for the next
+  frame while none is ready.
 - Interrupts: no.
 - Locks: no spinlock may be held.
-- Process: a process for a file; a task will do with VCA_ReadFunc.
+- Process: a process for a file; a task will do with VCA_ReadFunc, or
+  when the pictures are decoded ahead.
 
 **OWNERSHIP**
 
 The frame's planes are the decoder's, lent until ReleaseVideoFrame
 gives them back; they do not change while lent. The pictures are
-decoded by one task at a time, which may be another than the one that
-decodes the sound.
+asked for by one task at a time, which may be another than the one
+that decodes the sound.
 
 **NOTES**
 
 The chip decodes 1080p H.264 at about 150 frames a second. Motion JPEG
 is decoded on the calling task, about a second for a 1080p picture on
-the VisionFive 2: for small pictures.
+the VisionFive 2: for small pictures. A frame decoded ahead costs the
+decoder a frame's memory for each place in the queue.
 
 **BUGS**
 
@@ -230,6 +243,75 @@ None known.
 ```zig
 var samples: [2048 * 2]i16 = undefined;
 const got = vcb.DecodeVideoSound(film, &samples, 2048);
+```
+
+## GetVideoDecoder
+
+Says which codec module decodes a film's pictures: the machine's video decoder or the processor, and the module by name and version.
+
+**SYNOPSIS**
+
+```zig
+fn GetVideoDecoder(base: *VideoCodecBase, stream: *vc.VideoStream, info: *vc.VideoDecoderInfo) void
+```
+
+**SINCE**
+
+1.13. LVO -72.
+
+**INPUTS**
+
+- `stream`: what OpenVideoStream made.
+- `info`: where it goes.
+
+**RESULT**
+
+None; `info` is filled in.
+
+**BEHAVIOR**
+
+`kind` is what the module's tag says it is: `VCMOD_CHIP`, a chip's
+decoder - chip.vcodec, through videodec.resource - or
+`VCMOD_SOFTWARE`, one that decodes on the processor. `version` and
+`revision` are the module's as it is loaded, and `name` its file in
+LIBS:codecs/, cut at 31 characters. It is the module decoding now: a
+chip's that refuses the stream as its first frame is asked for hands
+it on to the next module, and from then on that one is named. A
+stream opened without its pictures' decoder has none: `info` is
+cleared, `kind` 0.
+
+**CONTEXT**
+
+- Waits: only while a frame is decoded ahead (VCA_DecodeAhead), for it
+  to be done: the module may be changed under it.
+- Interrupts: no.
+- Locks: none.
+- Process: a task will do.
+
+**OWNERSHIP**
+
+`info` is the caller's.
+
+**NOTES**
+
+Asked before the first frame, the answer is the module that took the
+stream when it was opened; one that refuses it later is not known
+yet.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetVideoStreamInfo`, `DecodeVideoFrame`
+
+**EXAMPLES**
+
+```zig
+var decoder: vc.VideoDecoderInfo = .{};
+vcb.GetVideoDecoder(film, &decoder);
+const by_chip = decoder.kind == sdk.vcodec.VCMOD_CHIP;
 ```
 
 ## GetVideoStreamAttrs
@@ -331,7 +413,8 @@ track: its codec, rate and channels, as DecodeVideoSound hands it out.
 
 **CONTEXT**
 
-- Waits: no.
+- Waits: only while a frame is decoded ahead (VCA_DecodeAhead), for it
+  to be done, since the decoder is asked.
 - Interrupts: no.
 - Locks: none.
 - Process: a task will do.
@@ -614,7 +697,8 @@ fn OpenVideoStream(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, err: 
   beginning where it is) or `VCA_ReadFunc` with `VCA_ReadData` (a
   function of the program's) - and `VCA_Sound` FALSE for the pictures
   alone; `VCA_SoundTrack` and `VCA_Subtitles` choose the tracks
-  (SINCE 1.3).
+  (SINCE 1.3); `VCA_DecodeAhead` has that many frames decoded ahead
+  (SINCE 1.14).
 - `err`: where why it failed goes (VCERR_*), or null.
 
 **RESULT**
@@ -652,6 +736,14 @@ from the start by a process of the library's, for GetVideoSubtitle
 and the first samples are those at the start of what the film
 presents.
 
+With `VCA_DecodeAhead` (SINCE 1.14) - at most VIDEO_MOST_AHEAD frames,
+and not for a film read through a function - the decoder is asked to
+lend that many frames more than VIDEO_HELD_FRAMES, and a process of
+the library's ("videocodec pictures"), a priority below the caller's,
+starts decoding the pictures into a queue that long, for
+DecodeVideoFrame. Where no process can be made, the pictures are
+decoded on the task that asks for them, as without the tag.
+
 **CONTEXT**
 
 - Waits: yes, on the file, LIBS:codecs/ and the chip.
@@ -677,6 +769,9 @@ than in memory is loaded anew once no film has the old one. media.library
 reads a Matroska file's tracks ahead, 256 KiB at a time each.
 Subtitles take about 12 KiB, a process with a stack of 32 KiB, and
 what they read ahead: up to ten seconds of lines, or a picture.
+Decoding ahead takes a process with a stack of 64 KiB (32 KiB on the
+32-bit chips), and a decoded frame for each place in the queue: about
+3 MiB at 1080p, 12 MiB at 4K, twice that at 10 bits.
 
 **BUGS**
 
@@ -728,7 +823,9 @@ None.
 
 The frame's buffer goes back to the decoder, which decodes into it
 again, and `frame` is cleared. A frame that is not one the stream has
-lent - given back already, or cleared - is passed by.
+lent - given back already, or cleared - is passed by. Decoded ahead
+(SINCE 1.14), the process hands the buffer to the decoder before it
+decodes its next frame.
 
 **CONTEXT**
 
@@ -795,12 +892,14 @@ drops what it was sent and not yet shown. The next frame
 DecodeVideoFrame hands out is that key frame, `number` 0: frames due
 before it are passed over. The sound is moved to the key frame's time,
 so the next samples DecodeVideoSound hands out go with it, and the
-subtitles are read from there (SINCE 1.3).
+subtitles are read from there (SINCE 1.3). Decoded ahead (SINCE 1.14),
+the frame being decoded is waited for, the frames in the queue go back
+to the decoder, and the process decodes on from the key frame.
 
 **CONTEXT**
 
 - Waits: yes, on the file - and for a piece of sound being decoded by
-  another task to be done.
+  another task to be done, and for a frame being decoded ahead.
 - Interrupts: no.
 - Locks: no spinlock may be held.
 - Process: a process: the file is read.

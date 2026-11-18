@@ -31,6 +31,7 @@ pub const LVO = struct {
     pub const GetVideoTrack = libraries.lvo(14);
     pub const SelectVideoTrack = libraries.lvo(15);
     pub const GetVideoSubtitle = libraries.lvo(16);
+    pub const GetVideoDecoder = libraries.lvo(17);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -49,6 +50,7 @@ pub const Fn = struct {
     pub const GetVideoTrack = *const fn (*VideoCodecBase, *videocodec.VideoStream, u32, *media.MediaTrack) callconv(.c) i32;
     pub const SelectVideoTrack = *const fn (*VideoCodecBase, *videocodec.VideoStream, u32, i64) callconv(.c) i32;
     pub const GetVideoSubtitle = *const fn (*VideoCodecBase, *videocodec.VideoStream, i64, *videocodec.VideoSubtitle) callconv(.c) i32;
+    pub const GetVideoDecoder = *const fn (*VideoCodecBase, *videocodec.VideoStream, *videocodec.VideoDecoderInfo) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -134,5 +136,11 @@ pub const VideoCodecBase = opaque {
     /// VCERR_END when none is (SINCE 1.3).
     pub fn GetVideoSubtitle(self: *VideoCodecBase, stream: *videocodec.VideoStream, time: i64, subtitle: *videocodec.VideoSubtitle) i32 {
         return libraries.call(self, LVO.GetVideoSubtitle, Fn.GetVideoSubtitle, .{ stream, time, subtitle });
+    }
+
+    /// The codec module that decodes the pictures into `info`: the machine's
+    /// video decoder or the processor, its name and version (SINCE 1.13).
+    pub fn GetVideoDecoder(self: *VideoCodecBase, stream: *videocodec.VideoStream, info: *videocodec.VideoDecoderInfo) void {
+        return libraries.call(self, LVO.GetVideoDecoder, Fn.GetVideoDecoder, .{ stream, info });
     }
 };

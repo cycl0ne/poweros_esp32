@@ -8,6 +8,7 @@ const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
 const _codec = @import("../codec/_codec.zig");
 const subtitle = @import("../subtitle/_subtitle.zig");
+const _ahead = @import("../ahead/_ahead.zig");
 
 /// Moves a film's pictures to the key frame at or before a time, and its
 /// sound to that frame's time.
@@ -36,11 +37,13 @@ const subtitle = @import("../subtitle/_subtitle.zig");
 /// DecodeVideoFrame hands out is that key frame, `number` 0: frames due
 /// before it are passed over. The sound is moved to the key frame's time,
 /// so the next samples DecodeVideoSound hands out go with it, and the
-/// subtitles are read from there (SINCE 1.3).
+/// subtitles are read from there (SINCE 1.3). Decoded ahead (SINCE 1.14),
+/// the frame being decoded is waited for, the frames in the queue go back
+/// to the decoder, and the process decodes on from the key frame.
 ///
 /// CONTEXT:
 /// - Waits: yes, on the file - and for a piece of sound being decoded by
-///   another task to be done.
+///   another task to be done, and for a frame being decoded ahead.
 /// - Interrupts: no.
 /// - Locks: no spinlock may be held.
 /// - Process: a process: the file is read.
@@ -67,6 +70,10 @@ const subtitle = @import("../subtitle/_subtitle.zig");
 pub fn SeekVideo(_: *VideoCodecBase, stream: *vc.VideoStream, time: i64) i64 {
     const s = _stream.of(stream);
     if (s.file_info.seekable == 0) return vc.VCERR_NOSEEK;
+    // The process decoding ahead kept off the decoder and the track.
+    const ahead = s.ahead;
+    if (ahead) |held| _ahead.hold(held);
+    defer if (ahead) |held| _ahead.letGo(held);
     const moved = s.mb.SeekMedia(s.file, s.track, time);
     if (moved != media.MERR_OK) return _stream.fromMedia(moved);
     // The key packet read, to know where it landed: it is decoded first.
@@ -79,6 +86,7 @@ pub fn SeekVideo(_: *VideoCodecBase, stream: *vc.VideoStream, time: i64) i64 {
     } else if (read != media.MERR_END) {
         return _stream.fromMedia(read);
     }
+    if (ahead) |held| _ahead.empty(held);
     _codec.flush(s);
     s.shown_from = landed;
     s.number = 0;

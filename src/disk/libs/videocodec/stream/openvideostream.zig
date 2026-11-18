@@ -15,6 +15,7 @@ const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
 const Stream = _stream.Stream;
 const _codec = @import("../codec/_codec.zig");
+const _ahead = @import("../ahead/_ahead.zig");
 
 /// Opens a film and finds a decoder for its pictures and one for its
 /// sound - and reads its subtitles.
@@ -32,7 +33,8 @@ const _codec = @import("../codec/_codec.zig");
 ///   beginning where it is) or `VCA_ReadFunc` with `VCA_ReadData` (a
 ///   function of the program's) - and `VCA_Sound` FALSE for the pictures
 ///   alone; `VCA_SoundTrack` and `VCA_Subtitles` choose the tracks
-///   (SINCE 1.3).
+///   (SINCE 1.3); `VCA_DecodeAhead` has that many frames decoded ahead
+///   (SINCE 1.14).
 /// - `err`: where why it failed goes (VCERR_*), or null.
 ///
 /// RESULT:
@@ -68,6 +70,14 @@ const _codec = @import("../codec/_codec.zig");
 /// and the first samples are those at the start of what the film
 /// presents.
 ///
+/// With `VCA_DecodeAhead` (SINCE 1.14) - at most VIDEO_MOST_AHEAD frames,
+/// and not for a film read through a function - the decoder is asked to
+/// lend that many frames more than VIDEO_HELD_FRAMES, and a process of
+/// the library's ("videocodec pictures"), a priority below the caller's,
+/// starts decoding the pictures into a queue that long, for
+/// DecodeVideoFrame. Where no process can be made, the pictures are
+/// decoded on the task that asks for them, as without the tag.
+///
 /// CONTEXT:
 /// - Waits: yes, on the file, LIBS:codecs/ and the chip.
 /// - Interrupts: no.
@@ -90,6 +100,9 @@ const _codec = @import("../codec/_codec.zig");
 /// reads a Matroska file's tracks ahead, 256 KiB at a time each.
 /// Subtitles take about 12 KiB, a process with a stack of 32 KiB, and
 /// what they read ahead: up to ten seconds of lines, or a picture.
+/// Decoding ahead takes a process with a stack of 64 KiB (32 KiB on the
+/// 32-bit chips), and a decoded frame for each place in the queue: about
+/// 3 MiB at 1080p, 12 MiB at 4K, twice that at 10 bits.
 ///
 /// BUGS:
 /// None known.
@@ -125,6 +138,9 @@ fn open(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, code: *i32) ?*vc
     const read_fn = ub.GetTagData(vc.VCA_ReadFunc, 0, tags);
     const read_data = ub.GetTagData(vc.VCA_ReadData, 0, tags);
     const want_sound = ub.GetTagData(vc.VCA_Sound, 1, tags) != 0;
+    // A read function is the program's, called on its own task: decoded
+    // there.
+    const ahead: u32 = if (read_fn != 0) 0 else @intCast(@min(ub.GetTagData(vc.VCA_DecodeAhead, 0, tags), vc.VIDEO_MOST_AHEAD));
 
     const source: utility.TagItem = if (name != 0)
         .{ .tag = media.MDA_Name, .data = name }
@@ -178,6 +194,7 @@ fn open(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, code: *i32) ?*vc
     s.track = file_info.video;
     s.picture = picture;
     s.codec = _stream.codecOf(picture.codec);
+    s.slots = _stream.held_frames + ahead;
     sys.InitSemaphore(&s.sound_lock);
 
     const opened = _codec.open(s);
@@ -186,6 +203,8 @@ fn open(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, code: *i32) ?*vc
         code.* = opened;
         return null;
     }
+    // Without memory for the queue, decoded on the caller's task.
+    if (ahead != 0) s.ahead = _ahead.create(s, ahead);
     s.sound_track = vc.VIDEO_NO_TRACK;
     s.sub_track = vc.VIDEO_NO_TRACK;
     const sound_track: u32 = @truncate(ub.GetTagData(vc.VCA_SoundTrack, file_info.audio, tags));

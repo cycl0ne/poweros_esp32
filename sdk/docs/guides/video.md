@@ -82,6 +82,33 @@ the frames handed out. `VCERR_CORRUPT` is one picture the decoder
 stopped on: calling again goes on with the next. `VCERR_END` follows the
 last.
 
+### Decoded ahead
+
+```zig
+const film = vcb.OpenVideoStream(&[_]utility.TagItem{
+    .{ .tag = vc.VCA_Name, .data = @intFromPtr(path) },
+    .{ .tag = vc.VCA_DecodeAhead, .data = 3 },
+    .{},
+}, &err) orelse return;
+```
+
+How long a frame takes to decode depends on the frame. A key frame
+holds a whole picture, and the frames between hold what changed: in a
+4K AV1 film an AMD graphics device's decoder takes up to 40 ms for the
+large ones and a few for the rest, while at 60 frames a second each
+frame has 16.7 ms. Decoded when it is due, every large frame is late.
+With `VCA_DecodeAhead` (since 1.14) a process of the library's decodes
+that many frames ahead - up to `VIDEO_MOST_AHEAD`, four - into a queue,
+and `DecodeVideoFrame` takes the next from it. It waits only when the
+queue is empty, so the frames around a large one make up for it. The
+calls stay the same: frames are given back with `ReleaseVideoFrame`,
+and `SeekVideo` empties the queue and starts again at the key frame.
+The program still holds three at most. Each place in the queue is a
+frame the decoder lends: about 3 MiB at 1080p, 12 MiB at 4K. A film
+read through `VCA_ReadFunc` is decoded on the program's task as before,
+since its function is the program's. Movie and videocodec.datatype
+decode three frames ahead.
+
 ## On a video layer
 
 Where the screen's display has a video layer
@@ -276,6 +303,18 @@ decodes the track; `VCERR_NOCODEC` - the board has not the module's chip
 stream that it cannot decode it answers `ReceiveVCodecFrame` with
 `VCERR_UNSUPPORTED` before its first frame, and the next module starts
 again at the key packet.
+
+Which module decodes a film's pictures `GetVideoDecoder` says (1.13):
+its kind - `VCMOD_CHIP`, the machine's video decoder, or
+`VCMOD_SOFTWARE`, the processor - its file in `LIBS:codecs/` and its
+version. A chip's that refuses the stream has handed it on by its first
+frame, so a program that shows the answer asks after that one:
+
+```zig
+var decoder: vc.VideoDecoderInfo = .{};
+vcb.GetVideoDecoder(film, &decoder);
+const by_chip = decoder.kind == sdk.vcodec.VCMOD_CHIP; // "chip.vcodec"
+```
 
 A decoder is asked for frames (`ReceiveVCodecFrame`); `VCERR_NEED_DATA`
 has videocodec send the next packet (`SendVCodecPacket`), and

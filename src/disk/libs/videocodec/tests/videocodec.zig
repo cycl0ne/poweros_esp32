@@ -94,6 +94,8 @@ const clip_mkv = @embedFile("clip.mkv");
 const subs_mkv = @embedFile("subs.mkv");
 const subs_ac3_ref = @embedFile("subs_ac3_ref.raw");
 const subtitle = @import("../subtitle/_subtitle.zig");
+const _stream = @import("../stream/_stream.zig");
+const _ahead = @import("../ahead/_ahead.zig");
 
 /// How far a sample of ours may be from ffmpeg's: two decoders' inverse
 /// transforms round apart.
@@ -466,6 +468,110 @@ test "frames held and given back; a seek moves the pictures and the sound togeth
     vcb.ReleaseVideoFrame(film, &extra);
     // Closed with a frame still lent: it goes with the stream.
     try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, &extra));
+}
+
+test "decoded ahead: the queue filled to its length, frames in order from it, held and given back, emptied by a seek, the end said again" {
+    // The process's work is done here, a step at a time.
+    _ahead.decode_inline = true;
+    defer _ahead.decode_inline = false;
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
+    const vcb = rig.vcb;
+    try rig.write("WORK:clip.mov", clip_mov);
+    var err: i32 = 0;
+    const film = vcb.OpenVideoStream(&[_]utility.TagItem{
+        .{ .tag = vc.VCA_Name, .data = @intFromPtr("WORK:clip.mov") },
+        .{ .tag = vc.VCA_DecodeAhead, .data = 2 },
+        .{},
+    }, &err) orelse return error.NoStream;
+    defer vcb.CloseVideoStream(film);
+    const s = _stream.of(film);
+    const ahead = s.ahead orelse return error.NotAhead;
+    try testing.expectEqual(vc.VIDEO_HELD_FRAMES + 2, s.slots);
+
+    // Two frames, and the queue is full.
+    try testing.expectEqual(_ahead.Stepped.decoded, _ahead.step(ahead));
+    try testing.expectEqual(_ahead.Stepped.decoded, _ahead.step(ahead));
+    try testing.expectEqual(_ahead.Stepped.idle, _ahead.step(ahead));
+    try testing.expectEqual(@as(u32, 2), ahead.count);
+
+    // Taken in order - the third decoded when the queue is empty - and
+    // each its own planes.
+    var frames: [vc.VIDEO_HELD_FRAMES]vc.VideoFrame = @splat(.{});
+    for (&frames, 0..) |*frame, n| {
+        try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, frame));
+        try testing.expectEqual(@as(i64, @intCast(n * 100_000)), frame.time);
+        try testing.expectEqual(@as(u32, @intCast(n)), frame.number);
+    }
+    try testing.expect(frames[0].picture.y != frames[2].picture.y);
+    // The queue fills behind the three held: every slot in use.
+    try testing.expectEqual(_ahead.Stepped.decoded, _ahead.step(ahead));
+    try testing.expectEqual(_ahead.Stepped.decoded, _ahead.step(ahead));
+    try testing.expectEqual(_ahead.Stepped.idle, _ahead.step(ahead));
+    var extra: vc.VideoFrame = .{};
+    try testing.expectEqual(vc.VCERR_BUSY, vcb.DecodeVideoFrame(film, &extra));
+
+    // Given back - twice is passed by - and handed to the decoder by the
+    // next step, which decodes into it.
+    vcb.ReleaseVideoFrame(film, &frames[0]);
+    vcb.ReleaseVideoFrame(film, &frames[0]);
+    try testing.expectEqual(@as(u32, 1), @popCount(ahead.given_back));
+    try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, &extra));
+    try testing.expectEqual(@as(i64, 300_000), extra.time);
+    try testing.expectEqual(_ahead.Stepped.decoded, _ahead.step(ahead));
+    try testing.expectEqual(@as(u32, 0), ahead.given_back);
+    try testing.expectEqual(@as(u32, 2), ahead.count);
+
+    // A seek: what was queued goes back, decoding goes on from the key
+    // frame.
+    try testing.expectEqual(@as(i64, 700_000), vcb.SeekVideo(film, 750_000));
+    try testing.expectEqual(@as(u32, 0), ahead.count);
+    vcb.ReleaseVideoFrame(film, &extra);
+    vcb.ReleaseVideoFrame(film, &frames[1]);
+    vcb.ReleaseVideoFrame(film, &frames[2]);
+    var count: u32 = 0;
+    while (vcb.DecodeVideoFrame(film, &extra) == vc.VCERR_OK) : (count += 1) {
+        try testing.expectEqual(@as(i64, 700_000) + @as(i64, count) * 100_000, extra.time);
+        try testing.expectEqual(count, extra.number);
+        vcb.ReleaseVideoFrame(film, &extra);
+    }
+    try testing.expectEqual(@as(u32, 3), count);
+    // The end, said again until a seek.
+    try testing.expectEqual(vc.VCERR_END, vcb.DecodeVideoFrame(film, &extra));
+    try testing.expectEqual(@as(i64, 0), vcb.SeekVideo(film, 0));
+    try testing.expectEqual(vc.VCERR_OK, vcb.DecodeVideoFrame(film, &extra));
+    try testing.expectEqual(@as(i64, 0), extra.time);
+
+    // Asked about while a frame is queued.
+    try testing.expectEqual(_ahead.Stepped.decoded, _ahead.step(ahead));
+    var info: vc.VideoStreamInfo = .{};
+    vcb.GetVideoStreamInfo(film, &info);
+    try testing.expectEqual(@as(u32, 96), info.width);
+    var decoder: vc.VideoDecoderInfo = .{};
+    vcb.GetVideoDecoder(film, &decoder);
+    try testing.expectEqual(vcodec.VCMOD_SOFTWARE, decoder.kind);
+
+    // No more than VIDEO_MOST_AHEAD; none for a film read through a
+    // function, which is decoded on the caller's task.
+    const most = vcb.OpenVideoStream(&[_]utility.TagItem{
+        .{ .tag = vc.VCA_Name, .data = @intFromPtr("WORK:clip.mov") },
+        .{ .tag = vc.VCA_DecodeAhead, .data = 99 },
+        .{},
+    }, &err) orelse return error.NoStream;
+    try testing.expectEqual(vc.VIDEO_HELD_FRAMES + vc.VIDEO_MOST_AHEAD, _stream.of(most).slots);
+    vcb.CloseVideoStream(most);
+    var memory: Memory = .{ .bytes = clip_mp4 };
+    const read = vcb.OpenVideoStream(&[_]utility.TagItem{
+        .{ .tag = vc.VCA_ReadFunc, .data = @intFromPtr(&Memory.read) },
+        .{ .tag = vc.VCA_ReadData, .data = @intFromPtr(&memory) },
+        .{ .tag = vc.VCA_DecodeAhead, .data = 2 },
+        .{},
+    }, &err) orelse return error.NoStream;
+    try testing.expect(_stream.of(read).ahead == null);
+    try testing.expectEqual(vc.VIDEO_HELD_FRAMES, _stream.of(read).slots);
+    vcb.CloseVideoStream(read);
+    // Closed with a frame held and one queued: they go with the stream.
 }
 
 /// Every plane of a Motion JPEG frame, and each of its rows, starts on 16
@@ -1117,6 +1223,37 @@ test "the codec modules: a chip's first, software by priority; one that opens no
     try testing.expect(rig.open("WORK:clip.mov", &err) == null);
     try testing.expectEqual(vc.VCERR_NOCODEC, err);
     _codec.test_modules = &modules;
+}
+
+test "GetVideoDecoder: the module decoding by kind, name and version - the chip's, then the software's it handed the stream to" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch |e| std.debug.panic("deinit: {}", .{e});
+    const fake_library: *exec.Library = @ptrCast(@alignCast(kexec.InitResident(kexec.SysBase, &fake_tag.resident, null) orelse return error.NoLibrary));
+    defer _ = rig.sysLib().RemLibrary(fake_library);
+    const vcb = rig.vcb;
+    try rig.write("WORK:clip.mov", clip_mov);
+    var err: i32 = 0;
+
+    // The chip's takes the stream when it is opened and refuses it as the
+    // first frame is asked for; Motion JPEG's decodes it from there.
+    const chip_first = [_]_codec.Module{ modules[1], fakeAs(vcodec.VCMOD_CHIP, 0) };
+    _codec.test_modules = &chip_first;
+    defer _codec.test_modules = &modules;
+    Fake.reset(vc.VCERR_OK);
+    const film = rig.open("WORK:clip.mov", &err) orelse return error.NoStream;
+    defer vcb.CloseVideoStream(film);
+    var decoder: vc.VideoDecoderInfo = .{};
+    vcb.GetVideoDecoder(film, &decoder);
+    try testing.expectEqual(vcodec.VCMOD_CHIP, decoder.kind);
+    try testing.expectEqualStrings("fake.vcodec", std.mem.sliceTo(&decoder.name, 0));
+    try testing.expectEqual(@as(u32, fake_tag.resident.version), decoder.version);
+
+    try expectClip(vcb, film);
+    vcb.GetVideoDecoder(film, &decoder);
+    try testing.expectEqual(vcodec.VCMOD_SOFTWARE, decoder.kind);
+    try testing.expectEqualStrings(mjpeg_init.LIBRARY_NAME, std.mem.sliceTo(&decoder.name, 0));
+    try testing.expectEqual(@as(u32, mjpeg_init.mjpeg_vcodec_tag.resident.version), decoder.version);
 }
 
 fn put32(into: []u8, at: usize, value: u32) void {
