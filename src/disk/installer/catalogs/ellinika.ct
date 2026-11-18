@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language ellinika
+## codeset 106
+; The Installer's strings in Greek. A draft: it waits for a native reader to go through it.
+MSG_WINDOW_TITLE
+Εγκατάσταση του συστήματος
+MSG_BACK
+_Πίσω
+MSG_NEXT
+_Επόμενο
+MSG_LANGUAGE_TITLE
+Γλώσσα
+MSG_LANGUAGE_INTRO
+Επιλέξτε τη γλώσσα του συστήματος. Χρησιμοποιείται ήδη στα επόμενα βήματα, και το εγκατεστημένο σύστημα ξεκινά σε αυτήν.
+MSG_COLUMN_LANGUAGE
+Γλώσσα και χώρα
+MSG_KEYBOARD_TITLE
+Πληκτρολόγιο
+MSG_KEYBOARD_INTRO
+Επιλέξτε τη διάταξη του πληκτρολογίου. Ισχύει αμέσως: δοκιμάστε την στο πεδίο από κάτω.
+MSG_COLUMN_KEYMAP
+Διάταξη
+MSG_COLUMN_LAYOUT
+Περιγραφή
+MSG_TRY
+_Δοκιμή
+MSG_TARGET_TITLE
+Δίσκος
+MSG_TARGET_INTRO
+Επιλέξτε τον δίσκο όπου θα εγκατασταθεί το σύστημα. Όλα όσα έχει θα χαθούν.
+MSG_COLUMN_DEVICE
+Συσκευή
+MSG_COLUMN_UNIT
+Μονάδα
+MSG_COLUMN_SIZE
+Μέγεθος
+MSG_COLUMN_HOLDS
+Περιεχόμενο
+MSG_HOLDS_CONTAINER
+GPT με περιέκτη PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+πίνακας PowerOS
+MSG_HOLDS_FOREIGN
+πίνακας για άλλο μέγεθος μπλοκ
+MSG_HOLDS_NOTHING
+τίποτα
+MSG_HOLDS_UNREADABLE
+δεν διαβάζεται
+MSG_HOLDS_RUNNING
+%s - το σύστημα που εκτελείται
+MSG_LOOK_AGAIN
+_Νέα αναζήτηση
+MSG_TARGET_NONE
+Δεν υπάρχει δίσκος για εγκατάσταση. Τοποθετήστε μια κάρτα, έναν SSD ή ένα στικάκι USB και πατήστε «Νέα αναζήτηση».
+MSG_TARGET_CHOOSE
+Επιλέξτε έναν δίσκο.
+MSG_TARGET_RUNNING
+Το σύστημα που εκτελείται βρίσκεται σε αυτόν τον δίσκο: δεν μπορεί να εγκατασταθεί από πάνω του.
+MSG_TARGET_SMALL
+Αυτός ο δίσκος χωράει %s, και το σύστημα χρειάζεται τουλάχιστον %s.
+MSG_TARGET_UNREADABLE
+Αυτός ο δίσκος δεν διαβάζεται.
+MSG_TARGET_FITS
+%s στο %s, μονάδα %d.
+MSG_CONFIRM_TITLE
+Έτοιμο
+MSG_CONFIRM_DISK
+Δίσκος: %s, μονάδα %d, %s
+MSG_CONFIRM_LANGUAGE
+Γλώσσα: %s
+MSG_CONFIRM_KEYMAP
+Πληκτρολόγιο: %s
+MSG_CONFIRM_LOST
+Όλα όσα έχει αυτός ο δίσκος θα χαθούν.
+MSG_INSTALL
+_Εγκατάσταση
+MSG_PROGRESS_TITLE
+Εγκατάσταση
+MSG_PHASE_LOOKING
+Εξέταση του συστήματος ...
+MSG_PHASE_PREPARING
+Δημιουργία των διαμερισμάτων ...
+MSG_PHASE_COPYING
+Αντιγραφή του συστήματος ...
+MSG_PHASE_SETTINGS
+Εγγραφή των ρυθμίσεων ...
+MSG_COPIED
+Αρχεία που αντιγράφηκαν: %d (%s)
+MSG_STOP
+_Διακοπή
+MSG_STOPPING
+Διακοπή ...
+MSG_NO_PROCESS
+Δεν υπάρχει διεργασία για να εκτελεστεί η εγκατάσταση.
+MSG_DONE_TITLE
+Ολοκληρώθηκε
+MSG_DONE
+Το σύστημα εγκαταστάθηκε, αρχεία: %d (%s).
+MSG_DONE_NEXT
+Αφαιρέστε το στικάκι και επανεκκινήστε τον υπολογιστή: θα ξεκινήσει από τον δίσκο.
+MSG_FAILED
+Η εγκατάσταση δεν μπόρεσε να ολοκληρωθεί.
+MSG_STOPPED
+Η εγκατάσταση διακόπηκε.
+MSG_NOT_BOOTABLE
+Ο δίσκος δεν έχει σύστημα που ξεκινά. Το «Πίσω» οδηγεί ξανά στους δίσκους.
+MSG_RESTART
+_Επανεκκίνηση
+MSG_RESTART_FAILED
+Το C:Reboot δεν μπόρεσε να επανεκκινήσει τον υπολογιστή.
+MSG_NOLIBRARY
+%s: δεν ανοίγει το %s\n
+MSG_NOMEMORY
+%s: δεν υπάρχει μνήμη\n
+MSG_NOWINDOW
+%s: κανένα παράθυρο\n

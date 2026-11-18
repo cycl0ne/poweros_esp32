@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language magyar
+## codeset 106
+; The Installer's strings in Hungarian, a draft.
+MSG_WINDOW_TITLE
+A rendszer telepítése
+MSG_BACK
+_Vissza
+MSG_NEXT
+_Tovább
+MSG_LANGUAGE_TITLE
+Nyelv
+MSG_LANGUAGE_INTRO
+Válassza ki a rendszer nyelvét. A további lépések már ezt használják, és a telepített rendszer is ezzel indul.
+MSG_COLUMN_LANGUAGE
+Nyelv és ország
+MSG_KEYBOARD_TITLE
+Billentyűzet
+MSG_KEYBOARD_INTRO
+Válassza ki a billentyűzetkiosztást. Azonnal érvényes: próbálja ki az alábbi mezőben.
+MSG_COLUMN_KEYMAP
+Billentyűtérkép
+MSG_COLUMN_LAYOUT
+Kiosztás
+MSG_TRY
+_Kipróbálás
+MSG_TARGET_TITLE
+Lemez
+MSG_TARGET_INTRO
+Válassza ki a lemezt, amelyre a rendszer kerül. Minden rajta lévő adat elvész.
+MSG_COLUMN_DEVICE
+Eszköz
+MSG_COLUMN_UNIT
+Egység
+MSG_COLUMN_SIZE
+Méret
+MSG_COLUMN_HOLDS
+Tartalom
+MSG_HOLDS_CONTAINER
+GPT PowerOS-tárolóval
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-tábla
+MSG_HOLDS_FOREIGN
+más blokkmérethez készült tábla
+MSG_HOLDS_NOTHING
+semmi
+MSG_HOLDS_UNREADABLE
+nem olvasható
+MSG_HOLDS_RUNNING
+%s - a futó rendszer
+MSG_LOOK_AGAIN
+Ú_jrakeresés
+MSG_TARGET_NONE
+Nincs lemez, amelyre telepíteni lehetne. Helyezzen be egy kártyát, SSD-t vagy pendrive-ot, majd nyomja meg az Újrakeresés gombot.
+MSG_TARGET_CHOOSE
+Válasszon lemezt.
+MSG_TARGET_RUNNING
+Ezen a lemezen fut a rendszer: nem lehet felülírni.
+MSG_TARGET_SMALL
+Ez a lemez %s méretű, a rendszernek legalább %s kell.
+MSG_TARGET_UNREADABLE
+Ez a lemez nem olvasható.
+MSG_TARGET_FITS
+%s, eszköz: %s, egység: %d.
+MSG_CONFIRM_TITLE
+Összegzés
+MSG_CONFIRM_DISK
+Lemez: %s, egység: %d, %s
+MSG_CONFIRM_LANGUAGE
+Nyelv: %s
+MSG_CONFIRM_KEYMAP
+Billentyűzet: %s
+MSG_CONFIRM_LOST
+A lemezen lévő összes adat elvész.
+MSG_INSTALL
+_Telepítés
+MSG_PROGRESS_TITLE
+Telepítés folyamatban
+MSG_PHASE_LOOKING
+A rendszer vizsgálata ...
+MSG_PHASE_PREPARING
+A partíciók létrehozása ...
+MSG_PHASE_COPYING
+A rendszer másolása ...
+MSG_PHASE_SETTINGS
+A beállítások írása ...
+MSG_COPIED
+%d fájl átmásolva (%s)
+MSG_STOP
+_Leállítás
+MSG_STOPPING
+Leállítás ...
+MSG_NO_PROCESS
+Nincs folyamat, amelyben a telepítés futhatna.
+MSG_DONE_TITLE
+Kész
+MSG_DONE
+A rendszer telepítve: %d fájl (%s).
+MSG_DONE_NEXT
+Vegye ki a pendrive-ot, és indítsa újra a gépet: a lemezről fog elindulni.
+MSG_FAILED
+A telepítést nem lehetett befejezni.
+MSG_STOPPED
+A telepítés leállítva.
+MSG_NOT_BOOTABLE
+A lemezen nincs indítható rendszer. A Vissza gomb újra a lemezekhez vezet.
+MSG_RESTART
+Új_raindítás
+MSG_RESTART_FAILED
+A C:Reboot nem tudta újraindítani a gépet.
+MSG_NOLIBRARY
+%s: %s nem nyitható meg\n
+MSG_NOMEMORY
+%s: nincs elég memória\n
+MSG_NOWINDOW
+%s: nincs ablak\n

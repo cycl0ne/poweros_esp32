@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language norsk
+## codeset 106
+; The Installer's strings in Norwegian (Bokmål): a draft.
+MSG_WINDOW_TITLE
+Installer systemet
+MSG_BACK
+_Tilbake
+MSG_NEXT
+_Neste
+MSG_LANGUAGE_TITLE
+Språk
+MSG_LANGUAGE_INTRO
+Velg språket systemet skal bruke. Det tas i bruk med en gang, og det installerte systemet starter med det.
+MSG_COLUMN_LANGUAGE
+Språk og land
+MSG_KEYBOARD_TITLE
+Tastatur
+MSG_KEYBOARD_INTRO
+Velg tastaturoppsettet. Det brukes med en gang: prøv det i feltet nedenfor.
+MSG_COLUMN_KEYMAP
+Tastaturkart
+MSG_COLUMN_LAYOUT
+Oppsett
+MSG_TRY
+_Prøv det
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Velg disken systemet skal installeres på. Alt på den går tapt.
+MSG_COLUMN_DEVICE
+Enhet
+MSG_COLUMN_UNIT
+Nr.
+MSG_COLUMN_SIZE
+Størrelse
+MSG_COLUMN_HOLDS
+Innhold
+MSG_HOLDS_CONTAINER
+GPT med en PowerOS-container
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-tabell
+MSG_HOLDS_FOREIGN
+en tabell for en annen blokkstørrelse
+MSG_HOLDS_NOTHING
+ingenting
+MSG_HOLDS_UNREADABLE
+kan ikke leses
+MSG_HOLDS_RUNNING
+%s - systemet som kjører
+MSG_LOOK_AGAIN
+_Søk igjen
+MSG_TARGET_NONE
+Det finnes ingen disk å installere på. Sett inn et kort, en SSD eller en minnepinne, og trykk så på Søk igjen.
+MSG_TARGET_CHOOSE
+Velg en disk.
+MSG_TARGET_RUNNING
+Systemet som kjører, ligger på denne disken: det kan ikke installeres over.
+MSG_TARGET_SMALL
+Denne disken rommer %s, og systemet trenger minst %s.
+MSG_TARGET_UNREADABLE
+Denne disken kan ikke leses.
+MSG_TARGET_FITS
+%s på %s nr. %d.
+MSG_CONFIRM_TITLE
+Klar
+MSG_CONFIRM_DISK
+Disk: %s nr. %d, %s
+MSG_CONFIRM_LANGUAGE
+Språk: %s
+MSG_CONFIRM_KEYMAP
+Tastatur: %s
+MSG_CONFIRM_LOST
+Alt på denne disken går tapt.
+MSG_INSTALL
+_Installer
+MSG_PROGRESS_TITLE
+Installerer
+MSG_PHASE_LOOKING
+Ser på systemet ...
+MSG_PHASE_PREPARING
+Lager partisjonene ...
+MSG_PHASE_COPYING
+Kopierer systemet ...
+MSG_PHASE_SETTINGS
+Skriver innstillingene ...
+MSG_COPIED
+Filer kopiert: %d (%s)
+MSG_STOP
+_Stopp
+MSG_STOPPING
+Stopper ...
+MSG_NO_PROCESS
+Det finnes ingen prosess å kjøre installasjonen i.
+MSG_DONE_TITLE
+Ferdig
+MSG_DONE
+Systemet er installert. Filer: %d (%s).
+MSG_DONE_NEXT
+Ta ut minnepinnen og start maskinen på nytt: den starter fra disken.
+MSG_FAILED
+Installasjonen kunne ikke fullføres.
+MSG_STOPPED
+Installasjonen ble stoppet.
+MSG_NOT_BOOTABLE
+Disken har ikke noe system som starter. Tilbake fører til diskene igjen.
+MSG_RESTART
+_Start på nytt
+MSG_RESTART_FAILED
+C:Reboot kunne ikke starte maskinen på nytt.
+MSG_NOLIBRARY
+%s: kan ikke åpne %s\n
+MSG_NOMEMORY
+%s: ikke noe minne\n
+MSG_NOWINDOW
+%s: ikke noe vindu\n

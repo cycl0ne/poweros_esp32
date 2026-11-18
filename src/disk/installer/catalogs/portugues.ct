@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language portugues
+## codeset 106
+; The Installer's strings in Portuguese: a draft.
+MSG_WINDOW_TITLE
+Instalar o sistema
+MSG_BACK
+_Anterior
+MSG_NEXT
+_Seguinte
+MSG_LANGUAGE_TITLE
+Idioma
+MSG_LANGUAGE_INTRO
+Escolha o idioma do sistema. É usado a partir de agora, e o sistema instalado arranca nele.
+MSG_COLUMN_LANGUAGE
+Idioma e país
+MSG_KEYBOARD_TITLE
+Teclado
+MSG_KEYBOARD_INTRO
+Escolha a disposição do teclado. Aplica-se de imediato: experimente-a no campo abaixo.
+MSG_COLUMN_KEYMAP
+Mapa de teclado
+MSG_COLUMN_LAYOUT
+Disposição
+MSG_TRY
+_Experimentar
+MSG_TARGET_TITLE
+Disco
+MSG_TARGET_INTRO
+Escolha o disco onde o sistema vai ser instalado. Perde-se tudo o que contém.
+MSG_COLUMN_DEVICE
+Dispositivo
+MSG_COLUMN_UNIT
+Unidade
+MSG_COLUMN_SIZE
+Tamanho
+MSG_COLUMN_HOLDS
+Conteúdo
+MSG_HOLDS_CONTAINER
+GPT com um contentor PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+tabela PowerOS
+MSG_HOLDS_FOREIGN
+uma tabela para outro tamanho de bloco
+MSG_HOLDS_NOTHING
+nada
+MSG_HOLDS_UNREADABLE
+não pode ser lido
+MSG_HOLDS_RUNNING
+%s - o sistema em execução
+MSG_LOOK_AGAIN
+_Procurar de novo
+MSG_TARGET_NONE
+Não há nenhum disco onde instalar. Insira um cartão, um SSD ou uma pen USB e prima Procurar de novo.
+MSG_TARGET_CHOOSE
+Escolha um disco.
+MSG_TARGET_RUNNING
+O sistema em execução está neste disco: não pode ser instalado por cima.
+MSG_TARGET_SMALL
+Este disco tem uma capacidade de %s, e o sistema precisa de pelo menos %s.
+MSG_TARGET_UNREADABLE
+Este disco não pode ser lido.
+MSG_TARGET_FITS
+%s em %s unidade %d.
+MSG_CONFIRM_TITLE
+Pronto
+MSG_CONFIRM_DISK
+Disco: %s unidade %d, %s
+MSG_CONFIRM_LANGUAGE
+Idioma: %s
+MSG_CONFIRM_KEYMAP
+Teclado: %s
+MSG_CONFIRM_LOST
+Perde-se tudo o que este disco contém.
+MSG_INSTALL
+_Instalar
+MSG_PROGRESS_TITLE
+A instalar
+MSG_PHASE_LOOKING
+A examinar o sistema ...
+MSG_PHASE_PREPARING
+A criar as partições ...
+MSG_PHASE_COPYING
+A copiar o sistema ...
+MSG_PHASE_SETTINGS
+A escrever as definições ...
+MSG_COPIED
+Ficheiros copiados: %d (%s)
+MSG_STOP
+_Parar
+MSG_STOPPING
+A parar ...
+MSG_NO_PROCESS
+Não há nenhum processo para executar a instalação.
+MSG_DONE_TITLE
+Concluído
+MSG_DONE
+O sistema está instalado. Ficheiros: %d (%s).
+MSG_DONE_NEXT
+Retire a pen USB e reinicie a máquina: arranca a partir do disco.
+MSG_FAILED
+Não foi possível concluir a instalação.
+MSG_STOPPED
+A instalação foi parada.
+MSG_NOT_BOOTABLE
+O disco não contém nenhum sistema que arranque. Anterior volta à lista de discos.
+MSG_RESTART
+_Reiniciar
+MSG_RESTART_FAILED
+C:Reboot não conseguiu reiniciar a máquina.
+MSG_NOLIBRARY
+%s: não é possível abrir %s\n
+MSG_NOMEMORY
+%s: sem memória\n
+MSG_NOWINDOW
+%s: sem janela\n

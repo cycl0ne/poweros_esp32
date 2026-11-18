@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language polski
+## codeset 106
+; The Installer's strings in Polish, a draft.
+MSG_WINDOW_TITLE
+Instalacja systemu
+MSG_BACK
+_Wstecz
+MSG_NEXT
+_Dalej
+MSG_LANGUAGE_TITLE
+Język
+MSG_LANGUAGE_INTRO
+Wybierz język systemu. Będzie używany w dalszych krokach, a zainstalowany system uruchomi się w nim.
+MSG_COLUMN_LANGUAGE
+Język i kraj
+MSG_KEYBOARD_TITLE
+Klawiatura
+MSG_KEYBOARD_INTRO
+Wybierz układ klawiatury. Działa od razu: wypróbuj go w polu poniżej.
+MSG_COLUMN_KEYMAP
+Mapa klawiszy
+MSG_COLUMN_LAYOUT
+Układ
+MSG_TRY
+Wy_próbuj
+MSG_TARGET_TITLE
+Dysk
+MSG_TARGET_INTRO
+Wybierz dysk, na który trafi system. Wszystko, co się na nim znajduje, zostanie utracone.
+MSG_COLUMN_DEVICE
+Urządzenie
+MSG_COLUMN_UNIT
+Jednostka
+MSG_COLUMN_SIZE
+Rozmiar
+MSG_COLUMN_HOLDS
+Zawartość
+MSG_HOLDS_CONTAINER
+GPT z kontenerem PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+Tablica PowerOS
+MSG_HOLDS_FOREIGN
+tablica dla innego rozmiaru bloku
+MSG_HOLDS_NOTHING
+nic
+MSG_HOLDS_UNREADABLE
+nie można odczytać
+MSG_HOLDS_RUNNING
+%s - działający system
+MSG_LOOK_AGAIN
+_Szukaj ponownie
+MSG_TARGET_NONE
+Nie ma dysku, na którym można zainstalować system. Włóż kartę, dysk SSD lub pendrive, a następnie naciśnij Szukaj ponownie.
+MSG_TARGET_CHOOSE
+Wybierz dysk.
+MSG_TARGET_RUNNING
+Na tym dysku jest działający system: nie można go nadpisać.
+MSG_TARGET_SMALL
+Ten dysk mieści %s, a system potrzebuje co najmniej %s.
+MSG_TARGET_UNREADABLE
+Nie można odczytać tego dysku.
+MSG_TARGET_FITS
+%s na %s, jednostka %d.
+MSG_CONFIRM_TITLE
+Podsumowanie
+MSG_CONFIRM_DISK
+Dysk: %s, jednostka %d, %s
+MSG_CONFIRM_LANGUAGE
+Język: %s
+MSG_CONFIRM_KEYMAP
+Klawiatura: %s
+MSG_CONFIRM_LOST
+Wszystko na tym dysku zostanie utracone.
+MSG_INSTALL
+_Instaluj
+MSG_PROGRESS_TITLE
+Instalowanie
+MSG_PHASE_LOOKING
+Sprawdzanie systemu ...
+MSG_PHASE_PREPARING
+Tworzenie partycji ...
+MSG_PHASE_COPYING
+Kopiowanie systemu ...
+MSG_PHASE_SETTINGS
+Zapisywanie ustawień ...
+MSG_COPIED
+Skopiowane pliki: %d (%s)
+MSG_STOP
+_Zatrzymaj
+MSG_STOPPING
+Zatrzymywanie ...
+MSG_NO_PROCESS
+Nie ma procesu, w którym można przeprowadzić instalację.
+MSG_DONE_TITLE
+Zakończono
+MSG_DONE
+System jest zainstalowany. Pliki: %d (%s).
+MSG_DONE_NEXT
+Wyjmij pendrive i uruchom komputer ponownie: wystartuje z dysku.
+MSG_FAILED
+Nie udało się dokończyć instalacji.
+MSG_STOPPED
+Instalacja została zatrzymana.
+MSG_NOT_BOOTABLE
+Na dysku nie ma systemu, który się uruchamia. Wstecz prowadzi z powrotem do listy dysków.
+MSG_RESTART
+_Uruchom ponownie
+MSG_RESTART_FAILED
+C:Reboot nie mógł ponownie uruchomić komputera.
+MSG_NOLIBRARY
+%s: nie można otworzyć %s\n
+MSG_NOMEMORY
+%s: brak pamięci\n
+MSG_NOWINDOW
+%s: brak okna\n

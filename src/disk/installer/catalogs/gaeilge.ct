@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language gaeilge
+## codeset 106
+; The Installer's strings in Irish. A draft: it waits for a native reader to go through it.
+MSG_WINDOW_TITLE
+Suiteáil an córas
+MSG_BACK
+_Siar
+MSG_NEXT
+_Ar Aghaidh
+MSG_LANGUAGE_TITLE
+Teanga
+MSG_LANGUAGE_INTRO
+Roghnaigh an teanga a labhraíonn an córas. Úsáidtear í agus tú ag dul ar aghaidh, agus tosaíonn an córas suiteáilte inti.
+MSG_COLUMN_LANGUAGE
+Teanga agus tír
+MSG_KEYBOARD_TITLE
+Méarchlár
+MSG_KEYBOARD_INTRO
+Roghnaigh leagan amach an mhéarchláir. Úsáidtear é láithreach: triail é sa réimse thíos.
+MSG_COLUMN_KEYMAP
+Eochairmhapa
+MSG_COLUMN_LAYOUT
+Leagan Amach
+MSG_TRY
+_Triail é
+MSG_TARGET_TITLE
+Diosca
+MSG_TARGET_INTRO
+Roghnaigh an diosca a rachaidh an córas air. Caillfear gach a bhfuil air.
+MSG_COLUMN_DEVICE
+Gléas
+MSG_COLUMN_UNIT
+Aonad
+MSG_COLUMN_SIZE
+Méid
+MSG_COLUMN_HOLDS
+A bhfuil air
+MSG_HOLDS_CONTAINER
+GPT le coimeádán PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+tábla PowerOS
+MSG_HOLDS_FOREIGN
+tábla do mhéid bloic eile
+MSG_HOLDS_NOTHING
+dada
+MSG_HOLDS_UNREADABLE
+ní féidir é a léamh
+MSG_HOLDS_RUNNING
+%s - an córas atá ag rith
+MSG_LOOK_AGAIN
+_Féach arís
+MSG_TARGET_NONE
+Níl aon diosca ann le suiteáil air. Cuir isteach cárta, SSD nó cuimhneán USB, agus brúigh Féach arís.
+MSG_TARGET_CHOOSE
+Roghnaigh diosca.
+MSG_TARGET_RUNNING
+Tá an córas atá ag rith ar an diosca seo: ní féidir suiteáil air.
+MSG_TARGET_SMALL
+Coinníonn an diosca seo %s, agus teastaíonn %s ar a laghad ón gcóras.
+MSG_TARGET_UNREADABLE
+Ní féidir an diosca seo a léamh.
+MSG_TARGET_FITS
+%s ar %s aonad %d.
+MSG_CONFIRM_TITLE
+Réidh
+MSG_CONFIRM_DISK
+Diosca: %s aonad %d, %s
+MSG_CONFIRM_LANGUAGE
+Teanga: %s
+MSG_CONFIRM_KEYMAP
+Méarchlár: %s
+MSG_CONFIRM_LOST
+Caillfear gach a bhfuil ar an diosca seo.
+MSG_INSTALL
+Su_iteáil
+MSG_PROGRESS_TITLE
+Á Shuiteáil
+MSG_PHASE_LOOKING
+Ag féachaint ar an gcóras ...
+MSG_PHASE_PREPARING
+Ag déanamh na ndeighiltí ...
+MSG_PHASE_COPYING
+Ag cóipeáil an chórais ...
+MSG_PHASE_SETTINGS
+Ag scríobh na socruithe ...
+MSG_COPIED
+Comhaid cóipeáilte: %d (%s)
+MSG_STOP
+_Stad
+MSG_STOPPING
+Ag stopadh ...
+MSG_NO_PROCESS
+Níl aon phróiseas ann leis an suiteáil a rith.
+MSG_DONE_TITLE
+Críochnaithe
+MSG_DONE
+Tá an córas suiteáilte, comhaid: %d (%s).
+MSG_DONE_NEXT
+Bain amach an cuimhneán agus atosaigh an meaisín: tosóidh sé ón diosca.
+MSG_FAILED
+Níorbh fhéidir an tsuiteáil a chríochnú.
+MSG_STOPPED
+Stopadh an tsuiteáil.
+MSG_NOT_BOOTABLE
+Níl aon chóras ar an diosca a thosaíonn. Tugann Siar ar ais chuig na dioscaí thú.
+MSG_RESTART
+_Atosaigh
+MSG_RESTART_FAILED
+Níorbh fhéidir le C:Reboot an meaisín a atosú.
+MSG_NOLIBRARY
+%s: ní féidir %s a oscailt\n
+MSG_NOMEMORY
+%s: níl dóthain cuimhne ann\n
+MSG_NOWINDOW
+%s: gan fhuinneog\n

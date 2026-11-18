@@ -78,7 +78,7 @@ const Text = sdk.locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Installer";
-const VERSION = "1.0";
+const VERSION = "1.1";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (18.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -480,15 +480,16 @@ const App = struct {
     }
 
     /// The choice that matches the settings the system has: its country,
-    /// and its first language or none.
+    /// and its first language - where the settings name none, the
+    /// country's own, the first choice of the country.
     fn matching(settings: *const locale_file.Settings) ?usize {
         const country = settings.countryName();
         if (country.len == 0) return null;
-        const first: []const u8 = if (settings.language_count != 0) settings.language(0) else "";
         for (&choices, 0..) |*one, index| {
             if (!std_eql(one.country, country)) continue;
-            const wanted: []const u8 = if (one.languages.len != 0) one.languages[0] else "";
-            if (std_eql(wanted, first)) return index;
+            if (settings.language_count == 0) return index;
+            const wanted: []const u8 = if (one.languages.len != 0) one.languages[0] else "english";
+            if (std_eql(wanted, settings.language(0))) return index;
         }
         return null;
     }
@@ -969,6 +970,8 @@ fn listbrowser(ib: *IntuitionBase, id: usize, columns: [*]const lb.Column, rows:
         pair(lb.LISTBROWSER_Columns, @intFromPtr(columns)),
         pair(lb.LISTBROWSER_Rows, @intFromPtr(rows)),
         pair(lb.LISTBROWSER_Selected, if (place) |at| at else lb.LISTBROWSER_NONE),
+        // The row chosen in sight, in the middle where it can be.
+        pair(lb.LISTBROWSER_Top, if (place) |at| at -| rows_shown / 2 else 0),
         .{},
     });
 }

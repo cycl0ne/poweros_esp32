@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language espanol
+## codeset 106
+; The Installer's strings in Spanish: a draft.
+MSG_WINDOW_TITLE
+Instalar el sistema
+MSG_BACK
+_Atrás
+MSG_NEXT
+_Siguiente
+MSG_LANGUAGE_TITLE
+Idioma
+MSG_LANGUAGE_INTRO
+Elija el idioma del sistema. Se usa desde ahora, y el sistema instalado se inicia en él.
+MSG_COLUMN_LANGUAGE
+Idioma y país
+MSG_KEYBOARD_TITLE
+Teclado
+MSG_KEYBOARD_INTRO
+Elija la distribución del teclado. Se aplica de inmediato: pruébela en el campo de abajo.
+MSG_COLUMN_KEYMAP
+Mapa de teclado
+MSG_COLUMN_LAYOUT
+Distribución
+MSG_TRY
+_Probar
+MSG_TARGET_TITLE
+Disco
+MSG_TARGET_INTRO
+Elija el disco en el que se instalará el sistema. Se perderá todo lo que contiene.
+MSG_COLUMN_DEVICE
+Dispositivo
+MSG_COLUMN_UNIT
+Unidad
+MSG_COLUMN_SIZE
+Tamaño
+MSG_COLUMN_HOLDS
+Contenido
+MSG_HOLDS_CONTAINER
+GPT con un contenedor PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+tabla PowerOS
+MSG_HOLDS_FOREIGN
+una tabla para otro tamaño de bloque
+MSG_HOLDS_NOTHING
+nada
+MSG_HOLDS_UNREADABLE
+no se puede leer
+MSG_HOLDS_RUNNING
+%s - el sistema en uso
+MSG_LOOK_AGAIN
+_Buscar de nuevo
+MSG_TARGET_NONE
+No hay ningún disco en el que instalar. Inserte una tarjeta, un SSD o una memoria USB y pulse Buscar de nuevo.
+MSG_TARGET_CHOOSE
+Elija un disco.
+MSG_TARGET_RUNNING
+El sistema en uso está en este disco: no se puede instalar encima.
+MSG_TARGET_SMALL
+Este disco tiene una capacidad de %s, y el sistema necesita al menos %s.
+MSG_TARGET_UNREADABLE
+Este disco no se puede leer.
+MSG_TARGET_FITS
+%s en %s unidad %d.
+MSG_CONFIRM_TITLE
+Listo
+MSG_CONFIRM_DISK
+Disco: %s unidad %d, %s
+MSG_CONFIRM_LANGUAGE
+Idioma: %s
+MSG_CONFIRM_KEYMAP
+Teclado: %s
+MSG_CONFIRM_LOST
+Se perderá todo lo que contiene este disco.
+MSG_INSTALL
+_Instalar
+MSG_PROGRESS_TITLE
+Instalando
+MSG_PHASE_LOOKING
+Examinando el sistema ...
+MSG_PHASE_PREPARING
+Creando las particiones ...
+MSG_PHASE_COPYING
+Copiando el sistema ...
+MSG_PHASE_SETTINGS
+Escribiendo los ajustes ...
+MSG_COPIED
+Archivos copiados: %d (%s)
+MSG_STOP
+_Detener
+MSG_STOPPING
+Deteniendo ...
+MSG_NO_PROCESS
+No hay ningún proceso en el que ejecutar la instalación.
+MSG_DONE_TITLE
+Terminado
+MSG_DONE
+El sistema está instalado. Archivos: %d (%s).
+MSG_DONE_NEXT
+Retire la memoria USB y reinicie la máquina: se iniciará desde el disco.
+MSG_FAILED
+La instalación no pudo terminar.
+MSG_STOPPED
+La instalación se detuvo.
+MSG_NOT_BOOTABLE
+El disco no contiene ningún sistema que se inicie. Atrás vuelve a la lista de discos.
+MSG_RESTART
+_Reiniciar
+MSG_RESTART_FAILED
+C:Reboot no pudo reiniciar la máquina.
+MSG_NOLIBRARY
+%s: no se puede abrir %s\n
+MSG_NOMEMORY
+%s: sin memoria\n
+MSG_NOWINDOW
+%s: sin ventana\n

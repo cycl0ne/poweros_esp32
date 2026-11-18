@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language zhongwen
+## codeset 106
+; The Installer's strings in Chinese, simplified, a draft.
+MSG_WINDOW_TITLE
+安装系统
+MSG_BACK
+上一步(_B)
+MSG_NEXT
+下一步(_N)
+MSG_LANGUAGE_TITLE
+语言
+MSG_LANGUAGE_INTRO
+选择系统使用的语言。接下来的步骤即使用该语言，安装后的系统也以该语言启动。
+MSG_COLUMN_LANGUAGE
+语言和国家/地区
+MSG_KEYBOARD_TITLE
+键盘
+MSG_KEYBOARD_INTRO
+选择键盘布局。它立即生效：请在下面的输入框中试一试。
+MSG_COLUMN_KEYMAP
+键位映射
+MSG_COLUMN_LAYOUT
+布局
+MSG_TRY
+测试(_T)
+MSG_TARGET_TITLE
+磁盘
+MSG_TARGET_INTRO
+选择要安装系统的磁盘。磁盘上的所有内容都将丢失。
+MSG_COLUMN_DEVICE
+设备
+MSG_COLUMN_UNIT
+单元
+MSG_COLUMN_SIZE
+大小
+MSG_COLUMN_HOLDS
+内容
+MSG_HOLDS_CONTAINER
+带 PowerOS 容器的 GPT
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS 分区表
+MSG_HOLDS_FOREIGN
+用于其他块大小的分区表
+MSG_HOLDS_NOTHING
+无
+MSG_HOLDS_UNREADABLE
+无法读取
+MSG_HOLDS_RUNNING
+%s - 正在运行的系统
+MSG_LOOK_AGAIN
+重新查找(_L)
+MSG_TARGET_NONE
+没有可以安装到的磁盘。请插入存储卡、SSD 或 U 盘，然后按“重新查找”。
+MSG_TARGET_CHOOSE
+请选择磁盘。
+MSG_TARGET_RUNNING
+正在运行的系统位于此磁盘上：无法覆盖安装。
+MSG_TARGET_SMALL
+此磁盘容量为 %s，而系统至少需要 %s。
+MSG_TARGET_UNREADABLE
+无法读取此磁盘。
+MSG_TARGET_FITS
+%s，位于 %s 单元 %d。
+MSG_CONFIRM_TITLE
+确认
+MSG_CONFIRM_DISK
+磁盘: %s 单元 %d，%s
+MSG_CONFIRM_LANGUAGE
+语言: %s
+MSG_CONFIRM_KEYMAP
+键盘: %s
+MSG_CONFIRM_LOST
+此磁盘上的所有内容都将丢失。
+MSG_INSTALL
+安装(_I)
+MSG_PROGRESS_TITLE
+正在安装
+MSG_PHASE_LOOKING
+正在检查系统 ...
+MSG_PHASE_PREPARING
+正在创建分区 ...
+MSG_PHASE_COPYING
+正在复制系统 ...
+MSG_PHASE_SETTINGS
+正在写入设置 ...
+MSG_COPIED
+已复制 %d 个文件 (%s)
+MSG_STOP
+停止(_S)
+MSG_STOPPING
+正在停止 ...
+MSG_NO_PROCESS
+没有可以运行安装的进程。
+MSG_DONE_TITLE
+完成
+MSG_DONE
+系统已安装: %d 个文件 (%s)。
+MSG_DONE_NEXT
+请拔出 U 盘并重新启动计算机：它将从磁盘启动。
+MSG_FAILED
+安装未能完成。
+MSG_STOPPED
+安装已停止。
+MSG_NOT_BOOTABLE
+磁盘上没有可启动的系统。按“上一步”可返回磁盘列表。
+MSG_RESTART
+重新启动(_R)
+MSG_RESTART_FAILED
+C:Reboot 无法重新启动计算机。
+MSG_NOLIBRARY
+%s: 无法打开 %s\n
+MSG_NOMEMORY
+%s: 内存不足\n
+MSG_NOWINDOW
+%s: 没有窗口\n

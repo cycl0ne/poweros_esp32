@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language suomi
+## codeset 106
+; The Installer's strings in Finnish: a draft.
+MSG_WINDOW_TITLE
+Järjestelmän asennus
+MSG_BACK
+_Edellinen
+MSG_NEXT
+_Seuraava
+MSG_LANGUAGE_TITLE
+Kieli
+MSG_LANGUAGE_INTRO
+Valitse järjestelmän kieli. Se otetaan käyttöön heti, ja asennettu järjestelmä käynnistyy sillä kielellä.
+MSG_COLUMN_LANGUAGE
+Kieli ja maa
+MSG_KEYBOARD_TITLE
+Näppäimistö
+MSG_KEYBOARD_INTRO
+Valitse näppäimistön asettelu. Se on käytössä heti: kokeile sitä alla olevassa kentässä.
+MSG_COLUMN_KEYMAP
+Näppäinkartta
+MSG_COLUMN_LAYOUT
+Asettelu
+MSG_TRY
+_Kokeile
+MSG_TARGET_TITLE
+Levy
+MSG_TARGET_INTRO
+Valitse levy, jolle järjestelmä asennetaan. Kaikki sillä oleva menetetään.
+MSG_COLUMN_DEVICE
+Laite
+MSG_COLUMN_UNIT
+Yksikkö
+MSG_COLUMN_SIZE
+Koko
+MSG_COLUMN_HOLDS
+Sisältö
+MSG_HOLDS_CONTAINER
+GPT ja PowerOS-säiliö
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-taulu
+MSG_HOLDS_FOREIGN
+taulu toiselle lohkokoolle
+MSG_HOLDS_NOTHING
+ei mitään
+MSG_HOLDS_UNREADABLE
+ei voi lukea
+MSG_HOLDS_RUNNING
+%s - käynnissä oleva järjestelmä
+MSG_LOOK_AGAIN
+_Hae uudelleen
+MSG_TARGET_NONE
+Asennukseen ei ole levyä. Aseta kortti, SSD tai USB-tikku ja paina sitten Hae uudelleen.
+MSG_TARGET_CHOOSE
+Valitse levy.
+MSG_TARGET_RUNNING
+Käynnissä oleva järjestelmä on tällä levyllä: sen päälle ei voi asentaa.
+MSG_TARGET_SMALL
+Levyn koko on %s, ja järjestelmä tarvitsee vähintään %s.
+MSG_TARGET_UNREADABLE
+Levyä ei voi lukea.
+MSG_TARGET_FITS
+%s laitteessa %s, yksikkö %d.
+MSG_CONFIRM_TITLE
+Valmis asennukseen
+MSG_CONFIRM_DISK
+Levy: %s, yksikkö %d, %s
+MSG_CONFIRM_LANGUAGE
+Kieli: %s
+MSG_CONFIRM_KEYMAP
+Näppäimistö: %s
+MSG_CONFIRM_LOST
+Kaikki tällä levyllä oleva menetetään.
+MSG_INSTALL
+_Asenna
+MSG_PROGRESS_TITLE
+Asennetaan
+MSG_PHASE_LOOKING
+Tutkitaan järjestelmää ...
+MSG_PHASE_PREPARING
+Luodaan osioita ...
+MSG_PHASE_COPYING
+Kopioidaan järjestelmää ...
+MSG_PHASE_SETTINGS
+Kirjoitetaan asetuksia ...
+MSG_COPIED
+Tiedostoja kopioitu: %d (%s)
+MSG_STOP
+_Pysäytä
+MSG_STOPPING
+Pysäytetään ...
+MSG_NO_PROCESS
+Asennuksen suorittamiseen ei ole prosessia.
+MSG_DONE_TITLE
+Valmis
+MSG_DONE
+Järjestelmä on asennettu. Tiedostoja: %d (%s).
+MSG_DONE_NEXT
+Irrota USB-tikku ja käynnistä kone uudelleen: se käynnistyy levyltä.
+MSG_FAILED
+Asennusta ei voitu viedä loppuun.
+MSG_STOPPED
+Asennus pysäytettiin.
+MSG_NOT_BOOTABLE
+Levyllä ei ole käynnistyvää järjestelmää. Edellinen vie takaisin levyjen valintaan.
+MSG_RESTART
+_Käynnistä uudelleen
+MSG_RESTART_FAILED
+C:Reboot ei voinut käynnistää konetta uudelleen.
+MSG_NOLIBRARY
+%s: kirjastoa %s ei voi avata\n
+MSG_NOMEMORY
+%s: muisti ei riitä\n
+MSG_NOWINDOW
+%s: ei ikkunaa\n

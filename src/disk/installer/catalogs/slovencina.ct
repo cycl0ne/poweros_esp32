@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language slovencina
+## codeset 106
+; The Installer's strings in Slovak, a draft.
+MSG_WINDOW_TITLE
+Inštalácia systému
+MSG_BACK
+_Späť
+MSG_NEXT
+Ď_alej
+MSG_LANGUAGE_TITLE
+Jazyk
+MSG_LANGUAGE_INTRO
+Vyberte jazyk systému. Použije sa v ďalších krokoch a nainštalovaný systém sa v ňom spustí.
+MSG_COLUMN_LANGUAGE
+Jazyk a krajina
+MSG_KEYBOARD_TITLE
+Klávesnica
+MSG_KEYBOARD_INTRO
+Vyberte rozloženie klávesnice. Platí hneď: vyskúšajte ho v poli nižšie.
+MSG_COLUMN_KEYMAP
+Mapa klávesov
+MSG_COLUMN_LAYOUT
+Rozloženie
+MSG_TRY
+_Vyskúšať
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Vyberte disk, na ktorý sa systém nainštaluje. Všetko, čo je na ňom, sa stratí.
+MSG_COLUMN_DEVICE
+Zariadenie
+MSG_COLUMN_UNIT
+Jednotka
+MSG_COLUMN_SIZE
+Veľkosť
+MSG_COLUMN_HOLDS
+Obsah
+MSG_HOLDS_CONTAINER
+GPT s kontajnerom PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+Tabuľka PowerOS
+MSG_HOLDS_FOREIGN
+tabuľka pre inú veľkosť bloku
+MSG_HOLDS_NOTHING
+nič
+MSG_HOLDS_UNREADABLE
+nemožno prečítať
+MSG_HOLDS_RUNNING
+%s - bežiaci systém
+MSG_LOOK_AGAIN
+_Hľadať znova
+MSG_TARGET_NONE
+Nie je k dispozícii disk, na ktorý by sa dalo inštalovať. Vložte kartu, SSD alebo USB kľúč a stlačte Hľadať znova.
+MSG_TARGET_CHOOSE
+Vyberte disk.
+MSG_TARGET_RUNNING
+Na tomto disku je bežiaci systém: nemožno ho prepísať.
+MSG_TARGET_SMALL
+Tento disk má %s a systém potrebuje aspoň %s.
+MSG_TARGET_UNREADABLE
+Tento disk nemožno prečítať.
+MSG_TARGET_FITS
+%s na %s, jednotka %d.
+MSG_CONFIRM_TITLE
+Súhrn
+MSG_CONFIRM_DISK
+Disk: %s, jednotka %d, %s
+MSG_CONFIRM_LANGUAGE
+Jazyk: %s
+MSG_CONFIRM_KEYMAP
+Klávesnica: %s
+MSG_CONFIRM_LOST
+Všetko na tomto disku sa stratí.
+MSG_INSTALL
+_Inštalovať
+MSG_PROGRESS_TITLE
+Prebieha inštalácia
+MSG_PHASE_LOOKING
+Kontrola systému ...
+MSG_PHASE_PREPARING
+Vytváranie oddielov ...
+MSG_PHASE_COPYING
+Kopírovanie systému ...
+MSG_PHASE_SETTINGS
+Zápis nastavení ...
+MSG_COPIED
+Skopírované súbory: %d (%s)
+MSG_STOP
+_Zastaviť
+MSG_STOPPING
+Zastavuje sa ...
+MSG_NO_PROCESS
+Nie je k dispozícii proces, v ktorom by inštalácia mohla bežať.
+MSG_DONE_TITLE
+Hotovo
+MSG_DONE
+Systém je nainštalovaný. Súbory: %d (%s).
+MSG_DONE_NEXT
+Vyberte USB kľúč a reštartujte počítač: spustí sa z disku.
+MSG_FAILED
+Inštaláciu sa nepodarilo dokončiť.
+MSG_STOPPED
+Inštalácia bola zastavená.
+MSG_NOT_BOOTABLE
+Na disku nie je žiadny spustiteľný systém. Späť vedie znova k zoznamu diskov.
+MSG_RESTART
+_Reštartovať
+MSG_RESTART_FAILED
+C:Reboot nedokázal reštartovať počítač.
+MSG_NOLIBRARY
+%s: nemožno otvoriť %s\n
+MSG_NOMEMORY
+%s: nedostatok pamäte\n
+MSG_NOWINDOW
+%s: žiadne okno\n

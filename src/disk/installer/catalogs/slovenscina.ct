@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language slovenscina
+## codeset 106
+; The Installer's strings in Slovene, a draft.
+MSG_WINDOW_TITLE
+Namestitev sistema
+MSG_BACK
+_Nazaj
+MSG_NEXT
+Na_prej
+MSG_LANGUAGE_TITLE
+Jezik
+MSG_LANGUAGE_INTRO
+Izberite jezik sistema. Uporabljen bo v naslednjih korakih, nameščeni sistem pa se bo zagnal v njem.
+MSG_COLUMN_LANGUAGE
+Jezik in država
+MSG_KEYBOARD_TITLE
+Tipkovnica
+MSG_KEYBOARD_INTRO
+Izberite razporeditev tipkovnice. Velja takoj: preizkusite jo v polju spodaj.
+MSG_COLUMN_KEYMAP
+Preslikava tipk
+MSG_COLUMN_LAYOUT
+Razporeditev
+MSG_TRY
+Pre_izkusi
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Izberite disk, na katerega bo nameščen sistem. Vse na njem bo izgubljeno.
+MSG_COLUMN_DEVICE
+Naprava
+MSG_COLUMN_UNIT
+Enota
+MSG_COLUMN_SIZE
+Velikost
+MSG_COLUMN_HOLDS
+Vsebina
+MSG_HOLDS_CONTAINER
+GPT z vsebnikom PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+Tabela PowerOS
+MSG_HOLDS_FOREIGN
+tabela za drugo velikost bloka
+MSG_HOLDS_NOTHING
+nič
+MSG_HOLDS_UNREADABLE
+ni mogoče prebrati
+MSG_HOLDS_RUNNING
+%s - delujoči sistem
+MSG_LOOK_AGAIN
+_Išči znova
+MSG_TARGET_NONE
+Ni diska, na katerega bi lahko namestili sistem. Vstavite kartico, SSD ali USB-ključ in pritisnite Išči znova.
+MSG_TARGET_CHOOSE
+Izberite disk.
+MSG_TARGET_RUNNING
+Na tem disku je delujoči sistem: ni ga mogoče prepisati.
+MSG_TARGET_SMALL
+Ta disk ima %s, sistem pa potrebuje vsaj %s.
+MSG_TARGET_UNREADABLE
+Tega diska ni mogoče prebrati.
+MSG_TARGET_FITS
+%s na %s, enota %d.
+MSG_CONFIRM_TITLE
+Povzetek
+MSG_CONFIRM_DISK
+Disk: %s, enota %d, %s
+MSG_CONFIRM_LANGUAGE
+Jezik: %s
+MSG_CONFIRM_KEYMAP
+Tipkovnica: %s
+MSG_CONFIRM_LOST
+Vse na tem disku bo izgubljeno.
+MSG_INSTALL
+Na_mesti
+MSG_PROGRESS_TITLE
+Nameščanje
+MSG_PHASE_LOOKING
+Pregledovanje sistema ...
+MSG_PHASE_PREPARING
+Ustvarjanje razdelkov ...
+MSG_PHASE_COPYING
+Kopiranje sistema ...
+MSG_PHASE_SETTINGS
+Zapisovanje nastavitev ...
+MSG_COPIED
+Kopirane datoteke: %d (%s)
+MSG_STOP
+_Ustavi
+MSG_STOPPING
+Ustavljanje ...
+MSG_NO_PROCESS
+Ni procesa, v katerem bi lahko tekla namestitev.
+MSG_DONE_TITLE
+Končano
+MSG_DONE
+Sistem je nameščen. Datoteke: %d (%s).
+MSG_DONE_NEXT
+Odstranite USB-ključ in znova zaženite računalnik: zagnal se bo z diska.
+MSG_FAILED
+Namestitve ni bilo mogoče dokončati.
+MSG_STOPPED
+Namestitev je bila ustavljena.
+MSG_NOT_BOOTABLE
+Na disku ni sistema, ki bi se zagnal. Nazaj vodi spet do seznama diskov.
+MSG_RESTART
+_Znova zaženi
+MSG_RESTART_FAILED
+C:Reboot ni mogel znova zagnati računalnika.
+MSG_NOLIBRARY
+%s: ni mogoče odpreti %s\n
+MSG_NOMEMORY
+%s: premalo pomnilnika\n
+MSG_NOWINDOW
+%s: ni okna\n

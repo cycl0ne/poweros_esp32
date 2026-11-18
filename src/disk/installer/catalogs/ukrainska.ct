@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language ukrainska
+## codeset 106
+; The Installer's strings in Ukrainian. A draft: it waits for a native reader to go through it.
+MSG_WINDOW_TITLE
+Встановлення системи
+MSG_BACK
+_Назад
+MSG_NEXT
+_Далі
+MSG_LANGUAGE_TITLE
+Мова
+MSG_LANGUAGE_INTRO
+Виберіть мову системи. Вона діє вже на наступних кроках, і встановлена система запускається з нею.
+MSG_COLUMN_LANGUAGE
+Мова й країна
+MSG_KEYBOARD_TITLE
+Клавіатура
+MSG_KEYBOARD_INTRO
+Виберіть розкладку клавіатури. Вона діє одразу: спробуйте її в полі нижче.
+MSG_COLUMN_KEYMAP
+Розкладка
+MSG_COLUMN_LAYOUT
+Опис
+MSG_TRY
+_Спробувати
+MSG_TARGET_TITLE
+Диск
+MSG_TARGET_INTRO
+Виберіть диск, на який буде встановлено систему. Усе, що на ньому є, буде втрачено.
+MSG_COLUMN_DEVICE
+Пристрій
+MSG_COLUMN_UNIT
+Модуль
+MSG_COLUMN_SIZE
+Розмір
+MSG_COLUMN_HOLDS
+Вміст
+MSG_HOLDS_CONTAINER
+GPT з контейнером PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+таблиця PowerOS
+MSG_HOLDS_FOREIGN
+таблиця для іншого розміру блока
+MSG_HOLDS_NOTHING
+нічого
+MSG_HOLDS_UNREADABLE
+не читається
+MSG_HOLDS_RUNNING
+%s - робоча система
+MSG_LOOK_AGAIN
+_Шукати знову
+MSG_TARGET_NONE
+Немає диска для встановлення. Вставте картку, SSD або флешку й натисніть «Шукати знову».
+MSG_TARGET_CHOOSE
+Виберіть диск.
+MSG_TARGET_RUNNING
+На цьому диску працює система: встановити поверх неї не можна.
+MSG_TARGET_SMALL
+Обсяг цього диска %s, а системі потрібно щонайменше %s.
+MSG_TARGET_UNREADABLE
+Цей диск не читається.
+MSG_TARGET_FITS
+%s на %s, модуль %d.
+MSG_CONFIRM_TITLE
+Готово до встановлення
+MSG_CONFIRM_DISK
+Диск: %s, модуль %d, %s
+MSG_CONFIRM_LANGUAGE
+Мова: %s
+MSG_CONFIRM_KEYMAP
+Клавіатура: %s
+MSG_CONFIRM_LOST
+Усе, що є на цьому диску, буде втрачено.
+MSG_INSTALL
+_Встановити
+MSG_PROGRESS_TITLE
+Встановлення
+MSG_PHASE_LOOKING
+Огляд системи ...
+MSG_PHASE_PREPARING
+Створення розділів ...
+MSG_PHASE_COPYING
+Копіювання системи ...
+MSG_PHASE_SETTINGS
+Запис налаштувань ...
+MSG_COPIED
+Скопійовано файлів: %d (%s)
+MSG_STOP
+_Стоп
+MSG_STOPPING
+Зупинка ...
+MSG_NO_PROCESS
+Немає процесу, в якому можна виконати встановлення.
+MSG_DONE_TITLE
+Готово
+MSG_DONE
+Систему встановлено, файлів: %d (%s).
+MSG_DONE_NEXT
+Вийміть флешку й перезапустіть комп'ютер: він запуститься з диска.
+MSG_FAILED
+Встановлення не вдалося завершити.
+MSG_STOPPED
+Встановлення зупинено.
+MSG_NOT_BOOTABLE
+На диску немає системи, що запускається. «Назад» знову веде до дисків.
+MSG_RESTART
+_Перезапустити
+MSG_RESTART_FAILED
+C:Reboot не зміг перезапустити комп'ютер.
+MSG_NOLIBRARY
+%s: не вдається відкрити %s\n
+MSG_NOMEMORY
+%s: немає пам'яті\n
+MSG_NOWINDOW
+%s: немає вікна\n

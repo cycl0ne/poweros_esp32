@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language nederlands
+## codeset 106
+; The Installer's strings in Dutch: a draft.
+MSG_WINDOW_TITLE
+Het systeem installeren
+MSG_BACK
+_Terug
+MSG_NEXT
+_Volgende
+MSG_LANGUAGE_TITLE
+Taal
+MSG_LANGUAGE_INTRO
+Kies de taal van het systeem. Ze wordt meteen gebruikt, en het geïnstalleerde systeem start erin.
+MSG_COLUMN_LANGUAGE
+Taal en land
+MSG_KEYBOARD_TITLE
+Toetsenbord
+MSG_KEYBOARD_INTRO
+Kies de toetsenbordindeling. Die geldt meteen: probeer haar uit in het veld hieronder.
+MSG_COLUMN_KEYMAP
+Toetsenkaart
+MSG_COLUMN_LAYOUT
+Indeling
+MSG_TRY
+_Uitproberen
+MSG_TARGET_TITLE
+Schijf
+MSG_TARGET_INTRO
+Kies de schijf waarop het systeem komt. Alles wat erop staat, gaat verloren.
+MSG_COLUMN_DEVICE
+Apparaat
+MSG_COLUMN_UNIT
+Eenheid
+MSG_COLUMN_SIZE
+Grootte
+MSG_COLUMN_HOLDS
+Inhoud
+MSG_HOLDS_CONTAINER
+GPT met een PowerOS-container
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-tabel
+MSG_HOLDS_FOREIGN
+een tabel voor een andere blokgrootte
+MSG_HOLDS_NOTHING
+niets
+MSG_HOLDS_UNREADABLE
+onleesbaar
+MSG_HOLDS_RUNNING
+%s - het draaiende systeem
+MSG_LOOK_AGAIN
+_Opnieuw zoeken
+MSG_TARGET_NONE
+Er is geen schijf om op te installeren. Plaats een kaart, een SSD of een USB-stick en druk dan op Opnieuw zoeken.
+MSG_TARGET_CHOOSE
+Kies een schijf.
+MSG_TARGET_RUNNING
+Het draaiende systeem staat op deze schijf: eroverheen installeren kan niet.
+MSG_TARGET_SMALL
+Deze schijf bevat %s, en het systeem heeft minstens %s nodig.
+MSG_TARGET_UNREADABLE
+Deze schijf kan niet worden gelezen.
+MSG_TARGET_FITS
+%s op %s eenheid %d.
+MSG_CONFIRM_TITLE
+Klaar
+MSG_CONFIRM_DISK
+Schijf: %s eenheid %d, %s
+MSG_CONFIRM_LANGUAGE
+Taal: %s
+MSG_CONFIRM_KEYMAP
+Toetsenbord: %s
+MSG_CONFIRM_LOST
+Alles op deze schijf gaat verloren.
+MSG_INSTALL
+_Installeren
+MSG_PROGRESS_TITLE
+Installeren
+MSG_PHASE_LOOKING
+Het systeem bekijken ...
+MSG_PHASE_PREPARING
+De partities maken ...
+MSG_PHASE_COPYING
+Het systeem kopiëren ...
+MSG_PHASE_SETTINGS
+De instellingen schrijven ...
+MSG_COPIED
+Bestanden gekopieerd: %d (%s)
+MSG_STOP
+_Stoppen
+MSG_STOPPING
+Stoppen ...
+MSG_NO_PROCESS
+Er is geen proces om de installatie in uit te voeren.
+MSG_DONE_TITLE
+Voltooid
+MSG_DONE
+Het systeem is geïnstalleerd. Bestanden: %d (%s).
+MSG_DONE_NEXT
+Haal de USB-stick eruit en start de machine opnieuw op: ze start dan van de schijf.
+MSG_FAILED
+De installatie kon niet worden voltooid.
+MSG_STOPPED
+De installatie is gestopt.
+MSG_NOT_BOOTABLE
+Op de schijf staat geen systeem dat start. Terug leidt weer naar de schijven.
+MSG_RESTART
+_Opnieuw opstarten
+MSG_RESTART_FAILED
+C:Reboot kon de machine niet opnieuw opstarten.
+MSG_NOLIBRARY
+%s: kan %s niet openen\n
+MSG_NOMEMORY
+%s: geen geheugen\n
+MSG_NOWINDOW
+%s: geen venster\n

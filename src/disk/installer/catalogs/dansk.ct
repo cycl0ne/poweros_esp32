@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language dansk
+## codeset 106
+; The Installer's strings in Danish: a draft.
+MSG_WINDOW_TITLE
+Installer systemet
+MSG_BACK
+_Tilbage
+MSG_NEXT
+_Næste
+MSG_LANGUAGE_TITLE
+Sprog
+MSG_LANGUAGE_INTRO
+Vælg det sprog, systemet taler. Det bruges med det samme, og det installerede system starter med det.
+MSG_COLUMN_LANGUAGE
+Sprog og land
+MSG_KEYBOARD_TITLE
+Tastatur
+MSG_KEYBOARD_INTRO
+Vælg tastaturets layout. Det bruges med det samme: prøv det i feltet nedenfor.
+MSG_COLUMN_KEYMAP
+Tastaturkort
+MSG_COLUMN_LAYOUT
+Layout
+MSG_TRY
+_Prøv det
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Vælg den disk, systemet skal installeres på. Alt på den går tabt.
+MSG_COLUMN_DEVICE
+Enhed
+MSG_COLUMN_UNIT
+Nr.
+MSG_COLUMN_SIZE
+Størrelse
+MSG_COLUMN_HOLDS
+Indhold
+MSG_HOLDS_CONTAINER
+GPT med en PowerOS-container
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-tabel
+MSG_HOLDS_FOREIGN
+en tabel til en anden blokstørrelse
+MSG_HOLDS_NOTHING
+intet
+MSG_HOLDS_UNREADABLE
+kan ikke læses
+MSG_HOLDS_RUNNING
+%s - det kørende system
+MSG_LOOK_AGAIN
+_Søg igen
+MSG_TARGET_NONE
+Der er ingen disk at installere på. Sæt et kort, en SSD eller et USB-stik i, og tryk så på Søg igen.
+MSG_TARGET_CHOOSE
+Vælg en disk.
+MSG_TARGET_RUNNING
+Det kørende system ligger på denne disk: der kan ikke installeres oven på det.
+MSG_TARGET_SMALL
+Denne disk rummer %s, og systemet skal bruge mindst %s.
+MSG_TARGET_UNREADABLE
+Denne disk kan ikke læses.
+MSG_TARGET_FITS
+%s på %s nr. %d.
+MSG_CONFIRM_TITLE
+Klar
+MSG_CONFIRM_DISK
+Disk: %s nr. %d, %s
+MSG_CONFIRM_LANGUAGE
+Sprog: %s
+MSG_CONFIRM_KEYMAP
+Tastatur: %s
+MSG_CONFIRM_LOST
+Alt på denne disk går tabt.
+MSG_INSTALL
+_Installer
+MSG_PROGRESS_TITLE
+Installerer
+MSG_PHASE_LOOKING
+Ser på systemet ...
+MSG_PHASE_PREPARING
+Opretter partitionerne ...
+MSG_PHASE_COPYING
+Kopierer systemet ...
+MSG_PHASE_SETTINGS
+Skriver indstillingerne ...
+MSG_COPIED
+Filer kopieret: %d (%s)
+MSG_STOP
+_Stop
+MSG_STOPPING
+Stopper ...
+MSG_NO_PROCESS
+Der er ingen proces at køre installationen i.
+MSG_DONE_TITLE
+Færdig
+MSG_DONE
+Systemet er installeret. Filer: %d (%s).
+MSG_DONE_NEXT
+Tag USB-stikket ud, og genstart maskinen: den starter fra disken.
+MSG_FAILED
+Installationen kunne ikke fuldføres.
+MSG_STOPPED
+Installationen blev stoppet.
+MSG_NOT_BOOTABLE
+Disken rummer intet system, der kan starte. Tilbage fører til diskene igen.
+MSG_RESTART
+_Genstart
+MSG_RESTART_FAILED
+C:Reboot kunne ikke genstarte maskinen.
+MSG_NOLIBRARY
+%s: kan ikke åbne %s\n
+MSG_NOMEMORY
+%s: ingen hukommelse\n
+MSG_NOWINDOW
+%s: intet vindue\n

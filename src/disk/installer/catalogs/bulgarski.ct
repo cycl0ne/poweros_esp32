@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language bulgarski
+## codeset 106
+; The Installer's strings in Bulgarian. A draft: it waits for a native reader to go through it.
+MSG_WINDOW_TITLE
+Инсталиране на системата
+MSG_BACK
+На_зад
+MSG_NEXT
+_Напред
+MSG_LANGUAGE_TITLE
+Език
+MSG_LANGUAGE_INTRO
+Изберете езика на системата. Той се използва още в следващите стъпки и инсталираната система стартира с него.
+MSG_COLUMN_LANGUAGE
+Език и държава
+MSG_KEYBOARD_TITLE
+Клавиатура
+MSG_KEYBOARD_INTRO
+Изберете подредбата на клавиатурата. Тя действа веднага: опитайте я в полето отдолу.
+MSG_COLUMN_KEYMAP
+Подредба
+MSG_COLUMN_LAYOUT
+Описание
+MSG_TRY
+_Опитай
+MSG_TARGET_TITLE
+Диск
+MSG_TARGET_INTRO
+Изберете диска, на който да се инсталира системата. Всичко на него ще бъде загубено.
+MSG_COLUMN_DEVICE
+Устройство
+MSG_COLUMN_UNIT
+Единица
+MSG_COLUMN_SIZE
+Размер
+MSG_COLUMN_HOLDS
+Съдържание
+MSG_HOLDS_CONTAINER
+GPT с контейнер на PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+таблица на PowerOS
+MSG_HOLDS_FOREIGN
+таблица за друг размер на блока
+MSG_HOLDS_NOTHING
+нищо
+MSG_HOLDS_UNREADABLE
+не може да бъде прочетен
+MSG_HOLDS_RUNNING
+%s - работещата система
+MSG_LOOK_AGAIN
+_Търси отново
+MSG_TARGET_NONE
+Няма диск, на който да се инсталира. Поставете карта, SSD или флашка и натиснете „Търси отново“.
+MSG_TARGET_CHOOSE
+Изберете диск.
+MSG_TARGET_RUNNING
+Работещата система е на този диск: не може да се инсталира върху нея.
+MSG_TARGET_SMALL
+Този диск побира %s, а системата се нуждае от поне %s.
+MSG_TARGET_UNREADABLE
+Този диск не може да бъде прочетен.
+MSG_TARGET_FITS
+%s на %s, единица %d.
+MSG_CONFIRM_TITLE
+Готово за инсталиране
+MSG_CONFIRM_DISK
+Диск: %s, единица %d, %s
+MSG_CONFIRM_LANGUAGE
+Език: %s
+MSG_CONFIRM_KEYMAP
+Клавиатура: %s
+MSG_CONFIRM_LOST
+Всичко на този диск ще бъде загубено.
+MSG_INSTALL
+_Инсталирай
+MSG_PROGRESS_TITLE
+Инсталиране
+MSG_PHASE_LOOKING
+Преглед на системата ...
+MSG_PHASE_PREPARING
+Създаване на дяловете ...
+MSG_PHASE_COPYING
+Копиране на системата ...
+MSG_PHASE_SETTINGS
+Записване на настройките ...
+MSG_COPIED
+Копирани файлове: %d (%s)
+MSG_STOP
+_Спри
+MSG_STOPPING
+Спиране ...
+MSG_NO_PROCESS
+Няма процес, в който да се изпълни инсталирането.
+MSG_DONE_TITLE
+Завършено
+MSG_DONE
+Системата е инсталирана, файлове: %d (%s).
+MSG_DONE_NEXT
+Извадете флашката и рестартирайте компютъра: той ще стартира от диска.
+MSG_FAILED
+Инсталирането не можа да завърши.
+MSG_STOPPED
+Инсталирането беше спряно.
+MSG_NOT_BOOTABLE
+На диска няма система, която стартира. „Назад“ води отново към дисковете.
+MSG_RESTART
+_Рестартирай
+MSG_RESTART_FAILED
+C:Reboot не успя да рестартира компютъра.
+MSG_NOLIBRARY
+%s: %s не може да бъде отворена\n
+MSG_NOMEMORY
+%s: няма памет\n
+MSG_NOWINDOW
+%s: няма прозорец\n

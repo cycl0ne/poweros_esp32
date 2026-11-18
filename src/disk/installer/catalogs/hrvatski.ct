@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language hrvatski
+## codeset 106
+; The Installer's strings in Croatian, a draft.
+MSG_WINDOW_TITLE
+Instalacija sustava
+MSG_BACK
+_Natrag
+MSG_NEXT
+_Dalje
+MSG_LANGUAGE_TITLE
+Jezik
+MSG_LANGUAGE_INTRO
+Odaberite jezik sustava. Koristi se u sljedećim koracima, a instalirani sustav pokreće se na njemu.
+MSG_COLUMN_LANGUAGE
+Jezik i država
+MSG_KEYBOARD_TITLE
+Tipkovnica
+MSG_KEYBOARD_INTRO
+Odaberite raspored tipkovnice. Vrijedi odmah: isprobajte ga u polju ispod.
+MSG_COLUMN_KEYMAP
+Mapa tipki
+MSG_COLUMN_LAYOUT
+Raspored
+MSG_TRY
+_Isprobaj
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Odaberite disk na koji se instalira sustav. Sve na njemu bit će izgubljeno.
+MSG_COLUMN_DEVICE
+Uređaj
+MSG_COLUMN_UNIT
+Jedinica
+MSG_COLUMN_SIZE
+Veličina
+MSG_COLUMN_HOLDS
+Sadržaj
+MSG_HOLDS_CONTAINER
+GPT sa spremnikom PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+Tablica PowerOS
+MSG_HOLDS_FOREIGN
+tablica za drugu veličinu bloka
+MSG_HOLDS_NOTHING
+ništa
+MSG_HOLDS_UNREADABLE
+ne može se pročitati
+MSG_HOLDS_RUNNING
+%s - sustav koji radi
+MSG_LOOK_AGAIN
+_Traži ponovno
+MSG_TARGET_NONE
+Nema diska na koji bi se sustav mogao instalirati. Umetnite karticu, SSD ili USB stick, zatim pritisnite Traži ponovno.
+MSG_TARGET_CHOOSE
+Odaberite disk.
+MSG_TARGET_RUNNING
+Na ovom disku je sustav koji radi: ne može se prebrisati.
+MSG_TARGET_SMALL
+Ovaj disk ima %s, a sustavu treba najmanje %s.
+MSG_TARGET_UNREADABLE
+Ovaj disk ne može se pročitati.
+MSG_TARGET_FITS
+%s na %s, jedinica %d.
+MSG_CONFIRM_TITLE
+Sažetak
+MSG_CONFIRM_DISK
+Disk: %s, jedinica %d, %s
+MSG_CONFIRM_LANGUAGE
+Jezik: %s
+MSG_CONFIRM_KEYMAP
+Tipkovnica: %s
+MSG_CONFIRM_LOST
+Sve na ovom disku bit će izgubljeno.
+MSG_INSTALL
+_Instaliraj
+MSG_PROGRESS_TITLE
+Instaliranje
+MSG_PHASE_LOOKING
+Provjera sustava ...
+MSG_PHASE_PREPARING
+Stvaranje particija ...
+MSG_PHASE_COPYING
+Kopiranje sustava ...
+MSG_PHASE_SETTINGS
+Zapisivanje postavki ...
+MSG_COPIED
+Kopirane datoteke: %d (%s)
+MSG_STOP
+_Zaustavi
+MSG_STOPPING
+Zaustavljanje ...
+MSG_NO_PROCESS
+Nema procesa u kojem bi se izvršila instalacija.
+MSG_DONE_TITLE
+Gotovo
+MSG_DONE
+Sustav je instaliran. Datoteke: %d (%s).
+MSG_DONE_NEXT
+Izvadite USB stick i ponovno pokrenite računalo: pokrenut će se s diska.
+MSG_FAILED
+Instalacija nije mogla završiti.
+MSG_STOPPED
+Instalacija je zaustavljena.
+MSG_NOT_BOOTABLE
+Na disku nema sustava koji se može pokrenuti. Natrag vodi ponovno do diskova.
+MSG_RESTART
+_Ponovno pokreni
+MSG_RESTART_FAILED
+C:Reboot nije mogao ponovno pokrenuti računalo.
+MSG_NOLIBRARY
+%s: nije moguće otvoriti %s\n
+MSG_NOMEMORY
+%s: nema dovoljno memorije\n
+MSG_NOWINDOW
+%s: nema prozora\n

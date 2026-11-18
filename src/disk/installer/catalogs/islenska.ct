@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language islenska
+## codeset 106
+; The Installer's strings in Icelandic: a draft.
+MSG_WINDOW_TITLE
+Setja upp kerfið
+MSG_BACK
+_Til baka
+MSG_NEXT
+_Áfram
+MSG_LANGUAGE_TITLE
+Tungumál
+MSG_LANGUAGE_INTRO
+Veldu tungumál kerfisins. Það er notað strax, og uppsetta kerfið ræsist á því.
+MSG_COLUMN_LANGUAGE
+Tungumál og land
+MSG_KEYBOARD_TITLE
+Lyklaborð
+MSG_KEYBOARD_INTRO
+Veldu uppsetningu lyklaborðsins. Hún gildir strax: prófaðu hana í reitnum hér fyrir neðan.
+MSG_COLUMN_KEYMAP
+Lyklakort
+MSG_COLUMN_LAYOUT
+Uppsetning
+MSG_TRY
+_Prófa
+MSG_TARGET_TITLE
+Diskur
+MSG_TARGET_INTRO
+Veldu diskinn sem kerfið fer á. Allt sem á honum er glatast.
+MSG_COLUMN_DEVICE
+Tæki
+MSG_COLUMN_UNIT
+Eining
+MSG_COLUMN_SIZE
+Stærð
+MSG_COLUMN_HOLDS
+Innihald
+MSG_HOLDS_CONTAINER
+GPT með PowerOS-gámi
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-tafla
+MSG_HOLDS_FOREIGN
+tafla fyrir aðra blokkastærð
+MSG_HOLDS_NOTHING
+ekkert
+MSG_HOLDS_UNREADABLE
+ólesanlegt
+MSG_HOLDS_RUNNING
+%s - kerfið sem er í gangi
+MSG_LOOK_AGAIN
+_Leita aftur
+MSG_TARGET_NONE
+Enginn diskur er til að setja upp á. Settu inn kort, SSD eða USB-lykil og ýttu svo á Leita aftur.
+MSG_TARGET_CHOOSE
+Veldu disk.
+MSG_TARGET_RUNNING
+Kerfið sem er í gangi er á þessum diski: ekki er hægt að setja upp yfir það.
+MSG_TARGET_SMALL
+Þessi diskur rúmar %s, og kerfið þarf að minnsta kosti %s.
+MSG_TARGET_UNREADABLE
+Ekki er hægt að lesa þennan disk.
+MSG_TARGET_FITS
+%s á %s, eining %d.
+MSG_CONFIRM_TITLE
+Tilbúið
+MSG_CONFIRM_DISK
+Diskur: %s, eining %d, %s
+MSG_CONFIRM_LANGUAGE
+Tungumál: %s
+MSG_CONFIRM_KEYMAP
+Lyklaborð: %s
+MSG_CONFIRM_LOST
+Allt á þessum diski glatast.
+MSG_INSTALL
+_Setja upp
+MSG_PROGRESS_TITLE
+Uppsetning í gangi
+MSG_PHASE_LOOKING
+Skoðar kerfið ...
+MSG_PHASE_PREPARING
+Býr til disksneiðarnar ...
+MSG_PHASE_COPYING
+Afritar kerfið ...
+MSG_PHASE_SETTINGS
+Skrifar stillingarnar ...
+MSG_COPIED
+Skrár afritaðar: %d (%s)
+MSG_STOP
+_Stöðva
+MSG_STOPPING
+Stöðvar ...
+MSG_NO_PROCESS
+Ekkert ferli er til að keyra uppsetninguna í.
+MSG_DONE_TITLE
+Lokið
+MSG_DONE
+Kerfið er uppsett. Skrár: %d (%s).
+MSG_DONE_NEXT
+Taktu USB-lykilinn úr og endurræstu vélina: hún ræsist af disknum.
+MSG_FAILED
+Ekki tókst að ljúka uppsetningunni.
+MSG_STOPPED
+Uppsetningin var stöðvuð.
+MSG_NOT_BOOTABLE
+Á disknum er ekkert kerfi sem ræsist. Til baka leiðir aftur að diskunum.
+MSG_RESTART
+_Endurræsa
+MSG_RESTART_FAILED
+C:Reboot gat ekki endurræst vélina.
+MSG_NOLIBRARY
+%s: get ekki opnað %s\n
+MSG_NOMEMORY
+%s: ekkert minni\n
+MSG_NOWINDOW
+%s: enginn gluggi\n

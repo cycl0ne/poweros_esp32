@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language turkce
+## codeset 106
+; The Installer's strings in Turkish. A draft: it waits for a native reader to go through it.
+MSG_WINDOW_TITLE
+Sistemi kur
+MSG_BACK
+_Geri
+MSG_NEXT
+İ_leri
+MSG_LANGUAGE_TITLE
+Dil
+MSG_LANGUAGE_INTRO
+Sistemin dilini seçin. Sonraki adımlarda hemen kullanılır ve kurulan sistem bu dille başlar.
+MSG_COLUMN_LANGUAGE
+Dil ve ülke
+MSG_KEYBOARD_TITLE
+Klavye
+MSG_KEYBOARD_INTRO
+Klavye düzenini seçin. Hemen geçerli olur: aşağıdaki alanda deneyin.
+MSG_COLUMN_KEYMAP
+Düzen
+MSG_COLUMN_LAYOUT
+Açıklama
+MSG_TRY
+_Dene
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Sistemin kurulacağı diski seçin. Üzerindeki her şey kaybolur.
+MSG_COLUMN_DEVICE
+Aygıt
+MSG_COLUMN_UNIT
+Birim
+MSG_COLUMN_SIZE
+Boyut
+MSG_COLUMN_HOLDS
+İçerik
+MSG_HOLDS_CONTAINER
+PowerOS kapsayıcılı GPT
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS tablosu
+MSG_HOLDS_FOREIGN
+başka bir blok boyutu için tablo
+MSG_HOLDS_NOTHING
+boş
+MSG_HOLDS_UNREADABLE
+okunamıyor
+MSG_HOLDS_RUNNING
+%s - çalışan sistem
+MSG_LOOK_AGAIN
+_Yeniden ara
+MSG_TARGET_NONE
+Kurulacak disk yok. Bir kart, SSD ya da USB bellek takın ve Yeniden ara düğmesine basın.
+MSG_TARGET_CHOOSE
+Bir disk seçin.
+MSG_TARGET_RUNNING
+Çalışan sistem bu diskte: üzerine kurulamaz.
+MSG_TARGET_SMALL
+Bu diskin boyutu %s, sistem ise en az %s istiyor.
+MSG_TARGET_UNREADABLE
+Bu disk okunamıyor.
+MSG_TARGET_FITS
+%s: %s, birim %d.
+MSG_CONFIRM_TITLE
+Hazır
+MSG_CONFIRM_DISK
+Disk: %s, birim %d, %s
+MSG_CONFIRM_LANGUAGE
+Dil: %s
+MSG_CONFIRM_KEYMAP
+Klavye: %s
+MSG_CONFIRM_LOST
+Bu diskteki her şey kaybolur.
+MSG_INSTALL
+_Kur
+MSG_PROGRESS_TITLE
+Kuruluyor
+MSG_PHASE_LOOKING
+Sisteme bakılıyor ...
+MSG_PHASE_PREPARING
+Bölümler oluşturuluyor ...
+MSG_PHASE_COPYING
+Sistem kopyalanıyor ...
+MSG_PHASE_SETTINGS
+Ayarlar yazılıyor ...
+MSG_COPIED
+%d dosya kopyalandı (%s)
+MSG_STOP
+_Durdur
+MSG_STOPPING
+Durduruluyor ...
+MSG_NO_PROCESS
+Kurulumu çalıştıracak bir süreç yok.
+MSG_DONE_TITLE
+Bitti
+MSG_DONE
+Sistem kuruldu: %d dosya (%s).
+MSG_DONE_NEXT
+USB belleği çıkarın ve bilgisayarı yeniden başlatın: diskten başlayacak.
+MSG_FAILED
+Kurulum tamamlanamadı.
+MSG_STOPPED
+Kurulum durduruldu.
+MSG_NOT_BOOTABLE
+Diskte başlayan bir sistem yok. Geri düğmesi yeniden disklere götürür.
+MSG_RESTART
+_Yeniden başlat
+MSG_RESTART_FAILED
+C:Reboot bilgisayarı yeniden başlatamadı.
+MSG_NOLIBRARY
+%s: %s açılamıyor\n
+MSG_NOMEMORY
+%s: bellek yok\n
+MSG_NOWINDOW
+%s: pencere yok\n

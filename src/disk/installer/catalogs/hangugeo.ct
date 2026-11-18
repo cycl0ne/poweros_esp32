@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language hangugeo
+## codeset 106
+; The Installer's strings in Korean, a draft.
+MSG_WINDOW_TITLE
+시스템 설치
+MSG_BACK
+뒤로(_B)
+MSG_NEXT
+다음(_N)
+MSG_LANGUAGE_TITLE
+언어
+MSG_LANGUAGE_INTRO
+시스템 언어를 선택하십시오. 다음 단계부터 사용되며, 설치된 시스템도 이 언어로 시작됩니다.
+MSG_COLUMN_LANGUAGE
+언어 및 국가
+MSG_KEYBOARD_TITLE
+키보드
+MSG_KEYBOARD_INTRO
+키보드 배열을 선택하십시오. 바로 적용되므로 아래 입력란에서 시험해 보십시오.
+MSG_COLUMN_KEYMAP
+키맵
+MSG_COLUMN_LAYOUT
+배열
+MSG_TRY
+시험 입력(_T)
+MSG_TARGET_TITLE
+디스크
+MSG_TARGET_INTRO
+시스템을 설치할 디스크를 선택하십시오. 디스크의 모든 내용이 지워집니다.
+MSG_COLUMN_DEVICE
+장치
+MSG_COLUMN_UNIT
+유닛
+MSG_COLUMN_SIZE
+크기
+MSG_COLUMN_HOLDS
+내용
+MSG_HOLDS_CONTAINER
+PowerOS 컨테이너가 있는 GPT
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS 테이블
+MSG_HOLDS_FOREIGN
+다른 블록 크기용 테이블
+MSG_HOLDS_NOTHING
+없음
+MSG_HOLDS_UNREADABLE
+읽을 수 없음
+MSG_HOLDS_RUNNING
+%s - 실행 중인 시스템
+MSG_LOOK_AGAIN
+다시 찾기(_L)
+MSG_TARGET_NONE
+설치할 디스크가 없습니다. 카드, SSD 또는 USB 메모리를 꽂은 다음 [다시 찾기]를 누르십시오.
+MSG_TARGET_CHOOSE
+디스크를 선택하십시오.
+MSG_TARGET_RUNNING
+이 디스크에서 시스템이 실행 중이므로 덮어쓸 수 없습니다.
+MSG_TARGET_SMALL
+이 디스크의 용량: %s, 시스템에 필요한 최소 용량: %s.
+MSG_TARGET_UNREADABLE
+이 디스크를 읽을 수 없습니다.
+MSG_TARGET_FITS
+%s, %s 유닛 %d.
+MSG_CONFIRM_TITLE
+확인
+MSG_CONFIRM_DISK
+디스크: %s 유닛 %d, %s
+MSG_CONFIRM_LANGUAGE
+언어: %s
+MSG_CONFIRM_KEYMAP
+키보드: %s
+MSG_CONFIRM_LOST
+이 디스크의 모든 내용이 지워집니다.
+MSG_INSTALL
+설치(_I)
+MSG_PROGRESS_TITLE
+설치 중
+MSG_PHASE_LOOKING
+시스템 확인 중 ...
+MSG_PHASE_PREPARING
+파티션 만드는 중 ...
+MSG_PHASE_COPYING
+시스템 복사 중 ...
+MSG_PHASE_SETTINGS
+설정 쓰는 중 ...
+MSG_COPIED
+파일 %d개 복사됨 (%s)
+MSG_STOP
+중지(_S)
+MSG_STOPPING
+중지하는 중 ...
+MSG_NO_PROCESS
+설치를 실행할 프로세스가 없습니다.
+MSG_DONE_TITLE
+완료
+MSG_DONE
+시스템이 설치되었습니다: 파일 %d개 (%s).
+MSG_DONE_NEXT
+USB 메모리를 뽑고 컴퓨터를 다시 시작하십시오. 디스크에서 시작됩니다.
+MSG_FAILED
+설치를 끝내지 못했습니다.
+MSG_STOPPED
+설치가 중지되었습니다.
+MSG_NOT_BOOTABLE
+디스크에 시작할 수 있는 시스템이 없습니다. [뒤로]를 누르면 디스크 선택으로 돌아갑니다.
+MSG_RESTART
+다시 시작(_R)
+MSG_RESTART_FAILED
+C:Reboot로 컴퓨터를 다시 시작하지 못했습니다.
+MSG_NOLIBRARY
+%s: %s을(를) 열 수 없음\n
+MSG_NOMEMORY
+%s: 메모리 부족\n
+MSG_NOWINDOW
+%s: 창 없음\n

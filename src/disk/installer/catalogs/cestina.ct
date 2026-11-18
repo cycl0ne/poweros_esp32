@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language cestina
+## codeset 106
+; The Installer's strings in Czech, a draft.
+MSG_WINDOW_TITLE
+Instalace systému
+MSG_BACK
+_Zpět
+MSG_NEXT
+_Další
+MSG_LANGUAGE_TITLE
+Jazyk
+MSG_LANGUAGE_INTRO
+Vyberte jazyk systému. Použije se v dalších krocích a nainstalovaný systém se v něm spustí.
+MSG_COLUMN_LANGUAGE
+Jazyk a země
+MSG_KEYBOARD_TITLE
+Klávesnice
+MSG_KEYBOARD_INTRO
+Vyberte rozložení klávesnice. Platí ihned: vyzkoušejte ho v poli níže.
+MSG_COLUMN_KEYMAP
+Mapa kláves
+MSG_COLUMN_LAYOUT
+Rozložení
+MSG_TRY
+_Vyzkoušet
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Vyberte disk, na který se systém nainstaluje. Vše, co na něm je, bude ztraceno.
+MSG_COLUMN_DEVICE
+Zařízení
+MSG_COLUMN_UNIT
+Jednotka
+MSG_COLUMN_SIZE
+Velikost
+MSG_COLUMN_HOLDS
+Obsah
+MSG_HOLDS_CONTAINER
+GPT s kontejnerem PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+Tabulka PowerOS
+MSG_HOLDS_FOREIGN
+tabulka pro jinou velikost bloku
+MSG_HOLDS_NOTHING
+nic
+MSG_HOLDS_UNREADABLE
+nelze přečíst
+MSG_HOLDS_RUNNING
+%s - běžící systém
+MSG_LOOK_AGAIN
+_Hledat znovu
+MSG_TARGET_NONE
+Není k dispozici disk, na který by šlo instalovat. Vložte kartu, SSD nebo flash disk a stiskněte Hledat znovu.
+MSG_TARGET_CHOOSE
+Vyberte disk.
+MSG_TARGET_RUNNING
+Na tomto disku je běžící systém: nelze ho přepsat.
+MSG_TARGET_SMALL
+Tento disk pojme %s a systém potřebuje nejméně %s.
+MSG_TARGET_UNREADABLE
+Tento disk nelze přečíst.
+MSG_TARGET_FITS
+%s na %s, jednotka %d.
+MSG_CONFIRM_TITLE
+Shrnutí
+MSG_CONFIRM_DISK
+Disk: %s, jednotka %d, %s
+MSG_CONFIRM_LANGUAGE
+Jazyk: %s
+MSG_CONFIRM_KEYMAP
+Klávesnice: %s
+MSG_CONFIRM_LOST
+Vše na tomto disku bude ztraceno.
+MSG_INSTALL
+_Instalovat
+MSG_PROGRESS_TITLE
+Probíhá instalace
+MSG_PHASE_LOOKING
+Kontrola systému ...
+MSG_PHASE_PREPARING
+Vytváření oddílů ...
+MSG_PHASE_COPYING
+Kopírování systému ...
+MSG_PHASE_SETTINGS
+Zápis nastavení ...
+MSG_COPIED
+Zkopírované soubory: %d (%s)
+MSG_STOP
+_Zastavit
+MSG_STOPPING
+Zastavování ...
+MSG_NO_PROCESS
+Není k dispozici proces, ve kterém by instalace mohla běžet.
+MSG_DONE_TITLE
+Hotovo
+MSG_DONE
+Systém je nainstalován. Soubory: %d (%s).
+MSG_DONE_NEXT
+Vytáhněte flash disk a restartujte počítač: spustí se z disku.
+MSG_FAILED
+Instalaci se nepodařilo dokončit.
+MSG_STOPPED
+Instalace byla zastavena.
+MSG_NOT_BOOTABLE
+Na disku není žádný spustitelný systém. Zpět vede znovu k seznamu disků.
+MSG_RESTART
+_Restartovat
+MSG_RESTART_FAILED
+C:Reboot nemohl restartovat počítač.
+MSG_NOLIBRARY
+%s: nelze otevřít %s\n
+MSG_NOMEMORY
+%s: nedostatek paměti\n
+MSG_NOWINDOW
+%s: žádné okno\n

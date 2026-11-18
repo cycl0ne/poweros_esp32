@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language latviesu
+## codeset 106
+; The Installer's strings in Latvian. A draft: it waits for a native reader to go through it.
+MSG_WINDOW_TITLE
+Sistēmas instalēšana
+MSG_BACK
+_Atpakaļ
+MSG_NEXT
+_Tālāk
+MSG_LANGUAGE_TITLE
+Valoda
+MSG_LANGUAGE_INTRO
+Izvēlieties sistēmas valodu. Tā tiek lietota jau turpmākajos soļos, un instalētā sistēma startē tajā.
+MSG_COLUMN_LANGUAGE
+Valoda un valsts
+MSG_KEYBOARD_TITLE
+Tastatūra
+MSG_KEYBOARD_INTRO
+Izvēlieties tastatūras izkārtojumu. Tas darbojas uzreiz: izmēģiniet to laukā zemāk.
+MSG_COLUMN_KEYMAP
+Izkārtojums
+MSG_COLUMN_LAYOUT
+Apraksts
+MSG_TRY
+_Izmēģināt
+MSG_TARGET_TITLE
+Disks
+MSG_TARGET_INTRO
+Izvēlieties disku, uz kura instalēt sistēmu. Viss, kas tajā ir, tiks zaudēts.
+MSG_COLUMN_DEVICE
+Ierīce
+MSG_COLUMN_UNIT
+Vienība
+MSG_COLUMN_SIZE
+Lielums
+MSG_COLUMN_HOLDS
+Saturs
+MSG_HOLDS_CONTAINER
+GPT ar PowerOS konteineru
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS tabula
+MSG_HOLDS_FOREIGN
+tabula citam bloka lielumam
+MSG_HOLDS_NOTHING
+nekas
+MSG_HOLDS_UNREADABLE
+nav nolasāms
+MSG_HOLDS_RUNNING
+%s - darbojošā sistēma
+MSG_LOOK_AGAIN
+_Meklēt vēlreiz
+MSG_TARGET_NONE
+Nav diska, uz kura instalēt. Ievietojiet karti, SSD vai USB zibatmiņu un nospiediet „Meklēt vēlreiz“.
+MSG_TARGET_CHOOSE
+Izvēlieties disku.
+MSG_TARGET_RUNNING
+Šajā diskā ir darbojošā sistēma: pāri tai instalēt nevar.
+MSG_TARGET_SMALL
+Šajā diskā ietilpst %s, bet sistēmai vajag vismaz %s.
+MSG_TARGET_UNREADABLE
+Šo disku nevar nolasīt.
+MSG_TARGET_FITS
+%s ierīcē %s, vienība %d.
+MSG_CONFIRM_TITLE
+Gatavs
+MSG_CONFIRM_DISK
+Disks: %s, vienība %d, %s
+MSG_CONFIRM_LANGUAGE
+Valoda: %s
+MSG_CONFIRM_KEYMAP
+Tastatūra: %s
+MSG_CONFIRM_LOST
+Viss, kas ir šajā diskā, tiks zaudēts.
+MSG_INSTALL
+_Instalēt
+MSG_PROGRESS_TITLE
+Instalē
+MSG_PHASE_LOOKING
+Aplūko sistēmu ...
+MSG_PHASE_PREPARING
+Veido nodalījumus ...
+MSG_PHASE_COPYING
+Kopē sistēmu ...
+MSG_PHASE_SETTINGS
+Raksta iestatījumus ...
+MSG_COPIED
+Nokopēti faili: %d (%s)
+MSG_STOP
+_Apturēt
+MSG_STOPPING
+Aptur ...
+MSG_NO_PROCESS
+Nav procesa, kurā veikt instalēšanu.
+MSG_DONE_TITLE
+Pabeigts
+MSG_DONE
+Sistēma ir instalēta, faili: %d (%s).
+MSG_DONE_NEXT
+Izņemiet zibatmiņu un restartējiet datoru: tas startēs no diska.
+MSG_FAILED
+Instalēšanu nevarēja pabeigt.
+MSG_STOPPED
+Instalēšana tika apturēta.
+MSG_NOT_BOOTABLE
+Diskā nav sistēmas, kas startē. „Atpakaļ“ ved atkal pie diskiem.
+MSG_RESTART
+_Restartēt
+MSG_RESTART_FAILED
+C:Reboot nevarēja restartēt datoru.
+MSG_NOLIBRARY
+%s: nevar atvērt %s\n
+MSG_NOMEMORY
+%s: nav atmiņas\n
+MSG_NOWINDOW
+%s: nav loga\n

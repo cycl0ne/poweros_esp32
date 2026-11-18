@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language francais
+## codeset 106
+; The Installer's strings in French: a draft.
+MSG_WINDOW_TITLE
+Installer le système
+MSG_BACK
+_Précédent
+MSG_NEXT
+_Suivant
+MSG_LANGUAGE_TITLE
+Langue
+MSG_LANGUAGE_INTRO
+Choisissez la langue du système. Elle sert dès maintenant, et le système installé démarre dans cette langue.
+MSG_COLUMN_LANGUAGE
+Langue et pays
+MSG_KEYBOARD_TITLE
+Clavier
+MSG_KEYBOARD_INTRO
+Choisissez la disposition du clavier. Elle s'applique aussitôt : essayez-la dans le champ ci-dessous.
+MSG_COLUMN_KEYMAP
+Table de clavier
+MSG_COLUMN_LAYOUT
+Disposition
+MSG_TRY
+_Essayer
+MSG_TARGET_TITLE
+Disque
+MSG_TARGET_INTRO
+Choisissez le disque sur lequel installer le système. Tout son contenu sera perdu.
+MSG_COLUMN_DEVICE
+Périphérique
+MSG_COLUMN_UNIT
+Unité
+MSG_COLUMN_SIZE
+Taille
+MSG_COLUMN_HOLDS
+Contenu
+MSG_HOLDS_CONTAINER
+GPT avec un conteneur PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+table PowerOS
+MSG_HOLDS_FOREIGN
+une table pour une autre taille de bloc
+MSG_HOLDS_NOTHING
+rien
+MSG_HOLDS_UNREADABLE
+illisible
+MSG_HOLDS_RUNNING
+%s - le système en cours
+MSG_LOOK_AGAIN
+_Actualiser
+MSG_TARGET_NONE
+Aucun disque sur lequel installer. Insérez une carte, un SSD ou une clé USB, puis appuyez sur Actualiser.
+MSG_TARGET_CHOOSE
+Choisissez un disque.
+MSG_TARGET_RUNNING
+Le système en cours se trouve sur ce disque : il ne peut pas être remplacé.
+MSG_TARGET_SMALL
+Ce disque a une capacité de %s, et le système demande au moins %s.
+MSG_TARGET_UNREADABLE
+Ce disque est illisible.
+MSG_TARGET_FITS
+%s sur %s unité %d.
+MSG_CONFIRM_TITLE
+Prêt
+MSG_CONFIRM_DISK
+Disque : %s unité %d, %s
+MSG_CONFIRM_LANGUAGE
+Langue : %s
+MSG_CONFIRM_KEYMAP
+Clavier : %s
+MSG_CONFIRM_LOST
+Tout le contenu de ce disque sera perdu.
+MSG_INSTALL
+_Installer
+MSG_PROGRESS_TITLE
+Installation
+MSG_PHASE_LOOKING
+Examen du système ...
+MSG_PHASE_PREPARING
+Création des partitions ...
+MSG_PHASE_COPYING
+Copie du système ...
+MSG_PHASE_SETTINGS
+Écriture des paramètres ...
+MSG_COPIED
+Fichiers copiés : %d (%s)
+MSG_STOP
+_Arrêter
+MSG_STOPPING
+Arrêt ...
+MSG_NO_PROCESS
+Aucun processus pour effectuer l'installation.
+MSG_DONE_TITLE
+Terminé
+MSG_DONE
+Le système est installé. Fichiers : %d (%s).
+MSG_DONE_NEXT
+Retirez la clé USB et redémarrez la machine : elle démarrera depuis le disque.
+MSG_FAILED
+L'installation n'a pas pu se terminer.
+MSG_STOPPED
+L'installation a été arrêtée.
+MSG_NOT_BOOTABLE
+Le disque ne contient aucun système qui démarre. Précédent ramène à la liste des disques.
+MSG_RESTART
+_Redémarrer
+MSG_RESTART_FAILED
+C:Reboot n'a pas pu redémarrer la machine.
+MSG_NOLIBRARY
+%s : impossible d'ouvrir %s\n
+MSG_NOMEMORY
+%s : mémoire insuffisante\n
+MSG_NOWINDOW
+%s : pas de fenêtre\n

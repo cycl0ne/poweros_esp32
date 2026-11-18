@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language deutsch
+## codeset 106
+; The Installer's strings in German.
+MSG_WINDOW_TITLE
+System installieren
+MSG_BACK
+_Zurück
+MSG_NEXT
+_Weiter
+MSG_LANGUAGE_TITLE
+Sprache
+MSG_LANGUAGE_INTRO
+Wählen Sie die Sprache des Systems. Sie gilt ab dem nächsten Schritt, und das installierte System startet in ihr.
+MSG_COLUMN_LANGUAGE
+Sprache und Land
+MSG_KEYBOARD_TITLE
+Tastatur
+MSG_KEYBOARD_INTRO
+Wählen Sie die Belegung der Tastatur. Sie gilt sofort: Probieren Sie sie im Feld darunter aus.
+MSG_COLUMN_KEYMAP
+Keymap
+MSG_COLUMN_LAYOUT
+Belegung
+MSG_TRY
+_Ausprobieren
+MSG_TARGET_TITLE
+Laufwerk
+MSG_TARGET_INTRO
+Wählen Sie das Laufwerk, auf das das System kommt. Alles darauf geht verloren.
+MSG_COLUMN_DEVICE
+Gerät
+MSG_COLUMN_UNIT
+Unit
+MSG_COLUMN_SIZE
+Größe
+MSG_COLUMN_HOLDS
+Inhalt
+MSG_HOLDS_CONTAINER
+GPT mit einem PowerOS-Container
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-Tabelle
+MSG_HOLDS_FOREIGN
+eine Tabelle für eine andere Blockgröße
+MSG_HOLDS_NOTHING
+nichts
+MSG_HOLDS_UNREADABLE
+nicht lesbar
+MSG_HOLDS_RUNNING
+%s - das laufende System
+MSG_LOOK_AGAIN
+_Neu suchen
+MSG_TARGET_NONE
+Es gibt kein Laufwerk zum Installieren. Stecken Sie eine Karte, eine SSD oder einen Stick ein und drücken Sie Neu suchen.
+MSG_TARGET_CHOOSE
+Wählen Sie ein Laufwerk.
+MSG_TARGET_RUNNING
+Das laufende System ist auf diesem Laufwerk: Es kann nicht überschrieben werden.
+MSG_TARGET_SMALL
+Dieses Laufwerk fasst %s, das System braucht mindestens %s.
+MSG_TARGET_UNREADABLE
+Dieses Laufwerk kann nicht gelesen werden.
+MSG_TARGET_FITS
+%s auf %s Unit %d.
+MSG_CONFIRM_TITLE
+Bereit
+MSG_CONFIRM_DISK
+Laufwerk: %s Unit %d, %s
+MSG_CONFIRM_LANGUAGE
+Sprache: %s
+MSG_CONFIRM_KEYMAP
+Tastatur: %s
+MSG_CONFIRM_LOST
+Alles auf diesem Laufwerk geht verloren.
+MSG_INSTALL
+_Installieren
+MSG_PROGRESS_TITLE
+Installation
+MSG_PHASE_LOOKING
+Das System wird geprüft ...
+MSG_PHASE_PREPARING
+Die Partitionen werden angelegt ...
+MSG_PHASE_COPYING
+Das System wird kopiert ...
+MSG_PHASE_SETTINGS
+Die Einstellungen werden geschrieben ...
+MSG_COPIED
+Dateien kopiert: %d (%s)
+MSG_STOP
+_Stopp
+MSG_STOPPING
+Wird angehalten ...
+MSG_NO_PROCESS
+Es gibt keinen Prozess für die Installation.
+MSG_DONE_TITLE
+Fertig
+MSG_DONE
+Das System ist installiert: %d Dateien (%s).
+MSG_DONE_NEXT
+Ziehen Sie den Stick ab und starten Sie den Rechner neu: Er startet vom Laufwerk.
+MSG_FAILED
+Die Installation konnte nicht abgeschlossen werden.
+MSG_STOPPED
+Die Installation wurde angehalten.
+MSG_NOT_BOOTABLE
+Auf dem Laufwerk ist kein startfähiges System. Zurück führt wieder zu den Laufwerken.
+MSG_RESTART
+_Neustart
+MSG_RESTART_FAILED
+C:Reboot konnte den Rechner nicht neu starten.
+MSG_NOLIBRARY
+%s: %s lässt sich nicht öffnen\n
+MSG_NOMEMORY
+%s: kein Speicher\n
+MSG_NOWINDOW
+%s: kein Fenster\n

@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language romana
+## codeset 106
+; The Installer's strings in Romanian: a draft.
+MSG_WINDOW_TITLE
+Instalarea sistemului
+MSG_BACK
+Î_napoi
+MSG_NEXT
+_Următorul
+MSG_LANGUAGE_TITLE
+Limbă
+MSG_LANGUAGE_INTRO
+Alegeți limba sistemului. Este folosită de acum înainte, iar sistemul instalat pornește în ea.
+MSG_COLUMN_LANGUAGE
+Limbă și țară
+MSG_KEYBOARD_TITLE
+Tastatură
+MSG_KEYBOARD_INTRO
+Alegeți aspectul tastaturii. Se aplică imediat: încercați-l în câmpul de mai jos.
+MSG_COLUMN_KEYMAP
+Mapare de taste
+MSG_COLUMN_LAYOUT
+Aspect
+MSG_TRY
+_Testare
+MSG_TARGET_TITLE
+Disc
+MSG_TARGET_INTRO
+Alegeți discul pe care se instalează sistemul. Tot ce conține se pierde.
+MSG_COLUMN_DEVICE
+Dispozitiv
+MSG_COLUMN_UNIT
+Unitate
+MSG_COLUMN_SIZE
+Dimensiune
+MSG_COLUMN_HOLDS
+Conținut
+MSG_HOLDS_CONTAINER
+GPT cu un container PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+tabel PowerOS
+MSG_HOLDS_FOREIGN
+un tabel pentru altă dimensiune de bloc
+MSG_HOLDS_NOTHING
+nimic
+MSG_HOLDS_UNREADABLE
+nu poate fi citit
+MSG_HOLDS_RUNNING
+%s - sistemul care rulează
+MSG_LOOK_AGAIN
+_Reîmprospătare
+MSG_TARGET_NONE
+Nu există niciun disc pe care să se instaleze. Introduceți un card, un SSD sau un stick USB, apoi apăsați Reîmprospătare.
+MSG_TARGET_CHOOSE
+Alegeți un disc.
+MSG_TARGET_RUNNING
+Sistemul care rulează este pe acest disc: nu se poate instala peste el.
+MSG_TARGET_SMALL
+Capacitatea acestui disc este %s, iar sistemul are nevoie de cel puțin %s.
+MSG_TARGET_UNREADABLE
+Acest disc nu poate fi citit.
+MSG_TARGET_FITS
+%s pe %s unitatea %d.
+MSG_CONFIRM_TITLE
+Gata
+MSG_CONFIRM_DISK
+Disc: %s unitatea %d, %s
+MSG_CONFIRM_LANGUAGE
+Limbă: %s
+MSG_CONFIRM_KEYMAP
+Tastatură: %s
+MSG_CONFIRM_LOST
+Tot ce conține acest disc se pierde.
+MSG_INSTALL
+_Instalare
+MSG_PROGRESS_TITLE
+Se instalează
+MSG_PHASE_LOOKING
+Se examinează sistemul ...
+MSG_PHASE_PREPARING
+Se creează partițiile ...
+MSG_PHASE_COPYING
+Se copiază sistemul ...
+MSG_PHASE_SETTINGS
+Se scriu setările ...
+MSG_COPIED
+Fișiere copiate: %d (%s)
+MSG_STOP
+_Oprire
+MSG_STOPPING
+Se oprește ...
+MSG_NO_PROCESS
+Nu există niciun proces care să ruleze instalarea.
+MSG_DONE_TITLE
+Terminat
+MSG_DONE
+Sistemul este instalat. Fișiere: %d (%s).
+MSG_DONE_NEXT
+Scoateți stick-ul USB și reporniți mașina: va porni de pe disc.
+MSG_FAILED
+Instalarea nu s-a putut termina.
+MSG_STOPPED
+Instalarea a fost oprită.
+MSG_NOT_BOOTABLE
+Discul nu conține niciun sistem care pornește. Înapoi duce din nou la lista de discuri.
+MSG_RESTART
+_Repornire
+MSG_RESTART_FAILED
+C:Reboot nu a putut reporni mașina.
+MSG_NOLIBRARY
+%s: nu se poate deschide %s\n
+MSG_NOMEMORY
+%s: memorie insuficientă\n
+MSG_NOWINDOW
+%s: nicio fereastră\n

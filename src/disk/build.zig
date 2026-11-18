@@ -71,7 +71,7 @@ pub const Program = struct { disk: []const u8, source: []const u8, name: []const
 /// LOCALE:Catalogs/<language>/, the descriptor and the translation it is
 /// made from, and the catalog's name. One that is `wide` goes on the
 /// 64-bit machines' disks only: its language is written in a font only
-/// they have.
+/// they have, or its program is only there.
 pub const Catalog = struct { disk: []const u8, descriptor: []const u8, translation: []const u8, name: []const u8, wide: bool = false };
 
 /// A language the system is translated into: its name - its file in
@@ -105,13 +105,16 @@ pub fn wideLanguage(name: []const u8) bool {
 /// What is translated: the descriptor, the drawer its translations are
 /// in - `<language>.ct` each - and the catalog's name under a language's
 /// drawer. It has a translation into every language unless `only` names
-/// the ones it has, or `except` those it has not.
+/// the ones it has, or `except` those it has not. One that is `wide` is
+/// a program's that is on the 64-bit machines' disks alone, and so are
+/// its catalogs.
 pub const Translated = struct {
     descriptor: []const u8,
     translations: []const u8,
     name: []const u8,
     only: ?[]const []const u8 = null,
     except: []const []const u8 = &.{},
+    wide: bool = false,
 
     /// Whether it has a translation into `language`.
     pub fn has(strings: Translated, language: []const u8) bool {
@@ -142,6 +145,7 @@ pub const translated_strings = [_]Translated{
     .{ .descriptor = "commodities/emoji/emoji.cd", .translations = "commodities/emoji/catalogs", .name = "Commodities/Emoji.catalog", .except = &not_emoji },
     .{ .descriptor = "libs/anvil/anvil.cd", .translations = "libs/anvil/catalogs", .name = "sys/anvil.catalog" },
     .{ .descriptor = "libs/http/http.cd", .translations = "libs/http/catalogs", .name = "sys/http.catalog" },
+    .{ .descriptor = "installer/installer.cd", .translations = "installer/catalogs", .name = "Installer.catalog", .wide = true },
 };
 
 /// The catalogs `translated` comes to: one for each of its languages.
@@ -156,7 +160,7 @@ pub fn catalogsOf(comptime all: []const Translated) []const Catalog {
                 .descriptor = one.descriptor,
                 .translation = one.translations ++ "/" ++ language.name ++ ".ct",
                 .name = one.name,
-                .wide = language.wide,
+                .wide = language.wide or one.wide,
             }};
         }
     }

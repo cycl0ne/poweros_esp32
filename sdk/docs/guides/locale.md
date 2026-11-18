@@ -347,9 +347,10 @@ keeps them open.
 Notepad, Sheet, the Player and Movie have their texts in catalogs,
 German on the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`),
 and so have the Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`),
-the Emoji commodity, the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`)
-and http.library; their descriptors and translations are beside their
-sources. The same catalogs are there in every other language of
+the Emoji commodity, the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`),
+http.library and, on the 64-bit machines' disks, the Installer
+(`LOCALE:Catalogs/<language>/Installer.catalog`); their descriptors and
+translations are beside their sources. The same catalogs are there in every other language of
 `LOCALE:Languages` but zhongwen-fanti: the languages of Europe on every
 disk, Hindi (`LOCALE:Catalogs/hindi/`), Japanese (`nihongo/`), Korean
 (`hangugeo/`) and Chinese in the simplified characters (`zhongwen/`) on

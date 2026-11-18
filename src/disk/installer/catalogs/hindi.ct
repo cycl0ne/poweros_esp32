@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language hindi
+## codeset 106
+; The Installer's strings in Hindi: a draft.
+MSG_WINDOW_TITLE
+सिस्टम इंस्टॉल करें
+MSG_BACK
+_वापस
+MSG_NEXT
+_अगला
+MSG_LANGUAGE_TITLE
+भाषा
+MSG_LANGUAGE_INTRO
+सिस्टम की भाषा चुनें। आगे यही इस्तेमाल होगी, और इंस्टॉल किया गया सिस्टम इसी में शुरू होगा।
+MSG_COLUMN_LANGUAGE
+भाषा और देश
+MSG_KEYBOARD_TITLE
+कीबोर्ड
+MSG_KEYBOARD_INTRO
+कीबोर्ड का लेआउट चुनें। यह तुरंत लागू होता है: नीचे के फ़ील्ड में इसे आज़माएँ।
+MSG_COLUMN_KEYMAP
+कीमैप
+MSG_COLUMN_LAYOUT
+लेआउट
+MSG_TRY
+_आज़माएँ
+MSG_TARGET_TITLE
+डिस्क
+MSG_TARGET_INTRO
+वह डिस्क चुनें जिस पर सिस्टम इंस्टॉल होगा। इस पर मौजूद सब कुछ मिट जाएगा।
+MSG_COLUMN_DEVICE
+डिवाइस
+MSG_COLUMN_UNIT
+यूनिट
+MSG_COLUMN_SIZE
+आकार
+MSG_COLUMN_HOLDS
+इसमें क्या है
+MSG_HOLDS_CONTAINER
+PowerOS कंटेनर वाला GPT
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS तालिका
+MSG_HOLDS_FOREIGN
+किसी दूसरे ब्लॉक आकार की तालिका
+MSG_HOLDS_NOTHING
+कुछ नहीं
+MSG_HOLDS_UNREADABLE
+पढ़ा नहीं जा सकता
+MSG_HOLDS_RUNNING
+%s - चल रहा सिस्टम
+MSG_LOOK_AGAIN
+_फिर से देखें
+MSG_TARGET_NONE
+इंस्टॉल करने के लिए कोई डिस्क नहीं है। कोई कार्ड, SSD या USB स्टिक लगाएँ, फिर "फिर से देखें" दबाएँ।
+MSG_TARGET_CHOOSE
+कोई डिस्क चुनें।
+MSG_TARGET_RUNNING
+चल रहा सिस्टम इसी डिस्क पर है: इस पर इंस्टॉल नहीं किया जा सकता।
+MSG_TARGET_SMALL
+इस डिस्क की क्षमता %s है, और सिस्टम को कम से कम %s चाहिए।
+MSG_TARGET_UNREADABLE
+यह डिस्क पढ़ी नहीं जा सकती।
+MSG_TARGET_FITS
+%s, %s यूनिट %d पर।
+MSG_CONFIRM_TITLE
+तैयार
+MSG_CONFIRM_DISK
+डिस्क: %s यूनिट %d, %s
+MSG_CONFIRM_LANGUAGE
+भाषा: %s
+MSG_CONFIRM_KEYMAP
+कीबोर्ड: %s
+MSG_CONFIRM_LOST
+इस डिस्क पर मौजूद सब कुछ मिट जाएगा।
+MSG_INSTALL
+_इंस्टॉल करें
+MSG_PROGRESS_TITLE
+इंस्टॉल हो रहा है
+MSG_PHASE_LOOKING
+सिस्टम की जाँच हो रही है ...
+MSG_PHASE_PREPARING
+पार्टीशन बनाए जा रहे हैं ...
+MSG_PHASE_COPYING
+सिस्टम कॉपी हो रहा है ...
+MSG_PHASE_SETTINGS
+सेटिंग्स लिखी जा रही हैं ...
+MSG_COPIED
+कॉपी की गई फ़ाइलें: %d (%s)
+MSG_STOP
+_रोकें
+MSG_STOPPING
+रोका जा रहा है ...
+MSG_NO_PROCESS
+इंस्टॉल चलाने के लिए कोई प्रोसेस नहीं है।
+MSG_DONE_TITLE
+पूरा हुआ
+MSG_DONE
+सिस्टम इंस्टॉल हो गया है। फ़ाइलें: %d (%s)।
+MSG_DONE_NEXT
+USB स्टिक निकालें और मशीन को पुनः आरंभ करें: यह डिस्क से शुरू होगी।
+MSG_FAILED
+इंस्टॉल पूरा नहीं हो सका।
+MSG_STOPPED
+इंस्टॉल रोक दिया गया।
+MSG_NOT_BOOTABLE
+डिस्क पर ऐसा कोई सिस्टम नहीं है जो शुरू हो सके। "वापस" से फिर डिस्कों की सूची पर जाएँ।
+MSG_RESTART
+_पुनः आरंभ करें
+MSG_RESTART_FAILED
+C:Reboot मशीन को पुनः आरंभ नहीं कर सका।
+MSG_NOLIBRARY
+%s: %s नहीं खुल सका\n
+MSG_NOMEMORY
+%s: मेमोरी नहीं\n
+MSG_NOWINDOW
+%s: कोई विंडो नहीं\n

@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language nihongo
+## codeset 106
+; The Installer's strings in Japanese, a draft.
+MSG_WINDOW_TITLE
+システムのインストール
+MSG_BACK
+戻る(_B)
+MSG_NEXT
+次へ(_N)
+MSG_LANGUAGE_TITLE
+言語
+MSG_LANGUAGE_INTRO
+システムの言語を選んでください。以降の手順で使われ、インストールしたシステムもこの言語で起動します。
+MSG_COLUMN_LANGUAGE
+言語と国
+MSG_KEYBOARD_TITLE
+キーボード
+MSG_KEYBOARD_INTRO
+キーボードの配列を選んでください。すぐに有効になるので、下の欄で試してください。
+MSG_COLUMN_KEYMAP
+キーマップ
+MSG_COLUMN_LAYOUT
+配列
+MSG_TRY
+試し入力(_T)
+MSG_TARGET_TITLE
+ディスク
+MSG_TARGET_INTRO
+システムをインストールするディスクを選んでください。ディスクの内容はすべて失われます。
+MSG_COLUMN_DEVICE
+デバイス
+MSG_COLUMN_UNIT
+ユニット
+MSG_COLUMN_SIZE
+サイズ
+MSG_COLUMN_HOLDS
+内容
+MSG_HOLDS_CONTAINER
+GPT (PowerOS コンテナーあり)
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS テーブル
+MSG_HOLDS_FOREIGN
+別のブロックサイズ用のテーブル
+MSG_HOLDS_NOTHING
+なし
+MSG_HOLDS_UNREADABLE
+読み取れません
+MSG_HOLDS_RUNNING
+%s - 実行中のシステム
+MSG_LOOK_AGAIN
+再検索(_L)
+MSG_TARGET_NONE
+インストール先のディスクがありません。カード、SSD または USB メモリを差し込んでから、[再検索] を押してください。
+MSG_TARGET_CHOOSE
+ディスクを選んでください。
+MSG_TARGET_RUNNING
+このディスクでは実行中のシステムが動いているため、上書きできません。
+MSG_TARGET_SMALL
+このディスクの容量は %s ですが、システムには %s 以上が必要です。
+MSG_TARGET_UNREADABLE
+このディスクは読み取れません。
+MSG_TARGET_FITS
+%s、%s ユニット %d。
+MSG_CONFIRM_TITLE
+確認
+MSG_CONFIRM_DISK
+ディスク: %s ユニット %d、%s
+MSG_CONFIRM_LANGUAGE
+言語: %s
+MSG_CONFIRM_KEYMAP
+キーボード: %s
+MSG_CONFIRM_LOST
+このディスクの内容はすべて失われます。
+MSG_INSTALL
+インストール(_I)
+MSG_PROGRESS_TITLE
+インストール中
+MSG_PHASE_LOOKING
+システムを確認しています ...
+MSG_PHASE_PREPARING
+パーティションを作成しています ...
+MSG_PHASE_COPYING
+システムをコピーしています ...
+MSG_PHASE_SETTINGS
+設定を書き込んでいます ...
+MSG_COPIED
+%d 個のファイルをコピーしました (%s)
+MSG_STOP
+中止(_S)
+MSG_STOPPING
+中止しています ...
+MSG_NO_PROCESS
+インストールを実行するプロセスがありません。
+MSG_DONE_TITLE
+完了
+MSG_DONE
+システムをインストールしました: %d 個のファイル (%s)。
+MSG_DONE_NEXT
+USB メモリを取り外して、コンピューターを再起動してください。ディスクから起動します。
+MSG_FAILED
+インストールを完了できませんでした。
+MSG_STOPPED
+インストールを中止しました。
+MSG_NOT_BOOTABLE
+このディスクには起動できるシステムがありません。[戻る] でディスクの選択に戻ります。
+MSG_RESTART
+再起動(_R)
+MSG_RESTART_FAILED
+C:Reboot でコンピューターを再起動できませんでした。
+MSG_NOLIBRARY
+%s: %s を開けません\n
+MSG_NOMEMORY
+%s: メモリがありません\n
+MSG_NOWINDOW
+%s: ウィンドウがありません\n

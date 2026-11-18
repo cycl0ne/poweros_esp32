@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language eesti
+## codeset 106
+; The Installer's strings in Estonian: a draft.
+MSG_WINDOW_TITLE
+Süsteemi installimine
+MSG_BACK
+_Tagasi
+MSG_NEXT
+_Edasi
+MSG_LANGUAGE_TITLE
+Keel
+MSG_LANGUAGE_INTRO
+Vali süsteemi keel. Seda kasutatakse kohe, ja installitud süsteem käivitub selles keeles.
+MSG_COLUMN_LANGUAGE
+Keel ja riik
+MSG_KEYBOARD_TITLE
+Klaviatuur
+MSG_KEYBOARD_INTRO
+Vali klaviatuuri paigutus. See kehtib kohe: proovi seda allolevas väljas.
+MSG_COLUMN_KEYMAP
+Klahvitabel
+MSG_COLUMN_LAYOUT
+Paigutus
+MSG_TRY
+_Proovi
+MSG_TARGET_TITLE
+Ketas
+MSG_TARGET_INTRO
+Vali ketas, kuhu süsteem installitakse. Kõik, mis sellel on, läheb kaotsi.
+MSG_COLUMN_DEVICE
+Seade
+MSG_COLUMN_UNIT
+Üksus
+MSG_COLUMN_SIZE
+Suurus
+MSG_COLUMN_HOLDS
+Sisu
+MSG_HOLDS_CONTAINER
+GPT koos PowerOS-i konteineriga
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-i tabel
+MSG_HOLDS_FOREIGN
+tabel teise plokisuuruse jaoks
+MSG_HOLDS_NOTHING
+mitte midagi
+MSG_HOLDS_UNREADABLE
+ei saa lugeda
+MSG_HOLDS_RUNNING
+%s - töötav süsteem
+MSG_LOOK_AGAIN
+_Otsi uuesti
+MSG_TARGET_NONE
+Pole ketast, kuhu installida. Sisesta kaart, SSD või USB-mälupulk ja vajuta siis Otsi uuesti.
+MSG_TARGET_CHOOSE
+Vali ketas.
+MSG_TARGET_RUNNING
+Töötav süsteem on sellel kettal: selle peale ei saa installida.
+MSG_TARGET_SMALL
+Selle ketta maht on %s, ja süsteem vajab vähemalt %s.
+MSG_TARGET_UNREADABLE
+Seda ketast ei saa lugeda.
+MSG_TARGET_FITS
+%s seadmel %s, üksus %d.
+MSG_CONFIRM_TITLE
+Valmis
+MSG_CONFIRM_DISK
+Ketas: %s, üksus %d, %s
+MSG_CONFIRM_LANGUAGE
+Keel: %s
+MSG_CONFIRM_KEYMAP
+Klaviatuur: %s
+MSG_CONFIRM_LOST
+Kõik sellel kettal läheb kaotsi.
+MSG_INSTALL
+_Installi
+MSG_PROGRESS_TITLE
+Installimine
+MSG_PHASE_LOOKING
+Süsteemi uurimine ...
+MSG_PHASE_PREPARING
+Partitsioonide loomine ...
+MSG_PHASE_COPYING
+Süsteemi kopeerimine ...
+MSG_PHASE_SETTINGS
+Sätete kirjutamine ...
+MSG_COPIED
+Kopeeritud faile: %d (%s)
+MSG_STOP
+_Peata
+MSG_STOPPING
+Peatamine ...
+MSG_NO_PROCESS
+Pole protsessi, milles installi käivitada.
+MSG_DONE_TITLE
+Lõpetatud
+MSG_DONE
+Süsteem on installitud. Faile: %d (%s).
+MSG_DONE_NEXT
+Eemalda USB-mälupulk ja taaskäivita masin: see käivitub kettalt.
+MSG_FAILED
+Installimist ei saanud lõpetada.
+MSG_STOPPED
+Installimine peatati.
+MSG_NOT_BOOTABLE
+Kettal pole süsteemi, mis käivituks. Tagasi viib uuesti ketaste juurde.
+MSG_RESTART
+Taas_käivita
+MSG_RESTART_FAILED
+C:Reboot ei saanud masinat taaskäivitada.
+MSG_NOLIBRARY
+%s: ei saa avada teeki %s\n
+MSG_NOMEMORY
+%s: mälu ei jätku\n
+MSG_NOWINDOW
+%s: akent pole\n

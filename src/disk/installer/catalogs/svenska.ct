@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language svenska
+## codeset 106
+; The Installer's strings in Swedish: a draft.
+MSG_WINDOW_TITLE
+Installera systemet
+MSG_BACK
+_Bakåt
+MSG_NEXT
+_Nästa
+MSG_LANGUAGE_TITLE
+Språk
+MSG_LANGUAGE_INTRO
+Välj det språk systemet talar. Det används direkt, och det installerade systemet startar med det.
+MSG_COLUMN_LANGUAGE
+Språk och land
+MSG_KEYBOARD_TITLE
+Tangentbord
+MSG_KEYBOARD_INTRO
+Välj tangentbordets layout. Den används direkt: prova den i fältet nedan.
+MSG_COLUMN_KEYMAP
+Tangentkarta
+MSG_COLUMN_LAYOUT
+Layout
+MSG_TRY
+_Prova
+MSG_TARGET_TITLE
+Disk
+MSG_TARGET_INTRO
+Välj disken som systemet ska installeras på. Allt på den går förlorat.
+MSG_COLUMN_DEVICE
+Enhet
+MSG_COLUMN_UNIT
+Nr
+MSG_COLUMN_SIZE
+Storlek
+MSG_COLUMN_HOLDS
+Innehåll
+MSG_HOLDS_CONTAINER
+GPT med en PowerOS-container
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+PowerOS-tabell
+MSG_HOLDS_FOREIGN
+en tabell för en annan blockstorlek
+MSG_HOLDS_NOTHING
+ingenting
+MSG_HOLDS_UNREADABLE
+kan inte läsas
+MSG_HOLDS_RUNNING
+%s - det körande systemet
+MSG_LOOK_AGAIN
+_Sök igen
+MSG_TARGET_NONE
+Det finns ingen disk att installera på. Sätt i ett kort, en SSD eller ett USB-minne och tryck sedan på Sök igen.
+MSG_TARGET_CHOOSE
+Välj en disk.
+MSG_TARGET_RUNNING
+Det körande systemet finns på den här disken: det går inte att installera över det.
+MSG_TARGET_SMALL
+Den här disken rymmer %s, och systemet behöver minst %s.
+MSG_TARGET_UNREADABLE
+Den här disken kan inte läsas.
+MSG_TARGET_FITS
+%s på %s nr %d.
+MSG_CONFIRM_TITLE
+Redo
+MSG_CONFIRM_DISK
+Disk: %s nr %d, %s
+MSG_CONFIRM_LANGUAGE
+Språk: %s
+MSG_CONFIRM_KEYMAP
+Tangentbord: %s
+MSG_CONFIRM_LOST
+Allt på den här disken går förlorat.
+MSG_INSTALL
+_Installera
+MSG_PROGRESS_TITLE
+Installerar
+MSG_PHASE_LOOKING
+Undersöker systemet ...
+MSG_PHASE_PREPARING
+Skapar partitionerna ...
+MSG_PHASE_COPYING
+Kopierar systemet ...
+MSG_PHASE_SETTINGS
+Skriver inställningarna ...
+MSG_COPIED
+Kopierade filer: %d (%s)
+MSG_STOP
+_Stoppa
+MSG_STOPPING
+Stoppar ...
+MSG_NO_PROCESS
+Det finns ingen process att köra installationen i.
+MSG_DONE_TITLE
+Klart
+MSG_DONE
+Systemet är installerat. Filer: %d (%s).
+MSG_DONE_NEXT
+Ta ut USB-minnet och starta om datorn: den startar från disken.
+MSG_FAILED
+Installationen kunde inte slutföras.
+MSG_STOPPED
+Installationen stoppades.
+MSG_NOT_BOOTABLE
+Disken har inget system som startar. Bakåt leder tillbaka till diskarna.
+MSG_RESTART
+_Starta om
+MSG_RESTART_FAILED
+C:Reboot kunde inte starta om datorn.
+MSG_NOLIBRARY
+%s: kan inte öppna %s\n
+MSG_NOMEMORY
+%s: inget minne\n
+MSG_NOWINDOW
+%s: inget fönster\n

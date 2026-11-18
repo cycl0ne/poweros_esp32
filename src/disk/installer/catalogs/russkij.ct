@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language russkij
+## codeset 106
+; The Installer's strings in Russian. A draft: it waits for a native reader to go through it.
+MSG_WINDOW_TITLE
+Установка системы
+MSG_BACK
+_Назад
+MSG_NEXT
+_Далее
+MSG_LANGUAGE_TITLE
+Язык
+MSG_LANGUAGE_INTRO
+Выберите язык системы. Он действует уже на следующих шагах, и установленная система запускается с ним.
+MSG_COLUMN_LANGUAGE
+Язык и страна
+MSG_KEYBOARD_TITLE
+Клавиатура
+MSG_KEYBOARD_INTRO
+Выберите раскладку клавиатуры. Она действует сразу: попробуйте её в поле ниже.
+MSG_COLUMN_KEYMAP
+Раскладка
+MSG_COLUMN_LAYOUT
+Описание
+MSG_TRY
+_Попробовать
+MSG_TARGET_TITLE
+Диск
+MSG_TARGET_INTRO
+Выберите диск, на который будет установлена система. Всё, что на нём есть, будет потеряно.
+MSG_COLUMN_DEVICE
+Устройство
+MSG_COLUMN_UNIT
+Модуль
+MSG_COLUMN_SIZE
+Размер
+MSG_COLUMN_HOLDS
+Содержимое
+MSG_HOLDS_CONTAINER
+GPT с контейнером PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+таблица PowerOS
+MSG_HOLDS_FOREIGN
+таблица для другого размера блока
+MSG_HOLDS_NOTHING
+ничего
+MSG_HOLDS_UNREADABLE
+не читается
+MSG_HOLDS_RUNNING
+%s - работающая система
+MSG_LOOK_AGAIN
+_Искать снова
+MSG_TARGET_NONE
+Нет диска для установки. Вставьте карту, SSD или флешку и нажмите «Искать снова».
+MSG_TARGET_CHOOSE
+Выберите диск.
+MSG_TARGET_RUNNING
+На этом диске работающая система: установить поверх неё нельзя.
+MSG_TARGET_SMALL
+Объём этого диска %s, а системе нужно не меньше %s.
+MSG_TARGET_UNREADABLE
+Этот диск не читается.
+MSG_TARGET_FITS
+%s на %s, модуль %d.
+MSG_CONFIRM_TITLE
+Готово к установке
+MSG_CONFIRM_DISK
+Диск: %s, модуль %d, %s
+MSG_CONFIRM_LANGUAGE
+Язык: %s
+MSG_CONFIRM_KEYMAP
+Клавиатура: %s
+MSG_CONFIRM_LOST
+Всё, что есть на этом диске, будет потеряно.
+MSG_INSTALL
+_Установить
+MSG_PROGRESS_TITLE
+Установка
+MSG_PHASE_LOOKING
+Изучение системы ...
+MSG_PHASE_PREPARING
+Создание разделов ...
+MSG_PHASE_COPYING
+Копирование системы ...
+MSG_PHASE_SETTINGS
+Запись настроек ...
+MSG_COPIED
+Скопировано файлов: %d (%s)
+MSG_STOP
+_Стоп
+MSG_STOPPING
+Остановка ...
+MSG_NO_PROCESS
+Нет процесса, в котором можно выполнить установку.
+MSG_DONE_TITLE
+Готово
+MSG_DONE
+Система установлена, файлов: %d (%s).
+MSG_DONE_NEXT
+Извлеките флешку и перезапустите компьютер: он запустится с диска.
+MSG_FAILED
+Установку не удалось завершить.
+MSG_STOPPED
+Установка остановлена.
+MSG_NOT_BOOTABLE
+На диске нет системы, которая запускается. «Назад» снова ведёт к дискам.
+MSG_RESTART
+_Перезапустить
+MSG_RESTART_FAILED
+C:Reboot не смог перезапустить компьютер.
+MSG_NOLIBRARY
+%s: не удаётся открыть %s\n
+MSG_NOMEMORY
+%s: нет памяти\n
+MSG_NOWINDOW
+%s: нет окна\n

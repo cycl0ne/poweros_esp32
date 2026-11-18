@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language italiano
+## codeset 106
+; The Installer's strings in Italian: a draft.
+MSG_WINDOW_TITLE
+Installa il sistema
+MSG_BACK
+_Indietro
+MSG_NEXT
+_Avanti
+MSG_LANGUAGE_TITLE
+Lingua
+MSG_LANGUAGE_INTRO
+Scegli la lingua del sistema. Viene usata da subito, e il sistema installato si avvia in questa lingua.
+MSG_COLUMN_LANGUAGE
+Lingua e paese
+MSG_KEYBOARD_TITLE
+Tastiera
+MSG_KEYBOARD_INTRO
+Scegli la disposizione della tastiera. Si applica subito: provala nel campo qui sotto.
+MSG_COLUMN_KEYMAP
+Mappa tastiera
+MSG_COLUMN_LAYOUT
+Disposizione
+MSG_TRY
+_Prova
+MSG_TARGET_TITLE
+Disco
+MSG_TARGET_INTRO
+Scegli il disco su cui installare il sistema. Tutto il suo contenuto andrà perso.
+MSG_COLUMN_DEVICE
+Dispositivo
+MSG_COLUMN_UNIT
+Unità
+MSG_COLUMN_SIZE
+Dimensione
+MSG_COLUMN_HOLDS
+Contenuto
+MSG_HOLDS_CONTAINER
+GPT con un contenitore PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+tabella PowerOS
+MSG_HOLDS_FOREIGN
+una tabella per un'altra dimensione di blocco
+MSG_HOLDS_NOTHING
+niente
+MSG_HOLDS_UNREADABLE
+illeggibile
+MSG_HOLDS_RUNNING
+%s - il sistema in uso
+MSG_LOOK_AGAIN
+_Cerca di nuovo
+MSG_TARGET_NONE
+Non c'è nessun disco su cui installare. Inserisci una scheda, un SSD o una chiavetta USB, poi premi Cerca di nuovo.
+MSG_TARGET_CHOOSE
+Scegli un disco.
+MSG_TARGET_RUNNING
+Il sistema in uso è su questo disco: non vi si può installare sopra.
+MSG_TARGET_SMALL
+Questo disco ha una capacità di %s, e il sistema richiede almeno %s.
+MSG_TARGET_UNREADABLE
+Questo disco non si può leggere.
+MSG_TARGET_FITS
+%s su %s unità %d.
+MSG_CONFIRM_TITLE
+Pronto
+MSG_CONFIRM_DISK
+Disco: %s unità %d, %s
+MSG_CONFIRM_LANGUAGE
+Lingua: %s
+MSG_CONFIRM_KEYMAP
+Tastiera: %s
+MSG_CONFIRM_LOST
+Tutto il contenuto di questo disco andrà perso.
+MSG_INSTALL
+I_nstalla
+MSG_PROGRESS_TITLE
+Installazione
+MSG_PHASE_LOOKING
+Esame del sistema ...
+MSG_PHASE_PREPARING
+Creazione delle partizioni ...
+MSG_PHASE_COPYING
+Copia del sistema ...
+MSG_PHASE_SETTINGS
+Scrittura delle impostazioni ...
+MSG_COPIED
+File copiati: %d (%s)
+MSG_STOP
+_Interrompi
+MSG_STOPPING
+Interruzione ...
+MSG_NO_PROCESS
+Non c'è nessun processo su cui eseguire l'installazione.
+MSG_DONE_TITLE
+Completato
+MSG_DONE
+Il sistema è installato. File: %d (%s).
+MSG_DONE_NEXT
+Togli la chiavetta USB e riavvia la macchina: si avvierà dal disco.
+MSG_FAILED
+L'installazione non è riuscita a terminare.
+MSG_STOPPED
+L'installazione è stata interrotta.
+MSG_NOT_BOOTABLE
+Il disco non contiene un sistema che si avvii. Indietro riporta all'elenco dei dischi.
+MSG_RESTART
+_Riavvia
+MSG_RESTART_FAILED
+C:Reboot non è riuscito a riavviare la macchina.
+MSG_NOLIBRARY
+%s: impossibile aprire %s\n
+MSG_NOMEMORY
+%s: memoria insufficiente\n
+MSG_NOWINDOW
+%s: nessuna finestra\n

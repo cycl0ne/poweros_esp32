@@ -1,0 +1,118 @@
+## version $VER: Installer.catalog 1.0 (18.11.2026)
+## language malti
+## codeset 106
+; The Installer's strings in Maltese: a draft.
+MSG_WINDOW_TITLE
+Installa s-sistema
+MSG_BACK
+_Lura
+MSG_NEXT
+Li _jmiss
+MSG_LANGUAGE_TITLE
+Lingwa
+MSG_LANGUAGE_INTRO
+Agħżel il-lingwa tas-sistema. Tintuża minn issa 'l quddiem, u s-sistema installata tibda biha.
+MSG_COLUMN_LANGUAGE
+Lingwa u pajjiż
+MSG_KEYBOARD_TITLE
+Tastiera
+MSG_KEYBOARD_INTRO
+Agħżel it-tqassim tat-tastiera. Jintuża mill-ewwel: ipprovah fil-qasam t'hawn taħt.
+MSG_COLUMN_KEYMAP
+Mappa tat-tastiera
+MSG_COLUMN_LAYOUT
+Tqassim
+MSG_TRY
+_Ipprova
+MSG_TARGET_TITLE
+Diska
+MSG_TARGET_INTRO
+Agħżel id-diska fejn tmur is-sistema. Kull ma fiha jintilef.
+MSG_COLUMN_DEVICE
+Apparat
+MSG_COLUMN_UNIT
+Unità
+MSG_COLUMN_SIZE
+Daqs
+MSG_COLUMN_HOLDS
+X'fiha
+MSG_HOLDS_CONTAINER
+GPT b'kontenitur PowerOS
+MSG_HOLDS_GPT
+GPT
+MSG_HOLDS_TABLE
+tabella PowerOS
+MSG_HOLDS_FOREIGN
+tabella għal daqs ieħor tal-blokk
+MSG_HOLDS_NOTHING
+xejn
+MSG_HOLDS_UNREADABLE
+ma tistax tinqara
+MSG_HOLDS_RUNNING
+%s - is-sistema li qed taħdem
+MSG_LOOK_AGAIN
+_Erġa' fittex
+MSG_TARGET_NONE
+M'hemmx diska fejn tinstalla. Daħħal kard, SSD jew stick USB, imbagħad agħfas Erġa' fittex.
+MSG_TARGET_CHOOSE
+Agħżel diska.
+MSG_TARGET_RUNNING
+Is-sistema li qed taħdem qiegħda fuq din id-diska: ma tistax tinstalla fuqha.
+MSG_TARGET_SMALL
+Din id-diska għandha kapaċità ta' %s, u s-sistema teħtieġ mill-inqas %s.
+MSG_TARGET_UNREADABLE
+Din id-diska ma tistax tinqara.
+MSG_TARGET_FITS
+%s fuq %s unità %d.
+MSG_CONFIRM_TITLE
+Lest
+MSG_CONFIRM_DISK
+Diska: %s unità %d, %s
+MSG_CONFIRM_LANGUAGE
+Lingwa: %s
+MSG_CONFIRM_KEYMAP
+Tastiera: %s
+MSG_CONFIRM_LOST
+Kull ma hemm fuq din id-diska jintilef.
+MSG_INSTALL
+_Installa
+MSG_PROGRESS_TITLE
+Qed jinstalla
+MSG_PHASE_LOOKING
+Qed jeżamina s-sistema ...
+MSG_PHASE_PREPARING
+Qed joħloq il-partizzjonijiet ...
+MSG_PHASE_COPYING
+Qed jikkopja s-sistema ...
+MSG_PHASE_SETTINGS
+Qed jikteb l-impostazzjonijiet ...
+MSG_COPIED
+Fajls ikkupjati: %d (%s)
+MSG_STOP
+_Waqqaf
+MSG_STOPPING
+Qed jieqaf ...
+MSG_NO_PROCESS
+M'hemmx proċess biex titħaddem l-installazzjoni.
+MSG_DONE_TITLE
+Tlesta
+MSG_DONE
+Is-sistema hija installata. Fajls: %d (%s).
+MSG_DONE_NEXT
+Oħroġ l-istick USB u erġa' ibda l-magna: tibda mid-diska.
+MSG_FAILED
+L-installazzjoni ma setgħetx titlesta.
+MSG_STOPPED
+L-installazzjoni twaqqfet.
+MSG_NOT_BOOTABLE
+Id-diska m'għandha l-ebda sistema li tibda. Lura terġa' twassal għad-diski.
+MSG_RESTART
+_Erġa' ibda
+MSG_RESTART_FAILED
+C:Reboot ma setax jerġa' jibda l-magna.
+MSG_NOLIBRARY
+%s: ma jistax jiftaħ %s\n
+MSG_NOMEMORY
+%s: m'hemmx memorja\n
+MSG_NOWINDOW
+%s: l-ebda tieqa\n
