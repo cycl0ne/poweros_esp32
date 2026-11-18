@@ -38,11 +38,12 @@
 //! context, and the bytes short of a block; whole blocks go through
 //! straight from the caller's memory.
 //!
-//! On an x86-64 core with PCLMULQDQ (`cb.core_clmul`) the products are
-//! the core's (`core` in Ghash and the functions here): four of its 64 by
-//! 64 multiplications a block, four blocks' products summed and brought
-//! into the field once by the same reduction (`coreBlocks`); with AES-NI
-//! the counter blocks are encrypted eight at a time.
+//! On an x86-64 core with PCLMULQDQ, or an AArch64 core with PMULL
+//! (`cb.core_clmul`), the products are the core's (`core` in Ghash and
+//! the functions here): four of its 64 by 64 multiplications a block,
+//! four blocks' products summed and brought into the field once by the
+//! same reduction (`coreBlocks`); with the core's AES the counter blocks
+//! are encrypted eight (x86-64) or four (AArch64) at a time.
 //!
 //! GHASH is linear, so on the 64-bit chips a long run of whole blocks
 //! given to a GMAC is cut into parts that the cores hash at once (exec's
@@ -63,6 +64,7 @@ const _cipher = @import("../cipher/_cipher.zig");
 const aes = @import("../engine/aes.zig");
 const jh7110 = @import("../engine/jh7110.zig");
 const x64 = @import("../engine/x64.zig");
+const own = @import("../engine/core.zig");
 
 /// x * y without carries, 32 by 32 bits into 64.
 fn multiply32(x: u32, y: u32) u64 {
@@ -97,10 +99,10 @@ fn multiply64(x: u64, y: u64) u128 {
 }
 
 /// x * y in GCM's field, each 128 bits as a block's bytes read most
-/// significant first; on the x86-64 core's PCLMULQDQ if `core`.
+/// significant first; on the core's PCLMULQDQ or PMULL if `core`.
 fn multiply(x: u128, y: u128, core: bool) u128 {
-    if (x64.built and core) {
-        const high, const low = x64.product(x, y);
+    if (own.clmul_built and core) {
+        const high, const low = own.product(x, y);
         return reduce(high, low);
     }
     if (quarters) {
@@ -354,7 +356,7 @@ const Ghash = struct {
 /// GHASH's running value `y` after `length` bytes of whole blocks, taken
 /// where they lie: (y ^ block) * h for each.
 fn wholeBlocks(y: u128, h: u128, data: [*]const u8, length: u32, core: bool) u128 {
-    if (x64.built and core) return coreBlocks(y, h, data, length);
+    if (own.clmul_built and core) return coreBlocks(y, h, data, length);
     if (quarters) {
         if (@intFromPtr(data) % 8 == 0) return quarterBlocks(true, y, h, data, length);
         return quarterBlocks(false, y, h, data, length);
@@ -367,7 +369,7 @@ fn wholeBlocks(y: u128, h: u128, data: [*]const u8, length: u32, core: bool) u12
     return value;
 }
 
-/// `wholeBlocks` on the x86-64 core's PCLMULQDQ: four blocks at a time -
+/// `wholeBlocks` on the core's PCLMULQDQ or PMULL: four blocks at a time -
 /// (y ^ b1) h^4 ^ b2 h^3 ^ b3 h^2 ^ b4 h, the products summed and brought
 /// into the field once - and the rest one at a time.
 fn coreBlocks(y: u128, h: u128, data: [*]const u8, length: u32) u128 {
@@ -383,7 +385,7 @@ fn coreBlocks(y: u128, h: u128, data: [*]const u8, length: u32) u128 {
             inline for (powers, 0..) |by, index| {
                 var block = loadBlock(data + at + index * AES_BLOCK);
                 if (index == 0) block ^= value;
-                const product_high, const product_low = x64.product(block, by);
+                const product_high, const product_low = own.product(block, by);
                 high ^= product_high;
                 low ^= product_low;
             }
@@ -653,7 +655,7 @@ pub fn run(cb: *CryptoBase, message: *const GcmMessage, seal: bool) i32 {
     if (message.length != 0 and session.core() != null) {
         // The data's first counter block is the one after J0.
         _cipher.increment32(&counter);
-        x64.ctr(session.core().?, .last32, &counter, message.input.?, message.output.?, message.length);
+        own.ctr(session.core().?, .last32, &counter, message.input.?, message.output.?, message.length);
     } else if (message.length != 0) {
         const from = message.input.?;
         const to = message.output.?;

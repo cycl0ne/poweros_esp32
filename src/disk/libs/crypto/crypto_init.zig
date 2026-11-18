@@ -14,19 +14,21 @@ const CryptoBase = _base.CryptoBase;
 const _engine = @import("engine/_engine.zig");
 const jh7110 = @import("engine/jh7110.zig");
 const x64 = @import("engine/x64.zig");
+const own = @import("engine/core.zig");
 const crypto_lvo = @import("crypto_lvo.zig");
 
 pub const LIBRARY_NAME = crypto.CRYPTONAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 12;
-const BUILD_DATE = "14.11.2026";
+pub const LIBRARY_REVISION = 13;
+const BUILD_DATE = "18.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++
     " (" ++ BUILD_DATE ++ ")\r\n";
 
 /// The base filled in, the engines' locks made, the engines started, and
-/// an x86-64 core asked which of its crypto instructions it has.
+/// an x86-64 or AArch64 core asked which of its crypto instructions it
+/// has - those the build carries.
 fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(.c) ?*exec.Library {
     const cb = _base.cryptoBase(lib);
     const header = lib.*;
@@ -40,20 +42,20 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.Disable();
     _engine.start();
     sys_base.Enable();
-    if (x64.built) {
+    if (own.built) {
         const has = coreFeatures(sys_base);
-        cb.core_aes = has.aes;
-        cb.core_clmul = has.clmul;
-        cb.core_sha = has.sha;
+        cb.core_aes = own.aes_built and has.aes;
+        cb.core_clmul = own.clmul_built and has.clmul;
+        cb.core_sha = own.sha_built and has.sha;
     }
     return lib;
 }
 
-/// Which of the instructions `engine/x64.zig` uses a task may run:
-/// platform.resource's answer. The host, whose tests run this, has no
-/// such resource: the core is asked itself there.
+/// Which of the instructions `engine/x64.zig` or `engine/a64.zig` uses a
+/// task may run: platform.resource's answer. The host, whose tests run
+/// this, has no such resource: the core is asked itself there.
 fn coreFeatures(sys: *ExecBase) x64.Features {
-    const found = sys.OpenResource(platform.PLATFORMNAME) orelse return x64.features();
+    const found = sys.OpenResource(platform.PLATFORMNAME) orelse return if (x64.built) x64.features() else .{};
     const pr: *PlatformBase = @ptrCast(@alignCast(found));
     return .{
         .aes = pr.CpuFeature(platform.CPUF_AES),

@@ -7,7 +7,8 @@ const CipherContext = crypto.CipherContext;
 const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _cipher = @import("_cipher.zig");
 
-/// Sets up a context for AES in one mode, with a key and an IV.
+/// Sets up a context for AES in one mode, or for ChaCha20, with a key
+/// and an IV.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -20,11 +21,13 @@ const _cipher = @import("_cipher.zig");
 /// - `context`: the caller's, made with `.{}` so that its `size` is
 ///   right; whatever it held before is dropped.
 /// - `mode`: CIPHER_AES_ECB, CIPHER_AES_CBC or CIPHER_AES_CTR, with
-///   CIPHERF_DECRYPT or-ed in to decrypt.
+///   CIPHERF_DECRYPT or-ed in to decrypt; or CIPHER_CHACHA20 (since
+///   2.13).
 /// - `key`: `key_length` bytes.
-/// - `key_length`: 16 (AES-128) or 32 (AES-256).
-/// - `iv`: 16 bytes - CBC's IV, CTR's first counter block. Not read for
-///   ECB, which may pass null.
+/// - `key_length`: 16 (AES-128) or 32 (AES-256); 32 for ChaCha20.
+/// - `iv`: 16 bytes - CBC's IV, CTR's first counter block, ChaCha20's
+///   block counter (4 bytes, little-endian) and nonce (12 bytes). Not
+///   read for ECB, which may pass null.
 ///
 /// RESULT:
 /// CRYPTOERR_OK; CRYPTOERR_ALGORITHM for a mode or a flag there is not;
@@ -37,7 +40,8 @@ const _cipher = @import("_cipher.zig");
 /// The key and the IV are copied into the context, which from here on
 /// is all the cipher is: UpdateCipher takes the data in any number of
 /// calls. A CBC context goes one way only - it encrypts, or with
-/// CIPHERF_DECRYPT it decrypts. CTR does both alike and ignores the flag.
+/// CIPHERF_DECRYPT it decrypts. CTR and ChaCha20 do both alike and ignore
+/// the flag.
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -50,12 +54,14 @@ const _cipher = @import("_cipher.zig");
 /// clears it when it is done, as it would the key.
 ///
 /// NOTES:
-/// A CTR counter block must never be used twice with the same key, and
+/// A CTR counter block, or a ChaCha20 nonce, must never be used twice
+/// with the same key, and
 /// ECB shows equal plaintext blocks as equal ciphertext blocks; ECB is
 /// here to build other modes on, not to encrypt data with.
 ///
 /// BUGS:
-/// AES-192 is not there: the engine takes 128- and 256-bit keys.
+/// AES-192 is not there: the engine takes 128- and 256-bit keys. ChaCha20
+/// takes no 128-bit key, which RFC 8439 does not have either.
 ///
 /// SEE ALSO:
 /// `UpdateCipher`, `SealGcm`
@@ -72,10 +78,10 @@ pub fn InitCipher(_: *CryptoBase, context: *CipherContext, mode: u32, key: *cons
     const size = context.size;
     context.* = .{ .size = size };
     const cipher = mode & ~crypto.CIPHERF_DECRYPT;
-    if (cipher != crypto.CIPHER_AES_ECB and cipher != crypto.CIPHER_AES_CBC and cipher != crypto.CIPHER_AES_CTR) {
+    if (cipher != crypto.CIPHER_AES_ECB and cipher != crypto.CIPHER_AES_CBC and cipher != crypto.CIPHER_AES_CTR and cipher != crypto.CIPHER_CHACHA20) {
         return crypto.CRYPTOERR_ALGORITHM;
     }
-    if (!_cipher.keyLength(key_length)) return crypto.CRYPTOERR_KEY;
+    if (if (cipher == crypto.CIPHER_CHACHA20) key_length != crypto.CHACHA_KEY else !_cipher.keyLength(key_length)) return crypto.CRYPTOERR_KEY;
     if (cipher != crypto.CIPHER_AES_ECB) {
         const bytes: [*]const u8 = @ptrCast(iv orelse return crypto.CRYPTOERR_LENGTH);
         for (&context.chain, 0..) |*byte, index| byte.* = bytes[index];
@@ -84,5 +90,7 @@ pub fn InitCipher(_: *CryptoBase, context: *CipherContext, mode: u32, key: *cons
     for (0..key_length) |index| context.key[index] = key_bytes[index];
     context.key_length = key_length;
     context.mode = mode;
+    // ChaCha20 counts the bytes of its block under way.
+    if (cipher == crypto.CIPHER_CHACHA20) context.stream_used = 0;
     return crypto.CRYPTOERR_OK;
 }

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! crypto.library's functions: random bytes, hashes, HMAC, HKDF, AES and
-//! modular exponentiation on the chip's own engines; key agreement and
-//! signatures on X25519, Ed25519, P-256 and P-384, and RSA signatures.
+//! modular exponentiation on the chip's own engines; ChaCha20 and
+//! Poly1305; key agreement and signatures on X25519, Ed25519, P-256 and
+//! P-384, and RSA signatures.
 //! A hash, an HMAC or a cipher under way is a context the caller keeps
 //! (sdk.crypto); a call that can fail answers 0 or a CRYPTOERR_* code.
 //!
@@ -42,6 +43,10 @@ pub const LVO = struct {
     pub const InitGmac = libraries.lvo(27);
     pub const UpdateGmac = libraries.lvo(28);
     pub const FinishGmac = libraries.lvo(29);
+    pub const SealChaChaPoly = libraries.lvo(30);
+    pub const OpenChaChaPoly = libraries.lvo(31);
+    pub const Poly1305Pieces = libraries.lvo(32);
+    pub const CryptoEngines = libraries.lvo(33);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -73,6 +78,10 @@ pub const Fn = struct {
     pub const InitGmac = *const fn (*CryptoBase, *crypto.GmacContext, *const anyopaque, u32, *const anyopaque, u32) callconv(.c) i32;
     pub const UpdateGmac = *const fn (*CryptoBase, *crypto.GmacContext, ?*const anyopaque, u32) callconv(.c) void;
     pub const FinishGmac = *const fn (*CryptoBase, *crypto.GmacContext, *anyopaque) callconv(.c) i32;
+    pub const SealChaChaPoly = *const fn (*CryptoBase, *const crypto.AeadMessage) callconv(.c) i32;
+    pub const OpenChaChaPoly = *const fn (*CryptoBase, *const crypto.AeadMessage) callconv(.c) i32;
+    pub const Poly1305Pieces = *const fn (*CryptoBase, *const [32]u8, ?[*]const crypto.Bytes, u32, *[16]u8) callconv(.c) i32;
+    pub const CryptoEngines = *const fn (*CryptoBase) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -226,5 +235,27 @@ pub const CryptoBase = opaque {
     /// wiped.
     pub fn FinishGmac(self: *CryptoBase, context: *crypto.GmacContext, tag: *anyopaque) i32 {
         return libraries.call(self, LVO.FinishGmac, Fn.FinishGmac, .{ context, tag });
+    }
+
+    /// A message encrypted with ChaCha20-Poly1305 (RFC 8439), and its tag.
+    pub fn SealChaChaPoly(self: *CryptoBase, message: *const crypto.AeadMessage) i32 {
+        return libraries.call(self, LVO.SealChaChaPoly, Fn.SealChaChaPoly, .{message});
+    }
+
+    /// A message's tag checked with ChaCha20-Poly1305, and the message
+    /// decrypted.
+    pub fn OpenChaChaPoly(self: *CryptoBase, message: *const crypto.AeadMessage) i32 {
+        return libraries.call(self, LVO.OpenChaChaPoly, Fn.OpenChaChaPoly, .{message});
+    }
+
+    /// Poly1305 with the one-time `key` over `count` pieces, taken one after
+    /// another: the tag (POLY1305_TAG bytes) into `tag`.
+    pub fn Poly1305Pieces(self: *CryptoBase, key: *const [32]u8, pieces: ?[*]const crypto.Bytes, count: u32, tag: *[16]u8) i32 {
+        return libraries.call(self, LVO.Poly1305Pieces, Fn.Poly1305Pieces, .{ key, pieces, count, tag });
+    }
+
+    /// Which work runs on hardware here: CRYPTOENG_* bits.
+    pub fn CryptoEngines(self: *CryptoBase) u32 {
+        return libraries.call(self, LVO.CryptoEngines, Fn.CryptoEngines, .{});
     }
 };

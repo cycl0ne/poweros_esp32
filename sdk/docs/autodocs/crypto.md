@@ -1,8 +1,9 @@
 # crypto.library
 
 crypto.library's functions: random bytes, hashes, HMAC, HKDF, AES and
-modular exponentiation on the chip's own engines; key agreement and
-signatures on X25519, Ed25519, P-256 and P-384, and RSA signatures.
+modular exponentiation on the chip's own engines; ChaCha20 and
+Poly1305; key agreement and signatures on X25519, Ed25519, P-256 and
+P-384, and RSA signatures.
 A hash, an HMAC or a cipher under way is a context the caller keeps
 (sdk.crypto); a call that can fail answers 0 or a CRYPTOERR_* code.
 
@@ -10,6 +11,7 @@ Generated from the source by `./zig build autodoc`.
 
 ## Index
 
+- [CryptoEngines](#cryptoengines) - Says which work runs on hardware here - an engine of the chip's, or the core's own instructions - and so which algorithms are the fast ones.
 - [Decapsulate](#decapsulate) - Takes the secret out of a ciphertext Encapsulate made for one's own public key.
 - [Encapsulate](#encapsulate) - Makes a secret for the owner of a public key, and the ciphertext that gives it to them: they take it out with Decapsulate, and nobody else can.
 - [FinishGmac](#finishgmac) - Ends a GMAC: its tag, and the context wiped.
@@ -19,15 +21,18 @@ Generated from the source by `./zig build autodoc`.
 - [HkdfExpand](#hkdfexpand) - Expands a pseudorandom key into keying material of a given length (HKDF-Expand, RFC 5869).
 - [HkdfExtract](#hkdfextract) - Extracts a pseudorandom key from input keying material and a salt (HKDF-Extract, RFC 5869).
 - [HmacPieces](#hmacpieces) - Makes the HMAC of a message given whole, in any number of pieces, in one call.
-- [InitCipher](#initcipher) - Sets up a context for AES in one mode, with a key and an IV.
+- [InitCipher](#initcipher) - Sets up a context for AES in one mode, or for ChaCha20, with a key and an IV.
 - [InitGmac](#initgmac) - Sets up a context for a GMAC - GCM's tag over data it only authenticates - whose data comes in pieces.
 - [InitHash](#inithash) - Sets up a context for a new hash of one algorithm.
 - [InitHmac](#inithmac) - Sets up a context for a new HMAC with one hash algorithm and a key.
 - [KemKeyPair](#kemkeypair) - Makes a key pair for a key encapsulation mechanism: a public key that others encapsulate secrets to, and the private key that takes them out again.
 - [MakeKeyPair](#makekeypair) - Makes a key pair on a curve: a private key from the chip's random number generator, and the public key that goes with it.
 - [ModExp](#modexp) - Raises a number to a power modulo another.
+- [OpenChaChaPoly](#openchachapoly) - Checks a message's ChaCha20-Poly1305 tag and, if it is right, decrypts it.
 - [OpenGcm](#opengcm) - Checks a message's AES-GCM tag and, if it is right, decrypts it.
+- [Poly1305Pieces](#poly1305pieces) - Poly1305 (RFC 8439, 2.5) with a one-time key over a message given in any number of pieces.
 - [RandomBytes](#randombytes) - Fills a buffer with random bytes.
+- [SealChaChaPoly](#sealchachapoly) - Encrypts a message with ChaCha20-Poly1305 (RFC 8439) and writes its tag.
 - [SealGcm](#sealgcm) - Encrypts a message with AES-GCM and writes its tag.
 - [SharedSecret](#sharedsecret) - Works out the secret one's own private key shares with the owner of a public key: Diffie-Hellman on a curve.
 - [Sign](#sign) - Signs a message with a private key: Ed25519.
@@ -36,6 +41,77 @@ Generated from the source by `./zig build autodoc`.
 - [UpdateHash](#updatehash) - Adds bytes to a hash under way.
 - [UpdateHmac](#updatehmac) - Adds bytes to an HMAC under way.
 - [VerifySignature](#verifysignature) - Checks a signature with a public key: RSA in both its encodings, ECDSA on P-256 and P-384, and Ed25519.
+
+## CryptoEngines
+
+Says which work runs on hardware here - an engine of the chip's, or the core's own instructions - and so which algorithms are the fast ones.
+
+**SYNOPSIS**
+
+```zig
+fn CryptoEngines(cb: *CryptoBase) u32
+```
+
+**SINCE**
+
+2.13. LVO -136.
+
+**INPUTS**
+
+None.
+
+**RESULT**
+
+CRYPTOENG_* bits: CRYPTOENG_AES for AES's rounds, CRYPTOENG_GHASH for
+GCM's multiplications, CRYPTOENG_SHA256 for SHA-1, SHA-224 and
+SHA-256, CRYPTOENG_SHA512 for SHA-384 and SHA-512. A bit that is clear
+is software, or the core's vector registers.
+
+**BEHAVIOR**
+
+The answer is the machine's and the same for every call: the S3's
+engines do AES and SHA; the JH7110's (VisionFive 2) AES, all of GCM
+and SHA-2; an x86-64 core AES with AES-NI, GHASH with PCLMULQDQ and
+SHA-256 with the SHA extensions; an AArch64 core with the crypto
+extension (the CM5's Cortex-A76) AES with AESE and AESD, GHASH with
+PMULL and SHA-256 with its SHA-1 and SHA-256 instructions. An AArch64
+core without it (the CM4's Cortex-A72) has none of the bits: its AES
+runs on the vector registers, constant-time but not fast, and its
+GHASH and SHA in software. ChaCha20 and Poly1305 are software
+everywhere - on the vector registers where there are some - and have
+no bit.
+
+**CONTEXT**
+
+- Waits: on the VisionFive 2 the first call that asks sets up the
+  JH7110's engine, as the first that uses it would, and may wait for
+  it.
+- Interrupts: no.
+- Locks: no spinlock may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**NOTES**
+
+TLS and SSH ask it to put their ciphers in order: ChaCha20-Poly1305
+first where CRYPTOENG_AES is clear, AES-GCM first where it is set.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SealChaChaPoly`, `SealGcm`
+
+**EXAMPLES**
+
+```zig
+const fast_aes = cb.CryptoEngines() & crypto.CRYPTOENG_AES != 0;
+```
 
 ## Decapsulate
 
@@ -658,7 +734,7 @@ if (length == 0) return error.Mac;
 
 ## InitCipher
 
-Sets up a context for AES in one mode, with a key and an IV.
+Sets up a context for AES in one mode, or for ChaCha20, with a key and an IV.
 
 **SYNOPSIS**
 
@@ -675,11 +751,13 @@ fn InitCipher(cb: *CryptoBase, context: *CipherContext, mode: u32, key: *const a
 - `context`: the caller's, made with `.{}` so that its `size` is
   right; whatever it held before is dropped.
 - `mode`: CIPHER_AES_ECB, CIPHER_AES_CBC or CIPHER_AES_CTR, with
-  CIPHERF_DECRYPT or-ed in to decrypt.
+  CIPHERF_DECRYPT or-ed in to decrypt; or CIPHER_CHACHA20 (since
+  2.13).
 - `key`: `key_length` bytes.
-- `key_length`: 16 (AES-128) or 32 (AES-256).
-- `iv`: 16 bytes - CBC's IV, CTR's first counter block. Not read for
-  ECB, which may pass null.
+- `key_length`: 16 (AES-128) or 32 (AES-256); 32 for ChaCha20.
+- `iv`: 16 bytes - CBC's IV, CTR's first counter block, ChaCha20's
+  block counter (4 bytes, little-endian) and nonce (12 bytes). Not
+  read for ECB, which may pass null.
 
 **RESULT**
 
@@ -694,7 +772,8 @@ refuses it. CRYPTOERR_CONTEXT for a context whose `size` is less than
 The key and the IV are copied into the context, which from here on
 is all the cipher is: UpdateCipher takes the data in any number of
 calls. A CBC context goes one way only - it encrypts, or with
-CIPHERF_DECRYPT it decrypts. CTR does both alike and ignores the flag.
+CIPHERF_DECRYPT it decrypts. CTR and ChaCha20 do both alike and ignore
+the flag.
 
 **CONTEXT**
 
@@ -710,13 +789,15 @@ clears it when it is done, as it would the key.
 
 **NOTES**
 
-A CTR counter block must never be used twice with the same key, and
+A CTR counter block, or a ChaCha20 nonce, must never be used twice
+with the same key, and
 ECB shows equal plaintext blocks as equal ciphertext blocks; ECB is
 here to build other modes on, not to encrypt data with.
 
 **BUGS**
 
-AES-192 is not there: the engine takes 128- and 256-bit keys.
+AES-192 is not there: the engine takes 128- and 256-bit keys. ChaCha20
+takes no 128-bit key, which RFC 8439 does not have either.
 
 **SEE ALSO**
 
@@ -1187,6 +1268,77 @@ const n: crypto.Number = .{ .bytes = &modulus, .length = 256 };
 if (cb.ModExp(&decoded, &s, &e, &n) != crypto.CRYPTOERR_OK) return error.Key;
 ```
 
+## OpenChaChaPoly
+
+Checks a message's ChaCha20-Poly1305 tag and, if it is right, decrypts it.
+
+**SYNOPSIS**
+
+```zig
+fn OpenChaChaPoly(cb: *CryptoBase, message: *const AeadMessage) i32
+```
+
+**SINCE**
+
+2.13. LVO -128.
+
+**INPUTS**
+
+- `message`: the key (32 bytes) and the nonce (12 bytes) it was
+  sealed with, the header (`aad`, may be none), the ciphertext
+  (`input`, `length` bytes, may be none), where the plaintext goes
+  (`output`, `length` bytes; may be `input` itself) and the 16-byte
+  tag that came with it.
+
+**RESULT**
+
+CRYPTOERR_OK; CRYPTOERR_TAG when the tag does not match the key,
+nonce, header and ciphertext; CRYPTOERR_KEY for a key of another
+length; CRYPTOERR_LENGTH for a nonce of another length, or a null
+buffer with a length that is not 0.
+
+**BEHAVIOR**
+
+The tag is worked out over the header and the ciphertext and compared
+with the one given, every byte of it whatever the first difference.
+Only a message whose tag matches is decrypted: on CRYPTOERR_TAG the
+output has not been written, so nothing forged is ever there to be
+used by mistake.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated; the message stays the caller's.
+
+**NOTES**
+
+As in SealChaChaPoly: software on every chip, four blocks at a time
+where the core has 128-bit vectors.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SealChaChaPoly`, `OpenGcm`
+
+**EXAMPLES**
+
+```zig
+switch (cb.OpenChaChaPoly(&message)) {
+    crypto.CRYPTOERR_OK => {},
+    crypto.CRYPTOERR_TAG => return error.Forged,
+    else => return error.Open,
+}
+```
+
 ## OpenGcm
 
 Checks a message's AES-GCM tag and, if it is right, decrypts it.
@@ -1237,8 +1389,9 @@ Nothing is allocated; the message stays the caller's.
 
 **NOTES**
 
-As in SealGcm: an x86-64 core with AES-NI and PCLMULQDQ does the work
-on its own instructions.
+As in SealGcm: an x86-64 core with AES-NI and PCLMULQDQ, or an AArch64
+core with the crypto extension, does the work on its own
+instructions.
 
 **BUGS**
 
@@ -1256,6 +1409,80 @@ switch (cb.OpenGcm(&message)) {
     crypto.CRYPTOERR_TAG => return error.Forged,
     else => return error.Open,
 }
+```
+
+## Poly1305Pieces
+
+Poly1305 (RFC 8439, 2.5) with a one-time key over a message given in any number of pieces.
+
+**SYNOPSIS**
+
+```zig
+fn Poly1305Pieces(cb: *CryptoBase, key: *const [32]u8, pieces: ?[*]const Bytes, count: u32, tag: *[16]u8) i32
+```
+
+**SINCE**
+
+2.13. LVO -132.
+
+**INPUTS**
+
+- `key`: the one-time key (POLY1305_KEY bytes): r, which the call
+  clamps as the RFC says, then s.
+- `pieces`: `count` pieces of the message, in order; null when
+  `count` is 0. A piece may be empty, its `bytes` then null.
+- `count`: how many pieces; 0 for the empty message.
+- `tag`: where the 16-byte tag goes.
+
+**RESULT**
+
+CRYPTOERR_OK; CRYPTOERR_LENGTH for `pieces` null with `count` above 0,
+or a piece with bytes to read and `bytes` null - nothing is written
+then.
+
+**BEHAVIOR**
+
+The tag is the RFC's over the pieces one after another: how the
+message is cut makes no difference. Nothing is padded between them;
+a protocol that pads (the RFC's AEAD does) gives the zeroes as pieces
+of their own. The key is used once: a second message under the same
+key lets its tags be forged.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated, and nothing of the key is kept.
+
+**NOTES**
+
+For a protocol that builds its own AEAD from ChaCha20 and Poly1305:
+SSH's chacha20-poly1305@openssh.com takes the one-time key from
+ChaCha20's block 0 (InitCipher with CIPHER_CHACHA20, UpdateCipher
+over 64 zero bytes, the first 32 of them), and the tag over the
+encrypted length and the encrypted packet - two pieces. The tag is
+compared by the caller, every byte of it, whatever the first
+difference.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`InitCipher`, `SealChaChaPoly`, `HmacPieces`
+
+**EXAMPLES**
+
+```zig
+const pieces = [_]crypto.Bytes{ .of(packet[0..4]), .of(packet[4..]) };
+var tag: [crypto.POLY1305_TAG]u8 = undefined;
+_ = cb.Poly1305Pieces(poly_key[0..32], &pieces, pieces.len, &tag);
 ```
 
 ## RandomBytes
@@ -1283,11 +1510,19 @@ None.
 
 **BEHAVIOR**
 
-The bytes come straight from the chip's generator, which draws on the
-noise of the SAR ADCs the kernel keeps sampling from boot to the end,
-whether or not the radio runs (and on the radio's as well when it
-does). They are fit for keys, nonces and IVs as they are, with no
-generator of the library's own in between.
+The bytes come straight from the machine's generator, with no
+generator of the library's own in between (sdk.hardware.rng):
+- on the ESP32s, the chip's, which draws on the noise of the SAR ADCs
+  the kernel keeps sampling from boot to the end, whether or not the
+  radio runs (and on the radio's as well when it does);
+- on the JH7110 (the VisionFive 2), its TRNG;
+- on the BCM2711 and the BCM2712 (the Raspberry Pi CM4 and CM5), their
+  RNG200 (SINCE 2.13);
+- on an x86-64 machine, the core's `rdrand`.
+From any of these they are fit for keys, nonces and IVs as they are.
+A machine without one - QEMU's virt - gets them from timing jitter,
+which is not fit for keys: its kernel says so as it starts ("random
+numbers from timing jitter").
 
 **CONTEXT**
 
@@ -1302,8 +1537,9 @@ Nothing is allocated.
 
 **NOTES**
 
-The generator refills between reads in a few cycles; the reads are
-spaced so that no word is read twice. `C:test/Crypto RANDOM` puts
+On the ESP32s the generator refills between reads in a few cycles;
+the reads are spaced so that no word is read twice. The RNG200 hands
+out each word of its FIFO once, to whichever core reads it. `C:test/Crypto RANDOM` puts
 20000 of its bits through FIPS 140-2's monobit, poker and long-run
 tests.
 
@@ -1321,6 +1557,92 @@ sampling, or the generator is left with timing noise alone.
 ```zig
 var key: [32]u8 = undefined;
 cb.RandomBytes(&key, key.len);
+```
+
+## SealChaChaPoly
+
+Encrypts a message with ChaCha20-Poly1305 (RFC 8439) and writes its tag.
+
+**SYNOPSIS**
+
+```zig
+fn SealChaChaPoly(cb: *CryptoBase, message: *const AeadMessage) i32
+```
+
+**SINCE**
+
+2.13. LVO -124.
+
+**INPUTS**
+
+- `message`: the key (CHACHA_KEY, 32 bytes), the nonce (CHACHA_NONCE,
+  12 bytes), the header to authenticate (`aad`, may be none), the
+  plaintext (`input`, `length` bytes, may be none), where the
+  ciphertext goes (`output`, `length` bytes; may be `input` itself)
+  and where the 16-byte tag goes. The same message as SealGcm's.
+
+**RESULT**
+
+CRYPTOERR_OK; CRYPTOERR_KEY for a key of another length;
+CRYPTOERR_LENGTH for a nonce of another length, or a null buffer with
+a length that is not 0. Nothing is written on an error.
+
+**BEHAVIOR**
+
+RFC 8439's AEAD: Poly1305's one-time key is the first 32 bytes of
+ChaCha20's block 0 under the key and nonce, the plaintext is
+encrypted from block 1 on, and the tag is Poly1305 over the header and
+the ciphertext, each padded with zeroes to 16 bytes, and their lengths.
+So neither the header nor the ciphertext can be changed, cut or moved
+without OpenChaChaPoly noticing. The whole message is one call. It is
+the AEAD of TLS's TLS_CHACHA20_POLY1305_SHA256 and of the TLS 1.2
+suites ending in _WITH_CHACHA20_POLY1305_SHA256.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is allocated; the message stays the caller's. What the call
+made of the key on its stack is cleared before it returns.
+
+**NOTES**
+
+A nonce is never used twice with the same key: two messages under one
+nonce give away the exclusive-or of their plaintexts and the
+one-time key, with which tags can be forged. A counter kept for the
+key, as TLS's sequence number is, is how a nonce is made.
+
+Software on every chip, taking the same steps whatever the key and
+the data. Four blocks at a time where the core has 128-bit vectors -
+NEON on the AArch64 machines, SSE on x86-64 - and one at a time on
+the others. Where CryptoEngines has CRYPTOENG_AES clear it is faster
+than AES-GCM.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenChaChaPoly`, `SealGcm`, `CryptoEngines`, `Poly1305Pieces`
+
+**EXAMPLES**
+
+```zig
+var tag: [crypto.POLY1305_TAG]u8 = undefined;
+const message: crypto.AeadMessage = .{
+    .key = &key, .key_length = crypto.CHACHA_KEY,
+    .nonce = &nonce, .nonce_length = crypto.CHACHA_NONCE,
+    .aad = &header, .aad_length = header.len,
+    .input = record.ptr, .output = record.ptr, .length = record.len,
+    .tag = &tag,
+};
+if (cb.SealChaChaPoly(&message) != crypto.CRYPTOERR_OK) return error.Seal;
 ```
 
 ## SealGcm
@@ -1380,7 +1702,11 @@ is how a nonce is made.
 
 On an x86-64 core with AES-NI and PCLMULQDQ the counter blocks are
 encrypted eight at a time and GHASH sums four blocks' products before
-one reduction: about 3.5 GB/s for AES-128 on a Ryzen 7 7840HS.
+one reduction: about 3.5 GB/s for AES-128 on a Ryzen 7 7840HS. An
+AArch64 core with the crypto extension (the CM5) does the same with
+AESE and PMULL, four counter blocks at a time; one without it (the
+CM4) encrypts them on its vector registers, in the same time whatever
+the key and the data, and multiplies in software.
 
 **BUGS**
 
@@ -1564,7 +1890,7 @@ fn UpdateCipher(cb: *CryptoBase, context: *CipherContext, input: ?*const anyopaq
 - `input`: `length` bytes; may be null when `length` is 0.
 - `output`: room for `length` bytes. It may be `input` itself, for
   the data in place; it may not overlap it any other way.
-- `length`: ECB and CBC: a multiple of 16. CTR: any.
+- `length`: ECB and CBC: a multiple of 16. CTR and ChaCha20: any.
 
 **RESULT**
 
@@ -1576,9 +1902,10 @@ a null buffer. Nothing is written on an error.
 
 The data continues from where the last call left off: a CBC chain
 runs on from the last block, a CTR counter from the last counter
-block, and a CTR call that ended inside a block starts the next with
-the rest of that block's key stream. So a message may be given in any
-number of pieces, and comes out as one call with all of it would.
+block, and a CTR or ChaCha20 call that ended inside a block starts the
+next with the rest of that block's key stream. So a message may be
+given in any number of pieces, and comes out as one call with all of
+it would.
 
 **CONTEXT**
 
@@ -1598,7 +1925,15 @@ caller, as its format says (PKCS #7, TLS).
 
 On an x86-64 core with AES-NI the blocks go through the core's own
 instructions, eight at a time where the mode lets them (all but CBC's
-encryption), and nothing waits.
+encryption), and nothing waits. An AArch64 core does the same four at
+a time, with its crypto extension or, where it has none (the CM4), on
+its vector registers, the S-box looked up from registers so that the
+time taken does not depend on the key or the data.
+
+ChaCha20 is software on every chip and never waits: four blocks at a
+time where the core has 128-bit vectors. A call that starts inside a
+block makes that block again, so pieces of 64 bytes and more are the
+cheaper way to give a long message.
 
 **BUGS**
 
@@ -1678,7 +2013,8 @@ so while the one before it is sent).
 
 On an x86-64 core with PCLMULQDQ each block is multiplied by the
 core's carry-less product, four blocks summed before one reduction:
-about 4.9 GB/s on one core of a Ryzen 7 7840HS, 8.7 GB/s shared.
+about 4.9 GB/s on one core of a Ryzen 7 7840HS, 8.7 GB/s shared. An
+AArch64 core with PMULL (the CM5) does the same.
 
 **BUGS**
 

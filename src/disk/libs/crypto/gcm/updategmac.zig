@@ -60,7 +60,8 @@ const _gcm = @import("_gcm.zig");
 ///
 /// On an x86-64 core with PCLMULQDQ each block is multiplied by the
 /// core's carry-less product, four blocks summed before one reduction:
-/// about 4.9 GB/s on one core of a Ryzen 7 7840HS, 8.7 GB/s shared.
+/// about 4.9 GB/s on one core of a Ryzen 7 7840HS, 8.7 GB/s shared. An
+/// AArch64 core with PMULL (the CM5) does the same.
 ///
 /// BUGS:
 /// None known.

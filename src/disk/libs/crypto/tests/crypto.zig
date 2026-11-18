@@ -28,6 +28,8 @@ test {
     _ = @import("../crypto_lvo.zig");
     _ = @import("../gcm/_gcm.zig");
     _ = @import("../engine/soft_rsa.zig");
+    _ = @import("../chacha/_chacha.zig");
+    _ = @import("../engine/a64.zig");
 }
 
 /// exec and the library; the base the tests open is theirs.
@@ -658,6 +660,162 @@ test "the core's AES-NI and PCLMULQDQ give the software's bytes in every mode, a
     rig.software();
     try testing.expectEqual(written, try everyMode(rig.cb, alone));
     try testing.expectEqualSlices(u8, alone[0..written], with_core[0..written]);
+}
+
+// --- ChaCha20-Poly1305 ----------------------------------------------------------
+
+test "RFC 8439's AEAD through the jump table: sealed, a forgery refused, opened; what it refuses" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    const key = hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f");
+    const nonce = hex("070000004041424344454647");
+    const aad = hex("50515253c0c1c2c3c4c5c6c7");
+    const plain = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    const sealed = hex("d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6" ++
+        "3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36" ++
+        "92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc" ++
+        "3ff4def08e4b7a9de576d26586cec64b6116");
+    var data: [plain.len]u8 = plain.*;
+    var tag: [crypto.POLY1305_TAG]u8 = undefined;
+    var message: crypto.AeadMessage = .{
+        .key = &key,
+        .key_length = crypto.CHACHA_KEY,
+        .nonce = &nonce,
+        .nonce_length = crypto.CHACHA_NONCE,
+        .aad = &aad,
+        .aad_length = aad.len,
+        .input = &data,
+        .output = &data,
+        .length = data.len,
+        .tag = &tag,
+    };
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealChaChaPoly(&message));
+    try testing.expectEqualSlices(u8, &sealed, &data);
+    try testing.expectEqualSlices(u8, &hex("1ae10b594f09e26a7e902ecbd0600691"), &tag);
+
+    tag[15] ^= 0x80;
+    try testing.expectEqual(crypto.CRYPTOERR_TAG, cb.OpenChaChaPoly(&message));
+    try testing.expectEqualSlices(u8, &sealed, &data);
+    tag[15] ^= 0x80;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.OpenChaChaPoly(&message));
+    try testing.expectEqualSlices(u8, plain, &data);
+
+    // A header alone, and nothing at all, with null buffers.
+    var empty: crypto.AeadMessage = message;
+    empty.input = null;
+    empty.output = null;
+    empty.length = 0;
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.SealChaChaPoly(&empty));
+    var reference: [crypto.POLY1305_TAG]u8 = undefined;
+    std.crypto.aead.chacha_poly.ChaCha20Poly1305.encrypt(&.{}, &reference, &.{}, &aad, nonce, key);
+    try testing.expectEqualSlices(u8, &reference, &tag);
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.OpenChaChaPoly(&empty));
+
+    // What it refuses, writing nothing.
+    @memset(&tag, 0x55);
+    var wrong = message;
+    wrong.key_length = 16;
+    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.SealChaChaPoly(&wrong));
+    wrong = message;
+    wrong.nonce_length = 8;
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.SealChaChaPoly(&wrong));
+    wrong = message;
+    wrong.aad = null;
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.SealChaChaPoly(&wrong));
+    wrong = message;
+    wrong.output = null;
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.OpenChaChaPoly(&wrong));
+    for (tag) |byte| try testing.expectEqual(@as(u8, 0x55), byte);
+    try testing.expectEqualSlices(u8, plain, &data);
+}
+
+test "ChaCha20 as a cipher: RFC 8439's 2.4.2 in pieces of every size, std.crypto's stream, and what InitCipher refuses" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    const key = hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    // Block counter 1, nonce 000000000000004a00000000.
+    const iv = hex("01000000" ++ "000000000000004a00000000");
+    const plain = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    const expected = hex("6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0b" ++
+        "f91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d8" ++
+        "07ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab7793736" ++
+        "5af90bbf74a35be6b40b8eedf2785e42874d");
+    for (1..plain.len + 1) |piece| {
+        // Decrypting is the same: the flag is ignored.
+        for ([_]u32{ 0, crypto.CIPHERF_DECRYPT }) |flag| {
+            var context: crypto.CipherContext = .{};
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitCipher(&context, crypto.CIPHER_CHACHA20 | flag, &key, 32, &iv));
+            var out: [plain.len]u8 = undefined;
+            var at: usize = 0;
+            while (at < plain.len) {
+                const take = @min(piece, plain.len - at);
+                try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, plain[at..].ptr, out[at..].ptr, @intCast(take)));
+                at += take;
+            }
+            try testing.expectEqualSlices(u8, &expected, &out);
+        }
+    }
+
+    // Long runs, in place, from a counter near a byte's carry.
+    const long = try testing.allocator.alloc(u8, 70_001);
+    defer testing.allocator.free(long);
+    for (long, 0..) |*byte, index| byte.* = @truncate(index *% 7);
+    const theirs = try testing.allocator.dupe(u8, long);
+    defer testing.allocator.free(theirs);
+    var start = hex("fd000000" ++ "0102030405060708090a0b0c");
+    var context: crypto.CipherContext = .{};
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.InitCipher(&context, crypto.CIPHER_CHACHA20, &key, 32, &start));
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, long.ptr, long.ptr, 1000));
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.UpdateCipher(&context, long[1000..].ptr, long[1000..].ptr, @intCast(long.len - 1000)));
+    std.crypto.stream.chacha.ChaCha20IETF.xor(theirs, theirs, 0xFD, key, start[4..16].*);
+    try testing.expectEqualSlices(u8, theirs, long);
+
+    try testing.expectEqual(crypto.CRYPTOERR_KEY, cb.InitCipher(&context, crypto.CIPHER_CHACHA20, &key, 16, &start));
+    try testing.expectEqual(crypto.CRYPTOERR_ALGORITHM, cb.UpdateCipher(&context, long.ptr, long.ptr, 16));
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.InitCipher(&context, crypto.CIPHER_CHACHA20, &key, 32, null));
+    try testing.expectEqual(crypto.CRYPTOERR_ALGORITHM, cb.InitCipher(&context, 5, &key, 32, &start));
+    start = undefined;
+}
+
+test "Poly1305Pieces: RFC 8439's 2.5.2 however it is cut, and nothing for what it cannot read" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    const key = hex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
+    const text = "Cryptographic Forum Research Group";
+    const expected = hex("a8061dc1305136c6c22b8baf0c0127a9");
+    var tag: [crypto.POLY1305_TAG]u8 = undefined;
+    for (0..text.len + 1) |cut| {
+        for (0..text.len - cut + 1) |second| {
+            const pieces = [_]crypto.Bytes{ .of(text[0..cut]), .{}, .of(text[cut..][0..second]), .of(text[cut + second ..]) };
+            @memset(&tag, 0);
+            try testing.expectEqual(crypto.CRYPTOERR_OK, cb.Poly1305Pieces(&key, &pieces, pieces.len, &tag));
+            try testing.expectEqualSlices(u8, &expected, &tag);
+        }
+    }
+    // The empty message: Poly1305 of nothing is s.
+    try testing.expectEqual(crypto.CRYPTOERR_OK, cb.Poly1305Pieces(&key, null, 0, &tag));
+    try testing.expectEqualSlices(u8, key[16..32], &tag);
+    @memset(&tag, 0x55);
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.Poly1305Pieces(&key, null, 1, &tag));
+    const unreadable = [_]crypto.Bytes{ .of(text[0..4]), .{ .bytes = null, .length = 3 } };
+    try testing.expectEqual(crypto.CRYPTOERR_LENGTH, cb.Poly1305Pieces(&key, &unreadable, unreadable.len, &tag));
+    for (tag) |byte| try testing.expectEqual(@as(u8, 0x55), byte);
+}
+
+test "CryptoEngines: on the host, what the core has, and nothing once it is made to use software" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const has = @import("../engine/x64.zig").features();
+    var expected: u32 = 0;
+    if (has.aes) expected |= crypto.CRYPTOENG_AES;
+    if (has.clmul) expected |= crypto.CRYPTOENG_GHASH;
+    if (has.sha) expected |= crypto.CRYPTOENG_SHA256;
+    try testing.expectEqual(expected, rig.cb.CryptoEngines());
+    rig.software();
+    try testing.expectEqual(@as(u32, 0), rig.cb.CryptoEngines());
 }
 
 // --- ModExp -------------------------------------------------------------------

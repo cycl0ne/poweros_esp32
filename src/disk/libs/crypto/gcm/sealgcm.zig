@@ -53,7 +53,11 @@ const _gcm = @import("_gcm.zig");
 ///
 /// On an x86-64 core with AES-NI and PCLMULQDQ the counter blocks are
 /// encrypted eight at a time and GHASH sums four blocks' products before
-/// one reduction: about 3.5 GB/s for AES-128 on a Ryzen 7 7840HS.
+/// one reduction: about 3.5 GB/s for AES-128 on a Ryzen 7 7840HS. An
+/// AArch64 core with the crypto extension (the CM5) does the same with
+/// AESE and PMULL, four counter blocks at a time; one without it (the
+/// CM4) encrypts them on its vector registers, in the same time whatever
+/// the key and the data, and multiplies in software.
 ///
 /// BUGS:
 /// On the S3 GHASH runs in software, bit by bit, and is slower than the

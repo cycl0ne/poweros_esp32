@@ -1,6 +1,7 @@
 //! crypto.library's functions: random bytes, hashes, HMAC, HKDF, AES and
-//! modular exponentiation on the chip's own engines; key agreement and
-//! signatures on X25519, Ed25519, P-256 and P-384, and RSA signatures.
+//! modular exponentiation on the chip's own engines; ChaCha20 and
+//! Poly1305; key agreement and signatures on X25519, Ed25519, P-256 and
+//! P-384, and RSA signatures.
 //! A hash, an HMAC or a cipher under way is a context the caller keeps
 //! (sdk.crypto); a call that can fail answers 0 or a CRYPTOERR_* code.
 ##include libs/crypto/crypto as crypto
@@ -75,4 +76,14 @@ void UpdateGmac(*crypto.GmacContext context, ?*const anyopaque data, u32 length)
 /// The GMAC ended: its tag (GCM_TAG bytes) into `tag`, and the context
 /// wiped.
 i32 FinishGmac(*crypto.GmacContext context, *anyopaque tag)
+/// A message encrypted with ChaCha20-Poly1305 (RFC 8439), and its tag.
+i32 SealChaChaPoly(*const crypto.AeadMessage message)
+/// A message's tag checked with ChaCha20-Poly1305, and the message
+/// decrypted.
+i32 OpenChaChaPoly(*const crypto.AeadMessage message)
+/// Poly1305 with the one-time `key` over `count` pieces, taken one after
+/// another: the tag (POLY1305_TAG bytes) into `tag`.
+i32 Poly1305Pieces(*const [32]u8 key, ?[*]const crypto.Bytes pieces, u32 count, *[16]u8 tag)
+/// Which work runs on hardware here: CRYPTOENG_* bits.
+u32 CryptoEngines()
 ##end

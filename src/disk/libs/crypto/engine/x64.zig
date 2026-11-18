@@ -244,7 +244,7 @@ pub fn decrypt(keys: *const Keys, block: Block) Block {
 pub const lanes = 8;
 
 /// `lanes` blocks encrypted together.
-inline fn encryptLanes(keys: *const Keys, states: *[lanes]Block) void {
+pub inline fn encryptLanes(keys: *const Keys, states: *[lanes]Block) void {
     inline for (0..lanes) |lane| states[lane] ^= keys.round[0];
     for (keys.round[1..keys.rounds]) |key| {
         inline for (0..lanes) |lane| states[lane] = aesenc(states[lane], key);
@@ -254,7 +254,7 @@ inline fn encryptLanes(keys: *const Keys, states: *[lanes]Block) void {
 }
 
 /// `lanes` blocks decrypted together.
-inline fn decryptLanes(keys: *const Keys, states: *[lanes]Block) void {
+pub inline fn decryptLanes(keys: *const Keys, states: *[lanes]Block) void {
     inline for (0..lanes) |lane| states[lane] ^= keys.round[0];
     for (keys.round[1..keys.rounds]) |key| {
         inline for (0..lanes) |lane| states[lane] = aesdec(states[lane], key);
@@ -263,112 +263,14 @@ inline fn decryptLanes(keys: *const Keys, states: *[lanes]Block) void {
     inline for (0..lanes) |lane| states[lane] = aesdeclast(states[lane], last);
 }
 
-/// `blocks` blocks each on its own (ECB), `from` and `to` the same or
-/// apart.
-pub fn ecb(keys: *const Keys, backward: bool, from: [*]const u8, to: [*]u8, blocks: u32) void {
-    var at: usize = 0;
-    var left = blocks;
-    while (left >= lanes) : (left -= lanes) {
-        var states: [lanes]Block = undefined;
-        inline for (0..lanes) |lane| states[lane] = load(from + at + 16 * lane);
-        if (backward) decryptLanes(keys, &states) else encryptLanes(keys, &states);
-        inline for (0..lanes) |lane| store(to + at + 16 * lane, states[lane]);
-        at += 16 * lanes;
-    }
-    while (left > 0) : (left -= 1) {
-        const block = load(from + at);
-        store(to + at, if (backward) decrypt(keys, block) else encrypt(keys, block));
-        at += 16;
-    }
-}
-
-/// CBC's encryption: each block added to the ciphertext before it - the
-/// chain, which is left at the last.
-pub fn cbcEncrypt(keys: *const Keys, chain: *[16]u8, from: [*]const u8, to: [*]u8, blocks: u32) void {
-    var previous = load(chain);
-    var at: usize = 0;
-    for (0..blocks) |_| {
-        previous = encrypt(keys, load(from + at) ^ previous);
-        store(to + at, previous);
-        at += 16;
-    }
-    store(chain, previous);
-}
-
-/// CBC's decryption: each block decrypted and the ciphertext before it
-/// added - the chain for the first, which is left at the last. A run's
-/// ciphertexts are all read before any of its blocks is written, so
-/// `to` may be `from`.
-pub fn cbcDecrypt(keys: *const Keys, chain: *[16]u8, from: [*]const u8, to: [*]u8, blocks: u32) void {
-    var previous = load(chain);
-    var at: usize = 0;
-    var left = blocks;
-    while (left >= lanes) : (left -= lanes) {
-        var received: [lanes]Block = undefined;
-        inline for (0..lanes) |lane| received[lane] = load(from + at + 16 * lane);
-        var states = received;
-        decryptLanes(keys, &states);
-        store(to + at, states[0] ^ previous);
-        inline for (1..lanes) |lane| store(to + at + 16 * lane, states[lane] ^ received[lane - 1]);
-        previous = received[lanes - 1];
-        at += 16 * lanes;
-    }
-    while (left > 0) : (left -= 1) {
-        const received = load(from + at);
-        store(to + at, decrypt(keys, received) ^ previous);
-        previous = received;
-        at += 16;
-    }
-    store(chain, previous);
-}
-
-/// How a counter block counts: all its 128 bits (the CTR mode), or its
-/// last 32 (GCM), most significant byte first either way.
-pub const Count = enum { whole, last32 };
-
-/// A counter block `step` past the one `base` stands for.
-inline fn counterBlock(comptime count: Count, base: Block, value: u128, step: u32) Block {
-    switch (count) {
-        .whole => return @bitCast(@byteSwap(value +% step)),
-        .last32 => {
-            var words: Words = @bitCast(base);
-            words[3] = @byteSwap(@as(u32, @truncate(value)) +% step);
-            return @bitCast(words);
-        },
-    }
-}
-
-/// `length` bytes encrypted or decrypted alike by a counter mode: the
-/// counter block `counter` and those after it encrypted and added to the
-/// data, the last block's key stream cut to what is left. `counter` is
-/// left at the block after the last one used.
-pub fn ctr(keys: *const Keys, comptime count: Count, counter: *[16]u8, from: [*]const u8, to: [*]u8, length: u32) void {
-    const base = load(counter);
-    const value = @byteSwap(@as(u128, @bitCast(base)));
-    var step: u32 = 0;
-    var at: usize = 0;
-    while (length - at >= 16 * lanes) {
-        var states: [lanes]Block = undefined;
-        inline for (0..lanes) |lane| states[lane] = counterBlock(count, base, value, step + @as(u32, lane));
-        encryptLanes(keys, &states);
-        inline for (0..lanes) |lane| store(to + at + 16 * lane, states[lane] ^ load(from + at + 16 * lane));
-        step += lanes;
-        at += 16 * lanes;
-    }
-    while (length - at >= 16) {
-        store(to + at, encrypt(keys, counterBlock(count, base, value, step)) ^ load(from + at));
-        step += 1;
-        at += 16;
-    }
-    if (at < length) {
-        var stream: [16]u8 = @bitCast(encrypt(keys, counterBlock(count, base, value, step)));
-        for (0..length - at) |index| to[at + index] = from[at + index] ^ stream[index];
-        const wiped: *volatile [16]u8 = &stream;
-        wiped.* = @splat(0);
-        step += 1;
-    }
-    store(counter, counterBlock(count, base, value, step));
-}
+/// ECB, CBC and the counter modes, `lanes` blocks at a time where the
+/// mode lets them (`runs.zig`).
+const runs = @import("runs.zig").Runs(@This());
+pub const ecb = runs.ecb;
+pub const cbcEncrypt = runs.cbcEncrypt;
+pub const cbcDecrypt = runs.cbcDecrypt;
+pub const ctr = runs.ctr;
+pub const Count = @import("runs.zig").Count;
 
 // --- GHASH ---------------------------------------------------------------------------
 

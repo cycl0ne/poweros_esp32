@@ -24,7 +24,7 @@ fn multiply(a: u8, b: u8) u8 {
     return product;
 }
 
-const sbox: [256]u8 = blk: {
+pub const sbox: [256]u8 = blk: {
     @setEvalBranchQuota(1_000_000);
     var table: [256]u8 = undefined;
     for (0..256) |value| {
@@ -45,7 +45,7 @@ const sbox: [256]u8 = blk: {
     break :blk table;
 };
 
-const inverse_sbox: [256]u8 = blk: {
+pub const inverse_sbox: [256]u8 = blk: {
     var table: [256]u8 = undefined;
     for (sbox, 0..) |value, index| table[value] = @intCast(index);
     break :blk table;

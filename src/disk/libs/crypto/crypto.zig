@@ -8,8 +8,11 @@
 //! unit - fed by the CPU; the library adds the modes, the padding and the
 //! numbers' set-up around them (`engine/_engine.zig`). An x86-64 core
 //! with AES-NI, PCLMULQDQ and the SHA extensions does AES, GCM's hash,
-//! SHA-1 and SHA-256 on those instructions instead (`engine/x64.zig`);
-//! every other chip without an engine runs the engines' software models.
+//! SHA-1 and SHA-256 on those instructions instead (`engine/x64.zig`),
+//! and an AArch64 core with the crypto extension on its AESE, PMULL and
+//! SHA instructions; one without it (the CM4) does AES on its vector
+//! registers, constant-time (`engine/a64.zig`). Every other chip without
+//! an engine runs the engines' software models.
 //! A computation
 //! under way is a context the caller keeps, so the one base is shared by
 //! every opener and holds only the engines' locks and ModExp's working

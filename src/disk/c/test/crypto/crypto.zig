@@ -9,7 +9,9 @@
 //! message of several blocks, two hashes interleaved (the engine taking
 //! turns between them), RFC 4231's HMAC, FIPS 197's AES blocks both
 //! ways, SP 800-38A's CBC and CTR, the GCM paper's test case 4 and a
-//! forged tag, modular exponentiation on numbers of 2048, 1024 and 1000
+//! forged tag, RFC 8439's ChaCha20, Poly1305 and their AEAD (crypto.library
+//! 2.13 on) and 64 KiB of the AEAD as std.crypto seals it, modular
+//! exponentiation on numbers of 2048, 1024 and 1000
 //! bits, RFC 5869's HKDF, RFC 7748's X25519, RFC 8032's Ed25519, key
 //! agreement on P-256 and P-384, and ECDSA (P-256, P-384) and RSA-PSS
 //! signatures openssl made. On the chip the hashes, AES and the exponentiations go
@@ -28,19 +30,25 @@
 //! a time (InitGmac, UpdateGmac, FinishGmac) against SealGcm with the
 //! data as its header and the GHASH worked out here.
 //!
-//! It prints one line per check that fails (every check, with VERBOSE)
-//! and a count at the end; the return code is 0 when all pass, 10 when
-//! any fails, 20 when the library cannot be opened.
+//! It prints one line per check that fails (every check, with VERBOSE,
+//! and what CryptoEngines says runs on hardware) and a count at the end;
+//! the return code is 0 when all pass, 10 when any fails, 20 when the
+//! library cannot be opened.
 //!
 //! BENCH times each kind of work after the checks - a key pair, a shared
 //! secret, a signature checked and made, a 2048-bit exponentiation with
 //! a 2048-bit exponent (an RSA private key's), AES-GCM, AES-CTR alone
-//! (the engine's share of GCM) and SHA-256 in bulk - in microseconds an
+//! (the engine's share of GCM), ChaCha20-Poly1305, ChaCha20 alone,
+//! Poly1305 alone and SHA-256 in bulk - in microseconds an
 //! operation or kilobytes a second, on timer.device's E-clock; and
 //! SHA-256 of messages from 256 bytes to 64 KiB, in one HashPieces and in
-//! steps, and GMAC a piece at a time, in one call, and in 1 MiB pieces.
+//! steps, and GMAC a piece at a time, in one call, and in 1 MiB pieces;
+//! and how fast RandomBytes and the SDK's generator give their bytes.
 //! RANDOM puts 20000 bits of RandomBytes through FIPS 140-2's monobit,
-//! poker and long-run tests.
+//! poker and long-run tests, and 20000 bits of the generator it draws on
+//! as this program's own copy of the SDK reaches it (sdk.hardware.rng):
+//! the machine's driver as built now, whatever copy a library loaded
+//! long ago holds.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -55,7 +63,7 @@ const CryptoBase = sdk.interface.crypto.CryptoBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Crypto";
-const VERSION_STRING = "\x00$VER: Crypto 1.9 (27.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Crypto 1.11 (18.11.2026)\r\n";
 
 const template = "VERBOSE/S,BENCH/S,RANDOM/S";
 const arg_verbose = 0;
@@ -256,6 +264,125 @@ fn gcm(run: *Run) void {
     run.check("AES-128-GCM, a forged tag refused", run.cb.OpenGcm(&message) == crypto.CRYPTOERR_TAG and same(&data, &sealed));
     tag[0] ^= 0x80;
     run.check("AES-128-GCM open (GCM test case 4)", run.cb.OpenGcm(&message) == crypto.CRYPTOERR_OK and same(&data, &plain));
+}
+
+/// Whether the library has ChaCha20-Poly1305, Poly1305Pieces and
+/// CryptoEngines: 2.13 or later.
+fn hasChaCha(cb: *CryptoBase) bool {
+    const lib = cb.lib();
+    return lib.version > 2 or (lib.version == 2 and lib.revision >= 13);
+}
+
+/// RFC 8439's vectors - the cipher (2.4.2) in two pieces, Poly1305
+/// (2.5.2) in three, the AEAD (2.8.2) sealed, forged and opened - and
+/// 64 KiB and a bit of the AEAD and of Poly1305 as std.crypto makes them
+/// (the digest of the ciphertext, the tags), which is what the cores
+/// with vectors do four blocks at a time.
+fn chacha(run: *Run) void {
+    const cb = run.cb;
+    if (!hasChaCha(cb)) {
+        _ = Printf(run.dl, "%-40s %s\n", .{ "ChaCha20-Poly1305", "not in this crypto.library (2.13 on)" });
+        return;
+    }
+    if (run.verbose) {
+        const engines = cb.CryptoEngines();
+        _ = Printf(run.dl, "%-40s%s%s%s%s%s\n", .{
+            "On hardware:",
+            if (engines & crypto.CRYPTOENG_AES != 0) " AES" else "",
+            if (engines & crypto.CRYPTOENG_GHASH != 0) " GHASH" else "",
+            if (engines & crypto.CRYPTOENG_SHA256 != 0) " SHA-256" else "",
+            if (engines & crypto.CRYPTOENG_SHA512 != 0) " SHA-512" else "",
+            if (engines == 0) " nothing" else "",
+        });
+    }
+    const sunscreen = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+    var key = hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+    const iv = hex("01000000000000000000004a00000000");
+    var data: [sunscreen.len]u8 = sunscreen.*;
+    var context: crypto.CipherContext = .{};
+    var good = cb.InitCipher(&context, crypto.CIPHER_CHACHA20, &key, 32, &iv) == crypto.CRYPTOERR_OK;
+    good = good and cb.UpdateCipher(&context, &data, &data, 50) == crypto.CRYPTOERR_OK;
+    good = good and cb.UpdateCipher(&context, data[50..].ptr, data[50..].ptr, data.len - 50) == crypto.CRYPTOERR_OK;
+    context = .{};
+    run.check("ChaCha20 (RFC 8439, 2.4.2)", good and same(&data, &hex("6e2e359a2568f98041ba0728dd0d6981e97e7aec1d4360c20a27afccfd9fae0b" ++
+        "f91b65c5524733ab8f593dabcd62b3571639d624e65152ab8f530c359f0861d8" ++
+        "07ca0dbf500d6a6156a38e088a22b65e52bc514d16ccf806818ce91ab7793736" ++
+        "5af90bbf74a35be6b40b8eedf2785e42874d")));
+
+    const poly_key = hex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
+    const text = "Cryptographic Forum Research Group";
+    const pieces = [_]crypto.Bytes{ .of(text[0..5]), .of(text[5..21]), .of(text[21..]) };
+    var tag: [crypto.POLY1305_TAG]u8 = undefined;
+    good = cb.Poly1305Pieces(&poly_key, &pieces, pieces.len, &tag) == crypto.CRYPTOERR_OK;
+    run.check("Poly1305 (RFC 8439, 2.5.2)", good and same(&tag, &hex("a8061dc1305136c6c22b8baf0c0127a9")));
+
+    key = hex("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f");
+    const nonce = hex("070000004041424344454647");
+    const aad = hex("50515253c0c1c2c3c4c5c6c7");
+    data = sunscreen.*;
+    const message: crypto.AeadMessage = .{
+        .key = &key,
+        .key_length = crypto.CHACHA_KEY,
+        .nonce = &nonce,
+        .nonce_length = crypto.CHACHA_NONCE,
+        .aad = &aad,
+        .aad_length = aad.len,
+        .input = &data,
+        .output = &data,
+        .length = data.len,
+        .tag = &tag,
+    };
+    const sealed = hex("d31a8d34648e60db7b86afbc53ef7ec2a4aded51296e08fea9e2b5a736ee62d6" ++
+        "3dbea45e8ca9671282fafb69da92728b1a71de0a9e060b2905d6a5b67ecd3b36" ++
+        "92ddbd7f2d778b8c9803aee328091b58fab324e4fad675945585808b4831d7bc" ++
+        "3ff4def08e4b7a9de576d26586cec64b6116");
+    good = cb.SealChaChaPoly(&message) == crypto.CRYPTOERR_OK;
+    run.check("ChaCha20-Poly1305 seal (RFC 8439, 2.8.2)", good and same(&data, &sealed) and same(&tag, &hex("1ae10b594f09e26a7e902ecbd0600691")));
+    tag[7] ^= 0x01;
+    run.check("ChaCha20-Poly1305, a forged tag refused", cb.OpenChaChaPoly(&message) == crypto.CRYPTOERR_TAG and same(&data, &sealed));
+    tag[7] ^= 0x01;
+    run.check("ChaCha20-Poly1305 open (RFC 8439, 2.8.2)", cb.OpenChaChaPoly(&message) == crypto.CRYPTOERR_OK and same(&data, sunscreen));
+
+    // 64 KiB and 37 bytes, sealed in one call and opened again.
+    const long: u32 = 65536 + 37;
+    const memory = run.sys.AllocVec(long, exec.MEMF_ANY) orelse return run.check("ChaCha20-Poly1305 of 64 KiB (no memory)", false);
+    defer run.sys.FreeVec(memory);
+    const bytes: [*]u8 = @ptrCast(memory);
+    const fill = struct {
+        fn fill(into: [*]u8, length: u32) void {
+            for (0..length) |index| into[index] = @truncate(index *% 251 +% 17);
+        }
+    }.fill;
+    fill(bytes, long);
+    var long_key: [32]u8 = undefined;
+    for (&long_key, 0..) |*byte, index| byte.* = @intCast(index);
+    var long_nonce: [12]u8 = undefined;
+    for (&long_nonce, 0..) |*byte, index| byte.* = @intCast(0x70 + index);
+    const header = "a header";
+    const long_message: crypto.AeadMessage = .{
+        .key = &long_key,
+        .key_length = 32,
+        .nonce = &long_nonce,
+        .nonce_length = 12,
+        .aad = header,
+        .aad_length = header.len,
+        .input = bytes,
+        .output = bytes,
+        .length = long,
+        .tag = &tag,
+    };
+    good = cb.SealChaChaPoly(&long_message) == crypto.CRYPTOERR_OK;
+    var digest: [crypto.DIGEST_MAX]u8 = undefined;
+    const sealed_digest = digestOf(cb, crypto.HASH_SHA256, bytes[0..long], &digest);
+    run.check("ChaCha20-Poly1305 of 64 KiB, as std has it", good and same(sealed_digest, &hex("90539f6530f5e22d701d1dccbd46e0f20053fb87294c4e1ecfa02f21d614966f")) and
+        same(&tag, &hex("0eef0414e8c08172c882a406cacdabcd")));
+    good = cb.OpenChaChaPoly(&long_message) == crypto.CRYPTOERR_OK;
+    var back = good;
+    for (0..long) |index| back = back and bytes[index] == @as(u8, @truncate(index *% 251 +% 17));
+    run.check("ChaCha20-Poly1305 of 64 KiB, opened again", back);
+    const whole = [_]crypto.Bytes{.{ .bytes = bytes, .length = long }};
+    good = cb.Poly1305Pieces(&long_key, &whole, 1, &tag) == crypto.CRYPTOERR_OK;
+    run.check("Poly1305 of 64 KiB, as std has it", good and same(&tag, &hex("4b9b0e3dd121bd808f05c8cd2b1970b5")));
 }
 
 /// `length` bytes of `from` through a fresh context of `mode`, into `one`
@@ -726,12 +853,22 @@ const pss_signature = hex(
 
 // --- RANDOM: the generator's bits --------------------------------------------
 
-/// FIPS 140-2's tests over 20000 bits: monobit (9725 to 10275 ones),
-/// poker (2.16 < X < 46.17 over 4-bit nibbles) and long runs (none of 26
-/// or more).
+/// FIPS 140-2's tests over 20000 bits of RandomBytes, and over 20000 of
+/// the generator RandomBytes draws on as this program's own copy of the
+/// SDK reaches it (sdk.hardware.rng) - the same driver, which a library
+/// loaded long ago may hold an older copy of.
 fn random(run: *Run) void {
     var bits: [2500]u8 = undefined;
     run.cb.RandomBytes(&bits, bits.len);
+    fips(run, "RandomBytes", "RNG", &bits);
+    sdk.hardware.rng.fill(&bits);
+    fips(run, "The SDK's generator", "SDK RNG", &bits);
+}
+
+/// FIPS 140-2's tests over the 20000 bits in `bits`: monobit (9725 to
+/// 10275 ones), poker (2.16 < X < 46.17 over 4-bit nibbles) and long runs
+/// (none of 26 or more).
+fn fips(run: *Run, name: [*:0]const u8, comptime check: []const u8, bits: *const [2500]u8) void {
     var ones: u32 = 0;
     var nibbles: [16]u32 = @splat(0);
     var longest: u32 = 0;
@@ -752,10 +889,10 @@ fn random(run: *Run) void {
     for (nibbles) |count| squares += @as(u64, count) * count;
     // 16/5000 * squares - 5000 between 2.16 and 46.17, in integers.
     const poker = 16 * squares;
-    _ = Printf(run.dl, "RandomBytes: %u ones in 20000 bits, nibble squares %ld, longest run %u\n", .{ ones, squares, longest });
-    run.check("RNG monobit (FIPS 140-2)", ones > 9725 and ones < 10275);
-    run.check("RNG poker (FIPS 140-2)", poker > 25_010_800 and poker < 25_230_850);
-    run.check("RNG long runs (FIPS 140-2)", longest < 26);
+    _ = Printf(run.dl, "%s: %u ones in 20000 bits, nibble squares %ld, longest run %u\n", .{ name, ones, squares, longest });
+    run.check(check ++ " monobit (FIPS 140-2)", ones > 9725 and ones < 10275);
+    run.check(check ++ " poker (FIPS 140-2)", poker > 25_010_800 and poker < 25_230_850);
+    run.check(check ++ " long runs (FIPS 140-2)", longest < 26);
 }
 
 // --- BENCH: how long the work takes -------------------------------------------
@@ -848,6 +985,21 @@ fn bench(run: *Run) void {
     started = micros(run);
     for (0..64) |_| _ = cb.UpdateCipher(&context, &Buffer.data, &Buffer.data, Buffer.data.len);
     throughput(run, "AES-128-CTR (the engine alone)", started, 64);
+    if (hasChaCha(cb)) {
+        const chacha_key: [32]u8 = @splat(4);
+        const sealing: crypto.AeadMessage = .{ .key = &chacha_key, .key_length = 32, .nonce = &nonce, .nonce_length = 12, .input = &Buffer.data, .output = &Buffer.data, .length = Buffer.data.len, .tag = &tag };
+        started = micros(run);
+        for (0..64) |_| _ = cb.SealChaChaPoly(&sealing);
+        throughput(run, "ChaCha20-Poly1305 seal", started, 64);
+        _ = cb.InitCipher(&context, crypto.CIPHER_CHACHA20, &chacha_key, 32, &([_]u8{0} ** 16));
+        started = micros(run);
+        for (0..64) |_| _ = cb.UpdateCipher(&context, &Buffer.data, &Buffer.data, Buffer.data.len);
+        throughput(run, "ChaCha20 (the cipher alone)", started, 64);
+        const record = [_]crypto.Bytes{.of(&Buffer.data)};
+        started = micros(run);
+        for (0..64) |_| _ = cb.Poly1305Pieces(&chacha_key, &record, 1, &tag);
+        throughput(run, "Poly1305", started, 64);
+    }
     var digest: [crypto.DIGEST_MAX]u8 = undefined;
     started = micros(run);
     for (0..256) |_| _ = digestOf(cb, crypto.HASH_SHA256, &Buffer.data, &digest);
@@ -864,6 +1016,23 @@ fn bench(run: *Run) void {
     throughput(run, "AES-128-GMAC in one call", started, 64);
     gmacMegabyte(run);
     sizes(run);
+    randomRate(run);
+}
+
+/// RandomBytes, 256 KiB in pieces of 4 KiB: how fast the machine's
+/// generator gives its bits.
+fn randomRate(run: *Run) void {
+    const Buffer = struct {
+        var data: [4096]u8 = undefined;
+    };
+    var started = micros(run);
+    for (0..64) |_| run.cb.RandomBytes(&Buffer.data, Buffer.data.len);
+    var elapsed = micros(run) - started;
+    _ = Printf(run.dl, "%-34s %ld KiB/s (256 KiB in %ld ms)\n", .{ "RandomBytes", rate(256 * 1024, elapsed), elapsed / 1000 });
+    started = micros(run);
+    for (0..64) |_| sdk.hardware.rng.fill(&Buffer.data);
+    elapsed = micros(run) - started;
+    _ = Printf(run.dl, "%-34s %ld KiB/s (256 KiB in %ld ms)\n", .{ "The SDK's generator", rate(256 * 1024, elapsed), elapsed / 1000 });
 }
 
 /// GMAC of 1 MiB in one UpdateGmac, 16 times: what crypto.library shares
@@ -943,6 +1112,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     onePieces(&run);
     aes(&run);
     gcm(&run);
+    chacha(&run);
     longData(&run);
     modexp(&run);
     keys(&run);

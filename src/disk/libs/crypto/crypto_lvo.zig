@@ -38,6 +38,10 @@ const HmacPieces = @import("hmac/hmacpieces.zig").HmacPieces;
 const InitGmac = @import("gcm/initgmac.zig").InitGmac;
 const UpdateGmac = @import("gcm/updategmac.zig").UpdateGmac;
 const FinishGmac = @import("gcm/finishgmac.zig").FinishGmac;
+const SealChaChaPoly = @import("chacha/sealchachapoly.zig").SealChaChaPoly;
+const OpenChaChaPoly = @import("chacha/openchachapoly.zig").OpenChaChaPoly;
+const Poly1305Pieces = @import("chacha/poly1305pieces.zig").Poly1305Pieces;
+const CryptoEngines = @import("engine/cryptoengines.zig").CryptoEngines;
 
 /// crypto.library's interface, as the SDK generates it from
 /// sdk/fd/crypto_lib.fd.
@@ -88,6 +92,10 @@ const contract_files = [_][]const u8{
     @embedFile("gcm/initgmac.zig"),
     @embedFile("gcm/updategmac.zig"),
     @embedFile("gcm/finishgmac.zig"),
+    @embedFile("chacha/sealchachapoly.zig"),
+    @embedFile("chacha/openchachapoly.zig"),
+    @embedFile("chacha/poly1305pieces.zig"),
+    @embedFile("engine/cryptoengines.zig"),
 };
 
 fn lvoRandomBytes(cb: *CryptoBase, buffer: *anyopaque, length: u32) callconv(.c) void {
@@ -168,6 +176,18 @@ fn lvoUpdateGmac(cb: *CryptoBase, context: *crypto.GmacContext, data: ?*const an
 fn lvoFinishGmac(cb: *CryptoBase, context: *crypto.GmacContext, tag: *anyopaque) callconv(.c) i32 {
     return FinishGmac(cb, context, tag);
 }
+fn lvoSealChaChaPoly(cb: *CryptoBase, message: *const crypto.AeadMessage) callconv(.c) i32 {
+    return SealChaChaPoly(cb, message);
+}
+fn lvoOpenChaChaPoly(cb: *CryptoBase, message: *const crypto.AeadMessage) callconv(.c) i32 {
+    return OpenChaChaPoly(cb, message);
+}
+fn lvoPoly1305Pieces(cb: *CryptoBase, key: *const [32]u8, pieces: ?[*]const crypto.Bytes, count: u32, tag: *[16]u8) callconv(.c) i32 {
+    return Poly1305Pieces(cb, key, pieces, count, tag);
+}
+fn lvoCryptoEngines(cb: *CryptoBase) callconv(.c) u32 {
+    return CryptoEngines(cb);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -202,6 +222,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoInitGmac),
     vec(lvoUpdateGmac),
     vec(lvoFinishGmac),
+    vec(lvoSealChaChaPoly),
+    vec(lvoOpenChaChaPoly),
+    vec(lvoPoly1305Pieces),
+    vec(lvoCryptoEngines),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -32,12 +32,14 @@ pub const CRYPTONAME = "crypto.library";
 pub const CRYPTOERR_OK: i32 = 0;
 /// An algorithm or a cipher mode the library does not have.
 pub const CRYPTOERR_ALGORITHM: i32 = -1;
-/// A key whose length the cipher does not take (AES: 16 or 32 bytes).
+/// A key whose length the cipher does not take (AES: 16 or 32 bytes;
+/// ChaCha20: 32).
 pub const CRYPTOERR_KEY: i32 = -2;
 /// A length the call cannot take: not a whole number of blocks where it
 /// has to be, a nonce of none, a number longer than the engine's.
 pub const CRYPTOERR_LENGTH: i32 = -3;
-/// OpenGcm: the tag does not match; nothing was written to the output.
+/// OpenGcm, OpenChaChaPoly: the tag does not match; nothing was written
+/// to the output.
 pub const CRYPTOERR_TAG: i32 = -4;
 /// ModExp: a modulus that is even, or less than 3.
 pub const CRYPTOERR_NUMBER: i32 = -5;
@@ -133,7 +135,16 @@ pub const AES_BLOCK: u32 = 16;
 pub const CIPHER_AES_ECB: u32 = 1;
 pub const CIPHER_AES_CBC: u32 = 2;
 pub const CIPHER_AES_CTR: u32 = 3;
-/// Or-ed into the mode: decrypt. CTR is the same both ways and ignores it.
+/// ChaCha20 (RFC 8439), since 2.13: a key of 32 bytes, and an IV of 16
+/// - the state's last four words, as the RFC lays them out: the 32-bit
+/// block counter, little-endian, then the 12-byte nonce. Any length, the
+/// rest of a 64-byte block carried to the next call, as CTR does. SSH's
+/// form of it, a 64-bit counter and a 64-bit nonce, is the same 16 bytes:
+/// the counter counts in its first four bytes only, which no message of
+/// less than 256 GiB tells apart.
+pub const CIPHER_CHACHA20: u32 = 4;
+/// Or-ed into the mode: decrypt. CTR and ChaCha20 are the same both ways
+/// and ignore it.
 pub const CIPHERF_DECRYPT: u32 = 1 << 16;
 
 /// One cipher under way: InitCipher, then UpdateCipher over the data.
@@ -143,13 +154,15 @@ pub const CipherContext = extern struct {
     size: u32 = @sizeOf(CipherContext),
     /// CIPHER_*, CIPHERF_DECRYPT or-ed in.
     mode: u32 = 0,
-    /// 16 or 32.
+    /// 16 or 32; ChaCha20: 32.
     key_length: u32 = 0,
     key: [32]u8 = @splat(0),
     /// CBC: the last ciphertext block. CTR: the next counter block.
+    /// ChaCha20: the block counter and the nonce of the block under way.
     chain: [AES_BLOCK]u8 = @splat(0),
     /// CTR: the key stream of the counter block last used, and how much
-    /// of it is used up.
+    /// of it is used up. ChaCha20: `stream` unused, `stream_used` the
+    /// bytes of the block under way already used (0 to 63).
     stream: [AES_BLOCK]u8 = @splat(0),
     stream_used: u32 = AES_BLOCK,
     reserved: [48]u8 = @splat(0),
@@ -207,6 +220,32 @@ pub const GcmMessage = extern struct {
     /// SealGcm writes it, OpenGcm reads it.
     tag: *[GCM_TAG]u8,
 };
+
+/// ChaCha20-Poly1305's key, nonce and tag (RFC 8439), since 2.13.
+pub const CHACHA_KEY: u32 = 32;
+pub const CHACHA_NONCE: u32 = 12;
+pub const POLY1305_TAG: u32 = 16;
+/// Poly1305's one-time key, for Poly1305Pieces: r, then s.
+pub const POLY1305_KEY: u32 = 32;
+
+/// One message for SealChaChaPoly or OpenChaChaPoly: the same fields as
+/// GCM's, with a key of 32 bytes and a nonce of 12.
+pub const AeadMessage = GcmMessage;
+
+// --- engines ------------------------------------------------------------------
+
+/// CryptoEngines' bits, since 2.13: which work runs on hardware - an
+/// engine of the chip's, or the core's own instructions - and not in
+/// software. AES's rounds; GHASH's multiplications, so all of AES-GCM
+/// with CRYPTOENG_AES; SHA-256 (and SHA-224, SHA-1); SHA-512 (and
+/// SHA-384). A protocol that can choose prefers ChaCha20-Poly1305 where
+/// CRYPTOENG_AES is clear: there it is the faster of the two, and takes
+/// the same time whatever the key, which AES in software does not
+/// everywhere.
+pub const CRYPTOENG_AES: u32 = 1 << 0;
+pub const CRYPTOENG_GHASH: u32 = 1 << 1;
+pub const CRYPTOENG_SHA256: u32 = 1 << 2;
+pub const CRYPTOENG_SHA512: u32 = 1 << 3;
 
 // --- numbers ------------------------------------------------------------------
 

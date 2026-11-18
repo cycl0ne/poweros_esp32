@@ -10,7 +10,8 @@ const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 const _cipher = @import("_cipher.zig");
 const aes = @import("../engine/aes.zig");
 const jh7110 = @import("../engine/jh7110.zig");
-const x64 = @import("../engine/x64.zig");
+const own = @import("../engine/core.zig");
+const _chacha = @import("../chacha/_chacha.zig");
 
 /// Encrypts or decrypts data with the context's cipher.
 ///
@@ -26,7 +27,7 @@ const x64 = @import("../engine/x64.zig");
 /// - `input`: `length` bytes; may be null when `length` is 0.
 /// - `output`: room for `length` bytes. It may be `input` itself, for
 ///   the data in place; it may not overlap it any other way.
-/// - `length`: ECB and CBC: a multiple of 16. CTR: any.
+/// - `length`: ECB and CBC: a multiple of 16. CTR and ChaCha20: any.
 ///
 /// RESULT:
 /// CRYPTOERR_OK; CRYPTOERR_ALGORITHM for a context InitCipher did not set
@@ -36,9 +37,10 @@ const x64 = @import("../engine/x64.zig");
 /// BEHAVIOR:
 /// The data continues from where the last call left off: a CBC chain
 /// runs on from the last block, a CTR counter from the last counter
-/// block, and a CTR call that ended inside a block starts the next with
-/// the rest of that block's key stream. So a message may be given in any
-/// number of pieces, and comes out as one call with all of it would.
+/// block, and a CTR or ChaCha20 call that ended inside a block starts the
+/// next with the rest of that block's key stream. So a message may be
+/// given in any number of pieces, and comes out as one call with all of
+/// it would.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the AES engine while another task has it.
@@ -55,7 +57,15 @@ const x64 = @import("../engine/x64.zig");
 ///
 /// On an x86-64 core with AES-NI the blocks go through the core's own
 /// instructions, eight at a time where the mode lets them (all but CBC's
-/// encryption), and nothing waits.
+/// encryption), and nothing waits. An AArch64 core does the same four at
+/// a time, with its crypto extension or, where it has none (the CM4), on
+/// its vector registers, the S-box looked up from registers so that the
+/// time taken does not depend on the key or the data.
+///
+/// ChaCha20 is software on every chip and never waits: four blocks at a
+/// time where the core has 128-bit vectors. A call that starts inside a
+/// block makes that block again, so pieces of 64 bytes and more are the
+/// cheaper way to give a long message.
 ///
 /// BUGS:
 /// None known.
@@ -71,10 +81,15 @@ pub fn UpdateCipher(cb: *CryptoBase, context: *CipherContext, input: ?*const any
     const cipher = context.mode & ~crypto.CIPHERF_DECRYPT;
     const decrypt = context.mode & crypto.CIPHERF_DECRYPT != 0;
     if (!_cipher.keyLength(context.key_length)) return crypto.CRYPTOERR_ALGORITHM;
-    if (cipher != crypto.CIPHER_AES_CTR and length % AES_BLOCK != 0) return crypto.CRYPTOERR_LENGTH;
+    const streams = cipher == crypto.CIPHER_AES_CTR or cipher == crypto.CIPHER_CHACHA20;
+    if (!streams and length % AES_BLOCK != 0) return crypto.CRYPTOERR_LENGTH;
     if (length == 0) return crypto.CRYPTOERR_OK;
     const from: [*]const u8 = @ptrCast(input orelse return crypto.CRYPTOERR_LENGTH);
     const to: [*]u8 = @ptrCast(output orelse return crypto.CRYPTOERR_LENGTH);
+    if (cipher == crypto.CIPHER_CHACHA20) {
+        _chacha.update(&context.key, &context.chain, &context.stream_used, from, to, length);
+        return crypto.CRYPTOERR_OK;
+    }
     var at: u32 = 0;
     // CTR first spends what is left of the last call's key stream, so
     // that the rest starts on a block.
@@ -94,12 +109,12 @@ pub fn UpdateCipher(cb: *CryptoBase, context: *CipherContext, input: ?*const any
     if (session.core()) |keys| {
         const whole = (length - at) / AES_BLOCK * AES_BLOCK;
         switch (cipher) {
-            crypto.CIPHER_AES_ECB => x64.ecb(keys, decrypt, from + at, to + at, whole / AES_BLOCK),
+            crypto.CIPHER_AES_ECB => own.ecb(keys, decrypt, from + at, to + at, whole / AES_BLOCK),
             crypto.CIPHER_AES_CBC => if (decrypt)
-                x64.cbcDecrypt(keys, &context.chain, from + at, to + at, whole / AES_BLOCK)
+                own.cbcDecrypt(keys, &context.chain, from + at, to + at, whole / AES_BLOCK)
             else
-                x64.cbcEncrypt(keys, &context.chain, from + at, to + at, whole / AES_BLOCK),
-            else => x64.ctr(keys, .whole, &context.chain, from + at, to + at, whole),
+                own.cbcEncrypt(keys, &context.chain, from + at, to + at, whole / AES_BLOCK),
+            else => own.ctr(keys, .whole, &context.chain, from + at, to + at, whole),
         }
         at += whole;
         if (at == length) return crypto.CRYPTOERR_OK;

@@ -22,11 +22,19 @@ const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 /// None.
 ///
 /// BEHAVIOR:
-/// The bytes come straight from the chip's generator, which draws on the
-/// noise of the SAR ADCs the kernel keeps sampling from boot to the end,
-/// whether or not the radio runs (and on the radio's as well when it
-/// does). They are fit for keys, nonces and IVs as they are, with no
-/// generator of the library's own in between.
+/// The bytes come straight from the machine's generator, with no
+/// generator of the library's own in between (sdk.hardware.rng):
+/// - on the ESP32s, the chip's, which draws on the noise of the SAR ADCs
+///   the kernel keeps sampling from boot to the end, whether or not the
+///   radio runs (and on the radio's as well when it does);
+/// - on the JH7110 (the VisionFive 2), its TRNG;
+/// - on the BCM2711 and the BCM2712 (the Raspberry Pi CM4 and CM5), their
+///   RNG200 (SINCE 2.13);
+/// - on an x86-64 machine, the core's `rdrand`.
+/// From any of these they are fit for keys, nonces and IVs as they are.
+/// A machine without one - QEMU's virt - gets them from timing jitter,
+/// which is not fit for keys: its kernel says so as it starts ("random
+/// numbers from timing jitter").
 ///
 /// CONTEXT:
 /// - Waits: no.
@@ -38,8 +46,9 @@ const CryptoBase = @import("../crypto_base.zig").CryptoBase;
 /// Nothing is allocated.
 ///
 /// NOTES:
-/// The generator refills between reads in a few cycles; the reads are
-/// spaced so that no word is read twice. `C:test/Crypto RANDOM` puts
+/// On the ESP32s the generator refills between reads in a few cycles;
+/// the reads are spaced so that no word is read twice. The RNG200 hands
+/// out each word of its FIFO once, to whichever core reads it. `C:test/Crypto RANDOM` puts
 /// 20000 of its bits through FIPS 140-2's monobit, poker and long-run
 /// tests.
 ///
