@@ -31,7 +31,9 @@ pub const PGA_Dummy = utility.TAG_USER + 0x31000;
 /// Which way the knob may move: `FREEHORIZ`, `FREEVERT`, or both.
 pub const PGA_Freedom = PGA_Dummy + 0x01;
 /// True draws no frame round the container, for a slider that sits in
-/// something already framed.
+/// something already framed. In a window's border, what shows beside the
+/// knob is then the border, and the knob goes the way the border goes
+/// while the window is not the active one.
 pub const PGA_Borderless = PGA_Dummy + 0x02;
 /// Where the knob is across the container, 0 to `MAXPOT`.
 pub const PGA_HorizPot = PGA_Dummy + 0x03;
@@ -50,6 +52,10 @@ pub const PGA_Visible = PGA_Dummy + 0x08;
 /// what a target is told.
 pub const PGA_Top = PGA_Dummy + 0x09;
 /// True draws the knob with a lit and a shadowed edge rather than flat.
+/// In a window's border such a bar takes the border's colours, with a
+/// frame of its own or without: the border shows beside the knob, and
+/// while the window is not the active one the knob is the inactive
+/// border's colour too, told apart by its edge.
 pub const PGA_NewLook = PGA_Dummy + 0x0A;
 
 /// The knob's size is worked out from the body rather than given as an

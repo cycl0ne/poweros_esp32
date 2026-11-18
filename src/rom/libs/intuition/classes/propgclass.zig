@@ -11,6 +11,12 @@
 //! knob moves it by one bodyful towards the press, which leaves one thing
 //! of the old view in the new one. The gadget draws a frame round itself
 //! unless `PGA_Borderless`, and the knob as a raised box.
+//!
+//! **In a window's border** a bar that is borderless or has the new look
+//! takes the border's colours: what shows beside the knob is the border,
+//! and while the window is not the active one the knob is the inactive
+//! border's colour as well, told apart by its edge alone - with a frame of
+//! its own or without.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -243,33 +249,40 @@ fn render(ib: *IntuitionBase, cl: *Class, o: *Object, gi: ?*classusr.GadgetInfo,
     if (edged) it.DrawPart(rp, dri, own_style, style.PART_KNOB, st, if (asleep) style.DPF_EDGES_ONLY else 0, &knob, null);
 }
 
-/// Whether the bar sits in the border of a window that is not the active
-/// one.
+/// Whether the bar takes its colours from the window border it sits in:
+/// one in a border that is borderless or has the new look. A bar of the
+/// old look keeps its own, in a border too.
+fn takesBorder(ib: *IntuitionBase, o: *Object, p: *const Data) bool {
+    if (p.flags & (pg.PROPBORDERLESS | pg.PROPNEWLOOK) == 0) return false;
+    return gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_BORDER != 0;
+}
+
+/// Whether the bar takes the colours of the border of a window that is not
+/// the active one.
 fn inSleepingBorder(ib: *IntuitionBase, o: *Object, p: *const Data, gi: *const classusr.GadgetInfo) bool {
-    if (p.flags & pg.PROPBORDERLESS == 0) return false;
-    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_BORDER == 0) return false;
+    if (!takesBorder(ib, o, p)) return false;
     const w: *_window.Window = @ptrCast(@alignCast(gi.window));
     return w.flags & _window.WF_ACTIVE == 0;
 }
 
 /// What shows beside the knob.
 ///
-/// A bar with a border of its own has a channel to put the knob in, and
-/// that channel is the plain ground. A borderless one has no channel: it
-/// is there to sit in something else's border, and what shows beside the
-/// knob is that border. So it is put back in the colour the border was
-/// painted in, which is the window's fill while the window is the active
-/// one and the plain ground while it is not - the same rule the border
-/// itself is painted by, since the answer has to match it exactly or the
-/// bar would show as a stripe of the wrong colour. Both are the style's:
-/// the channel's background, or the title bar's - the inactive one's in a
-/// window that is not active - which is what a border is painted in.
+/// A bar anywhere but a window's border has a channel to put the knob in,
+/// and that channel is the plain ground. In a border, a borderless bar or
+/// one of the new look (`takesBorder`) shows the border beside the knob,
+/// in its frame where it has one: it is put back in the colour the border
+/// was painted in, which is the window's fill while the window is the
+/// active one and the plain ground while it is not - the same rule the
+/// border itself is painted by, since the answer has to match it exactly
+/// or the bar would show as a stripe of the wrong colour. Both are the
+/// style's: the channel's background, or the title bar's - the inactive
+/// one's in a window that is not active - which is what a border is
+/// painted in.
 fn behind(ib: *IntuitionBase, o: *Object, p: *const Data, gi: *const classusr.GadgetInfo, own_style: ?*const intuition.Style) graphics.Pen {
     const it = ib.iface();
     const dri = gi.draw_info;
     const channel: graphics.Pen = @truncate(it.GetStyleAttr(dri, own_style, style.PART_TRACK, style.STATE_NORMAL, style.STYLE_Background));
-    if (p.flags & pg.PROPBORDERLESS == 0) return channel;
-    if (gadgetclass.gadgetOf(ib, o).activation & gadgetclass.GACT_BORDER == 0) return channel;
+    if (!takesBorder(ib, o, p)) return channel;
     // The window is the one being drawn into, not the one the gadget
     // says it belongs to: a bar that is a part of some larger gadget is
     // not on the window's own list and has no window of its own.

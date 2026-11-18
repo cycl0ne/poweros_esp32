@@ -8436,6 +8436,80 @@ test "sliders: the flags a freedom change keeps, and one told only in fractions"
     try tearDown(ib);
 }
 
+test "sliders: in a window's border one of the new look takes the border's colours, frame or not; the old look keeps its own" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const pg = intuition.propgclass;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    // A bar down the right border, half of it knob: with its frame, the
+    // knob's inside at row 20 and the channel below the knob at row 28;
+    // row 35 is the border under the bar.
+    const knob_inside = .{ 58, 20 };
+    const beside = .{ 58, 28 };
+    const border = .{ 58, 35 };
+    var screen: ?*intuition.Screen = null;
+    for ([_]bool{ true, false }) |new_look| {
+        const bar = it.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
+            .{ .tag = gc.GA_RelRight, .data = @bitCast(@as(isize, -9)) },
+            .{ .tag = gc.GA_Top, .data = 14 },
+            .{ .tag = gc.GA_Width, .data = 10 },
+            .{ .tag = gc.GA_Height, .data = 20 },
+            .{ .tag = gc.GA_RightBorder, .data = 1 },
+            .{ .tag = pg.PGA_NewLook, .data = @intFromBool(new_look) },
+            .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
+            .{ .tag = pg.PGA_Total, .data = 10 },
+            .{ .tag = pg.PGA_Visible, .data = 5 },
+            .{},
+        }).?;
+        const w = it.OpenWindowTagList(&[_]TagItem{
+            .{ .tag = wn.WA_Width, .data = 64 },
+            .{ .tag = wn.WA_Height, .data = 40 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(bar) },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{},
+        }).?;
+        screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+        const active_knob = display.pixel(knob_inside[0], knob_inside[1]);
+        const active_border = display.pixel(border[0], border[1]);
+        try testing.expect(active_border != 0xAD55);
+        // In the new look the channel is the border, the window's fill.
+        if (new_look) try testing.expectEqual(active_border, display.pixel(beside[0], beside[1]));
+
+        // Another window taken active: the border is drawn again in the
+        // background pen, and the bar with it.
+        const other = it.OpenWindowTagList(&[_]TagItem{
+            .{ .tag = wn.WA_Top, .data = 28 },
+            .{ .tag = wn.WA_Width, .data = 12 },
+            .{ .tag = wn.WA_Height, .data = 12 },
+            .{ .tag = wn.WA_Borderless, .data = 1 },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{},
+        }).?;
+        try testing.expectEqual(@as(usize, 0), windowAttr(ib, w, wn.WA_Active));
+        try testing.expectEqual(@as(u16, 0xAD55), display.pixel(border[0], border[1]));
+        if (new_look) {
+            // The channel and the knob are the inactive border's colour,
+            // the knob told apart by its edge.
+            try testing.expectEqual(@as(u16, 0xAD55), display.pixel(beside[0], beside[1]));
+            try testing.expectEqual(@as(u16, 0xAD55), display.pixel(knob_inside[0], knob_inside[1]));
+        } else {
+            // The old look's knob is the same whichever window is active.
+            try testing.expectEqual(active_knob, display.pixel(knob_inside[0], knob_inside[1]));
+        }
+        it.CloseWindow(other);
+        it.CloseWindow(w);
+        it.DisposeObject(bar);
+    }
+    try testing.expect(it.CloseScreen(screen.?));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "gadgets: buttons pressed, followed off and on, told about, disabled and taken out" {
     const ib = try setUp();
     defer kexec.deinit();

@@ -66,8 +66,8 @@ const render = @import("render.zig");
 
 pub const DEVICE_NAME = con.CONSOLENAME;
 const DEVICE_VERSION = 0;
-const DEVICE_REVISION = 14;
-const BUILD_DATE = "13.11.2026";
+const DEVICE_REVISION = 15;
+const BUILD_DATE = "18.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -530,6 +530,13 @@ fn linked(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) ca
 
 /// The bar, in a right border wide enough to hold one - the border a
 /// window has its size gadget in, whose corner the bar stops above.
+///
+/// It looks as a scroller in a border does: no channel of its own, the
+/// border being the channel, and a knob with an edge, kept a fifth of
+/// the border in from either side so that the border's colour runs down
+/// both sides of it. Borderless in a border, the bar goes the way the
+/// border goes: its knob the window's fill while the window is the active
+/// one, and the inactive border's colour while it is not.
 fn makeBar(u: *Unit) void {
     const cb = u.base;
     const ib = cb.intuition_base;
@@ -542,12 +549,15 @@ fn makeBar(u: *Unit) void {
     const link = ib.NewObjectTagList(cl, null, null) orelse return;
     intuition.classes.instData(usize, cl, link).* = @intFromPtr(u);
     const rows = u.grid.rows;
+    const inset = @max(@divTrunc(right, 5), 1);
     const bar = ib.NewObjectTagList(null, classusr.PROPGCLASS, &[_]TagItem{
         .{ .tag = gc.GA_RightBorder, .data = 1 },
-        .{ .tag = gc.GA_RelRight, .data = @bitCast(-(right - 4)) },
+        .{ .tag = gc.GA_RelRight, .data = @bitCast(-(right - 1 - inset)) },
         .{ .tag = gc.GA_Top, .data = @bitCast(top + 1) },
-        .{ .tag = gc.GA_Width, .data = @bitCast(right - 6) },
+        .{ .tag = gc.GA_Width, .data = @bitCast(right - 2 * inset) },
         .{ .tag = gc.GA_RelHeight, .data = @bitCast(-(top + bottom + right + 2)) },
+        .{ .tag = pg.PGA_Borderless, .data = 1 },
+        .{ .tag = pg.PGA_NewLook, .data = 1 },
         .{ .tag = pg.PGA_Freedom, .data = pg.FREEVERT },
         .{ .tag = pg.PGA_Total, .data = rows },
         .{ .tag = pg.PGA_Visible, .data = rows },
