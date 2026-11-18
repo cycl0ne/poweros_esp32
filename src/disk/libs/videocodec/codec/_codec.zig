@@ -91,8 +91,11 @@ pub const Decoder = struct {
     packet: vcodec.VCodecPacket = .{},
     /// The end of the track was sent.
     fed_end: bool = false,
+    /// Frames the decoder handed out since it was opened or flushed: a
+    /// decoder may refuse the stream only before the first.
+    decoded: u32 = 0,
     /// The frames lent out, as the decoder handed them out, by slot.
-    lent: [_stream.held_frames]vc.VideoFrame = @splat(.{}),
+    lent: [_stream.most_slots]vc.VideoFrame = @splat(.{}),
 };
 
 /// A decoder for the stream's picture track, from the modules that
@@ -119,7 +122,7 @@ fn openFrom(s: *Stream, first: u32) i32 {
         .width = s.picture.width,
         .height = s.picture.height,
         .max_packet = s.picture.max_packet,
-        .held = _stream.held_frames,
+        .held = s.slots,
     };
     var index = first;
     while (index < d.count) : (index += 1) {
@@ -163,16 +166,17 @@ pub fn decode(s: *Stream, frame: *vc.VideoFrame, slot: u32) i32 {
                     continue;
                 }
                 d.lent[slot] = got;
+                d.decoded += 1;
                 frame.* = got;
                 return vc.VCERR_OK;
             },
             vc.VCERR_NEED_DATA => {
                 const fed = feed(s);
-                if (fed == vc.VCERR_UNSUPPORTED and s.number == 0 and another(s)) continue;
+                if (fed == vc.VCERR_UNSUPPORTED and d.decoded == 0 and another(s)) continue;
                 if (fed != vc.VCERR_OK) return fed;
             },
             vc.VCERR_UNSUPPORTED => {
-                if (s.number != 0 or !another(s)) return received;
+                if (d.decoded != 0 or !another(s)) return received;
             },
             else => return received,
         }
@@ -192,6 +196,7 @@ pub fn flush(s: *Stream) void {
     d.vb.?.FlushVCodec(d.handle.?);
     d.pending = false;
     d.fed_end = false;
+    d.decoded = 0;
 }
 
 /// What the decoder read from the stream, into `info`: false while it

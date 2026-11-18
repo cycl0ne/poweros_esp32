@@ -1,4 +1,4 @@
-## version $VER: programs/Movie.catalog 1.0 (12.11.2026)
+## version $VER: programs/Movie.catalog 1.1 (17.11.2026)
 ## language zhongwen
 ## codeset 106
 ; Movie's strings in Chinese, simplified. A draft: it waits for a reader
@@ -23,6 +23,14 @@ MSG_MENU_SUBTITLES_OFF
 关
 MSG_MENU_TRACK
 轨道
+MSG_MENU_FRAME_RATE
+帧率
+MSG_MENU_INFO
+影片信息...
+MSG_FRAME_RATE
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED
+%u.%u / %u.%u fps，丢弃 %u 帧
 MSG_ASK_OPEN
 播放影片
 MSG_ABOUT_TITLE
@@ -35,6 +43,48 @@ MSG_CANNOT_PLAY_TITLE
 Movie
 MSG_CANNOT_PLAY
 %s\n无法播放：\n%s
+MSG_INFO_TITLE
+影片信息
+MSG_INFO_FILE
+文件
+MSG_INFO_NAMED
+标题
+MSG_INFO_CONTAINER
+容器
+MSG_INFO_LENGTH
+时长
+MSG_INFO_PICTURES
+画面
+MSG_INFO_COLOURS
+色彩
+MSG_INFO_BITS
+%u 位
+MSG_INFO_LIMITED
+有限范围
+MSG_INFO_FULL
+完整范围
+MSG_INFO_SHOWN
+显示
+MSG_INFO_ON_LAYER
+在显示器的视频层上
+MSG_INFO_BY_GRAPHICS
+由 graphics.library 绘制
+MSG_INFO_DECODED
+解码
+MSG_INFO_BY_CHIP
+由视频解码器
+MSG_INFO_BY_PROCESSOR
+由处理器
+MSG_INFO_SOUND
+声音
+MSG_INFO_NONE
+无
+MSG_INFO_CHANNELS
+%u 声道
+MSG_INFO_TRACKS
+轨道
+MSG_INFO_TRACK_COUNTS
+声音 %u，字幕 %u
 MSG_VOLUME_HINT
 音量
 MSG_NOLIBRARY

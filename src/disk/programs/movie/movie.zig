@@ -22,9 +22,12 @@
 //!
 //! **The sound sets the time.** It plays on a process of its own (the
 //! module `filmsound`, which videocodec.datatype plays a film's sound
-//! with too), which keeps audio.device fed; the window decodes the
-//! pictures and shows each when what is heard has come to its time -
-//! audio.device's position, less the output's latency. A picture whose
+//! with too), which keeps audio.device fed; videocodec.library decodes
+//! the pictures a few frames ahead on a process of its own
+//! (`decode_ahead`), and the window shows each when what is heard has
+//! come to its time - audio.device's position, less the output's
+//! latency, carried on between the device's steps by the machine's clock
+//! so that the pictures come at even times. A picture whose
 //! time is past by more than a frame is given back unshown, up to a few
 //! in a row, so a machine too slow for the film still shows some of it;
 //! one not yet due is waited for by timer.device, with the window's
@@ -69,6 +72,19 @@
 //! process and starts one on the new track from the time heard - its rate
 //! and channels may be others. The subtitles that show at a picture's
 //! time are drawn over it when it is put (subtitles.zig).
+//!
+//! **Frame rate** (since 1.5), an item of the Project menu that ticks,
+//! draws over the picture's top left how many pictures were shown in the
+//! last second of playing, beside the film's own rate, and how many were
+//! given back for coming too late (rate.zig); `ENV:Movie.prefs` keeps
+//! whether it is ticked (`FRAMERATE=YES`), ENVARC: too, and a start
+//! reads it. **Film information...**
+//! says in a requester what the film is: its file, its title and its
+//! container, its length, its pictures - their codec, size and rate, the
+//! colours of the one shown, and whether the display's video layer or
+//! graphics.library shows them, and what decodes them: the machine's
+//! video decoder or the processor, by its codec module - its sound, and
+//! its tracks.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -113,13 +129,19 @@ const Sound = @import("filmsound").Sound;
 const Whole = @import("whole.zig").Whole;
 const subtitles = @import("subtitles.zig");
 const Subtitles = subtitles.Subtitles;
+const FrameRate = @import("rate.zig").FrameRate;
 const media = sdk.media;
 const diskfont = sdk.diskfont;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
+const MediaBase = sdk.interface.media.MediaBase;
+const ac = sdk.audiocodec;
+const vcodec = sdk.vcodec;
+const prefs = sdk.prefs;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 pub const COMMAND_NAME = "Movie";
-const VERSION = "1.4";
-const DATE = "10.11.2026";
+const VERSION = "1.7";
+const DATE = "18.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active.
@@ -128,6 +150,11 @@ const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 const ABOUT_VERSION = COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")";
 
 const template = "FILE,VOLUME/K/N,FULL/S";
+
+/// Where Movie keeps whether it shows the frame rate: `FRAMERATE=YES` or
+/// `NO`.
+const ENV_FILE = "ENV:Movie.prefs";
+const ENVARC_FILE = "ENVARC:Movie.prefs";
 const arg_file = 0;
 const arg_volume = 1;
 const arg_full = 2;
@@ -140,15 +167,17 @@ const ID_PICTURE = 4;
 const MENU_PROJECT = 0;
 const ITEM_OPEN = 0;
 const ITEM_WHOLE = 1;
-const ITEM_ABOUT = 3;
-const ITEM_QUIT = 4;
+const ITEM_RATE = 2;
+const ITEM_INFO = 3;
+const ITEM_ABOUT = 5;
+const ITEM_QUIT = 6;
 /// The film's tracks: each of its sound tracks; Off, then each of its
 /// subtitles. So many of each at most.
 const MENU_SOUND = 1;
 const MENU_SUBTITLES = 2;
 const most_listed = 24;
 /// The menus' entries at most: Project's, then the tracks', and the end.
-const menu_room = 6 + 1 + most_listed + 2 + most_listed + 1;
+const menu_room = project_menu.len + 1 + most_listed + 2 + most_listed + 1;
 
 /// The files the requester shows.
 const open_pattern = "#?.(mp4|m4v|mov|mkv)";
@@ -167,6 +196,10 @@ const most_dropped = 4;
 /// Pictures the decoder may stop on in a row before the film is taken to
 /// have ended.
 const most_corrupt = 16;
+/// Frames videocodec.library decodes ahead of the one shown (1.14): a
+/// key frame that takes the decoder longer than a frame's time is made
+/// up for by the queue, rather than shown late.
+const decode_ahead = 3;
 /// The window's picture at most this part of the screen, at the start.
 const start_part_num = 2;
 const start_part_den = 3;
@@ -195,12 +228,19 @@ fn menuItem(text: Id, key: ?[*:0]const u8) MenuEntry {
     return .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(text), .comm_key = key }, .text = text };
 }
 
+/// An item that ticks and unticks itself when picked.
+fn menuToggle(text: Id, key: ?[*:0]const u8) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(text), .comm_key = key, .flags = mn.CHECKIT | mn.MENUTOGGLE }, .text = text };
+}
+
 const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
 
 const project_menu = [_]MenuEntry{
     menuTitle(.MSG_MENU_PROJECT),
     menuItem(.MSG_MENU_OPEN, "O"),
     menuItem(.MSG_MENU_WHOLE_SCREEN, "F"),
+    menuToggle(.MSG_MENU_FRAME_RATE, "R"),
+    menuItem(.MSG_MENU_INFO, "I"),
     bar,
     menuItem(.MSG_MENU_ABOUT, null),
     menuItem(.MSG_MENU_QUIT, "Q"),
@@ -252,8 +292,12 @@ const App = struct {
     level: u32 = 100,
     /// videocodec.library lists the tracks and hands out subtitles (1.3).
     tracks_known: bool = false,
+    /// videocodec.library says which module decodes the pictures (1.13).
+    decoder_known: bool = false,
     /// The subtitles drawn over the pictures.
     subs: Subtitles,
+    /// The frame rate drawn over them while Frame rate is ticked.
+    rate: FrameRate,
 
     // --- the pictures -----------------------------------------------------------
     /// The frame shown - lent, kept until the next is shown - and the one
@@ -398,7 +442,11 @@ const App = struct {
     /// before still playing.
     fn openFilm(app: *App, path: [*:0]const u8) i32 {
         var err: i32 = 0;
-        const film = app.vcb.OpenVideoStream(&[_]TagItem{ pair(vc.VCA_Name, @intFromPtr(path)), .{} }, &err) orelse return if (err != 0) err else vc.VCERR_OPEN;
+        const film = app.vcb.OpenVideoStream(&[_]TagItem{
+            pair(vc.VCA_Name, @intFromPtr(path)),
+            pair(vc.VCA_DecodeAhead, decode_ahead),
+            .{},
+        }, &err) orelse return if (err != 0) err else vc.VCERR_OPEN;
         app.closeFilm();
         app.film = film;
         app.info = .{};
@@ -450,6 +498,7 @@ const App = struct {
                 app.timer_clock = !app.soundKeepsTime();
                 app.state = .playing;
                 app.setClock(app.clock_time);
+                app.rate.restart(app.uptime());
             },
             .ended => {
                 app.moveTo(0);
@@ -502,6 +551,7 @@ const App = struct {
         if (app.sound) |sound| sound.start(landed, held);
         app.timer_clock = !app.soundKeepsTime();
         app.setClock(landed);
+        app.rate.restart(app.uptime());
         app.shown_second = ~@as(u32, 0);
         app.showTime(landed);
         if (held) {
@@ -606,8 +656,11 @@ const App = struct {
                 app.vcb.ReleaseVideoFrame(app.film.?, &app.waiting.?);
                 app.waiting = null;
                 app.dropped_in_row += 1;
+                app.rate.count(false);
                 continue;
             }
+            app.rate.count(true);
+            app.rateDue();
             app.showWaiting();
             app.showTime(at);
             if (!app.decodeNext()) return app.picturesOver();
@@ -673,6 +726,7 @@ const App = struct {
             }
             last.* = box;
             app.subs.forget();
+            app.rate.forget();
         }
         const handed = app.handOver(frame, box);
         if (!handed) {
@@ -684,7 +738,71 @@ const App = struct {
             }
         }
         const drew = app.showSubtitle(frame, rp, box, moved or !handed);
-        if (app.whole == null and (moved or !handed or drew)) app.ib.QueueGadgetRefresh(app.canvas);
+        const rated = app.rate.show(rp, box, app.layerKey(), moved or !handed);
+        if (app.whole == null and (moved or !handed or drew or rated)) app.ib.QueueGadgetRefresh(app.canvas);
+    }
+
+    /// The layer's key colour while the film is on one.
+    fn layerKey(app: *const App) ?u32 {
+        return if (app.layer) |layer| layer.key else null;
+    }
+
+    // --- the frame rate ---------------------------------------------------------
+
+    /// The rate's text made anew once a second of playing has been
+    /// counted, while it is shown.
+    fn rateDue(app: *App) void {
+        if (!app.rate.on) return;
+        const at = app.uptime();
+        if (app.rate.due(at)) app.makeRateText(at);
+    }
+
+    /// The text from the second just counted: pictures shown a second, the
+    /// film's own rate, and how many were given back unshown.
+    fn makeRateText(app: *App, at: u64) void {
+        const taken = app.rate.take(at);
+        const film = app.filmTenths();
+        var made: [128:0]u8 = @splat(0);
+        if (taken.dropped == 0) {
+            comptime exec.checkFormat(strings.builtin(.MSG_FRAME_RATE), @TypeOf(.{ @as(u32, 0), @as(u32, 0), @as(u32, 0), @as(u32, 0) }));
+            const stream = exec.fmtStream(.{ taken.tenths / 10, taken.tenths % 10, film / 10, film % 10 });
+            _ = app.sys.RawDoFmt(app.text.get(.MSG_FRAME_RATE), &stream, null, &made);
+        } else {
+            comptime exec.checkFormat(strings.builtin(.MSG_FRAME_RATE_DROPPED), @TypeOf(.{ @as(u32, 0), @as(u32, 0), @as(u32, 0), @as(u32, 0), @as(u32, 0) }));
+            const stream = exec.fmtStream(.{ taken.tenths / 10, taken.tenths % 10, film / 10, film % 10, taken.dropped });
+            _ = app.sys.RawDoFmt(app.text.get(.MSG_FRAME_RATE_DROPPED), &stream, null, &made);
+        }
+        app.rate.set(made[0..lengthOf(&made)]);
+    }
+
+    /// The film's own rate, in tenths of a picture a second: as it says,
+    /// or from a frame's time where it does not.
+    fn filmTenths(app: *const App) u32 {
+        if (app.info.rate_num != 0) {
+            const den: u64 = @max(app.info.rate_den, 1);
+            return @intCast(@min((@as(u64, app.info.rate_num) * 10 + den / 2) / den, 0xFFFF_FFFF));
+        }
+        return @intCast(@divTrunc(10_000_000, @max(app.frame_us, 1)));
+    }
+
+    /// Frame rate picked: its tick says whether the rate is drawn. Counting
+    /// starts afresh when it is, and the first text comes after a second
+    /// of playing; when it is not, its box goes - the key colour back over
+    /// the layer, the picture put down again elsewhere.
+    fn toggleRate(app: *App, number: u32) void {
+        const item = app.ib.ItemAddress(app.strip, number) orelse return;
+        const on = item.flags & mn.CHECKED != 0;
+        if (on == app.rate.on) return;
+        app.rate.on = on;
+        app.keepSettings();
+        if (on) {
+            app.rate.restart(app.uptime());
+            app.rate.set("");
+            return;
+        }
+        if (app.rate.hide(app.layerKey())) {
+            if (app.whole == null) app.ib.QueueGadgetRefresh(app.canvas);
+        } else app.showAgain();
     }
 
     /// The subtitle at the picture's time over it: drawn again when the
@@ -1020,6 +1138,8 @@ const App = struct {
             MENU_PROJECT => switch (item) {
                 ITEM_OPEN => app.askFilm(),
                 ITEM_WHOLE => app.openWhole(),
+                ITEM_RATE => app.toggleRate(number),
+                ITEM_INFO => app.showInfo(),
                 ITEM_ABOUT => app.showAbout(),
                 ITEM_QUIT => return false,
                 else => {},
@@ -1077,6 +1197,7 @@ const App = struct {
         for (project_menu) |entry| {
             table[used] = entry.menu;
             if (entry.text) |id| table[used].label = app.text.get(id);
+            if (entry.text == .MSG_MENU_FRAME_RATE and app.rate.on) table[used].flags |= mn.CHECKED;
             used += 1;
         }
         if (app.tracks_known) {
@@ -1292,6 +1413,118 @@ const App = struct {
         if (was_playing) app.play();
     }
 
+    /// Whether the frame rate is shown, written to ENV: and ENVARC: for the
+    /// next start.
+    fn keepSettings(app: *App) void {
+        const header = "; Movie's settings: FRAMERATE=YES shows the frame rate over the picture\n";
+        const text: []const u8 = if (app.rate.on) header ++ "FRAMERATE=YES\n" else header ++ "FRAMERATE=NO\n";
+        for ([_][*:0]const u8{ ENV_FILE, ENVARC_FILE }) |path| _ = prefs.save(app.dl, path, text);
+    }
+
+    /// Film information...: what the film is, in a requester. The film
+    /// stands while it is up.
+    fn showInfo(app: *App) void {
+        if (app.film == null) return;
+        var lines: Lines = .{};
+        app.infoLines(&lines);
+        const easy = intuition.requesters.EasyStruct{
+            .title = app.text.get(.MSG_INFO_TITLE),
+            .text_format = "%s",
+            .gadget_format = app.text.get(.MSG_OK),
+        };
+        const stream = exec.fmtStream(.{@as([*:0]const u8, &lines.text)});
+        const was_playing = app.state == .playing;
+        app.pause();
+        _ = app.ib.EasyRequestArgs(app.window, &easy, null, &stream);
+        if (was_playing) app.play();
+    }
+
+    /// The requester's lines: a label and what it says, a line each.
+    fn infoLines(app: *App, lines: *Lines) void {
+        const info = &app.info;
+        const sys = app.sys;
+        lines.label(app.text.get(.MSG_INFO_FILE));
+        lines.addText(&app.name);
+        if (info.title[0] != 0) {
+            lines.label(app.text.get(.MSG_INFO_NAMED));
+            lines.add(info.title[0..lengthOf(@ptrCast(&info.title))]);
+        }
+        if (containerName(app.containerKind())) |name| {
+            lines.label(app.text.get(.MSG_INFO_CONTAINER));
+            lines.addText(name);
+        }
+        if (info.duration != 0) {
+            lines.label(app.text.get(.MSG_INFO_LENGTH));
+            var time: [24]u8 = undefined;
+            lines.add(time[0..app.formatTime(&time, app.secondOf(@intCast(@min(info.duration, @as(u64, 1) << 62))))]);
+        }
+        lines.label(app.text.get(.MSG_INFO_PICTURES));
+        lines.addText(videoCodecName(info.codec));
+        comptime exec.checkFormat(", %u x %u", @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
+        lines.addFormat(sys, ", %u x %u", &exec.fmtStream(.{ info.width, info.height }));
+        if (info.rate_num != 0) {
+            const den: u64 = @max(info.rate_den, 1);
+            const thousandths: u32 = @intCast(@min((@as(u64, info.rate_num) * 1000 + den / 2) / den, 0xFFFF_FFFF));
+            comptime exec.checkFormat(", %u.%03u fps", @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
+            lines.addFormat(sys, ", %u.%03u fps", &exec.fmtStream(.{ thousandths / 1000, thousandths % 1000 }));
+        }
+        // What decodes them: the machine's video decoder or the processor.
+        if (app.decoder_known) {
+            var decoder: vc.VideoDecoderInfo = .{};
+            app.vcb.GetVideoDecoder(app.film.?, &decoder);
+            if (decoder.kind != 0) {
+                lines.label(app.text.get(.MSG_INFO_DECODED));
+                lines.addText(app.text.get(if (decoder.kind == vcodec.VCMOD_CHIP) .MSG_INFO_BY_CHIP else .MSG_INFO_BY_PROCESSOR));
+                comptime exec.checkFormat(" (%s %u.%u)", @TypeOf(.{ @as([*:0]const u8, ""), @as(u32, 0), @as(u32, 0) }));
+                lines.addFormat(sys, " (%s %u.%u)", &exec.fmtStream(.{ @as([*:0]const u8, @ptrCast(&decoder.name)), decoder.version, decoder.revision }));
+            }
+        }
+        // The colours, as the picture shown says them.
+        if (app.shown) |*frame| {
+            const picture = &frame.picture;
+            lines.label(app.text.get(.MSG_INFO_COLOURS));
+            comptime exec.checkFormat(strings.builtin(.MSG_INFO_BITS), @TypeOf(.{@as(u32, 0)}));
+            lines.addFormat(sys, app.text.get(.MSG_INFO_BITS), &exec.fmtStream(.{@as(u32, picture.depth)}));
+            lines.add(", ");
+            lines.addText(matrixName(picture.matrix));
+            lines.add(", ");
+            lines.addText(app.text.get(if (picture.range == rtg.RTGYUV_FULL) .MSG_INFO_FULL else .MSG_INFO_LIMITED));
+            lines.add(", ");
+            lines.addText(transferName(picture.transfer));
+        }
+        lines.label(app.text.get(.MSG_INFO_SHOWN));
+        lines.addText(app.text.get(if (app.layer != null) .MSG_INFO_ON_LAYER else .MSG_INFO_BY_GRAPHICS));
+        lines.label(app.text.get(.MSG_INFO_SOUND));
+        if (info.sound_codec == ac.ACODEC_UNKNOWN) {
+            lines.addText(app.text.get(.MSG_INFO_NONE));
+        } else {
+            lines.addText(audioCodecName(info.sound_codec));
+            comptime exec.checkFormat(", %u Hz, ", @TypeOf(.{@as(u32, 0)}));
+            lines.addFormat(sys, ", %u Hz, ", &exec.fmtStream(.{info.sound_rate}));
+            comptime exec.checkFormat(strings.builtin(.MSG_INFO_CHANNELS), @TypeOf(.{@as(u32, 0)}));
+            lines.addFormat(sys, app.text.get(.MSG_INFO_CHANNELS), &exec.fmtStream(.{info.sound_channels}));
+        }
+        if (app.tracks_known) {
+            lines.label(app.text.get(.MSG_INFO_TRACKS));
+            comptime exec.checkFormat(strings.builtin(.MSG_INFO_TRACK_COUNTS), @TypeOf(.{ @as(u32, 0), @as(u32, 0) }));
+            lines.addFormat(sys, app.text.get(.MSG_INFO_TRACK_COUNTS), &exec.fmtStream(.{ app.sound_count, app.sub_count }));
+        }
+    }
+
+    /// What kind of container the film's file is, by media.library's look
+    /// at its first bytes: MEDIA_UNKNOWN where it cannot say.
+    fn containerKind(app: *App) u32 {
+        const lib = app.sys.OpenLibrary(media.MEDIANAME, 0) orelse return media.MEDIA_UNKNOWN;
+        defer app.sys.CloseLibrary(lib);
+        const mb: *MediaBase = @ptrCast(lib);
+        const file = app.dl.Open(&app.name, dos.MODE_OLDFILE) orelse return media.MEDIA_UNKNOWN;
+        defer _ = app.dl.Close(file);
+        var bytes: [media.MEDIA_IDENTIFY_BYTES]u8 = @splat(0);
+        const got = app.dl.Read(file, &bytes, bytes.len);
+        if (got <= 0) return media.MEDIA_UNKNOWN;
+        return mb.IdentifyMedia(&bytes, @intCast(got));
+    }
+
     /// Every message the window has: false when it is to close.
     fn windowMessages(app: *App) bool {
         var code: u32 = 0;
@@ -1366,6 +1599,104 @@ fn same(a: Rect, b: Rect) bool {
     return a.min_x == b.min_x and a.min_y == b.min_y and a.max_x == b.max_x and a.max_y == b.max_y;
 }
 
+/// The bytes of a NUL-terminated text before its NUL.
+fn lengthOf(text: [*:0]const u8) usize {
+    var length: usize = 0;
+    while (text[length] != 0) length += 1;
+    return length;
+}
+
+/// A requester's text, put together a line at a time: a line is its
+/// label, a colon and what follows. What does not fit is left off.
+const Lines = struct {
+    text: [2048:0]u8 = @splat(0),
+    used: usize = 0,
+
+    fn add(lines: *Lines, piece: []const u8) void {
+        const length = @min(piece.len, lines.text.len - lines.used);
+        @memcpy(lines.text[lines.used..][0..length], piece[0..length]);
+        lines.used += length;
+        lines.text[lines.used] = 0;
+    }
+
+    fn addText(lines: *Lines, text: [*:0]const u8) void {
+        lines.add(text[0..lengthOf(text)]);
+    }
+
+    /// `format` with the values in `stream`, as RawDoFmt writes them.
+    fn addFormat(lines: *Lines, sys: *ExecBase, format: [*:0]const u8, stream: *const anyopaque) void {
+        var made: [128:0]u8 = @splat(0);
+        _ = sys.RawDoFmt(format, stream, null, &made);
+        lines.addText(&made);
+    }
+
+    /// A new line begun with `name` and a colon: on a line of its own after
+    /// the first.
+    fn label(lines: *Lines, name: [*:0]const u8) void {
+        if (lines.used != 0) lines.add("\n");
+        lines.addText(name);
+        lines.add(": ");
+    }
+};
+
+/// A picture codec's name.
+fn videoCodecName(codec: u32) [*:0]const u8 {
+    return switch (codec) {
+        vc.VCODEC_H264 => "H.264 (AVC)",
+        vc.VCODEC_H265 => "H.265 (HEVC)",
+        vc.VCODEC_MJPEG => "Motion JPEG",
+        vc.VCODEC_MPEG4V => "MPEG-4 Part 2",
+        vc.VCODEC_VP8 => "VP8",
+        vc.VCODEC_VP9 => "VP9",
+        vc.VCODEC_AV1 => "AV1",
+        else => "?",
+    };
+}
+
+/// A sound codec's name.
+fn audioCodecName(codec: u32) [*:0]const u8 {
+    return switch (codec) {
+        ac.ACODEC_WAV => "PCM",
+        ac.ACODEC_MP3 => "MP3",
+        ac.ACODEC_FLAC => "FLAC",
+        ac.ACODEC_VORBIS => "Vorbis",
+        ac.ACODEC_AAC => "AAC",
+        ac.ACODEC_AC3 => "AC-3",
+        ac.ACODEC_EAC3 => "E-AC-3",
+        ac.ACODEC_OPUS => "Opus",
+        ac.ACODEC_DTS => "DTS",
+        else => "?",
+    };
+}
+
+/// A container's name; null for one media.library does not know.
+fn containerName(kind: u32) ?[*:0]const u8 {
+    return switch (kind) {
+        media.MEDIA_MP4 => "MP4 / QuickTime",
+        media.MEDIA_MKV => "Matroska / WebM",
+        else => null,
+    };
+}
+
+/// The weights a picture's colours are made with.
+fn matrixName(matrix: u8) [*:0]const u8 {
+    return switch (matrix) {
+        rtg.RTGYUV_BT601 => "BT.601",
+        rtg.RTGYUV_BT709 => "BT.709",
+        rtg.RTGYUV_BT2020 => "BT.2020",
+        else => "?",
+    };
+}
+
+/// The curve a picture's numbers stand on: SDR, or HDR's two.
+fn transferName(transfer: u8) [*:0]const u8 {
+    return switch (transfer) {
+        rtg.RTGYUV_PQ => "HDR (PQ)",
+        rtg.RTGYUV_HLG => "HDR (HLG)",
+        else => "SDR",
+    };
+}
+
 /// A film asked for in a file requester, its full name into `into`;
 /// started in the drawer of `current` when there is one. False when none
 /// was picked.
@@ -1429,6 +1760,21 @@ const Loose = struct {
 fn noWindow(text: *const Text, dl: *DosBase) i32 {
     _ = text.printf(dl, .MSG_NOMEMORY, .{@as([*:0]const u8, COMMAND_NAME)});
     return dos.RETURN_FAIL;
+}
+
+/// Whether `ENV:Movie.prefs` says the frame rate is shown: not where it
+/// does not say so, nor without the file or utility.library to read it.
+fn rateWanted(sys: *ExecBase, dl: *DosBase) bool {
+    const lib = sys.OpenLibrary(sdk.utility.UTILITYNAME, 0) orelse return false;
+    defer sys.CloseLibrary(lib);
+    const text = prefs.loadWhole(sys, dl, ENV_FILE) orelse return false;
+    defer sys.FreeVec(text.ptr);
+    const line = prefs.firstLine(text) orelse return false;
+    var pairs = prefs.Pairs.init(@as(*UtilityBase, @ptrCast(lib)), line);
+    while (pairs.next() catch null) |setting| {
+        if (prefs.style.same(setting.key, "FRAMERATE")) return prefs.yesOrNo(setting.value) orelse false;
+    }
+    return false;
 }
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
@@ -1502,9 +1848,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .al = al,
         .level = percent,
         .tracks_known = vcb.lib().version > 1 or vcb.lib().revision >= 3,
+        .decoder_known = vcb.lib().version > 1 or vcb.lib().revision >= 13,
         .subs = .{ .sys = sys, .ib = ib, .gb = gb, .dfb = @ptrCast(diskfont_lib) },
+        .rate = .{ .ib = ib, .gb = gb, .on = rateWanted(sys, dl) },
     };
     defer app.subs.close();
+    defer app.rate.close();
 
     // The film: named, or asked for.
     var asked: [dos.path_max + 1:0]u8 = @splat(0);

@@ -7,6 +7,7 @@ const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
 const vcodec = sdk.vcodec;
 const _codec = @import("../codec/_codec.zig");
+const _ahead = @import("../ahead/_ahead.zig");
 
 /// Says what a film is: its pictures, its length, its sound, its title.
 ///
@@ -34,7 +35,8 @@ const _codec = @import("../codec/_codec.zig");
 /// track: its codec, rate and channels, as DecodeVideoSound hands it out.
 ///
 /// CONTEXT:
-/// - Waits: no.
+/// - Waits: only while a frame is decoded ahead (VCA_DecodeAhead), for it
+///   to be done, since the decoder is asked.
 /// - Interrupts: no.
 /// - Locks: none.
 /// - Process: a task will do.
@@ -74,7 +76,10 @@ pub fn GetVideoStreamInfo(_: *VideoCodecBase, stream: *vc.VideoStream, info: *vc
         info.rate_den = 1000 / common;
     }
     var read: vcodec.VCodecInfo = .{};
-    if (_codec.streamInfo(s, &read)) {
+    if (s.ahead) |ahead| _ahead.hold(ahead);
+    const known = _codec.streamInfo(s, &read);
+    if (s.ahead) |ahead| _ahead.letGo(ahead);
+    if (known) {
         if (read.width != 0) {
             info.width = read.width;
             info.height = read.height;

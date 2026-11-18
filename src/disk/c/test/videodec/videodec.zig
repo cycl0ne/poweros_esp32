@@ -57,8 +57,7 @@
 //!
 //! WATCHDOG arms the watchdog for that many milliseconds before the
 //! decoder is opened, feeds it with each picture, and disarms it at the
-//! end: a decoder that stops the machine has it reset. An AMD graphics
-//! device's decoder is only started while the watchdog is armed.
+//! end: a decoder that stops the machine has it reset.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -83,7 +82,7 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "VideoDec";
-const VERSION_STRING = "\x00$VER: VideoDec 1.6 (17.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: VideoDec 1.7 (17.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,H265/S,FRAME/K/N,TO/K,RGB/S,SHOW/S,SMOOTH/S,WIDTH/K/N,PACE/S,PQ/S,HLG/S,BT2020/S,PEAK/K/N,WATCHDOG/K/N,SUMS/S";
@@ -480,7 +479,7 @@ fn errorName(code: u32) [*:0]const u8 {
         videodec.VDERR_END => "ended",
         videodec.VDERR_FULL => "full",
         videodec.VDERR_CORRUPT => "corrupt, or the chip stopped",
-        videodec.VDERR_NO_ENGINE => "no decoder (or no firmware in DEVS:firmware/, or an AMD decoder without WATCHDOG)",
+        videodec.VDERR_NO_ENGINE => "no decoder (or no firmware in DEVS:firmware/)",
         videodec.VDERR_UNSUPPORTED => "not supported",
         videodec.VDERR_NO_MEMORY => "no memory",
         videodec.VDERR_BUSY => "every decoder in use",

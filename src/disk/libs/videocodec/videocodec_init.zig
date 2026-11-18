@@ -13,8 +13,8 @@ const _codec = @import("codec/_codec.zig");
 
 pub const LIBRARY_NAME = sdk.videocodec.VIDEOCODECNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 12;
-const BUILD_DATE = "15.11.2026";
+pub const LIBRARY_REVISION = 14;
+const BUILD_DATE = "17.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

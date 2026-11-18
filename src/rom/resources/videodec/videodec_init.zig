@@ -7,8 +7,8 @@
 //!
 //! On x86-64 the decoder is an AMD graphics device's, found through
 //! amdgpu.resource - by reading only: it is powered, its firmware loaded
-//! and started by the first OpenVideoDecoder, and only while the
-//! watchdog is armed. It is driven for H.264, H.265 and VP9.
+//! and started by the first OpenVideoDecoder. It is driven for H.264,
+//! H.265, VP9 and AV1.
 //!
 //! On the BCM2711 (the Compute Module 4) the decoder is the chip's H.265
 //! block, found among the board's parts: its clock is set and its
@@ -37,7 +37,7 @@ const bcm2711 = @import("codec/_bcm2711.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 9;
+pub const RESOURCE_REVISION = 10;
 const BUILD_DATE = "17.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
