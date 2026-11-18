@@ -276,17 +276,19 @@ fn letGo(host: *Host, ep: *Endpoint) void {
 }
 
 /// An endpoint's ring there and empty, its cycle state 1: what its
-/// context is pointed at when it is added. An isochronous endpoint's is
-/// longer; one of the other length is made again.
+/// context is pointed at when it is added, with `ring_guard` bytes behind
+/// it. An isochronous endpoint's is longer; one of the other length is
+/// made again.
 fn freshRing(host: *Host, ep: *Endpoint) bool {
     const count: u32 = if (_xhci.isIso(ep)) _xhci.iso_ring_trbs else _xhci.ring_trbs;
     if (ep.ring.count != count) {
         const bytes = count * @sizeOf(Trb);
+        const alignment: usize = if (_xhci.isIso(ep)) bytes else _xhci.dma_align;
         var raw: ?*anyopaque = null;
-        const memory = _xhci.allocDma(host, bytes, if (_xhci.isIso(ep)) bytes else _xhci.dma_align, &raw) orelse return false;
+        const memory = _xhci.allocDma(host, bytes + _xhci.ring_guard, alignment, &raw) orelse return false;
         if (ep.ring_raw) |old| host.sys.FreeMem(old, ep.ring_raw_size);
         ep.ring_raw = raw;
-        ep.ring_raw_size = @intCast(_xhci.roundUp(bytes, _xhci.dma_align) + (if (_xhci.isIso(ep)) bytes else _xhci.dma_align));
+        ep.ring_raw_size = @intCast(_xhci.roundUp(bytes + _xhci.ring_guard, _xhci.dma_align) + alignment);
         const trbs: [*]Trb = @ptrCast(@alignCast(memory));
         ep.ring.init(trbs[0..count]);
     } else {

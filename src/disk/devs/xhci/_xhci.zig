@@ -46,6 +46,15 @@
 //! one in `fromDevice` the VL805's root hub found no device behind it.
 //! For one that does not, the lines are written back to memory, and
 //! dropped from the caches before they are read.
+//!
+//! **Behind every ring the controller takes from** - the command ring, a
+//! transfer ring, a stream's - are `ring_guard` bytes no other ring is
+//! in. A VL805 reads the 64 bytes after any TRB it fetches, past a ring's
+//! closing Link too, and keeps them as TRBs: where they are the start of
+//! another ring, it takes them for that ring's once its doorbell is rung
+//! and does not read them again, and with their cycle bits stale the
+//! endpoint waits for good - a mouse whose reports stop until it is
+//! plugged in again.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -93,6 +102,9 @@ pub const bulk_round: u32 = 16 * 1024;
 /// What every DMA block is aligned to and a whole number of: a cache
 /// line, and what the controller wants of a context or a ring.
 pub const dma_align: usize = 64;
+/// The bytes behind a ring the controller takes from that no other ring
+/// is in: what a VL805 reads ahead past its end.
+pub const ring_guard: usize = 64;
 
 /// xhci.device's base: what MakeLibrary allocated, and a block per
 /// started controller.

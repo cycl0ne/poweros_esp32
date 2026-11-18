@@ -240,7 +240,7 @@ fn makeMemory(host: *Host) bool {
         _xhci.toDevice(host, @intFromPtr(array), host.scratchpads * 8);
         host.dcbaa[0] = @intFromPtr(array);
     }
-    const commands = _xhci.allocDma(host, _xhci.ring_trbs * @sizeOf(Trb), _xhci.dma_align, null) orelse return false;
+    const commands = _xhci.allocDma(host, _xhci.ring_trbs * @sizeOf(Trb) + _xhci.ring_guard, _xhci.dma_align, null) orelse return false;
     const command_trbs: [*]Trb = @ptrCast(@alignCast(commands));
     host.commands.init(command_trbs[0.._xhci.ring_trbs]);
     // A page, aligned to one: never across a 64 KiB boundary.
