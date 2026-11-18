@@ -35,3 +35,9 @@ uart_2ndstage=1
 # The picture the firmware lights and hands the kernel: the whole of the
 # monitor's preferred mode, no border.
 disable_overscan=1
+
+# The cores up to 1.8 GHz where the board's chip takes it - its C0
+# stepping, from the board's revision 1.4 on - with the supply raised to
+# match; a board before stays at 1.5 GHz. Without it the firmware lets
+# the cores go no faster than 1.5 GHz, whatever the kernel asks for.
+arm_boost=1

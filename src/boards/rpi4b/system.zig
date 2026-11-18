@@ -269,7 +269,8 @@ pub const root = [_]Tag{
     // that is slower: 1.8 GHz on a board with the chip's C0 stepping
     // (from the board's revision 1.4 on), 1.5 GHz on one before. The
     // firmware sets the clock and the supply with it, asked through its
-    // mailbox (clock.zig).
+    // mailbox (clock.zig), and goes past 1.5 GHz only as config.txt's
+    // arm_boost lets it.
     .value(st.SYSTAG_CpuSpeed, 1800),
     .pointer(st.SYSTAG_BootStart, &boot_start),
     .pointer(st.SYSTAG_Part, &ethernet),
