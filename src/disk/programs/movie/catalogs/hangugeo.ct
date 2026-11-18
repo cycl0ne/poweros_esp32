@@ -1,4 +1,4 @@
-## version $VER: programs/Movie.catalog 1.0 (12.11.2026)
+## version $VER: programs/Movie.catalog 1.1 (17.11.2026)
 ## language hangugeo
 ## codeset 106
 ; Movie's strings in Korean. A draft: it waits for a reader of Korean
@@ -23,6 +23,14 @@ MSG_MENU_SUBTITLES_OFF
 끔
 MSG_MENU_TRACK
 트랙
+MSG_MENU_FRAME_RATE
+프레임 속도
+MSG_MENU_INFO
+영상 정보...
+MSG_FRAME_RATE
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED
+%u.%u / %u.%u fps, %u개 버림
 MSG_ASK_OPEN
 영화 재생
 MSG_ABOUT_TITLE
@@ -35,6 +43,48 @@ MSG_CANNOT_PLAY_TITLE
 Movie
 MSG_CANNOT_PLAY
 %s\n재생할 수 없습니다:\n%s
+MSG_INFO_TITLE
+영상 정보
+MSG_INFO_FILE
+파일
+MSG_INFO_NAMED
+제목
+MSG_INFO_CONTAINER
+컨테이너
+MSG_INFO_LENGTH
+길이
+MSG_INFO_PICTURES
+화면
+MSG_INFO_COLOURS
+색
+MSG_INFO_BITS
+%u비트
+MSG_INFO_LIMITED
+제한 범위
+MSG_INFO_FULL
+전체 범위
+MSG_INFO_SHOWN
+표시
+MSG_INFO_ON_LAYER
+디스플레이의 비디오 레이어
+MSG_INFO_BY_GRAPHICS
+graphics.library가 그림
+MSG_INFO_DECODED
+디코딩
+MSG_INFO_BY_CHIP
+비디오 디코더
+MSG_INFO_BY_PROCESSOR
+프로세서
+MSG_INFO_SOUND
+소리
+MSG_INFO_NONE
+없음
+MSG_INFO_CHANNELS
+%u채널
+MSG_INFO_TRACKS
+트랙
+MSG_INFO_TRACK_COUNTS
+소리 %u, 자막 %u
 MSG_VOLUME_HINT
 음량
 MSG_NOLIBRARY

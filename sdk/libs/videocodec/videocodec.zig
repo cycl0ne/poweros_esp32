@@ -21,7 +21,11 @@
 //! `ReleaseVideoFrame` gives it back; up to `VIDEO_HELD_FRAMES` are lent
 //! at once. Its `picture` is an `rtg.RtgYuv`, which graphics'
 //! `WriteYUVPixelArray` and `ScaleYUVPixelArray` put into a window as it
-//! is.
+//! is. With `VCA_DecodeAhead` (SINCE 1.14) a process of the library's
+//! decodes the next frames while the program shows this one, and
+//! DecodeVideoFrame takes them from a queue: a frame that takes longer
+//! to decode than it is shown - a key frame of a large film - is made up
+//! for by the frames around it.
 //!
 //! **The sound**: `DecodeVideoSound` hands out the sound track as
 //! `DecodeAudio` does - 16-bit samples, the channels interleaved - for
@@ -116,6 +120,18 @@ pub const VCA_SoundTrack = VCA_Dummy + 0x06;
 /// film marks to be shown (media.library's `MDA_Subtitles`), else none
 /// (SINCE 1.3).
 pub const VCA_Subtitles = VCA_Dummy + 0x07;
+/// `u32`: how many frames are decoded ahead, up to `VIDEO_MOST_AHEAD`
+/// (SINCE 1.14). A process of the library's decodes the pictures into a
+/// queue that long, and DecodeVideoFrame takes the next frame from it,
+/// waiting only while it is empty. The decoder lends a frame for each
+/// place in the queue on top of the program's `VIDEO_HELD_FRAMES`. 0 by
+/// default: the pictures are decoded on the task that asks. Not for a
+/// film read through `VCA_ReadFunc`, whose function is called on the
+/// program's task.
+pub const VCA_DecodeAhead = VCA_Dummy + 0x08;
+
+/// The most frames `VCA_DecodeAhead` decodes ahead.
+pub const VIDEO_MOST_AHEAD: u32 = 4;
 
 /// No track: `VCA_Subtitles` and `SelectVideoTrack` for subtitles off.
 pub const VIDEO_NO_TRACK: u32 = 0xFFFF_FFFF;
@@ -213,6 +229,22 @@ pub const VideoSubtitle = extern struct {
     height: u32 = 0,
     /// The library's.
     private: [2]u32 = @splat(0),
+};
+
+// --- the decoder (SINCE 1.13) -----------------------------------------------------
+
+/// What GetVideoDecoder fills in: the codec module that decodes a film's
+/// pictures.
+pub const VideoDecoderInfo = extern struct {
+    /// Its kind, as its tag says (`sdk.vcodec`): VCMOD_CHIP - the
+    /// machine's video decoder - or VCMOD_SOFTWARE - the processor; 0
+    /// while no module decodes the pictures.
+    kind: u32 = 0,
+    /// Its version and revision.
+    version: u32 = 0,
+    revision: u32 = 0,
+    /// Its file in LIBS:codecs/, NUL-terminated: "chip.vcodec".
+    name: [32]u8 = @splat(0),
 };
 
 // --- errors -----------------------------------------------------------------------

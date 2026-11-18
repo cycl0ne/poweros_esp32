@@ -3,10 +3,12 @@
 //! touch panel would, for a display with no touch panel to tap - QEMU's.
 //! Built against the SDK only.
 //!
-//!   Tap X/N,Y/N,TOX/K/N,TOY/K/N,DEMO/S
+//!   Tap X/N,Y/N,TOX/K/N,TOY/K/N,STEPS/K/N,DEMO/S
 //!
 //! A finger comes down at X,Y and lifts there; with TOX and TOY it moves
-//! to that place in steps, a fiftieth of a second apart, and lifts there.
+//! to that place in steps, a fiftieth of a second apart, and lifts there:
+//! STEPS of them, 10 when not given - 250 drag a window for five seconds,
+//! long enough to look at what the screen shows meanwhile.
 //! DEMO instead opens a screen of its own, its bar uncovered, with a
 //! window that has menus, and prints each pick and each move of the window
 //! until the window is closed or a minute is up - something to tap at from
@@ -33,11 +35,12 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Tap";
-const VERSION_STRING = "\x00$VER: Tap 1.0 (08.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Tap 1.1 (17.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "X/N,Y/N,TOX/K/N,TOY/K/N,DEMO/S";
-const steps = 10;
+const template = "X/N,Y/N,TOX/K/N,TOY/K/N,STEPS/K/N,DEMO/S";
+/// The steps of a drag when STEPS does not say.
+const default_steps = 10;
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -45,17 +48,18 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const dos_lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(dos_lib);
     const dl: *DosBase = @ptrCast(dos_lib);
-    var argv: [5]usize = @splat(0);
+    var argv: [6]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_FAIL;
     };
     defer dl.FreeArgs(rda);
-    if (argv[4] != 0) return demo(sys, dl);
+    if (argv[5] != 0) return demo(sys, dl);
     const x = dos.rdargs.number(argv[0]) orelse return usage(dl);
     const y = dos.rdargs.number(argv[1]) orelse return usage(dl);
     const to_x = dos.rdargs.number(argv[2]) orelse x;
     const to_y = dos.rdargs.number(argv[3]) orelse y;
+    const steps: i32 = @intCast(@max(@min(dos.rdargs.number(argv[4]) orelse default_steps, 100_000), 1));
 
     const port = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
     defer sys.DeleteMsgPort(port);

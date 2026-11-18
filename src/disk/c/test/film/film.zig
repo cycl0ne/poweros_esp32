@@ -4,7 +4,7 @@
 //! only.
 //!
 //!   Film FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S,TRACKS/S,
-//!        SUBS/K/N,PACKETS/K/N
+//!        SUBS/K/N,PACKETS/K/N,AHEAD/K/N,PACE/S
 //!
 //! What the film is is printed - its pictures' codec, size and rate, its
 //! length, its sound - then every frame is taken and given back: how many
@@ -14,7 +14,12 @@
 //! is what graphics and a video layer go by. Then its sound is
 //! decoded whole, timed (NOSOUND leaves it closed). TOGETHER decodes the
 //! sound on a process of its own while the pictures are decoded, as a
-//! player does.
+//! player does. AHEAD has videocodec.library decode that many frames
+//! ahead on a process of its own (VCA_DecodeAhead), as Movie does. PACE
+//! takes each frame when it is due, at the film's rate, instead of at
+//! once - as a player shows them, without showing them - and counts the
+//! frames that came later than a frame's time after it: what a player
+//! would have had to pass over for the decoder alone.
 //!
 //! FRAME (and TO) writes that frame - counted from 0 in the order they
 //! are shown - into TO as its planes are: NV12 (the brightness rows, then
@@ -57,10 +62,10 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Film";
-const VERSION_STRING = "\x00$VER: Film 1.5 (08.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Film 1.6 (17.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S,TRACKS/S,SUBS/K/N,PACKETS/K/N";
+const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S,TRACKS/S,SUBS/K/N,PACKETS/K/N,AHEAD/K/N,PACE/S";
 const arg_file = 0;
 const arg_frame = 1;
 const arg_to = 2;
@@ -70,6 +75,8 @@ const arg_together = 5;
 const arg_tracks = 6;
 const arg_subs = 7;
 const arg_packets = 8;
+const arg_ahead = 9;
+const arg_pace = 10;
 
 /// How many packets PACKETS reads, and the bytes of each it shows.
 const packets_read = 12;
@@ -275,7 +282,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const lib = sys.OpenLibrary(dos.DOSNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(lib);
     const dl: *DosBase = @ptrCast(lib);
-    var argv: [9]usize = @splat(0);
+    var argv: [11]usize = @splat(0);
     const rda = dl.ReadArgs(template, &argv, null) orelse {
         _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
         return dos.RETURN_ERROR;
@@ -301,6 +308,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const film = vcb.OpenVideoStream(&[_]TagItem{
         .{ .tag = vc.VCA_Name, .data = @intFromPtr(name) },
         .{ .tag = vc.VCA_Sound, .data = @intFromBool(argv[arg_nosound] == 0) },
+        .{ .tag = vc.VCA_DecodeAhead, .data = if (argv[arg_ahead] != 0) @as(u32, @bitCast(@as(*const i32, @ptrFromInt(argv[arg_ahead])).*)) else 0 },
         .{},
     }, &err) orelse {
         _ = Printf(dl, "%s: %s\n", .{ name, vcb.VideoErrorText(err) });
@@ -358,6 +366,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     var out_of_order: u32 = 0;
     var last: i64 = -1 << 62;
     var slowest: u64 = 0;
+    // PACE: each frame taken when it is due, by the timer.
+    const pace = argv[arg_pace] != 0 and info.rate_num != 0;
+    const frame_us: u64 = if (info.rate_num != 0) @as(u64, 1_000_000) * @max(info.rate_den, 1) / info.rate_num else 0;
+    var first_time: ?i64 = null;
+    var origin: u64 = 0;
+    var late: u32 = 0;
+    var latest: u64 = 0;
+    const pace_port = sys.CreateMsgPort() orelse return dos.RETURN_FAIL;
+    defer sys.DeleteMsgPort(pace_port);
+    var pause_req: timer.TimeRequest = .{};
+    pause_req.node.message.reply_port = pace_port;
+    if (pace and sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &pause_req.node, 0) != 0) return dos.RETURN_FAIL;
+    defer if (pace) sys.CloseDevice(&pause_req.node);
     const decoding = now(tb);
     while (true) {
         const asked = now(tb);
@@ -370,6 +391,23 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             break;
         }
         slowest = @max(slowest, now(tb) - asked);
+        if (pace) {
+            // The clock starts with the first frame.
+            const at = now(tb);
+            if (first_time == null) {
+                first_time = frame.time;
+                origin = at;
+            }
+            const due = origin + @as(u64, @intCast(@max(frame.time - first_time.?, 0)));
+            if (at > due + frame_us) {
+                late += 1;
+                latest = @max(latest, at - due);
+            } else if (at < due) {
+                pause_req.node.command = timer.TR_ADDREQUEST;
+                pause_req.time = timer.TimeVal.fromMicros(due - at);
+                _ = sys.DoIO(&pause_req.node);
+            }
+        }
         if (frames == 0) sayColours(dl, &frame.picture);
         if (frame.time <= last) out_of_order += 1;
         last = frame.time;
@@ -391,6 +429,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     });
     if (out_of_order != 0) _ = Printf(dl, ", %u out of order", .{out_of_order});
     _ = Printf(dl, "\n", .{});
+    if (pace) _ = Printf(dl, "at the film's rate: %u frames later than a frame after they were due, the latest by %lu ms\n", .{ late, latest / 1000 });
 
     if (together) {
         _ = sys.WaitPort(port);

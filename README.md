@@ -756,7 +756,7 @@ screen in the device's memory for three seconds and back, the flip
 taken at the next frame each way.
 
 **The video decoder is videodec.resource's on such a device.** The first
-decoder opened while the watchdog is armed starts it: the firmware
+decoder opened starts it: the firmware
 loaded, the start's register writes applied by the security processor,
 the ring of commands checked. Each decoder opened is a stream the
 firmware keeps a context for, made and ended by a message. H.264 is
@@ -791,8 +791,7 @@ intra block copy, motion fields, size changes, spatial and temporal
 layers and film grain in 8 and 10 bits.
 `C:test/VideoDec <file> WATCHDOG 15000` feeds it an elementary stream
 or VP9 or AV1 in an IVF file;
-films reach it through chip.vcodec, so the Player plays on it once a
-program has armed the watchdog since the start.
+films reach it through chip.vcodec, so the Player and Movie play on it.
 
 **The JPEG decoder beside its video decoder is jpeg.resource's codec.**
 A file is copied into the device's memory without the segments the

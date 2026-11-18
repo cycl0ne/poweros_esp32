@@ -7,8 +7,14 @@
 //! (`codec/`: the chip's, chip.vcodec, or software), which is sent the
 //! track's packets read through `nextPacket` - which hands out first the
 //! packet a seek read to find where it landed. A frame lent out has a slot
-//! of the `VIDEO_HELD_FRAMES`; its number is in the frame's `private`,
-//! which ReleaseVideoFrame reads back.
+//! of the decoder's - the `VIDEO_HELD_FRAMES`, and one for each frame
+//! decoded ahead; its number is in the frame's `private`, which
+//! ReleaseVideoFrame reads back.
+//!
+//! **Decoded ahead** (SINCE 1.14, `VCA_DecodeAhead`), the pictures are
+//! decoded by a process of the library's into a queue (`ahead/`), and
+//! DecodeVideoFrame takes them from it; the caller still holds no more
+//! than VIDEO_HELD_FRAMES of them.
 //!
 //! **The sound** is decoded by whichever task calls DecodeVideoSound
 //! while the pictures are decoded by another; `sound_lock` keeps a seek
@@ -32,8 +38,17 @@ const AudioCodecBase = sdk.interface.audiocodec.AudioCodecBase;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _codec = @import("../codec/_codec.zig");
 const subtitle = @import("../subtitle/_subtitle.zig");
+const _ahead = @import("../ahead/_ahead.zig");
+const vcodec = sdk.vcodec;
 
 pub const held_frames = vc.VIDEO_HELD_FRAMES;
+/// The most slots a stream has: the caller's frames and those decoded
+/// ahead, each lent by the decoder at once.
+pub const most_slots = held_frames + vc.VIDEO_MOST_AHEAD;
+
+comptime {
+    if (most_slots > vcodec.VCODEC_MOST_HELD) @compileError("a decoder lends no more than VCODEC_MOST_HELD frames");
+}
 
 /// What a frame's `private[1]` holds, so a frame that is not one of the
 /// stream's is passed by.
@@ -60,8 +75,14 @@ pub const Stream = struct {
     shown_from: i64,
     /// Frames handed out since the stream was opened or moved.
     number: u32,
-    /// Which slots hold a frame lent out.
-    held: [held_frames]bool,
+    /// How many slots the decoder lends: VIDEO_HELD_FRAMES, and as many
+    /// more as are decoded ahead.
+    slots: u32,
+    /// Which slots hold a frame the caller holds.
+    held: [most_slots]bool,
+    /// The pictures decoded ahead by a process; null when they are
+    /// decoded on the caller's task.
+    ahead: ?*_ahead.Ahead,
     /// The sound, when there is one: audiocodec.library opened for it,
     /// the stream on the file's sound track, and what it is.
     sound_lib: ?*exec.Library,
@@ -128,12 +149,20 @@ pub fn nextPacket(s: *Stream, packet: *media.MediaPacket) i32 {
     return s.mb.ReadMediaPacket(s.file, s.track, packet);
 }
 
-/// A slot no frame lent out holds.
+/// A slot no frame lent out holds, for a frame decoded on the caller's
+/// task.
 pub fn freeSlot(s: *const Stream) ?u32 {
-    for (s.held, 0..) |taken, slot| {
+    for (s.held[0..s.slots], 0..) |taken, slot| {
         if (!taken) return @intCast(slot);
     }
     return null;
+}
+
+/// How many frames the caller holds.
+pub fn heldCount(s: *const Stream) u32 {
+    var count: u32 = 0;
+    for (s.held[0..s.slots]) |taken| count += @intFromBool(taken);
+    return count;
 }
 
 /// The slot a frame was handed out in; null for one that is not the
@@ -141,7 +170,7 @@ pub fn freeSlot(s: *const Stream) ?u32 {
 pub fn slotOf(s: *const Stream, frame: *const vc.VideoFrame) ?u32 {
     if (frame.private[1] != frame_mark) return null;
     const slot = frame.private[0];
-    if (slot == 0 or slot > held_frames or !s.held[slot - 1]) return null;
+    if (slot == 0 or slot > s.slots or !s.held[slot - 1]) return null;
     return slot - 1;
 }
 
@@ -243,11 +272,12 @@ pub fn startSubtitles(s: *Stream, track: u32, time: i64, seek: bool) ?*subtitle.
     return subtitle.create(s.sys, s.base.dos_base, s.mb, s.file, &s.picture, track, time, seek);
 }
 
-/// Everything the stream holds given back: the subtitles' reader, the
-/// sound, the decoder with the frames still lent, the film, the
-/// libraries, the stream.
+/// Everything the stream holds given back: the process decoding ahead,
+/// the subtitles' reader, the sound, the decoder with the frames still
+/// lent, the film, the libraries, the stream.
 pub fn destroy(s: *Stream) void {
     const sys = s.sys;
+    if (s.ahead) |ahead| _ahead.destroy(ahead);
     if (s.subtitles) |reader| subtitle.destroy(reader);
     if (s.sound) |sound| s.acb.?.CloseAudioStream(sound);
     if (s.sound_lib) |lib| sys.CloseLibrary(lib);

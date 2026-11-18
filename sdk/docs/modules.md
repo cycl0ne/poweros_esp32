@@ -174,7 +174,6 @@ flowchart TB
     m_videodec_resource --> m_ps2_resource
     m_videodec_resource --> m_timer_device
     m_videodec_resource --> m_vchiq_resource
-    m_videodec_resource --> m_watchdog_resource
 
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
     class m_display_drivers,m_dos_library,m_graphics_library,m_intuition_library,m_keymap_library,m_layers_library,m_motion_library,m_ramlib_library,m_rta_library,m_rtg_library,m_sound_drivers lib

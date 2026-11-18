@@ -76,7 +76,8 @@ const Rect = graphics.Rect;
 pub const Library = gadgets.ClassLibrary(.{
     .name = vdt.VIDEOCODECDTCLASS,
     .version = 1,
-    .date = "04.11.2026",
+    .revision = 2,
+    .date = "18.11.2026",
     .super = dtc.DATATYPESCLASS,
     .opens = &.{ datatypes.DATATYPESNAME, vc.VIDEOCODECNAME, dos.DOSNAME },
     .Instance = Data,
@@ -146,6 +147,7 @@ fn openFilm(base: *Base, cl: *Class, o: *Object, own: *Data) i32 {
     var err: i32 = 0;
     own.film = vcb.OpenVideoStream(&[_]TagItem{
         .{ .tag = vc.VCA_FileHandle, .data = @intFromPtr(file) },
+        .{ .tag = vc.VCA_DecodeAhead, .data = play.decode_ahead },
         .{},
     }, &err) orelse return errorFor(if (err != 0) err else vc.VCERR_OPEN);
     const film = own.film.?;

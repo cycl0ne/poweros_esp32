@@ -6,6 +6,7 @@ const vc = sdk.videocodec;
 const VideoCodecBase = @import("../videocodec_base.zig").VideoCodecBase;
 const _stream = @import("_stream.zig");
 const _codec = @import("../codec/_codec.zig");
+const _ahead = @import("../ahead/_ahead.zig");
 
 /// Hands out the next frame in the order frames are shown.
 ///
@@ -41,22 +42,33 @@ const _codec = @import("../codec/_codec.zig");
 /// function). The frame's `time` is when it is due, and `number`
 /// counts the frames handed out since the stream was opened or moved.
 ///
+/// A stream opened with VCA_DecodeAhead (SINCE 1.14) has its pictures
+/// decoded by a process of the library's into a queue: the frame is
+/// taken from its front, and the call waits only while it is empty - for
+/// the frame being decoded. The process decodes the next as soon as there
+/// is room. What the decoder said instead of a frame - the end, an error -
+/// comes through the queue in its place; after the end, or an error the
+/// decoder does not go past, the call says it again until a seek.
+///
 /// CONTEXT:
-/// - Waits: yes, on the file and the chip.
+/// - Waits: yes, on the file and the chip - decoded ahead, for the next
+///   frame while none is ready.
 /// - Interrupts: no.
 /// - Locks: no spinlock may be held.
-/// - Process: a process for a file; a task will do with VCA_ReadFunc.
+/// - Process: a process for a file; a task will do with VCA_ReadFunc, or
+///   when the pictures are decoded ahead.
 ///
 /// OWNERSHIP:
 /// The frame's planes are the decoder's, lent until ReleaseVideoFrame
 /// gives them back; they do not change while lent. The pictures are
-/// decoded by one task at a time, which may be another than the one that
-/// decodes the sound.
+/// asked for by one task at a time, which may be another than the one
+/// that decodes the sound.
 ///
 /// NOTES:
 /// The chip decodes 1080p H.264 at about 150 frames a second. Motion JPEG
 /// is decoded on the calling task, about a second for a 1080p picture on
-/// the VisionFive 2: for small pictures.
+/// the VisionFive 2: for small pictures. A frame decoded ahead costs the
+/// decoder a frame's memory for each place in the queue.
 ///
 /// BUGS:
 /// None known.
@@ -75,9 +87,16 @@ const _codec = @import("../codec/_codec.zig");
 /// ```
 pub fn DecodeVideoFrame(base: *VideoCodecBase, stream: *vc.VideoStream, frame: *vc.VideoFrame) i32 {
     const s = _stream.of(stream);
-    const slot = _stream.freeSlot(s) orelse return vc.VCERR_BUSY;
-    const result = _codec.decode(s, frame, slot);
-    if (result != vc.VCERR_OK) return result;
+    var slot: u32 = 0;
+    if (s.ahead) |ahead| {
+        if (_stream.heldCount(s) >= _stream.held_frames) return vc.VCERR_BUSY;
+        const result = _ahead.take(ahead, frame, &slot);
+        if (result != vc.VCERR_OK) return result;
+    } else {
+        slot = _stream.freeSlot(s) orelse return vc.VCERR_BUSY;
+        const result = _codec.decode(s, frame, slot);
+        if (result != vc.VCERR_OK) return result;
+    }
     _stream.tellColours(base, &s.picture, &frame.picture);
     s.held[slot] = true;
     frame.number = s.number;

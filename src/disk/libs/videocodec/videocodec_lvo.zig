@@ -27,6 +27,7 @@ const GetVideoStreamAttrs = @import("stream/getvideostreamattrs.zig").GetVideoSt
 const GetVideoTrack = @import("stream/getvideotrack.zig").GetVideoTrack;
 const SelectVideoTrack = @import("stream/selectvideotrack.zig").SelectVideoTrack;
 const GetVideoSubtitle = @import("stream/getvideosubtitle.zig").GetVideoSubtitle;
+const GetVideoDecoder = @import("stream/getvideodecoder.zig").GetVideoDecoder;
 
 /// videocodec.library's interface, as the SDK generates it from
 /// sdk/fd/videocodec_lib.fd.
@@ -64,6 +65,7 @@ const contract_files = [_][]const u8{
     @embedFile("stream/getvideotrack.zig"),
     @embedFile("stream/selectvideotrack.zig"),
     @embedFile("stream/getvideosubtitle.zig"),
+    @embedFile("stream/getvideodecoder.zig"),
 };
 
 fn lvoOpenVideoStream(base: *VideoCodecBase, tags: ?[*]const utility.TagItem, err: ?*i32) callconv(.c) ?*vc.VideoStream {
@@ -105,6 +107,9 @@ fn lvoSelectVideoTrack(base: *VideoCodecBase, stream: *vc.VideoStream, track: u3
 fn lvoGetVideoSubtitle(base: *VideoCodecBase, stream: *vc.VideoStream, time: i64, subtitle: *vc.VideoSubtitle) callconv(.c) i32 {
     return GetVideoSubtitle(base, stream, time, subtitle);
 }
+fn lvoGetVideoDecoder(base: *VideoCodecBase, stream: *vc.VideoStream, info: *vc.VideoDecoderInfo) callconv(.c) void {
+    return GetVideoDecoder(base, stream, info);
+}
 
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
@@ -126,6 +131,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoGetVideoTrack),
     vec(lvoSelectVideoTrack),
     vec(lvoGetVideoSubtitle),
+    vec(lvoGetVideoDecoder),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

@@ -32,7 +32,11 @@
 //! position it was given at and the film's time it starts from, so the
 //! time being heard (`heard`) is that time and the frames played since,
 //! in microseconds. The player asks with a request of its own, a copy of
-//! the opened one, so the two never share one.
+//! the opened one, so the two never share one. The device says its
+//! position in steps - 512 frames on an HD Audio output, 10.67 ms at
+//! 48 kHz, longer than a picture of a 60-frame film lasts - so between
+//! two steps the time is carried on by the machine's clock (`Clock`), and
+//! the pictures come at even times.
 //!
 //! **Moving** is the player's: it halts the sound - what is queued taken
 //! back (CMD_FLUSH) - moves the film (SeekVideo, which moves the sound
@@ -62,6 +66,63 @@ const process_priority = 5;
 const process_stack = 4096 * @sizeOf(usize);
 
 pub const State = enum { idle, playing, paused, ended };
+
+/// The longest step of the device's position the clock carries on over:
+/// a position that stops for longer - the sound played out, or starved -
+/// stops the time with it.
+const most_step_us = 50_000;
+
+/// The time heard between the device's steps: the machine's clock
+/// (UptimeUs) and how far the film's time is from it, `offset`. Each time
+/// the position is read it says where the time is to within a step: at
+/// or after the time the position says, and before the next step - the
+/// length of a step being the shortest seen between two. A clock that has
+/// run out of that is moved to its nearer end, so over a few steps the
+/// offset settles where the steps fall, and the time moves on as evenly
+/// as the machine's clock while it follows the sound. A stream that stops
+/// - played out, or starved - stops the clock a step later at most. It
+/// never goes back: what was said is held until the clock passes it.
+pub const Clock = struct {
+    /// The film's time less the machine's clock.
+    offset: i64 = 0,
+    /// The time the position said last, and the length of a step: 0
+    /// until two steps have been seen.
+    step_time: i64 = 0,
+    step_us: u64 = 0,
+    /// The time last said.
+    said: i64 = 0,
+    known: bool = false,
+
+    /// The time to say for `time`, what the position says, read at
+    /// `now_us` (UptimeUs).
+    pub fn at(clock: *Clock, time: i64, now_us: u64) i64 {
+        const now: i64 = @intCast(now_us);
+        if (!clock.known) {
+            clock.* = .{ .offset = time - now, .step_time = time, .said = time, .known = true };
+            return time;
+        }
+        if (time > clock.step_time) {
+            const length = @min(@as(u64, @intCast(time - clock.step_time)), most_step_us);
+            if (clock.step_us == 0 or length < clock.step_us) clock.step_us = length;
+        }
+        clock.step_time = time;
+        const carried = now + clock.offset;
+        const latest = time + @as(i64, @intCast(clock.step_us));
+        if (carried < time) {
+            clock.offset += time - carried;
+        } else if (carried > latest) {
+            clock.offset -= carried - latest;
+        }
+        clock.said = @max(now + clock.offset, clock.said);
+        return clock.said;
+    }
+
+    /// Started afresh by the next time read: after a start, a pause, a
+    /// halt.
+    pub fn forget(clock: *Clock) void {
+        clock.known = false;
+    }
+};
 
 /// What the player tells the process to do.
 const What = enum(u32) { start, pause, halt, volume, quit };
@@ -124,6 +185,8 @@ pub const Sound = struct {
     next: usize = 0,
     /// The decoding has reached the end of the sound.
     ending: bool = false,
+    /// The time heard between the device's steps; the player's.
+    clock: Clock = .{},
 
     /// The process started on the film's sound and set up - the device
     /// stream opened in the film's form at `percent`, the process called
@@ -223,16 +286,19 @@ pub const Sound = struct {
     /// first.
     pub fn start(sound: *Sound, time: i64, held: bool) void {
         _ = sound.order(.start, time, @intFromBool(held));
+        sound.clock.forget();
     }
 
     pub fn pause(sound: *Sound, held: bool) void {
         _ = sound.order(.pause, 0, @intFromBool(held));
+        sound.clock.forget();
     }
 
     /// Silent, what was queued taken back, and nothing more decoded: what
     /// the player does before it moves the film.
     pub fn halt(sound: *Sound) void {
         _ = sound.order(.halt, 0, 0);
+        sound.clock.forget();
     }
 
     /// The volume in percent of as recorded, 100 as it is.
@@ -240,9 +306,20 @@ pub const Sound = struct {
         _ = sound.order(.volume, 0, percent);
     }
 
-    /// The film's time being heard, in microseconds; null while nothing
-    /// plays - halted, or on a machine with no sound.
+    /// The film's time being heard, in microseconds - carried on between
+    /// the device's steps while it plays; null while nothing plays -
+    /// halted, or on a machine with no sound.
     pub fn heard(sound: *Sound) ?i64 {
+        const time = sound.positionTime() orelse return null;
+        if (sound.state != .playing) {
+            sound.clock.forget();
+            return time;
+        }
+        return sound.clock.at(time, sound.sys.UptimeUs());
+    }
+
+    /// The time the device's position says.
+    fn positionTime(sound: *Sound) ?i64 {
         if (!sound.opened or sound.state == .idle) return null;
         const io = sound.query;
         io.std.req.command = audio.AUDIOCMD_QUERY;

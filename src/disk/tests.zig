@@ -27,6 +27,7 @@ test {
     _ = @import("programs/player/tests/one.zig");
     _ = @import("programs/player/tests/m3u.zig");
     _ = @import("programs/movie/tests/subtitles.zig");
+    _ = @import("programs/movie/tests/rate.zig");
     _ = @import("programs/player/tests/csv.zig");
     _ = @import("programs/player/tests/stations.zig");
     _ = @import("c/screendump/tests/png.zig");
@@ -118,6 +119,7 @@ test {
     _ = @import("libs/codecs/vp9/tests/clip.zig");
     _ = @import("libs/codecs/av1/tests/clip.zig");
     _ = @import("libs/videocodec/tests/videocodec.zig");
+    _ = @import("libs/videocodec/tests/filmsound.zig");
     _ = @import("libs/anvil/tests/anvil.zig");
     _ = @import("libs/anvil/tests/app.zig");
     _ = @import("libs/anvil/tests/drop.zig");

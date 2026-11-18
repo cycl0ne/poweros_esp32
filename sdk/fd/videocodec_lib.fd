@@ -48,4 +48,7 @@ i32 SelectVideoTrack(*videocodec.VideoStream stream, u32 track, i64 time)
 /// The subtitle shown at `time` microseconds into `subtitle`: 0, or
 /// VCERR_END when none is (SINCE 1.3).
 i32 GetVideoSubtitle(*videocodec.VideoStream stream, i64 time, *videocodec.VideoSubtitle subtitle)
+/// The codec module that decodes the pictures into `info`: the machine's
+/// video decoder or the processor, its name and version (SINCE 1.13).
+void GetVideoDecoder(*videocodec.VideoStream stream, *videocodec.VideoDecoderInfo info)
 ##end
