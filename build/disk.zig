@@ -297,8 +297,8 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Movie.info", .picture = "video-x-generic", .fields = &.{ "KIND=TOOL", icon_stack } },
     // The two that draw in three dimensions are on every disk but the
     // ESP32-S3's, which has no facet.library.
-    .{ .path = "programs/Boing.info", .picture = "applications-games", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
-    .{ .path = "programs/Cobra.info", .picture = "applications-games", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
+    .{ .path = "programs/Boing.info", .picture = "internet-web-browser", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci, .a64v80, .x64uefi } },
+    .{ .path = "programs/Cobra.info", .picture = "weather-clear-night", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci, .a64v80, .x64uefi } },
     // The dock: on the ESP32s in SYS:Programs, started by hand; on the
     // 64-bit machines in SYS:WBStartup, started with the desktop, which
     // does not wait for it to end.
@@ -307,8 +307,8 @@ const disk_icons = [_]DiskIcon{
     // What each program is, in SYS:Programs/Docs: read in MultiView.
     .{ .path = "programs/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "programs/Docs/Battery.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
-    .{ .path = "programs/Docs/Boing.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
-    .{ .path = "programs/Docs/Cobra.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci } },
+    .{ .path = "programs/Docs/Boing.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci, .a64v80, .x64uefi } },
+    .{ .path = "programs/Docs/Cobra.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci, .a64v80, .x64uefi } },
     .{ .path = "programs/Docs/Dock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/FontView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/MultiView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
