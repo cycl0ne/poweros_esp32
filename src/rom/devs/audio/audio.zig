@@ -128,8 +128,8 @@ const recorder = @import("recorder.zig");
 
 pub const DEVICE_NAME = audio.AUDIONAME;
 const DEVICE_VERSION = 2;
-const DEVICE_REVISION = 15;
-const BUILD_DATE = "17.11.2026";
+const DEVICE_REVISION = 16;
+const BUILD_DATE = "18.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -137,9 +137,12 @@ const DEVICE_VERSION_STRING =
 
 const vec = exec.libraries.vec;
 
-/// Above ordinary tasks: a buffer that is not mixed in time is a gap
-/// everyone hears.
-const task_pri = 15;
+/// Above every task that makes or moves what is shown - rtg.library's
+/// frames task, which shares the making of a picture out over every core
+/// at 19, and intuition's input and pointer tasks - for a buffer not
+/// mixed in time is a gap everyone hears, where a picture a moment late
+/// is not seen; and the mix takes a sliver of a core.
+const task_pri = 22;
 const stack_size = 4096;
 
 /// How many streams there are, and sounds played by trigger: a voice of
