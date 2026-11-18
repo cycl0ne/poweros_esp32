@@ -28,6 +28,11 @@ const wire = @import("../wire.zig");
 
 const testing = std.testing;
 const Sha256 = std.crypto.hash.sha2.Sha256;
+/// OpenSSH's ChaCha20 - a 64-bit counter and a 64-bit nonce - and
+/// Poly1305, std's: the test client's chacha20-poly1305@openssh.com is
+/// made of these, not of crypto.library's.
+const ChaCha64 = std.crypto.stream.chacha.ChaCha20With64BitNonce;
+const Poly1305 = std.crypto.onetimeauth.Poly1305;
 
 // --- the wire types and the keys' text ----------------------------------------
 
@@ -141,6 +146,13 @@ const Client = struct {
     server_kexinit_length: usize = 0,
     /// The exchange it offers: ML-KEM-768 with X25519, or X25519 alone.
     hybrid: bool = true,
+    /// The ciphers it offers, each direction's.
+    client_to_server: []const u8 = "chacha20-poly1305@openssh.com,aes128-gcm@openssh.com",
+    server_to_client: []const u8 = "aes256-gcm@openssh.com",
+    /// Each direction's packets since the last NEWKEYS (strict), the
+    /// nonce of chacha20-poly1305@openssh.com.
+    send_sequence: u32 = 0,
+    receive_sequence: u32 = 0,
 
     /// What the server has to send, moved over, after it took what it
     /// was given.
@@ -160,7 +172,7 @@ const Client = struct {
     fn send(client: *Client, payload: []const u8) void {
         var packet: [40000]u8 = undefined;
         const sealed = client.sending.on;
-        const block: usize = if (sealed) 16 else 8;
+        const block: usize = if (sealed) client.sending.block() else 8;
         const counted = if (sealed) 1 + payload.len else 5 + payload.len;
         var padding = block - counted % block;
         if (padding < 4) padding += block;
@@ -170,7 +182,10 @@ const Client = struct {
         @memcpy(packet[5..][0..payload.len], payload);
         @memset(packet[5 + payload.len ..][0..padding], 0x5A);
         var total = 4 + length;
-        if (sealed) {
+        if (sealed and client.sending.cipher == .chacha) {
+            sealChaCha(&client.sending, client.send_sequence, packet[0 .. 4 + length], packet[4 + length ..][0..16]);
+            total += 16;
+        } else if (sealed) {
             const message: crypto.GcmMessage = .{
                 .key = &client.sending.key,
                 .key_length = client.sending.key_length,
@@ -187,6 +202,7 @@ const Client = struct {
             advance(&client.sending);
             total += 16;
         }
+        client.send_sequence +%= 1;
         client.rig.server.transport.feed(packet[0..total]);
         client.pump();
     }
@@ -194,11 +210,16 @@ const Client = struct {
     /// The next message from the server, opened; null when none is whole.
     fn next(client: *Client) !?[]const u8 {
         if (client.received_length < 4) return null;
-        const length = wire.get32(client.received[0..4]);
         const sealed = client.receiving.on;
+        const chacha = sealed and client.receiving.cipher == .chacha;
+        var length_bytes: [4]u8 = client.received[0..4].*;
+        if (chacha) ChaCha64.xor(&length_bytes, &length_bytes, 0, client.receiving.key[32..64].*, chachaNonce(client.receive_sequence));
+        const length = wire.get32(&length_bytes);
         const total = 4 + length + @as(usize, if (sealed) 16 else 0);
         if (client.received_length < total) return null;
-        if (sealed) {
+        if (chacha) {
+            if (!openChaCha(&client.receiving, client.receive_sequence, client.received[0 .. 4 + length], client.received[4 + length ..][0..16])) return error.BadTag;
+        } else if (sealed) {
             const message: crypto.GcmMessage = .{
                 .key = &client.receiving.key,
                 .key_length = client.receiving.key_length,
@@ -214,6 +235,7 @@ const Client = struct {
             if (client.rig.cb.OpenGcm(&message) != crypto.CRYPTOERR_OK) return error.BadTag;
             advance(&client.receiving);
         }
+        client.receive_sequence +%= 1;
         const padding = client.received[4];
         const payload_length = length - 1 - padding;
         @memcpy(client.payload[0..payload_length], client.received[5..][0..payload_length]);
@@ -235,14 +257,15 @@ const Client = struct {
     /// reply checked, K and H, the keys, NEWKEYS both ways.
     fn exchange(client: *Client, first: bool) !void {
         const cb = client.rig.cb;
+        const server = client.rig.server;
         var bytes: [512]u8 = undefined;
         var kexinit = wire.Writer{ .bytes = &bytes };
         kexinit.byte(transport.msg_kexinit);
         kexinit.raw(&([_]u8{7} ** 16));
         kexinit.string(if (client.hybrid) "mlkem768x25519-sha256,curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com" else "curve25519-sha256,ext-info-c,kex-strict-c-v00@openssh.com");
         kexinit.string("ssh-ed25519");
-        kexinit.string("chacha20-poly1305@openssh.com,aes128-gcm@openssh.com");
-        kexinit.string("aes256-gcm@openssh.com");
+        kexinit.string(client.client_to_server);
+        kexinit.string(client.server_to_client);
         kexinit.string("hmac-sha2-256");
         kexinit.string("hmac-sha2-256");
         kexinit.string("none");
@@ -322,14 +345,26 @@ const Client = struct {
         try testing.expectEqual(crypto.CRYPTOERR_OK, cb.VerifySignature(crypto.SIG_ED25519, &host_key, &crypto.Bytes.of(&exchange_hash), &crypto.Bytes.of(signature)));
 
         _ = try client.expect(transport.msg_newkeys);
-        var sending: Direction = .{ .on = true, .key_length = 16 };
-        var receiving: Direction = .{ .on = true, .key_length = 32 };
+        client.receive_sequence = 0;
+        // The ciphers: the client's first that the server has.
+        var theirs = wire.Reader{ .bytes = client.server_kexinit[0..client.server_kexinit_length], .at = 17 };
+        _ = theirs.string();
+        _ = theirs.string();
+        const server_c2s = theirs.string();
+        const server_s2c = theirs.string();
+        const sending_choice = transport.Choice.of(wire.choose(client.client_to_server, server_c2s).?);
+        const receiving_choice = transport.Choice.of(wire.choose(client.server_to_client, server_s2c).?);
+        var sending: Direction = .{ .on = true, .cipher = sending_choice.cipher, .key_length = sending_choice.key_length };
+        var receiving: Direction = .{ .on = true, .cipher = receiving_choice.cipher, .key_length = receiving_choice.key_length };
+        try testing.expectEqual(sending_choice.cipher, server.transport.receiving_choice.cipher);
+        try testing.expectEqual(receiving_choice.cipher, server.transport.sending_choice.cipher);
         derive(shared.written(), &exchange_hash, 'A', &client.session_id, &sending.nonce);
-        derive(shared.written(), &exchange_hash, 'C', &client.session_id, sending.key[0..16]);
+        derive(shared.written(), &exchange_hash, 'C', &client.session_id, sending.key[0..sending.key_length]);
         derive(shared.written(), &exchange_hash, 'B', &client.session_id, &receiving.nonce);
-        derive(shared.written(), &exchange_hash, 'D', &client.session_id, &receiving.key);
+        derive(shared.written(), &exchange_hash, 'D', &client.session_id, receiving.key[0..receiving.key_length]);
         client.receiving = receiving;
         client.send(&.{transport.msg_newkeys});
+        client.send_sequence = 0;
         client.sending = sending;
     }
 
@@ -434,6 +469,8 @@ fn hashString(hash: *Sha256, bytes: []const u8) void {
     hash.update(bytes);
 }
 
+/// RFC 4253, 7.2, a key of any length: K1 = HASH(K || H || letter ||
+/// session_id), then K2 = HASH(K || H || K1) and on.
 fn derive(shared: []const u8, exchange_hash: *const [32]u8, letter: u8, session_id: *const [32]u8, into: []u8) void {
     var hash = Sha256.init(.{});
     hash.update(shared);
@@ -442,7 +479,48 @@ fn derive(shared: []const u8, exchange_hash: *const [32]u8, letter: u8, session_
     hash.update(session_id);
     var digest: [32]u8 = undefined;
     hash.final(&digest);
-    @memcpy(into, digest[0..into.len]);
+    var at: usize = @min(into.len, 32);
+    @memcpy(into[0..at], digest[0..at]);
+    while (at < into.len) {
+        hash = Sha256.init(.{});
+        hash.update(shared);
+        hash.update(exchange_hash);
+        hash.update(into[0..at]);
+        hash.final(&digest);
+        const more = @min(into.len - at, 32);
+        @memcpy(into[at..][0..more], digest[0..more]);
+        at += more;
+    }
+}
+
+fn chachaNonce(sequence: u32) [8]u8 {
+    var nonce: [8]u8 = undefined;
+    std.mem.writeInt(u64, &nonce, sequence, .big);
+    return nonce;
+}
+
+/// chacha20-poly1305@openssh.com as OpenSSH's PROTOCOL.chacha20poly1305
+/// has it, from std's ChaCha20 and Poly1305: the length with K_1 at
+/// block 0, the rest with K_2 from block 1, the tag over both with K_2's
+/// block 0 as its key.
+fn sealChaCha(direction: *const Direction, sequence: u32, packet: []u8, tag: *[16]u8) void {
+    const nonce = chachaNonce(sequence);
+    ChaCha64.xor(packet[0..4], packet[0..4], 0, direction.key[32..64].*, nonce);
+    var poly_key: [32]u8 = @splat(0);
+    ChaCha64.xor(&poly_key, &poly_key, 0, direction.key[0..32].*, nonce);
+    ChaCha64.xor(packet[4..], packet[4..], 1, direction.key[0..32].*, nonce);
+    Poly1305.create(tag, packet, &poly_key);
+}
+
+fn openChaCha(direction: *const Direction, sequence: u32, packet: []u8, tag: *const [16]u8) bool {
+    const nonce = chachaNonce(sequence);
+    var poly_key: [32]u8 = @splat(0);
+    ChaCha64.xor(&poly_key, &poly_key, 0, direction.key[0..32].*, nonce);
+    var expected: [16]u8 = undefined;
+    Poly1305.create(&expected, packet, &poly_key);
+    if (!std.mem.eql(u8, &expected, tag)) return false;
+    ChaCha64.xor(packet[4..], packet[4..], 1, direction.key[0..32].*, nonce);
+    return true;
 }
 
 fn newClient(rig: *Rig) !*Client {
@@ -633,8 +711,13 @@ test "the client exchanges keys again in the middle; a packet tampered with ends
     try client.session("shell", "");
     const first_id = server.transport.session_id;
 
-    // Again: the session id stays, the keys change, data goes on.
+    // Again, with ChaCha20-Poly1305 the server's way too: the session id
+    // stays, the keys and the cipher change, data goes on.
+    try testing.expectEqual(transport.Cipher.chacha, client.sending.cipher);
+    try testing.expectEqual(transport.Cipher.aes_gcm, client.receiving.cipher);
+    client.server_to_client = "chacha20-poly1305@openssh.com";
     try client.exchange(false);
+    try testing.expectEqual(transport.Cipher.chacha, client.receiving.cipher);
     try testing.expectEqualSlices(u8, &first_id, &server.transport.session_id);
     client.data("after");
     var typed: [16]u8 = undefined;

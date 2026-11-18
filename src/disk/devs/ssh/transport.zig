@@ -10,7 +10,19 @@
 //! four bytes of random padding. From NEWKEYS on they are sealed with
 //! AES-GCM (RFC 5647): the length stays in clear and is authenticated, the
 //! rest is encrypted, a 16-byte tag follows, and the nonce's last eight
-//! bytes count the packets.
+//! bytes count the packets. Or with OpenSSH's chacha20-poly1305@openssh.com
+//! (its PROTOCOL.chacha20poly1305): the 64-byte key is two, K_2 then K_1;
+//! the nonce is the packet's sequence number, 64 bits big-endian; the
+//! length is encrypted with K_1 from block 0, the rest with K_2 from block
+//! 1, and the tag is Poly1305 over both as sent, its one-time key the
+//! first 32 bytes of K_2's block 0. So the length is opened first, with
+//! K_1 alone, to know where the packet ends (`packetLength`); the packet
+//! is decrypted only once its tag is right.
+//!
+//! Which cipher comes first in our list is the machine's: AES-GCM where
+//! crypto.library's AES runs on hardware, ChaCha20-Poly1305 where it is
+//! software (its CryptoEngines). A crypto.library before 2.13 has no
+//! ChaCha20-Poly1305 to offer.
 //!
 //! **The key exchange.** Each end's KEXINIT lists what it has; each
 //! algorithm is the client's first that the server has too (7.1). The
@@ -27,6 +39,7 @@
 //! exchange goes out while it runs: a message of the login or the
 //! channel sent meanwhile is held, and goes once our NEWKEYS has.
 
+const std = @import("std");
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
 const ssh_keys = sdk.devices.ssh.keys;
@@ -88,7 +101,14 @@ pub const hybrid_kex = "mlkem768x25519-sha256";
 pub const strict_server = "kex-strict-s-v00@openssh.com";
 pub const strict_client = "kex-strict-c-v00@openssh.com";
 pub const host_key_algorithms = ssh_keys.key_type;
-pub const ciphers = "aes256-gcm@openssh.com,aes128-gcm@openssh.com";
+pub const chacha_name = "chacha20-poly1305@openssh.com";
+const aes_names = "aes256-gcm@openssh.com,aes128-gcm@openssh.com";
+/// The ciphers offered: AES-GCM's first where AES is hardware,
+/// ChaCha20-Poly1305 first where it is not, and AES-GCM's alone with a
+/// crypto.library that has no ChaCha20-Poly1305 (`cipherList`).
+pub const ciphers_aes_first = aes_names ++ "," ++ chacha_name;
+pub const ciphers_chacha_first = chacha_name ++ "," ++ aes_names;
+pub const ciphers_aes_only = aes_names;
 /// Never used - an AEAD cipher brings its own - but a list must be there.
 pub const macs = "hmac-sha2-256";
 pub const compressions = "none";
@@ -96,7 +116,11 @@ pub const compressions = "none";
 /// The longest packet taken: its length field's value, RFC 4253's least
 /// every end takes.
 pub const packet_max: u32 = 35000;
+/// AES-GCM's tag and Poly1305's: 16 bytes each.
 pub const tag_bytes = crypto.GCM_TAG;
+comptime {
+    if (crypto.GCM_TAG != crypto.POLY1305_TAG) @compileError("ssh.device takes both ciphers' tags to be the same length");
+}
 pub const in_bytes = 4 + packet_max + tag_bytes;
 pub const out_bytes = 16384;
 /// Room a reply needs in the output before another packet is taken in.
@@ -110,13 +134,37 @@ pub const Role = enum(u8) { server, client };
 pub const Phase = enum(u8) { version, packets, ended };
 pub const KexState = enum(u8) { idle, sent, exchanging, finishing };
 
+/// The ciphers there are.
+pub const Cipher = enum(u8) { aes_gcm, chacha };
+
+/// A cipher a KEXINIT chose: which, and its key's length - AES-GCM's 16
+/// or 32, ChaCha20-Poly1305's two keys of 32.
+pub const Choice = struct {
+    cipher: Cipher = .aes_gcm,
+    key_length: u32 = 32,
+
+    pub fn of(name: []const u8) Choice {
+        if (wire.same(name, chacha_name)) return .{ .cipher = .chacha, .key_length = 64 };
+        return .{ .key_length = if (wire.same(name, "aes256-gcm@openssh.com")) 32 else 16 };
+    }
+};
+
 /// One direction's cipher: off until its NEWKEYS, then AES-GCM with this
-/// key and a nonce whose last eight bytes count the packets.
+/// key and a nonce whose last eight bytes count the packets, or
+/// ChaCha20-Poly1305 with its two keys and the sequence number as nonce.
 pub const Direction = struct {
     on: bool = false,
-    key: [32]u8 = @splat(0),
+    cipher: Cipher = .aes_gcm,
+    /// AES-GCM's key; ChaCha20-Poly1305's K_2 (the packet's), then K_1
+    /// (the length's).
+    key: [64]u8 = @splat(0),
     key_length: u32 = 0,
     nonce: [12]u8 = @splat(0),
+
+    /// The size the packet past its length is padded to.
+    pub fn block(direction: *const Direction) usize {
+        return if (direction.cipher == .chacha) 8 else 16;
+    }
 
     pub fn advance(direction: *Direction) void {
         var at: usize = 12;
@@ -164,9 +212,9 @@ pub const Transport = struct {
     our_kexinit_length: usize = 0,
     /// H under way, from both KEXINITs on.
     exchange: crypto.HashContext = .{},
-    /// The key lengths the KEXINITs chose for each direction.
-    sending_key_length: u32 = 32,
-    receiving_key_length: u32 = 32,
+    /// The ciphers the KEXINITs chose for each direction.
+    sending_choice: Choice = .{},
+    receiving_choice: Choice = .{},
     /// The exchange chosen is the hybrid one.
     hybrid: bool = false,
     strict: bool = false,
@@ -241,7 +289,7 @@ pub const Transport = struct {
             },
             .packets => {
                 if (t.in_length < 4) return false;
-                const length = wire.get32(t.in[0..4]);
+                const length = t.packetLength();
                 if (length < 5 or length > packet_max) return true;
                 const total: usize = 4 + @as(usize, length) + (if (t.receiving.on) tag_bytes else 0);
                 return t.in_length >= total;
@@ -249,14 +297,28 @@ pub const Transport = struct {
         }
     }
 
+    /// The length of the packet at the input's start, from its first four
+    /// bytes: as they are, or ChaCha20-Poly1305's opened with K_1. The
+    /// input is left as it came, which the tag is over.
+    fn packetLength(t: *const Transport) u32 {
+        if (!t.receiving.on or t.receiving.cipher != .chacha) return wire.get32(t.in[0..4]);
+        var length: [4]u8 = t.in[0..4].*;
+        var context: crypto.CipherContext = .{};
+        defer wipe(std.mem.asBytes(&context));
+        const iv = chachaIv(t.receive_sequence);
+        _ = t.cb.InitCipher(&context, crypto.CIPHER_CHACHA20, t.receiving.key[32..64], 32, &iv);
+        _ = t.cb.UpdateCipher(&context, &length, &length, 4);
+        return wire.get32(&length);
+    }
+
     /// The next whole message, opened; null when none is whole. It stays
     /// in the input until `done`.
     pub fn next(t: *Transport) ?Packet {
         if (t.phase == .version) t.versionLine();
         if (t.phase != .packets or t.in_length < 4) return null;
-        const length = wire.get32(t.in[0..4]);
+        const length = t.packetLength();
         const sealed = t.receiving.on;
-        const block: u32 = if (sealed) 16 else 8;
+        const block: u32 = if (sealed) @intCast(t.receiving.block()) else 8;
         // Encrypted, the length is not part of the blocks.
         const aligned = if (sealed) length else length + 4;
         if (length < 5 or length > packet_max or aligned % block != 0) {
@@ -266,20 +328,26 @@ pub const Transport = struct {
         const total: usize = 4 + length + (if (sealed) tag_bytes else 0);
         if (t.in_length < total) return null;
         if (sealed) {
-            const body = t.in[4..][0..length];
-            const message: crypto.GcmMessage = .{
-                .key = &t.receiving.key,
-                .key_length = t.receiving.key_length,
-                .nonce = &t.receiving.nonce,
-                .nonce_length = 12,
-                .aad = t.in[0..4].ptr,
-                .aad_length = 4,
-                .input = body.ptr,
-                .output = body.ptr,
-                .length = length,
-                .tag = t.in[4 + length ..][0..tag_bytes],
+            const opened = switch (t.receiving.cipher) {
+                .chacha => openChaCha(t.cb, &t.receiving, t.receive_sequence, t.in[0 .. 4 + length], t.in[4 + length ..][0..tag_bytes]),
+                .aes_gcm => opened: {
+                    const body = t.in[4..][0..length];
+                    const message: crypto.GcmMessage = .{
+                        .key = &t.receiving.key,
+                        .key_length = t.receiving.key_length,
+                        .nonce = &t.receiving.nonce,
+                        .nonce_length = 12,
+                        .aad = t.in[0..4].ptr,
+                        .aad_length = 4,
+                        .input = body.ptr,
+                        .output = body.ptr,
+                        .length = length,
+                        .tag = t.in[4 + length ..][0..tag_bytes],
+                    };
+                    break :opened t.cb.OpenGcm(&message) == crypto.CRYPTOERR_OK;
+                },
             };
-            if (t.cb.OpenGcm(&message) != crypto.CRYPTOERR_OK) {
+            if (!opened) {
                 t.disconnect(reason_mac_error, "packet authentication failed");
                 return null;
             }
@@ -395,7 +463,7 @@ pub const Transport = struct {
             return;
         }
         const sealed = t.sending.on;
-        const block: usize = if (sealed) 16 else 8;
+        const block: usize = if (sealed) t.sending.block() else 8;
         const counted: usize = if (sealed) 1 + payload.len else 4 + 1 + payload.len;
         var padding = block - counted % block;
         if (padding < 4) padding += block;
@@ -407,22 +475,25 @@ pub const Transport = struct {
         packet[4] = @intCast(padding);
         @memcpy(packet[5..][0..payload.len], payload);
         t.cb.RandomBytes(packet[5 + payload.len ..].ptr, @intCast(padding));
-        if (sealed) {
-            const message: crypto.GcmMessage = .{
-                .key = &t.sending.key,
-                .key_length = t.sending.key_length,
-                .nonce = &t.sending.nonce,
-                .nonce_length = 12,
-                .aad = packet[0..4].ptr,
-                .aad_length = 4,
-                .input = packet[4..].ptr,
-                .output = packet[4..].ptr,
-                .length = @intCast(length),
-                .tag = packet[4 + length ..][0..tag_bytes],
-            };
-            _ = t.cb.SealGcm(&message);
-            t.sending.advance();
-        }
+        if (sealed) switch (t.sending.cipher) {
+            .chacha => sealChaCha(t.cb, &t.sending, t.send_sequence, packet[0 .. 4 + length], packet[4 + length ..][0..tag_bytes]),
+            .aes_gcm => {
+                const message: crypto.GcmMessage = .{
+                    .key = &t.sending.key,
+                    .key_length = t.sending.key_length,
+                    .nonce = &t.sending.nonce,
+                    .nonce_length = 12,
+                    .aad = packet[0..4].ptr,
+                    .aad_length = 4,
+                    .input = packet[4..].ptr,
+                    .output = packet[4..].ptr,
+                    .length = @intCast(length),
+                    .tag = packet[4 + length ..][0..tag_bytes],
+                };
+                _ = t.cb.SealGcm(&message);
+                t.sending.advance();
+            },
+        };
         t.out_length += total;
         t.send_sequence +%= 1;
     }
@@ -466,6 +537,12 @@ pub const Transport = struct {
         if (t.phase == .packets and t.kex == .idle and t.exchanged) t.sendKexinit();
     }
 
+    /// Our cipher list, the same for every KEXINIT: the machine's order.
+    pub fn cipherList(t: *const Transport) []const u8 {
+        if (!hasChaCha(t.cb)) return ciphers_aes_only;
+        return if (t.cb.CryptoEngines() & crypto.CRYPTOENG_AES != 0) ciphers_aes_first else ciphers_chacha_first;
+    }
+
     fn sendKexinit(t: *Transport) void {
         var writer = Writer{ .bytes = &t.our_kexinit };
         writer.byte(msg_kexinit);
@@ -474,8 +551,8 @@ pub const Transport = struct {
         writer.raw(&cookie);
         writer.string(if (t.role == .server) kex_names ++ "," ++ strict_server else kex_names ++ "," ++ strict_client);
         writer.string(host_key_algorithms);
-        writer.string(ciphers);
-        writer.string(ciphers);
+        writer.string(t.cipherList());
+        writer.string(t.cipherList());
         writer.string(macs);
         writer.string(macs);
         writer.string(compressions);
@@ -525,6 +602,7 @@ pub const Transport = struct {
         }
         // The client's list decides; the other side is ours.
         const kex_name = if (server) wire.choose(kex_list, kex_names) else wire.choose(kex_names, kex_list);
+        const ciphers = t.cipherList();
         const cipher_client = if (server) wire.choose(ciphers_client, ciphers) else wire.choose(ciphers, ciphers_client);
         const cipher_server = if (server) wire.choose(ciphers_server, ciphers) else wire.choose(ciphers, ciphers_server);
         if (kex_name == null or !wire.hasName(host_key_list, host_key_algorithms) or cipher_client == null or cipher_server == null or
@@ -533,10 +611,10 @@ pub const Transport = struct {
             return t.disconnect(reason_key_exchange_failed, "no algorithms in common");
         }
         t.hybrid = wire.same(kex_name.?, hybrid_kex);
-        const client_key: u32 = if (wire.same(cipher_client.?, "aes256-gcm@openssh.com")) 32 else 16;
-        const server_key: u32 = if (wire.same(cipher_server.?, "aes256-gcm@openssh.com")) 32 else 16;
-        t.sending_key_length = if (server) server_key else client_key;
-        t.receiving_key_length = if (server) client_key else server_key;
+        const client_choice = Choice.of(cipher_client.?);
+        const server_choice = Choice.of(cipher_server.?);
+        t.sending_choice = if (server) server_choice else client_choice;
+        t.receiving_choice = if (server) client_choice else server_choice;
         // A wrong guess of the client's is the server's to drop.
         t.skip_guess = server and guessed and (!wire.same(wire.first(kex_list), kex_name.?) or !wire.same(wire.first(host_key_list), host_key_algorithms));
         if (t.kex == .idle) t.sendKexinit();
@@ -591,16 +669,14 @@ pub const Transport = struct {
     /// keys on; the peer's wait for its NEWKEYS.
     pub fn newKeys(t: *Transport, shared_encoded: []const u8, exchange_hash: *const [32]u8) void {
         const server = t.role == .server;
-        var client_to_server: Direction = .{ .on = true, .key_length = if (server) t.receiving_key_length else t.sending_key_length };
-        var server_to_client: Direction = .{ .on = true, .key_length = if (server) t.sending_key_length else t.receiving_key_length };
-        var key: [32]u8 = undefined;
+        const client_choice = if (server) t.receiving_choice else t.sending_choice;
+        const server_choice = if (server) t.sending_choice else t.receiving_choice;
+        var client_to_server: Direction = .{ .on = true, .cipher = client_choice.cipher, .key_length = client_choice.key_length };
+        var server_to_client: Direction = .{ .on = true, .cipher = server_choice.cipher, .key_length = server_choice.key_length };
         t.derive(shared_encoded, exchange_hash, 'A', &client_to_server.nonce);
         t.derive(shared_encoded, exchange_hash, 'B', &server_to_client.nonce);
-        t.derive(shared_encoded, exchange_hash, 'C', &key);
-        client_to_server.key = key;
-        t.derive(shared_encoded, exchange_hash, 'D', &key);
-        server_to_client.key = key;
-        wipe(&key);
+        t.derive(shared_encoded, exchange_hash, 'C', client_to_server.key[0..client_to_server.key_length]);
+        t.derive(shared_encoded, exchange_hash, 'D', server_to_client.key[0..server_to_client.key_length]);
         t.next_receiving = if (server) client_to_server else server_to_client;
         t.send(&.{msg_newkeys});
         t.sending = if (server) server_to_client else client_to_server;
@@ -617,7 +693,9 @@ pub const Transport = struct {
     }
 
     /// RFC 4253, 7.2: HASH(K || H || letter || session_id), as many bytes
-    /// of it as `into` holds (no key here is longer than one SHA-256).
+    /// of it as `into` holds - and for a key longer than one SHA-256
+    /// (ChaCha20-Poly1305's 64 bytes), HASH(K || H || what there is so
+    /// far) after it, as often as it takes.
     fn derive(t: *Transport, shared_encoded: []const u8, exchange_hash: *const [32]u8, letter: u8, into: []u8) void {
         var context: crypto.HashContext = .{};
         _ = t.cb.InitHash(&context, crypto.HASH_SHA256);
@@ -627,7 +705,19 @@ pub const Transport = struct {
         t.cb.UpdateHash(&context, &t.session_id, 32);
         var digest: [32]u8 = undefined;
         _ = t.cb.FinishHash(&context, &digest);
-        @memcpy(into, digest[0..into.len]);
+        var at: usize = @min(into.len, digest.len);
+        @memcpy(into[0..at], digest[0..at]);
+        while (at < into.len) {
+            context = .{};
+            _ = t.cb.InitHash(&context, crypto.HASH_SHA256);
+            t.cb.UpdateHash(&context, shared_encoded.ptr, @intCast(shared_encoded.len));
+            t.cb.UpdateHash(&context, exchange_hash, 32);
+            t.cb.UpdateHash(&context, into.ptr, @intCast(at));
+            _ = t.cb.FinishHash(&context, &digest);
+            const more = @min(into.len - at, digest.len);
+            @memcpy(into[at..][0..more], digest[0..more]);
+            at += more;
+        }
         wipe(&digest);
     }
 
@@ -641,6 +731,69 @@ pub const Transport = struct {
         t.exchanged = true;
     }
 };
+
+/// Whether crypto.library has ChaCha20-Poly1305, Poly1305Pieces and
+/// CryptoEngines: 2.13 or later.
+pub fn hasChaCha(cb: *CryptoBase) bool {
+    const lib = cb.lib();
+    return lib.version > 2 or (lib.version == 2 and lib.revision >= 13);
+}
+
+/// chacha20-poly1305@openssh.com's IV for CIPHER_CHACHA20: block counter
+/// 0 in the first eight bytes (a 64-bit counter, as the original ChaCha20
+/// has it), the sequence number as a 64-bit big-endian nonce in the last
+/// eight.
+pub fn chachaIv(sequence: u32) [16]u8 {
+    var iv: [16]u8 = @splat(0);
+    wire.put32(iv[12..16], sequence);
+    return iv;
+}
+
+/// A ChaCha20-Poly1305 context at block 0 of K_2, which made the
+/// one-time Poly1305 key from that block and stands at block 1, where
+/// the packet's bytes begin.
+fn chachaPacket(cb: *CryptoBase, direction: *const Direction, sequence: u32, context: *crypto.CipherContext, poly_key: *[64]u8) void {
+    const iv = chachaIv(sequence);
+    _ = cb.InitCipher(context, crypto.CIPHER_CHACHA20, direction.key[0..32], 32, &iv);
+    poly_key.* = @splat(0);
+    _ = cb.UpdateCipher(context, poly_key, poly_key, 64);
+}
+
+/// The packet - its length and the rest, `packet` - sealed with
+/// chacha20-poly1305@openssh.com, and its tag into `tag`.
+fn sealChaCha(cb: *CryptoBase, direction: *const Direction, sequence: u32, packet: []u8, tag: *[tag_bytes]u8) void {
+    var context: crypto.CipherContext = .{};
+    defer wipe(std.mem.asBytes(&context));
+    var poly_key: [64]u8 = undefined;
+    defer wipe(&poly_key);
+    const iv = chachaIv(sequence);
+    _ = cb.InitCipher(&context, crypto.CIPHER_CHACHA20, direction.key[32..64], 32, &iv);
+    _ = cb.UpdateCipher(&context, packet.ptr, packet.ptr, 4);
+    chachaPacket(cb, direction, sequence, &context, &poly_key);
+    _ = cb.UpdateCipher(&context, packet[4..].ptr, packet[4..].ptr, @intCast(packet.len - 4));
+    const pieces = [_]crypto.Bytes{.of(packet)};
+    _ = cb.Poly1305Pieces(poly_key[0..32], &pieces, pieces.len, tag);
+}
+
+/// The packet - its length and the rest as they came, `packet` - checked
+/// against `tag` and, if it is right, the rest decrypted in place; the
+/// length is left as it came. Whether the tag was right.
+fn openChaCha(cb: *CryptoBase, direction: *const Direction, sequence: u32, packet: []u8, tag: *const [tag_bytes]u8) bool {
+    var context: crypto.CipherContext = .{};
+    defer wipe(std.mem.asBytes(&context));
+    var poly_key: [64]u8 = undefined;
+    defer wipe(&poly_key);
+    chachaPacket(cb, direction, sequence, &context, &poly_key);
+    const pieces = [_]crypto.Bytes{.of(packet)};
+    var expected: [tag_bytes]u8 = undefined;
+    defer wipe(&expected);
+    _ = cb.Poly1305Pieces(poly_key[0..32], &pieces, pieces.len, &expected);
+    var differ: u8 = 0;
+    for (expected, tag) |a, b| differ |= a ^ b;
+    if (differ != 0) return false;
+    _ = cb.UpdateCipher(&context, packet[4..].ptr, packet[4..].ptr, @intCast(packet.len - 4));
+    return true;
+}
 
 fn startsWith(bytes: []const u8, prefix: []const u8) bool {
     return bytes.len >= prefix.len and wire.same(bytes[0..prefix.len], prefix);

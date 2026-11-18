@@ -80,7 +80,10 @@
 //! ML-KEM-768 with X25519, safe from a quantum computer - or
 //! curve25519-sha256 (RFC 8731), with OpenSSH's strict key exchange; host
 //! key ssh-ed25519 (RFC 8709); aes256-gcm@openssh.com and
-//! aes128-gcm@openssh.com (RFC 5647); no compression. Logins by password
+//! aes128-gcm@openssh.com (RFC 5647), and since 1.5
+//! chacha20-poly1305@openssh.com - first in the list where
+//! crypto.library's AES is software, last where it is hardware; no
+//! compression. Logins by password
 //! and by ssh-ed25519 key. One session channel per connection, with a
 //! shell, one command or a subsystem; no forwarding. The peer may renew
 //! the keys at any time.
