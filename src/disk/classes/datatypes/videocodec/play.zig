@@ -13,7 +13,8 @@
 //! **The clock is the sound's**, as it is in Movie: the sound plays on a
 //! process of its own (the module `filmsound`, which Movie plays with
 //! too) and a picture is put up when what is heard has come to its time -
-//! audio.device's position, less the output's latency. A picture whose
+//! audio.device's position, less the output's latency, carried on between
+//! the device's steps by the machine's clock. A picture whose
 //! time is past by more than a frame is given back unshown, up to
 //! `most_dropped` in a row, so a machine too slow for the film still
 //! shows some of it; one not yet due is waited for by timer.device. A
@@ -27,6 +28,12 @@
 //! decoder never decodes into a picture that is being drawn; where one is
 //! being drawn, the next goes up as soon as it is let go
 //! (`wake_on_free`).
+//!
+//! **Decoded ahead**: videocodec.library decodes the pictures
+//! `decode_ahead` frames ahead on a process of its own, and the process
+//! here takes each from its queue - waiting only when the decoder has
+//! fallen behind, so a key frame that takes longer than a frame's time is
+//! made up for by those around it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -52,6 +59,10 @@ pub const opened_dos = 2;
 /// The process's stack: the decoding itself is videocodec.library's, on
 /// memory of its own.
 pub const stack_bytes = 32768;
+/// Frames videocodec.library decodes ahead of the one shown (1.14): a
+/// key frame that takes the decoder longer than a frame's time is made
+/// up for by the queue, rather than shown late.
+pub const decode_ahead = 3;
 /// Pictures late by more than a frame given back unshown in a row, at
 /// most: then one is shown however late, so a film too much for the
 /// machine still moves.

@@ -1,4 +1,4 @@
-## version $VER: programs/Movie.catalog 1.0 (12.11.2026)
+## version $VER: programs/Movie.catalog 1.1 (17.11.2026)
 ## language hindi
 ## codeset 106
 ; Movie's strings in Hindi. A draft: it waits for a reader of Hindi
@@ -23,6 +23,14 @@ MSG_MENU_SUBTITLES_OFF
 बंद
 MSG_MENU_TRACK
 ट्रैक
+MSG_MENU_FRAME_RATE
+फ़्रेम दर
+MSG_MENU_INFO
+फ़िल्म की जानकारी...
+MSG_FRAME_RATE
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED
+%u.%u / %u.%u fps, %u छोड़े गए
 MSG_ASK_OPEN
 एक फ़िल्म चलाएँ
 MSG_ABOUT_TITLE
@@ -35,6 +43,48 @@ MSG_CANNOT_PLAY_TITLE
 Movie
 MSG_CANNOT_PLAY
 %s\nनहीं चलाया जा सकता:\n%s
+MSG_INFO_TITLE
+फ़िल्म की जानकारी
+MSG_INFO_FILE
+फ़ाइल
+MSG_INFO_NAMED
+शीर्षक
+MSG_INFO_CONTAINER
+कंटेनर
+MSG_INFO_LENGTH
+अवधि
+MSG_INFO_PICTURES
+चित्र
+MSG_INFO_COLOURS
+रंग
+MSG_INFO_BITS
+%u बिट
+MSG_INFO_LIMITED
+सीमित रेंज
+MSG_INFO_FULL
+पूरी रेंज
+MSG_INFO_SHOWN
+प्रदर्शन
+MSG_INFO_ON_LAYER
+डिस्प्ले की वीडियो परत पर
+MSG_INFO_BY_GRAPHICS
+graphics.library द्वारा बनाया गया
+MSG_INFO_DECODED
+डिकोडिंग
+MSG_INFO_BY_CHIP
+वीडियो डिकोडर द्वारा
+MSG_INFO_BY_PROCESSOR
+प्रोसेसर द्वारा
+MSG_INFO_SOUND
+ध्वनि
+MSG_INFO_NONE
+कोई नहीं
+MSG_INFO_CHANNELS
+%u चैनल
+MSG_INFO_TRACKS
+ट्रैक
+MSG_INFO_TRACK_COUNTS
+%u ध्वनि, %u उपशीर्षक
 MSG_VOLUME_HINT
 आवाज़
 MSG_NOLIBRARY

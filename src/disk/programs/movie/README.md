@@ -4,9 +4,10 @@ Movie plays films in a window: MP4, QuickTime's MOV and Matroska's MKV,
 their pictures in H.264, H.265, VP8, VP9, AV1 or Motion JPEG and their
 sound in AAC, AC-3, Opus or DTS - or, in an MKV, MP3, FLAC, Vorbis or
 E-AC-3 too - with their subtitles. H.264 and H.265 are decoded by the
-machine's video decoder where it has one - the VisionFive 2's - and by
-the processor where it has none or the film is one the decoder refuses;
-VP8, VP9 and AV1 by the processor, on every core; Motion JPEG by the
+machine's video decoder where it has one - the VisionFive 2's, or an AMD
+graphics device's, which takes VP9 and AV1 too - and by the processor
+where it has none or the film is one the decoder refuses; VP8, and VP9
+and AV1 elsewhere, by the processor, on every core; Motion JPEG by the
 processor too, which is enough for small pictures. On the ESP32 boards
 Motion JPEG alone: they have neither the room nor the speed for the
 others.
@@ -63,8 +64,19 @@ without a pointer; F, Esc or a click goes back to the window.
 
 The keys work over the whole screen too.
 
-**Project > Open...** plays another film; **About** says what Movie
-is; **Quit**, or the close gadget, ends it.
+**Project > Open...** plays another film. **Frame rate**, ticked, shows
+over the picture's top left how many pictures were shown in the last
+second of playing, beside the film's own rate - "23.9 / 24.0 fps" - and
+how many were left out for coming too late, when any were. Movie keeps
+the tick in `ENV:Movie.prefs` and `ENVARC:Movie.prefs` (`FRAMERATE=YES`),
+and starts with it as it was left. **Film
+information...** says what the film is: its file, title and container,
+its length, its pictures - codec, size and rate, whether the machine's
+video decoder or the processor decodes them and by which codec module,
+the colours of the one shown, and whether the display's video layer
+shows them or the processor puts them into the window - its sound, and
+how many sound and subtitle tracks it has. **About** says what Movie is; **Quit**, or the close
+gadget, ends it.
 
 ## Sound and subtitles
 
@@ -116,6 +128,16 @@ out for it - the processor puts each picture into the window itself.
 - On the VisionFive 2 a 1080p film takes its video decoder about 7 ms a
   picture. On the layer that is all it costs; put into the window by the
   processor at another size it takes about as long again.
+- The pictures are decoded three frames ahead of the one shown, on a
+  process of their own. A key frame that takes the decoder longer than a
+  frame's time - up to 40 ms for 4K AV1 on an AMD graphics device, where
+  a 60-frame film has 16 ms a frame - is made up for by the frames around
+  it, which take a few. It costs the decoder three frames more: about
+  37 MiB for a 4K film.
+- The film keeps time by its sound: audio.device's position, which an HD
+  Audio output moves in steps of 10.67 ms. Between two steps the time is
+  carried on by the machine's clock, so a 60-frame film's pictures come
+  every 16.7 ms rather than by the steps.
 - While a window is being dragged the film stays where it was, and
   follows once the window is let go.
 - A film read from the network plays as one from a disk does, as fast as

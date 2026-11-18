@@ -1,4 +1,4 @@
-## version $VER: programs/Movie.catalog 1.1 (30.10.2026)
+## version $VER: programs/Movie.catalog 1.2 (17.11.2026)
 ## language deutsch
 ## codeset 106
 ; Movie's strings in German.
@@ -22,6 +22,14 @@ MSG_MENU_SUBTITLES_OFF
 Aus
 MSG_MENU_TRACK
 Spur
+MSG_MENU_FRAME_RATE
+Bildrate
+MSG_MENU_INFO
+Filminformationen...
+MSG_FRAME_RATE
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED
+%u.%u / %u.%u fps, %u verworfen
 MSG_ASK_OPEN
 Einen Film abspielen
 MSG_ABOUT_TITLE
@@ -34,6 +42,48 @@ MSG_CANNOT_PLAY_TITLE
 Movie
 MSG_CANNOT_PLAY
 %s\nkann nicht abgespielt werden:\n%s
+MSG_INFO_TITLE
+Filminformationen
+MSG_INFO_FILE
+Datei
+MSG_INFO_NAMED
+Titel
+MSG_INFO_CONTAINER
+Container
+MSG_INFO_LENGTH
+Länge
+MSG_INFO_PICTURES
+Bilder
+MSG_INFO_COLOURS
+Farben
+MSG_INFO_BITS
+%u Bit
+MSG_INFO_LIMITED
+begrenzter Bereich
+MSG_INFO_FULL
+voller Bereich
+MSG_INFO_SHOWN
+Anzeige
+MSG_INFO_ON_LAYER
+auf der Video-Ebene des Bildschirms
+MSG_INFO_BY_GRAPHICS
+von graphics.library gezeichnet
+MSG_INFO_DECODED
+Dekodiert
+MSG_INFO_BY_CHIP
+vom Videodecoder
+MSG_INFO_BY_PROCESSOR
+vom Prozessor
+MSG_INFO_SOUND
+Ton
+MSG_INFO_NONE
+keiner
+MSG_INFO_CHANNELS
+%u Kanäle
+MSG_INFO_TRACKS
+Spuren
+MSG_INFO_TRACK_COUNTS
+%u Ton, %u Untertitel
 MSG_VOLUME_HINT
 Lautstärke
 MSG_NOLIBRARY

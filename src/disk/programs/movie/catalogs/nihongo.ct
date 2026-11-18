@@ -1,4 +1,4 @@
-## version $VER: programs/Movie.catalog 1.0 (12.11.2026)
+## version $VER: programs/Movie.catalog 1.1 (17.11.2026)
 ## language nihongo
 ## codeset 106
 ; Movie's strings in Japanese. A draft: it waits for a reader of
@@ -23,6 +23,14 @@ MSG_MENU_SUBTITLES_OFF
 オフ
 MSG_MENU_TRACK
 トラック
+MSG_MENU_FRAME_RATE
+フレームレート
+MSG_MENU_INFO
+映像の情報...
+MSG_FRAME_RATE
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED
+%u.%u / %u.%u fps、%u 枚落とした
 MSG_ASK_OPEN
 動画を再生
 MSG_ABOUT_TITLE
@@ -35,6 +43,48 @@ MSG_CANNOT_PLAY_TITLE
 Movie
 MSG_CANNOT_PLAY
 %s\nを再生できません:\n%s
+MSG_INFO_TITLE
+映像の情報
+MSG_INFO_FILE
+ファイル
+MSG_INFO_NAMED
+タイトル
+MSG_INFO_CONTAINER
+コンテナ
+MSG_INFO_LENGTH
+長さ
+MSG_INFO_PICTURES
+映像
+MSG_INFO_COLOURS
+色
+MSG_INFO_BITS
+%u ビット
+MSG_INFO_LIMITED
+リミテッドレンジ
+MSG_INFO_FULL
+フルレンジ
+MSG_INFO_SHOWN
+表示
+MSG_INFO_ON_LAYER
+画面のビデオレイヤー
+MSG_INFO_BY_GRAPHICS
+graphics.library で描画
+MSG_INFO_DECODED
+デコード
+MSG_INFO_BY_CHIP
+ビデオデコーダー
+MSG_INFO_BY_PROCESSOR
+プロセッサー
+MSG_INFO_SOUND
+音声
+MSG_INFO_NONE
+なし
+MSG_INFO_CHANNELS
+%u チャンネル
+MSG_INFO_TRACKS
+トラック
+MSG_INFO_TRACK_COUNTS
+音声 %u、字幕 %u
 MSG_VOLUME_HINT
 音量
 MSG_NOLIBRARY

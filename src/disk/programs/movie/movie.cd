@@ -26,6 +26,17 @@ Off
 ; A track that has neither a name nor a language: "Track 3".
 MSG_MENU_TRACK (//)
 Track
+MSG_MENU_FRAME_RATE (//)
+Frame rate
+MSG_MENU_INFO (//)
+Film information...
+;
+; Over the picture: the pictures shown in the last second and the film's
+; own rate, each in whole and tenths; then how many came too late.
+MSG_FRAME_RATE (//)
+%u.%u / %u.%u fps
+MSG_FRAME_RATE_DROPPED (//)
+%u.%u / %u.%u fps, %u dropped
 ;
 ; The requesters.
 MSG_ASK_OPEN (//)
@@ -40,6 +51,50 @@ MSG_CANNOT_PLAY_TITLE (//)
 Movie
 MSG_CANNOT_PLAY (//)
 %s\ncannot be played:\n%s
+;
+; Film information: each line a label, a colon, and what it says.
+MSG_INFO_TITLE (//)
+Film information
+MSG_INFO_FILE (//)
+File
+MSG_INFO_NAMED (//)
+Title
+MSG_INFO_CONTAINER (//)
+Container
+MSG_INFO_LENGTH (//)
+Length
+MSG_INFO_PICTURES (//)
+Pictures
+MSG_INFO_COLOURS (//)
+Colours
+MSG_INFO_BITS (//)
+%u bits
+MSG_INFO_LIMITED (//)
+limited range
+MSG_INFO_FULL (//)
+full range
+MSG_INFO_SHOWN (//)
+Shown
+MSG_INFO_ON_LAYER (//)
+on the display's video layer
+MSG_INFO_BY_GRAPHICS (//)
+drawn by graphics.library
+MSG_INFO_DECODED (//)
+Decoded
+MSG_INFO_BY_CHIP (//)
+by the video decoder
+MSG_INFO_BY_PROCESSOR (//)
+by the processor
+MSG_INFO_SOUND (//)
+Sound
+MSG_INFO_NONE (//)
+none
+MSG_INFO_CHANNELS (//)
+%u channels
+MSG_INFO_TRACKS (//)
+Tracks
+MSG_INFO_TRACK_COUNTS (//)
+%u sound, %u subtitles
 ;
 ; The window.
 MSG_VOLUME_HINT (//)
