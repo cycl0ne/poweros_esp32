@@ -10,7 +10,9 @@
 //! and the PEM files in `ENVARC:Sys/net/certificates/` - which the base
 //! reads once and shares between every opener - at the time now in UTC,
 //! the clock's local time turned by the zone utility.library knows. The
-//! hashes, keys, signatures and AES-GCM are crypto.library's.
+//! hashes, keys, signatures, AES-GCM and ChaCha20-Poly1305 are
+//! crypto.library's. ChaCha20-Poly1305 is offered first where
+//! crypto.library's AES is software (`protocol/schedule.zig`).
 //!
 //! The jump table is tls_lvo.zig, the ROM tag, init and expunge
 //! tls_init.zig, the base tls_base.zig. Each call is a file in

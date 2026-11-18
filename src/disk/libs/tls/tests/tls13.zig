@@ -300,3 +300,90 @@ test "TLS 1.2's records: AES-GCM with the explicit nonce and the sequence in the
     try testing.expect(record.open12(cb, &reader, wrong[0..length]) == null);
     _ = &nonce;
 }
+
+test "ChaCha20-Poly1305's records: TLS 1.3's and TLS 1.2's (RFC 7905), as std has them, and a changed byte refused" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const cb = rig.cb;
+    const Std = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
+    const content = "a record's worth of application data, sealed with ChaCha20-Poly1305";
+    var keys: schedule.TrafficKeys = .{ .key_length = 32, .sequence = 0x0102_0304_0506_0708, .chacha = true };
+    for (&keys.key, 0..) |*byte, index| byte.* = @intCast(0x40 + index);
+    for (&keys.iv, 0..) |*byte, index| byte.* = @intCast(0xa0 + index);
+    // Either way the nonce is the IV with the sequence number over its
+    // last eight bytes.
+    var nonce = keys.iv;
+    for (0..8) |index| nonce[4 + index] ^= @intCast(index + 1);
+
+    // TLS 1.3: type 23 outside, the real type inside, the header the
+    // AEAD's header.
+    var sealed: [128]u8 = undefined;
+    var writer = keys;
+    const length = record.seal(cb, &writer, record.HANDSHAKE, content, &sealed);
+    try testing.expectEqual(@as(usize, 5 + content.len + 1 + 16), length);
+    var inner: [content.len + 1]u8 = content.* ++ [_]u8{record.HANDSHAKE};
+    var expected: [content.len + 1]u8 = undefined;
+    var tag: [16]u8 = undefined;
+    Std.encrypt(&expected, &tag, &inner, sealed[0..5], nonce, keys.key);
+    try testing.expectEqualSlices(u8, &expected, sealed[5..][0 .. content.len + 1]);
+    try testing.expectEqualSlices(u8, &tag, sealed[5 + content.len + 1 ..][0..16]);
+    var reader = keys;
+    var copy = sealed;
+    const opened = record.open(cb, &reader, copy[0..length]) orelse return error.NotOpened;
+    try testing.expectEqual(record.HANDSHAKE, opened.content_type);
+    try testing.expectEqualSlices(u8, content, opened.content);
+    copy = sealed;
+    copy[9] ^= 1;
+    reader = keys;
+    try testing.expect(record.open(cb, &reader, copy[0..length]) == null);
+
+    // TLS 1.2: the type shows, nothing of the nonce is sent, and the
+    // header is the sequence number, the type, the version and the
+    // plain length.
+    writer = keys;
+    const length12 = record.seal12(cb, &writer, record.APPLICATION_DATA, content, &sealed);
+    try testing.expectEqual(@as(usize, 5 + content.len + 16), length12);
+    const aad = [_]u8{ 1, 2, 3, 4, 5, 6, 7, 8, 23, 3, 3, 0, content.len };
+    var expected12: [content.len]u8 = undefined;
+    Std.encrypt(&expected12, &tag, content, &aad, nonce, keys.key);
+    try testing.expectEqualSlices(u8, &expected12, sealed[5..][0..content.len]);
+    try testing.expectEqualSlices(u8, &tag, sealed[5 + content.len ..][0..16]);
+    reader = keys;
+    copy = sealed;
+    const opened12 = record.open12(cb, &reader, copy[0..length12]) orelse return error.NotOpened;
+    try testing.expectEqualSlices(u8, content, opened12.content);
+    try testing.expectEqual(keys.sequence + 1, reader.sequence);
+    copy = sealed;
+    copy[0] = record.HANDSHAKE;
+    reader = keys;
+    try testing.expect(record.open12(cb, &reader, copy[0..length12]) == null);
+    _ = &inner;
+}
+
+test "the suites offered: all nine, TLS 1.3's first, ChaCha20-Poly1305 first only where AES is software" {
+    var rig = try Rig.init();
+    defer rig.deinit() catch unreachable;
+    const base: *@import("../../crypto/crypto_base.zig").CryptoBase = @ptrCast(@alignCast(rig.cb));
+    for ([_]bool{ true, false }) |core_aes| {
+        base.core_aes = core_aes;
+        const offer = schedule.offer(rig.cb);
+        const ids = offer.slice();
+        try testing.expectEqual(@as(usize, 9), ids.len);
+        const expected: [9]u16 = if (core_aes)
+            .{ 0x1301, 0x1302, 0x1303, 0xC02B, 0xC02F, 0xC02C, 0xC030, 0xCCA9, 0xCCA8 }
+        else
+            .{ 0x1303, 0x1301, 0x1302, 0xCCA9, 0xCCA8, 0xC02B, 0xC02F, 0xC02C, 0xC030 };
+        for (expected, ids) |id, suite| try testing.expectEqual(id, suite.id);
+        try testing.expect(offer.find(0xCCA8).?.chacha);
+        try testing.expect(offer.find(0x009C) == null);
+    }
+    // A crypto.library before 2.13 has no ChaCha20-Poly1305: none of it
+    // is offered, and a server that picks it anyway is refused.
+    const revision = rig.cb.lib().revision;
+    rig.cb.lib().revision = 12;
+    defer rig.cb.lib().revision = revision;
+    const old = schedule.offer(rig.cb);
+    try testing.expectEqual(@as(usize, 6), old.slice().len);
+    for (old.slice()) |suite| try testing.expect(!suite.chacha);
+    try testing.expect(old.find(0x1303) == null);
+}

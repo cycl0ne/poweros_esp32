@@ -45,8 +45,8 @@ pub const TLS_GetAlert = TLS_Dummy + 0x05;
 /// GetSessionAttr only: the protocol's version, 0x0304 for TLS 1.3 or
 /// 0x0303 for TLS 1.2.
 pub const TLS_Version = TLS_Dummy + 0x10;
-/// GetSessionAttr only: the cipher suite's number (0x1301, 0x1302; TLS
-/// 1.2's 0xC02B, 0xC02F, 0xC02C, 0xC030).
+/// GetSessionAttr only: the cipher suite's number (0x1301, 0x1302,
+/// 0x1303; TLS 1.2's 0xC02B, 0xC02F, 0xC02C, 0xC030, 0xCCA9, 0xCCA8).
 pub const TLS_Suite = TLS_Dummy + 0x11;
 /// GetSessionAttr only: what the certificate check said, a TLSV_*.
 pub const TLS_Verdict = TLS_Dummy + 0x12;

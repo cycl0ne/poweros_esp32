@@ -11,7 +11,8 @@
 //!               PRF(pre-master, "master secret", client | server random)
 //!   key block = PRF(master, "key expansion", server | client random):
 //!               the client's key, the server's, then each one's four
-//!               bytes of nonce (AES-GCM, RFC 5288)
+//!               bytes of nonce (AES-GCM, RFC 5288) or twelve bytes of
+//!               IV (ChaCha20-Poly1305, RFC 7905)
 //!   Finished  = PRF(master, "client finished" / "server finished",
 //!               the handshake's hash), 12 bytes
 //!
@@ -55,18 +56,20 @@ pub fn prf(cb: *CryptoBase, hash: u32, secret: []const u8, label: []const u8, se
 }
 
 /// The two directions' keys from the master secret: the client's to
-/// write with, the server's to read with, each with its four bytes of
-/// nonce in the IV's first four.
+/// write with, the server's to read with, each with its IV - AES-GCM's
+/// four bytes of nonce in the IV's first four, ChaCha20-Poly1305's
+/// twelve.
 pub fn keys(cb: *CryptoBase, suite: schedule.Suite, master: []const u8, client_random: []const u8, server_random: []const u8, client: *schedule.TrafficKeys, server: *schedule.TrafficKeys) void {
-    var block: [2 * 32 + 2 * 4]u8 = undefined;
+    var block: [2 * 32 + 2 * 12]u8 = undefined;
     const key_length = suite.key_length;
-    const used = block[0 .. 2 * key_length + 8];
+    const iv_length: usize = if (suite.chacha) 12 else 4;
+    const used = block[0 .. 2 * key_length + 2 * iv_length];
     prf(cb, suite.hash, master, "key expansion", &.{ server_random, client_random }, used);
-    client.* = .{ .key_length = key_length };
-    server.* = .{ .key_length = key_length };
+    client.* = .{ .key_length = key_length, .chacha = suite.chacha };
+    server.* = .{ .key_length = key_length, .chacha = suite.chacha };
     @memcpy(client.key[0..key_length], used[0..key_length]);
     @memcpy(server.key[0..key_length], used[key_length .. 2 * key_length]);
-    @memcpy(client.iv[0..4], used[2 * key_length ..][0..4]);
-    @memcpy(server.iv[0..4], used[2 * key_length + 4 ..][0..4]);
+    @memcpy(client.iv[0..iv_length], used[2 * key_length ..][0..iv_length]);
+    @memcpy(server.iv[0..iv_length], used[2 * key_length + iv_length ..][0..iv_length]);
     schedule.wipe(&block);
 }

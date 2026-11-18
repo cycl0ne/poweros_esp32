@@ -48,11 +48,15 @@ const client_module = @import("../protocol/client.zig");
 /// failed or closed; TLSERR_NOMEM, TLSERR_CRYPTO.
 ///
 /// BEHAVIOR:
-/// TLS 1.3 with AES-128-GCM or AES-256-GCM, an X25519 key share (P-256
-/// or P-384 when the server asks), and ECDSA, RSA-PSS or Ed25519 for
-/// the server's signature. A server that speaks nothing newer gets TLS
-/// 1.2: ECDHE on the same curves with AES-GCM, signed with ECDSA or RSA,
-/// the extended master secret when it agrees, and no renegotiation. A
+/// TLS 1.3 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305, an X25519
+/// key share (P-256 or P-384 when the server asks), and ECDSA, RSA-PSS
+/// or Ed25519 for the server's signature. A server that speaks nothing
+/// newer gets TLS 1.2: ECDHE on the same curves with AES-GCM or
+/// ChaCha20-Poly1305, signed with ECDSA or RSA,
+/// the extended master secret when it agrees, and no renegotiation. The
+/// offer puts ChaCha20-Poly1305 first where crypto.library's AES is
+/// software (its CryptoEngines), AES-GCM first where it is hardware; a
+/// crypto.library before 2.13 has no ChaCha20-Poly1305 to offer. A
 /// server that could have spoken 1.3 and answers 1.2 is refused - the
 /// version was taken away on the way. The certificates are checked against
 /// `SYS:Certificates/Roots` and the PEM files in

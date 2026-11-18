@@ -5,11 +5,12 @@
 //! Before the keys are agreed a record's bytes are the plain handshake
 //! message. After, every record is protected - TLS 1.2's form at the end
 //! of this file, and TLS 1.3's: type 23 outside, and
-//! inside, AES-GCM over the content, its real type and any zero padding;
-//! the record's five header bytes are the GCM header, and the nonce is
-//! the IV with the record's sequence number laid over its last eight
-//! bytes. Each direction counts its own records from zero, and from zero
-//! again with every new key.
+//! inside, the suite's AEAD - AES-GCM or ChaCha20-Poly1305, the same
+//! message to crypto.library and the same 16-byte tag - over the content,
+//! its real type and any zero padding; the record's five header bytes
+//! are the AEAD's header, and the nonce is the IV with the record's
+//! sequence number laid over its last eight bytes. Each direction counts
+//! its own records from zero, and from zero again with every new key.
 
 const sdk = @import("sdk");
 const crypto = sdk.crypto;
@@ -58,6 +59,23 @@ pub fn plain(content_type: u8, first: bool, content: []const u8, out: []u8) usiz
     return header_length + content.len;
 }
 
+/// The AEAD's tag: AES-GCM's and Poly1305's are both 16 bytes.
+const tag_length = crypto.GCM_TAG;
+comptime {
+    if (crypto.GCM_TAG != crypto.POLY1305_TAG) @compileError("the record layer takes both AEADs' tags to be the same length");
+}
+
+/// The message sealed with the keys' AEAD.
+fn sealWith(cb: *CryptoBase, keys: *const TrafficKeys, message: *const crypto.AeadMessage) void {
+    _ = if (keys.chacha) cb.SealChaChaPoly(message) else cb.SealGcm(message);
+}
+
+/// The message opened with the keys' AEAD: whether its tag matched.
+fn openWith(cb: *CryptoBase, keys: *const TrafficKeys, message: *const crypto.AeadMessage) bool {
+    const result = if (keys.chacha) cb.OpenChaChaPoly(message) else cb.OpenGcm(message);
+    return result == crypto.CRYPTOERR_OK;
+}
+
 fn nonceOf(keys: *const TrafficKeys) [12]u8 {
     var nonce = keys.iv;
     for (0..8) |index| nonce[4 + index] ^= @truncate(keys.sequence >> @intCast(56 - 8 * index));
@@ -69,7 +87,7 @@ fn nonceOf(keys: *const TrafficKeys) [12]u8 {
 /// record's length.
 pub fn seal(cb: *CryptoBase, keys: *TrafficKeys, content_type: u8, content: []const u8, out: []u8) usize {
     const inner_length = content.len + 1;
-    const total = inner_length + crypto.GCM_TAG;
+    const total = inner_length + tag_length;
     out[0] = APPLICATION_DATA;
     out[1] = 3;
     out[2] = 3;
@@ -79,7 +97,7 @@ pub fn seal(cb: *CryptoBase, keys: *TrafficKeys, content_type: u8, content: []co
     @memcpy(body[0..content.len], content);
     body[content.len] = content_type;
     const nonce = nonceOf(keys);
-    const message: crypto.GcmMessage = .{
+    const message: crypto.AeadMessage = .{
         .key = &keys.key,
         .key_length = keys.key_length,
         .nonce = &nonce,
@@ -89,9 +107,9 @@ pub fn seal(cb: *CryptoBase, keys: *TrafficKeys, content_type: u8, content: []co
         .input = body.ptr,
         .output = body.ptr,
         .length = @intCast(inner_length),
-        .tag = body[inner_length..][0..crypto.GCM_TAG],
+        .tag = body[inner_length..][0..tag_length],
     };
-    _ = cb.SealGcm(&message);
+    sealWith(cb, keys, &message);
     keys.sequence += 1;
     return header_length + total;
 }
@@ -105,12 +123,12 @@ pub const Opened = struct {
 /// A protected record (header and all) opened in place; null when its
 /// tag does not match or it holds no type - which ends the connection.
 pub fn open(cb: *CryptoBase, keys: *TrafficKeys, record: []u8) ?Opened {
-    if (record.len < header_length + crypto.GCM_TAG + 1) return null;
+    if (record.len < header_length + tag_length + 1) return null;
     if (record[0] != APPLICATION_DATA) return null;
     const body = record[header_length..];
-    const inner_length = body.len - crypto.GCM_TAG;
+    const inner_length = body.len - tag_length;
     const nonce = nonceOf(keys);
-    const message: crypto.GcmMessage = .{
+    const message: crypto.AeadMessage = .{
         .key = &keys.key,
         .key_length = keys.key_length,
         .nonce = &nonce,
@@ -120,9 +138,9 @@ pub fn open(cb: *CryptoBase, keys: *TrafficKeys, record: []u8) ?Opened {
         .input = body.ptr,
         .output = body.ptr,
         .length = @intCast(inner_length),
-        .tag = body[inner_length..][0..crypto.GCM_TAG],
+        .tag = body[inner_length..][0..tag_length],
     };
-    if (cb.OpenGcm(&message) != crypto.CRYPTOERR_OK) return null;
+    if (!openWith(cb, keys, &message)) return null;
     keys.sequence += 1;
     // The real type is the last byte that is not padding.
     var end = inner_length;
@@ -137,6 +155,9 @@ pub fn open(cb: *CryptoBase, keys: *TrafficKeys, record: []u8) ?Opened {
 // key's four bytes of salt and eight explicit ones sent at the front of
 // the record (the sequence number), and the header GCM authenticates is
 // the sequence number, the type, the version and the plain length.
+// ChaCha20-Poly1305 as RFC 7905 has it: the same header, and the nonce
+// made as TLS 1.3 makes it, from a 12-byte IV and the sequence number,
+// so nothing of it is sent.
 
 fn header12(keys: *const TrafficKeys, content_type: u8, length: usize) [13]u8 {
     var aad: [13]u8 = undefined;
@@ -151,61 +172,79 @@ fn header12(keys: *const TrafficKeys, content_type: u8, length: usize) [13]u8 {
 
 /// `content` of `content_type` protected into a TLS 1.2 record in `out`;
 /// the record's length.
+/// The bytes of nonce a TLS 1.2 record carries before its ciphertext:
+/// AES-GCM's eight, ChaCha20-Poly1305's none.
+fn explicitNonce(keys: *const TrafficKeys) usize {
+    return if (keys.chacha) 0 else 8;
+}
+
+/// A TLS 1.2 record's nonce: AES-GCM's salt and the explicit bytes,
+/// ChaCha20-Poly1305's IV and sequence number.
+fn nonce12(keys: *const TrafficKeys, explicit: []const u8) [12]u8 {
+    if (keys.chacha) return nonceOf(keys);
+    var nonce: [12]u8 = undefined;
+    @memcpy(nonce[0..4], keys.iv[0..4]);
+    @memcpy(nonce[4..12], explicit[0..8]);
+    return nonce;
+}
+
+/// `content` of `content_type` protected into a TLS 1.2 record in `out`;
+/// the record's length.
 pub fn seal12(cb: *CryptoBase, keys: *TrafficKeys, content_type: u8, content: []const u8, out: []u8) usize {
-    const total = 8 + content.len + crypto.GCM_TAG;
+    const explicit = explicitNonce(keys);
+    const total = explicit + content.len + tag_length;
     out[0] = content_type;
     out[1] = 3;
     out[2] = 3;
     out[3] = @truncate(total >> 8);
     out[4] = @truncate(total);
     const body = out[header_length..];
-    // The explicit nonce: the sequence number, which never repeats.
-    for (0..8) |index| body[index] = @truncate(keys.sequence >> @intCast(56 - 8 * index));
-    var nonce: [12]u8 = undefined;
-    @memcpy(nonce[0..4], keys.iv[0..4]);
-    @memcpy(nonce[4..12], body[0..8]);
+    // AES-GCM's explicit nonce: the sequence number, which never repeats.
+    for (0..explicit) |index| body[index] = @truncate(keys.sequence >> @intCast(56 - 8 * index));
+    const nonce = nonce12(keys, body[0..explicit]);
     const aad = header12(keys, content_type, content.len);
-    @memcpy(body[8..][0..content.len], content);
-    const message: crypto.GcmMessage = .{
+    const data = body[explicit..];
+    @memcpy(data[0..content.len], content);
+    const message: crypto.AeadMessage = .{
         .key = &keys.key,
         .key_length = keys.key_length,
         .nonce = &nonce,
         .nonce_length = 12,
         .aad = &aad,
         .aad_length = aad.len,
-        .input = body[8..].ptr,
-        .output = body[8..].ptr,
+        .input = data.ptr,
+        .output = data.ptr,
         .length = @intCast(content.len),
-        .tag = body[8 + content.len ..][0..crypto.GCM_TAG],
+        .tag = data[content.len..][0..tag_length],
     };
-    _ = cb.SealGcm(&message);
+    sealWith(cb, keys, &message);
     keys.sequence += 1;
     return header_length + total;
 }
 
 /// A TLS 1.2 record opened in place; null when its tag does not match.
 pub fn open12(cb: *CryptoBase, keys: *TrafficKeys, received: []u8) ?Opened {
-    if (received.len < header_length + 8 + crypto.GCM_TAG) return null;
+    const explicit = explicitNonce(keys);
+    if (received.len < header_length + explicit + tag_length) return null;
     const content_type = received[0];
     const body = received[header_length..];
-    const length = body.len - 8 - crypto.GCM_TAG;
-    var nonce: [12]u8 = undefined;
-    @memcpy(nonce[0..4], keys.iv[0..4]);
-    @memcpy(nonce[4..12], body[0..8]);
+    const length = body.len - explicit - tag_length;
+    const nonce = nonce12(keys, body[0..explicit]);
     const aad = header12(keys, content_type, length);
-    const message: crypto.GcmMessage = .{
+    const data = body[explicit..];
+    const message: crypto.AeadMessage = .{
         .key = &keys.key,
         .key_length = keys.key_length,
         .nonce = &nonce,
         .nonce_length = 12,
         .aad = &aad,
         .aad_length = aad.len,
-        .input = body[8..].ptr,
-        .output = body[8..].ptr,
+        .input = data.ptr,
+        .output = data.ptr,
         .length = @intCast(length),
-        .tag = body[8 + length ..][0..crypto.GCM_TAG],
+        .tag = data[length..][0..tag_length],
     };
-    if (cb.OpenGcm(&message) != crypto.CRYPTOERR_OK) return null;
+    if (!openWith(cb, keys, &message)) return null;
     keys.sequence += 1;
-    return .{ .content_type = content_type, .content = body[8..][0..length] };
+    return .{ .content_type = content_type, .content = data[0..length] };
 }

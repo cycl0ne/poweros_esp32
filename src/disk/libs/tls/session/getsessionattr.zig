@@ -21,8 +21,10 @@ const _session = @import("_session.zig");
 /// - `attr`:
 ///   - TLS_Version: 0x0304 for TLS 1.3, 0x0303 for TLS 1.2.
 ///   - TLS_Suite: the cipher suite's number - 0x1301 AES-128-GCM-SHA256,
-///     0x1302 AES-256-GCM-SHA384; TLS 1.2's 0xC02B, 0xC02F (ECDHE with
-///     ECDSA or RSA, AES-128-GCM), 0xC02C, 0xC030 (AES-256-GCM).
+///     0x1302 AES-256-GCM-SHA384, 0x1303 CHACHA20-POLY1305-SHA256 (since
+///     1.7); TLS 1.2's 0xC02B, 0xC02F (ECDHE with ECDSA or RSA,
+///     AES-128-GCM), 0xC02C, 0xC030 (AES-256-GCM), 0xCCA9, 0xCCA8
+///     (ChaCha20-Poly1305, since 1.7).
 ///   - TLS_Verdict: the certificate check's TLSV_*.
 ///   - TLS_Alert: the alert the server ended with, 0 for none.
 ///   - TLS_Error: the session's last TLSERR_*.

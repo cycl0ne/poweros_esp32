@@ -201,6 +201,9 @@ pub const Client = struct {
     /// TLS13 or TLS12, once the server has said.
     version: u16 = TLS13,
     suite: schedule.Suite = schedule.TLS_AES_128_GCM_SHA256,
+    /// The suites the ClientHello offers, in its order: the machine's
+    /// (`schedule.offer`).
+    offer: schedule.Offer = .{},
 
     random: [32]u8 = @splat(0),
     server_random: [32]u8 = @splat(0),
@@ -255,6 +258,7 @@ pub const Client = struct {
         client.config = config;
         client.version = TLS13;
         client.suite = schedule.TLS_AES_128_GCM_SHA256;
+        client.offer = schedule.offer(cb);
         client.session_id_length = 32;
         client.group = GROUP_X25519;
         client.transcript = .{};
@@ -299,8 +303,9 @@ pub const Client = struct {
         w.bytes(&client.random);
         w.number(1, client.session_id_length);
         w.bytes(client.session_id[0..client.session_id_length]);
-        w.number(2, 2 * schedule.offered.len);
-        for (schedule.offered) |suite| w.number(2, suite.id);
+        const suites = client.offer.slice();
+        w.number(2, @intCast(2 * suites.len));
+        for (suites) |suite| w.number(2, suite.id);
         w.number(1, 1);
         w.number(1, 0);
         const extensions = w.open(2);
@@ -593,7 +598,7 @@ pub const Client = struct {
         // A TLS 1.2 server may send no extensions at all.
         const extensions = if (reader.atEnd()) &[_]u8{} else reader.vector(2) orelse return client.fail(.decode, ALERT_DECODE_ERROR, output);
         if (version != TLS12 or compression != 0) return client.fail(.unsupported, ALERT_PROTOCOL_VERSION, output);
-        const suite = schedule.suiteOf(suite_id) orelse return client.fail(.unsupported, ALERT_ILLEGAL_PARAMETER, output);
+        const suite = client.offer.find(suite_id) orelse return client.fail(.unsupported, ALERT_ILLEGAL_PARAMETER, output);
 
         var chosen_version: u16 = TLS12;
         var share_group: u16 = 0;

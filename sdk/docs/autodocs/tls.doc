@@ -66,8 +66,10 @@ tls.library/WriteSession
 	- `attr`:
 	  - TLS_Version: 0x0304 for TLS 1.3, 0x0303 for TLS 1.2.
 	  - TLS_Suite: the cipher suite's number - 0x1301 AES-128-GCM-SHA256,
-	    0x1302 AES-256-GCM-SHA384; TLS 1.2's 0xC02B, 0xC02F (ECDHE with
-	    ECDSA or RSA, AES-128-GCM), 0xC02C, 0xC030 (AES-256-GCM).
+	    0x1302 AES-256-GCM-SHA384, 0x1303 CHACHA20-POLY1305-SHA256 (since
+	    1.7); TLS 1.2's 0xC02B, 0xC02F (ECDHE with ECDSA or RSA,
+	    AES-128-GCM), 0xC02C, 0xC030 (AES-256-GCM), 0xCCA9, 0xCCA8
+	    (ChaCha20-Poly1305, since 1.7).
 	  - TLS_Verdict: the certificate check's TLSV_*.
 	  - TLS_Alert: the alert the server ended with, 0 for none.
 	  - TLS_Error: the session's last TLSERR_*.
@@ -139,11 +141,15 @@ tls.library/WriteSession
 	failed or closed; TLSERR_NOMEM, TLSERR_CRYPTO.
 
    BEHAVIOR
-	TLS 1.3 with AES-128-GCM or AES-256-GCM, an X25519 key share (P-256
-	or P-384 when the server asks), and ECDSA, RSA-PSS or Ed25519 for
-	the server's signature. A server that speaks nothing newer gets TLS
-	1.2: ECDHE on the same curves with AES-GCM, signed with ECDSA or RSA,
-	the extended master secret when it agrees, and no renegotiation. A
+	TLS 1.3 with AES-128-GCM, AES-256-GCM or ChaCha20-Poly1305, an X25519
+	key share (P-256 or P-384 when the server asks), and ECDSA, RSA-PSS
+	or Ed25519 for the server's signature. A server that speaks nothing
+	newer gets TLS 1.2: ECDHE on the same curves with AES-GCM or
+	ChaCha20-Poly1305, signed with ECDSA or RSA,
+	the extended master secret when it agrees, and no renegotiation. The
+	offer puts ChaCha20-Poly1305 first where crypto.library's AES is
+	software (its CryptoEngines), AES-GCM first where it is hardware; a
+	crypto.library before 2.13 has no ChaCha20-Poly1305 to offer. A
 	server that could have spoken 1.3 and answers 1.2 is refused - the
 	version was taken away on the way. The certificates are checked against
 	`SYS:Certificates/Roots` and the PEM files in
