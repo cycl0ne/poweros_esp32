@@ -563,12 +563,12 @@ pub fn releaseSemaphores(base: *ExecBase, task: *Task) void {
     if (released.count != 0) {
         const first = released.first[0].?;
         const named = first.link.name;
-        exec.kprintf("exec: task \"%.32s\" #%u ended holding %u semaphore%s - released: %08x%s%.24s%s%s\n", .{
+        exec.kprintf("exec: task \"%.32s\" #%u ended holding %u semaphore%s - released: %08zx%s%.24s%s%s\n", .{
             task.name().ptr,
             task.id,
             released.count,
             plural(released.count),
-            @as(u32, @truncate(@intFromPtr(first))),
+            @intFromPtr(first),
             if (named != null) " \"" else "",
             named orelse "",
             if (named != null) "\"" else "",

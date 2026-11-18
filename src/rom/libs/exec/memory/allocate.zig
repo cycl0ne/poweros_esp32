@@ -74,7 +74,7 @@ const Deallocate = @import("deallocate.zig").Deallocate;
 /// ```
 pub fn Allocate(_: *ExecBase, mh: *MemHeader, byte_size: usize) ?*anyopaque {
     if (byte_size == 0 or byte_size > mh.free) return null;
-    const size: u32 = @intCast(_memory.alignUp(byte_size, MEM_BLOCKSIZE));
+    const size = _memory.alignUp(byte_size, MEM_BLOCKSIZE);
 
     var link: *?*MemChunk = &mh.first;
     while (link.*) |chunk| : (link = &chunk.next) {

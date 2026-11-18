@@ -49,7 +49,7 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const Printf = dos.stdio.Printf;
 
 const NAME = "MemOwner";
-const VERSION_STRING = "\x00$VER: MemOwner 1.2 (16.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: MemOwner 1.3 (18.11.2026)\r\n";
 const TEMPLATE = "LEAK/S,WRONGSIZE/S,TWICE/S,OVERRUN/S,AFTERFREE/S,CRASH/S,ALERT/S,WAIT/S";
 const arg_leak = 0;
 const arg_wrong_size = 1;
@@ -126,12 +126,12 @@ fn blocks(sys: *ExecBase, dl: *DosBase) i32 {
 fn show(dl: *DosBase, what: [*:0]const u8, block: *anyopaque) void {
     const header = exec.MemBlock.of(block);
     const owner: [*:0]const u8 = if (header.owner == exec.MEMOWNER_SYSTEM) "system" else "task";
-    _ = Printf(dl, "0x%08x  %-18s %-6s %3u  %4u  %s\n", .{
-        @as(u32, @truncate(@intFromPtr(block))),
+    _ = Printf(dl, "0x%08zx  %-18s %-6s %3u  %4zd  %s\n", .{
+        @intFromPtr(block),
         what,
         owner,
         header.owner,
-        @as(u32, @intCast(header.bytes())),
+        header.bytes(),
         @as([*:0]const u8, if (header.private()) "yes" else "no"),
     });
 }
@@ -155,8 +155,8 @@ fn leak(sys: *ExecBase, dl: *DosBase) i32 {
         // The private one went as the task ended: its MemBlock is free
         // space's now, or another block's.
         const left = header.inUse() and header.owner == leaker_id;
-        _ = Printf(dl, "  0x%08x  %-20s %s\n", .{
-            @as(u32, @truncate(@intFromPtr(kept))),
+        _ = Printf(dl, "  0x%08zx  %-20s %s\n", .{
+            @intFromPtr(kept),
             what,
             @as([*:0]const u8, if (left) "left" else "freed as it ended"),
         });
@@ -194,7 +194,7 @@ fn misuse(sys: *ExecBase, dl: *DosBase, overrun: bool) i32 {
     sys.FreeMem(block, size);
     const at = after_free_size - 40;
     bytes[at] = 0x55;
-    _ = Printf(dl, "0x%08x written after its free: MemDebug CHECK finds it\n", .{@as(u32, @truncate(@intFromPtr(block) + at))});
+    _ = Printf(dl, "0x%08zx written after its free: MemDebug CHECK finds it\n", .{@intFromPtr(block) + at});
     return dos.RETURN_OK;
 }
 
@@ -264,11 +264,11 @@ fn crash(sys: *ExecBase, dl: *DosBase, exception: bool) i32 {
         .{},
     }) else null;
     const me = sys.FindTask(null).?;
-    _ = Printf(dl, "task %u holds the semaphore \"MemOwner\" at 0x%08x, %s, and 4096 private bytes at 0x%08x\n", .{
+    _ = Printf(dl, "task %u holds the semaphore \"MemOwner\" at 0x%08zx, %s, and 4096 private bytes at 0x%08zx\n", .{
         me.id,
-        @as(u32, @truncate(@intFromPtr(&held.semaphore))),
+        @intFromPtr(&held.semaphore),
         @as([*:0]const u8, if (window != null) "a window" else "no window (no screen)"),
-        @as(u32, @truncate(@intFromPtr(private))),
+        @intFromPtr(private),
     });
     _ = Printf(dl, "%s in two seconds: Software Failure - Kill ends the task (or s3> kill %u)\n", .{
         @as([*:0]const u8, if (exception) "a read from an address nothing answers" else "a dead-end alert"),
@@ -291,7 +291,7 @@ fn wait(sys: *ExecBase, dl: *DosBase) i32 {
         _ = dl.PutStr("no semaphore \"MemOwner\": MemOwner CRASH makes it\n");
         return dos.RETURN_WARN;
     };
-    _ = Printf(dl, "waiting for the semaphore \"MemOwner\" at 0x%08x\n", .{@as(u32, @truncate(@intFromPtr(semaphore)))});
+    _ = Printf(dl, "waiting for the semaphore \"MemOwner\" at 0x%08zx\n", .{@intFromPtr(semaphore)});
     _ = dl.Flush(dl.Output());
     sys.ObtainSemaphore(semaphore);
     _ = dl.PutStr("got it: its holder let it go, or ended\n");

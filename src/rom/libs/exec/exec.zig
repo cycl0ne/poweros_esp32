@@ -726,7 +726,7 @@ test {
 }
 
 var test_ram: [80 * 1024]u8 align(16) = undefined;
-var test_ram_free: u32 = 0;
+var test_ram_free: usize = 0;
 
 /// exec with 80 KiB of test RAM. It claims no attribute and sits at the
 /// lowest priority, so a region a test adds itself is always picked first.

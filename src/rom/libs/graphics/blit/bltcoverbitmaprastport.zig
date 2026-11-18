@@ -103,7 +103,7 @@ pub fn BltCoverBitMapRastPort(gb: *GraphicsBase, src: *const rtg.Surface, src_ar
     if (cover.alpha == 0) return;
     if (src.pixels == null) {
         dest.last_error = graphics.GERR_BAD_SIZE;
-        exec.kprintf(gb.sys_base, "blit: source surface 0x%x has no pixels\n", .{@as(u32, @truncate(@intFromPtr(src)))});
+        exec.kprintf(gb.sys_base, "blit: source surface 0x%zx has no pixels\n", .{@intFromPtr(src)});
         return;
     }
     const from = Rect.intersect(src_area.*, .{

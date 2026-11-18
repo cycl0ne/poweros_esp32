@@ -116,10 +116,10 @@ pub fn FreeMem(base: *ExecBase, memory_block: ?*anyopaque, byte_size: usize) voi
     };
     if (wall_damage) |offset| {
         base.mem_debug.walls +%= 1;
-        exec.kprintf("FreeMem: %08x written past its end at +%u (%u bytes asked), owner %u\n", .{
-            @as(u32, @truncate(@intFromPtr(block))),
-            @as(u32, @intCast(offset)),
-            @as(u32, @intCast(asked)),
+        exec.kprintf("FreeMem: %08zx written past its end at +%zd (%zd bytes asked), owner %u\n", .{
+            @intFromPtr(block),
+            offset,
+            asked,
             owner,
         });
         sys.AlertAt(sdk.exec.AN_MemWall, caller, "FreeMem: the block was written past its end");
@@ -130,14 +130,14 @@ pub fn FreeMem(base: *ExecBase, memory_block: ?*anyopaque, byte_size: usize) voi
     // block not in use has no owner or size to tell: what is there is free
     // space's, or whatever overwrote it.
     if (refused == sdk.exec.AN_FreeTwice) {
-        exec.kprintf("FreeMem: %08x refused - not in use: freed already, or its MemBlock written over\n", .{
-            @as(u32, @truncate(@intFromPtr(block))),
+        exec.kprintf("FreeMem: %08zx refused - not in use: freed already, or its MemBlock written over\n", .{
+            @intFromPtr(block),
         });
         sys.AlertAt(refused, caller, "FreeMem: a block that is not in use");
         return;
     }
-    exec.kprintf("FreeMem: %08x refused - %ld bytes freed, %ld held, owner %u\n", .{
-        @as(u32, @truncate(@intFromPtr(block))),
+    exec.kprintf("FreeMem: %08zx refused - %ld bytes freed, %ld held, owner %u\n", .{
+        @intFromPtr(block),
         @as(u64, byte_size),
         @as(u64, held),
         owner,

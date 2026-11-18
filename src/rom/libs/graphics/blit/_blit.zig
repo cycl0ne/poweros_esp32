@@ -413,7 +413,7 @@ pub fn blitInto(
     // reads input, is every window on the display at once.
     if (src.pixels == null) {
         dest.last_error = graphics.GERR_BAD_SIZE;
-        exec.kprintf(gb.sys_base, "blit: source surface 0x%x has no pixels\n", .{@as(u32, @truncate(@intFromPtr(src)))});
+        exec.kprintf(gb.sys_base, "blit: source surface 0x%zx has no pixels\n", .{@intFromPtr(src)});
         return;
     }
     const asked = Rect{ .min_x = src_x, .min_y = src_y, .max_x = src_x + width, .max_y = src_y + height };
@@ -449,7 +449,7 @@ pub fn blitInto(
         // over, and the pieces that do have somewhere are still drawn.
         if (r.surface.pixels == null) {
             dest.last_error = graphics.GERR_BAD_SIZE;
-            exec.kprintf(gb.sys_base, "blit: clip piece surface 0x%x has no pixels\n", .{@as(u32, @truncate(@intFromPtr(r.surface)))});
+            exec.kprintf(gb.sys_base, "blit: clip piece surface 0x%zx has no pixels\n", .{@intFromPtr(r.surface)});
             continue;
         }
         // A plain move of a piece of a board's buffer is the engine's

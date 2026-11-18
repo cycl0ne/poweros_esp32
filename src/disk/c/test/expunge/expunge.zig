@@ -134,7 +134,7 @@ fn runHandler(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8) bool {
     const handler: *exec.Interrupt = @fieldParentPtr("node", node);
     const code: exec.MemHandlerFn = @ptrCast(@alignCast(handler.code.?));
     var data: exec.MemHandlerData = .{
-        .request_size = ~@as(u32, 0),
+        .request_size = ~@as(usize, 0),
         .request_flags = exec.MEMF_ANY,
         .flags = exec.MEMHF_FLUSH,
     };

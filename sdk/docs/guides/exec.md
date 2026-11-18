@@ -117,15 +117,18 @@ cache. An allocation comes from the first region, by priority, that has
 every attribute asked for and room - so `MEMF_ANY` takes PSRAM first
 where there is PSRAM, and internal memory is kept for what only it can do.
 
-A RISC-V 64 machine has one kind, its DRAM: every region is
-`MEMF_INTERNAL` and `MEMF_EXTERNAL` at once, at priority 0. The regions
-are the RAM the device tree names less what is in use - the kernel, the
-disk image the loader put in RAM, and the ranges the tree reserves for
-the firmware. Only RAM below 4 GiB is `MEMF_DMA`, since the DMA engines'
-descriptors hold 32-bit addresses, so a region that crosses 4 GiB is cut
-there; and no region is larger than 2 GiB, as exec counts a region's free
-bytes in 32 bits. Such a board says so with `SYSTAG_UnifiedMemory`, so a
-program shows one figure of free memory rather than the same one twice.
+A 64-bit machine has one kind, its DRAM: every region is
+`MEMF_INTERNAL` and `MEMF_EXTERNAL` at once. The regions are the RAM the
+firmware names less what is in use - the kernel, the disk image the
+loader put in RAM, and the ranges the firmware reserves for itself. Only
+RAM below 4 GiB is `MEMF_DMA`, since the DMA engines' descriptors hold
+32-bit addresses, so a region that crosses 4 GiB is cut there; past it, a
+range of RAM is one region however large. The regions below the line are
+called "dma memory" and are at priority -10, those past it "memory" at
+priority 0: `MEMF_ANY` takes memory past the line first, and what DMA
+reaches is kept for what needs it, as internal memory is on an ESP32. Such
+a board says so with `SYSTAG_UnifiedMemory`, so a program shows one
+figure of free memory rather than the same one twice.
 
 | Flag | |
 |---|---|
@@ -162,7 +165,10 @@ const name = sys.AllocVec(len + 1, exec.MEMF_ANY) orelse return;
 defer sys.FreeVec(name);
 ```
 
-A block is rounded up to `MEM_BLOCKSIZE` (8 bytes) and aligned to it.
+A block is rounded up to `MEM_BLOCKSIZE` (8 bytes on the 32-bit chips,
+16 on the 64-bit machines) and aligned to it. Sizes are machine words -
+a free chunk's, a block's, a region's free count - so one block may be
+as large as the region it comes from.
 
 **Every block says who holds it.** In front of each one is a `MemBlock`,
 one `MEM_BLOCKSIZE` more taken from the region: the owner, the size and

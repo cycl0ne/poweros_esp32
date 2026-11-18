@@ -116,8 +116,8 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 pub fn AllocMem(base: *ExecBase, byte_size: usize, requirements: u32) ?*anyopaque {
     if (byte_size == 0) return null;
     const caller = @returnAddress();
-    // A size past a word fits no region, but is still worth the handlers'
-    // run: asking for more than there is expunges everything idle.
+    // A size past the address space fits no region, but is still worth the
+    // handlers' run: asking for more than there is expunges everything idle.
     const walled = base.mem_debug.on;
     const whole = _memory.wholeSize(byte_size, walled) orelse ~@as(usize, 0);
     const owner = _memory.ownerFor(base, requirements);
@@ -206,7 +206,7 @@ fn lowMemory(base: *ExecBase, byte_size: usize, whole: usize, requirements: u32,
     sys.ObtainSemaphore(&base.sem_memhandlers);
     defer sys.ReleaseSemaphore(&base.sem_memhandlers);
     var data: sdk.exec.MemHandlerData = .{
-        .request_size = _memory.fitsWord(byte_size) orelse ~@as(u32, 0),
+        .request_size = byte_size,
         .request_flags = requirements,
         .flags = 0,
     };
@@ -240,7 +240,7 @@ fn lowMemory(base: *ExecBase, byte_size: usize, whole: usize, requirements: u32,
 /// The block or null, on the same terms as `Allocate`.
 fn allocateReverse(mh: *MemHeader, byte_size: usize) ?*anyopaque {
     if (byte_size == 0 or byte_size > mh.free) return null;
-    const size: u32 = @intCast(_memory.alignUp(byte_size, MEM_BLOCKSIZE));
+    const size = _memory.alignUp(byte_size, MEM_BLOCKSIZE);
 
     var fitting: ?*?*MemChunk = null;
     var link: *?*MemChunk = &mh.first;

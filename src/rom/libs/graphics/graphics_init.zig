@@ -113,11 +113,11 @@ pub const LIBRARY_VERSION = 0;
 /// library looked for a display - is given its first picture when the
 /// display is first asked for. The version stays 0 until there is
 /// something to demand of it.
-pub const LIBRARY_REVISION = 53;
+pub const LIBRARY_REVISION = 54;
 
 /// dd.mm.yyyy, the form every module's `$VER:` string uses so that
 /// `Version` reads them all the same way.
-const BUILD_DATE = "17.11.2026";
+const BUILD_DATE = "18.11.2026";
 
 /// The `$VER:` string, NUL first so that a scan of the image finds it and
 /// `id_string` can start one byte in as a plain C string.

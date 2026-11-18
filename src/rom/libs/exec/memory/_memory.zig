@@ -90,7 +90,7 @@ pub const attribute_mask = MEMF_INTERNAL | MEMF_EXTERNAL | MEMF_DMA;
 
 /// What a block of `byte_size` takes from its region: the size rounded up
 /// to MEM_BLOCKSIZE, its MemBlock, and its wall when it has one. Null when
-/// that does not fit a word.
+/// that does not fit the address space.
 ///
 /// INPUTS:
 /// - `byte_size` - what was asked for.
@@ -101,7 +101,6 @@ pub fn wholeSize(byte_size: usize, walled: bool) ?usize {
     const extra: usize = MEM_BLOCKSIZE + if (walled) @as(usize, sdk.exec.MEM_WALLSIZE) else 0;
     const whole = @addWithOverflow(alignDown(rounded[0], MEM_BLOCKSIZE), extra);
     if (whole[1] != 0) return null;
-    _ = fitsWord(whole[0]) orelse return null;
     return whole[0];
 }
 
@@ -136,7 +135,7 @@ pub fn ownerFor(base: *ExecBase, requirements: u32) u32 {
 pub fn markBlock(chunk: *anyopaque, whole: usize, owner: u32, requirements: u32, walled: bool) *anyopaque {
     const header: *MemBlock = @ptrCast(@alignCast(chunk));
     const wall: usize = if (walled) sdk.exec.MEM_WALLSIZE else 0;
-    const size: u32 = @intCast(whole - MEM_BLOCKSIZE - wall);
+    const size: usize = whole - MEM_BLOCKSIZE - wall;
     header.* = .{
         .owner = owner,
         .size = size | sdk.exec.MEMBF_INUSE | (requirements & sdk.exec.MEMBF_PRIVATE) |
@@ -179,13 +178,13 @@ pub fn splitFront(header: *MemBlock, keep: usize) usize {
     const cut = keep - block;
     const bytes = header.bytes();
     if (header.walled()) {
-        const first: *u32 = @ptrFromInt(block + bytes);
-        first.* = ((first.* ^ sdk.exec.MEM_PATTERN_WALL) - @as(u32, @intCast(cut))) ^ sdk.exec.MEM_PATTERN_WALL;
+        const first: *usize = @ptrFromInt(block + bytes);
+        first.* = ((first.* ^ sdk.exec.MEM_PATTERN_WALL_WORD) - cut) ^ sdk.exec.MEM_PATTERN_WALL_WORD;
     }
     const rest: *MemBlock = @ptrFromInt(keep - MEM_BLOCKSIZE);
     rest.* = .{
         .owner = header.owner,
-        .size = @as(u32, @intCast(bytes - cut)) | (header.size & sdk.exec.MEM_BLOCKMASK),
+        .size = (bytes - cut) | (header.size & sdk.exec.MEM_BLOCKMASK),
     };
     header.size = 0;
     return cut;
@@ -260,16 +259,6 @@ pub fn alignDown(value: usize, alignment: usize) usize {
     return value & ~(alignment - 1);
 }
 
-/// `value` as a 32-bit word, or null when it does not fit - a chunk's size
-/// and a region's free count are words.
-///
-/// INPUTS:
-/// - `value` - the size to narrow.
-pub fn fitsWord(value: usize) ?u32 {
-    if (value > ~@as(u32, 0)) return null;
-    return @intCast(value);
-}
-
 /// What the system has handed out and taken back since the counting
 /// started, and whether each event is printed as well as counted.
 ///
@@ -332,13 +321,11 @@ pub fn traceEvent(base: *ExecBase, letter: u8, size: usize, block: ?*anyopaque, 
         trace.free_bytes += size;
     }
     if (!trace.loud or size < trace.min_size) return;
-    // An address on this machine is 32 bits; the host, where the tests
-    // compile this, has wider ones, and %x takes a word.
-    exec.kprintf("%c %ld %08x from %08x\n", .{
+    exec.kprintf("%c %ld %08zx from %08zx\n", .{
         letter,
         @as(u64, size),
-        @as(u32, @truncate(@intFromPtr(block))),
-        @as(u32, @truncate(caller)),
+        @intFromPtr(block),
+        caller,
     });
 }
 
@@ -411,7 +398,7 @@ pub fn debugNew(base: *ExecBase, block: *anyopaque, byte_size: usize, requiremen
     const rounded = header.bytes();
     if (firstNot(at, rounded + sdk.exec.MEM_WALLSIZE, sdk.exec.MEM_PATTERN_FREED)) |offset| {
         base.mem_debug.freed_writes +%= 1;
-        exec.kprintf("memdebug: free memory at %08x was written after it was freed\n", .{@as(u32, @truncate(at + offset))});
+        exec.kprintf("memdebug: free memory at %08zx was written after it was freed\n", .{at + offset});
     }
     const bytes: [*]u8 = @ptrCast(block);
     if (requirements & sdk.exec.MEMF_CLEAR != 0) {
@@ -422,8 +409,8 @@ pub fn debugNew(base: *ExecBase, block: *anyopaque, byte_size: usize, requiremen
     }
     @memset(bytes[byte_size..rounded], @as(u8, @truncate(sdk.exec.MEM_PATTERN_WALL)));
     fill(at + rounded, sdk.exec.MEM_WALLSIZE, sdk.exec.MEM_PATTERN_WALL);
-    const first: *u32 = @ptrFromInt(at + rounded);
-    first.* = @as(u32, @intCast(byte_size)) ^ sdk.exec.MEM_PATTERN_WALL;
+    const first: *usize = @ptrFromInt(at + rounded);
+    first.* = byte_size ^ sdk.exec.MEM_PATTERN_WALL_WORD;
 }
 
 /// What a free left in its region, filled while memory debugging is on, so
@@ -574,11 +561,9 @@ pub fn expectOneChunk(mh: *const MemHeader) !void {
     try testing.expectEqual(@intFromPtr(mh.upper) - @intFromPtr(mh.lower), @as(usize, mh.free));
 }
 
-test "alignUp, alignDown and fitsWord" {
+test "alignUp and alignDown" {
     try testing.expectEqual(@as(usize, 16), alignUp(1, 16));
     try testing.expectEqual(@as(usize, 16), alignUp(16, 16));
     try testing.expectEqual(@as(usize, 0), alignUp(0, 16));
     try testing.expectEqual(@as(usize, 16), alignDown(31, 16));
-    try testing.expectEqual(@as(?u32, 5), fitsWord(5));
-    if (@sizeOf(usize) > 4) try testing.expect(fitsWord(@as(usize, 1) << 32) == null);
 }

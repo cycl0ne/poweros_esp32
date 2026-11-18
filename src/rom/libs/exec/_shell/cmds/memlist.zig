@@ -20,7 +20,7 @@ const Row = struct {
     lower: usize,
     upper: usize,
     pri: i8,
-    free: u32,
+    free: usize,
     attributes: u32,
     name: [23]u8,
 };
@@ -38,7 +38,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
             continue;
         }
         const mh: *sdk.exec.MemHeader = @fieldParentPtr("node", node);
-        rows[count] = .{ .address = @intFromPtr(mh), .lower = @intFromPtr(mh.lower), .upper = @intFromPtr(mh.upper), .pri = node.pri, .free = @intCast(mh.free), .attributes = mh.attributes, .name = undefined };
+        rows[count] = .{ .address = @intFromPtr(mh), .lower = @intFromPtr(mh.lower), .upper = @intFromPtr(mh.upper), .pri = node.pri, .free = mh.free, .attributes = mh.attributes, .name = undefined };
         _ = _shell.copyName(&rows[count].name, node.name);
         count += 1;
     }
@@ -60,7 +60,7 @@ pub fn run(shell: *Shell, _: *Args) anyerror!void {
             n += attribute.name.len + 1;
         }
         buf[n] = 0;
-        shell.print("0x%08zx  0x%08zx-0x%08zx  %4d  %8d  %-18s  %s\n", .{
+        shell.print("0x%08zx  0x%08zx-0x%08zx  %4d  %8zd  %-18s  %s\n", .{
             row.address,                             row.lower, row.upper,
             row.pri,                                 row.free,  buf[0..n :0],
             @as([*:0]const u8, @ptrCast(&row.name)),

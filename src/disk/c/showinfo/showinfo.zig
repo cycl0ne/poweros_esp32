@@ -21,8 +21,9 @@
 //! TASKS shows what each core runs, then the ready and the waiting tasks,
 //! with the core a task keeps to (SetTaskAffinity, NP_Affinity).
 //!
-//! A region's free blocks are not walked: its largest block is asked of
-//! AvailMem - the largest of memory of its kind.
+//! MEM shows each region's size, its free bytes and its largest block -
+//! the biggest AllocMem could give from it, found on its chain of free
+//! chunks while the region is copied out.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -32,7 +33,7 @@ const DosBase = sdk.interface.dos.DosBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowInfo";
-const VERSION_STRING = "\x00$VER: ShowInfo 1.4 (04.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowInfo 1.5 (18.11.2026)\r\n";
 
 const template = "TASKS/S,DEVS/S,LIBS/S,RESOURCES/S,PORTS/S,SEMAPHORES/S," ++
     "HANDLERS/S,RESIDENTS/S,INTS/S,MEM/S,SEGMENTS/S,ALL/S";
@@ -115,8 +116,10 @@ const Row = struct {
     version: u16 = 0,
     revision: u16 = 0,
     open_cnt: u16 = 0,
+    /// A region's bytes, its free ones, and its largest block.
+    size: usize = 0,
     free: usize = 0,
-    attributes: u32 = 0,
+    largest: usize = 0,
 };
 
 /// The rows of the list being printed.
@@ -150,8 +153,9 @@ fn copyRows(which: u32) Copy {
             },
             exec.EXECLIST_MEMORY => {
                 const mh: *exec.MemHeader = @fieldParentPtr("node", n);
+                row.size = @intFromPtr(mh.upper) - @intFromPtr(mh.lower);
                 row.free = mh.free;
-                row.attributes = mh.attributes;
+                row.largest = largestBlock(mh);
             },
             else => {},
         }
@@ -404,20 +408,40 @@ fn nodeList(which: u32) void {
     more(copy);
 }
 
-/// The biggest single piece of a region: MemHeader says how much is free
-/// altogether, and the chunks say whether it is in one piece.
+/// The biggest block AllocMem could give from a region: its largest free
+/// chunk less the MemBlock in front of a block. Under the memory list's
+/// lock, which holds the chain still.
+fn largestBlock(mh: *const exec.MemHeader) usize {
+    var largest: usize = 0;
+    var chunk = mh.first;
+    while (chunk) |free_chunk| : (chunk = free_chunk.next) {
+        largest = @max(largest, free_chunk.bytes -| exec.MEM_BLOCKSIZE);
+    }
+    return largest;
+}
+
+/// A line per region, in the order AllocMem tries them, and their sums.
 fn memory() void {
     _ = dl.PutStr("\nMemory\n");
-    _ = dl.PutStr("name                           pri      free     largest\n");
+    _ = dl.PutStr("name                           pri          size          free       largest\n");
     const copy = copyRows(exec.EXECLIST_MEMORY);
+    var size: usize = 0;
+    var free: usize = 0;
+    var largest: usize = 0;
     for (rows[0..copy.count]) |*row| {
-        const largest = sys.AvailMem(row.attributes | exec.MEMF_LARGEST);
-        _ = Printf(dl, "%-29s %4d  %8zd  %10zd\n", .{
+        _ = Printf(dl, "%-29s %4d  %12zd  %12zd  %12zd\n", .{
             @as([*:0]const u8, @ptrCast(&row.name)),
             row.pri,
+            row.size,
             row.free,
-            largest,
+            row.largest,
         });
+        size += row.size;
+        free += row.free;
+        largest = @max(largest, row.largest);
+    }
+    if (copy.count > 1) {
+        _ = Printf(dl, "%-29s       %12zd  %12zd  %12zd\n", .{ @as([*:0]const u8, "total"), size, free, largest });
     }
     more(copy);
 }

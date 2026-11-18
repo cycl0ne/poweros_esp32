@@ -14,10 +14,12 @@
 //! It is all DRAM, so it is both internal and external memory as exec's
 //! callers ask for them. Only what is below 4 GiB is MEMF_DMA: the DMA
 //! engines' descriptors hold 32-bit addresses, so a region that crosses
-//! the line is cut there. And exec counts a region's free bytes in 32
-//! bits (MemHeader.free, MemChunk.bytes), so none is larger than 2 GiB.
+//! the line is cut there; past it, a range is one region however large.
 //! The region the kernel's heap starts in comes first, as it holds
 //! SysBase; then the rest above the kernel, then what is below it.
+//! DMA memory is at a lower priority than the rest, so an allocation that
+//! does not ask for MEMF_DMA takes memory past the limit first and what
+//! DMA reaches is kept for what needs it.
 
 const exec = @import("../../rom/libs/exec/exec.zig");
 const layout = @import("layout.zig");
@@ -26,9 +28,9 @@ const ramdisk = sdk.hardware.ramdisk;
 const Range = @import("fdt.zig").Range;
 const max_reserved = @import("fdt.zig").max_reserved;
 
-/// The VisionFive 2's 8 GiB: above the kernel, to 4 GiB and three pieces
-/// of `largest` after it; below it, around the disk image. Room besides
-/// for the pieces more reserved ranges cut.
+/// The VisionFive 2's 8 GiB: above the kernel to 4 GiB, and the rest
+/// after it; below it, around the disk image. Room besides for the pieces
+/// more reserved ranges cut.
 pub const max_regions = 12;
 
 /// Where RAM is, which the kernel sets from the board.
@@ -45,10 +47,10 @@ pub fn ramEnd() usize {
 
 /// A region too small for a MemHeader and a block is not handed out.
 const smallest = 64 * 1024;
+/// DMA memory's place on the memory list: behind the rest.
+const dma_pri: i8 = -10;
 /// Where DMA stops reaching.
 const dma_limit: usize = 1 << 32;
-/// The most one region holds.
-const largest: usize = 1 << 31;
 const page = 4096;
 
 /// What is not free, each widened to whole pages: the kernel, the disk
@@ -112,28 +114,22 @@ fn free(buf: *[max_regions]exec.MemRegion, count: *usize, in_use: []const Range,
     }
 }
 
-/// `from` to `to` as regions: cut where it crosses 4 GiB, and into
-/// pieces of `largest`; nothing for a range too small to keep, or one
-/// there is no room left for.
+/// `from` to `to` as regions: cut where it crosses 4 GiB; nothing for a
+/// range too small to keep, or one there is no room left for.
 fn add(buf: *[max_regions]exec.MemRegion, count: *usize, from: usize, to: usize) void {
     if (from < dma_limit and to > dma_limit) {
         add(buf, count, from, dma_limit);
         add(buf, count, dma_limit, to);
         return;
     }
-    if (to -| from > largest) {
-        add(buf, count, from, from + largest);
-        add(buf, count, from + largest, to);
-        return;
-    }
     if (to -| from < smallest or count.* == max_regions) return;
     const dma = to <= dma_limit;
     buf[count.*] = .{
-        .name = if (count.* == 0) "memory" else if (dma) "more memory" else "memory above 4 GiB",
+        .name = if (dma) "dma memory" else "memory",
         .base = @ptrFromInt(from),
         .size = to - from,
         .attributes = exec.MEMF_INTERNAL | exec.MEMF_EXTERNAL | if (dma) exec.MEMF_DMA else 0,
-        .pri = 0,
+        .pri = if (dma) dma_pri else 0,
     };
     count.* += 1;
 }

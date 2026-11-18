@@ -2403,9 +2403,8 @@ exec.library/WaitPort
 	  the region, which for a region named by the kernel is the ROM image.
 
    RESULT
-	The header, which sits at the start of the block, or null: the block is
-	too small for a header and one chunk, or the free space will not fit a
-	`u32`.
+	The header, which sits at the start of the block, or null when the
+	block is too small for a header and one chunk.
 
    BEHAVIOR
 	The free space is one chunk covering everything from behind the header,

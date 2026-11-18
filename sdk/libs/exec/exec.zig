@@ -92,6 +92,7 @@ pub const MEMBF_INUSE = memory.MEMBF_INUSE;
 pub const MEMBF_WALLED = memory.MEMBF_WALLED;
 pub const MEM_WALLSIZE = memory.MEM_WALLSIZE;
 pub const MEM_PATTERN_WALL = memory.MEM_PATTERN_WALL;
+pub const MEM_PATTERN_WALL_WORD = memory.MEM_PATTERN_WALL_WORD;
 pub const MEM_PATTERN_NEW = memory.MEM_PATTERN_NEW;
 pub const MEM_PATTERN_FREED = memory.MEM_PATTERN_FREED;
 pub const MEMDEBUG_ASK = memory.MEMDEBUG_ASK;

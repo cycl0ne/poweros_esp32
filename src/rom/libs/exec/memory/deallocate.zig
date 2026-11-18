@@ -98,7 +98,7 @@ pub fn Deallocate(_: *ExecBase, mh: *MemHeader, memory_block: ?*anyopaque, byte_
     }
 
     const chunk: *MemChunk = @ptrFromInt(start);
-    chunk.* = .{ .next = next, .bytes = @intCast(end - start) };
+    chunk.* = .{ .next = next, .bytes = end - start };
     mh.free += chunk.bytes;
     if (next) |n| {
         if (@intFromPtr(n) == end) {
@@ -122,6 +122,26 @@ pub fn Deallocate(_: *ExecBase, mh: *MemHeader, memory_block: ?*anyopaque, byte_
 
 const std = @import("std");
 const testing = std.testing;
+
+test "a region past 4 GiB is counted whole, and gives a block that size" {
+    if (@sizeOf(usize) < 8) return error.SkipZigTest;
+    const base: *ExecBase = undefined; // the region calls never read it
+    // Only the header and the one chunk at the start are written: the whole
+    // chunk is taken, so nothing is split off at its far end.
+    var buf: [1024]u8 align(16) = undefined;
+    const claimed: usize = 6 << 30;
+    const mh = CreateMemHeader(base, claimed, sdk.exec.MEMF_ANY, 0, &buf, "large").?;
+    const free = mh.free;
+    try testing.expect(free > 1 << 32);
+    try testing.expectEqual(@intFromPtr(mh.upper) - @intFromPtr(mh.lower), free);
+
+    const block = Allocate(base, mh, free).?;
+    try testing.expectEqual(@as(usize, 0), mh.free);
+    try testing.expect(mh.first == null);
+    Deallocate(base, mh, block, free);
+    try testing.expectEqual(free, mh.free);
+    try _memory.expectOneChunk(mh);
+}
 
 test "random Allocate/Deallocate keeps the chunk list consistent" {
     const base: *ExecBase = undefined; // the region calls never read it

@@ -28,7 +28,7 @@ pub const Rig = struct {
     fb: *FacetBase,
     region: []align(64) u8,
     header: *exec.MemHeader,
-    free_at_start: u32,
+    free_at_start: usize,
 
     pub fn up() !Rig {
         try kexec.setUp();

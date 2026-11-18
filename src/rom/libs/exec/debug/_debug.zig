@@ -309,7 +309,7 @@ fn dump(words: *Words) void {
     var at = address & ~@as(usize, 3);
     const end = at + length;
     while (at < end) {
-        printf("%08x ", .{@as(u32, @truncate(at))});
+        printf("%08zx ", .{at});
         var column: usize = 0;
         while (column < 4 and at < end) : (column += 1) {
             if (word32(at)) |value| {
@@ -333,11 +333,11 @@ fn poke(words: *Words) void {
         return;
     };
     if (address & 3 != 0 or !readable(address)) {
-        printf("%08x cannot be written\n", .{@as(u32, @truncate(address))});
+        printf("%08zx cannot be written\n", .{address});
         return;
     }
     @as(*volatile u32, @ptrFromInt(address)).* = @truncate(value);
-    printf("%08x = %08x\n", .{ @as(u32, @truncate(address)), @as(u32, @truncate(value)) });
+    printf("%08zx = %08x\n", .{ address, @as(u32, @truncate(value)) });
 }
 
 /// The register windows pushed out to the stacks they belong to, by
@@ -510,7 +510,7 @@ fn listBreakpoints(chip: *const DebugHardware) void {
     while (slot < chip.breakpoints) : (slot += 1) {
         const at = chip.breakpointAt(slot) orelse continue;
         any = true;
-        printf("  %d  0x%08x", .{ slot, @as(u32, @truncate(at)) });
+        printf("  %d  0x%08zx", .{ slot, at });
         named(at);
         put('\n');
     }
@@ -541,8 +541,8 @@ fn watchpoint(words: *Words) void {
     // The slots are told apart by nothing, so a second watchpoint takes
     // the second slot and a third replaces the first.
     chip.setWatchpoint(watch_next, address, @truncate(size), on_read, on_write);
-    printf("watching 0x%08x, %d bytes, %s\n", .{
-        @as(u32, @truncate(address)),
+    printf("watching 0x%08zx, %d bytes, %s\n", .{
+        address,
         @as(u32, @truncate(size)),
         @as([*:0]const u8, if (on_read and on_write) "read and write" else if (on_read) "read" else "write"),
     });

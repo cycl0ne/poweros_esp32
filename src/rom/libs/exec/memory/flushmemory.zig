@@ -76,7 +76,7 @@ pub fn FlushMemory(base: *ExecBase, hook: ?*FlushHook) usize {
         sys.ObtainSemaphore(&base.sem_memhandlers);
         defer sys.ReleaseSemaphore(&base.sem_memhandlers);
         var data: sdk.exec.MemHandlerData = .{
-            .request_size = ~@as(u32, 0),
+            .request_size = ~@as(usize, 0),
             .request_flags = sdk.exec.MEMF_ANY,
             .flags = sdk.exec.MEMHF_FLUSH,
             .hook = hook,

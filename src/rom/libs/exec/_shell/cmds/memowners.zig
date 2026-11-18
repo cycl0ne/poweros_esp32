@@ -47,7 +47,7 @@ pub fn run(shell: *Shell, args: *Args) anyerror!void {
     }
     shell.print("free   in %u chunks                       %10zu\n", .{ tally.free_chunks, tally.free_bytes });
     if (tally.damaged) |at| {
-        shell.print("%u regions, %u blocks - damaged at 0x%08x, the rest of that region not counted\n", .{ tally.regions, tally.blocks, @as(u32, @truncate(at)) });
+        shell.print("%u regions, %u blocks - damaged at 0x%08zx, the rest of that region not counted\n", .{ tally.regions, tally.blocks, at });
     } else {
         shell.print("%u regions, %u blocks, every one readable\n", .{ tally.regions, tally.blocks });
     }
@@ -88,7 +88,7 @@ fn blocksOf(shell: *Shell, id: u32) void {
     shell.print("block       size        private\n", .{});
     for (blocks[0..count]) |*block| {
         const private: [*:0]const u8 = if (block.private) "private" else "";
-        shell.print("0x%08x  %10zu  %s\n", .{ @as(u32, @truncate(block.address)), block.bytes, private });
+        shell.print("0x%08zx  %10zu  %s\n", .{ block.address, block.bytes, private });
     }
     if (more != 0) shell.print("... and %u more\n", .{more});
     shell.print("%u blocks, %zu bytes with their MemBlocks\n", .{ @as(u32, @intCast(count)) + more, bytes });

@@ -67,8 +67,9 @@ pub const MEMF_NO_EXPUNGE: u32 = 1 << 31;
 pub const MemChunk = extern struct {
     /// mc_Next: the next free chunk, in address order.
     next: ?*MemChunk = null,
-    /// mc_Bytes: size of this free chunk.
-    bytes: u32 = 0,
+    /// mc_Bytes: size of this free chunk - a machine word, so a chunk is
+    /// as large as the region it is in.
+    bytes: usize = 0,
 };
 
 /// Allocation granularity: every chunk is a multiple of this and aligned to
@@ -92,12 +93,15 @@ pub const MEMBF_INUSE: u32 = 1 << 1;
 pub const MEMBF_WALLED: u32 = 1 << 2;
 
 /// The wall behind a block allocated while memory debugging is on. Its
-/// first word holds the size that was asked for, as `size ^
-/// MEM_PATTERN_WALL`; the rest of it, and the block's bytes between that
-/// size and the rounded one, hold MEM_PATTERN_WALL.
+/// first machine word holds the size that was asked for, as `size ^
+/// MEM_PATTERN_WALL_WORD`; the rest of it, and the block's bytes between
+/// that size and the rounded one, hold MEM_PATTERN_WALL.
 pub const MEM_WALLSIZE = 2 * MEM_BLOCKSIZE;
 /// What a wall holds, word by word (its bytes are all 0xFD).
 pub const MEM_PATTERN_WALL: u32 = 0xFDFD_FDFD;
+/// MEM_PATTERN_WALL a machine word wide: what a wall's size is kept
+/// against.
+pub const MEM_PATTERN_WALL_WORD: usize = std.math.maxInt(usize) / 0xFF * 0xFD;
 /// What a block allocated while memory debugging is on holds before it is
 /// written, unless MEMF_CLEAR asked for zeros: read as a pointer or a
 /// count, it is plainly wrong.
@@ -145,15 +149,15 @@ pub const MemDamage = extern struct {
 
 /// What is in front of every block AllocMem answers, one MEM_BLOCKSIZE
 /// long: the block's owner, its size and its MEMBF_* flags. The size is
-/// in the word right below the block on every chip; on a 64-bit one the
-/// first half of the MemBlock is padding.
+/// the machine word right below the block on every chip; on a 64-bit one
+/// the MemBlock starts with four bytes of padding.
 pub const MemBlock = extern struct {
-    pad: [MEM_BLOCKSIZE - 8]u8 = @splat(0),
+    pad: [MEM_BLOCKSIZE - 4 - @sizeOf(usize)]u8 = @splat(0),
     /// A task's number (`Task.id`), or MEMOWNER_SYSTEM.
     owner: u32 = MEMOWNER_SYSTEM,
     /// The block's bytes, rounded up to MEM_BLOCKSIZE and without the
     /// MemBlock, with MEMBF_* in the bits below MEM_BLOCKSIZE.
-    size: u32 = 0,
+    size: usize = 0,
 
     /// The MemBlock of a block AllocMem answered.
     pub fn of(block: *anyopaque) *MemBlock {
@@ -162,7 +166,7 @@ pub const MemBlock = extern struct {
 
     /// The block's bytes, without the MemBlock.
     pub fn bytes(header: *const MemBlock) usize {
-        return header.size & ~@as(u32, MEM_BLOCKMASK);
+        return header.size & ~@as(usize, MEM_BLOCKMASK);
     }
 
     pub fn private(header: *const MemBlock) bool {
@@ -192,14 +196,14 @@ pub const MemBlock = extern struct {
         if (!header.walled()) return null;
         const block: [*]const u8 = @ptrFromInt(@intFromPtr(header) + MEM_BLOCKSIZE);
         const rounded = header.bytes();
-        const wall: [*]align(4) const u8 = @alignCast(block + rounded);
-        const first: *const u32 = @ptrCast(wall);
-        const wanted = first.* ^ MEM_PATTERN_WALL;
+        const wall: [*]align(@alignOf(usize)) const u8 = @alignCast(block + rounded);
+        const first: *const usize = @ptrCast(wall);
+        const wanted = first.* ^ MEM_PATTERN_WALL_WORD;
         if (wanted > rounded or wanted + MEM_BLOCKSIZE <= rounded) return rounded;
         for (wanted..rounded) |at| {
             if (block[at] != @as(u8, @truncate(MEM_PATTERN_WALL))) return at;
         }
-        for (4..MEM_WALLSIZE) |at| {
+        for (@sizeOf(usize)..MEM_WALLSIZE) |at| {
             if (wall[at] != @as(u8, @truncate(MEM_PATTERN_WALL))) return rounded + at;
         }
         return null;
@@ -209,8 +213,8 @@ pub const MemBlock = extern struct {
     /// size for one without a wall.
     pub fn askedSize(header: *const MemBlock) usize {
         if (!header.walled()) return header.bytes();
-        const first: *const u32 = @ptrFromInt(@intFromPtr(header) + MEM_BLOCKSIZE + header.bytes());
-        return first.* ^ MEM_PATTERN_WALL;
+        const first: *const usize = @ptrFromInt(@intFromPtr(header) + MEM_BLOCKSIZE + header.bytes());
+        return first.* ^ MEM_PATTERN_WALL_WORD;
     }
 };
 
@@ -304,7 +308,7 @@ pub const MemHeader = extern struct {
     /// mh_Upper: one past the highest address the chunks can cover.
     upper: ?*anyopaque = null,
     /// mh_Free: total free bytes.
-    free: u32 = 0,
+    free: usize = 0,
 
     pub fn name(mh: *const MemHeader) [:0]const u8 {
         return std.mem.span(mh.node.name orelse return "");
@@ -315,7 +319,7 @@ pub const MemHeader = extern struct {
 /// allocation - or that FlushMemory asks for everything there is.
 pub const MemHandlerData = extern struct {
     /// memh_RequestSize
-    request_size: u32,
+    request_size: usize,
     /// memh_RequestFlags: the AllocMem requirements.
     request_flags: u32,
     /// memh_Flags: MEMHF_RECYCLE when the same handler is called again,

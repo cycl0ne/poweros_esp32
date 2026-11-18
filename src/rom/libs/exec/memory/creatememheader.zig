@@ -37,9 +37,8 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 ///   the region, which for a region named by the kernel is the ROM image.
 ///
 /// RESULT:
-/// The header, which sits at the start of the block, or null: the block is
-/// too small for a header and one chunk, or the free space will not fit a
-/// `u32`.
+/// The header, which sits at the start of the block, or null when the
+/// block is too small for a header and one chunk.
 ///
 /// BEHAVIOR:
 /// The free space is one chunk covering everything from behind the header,
@@ -82,7 +81,7 @@ pub fn CreateMemHeader(_: *ExecBase, size: usize, attributes: u32, pri: i8, regi
     const lower = _memory.alignUp(header + @sizeOf(MemHeader), MEM_BLOCKSIZE);
     const upper = _memory.alignDown(start + size, MEM_BLOCKSIZE);
     if (upper < lower + MEM_BLOCKSIZE) return null;
-    const bytes = _memory.fitsWord(upper - lower) orelse return null;
+    const bytes = upper - lower;
 
     const chunk: *MemChunk = @ptrFromInt(lower);
     chunk.* = .{ .next = null, .bytes = bytes };

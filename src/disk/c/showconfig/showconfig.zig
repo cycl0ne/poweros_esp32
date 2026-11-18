@@ -38,7 +38,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.10 (16.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.11 (18.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICES/S,SPEAKS/K";
@@ -113,7 +113,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             _ = Printf(dl, "%-6s %-2d  ", .{ busName(bus), @as(u32, @truncate(ub.GetTagData(st.PART_BusUnit, 0, tags))) });
         }
         if (ub.FindTagItem(st.PART_Address, tags)) |address| {
-            _ = Printf(dl, "0x%-8x  ", .{@as(u32, @truncate(address.data))});
+            _ = Printf(dl, "0x%-8zx  ", .{address.data});
         } else {
             _ = dl.PutStr("-           ");
         }

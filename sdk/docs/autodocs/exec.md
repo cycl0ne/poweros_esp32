@@ -3031,9 +3031,8 @@ fn CreateMemHeader(_: *ExecBase, size: usize, attributes: u32, pri: i8,
 
 **RESULT**
 
-The header, which sits at the start of the block, or null: the block is
-too small for a header and one chunk, or the free space will not fit a
-`u32`.
+The header, which sits at the start of the block, or null when the
+block is too small for a header and one chunk.
 
 **BEHAVIOR**
 
