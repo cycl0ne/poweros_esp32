@@ -33,11 +33,12 @@ pub const default_rdb_size_kib = 64;
 /// work disk, DH1:, made blank once and kept from then on with what is
 /// saved to it.
 pub const virt_system_bytes = 256 * 1024 * 1024;
-/// The RISC-V 64 and AArch64 machines' disk image, which their loader
-/// puts in RAM beside the kernel: not flash, so larger than the ESP32s'
-/// flash disk - room for what only those machines run, such as the video
-/// codecs in software.
-pub const ram_disk_size = 32 * 1024 * 1024;
+/// The 64-bit machines' disk image, which their loader puts in RAM beside
+/// the kernel: not flash, so larger than the ESP32s' flash disk - room
+/// for everything a 64-bit machine's system has, the video codecs in
+/// software, Noto Sans CJK and Noto Color Emoji among it, with room over.
+/// Each kernel takes its size from the loader.
+pub const ram_disk_size = 128 * 1024 * 1024;
 pub const virt_work_bytes = 1024 * 1024 * 1024;
 /// Where the work disks are kept, from the root of the tree: outside
 /// zig-out/, which cleaning the build clears.

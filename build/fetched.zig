@@ -45,26 +45,18 @@ const DiskFont = struct {
     /// font of a collection after the first: the family is a contents
     /// file alone, which names the file there.
     in: ?[]const u8 = null,
-    /// In the 64-bit disks' trees and manifests - so in the release
-    /// packages - and on the system disks, not in the disk image a
-    /// machine starts from out of RAM, which has not the room (mkfs's
-    /// `--system-file`).
-    system: bool = false,
 };
 
-/// Where a font family's files go: a disk's ordinary list, or - under
-/// `--system-file=` - its tree, manifest and system disk without the
-/// image in RAM.
+/// Where a font family's files go: the lists of the disks it is on.
 pub const FontPlace = struct {
     runs: []const *std.Build.Step.Run,
-    prefix: []const u8,
 
     pub fn drawer(place: FontPlace, path: []const u8) void {
-        for (place.runs) |run| run.addArg(run.step.owner.fmt("{s}{s}", .{ place.prefix, path }));
+        for (place.runs) |run| run.addArg(path);
     }
 
     pub fn file(place: FontPlace, path: []const u8, from: std.Build.LazyPath) void {
-        for (place.runs) |run| run.addPrefixedFileArg(run.step.owner.fmt("{s}{s}=", .{ place.prefix, path }), from);
+        for (place.runs) |run| run.addPrefixedFileArg(run.step.owner.fmt("{s}=", .{path}), from);
     }
 };
 
@@ -83,8 +75,8 @@ pub const cjk_file = "NotoSansCJK-Regular.ttc";
 fn cjkFamily(comptime name: []const u8, comptime face: []const u8) DiskFont {
     const first = "cjk-jp";
     const source: []const []const u8 = &.{devanagari_dir ++ "/" ++ cjk_file};
-    if (comptime std.mem.eql(u8, name, first)) return .{ .name = name, .sources = source, .outlines = &.{cjk_file}, .wide = true, .set = .cjk, .system = true };
-    return .{ .name = name, .options = &.{ "--face", face, "--in", first }, .sources = source, .wide = true, .set = .cjk, .in = first, .system = true };
+    if (comptime std.mem.eql(u8, name, first)) return .{ .name = name, .sources = source, .outlines = &.{cjk_file}, .wide = true, .set = .cjk };
+    return .{ .name = name, .options = &.{ "--face", face, "--in", first }, .sources = source, .wide = true, .set = .cjk, .in = first };
 }
 
 /// Noto Color Emoji as scripts/fetch-fonts.sh names it, in
@@ -118,9 +110,7 @@ fn liberationFamily(comptime name: []const u8, comptime file: []const u8) [4]Dis
 /// mono, each with its bold, italic and bold italic faces - which SVG's
 /// text is drawn in, Noto Sans Devanagari, regular and bold, which
 /// `font.prefs` names as the font a text falls back to for the script,
-/// and - in the trees and on the system disks alone, the file being
-/// 19.5 MB and the disk image in RAM 32 - Noto Sans CJK - Japanese, Chinese and
-/// Korean - as five families of the one file, a region's forms each:
+/// Noto Sans CJK - Japanese, Chinese and Korean - as five families of the one file, a region's forms each:
 /// Japan's, Korea's, China's, Taiwan's and Hong Kong's - and Noto Color
 /// Emoji, 10.7 MB of glyphs in their own colours, which `font.prefs`
 /// names last among the fonts a text falls back to.
@@ -144,7 +134,7 @@ pub const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("ser
     cjkFamily("cjk-sc", "2"),
     cjkFamily("cjk-tc", "3"),
     cjkFamily("cjk-hk", "4"),
-    .{ .name = "emoji", .sources = &.{devanagari_dir ++ "/" ++ emoji_file}, .outlines = &.{emoji_file}, .wide = true, .set = .emoji, .system = true },
+    .{ .name = "emoji", .sources = &.{devanagari_dir ++ "/" ++ emoji_file}, .outlines = &.{emoji_file}, .wide = true, .set = .emoji },
 };
 
 /// Whether scripts/fetch-fonts.sh has fetched `sub` into the fonts' `dir`.
@@ -191,7 +181,7 @@ pub fn emojiDir(b: *std.Build) ?[]const u8 {
     const io = b.graph.io;
     const path = b.pathFromRoot("toolchain/emoji/16.0");
     std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "emoji-test.txt" }), .{}) catch {
-        std.log.info("no emoji list and names (scripts/fetch-emoji.sh): the 64-bit packages and system disks have no LOCALE:Emoji", .{});
+        std.log.info("no emoji list and names (scripts/fetch-emoji.sh): the 64-bit disks have no LOCALE:Emoji", .{});
         return null;
     };
     return path;

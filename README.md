@@ -446,8 +446,8 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard, mouse and wheel, and the USB controller, at 240 MHz (an older QEMU runs too, without what it lacks - run the script again for the wheel and USB) |
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/esp32s3wifi.device` |
 | `scripts/fetch-aic8800.sh` | the AIC8800 USB Wi-Fi stick's firmware, which `DEVS:usb/aic8800.device` loads into it (the ESP32-P4's disk) |
-| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go, Liberation and Noto Sans Devanagari on the 64-bit machines' disks, and Noto Sans CJK and Noto Color Emoji in the 64-bit machines' release packages and on the system disks of QEMU's virt machines, not in the disk image a machine starts from out of RAM), and a font only the host tests read (Source Sans 3) |
-| `scripts/fetch-emoji.sh` | Unicode's list of the emoji and the CLDR's names for them, made into `LOCALE:Emoji` - the emoji in their groups and order, and what each is called in the disk's languages (in the 64-bit machines' release packages and on the system disks of QEMU's virt machines, not in the disk image a machine starts from out of RAM) |
+| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go, Liberation, Noto Sans Devanagari, Noto Sans CJK and Noto Color Emoji on the 64-bit machines' disks), and a font only the host tests read (Source Sans 3) |
+| `scripts/fetch-emoji.sh` | Unicode's list of the emoji and the CLDR's names for them, made into `LOCALE:Emoji` - the emoji in their groups and order, and what each is called in the disk's languages (on the 64-bit machines' disks) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
@@ -507,7 +507,7 @@ them, so QEMU started by hand needs the same option.
 64-bit RISC-V machine under SBI firmware, which enters it in supervisor
 mode: `zig-out/bin/kernel` (the ELF), `kernel.bin` (the same from its
 first address, 0x80200000, with the header U-Boot's `booti` reads) and
-`disk-rv64.bin`, the disk as an image of its whole 32 MB. There is no
+`disk-rv64.bin`, the disk as an image of its whole 128 MB. There is no
 flash: on the VisionFive 2 the loader puts the image in RAM beside the
 kernel and names it in the device tree, flash.device serves it as
 `DH0:`, and what is written to it is gone when the machine stops.
@@ -620,7 +620,7 @@ FAT32 volume can be both U-Boot's and PowerOS's
 PSCI firmware (chip `a64psci`): `zig-out/bin/kernel` (the ELF, for a
 debugger), `kernel.bin` (the same from its first address, 0x40200000,
 with the arm64 `Image` header QEMU and the Pi's firmware read),
-`disk-a64.bin`, the disk as an image of its whole 32 MB for a loader to
+`disk-a64.bin`, the disk as an image of its whole 128 MB for a loader to
 put in RAM as on the VisionFive 2, and `system-a64.bin`, the same files
 as the system disk the `virt64` steps start from. The kernel runs at EL1
 with its MMU on: an identity map, RAM normal cacheable memory, page 0
@@ -716,7 +716,7 @@ so a board with 1 GB runs it too.
 firmware (chip `x64uefi`): `zig-out/bin/kernel` (the ELF, for a
 debugger), `kernel.bin` (the same from its first address, 0x00200000),
 `system-x64.bin`, the system as a disk for the machine to start from, and
-`disk-x64.bin`, the same files as an image of 32 MB for a loader to put in
+`disk-x64.bin`, the same files as an image of 128 MB for a loader to put in
 RAM, which is what a machine with no disk of its own runs on. The kernel runs on a map of its own: an
 identity map, 1 GiB blocks where the core has them, page 0 left out so
 that a null pointer faults, the kernel's code read-only, and anything the

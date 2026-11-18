@@ -1090,9 +1090,9 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         const devanagari = hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf");
         if (!devanagari) std.log.info("no Noto Sans Devanagari, Regular and Bold (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:devanagari", .{});
         const cjk = hasFontFile(b, dir, devanagari_dir ++ "/" ++ cjk_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansCJK.licence");
-        if (!cjk) std.log.info("no Noto Sans CJK Regular and its licence (scripts/fetch-fonts.sh): the 64-bit packages and system disks have no FONTS:cjk-jp, -kr, -sc, -tc and -hk", .{});
+        if (!cjk) std.log.info("no Noto Sans CJK Regular and its licence (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:cjk-jp, -kr, -sc, -tc and -hk", .{});
         const emoji = hasFontFile(b, dir, devanagari_dir ++ "/" ++ emoji_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoColorEmoji.licence");
-        if (!emoji) std.log.info("no Noto Color Emoji and its licence (scripts/fetch-fonts.sh): the 64-bit packages and system disks have no FONTS:emoji", .{});
+        if (!emoji) std.log.info("no Noto Color Emoji and its licence (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:emoji", .{});
         for (disk_fonts) |family| {
             switch (family.set) {
                 .base => {},
@@ -1102,10 +1102,8 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
                 .emoji => if (!emoji) continue,
             }
             // The 64-bit disks take every family; the ESP32s' the ones
-            // that are not `wide`. A `system` family is in the 64-bit
-            // disks' trees and on the system disks, not in the image a
-            // machine starts from out of RAM.
-            const onto: FontPlace = .{ .runs = disks.some(family.wide or family.system).runs, .prefix = if (family.system) "--system-file=" else "" };
+            // that are not `wide`.
+            const onto: FontPlace = .{ .runs = disks.some(family.wide).runs };
             const run = b.addRunArtifact(fontconv);
             const out = run.addOutputDirectoryArg(family.name);
             run.addArg(family.name);
@@ -1126,8 +1124,8 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         disks.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
         if (liberation) disks.some(true).addPrefixedFileArg("fonts/liberation.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
         if (devanagari) disks.some(true).addPrefixedFileArg("fonts/devanagari.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansDevanagari.licence" }) });
-        if (cjk) disks.some(true).addPrefixedFileArg("--system-file=fonts/cjk.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansCJK.licence" }) });
-        if (emoji) disks.some(true).addPrefixedFileArg("--system-file=fonts/emoji.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoColorEmoji.licence" }) });
+        if (cjk) disks.some(true).addPrefixedFileArg("fonts/cjk.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansCJK.licence" }) });
+        if (emoji) disks.some(true).addPrefixedFileArg("fonts/emoji.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoColorEmoji.licence" }) });
     }
     // SYS:Certificates/Roots - Mozilla's roots, which
     // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
@@ -1156,8 +1154,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     // LOCALE:Emoji/ - the emoji in their groups and order, and their
     // names in the disk's languages, which tools/emojigen makes of what
     // scripts/fetch-emoji.sh fetched - and the licence of that beside
-    // them. Where FONTS:emoji is: in the 64-bit disks' trees and on
-    // the system disks, not in the image in RAM.
+    // them. Where FONTS:emoji is: on the 64-bit disks.
     if (emojiDir(b)) |dir| {
         const emojigen = b.addExecutable(.{
             .name = "emojigen",
@@ -1171,7 +1168,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         const run = b.addRunArtifact(emojigen);
         run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, "emoji-test.txt" }) });
         const out = run.addOutputDirectoryArg("emoji");
-        const onto: FontPlace = .{ .runs = disks.some(true).runs, .prefix = "--system-file=" };
+        const onto: FontPlace = .{ .runs = disks.some(true).runs };
         onto.drawer("locale/Emoji");
         onto.file("locale/Emoji/emoji.list", out.path(b, "emoji.list"));
         for (emoji_languages) |language| {
