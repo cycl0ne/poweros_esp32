@@ -4,7 +4,9 @@
 //! an installed system and its list, and a package beside it: a run
 //! checked, then done, what it says heard through a hook; a file changed
 //! on the machine kept, and FORCE taking the package's; a run with no
-//! package to read saying why.
+//! package to read saying why; each row with what the file here and the
+//! package's say they are, and the "$VER:" string found across the
+//! pieces a file is read in.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -16,6 +18,7 @@ const manifest = sdk.install.manifest;
 const host = @import("host_rom");
 const kexec = host.exec;
 const update_init = @import("../update_init.zig");
+const version = @import("../version/_version.zig");
 
 const testing = std.testing;
 const DosBase = sdk.interface.dos.DosBase;
@@ -141,8 +144,9 @@ fn listOf(files: []const Shipped, into: []u8) []const u8 {
     return into[0..at];
 }
 
-/// What a hook heard: each path's row as `what path`, a line apart, the
-/// files written and their bytes, and the last line said.
+/// What a hook heard: each path's row as `what path`, a line apart -
+/// `what path old new` where it has a version, `-` for the one it has
+/// not - the files written and their bytes, and the last line said.
 const Heard = struct {
     rows: [1024]u8 = undefined,
     rows_used: usize = 0,
@@ -160,11 +164,13 @@ const Heard = struct {
         const text = std.mem.span(said.text);
         switch (said.kind) {
             update.UPDM_PATH => {
-                const what = std.mem.span(said.what);
-                for ([_][]const u8{ what, " ", text, "\n" }) |piece| {
-                    @memcpy(heard.rows[heard.rows_used..][0..piece.len], piece);
-                    heard.rows_used += piece.len;
+                const old = std.mem.span(said.old_version);
+                const new = std.mem.span(said.new_version);
+                for ([_][]const u8{ std.mem.span(said.what), " ", text }) |piece| heard.put(piece);
+                if (old.len != 0 or new.len != 0) {
+                    for ([_][]const u8{ " ", if (old.len != 0) old else "-", " ", if (new.len != 0) new else "-" }) |piece| heard.put(piece);
                 }
+                heard.put("\n");
             },
             update.UPDM_WROTE => {
                 heard.wrote += 1;
@@ -178,6 +184,11 @@ const Heard = struct {
             },
         }
         return 0;
+    }
+
+    fn put(heard: *Heard, piece: []const u8) void {
+        @memcpy(heard.rows[heard.rows_used..][0..piece.len], piece);
+        heard.rows_used += piece.len;
     }
 
     fn rowsSaid(heard: *const Heard) []const u8 {
@@ -291,6 +302,71 @@ test "a file changed on the machine is kept, and FORCE takes the package's" {
     try testing.expectEqualStrings("new SYS:C/New\nnewer SYS:C/Tool\nlist SYS:Storage/installed.manifest\n", heard.rowsSaid());
     var bytes: [256]u8 = undefined;
     try testing.expectEqualStrings(new_tool, try rig.read("SYS:C/Tool", &bytes));
+}
+
+test "each row says what the file here and the package's say they are" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const tool_here = "code\x00$VER: \x00$VER: Tool 1.3 (01.11.2026)\r\nmore code";
+    const tool_now = "code\x00$VER: Tool 1.4 (18.11.2026)\r\n";
+    const fresh = "\x00$VER: New 2.0 (18.11.2026)\r\n";
+    const dropped = "\x00$VER: Old tool 7 (01.01.2026)\r\n";
+    var text: [1024]u8 = undefined;
+    try rig.write("SYS:C/Old", dropped);
+    try rig.write("SYS:C/Tool", tool_here);
+    try rig.write(kept_list, listOf(&.{
+        .{ .path = "system/C/Old", .bytes = dropped },
+        .{ .path = "system/C/Tool", .bytes = tool_here },
+    }, &text));
+    try rig.write("WORK:Package/system/C/New", fresh);
+    try rig.write("WORK:Package/system/C/Tool", tool_now);
+    try rig.write("WORK:Package/manifest", listOf(&.{
+        .{ .path = "system/C/New", .bytes = fresh },
+        .{ .path = "system/C/Tool", .bytes = tool_now },
+    }, &text));
+    // A line for a path the list does not hold, and one out of order, are
+    // passed over.
+    try rig.write("WORK:Package/versions", "# what the files are\n2.0 system/C/New\n9 system/C/Nothing\n1.4 system/C/Tool\n1.0 system/C/Aaa\n");
+    const upd = rig.upd;
+
+    var heard: Heard = .{};
+    var hook: utility.Hook = .{ .entry = &Heard.entry, .data = &heard };
+    const run = upd.CreateUpdate(&[_]TagItem{
+        .{ .tag = update.UPD_Source, .data = @intFromPtr("WORK:Package") },
+        .{ .tag = update.UPD_Hook, .data = @intFromPtr(&hook) },
+        .{},
+    }) orelse return error.NoRun;
+    defer upd.DeleteUpdate(run);
+
+    try testing.expectEqual(dos.RETURN_WARN, upd.DoUpdate(run, &[_]TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} }));
+    try testing.expectEqualStrings("new SYS:C/New - 2.0\ngone SYS:C/Old 7 -\nnewer SYS:C/Tool 1.3 1.4\n", heard.rowsSaid());
+
+    // Without the package's versions, the rows have the machine's alone.
+    try testing.expect(rig.dosLib().DeleteFile("WORK:Package/versions"));
+    heard = .{};
+    try testing.expectEqual(dos.RETURN_WARN, upd.DoUpdate(run, &[_]TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} }));
+    try testing.expectEqualStrings("new SYS:C/New\ngone SYS:C/Old 7 -\nnewer SYS:C/Tool 1.3 -\n", heard.rowsSaid());
+}
+
+test "a version string is found across the pieces a file is read in" {
+    const file = "lead\x00$VER: Nothing here\x00$VER: Dir 40.2 (01.01.2026)\x00tail";
+    // Every cut of the file into two pieces finds the same string.
+    for (0..file.len + 1) |cut| {
+        var scan: version.Scan = .{};
+        scan.add(file[0..cut]);
+        scan.add(file[cut..]);
+        scan.finish();
+        try testing.expectEqualStrings("40.2", std.mem.span(scan.found.cstr()));
+    }
+    // A string that runs to the file's end ends with it.
+    var scan: version.Scan = .{};
+    scan.add("$$VER: List 1.3");
+    scan.finish();
+    try testing.expectEqualStrings("1.3", std.mem.span(scan.found.cstr()));
+    // A number longer than a version holds is none.
+    try testing.expect(version.numberIn("Name 123456789012345678901234") == null);
+    try testing.expect(version.numberIn("1.0") == null);
 }
 
 test "a list in SYS:System, with files to write: the package's written to SYS:Storage, the old one deleted" {

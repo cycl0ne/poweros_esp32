@@ -4,6 +4,7 @@
 //! a package holds and where each half of it belongs on a machine.
 //!
 //!     manifest              every drawer and file below (`manifest.zig`)
+//!     versions              the version each file says it is
 //!     system/...            the system volume's files
 //!     boot/...              what the machine's firmware reads
 //!
@@ -43,6 +44,24 @@ pub const half_names = [2][]const u8{ "system", "boot" };
 
 /// The list's own name in a package.
 pub const package_manifest = "manifest";
+
+/// What each file in the package's system half says it is, for a person
+/// to read before an update: a line `<version> <path>` for every file
+/// with a "$VER:" string, sorted as the manifest is, `#` lines comments.
+/// The version is the string's number as it stands - `1.26`, `40` -
+/// the first "$VER:" in the file whose name is followed by one. It is
+/// held against nothing and not in the manifest: a package without it
+/// is whole, and an update only shows no versions for its files.
+pub const package_versions = "versions";
+
+/// The longest version a line of `package_versions` holds; a longer
+/// number is no version.
+pub const max_version = 23;
+
+/// How much of a "$VER:" string past its tag is looked at for the
+/// number: a name and a number fit in it, and the build and the machine
+/// cut the same string in the same place.
+pub const version_room = 128;
 
 /// The list a machine keeps of what it was given, which an update
 /// compares against. It lies beside `boot_manifest`, under its own name:

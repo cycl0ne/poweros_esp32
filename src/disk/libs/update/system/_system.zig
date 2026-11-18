@@ -12,6 +12,10 @@
 //!
 //! What the build dropped is deleted after everything else and in
 //! reverse, so a drawer goes after what was in it.
+//!
+//! A file's row says what the file here and the package's say they are
+//! (`version/_version.zig`): the one here found in the read the compare
+//! makes anyway, the package's from its `versions`.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -21,6 +25,7 @@ const rule = install.update;
 const prefs = sdk.prefs;
 const shared = @import("../run/_run.zig");
 const source = @import("../package/_package.zig");
+const version = @import("../version/_version.zig");
 const Run = shared.Run;
 const Name = shared.Name;
 
@@ -88,10 +93,14 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
     }
 
     const where = Name.of(volume, part.rest);
+    // What the file here says it is, where it is read; the package's,
+    // for a row that writes or keeps it.
+    var old: version.Text = .{};
+    var new: version.Text = .{};
     const here = if (rule.agree(had, want))
         thereOf(run, where.cstr())
     else
-        hereOf(run, where.cstr(), had, want);
+        hereOf(run, where.cstr(), had, want, &old);
     switch (rule.actionFor(had, want, here, run.force)) {
         .keep => {},
         .make => {
@@ -105,7 +114,8 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
         .write => {
             const entry = want.?;
             const what: [*:0]const u8 = if (had == null) "new" else if (here == .gone) "again" else "newer";
-            shared.row(run, what, where.cstr(), entry.size);
+            run.versions.of(path, &new);
+            shared.fileRow(run, what, where.cstr(), entry.size, old.cstr(), new.cstr());
             run.written += 1;
             run.written_bytes += entry.size;
             if (run.check) return dos.RETURN_OK;
@@ -113,11 +123,12 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
         },
         .kept => {
             run.kept += 1;
-            shared.row(run, "kept", where.cstr(), 0);
+            run.versions.of(path, &new);
+            shared.fileRow(run, "kept", where.cstr(), 0, old.cstr(), new.cstr());
         },
         .delete => {
             run.deleted += 1;
-            shared.row(run, "gone", where.cstr(), 0);
+            shared.fileRow(run, "gone", where.cstr(), 0, old.cstr(), "");
             if (run.check) return dos.RETURN_OK;
             if (!gone.add(part.rest) or !gone.add("\n")) {
                 return shared.fail(run, "no memory for the list of what to delete\n", .{});
@@ -218,11 +229,14 @@ pub fn changed(run: *Run) bool {
 }
 
 /// What the file on the machine is, held against the two lists: read
-/// once, and only where the lists differ.
-fn hereOf(run: *Run, where: [*:0]const u8, had: ?manifest.Entry, want: ?manifest.Entry) rule.Here {
+/// once, and only where the lists differ - and what it says it is, in
+/// `found`, from the same read.
+fn hereOf(run: *Run, where: [*:0]const u8, had: ?manifest.Entry, want: ?manifest.Entry, found: *version.Text) rule.Here {
     var sum: u32 = 0;
     var length: u64 = 0;
-    if (!sumOf(run, where, &sum, &length)) return .gone;
+    var scan: version.Scan = .{};
+    if (!sumOf(run, where, &sum, &length, &scan)) return .gone;
+    found.* = scan.found;
     if (had) |entry| {
         if (entry.kind == .file and entry.crc == sum and entry.size == length) return .same;
     }
@@ -246,12 +260,13 @@ fn thereOf(run: *Run, where: [*:0]const u8) rule.Here {
 pub fn sameFile(run: *Run, where: [*:0]const u8, entry: manifest.Entry) bool {
     var sum: u32 = 0;
     var length: u64 = 0;
-    if (!sumOf(run, where, &sum, &length)) return false;
+    if (!sumOf(run, where, &sum, &length, null)) return false;
     return sum == entry.crc and length == entry.size;
 }
 
-/// A file's CRC-32 and its length; false when it is not there.
-fn sumOf(run: *Run, where: [*:0]const u8, sum: *u32, length: *u64) bool {
+/// A file's CRC-32 and its length, and its "$VER:" string looked for
+/// in `scan` where one is given; false when it is not there.
+fn sumOf(run: *Run, where: [*:0]const u8, sum: *u32, length: *u64, scan: ?*version.Scan) bool {
     const dl = run.dl;
     const file = dl.Open(where, dos.MODE_OLDFILE) orelse return false;
     defer _ = dl.Close(file);
@@ -262,8 +277,10 @@ fn sumOf(run: *Run, where: [*:0]const u8, sum: *u32, length: *u64) bool {
         if (got <= 0) break;
         const count: usize = @intCast(got);
         crc = dos.flashfs.crcAdd(crc, run.buffer[0..count]);
+        if (scan) |looking| looking.add(run.buffer[0..count]);
         total += count;
     }
+    if (scan) |looking| looking.finish();
     sum.* = dos.flashfs.crcEnd(crc);
     length.* = total;
     return true;

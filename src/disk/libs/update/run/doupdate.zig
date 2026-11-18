@@ -54,6 +54,13 @@ const _boot = @import("../boot/_boot.zig");
 /// is said: `new`, `newer`, `again`, `kept`, `gone`, `drawer`, then
 /// `list` once the package's list is the machine's own.
 ///
+/// A file's row carries what the file here and the package's say they
+/// are - the number of the "$VER:" string, on the output after the path
+/// as `1.3 -> 1.4`, to a hook as `old_version` and `new_version`. The one
+/// here is found in the read the compare makes, so only a file the lists
+/// differ about has it; the package's comes from its `versions`, read
+/// once beside its list, and a package without one carries none.
+///
 /// The machine's list is read from `SYS:Storage/installed.manifest`, or,
 /// where a system was installed with it at `SYS:System/manifest`, from
 /// there: a run that is not a check then writes it to its own place even
@@ -152,6 +159,14 @@ fn walk(run: *Run, settings: *const prefs.install.Settings) i32 {
     }
     run.files = reader.header.counts.files;
     run.bytes = reader.header.counts.bytes;
+
+    // What the package's files say they are, for the rows: a package
+    // need not hold them, and one that does not is read all the same.
+    const versions = _package.optional(run, install.package_versions);
+    if (run.broke) return dos.RETURN_FAIL;
+    defer if (versions) |text| sys.FreeVec(@ptrCast(text.ptr));
+    run.versions = if (versions) |text| .init(text) else .{};
+    defer run.versions = .{};
 
     var size: [16:0]u8 = @splat(0);
     update.bytesAsText(&size, run.bytes);

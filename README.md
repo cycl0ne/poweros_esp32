@@ -1147,7 +1147,8 @@ and its return code tells a script whether there is anything to do. The
 system volume is given a snapshot before the first file is written.
 `SYS:System/Update` does the same in a window: a check as it opens, the
 package's drawer picked from a requester and kept in `update.prefs`, a
-row for every path, a gauge while it writes, Stop, Restart, and Keep for
+row for every path with the version here and the package's, a gauge
+while it writes, Stop, Restart, and Keep for
 a kernel that came up on its try. The work is
 `LIBS:update.library`'s, which a program calls the same way
 (`sdk.update`).

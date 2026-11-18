@@ -80,6 +80,15 @@ pub const UpdateMessage = extern struct {
     /// UPDM_PATH: the bytes written for it, 0 where none are.
     /// UPDM_WROTE: the file's length.
     bytes: u64 align(4) = 0,
+    /// UPDM_PATH: what the file on this machine says it is - the number
+    /// of its "$VER:" string, `1.26` - where it was read for the compare:
+    /// a file the two lists differ about (`newer`, `kept`, `gone`). Empty
+    /// where it was not read or says nothing.
+    old_version: [*:0]const u8 = "",
+    /// UPDM_PATH: what the package's file says it is, from the package's
+    /// `versions` (`sdk.install.package_versions`); empty where that has
+    /// no line for it, or the package has none.
+    new_version: [*:0]const u8 = "",
 };
 
 /// What a run came to, from GetUpdateInfo.

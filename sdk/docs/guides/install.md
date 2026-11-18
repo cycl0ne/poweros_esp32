@@ -261,6 +261,7 @@ it anyway.
 
 ```
 manifest              every drawer and file below, with sizes and sums
+versions              the version each file of system/ says it is
 system/...            the system volume's files
 boot/...              what that board's firmware reads
 ```
@@ -293,6 +294,12 @@ are sorted by path with letters as if upper case, the order the file
 systems compare names in, and a reader refuses a line that is not after
 the one before it: two lists are compared by walking both at once with
 nothing held in memory but the two lines in hand.
+
+`versions` is for the people reading an update: a line `<version>
+<path>` for each file of the system half with a `$VER:` string, the
+string's number as it stands (`1.26`), sorted as the list is. It is not
+in the list and nothing is held against it, so a package without one is
+whole, and its rows only show no new version.
 
 `./zig build serve -Dboard=<board>` hands the same package out over HTTP
 (`-Dserve-port=`, 8080 by default): GET and HEAD only, no directory
@@ -449,14 +456,19 @@ this machine, `gone` for one the build dropped, `drawer` for a drawer
 made, `list` for the package's list written as the machine's own, and -
 with `BOOT` - `slot` for the partition the firmware reads, `boot` for a
 file written into it, `same` for one already right and `tried` for
-`autoboot.txt`:
+`autoboot.txt`. A file's line ends with what it says it is - the file
+here, then the package's, `1.3 -> 1.4`, either alone where only one has
+a `$VER:` string. The file here is found in the read the compare makes
+anyway, so only a file the lists differ about shows one; the package's
+comes from its `versions`:
 
 ```
-  new     SYS:c/Mixer
+  new     SYS:c/Mixer  1.2
+  newer   SYS:c/List  1.3 -> 1.4
   gone    SYS:programs/Docs/Battery.md
   kept    SYS:s/startup-sequence
   list    SYS:Storage/installed.manifest
-Done: 1 written (39), 1 deleted, 1 kept as they are, 0 drawers made.
+Done: 2 written (48K), 1 deleted, 1 kept as they are, 0 drawers made.
 What is kept was changed on this machine; FORCE takes the package's own.
 ```
 
@@ -483,7 +495,8 @@ desktop or as `SYS:System/Update FROM <package>`. It checks as it opens -
 the package FROM gives, else the one `update.prefs` names, else the one
 the install wrote down - and puts the package it read in the field at
 the top, a row in the list for every path something would happen to,
-with how much is written for it, and what the check comes to in the two
+with the version of the file here and the package's (**Old**, **New**)
+and how much is written for it, and what the check comes to in the two
 lines above the list.
 
 - **Check** looks again, at what the field holds. The field's button
@@ -669,8 +682,9 @@ upd.GetUpdateInfo(run, &info); // what it came to, `tried` among it
   **ConfirmUpdate** is CONFIRM.
 - **What a run says** goes to the program's output, or with `UPD_Hook`
   to a hook: an `UpdateMessage` for each line, for each path with what
-  happens to it and the bytes written for it, and for each file once it
-  is in place - enough for a list and a gauge.
+  happens to it, the bytes written for it and the two versions
+  (`old_version`, `new_version`), and for each file once it is in place
+  - enough for a list and a gauge.
 - **A run belongs to the task that made it**, which it checks for Ctrl-C
   between files, and whose wait on the network Ctrl-C breaks: a program
   that runs it on a process of its own stops it with

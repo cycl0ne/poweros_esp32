@@ -13,8 +13,9 @@
 //!
 //! **A check as the window opens.** The package's list is held against
 //! the one this machine was given, and every path something would happen
-//! to is a row: what would happen to it, the path, and how much would be
-//! written. The line under the switches says what it comes to. Check
+//! to is a row: what would happen to it, the path, the version of the
+//! file on this machine and of the package's - the numbers of their
+//! "$VER:" strings, where they have one - and how much would be written. The line under the switches says what it comes to. Check
 //! looks again - at what the field names - and so does a drawer picked,
 //! Return in the field, or a switch changed:
 //!
@@ -86,8 +87,8 @@ const cb_class = sdk.gadgets.checkbox;
 const fg = sdk.gadgets.fuelgauge;
 
 pub const COMMAND_NAME = "Update";
-const VERSION = "1.3";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (09.11.2026)\r\n";
+const VERSION = "1.4";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (18.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -133,7 +134,9 @@ const gauge_most: u64 = 0x7FFF_FFFF;
 
 const columns = [_]lb.Column{
     .{ .title = "What", .weight = 1 },
-    .{ .title = "Path", .weight = 6 },
+    .{ .title = "Path", .weight = 5 },
+    .{ .title = "Old", .weight = 1 },
+    .{ .title = "New", .weight = 1 },
     .{ .title = "Size", .weight = 1, .flags = lb.COLUMN_RIGHT },
     .{},
 };

@@ -63,6 +63,27 @@ pub fn whole(run: *Run, rest: []const u8) ?[]u8 {
     }
 }
 
+/// The whole of the package's `rest` in memory where the package holds
+/// it, freed with FreeVec: what a package need not hold (`versions`).
+/// Null, and nothing said, where it is not there or cannot be had - but
+/// Ctrl-C while it is fetched is said, and sets `run.broke`.
+pub fn optional(run: *Run, rest: []const u8) ?[]u8 {
+    const name = Name.of(run.from[0..run.ub.Strlen(run.from)], rest);
+    switch (run.kind) {
+        .path => return sdk.prefs.loadWhole(run.sys, run.dl, name.cstr()),
+        .address => {
+            var buffer: shared.Buffer = .{ .sys = run.sys };
+            run.hush = true;
+            defer run.hush = false;
+            if (!get(run, name.cstr(), &buffer, null, null, null) or buffer.at == 0) {
+                buffer.free();
+                return null;
+            }
+            return buffer.bytes[0..buffer.at];
+        },
+    }
+}
+
 /// The package's `rest` written to the file `to`, its CRC-32 in `sum`
 /// and its length in `length`. Null when it is written; a return code
 /// when it is not, said already.
@@ -107,11 +128,12 @@ pub fn fetch(run: *Run, rest: []const u8, to: [*:0]const u8, sum: *u32, length: 
 }
 
 /// `url` fetched: into `buffer` where one is given, else written to the
-/// file `out` with `crc` carried on. False when it failed, said already.
+/// file `out` with `crc` carried on. False when it failed, said already
+/// unless `run.hush` - a stop is said either way, and sets `run.broke`.
 fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHandle, crc: ?*u32, count: ?*u64) bool {
     const dl = run.dl;
     const hb = run.hb orelse {
-        _ = shared.fail(run, "%s is an address and http.library is not open\n", .{url});
+        if (!run.hush) _ = shared.fail(run, "%s is an address and http.library is not open\n", .{url});
         return false;
     };
     const client = run.client orelse return false;
@@ -130,13 +152,16 @@ fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHa
     const status = hb.GetRequestAttr(request, http.HTTP_Status);
     if (status < 200 or status > 299) {
         const line: [*:0]const u8 = @ptrFromInt(hb.GetRequestAttr(request, http.HTTP_StatusLine));
-        _ = shared.fail(run, "%s: %s\n", .{ url, line });
+        if (!run.hush) _ = shared.fail(run, "%s: %s\n", .{ url, line });
         return false;
     }
 
     var total: u64 = 0;
     while (true) {
-        if (shared.stopped(run)) return false;
+        if (shared.stopped(run)) {
+            run.broke = true;
+            return false;
+        }
         const got = hb.ReadRequest(request, run.buffer.ptr, @intCast(run.buffer.len));
         if (got == 0) break;
         if (got < 0) {
@@ -146,7 +171,7 @@ fn get(run: *Run, url: [*:0]const u8, buffer: ?*shared.Buffer, out: ?*dos.FileHa
         const piece: usize = @intCast(got);
         if (buffer) |into| {
             if (!into.add(run.buffer[0..piece])) {
-                _ = shared.fail(run, "no memory for %s\n", .{url});
+                if (!run.hush) _ = shared.fail(run, "no memory for %s\n", .{url});
                 return false;
             }
         }
@@ -171,6 +196,7 @@ fn broken(run: *Run, code: i32) bool {
     const sb = run.sb orelse return false;
     if (sb.Errno() != bsd.EINTR) return false;
     shared.fault(run, dos.ERROR_BREAK, null, false);
+    run.broke = true;
     return true;
 }
 
@@ -181,6 +207,7 @@ const user_agent = "PowerOS-Update/1.0";
 /// words (Fault): what was wrong with a certificate, the host without an
 /// address, why the connection failed.
 fn failedRequest(run: *Run, hb: *HttpBase, client: *http.Client, url: [*:0]const u8, code: i32) void {
+    if (run.hush) return;
     var words: [256]u8 = undefined;
     _ = hb.Fault(client, code, null, &words, words.len);
     _ = shared.fail(run, "%s: %s\n", .{ url, @as([*:0]const u8, @ptrCast(&words)) });

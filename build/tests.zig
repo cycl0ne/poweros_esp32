@@ -368,6 +368,14 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     // compiling.
     test_step.dependOn(&mkpackage.step);
     test_step.dependOn(&serve.step);
+    // mkpackage's own tests: the version it reads out of a file for a
+    // package's `versions`.
+    const mkpackage_tests = b.createModule(.{
+        .root_source_file = b.path("tools/mkpackage/mkpackage.zig"),
+        .target = b.graph.host,
+    });
+    mkpackage_tests.addImport("sdk", sdk);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mkpackage_tests })).step);
     // Every program and module on a disk compiles: every board's flash
     // disk and every 64-bit chip's disk is made.
     for (disks.runs) |run| check_all_step.dependOn(&run.step);

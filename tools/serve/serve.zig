@@ -149,12 +149,14 @@ fn answer(io: Io, root: Io.Dir, request: *http.Server.Request, gpa: mem.Allocato
     });
 }
 
-/// What a file in a package is, for a client that asks. A manifest and
-/// the firmware's own settings are read by people as well as machines;
-/// everything else is a program, a picture or an image of a disk.
+/// What a file in a package is, for a client that asks. A manifest, the
+/// versions and the firmware's own settings are read by people as well
+/// as machines; everything else is a program, a picture or an image of a
+/// disk.
 fn contentType(path: []const u8) []const u8 {
     const plain = "text/plain; charset=utf-8";
     if (mem.eql(u8, path, install.package_manifest)) return plain;
+    if (mem.eql(u8, path, install.package_versions)) return plain;
     for ([_][]const u8{ ".txt", ".md", ".cd" }) |suffix| {
         if (mem.endsWith(u8, path, suffix)) return plain;
     }

@@ -292,6 +292,13 @@ where the two disagree. For each path that something happens to, a row
 is said: `new`, `newer`, `again`, `kept`, `gone`, `drawer`, then
 `list` once the package's list is the machine's own.
 
+A file's row carries what the file here and the package's say they
+are - the number of the "$VER:" string, on the output after the path
+as `1.3 -> 1.4`, to a hook as `old_version` and `new_version`. The one
+here is found in the read the compare makes, so only a file the lists
+differ about has it; the package's comes from its `versions`, read
+once beside its list, and a package without one carries none.
+
 The machine's list is read from `SYS:Storage/installed.manifest`, or,
 where a system was installed with it at `SYS:System/manifest`, from
 there: a run that is not a check then writes it to its own place even

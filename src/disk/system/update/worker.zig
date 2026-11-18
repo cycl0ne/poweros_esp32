@@ -80,6 +80,10 @@ pub const Job = struct {
     /// What has been written so far.
     wrote_bytes: u64 = 0,
     wrote_files: u32 = 0,
+    /// Whether update.library's rows carry the two versions, which it
+    /// does from 1.6 on: one still in memory from before an update is
+    /// older than this program.
+    versions: bool = false,
 
     // --- the end, set by the worker before it ends -------------------------------
     code: i32 = dos.RETURN_OK,
@@ -204,6 +208,7 @@ pub const Job = struct {
             return;
         };
         defer sys.CloseLibrary(library);
+        job.versions = library.version > 1 or library.revision >= 6;
         const upd: *UpdateBase = @ptrCast(library);
         var hook: utility.Hook = .{ .entry = &heard, .data = job };
 
@@ -259,7 +264,9 @@ fn heard(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callcon
         update.UPDM_PATH => {
             var size: [16:0]u8 = @splat(0);
             if (said.bytes != 0) update.bytesAsText(&size, said.bytes);
-            const texts = [_][*:0]const u8{ said.what, said.text, @ptrCast(&size) };
+            const old: [*:0]const u8 = if (job.versions) said.old_version else "";
+            const new: [*:0]const u8 = if (job.versions) said.new_version else "";
+            const texts = [_][*:0]const u8{ said.what, said.text, old, new, @ptrCast(&size) };
             const row = lb.allocRow(sys, &texts, 0) orelse return 0;
             sys.ObtainSemaphore(&job.lock);
             sys.AddTail(&job.rows, &row.node);

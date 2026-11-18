@@ -20,7 +20,10 @@
 //! the CRC-32 of the bytes that are there (`sdk.install.manifest`). The
 //! manifest is of the package as it is, not as a build meant it to be,
 //! and it is written last - so it is also the mark of a package that was
-//! gathered to the end.
+//! gathered to the end. Before it `<dir>/versions` is written
+//! (`install.package_versions`): the version each file of the system half
+//! says it is in its "$VER:" string, which an update shows beside the
+//! version on the machine.
 //!
 //! **CHIP and BOARD.** Every machine's package holds the same paths, so
 //! the manifest says which chip the files are built for; and two boards
@@ -138,8 +141,9 @@ pub fn main(init: std.process.Init) !void {
             fatal("{s}: {s}", .{ host, @errorName(err) });
     }
 
-    // The manifest of what is now there, written last.
+    // The versions, and the manifest of what is now there, written last.
     const entries = try entriesOf(io, package, init.gpa, arena);
+    try writeVersions(io, package, entries, init.gpa, arena);
     var text: std.ArrayList(u8) = .empty;
     try text.appendSlice(arena, manifest.preamble);
     var counts: manifest.Counts = .{};
@@ -161,6 +165,7 @@ fn entriesOf(io: Io, package: Io.Dir, gpa: Allocator, arena: Allocator) ![]manif
     defer walker.deinit();
     while (try walker.next(io)) |entry| {
         if (mem.eql(u8, entry.path, install.package_manifest)) continue;
+        if (mem.eql(u8, entry.path, install.package_versions)) continue;
         const path = try arena.dupe(u8, entry.path);
         if (!manifest.pathOk(path)) fatal("{s}: a manifest cannot name this file", .{path});
         switch (entry.kind) {
@@ -194,6 +199,81 @@ fn entriesOf(io: Io, package: Io.Dir, gpa: Allocator, arena: Allocator) ![]manif
         }
     }
     return entries.items;
+}
+
+/// What `versions` says of itself, before its lines.
+const versions_preamble =
+    \\# What each file of the system half says it is: the version and
+    \\# revision of its "$VER:" string, a line `<version> <path>` for each
+    \\# file that has one, sorted as the manifest is. For a person to read
+    \\# before an update; the manifest is the package's list.
+    \\
+;
+
+/// `versions` written over the system half's files, in the manifest's
+/// order: every file with a version gets a line. Written every time, so
+/// a package gathered again over an old one has none that is stale.
+fn writeVersions(io: Io, package: Io.Dir, entries: []const manifest.Entry, gpa: Allocator, arena: Allocator) !void {
+    var text: std.ArrayList(u8) = .empty;
+    try text.appendSlice(arena, versions_preamble);
+    for (entries) |entry| {
+        if (entry.kind != .file) continue;
+        const part = install.halfOf(entry.path) orelse continue;
+        if (part.half != .system) continue;
+        const content = package.readFileAlloc(io, entry.path, gpa, .unlimited) catch |err|
+            fatal("{s}: {s}", .{ entry.path, @errorName(err) });
+        defer gpa.free(content);
+        const version = versionOf(content) orelse continue;
+        try text.print(arena, "{s} {s}\n", .{ version, entry.path });
+    }
+    try package.writeFile(io, .{ .sub_path = install.package_versions, .data = text.items });
+}
+
+const ver_tag = "$VER: ";
+
+/// A file's version: the number of the first "$VER:" string in it whose
+/// name is followed by one - `1.26` of `$VER: Player 1.26 (29.10.2026)`.
+/// The string ends at a NUL or the end of its line, and its first
+/// `install.version_room` bytes are looked at; the next is looked for
+/// past its end. update.library reads a file on the machine by the same
+/// rule.
+fn versionOf(content: []const u8) ?[]const u8 {
+    var from: usize = 0;
+    while (mem.indexOfPos(u8, content, from, ver_tag)) |at| {
+        const start = at + ver_tag.len;
+        var end = start;
+        while (end < content.len and content[end] != 0 and content[end] != '\r' and content[end] != '\n') end += 1;
+        if (numberIn(content[start..@min(end, start + install.version_room)])) |number| return number;
+        from = end;
+    }
+    return null;
+}
+
+/// The number in what follows "$VER: ": the name is every word up to one
+/// that begins with a digit, and the number is that word's digits, with
+/// a `.` and the digits after it where they follow.
+fn numberIn(text: []const u8) ?[]const u8 {
+    var words = mem.tokenizeScalar(u8, text, ' ');
+    _ = words.next() orelse return null; // the name has a word at least
+    while (words.next()) |word| {
+        if (!std.ascii.isDigit(word[0])) continue;
+        var end: usize = 0;
+        while (end < word.len and std.ascii.isDigit(word[end])) end += 1;
+        if (end + 1 < word.len and word[end] == '.' and std.ascii.isDigit(word[end + 1])) {
+            end += 1;
+            while (end < word.len and std.ascii.isDigit(word[end])) end += 1;
+        }
+        if (end > install.max_version) return null;
+        return word[0..end];
+    }
+    return null;
+}
+
+test "a version is the number after the name" {
+    try std.testing.expectEqualStrings("1.26", versionOf("..\x00$VER: Player 1.26 (29.10.2026)\r\n").?);
+    try std.testing.expectEqualStrings("2", versionOf("$VER: Pre fs 2 (1.1.2026)").?);
+    try std.testing.expectEqualStrings("1.3", versionOf("$VER: \x00junk$VER: List 1.3.").?);
+    try std.testing.expect(versionOf("$VER: nothing here\n$VER: \x00") == null);
 }
 
 /// A package held against its own manifest: every line's length and sum

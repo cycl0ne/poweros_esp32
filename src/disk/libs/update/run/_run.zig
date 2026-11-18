@@ -4,11 +4,13 @@
 //! the snapshot the system volume is given, and the names it builds.
 //!
 //! **What a run says** goes to the caller's output - a line of prose, or
-//! a line for each path saying first what happens to it (`row`) - unless
+//! a line for each path saying first what happens to it (`row`), and for
+//! a file what it and the package's say they are (`fileRow`) - unless
 //! the run was given a hook (`UPD_Hook`): then each line is formatted and
-//! handed to it as an `UpdateMessage`, each path with what happens to it
-//! and the bytes written for it, and each file once it is in place
-//! (`wrote`). `UPD_Quiet` quiets only the output, never a failure.
+//! handed to it as an `UpdateMessage`, each path with what happens to it,
+//! the bytes written for it and the two versions, and each file once it
+//! is in place (`wrote`). `UPD_Quiet` quiets only the output, never a
+//! failure.
 //!
 //! **A run belongs to the task that made it.** It reads and writes on
 //! that task's process - dos's packets, the output, the network libraries
@@ -29,6 +31,7 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const HttpBase = sdk.interface.http.HttpBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const UpdateBase = @import("../update_base.zig").UpdateBase;
+const Versions = @import("../version/_version.zig").Versions;
 const Printf = dos.stdio.Printf;
 
 /// What a failure said on the output starts with.
@@ -82,6 +85,15 @@ pub const Run = struct {
     /// What the package holds, from its list's first line.
     files: u32 = 0,
     bytes: u64 = 0,
+    /// What the package's files say they are, walked beside its list;
+    /// empty for a package without them, and outside DoUpdate.
+    versions: Versions = .{},
+    /// A fetch going on is of what a package need not hold: where it
+    /// fails, nothing is said.
+    hush: bool = false,
+    /// Ctrl-C ended a fetch: a run whose fetch only answers "not there"
+    /// asks this to tell a stop from a file that is not there.
+    broke: bool = false,
     /// What the install left: where this system came from, which board
     /// it was built for, and which partition its firmware reads.
     settings: prefs.install.Settings = .{},
@@ -114,6 +126,7 @@ pub const Run = struct {
         run.boot_written = 0;
         run.tried = 0;
         run.snapshotted = false;
+        run.broke = false;
     }
 };
 
@@ -203,13 +216,33 @@ pub fn say(run: *Run, comptime format: [:0]const u8, args: anytype) void {
 /// What happens to the path `where`, said as a line with `what` first
 /// unless QUIET; `bytes` is what is written for it, for a hook.
 pub fn row(run: *Run, what: [*:0]const u8, where: [*:0]const u8, bytes: u64) void {
+    fileRow(run, what, where, bytes, "", "");
+}
+
+/// `row` for a file, with what the file here says it is (`old`) and what
+/// the package's says (`new`), either of them empty where it says
+/// nothing. On the output they follow the path, `old -> new` where both
+/// are known.
+pub fn fileRow(run: *Run, what: [*:0]const u8, where: [*:0]const u8, bytes: u64, old: [*:0]const u8, new: [*:0]const u8) void {
     if (run.hook) |hook| {
-        var message: update.UpdateMessage = .{ .kind = update.UPDM_PATH, .text = where, .what = what, .bytes = bytes };
+        var message: update.UpdateMessage = .{
+            .kind = update.UPDM_PATH,
+            .text = where,
+            .what = what,
+            .bytes = bytes,
+            .old_version = old,
+            .new_version = new,
+        };
         _ = run.ub.CallHookPkt(hook, run.object, &message);
         return;
     }
     if (run.quiet) return;
-    _ = Printf(run.dl, "  %-7s %s\n", .{ what, where });
+    const dl = run.dl;
+    if (old[0] != 0 and new[0] != 0) {
+        _ = Printf(dl, "  %-7s %s  %s -> %s\n", .{ what, where, old, new });
+    } else if (old[0] != 0 or new[0] != 0) {
+        _ = Printf(dl, "  %-7s %s  %s\n", .{ what, where, if (old[0] != 0) old else new });
+    } else _ = Printf(dl, "  %-7s %s\n", .{ what, where });
 }
 
 /// The file `where`, `bytes` long, written whole and put in place: told
