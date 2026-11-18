@@ -28,6 +28,13 @@
 //! for its answer, keeping the buffers and events that come meanwhile for
 //! `Client.next`.
 //!
+//! **An output buffer's bulk holds the service up**: once the firmware
+//! has sent a BUFFER_TO_HOST whose bytes come as a bulk, it sends nothing
+//! more on the service - no answer, no buffer - until the ARM has put out
+//! that bulk. A client whose output buffers carry bytes takes them as
+//! they come, while it waits for an answer too (`Client.on_buffer`), and
+//! never lets go of such a message without taking its bytes.
+//!
 //! The messages, their numbers and their layout are the Raspberry Pi's
 //! MMAL as Linux's driver speaks it (drivers/staging/vc04_services/
 //! vchiq-mmal, version 15; its numbers, the code here is written fresh).
@@ -456,6 +463,12 @@ pub const Client = struct {
     vb: *VchiqBase,
     service: *vchiq.VchiqService,
     context: u32 = 1,
+    /// Where a buffer that comes while an answer is waited for goes, in
+    /// place of being kept for `next`: set after `open` by a client whose
+    /// output buffers carry bytes, which it takes there at once (the
+    /// firmware answers nothing until it has). Not to make a call itself.
+    on_buffer: ?*const fn (context: *anyopaque, m: *const Message) void = null,
+    on_buffer_context: ?*anyopaque = null,
     kept: [kept_max]Message = undefined,
     kept_first: u32 = 0,
     kept_count: u32 = 0,
@@ -482,9 +495,9 @@ pub const Client = struct {
 
     /// `request` sent - its first `length` bytes - and its answer waited
     /// for, into `answer`: VCHIQERR_OK, or VCHIQERR_TIMEOUT, or why it
-    /// could not go. Buffers and events that come meanwhile are kept for
-    /// `next`; an answer to an earlier request that ran out of time is
-    /// dropped.
+    /// could not go. Buffers that come meanwhile go to `on_buffer` where
+    /// it is set; they and events are kept for `next` otherwise. An answer
+    /// to an earlier request that ran out of time is dropped.
     pub fn callLength(c: *Client, request: anytype, length: usize, answer: *Message) u32 {
         const h: *Header = &request.h;
         h.magic = MAGIC;
@@ -499,7 +512,9 @@ pub const Client = struct {
             if (got != vchiq.VCHIQERR_OK) return got;
             const a = answer.header();
             if (a.type == h.type and a.context == h.context) return vchiq.VCHIQERR_OK;
-            if (a.type == MSG_BUFFER_TO_HOST or a.type == MSG_EVENT_TO_HOST) c.keep(answer);
+            if (a.type == MSG_BUFFER_TO_HOST) {
+                if (c.on_buffer) |handler| handler(c.on_buffer_context.?, answer) else c.keep(answer);
+            } else if (a.type == MSG_EVENT_TO_HOST) c.keep(answer);
         }
     }
 

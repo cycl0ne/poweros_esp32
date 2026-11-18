@@ -37,8 +37,8 @@ const bcm2711 = @import("codec/_bcm2711.zig");
 /// The name it is opened by. The SDK's.
 pub const RESOURCE_NAME = types.VIDEODECNAME;
 pub const RESOURCE_VERSION = 1;
-pub const RESOURCE_REVISION = 10;
-const BUILD_DATE = "17.11.2026";
+pub const RESOURCE_REVISION = 11;
+const BUILD_DATE = "18.11.2026";
 const RESOURCE_VERSION_STRING =
     "\x00$VER: " ++ RESOURCE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ RESOURCE_VERSION, RESOURCE_REVISION }) ++

@@ -8,10 +8,12 @@
 //!
 //! What the film is is printed - its pictures' codec, size and rate, its
 //! length, its sound - then every frame is taken and given back: how many
-//! came out, how fast, and whether their times rose. The first picture
-//! says what its numbers mean as well: its layout, matrix, curve,
-//! primaries, range and depth, and the light it was mastered for, which
-//! is what graphics and a video layer go by. Then its sound is
+//! came out, how fast, and whether their times rose. A damaged picture is
+//! said and passed over; Ctrl-C stops the decoding, and so does a run of
+//! `damaged_most` damaged pictures, the decoder having stopped. The first
+//! picture says what its numbers mean as well: its layout, matrix,
+//! curve, primaries, range and depth, and the light it was mastered for,
+//! which is what graphics and a video layer go by. Then its sound is
 //! decoded whole, timed (NOSOUND leaves it closed). TOGETHER decodes the
 //! sound on a process of its own while the pictures are decoded, as a
 //! player does. AHEAD has videocodec.library decode that many frames
@@ -62,7 +64,7 @@ const TimerBase = timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Film";
-const VERSION_STRING = "\x00$VER: Film 1.6 (17.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Film 1.7 (18.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "FILE/A,FRAME/K/N,TO/K,NOSOUND/S,SEEK/K/N,TOGETHER/S,TRACKS/S,SUBS/K/N,PACKETS/K/N,AHEAD/K/N,PACE/S";
@@ -77,6 +79,10 @@ const arg_subs = 7;
 const arg_packets = 8;
 const arg_ahead = 9;
 const arg_pace = 10;
+
+/// Damaged pictures in a row after which the decoder is taken to have
+/// stopped: more than a key picture's distance in any film.
+const damaged_most = 600;
 
 /// How many packets PACKETS reads, and the bytes of each it shows.
 const packets_read = 12;
@@ -380,16 +386,26 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (pace and sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &pause_req.node, 0) != 0) return dos.RETURN_FAIL;
     defer if (pace) sys.CloseDevice(&pause_req.node);
     const decoding = now(tb);
+    var damaged_in_a_row: u32 = 0;
     while (true) {
         const asked = now(tb);
         const got = vcb.DecodeVideoFrame(film, &frame);
         if (got == vc.VCERR_END) break;
         if (got != vc.VCERR_OK) {
             _ = Printf(dl, "frame %u: %s\n", .{ frames, vcb.VideoErrorText(got) });
-            if (got == vc.VCERR_CORRUPT) continue;
+            damaged_in_a_row += 1;
+            if (stopped(sys)) {
+                _ = Printf(dl, "***Break\n", .{});
+                result = dos.RETURN_WARN;
+                break;
+            }
+            // A decoder that hands out nothing but damaged pictures has
+            // stopped: the film is not decoded any further.
+            if (got == vc.VCERR_CORRUPT and damaged_in_a_row < damaged_most) continue;
             result = dos.RETURN_WARN;
             break;
         }
+        damaged_in_a_row = 0;
         slowest = @max(slowest, now(tb) - asked);
         if (pace) {
             // The clock starts with the first frame.

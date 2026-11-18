@@ -18,6 +18,8 @@
 //! other than 8-bit 4:2:0 - High 10, 4:2:2, 4:4:4, grey - is refused
 //! there, before the firmware sees it. Each slot the parser hands out is
 //! given back as soon as it lets go of it: nothing here is kept by slot.
+//! At a seek the parser forgets the pictures it held without letting go
+//! of them, so the slots still out are given back then.
 //!
 //! **A picture fed** is read by the parser, then copied into one of the
 //! input buffers here and handed over - its message, then its bytes as a
@@ -31,7 +33,17 @@
 //! frames held and three more - and the output buffer goes back to the
 //! component at once. The component gives its frames in the order they
 //! are shown, each with the time its picture was fed with. One that
-//! comes while every frame here is lent waits for one to be released.
+//! comes while every frame here is lent waits for one to be released -
+//! and the firmware with it, which sends nothing more on the service
+//! until the bulk of a buffer it gave back is taken. So an output buffer
+//! is taken as it comes, while an answer is waited for too (the client's
+//! `on_buffer`), and none is let go of without its bytes.
+//!
+//! **A seek** (`flush`) drops the frames waiting to be handed out and
+//! those still to come: the input is drained, every frame that comes
+//! meanwhile taken, dropped and its buffer handed back, so the component
+//! goes on reading; then both ports are disabled and enabled again, and
+//! the output buffers handed over anew.
 //!
 //! **The samples** are the decoder's, but for one thing the firmware does
 //! on the way out, in NV12, I420 and its own column layout alike: a
@@ -113,9 +125,13 @@ pub const MmalSession = struct {
     profile: u32 = 0,
     rate_num: u32 = 0,
     rate_den: u32 = 0,
+    /// The slots the parser handed out and has not let go of.
+    slots_out: [256]bool = @splat(false),
     /// The output buffers' round: a buffer of an earlier one that comes
     /// back is not handed to the component again.
     generation: u32 = 0,
+    /// A seek drains the component: the frames that come are dropped.
+    dropping: bool = false,
     out_count: u32 = 0,
     /// Whether the output port is enabled: from the start, with no
     /// buffers until the stream's format is known.
@@ -171,6 +187,8 @@ pub const MmalSession = struct {
             return types.VDERR_NO_ENGINE;
         }
         s.open = true;
+        s.c.on_buffer = &bufferDuringCall;
+        s.c.on_buffer_context = s;
         var reply: mmal.ComponentCreateReply = undefined;
         if (s.c.create("ril.video_decode", 0, &reply) != vchiq.VCHIQERR_OK or reply.status != mmal.STATUS_SUCCESS) {
             s.log("the firmware made no ril.video_decode", .{});
@@ -290,20 +308,33 @@ pub const MmalSession = struct {
     }
 
     /// What was fed and not handed out dropped: the pictures out waited
-    /// for, the frames they come to dropped, both ports started over.
+    /// for - each taken as it comes, dropped, its buffer handed back, so
+    /// that the component reads on - and both ports started over. An
+    /// output buffer waiting for a frame is taken into one of those the
+    /// drop frees: the firmware answers nothing until it is.
     pub fn flush(s: *MmalSession) void {
+        s.dropping = true;
+        defer s.dropping = false;
+        s.dropReady();
         const until = s.sys().UptimeUs() + wait_us;
-        while (s.failed == types.VDERR_OK and !s.allSlotsFree() and s.sys().UptimeUs() < until) _ = s.pump(10_000);
+        while (s.failed == types.VDERR_OK and !s.allSlotsFree() and s.sys().UptimeUs() < until) {
+            s.drainPending();
+            _ = s.pump(10_000);
+        }
         s.pumpAll();
-        if (s.parser) |parser| s.library.?.ResetVideoParser(parser);
+        if (s.parser) |parser| {
+            s.library.?.ResetVideoParser(parser);
+            for (&s.slots_out, 0..) |*out, slot| {
+                if (out.*) s.giveSlot(@intCast(slot));
+            }
+        }
         s.generation += 1;
         _ = s.c.portAction(&s.input, mmal.ACTION_DISABLE);
         const output_was = s.out_enabled;
         if (output_was) _ = s.c.portAction(&s.output, mmal.ACTION_DISABLE);
         s.pumpAll();
-        for (&s.frames) |*f| f.ready = false;
-        s.ready_count = 0;
-        s.pending_count = 0;
+        s.dropReady();
+        s.drainPending();
         _ = s.c.portAction(&s.input, mmal.ACTION_ENABLE);
         if (output_was) {
             _ = s.c.portAction(&s.output, mmal.ACTION_ENABLE);
@@ -335,9 +366,22 @@ pub const MmalSession = struct {
         return types.VDERR_OK;
     }
 
+    /// The component disabled and destroyed, the service closed. Every
+    /// frame that comes until then is taken and dropped, the one waiting
+    /// for a frame first, and no buffer handed back: the firmware answers
+    /// nothing while a frame's bytes wait, and stays so once the service
+    /// is closed under it. The caller's frames end with the session.
     pub fn end(s: *MmalSession) void {
         const sys_base = s.sys();
         if (s.made) {
+            // A session that failed has its waiting frames taken as well.
+            s.failed = types.VDERR_OK;
+            s.dropping = true;
+            s.generation += 1;
+            s.out_count = 0;
+            for (s.frames[0..s.frame_count]) |*f| f.lent = false;
+            s.dropReady();
+            s.pumpAll();
             _ = s.c.component(mmal.MSG_COMPONENT_DISABLE, s.component);
             _ = s.c.component(mmal.MSG_COMPONENT_DESTROY, s.component);
         }
@@ -373,7 +417,9 @@ pub const MmalSession = struct {
             switch (library.NextVideoEvent(parser, &said)) {
                 vp.VPERR_OK => switch (said.kind) {
                     vp.VPEV_SEQUENCE => if (said.sequence) |sequence| s.begin(sequence),
-                    vp.VPEV_FREE => library.ReleaseVideoSlot(parser, said.slot),
+                    vp.VPEV_PICTURE => if (said.picture) |picture| s.takeSlot(picture.slot),
+                    vp.VPEV_MISSING => s.takeSlot(said.slot),
+                    vp.VPEV_FREE => s.giveSlot(said.slot),
                     else => {},
                 },
                 vp.VPERR_NEED_DATA, vp.VPERR_END => return,
@@ -389,6 +435,17 @@ pub const MmalSession = struct {
                 },
             }
         }
+    }
+
+    /// A slot the parser handed out, kept until it lets go of it.
+    fn takeSlot(s: *MmalSession, slot: u32) void {
+        if (slot < s.slots_out.len) s.slots_out[slot] = true;
+    }
+
+    /// A slot given back to the parser.
+    fn giveSlot(s: *MmalSession, slot: u32) void {
+        if (slot < s.slots_out.len) s.slots_out[slot] = false;
+        s.library.?.ReleaseVideoSlot(s.parser.?, slot);
     }
 
     /// A sequence: its profile and frame rate kept, or the stream refused
@@ -429,14 +486,36 @@ pub const MmalSession = struct {
             if (s.ready_count > 0) return false;
             const now = s.sys().UptimeUs();
             if (now > until) {
-                s.log("no input buffer came back", .{});
+                s.sayStuck();
                 s.fail(types.VDERR_CORRUPT);
                 return false;
             }
-            // A bulk the firmware read ends without a message.
-            if (!s.pump(10_000)) continue;
+            // A frame released lets a waiting output buffer in; a bulk
+            // the firmware read ends without a message.
+            s.drainPending();
+            _ = s.pump(10_000);
         }
         return true;
+    }
+
+    /// No input buffer back in time, said with what the session holds:
+    /// the input buffers the component has and those whose bytes the
+    /// firmware has not read, the frames lent and ready, and the output
+    /// buffers waiting for a free frame.
+    fn sayStuck(s: *MmalSession) void {
+        var with_vpu: u32 = 0;
+        var unread: u32 = 0;
+        for (&s.in_slots) |*slot| {
+            if (slot.with_vpu) with_vpu += 1;
+            if (slot.bulk.size != 0 and slot.bulk.done.signalled == 0) unread += 1;
+        }
+        var lent: u32 = 0;
+        for (s.frames[0..s.frame_count]) |*f| {
+            if (f.lent) lent += 1;
+        }
+        s.log("no input buffer came back: %u of %u with the component, %u unread; frames %u lent, %u ready of %u; %u output buffers waiting, %u handed", .{
+            with_vpu, @as(u32, in_count), unread, lent, s.ready_count, s.frame_count, s.pending_count, s.out_count,
+        });
     }
 
     /// One input buffer handed over: its message, then its bytes.
@@ -500,23 +579,33 @@ pub const MmalSession = struct {
             return false;
         }
         switch (m.header().type) {
-            mmal.MSG_BUFFER_TO_HOST => {
-                const b = m.as(mmal.BufferMessage).?;
-                if (b.drvbuf.port_handle == s.input.port_handle) {
-                    const n = b.drvbuf.client_context;
-                    if (n >= 1 and n <= in_count) s.in_slots[n - 1].with_vpu = false;
-                    if (b.buffer.flags & mmal.BUFFER_FLAG_TRANSMISSION_FAILED != 0) {
-                        s.log("the firmware could not take a picture's bytes", .{});
-                        s.fail(types.VDERR_NO_ENGINE);
-                    }
-                } else if (b.drvbuf.port_handle == s.output.port_handle) {
-                    s.outputBack(b);
-                }
-            },
+            mmal.MSG_BUFFER_TO_HOST => s.bufferBack(m.as(mmal.BufferMessage).?),
             mmal.MSG_EVENT_TO_HOST => s.event(m.as(mmal.EventToHost).?),
             else => s.log("message %u not known", .{m.header().type}),
         }
         return true;
+    }
+
+    /// A buffer that came while an answer was waited for (the client's
+    /// `on_buffer`), dealt with at once.
+    fn bufferDuringCall(context: *anyopaque, m: *const mmal.Message) void {
+        const s: *MmalSession = @ptrCast(@alignCast(context));
+        if (m.as(mmal.BufferMessage)) |b| s.bufferBack(b);
+    }
+
+    /// A buffer the component handed back: an input buffer free once its
+    /// bulk is read too, an output buffer's frame taken.
+    fn bufferBack(s: *MmalSession, b: *const mmal.BufferMessage) void {
+        if (b.drvbuf.port_handle == s.input.port_handle) {
+            const n = b.drvbuf.client_context;
+            if (n >= 1 and n <= in_count) s.in_slots[n - 1].with_vpu = false;
+            if (b.buffer.flags & mmal.BUFFER_FLAG_TRANSMISSION_FAILED != 0) {
+                s.log("the firmware could not take a picture's bytes", .{});
+                s.fail(types.VDERR_NO_ENGINE);
+            }
+        } else if (b.drvbuf.port_handle == s.output.port_handle) {
+            s.outputBack(b);
+        }
     }
 
     fn event(s: *MmalSession, e: *const mmal.EventToHost) void {
@@ -536,13 +625,15 @@ pub const MmalSession = struct {
     fn formatChanged(s: *MmalSession, f: *const mmal.FormatChanged) void {
         const changed: mmal.FormatChanged = f.*;
         // The port is set only while it is disabled: it was enabled from
-        // the start, with no buffers, or with the last format's.
+        // the start, with no buffers, or with the last format's. A frame
+        // of the last format that comes meanwhile is dropped, and its
+        // buffer not handed back.
+        s.out_count = 0;
+        s.generation += 1;
         if (s.out_enabled) {
             _ = s.c.portAction(&s.output, mmal.ACTION_DISABLE);
             s.out_enabled = false;
         }
-        s.out_count = 0;
-        s.generation += 1;
         s.output.format = changed.format;
         s.output.format.encoding = mmal.ENCODING_NV12;
         s.output.es = changed.es;
@@ -641,10 +732,12 @@ pub const MmalSession = struct {
         }
         const current = b.drvbuf.client_context >> 8 == s.generation;
         if (current) {
-            f.ready = true;
-            f.time = if (b.buffer.pts == mmal.TIME_UNKNOWN) 0 else b.buffer.pts;
-            s.ready[(s.ready_first + s.ready_count) % most_frames] = @intCast(index);
-            s.ready_count += 1;
+            if (!s.dropping) {
+                f.ready = true;
+                f.time = if (b.buffer.pts == mmal.TIME_UNKNOWN) 0 else b.buffer.pts;
+                s.ready[(s.ready_first + s.ready_count) % most_frames] = @intCast(index);
+                s.ready_count += 1;
+            }
             if (s.out_count > 0) s.giveOutput(b.drvbuf.client_context);
         }
         if (b.buffer.flags & mmal.BUFFER_FLAG_EOS != 0) s.ended = true;
@@ -676,6 +769,12 @@ pub const MmalSession = struct {
         }
         s.frame_bytes = rounded;
         return true;
+    }
+
+    /// The frames waiting to be handed out dropped.
+    fn dropReady(s: *MmalSession) void {
+        for (s.frames[0..s.frame_count]) |*f| f.ready = false;
+        s.ready_count = 0;
     }
 
     fn freeFrames(s: *MmalSession) void {
