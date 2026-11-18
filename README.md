@@ -290,9 +290,9 @@ scripts/fetch-emoji.sh       # optional: the emoji's list and names
 ./zig build qemu-display     # the first run also fetches the Zig toolchain
 ```
 
-`scripts/build-qemu.sh` runs on Linux. It needs a C compiler, git,
-Python 3, ninja, pkg-config, and the development files of glib, pixman,
-SDL2, libgcrypt and libslirp:
+`scripts/build-qemu.sh` needs a C compiler, git, Python 3, ninja,
+pkg-config and the development files of glib, pixman, SDL2, libgcrypt and
+libslirp:
 
 ```sh
 # Debian, Ubuntu
@@ -302,44 +302,25 @@ sudo apt install build-essential git python3 python3-venv ninja-build pkg-config
 sudo pacman -S --needed base-devel git python ninja glib2 pixman sdl2 libgcrypt libslirp
 ```
 
-`scripts/fetch-icons.sh` draws the icons at each board's size with
-`rsvg-convert` (`librsvg2-bin`, `librsvg`); without it they are the
-release's 32-pixel pictures.
-
-The window shows the boot and then the desktop; `SYS:System/Shell` opens
-a shell on it. The terminal QEMU runs in is the serial console: `s3>`
-there is the ROM's debug shell, `newshell` starts a CLI (`List`, `Info`,
-...), and Ctrl-A X quits QEMU. `qemu-display` also forwards host port
-2323 to the machine's Telnet port and 2222 to its SSH port, for
-`C:net/ShellServer`. The steps run both of the S3's cores on one host
-thread (`-accel tcg,thread=single`): with a thread for each, Espressif's
-QEMU damages its own memory early in a boot and stops in up to half of
-them, so QEMU started by hand needs the same option.
+The terminal QEMU runs in is the serial console: `s3>` there is the ROM's
+debug shell, `newshell` starts a shell, Ctrl-A X quits. `qemu-display`
+forwards host ports 2323 and 2222 to the machine's Telnet and SSH
+(`C:net/ShellServer`).
 
 ### Archives to download, and a release
 
-`./zig build archive -Dboard=<board>` packs what somebody needs to run the
-system on that machine without building it, and `./zig build release`
-packs every board's at once. Both write into `release/` - a directory of
-its own beside `zig-out`, kept out of the repository, so that what is
-uploaded is in one place and nothing else is in it. What an archive holds
-differs with the machine:
+`./zig build archive -Dboard=<board>` packs what a machine needs to run
+the system without building it, and `./zig build release
+-Ddisk-tree=false` packs every board's, into `release/`:
 
-| For | `release/poweros-<board>.tar.gz` holds |
+| For | `poweros-<board>.tar.gz` holds |
 |---|---|
-| QEMU's two `virt` machines | the kernel, the system disk, a blank work disk, and a `run.sh` that starts QEMU on them ([qemupackage](tools/qemupackage/README.md)) |
-| the four ESP32 boards | the kernel, the flash disk, and a `flash.sh` that writes both over USB with esptool ([espackage](tools/espackage/README.md)) |
-| the VisionFive 2 and the Compute Module 5 | the kernel, the disk image the system runs from, `config.txt` where the board reads one, and a `write.sh` that copies them onto the partition its firmware loads from ([bootpackage](tools/bootpackage/README.md)) |
+| QEMU's `virt` machines | the kernel, the system disk, a blank work disk and `run.sh` ([qemupackage](tools/qemupackage/README.md)) |
+| the ESP32 boards | the kernel, the flash disk and `flash.sh` ([espackage](tools/espackage/README.md)) |
+| the VisionFive 2 and the Compute Module 5 | the kernel, the disk image, `config.txt` and `write.sh` ([bootpackage](tools/bootpackage/README.md)) |
 
-Each archive is 6 to 10 MB. The QEMU one takes 18 MB on a disk unpacked,
-though its two images are 1.3 GB long - `tools/mkfs` writes only the
-blocks it touches, and the archive keeps the holes as holes. The two
-emulators have no archive: neither Espressif's QEMU nor esp-emulator is a
-machine anybody has by downloading one.
-
-**Already built, for the newest release:** each archive is at
-`https://github.com/cycl0ne/poweros_esp32/releases/latest/download/poweros-<board>.tar.gz`,
-with `SHA256SUMS` beside it under the same address, so
+The newest release's archives are on GitHub, with `SHA256SUMS` beside
+them:
 
 ```sh
 curl -LO https://github.com/cycl0ne/poweros_esp32/releases/latest/download/poweros-rpi_cm5.tar.gz
@@ -348,174 +329,44 @@ sha256sum -c --ignore-missing SHA256SUMS
 tar -xzf poweros-rpi_cm5.tar.gz && poweros-rpi_cm5/write.sh --help
 ```
 
-is the whole of it. On a machine that already runs the system, `C:Hash
-CHECK SHA256SUMS` reads the same list. Two pieces of firmware are not in
-these archives, since passing them on is not ours to do - the CYW43455's,
-which the Compute Module 5's radio runs, and the WAVE511's, which the
-VisionFive 2's video decoder runs (`scripts/fetch-vpu.sh`,
-`scripts/fetch-cyw43455.sh` fetch them from their owners for a build of
-one's own).
-
-`./zig build sums` writes `release/SHA256SUMS` over the archives that are
-in that directory - the digest in lower-case hex, two spaces, the name -
-which is what `sha256sum -c SHA256SUMS` reads, and what the system's own
-`C:Hash CHECK` reads on a machine that has no such command. It sums what
-is there rather than what one build made, because a whole set of archives
-is not one build's: the files a firmware loads go into a disk image's
-`SYS:Storage/Boot` for the machine the build is for, so each 64-bit
-board's archive comes from a build of its own. So it is run last, over the
-finished directory, and it builds and replaces nothing in it.
-
-The scripts in them ask the host what it has rather than assuming:
-`run.sh` a display backend, the virtio GPU or the ramfb, an audio driver
-and QEMU's user-mode network, leaving out what is missing and saying so;
-`flash.sh` esptool under either of its names and the board's port;
-`write.sh` whether what it was given is a directory it may write to, and
-whether the room is there. Each has a `--help` and a `--print` that shows
-what it would do without doing it, and `run.sh --serial` runs the machine
-with no window.
-
-`./zig build release -Ddisk-tree=false` is a release: an archive for every
-board, and a package for each machine that installs itself onto a medium.
-The `disk/` tree in this root is the builder's own files, and the network
-settings in it hold a passphrase, so `archive` and `release` refuse to
-pack them unasked: `-Ddisk-tree=false` leaves
-that tree off the images, `-Ddisk-tree=true` packs it deliberately. One
-thing a release cannot do for every machine at once: the
-`SYS:Storage/Boot` of a disk image is filled for the board the build was
-for and empty for the others, since one image serves both boards of a chip
-- build the release with `-Dboard=` set to the machine you care about, or
-once for each.
-
+Each script has `--help`, and `--print` to show what it would do. The
+firmware of the Compute Module 5's radio and of the VisionFive 2's video
+decoder is not in the archives: `scripts/fetch-cyw43455.sh` and
+`scripts/fetch-vpu.sh` fetch it for a build of one's own.
+`-Ddisk-tree=false` keeps the `disk/` tree, the builder's own files, off
+the images.
 
 ### Onto a card or an SSD
 
-The 64-bit machines' disk image lives in RAM: what is written to it is
-gone at power off. A microSD card or an NVMe SSD keeps it, and both are
-driven - sdcard.device, nvme.device with pci.library and posfs-handler -
-so a partition on one is where the system starts from and stays.
+The 64-bit machines' disk image lives in RAM; a microSD card or an NVMe
+SSD keeps the system.
 
-**From the host.** `system-rv64.bin` and `system-a64.bin` are a whole
-installed disk: a GPT, a PowerOS container with a RigidDiskBlock in its
-first block, and one bootable posfs partition holding the disk's files
-(`tools/mkfs --gpt`). The virt boards' builds install them
-(`-Dboard=qemu_virt`, `-Dboard=qemu_virt_a64`), each 256 MB of which only
-the written blocks take room, and written to a card or an SSD with `dd` it
-is a system to start. It carries the icons and the sound setting of the
-build that made it, so a board gets its own from the second way.
+- **From the host:** `system-rv64.bin` and `system-a64.bin`, which the
+  virt boards' builds make, are a whole installed disk to write with
+  `dd`.
+- **From the machine:** `SYS:Installer` in a window, or `C:Install` in
+  one command:
 
-**From the machine.** `SYS:Installer`, its icon in the disk's root, does
-it in a window: the language, the keyboard, the disk, a last look, the
-install with a gauge, and a restart. `C:Install` does the whole of it in
-one command, on a machine with nothing but a console:
+  ```
+  Install                                        the units it can go onto
+  Install nvme.device                            a system onto unit 0, after one question
+  Install nvme.device FROM WORK:package FORCE    from a release package, asking nothing
+  ```
 
-```
-Install                            the units it can go onto, and what each holds
-Install nvme.device                a system onto unit 0 of it, after one question
-Install nvme.device 1 SIZE 16G     unit 1, 16 GB of it for the system
-Install nvme.device FROM WORK:package FORCE    from a release package, asking nothing
-```
+- **Up to date:** `C:Update` or `SYS:System/Update` takes only what
+  differs from a package on a stick, a share or at an `http://` address;
+  `BOOT` writes the kernel too, and `CHECK` only says what would change.
+  Where the firmware starts from either of a pair of partitions,
+  `C:Reboot TRYBOOT` tries a new kernel once and `Update CONFIRM` keeps
+  it.
+- **A package:** `./zig build package -Dboard=<board>` gathers one into
+  `release/package-<board>/`, and `./zig build serve -Dboard=<board>`
+  hands it out over HTTP - in QEMU's network at `http://10.0.2.2:8080/`.
 
-It writes a GPT with the partition the firmware reads - two where the
-board's firmware starts from either of a pair - and a PowerOS container
-over the rest with the system and a work partition on posfs in it; gives
-each an empty volume; copies the files, from `SYS:` and `SYS:Storage/Boot`
-or from a package, checking each one against the sum its list gives; and
-leaves `SYS:Storage/installed.manifest` and `ENVARC:Sys/install.prefs` behind, which
-say what was installed and from where. The
-[install guide](sdk/docs/guides/install.md) has each keyword, both
-sources, the package's list and what each board's firmware reads. The
-same thing by hand is eight lines of shell - `RDB INIT GPT`, `RDB ADD`,
-`Format`, `Copy SYS: TO ... ALL CLONE`,
-`RDB CHANGE ... BOOTABLE BOOTPRI` - which the
-[disks guide](sdk/docs/guides/rdb.md#from-the-shell) has with what each
-is for, and `SYS:System/HDToolBox` does the table in a window.
+The [install guide](sdk/docs/guides/install.md) has the details, and the
+[disks guide](sdk/docs/guides/rdb.md) the partitions.
 
-**Up to date.** `C:Update` reads a package over a system that is
-installed already - from a stick, a share or an `http://` address - and
-takes from it what differs; `BOOT` writes the kernel with it. Three things are compared for every path:
-the list the machine was given, the list in the package, and the file
-itself, so what the build changed is fetched, what it dropped is deleted,
-and what was changed on this machine is kept and said by name rather than
-written over. Where the two lists agree the file is looked for and not
-read, which is why an update over a 50 MB package that differs in two
-files fetches 4.7 KB. `CHECK` says what would happen and writes nothing,
-and its return code tells a script whether there is anything to do. The
-system volume is given a snapshot before the first file is written.
-`SYS:System/Update` does the same in a window: a check as it opens, the
-package's drawer picked from a requester and kept in `update.prefs`, a
-row for every path with the version here and the package's, a gauge
-while it writes, Stop, Restart, and Keep for
-a kernel that came up on its try. The work is
-`LIBS:update.library`'s, which a program calls the same way
-(`sdk.update`).
-
-**By itself.** `ENVARC:Sys/update.prefs` says where a machine looks for
-a newer system, whether it looks at every start, and whether what it
-finds is written without being asked: `C:Update AUTO` runs from
-`S:Network-Startup` once the network is up, puts what it found in the
-system log and offers it in a requester where there is a desktop. Without
-that file nothing looks anywhere. The **Update** page in
-`SYS:Programs/Prefs` writes it.
-
-**A kernel with a way back.** `Update BOOT` writes what the firmware
-reads into the partition it reads it from, after the system volume's
-files. Where the firmware starts from either of a pair of partitions, the
-one not in use is written and `autoboot.txt` points at it for a single
-start: `C:Reboot TRYBOOT` starts the machine on it, a kernel that does
-not come up costs one start, and the system that did come up keeps it
-with `Update CONFIRM`. Where the firmware reads one partition, the file
-being replaced is kept beside the new one as `<name>.old`. `C:Reboot`
-holds every drive a device feeds still before the reset, so that what a
-file system is holding is written out.
-
-**What starts it.** Of the bootable partitions of every disk, dos starts
-from the one with the highest boot priority; an install gives the system
-partition 5, and a disk image's `DH0` has none, so the medium wins. The
-loader can leave the disk image out altogether, and the machine then
-starts from the medium alone, as QEMU's virt machines do.
-
-**The kernel** is what the firmware loads, from a FAT partition it reads
-itself: on the VisionFive 2 the card's, which the machine writes too
-(sdcard.device and FAT's handler are in its ROM); on the Compute Module 5
-the eMMC's, which no driver here reaches, so its kernel is written from
-another machine. Beside it lies the disk image, which is only the system
-to fall back on once a medium holds one. A machine carries that kernel
-itself, in `SYS:Storage/Boot` with `SYS:Storage/manifest` over it - the
-list says which chip and board the files are for - so a boot partition
-can be written from the running system with nothing else at hand.
-
-**A release package.** `./zig build package -Dboard=<board>` gathers
-everything a machine is installed from into one directory,
-`release/package-<board>/`: the volume's files under `system/`, what that
-board's firmware loads under `boot/` - the kernel, the disk image, the
-board's `config.txt` - and a `manifest` over both halves, a line for each
-drawer and file with the file's length and the CRC-32 of its bytes
-([mkpackage](tools/mkpackage/README.md)). The list says which chip and
-which board the files are for: every machine's package holds the same
-paths, and two boards of one chip share them all while their kernels
-differ in what the board has and where it is. `-Dboot=[<name>=]<file>`
-adds a file this tree does not hold - the Compute Module 5's device tree
-is Raspberry Pi's - and it goes into the manifest with the rest. The same
-tool reads a package back against its own manifest (`--check`), which the
-step does over what it has just gathered.
-
-`./zig build serve -Dboard=<board>` gathers the package and hands it out
-over HTTP ([serve](tools/serve/README.md), `-Dserve-port=`, 8080 by
-default): GET and HEAD and nothing else, no listing of a directory, and
-only the paths a manifest may name. In QEMU's user network the host is
-10.0.2.2, so a machine there reaches `http://10.0.2.2:8080/`. On the
-machine, `C:Install` makes a medium from such a package and `C:Update`
-brings one that is installed already up to date from a later one.
-
-**Keeping the files current.** Besides the image, each build writes the
-disk's files as a tree (`zig-out/disk-rv64/`, `zig-out/disk-a64/`) and a
-list of them - CRC-32, size and path per file
-(`zig-out/bin/disk-rv64.manifest`) - for a medium that is `SYS:` to be
-brought up to date file by file. `C:Hash` sums the files on the machine
-the same way (`ALGO=CRC32`), and `Hash CHECK` reads back a list it wrote.
-
-More build steps and options:
+### Build steps and options
 
 | Command | What it does |
 |---|---|
