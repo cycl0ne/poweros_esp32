@@ -352,7 +352,9 @@ http.library and, on the 64-bit machines' disks, the Installer
 (`LOCALE:Catalogs/<language>/Installer.catalog`); their descriptors and
 translations are beside their sources. The same catalogs are there in every other language of
 `LOCALE:Languages` but zhongwen-fanti: the languages of Europe on every
-disk, Hindi (`LOCALE:Catalogs/hindi/`), Japanese (`nihongo/`), Korean
+disk that holds the `languages` set - every disk but the ESP32-S3
+boards' flash, which speaks English alone and gets its languages with
+the packages that bring its desktop - Hindi (`LOCALE:Catalogs/hindi/`), Japanese (`nihongo/`), Korean
 (`hangugeo/`) and Chinese in the simplified characters (`zhongwen/`) on
 the 64-bit machines' disks, without the Emoji commodity's. The build
 makes them from two lists in `src/disk/build.zig`: `languages`, each

@@ -7,4 +7,4 @@
 //! port for, and what draws in three dimensions, which it has no screen
 //! for: this is the image the ESP32-P4's test programs are run from.
 
-pub const sets = "base,gui,net,media,storage,usb,modbus,commodities,dev,tests";
+pub const sets = "base,languages,gui,net,media,storage,usb,modbus,commodities,dev,tests";

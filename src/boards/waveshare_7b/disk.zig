@@ -3,8 +3,9 @@
 //! (`src/disk/build.zig`'s `Set`), which the build reads; `-Dsets=` names
 //! others for one build.
 //!
-//! The desktop, the network over the chip's radio, sound, cards and sticks,
-//! and Modbus on the RS-485 line. The test programs and the developer's
-//! tools are left off: they are run from an emulator's image.
+//! What the board starts with and no more: the shell, the network over
+//! the chip's radio, cards and sticks, and USB. The desktop, sound, the
+//! languages besides English and the rest go onto the card in the slot
+//! as packages; the flash holds what boots the board and fetches them.
 
-pub const sets = "base,gui,net,wifi,media,storage,usb,modbus,commodities";
+pub const sets = "base,net,wifi,storage,usb";

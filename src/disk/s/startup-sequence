@@ -55,8 +55,10 @@ EndIf
 
 ; The kinds of file the system knows, from DEVS:DataTypes into the list
 ; datatypes.library works from. Without it nothing opens a file by what
-; is in it.
-C:AddDataTypes >NIL: QUIET
+; is in it. A disk without the desktop has neither.
+If EXISTS C:AddDataTypes
+  C:AddDataTypes >NIL: QUIET
+EndIf
 
 ; LOCALE: - the countries, the languages and the catalogs of translated
 ; texts a locale is made from.
@@ -74,8 +76,15 @@ C:SetPrefs >NIL:
 
 ; Where a command is looked for, before C:. C:test holds the programs that
 ; exercise a device or a library, C:net the network's tools, so they are
-; called by name like the rest.
-Path >NIL: RAM: SYS: S: C:test C:net
+; called by name like the rest - each where the disk has it, since Path
+; stops at the first drawer that is not there.
+Path >NIL: RAM: SYS: S:
+If EXISTS C:test
+  Path >NIL: C:test ADD
+EndIf
+If EXISTS C:net
+  Path >NIL: C:net ADD
+EndIf
 
 SetEnv Kickstart $Kickstart
 UnSet Kickstart
@@ -103,9 +112,14 @@ C:USB >NIL: AUTO
 
 ; The desktop, and this shell's window put away so it shows: a shell is
 ; one double click away (SYS:System/Shell), and the serial console keeps
-; its own. A desktop that could not start leaves this shell where it is.
-C:LoadAnvil
-Set Desktop $RC
+; its own. A desktop that could not start leaves this shell where it is,
+; and so does a disk without one - the ESP32-S3's flash, whose desktop
+; comes onto the card as packages.
+Set Desktop 20
+If EXISTS C:LoadAnvil
+  C:LoadAnvil
+  Set Desktop $RC
+EndIf
 
 ; The desktop is up: every display driver loaded from the disk came back,
 ; and its name leaves ENVARC:Sys/display.trying. A name left there is a

@@ -8,4 +8,4 @@
 //! network. The test programs and the developer's tools are left off:
 //! they are run from an emulator's image.
 
-pub const sets = "base,gui,net,wifi,media,storage,usb,3d,modbus,commodities";
+pub const sets = "base,languages,gui,net,wifi,media,storage,usb,3d,modbus,commodities";

@@ -372,8 +372,8 @@ What each board runs is in [Boards](#boards).
 
 | `-Dboard=` | Board | State |
 |---|---|---|
-| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
-| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
+| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; its flash disk holds the shell, the network and the card ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
+| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; its flash disk holds the shell, the network and the card ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); sound into an output that goes nowhere |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file, DVI to a monitor without HDMI's block |
@@ -1304,7 +1304,8 @@ sets in `src/boards/<board>/disk.zig`:
 
 | Set | What is in it |
 |---|---|
-| `base` | what a shell needs: `C:`, `S:`, the locale, the fonts |
+| `base` | what a shell needs: `C:`, `S:`, locale.library, the keymaps, the fonts |
+| `languages` | what the system speaks besides English: `LOCALE:`'s languages, countries and catalogs |
 | `gui` | the desktop: anvil.library, the gadget and image classes, the datatypes of pictures and text, the programs with windows |
 | `net` | bsdsocket.library and what speaks over it, the network drivers, `C:net` |
 | `wifi` | the radios' drivers and what joins a network with them |
@@ -1317,9 +1318,14 @@ sets in `src/boards/<board>/disk.zig`:
 | `dev` | Git |
 | `tests` | `C:test` and `SYS:Tests`, and the example library and gadget they open |
 
-The four ESP32 boards leave `dev` and `tests` off; the two emulators'
-disks have `tests`, and are where the test programs are run. The 64-bit
-machines' disks hold every set. `-Dsets=` names other sets for one
+The two ESP32-S3 boards' flash holds what starts the board and no more -
+`base`, `net`, `wifi`, `storage` and `usb`: the shell on the panel, in
+English, the network over the radio, the card in the slot and USB. The
+desktop, sound and the other languages are to come onto the card as
+packages. The ESP32-P4 boards hold every set but `dev` and `tests`. The
+two emulators' disks have `tests`, and are where the test programs are
+run; QEMU's ESP32-S3 keeps the desktop for them and leaves sound, the
+languages and Git off. The 64-bit machines' disks hold every set. `-Dsets=` names other sets for one
 build, and what a chip cannot run is on none of its disks whatever the
 sets say.
 

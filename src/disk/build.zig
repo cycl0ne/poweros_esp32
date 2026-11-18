@@ -24,7 +24,11 @@ const poweros_sdk = @import("poweros_sdk");
 /// (`builtFor`): a driver of hardware a chip lacks is on no disk of that
 /// chip's, whatever its board names.
 ///
-/// - `base`: what a shell needs - C:, S:, the locale, the fonts.
+/// - `base`: what a shell needs - C:, S:, locale.library, the keymaps,
+///   the fonts.
+/// - `languages`: what the system speaks besides English - LOCALE:'s
+///   languages, countries and catalogs. Without it the system speaks
+///   English and writes the United States' formats.
 /// - `gui`: the desktop - anvil.library, the classes, the datatypes of
 ///   pictures and text, the programs with windows.
 /// - `net`: bsdsocket.library and what speaks over it, the network
@@ -40,7 +44,7 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `dev`: what somebody working on the system wants there - Git.
 /// - `tests`: C:test and SYS:Tests, and the example library and gadget
 ///   they open.
-pub const Set = enum { base, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, dev, tests };
+pub const Set = enum { base, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, dev, tests };
 
 /// Some of the sets.
 pub const Sets = std.EnumSet(Set);
@@ -642,6 +646,10 @@ const path_sets = [_]struct { []const u8, Set }{
     .{ "devs/usb/firmware", .wifi },
     .{ "devs/usb", .usb },
     .{ "s/network-startup", .net },
+    // LOCALE:'s drawers; the drawer itself is the shell's, which assigns it.
+    .{ "locale/Catalogs", .languages },
+    .{ "locale/Countries", .languages },
+    .{ "locale/Languages", .languages },
     .{ "Commodities", .commodities },
     // What the desktop shows and starts.
     .{ "devs/datatypes", .gui },

@@ -787,10 +787,10 @@ pub const DiskImages = struct {
         }
 
         /// The file `from` at `path` on each of these disks that holds
-        /// `set`.
+        /// `set` and the sets of the drawers it lies in.
         pub fn addFileIn(images: Some, set: poweros_userland.Set, path: []const u8, from: std.Build.LazyPath) void {
             for (images.runs, images.sets) |run, sets| {
-                if (sets.contains(set)) run.addPrefixedFileArg(run.step.owner.fmt("{s}=", .{path}), from);
+                if (sets.contains(set) and poweros_userland.onDisk(sets, path)) run.addPrefixedFileArg(run.step.owner.fmt("{s}=", .{path}), from);
             }
         }
     };
@@ -1047,7 +1047,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     }
     for (rom_catalogs) |catalog| {
         const catalog_file = poweros_sdk.addCatalog(b, sdk_dep, b.path(catalog.descriptor), b.path(catalog.translation), catalog.name);
-        disks.some(catalog.wide).addPrefixedFileArg(b.fmt("{s}=", .{catalog.disk}), catalog_file);
+        disks.some(catalog.wide).addFileIn(poweros_userland.setOfCatalog(catalog), catalog.disk, catalog_file);
     }
     // The chips' own versions after the shared ones, which they replace
     // on their images.
