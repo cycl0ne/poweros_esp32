@@ -13,7 +13,7 @@ separate SDK.
 **Status: release 0.21** ([the archives to
 download](https://github.com/cycl0ne/poweros_esp32/releases/latest)). It runs on two ESP32-S3 boards, on two
 ESP32-P4 boards, on StarFive's VisionFive 2 (RISC-V 64), on a Raspberry Pi
-Compute Module 5 (AArch64), in Espressif's QEMU, in QEMU's RISC-V 64 and
+Compute Module 5 and a Raspberry Pi 4 Model B (AArch64), in Espressif's QEMU, in QEMU's RISC-V 64 and
 AArch64 `virt` machines and in its x86-64 q35 machine.
 
 [![PowerOS in QEMU's AArch64 machine: a textured cube turning in a window, CPU Load with four cores at work, Memory Map and the desktop's About](docs/screenshots/desktop-a64.gif)](docs/screenshots/README.md#four-cores-the-desktop-on-aarch64)
@@ -21,16 +21,9 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 [![PowerOS multitasking on the 7" Waveshare board](docs/screenshots/board-waveshare-7b.jpg)](docs/screenshots/README.md#on-the-board)
 
 <p>
-<a href="docs/screenshots/README.md#music-sysprogramsplayer"><img src="docs/screenshots/player-wave.png" width="49%" alt="Player on the Olimex's 2.8-inch panel: a mix's cover, tags and chapter, and its wave"></a>
-<a href="docs/screenshots/README.md#music-sysprogramsplayer"><img src="docs/screenshots/player-bars.png" width="49%" alt="Player on the Olimex's 2.8-inch panel: the same mix as the spectrum's bars"></a>
-</p>
-<p>
-<a href="docs/screenshots/README.md#every-script-text-in-utf-8"><img src="docs/screenshots/text.png" width="49%" alt="Notepad with a text in six scripts and emoji in colour, the emoji picker on its flags, and a console window with flags in its cells"></a>
-<a href="docs/screenshots/README.md#eight-cores-the-desktop-on-x86-64"><img src="docs/screenshots/desktop-x64.png" width="49%" alt="The desktop on x86-64: MultiView with a picture, Boing in a window, the Clock, Volume's equalizer and CPU Load with eight cores at work"></a>
-</p>
-<p>
-<a href="docs/screenshots/README.md#the-desktop-anvil"><img src="docs/screenshots/desktop.png" width="49%" alt="The desktop: the system disk and its programs drawer open, the dock along the bottom edge"></a>
-<a href="docs/screenshots/README.md#notepad-sysprogramsnotepad"><img src="docs/screenshots/notepad.png" width="49%" alt="Notepad with S:Startup-Sequence: the ribbon, and line numbers on"></a>
+<a href="docs/screenshots/README.md#every-script-text-in-utf-8"><img src="docs/screenshots/text.png" width="39.5%" alt="Notepad with a text in six scripts and emoji in colour, the emoji picker on its flags, and a console window with flags in its cells"></a>
+<a href="docs/screenshots/README.md#eight-cores-the-desktop-on-x86-64"><img src="docs/screenshots/desktop-x64.png" width="39.5%" alt="The desktop on x86-64: MultiView with a picture, Boing in a window, the Clock, Volume's equalizer and CPU Load with eight cores at work"></a>
+<a href="docs/screenshots/README.md#music-sysprogramsplayer"><img src="docs/screenshots/player-wave.png" width="18.5%" alt="Player on the Olimex's 2.8-inch panel: a mix's cover, tags and chapter, and its wave"></a>
 </p>
 <p>
 <a href="docs/screenshots/README.md#on-the-board"><img src="docs/screenshots/board-olimex-p4pc.jpg" width="49%" alt="The Olimex ESP32-P4-PC on a television over HDMI, with a USB keyboard and mouse: Plasma, Lines and CPU Load"></a>
@@ -91,280 +84,101 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 
 ```mermaid
 flowchart TB
-    subgraph m_programs ["Programs"]
-        m_shell["the shell<br/>65 commands in C:"]
-        m_desktop["the desktop<br/>anvil.library"]
-        m_apps["SYS:Programs<br/>SYS:System<br/>SYS:Commodities"]
+    subgraph programs ["Programs"]
+        direction TB
+        p_shell["the shell<br/>65 commands in C:"]
+        p_desktop["the desktop<br/>and its programs"]
+        p_net["network tools<br/>Git, SSH, shares"]
     end
 
-    subgraph m_modules ["Libraries and devices"]
-        m_intuition["intuition.library<br/>layers.library<br/>graphics.library"]
-        m_datatypes["datatypes.library<br/>asl, icon, diskfont"]
-        m_network["bsdsocket.library<br/>tls, http, usb, pci"]
-        m_audio["audio.device"]
-        m_rtg["<b>rtg.library</b><br/>the displays<br/>and their drivers"]
-        m_dos["dos.library<br/>posfs, FAT, flash, RAM:"]
-        m_devices["devices<br/>network, USB,<br/>disks, serial"]
-        m_rta["<b>rta.library</b><br/>the sound outputs<br/>and their drivers"]
+    subgraph libraries ["Libraries"]
+        direction TB
+        l_ui["intuition · layers · graphics<br/>screens, windows, gadgets, text"]
+        l_media["datatypes · audiocodec · videocodec<br/>pictures, documents, sound, films"]
+        l_net["bsdsocket · tls · http<br/>IPv4 and IPv6"]
+        l_dos["dos<br/>posfs, FAT, SMB, RAM:"]
     end
 
-    subgraph m_kernel ["Kernel"]
-        m_exec["exec.library<br/>tasks on every core,<br/>ports, memory, libraries"]
-        m_expansion["expansion.library<br/>the board,<br/>described as data"]
+    subgraph below ["Displays, sound and devices"]
+        direction TB
+        d_rtg["rtg.library<br/>every display"]
+        d_rta["rta.library<br/>every sound output"]
+        d_devs["devices<br/>USB, PCI Express, disks, network"]
     end
 
-    subgraph m_hardware ["Hardware"]
-        m_s3["ESP32-S3"]
-        m_p4["ESP32-P4"]
-        m_rv64["RISC-V 64<br/>under SBI firmware"]
-        m_a64["AArch64<br/>under PSCI firmware"]
-        m_x64["x86-64<br/>under UEFI firmware"]
+    subgraph kernel ["Kernel"]
+        direction TB
+        k_exec["exec.library<br/>tasks on every core, ports, memory"]
+        k_exp["expansion.library<br/>the board, described as data"]
     end
 
-    m_intuition --> m_rtg
-    m_datatypes --> m_dos
-    m_network --> m_devices
-    m_audio --> m_rta
+    subgraph hardware ["Hardware"]
+        direction TB
+        h_esp["ESP32-S3 · ESP32-P4"]
+        h_rv["RISC-V 64<br/>under SBI firmware"]
+        h_arm["AArch64<br/>under PSCI firmware"]
+        h_x86["x86-64<br/>under UEFI firmware"]
+    end
 
-    m_shell ~~~ m_intuition
-    m_desktop ~~~ m_datatypes
-    m_desktop ~~~ m_network
-    m_apps ~~~ m_audio
-    m_rtg ~~~ m_exec
-    m_dos ~~~ m_exec
-    m_devices ~~~ m_expansion
-    m_rta ~~~ m_expansion
-    m_exec ~~~ m_s3
-    m_exec ~~~ m_p4
-    m_expansion ~~~ m_rv64
-    m_expansion ~~~ m_a64
+    programs --> libraries --> below --> kernel --> hardware
 
     classDef prog fill:#ede9fe,stroke:#7c3aed,color:#111827
-    class m_shell,m_apps prog
+    class p_shell,p_desktop,p_net prog
     classDef lib fill:#dbeafe,stroke:#2563eb,color:#111827
-    class m_desktop,m_intuition,m_datatypes,m_network,m_dos,m_exec,m_expansion lib
+    class l_ui,l_media,l_net,l_dos,d_rtg,d_rta,k_exec,k_exp lib
     classDef dev fill:#dcfce7,stroke:#16a34a,color:#111827
-    class m_audio,m_devices dev
-    classDef key fill:#2563eb,stroke:#1e3a8a,stroke-width:3px,color:#ffffff
-    class m_rtg,m_rta key
+    class d_devs dev
     classDef chip fill:#e5e7eb,stroke:#6b7280,color:#111827
-    class m_s3,m_p4,m_rv64,m_a64 chip
-    style m_programs fill:none,stroke:#9ca3af
-    style m_modules fill:none,stroke:#9ca3af
-    style m_kernel fill:none,stroke:#9ca3af
-    style m_hardware fill:none,stroke:#9ca3af
+    class h_esp,h_rv,h_arm,h_x86 chip
 ```
 
-Each layer uses the ones below it; libraries are blue, devices green.
-Two libraries stand between the hardware and everything a program shows
-and plays:
+Each layer uses the ones below it. exec, utility, expansion, dos, rtg,
+rta, graphics, layers, intuition, keymap and motion are in the ROM; the
+other libraries are loaded from `LIBS:` when first opened. Every call of
+every module is in [the SDK's documentation](sdk/docs/README.md).
 
-**rtg.library** keeps the displays. Each of the machine's - a panel
-of the board, a display function on PCI - is offered to the drivers
-that say they take such a thing, and the one that takes it makes a board
-for each output; the first board is the machine's display (`C:Rtg`
-lists drivers, devices and boards). What a user chose for an output -
-the mode it comes up in, its mirror, its brightness, its colour range,
-which board is the first - is kept a line a monitor in
-`ENVARC:Sys/display.prefs`, which the library reads and writes itself
-(`Rtg <board> SET ... SAVE`). A driver need not be in the ROM: the
-64-bit machines' disks carry theirs in `DEVS:gfxdrv/` as well, and
-`C:BindDrivers` has the library load the ones for a display the ROM has
-no driver for - each file read for what it takes before it is loaded,
-and a driver that hung the machine not tried again until `Rtg RETRY`. graphics.library, layers and
-intuition draw into a board's buffers without
-knowing what panel is behind them, so one program draws on a 3.5" SPI
-panel and on a 1080p monitor alike. Where a display has a picture of
-its own - a controller's memory behind a bus, a firmware's framebuffer,
-a stream's copy - rtg.library composes it: screens pulled down over
-each other, a dragged icon and the pointer over them, so a driver for
-such a display says only which rectangle of it to deliver. A buffer
-that is not the mode's width is scaled into the picture as it is
-composed, so a picture made for one monitor is shown on the next; the
-picture is mirrored either way, pointer and all, by the display's own
-hardware or by the library; and a board is blank or asleep at a call,
-its picture and its backlight back as they were on waking. A display
-that must never read a buffer drawn in - an HDMI port reading RAM past
-the caches, an emulator's GPU - is flipped between two frames: the
-library makes each picture in the one the display is not reading, from
-what was written since the last, and the driver only tells the display
-which to read. A board's
-engine takes the fills, copies, blends and scales - the ESP32-P4's PPA
-and 2D-DMA - and where a display reads its picture out of RAM, on the
-64-bit machines, graphics.library draws them on every core
-([displays guide](sdk/docs/guides/rtg.md)).
-
-| Driver | Display |
+| | |
 |---|---|
-| `rgb` | the Waveshare 7B's 1024×600 RGB panel |
-| `dcs` on `qspi` | the ES3C35P's 480×320 SPI panel |
-| `dsi` | the ESP32-P4's MIPI DSI panels, and HDMI through the Olimex's LT8912B |
-| `jh7110` | the VisionFive 2's HDMI port, in the monitor's own mode |
-| `bcm2712` | the Compute Module 5's first HDMI port, in the monitor's own mode |
-| `bcm2711` | the Compute Module 4's first HDMI port, in the mode its firmware lit |
-| `virtio` | QEMU's virtio GPU - on a memory-mapped transport (`virtio-gpu-device`) or on PCI (`virtio-gpu-pci`), the pointer the host's own; on `qemu_q35` loaded from the disk |
-| `fw` | the framebuffer a UEFI firmware lit, and QEMU's `ramfb` |
-| `amd` | an AMD display behind the framebuffer its firmware lit, flipped between that buffer and a frame of the device's own; loaded from the disk |
-| `qemu` | Espressif QEMU's display |
+| **Kernel** | tasks on every core, message ports, memory, libraries and devices; tag lists, hooks, dates and time zones, UTF-8 strings; the board's parts, described as data ([exec](sdk/docs/guides/exec.md), [utility](sdk/docs/guides/utility.md)) |
+| **Files** | processes, handlers and the shell's arguments; posfs - journaling, copy-on-write, checksummed, with snapshots; FAT32 and exFAT on cards and sticks; `RAM:` and `PIPE:`; SMB 2 and 3 shares as volumes; partitions from an RDB or a GPT on any drive ([dos](sdk/docs/guides/dos.md), [posfs](sdk/docs/guides/posfs.md), [disks](sdk/docs/guides/rdb.md)) |
+| **Screens** | one interface for every display, from a 3.5" panel to an HDMI monitor; screens, windows and gadgets in styles; animations; 3D in Vulkan's model, on the cores or a GPU ([displays](sdk/docs/guides/rtg.md), [intuition](sdk/docs/guides/intuition.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md)) |
+| **Text** | UTF-8 everywhere; bitmap and outline fonts - TrueType, OpenType, variable fonts, colour emoji - shaped with ligatures, kerning and marks, and fallback fonts, so Devanagari, Chinese, Japanese, Korean and emoji show in any font ([fonts](sdk/docs/guides/fonts.md)) |
+| **Languages** | 47 countries and 33 languages besides English: dates, numbers, money and sorting as each country has them; programs translated through catalogs, German complete and the others as drafts; a keymap for every European layout and for Devanagari ([locale](sdk/docs/guides/locale.md)) |
+| **Sound** | up to sixteen streams mixed into an output, each output with its own volume and a ten-band equalizer; recording; WAV, MP3, FLAC and Ogg Vorbis, from files or internet radio ([sound](sdk/docs/guides/audio.md)) |
+| **Video** | films in MP4, MOV and Matroska - H.264, H.265, VP9 and AV1 - with their sound and subtitles, on the chip's own decoder where it has one |
+| **Network** | TCP/IP with IPv4 and IPv6, TLS 1.3 and 1.2, HTTP, WPA2 Wi-Fi, a packet filter; a shell over Telnet or SSH; a git client that clones, fetches, commits and pushes; SMB shares ([network](sdk/docs/guides/network.md)) |
+| **Devices** | USB hosts up to SuperSpeed with keyboards, mice, sticks and disks, serial and Ethernet adapters, Wi-Fi sticks, speakers and headsets; PCI Express; NVMe, SD cards and flash; Ethernet up to 1000 Mbit/s; I2C, RS-485 and Modbus ([USB](sdk/docs/guides/usb.md), [Modbus](sdk/docs/guides/modbus.md)) |
+| **Desktop** | the desktop with icons and a dock; requesters; datatypes for pictures, text, Markdown, HTML, animations and sounds; commodities, hotkeys and filters on the input ([desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [datatypes](sdk/docs/guides/datatypes.md), [commodities](sdk/docs/guides/commodities.md)) |
+| **When something fails** | a Guru and a ROM debugger on the serial port, memory debugging, the system log, and a failed program held for Suspend, Kill or Reboot ([debugging](sdk/docs/guides/debugging.md)) |
 
-**rta.library** keeps the sound outputs and ways in. Each is a sink or a
-source of a driver, made from the parts the board's description names,
-or when a USB speaker is plugged in. `audio.device` mixes up to sixteen
-streams, each in its own form, rate, volume and pan, into one sink; the
-output preferred takes over when it is plugged in, each keeps its own
-volume (`C:Audio`, Prefs, `SYS:Programs/Volume`) - a USB speaker's at
-its own control - and its own ten-band equalizer, with presets by name
-(`C:Audio`, Prefs, `SYS:Programs/Volume`, the Player), a click plays at
-once as a trigger, and unit 1 records (`C:Record`). `LIBS:audiocodec.library`
-decodes WAV, MP3, FLAC and Ogg Vorbis as they play - a chained Ogg
-stream song by song, each with its own rate and tags - from a file or
-from a program's own reader - `SYS:Programs/Player`'s internet stations,
-kept on its Radio page or found in radio-browser.info's list, with the
-station's picture and the song's when the station names one; the Player
-reads and writes M3U playlists and reads PLS, and draws the sound as a
-plasma, its wave, the spectrum's bars, left against right or a meter
-for each side, in its window or over the whole screen; `C:Play` plays a
-file or a station's address in the shell, each title said as it changes
-([sound guide](sdk/docs/guides/audio.md)).
+The programs on the disk:
 
-| Driver | Output |
+- **`SYS:Programs`** - MultiView, Notepad, Sheet, Terminal, Player,
+  Movie, FontView, Battery, Prefs, Volume, and Boing and Cobra, a
+  bouncing ball and a ship in space
+- **`SYS:System`** - Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
+  MemMap, Clock, and SystemScan on the 64-bit machines
+- **`SYS:Commodities`** - Exchange, Blanker, FKey, Emoji, AutoPoint,
+  ClickToFront, MouseBlanker, NoCapsLock and NumericPad
+- **`C:`** - 65 commands, test programs in `C:test` and network tools in
+  `C:net`; scripts, redirection, line editing and file name completion
+- **Installing** - the Installer and `C:Install` put the running system
+  onto a card or an SSD, and `C:Update` brings it up to date from a
+  release package, with a way back
+  ([installing](sdk/docs/guides/install.md))
+
+Under all of it the hardware, driven from this tree register by register.
+A board is data - its parts and their wiring in `src/boards/<board>/` -
+so a chip is brought up once and every board of it follows. What each
+board runs is in [Boards](#boards).
+
+| Chip | Machines |
 |---|---|
-| `es8311` | the ES8311 codec, and its microphone input |
-| `i2samp` | I2S amplifiers, as the CrowPanel's two speakers |
-| `hdmi` | the VisionFive 2's and the Compute Module 5's HDMI ports, 48000 Hz stereo |
-| `hda` | a PC's high definition audio controllers on PCI: its speakers, its jacks, and HDMI to a monitor's speakers behind an AMD display engine |
-| `uac` | USB speakers and headsets (`DEVS:usb/uac.device`) |
-| `file` | a WAV file, written in time |
-| `null` | in the emulators, an output into nothing that keeps time |
-
-The libraries: exec, utility, expansion, dos, rtg, rta, graphics,
-layers, intuition, keymap and motion are in the ROM, the rest are loaded
-from `LIBS:` when first opened. Every module, with its reference, is in
-[the SDK's documentation](sdk/docs/README.md).
-
-| Area | Libraries |
-|---|---|
-| Kernel | `exec` tasks on every core, ports, memory, libraries and devices; `utility` tag lists, hooks, dates, the zone the clock keeps, UTF-8 strings with Unicode's case, widths and clusters, text between UTF-8 and Latin-1, URLs and arrays sorted; `expansion` the board's parts |
-| Files | `dos` processes, files, handlers, the shell's `ReadArgs`, files read whole, trees made and deleted, passwords typed without their echo; `rdb` partitions on any drive; `compression` DEFLATE, zlib and gzip |
-| Languages | `locale` countries' dates, numbers and money, languages' words and order of letters, characters classed and sorted by Unicode, programs' texts translated in catalogs, the emoji in their groups with their names in each language (`LOCALE:Emoji`) |
-| Displays | **`rtg`**; `graphics` drawing, text in UTF-8 set as its font shapes it and taken by its clusters - a conjunct, a flag, a joined emoji is never cut -, and where in a drawn text a cursor goes; `layers`; `intuition` screens, windows, gadgets, styles; `keymap` keys into UTF-8 by the ROM's keymaps or one loaded from `DEVS:Keymaps` - every European country's layout with fifteen dead keys (`SetMap fr`, `SetMap cz`, `SetMap ru`), Devanagari by the InScript layout (`SetMap inscript`); `motion` animations and timers |
-| Sound | **`rta`**; `audiocodec` WAV, MP3, FLAC, Ogg Vorbis |
-| Video | `videocodec` films - their pictures, sound and subtitles; `media` MP4, MOV and Matroska; `videoparse` H.264, H.265, VP9 and AV1 streams read for a decoder |
-| Desktop | `anvil` the desktop; `asl` requesters; `commodities` hotkeys and filters on the input stream; `icon`; `datatypes` pictures, text (plain, Markdown, HTML), animations and sounds by what is in them, from a file or from memory; `iffparse`; `diskfont` and `truetype` fonts, their outlines TrueType and OpenType files of quadratic or cubic curves, or of pictures - a bitmap font's strikes, an emoji font's colour pictures - scaled to the size asked with the baseline and the tops of the small and capital letters on whole rows, a variable font read at any place on its axes and a family whose bold and italic are the font at those places, an outline's characters rendered as they are first drawn, and fallback fonts for the characters one lacks - Devanagari's from Noto Sans Devanagari on the 64-bit machines' disks, kana, Hangul and Han characters from Noto Sans CJK, a collection whose fonts for five regions' forms are families of the one file, and emoji as pictures in their own colours from Noto Color Emoji, a picture or text as each asks, both on the system disks of QEMU's virt machines -, `truetypeshaping` a text's glyphs with a font's ligatures, kerning and marks, Devanagari by its syllables, which every text drawn in such a font is set with, a variable font's as they are at its place on the axes; `facet` 3D in Vulkan's model, on the cores or a GPU - on every disk but the ESP32-S3's, whose 14 MB of flash the rest of the system has |
-| Network | `bsdsocket` TCP/IP, IPv4 and IPv6; `tls` 1.3 and 1.2; `http` HTTP/1.1 requests, connections kept, a failure said in the user's language; `crypto`; `wpa` WPA2; `filter` a packet filter |
-| Buses | `usb` the USB host stack; `pci` PCI Express; `modbus` RTU and TCP |
-
-Beside them:
-
-- **File systems:** posfs, journaling, copy-on-write, checksummed, with
-  snapshots ([posfs guide](sdk/docs/guides/posfs.md)); FAT32 and exFAT
-  on cards and sticks; the flash file system (`DH0:`), `RAM:`, `PIPE:`;
-  a share on an SMB 2 or 3 server, read and written as a volume, signed
-  and encrypted, mounted at boot from its file in `DEVS:Shares/` and
-  connected again after a server restart; a server asked what shares it
-  has and one of them mounted from the screen (`SYS:System/Shares`,
-  `C:net/MountShare`, [network
-  guide](sdk/docs/guides/network.md#a-share-as-a-volume-smb-handler));
-  partitions from an RDB or a GPT on any drive, laid out in
-  `SYS:System/HDToolBox` ([disks guide](sdk/docs/guides/rdb.md)); a
-  system put onto a card or an SSD by one command, from the running
-  system or from a release package (`C:Install`), or in a window from
-  the disk's root, the language and the keyboard chosen first
-  (`SYS:Installer`), and brought up to date
-  from a package afterwards, only what differs fetched, the kernel with a
-  way back from one that does not come up (`C:Update`,
-  `SYS:System/Update`, `C:Reboot`).
-- **Devices:** timer, serial, console, input from keyboards, mice and
-  touch - a PC's own keyboard and TrackPoint or touchpad on its keyboard
-  controller among them (`ps2.resource`, x86-64) - and a character typed
-  by no key, which goes to the text
-  gadgets, the windows and the consoles as a key's does -, flash, SD
-  card, NVMe, I2C, RS-485, clipboard; USB hosts on the
-  ESP32s' OTG and on xHCI, there up to SuperSpeed (5 Gbit/s), bulk
-  streams and links resting in U1 and U2, a device plugged in or pulled
-  out told to the windows that ask, with class drivers for keyboards,
-  mice, sticks and disks (Bulk-Only and UAS), serial and Ethernet
-  adapters, Wi-Fi sticks, and on xHCI speakers and headsets
-  ([USB guide](sdk/docs/guides/usb.md)); Ethernet up to 1000 Mbit/s, the
-  ESP32-S3's Wi-Fi and SLIP, and a shell over Telnet or SSH
-  ([network guide](sdk/docs/guides/network.md)).
-- **The shell:** 65 commands in `C:`, test programs in `C:test`, network
-  tools in `C:net` - among them a git client that clones, fetches,
-  commits and pushes over HTTPS and SSH (`C:net/Git`,
-  [network guide](sdk/docs/guides/network.md#git-cnetgit)); scripts,
-  output and errors redirected apart, line editing and file name
-  completion in UTF-8 on a console whose window keeps the output that
-  scrolled off it - looked at again with the wheel, Shift and the page
-  keys or the bar in its border - and that places each character in the
-  cells Unicode gives it and keeps the marks written on it in its cell
-  - an emoji in colour in its two cells, what joins several kept for
-  a copy -,
-  files hashed and checked against a list of digests
-  ([dos guide](sdk/docs/guides/dos.md)).
-- **Languages:** 47 countries and 33 languages besides English in
-  `LOCALE:` - every country of the European Union, with Norway,
-  Iceland, Switzerland, the United Kingdom, Turkey, Russia and Ukraine,
-  and India and Hindi, Japan and Japanese, Korea and Korean, China and
-  Taiwan with Chinese in the simplified and the traditional characters
-  on the 64-bit machines' disks - the one chosen on Prefs' Region page
-  with the time zone, or in `ENV:Sys/locale.prefs`; dates as the
-  country writes them (`2026年11月12日木曜日`), dos's error texts and the
-  shell's messages in it - German shipped, the other 31 languages as
-  drafts - its
-  money and quotes as the files write them (`€`, `„“`, `₹`), digits
-  grouped as the country groups them (`12,34,567`), the characters
-  of every script classed and sorted by Unicode with a language's own
-  letters where it puts them (`Å`, `Ä`, `Ö` after `Z` in Swedish) and
-  Devanagari in a dictionary's order and the kana by their sounds,
-  and a
-  program's own texts from its catalog, built from a descriptor and
-  checked by `sdk/tools/catcomp`: the desktop's, Notepad's, Sheet's,
-  the Player's, Movie's and the Clock's in German and, as drafts, in
-  the other languages of Europe and in Hindi, Japanese, Korean and
-  Simplified Chinese ([locale guide](sdk/docs/guides/locale.md)).
-- **Programs:** in `SYS:Programs` MultiView - any file the datatypes
-  know, a page's links followed to files and to the web - Notepad,
-  Sheet, Terminal, Player, Movie, which plays films in a window,
-  FontView, Battery, Prefs, Volume, and Boing and Cobra, a bouncing
-  ball and a ship in space on a screen of their own or in a window,
-  on the disks that hold facet.library; in the disk's root, on the
-  64-bit machines, the Installer, which puts the running system onto a
-  disk of the machine in a window - the language, the country and the
-  keyboard chosen first and used at once, the disk the running system
-  is on refused; in
-  `SYS:System` the Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
-  MemMap, Clock - the time on a dial or in figures, which the dock's clock opens - and,
-  on the 64-bit machines, SystemScan, which writes down what a machine is made of and
-  which of its PCI functions no driver has, to read and to save as a text file; in
-  `SYS:Commodities` Exchange, which lists the commodities running and
-  makes each active or inactive, shows or hides its window, or ends it,
-  and the commodities
-  themselves - Blanker, a screen that darkens when nothing happens;
-  FKey, functions on freely chosen keys; Emoji, a window to pick an
-  emoji from - by group, by name in the locale's language, or from the
-  ones used last - typed into the window being worked in; AutoPoint, the window under the
-  pointer activated; ClickToFront, a double click that brings a window
-  up; MouseBlanker, the pointer out of the way while typing; NoCapsLock;
-  and NumericPad, a keypad on a keyboard that has none
-  ([commodities guide](sdk/docs/guides/commodities.md)).
-- **When something fails:** a Guru and a ROM debugger on the serial
-  port, memory debugging, the system log, and a program that fails held
-  for Suspend, Kill or Reboot
-  ([debugging guide](sdk/docs/guides/debugging.md)).
-
-And under all of it the hardware, driven from this tree register by
-register: a board is data - its parts and their wiring in
-`src/boards/<board>/`, which expansion.library hands out, and the drivers
-it names - so a chip is brought up once and every board of it follows.
-What each board runs is in [Boards](#boards).
-
-| Chip | Machines | Driven here |
-|---|---|---|
-| ESP32-S3, two Xtensa LX7 cores | Waveshare 7B, ES3C35P, Espressif QEMU | the caches and the MMU, flash and PSRAM, the interrupt matrix, GDMA, RGB and QSPI panels, I2S, SPI, I2C, UART, the USB serial port, USB OTG, the SD slot, and the radio with its vendor libraries |
-| ESP32-P4, two RISC-V 32 cores | Olimex ESP32-P4-PC, Elecrow CrowPanel Advanced 10.1", esp-emulator | the same, and MIPI DSI, the PPA and 2D-DMA engines, the JPEG codec, the SDMMC host, 10/100 Ethernet, and USB OTG with the ports behind a hub |
-| RISC-V 64 under SBI firmware, four cores - StarFive's JH7110 | VisionFive 2, QEMU's `virt` | its display controller behind HDMI, PCI Express with an NVMe SSD and the VL805's USB, gigabit Ethernet, the SDMMC host, the random number generator, the video decoder, DMA, the RTC, and sound over HDMI and on the jack |
-| x86-64 under UEFI firmware, as many cores as the machine has | QEMU's q35, a PC | the descriptor and interrupt tables, the task state with its own stack for a fault, the local interrupt controller and the machine's I/O controller in front of it, the timestamp counter measured against the power-management timer, the controller's own timer as the tick, the page tables, the firmware's tables read for the memory, the cores, the controllers and PCI Express's configuration space, messages from a PCI function as interrupts of the local controller's own, a 16550 console in the I/O port space, the other cores started by their own controllers - held, then let go at a page below the first mebibyte, which brings each through the two mode changes the firmware had already made for the boot core - and the core's own random numbers |
-| AArch64 under PSCI firmware, four cores - Broadcom's BCM2712 | Compute Module 5, QEMU's `virt` | HDMI 0 - the video scaler, a pixel valve, the HDMI controller, the monitor read and set over DDC/CI - PCI Express with an NVMe SSD, the V3D GPU, the RP1's two USB controllers, Ethernet and UART over its PCI Express link, the radio on the second SD host, the RTC and the core clocks through the VideoCore's firmware, the chip's temperature, and the IO board's fan turned as it asks |
+| ESP32-S3, two Xtensa LX7 cores | Waveshare 7B, ES3C35P, Espressif QEMU |
+| ESP32-P4, two RISC-V 32 cores | Olimex ESP32-P4-PC, Elecrow CrowPanel Advanced 10.1", esp-emulator |
+| RISC-V 64 under SBI firmware, StarFive's JH7110 | VisionFive 2, QEMU's `virt` |
+| AArch64 under PSCI firmware, Broadcom's BCM2712 and BCM2711 | Compute Module 5, Raspberry Pi 4 Model B, Compute Module 4, QEMU's `virt` |
+| x86-64 under UEFI firmware, as many cores as the machine has | a PC, QEMU's q35 |
 
 ## Quick start
 
