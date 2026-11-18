@@ -815,6 +815,13 @@ pub const CHIP_BCM2711_VCHIQ: u32 = 58;
 /// The BCM2711's at 0xFE10_4000 and the BCM2712's at 0x10_7D20_8000 are
 /// the same block (the device tree's `brcm,bcm2711-rng200`).
 pub const CHIP_BCM2711_RNG200: u32 = 59;
+/// The BCM2711's PCI Express root port, Broadcom's STB bridge in the
+/// generation before the BCM2712's (PARTKIND_PCI on BUS_MEMORY):
+/// PART_Address and PART_PciConfig its bridge's registers, which its
+/// configuration space is reached through. Its INTA is PART_Irq, INTB to
+/// INTD the three interrupts after it. On the Raspberry Pi 4 Model B the
+/// VL805 behind it is the USB-A sockets.
+pub const CHIP_BCM2711_PCIE: u32 = 60;
 
 // How a part is reached.
 pub const BUS_NONE: u32 = 0;

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MPL-2.0
+# The Raspberry Pi 4 Model B's config.txt, read by the VideoCore's
+# firmware (start4.elf, beside it with fixup4.dat) from the first FAT
+# partition of the microSD card - or, with no card in, of a USB stick -
+# beside kernel.bin, disk-a64v80.bin and the board's device tree
+# (bcm2711-rpi-4-b.dtb, Raspberry Pi's), which the firmware picks by
+# the board's name.
+
+# The kernel at 2 MiB, where it is linked (build/kernel.zig's script for
+# the BCM2711 boards), so it runs where it is put. The device tree and
+# the disk image apart above it: the image would be cleared with the
+# kernel's .bss if it followed the kernel. The system runs on that image,
+# in RAM. The GIC on, as the armstub leaves it for a kernel that takes
+# its interrupts there.
+arm_64bit=1
+kernel=kernel.bin
+kernel_address=0x00200000
+device_tree_address=0x03000000
+initramfs disk-a64v80.bin 0x04000000
+enable_gic=1
+os_check=0
+
+# The UARTs on, the PL011's clock with them: the PL011 is the kernel's
+# raw port and its console. Unless told otherwise the firmware gives the
+# PL011 to the Bluetooth and GPIO 14 and 15 - pins 8 and 10 of the
+# 40-pin header - to the mini UART; `disable-bt` (overlays/, Raspberry
+# Pi's) has it put the PL011 there instead, at 115200 8N1, before the
+# firmware's own lines (`uart_2ndstage`): which files it read, and when
+# it started the kernel. The kernel gives the pins to the PL011 all the
+# same (src/boards/rpi_cm4/pins.zig).
+enable_uart=1
+dtoverlay=disable-bt
+uart_2ndstage=1
+
+# The picture the firmware lights and hands the kernel: the whole of the
+# monitor's preferred mode, no border.
+disable_overscan=1

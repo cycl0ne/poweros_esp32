@@ -45,6 +45,11 @@
 //! **What the walk does not see**: the root port's BAR0 and BAR1, as on
 //! the JH7110.
 //!
+//! The BCM2711's port is the same bridge a generation earlier
+//! (`bcm2711.zig`): its configuration space, its outbound windows and its
+//! PHY's registers are reached as here, and it uses the functions below
+//! for them.
+//!
 //! **Interrupts.** INTA to INTD of the functions behind a port are four
 //! GIC interrupts of their own, PART_Irq and the three after it, level
 //! triggered: a function's line is the one it ends up on at the root
@@ -273,7 +278,7 @@ fn holdBridge(unit: u32, held: bool) void {
 
 /// Outbound window `index`: `window.size` bytes from `window.cpu` on the
 /// processor's side to `window.base` on the bus.
-fn outbound(r: usize, index: u32, window: Window) void {
+pub fn outbound(r: usize, index: u32, window: Window) void {
     const base_mb = window.cpu >> 20;
     const limit_mb = (window.cpu + window.size - 1) >> 20;
     reg(r + PCIE_MISC_CPU_2_PCIE_MEM_WIN0_LO + 8 * index).* = @truncate(window.base);
@@ -286,7 +291,7 @@ fn outbound(r: usize, index: u32, window: Window) void {
 
 /// One of the PHY's registers written over MDIO, port 0: false if the PHY
 /// did not take it within 100 µs.
-fn mdioWrite(r: usize, at: u8, value: u16) bool {
+pub fn mdioWrite(r: usize, at: u8, value: u16) bool {
     reg(r + PCIE_RC_DL_MDIO_ADDR).* = at;
     _ = reg(r + PCIE_RC_DL_MDIO_ADDR).*;
     reg(r + PCIE_RC_DL_MDIO_WR_DATA).* = MDIO_DATA_DONE | value;
@@ -299,9 +304,9 @@ fn mdioWrite(r: usize, at: u8, value: u16) bool {
 }
 
 /// `us` microseconds, on the system counter: the waits while a port is
-/// set up are too short for timer.device. Only `bringUp`'s, so only built
-/// for the BCM2712.
-fn wait(us: u64) void {
+/// set up are too short for timer.device. Only the bring-ups' - this
+/// file's and `bcm2711.zig`'s - so only built for those two chips.
+pub fn wait(us: u64) void {
     const cpu = sdk.hardware.cpu;
     const ticks = cpu.counterFrequency() * us / 1_000_000;
     const from = cpu.time();

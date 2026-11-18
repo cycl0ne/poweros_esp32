@@ -39,7 +39,7 @@ and writing a controller.
 |---|---|---|
 | `usbport.resource` | ROM | who holds each of the chip's USB ports, and which controller it is given to |
 | `usbotg.device` | `DEVS:` | the chip's USB OTG controller as a host controller: transfers to devices on its bus, its root port answered as a hub; on the ESP32s' disks |
-| `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, QEMU's qemu-xhci - a unit per controller, its USB 2 and USB 3 root ports answered as one hub; on the RISC-V 64 disk |
+| `xhci.device` | `DEVS:` | xHCI controllers on PCI as host controllers - the VisionFive 2's VL805, the Raspberry Pi 4 Model B's, QEMU's qemu-xhci - a unit per controller, its USB 2 and USB 3 root ports answered as one hub; on the RISC-V 64 disk |
 | `pci.library` | `LIBS:` | the machine's PCI functions, among which xhci.device finds its controllers ([pci](../autodocs/pci.md)); on the RISC-V 64 disk |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
@@ -144,6 +144,7 @@ and its address is free again.
 | 7B, ES3C35P | the console's USB-C | by hand (`USB START`), the console giving up the port; not yet tried on the boards |
 | QEMU | the emulator's DWC2, with what `-Dusb` plugs in | started at boot |
 | VisionFive 2 | four USB-A on the VL805, an xHCI controller on PCI Express port 0, their USB 2 lines through the VL805's own hub, their USB 3 lines on its USB 3 root ports | started at boot; the hub, keyboards and mice work; a USB 3 device at SuperSpeed: not yet tried on the board |
+| Raspberry Pi 4 Model B | four USB-A on the VL805, behind the BCM2711's PCI Express port, the same way; the VideoCore's firmware loads the VL805's code into it as xhci.device starts the unit | started at boot; not yet tried on the board |
 | QEMU's RISC-V virt | qemu-xhci, with `-device qemu-xhci` on QEMU's command line | started at boot when the controller is there |
 
 **Speeds.** The ESP32-S3's port and the P4's full-speed controller run
@@ -751,8 +752,19 @@ memory below 4 GiB, in whole cache lines. For a controller that sees the
 processors' caches (pci.library's `dma_coherent`: the VL805, QEMU's), a
 fence each way orders it: what the driver wrote before the controller is
 told, what the controller wrote after the driver hears of it. For one
-that does not, it is written back before the controller is told and
-dropped from the caches before it is read.
+that does not (the BCM2711's and the BCM2712's), it is written back
+before the controller is told and dropped from the caches before it is
+read.
+
+A VL805 runs code of its own, which it reads from an EEPROM beside it
+where the board has one. On the Raspberry Pi 4 Model B the VideoCore's
+firmware has the code instead: before the controller is reset,
+xhci.device reads the version of the code the function runs (its
+configuration space at 0x50, 0 for none) and, where it runs none, asks
+the firmware through its mailbox to load it (NOTIFY_XHCI_RESET with the
+function's address) and waits up to a second for the version. PERST#
+takes the code away, so this is done at each start of the unit,
+`UHCMD_USBRESET`'s too.
 
 ## In QEMU
 

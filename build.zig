@@ -292,7 +292,9 @@ pub fn build(b: *std.Build) void {
     const run_steps = addRunSteps(b, .{
         .a64_system_disk = a64_system_disk,
         .a64_target = a64_target,
+        .a64v80_disk_bin = a64v80_disk_bin,
         .board = board,
+        .boot_files = boot_files,
         .built = built,
         .cores = cores,
         .disk_offset = disk_offset,

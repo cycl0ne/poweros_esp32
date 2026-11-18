@@ -34,14 +34,15 @@ pub const ExecBase = @import("../../interface/exec.zig").ExecBase;
 /// L2MEM; on a machine under SBI firmware in the page right below the
 /// kernel, which every one of them links at 0x8020_0000, and the same on
 /// an AArch64 machine under PSCI firmware, whose kernel is at 0x4020_0000,
-/// and on an x86-64 machine started by UEFI, whose kernel is 2 MiB into
-/// the address space.
+/// on a BCM2711 board, whose kernel is 2 MiB into its RAM, and on an
+/// x86-64 machine started by UEFI, whose kernel is 2 MiB into the address
+/// space.
 pub const AbsExecBase: *const *ExecBase = @ptrFromInt(switch (@import("../../hardware/hardware.zig").chip) {
     .esp32s3 => 0x3FCE_9700,
     .esp32p4 => 0x4FF3_ABC0,
     .rv64sbi => 0x801F_F000,
-    .a64psci, .a64v80 => 0x401F_F000,
-    .x64uefi => 0x001F_F000,
+    .a64psci => 0x401F_F000,
+    .a64v80, .x64uefi => 0x001F_F000,
 });
 
 pub const NodeType = nodes.NodeType;

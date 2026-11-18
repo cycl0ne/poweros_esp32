@@ -16,6 +16,7 @@ const flash_boards = build_boards.flash_boards;
 const virt_work_bytes = build_boards.virt_work_bytes;
 const virt_work_dir = build_boards.virt_work_dir;
 const flashDisk = build_disk.flashDisk;
+const BootFile = build_disk.BootFile;
 const Image = build_kernel.Image;
 const addA64Image = build_kernel.addA64Image;
 const addImage = build_kernel.addImage;
@@ -332,7 +333,9 @@ pub fn findQemu(b: *std.Build) []const u8 {
 pub const RunStepsWith = struct {
     a64_system_disk: std.Build.LazyPath,
     a64_target: std.Build.ResolvedTarget,
+    a64v80_disk_bin: std.Build.LazyPath,
     board: Board,
+    boot_files: []const BootFile,
     built: Image,
     cores: u32,
     disk_offset: u32,
@@ -376,13 +379,77 @@ pub const MadeRunSteps = struct {
     blank_work_disk: std.Build.LazyPath,
 };
 
+/// The files a Raspberry Pi 4B's firmware reads that this tree does not
+/// hold: Raspberry Pi's own (github.com/raspberrypi/firmware, boot/),
+/// given with -Dboot= as for a release package - the overlay that puts
+/// the PL011 on the header's pins under its name there
+/// (`-Dboot=overlays/disable-bt.dtbo=<file>`).
+const pi4b_firmware = [_][]const u8{ "start4.elf", "fixup4.dat", "bcm2711-rpi-4-b.dtb", "overlays/disable-bt.dtbo" };
+
+/// What `addPiStick` takes.
+const PiStickWith = struct {
+    board: Board,
+    boot_files: []const BootFile,
+    config: std.Build.LazyPath,
+    image: std.Build.LazyPath,
+    logdebug: bool,
+    mkstick: *std.Build.Step.Compile,
+    ram_disk: std.Build.LazyPath,
+    ram_disk_name: []const u8,
+    size: ?u64,
+};
+
+/// The medium a Raspberry Pi 4B starts from, into
+/// release/stick-<board>.img: an MBR whose one partition is FAT32 and
+/// holds what the firmware reads - start4.elf and fixup4.dat, the board's
+/// device tree and the overlay config.txt names, config.txt - the kernel,
+/// and the disk image the system
+/// runs on, in RAM. The firmware's own three come with -Dboot=; without
+/// all of them the step fails, naming the ones it lacks.
+fn addPiStick(b: *std.Build, step: *std.Build.Step, with: PiStickWith) void {
+    var missing: std.ArrayList(u8) = .empty;
+    for (pi4b_firmware) |name| {
+        for (with.boot_files) |file| {
+            if (std.mem.eql(u8, file.name, name)) break;
+        } else missing.appendSlice(b.allocator, b.fmt(" -Dboot=<dir>/{s}", .{name})) catch @panic("OOM");
+    }
+    if (missing.items.len != 0) {
+        step.dependOn(&b.addFail(b.fmt(
+            "stick: the Raspberry Pi 4B's firmware reads files this tree does not hold, Raspberry Pi's own (github.com/raspberrypi/firmware, boot/):{s}",
+            .{missing.items},
+        )).step);
+        return;
+    }
+    const make_stick = b.addRunArtifact(with.mkstick);
+    const stick_name = b.fmt("stick-{s}.img", .{@tagName(with.board)});
+    const stick_image = make_stick.addPrefixedOutputFileArg("--into=", stick_name);
+    make_stick.addArg(b.fmt("--as=release/{s}", .{stick_name}));
+    make_stick.addArg("--table=mbr");
+    if (with.size) |mib| make_stick.addArg(b.fmt("--size={d}", .{mib}));
+    make_stick.addPrefixedFileArg("config.txt=", with.config);
+    make_stick.addPrefixedFileArg("kernel.bin=", with.image);
+    make_stick.addPrefixedFileArg(b.fmt("{s}=", .{with.ram_disk_name}), with.ram_disk);
+    for (with.boot_files) |file| {
+        make_stick.addPrefixedFileArg(b.fmt("{s}=", .{file.name}), .{ .cwd_relative = file.host });
+    }
+    const report = make_stick.captureStdOut(.{ .basename = "report.txt" });
+    const put = b.addInstallFileWithDir(stick_image, release_dir, stick_name);
+    const tail = if (with.logdebug)
+        "\nThe kernel on it names every module as the cold start starts it.\n"
+    else
+        "\nThe kernel on it is a quiet one. Build it with -Dlogdebug to have it\nname every module as the cold start starts it, which is how a boot that\nstops somewhere is read.\n";
+    step.dependOn(&addReport(b, report, tail, &put.step).step);
+}
+
 /// The steps that boot an emulated board - `qemu`, `emu`, `virt`,
 /// `virt64`, `q35` and their display steps - and `stick`, the medium a
-/// UEFI machine starts from.
+/// UEFI machine or a Raspberry Pi 4B starts from.
 pub fn addRunSteps(b: *std.Build, with: RunStepsWith) MadeRunSteps {
     const a64_system_disk = with.a64_system_disk;
     const a64_target = with.a64_target;
+    const a64v80_disk_bin = with.a64v80_disk_bin;
     const board = with.board;
+    const boot_files = with.boot_files;
     const built = with.built;
     const cores = with.cores;
     const disk_offset = with.disk_offset;
@@ -637,12 +704,24 @@ pub fn addRunSteps(b: *std.Build, with: RunStepsWith) MadeRunSteps {
     // its own holds: one stick carries a whole machine, what is written
     // on it stays, and `C:Install` puts a system on a disk of the
     // machine's own from it.
-    const stick_step = b.step("stick", "Make the boot medium for -Dboard= (UEFI machines): release/stick-<board>.img");
+    const stick_step = b.step("stick", "Make the boot medium for -Dboard= (UEFI machines, the Raspberry Pi 4B): release/stick-<board>.img");
     const stick_size = b.option(u64, "stick-size", "How many mebibytes the `stick` step's medium is (default: 320, the least a FAT32 volume of 4 KiB clusters can be with room over)");
     const stick_ram = b.option(bool, "stick-ram", "The `stick` step's medium carries the system as a disk image beside the kernel too, which the loader reads into RAM: for a machine whose USB controller the system does not drive (default: false)") orelse false;
-    if (chipOf(board) != .x64uefi) {
+    if (board == .rpi4b) {
+        addPiStick(b, stick_step, .{
+            .boot_files = boot_files,
+            .board = board,
+            .config = b.path("src/boards/rpi4b/config.txt"),
+            .image = built.image,
+            .logdebug = logdebug,
+            .mkstick = mkstick,
+            .ram_disk = a64v80_disk_bin,
+            .ram_disk_name = ramDiskName(.a64v80),
+            .size = stick_size,
+        });
+    } else if (chipOf(board) != .x64uefi) {
         stick_step.dependOn(&b.addFail(
-            "stick: this board's firmware does not read a partition. It is for a machine started by UEFI: -Dboard=qemu_q35.",
+            "stick: this board's firmware does not read a partition. It is for a machine started by UEFI (-Dboard=qemu_q35), or a Raspberry Pi 4B (-Dboard=rpi4b).",
         ).step);
     } else {
         const make_stick = b.addRunArtifact(mkstick);

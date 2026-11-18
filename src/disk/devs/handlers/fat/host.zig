@@ -16,6 +16,9 @@
 
 pub const format = @import("fat32/format.zig");
 pub const layout = @import("fat32/layout.zig");
+/// How a name is held: the short entry, its case flags, the tail a short
+/// name made from a long one gets, and the long name's pieces.
+pub const names = @import("fat32/names.zig");
 
 const _fat = @import("_fat.zig");
 

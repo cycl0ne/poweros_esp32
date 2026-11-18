@@ -12,6 +12,7 @@
 const std = @import("std");
 const sdk = @import("sdk");
 const pci = sdk.pci;
+const st = sdk.expansion.systemtags;
 const scan = @import("../scan/scan.zig");
 const place = @import("../scan/place.zig");
 const ecam = @import("../host/ecam.zig");
@@ -938,11 +939,22 @@ test "the host bridge's vectors are given out in runs, aligned as asked" {
     try testing.expectEqual(@as(?u8, null), _host.takeVectors(&host, 33, 1));
 }
 
-test "DMA: what a function behind either host bridge moves sees the caches" {
+test "DMA: what a function behind QEMU's or the JH7110's host bridge moves sees the caches; behind the Broadcom chips' it does not" {
     // QEMU's devices reach memory as its processors do; the JH7110's were
     // measured to on the board.
     try testing.expect(_host.coherent(.ecam));
     try testing.expect(_host.coherent(.jh7110));
+    try testing.expect(!_host.coherent(.bcm2712));
+    try testing.expect(!_host.coherent(.bcm2711));
+}
+
+test "the BCM2711's port: its part's chip known, one device on its bus, INTA to INTD from PART_Irq on" {
+    try testing.expectEqual(@as(?_host.Chip, .bcm2711), _host.chipOf(st.CHIP_BCM2711_PCIE));
+    const host: _host.Host = .{ .sys = undefined, .chip = .bcm2711, .segment = 0, .irq = 175 };
+    try testing.expectEqual(@as(u8, 1), _host.rootDevices(&host));
+    try testing.expectEqual(@as(u32, 175), _host.interruptOf(&host, 0, 1));
+    try testing.expectEqual(@as(u32, 178), _host.interruptOf(&host, 0, 4));
+    try testing.expectEqual(@as(u32, 0), _host.interruptOf(&host, 0, 0));
 }
 
 // --- a port's reset ---------------------------------------------------------------------
@@ -983,6 +995,7 @@ test "a bridge that holds no PERST# has no port to reset" {
     try testing.expect(!_host.hasLink(&.{ .sys = undefined, .chip = .ecam, .segment = 0 }));
     try testing.expect(_host.hasLink(&.{ .sys = undefined, .chip = .jh7110, .segment = 0 }));
     try testing.expect(_host.hasLink(&.{ .sys = undefined, .chip = .bcm2712, .segment = 0 }));
+    try testing.expect(_host.hasLink(&.{ .sys = undefined, .chip = .bcm2711, .segment = 0 }));
 }
 
 // --- a function reset behind the library's back ------------------------------------------

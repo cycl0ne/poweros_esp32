@@ -8,6 +8,11 @@
  * (0x401FF000). Code, the vectors, ROM tags, constants, data, .bss, the
  * boot stack; exec's heap is everything above, to the end of RAM
  * (ram.zig).
+ *
+ * The BCM2711 boards (chip a64v80) link the same at 0x00200000 instead,
+ * where their firmware puts the image, and AbsExecBase at 0x001FF000:
+ * build/kernel.zig makes their script from this one, changing the
+ * ORIGIN below and nothing else.
  */
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)

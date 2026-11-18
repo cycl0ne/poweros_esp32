@@ -42,8 +42,8 @@ const _state = @import("host/_state.zig");
 
 pub const LIBRARY_NAME = pci.PCINAME;
 pub const LIBRARY_VERSION = 2;
-pub const LIBRARY_REVISION = 7;
-const BUILD_DATE = "05.11.2026";
+pub const LIBRARY_REVISION = 8;
+const BUILD_DATE = "18.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

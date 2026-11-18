@@ -32,7 +32,8 @@
  * mapped at all, so a null pointer faults whatever is at address 0 (QEMU
  * has flash there, the Pi RAM). And the kernel's GiB is 2 MiB blocks
  * whose first ones - those its code is in - are pages, the code's
- * read-only. All of it is made here, before the MMU is on: changing a
+ * read-only; where that is the first GiB (the BCM2711 boards, linked at
+ * 2 MiB), its table is the first GiB's. All of it is made here, before the MMU is on: changing a
  * table under the code that runs from it would take the break-before-
  * make dance the architecture asks for, which the code cannot do to
  * itself. mmu.zig adds RAM the device tree has beyond the window.
@@ -193,7 +194,8 @@ _boot:
     msr     daifset, #0xf
     mov     x19, x0                 /* the device tree */
     /* An image loaded where it is not linked - the Pi's firmware loads
-       nothing above RAM's first GiB - is copied where it is, from its
+       nothing above RAM's first GiB, and the Compute Module 5's kernel is
+       linked above it - is copied where it is, from its
        header to the end of its data, and goes on there. Only the boot
        core comes here, before anything has been written. With the MMU
        off the copy goes straight to memory; lines the caches hold of
@@ -312,16 +314,23 @@ _boot:
     str     x4, [x0]
 
     /* The kernel's GiB in 2 MiB blocks of RAM, and the blocks its code is
-       in in pages, the code's read-only. */
+       in in pages, the code's read-only. A kernel in the first GiB - the
+       BCM2711 boards', linked at 2 MiB - has its blocks in that GiB's
+       table, made above, and its code's pages go in there: past the
+       first 2 MiB, which are pages already. */
     adrp    x7, _text_start
     add     x7, x7, :lo12:_text_start
     adrp    x8, _text_end
     add     x8, x8, :lo12:_text_end
     lsr     x9, x7, #30             /* the kernel's GiB */
-    lsl     x10, x9, #30            /* where it starts */
+    ldr     x6, =ATTR_RAM
+    cbnz    x9, 13f
+    adrp    x1, a64_low_l2
+    add     x1, x1, :lo12:a64_low_l2
+    b       14f
+13: lsl     x10, x9, #30            /* where it starts */
     adrp    x1, a64_kernel_l2
     add     x1, x1, :lo12:a64_kernel_l2
-    ldr     x6, =ATTR_RAM
     mov     x3, #0
 8:  lsl     x4, x3, #21
     add     x4, x4, x10
@@ -333,7 +342,7 @@ _boot:
     b.lo    8b
     orr     x4, x1, #DESC_TABLE
     str     x4, [x0, x9, lsl #3]
-    adrp    x2, a64_code_l3
+14: adrp    x2, a64_code_l3
     add     x2, x2, :lo12:a64_code_l3
     lsr     x11, x7, #21            /* the code's first 2 MiB */
     sub     x12, x8, #1

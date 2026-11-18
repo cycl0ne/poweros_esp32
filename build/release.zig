@@ -404,7 +404,7 @@ fn addBoardArchive(b: *std.Build, step: *std.Build.Step, board: Board, image: Im
             .loader_path = "EFI/BOOT/BOOTX64.EFI",
             .boot_files = parts.boot_files,
         }),
-        .visionfive2, .rpi_cm5, .rpi_cm4 => addBootPackage(b, step, board, image.image, .{
+        .visionfive2, .rpi_cm5, .rpi_cm4, .rpi4b => addBootPackage(b, step, board, image.image, .{
             .ram_disk = disk,
             .boot_files = parts.boot_files,
         }),
@@ -416,7 +416,7 @@ fn addBoardArchive(b: *std.Build, step: *std.Build.Step, board: Board, image: Im
 /// others.
 fn piConfig(b: *std.Build, board: Board) ?std.Build.LazyPath {
     return switch (board) {
-        .rpi_cm5, .rpi_cm4 => b.path(b.fmt("src/boards/{s}/config.txt", .{@tagName(board)})),
+        .rpi_cm5, .rpi_cm4, .rpi4b => b.path(b.fmt("src/boards/{s}/config.txt", .{@tagName(board)})),
         else => null,
     };
 }
@@ -615,8 +615,22 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
                 list.addPrefixedFileArg("boot/config.txt=", config);
                 run.addPrefixedFileArg("Storage/Boot/config.txt=", config);
             }
+            // A file in a drawer of its own under Storage/Boot - a Pi's
+            // overlays/ - has the drawer made first, once: the image is
+            // made in the order it is told.
+            var boot_dirs: std.ArrayList([]const u8) = .empty;
             for (boot_files) |file| {
                 const host: std.Build.LazyPath = .{ .cwd_relative = file.host };
+                var at: usize = 0;
+                while (std.mem.indexOfScalarPos(u8, file.name, at, '/')) |slash| : (at = slash + 1) {
+                    const dir = file.name[0..slash];
+                    for (boot_dirs.items) |had| {
+                        if (std.mem.eql(u8, had, dir)) break;
+                    } else {
+                        boot_dirs.append(b.allocator, dir) catch @panic("OOM");
+                        run.addArg(b.fmt("Storage/Boot/{s}", .{dir}));
+                    }
+                }
                 list.addPrefixedFileArg(b.fmt("boot/{s}=", .{file.name}), host);
                 run.addPrefixedFileArg(b.fmt("Storage/Boot/{s}=", .{file.name}), host);
             }

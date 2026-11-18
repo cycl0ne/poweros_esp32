@@ -115,7 +115,8 @@ pub fn addRv64Image(b: *std.Build, kernel: *std.Build.Step.Compile) Image {
 }
 
 /// An AArch64 kernel made into what is booted: the ELF, for a debugger,
-/// and a raw binary of it from its first address (0x40200000), which
+/// and a raw binary of it from its first address (0x40200000, 0x00200000
+/// on the BCM2711 boards), which
 /// starts with an arm64 Image header (start.S): QEMU's -kernel loads it
 /// as it loads Linux - at the start of RAM plus the header's text_offset,
 /// the device tree in x0, the initrd in /chosen - which it does for an
@@ -253,19 +254,35 @@ pub fn addKernel(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
         .name = "kernel",
         .root_module = kernel_mod,
     });
-    kernel.setLinkerScript(b.path(switch (chip) {
-        .esp32s3 => "kernel.ld",
-        .esp32p4 => "src/arch/esp32p4/kernel.ld",
-        .rv64sbi => "src/arch/rv64sbi/kernel.ld",
-        .a64psci, .a64v80 => "src/arch/a64psci/kernel.ld",
-        .x64uefi => "src/arch/x64uefi/kernel.ld",
-    }));
+    kernel.setLinkerScript(switch (chip) {
+        .esp32s3 => b.path("kernel.ld"),
+        .esp32p4 => b.path("src/arch/esp32p4/kernel.ld"),
+        .rv64sbi => b.path("src/arch/rv64sbi/kernel.ld"),
+        .a64psci => b.path("src/arch/a64psci/kernel.ld"),
+        .a64v80 => lowA64Script(b),
+        .x64uefi => b.path("src/arch/x64uefi/kernel.ld"),
+    });
     kernel.entry = .{ .symbol_name = "_start" };
     // A section per function, so each function's literals (.literal.<fn>)
     // sit next to its code: l32r reaches only 256 KiB back, and the code in
     // flash is bigger than that (kernel.ld keeps the input order).
     kernel.link_function_sections = true;
     return kernel;
+}
+
+/// The AArch64 linker script with the kernel at 2 MiB, as the BCM2711
+/// boards link it (chip a64v80): their RAM starts at 0 and their firmware
+/// loads the image there, so it runs where it is put - on a board with
+/// 1 GiB of RAM too, which has none at 0x40200000. It is
+/// src/arch/a64psci/kernel.ld with that one address changed, so the two
+/// cannot drift apart.
+fn lowA64Script(b: *std.Build) std.Build.LazyPath {
+    const script = @embedFile("../src/arch/a64psci/kernel.ld");
+    const linked = "ORIGIN = 0x40200000";
+    if (std.mem.count(u8, script, linked) != 1)
+        @panic("src/arch/a64psci/kernel.ld: `ORIGIN = 0x40200000` is not in it once, and the BCM2711 boards' script is made by changing it");
+    const low = std.mem.replaceOwned(u8, b.allocator, script, linked, "ORIGIN = 0x00200000") catch @panic("OOM");
+    return b.addWriteFiles().add("kernel-a64v80.ld", low);
 }
 
 /// esptool: ESP-IDF's, the newest under ~/.espressif/tools/python/<version>/venv/bin,

@@ -5,8 +5,8 @@
 //! firmware (start4.elf), which reads config.txt from the eMMC's first
 //! FAT partition - or, with the board's BOOT switch on, everything from a
 //! PC over the USB-C port (rpiboot). The firmware loads kernel.bin at
-//! 2 MiB - the kernel copies itself to 0x40200000 (start.S) - the disk
-//! image and the device tree where config.txt says, and enters the kernel
+//! 2 MiB, where it is linked, the disk image and the device tree where
+//! config.txt says, and enters the kernel
 //! at EL2 through its armstub. There is no PSCI: the armstub keeps the
 //! other three cores in a loop at EL2 that waits for an address at
 //! 0xD8, 0xE0 and 0xE8 (the device tree's spin table, cpu1.zig).

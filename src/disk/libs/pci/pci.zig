@@ -16,8 +16,9 @@
 //! The jump table is pci_lvo.zig, the ROM tag, the init and the expunge
 //! pci_init.zig, the base pci_base.zig, the timer waits delay.zig. The
 //! walk is scan/ - `scan.zig` what is there, `place.zig` where it goes -
-//! the host bridges host/ - `_host.zig` what both have, `ecam.zig`
-//! QEMU's, and `jh7110.zig` the JH7110's PCI Express ports. Each call is
+//! the host bridges host/ - `_host.zig` what they all have, `ecam.zig`
+//! QEMU's, `jh7110.zig` the JH7110's PCI Express ports, `bcm2712.zig` the
+//! BCM2712's and `bcm2711.zig` the BCM2711's. Each call is
 //! a file under its area: `find/`, `config/`, `claim/`, `interrupt/`
 //! (`_vectors.zig` MSI and MSI-X), `reset/`.
 

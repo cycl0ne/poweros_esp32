@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The cores' clock on the Compute Module 4 (`boards.cpu_clock`): the
+//! The cores' clock on the BCM2711 boards - the Compute Module 4 and the
+//! Raspberry Pi 4 Model B (`boards.cpu_clock`): the
 //! VideoCore's firmware sets it, and the cores' supply with it, when it is
 //! asked through its mailbox - as Linux's cpufreq asks it. Unasked, it
 //! leaves them where it started them. It takes them no faster than config.txt's
-//! arm_freq allows - 1.5 GHz unless that says less - and slows them by
-//! itself while the chip is too hot or its supply sags.
+//! arm_freq allows - 1.5 GHz unless that says less, 1.8 GHz on a Pi 4B
+//! with the chip's C0 stepping - and slows them by itself while the chip
+//! is too hot or its supply sags. The board's mailbox is in its system
+//! list (`boards.system`).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const videocore = sdk.hardware.videocore;
 const ExecBase = sdk.interface.exec.ExecBase;
-const system = @import("system.zig");
+const system = @import("../boards.zig").system;
 
 const TAG_GET_MAX_CLOCK_RATE: u32 = 0x0003_0004;
 const TAG_SET_CLOCK_RATE: u32 = 0x0003_8002;

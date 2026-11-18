@@ -3,7 +3,9 @@
 //! (sdk/devices/usbhc.zig) has a host controller - what usb.library runs
 //! a bus on. The units are the board's own controllers first (CHIP_DWC3
 //! parts: the CM5's RP1's two), then the xHCI functions pci.library
-//! found: the VisionFive 2's VL805, QEMU's qemu-xhci.
+//! found: the VisionFive 2's VL805, the Raspberry Pi 4 Model B's, whose
+//! code the VideoCore's firmware loads into it at each start
+//! (vl805.zig), QEMU's qemu-xhci.
 //!
 //!   UHCMD_CONTROLXFER  a control transfer: setup, data, status
 //!   UHCMD_BULKXFER     a bulk transfer, in rounds of 16 KiB
@@ -53,11 +55,12 @@ const controller = @import("controller.zig");
 const transfer = @import("transfer.zig");
 const roothub = @import("roothub.zig");
 const regs = @import("regs.zig");
+const vl805 = @import("vl805.zig");
 
 pub const DEVICE_NAME = _xhci.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 16;
-const BUILD_DATE = "14.11.2026";
+const DEVICE_REVISION = 17;
+const BUILD_DATE = "18.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -168,6 +171,7 @@ fn start(host: *Host) bool {
         sdk.exec.kprintf(host.sys, "%s: unit %d: the controller does not answer on its bus\n", .{ DEVICE_NAME, host.number });
         return false;
     }
+    vl805.load(host);
     if (!controller.bringUp(host)) return false;
     host.int = .{
         .node = .{ .type = .interrupt, .pri = 0, .name = DEVICE_NAME },
@@ -488,7 +492,8 @@ fn boardHost(ub: *UtilityBase, part: *const expansion.BoardPart) bool {
 
 /// The board's own controllers - its CHIP_DWC3 parts, and its CHIP_XHCI
 /// parts in memory, that may be hosts - each at the unit its part names:
-/// where its registers are, its interrupt, and whether it is a DWC3.
+/// where its registers are, its interrupt, and whether it is a DWC3. And
+/// the VideoCore's mailbox, where the board has its firmware.
 fn findBoardControllers(base: *XhciBase) void {
     const sys = base.sys_base;
     const utility_lib = sys.OpenLibrary(sdk.interface.utility.NAME, 1) orelse return;
@@ -497,6 +502,9 @@ fn findBoardControllers(base: *XhciBase) void {
     const expansion_lib = sys.OpenLibrary(expansion.EXPANSIONNAME, 1) orelse return;
     defer sys.CloseLibrary(expansion_lib);
     const eb: *ExpansionBase = @ptrCast(expansion_lib);
+    if (eb.FindBoardPart(null, st.PARTKIND_FIRMWARE, st.CHIP_RPI_FIRMWARE)) |firmware| {
+        base.firmware = ub.GetTagData(st.PART_Address, 0, firmware.tags);
+    }
     // How many of them there are, which is the highest unit a part
     // names: the block below is allocated for that many.
     var count: u32 = 0;
@@ -534,6 +542,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     base.board = null;
     base.board_units = 0;
     base.units = 0;
+    base.firmware = 0;
     findBoardControllers(base);
     base.units = base.board_units;
     if (sys_base.OpenLibrary(pci.PCINAME, 2)) |pci_lib| {

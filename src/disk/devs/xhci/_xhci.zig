@@ -110,6 +110,10 @@ pub const XhciBase = extern struct {
     board_units: u32 = 0,
     board: ?[*]BoardController = null,
     hosts: ?[*]?*Host = null,
+    /// The VideoCore's mailbox, where the board has its firmware
+    /// (CHIP_RPI_FIRMWARE), which loads a VL805's code (vl805.zig); 0 on
+    /// any other board.
+    firmware: usize = 0,
     /// Who may start and stop a unit: one opener at a time.
     open_lock: exec.SignalSemaphore = .{},
 };

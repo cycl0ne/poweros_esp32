@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The picture on the Compute Module 4's HDMI port, asked of the
-//! VideoCore's firmware before anything else runs (`boards.firmware_screen`).
+//! The picture on the first HDMI port of the BCM2711 boards - the Compute
+//! Module 4 and the Raspberry Pi 4 Model B - asked of the VideoCore's
+//! firmware before anything else runs (`boards.firmware_screen`).
 //!
-//! The board has no serial port, so the screen is where the kernel's
-//! first lines can be read, and where a boot that stops says why. The
+//! The CM4-NANO-B has no serial port, and a Pi 4B's wants an adapter, so
+//! the screen is where the kernel's first lines can be read, and where a
+//! boot that stops says why. The
 //! firmware drives the display itself - it read the monitor's EDID and
 //! lit a mode on it before the kernel started - and hands out a
 //! framebuffer in its own memory through the mailbox's property channel:
@@ -37,7 +39,7 @@ const tags = rtg.tags;
 const Tag = sdk.utility.FixedTagItem;
 const reg = sdk.hardware.mmio.reg;
 const hwcpu = sdk.hardware.cpu;
-const system = @import("system.zig");
+const system = @import("../boards.zig").system;
 
 /// The picture the firmware lit, as it handed it over.
 pub const Picture = sdk.hardware.videocore.Picture;

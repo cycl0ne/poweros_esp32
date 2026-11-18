@@ -376,6 +376,20 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     });
     mkpackage_tests.addImport("sdk", sdk);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mkpackage_tests })).step);
+    // mkstick's own: the names it gives the files on a medium, and the
+    // MBR's entry.
+    const mkstick_fat = b.createModule(.{
+        .root_source_file = b.path("src/disk/devs/handlers/fat/host.zig"),
+        .target = b.graph.host,
+    });
+    mkstick_fat.addImport("sdk", sdk);
+    const mkstick_tests = b.createModule(.{
+        .root_source_file = b.path("tools/mkstick/mkstick.zig"),
+        .target = b.graph.host,
+    });
+    mkstick_tests.addImport("sdk", sdk);
+    mkstick_tests.addImport("fat32", mkstick_fat);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = mkstick_tests })).step);
     // Every program and module on a disk compiles: every board's flash
     // disk and every 64-bit chip's disk is made.
     for (disks.runs) |run| check_all_step.dependOn(&run.step);

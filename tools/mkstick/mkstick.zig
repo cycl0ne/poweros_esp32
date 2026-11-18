@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
-//! mkstick: makes the medium a machine whose firmware is UEFI starts
-//! from - an image to write to a USB stick - out of the files that
-//! firmware and the loader read.
+//! mkstick: makes the medium a machine starts from - an image to write
+//! to a USB stick - out of the files its firmware and loader read: a
+//! machine whose firmware is UEFI, or a Raspberry Pi, whose firmware
+//! reads the first FAT partition of a disk with an MBR.
 //!
 //! usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>]
-//!                [--label=<name>] [--name=<partition>]
+//!                [--table=gpt|mbr] [--label=<name>] [--name=<partition>]
 //!                [--system=<disk image>]
 //!                <path on the stick>=<file> ...
 //!
-//! What it writes: a protective MBR, a GPT whose first partition is an
-//! EFI System partition of `--size` mebibytes from the first mebibyte
-//! on, and a FAT32 volume on that partition holding the files it was
-//! given.
+//! What it writes: with `--table=gpt`, the default, a protective MBR, a
+//! GPT whose first partition is an EFI System partition from the first
+//! mebibyte on, and a FAT32 volume on that partition holding the files
+//! it was given. With `--table=mbr`, an MBR whose one partition is FAT32
+//! (type 0x0C) from the first mebibyte to the medium's end, with the
+//! volume on it - what a Raspberry Pi's bootloader reads, off a card or
+//! a USB stick. The medium is `--size` mebibytes either way.
 //!
 //! A UEFI firmware reads one name off such a partition and no other,
 //! `EFI/BOOT/BOOTX64.EFI`, so that is where the loader goes; the loader
-//! then reads `kernel.bin` from beside itself.
+//! then reads `kernel.bin` from beside itself. A Raspberry Pi's firmware
+//! reads config.txt from the volume's root, and what that names.
 //!
 //! **The system is the second partition** (`--system`): the PowerOS
 //! container of a disk image `mkfs --gpt` made - a table in its first
@@ -29,7 +34,8 @@
 //! one is - what is written on it stays - and `C:Install` on the machine
 //! started from it puts a system on a disk of the machine's own. Without
 //! `--system` the medium holds the EFI System partition alone, and the
-//! loader reads a disk image from beside itself when one is there.
+//! loader reads a disk image from beside itself when one is there. The
+//! container goes in a GPT: with `--table=mbr` there is the volume alone.
 //!
 //! **The volume is the file system's own format.** `format.write`
 //! (`src/disk/devs/handlers/fat/fat32/format.zig`, through that
@@ -40,10 +46,18 @@
 //!
 //! The files are added here rather than through the handler: its own
 //! file path wants a library base, which a tool on the host has no
-//! business bringing up, and a boot medium holds a handful of files whose
-//! names fit a directory entry as it stands. One that does not is
-//! refused, not shortened - a medium is no place for a tool to invent
-//! names on.
+//! business bringing up, and a boot medium holds a handful of files.
+//!
+//! **Names are kept as they are given.** One that is eight characters
+//! and three, each part in one case, is a short name alone, with the
+//! entry's two flags for a part in small letters - `config.txt` stays in
+//! small letters. Any other is a long name, in the entries before the
+//! short one, and the short one is made from it as the handler makes one
+//! (`fat32/names.zig`): its basis, with `~1` on the end, counted up until
+//! no other entry in the directory has it. A firmware that reads long
+//! names - a Raspberry Pi's does - finds `bcm2711-rpi-4-b.dtb` by its
+//! name. A name with a character a FAT volume holds in no name is
+//! refused, not changed.
 //!
 //! The image is as long as the medium it describes and holds only the
 //! blocks that were written, so it takes a few megabytes on the host
@@ -57,6 +71,7 @@ const gpt = sdk.dos.gpt;
 const fat = sdk.dos.fat;
 const fat_host = @import("fat32");
 const format = fat_host.format;
+const names = fat_host.names;
 
 fn fatal(comptime message: []const u8, args: anytype) noreturn {
     std.debug.print("mkstick: " ++ message ++ "\n", args);
@@ -83,6 +98,16 @@ const default_size_mib: u64 = 320;
 const default_name = "PowerOS boot";
 const default_label = "POWEROS";
 
+/// The partition table the medium has (`--table`).
+const Table = enum { gpt, mbr };
+
+/// Where the volume starts on a medium with an MBR: its first mebibyte
+/// is the table's and room, as a GPT medium's is.
+const mbr_first: u64 = 1024 * 1024 / block_bytes;
+
+/// The longest name a long-name entry run holds.
+const long_max = 255;
+
 /// A file or a directory asked for, and where it goes.
 const Give = struct {
     /// Its path on the stick, `/` between the parts.
@@ -93,9 +118,17 @@ const Give = struct {
 
 /// A directory or a file on the way to the medium.
 const Node = struct {
+    /// Its name as it was given, which a long name holds where the short
+    /// one cannot.
+    name: []const u8,
     /// Its name as a directory entry holds it: eight and three,
-    /// space-padded.
-    short: [fat.ent_name_bytes]u8,
+    /// space-padded, in capitals.
+    short: [fat.ent_name_bytes]u8 = @splat(' '),
+    /// The entry's case byte: which parts of the short name were small
+    /// letters.
+    case: u8 = 0,
+    /// Whether the name goes in long-name entries before the short one.
+    long: bool = false,
     /// A file's bytes; null for a directory.
     bytes: ?[]const u8,
     /// A directory's children, in the order they were given.
@@ -124,6 +157,7 @@ pub fn main(init: std.process.Init) !void {
     var label_text: []const u8 = default_label;
     var name_text: []const u8 = default_name;
     var system_path: ?[]const u8 = null;
+    var table: Table = .gpt;
     var given: std.ArrayList(Give) = .empty;
     for (args, 0..) |arg, index| {
         if (index == 0) continue;
@@ -140,6 +174,9 @@ pub fn main(init: std.process.Init) !void {
             name_text = arg["--name=".len..];
         } else if (mem.startsWith(u8, arg, "--system=")) {
             system_path = arg["--system=".len..];
+        } else if (mem.startsWith(u8, arg, "--table=")) {
+            table = std.meta.stringToEnum(Table, arg["--table=".len..]) orelse
+                fatal("--table: {s} is neither gpt nor mbr", .{arg["--table=".len..]});
         } else if (mem.startsWith(u8, arg, "--")) {
             fatal("{s}: no such option", .{arg});
         } else {
@@ -154,26 +191,30 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     const path = into orelse fatal(
-        "usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>] [--label=<name>] [--name=<partition>] [--system=<disk image>] <path on the stick>=<file> ...",
+        "usage: mkstick --into=<image> [--as=<path>] [--size=<MiB>] [--table=gpt|mbr] [--label=<name>] [--name=<partition>] [--system=<disk image>] <path on the stick>=<file> ...",
         .{},
     );
     if (given.items.len == 0) fatal("nothing to put on it: give at least the loader the firmware reads", .{});
+    if (table == .mbr and system_path != null) fatal("--system: the system's container goes in a GPT, and --table=mbr has room for the volume alone", .{});
     const label = fat_host.shortLabel(label_text) catch
         fatal("--label: {s} is not a name a volume can carry", .{label_text});
 
     // The tree, and what it takes.
     const root = try arena.create(Node);
-    root.* = .{ .short = @splat(' '), .bytes = null };
+    root.* = .{ .name = "", .bytes = null };
     for (given.items) |one| try place(arena, root, one);
 
-    const made = layOut(root, size_mib) orelse fatal(
+    const made = layOut(root, size_mib, table) orelse fatal(
         "--size={d}: a volume that small cannot hold the files, or cannot be FAT32 at all",
         .{size_mib},
     );
     // The system's container, behind the volume on a mebibyte of its own.
     const system: ?System = if (system_path) |from| takeSystem(io, arena, from, gpt.alignUp(made.plan.first + made.plan.total, block_bytes)) else null;
     const body = if (system) |container| container.first + container.blocks else made.plan.first + made.plan.total;
-    const blocks = body + backBlocks();
+    const blocks = switch (table) {
+        .gpt => body + backBlocks(),
+        .mbr => body,
+    };
 
     // The image: as long as the medium, holding what was written.
     const file = cwd.createFile(io, path, .{ .read = true }) catch |e| fatal("{s}: {t}", .{ path, e });
@@ -182,7 +223,10 @@ pub fn main(init: std.process.Init) !void {
     image.end(blocks);
 
     const seed = seedOf(label_text, name_text, blocks);
-    writeTable(&image, blocks, made.plan, name_text, &seed, system);
+    switch (table) {
+        .gpt => writeTable(&image, blocks, made.plan, name_text, &seed, system),
+        .mbr => writeMbr(&image, made.plan, &seed),
+    }
     if (system) |container| writeSystem(&image, container);
     format.write(&image, made.plan, label, serialOf(&seed), made_stamp) catch |e|
         fatal("{s}: the volume could not be laid down: {t}", .{ path, e });
@@ -199,17 +243,28 @@ pub fn main(init: std.process.Init) !void {
     out.interface.print(
         \\mkstick: {s}
         \\  medium        {d} MiB, blocks of {d} bytes
-        \\  partition     EFI System, blocks {d} to {d}, "{s}"
-        \\  volume        FAT32 "{s}", clusters of {d} bytes, {d} of them
-        \\  on it         {d} bytes in {d} files and {d} drawers
         \\
     , .{
         shown,
         blocks * block_bytes / (1024 * 1024),
         block_bytes,
-        made.plan.first,
-        made.plan.first + made.plan.total - 1,
-        name_text,
+    }) catch |e| fatal("the report could not be written: {t}", .{e});
+    const partition_said = switch (table) {
+        .gpt => out.interface.print(
+            \\  partition     EFI System, blocks {d} to {d}, "{s}"
+            \\
+        , .{ made.plan.first, made.plan.first + made.plan.total - 1, name_text }),
+        .mbr => out.interface.print(
+            \\  partition     FAT32 in an MBR (type 0x0C), blocks {d} to {d}
+            \\
+        , .{ made.plan.first, made.plan.first + made.plan.total - 1 }),
+    };
+    partition_said catch |e| fatal("the report could not be written: {t}", .{e});
+    out.interface.print(
+        \\  volume        FAT32 "{s}", clusters of {d} bytes, {d} of them
+        \\  on it         {d} bytes in {d} files and {d} drawers
+        \\
+    , .{
         label_text,
         made.plan.sectors_per_cluster * block_bytes,
         made.plan.clusters,
@@ -294,11 +349,7 @@ fn place(arena: Allocator, root: *Node, one: Give) !void {
     while (parts.next()) |part| {
         if (part.len == 0) continue;
         const last = parts.peek() == null;
-        const short = shortName(part) orelse fatal(
-            "{s}: a directory entry holds eight characters and three, and this tool does not shorten a name for you",
-            .{part},
-        );
-        if (find(node, &short)) |had| {
+        if (find(node, part)) |had| {
             if (last) fatal("{s}: given twice", .{one.path});
             if (!had.isDir()) fatal("{s}: {s} is a file on the way to it", .{ one.path, part });
             node = had;
@@ -307,22 +358,35 @@ fn place(arena: Allocator, root: *Node, one: Give) !void {
         if (!node.isDir()) fatal("{s}: {s} is a file on the way to it", .{ one.path, part });
         const made = try arena.create(Node);
         made.* = .{
-            .short = short,
+            .name = part,
             .bytes = if (last) one.bytes else null,
             .parent = node,
         };
+        if (!nameIn(node, made)) fatal(
+            "{s}: not a name a FAT volume holds - at most {d} characters, none of \\ / : * ? \" < > | and none below a space, not ending in a dot or a space",
+            .{ part, long_max },
+        );
         try node.children.append(arena, made);
         node = made;
     }
     if (node == root) fatal("{s}: no name in it", .{one.path});
 }
 
-/// The child of `node` by that name, if it has one.
-fn find(node: *Node, short: *const [fat.ent_name_bytes]u8) ?*Node {
+/// The child of `node` by that name, if it has one - in either case, as
+/// a FAT volume tells names apart.
+fn find(node: *Node, name: []const u8) ?*Node {
     for (node.children.items) |child| {
-        if (mem.eql(u8, &child.short, short)) return child;
+        if (std.ascii.eqlIgnoreCase(child.name, name)) return child;
     }
     return null;
+}
+
+/// Whether a child of `node` has that short name.
+fn hasShort(node: *const Node, short: *const [fat.ent_name_bytes]u8) bool {
+    for (node.children.items) |child| {
+        if (mem.eql(u8, &child.short, short)) return true;
+    }
+    return false;
 }
 
 /// The files or the drawers in the tree, `root` itself left out.
@@ -335,19 +399,103 @@ fn count(node: *const Node, dirs: bool) u32 {
     return total;
 }
 
-/// A name as a directory entry holds it: eight characters and three,
-/// upper case, space-padded. Null for a name that does not fit one, or
-/// that holds a character an entry may not.
-fn shortName(name: []const u8) ?[fat.ent_name_bytes]u8 {
-    if (name.len == 0) return null;
-    const dot = mem.lastIndexOfScalar(u8, name, '.');
+/// `node`'s entry worked out among those already in `dir`: its short
+/// name alone where the name is one, else a long name and a short one
+/// made from it - the basis, `~1` on the end, counted up until no other
+/// entry in the directory has it (`names.withTail`). False for a name a
+/// FAT volume does not hold.
+fn nameIn(dir: *const Node, node: *Node) bool {
+    const name = node.name;
+    if (name.len == 0 or name.len > long_max) return false;
+    for (name) |char| if (!longChar(char)) return false;
+    if (name[name.len - 1] == '.' or name[name.len - 1] == ' ') return false;
+    if (shortOf(name)) |short| {
+        node.short = short.bytes;
+        node.case = short.case;
+        return true;
+    }
+    node.long = true;
+    const basis = basisOf(name);
+    var number: u32 = 1;
+    while (number < 1_000_000) : (number += 1) {
+        const short = names.withTail(basis, number);
+        if (hasShort(dir, &short)) continue;
+        node.short = short;
+        return true;
+    }
+    return false;
+}
+
+/// A name as a short entry alone - eight characters and three, in
+/// capitals, space-padded, and the case byte's flags for a part that was
+/// all small letters - or null where it needs a long name: a part too
+/// long, a second dot, a character a short name may not hold, or small
+/// letters and capitals in one part.
+fn shortOf(name: []const u8) ?names.Short {
+    const dot = mem.indexOfScalar(u8, name, '.');
+    if (dot) |at| if (mem.indexOfScalarPos(u8, name, at + 1, '.') != null) return null;
     const base = if (dot) |at| name[0..at] else name;
     const ext = if (dot) |at| name[at + 1 ..] else name[0..0];
     if (base.len == 0 or base.len > 8 or ext.len > 3) return null;
-    var short: [fat.ent_name_bytes]u8 = @splat(' ');
-    for (base, 0..) |char, at| short[at] = upper(char) orelse return null;
-    for (ext, 0..) |char, at| short[8 + at] = upper(char) orelse return null;
+    if (dot != null and ext.len == 0) return null;
+    var short: names.Short = .{ .bytes = @splat(' '), .case = 0 };
+    for (base, 0..) |char, at| short.bytes[at] = upper(char) orelse return null;
+    for (ext, 0..) |char, at| short.bytes[8 + at] = upper(char) orelse return null;
+    short.case |= caseFlag(base, names.case_lower_base) orelse return null;
+    short.case |= caseFlag(ext, names.case_lower_ext) orelse return null;
     return short;
+}
+
+/// `flag` for a part whose letters are all small, 0 for one whose
+/// letters are all capitals or that has none, null for one with both.
+fn caseFlag(part: []const u8, flag: u8) ?u8 {
+    var small = false;
+    var capital = false;
+    for (part) |char| {
+        if (std.ascii.isLower(char)) small = true;
+        if (std.ascii.isUpper(char)) capital = true;
+    }
+    if (small and capital) return null;
+    return if (small) flag else 0;
+}
+
+/// The short name a long one starts from, by the handler's rule
+/// (`names.basisOf`) for the characters this tool takes: capitals, each
+/// character a short name may not hold made one `_`, spaces and leading
+/// dots dropped, up to eight before the last dot and three after it.
+fn basisOf(name: []const u8) names.Basis {
+    var basis: names.Basis = .{};
+    var start: usize = 0;
+    while (start < name.len and (name[start] == '.' or name[start] == ' ')) start += 1;
+    const last_dot = mem.lastIndexOfScalar(u8, name[start..], '.');
+    const stem_end = if (last_dot) |at| start + at else name.len;
+    for (name[start..stem_end]) |char| {
+        if (char == ' ' or char == '.') continue;
+        if (basis.base_len == basis.base.len) break;
+        basis.base[basis.base_len] = upper(char) orelse '_';
+        basis.base_len += 1;
+    }
+    if (basis.base_len == 0) {
+        basis.base[0] = '_';
+        basis.base_len = 1;
+    }
+    if (stem_end < name.len) {
+        var ext_len: usize = 0;
+        for (name[stem_end + 1 ..]) |char| {
+            if (char == ' ') continue;
+            if (ext_len == basis.ext.len) break;
+            basis.ext[ext_len] = upper(char) orelse '_';
+            ext_len += 1;
+        }
+    }
+    return basis;
+}
+
+/// Whether a long name may hold `char`: anything printable but the nine
+/// a FAT volume keeps out of every name. This tool takes ASCII alone.
+fn longChar(char: u8) bool {
+    if (char < 0x20 or char >= 0x7F) return false;
+    return mem.indexOfScalar(u8, "\\/:*?\"<>|", char) == null;
 }
 
 /// A character of a short name, upper case; null for one a name may not
@@ -371,13 +519,25 @@ const Made = struct {
 /// Where the volume goes and how it is laid out, for a medium of
 /// `size_mib` mebibytes. Null where the volume cannot be FAT32 at that
 /// size, or cannot hold the tree.
-fn layOut(root: *Node, size_mib: u64) ?Made {
+fn layOut(root: *Node, size_mib: u64, table: Table) ?Made {
     const blocks = size_mib * 1024 * 1024 / block_bytes;
-    var guid: gpt.Guid = @splat(0);
-    const header = gpt.freshHeader(blocks, block_bytes, &guid) orelse return null;
-    const first = gpt.alignUp(header.first_usable_lba, block_bytes);
-    if (first > header.last_usable_lba) return null;
-    const total = header.last_usable_lba - first + 1;
+    var first: u64 = undefined;
+    var total: u64 = undefined;
+    switch (table) {
+        .gpt => {
+            var guid: gpt.Guid = @splat(0);
+            const header = gpt.freshHeader(blocks, block_bytes, &guid) orelse return null;
+            first = gpt.alignUp(header.first_usable_lba, block_bytes);
+            if (first > header.last_usable_lba) return null;
+            total = header.last_usable_lba - first + 1;
+        },
+        .mbr => {
+            // An MBR counts blocks in 32 bits.
+            if (blocks <= mbr_first or blocks > 0xFFFF_FFFF) return null;
+            first = mbr_first;
+            total = blocks - mbr_first;
+        },
+    }
     // The cluster asked for, or the one the volume's size would get if
     // it is too small for that - a stick made smaller than a FAT32
     // volume of 4 KiB clusters can be.
@@ -412,12 +572,17 @@ fn hand(node: *Node, bytes_per_cluster: u32, next: *u32) void {
     }
 }
 
-/// The bytes a directory's entries take: its children, and for one that
-/// is not the root the two entries that name itself and the directory
-/// above it.
+/// The bytes a directory's entries take: its children's, each one's long
+/// name before it where it has one, and for a directory that is not the
+/// root the two entries that name itself and the directory above it; the
+/// root's one is the volume's name.
 fn dirBytes(node: *const Node) usize {
-    const own: usize = if (node.parent == null) 1 else 2;
-    return (own + node.children.items.len) * fat.entry_bytes;
+    var entries: usize = if (node.parent == null) 1 else 2;
+    for (node.children.items) |child| {
+        entries += 1;
+        if (child.long) entries += names.pieceCount(child.name.len);
+    }
+    return entries * fat.entry_bytes;
 }
 
 /// The clusters `bytes` take, one at least - a directory always has a
@@ -433,6 +598,40 @@ fn clustersFor(bytes: usize, bytes_per_cluster: u32) u32 {
 fn backBlocks() u64 {
     var header: gpt.Header = .{};
     return gpt.entriesBlocks(&header, block_bytes) + 1;
+}
+
+/// Where an MBR holds the number a disk is told apart by.
+const mbr_disk_signature_at: usize = 440;
+
+/// The MBR, with the one partition the volume is on, marked FAT32 that
+/// is found by its blocks' numbers alone (0x0C), and not marked active:
+/// nothing that reads this medium asks.
+fn writeMbr(image: *Image, plan: format.Plan, seed: *const [32]u8) void {
+    const block = image.arena.alloc(u8, block_bytes) catch @panic("out of memory");
+    @memset(block, 0);
+    @memcpy(block[mbr_disk_signature_at..][0..4], drawn(seed, 0)[0..4]);
+    const at = fat.partition_table_at;
+    const last = plan.first + plan.total - 1;
+    @memcpy(block[at + 1 ..][0..3], &chsOf(plan.first));
+    block[at + 4] = fat.TYPE_FAT32_LBA;
+    @memcpy(block[at + 5 ..][0..3], &chsOf(last));
+    fat.putU32(block, at + 8, @intCast(plan.first));
+    fat.putU32(block, at + 12, @intCast(plan.total));
+    fat.putU16(block, fat.signature_at, fat.signature);
+    image.put(0, block);
+}
+
+/// A block's place as an MBR entry also gives it - its cylinder, head and
+/// sector for 255 heads of 63 sectors, as the entry packs them - and past
+/// what those can count, the most they can.
+fn chsOf(block: u64) [3]u8 {
+    const heads = 255;
+    const sectors = 63;
+    if (block >= 1024 * heads * sectors) return .{ 0xFE, 0xFF, 0xFF };
+    const cylinder = block / (heads * sectors);
+    const head = block / sectors % heads;
+    const sector = block % sectors + 1;
+    return .{ @intCast(head), @intCast(sector | (cylinder >> 8) << 6), @intCast(cylinder & 0xFF) };
 }
 
 /// The protective MBR and both copies of the GPT, with the partition
@@ -551,19 +750,32 @@ fn writeDir(image: *Image, plan: format.Plan, node: *Node) void {
         image.get(clusterAt(plan, node.cluster), room[0..block_bytes]);
         at = fat.entry_bytes;
     } else {
-        putEntry(room[0..fat.entry_bytes], ".          ".*, fat_host.ATTR_DIRECTORY, node.cluster, 0);
+        putEntry(room[0..fat.entry_bytes], ".          ".*, 0, fat_host.ATTR_DIRECTORY, node.cluster, 0);
         // The directory above, which is 0 where that is the root: a
         // reader is told to find the root by the boot sector and not by
         // a cluster number here.
         const above = node.parent.?;
         const up: u32 = if (above.parent == null) 0 else above.cluster;
-        putEntry(room[fat.entry_bytes..][0..fat.entry_bytes], "..         ".*, fat_host.ATTR_DIRECTORY, up, 0);
+        putEntry(room[fat.entry_bytes..][0..fat.entry_bytes], "..         ".*, 0, fat_host.ATTR_DIRECTORY, up, 0);
         at = 2 * fat.entry_bytes;
     }
     for (node.children.items) |child| {
+        if (child.long) {
+            // The long name's pieces, its end first, each carrying the
+            // short name's check.
+            var units: [long_max]u16 = undefined;
+            for (child.name, 0..) |char, index| units[index] = char;
+            const name = units[0..child.name.len];
+            const checksum = fat.shortNameChecksum(&child.short);
+            var order = names.pieceCount(name.len);
+            while (order != 0) : (order -= 1) {
+                names.fillPiece(room[at..][0..fat.entry_bytes], name, order, checksum);
+                at += fat.entry_bytes;
+            }
+        }
         const length: u32 = if (child.bytes) |content| @intCast(content.len) else 0;
         const attr: u8 = if (child.isDir()) fat_host.ATTR_DIRECTORY else fat_host.ATTR_ARCHIVE;
-        putEntry(room[at..][0..fat.entry_bytes], child.short, attr, child.cluster, length);
+        putEntry(room[at..][0..fat.entry_bytes], child.short, child.case, attr, child.cluster, length);
         at += fat.entry_bytes;
     }
     image.putBytes(clusterAt(plan, node.cluster), room);
@@ -581,6 +793,7 @@ fn writeDir(image: *Image, plan: format.Plan, node: *Node) void {
 fn putEntry(
     into: []u8,
     short: [fat.ent_name_bytes]u8,
+    case: u8,
     attr: u8,
     cluster: u32,
     length: u32,
@@ -588,6 +801,7 @@ fn putEntry(
     @memset(into, 0);
     @memcpy(into[fat.ent_name..][0..fat.ent_name_bytes], &short);
     into[fat.ent_attr] = attr;
+    into[fat.ent_case] = case;
     fat.putU16(into, fat.ent_create_time, made_stamp.time);
     fat.putU16(into, fat.ent_create_date, made_stamp.date);
     fat.putU16(into, fat.ent_access_date, made_stamp.date);
@@ -695,3 +909,57 @@ const Image = struct {
         return true;
     }
 };
+
+test "a name is kept as it is given: short where it fits, long with a short one made from it" {
+    const gpa = std.testing.allocator;
+    var dir: Node = .{ .name = "", .bytes = null };
+    defer dir.children.deinit(gpa);
+
+    // Eight and three in small letters: a short name, flagged small.
+    var config: Node = .{ .name = "config.txt", .bytes = "" };
+    try std.testing.expect(nameIn(&dir, &config));
+    try std.testing.expectEqualStrings("CONFIG  TXT", &config.short);
+    try std.testing.expectEqual(names.case_lower_base | names.case_lower_ext, config.case);
+    try std.testing.expect(!config.long);
+    try dir.children.append(gpa, &config);
+
+    // In capitals: a short name as it is.
+    var loader: Node = .{ .name = "BOOTX64.EFI", .bytes = "" };
+    try std.testing.expect(nameIn(&dir, &loader));
+    try std.testing.expectEqualStrings("BOOTX64 EFI", &loader.short);
+    try std.testing.expectEqual(@as(u8, 0), loader.case);
+    try std.testing.expect(!loader.long);
+
+    // Too long: a long name, its short one the basis and `~1` - and `~2`
+    // for the next with the same basis.
+    var tree: Node = .{ .name = "bcm2711-rpi-4-b.dtb", .bytes = "" };
+    try std.testing.expect(nameIn(&dir, &tree));
+    try std.testing.expect(tree.long);
+    try std.testing.expectEqualStrings("BCM271~1DTB", &tree.short);
+    try dir.children.append(gpa, &tree);
+    var other: Node = .{ .name = "bcm2711-rpi-cm4.dtb", .bytes = "" };
+    try std.testing.expect(nameIn(&dir, &other));
+    try std.testing.expectEqualStrings("BCM271~2DTB", &other.short);
+
+    // Small letters and capitals in one part, or two dots: a long name.
+    var mixed: Node = .{ .name = "Kernel.bin", .bytes = "" };
+    try std.testing.expect(nameIn(&dir, &mixed));
+    try std.testing.expect(mixed.long);
+    try std.testing.expectEqualStrings("KERNEL~1BIN", &mixed.short);
+    var dotted: Node = .{ .name = "a.b.c", .bytes = "" };
+    try std.testing.expect(nameIn(&dir, &dotted));
+    try std.testing.expect(dotted.long);
+    try std.testing.expectEqualStrings("AB~1    C  ", &dotted.short);
+
+    // What no FAT name holds is refused.
+    var colon: Node = .{ .name = "a:b", .bytes = "" };
+    try std.testing.expect(!nameIn(&dir, &colon));
+    var trailing: Node = .{ .name = "end.", .bytes = "" };
+    try std.testing.expect(!nameIn(&dir, &trailing));
+}
+
+test "an MBR entry counts a block in cylinders, heads and sectors until they run out" {
+    // The first mebibyte's end, where the volume starts: as fdisk gives it.
+    try std.testing.expectEqual([3]u8{ 0x20, 0x21, 0x00 }, chsOf(mbr_first));
+    try std.testing.expectEqual([3]u8{ 0xFE, 0xFF, 0xFF }, chsOf(1024 * 255 * 63));
+}

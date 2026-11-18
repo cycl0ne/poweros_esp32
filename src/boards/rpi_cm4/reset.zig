@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: MPL-2.0
-//! How the Compute Module 4 restarts itself: through the watchdog in the
-//! chip's power manager, as Linux's bcm2835_wdt does - the firmware has no
-//! PSCI to ask (`boards.before_reset`).
+//! How the BCM2711 boards - the Compute Module 4 and the Raspberry Pi 4
+//! Model B - restart themselves: through the watchdog in the chip's power
+//! manager, as Linux's bcm2835_wdt does - the firmware has no PSCI to ask
+//! (`boards.before_reset`). The power manager and the mailbox are in the
+//! board's system list (`boards.system`).
 //!
 //! The watchdog counts PM_WDOG down in ticks of about 15 µs, and at nought
 //! does what PM_RSTC's WRCFG says: a full reset of the chip, after which
-//! the bootloader starts again - from the eMMC, or from the PC over USB
-//! while the board's BOOT switch is on. Both registers take a write only
+//! the bootloader starts again - on the Compute Module 4 from the eMMC,
+//! or from the PC over USB while the board's BOOT switch is on; on the
+//! Pi 4B from the card, or the USB stick with no card in. Both registers take a write only
 //! with the power manager's password in their top byte.
 //!
 //! **The firmware is told first** (NOTIFY_REBOOT), as Linux tells it
@@ -37,7 +40,7 @@ const hwcpu = sdk.hardware.cpu;
 const exec = sdk.exec;
 const videocore = sdk.hardware.videocore;
 const ExecBase = sdk.interface.exec.ExecBase;
-const system = @import("system.zig");
+const system = @import("../boards.zig").system;
 const domains = @import("domains.zig");
 
 const PM_RSTC: usize = 0x1C;

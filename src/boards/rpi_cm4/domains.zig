@@ -19,7 +19,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const videocore = sdk.hardware.videocore;
 const ExecBase = sdk.interface.exec.ExecBase;
-const system = @import("system.zig");
+const system = @import("../boards.zig").system;
 
 const TAG_SET_POWER_STATE: u32 = 0x0002_8001;
 /// The firmware's number for the USB block.

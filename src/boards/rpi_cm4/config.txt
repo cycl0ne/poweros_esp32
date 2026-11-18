@@ -5,8 +5,8 @@
 # kernel.bin, disk-a64v80.bin and the module's device tree
 # (bcm2711-rpi-cm4.dtb, Raspberry Pi's).
 
-# The kernel at 2 MiB, where it copies itself from to where it is linked,
-# 0x40200000 (src/arch/a64psci/kernel.ld, start.S). The device tree and
+# The kernel at 2 MiB, where it is linked (build/kernel.zig's script for
+# the BCM2711 boards), so it runs where it is put. The device tree and
 # the disk image apart above it: the image would be cleared with the
 # kernel's .bss if it followed the kernel. The GIC on, as the armstub
 # leaves it for a kernel that takes its interrupts there.
