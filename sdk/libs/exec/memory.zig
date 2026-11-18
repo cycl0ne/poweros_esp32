@@ -21,6 +21,7 @@
 
 const std = @import("std");
 const Node = @import("nodes.zig").Node;
+const ExecBase = @import("../../interface/exec.zig").ExecBase;
 
 /// Memory attributes and AllocMem requirements (MEMF_*).
 ///
@@ -311,17 +312,43 @@ pub const MemHeader = extern struct {
 };
 
 /// struct MemHandlerData: what a memory handler is told about the failed
-/// allocation.
+/// allocation - or that FlushMemory asks for everything there is.
 pub const MemHandlerData = extern struct {
     /// memh_RequestSize
     request_size: u32,
     /// memh_RequestFlags: the AllocMem requirements.
     request_flags: u32,
-    /// memh_Flags: MEMHF_RECYCLE when the same handler is called again.
+    /// memh_Flags: MEMHF_RECYCLE when the same handler is called again,
+    /// MEMHF_FLUSH from FlushMemory.
     flags: u32,
+    /// FlushMemory's hook, which exec's own handler tells of each library
+    /// and device it expunges; null from AllocMem.
+    hook: ?*FlushHook = null,
 };
 
 pub const MEMHF_RECYCLE: u32 = 1 << 0;
+/// Asked by FlushMemory: no allocation waits, so a handler frees all it
+/// can in one call rather than one thing at a time.
+pub const MEMHF_FLUSH: u32 = 1 << 1;
+
+/// What FlushMemory's hook is told of a library or device nobody has
+/// open: its Expunge is about to run, with its name; then it went, or it
+/// refused and stays.
+pub const FLUSH_EXPUNGING: u32 = 0;
+pub const FLUSH_GONE: u32 = 1;
+pub const FLUSH_KEPT: u32 = 2;
+
+/// FlushMemory's hook: told before each library and device it expunges,
+/// and after. Lives in the caller's memory.
+pub const FlushHook = extern struct {
+    code: FlushFn,
+    /// The caller's, handed back through `hook`.
+    data: ?*anyopaque = null,
+};
+
+/// A FlushHook's code: `stage` is FLUSH_EXPUNGING, FLUSH_GONE or
+/// FLUSH_KEPT; `name` is the module's with FLUSH_EXPUNGING, null after.
+pub const FlushFn = *const fn (sys_base: *ExecBase, hook: *FlushHook, stage: u32, name: ?[*:0]const u8) callconv(.c) void;
 
 /// Memory handler results.
 pub const MEM_DID_NOTHING: i32 = 0;

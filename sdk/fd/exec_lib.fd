@@ -312,4 +312,10 @@ u64 UptimeUs()
 /// interrupt, before timer.device - and for a part's few microseconds
 /// between two writes.
 void SpinUs(u64 us)
+/// Free all the memory that can be freed (SINCE 1.43): every low-memory
+/// handler asked until it has nothing more - the libraries and devices
+/// nobody has open expunged, the fonts nobody uses let go. `hook`, when
+/// given, is told of each library and device before its Expunge runs and
+/// after. Returns how much more memory is free than before.
+usize FlushMemory(?*exec.FlushHook hook)
 ##end

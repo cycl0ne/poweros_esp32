@@ -73,6 +73,7 @@ const contract_files = [_][]const u8{
     @embedFile("time/gettimebase.zig"),
     @embedFile("time/uptimeus.zig"),
     @embedFile("time/spinus.zig"),
+    @embedFile("memory/flushmemory.zig"),
     @embedFile("task/lockcoretasks.zig"),
     @embedFile("task/unlockcoretasks.zig"),
     @embedFile("list/lockexeclist.zig"),
@@ -373,6 +374,7 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoGetTimeBase),
     vec(lvoUptimeUs),
     vec(lvoSpinUs),
+    vec(lvoFlushMemory),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -966,6 +968,9 @@ fn lvoUptimeUs(base: *ExecBase) callconv(.c) u64 {
 }
 fn lvoSpinUs(base: *ExecBase, us: u64) callconv(.c) void {
     exec.SpinUs(base, us);
+}
+fn lvoFlushMemory(base: *ExecBase, hook: ?*sdk.exec.FlushHook) callconv(.c) usize {
+    return exec.FlushMemory(base, hook);
 }
 fn lvoPostWork(base: *ExecBase, job: *sdk.exec.WorkJob) callconv(.c) void {
     exec.PostWork(base, job);

@@ -160,6 +160,7 @@ pub const LVO = struct {
     pub const GetTimeBase = libraries.lvo(148);
     pub const UptimeUs = libraries.lvo(149);
     pub const SpinUs = libraries.lvo(150);
+    pub const FlushMemory = libraries.lvo(151);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -310,6 +311,7 @@ pub const Fn = struct {
     pub const GetTimeBase = *const fn (*ExecBase) callconv(.c) u64;
     pub const UptimeUs = *const fn (*ExecBase) callconv(.c) u64;
     pub const SpinUs = *const fn (*ExecBase, u64) callconv(.c) void;
+    pub const FlushMemory = *const fn (*ExecBase, ?*exec.FlushHook) callconv(.c) usize;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1034,5 +1036,14 @@ pub const ExecBase = opaque {
     /// between two writes.
     pub fn SpinUs(self: *ExecBase, us: u64) void {
         return libraries.call(self, LVO.SpinUs, Fn.SpinUs, .{us});
+    }
+
+    /// Free all the memory that can be freed (SINCE 1.43): every low-memory
+    /// handler asked until it has nothing more - the libraries and devices
+    /// nobody has open expunged, the fonts nobody uses let go. `hook`, when
+    /// given, is told of each library and device before its Expunge runs and
+    /// after. Returns how much more memory is free than before.
+    pub fn FlushMemory(self: *ExecBase, hook: ?*exec.FlushHook) usize {
+        return libraries.call(self, LVO.FlushMemory, Fn.FlushMemory, .{hook});
     }
 };

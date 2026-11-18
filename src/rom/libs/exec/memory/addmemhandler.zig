@@ -33,6 +33,8 @@ const Interrupt = sdk.exec.Interrupt;
 /// one that frees a little at a time can be driven until the allocation
 /// succeeds - which is how exec's own expunges one library per call rather
 /// than emptying the machine on the first failed allocation.
+/// `FlushMemory` asks too, with `MEMHF_FLUSH` set and no allocation
+/// waiting: a handler that sees it may free all it can in one call.
 ///
 /// CONTEXT:
 /// - Waits: for the memory handlers' semaphore while another task runs
@@ -57,7 +59,7 @@ const Interrupt = sdk.exec.Interrupt;
 /// None known.
 ///
 /// SEE ALSO:
-/// `RemMemHandler`, `AllocMem`
+/// `RemMemHandler`, `AllocMem`, `FlushMemory`
 ///
 /// EXAMPLES:
 /// ```zig

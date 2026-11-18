@@ -70,11 +70,14 @@ const Library = sdk.exec.Library;
 
 /// Low-memory handler: expunges libraries and devices nobody has open.
 ///
-/// One per call - `MEM_TRY_AGAIN` after each one that went, so `AllocMem`
-/// retries and only as many go as the allocation needed. The segments one
-/// that went was loaded in go with it, to the module loader. A module that
-/// refuses to go (exec.library) is left where it is, which is read from it
-/// still being on the list rather than from what its vector answered.
+/// From AllocMem one per call - `MEM_TRY_AGAIN` after each one that went,
+/// so `AllocMem` retries and only as many go as the allocation needed.
+/// From FlushMemory (`MEMHF_FLUSH`) each is tried once in the one call,
+/// and `MEM_ALL_DONE` says some went; its hook is told of each before its
+/// Expunge runs, and after. The segments one that went was loaded in go
+/// with it, to the module loader. A module that refuses to go
+/// (exec.library) is left where it is, which is read from it still being
+/// on the list rather than from what its vector answered.
 ///
 /// It runs inside AllocMem, whose caller may hold any library's lock - an
 /// Open vector allocating - or the list. So it waits for neither: it tries
@@ -83,37 +86,46 @@ const Library = sdk.exec.Library;
 /// too.
 ///
 /// INPUTS:
-/// - `data` - what the allocation wanted; not looked at, since what is
-///   wanted is freed by whoever will free it.
+/// - `data` - what the allocation wanted, of which only the flags and the
+///   hook are looked at: what is wanted is freed by whoever will free it.
 /// - `is_data` - the handler's own data: exec's base, which the handler's
 ///   `data` field is set to when it is added.
 pub fn flushLibraries(data: *const sdk.exec.MemHandlerData, is_data: ?*anyopaque) callconv(.c) i32 {
-    _ = data;
     const base: *ExecBase = @ptrCast(@alignCast(is_data.?));
     const sys = base.iface();
-    // A library tried and kept is not tried again in this call; the walk
-    // starts over after each, since the list was let go meanwhile.
+    const every = data.flags & sdk.exec.MEMHF_FLUSH != 0;
+    var result = sdk.exec.MEM_DID_NOTHING;
+    // A library kept, or busy, is not tried again in this call; the walk
+    // starts over after each, since the list was let go meanwhile - and a
+    // module that went may have closed others, which are idle now.
     var tried: [16]usize = undefined;
     var tried_count: usize = 0;
     while (tried_count < tried.len) {
-        if (!sys.AttemptSemaphore(&base.sem_libraries)) return sdk.exec.MEM_DID_NOTHING;
+        if (!sys.AttemptSemaphore(&base.sem_libraries)) return result;
         const found = idleLibrary(base, tried[0..tried_count]) orelse {
             sys.ReleaseSemaphore(&base.sem_libraries);
-            return sdk.exec.MEM_DID_NOTHING;
+            return result;
         };
-        tried[tried_count] = @intFromPtr(found.lib);
-        tried_count += 1;
         // Tried, never waited for: its holder may be the caller.
         const held = sys.AttemptSemaphore(&found.lib.lock);
         sys.ReleaseSemaphore(&base.sem_libraries);
-        if (!held) continue;
-        const gone = expungeHeld(base, found.lib, found.list);
-        if (gone.went) {
-            unloadModule(base, gone.seg_list);
-            return sdk.exec.MEM_TRY_AGAIN;
+        if (held) {
+            // Told first, so an Expunge that never comes back is the
+            // last one the hook heard of.
+            if (data.hook) |hook| hook.code(sys, hook, sdk.exec.FLUSH_EXPUNGING, found.lib.node.name);
+            const gone = expungeHeld(base, found.lib, found.list);
+            if (data.hook) |hook| hook.code(sys, hook, if (gone.went) sdk.exec.FLUSH_GONE else sdk.exec.FLUSH_KEPT, null);
+            if (gone.went) {
+                unloadModule(base, gone.seg_list);
+                if (!every) return sdk.exec.MEM_TRY_AGAIN;
+                result = sdk.exec.MEM_ALL_DONE;
+                continue;
+            }
         }
+        tried[tried_count] = @intFromPtr(found.lib);
+        tried_count += 1;
     }
-    return sdk.exec.MEM_DID_NOTHING;
+    return result;
 }
 
 /// Hands the segments a module that went was loaded in to the module

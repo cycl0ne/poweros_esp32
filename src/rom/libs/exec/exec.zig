@@ -369,9 +369,15 @@ pub const inUse = _interrupt.inUse;
 pub const format = _rawio.format;
 pub const AddMemHandler = @import("memory/addmemhandler.zig").AddMemHandler;
 pub const RemMemHandler = @import("memory/remmemhandler.zig").RemMemHandler;
+pub const FlushMemory = @import("memory/flushmemory.zig").FlushMemory;
 pub const MemHandlerData = sdk.exec.MemHandlerData;
 pub const MemHandlerFn = sdk.exec.MemHandlerFn;
 pub const MEMHF_RECYCLE = sdk.exec.MEMHF_RECYCLE;
+pub const MEMHF_FLUSH = sdk.exec.MEMHF_FLUSH;
+pub const FlushHook = sdk.exec.FlushHook;
+pub const FLUSH_EXPUNGING = sdk.exec.FLUSH_EXPUNGING;
+pub const FLUSH_GONE = sdk.exec.FLUSH_GONE;
+pub const FLUSH_KEPT = sdk.exec.FLUSH_KEPT;
 pub const MEM_DID_NOTHING = sdk.exec.MEM_DID_NOTHING;
 pub const MEM_ALL_DONE = sdk.exec.MEM_ALL_DONE;
 pub const MEM_TRY_AGAIN = sdk.exec.MEM_TRY_AGAIN;
@@ -907,6 +913,72 @@ test "the low-memory flush expunges one idle library per call, and passes over a
     try testing.expect(FindName(SysBase, &SysBase.lib_list, LIBRARY_NAME) != null);
     try testing.expect(SysBase.lib.flags & LIBF_GOING == 0);
     try testing.expectEqual(@as(u32, 0), SysBase.sem_libraries.state);
+    try expectNoLeaks();
+}
+
+/// What a FlushHook was told, in order: the stages, and the names that
+/// came with FLUSH_EXPUNGING.
+const FlushLog = struct {
+    stages: [8]u32 = undefined,
+    names: [8][*:0]const u8 = undefined,
+    told: usize = 0,
+    named: usize = 0,
+};
+
+fn flushTold(_: *sdk.interface.exec.ExecBase, hook: *FlushHook, stage: u32, name: ?[*:0]const u8) callconv(.c) void {
+    const log: *FlushLog = @ptrCast(@alignCast(hook.data.?));
+    log.stages[log.told] = stage;
+    log.told += 1;
+    if (name) |named| {
+        log.names[log.named] = named;
+        log.named += 1;
+    }
+}
+
+test "FlushMemory: each idle library tried once, the hook told before and after, a handler asked until it is done" {
+    try setUp();
+    defer deinit();
+
+    _ = CreateLibrary(SysBase, &.{ .name = "first.library", .vectors = &test_vectors }).?;
+    _ = CreateLibrary(SysBase, &.{ .name = "second.library", .vectors = &test_vectors }).?;
+    const busy = CreateLibrary(SysBase, &.{ .name = "busy.library", .vectors = &test_vectors }).?;
+    _ = OpenLibrary(SysBase, "busy.library", 0).?;
+    // A handler with two blocks to give back, one per call.
+    var release_log: HandlerLog = .{};
+    var release: Interrupt = .{ .node = .{ .type = .interrupt, .pri = 5, .name = "release" }, .data = &release_log, .code = vec(releaseBlocks) };
+    AddMemHandler(SysBase, &release);
+    release_log.blocks[0] = AllocMem(SysBase, 256, MEMF_ANY).?;
+    release_log.blocks[1] = AllocMem(SysBase, 256, MEMF_ANY).?;
+
+    var log: FlushLog = .{};
+    var hook: FlushHook = .{ .code = flushTold, .data = &log };
+    const freed = FlushMemory(SysBase, &hook);
+    // Both blocks back - the handler asked again with MEMHF_RECYCLE - and
+    // both idle libraries gone; the open one and exec.library stay.
+    try testing.expectEqual(@as(u32, 2), release_log.calls);
+    try testing.expectEqual(@as(u32, 1), release_log.recycle_calls);
+    try testing.expect(freed >= 2 * (256 + MEM_BLOCKSIZE));
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "first.library") == null);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "second.library") == null);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, "busy.library") != null);
+    try testing.expect(FindName(SysBase, &SysBase.lib_list, LIBRARY_NAME) != null);
+    // exec.library tried once and kept, each of the others named before
+    // it went; the open one never named.
+    const told = [_]u32{ FLUSH_EXPUNGING, FLUSH_KEPT, FLUSH_EXPUNGING, FLUSH_GONE, FLUSH_EXPUNGING, FLUSH_GONE };
+    try testing.expectEqualSlices(u32, &told, log.stages[0..log.told]);
+    try testing.expectEqual(@as(usize, 3), log.named);
+    try testing.expectEqualStrings(LIBRARY_NAME, std.mem.span(log.names[0]));
+    try testing.expectEqualStrings("first.library", std.mem.span(log.names[1]));
+    try testing.expectEqualStrings("second.library", std.mem.span(log.names[2]));
+
+    // Nothing left to free: nothing gained, and without a hook nothing told.
+    try testing.expectEqual(@as(usize, 0), FlushMemory(SysBase, null));
+    try testing.expectEqual(@as(u32, 0), SysBase.sem_libraries.state);
+    try testing.expectEqual(@as(u32, 0), SysBase.sem_memhandlers.state);
+
+    RemMemHandler(SysBase, &release);
+    CloseLibrary(SysBase, busy);
+    _ = RemLibrary(SysBase, busy);
     try expectNoLeaks();
 }
 

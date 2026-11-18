@@ -104,7 +104,8 @@ const MEM_BLOCKSIZE = sdk.exec.MEM_BLOCKSIZE;
 /// None known.
 ///
 /// SEE ALSO:
-/// `FreeMem`, `AllocVec`, `AvailMem`, `AddMemHandler`, `BeginSystemMemory`
+/// `FreeMem`, `AllocVec`, `AvailMem`, `AddMemHandler`, `FlushMemory`,
+/// `BeginSystemMemory`
 ///
 /// EXAMPLES:
 /// ```zig

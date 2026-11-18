@@ -280,8 +280,34 @@ with `AddMemHandler`: an `exec.Interrupt` whose code is an
 `exec.MemHandlerFn`, answering `MEM_DID_NOTHING`, `MEM_TRY_AGAIN` or
 `MEM_ALL_DONE`. It runs inside someone's `AllocMem`, whose caller may hold
 anything, so it neither waits nor allocates: it tries the locks it needs
-and passes over what is busy. `C:Avail FLUSH` asks for more than there
-is, which runs every handler.
+and passes over what is busy.
+
+**Freeing all there is.** `FlushMemory` asks every handler for all it
+can give, with no allocation waiting: each sees `MEMHF_FLUSH` and may
+free everything in one call, and exec's own tries each library and
+device nobody has open once - one that refuses stays. It answers how many
+more bytes are free. A `FlushHook` is told of each library and device
+before its Expunge runs, with its name, and after, whether it went:
+
+```zig
+fn tell(_: *ExecBase, hook: *exec.FlushHook, stage: u32, name: ?[*:0]const u8) callconv(.c) void {
+    const dl: *DosBase = @ptrCast(@alignCast(hook.data.?));
+    if (stage == exec.FLUSH_EXPUNGING) _ = dos.stdio.Printf(dl, "%s\n", .{name.?});
+}
+
+var hook: exec.FlushHook = .{ .code = tell, .data = dl };
+const freed = sys.FlushMemory(&hook);
+```
+
+The hook runs holding the handlers' semaphore and the module's own lock:
+it may print, and must not wait for a task that needs memory there is
+none of. `C:Avail FLUSH` is this call, each module named above the
+table as it is tried - so a module whose Expunge never comes back is the
+last name written. A screen shows only what was drawn before the machine
+stopped, which may be less; `C:test/Expunge NAME ...` asks one library or
+device at a time to go, and `HANDLER <name>` runs one memory handler
+alone, each line written out at once, so that over a remote shell the
+last line that arrives names what the machine did not come back from.
 
 Memory is not allocated or freed in an interrupt, and not allocated while
 a spinlock is held. `CopyMem`, `CopyMemQuick` (word-aligned) and `SetMem`

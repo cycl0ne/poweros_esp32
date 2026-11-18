@@ -71,6 +71,7 @@ Generated from the source by `./zig build autodoc`.
 - [FindResident](#findresident) - Finds a resident module by name.
 - [FindSemaphore](#findsemaphore) - Finds a public semaphore by name.
 - [FindTask](#findtask) - Finds a task by name, or answers the calling task.
+- [FlushMemory](#flushmemory) - Frees all the memory that can be freed.
 - [FreeMem](#freemem) - Gives memory back to the system.
 - [FreePooled](#freepooled) - Gives a block from `AllocPooled` back to its pool.
 - [FreeSignal](#freesignal) - Gives a signal bit back.
@@ -581,6 +582,8 @@ allocation is retried after each one that did something.
 one that frees a little at a time can be driven until the allocation
 succeeds - which is how exec's own expunges one library per call rather
 than emptying the machine on the first failed allocation.
+`FlushMemory` asks too, with `MEMHF_FLUSH` set and no allocation
+waiting: a handler that sees it may free all it can in one call.
 
 **CONTEXT**
 
@@ -610,7 +613,7 @@ None known.
 
 **SEE ALSO**
 
-`RemMemHandler`, `AllocMem`
+`RemMemHandler`, `AllocMem`, `FlushMemory`
 
 **EXAMPLES**
 
@@ -1328,7 +1331,8 @@ None known.
 
 **SEE ALSO**
 
-`FreeMem`, `AllocVec`, `AvailMem`, `AddMemHandler`, `BeginSystemMemory`
+`FreeMem`, `AllocVec`, `AvailMem`, `AddMemHandler`, `FlushMemory`,
+`BeginSystemMemory`
 
 **EXAMPLES**
 
@@ -4326,6 +4330,81 @@ None known.
 ```zig
 const me = sys.FindTask(null).?;
 if (sys.FindTask("timer.device")) |t| sys.Signal(t, 1 << sig);
+```
+
+## FlushMemory
+
+Frees all the memory that can be freed.
+
+**SYNOPSIS**
+
+```zig
+fn FlushMemory(base: *ExecBase, hook: ?*FlushHook) usize
+```
+
+**SINCE**
+
+1.43. LVO -608.
+
+**INPUTS**
+
+- `hook` - told of each library and device nobody has open: with
+  `FLUSH_EXPUNGING` and its name before its Expunge runs, then with
+  `FLUSH_GONE` or `FLUSH_KEPT` and no name - the name may have gone
+  with the module. Null for nothing told.
+
+**RESULT**
+
+How many more bytes are free than before (`AvailMem(MEMF_ANY)` after
+less before; 0 when other tasks took more meanwhile).
+
+**BEHAVIOR**
+
+Every low-memory handler is asked, highest priority first, with
+`MEMHF_FLUSH` set: no allocation is waiting, so a handler frees all it
+can rather than one thing at a time. One that answers `MEM_TRY_AGAIN`
+is asked again with `MEMHF_RECYCLE` until it answers otherwise. exec's
+own handler tries each library and device nobody has open, pinned or
+is expunging once - one that refuses stays, one whose lock is held by
+someone is passed over - and diskfont.library's lets go of the fonts
+nobody uses.
+
+**CONTEXT**
+
+- Waits: for the memory handlers' semaphore while another task runs
+  them, and for whatever an Expunge waits for - a device's task to
+  end.
+- Interrupts: no.
+- Locks: takes the memory handlers' semaphore; the hook runs holding
+  it and the module's own lock. No spinlock may be held.
+- Process: a Task will do; the hook runs on it.
+
+**OWNERSHIP**
+
+Nothing is allocated. The hook is the caller's and is only called
+during the call.
+
+**NOTES**
+
+The hook is told before a module's Expunge runs, so a module whose
+Expunge never comes back is the last one it was told of. It may print:
+it holds no lock its output needs, unless what it prints through is
+the module being expunged. It must not wait for a task that needs
+memory there is none of: the handlers' semaphore is held.
+
+**BUGS**
+
+exec's handler remembers up to 16 modules that refused or were busy
+in one call; past that, the rest are left where they are.
+
+**SEE ALSO**
+
+`AddMemHandler`, `AvailMem`, `AllocMem`, `RemLibrary`
+
+**EXAMPLES**
+
+```zig
+const freed = sys.FlushMemory(null);
 ```
 
 ## FreeMem

@@ -196,6 +196,7 @@ const tests = [_][]const u8{
     "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
     "film",        "commodities", "filmdt",      "watchdog",  "gpu",
     "dttime",      "names",       "axes",        "bands",     "vchiq",
+    "expunge",
 };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "git" };
 

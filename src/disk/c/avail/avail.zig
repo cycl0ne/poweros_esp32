@@ -5,9 +5,12 @@
 //!   Avail INTERNAL/S,EXTERNAL/S,TOTAL/S,FLUSH/S,OWNERS/S
 //!
 //! With one of INTERNAL, EXTERNAL or TOTAL it prints that one number and
-//! nothing else, which is what a script wants. FLUSH first asks exec for more
-//! memory than there is, which expunges every library, device and font nobody
-//! has open.
+//! nothing else, which is what a script wants. FLUSH first has exec free
+//! all it can (FlushMemory), which expunges every library, device and font
+//! nobody has open. Above the table it names each library and device as
+//! it is tried, and says whether it went or stays - the name written out
+//! before the module's Expunge runs, so one that never comes back is the
+//! last line on the screen. With one number, or OWNERS, nothing is named.
 //!
 //! OWNERS prints who holds the memory instead: the system, each task by its
 //! number and name, and the numbers of tasks that have ended with what they
@@ -33,7 +36,7 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Avail";
-const VERSION_STRING = "\x00$VER: Avail 1.3 (18.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Avail 1.4 (18.11.2026)\r\n";
 
 const template = "INTERNAL/S,EXTERNAL/S,TOTAL/S,FLUSH/S,OWNERS/S";
 const MSG_NOTBOTH = "only one of INTERNAL, EXTERNAL, or TOTAL allowed\n";
@@ -78,11 +81,6 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer dl.FreeArgs(rda);
 
-    // The largest allocation there could never be: exec frees everything it
-    // can while it looks, and then says no.
-    if (argv[flush] != 0) _ = sys.AllocMem(0xFFFF_FFFF, exec.MEMF_ANY);
-    if (argv[owners] != 0) return showOwners(sys, dl);
-
     var asked: u32 = 0;
     var one: u32 = exec.MEMF_ANY;
     if (argv[internal] != 0) {
@@ -101,6 +99,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = dl.PutStr(MSG_NOTBOTH);
         return dos.RETURN_ERROR;
     }
+    if (argv[flush] != 0) {
+        // Named for a person reading the table; a script's number and the
+        // owners come without.
+        if (asked == 0 and argv[owners] == 0) {
+            var hook: exec.FlushHook = .{ .code = tell, .data = dl };
+            _ = sys.FlushMemory(&hook);
+        } else {
+            _ = sys.FlushMemory(null);
+        }
+    }
+    if (argv[owners] != 0) return showOwners(sys, dl);
     if (asked == 1) {
         // One number and nothing else, which is what a script wants.
         _ = Printf(dl, "%zd\n", .{sys.AvailMem(one)});
@@ -120,6 +129,19 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
     }
     return dos.RETURN_OK;
+}
+
+/// FlushMemory's hook: a line for each library and device tried, its name
+/// written out before its Expunge runs.
+fn tell(sys_base: *ExecBase, hook: *exec.FlushHook, stage: u32, name: ?[*:0]const u8) callconv(.c) void {
+    _ = sys_base;
+    const dl: *DosBase = @ptrCast(@alignCast(hook.data.?));
+    switch (stage) {
+        exec.FLUSH_EXPUNGING => _ = Printf(dl, "%s: ", .{name orelse @as([*:0]const u8, "?")}),
+        exec.FLUSH_GONE => _ = dl.PutStr("expunged\n"),
+        else => _ = dl.PutStr("stays\n"),
+    }
+    _ = dl.Flush(dl.Output());
 }
 
 /// Whether the board says its RAM is one kind (SYSTAG_UnifiedMemory). No
