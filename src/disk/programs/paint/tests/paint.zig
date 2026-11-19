@@ -1324,3 +1324,75 @@ test "palette: reduced to its colours, plain, by the ordered pattern and by spre
     // A quarter of 64, give or take what the edges lose.
     try testing.expect(whites >= 12 and whites <= 20);
 }
+
+test "gradient: straight along its drag, round from its start, the colours mixed alpha and all" {
+    const gradient_zig = @import("../gradient.zig");
+    try testing.expect(gradient_zig.Shade.of(.{ 5, 5 }, .{ 5, 5 }, 0xFF000000, 0xFFFFFFFF, false) == null);
+    const straight = gradient_zig.Shade.of(.{ 10, 0 }, .{ 20, 0 }, 0xFF000000, 0xFFFFFFFF, false).?;
+    // Before the start, at the middle - on any row - and past the end.
+    try testing.expectEqual(@as(Pixel, 0xFF000000), straight.at(3, 7));
+    try testing.expectEqual(@as(Pixel, 0xFF808080), straight.at(15, 0));
+    try testing.expectEqual(@as(Pixel, 0xFF808080), straight.at(15, 40));
+    try testing.expectEqual(@as(Pixel, 0xFFFFFFFF), straight.at(30, -9));
+    const round = gradient_zig.Shade.of(.{ 0, 0 }, .{ 0, 10 }, 0xFFFF0000, 0x000000FF, true).?;
+    try testing.expectEqual(@as(Pixel, 0xFFFF0000), round.at(0, 0));
+    // Half the radius away in any direction: half way, alpha too.
+    try testing.expectEqual(round.at(5, 0), round.at(0, -5));
+    try testing.expectEqual(@as(Pixel, 0x80800080), round.at(-5, 0));
+    try testing.expectEqual(@as(Pixel, 0x000000FF), round.at(30, 30));
+}
+
+test "shapes: a guide's dashes run from one end to the other, cut to the picture" {
+    var pixels: [8 * 8]Pixel = @splat(0x11223344);
+    var picture = Picture{ .pixels = &pixels, .width = 8, .height = 8 };
+    var changed = Area.none;
+    shapes.guide(&picture, .{ 1, 1 }, .{ 6, 4 }, &changed);
+    try testing.expect(picture.get(1, 1) != 0x11223344);
+    try testing.expect(picture.get(6, 4) != 0x11223344);
+    try testing.expectEqual(@as(Pixel, 0x11223344), picture.get(6, 1));
+    try testing.expectEqual(Area{ .min_x = 1, .min_y = 1, .max_x = 7, .max_y = 5 }, changed);
+    changed = Area.none;
+    shapes.guide(&picture, .{ -4, 3 }, .{ 3, 3 }, &changed);
+    try testing.expectEqual(Area{ .min_x = 0, .min_y = 3, .max_x = 4, .max_y = 4 }, changed);
+}
+
+test "image: turned, flipped and placed on a canvas, a pixel at a time" {
+    const image_zig = @import("../image.zig");
+    // 3 across, 2 down:  1 2 3 / 4 5 6.
+    var pixels = [_]Pixel{ 1, 2, 3, 4, 5, 6 };
+    const from = Picture{ .pixels = &pixels, .width = 3, .height = 2 };
+    var room: [12]Pixel = undefined;
+    const cases = [_]struct { change: image_zig.Change, want: []const Pixel }{
+        .{ .change = .turn_right, .want = &.{ 4, 1, 5, 2, 6, 3 } },
+        .{ .change = .turn_left, .want = &.{ 3, 6, 2, 5, 1, 4 } },
+        .{ .change = .turn_half, .want = &.{ 6, 5, 4, 3, 2, 1 } },
+        .{ .change = .flip_across, .want = &.{ 3, 2, 1, 6, 5, 4 } },
+        .{ .change = .flip_down, .want = &.{ 4, 5, 6, 1, 2, 3 } },
+        // Cut to the middle column's lower pixel, and laid on a larger
+        // canvas a pixel in from its top left.
+        .{ .change = .{ .place = .{ .width = 1, .height = 1, .left = -1, .top = -1 } }, .want = &.{5} },
+        .{ .change = .{ .place = .{ .width = 4, .height = 3, .left = 1, .top = 1 } }, .want = &.{ 9, 9, 9, 9, 9, 1, 2, 3, 9, 4, 5, 6 } },
+    };
+    for (cases) |case| {
+        const size = image_zig.sizeAfter(case.change, from.width, from.height);
+        var into = Picture{ .pixels = &room, .width = size[0], .height = size[1] };
+        image_zig.apply(case.change, &from, &into, 9);
+        try testing.expectEqualSlices(Pixel, case.want, room[0..case.want.len]);
+    }
+    try testing.expectEqual([2]u32{ 2, 3 }, image_zig.sizeAfter(.turn_left, 3, 2));
+    // Nine places on a canvas 10 larger each way, and 4 smaller.
+    try testing.expectEqual(image_zig.Place{ .width = 13, .height = 12, .left = 0, .top = 0 }, image_zig.placed(3, 2, 13, 12, 0));
+    try testing.expectEqual(image_zig.Place{ .width = 13, .height = 12, .left = 5, .top = 5 }, image_zig.placed(3, 2, 13, 12, 4));
+    try testing.expectEqual(image_zig.Place{ .width = 13, .height = 12, .left = 10, .top = 10 }, image_zig.placed(3, 2, 13, 12, 8));
+    try testing.expectEqual(image_zig.Place{ .width = 1, .height = 1, .left = -1, .top = -1 }, image_zig.placed(3, 2, 1, 1, 4));
+}
+
+test "image: trimmed to what is unlike the top left corner" {
+    const image_zig = @import("../image.zig");
+    var pixels: [6 * 5]Pixel = @splat(7);
+    var picture = Picture{ .pixels = &pixels, .width = 6, .height = 5 };
+    try testing.expect(image_zig.trimmed(&picture).isEmpty());
+    picture.set(2, 1, 8);
+    picture.set(4, 3, 8);
+    try testing.expectEqual(Area{ .min_x = 2, .min_y = 1, .max_x = 5, .max_y = 4 }, image_zig.trimmed(&picture));
+}

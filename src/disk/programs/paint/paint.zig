@@ -78,6 +78,11 @@
 //!     drawn again from there as it changes, and kept for undoing when it
 //!     is done (shapes.zig); Escape puts it away, Undo too;
 //!   - fill (`f`), the area of one colour pressed on (fill.zig);
+//!   - gradient (`g`): a drag, shown as a guide line (`shapes.guide`),
+//!     lays the foreground at its start shading to the background at its
+//!     end over the layer painted, inside what is chosen, with the
+//!     brush's opacity and dither - along the drag, or round its start
+//!     with Tools' Round Gradient (gradient.zig);
 //!   - pick colour (`i`), the colour under the pointer made the
 //!     foreground, or the background with the menu button, and then the
 //!     tool before it again;
@@ -114,6 +119,14 @@
 //! (`PALETTE_Button`); the two are shown above it, the foreground in
 //! front, and a click there or on the swap beside them swaps them, as `x`
 //! does.
+//!
+//! **The Image menu** (image.zig) changes every layer: turned, flipped,
+//! cropped to the selection, trimmed, or put on a canvas of another
+//! size. Each layer and its mask is made anew at the new size and
+//! swapped in, the old ones held by the history - one step to undo - and
+//! the memory beside the layers (`kept`, the mask, the composite) is
+//! made again for the size (`fitSides`), on undo and redo too
+//! (`followSize`). Flatten makes the layers one as they show.
 //!
 //! **The palette** (palette.zig). The Palette menu edits it in a window
 //! of its own (`editPalette`, modal): a colour by red, green and blue,
@@ -179,7 +192,10 @@
 //!
 //!   File      New... (N), Open... (O), Save (S), Save As... (A), Quit (Q)
 //!   Edit      Undo (Z), Redo (Y), Swap Colours, Clear (K)
-//!   Tools     the tools, Filled Shapes
+//!   Image     Rotate (90° Clockwise, 90° Anticlockwise, 180°), Flip
+//!             Horizontally, Flip Vertically, Crop to the Selection,
+//!             Trim, Canvas Size..., Flatten
+//!   Tools     the tools, Filled Shapes, Round Gradient
 //!   Layer     New Layer (L), Duplicate (D), Delete, Rename..., Move Up,
 //!             Move Down, Merge Down (M), Flip Horizontally, Flip
 //!             Vertically, Add Mask (Show All, Hide All, Show the
@@ -270,6 +286,8 @@ const shapes = @import("shapes.zig");
 const fill_zig = @import("fill.zig");
 const layers_zig = @import("layers.zig");
 const palette_zig = @import("palette.zig");
+const gradient_zig = @import("gradient.zig");
+const image_zig = @import("image.zig");
 const selection_zig = @import("selection.zig");
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
@@ -286,7 +304,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.10";
+const VERSION = "1.11";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -356,6 +374,15 @@ const ID_EDIT_BACKWARDS = 75;
 // The new picture's window.
 const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
+/// Canvas Size's choice of where the picture goes.
+const ID_PLACE = 76;
+
+/// The places Canvas Size puts the picture, by rows from the top left.
+const place_texts = [_]Id{
+    .MSG_PLACE_TOP_LEFT,    .MSG_PLACE_TOP,    .MSG_PLACE_TOP_RIGHT,
+    .MSG_PLACE_LEFT,        .MSG_PLACE_MIDDLE, .MSG_PLACE_RIGHT,
+    .MSG_PLACE_BOTTOM_LEFT, .MSG_PLACE_BOTTOM, .MSG_PLACE_BOTTOM_RIGHT,
+};
 const ID_OK = 22;
 const ID_CANCEL = 23;
 // The text's window.
@@ -386,6 +413,7 @@ const Tool = enum(u32) {
     ellipse,
     polygon,
     fill,
+    gradient,
     airbrush,
     eraser,
     smudge,
@@ -480,13 +508,23 @@ const Command = enum(u32) {
     reduce_ordered,
     reduce_diffused,
     cycle,
+    round_gradient,
+    image_turn_right,
+    image_turn_left,
+    image_turn_half,
+    image_flip_across,
+    image_flip_down,
+    crop,
+    trim,
+    canvas_size,
+    flatten,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.cycle)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.flatten)) return null;
         return @enumFromInt(value);
     }
 };
@@ -516,6 +554,7 @@ const tools = [_]ToolEntry{
     .{ .tool = .ellipse, .glyph = command.CMD_ELLIPSE, .hint = .MSG_TOOL_ELLIPSE, .label = .MSG_MENU_ELLIPSE },
     .{ .tool = .polygon, .glyph = command.CMD_POLYGON, .hint = .MSG_TOOL_POLYGON, .label = .MSG_MENU_POLYGON },
     .{ .tool = .fill, .glyph = command.CMD_FLOOD_FILL, .hint = .MSG_TOOL_FILL, .label = .MSG_MENU_FILL },
+    .{ .tool = .gradient, .glyph = command.CMD_GRADIENT, .hint = .MSG_TOOL_GRADIENT, .label = .MSG_MENU_GRADIENT },
     .{ .tool = .airbrush, .glyph = command.CMD_AIRBRUSH, .hint = .MSG_TOOL_AIRBRUSH, .label = .MSG_MENU_AIRBRUSH },
     .{ .tool = .eraser, .glyph = command.CMD_ERASER, .hint = .MSG_TOOL_ERASER, .label = .MSG_MENU_ERASER },
     .{ .tool = .smudge, .glyph = command.CMD_SMUDGE, .hint = .MSG_TOOL_SMUDGE, .label = .MSG_MENU_SMUDGE },
@@ -609,6 +648,7 @@ const tool_keys = [_]ToolKey{
     .{ .key = 'e', .tool = .ellipse },
     .{ .key = 'n', .tool = .polygon },
     .{ .key = 'f', .tool = .fill },
+    .{ .key = 'g', .tool = .gradient },
     .{ .key = 'a', .tool = .airbrush },
     .{ .key = 'E', .tool = .eraser },
     .{ .key = 's', .tool = .smudge },
@@ -702,10 +742,24 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_SWAP, null, .swap),
     item(.MSG_MENU_CLEAR, "K", .clear),
+    menuTitle(.MSG_MENU_IMAGE),
+    .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_ROTATE) }, .text = .MSG_MENU_ROTATE },
+    subItem(.MSG_TURN_RIGHT, .image_turn_right),
+    subItem(.MSG_TURN_LEFT, .image_turn_left),
+    subItem(.MSG_TURN_HALF, .image_turn_half),
+    item(.MSG_MENU_FLIP_ACROSS, null, .image_flip_across),
+    item(.MSG_MENU_FLIP_DOWN, null, .image_flip_down),
+    bar,
+    item(.MSG_MENU_CROP, null, .crop),
+    item(.MSG_MENU_TRIM, null, .trim),
+    item(.MSG_MENU_CANVAS_SIZE, null, .canvas_size),
+    bar,
+    item(.MSG_MENU_FLATTEN, null, .flatten),
     menuTitle(.MSG_MENU_TOOLS),
 } ++ toolItems() ++ [_]MenuEntry{
     bar,
     toggleItem(.MSG_MENU_FILLED, null, .filled),
+    toggleItem(.MSG_MENU_ROUND_GRADIENT, null, .round_gradient),
     menuTitle(.MSG_MENU_LAYER),
     item(.MSG_MENU_NEW_LAYER, "L", .new_layer),
     item(.MSG_MENU_DUPLICATE_LAYER, "D", .duplicate_layer),
@@ -821,6 +875,7 @@ const MenuState = struct {
     painting_mask: bool,
     /// The palette cycles.
     cycling: bool,
+    round_gradient: bool,
 };
 
 // --- the window ----------------------------------------------------------------
@@ -1067,6 +1122,12 @@ const App = struct {
     clock: timer.TimeRequest = .{},
     clock_port: ?*exec.MsgPort = null,
     clock_out: bool = false,
+    /// The gradient tool shades round its drag's start rather than
+    /// along it.
+    round_gradient: bool = false,
+    /// Where Canvas Size puts the picture, 0 to 8 by rows from the top
+    /// left: in the middle to begin with.
+    canvas_place: u32 = 4,
     /// The picture pixel under the pointer while it is over the view and
     /// no button is down; null otherwise.
     hover: ?Point = null,
@@ -2270,6 +2331,219 @@ const App = struct {
         app.clock_port = null;
     }
 
+    // --- the Image menu ---------------------------------------------------------
+
+    /// Every layer, with its mask, made anew by `change`; one step to
+    /// undo. A requester says when there is no memory for it: nothing
+    /// changes then.
+    fn changeImage(app: *App, change: image_zig.Change) void {
+        const bottom = app.stack.layers[0].picture;
+        const size = image_zig.sizeAfter(change, bottom.width, bottom.height);
+        if (size[0] == 0 or size[1] == 0 or size[0] > max_side or size[1] > max_side) return;
+        const count = app.stack.count;
+        const sys = app.sys;
+        const list = sys.AllocVec(@sizeOf(Layer) * count, exec.MEMF_ANY) orelse return app.tell(.MSG_NO_IMAGE_MEMORY);
+        defer sys.FreeVec(list);
+        const made: [*]Layer = @ptrCast(@alignCast(list));
+        var done: u32 = 0;
+        while (done < count) : (done += 1) {
+            // The bottom layer's new canvas the background colour, the
+            // others' see-through.
+            const fill: Pixel = if (done == 0) app.background else 0;
+            made[done] = app.changedLayer(&app.stack.layers[done], change, size, fill) orelse break;
+        }
+        const new_size = size[0] != bottom.width or size[1] != bottom.height;
+        if (done < count or (new_size and !app.fitSides(size[0], size[1]))) {
+            for (made[0..done]) |layer| app.freeLayer(layer);
+            app.tell(.MSG_NO_IMAGE_MEMORY);
+            return;
+        }
+        app.swapLayers(made[0..count]);
+    }
+
+    /// A copy of `layer` made by `change` at `size`, a canvas's new part
+    /// `fill` - its mask's white, showing; null when there is no memory
+    /// for it.
+    fn changedLayer(app: *App, layer: *const Layer, change: image_zig.Change, size: [2]u32, fill: Pixel) ?Layer {
+        const sys = app.sys;
+        const bytes = Picture.bytesFor(size[0], size[1]);
+        const memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return null;
+        var made = layer.*;
+        made.memory = memory;
+        made.picture = .{ .pixels = @ptrCast(@alignCast(memory)), .width = size[0], .height = size[1] };
+        made.id = app.stack.newId();
+        made.mask = null;
+        made.mask_memory = null;
+        image_zig.apply(change, &layer.picture, &made.picture, fill);
+        if (layer.mask) |*mask| {
+            const mask_memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
+                sys.FreeVec(memory);
+                return null;
+            };
+            made.mask = .{ .pixels = @ptrCast(@alignCast(mask_memory)), .width = size[0], .height = size[1] };
+            made.mask_memory = mask_memory;
+            image_zig.apply(change, mask, &made.mask.?, 0xFFFFFFFF);
+        }
+        return made;
+    }
+
+    /// The layers swapped for `made`, place by place: each taken out and
+    /// its new one put in, the whole one step to undo; then shown again.
+    /// The layer painted goes last, its new one put in above it before it
+    /// is taken out, so that undoing the step - which paints the layer
+    /// its last record puts back - paints it again.
+    fn swapLayers(app: *App, made: []const Layer) void {
+        const painted = app.stack.current;
+        const count: u32 = @intCast(made.len);
+        var kept = true;
+        var turn: u32 = 0;
+        while (turn < count) : (turn += 1) {
+            const place = if (turn + 1 == count) painted else if (turn < painted) turn else turn + 1;
+            const joined = turn != 0;
+            if (place == painted and app.stack.count < layers_zig.max_layers) {
+                app.stack.insert(place + 1, made[place]);
+                if (!app.history.layerIn(&app.stack, place + 1, joined)) kept = false;
+                const old = app.stack.remove(place);
+                if (!app.history.layerOut(old, place, true)) {
+                    app.freeLayer(old);
+                    kept = false;
+                }
+                continue;
+            }
+            const old = app.stack.remove(place);
+            if (!app.history.layerOut(old, place, joined)) {
+                app.freeLayer(old);
+                kept = false;
+            }
+            app.stack.insert(place, made[place]);
+            if (!app.history.layerIn(&app.stack, place, true)) kept = false;
+        }
+        app.stack.current = painted;
+        if (!kept) app.tell(.MSG_NO_UNDO);
+        app.resized();
+    }
+
+    /// The memory beside the layers - `kept`, the mask, the composite
+    /// when there is one - made again for a picture `width` by `height`,
+    /// the selection let go; the history stays. False, with nothing
+    /// changed, when there is no memory for it.
+    fn fitSides(app: *App, width: u32, height: u32) bool {
+        const sys = app.sys;
+        const bytes = Picture.bytesFor(width, height);
+        const kept = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return false;
+        const mask = sys.AllocVec(@as(usize, width) * height, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+            sys.FreeVec(kept);
+            return false;
+        };
+        const composite: ?*anyopaque = if (app.memory[3] == null) null else sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
+            sys.FreeVec(mask);
+            sys.FreeVec(kept);
+            return false;
+        };
+        for ([_]usize{ 0, 2, 3, 4 }) |slot| if (app.memory[slot]) |block| sys.FreeVec(block);
+        app.memory[0] = kept;
+        app.memory[2] = mask;
+        app.memory[3] = composite;
+        app.memory[4] = null;
+        app.mask = @as([*]u8, @ptrCast(mask))[0 .. @as(usize, width) * height];
+        app.scratch = .{ .mask = app.mask, .width = width, .height = height };
+        app.kept = .{ .pixels = @ptrCast(@alignCast(kept)), .width = width, .height = height };
+        app.stack.composite = if (composite) |memory| Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height } else null;
+        app.selection = .{};
+        app.choosing = false;
+        return true;
+    }
+
+    /// After an undo or a redo, the memory beside the layers fitted to
+    /// their size, and the view to it, when that changed; false when
+    /// there is no memory for it.
+    fn followSize(app: *App) bool {
+        const bottom = app.stack.layers[0].picture;
+        if (bottom.width == app.kept.width and bottom.height == app.kept.height) return true;
+        if (!app.fitSides(bottom.width, bottom.height)) return false;
+        app.view.fit(bottom.width, bottom.height);
+        app.whole = true;
+        return true;
+    }
+
+    /// The picture shown again after its layers changed whole: the layer
+    /// painted kept, the view fitted to its size.
+    fn resized(app: *App) void {
+        app.changed = true;
+        app.paintLayer();
+        app.view.fit(app.picture.width, app.picture.height);
+        app.whole = true;
+        app.layers_stale = true;
+        app.show(app.picture.whole());
+    }
+
+    /// The picture cut to the box of what is chosen.
+    fn crop(app: *App) void {
+        if (!app.selection.any()) return;
+        const box = app.selection.box.clip(app.picture.width, app.picture.height);
+        if (box.isEmpty()) return;
+        app.changeImage(.{ .place = .{ .width = box.width(), .height = box.height(), .left = -box.min_x, .top = -box.min_y } });
+    }
+
+    /// The picture's edges cut away where what is shown there is all the
+    /// colour of its top left corner.
+    fn trim(app: *App) void {
+        if (!app.stack.plain() and !app.haveComposite()) return;
+        const whole = app.stack.layers[0].picture.whole();
+        app.stack.compose(whole);
+        const box = image_zig.trimmed(app.stack.shown());
+        if (box.isEmpty() or (box.width() == whole.width() and box.height() == whole.height())) return;
+        app.changeImage(.{ .place = .{ .width = box.width(), .height = box.height(), .left = -box.min_x, .top = -box.min_y } });
+    }
+
+    /// The canvas made another size, asked with where the picture goes on
+    /// it: cut where it is smaller, the background colour - see-through
+    /// in the layers above the bottom one - where it is larger.
+    fn canvasSize(app: *App) void {
+        var where = app.canvas_place;
+        const size = app.askSize(.MSG_CANVAS_TITLE, &where) orelse return;
+        app.canvas_place = where;
+        const bottom = app.stack.layers[0].picture;
+        if (size[0] == bottom.width and size[1] == bottom.height) return;
+        app.changeImage(.{ .place = image_zig.placed(bottom.width, bottom.height, size[0], size[1], where) });
+    }
+
+    /// The layers made one, as they show - hidden ones left out, masks
+    /// and blend modes laid in - named as the bottom one; one step to
+    /// undo.
+    fn flatten(app: *App) void {
+        const count = app.stack.count;
+        if (count < 2 or !app.haveComposite()) return;
+        const whole = app.stack.layers[0].picture.whole();
+        app.stack.compose(whole);
+        const shown = app.stack.shown();
+        const memory = app.sys.AllocVec(Picture.bytesFor(shown.width, shown.height), exec.MEMF_ANY) orelse return app.tell(.MSG_NO_IMAGE_MEMORY);
+        var layer = Layer{ .picture = .{ .pixels = @ptrCast(@alignCast(memory)), .width = shown.width, .height = shown.height }, .memory = memory, .id = app.stack.newId() };
+        layer.picture.copyArea(shown, whole);
+        layer.name = app.stack.layers[0].name;
+        // The one layer put in at the top, then the others taken out -
+        // the stack is never empty: those above the layer painted from the
+        // top down, those under it, and it last, so that undoing the step
+        // paints it again.
+        const painted = app.stack.current;
+        app.stack.insert(count, layer);
+        var kept = app.history.layerIn(&app.stack, count, false);
+        var turn: u32 = 0;
+        while (turn < count) : (turn += 1) {
+            const above = count - 1 - painted;
+            const place = if (turn < above) count - 1 - turn else if (turn + 1 < count) painted - 1 - (turn - above) else 0;
+            const old = app.stack.remove(place);
+            if (!app.history.layerOut(old, place, true)) {
+                app.freeLayer(old);
+                kept = false;
+            }
+        }
+        app.stack.current = 0;
+        app.painting_mask = false;
+        if (!kept) app.tell(.MSG_NO_UNDO);
+        app.resized();
+    }
+
     // --- masks ------------------------------------------------------------------
 
     /// A mask put on the layer painted - white over all of it, black, or
@@ -2714,7 +2988,7 @@ const App = struct {
         app.at = at;
         switch (app.tool) {
             .freehand, .dots, .airbrush, .eraser, .smudge => app.strokeTo(at, colour, menu_button, final),
-            .line, .curve, .rectangle, .ellipse => app.dragShape(at, colour, menu_button, first, final),
+            .line, .curve, .rectangle, .ellipse, .gradient => app.dragShape(at, colour, menu_button, first, final),
             .polygon => app.polygonTo(at, colour, menu_button, first, final),
             .fill => if (first) app.floodAt(at, colour),
             .pick => if (final) app.pickAt(at, menu_button),
@@ -2913,6 +3187,7 @@ const App = struct {
             else
                 shapes.polyline(&ink, brush, points, &drawn),
             .grab => shapes.frame(&app.picture, points[0], points[1], &drawn),
+            .gradient => shapes.guide(&app.picture, points[0], points[1], &drawn),
             else => app.straight(&ink, brush, points[0], points[1], &drawn),
         }
         app.show(drawing.shown.add(drawn));
@@ -2928,9 +3203,11 @@ const App = struct {
     /// The shape done: a polygon closed, and what it covers kept for
     /// undoing.
     fn endShape(app: *App) void {
-        // A brush's frame is never kept: it goes as it is.
-        if (app.drawing) |drawing| if (drawing.tool == .grab) {
+        // A brush's frame is never kept: it goes as it is. A gradient's
+        // drag goes, and the gradient is laid.
+        if (app.drawing) |drawing| if (drawing.tool == .grab or drawing.tool == .gradient) {
             _ = app.cancelShape();
+            if (drawing.tool == .gradient) app.shade(drawing);
             return;
         };
         if (app.drawing) |*drawing| if (drawing.tool == .polygon and !drawing.closed) {
@@ -2943,6 +3220,30 @@ const App = struct {
         if (drawing.shown.isEmpty()) return;
         app.changed = true;
         app.recordChange(drawing.shown);
+    }
+
+    /// A gradient laid over the layer painted, inside what is chosen: from
+    /// the drag's colour at its start to the other colour in use at its
+    /// end, with the brush's opacity and dither; round its start with
+    /// Round Gradient. One step to undo.
+    fn shade(app: *App, drawing: Drawing) void {
+        const other = if (drawing.menu) app.foreground else app.background;
+        const shading = gradient_zig.Shade.of(drawing.points[0], drawing.points[1], drawing.colour, other, app.round_gradient) orelse return;
+        // Laid once, so the flow has nothing to build up.
+        var settings = app.settings;
+        settings.flow = 100;
+        const picture = &app.picture;
+        const area = if (app.selection.any()) app.selection.box.clip(picture.width, picture.height) else picture.whole();
+        var y = area.min_y;
+        while (y < area.max_y) : (y += 1) {
+            const row = picture.row(@intCast(y));
+            var x = area.min_x;
+            while (x < area.max_x) : (x += 1) {
+                const pixel = &row[@intCast(x)];
+                pixel.* = brush_zig.lay(settings, .paint, pixel.*, shading.at(x, y), 255, 0, x, y).pixel;
+            }
+        }
+        app.changedArea(area);
     }
 
     /// The shape put away, the picture as it was. False with none.
@@ -3407,6 +3708,7 @@ const App = struct {
             .has_mask = app.stack.layers[app.stack.current].mask != null,
             .painting_mask = app.painting_mask,
             .cycling = app.cycling,
+            .round_gradient = app.round_gradient,
         };
     }
 
@@ -3689,12 +3991,12 @@ const App = struct {
             .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
             .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .flip_layer_across, .flip_layer_down => app.endShape(),
             .select_all, .select_layer, .select_colour, .select_see_through, .select_not_in_palette, .deselect, .invert_selection, .copy_to_layer, .cut_to_layer, .copy_to_brush => app.endShape(),
-            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask, .edit_palette, .reduce_plain, .reduce_ordered, .reduce_diffused => app.endShape(),
+            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask, .edit_palette, .reduce_plain, .reduce_ordered, .reduce_diffused, .image_turn_right, .image_turn_left, .image_turn_half, .image_flip_across, .image_flip_down, .crop, .trim, .canvas_size, .flatten => app.endShape(),
             else => {},
         }
         switch (which) {
             .new => if (app.mayLeave()) {
-                if (app.askSize()) |size| {
+                if (app.askSize(.MSG_NEW_TITLE, null)) |size| {
                     if (app.newPicture(size[0], size[1])) app.forgetPath() else app.tellSize(.MSG_NO_PICTURE, size);
                 }
             },
@@ -3707,12 +4009,23 @@ const App = struct {
             .quit => return !app.mayLeave(),
             .undo => {
                 const painted = app.stack.currentLayer().id;
-                if (app.history.undo(&app.stack)) |change| app.applied(change, painted);
+                if (app.history.undo(&app.stack)) |change| {
+                    if (app.followSize()) app.applied(change, painted) else {
+                        // Done again, the picture is the size it was.
+                        _ = app.history.redo(&app.stack);
+                        app.tell(.MSG_NO_IMAGE_MEMORY);
+                    }
+                }
                 if (app.show_mask) app.whole = true;
             },
             .redo => {
                 const painted = app.stack.currentLayer().id;
-                if (app.history.redo(&app.stack)) |change| app.applied(change, painted);
+                if (app.history.redo(&app.stack)) |change| {
+                    if (app.followSize()) app.applied(change, painted) else {
+                        _ = app.history.undo(&app.stack);
+                        app.tell(.MSG_NO_IMAGE_MEMORY);
+                    }
+                }
                 if (app.show_mask) app.whole = true;
             },
             .swap => {
@@ -3767,6 +4080,16 @@ const App = struct {
             .reduce_ordered => app.reduce(.ordered),
             .reduce_diffused => app.reduce(.diffused),
             .cycle => app.cycle(!app.cycling),
+            .round_gradient => app.round_gradient = !app.round_gradient,
+            .image_turn_right => app.changeImage(.turn_right),
+            .image_turn_left => app.changeImage(.turn_left),
+            .image_turn_half => app.changeImage(.turn_half),
+            .image_flip_across => app.changeImage(.flip_across),
+            .image_flip_down => app.changeImage(.flip_down),
+            .crop => app.crop(),
+            .trim => app.trim(),
+            .canvas_size => app.canvasSize(),
+            .flatten => app.flatten(),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -3931,17 +4254,29 @@ const App = struct {
         _ = app.ib.EasyRequestArgs(gui.window, &easy, null, &args);
     }
 
-    /// The new picture's size, asked in a window of its own: null when
-    /// it was closed or cancelled.
-    fn askSize(app: *App) ?[2]u32 {
+    /// A picture's size, asked in a window of its own titled `title`,
+    /// with where in it the picture goes when `where` is given - read
+    /// from there and written back: null when it was closed or
+    /// cancelled.
+    fn askSize(app: *App, comptime title: Id, where: ?*u32) ?[2]u32 {
         const gui = app.ui() orelse return null;
         const lib = app.sys.OpenLibrary(ig.INTEGER_LIBRARY, 0) orelse return null;
         defer app.sys.CloseLibrary(lib);
         const ib = app.ib;
         const fields = [2]?*Object{ integerField(ib, ID_WIDTH, app.picture.width), integerField(ib, ID_HEIGHT, app.picture.height) };
         const answers = [2]?*Object{ textButton(ib, app.text.get(.MSG_OK), ID_OK), textButton(ib, app.text.get(.MSG_CANCEL), ID_CANCEL) };
-        if (fields[0] == null or fields[1] == null or answers[0] == null or answers[1] == null) {
+        // Made at run time, so the list's end is set as the rest is.
+        var place_labels: [place_texts.len:null]?[*:0]const u8 = @splat(null);
+        for (&place_labels, place_texts) |*label, text| label.* = app.text.get(text);
+        const place_choice: ?*Object = if (where) |given| ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_PLACE },
+            .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&place_labels) },
+            .{ .tag = ch.CHOOSER_Active, .data = @min(given.*, place_texts.len - 1) },
+            .{},
+        }) else null;
+        if (fields[0] == null or fields[1] == null or answers[0] == null or answers[1] == null or (where != null and place_choice == null)) {
             for (fields ++ answers) |made| ib.DisposeObject(made);
+            ib.DisposeObject(place_choice);
             return null;
         }
         const row = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -3952,8 +4287,10 @@ const App = struct {
             .{},
         }) orelse {
             for (fields ++ answers) |made| ib.DisposeObject(made);
+            ib.DisposeObject(place_choice);
             return null;
         };
+        const placing = place_choice != null;
         const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
             .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
@@ -3961,16 +4298,19 @@ const App = struct {
             .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_WIDTH)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[1]) },
             .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_HEIGHT)) },
+            .{ .tag = if (placing) lg.LAYOUTA_AddChild else sdk.utility.TAG_IGNORE, .data = @intFromPtr(place_choice) },
+            .{ .tag = if (placing) lg.CHILDA_Label else sdk.utility.TAG_IGNORE, .data = @intFromPtr(app.text.get(.MSG_PLACE)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(row) },
             .{},
         }) orelse {
             ib.DisposeObject(row);
             for (fields) |made| ib.DisposeObject(made);
+            ib.DisposeObject(place_choice);
             return null;
         };
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             screenTag(gui),
-            .{ .tag = wn.WA_Title, .data = @intFromPtr(app.text.get(.MSG_NEW_TITLE)) },
+            .{ .tag = wn.WA_Title, .data = @intFromPtr(app.text.get(title)) },
             .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
             .{ .tag = wn.WA_AutoAdjust, .data = 1 },
             .{ .tag = wn.WA_CloseGadget, .data = 1 },
@@ -4007,12 +4347,12 @@ const App = struct {
                         // Return in the height is OK too; in the width it
                         // goes on to the height.
                         ID_WIDTH => _ = ib.ActivateGadget(fields[1].?, window, null),
-                        ID_OK, ID_HEIGHT => return sizeOf(ib, fields),
+                        ID_OK, ID_HEIGHT => return answered(ib, fields, place_choice, where),
                         else => {},
                     },
                     // Return with no field typed into is OK, Escape Cancel.
                     wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
-                        '\r' => return sizeOf(ib, fields),
+                        '\r' => return answered(ib, fields, place_choice, where),
                         0x1B => return null,
                         else => {},
                     },
@@ -4853,13 +5193,17 @@ const App = struct {
         _ = ib.GetAttr(cv.CANVAS_RastPort, gui.colours, &value);
         gui.colours_rp = @ptrFromInt(value);
 
-        // The menus; without them Paint still paints.
-        var table: [menus.len]mn.NewMenu = undefined;
-        for (menus, &table) |entry, *one| {
+        // The menus, with the catalog's labels, made from a copy of the
+        // table in memory of its own - as large as the menus, it would
+        // crowd the stack. Without them Paint still paints.
+        const room = app.sys.AllocVec(@sizeOf(@TypeOf(menus[0].menu)) * menus.len, exec.MEMF_ANY) orelse return true;
+        defer app.sys.FreeVec(room);
+        const table = @as([*]mn.NewMenu, @ptrCast(@alignCast(room)))[0..menus.len];
+        for (menus, table) |entry, *one| {
             one.* = entry.menu;
             if (entry.text) |id| one.label = app.text.get(id);
         }
-        if (ib.CreateMenusA(&table, null)) |strip| {
+        if (ib.CreateMenusA(table.ptr, null)) |strip| {
             if (ib.LayoutMenusA(strip, screen, null) and ib.SetMenuStrip(gui.window, strip)) {
                 gui.strip = strip;
             } else ib.FreeMenus(strip);
@@ -4908,6 +5252,17 @@ fn sizeOf(ib: *IntuitionBase, fields: [2]?*Object) [2]u32 {
     _ = ib.GetAttr(ig.INTEGER_Number, fields[0].?, &width);
     _ = ib.GetAttr(ig.INTEGER_Number, fields[1].?, &height);
     return .{ @truncate(width), @truncate(height) };
+}
+
+/// The size typed, and where the picture goes written to `where` when
+/// it was asked.
+fn answered(ib: *IntuitionBase, fields: [2]?*Object, place_choice: ?*Object, where: ?*u32) [2]u32 {
+    if (place_choice) |chooser| if (where) |into| {
+        var active: usize = 0;
+        _ = ib.GetAttr(ch.CHOOSER_Active, chooser, &active);
+        into.* = @intCast(@min(active, place_texts.len - 1));
+    };
+    return sizeOf(ib, fields);
 }
 
 fn windowOf(ib: *IntuitionBase, object: *Object) usize {
@@ -5199,11 +5554,12 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
             .grid => state.grid,
             .own_screen => state.own,
             .cycle => state.cycling,
+            .round_gradient => state.round_gradient,
             .paint_mask => {
                 if (state.has_mask) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
                 break :blk state.painting_mask;
             },
-            .undo, .redo, .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .deselect, .copy_to_layer, .cut_to_layer, .copy_to_brush, .mask_show_all, .mask_hide_all, .mask_selection, .apply_mask, .delete_mask => {
+            .undo, .redo, .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .deselect, .copy_to_layer, .cut_to_layer, .copy_to_brush, .mask_show_all, .mask_hide_all, .mask_selection, .apply_mask, .delete_mask, .crop, .flatten => {
                 const can = switch (which) {
                     .mask_show_all, .mask_hide_all => !state.has_mask,
                     .mask_selection => !state.has_mask and state.selected,
@@ -5211,7 +5567,8 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
                     .undo => state.can_undo,
                     .redo => state.can_redo,
                     .new_layer, .duplicate_layer => state.layers < layers_zig.max_layers,
-                    .deselect, .copy_to_brush => state.selected,
+                    .deselect, .copy_to_brush, .crop => state.selected,
+                    .flatten => state.layers > 1,
                     .copy_to_layer, .cut_to_layer => state.selected and state.layers < layers_zig.max_layers,
                     .delete_layer => state.layers > 1,
                     .layer_up => state.current + 1 < state.layers,
@@ -5255,7 +5612,8 @@ fn sameState(a: MenuState, b: MenuState) bool {
         a.own_brush == b.own_brush and a.has_own == b.has_own and a.one_colour == b.one_colour and
         a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo and
         a.layers == b.layers and a.current == b.current and a.selected == b.selected and
-        a.has_mask == b.has_mask and a.painting_mask == b.painting_mask and a.cycling == b.cycling;
+        a.has_mask == b.has_mask and a.painting_mask == b.painting_mask and a.cycling == b.cycling and
+        a.round_gradient == b.round_gradient;
 }
 
 /// Whether the text made and the C string are the same.

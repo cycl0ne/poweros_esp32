@@ -72,6 +72,31 @@ pub fn frame(picture: *Picture, a: Point, b: Point, changed: *Area) void {
     }
 }
 
+/// The line from `a` to `b`, both in, in dashes of black and white, cut
+/// to the picture: a drag shown, not painted.
+pub fn guide(picture: *Picture, a: Point, b: Point, changed: *Area) void {
+    const dx: i32 = @intCast(@abs(b[0] - a[0]));
+    const dy: i32 = -@as(i32, @intCast(@abs(b[1] - a[1])));
+    const step_x: i32 = if (a[0] < b[0]) 1 else -1;
+    const step_y: i32 = if (a[1] < b[1]) 1 else -1;
+    var x = a[0];
+    var y = a[1];
+    var left = dx + dy;
+    while (true) {
+        dash(picture, x, y, changed);
+        if (x == b[0] and y == b[1]) break;
+        const twice = 2 * left;
+        if (twice >= dy) {
+            left += dy;
+            x += step_x;
+        }
+        if (twice <= dx) {
+            left += dx;
+            y += step_y;
+        }
+    }
+}
+
 fn dash(picture: *Picture, x: i32, y: i32, changed: *Area) void {
     if (!picture.inside(x, y)) return;
     picture.set(@intCast(x), @intCast(y), if ((x + y) & 4 == 0) 0xFF000000 else 0xFFFFFFFF);

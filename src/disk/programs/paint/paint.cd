@@ -25,6 +25,24 @@ MSG_MENU_REDO (//)
 Redo
 MSG_MENU_CLEAR (//)
 Clear
+MSG_MENU_IMAGE (//)
+Image
+MSG_MENU_ROTATE (//)
+Rotate
+MSG_TURN_RIGHT (//)
+90° Clockwise
+MSG_TURN_LEFT (//)
+90° Anticlockwise
+MSG_TURN_HALF (//)
+180°
+MSG_MENU_CROP (//)
+Crop to the Selection
+MSG_MENU_TRIM (//)
+Trim
+MSG_MENU_CANVAS_SIZE (//)
+Canvas Size...
+MSG_MENU_FLATTEN (//)
+Flatten
 MSG_MENU_TOOLS (//)
 Tools
 MSG_MENU_FREEHAND (//)
@@ -43,6 +61,8 @@ MSG_MENU_POLYGON (//)
 Polygon
 MSG_MENU_FILL (//)
 Fill
+MSG_MENU_GRADIENT (//)
+Gradient
 MSG_MENU_AIRBRUSH (//)
 Airbrush
 MSG_MENU_PICK (//)
@@ -67,6 +87,8 @@ MSG_MENU_ZOOM_TOOL (//)
 Zoom
 MSG_MENU_FILLED (//)
 Filled Shapes
+MSG_MENU_ROUND_GRADIENT (//)
+Round Gradient
 MSG_MENU_SWAP (//)
 Swap Colours
 MSG_MENU_VIEW (//)
@@ -219,6 +241,8 @@ MSG_TOOL_POLYGON (//)
 Polygon: a corner at each release, closed on the first corner
 MSG_TOOL_FILL (//)
 Fill: the area of one colour that is clicked
+MSG_TOOL_GRADIENT (//)
+Gradient: from the foreground where the drag starts to the background where it ends
 MSG_TOOL_AIRBRUSH (//)
 Airbrush: a spray where the pointer is, for as long as it is held
 MSG_TOOL_PICK (//)
@@ -340,6 +364,30 @@ MSG_STATUS_OWN_AT (//)
 ; The new picture's window.
 MSG_NEW_TITLE (//)
 New Picture
+MSG_CANVAS_TITLE (//)
+Canvas Size
+MSG_PLACE (//)
+Picture
+MSG_PLACE_TOP_LEFT (//)
+Top Left
+MSG_PLACE_TOP (//)
+Top
+MSG_PLACE_TOP_RIGHT (//)
+Top Right
+MSG_PLACE_LEFT (//)
+Left
+MSG_PLACE_MIDDLE (//)
+Middle
+MSG_PLACE_RIGHT (//)
+Right
+MSG_PLACE_BOTTOM_LEFT (//)
+Bottom Left
+MSG_PLACE_BOTTOM (//)
+Bottom
+MSG_PLACE_BOTTOM_RIGHT (//)
+Bottom Right
+MSG_NO_IMAGE_MEMORY (//)
+There is no memory\nto change the picture.
 MSG_WIDTH (//)
 Width
 MSG_HEIGHT (//)

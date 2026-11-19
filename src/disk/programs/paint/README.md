@@ -89,6 +89,7 @@ A tool is chosen with its button, in the Tools menu, or with its key.
 | Ellipse | `e` | in the box from one corner to the other |
 | Polygon | `n` | a corner at each release - a click, or a drag from the last corner; let go on the first corner, or on the last one again, it closes |
 | Fill | `f` | the area of one colour that is pressed on, as far as the same colour reaches side by side and up and down |
+| Gradient | `g` | a drag lays the foreground at its start shading into the background at its end, over the whole layer painted - or what is chosen of it; with the menu button the other way round |
 | Airbrush | `a` | a spray of single pixels round the pointer, for as long as the button is held, moving or not; it reaches four times the brush's size |
 | Pick colour | `i` | the colour shown under the pointer, all the layers together, becomes the foreground - with the menu button the background - and the tool before it is chosen again |
 | Text | `t` | a click asks for the text and its font, and puts it down with its top left there |
@@ -100,6 +101,14 @@ A tool is chosen with its button, in the Tools menu, or with its key.
 | Smudge | `s` | the colours under the brush dragged along the stroke, thinning as they go; the flow and the opacity say how strongly |
 | Hand | | the picture moved with the pointer; Space held does the same with any tool |
 | Zoom | `m` | a click zooms in about the place clicked, the menu button out |
+
+A gradient shades along its drag: before the drag's start it is the
+start's colour, past its end the end's, and between them it changes
+evenly, the same along every line square to the drag. With **Round
+Gradient** (Tools menu) it shades round the drag's start instead, the
+drag's length its radius. While dragging, a dashed line shows the way;
+the gradient goes down on release, with the brush's opacity and dither,
+and is one step to undo.
 
 Lines, curves and the outlines of rectangles, ellipses and polygons are
 drawn with the brush. **Filled shapes** - the button under the tools,
@@ -349,6 +358,20 @@ to save it first: Save, Don't save, or Cancel.
 The window's title names the picture's file - on a screen of its own,
 the screen's bar does - with a `*` in front while it has changes.
 
+The Image menu changes the whole picture, every layer and its mask:
+
+| Image menu | Does |
+|---|---|
+| Rotate | a quarter turn clockwise, anticlockwise, or a half turn |
+| Flip Horizontally, Flip Vertically | the picture mirrored left to right, top to bottom |
+| Crop to the Selection | the picture cut to the box round what is chosen |
+| Trim | the edges cut away where all that shows is the colour of the top left corner |
+| Canvas Size... | the picture put on a canvas of another size, asked with where on it the picture goes - one of nine places; what is past the canvas is cut away, and new canvas is the background colour in the bottom layer and see-through above it |
+| Flatten | the layers made one as they show - hidden ones left out, masks and blend modes laid in |
+
+Each is one step to undo, the picture's size with it; what is chosen is
+let go when the size changes.
+
 ## Files
 
 File → Open... opens a project or any picture the system has a
@@ -394,7 +417,8 @@ The letters are the items' keys, pressed with the right command key.
 |---|---|
 | File | New... (N), Open... (O), Save (S), Save As... (A), Quit (Q) |
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
-| Tools | the tools; Filled Shapes |
+| Image | Rotate (90° Clockwise, 90° Anticlockwise, 180°), Flip Horizontally, Flip Vertically, Crop to the Selection, Trim, Canvas Size..., Flatten |
+| Tools | the tools; Filled Shapes, Round Gradient |
 | Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
 | Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
