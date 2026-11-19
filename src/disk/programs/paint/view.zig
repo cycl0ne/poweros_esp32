@@ -10,7 +10,11 @@
 //! a zoom of 8 a grid marks the pixels' edges. Coverage below full shows
 //! a checkerboard through it, so what is see-through looks it. The brush
 //! under the pointer (`brush.Ghost`) is laid over the rows as they are
-//! made, so it is seen and never in the picture.
+//! made, so it is seen and never in the picture, and so is the outline
+//! of what is chosen (selection.zig): a view pixel on the side of a
+//! chosen picture pixel that faces one not chosen is a dash, four pixels
+//! black and four white along the view's diagonals, which shows on any
+//! colour and at any zoom.
 //!
 //! The view's rows are made here into the program's buffer, a band at a
 //! time, and the program writes them into the canvas with
@@ -21,6 +25,7 @@ const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
 const Ghost = @import("brush.zig").Ghost;
+const Outline = @import("selection.zig").Outline;
 
 /// The zooms the view steps through.
 pub const zooms = [_]u32{ 1, 2, 3, 4, 6, 8, 12, 16 };
@@ -138,8 +143,9 @@ pub const View = struct {
     }
 
     /// The view's row `y` from `min_x` to before `max_x`, into `out`, the
-    /// brush shown over it where `ghost` is.
-    pub fn row(view: *const View, picture: *const Picture, y: i32, min_x: i32, max_x: i32, out: []Pixel, ghost: ?*const Ghost) void {
+    /// brush shown over it where `ghost` is and the edge of what
+    /// `outline` chooses.
+    pub fn row(view: *const View, picture: *const Picture, y: i32, min_x: i32, max_x: i32, out: []Pixel, ghost: ?*const Ghost, outline: ?*const Outline) void {
         const zoom: i32 = @intCast(view.zoom);
         const down = y - view.offset_y;
         const picture_y = view.top + @divFloor(down, zoom);
@@ -152,6 +158,9 @@ pub const View = struct {
         const brush: ?*const Ghost = if (ghost) |given| (if (given.crosses(picture_y)) given else null) else null;
         const grid_row = view.grid and view.zoom >= grid_zoom and @mod(down, zoom) == 0;
         const show_grid = view.grid and view.zoom >= grid_zoom;
+        // The outline, when what it chooses reaches this row.
+        const edges: ?*const Outline = if (outline) |given| (if (picture_y >= given.box.min_y and picture_y < given.box.max_y) given else null) else null;
+        const sub_y = @mod(down, zoom);
         var x = min_x;
         var at: usize = 0;
         while (x < max_x) : ({
@@ -168,10 +177,24 @@ pub const View = struct {
             if (brush) |laid| colour = laid.shown(picture_x, picture_y, colour);
             if (colour >> 24 != 0xFF) colour = overChecks(colour, x, y);
             if (grid_row or (show_grid and @mod(across, zoom) == 0)) colour = gridded(colour);
+            if (edges) |chosen| if (onEdge(chosen, picture_x, picture_y, @mod(across, zoom), sub_y, zoom)) {
+                colour = if ((((x + y) >> 2) & 1) == 0) 0xFF000000 else 0xFFFFFFFF;
+            };
             out[at] = colour;
         }
     }
 };
+
+/// Whether the view pixel at (`sub_x`, `sub_y`) within the picture pixel
+/// (`x`, `y`), `zoom` a side, is on the edge of what is chosen: the pixel
+/// chosen, and the view pixel on a side of it facing one that is not.
+fn onEdge(outline: *const Outline, x: i32, y: i32, sub_x: i32, sub_y: i32, zoom: i32) bool {
+    if (!outline.chosen(x, y)) return false;
+    return (sub_x == 0 and !outline.chosen(x - 1, y)) or
+        (sub_x == zoom - 1 and !outline.chosen(x + 1, y)) or
+        (sub_y == 0 and !outline.chosen(x, y - 1)) or
+        (sub_y == zoom - 1 and !outline.chosen(x, y + 1));
+}
 
 /// A see-through colour laid over the checkerboard at the view's (`x`, `y`).
 fn overChecks(colour: Pixel, x: i32, y: i32) Pixel {

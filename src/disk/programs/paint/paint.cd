@@ -51,6 +51,12 @@ MSG_MENU_TEXT (//)
 Text
 MSG_MENU_GRAB (//)
 Cut Brush
+MSG_MENU_SELECT_BOX (//)
+Rectangle Selection
+MSG_MENU_LASSO (//)
+Lasso
+MSG_MENU_WAND (//)
+Magic Wand
 MSG_MENU_HAND (//)
 Hand
 MSG_MENU_ERASER (//)
@@ -91,6 +97,30 @@ MSG_MENU_LAYER_DOWN (//)
 Move Down
 MSG_MENU_MERGE_DOWN (//)
 Merge Down
+MSG_MENU_SELECTION (//)
+Selection
+MSG_MENU_SELECT (//)
+Select
+MSG_MENU_SELECT_ALL (//)
+All
+MSG_MENU_SELECT_LAYER (//)
+Pixels of the Layer
+MSG_MENU_SELECT_COLOUR (//)
+Pixels of the Colour
+MSG_MENU_SELECT_SEE_THROUGH (//)
+See-through Pixels
+MSG_MENU_SELECT_NOT_IN_PALETTE (//)
+Pixels Not in the Palette
+MSG_MENU_DESELECT (//)
+Deselect
+MSG_MENU_INVERT (//)
+Invert
+MSG_MENU_COPY_TO_LAYER (//)
+Copy to Layer
+MSG_MENU_CUT_TO_LAYER (//)
+Cut to Layer
+MSG_MENU_COPY_TO_BRUSH (//)
+Copy to Brush
 MSG_MENU_BRUSH (//)
 Brush
 MSG_MENU_ROUND (//)
@@ -151,6 +181,12 @@ MSG_TOOL_TEXT (//)
 Text: typed, and put where the picture is clicked
 MSG_TOOL_GRAB (//)
 Cut brush: a part of the picture taken as the brush
+MSG_TOOL_SELECT_BOX (//)
+Rectangle selection: what may be painted (Shift adds, Alt takes away)
+MSG_TOOL_LASSO (//)
+Lasso: a shape drawn by hand chosen (Shift adds, Alt takes away)
+MSG_TOOL_WAND (//)
+Magic wand: the colour's pixels joined to the one clicked chosen
 MSG_TOOL_HAND (//)
 Hand: the picture moved with the pointer
 MSG_TOOL_ERASER (//)
@@ -300,6 +336,12 @@ MSG_NO_FONT (//)
 The font could not be opened.
 MSG_FILL_SHORT (//)
 There was not memory enough to fill all of it.
+MSG_CHOICE_SHORT (//)
+There was not memory enough to choose all of it.
+MSG_NO_SELECTION (//)
+There is no memory for a selection.
+MSG_OUTLINE (//)
+Outline
 MSG_OPEN_TITLE (//)
 Open a picture
 MSG_SAVE_AS_TITLE (//)

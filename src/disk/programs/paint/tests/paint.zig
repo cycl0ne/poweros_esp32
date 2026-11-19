@@ -12,6 +12,9 @@ const view_zig = @import("../view.zig");
 const shapes = @import("../shapes.zig");
 const fill_zig = @import("../fill.zig");
 const layers_zig = @import("../layers.zig");
+const selection_zig = @import("../selection.zig");
+const Selection = selection_zig.Selection;
+const Scratch = selection_zig.Scratch;
 const Stack = layers_zig.Stack;
 const Layer = layers_zig.Layer;
 const Picture = picture_zig.Picture;
@@ -683,7 +686,7 @@ test "view: a row at a zoom, the backdrop round it, the grid and the checkerboar
     view.fit(3, 2);
     try testing.expectEqual(@as(i32, 2), view.offset_x);
     var out: [10]Pixel = undefined;
-    view.row(&picture, 1, 0, 10, &out, null);
+    view.row(&picture, 1, 0, 10, &out, null, null);
     try testing.expectEqual(view_zig.backdrop, out[0]);
     try testing.expectEqual(view_zig.backdrop, out[1]);
     try testing.expectEqual(red, out[2]);
@@ -698,15 +701,15 @@ test "view: a row at a zoom, the backdrop round it, the grid and the checkerboar
     var close = View{ .width = 24, .height = 16, .zoom = 8 };
     close.fit(3, 2);
     var line: [24]Pixel = undefined;
-    close.row(&picture, 1, 0, 24, &line, null);
+    close.row(&picture, 1, 0, 24, &line, null, null);
     try testing.expect(line[0] != red);
     try testing.expectEqual(red, line[1]);
     try testing.expect(line[8] != blue);
     try testing.expectEqual(blue, line[9]);
-    close.row(&picture, 0, 0, 24, &line, null);
+    close.row(&picture, 0, 0, 24, &line, null, null);
     try testing.expect(line[1] != red);
     close.grid = false;
-    close.row(&picture, 0, 0, 24, &line, null);
+    close.row(&picture, 0, 0, 24, &line, null, null);
     try testing.expectEqual(red, line[1]);
 }
 
@@ -883,4 +886,173 @@ test "brush: a spray puts its pixels within its reach, and stops at the picture'
     changed = Area.none;
     brush_zig.spray(inked(&picture, blue), brush, 0, 0, &random, &changed);
     try testing.expect(changed.min_x >= 0 and changed.min_y >= 0);
+}
+
+/// A selection and a scratch mask for a picture `width` by `height`.
+const Choosing = struct {
+    selection: Selection,
+    scratch: Scratch,
+
+    fn of(width: u32, height: u32) !Choosing {
+        const bytes = @as(usize, width) * height;
+        const mask = try testing.allocator.alloc(u8, bytes);
+        @memset(mask, 0);
+        const scratch = try testing.allocator.alloc(u8, bytes);
+        @memset(scratch, 0);
+        return .{
+            .selection = .{ .mask = mask, .width = width, .height = height },
+            .scratch = .{ .mask = scratch, .width = width, .height = height },
+        };
+    }
+
+    fn deinit(choosing: Choosing) void {
+        testing.allocator.free(choosing.selection.mask);
+        testing.allocator.free(choosing.scratch.mask);
+    }
+
+    fn scratchEmpty(choosing: *const Choosing) bool {
+        for (choosing.scratch.mask) |part| if (part != 0) return false;
+        return true;
+    }
+};
+
+test "selection: rectangles put in place, added and taken away, inverted and cleared" {
+    var choosing = try Choosing.of(16, 12);
+    defer choosing.deinit();
+    const selection = &choosing.selection;
+    try testing.expect(!selection.any());
+    choosing.scratch.rectangle(.{ .min_x = 2, .min_y = 2, .max_x = 6, .max_y = 5 });
+    selection.take(&choosing.scratch, .replace);
+    try testing.expect(choosing.scratchEmpty());
+    try testing.expectEqual(Area{ .min_x = 2, .min_y = 2, .max_x = 6, .max_y = 5 }, selection.box);
+    try testing.expectEqual(@as(u8, 255), selection.at(2, 2));
+    try testing.expectEqual(@as(u8, 0), selection.at(6, 2));
+    // Another added, reaching past the picture: cut to it.
+    choosing.scratch.rectangle(.{ .min_x = 10, .min_y = 8, .max_x = 40, .max_y = 40 });
+    selection.take(&choosing.scratch, .add);
+    try testing.expectEqual(Area{ .min_x = 2, .min_y = 2, .max_x = 16, .max_y = 12 }, selection.box);
+    try testing.expectEqual(@as(u8, 255), selection.at(3, 3));
+    // Taken away: the second again, and the box shrinks to the first.
+    choosing.scratch.rectangle(.{ .min_x = 8, .min_y = 6, .max_x = 16, .max_y = 12 });
+    selection.take(&choosing.scratch, .take);
+    try testing.expectEqual(Area{ .min_x = 2, .min_y = 2, .max_x = 6, .max_y = 5 }, selection.box);
+    // In place of what was.
+    choosing.scratch.rectangle(.{ .min_x = 0, .min_y = 0, .max_x = 1, .max_y = 1 });
+    selection.take(&choosing.scratch, .replace);
+    try testing.expectEqual(Area{ .max_x = 1, .max_y = 1 }, selection.box);
+    try testing.expectEqual(@as(u8, 0), selection.at(3, 3));
+    selection.invert();
+    try testing.expectEqual(@as(u8, 0), selection.at(0, 0));
+    try testing.expectEqual(@as(u8, 255), selection.at(1, 0));
+    try testing.expectEqual(Area{ .max_x = 16, .max_y = 12 }, selection.box);
+    selection.clear();
+    try testing.expect(!selection.any());
+    for (selection.mask) |part| try testing.expectEqual(@as(u8, 0), part);
+    selection.all();
+    try testing.expectEqual(@as(u8, 255), selection.at(15, 11));
+}
+
+test "selection: a lasso's shape, the wand's joined colour, a colour, alpha and the palette" {
+    var picture = try made(16, 12, white);
+    defer free(picture);
+    var choosing = try Choosing.of(16, 12);
+    defer choosing.deinit();
+    const selection = &choosing.selection;
+    // A triangle: pixels whose middles it holds.
+    choosing.scratch.polygon(&.{ .{ 0, 0 }, .{ 10, 0 }, .{ 0, 10 } });
+    selection.take(&choosing.scratch, .replace);
+    try testing.expectEqual(@as(u8, 255), selection.at(1, 1));
+    try testing.expectEqual(@as(u8, 0), selection.at(8, 8));
+    try testing.expectEqual(@as(i32, 0), selection.box.min_x);
+    try testing.expect(choosing.scratchEmpty());
+    // A red wall down the middle: the wand on the left takes the left.
+    picture.fillArea(.{ .min_x = 8, .max_x = 9, .max_y = 12 }, red);
+    picture.set(12, 4, red);
+    const start = try testing.allocator.alloc(fill_zig.Seed, 2);
+    var seeds = fill_zig.Seeds{ .items = start.ptr, .capacity = start.len, .more = TestSeeds.more };
+    defer testing.allocator.free(seeds.items[0..seeds.capacity]);
+    try testing.expect(choosing.scratch.wand(&picture, 1, 1, &seeds));
+    selection.take(&choosing.scratch, .replace);
+    try testing.expectEqual(Area{ .max_x = 8, .max_y = 12 }, selection.box);
+    try testing.expectEqual(@as(u8, 0), selection.at(10, 1));
+    // Every red pixel, joined or not.
+    choosing.scratch.colour(&picture, red);
+    selection.take(&choosing.scratch, .replace);
+    try testing.expectEqual(Area{ .min_x = 8, .max_x = 13, .max_y = 12 }, selection.box);
+    try testing.expectEqual(@as(u8, 255), selection.at(12, 4));
+    try testing.expectEqual(@as(u8, 0), selection.at(11, 4));
+    // As far as a pixel is there; what is see-through.
+    picture.set(3, 3, 0x40000000);
+    picture.set(4, 3, 0);
+    choosing.scratch.alpha(&picture, false);
+    selection.take(&choosing.scratch, .replace);
+    try testing.expectEqual(@as(u8, 0x40), selection.at(3, 3));
+    try testing.expectEqual(@as(u8, 0), selection.at(4, 3));
+    choosing.scratch.alpha(&picture, true);
+    selection.take(&choosing.scratch, .replace);
+    try testing.expectEqual(Area{ .min_x = 3, .min_y = 3, .max_x = 5, .max_y = 4 }, selection.box);
+    // Not in a palette of white: the red, and the dim pixel.
+    choosing.scratch.notIn(&picture, &.{white});
+    selection.take(&choosing.scratch, .replace);
+    try testing.expectEqual(@as(u8, 255), selection.at(8, 0));
+    try testing.expectEqual(@as(u8, 255), selection.at(3, 3));
+    try testing.expectEqual(@as(u8, 0), selection.at(4, 3));
+    try testing.expectEqual(@as(u8, 0), selection.at(0, 0));
+}
+
+test "selection: the stencil keeps a change inside, puts back outside, and mixes a part" {
+    var picture = try made(8, 4, white);
+    defer free(picture);
+    var kept = try made(8, 4, white);
+    defer free(kept);
+    var choosing = try Choosing.of(8, 4);
+    defer choosing.deinit();
+    const selection = &choosing.selection;
+    // With nothing chosen the change stays whole.
+    picture.fill(red);
+    selection.stencil(&picture, &kept, picture.whole());
+    try testing.expectEqual(red, picture.get(7, 3));
+    choosing.scratch.rectangle(.{ .min_x = 2, .min_y = 1, .max_x = 4, .max_y = 3 });
+    selection.take(&choosing.scratch, .replace);
+    selection.mask[1 * 8 + 3] = 128;
+    selection.stencil(&picture, &kept, picture.whole());
+    try testing.expectEqual(red, picture.get(2, 1));
+    try testing.expectEqual(white, picture.get(1, 1));
+    try testing.expectEqual(white, picture.get(0, 0));
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), picture.get(3, 1));
+    // The outline: the chosen pixels, half and more.
+    const outline = selection.outline();
+    try testing.expect(outline.chosen(3, 1));
+    try testing.expect(!outline.chosen(4, 1));
+    try testing.expect(!outline.chosen(-1, 1));
+}
+
+test "view: the outline of what is chosen in dashes over the rows" {
+    var picture = try made(8, 8, red);
+    defer free(picture);
+    var choosing = try Choosing.of(8, 8);
+    defer choosing.deinit();
+    choosing.scratch.rectangle(.{ .min_x = 2, .min_y = 2, .max_x = 6, .max_y = 6 });
+    choosing.selection.take(&choosing.scratch, .replace);
+    const outline = choosing.selection.outline();
+    var view = View{ .width = 8, .height = 8, .grid = false };
+    view.fit(8, 8);
+    var line: [8]Pixel = undefined;
+    // Inside, a row away from the edge: only its ends are dashes.
+    view.row(&picture, 3, 0, 8, &line, null, &outline);
+    try testing.expectEqual(red, line[1]);
+    try testing.expect(line[2] == 0xFF000000 or line[2] == 0xFFFFFFFF);
+    try testing.expectEqual(red, line[3]);
+    try testing.expect(line[5] == 0xFF000000 or line[5] == 0xFFFFFFFF);
+    // The top edge: dashes all along it.
+    view.row(&picture, 2, 0, 8, &line, null, &outline);
+    for (line[2..6]) |pixel| try testing.expect(pixel == 0xFF000000 or pixel == 0xFFFFFFFF);
+    try testing.expectEqual(red, line[6]);
+    // At a zoom of 2 a chosen pixel's inner half is no edge: the lower
+    // half of the top row chosen, its first pixel's left half a dash.
+    view.zoom = 2;
+    view.fit(8, 8);
+    view.row(&picture, 5, 0, 8, &line, null, &outline);
+    try testing.expect(line[4] == 0xFF000000 or line[4] == 0xFFFFFFFF);
+    try testing.expectEqual(red, line[5]);
 }

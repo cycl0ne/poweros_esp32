@@ -54,7 +54,8 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
   with Space held - a drag moves it as a hand moves paper - with the
   wheel (Shift and the wheel go across) or with the cursor keys.
 - **The zoom bar** above it: smaller, the zoom in per cent, larger, and
-  the whole picture as large as it fits.
+  the whole picture as large as it fits; at its right end, Outline shows
+  the edge of what is chosen, or hides it.
 - **The status line** says the picture's size, the zoom and the brush's
   size, and the pixel under the pointer while it is over the picture.
 
@@ -91,6 +92,9 @@ A tool is chosen with its button, in the Tools menu, or with its key.
 | Pick colour | `i` | the colour shown under the pointer, all the layers together, becomes the foreground - with the menu button the background - and the tool before it is chosen again |
 | Text | `t` | a click asks for the text and its font, and puts it down with its top left there |
 | Cut brush | `b` | a frame pulled over the picture; what it holds becomes the brush - see [Brushes](#brushes) |
+| Rectangle selection | `R` | a rectangle pulled out is chosen - see [Selections](#selections) |
+| Lasso | `L` | a shape drawn round with the button held is chosen, closed straight back to where it began |
+| Magic wand | `w` | the pixels of the colour clicked on, joined to it, are chosen |
 | Eraser | `E` | the picture made see-through where the brush goes, by the brush's settings as paint is |
 | Smudge | `s` | the colours under the brush dragged along the stroke, thinning as they go; the flow and the opacity say how strongly |
 | Hand | | the picture moved with the pointer; Space held does the same with any tool |
@@ -202,6 +206,36 @@ leave the bottom layer the background colour and any other see-through.
 | Merge Down | `M` | the one painted laid into the one under it as it shows, and taken out |
 | Flip Horizontally, Flip Vertically | | the one painted, left to right, top to bottom |
 
+## Selections
+
+Part of the picture can be chosen, and then a change touches only
+that part: a stroke, a shape, a fill, a text, Clear and the cut all
+stop at its edge, which is shown in dashes of black and white. With
+nothing chosen everything may change.
+
+The rectangle selection, the lasso and the magic wand choose anew; with
+Shift held what they choose is added to what is chosen, with Alt it is
+taken away. A click with the rectangle or the lasso chooses nothing,
+and so does Escape when no shape is being drawn. The magic wand takes
+the colour of the layer being painted, and so do the Select items.
+
+| Selection menu | Key | Does |
+|---|---|---|
+| Select → All | | every pixel |
+| Select → Pixels of the Layer | | the layer painted, as far as each pixel is there |
+| Select → Pixels of the Colour | | every pixel in the foreground colour |
+| Select → See-through Pixels | | the layer painted, as far as each pixel is see-through |
+| Select → Pixels Not in the Palette | | every pixel of a colour none of the 32 is |
+| Deselect | Escape | nothing chosen |
+| Invert | | what is chosen let go, and the rest chosen |
+| Copy to Layer | | what is chosen of the layer painted, in a new layer over it |
+| Cut to Layer | | the same, and taken from the layer it was in - one step to undo |
+| Copy to Brush | `B` | what is chosen of the layer painted, as the brush |
+
+What is chosen is not saved, and goes with a new or another picture.
+Choosing is not a change to undo; the Layer menu's flips turn the whole
+layer, whatever is chosen.
+
 ## Colours
 
 A picture opened from a file with a palette - an ILBM, a GIF, a PNG
@@ -282,6 +316,7 @@ The letters are the items' keys, pressed with the right command key.
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
 | Tools | the tools; Filled Shapes |
 | Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically |
+| Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Own Screen |
 | Help | About Paint... |
@@ -296,6 +331,7 @@ The letters are the items' keys, pressed with the right command key.
 | `x` | swaps the foreground and background colours |
 | a tool's letter | chooses it - see [The tools](#the-tools) |
 | `F` | filled shapes on and off |
-| Return, Escape | end a curve or polygon as it is, put it away |
+| Return, Escape | end a curve or polygon as it is, put it away; Escape with none chooses nothing |
+| Shift, Alt held | a selection tool adds to what is chosen, takes from it |
 | cursor keys | move the picture |
 | Space, held | a drag moves the picture, whatever the tool |

@@ -93,6 +93,8 @@
 //!     goes, by the same settings as paint;
 //!   - smudge (`s`): the colours under the brush dragged along the
 //!     stroke, in memory of the brush's size while it is made;
+//!   - the rectangle selection (`R`), the lasso (`L`) and the magic wand
+//!     (`w`), which choose what may be painted (below);
 //!   - the hand: the picture moved with the pointer, as Space held does
 //!     with any tool;
 //!   - zoom (`m`): a click zooms in about where it is, the menu button
@@ -112,6 +114,18 @@
 //! (`PALETTE_Button`); the two are shown above it, the foreground in
 //! front, and a click there or on the swap beside them swaps them, as `x`
 //! does.
+//!
+//! **Selections** (selection.zig). The rectangle selection (`R`), the
+//! lasso (`L`) and the magic wand (`w`) choose pixels - in place of what
+//! was chosen, or with Shift added to it, with Alt taken from it - as do
+//! the Selection menu's Select items. While something is chosen it is a
+//! stencil: a change is cut to it before it is kept for undoing, and a
+//! stroke or a shape on its way is shown cut to it (`flush`). Its edge is
+//! drawn by the view in dashes (the zoom bar's Outline turns that off),
+//! and a choice being made is outlined from the scratch mask, which is
+//! the paint mask's memory - a choice and a change are never made at
+//! once. What is chosen can be copied or cut to a new layer, or copied to
+//! the brush.
 //!
 //! **Layers.** The Layer menu puts a new one in over the one painted
 //! (see-through, or a copy), deletes, renames, moves, merges down and
@@ -147,6 +161,9 @@
 //!   Layer     New Layer (L), Duplicate (D), Delete, Rename..., Move Up,
 //!             Move Down, Merge Down (M), Flip Horizontally, Flip
 //!             Vertically
+//!   Selection Select (All, Pixels of the Layer, Pixels of the Colour,
+//!             See-through Pixels, Pixels Not in the Palette), Deselect,
+//!             Invert, Copy to Layer, Cut to Layer, Copy to Brush (B)
 //!   Brush     Round, Square, Own Brush, Size, Smaller ([), Larger (]),
 //!             Own Colours, One Colour, Flip Horizontally, Flip
 //!             Vertically, Turn Right, Open Brush..., Save Brush...
@@ -223,6 +240,7 @@ const view_zig = @import("view.zig");
 const shapes = @import("shapes.zig");
 const fill_zig = @import("fill.zig");
 const layers_zig = @import("layers.zig");
+const selection_zig = @import("selection.zig");
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
@@ -231,11 +249,14 @@ const History = history_zig.History;
 const Stack = layers_zig.Stack;
 const Layer = layers_zig.Layer;
 const Blend = layers_zig.Blend;
+const Selection = selection_zig.Selection;
+const Scratch = selection_zig.Scratch;
+const Outline = selection_zig.Outline;
 const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.6";
+const VERSION = "1.7";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -282,6 +303,8 @@ const ID_LAYER_ADD = 43;
 const ID_LAYER_DELETE = 44;
 // The rename window's name.
 const ID_NAME = 26;
+/// The zoom bar's box that shows the outline of what is chosen.
+const ID_OUTLINE = 28;
 // The new picture's window.
 const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
@@ -321,6 +344,9 @@ const Tool = enum(u32) {
     pick,
     text,
     grab,
+    select_box,
+    lasso,
+    wand,
     hand,
     zoom,
 
@@ -377,13 +403,23 @@ const Command = enum(u32) {
     merge_down,
     flip_layer_across,
     flip_layer_down,
+    select_all,
+    select_layer,
+    select_colour,
+    select_see_through,
+    select_not_in_palette,
+    deselect,
+    invert_selection,
+    copy_to_layer,
+    cut_to_layer,
+    copy_to_brush,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.flip_layer_down)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.copy_to_brush)) return null;
         return @enumFromInt(value);
     }
 };
@@ -425,6 +461,9 @@ const tools = [_]ToolEntry{
     .{ .tool = .pick, .glyph = command.CMD_PICK_COLOUR, .hint = .MSG_TOOL_PICK, .label = .MSG_MENU_PICK },
     .{ .tool = .text, .glyph = command.CMD_TEXT, .hint = .MSG_TOOL_TEXT, .label = .MSG_MENU_TEXT },
     .{ .tool = .grab, .glyph = command.CMD_GRAB_BRUSH, .hint = .MSG_TOOL_GRAB, .label = .MSG_MENU_GRAB },
+    .{ .tool = .select_box, .glyph = command.CMD_SELECT_BOX, .hint = .MSG_TOOL_SELECT_BOX, .label = .MSG_MENU_SELECT_BOX },
+    .{ .tool = .lasso, .glyph = command.CMD_LASSO, .hint = .MSG_TOOL_LASSO, .label = .MSG_MENU_LASSO },
+    .{ .tool = .wand, .glyph = command.CMD_WAND, .hint = .MSG_TOOL_WAND, .label = .MSG_MENU_WAND },
     .{ .tool = .hand, .glyph = command.CMD_HAND, .hint = .MSG_TOOL_HAND, .label = .MSG_MENU_HAND },
     .{ .tool = .zoom, .glyph = command.CMD_ZOOM_IN, .hint = .MSG_TOOL_ZOOM, .label = .MSG_MENU_ZOOM_TOOL },
 };
@@ -477,6 +516,8 @@ comptime {
 }
 /// How many rows of layers the list shows at the least.
 const layer_rows_shown = 5;
+/// The most corners a lasso keeps; past that every second goes.
+const max_lasso = 2048;
 /// The largest brush the panel's slider sets.
 const panel_brush_max = brush_zig.max_size;
 
@@ -514,6 +555,9 @@ const tool_keys = [_]ToolKey{
     .{ .key = 'i', .tool = .pick },
     .{ .key = 't', .tool = .text },
     .{ .key = 'b', .tool = .grab },
+    .{ .key = 'R', .tool = .select_box },
+    .{ .key = 'L', .tool = .lasso },
+    .{ .key = 'w', .tool = .wand },
 };
 
 // --- the menus ---------------------------------------------------------------
@@ -542,6 +586,11 @@ fn choiceItem(text: Id, which: Command, exclude: u32) MenuEntry {
     made.menu.flags = mn.CHECKIT;
     made.menu.mutual_exclude = exclude;
     return made;
+}
+
+/// An item of the item above it, shown beside it when it is pointed at.
+fn subItem(text: Id, which: Command) MenuEntry {
+    return .{ .menu = .{ .type = mn.NM_SUB, .label = strings.builtin(text), .user_data = @ptrFromInt(which.id()) }, .text = text };
 }
 
 fn sizeItem(comptime place: usize) MenuEntry {
@@ -608,6 +657,19 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_FLIP_ACROSS, null, .flip_layer_across),
     item(.MSG_MENU_FLIP_DOWN, null, .flip_layer_down),
+    menuTitle(.MSG_MENU_SELECTION),
+    .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_SELECT) }, .text = .MSG_MENU_SELECT },
+    subItem(.MSG_MENU_SELECT_ALL, .select_all),
+    subItem(.MSG_MENU_SELECT_LAYER, .select_layer),
+    subItem(.MSG_MENU_SELECT_COLOUR, .select_colour),
+    subItem(.MSG_MENU_SELECT_SEE_THROUGH, .select_see_through),
+    subItem(.MSG_MENU_SELECT_NOT_IN_PALETTE, .select_not_in_palette),
+    item(.MSG_MENU_DESELECT, null, .deselect),
+    item(.MSG_MENU_INVERT, null, .invert_selection),
+    bar,
+    item(.MSG_MENU_COPY_TO_LAYER, null, .copy_to_layer),
+    item(.MSG_MENU_CUT_TO_LAYER, null, .cut_to_layer),
+    item(.MSG_MENU_COPY_TO_BRUSH, "B", .copy_to_brush),
     menuTitle(.MSG_MENU_BRUSH),
     // Round, Square and Own Brush, the first three, rule each other out;
     // so do the two ways an own brush goes down, the ninth and tenth.
@@ -666,6 +728,8 @@ const MenuState = struct {
     /// How many layers there are, and which is painted.
     layers: u32,
     current: u32,
+    /// Whether anything is chosen.
+    selected: bool,
 };
 
 // --- the window ----------------------------------------------------------------
@@ -706,6 +770,8 @@ const Gui = struct {
     layer_list: *Object = undefined,
     layer_opacity: *Object = undefined,
     blend: *Object = undefined,
+    /// The zoom bar's box for the outline.
+    outline_box: *Object = undefined,
     layer_images: [3]?*Object = .{ null, null, null },
     strip: ?*intuition.Menu = null,
     /// Onto the view's and the colours' pictures.
@@ -818,9 +884,29 @@ const App = struct {
     /// How much paint each pixel has had in the change being made, a
     /// byte a pixel (brush.zig's `Ink`).
     mask: []u8 = &.{},
-    /// The memory of `kept`, the history, the mask and the composite,
-    /// AllocVec's; null before the first. Each layer has its own.
-    memory: [4]?*anyopaque = @splat(null),
+    /// The memory of `kept`, the history, the mask, the composite and the
+    /// selection, AllocVec's; null before the first. Each layer has its
+    /// own.
+    memory: [5]?*anyopaque = @splat(null),
+    /// What a change may touch (selection.zig): picture-wide, made when
+    /// something is first chosen.
+    selection: Selection = .{},
+    /// A choice being made, in the mask's memory - which no change uses
+    /// while a choice is made.
+    scratch: Scratch = .{ .mask = &.{}, .width = 0, .height = 0 },
+    /// A choice is being made with the pointer: its outline is shown
+    /// rather than the selection's.
+    choosing: bool = false,
+    choose_how: selection_zig.How = .replace,
+    choose_from: Point = .{ 0, 0 },
+    /// The keys held as the last message came: Shift adds to what is
+    /// chosen, Alt takes from it.
+    qualifier: usize = 0,
+    /// The lasso's corners, in memory made the first time it is used.
+    lasso: []Point = &.{},
+    lasso_count: usize = 0,
+    /// Whether the outline of what is chosen is shown.
+    show_outline: bool = true,
     /// What a new layer is called after: one more each time.
     layer_number: u32 = 0,
     /// The Layers section's rows, top layer first, rebuilt when the
@@ -982,8 +1068,9 @@ const App = struct {
             return false;
         };
         app.freePicture();
-        app.memory = .{ second, third, fourth, fifth };
+        app.memory = .{ second, third, fourth, fifth, null };
         app.mask = @as([*]u8, @ptrCast(fourth))[0 .. @as(usize, width) * height];
+        app.scratch = .{ .mask = app.mask, .width = width, .height = height };
         app.kept = .{ .pixels = @ptrCast(@alignCast(second)), .width = width, .height = height };
         app.history = .{ .memory = @ptrCast(@alignCast(third)), .size = room, .release = releaseLayer, .context = app };
         app.stack.count = 0;
@@ -1044,6 +1131,8 @@ const App = struct {
         for (app.stack.all()) |layer| app.sys.FreeVec(layer.memory);
         app.stack.count = 0;
         app.stack.composite = null;
+        app.selection = .{};
+        app.choosing = false;
         for (&app.memory) |*memory| {
             if (memory.*) |block| app.sys.FreeVec(block);
             memory.* = null;
@@ -1059,10 +1148,31 @@ const App = struct {
         app.show(area);
     }
 
-    /// What a change did to the layer painted kept for undoing; said in a
-    /// requester when it was too large.
+    /// What a change did to the layer painted, cut to what is chosen,
+    /// kept for undoing; said in a requester when it was too large.
     fn recordChange(app: *App, area: Area) void {
+        app.selection.stencil(&app.picture, &app.kept, area);
+        app.recordWhole(area);
+    }
+
+    /// What a change did to the layer painted kept for undoing as it is,
+    /// whatever is chosen.
+    fn recordWhole(app: *App, area: Area) void {
         if (!app.history.record(app.stack.currentLayer().id, &app.picture, &app.kept, area)) app.tell(.MSG_NO_UNDO);
+    }
+
+    /// Memory for the selection, made the first time something is
+    /// chosen; false, said in a requester, when there is none.
+    fn haveSelection(app: *App) bool {
+        if (app.selection.mask.len != 0) return true;
+        const bytes = @as(usize, app.picture.width) * app.picture.height;
+        const memory = app.sys.AllocVec(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+            app.tell(.MSG_NO_SELECTION);
+            return false;
+        };
+        app.memory[4] = memory;
+        app.selection = .{ .mask = @as([*]u8, @ptrCast(memory))[0..bytes], .width = app.picture.width, .height = app.picture.height };
+        return true;
     }
 
     /// What an undo or a redo did shown, and the layer painted followed:
@@ -1082,6 +1192,207 @@ const App = struct {
     /// background colour at the bottom, see-through above it.
     fn emptyColour(app: *const App) Pixel {
         return if (app.stack.current == 0) app.background else 0;
+    }
+
+    // --- what is chosen ---------------------------------------------------------
+
+    /// How a choice made now meets what is chosen: Shift held adds to it,
+    /// Alt takes from it, otherwise it takes its place.
+    fn howWanted(app: *const App) selection_zig.How {
+        if (app.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0) return .add;
+        if (app.qualifier & (ie.IEQUALIFIER_LALT | ie.IEQUALIFIER_RALT) != 0) return .take;
+        return .replace;
+    }
+
+    /// A choice begun with the pointer: false when there is no memory
+    /// for it.
+    fn beginChoice(app: *App, at: Point) bool {
+        if (!app.haveSelection()) return false;
+        app.choosing = true;
+        app.choose_how = app.howWanted();
+        app.choose_from = at;
+        // What is chosen is not outlined while the new choice is.
+        app.show(app.selection.box);
+        return true;
+    }
+
+    /// The choice being made laid into what is chosen - a click, which
+    /// chooses nothing, takes its place by nothing - and shown.
+    fn endChoice(app: *App, click: bool) void {
+        app.choosing = false;
+        const was = app.selection.box.add(app.scratch.box);
+        if (click and app.choose_how == .replace) {
+            app.scratch.empty();
+            app.selection.clear();
+        } else {
+            app.selection.take(&app.scratch, app.choose_how);
+        }
+        app.show(was.add(app.selection.box));
+    }
+
+    /// The rectangle from where the button went down to `at` chosen, as
+    /// it is dragged; let go, it is laid into what is chosen.
+    fn chooseBoxTo(app: *App, at: Point, first: bool, final: bool) void {
+        if ((first or !app.choosing) and !app.beginChoice(at)) return;
+        const was = app.scratch.box;
+        app.scratch.rectangle(shapes.areaOf(app.choose_from, at));
+        app.show(was.add(app.scratch.box));
+        if (final) app.endChoice(at[0] == app.choose_from[0] and at[1] == app.choose_from[1]);
+    }
+
+    /// The lasso drawn on to `at`, its shape - closed straight back to
+    /// where it began - chosen as it goes; let go, laid into what is
+    /// chosen.
+    fn lassoTo(app: *App, at: Point, first: bool, final: bool) void {
+        if (first or !app.choosing) {
+            if (!app.haveLasso() or !app.beginChoice(at)) return;
+            app.lasso_count = 0;
+        }
+        const points = app.lasso;
+        if (app.lasso_count == 0 or points[app.lasso_count - 1][0] != at[0] or points[app.lasso_count - 1][1] != at[1]) {
+            // Full, every second corner let go.
+            if (app.lasso_count == points.len) {
+                var kept: usize = 0;
+                var place: usize = 0;
+                while (place < points.len) : (place += 2) {
+                    points[kept] = points[place];
+                    kept += 1;
+                }
+                app.lasso_count = kept;
+            }
+            points[app.lasso_count] = at;
+            app.lasso_count += 1;
+        }
+        const was = app.scratch.box;
+        app.scratch.polygon(points[0..app.lasso_count]);
+        app.show(was.add(app.scratch.box));
+        if (final) app.endChoice(app.lasso_count < 3);
+    }
+
+    /// Memory for the lasso's corners, made the first time; false, said
+    /// in a requester, when there is none.
+    fn haveLasso(app: *App) bool {
+        if (app.lasso.len != 0) return true;
+        const memory = app.sys.AllocVec(max_lasso * @sizeOf(Point), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_NO_SELECTION);
+            return false;
+        };
+        app.lasso = @as([*]Point, @ptrCast(@alignCast(memory)))[0..max_lasso];
+        return true;
+    }
+
+    /// The pixels of the colour at `at` in the layer painted, joined to
+    /// it, chosen.
+    fn wandAt(app: *App, at: Point) void {
+        if (!app.haveSelection()) return;
+        const memory = app.sys.AllocVec(first_seeds * @sizeOf(fill_zig.Seed), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_CHOICE_SHORT);
+            return;
+        };
+        var seeds = fill_zig.Seeds{ .items = @ptrCast(@alignCast(memory)), .capacity = first_seeds, .more = moreSeeds, .context = app.sys };
+        const whole = app.scratch.wand(&app.picture, at[0], at[1], &seeds);
+        app.sys.FreeVec(@ptrCast(seeds.items));
+        app.choose_how = app.howWanted();
+        app.endChoice(false);
+        if (!whole) app.tell(.MSG_CHOICE_SHORT);
+    }
+
+    /// Every pixel chosen.
+    fn selectAll(app: *App) void {
+        if (!app.haveSelection()) return;
+        app.selection.all();
+        app.show(app.picture.whole());
+    }
+
+    /// The pixels of the layer painted chosen by what they are: as far as
+    /// they are there, the foreground's, as far as they are see-through,
+    /// or those of no colour in the palette.
+    fn selectBy(app: *App, which: enum { layer, colour, see_through, not_in_palette }) void {
+        if (!app.haveSelection()) return;
+        switch (which) {
+            .layer => app.scratch.alpha(&app.picture, false),
+            .colour => app.scratch.colour(&app.picture, app.foreground),
+            .see_through => app.scratch.alpha(&app.picture, true),
+            .not_in_palette => app.scratch.notIn(&app.picture, &app.palette),
+        }
+        app.choose_how = .replace;
+        app.endChoice(false);
+    }
+
+    /// Nothing chosen: every pixel may change.
+    fn deselect(app: *App) void {
+        const was = app.selection.box;
+        app.selection.clear();
+        app.show(was);
+    }
+
+    /// What is chosen let go and what is not chosen.
+    fn invertSelection(app: *App) void {
+        if (!app.haveSelection()) return;
+        const was = app.selection.box;
+        app.selection.invert();
+        app.show(was.add(app.selection.box));
+    }
+
+    /// What is chosen of the layer painted put in a new layer over it,
+    /// and painted - cut, it is taken from the layer it was in, which
+    /// undoing puts back in the same step.
+    fn selectionToLayer(app: *App, cut: bool) void {
+        if (!app.selection.any() or app.stack.count >= layers_zig.max_layers or !app.haveComposite()) return;
+        const width = app.picture.width;
+        const height = app.picture.height;
+        const memory = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+            app.tell(.MSG_NO_LAYER);
+            return;
+        };
+        var layer = Layer{ .picture = .{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height }, .memory = memory, .id = app.stack.newId() };
+        app.nameLayer(&layer);
+        const box = app.selection.box;
+        const empty = app.emptyColour();
+        const from: usize = @intCast(box.min_x);
+        const to: usize = @intCast(box.max_x);
+        var y: u32 = @intCast(box.min_y);
+        while (y < box.max_y) : (y += 1) {
+            const parts = app.selection.mask[@as(usize, y) * width ..][from..to];
+            for (parts, app.picture.row(y)[from..to], layer.picture.row(y)[from..to]) |part, *pixel, *taken| {
+                if (part == 0) continue;
+                taken.* = selection_zig.partOf(pixel.*, part);
+                if (cut) pixel.* = selection_zig.takenFrom(pixel.*, part, empty);
+            }
+        }
+        var joined = false;
+        if (cut) {
+            if (app.history.remember(app.stack.currentLayer().id, &app.kept, box, false)) joined = true else app.tell(.MSG_NO_UNDO);
+            app.kept.copyArea(&app.picture, box);
+        }
+        const place = app.stack.current + 1;
+        app.stack.insert(place, layer);
+        app.stack.current = place;
+        if (!app.history.layerIn(&app.stack, place, joined)) app.tell(.MSG_NO_UNDO);
+        app.layersChanged();
+    }
+
+    /// What is chosen of the layer painted made the own brush, in use.
+    fn selectionToBrush(app: *App) void {
+        if (!app.selection.any()) return;
+        const box = app.selection.box;
+        const memory = app.brushMemory(box.width(), box.height()) orelse return;
+        var made = Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = box.width(), .height = box.height() };
+        const from: usize = @intCast(box.min_x);
+        const to: usize = @intCast(box.max_x);
+        var y: u32 = 0;
+        while (y < made.height) : (y += 1) {
+            const at_y = @as(usize, y) + @as(usize, @intCast(box.min_y));
+            const parts = app.selection.mask[at_y * app.picture.width ..][from..to];
+            for (made.row(y), parts, app.picture.row(@intCast(at_y))[from..to]) |*into, part, pixel| into.* = selection_zig.partOf(pixel, part);
+        }
+        app.takeBrush(memory, made.width, made.height);
+        // A tool that puts the brush down.
+        switch (app.tool) {
+            .freehand, .dots, .line, .curve => {},
+            .rectangle, .ellipse, .polygon => if (app.filled) app.chooseTool(.dots),
+            else => app.chooseTool(.dots),
+        }
     }
 
     // --- the layers -------------------------------------------------------------
@@ -1193,7 +1504,10 @@ const App = struct {
                 }
             }
         }
-        app.changedArea(picture.whole());
+        // The whole layer, whatever is chosen.
+        app.changed = true;
+        app.recordWhole(picture.whole());
+        app.show(picture.whole());
     }
 
     /// The layer at `place` from the bottom painted.
@@ -1522,6 +1836,9 @@ const App = struct {
             .pick => if (final) app.pickAt(at, menu_button),
             .text => if (final) app.placeText(at, colour),
             .grab => app.grabTo(at, menu_button, first, final),
+            .select_box => app.chooseBoxTo(at, first, final),
+            .lasso => app.lassoTo(at, first, final),
+            .wand => if (first) app.wandAt(at),
             .hand => {},
             .zoom => if (first) app.zoomClick(view_x, view_y, menu_button),
         }
@@ -1761,6 +2078,7 @@ const App = struct {
         app.pressing = false;
         app.at = null;
         app.endStroke();
+        if (app.choosing) app.endChoice(false);
         if (app.drawing) |drawing| {
             if (drawing.tool != .polygon and !drawing.bending) app.endShape();
         }
@@ -2071,14 +2389,32 @@ const App = struct {
         app.whole = true;
     }
 
+    /// Whether a stroke or a shape is being made in the layer painted.
+    fn changeUnderWay(app: *const App) bool {
+        if (app.stroke != null) return true;
+        const drawing = app.drawing orelse return false;
+        return drawing.tool != .grab;
+    }
+
+    /// The outline to show: of the choice being made, or of the
+    /// selection when it is to be shown; null for none.
+    fn outlineShown(app: *const App) ?Outline {
+        if (app.choosing) return if (app.scratch.box.isEmpty()) null else app.scratch.outline();
+        if (!app.show_outline or !app.selection.any()) return null;
+        return app.selection.outline();
+    }
+
     /// What is pending drawn into the canvas and shown, with the status
     /// and the menus brought up to date.
     fn flush(app: *App) void {
         const gui = app.ui() orelse return;
         const pointer_brush = app.pointerBrush();
         app.followPointerBrush(pointer_brush);
-        // The layers made into what is shown where they changed.
+        // A change being made shown only where it may go, and the layers
+        // made into what is shown where they changed.
+        if (app.changeUnderWay()) app.selection.stencil(&app.picture, &app.kept, app.pending);
         app.stack.compose(app.pending);
+        const outline = app.outlineShown();
         const area = if (app.whole) Area{ .max_x = @intCast(app.view.width), .max_y = @intCast(app.view.height) } else app.view.toView(app.pending);
         app.whole = false;
         app.pending = Area.none;
@@ -2091,7 +2427,7 @@ const App = struct {
                 var row: i32 = 0;
                 while (row < rows) : (row += 1) {
                     const start: usize = @as(usize, @intCast(row)) * width;
-                    app.view.row(app.stack.shown(), y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null);
+                    app.view.row(app.stack.shown(), y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null, if (outline) |*shown| shown else null);
                 }
                 app.gb.WritePixelArray(gui.view_rp, @ptrCast(band), width * @sizeOf(Pixel), @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
                     .min_x = area.min_x,
@@ -2182,6 +2518,7 @@ const App = struct {
             .can_redo = app.history.canRedo(),
             .layers = app.stack.count,
             .current = app.stack.current,
+            .selected = app.selection.any(),
         };
     }
 
@@ -2456,6 +2793,7 @@ const App = struct {
             .undo => if (app.cancelShape()) return true,
             .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
             .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .flip_layer_across, .flip_layer_down => app.endShape(),
+            .select_all, .select_layer, .select_colour, .select_see_through, .select_not_in_palette, .deselect, .invert_selection, .copy_to_layer, .cut_to_layer, .copy_to_brush => app.endShape(),
             else => {},
         }
         switch (which) {
@@ -2502,6 +2840,16 @@ const App = struct {
             .merge_down => app.mergeDown(),
             .flip_layer_across => app.flipLayer(true),
             .flip_layer_down => app.flipLayer(false),
+            .select_all => app.selectAll(),
+            .select_layer => app.selectBy(.layer),
+            .select_colour => app.selectBy(.colour),
+            .select_see_through => app.selectBy(.see_through),
+            .select_not_in_palette => app.selectBy(.not_in_palette),
+            .deselect => app.deselect(),
+            .invert_selection => app.invertSelection(),
+            .copy_to_layer => app.selectionToLayer(false),
+            .cut_to_layer => app.selectionToLayer(true),
+            .copy_to_brush => app.selectionToBrush(),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -2571,7 +2919,7 @@ const App = struct {
             // Return ends a polygon or a curve as it is, Escape puts it
             // away.
             '\r' => app.endShape(),
-            0x1B => _ = app.cancelShape(),
+            0x1B => if (!app.cancelShape()) app.deselect(),
             // Space held moves the picture; its release comes as a raw
             // key.
             ' ' => app.space_held = true,
@@ -2986,6 +3334,7 @@ const App = struct {
             var gadget: usize = wc.WINDOW_NOGADGET;
             _ = app.ib.GetAttr(wc.WINDOWA_Qualifier, gui.object.?, &qualifier);
             _ = app.ib.GetAttr(wc.WINDOWA_GadgetID, gui.object.?, &gadget);
+            app.qualifier = qualifier;
             switch (word & wc.WMHI_CLASSMASK) {
                 wc.WMHI_CLOSEWINDOW => if (app.mayLeave()) return false,
                 wc.WMHI_MENUPICK => {
@@ -3004,6 +3353,10 @@ const App = struct {
                     ID_BLEND => app.setBlend(code),
                     ID_LAYER_ADD => _ = app.perform(.new_layer),
                     ID_LAYER_DELETE => _ = app.perform(.delete_layer),
+                    ID_OUTLINE => {
+                        app.show_outline = code != 0;
+                        app.show(app.selection.box);
+                    },
                     else => |id| {
                         if (id >= ID_SECTION and id < ID_SECTION + section_names.len) {
                             app.foldSection(id - ID_SECTION, code != 0);
@@ -3420,6 +3773,11 @@ const App = struct {
         });
 
         // The picture, under the zoom bar.
+        const outline_box = made.take(ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_OUTLINE },
+            .{ .tag = gc.GA_Selected, .data = @intFromBool(app.show_outline) },
+            .{},
+        }));
         const zoom_bar = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
@@ -3432,6 +3790,9 @@ const App = struct {
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button_gadgets[fit_button]) },
             .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
             .{ .tag = lg.LAYOUTA_AddSpace, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(outline_box) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_OUTLINE)) },
             .{},
         });
         const centre = made.layout(&[_]TagItem{
@@ -3471,6 +3832,7 @@ const App = struct {
         for (section_gadgets, &gui.section_buttons) |gadget, *slot| slot.* = gadget.?;
         gui.section_bodies = .{ layers_body.?, brush_body.?, colour_body.? };
         gui.layer_list = layer_list.?;
+        gui.outline_box = outline_box.?;
         gui.layer_opacity = layer_opacity.?;
         gui.blend = blend.?;
         gui.shown_layer = app.stack.current;
@@ -3682,7 +4044,7 @@ fn sectionButton(ib: *IntuitionBase, id: u32, image: ?*Object, label: [*:0]const
 /// fails is disposed of.
 const Builder = struct {
     ib: *IntuitionBase,
-    loose: [48]?*Object = @splat(null),
+    loose: [64]?*Object = @splat(null),
     /// Something could not be made: nothing more is.
     failed: bool = false,
 
@@ -3797,11 +4159,13 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
         },
         .grid => state.grid,
         .own_screen => state.own,
-        .undo, .redo, .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down => {
+        .undo, .redo, .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .deselect, .copy_to_layer, .cut_to_layer, .copy_to_brush => {
             const can = switch (which) {
                 .undo => state.can_undo,
                 .redo => state.can_redo,
                 .new_layer, .duplicate_layer => state.layers < layers_zig.max_layers,
+                .deselect, .copy_to_brush => state.selected,
+                .copy_to_layer, .cut_to_layer => state.selected and state.layers < layers_zig.max_layers,
                 .delete_layer => state.layers > 1,
                 .layer_up => state.current + 1 < state.layers,
                 else => state.current > 0,
@@ -3842,7 +4206,7 @@ fn sameState(a: MenuState, b: MenuState) bool {
     return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and
         a.own_brush == b.own_brush and a.has_own == b.has_own and a.one_colour == b.one_colour and
         a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo and
-        a.layers == b.layers and a.current == b.current;
+        a.layers == b.layers and a.current == b.current and a.selected == b.selected;
 }
 
 /// Whether the text made and the C string are the same.
@@ -3959,6 +4323,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer {
         if (app.gui) |*gui| gui.close(app.ib);
         lb.freeRows(sys, &app.layer_rows);
+        if (app.lasso.len != 0) sys.FreeVec(@ptrCast(app.lasso.ptr));
         if (app.band) |band| sys.FreeVec(band);
         if (app.own_memory) |memory| sys.FreeVec(memory);
         app.freePicture();

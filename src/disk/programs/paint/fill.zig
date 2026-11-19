@@ -28,7 +28,7 @@ pub const Seeds = struct {
     /// The program's own, for `more`.
     context: ?*anyopaque = null,
 
-    fn push(seeds: *Seeds, seed: Seed) bool {
+    pub fn push(seeds: *Seeds, seed: Seed) bool {
         if (seeds.len == seeds.capacity and !seeds.more(seeds)) return false;
         seeds.items[seeds.len] = seed;
         seeds.len += 1;

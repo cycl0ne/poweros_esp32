@@ -245,6 +245,26 @@ pub fn polyline(ink: *Ink, brush: Brush, points: []const Point, changed: *Area) 
 }
 
 fn fillPolygon(ink: *Ink, points: []const Point, changed: *Area) void {
+    var crossings: [max_points]i64 = undefined;
+    const Spans = struct {
+        ink: *Ink,
+        changed: *Area,
+
+        fn put(spans: @This(), y: i32, from: i32, to: i32) void {
+            span(spans.ink, y, from, to, spans.changed);
+        }
+    };
+    polygonSpans(points, ink.picture.height, &crossings, Spans{ .ink = ink, .changed = changed }, Spans.put);
+}
+
+/// The polygon through `points`, closed, a row at a time from the top:
+/// `put` is given each run of pixels whose middles it holds, by the
+/// even-odd rule - its row and its first and last pixel across, the last
+/// in - for the rows 0 to before `height`. A row has at most
+/// `crossings.len` edges crossing it counted; past that its last ones are
+/// left out.
+pub fn polygonSpans(points: []const Point, height: u32, crossings: []i64, context: anytype, comptime put: fn (@TypeOf(context), i32, i32, i32) void) void {
+    if (points.len == 0) return;
     var top: i32 = points[0][1];
     var bottom: i32 = points[0][1];
     for (points) |point| {
@@ -252,9 +272,8 @@ fn fillPolygon(ink: *Ink, points: []const Point, changed: *Area) void {
         bottom = @max(bottom, point[1]);
     }
     top = @max(top, 0);
-    bottom = @min(bottom, @as(i32, @intCast(ink.picture.height)) - 1);
+    bottom = @min(bottom, @as(i32, @intCast(height)) - 1);
     // Where the edges cross a row's middle, in 256ths of twice a pixel.
-    var crossings: [max_points]i64 = undefined;
     var y = top;
     while (y <= bottom) : (y += 1) {
         const middle: i64 = 2 * @as(i64, y) + 1;
@@ -286,7 +305,7 @@ fn fillPolygon(ink: *Ink, points: []const Point, changed: *Area) void {
         while (pair + 1 < count) : (pair += 2) {
             const from: i32 = @intCast(@divFloor(crossings[pair] - 256 + 511, 512));
             const to: i32 = @intCast(@divFloor(crossings[pair + 1] - 256 + 511, 512));
-            if (to > from) span(ink, y, from, to - 1, changed);
+            if (to > from) put(context, y, from, to - 1);
         }
     }
 }
