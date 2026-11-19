@@ -30,7 +30,7 @@ test {
 // --- the format's parts -----------------------------------------------------------
 
 test "paintio: a header and a layer's header read back as they were written" {
-    var layer = paintio.Layer{ .opacity = 0x80, .flags = paintio.LAYERF_HIDDEN };
+    var layer = paintio.Layer{ .opacity = 0x80, .flags = paintio.LAYERF_HIDDEN, .blend = paintio.LAYERBLEND_SCREEN };
     @memcpy(layer.name[0..6], "Clouds");
     const project = paintio.Project{ .width = 640, .height = 480, .layer_count = 3, .current = 2 };
     var header: [_project.header_size]u8 = undefined;
@@ -50,6 +50,11 @@ test "paintio: a header and a layer's header read back as they were written" {
     _project.readLayerHeader(layer_header[0..length], &layer_back);
     try testing.expectEqual(@as(u8, 0x80), layer_back.opacity);
     try testing.expectEqual(paintio.LAYERF_HIDDEN, layer_back.flags);
+    try testing.expectEqual(paintio.LAYERBLEND_SCREEN, layer_back.blend);
+    // A blend mode this reader does not know is normal.
+    layer_header[2] = paintio.LAYERBLEND_LAST + 1;
+    _project.readLayerHeader(layer_header[0..length], &layer_back);
+    try testing.expectEqual(paintio.LAYERBLEND_NORMAL, layer_back.blend);
     try testing.expectEqualStrings("Clouds", std.mem.sliceTo(&layer_back.name, 0));
 }
 
@@ -200,7 +205,7 @@ test "paintio: a project of two layers comes back as it was saved" {
     var top: [width * height]u32 = undefined;
     pattern(&bottom, 0);
     pattern(&top, 99);
-    var layers = [_]paintio.Layer{ .{ .pixels = &bottom }, .{ .pixels = &top, .opacity = 0x40, .flags = paintio.LAYERF_HIDDEN } };
+    var layers = [_]paintio.Layer{ .{ .pixels = &bottom }, .{ .pixels = &top, .opacity = 0x40, .flags = paintio.LAYERF_HIDDEN, .blend = paintio.LAYERBLEND_MULTIPLY } };
     @memcpy(layers[0].name[0..10], "Background");
     @memcpy(layers[1].name[0..31], "a name that is longer than room");
     var project = paintio.Project{ .width = width, .height = height, .layer_count = 2, .current = 1, .layers = &layers, .palette_count = 3 };
@@ -229,6 +234,7 @@ test "paintio: a project of two layers comes back as it was saved" {
         try testing.expectEqualSlices(u32, saved.pixels.?[0 .. width * height], read.pixels.?[0 .. width * height]);
         try testing.expectEqual(saved.opacity, read.opacity);
         try testing.expectEqual(saved.flags, read.flags);
+        try testing.expectEqual(saved.blend, read.blend);
         try testing.expectEqualStrings(std.mem.sliceTo(&saved.name, 0), std.mem.sliceTo(&read.name, 0));
     }
     rig.pio.FreeProject(&back);

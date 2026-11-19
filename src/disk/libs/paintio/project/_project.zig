@@ -16,8 +16,8 @@ const DosBase = sdk.interface.dos.DosBase;
 
 /// `PHDR`'s size: four numbers.
 pub const header_size = 16;
-/// `LHDR`'s largest size: the opacity, the flags, two bytes of 0, and a
-/// name without its NUL.
+/// `LHDR`'s largest size: the opacity, the flags, the blend mode, a byte
+/// of 0, and a name without its NUL.
 pub const layer_header_size = 4 + paintio.NAME_SIZE - 1;
 
 fn putWord(into: []u8, value: u32) void {
@@ -73,7 +73,7 @@ pub fn readHeader(bytes: []const u8, project: *paintio.Project) bool {
 pub fn layerHeaderBytes(layer: *const paintio.Layer, into: *[layer_header_size]u8) usize {
     into[0] = layer.opacity;
     into[1] = layer.flags;
-    into[2] = 0;
+    into[2] = layer.blend;
     into[3] = 0;
     var length: usize = 0;
     while (length < paintio.NAME_SIZE - 1 and layer.name[length] != 0) : (length += 1) into[4 + length] = layer.name[length];
@@ -86,6 +86,7 @@ pub fn readLayerHeader(bytes: []const u8, layer: *paintio.Layer) void {
     if (bytes.len < 4) return;
     layer.opacity = bytes[0];
     layer.flags = bytes[1];
+    layer.blend = if (bytes[2] <= paintio.LAYERBLEND_LAST) bytes[2] else paintio.LAYERBLEND_NORMAL;
     const length = @min(bytes.len - 4, paintio.NAME_SIZE - 1);
     for (bytes[4..][0..length], 0..) |byte, at| {
         if (byte == 0) break;

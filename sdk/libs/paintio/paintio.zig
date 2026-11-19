@@ -18,9 +18,9 @@
 //!   - `PHDR`: the width, the height, the number of layers and the layer
 //!     being painted, a `u32` each.
 //!   - `PALT`: the palette, a `u32` `0xAARRGGBB` a colour.
-//!   - For each layer, from the bottom: `LHDR` - its opacity and its flags
-//!     (`LAYERF_`), a byte each, two bytes of 0, and its name, UTF-8 - and
-//!     then its `BODY`: the rows, alpha, red, green and blue a byte each a
+//!   - For each layer, from the bottom: `LHDR` - its opacity, its flags
+//!     (`LAYERF_`) and its blend mode (`LAYERBLEND_`), a byte each, a byte
+//!     of 0, and its name, UTF-8 - and then its `BODY`: the rows, alpha, red, green and blue a byte each a
 //!     pixel, packed by Deflate in a zlib wrapping (compression.library).
 //!
 //! A chunk the reader does not know is passed over, so what a later Paint
@@ -51,6 +51,44 @@ pub const NAME_SIZE = 32;
 /// of the project.
 pub const LAYERF_HIDDEN: u8 = 1 << 0;
 
+/// `Layer.blend`: how a layer's colours are put together with those of
+/// what is under it, before its opacity and its alpha lay the result over
+/// them. A blend mode past the last is read as normal.
+/// Its own colours.
+pub const LAYERBLEND_NORMAL: u8 = 0;
+/// The two added.
+pub const LAYERBLEND_ADD: u8 = 1;
+/// Multiplied: never lighter than either.
+pub const LAYERBLEND_MULTIPLY: u8 = 2;
+/// The opposites multiplied: never darker than either.
+pub const LAYERBLEND_SCREEN: u8 = 3;
+/// Multiply where what is under is dark, screen where it is light.
+pub const LAYERBLEND_OVERLAY: u8 = 4;
+/// The darker of the two, each of red, green and blue.
+pub const LAYERBLEND_DARKEN: u8 = 5;
+/// The lighter of the two, each of red, green and blue.
+pub const LAYERBLEND_LIGHTEN: u8 = 6;
+/// What is under made lighter, the more the lighter the layer is.
+pub const LAYERBLEND_COLOUR_DODGE: u8 = 7;
+/// What is under made darker, the more the darker the layer is.
+pub const LAYERBLEND_COLOUR_BURN: u8 = 8;
+/// Multiply where the layer is dark, screen where it is light.
+pub const LAYERBLEND_HARD_LIGHT: u8 = 9;
+/// A gentler hard light.
+pub const LAYERBLEND_SOFT_LIGHT: u8 = 10;
+/// The layer's hue, with the saturation and the brightness of what is
+/// under.
+pub const LAYERBLEND_HUE: u8 = 11;
+/// The layer's saturation, with the hue and the brightness of what is
+/// under.
+pub const LAYERBLEND_SATURATION: u8 = 12;
+/// The layer's hue and saturation, with the brightness of what is under.
+pub const LAYERBLEND_COLOUR: u8 = 13;
+/// The layer's brightness, with the hue and the saturation of what is
+/// under.
+pub const LAYERBLEND_LUMINOSITY: u8 = 14;
+pub const LAYERBLEND_LAST: u8 = LAYERBLEND_LUMINOSITY;
+
 /// One layer of a project.
 pub const Layer = extern struct {
     /// `width` times `height` pixels, `0xAARRGGBB`.
@@ -60,7 +98,9 @@ pub const Layer = extern struct {
     /// How much of it shows over what is under it, 255 all of it.
     opacity: u8 = 255,
     flags: u8 = 0,
-    pad: [2]u8 = .{ 0, 0 },
+    /// `LAYERBLEND_`. Since 1.1.
+    blend: u8 = LAYERBLEND_NORMAL,
+    pad: u8 = 0,
 };
 
 /// `Project.kind`: what `LoadProject` read.

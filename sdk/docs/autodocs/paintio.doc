@@ -80,8 +80,8 @@ paintio.library/SaveProject
 
    BEHAVIOR
 	A project comes back as it was saved: its size, its layers from the
-	bottom with their names, opacity and flags, the layer being painted
-	and its palette; `kind` is `PIOKIND_PROJECT`. A picture comes back as
+	bottom with their names, opacity, flags and blend modes, the layer
+	being painted and its palette; `kind` is `PIOKIND_PROJECT`. A picture comes back as
 	a project of one layer of the picture's size, unnamed and wholly
 	opaque, with `kind` `PIOKIND_PICTURE` and, when the file had one, its
 	palette - up to `MAX_PALETTE` colours, each wholly opaque. Pixels are
