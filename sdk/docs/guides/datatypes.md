@@ -68,6 +68,27 @@ a film is read as it is played, and a font's sizes are files beside its
 contents file, so these refuse bytes in memory with
 `DTERROR_COULDNT_OPEN`.
 
+## An empty object
+
+`DTST_RAM` (datatypes.library 1.5) makes an object with nothing in it
+yet, for a program to fill and write out: a picture it has drawn, to be
+saved. It is of the class `DTA_BaseName` names, or else of the group's
+own - `picture` for `GID_PICTURE`, `ascii` for `GID_TEXT`, `sound`,
+`animation`, `model` and the rest by their groups' names. Nothing is
+read and no descriptor is asked; a class that cannot be made empty
+answers no object, `DTERROR_COULDNT_OPEN`.
+
+```zig
+const picture = dt.NewDTObjectA(null, &.{
+    .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_RAM },
+    .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+    .{},
+}) orelse return;
+defer dt.DisposeDTObject(picture);
+```
+
+How a picture is filled and saved is under [Pictures](#pictures).
+
 ## What a file is
 
 The kinds of file the system knows are text files in `DEVS:DataTypes`,

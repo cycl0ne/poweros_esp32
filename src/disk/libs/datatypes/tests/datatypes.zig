@@ -344,3 +344,13 @@ test "datatypes: the class library's name from a base name" {
     long[55] = 0;
     try testing.expect(!_type.className(@ptrCast(&long), &name));
 }
+
+test "datatypes: an empty object of a group is made of the group's own class" {
+    try testing.expectEqualStrings("picture", std.mem.span(_type.groupClass(datatypes.GID_PICTURE).?));
+    try testing.expectEqualStrings("ascii", std.mem.span(_type.groupClass(datatypes.GID_TEXT).?));
+    try testing.expectEqualStrings("sound", std.mem.span(_type.groupClass(datatypes.GID_SOUND).?));
+    try testing.expectEqualStrings("model", std.mem.span(_type.groupClass(datatypes.GID_MODEL).?));
+    // The system's own group, and anything that is no group, have none.
+    try testing.expect(_type.groupClass(datatypes.GID_SYSTEM) == null);
+    try testing.expect(_type.groupClass(ID("junk")) == null);
+}

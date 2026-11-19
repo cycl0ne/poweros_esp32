@@ -31,8 +31,10 @@ pub const LIBRARY_VERSION = 1;
 /// 3: bytes in memory without a name are not known by a descriptor that
 /// knows its files by their name alone.
 /// 4: bytes in memory with a name are tried by it, then by what they hold.
-pub const LIBRARY_REVISION = 4;
-const BUILD_DATE = "10.11.2026";
+/// 5: `DTST_RAM`, an empty object of a group's class or of the one
+/// `DTA_BaseName` names; `DTST_MEMORY` is 5, `DTST_HOTLINK` 4.
+pub const LIBRARY_REVISION = 5;
+const BUILD_DATE = "19.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

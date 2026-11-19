@@ -113,12 +113,18 @@ pub const DTA_NominalHoriz = DTA_Dummy + 125;
 pub const DTA_SourceSize = DTA_Dummy + 126;
 
 /// Where an object's contents come from.
+/// Nowhere yet: an empty object of a class, to be filled by the program
+/// - a picture's header and rows - and written out with `DTM_WRITE`.
+/// The class is the one `DTA_BaseName` names, or the group's own
+/// (`DTA_GroupID`): picture.datatype for `GID_PICTURE`.
 pub const DTST_RAM: u32 = 1;
 pub const DTST_FILE: u32 = 2;
 pub const DTST_CLIPBOARD: u32 = 3;
+/// Kept for contents linked to another program's; nothing takes it.
+pub const DTST_HOTLINK: u32 = 4;
 /// Bytes in memory: `DTA_Handle` the first of them, `DTA_SourceSize`
 /// how many - a picture a song's tags hold, say, read without a file.
-pub const DTST_MEMORY: u32 = 4;
+pub const DTST_MEMORY: u32 = 5;
 
 // --- the scroll numbers, as the class keeps them ----------------------------
 

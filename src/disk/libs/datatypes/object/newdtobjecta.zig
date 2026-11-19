@@ -25,17 +25,19 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 /// fn NewDTObjectA(db: *DataTypesBase, name: ?[*:0]const u8, attrs: ?[*]const utility.TagItem) ?*classusr.Object
 /// ```
 ///
-/// SINCE: 1.0; `DTST_MEMORY` 1.2. LVO -28.
+/// SINCE: 1.0; `DTST_MEMORY` 1.2; `DTST_RAM` 1.5. LVO -28.
 ///
 /// INPUTS:
 /// - `name` - the file's name, or null when `DTA_Handle` says where the
 ///   contents are. For bytes in memory, the name they would have as a
-///   file, or null.
+///   file, or null. For an empty object, the name it is known by, or
+///   null.
 /// - `attrs` - `DTA_SourceType` (`DTST_FILE` unless given),
 ///   `DTA_GroupID` to refuse anything of another group, `DTA_Handle`,
-///   `DTA_SourceSize` for memory, and any attribute of the object's own
-///   class. `GA_Left` and its like place the object in the window it
-///   will be added to.
+///   `DTA_SourceSize` for memory, `DTA_BaseName` for an empty object of
+///   a class of its own, and any attribute of the object's own class.
+///   `GA_Left` and its like place the object in the window it will be
+///   added to.
 ///
 /// RESULT:
 /// The object, or null with `IoErr` saying why:
@@ -44,7 +46,9 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 /// be opened or its class does not read from memory,
 /// `ERROR_OBJECT_WRONG_TYPE` when it is not of the group that was asked
 /// for, `ERROR_REQUIRED_ARG_MISSING` when bytes in memory come without
-/// their size, `ERROR_NOT_IMPLEMENTED` for any other source type.
+/// their size or an empty object without a group or a class,
+/// `ERROR_BAD_NUMBER` for an empty object of a group with no class of
+/// its own, `ERROR_NOT_IMPLEMENTED` for any other source type.
 ///
 /// BEHAVIOR:
 /// The file is recognised (`ObtainDataTypeA`), its class library is
@@ -61,6 +65,15 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 /// are (`ObtainDataTypeA`), by `name` too when one is given, and the
 /// object reads them while it is made: once this returns they are the
 /// caller's again, to free or to change.
+///
+/// `DTST_RAM` reads nothing: the object is an empty one, to be filled
+/// by the program and written out with `DTM_WRITE`. It is made of the
+/// class `DTA_BaseName` names - `png` makes a png.datatype object,
+/// which writes a PNG for `DTWM_RAW` - or else of the group's own:
+/// `ascii` for `GID_TEXT`, `document`, `sound`, `instrument`, `music`,
+/// `picture`, `animation`, `movie`, `model` for the others. No
+/// descriptor is asked, and the object has none (`DTA_DataType` is
+/// null).
 ///
 /// The class library is closed again straight away. It stays loaded
 /// because it has an object, and goes when the last one is disposed of.
@@ -79,6 +92,9 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 /// NOTES:
 /// - The object is a gadget: it is not shown until `AddDTObject` puts it
 ///   in a window, or until a layout it was put in is laid out.
+/// - Whether a class can be made empty is the class's to say: a class
+///   that cannot answers no object, `DTERROR_COULDNT_OPEN`. picture.
+///   datatype can; png.datatype since 1.3.
 /// - The classes that read the whole of their source at once read from
 ///   memory: JPEG, PNG, GIF, BMP, text, models, Markdown, HTML, Lottie.
 ///   ILBM, 8SVX and the sound of an audio codec read a file as they go,
@@ -107,6 +123,14 @@ const ReleaseDataType = @import("../type/releasedatatype.zig").ReleaseDataType;
 ///     .{},
 /// }) orelse return;
 /// defer dt.DisposeDTObject(cover);
+///
+/// // An empty picture, filled and saved as an IFF ILBM.
+/// const empty = dt.NewDTObjectA(null, &.{
+///     .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_RAM },
+///     .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+///     .{},
+/// }) orelse return;
+/// defer dt.DisposeDTObject(empty);
 /// ```
 pub fn NewDTObjectA(db: *DataTypesBase, name: ?[*:0]const u8, attrs: ?[*]const utility.TagItem) ?*classusr.Object {
     const sys = db.sys_base;
@@ -121,6 +145,7 @@ pub fn NewDTObjectA(db: *DataTypesBase, name: ?[*:0]const u8, attrs: ?[*]const u
     var lock: ?*dos.FileLock = null;
     var iff: ?*iffparse.IFFHandle = null;
 
+    if (dt == null and source_type == dtc.DTST_RAM) return empty(db, name, wanted_group, attrs);
     if (dt == null) {
         switch (source_type) {
             dtc.DTST_FILE => {
@@ -207,6 +232,39 @@ pub fn NewDTObjectA(db: *DataTypesBase, name: ?[*:0]const u8, attrs: ?[*]const u
         return null;
     };
     return object;
+}
+
+/// An empty object (`DTST_RAM`): of the class `DTA_BaseName` names, or
+/// of the group's own, with no source and no descriptor.
+fn empty(db: *DataTypesBase, name: ?[*:0]const u8, group: u32, attrs: ?[*]const utility.TagItem) ?*classusr.Object {
+    const sys = db.sys_base;
+    const dl = db.dos_base;
+    const ub = db.utility_base;
+    const named: ?[*:0]const u8 = @ptrFromInt(ub.GetTagData(dtc.DTA_BaseName, 0, attrs));
+    const base_name = named orelse (if (group != 0) _type.groupClass(group) else null) orelse {
+        _ = dl.SetIoErr(if (group != 0) dos.ERROR_BAD_NUMBER else dos.ERROR_REQUIRED_ARG_MISSING);
+        return null;
+    };
+    var class_name: [64]u8 = @splat(0);
+    if (!_type.className(base_name, &class_name)) {
+        _ = dl.SetIoErr(datatypes.DTERROR_UNKNOWN_DATATYPE);
+        return null;
+    }
+    const lib = sys.OpenLibrary(@ptrCast(&class_name), 0) orelse {
+        _ = dl.SetIoErr(datatypes.DTERROR_UNKNOWN_DATATYPE);
+        return null;
+    };
+    defer sys.CloseLibrary(lib);
+    const first = [_]utility.TagItem{
+        .{ .tag = dtc.DTA_Name, .data = @intFromPtr(name) },
+        .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_RAM },
+        .{ .tag = utility.TAG_MORE, .data = @intFromPtr(attrs) },
+    };
+    _ = dl.SetIoErr(0);
+    return db.intuition_base.NewObjectTagList(null, @ptrCast(&class_name[datatypes.class_prefix.len]), &first) orelse {
+        if (dl.IoErr() == 0) _ = dl.SetIoErr(datatypes.DTERROR_COULDNT_OPEN);
+        return null;
+    };
 }
 
 /// The unit number a clipboard name says, 0 when it says nothing.

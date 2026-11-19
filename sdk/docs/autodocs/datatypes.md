@@ -549,18 +549,20 @@ fn NewDTObjectA(db: *DataTypesBase, name: ?[*:0]const u8, attrs: ?[*]const utili
 
 **SINCE**
 
-1.0; `DTST_MEMORY` 1.2. LVO -28.
+1.0; `DTST_MEMORY` 1.2; `DTST_RAM` 1.5. LVO -28.
 
 **INPUTS**
 
 - `name` - the file's name, or null when `DTA_Handle` says where the
   contents are. For bytes in memory, the name they would have as a
-  file, or null.
+  file, or null. For an empty object, the name it is known by, or
+  null.
 - `attrs` - `DTA_SourceType` (`DTST_FILE` unless given),
   `DTA_GroupID` to refuse anything of another group, `DTA_Handle`,
-  `DTA_SourceSize` for memory, and any attribute of the object's own
-  class. `GA_Left` and its like place the object in the window it
-  will be added to.
+  `DTA_SourceSize` for memory, `DTA_BaseName` for an empty object of
+  a class of its own, and any attribute of the object's own class.
+  `GA_Left` and its like place the object in the window it will be
+  added to.
 
 **RESULT**
 
@@ -570,7 +572,9 @@ class cannot be loaded, `DTERROR_COULDNT_OPEN` when the file cannot
 be opened or its class does not read from memory,
 `ERROR_OBJECT_WRONG_TYPE` when it is not of the group that was asked
 for, `ERROR_REQUIRED_ARG_MISSING` when bytes in memory come without
-their size, `ERROR_NOT_IMPLEMENTED` for any other source type.
+their size or an empty object without a group or a class,
+`ERROR_BAD_NUMBER` for an empty object of a group with no class of
+its own, `ERROR_NOT_IMPLEMENTED` for any other source type.
 
 **BEHAVIOR**
 
@@ -588,6 +592,15 @@ them and `DTA_SourceSize` how many. They are recognised as a file's
 are (`ObtainDataTypeA`), by `name` too when one is given, and the
 object reads them while it is made: once this returns they are the
 caller's again, to free or to change.
+
+`DTST_RAM` reads nothing: the object is an empty one, to be filled
+by the program and written out with `DTM_WRITE`. It is made of the
+class `DTA_BaseName` names - `png` makes a png.datatype object,
+which writes a PNG for `DTWM_RAW` - or else of the group's own:
+`ascii` for `GID_TEXT`, `document`, `sound`, `instrument`, `music`,
+`picture`, `animation`, `movie`, `model` for the others. No
+descriptor is asked, and the object has none (`DTA_DataType` is
+null).
 
 The class library is closed again straight away. It stays loaded
 because it has an object, and goes when the last one is disposed of.
@@ -609,6 +622,9 @@ The object is the caller's, to give back with `DisposeDTObject`.
 
 - The object is a gadget: it is not shown until `AddDTObject` puts it
   in a window, or until a layout it was put in is laid out.
+- Whether a class can be made empty is the class's to say: a class
+  that cannot answers no object, `DTERROR_COULDNT_OPEN`. picture.
+  datatype can; png.datatype since 1.3.
 - The classes that read the whole of their source at once read from
   memory: JPEG, PNG, GIF, BMP, text, models, Markdown, HTML, Lottie.
   ILBM, 8SVX and the sound of an audio codec read a file as they go,
@@ -639,6 +655,14 @@ const cover = dt.NewDTObjectA(null, &.{
     .{},
 }) orelse return;
 defer dt.DisposeDTObject(cover);
+
+// An empty picture, filled and saved as an IFF ILBM.
+const empty = dt.NewDTObjectA(null, &.{
+    .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_RAM },
+    .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+    .{},
+}) orelse return;
+defer dt.DisposeDTObject(empty);
 ```
 
 ## ObtainDTDrawInfoA

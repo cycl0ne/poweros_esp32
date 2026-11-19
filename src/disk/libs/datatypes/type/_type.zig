@@ -262,6 +262,23 @@ fn asksTheClass(db: *DataTypesBase, dt: *datatypes.DataType, source: *Source) bo
     return answer;
 }
 
+/// The base name of a group's own class: what an empty object of the
+/// group (`DTST_RAM`) is made of. Null for a group with none.
+pub fn groupClass(group: u32) ?[*:0]const u8 {
+    return switch (group) {
+        datatypes.GID_TEXT => "ascii",
+        datatypes.GID_DOCUMENT => "document",
+        datatypes.GID_SOUND => "sound",
+        datatypes.GID_INSTRUMENT => "instrument",
+        datatypes.GID_MUSIC => "music",
+        datatypes.GID_PICTURE => "picture",
+        datatypes.GID_ANIMATION => "animation",
+        datatypes.GID_MOVIE => "movie",
+        datatypes.GID_MODEL => "model",
+        else => null,
+    };
+}
+
 /// `datatypes/<base>.datatype` written into `into`. False when it does
 /// not fit.
 pub fn className(base_name: [*:0]const u8, into: *[64]u8) bool {
