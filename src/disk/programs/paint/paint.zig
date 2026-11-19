@@ -133,6 +133,14 @@
 //! which takes what is shown; Clear and the cut leave the bottom layer
 //! the background colour and any other see-through.
 //!
+//! **Masks.** A layer may have a mask (layers.zig): greys that say how
+//! much of each pixel shows. While it is painted (`painting_mask`),
+//! `picture` is the mask, and the history names it by the layer's id
+//! with `mask_id` added, so every tool, the stencil and undo work on it
+//! unchanged. A mask put on, applied or deleted is a step to undo; the
+//! zoom bar's Mask shows it in the view in place of the composite. A
+//! project keeps it as a byte a pixel, how much it shows.
+//!
 //! **Files** go through paintio.library, which is Paint's own and lies in
 //! its drawer: it is opened by its path, `PROGDIR:Libs/paintio.library`,
 //! the first time a file is opened or saved, and closed at the end. Open...
@@ -140,8 +148,8 @@
 //! reads, and takes its palette when it has one. Save As...
 //! writes what the name ends in: `.png` a PNG, `.iff`, `.ilbm` or `.lbm`
 //! an ILBM, both of what is shown, anything else a project (`FORM PNTG`),
-//! which keeps every layer - its name, opacity, blend mode and whether it
-//! is shown - the layer painted and the palette; Save writes the file again in its form, or asks for a
+//! which keeps every layer - its name, opacity, blend mode, whether it
+//! is shown and its mask - the layer painted and the palette; Save writes the file again in its form, or asks for a
 //! name when the picture came from a format Paint does not write. The
 //! window's title, or the screen's bar on a screen of its own, names the
 //! file, with a `*` before it while it has changes.
@@ -160,7 +168,9 @@
 //!   Tools     the tools, Filled Shapes
 //!   Layer     New Layer (L), Duplicate (D), Delete, Rename..., Move Up,
 //!             Move Down, Merge Down (M), Flip Horizontally, Flip
-//!             Vertically
+//!             Vertically, Add Mask (Show All, Hide All, Show the
+//!             Selection), Paint the Mask (E), Apply the Mask, Delete
+//!             the Mask
 //!   Selection Select (All, Pixels of the Layer, Pixels of the Colour,
 //!             See-through Pixels, Pixels Not in the Palette), Deselect,
 //!             Invert, Copy to Layer, Cut to Layer, Copy to Brush (B)
@@ -256,7 +266,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.7";
+const VERSION = "1.8";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -305,6 +315,8 @@ const ID_LAYER_DELETE = 44;
 const ID_NAME = 26;
 /// The zoom bar's box that shows the outline of what is chosen.
 const ID_OUTLINE = 28;
+/// The zoom bar's box that shows the mask of the layer painted.
+const ID_SHOW_MASK = 29;
 // The new picture's window.
 const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
@@ -413,13 +425,19 @@ const Command = enum(u32) {
     copy_to_layer,
     cut_to_layer,
     copy_to_brush,
+    mask_show_all,
+    mask_hide_all,
+    mask_selection,
+    paint_mask,
+    apply_mask,
+    delete_mask,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.copy_to_brush)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.delete_mask)) return null;
         return @enumFromInt(value);
     }
 };
@@ -657,6 +675,14 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_FLIP_ACROSS, null, .flip_layer_across),
     item(.MSG_MENU_FLIP_DOWN, null, .flip_layer_down),
+    bar,
+    .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_ADD_MASK) }, .text = .MSG_MENU_ADD_MASK },
+    subItem(.MSG_MENU_MASK_SHOW_ALL, .mask_show_all),
+    subItem(.MSG_MENU_MASK_HIDE_ALL, .mask_hide_all),
+    subItem(.MSG_MENU_MASK_SELECTION, .mask_selection),
+    toggleItem(.MSG_MENU_PAINT_MASK, "E", .paint_mask),
+    item(.MSG_MENU_APPLY_MASK, null, .apply_mask),
+    item(.MSG_MENU_DELETE_MASK, null, .delete_mask),
     menuTitle(.MSG_MENU_SELECTION),
     .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_SELECT) }, .text = .MSG_MENU_SELECT },
     subItem(.MSG_MENU_SELECT_ALL, .select_all),
@@ -730,6 +756,9 @@ const MenuState = struct {
     current: u32,
     /// Whether anything is chosen.
     selected: bool,
+    /// The layer painted has a mask; it is painted in the mask.
+    has_mask: bool,
+    painting_mask: bool,
 };
 
 // --- the window ----------------------------------------------------------------
@@ -770,8 +799,9 @@ const Gui = struct {
     layer_list: *Object = undefined,
     layer_opacity: *Object = undefined,
     blend: *Object = undefined,
-    /// The zoom bar's box for the outline.
+    /// The zoom bar's boxes for the outline and the mask.
     outline_box: *Object = undefined,
+    show_mask_box: *Object = undefined,
     layer_images: [3]?*Object = .{ null, null, null },
     strip: ?*intuition.Menu = null,
     /// Onto the view's and the colours' pictures.
@@ -907,6 +937,10 @@ const App = struct {
     lasso_count: usize = 0,
     /// Whether the outline of what is chosen is shown.
     show_outline: bool = true,
+    /// The layer painted is painted in its mask (`picture` is the mask).
+    painting_mask: bool = false,
+    /// The view shows the mask of the layer painted, when it has one.
+    show_mask: bool = false,
     /// What a new layer is called after: one more each time.
     layer_number: u32 = 0,
     /// The Layers section's rows, top layer first, rebuilt when the
@@ -917,7 +951,7 @@ const App = struct {
     blend_labels: [Blend.count:null]?[*:0]const u8 = @splat(null),
     /// The list's columns - the eye, the name - which it reads while it
     /// is there.
-    layer_columns: [3]lb.Column = @splat(.{}),
+    layer_columns: [4]lb.Column = @splat(.{}),
     /// Changed since it was made.
     changed: bool = false,
 
@@ -1097,11 +1131,27 @@ const App = struct {
         app.show(app.picture.whole());
     }
 
-    /// The layer the stack has as its current one made the one painted,
-    /// and `kept` a copy of it.
+    /// The layer the stack has as its current one made the one painted -
+    /// its mask when that is painted and it has one - and `kept` a copy
+    /// of it.
     fn paintLayer(app: *App) void {
-        app.picture = app.stack.currentLayer().picture;
+        const layer = app.stack.currentLayer();
+        if (layer.mask == null) app.painting_mask = false;
+        app.picture = if (app.painting_mask) layer.mask.? else layer.picture;
         app.kept.copyArea(&app.picture, app.picture.whole());
+    }
+
+    /// The id the history knows what is painted by: the layer's, or its
+    /// mask's.
+    fn paintedId(app: *App) u32 {
+        const id = app.stack.currentLayer().id;
+        return if (app.painting_mask) id | layers_zig.mask_id else id;
+    }
+
+    /// A layer's memory given back, its mask's with it.
+    fn freeLayer(app: *App, layer: Layer) void {
+        app.sys.FreeVec(layer.memory);
+        if (layer.mask_memory) |memory| app.sys.FreeVec(memory);
     }
 
     /// The composite made when the stack needs one first: false, said in
@@ -1128,9 +1178,10 @@ const App = struct {
     /// The layers, the memory beside them and the history given back.
     fn freePicture(app: *App) void {
         if (app.memory[1] != null) app.history.clear();
-        for (app.stack.all()) |layer| app.sys.FreeVec(layer.memory);
+        for (app.stack.all()) |layer| app.freeLayer(layer);
         app.stack.count = 0;
         app.stack.composite = null;
+        app.painting_mask = false;
         app.selection = .{};
         app.choosing = false;
         for (&app.memory) |*memory| {
@@ -1158,7 +1209,7 @@ const App = struct {
     /// What a change did to the layer painted kept for undoing as it is,
     /// whatever is chosen.
     fn recordWhole(app: *App, area: Area) void {
-        if (!app.history.record(app.stack.currentLayer().id, &app.picture, &app.kept, area)) app.tell(.MSG_NO_UNDO);
+        if (!app.history.record(app.paintedId(), &app.picture, &app.kept, area)) app.tell(.MSG_NO_UNDO);
     }
 
     /// Memory for the selection, made the first time something is
@@ -1179,7 +1230,9 @@ const App = struct {
     /// `painted` was its id before.
     fn applied(app: *App, change: history_zig.Change, painted: u32) void {
         app.changed = true;
-        if (change.layers or app.stack.currentLayer().id != painted) {
+        const was_mask = app.painting_mask;
+        if (change.painted_mask) |mask| app.painting_mask = mask;
+        if (change.layers or app.stack.currentLayer().id != painted or app.painting_mask != was_mask) {
             app.paintLayer();
             app.layers_stale = true;
         } else {
@@ -1189,8 +1242,10 @@ const App = struct {
     }
 
     /// What a cleared or cut area of the layer painted becomes: the
-    /// background colour at the bottom, see-through above it.
+    /// background colour at the bottom, see-through above it; in a mask,
+    /// black, which hides.
     fn emptyColour(app: *const App) Pixel {
+        if (app.painting_mask) return 0xFF00_0000;
         return if (app.stack.current == 0) app.background else 0;
     }
 
@@ -1362,7 +1417,7 @@ const App = struct {
         }
         var joined = false;
         if (cut) {
-            if (app.history.remember(app.stack.currentLayer().id, &app.kept, box, false)) joined = true else app.tell(.MSG_NO_UNDO);
+            if (app.history.remember(app.paintedId(), &app.kept, box, false)) joined = true else app.tell(.MSG_NO_UNDO);
             app.kept.copyArea(&app.picture, box);
         }
         const place = app.stack.current + 1;
@@ -1410,6 +1465,16 @@ const App = struct {
         var layer = Layer{ .picture = .{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height }, .memory = memory, .id = app.stack.newId() };
         if (copy) {
             const from = app.stack.currentLayer();
+            if (from.mask) |*mask| {
+                const mask_memory = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY) orelse {
+                    app.sys.FreeVec(memory);
+                    app.tell(.MSG_NO_LAYER);
+                    return;
+                };
+                layer.mask = .{ .pixels = @ptrCast(@alignCast(mask_memory)), .width = width, .height = height };
+                layer.mask.?.copyArea(mask, mask.whole());
+                layer.mask_memory = mask_memory;
+            }
             layer.picture.copyArea(&from.picture, from.picture.whole());
             layer.opacity = from.opacity;
             layer.blend = from.blend;
@@ -1434,7 +1499,7 @@ const App = struct {
         const place = app.stack.current;
         const layer = app.stack.remove(place);
         if (!app.history.layerOut(layer, place, false)) {
-            app.sys.FreeVec(layer.memory);
+            app.freeLayer(layer);
             app.tell(.MSG_NO_UNDO);
         }
         app.layersChanged();
@@ -1450,63 +1515,137 @@ const App = struct {
     }
 
     /// The layer painted laid into the one under it as it shows over it
-    /// - nothing when it is hidden - and taken out; one step to undo. The
-    /// one under keeps its own opacity and blend mode.
+    /// - through its mask, nothing when it is hidden - and taken out; one
+    /// step to undo. The one under keeps its own opacity and blend mode;
+    /// its mask, when something is laid in, is laid into it first, so
+    /// that it does not hide what comes from above.
     fn mergeDown(app: *App) void {
         const place = app.stack.current;
         if (place == 0) return;
         const upper = app.stack.layers[place];
         const lower = &app.stack.layers[place - 1];
         const area = if (upper.shown and upper.opacity != 0) coveredArea(&upper.picture) else Area{};
-        // The lower layer's pixels kept, then the upper one taken out,
-        // joined to that; with nothing to lay in, the taking out alone.
+        // The lower layer's pixels kept, its mask taken off, then the
+        // upper one taken out, joined to those; with nothing to lay in,
+        // the taking out alone.
         const joined = !area.isEmpty();
-        const kept = !joined or app.history.remember(lower.id, &lower.picture, area, false);
+        const lower_masked = joined and lower.mask != null;
+        const kept_area = if (lower_masked) lower.picture.whole() else area;
+        var kept = !joined or app.history.remember(lower.id, &lower.picture, kept_area, false);
+        if (lower_masked) {
+            maskInto(&lower.picture, &lower.mask.?);
+            const mask = lower.mask.?;
+            const mask_memory = lower.mask_memory.?;
+            lower.mask = null;
+            lower.mask_memory = null;
+            if (!kept or !app.history.maskOut(lower.id, mask, mask_memory, true)) {
+                app.sys.FreeVec(mask_memory);
+                kept = false;
+            }
+        }
         if (joined) {
             var y: u32 = @intCast(area.min_y);
             const from: usize = @intCast(area.min_x);
             const to: usize = @intCast(area.max_x);
-            while (y < area.max_y) : (y += 1) layers_zig.blendRow(lower.picture.row(y)[from..to], upper.picture.row(y)[from..to], upper.blend, upper.opacity);
+            while (y < area.max_y) : (y += 1) {
+                const mask_row: ?[]const Pixel = if (upper.mask) |*mask| mask.row(y)[from..to] else null;
+                layers_zig.blendRow(lower.picture.row(y)[from..to], upper.picture.row(y)[from..to], mask_row, upper.blend, upper.opacity);
+            }
         }
         const taken = app.stack.remove(place);
         if (!kept or !app.history.layerOut(taken, place, joined)) {
-            app.sys.FreeVec(taken.memory);
+            app.freeLayer(taken);
             app.tell(.MSG_NO_UNDO);
         }
         app.layersChanged();
     }
 
-    /// The layer painted flipped across, or upside down.
+    // --- masks ------------------------------------------------------------------
+
+    /// A mask put on the layer painted - white over all of it, black, or
+    /// as much as is chosen of each pixel - and painted.
+    fn addMask(app: *App, how: enum { show_all, hide_all, selection }) void {
+        const layer = app.stack.currentLayer();
+        if (layer.mask != null or !app.haveComposite()) return;
+        if (how == .selection and !app.selection.any()) return;
+        const width = app.picture.width;
+        const height = app.picture.height;
+        const memory = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_NO_MASK);
+            return;
+        };
+        var mask = Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height };
+        switch (how) {
+            .show_all => mask.fill(0xFFFF_FFFF),
+            .hide_all => mask.fill(0xFF00_0000),
+            .selection => for (app.selection.mask, mask.pixels[0..app.selection.mask.len]) |part, *pixel| {
+                pixel.* = 0xFF00_0000 | @as(Pixel, part) * 0x01_01_01;
+            },
+        }
+        layer.mask = mask;
+        layer.mask_memory = memory;
+        if (!app.history.maskIn(layer.id, false)) app.tell(.MSG_NO_UNDO);
+        app.painting_mask = true;
+        app.layersChanged();
+    }
+
+    /// The mask of the layer painted painted, or the layer itself.
+    fn paintMask(app: *App, mask: bool) void {
+        if (app.painting_mask == mask or (mask and app.stack.currentLayer().mask == null)) return;
+        app.painting_mask = mask;
+        app.paintLayer();
+        app.layers_stale = true;
+        if (app.show_mask) app.whole = true;
+    }
+
+    /// The mask of the layer painted laid into its pixels - each keeps as
+    /// much of its alpha as the mask let show - or only deleted; and the
+    /// layer painted. One step to undo.
+    fn takeMask(app: *App, apply: bool) void {
+        const layer = app.stack.currentLayer();
+        if (layer.mask == null) return;
+        var kept = true;
+        if (apply) {
+            kept = app.history.remember(layer.id, &layer.picture, layer.picture.whole(), false);
+            maskInto(&layer.picture, &layer.mask.?);
+        }
+        const mask = layer.mask.?;
+        const memory = layer.mask_memory.?;
+        layer.mask = null;
+        layer.mask_memory = null;
+        if (!kept or !app.history.maskOut(layer.id, mask, memory, apply)) {
+            app.sys.FreeVec(memory);
+            app.tell(.MSG_NO_UNDO);
+        }
+        app.painting_mask = false;
+        app.layersChanged();
+    }
+
+    /// The picture the view shows: the mask of the layer painted while
+    /// Show Mask is on and it has one, otherwise what the layers make.
+    fn viewed(app: *const App) *const Picture {
+        if (app.show_mask) {
+            if (app.stack.layers[app.stack.current].mask) |*mask| return mask;
+        }
+        return app.stack.shown();
+    }
+
+    /// The layer painted flipped across, or upside down, with its mask;
+    /// one step to undo.
     fn flipLayer(app: *App, across: bool) void {
         const picture = &app.picture;
-        if (across) {
-            var y: u32 = 0;
-            while (y < picture.height) : (y += 1) {
-                const row = picture.row(y);
-                var left: usize = 0;
-                var right: usize = row.len;
-                while (left + 1 < right) : (left += 1) {
-                    right -= 1;
-                    const held = row[left];
-                    row[left] = row[right];
-                    row[right] = held;
-                }
-            }
-        } else {
-            var top: u32 = 0;
-            var bottom: u32 = picture.height;
-            while (top + 1 < bottom) : (top += 1) {
-                bottom -= 1;
-                for (picture.row(top), picture.row(bottom)) |*upper, *lower| {
-                    const held = upper.*;
-                    upper.* = lower.*;
-                    lower.* = held;
-                }
-            }
-        }
+        flipPicture(picture, across);
         // The whole layer, whatever is chosen.
         app.changed = true;
         app.recordWhole(picture.whole());
+        // The mask, or the layer when the mask is painted, flipped too.
+        const layer = app.stack.currentLayer();
+        if (layer.mask) |*mask| {
+            const other = if (app.painting_mask) &layer.picture else mask;
+            const other_id = if (app.painting_mask) layer.id else layer.id | layers_zig.mask_id;
+            if (!app.history.remember(other_id, other, other.whole(), true)) app.tell(.MSG_NO_UNDO);
+            flipPicture(other, across);
+        }
         app.show(picture.whole());
     }
 
@@ -1514,8 +1653,11 @@ const App = struct {
     fn chooseLayer(app: *App, place: u32) void {
         if (place >= app.stack.count or place == app.stack.current) return;
         app.endShape();
+        // Which row's mask is painted changes.
+        if (app.painting_mask) app.layers_stale = true;
         app.stack.current = place;
         app.paintLayer();
+        if (app.show_mask) app.whole = true;
     }
 
     /// The layer at `place` shown or hidden, as its eye in the list says.
@@ -1619,7 +1761,7 @@ const App = struct {
         }
         defer pio.FreeProject(&project);
         const given = project.layers.?[0..@min(project.layer_count, layers_zig.max_layers)];
-        const plain = given.len == 1 and given[0].flags & paintio.LAYERF_HIDDEN == 0 and given[0].opacity == 255;
+        const plain = given.len == 1 and given[0].flags & paintio.LAYERF_HIDDEN == 0 and given[0].opacity == 255 and given[0].mask == null;
         if (given.len == 0 or !app.takePicture(project.width, project.height, plain)) {
             app.tellSize(.MSG_NO_PICTURE, .{ project.width, project.height });
             return false;
@@ -1636,6 +1778,7 @@ const App = struct {
                 .id = app.stack.newId(),
             };
             from.pixels = null;
+            if (from.mask) |parts| app.takeMaskOf(&layer, parts);
             layer.name = from.name;
             layer.name[layers_zig.name_size - 1] = 0;
             if (layer.name[0] == 0) app.nameLayer(&layer) else app.layer_number += 1;
@@ -1651,6 +1794,23 @@ const App = struct {
         app.keepPath(name);
         app.writes_back = (project.kind == paintio.PIOKIND_PROJECT) == (formatOf(name) == .project);
         return true;
+    }
+
+    /// A mask read from a file - how much each pixel shows, a byte each -
+    /// put on `layer` as greys; left off, as a requester says, when there
+    /// is no memory for it.
+    fn takeMaskOf(app: *App, layer: *Layer, parts: [*]const u8) void {
+        const width = layer.picture.width;
+        const height = layer.picture.height;
+        const memory = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_NO_MASK);
+            return;
+        };
+        const mask = Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height };
+        const count = @as(usize, width) * height;
+        for (mask.pixels[0..count], parts[0..count]) |*pixel, part| pixel.* = 0xFF00_0000 | @as(Pixel, part) * 0x01_01_01;
+        layer.mask = mask;
+        layer.mask_memory = memory;
     }
 
     /// The palette's boxes drawn again from `palette`.
@@ -1694,13 +1854,25 @@ const App = struct {
                 const memory = app.sys.AllocVec(@sizeOf(paintio.Layer) * count, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse break :blk dos.ERROR_NO_FREE_STORE;
                 defer app.sys.FreeVec(memory);
                 const layers: [*]paintio.Layer = @ptrCast(@alignCast(memory));
-                for (app.stack.all(), layers[0..count]) |*layer, *into| into.* = .{
-                    .pixels = layer.picture.pixels,
-                    .name = layer.name,
-                    .opacity = @intCast((@as(u32, layer.opacity) * 255 + 50) / 100),
-                    .flags = if (layer.shown) 0 else paintio.LAYERF_HIDDEN,
-                    .blend = @intFromEnum(layer.blend),
+                // A mask goes to the file as how much it shows, a byte a
+                // pixel, in memory made for the saving.
+                defer for (layers[0..count]) |layer| {
+                    if (layer.mask) |parts| app.sys.FreeVec(parts);
                 };
+                for (app.stack.all(), layers[0..count]) |*layer, *into| {
+                    into.* = .{
+                        .pixels = layer.picture.pixels,
+                        .name = layer.name,
+                        .opacity = @intCast((@as(u32, layer.opacity) * 255 + 50) / 100),
+                        .flags = if (layer.shown) 0 else paintio.LAYERF_HIDDEN,
+                        .blend = @intFromEnum(layer.blend),
+                    };
+                    const mask = layer.mask orelse continue;
+                    const pixels = @as(usize, width) * height;
+                    const parts: [*]u8 = @ptrCast(app.sys.AllocVec(pixels, exec.MEMF_ANY) orelse break :blk dos.ERROR_NO_FREE_STORE);
+                    for (parts[0..pixels], mask.pixels[0..pixels]) |*part, pixel| part.* = layers_zig.shownBy(pixel);
+                    into.mask = parts;
+                }
                 var project = paintio.Project{ .width = width, .height = height, .layer_count = count, .current = app.stack.current, .layers = layers, .palette_count = app.palette.len };
                 @memcpy(project.palette[0..app.palette.len], &app.palette);
                 break :blk pio.SaveProject(name, &project);
@@ -2427,7 +2599,7 @@ const App = struct {
                 var row: i32 = 0;
                 while (row < rows) : (row += 1) {
                     const start: usize = @as(usize, @intCast(row)) * width;
-                    app.view.row(app.stack.shown(), y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null, if (outline) |*shown| shown else null);
+                    app.view.row(app.viewed(), y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null, if (outline) |*shown| shown else null);
                 }
                 app.gb.WritePixelArray(gui.view_rp, @ptrCast(band), width * @sizeOf(Pixel), @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
                     .min_x = area.min_x,
@@ -2519,6 +2691,8 @@ const App = struct {
             .layers = app.stack.count,
             .current = app.stack.current,
             .selected = app.selection.any(),
+            .has_mask = app.stack.layers[app.stack.current].mask != null,
+            .painting_mask = app.painting_mask,
         };
     }
 
@@ -2665,7 +2839,8 @@ const App = struct {
     }
 
     /// The list's rows made again from the stack, top layer first: each
-    /// its eye, on while the layer is shown, and its name.
+    /// its eye, on while the layer is shown, its name, and whether it has
+    /// a mask and the mask is painted.
     fn buildLayerRows(app: *App) void {
         const sys = app.sys;
         lb.freeRows(sys, &app.layer_rows);
@@ -2673,7 +2848,13 @@ const App = struct {
         while (place > 0) {
             place -= 1;
             const layer = &app.stack.layers[place];
-            const row = lb.allocRow(sys, &.{ "", @as([*:0]const u8, @ptrCast(&layer.name)) }, 0) orelse continue;
+            const mask: [*:0]const u8 = if (layer.mask == null)
+                ""
+            else if (app.painting_mask and place == app.stack.current)
+                app.text.get(.MSG_MASK_PAINTED)
+            else
+                app.text.get(.MSG_MASK_ROW);
+            const row = lb.allocRow(sys, &.{ "", @as([*:0]const u8, @ptrCast(&layer.name)), mask }, 0) orelse continue;
             row.flags = if (layer.shown) lb.ROW_ON else 0;
             row.user_data = layer.id;
             sys.AddTail(&app.layer_rows, &row.node);
@@ -2794,6 +2975,7 @@ const App = struct {
             .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
             .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .flip_layer_across, .flip_layer_down => app.endShape(),
             .select_all, .select_layer, .select_colour, .select_see_through, .select_not_in_palette, .deselect, .invert_selection, .copy_to_layer, .cut_to_layer, .copy_to_brush => app.endShape(),
+            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask => app.endShape(),
             else => {},
         }
         switch (which) {
@@ -2812,10 +2994,12 @@ const App = struct {
             .undo => {
                 const painted = app.stack.currentLayer().id;
                 if (app.history.undo(&app.stack)) |change| app.applied(change, painted);
+                if (app.show_mask) app.whole = true;
             },
             .redo => {
                 const painted = app.stack.currentLayer().id;
                 if (app.history.redo(&app.stack)) |change| app.applied(change, painted);
+                if (app.show_mask) app.whole = true;
             },
             .swap => {
                 const was = app.foreground;
@@ -2850,6 +3034,12 @@ const App = struct {
             .copy_to_layer => app.selectionToLayer(false),
             .cut_to_layer => app.selectionToLayer(true),
             .copy_to_brush => app.selectionToBrush(),
+            .mask_show_all => app.addMask(.show_all),
+            .mask_hide_all => app.addMask(.hide_all),
+            .mask_selection => app.addMask(.selection),
+            .paint_mask => app.paintMask(!app.painting_mask),
+            .apply_mask => app.takeMask(true),
+            .delete_mask => app.takeMask(false),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -3357,6 +3547,10 @@ const App = struct {
                         app.show_outline = code != 0;
                         app.show(app.selection.box);
                     },
+                    ID_SHOW_MASK => {
+                        app.show_mask = code != 0;
+                        app.whole = true;
+                    },
                     else => |id| {
                         if (id >= ID_SECTION and id < ID_SECTION + section_names.len) {
                             app.foldSection(id - ID_SECTION, code != 0);
@@ -3511,6 +3705,7 @@ const App = struct {
         app.layer_columns = .{
             .{ .title = "", .weight = 1, .flags = lb.COLUMN_TOGGLE | lb.COLUMN_NOSORT, .image = gui.layer_images[0] },
             .{ .title = "", .weight = 5, .flags = lb.COLUMN_NOSORT },
+            .{ .title = "", .weight = 2, .flags = lb.COLUMN_NOSORT },
             .{},
         };
         app.buildLayerRows();
@@ -3778,6 +3973,11 @@ const App = struct {
             .{ .tag = gc.GA_Selected, .data = @intFromBool(app.show_outline) },
             .{},
         }));
+        const show_mask_box = made.take(ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_SHOW_MASK },
+            .{ .tag = gc.GA_Selected, .data = @intFromBool(app.show_mask) },
+            .{},
+        }));
         const zoom_bar = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
@@ -3790,6 +3990,9 @@ const App = struct {
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button_gadgets[fit_button]) },
             .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
             .{ .tag = lg.LAYOUTA_AddSpace, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(show_mask_box) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_SHOW_MASK)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(outline_box) },
             .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
             .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_OUTLINE)) },
@@ -3833,6 +4036,7 @@ const App = struct {
         gui.section_bodies = .{ layers_body.?, brush_body.?, colour_body.? };
         gui.layer_list = layer_list.?;
         gui.outline_box = outline_box.?;
+        gui.show_mask_box = show_mask_box.?;
         gui.layer_opacity = layer_opacity.?;
         gui.blend = blend.?;
         gui.shown_layer = app.stack.current;
@@ -4006,6 +4210,42 @@ fn lengthOf(text: [*:0]const u8) usize {
     return length;
 }
 
+/// Each pixel of `picture` left with as much of its alpha as `mask` lets
+/// show.
+fn maskInto(picture: *Picture, mask: *const Picture) void {
+    const count = @as(usize, picture.width) * picture.height;
+    for (picture.pixels[0..count], mask.pixels[0..count]) |*pixel, part| pixel.* = layers_zig.masked(pixel.*, part);
+}
+
+/// `picture` flipped across, or upside down.
+fn flipPicture(picture: *Picture, across: bool) void {
+    if (across) {
+        var y: u32 = 0;
+        while (y < picture.height) : (y += 1) {
+            const row = picture.row(y);
+            var left: usize = 0;
+            var right: usize = row.len;
+            while (left + 1 < right) : (left += 1) {
+                right -= 1;
+                const held = row[left];
+                row[left] = row[right];
+                row[right] = held;
+            }
+        }
+    } else {
+        var top: u32 = 0;
+        var bottom: u32 = picture.height;
+        while (top + 1 < bottom) : (top += 1) {
+            bottom -= 1;
+            for (picture.row(top), picture.row(bottom)) |*upper, *lower| {
+                const held = upper.*;
+                upper.* = lower.*;
+                lower.* = held;
+            }
+        }
+    }
+}
+
 /// The history's way to give back a layer it held: `context` is the App.
 fn releaseLayer(context: *anyopaque, memory: *anyopaque) void {
     const app: *App = @ptrCast(@alignCast(context));
@@ -4140,41 +4380,50 @@ fn integerField(ib: *IntuitionBase, id: u32, value: u32) ?*Object {
 /// A check mark's item set from what Paint is doing.
 fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
     const value = @intFromPtr(mn.GTMENUITEM_USERDATA(menu_item));
-    const on: ?bool = if (Tool.of(value)) |tool|
-        tool == state.tool
-    else if (value >= size_base and value < size_base + brush_zig.sizes.len)
-        !state.own_brush and brush_zig.sizes[value - size_base] == state.size
-    else if (Command.of(value)) |which| switch (which) {
-        .filled => state.filled,
-        .round => !state.own_brush and state.round,
-        .square => !state.own_brush and !state.round,
-        .own_colours => !state.one_colour,
-        .one_colour => state.one_colour,
-        // What there must be an own brush for.
-        .own_brush, .flip_across, .flip_down, .turn, .save_brush => {
-            if (state.has_own) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
-            if (which != .own_brush) return;
-            if (state.own_brush) menu_item.flags |= mn.CHECKED else menu_item.flags &= ~mn.CHECKED;
-            return;
-        },
-        .grid => state.grid,
-        .own_screen => state.own,
-        .undo, .redo, .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .deselect, .copy_to_layer, .cut_to_layer, .copy_to_brush => {
-            const can = switch (which) {
-                .undo => state.can_undo,
-                .redo => state.can_redo,
-                .new_layer, .duplicate_layer => state.layers < layers_zig.max_layers,
-                .deselect, .copy_to_brush => state.selected,
-                .copy_to_layer, .cut_to_layer => state.selected and state.layers < layers_zig.max_layers,
-                .delete_layer => state.layers > 1,
-                .layer_up => state.current + 1 < state.layers,
-                else => state.current > 0,
-            };
-            if (can) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
-            return;
-        },
-        else => null,
-    } else null;
+    const on: ?bool = blk: {
+        break :blk if (Tool.of(value)) |tool|
+            tool == state.tool
+        else if (value >= size_base and value < size_base + brush_zig.sizes.len)
+            !state.own_brush and brush_zig.sizes[value - size_base] == state.size
+        else if (Command.of(value)) |which| switch (which) {
+            .filled => state.filled,
+            .round => !state.own_brush and state.round,
+            .square => !state.own_brush and !state.round,
+            .own_colours => !state.one_colour,
+            .one_colour => state.one_colour,
+            // What there must be an own brush for.
+            .own_brush, .flip_across, .flip_down, .turn, .save_brush => {
+                if (state.has_own) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
+                if (which != .own_brush) return;
+                if (state.own_brush) menu_item.flags |= mn.CHECKED else menu_item.flags &= ~mn.CHECKED;
+                return;
+            },
+            .grid => state.grid,
+            .own_screen => state.own,
+            .paint_mask => {
+                if (state.has_mask) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
+                break :blk state.painting_mask;
+            },
+            .undo, .redo, .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .deselect, .copy_to_layer, .cut_to_layer, .copy_to_brush, .mask_show_all, .mask_hide_all, .mask_selection, .apply_mask, .delete_mask => {
+                const can = switch (which) {
+                    .mask_show_all, .mask_hide_all => !state.has_mask,
+                    .mask_selection => !state.has_mask and state.selected,
+                    .apply_mask, .delete_mask => state.has_mask,
+                    .undo => state.can_undo,
+                    .redo => state.can_redo,
+                    .new_layer, .duplicate_layer => state.layers < layers_zig.max_layers,
+                    .deselect, .copy_to_brush => state.selected,
+                    .copy_to_layer, .cut_to_layer => state.selected and state.layers < layers_zig.max_layers,
+                    .delete_layer => state.layers > 1,
+                    .layer_up => state.current + 1 < state.layers,
+                    else => state.current > 0,
+                };
+                if (can) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
+                return;
+            },
+            else => null,
+        } else null;
+    };
     const checked = on orelse return;
     if (checked) menu_item.flags |= mn.CHECKED else menu_item.flags &= ~mn.CHECKED;
 }
@@ -4206,7 +4455,8 @@ fn sameState(a: MenuState, b: MenuState) bool {
     return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and
         a.own_brush == b.own_brush and a.has_own == b.has_own and a.one_colour == b.one_colour and
         a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo and
-        a.layers == b.layers and a.current == b.current and a.selected == b.selected;
+        a.layers == b.layers and a.current == b.current and a.selected == b.selected and
+        a.has_mask == b.has_mask and a.painting_mask == b.painting_mask;
 }
 
 /// Whether the text made and the C string are the same.

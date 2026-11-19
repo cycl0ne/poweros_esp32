@@ -8,13 +8,20 @@
 //! it. Its pixels are in memory of the program's (`memory`), which the
 //! program gives back when the layer goes for good.
 //!
+//! **A mask** a layer may have: a picture of greys as large as it, which
+//! the program paints as it paints a layer. Where it is white the layer
+//! shows, where it is black or see-through it does not, and a grey shows
+//! that much of it: its brightness times its alpha (`shownBy`). The
+//! history names a mask by its layer's id with `mask_id` added.
+//!
 //! **The composite** is what the layers shown make, the bottom one laid
 //! first over nothing: each layer's pixels are blended with what is under
 //! them by its mode and laid over it by its alpha times its opacity
 //! (`blendOver`). It is made again over the area a change touched
 //! (`compose`), a row at a time, so the view and a saved picture read a
-//! single picture. A stack of one layer, shown and wholly opaque, is
-//! that layer as it is (`plain`), and needs no composite.
+//! single picture. A layer's mask takes from its alpha first. A stack of
+//! one layer, shown, wholly opaque and without a mask, is that layer as
+//! it is (`plain`), and needs no composite.
 //!
 //! **Blending** follows the compositing rule for a source laid over a
 //! backdrop: where the backdrop is covered, the layer's colour is first
@@ -36,6 +43,8 @@ const Area = picture_zig.Area;
 pub const max_layers = 64;
 /// The bytes a layer's name has room for, its NUL among them.
 pub const name_size = 32;
+/// Added to a layer's id, the id of its mask.
+pub const mask_id: u32 = 1 << 31;
 
 /// How a layer's colours are put together with what is under it; in the
 /// order the project file numbers them.
@@ -69,6 +78,9 @@ pub const Layer = struct {
     blend: Blend = .normal,
     shown: bool = true,
     id: u32 = 0,
+    /// Its mask, when it has one, and the mask's memory, the program's.
+    mask: ?Picture = null,
+    mask_memory: ?*anyopaque = null,
 
     /// The name, without its NUL.
     pub fn nameText(layer: *const Layer) []const u8 {
@@ -108,7 +120,8 @@ pub const Stack = struct {
 
     /// One layer, shown, wholly opaque: the picture is that layer.
     pub fn plain(stack: *const Stack) bool {
-        return stack.count == 1 and stack.layers[0].shown and stack.layers[0].opacity == 100;
+        const bottom = &stack.layers[0];
+        return stack.count == 1 and bottom.shown and bottom.opacity == 100 and bottom.mask == null;
     }
 
     /// The picture that is shown: the bottom layer of a plain stack, the
@@ -118,11 +131,21 @@ pub const Stack = struct {
         return &stack.composite.?;
     }
 
-    /// Where the layer with that id is, if it is in the stack.
+    /// Where the layer with that id is, or the layer whose mask it is, if
+    /// it is in the stack.
     pub fn placeOf(stack: *const Stack, id: u32) ?u32 {
         for (stack.layers[0..stack.count], 0..) |layer, place| {
-            if (layer.id == id) return @intCast(place);
+            if (layer.id == id & ~mask_id) return @intCast(place);
         }
+        return null;
+    }
+
+    /// The pixels the id names: a layer's, or its mask's when it has one.
+    pub fn pictureOf(stack: *Stack, id: u32) ?*Picture {
+        const place = stack.placeOf(id) orelse return null;
+        const layer = &stack.layers[place];
+        if (id & mask_id == 0) return &layer.picture;
+        if (layer.mask) |*mask| return mask;
         return null;
     }
 
@@ -188,7 +211,8 @@ pub const Stack = struct {
             @memset(into, 0);
             for (stack.layers[0..stack.count]) |*layer| {
                 if (!layer.shown or layer.opacity == 0) continue;
-                blendRow(into, layer.picture.row(y)[from..to], layer.blend, layer.opacity);
+                const mask_row: ?[]const Pixel = if (layer.mask) |*mask| mask.row(y)[from..to] else null;
+                blendRow(into, layer.picture.row(y)[from..to], mask_row, layer.blend, layer.opacity);
             }
         }
     }
@@ -198,15 +222,36 @@ pub const Stack = struct {
         var colour: Pixel = 0;
         for (stack.layers[0..stack.count]) |*layer| {
             if (!layer.shown or layer.opacity == 0) continue;
-            colour = blendOver(colour, layer.picture.get(x, y), layer.blend, layer.opacity);
+            var above = layer.picture.get(x, y);
+            if (layer.mask) |*mask| above = masked(above, mask.get(x, y));
+            colour = blendOver(colour, above, layer.blend, layer.opacity);
         }
         return colour;
     }
 };
 
-/// A row of a layer laid over the row `into` holds, in place.
-pub fn blendRow(into: []Pixel, layer: []const Pixel, mode: Blend, opacity: u8) void {
+/// A row of a layer laid over the row `into` holds, in place, through
+/// the row of its mask when it has one.
+pub fn blendRow(into: []Pixel, layer: []const Pixel, mask: ?[]const Pixel, mode: Blend, opacity: u8) void {
+    if (mask) |shows| {
+        for (into, layer, shows) |*below, above, part| below.* = blendOver(below.*, masked(above, part), mode, opacity);
+        return;
+    }
     for (into, layer) |*below, above| below.* = blendOver(below.*, above, mode, opacity);
+}
+
+/// How much a mask's pixel lets show, 0 to 255: its brightness times its
+/// alpha.
+pub fn shownBy(mask: Pixel) u8 {
+    const value = channels(mask);
+    const bright = (30 * value[0] + 59 * value[1] + 11 * value[2] + 50) / 100;
+    return @intCast((bright * (mask >> 24) + 127) / 255);
+}
+
+/// `pixel` with as much of its alpha as `mask` lets show.
+pub fn masked(pixel: Pixel, mask: Pixel) Pixel {
+    const alpha = ((pixel >> 24) * shownBy(mask) + 127) / 255;
+    return (alpha << 24) | (pixel & 0x00FF_FFFF);
 }
 
 /// `above`, at `opacity` percent, blended by `mode` with `below` and laid

@@ -12,7 +12,8 @@
 //! block cannot be undone and empties it.
 //!
 //! **Pixels.** A record of a change to a layer's pixels names the layer by
-//! its id and keeps the area it touched with that area's pixels from the
+//! its id - or its mask by the mask's (`layers.mask_id` added) - and
+//! keeps the area it touched with that area's pixels from the
 //! other side of the change. Undoing it swaps its pixels with the
 //! layer's: the layer gets them back from before the change and the
 //! record keeps the ones from after it, which redoing swaps back. The
@@ -28,6 +29,10 @@
 //! (`release`) when the record that holds it is dropped: a layer deleted
 //! is gone for good when its deletion can no longer be undone. A record
 //! of a layer moved keeps where from and where to.
+//!
+//! **Masks.** A record of a mask put on a layer or taken off it holds the
+//! mask - its pixels and their memory - in the same way while it is off
+//! the layer; a layer held keeps its mask with it.
 //!
 //! **Steps of more than one record.** A record made `joined` is undone
 //! and redone with the one before it - merging a layer down is the lower
@@ -48,12 +53,18 @@ const layers_zig = @import("layers.zig");
 const Layer = layers_zig.Layer;
 const Stack = layers_zig.Stack;
 
-const Kind = enum(u32) { pixels, layer_in, layer_out, moved };
+const Kind = enum(u32) { pixels, layer_in, layer_out, moved, mask_in, mask_out };
+
+/// A mask off its layer, as a record holds it.
+const HeldMask = struct {
+    picture: Picture,
+    memory: *anyopaque,
+};
 
 const Header = extern struct {
     kind: Kind,
-    /// The layer's id: the one whose pixels it keeps, or the one put in
-    /// or taken out.
+    /// The layer's id: the one whose pixels it keeps - its mask's id for
+    /// the mask's - or the one put in or taken out, or whose mask is.
     id: u32,
     min_x: i32 = 0,
     min_y: i32 = 0,
@@ -67,7 +78,7 @@ const Header = extern struct {
     to: u32 = 0,
     /// Undone and redone with the record before it.
     joined: u32 = 0,
-    /// The record holds the layer, out of the stack.
+    /// The record holds the layer, out of the stack, or the mask.
     holding: u32 = 0,
 
     fn area(header: Header) Area {
@@ -79,6 +90,7 @@ const Header = extern struct {
         return switch (header.kind) {
             .pixels => @as(usize, header.count) * @sizeOf(Pixel),
             .layer_in, .layer_out => layer_bytes,
+            .mask_in, .mask_out => mask_bytes,
             .moved => 0,
         };
     }
@@ -87,6 +99,7 @@ const Header = extern struct {
 const header_bytes = @sizeOf(Header);
 const footer_bytes = @sizeOf(u32);
 const layer_bytes = (@sizeOf(Layer) + 3) & ~@as(usize, 3);
+const mask_bytes = (@sizeOf(HeldMask) + 3) & ~@as(usize, 3);
 
 /// What an undo or a redo changed: the area of the picture to show again,
 /// and whether the stack of layers is another.
@@ -95,6 +108,9 @@ pub const Change = struct {
     layers: bool = false,
     /// A record of the step has chosen the layer painted.
     placed: bool = false,
+    /// Whether the layer painted is painted in its mask, when a record
+    /// of pixels chose it: the mask's pixels or the layer's.
+    painted_mask: ?bool = null,
 };
 
 pub const History = struct {
@@ -187,6 +203,20 @@ pub const History = struct {
         return true;
     }
 
+    /// A mask has been put on the layer `id`.
+    pub fn maskIn(history: *History, id: u32, joined: bool) bool {
+        return history.begin(.{ .kind = .mask_in, .id = id }, joined) != null;
+    }
+
+    /// The mask `picture`, in `memory`, has been taken off the layer `id`,
+    /// and is the record's to hold. False when it could not be kept: the
+    /// mask is still the caller's then, to give back.
+    pub fn maskOut(history: *History, id: u32, picture: Picture, memory: *anyopaque, joined: bool) bool {
+        const at = history.begin(.{ .kind = .mask_out, .id = id, .holding = 1 }, joined) orelse return false;
+        history.putHeld(HeldMask, at, .{ .picture = picture, .memory = memory });
+        return true;
+    }
+
     /// The layer at `from` has been moved to `to`.
     pub fn moved(history: *History, from: u32, to: u32, joined: bool) bool {
         return history.begin(.{ .kind = .moved, .id = 0, .place = from, .to = to }, joined) != null;
@@ -229,9 +259,31 @@ pub const History = struct {
         switch (header.kind) {
             .pixels => {
                 const place = stack.placeOf(header.id) orelse return;
-                history.swap(at, &stack.layers[place].picture);
-                if (choose) stack.current = place;
+                history.swap(at, stack.pictureOf(header.id) orelse return);
+                if (choose) {
+                    stack.current = place;
+                    change.painted_mask = header.id & layers_zig.mask_id != 0;
+                }
                 change.area = change.area.add(header.area());
+            },
+            .mask_in, .mask_out => {
+                // Undoing a mask put on, or doing again one taken off,
+                // takes it off; the other two put it back.
+                const place = stack.placeOf(header.id) orelse return;
+                const layer = &stack.layers[place];
+                if ((header.kind == .mask_in) != again) {
+                    history.putHeld(HeldMask, at, .{ .picture = layer.mask.?, .memory = layer.mask_memory.? });
+                    layer.mask = null;
+                    layer.mask_memory = null;
+                    header.holding = 1;
+                } else {
+                    const held = history.heldAt(HeldMask, at);
+                    layer.mask = held.picture;
+                    layer.mask_memory = held.memory;
+                    header.holding = 0;
+                }
+                if (choose) stack.current = place;
+                change.layers = true;
             },
             .layer_in, .layer_out => {
                 // Undoing a layer put in, or doing again one taken out,
@@ -317,11 +369,19 @@ pub const History = struct {
         if (history.done > 0) history.headerAt(0).joined = 0;
     }
 
-    /// A record going: the layer it holds given back.
+    /// A record going: the layer it holds given back with its mask, or
+    /// the mask.
     fn letGo(history: *History, header: *align(4) Header, at: usize) void {
         if (header.holding == 0) return;
         header.holding = 0;
-        history.release(history.context, history.layerAt(at).memory);
+        switch (header.kind) {
+            .mask_in, .mask_out => history.release(history.context, history.heldAt(HeldMask, at).memory),
+            else => {
+                const layer = history.layerAt(at);
+                history.release(history.context, layer.memory);
+                if (layer.mask_memory) |memory| history.release(history.context, memory);
+            },
+        }
     }
 
     /// The record at `at` and the picture's pixels traded.
@@ -351,18 +411,26 @@ pub const History = struct {
         return first[0..count];
     }
 
-    /// The layer a record keeps, copied out: the block is aligned for
-    /// pixels, not for a layer's pointers.
     fn layerAt(history: *History, at: usize) Layer {
-        var layer: Layer = undefined;
-        const into: *[@sizeOf(Layer)]u8 = @ptrCast(&layer);
-        @memcpy(into, (history.memory + at + header_bytes)[0..@sizeOf(Layer)]);
-        return layer;
+        return history.heldAt(Layer, at);
     }
 
     fn putLayer(history: *History, at: usize, layer: Layer) void {
-        const from: *const [@sizeOf(Layer)]u8 = @ptrCast(&layer);
-        @memcpy((history.memory + at + header_bytes)[0..@sizeOf(Layer)], from);
+        history.putHeld(Layer, at, layer);
+    }
+
+    /// The layer or mask a record keeps, copied out: the block is aligned
+    /// for pixels, not for their pointers.
+    fn heldAt(history: *History, comptime T: type, at: usize) T {
+        var held: T = undefined;
+        const into: *[@sizeOf(T)]u8 = @ptrCast(&held);
+        @memcpy(into, (history.memory + at + header_bytes)[0..@sizeOf(T)]);
+        return held;
+    }
+
+    fn putHeld(history: *History, comptime T: type, at: usize, held: T) void {
+        const from: *const [@sizeOf(T)]u8 = @ptrCast(&held);
+        @memcpy((history.memory + at + header_bytes)[0..@sizeOf(T)], from);
     }
 
     /// The length a record ending at `end` has written there.

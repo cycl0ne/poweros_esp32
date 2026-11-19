@@ -54,8 +54,9 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
   with Space held - a drag moves it as a hand moves paper - with the
   wheel (Shift and the wheel go across) or with the cursor keys.
 - **The zoom bar** above it: smaller, the zoom in per cent, larger, and
-  the whole picture as large as it fits; at its right end, Outline shows
-  the edge of what is chosen, or hides it.
+  the whole picture as large as it fits; at its right end, Mask shows
+  the mask of the layer painted in place of the picture, and Outline
+  shows the edge of what is chosen, or hides it.
 - **The status line** says the picture's size, the zoom and the brush's
   size, and the pixel under the pointer while it is over the picture.
 
@@ -204,7 +205,28 @@ leave the bottom layer the background colour and any other see-through.
 | Rename... | | asks for its name |
 | Move Up, Move Down | | the one painted moved one place in the stack |
 | Merge Down | `M` | the one painted laid into the one under it as it shows, and taken out |
-| Flip Horizontally, Flip Vertically | | the one painted, left to right, top to bottom |
+| Flip Horizontally, Flip Vertically | | the one painted, left to right, top to bottom, with its mask |
+| Add Mask → Show All, Hide All, Show the Selection | | a mask on the one painted, white, black, or as much as each pixel is chosen; the mask painted |
+| Paint the Mask | `E` | the mask painted, or the layer again |
+| Apply the Mask | | the layer left with only what the mask let show, and the mask taken off |
+| Delete the Mask | | the mask taken off, the whole layer shown again |
+
+### Masks
+
+A layer may have a mask: a picture of greys as large as the layer,
+which says how much of each pixel shows - all of it where the mask is
+white, none where it is black or see-through, and as much as a grey is
+bright in between. A mask hides without taking anything away: painting
+it white again brings back what it hid.
+
+While the mask is painted - Add Mask leaves it so, and Paint the Mask
+turns it on and off - every tool works on the mask, in whatever colour
+it is given, and the list shows `[Mask]` beside the layer; a layer with
+a mask not painted shows `Mask`. Clear makes the mask black. The zoom
+bar's Mask shows the mask itself, in place of the picture.
+
+Merge Down lays the layer into the one under it as its mask lets it
+show; when the one under has a mask, that is applied first.
 
 ## Selections
 
@@ -289,8 +311,9 @@ Save As instead. A file that cannot be read or written says why in a
 requester.
 
 A project is an IFF `FORM PNTG`: each layer, packed, with its name,
-opacity, blend mode and whether it is shown, which layer is painted,
-and the palette. Opened, all of it comes back.
+opacity, blend mode, whether it is shown and its mask, which layer is
+painted, and the palette. Opened, all of it comes back; a mask comes
+back as greys.
 
 Edit → Clear makes the whole layer painted the background colour - or
 see-through, when it is not the bottom one.
@@ -299,8 +322,9 @@ see-through, when it is not the bottom one.
 
 Every stroke, shape, fill, text and clear can be undone, with Edit →
 Undo or its tool, and done again with Redo - and every layer put in,
-deleted, moved, merged down or flipped; undone, the layer it touched is
-painted. Hiding a layer, its opacity, blend mode and name are not
+deleted, moved, merged down or flipped, and every mask put on, applied
+or deleted; undone, the layer it touched is painted - in its mask, when
+that was what changed. Hiding a layer, its opacity, blend mode and name are not
 changes to undo. Paint keeps as many changes
 as fit in a block three pictures' worth large - or half the memory free,
 when that is less; the oldest go first. A change larger than the whole
@@ -315,7 +339,7 @@ The letters are the items' keys, pressed with the right command key.
 | File | New... (N), Open... (O), Save (S), Save As... (A), Quit (Q) |
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
 | Tools | the tools; Filled Shapes |
-| Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically |
+| Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
 | Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Own Screen |

@@ -29,6 +29,7 @@ const testing = std.testing;
 const white: Pixel = 0xFFFFFFFF;
 const red: Pixel = 0xFFFF0000;
 const blue: Pixel = 0xFF0000FF;
+const black: Pixel = 0xFF000000;
 
 fn made(width: u32, height: u32, colour: Pixel) !Picture {
     const pixels = try testing.allocator.alloc(Pixel, width * height);
@@ -535,10 +536,104 @@ test "history: a deleted layer is given back once its deletion can no longer be 
     try testing.expect(!history.canUndo());
 }
 
+test "history: a mask put on, painted, taken off, each undone and done again, then given back" {
+    released = 0;
+    var slots: [layers_zig.max_layers]Layer = undefined;
+    var stack = Stack{ .layers = &slots };
+    stack.insert(0, try layerOf(&stack, red));
+    defer freeStack(&stack);
+    const room = 4 * History.recordBytes(.{ .max_x = test_side, .max_y = test_side });
+    const memory = try testing.allocator.alignedAlloc(u8, .@"4", room);
+    defer testing.allocator.free(memory);
+    var history = historyOf(memory);
+    defer history.clear();
+    const layer = &stack.layers[0];
+    const id = layer.id;
+    const corner = Area{ .max_x = 4, .max_y = 4 };
+
+    // A white mask put on, painted black in a corner.
+    const mask = try made(test_side, test_side, 0xFFFFFFFF);
+    layer.mask = mask;
+    layer.mask_memory = @ptrCast(mask.pixels);
+    try testing.expect(history.maskIn(id, false));
+    try testing.expect(history.remember(id | layers_zig.mask_id, &layer.mask.?, corner, false));
+    layer.mask.?.fillArea(corner, black);
+
+    // The painting undone is the mask's, and makes the mask the one
+    // painted; then the mask comes off, held by its record.
+    var change = history.undo(&stack).?;
+    try testing.expectEqual(@as(?bool, true), change.painted_mask);
+    try testing.expectEqual(@as(Pixel, 0xFFFFFFFF), mask.get(0, 0));
+    change = history.undo(&stack).?;
+    try testing.expect(change.layers);
+    try testing.expect(layer.mask == null);
+    try testing.expectEqual(red, layer.picture.get(0, 0));
+    // Both done again.
+    _ = history.redo(&stack).?;
+    try testing.expect(layer.mask != null);
+    _ = history.redo(&stack).?;
+    try testing.expectEqual(black, layer.mask.?.get(0, 0));
+
+    // Taken off: undone it is back, done again it is held once more.
+    try testing.expect(history.maskOut(id, layer.mask.?, layer.mask_memory.?, false));
+    layer.mask = null;
+    layer.mask_memory = null;
+    _ = history.undo(&stack).?;
+    try testing.expectEqual(black, layer.mask.?.get(0, 0));
+    _ = history.redo(&stack).?;
+    try testing.expect(layer.mask == null);
+    try testing.expectEqual(@as(usize, 0), released);
+    // The history emptied: the mask its record held is given back.
+    history.clear();
+    try testing.expectEqual(@as(usize, 1), released);
+}
+
+test "layers: a mask hides where it is black or see-through, shows where it is white, a grey in part" {
+    var slots: [layers_zig.max_layers]Layer = undefined;
+    var stack = Stack{ .layers = &slots };
+    stack.insert(0, try layerOf(&stack, white));
+    defer freeStack(&stack);
+    var mask = try made(test_side, test_side, 0xFFFFFFFF);
+    defer free(mask);
+    // One layer with a mask needs a composite.
+    stack.layers[0].mask = mask;
+    try testing.expect(!stack.plain());
+    stack.layers[0].mask = null;
+    try testing.expect(stack.plain());
+
+    var composite = try made(test_side, test_side, 0);
+    defer free(composite);
+    stack.composite = composite;
+    stack.insert(1, try layerOf(&stack, red));
+    mask.fillArea(.{ .max_x = 4, .max_y = 4 }, black);
+    mask.fillArea(.{ .min_x = 4, .max_x = 8, .max_y = 4 }, 0xFF808080);
+    mask.set(8, 0, 0x00FFFFFF);
+    stack.layers[1].mask = mask;
+    defer stack.layers[1].mask = null;
+
+    // The ids name the layer's pixels and its mask.
+    const id = stack.layers[1].id;
+    try testing.expectEqual(&stack.layers[1].picture, stack.pictureOf(id).?);
+    try testing.expectEqual(&stack.layers[1].mask.?, stack.pictureOf(id | layers_zig.mask_id).?);
+    try testing.expect(stack.pictureOf(stack.layers[0].id | layers_zig.mask_id) == null);
+    try testing.expectEqual(@as(?u32, 1), stack.placeOf(id | layers_zig.mask_id));
+
+    stack.compose(composite.whole());
+    try testing.expectEqual(white, composite.get(0, 0));
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), composite.get(5, 0));
+    try testing.expectEqual(white, composite.get(8, 0));
+    try testing.expectEqual(red, composite.get(9, 9));
+    try testing.expectEqual(composite.get(5, 0), stack.pixelAt(5, 0));
+
+    try testing.expectEqual(@as(u8, 128), layers_zig.shownBy(0xFF808080));
+    try testing.expectEqual(@as(u8, 128), layers_zig.shownBy(0x80FFFFFF));
+    try testing.expectEqual(@as(Pixel, 0x00FF0000), layers_zig.masked(red, black));
+    try testing.expectEqual(red, layers_zig.masked(red, 0xFFFFFFFF));
+}
+
 test "layers: each blend mode on a known pair, by opacity and coverage" {
     const grey: Pixel = 0xFF808080;
     const green: Pixel = 0xFF00FF00;
-    const black: Pixel = 0xFF000000;
     const blend = layers_zig.blendOver;
     // Over nothing, every mode is the layer at its opacity.
     try testing.expectEqual(@as(Pixel, 0x80FF0000), blend(0, red, .multiply, 50));

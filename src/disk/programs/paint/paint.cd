@@ -143,6 +143,20 @@ MSG_MENU_FLIP_ACROSS (//)
 Flip Horizontally
 MSG_MENU_FLIP_DOWN (//)
 Flip Vertically
+MSG_MENU_ADD_MASK (//)
+Add Mask
+MSG_MENU_MASK_SHOW_ALL (//)
+Show All
+MSG_MENU_MASK_HIDE_ALL (//)
+Hide All
+MSG_MENU_MASK_SELECTION (//)
+Show the Selection
+MSG_MENU_PAINT_MASK (//)
+Paint the Mask
+MSG_MENU_APPLY_MASK (//)
+Apply the Mask
+MSG_MENU_DELETE_MASK (//)
+Delete the Mask
 MSG_MENU_TURN (//)
 Turn Right
 MSG_MENU_OPEN_BRUSH (//)
@@ -330,6 +344,8 @@ MSG_NO_UNDO (//)
 That change was too large to keep:\nit cannot be undone.
 MSG_NO_LAYER (//)
 There is no memory for another layer.
+MSG_NO_MASK (//)
+There is no memory for a mask.
 MSG_NO_OWN_SCREEN (//)
 No screen of its own could be opened.
 MSG_NO_FONT (//)
@@ -342,6 +358,12 @@ MSG_NO_SELECTION (//)
 There is no memory for a selection.
 MSG_OUTLINE (//)
 Outline
+MSG_SHOW_MASK (//)
+Mask
+MSG_MASK_ROW (//)
+Mask
+MSG_MASK_PAINTED (//)
+[Mask]
 MSG_OPEN_TITLE (//)
 Open a picture
 MSG_SAVE_AS_TITLE (//)
