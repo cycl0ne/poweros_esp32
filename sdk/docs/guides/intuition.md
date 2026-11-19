@@ -1127,6 +1127,12 @@ wc.WMHI_IDCMPUPDATE => {
 },
 ```
 
+A canvas told `CANVAS_Ticks` (2.4) tells the place again at each of
+intuition's ticks, ten a second, while it is pressed, so a tool that
+keeps working where the pointer is held - an airbrush - hears of it
+without the pointer moving. `SYS:Programs/Paint` sets it while its
+airbrush is the tool.
+
 ### By a finger
 
 On a touch panel there is no menu button. A tap on the screen's bar - a

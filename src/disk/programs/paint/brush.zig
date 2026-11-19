@@ -8,6 +8,11 @@
 //! in the circle that fits the box, so a round brush of 1 or 2 is its
 //! box. A line is stamped at every pixel of it (Bresenham's steps), both
 //! ends included, which leaves no gap at any slope.
+//!
+//! The airbrush sprays single pixels at random over a disc round the
+//! place, its radius four times the brush's size - eight pixels at the
+//! least - as many at a time as a sixteenth of the radius squared: about
+//! one pixel in fifty of the disc.
 
 const picture_zig = @import("picture.zig");
 const Picture = picture_zig.Picture;
@@ -112,5 +117,57 @@ pub fn line(picture: *Picture, brush: Brush, x0: i32, y0: i32, x1: i32, y1: i32,
             err += across;
             y += step_y;
         }
+    }
+}
+
+/// Numbers that look random enough for a spray: xorshift, never 0.
+pub const Random = struct {
+    state: u32 = 0x2545_F491,
+
+    pub fn next(random: *Random) u32 {
+        var value = if (random.state == 0) 1 else random.state;
+        value ^= value << 13;
+        value ^= value >> 17;
+        value ^= value << 5;
+        random.state = value;
+        return value;
+    }
+
+    /// One of 0 to `limit` - 1.
+    fn below(random: *Random, limit: u32) u32 {
+        return random.next() % limit;
+    }
+};
+
+/// How far the airbrush reaches from the place, for this brush.
+pub fn sprayRadius(brush: Brush) u32 {
+    return @max(8, brush.size * 4);
+}
+
+/// How many pixels one spray puts down, for this brush.
+pub fn sprayCount(brush: Brush) u32 {
+    const radius = sprayRadius(brush);
+    return @max(4, radius * radius / 16);
+}
+
+/// One spray of the airbrush at (`x`, `y`): `sprayCount` pixels at random
+/// within `sprayRadius` of it, those outside the picture lost.
+pub fn spray(picture: *Picture, brush: Brush, x: i32, y: i32, colour: Pixel, random: *Random, changed: *Area) void {
+    const radius = sprayRadius(brush);
+    const reach: i32 = @intCast(radius);
+    const limit = reach * reach;
+    var left = sprayCount(brush);
+    // Places in the square round the disc, those in the disc kept.
+    var tries = 2 * left;
+    while (left > 0 and tries > 0) : (tries -= 1) {
+        const dx: i32 = @as(i32, @intCast(random.below(2 * radius + 1))) - reach;
+        const dy: i32 = @as(i32, @intCast(random.below(2 * radius + 1))) - reach;
+        if (dx * dx + dy * dy > limit) continue;
+        left -= 1;
+        const px = x + dx;
+        const py = y + dy;
+        if (!picture.inside(px, py)) continue;
+        picture.set(@intCast(px), @intCast(py), colour);
+        changed.* = changed.add(.{ .min_x = px, .min_y = py, .max_x = px + 1, .max_y = py + 1 });
     }
 }

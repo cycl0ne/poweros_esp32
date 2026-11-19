@@ -25,11 +25,34 @@
 //! **Painting.** The select button paints in the foreground colour, the
 //! menu button in the background colour - the canvas takes the menu
 //! button over its box (`GA_MenuButton`), so the menus stay shut there and
-//! open anywhere else. The tools: freehand, a line along the way the
-//! pointer goes, and dotted freehand, the brush put down wherever the
-//! pointer is told to be. The brush is round or square and 1 to 32 pixels
+//! open anywhere else. The brush is round or square and 1 to 32 pixels
 //! (brush.zig), chosen in the Brush menu or with `[` and `]` - or `<`
-//! and `>`, one key on a German keyboard.
+//! and `>`, one key on a German keyboard. The tools, down the right and
+//! in the Tools menu, each with a key of its own:
+//!
+//!   - freehand (`p`), a line along the way the pointer goes, and dotted
+//!     freehand (`.`), the brush put down wherever the pointer is told to
+//!     be; the airbrush (`a`) sprays round the pointer, and keeps
+//!     spraying where it is held - the canvas tells every tick then
+//!     (`CANVAS_Ticks`);
+//!   - line (`l`), rectangle (`r`) and ellipse (`e`), pulled from where
+//!     the button goes down to where it is let go; curve (`c`), a line
+//!     pulled out and then, with a second press, bent through the
+//!     pointer; polygon (`n`), a corner at each release, closed by a
+//!     release on its first corner or on its last again, or by Return.
+//!     Rectangles, ellipses and polygons are outlines in the brush, or
+//!     filled (`F`, the button under the tools, or Tools' Filled
+//!     Shapes). A shape is drawn into the picture over what `kept` holds,
+//!     drawn again from there as it changes, and kept for undoing when it
+//!     is done (shapes.zig); Escape puts it away, Undo too;
+//!   - fill (`f`), the area of one colour pressed on (fill.zig);
+//!   - pick colour (`i`), the colour under the pointer made the
+//!     foreground, or the background with the menu button, and then the
+//!     tool before it again;
+//!   - text (`t`): a click asks for the text and its font (getfont.gadget,
+//!     the screen's font to begin with) and puts it down with its top
+//!     left there, drawn by graphics.library into a surface over the
+//!     picture's own pixels.
 //!
 //! **The colours.** palette.gadget shows 32 colours: the select button
 //! picks the foreground, the menu button the background (`PALETTE_Button`);
@@ -44,13 +67,16 @@
 //!
 //!   Project   New... (N), Quit (Q)
 //!   Edit      Undo (Z), Redo (Y), Swap Colours, Clear (K)
+//!   Tools     the tools, Filled Shapes
 //!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G)
 //!   Brush     Round, Square, Size, Smaller ([), Larger (])
 //!   Settings  Own Screen
 //!
 //! Without a menu key: `+` and `-` zoom, `[` and `]` (or `<` and `>`)
-//! size the brush, `x` swaps the colours, the cursor keys scroll. A picture that has changed is not let go - by New,
-//! Quit, Ctrl-C or the close gadget - before a requester asks.
+//! size the brush, `x` swaps the colours, the tools' letters choose them,
+//! Return ends a shape and Escape puts it away, the cursor keys scroll.
+//! A picture that has changed is not let go - by New, Quit, Ctrl-C or
+//! the close gadget - before a requester asks.
 //!
 //! Its texts are in `paint.cd`, read through `sdk.locale.Strings`.
 
@@ -78,6 +104,8 @@ const tb = sdk.gadgets.toolbutton;
 const tx = sdk.gadgets.text;
 const sr = sdk.gadgets.scroller;
 const ig = sdk.gadgets.integer;
+const sg = sdk.gadgets.string;
+const gfo = sdk.gadgets.getfont;
 const command = sdk.images.command;
 const prefs = sdk.prefs;
 const rdargs = dos.rdargs;
@@ -88,6 +116,7 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const IconBase = sdk.interface.icon.IconBase;
+const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const Screen = intuition.Screen;
@@ -98,15 +127,18 @@ const picture_zig = @import("picture.zig");
 const brush_zig = @import("brush.zig");
 const history_zig = @import("history.zig");
 const view_zig = @import("view.zig");
+const shapes = @import("shapes.zig");
+const fill_zig = @import("fill.zig");
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
 const Brush = brush_zig.Brush;
 const History = history_zig.History;
 const View = view_zig.View;
+const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.0";
+const VERSION = "1.1";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -135,6 +167,15 @@ const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
 const ID_OK = 22;
 const ID_CANCEL = 23;
+// The text's window.
+const ID_TEXT = 24;
+const ID_FONT = 25;
+
+/// The seeds a fill starts with room for; it makes more as it needs them.
+const first_seeds = 4096;
+/// How far from a polygon's first corner, in the view's pixels, a release
+/// closes it.
+const close_reach = 4;
 
 const raw_up = 0x4C;
 const raw_down = 0x4D;
@@ -145,6 +186,15 @@ const raw_left = 0x4F;
 const Tool = enum(u32) {
     freehand,
     dots,
+    line,
+    curve,
+    rectangle,
+    ellipse,
+    polygon,
+    fill,
+    airbrush,
+    pick,
+    text,
 
     const base = 300;
 
@@ -176,13 +226,14 @@ const Command = enum(u32) {
     smaller,
     larger,
     own_screen,
+    filled,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.own_screen)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.filled)) return null;
         return @enumFromInt(value);
     }
 };
@@ -207,20 +258,53 @@ const black_index = 0;
 const white_index = 1;
 
 /// The tools down the right, and the commands under them.
-const ToolEntry = struct { tool: Tool, glyph: u32, hint: Id };
+/// In the order of `Tool`, which is the Tools menu's order too.
+const ToolEntry = struct { tool: Tool, glyph: u32, hint: Id, label: Id };
 const tools = [_]ToolEntry{
-    .{ .tool = .freehand, .glyph = command.CMD_PENCIL, .hint = .MSG_TOOL_FREEHAND },
-    .{ .tool = .dots, .glyph = command.CMD_BRUSH, .hint = .MSG_TOOL_DOTS },
+    .{ .tool = .freehand, .glyph = command.CMD_PENCIL, .hint = .MSG_TOOL_FREEHAND, .label = .MSG_MENU_FREEHAND },
+    .{ .tool = .dots, .glyph = command.CMD_BRUSH, .hint = .MSG_TOOL_DOTS, .label = .MSG_MENU_DOTS },
+    .{ .tool = .line, .glyph = command.CMD_LINE, .hint = .MSG_TOOL_LINE, .label = .MSG_MENU_LINE },
+    .{ .tool = .curve, .glyph = command.CMD_CURVE, .hint = .MSG_TOOL_CURVE, .label = .MSG_MENU_CURVE },
+    .{ .tool = .rectangle, .glyph = command.CMD_RECTANGLE, .hint = .MSG_TOOL_RECTANGLE, .label = .MSG_MENU_RECTANGLE },
+    .{ .tool = .ellipse, .glyph = command.CMD_ELLIPSE, .hint = .MSG_TOOL_ELLIPSE, .label = .MSG_MENU_ELLIPSE },
+    .{ .tool = .polygon, .glyph = command.CMD_POLYGON, .hint = .MSG_TOOL_POLYGON, .label = .MSG_MENU_POLYGON },
+    .{ .tool = .fill, .glyph = command.CMD_FLOOD_FILL, .hint = .MSG_TOOL_FILL, .label = .MSG_MENU_FILL },
+    .{ .tool = .airbrush, .glyph = command.CMD_AIRBRUSH, .hint = .MSG_TOOL_AIRBRUSH, .label = .MSG_MENU_AIRBRUSH },
+    .{ .tool = .pick, .glyph = command.CMD_PICK_COLOUR, .hint = .MSG_TOOL_PICK, .label = .MSG_MENU_PICK },
+    .{ .tool = .text, .glyph = command.CMD_TEXT, .hint = .MSG_TOOL_TEXT, .label = .MSG_MENU_TEXT },
 };
-const ButtonEntry = struct { which: Command, glyph: u32, hint: Id };
+comptime {
+    for (tools, 0..) |entry, place| {
+        if (@intFromEnum(entry.tool) != place) @compileError("the tools in Tool's order");
+    }
+}
+const ButtonEntry = struct { which: Command, glyph: u32, hint: Id, kind: u32 = tb.TBKIND_PUSH };
 const buttons = [_]ButtonEntry{
+    .{ .which = .filled, .glyph = command.CMD_FILLED, .hint = .MSG_FILLED_HINT, .kind = tb.TBKIND_TOGGLE },
     .{ .which = .undo, .glyph = command.CMD_UNDO, .hint = .MSG_UNDO_HINT },
     .{ .which = .redo, .glyph = command.CMD_REDO, .hint = .MSG_REDO_HINT },
     .{ .which = .zoom_in, .glyph = command.CMD_ZOOM_IN, .hint = .MSG_ZOOM_IN_HINT },
     .{ .which = .zoom_out, .glyph = command.CMD_ZOOM_OUT, .hint = .MSG_ZOOM_OUT_HINT },
 };
-const undo_button = 0;
-const redo_button = 1;
+const filled_button = 0;
+const undo_button = 1;
+const redo_button = 2;
+
+/// The keys that choose a tool.
+const ToolKey = struct { key: u32, tool: Tool };
+const tool_keys = [_]ToolKey{
+    .{ .key = 'p', .tool = .freehand },
+    .{ .key = '.', .tool = .dots },
+    .{ .key = 'l', .tool = .line },
+    .{ .key = 'c', .tool = .curve },
+    .{ .key = 'r', .tool = .rectangle },
+    .{ .key = 'e', .tool = .ellipse },
+    .{ .key = 'n', .tool = .polygon },
+    .{ .key = 'f', .tool = .fill },
+    .{ .key = 'a', .tool = .airbrush },
+    .{ .key = 'i', .tool = .pick },
+    .{ .key = 't', .tool = .text },
+};
 
 // --- the menus ---------------------------------------------------------------
 
@@ -261,6 +345,26 @@ fn sizeItem(comptime place: usize) MenuEntry {
     } };
 }
 
+/// A tool's item: one of the Tools menu's first items, each ruling the
+/// others out.
+fn toolItem(comptime entry: ToolEntry) MenuEntry {
+    const all: u32 = (1 << tools.len) - 1;
+    const place = @intFromEnum(entry.tool);
+    return .{ .menu = .{
+        .type = mn.NM_ITEM,
+        .label = strings.builtin(entry.label),
+        .flags = mn.CHECKIT,
+        .mutual_exclude = all & ~@as(u32, 1 << place),
+        .user_data = @ptrFromInt(entry.tool.id()),
+    }, .text = entry.label };
+}
+
+fn toolItems() [tools.len]MenuEntry {
+    var made: [tools.len]MenuEntry = undefined;
+    inline for (tools, 0..) |entry, place| made[place] = toolItem(entry);
+    return made;
+}
+
 const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
 
 const menus = [_]MenuEntry{
@@ -274,6 +378,10 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_SWAP, null, .swap),
     item(.MSG_MENU_CLEAR, "K", .clear),
+    menuTitle(.MSG_MENU_TOOLS),
+} ++ toolItems() ++ [_]MenuEntry{
+    bar,
+    toggleItem(.MSG_MENU_FILLED, null, .filled),
     menuTitle(.MSG_MENU_VIEW),
     item(.MSG_MENU_ZOOM_IN, "+", .zoom_in),
     item(.MSG_MENU_ZOOM_OUT, "-", .zoom_out),
@@ -302,6 +410,8 @@ fn sizeItems() [size_labels.len]MenuEntry {
 
 /// What the menus' check marks and the undo items show, as last set.
 const MenuState = struct {
+    tool: Tool,
+    filled: bool,
     round: bool,
     size: u32,
     grid: bool,
@@ -337,6 +447,7 @@ const Gui = struct {
     ground: Pixel = 0xFFA0A0A0,
     shown_menus: ?MenuState = null,
     shown_undo: ?[2]bool = null,
+    shown_filled: ?bool = null,
 
     fn close(gui: *Gui, ib: *IntuitionBase) void {
         if (gui.strip) |strip| {
@@ -359,6 +470,24 @@ const Stroke = struct {
     colour: Pixel,
     last: ?[2]i32 = null,
     changed: Area = Area.none,
+};
+
+/// A shape being drawn: drawn into the picture over what `kept` holds,
+/// and drawn again from there each time it changes, until it is ended -
+/// kept for undoing - or put away.
+const Drawing = struct {
+    tool: Tool,
+    colour: Pixel,
+    /// Its corners: a line's, a rectangle's and an ellipse's two, a
+    /// curve's two ends and its bend, a polygon's as they are put down.
+    points: [shapes.max_points]Point = undefined,
+    count: usize = 0,
+    /// A curve's line is down and waits to be bent.
+    bending: bool = false,
+    /// A polygon is closed: drawn whole, filled when that is wanted.
+    closed: bool = false,
+    /// What it covers in the picture now.
+    shown: Area = Area.none,
 };
 
 const App = struct {
@@ -384,6 +513,18 @@ const App = struct {
     /// The foreground's place in the palette.
     foreground_index: u32 = black_index,
     stroke: ?Stroke = null,
+    drawing: ?Drawing = null,
+    /// The button is down on the picture.
+    pressing: bool = false,
+    /// Shapes drawn filled.
+    filled: bool = false,
+    /// The tool the colour picker goes back to.
+    before_pick: Tool = .freehand,
+    random: brush_zig.Random = .{},
+    /// The text tool's last text and its font.
+    typed: [256:0]u8 = @splat(0),
+    font_name: [108:0]u8 = @splat(0),
+    font_size: u32 = 24,
     /// Where the pointer was told to be while painting, for the status.
     at: ?[2]i32 = null,
 
@@ -436,6 +577,7 @@ const App = struct {
         app.kept.fill(app.background);
         app.changed = false;
         app.stroke = null;
+        app.drawing = null;
         app.view.left = 0;
         app.view.top = 0;
         app.view.fit(width, height);
@@ -470,8 +612,29 @@ const App = struct {
         _ = app.ib.GetAttr(cv.CANVAS_X, gui.view, &x);
         _ = app.ib.GetAttr(cv.CANVAS_Y, gui.view, &y);
         _ = app.ib.GetAttr(cv.CANVAS_Button, gui.view, &button);
-        const at = app.view.toPicture(@truncate(@as(isize, @bitCast(x))), @truncate(@as(isize, @bitCast(y))));
-        if (app.stroke == null) app.stroke = .{ .colour = if (button == cv.CANVAS_MENU) app.background else app.foreground };
+        const under = app.view.toPicture(@truncate(@as(isize, @bitCast(x))), @truncate(@as(isize, @bitCast(y))));
+        // Far past the picture is as good as just past it.
+        const at = Point{ @max(-max_side, @min(2 * max_side, under[0])), @max(-max_side, @min(2 * max_side, under[1])) };
+        const first = !app.pressing;
+        app.pressing = !final;
+        const menu_button = button == cv.CANVAS_MENU;
+        const colour = if (menu_button) app.background else app.foreground;
+        app.at = at;
+        switch (app.tool) {
+            .freehand, .dots, .airbrush => app.strokeTo(at, colour, final),
+            .line, .curve, .rectangle, .ellipse => app.dragShape(at, colour, first, final),
+            .polygon => app.polygonTo(at, colour, first, final),
+            .fill => if (first) app.floodAt(at, colour),
+            .pick => if (final) app.pickAt(at, menu_button),
+            .text => if (final) app.placeText(at, colour),
+        }
+        if (final) app.at = null;
+    }
+
+    /// The freehand tools and the airbrush, from where the pointer was
+    /// to where it is.
+    fn strokeTo(app: *App, at: Point, colour: Pixel, final: bool) void {
+        if (app.stroke == null) app.stroke = .{ .colour = colour };
         const stroke = &app.stroke.?;
         var changed = Area.none;
         switch (app.tool) {
@@ -479,13 +642,223 @@ const App = struct {
                 brush_zig.line(&app.picture, app.brush, last[0], last[1], at[0], at[1], stroke.colour, &changed)
             else
                 brush_zig.stamp(&app.picture, app.brush, at[0], at[1], stroke.colour, &changed),
-            .dots => brush_zig.stamp(&app.picture, app.brush, at[0], at[1], stroke.colour, &changed),
+            .airbrush => brush_zig.spray(&app.picture, app.brush, at[0], at[1], stroke.colour, &app.random, &changed),
+            else => brush_zig.stamp(&app.picture, app.brush, at[0], at[1], stroke.colour, &changed),
         }
         stroke.last = at;
         stroke.changed = stroke.changed.add(changed);
-        app.at = at;
         app.show(changed);
         if (final) app.endStroke();
+    }
+
+    /// A line, a rectangle or an ellipse pulled from where the button
+    /// went down to where it is; a curve's line the same, and then, on
+    /// the next press, its bend.
+    fn dragShape(app: *App, at: Point, colour: Pixel, first: bool, final: bool) void {
+        if (app.drawing) |*drawing| if (drawing.bending) {
+            drawing.points[2] = at;
+            drawing.count = 3;
+            app.drawShape();
+            if (final) app.endShape();
+            return;
+        };
+        if (first or app.drawing == null) {
+            app.endShape();
+            app.drawing = .{ .tool = app.tool, .colour = colour, .count = 2 };
+            app.drawing.?.points[0] = at;
+        }
+        const drawing = &app.drawing.?;
+        drawing.points[1] = at;
+        app.drawShape();
+        if (!final) return;
+        // A curve's line waits to be bent - unless it is a single point.
+        const points = drawing.points;
+        if (drawing.tool == .curve and (points[0][0] != points[1][0] or points[0][1] != points[1][1])) {
+            drawing.bending = true;
+            return;
+        }
+        app.endShape();
+    }
+
+    /// A polygon's corners: each press starts an edge from the last
+    /// corner, its release puts the edge's end down. Let go on the first
+    /// corner, or on the last one again, it is closed and done.
+    fn polygonTo(app: *App, at: Point, colour: Pixel, first: bool, final: bool) void {
+        if (app.drawing == null) {
+            if (!first) return;
+            app.drawing = .{ .tool = .polygon, .colour = colour, .count = 2 };
+            app.drawing.?.points[0] = at;
+            app.drawing.?.points[1] = at;
+        } else if (first) {
+            const drawing = &app.drawing.?;
+            if (drawing.count < drawing.points.len) {
+                drawing.points[drawing.count] = at;
+                drawing.count += 1;
+            }
+        }
+        const drawing = &app.drawing.?;
+        drawing.points[drawing.count - 1] = at;
+        app.drawShape();
+        if (!final or drawing.count < 3) return;
+        const reach: i32 = @intCast(close_reach / app.view.zoom);
+        const end = drawing.points[drawing.count - 1];
+        if (near(end, drawing.points[0], reach) or near(end, drawing.points[drawing.count - 2], reach)) {
+            // The corner let go of is that one.
+            drawing.count -= 1;
+            app.endShape();
+        }
+    }
+
+    /// The shape drawn again: the picture as `kept` has it where it was,
+    /// and the shape as it is now.
+    fn drawShape(app: *App) void {
+        const drawing = if (app.drawing) |*drawing| drawing else return;
+        app.picture.copyArea(&app.kept, drawing.shown);
+        var drawn = Area.none;
+        const points = drawing.points[0..drawing.count];
+        const picture = &app.picture;
+        const colour = drawing.colour;
+        switch (drawing.tool) {
+            .rectangle => shapes.rectangle(picture, app.brush, points[0], points[1], colour, app.filled, &drawn),
+            .ellipse => shapes.ellipse(picture, app.brush, points[0], points[1], colour, app.filled, &drawn),
+            .curve => if (points.len == 3)
+                shapes.curve(picture, app.brush, points[0], points[1], points[2], colour, &drawn)
+            else
+                brush_zig.line(picture, app.brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
+            .polygon => if (drawing.closed)
+                shapes.polygon(picture, app.brush, points, colour, app.filled, &drawn)
+            else
+                shapes.polyline(picture, app.brush, points, colour, &drawn),
+            else => brush_zig.line(picture, app.brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
+        }
+        app.show(drawing.shown.add(drawn));
+        drawing.shown = drawn;
+    }
+
+    /// The shape done: a polygon closed, and what it covers kept for
+    /// undoing.
+    fn endShape(app: *App) void {
+        if (app.drawing) |*drawing| if (drawing.tool == .polygon and !drawing.closed) {
+            drawing.closed = true;
+            app.drawShape();
+        };
+        const drawing = app.drawing orelse return;
+        app.drawing = null;
+        if (drawing.shown.isEmpty()) return;
+        app.changed = true;
+        if (!app.history.record(&app.picture, &app.kept, drawing.shown)) app.tell(.MSG_NO_UNDO);
+    }
+
+    /// The shape put away, the picture as it was. False with none.
+    fn cancelShape(app: *App) bool {
+        const drawing = app.drawing orelse return false;
+        app.drawing = null;
+        app.picture.copyArea(&app.kept, drawing.shown);
+        app.show(drawing.shown);
+        return true;
+    }
+
+    /// The press ended without its release - the window lost the input:
+    /// what was being dragged ends where it is.
+    fn letGo(app: *App) void {
+        if (!app.pressing) return;
+        app.pressing = false;
+        app.at = null;
+        app.endStroke();
+        if (app.drawing) |drawing| {
+            if (drawing.tool != .polygon and !drawing.bending) app.endShape();
+        }
+    }
+
+    /// The area of one colour at `at` filled.
+    fn floodAt(app: *App, at: Point, colour: Pixel) void {
+        const memory = app.sys.AllocVec(first_seeds * @sizeOf(fill_zig.Seed), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_FILL_SHORT);
+            return;
+        };
+        var seeds = fill_zig.Seeds{ .items = @ptrCast(@alignCast(memory)), .capacity = first_seeds, .more = moreSeeds, .context = app.sys };
+        var changed = Area.none;
+        const whole = fill_zig.flood(&app.picture, at[0], at[1], colour, &seeds, &changed);
+        app.sys.FreeVec(@ptrCast(seeds.items));
+        app.changedArea(changed);
+        if (!whole) app.tell(.MSG_FILL_SHORT);
+    }
+
+    /// The colour under `at` taken as the foreground, or with the menu
+    /// button the background; the tool before the picker chosen again.
+    fn pickAt(app: *App, at: Point, menu_button: bool) void {
+        if (app.picture.inside(at[0], at[1])) {
+            const colour = app.picture.get(@intCast(at[0]), @intCast(at[1]));
+            if (menu_button) app.background = colour else {
+                app.foreground = colour;
+                // The palette shows it when it has it.
+                for (colours, 0..) |offered, place| if (offered == colour) {
+                    app.foreground_index = @intCast(place);
+                    if (app.ui()) |gui| _ = app.ib.SetGadgetAttrsTagList(gui.palette, gui.window, &[_]TagItem{ .{ .tag = pa.PALETTE_Color, .data = place }, .{} });
+                    break;
+                };
+            }
+            app.drawColours();
+        }
+        app.chooseTool(app.before_pick);
+    }
+
+    /// A text asked for and put down with its top left at `at`.
+    fn placeText(app: *App, at: Point, colour: Pixel) void {
+        if (!app.askText()) return;
+        var length: u32 = 0;
+        while (app.typed[length] != 0) length += 1;
+        if (length == 0) return;
+        const lib = app.sys.OpenLibrary(sdk.diskfont.DISKFONTNAME, 0) orelse {
+            app.tell(.MSG_NO_FONT);
+            return;
+        };
+        defer app.sys.CloseLibrary(lib);
+        const df: *DiskfontBase = @ptrCast(lib);
+        const font = df.OpenDiskFont(&.{ .name = &app.font_name, .y_size = @intCast(@min(app.font_size, 0xFFFF)) }) orelse {
+            app.tell(.MSG_NO_FONT);
+            return;
+        };
+        defer app.gb.CloseFont(font);
+        // A surface over the picture's own pixels, which graphics draws
+        // the text into.
+        var surface = sdk.rtg.Surface{
+            .pixels = @ptrCast(app.picture.pixels),
+            .width = app.picture.width,
+            .height = app.picture.height,
+            .pitch = app.picture.width * @sizeOf(Pixel),
+            .size_bytes = Picture.bytesFor(app.picture.width, app.picture.height),
+            .format = .bgra32,
+        };
+        const rp = app.gb.CreateRastPortTagList(&[_]TagItem{
+            .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+            .{ .tag = graphics.RPTAG_APen, .data = colour },
+            .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 },
+            .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) },
+            .{},
+        }) orelse return;
+        defer app.gb.FreeRastPort(rp);
+        var baseline: u32 = 0;
+        var height: u32 = 0;
+        app.gb.GetRPAttrs(rp, &[_]TagItem{
+            .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) },
+            .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&height) },
+            .{},
+        });
+        var extent = graphics.TextExtent{};
+        app.gb.TextExtent(rp, &app.typed, length, &extent);
+        const line_y = at[1] + @as(i32, @intCast(baseline));
+        app.gb.Move(rp, at[0], line_y);
+        app.gb.Text(rp, &app.typed, length);
+        // What the letters reach, and a margin for what leans past it.
+        const margin: i32 = @intCast(height / 4 + 2);
+        const area = Area{
+            .min_x = at[0] + @min(extent.extent.min_x, 0) - margin,
+            .min_y = line_y + @min(extent.extent.min_y, -@as(i32, @intCast(baseline))) - margin,
+            .max_x = at[0] + @max(extent.extent.max_x, extent.width) + margin,
+            .max_y = line_y + @max(extent.extent.max_y, @as(i32, @intCast(height -| baseline))) + margin,
+        };
+        app.changedArea(area.clip(app.picture.width, app.picture.height));
     }
 
     /// The stroke over: what it changed kept for undoing.
@@ -651,11 +1024,13 @@ const App = struct {
 
     fn menuState(app: *const App) MenuState {
         return .{
+            .tool = app.tool,
+            .filled = app.filled,
             .round = app.brush.shape == .round,
             .size = app.brush.size,
             .grid = app.view.grid,
             .own = app.own,
-            .can_undo = app.history.canUndo(),
+            .can_undo = app.history.canUndo() or app.drawing != null,
             .can_redo = app.history.canRedo(),
         };
     }
@@ -683,10 +1058,15 @@ const App = struct {
         _ = app.ib.ResetMenuStrip(gui.window, strip);
     }
 
-    /// Undo and Redo's buttons disabled while there is nothing to do.
+    /// Undo and Redo's buttons disabled while there is nothing to do, and
+    /// the filled shapes' button as they are.
     fn syncButtons(app: *App) void {
         const gui = app.ui() orelse return;
-        const state = [2]bool{ app.history.canUndo(), app.history.canRedo() };
+        if (gui.shown_filled == null or gui.shown_filled.? != app.filled) {
+            gui.shown_filled = app.filled;
+            _ = app.ib.SetGadgetAttrsTagList(gui.command_buttons[filled_button], gui.window, &[_]TagItem{ .{ .tag = tb.TOOLBUTTON_Checked, .data = @intFromBool(app.filled) }, .{} });
+        }
+        const state = [2]bool{ app.history.canUndo() or app.drawing != null, app.history.canRedo() };
         if (gui.shown_undo) |shown| {
             if (shown[0] == state[0] and shown[1] == state[1]) return;
         }
@@ -696,13 +1076,18 @@ const App = struct {
         }
     }
 
-    /// The tool chosen, its button down and the others up.
+    /// The tool chosen, its button down and the others up; a shape
+    /// being drawn is done first. The airbrush keeps spraying where the
+    /// pointer is held, so the picture tells it at every tick then.
     fn chooseTool(app: *App, tool: Tool) void {
+        app.endShape();
+        if (tool == .pick and app.tool != .pick) app.before_pick = app.tool;
         app.tool = tool;
         const gui = app.ui() orelse return;
         for (tools, gui.tool_buttons) |entry, button| {
             _ = app.ib.SetGadgetAttrsTagList(button, gui.window, &[_]TagItem{ .{ .tag = tb.TOOLBUTTON_Checked, .data = @intFromBool(entry.tool == tool) }, .{} });
         }
+        _ = app.ib.SetGadgetAttrsTagList(gui.view, gui.window, &[_]TagItem{ .{ .tag = cv.CANVAS_Ticks, .data = @intFromBool(tool == .airbrush) }, .{} });
     }
 
     // --- the commands ---------------------------------------------------------
@@ -713,6 +1098,10 @@ const App = struct {
         const strip = gui.strip orelse return true;
         const picked_item = app.ib.ItemAddress(strip, number) orelse return true;
         const value = @intFromPtr(mn.GTMENUITEM_USERDATA(picked_item));
+        if (Tool.of(value)) |tool| {
+            app.chooseTool(tool);
+            return true;
+        }
         if (value >= size_base and value < size_base + brush_zig.sizes.len) {
             app.brush.size = brush_zig.sizes[value - size_base];
             return true;
@@ -726,6 +1115,7 @@ const App = struct {
                 app.whole = true;
             },
             .own_screen => app.switch_wanted = checked != app.own,
+            .filled => app.filled = checked,
             else => return app.perform(which),
         }
         return true;
@@ -733,6 +1123,13 @@ const App = struct {
 
     /// A command, from a menu, a button or a key. False to end.
     fn perform(app: *App, which: Command) bool {
+        // A shape being drawn: Undo puts it away, what changes the picture
+        // ends it first.
+        switch (which) {
+            .undo => if (app.cancelShape()) return true,
+            .new, .quit, .redo, .clear => app.endShape(),
+            else => {},
+        }
         switch (which) {
             .new => if (app.mayLeave()) {
                 if (app.askSize()) |size| {
@@ -771,6 +1168,12 @@ const App = struct {
             .smaller => app.brush = app.brush.stepped(false),
             .larger => app.brush = app.brush.stepped(true),
             .own_screen => app.switch_wanted = true,
+            .filled => app.filled = !app.filled,
+        }
+        // A shape being drawn follows the brush and the filling.
+        switch (which) {
+            .round, .square, .smaller, .larger, .filled => app.drawShape(),
+            else => {},
         }
         return true;
     }
@@ -797,10 +1200,18 @@ const App = struct {
         switch (code) {
             '+', '=' => app.zoomTo(app.view.nextZoom(true)),
             '-' => app.zoomTo(app.view.nextZoom(false)),
-            '[', '<' => app.brush = app.brush.stepped(false),
-            ']', '>' => app.brush = app.brush.stepped(true),
+            '[', '<' => _ = app.perform(.smaller),
+            ']', '>' => _ = app.perform(.larger),
             'x', 'X' => _ = app.perform(.swap),
-            else => {},
+            'F' => _ = app.perform(.filled),
+            // Return ends a polygon or a curve as it is, Escape puts it
+            // away.
+            '\r' => app.endShape(),
+            0x1B => _ = app.cancelShape(),
+            else => for (tool_keys) |pair| if (pair.key == code) {
+                app.chooseTool(pair.tool);
+                break;
+            },
         }
     }
 
@@ -936,6 +1347,127 @@ const App = struct {
         }
     }
 
+    /// The text and its font, asked in a window of its own: false when
+    /// it was closed or cancelled. What is typed, and the font, are kept
+    /// for the next time.
+    fn askText(app: *App) bool {
+        const gui = app.ui() orelse return false;
+        const sys = app.sys;
+        const string_lib = sys.OpenLibrary(sg.STRING_LIBRARY, 0) orelse return false;
+        defer sys.CloseLibrary(string_lib);
+        const font_lib = sys.OpenLibrary(gfo.GETFONT_LIBRARY, 0) orelse return false;
+        defer sys.CloseLibrary(font_lib);
+        const ib = app.ib;
+        const field = ib.NewObjectTagList(null, sg.STRING_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_TEXT },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = gc.STRINGA_MaxChars, .data = app.typed.len },
+            .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(&app.typed) },
+            .{},
+        });
+        const font = ib.NewObjectTagList(null, gfo.GETFONT_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_FONT },
+            .{ .tag = gfo.GETFONT_TitleText, .data = @intFromPtr(app.text.get(.MSG_FONT_TITLE)) },
+            .{ .tag = gfo.GETFONT_Name, .data = @intFromPtr(&app.font_name) },
+            .{ .tag = gfo.GETFONT_Size, .data = app.font_size },
+            .{},
+        });
+        const answers = [2]?*Object{ textButton(ib, app.text.get(.MSG_OK), ID_OK), textButton(ib, app.text.get(.MSG_CANCEL), ID_CANCEL) };
+        if (field == null or font == null or answers[0] == null or answers[1] == null) {
+            for ([_]?*Object{ field, font } ++ answers) |made| ib.DisposeObject(made);
+            return false;
+        }
+        const row = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[0]) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[1]) },
+            .{},
+        }) orelse {
+            for ([_]?*Object{ field, font } ++ answers) |made| ib.DisposeObject(made);
+            return false;
+        };
+        const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(field) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_TEXT)) },
+            .{ .tag = lg.CHILDA_MinWidth, .data = 240 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(font) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_FONT)) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(row) },
+            .{},
+        }) orelse {
+            ib.DisposeObject(row);
+            ib.DisposeObject(field);
+            ib.DisposeObject(font);
+            return false;
+        };
+        const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+            screenTag(gui),
+            .{ .tag = wn.WA_Title, .data = @intFromPtr(app.text.get(.MSG_TEXT_TITLE)) },
+            .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
+            .{ .tag = wn.WA_AutoAdjust, .data = 1 },
+            .{ .tag = wn.WA_CloseGadget, .data = 1 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_DepthGadget, .data = 1 },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_ACTIVEWINDOW },
+            .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+            .{},
+        }) orelse {
+            ib.DisposeObject(layout);
+            return false;
+        };
+        defer ib.DisposeObject(object);
+        var open = wc.WmOpen{};
+        if (ib.SendMessage(object, @ptrCast(&open)) == 0) return false;
+        const window: *Window = @ptrFromInt(windowOf(ib, object));
+
+        var signal: usize = 0;
+        _ = ib.GetAttr(wc.WINDOWA_SigMask, object, &signal);
+        var code: u32 = 0;
+        var handle = wc.WmHandleInput{ .code = &code };
+        while (true) {
+            _ = sys.Wait(@truncate(signal));
+            while (true) {
+                const word = ib.SendMessage(object, @ptrCast(&handle));
+                if (word == wc.WMHI_LASTMSG) break;
+                switch (word & wc.WMHI_CLASSMASK) {
+                    wc.WMHI_CLOSEWINDOW => return false,
+                    wc.WMHI_ACTIVE => _ = ib.ActivateGadget(field.?, window, null),
+                    wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
+                        ID_CANCEL => return false,
+                        ID_OK, ID_TEXT => {
+                            app.keepText(field.?, font.?);
+                            return true;
+                        },
+                        else => {},
+                    },
+                    wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
+                        '\r' => {
+                            app.keepText(field.?, font.?);
+                            return true;
+                        },
+                        0x1B => return false,
+                        else => {},
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
+    /// What the text window's fields say, kept.
+    fn keepText(app: *App, field: *Object, font: *Object) void {
+        var value: usize = 0;
+        if (app.ib.GetAttr(gc.STRINGA_TextVal, field, &value) != 0 and value != 0) copyName(&app.typed, @ptrFromInt(value));
+        value = 0;
+        if (app.ib.GetAttr(gfo.GETFONT_Name, font, &value) != 0 and value != 0) copyName(&app.font_name, @ptrFromInt(value));
+        value = 0;
+        if (app.ib.GetAttr(gfo.GETFONT_Size, font, &value) != 0 and value != 0) app.font_size = @truncate(value);
+    }
+
     // --- the window's messages ------------------------------------------------
 
     /// Everything the window has to say. False to end.
@@ -964,6 +1496,13 @@ const App = struct {
                     else => |id| {
                         if (Tool.of(id)) |tool| {
                             app.chooseTool(tool);
+                        } else if (id == Command.filled.id()) {
+                            // The button has turned itself.
+                            var on: usize = 0;
+                            _ = app.ib.GetAttr(tb.TOOLBUTTON_Checked, gui.command_buttons[filled_button], &on);
+                            app.filled = on != 0;
+                            gui.shown_filled = app.filled;
+                            app.drawShape();
                         } else if (Command.of(id)) |which| {
                             if (!app.perform(which)) return false;
                         }
@@ -984,6 +1523,7 @@ const App = struct {
                     if (shifted) app.scrollBy(@as(i32, notches) * step, 0) else app.scrollBy(0, @as(i32, notches) * step);
                 },
                 wc.WMHI_NEWSIZE => app.fitView(),
+                wc.WMHI_INACTIVE => app.letGo(),
                 else => {},
             }
             if (app.switch_wanted) return true;
@@ -1013,6 +1553,7 @@ const App = struct {
     /// when it cannot be made on either.
     fn switchScreen(app: *App) bool {
         const to = !app.own;
+        app.letGo();
         app.endStroke();
         if (app.gui) |*gui| gui.close(app.ib);
         app.gui = null;
@@ -1061,6 +1602,11 @@ const App = struct {
         const info = ib.GetScreenDrawInfo(screen);
         gui.draw_info = info;
         gui.ground = info.pens[sc.BACKGROUNDPEN];
+        // The text tool's font is the screen's until another is chosen.
+        if (app.font_name[0] == 0) {
+            const name: [*:0]const u8 = if (info.font) |font| font.node.name orelse graphics.POSPAZNAME else graphics.POSPAZNAME;
+            copyName(&app.font_name, name);
+        }
 
         // The pictures of the tools and the commands.
         for (tools, 0..) |entry, place| gui.images[place] = glyph(ib, entry.glyph);
@@ -1070,7 +1616,7 @@ const App = struct {
         // takes it.
         var made: [tools.len + buttons.len + 4]?*Object = @splat(null);
         for (tools, 0..) |entry, place| made[place] = toolButton(ib, entry.tool.id(), gui.images[place], app.text.get(entry.hint), tb.TBKIND_TOGGLE);
-        for (buttons, tools.len..) |entry, place| made[place] = toolButton(ib, entry.which.id(), gui.images[place], app.text.get(entry.hint), tb.TBKIND_PUSH);
+        for (buttons, tools.len..) |entry, place| made[place] = toolButton(ib, entry.which.id(), gui.images[place], app.text.get(entry.hint), entry.kind);
         const others = tools.len + buttons.len;
         made[others] = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_VIEW },
@@ -1206,7 +1752,7 @@ const App = struct {
             .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
             .{ .tag = wn.WA_SizeGadget, .data = 1 },
             .{ .tag = wn.WA_Activate, .data = 1 },
-            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEWHEEL },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_INACTIVEWINDOW },
             .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
             // The bars tell the window as they move, and as they are let go.
             .{ .tag = wc.WINDOWA_VertScroller, .data = @intFromPtr(&[_]TagItem{
@@ -1253,6 +1799,34 @@ const App = struct {
         return true;
     }
 };
+
+/// A C string copied into a buffer, cut to fit.
+fn copyName(into: anytype, from: [*:0]const u8) void {
+    var at: usize = 0;
+    while (at < into.len and from[at] != 0) : (at += 1) into[at] = from[at];
+    into[at] = 0;
+}
+
+/// Whether two places are within `reach` of each other, across and down.
+fn near(a: Point, b: Point, reach: i32) bool {
+    const across = a[0] - b[0];
+    const down = a[1] - b[1];
+    return across >= -reach and across <= reach and down >= -reach and down <= reach;
+}
+
+/// A fill's seeds out of room: a stack twice the size, with exec's
+/// memory (`context` is exec).
+fn moreSeeds(seeds: *fill_zig.Seeds) bool {
+    const sys: *ExecBase = @ptrCast(@alignCast(seeds.context orelse return false));
+    const capacity = seeds.capacity * 2;
+    const memory = sys.AllocVec(capacity * @sizeOf(fill_zig.Seed), exec.MEMF_ANY) orelse return false;
+    const items: [*]fill_zig.Seed = @ptrCast(@alignCast(memory));
+    @memcpy(items[0..seeds.len], seeds.items[0..seeds.len]);
+    sys.FreeVec(@ptrCast(seeds.items));
+    seeds.items = items;
+    seeds.capacity = capacity;
+    return true;
+}
 
 /// The tag that puts a window on the GUI's screen.
 fn screenTag(gui: *const Gui) TagItem {
@@ -1313,9 +1887,12 @@ fn integerField(ib: *IntuitionBase, id: u32, value: u32) ?*Object {
 /// A check mark's item set from what Paint is doing.
 fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
     const value = @intFromPtr(mn.GTMENUITEM_USERDATA(menu_item));
-    const on: ?bool = if (value >= size_base and value < size_base + brush_zig.sizes.len)
+    const on: ?bool = if (Tool.of(value)) |tool|
+        tool == state.tool
+    else if (value >= size_base and value < size_base + brush_zig.sizes.len)
         brush_zig.sizes[value - size_base] == state.size
     else if (Command.of(value)) |which| switch (which) {
+        .filled => state.filled,
         .round => state.round,
         .square => !state.round,
         .grid => state.grid,
@@ -1332,7 +1909,7 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
 }
 
 fn sameState(a: MenuState, b: MenuState) bool {
-    return a.round == b.round and a.size == b.size and a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo;
+    return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo;
 }
 
 /// Whether the text made and the C string are the same.

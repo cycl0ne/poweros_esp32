@@ -34,9 +34,9 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
   its middle on a dark ground; one larger is scrolled with the scroll
   bars in the window's border, with the wheel (Shift and the wheel go
   across) or with the cursor keys.
-- **The tools** are down the right: freehand and dotted freehand, then
-  Undo and Redo, then Zoom In and Zoom Out. A tool shows a hint when the
-  pointer rests on it.
+- **The tools** are down the right, two to a row, then the filled
+  shapes' button, Undo and Redo, and Zoom In and Zoom Out. A tool shows
+  a hint when the pointer rests on it.
 - **The colours** are along the bottom: the two in use at the left - the
   foreground in front, the background behind it - and 32 to pick from.
 - **The status line** says the picture's size, the zoom and the brush's
@@ -48,14 +48,39 @@ The select button paints in the foreground colour, the menu button in
 the background colour. Over the picture the menu button paints; the
 menus open with it anywhere else in the window or the screen's bar.
 
-- **Freehand** draws a line along the way the pointer goes, without
-  gaps however fast it moves.
-- **Dotted freehand** puts the brush down wherever the pointer is told
-  to be, so a fast stroke leaves dots spread apart.
-
 The brush is round or square, 1, 2, 3, 4, 6, 8, 12, 16, 24 or 32 pixels
 across: chosen in the Brush menu, or a size smaller and larger with `[`
 and `]` - or `<` and `>`, which are one key on a German keyboard.
+
+## The tools
+
+A tool is chosen with its button, in the Tools menu, or with its key.
+
+| Tool | Key | Does |
+|---|---|---|
+| Freehand | `p` | a line along the way the pointer goes, without gaps however fast it moves |
+| Dotted freehand | `.` | the brush wherever the pointer is told to be, so a fast stroke leaves dots spread apart |
+| Line | `l` | a straight line from where the button goes down to where it is let go |
+| Curve | `c` | a line pulled out as with Line; then a second press bends it, the curve passing through the pointer half way along |
+| Rectangle | `r` | from one corner to the other |
+| Ellipse | `e` | in the box from one corner to the other |
+| Polygon | `n` | a corner at each release - a click, or a drag from the last corner; let go on the first corner, or on the last one again, it closes |
+| Fill | `f` | the area of one colour that is pressed on, as far as the same colour reaches side by side and up and down |
+| Airbrush | `a` | a spray of single pixels round the pointer, for as long as the button is held, moving or not; it reaches four times the brush's size |
+| Pick colour | `i` | the colour under the pointer becomes the foreground - with the menu button the background - and the tool before it is chosen again |
+| Text | `t` | a click asks for the text and its font, and puts it down with its top left there |
+
+Lines, curves and the outlines of rectangles, ellipses and polygons are
+drawn with the brush. **Filled shapes** - the button under the tools,
+Tools → Filled Shapes, or `F` - fills rectangles, ellipses and polygons
+instead. While a shape is being drawn it follows the pointer, the brush
+and the filling; Return ends a curve or a polygon as it is, and Escape
+or Undo puts it away.
+
+The text's window has the text and its font: the screen's font at 24
+rows to begin with, and another chosen with the button beside it.
+Return takes them, Escape leaves the picture as it is; both are kept for
+the next text.
 
 ## Colours
 
@@ -86,7 +111,7 @@ Edit → Clear makes the whole picture the background colour.
 
 ## Undo
 
-Every stroke and every clear can be undone, with Edit →
+Every stroke, shape, fill, text and clear can be undone, with Edit →
 Undo or its tool, and done again with Redo. Paint keeps as many changes
 as fit in a block three pictures' worth large - or half the memory free,
 when that is less; the oldest go first. A change larger than the whole
@@ -100,6 +125,7 @@ The letters are the items' keys, pressed with the right command key.
 |---|---|
 | Project | New... (N), Quit (Q) |
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
+| Tools | the tools; Filled Shapes |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G) |
 | Brush | Round, Square, Size, Smaller ([), Larger (]) |
 | Settings | Own Screen |
@@ -111,4 +137,7 @@ The letters are the items' keys, pressed with the right command key.
 | `+`, `-` | zoom in, out |
 | `[`, `]` or `<`, `>` | a brush a size smaller, larger |
 | `x` | swaps the foreground and background colours |
+| a tool's letter | chooses it - see [The tools](#the-tools) |
+| `F` | filled shapes on and off |
+| Return, Escape | end a curve or polygon as it is, put it away |
 | cursor keys | scroll the picture |

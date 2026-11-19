@@ -1,0 +1,247 @@
+// SPDX-License-Identifier: MIT
+//! Paint's shapes: rectangles, ellipses, curves and polygons, drawn into
+//! the picture with the brush as outlines or filled in the colour.
+//!
+//! An outline is the brush stamped along it (brush.zig), so a shape's line
+//! is as wide and as round as the brush; a filled shape takes no brush and
+//! covers its outline's one-pixel path too, so it meets an outline drawn
+//! round it without a gap.
+//!
+//! A rectangle and an ellipse are given by two opposite corners of their
+//! box, both inside it. The ellipse is the pixels whose middles lie in it,
+//! worked out a row at a time in whole numbers from twice the distances
+//! (so a box of an even size, whose middle falls between pixels, is
+//! exact); its outline is the pixels of each row that lie at its ends or
+//! have no neighbour above or below in the shape. A curve runs from its
+//! first point to its last and passes through the third, its bend, half
+//! way along: a quadratic curve, drawn as short lines. A polygon is
+//! filled by its pixels' middles, a row at a time, with the even-odd
+//! rule: a part enclosed twice by a crossing outline stays open.
+
+const picture_zig = @import("picture.zig");
+const brush_zig = @import("brush.zig");
+const Picture = picture_zig.Picture;
+const Pixel = picture_zig.Pixel;
+const Area = picture_zig.Area;
+const Brush = brush_zig.Brush;
+
+pub const Point = [2]i32;
+
+/// The most corners a polygon has.
+pub const max_points = 128;
+
+/// The box two corners make, both in it.
+const Box = struct {
+    x0: i32,
+    y0: i32,
+    x1: i32,
+    y1: i32,
+
+    fn of(a: Point, b: Point) Box {
+        return .{ .x0 = @min(a[0], b[0]), .y0 = @min(a[1], b[1]), .x1 = @max(a[0], b[0]), .y1 = @max(a[1], b[1]) };
+    }
+};
+
+/// The row `y` from `x0` to `x1`, both in, in the colour, cut to the
+/// picture.
+fn span(picture: *Picture, y: i32, x0: i32, x1: i32, colour: Pixel, changed: *Area) void {
+    const cut = (Area{ .min_x = x0, .min_y = y, .max_x = x1 + 1, .max_y = y + 1 }).clip(picture.width, picture.height);
+    if (cut.isEmpty()) return;
+    @memset(picture.row(@intCast(y))[@intCast(cut.min_x)..@intCast(cut.max_x)], colour);
+    changed.* = changed.add(cut);
+}
+
+pub fn rectangle(picture: *Picture, brush: Brush, a: Point, b: Point, colour: Pixel, filled: bool, changed: *Area) void {
+    const box = Box.of(a, b);
+    if (filled) {
+        var y = @max(box.y0, 0);
+        while (y <= @min(box.y1, @as(i32, @intCast(picture.height)) - 1)) : (y += 1) span(picture, y, box.x0, box.x1, colour, changed);
+        return;
+    }
+    brush_zig.line(picture, brush, box.x0, box.y0, box.x1, box.y0, colour, changed);
+    brush_zig.line(picture, brush, box.x1, box.y0, box.x1, box.y1, colour, changed);
+    brush_zig.line(picture, brush, box.x1, box.y1, box.x0, box.y1, colour, changed);
+    brush_zig.line(picture, brush, box.x0, box.y1, box.x0, box.y0, colour, changed);
+}
+
+/// The largest whole number whose square is at most `n`.
+fn squareRoot(n: u128) u128 {
+    if (n < 2) return n;
+    var low: u128 = 1;
+    var high: u128 = @min(n, 1 << 64);
+    while (low < high) {
+        const middle = low + (high - low + 1) / 2;
+        if (middle * middle <= n) low = middle else high = middle - 1;
+    }
+    return low;
+}
+
+/// The ellipse's pixels in the row `y`: its first and last, or null for
+/// a row outside it.
+fn ellipseRow(box: Box, y: i32) ?[2]i32 {
+    if (y < box.y0 or y > box.y1) return null;
+    // Twice the radii, and twice the row's distance from the middle.
+    const across: i128 = box.x1 - box.x0;
+    const down: i128 = box.y1 - box.y0;
+    const from_middle: i128 = 2 * @as(i128, y) - box.y0 - box.y1;
+    var half: i128 = across;
+    if (down != 0) {
+        // The largest twice-distance across with
+        // half² · down² + from_middle² · across² <= across² · down².
+        const room = across * across * (down * down - from_middle * from_middle);
+        if (room < 0) return null;
+        half = @intCast(squareRoot(@intCast(@divFloor(room, down * down))));
+        // A pixel's twice-distance has the parity of the box's width.
+        if (@mod(half - across, 2) != 0) half -= 1;
+        if (half < 0) return null;
+    }
+    const middle2: i128 = @as(i128, box.x0) + box.x1;
+    return .{ @intCast(@divExact(middle2 - half, 2)), @intCast(@divExact(middle2 + half, 2)) };
+}
+
+pub fn ellipse(picture: *Picture, brush: Brush, a: Point, b: Point, colour: Pixel, filled: bool, changed: *Area) void {
+    const box = Box.of(a, b);
+    // Rows beyond the brush's reach above and below the picture change
+    // nothing.
+    const reach: i32 = @intCast(brush.size);
+    const first = @max(box.y0, -reach);
+    const last = @min(box.y1, @as(i32, @intCast(picture.height)) + reach);
+    var y = first;
+    while (y <= last) : (y += 1) {
+        const row = ellipseRow(box, y) orelse continue;
+        if (filled) {
+            span(picture, y, row[0], row[1], colour, changed);
+            continue;
+        }
+        // The pixels with a neighbour above and below, and not at an end,
+        // are inside: the rest of the row is the outline.
+        var inner_from = row[0] + 1;
+        var inner_to = row[1] - 1;
+        for ([_]i32{ y - 1, y + 1 }) |near| {
+            if (ellipseRow(box, near)) |other| {
+                inner_from = @max(inner_from, other[0]);
+                inner_to = @min(inner_to, other[1]);
+            } else {
+                inner_from = row[1] + 1;
+            }
+        }
+        var x = row[0];
+        while (x <= row[1]) : (x += 1) {
+            if (x >= inner_from and x <= inner_to) {
+                x = inner_to;
+                continue;
+            }
+            brush_zig.stamp(picture, brush, x, y, colour, changed);
+        }
+    }
+}
+
+/// From `from` to `to` through `through`, half way along.
+pub fn curve(picture: *Picture, brush: Brush, from: Point, to: Point, through: Point, colour: Pixel, changed: *Area) void {
+    // Twice the control point: the curve's middle is a quarter of each
+    // end and half of the control point.
+    const control2 = [2]i64{ 4 * @as(i64, through[0]) - from[0] - to[0], 4 * @as(i64, through[1]) - from[1] - to[1] };
+    const length = distance(from, through) + distance(through, to);
+    const steps: i64 = @max(8, @min(256, @divTrunc(length, 4)));
+    const whole = 2 * steps * steps;
+    var last = from;
+    var step: i64 = 1;
+    while (step <= steps) : (step += 1) {
+        const rest = steps - step;
+        var at: Point = undefined;
+        for (0..2) |axis| {
+            const sum = 2 * rest * rest * from[axis] + 2 * rest * step * control2[axis] + 2 * step * step * to[axis];
+            at[axis] = @intCast(@divFloor(sum + @divTrunc(whole, 2), whole));
+        }
+        brush_zig.line(picture, brush, last[0], last[1], at[0], at[1], colour, changed);
+        last = at;
+    }
+}
+
+fn distance(a: Point, b: Point) i64 {
+    const across = @as(i64, a[0]) - b[0];
+    const down = @as(i64, a[1]) - b[1];
+    return (if (across < 0) -across else across) + (if (down < 0) -down else down);
+}
+
+/// The polygon through `points`, closed from the last back to the first.
+pub fn polygon(picture: *Picture, brush: Brush, points: []const Point, colour: Pixel, filled: bool, changed: *Area) void {
+    if (points.len == 0) return;
+    if (filled) {
+        fillPolygon(picture, points, colour, changed);
+        // Its one-pixel outline too, which the middles may leave out.
+        const thin = Brush{ .size = 1 };
+        outline(picture, thin, points, colour, changed);
+        return;
+    }
+    outline(picture, brush, points, colour, changed);
+}
+
+fn outline(picture: *Picture, brush: Brush, points: []const Point, colour: Pixel, changed: *Area) void {
+    if (points.len == 1) {
+        brush_zig.stamp(picture, brush, points[0][0], points[0][1], colour, changed);
+        return;
+    }
+    for (points, 0..) |point, place| {
+        const next = points[(place + 1) % points.len];
+        brush_zig.line(picture, brush, point[0], point[1], next[0], next[1], colour, changed);
+    }
+}
+
+/// The corners' lines from `from` to the last, open: a polygon being
+/// drawn.
+pub fn polyline(picture: *Picture, brush: Brush, points: []const Point, colour: Pixel, changed: *Area) void {
+    if (points.len == 0) return;
+    brush_zig.stamp(picture, brush, points[0][0], points[0][1], colour, changed);
+    for (points[1..], 0..) |point, place| {
+        const before = points[place];
+        brush_zig.line(picture, brush, before[0], before[1], point[0], point[1], colour, changed);
+    }
+}
+
+fn fillPolygon(picture: *Picture, points: []const Point, colour: Pixel, changed: *Area) void {
+    var top: i32 = points[0][1];
+    var bottom: i32 = points[0][1];
+    for (points) |point| {
+        top = @min(top, point[1]);
+        bottom = @max(bottom, point[1]);
+    }
+    top = @max(top, 0);
+    bottom = @min(bottom, @as(i32, @intCast(picture.height)) - 1);
+    // Where the edges cross a row's middle, in 256ths of twice a pixel.
+    var crossings: [max_points]i64 = undefined;
+    var y = top;
+    while (y <= bottom) : (y += 1) {
+        const middle: i64 = 2 * @as(i64, y) + 1;
+        var count: usize = 0;
+        for (points, 0..) |a, place| {
+            const b = points[(place + 1) % points.len];
+            const ay: i64 = 2 * @as(i64, a[1]) + 1;
+            const by: i64 = 2 * @as(i64, b[1]) + 1;
+            // Half-open, so a corner between two edges is crossed once.
+            if ((ay <= middle and middle < by) or (by <= middle and middle < ay)) {
+                const ax: i64 = 2 * @as(i64, a[0]) + 1;
+                const bx: i64 = 2 * @as(i64, b[0]) + 1;
+                if (count == crossings.len) break;
+                crossings[count] = ax * 256 + @divFloor((middle - ay) * (bx - ax) * 256, by - ay);
+                count += 1;
+            }
+        }
+        // In order across, a few at a time.
+        var sorted: usize = 1;
+        while (sorted < count) : (sorted += 1) {
+            const crossing = crossings[sorted];
+            var at = sorted;
+            while (at > 0 and crossings[at - 1] > crossing) : (at -= 1) crossings[at] = crossings[at - 1];
+            crossings[at] = crossing;
+        }
+        // A pixel is in when its middle, 2x + 1, is from one crossing to
+        // before the next.
+        var pair: usize = 0;
+        while (pair + 1 < count) : (pair += 2) {
+            const from: i32 = @intCast(@divFloor(crossings[pair] - 256 + 511, 512));
+            const to: i32 = @intCast(@divFloor(crossings[pair + 1] - 256 + 511, 512));
+            if (to > from) span(picture, y, from, to - 1, colour, changed);
+        }
+    }
+}

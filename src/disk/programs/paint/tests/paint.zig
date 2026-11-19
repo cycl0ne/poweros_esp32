@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of Paint's workings: the brushes' shapes and what they put
-//! down, undo and redo over a block that fills, and the view's mapping,
-//! zoom and rows. The window is not here.
+//! down, the shapes, the fill and the spray, undo and redo over a block
+//! that fills, and the view's mapping, zoom and rows. The window is not
+//! here.
 
 const std = @import("std");
 const picture_zig = @import("../picture.zig");
 const brush_zig = @import("../brush.zig");
 const history_zig = @import("../history.zig");
 const view_zig = @import("../view.zig");
+const shapes = @import("../shapes.zig");
+const fill_zig = @import("../fill.zig");
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
@@ -195,4 +198,179 @@ test "view: a row at a zoom, the backdrop round it, the grid and the checkerboar
     close.grid = false;
     close.row(&picture, 0, 0, 24, &line);
     try testing.expectEqual(red, line[1]);
+}
+
+/// Whether the pixel is the colour, for pictures drawn in the tests.
+fn at(picture: *const Picture, x: u32, y: u32) Pixel {
+    return picture.get(x, y);
+}
+
+test "shapes: a rectangle's outline and its filled box, both corners in it" {
+    var picture = try made(12, 10, white);
+    defer free(picture);
+    var changed = Area.none;
+    shapes.rectangle(&picture, .{ .size = 1 }, .{ 8, 7 }, .{ 2, 1 }, red, false, &changed);
+    try testing.expectEqual(Area{ .min_x = 2, .min_y = 1, .max_x = 9, .max_y = 8 }, changed);
+    // The outline: 7 by 7, its inside left alone.
+    try testing.expectEqual(@as(usize, 24), count(&picture, red));
+    try testing.expectEqual(white, at(&picture, 5, 4));
+    try testing.expectEqual(red, at(&picture, 8, 7));
+
+    changed = Area.none;
+    shapes.rectangle(&picture, .{ .size = 1 }, .{ -3, -3 }, .{ 1, 1 }, blue, true, &changed);
+    try testing.expectEqual(@as(usize, 4), count(&picture, blue));
+    try testing.expectEqual(Area{ .min_x = 0, .min_y = 0, .max_x = 2, .max_y = 2 }, changed);
+}
+
+test "shapes: an ellipse fills its box's middles, its outline is its edge" {
+    var picture = try made(16, 16, white);
+    defer free(picture);
+    var changed = Area.none;
+    // A box of 3 by 3: a plus.
+    shapes.ellipse(&picture, .{ .size = 1 }, .{ 0, 0 }, .{ 2, 2 }, red, true, &changed);
+    try testing.expectEqual(@as(usize, 5), count(&picture, red));
+    try testing.expectEqual(white, at(&picture, 0, 0));
+    try testing.expectEqual(red, at(&picture, 1, 0));
+    try testing.expectEqual(red, at(&picture, 0, 1));
+
+    // A circle of 11: every row from its top to its bottom, and as wide as
+    // the box in the middle row; its outline leaves the middle open and
+    // meets the filled one at the edge.
+    picture.fill(white);
+    shapes.ellipse(&picture, .{ .size = 1 }, .{ 2, 2 }, .{ 12, 12 }, red, true, &changed);
+    const filled = count(&picture, red);
+    for (2..13) |y| {
+        var in_row: usize = 0;
+        for (picture.row(@intCast(y))) |pixel| if (pixel == red) {
+            in_row += 1;
+        };
+        try testing.expect(in_row > 0);
+    }
+    try testing.expectEqual(red, at(&picture, 2, 7));
+    try testing.expectEqual(red, at(&picture, 12, 7));
+    try testing.expectEqual(white, at(&picture, 1, 7));
+    var rim = try made(16, 16, white);
+    defer free(rim);
+    shapes.ellipse(&rim, .{ .size = 1 }, .{ 2, 2 }, .{ 12, 12 }, red, false, &changed);
+    try testing.expectEqual(white, at(&rim, 7, 7));
+    try testing.expect(count(&rim, red) < filled);
+    for (0..16) |y| for (0..16) |x| {
+        if (at(&rim, @intCast(x), @intCast(y)) == red) try testing.expectEqual(red, at(&picture, @intCast(x), @intCast(y)));
+    };
+    // A box one row tall is a line; one column wide too.
+    picture.fill(white);
+    shapes.ellipse(&picture, .{ .size = 1 }, .{ 1, 3 }, .{ 9, 3 }, blue, false, &changed);
+    try testing.expectEqual(@as(usize, 9), count(&picture, blue));
+    picture.fill(white);
+    shapes.ellipse(&picture, .{ .size = 1 }, .{ 4, 0 }, .{ 4, 5 }, blue, true, &changed);
+    try testing.expectEqual(@as(usize, 6), count(&picture, blue));
+}
+
+test "shapes: a curve from end to end through its bend, a straight one a line" {
+    var picture = try made(40, 30, white);
+    defer free(picture);
+    var changed = Area.none;
+    shapes.curve(&picture, .{ .size = 1 }, .{ 2, 20 }, .{ 36, 20 }, .{ 19, 4 }, red, &changed);
+    try testing.expectEqual(red, at(&picture, 2, 20));
+    try testing.expectEqual(red, at(&picture, 36, 20));
+    try testing.expectEqual(red, at(&picture, 19, 4));
+    // Nothing on the straight line between the ends' middle.
+    try testing.expectEqual(white, at(&picture, 19, 20));
+
+    picture.fill(white);
+    shapes.curve(&picture, .{ .size = 1 }, .{ 0, 5 }, .{ 10, 5 }, .{ 5, 5 }, blue, &changed);
+    try testing.expectEqual(@as(usize, 11), count(&picture, blue));
+}
+
+test "shapes: a polygon's outline closes, filled it takes its inside and its edge" {
+    var picture = try made(20, 20, white);
+    defer free(picture);
+    var changed = Area.none;
+    const triangle = [_]shapes.Point{ .{ 2, 2 }, .{ 17, 2 }, .{ 2, 17 } };
+    shapes.polygon(&picture, .{ .size = 1 }, &triangle, red, false, &changed);
+    try testing.expectEqual(red, at(&picture, 10, 9));
+    try testing.expectEqual(red, at(&picture, 2, 10));
+    try testing.expectEqual(white, at(&picture, 5, 5));
+
+    picture.fill(white);
+    shapes.polygon(&picture, .{ .size = 1 }, &triangle, blue, true, &changed);
+    try testing.expectEqual(blue, at(&picture, 5, 5));
+    try testing.expectEqual(blue, at(&picture, 17, 2));
+    try testing.expectEqual(blue, at(&picture, 2, 17));
+    try testing.expectEqual(white, at(&picture, 15, 15));
+    try testing.expectEqual(white, at(&picture, 1, 1));
+    // Every row from the top corner to the bottom one, without a gap.
+    for (2..18) |y| {
+        var x: u32 = 2;
+        while (x < 20 and at(&picture, x, @intCast(y)) == blue) x += 1;
+        try testing.expect(x > 2);
+        while (x < 20) : (x += 1) try testing.expectEqual(white, at(&picture, x, @intCast(y)));
+    }
+
+    // An open polyline: no closing edge.
+    picture.fill(white);
+    shapes.polyline(&picture, .{ .size = 1 }, &triangle, red, &changed);
+    try testing.expectEqual(white, at(&picture, 2, 10));
+    try testing.expectEqual(red, at(&picture, 10, 9));
+}
+
+/// A stack for the fill's seeds from the test's allocator, made larger
+/// as it fills.
+const TestSeeds = struct {
+    fn more(seeds: *fill_zig.Seeds) bool {
+        const larger = testing.allocator.alloc(fill_zig.Seed, seeds.capacity * 2) catch return false;
+        @memcpy(larger[0..seeds.len], seeds.items[0..seeds.len]);
+        testing.allocator.free(seeds.items[0..seeds.capacity]);
+        seeds.items = larger.ptr;
+        seeds.capacity = larger.len;
+        return true;
+    }
+};
+
+test "fill: the joined area made the colour, through every turn, and no further" {
+    var picture = try made(16, 12, white);
+    defer free(picture);
+    var changed = Area.none;
+    // A wall with a gap at its bottom, and a closed box.
+    shapes.rectangle(&picture, .{ .size = 1 }, .{ 8, 0 }, .{ 8, 9 }, red, false, &changed);
+    shapes.rectangle(&picture, .{ .size = 1 }, .{ 10, 2 }, .{ 14, 6 }, red, false, &changed);
+    const start = try testing.allocator.alloc(fill_zig.Seed, 2);
+    var seeds = fill_zig.Seeds{ .items = start.ptr, .capacity = start.len, .more = TestSeeds.more };
+    defer testing.allocator.free(seeds.items[0..seeds.capacity]);
+    changed = Area.none;
+    try testing.expect(fill_zig.flood(&picture, 1, 1, blue, &seeds, &changed));
+    // Round the wall's foot and up the other side; the box's inside not.
+    try testing.expectEqual(blue, at(&picture, 9, 0));
+    try testing.expectEqual(blue, at(&picture, 15, 11));
+    try testing.expectEqual(white, at(&picture, 12, 4));
+    try testing.expectEqual(red, at(&picture, 8, 5));
+    try testing.expectEqual(Area{ .min_x = 0, .min_y = 0, .max_x = 16, .max_y = 12 }, changed);
+    try testing.expect(seeds.capacity > 2);
+    // The same colour again changes nothing.
+    changed = Area.none;
+    try testing.expect(fill_zig.flood(&picture, 1, 1, blue, &seeds, &changed));
+    try testing.expect(changed.isEmpty());
+}
+
+test "brush: a spray puts its pixels within its reach, and stops at the picture's edge" {
+    var picture = try made(40, 40, white);
+    defer free(picture);
+    var changed = Area.none;
+    var random = brush_zig.Random{};
+    const brush = Brush{ .size = 4 };
+    brush_zig.spray(&picture, brush, 20, 20, red, &random, &changed);
+    const reach: i32 = @intCast(brush_zig.sprayRadius(brush));
+    try testing.expect(count(&picture, red) > 0);
+    try testing.expect(count(&picture, red) <= brush_zig.sprayCount(brush));
+    try testing.expect(changed.min_x >= 20 - reach and changed.max_x <= 20 + reach + 1);
+    for (0..40) |y| for (0..40) |x| {
+        if (at(&picture, @intCast(x), @intCast(y)) != red) continue;
+        const dx = @as(i32, @intCast(x)) - 20;
+        const dy = @as(i32, @intCast(y)) - 20;
+        try testing.expect(dx * dx + dy * dy <= reach * reach);
+    };
+    // At the corner, only what falls inside.
+    changed = Area.none;
+    brush_zig.spray(&picture, brush, 0, 0, blue, &random, &changed);
+    try testing.expect(changed.min_x >= 0 and changed.min_y >= 0);
 }
