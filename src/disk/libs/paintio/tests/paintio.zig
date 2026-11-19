@@ -198,14 +198,16 @@ fn pattern(pixels: *[width * height]u32, seed: u32) void {
     }
 }
 
-test "paintio: a project of two layers comes back as it was saved" {
+test "paintio: a project of two layers, one with a mask, comes back as it was saved" {
     var rig: Rig = undefined;
     try rig.init();
     var bottom: [width * height]u32 = undefined;
     var top: [width * height]u32 = undefined;
     pattern(&bottom, 0);
     pattern(&top, 99);
-    var layers = [_]paintio.Layer{ .{ .pixels = &bottom }, .{ .pixels = &top, .opacity = 0x40, .flags = paintio.LAYERF_HIDDEN, .blend = paintio.LAYERBLEND_MULTIPLY } };
+    var mask: [width * height]u8 = undefined;
+    for (&mask, 0..) |*part, at| part.* = @truncate(at * 5);
+    var layers = [_]paintio.Layer{ .{ .pixels = &bottom }, .{ .pixels = &top, .mask = &mask, .opacity = 0x40, .flags = paintio.LAYERF_HIDDEN, .blend = paintio.LAYERBLEND_MULTIPLY } };
     @memcpy(layers[0].name[0..10], "Background");
     @memcpy(layers[1].name[0..31], "a name that is longer than room");
     var project = paintio.Project{ .width = width, .height = height, .layer_count = 2, .current = 1, .layers = &layers, .palette_count = 3 };
@@ -237,6 +239,9 @@ test "paintio: a project of two layers comes back as it was saved" {
         try testing.expectEqual(saved.blend, read.blend);
         try testing.expectEqualStrings(std.mem.sliceTo(&saved.name, 0), std.mem.sliceTo(&read.name, 0));
     }
+    // The bottom has no mask; the top's comes back.
+    try testing.expect(read_layers[0].mask == null);
+    try testing.expectEqualSlices(u8, &mask, read_layers[1].mask.?[0 .. width * height]);
     rig.pio.FreeProject(&back);
     try testing.expect(back.layers == null);
     try testing.expectEqual(@as(u32, 0), back.layer_count);

@@ -22,6 +22,8 @@
 //!     (`LAYERF_`) and its blend mode (`LAYERBLEND_`), a byte each, a byte
 //!     of 0, and its name, UTF-8 - and then its `BODY`: the rows, alpha, red, green and blue a byte each a
 //!     pixel, packed by Deflate in a zlib wrapping (compression.library).
+//!     A layer with a mask has an `LMSK` after its `BODY`: the mask's
+//!     rows, a byte a pixel, packed the same way.
 //!
 //! A chunk the reader does not know is passed over, so what a later Paint
 //! adds does not keep an earlier one from reading the rest.
@@ -37,6 +39,8 @@ pub const ID_PHDR = iffparse.MakeID("PHDR");
 pub const ID_PALT = iffparse.MakeID("PALT");
 pub const ID_LHDR = iffparse.MakeID("LHDR");
 pub const ID_BODY = iffparse.MakeID("BODY");
+/// A layer's mask. Since 1.2.
+pub const ID_LMSK = iffparse.MakeID("LMSK");
 
 /// The largest side of a project.
 pub const MAX_SIDE: u32 = 16384;
@@ -93,6 +97,10 @@ pub const LAYERBLEND_LAST: u8 = LAYERBLEND_LUMINOSITY;
 pub const Layer = extern struct {
     /// `width` times `height` pixels, `0xAARRGGBB`.
     pixels: ?[*]u32 = null,
+    /// Its mask, `width` times `height` bytes: how much of each pixel
+    /// shows, 0 none and 255 all. Null for a layer without one. Since
+    /// 1.2.
+    mask: ?[*]u8 = null,
     /// UTF-8, ended by a NUL.
     name: [NAME_SIZE]u8 = @splat(0),
     /// How much of it shows over what is under it, 255 all of it.

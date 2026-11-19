@@ -3,10 +3,11 @@
 //!
 //! The form is made with iffparse.library on the open file: `PHDR`,
 //! `PALT` when there is a palette, and an `LHDR` and a `BODY` for each
-//! layer from the bottom. A body goes a row at a time - the row turned
-//! into the file's bytes, through compression.library's Deflate, and what
-//! comes out written whenever its buffer is full - so the memory it takes
-//! is a row and a buffer, whatever the picture's size.
+//! layer from the bottom, and an `LMSK` after a layer with a mask. A body
+//! or a mask goes a row at a time - the row turned into the file's bytes,
+//! through compression.library's Deflate, and what comes out written
+//! whenever its buffer is full - so the memory it takes is a row and a
+//! buffer, whatever the picture's size.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -34,9 +35,9 @@ const out_size = 32 * 1024;
 ///
 /// INPUTS:
 /// - `name`: the file, made anew or written over.
-/// - `project`: the size, the layers from the bottom with their pixels,
-///   the layer being painted and the palette (`palette_count` colours of
-///   `palette`). `kind` is not written.
+/// - `project`: the size, the layers from the bottom with their pixels
+///   and their masks, the layer being painted and the palette
+///   (`palette_count` colours of `palette`). `kind` is not written.
 ///
 /// RESULT:
 /// 0 when the file is written, otherwise a dos error code: why the file
@@ -51,7 +52,8 @@ const out_size = 32 * 1024;
 /// BEHAVIOR:
 /// The file is an IFF `FORM PNTG` (`sdk.paintio` has its chunks): the
 /// header, the palette when it has colours, and each layer's header and
-/// pixels, packed by Deflate in a zlib wrapping. A file that could not
+/// pixels, and its mask when it has one, packed by Deflate in a zlib
+/// wrapping. A file that could not
 /// be written whole is deleted, so a failure leaves no half a project
 /// behind - nor the file that was there before.
 ///
@@ -138,8 +140,12 @@ fn write(base: *PaintIOBase, ip: *IFFParseBase, cb: *CompressionBase, file: *dos
         const length = _project.layerHeaderBytes(layer, &layer_header);
         failure = chunk(ip, iff, paintio.ID_LHDR, layer_header[0..length]);
         if (failure != 0) return _project.iffError(dl, failure);
-        const body = writeBody(dl, ip, cb, iff, layer.pixels.?, project.width, project.height, @ptrCast(row), @ptrCast(out));
+        const body = writeBody(dl, ip, cb, iff, .{ .pixels = layer.pixels.? }, project.width, project.height, @ptrCast(row), @ptrCast(out));
         if (body != 0) return body;
+        if (layer.mask) |mask| {
+            const masked = writeBody(dl, ip, cb, iff, .{ .mask = mask }, project.width, project.height, @ptrCast(row), @ptrCast(out));
+            if (masked != 0) return masked;
+        }
     }
     failure = ip.PopChunk(iff);
     if (failure != 0) return _project.iffError(dl, failure);
@@ -156,18 +162,35 @@ fn chunk(ip: *IFFParseBase, iff: *iffparse.IFFHandle, id: u32, bytes: []const u8
     return ip.PopChunk(iff);
 }
 
-/// A layer's `BODY`: 0, or why not, as a dos code.
-fn writeBody(dl: *DosBase, ip: *IFFParseBase, cb: *CompressionBase, iff: *iffparse.IFFHandle, pixels: [*]const u32, width: u32, height: u32, row: [*]u8, out: [*]u8) i32 {
+/// What a packed chunk holds: a layer's pixels, or its mask.
+const Rows = union(enum) {
+    pixels: [*]const u32,
+    mask: [*]const u8,
+};
+
+/// A layer's `BODY`, or its `LMSK`: 0, or why not, as a dos code.
+fn writeBody(dl: *DosBase, ip: *IFFParseBase, cb: *CompressionBase, iff: *iffparse.IFFHandle, rows: Rows, width: u32, height: u32, row: [*]u8, out: [*]u8) i32 {
     var stream = compression.Stream{};
     if (cb.InitDeflate(&stream, compression.FORMAT_ZLIB, compression.LEVEL_DEFAULT) != compression.COMPRESS_OK) return dos.ERROR_NO_FREE_STORE;
     defer cb.EndDeflate(&stream);
-    const pushed = ip.PushChunk(iff, 0, paintio.ID_BODY, iffparse.IFFSIZE_UNKNOWN);
+    const id = switch (rows) {
+        .pixels => paintio.ID_BODY,
+        .mask => paintio.ID_LMSK,
+    };
+    const pushed = ip.PushChunk(iff, 0, id, iffparse.IFFSIZE_UNKNOWN);
     if (pushed != 0) return _project.iffError(dl, pushed);
     var y: u32 = 0;
     while (y < height) : (y += 1) {
-        _project.toFile(pixels[@as(usize, y) * width ..][0..width], row);
+        const start = @as(usize, y) * width;
+        const bytes = switch (rows) {
+            .pixels => |pixels| blk: {
+                _project.toFile(pixels[start..][0..width], row);
+                break :blk row[0 .. @as(usize, width) * 4];
+            },
+            .mask => |mask| mask[start..][0..width],
+        };
         const flush = if (y + 1 == height) compression.FLUSH_FINISH else compression.FLUSH_NONE;
-        const failure = deflate(dl, ip, cb, iff, &stream, row[0 .. @as(usize, width) * 4], flush, out);
+        const failure = deflate(dl, ip, cb, iff, &stream, bytes, flush, out);
         if (failure != 0) return failure;
     }
     const popped = ip.PopChunk(iff);

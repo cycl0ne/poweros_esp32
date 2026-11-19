@@ -22,7 +22,7 @@ paintio.library/SaveProject
 	None. The project is empty afterwards: no layers, no size.
 
    BEHAVIOR
-	Every layer's pixels are freed, then the layers, and the project is
+	Every layer's pixels and mask are freed, then the layers, and the project is
 	set back to its defaults. An empty project is left as it is, so the
 	call may be made whatever `LoadProject` answered.
 
@@ -38,8 +38,9 @@ paintio.library/SaveProject
 	in: those pixels are not the library's to free.
 
    NOTES
-	A caller that keeps a layer's pixels sets that layer's `pixels` to
-	null first, and frees them itself later with `FreeVec`.
+	A caller that keeps a layer's pixels or its mask sets that layer's
+	`pixels` or `mask` to null first, and frees them itself later with
+	`FreeVec`.
 
    BUGS
 	None known.
@@ -80,7 +81,7 @@ paintio.library/SaveProject
 
    BEHAVIOR
 	A project comes back as it was saved: its size, its layers from the
-	bottom with their names, opacity, flags and blend modes, the layer
+	bottom with their names, opacity, flags, blend modes and masks, the layer
 	being painted and its palette; `kind` is `PIOKIND_PROJECT`. A picture comes back as
 	a project of one layer of the picture's size, unnamed and wholly
 	opaque, with `kind` `PIOKIND_PICTURE` and, when the file had one, its
@@ -98,12 +99,13 @@ paintio.library/SaveProject
 	  datatypes reads a picture on it.
 
    OWNERSHIP
-	The layers and their pixels are allocated with `AllocVec` and are the
-	caller's, given back with `FreeProject`.
+	The layers, their pixels and their masks are allocated with
+	`AllocVec` and are the caller's, given back with `FreeProject`.
 
    NOTES
 	Each layer is the project's size, a row after another with nothing
-	between: four bytes a pixel. A picture is read whole into memory by
+	between: four bytes a pixel, and a mask a byte a pixel. A picture is
+	read whole into memory by
 	its datatype first, so it takes about twice its pixels while it is
 	read.
 
@@ -190,9 +192,9 @@ paintio.library/SaveProject
 
    INPUTS
 	- `name`: the file, made anew or written over.
-	- `project`: the size, the layers from the bottom with their pixels,
-	  the layer being painted and the palette (`palette_count` colours of
-	  `palette`). `kind` is not written.
+	- `project`: the size, the layers from the bottom with their pixels
+	  and their masks, the layer being painted and the palette
+	  (`palette_count` colours of `palette`). `kind` is not written.
 
    RESULT
 	0 when the file is written, otherwise a dos error code: why the file
@@ -207,7 +209,8 @@ paintio.library/SaveProject
    BEHAVIOR
 	The file is an IFF `FORM PNTG` (`sdk.paintio` has its chunks): the
 	header, the palette when it has colours, and each layer's header and
-	pixels, packed by Deflate in a zlib wrapping. A file that could not
+	pixels, and its mask when it has one, packed by Deflate in a zlib
+	wrapping. A file that could not
 	be written whole is deleted, so a failure leaves no half a project
 	behind - nor the file that was there before.
 

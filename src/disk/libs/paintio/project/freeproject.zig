@@ -21,7 +21,7 @@ const PaintIOBase = @import("../paintio_base.zig").PaintIOBase;
 /// None. The project is empty afterwards: no layers, no size.
 ///
 /// BEHAVIOR:
-/// Every layer's pixels are freed, then the layers, and the project is
+/// Every layer's pixels and mask are freed, then the layers, and the project is
 /// set back to its defaults. An empty project is left as it is, so the
 /// call may be made whatever `LoadProject` answered.
 ///
@@ -37,8 +37,9 @@ const PaintIOBase = @import("../paintio_base.zig").PaintIOBase;
 /// in: those pixels are not the library's to free.
 ///
 /// NOTES:
-/// A caller that keeps a layer's pixels sets that layer's `pixels` to
-/// null first, and frees them itself later with `FreeVec`.
+/// A caller that keeps a layer's pixels or its mask sets that layer's
+/// `pixels` or `mask` to null first, and frees them itself later with
+/// `FreeVec`.
 ///
 /// BUGS:
 /// None known.
@@ -59,6 +60,7 @@ pub fn FreeProject(base: *PaintIOBase, project: *paintio.Project) void {
     if (project.layers) |layers| {
         for (layers[0..project.layer_count]) |layer| {
             if (layer.pixels) |pixels| sys.FreeVec(pixels);
+            if (layer.mask) |mask| sys.FreeVec(mask);
         }
         sys.FreeVec(layers);
     }

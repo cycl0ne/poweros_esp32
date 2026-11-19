@@ -52,7 +52,7 @@ const in_size = 16 * 1024;
 ///
 /// BEHAVIOR:
 /// A project comes back as it was saved: its size, its layers from the
-/// bottom with their names, opacity, flags and blend modes, the layer
+/// bottom with their names, opacity, flags, blend modes and masks, the layer
 /// being painted and its palette; `kind` is `PIOKIND_PROJECT`. A picture comes back as
 /// a project of one layer of the picture's size, unnamed and wholly
 /// opaque, with `kind` `PIOKIND_PICTURE` and, when the file had one, its
@@ -70,12 +70,13 @@ const in_size = 16 * 1024;
 ///   datatypes reads a picture on it.
 ///
 /// OWNERSHIP:
-/// The layers and their pixels are allocated with `AllocVec` and are the
-/// caller's, given back with `FreeProject`.
+/// The layers, their pixels and their masks are allocated with
+/// `AllocVec` and are the caller's, given back with `FreeProject`.
 ///
 /// NOTES:
 /// Each layer is the project's size, a row after another with nothing
-/// between: four bytes a pixel. A picture is read whole into memory by
+/// between: four bytes a pixel, and a mask a byte a pixel. A picture is
+/// read whole into memory by
 /// its datatype first, so it takes about twice its pixels while it is
 /// read.
 ///
@@ -143,6 +144,7 @@ fn read(base: *PaintIOBase, file: *dos.FileHandle, project: *paintio.Project) i3
         paintio.ID_PNTG, paintio.ID_PALT,
         paintio.ID_PNTG, paintio.ID_LHDR,
         paintio.ID_PNTG, paintio.ID_BODY,
+        paintio.ID_PNTG, paintio.ID_LMSK,
     };
     const stopped = ip.StopChunks(iff, &stops, stops.len / 2);
     if (stopped != 0) return _project.iffError(dl, stopped);
@@ -199,6 +201,17 @@ fn read(base: *PaintIOBase, file: *dos.FileHandle, project: *paintio.Project) i3
                 _project.fromFile(pixels[0..count]);
                 bodies += 1;
             },
+            // The mask of the layer whose pixels came last.
+            paintio.ID_LMSK => {
+                const layers = project.layers orelse return dos.ERROR_OBJECT_WRONG_TYPE;
+                if (bodies == 0 or layers[bodies - 1].mask != null) return dos.ERROR_OBJECT_WRONG_TYPE;
+                const count = @as(usize, project.width) * project.height;
+                const memory = sys.AllocVec(count, exec.MEMF_ANY) orelse return dos.ERROR_NO_FREE_STORE;
+                const mask: [*]u8 = @ptrCast(memory);
+                layers[bodies - 1].mask = mask;
+                const failure = readBody(dl, ip, cb, iff, mask, count, @ptrCast(input));
+                if (failure != 0) return failure;
+            },
             else => {},
         }
     }
@@ -207,7 +220,8 @@ fn read(base: *PaintIOBase, file: *dos.FileHandle, project: *paintio.Project) i3
     return 0;
 }
 
-/// A body's zlib stream unpacked into `into`, which it must fill exactly:
+/// A body's or a mask's zlib stream unpacked into `into`, which it must
+/// fill exactly:
 /// 0, or why not, as a dos code.
 fn readBody(dl: *DosBase, ip: *IFFParseBase, cb: *CompressionBase, iff: *iffparse.IFFHandle, into: [*]u8, size: usize, input: [*]u8) i32 {
     var stream = compression.Stream{};
