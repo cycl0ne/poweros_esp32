@@ -11,6 +11,9 @@ const history_zig = @import("../history.zig");
 const view_zig = @import("../view.zig");
 const shapes = @import("../shapes.zig");
 const fill_zig = @import("../fill.zig");
+const layers_zig = @import("../layers.zig");
+const Stack = layers_zig.Stack;
+const Layer = layers_zig.Layer;
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
@@ -341,53 +344,280 @@ test "shapes: the frame round what is cut is dashes, black and white, cut to the
     try testing.expect(changed.isEmpty());
 }
 
+/// Layers for the tests, `test_side` square: their memory is the pixels,
+/// from the testing allocator, which `releaseLayer` gives back.
+const test_side = 16;
+
+fn layerOf(stack: *Stack, colour: Pixel) !Layer {
+    const picture = try made(test_side, test_side, colour);
+    return .{ .picture = picture, .memory = @ptrCast(picture.pixels), .id = stack.newId() };
+}
+
+var released: usize = 0;
+
+fn releaseLayer(_: *anyopaque, memory: *anyopaque) void {
+    free(.{ .pixels = @ptrCast(@alignCast(memory)), .width = test_side, .height = test_side });
+    released += 1;
+}
+
+fn freeStack(stack: *Stack) void {
+    for (stack.all()) |layer| free(layer.picture);
+    stack.count = 0;
+}
+
+fn historyOf(memory: []align(4) u8) History {
+    return .{ .memory = memory.ptr, .size = memory.len, .release = releaseLayer, .context = undefined };
+}
+
 test "history: undone and redone, a new change drops the redo, the oldest go when the block is full" {
-    var picture = try made(16, 16, white);
-    defer free(picture);
-    var kept = try made(16, 16, white);
+    var slots: [layers_zig.max_layers]Layer = undefined;
+    var stack = Stack{ .layers = &slots };
+    stack.insert(0, try layerOf(&stack, white));
+    defer freeStack(&stack);
+    const picture = &stack.layers[0].picture;
+    const id = stack.layers[0].id;
+    var kept = try made(test_side, test_side, white);
     defer free(kept);
     // Room for three records of 4 by 4, not four.
     const room = 3 * History.recordBytes(.{ .max_x = 4, .max_y = 4 }) + 8;
     const memory = try testing.allocator.alignedAlloc(u8, .@"4", room);
     defer testing.allocator.free(memory);
-    var history = History{ .memory = memory.ptr, .size = room };
+    var history = historyOf(memory);
+    defer history.clear();
 
     const colours = [_]Pixel{ 0xFF000001, 0xFF000002, 0xFF000003, 0xFF000004 };
     for (colours, 0..) |colour, i| {
         var changed = Area.none;
-        brush_zig.stamp(inked(&picture, colour), .{ .shape = .square, .size = 4 }, @intCast(i * 4 + 2), 2, &changed);
-        try testing.expect(history.record(&picture, &kept, changed));
+        brush_zig.stamp(inked(picture, colour), .{ .shape = .square, .size = 4 }, @intCast(i * 4 + 2), 2, &changed);
+        try testing.expect(history.record(id, picture, &kept, changed));
         try testing.expectEqual(colour, kept.get(@intCast(i * 4), 0));
     }
     // Three can be undone, the first change is kept for good.
     var undone: usize = 0;
-    while (history.undo(&picture, &kept)) |area| : (undone += 1) {
-        try testing.expectEqual(@as(u32, 4), area.width());
+    while (history.undo(&stack)) |change| : (undone += 1) {
+        try testing.expectEqual(@as(u32, 4), change.area.width());
+        try testing.expect(!change.layers);
+        kept.copyArea(picture, change.area);
     }
     try testing.expectEqual(@as(usize, 3), undone);
     try testing.expectEqual(colours[0], picture.get(0, 0));
     try testing.expectEqual(white, picture.get(4, 0));
-    try testing.expectEqual(white, kept.get(12, 0));
 
     // Redone, two of them; then a new change, and nothing to redo.
-    _ = history.redo(&picture, &kept).?;
-    _ = history.redo(&picture, &kept).?;
+    kept.copyArea(picture, history.redo(&stack).?.area);
+    kept.copyArea(picture, history.redo(&stack).?.area);
     try testing.expectEqual(colours[2], picture.get(8, 0));
     try testing.expectEqual(white, picture.get(12, 0));
     var changed = Area.none;
-    brush_zig.stamp(inked(&picture, red), .{ .size = 1 }, 15, 15, &changed);
-    try testing.expect(history.record(&picture, &kept, changed));
+    brush_zig.stamp(inked(picture, red), .{ .size = 1 }, 15, 15, &changed);
+    try testing.expect(history.record(id, picture, &kept, changed));
     try testing.expect(!history.canRedo());
-    _ = history.undo(&picture, &kept).?;
+    kept.copyArea(picture, history.undo(&stack).?.area);
     try testing.expectEqual(white, picture.get(15, 15));
     try testing.expectEqual(colours[2], picture.get(8, 0));
 
     // A change larger than the block: kept from then on, nothing to undo.
     changed = Area.none;
-    brush_zig.stamp(inked(&picture, red), .{ .shape = .square, .size = 16 }, 8, 8, &changed);
-    try testing.expect(!history.record(&picture, &kept, changed));
+    brush_zig.stamp(inked(picture, red), .{ .shape = .square, .size = 16 }, 8, 8, &changed);
+    try testing.expect(!history.record(id, picture, &kept, changed));
     try testing.expect(!history.canUndo());
     try testing.expectEqual(red, kept.get(0, 0));
+}
+
+test "history: layers put in, painted, moved, deleted and merged down, each undone and done again" {
+    released = 0;
+    var slots: [layers_zig.max_layers]Layer = undefined;
+    var stack = Stack{ .layers = &slots };
+    stack.insert(0, try layerOf(&stack, white));
+    defer freeStack(&stack);
+    const room = 4 * History.recordBytes(.{ .max_x = test_side, .max_y = test_side });
+    const memory = try testing.allocator.alignedAlloc(u8, .@"4", room);
+    defer testing.allocator.free(memory);
+    var history = historyOf(memory);
+    defer history.clear();
+    const white_id = stack.layers[0].id;
+
+    // A red layer over it, painted; a blue one over that, moved to the
+    // bottom.
+    stack.insert(1, try layerOf(&stack, 0));
+    stack.current = 1;
+    try testing.expect(history.layerIn(&stack, 1, false));
+    const red_id = stack.layers[1].id;
+    try testing.expect(history.remember(red_id, &stack.layers[1].picture, stack.layers[1].picture.whole(), false));
+    stack.layers[1].picture.fill(red);
+    stack.insert(2, try layerOf(&stack, blue));
+    stack.current = 2;
+    try testing.expect(history.layerIn(&stack, 2, false));
+    const blue_id = stack.layers[2].id;
+    stack.move(2, 0);
+    try testing.expect(history.moved(2, 0, false));
+    try testing.expectEqual(@as(u32, 0), stack.current);
+    // Red, now at the top, deleted.
+    const red_layer = stack.remove(2);
+    try testing.expect(history.layerOut(red_layer, 2, false));
+    // White merged down into blue: blue's pixels kept, made white, and
+    // white taken out - one step.
+    try testing.expect(history.remember(blue_id, &stack.layers[0].picture, stack.layers[0].picture.whole(), false));
+    stack.layers[0].picture.fill(white);
+    stack.current = 1;
+    const white_layer = stack.remove(1);
+    try testing.expect(history.layerOut(white_layer, 1, true));
+    try testing.expectEqual(@as(u32, 1), stack.count);
+    try testing.expectEqual(white, stack.layers[0].picture.get(0, 0));
+
+    // The merge undone in one: white back and painted, blue blue again.
+    var change = history.undo(&stack).?;
+    try testing.expect(change.layers);
+    try testing.expectEqual(@as(u32, 2), stack.count);
+    try testing.expectEqual(white_id, stack.layers[1].id);
+    try testing.expectEqual(@as(u32, 1), stack.current);
+    try testing.expectEqual(blue, stack.layers[0].picture.get(0, 0));
+    // Red's deletion: red back at the top.
+    change = history.undo(&stack).?;
+    try testing.expectEqual(@as(u32, 3), stack.count);
+    try testing.expectEqual(red_id, stack.layers[2].id);
+    try testing.expectEqual(@as(u32, 2), stack.current);
+    // The move: blue back at the top.
+    _ = history.undo(&stack).?;
+    try testing.expectEqual(blue_id, stack.layers[2].id);
+    try testing.expectEqual(white_id, stack.layers[0].id);
+    // Blue put in, red painted, red put in: white alone.
+    _ = history.undo(&stack).?;
+    try testing.expectEqual(@as(u32, 2), stack.count);
+    _ = history.undo(&stack).?;
+    try testing.expectEqual(@as(u32, 0), stack.layers[1].picture.get(0, 0));
+    _ = history.undo(&stack).?;
+    try testing.expectEqual(@as(u32, 1), stack.count);
+    try testing.expect(!history.canUndo());
+    try testing.expectEqual(@as(usize, 0), released);
+
+    // All done again: blue alone, made white by the merge.
+    while (history.redo(&stack)) |_| {}
+    try testing.expectEqual(@as(u32, 1), stack.count);
+    try testing.expectEqual(blue_id, stack.layers[0].id);
+    try testing.expectEqual(white, stack.layers[0].picture.get(0, 0));
+    try testing.expectEqual(@as(u32, 0), stack.current);
+
+    // Back to the start, and a new change: the layers only the dropped
+    // records held, red and blue, are given back.
+    while (history.undo(&stack)) |_| {}
+    var kept = try made(test_side, test_side, white);
+    defer free(kept);
+    stack.layers[0].picture.set(0, 0, red);
+    try testing.expect(history.record(white_id, &stack.layers[0].picture, &kept, .{ .max_x = 1, .max_y = 1 }));
+    try testing.expectEqual(@as(usize, 2), released);
+}
+
+test "history: a deleted layer is given back once its deletion can no longer be undone" {
+    released = 0;
+    var slots: [layers_zig.max_layers]Layer = undefined;
+    var stack = Stack{ .layers = &slots };
+    stack.insert(0, try layerOf(&stack, white));
+    stack.insert(1, try layerOf(&stack, red));
+    defer freeStack(&stack);
+    // Room for the deletion and a record of the whole picture, not two.
+    const room = History.recordBytes(.{ .max_x = test_side, .max_y = test_side }) + 40;
+    const memory = try testing.allocator.alignedAlloc(u8, .@"4", room);
+    defer testing.allocator.free(memory);
+    var history = historyOf(memory);
+    defer history.clear();
+    try testing.expect(history.layerOut(stack.remove(1), 1, false));
+    try testing.expectEqual(@as(usize, 0), released);
+    var kept = try made(test_side, test_side, white);
+    defer free(kept);
+    stack.layers[0].picture.fill(blue);
+    try testing.expect(history.record(stack.layers[0].id, &stack.layers[0].picture, &kept, stack.layers[0].picture.whole()));
+    try testing.expectEqual(@as(usize, 1), released);
+    _ = history.undo(&stack).?;
+    try testing.expect(!history.canUndo());
+}
+
+test "layers: each blend mode on a known pair, by opacity and coverage" {
+    const grey: Pixel = 0xFF808080;
+    const green: Pixel = 0xFF00FF00;
+    const black: Pixel = 0xFF000000;
+    const blend = layers_zig.blendOver;
+    // Over nothing, every mode is the layer at its opacity.
+    try testing.expectEqual(@as(Pixel, 0x80FF0000), blend(0, red, .multiply, 50));
+    try testing.expectEqual(red, blend(blue, red, .normal, 100));
+    try testing.expectEqual(blue, blend(blue, red, .normal, 0));
+    try testing.expectEqual(blue, blend(blue, 0x00FF0000, .screen, 100));
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), blend(white, red, .normal, 50));
+    try testing.expectEqual(@as(Pixel, 0xFFFFFF00), blend(red, green, .add, 100));
+    try testing.expectEqual(red, blend(red, white, .multiply, 100));
+    try testing.expectEqual(black, blend(red, black, .multiply, 100));
+    try testing.expectEqual(red, blend(red, black, .screen, 100));
+    try testing.expectEqual(white, blend(red, white, .screen, 100));
+    try testing.expectEqual(black, blend(red, green, .darken, 100));
+    try testing.expectEqual(@as(Pixel, 0xFFFFFF00), blend(red, green, .lighten, 100));
+    // Overlay keeps what is under at its ends; hard light keeps the layer.
+    try testing.expectEqual(black, blend(black, grey, .overlay, 100));
+    try testing.expectEqual(white, blend(white, grey, .overlay, 100));
+    try testing.expectEqual(white, blend(grey, white, .hard_light, 100));
+    // Dodge brightens, burn darkens, by the layer.
+    try testing.expectEqual(@as(Pixel, 0xFF7F7F7F) | 0, blend(0xFF7F7F7F, black, .colour_dodge, 100));
+    try testing.expectEqual(white, blend(grey, white, .colour_dodge, 100));
+    try testing.expectEqual(black, blend(grey, black, .colour_burn, 100));
+    try testing.expectEqual(grey, blend(grey, white, .colour_burn, 100));
+    // Soft light: grey changes nothing, white lightens, black darkens.
+    const soft_grey = blend(0xFF404040, grey, .soft_light, 100) & 0xFF;
+    try testing.expect(soft_grey >= 0x3F and soft_grey <= 0x41);
+    try testing.expect(blend(0xFF404040, white, .soft_light, 100) & 0xFF > 0x40);
+    try testing.expect(blend(0xFF404040, black, .soft_light, 100) & 0xFF < 0x40);
+    // Luminosity: a grey layer's brightness with what is under's colour;
+    // colour: the layer's colour at the brightness under it.
+    const lit = blend(red, grey, .luminosity, 100);
+    try testing.expect((lit >> 16) & 0xFF > (lit >> 8) & 0xFF);
+    try testing.expectEqual(grey, blend(grey, grey, .colour, 100));
+    const coloured = blend(grey, red, .colour, 100);
+    try testing.expect((coloured >> 16) & 0xFF > coloured & 0xFF);
+    // Hue: the layer's hue at what is under's saturation: under grey,
+    // grey still.
+    try testing.expectEqual(grey, blend(grey, red, .hue, 100));
+    try testing.expectEqual(grey, blend(grey, red, .saturation, 100));
+    try testing.expectEqual(red, blend(red, green, .saturation, 100));
+}
+
+test "layers: the stack plain or composed, layers moved and taken out keep the one painted" {
+    var slots: [layers_zig.max_layers]Layer = undefined;
+    var stack = Stack{ .layers = &slots };
+    stack.insert(0, try layerOf(&stack, white));
+    defer freeStack(&stack);
+    try testing.expect(stack.plain());
+    try testing.expectEqual(&stack.layers[0].picture, stack.shown());
+    var composite = try made(test_side, test_side, 0);
+    defer free(composite);
+    stack.composite = composite;
+    // Half red over white in a corner, a hidden blue over all.
+    stack.insert(1, try layerOf(&stack, 0));
+    stack.layers[1].picture.fillArea(.{ .max_x = 4, .max_y = 4 }, red);
+    stack.layers[1].opacity = 50;
+    stack.insert(2, try layerOf(&stack, blue));
+    stack.layers[2].shown = false;
+    try testing.expect(!stack.plain());
+    stack.compose(stack.layers[0].picture.whole());
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), composite.get(0, 0));
+    try testing.expectEqual(white, composite.get(8, 8));
+    try testing.expectEqual(composite.get(0, 0), stack.pixelAt(0, 0));
+    // Shown, the blue covers all, but only where it is composed again.
+    stack.layers[2].shown = true;
+    stack.compose(.{ .max_x = 2, .max_y = 2 });
+    try testing.expectEqual(blue, composite.get(1, 1));
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), composite.get(3, 3));
+
+    // The painted layer stays itself as layers move and go.
+    stack.current = 1;
+    const painted = stack.layers[1].id;
+    stack.move(2, 0);
+    try testing.expectEqual(painted, stack.currentLayer().id);
+    stack.move(1, 2);
+    try testing.expectEqual(painted, stack.currentLayer().id);
+    const top = stack.remove(2);
+    free(top.picture);
+    try testing.expectEqual(@as(u32, 1), stack.current);
+    const bottom = stack.remove(0);
+    free(bottom.picture);
+    try testing.expectEqual(@as(u32, 0), stack.current);
 }
 
 test "view: a small picture in the middle, a large one scrolled inside, the zoom kept under a point" {

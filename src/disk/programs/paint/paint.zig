@@ -18,7 +18,12 @@
 //!
 //! **The side panel.** Each section is a button with its name over its
 //! gadgets; a press folds them away (`CHILDA_Hidden`) and unfolds them,
-//! and the window is laid out again. Brush: Round, Square or Own Brush in
+//! and the window is laid out again. Layers: the opacity of the layer
+//! painted with the buttons that delete it and add one, its blend mode in
+//! a chooser, and a listbrowser of the layers, top first, each with an
+//! eye that shows and hides it (a toggle column) and its name; a click
+//! paints a layer, a double-click renames it, a drag moves it. Brush:
+//! Round, Square or Own Brush in
 //! a chooser, and sliders for the size (1 to 64), the softness, the
 //! opacity, the flow, the jitter and the rotation, and Dither (brush.zig
 //! says what each does; every stroke, shape and spray goes down through
@@ -30,7 +35,12 @@
 //! change.
 //!
 //! **The picture** is true colour, `0xAARRGGBB` a pixel, as large as the
-//! screen to begin with; File's New... asks for another size. It is
+//! screen to begin with; File's New... asks for another size. It is a
+//! stack of layers (layers.zig), at most 64: `picture` is the one being
+//! painted and `kept` its copy from before the change being made. What is
+//! shown is the stack composed where it changed into a picture of its
+//! own, made when the stack first needs one - one layer, shown, at full
+//! opacity is shown as it is. It is
 //! shown in canvas.gadget, which follows its box: Paint makes the rows the
 //! window shows from the picture (view.zig) - at a zoom of 1 to 16, with a
 //! grid from 8 on, a smaller picture in the middle on a dark ground - and
@@ -103,27 +113,40 @@
 //! front, and a click there or on the swap beside them swaps them, as `x`
 //! does.
 //!
+//! **Layers.** The Layer menu puts a new one in over the one painted
+//! (see-through, or a copy), deletes, renames, moves, merges down and
+//! flips it. Every tool works on the layer painted, but pick colour,
+//! which takes what is shown; Clear and the cut leave the bottom layer
+//! the background colour and any other see-through.
+//!
 //! **Files** go through paintio.library, which is Paint's own and lies in
 //! its drawer: it is opened by its path, `PROGDIR:Libs/paintio.library`,
 //! the first time a file is opened or saved, and closed at the end. Open...
 //! (and FILE at the start) reads a project or any picture datatypes
 //! reads, and takes its palette when it has one. Save As...
 //! writes what the name ends in: `.png` a PNG, `.iff`, `.ilbm` or `.lbm`
-//! an ILBM, anything else a project (`FORM PNTG`), which keeps the
-//! palette too; Save writes the file again in its form, or asks for a
+//! an ILBM, both of what is shown, anything else a project (`FORM PNTG`),
+//! which keeps every layer - its name, opacity, blend mode and whether it
+//! is shown - the layer painted and the palette; Save writes the file again in its form, or asks for a
 //! name when the picture came from a format Paint does not write. The
 //! window's title, or the screen's bar on a screen of its own, names the
 //! file, with a `*` before it while it has changes.
 //!
 //! **Undo.** Every stroke, clear and so on is kept for undoing and redoing
 //! (history.zig), as far back as a block of three pictures' worth - or half
-//! the memory free, when that is less - reaches; the oldest go first.
+//! the memory free, when that is less - reaches; the oldest go first. A
+//! layer put in, taken out or moved is a step too: a layer taken out is
+//! held by the history until its step is gone, and a merge down is the
+//! lower layer's pixels and the upper one taken out, undone as one.
 //!
 //! The menus, with their keys (pressed with the right command key):
 //!
 //!   File      New... (N), Open... (O), Save (S), Save As... (A), Quit (Q)
 //!   Edit      Undo (Z), Redo (Y), Swap Colours, Clear (K)
 //!   Tools     the tools, Filled Shapes
+//!   Layer     New Layer (L), Duplicate (D), Delete, Rename..., Move Up,
+//!             Move Down, Merge Down (M), Flip Horizontally, Flip
+//!             Vertically
 //!   Brush     Round, Square, Own Brush, Size, Smaller ([), Larger (]),
 //!             Own Colours, One Colour, Flip Horizontally, Flip
 //!             Vertically, Turn Right, Open Brush..., Save Brush...
@@ -167,6 +190,7 @@ const ch = sdk.gadgets.chooser;
 const sl = sdk.gadgets.slider;
 const cw = sdk.gadgets.colorwheel;
 const gs = sdk.gadgets.gradientslider;
+const lb = sdk.gadgets.listbrowser;
 const cb = sdk.gadgets.checkbox;
 const ig = sdk.gadgets.integer;
 const sg = sdk.gadgets.string;
@@ -198,16 +222,20 @@ const history_zig = @import("history.zig");
 const view_zig = @import("view.zig");
 const shapes = @import("shapes.zig");
 const fill_zig = @import("fill.zig");
+const layers_zig = @import("layers.zig");
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
 const Brush = brush_zig.Brush;
 const History = history_zig.History;
+const Stack = layers_zig.Stack;
+const Layer = layers_zig.Layer;
+const Blend = layers_zig.Blend;
 const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.5";
+const VERSION = "1.6";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -245,6 +273,15 @@ const ID_SETTING = 11;
 const ID_DITHER = 16;
 /// A section's button: this and the section's place.
 const ID_SECTION = 30;
+// The Layers section: the list, the opacity, the blend mode, and the
+// buttons that add and delete.
+const ID_LAYERS = 40;
+const ID_LAYER_OPACITY = 41;
+const ID_BLEND = 42;
+const ID_LAYER_ADD = 43;
+const ID_LAYER_DELETE = 44;
+// The rename window's name.
+const ID_NAME = 26;
 // The new picture's window.
 const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
@@ -331,13 +368,22 @@ const Command = enum(u32) {
     save_brush,
     fit,
     about,
+    new_layer,
+    duplicate_layer,
+    delete_layer,
+    rename_layer,
+    layer_up,
+    layer_down,
+    merge_down,
+    flip_layer_across,
+    flip_layer_down,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.about)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.flip_layer_down)) return null;
         return @enumFromInt(value);
     }
 };
@@ -410,9 +456,27 @@ const swap_button = 6;
 
 /// The side panel's sections, each a button over its gadgets that folds
 /// them away and unfolds them.
-const section_names = [_]Id{ .MSG_SECTION_BRUSH, .MSG_SECTION_COLOUR };
-const brush_section = 0;
-const colour_section = 1;
+const section_names = [_]Id{ .MSG_SECTION_LAYERS, .MSG_SECTION_BRUSH, .MSG_SECTION_COLOUR };
+const layers_section = 0;
+const brush_section = 1;
+const colour_section = 2;
+
+/// The blend modes as the Layers section's chooser lists them, in
+/// `Blend`'s order, which is the project file's.
+const blend_names = [_]Id{
+    .MSG_BLEND_NORMAL,     .MSG_BLEND_ADD,     .MSG_BLEND_MULTIPLY,   .MSG_BLEND_SCREEN, .MSG_BLEND_OVERLAY,
+    .MSG_BLEND_DARKEN,     .MSG_BLEND_LIGHTEN, .MSG_BLEND_DODGE,      .MSG_BLEND_BURN,   .MSG_BLEND_HARD_LIGHT,
+    .MSG_BLEND_SOFT_LIGHT, .MSG_BLEND_HUE,     .MSG_BLEND_SATURATION, .MSG_BLEND_COLOUR, .MSG_BLEND_LUMINOSITY,
+};
+comptime {
+    if (blend_names.len != Blend.count) @compileError("a name for every blend mode");
+    if (@intFromEnum(Blend.luminosity) != paintio.LAYERBLEND_LUMINOSITY or @intFromEnum(Blend.hard_light) != paintio.LAYERBLEND_HARD_LIGHT)
+        @compileError("the blend modes in the project file's order");
+    if (layers_zig.max_layers != paintio.MAX_LAYERS or layers_zig.name_size != paintio.NAME_SIZE)
+        @compileError("a layer as the project file keeps it");
+}
+/// How many rows of layers the list shows at the least.
+const layer_rows_shown = 5;
 /// The largest brush the panel's slider sets.
 const panel_brush_max = brush_zig.max_size;
 
@@ -532,6 +596,18 @@ const menus = [_]MenuEntry{
 } ++ toolItems() ++ [_]MenuEntry{
     bar,
     toggleItem(.MSG_MENU_FILLED, null, .filled),
+    menuTitle(.MSG_MENU_LAYER),
+    item(.MSG_MENU_NEW_LAYER, "L", .new_layer),
+    item(.MSG_MENU_DUPLICATE_LAYER, "D", .duplicate_layer),
+    item(.MSG_MENU_DELETE_LAYER, null, .delete_layer),
+    item(.MSG_MENU_RENAME_LAYER, null, .rename_layer),
+    bar,
+    item(.MSG_MENU_LAYER_UP, null, .layer_up),
+    item(.MSG_MENU_LAYER_DOWN, null, .layer_down),
+    item(.MSG_MENU_MERGE_DOWN, "M", .merge_down),
+    bar,
+    item(.MSG_MENU_FLIP_ACROSS, null, .flip_layer_across),
+    item(.MSG_MENU_FLIP_DOWN, null, .flip_layer_down),
     menuTitle(.MSG_MENU_BRUSH),
     // Round, Square and Own Brush, the first three, rule each other out;
     // so do the two ways an own brush goes down, the ninth and tenth.
@@ -587,6 +663,9 @@ const MenuState = struct {
     own: bool,
     can_undo: bool,
     can_redo: bool,
+    /// How many layers there are, and which is painted.
+    layers: u32,
+    current: u32,
 };
 
 // --- the window ----------------------------------------------------------------
@@ -622,6 +701,12 @@ const Gui = struct {
     brightness: *Object = undefined,
     /// The pictures of a section folded and unfolded.
     fold_images: [2]?*Object = .{ null, null },
+    /// The Layers section: the list, the opacity, the blend mode, and
+    /// the pictures of the eye and of the buttons that add and delete.
+    layer_list: *Object = undefined,
+    layer_opacity: *Object = undefined,
+    blend: *Object = undefined,
+    layer_images: [3]?*Object = .{ null, null, null },
     strip: ?*intuition.Menu = null,
     /// Onto the view's and the colours' pictures.
     view_rp: *RastPort = undefined,
@@ -637,6 +722,11 @@ const Gui = struct {
     shown_size_off: ?bool = null,
     shown_colour: ?Pixel = null,
     shown_zoom: ?u32 = null,
+    /// The layer painted, its opacity and its blend mode as the Layers
+    /// section shows them.
+    shown_layer: ?u32 = null,
+    shown_layer_opacity: ?u8 = null,
+    shown_blend: ?Blend = null,
     /// Whether the title shown has the mark of a change; null before the
     /// first, and when the file's name has changed.
     shown_changed: ?bool = null,
@@ -650,6 +740,7 @@ const Gui = struct {
         ib.DisposeObject(gui.object);
         for (gui.images) |image| ib.DisposeObject(image);
         for (gui.fold_images) |image| ib.DisposeObject(image);
+        for (gui.layer_images) |image| ib.DisposeObject(image);
         const screen = gui.screen orelse return;
         if (gui.draw_info) |info| ib.FreeScreenDrawInfo(screen, info);
         if (gui.own) _ = ib.CloseScreen(screen) else ib.UnlockPubScreen(null, screen);
@@ -718,15 +809,29 @@ const App = struct {
     ub: ?*UtilityBase,
     text: *const Text,
 
+    /// The layers; the slots for them are AllocVec's, given at the start.
+    stack: Stack = .{ .layers = undefined },
+    /// The layer being painted: the stack's current one.
     picture: Picture = undefined,
     kept: Picture = undefined,
     history: History = undefined,
     /// How much paint each pixel has had in the change being made, a
     /// byte a pixel (brush.zig's `Ink`).
     mask: []u8 = &.{},
-    /// The memory of the picture, `kept`, the history and the mask,
-    /// AllocVec's; null before the first.
+    /// The memory of `kept`, the history, the mask and the composite,
+    /// AllocVec's; null before the first. Each layer has its own.
     memory: [4]?*anyopaque = @splat(null),
+    /// What a new layer is called after: one more each time.
+    layer_number: u32 = 0,
+    /// The Layers section's rows, top layer first, rebuilt when the
+    /// layers change (`layers_stale`).
+    layer_rows: exec.List = .{},
+    layers_stale: bool = true,
+    /// The blend modes' names for the chooser.
+    blend_labels: [Blend.count:null]?[*:0]const u8 = @splat(null),
+    /// The list's columns - the eye, the name - which it reads while it
+    /// is there.
+    layer_columns: [3]lb.Column = @splat(.{}),
     /// Changed since it was made.
     changed: bool = false,
 
@@ -827,25 +932,32 @@ const App = struct {
 
     // --- the picture ----------------------------------------------------------
 
-    /// A new picture of that size in the background colour, the history
-    /// emptied; the old one stays when there is no memory for it.
+    /// A new picture of that size in the background colour, one layer,
+    /// the history emptied; the old one stays when there is no memory for
+    /// it.
     fn newPicture(app: *App, width: u32, height: u32) bool {
         if (width == 0 or height == 0 or width > max_side or height > max_side) return false;
-        const first = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY) orelse return false;
-        var made = Picture{ .pixels = @ptrCast(@alignCast(first)), .width = width, .height = height };
+        const memory = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY) orelse return false;
+        var made = Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height };
         made.fill(app.background);
-        if (!app.takePicture(first, width, height)) {
-            app.sys.FreeVec(first);
+        if (!app.takePicture(width, height, true)) {
+            app.sys.FreeVec(memory);
             return false;
         }
+        app.layer_number = 0;
+        var layer = Layer{ .picture = made, .memory = memory, .id = app.stack.newId() };
+        app.nameLayer(&layer);
+        app.stack.insert(0, layer);
+        app.showPicture();
         return true;
     }
 
-    /// `first`, a picture's pixels of that size from AllocVec, made the
-    /// picture, with the memory beside it to keep and undo with, and the
-    /// history emptied. False when there is no memory for those: the old
-    /// picture stays, and `first` is still the caller's.
-    fn takePicture(app: *App, first: *anyopaque, width: u32, height: u32) bool {
+    /// The memory beside the layers for a picture of that size - to keep
+    /// and undo with, the mask, and the composite unless the picture is
+    /// `plain` - made, and the old picture given up for it: the stack is
+    /// empty then, for the caller to fill, and `showPicture` after. False
+    /// when there is no memory for those: the old picture stays.
+    fn takePicture(app: *App, width: u32, height: u32, plain: bool) bool {
         const bytes = Picture.bytesFor(width, height);
         const sys = app.sys;
         const second = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return false;
@@ -863,13 +975,30 @@ const App = struct {
             sys.FreeVec(second);
             return false;
         };
+        const fifth: ?*anyopaque = if (plain) null else sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
+            sys.FreeVec(fourth);
+            sys.FreeVec(third);
+            sys.FreeVec(second);
+            return false;
+        };
         app.freePicture();
-        app.memory = .{ first, second, third, fourth };
+        app.memory = .{ second, third, fourth, fifth };
         app.mask = @as([*]u8, @ptrCast(fourth))[0 .. @as(usize, width) * height];
-        app.picture = .{ .pixels = @ptrCast(@alignCast(first)), .width = width, .height = height };
         app.kept = .{ .pixels = @ptrCast(@alignCast(second)), .width = width, .height = height };
-        app.history = .{ .memory = @ptrCast(@alignCast(third)), .size = room };
-        app.kept.copyArea(&app.picture, app.picture.whole());
+        app.history = .{ .memory = @ptrCast(@alignCast(third)), .size = room, .release = releaseLayer, .context = app };
+        app.stack.count = 0;
+        app.stack.current = 0;
+        app.stack.composite = if (fifth) |memory| Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height } else null;
+        return true;
+    }
+
+    /// The layers just put in shown from the start: the one painted kept,
+    /// nothing changed yet, the view at the top left.
+    fn showPicture(app: *App) void {
+        if (app.stack.current >= app.stack.count) app.stack.current = app.stack.count - 1;
+        app.paintLayer();
+        const width = app.picture.width;
+        const height = app.picture.height;
         app.changed = false;
         app.stroke = null;
         app.drawing = null;
@@ -877,7 +1006,278 @@ const App = struct {
         app.view.top = 0;
         app.view.fit(width, height);
         app.whole = true;
+        app.layers_stale = true;
+        app.show(app.picture.whole());
+    }
+
+    /// The layer the stack has as its current one made the one painted,
+    /// and `kept` a copy of it.
+    fn paintLayer(app: *App) void {
+        app.picture = app.stack.currentLayer().picture;
+        app.kept.copyArea(&app.picture, app.picture.whole());
+    }
+
+    /// The composite made when the stack needs one first: false, said in
+    /// a requester, when there is no memory for it.
+    fn haveComposite(app: *App) bool {
+        if (app.stack.composite != null) return true;
+        const memory = app.sys.AllocVec(Picture.bytesFor(app.picture.width, app.picture.height), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_NO_LAYER);
+            return false;
+        };
+        app.memory[3] = memory;
+        app.stack.composite = .{ .pixels = @ptrCast(@alignCast(memory)), .width = app.picture.width, .height = app.picture.height };
         return true;
+    }
+
+    /// A new layer called "Layer" and the next number.
+    fn nameLayer(app: *App, layer: *Layer) void {
+        app.layer_number += 1;
+        var name: [layers_zig.name_size]u8 = undefined;
+        const made = app.text.format(&name, .MSG_LAYER_NAME, .{@as(i64, app.layer_number)});
+        layer.setName(made[0..@min(made.len, name.len)]);
+    }
+
+    /// The layers, the memory beside them and the history given back.
+    fn freePicture(app: *App) void {
+        if (app.memory[1] != null) app.history.clear();
+        for (app.stack.all()) |layer| app.sys.FreeVec(layer.memory);
+        app.stack.count = 0;
+        app.stack.composite = null;
+        for (&app.memory) |*memory| {
+            if (memory.*) |block| app.sys.FreeVec(block);
+            memory.* = null;
+        }
+    }
+
+    /// A change of `area` made to the layer painted: kept for undoing,
+    /// and shown.
+    fn changedArea(app: *App, area: Area) void {
+        if (area.isEmpty()) return;
+        app.changed = true;
+        app.recordChange(area);
+        app.show(area);
+    }
+
+    /// What a change did to the layer painted kept for undoing; said in a
+    /// requester when it was too large.
+    fn recordChange(app: *App, area: Area) void {
+        if (!app.history.record(app.stack.currentLayer().id, &app.picture, &app.kept, area)) app.tell(.MSG_NO_UNDO);
+    }
+
+    /// What an undo or a redo did shown, and the layer painted followed:
+    /// `painted` was its id before.
+    fn applied(app: *App, change: history_zig.Change, painted: u32) void {
+        app.changed = true;
+        if (change.layers or app.stack.currentLayer().id != painted) {
+            app.paintLayer();
+            app.layers_stale = true;
+        } else {
+            app.kept.copyArea(&app.picture, change.area);
+        }
+        app.show(change.area);
+    }
+
+    /// What a cleared or cut area of the layer painted becomes: the
+    /// background colour at the bottom, see-through above it.
+    fn emptyColour(app: *const App) Pixel {
+        return if (app.stack.current == 0) app.background else 0;
+    }
+
+    // --- the layers -------------------------------------------------------------
+
+    /// A layer put in over the one painted and painted: see-through, or
+    /// a copy of the one painted.
+    fn addLayer(app: *App, copy: bool) void {
+        if (app.stack.count >= layers_zig.max_layers or !app.haveComposite()) return;
+        const width = app.picture.width;
+        const height = app.picture.height;
+        const memory = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+            app.tell(.MSG_NO_LAYER);
+            return;
+        };
+        var layer = Layer{ .picture = .{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height }, .memory = memory, .id = app.stack.newId() };
+        if (copy) {
+            const from = app.stack.currentLayer();
+            layer.picture.copyArea(&from.picture, from.picture.whole());
+            layer.opacity = from.opacity;
+            layer.blend = from.blend;
+            layer.shown = from.shown;
+            var name: [layers_zig.name_size]u8 = undefined;
+            const made = app.text.format(&name, .MSG_LAYER_COPY, .{@as([*:0]const u8, @ptrCast(&from.name))});
+            layer.setName(made[0..@min(made.len, name.len)]);
+        } else {
+            app.nameLayer(&layer);
+        }
+        const place = app.stack.current + 1;
+        app.stack.insert(place, layer);
+        app.stack.current = place;
+        if (!app.history.layerIn(&app.stack, place, false)) app.tell(.MSG_NO_UNDO);
+        app.layersChanged();
+    }
+
+    /// The layer painted taken out, the one under it painted; never the
+    /// last.
+    fn deleteLayer(app: *App) void {
+        if (app.stack.count <= 1) return;
+        const place = app.stack.current;
+        const layer = app.stack.remove(place);
+        if (!app.history.layerOut(layer, place, false)) {
+            app.sys.FreeVec(layer.memory);
+            app.tell(.MSG_NO_UNDO);
+        }
+        app.layersChanged();
+    }
+
+    /// The layer at `from` moved to `to`, and painted.
+    fn moveLayer(app: *App, from: u32, to: u32) void {
+        if (from == to or from >= app.stack.count or to >= app.stack.count) return;
+        app.stack.move(from, to);
+        app.stack.current = to;
+        if (!app.history.moved(from, to, false)) app.tell(.MSG_NO_UNDO);
+        app.layersChanged();
+    }
+
+    /// The layer painted laid into the one under it as it shows over it
+    /// - nothing when it is hidden - and taken out; one step to undo. The
+    /// one under keeps its own opacity and blend mode.
+    fn mergeDown(app: *App) void {
+        const place = app.stack.current;
+        if (place == 0) return;
+        const upper = app.stack.layers[place];
+        const lower = &app.stack.layers[place - 1];
+        const area = if (upper.shown and upper.opacity != 0) coveredArea(&upper.picture) else Area{};
+        // The lower layer's pixels kept, then the upper one taken out,
+        // joined to that; with nothing to lay in, the taking out alone.
+        const joined = !area.isEmpty();
+        const kept = !joined or app.history.remember(lower.id, &lower.picture, area, false);
+        if (joined) {
+            var y: u32 = @intCast(area.min_y);
+            const from: usize = @intCast(area.min_x);
+            const to: usize = @intCast(area.max_x);
+            while (y < area.max_y) : (y += 1) layers_zig.blendRow(lower.picture.row(y)[from..to], upper.picture.row(y)[from..to], upper.blend, upper.opacity);
+        }
+        const taken = app.stack.remove(place);
+        if (!kept or !app.history.layerOut(taken, place, joined)) {
+            app.sys.FreeVec(taken.memory);
+            app.tell(.MSG_NO_UNDO);
+        }
+        app.layersChanged();
+    }
+
+    /// The layer painted flipped across, or upside down.
+    fn flipLayer(app: *App, across: bool) void {
+        const picture = &app.picture;
+        if (across) {
+            var y: u32 = 0;
+            while (y < picture.height) : (y += 1) {
+                const row = picture.row(y);
+                var left: usize = 0;
+                var right: usize = row.len;
+                while (left + 1 < right) : (left += 1) {
+                    right -= 1;
+                    const held = row[left];
+                    row[left] = row[right];
+                    row[right] = held;
+                }
+            }
+        } else {
+            var top: u32 = 0;
+            var bottom: u32 = picture.height;
+            while (top + 1 < bottom) : (top += 1) {
+                bottom -= 1;
+                for (picture.row(top), picture.row(bottom)) |*upper, *lower| {
+                    const held = upper.*;
+                    upper.* = lower.*;
+                    lower.* = held;
+                }
+            }
+        }
+        app.changedArea(picture.whole());
+    }
+
+    /// The layer at `place` from the bottom painted.
+    fn chooseLayer(app: *App, place: u32) void {
+        if (place >= app.stack.count or place == app.stack.current) return;
+        app.endShape();
+        app.stack.current = place;
+        app.paintLayer();
+    }
+
+    /// The layer at `place` shown or hidden, as its eye in the list says.
+    fn showLayer(app: *App, place: u32, shown: bool) void {
+        if (place >= app.stack.count) return;
+        if (!app.haveComposite()) {
+            app.layers_stale = true;
+            return;
+        }
+        app.stack.layers[place].shown = shown;
+        app.changed = true;
+        app.show(app.picture.whole());
+    }
+
+    /// The layer painted given an opacity, 0 to 100.
+    fn setLayerOpacity(app: *App, level: u32) void {
+        const layer = app.stack.currentLayer();
+        const opacity: u8 = @intCast(@min(level, 100));
+        if (opacity == layer.opacity or !app.haveComposite()) return;
+        layer.opacity = opacity;
+        app.changed = true;
+        app.show(app.picture.whole());
+    }
+
+    /// The layer painted given a blend mode.
+    fn setBlend(app: *App, which: u32) void {
+        if (which >= Blend.count) return;
+        const layer = app.stack.currentLayer();
+        const mode: Blend = @enumFromInt(which);
+        if (mode == layer.blend) return;
+        layer.blend = mode;
+        app.changed = true;
+        app.show(app.picture.whole());
+    }
+
+    /// A press on the list of layers: one chosen, shown or hidden by its
+    /// eye, moved by a drag, renamed by a double-click.
+    fn layerPicked(app: *App, code: u32) void {
+        const flags = lb.LISTBROWSER_TOGGLED | lb.LISTBROWSER_MOVED | lb.LISTBROWSER_DOUBLE;
+        const row = code & ~flags;
+        const count = app.stack.count;
+        if (row >= count) return;
+        // The list has the top layer first.
+        const place = count - 1 - row;
+        if (code & lb.LISTBROWSER_TOGGLED != 0) {
+            app.showLayer(place, !app.stack.layers[place].shown);
+        } else if (code & lb.LISTBROWSER_MOVED != 0) {
+            const gui = app.ui() orelse return;
+            var from_row: usize = 0;
+            _ = app.ib.GetAttr(lb.LISTBROWSER_Moved, gui.layer_list, &from_row);
+            app.endShape();
+            if (from_row < count) app.moveLayer(count - 1 - @as(u32, @intCast(from_row)), place);
+        } else {
+            app.chooseLayer(place);
+            if (code & lb.LISTBROWSER_DOUBLE != 0) app.renameLayer();
+        }
+    }
+
+    /// The stack has changed: the layer painted followed, the list made
+    /// again, and all shown.
+    fn layersChanged(app: *App) void {
+        app.changed = true;
+        app.paintLayer();
+        app.layers_stale = true;
+        app.show(app.picture.whole());
+    }
+
+    /// The layer painted given the name asked for.
+    fn renameLayer(app: *App) void {
+        const layer = app.stack.currentLayer();
+        var name: [layers_zig.name_size:0]u8 = @splat(0);
+        @memcpy(name[0..layers_zig.name_size], &layer.name);
+        if (!app.askName(&name)) return;
+        layer.setName(name[0..lengthOf(&name)]);
+        app.changed = true;
+        app.layers_stale = true;
     }
 
     // --- files --------------------------------------------------------------
@@ -904,20 +1304,31 @@ const App = struct {
             return false;
         }
         defer pio.FreeProject(&project);
-        // The bottom layer is the picture: Paint paints one.
-        const layer = &project.layers.?[0];
-        if (!app.takePicture(layer.pixels.?, project.width, project.height)) {
+        const given = project.layers.?[0..@min(project.layer_count, layers_zig.max_layers)];
+        const plain = given.len == 1 and given[0].flags & paintio.LAYERF_HIDDEN == 0 and given[0].opacity == 255;
+        if (given.len == 0 or !app.takePicture(project.width, project.height, plain)) {
             app.tellSize(.MSG_NO_PICTURE, .{ project.width, project.height });
             return false;
         }
-        // The pixels are the picture's now, not the project's to free.
-        layer.pixels = null;
-        app.stroke = null;
-        app.drawing = null;
-        app.view.left = 0;
-        app.view.top = 0;
-        app.view.fit(project.width, project.height);
-        app.whole = true;
+        // The pixels are the layers' now, not the project's to free.
+        app.layer_number = 0;
+        for (given) |*from| {
+            var layer = Layer{
+                .picture = .{ .pixels = from.pixels.?, .width = project.width, .height = project.height },
+                .memory = @ptrCast(from.pixels.?),
+                .opacity = @intCast((@as(u32, from.opacity) * 100 + 127) / 255),
+                .blend = if (from.blend <= paintio.LAYERBLEND_LAST) @enumFromInt(from.blend) else .normal,
+                .shown = from.flags & paintio.LAYERF_HIDDEN == 0,
+                .id = app.stack.newId(),
+            };
+            from.pixels = null;
+            layer.name = from.name;
+            layer.name[layers_zig.name_size - 1] = 0;
+            if (layer.name[0] == 0) app.nameLayer(&layer) else app.layer_number += 1;
+            app.stack.insert(app.stack.count, layer);
+        }
+        app.stack.current = @min(project.current, app.stack.count - 1);
+        app.showPicture();
         if (project.palette_count != 0) {
             const count = @min(project.palette_count, app.palette.len);
             @memcpy(app.palette[0..count], project.palette[0..count]);
@@ -951,18 +1362,32 @@ const App = struct {
         return app.saveTo(&name);
     }
 
-    /// The picture written as the name's ending says: a PNG, an ILBM,
-    /// or a project with the palette. Whether it was.
+    /// The picture written as the name's ending says: a PNG or an ILBM
+    /// of what is shown, or a project of every layer with the palette.
+    /// Whether it was.
     fn saveTo(app: *App, name: [*:0]const u8) bool {
         const pio = app.paintIO() orelse return false;
         const width = app.picture.width;
         const height = app.picture.height;
+        // What is shown, made whole.
+        app.stack.compose(app.picture.whole());
+        const shown = app.stack.shown().pixels;
         const failure = switch (formatOf(name)) {
-            .png => pio.SavePicture(name, app.picture.pixels, width, height, paintio.PIOFORMAT_PNG),
-            .ilbm => pio.SavePicture(name, app.picture.pixels, width, height, paintio.PIOFORMAT_ILBM),
+            .png => pio.SavePicture(name, shown, width, height, paintio.PIOFORMAT_PNG),
+            .ilbm => pio.SavePicture(name, shown, width, height, paintio.PIOFORMAT_ILBM),
             .project => blk: {
-                var layers = [1]paintio.Layer{.{ .pixels = app.picture.pixels }};
-                var project = paintio.Project{ .width = width, .height = height, .layer_count = 1, .layers = &layers, .palette_count = app.palette.len };
+                const count = app.stack.count;
+                const memory = app.sys.AllocVec(@sizeOf(paintio.Layer) * count, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse break :blk dos.ERROR_NO_FREE_STORE;
+                defer app.sys.FreeVec(memory);
+                const layers: [*]paintio.Layer = @ptrCast(@alignCast(memory));
+                for (app.stack.all(), layers[0..count]) |*layer, *into| into.* = .{
+                    .pixels = layer.picture.pixels,
+                    .name = layer.name,
+                    .opacity = @intCast((@as(u32, layer.opacity) * 255 + 50) / 100),
+                    .flags = if (layer.shown) 0 else paintio.LAYERF_HIDDEN,
+                    .blend = @intFromEnum(layer.blend),
+                };
+                var project = paintio.Project{ .width = width, .height = height, .layer_count = count, .current = app.stack.current, .layers = layers, .palette_count = app.palette.len };
                 @memcpy(project.palette[0..app.palette.len], &app.palette);
                 break :blk pio.SaveProject(name, &project);
             },
@@ -1060,21 +1485,6 @@ const App = struct {
         }
         app.title[used] = 0;
         if (gui.own) app.ib.SetWindowTitles(gui.window, wn.TITLE_UNCHANGED, &app.title) else app.ib.SetWindowTitles(gui.window, &app.title, wn.TITLE_UNCHANGED);
-    }
-
-    fn freePicture(app: *App) void {
-        for (&app.memory) |*memory| {
-            if (memory.*) |block| app.sys.FreeVec(block);
-            memory.* = null;
-        }
-    }
-
-    /// A change of `area` made: kept for undoing, and shown.
-    fn changedArea(app: *App, area: Area) void {
-        if (area.isEmpty()) return;
-        app.changed = true;
-        if (!app.history.record(&app.picture, &app.kept, area)) app.tell(.MSG_NO_UNDO);
-        app.show(area);
     }
 
     // --- painting -------------------------------------------------------------
@@ -1331,7 +1741,7 @@ const App = struct {
         brush_zig.clearMask(app.mask, app.picture.width, drawing.shown);
         if (drawing.shown.isEmpty()) return;
         app.changed = true;
-        if (!app.history.record(&app.picture, &app.kept, drawing.shown)) app.tell(.MSG_NO_UNDO);
+        app.recordChange(drawing.shown);
     }
 
     /// The shape put away, the picture as it was. False with none.
@@ -1380,7 +1790,7 @@ const App = struct {
         brush_zig.grab(&app.picture, area, app.background, &made);
         app.takeBrush(memory, made.width, made.height);
         if (menu_button) {
-            app.picture.fillArea(area, app.background);
+            app.picture.fillArea(area, app.emptyColour());
             app.changedArea(area);
         }
         app.chooseTool(app.before_grab);
@@ -1545,7 +1955,7 @@ const App = struct {
     /// button the background; the tool before the picker chosen again.
     fn pickAt(app: *App, at: Point, menu_button: bool) void {
         if (app.picture.inside(at[0], at[1])) {
-            const colour = app.picture.get(@intCast(at[0]), @intCast(at[1]));
+            const colour = app.stack.pixelAt(@intCast(at[0]), @intCast(at[1]));
             if (menu_button) app.background = colour else {
                 app.foreground = colour;
                 // The palette shows it when it has it.
@@ -1627,7 +2037,7 @@ const App = struct {
         brush_zig.clearMask(app.mask, app.picture.width, stroke.changed);
         if (stroke.changed.isEmpty()) return;
         app.changed = true;
-        if (!app.history.record(&app.picture, &app.kept, stroke.changed)) app.tell(.MSG_NO_UNDO);
+        app.recordChange(stroke.changed);
     }
 
     // --- the view -------------------------------------------------------------
@@ -1667,6 +2077,8 @@ const App = struct {
         const gui = app.ui() orelse return;
         const pointer_brush = app.pointerBrush();
         app.followPointerBrush(pointer_brush);
+        // The layers made into what is shown where they changed.
+        app.stack.compose(app.pending);
         const area = if (app.whole) Area{ .max_x = @intCast(app.view.width), .max_y = @intCast(app.view.height) } else app.view.toView(app.pending);
         app.whole = false;
         app.pending = Area.none;
@@ -1679,7 +2091,7 @@ const App = struct {
                 var row: i32 = 0;
                 while (row < rows) : (row += 1) {
                     const start: usize = @as(usize, @intCast(row)) * width;
-                    app.view.row(&app.picture, y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null);
+                    app.view.row(app.stack.shown(), y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null);
                 }
                 app.gb.WritePixelArray(gui.view_rp, @ptrCast(band), width * @sizeOf(Pixel), @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
                     .min_x = area.min_x,
@@ -1768,6 +2180,8 @@ const App = struct {
             .own = app.own,
             .can_undo = app.history.canUndo() or app.drawing != null,
             .can_redo = app.history.canRedo(),
+            .layers = app.stack.count,
+            .current = app.stack.current,
         };
     }
 
@@ -1816,6 +2230,7 @@ const App = struct {
     /// and the zoom, where they changed.
     fn syncPanel(app: *App) void {
         const gui = app.ui() orelse return;
+        app.syncLayers(gui);
         const shape: u32 = if (app.brush.own != null) 2 else if (app.brush.shape == .round) 0 else 1;
         if (gui.shown_shape == null or gui.shown_shape.? != shape) {
             gui.shown_shape = shape;
@@ -1882,6 +2297,50 @@ const App = struct {
         };
         _ = app.perform(which);
         if (app.ui()) |gui| gui.shown_shape = null;
+    }
+
+    /// The Layers section set from the stack, where it changed: the list
+    /// made again when the layers did, the layer painted chosen in it,
+    /// its opacity and its blend mode.
+    fn syncLayers(app: *App, gui: *Gui) void {
+        const count = app.stack.count;
+        const current = app.stack.current;
+        if (app.layers_stale) {
+            app.layers_stale = false;
+            _ = app.ib.SetGadgetAttrsTagList(gui.layer_list, gui.window, &[_]TagItem{ .{ .tag = lb.LISTBROWSER_Rows, .data = lb.LISTBROWSER_DETACH }, .{} });
+            app.buildLayerRows();
+            _ = app.ib.SetGadgetAttrsTagList(gui.layer_list, gui.window, &[_]TagItem{ .{ .tag = lb.LISTBROWSER_Rows, .data = @intFromPtr(&app.layer_rows) }, .{} });
+            gui.shown_layer = null;
+        }
+        if (gui.shown_layer == null or gui.shown_layer.? != current) {
+            gui.shown_layer = current;
+            _ = app.ib.SetGadgetAttrsTagList(gui.layer_list, gui.window, &[_]TagItem{ .{ .tag = lb.LISTBROWSER_Selected, .data = count - 1 - current }, .{} });
+        }
+        const layer = app.stack.currentLayer();
+        if (gui.shown_layer_opacity == null or gui.shown_layer_opacity.? != layer.opacity) {
+            gui.shown_layer_opacity = layer.opacity;
+            _ = app.ib.SetGadgetAttrsTagList(gui.layer_opacity, gui.window, &[_]TagItem{ .{ .tag = sl.SLIDER_Level, .data = layer.opacity }, .{} });
+        }
+        if (gui.shown_blend == null or gui.shown_blend.? != layer.blend) {
+            gui.shown_blend = layer.blend;
+            _ = app.ib.SetGadgetAttrsTagList(gui.blend, gui.window, &[_]TagItem{ .{ .tag = ch.CHOOSER_Active, .data = @intFromEnum(layer.blend) }, .{} });
+        }
+    }
+
+    /// The list's rows made again from the stack, top layer first: each
+    /// its eye, on while the layer is shown, and its name.
+    fn buildLayerRows(app: *App) void {
+        const sys = app.sys;
+        lb.freeRows(sys, &app.layer_rows);
+        var place = app.stack.count;
+        while (place > 0) {
+            place -= 1;
+            const layer = &app.stack.layers[place];
+            const row = lb.allocRow(sys, &.{ "", @as([*:0]const u8, @ptrCast(&layer.name)) }, 0) orelse continue;
+            row.flags = if (layer.shown) lb.ROW_ON else 0;
+            row.user_data = layer.id;
+            sys.AddTail(&app.layer_rows, &row.node);
+        }
     }
 
     /// A brush setting as its slider shows it.
@@ -1996,6 +2455,7 @@ const App = struct {
         switch (which) {
             .undo => if (app.cancelShape()) return true,
             .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
+            .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .flip_layer_across, .flip_layer_down => app.endShape(),
             else => {},
         }
         switch (which) {
@@ -2011,13 +2471,13 @@ const App = struct {
             .save => _ = app.saveKept(),
             .save_as => _ = app.saveAs(),
             .quit => return !app.mayLeave(),
-            .undo => if (app.history.undo(&app.picture, &app.kept)) |area| {
-                app.changed = true;
-                app.show(area);
+            .undo => {
+                const painted = app.stack.currentLayer().id;
+                if (app.history.undo(&app.stack)) |change| app.applied(change, painted);
             },
-            .redo => if (app.history.redo(&app.picture, &app.kept)) |area| {
-                app.changed = true;
-                app.show(area);
+            .redo => {
+                const painted = app.stack.currentLayer().id;
+                if (app.history.redo(&app.stack)) |change| app.applied(change, painted);
             },
             .swap => {
                 const was = app.foreground;
@@ -2026,13 +2486,22 @@ const App = struct {
                 app.drawColours();
             },
             .clear => {
-                app.picture.fill(app.background);
+                app.picture.fill(app.emptyColour());
                 app.changedArea(app.picture.whole());
             },
             .zoom_in => app.zoomTo(app.view.nextZoom(true)),
             .zoom_out => app.zoomTo(app.view.nextZoom(false)),
             .actual_size => app.zoomTo(1),
             .fit => app.zoomTo(app.view.fitZoom(app.picture.width, app.picture.height)),
+            .new_layer => app.addLayer(false),
+            .duplicate_layer => app.addLayer(true),
+            .delete_layer => app.deleteLayer(),
+            .rename_layer => app.renameLayer(),
+            .layer_up => app.moveLayer(app.stack.current, app.stack.current + 1),
+            .layer_down => if (app.stack.current > 0) app.moveLayer(app.stack.current, app.stack.current - 1),
+            .merge_down => app.mergeDown(),
+            .flip_layer_across => app.flipLayer(true),
+            .flip_layer_down => app.flipLayer(false),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -2282,6 +2751,106 @@ const App = struct {
         }
     }
 
+    /// A layer's name, asked in a window of its own starting from `name`
+    /// and written back there: false when it was closed or cancelled.
+    fn askName(app: *App, name: *[layers_zig.name_size:0]u8) bool {
+        const gui = app.ui() orelse return false;
+        const sys = app.sys;
+        const string_lib = sys.OpenLibrary(sg.STRING_LIBRARY, 0) orelse return false;
+        defer sys.CloseLibrary(string_lib);
+        const ib = app.ib;
+        const field = ib.NewObjectTagList(null, sg.STRING_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_NAME },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = gc.STRINGA_MaxChars, .data = layers_zig.name_size },
+            .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(name) },
+            .{},
+        });
+        const answers = [2]?*Object{ textButton(ib, app.text.get(.MSG_OK), ID_OK), textButton(ib, app.text.get(.MSG_CANCEL), ID_CANCEL) };
+        if (field == null or answers[0] == null or answers[1] == null) {
+            for ([_]?*Object{field} ++ answers) |made| ib.DisposeObject(made);
+            return false;
+        }
+        const row = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[0]) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[1]) },
+            .{},
+        }) orelse {
+            for ([_]?*Object{field} ++ answers) |made| ib.DisposeObject(made);
+            return false;
+        };
+        const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(field) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_NAME)) },
+            .{ .tag = lg.CHILDA_MinWidth, .data = 200 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(row) },
+            .{},
+        }) orelse {
+            ib.DisposeObject(row);
+            ib.DisposeObject(field);
+            return false;
+        };
+        const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+            screenTag(gui),
+            .{ .tag = wn.WA_Title, .data = @intFromPtr(app.text.get(.MSG_RENAME_TITLE)) },
+            .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
+            .{ .tag = wn.WA_AutoAdjust, .data = 1 },
+            .{ .tag = wn.WA_CloseGadget, .data = 1 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_DepthGadget, .data = 1 },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_ACTIVEWINDOW },
+            .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+            .{},
+        }) orelse {
+            ib.DisposeObject(layout);
+            return false;
+        };
+        defer ib.DisposeObject(object);
+        var open = wc.WmOpen{};
+        if (ib.SendMessage(object, @ptrCast(&open)) == 0) return false;
+        const window: *Window = @ptrFromInt(windowOf(ib, object));
+
+        var signal: usize = 0;
+        _ = ib.GetAttr(wc.WINDOWA_SigMask, object, &signal);
+        var code: u32 = 0;
+        var handle = wc.WmHandleInput{ .code = &code };
+        while (true) {
+            _ = sys.Wait(@truncate(signal));
+            while (true) {
+                const word = ib.SendMessage(object, @ptrCast(&handle));
+                if (word == wc.WMHI_LASTMSG) break;
+                const done = switch (word & wc.WMHI_CLASSMASK) {
+                    wc.WMHI_CLOSEWINDOW => return false,
+                    wc.WMHI_ACTIVE => blk: {
+                        _ = ib.ActivateGadget(field.?, window, null);
+                        break :blk false;
+                    },
+                    wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
+                        ID_CANCEL => return false,
+                        ID_OK, ID_NAME => true,
+                        else => false,
+                    },
+                    wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
+                        '\r' => true,
+                        0x1B => return false,
+                        else => false,
+                    },
+                    else => false,
+                };
+                if (!done) continue;
+                var value: usize = 0;
+                if (ib.GetAttr(gc.STRINGA_TextVal, field.?, &value) == 0 or value == 0) return false;
+                copyName(name, @ptrFromInt(value));
+                return true;
+            }
+        }
+    }
+
     /// The text and its font, asked in a window of its own: false when
     /// it was closed or cancelled. What is typed, and the font, are kept
     /// for the next time.
@@ -2430,6 +2999,11 @@ const App = struct {
                     ID_SHAPE => app.pickShape(code),
                     ID_SIZE => app.sizeBrush(code),
                     ID_WHEEL, ID_BRIGHTNESS => app.takeColour(),
+                    ID_LAYERS => app.layerPicked(code),
+                    ID_LAYER_OPACITY => app.setLayerOpacity(code),
+                    ID_BLEND => app.setBlend(code),
+                    ID_LAYER_ADD => _ = app.perform(.new_layer),
+                    ID_LAYER_DELETE => _ = app.perform(.delete_layer),
                     else => |id| {
                         if (id >= ID_SECTION and id < ID_SECTION + section_names.len) {
                             app.foldSection(id - ID_SECTION, code != 0);
@@ -2462,6 +3036,11 @@ const App = struct {
                         app.sizeBrush(@truncate(level));
                     },
                     ID_WHEEL, ID_BRIGHTNESS => app.takeColour(),
+                    ID_LAYER_OPACITY => {
+                        var level: usize = 0;
+                        _ = app.ib.GetAttr(sl.SLIDER_Level, gui.layer_opacity, &level);
+                        app.setLayerOpacity(@truncate(level));
+                    },
                     else => |id| if (id >= ID_SETTING and id < ID_SETTING + setting_entries.len) {
                         var level: usize = 0;
                         _ = app.ib.GetAttr(sl.SLIDER_Level, gui.setting_sliders[id - ID_SETTING], &level);
@@ -2574,6 +3153,14 @@ const App = struct {
         for (tools, 0..) |entry, place| gui.images[place] = glyph(ib, entry.glyph);
         for (buttons, tools.len..) |entry, place| gui.images[place] = glyph(ib, entry.glyph);
         gui.fold_images = .{ glyph(ib, command.CMD_FOLDED), glyph(ib, command.CMD_UNFOLDED) };
+        gui.layer_images = .{ glyph(ib, command.CMD_EYE), glyph(ib, command.CMD_NEW), glyph(ib, command.CMD_DELETE) };
+        for (&app.blend_labels, blend_names) |*label, id| label.* = app.text.get(id);
+        app.layer_columns = .{
+            .{ .title = "", .weight = 1, .flags = lb.COLUMN_TOGGLE | lb.COLUMN_NOSORT, .image = gui.layer_images[0] },
+            .{ .title = "", .weight = 5, .flags = lb.COLUMN_NOSORT },
+            .{},
+        };
+        app.buildLayerRows();
         for (&app.shape_labels, [_]Id{ .MSG_MENU_ROUND, .MSG_MENU_SQUARE, .MSG_MENU_OWN_BRUSH }) |*label, id| label.* = app.text.get(id);
 
         // The gadgets, the program's to dispose of until a layout takes
@@ -2583,6 +3170,43 @@ const App = struct {
         for (tools, 0..) |entry, place| tool_gadgets[place] = made.take(toolButton(ib, entry.tool.id(), gui.images[place], app.text.get(entry.hint), tb.TBKIND_TOGGLE));
         var button_gadgets: [buttons.len]?*Object = undefined;
         for (buttons, 0..) |entry, place| button_gadgets[place] = made.take(toolButton(ib, entry.which.id(), gui.images[tools.len + place], app.text.get(entry.hint), entry.kind));
+        // The Layers section: the list, top layer first, the opacity with
+        // the buttons that delete and add, the blend mode.
+        // Room for a few rows; as wide as the panel makes it.
+        const line_height: u32 = if (info.font) |font| font.image.height else 8;
+        const layer_list = made.take(ib.NewObjectTagList(null, lb.LISTBROWSER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_LAYERS },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = lb.LISTBROWSER_Columns, .data = @intFromPtr(&app.layer_columns) },
+            .{ .tag = lb.LISTBROWSER_Rows, .data = @intFromPtr(&app.layer_rows) },
+            .{ .tag = lb.LISTBROWSER_Headings, .data = 0 },
+            .{ .tag = lb.LISTBROWSER_Reorder, .data = 1 },
+            .{ .tag = lb.LISTBROWSER_Selected, .data = app.stack.count - 1 - app.stack.current },
+            .{ .tag = gc.GA_Width, .data = 100 },
+            .{ .tag = gc.GA_Height, .data = layer_rows_shown * line_height + 6 },
+            .{},
+        }));
+        const layer_opacity = made.take(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_LAYER_OPACITY },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{ .tag = sl.SLIDER_Min, .data = 0 },
+            .{ .tag = sl.SLIDER_Max, .data = 100 },
+            .{ .tag = sl.SLIDER_Level, .data = app.stack.currentLayer().opacity },
+            .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld%%") },
+            .{ .tag = sl.SLIDER_LevelPlace, .data = sl.SLIDER_PLACE_RIGHT },
+            .{ .tag = sl.SLIDER_MaxLevelLen, .data = level_room },
+            .{},
+        }));
+        const layer_delete = made.take(toolButton(ib, ID_LAYER_DELETE, gui.layer_images[2], app.text.get(.MSG_DELETE_LAYER_HINT), tb.TBKIND_PUSH));
+        const layer_add = made.take(toolButton(ib, ID_LAYER_ADD, gui.layer_images[1], app.text.get(.MSG_NEW_LAYER_HINT), tb.TBKIND_PUSH));
+        const blend = made.take(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_BLEND },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&app.blend_labels) },
+            .{ .tag = ch.CHOOSER_Active, .data = @intFromEnum(app.stack.currentLayer().blend) },
+            .{},
+        }));
         var section_gadgets: [section_names.len]?*Object = undefined;
         for (section_names, 0..) |name, place| {
             const open = app.open_sections[place];
@@ -2745,6 +3369,26 @@ const App = struct {
         brush_tags[tag_count + 1] = .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_DITHER)) };
         brush_tags[tag_count + 2] = .{};
         const brush_body = made.layout(brush_tags[0 .. tag_count + 3]);
+        const opacity_row = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(layer_opacity) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(layer_delete) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(layer_add) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{},
+        });
+        const layers_body = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(opacity_row) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_OPACITY)) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(blend) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_BLEND)) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(layer_list) },
+            .{},
+        });
         const colour_body = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
@@ -2756,6 +3400,11 @@ const App = struct {
         const panel = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(section_gadgets[layers_section]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(layers_body) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!app.open_sections[layers_section]) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(section_gadgets[brush_section]) },
             .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(brush_body) },
@@ -2820,7 +3469,12 @@ const App = struct {
         for (tool_gadgets, &gui.tool_buttons) |gadget, *slot| slot.* = gadget.?;
         for (button_gadgets, &gui.command_buttons) |gadget, *slot| slot.* = gadget.?;
         for (section_gadgets, &gui.section_buttons) |gadget, *slot| slot.* = gadget.?;
-        gui.section_bodies = .{ brush_body.?, colour_body.? };
+        gui.section_bodies = .{ layers_body.?, brush_body.?, colour_body.? };
+        gui.layer_list = layer_list.?;
+        gui.layer_opacity = layer_opacity.?;
+        gui.blend = blend.?;
+        gui.shown_layer = app.stack.current;
+        app.layers_stale = false;
         gui.view = view.?;
         gui.colours = colours_box.?;
         gui.palette = palette.?;
@@ -2963,6 +3617,37 @@ fn windowOf(ib: *IntuitionBase, object: *Object) usize {
 
 fn glyph(ib: *IntuitionBase, which: u32) ?*Object {
     return ib.NewObjectTagList(null, command.COMMAND_CLASS, &[_]TagItem{ .{ .tag = command.COMMAND_Glyph, .data = which }, .{} });
+}
+
+/// The least area holding every pixel of `picture` that is not wholly
+/// see-through; empty when there is none.
+fn coveredArea(picture: *const Picture) Area {
+    var area = Area.none;
+    var y: u32 = 0;
+    while (y < picture.height) : (y += 1) {
+        const row = picture.row(y);
+        var first: ?usize = null;
+        var last: usize = 0;
+        for (row, 0..) |pixel, x| if (pixel >> 24 != 0) {
+            if (first == null) first = x;
+            last = x;
+        };
+        const left = first orelse continue;
+        area = area.add(.{ .min_x = @intCast(left), .min_y = @intCast(y), .max_x = @intCast(last + 1), .max_y = @intCast(y + 1) });
+    }
+    return if (area.isEmpty()) Area{} else area;
+}
+
+fn lengthOf(text: [*:0]const u8) usize {
+    var length: usize = 0;
+    while (text[length] != 0) length += 1;
+    return length;
+}
+
+/// The history's way to give back a layer it held: `context` is the App.
+fn releaseLayer(context: *anyopaque, memory: *anyopaque) void {
+    const app: *App = @ptrCast(@alignCast(context));
+    app.sys.FreeVec(memory);
 }
 
 fn toolButton(ib: *IntuitionBase, id: u32, image: ?*Object, hint: [*:0]const u8, kind: u32) ?*Object {
@@ -3112,8 +3797,15 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
         },
         .grid => state.grid,
         .own_screen => state.own,
-        .undo, .redo => {
-            const can = if (which == .undo) state.can_undo else state.can_redo;
+        .undo, .redo, .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down => {
+            const can = switch (which) {
+                .undo => state.can_undo,
+                .redo => state.can_redo,
+                .new_layer, .duplicate_layer => state.layers < layers_zig.max_layers,
+                .delete_layer => state.layers > 1,
+                .layer_up => state.current + 1 < state.layers,
+                else => state.current > 0,
+            };
             if (can) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
             return;
         },
@@ -3149,7 +3841,8 @@ fn formatOf(name: [*:0]const u8) Format {
 fn sameState(a: MenuState, b: MenuState) bool {
     return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and
         a.own_brush == b.own_brush and a.has_own == b.has_own and a.one_colour == b.one_colour and
-        a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo;
+        a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo and
+        a.layers == b.layers and a.current == b.current;
 }
 
 /// Whether the text made and the C string are the same.
@@ -3215,7 +3908,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer text.close();
 
     // Opened until the end: what the window is made of.
-    const names = [_][*:0]const u8{ intuition.INTUITIONNAME, graphics.GRAPHICSNAME, cv.CANVAS_LIBRARY, pa.PALETTE_LIBRARY, tb.TOOLBUTTON_LIBRARY, tx.TEXT_LIBRARY, command.COMMAND_LIBRARY, ch.CHOOSER_LIBRARY, sl.SLIDER_LIBRARY, cw.WHEEL_LIBRARY, gs.GRAD_LIBRARY, cb.CHECKBOX_LIBRARY };
+    const names = [_][*:0]const u8{ intuition.INTUITIONNAME, graphics.GRAPHICSNAME, cv.CANVAS_LIBRARY, pa.PALETTE_LIBRARY, tb.TOOLBUTTON_LIBRARY, tx.TEXT_LIBRARY, command.COMMAND_LIBRARY, ch.CHOOSER_LIBRARY, sl.SLIDER_LIBRARY, cw.WHEEL_LIBRARY, gs.GRAD_LIBRARY, cb.CHECKBOX_LIBRARY, lb.LISTBROWSER_LIBRARY };
     var libs: [names.len]?*exec.Library = @splat(null);
     defer for (libs) |lib| {
         if (lib) |opened| sys.CloseLibrary(opened);
@@ -3247,6 +3940,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     }
     if (own == null) own = screenWanted(sys, dl, ub) orelse keptScreen(sys, dl, ub);
 
+    // Room for every layer there can be.
+    const slots = sys.AllocVec(@sizeOf([layers_zig.max_layers]Layer), exec.MEMF_ANY) orelse {
+        _ = text.printf(dl, .MSG_NOMEMORY, .{});
+        return dos.RETURN_FAIL;
+    };
+    defer sys.FreeVec(slots);
     var app = App{
         .sys = sys,
         .dl = dl,
@@ -3254,9 +3953,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .gb = @ptrCast(libs[1]),
         .ub = ub,
         .text = &text,
+        .stack = .{ .layers = @ptrCast(@alignCast(slots)) },
     };
+    app.layer_rows.init(.unknown);
     defer {
         if (app.gui) |*gui| gui.close(app.ib);
+        lb.freeRows(sys, &app.layer_rows);
         if (app.band) |band| sys.FreeVec(band);
         if (app.own_memory) |memory| sys.FreeVec(memory);
         app.freePicture();

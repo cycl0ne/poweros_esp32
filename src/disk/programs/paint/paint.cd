@@ -75,6 +75,22 @@ MSG_MENU_FIT (//)
 Zoom to Fit
 MSG_MENU_GRID (//)
 Grid
+MSG_MENU_LAYER (//)
+Layer
+MSG_MENU_NEW_LAYER (//)
+New Layer
+MSG_MENU_DUPLICATE_LAYER (//)
+Duplicate
+MSG_MENU_DELETE_LAYER (//)
+Delete
+MSG_MENU_RENAME_LAYER (//)
+Rename...
+MSG_MENU_LAYER_UP (//)
+Move Up
+MSG_MENU_LAYER_DOWN (//)
+Move Down
+MSG_MENU_MERGE_DOWN (//)
+Merge Down
 MSG_MENU_BRUSH (//)
 Brush
 MSG_MENU_ROUND (//)
@@ -163,6 +179,8 @@ MSG_ZOOM (//)
 %ld %%
 ;
 ; The side panel's sections.
+MSG_SECTION_LAYERS (//)
+Layers
 MSG_SECTION_BRUSH (//)
 Brush
 MSG_SECTION_COLOUR (//)
@@ -183,6 +201,48 @@ MSG_ROTATION (//)
 Rotation
 MSG_DITHER (//)
 Dither
+;
+; The layers section.
+MSG_BLEND (//)
+Blend
+MSG_NEW_LAYER_HINT (//)
+A new layer over the one painted
+MSG_DELETE_LAYER_HINT (//)
+The layer painted deleted
+MSG_LAYER_NAME (//)
+Layer %ld
+MSG_LAYER_COPY (//)
+%s copy
+MSG_BLEND_NORMAL (//)
+Normal
+MSG_BLEND_ADD (//)
+Add
+MSG_BLEND_MULTIPLY (//)
+Multiply
+MSG_BLEND_SCREEN (//)
+Screen
+MSG_BLEND_OVERLAY (//)
+Overlay
+MSG_BLEND_DARKEN (//)
+Darken
+MSG_BLEND_LIGHTEN (//)
+Lighten
+MSG_BLEND_DODGE (//)
+Colour Dodge
+MSG_BLEND_BURN (//)
+Colour Burn
+MSG_BLEND_HARD_LIGHT (//)
+Hard Light
+MSG_BLEND_SOFT_LIGHT (//)
+Soft Light
+MSG_BLEND_HUE (//)
+Hue
+MSG_BLEND_SATURATION (//)
+Saturation
+MSG_BLEND_COLOUR (//)
+Colour
+MSG_BLEND_LUMINOSITY (//)
+Luminosity
 ;
 ; The line under the picture: its size, the zoom and the brush, and
 ; while painting where the pointer is.
@@ -212,6 +272,10 @@ Cancel
 ; The text's window.
 MSG_TEXT_TITLE (//)
 Text
+MSG_RENAME_TITLE (//)
+Rename Layer
+MSG_NAME (//)
+Name
 MSG_TEXT (//)
 Text
 MSG_FONT (//)
@@ -228,6 +292,8 @@ MSG_NO_PICTURE (//)
 There is no memory for a picture\nof %ld by %ld pixels.
 MSG_NO_UNDO (//)
 That change was too large to keep:\nit cannot be undone.
+MSG_NO_LAYER (//)
+There is no memory for another layer.
 MSG_NO_OWN_SCREEN (//)
 No screen of its own could be opened.
 MSG_NO_FONT (//)

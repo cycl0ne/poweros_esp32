@@ -1,8 +1,8 @@
 # Paint
 
 `SYS:Programs/Paint/Paint` paints pictures with the pointer: a window
-with the tools and the colours down its left, a side panel for the brush
-and the colour, and the picture under a zoom bar. Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
+with the tools and the colours down its left, a side panel for the
+layers, the brush and the colour, and the picture under a zoom bar. Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
 it loads only when they are needed sit beside it rather than in `LIBS:`:
 `Libs/paintio.library` opens and saves files, and is loaded the first
 time a file is opened or saved.
@@ -43,9 +43,9 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
 - **The colours** are under them: the two in use - the foreground in
   front, the background behind it - with the swap beside them, and the
   picture's 32 to pick from.
-- **The side panel** beside them has a section for the brush and one
-  for the colour. A press on a section's name folds it away and another
-  unfolds it. Brush: Round, Square or Own Brush, and its settings - see
+- **The side panel** beside them has a section for the layers, one for
+  the brush and one for the colour. A press on a section's name folds it
+  away and another unfolds it. Layers: see [Layers](#layers). Brush: Round, Square or Own Brush, and its settings - see
   [The brush's settings](#the-brushs-settings). Colour: the foreground on a colour wheel - its hue
   round the wheel, its saturation out from the middle - and its
   brightness on the slider beside it.
@@ -88,7 +88,7 @@ A tool is chosen with its button, in the Tools menu, or with its key.
 | Polygon | `n` | a corner at each release - a click, or a drag from the last corner; let go on the first corner, or on the last one again, it closes |
 | Fill | `f` | the area of one colour that is pressed on, as far as the same colour reaches side by side and up and down |
 | Airbrush | `a` | a spray of single pixels round the pointer, for as long as the button is held, moving or not; it reaches four times the brush's size |
-| Pick colour | `i` | the colour under the pointer becomes the foreground - with the menu button the background - and the tool before it is chosen again |
+| Pick colour | `i` | the colour shown under the pointer, all the layers together, becomes the foreground - with the menu button the background - and the tool before it is chosen again |
 | Text | `t` | a click asks for the text and its font, and puts it down with its top left there |
 | Cut brush | `b` | a frame pulled over the picture; what it holds becomes the brush - see [Brushes](#brushes) |
 | Eraser | `E` | the picture made see-through where the brush goes, by the brush's settings as paint is |
@@ -158,6 +158,50 @@ see-through, it is mixed into what is under it.
 Round, Square or a size go back to the built-in brushes; Own Brush goes
 back to yours, which stays until another is cut or opened.
 
+## Layers
+
+A picture is a stack of layers, each as large as the picture, and what
+is shown is each layer laid over the ones below it. Painting, filling,
+smudging, cutting and clearing change the layer being painted, which is
+marked in the Layers section's list; picking a colour takes what is
+shown.
+
+The Layers section shows the layers top first: an eye, open while the
+layer is shown - a click on it hides the layer or shows it again - and
+the name. A click on a layer paints it, a double-click renames it, and
+a drag moves it to another place in the stack. Above the list:
+
+- **Opacity**, 0 to 100 %, how much of the layer painted shows, with the
+  buttons that delete it and put a new one in over it;
+- **Blend**, how its colours are mixed with those under it:
+
+| Blend | Gives |
+|---|---|
+| Normal | the layer's colours over those under it |
+| Add | the two added, brighter, as light is |
+| Multiply | the two multiplied, darker, as inks are |
+| Screen | the opposite of Multiply: brighter, never darker |
+| Overlay | Multiply where it is dark under it, Screen where it is light |
+| Darken, Lighten | the darker, the lighter of the two, colour by colour |
+| Colour Dodge, Colour Burn | what is under it brightened, darkened, by the layer |
+| Hard Light | Overlay as if the layer were under it |
+| Soft Light | a gentle Hard Light |
+| Hue, Saturation, Colour, Luminosity | that of the layer, the rest of what is under it |
+
+A new layer is see-through; a new picture has one layer in the
+background colour, called Layer 1. Clear and the menu button's cut
+leave the bottom layer the background colour and any other see-through.
+
+| Layer menu | Key | Does |
+|---|---|---|
+| New Layer | `L` | a see-through layer over the one painted |
+| Duplicate | `D` | a copy of the one painted over it, named so |
+| Delete | | the one painted taken out; the last one stays |
+| Rename... | | asks for its name |
+| Move Up, Move Down | | the one painted moved one place in the stack |
+| Merge Down | `M` | the one painted laid into the one under it as it shows, and taken out |
+| Flip Horizontally, Flip Vertically | | the one painted, left to right, top to bottom |
+
 ## Colours
 
 A picture opened from a file with a palette - an ILBM, a GIF, a PNG
@@ -201,23 +245,29 @@ As... asks for a name, and what the name ends in says what is written:
 
 | Ending | Written as |
 |---|---|
-| `.png` | a PNG, with the see-through parts when there are any |
-| `.iff`, `.ilbm`, `.lbm` | an ILBM of 24 planes - 32 with see-through parts |
-| anything else | a project: the picture and its 32 colours, packed |
+| `.png` | a PNG of what is shown, with the see-through parts when there are any |
+| `.iff`, `.ilbm`, `.lbm` | an ILBM of what is shown, 24 planes - 32 with see-through parts |
+| anything else | a project: every layer and the 32 colours, packed |
 
 File → Save writes the file again in the same form; a picture that
 came from a form Paint does not write - a JPEG, a GIF - is saved with
 Save As instead. A file that cannot be read or written says why in a
 requester.
 
-A project is an IFF `FORM PNTG`: the picture, packed, and its palette.
+A project is an IFF `FORM PNTG`: each layer, packed, with its name,
+opacity, blend mode and whether it is shown, which layer is painted,
+and the palette. Opened, all of it comes back.
 
-Edit → Clear makes the whole picture the background colour.
+Edit → Clear makes the whole layer painted the background colour - or
+see-through, when it is not the bottom one.
 
 ## Undo
 
 Every stroke, shape, fill, text and clear can be undone, with Edit →
-Undo or its tool, and done again with Redo. Paint keeps as many changes
+Undo or its tool, and done again with Redo - and every layer put in,
+deleted, moved, merged down or flipped; undone, the layer it touched is
+painted. Hiding a layer, its opacity, blend mode and name are not
+changes to undo. Paint keeps as many changes
 as fit in a block three pictures' worth large - or half the memory free,
 when that is less; the oldest go first. A change larger than the whole
 block cannot be undone, which a requester says.
@@ -231,6 +281,7 @@ The letters are the items' keys, pressed with the right command key.
 | File | New... (N), Open... (O), Save (S), Save As... (A), Quit (Q) |
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
 | Tools | the tools; Filled Shapes |
+| Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Own Screen |
 | Help | About Paint... |
