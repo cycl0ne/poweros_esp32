@@ -14,6 +14,7 @@ test {
     _ = @import("programs/cobra/flight.zig");
     _ = @import("programs/cobra/planet.zig");
     _ = @import("programs/sheet/tests/sheet.zig");
+    _ = @import("programs/paint/tests/paint.zig");
     _ = @import("system/hdtoolbox/tests/hdtoolbox.zig");
     _ = @import("system/memmap/tests/memmap.zig");
     _ = @import("system/clock/time.zig");

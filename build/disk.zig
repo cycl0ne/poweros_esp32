@@ -146,9 +146,11 @@ const image_dirs = [_][]const u8{
     // which keymap.library loads when one is asked for by name.
     "devs/keymaps",
     // SYS:Programs - programs with windows, off the command path, and
-    // in Docs what each of them is.
+    // in Docs what each of them is; Paint in a drawer of its own, which
+    // its libraries go in too.
     "programs",
     "programs/Docs",
+    "programs/Paint",
     // SYS:WBStartup - the programs the desktop starts as it comes up,
     // empty until some are put there.
     "WBStartup",

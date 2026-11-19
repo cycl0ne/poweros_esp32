@@ -1,0 +1,104 @@
+; Paint's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/programs/Paint.catalog
+; stands in for them. A text written by RawDoFmt takes its values in
+; order: a translation keeps them so.
+#version 1
+;
+; The menus.
+MSG_MENU_PROJECT (1//)
+Project
+MSG_MENU_NEW (//)
+New...
+MSG_MENU_QUIT (//)
+Quit
+MSG_MENU_EDIT (//)
+Edit
+MSG_MENU_UNDO (//)
+Undo
+MSG_MENU_REDO (//)
+Redo
+MSG_MENU_CLEAR (//)
+Clear
+MSG_MENU_SWAP (//)
+Swap Colours
+MSG_MENU_VIEW (//)
+View
+MSG_MENU_ZOOM_IN (//)
+Zoom In
+MSG_MENU_ZOOM_OUT (//)
+Zoom Out
+MSG_MENU_ACTUAL_SIZE (//)
+Actual Size
+MSG_MENU_GRID (//)
+Grid
+MSG_MENU_BRUSH (//)
+Brush
+MSG_MENU_ROUND (//)
+Round
+MSG_MENU_SQUARE (//)
+Square
+MSG_MENU_SIZE (//)
+Size
+MSG_MENU_SMALLER (//)
+Smaller
+MSG_MENU_LARGER (//)
+Larger
+MSG_MENU_SETTINGS (//)
+Settings
+MSG_MENU_OWN_SCREEN (//)
+Own Screen
+;
+; The tools' hints.
+MSG_TOOL_FREEHAND (//)
+Freehand: a line where the pointer goes
+MSG_TOOL_DOTS (//)
+Dotted freehand: the brush where the pointer is
+MSG_UNDO_HINT (//)
+Undo the last change
+MSG_REDO_HINT (//)
+Make the change undone again
+MSG_ZOOM_IN_HINT (//)
+Show the picture larger
+MSG_ZOOM_OUT_HINT (//)
+Show the picture smaller
+;
+; The line under the picture: its size, the zoom and the brush, and
+; while painting where the pointer is.
+MSG_STATUS (//)
+%ld x %ld   %ld:1   brush %ld
+MSG_STATUS_AT (//)
+%ld x %ld   %ld:1   brush %ld   at %ld, %ld
+;
+; The new picture's window.
+MSG_NEW_TITLE (//)
+New Picture
+MSG_WIDTH (//)
+Width
+MSG_HEIGHT (//)
+Height
+MSG_OK (//)
+OK
+MSG_CANCEL (//)
+Cancel
+;
+; Requesters.
+MSG_CHANGED (//)
+The picture has changed.\nDiscard it?
+MSG_CHANGED_BUTTONS (//)
+Discard|Cancel
+MSG_NO_PICTURE (//)
+There is no memory for a picture\nof %ld by %ld pixels.
+MSG_NO_UNDO (//)
+That change was too large to keep:\nit cannot be undone.
+MSG_NO_OWN_SCREEN (//)
+No screen of its own could be opened.
+;
+; What the shell is told.
+MSG_NOLIBRARY (//)
+No %s\n
+MSG_NOSCREEN (//)
+No screen - no display\n
+MSG_NOMEMORY (//)
+No memory for the window\n
+MSG_BADSCREEN (//)
+SCREEN is OWN or DESKTOP\n
