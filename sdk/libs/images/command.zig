@@ -252,5 +252,13 @@ pub const CMD_SMUDGE: u32 = 78;
 /// An open eye: something shown - a layer, dimmed when it is hidden.
 /// Since 1.12.
 pub const CMD_EYE: u32 = 79;
+/// A frame of dashes round nothing: a rectangle chosen. Since 1.13.
+pub const CMD_SELECT_BOX: u32 = 80;
+/// A loop of dashes with a rope's end: a shape chosen by hand - a
+/// lasso. Since 1.13.
+pub const CMD_LASSO: u32 = 81;
+/// A wand with sparks at its tip: what is alike chosen at a touch.
+/// Since 1.13.
+pub const CMD_WAND: u32 = 82;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_EYE;
+pub const CMD_LAST: u32 = CMD_WAND;

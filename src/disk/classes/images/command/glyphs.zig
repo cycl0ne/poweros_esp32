@@ -97,6 +97,9 @@ pub fn draw(p: *Painter, glyph: u32) void {
         command.CMD_ERASER => drawEraser(p),
         command.CMD_SMUDGE => drawSmudge(p),
         command.CMD_EYE => drawEye(p),
+        command.CMD_SELECT_BOX => drawSelectBox(p),
+        command.CMD_LASSO => drawLasso(p),
+        command.CMD_WAND => drawWand(p),
         command.CMD_LAUNCHER => drawLauncher(p),
         else => {},
     }
@@ -800,6 +803,75 @@ noinline fn drawEye(p: *Painter) void {
     p.solid(&.{p.disc(50, 50, 14)}, .blue, .{ .no_shadow = true });
     p.ink(&.{p.disc(50, 50, 6)});
     p.solid(&.{p.disc(55, 45, 3)}, .paper, .{ .flat = true, .no_shadow = true });
+}
+
+noinline fn drawSelectBox(p: *Painter) void {
+    // The frame alone: its corners and a dash between each two.
+    p.solid(&.{
+        p.poly(&.{ .{ 6, 6 }, .{ 24, 6 }, .{ 24, 13 }, .{ 13, 13 }, .{ 13, 24 }, .{ 6, 24 } }),
+        p.poly(&.{ .{ 76, 6 }, .{ 94, 6 }, .{ 94, 24 }, .{ 87, 24 }, .{ 87, 13 }, .{ 76, 13 } }),
+        p.poly(&.{ .{ 6, 76 }, .{ 13, 76 }, .{ 13, 87 }, .{ 24, 87 }, .{ 24, 94 }, .{ 6, 94 } }),
+        p.poly(&.{ .{ 87, 76 }, .{ 94, 76 }, .{ 94, 94 }, .{ 76, 94 }, .{ 76, 87 }, .{ 87, 87 } }),
+        p.rr(41, 6, 59, 13, 0),
+        p.rr(41, 87, 59, 94, 0),
+        p.rr(6, 41, 13, 59, 0),
+        p.rr(87, 41, 94, 59, 0),
+    }, .blue, .{ .flat = true, .no_shadow = true });
+}
+
+noinline fn drawLasso(p: *Painter) void {
+    // The loop, a wide oval in ten dashes, then the rope hanging from
+    // its bottom in a zig-zag and the knot where it meets the loop.
+    var dashes: [lasso_dashes.len]shapes.Shape = undefined;
+    for (&dashes, &lasso_dashes) |*dash, *corners| dash.* = p.poly(corners);
+    p.solid(&dashes, .blue, .{ .flat = true, .no_shadow = true });
+    p.solid(&.{
+        p.poly(&shapes.bar(44, 66, 58, 80, 8)),
+        p.poly(&shapes.bar(58, 80, 40, 92, 8)),
+        p.poly(&shapes.bar(40, 92, 50, 98, 8)),
+    }, .brown, .{ .no_gloss = true });
+    p.solid(&.{p.disc(44, 64, 7)}, .brown, .{ .no_gloss = true });
+}
+
+/// The lasso's loop round (50, 34): ten dashes of an oval 44 across and
+/// 28 down from its middle, 7 thick, each from a fifth of the way round
+/// to two thirds of the way to the next.
+const lasso_dashes = blk: {
+    var out: [10][6][2]f32 = undefined;
+    for (&out, 0..) |*dash, i| {
+        const start: f32 = @as(f32, @floatFromInt(i)) * 36 + 4;
+        const angles = [3]f32{ start, start + 12, start + 24 };
+        for (angles, 0..) |degrees, place| {
+            const a = degrees * (3.14159265 / 180.0);
+            dash[place] = .{ 50 + 44 * @cos(a), 34 - 28 * @sin(a) };
+            dash[5 - place] = .{ 50 + 37 * @cos(a), 34 - 21 * @sin(a) };
+        }
+    }
+    break :blk out;
+};
+
+noinline fn drawWand(p: *Painter) void {
+    // The stick at a slant, its white tip, and the sparks round the tip:
+    // a large one and two small.
+    p.solid(&.{p.poly(&shapes.bar(10, 94, 56, 48, 13))}, .iron, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.bar(56, 48, 68, 36, 13))}, .paper, .{ .no_shadow = true, .no_gloss = true });
+    p.solid(&.{ p.poly(&large_spark), p.poly(&right_spark), p.poly(&top_spark) }, .yellow, .{ .no_gloss = true });
+}
+
+const large_spark = spark(80, 22, 18);
+const right_spark = spark(92, 50, 8);
+const top_spark = spark(52, 14, 8);
+
+/// A spark round (`cx`, `cy`): four points `reach` out, and the corners
+/// between them a fifth of that in.
+fn spark(comptime cx: f32, comptime cy: f32, comptime reach: f32) [8][2]f32 {
+    var out: [8][2]f32 = undefined;
+    for (&out, 0..) |*corner, i| {
+        const a: f32 = @as(f32, @floatFromInt(i)) * 45 * (3.14159265 / 180.0);
+        const r: f32 = if (i % 2 == 0) reach else reach / 5;
+        corner.* = .{ cx + r * @cos(a), cy - r * @sin(a) };
+    }
+    return out;
 }
 
 const outer_lids = almond(4, 96, 88);
