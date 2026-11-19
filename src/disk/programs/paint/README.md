@@ -45,7 +45,7 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
   foreground in front, the background behind it - and the picture's 32
   to pick from.
 - **The status line** says the picture's size, the zoom and the brush's
-  size, and while painting the pixel under the pointer.
+  size, and the pixel under the pointer while it is over the picture.
 
 ## Painting
 
@@ -55,7 +55,10 @@ menus open with it anywhere else in the window or the screen's bar.
 
 The brush is round or square, 1, 2, 3, 4, 6, 8, 12, 16, 24 or 32 pixels
 across: chosen in the Brush menu, or a size smaller and larger with `[`
-and `]` - or `<` and `>`, which are one key on a German keyboard.
+and `]` - or `<` and `>`, which are one key on a German keyboard - or a
+brush of your own (see [Brushes](#brushes)). While the pointer is over
+the picture, the brush is shown where it would go down, in the
+foreground colour.
 
 ## The tools
 
@@ -74,6 +77,7 @@ A tool is chosen with its button, in the Tools menu, or with its key.
 | Airbrush | `a` | a spray of single pixels round the pointer, for as long as the button is held, moving or not; it reaches four times the brush's size |
 | Pick colour | `i` | the colour under the pointer becomes the foreground - with the menu button the background - and the tool before it is chosen again |
 | Text | `t` | a click asks for the text and its font, and puts it down with its top left there |
+| Cut brush | `b` | a frame pulled over the picture; what it holds becomes the brush - see [Brushes](#brushes) |
 
 Lines, curves and the outlines of rectangles, ellipses and polygons are
 drawn with the brush. **Filled shapes** - the button under the tools,
@@ -86,6 +90,36 @@ The text's window has the text and its font: the screen's font at 24
 rows to begin with, and another chosen with the button beside it.
 Return takes them, Escape leaves the picture as it is; both are kept for
 the next text.
+
+## Brushes
+
+The cut brush tool takes a part of the picture as a brush: pull a frame
+over it, and what the frame holds is the brush once the button is let
+go, its pixels of the background colour left out, so it has the shape of
+what is drawn. With the menu button the part is cut out, the picture
+left the background colour there - which Undo puts back. Paint then
+goes back to the tool before, or to dotted freehand when that one puts
+no brush down.
+
+Brush → Open Brush... takes any picture file as the brush, its
+see-through parts as they are; Save Brush... writes the brush as a PNG,
+or as an ILBM for a name ending in `.iff`, `.ilbm` or `.lbm`. A brush is
+at most 1024 pixels a side.
+
+The brush goes down in its own colours, or with Brush → One Colour as
+its shape in the foreground colour. The menu button always puts down
+its shape, in the background colour. Where the brush is partly
+see-through, it is mixed into what is under it.
+
+| Brush menu | Key | Does |
+|---|---|---|
+| Flip Horizontally | `h` | left to right |
+| Flip Vertically | `v` | top to bottom |
+| Turn Right | `z` | a quarter turn clockwise |
+| Smaller, Larger | `[`, `]` | halves it, keeping every second pixel; doubles it, each pixel made four |
+
+Round, Square or a size go back to the built-in brushes; Own Brush goes
+back to yours, which stays until another is cut or opened.
 
 ## Colours
 
@@ -158,7 +192,7 @@ The letters are the items' keys, pressed with the right command key.
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
 | Tools | the tools; Filled Shapes |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G) |
-| Brush | Round, Square, Size, Smaller ([), Larger (]) |
+| Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
 | Settings | Own Screen |
 
 ## Keys
@@ -166,7 +200,8 @@ The letters are the items' keys, pressed with the right command key.
 | Key | Does |
 |---|---|
 | `+`, `-` | zoom in, out |
-| `[`, `]` or `<`, `>` | a brush a size smaller, larger |
+| `[`, `]` or `<`, `>` | a brush a size smaller, larger; your own halved, doubled |
+| `h`, `v`, `z` | your own brush flipped across, flipped down, turned right |
 | `x` | swaps the foreground and background colours |
 | a tool's letter | chooses it - see [The tools](#the-tools) |
 | `F` | filled shapes on and off |

@@ -27,8 +27,12 @@
 //! button over its box (`GA_MenuButton`), so the menus stay shut there and
 //! open anywhere else. The brush is round or square and 1 to 32 pixels
 //! (brush.zig), chosen in the Brush menu or with `[` and `]` - or `<`
-//! and `>`, one key on a German keyboard. The tools, down the right and
-//! in the Tools menu, each with a key of its own:
+//! and `>`, one key on a German keyboard - or an own brush (below).
+//! While the pointer is over the picture and no button is down, the
+//! brush is shown where it would go down: the window reports the mouse,
+//! and the view lays the brush over the rows it makes, never into the
+//! picture. The tools, down the right and in the Tools menu, each with a
+//! key of its own:
 //!
 //!   - freehand (`p`), a line along the way the pointer goes, and dotted
 //!     freehand (`.`), the brush put down wherever the pointer is told to
@@ -52,7 +56,20 @@
 //!   - text (`t`): a click asks for the text and its font (getfont.gadget,
 //!     the screen's font to begin with) and puts it down with its top
 //!     left there, drawn by graphics.library into a surface over the
-//!     picture's own pixels.
+//!     picture's own pixels;
+//!   - cut brush (`b`): a frame of dashes pulled over the picture, and
+//!     what it holds made the own brush - with the menu button cut out,
+//!     the background colour left there - and then the tool before it
+//!     again, or dotted freehand when that one puts no brush down.
+//!
+//! **The own brush** is a picture of its own, up to 1024 pixels a side:
+//! cut from the picture, the background colour's pixels left out, or
+//! opened from any picture file. It goes down in its own colours or, in
+//! One Colour or with the menu button, as its shape in the stroke's
+//! colour. Brush's items flip it (`h`, `v`) and turn it a quarter to the
+//! right (`z`); Smaller and Larger halve and double it; Save Brush...
+//! writes it as a PNG, or an ILBM for a name ending as one does. Round,
+//! Square or a size go back to the built-in brushes, Own Brush to it.
 //!
 //! **The colours.** palette.gadget shows the picture's 32 colours: the
 //! select button picks the foreground, the menu button the background
@@ -81,11 +98,14 @@
 //!   Edit      Undo (Z), Redo (Y), Swap Colours, Clear (K)
 //!   Tools     the tools, Filled Shapes
 //!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G)
-//!   Brush     Round, Square, Size, Smaller ([), Larger (])
+//!   Brush     Round, Square, Own Brush, Size, Smaller ([), Larger (]),
+//!             Own Colours, One Colour, Flip Horizontally, Flip
+//!             Vertically, Turn Right, Open Brush..., Save Brush...
 //!   Settings  Own Screen
 //!
 //! Without a menu key: `+` and `-` zoom, `[` and `]` (or `<` and `>`)
-//! size the brush, `x` swaps the colours, the tools' letters choose them,
+//! size the brush, `h`, `v` and `z` flip and turn an own brush, `x` swaps
+//! the colours, the tools' letters choose them,
 //! Return ends a shape and Escape puts it away, the cursor keys scroll.
 //! A picture that has changed is not let go - by New, Open, Quit, Ctrl-C
 //! or the close gadget - before a requester asks whether to save it.
@@ -154,7 +174,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.2";
+const VERSION = "1.3";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -215,6 +235,7 @@ const Tool = enum(u32) {
     airbrush,
     pick,
     text,
+    grab,
 
     const base = 300;
 
@@ -250,13 +271,21 @@ const Command = enum(u32) {
     open,
     save,
     save_as,
+    own_brush,
+    own_colours,
+    one_colour,
+    flip_across,
+    flip_down,
+    turn,
+    open_brush,
+    save_brush,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.save_as)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.save_brush)) return null;
         return @enumFromInt(value);
     }
 };
@@ -295,6 +324,7 @@ const tools = [_]ToolEntry{
     .{ .tool = .airbrush, .glyph = command.CMD_AIRBRUSH, .hint = .MSG_TOOL_AIRBRUSH, .label = .MSG_MENU_AIRBRUSH },
     .{ .tool = .pick, .glyph = command.CMD_PICK_COLOUR, .hint = .MSG_TOOL_PICK, .label = .MSG_MENU_PICK },
     .{ .tool = .text, .glyph = command.CMD_TEXT, .hint = .MSG_TOOL_TEXT, .label = .MSG_MENU_TEXT },
+    .{ .tool = .grab, .glyph = command.CMD_GRAB_BRUSH, .hint = .MSG_TOOL_GRAB, .label = .MSG_MENU_GRAB },
 };
 comptime {
     for (tools, 0..) |entry, place| {
@@ -327,6 +357,7 @@ const tool_keys = [_]ToolKey{
     .{ .key = 'a', .tool = .airbrush },
     .{ .key = 'i', .tool = .pick },
     .{ .key = 't', .tool = .text },
+    .{ .key = 'b', .tool = .grab },
 };
 
 // --- the menus ---------------------------------------------------------------
@@ -416,14 +447,26 @@ const menus = [_]MenuEntry{
     bar,
     toggleItem(.MSG_MENU_GRID, "G", .grid),
     menuTitle(.MSG_MENU_BRUSH),
-    // Round and Square, the first two, rule each other out.
-    choiceItem(.MSG_MENU_ROUND, .round, 1 << 1),
-    choiceItem(.MSG_MENU_SQUARE, .square, 1 << 0),
+    // Round, Square and Own Brush, the first three, rule each other out;
+    // so do the two ways an own brush goes down, the ninth and tenth.
+    choiceItem(.MSG_MENU_ROUND, .round, 1 << 1 | 1 << 2),
+    choiceItem(.MSG_MENU_SQUARE, .square, 1 << 0 | 1 << 2),
+    choiceItem(.MSG_MENU_OWN_BRUSH, .own_brush, 1 << 0 | 1 << 1),
     bar,
     .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_SIZE) }, .text = .MSG_MENU_SIZE },
 } ++ sizeItems() ++ [_]MenuEntry{
     item(.MSG_MENU_SMALLER, "[", .smaller),
     item(.MSG_MENU_LARGER, "]", .larger),
+    bar,
+    choiceItem(.MSG_MENU_OWN_COLOURS, .own_colours, 1 << 9),
+    choiceItem(.MSG_MENU_ONE_COLOUR, .one_colour, 1 << 8),
+    bar,
+    item(.MSG_MENU_FLIP_ACROSS, null, .flip_across),
+    item(.MSG_MENU_FLIP_DOWN, null, .flip_down),
+    item(.MSG_MENU_TURN, null, .turn),
+    bar,
+    item(.MSG_MENU_OPEN_BRUSH, null, .open_brush),
+    item(.MSG_MENU_SAVE_BRUSH, null, .save_brush),
     menuTitle(.MSG_MENU_SETTINGS),
     toggleItem(.MSG_MENU_OWN_SCREEN, null, .own_screen),
     .{ .menu = .{} },
@@ -441,6 +484,10 @@ const MenuState = struct {
     filled: bool,
     round: bool,
     size: u32,
+    /// The own brush is in use; there is one; it goes down in one colour.
+    own_brush: bool,
+    has_own: bool,
+    one_colour: bool,
     grid: bool,
     own: bool,
     can_undo: bool,
@@ -498,8 +545,29 @@ const Gui = struct {
 /// what it has changed.
 const Stroke = struct {
     colour: Pixel,
+    /// Made with the menu button: an own brush goes down in the colour.
+    menu: bool = false,
     last: ?[2]i32 = null,
     changed: Area = Area.none,
+};
+
+/// The brush as it was shown under the pointer: where, in which colour,
+/// and which brush - by its settings and its changes.
+const GhostMark = struct {
+    area: Area = .{},
+    colour: Pixel = 0,
+    shape: brush_zig.Shape = .round,
+    size: u32 = 0,
+    own: bool = false,
+    mode: brush_zig.Mode = .own_colours,
+    changes: u32 = 0,
+
+    fn same(mark: GhostMark, other: GhostMark) bool {
+        return mark.area.min_x == other.area.min_x and mark.area.min_y == other.area.min_y and
+            mark.area.max_x == other.area.max_x and mark.area.max_y == other.area.max_y and
+            mark.colour == other.colour and mark.shape == other.shape and mark.size == other.size and
+            mark.own == other.own and mark.mode == other.mode and mark.changes == other.changes;
+    }
 };
 
 /// A shape being drawn: drawn into the picture over what `kept` holds,
@@ -508,6 +576,8 @@ const Stroke = struct {
 const Drawing = struct {
     tool: Tool,
     colour: Pixel,
+    /// Made with the menu button.
+    menu: bool = false,
     /// Its corners: a line's, a rectangle's and an ellipse's two, a
     /// curve's two ends and its bend, a polygon's as they are put down.
     points: [shapes.max_points]Point = undefined,
@@ -550,6 +620,25 @@ const App = struct {
     filled: bool = false,
     /// The tool the colour picker goes back to.
     before_pick: Tool = .freehand,
+    /// The tool cutting a brush goes back to: one that puts the brush
+    /// down.
+    before_grab: Tool = .dots,
+    /// The own brush - cut from the picture or loaded - and its memory,
+    /// AllocVec's; null before the first. `brush.own` points here while
+    /// it is in use.
+    own_brush: Picture = undefined,
+    own_memory: ?*anyopaque = null,
+    /// Counts the changes to the own brush's pixels, which the brush
+    /// shown under the pointer follows.
+    brush_changes: u32 = 0,
+    /// The file the own brush was last opened from or saved to.
+    brush_path: [path_size:0]u8 = @splat(0),
+    /// The picture pixel under the pointer while it is over the view and
+    /// no button is down; null otherwise.
+    hover: ?Point = null,
+    /// The brush as it is shown under the pointer, to tell when it must
+    /// be drawn again.
+    ghost_shown: GhostMark = .{},
     random: brush_zig.Random = .{},
     /// The text tool's last text and its font.
     typed: [256:0]u8 = @splat(0),
@@ -666,7 +755,7 @@ const App = struct {
         // The bottom layer is the picture: Paint paints one.
         const layer = &project.layers.?[0];
         if (!app.takePicture(layer.pixels.?, project.width, project.height)) {
-            app.tellSize(.{ project.width, project.height });
+            app.tellSize(.MSG_NO_PICTURE, .{ project.width, project.height });
             return false;
         }
         // The pixels are the picture's now, not the project's to free.
@@ -707,7 +796,7 @@ const App = struct {
 
     fn saveAs(app: *App) bool {
         var name: [path_size:0]u8 = undefined;
-        if (!app.askFile(app.text.get(.MSG_SAVE_AS_TITLE), true, &name)) return false;
+        if (!app.askFile(app.text.get(.MSG_SAVE_AS_TITLE), true, &app.path, &name)) return false;
         return app.saveTo(&name);
     }
 
@@ -756,19 +845,19 @@ const App = struct {
 
     /// A file asked for with asl's requester, into `into`. False when the
     /// requester was cancelled or could not be had.
-    fn askFile(app: *App, title: [*:0]const u8, saving: bool, into: *[path_size:0]u8) bool {
+    fn askFile(app: *App, title: [*:0]const u8, saving: bool, start: *const [path_size:0]u8, into: *[path_size:0]u8) bool {
         const gui = app.ui() orelse return false;
         if (app.asl_lib == null) app.asl_lib = app.sys.OpenLibrary(asl.ASLNAME, 0);
         const ab: *AslBase = @ptrCast(app.asl_lib orelse {
             app.tellMissing(asl.ASLNAME);
             return false;
         });
-        // The drawer and the name the file has now, to begin with.
+        // The drawer and the name of the file `start` is, to begin with.
         var drawer: [path_size:0]u8 = @splat(0);
         var file: [*:0]const u8 = "";
-        if (app.path[0] != 0) {
-            drawer = app.path;
-            file = app.dl.FilePart(&app.path);
+        if (start[0] != 0) {
+            drawer = start.*;
+            file = app.dl.FilePart(start);
             const path_end = @intFromPtr(app.dl.PathPart(&drawer)) - @intFromPtr(&drawer);
             drawer[path_end] = 0;
         }
@@ -858,29 +947,44 @@ const App = struct {
         const colour = if (menu_button) app.background else app.foreground;
         app.at = at;
         switch (app.tool) {
-            .freehand, .dots, .airbrush => app.strokeTo(at, colour, final),
-            .line, .curve, .rectangle, .ellipse => app.dragShape(at, colour, first, final),
-            .polygon => app.polygonTo(at, colour, first, final),
+            .freehand, .dots, .airbrush => app.strokeTo(at, colour, menu_button, final),
+            .line, .curve, .rectangle, .ellipse => app.dragShape(at, colour, menu_button, first, final),
+            .polygon => app.polygonTo(at, colour, menu_button, first, final),
             .fill => if (first) app.floodAt(at, colour),
             .pick => if (final) app.pickAt(at, menu_button),
             .text => if (final) app.placeText(at, colour),
+            .grab => app.grabTo(at, menu_button, first, final),
         }
-        if (final) app.at = null;
+        // Let go, the pointer is where the brush is shown again.
+        if (final) {
+            app.hover = at;
+            app.at = if (app.picture.inside(at[0], at[1])) at else null;
+        }
+    }
+
+    /// The brush as a stroke puts it down: an own brush in the stroke's
+    /// colour rather than its own colours, when made with the menu
+    /// button.
+    fn brushFor(app: *const App, menu_button: bool) Brush {
+        var used = app.brush;
+        if (menu_button) used.mode = .one_colour;
+        return used;
     }
 
     /// The freehand tools and the airbrush, from where the pointer was
     /// to where it is.
-    fn strokeTo(app: *App, at: Point, colour: Pixel, final: bool) void {
-        if (app.stroke == null) app.stroke = .{ .colour = colour };
+    fn strokeTo(app: *App, at: Point, colour: Pixel, menu_button: bool, final: bool) void {
+        if (app.stroke == null) app.stroke = .{ .colour = colour, .menu = menu_button };
         const stroke = &app.stroke.?;
+        const brush = app.brushFor(stroke.menu);
         var changed = Area.none;
         switch (app.tool) {
             .freehand => if (stroke.last) |last|
-                brush_zig.line(&app.picture, app.brush, last[0], last[1], at[0], at[1], stroke.colour, &changed)
+                brush_zig.line(&app.picture, brush, last[0], last[1], at[0], at[1], stroke.colour, &changed)
             else
-                brush_zig.stamp(&app.picture, app.brush, at[0], at[1], stroke.colour, &changed),
-            .airbrush => brush_zig.spray(&app.picture, app.brush, at[0], at[1], stroke.colour, &app.random, &changed),
-            else => brush_zig.stamp(&app.picture, app.brush, at[0], at[1], stroke.colour, &changed),
+                brush_zig.stamp(&app.picture, brush, at[0], at[1], stroke.colour, &changed),
+            .airbrush => brush_zig.spray(&app.picture, brush, at[0], at[1], stroke.colour, &app.random, &changed),
+            else => brush_zig.stamp(&app.picture, brush, at[0], at[1], stroke.colour, &changed),
         }
         stroke.last = at;
         stroke.changed = stroke.changed.add(changed);
@@ -891,7 +995,7 @@ const App = struct {
     /// A line, a rectangle or an ellipse pulled from where the button
     /// went down to where it is; a curve's line the same, and then, on
     /// the next press, its bend.
-    fn dragShape(app: *App, at: Point, colour: Pixel, first: bool, final: bool) void {
+    fn dragShape(app: *App, at: Point, colour: Pixel, menu_button: bool, first: bool, final: bool) void {
         if (app.drawing) |*drawing| if (drawing.bending) {
             drawing.points[2] = at;
             drawing.count = 3;
@@ -901,7 +1005,7 @@ const App = struct {
         };
         if (first or app.drawing == null) {
             app.endShape();
-            app.drawing = .{ .tool = app.tool, .colour = colour, .count = 2 };
+            app.drawing = .{ .tool = app.tool, .colour = colour, .menu = menu_button, .count = 2 };
             app.drawing.?.points[0] = at;
         }
         const drawing = &app.drawing.?;
@@ -920,10 +1024,10 @@ const App = struct {
     /// A polygon's corners: each press starts an edge from the last
     /// corner, its release puts the edge's end down. Let go on the first
     /// corner, or on the last one again, it is closed and done.
-    fn polygonTo(app: *App, at: Point, colour: Pixel, first: bool, final: bool) void {
+    fn polygonTo(app: *App, at: Point, colour: Pixel, menu_button: bool, first: bool, final: bool) void {
         if (app.drawing == null) {
             if (!first) return;
-            app.drawing = .{ .tool = .polygon, .colour = colour, .count = 2 };
+            app.drawing = .{ .tool = .polygon, .colour = colour, .menu = menu_button, .count = 2 };
             app.drawing.?.points[0] = at;
             app.drawing.?.points[1] = at;
         } else if (first) {
@@ -955,18 +1059,20 @@ const App = struct {
         const points = drawing.points[0..drawing.count];
         const picture = &app.picture;
         const colour = drawing.colour;
+        const brush = app.brushFor(drawing.menu);
         switch (drawing.tool) {
-            .rectangle => shapes.rectangle(picture, app.brush, points[0], points[1], colour, app.filled, &drawn),
-            .ellipse => shapes.ellipse(picture, app.brush, points[0], points[1], colour, app.filled, &drawn),
+            .rectangle => shapes.rectangle(picture, brush, points[0], points[1], colour, app.filled, &drawn),
+            .ellipse => shapes.ellipse(picture, brush, points[0], points[1], colour, app.filled, &drawn),
             .curve => if (points.len == 3)
-                shapes.curve(picture, app.brush, points[0], points[1], points[2], colour, &drawn)
+                shapes.curve(picture, brush, points[0], points[1], points[2], colour, &drawn)
             else
-                brush_zig.line(picture, app.brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
+                brush_zig.line(picture, brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
             .polygon => if (drawing.closed)
-                shapes.polygon(picture, app.brush, points, colour, app.filled, &drawn)
+                shapes.polygon(picture, brush, points, colour, app.filled, &drawn)
             else
-                shapes.polyline(picture, app.brush, points, colour, &drawn),
-            else => brush_zig.line(picture, app.brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
+                shapes.polyline(picture, brush, points, colour, &drawn),
+            .grab => shapes.frame(picture, points[0], points[1], &drawn),
+            else => brush_zig.line(picture, brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
         }
         app.show(drawing.shown.add(drawn));
         drawing.shown = drawn;
@@ -975,6 +1081,11 @@ const App = struct {
     /// The shape done: a polygon closed, and what it covers kept for
     /// undoing.
     fn endShape(app: *App) void {
+        // A brush's frame is never kept: it goes as it is.
+        if (app.drawing) |drawing| if (drawing.tool == .grab) {
+            _ = app.cancelShape();
+            return;
+        };
         if (app.drawing) |*drawing| if (drawing.tool == .polygon and !drawing.closed) {
             drawing.closed = true;
             app.drawShape();
@@ -1005,6 +1116,175 @@ const App = struct {
         if (app.drawing) |drawing| {
             if (drawing.tool != .polygon and !drawing.bending) app.endShape();
         }
+    }
+
+    // --- the own brush ----------------------------------------------------------
+
+    /// The frame of what is cut as a brush, pulled from where the button
+    /// went down to where it is. Let go, what it holds is the brush, in
+    /// use - with the menu button cut out, the picture left the
+    /// background colour there - and the tool before is chosen again.
+    fn grabTo(app: *App, at: Point, menu_button: bool, first: bool, final: bool) void {
+        if (first or app.drawing == null) {
+            app.endShape();
+            app.drawing = .{ .tool = .grab, .colour = 0, .menu = menu_button, .count = 2 };
+            app.drawing.?.points[0] = at;
+        }
+        const drawing = &app.drawing.?;
+        drawing.points[1] = at;
+        app.drawShape();
+        if (!final) return;
+        const area = shapes.areaOf(drawing.points[0], drawing.points[1]).clip(app.picture.width, app.picture.height);
+        _ = app.cancelShape();
+        if (area.isEmpty()) return;
+        const memory = app.brushMemory(area.width(), area.height()) orelse return;
+        var made = Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = area.width(), .height = area.height() };
+        brush_zig.grab(&app.picture, area, app.background, &made);
+        app.takeBrush(memory, made.width, made.height);
+        if (menu_button) {
+            app.picture.fillArea(area, app.background);
+            app.changedArea(area);
+        }
+        app.chooseTool(app.before_grab);
+    }
+
+    /// Memory for an own brush of that size; null, said in a requester,
+    /// when it is larger than a brush may be or there is none.
+    fn brushMemory(app: *App, width: u32, height: u32) ?*anyopaque {
+        if (width > brush_zig.max_own_side or height > brush_zig.max_own_side) {
+            app.tellSize(.MSG_BRUSH_TOO_LARGE, .{ brush_zig.max_own_side, brush_zig.max_own_side });
+            return null;
+        }
+        return app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY) orelse {
+            app.tellSize(.MSG_NO_BRUSH, .{ width, height });
+            return null;
+        };
+    }
+
+    /// `memory`, an own brush's pixels of that size from AllocVec, made
+    /// the own brush and put in use; the one before freed.
+    fn takeBrush(app: *App, memory: *anyopaque, width: u32, height: u32) void {
+        if (app.own_memory) |old| app.sys.FreeVec(old);
+        app.own_memory = memory;
+        app.own_brush = .{ .pixels = @ptrCast(@alignCast(memory)), .width = width, .height = height };
+        app.brush.own = &app.own_brush;
+        app.brush_changes +%= 1;
+    }
+
+    /// The own brush flipped, turned, halved or doubled, and put in use.
+    fn transformBrush(app: *App, which: brush_zig.Transform) void {
+        if (app.own_memory == null) return;
+        const from = app.own_brush;
+        const size = brush_zig.transformedSize(which, from.width, from.height) orelse {
+            app.tellSize(.MSG_BRUSH_TOO_LARGE, .{ brush_zig.max_own_side, brush_zig.max_own_side });
+            return;
+        };
+        const memory = app.brushMemory(size[0], size[1]) orelse return;
+        var made = Picture{ .pixels = @ptrCast(@alignCast(memory)), .width = size[0], .height = size[1] };
+        brush_zig.transform(which, &from, &made);
+        app.takeBrush(memory, size[0], size[1]);
+    }
+
+    /// A brush read from a file - any picture, as it is, or a project's
+    /// bottom layer - made the own brush, in use.
+    fn openBrush(app: *App) void {
+        var name: [path_size:0]u8 = undefined;
+        if (!app.askFile(app.text.get(.MSG_OPEN_BRUSH_TITLE), false, &app.brush_path, &name)) return;
+        const pio = app.paintIO() orelse return;
+        var project = paintio.Project{};
+        const failure = pio.LoadProject(&name, &project);
+        if (failure != 0) {
+            app.tellFault(.MSG_NO_OPEN, &name, failure);
+            return;
+        }
+        defer pio.FreeProject(&project);
+        if (project.width > brush_zig.max_own_side or project.height > brush_zig.max_own_side) {
+            app.tellSize(.MSG_BRUSH_TOO_LARGE, .{ brush_zig.max_own_side, brush_zig.max_own_side });
+            return;
+        }
+        // The pixels are the brush's now, not the project's to free.
+        const layer = &project.layers.?[0];
+        app.takeBrush(layer.pixels.?, project.width, project.height);
+        layer.pixels = null;
+        app.brush_path = name;
+    }
+
+    /// The own brush written to a file: an ILBM for a name ending as one
+    /// does, a PNG otherwise, with its see-through parts.
+    fn saveBrush(app: *App) void {
+        if (app.own_memory == null) return;
+        var name: [path_size:0]u8 = undefined;
+        if (!app.askFile(app.text.get(.MSG_SAVE_BRUSH_TITLE), true, &app.brush_path, &name)) return;
+        const pio = app.paintIO() orelse return;
+        const format = if (formatOf(&name) == .ilbm) paintio.PIOFORMAT_ILBM else paintio.PIOFORMAT_PNG;
+        const failure = pio.SavePicture(&name, app.own_brush.pixels, app.own_brush.width, app.own_brush.height, format);
+        if (failure != 0) {
+            app.tellFault(.MSG_NO_SAVE_BRUSH, &name, failure);
+            return;
+        }
+        app.brush_path = name;
+    }
+
+    /// The brush shown under the pointer: while the pointer is over the
+    /// view, no button is down, nothing is being drawn and the tool puts
+    /// the brush down.
+    fn pointerBrush(app: *const App) ?brush_zig.Ghost {
+        const at = app.hover orelse return null;
+        if (app.pressing or app.drawing != null or app.gui == null) return null;
+        switch (app.tool) {
+            .freehand, .dots, .line, .curve => {},
+            .rectangle, .ellipse, .polygon => if (app.filled) return null,
+            else => return null,
+        }
+        return brush_zig.Ghost.at(app.brush, at[0], at[1], app.foreground);
+    }
+
+    /// Where the brush under the pointer was and where it is now drawn
+    /// again, when it has moved or changed.
+    fn followPointerBrush(app: *App, now: ?brush_zig.Ghost) void {
+        const mark: GhostMark = if (now) |shown| .{
+            .area = shown.area,
+            .colour = shown.colour,
+            .shape = app.brush.shape,
+            .size = app.brush.size,
+            .own = app.brush.own != null,
+            .mode = app.brush.mode,
+            .changes = app.brush_changes,
+        } else .{};
+        if (mark.same(app.ghost_shown)) return;
+        app.show(app.ghost_shown.area);
+        app.show(mark.area);
+        app.ghost_shown = mark;
+    }
+
+    /// The pointer moved: the picture pixel under it, while it is over the
+    /// view and no button is down - where the brush is shown, and what
+    /// the status says.
+    fn hoverAt(app: *App) void {
+        const gui = app.ui() orelse return;
+        if (app.pressing) return;
+        var mouse_x: usize = 0;
+        var mouse_y: usize = 0;
+        _ = app.ib.GetAttr(wc.WINDOWA_MouseX, gui.object.?, &mouse_x);
+        _ = app.ib.GetAttr(wc.WINDOWA_MouseY, gui.object.?, &mouse_y);
+        var width: usize = 0;
+        var height: usize = 0;
+        app.ib.GetWindowAttrs(gui.window, &[_]TagItem{
+            .{ .tag = wn.WA_Width, .data = @intFromPtr(&width) },
+            .{ .tag = wn.WA_Height, .data = @intFromPtr(&height) },
+            .{},
+        });
+        const box = gc.boxIn(gc.gadget(gui.view), @intCast(width), @intCast(height));
+        const x = @as(i32, @truncate(@as(isize, @bitCast(mouse_x)))) - box.left;
+        const y = @as(i32, @truncate(@as(isize, @bitCast(mouse_y)))) - box.top;
+        if (x < 0 or y < 0 or x >= app.view.width or y >= app.view.height) {
+            app.hover = null;
+            app.at = null;
+            return;
+        }
+        const at = app.view.toPicture(x, y);
+        app.hover = at;
+        app.at = if (app.picture.inside(at[0], at[1])) at else null;
     }
 
     /// The area of one colour at `at` filled.
@@ -1144,6 +1424,8 @@ const App = struct {
     /// and the menus brought up to date.
     fn flush(app: *App) void {
         const gui = app.ui() orelse return;
+        const pointer_brush = app.pointerBrush();
+        app.followPointerBrush(pointer_brush);
         const area = if (app.whole) Area{ .max_x = @intCast(app.view.width), .max_y = @intCast(app.view.height) } else app.view.toView(app.pending);
         app.whole = false;
         app.pending = Area.none;
@@ -1156,7 +1438,7 @@ const App = struct {
                 var row: i32 = 0;
                 while (row < rows) : (row += 1) {
                     const start: usize = @as(usize, @intCast(row)) * width;
-                    app.view.row(&app.picture, y + row, area.min_x, area.max_x, band[start .. start + width]);
+                    app.view.row(&app.picture, y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null);
                 }
                 app.gb.WritePixelArray(gui.view_rp, @ptrCast(band), width * @sizeOf(Pixel), @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
                     .min_x = area.min_x,
@@ -1247,10 +1529,16 @@ const App = struct {
     fn showStatus(app: *App) void {
         const gui = app.ui() orelse return;
         var line: [128]u8 = undefined;
-        const made = if (app.at) |at|
-            app.text.format(&line, .MSG_STATUS_AT, .{ @as(i64, app.picture.width), @as(i64, app.picture.height), @as(i64, app.view.zoom), @as(i64, app.brush.size), @as(i64, at[0]), @as(i64, at[1]) })
+        const width: i64 = app.picture.width;
+        const height: i64 = app.picture.height;
+        const zoom: i64 = app.view.zoom;
+        const made = if (app.brush.own) |own| (if (app.at) |at|
+            app.text.format(&line, .MSG_STATUS_OWN_AT, .{ width, height, zoom, @as(i64, own.width), @as(i64, own.height), @as(i64, at[0]), @as(i64, at[1]) })
         else
-            app.text.format(&line, .MSG_STATUS, .{ @as(i64, app.picture.width), @as(i64, app.picture.height), @as(i64, app.view.zoom), @as(i64, app.brush.size) });
+            app.text.format(&line, .MSG_STATUS_OWN, .{ width, height, zoom, @as(i64, own.width), @as(i64, own.height) })) else if (app.at) |at|
+            app.text.format(&line, .MSG_STATUS_AT, .{ width, height, zoom, @as(i64, app.brush.size), @as(i64, at[0]), @as(i64, at[1]) })
+        else
+            app.text.format(&line, .MSG_STATUS, .{ width, height, zoom, @as(i64, app.brush.size) });
         if (same(made, &app.status)) return;
         const length = @min(made.len, app.status.len);
         @memcpy(app.status[0..length], made[0..length]);
@@ -1266,6 +1554,9 @@ const App = struct {
             .filled = app.filled,
             .round = app.brush.shape == .round,
             .size = app.brush.size,
+            .own_brush = app.brush.own != null,
+            .has_own = app.own_memory != null,
+            .one_colour = app.brush.mode == .one_colour,
             .grid = app.view.grid,
             .own = app.own,
             .can_undo = app.history.canUndo() or app.drawing != null,
@@ -1320,6 +1611,11 @@ const App = struct {
     fn chooseTool(app: *App, tool: Tool) void {
         app.endShape();
         if (tool == .pick and app.tool != .pick) app.before_pick = app.tool;
+        if (tool == .grab and app.tool != .grab) app.before_grab = switch (app.tool) {
+            .freehand, .dots, .line, .curve => app.tool,
+            .rectangle, .ellipse, .polygon => if (app.filled) .dots else app.tool,
+            else => .dots,
+        };
         app.tool = tool;
         const gui = app.ui() orelse return;
         for (tools, gui.tool_buttons) |entry, button| {
@@ -1342,6 +1638,7 @@ const App = struct {
         }
         if (value >= size_base and value < size_base + brush_zig.sizes.len) {
             app.brush.size = brush_zig.sizes[value - size_base];
+            app.brush.own = null;
             return true;
         }
         const which = Command.of(value) orelse return true;
@@ -1365,19 +1662,19 @@ const App = struct {
         // ends it first.
         switch (which) {
             .undo => if (app.cancelShape()) return true,
-            .new, .quit, .redo, .clear, .open, .save, .save_as => app.endShape(),
+            .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
             else => {},
         }
         switch (which) {
             .new => if (app.mayLeave()) {
                 if (app.askSize()) |size| {
-                    if (app.newPicture(size[0], size[1])) app.forgetPath() else app.tellSize(size);
+                    if (app.newPicture(size[0], size[1])) app.forgetPath() else app.tellSize(.MSG_NO_PICTURE, size);
                     app.followBars();
                 }
             },
             .open => if (app.mayLeave()) {
                 var name: [path_size:0]u8 = undefined;
-                if (app.askFile(app.text.get(.MSG_OPEN_TITLE), false, &name)) _ = app.load(&name);
+                if (app.askFile(app.text.get(.MSG_OPEN_TITLE), false, &app.path, &name)) _ = app.load(&name);
             },
             .save => _ = app.saveKept(),
             .save_as => _ = app.saveAs(),
@@ -1407,16 +1704,33 @@ const App = struct {
                 app.view.grid = !app.view.grid;
                 app.whole = true;
             },
-            .round => app.brush.shape = .round,
-            .square => app.brush.shape = .square,
-            .smaller => app.brush = app.brush.stepped(false),
-            .larger => app.brush = app.brush.stepped(true),
+            .round, .square => {
+                app.brush.shape = if (which == .round) .round else .square;
+                app.brush.own = null;
+            },
+            // An own brush is halved and doubled.
+            .smaller => if (app.brush.own != null) app.transformBrush(.halve) else {
+                app.brush = app.brush.stepped(false);
+            },
+            .larger => if (app.brush.own != null) app.transformBrush(.double) else {
+                app.brush = app.brush.stepped(true);
+            },
+            .own_brush => if (app.own_memory != null) {
+                app.brush.own = &app.own_brush;
+            },
+            .own_colours => app.brush.mode = .own_colours,
+            .one_colour => app.brush.mode = .one_colour,
+            .flip_across => app.transformBrush(.flip_across),
+            .flip_down => app.transformBrush(.flip_down),
+            .turn => app.transformBrush(.turn),
+            .open_brush => app.openBrush(),
+            .save_brush => app.saveBrush(),
             .own_screen => app.switch_wanted = true,
             .filled => app.filled = !app.filled,
         }
         // A shape being drawn follows the brush and the filling.
         switch (which) {
-            .round, .square, .smaller, .larger, .filled => app.drawShape(),
+            .round, .square, .smaller, .larger, .filled, .own_brush, .own_colours, .one_colour, .flip_across, .flip_down, .turn, .open_brush => app.drawShape(),
             else => {},
         }
         return true;
@@ -1448,6 +1762,9 @@ const App = struct {
             ']', '>' => _ = app.perform(.larger),
             'x', 'X' => _ = app.perform(.swap),
             'F' => _ = app.perform(.filled),
+            'h' => _ = app.perform(.flip_across),
+            'v' => _ = app.perform(.flip_down),
+            'z' => _ = app.perform(.turn),
             // Return ends a polygon or a curve as it is, Escape puts it
             // away.
             '\r' => app.endShape(),
@@ -1517,10 +1834,12 @@ const App = struct {
         _ = app.ib.EasyRequestArgs(gui.window, &easy, null, null);
     }
 
-    fn tellSize(app: *App, size: [2]u32) void {
+    /// A requester naming a size: `message` takes the width and the
+    /// height.
+    fn tellSize(app: *App, comptime message: Id, size: [2]u32) void {
         const gui = app.ui() orelse return;
-        comptime sdk.exec.checkFormat(strings.builtin(.MSG_NO_PICTURE), struct { i64, i64 });
-        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(.MSG_NO_PICTURE), .gadget_format = app.text.get(.MSG_OK) };
+        comptime sdk.exec.checkFormat(strings.builtin(message), struct { i64, i64 });
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(message), .gadget_format = app.text.get(.MSG_OK) };
         const args = [_]i64{ size[0], size[1] };
         _ = app.ib.EasyRequestArgs(gui.window, &easy, null, &args);
     }
@@ -1791,8 +2110,13 @@ const App = struct {
                     const shifted = qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
                     if (shifted) app.scrollBy(@as(i32, notches) * step, 0) else app.scrollBy(0, @as(i32, notches) * step);
                 },
+                wc.WMHI_MOUSEMOVE => app.hoverAt(),
                 wc.WMHI_NEWSIZE => app.fitView(),
-                wc.WMHI_INACTIVE => app.letGo(),
+                wc.WMHI_INACTIVE => {
+                    app.letGo();
+                    app.hover = null;
+                    app.at = null;
+                },
                 else => {},
             }
             if (app.switch_wanted) return true;
@@ -1913,7 +2237,7 @@ const App = struct {
         made[others + 3] = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_STATUS },
             .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&app.status) },
-            .{ .tag = tx.TEXT_RoomFor, .data = @intFromPtr("16384 x 16384   16:1   brush 32   at -00000, -00000") },
+            .{ .tag = tx.TEXT_RoomFor, .data = @intFromPtr("16384 x 16384   16:1   brush 1024 x 1024   at -00000, -00000") },
             .{},
         });
         for (made) |one| if (one == null) {
@@ -2022,7 +2346,9 @@ const App = struct {
             .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
             .{ .tag = wn.WA_SizeGadget, .data = 1 },
             .{ .tag = wn.WA_Activate, .data = 1 },
-            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_INACTIVEWINDOW },
+            // The pointer's moves: where the brush is shown.
+            .{ .tag = wn.WA_ReportMouse, .data = 1 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_INACTIVEWINDOW | wn.IDCMP_MOUSEMOVE },
             .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
             // The bars tell the window as they move, and as they are let go.
             .{ .tag = wc.WINDOWA_VertScroller, .data = @intFromPtr(&[_]TagItem{
@@ -2160,11 +2486,20 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
     const on: ?bool = if (Tool.of(value)) |tool|
         tool == state.tool
     else if (value >= size_base and value < size_base + brush_zig.sizes.len)
-        brush_zig.sizes[value - size_base] == state.size
+        !state.own_brush and brush_zig.sizes[value - size_base] == state.size
     else if (Command.of(value)) |which| switch (which) {
         .filled => state.filled,
-        .round => state.round,
-        .square => !state.round,
+        .round => !state.own_brush and state.round,
+        .square => !state.own_brush and !state.round,
+        .own_colours => !state.one_colour,
+        .one_colour => state.one_colour,
+        // What there must be an own brush for.
+        .own_brush, .flip_across, .flip_down, .turn, .save_brush => {
+            if (state.has_own) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
+            if (which != .own_brush) return;
+            if (state.own_brush) menu_item.flags |= mn.CHECKED else menu_item.flags &= ~mn.CHECKED;
+            return;
+        },
         .grid => state.grid,
         .own_screen => state.own,
         .undo, .redo => {
@@ -2202,7 +2537,9 @@ fn formatOf(name: [*:0]const u8) Format {
 }
 
 fn sameState(a: MenuState, b: MenuState) bool {
-    return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo;
+    return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and
+        a.own_brush == b.own_brush and a.has_own == b.has_own and a.one_colour == b.one_colour and
+        a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo;
 }
 
 /// Whether the text made and the C string are the same.
@@ -2311,6 +2648,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer {
         if (app.gui) |*gui| gui.close(app.ib);
         if (app.band) |band| sys.FreeVec(band);
+        if (app.own_memory) |memory| sys.FreeVec(memory);
         app.freePicture();
         if (app.pio_lib) |lib| sys.CloseLibrary(lib);
         if (app.asl_lib) |lib| sys.CloseLibrary(lib);

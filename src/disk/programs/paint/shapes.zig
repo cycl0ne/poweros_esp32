@@ -17,6 +17,10 @@
 //! way along: a quadratic curve, drawn as short lines. A polygon is
 //! filled by its pixels' middles, a row at a time, with the even-odd
 //! rule: a part enclosed twice by a crossing outline stays open.
+//!
+//! The frame round what is being cut as a brush is a one-pixel outline
+//! of dashes, four pixels black and four white, which shows on any
+//! colour.
 
 const picture_zig = @import("picture.zig");
 const brush_zig = @import("brush.zig");
@@ -41,6 +45,36 @@ const Box = struct {
         return .{ .x0 = @min(a[0], b[0]), .y0 = @min(a[1], b[1]), .x1 = @max(a[0], b[0]), .y1 = @max(a[1], b[1]) };
     }
 };
+
+/// The area two corners make, both in it.
+pub fn areaOf(a: Point, b: Point) Area {
+    const box = Box.of(a, b);
+    return .{ .min_x = box.x0, .min_y = box.y0, .max_x = box.x1 + 1, .max_y = box.y1 + 1 };
+}
+
+/// The frame of the box two corners make, both in it, in dashes of black
+/// and white, cut to the picture.
+pub fn frame(picture: *Picture, a: Point, b: Point, changed: *Area) void {
+    const box = Box.of(a, b);
+    const right: i32 = @as(i32, @intCast(picture.width)) - 1;
+    const bottom: i32 = @as(i32, @intCast(picture.height)) - 1;
+    var x = @max(box.x0, 0);
+    while (x <= @min(box.x1, right)) : (x += 1) {
+        dash(picture, x, box.y0, changed);
+        dash(picture, x, box.y1, changed);
+    }
+    var y = @max(box.y0, 0);
+    while (y <= @min(box.y1, bottom)) : (y += 1) {
+        dash(picture, box.x0, y, changed);
+        dash(picture, box.x1, y, changed);
+    }
+}
+
+fn dash(picture: *Picture, x: i32, y: i32, changed: *Area) void {
+    if (!picture.inside(x, y)) return;
+    picture.set(@intCast(x), @intCast(y), if ((x + y) & 4 == 0) 0xFF000000 else 0xFFFFFFFF);
+    changed.* = changed.add(.{ .min_x = x, .min_y = y, .max_x = x + 1, .max_y = y + 1 });
+}
 
 /// The row `y` from `x0` to `x1`, both in, in the colour, cut to the
 /// picture.

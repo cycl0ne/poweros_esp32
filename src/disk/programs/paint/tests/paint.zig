@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of Paint's workings: the brushes' shapes and what they put
-//! down, the shapes, the fill and the spray, undo and redo over a block
-//! that fills, and the view's mapping, zoom and rows. The window is not
-//! here.
+//! down, an own brush cut, inked, shown and transformed, the shapes, the
+//! fill and the spray, undo and redo over a block that fills, and the
+//! view's mapping, zoom and rows. The window is not here.
 
 const std = @import("std");
 const picture_zig = @import("../picture.zig");
@@ -82,6 +82,114 @@ test "brush: a stamp cut at the edge, a line with no gaps, the changed area" {
     try testing.expectEqual(blue, picture.get(15, 0));
     try testing.expectEqual(blue, picture.get(18, 9));
     try testing.expectEqual(Area{ .min_x = 15, .min_y = 0, .max_x = 19, .max_y = 10 }, changed);
+}
+
+test "brush: an own brush cut from the picture, the background left out, held by its middle" {
+    var picture = try made(8, 6, white);
+    defer free(picture);
+    picture.set(2, 1, red);
+    picture.set(4, 3, blue);
+    var pixels: [3 * 3]Pixel = undefined;
+    var own = Picture{ .pixels = &pixels, .width = 3, .height = 3 };
+    brush_zig.grab(&picture, shapes.areaOf(.{ 4, 3 }, .{ 2, 1 }), white, &own);
+    try testing.expectEqual(red, own.get(0, 0));
+    try testing.expectEqual(blue, own.get(2, 2));
+    try testing.expectEqual(@as(Pixel, 0), own.get(1, 1));
+
+    const brush = Brush{ .size = 7, .own = &own };
+    try testing.expectEqual(@as(u32, 3), brush.width());
+    try testing.expectEqual([2]i32{ 9, 19 }, brush.corner(10, 20));
+    try testing.expect(brush.covers(0, 0));
+    try testing.expect(!brush.covers(1, 1));
+
+    // Its own colours, stamped: the see-through middle leaves the picture.
+    var into = try made(5, 5, white);
+    defer free(into);
+    var changed = Area.none;
+    brush_zig.stamp(&into, brush, 2, 2, 0xFF00FF00, &changed);
+    try testing.expectEqual(red, into.get(1, 1));
+    try testing.expectEqual(blue, into.get(3, 3));
+    try testing.expectEqual(white, into.get(2, 2));
+    try testing.expectEqual(Area{ .min_x = 1, .min_y = 1, .max_x = 4, .max_y = 4 }, changed);
+    // In one colour: its shape in the stroke's.
+    var one = brush;
+    one.mode = .one_colour;
+    brush_zig.stamp(&into, one, 2, 2, 0xFF00FF00, &changed);
+    try testing.expectEqual(@as(Pixel, 0xFF00FF00), into.get(1, 1));
+    try testing.expectEqual(white, into.get(2, 2));
+}
+
+test "brush: a pixel covered in part is laid over, one covered wholly replaced" {
+    // Half black over white: grey, wholly covering.
+    try testing.expectEqual(@as(Pixel, 0xFF7F7F7F), brush_zig.overlay(0x80000000, white));
+    try testing.expectEqual(red, brush_zig.overlay(red, blue));
+    try testing.expectEqual(blue, brush_zig.overlay(0x00FF0000, blue));
+    // Over nothing, the colour stays and the coverage is its own.
+    try testing.expectEqual(@as(Pixel, 0x80FF0000), brush_zig.overlay(0x80FF0000, 0));
+
+    var pixels = [_]Pixel{ 0x80FF0000, 0xFFFF0000 };
+    const own = Picture{ .pixels = &pixels, .width = 2, .height = 1 };
+    const brush = Brush{ .own = &own, .mode = .one_colour };
+    // A colour at half coverage is mixed; at full coverage it replaces,
+    // see-through colours too.
+    try testing.expectEqual(@as(?Pixel, 0xFF7F7FFF), brush.ink(0, 0, 0xFF0000FF, white));
+    try testing.expectEqual(@as(?Pixel, 0x000000FF), brush.ink(1, 0, 0x000000FF, white));
+
+    // The brush shown under the pointer is what a stamp would make.
+    const shown = brush_zig.Ghost.at(brush, 10, 5, 0xFF0000FF);
+    try testing.expect(shown.crosses(5));
+    try testing.expect(!shown.crosses(6));
+    try testing.expectEqual(@as(Pixel, 0xFF7F7FFF), shown.shown(9, 5, white));
+    try testing.expectEqual(white, shown.shown(11, 5, white));
+}
+
+test "brush: flipped, turned a quarter to the right, halved and doubled" {
+    // 1 2 3
+    // 4 5 6
+    var pixels = [_]Pixel{ 1, 2, 3, 4, 5, 6 };
+    const own = Picture{ .pixels = &pixels, .width = 3, .height = 2 };
+    var out: [12]Pixel = undefined;
+
+    var into = Picture{ .pixels = &out, .width = 3, .height = 2 };
+    brush_zig.transform(.flip_across, &own, &into);
+    try testing.expectEqualSlices(Pixel, &.{ 3, 2, 1, 6, 5, 4 }, out[0..6]);
+    brush_zig.transform(.flip_down, &own, &into);
+    try testing.expectEqualSlices(Pixel, &.{ 4, 5, 6, 1, 2, 3 }, out[0..6]);
+
+    try testing.expectEqual([2]u32{ 2, 3 }, brush_zig.transformedSize(.turn, 3, 2).?);
+    into = .{ .pixels = &out, .width = 2, .height = 3 };
+    brush_zig.transform(.turn, &own, &into);
+    try testing.expectEqualSlices(Pixel, &.{ 4, 1, 5, 2, 6, 3 }, out[0..6]);
+
+    try testing.expectEqual([2]u32{ 2, 1 }, brush_zig.transformedSize(.halve, 3, 2).?);
+    into = .{ .pixels = &out, .width = 2, .height = 1 };
+    brush_zig.transform(.halve, &own, &into);
+    try testing.expectEqualSlices(Pixel, &.{ 1, 3 }, out[0..2]);
+
+    into = .{ .pixels = &out, .width = 6, .height = 2 };
+    const top = Picture{ .pixels = &pixels, .width = 3, .height = 1 };
+    brush_zig.transform(.double, &top, &into);
+    try testing.expectEqualSlices(Pixel, &.{ 1, 1, 2, 2, 3, 3, 1, 1, 2, 2, 3, 3 }, out[0..12]);
+
+    // No larger than a brush may be.
+    try testing.expect(brush_zig.transformedSize(.double, brush_zig.max_own_side / 2 + 1, 4) == null);
+}
+
+test "shapes: the frame round what is cut is dashes, black and white, cut to the picture" {
+    var picture = try made(12, 10, red);
+    defer free(picture);
+    var changed = Area.none;
+    shapes.frame(&picture, .{ 9, 7 }, .{ 1, 1 }, &changed);
+    try testing.expectEqual(Area{ .min_x = 1, .min_y = 1, .max_x = 10, .max_y = 8 }, changed);
+    try testing.expectEqual(@as(Pixel, 0xFF000000), picture.get(1, 1));
+    try testing.expectEqual(@as(Pixel, 0xFFFFFFFF), picture.get(4, 1));
+    // The inside is left alone; the outline of 9 by 7 is all there is.
+    try testing.expectEqual(red, picture.get(5, 4));
+    try testing.expectEqual(@as(usize, 12 * 10 - (2 * 9 + 2 * 7 - 4)), count(&picture, red));
+
+    changed = Area.none;
+    shapes.frame(&picture, .{ -5, -5 }, .{ 40, 40 }, &changed);
+    try testing.expect(changed.isEmpty());
 }
 
 test "history: undone and redone, a new change drops the redo, the oldest go when the block is full" {
@@ -173,7 +281,7 @@ test "view: a row at a zoom, the backdrop round it, the grid and the checkerboar
     view.fit(3, 2);
     try testing.expectEqual(@as(i32, 2), view.offset_x);
     var out: [10]Pixel = undefined;
-    view.row(&picture, 1, 0, 10, &out);
+    view.row(&picture, 1, 0, 10, &out, null);
     try testing.expectEqual(view_zig.backdrop, out[0]);
     try testing.expectEqual(view_zig.backdrop, out[1]);
     try testing.expectEqual(red, out[2]);
@@ -188,15 +296,15 @@ test "view: a row at a zoom, the backdrop round it, the grid and the checkerboar
     var close = View{ .width = 24, .height = 16, .zoom = 8 };
     close.fit(3, 2);
     var line: [24]Pixel = undefined;
-    close.row(&picture, 1, 0, 24, &line);
+    close.row(&picture, 1, 0, 24, &line, null);
     try testing.expect(line[0] != red);
     try testing.expectEqual(red, line[1]);
     try testing.expect(line[8] != blue);
     try testing.expectEqual(blue, line[9]);
-    close.row(&picture, 0, 0, 24, &line);
+    close.row(&picture, 0, 0, 24, &line, null);
     try testing.expect(line[1] != red);
     close.grid = false;
-    close.row(&picture, 0, 0, 24, &line);
+    close.row(&picture, 0, 0, 24, &line, null);
     try testing.expectEqual(red, line[1]);
 }
 

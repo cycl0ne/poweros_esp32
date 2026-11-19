@@ -96,6 +96,14 @@ pub const Picture = struct {
         @memset(picture.pixels[0 .. @as(usize, picture.width) * picture.height], colour);
     }
 
+    /// The area, cut to the picture, the colour.
+    pub fn fillArea(picture: *Picture, area: Area, colour: Pixel) void {
+        const cut = area.clip(picture.width, picture.height);
+        if (cut.isEmpty()) return;
+        var y: u32 = @intCast(cut.min_y);
+        while (y < cut.max_y) : (y += 1) @memset(picture.row(y)[@intCast(cut.min_x)..@intCast(cut.max_x)], colour);
+    }
+
     /// The area copied from `from`, a picture of the same size.
     pub fn copyArea(picture: *Picture, from: *const Picture, area: Area) void {
         const cut = area.clip(picture.width, picture.height);

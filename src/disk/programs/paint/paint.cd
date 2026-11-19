@@ -49,6 +49,8 @@ MSG_MENU_PICK (//)
 Pick Colour
 MSG_MENU_TEXT (//)
 Text
+MSG_MENU_GRAB (//)
+Cut Brush
 MSG_MENU_FILLED (//)
 Filled Shapes
 MSG_MENU_SWAP (//)
@@ -69,12 +71,28 @@ MSG_MENU_ROUND (//)
 Round
 MSG_MENU_SQUARE (//)
 Square
+MSG_MENU_OWN_BRUSH (//)
+Own Brush
 MSG_MENU_SIZE (//)
 Size
 MSG_MENU_SMALLER (//)
 Smaller
 MSG_MENU_LARGER (//)
 Larger
+MSG_MENU_OWN_COLOURS (//)
+Own Colours
+MSG_MENU_ONE_COLOUR (//)
+One Colour
+MSG_MENU_FLIP_ACROSS (//)
+Flip Horizontally
+MSG_MENU_FLIP_DOWN (//)
+Flip Vertically
+MSG_MENU_TURN (//)
+Turn Right
+MSG_MENU_OPEN_BRUSH (//)
+Open Brush...
+MSG_MENU_SAVE_BRUSH (//)
+Save Brush...
 MSG_MENU_SETTINGS (//)
 Settings
 MSG_MENU_OWN_SCREEN (//)
@@ -103,6 +121,8 @@ MSG_TOOL_PICK (//)
 Pick colour: the colour under the pointer
 MSG_TOOL_TEXT (//)
 Text: typed, and put where the picture is clicked
+MSG_TOOL_GRAB (//)
+Cut brush: a part of the picture taken as the brush
 MSG_FILLED_HINT (//)
 Rectangles, ellipses and polygons filled
 MSG_UNDO_HINT (//)
@@ -120,6 +140,10 @@ MSG_STATUS (//)
 %ld x %ld   %ld:1   brush %ld
 MSG_STATUS_AT (//)
 %ld x %ld   %ld:1   brush %ld   at %ld, %ld
+MSG_STATUS_OWN (//)
+%ld x %ld   %ld:1   brush %ld x %ld
+MSG_STATUS_OWN_AT (//)
+%ld x %ld   %ld:1   brush %ld x %ld   at %ld, %ld
 ;
 ; The new picture's window.
 MSG_NEW_TITLE (//)
@@ -170,6 +194,16 @@ MSG_NO_PART (//)
 %s\ncannot be opened.
 MSG_UNTITLED (//)
 Untitled
+MSG_OPEN_BRUSH_TITLE (//)
+Open a brush
+MSG_SAVE_BRUSH_TITLE (//)
+Save the brush as
+MSG_NO_SAVE_BRUSH (//)
+The brush cannot be saved\nas %s:\n%s
+MSG_BRUSH_TOO_LARGE (//)
+A brush can be at most %ld by %ld pixels.
+MSG_NO_BRUSH (//)
+There is no memory for a brush\nof %ld by %ld pixels.
 ;
 ; What the shell is told.
 MSG_NOLIBRARY (//)

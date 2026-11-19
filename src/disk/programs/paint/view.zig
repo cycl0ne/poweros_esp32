@@ -8,7 +8,9 @@
 //! (`left`, `top`: the picture pixel at the view's top left); a smaller
 //! one sits in the middle (`offset_x`, `offset_y`) on the backdrop. From
 //! a zoom of 8 a grid marks the pixels' edges. Coverage below full shows
-//! a checkerboard through it, so what is see-through looks it.
+//! a checkerboard through it, so what is see-through looks it. The brush
+//! under the pointer (`brush.Ghost`) is laid over the rows as they are
+//! made, so it is seen and never in the picture.
 //!
 //! The view's rows are made here into the program's buffer, a band at a
 //! time, and the program writes them into the canvas with
@@ -18,6 +20,7 @@ const picture_zig = @import("picture.zig");
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
+const Ghost = @import("brush.zig").Ghost;
 
 /// The zooms the view steps through.
 pub const zooms = [_]u32{ 1, 2, 3, 4, 6, 8, 12, 16 };
@@ -115,8 +118,9 @@ pub const View = struct {
         return view.zoom;
     }
 
-    /// The view's row `y` from `min_x` to before `max_x`, into `out`.
-    pub fn row(view: *const View, picture: *const Picture, y: i32, min_x: i32, max_x: i32, out: []Pixel) void {
+    /// The view's row `y` from `min_x` to before `max_x`, into `out`, the
+    /// brush shown over it where `ghost` is.
+    pub fn row(view: *const View, picture: *const Picture, y: i32, min_x: i32, max_x: i32, out: []Pixel, ghost: ?*const Ghost) void {
         const zoom: i32 = @intCast(view.zoom);
         const down = y - view.offset_y;
         const picture_y = view.top + @divFloor(down, zoom);
@@ -125,6 +129,8 @@ pub const View = struct {
             return;
         }
         const pixels = picture.row(@intCast(picture_y));
+        // The brush, when it reaches this row.
+        const brush: ?*const Ghost = if (ghost) |given| (if (given.crosses(picture_y)) given else null) else null;
         const grid_row = view.grid and view.zoom >= grid_zoom and @mod(down, zoom) == 0;
         const show_grid = view.grid and view.zoom >= grid_zoom;
         var x = min_x;
@@ -140,6 +146,7 @@ pub const View = struct {
                 continue;
             }
             var colour = pixels[@intCast(picture_x)];
+            if (brush) |laid| colour = laid.shown(picture_x, picture_y, colour);
             if (colour >> 24 != 0xFF) colour = overChecks(colour, x, y);
             if (grid_row or (show_grid and @mod(across, zoom) == 0)) colour = gridded(colour);
             out[at] = colour;
