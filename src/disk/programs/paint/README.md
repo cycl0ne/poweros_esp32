@@ -3,15 +3,19 @@
 `SYS:Programs/Paint/Paint` paints pictures with the pointer: a window
 with the picture, the tools down its right and the colours along its
 bottom. Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
-it loads only when they are needed sit beside it rather than in `LIBS:`.
+it loads only when they are needed sit beside it rather than in `LIBS:`:
+`Libs/paintio.library` opens and saves files, and is loaded the first
+time a file is opened or saved.
 
 Its menus, hints, requesters and messages are in the language chosen on
 Prefs' Region page when there is a catalog for it, and in English
 otherwise.
 
 ```
-Paint [SCREEN=OWN|DESKTOP]
+Paint [FILE] [SCREEN=OWN|DESKTOP]
 ```
+
+FILE is a picture or a project to open at the start.
 
 ## Where it opens
 
@@ -38,7 +42,8 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
   shapes' button, Undo and Redo, and Zoom In and Zoom Out. A tool shows
   a hint when the pointer rests on it.
 - **The colours** are along the bottom: the two in use at the left - the
-  foreground in front, the background behind it - and 32 to pick from.
+  foreground in front, the background behind it - and the picture's 32
+  to pick from.
 - **The status line** says the picture's size, the zoom and the brush's
   size, and while painting the pixel under the pointer.
 
@@ -84,6 +89,10 @@ the next text.
 
 ## Colours
 
+A picture opened from a file with a palette - an ILBM, a GIF, a PNG
+with one - brings its colours: as many of the first 32 as it has take
+the places of Paint's. A project keeps its 32.
+
 A press on one of the 32 colours with the select button makes it the
 foreground, with the menu button the background. A click on the two
 colours in use, or `x`, swaps them.
@@ -103,9 +112,31 @@ through it.
 A new picture is as large as the screen and white. Project → New... asks
 for another size - the width and the height, typed or stepped with the
 arrows, Return taking them and Escape leaving the picture as it is. A
-picture that has changed is not let go - by New..., Quit, Control-C or
-the window's close gadget - before a requester asks whether to discard
-it.
+picture that has changed is not let go - by New..., Open..., Quit,
+Control-C or the window's close gadget - before a requester asks whether
+to save it first: Save, Don't save, or Cancel.
+
+The window's title names the picture's file - on a screen of its own,
+the screen's bar does - with a `*` in front while it has changes.
+
+## Files
+
+Project → Open... opens a project or any picture the system has a
+datatype for: PNG, ILBM, JPEG, GIF, BMP and the others. Project → Save
+As... asks for a name, and what the name ends in says what is written:
+
+| Ending | Written as |
+|---|---|
+| `.png` | a PNG, with the see-through parts when there are any |
+| `.iff`, `.ilbm`, `.lbm` | an ILBM of 24 planes - 32 with see-through parts |
+| anything else | a project: the picture and its 32 colours, packed |
+
+Project → Save writes the file again in the same form; a picture that
+came from a form Paint does not write - a JPEG, a GIF - is saved with
+Save As instead. A file that cannot be read or written says why in a
+requester.
+
+A project is an IFF `FORM PNTG`: the picture, packed, and its palette.
 
 Edit → Clear makes the whole picture the background colour.
 
@@ -123,7 +154,7 @@ The letters are the items' keys, pressed with the right command key.
 
 | Menu | Items |
 |---|---|
-| Project | New... (N), Quit (Q) |
+| Project | New... (N), Open... (O), Save (S), Save As... (A), Quit (Q) |
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
 | Tools | the tools; Filled Shapes |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G) |

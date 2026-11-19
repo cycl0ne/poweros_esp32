@@ -9,6 +9,12 @@ MSG_MENU_PROJECT (1//)
 Project
 MSG_MENU_NEW (//)
 New...
+MSG_MENU_OPEN (//)
+Open...
+MSG_MENU_SAVE (//)
+Save
+MSG_MENU_SAVE_AS (//)
+Save As...
 MSG_MENU_QUIT (//)
 Quit
 MSG_MENU_EDIT (//)
@@ -139,9 +145,9 @@ The text's font
 ;
 ; Requesters.
 MSG_CHANGED (//)
-The picture has changed.\nDiscard it?
+The picture has changed.\nSave it first?
 MSG_CHANGED_BUTTONS (//)
-Discard|Cancel
+Save|Don't save|Cancel
 MSG_NO_PICTURE (//)
 There is no memory for a picture\nof %ld by %ld pixels.
 MSG_NO_UNDO (//)
@@ -152,6 +158,18 @@ MSG_NO_FONT (//)
 The font could not be opened.
 MSG_FILL_SHORT (//)
 There was not memory enough to fill all of it.
+MSG_OPEN_TITLE (//)
+Open a picture
+MSG_SAVE_AS_TITLE (//)
+Save the picture as
+MSG_NO_OPEN (//)
+%s\ncannot be opened:\n%s
+MSG_NO_SAVE (//)
+The picture cannot be saved\nas %s:\n%s
+MSG_NO_PART (//)
+%s\ncannot be opened.
+MSG_UNTITLED (//)
+Untitled
 ;
 ; What the shell is told.
 MSG_NOLIBRARY (//)

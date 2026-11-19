@@ -151,6 +151,7 @@ const image_dirs = [_][]const u8{
     "programs",
     "programs/Docs",
     "programs/Paint",
+    "programs/Paint/Libs",
     // SYS:WBStartup - the programs the desktop starts as it comes up,
     // empty until some are put there.
     "WBStartup",

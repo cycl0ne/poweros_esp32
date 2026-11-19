@@ -269,6 +269,7 @@ const window_programs = [_]Program{
     .{ .disk = "programs/Notepad", .source = "programs/notepad/notepad.zig", .name = "notepad", .set = .gui, .strings = "programs/notepad/notepad.cd" },
     .{ .disk = "programs/Sheet", .source = "programs/sheet/sheet.zig", .name = "sheet", .set = .gui, .strings = "programs/sheet/sheet.cd" },
     .{ .disk = "programs/Paint/Paint", .source = "programs/paint/paint.zig", .name = "paint", .set = .gui, .strings = "programs/paint/paint.cd", .catalog = "programs/Paint.catalog" },
+    .{ .disk = "programs/Paint/Libs/paintio.library", .source = "libs/paintio/paintio.zig", .name = "paintio.library", .set = .gui },
     .{ .disk = "programs/Terminal", .source = "programs/terminal/terminal.zig", .name = "terminal", .set = .gui },
     .{ .disk = "programs/Player", .source = "programs/player/player.zig", .name = "player", .set = .media, .strings = "programs/player/player.cd" },
     .{ .disk = "programs/Movie", .source = "programs/movie/movie.zig", .name = "movie", .set = .media, .imports = &.{"filmsound"}, .strings = "programs/movie/movie.cd" },

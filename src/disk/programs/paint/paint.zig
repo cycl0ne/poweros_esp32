@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Paint: pictures painted with the pointer. Built against the SDK only.
 //!
-//!   Paint [SCREEN=OWN|DESKTOP]
+//!   Paint [FILE] [SCREEN=OWN|DESKTOP]
 //!
 //! A window with the picture, the tools down its right and the colours
 //! along its bottom. It opens on the desktop's screen, or on a screen of
@@ -54,10 +54,22 @@
 //!     left there, drawn by graphics.library into a surface over the
 //!     picture's own pixels.
 //!
-//! **The colours.** palette.gadget shows 32 colours: the select button
-//! picks the foreground, the menu button the background (`PALETTE_Button`);
-//! the two are shown beside it, the foreground in front, and a click there
-//! swaps them, as `x` does.
+//! **The colours.** palette.gadget shows the picture's 32 colours: the
+//! select button picks the foreground, the menu button the background
+//! (`PALETTE_Button`); the two are shown beside it, the foreground in
+//! front, and a click there swaps them, as `x` does.
+//!
+//! **Files** go through paintio.library, which is Paint's own and lies in
+//! its drawer: it is opened by its path, `PROGDIR:Libs/paintio.library`,
+//! the first time a file is opened or saved, and closed at the end. Open...
+//! (and FILE at the start) reads a project or any picture datatypes
+//! reads, and takes its palette when it has one. Save As...
+//! writes what the name ends in: `.png` a PNG, `.iff`, `.ilbm` or `.lbm`
+//! an ILBM, anything else a project (`FORM PNTG`), which keeps the
+//! palette too; Save writes the file again in its form, or asks for a
+//! name when the picture came from a format Paint does not write. The
+//! window's title, or the screen's bar on a screen of its own, names the
+//! file, with a `*` before it while it has changes.
 //!
 //! **Undo.** Every stroke, clear and so on is kept for undoing and redoing
 //! (history.zig), as far back as a block of three pictures' worth - or half
@@ -65,7 +77,7 @@
 //!
 //! The menus, with their keys (pressed with the right command key):
 //!
-//!   Project   New... (N), Quit (Q)
+//!   Project   New... (N), Open... (O), Save (S), Save As... (A), Quit (Q)
 //!   Edit      Undo (Z), Redo (Y), Swap Colours, Clear (K)
 //!   Tools     the tools, Filled Shapes
 //!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G)
@@ -75,8 +87,8 @@
 //! Without a menu key: `+` and `-` zoom, `[` and `]` (or `<` and `>`)
 //! size the brush, `x` swaps the colours, the tools' letters choose them,
 //! Return ends a shape and Escape puts it away, the cursor keys scroll.
-//! A picture that has changed is not let go - by New, Quit, Ctrl-C or
-//! the close gadget - before a requester asks.
+//! A picture that has changed is not let go - by New, Open, Quit, Ctrl-C
+//! or the close gadget - before a requester asks whether to save it.
 //!
 //! Its texts are in `paint.cd`, read through `sdk.locale.Strings`.
 
@@ -108,6 +120,8 @@ const sg = sdk.gadgets.string;
 const gfo = sdk.gadgets.getfont;
 const command = sdk.images.command;
 const prefs = sdk.prefs;
+const paintio = sdk.paintio;
+const asl = sdk.asl;
 const rdargs = dos.rdargs;
 const PixelFormat = sdk.rtg.PixelFormat;
 const ExecBase = sdk.interface.exec.ExecBase;
@@ -117,6 +131,8 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const IconBase = sdk.interface.icon.IconBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
+const PaintIOBase = sdk.interface.paintio.PaintIOBase;
+const AslBase = sdk.interface.asl.AslBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
 const Screen = intuition.Screen;
@@ -138,14 +154,18 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.1";
+const VERSION = "1.2";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
 /// screen's title.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
-const template = "SCREEN/K";
+const template = "FILE,SCREEN/K";
+const arg_file = 0;
+const arg_screen = 1;
+/// The room for a file's path.
+const path_size = 256;
 const ENV_FILE = "ENV:Paint.prefs";
 const ENVARC_FILE = "ENVARC:Paint.prefs";
 
@@ -227,13 +247,16 @@ const Command = enum(u32) {
     larger,
     own_screen,
     filled,
+    open,
+    save,
+    save_as,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.filled)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.save_as)) return null;
         return @enumFromInt(value);
     }
 };
@@ -370,6 +393,10 @@ const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } 
 const menus = [_]MenuEntry{
     menuTitle(.MSG_MENU_PROJECT),
     item(.MSG_MENU_NEW, "N", .new),
+    item(.MSG_MENU_OPEN, "O", .open),
+    bar,
+    item(.MSG_MENU_SAVE, "S", .save),
+    item(.MSG_MENU_SAVE_AS, "A", .save_as),
     bar,
     item(.MSG_MENU_QUIT, "Q", .quit),
     menuTitle(.MSG_MENU_EDIT),
@@ -448,6 +475,9 @@ const Gui = struct {
     shown_menus: ?MenuState = null,
     shown_undo: ?[2]bool = null,
     shown_filled: ?bool = null,
+    /// Whether the title shown has the mark of a change; null before the
+    /// first, and when the file's name has changed.
+    shown_changed: ?bool = null,
 
     fn close(gui: *Gui, ib: *IntuitionBase) void {
         if (gui.strip) |strip| {
@@ -527,6 +557,21 @@ const App = struct {
     font_size: u32 = 24,
     /// Where the pointer was told to be while painting, for the status.
     at: ?[2]i32 = null,
+    /// The picture's colours, which the palette shows: a file's own when
+    /// it had some.
+    palette: [colours.len]Pixel = colours,
+
+    /// The file the picture is, empty for a new one; and whether Save
+    /// writes it again as it is - false for a picture from a format
+    /// Paint does not write.
+    path: [path_size:0]u8 = @splat(0),
+    writes_back: bool = false,
+    /// paintio.library and asl.library, opened the first time a file is
+    /// opened or saved.
+    pio_lib: ?*exec.Library = null,
+    asl_lib: ?*exec.Library = null,
+    /// What the window or the screen's bar says: the file's name.
+    title: [path_size + 16:0]u8 = @splat(0),
 
     view: View = .{},
     /// What is to be shown again: an area of the picture, or all.
@@ -551,20 +596,30 @@ const App = struct {
     /// emptied; the old one stays when there is no memory for it.
     fn newPicture(app: *App, width: u32, height: u32) bool {
         if (width == 0 or height == 0 or width > max_side or height > max_side) return false;
+        const first = app.sys.AllocVec(Picture.bytesFor(width, height), exec.MEMF_ANY) orelse return false;
+        var made = Picture{ .pixels = @ptrCast(@alignCast(first)), .width = width, .height = height };
+        made.fill(app.background);
+        if (!app.takePicture(first, width, height)) {
+            app.sys.FreeVec(first);
+            return false;
+        }
+        return true;
+    }
+
+    /// `first`, a picture's pixels of that size from AllocVec, made the
+    /// picture, with the memory beside it to keep and undo with, and the
+    /// history emptied. False when there is no memory for those: the old
+    /// picture stays, and `first` is still the caller's.
+    fn takePicture(app: *App, first: *anyopaque, width: u32, height: u32) bool {
         const bytes = Picture.bytesFor(width, height);
         const sys = app.sys;
-        const first = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return false;
-        const second = sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
-            sys.FreeVec(first);
-            return false;
-        };
+        const second = sys.AllocVec(bytes, exec.MEMF_ANY) orelse return false;
         // Three pictures' worth to undo with, or half of the largest block
         // free when that is less.
         var room = @min(3 * bytes, sys.AvailMem(exec.MEMF_ANY | exec.MEMF_LARGEST) / 2) & ~@as(usize, 3);
         const third = while (room >= least_history) : (room = (room / 2) & ~@as(usize, 3)) {
             if (sys.AllocVec(room, exec.MEMF_ANY)) |made| break made;
         } else {
-            sys.FreeVec(first);
             sys.FreeVec(second);
             return false;
         };
@@ -573,8 +628,7 @@ const App = struct {
         app.picture = .{ .pixels = @ptrCast(@alignCast(first)), .width = width, .height = height };
         app.kept = .{ .pixels = @ptrCast(@alignCast(second)), .width = width, .height = height };
         app.history = .{ .memory = @ptrCast(@alignCast(third)), .size = room };
-        app.picture.fill(app.background);
-        app.kept.fill(app.background);
+        app.kept.copyArea(&app.picture, app.picture.whole());
         app.changed = false;
         app.stroke = null;
         app.drawing = null;
@@ -583,6 +637,189 @@ const App = struct {
         app.view.fit(width, height);
         app.whole = true;
         return true;
+    }
+
+    // --- files --------------------------------------------------------------
+
+    /// paintio.library from Paint's drawer, opened the first time;
+    /// null, said in a requester, when it cannot be.
+    fn paintIO(app: *App) ?*PaintIOBase {
+        if (app.pio_lib == null) app.pio_lib = app.sys.OpenLibrary(paintio.PAINTIOPATH, 1);
+        return @ptrCast(app.pio_lib orelse {
+            app.tellMissing(paintio.PAINTIOPATH);
+            return null;
+        });
+    }
+
+    /// The picture's file read: a project, or a picture as it is in any
+    /// format datatypes reads, with its palette when it has one. False,
+    /// the picture as it was, when it could not be.
+    fn load(app: *App, name: [*:0]const u8) bool {
+        const pio = app.paintIO() orelse return false;
+        var project = paintio.Project{};
+        const failure = pio.LoadProject(name, &project);
+        if (failure != 0) {
+            app.tellFault(.MSG_NO_OPEN, name, failure);
+            return false;
+        }
+        defer pio.FreeProject(&project);
+        // The bottom layer is the picture: Paint paints one.
+        const layer = &project.layers.?[0];
+        if (!app.takePicture(layer.pixels.?, project.width, project.height)) {
+            app.tellSize(.{ project.width, project.height });
+            return false;
+        }
+        // The pixels are the picture's now, not the project's to free.
+        layer.pixels = null;
+        app.stroke = null;
+        app.drawing = null;
+        app.view.left = 0;
+        app.view.top = 0;
+        app.view.fit(project.width, project.height);
+        app.whole = true;
+        if (project.palette_count != 0) {
+            const count = @min(project.palette_count, app.palette.len);
+            @memcpy(app.palette[0..count], project.palette[0..count]);
+            app.showPalette();
+        }
+        app.keepPath(name);
+        app.writes_back = (project.kind == paintio.PIOKIND_PROJECT) == (formatOf(name) == .project);
+        app.followBars();
+        return true;
+    }
+
+    /// The palette's boxes drawn again from `palette`.
+    fn showPalette(app: *App) void {
+        const gui = app.ui() orelse return;
+        _ = app.ib.SetGadgetAttrsTagList(gui.palette, gui.window, &[_]TagItem{
+            .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&app.palette) },
+            .{},
+        });
+    }
+
+    /// Saved where it came from, in the form it was, or under a name
+    /// asked for when it has none or came from a form Paint does not
+    /// write. Whether it was.
+    fn saveKept(app: *App) bool {
+        if (app.path[0] == 0 or !app.writes_back) return app.saveAs();
+        return app.saveTo(&app.path);
+    }
+
+    fn saveAs(app: *App) bool {
+        var name: [path_size:0]u8 = undefined;
+        if (!app.askFile(app.text.get(.MSG_SAVE_AS_TITLE), true, &name)) return false;
+        return app.saveTo(&name);
+    }
+
+    /// The picture written as the name's ending says: a PNG, an ILBM,
+    /// or a project with the palette. Whether it was.
+    fn saveTo(app: *App, name: [*:0]const u8) bool {
+        const pio = app.paintIO() orelse return false;
+        const width = app.picture.width;
+        const height = app.picture.height;
+        const failure = switch (formatOf(name)) {
+            .png => pio.SavePicture(name, app.picture.pixels, width, height, paintio.PIOFORMAT_PNG),
+            .ilbm => pio.SavePicture(name, app.picture.pixels, width, height, paintio.PIOFORMAT_ILBM),
+            .project => blk: {
+                var layers = [1]paintio.Layer{.{ .pixels = app.picture.pixels }};
+                var project = paintio.Project{ .width = width, .height = height, .layer_count = 1, .layers = &layers, .palette_count = app.palette.len };
+                @memcpy(project.palette[0..app.palette.len], &app.palette);
+                break :blk pio.SaveProject(name, &project);
+            },
+        };
+        if (failure != 0) {
+            app.tellFault(.MSG_NO_SAVE, name, failure);
+            return false;
+        }
+        app.changed = false;
+        app.keepPath(name);
+        app.writes_back = true;
+        return true;
+    }
+
+    /// The file's name kept, and the title made to show it.
+    fn keepPath(app: *App, name: [*:0]const u8) void {
+        if (name != @as([*:0]const u8, &app.path)) {
+            var at: usize = 0;
+            while (name[at] != 0 and at < app.path.len) : (at += 1) app.path[at] = name[at];
+            app.path[at] = 0;
+        }
+        if (app.ui()) |gui| gui.shown_changed = null;
+    }
+
+    /// A new picture has no file.
+    fn forgetPath(app: *App) void {
+        app.path[0] = 0;
+        app.writes_back = false;
+        if (app.ui()) |gui| gui.shown_changed = null;
+    }
+
+    /// A file asked for with asl's requester, into `into`. False when the
+    /// requester was cancelled or could not be had.
+    fn askFile(app: *App, title: [*:0]const u8, saving: bool, into: *[path_size:0]u8) bool {
+        const gui = app.ui() orelse return false;
+        if (app.asl_lib == null) app.asl_lib = app.sys.OpenLibrary(asl.ASLNAME, 0);
+        const ab: *AslBase = @ptrCast(app.asl_lib orelse {
+            app.tellMissing(asl.ASLNAME);
+            return false;
+        });
+        // The drawer and the name the file has now, to begin with.
+        var drawer: [path_size:0]u8 = @splat(0);
+        var file: [*:0]const u8 = "";
+        if (app.path[0] != 0) {
+            drawer = app.path;
+            file = app.dl.FilePart(&app.path);
+            const path_end = @intFromPtr(app.dl.PathPart(&drawer)) - @intFromPtr(&drawer);
+            drawer[path_end] = 0;
+        }
+        const handle = ab.AllocAslRequest(asl.ASL_FileRequest, &[_]TagItem{
+            .{ .tag = asl.ASLFR_TitleText, .data = @intFromPtr(title) },
+            .{ .tag = asl.ASLFR_Window, .data = @intFromPtr(gui.window) },
+            .{ .tag = asl.ASLFR_SleepWindow, .data = 1 },
+            .{ .tag = asl.ASLFR_InitialDrawer, .data = @intFromPtr(&drawer) },
+            .{ .tag = asl.ASLFR_InitialFile, .data = @intFromPtr(file) },
+            .{ .tag = asl.ASLFR_DoSaveMode, .data = @intFromBool(saving) },
+            .{},
+        }) orelse return false;
+        defer ab.FreeAslRequest(handle);
+        if (!ab.AslRequest(handle, null)) return false;
+        const request: *asl.FileRequester = @ptrCast(@alignCast(handle));
+        const chosen = request.file orelse return false;
+        if (chosen[0] == 0) return false;
+        into.* = @splat(0);
+        if (request.drawer) |dir| {
+            var at: usize = 0;
+            while (dir[at] != 0 and at < into.len) : (at += 1) into[at] = dir[at];
+        }
+        return app.dl.AddPart(into, chosen, into.len);
+    }
+
+    /// The window's title - or on a screen of its own, the screen's bar -
+    /// naming the file, a `*` before it while it has changes.
+    fn syncTitle(app: *App) void {
+        const gui = app.ui() orelse return;
+        if (gui.shown_changed) |shown| {
+            if (shown == app.changed) return;
+        }
+        gui.shown_changed = app.changed;
+        const name: [*:0]const u8 = if (app.path[0] != 0) app.dl.FilePart(&app.path) else app.text.get(.MSG_UNTITLED);
+        const tail = " - " ++ COMMAND_NAME;
+        var used: usize = 0;
+        if (app.changed) {
+            app.title[0] = '*';
+            used = 1;
+        }
+        var at: usize = 0;
+        while (name[at] != 0 and used < app.title.len - tail.len) : (at += 1) {
+            app.title[used] = name[at];
+            used += 1;
+        }
+        for (tail) |byte| {
+            app.title[used] = byte;
+            used += 1;
+        }
+        app.title[used] = 0;
+        if (gui.own) app.ib.SetWindowTitles(gui.window, wn.TITLE_UNCHANGED, &app.title) else app.ib.SetWindowTitles(gui.window, &app.title, wn.TITLE_UNCHANGED);
     }
 
     fn freePicture(app: *App) void {
@@ -792,7 +1029,7 @@ const App = struct {
             if (menu_button) app.background = colour else {
                 app.foreground = colour;
                 // The palette shows it when it has it.
-                for (colours, 0..) |offered, place| if (offered == colour) {
+                for (app.palette, 0..) |offered, place| if (offered == colour) {
                     app.foreground_index = @intCast(place);
                     if (app.ui()) |gui| _ = app.ib.SetGadgetAttrsTagList(gui.palette, gui.window, &[_]TagItem{ .{ .tag = pa.PALETTE_Color, .data = place }, .{} });
                     break;
@@ -934,6 +1171,7 @@ const App = struct {
         app.showStatus();
         app.syncMenus();
         app.syncButtons();
+        app.syncTitle();
     }
 
     /// The bars set from the view: the picture's pixels across and down,
@@ -1127,16 +1365,22 @@ const App = struct {
         // ends it first.
         switch (which) {
             .undo => if (app.cancelShape()) return true,
-            .new, .quit, .redo, .clear => app.endShape(),
+            .new, .quit, .redo, .clear, .open, .save, .save_as => app.endShape(),
             else => {},
         }
         switch (which) {
             .new => if (app.mayLeave()) {
                 if (app.askSize()) |size| {
-                    if (!app.newPicture(size[0], size[1])) app.tellSize(size);
+                    if (app.newPicture(size[0], size[1])) app.forgetPath() else app.tellSize(size);
                     app.followBars();
                 }
             },
+            .open => if (app.mayLeave()) {
+                var name: [path_size:0]u8 = undefined;
+                if (app.askFile(app.text.get(.MSG_OPEN_TITLE), false, &name)) _ = app.load(&name);
+            },
+            .save => _ = app.saveKept(),
+            .save_as => _ = app.saveAs(),
             .quit => return !app.mayLeave(),
             .undo => if (app.history.undo(&app.picture, &app.kept)) |area| {
                 app.changed = true;
@@ -1183,14 +1427,14 @@ const App = struct {
     /// palette showing the foreground.
     fn pickedColour(app: *App, place: u32) void {
         const gui = app.ui() orelse return;
-        if (place >= colours.len) return;
+        if (place >= app.palette.len) return;
         var button: usize = pa.PALETTE_SELECT;
         _ = app.ib.GetAttr(pa.PALETTE_Button, gui.palette, &button);
         if (button == pa.PALETTE_MENU) {
-            app.background = colours[place];
+            app.background = app.palette[place];
             _ = app.ib.SetGadgetAttrsTagList(gui.palette, gui.window, &[_]TagItem{ .{ .tag = pa.PALETTE_Color, .data = app.foreground_index }, .{} });
         } else {
-            app.foreground = colours[place];
+            app.foreground = app.palette[place];
             app.foreground_index = place;
         }
         app.drawColours();
@@ -1230,7 +1474,8 @@ const App = struct {
 
     // --- requesters -------------------------------------------------------------
 
-    /// Whether the picture may go: unchanged, or let go of when asked.
+    /// Whether the picture may go: unchanged, saved when asked, or let go
+    /// of.
     fn mayLeave(app: *App) bool {
         if (!app.changed) return true;
         const gui = app.ui() orelse return true;
@@ -1239,7 +1484,31 @@ const App = struct {
             .text_format = app.text.get(.MSG_CHANGED),
             .gadget_format = app.text.get(.MSG_CHANGED_BUTTONS),
         };
-        return app.ib.EasyRequestArgs(gui.window, &easy, null, null) == 1;
+        return switch (app.ib.EasyRequestArgs(gui.window, &easy, null, null)) {
+            1 => app.saveKept(),
+            2 => true,
+            else => false,
+        };
+    }
+
+    /// A requester naming a file and saying why it failed, in dos's words.
+    fn tellFault(app: *App, comptime message: Id, name: [*:0]const u8, failure: i32) void {
+        const gui = app.ui() orelse return;
+        comptime sdk.exec.checkFormat(strings.builtin(message), struct { [*:0]const u8, [*:0]const u8 });
+        var why: [100:0]u8 = @splat(0);
+        _ = app.dl.Fault(failure, null, &why, why.len);
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(message), .gadget_format = app.text.get(.MSG_OK) };
+        const args = [_]usize{ @intFromPtr(name), @intFromPtr(&why) };
+        _ = app.ib.EasyRequestArgs(gui.window, &easy, null, &args);
+    }
+
+    /// A requester saying a library is missing.
+    fn tellMissing(app: *App, name: [*:0]const u8) void {
+        const gui = app.ui() orelse return;
+        comptime sdk.exec.checkFormat(strings.builtin(.MSG_NO_PART), struct { [*:0]const u8 });
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(.MSG_NO_PART), .gadget_format = app.text.get(.MSG_OK) };
+        const args = [_]usize{@intFromPtr(name)};
+        _ = app.ib.EasyRequestArgs(gui.window, &easy, null, &args);
     }
 
     fn tell(app: *App, comptime message: Id) void {
@@ -1532,6 +1801,9 @@ const App = struct {
 
     fn run(app: *App) void {
         while (true) {
+            // What changed since the last wait shown first: a file opened
+            // at the start has not been yet.
+            app.flush();
             const gui = app.ui() orelse return;
             var signal: usize = 0;
             _ = app.ib.GetAttr(wc.WINDOWA_SigMask, gui.object.?, &signal);
@@ -1541,9 +1813,7 @@ const App = struct {
             if (app.switch_wanted) {
                 app.switch_wanted = false;
                 if (!app.switchScreen()) return;
-                continue;
             }
-            app.flush();
         }
     }
 
@@ -1635,8 +1905,8 @@ const App = struct {
         made[others + 2] = ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_PALETTE },
             .{ .tag = gc.GA_MenuButton, .data = 1 },
-            .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&colours) },
-            .{ .tag = pa.PALETTE_NumColors, .data = colours.len },
+            .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&app.palette) },
+            .{ .tag = pa.PALETTE_NumColors, .data = app.palette.len },
             .{ .tag = pa.PALETTE_Color, .data = app.foreground_index },
             .{},
         });
@@ -1908,6 +2178,29 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
     if (checked) menu_item.flags |= mn.CHECKED else menu_item.flags &= ~mn.CHECKED;
 }
 
+/// What a file is written as, by its name's ending.
+const Format = enum { project, png, ilbm };
+
+fn formatOf(name: [*:0]const u8) Format {
+    var length: usize = 0;
+    while (name[length] != 0) length += 1;
+    var dot = length;
+    while (dot > 0) {
+        dot -= 1;
+        switch (name[dot]) {
+            '.' => break,
+            '/', ':' => return .project,
+            else => {},
+        }
+    } else return .project;
+    const ending = name[dot + 1 .. length];
+    if (prefs.style.same(ending, "PNG")) return .png;
+    for ([_][]const u8{ "IFF", "ILBM", "LBM" }) |known| {
+        if (prefs.style.same(ending, known)) return .ilbm;
+    }
+    return .project;
+}
+
 fn sameState(a: MenuState, b: MenuState) bool {
     return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo;
 }
@@ -1920,8 +2213,9 @@ fn same(made: []const u8, shown: [*:0]const u8) bool {
     return shown[made.len] == 0;
 }
 
-/// Where the settings came from: the icon Paint was started from, or the
-/// command line.
+/// The screen the icon Paint was started from asks for with its tool
+/// type, or the last choice when it asks for none; null when Paint was
+/// not started from an icon.
 fn screenWanted(sys: *ExecBase, dl: *DosBase, ub: ?*UtilityBase) ?bool {
     var count: u32 = 0;
     const files = dl.GetArgList(&count);
@@ -1989,22 +2283,22 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer if (utility_lib) |lib| sys.CloseLibrary(lib);
     const ub: ?*UtilityBase = @ptrCast(utility_lib);
 
-    // The screen: SCREEN= from the shell or the icon, or the last choice.
-    var own = screenWanted(sys, dl, ub);
-    if (own == null) {
-        var argv: [1]usize = @splat(0);
-        const rda = dl.ReadArgs(template, &argv, null) orelse {
-            _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
+    // The file to open, and the screen: SCREEN= from the shell, the
+    // icon's tool type, or the last choice.
+    var argv: [2]usize = @splat(0);
+    const rda = dl.ReadArgs(template, &argv, null) orelse {
+        _ = dl.PrintFault(dl.IoErr(), COMMAND_NAME);
+        return dos.RETURN_ERROR;
+    };
+    defer dl.FreeArgs(rda);
+    var own: ?bool = null;
+    if (rdargs.string(argv[arg_screen])) |value| {
+        own = ownOrDesktop(value) orelse {
+            _ = text.printf(dl, .MSG_BADSCREEN, .{});
             return dos.RETURN_ERROR;
         };
-        defer dl.FreeArgs(rda);
-        if (rdargs.string(argv[0])) |value| {
-            own = ownOrDesktop(value) orelse {
-                _ = text.printf(dl, .MSG_BADSCREEN, .{});
-                return dos.RETURN_ERROR;
-            };
-        } else own = keptScreen(sys, dl, ub);
     }
+    if (own == null) own = screenWanted(sys, dl, ub) orelse keptScreen(sys, dl, ub);
 
     var app = App{
         .sys = sys,
@@ -2018,6 +2312,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         if (app.gui) |*gui| gui.close(app.ib);
         if (app.band) |band| sys.FreeVec(band);
         app.freePicture();
+        if (app.pio_lib) |lib| sys.CloseLibrary(lib);
+        if (app.asl_lib) |lib| sys.CloseLibrary(lib);
     }
 
     // A picture as large as the screen to begin with.
@@ -2045,6 +2341,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         }
         app.tell(.MSG_NO_OWN_SCREEN);
     }
+    if (rdargs.string(argv[arg_file])) |name| _ = app.load(name);
     app.run();
     return dos.RETURN_OK;
 }

@@ -37,6 +37,7 @@ pub const images = @import("libs/images/images.zig");
 pub const bsdsocket = @import("libs/bsdsocket/bsdsocket.zig");
 pub const crypto = @import("libs/crypto/crypto.zig");
 pub const compression = @import("libs/compression/compression.zig");
+pub const paintio = @import("libs/paintio/paintio.zig");
 pub const http = @import("libs/http/http.zig");
 /// LZ4's block format (sdk/libs/lz4).
 pub const lz4 = @import("libs/lz4/lz4.zig");

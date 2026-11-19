@@ -1,0 +1,18 @@
+//! paintio.library's functions: Paint's projects and pictures read from
+//! and written to files. It is Paint's own, in Paint's drawer, and Paint
+//! opens it by its path (sdk.paintio.PAINTIOPATH). A call that can fail
+//! answers 0, or a dos error code that Fault puts into words.
+##include libs/paintio/paintio as paintio
+##basetype PaintIOBase
+##name paintio.library
+##bias 4
+##public
+/// A project, or a picture datatypes reads, as a project.
+i32 LoadProject([*:0]const u8 name, *paintio.Project project)
+/// The project written as a FORM PNTG.
+i32 SaveProject([*:0]const u8 name, *const paintio.Project project)
+/// Pixels written as a picture: PNG or ILBM (PIOFORMAT_*).
+i32 SavePicture([*:0]const u8 name, [*]const u32 pixels, u32 width, u32 height, u32 format)
+/// What LoadProject allocated given back.
+void FreeProject(*paintio.Project project)
+##end
