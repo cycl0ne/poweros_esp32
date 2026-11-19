@@ -48,7 +48,14 @@
 //! hand tool, or Space held, drags a picture larger than the view, and
 //! the wheel (with Shift across) and the cursor keys move it. The zoom
 //! bar above it makes it smaller and larger, says the zoom in per cent,
-//! and fits the whole picture to the view.
+//! and fits the whole picture to the view. View → Rulers puts a ruler
+//! above and left of the view, drawn onto the canvas's RastPort in the
+//! screen's font (`drawSides`), the pointer marked; View → Split Screen
+//! shows a second view beside the first, four times closer on its
+//! middle (`splitScreen`). `view` is the one worked in - zoom, scrolling
+//! and every press act on it - and `other` the second; a press in the
+//! other swaps them. Each view is its part of the canvas (`View.x`, `y`,
+//! `layoutViews`), and flush makes each one's rows.
 //!
 //! **Painting.** The select button paints in the foreground colour, the
 //! menu button in the background colour - the canvas takes the menu
@@ -229,7 +236,7 @@
 //!             Ordered Dither, Error Diffusion), Cycle Colours (Tab),
 //!             Open Palette..., Save Palette...
 //!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit,
-//!             Grid (G), Own Screen
+//!             Grid (G), Rulers (U), Split Screen (W), Own Screen
 //!   Help      About Paint...
 //!
 //! Without a menu key: `+` and `-` zoom, `[` and `]` (or `<` and `>`)
@@ -324,7 +331,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.13";
+const VERSION = "1.14";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -577,13 +584,15 @@ const Command = enum(u32) {
     picture_size,
     effects,
     free_transform,
+    rulers,
+    split_screen,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.free_transform)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.split_screen)) return null;
         return @enumFromInt(value);
     }
 };
@@ -900,6 +909,8 @@ const menus = [_]MenuEntry{
     item(.MSG_MENU_FIT, null, .fit),
     bar,
     toggleItem(.MSG_MENU_GRID, "G", .grid),
+    toggleItem(.MSG_MENU_RULERS, "U", .rulers),
+    toggleItem(.MSG_MENU_SPLIT_SCREEN, "W", .split_screen),
     bar,
     toggleItem(.MSG_MENU_OWN_SCREEN, null, .own_screen),
     menuTitle(.MSG_MENU_HELP),
@@ -924,6 +935,8 @@ const MenuState = struct {
     has_own: bool,
     one_colour: bool,
     grid: bool,
+    rulers: bool,
+    split: bool,
     own: bool,
     can_undo: bool,
     can_redo: bool,
@@ -1226,7 +1239,21 @@ const App = struct {
     /// What the window or the screen's bar says: the file's name.
     title: [path_size + 16:0]u8 = @splat(0),
 
+    /// The view zoom and scrolling act on, and with Split Screen the
+    /// other one beside it; a press in the other swaps the two.
     view: View = .{},
+    other: View = .{},
+    split: bool = false,
+    rulers: bool = false,
+    /// The canvas's size, which the views share.
+    canvas_width: u32 = 0,
+    canvas_height: u32 = 0,
+    /// A ruler's strip, a side, and where its numbers' baseline is: from
+    /// the screen's font.
+    ruler_size: u32 = 16,
+    ruler_baseline: u32 = 11,
+    /// The picture pixel the rulers mark, as last drawn.
+    ruled: ?Point = null,
     /// What is to be shown again: an area of the picture, or all.
     pending: Area = Area.none,
     whole: bool = false,
@@ -1327,15 +1354,10 @@ const App = struct {
     fn showPicture(app: *App) void {
         if (app.stack.current >= app.stack.count) app.stack.current = app.stack.count - 1;
         app.paintLayer();
-        const width = app.picture.width;
-        const height = app.picture.height;
         app.changed = false;
         app.stroke = null;
         app.drawing = null;
-        app.view.left = 0;
-        app.view.top = 0;
-        app.view.fit(width, height);
-        app.whole = true;
+        app.fitViews(true);
         app.layers_stale = true;
         app.show(app.picture.whole());
     }
@@ -2564,8 +2586,7 @@ const App = struct {
         const bottom = app.stack.layers[0].picture;
         if (bottom.width == app.kept.width and bottom.height == app.kept.height) return true;
         if (!app.fitSides(bottom.width, bottom.height)) return false;
-        app.view.fit(bottom.width, bottom.height);
-        app.whole = true;
+        app.fitViews(false);
         return true;
     }
 
@@ -2574,8 +2595,7 @@ const App = struct {
     fn resized(app: *App) void {
         app.changed = true;
         app.paintLayer();
-        app.view.fit(app.picture.width, app.picture.height);
-        app.whole = true;
+        app.fitViews(false);
         app.layers_stale = true;
         app.show(app.picture.whole());
     }
@@ -2831,7 +2851,7 @@ const App = struct {
         const covered = moving.shape.area().clip(picture.width, picture.height);
         app.leaveBehind(moving.area, moving.covered.add(covered));
         // The frame shown round it, and taken from where it was.
-        const reach: i32 = @intCast(transform_zig.handle_half / app.view.zoom + 2);
+        const reach: i32 = @intCast(transform_zig.handle_half / app.leastZoom() + 2);
         const box = moving.shape.area();
         const framed = Area{ .min_x = box.min_x - reach, .min_y = box.min_y - reach, .max_x = box.max_x + reach, .max_y = box.max_y + reach };
         app.show(moving.framed.add(framed).add(moving.covered).add(covered));
@@ -2910,16 +2930,6 @@ const App = struct {
         app.sys.FreeVec(moving.memory);
         app.show(moving.framed);
         app.transforming = null;
-    }
-
-    /// A transform's frame in the view.
-    fn frameOf(app: *const App, shape: transform_zig.Shape) transform_zig.Frame {
-        const zoom: f32 = @floatFromInt(app.view.zoom);
-        const origin = transform_zig.Spot{
-            @as(f32, @floatFromInt(app.view.offset_x)) - @as(f32, @floatFromInt(app.view.left)) * zoom,
-            @as(f32, @floatFromInt(app.view.offset_y)) - @as(f32, @floatFromInt(app.view.top)) * zoom,
-        };
-        return transform_zig.Frame.of(shape, origin, zoom);
     }
 
     /// The Effects window: its sliders change the layer painted - what
@@ -3455,9 +3465,17 @@ const App = struct {
         _ = app.ib.GetAttr(cv.CANVAS_X, gui.view, &x);
         _ = app.ib.GetAttr(cv.CANVAS_Y, gui.view, &y);
         _ = app.ib.GetAttr(cv.CANVAS_Button, gui.view, &button);
-        const view_x: i32 = @truncate(@as(isize, @bitCast(x)));
-        const view_y: i32 = @truncate(@as(isize, @bitCast(y)));
+        const canvas_x: i32 = @truncate(@as(isize, @bitCast(x)));
+        const canvas_y: i32 = @truncate(@as(isize, @bitCast(y)));
         const first = !app.pressing;
+        // A press in the other view makes it the one worked in.
+        if (first and app.split and app.other.contains(canvas_x, canvas_y)) {
+            const was = app.view;
+            app.view = app.other;
+            app.other = was;
+        }
+        const view_x = canvas_x - app.view.x;
+        const view_y = canvas_y - app.view.y;
         app.pressing = !final;
         // The hand, or Space held: the picture moved, nothing painted.
         if (app.tool == .hand or app.space_held) {
@@ -3921,12 +3939,13 @@ const App = struct {
         const box = gc.boxIn(gc.gadget(gui.view), @intCast(width), @intCast(height));
         const x = @as(i32, @truncate(@as(isize, @bitCast(mouse_x)))) - box.left;
         const y = @as(i32, @truncate(@as(isize, @bitCast(mouse_y)))) - box.top;
-        if (x < 0 or y < 0 or x >= app.view.width or y >= app.view.height) {
+        const view = if (app.split and app.other.contains(x, y)) &app.other else &app.view;
+        if (!view.contains(x, y)) {
             app.hover = null;
             app.at = null;
             return;
         }
-        const at = app.view.toPicture(x, y);
+        const at = view.toPicture(x - view.x, y - view.y);
         app.hover = at;
         app.at = if (app.picture.inside(at[0], at[1])) at else null;
     }
@@ -4053,16 +4072,223 @@ const App = struct {
         _ = app.ib.GetAttr(cv.CANVAS_RastPort, gui.view, &value);
         gui.view_rp = @ptrFromInt(value);
         _ = app.ib.GetAttr(cv.CANVAS_Width, gui.view, &value);
-        app.view.width = @truncate(value);
+        app.canvas_width = @truncate(value);
         _ = app.ib.GetAttr(cv.CANVAS_Height, gui.view, &value);
-        app.view.height = @truncate(value);
-        if (app.view.width > app.band_width) {
+        app.canvas_height = @truncate(value);
+        if (app.canvas_width > app.band_width) {
             if (app.band) |band| app.sys.FreeVec(band);
-            app.band = @ptrCast(@alignCast(app.sys.AllocVec(@as(usize, app.view.width) * band_rows * @sizeOf(Pixel), exec.MEMF_ANY)));
-            app.band_width = if (app.band != null) app.view.width else 0;
+            app.band = @ptrCast(@alignCast(app.sys.AllocVec(@as(usize, app.canvas_width) * band_rows * @sizeOf(Pixel), exec.MEMF_ANY)));
+            app.band_width = if (app.band != null) app.canvas_width else 0;
         }
-        app.view.fit(app.picture.width, app.picture.height);
+        // The rulers' numbers in the screen's font.
+        if (gui.draw_info) |info| if (info.font) |font| {
+            app.gb.SetRPAttrs(gui.view_rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(font) }, .{} });
+            var baseline: u32 = 0;
+            var height: u32 = 0;
+            app.gb.GetRPAttrs(gui.view_rp, &[_]TagItem{
+                .{ .tag = graphics.RPTAG_FontBaseline, .data = @intFromPtr(&baseline) },
+                .{ .tag = graphics.RPTAG_FontHeight, .data = @intFromPtr(&height) },
+                .{},
+            });
+            if (height != 0) {
+                app.ruler_size = height + 3;
+                app.ruler_baseline = baseline;
+            }
+        };
+        app.layoutViews();
+    }
+
+    /// The views laid in the canvas: each its share of it - the whole,
+    /// or a half with Split Screen, the one on the left staying there -
+    /// below and right of its rulers' strips when they are shown; each
+    /// fitted to the picture again.
+    fn layoutViews(app: *App) void {
+        const ruler = if (app.rulers) app.ruler_size else 0;
+        const width = app.canvas_width;
+        if (!app.split) {
+            app.placeView(&app.view, ruler, width -| ruler);
+        } else {
+            const left_first = app.view.x <= app.other.x;
+            const left = if (left_first) &app.view else &app.other;
+            const right = if (left_first) &app.other else &app.view;
+            const half = (width -| divider) / 2;
+            app.placeView(left, ruler, half -| ruler);
+            const start = half + divider + ruler;
+            app.placeView(right, start, width -| start);
+        }
         app.whole = true;
+    }
+
+    fn placeView(app: *const App, view: *View, x: u32, width: u32) void {
+        const ruler = if (app.rulers) app.ruler_size else 0;
+        view.x = @intCast(x);
+        view.y = @intCast(ruler);
+        view.width = width;
+        view.height = app.canvas_height -| ruler;
+        view.fit(app.picture.width, app.picture.height);
+    }
+
+    /// Each view shown fitted to the picture: scrolled to its top left
+    /// first when `from_start`.
+    fn fitViews(app: *App, from_start: bool) void {
+        for ([2]*View{ &app.view, &app.other }) |view| {
+            if (from_start) {
+                view.left = 0;
+                view.top = 0;
+            }
+            view.fit(app.picture.width, app.picture.height);
+        }
+        app.whole = true;
+    }
+
+    /// The least zoom of the views shown.
+    fn leastZoom(app: *const App) u32 {
+        return if (app.split) @min(app.view.zoom, app.other.zoom) else app.view.zoom;
+    }
+
+    /// View → Split Screen: the picture shown twice side by side - the
+    /// view as it was on the left, a closer one of its middle on the
+    /// right. A press in either makes it the one zoom and scrolling act
+    /// on. Turned off, the one worked in last stays.
+    fn splitScreen(app: *App, on: bool) void {
+        if (on == app.split) return;
+        app.split = on;
+        if (!on) return app.layoutViews();
+        const middle = app.view.toPicture(@intCast(app.view.width / 2), @intCast(app.view.height / 2));
+        app.other = app.view;
+        // Four times as close, as far as the zooms go.
+        for (view_zig.zooms) |zoom| {
+            if (zoom <= app.view.zoom * 4) app.other.zoom = zoom;
+        }
+        app.view.x = 0;
+        app.other.x = 1;
+        app.layoutViews();
+        app.other.left = middle[0] - @as(i32, @intCast(app.other.columns() / 2));
+        app.other.top = middle[1] - @as(i32, @intCast(app.other.rows() / 2));
+        app.other.fit(app.picture.width, app.picture.height);
+    }
+
+    /// View → Grid: the pixels' edges marked from a zoom of 8, in each
+    /// view.
+    fn showGrid(app: *App, on: bool) void {
+        app.view.grid = on;
+        app.other.grid = on;
+        app.whole = true;
+    }
+
+    /// View → Rulers: a ruler along the top and the left of each view.
+    fn showRulers(app: *App, on: bool) void {
+        app.rulers = on;
+        app.layoutViews();
+    }
+
+    /// Where the rulers mark: the picture pixel under the pointer, or
+    /// the one painted at while a button is down.
+    fn pointerSpot(app: *const App) ?Point {
+        return if (app.pressing) app.at else app.hover;
+    }
+
+    /// The rulers of each view shown, and between two views the divider.
+    fn drawSides(app: *App, gui: *Gui) void {
+        const rp = gui.view_rp;
+        const gb = app.gb;
+        app.ruled = app.pointerSpot();
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_DrMd, .data = graphics.DRMD_JAM1 }, .{} });
+        if (app.split) {
+            const left = if (app.view.x <= app.other.x) &app.view else &app.other;
+            const start = left.x + @as(i32, @intCast(left.width));
+            app.fillIn(rp, ruler_edge, .{ .min_x = start, .max_x = start + divider, .max_y = @intCast(app.canvas_height) });
+        }
+        if (!app.rulers) return;
+        for ([2]*const View{ &app.view, &app.other }, 0..) |view, place| {
+            if (place == 1 and !app.split) break;
+            app.drawRuler(rp, view, true);
+            app.drawRuler(rp, view, false);
+        }
+    }
+
+    fn fillIn(app: *App, rp: *RastPort, colour: Pixel, area: graphics.Rect) void {
+        if (area.max_x <= area.min_x or area.max_y <= area.min_y) return;
+        app.gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = colour }, .{} });
+        app.gb.RectFill(rp, &area);
+    }
+
+    /// One ruler of `view`: along its top when `across`, its left
+    /// otherwise - the top one taking the corner. A tick every few
+    /// picture pixels, longer half way, numbered at the longest - down
+    /// the left one a digit under another - and the pointer marked.
+    fn drawRuler(app: *App, rp: *RastPort, view: *const View, across: bool) void {
+        const gb = app.gb;
+        const size: i32 = @intCast(app.ruler_size);
+        const width: i32 = @intCast(view.width);
+        const height: i32 = @intCast(view.height);
+        const strip: graphics.Rect = if (across)
+            .{ .min_x = view.x - size, .min_y = view.y - size, .max_x = view.x + width, .max_y = view.y }
+        else
+            .{ .min_x = view.x - size, .min_y = view.y, .max_x = view.x, .max_y = view.y + height };
+        app.fillIn(rp, ruler_ground, strip);
+        // The edge towards the picture.
+        app.fillIn(rp, ruler_edge, if (across)
+            .{ .min_x = strip.min_x, .min_y = strip.max_y - 1, .max_x = strip.max_x, .max_y = strip.max_y }
+        else
+            .{ .min_x = strip.max_x - 1, .min_y = strip.min_y, .max_x = strip.max_x, .max_y = strip.max_y });
+        const zoom: i32 = @intCast(view.zoom);
+        const length = if (across) width else height;
+        const offset = if (across) view.offset_x else view.offset_y;
+        const first = if (across) view.left else view.top;
+        const steps = view_zig.rulerSteps(view.zoom);
+        // The first tick at or before the view's start.
+        var at = @divFloor(first + @divFloor(-offset, zoom), steps.minor) * steps.minor;
+        gb.SetRPAttrs(rp, &[_]TagItem{ .{ .tag = graphics.RPTAG_APen, .data = ruler_ink }, .{} });
+        while (true) : (at += steps.minor) {
+            const place = offset + (at - first) * zoom;
+            if (place >= length) break;
+            if (place < 0) continue;
+            const major = @mod(at, steps.major) == 0;
+            const reach: i32 = if (major) size - 1 else if (@mod(2 * at, steps.major) == 0) @divTrunc(size, 2) else @divTrunc(size, 4);
+            if (across) {
+                const x = view.x + place;
+                gb.RectFill(rp, &.{ .min_x = x, .min_y = strip.max_y - reach, .max_x = x + 1, .max_y = strip.max_y });
+            } else {
+                const y = view.y + place;
+                gb.RectFill(rp, &.{ .min_x = strip.max_x - reach, .min_y = y, .max_x = strip.max_x, .max_y = y + 1 });
+            }
+            if (major) app.numberRuler(rp, strip, across, place, at);
+        }
+        // The pointer.
+        const spot = app.ruled orelse return;
+        const place = offset + ((if (across) spot[0] else spot[1]) - first) * zoom + @divTrunc(zoom, 2);
+        if (place < 0 or place >= length) return;
+        app.fillIn(rp, ruler_mark, if (across)
+            .{ .min_x = view.x + place, .min_y = strip.min_y, .max_x = view.x + place + 1, .max_y = strip.max_y }
+        else
+            .{ .min_x = strip.min_x, .min_y = view.y + place, .max_x = strip.max_x, .max_y = view.y + place + 1 });
+    }
+
+    /// The number `value` beside its tick, `place` along the ruler
+    /// `strip`; left out where it would run past the strip's end.
+    fn numberRuler(app: *App, rp: *RastPort, strip: graphics.Rect, across: bool, place: i32, value: i32) void {
+        const gb = app.gb;
+        var digits: [12]u8 = undefined;
+        const text = view_zig.numberText(value, &digits);
+        const baseline: i32 = @intCast(app.ruler_baseline);
+        if (across) {
+            const x = strip.min_x + @as(i32, @intCast(app.ruler_size)) + place + 2;
+            if (x + gb.TextLength(rp, text.ptr, @intCast(text.len)) > strip.max_x) return;
+            gb.Move(rp, x, strip.min_y + 1 + baseline);
+            gb.Text(rp, text.ptr, @intCast(text.len));
+            return;
+        }
+        // A digit under another, a line a digit as tall as the digits.
+        const line = baseline + 1;
+        const top = strip.min_y + place + 2;
+        if (top + line * @as(i32, @intCast(text.len)) > strip.max_y) return;
+        for (0..text.len) |index| {
+            const digit = text[index..].ptr;
+            const wide = gb.TextLength(rp, digit, 1);
+            gb.Move(rp, strip.min_x + @divTrunc(strip.max_x - strip.min_x - 1 - wide, 2), top + line * @as(i32, @intCast(index)) + baseline);
+            gb.Text(rp, digit, 1);
+        }
     }
 
     /// Whether a stroke or a shape is being made in the layer painted.
@@ -4091,15 +4317,21 @@ const App = struct {
         // made into what is shown where they changed.
         if (app.changeUnderWay()) app.selection.stencil(&app.picture, &app.kept, app.pending);
         app.stack.compose(app.pending);
-        app.view.turned = if (app.cycling and !app.show_mask) &app.turned else null;
+        const turned: ?*const palette_zig.Turned = if (app.cycling and !app.show_mask) &app.turned else null;
         const outline = app.outlineShown();
-        const frame = if (app.transforming) |moving| app.frameOf(moving.shape) else null;
-        app.view.frame = if (frame) |*shown| shown else null;
-        defer app.view.frame = null;
-        const area = if (app.whole) Area{ .max_x = @intCast(app.view.width), .max_y = @intCast(app.view.height) } else app.view.toView(app.pending);
+        const whole = app.whole;
+        const pending = app.pending;
         app.whole = false;
         app.pending = Area.none;
-        if (!area.isEmpty() and app.band != null) {
+        var drawn = false;
+        for ([2]*View{ &app.view, &app.other }, 0..) |view, place| {
+            if (place == 1 and !app.split) break;
+            const frame = if (app.transforming) |moving| frameOf(view, moving.shape) else null;
+            view.turned = turned;
+            view.frame = if (frame) |*shown| shown else null;
+            defer view.frame = null;
+            const area = if (whole) Area{ .max_x = @intCast(view.width), .max_y = @intCast(view.height) } else view.toView(pending);
+            if (area.isEmpty() or app.band == null) continue;
             const band = app.band.?;
             const width = area.width();
             var y = area.min_y;
@@ -4108,18 +4340,25 @@ const App = struct {
                 var row: i32 = 0;
                 while (row < rows) : (row += 1) {
                     const start: usize = @as(usize, @intCast(row)) * width;
-                    app.view.row(app.viewed(), y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null, if (outline) |*shown| shown else null);
+                    view.row(app.viewed(), y + row, area.min_x, area.max_x, band[start .. start + width], if (pointer_brush) |*shown| shown else null, if (outline) |*shown| shown else null);
                 }
                 app.gb.WritePixelArray(gui.view_rp, @ptrCast(band), width * @sizeOf(Pixel), @intFromEnum(PixelFormat.bgra32), 0, 0, &.{
-                    .min_x = area.min_x,
-                    .min_y = y,
-                    .max_x = area.max_x,
-                    .max_y = y + rows,
+                    .min_x = view.x + area.min_x,
+                    .min_y = view.y + y,
+                    .max_x = view.x + area.max_x,
+                    .max_y = view.y + y + rows,
                 });
                 y += rows;
             }
-            app.ib.QueueGadgetRefresh(gui.view);
+            drawn = true;
         }
+        // The rulers when the views or the pointer moved, the divider
+        // with everything.
+        if ((app.split or app.rulers) and (whole or (app.rulers and !samePoint(app.pointerSpot(), app.ruled)))) {
+            app.drawSides(gui);
+            drawn = true;
+        }
+        if (drawn) app.ib.QueueGadgetRefresh(gui.view);
         app.showStatus();
         app.syncMenus();
         app.syncButtons();
@@ -4194,6 +4433,8 @@ const App = struct {
             .has_own = app.own_memory != null,
             .one_colour = app.brush.mode == .one_colour,
             .grid = app.view.grid,
+            .rulers = app.rulers,
+            .split = app.split,
             .own = app.own,
             .can_undo = app.history.canUndo() or app.drawing != null,
             .can_redo = app.history.canRedo(),
@@ -4466,10 +4707,7 @@ const App = struct {
         // An item with a check mark has turned itself.
         const checked = picked_item.flags & mn.CHECKED != 0;
         switch (which) {
-            .grid => {
-                app.view.grid = checked;
-                app.whole = true;
-            },
+            .grid => app.showGrid(checked),
             .own_screen => app.switch_wanted = checked != app.own,
             .filled => app.filled = checked,
             else => return app.perform(which),
@@ -4590,10 +4828,9 @@ const App = struct {
             // Asked again while one is under way, it takes it.
             .free_transform => if (app.transforming != null) app.endShape() else app.freeTransform(),
             .about => app.about(),
-            .grid => {
-                app.view.grid = !app.view.grid;
-                app.whole = true;
-            },
+            .grid => app.showGrid(!app.view.grid),
+            .rulers => app.showRulers(!app.rulers),
+            .split_screen => app.splitScreen(!app.split),
             .round, .square => {
                 app.brush.shape = if (which == .round) .round else .square;
                 app.brush.own = null;
@@ -5768,6 +6005,32 @@ fn sizeOf(ib: *IntuitionBase, fields: [2]?*Object) [2]u32 {
     return .{ @truncate(width), @truncate(height) };
 }
 
+/// The gap between two views, in pixels.
+const divider = 4;
+/// The rulers' colours: their ground, the edge towards the picture and
+/// the divider, the ticks and numbers, the pointer's mark.
+const ruler_ground: Pixel = 0xFFE4E4E4;
+const ruler_edge: Pixel = 0xFF808080;
+const ruler_ink: Pixel = 0xFF303030;
+const ruler_mark: Pixel = 0xFFD02828;
+
+/// Whether two picture pixels, or none, are the same.
+fn samePoint(a: ?Point, b: ?Point) bool {
+    const first = a orelse return b == null;
+    const second = b orelse return false;
+    return first[0] == second[0] and first[1] == second[1];
+}
+
+/// A transform's frame in `view`.
+fn frameOf(view: *const View, shape: transform_zig.Shape) transform_zig.Frame {
+    const zoom: f32 = @floatFromInt(view.zoom);
+    const origin = transform_zig.Spot{
+        @as(f32, @floatFromInt(view.offset_x)) - @as(f32, @floatFromInt(view.left)) * zoom,
+        @as(f32, @floatFromInt(view.offset_y)) - @as(f32, @floatFromInt(view.top)) * zoom,
+    };
+    return transform_zig.Frame.of(shape, origin, zoom);
+}
+
 /// How near to a handle, in view pixels, a press takes it.
 const handle_reach = 5;
 
@@ -6130,6 +6393,8 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
                 return;
             },
             .grid => state.grid,
+            .rulers => state.rulers,
+            .split_screen => state.split,
             .own_screen => state.own,
             .cycle => state.cycling,
             .round_gradient => state.round_gradient,
@@ -6188,7 +6453,7 @@ fn formatOf(name: [*:0]const u8) Format {
 fn sameState(a: MenuState, b: MenuState) bool {
     return a.tool == b.tool and a.filled == b.filled and a.round == b.round and a.size == b.size and
         a.own_brush == b.own_brush and a.has_own == b.has_own and a.one_colour == b.one_colour and
-        a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo and
+        a.grid == b.grid and a.rulers == b.rulers and a.split == b.split and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo and
         a.layers == b.layers and a.current == b.current and a.selected == b.selected and
         a.has_mask == b.has_mask and a.painting_mask == b.painting_mask and a.cycling == b.cycling and
         a.round_gradient == b.round_gradient;

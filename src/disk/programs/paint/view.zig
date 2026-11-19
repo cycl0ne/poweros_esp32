@@ -23,7 +23,12 @@
 //!
 //! The view's rows are made here into the program's buffer, a band at a
 //! time, and the program writes them into the canvas with
-//! `WritePixelArray`; only the area a change touched is made again.
+//! `WritePixelArray`; only the area a change touched is made again. A
+//! view is a part of the canvas (`x`, `y`): the rulers' strips are above
+//! and left of it when they are shown, and with Split Screen two views
+//! share the canvas side by side. Everything here counts from the
+//! view's own top left. The rulers tick every few picture pixels
+//! (`rulerSteps`), so ticks never crowd and numbers have room.
 
 const picture_zig = @import("picture.zig");
 const Picture = picture_zig.Picture;
@@ -47,6 +52,9 @@ const check_dark: Pixel = 0xFFCCCCCC;
 const check_shift = 3;
 
 pub const View = struct {
+    /// Where its top left is in the canvas.
+    x: i32 = 0,
+    y: i32 = 0,
     zoom: u32 = 1,
     left: i32 = 0,
     top: i32 = 0,
@@ -69,6 +77,11 @@ pub const View = struct {
 
     pub fn rows(view: *const View) u32 {
         return view.height / view.zoom;
+    }
+
+    /// Whether the canvas's pixel (`x`, `y`) is one of the view's.
+    pub fn contains(view: *const View, x: i32, y: i32) bool {
+        return x >= view.x and y >= view.y and x - view.x < view.width and y - view.y < view.height;
     }
 
     /// The scroll kept inside the picture, and a picture smaller than the
@@ -202,6 +215,47 @@ pub const View = struct {
         if (marks) |*laid| laid.lay(shown, y, min_x);
     }
 };
+
+/// A ruler's ticks, in picture pixels: one every `minor`, numbered every
+/// `major`, a multiple of it. Steps go 1, 2, 5, 10, 20, 50, ... so the
+/// ticks are 6 view pixels apart at least and the numbers 64.
+pub const RulerSteps = struct { minor: i32, major: i32 };
+
+pub fn rulerSteps(zoom: u32) RulerSteps {
+    const least_tick = 6;
+    const least_number = 64;
+    var minor: i32 = 0;
+    var major: i32 = 0;
+    var step: i32 = 1;
+    var scale: i32 = 1;
+    while (major == 0) {
+        for ([_]i32{ 1, 2, 5 }) |times| {
+            step = times * scale;
+            const apart = step * @as(i32, @intCast(zoom));
+            if (minor == 0 and apart >= least_tick) minor = step;
+            if (minor != 0 and major == 0 and apart >= least_number and @mod(step, minor) == 0) major = step;
+        }
+        scale *= 10;
+    }
+    return .{ .minor = minor, .major = major };
+}
+
+/// `value` written out in digits, a minus first when it is below 0.
+pub fn numberText(value: i32, into: *[12]u8) []const u8 {
+    var left: u32 = @abs(value);
+    var at: usize = into.len;
+    while (true) {
+        at -= 1;
+        into[at] = '0' + @as(u8, @intCast(left % 10));
+        left /= 10;
+        if (left == 0) break;
+    }
+    if (value < 0) {
+        at -= 1;
+        into[at] = '-';
+    }
+    return into[at..];
+}
 
 /// Whether the view pixel at (`sub_x`, `sub_y`) within the picture pixel
 /// (`x`, `y`), `zoom` a side, is on the edge of what is chosen: the pixel

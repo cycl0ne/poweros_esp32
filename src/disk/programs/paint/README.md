@@ -395,6 +395,17 @@ turns off and on. View → Actual Size goes back to 1:1; View → Zoom to
 Fit, or the zoom bar's last button, shows the whole picture at the
 largest zoom it fits at.
 
+View → Rulers puts a ruler along the top of the view and down its left,
+numbered in the picture's pixels, with a red mark where the pointer is
+- or where the brush paints, while a button is down.
+
+View → Split Screen shows the picture twice, side by side: the view as
+it was on the left, and on the right one four times as close on its
+middle - for detail while the whole stays in sight. Paint works in
+either: a press in one makes it the one the zoom, the hand and the
+scrolling act on, and what changes shows in both. Turned off, the view
+worked in last stays.
+
 A part of the picture that is see-through shows a light checkerboard
 through it.
 
@@ -476,7 +487,7 @@ The letters are the items' keys, pressed with the right command key.
 | Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
 | Palette | Edit... (P), From the Picture, Presets (Paint's Own, Greys, Spectrum, Pastel, Earth), Reduce (No Dither, Ordered Dither, Error Diffusion), Cycle Colours, Open Palette..., Save Palette... |
-| View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Own Screen |
+| View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Rulers (U), Split Screen (W), Own Screen |
 | Help | About Paint... |
 
 ## Keys

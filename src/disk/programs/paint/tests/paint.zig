@@ -1408,6 +1408,28 @@ test "image: a scale's size, and a side that follows the other in proportion" {
     try std.testing.expectEqual([2]u32{ 1280, 800 }, image_zig.proportioned(.{ 1280, 800 }, .{ 1280, 800 }));
 }
 
+test "view: rulers tick apart and number further apart; a view's part of the canvas" {
+    // A tick 6 view pixels apart at least, a number 64, on a multiple.
+    try std.testing.expectEqual(view_zig.RulerSteps{ .minor = 10, .major = 100 }, view_zig.rulerSteps(1));
+    try std.testing.expectEqual(view_zig.RulerSteps{ .minor = 5, .major = 50 }, view_zig.rulerSteps(2));
+    try std.testing.expectEqual(view_zig.RulerSteps{ .minor = 1, .major = 10 }, view_zig.rulerSteps(8));
+    try std.testing.expectEqual(view_zig.RulerSteps{ .minor = 1, .major = 5 }, view_zig.rulerSteps(16));
+    try std.testing.expectEqual(view_zig.RulerSteps{ .minor = 2, .major = 20 }, view_zig.rulerSteps(4));
+
+    var digits: [12]u8 = undefined;
+    try std.testing.expectEqualStrings("0", view_zig.numberText(0, &digits));
+    try std.testing.expectEqualStrings("1280", view_zig.numberText(1280, &digits));
+    try std.testing.expectEqualStrings("-50", view_zig.numberText(-50, &digits));
+    try std.testing.expectEqualStrings("-2147483648", view_zig.numberText(-2147483648, &digits));
+
+    const view = view_zig.View{ .x = 20, .y = 16, .width = 100, .height = 50 };
+    try std.testing.expect(view.contains(20, 16));
+    try std.testing.expect(view.contains(119, 65));
+    try std.testing.expect(!view.contains(120, 30));
+    try std.testing.expect(!view.contains(19, 30));
+    try std.testing.expect(!view.contains(30, 66));
+}
+
 test "transform: a shape sized by a corner and a side, moved, turned" {
     const transform = @import("../transform.zig");
     const lifted = Area{ .min_x = 10, .min_y = 20, .max_x = 30, .max_y = 60 };

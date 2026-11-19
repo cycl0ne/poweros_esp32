@@ -109,6 +109,10 @@ MSG_MENU_FIT (//)
 Zoom to Fit
 MSG_MENU_GRID (//)
 Grid
+MSG_MENU_RULERS (//)
+Rulers
+MSG_MENU_SPLIT_SCREEN (//)
+Split Screen
 MSG_MENU_LAYER (//)
 Layer
 MSG_MENU_NEW_LAYER (//)
