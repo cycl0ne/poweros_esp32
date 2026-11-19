@@ -100,6 +100,7 @@ pub fn draw(p: *Painter, glyph: u32) void {
         command.CMD_SELECT_BOX => drawSelectBox(p),
         command.CMD_LASSO => drawLasso(p),
         command.CMD_WAND => drawWand(p),
+        command.CMD_GRADIENT => drawGradient(p),
         command.CMD_LAUNCHER => drawLauncher(p),
         else => {},
     }
@@ -856,6 +857,21 @@ noinline fn drawWand(p: *Painter) void {
     p.solid(&.{p.poly(&shapes.bar(10, 94, 56, 48, 13))}, .iron, .{ .no_gloss = true });
     p.solid(&.{p.poly(&shapes.bar(56, 48, 68, 36, 13))}, .paper, .{ .no_shadow = true, .no_gloss = true });
     p.solid(&.{ p.poly(&large_spark), p.poly(&right_spark), p.poly(&top_spark) }, .yellow, .{ .no_gloss = true });
+}
+
+noinline fn drawGradient(p: *Painter) void {
+    // The square in its frame, shading from dark blue at the left to
+    // white at the right, and across it the drag that laid the shading:
+    // a dark line with a dot at each end.
+    p.solid(&.{p.rr(6, 6, 94, 94, 6)}, .iron, .{ .no_gloss = true });
+    const blue = shapes.tones(.blue);
+    p.fill(p.rr(12, 12, 88, 88, 3), .{ .fill = .{
+        .kind = graphics.FILL_LINEAR,
+        .to_x = graphics.FILL_ONE,
+        .to_y = 0,
+        .stops = .{ .{ .at = 0, .pen = blue.dark }, .{ .at = graphics.FILL_ONE, .pen = 0xFFFF_FFFF }, .{}, .{} },
+    } });
+    p.solid(&.{ p.poly(&shapes.bar(26, 72, 74, 28, 7)), p.disc(26, 72, 9), p.disc(74, 28, 9) }, .iron, .{ .no_shadow = true, .no_gloss = true });
 }
 
 const large_spark = spark(80, 22, 18);

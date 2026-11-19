@@ -260,5 +260,8 @@ pub const CMD_LASSO: u32 = 81;
 /// A wand with sparks at its tip: what is alike chosen at a touch.
 /// Since 1.13.
 pub const CMD_WAND: u32 = 82;
+/// A square shading from blue to white, and the drag that laid it: a
+/// gradient. Since 1.14.
+pub const CMD_GRADIENT: u32 = 83;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_WAND;
+pub const CMD_LAST: u32 = CMD_GRADIENT;
