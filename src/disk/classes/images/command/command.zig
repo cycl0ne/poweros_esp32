@@ -52,11 +52,11 @@ pub const Data = extern struct {
 };
 
 /// 1.9: a paint program's tools. 1.10: the hand, fit, swap, folded and
-/// unfolded. 1.11: the eraser and the smudging finger.
+/// unfolded. 1.11: the eraser and the smudging finger. 1.12: the eye.
 pub const Library = gadgets.ClassLibrary(.{
     .name = command.COMMAND_CLASS,
     .version = 1,
-    .revision = 11,
+    .revision = 12,
     .date = "19.11.2026",
     .super = classusr.IMAGECLASS,
     .Instance = Data,

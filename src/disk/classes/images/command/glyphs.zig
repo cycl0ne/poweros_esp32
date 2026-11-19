@@ -96,6 +96,7 @@ pub fn draw(p: *Painter, glyph: u32) void {
         command.CMD_UNFOLDED => drawUnfolded(p),
         command.CMD_ERASER => drawEraser(p),
         command.CMD_SMUDGE => drawSmudge(p),
+        command.CMD_EYE => drawEye(p),
         command.CMD_LAUNCHER => drawLauncher(p),
         else => {},
     }
@@ -789,6 +790,40 @@ noinline fn drawSmudge(p: *Painter) void {
     p.solid(&.{p.poly(&shapes.taper(58, 80, 4, 90, 24, 4))}, .blue, .{ .flat = true, .no_shadow = true });
     p.solid(&.{ p.poly(&shapes.bar(92, 6, 62, 58, 32)), p.disc(62, 58, 16) }, .yellow, .{ .no_gloss = true });
     p.solid(&.{p.disc(68, 50, 8)}, .paper, .{ .no_shadow = true, .no_gloss = true });
+}
+
+noinline fn drawEye(p: *Painter) void {
+    // The lids in the ink, the white within them, the iris, the pupil
+    // and a glint.
+    p.ink(&.{p.poly(&outer_lids)});
+    p.solid(&.{p.poly(&inner_lids)}, .paper, .{ .no_shadow = true, .no_gloss = true });
+    p.solid(&.{p.disc(50, 50, 14)}, .blue, .{ .no_shadow = true });
+    p.ink(&.{p.disc(50, 50, 6)});
+    p.solid(&.{p.disc(55, 45, 3)}, .paper, .{ .flat = true, .no_shadow = true });
+}
+
+const outer_lids = almond(4, 96, 88);
+const inner_lids = almond(14, 86, 64);
+
+/// An eye's outline from (`left`, 50) to (`right`, 50), its lids each a
+/// curve whose middle is `open` / 4 from the line between: sixteen
+/// corners, worked out as the class is built.
+fn almond(comptime left: f32, comptime right: f32, comptime open: f32) [shapes.max_corners][2]f32 {
+    comptime {
+        @setEvalBranchQuota(10_000);
+        const half = shapes.max_corners / 2;
+        var corners: [shapes.max_corners][2]f32 = undefined;
+        for (0..half) |step| {
+            const t = @as(f32, @floatFromInt(step)) / half;
+            const x = (1 - t) * (1 - t) * left + 2 * t * (1 - t) * 50 + t * t * right;
+            corners[step] = .{ x, 50 - t * (1 - t) * open };
+            // The lower lid from the right back to the left.
+            const lower_t = 1 - t;
+            const x_lower = (1 - lower_t) * (1 - lower_t) * left + 2 * lower_t * (1 - lower_t) * 50 + lower_t * lower_t * right;
+            corners[half + step] = .{ x_lower, 50 + lower_t * (1 - lower_t) * open };
+        }
+        return corners;
+    }
 }
 
 noinline fn drawStencil(p: *Painter) void {

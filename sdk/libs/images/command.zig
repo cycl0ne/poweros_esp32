@@ -26,7 +26,7 @@
 //! out, shapes filled, layers and a stencil. Since 1.10 what is round a
 //! paint program's picture: a hand that moves it, a frame it fits, two
 //! colours swapped, and a section folded and unfolded. Since 1.11 an
-//! eraser and a smudging finger.
+//! eraser and a smudging finger; since 1.12 an eye.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -249,5 +249,8 @@ pub const CMD_ERASER: u32 = 77;
 /// A finger pointing down at a smear of colour: colours dragged along.
 /// Since 1.11.
 pub const CMD_SMUDGE: u32 = 78;
+/// An open eye: something shown - a layer, dimmed when it is hidden.
+/// Since 1.12.
+pub const CMD_EYE: u32 = 79;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_SMUDGE;
+pub const CMD_LAST: u32 = CMD_EYE;
