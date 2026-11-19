@@ -4,7 +4,9 @@
 //! A picture.datatype subclass. It walks the form in `OM_NEW` - what the
 //! picture is (`BMHD`), its palette (`CMAP`), what the machine's display
 //! was set to (`CAMG`) and the rows themselves (`BODY`) - and hands the
-//! pixels to its superclass; everything after that is the superclass's.
+//! pixels to its superclass, and the palette with them
+//! (`PDTA_ColorRegisters`), so a program can ask for the colours the
+//! picture was drawn with; everything after that is the superclass's.
 //!
 //! **The walk is iffparse's.** The chunks that say what the picture is
 //! are asked for as properties and the rows are stopped on, so the form
@@ -36,11 +38,12 @@ const Object = classes.Object;
 const Base = gadgets.Base;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// 1.2: the file's palette handed to the superclass.
 pub const Library = gadgets.ClassLibrary(.{
     .name = "ilbm.datatype",
     .version = 1,
-    .revision = 1,
-    .date = "28.10.2026",
+    .revision = 2,
+    .date = "19.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, iffparse.IFFPARSENAME },
     .Instance = Data,
@@ -176,6 +179,11 @@ fn readForm(base: *Base, cl: *Class, o: *Object, ip: *IFFParseBase, iff: *iffpar
     if (!subclass.setPicture(ib, cl, o, &kept, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_LUT8)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }
+    if (colors != 0) subclass.superTell(ib, cl, o, &.{
+        .{ .tag = pic.PDTA_ColorRegisters, .data = @intFromPtr(&palette) },
+        .{ .tag = pic.PDTA_NumColors, .data = colors },
+        .{},
+    });
 
     var at: usize = 0;
     var y: u32 = 0;

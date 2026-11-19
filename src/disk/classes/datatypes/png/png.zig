@@ -19,7 +19,9 @@
 //! file - one bit, a palette number, sixteen bits a channel - is all
 //! gone by the time it leaves the decoder (`sdk.datatypes.png`): a row arrives here as red,
 //! green, blue and coverage, and the coverage is what decides whether
-//! the picture is later drawn mixed into what is under it.
+//! the picture is later drawn mixed into what is under it. A palette the
+//! file has (`PLTE`) goes to the superclass too, as the picture's
+//! `PDTA_ColorRegisters`.
 //!
 //! **The file is read whole before it is unpacked**, because the
 //! compressed stream is the `IDAT` chunks one after another and nothing
@@ -51,11 +53,11 @@ const write = @import("write.zig");
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
 /// 1.3: a PNG written for `DTM_WRITE` with `DTWM_RAW`; made empty under
-/// `DTST_RAM`.
+/// `DTST_RAM`. 1.4: a palette (`PLTE`) handed to the superclass.
 pub const Library = gadgets.ClassLibrary(.{
     .name = "png.datatype",
     .version = 1,
-    .revision = 3,
+    .revision = 4,
     .date = "19.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, compression.COMPRESSIONNAME },
@@ -168,6 +170,16 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     subclass.setSource(base.intuition_base, cl, o, info.width, info.height, by);
     if (!subclass.setPicture(base.intuition_base, cl, o, &header, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_RGB)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
+    }
+    if (work.palette.count != 0) {
+        var registers: [256]pic.ColorRegister = undefined;
+        const count = @min(work.palette.count, registers.len);
+        for (work.palette.color[0..count], registers[0..count]) |entry, *into| into.* = .{ .red = entry[0], .green = entry[1], .blue = entry[2] };
+        subclass.superTell(base.intuition_base, cl, o, &.{
+            .{ .tag = pic.PDTA_ColorRegisters, .data = @intFromPtr(&registers) },
+            .{ .tag = pic.PDTA_NumColors, .data = count },
+            .{},
+        });
     }
 
     unpackRows(base, cl, o, info, work, raw[0..raw_size], colour, empty[0..first_row]);

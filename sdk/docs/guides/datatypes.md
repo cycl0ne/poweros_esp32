@@ -182,6 +182,14 @@ _ = dt.GetDTAttrsA(object, &.{
 const bmh: *pic.BitMapHeader = @ptrFromInt(header);
 ```
 
+**The palette** a file was drawn with - an ILBM's `CMAP`, a GIF's
+colours, a PNG's `PLTE` - comes with the picture as
+`PDTA_ColorRegisters`, red, green and blue a colour, and
+`PDTA_NumColors` (ilbm.datatype and gif.datatype 1.2, png.datatype
+1.4). A picture of colours alone has none: 0 colours. The pixels are in
+colour either way; the palette is for a program that wants to paint
+with the same colours, as `SYS:Programs/Paint` does.
+
 **A picture larger than the machine can hold is kept smaller** by the
 format's class (see *Writing a class*) - half, a
 quarter or an eighth of each side - rather than refused, because a
@@ -779,6 +787,9 @@ A picture class has less to do than that: it sets
 and its memory, and then hands each row over with
 `PDTM_WRITEPIXELARRAY`. Drawing, scrolling and scaling are the
 superclass's, so a format class holds no pixels and has no `GM_RENDER`.
+A file with a palette hands it over too, `PDTA_ColorRegisters` and
+`PDTA_NumColors` set on the superclass (`subclass.superTell`), which
+keeps a copy.
 
 Keeping a large picture smaller is the format class's part, because only
 it knows what it holds beside the picture while it reads.

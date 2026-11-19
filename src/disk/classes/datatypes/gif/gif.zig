@@ -3,7 +3,8 @@
 //!
 //! A picture.datatype subclass. It reads the file in `OM_NEW` - the
 //! screen the pictures sit on, the palette, the compressed pixels of the
-//! first picture - and hands the rows to its superclass; everything
+//! first picture - and hands the rows to its superclass, with the palette
+//! they are drawn in as the picture's `PDTA_ColorRegisters`; everything
 //! after that is the superclass's.
 //!
 //! **What is shown is the screen the file names, not the first picture.**
@@ -38,11 +39,12 @@ const Object = classes.Object;
 const Base = gadgets.Base;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// 1.2: the palette the picture is drawn in handed to the superclass.
 pub const Library = gadgets.ClassLibrary(.{
     .name = "gif.datatype",
     .version = 1,
-    .revision = 1,
-    .date = "28.10.2026",
+    .revision = 2,
+    .date = "19.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{pic.PICTURE_LIBRARY},
     .Instance = Data,
@@ -102,6 +104,13 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     if (!subclass.setPicture(ib, cl, o, &header, if (alpha) pic.PBPAFMT_RGBA else pic.PBPAFMT_LUT8)) {
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
     }
+    // The palette the frame is drawn in - its own, or the screen's - is
+    // the bytes red, green and blue a colour, as a ColorRegister is.
+    if (picture.palette.len >= 3) subclass.superTell(ib, cl, o, &.{
+        .{ .tag = pic.PDTA_ColorRegisters, .data = @intFromPtr(picture.palette.ptr) },
+        .{ .tag = pic.PDTA_NumColors, .data = picture.palette.len / 3 },
+        .{},
+    });
 
     const row_memory = sys.AllocVec(screen.width * 4, exec.MEMF_ANY) orelse
         return datatypes.DTERROR_NOT_ENOUGH_DATA;
