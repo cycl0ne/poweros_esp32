@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! Paint's shapes: rectangles, ellipses, curves and polygons, drawn into
-//! the picture with the brush as outlines or filled in the colour.
+//! the picture with the brush as outlines or filled in the colour - laid
+//! with the ink either way (brush.zig), so at its opacity.
 //!
 //! An outline is the brush stamped along it (brush.zig), so a shape's line
 //! is as wide and as round as the brush; a filled shape takes no brush and
@@ -28,6 +29,7 @@ const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
 const Brush = brush_zig.Brush;
+const Ink = brush_zig.Ink;
 
 pub const Point = [2]i32;
 
@@ -76,26 +78,32 @@ fn dash(picture: *Picture, x: i32, y: i32, changed: *Area) void {
     changed.* = changed.add(.{ .min_x = x, .min_y = y, .max_x = x + 1, .max_y = y + 1 });
 }
 
-/// The row `y` from `x0` to `x1`, both in, in the colour, cut to the
-/// picture.
-fn span(picture: *Picture, y: i32, x0: i32, x1: i32, colour: Pixel, changed: *Area) void {
+/// The row `y` from `x0` to `x1`, both in, laid with the ink, cut to
+/// the picture.
+fn span(ink: *Ink, y: i32, x0: i32, x1: i32, changed: *Area) void {
+    const picture = ink.picture;
     const cut = (Area{ .min_x = x0, .min_y = y, .max_x = x1 + 1, .max_y = y + 1 }).clip(picture.width, picture.height);
     if (cut.isEmpty()) return;
-    @memset(picture.row(@intCast(y))[@intCast(cut.min_x)..@intCast(cut.max_x)], colour);
+    if (ink.settings.whole() and ink.kind == .paint) {
+        @memset(picture.row(@intCast(y))[@intCast(cut.min_x)..@intCast(cut.max_x)], ink.colour);
+    } else {
+        var x = cut.min_x;
+        while (x < cut.max_x) : (x += 1) ink.put(@intCast(x), @intCast(y), .{ .colour = ink.colour, .coverage = 255 });
+    }
     changed.* = changed.add(cut);
 }
 
-pub fn rectangle(picture: *Picture, brush: Brush, a: Point, b: Point, colour: Pixel, filled: bool, changed: *Area) void {
+pub fn rectangle(ink: *Ink, brush: Brush, a: Point, b: Point, filled: bool, changed: *Area) void {
     const box = Box.of(a, b);
     if (filled) {
         var y = @max(box.y0, 0);
-        while (y <= @min(box.y1, @as(i32, @intCast(picture.height)) - 1)) : (y += 1) span(picture, y, box.x0, box.x1, colour, changed);
+        while (y <= @min(box.y1, @as(i32, @intCast(ink.picture.height)) - 1)) : (y += 1) span(ink, y, box.x0, box.x1, changed);
         return;
     }
-    brush_zig.line(picture, brush, box.x0, box.y0, box.x1, box.y0, colour, changed);
-    brush_zig.line(picture, brush, box.x1, box.y0, box.x1, box.y1, colour, changed);
-    brush_zig.line(picture, brush, box.x1, box.y1, box.x0, box.y1, colour, changed);
-    brush_zig.line(picture, brush, box.x0, box.y1, box.x0, box.y0, colour, changed);
+    brush_zig.line(ink, brush, box.x0, box.y0, box.x1, box.y0, changed);
+    brush_zig.line(ink, brush, box.x1, box.y0, box.x1, box.y1, changed);
+    brush_zig.line(ink, brush, box.x1, box.y1, box.x0, box.y1, changed);
+    brush_zig.line(ink, brush, box.x0, box.y1, box.x0, box.y0, changed);
 }
 
 /// The largest whole number whose square is at most `n`.
@@ -133,18 +141,18 @@ fn ellipseRow(box: Box, y: i32) ?[2]i32 {
     return .{ @intCast(@divExact(middle2 - half, 2)), @intCast(@divExact(middle2 + half, 2)) };
 }
 
-pub fn ellipse(picture: *Picture, brush: Brush, a: Point, b: Point, colour: Pixel, filled: bool, changed: *Area) void {
+pub fn ellipse(ink: *Ink, brush: Brush, a: Point, b: Point, filled: bool, changed: *Area) void {
     const box = Box.of(a, b);
     // Rows beyond the brush's reach above and below the picture change
     // nothing.
-    const reach: i32 = @intCast(brush.size);
+    const reach: i32 = @intCast(brush.span());
     const first = @max(box.y0, -reach);
-    const last = @min(box.y1, @as(i32, @intCast(picture.height)) + reach);
+    const last = @min(box.y1, @as(i32, @intCast(ink.picture.height)) + reach);
     var y = first;
     while (y <= last) : (y += 1) {
         const row = ellipseRow(box, y) orelse continue;
         if (filled) {
-            span(picture, y, row[0], row[1], colour, changed);
+            span(ink, y, row[0], row[1], changed);
             continue;
         }
         // The pixels with a neighbour above and below, and not at an end,
@@ -165,13 +173,13 @@ pub fn ellipse(picture: *Picture, brush: Brush, a: Point, b: Point, colour: Pixe
                 x = inner_to;
                 continue;
             }
-            brush_zig.stamp(picture, brush, x, y, colour, changed);
+            brush_zig.stamp(ink, brush, x, y, changed);
         }
     }
 }
 
 /// From `from` to `to` through `through`, half way along.
-pub fn curve(picture: *Picture, brush: Brush, from: Point, to: Point, through: Point, colour: Pixel, changed: *Area) void {
+pub fn curve(ink: *Ink, brush: Brush, from: Point, to: Point, through: Point, changed: *Area) void {
     // Twice the control point: the curve's middle is a quarter of each
     // end and half of the control point.
     const control2 = [2]i64{ 4 * @as(i64, through[0]) - from[0] - to[0], 4 * @as(i64, through[1]) - from[1] - to[1] };
@@ -187,9 +195,10 @@ pub fn curve(picture: *Picture, brush: Brush, from: Point, to: Point, through: P
             const sum = 2 * rest * rest * from[axis] + 2 * rest * step * control2[axis] + 2 * step * step * to[axis];
             at[axis] = @intCast(@divFloor(sum + @divTrunc(whole, 2), whole));
         }
-        brush_zig.line(picture, brush, last[0], last[1], at[0], at[1], colour, changed);
+        brush_zig.line(ink, brush, last[0], last[1], at[0], at[1], changed);
         last = at;
     }
+    brush_zig.finish(ink, brush, to[0], to[1], changed);
 }
 
 fn distance(a: Point, b: Point) i64 {
@@ -199,41 +208,43 @@ fn distance(a: Point, b: Point) i64 {
 }
 
 /// The polygon through `points`, closed from the last back to the first.
-pub fn polygon(picture: *Picture, brush: Brush, points: []const Point, colour: Pixel, filled: bool, changed: *Area) void {
+pub fn polygon(ink: *Ink, brush: Brush, points: []const Point, filled: bool, changed: *Area) void {
     if (points.len == 0) return;
     if (filled) {
-        fillPolygon(picture, points, colour, changed);
+        fillPolygon(ink, points, changed);
         // Its one-pixel outline too, which the middles may leave out.
         const thin = Brush{ .size = 1 };
-        outline(picture, thin, points, colour, changed);
+        outline(ink, thin, points, changed);
         return;
     }
-    outline(picture, brush, points, colour, changed);
+    outline(ink, brush, points, changed);
 }
 
-fn outline(picture: *Picture, brush: Brush, points: []const Point, colour: Pixel, changed: *Area) void {
+fn outline(ink: *Ink, brush: Brush, points: []const Point, changed: *Area) void {
     if (points.len == 1) {
-        brush_zig.stamp(picture, brush, points[0][0], points[0][1], colour, changed);
+        brush_zig.stamp(ink, brush, points[0][0], points[0][1], changed);
         return;
     }
     for (points, 0..) |point, place| {
         const next = points[(place + 1) % points.len];
-        brush_zig.line(picture, brush, point[0], point[1], next[0], next[1], colour, changed);
+        brush_zig.line(ink, brush, point[0], point[1], next[0], next[1], changed);
     }
 }
 
 /// The corners' lines from `from` to the last, open: a polygon being
 /// drawn.
-pub fn polyline(picture: *Picture, brush: Brush, points: []const Point, colour: Pixel, changed: *Area) void {
+pub fn polyline(ink: *Ink, brush: Brush, points: []const Point, changed: *Area) void {
     if (points.len == 0) return;
-    brush_zig.stamp(picture, brush, points[0][0], points[0][1], colour, changed);
+    brush_zig.stamp(ink, brush, points[0][0], points[0][1], changed);
     for (points[1..], 0..) |point, place| {
         const before = points[place];
-        brush_zig.line(picture, brush, before[0], before[1], point[0], point[1], colour, changed);
+        brush_zig.line(ink, brush, before[0], before[1], point[0], point[1], changed);
     }
+    const end = points[points.len - 1];
+    brush_zig.finish(ink, brush, end[0], end[1], changed);
 }
 
-fn fillPolygon(picture: *Picture, points: []const Point, colour: Pixel, changed: *Area) void {
+fn fillPolygon(ink: *Ink, points: []const Point, changed: *Area) void {
     var top: i32 = points[0][1];
     var bottom: i32 = points[0][1];
     for (points) |point| {
@@ -241,7 +252,7 @@ fn fillPolygon(picture: *Picture, points: []const Point, colour: Pixel, changed:
         bottom = @max(bottom, point[1]);
     }
     top = @max(top, 0);
-    bottom = @min(bottom, @as(i32, @intCast(picture.height)) - 1);
+    bottom = @min(bottom, @as(i32, @intCast(ink.picture.height)) - 1);
     // Where the edges cross a row's middle, in 256ths of twice a pixel.
     var crossings: [max_points]i64 = undefined;
     var y = top;
@@ -275,7 +286,7 @@ fn fillPolygon(picture: *Picture, points: []const Point, colour: Pixel, changed:
         while (pair + 1 < count) : (pair += 2) {
             const from: i32 = @intCast(@divFloor(crossings[pair] - 256 + 511, 512));
             const to: i32 = @intCast(@divFloor(crossings[pair + 1] - 256 + 511, 512));
-            if (to > from) span(picture, y, from, to - 1, colour, changed);
+            if (to > from) span(ink, y, from, to - 1, changed);
         }
     }
 }

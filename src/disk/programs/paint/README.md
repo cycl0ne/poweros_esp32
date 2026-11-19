@@ -45,8 +45,8 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
   picture's 32 to pick from.
 - **The side panel** beside them has a section for the brush and one
   for the colour. A press on a section's name folds it away and another
-  unfolds it. Brush: Round, Square or Own Brush, and the size from 1 to
-  64 on a slider. Colour: the foreground on a colour wheel - its hue
+  unfolds it. Brush: Round, Square or Own Brush, and its settings - see
+  [The brush's settings](#the-brushs-settings). Colour: the foreground on a colour wheel - its hue
   round the wheel, its saturation out from the middle - and its
   brightness on the slider beside it.
 - **The picture** fills the rest. One smaller than the view sits in its
@@ -91,7 +91,10 @@ A tool is chosen with its button, in the Tools menu, or with its key.
 | Pick colour | `i` | the colour under the pointer becomes the foreground - with the menu button the background - and the tool before it is chosen again |
 | Text | `t` | a click asks for the text and its font, and puts it down with its top left there |
 | Cut brush | `b` | a frame pulled over the picture; what it holds becomes the brush - see [Brushes](#brushes) |
+| Eraser | `E` | the picture made see-through where the brush goes, by the brush's settings as paint is |
+| Smudge | `s` | the colours under the brush dragged along the stroke, thinning as they go; the flow and the opacity say how strongly |
 | Hand | | the picture moved with the pointer; Space held does the same with any tool |
+| Zoom | `m` | a click zooms in about the place clicked, the menu button out |
 
 Lines, curves and the outlines of rectangles, ellipses and polygons are
 drawn with the brush. **Filled shapes** - the button under the tools,
@@ -104,6 +107,26 @@ The text's window has the text and its font: the screen's font at 24
 rows to begin with, and another chosen with the button beside it.
 Return takes them, Escape leaves the picture as it is; both are kept for
 the next text.
+
+## The brush's settings
+
+The Brush section of the side panel sets how the brush puts its paint
+down. They hold for the freehand tools, the airbrush, the eraser, the
+lines and the shapes - a filled shape too - and not for the fill tool.
+
+| Setting | Does |
+|---|---|
+| Size | 1 to 64 pixels across, for the round and square brushes |
+| Softness | how far in from its edge a round or square brush fades: 0 % a hard edge, 100 % from its middle |
+| Opacity | the most paint a stroke puts on a pixel: however often the brush passes over it in one stroke, it gets no more |
+| Flow | how much of that each touch of the brush gives: below 100 % the paint builds up where the brush goes again, up to the opacity |
+| Jitter | each touch of the brush moved at random, up to the brush's size |
+| Rotation | a square brush or your own turned clockwise, 0 to 359 degrees |
+| Dither | paint short of whole made whole or nothing, in a fine even pattern, so a part-way opacity shows as a dot pattern of the colour |
+
+At 100 % opacity and flow without dither the brush goes down as it
+always has. While the pointer is over the picture, the brush shown
+under it is what a click would put down, softness, opacity and all.
 
 ## Brushes
 

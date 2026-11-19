@@ -35,6 +35,13 @@ fn free(picture: Picture) void {
     testing.allocator.free(picture.pixels[0 .. picture.width * picture.height]);
 }
 
+/// An ink of whole paint in `colour` for `picture`, fresh each time.
+var test_ink: brush_zig.Ink = undefined;
+fn inked(picture: *Picture, colour: Pixel) *brush_zig.Ink {
+    test_ink = .{ .picture = picture, .colour = colour };
+    return &test_ink;
+}
+
 fn count(picture: *const Picture, colour: Pixel) usize {
     var found: usize = 0;
     for (picture.pixels[0 .. picture.width * picture.height]) |pixel| {
@@ -67,13 +74,13 @@ test "brush: a stamp cut at the edge, a line with no gaps, the changed area" {
     defer free(picture);
     var changed = Area.none;
     // A square of 4 at the corner: the part inside, 2 by 2.
-    brush_zig.stamp(&picture, .{ .shape = .square, .size = 4 }, 0, 0, red, &changed);
+    brush_zig.stamp(inked(&picture, red), .{ .shape = .square, .size = 4 }, 0, 0, &changed);
     try testing.expectEqual(@as(usize, 4), count(&picture, red));
     try testing.expectEqual(Area{ .min_x = 0, .min_y = 0, .max_x = 2, .max_y = 2 }, changed);
 
     // A steep line of single pixels: one in every row, ends included.
     changed = Area.none;
-    brush_zig.line(&picture, .{ .size = 1 }, 15, 0, 18, 9, blue, &changed);
+    brush_zig.line(inked(&picture, blue), .{ .size = 1 }, 15, 0, 18, 9, &changed);
     try testing.expectEqual(@as(usize, 10), count(&picture, blue));
     for (0..10) |y| {
         var in_row: usize = 0;
@@ -109,7 +116,7 @@ test "brush: an own brush cut from the picture, the background left out, held by
     var into = try made(5, 5, white);
     defer free(into);
     var changed = Area.none;
-    brush_zig.stamp(&into, brush, 2, 2, 0xFF00FF00, &changed);
+    brush_zig.stamp(inked(&into, 0xFF00FF00), brush, 2, 2, &changed);
     try testing.expectEqual(red, into.get(1, 1));
     try testing.expectEqual(blue, into.get(3, 3));
     try testing.expectEqual(white, into.get(2, 2));
@@ -117,7 +124,7 @@ test "brush: an own brush cut from the picture, the background left out, held by
     // In one colour: its shape in the stroke's.
     var one = brush;
     one.mode = .one_colour;
-    brush_zig.stamp(&into, one, 2, 2, 0xFF00FF00, &changed);
+    brush_zig.stamp(inked(&into, 0xFF00FF00), one, 2, 2, &changed);
     try testing.expectEqual(@as(Pixel, 0xFF00FF00), into.get(1, 1));
     try testing.expectEqual(white, into.get(2, 2));
 }
@@ -135,11 +142,13 @@ test "brush: a pixel covered in part is laid over, one covered wholly replaced" 
     const brush = Brush{ .own = &own, .mode = .one_colour };
     // A colour at half coverage is mixed; at full coverage it replaces,
     // see-through colours too.
-    try testing.expectEqual(@as(?Pixel, 0xFF7F7FFF), brush.ink(0, 0, 0xFF0000FF, white));
-    try testing.expectEqual(@as(?Pixel, 0x000000FF), brush.ink(1, 0, 0x000000FF, white));
+    const half = brush.tip(0, 0, 0xFF0000FF).?;
+    try testing.expectEqual(@as(Pixel, 0xFF7F7FFF), brush_zig.lay(.{}, .paint, white, half.colour, half.coverage, 0, 0, 0).pixel);
+    const whole = brush.tip(1, 0, 0x000000FF).?;
+    try testing.expectEqual(@as(Pixel, 0x000000FF), brush_zig.lay(.{}, .paint, white, whole.colour, whole.coverage, 0, 1, 0).pixel);
 
     // The brush shown under the pointer is what a stamp would make.
-    const shown = brush_zig.Ghost.at(brush, 10, 5, 0xFF0000FF);
+    const shown = brush_zig.Ghost.at(brush, 10, 5, 0xFF0000FF, .{}, .paint);
     try testing.expect(shown.crosses(5));
     try testing.expect(!shown.crosses(6));
     try testing.expectEqual(@as(Pixel, 0xFF7F7FFF), shown.shown(9, 5, white));
@@ -178,6 +187,143 @@ test "brush: flipped, turned a quarter to the right, halved and doubled" {
     try testing.expect(brush_zig.transformedSize(.double, brush_zig.max_own_side / 2 + 1, 4) == null);
 }
 
+test "brush: a soft brush fades to its edge, a turned one turns its box and its pixels" {
+    // Round, 9 across: the middle whole, the edge in part, the corner not.
+    const soft = Brush{ .size = 9, .softness = 100 };
+    try testing.expectEqual(@as(u32, 255), soft.coverage(4, 4));
+    const edge = soft.coverage(0, 4);
+    try testing.expect(edge > 0 and edge < 255);
+    try testing.expectEqual(@as(u32, 0), soft.coverage(0, 0));
+    // Hard, as ever.
+    try testing.expectEqual(@as(u32, 255), (Brush{ .size = 9 }).coverage(0, 4));
+
+    // A square of 4 turned 45 degrees takes a box of 6, its corner bare
+    // and its middle covered; turned 90 it is as it was.
+    const diamond = Brush{ .shape = .square, .size = 4, .rotation = 45 };
+    try testing.expectEqual([2]u32{ 6, 6 }, diamond.box());
+    try testing.expect(!diamond.covers(0, 0));
+    try testing.expect(diamond.covers(2, 2));
+    try testing.expectEqual([2]u32{ 4, 4 }, (Brush{ .shape = .square, .size = 4, .rotation = 90 }).box());
+    // A round brush is never turned.
+    try testing.expectEqual([2]u32{ 5, 5 }, (Brush{ .size = 5, .rotation = 30 }).box());
+
+    // An own brush two across, turned a quarter right: its left end on
+    // top, as Turn Right makes it.
+    var pixels = [_]Pixel{ red, blue };
+    const own = Picture{ .pixels = &pixels, .width = 2, .height = 1 };
+    const turned = Brush{ .own = &own, .rotation = 90 };
+    try testing.expectEqual([2]u32{ 1, 2 }, turned.box());
+    try testing.expectEqual(red, turned.tip(0, 0, 0).?.colour);
+    try testing.expectEqual(blue, turned.tip(0, 1, 0).?.colour);
+}
+
+test "brush: a change never puts more than the opacity on a pixel; the flow builds up to it" {
+    var picture = try made(8, 8, white);
+    defer free(picture);
+    var mask = [_]u8{0} ** 64;
+    var changed = Area.none;
+    const square = Brush{ .shape = .square, .size = 4 };
+
+    // Half the opacity: half red over white, and no more for a second
+    // stamp in the same change.
+    var ink = brush_zig.Ink{ .picture = &picture, .colour = red, .settings = .{ .opacity = 50 }, .mask = &mask };
+    brush_zig.stamp(&ink, square, 2, 2, &changed);
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), picture.get(1, 1));
+    brush_zig.stamp(&ink, square, 2, 2, &changed);
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), picture.get(1, 1));
+    // A new change starts from nothing again.
+    brush_zig.clearMask(&mask, 8, changed);
+    try testing.expectEqual(@as(u8, 0), mask[9]);
+
+    // Half the flow: half at first, more where the brush goes again.
+    picture.fill(white);
+    ink.settings = .{ .flow = 50 };
+    brush_zig.stamp(&ink, square, 2, 2, &changed);
+    try testing.expectEqual(@as(Pixel, 0xFFFF7F7F), picture.get(1, 1));
+    brush_zig.stamp(&ink, square, 2, 2, &changed);
+    try testing.expect(picture.get(1, 1) & 0xFF < 0x7F);
+}
+
+test "brush: dithered paint is whole or none, the eraser takes paint away" {
+    var picture = try made(4, 4, white);
+    defer free(picture);
+    var mask = [_]u8{0} ** 16;
+    var changed = Area.none;
+    const square = Brush{ .shape = .square, .size = 4 };
+    // Half the opacity, dithered: half the pixels red, the rest white.
+    var ink = brush_zig.Ink{ .picture = &picture, .colour = red, .settings = .{ .opacity = 50, .dither = true }, .mask = &mask };
+    brush_zig.stamp(&ink, square, 2, 2, &changed);
+    try testing.expectEqual(@as(usize, 8), count(&picture, red));
+    try testing.expectEqual(@as(usize, 8), count(&picture, white));
+
+    // The eraser, whole: see-through; at half: half of it left.
+    picture.fill(white);
+    @memset(&mask, 0);
+    ink = .{ .picture = &picture, .colour = red, .kind = .erase };
+    brush_zig.stamp(&ink, .{ .size = 1 }, 0, 0, &changed);
+    try testing.expectEqual(@as(Pixel, 0), picture.get(0, 0));
+    ink.settings = .{ .opacity = 50 };
+    ink.mask = &mask;
+    brush_zig.stamp(&ink, .{ .size = 1 }, 1, 0, &changed);
+    try testing.expectEqual(@as(Pixel, 0x7FFFFFFF), picture.get(1, 0));
+}
+
+test "brush: paint that builds up is stamped a quarter of the brush apart, without gaps; jitter stays near" {
+    var picture = try made(40, 12, white);
+    defer free(picture);
+    var mask = [_]u8{0} ** (40 * 12);
+    var changed = Area.none;
+    var ink = brush_zig.Ink{ .picture = &picture, .colour = red, .settings = .{ .flow = 50 }, .mask = &mask };
+    brush_zig.line(&ink, .{ .shape = .square, .size = 8 }, 4, 5, 35, 5, &changed);
+    // Every second pixel stamped: none along the line left white, but
+    // the last stamp is short of the end until the line is finished.
+    try testing.expectEqual(@as(u32, 32), ink.walked);
+    try testing.expectEqual(white, picture.get(38, 5));
+    brush_zig.finish(&ink, .{ .shape = .square, .size = 8 }, 35, 5, &changed);
+    var x: u32 = 0;
+    while (x < 39) : (x += 1) try testing.expect(picture.get(x, 5) != white);
+
+    // Jittered stamps land within the brush's side of where they were put.
+    picture.fill(white);
+    var random = brush_zig.Random{};
+    var jittered = brush_zig.Ink{ .picture = &picture, .colour = red, .settings = .{ .jitter = 100 }, .random = &random };
+    for (0..20) |_| {
+        var one = Area.none;
+        brush_zig.stamp(&jittered, .{ .size = 2 }, 20, 6, &one);
+        try testing.expect(one.min_x >= 17 and one.max_x <= 23);
+    }
+}
+
+test "brush: smudging drags the colours under the brush along" {
+    // Red on the left half, white on the right.
+    var picture = try made(20, 4, white);
+    defer free(picture);
+    var y: u32 = 0;
+    while (y < 4) : (y += 1) for (0..10) |x| picture.set(@intCast(x), y, red);
+    var carried_pixels = [_]Pixel{0} ** 4;
+    var carried = Picture{ .pixels = &carried_pixels, .width = 2, .height = 2 };
+    const brush = Brush{ .shape = .square, .size = 2 };
+    var changed = Area.none;
+
+    // Taken up in the red and dragged two pixels into the white: whole,
+    // red goes with it.
+    brush_zig.takeUp(&picture, brush, 8, 2, &carried);
+    var ink = brush_zig.Ink{ .picture = &picture, .colour = 0 };
+    brush_zig.smearLine(&ink, brush, &carried, 8, 2, 12, 2, &changed);
+    try testing.expectEqual(red, picture.get(11, 2));
+
+    // At half the flow it thins as it goes.
+    picture.fill(white);
+    y = 0;
+    while (y < 4) : (y += 1) for (0..10) |x| picture.set(@intCast(x), y, red);
+    brush_zig.takeUp(&picture, brush, 8, 2, &carried);
+    ink = .{ .picture = &picture, .colour = 0, .settings = .{ .flow = 50 } };
+    brush_zig.smearLine(&ink, brush, &carried, 8, 2, 14, 2, &changed);
+    const near = picture.get(10, 2) & 0xFF;
+    const far = picture.get(13, 2) & 0xFF;
+    try testing.expect(near < far and far < 0xFF);
+}
+
 test "shapes: the frame round what is cut is dashes, black and white, cut to the picture" {
     var picture = try made(12, 10, red);
     defer free(picture);
@@ -209,7 +355,7 @@ test "history: undone and redone, a new change drops the redo, the oldest go whe
     const colours = [_]Pixel{ 0xFF000001, 0xFF000002, 0xFF000003, 0xFF000004 };
     for (colours, 0..) |colour, i| {
         var changed = Area.none;
-        brush_zig.stamp(&picture, .{ .shape = .square, .size = 4 }, @intCast(i * 4 + 2), 2, colour, &changed);
+        brush_zig.stamp(inked(&picture, colour), .{ .shape = .square, .size = 4 }, @intCast(i * 4 + 2), 2, &changed);
         try testing.expect(history.record(&picture, &kept, changed));
         try testing.expectEqual(colour, kept.get(@intCast(i * 4), 0));
     }
@@ -229,7 +375,7 @@ test "history: undone and redone, a new change drops the redo, the oldest go whe
     try testing.expectEqual(colours[2], picture.get(8, 0));
     try testing.expectEqual(white, picture.get(12, 0));
     var changed = Area.none;
-    brush_zig.stamp(&picture, .{ .size = 1 }, 15, 15, red, &changed);
+    brush_zig.stamp(inked(&picture, red), .{ .size = 1 }, 15, 15, &changed);
     try testing.expect(history.record(&picture, &kept, changed));
     try testing.expect(!history.canRedo());
     _ = history.undo(&picture, &kept).?;
@@ -238,7 +384,7 @@ test "history: undone and redone, a new change drops the redo, the oldest go whe
 
     // A change larger than the block: kept from then on, nothing to undo.
     changed = Area.none;
-    brush_zig.stamp(&picture, .{ .shape = .square, .size = 16 }, 8, 8, red, &changed);
+    brush_zig.stamp(inked(&picture, red), .{ .shape = .square, .size = 16 }, 8, 8, &changed);
     try testing.expect(!history.record(&picture, &kept, changed));
     try testing.expect(!history.canUndo());
     try testing.expectEqual(red, kept.get(0, 0));
@@ -343,7 +489,7 @@ test "shapes: a rectangle's outline and its filled box, both corners in it" {
     var picture = try made(12, 10, white);
     defer free(picture);
     var changed = Area.none;
-    shapes.rectangle(&picture, .{ .size = 1 }, .{ 8, 7 }, .{ 2, 1 }, red, false, &changed);
+    shapes.rectangle(inked(&picture, red), .{ .size = 1 }, .{ 8, 7 }, .{ 2, 1 }, false, &changed);
     try testing.expectEqual(Area{ .min_x = 2, .min_y = 1, .max_x = 9, .max_y = 8 }, changed);
     // The outline: 7 by 7, its inside left alone.
     try testing.expectEqual(@as(usize, 24), count(&picture, red));
@@ -351,7 +497,7 @@ test "shapes: a rectangle's outline and its filled box, both corners in it" {
     try testing.expectEqual(red, at(&picture, 8, 7));
 
     changed = Area.none;
-    shapes.rectangle(&picture, .{ .size = 1 }, .{ -3, -3 }, .{ 1, 1 }, blue, true, &changed);
+    shapes.rectangle(inked(&picture, blue), .{ .size = 1 }, .{ -3, -3 }, .{ 1, 1 }, true, &changed);
     try testing.expectEqual(@as(usize, 4), count(&picture, blue));
     try testing.expectEqual(Area{ .min_x = 0, .min_y = 0, .max_x = 2, .max_y = 2 }, changed);
 }
@@ -361,7 +507,7 @@ test "shapes: an ellipse fills its box's middles, its outline is its edge" {
     defer free(picture);
     var changed = Area.none;
     // A box of 3 by 3: a plus.
-    shapes.ellipse(&picture, .{ .size = 1 }, .{ 0, 0 }, .{ 2, 2 }, red, true, &changed);
+    shapes.ellipse(inked(&picture, red), .{ .size = 1 }, .{ 0, 0 }, .{ 2, 2 }, true, &changed);
     try testing.expectEqual(@as(usize, 5), count(&picture, red));
     try testing.expectEqual(white, at(&picture, 0, 0));
     try testing.expectEqual(red, at(&picture, 1, 0));
@@ -371,7 +517,7 @@ test "shapes: an ellipse fills its box's middles, its outline is its edge" {
     // the box in the middle row; its outline leaves the middle open and
     // meets the filled one at the edge.
     picture.fill(white);
-    shapes.ellipse(&picture, .{ .size = 1 }, .{ 2, 2 }, .{ 12, 12 }, red, true, &changed);
+    shapes.ellipse(inked(&picture, red), .{ .size = 1 }, .{ 2, 2 }, .{ 12, 12 }, true, &changed);
     const filled = count(&picture, red);
     for (2..13) |y| {
         var in_row: usize = 0;
@@ -385,7 +531,7 @@ test "shapes: an ellipse fills its box's middles, its outline is its edge" {
     try testing.expectEqual(white, at(&picture, 1, 7));
     var rim = try made(16, 16, white);
     defer free(rim);
-    shapes.ellipse(&rim, .{ .size = 1 }, .{ 2, 2 }, .{ 12, 12 }, red, false, &changed);
+    shapes.ellipse(inked(&rim, red), .{ .size = 1 }, .{ 2, 2 }, .{ 12, 12 }, false, &changed);
     try testing.expectEqual(white, at(&rim, 7, 7));
     try testing.expect(count(&rim, red) < filled);
     for (0..16) |y| for (0..16) |x| {
@@ -393,10 +539,10 @@ test "shapes: an ellipse fills its box's middles, its outline is its edge" {
     };
     // A box one row tall is a line; one column wide too.
     picture.fill(white);
-    shapes.ellipse(&picture, .{ .size = 1 }, .{ 1, 3 }, .{ 9, 3 }, blue, false, &changed);
+    shapes.ellipse(inked(&picture, blue), .{ .size = 1 }, .{ 1, 3 }, .{ 9, 3 }, false, &changed);
     try testing.expectEqual(@as(usize, 9), count(&picture, blue));
     picture.fill(white);
-    shapes.ellipse(&picture, .{ .size = 1 }, .{ 4, 0 }, .{ 4, 5 }, blue, true, &changed);
+    shapes.ellipse(inked(&picture, blue), .{ .size = 1 }, .{ 4, 0 }, .{ 4, 5 }, true, &changed);
     try testing.expectEqual(@as(usize, 6), count(&picture, blue));
 }
 
@@ -404,7 +550,7 @@ test "shapes: a curve from end to end through its bend, a straight one a line" {
     var picture = try made(40, 30, white);
     defer free(picture);
     var changed = Area.none;
-    shapes.curve(&picture, .{ .size = 1 }, .{ 2, 20 }, .{ 36, 20 }, .{ 19, 4 }, red, &changed);
+    shapes.curve(inked(&picture, red), .{ .size = 1 }, .{ 2, 20 }, .{ 36, 20 }, .{ 19, 4 }, &changed);
     try testing.expectEqual(red, at(&picture, 2, 20));
     try testing.expectEqual(red, at(&picture, 36, 20));
     try testing.expectEqual(red, at(&picture, 19, 4));
@@ -412,7 +558,7 @@ test "shapes: a curve from end to end through its bend, a straight one a line" {
     try testing.expectEqual(white, at(&picture, 19, 20));
 
     picture.fill(white);
-    shapes.curve(&picture, .{ .size = 1 }, .{ 0, 5 }, .{ 10, 5 }, .{ 5, 5 }, blue, &changed);
+    shapes.curve(inked(&picture, blue), .{ .size = 1 }, .{ 0, 5 }, .{ 10, 5 }, .{ 5, 5 }, &changed);
     try testing.expectEqual(@as(usize, 11), count(&picture, blue));
 }
 
@@ -421,13 +567,13 @@ test "shapes: a polygon's outline closes, filled it takes its inside and its edg
     defer free(picture);
     var changed = Area.none;
     const triangle = [_]shapes.Point{ .{ 2, 2 }, .{ 17, 2 }, .{ 2, 17 } };
-    shapes.polygon(&picture, .{ .size = 1 }, &triangle, red, false, &changed);
+    shapes.polygon(inked(&picture, red), .{ .size = 1 }, &triangle, false, &changed);
     try testing.expectEqual(red, at(&picture, 10, 9));
     try testing.expectEqual(red, at(&picture, 2, 10));
     try testing.expectEqual(white, at(&picture, 5, 5));
 
     picture.fill(white);
-    shapes.polygon(&picture, .{ .size = 1 }, &triangle, blue, true, &changed);
+    shapes.polygon(inked(&picture, blue), .{ .size = 1 }, &triangle, true, &changed);
     try testing.expectEqual(blue, at(&picture, 5, 5));
     try testing.expectEqual(blue, at(&picture, 17, 2));
     try testing.expectEqual(blue, at(&picture, 2, 17));
@@ -443,7 +589,7 @@ test "shapes: a polygon's outline closes, filled it takes its inside and its edg
 
     // An open polyline: no closing edge.
     picture.fill(white);
-    shapes.polyline(&picture, .{ .size = 1 }, &triangle, red, &changed);
+    shapes.polyline(inked(&picture, red), .{ .size = 1 }, &triangle, &changed);
     try testing.expectEqual(white, at(&picture, 2, 10));
     try testing.expectEqual(red, at(&picture, 10, 9));
 }
@@ -466,8 +612,8 @@ test "fill: the joined area made the colour, through every turn, and no further"
     defer free(picture);
     var changed = Area.none;
     // A wall with a gap at its bottom, and a closed box.
-    shapes.rectangle(&picture, .{ .size = 1 }, .{ 8, 0 }, .{ 8, 9 }, red, false, &changed);
-    shapes.rectangle(&picture, .{ .size = 1 }, .{ 10, 2 }, .{ 14, 6 }, red, false, &changed);
+    shapes.rectangle(inked(&picture, red), .{ .size = 1 }, .{ 8, 0 }, .{ 8, 9 }, false, &changed);
+    shapes.rectangle(inked(&picture, red), .{ .size = 1 }, .{ 10, 2 }, .{ 14, 6 }, false, &changed);
     const start = try testing.allocator.alloc(fill_zig.Seed, 2);
     var seeds = fill_zig.Seeds{ .items = start.ptr, .capacity = start.len, .more = TestSeeds.more };
     defer testing.allocator.free(seeds.items[0..seeds.capacity]);
@@ -492,7 +638,7 @@ test "brush: a spray puts its pixels within its reach, and stops at the picture'
     var changed = Area.none;
     var random = brush_zig.Random{};
     const brush = Brush{ .size = 4 };
-    brush_zig.spray(&picture, brush, 20, 20, red, &random, &changed);
+    brush_zig.spray(inked(&picture, red), brush, 20, 20, &random, &changed);
     const reach: i32 = @intCast(brush_zig.sprayRadius(brush));
     try testing.expect(count(&picture, red) > 0);
     try testing.expect(count(&picture, red) <= brush_zig.sprayCount(brush));
@@ -505,6 +651,6 @@ test "brush: a spray puts its pixels within its reach, and stops at the picture'
     };
     // At the corner, only what falls inside.
     changed = Area.none;
-    brush_zig.spray(&picture, brush, 0, 0, blue, &random, &changed);
+    brush_zig.spray(inked(&picture, blue), brush, 0, 0, &random, &changed);
     try testing.expect(changed.min_x >= 0 and changed.min_y >= 0);
 }

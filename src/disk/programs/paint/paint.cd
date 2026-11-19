@@ -53,6 +53,12 @@ MSG_MENU_GRAB (//)
 Cut Brush
 MSG_MENU_HAND (//)
 Hand
+MSG_MENU_ERASER (//)
+Eraser
+MSG_MENU_SMUDGE (//)
+Smudge
+MSG_MENU_ZOOM_TOOL (//)
+Zoom
 MSG_MENU_FILLED (//)
 Filled Shapes
 MSG_MENU_SWAP (//)
@@ -131,6 +137,12 @@ MSG_TOOL_GRAB (//)
 Cut brush: a part of the picture taken as the brush
 MSG_TOOL_HAND (//)
 Hand: the picture moved with the pointer
+MSG_TOOL_ERASER (//)
+Eraser: the picture made see-through where the brush goes
+MSG_TOOL_SMUDGE (//)
+Smudge: the colours under the brush dragged along
+MSG_TOOL_ZOOM (//)
+Zoom: larger where it is clicked, smaller with the menu button
 MSG_FILLED_HINT (//)
 Rectangles, ellipses and polygons filled
 MSG_UNDO_HINT (//)
@@ -155,6 +167,22 @@ MSG_SECTION_BRUSH (//)
 Brush
 MSG_SECTION_COLOUR (//)
 Colour
+;
+; The brush section's labels.
+MSG_SIZE (//)
+Size
+MSG_SOFTNESS (//)
+Softness
+MSG_OPACITY (//)
+Opacity
+MSG_FLOW (//)
+Flow
+MSG_JITTER (//)
+Jitter
+MSG_ROTATION (//)
+Rotation
+MSG_DITHER (//)
+Dither
 ;
 ; The line under the picture: its size, the zoom and the brush, and
 ; while painting where the pointer is.

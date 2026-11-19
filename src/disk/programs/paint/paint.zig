@@ -19,7 +19,11 @@
 //! **The side panel.** Each section is a button with its name over its
 //! gadgets; a press folds them away (`CHILDA_Hidden`) and unfolds them,
 //! and the window is laid out again. Brush: Round, Square or Own Brush in
-//! a chooser and the size, 1 to 64, on a slider. Colour: the foreground on
+//! a chooser, and sliders for the size (1 to 64), the softness, the
+//! opacity, the flow, the jitter and the rotation, and Dither (brush.zig
+//! says what each does; every stroke, shape and spray goes down through
+//! its `Ink`, whose mask is a byte a pixel kept with the picture and
+//! emptied where a change ends). Colour: the foreground on
 //! a colour wheel (colorwheel.gadget) with its brightness beside it
 //! (gradientslider.gadget, from the colour at its brightest down to
 //! black). The panel follows the brush and the foreground however they
@@ -75,8 +79,14 @@
 //!     what it holds made the own brush - with the menu button cut out,
 //!     the background colour left there - and then the tool before it
 //!     again, or dotted freehand when that one puts no brush down;
+//!   - the eraser (`E`): the picture made see-through where the brush
+//!     goes, by the same settings as paint;
+//!   - smudge (`s`): the colours under the brush dragged along the
+//!     stroke, in memory of the brush's size while it is made;
 //!   - the hand: the picture moved with the pointer, as Space held does
-//!     with any tool.
+//!     with any tool;
+//!   - zoom (`m`): a click zooms in about where it is, the menu button
+//!     out.
 //!
 //! **The own brush** is a picture of its own, up to 1024 pixels a side:
 //! cut from the picture, the background colour's pixels left out, or
@@ -157,6 +167,7 @@ const ch = sdk.gadgets.chooser;
 const sl = sdk.gadgets.slider;
 const cw = sdk.gadgets.colorwheel;
 const gs = sdk.gadgets.gradientslider;
+const cb = sdk.gadgets.checkbox;
 const ig = sdk.gadgets.integer;
 const sg = sdk.gadgets.string;
 const gfo = sdk.gadgets.getfont;
@@ -196,7 +207,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.4";
+const VERSION = "1.5";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -228,6 +239,10 @@ const ID_SHAPE = 6;
 const ID_SIZE = 7;
 const ID_WHEEL = 8;
 const ID_BRIGHTNESS = 9;
+/// The brush's settings: softness, opacity, flow, jitter and rotation on
+/// sliders, in this order, and dither.
+const ID_SETTING = 11;
+const ID_DITHER = 16;
 /// A section's button: this and the section's place.
 const ID_SECTION = 30;
 // The new picture's window.
@@ -264,10 +279,13 @@ const Tool = enum(u32) {
     polygon,
     fill,
     airbrush,
+    eraser,
+    smudge,
     pick,
     text,
     grab,
     hand,
+    zoom,
 
     const base = 300;
 
@@ -356,10 +374,13 @@ const tools = [_]ToolEntry{
     .{ .tool = .polygon, .glyph = command.CMD_POLYGON, .hint = .MSG_TOOL_POLYGON, .label = .MSG_MENU_POLYGON },
     .{ .tool = .fill, .glyph = command.CMD_FLOOD_FILL, .hint = .MSG_TOOL_FILL, .label = .MSG_MENU_FILL },
     .{ .tool = .airbrush, .glyph = command.CMD_AIRBRUSH, .hint = .MSG_TOOL_AIRBRUSH, .label = .MSG_MENU_AIRBRUSH },
+    .{ .tool = .eraser, .glyph = command.CMD_ERASER, .hint = .MSG_TOOL_ERASER, .label = .MSG_MENU_ERASER },
+    .{ .tool = .smudge, .glyph = command.CMD_SMUDGE, .hint = .MSG_TOOL_SMUDGE, .label = .MSG_MENU_SMUDGE },
     .{ .tool = .pick, .glyph = command.CMD_PICK_COLOUR, .hint = .MSG_TOOL_PICK, .label = .MSG_MENU_PICK },
     .{ .tool = .text, .glyph = command.CMD_TEXT, .hint = .MSG_TOOL_TEXT, .label = .MSG_MENU_TEXT },
     .{ .tool = .grab, .glyph = command.CMD_GRAB_BRUSH, .hint = .MSG_TOOL_GRAB, .label = .MSG_MENU_GRAB },
     .{ .tool = .hand, .glyph = command.CMD_HAND, .hint = .MSG_TOOL_HAND, .label = .MSG_MENU_HAND },
+    .{ .tool = .zoom, .glyph = command.CMD_ZOOM_IN, .hint = .MSG_TOOL_ZOOM, .label = .MSG_MENU_ZOOM_TOOL },
 };
 comptime {
     for (tools, 0..) |entry, place| {
@@ -395,6 +416,22 @@ const colour_section = 1;
 /// The largest brush the panel's slider sets.
 const panel_brush_max = brush_zig.max_size;
 
+/// The characters of room every slider of the panel gives its level -
+/// more than "100%" takes - so their bars are as long as each other.
+const level_room = 5;
+
+/// The brush's settings on the panel's sliders: their labels, their
+/// ranges, and the format their level is shown in.
+const Setting = enum { softness, opacity, flow, jitter, rotation };
+const SettingEntry = struct { label: Id, least: u32, most: u32, format: [*:0]const u8 };
+const setting_entries = [_]SettingEntry{
+    .{ .label = .MSG_SOFTNESS, .least = 0, .most = 100, .format = "%ld%%" },
+    .{ .label = .MSG_OPACITY, .least = 1, .most = 100, .format = "%ld%%" },
+    .{ .label = .MSG_FLOW, .least = 1, .most = 100, .format = "%ld%%" },
+    .{ .label = .MSG_JITTER, .least = 0, .most = 100, .format = "%ld%%" },
+    .{ .label = .MSG_ROTATION, .least = 0, .most = 359, .format = "%ld" },
+};
+
 /// The keys that choose a tool.
 const ToolKey = struct { key: u32, tool: Tool };
 const tool_keys = [_]ToolKey{
@@ -407,6 +444,9 @@ const tool_keys = [_]ToolKey{
     .{ .key = 'n', .tool = .polygon },
     .{ .key = 'f', .tool = .fill },
     .{ .key = 'a', .tool = .airbrush },
+    .{ .key = 'E', .tool = .eraser },
+    .{ .key = 's', .tool = .smudge },
+    .{ .key = 'm', .tool = .zoom },
     .{ .key = 'i', .tool = .pick },
     .{ .key = 't', .tool = .text },
     .{ .key = 'b', .tool = .grab },
@@ -575,6 +615,9 @@ const Gui = struct {
     /// brightness.
     shape: *Object = undefined,
     size: *Object = undefined,
+    /// The brush's settings' sliders, in `Setting`'s order, and dither.
+    setting_sliders: [setting_entries.len]*Object = undefined,
+    dither: *Object = undefined,
     wheel: *Object = undefined,
     brightness: *Object = undefined,
     /// The pictures of a section folded and unfolded.
@@ -622,6 +665,9 @@ const Stroke = struct {
     menu: bool = false,
     last: ?[2]i32 = null,
     changed: Area = Area.none,
+    /// What it puts its paint down with, and how far its lines have
+    /// walked.
+    ink: brush_zig.Ink,
 };
 
 /// The brush as it was shown under the pointer: where, in which colour,
@@ -633,13 +679,14 @@ const GhostMark = struct {
     size: u32 = 0,
     own: bool = false,
     mode: brush_zig.Mode = .own_colours,
+    kind: brush_zig.Kind = .paint,
     changes: u32 = 0,
 
     fn same(mark: GhostMark, other: GhostMark) bool {
         return mark.area.min_x == other.area.min_x and mark.area.min_y == other.area.min_y and
             mark.area.max_x == other.area.max_x and mark.area.max_y == other.area.max_y and
             mark.colour == other.colour and mark.shape == other.shape and mark.size == other.size and
-            mark.own == other.own and mark.mode == other.mode and mark.changes == other.changes;
+            mark.own == other.own and mark.mode == other.mode and mark.kind == other.kind and mark.changes == other.changes;
     }
 };
 
@@ -674,13 +721,23 @@ const App = struct {
     picture: Picture = undefined,
     kept: Picture = undefined,
     history: History = undefined,
-    /// The memory of the three, AllocVec's; null before the first.
-    memory: [3]?*anyopaque = @splat(null),
+    /// How much paint each pixel has had in the change being made, a
+    /// byte a pixel (brush.zig's `Ink`).
+    mask: []u8 = &.{},
+    /// The memory of the picture, `kept`, the history and the mask,
+    /// AllocVec's; null before the first.
+    memory: [4]?*anyopaque = @splat(null),
     /// Changed since it was made.
     changed: bool = false,
 
     tool: Tool = .freehand,
     brush: Brush = .{},
+    /// How the brush's paint goes down: opacity, flow, jitter, dither.
+    settings: brush_zig.Settings = .{},
+    /// The colours a smudge carries along, the brush's box in size, and
+    /// their memory, AllocVec's, while one is being made.
+    carried: Picture = undefined,
+    carried_memory: ?*anyopaque = null,
     foreground: Pixel = colours[black_index],
     background: Pixel = colours[white_index],
     /// The foreground's place in the palette.
@@ -801,8 +858,14 @@ const App = struct {
             sys.FreeVec(second);
             return false;
         };
+        const fourth = sys.AllocVec(@as(usize, width) * height, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse {
+            sys.FreeVec(third);
+            sys.FreeVec(second);
+            return false;
+        };
         app.freePicture();
-        app.memory = .{ first, second, third };
+        app.memory = .{ first, second, third, fourth };
+        app.mask = @as([*]u8, @ptrCast(fourth))[0 .. @as(usize, width) * height];
         app.picture = .{ .pixels = @ptrCast(@alignCast(first)), .width = width, .height = height };
         app.kept = .{ .pixels = @ptrCast(@alignCast(second)), .width = width, .height = height };
         app.history = .{ .memory = @ptrCast(@alignCast(third)), .size = room };
@@ -1042,7 +1105,7 @@ const App = struct {
         const colour = if (menu_button) app.background else app.foreground;
         app.at = at;
         switch (app.tool) {
-            .freehand, .dots, .airbrush => app.strokeTo(at, colour, menu_button, final),
+            .freehand, .dots, .airbrush, .eraser, .smudge => app.strokeTo(at, colour, menu_button, final),
             .line, .curve, .rectangle, .ellipse => app.dragShape(at, colour, menu_button, first, final),
             .polygon => app.polygonTo(at, colour, menu_button, first, final),
             .fill => if (first) app.floodAt(at, colour),
@@ -1050,6 +1113,7 @@ const App = struct {
             .text => if (final) app.placeText(at, colour),
             .grab => app.grabTo(at, menu_button, first, final),
             .hand => {},
+            .zoom => if (first) app.zoomClick(view_x, view_y, menu_button),
         }
         // Let go, the pointer is where the brush is shown again.
         if (final) {
@@ -1080,25 +1144,79 @@ const App = struct {
         return used;
     }
 
-    /// The freehand tools and the airbrush, from where the pointer was
-    /// to where it is.
+    /// The ink a change puts its paint down with: in `colour`, as the
+    /// brush's settings say, taking paint away for the eraser.
+    fn inkFor(app: *App, colour: Pixel) brush_zig.Ink {
+        return .{
+            .picture = &app.picture,
+            .colour = colour,
+            .settings = app.settings,
+            .kind = if (app.tool == .eraser) .erase else .paint,
+            .mask = app.mask,
+            .random = &app.random,
+        };
+    }
+
+    /// The freehand tools, the airbrush, the eraser and smudge, from
+    /// where the pointer was to where it is.
     fn strokeTo(app: *App, at: Point, colour: Pixel, menu_button: bool, final: bool) void {
-        if (app.stroke == null) app.stroke = .{ .colour = colour, .menu = menu_button };
+        const brush = app.brushFor(menu_button);
+        if (app.stroke == null) {
+            app.stroke = .{ .colour = colour, .menu = menu_button, .ink = app.inkFor(colour) };
+            // Smudge first takes up what is under the brush.
+            if (app.tool == .smudge and !app.takeUp(brush, at)) {
+                app.stroke = null;
+                return;
+            }
+        }
         const stroke = &app.stroke.?;
-        const brush = app.brushFor(stroke.menu);
         var changed = Area.none;
         switch (app.tool) {
-            .freehand => if (stroke.last) |last|
-                brush_zig.line(&app.picture, brush, last[0], last[1], at[0], at[1], stroke.colour, &changed)
-            else
-                brush_zig.stamp(&app.picture, brush, at[0], at[1], stroke.colour, &changed),
-            .airbrush => brush_zig.spray(&app.picture, brush, at[0], at[1], stroke.colour, &app.random, &changed),
-            else => brush_zig.stamp(&app.picture, brush, at[0], at[1], stroke.colour, &changed),
+            .freehand, .eraser => if (stroke.last) |last| {
+                brush_zig.line(&stroke.ink, brush, last[0], last[1], at[0], at[1], &changed);
+            } else {
+                brush_zig.stamp(&stroke.ink, brush, at[0], at[1], &changed);
+                stroke.ink.walked = 1;
+            },
+            .smudge => if (stroke.last) |last| {
+                brush_zig.smearLine(&stroke.ink, brush, &app.carried, last[0], last[1], at[0], at[1], &changed);
+            } else {
+                stroke.ink.walked = 1;
+            },
+            .airbrush => brush_zig.spray(&stroke.ink, brush, at[0], at[1], &app.random, &changed),
+            else => brush_zig.stamp(&stroke.ink, brush, at[0], at[1], &changed),
         }
+        if (final and (app.tool == .freehand or app.tool == .eraser)) brush_zig.finish(&stroke.ink, brush, at[0], at[1], &changed);
         stroke.last = at;
         stroke.changed = stroke.changed.add(changed);
         app.show(changed);
         if (final) app.endStroke();
+    }
+
+    /// The colours under the brush at `at` taken up for a smudge, in
+    /// memory of their own; false when there is none.
+    fn takeUp(app: *App, brush: Brush, at: Point) bool {
+        app.dropCarried();
+        const box = brush.box();
+        const memory = app.sys.AllocVec(Picture.bytesFor(box[0], box[1]), exec.MEMF_ANY) orelse return false;
+        app.carried_memory = memory;
+        app.carried = .{ .pixels = @ptrCast(@alignCast(memory)), .width = box[0], .height = box[1] };
+        brush_zig.takeUp(&app.picture, brush, at[0], at[1], &app.carried);
+        return true;
+    }
+
+    fn dropCarried(app: *App) void {
+        if (app.carried_memory) |memory| app.sys.FreeVec(memory);
+        app.carried_memory = null;
+    }
+
+    /// A press of the zoom tool at (`x`, `y`) in the view: the next zoom
+    /// in, or out with the menu button, the pixel there kept under it.
+    fn zoomClick(app: *App, x: i32, y: i32, out: bool) void {
+        const zoom = app.view.nextZoom(!out);
+        if (zoom == app.view.zoom) return;
+        app.view.zoomAt(zoom, x, y, app.picture.width, app.picture.height);
+        app.whole = true;
     }
 
     /// A line, a rectangle or an ellipse pulled from where the button
@@ -1164,27 +1282,36 @@ const App = struct {
     fn drawShape(app: *App) void {
         const drawing = if (app.drawing) |*drawing| drawing else return;
         app.picture.copyArea(&app.kept, drawing.shown);
+        brush_zig.clearMask(app.mask, app.picture.width, drawing.shown);
         var drawn = Area.none;
         const points = drawing.points[0..drawing.count];
-        const picture = &app.picture;
-        const colour = drawing.colour;
         const brush = app.brushFor(drawing.menu);
+        var ink = app.inkFor(drawing.colour);
+        // The same jitter each time it is drawn again, so it holds still.
+        var random = brush_zig.Random{};
+        ink.random = &random;
         switch (drawing.tool) {
-            .rectangle => shapes.rectangle(picture, brush, points[0], points[1], colour, app.filled, &drawn),
-            .ellipse => shapes.ellipse(picture, brush, points[0], points[1], colour, app.filled, &drawn),
+            .rectangle => shapes.rectangle(&ink, brush, points[0], points[1], app.filled, &drawn),
+            .ellipse => shapes.ellipse(&ink, brush, points[0], points[1], app.filled, &drawn),
             .curve => if (points.len == 3)
-                shapes.curve(picture, brush, points[0], points[1], points[2], colour, &drawn)
+                shapes.curve(&ink, brush, points[0], points[1], points[2], &drawn)
             else
-                brush_zig.line(picture, brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
+                app.straight(&ink, brush, points[0], points[1], &drawn),
             .polygon => if (drawing.closed)
-                shapes.polygon(picture, brush, points, colour, app.filled, &drawn)
+                shapes.polygon(&ink, brush, points, app.filled, &drawn)
             else
-                shapes.polyline(picture, brush, points, colour, &drawn),
-            .grab => shapes.frame(picture, points[0], points[1], &drawn),
-            else => brush_zig.line(picture, brush, points[0][0], points[0][1], points[1][0], points[1][1], colour, &drawn),
+                shapes.polyline(&ink, brush, points, &drawn),
+            .grab => shapes.frame(&app.picture, points[0], points[1], &drawn),
+            else => app.straight(&ink, brush, points[0], points[1], &drawn),
         }
         app.show(drawing.shown.add(drawn));
         drawing.shown = drawn;
+    }
+
+    /// A straight line from `from` to `to`, its end reached.
+    fn straight(_: *App, ink: *brush_zig.Ink, brush: Brush, from: Point, to: Point, drawn: *Area) void {
+        brush_zig.line(ink, brush, from[0], from[1], to[0], to[1], drawn);
+        brush_zig.finish(ink, brush, to[0], to[1], drawn);
     }
 
     /// The shape done: a polygon closed, and what it covers kept for
@@ -1201,6 +1328,7 @@ const App = struct {
         };
         const drawing = app.drawing orelse return;
         app.drawing = null;
+        brush_zig.clearMask(app.mask, app.picture.width, drawing.shown);
         if (drawing.shown.isEmpty()) return;
         app.changed = true;
         if (!app.history.record(&app.picture, &app.kept, drawing.shown)) app.tell(.MSG_NO_UNDO);
@@ -1211,6 +1339,7 @@ const App = struct {
         const drawing = app.drawing orelse return false;
         app.drawing = null;
         app.picture.copyArea(&app.kept, drawing.shown);
+        brush_zig.clearMask(app.mask, app.picture.width, drawing.shown);
         app.show(drawing.shown);
         return true;
     }
@@ -1341,11 +1470,12 @@ const App = struct {
         const at = app.hover orelse return null;
         if (app.pressing or app.space_held or app.drawing != null or app.gui == null) return null;
         switch (app.tool) {
-            .freehand, .dots, .line, .curve => {},
+            .freehand, .dots, .line, .curve, .eraser => {},
             .rectangle, .ellipse, .polygon => if (app.filled) return null,
             else => return null,
         }
-        return brush_zig.Ghost.at(app.brush, at[0], at[1], app.foreground);
+        const kind: brush_zig.Kind = if (app.tool == .eraser) .erase else .paint;
+        return brush_zig.Ghost.at(app.brush, at[0], at[1], app.foreground, app.settings, kind);
     }
 
     /// Where the brush under the pointer was and where it is now drawn
@@ -1358,6 +1488,7 @@ const App = struct {
             .size = app.brush.size,
             .own = app.brush.own != null,
             .mode = app.brush.mode,
+            .kind = shown.kind,
             .changes = app.brush_changes,
         } else .{};
         if (mark.same(app.ghost_shown)) return;
@@ -1492,6 +1623,8 @@ const App = struct {
         const stroke = app.stroke orelse return;
         app.stroke = null;
         app.at = null;
+        app.dropCarried();
+        brush_zig.clearMask(app.mask, app.picture.width, stroke.changed);
         if (stroke.changed.isEmpty()) return;
         app.changed = true;
         if (!app.history.record(&app.picture, &app.kept, stroke.changed)) app.tell(.MSG_NO_UNDO);
@@ -1579,8 +1712,6 @@ const App = struct {
         app.view.zoomAt(zoom, @intCast(app.view.width / 2), @intCast(app.view.height / 2), app.picture.width, app.picture.height);
         app.whole = true;
     }
-
-
 
     /// The two colours, the foreground in front of the background.
     fn drawColours(app: *App) void {
@@ -1751,6 +1882,33 @@ const App = struct {
         };
         _ = app.perform(which);
         if (app.ui()) |gui| gui.shown_shape = null;
+    }
+
+    /// A brush setting as its slider shows it.
+    fn settingLevel(app: *const App, which: Setting) u32 {
+        return switch (which) {
+            .softness => app.brush.softness,
+            .opacity => app.settings.opacity,
+            .flow => app.settings.flow,
+            .jitter => app.settings.jitter,
+            .rotation => app.brush.rotation,
+        };
+    }
+
+    /// A brush setting from its slider.
+    fn setSetting(app: *App, which: Setting, level: u32) void {
+        const entry = setting_entries[@intFromEnum(which)];
+        const value = @max(entry.least, @min(level, entry.most));
+        if (value == app.settingLevel(which)) return;
+        switch (which) {
+            .softness => app.brush.softness = @intCast(value),
+            .opacity => app.settings.opacity = @intCast(value),
+            .flow => app.settings.flow = @intCast(value),
+            .jitter => app.settings.jitter = @intCast(value),
+            .rotation => app.brush.rotation = @intCast(value),
+        }
+        // The brush under the pointer shown again.
+        app.brush_changes +%= 1;
     }
 
     /// The brush's size from the panel's slider: a built-in brush that
@@ -2275,6 +2433,11 @@ const App = struct {
                     else => |id| {
                         if (id >= ID_SECTION and id < ID_SECTION + section_names.len) {
                             app.foldSection(id - ID_SECTION, code != 0);
+                        } else if (id >= ID_SETTING and id < ID_SETTING + setting_entries.len) {
+                            app.setSetting(@enumFromInt(id - ID_SETTING), code);
+                        } else if (id == ID_DITHER) {
+                            app.settings.dither = code != 0;
+                            app.brush_changes +%= 1;
                         } else if (Tool.of(id)) |tool| {
                             app.chooseTool(tool);
                         } else if (id == Command.filled.id()) {
@@ -2299,7 +2462,11 @@ const App = struct {
                         app.sizeBrush(@truncate(level));
                     },
                     ID_WHEEL, ID_BRIGHTNESS => app.takeColour(),
-                    else => {},
+                    else => |id| if (id >= ID_SETTING and id < ID_SETTING + setting_entries.len) {
+                        var level: usize = 0;
+                        _ = app.ib.GetAttr(sl.SLIDER_Level, gui.setting_sliders[id - ID_SETTING], &level);
+                        app.setSetting(@enumFromInt(id - ID_SETTING), @truncate(level));
+                    },
                 },
                 wc.WMHI_VANILLAKEY => app.keyed(@truncate(word & wc.WMHI_KEYMASK)),
                 wc.WMHI_RAWKEY => app.rawKeyed(@truncate(word & wc.WMHI_KEYMASK)),
@@ -2472,7 +2639,27 @@ const App = struct {
             .{ .tag = sl.SLIDER_Level, .data = @min(app.brush.size, panel_brush_max) },
             .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld") },
             .{ .tag = sl.SLIDER_LevelPlace, .data = sl.SLIDER_PLACE_RIGHT },
-            .{ .tag = sl.SLIDER_MaxLevelLen, .data = 2 },
+            .{ .tag = sl.SLIDER_MaxLevelLen, .data = level_room },
+            .{},
+        }));
+        var setting_gadgets: [setting_entries.len]?*Object = undefined;
+        for (setting_entries, 0..) |entry, place| {
+            setting_gadgets[place] = made.take(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+                .{ .tag = gc.GA_ID, .data = ID_SETTING + place },
+                .{ .tag = gc.GA_RelVerify, .data = 1 },
+                .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+                .{ .tag = sl.SLIDER_Min, .data = entry.least },
+                .{ .tag = sl.SLIDER_Max, .data = entry.most },
+                .{ .tag = sl.SLIDER_Level, .data = app.settingLevel(@enumFromInt(place)) },
+                .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr(entry.format) },
+                .{ .tag = sl.SLIDER_LevelPlace, .data = sl.SLIDER_PLACE_RIGHT },
+                .{ .tag = sl.SLIDER_MaxLevelLen, .data = level_room },
+                .{},
+            }));
+        }
+        const dither = made.take(ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_DITHER },
+            .{ .tag = gc.GA_Selected, .data = @intFromBool(app.settings.dither) },
             .{},
         }));
         app.shades[0] = brightestOf(app.foreground);
@@ -2537,13 +2724,27 @@ const App = struct {
 
         // Beside them the side panel: each section's button over what it
         // folds away, the sections at the top.
-        const brush_body = made.layout(&[_]TagItem{
+        var brush_tags: [8 + 2 * setting_entries.len + 3]TagItem = undefined;
+        var tag_count: usize = 0;
+        for ([_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(shape) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(size) },
-            .{},
-        });
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_SIZE)) },
+        }) |tag| {
+            brush_tags[tag_count] = tag;
+            tag_count += 1;
+        }
+        for (setting_gadgets, setting_entries) |gadget, entry| {
+            brush_tags[tag_count] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gadget) };
+            brush_tags[tag_count + 1] = .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(entry.label)) };
+            tag_count += 2;
+        }
+        brush_tags[tag_count] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(dither) };
+        brush_tags[tag_count + 1] = .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_DITHER)) };
+        brush_tags[tag_count + 2] = .{};
+        const brush_body = made.layout(brush_tags[0 .. tag_count + 3]);
         const colour_body = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
@@ -2627,6 +2828,8 @@ const App = struct {
         gui.zoom_text = zoom_text.?;
         gui.shape = shape.?;
         gui.size = size.?;
+        for (setting_gadgets, &gui.setting_sliders) |gadget, *slot| slot.* = gadget.?;
+        gui.dither = dither.?;
         gui.wheel = wheel.?;
         gui.brightness = brightness.?;
         gui.panel = panel.?;
@@ -3012,7 +3215,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer text.close();
 
     // Opened until the end: what the window is made of.
-    const names = [_][*:0]const u8{ intuition.INTUITIONNAME, graphics.GRAPHICSNAME, cv.CANVAS_LIBRARY, pa.PALETTE_LIBRARY, tb.TOOLBUTTON_LIBRARY, tx.TEXT_LIBRARY, command.COMMAND_LIBRARY, ch.CHOOSER_LIBRARY, sl.SLIDER_LIBRARY, cw.WHEEL_LIBRARY, gs.GRAD_LIBRARY };
+    const names = [_][*:0]const u8{ intuition.INTUITIONNAME, graphics.GRAPHICSNAME, cv.CANVAS_LIBRARY, pa.PALETTE_LIBRARY, tb.TOOLBUTTON_LIBRARY, tx.TEXT_LIBRARY, command.COMMAND_LIBRARY, ch.CHOOSER_LIBRARY, sl.SLIDER_LIBRARY, cw.WHEEL_LIBRARY, gs.GRAD_LIBRARY, cb.CHECKBOX_LIBRARY };
     var libs: [names.len]?*exec.Library = @splat(null);
     defer for (libs) |lib| {
         if (lib) |opened| sys.CloseLibrary(opened);
