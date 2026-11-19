@@ -94,6 +94,8 @@ pub fn draw(p: *Painter, glyph: u32) void {
         command.CMD_SWAP => drawSwap(p),
         command.CMD_FOLDED => drawFolded(p),
         command.CMD_UNFOLDED => drawUnfolded(p),
+        command.CMD_ERASER => drawEraser(p),
+        command.CMD_SMUDGE => drawSmudge(p),
         command.CMD_LAUNCHER => drawLauncher(p),
         else => {},
     }
@@ -771,6 +773,22 @@ noinline fn drawFolded(p: *Painter) void {
 
 noinline fn drawUnfolded(p: *Painter) void {
     p.ink(&.{p.poly(&.{ .{ 18, 32 }, .{ 82, 32 }, .{ 50, 76 } })});
+}
+
+noinline fn drawEraser(p: *Painter) void {
+    // The bare line it leaves, then the rubber and its sleeve along a
+    // diagonal.
+    p.solid(&.{p.rr(10, 86, 58, 93, 3)}, .paper, .{ .no_shadow = true, .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.bar(18, 70, 46, 42, 30))}, .red, .{});
+    p.solid(&.{p.poly(&shapes.bar(46, 42, 82, 6, 30))}, .blue, .{});
+}
+
+noinline fn drawSmudge(p: *Painter) void {
+    // The smear, thinning to the left, and the finger pressing on it:
+    // its round tip, and its nail.
+    p.solid(&.{p.poly(&shapes.taper(58, 80, 4, 90, 24, 4))}, .blue, .{ .flat = true, .no_shadow = true });
+    p.solid(&.{ p.poly(&shapes.bar(92, 6, 62, 58, 32)), p.disc(62, 58, 16) }, .yellow, .{ .no_gloss = true });
+    p.solid(&.{p.disc(68, 50, 8)}, .paper, .{ .no_shadow = true, .no_gloss = true });
 }
 
 noinline fn drawStencil(p: *Painter) void {

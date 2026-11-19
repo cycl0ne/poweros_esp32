@@ -25,7 +25,8 @@
 //! ellipse, a polygon, a fill, an airbrush, a dropper, text, a brush cut
 //! out, shapes filled, layers and a stencil. Since 1.10 what is round a
 //! paint program's picture: a hand that moves it, a frame it fits, two
-//! colours swapped, and a section folded and unfolded.
+//! colours swapped, and a section folded and unfolded. Since 1.11 an
+//! eraser and a smudging finger.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -242,5 +243,11 @@ pub const CMD_SWAP: u32 = 74;
 pub const CMD_FOLDED: u32 = 75;
 /// A triangle pointing down, in the ink: a section unfolded. Since 1.10.
 pub const CMD_UNFOLDED: u32 = 76;
+/// A block eraser in its sleeve, at a slant, over the bare line it
+/// leaves: paint taken away. Since 1.11.
+pub const CMD_ERASER: u32 = 77;
+/// A finger pointing down at a smear of colour: colours dragged along.
+/// Since 1.11.
+pub const CMD_SMUDGE: u32 = 78;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_UNFOLDED;
+pub const CMD_LAST: u32 = CMD_SMUDGE;
