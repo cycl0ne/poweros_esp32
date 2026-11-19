@@ -5,8 +5,8 @@
 #version 1
 ;
 ; The menus.
-MSG_MENU_PROJECT (1//)
-Project
+MSG_MENU_FILE (1//)
+File
 MSG_MENU_NEW (//)
 New...
 MSG_MENU_OPEN (//)
@@ -51,6 +51,8 @@ MSG_MENU_TEXT (//)
 Text
 MSG_MENU_GRAB (//)
 Cut Brush
+MSG_MENU_HAND (//)
+Hand
 MSG_MENU_FILLED (//)
 Filled Shapes
 MSG_MENU_SWAP (//)
@@ -63,6 +65,8 @@ MSG_MENU_ZOOM_OUT (//)
 Zoom Out
 MSG_MENU_ACTUAL_SIZE (//)
 Actual Size
+MSG_MENU_FIT (//)
+Zoom to Fit
 MSG_MENU_GRID (//)
 Grid
 MSG_MENU_BRUSH (//)
@@ -93,10 +97,12 @@ MSG_MENU_OPEN_BRUSH (//)
 Open Brush...
 MSG_MENU_SAVE_BRUSH (//)
 Save Brush...
-MSG_MENU_SETTINGS (//)
-Settings
 MSG_MENU_OWN_SCREEN (//)
 Own Screen
+MSG_MENU_HELP (//)
+Help
+MSG_MENU_ABOUT (//)
+About Paint...
 ;
 ; The tools' hints.
 MSG_TOOL_FREEHAND (//)
@@ -123,6 +129,8 @@ MSG_TOOL_TEXT (//)
 Text: typed, and put where the picture is clicked
 MSG_TOOL_GRAB (//)
 Cut brush: a part of the picture taken as the brush
+MSG_TOOL_HAND (//)
+Hand: the picture moved with the pointer
 MSG_FILLED_HINT (//)
 Rectangles, ellipses and polygons filled
 MSG_UNDO_HINT (//)
@@ -133,6 +141,20 @@ MSG_ZOOM_IN_HINT (//)
 Show the picture larger
 MSG_ZOOM_OUT_HINT (//)
 Show the picture smaller
+MSG_FIT_HINT (//)
+Show the whole picture as large as it fits
+MSG_SWAP_HINT (//)
+Swap the two colours
+;
+; The zoom above the picture, in per cent.
+MSG_ZOOM (//)
+%ld %%
+;
+; The side panel's sections.
+MSG_SECTION_BRUSH (//)
+Brush
+MSG_SECTION_COLOUR (//)
+Colour
 ;
 ; The line under the picture: its size, the zoom and the brush, and
 ; while painting where the pointer is.
@@ -154,6 +176,8 @@ MSG_HEIGHT (//)
 Height
 MSG_OK (//)
 OK
+MSG_ABOUT (//)
+Paint %s\n\nPictures in true colour, painted with\nbuilt-in and cut brushes.
 MSG_CANCEL (//)
 Cancel
 ;

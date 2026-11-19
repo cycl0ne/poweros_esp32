@@ -1,8 +1,8 @@
 # Paint
 
 `SYS:Programs/Paint/Paint` paints pictures with the pointer: a window
-with the picture, the tools down its right and the colours along its
-bottom. Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
+with the tools and the colours down its left, a side panel for the brush
+and the colour, and the picture under a zoom bar. Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
 it loads only when they are needed sit beside it rather than in `LIBS:`:
 `Libs/paintio.library` opens and saves files, and is loaded the first
 time a file is opened or saved.
@@ -20,30 +20,41 @@ FILE is a picture or a project to open at the start.
 ## Where it opens
 
 Paint opens on the desktop's screen, in a window that can be moved and
-sized, or on a screen of its own: a window over the whole screen under
-its bar, with the menus in the bar. `SCREEN=OWN` from the shell, or
+sized, or on a screen of its own: a window without a border over the
+whole screen under its bar. `SCREEN=OWN` from the shell, or
 `SCREEN=OWN` as a tool type of its icon, asks for its own screen;
 `SCREEN=DESKTOP` for the desktop's. Without either it opens where it was
 the last time.
 
-Settings → Own Screen switches while it runs: the window closes and
-opens again on the other screen, and the picture, the zoom, the brush,
-the colours and everything that can be undone stay as they were. The
+View → Own Screen switches while it runs: the window closes and opens
+again on the other screen, and the picture, the zoom, the brush, the
+colours, the folded sections and everything that can be undone stay as
+they were. The
 choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
 `SCREEN=OWN` or `SCREEN=DESKTOP`.
 
 ## The window
 
-- **The picture** fills the window. One smaller than the window sits in
-  its middle on a dark ground; one larger is scrolled with the scroll
-  bars in the window's border, with the wheel (Shift and the wheel go
-  across) or with the cursor keys.
-- **The tools** are down the right, two to a row, then the filled
-  shapes' button, Undo and Redo, and Zoom In and Zoom Out. A tool shows
-  a hint when the pointer rests on it.
-- **The colours** are along the bottom: the two in use at the left - the
-  foreground in front, the background behind it - and the picture's 32
-  to pick from.
+- **The menu titles** stay in the screen's bar while Paint's window is
+  active, and a click on one opens it.
+- **The tools** are down the left, two to a row, then the filled
+  shapes' button, Undo and Redo. A tool shows a hint when the pointer
+  rests on it.
+- **The colours** are under them: the two in use - the foreground in
+  front, the background behind it - with the swap beside them, and the
+  picture's 32 to pick from.
+- **The side panel** beside them has a section for the brush and one
+  for the colour. A press on a section's name folds it away and another
+  unfolds it. Brush: Round, Square or Own Brush, and the size from 1 to
+  64 on a slider. Colour: the foreground on a colour wheel - its hue
+  round the wheel, its saturation out from the middle - and its
+  brightness on the slider beside it.
+- **The picture** fills the rest. One smaller than the view sits in its
+  middle on a dark ground. One larger is moved with the hand tool or
+  with Space held - a drag moves it as a hand moves paper - with the
+  wheel (Shift and the wheel go across) or with the cursor keys.
+- **The zoom bar** above it: smaller, the zoom in per cent, larger, and
+  the whole picture as large as it fits.
 - **The status line** says the picture's size, the zoom and the brush's
   size, and the pixel under the pointer while it is over the picture.
 
@@ -51,12 +62,12 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
 
 The select button paints in the foreground colour, the menu button in
 the background colour. Over the picture the menu button paints; the
-menus open with it anywhere else in the window or the screen's bar. The
-menu titles stay in the screen's bar while Paint's window is active, and
-a click on one opens it.
+menus open with it anywhere else in the window or the screen's bar, or
+with a click on a title in the bar.
 
-The brush is round or square, 1, 2, 3, 4, 6, 8, 12, 16, 24 or 32 pixels
-across: chosen in the Brush menu, or a size smaller and larger with `[`
+The brush is round or square, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48 or 64
+pixels across in the Brush menu - or any size from 1 to 64 on the side
+panel's slider - or a size smaller and larger with `[`
 and `]` - or `<` and `>`, which are one key on a German keyboard - or a
 brush of your own (see [Brushes](#brushes)). While the pointer is over
 the picture, the brush is shown where it would go down, in the
@@ -80,6 +91,7 @@ A tool is chosen with its button, in the Tools menu, or with its key.
 | Pick colour | `i` | the colour under the pointer becomes the foreground - with the menu button the background - and the tool before it is chosen again |
 | Text | `t` | a click asks for the text and its font, and puts it down with its top left there |
 | Cut brush | `b` | a frame pulled over the picture; what it holds becomes the brush - see [Brushes](#brushes) |
+| Hand | | the picture moved with the pointer; Space held does the same with any tool |
 
 Lines, curves and the outlines of rectangles, ellipses and polygons are
 drawn with the brush. **Filled shapes** - the button under the tools,
@@ -131,21 +143,24 @@ the places of Paint's. A project keeps its 32.
 
 A press on one of the 32 colours with the select button makes it the
 foreground, with the menu button the background. A click on the two
-colours in use, or `x`, swaps them.
+colours in use, on the swap beside them, or `x`, swaps them. The colour
+wheel and the brightness slider make the foreground any colour.
 
 ## The view
 
 The zoom goes from 1:1 to 16:1 - 1, 2, 3, 4, 6, 8, 12 and 16 - with the
-View menu, the two tools, or `+` and `-`; it keeps the middle of the
-window where it is. From 8:1 a grid marks each pixel, which View → Grid
-turns off and on. View → Actual Size goes back to 1:1.
+View menu, the zoom bar, or `+` and `-`; it keeps the middle of the
+view where it is. From 8:1 a grid marks each pixel, which View → Grid
+turns off and on. View → Actual Size goes back to 1:1; View → Zoom to
+Fit, or the zoom bar's last button, shows the whole picture at the
+largest zoom it fits at.
 
 A part of the picture that is see-through shows a light checkerboard
 through it.
 
 ## The picture
 
-A new picture is as large as the screen and white. Project → New... asks
+A new picture is as large as the screen and white. File → New... asks
 for another size - the width and the height, typed or stepped with the
 arrows, Return taking them and Escape leaving the picture as it is. A
 picture that has changed is not let go - by New..., Open..., Quit,
@@ -157,8 +172,8 @@ the screen's bar does - with a `*` in front while it has changes.
 
 ## Files
 
-Project → Open... opens a project or any picture the system has a
-datatype for: PNG, ILBM, JPEG, GIF, BMP and the others. Project → Save
+File → Open... opens a project or any picture the system has a
+datatype for: PNG, ILBM, JPEG, GIF, BMP and the others. File → Save
 As... asks for a name, and what the name ends in says what is written:
 
 | Ending | Written as |
@@ -167,7 +182,7 @@ As... asks for a name, and what the name ends in says what is written:
 | `.iff`, `.ilbm`, `.lbm` | an ILBM of 24 planes - 32 with see-through parts |
 | anything else | a project: the picture and its 32 colours, packed |
 
-Project → Save writes the file again in the same form; a picture that
+File → Save writes the file again in the same form; a picture that
 came from a form Paint does not write - a JPEG, a GIF - is saved with
 Save As instead. A file that cannot be read or written says why in a
 requester.
@@ -190,12 +205,12 @@ The letters are the items' keys, pressed with the right command key.
 
 | Menu | Items |
 |---|---|
-| Project | New... (N), Open... (O), Save (S), Save As... (A), Quit (Q) |
+| File | New... (N), Open... (O), Save (S), Save As... (A), Quit (Q) |
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
 | Tools | the tools; Filled Shapes |
-| View | Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
-| Settings | Own Screen |
+| View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Own Screen |
+| Help | About Paint... |
 
 ## Keys
 
@@ -208,4 +223,5 @@ The letters are the items' keys, pressed with the right command key.
 | a tool's letter | chooses it - see [The tools](#the-tools) |
 | `F` | filled shapes on and off |
 | Return, Escape | end a curve or polygon as it is, put it away |
-| cursor keys | scroll the picture |
+| cursor keys | move the picture |
+| Space, held | a drag moves the picture, whatever the tool |

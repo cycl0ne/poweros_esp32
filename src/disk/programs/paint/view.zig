@@ -28,7 +28,7 @@ pub const zooms = [_]u32{ 1, 2, 3, 4, 6, 8, 12, 16 };
 pub const grid_zoom = 8;
 
 /// What is round the picture.
-pub const backdrop: Pixel = 0xFF5A5A5A;
+pub const backdrop: Pixel = 0xFF303030;
 /// The checkerboard behind what is see-through, in squares of 8.
 const check_light: Pixel = 0xFFFFFFFF;
 const check_dark: Pixel = 0xFFCCCCCC;
@@ -116,6 +116,25 @@ pub const View = struct {
             if (zooms[at] < view.zoom) return zooms[at];
         }
         return view.zoom;
+    }
+
+    /// The largest of `zooms` the whole picture shows at, or 1 when it
+    /// is larger than the view.
+    pub fn fitZoom(view: *const View, picture_width: u32, picture_height: u32) u32 {
+        var best: u32 = 1;
+        for (zooms) |zoom| {
+            if (picture_width * zoom <= view.width and picture_height * zoom <= view.height) best = zoom;
+        }
+        return best;
+    }
+
+    /// The view moved by a drag, as a hand moves paper: `start` its
+    /// corner when the drag began at the view's `from`, now at `to`.
+    pub fn panTo(view: *View, start: [2]i32, from: [2]i32, to: [2]i32, picture_width: u32, picture_height: u32) void {
+        const zoom: i32 = @intCast(view.zoom);
+        view.left = start[0] - @divTrunc(to[0] - from[0], zoom);
+        view.top = start[1] - @divTrunc(to[1] - from[1], zoom);
+        view.fit(picture_width, picture_height);
     }
 
     /// The view's row `y` from `min_x` to before `max_x`, into `out`, the

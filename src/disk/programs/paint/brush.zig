@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! Paint's brushes and what they put down: a round or a square brush of
-//! 1 to 32 pixels, or one of the user's own - cut from the picture or
+//! 1 to 64 pixels, or one of the user's own - cut from the picture or
 //! loaded - stamped at a place or along a line.
 //!
 //! A brush is a box, held by its middle: the pixel half its width across
@@ -39,7 +39,7 @@ pub const Shape = enum { round, square };
 pub const Mode = enum { own_colours, one_colour };
 
 /// The largest built-in brush.
-pub const max_size = 32;
+pub const max_size = 64;
 
 /// The longest side a brush of one's own may have, grabbed, loaded or
 /// doubled.
@@ -47,7 +47,7 @@ pub const max_own_side = 1024;
 
 /// The sizes the Brush menu offers, smallest first; the keys that make a
 /// brush smaller and larger step through them.
-pub const sizes = [_]u32{ 1, 2, 3, 4, 6, 8, 12, 16, 24, 32 };
+pub const sizes = [_]u32{ 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64 };
 
 pub const Brush = struct {
     shape: Shape = .round,

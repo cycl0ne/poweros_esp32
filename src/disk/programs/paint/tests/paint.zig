@@ -55,7 +55,10 @@ test "brush: a round brush is the disc in its box, a square one the box, held by
     // Sizes step along the list and stop at its ends.
     try testing.expectEqual(@as(u32, 6), (Brush{ .size = 4 }).stepped(true).size);
     try testing.expectEqual(@as(u32, 3), (Brush{ .size = 4 }).stepped(false).size);
-    try testing.expectEqual(@as(u32, 32), (Brush{ .size = 32 }).stepped(true).size);
+    try testing.expectEqual(@as(u32, 64), (Brush{ .size = 64 }).stepped(true).size);
+    // A size between the steps, as the slider sets, goes to the next.
+    try testing.expectEqual(@as(u32, 48), (Brush{ .size = 41 }).stepped(true).size);
+    try testing.expectEqual(@as(u32, 32), (Brush{ .size = 41 }).stepped(false).size);
     try testing.expectEqual(@as(u32, 1), (Brush{ .size = 1 }).stepped(false).size);
 }
 
@@ -270,6 +273,29 @@ test "view: a small picture in the middle, a large one scrolled inside, the zoom
     try testing.expectEqual(under, view.toPicture(40, 20));
     try testing.expectEqual(@as(u32, 12), view.nextZoom(true));
     try testing.expectEqual(@as(u32, 6), view.nextZoom(false));
+}
+
+test "view: fitted, the largest zoom the whole picture shows at; dragged, the picture follows the hand" {
+    var view = View{ .width = 100, .height = 50 };
+    try testing.expectEqual(@as(u32, 2), view.fitZoom(40, 20));
+    try testing.expectEqual(@as(u32, 12), view.fitZoom(8, 4));
+    try testing.expectEqual(@as(u32, 16), view.fitZoom(1, 1));
+    // Larger than the view: shown as it is.
+    try testing.expectEqual(@as(u32, 1), view.fitZoom(200, 20));
+
+    // At 4 the 40 by 20 picture is 160 by 80: dragged 8 view pixels to the
+    // left and 4 up, it moves 2 picture pixels and 1.
+    view.zoom = 4;
+    view.left = 5;
+    view.top = 5;
+    view.fit(40, 20);
+    view.panTo(.{ 5, 5 }, .{ 50, 20 }, .{ 42, 16 }, 40, 20);
+    try testing.expectEqual(@as(i32, 7), view.left);
+    try testing.expectEqual(@as(i32, 6), view.top);
+    // Dragged far, it stops where the picture's edge meets the view's.
+    view.panTo(.{ 5, 5 }, .{ 50, 20 }, .{ 950, -500 }, 40, 20);
+    try testing.expectEqual(@as(i32, 0), view.left);
+    try testing.expectEqual(@as(i32, 8), view.top);
 }
 
 test "view: a row at a zoom, the backdrop round it, the grid and the checkerboard" {

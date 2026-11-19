@@ -3,36 +3,50 @@
 //!
 //!   Paint [FILE] [SCREEN=OWN|DESKTOP]
 //!
-//! A window with the picture, the tools down its right and the colours
-//! along its bottom. It opens on the desktop's screen, or on a screen of
-//! its own (`SCREEN=OWN`, from the shell or as the icon's tool type): a
-//! window over the whole screen under its bar, the menus in the bar.
-//! Without either it opens where it did the last time - Settings' Own
-//! Screen switches while it runs, and `ENV:Paint.prefs` keeps the
+//! A window with the tools, the two colours and the palette down its left,
+//! a side panel of sections beside them, the picture under a zoom bar,
+//! and a status line along the bottom. Its menu titles stay in the
+//! screen's bar while it is active (`WA_MenuBar`), a click opening one.
+//! It opens on the desktop's screen, or on a screen of its own
+//! (`SCREEN=OWN`, from the shell or as the icon's tool type): a window
+//! without a border over the whole screen under its bar. Without either
+//! it opens where it did the last time - View's Own Screen switches while
+//! it runs, and `ENV:Paint.prefs` keeps the
 //! choice (`SCREEN=OWN`), ENVARC: too. A switch takes the window down and
 //! makes it again on the other screen; the picture, the zoom, the brush,
-//! the colours and what can be undone stay.
+//! the colours, the folded sections and what can be undone stay.
+//!
+//! **The side panel.** Each section is a button with its name over its
+//! gadgets; a press folds them away (`CHILDA_Hidden`) and unfolds them,
+//! and the window is laid out again. Brush: Round, Square or Own Brush in
+//! a chooser and the size, 1 to 64, on a slider. Colour: the foreground on
+//! a colour wheel (colorwheel.gadget) with its brightness beside it
+//! (gradientslider.gadget, from the colour at its brightest down to
+//! black). The panel follows the brush and the foreground however they
+//! change.
 //!
 //! **The picture** is true colour, `0xAARRGGBB` a pixel, as large as the
-//! screen to begin with; Project's New... asks for another size. It is
+//! screen to begin with; File's New... asks for another size. It is
 //! shown in canvas.gadget, which follows its box: Paint makes the rows the
 //! window shows from the picture (view.zig) - at a zoom of 1 to 16, with a
-//! grid from 8 on, a smaller picture in the middle - and writes only the
-//! area a change touched. The scroll bars in the border move over a
-//! picture larger than the view; so do the wheel (with Shift across) and
-//! the cursor keys.
+//! grid from 8 on, a smaller picture in the middle on a dark ground - and
+//! writes only the area a change touched. There are no scroll bars: the
+//! hand tool, or Space held, drags a picture larger than the view, and
+//! the wheel (with Shift across) and the cursor keys move it. The zoom
+//! bar above it makes it smaller and larger, says the zoom in per cent,
+//! and fits the whole picture to the view.
 //!
 //! **Painting.** The select button paints in the foreground colour, the
 //! menu button in the background colour - the canvas takes the menu
 //! button over its box (`GA_MenuButton`), so the menus stay shut there and
-//! open anywhere else. The brush is round or square and 1 to 32 pixels
+//! open anywhere else. The brush is round or square and 1 to 64 pixels
 //! (brush.zig), chosen in the Brush menu or with `[` and `]` - or `<`
 //! and `>`, one key on a German keyboard - or an own brush (below).
 //! While the pointer is over the picture and no button is down, the
 //! brush is shown where it would go down: the window reports the mouse,
 //! and the view lays the brush over the rows it makes, never into the
-//! picture. The tools, down the right and in the Tools menu, each with a
-//! key of its own:
+//! picture. The tools, two to a row down the left and in the Tools menu,
+//! each but the hand with a key of its own:
 //!
 //!   - freehand (`p`), a line along the way the pointer goes, and dotted
 //!     freehand (`.`), the brush put down wherever the pointer is told to
@@ -60,7 +74,9 @@
 //!   - cut brush (`b`): a frame of dashes pulled over the picture, and
 //!     what it holds made the own brush - with the menu button cut out,
 //!     the background colour left there - and then the tool before it
-//!     again, or dotted freehand when that one puts no brush down.
+//!     again, or dotted freehand when that one puts no brush down;
+//!   - the hand: the picture moved with the pointer, as Space held does
+//!     with any tool.
 //!
 //! **The own brush** is a picture of its own, up to 1024 pixels a side:
 //! cut from the picture, the background colour's pixels left out, or
@@ -73,8 +89,9 @@
 //!
 //! **The colours.** palette.gadget shows the picture's 32 colours: the
 //! select button picks the foreground, the menu button the background
-//! (`PALETTE_Button`); the two are shown beside it, the foreground in
-//! front, and a click there swaps them, as `x` does.
+//! (`PALETTE_Button`); the two are shown above it, the foreground in
+//! front, and a click there or on the swap beside them swaps them, as `x`
+//! does.
 //!
 //! **Files** go through paintio.library, which is Paint's own and lies in
 //! its drawer: it is opened by its path, `PROGDIR:Libs/paintio.library`,
@@ -94,19 +111,21 @@
 //!
 //! The menus, with their keys (pressed with the right command key):
 //!
-//!   Project   New... (N), Open... (O), Save (S), Save As... (A), Quit (Q)
+//!   File      New... (N), Open... (O), Save (S), Save As... (A), Quit (Q)
 //!   Edit      Undo (Z), Redo (Y), Swap Colours, Clear (K)
 //!   Tools     the tools, Filled Shapes
-//!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Grid (G)
 //!   Brush     Round, Square, Own Brush, Size, Smaller ([), Larger (]),
 //!             Own Colours, One Colour, Flip Horizontally, Flip
 //!             Vertically, Turn Right, Open Brush..., Save Brush...
-//!   Settings  Own Screen
+//!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit,
+//!             Grid (G), Own Screen
+//!   Help      About Paint...
 //!
 //! Without a menu key: `+` and `-` zoom, `[` and `]` (or `<` and `>`)
 //! size the brush, `h`, `v` and `z` flip and turn an own brush, `x` swaps
 //! the colours, the tools' letters choose them,
-//! Return ends a shape and Escape puts it away, the cursor keys scroll.
+//! Return ends a shape and Escape puts it away, the cursor keys move the
+//! picture, and Space held lets a drag move it.
 //! A picture that has changed is not let go - by New, Open, Quit, Ctrl-C
 //! or the close gadget - before a requester asks whether to save it.
 //!
@@ -134,7 +153,10 @@ const cv = sdk.gadgets.canvas;
 const pa = sdk.gadgets.palette;
 const tb = sdk.gadgets.toolbutton;
 const tx = sdk.gadgets.text;
-const sr = sdk.gadgets.scroller;
+const ch = sdk.gadgets.chooser;
+const sl = sdk.gadgets.slider;
+const cw = sdk.gadgets.colorwheel;
+const gs = sdk.gadgets.gradientslider;
 const ig = sdk.gadgets.integer;
 const sg = sdk.gadgets.string;
 const gfo = sdk.gadgets.getfont;
@@ -174,7 +196,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.3";
+const VERSION = "1.4";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -200,8 +222,14 @@ const ID_VIEW = 1;
 const ID_COLOURS = 2;
 const ID_PALETTE = 3;
 const ID_STATUS = 4;
-const ID_VERT = 10;
-const ID_HORIZ = 11;
+const ID_ZOOM = 5;
+// The side panel.
+const ID_SHAPE = 6;
+const ID_SIZE = 7;
+const ID_WHEEL = 8;
+const ID_BRIGHTNESS = 9;
+/// A section's button: this and the section's place.
+const ID_SECTION = 30;
 // The new picture's window.
 const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
@@ -221,6 +249,9 @@ const raw_up = 0x4C;
 const raw_down = 0x4D;
 const raw_right = 0x4E;
 const raw_left = 0x4F;
+/// Space, and a key let go: its code with `raw_released`.
+const raw_space = 0x40;
+const raw_released = 0x80;
 
 /// The painting tools; a tool's button has `id()` as its `GA_ID`.
 const Tool = enum(u32) {
@@ -236,6 +267,7 @@ const Tool = enum(u32) {
     pick,
     text,
     grab,
+    hand,
 
     const base = 300;
 
@@ -279,13 +311,15 @@ const Command = enum(u32) {
     turn,
     open_brush,
     save_brush,
+    fit,
+    about,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.save_brush)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.about)) return null;
         return @enumFromInt(value);
     }
 };
@@ -293,7 +327,7 @@ const Command = enum(u32) {
 /// The Size submenu's items have `size_base` and the size's place in
 /// `brush_zig.sizes` as their user data.
 const size_base = 200;
-const size_labels = [_][*:0]const u8{ "1", "2", "3", "4", "6", "8", "12", "16", "24", "32" };
+const size_labels = [_][*:0]const u8{ "1", "2", "3", "4", "6", "8", "12", "16", "24", "32", "48", "64" };
 comptime {
     if (size_labels.len != brush_zig.sizes.len) @compileError("a label for every brush size");
 }
@@ -309,7 +343,7 @@ const colours = [32]Pixel{
 const black_index = 0;
 const white_index = 1;
 
-/// The tools down the right, and the commands under them.
+/// The tools down the left, and the commands with them.
 /// In the order of `Tool`, which is the Tools menu's order too.
 const ToolEntry = struct { tool: Tool, glyph: u32, hint: Id, label: Id };
 const tools = [_]ToolEntry{
@@ -325,6 +359,7 @@ const tools = [_]ToolEntry{
     .{ .tool = .pick, .glyph = command.CMD_PICK_COLOUR, .hint = .MSG_TOOL_PICK, .label = .MSG_MENU_PICK },
     .{ .tool = .text, .glyph = command.CMD_TEXT, .hint = .MSG_TOOL_TEXT, .label = .MSG_MENU_TEXT },
     .{ .tool = .grab, .glyph = command.CMD_GRAB_BRUSH, .hint = .MSG_TOOL_GRAB, .label = .MSG_MENU_GRAB },
+    .{ .tool = .hand, .glyph = command.CMD_HAND, .hint = .MSG_TOOL_HAND, .label = .MSG_MENU_HAND },
 };
 comptime {
     for (tools, 0..) |entry, place| {
@@ -336,12 +371,29 @@ const buttons = [_]ButtonEntry{
     .{ .which = .filled, .glyph = command.CMD_FILLED, .hint = .MSG_FILLED_HINT, .kind = tb.TBKIND_TOGGLE },
     .{ .which = .undo, .glyph = command.CMD_UNDO, .hint = .MSG_UNDO_HINT },
     .{ .which = .redo, .glyph = command.CMD_REDO, .hint = .MSG_REDO_HINT },
-    .{ .which = .zoom_in, .glyph = command.CMD_ZOOM_IN, .hint = .MSG_ZOOM_IN_HINT },
     .{ .which = .zoom_out, .glyph = command.CMD_ZOOM_OUT, .hint = .MSG_ZOOM_OUT_HINT },
+    .{ .which = .zoom_in, .glyph = command.CMD_ZOOM_IN, .hint = .MSG_ZOOM_IN_HINT },
+    .{ .which = .fit, .glyph = command.CMD_ZOOM_FIT, .hint = .MSG_FIT_HINT },
+    .{ .which = .swap, .glyph = command.CMD_SWAP, .hint = .MSG_SWAP_HINT },
 };
 const filled_button = 0;
 const undo_button = 1;
 const redo_button = 2;
+/// The first buttons go under the tools; the zoom's above the picture,
+/// the swap beside the two colours.
+const column_buttons = 3;
+const zoom_out_button = 3;
+const zoom_in_button = 4;
+const fit_button = 5;
+const swap_button = 6;
+
+/// The side panel's sections, each a button over its gadgets that folds
+/// them away and unfolds them.
+const section_names = [_]Id{ .MSG_SECTION_BRUSH, .MSG_SECTION_COLOUR };
+const brush_section = 0;
+const colour_section = 1;
+/// The largest brush the panel's slider sets.
+const panel_brush_max = brush_zig.max_size;
 
 /// The keys that choose a tool.
 const ToolKey = struct { key: u32, tool: Tool };
@@ -422,7 +474,7 @@ fn toolItems() [tools.len]MenuEntry {
 const bar = MenuEntry{ .menu = .{ .type = mn.NM_ITEM, .label = mn.NM_BARLABEL } };
 
 const menus = [_]MenuEntry{
-    menuTitle(.MSG_MENU_PROJECT),
+    menuTitle(.MSG_MENU_FILE),
     item(.MSG_MENU_NEW, "N", .new),
     item(.MSG_MENU_OPEN, "O", .open),
     bar,
@@ -440,12 +492,6 @@ const menus = [_]MenuEntry{
 } ++ toolItems() ++ [_]MenuEntry{
     bar,
     toggleItem(.MSG_MENU_FILLED, null, .filled),
-    menuTitle(.MSG_MENU_VIEW),
-    item(.MSG_MENU_ZOOM_IN, "+", .zoom_in),
-    item(.MSG_MENU_ZOOM_OUT, "-", .zoom_out),
-    item(.MSG_MENU_ACTUAL_SIZE, "1", .actual_size),
-    bar,
-    toggleItem(.MSG_MENU_GRID, "G", .grid),
     menuTitle(.MSG_MENU_BRUSH),
     // Round, Square and Own Brush, the first three, rule each other out;
     // so do the two ways an own brush goes down, the ninth and tenth.
@@ -467,8 +513,17 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_OPEN_BRUSH, null, .open_brush),
     item(.MSG_MENU_SAVE_BRUSH, null, .save_brush),
-    menuTitle(.MSG_MENU_SETTINGS),
+    menuTitle(.MSG_MENU_VIEW),
+    item(.MSG_MENU_ZOOM_IN, "+", .zoom_in),
+    item(.MSG_MENU_ZOOM_OUT, "-", .zoom_out),
+    item(.MSG_MENU_ACTUAL_SIZE, "1", .actual_size),
+    item(.MSG_MENU_FIT, null, .fit),
+    bar,
+    toggleItem(.MSG_MENU_GRID, "G", .grid),
+    bar,
     toggleItem(.MSG_MENU_OWN_SCREEN, null, .own_screen),
+    menuTitle(.MSG_MENU_HELP),
+    item(.MSG_MENU_ABOUT, null, .about),
     .{ .menu = .{} },
 };
 
@@ -509,10 +564,21 @@ const Gui = struct {
     colours: *Object = undefined,
     palette: *Object = undefined,
     status: *Object = undefined,
+    zoom_text: *Object = undefined,
     tool_buttons: [tools.len]*Object = undefined,
     command_buttons: [buttons.len]*Object = undefined,
-    vert: ?*Object = null,
-    horiz: ?*Object = null,
+    /// The side panel, its sections' buttons and what each folds away.
+    panel: *Object = undefined,
+    section_buttons: [section_names.len]*Object = undefined,
+    section_bodies: [section_names.len]*Object = undefined,
+    /// The brush's shape and size, and the foreground's wheel and its
+    /// brightness.
+    shape: *Object = undefined,
+    size: *Object = undefined,
+    wheel: *Object = undefined,
+    brightness: *Object = undefined,
+    /// The pictures of a section folded and unfolded.
+    fold_images: [2]?*Object = .{ null, null },
     strip: ?*intuition.Menu = null,
     /// Onto the view's and the colours' pictures.
     view_rp: *RastPort = undefined,
@@ -522,6 +588,12 @@ const Gui = struct {
     shown_menus: ?MenuState = null,
     shown_undo: ?[2]bool = null,
     shown_filled: ?bool = null,
+    /// What the panel and the zoom bar show, as last set.
+    shown_shape: ?u32 = null,
+    shown_size: ?u32 = null,
+    shown_size_off: ?bool = null,
+    shown_colour: ?Pixel = null,
+    shown_zoom: ?u32 = null,
     /// Whether the title shown has the mark of a change; null before the
     /// first, and when the file's name has changed.
     shown_changed: ?bool = null,
@@ -534,6 +606,7 @@ const Gui = struct {
         // The layout and every gadget in it go with the window object.
         ib.DisposeObject(gui.object);
         for (gui.images) |image| ib.DisposeObject(image);
+        for (gui.fold_images) |image| ib.DisposeObject(image);
         const screen = gui.screen orelse return;
         if (gui.draw_info) |info| ib.FreeScreenDrawInfo(screen, info);
         if (gui.own) _ = ib.CloseScreen(screen) else ib.UnlockPubScreen(null, screen);
@@ -673,6 +746,22 @@ const App = struct {
     own: bool = false,
     switch_wanted: bool = false,
     status: [128:0]u8 = @splat(0),
+    /// The zoom as the zoom bar says it.
+    zoom_line: [16:0]u8 = @splat(0),
+    /// The side panel's sections that are unfolded.
+    open_sections: [section_names.len]bool = @splat(true),
+    /// The brush's shapes as the panel's chooser lists them.
+    shape_labels: [3:null]?[*:0]const u8 = .{ null, null, null },
+    /// The brightness slider's colours: the foreground at its brightest,
+    /// then black.
+    shades: [3]graphics.Pen = .{ 0xFFFFFFFF, 0xFF000000, gs.GRAD_PEN_END },
+    /// Space is held: the picture moves under the pointer, as with the
+    /// hand.
+    space_held: bool = false,
+    /// Where a drag of the hand began in the view, and the view's corner
+    /// then.
+    pan_from: [2]i32 = .{ 0, 0 },
+    pan_start: [2]i32 = .{ 0, 0 },
 
     /// The window's state while it is open.
     fn ui(app: *App) ?*Gui {
@@ -773,7 +862,6 @@ const App = struct {
         }
         app.keepPath(name);
         app.writes_back = (project.kind == paintio.PIOKIND_PROJECT) == (formatOf(name) == .project);
-        app.followBars();
         return true;
     }
 
@@ -938,11 +1026,18 @@ const App = struct {
         _ = app.ib.GetAttr(cv.CANVAS_X, gui.view, &x);
         _ = app.ib.GetAttr(cv.CANVAS_Y, gui.view, &y);
         _ = app.ib.GetAttr(cv.CANVAS_Button, gui.view, &button);
-        const under = app.view.toPicture(@truncate(@as(isize, @bitCast(x))), @truncate(@as(isize, @bitCast(y))));
-        // Far past the picture is as good as just past it.
-        const at = Point{ @max(-max_side, @min(2 * max_side, under[0])), @max(-max_side, @min(2 * max_side, under[1])) };
+        const view_x: i32 = @truncate(@as(isize, @bitCast(x)));
+        const view_y: i32 = @truncate(@as(isize, @bitCast(y)));
         const first = !app.pressing;
         app.pressing = !final;
+        // The hand, or Space held: the picture moved, nothing painted.
+        if (app.tool == .hand or app.space_held) {
+            app.panTo(.{ view_x, view_y }, first);
+            return;
+        }
+        const under = app.view.toPicture(view_x, view_y);
+        // Far past the picture is as good as just past it.
+        const at = Point{ @max(-max_side, @min(2 * max_side, under[0])), @max(-max_side, @min(2 * max_side, under[1])) };
         const menu_button = button == cv.CANVAS_MENU;
         const colour = if (menu_button) app.background else app.foreground;
         app.at = at;
@@ -954,12 +1049,26 @@ const App = struct {
             .pick => if (final) app.pickAt(at, menu_button),
             .text => if (final) app.placeText(at, colour),
             .grab => app.grabTo(at, menu_button, first, final),
+            .hand => {},
         }
         // Let go, the pointer is where the brush is shown again.
         if (final) {
             app.hover = at;
             app.at = if (app.picture.inside(at[0], at[1])) at else null;
         }
+    }
+
+    /// The hand dragged from where it was pressed, `point` in the view:
+    /// the picture follows it.
+    fn panTo(app: *App, point: [2]i32, first: bool) void {
+        if (first) {
+            app.pan_from = point;
+            app.pan_start = .{ app.view.left, app.view.top };
+            return;
+        }
+        const was = [2]i32{ app.view.left, app.view.top };
+        app.view.panTo(app.pan_start, app.pan_from, point, app.picture.width, app.picture.height);
+        if (app.view.left != was[0] or app.view.top != was[1]) app.whole = true;
     }
 
     /// The brush as a stroke puts it down: an own brush in the stroke's
@@ -1230,7 +1339,7 @@ const App = struct {
     /// the brush down.
     fn pointerBrush(app: *const App) ?brush_zig.Ghost {
         const at = app.hover orelse return null;
-        if (app.pressing or app.drawing != null or app.gui == null) return null;
+        if (app.pressing or app.space_held or app.drawing != null or app.gui == null) return null;
         switch (app.tool) {
             .freehand, .dots, .line, .curve => {},
             .rectangle, .ellipse, .polygon => if (app.filled) return null,
@@ -1417,7 +1526,6 @@ const App = struct {
         }
         app.view.fit(app.picture.width, app.picture.height);
         app.whole = true;
-        app.followBars();
     }
 
     /// What is pending drawn into the canvas and shown, with the status
@@ -1453,40 +1561,8 @@ const App = struct {
         app.showStatus();
         app.syncMenus();
         app.syncButtons();
+        app.syncPanel();
         app.syncTitle();
-    }
-
-    /// The bars set from the view: the picture's pixels across and down,
-    /// those shown, and the first shown.
-    fn followBars(app: *App) void {
-        const gui = app.ui() orelse return;
-        const pairs = [_]struct { gadget: ?*Object, total: u32, visible: u32, top: i32 }{
-            .{ .gadget = gui.horiz, .total = app.picture.width, .visible = @min(app.view.columns(), app.picture.width), .top = app.view.left },
-            .{ .gadget = gui.vert, .total = app.picture.height, .visible = @min(app.view.rows(), app.picture.height), .top = app.view.top },
-        };
-        for (pairs) |pair| {
-            const gadget = pair.gadget orelse continue;
-            _ = app.ib.SetGadgetAttrsTagList(gadget, gui.window, &[_]TagItem{
-                .{ .tag = sr.SCROLLER_Total, .data = pair.total },
-                .{ .tag = sr.SCROLLER_Visible, .data = pair.visible },
-                .{ .tag = sr.SCROLLER_Top, .data = @intCast(pair.top) },
-                .{},
-            });
-        }
-    }
-
-    /// The view moved to where the bars are.
-    fn followScrollers(app: *App) void {
-        const gui = app.ui() orelse return;
-        var left: usize = @intCast(app.view.left);
-        var top: usize = @intCast(app.view.top);
-        if (gui.horiz) |scroller| _ = app.ib.GetAttr(sr.SCROLLER_Top, scroller, &left);
-        if (gui.vert) |scroller| _ = app.ib.GetAttr(sr.SCROLLER_Top, scroller, &top);
-        if (left == app.view.left and top == app.view.top) return;
-        app.view.left = @intCast(left);
-        app.view.top = @intCast(top);
-        app.view.fit(app.picture.width, app.picture.height);
-        app.whole = true;
     }
 
     /// The view scrolled by picture pixels.
@@ -1495,7 +1571,6 @@ const App = struct {
         app.view.top += down;
         app.view.fit(app.picture.width, app.picture.height);
         app.whole = true;
-        app.followBars();
     }
 
     /// The zoom changed about the view's middle.
@@ -1503,8 +1578,9 @@ const App = struct {
         if (zoom == app.view.zoom) return;
         app.view.zoomAt(zoom, @intCast(app.view.width / 2), @intCast(app.view.height / 2), app.picture.width, app.picture.height);
         app.whole = true;
-        app.followBars();
     }
+
+
 
     /// The two colours, the foreground in front of the background.
     fn drawColours(app: *App) void {
@@ -1605,6 +1681,105 @@ const App = struct {
         }
     }
 
+    /// The side panel and the zoom bar set from the brush, the foreground
+    /// and the zoom, where they changed.
+    fn syncPanel(app: *App) void {
+        const gui = app.ui() orelse return;
+        const shape: u32 = if (app.brush.own != null) 2 else if (app.brush.shape == .round) 0 else 1;
+        if (gui.shown_shape == null or gui.shown_shape.? != shape) {
+            gui.shown_shape = shape;
+            _ = app.ib.SetGadgetAttrsTagList(gui.shape, gui.window, &[_]TagItem{ .{ .tag = ch.CHOOSER_Active, .data = shape }, .{} });
+        }
+        // An own brush has a size of its own: the slider waits.
+        const size = @min(app.brush.size, panel_brush_max);
+        const size_off = app.brush.own != null;
+        if (gui.shown_size == null or gui.shown_size.? != size or gui.shown_size_off.? != size_off) {
+            gui.shown_size = size;
+            gui.shown_size_off = size_off;
+            _ = app.ib.SetGadgetAttrsTagList(gui.size, gui.window, &[_]TagItem{
+                .{ .tag = sl.SLIDER_Level, .data = size },
+                .{ .tag = gc.GA_Disabled, .data = @intFromBool(size_off) },
+                .{},
+            });
+        }
+        if (gui.shown_colour == null or gui.shown_colour.? != app.foreground) {
+            gui.shown_colour = app.foreground;
+            const rgb = wheelRGB(app.foreground);
+            _ = app.ib.SetGadgetAttrsTagList(gui.wheel, gui.window, &[_]TagItem{ .{ .tag = cw.WHEEL_RGB, .data = @intFromPtr(&rgb) }, .{} });
+            app.showShades();
+        }
+        if (gui.shown_zoom == null or gui.shown_zoom.? != app.view.zoom) {
+            gui.shown_zoom = app.view.zoom;
+            const made = app.text.format(&app.zoom_line, .MSG_ZOOM, .{@as(i64, app.view.zoom) * 100});
+            app.zoom_line[@min(made.len, app.zoom_line.len)] = 0;
+            _ = app.ib.SetGadgetAttrsTagList(gui.zoom_text, gui.window, &[_]TagItem{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&app.zoom_line) }, .{} });
+        }
+    }
+
+    /// The brightness slider running from the foreground at its brightest
+    /// to black.
+    fn showShades(app: *App) void {
+        const gui = app.ui() orelse return;
+        const brightest = brightestOf(app.foreground);
+        if (app.shades[0] == brightest) return;
+        app.shades[0] = brightest;
+        _ = app.ib.SetGadgetAttrsTagList(gui.brightness, gui.window, &[_]TagItem{ .{ .tag = gs.GRAD_PenArray, .data = @intFromPtr(&app.shades) }, .{} });
+    }
+
+    /// The foreground taken from the colour wheel and its brightness.
+    fn takeColour(app: *App) void {
+        const gui = app.ui() orelse return;
+        var rgb: cw.ColorWheelRGB align(@alignOf(usize)) = .{};
+        _ = app.ib.GetAttr(cw.WHEEL_RGB, gui.wheel, @ptrCast(&rgb));
+        const colour: Pixel = 0xFF00_0000 | (rgb.red >> 24) << 16 | (rgb.green >> 24) << 8 | rgb.blue >> 24;
+        if (colour == app.foreground) return;
+        app.foreground = colour;
+        // The wheel shows it already.
+        gui.shown_colour = colour;
+        app.showShades();
+        app.drawColours();
+        app.drawShape();
+    }
+
+    /// The brush's shape picked in the panel: an own brush only when
+    /// there is one, the chooser put back otherwise.
+    fn pickShape(app: *App, place: u32) void {
+        const which: Command = switch (place) {
+            0 => .round,
+            1 => .square,
+            else => .own_brush,
+        };
+        _ = app.perform(which);
+        if (app.ui()) |gui| gui.shown_shape = null;
+    }
+
+    /// The brush's size from the panel's slider: a built-in brush that
+    /// size.
+    fn sizeBrush(app: *App, level: u32) void {
+        const size = @max(1, @min(level, panel_brush_max));
+        if (app.brush.own != null or app.brush.size == size) return;
+        app.brush.size = size;
+        if (app.ui()) |gui| gui.shown_size = size;
+        app.drawShape();
+    }
+
+    /// A section of the side panel folded or unfolded, as its button
+    /// now is, and the window laid out again round it.
+    fn foldSection(app: *App, place: usize, open: bool) void {
+        const gui = app.ui() orelse return;
+        app.open_sections[place] = open;
+        _ = app.ib.SetGadgetAttrsTagList(gui.section_buttons[place], gui.window, &[_]TagItem{ .{ .tag = tb.TOOLBUTTON_Image, .data = @intFromPtr(gui.fold_images[@intFromBool(open)]) }, .{} });
+        _ = app.ib.SetGadgetAttrsTagList(gui.panel, gui.window, &[_]TagItem{
+            .{ .tag = lg.LAYOUTA_ModifyChild, .data = @intFromPtr(gui.section_bodies[place]) },
+            .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!open) },
+            .{},
+        });
+        // Laid out again, the picture's box with it.
+        var again = wc.WmRethink{};
+        _ = app.ib.SendMessage(gui.object, @ptrCast(&again));
+        app.fitView();
+    }
+
     /// The tool chosen, its button down and the others up; a shape
     /// being drawn is done first. The airbrush keeps spraying where the
     /// pointer is held, so the picture tells it at every tick then.
@@ -1669,7 +1844,6 @@ const App = struct {
             .new => if (app.mayLeave()) {
                 if (app.askSize()) |size| {
                     if (app.newPicture(size[0], size[1])) app.forgetPath() else app.tellSize(.MSG_NO_PICTURE, size);
-                    app.followBars();
                 }
             },
             .open => if (app.mayLeave()) {
@@ -1700,6 +1874,8 @@ const App = struct {
             .zoom_in => app.zoomTo(app.view.nextZoom(true)),
             .zoom_out => app.zoomTo(app.view.nextZoom(false)),
             .actual_size => app.zoomTo(1),
+            .fit => app.zoomTo(app.view.fitZoom(app.picture.width, app.picture.height)),
+            .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
                 app.whole = true;
@@ -1769,6 +1945,9 @@ const App = struct {
             // away.
             '\r' => app.endShape(),
             0x1B => _ = app.cancelShape(),
+            // Space held moves the picture; its release comes as a raw
+            // key.
+            ' ' => app.space_held = true,
             else => for (tool_keys) |pair| if (pair.key == code) {
                 app.chooseTool(pair.tool);
                 break;
@@ -1785,6 +1964,7 @@ const App = struct {
             raw_down => app.scrollBy(0, down),
             raw_left => app.scrollBy(-across, 0),
             raw_right => app.scrollBy(across, 0),
+            raw_space | raw_released => app.space_held = false,
             else => {},
         }
     }
@@ -1825,6 +2005,15 @@ const App = struct {
         comptime sdk.exec.checkFormat(strings.builtin(.MSG_NO_PART), struct { [*:0]const u8 });
         const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(.MSG_NO_PART), .gadget_format = app.text.get(.MSG_OK) };
         const args = [_]usize{@intFromPtr(name)};
+        _ = app.ib.EasyRequestArgs(gui.window, &easy, null, &args);
+    }
+
+    /// What Paint is, and its version.
+    fn about(app: *App) void {
+        const gui = app.ui() orelse return;
+        comptime sdk.exec.checkFormat(strings.builtin(.MSG_ABOUT), struct { [*:0]const u8 });
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(.MSG_ABOUT), .gadget_format = app.text.get(.MSG_OK) };
+        const args = [_]usize{@intFromPtr(VERSION)};
         _ = app.ib.EasyRequestArgs(gui.window, &easy, null, &args);
     }
 
@@ -2080,9 +2269,13 @@ const App = struct {
                     ID_VIEW => app.endStroke(),
                     ID_COLOURS => _ = app.perform(.swap),
                     ID_PALETTE => app.pickedColour(code),
-                    ID_VERT, ID_HORIZ => app.followScrollers(),
+                    ID_SHAPE => app.pickShape(code),
+                    ID_SIZE => app.sizeBrush(code),
+                    ID_WHEEL, ID_BRIGHTNESS => app.takeColour(),
                     else => |id| {
-                        if (Tool.of(id)) |tool| {
+                        if (id >= ID_SECTION and id < ID_SECTION + section_names.len) {
+                            app.foldSection(id - ID_SECTION, code != 0);
+                        } else if (Tool.of(id)) |tool| {
                             app.chooseTool(tool);
                         } else if (id == Command.filled.id()) {
                             // The button has turned itself.
@@ -2096,10 +2289,16 @@ const App = struct {
                         }
                     },
                 },
-                // The pointer on the picture, or a bar moved.
+                // The pointer on the picture, the size's slider or the
+                // colour's wheel moved.
                 wc.WMHI_IDCMPUPDATE => switch (gadget) {
                     ID_VIEW => app.paintTo(qualifier & ie.IEQUALIFIER_REPEAT == 0),
-                    ID_VERT, ID_HORIZ => app.followScrollers(),
+                    ID_SIZE => {
+                        var level: usize = 0;
+                        _ = app.ib.GetAttr(sl.SLIDER_Level, gui.size, &level);
+                        app.sizeBrush(@truncate(level));
+                    },
+                    ID_WHEEL, ID_BRIGHTNESS => app.takeColour(),
                     else => {},
                 },
                 wc.WMHI_VANILLAKEY => app.keyed(@truncate(word & wc.WMHI_KEYMASK)),
@@ -2116,6 +2315,7 @@ const App = struct {
                     app.letGo();
                     app.hover = null;
                     app.at = null;
+                    app.space_held = false;
                 },
                 else => {},
             }
@@ -2202,114 +2402,237 @@ const App = struct {
             copyName(&app.font_name, name);
         }
 
-        // The pictures of the tools and the commands.
+        // The pictures of the tools and the commands, and of a section
+        // folded and unfolded.
         for (tools, 0..) |entry, place| gui.images[place] = glyph(ib, entry.glyph);
         for (buttons, tools.len..) |entry, place| gui.images[place] = glyph(ib, entry.glyph);
+        gui.fold_images = .{ glyph(ib, command.CMD_FOLDED), glyph(ib, command.CMD_UNFOLDED) };
+        for (&app.shape_labels, [_]Id{ .MSG_MENU_ROUND, .MSG_MENU_SQUARE, .MSG_MENU_OWN_BRUSH }) |*label, id| label.* = app.text.get(id);
 
-        // The gadgets; each one the program's to dispose of until a layout
-        // takes it.
-        var made: [tools.len + buttons.len + 4]?*Object = @splat(null);
-        for (tools, 0..) |entry, place| made[place] = toolButton(ib, entry.tool.id(), gui.images[place], app.text.get(entry.hint), tb.TBKIND_TOGGLE);
-        for (buttons, tools.len..) |entry, place| made[place] = toolButton(ib, entry.which.id(), gui.images[place], app.text.get(entry.hint), entry.kind);
-        const others = tools.len + buttons.len;
-        made[others] = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
+        // The gadgets, the program's to dispose of until a layout takes
+        // them.
+        var made = Builder{ .ib = ib };
+        var tool_gadgets: [tools.len]?*Object = undefined;
+        for (tools, 0..) |entry, place| tool_gadgets[place] = made.take(toolButton(ib, entry.tool.id(), gui.images[place], app.text.get(entry.hint), tb.TBKIND_TOGGLE));
+        var button_gadgets: [buttons.len]?*Object = undefined;
+        for (buttons, 0..) |entry, place| button_gadgets[place] = made.take(toolButton(ib, entry.which.id(), gui.images[tools.len + place], app.text.get(entry.hint), entry.kind));
+        var section_gadgets: [section_names.len]?*Object = undefined;
+        for (section_names, 0..) |name, place| {
+            const open = app.open_sections[place];
+            section_gadgets[place] = made.take(sectionButton(ib, ID_SECTION + @as(u32, @intCast(place)), gui.fold_images[@intFromBool(open)], app.text.get(name), open));
+        }
+        const view = made.take(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_VIEW },
             .{ .tag = gc.GA_MenuButton, .data = 1 },
             .{ .tag = gc.GA_RelVerify, .data = 1 },
             .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
             .{},
-        });
-        made[others + 1] = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
+        }));
+        const colours_box = made.take(ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_COLOURS },
             .{ .tag = gc.GA_RelVerify, .data = 1 },
             .{ .tag = cv.CANVAS_Width, .data = 30 },
             .{ .tag = cv.CANVAS_Height, .data = 30 },
             .{},
-        });
-        made[others + 2] = ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
+        }));
+        const palette = made.take(ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_PALETTE },
             .{ .tag = gc.GA_MenuButton, .data = 1 },
             .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&app.palette) },
             .{ .tag = pa.PALETTE_NumColors, .data = app.palette.len },
             .{ .tag = pa.PALETTE_Color, .data = app.foreground_index },
             .{},
-        });
-        made[others + 3] = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        }));
+        const status = made.take(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_STATUS },
             .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&app.status) },
             .{ .tag = tx.TEXT_RoomFor, .data = @intFromPtr("16384 x 16384   16:1   brush 1024 x 1024   at -00000, -00000") },
             .{},
-        });
-        for (made) |one| if (one == null) {
-            for (made) |gadget| ib.DisposeObject(gadget);
+        }));
+        const zoom_text = made.take(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_ZOOM },
+            .{ .tag = tx.TEXT_Text, .data = @intFromPtr(&app.zoom_line) },
+            .{ .tag = tx.TEXT_RoomFor, .data = @intFromPtr("1600 %") },
+            .{ .tag = tx.TEXT_Justification, .data = tx.TEXT_JUSTIFY_CENTER },
+            .{},
+        }));
+        const shape = made.take(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_SHAPE },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&app.shape_labels) },
+            .{ .tag = ch.CHOOSER_Active, .data = 0 },
+            .{},
+        }));
+        const size = made.take(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_SIZE },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{ .tag = sl.SLIDER_Min, .data = 1 },
+            .{ .tag = sl.SLIDER_Max, .data = panel_brush_max },
+            .{ .tag = sl.SLIDER_Level, .data = @min(app.brush.size, panel_brush_max) },
+            .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld") },
+            .{ .tag = sl.SLIDER_LevelPlace, .data = sl.SLIDER_PLACE_RIGHT },
+            .{ .tag = sl.SLIDER_MaxLevelLen, .data = 2 },
+            .{},
+        }));
+        app.shades[0] = brightestOf(app.foreground);
+        const brightness = made.take(ib.NewObjectTagList(null, gs.GRAD_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_BRIGHTNESS },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{ .tag = sdk.intuition.propgclass.PGA_Freedom, .data = sdk.intuition.propgclass.FREEVERT },
+            .{ .tag = gc.GA_Width, .data = 18 },
+            .{ .tag = gc.GA_Height, .data = 140 },
+            .{ .tag = gs.GRAD_PenArray, .data = @intFromPtr(&app.shades) },
+            .{ .tag = gs.GRAD_KnobPixels, .data = 7 },
+            .{},
+        }));
+        const rgb = wheelRGB(app.foreground);
+        const wheel = if (brightness) |slider| made.take(ib.NewObjectTagList(null, cw.WHEEL_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_WHEEL },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{ .tag = gc.GA_Width, .data = 140 },
+            .{ .tag = gc.GA_Height, .data = 140 },
+            .{ .tag = cw.WHEEL_RGB, .data = @intFromPtr(&rgb) },
+            .{ .tag = cw.WHEEL_GradientSlider, .data = @intFromPtr(slider) },
+            .{},
+        })) else null;
+        if (made.failed) {
+            made.drop();
             return false;
-        };
-        for (0..tools.len) |place| gui.tool_buttons[place] = made[place].?;
-        for (0..buttons.len) |place| gui.command_buttons[place] = made[tools.len + place].?;
-        gui.view = made[others].?;
-        gui.colours = made[others + 1].?;
-        gui.palette = made[others + 2].?;
-        gui.status = made[others + 3].?;
+        }
 
-        // The tools two to a row; the picture and the tools side by side;
-        // the colours and the status under them.
-        var tool_tags: [tools.len + buttons.len + 4]TagItem = undefined;
-        tool_tags[0] = .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_GRID };
-        tool_tags[1] = .{ .tag = lg.LAYOUTA_Columns, .data = 2 };
-        tool_tags[2] = .{ .tag = lg.LAYOUTA_Spacing, .data = 2 };
-        for (0..others) |place| tool_tags[3 + place] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(made[place]) };
-        tool_tags[3 + others] = .{};
-        const tool_layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &tool_tags) orelse {
-            for (made) |gadget| ib.DisposeObject(gadget);
-            return false;
-        };
-        const upper = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        // Down the left: the tools, the filling, Undo and Redo two to a
+        // row, the two colours and the swap, and the palette under them.
+        var grid_tags: [3 + tools.len + column_buttons + 1]TagItem = undefined;
+        grid_tags[0] = .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_GRID };
+        grid_tags[1] = .{ .tag = lg.LAYOUTA_Columns, .data = 2 };
+        grid_tags[2] = .{ .tag = lg.LAYOUTA_Spacing, .data = 2 };
+        for (tool_gadgets, 3..) |gadget, place| grid_tags[place] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gadget) };
+        for (button_gadgets[0..column_buttons], 3 + tools.len..) |gadget, place| grid_tags[place] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gadget) };
+        grid_tags[grid_tags.len - 1] = .{};
+        const tool_grid = made.layout(&grid_tags);
+        const colour_row = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
-            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gui.view) },
-            .{ .tag = lg.CHILDA_WeightWidth, .data = 1 },
-            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(tool_layout) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(colours_box) },
             .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
-            .{ .tag = lg.CHILDA_Align, .data = lg.CALIGN_TOP },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button_gadgets[swap_button]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
             .{},
-        }) orelse {
-            ib.DisposeObject(tool_layout);
-            for (made[others..]) |gadget| ib.DisposeObject(gadget);
-            return false;
-        };
-        const lower = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        });
+        const column = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(tool_grid) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(colour_row) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(palette) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddSpace, .data = 0 },
+            .{},
+        });
+
+        // Beside them the side panel: each section's button over what it
+        // folds away, the sections at the top.
+        const brush_body = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(shape) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(size) },
+            .{},
+        });
+        const colour_body = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(wheel) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(brightness) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{},
+        });
+        const panel = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(section_gadgets[brush_section]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(brush_body) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!app.open_sections[brush_section]) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(section_gadgets[colour_section]) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(colour_body) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.CHILDA_Hidden, .data = @intFromBool(!app.open_sections[colour_section]) },
+            .{ .tag = lg.LAYOUTA_AddSpace, .data = 0 },
+            .{},
+        });
+
+        // The picture, under the zoom bar.
+        const zoom_bar = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button_gadgets[zoom_out_button]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(zoom_text) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button_gadgets[zoom_in_button]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(button_gadgets[fit_button]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddSpace, .data = 0 },
+            .{},
+        });
+        const centre = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 2 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(zoom_bar) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(view) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 1 },
+            .{},
+        });
+        const main_row = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
-            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gui.colours) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(column) },
             .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
-            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gui.palette) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(panel) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(centre) },
             .{ .tag = lg.CHILDA_WeightWidth, .data = 1 },
-            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(gui.status) },
-            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
             .{},
-        }) orelse {
-            ib.DisposeObject(upper);
-            for (made[others + 1 ..]) |gadget| ib.DisposeObject(gadget);
-            return false;
-        };
-        const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        });
+        const layout = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Margin, .data = 2 },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 4 },
-            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(upper) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(main_row) },
             .{ .tag = lg.CHILDA_WeightHeight, .data = 1 },
-            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(lower) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(status) },
             .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
             .{},
         }) orelse {
-            ib.DisposeObject(upper);
-            ib.DisposeObject(lower);
+            made.drop();
             return false;
         };
+        for (tool_gadgets, &gui.tool_buttons) |gadget, *slot| slot.* = gadget.?;
+        for (button_gadgets, &gui.command_buttons) |gadget, *slot| slot.* = gadget.?;
+        for (section_gadgets, &gui.section_buttons) |gadget, *slot| slot.* = gadget.?;
+        gui.section_bodies = .{ brush_body.?, colour_body.? };
+        gui.view = view.?;
+        gui.colours = colours_box.?;
+        gui.palette = palette.?;
+        gui.status = status.?;
+        gui.zoom_text = zoom_text.?;
+        gui.shape = shape.?;
+        gui.size = size.?;
+        gui.wheel = wheel.?;
+        gui.brightness = brightness.?;
+        gui.panel = panel.?;
 
         // On its own screen the window fills it under the bar, without a
-        // title or the gadgets that move it - not a backdrop, which has no
-        // sizing gadget and so no room for the bars in its borders; on the
-        // desktop's it takes most of the screen.
+        // border; on the desktop's it takes most of the screen.
         var screen_width: usize = 0;
         var screen_height: usize = 0;
         var bar_height: usize = 0;
@@ -2325,6 +2648,8 @@ const App = struct {
             .{ .tag = wn.WA_Top, .data = top },
             .{ .tag = wn.WA_Width, .data = screen_width },
             .{ .tag = wn.WA_Height, .data = screen_height -| top },
+            .{ .tag = wn.WA_Borderless, .data = 1 },
+            .{ .tag = sdk.utility.TAG_IGNORE, .data = 0 },
             .{ .tag = sdk.utility.TAG_IGNORE, .data = 0 },
             .{ .tag = sdk.utility.TAG_IGNORE, .data = 0 },
             .{ .tag = sdk.utility.TAG_IGNORE, .data = 0 },
@@ -2339,12 +2664,15 @@ const App = struct {
             .{ .tag = wn.WA_CloseGadget, .data = 1 },
             .{ .tag = wn.WA_DragBar, .data = 1 },
             .{ .tag = wn.WA_DepthGadget, .data = 1 },
+            .{ .tag = wn.WA_SizeGadget, .data = 1 },
+            // No scroll bars: the sizing gadget in the bottom border, the
+            // right one thin.
+            .{ .tag = wn.WA_SizeBBottom, .data = 1 },
             .{ .tag = wn.WA_AutoAdjust, .data = 1 },
         };
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             screenTag(gui),
             .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
-            .{ .tag = wn.WA_SizeGadget, .data = 1 },
             .{ .tag = wn.WA_Activate, .data = 1 },
             // The pointer's moves: where the brush is shown.
             .{ .tag = wn.WA_ReportMouse, .data = 1 },
@@ -2353,34 +2681,17 @@ const App = struct {
             .{ .tag = wn.WA_MenuBar, .data = 1 },
             .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_INACTIVEWINDOW | wn.IDCMP_MOUSEMOVE },
             .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
-            // The bars tell the window as they move, and as they are let go.
-            .{ .tag = wc.WINDOWA_VertScroller, .data = @intFromPtr(&[_]TagItem{
-                .{ .tag = gc.GA_ID, .data = ID_VERT },
-                .{ .tag = gc.GA_RelVerify, .data = 1 },
-                .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
-                .{},
-            }) },
-            .{ .tag = wc.WINDOWA_HorizScroller, .data = @intFromPtr(&[_]TagItem{
-                .{ .tag = gc.GA_ID, .data = ID_HORIZ },
-                .{ .tag = gc.GA_RelVerify, .data = 1 },
-                .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
-                .{},
-            }) },
             .{ .tag = sdk.utility.TAG_MORE, .data = @intFromPtr(&place_tags) },
         }) orelse {
-            ib.DisposeObject(layout);
+            made.drop();
             return false;
         };
+        made.keep(layout);
         gui.object = object;
         var open = wc.WmOpen{};
         if (ib.SendMessage(object, @ptrCast(&open)) == 0) return false;
         gui.window = @ptrFromInt(windowOf(ib, object));
         var value: usize = 0;
-        _ = ib.GetAttr(wc.WINDOWA_VertScroller, object, &value);
-        gui.vert = @ptrFromInt(value);
-        value = 0;
-        _ = ib.GetAttr(wc.WINDOWA_HorizScroller, object, &value);
-        gui.horiz = @ptrFromInt(value);
         _ = ib.GetAttr(cv.CANVAS_RastPort, gui.colours, &value);
         gui.colours_rp = @ptrFromInt(value);
 
@@ -2461,6 +2772,99 @@ fn toolButton(ib: *IntuitionBase, id: u32, image: ?*Object, hint: [*:0]const u8,
         .{ .tag = tb.TOOLBUTTON_Hint, .data = @intFromPtr(hint) },
         .{},
     });
+}
+
+/// A section of the side panel's button: its name beside the picture of
+/// it folded or unfolded, on while the section is unfolded.
+fn sectionButton(ib: *IntuitionBase, id: u32, image: ?*Object, label: [*:0]const u8, open: bool) ?*Object {
+    return ib.NewObjectTagList(null, tb.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_ID, .data = id },
+        .{ .tag = if (image != null) tb.TOOLBUTTON_Image else sdk.utility.TAG_IGNORE, .data = @intFromPtr(image) },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(label) },
+        .{ .tag = tb.TOOLBUTTON_Size, .data = tb.TBSIZE_MEDIUM },
+        .{ .tag = tb.TOOLBUTTON_Kind, .data = tb.TBKIND_TOGGLE },
+        .{ .tag = tb.TOOLBUTTON_Checked, .data = @intFromBool(open) },
+        .{},
+    });
+}
+
+/// The gadgets of a window being made: each kept loose - the program's
+/// to dispose of - until a layout takes it, and the layouts the same
+/// until the window takes the outermost. Whatever is loose when making
+/// fails is disposed of.
+const Builder = struct {
+    ib: *IntuitionBase,
+    loose: [48]?*Object = @splat(null),
+    /// Something could not be made: nothing more is.
+    failed: bool = false,
+
+    /// A gadget made, or null when it could not be.
+    fn take(builder: *Builder, made: ?*Object) ?*Object {
+        const object = made orelse {
+            builder.failed = true;
+            return null;
+        };
+        for (&builder.loose) |*slot| {
+            if (slot.* == null) {
+                slot.* = object;
+                return object;
+            }
+        }
+        builder.failed = true;
+        builder.ib.DisposeObject(object);
+        return null;
+    }
+
+    /// A layout made of `tags`, which takes the children they add.
+    fn layout(builder: *Builder, tags: []const TagItem) ?*Object {
+        if (builder.failed) return null;
+        const made = builder.ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, tags.ptr) orelse {
+            builder.failed = true;
+            return null;
+        };
+        for (tags) |tag| {
+            if (tag.tag != lg.LAYOUTA_AddChild) continue;
+            for (&builder.loose) |*slot| {
+                if (slot.* != null and @intFromPtr(slot.*.?) == tag.data) slot.* = null;
+            }
+        }
+        return builder.take(made);
+    }
+
+    /// Something taken by what is not a layout: no longer loose.
+    fn keep(builder: *Builder, object: *Object) void {
+        for (&builder.loose) |*slot| {
+            if (slot.* == object) slot.* = null;
+        }
+    }
+
+    /// Whatever is loose disposed of.
+    fn drop(builder: *Builder) void {
+        for (&builder.loose) |*slot| {
+            builder.ib.DisposeObject(slot.*);
+            slot.* = null;
+        }
+    }
+};
+
+/// A colour as the colour wheel takes it.
+fn wheelRGB(colour: Pixel) cw.ColorWheelRGB {
+    return .{
+        .red = (colour >> 16 & 0xFF) * 0x0101_0101,
+        .green = (colour >> 8 & 0xFF) * 0x0101_0101,
+        .blue = (colour & 0xFF) * 0x0101_0101,
+    };
+}
+
+/// The colour at its brightest, its hue and saturation kept: white for
+/// black, which has neither.
+fn brightestOf(colour: Pixel) Pixel {
+    const red = colour >> 16 & 0xFF;
+    const green = colour >> 8 & 0xFF;
+    const blue = colour & 0xFF;
+    const most = @max(red, @max(green, blue));
+    if (most == 0) return 0xFFFF_FFFF;
+    return 0xFF00_0000 | (red * 255 / most) << 16 | (green * 255 / most) << 8 | blue * 255 / most;
 }
 
 fn textButton(ib: *IntuitionBase, label: [*:0]const u8, id: u32) ?*Object {
@@ -2608,7 +3012,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer text.close();
 
     // Opened until the end: what the window is made of.
-    const names = [_][*:0]const u8{ intuition.INTUITIONNAME, graphics.GRAPHICSNAME, cv.CANVAS_LIBRARY, pa.PALETTE_LIBRARY, tb.TOOLBUTTON_LIBRARY, tx.TEXT_LIBRARY, command.COMMAND_LIBRARY };
+    const names = [_][*:0]const u8{ intuition.INTUITIONNAME, graphics.GRAPHICSNAME, cv.CANVAS_LIBRARY, pa.PALETTE_LIBRARY, tb.TOOLBUTTON_LIBRARY, tx.TEXT_LIBRARY, command.COMMAND_LIBRARY, ch.CHOOSER_LIBRARY, sl.SLIDER_LIBRARY, cw.WHEEL_LIBRARY, gs.GRAD_LIBRARY };
     var libs: [names.len]?*exec.Library = @splat(null);
     defer for (libs) |lib| {
         if (lib) |opened| sys.CloseLibrary(opened);
