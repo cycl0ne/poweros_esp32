@@ -12,6 +12,8 @@
 //! target the pointer's place in the picture, and which button made the
 //! press: the menu button reaches it when it was made with
 //! `GA_MenuButton`, and a press ends on the release of its own button.
+//! With `CANVAS_Ticks` the ticks intuition sends the active gadget tell
+//! the place too.
 //!
 //! `OM_SET` of `CANVAS_Width` or `CANVAS_Height` makes the picture anew at
 //! the new size (0: the gadget's box, from the GadgetInfo when there is
@@ -47,11 +49,11 @@ const Pen = graphics.Pen;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
 /// 2.3: `CANVAS_Button`, and a press of the menu button ends on its own
-/// release.
+/// release. 2.4: `CANVAS_Ticks`.
 pub const Library = gadgets.ClassLibrary(.{
     .name = cv.CANVAS_CLASS,
     .version = 2,
-    .revision = 3,
+    .revision = 4,
     .date = "19.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
@@ -75,6 +77,8 @@ pub const Data = extern struct {
     last_y: i32 = 0,
     /// The button of the last press, `CANVAS_SELECT` or `CANVAS_MENU`.
     button: u32 = cv.CANVAS_SELECT,
+    /// `CANVAS_Ticks`: the ticks tell the place too, 0 or 1.
+    ticks: u32 = 0,
 };
 
 const default_width = 160;
@@ -227,6 +231,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             own.height = @max(if (asked_h != 0) asked_h else given_h, 1);
             own.nominal_width = own.width;
             own.nominal_height = own.height;
+            own.ticks = @intFromBool(ub.GetTagData(cv.CANVAS_Ticks, 0, new.attr_list) != 0);
             if (makePicture(gb, own.width, own.height, displayFormat(gb))) |picture| {
                 own.bitmap = picture.bitmap;
                 own.rast_port = picture.rast_port;
@@ -252,6 +257,9 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             const changed = ib.SendSuperMessage(cl, o, msg);
             const ub = base.utility_base;
+            if (ub.FindTagItem(cv.CANVAS_Ticks, set.attr_list)) |ticks| {
+                classes.instData(Data, cl, o.?).ticks = @intFromBool(ticks.data != 0);
+            }
             const width_item = ub.FindTagItem(cv.CANVAS_Width, set.attr_list);
             const height_item = ub.FindTagItem(cv.CANVAS_Height, set.attr_list);
             if (width_item == null and height_item == null) return changed;
@@ -285,6 +293,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 cv.CANVAS_X => get.storage.* = @bitCast(@as(isize, own.last_x)),
                 cv.CANVAS_Y => get.storage.* = @bitCast(@as(isize, own.last_y)),
                 cv.CANVAS_Button => get.storage.* = own.button,
+                cv.CANVAS_Ticks => get.storage.* = own.ticks,
                 else => return ib.SendSuperMessage(cl, o, msg),
             }
             return 1;
@@ -310,8 +319,12 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         gc.GM_HANDLEINPUT => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const e = in.event orelse return gc.GMR_MEACTIVE;
-            if (e.class != ie.IECLASS_NEWPOINTERPOS) return gc.GMR_MEACTIVE;
             const own = classes.instData(Data, cl, o.?);
+            if (e.class == ie.IECLASS_TIMER and own.ticks != 0) {
+                tell(base, own, o.?, in, classusr.OPUF_INTERIM);
+                return gc.GMR_MEACTIVE;
+            }
+            if (e.class != ie.IECLASS_NEWPOINTERPOS) return gc.GMR_MEACTIVE;
             const held = if (own.button == cv.CANVAS_MENU) ie.IECODE_RBUTTON else ie.IECODE_LBUTTON;
             if (e.code == held | ie.IECODE_UP_PREFIX) {
                 tell(base, own, o.?, in, 0);

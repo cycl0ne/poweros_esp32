@@ -24,6 +24,11 @@
 //! hears of the press, says the same in its qualifier
 //! (`IEQUALIFIER_RBUTTON`, read with `WINDOWA_Qualifier`).
 //!
+//! **A pointer held still.** Made or set with `CANVAS_Ticks`, the gadget
+//! tells the place again at each of intuition's ticks - ten a second -
+//! while it is pressed, whether the pointer moved or not: what a tool
+//! that keeps working where it is held, a spray, needs.
+//!
 //!   const canvas = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &.{
 //!       .{ .tag = cv.CANVAS_Width, .data = 200 },
 //!       .{ .tag = cv.CANVAS_Height, .data = 120 },
@@ -82,3 +87,8 @@ pub const CANVAS_Button = CANVAS_Dummy + 0x07;
 /// `CANVAS_Button`'s values.
 pub const CANVAS_SELECT: u32 = 0;
 pub const CANVAS_MENU: u32 = 1;
+
+/// bool: while pressed, the place told again, interim, at each of
+/// intuition's ticks - ten a second - as well as when the pointer moves.
+/// Made, set and read; off unless told. Since canvas.gadget 2.4.
+pub const CANVAS_Ticks = CANVAS_Dummy + 0x08;

@@ -2045,6 +2045,39 @@ test "canvas.gadget: a press of the menu button is told as one, and ends on its 
     try rig.down();
 }
 
+test "canvas.gadget: with CANVAS_Ticks a tick tells the place while pressed, without it nothing" {
+    var heard = Heard{ .tag = cv.CANVAS_X, .ib = undefined };
+    var rig = try Rig.up(&canvas.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const picture = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
+        .{ .tag = cv.CANVAS_Width, .data = 50 },
+        .{ .tag = cv.CANVAS_Height, .data = 40 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), attr(ib, picture, cv.CANVAS_Ticks));
+    const tick = ie.InputEvent{ .class = ie.IECLASS_TIMER };
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &press, 3, 4, &termination);
+    _ = ib.SendMessage(picture, @ptrCast(&down));
+    const before = heard.times;
+    var ticked = input(gc.GM_HANDLEINPUT, &tick, 3, 4, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&ticked)));
+    try testing.expectEqual(before, heard.times);
+
+    // Set while pressed: each tick tells the place, still active.
+    _ = ib.SetAttrsTagList(picture, &[_]TagItem{ .{ .tag = cv.CANVAS_Ticks, .data = 1 }, .{} });
+    try testing.expectEqual(@as(usize, 1), attr(ib, picture, cv.CANVAS_Ticks));
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&ticked)));
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&ticked)));
+    try testing.expectEqual(before + 2, heard.times);
+    try testing.expectEqual(@as(?usize, 3), heard.value);
+    var up = input(gc.GM_HANDLEINPUT, &release, 3, 4, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(picture, @ptrCast(&up)));
+    ib.DisposeObject(picture);
+    try rig.down();
+}
+
 test "canvas.gadget: the picture made anew at another size, 0 its box's, what fits of it kept" {
     var heard = Heard{ .tag = cv.CANVAS_X, .ib = undefined };
     var rig = try Rig.up(&canvas.Library.resident_tag, &heard);
