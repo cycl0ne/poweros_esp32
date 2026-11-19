@@ -89,6 +89,11 @@ pub fn draw(p: *Painter, glyph: u32) void {
         command.CMD_FILLED => drawFilled(p),
         command.CMD_LAYERS => drawLayers(p),
         command.CMD_STENCIL => drawStencil(p),
+        command.CMD_HAND => drawHand(p),
+        command.CMD_ZOOM_FIT => drawZoomFit(p),
+        command.CMD_SWAP => drawSwap(p),
+        command.CMD_FOLDED => drawFolded(p),
+        command.CMD_UNFOLDED => drawUnfolded(p),
         command.CMD_LAUNCHER => drawLauncher(p),
         else => {},
     }
@@ -722,6 +727,50 @@ noinline fn drawLayers(p: *Painter) void {
     for ([_]f32{ 52, 33, 14 }, [_]Hue{ .blue, .green, .orange }) |top, hue| {
         p.solid(&.{p.poly(&.{ .{ 50, top }, .{ 94, top + 17 }, .{ 50, top + 34 }, .{ 6, top + 17 } })}, hue, .{ .no_gloss = true });
     }
+}
+
+noinline fn drawHand(p: *Painter) void {
+    // The palm, four fingers standing up from it and the thumb out to
+    // the left, one shape.
+    p.solid(&.{
+        p.rr(28, 44, 82, 94, 14),
+        p.rr(28, 18, 40, 58, 6),
+        p.rr(42, 8, 54, 54, 6),
+        p.rr(56, 12, 68, 54, 6),
+        p.rr(70, 24, 82, 58, 6),
+        p.poly(&shapes.bar(36, 76, 12, 48, 13)),
+    }, .yellow, .{ .no_gloss = true });
+}
+
+noinline fn drawZoomFit(p: *Painter) void {
+    // The sheet, and the frame's corners round it.
+    p.solid(&.{p.rr(26, 26, 74, 74, 4)}, .paper, .{ .no_gloss = true });
+    p.solid(&.{
+        p.poly(&.{ .{ 4, 4 }, .{ 26, 4 }, .{ 26, 13 }, .{ 13, 13 }, .{ 13, 26 }, .{ 4, 26 } }),
+        p.poly(&.{ .{ 74, 4 }, .{ 96, 4 }, .{ 96, 26 }, .{ 87, 26 }, .{ 87, 13 }, .{ 74, 13 } }),
+        p.poly(&.{ .{ 4, 74 }, .{ 13, 74 }, .{ 13, 87 }, .{ 26, 87 }, .{ 26, 96 }, .{ 4, 96 } }),
+        p.poly(&.{ .{ 87, 74 }, .{ 96, 74 }, .{ 96, 96 }, .{ 74, 96 }, .{ 74, 87 }, .{ 87, 87 } }),
+    }, .blue, .{ .flat = true, .no_shadow = true });
+}
+
+noinline fn drawSwap(p: *Painter) void {
+    // One arrow to the right above, one to the left below.
+    p.solid(&.{
+        p.rr(8, 24, 68, 38, 0),
+        p.poly(&.{ .{ 64, 10 }, .{ 94, 31 }, .{ 64, 52 } }),
+    }, .blue, .{});
+    p.solid(&.{
+        p.rr(32, 62, 92, 76, 0),
+        p.poly(&.{ .{ 36, 48 }, .{ 6, 69 }, .{ 36, 90 } }),
+    }, .orange, .{});
+}
+
+noinline fn drawFolded(p: *Painter) void {
+    p.ink(&.{p.poly(&.{ .{ 32, 18 }, .{ 76, 50 }, .{ 32, 82 } })});
+}
+
+noinline fn drawUnfolded(p: *Painter) void {
+    p.ink(&.{p.poly(&.{ .{ 18, 32 }, .{ 82, 32 }, .{ 50, 76 } })});
 }
 
 noinline fn drawStencil(p: *Painter) void {

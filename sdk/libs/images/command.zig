@@ -23,7 +23,9 @@
 //! 1.8 icons laid out again as their window is sized. Since 1.9 a paint
 //! program's tools: a pencil, a brush, a line, a curve, a rectangle, an
 //! ellipse, a polygon, a fill, an airbrush, a dropper, text, a brush cut
-//! out, shapes filled, layers and a stencil.
+//! out, shapes filled, layers and a stencil. Since 1.10 what is round a
+//! paint program's picture: a hand that moves it, a frame it fits, two
+//! colours swapped, and a section folded and unfolded.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -226,5 +228,19 @@ pub const CMD_LAYERS: u32 = 70;
 /// A metal plate with a star cut out of it, blue showing through: a
 /// stencil. Since 1.9.
 pub const CMD_STENCIL: u32 = 71;
+/// An open hand, its fingers up and its thumb out: the view moved by
+/// dragging. Since 1.10.
+pub const CMD_HAND: u32 = 72;
+/// A sheet in the four corners of a frame: the picture made to fit the
+/// view. Since 1.10.
+pub const CMD_ZOOM_FIT: u32 = 73;
+/// Two arrows, one to the right above one to the left: two things
+/// swapped. Since 1.10.
+pub const CMD_SWAP: u32 = 74;
+/// A triangle pointing right, in the ink: a section folded away, which a
+/// press unfolds. Since 1.10.
+pub const CMD_FOLDED: u32 = 75;
+/// A triangle pointing down, in the ink: a section unfolded. Since 1.10.
+pub const CMD_UNFOLDED: u32 = 76;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_STENCIL;
+pub const CMD_LAST: u32 = CMD_UNFOLDED;
