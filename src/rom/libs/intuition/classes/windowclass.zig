@@ -27,8 +27,9 @@
 //! next step once the last step's message is back (input/_input.zig
 //! `pace`), so it waits for that drawing too. Closing the window replies
 //! one still held. What the word has no room for - the keys held with the
-//! message, the gadget it came from - is kept to be read
-//! (`WINDOWA_Qualifier`, `WINDOWA_GadgetID`); an update's `GA_ID` is read
+//! message, the gadget it came from, where the pointer was - is kept to
+//! be read (`WINDOWA_Qualifier`, `WINDOWA_GadgetID`, `WINDOWA_MouseX`,
+//! `WINDOWA_MouseY`); an update's `GA_ID` is read
 //! from its tag list before the reply, since the list goes with the
 //! message.
 //!
@@ -67,10 +68,14 @@ pub const Data = extern struct {
     title: ?[*:0]const u8 = null,
     /// The window while it is open.
     window: ?*intuition.Window = null,
-    /// What `WINDOWA_Qualifier` and `WINDOWA_GadgetID` read: the message
-    /// `WM_HANDLEINPUT` answered last.
+    /// What `WINDOWA_Qualifier` and `WINDOWA_GadgetID` read: of the
+    /// message `WM_HANDLEINPUT` answered last.
     qualifier: u32 = 0,
     gadget_id: usize = wc.WINDOW_NOGADGET,
+    /// What `WINDOWA_MouseX` and `WINDOWA_MouseY` read: where that
+    /// message says the pointer was.
+    mouse_x: i32 = 0,
+    mouse_y: i32 = 0,
     /// The `IDCMP_NEWSIZE` `WM_HANDLEINPUT` answered last, replied at its
     /// next call or when the window closes.
     held: ?*intuition.IntuiMessage = null,
@@ -346,6 +351,8 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
         const said = im.code;
         const address = im.iaddress;
         const qualifier = im.qualifier;
+        const mouse_x = im.mouse_x;
+        const mouse_y = im.mouse_y;
         // An update's tag list is the message's, and goes with the reply.
         const update_id: usize = if (class == wn.IDCMP_IDCMPUPDATE)
             ib.utility_base.GetTagData(gc.GA_ID, wc.WINDOW_NOGADGET, @ptrCast(@alignCast(address)))
@@ -354,6 +361,8 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
         if (class == wn.IDCMP_NEWSIZE) p.held = im else it.ReplyIMsg(im);
         p.qualifier = qualifier;
         p.gadget_id = wc.WINDOW_NOGADGET;
+        p.mouse_x = mouse_x;
+        p.mouse_y = mouse_y;
         // A key that works a gadget of the layout is that gadget's, not
         // the program's: what it did is reported in the gadget's name, or
         // not at all.
@@ -389,6 +398,7 @@ fn handleInput(ib: *IntuitionBase, p: *Data, code: ?*u32) usize {
             wn.IDCMP_MOUSEWHEEL => wc.WMHI_MOUSEWHEEL | (said & 0xFFFF),
             wn.IDCMP_USBCHANGE => wc.WMHI_USBCHANGE | (said & 0xFFFF),
             wn.IDCMP_CHANGEWINDOW => wc.WMHI_CHANGEWINDOW,
+            wn.IDCMP_MOUSEMOVE => wc.WMHI_MOUSEMOVE,
             else => continue,
         };
         if (code) |out| out.* = said;
@@ -464,6 +474,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 wn.WA_Title => get.storage.* = @intFromPtr(p.title),
                 wc.WINDOWA_Qualifier => get.storage.* = p.qualifier,
                 wc.WINDOWA_GadgetID => get.storage.* = p.gadget_id,
+                wc.WINDOWA_MouseX => get.storage.* = @bitCast(@as(isize, p.mouse_x)),
+                wc.WINDOWA_MouseY => get.storage.* = @bitCast(@as(isize, p.mouse_y)),
                 wc.WINDOWA_VertScroller => get.storage.* = @intFromPtr(p.vert),
                 wc.WINDOWA_HorizScroller => get.storage.* = @intFromPtr(p.horiz),
                 else => return it.SendSuperMessage(cl, o, msg),

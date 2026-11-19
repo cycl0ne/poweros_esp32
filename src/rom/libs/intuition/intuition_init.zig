@@ -287,7 +287,9 @@ pub const LIBRARY_VERSION = 0;
 /// gives a buffer made before the move to the screen's board.
 /// 104: a gadget made with GA_MenuButton takes the menu button pressed
 /// over it, as the select button presses it, and the menus stay shut.
-pub const LIBRARY_REVISION = 104;
+/// 105: windowclass's WMHI_MOUSEMOVE, and WINDOWA_MouseX and
+/// WINDOWA_MouseY, where the pointer was at the message answered last.
+pub const LIBRARY_REVISION = 105;
 const BUILD_DATE = "19.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

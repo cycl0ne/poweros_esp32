@@ -7546,6 +7546,60 @@ test "windowclass: a size is replied at the next WM_HANDLEINPUT, or when the win
     try tearDown(ib);
 }
 
+test "windowclass: the pointer's moves are WMHI_MOUSEMOVE, with where it is" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const ie = sdk.devices.inputevent;
+    const wn = intuition.windows;
+    const lg = intuition.layoutgclass;
+    const wc = intuition.windowclass;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 112, 56, .rgb565);
+
+    const layout = it.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(framedButton(ib, "OK", 1)) },
+        .{},
+    }).?;
+    const object = it.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 10 },
+        .{ .tag = wn.WA_Top, .data = 6 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_ReportMouse, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_MOUSEMOVE },
+        .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+        .{},
+    }).?;
+    var open = wc.WmOpen{};
+    const w: *intuition.Window = @ptrFromInt(it.SendMessage(object, @ptrCast(&open)));
+    var code: u32 = 0;
+    var handle = wc.WmHandleInput{ .code = &code };
+    while (it.SendMessage(object, @ptrCast(&handle)) != wc.WMHI_LASTMSG) {}
+
+    // A move over the window, and one past its left edge: each a word,
+    // and where the pointer was, from the window's corner.
+    var place: usize = 0;
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 30, 20);
+    try testing.expectEqual(wc.WMHI_MOUSEMOVE, it.SendMessage(object, @ptrCast(&handle)));
+    _ = it.GetAttr(wc.WINDOWA_MouseX, object, &place);
+    try testing.expectEqual(@as(isize, 20), @as(isize, @bitCast(place)));
+    _ = it.GetAttr(wc.WINDOWA_MouseY, object, &place);
+    try testing.expectEqual(@as(isize, 14), @as(isize, @bitCast(place)));
+    while (it.SendMessage(object, @ptrCast(&handle)) != wc.WMHI_LASTMSG) {}
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 4, 20);
+    try testing.expectEqual(wc.WMHI_MOUSEMOVE, it.SendMessage(object, @ptrCast(&handle)));
+    _ = it.GetAttr(wc.WINDOWA_MouseX, object, &place);
+    try testing.expectEqual(@as(isize, -6), @as(isize, @bitCast(place)));
+    while (it.SendMessage(object, @ptrCast(&handle)) != wc.WMHI_LASTMSG) {}
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    try testing.expect(it.LockPubScreen(null) == screen); // held open past the window
+    it.DisposeObject(object);
+    it.UnlockPubScreen(null, screen);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windowclass: a move is WMHI_CHANGEWINDOW, and the screen names its display" {
     const ib = try setUp();
     defer kexec.deinit();

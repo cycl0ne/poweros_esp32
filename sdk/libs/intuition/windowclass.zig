@@ -30,7 +30,8 @@
 //! `IDCMP_GADGETDOWN`, `IDCMP_MENUPICK` and `IDCMP_VANILLAKEY` whatever it
 //! is told; `WA_IDCMP` adds to them - `IDCMP_RAWKEY`, `IDCMP_NEWSIZE`,
 //! `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW`, `IDCMP_DISKINSERTED`,
-//! `IDCMP_DISKREMOVED` and `IDCMP_USBCHANGE` have words of their own.
+//! `IDCMP_DISKREMOVED`, `IDCMP_USBCHANGE` and `IDCMP_MOUSEMOVE` have words
+//! of their own.
 //!
 //! A character typed is offered to the layout first: the gadget whose
 //! `GA_Key` it is - the letter underlined in its label - is worked as a
@@ -41,9 +42,11 @@
 //!
 //! What the word leaves out of a message is read from the object after
 //! it: the keys held with it (`WINDOWA_Qualifier`) - so a program tells a
-//! Shift-click or Shift and a cursor key from the plain one - and which
+//! Shift-click or Shift and a cursor key from the plain one - which
 //! gadget it came from (`WINDOWA_GadgetID`), which is the one way to tell
-//! apart the `WMHI_IDCMPUPDATE`s of several gadgets that tell the window.
+//! apart the `WMHI_IDCMPUPDATE`s of several gadgets that tell the window,
+//! and where the pointer was (`WINDOWA_MouseX`, `WINDOWA_MouseY`), which
+//! is what a `WMHI_MOUSEMOVE` is about.
 //!
 //! A window that scrolls what it shows asks for scroll bars in its borders
 //! (`WINDOWA_VertScroller`, `WINDOWA_HorizScroller`): each is a
@@ -124,6 +127,12 @@ pub const WINDOWA_GadgetID = WINDOWA_Dummy + 0x05;
 /// `WM_OPEN` on - 0 before, or when scroller.gadget could not be opened.
 pub const WINDOWA_VertScroller = WINDOWA_Dummy + 0x06;
 pub const WINDOWA_HorizScroller = WINDOWA_Dummy + 0x07;
+/// Read only: where the pointer was when the message `WM_HANDLEINPUT`
+/// answered last was sent, in the window's pixels from its top left
+/// corner, the border included - left of or above the window negative.
+/// What a `WMHI_MOUSEMOVE` says. Since intuition 0.105.
+pub const WINDOWA_MouseX = WINDOWA_Dummy + 0x08;
+pub const WINDOWA_MouseY = WINDOWA_Dummy + 0x09;
 
 /// What `WINDOWA_GadgetID` reads for a message that came from no gadget.
 pub const WINDOW_NOGADGET: usize = ~@as(usize, 0);
@@ -222,3 +231,9 @@ pub const WMHI_USBCHANGE: usize = 15 << class_shift;
 /// program that hands the display something by where the window is - a
 /// film on a video layer - looks again. Since intuition 0.75.
 pub const WMHI_CHANGEWINDOW: usize = 16 << class_shift;
+/// The pointer moved (the window asked for `IDCMP_MOUSEMOVE` and to hear
+/// the pointer, `WA_ReportMouse`, or a gadget it holds follows the mouse):
+/// where to is `WINDOWA_MouseX` and `WINDOWA_MouseY`. A window that
+/// reports the mouse is told of every move while it is the active one,
+/// over it or not. Since intuition 0.105.
+pub const WMHI_MOUSEMOVE: usize = 17 << class_shift;

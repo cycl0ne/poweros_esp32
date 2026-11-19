@@ -540,6 +540,7 @@ up), what goes with it in the bits below.
 | `WMHI_ACTIVE`, `WMHI_INACTIVE` | active or not, with `IDCMP_ACTIVEWINDOW`, `IDCMP_INACTIVEWINDOW` | |
 | `WMHI_IDCMPUPDATE` | a gadget told the window, with `IDCMP_IDCMPUPDATE` | its `ICSPECIAL_CODE` |
 | `WMHI_MOUSEWHEEL` | the wheel, with `IDCMP_MOUSEWHEEL`, where no gadget took it | the notches down, as an `i16`'s bits; `code` has both directions |
+| `WMHI_MOUSEMOVE` | the pointer moved, with `IDCMP_MOUSEMOVE` and `WA_ReportMouse` - every move while the window is active, over it or not | |
 
 `WMHI_NEWPREFS`, `WMHI_DISKINSERTED` and `WMHI_DISKREMOVED` follow
 their classes too, and `WMHI_USBCHANGE` carries `IDCMP_USBCHANGE`'s code:
@@ -548,9 +549,11 @@ a USB device attached or detached.
 What the word has no room for is read from the object after it: the
 keys held with the message (`WINDOWA_Qualifier`, the
 `inputevent.IEQUALIFIER_*` bits) - which tells a Shift-click, or Shift
-and a cursor key, from the plain one - and the `GA_ID` of the gadget it
+and a cursor key, from the plain one - the `GA_ID` of the gadget it
 came from (`WINDOWA_GadgetID`), or `WINDOW_NOGADGET` for a message no
-gadget sent:
+gadget sent, and where the pointer was (`WINDOWA_MouseX`,
+`WINDOWA_MouseY`, from the window's top left corner, negative left of
+or above it), which is what a `WMHI_MOUSEMOVE` is about:
 
 ```zig
 const word = ib.SendMessage(object, @ptrCast(&handle));
