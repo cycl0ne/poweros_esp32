@@ -10,7 +10,9 @@
 //!
 //! A press on the field says the gadget takes text (`GFLG_TYPING`), so
 //! the on-screen keyboard comes up for it; a press on an arrow says it
-//! does not, so the keyboard stays away while the number is stepped.
+//! does not, so the keyboard stays away while the number is stepped. Made
+//! active with no press - `ActivateGadget`, or Tab arriving at it - it is
+//! the field that goes active, the number ready to be typed.
 //!
 //! The number this gadget keeps is the one that counts: a number typed is
 //! taken when the field is done with - brought into the range first - and
@@ -38,11 +40,12 @@ const Object = classes.Object;
 const TagItem = utility.TagItem;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// 1.3: made active with no press, the field takes the keys.
 pub const Library = gadgets.ClassLibrary(.{
     .name = ig.INTEGER_CLASS,
     .version = 1,
-    .revision = 2,
-    .date = "27.10.2026",
+    .revision = 3,
+    .date = "19.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -398,8 +401,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const own = classes.instData(Data, cl, o.?);
-            if (in.event == null) return gc.GMR_NOREUSE;
-            const which = partsOf(own, o.?, in.gadget_info).arrowAt(own, in.mouse.x, in.mouse.y);
+            // No press - ActivateGadget, or Tab - is the field's.
+            const which = if (in.event == null) NONE else partsOf(own, o.?, in.gadget_info).arrowAt(own, in.mouse.x, in.mouse.y);
             const g = gc.gadget(o.?);
             if (which == NONE) {
                 g.flags |= gc.GFLG_TYPING;

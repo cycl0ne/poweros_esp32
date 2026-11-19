@@ -2460,6 +2460,14 @@ test "integer.gadget: the arrows step the number, and a number typed is brought 
     var gone = gc.GpGoInactive{ .gadget_info = null, .abort = 0 };
     _ = ib.SendMessage(field, @ptrCast(&gone));
 
+    // Made active with no press - ActivateGadget, Tab - the field takes
+    // the keys rather than the gadget being done at once.
+    g.flags &= ~gc.GFLG_TYPING;
+    var given = gc.GpInput{ .method_id = gc.GM_GOACTIVE, .gadget_info = null, .event = null, .termination = &termination, .mouse = .{} };
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(field, @ptrCast(&given)));
+    try testing.expect(g.flags & gc.GFLG_TYPING != 0);
+    _ = ib.SendMessage(field, @ptrCast(&gone));
+
     // Made without arrows, it is as wide as the field alone.
     const plain = ib.NewObjectTagList(null, ig.INTEGER_CLASS, &[_]TagItem{
         .{ .tag = ig.INTEGER_Arrows, .data = 0 },

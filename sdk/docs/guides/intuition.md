@@ -836,7 +836,9 @@ kerns its letters or sets marks on them too (`TextOffsetToX`,
 `TextXToOffset`).
 `ActivateGadget` gives a gadget the keyboard without a press, and only in
 the active window; a window is not always active the moment it opens, so
-a program waits for `WMHI_ACTIVE` as above. A gadget that hands the
+a program waits for `WMHI_ACTIVE` as above. An `integer.gadget` given
+it so hands it to its number field, ready for a number to be typed. A
+gadget that hands the
 program a key it does not take - a textedit.gadget passing on a menu's
 shortcut or Control-C - lets the keyboard go, and the program gives it
 back with `ActivateGadget` once it has done what the key asked.
