@@ -1408,6 +1408,108 @@ test "image: a scale's size, and a side that follows the other in proportion" {
     try std.testing.expectEqual([2]u32{ 1280, 800 }, image_zig.proportioned(.{ 1280, 800 }, .{ 1280, 800 }));
 }
 
+test "transform: a shape sized by a corner and a side, moved, turned" {
+    const transform = @import("../transform.zig");
+    const lifted = Area{ .min_x = 10, .min_y = 20, .max_x = 30, .max_y = 60 };
+    const shape = transform.Shape.of(lifted);
+    try std.testing.expectEqual(transform.Spot{ 20, 40 }, shape.centre);
+    try std.testing.expectEqual(lifted, shape.area());
+
+    // A corner dragged: the opposite one stays.
+    const grown = transform.dragged(shape, .bottom_right, .{ 30, 60 }, .{ 40, 80 }, false);
+    try std.testing.expectEqual(transform.Spot{ 30, 60 }, grown.shown);
+    try std.testing.expectEqual(Area{ .min_x = 10, .min_y = 20, .max_x = 40, .max_y = 80 }, grown.area());
+    // With Shift the proportions stay, the larger change winning.
+    const kept = transform.dragged(shape, .bottom_right, .{ 30, 60 }, .{ 50, 62 }, true);
+    try std.testing.expectEqual(transform.Spot{ 40, 80 }, kept.shown);
+    // Past the opposite corner it turns over, never below a pixel.
+    const over = transform.dragged(shape, .top_left, .{ 10, 20 }, .{ 30, 60 }, false);
+    try std.testing.expectEqual(transform.Spot{ 1, 1 }, over.shown);
+    // A side's middle: only its own way.
+    const wider = transform.dragged(shape, .right, .{ 30, 40 }, .{ 50, 999 }, false);
+    try std.testing.expectEqual(Area{ .min_x = 10, .min_y = 20, .max_x = 50, .max_y = 60 }, wider.area());
+    // Inside, it moves.
+    const moved = transform.dragged(shape, .move, .{ 15, 25 }, .{ 20, 22 }, false);
+    try std.testing.expectEqual(Area{ .min_x = 15, .min_y = 17, .max_x = 35, .max_y = 57 }, moved.area());
+
+    // Outside, it turns: a quarter clockwise lays it on its side.
+    const turned = transform.dragged(shape, .turn, .{ 100, 40 }, .{ 20, 100 }, false);
+    try std.testing.expectEqual(@as(u32, 90), turned.degrees);
+    try std.testing.expectEqual(Area{ .min_x = 0, .min_y = 30, .max_x = 40, .max_y = 50 }, turned.area());
+    // With Shift in steps of 15 degrees.
+    const stepped = transform.dragged(shape, .turn, .{ 100, 40 }, .{ 100, 108 }, true);
+    try std.testing.expectEqual(@as(u32, 45), stepped.degrees);
+
+    // What a press takes.
+    try std.testing.expectEqual(transform.Grip.top_left, transform.gripAt(shape, .{ 11, 19 }, 2));
+    try std.testing.expectEqual(transform.Grip.bottom, transform.gripAt(shape, .{ 20, 61 }, 2));
+    try std.testing.expectEqual(transform.Grip.move, transform.gripAt(shape, .{ 25, 50 }, 2));
+    try std.testing.expectEqual(transform.Grip.turn, transform.gripAt(shape, .{ 50, 50 }, 2));
+}
+
+test "transform: the matrix takes the picture back to the lifted pixels" {
+    const transform = @import("../transform.zig");
+    const lifted = picture_zig.Area{ .min_x = 0, .min_y = 0, .max_x = 40, .max_y = 20 };
+    // Untouched, a pixel is its own.
+    const shape = transform.Shape.of(lifted);
+    const same = shape.matrix(0, 0);
+    try std.testing.expectEqual(@as(i32, 1 << 16), same.xx);
+    try std.testing.expectEqual(@as(i32, 0), same.xy);
+    try std.testing.expectEqual(@as(i32, 0), same.dx);
+    try std.testing.expectEqual(@as(i32, 0), same.dy);
+    // Turned and scaled, a point placed from the lifted pixels maps back
+    // to where it was in them.
+    var changed = shape;
+    changed.degrees = 30;
+    changed.shown = .{ 80, 10 };
+    changed.centre = .{ 100, 70 };
+    const left = 40;
+    const top = 30;
+    const matrix = changed.matrix(left, top);
+    for ([_]transform.Spot{ .{ 0, 0 }, .{ -40, -5 }, .{ 30, 4 } }) |spot| {
+        const placed = changed.place(spot);
+        const across = placed[0] - left;
+        const down = placed[1] - top;
+        const back_x = (@as(f32, @floatFromInt(matrix.xx)) * across + @as(f32, @floatFromInt(matrix.xy)) * down + @as(f32, @floatFromInt(matrix.dx))) / 65536;
+        const back_y = (@as(f32, @floatFromInt(matrix.yx)) * across + @as(f32, @floatFromInt(matrix.yy)) * down + @as(f32, @floatFromInt(matrix.dy))) / 65536;
+        try std.testing.expectApproxEqAbs(spot[0] / 2 + 20, back_x, 0.01);
+        try std.testing.expectApproxEqAbs(spot[1] * 2 + 10, back_y, 0.01);
+    }
+}
+
+test "transform: the frame marks its edges and handles on a row" {
+    const transform = @import("../transform.zig");
+    const shape = transform.Shape.of(.{ .min_x = 10, .min_y = 10, .max_x = 30, .max_y = 40 });
+    const frame = transform.Frame.of(shape, .{ 0, 0 }, 1);
+    var row = [_]u32{0x12345678} ** 40;
+    // The top edge, through its handles' middles: white edged in black.
+    frame.marks(10).lay(&row, 10, 0);
+    try std.testing.expectEqual(@as(u32, 0x12345678), row[6]);
+    try std.testing.expectEqual(@as(u32, 0xFF000000), row[7]);
+    for (row[8..13]) |pixel| try std.testing.expectEqual(@as(u32, 0xFFFFFFFF), pixel);
+    try std.testing.expectEqual(@as(u32, 0xFF000000), row[13]);
+    try std.testing.expect(row[14] == 0xFF000000 or row[14] == 0xFFFFFFFF);
+    try std.testing.expectEqual(@as(u32, 0x12345678), row[34]);
+    // A handle's top row is its black rim.
+    row = [_]u32{0x12345678} ** 40;
+    frame.marks(7).lay(&row, 7, 0);
+    for (row[7..14]) |pixel| try std.testing.expectEqual(@as(u32, 0xFF000000), pixel);
+    try std.testing.expectEqual(@as(u32, 0x12345678), row[14]);
+    // Down a side: the edge, and nothing between.
+    row = [_]u32{0x12345678} ** 40;
+    frame.marks(18).lay(&row, 18, 0);
+    try std.testing.expect(row[30] != 0x12345678);
+    try std.testing.expectEqual(@as(u32, 0x12345678), row[20]);
+    // A handle's middle row: white edged in black.
+    row = [_]u32{0x12345678} ** 40;
+    frame.marks(25).lay(&row, 25, 0);
+    try std.testing.expectEqual(@as(u32, 0xFF000000), row[27]);
+    try std.testing.expectEqual(@as(u32, 0xFFFFFFFF), row[30]);
+    try std.testing.expectEqual(@as(u32, 0xFF000000), row[33]);
+    // Far from it, nothing.
+    try std.testing.expectEqual(@as(u8, 0), frame.marks(50).count);
+}
+
 test "image: trimmed to what is unlike the top left corner" {
     const image_zig = @import("../image.zig");
     var pixels: [6 * 5]Pixel = @splat(7);

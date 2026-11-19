@@ -16,7 +16,10 @@
 //! black and four white along the view's diagonals, which shows on any
 //! colour and at any zoom. While the palette cycles, each pixel of a
 //! range's colours is shown as the colour that has turned onto its place
-//! (`turned`); the picture itself is left.
+//! (`turned`); the picture itself is left. While a free transform is
+//! under way its frame (`transform.Frame`) is laid over each row last,
+//! over the backdrop too, since what is turned or moved may reach past
+//! the picture.
 //!
 //! The view's rows are made here into the program's buffer, a band at a
 //! time, and the program writes them into the canvas with
@@ -29,6 +32,7 @@ const Area = picture_zig.Area;
 const Ghost = @import("brush.zig").Ghost;
 const Outline = @import("selection.zig").Outline;
 const Turned = @import("palette.zig").Turned;
+const Frame = @import("transform.zig").Frame;
 
 /// The zooms the view steps through.
 pub const zooms = [_]u32{ 1, 2, 3, 4, 6, 8, 12, 16 };
@@ -54,6 +58,9 @@ pub const View = struct {
     /// While the palette cycles, the colours shown in place of its
     /// ranges' own.
     turned: ?*const Turned = null,
+    /// A free transform's frame, in the view's pixels, while one is under
+    /// way.
+    frame: ?*const Frame = null,
 
     /// The picture's pixels across and down the view shows whole.
     pub fn columns(view: *const View) u32 {
@@ -149,14 +156,17 @@ pub const View = struct {
     }
 
     /// The view's row `y` from `min_x` to before `max_x`, into `out`, the
-    /// brush shown over it where `ghost` is and the edge of what
-    /// `outline` chooses.
+    /// brush shown over it where `ghost` is, the edge of what `outline`
+    /// chooses, and the transform's frame.
     pub fn row(view: *const View, picture: *const Picture, y: i32, min_x: i32, max_x: i32, out: []Pixel, ghost: ?*const Ghost, outline: ?*const Outline) void {
         const zoom: i32 = @intCast(view.zoom);
         const down = y - view.offset_y;
         const picture_y = view.top + @divFloor(down, zoom);
+        const shown = out[0..@intCast(max_x - min_x)];
+        const marks = if (view.frame) |frame| frame.marks(y) else null;
         if (down < 0 or picture_y >= picture.height) {
-            @memset(out[0..@intCast(max_x - min_x)], backdrop);
+            @memset(shown, backdrop);
+            if (marks) |*laid| laid.lay(shown, y, min_x);
             return;
         }
         const pixels = picture.row(@intCast(picture_y));
@@ -189,6 +199,7 @@ pub const View = struct {
             };
             out[at] = colour;
         }
+        if (marks) |*laid| laid.lay(shown, y, min_x);
     }
 };
 

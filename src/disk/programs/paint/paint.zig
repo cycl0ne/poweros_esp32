@@ -135,6 +135,15 @@
 //! painted anew from `kept` each time its sliders settle - the colours
 //! (`AdjustColours`), then blur and sharpening - cut to the selection
 //! and shown; OK records it as any change is, Cancel copies `kept` back.
+//! Free Transform (`freeTransform`) lifts what shows of the layer painted
+//! - of what is chosen of it - into a buffer of its own and leaves its
+//! place as a cut does (`leaveBehind`, from `kept`); its shape
+//! (transform.zig) changes with each press, and `showTransform` lays the
+//! lifted pixels over what is left through `TransformPixels`: the
+//! nearest pixel while it is dragged, mixed when it is taken. The view
+//! draws its frame. A transform is ended as a shape is: `endShape` takes
+//! it, one change recorded over where it was and where it went;
+//! `cancelShape` - Escape, Undo - copies `kept` back.
 //!
 //! **The palette** (palette.zig). The Palette menu edits it in a window
 //! of its own (`editPalette`, modal): a colour by red, green and blue,
@@ -206,9 +215,9 @@
 //!   Tools     the tools, Filled Shapes, Round Gradient
 //!   Layer     New Layer (L), Duplicate (D), Delete, Rename..., Move Up,
 //!             Move Down, Merge Down (M), Flip Horizontally, Flip
-//!             Vertically, Effects... (F), Add Mask (Show All, Hide All,
-//!             Show the Selection), Paint the Mask (E), Apply the Mask,
-//!             Delete the Mask
+//!             Vertically, Effects... (F), Free Transform (T), Add Mask
+//!             (Show All, Hide All, Show the Selection), Paint the Mask
+//!             (E), Apply the Mask, Delete the Mask
 //!   Selection Select (All, Pixels of the Layer, Pixels of the Colour,
 //!             See-through Pixels, Pixels Not in the Palette), Deselect,
 //!             Invert, Copy to Layer, Cut to Layer, Copy to Brush (B)
@@ -297,6 +306,7 @@ const fill_zig = @import("fill.zig");
 const layers_zig = @import("layers.zig");
 const palette_zig = @import("palette.zig");
 const gradient_zig = @import("gradient.zig");
+const transform_zig = @import("transform.zig");
 const image_zig = @import("image.zig");
 const selection_zig = @import("selection.zig");
 const Picture = picture_zig.Picture;
@@ -314,7 +324,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.12";
+const VERSION = "1.13";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -566,13 +576,14 @@ const Command = enum(u32) {
     flatten,
     picture_size,
     effects,
+    free_transform,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.effects)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.free_transform)) return null;
         return @enumFromInt(value);
     }
 };
@@ -822,6 +833,7 @@ const menus = [_]MenuEntry{
     item(.MSG_MENU_FLIP_ACROSS, null, .flip_layer_across),
     item(.MSG_MENU_FLIP_DOWN, null, .flip_layer_down),
     item(.MSG_MENU_EFFECTS, "F", .effects),
+    item(.MSG_MENU_FREE_TRANSFORM, "T", .free_transform),
     bar,
     .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_ADD_MASK) }, .text = .MSG_MENU_ADD_MASK },
     subItem(.MSG_MENU_MASK_SHOW_ALL, .mask_show_all),
@@ -1180,6 +1192,8 @@ const App = struct {
     canvas_place: u32 = 4,
     /// How Picture Size scales, as last asked.
     scaling: Scaling = .{},
+    /// The free transform under way, if one is.
+    transforming: ?Transforming = null,
     /// The picture pixel under the pointer while it is over the view and
     /// no button is down; null otherwise.
     hover: ?Point = null,
@@ -2722,6 +2736,192 @@ const App = struct {
         app.show(picture.whole());
     }
 
+    // --- the free transform ----------------------------------------------------
+
+    /// Layer → Free Transform: what shows of the layer painted - of what
+    /// is chosen of it when something is - lifted into a frame with
+    /// handles, the place it was left as a cut leaves it. Presses on the
+    /// picture then size, move and turn it (`transformTo`); Return or
+    /// any command that ends a shape takes it, Escape or Undo puts it
+    /// back.
+    fn freeTransform(app: *App) void {
+        app.endShape();
+        if (app.transforming != null) return;
+        _ = app.paintFX() orelse return;
+        const picture = &app.picture;
+        const box = if (app.selection.any()) app.selection.box.clip(picture.width, picture.height) else picture.whole();
+        const area = app.liftedArea(box);
+        if (area.isEmpty()) return;
+        const memory = app.sys.AllocVec(@as(usize, area.width()) * area.height() * @sizeOf(Pixel), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_NO_IMAGE_MEMORY);
+            return;
+        };
+        const lifted: [*]Pixel = @ptrCast(@alignCast(memory));
+        var at: usize = 0;
+        var y = area.min_y;
+        while (y < area.max_y) : (y += 1) {
+            var x = area.min_x;
+            while (x < area.max_x) : (x += 1) {
+                lifted[at] = app.liftedAt(x, y);
+                at += 1;
+            }
+        }
+        const shape = transform_zig.Shape.of(area);
+        // What it covered begins as where it was, so the first showing
+        // leaves that place as a cut does.
+        app.transforming = .{ .lifted = lifted, .memory = memory, .area = area, .shape = shape, .covered = area, .framed = area, .before = shape };
+        if (!app.showTransform(paintfx.PFXSCALE_HARD)) app.tell(.MSG_NO_IMAGE_MEMORY);
+    }
+
+    /// How much of the pixel (`x`, `y`) a transform lifts: all of it with
+    /// nothing chosen.
+    fn liftedPart(app: *const App, x: i32, y: i32) u8 {
+        return if (app.selection.any()) app.selection.at(x, y) else 255;
+    }
+
+    /// What a transform lifts of the pixel (`x`, `y`), as it was before.
+    fn liftedAt(app: *const App, x: i32, y: i32) Pixel {
+        return selection_zig.partOf(app.kept.get(@intCast(x), @intCast(y)), app.liftedPart(x, y));
+    }
+
+    /// The least area of `box` holding something a transform lifts: a
+    /// pixel that shows, chosen at least in part.
+    fn liftedArea(app: *const App, box: Area) Area {
+        var found = Area.none;
+        var y = box.min_y;
+        while (y < box.max_y) : (y += 1) {
+            var x = box.min_x;
+            while (x < box.max_x) : (x += 1) {
+                if (app.liftedAt(x, y) >> 24 == 0) continue;
+                found = found.add(.{ .min_x = x, .min_y = y, .max_x = x + 1, .max_y = y + 1 });
+            }
+        }
+        return if (found.isEmpty()) Area{} else found;
+    }
+
+    /// The layer painted over `area` as the transform leaves it: as it
+    /// was, with what was lifted taken away.
+    fn leaveBehind(app: *App, lifted_from: Area, area: Area) void {
+        const picture = &app.picture;
+        const cut = area.clip(picture.width, picture.height);
+        picture.copyArea(&app.kept, cut);
+        const empty = app.emptyColour();
+        var y = @max(cut.min_y, lifted_from.min_y);
+        while (y < @min(cut.max_y, lifted_from.max_y)) : (y += 1) {
+            var x = @max(cut.min_x, lifted_from.min_x);
+            while (x < @min(cut.max_x, lifted_from.max_x)) : (x += 1) {
+                const part = app.liftedPart(x, y);
+                if (part == 0) continue;
+                const place_x: u32 = @intCast(x);
+                const place_y: u32 = @intCast(y);
+                picture.set(place_x, place_y, selection_zig.takenFrom(app.kept.get(place_x, place_y), part, empty));
+            }
+        }
+    }
+
+    /// The layer painted shown with the transform's pixels in their
+    /// shape over what is left: each pixel the nearest lifted one
+    /// (`PFXSCALE_HARD`) while it is dragged, mixed (`PFXSCALE_SMOOTH`)
+    /// when it is taken. False when there was no memory for the pixels it
+    /// makes: the layer is left without them then.
+    fn showTransform(app: *App, how: u32) bool {
+        const moving = &(app.transforming orelse return false);
+        const fx: *PaintFXBase = @ptrCast(app.fx_lib orelse return false);
+        const picture = &app.picture;
+        const covered = moving.shape.area().clip(picture.width, picture.height);
+        app.leaveBehind(moving.area, moving.covered.add(covered));
+        // The frame shown round it, and taken from where it was.
+        const reach: i32 = @intCast(transform_zig.handle_half / app.view.zoom + 2);
+        const box = moving.shape.area();
+        const framed = Area{ .min_x = box.min_x - reach, .min_y = box.min_y - reach, .max_x = box.max_x + reach, .max_y = box.max_y + reach };
+        app.show(moving.framed.add(framed).add(moving.covered).add(covered));
+        moving.framed = framed;
+        moving.covered = covered;
+        if (covered.isEmpty()) return true;
+        const memory = app.sys.AllocVec(@as(usize, covered.width()) * covered.height() * @sizeOf(Pixel), exec.MEMF_ANY) orelse return false;
+        defer app.sys.FreeVec(memory);
+        const made: [*]Pixel = @ptrCast(@alignCast(memory));
+        const from = paintfx.Pixels{ .pixels = moving.lifted, .width = moving.area.width(), .height = moving.area.height(), .pitch = moving.area.width() };
+        const into = paintfx.Pixels{ .pixels = made, .width = covered.width(), .height = covered.height(), .pitch = covered.width() };
+        const matrix = moving.shape.matrix(covered.min_x, covered.min_y);
+        fx.TransformPixels(&from, &into, &matrix, how);
+        var at: usize = 0;
+        var y: u32 = @intCast(covered.min_y);
+        while (y < covered.max_y) : (y += 1) {
+            for (picture.row(y)[@intCast(covered.min_x)..@intCast(covered.max_x)]) |*pixel| {
+                pixel.* = brush_zig.overlay(made[at], pixel.*);
+                at += 1;
+            }
+        }
+        return true;
+    }
+
+    /// A press on the view, at its pixel (`view_x`, `view_y`), while a
+    /// transform is under way: on a handle it sizes the shape, inside it
+    /// moves it, outside it turns it - Shift keeping a corner's
+    /// proportions and turning in steps of 15 degrees.
+    fn transformTo(app: *App, view_x: i32, view_y: i32, first: bool) void {
+        const moving = &(app.transforming orelse return);
+        const zoom: f32 = @floatFromInt(app.view.zoom);
+        const point = transform_zig.Spot{
+            @as(f32, @floatFromInt(app.view.left)) + (@as(f32, @floatFromInt(view_x - app.view.offset_x)) + 0.5) / zoom,
+            @as(f32, @floatFromInt(app.view.top)) + (@as(f32, @floatFromInt(view_y - app.view.offset_y)) + 0.5) / zoom,
+        };
+        if (first) {
+            moving.grip = transform_zig.gripAt(moving.shape, point, @as(f32, handle_reach) / zoom);
+            moving.from = point;
+            moving.before = moving.shape;
+            return;
+        }
+        const keep = app.qualifier & (ie.IEQUALIFIER_LSHIFT | ie.IEQUALIFIER_RSHIFT) != 0;
+        const shape = transform_zig.dragged(moving.before, moving.grip, moving.from, point, keep);
+        if (shape.same(moving.shape)) return;
+        moving.shape = shape;
+        // Without memory the shape is shown when there is.
+        _ = app.showTransform(paintfx.PFXSCALE_HARD);
+    }
+
+    /// The transform taken: its pixels mixed into the layer painted in
+    /// their shape, one step to undo. What was chosen has moved, so
+    /// nothing is chosen after it.
+    fn takeTransform(app: *App) void {
+        const moving = app.transforming orelse return;
+        if (moving.shape.same(transform_zig.Shape.of(moving.area))) return app.dropTransform();
+        // Without memory for the mix the nearest pixels stay.
+        if (!app.showTransform(paintfx.PFXSCALE_SMOOTH)) app.tell(.MSG_NO_IMAGE_MEMORY);
+        const changed = moving.area.add(app.transforming.?.covered);
+        app.endTransform();
+        app.changed = true;
+        app.recordWhole(changed);
+        if (app.selection.any()) app.deselect();
+    }
+
+    /// The transform put away: the layer painted as it was.
+    fn dropTransform(app: *App) void {
+        const moving = app.transforming orelse return;
+        app.picture.copyArea(&app.kept, moving.area.add(moving.covered));
+        app.show(moving.area);
+        app.endTransform();
+    }
+
+    /// The transform's memory given back and its frame taken away.
+    fn endTransform(app: *App) void {
+        const moving = app.transforming orelse return;
+        app.sys.FreeVec(moving.memory);
+        app.show(moving.framed);
+        app.transforming = null;
+    }
+
+    /// A transform's frame in the view.
+    fn frameOf(app: *const App, shape: transform_zig.Shape) transform_zig.Frame {
+        const zoom: f32 = @floatFromInt(app.view.zoom);
+        const origin = transform_zig.Spot{
+            @as(f32, @floatFromInt(app.view.offset_x)) - @as(f32, @floatFromInt(app.view.left)) * zoom,
+            @as(f32, @floatFromInt(app.view.offset_y)) - @as(f32, @floatFromInt(app.view.top)) * zoom,
+        };
+        return transform_zig.Frame.of(shape, origin, zoom);
+    }
+
     /// The Effects window: its sliders change the layer painted - what
     /// is chosen of it - as they move, the picture showing it; OK keeps
     /// that, one step to undo, Cancel puts the layer back as it was.
@@ -3264,6 +3464,8 @@ const App = struct {
             app.panTo(.{ view_x, view_y }, first);
             return;
         }
+        // A transform under way takes every press, whatever the tool.
+        if (app.transforming != null) return app.transformTo(view_x, view_y, first);
         const under = app.view.toPicture(view_x, view_y);
         // Far past the picture is as good as just past it.
         const at = Point{ @max(-max_side, @min(2 * max_side, under[0])), @max(-max_side, @min(2 * max_side, under[1])) };
@@ -3487,6 +3689,7 @@ const App = struct {
     /// The shape done: a polygon closed, and what it covers kept for
     /// undoing.
     fn endShape(app: *App) void {
+        if (app.transforming != null) return app.takeTransform();
         // A brush's frame is never kept: it goes as it is. A gradient's
         // drag goes, and the gradient is laid.
         if (app.drawing) |drawing| if (drawing.tool == .grab or drawing.tool == .gradient) {
@@ -3532,6 +3735,10 @@ const App = struct {
 
     /// The shape put away, the picture as it was. False with none.
     fn cancelShape(app: *App) bool {
+        if (app.transforming != null) {
+            app.dropTransform();
+            return true;
+        }
         const drawing = app.drawing orelse return false;
         app.drawing = null;
         app.picture.copyArea(&app.kept, drawing.shown);
@@ -3665,7 +3872,7 @@ const App = struct {
     /// the brush down.
     fn pointerBrush(app: *const App) ?brush_zig.Ghost {
         const at = app.hover orelse return null;
-        if (app.pressing or app.space_held or app.drawing != null or app.gui == null) return null;
+        if (app.pressing or app.space_held or app.drawing != null or app.transforming != null or app.gui == null) return null;
         switch (app.tool) {
             .freehand, .dots, .line, .curve, .eraser => {},
             .rectangle, .ellipse, .polygon => if (app.filled) return null,
@@ -3868,6 +4075,7 @@ const App = struct {
     /// The outline to show: of the choice being made, or of the
     /// selection when it is to be shown; null for none.
     fn outlineShown(app: *const App) ?Outline {
+        if (app.transforming != null) return null;
         if (app.choosing) return if (app.scratch.box.isEmpty()) null else app.scratch.outline();
         if (!app.show_outline or !app.selection.any()) return null;
         return app.selection.outline();
@@ -3885,6 +4093,9 @@ const App = struct {
         app.stack.compose(app.pending);
         app.view.turned = if (app.cycling and !app.show_mask) &app.turned else null;
         const outline = app.outlineShown();
+        const frame = if (app.transforming) |moving| app.frameOf(moving.shape) else null;
+        app.view.frame = if (frame) |*shown| shown else null;
+        defer app.view.frame = null;
         const area = if (app.whole) Area{ .max_x = @intCast(app.view.width), .max_y = @intCast(app.view.height) } else app.view.toView(app.pending);
         app.whole = false;
         app.pending = Area.none;
@@ -4376,6 +4587,8 @@ const App = struct {
             .flatten => app.flatten(),
             .picture_size => app.pictureSize(),
             .effects => app.effects(),
+            // Asked again while one is under way, it takes it.
+            .free_transform => if (app.transforming != null) app.endShape() else app.freeTransform(),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -5555,8 +5768,30 @@ fn sizeOf(ib: *IntuitionBase, fields: [2]?*Object) [2]u32 {
     return .{ @truncate(width), @truncate(height) };
 }
 
-/// The size typed, and where the picture goes written to `where` when
-/// it was asked.
+/// How near to a handle, in view pixels, a press takes it.
+const handle_reach = 5;
+
+/// A free transform under way: the pixels lifted from the layer painted,
+/// where they were, the shape they have now, and the press that changes
+/// it.
+const Transforming = struct {
+    /// The lifted pixels, `area`'s size, a row after another.
+    lifted: [*]Pixel,
+    memory: *anyopaque,
+    /// Where they were lifted from.
+    area: Area,
+    shape: transform_zig.Shape,
+    /// What the shape covered of the picture, and the area round its
+    /// frame, as last shown.
+    covered: Area,
+    framed: Area,
+    /// The press under way: what it took, where it began, and the shape
+    /// then.
+    grip: transform_zig.Grip = .move,
+    from: transform_zig.Spot = .{ 0, 0 },
+    before: transform_zig.Shape,
+};
+
 /// What a size window asks besides the width and the height.
 const SizeQuestion = union(enum) {
     plain,
@@ -6080,6 +6315,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         app.freePicture();
         if (app.pio_lib) |lib| sys.CloseLibrary(lib);
         if (app.asl_lib) |lib| sys.CloseLibrary(lib);
+        if (app.transforming) |moving| sys.FreeVec(moving.memory);
         if (app.fx_lib) |lib| sys.CloseLibrary(lib);
     }
 

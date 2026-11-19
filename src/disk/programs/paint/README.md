@@ -218,6 +218,7 @@ leave the bottom layer the background colour and any other see-through.
 | Merge Down | `M` | the one painted laid into the one under it as it shows, and taken out |
 | Flip Horizontally, Flip Vertically | | the one painted, left to right, top to bottom, with its mask |
 | Effects... | `F` | the one painted - what is chosen of it - changed in colour, blurred or sharpened; see [Effects](#effects) |
+| Free Transform | `T` | the one painted - what is chosen of it - scaled, turned and moved in a frame; see [Free Transform](#free-transform) |
 | Add Mask → Show All, Hide All, Show the Selection | | a mask on the one painted, white, black, or as much as each pixel is chosen; the mask painted |
 | Paint the Mask | `E` | the mask painted, or the layer again |
 | Apply the Mask | | the layer left with only what the mask let show, and the mask taken off |
@@ -265,6 +266,28 @@ back; Reset sets every slider to none again.
 The colours change first, in the order of the table, then the blur, the
 sharpening and the texture. Colours are mixed by how much each shows,
 so a blur thins an edge into the see-through without darkening it.
+
+### Free Transform
+
+Layer → Free Transform lifts the layer painted - only what is chosen of
+it, when something is - into a frame with a handle at each corner and
+in the middle of each side; where it was is left as a cut leaves it,
+see-through, or the background colour on the bottom layer. Then, with
+any tool:
+
+| Press and drag | Does |
+|---|---|
+| a corner | the size, the opposite corner staying; with Shift the proportions too |
+| a side's middle | the size that way only, the opposite side staying |
+| inside the frame | moves it |
+| outside the frame | turns it round its middle; with Shift in steps of 15 degrees |
+
+While it is dragged, each pixel is the nearest one lifted, so it keeps
+up; once it is taken, the pixels are mixed, smooth along every edge.
+Return, Layer → Free Transform again, or anything that ends a shape -
+another tool, a command that changes the picture, Save - takes it, one
+step to undo; nothing is chosen after it. Escape or Undo puts the layer
+back as it was.
 
 ## Selections
 
@@ -429,7 +452,7 @@ see-through, when it is not the bottom one.
 
 ## Undo
 
-Every stroke, shape, fill, text and clear can be undone, with Edit →
+Every stroke, shape, fill, text, clear, effect and transform can be undone, with Edit →
 Undo or its tool, and done again with Redo - and every layer put in,
 deleted, moved, merged down or flipped, and every mask put on, applied
 or deleted; undone, the layer it touched is painted - in its mask, when
@@ -449,7 +472,7 @@ The letters are the items' keys, pressed with the right command key.
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
 | Image | Rotate (90° Clockwise, 90° Anticlockwise, 180°), Flip Horizontally, Flip Vertically, Crop to the Selection, Trim, Picture Size... (R), Canvas Size..., Flatten |
 | Tools | the tools; Filled Shapes, Round Gradient |
-| Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Effects... (F), Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
+| Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Effects... (F), Free Transform (T), Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
 | Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
 | Palette | Edit... (P), From the Picture, Presets (Paint's Own, Greys, Spectrum, Pastel, Earth), Reduce (No Dither, Ordered Dither, Error Diffusion), Cycle Colours, Open Palette..., Save Palette... |
