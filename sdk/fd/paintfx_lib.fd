@@ -1,0 +1,20 @@
+//! paintfx.library's functions: Paint's effects and transforms, worked on
+//! pixels in memory. It is Paint's own, in Paint's drawer, and Paint
+//! opens it by its path (sdk.paintfx.PAINTFXPATH). A call that needs
+//! memory answers 0, or ERROR_NO_FREE_STORE when there is none.
+##include libs/paintfx/paintfx as paintfx
+##basetype PaintFXBase
+##name paintfx.library
+##bias 4
+##public
+/// The pixels' colours changed in place, as `adjust` says.
+void AdjustColours(*const paintfx.Pixels pixels, *const paintfx.Adjust adjust)
+/// The pixels blurred over `radius` pixels into `into`, `from`'s size.
+i32 BlurPixels(*const paintfx.Pixels from, *const paintfx.Pixels into, u32 radius)
+/// The pixels sharpened: their difference from a blur over `radius` added, `amount` percent.
+i32 SharpenPixels(*const paintfx.Pixels from, *const paintfx.Pixels into, u32 amount, u32 radius)
+/// The pixels scaled to `into`'s size (PFXSCALE_*).
+i32 ScalePixels(*const paintfx.Pixels from, *const paintfx.Pixels into, u32 how)
+/// Each pixel of `into` taken from where `matrix` puts it in `from` (PFXSCALE_*).
+void TransformPixels(*const paintfx.Pixels from, *const paintfx.Pixels into, *const paintfx.Matrix matrix, u32 how)
+##end

@@ -1,0 +1,373 @@
+# paintfx.library
+
+paintfx.library's functions: Paint's effects and transforms, worked on
+pixels in memory. It is Paint's own, in Paint's drawer, and Paint
+opens it by its path (sdk.paintfx.PAINTFXPATH). A call that needs
+memory answers 0, or ERROR_NO_FREE_STORE when there is none.
+
+Generated from the source by `./zig build autodoc`.
+
+## Index
+
+- [AdjustColours](#adjustcolours) - Changes the colours of pixels in place: haze, balance, brightness, contrast, saturation, hue, sepia and inversion.
+- [BlurPixels](#blurpixels) - Blurs pixels, like a Gaussian whose spread is about `radius` pixels.
+- [ScalePixels](#scalepixels) - Scales pixels to another size: hard, each new pixel the nearest old one, or smooth.
+- [SharpenPixels](#sharpenpixels) - Sharpens pixels: each moved away from the blur of the pixels round it, by `amount` percent of the difference.
+- [TransformPixels](#transformpixels) - Fills pixels from other pixels through a matrix: a free rotation, a scale, a slant, or all of them.
+
+## AdjustColours
+
+Changes the colours of pixels in place: haze, balance, brightness, contrast, saturation, hue, sepia and inversion.
+
+**SYNOPSIS**
+
+```zig
+fn AdjustColours(base: *PaintFXBase, pixels: *const paintfx.Pixels, adjust: *const paintfx.Adjust) void
+```
+
+**SINCE**
+
+1.0. LVO -20.
+
+**INPUTS**
+
+- `pixels`: the pixels to change, `0xAARRGGBB`.
+- `adjust`: the changes, each 0 for none; a value past its range is
+  taken as the end of the range.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+Each pixel's red, green and blue go through the changes in the order
+of `paintfx.Adjust`'s fields; its alpha stays as it is.
+
+- `dehaze`: the level that the darkest of the three channels stays
+  above in all but a hundredth of the pixels that show (alpha 128 and
+  more) is the haze; that share of it is taken away from every
+  channel, and what is left stretched to the whole range again.
+- `red`, `green`, `blue`: towards full by that share of what is
+  missing, or towards none by that share of what is there.
+- `brightness`: up to 128 added or taken away.
+- `contrast`: the distance from the middle, 128, multiplied - by 0 at
+  -100, by about 130 at 100.
+- `saturation`, `hue`, `sepia`: one matrix on the three channels -
+  the colour moved from its grey (by the weights 0.213, 0.715 and
+  0.072) by 0 to 2 times, turned round that grey by whole degrees,
+  and mixed with its sepia tone.
+- `invert`: towards the opposite, 255 less the channel.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: not from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pixels stay the caller's.
+
+**NOTES**
+
+The haze is measured on these pixels each time, so a view of part of
+a picture lifts the haze of that part.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BlurPixels`, `SharpenPixels`
+
+**EXAMPLES**
+
+```zig
+const view = paintfx.Pixels{ .pixels = pixels, .width = 640, .height = 480, .pitch = 640 };
+fx.AdjustColours(&view, &.{ .brightness = 20, .saturation = -100 });
+```
+
+## BlurPixels
+
+Blurs pixels, like a Gaussian whose spread is about `radius` pixels.
+
+**SYNOPSIS**
+
+```zig
+fn BlurPixels(base: *PaintFXBase, from: *const paintfx.Pixels, into: *const paintfx.Pixels, radius: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -24.
+
+**INPUTS**
+
+- `from`: the pixels to blur.
+- `into`: where the blurred pixels go, as large as `from`; it may be
+  `from` itself.
+- `radius`: how far the blur reaches, in pixels; 0 copies.
+
+**RESULT**
+
+0, or `ERROR_NO_FREE_STORE` when there was no memory for the call's
+two lines - `into` is as it was then - or `ERROR_BAD_NUMBER` when
+`into` is not `from`'s size.
+
+**BEHAVIOR**
+
+Three box blurs of `radius` across each row, then three down each
+column, the colours weighted by their alpha: a see-through pixel
+thins its neighbours' alpha without darkening them. Past the edges
+the edge pixels stand in, so a picture does not darken towards its
+border.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: not from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pixels stay the caller's. The lines, two of weighted colours as
+long as the longer side, are the call's and freed before it answers.
+
+**NOTES**
+
+Between the passes the weighted colours are kept a byte each, so a
+colour whose alpha is low comes back a little coarser.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SharpenPixels`, `AdjustColours`
+
+**EXAMPLES**
+
+```zig
+const view = paintfx.Pixels{ .pixels = pixels, .width = 640, .height = 480, .pitch = 640 };
+if (fx.BlurPixels(&view, &view, 4) != 0) {
+    // no memory: the picture as it was
+}
+```
+
+## ScalePixels
+
+Scales pixels to another size: hard, each new pixel the nearest old one, or smooth.
+
+**SYNOPSIS**
+
+```zig
+fn ScalePixels(base: *PaintFXBase, from: *const paintfx.Pixels, into: *const paintfx.Pixels, how: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -32.
+
+**INPUTS**
+
+- `from`: the pixels to scale.
+- `into`: where they go, at its own width and height; not over
+  `from`.
+- `how`: `PFXSCALE_HARD` or `PFXSCALE_SMOOTH`.
+
+**RESULT**
+
+0, or `ERROR_NO_FREE_STORE` when a smooth scale had no memory for its
+copy - `into` is as it was then.
+
+**BEHAVIOR**
+
+Hard, each pixel of `into` is the pixel of `from` its centre falls
+on: the picture's own colours, its pixels grown into blocks or some
+of them left out. Smooth, each way on its own: where `into` is
+smaller, a pixel is the average of the part of `from` it covers,
+each old pixel counted by how much of it is covered; where it is
+larger, a mix of the two old pixels nearest its centre. Colours are
+weighted by their alpha in either.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: not from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pixels stay the caller's. A smooth scale's copy, `into`'s width
+by `from`'s height at four bytes a pixel, and two lines of weighted
+colours are the call's and freed before it answers.
+
+**NOTES**
+
+A smooth scale keeps its first pass a byte a channel, weighted, so a
+colour whose alpha is low comes back a little coarser.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`TransformPixels`
+
+**EXAMPLES**
+
+```zig
+const from = paintfx.Pixels{ .pixels = old, .width = 640, .height = 480, .pitch = 640 };
+const into = paintfx.Pixels{ .pixels = new, .width = 320, .height = 240, .pitch = 320 };
+if (fx.ScalePixels(&from, &into, paintfx.PFXSCALE_SMOOTH) != 0) {
+    // no memory
+}
+```
+
+## SharpenPixels
+
+Sharpens pixels: each moved away from the blur of the pixels round it, by `amount` percent of the difference.
+
+**SYNOPSIS**
+
+```zig
+fn SharpenPixels(base: *PaintFXBase, from: *const paintfx.Pixels, into: *const paintfx.Pixels, amount: u32, radius: u32) i32
+```
+
+**SINCE**
+
+1.0. LVO -28.
+
+**INPUTS**
+
+- `from`: the pixels to sharpen.
+- `into`: where the sharpened pixels go, as large as `from`; it may be
+  `from` itself.
+- `amount`: how much of the difference is added, in percent, up to
+  1000; 0 copies.
+- `radius`: the blur the pixels are compared with, as `BlurPixels`
+  takes it: 1 or 2 sharpens edges, 10 and more brings out texture
+  and local contrast.
+
+**RESULT**
+
+0, or `ERROR_NO_FREE_STORE` when there was no memory for the blurred
+copy - `into` is as it was then - or `ERROR_BAD_NUMBER` when `into`
+is not `from`'s size.
+
+**BEHAVIOR**
+
+`from` is blurred into a copy of the call's own; then each channel of
+each pixel becomes `c + (c - blurred) · amount / 100`, held to 0 to
+255. The alpha stays `from`'s.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: not from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pixels stay the caller's. The blurred copy, four bytes a pixel of
+`from`, is the call's and freed before it answers.
+
+**NOTES**
+
+A radius of 0 is taken as 1.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`BlurPixels`, `AdjustColours`
+
+**EXAMPLES**
+
+```zig
+const view = paintfx.Pixels{ .pixels = pixels, .width = 640, .height = 480, .pitch = 640 };
+_ = fx.SharpenPixels(&view, &view, 150, 1); // the edges
+_ = fx.SharpenPixels(&view, &view, 40, 16); // the texture
+```
+
+## TransformPixels
+
+Fills pixels from other pixels through a matrix: a free rotation, a scale, a slant, or all of them.
+
+**SYNOPSIS**
+
+```zig
+fn TransformPixels(base: *PaintFXBase, from: *const paintfx.Pixels, into: *const paintfx.Pixels, matrix: *const paintfx.Matrix, how: u32) void
+```
+
+**SINCE**
+
+1.0. LVO -36.
+
+**INPUTS**
+
+- `from`: the pixels taken from.
+- `into`: the pixels filled, every one of them; not over `from`.
+- `matrix`: where each pixel of `into` is taken from, its centre
+  mapped into `from` (`paintfx.Matrix`, 16.16).
+- `how`: `PFXSCALE_HARD` or `PFXSCALE_SMOOTH`.
+
+**RESULT**
+
+None.
+
+**BEHAVIOR**
+
+The centre of each pixel of `into` is mapped into `from`. Hard, the
+pixel is the one of `from` that point falls on, or see-through when
+it falls outside. Smooth, it is a mix of the four pixels of `from`
+whose centres are round the point, weighted by how near each is and
+by its alpha, those outside `from` counted as see-through - so the
+edges of what is turned are softened too.
+
+The matrix is the way back, from `into` to `from`: to show `from`
+turned by an angle `a` about a point, the matrix turns by `-a` about
+the point it lands on.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: not from an interrupt.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The pixels and the matrix stay the caller's; nothing is allocated.
+
+**NOTES**
+
+Smooth, a shrink of more than a half leaves pixels out, as a mix of
+four does not see the rest; `ScalePixels` first, then the turn, keeps
+them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ScalePixels`
+
+**EXAMPLES**
+
+```zig
+// `from` 100 x 100 shown twice the size in `into`, 200 x 200.
+const matrix = paintfx.Matrix{ .xx = paintfx.MATRIX_ONE / 2, .yy = paintfx.MATRIX_ONE / 2 };
+fx.TransformPixels(&from, &into, &matrix, paintfx.PFXSCALE_SMOOTH);
+```
