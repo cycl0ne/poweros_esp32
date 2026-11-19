@@ -25,7 +25,9 @@ const menus = @import("../input/menus.zig");
 /// The window has no strip afterwards: the menu button over it shows an
 /// empty bar, and no shortcut picks anything. A session showing its menus
 /// ends first, and the window is sent IDCMP_MENUPICK `MENUNULL`. A window
-/// with no strip is left as it is.
+/// with no strip is left as it is. A screen bar that shows the window's
+/// titles (`WA_MenuBar`) keeps them a few ticks, for the strip put back,
+/// and then shows the screen's title.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore.
@@ -56,4 +58,5 @@ pub fn ClearMenuStrip(ib: *IntuitionBase, window: *Window) void {
     defer _window.unlock(ib);
     menus.endFor(ib, window);
     window.menu_strip = null;
+    menus.barChanged(ib, window);
 }

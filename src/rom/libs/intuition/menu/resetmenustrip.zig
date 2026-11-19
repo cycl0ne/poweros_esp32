@@ -62,5 +62,6 @@ pub fn ResetMenuStrip(ib: *IntuitionBase, window: *Window, menu_strip: *Menu) bo
     defer _window.unlock(ib);
     menus.endFor(ib, window);
     window.menu_strip = menu_strip;
+    menus.barChanged(ib, window);
     return true;
 }

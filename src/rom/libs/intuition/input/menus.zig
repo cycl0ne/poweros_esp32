@@ -34,6 +34,14 @@
 //! IDCMP_MENUHELP with what was under the pointer. The windows sent
 //! `MENUWAITING` are sent IDCMP_MOUSEBUTTONS `MENUUP`.
 //!
+//! **In the bar.** A window opened with `WA_MenuBar` keeps its titles in
+//! its screen's bar while it is active (`barWindow`, drawn by the bar
+//! itself), and a press of the select button on one (`pressBar`) opens
+//! the session as a tap does. What the bar shows is kept as a fingerprint
+//! of the titles, so a strip changed without changing them - taken away
+//! and put back, as programs do to change their items - leaves the bar
+//! alone; one taken away for good is noticed two ticks later.
+//!
 //! **By a tap.** A finger tapped on a screen's bar (`tapBar`) opens the
 //! same session without a button held: the menus stay up, the finger
 //! highlights what it is over, and lifted over an item picks it - over a
@@ -140,7 +148,10 @@ pub const State = extern struct {
     /// Opened by a tap on the bar: the menus stay until a tap picks an
     /// item or closes them.
     sticky: u8 = 0,
-    pad: [2]u8 = .{ 0, 0 },
+    /// Ticks since the strip of the window whose titles the bar keeps was
+    /// taken away; 0 when it was not.
+    bar_wait: u8 = 0,
+    pad: [1]u8 = .{0},
     /// The titles, over the bar, and the two panels.
     strip: ?*layers.Layer = null,
     items: Panel = .{},
@@ -211,6 +222,81 @@ pub fn tapBar(ib: *IntuitionBase) void {
     if (lent.menu_strip == null) return;
     menuButton(ib);
     if (st.stage != .idle) st.sticky = 1;
+}
+
+/// The window whose menus `s`'s bar keeps (`WA_MenuBar`): the active
+/// window, when it is on `s`, asked for them and has a strip - or the
+/// window it borrows menus from, when it does.
+pub fn barWindow(ib: *IntuitionBase, s: *Screen) ?*Window {
+    const active = ib.active_window orelse return null;
+    if (active.screen != s or active.more_flags & _window.WMF_MENUBAR == 0) return null;
+    const lent = active.menu_lend orelse active;
+    if (lent.menu_strip == null) return null;
+    return lent;
+}
+
+/// What of the menus `s`'s bar keeps shows there - the strip, and each
+/// title's name, place and enabling, folded together - or 0 for none.
+pub fn fingerprint(ib: *IntuitionBase, s: *Screen) usize {
+    const w = barWindow(ib, s) orelse return 0;
+    var print: usize = @intFromPtr(w.menu_strip.?);
+    var menu = w.menu_strip;
+    while (menu) |m| : (menu = m.next_menu) {
+        const name: usize = if (m.name) |text| @intFromPtr(text) else 0;
+        const left: usize = @bitCast(@as(isize, m.left));
+        print = print *% 31 +% name +% left +% (m.flags & mn.MENUENABLED);
+    }
+    // Never 0, which is the title; and nothing folded in lost to that.
+    return if (print == 0) 1 else print;
+}
+
+/// `w`'s menus changed - set, taken away, lent, or a title enabled or
+/// disabled: the bar that keeps them drawn again where what it shows is
+/// no longer what they are. A strip taken away is waited for a few ticks
+/// first, since a program takes its strip away to change it and puts it
+/// back at once.
+pub fn barChanged(ib: *IntuitionBase, w: *Window) void {
+    const active = ib.active_window orelse return;
+    if (active.more_flags & _window.WMF_MENUBAR == 0) return;
+    if (active != w and active.menu_lend != w) return;
+    const st = stateOf(ib);
+    if (barWindow(ib, active.screen) == null) {
+        st.bar_wait = 1;
+        return;
+    }
+    st.bar_wait = 0;
+    settleBar(ib, active.screen);
+}
+
+/// A tick: a bar whose window's strip has been away for two of them
+/// shows the screen's title.
+pub fn barTick(ib: *IntuitionBase) void {
+    const st = stateOf(ib);
+    if (st.bar_wait == 0) return;
+    st.bar_wait += 1;
+    if (st.bar_wait < 3) return;
+    st.bar_wait = 0;
+    const active = ib.active_window orelse return;
+    settleBar(ib, active.screen);
+}
+
+fn settleBar(ib: *IntuitionBase, s: *Screen) void {
+    if (fingerprint(ib, s) != s.bar_titles) _screen.drawBar(ib, s);
+}
+
+/// A press of the select button on `s`'s bar, where no window covers it:
+/// on a title of the menus the bar keeps (`WA_MenuBar`), those menus
+/// opened as a tap on the bar opens them, and true - whether the window
+/// traps the menu button or not, since it asked for its titles there. A
+/// press anywhere else is false, the bar left to drag the screen.
+pub fn pressBar(ib: *IntuitionBase, s: *Screen) bool {
+    const st = stateOf(ib);
+    if (st.stage != .idle) return false;
+    const w = barWindow(ib, s) orelse return false;
+    if (titleAt(ib, w) == mn.NOMENU) return false;
+    menuButton(ib);
+    if (st.stage != .idle) st.sticky = 1;
+    return true;
 }
 
 /// A key to the active window: true when it was the right-Amiga shortcut of
@@ -688,11 +774,19 @@ fn paintStrip(ib: *IntuitionBase, w: *Window) void {
     const rp = rastPortOf(ib, layer) orelse return;
     ib.layers_base.LockLayer(layer);
     defer ib.layers_base.UnlockLayer(layer);
-    graphics.SetFont(gb, rp, s.font);
     // The menu bar is the screen bar's look.
     const look = _screen.barLook(ib, s);
     d.box(gb, rp, 0, 0, s.width, s.bar_height - 1, look.ground);
     d.box(gb, rp, 0, s.bar_height - 1, s.width, 1, look.trim);
+    drawTitles(ib, rp, s, w, look);
+}
+
+/// The titles of `w`'s strip across a bar of `s` whose ground is drawn
+/// already in `look`: the screen's own bar, or the strip a session lays
+/// over it. A disabled title ghosted.
+pub fn drawTitles(ib: *IntuitionBase, rp: *graphics.RastPort, s: *Screen, w: *Window, look: _screen.BarLook) void {
+    const gb = ib.graphics_base;
+    graphics.SetFont(gb, rp, s.font);
     var menu = w.menu_strip;
     while (menu) |m| : (menu = m.next_menu) {
         const name = m.name orelse continue;
@@ -938,7 +1032,12 @@ fn highSub(ib: *IntuitionBase) void {
 /// Which title the pointer is on, or NOMENU.
 fn hitMenu(ib: *IntuitionBase) u32 {
     const st = stateOf(ib);
-    const w = st.window orelse return mn.NOMENU;
+    return titleAt(ib, st.window orelse return mn.NOMENU);
+}
+
+/// Which title of `w`'s strip the pointer is on in its screen's bar, or
+/// NOMENU.
+fn titleAt(ib: *IntuitionBase, w: *Window) u32 {
     const x = ib.input.x - _screen.bar_border;
     const y = ib.input.y;
     if (y < 0 or y >= w.screen.bar_height - 1) return mn.NOMENU;

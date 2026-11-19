@@ -392,6 +392,17 @@ pub const WA_Hidden = WA_Dummy + 0x113;
 /// said here.
 pub const WA_HideGadget = WA_Dummy + 0x114;
 
+/// True keeps the window's menu titles in its screen's bar, in place of
+/// the screen's title, while it is the active window: a press of the
+/// select button on a title opens the menus there, and they stay up as a
+/// tap on the bar leaves them - a click on an item picks it, one anywhere
+/// else closes them. The rest of the bar still drags the screen. A
+/// window that borrows another's menus (`LendMenus`) shows those. A strip
+/// taken away (`ClearMenuStrip`) and put back within a few ticks leaves
+/// the bar as it was. `OpenWindow` and `GetWindowAttrs`; since intuition
+/// 0.106.
+pub const WA_MenuBar = WA_Dummy + 0x115;
+
 /// `WA_Position`'s values.
 pub const WPOS_CENTERSCREEN: u32 = 1;
 pub const WPOS_CENTERMOUSE: u32 = 2;

@@ -4,6 +4,7 @@
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const _window = @import("../window/_window.zig");
 const Window = _window.Window;
+const menus = @import("../input/menus.zig");
 
 /// Makes one window's menu button show another window's menus.
 ///
@@ -27,7 +28,8 @@ const Window = _window.Window;
 /// shortcut of `to_window`'s items - makes `to_window` active and uses its
 /// menus on its screen, as though the pointer had been there. The picks go
 /// to `to_window`, and `from_window` is made active again when the session
-/// ends.
+/// ends. A screen bar that keeps `from_window`'s titles (`WA_MenuBar`)
+/// shows `to_window`'s.
 ///
 /// CONTEXT:
 /// - Waits: for the screen list's semaphore.
@@ -57,4 +59,5 @@ pub fn LendMenus(ib: *IntuitionBase, from_window: *Window, to_window: ?*Window) 
     _window.lock(ib);
     defer _window.unlock(ib);
     from_window.menu_lend = to_window;
+    menus.barChanged(ib, from_window);
 }

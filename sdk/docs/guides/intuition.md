@@ -1136,6 +1136,24 @@ keeps working where the pointer is held - an airbrush - hears of it
 without the pointer moving. `SYS:Programs/Paint` sets it while its
 airbrush is the tool.
 
+### Titles always in the bar
+
+A window opened with `WA_MenuBar` (intuition 0.106) keeps its menu
+titles in its screen's bar while it is the active window, where the bar
+otherwise says the screen's title. A click on a title opens its panel and
+the menus stay up: the pointer moved along the bar opens the others, a
+click on an item picks it, and a click anywhere else closes them with
+`MENUNULL`. The menu button opens them as before, and the rest of the bar
+still drags the screen. A window that traps the menu button
+(`WA_RMBTrap`) - one that paints with it - gets its menus from the bar
+all the same.
+
+A program changes its items between `ClearMenuStrip` and
+`ResetMenuStrip`, and the bar does not follow that: it is drawn again
+only when the titles themselves change, a title is enabled or disabled,
+or the strip stays away for two ticks. `SYS:Programs/Paint` opens its
+window with it.
+
 ### By a finger
 
 On a touch panel there is no menu button. A tap on the screen's bar - a

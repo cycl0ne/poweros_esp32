@@ -92,8 +92,9 @@ pub fn HideWindow(ib: *IntuitionBase, window: *Window) void {
         // are at this moment - and its program told, as it would be told
         // by another window taking the activation.
         _window.deactivate(ib, w);
-        // No window active: the screen says its own title again.
-        if (s.title != s.default_title) {
+        // No window active: the screen says its own title again, in place
+        // of the window's menu titles too.
+        if (s.title != s.default_title or w.more_flags & _window.WMF_MENUBAR != 0) {
             s.title = s.default_title;
             _screen.drawBar(ib, s);
         }

@@ -1192,7 +1192,9 @@ Nothing.
 The window has no strip afterwards: the menu button over it shows an
 empty bar, and no shortcut picks anything. A session showing its menus
 ends first, and the window is sent IDCMP_MENUPICK `MENUNULL`. A window
-with no strip is left as it is.
+with no strip is left as it is. A screen bar that shows the window's
+titles (`WA_MenuBar`) keeps them a few ticks, for the strip put back,
+and then shows the screen's title.
 
 **CONTEXT**
 
@@ -3775,7 +3777,8 @@ fn GetWindowAttrs(ib: *IntuitionBase, window: *Window,
   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
   0.49, its screen's `SA_PixelFormat`), `WA_StayInFront` (since
   0.57), `WA_Task` (since 0.81, the task that opened it),
-  `WA_Hidden` (since 0.82, put away with `HideWindow`).
+  `WA_Hidden` (since 0.82, put away with `HideWindow`), `WA_MenuBar`
+  (since 0.106).
   `WA_Left` and `WA_Top`
   are signed, written by their bits: a window past the screen's left
   edge (`IPREFS_OffScreen`) has a negative left.
@@ -4479,7 +4482,8 @@ While `from_window` is active, the menu button - and a right-Amiga
 shortcut of `to_window`'s items - makes `to_window` active and uses its
 menus on its screen, as though the pointer had been there. The picks go
 to `to_window`, and `from_window` is made active again when the session
-ends.
+ends. A screen bar that keeps `from_window`'s titles (`WA_MenuBar`)
+shows `to_window`'s.
 
 **CONTEXT**
 
@@ -5835,7 +5839,8 @@ fn OpenWindowTagList(ib: *IntuitionBase,
   pressed beside whatever has the input - and `WA_IDCMP` for a message
   port, or `WA_UserPort` for a port of the program's it shares with its
   other windows. Its menus:
-  `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
+  `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`, and
+  `WA_MenuBar` for its titles kept in the screen's bar (since 0.106). Its
   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
   `WA_PointerDelay`, as
   `SetWindowPointerA` takes them. Painted by its backfill alone, with no
@@ -7621,7 +7626,8 @@ and its shortcut take up, with a trim, and at least as wide as the
 title - into the menu's `jazz_x`..`beat_y`, and the strip becomes the
 window's. From then on the menu button over the window, while it is
 active and does not trap the button, shows it, and a right-Amiga key
-with an item's `command` picks that item.
+with an item's `command` picks that item. A window opened with
+`WA_MenuBar` shows the titles in its screen's bar while it is active.
 
 A strip the window already had is simply replaced. When the window's
 menus are being shown, that session ends first and the window is sent

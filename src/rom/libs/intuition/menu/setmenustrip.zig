@@ -33,7 +33,8 @@ const menus = @import("../input/menus.zig");
 /// title - into the menu's `jazz_x`..`beat_y`, and the strip becomes the
 /// window's. From then on the menu button over the window, while it is
 /// active and does not trap the button, shows it, and a right-Amiga key
-/// with an item's `command` picks that item.
+/// with an item's `command` picks that item. A window opened with
+/// `WA_MenuBar` shows the titles in its screen's bar while it is active.
 ///
 /// A strip the window already had is simply replaced. When the window's
 /// menus are being shown, that session ends first and the window is sent
@@ -72,5 +73,6 @@ pub fn SetMenuStrip(ib: *IntuitionBase, window: *Window, menu_strip: *Menu) bool
     menus.endFor(ib, window);
     _menu.layOut(ib, window, menu_strip);
     window.menu_strip = menu_strip;
+    menus.barChanged(ib, window);
     return true;
 }

@@ -38,7 +38,8 @@ const interior = _window.interior;
 ///   `WA_AmigaKey`, `WA_MenuHelp`, `WA_Number`, `WA_PixelFormat` (since
 ///   0.49, its screen's `SA_PixelFormat`), `WA_StayInFront` (since
 ///   0.57), `WA_Task` (since 0.81, the task that opened it),
-///   `WA_Hidden` (since 0.82, put away with `HideWindow`).
+///   `WA_Hidden` (since 0.82, put away with `HideWindow`), `WA_MenuBar`
+///   (since 0.106).
 ///   `WA_Left` and `WA_Top`
 ///   are signed, written by their bits: a window past the screen's left
 ///   edge (`IPREFS_OffScreen`) has a negative left.
@@ -123,6 +124,7 @@ pub fn GetWindowAttrs(ib: *IntuitionBase, window: *Window, tags: ?[*]const TagIt
             wn.WA_Checkmark => out.* = @intFromPtr(window.check_mark),
             wn.WA_AmigaKey => out.* = @intFromPtr(window.amiga_key),
             wn.WA_MenuHelp => out.* = @intFromBool(window.more_flags & _window.WMF_MENUHELP != 0),
+            wn.WA_MenuBar => out.* = @intFromBool(window.more_flags & _window.WMF_MENUBAR != 0),
             wn.WA_Number => out.* = window.number,
             // The task that opened it, which closes it when it ends: 0
             // for a window opened as the system's, which no task owns.

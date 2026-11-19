@@ -801,6 +801,7 @@ pub fn handle(ib: *IntuitionBase, e: *const InputEvent) void {
     if (e.class == ie.IECLASS_TIMER) {
         pointer.tick(ib);
         paceTick(ib);
+        menus.barTick(ib);
     }
     // An alert up takes everything.
     if (ib.alert.active) return @import("../misc/_misc.zig").alertInput(ib, e);
@@ -1249,6 +1250,9 @@ fn press(ib: *IntuitionBase, e: *const InputEvent) void {
         _kscreen.drawDepth(ib, s, true);
         return;
     }
+    // The active window's menu titles in its bar (`WA_MenuBar`): a press
+    // on one opens its menus.
+    if (_kscreen.onBar(ib, s, st.x, st.y) and menus.pressBar(ib, s)) return;
     // Its bar, where no window covers it: the screen dragged down its
     // display, or back up, while the button is held. A finger there may
     // be a tap instead, which opens the menus: a bar that cannot be

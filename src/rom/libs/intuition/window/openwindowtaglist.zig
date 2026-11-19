@@ -76,7 +76,8 @@ const _fade = @import("_fade.zig");
 ///   pressed beside whatever has the input - and `WA_IDCMP` for a message
 ///   port, or `WA_UserPort` for a port of the program's it shares with its
 ///   other windows. Its menus:
-///   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`. Its
+///   `WA_Checkmark`, `WA_AmigaKey`, `WA_MenuHelp`, `WA_NewLookMenus`, and
+///   `WA_MenuBar` for its titles kept in the screen's bar (since 0.106). Its
 ///   pointer: `WA_Pointer`, `WA_BusyPointer`, `WA_HidePointer`,
 ///   `WA_PointerDelay`, as
 ///   `SetWindowPointerA` takes them. Painted by its backfill alone, with no
@@ -190,6 +191,7 @@ pub fn OpenWindowTagList(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*Window {
     if (flags & WF_BACKDROP != 0) flags &= ~(WF_SIZE | WF_DRAG | WF_DEPTH | WF_HASZOOM);
     var more_flags: u32 = if (ub.GetTagData(wn.WA_MenuHelp, 0, tags) != 0) _window.WMF_MENUHELP else 0;
     more_flags |= flagIf(ub, wn.WA_StayInFront, tags, _window.WMF_STAYINFRONT);
+    more_flags |= flagIf(ub, wn.WA_MenuBar, tags, _window.WMF_MENUBAR);
     more_flags |= flagIf(ub, _window.WA_Above, tags, _window.WMF_ABOVE);
     // `WA_HideGadget` false: no hide gadget, whatever its screen holds.
     if (ub.GetTagData(wn.WA_HideGadget, 1, tags) == 0) more_flags |= _window.WMF_NOHIDE;

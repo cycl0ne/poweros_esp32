@@ -420,6 +420,9 @@ pub const WMF_NOHIDE: u32 = 1 << 8;
 /// windows of the screen go to, which is also the window that never
 /// carries a hide gadget itself.
 pub const WMF_HIDEHOST: u32 = 1 << 9;
+/// `WA_MenuBar`: while it is active its screen's bar shows its menu
+/// titles, and a press on one opens them.
+pub const WMF_MENUBAR: u32 = 1 << 10;
 
 /// intuition.library's own tag, not in the SDK: true opens a window in
 /// front of every other, those that stay in front included, and keeps it
@@ -1371,6 +1374,12 @@ pub fn activate(ib: *IntuitionBase, w: *Window) void {
         w.screen.title = w.screen_title;
         _screen.drawBar(ib, w.screen);
     }
+    // A bar that kept the menu titles of the window that was active shows
+    // the title again; one that keeps the new one's shows them.
+    if (old) |o| {
+        if (o.more_flags & WMF_MENUBAR != 0) _screen.drawBar(ib, o.screen);
+    }
+    if (w.more_flags & WMF_MENUBAR != 0) _screen.drawBar(ib, w.screen);
     if (old) |o| deactivate(ib, o);
     w.flags |= WF_ACTIVE;
     drawBorder(ib, w);

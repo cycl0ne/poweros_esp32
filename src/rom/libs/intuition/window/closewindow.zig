@@ -81,8 +81,9 @@ pub fn CloseWindow(ib: *IntuitionBase, window: ?*Window) void {
     const was_active = ib.active_window == w;
     if (was_active) {
         ib.active_window = null;
-        // No window active: the screen says its own title again.
-        if (s.title != s.default_title) {
+        // No window active: the screen says its own title again, in place
+        // of the window's menu titles too.
+        if (s.title != s.default_title or w.more_flags & _window.WMF_MENUBAR != 0) {
             s.title = s.default_title;
             _screen.drawBar(ib, s);
         }

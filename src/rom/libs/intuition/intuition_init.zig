@@ -289,7 +289,9 @@ pub const LIBRARY_VERSION = 0;
 /// over it, as the select button presses it, and the menus stay shut.
 /// 105: windowclass's WMHI_MOUSEMOVE, and WINDOWA_MouseX and
 /// WINDOWA_MouseY, where the pointer was at the message answered last.
-pub const LIBRARY_REVISION = 105;
+/// 106: WA_MenuBar - a window's menu titles kept in its screen's bar while
+/// it is active, a click on one opening them.
+pub const LIBRARY_REVISION = 106;
 const BUILD_DATE = "19.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

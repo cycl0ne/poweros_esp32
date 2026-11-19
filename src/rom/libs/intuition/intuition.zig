@@ -10986,6 +10986,94 @@ test "menus by a finger: a tap on the bar opens them and they stay, a tap picks,
     try tearDown(ib);
 }
 
+test "WA_MenuBar: the titles in the bar while active, a click opens them, a strip put back leaves the bar" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const mn = intuition.menus;
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.sized(ib, 96, 64, .rgb565);
+    var strip: TestMenus = undefined;
+    strip.make();
+    const w = try menuWindow(ib, wn.IDCMP_MENUPICK | wn.IDCMP_MOUSEBUTTONS, &.{.{ .tag = wn.WA_MenuBar, .data = 1 }});
+    try testing.expectEqual(@as(usize, 1), windowAttr(ib, w, wn.WA_MenuBar));
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    const bar: *_kscreen.Screen = @ptrCast(@alignCast(screen));
+    // No strip yet: the bar shows the title; with one, the titles.
+    try testing.expectEqual(@as(usize, 0), bar.bar_titles);
+    _ = it.SetMenuStrip(w, &strip.menus[0]);
+    const shown = bar.bar_titles;
+    try testing.expect(shown != 0);
+    var got: [4]intuition.IntuiMessage = undefined;
+
+    // A click on Project opens it, and it stays when the button is let go.
+    click(ib, 10, 5);
+    try testing.expectEqual(_menus.Stage.shown, ib.menu.stage);
+    try testing.expectEqual(@as(u32, 0), mn.MENUNUM(ib.menu.drawn));
+    // The pointer, no button down, along the bar to Opts: its panel.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 40, 5);
+    try testing.expectEqual(@as(u32, 1), mn.MENUNUM(ib.menu.drawn));
+    // Back to Project, and a click on Save picks it.
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 10, 5);
+    pointerEvent(ib, ie.IECODE_NOBUTTON, 20, 25);
+    click(ib, 20, 25);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+    try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
+    try testing.expectEqual(mn.FULLMENUNUM(0, 1, mn.NOSUB), got[0].code);
+    // A click past the titles opens nothing: the bar drags the screen.
+    click(ib, 80, 5);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+
+    // The strip taken away and put back, as a program changes its items:
+    // the bar is left as it is, across ticks too.
+    it.ClearMenuStrip(w);
+    tickEvent(ib);
+    _ = it.ResetMenuStrip(w, &strip.menus[0]);
+    tickEvent(ib);
+    tickEvent(ib);
+    try testing.expectEqual(shown, bar.bar_titles);
+    // A title disabled is drawn again, ghosted.
+    it.OffMenu(w, mn.FULLMENUNUM(1, mn.NOITEM, mn.NOSUB));
+    try testing.expect(bar.bar_titles != shown);
+    it.OnMenu(w, mn.FULLMENUNUM(1, mn.NOITEM, mn.NOSUB));
+    try testing.expectEqual(shown, bar.bar_titles);
+    // Taken away for good: two ticks later the title.
+    it.ClearMenuStrip(w);
+    tickEvent(ib);
+    try testing.expectEqual(shown, bar.bar_titles);
+    tickEvent(ib);
+    try testing.expectEqual(@as(usize, 0), bar.bar_titles);
+    _ = it.SetMenuStrip(w, &strip.menus[0]);
+    try testing.expectEqual(shown, bar.bar_titles);
+
+    // Another window active: the title, and a click there opens nothing;
+    // this one active again: its titles.
+    const other = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 4 },
+        .{ .tag = wn.WA_Top, .data = 44 },
+        .{ .tag = wn.WA_Width, .data = 30 },
+        .{ .tag = wn.WA_Height, .data = 16 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 0), bar.bar_titles);
+    click(ib, 10, 5);
+    try testing.expectEqual(_menus.Stage.idle, ib.menu.stage);
+    it.ActivateWindow(w);
+    try testing.expectEqual(shown, bar.bar_titles);
+    // Closed while active: the title again.
+    it.ClearMenuStrip(w);
+    it.CloseWindow(w);
+    try testing.expectEqual(@as(usize, 0), bar.bar_titles);
+
+    it.CloseWindow(other);
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "a finger's window drag waits out its wobble; a mouse's moves at once" {
     const ib = try setUp();
     defer kexec.deinit();

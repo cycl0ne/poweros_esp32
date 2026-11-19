@@ -57,4 +57,5 @@ pub fn OffMenu(ib: *IntuitionBase, window: *Window, menu_number: u32) void {
     defer _window.unlock(ib);
     _menu.onOff(window.menu_strip, menu_number, false);
     menus.enablingChanged(ib, window);
+    menus.barChanged(ib, window);
 }

@@ -53,6 +53,7 @@ const TagItem = utility.TagItem;
 const Pen = graphics.Pen;
 const IntuitionBase = @import("../intuition.zig").IntuitionBase;
 const Window = @import("../window/_window.zig").Window;
+const menus = @import("../input/menus.zig");
 
 /// What a screen is, behind the opaque `sdk.intuition.Screen`.
 pub const Screen = extern struct {
@@ -101,6 +102,9 @@ pub const Screen = extern struct {
     title: ?[*:0]const u8 = null,
     /// What the bar says with none of its windows active: `SA_Title`.
     default_title: ?[*:0]const u8 = null,
+    /// What of the active window's menus the bar shows (`WA_MenuBar`) -
+    /// a fingerprint of their titles - or 0 while it shows the title.
+    bar_titles: usize = 0,
     width: i32,
     height: i32,
     depth: u32,
@@ -473,6 +477,10 @@ pub fn drawBar(ib: *IntuitionBase, s: *Screen) void {
     gb.DrawHLine(rp, 0, s.bar_height - 1, s.width);
 
     defer drawDepthOn(ib, s, rp);
+    // The active window's menu titles in place of the title, when it keeps
+    // them there (`WA_MenuBar`).
+    s.bar_titles = menus.fingerprint(ib, s);
+    if (menus.barWindow(ib, s)) |w| return menus.drawTitles(ib, rp, s, w, look);
     const title = s.title orelse return;
     graphics.SetFont(gb, rp, s.font);
     var baseline: u32 = 0;
