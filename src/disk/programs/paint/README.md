@@ -269,6 +269,34 @@ foreground, with the menu button the background. A click on the two
 colours in use, on the swap beside them, or `x`, swaps them. The colour
 wheel and the brightness slider make the foreground any colour.
 
+### The palette
+
+Palette → Edit... opens the palette in a window of its own. A colour
+picked there is changed with its sliders - red, green and blue, or
+hue, saturation and value - or by typing its hex value, `#RRGGBB`.
+Spread, then a second colour picked, makes the colours between the two
+an even run from the one to the other; Copy puts the colour chosen onto
+the one picked next, Swap trades the two. OK takes the new colours,
+Cancel or Escape leaves the palette as it was. With **Change the
+pixels too**, OK first makes every pixel of a colour that changed - in
+every layer - the new colour, keeping how see-through it is; that is
+one step to undo. The foreground, when it was picked from the palette,
+becomes its colour's new one.
+
+The other items of the Palette menu:
+
+| Palette menu | Does |
+|---|---|
+| From the Picture | the colours the picture shows most, darkest first, in place of the first ones - all of them when it has no more than 32 |
+| Presets | Paint's Own, Greys, Spectrum, Pastel, Earth |
+| Open Palette... | a palette file, or the palette of a picture or a project |
+| Save Palette... | the 32 colours as a palette file |
+
+A palette file is text, a colour a line, six hex digits each
+(`E02828`); a `#` before them and a name after are passed over, so the
+files of other programs that write their colours so are read too.
+Changing the palette is not a change to undo.
+
 ## The view
 
 The zoom goes from 1:1 to 16:1 - 1, 2, 3, 4, 6, 8, 12 and 16 - with the
@@ -342,6 +370,7 @@ The letters are the items' keys, pressed with the right command key.
 | Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
 | Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
+| Palette | Edit... (P), From the Picture, Presets (Paint's Own, Greys, Spectrum, Pastel, Earth), Open Palette..., Save Palette... |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Own Screen |
 | Help | About Paint... |
 

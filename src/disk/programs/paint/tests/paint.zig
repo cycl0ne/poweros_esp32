@@ -12,6 +12,7 @@ const view_zig = @import("../view.zig");
 const shapes = @import("../shapes.zig");
 const fill_zig = @import("../fill.zig");
 const layers_zig = @import("../layers.zig");
+const palette_zig = @import("../palette.zig");
 const selection_zig = @import("../selection.zig");
 const Selection = selection_zig.Selection;
 const Scratch = selection_zig.Scratch;
@@ -629,6 +630,109 @@ test "layers: a mask hides where it is black or see-through, shows where it is w
     try testing.expectEqual(@as(u8, 128), layers_zig.shownBy(0x80FFFFFF));
     try testing.expectEqual(@as(Pixel, 0x00FF0000), layers_zig.masked(red, black));
     try testing.expectEqual(red, layers_zig.masked(red, 0xFFFFFFFF));
+}
+
+test "palette: hue, saturation and value there and back, the hex text, a run spread" {
+    const Hsv = palette_zig.Hsv;
+    try testing.expectEqual(Hsv{ .hue = 0, .saturation = 100, .value = 100 }, palette_zig.toHsv(red));
+    try testing.expectEqual(Hsv{ .hue = 120, .saturation = 100, .value = 100 }, palette_zig.toHsv(0xFF00FF00));
+    try testing.expectEqual(Hsv{ .hue = 240, .saturation = 100, .value = 100 }, palette_zig.toHsv(blue));
+    try testing.expectEqual(Hsv{ .hue = 300, .saturation = 100, .value = 100 }, palette_zig.toHsv(0xFFFF00FF));
+    try testing.expectEqual(Hsv{ .hue = 0, .saturation = 0, .value = 50 }, palette_zig.toHsv(0xFF808080));
+    try testing.expectEqual(Hsv{}, palette_zig.toHsv(black));
+    try testing.expectEqual(red, palette_zig.fromHsv(.{ .hue = 0, .saturation = 100, .value = 100 }));
+    try testing.expectEqual(@as(Pixel, 0xFF00FF00), palette_zig.fromHsv(.{ .hue = 120, .saturation = 100, .value = 100 }));
+    try testing.expectEqual(@as(Pixel, 0xFFFF8000), palette_zig.fromHsv(.{ .hue = 30, .saturation = 100, .value = 100 }));
+    try testing.expectEqual(white, palette_zig.fromHsv(.{ .hue = 200, .saturation = 0, .value = 100 }));
+    // Every colour comes back within a few steps of each channel.
+    var colour: Pixel = 0;
+    while (colour < 0x0100_0000) : (colour += 0x0011_0D07) {
+        const back = palette_zig.fromHsv(palette_zig.toHsv(colour | 0xFF00_0000));
+        for ([_]u5{ 16, 8, 0 }) |shift| {
+            const was: i32 = @intCast((colour >> shift) & 0xFF);
+            const now: i32 = @intCast((back >> shift) & 0xFF);
+            try testing.expect(@abs(was - now) <= 4);
+        }
+    }
+
+    var hex: [8]u8 = undefined;
+    try testing.expectEqualStrings("#12ABEF", palette_zig.hexText(0xFF12ABEF, &hex));
+    try testing.expectEqual(@as(u8, 0), hex[7]);
+    try testing.expectEqual(@as(?Pixel, 0xFF12ABEF), palette_zig.parseHex("#12abef"));
+    try testing.expectEqual(@as(?Pixel, 0xFF12ABEF), palette_zig.parseHex(" 12ABEF\r"));
+    try testing.expectEqual(@as(?Pixel, null), palette_zig.parseHex("12ABE"));
+    try testing.expectEqual(@as(?Pixel, null), palette_zig.parseHex("#12ABEG"));
+
+    var run = palette_zig.standard;
+    run[3] = black;
+    run[7] = 0xFF804020;
+    palette_zig.spread(&run, 7, 3);
+    try testing.expectEqual(@as(Pixel, 0xFF201008), run[4]);
+    try testing.expectEqual(@as(Pixel, 0xFF402010), run[5]);
+    try testing.expectEqual(@as(Pixel, 0xFF603018), run[6]);
+    try testing.expectEqual(palette_zig.standard[2], run[2]);
+    try testing.expectEqual(palette_zig.standard[8], run[8]);
+}
+
+test "palette: the colours a picture uses most, as they are when few, cut in boxes when many" {
+    const counts = try testing.allocator.alloc(u32, palette_zig.bins);
+    defer testing.allocator.free(counts);
+    var found: palette_zig.Palette = undefined;
+
+    // Three colours and see-through: those three, darkest first.
+    const few = [_]Pixel{ white, red, 0x00123456, red, black, white, 0x40FFFF00 };
+    try testing.expectEqual(@as(usize, 3), palette_zig.mostUsed(&few, counts, &found));
+    try testing.expectEqualSlices(Pixel, &.{ black, red, white }, found[0..3]);
+
+    // Many reds and many blues, more reds: 32 colours, reds and blues
+    // among them, more of them red.
+    var many: [3000]Pixel = undefined;
+    for (&many, 0..) |*pixel, place| {
+        const number: Pixel = @intCast(place);
+        pixel.* = if (place % 3 == 0)
+            0xFF000000 | (number % 13) << 16 | (number / 3 % 40) << 8 | (100 + number % 150)
+        else
+            0xFF000000 | (110 + number % 140) << 16 | (number / 2 % 60) << 8 | (number % 15);
+    }
+    try testing.expectEqual(@as(usize, 32), palette_zig.mostUsed(&many, counts, &found));
+    var reds: u32 = 0;
+    var blues: u32 = 0;
+    for (found) |colour| {
+        if ((colour >> 16) & 0xFF > 100 and colour & 0xFF < 20) reds += 1;
+        if (colour & 0xFF > 90 and (colour >> 16) & 0xFF < 20) blues += 1;
+    }
+    try testing.expectEqual(@as(u32, 32), reds + blues);
+    try testing.expect(reds > blues and blues > 4);
+    for (found[1..], found[0..31]) |later, earlier| try testing.expect(brightnessOf(later) >= brightnessOf(earlier));
+}
+
+fn brightnessOf(colour: Pixel) u32 {
+    return 30 * ((colour >> 16) & 0xFF) + 59 * ((colour >> 8) & 0xFF) + 11 * (colour & 0xFF);
+}
+
+test "palette: its text there and back, the presets opaque, pixels recoloured keeping their alpha" {
+    var text: [palette_zig.size * 7]u8 = undefined;
+    const length = palette_zig.toText(&palette_zig.earth, &text);
+    try testing.expectEqual(text.len, length);
+    try testing.expectEqualStrings("1B1410\n3B2A1E\n", text[0..14]);
+    var back: palette_zig.Palette = undefined;
+    try testing.expectEqual(@as(usize, 32), palette_zig.fromText(&text, &back));
+    try testing.expectEqualSlices(Pixel, &palette_zig.earth, &back);
+    // Another program's lines: a # before, a name after, a heading.
+    try testing.expectEqual(@as(usize, 2), palette_zig.fromText("; colours\r\n#FF0000 red\r\n\n  00ff00\nFF00001\n", &back));
+    try testing.expectEqualSlices(Pixel, &.{ red, 0xFF00FF00 }, back[0..2]);
+
+    for ([_]*const palette_zig.Palette{ &palette_zig.standard, &palette_zig.greys, &palette_zig.spectrum, &palette_zig.pastel, &palette_zig.earth }) |preset| {
+        for (preset) |colour| try testing.expectEqual(@as(Pixel, 0xFF), colour >> 24);
+    }
+    try testing.expectEqual(black, palette_zig.greys[0]);
+    try testing.expectEqual(white, palette_zig.greys[31]);
+    try testing.expectEqual(red, palette_zig.spectrum[8]);
+
+    var row = [_]Pixel{ white, 0x80FF0000, 0x00FF0000, blue, red };
+    try testing.expectEqual(@as(?[2]usize, .{ 1, 5 }), palette_zig.recolour(&row, &.{ red, blue }, &.{ 0xFF00FF00, red }));
+    try testing.expectEqualSlices(Pixel, &.{ white, 0x8000FF00, 0x00FF0000, red, 0xFF00FF00 }, &row);
+    try testing.expectEqual(@as(?[2]usize, null), palette_zig.recolour(&row, &.{blue}, &.{black}));
 }
 
 test "layers: each blend mode on a known pair, by opacity and coverage" {

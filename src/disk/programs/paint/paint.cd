@@ -163,6 +163,28 @@ MSG_MENU_OPEN_BRUSH (//)
 Open Brush...
 MSG_MENU_SAVE_BRUSH (//)
 Save Brush...
+MSG_MENU_PALETTE (//)
+Palette
+MSG_MENU_EDIT_PALETTE (//)
+Edit...
+MSG_MENU_FROM_PICTURE (//)
+From the Picture
+MSG_MENU_PRESETS (//)
+Presets
+MSG_PRESET_STANDARD (//)
+Paint's Own
+MSG_PRESET_GREYS (//)
+Greys
+MSG_PRESET_SPECTRUM (//)
+Spectrum
+MSG_PRESET_PASTEL (//)
+Pastel
+MSG_PRESET_EARTH (//)
+Earth
+MSG_MENU_OPEN_PALETTE (//)
+Open Palette...
+MSG_MENU_SAVE_PALETTE (//)
+Save Palette...
 MSG_MENU_OWN_SCREEN (//)
 Own Screen
 MSG_MENU_HELP (//)
@@ -382,6 +404,48 @@ MSG_SAVE_BRUSH_TITLE (//)
 Save the brush as
 MSG_NO_SAVE_BRUSH (//)
 The brush cannot be saved\nas %s:\n%s
+MSG_NO_SAVE_PALETTE (//)
+The palette cannot be saved\nas %s:\n%s
+MSG_NO_PALETTE (//)
+%s\nholds no palette.
+MSG_NO_COUNT (//)
+There is no memory to count the colours.
+MSG_OPEN_PALETTE_TITLE (//)
+Open a palette
+MSG_SAVE_PALETTE_TITLE (//)
+Save the palette as
+MSG_PALETTE_TITLE (//)
+Palette
+MSG_RED (//)
+Red
+MSG_GREEN (//)
+Green
+MSG_BLUE (//)
+Blue
+MSG_HUE (//)
+Hue
+MSG_SATURATION (//)
+Saturation
+MSG_VALUE (//)
+Value
+MSG_HEX (//)
+Hex
+MSG_SPREAD (//)
+Spread
+MSG_COPY_COLOUR (//)
+Copy
+MSG_SWAP_COLOURS (//)
+Swap
+MSG_CHANGE_PIXELS (//)
+Change the pixels too
+MSG_PICK_COLOUR (//)
+Pick a colour to change it.
+MSG_PICK_SPREAD (//)
+Pick the other end of the run.
+MSG_PICK_COPY (//)
+Pick the colour to copy it onto.
+MSG_PICK_SWAP (//)
+Pick the colour to swap it with.
 MSG_BRUSH_TOO_LARGE (//)
 A brush can be at most %ld by %ld pixels.
 MSG_NO_BRUSH (//)

@@ -115,6 +115,15 @@
 //! front, and a click there or on the swap beside them swaps them, as `x`
 //! does.
 //!
+//! **The palette** (palette.zig). The Palette menu edits it in a window
+//! of its own (`editPalette`, modal): a colour by red, green and blue,
+//! hue, saturation and value, or hex text, and a run spread, a colour
+//! copied or two swapped; OK takes the colours, and with Change the
+//! Pixels Too first makes the pixels of each colour changed its new one
+//! in every layer, a step to undo. It also takes the colours what is
+//! shown uses most, a preset, or a file - a palette's text, or the
+//! palette of a picture or project - and writes its text.
+//!
 //! **Selections** (selection.zig). The rectangle selection (`R`), the
 //! lasso (`L`) and the magic wand (`w`) choose pixels - in place of what
 //! was chosen, or with Shift added to it, with Alt taken from it - as do
@@ -177,6 +186,9 @@
 //!   Brush     Round, Square, Own Brush, Size, Smaller ([), Larger (]),
 //!             Own Colours, One Colour, Flip Horizontally, Flip
 //!             Vertically, Turn Right, Open Brush..., Save Brush...
+//!   Palette   Edit... (P), From the Picture, Presets (Paint's Own,
+//!             Greys, Spectrum, Pastel, Earth), Open Palette..., Save
+//!             Palette...
 //!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit,
 //!             Grid (G), Own Screen
 //!   Help      About Paint...
@@ -250,6 +262,7 @@ const view_zig = @import("view.zig");
 const shapes = @import("shapes.zig");
 const fill_zig = @import("fill.zig");
 const layers_zig = @import("layers.zig");
+const palette_zig = @import("palette.zig");
 const selection_zig = @import("selection.zig");
 const Picture = picture_zig.Picture;
 const Pixel = picture_zig.Pixel;
@@ -266,7 +279,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.8";
+const VERSION = "1.9";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -317,6 +330,16 @@ const ID_NAME = 26;
 const ID_OUTLINE = 28;
 /// The zoom bar's box that shows the mask of the layer painted.
 const ID_SHOW_MASK = 29;
+// The palette editor: its colours, its sliders - red, green, blue, hue,
+// saturation, value - the hex text, the box that changes the pixels too,
+// and the buttons that spread, copy and swap.
+const ID_EDIT_PALETTE = 60;
+const ID_EDIT_SLIDER = 61;
+const ID_EDIT_HEX = 67;
+const ID_EDIT_PIXELS = 68;
+const ID_EDIT_SPREAD = 69;
+const ID_EDIT_COPY = 70;
+const ID_EDIT_SWAP = 71;
 // The new picture's window.
 const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
@@ -431,13 +454,22 @@ const Command = enum(u32) {
     paint_mask,
     apply_mask,
     delete_mask,
+    edit_palette,
+    palette_from_picture,
+    preset_standard,
+    preset_greys,
+    preset_spectrum,
+    preset_pastel,
+    preset_earth,
+    open_palette,
+    save_palette,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.delete_mask)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.save_palette)) return null;
         return @enumFromInt(value);
     }
 };
@@ -450,14 +482,8 @@ comptime {
     if (size_labels.len != brush_zig.sizes.len) @compileError("a label for every brush size");
 }
 
-/// The colours the palette offers to begin with: black, white and greys,
-/// a ring of hues, the same darker, and earth and skin.
-const colours = [32]Pixel{
-    0xFF000000, 0xFFFFFFFF, 0xFF404040, 0xFF808080, 0xFFC0C0C0, 0xFFE02828, 0xFFF08A1E, 0xFFF5D820,
-    0xFF8CD02A, 0xFF22A447, 0xFF1FB3A3, 0xFF2AB4F0, 0xFF2858D8, 0xFF5A35C8, 0xFF9A35C8, 0xFFE03AA0,
-    0xFF202020, 0xFF606060, 0xFFA0A0A0, 0xFFE0E0E0, 0xFF801818, 0xFF8A4A10, 0xFF8A7A10, 0xFF4A7A18,
-    0xFF145A28, 0xFF106A60, 0xFF186A90, 0xFF183480, 0xFF341E78, 0xFF581E78, 0xFF801E5A, 0xFF5A3A22,
-};
+/// The colours the palette offers to begin with.
+const colours = palette_zig.standard;
 const black_index = 0;
 const white_index = 1;
 
@@ -717,6 +743,18 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_OPEN_BRUSH, null, .open_brush),
     item(.MSG_MENU_SAVE_BRUSH, null, .save_brush),
+    menuTitle(.MSG_MENU_PALETTE),
+    item(.MSG_MENU_EDIT_PALETTE, "P", .edit_palette),
+    item(.MSG_MENU_FROM_PICTURE, null, .palette_from_picture),
+    .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_PRESETS) }, .text = .MSG_MENU_PRESETS },
+    subItem(.MSG_PRESET_STANDARD, .preset_standard),
+    subItem(.MSG_PRESET_GREYS, .preset_greys),
+    subItem(.MSG_PRESET_SPECTRUM, .preset_spectrum),
+    subItem(.MSG_PRESET_PASTEL, .preset_pastel),
+    subItem(.MSG_PRESET_EARTH, .preset_earth),
+    bar,
+    item(.MSG_MENU_OPEN_PALETTE, null, .open_palette),
+    item(.MSG_MENU_SAVE_PALETTE, null, .save_palette),
     menuTitle(.MSG_MENU_VIEW),
     item(.MSG_MENU_ZOOM_IN, "+", .zoom_in),
     item(.MSG_MENU_ZOOM_OUT, "-", .zoom_out),
@@ -988,6 +1026,10 @@ const App = struct {
     brush_changes: u32 = 0,
     /// The file the own brush was last opened from or saved to.
     brush_path: [path_size:0]u8 = @splat(0),
+    /// Where a palette was opened from or saved to last.
+    palette_path: [path_size:0]u8 = @splat(0),
+    /// The palette editor's Change the Pixels Too, kept for the next time.
+    recolour_pixels: bool = false,
     /// The picture pixel under the pointer while it is over the view and
     /// no button is down; null otherwise.
     hover: ?Point = null,
@@ -1558,6 +1600,416 @@ const App = struct {
             app.tell(.MSG_NO_UNDO);
         }
         app.layersChanged();
+    }
+
+    // --- the palette ------------------------------------------------------------
+
+    /// The palette's first colours made `given`, and shown.
+    fn setPalette(app: *App, given: []const Pixel) void {
+        for (app.palette[0..given.len], given) |*colour, made| colour.* = made | 0xFF00_0000;
+        app.changed = true;
+        app.showPalette();
+    }
+
+    /// The palette made the colours what is shown uses most; a requester
+    /// says when there is no memory to count them.
+    fn paletteFromPicture(app: *App) void {
+        const memory = app.sys.AllocVec(palette_zig.bins * @sizeOf(u32), exec.MEMF_ANY) orelse {
+            app.tell(.MSG_NO_COUNT);
+            return;
+        };
+        defer app.sys.FreeVec(memory);
+        const counts = @as([*]u32, @ptrCast(@alignCast(memory)))[0..palette_zig.bins];
+        app.stack.compose(app.picture.whole());
+        const shown = app.stack.shown();
+        var found: palette_zig.Palette = undefined;
+        const count = palette_zig.mostUsed(shown.pixels[0 .. @as(usize, shown.width) * shown.height], counts, &found);
+        if (count != 0) app.setPalette(found[0..count]);
+    }
+
+    /// A palette read from a file: a palette's text, or the palette of a
+    /// picture or a project that has one.
+    fn openPalette(app: *App) void {
+        var name: [path_size:0]u8 = undefined;
+        if (!app.askFile(app.text.get(.MSG_OPEN_PALETTE_TITLE), false, &app.palette_path, &name)) return;
+        const dl = app.dl;
+        const file = dl.Open(&name, dos.MODE_OLDFILE) orelse {
+            app.tellFault(.MSG_NO_OPEN, &name, dl.IoErr());
+            return;
+        };
+        var text: [palette_text_size]u8 = undefined;
+        const got = dl.Read(file, &text, text.len);
+        _ = dl.Close(file);
+        var found: palette_zig.Palette = undefined;
+        var count: usize = 0;
+        if (got > 0 and palette_zig.isText(text[0..@intCast(got)])) count = palette_zig.fromText(text[0..@intCast(got)], &found);
+        if (count == 0) {
+            const pio = app.paintIO() orelse return;
+            var project = paintio.Project{};
+            const failure = pio.LoadProject(&name, &project);
+            if (failure != 0) {
+                app.tellFault(.MSG_NO_OPEN, &name, failure);
+                return;
+            }
+            defer pio.FreeProject(&project);
+            count = @min(project.palette_count, found.len);
+            @memcpy(found[0..count], project.palette[0..count]);
+        }
+        if (count == 0) {
+            app.tellName(.MSG_NO_PALETTE, &name);
+            return;
+        }
+        app.setPalette(found[0..count]);
+        app.palette_path = name;
+    }
+
+    /// The palette written to a file as text, a colour a line.
+    fn savePalette(app: *App) void {
+        var name: [path_size:0]u8 = undefined;
+        if (!app.askFile(app.text.get(.MSG_SAVE_PALETTE_TITLE), true, &app.palette_path, &name)) return;
+        var text: [palette_zig.size * 7]u8 = undefined;
+        const length: isize = @intCast(palette_zig.toText(&app.palette, &text));
+        const dl = app.dl;
+        const file = dl.Open(&name, dos.MODE_NEWFILE) orelse {
+            app.tellFault(.MSG_NO_SAVE_PALETTE, &name, dl.IoErr());
+            return;
+        };
+        var failure: i32 = if (dl.Write(file, &text, length) != length) dl.IoErr() else 0;
+        if (!dl.Close(file) and failure == 0) failure = dl.IoErr();
+        if (failure != 0) {
+            _ = dl.DeleteFile(&name);
+            app.tellFault(.MSG_NO_SAVE_PALETTE, &name, failure);
+            return;
+        }
+        app.palette_path = name;
+    }
+
+    /// The palette edited in a window of its own. A colour picked from
+    /// the 32 is changed by its red, green and blue, its hue, saturation
+    /// and value, or its hex text; Spread, Copy and Swap act between it
+    /// and the next one picked. OK takes the colours - and with Change the
+    /// Pixels Too makes the pixels of each colour changed the new one, a
+    /// step to undo - Cancel leaves them.
+    fn editPalette(app: *App) void {
+        const gui = app.ui() orelse return;
+        const sys = app.sys;
+        const string_lib = sys.OpenLibrary(sg.STRING_LIBRARY, 0) orelse return;
+        defer sys.CloseLibrary(string_lib);
+        const ib = app.ib;
+        var editor = Editor{ .colours = app.palette, .chosen = @min(app.foreground_index, palette_zig.size - 1) };
+
+        var made = Builder{ .ib = ib };
+        const swatches = made.take(ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EDIT_PALETTE },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&editor.colours) },
+            .{ .tag = pa.PALETTE_NumColors, .data = palette_zig.size },
+            .{ .tag = pa.PALETTE_Color, .data = editor.chosen },
+            .{},
+        }));
+        var sliders: [editor_sliders.len]?*Object = undefined;
+        for (&sliders, editor_sliders, 0..) |*slider, entry, place| slider.* = made.take(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EDIT_SLIDER + place },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{ .tag = sl.SLIDER_Min, .data = 0 },
+            .{ .tag = sl.SLIDER_Max, .data = entry.most },
+            .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld") },
+            .{ .tag = sl.SLIDER_LevelPlace, .data = sl.SLIDER_PLACE_RIGHT },
+            .{ .tag = sl.SLIDER_MaxLevelLen, .data = 3 },
+            .{},
+        }));
+        _ = palette_zig.hexText(editor.colours[editor.chosen], &editor.hex);
+        const hex_field = made.take(ib.NewObjectTagList(null, sg.STRING_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EDIT_HEX },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = gc.STRINGA_MaxChars, .data = editor.hex.len },
+            .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(&editor.hex) },
+            .{},
+        }));
+        const pixels_box = made.take(ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EDIT_PIXELS },
+            .{ .tag = gc.GA_Selected, .data = @intFromBool(app.recolour_pixels) },
+            .{},
+        }));
+        const actions = [3]?*Object{
+            made.take(textButton(ib, app.text.get(.MSG_SPREAD), ID_EDIT_SPREAD)),
+            made.take(textButton(ib, app.text.get(.MSG_COPY_COLOUR), ID_EDIT_COPY)),
+            made.take(textButton(ib, app.text.get(.MSG_SWAP_COLOURS), ID_EDIT_SWAP)),
+        };
+        const answers = [2]?*Object{ made.take(textButton(ib, app.text.get(.MSG_OK), ID_OK)), made.take(textButton(ib, app.text.get(.MSG_CANCEL), ID_CANCEL)) };
+        const hint = made.take(ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+            .{ .tag = tx.TEXT_Text, .data = @intFromPtr(app.text.get(.MSG_PICK_COLOUR)) },
+            .{ .tag = tx.TEXT_RoomFor, .data = @intFromPtr(app.text.get(.MSG_PICK_SPREAD)) },
+            .{},
+        }));
+        var value_tags: [2 + 3 * editor_sliders.len + 1]TagItem = undefined;
+        value_tags[0] = .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT };
+        value_tags[1] = .{ .tag = lg.LAYOUTA_Spacing, .data = 4 };
+        var tag_count: usize = 2;
+        for (sliders, editor_sliders) |slider, entry| {
+            value_tags[tag_count] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(slider) };
+            value_tags[tag_count + 1] = .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(entry.label)) };
+            value_tags[tag_count + 2] = .{ .tag = lg.CHILDA_MinWidth, .data = 160 };
+            tag_count += 3;
+        }
+        value_tags[tag_count] = .{};
+        const values = made.layout(&value_tags);
+        const top = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 8 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(swatches) },
+            .{ .tag = lg.CHILDA_MinWidth, .data = 8 * 22 },
+            .{ .tag = lg.CHILDA_MinHeight, .data = 4 * 22 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(values) },
+            .{},
+        });
+        const action_row = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(actions[0]) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(actions[1]) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(actions[2]) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(hex_field) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_HEX)) },
+            .{ .tag = lg.CHILDA_MinWidth, .data = 80 },
+            .{},
+        });
+        const answer_row = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(pixels_box) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_CHANGE_PIXELS)) },
+            .{ .tag = lg.LAYOUTA_AddSpace, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[0]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[1]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{},
+        });
+        const layout = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(top) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(action_row) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(hint) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answer_row) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{},
+        });
+        if (made.failed or layout == null) {
+            made.drop();
+            return;
+        }
+        const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+            screenTag(gui),
+            .{ .tag = wn.WA_Title, .data = @intFromPtr(app.text.get(.MSG_PALETTE_TITLE)) },
+            .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
+            .{ .tag = wn.WA_AutoAdjust, .data = 1 },
+            .{ .tag = wn.WA_CloseGadget, .data = 1 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_DepthGadget, .data = 1 },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE },
+            .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+            .{},
+        }) orelse {
+            made.drop();
+            return;
+        };
+        made.keep(layout.?);
+        defer ib.DisposeObject(object);
+        var open = wc.WmOpen{};
+        if (ib.SendMessage(object, @ptrCast(&open)) == 0) return;
+        editor.window = @ptrFromInt(windowOf(ib, object));
+        editor.palette = swatches.?;
+        for (&editor.sliders, sliders) |*into, slider| into.* = slider.?;
+        editor.hex_field = hex_field.?;
+        editor.hint = hint.?;
+        app.showEdited(&editor, true, null);
+
+        var signal: usize = 0;
+        _ = ib.GetAttr(wc.WINDOWA_SigMask, object, &signal);
+        var code: u32 = 0;
+        var handle = wc.WmHandleInput{ .code = &code };
+        const taken = done: {
+            while (true) {
+                _ = sys.Wait(@truncate(signal));
+                while (true) {
+                    const word = ib.SendMessage(object, @ptrCast(&handle));
+                    if (word == wc.WMHI_LASTMSG) break;
+                    var gadget: usize = wc.WINDOW_NOGADGET;
+                    _ = ib.GetAttr(wc.WINDOWA_GadgetID, object, &gadget);
+                    const id = switch (word & wc.WMHI_CLASSMASK) {
+                        wc.WMHI_CLOSEWINDOW => break :done false,
+                        wc.WMHI_GADGETUP => word & wc.WMHI_GADGETMASK,
+                        wc.WMHI_IDCMPUPDATE => gadget,
+                        wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
+                            '\r' => break :done true,
+                            0x1B => break :done false,
+                            else => continue,
+                        },
+                        else => continue,
+                    };
+                    switch (id) {
+                        ID_OK => break :done true,
+                        ID_CANCEL => break :done false,
+                        ID_EDIT_PALETTE => app.pickEdited(&editor, code),
+                        ID_EDIT_HEX => {
+                            var value: usize = 0;
+                            _ = ib.GetAttr(gc.STRINGA_TextVal, hex_field.?, &value);
+                            if (value != 0) {
+                                const typed: [*:0]const u8 = @ptrFromInt(value);
+                                var length: usize = 0;
+                                while (typed[length] != 0) length += 1;
+                                if (palette_zig.parseHex(typed[0..length])) |colour| editor.colours[editor.chosen] = colour;
+                            }
+                            app.showEdited(&editor, true, null);
+                        },
+                        ID_EDIT_PIXELS => app.recolour_pixels = code != 0,
+                        ID_EDIT_SPREAD => app.awaitPick(&editor, .spread),
+                        ID_EDIT_COPY => app.awaitPick(&editor, .copy),
+                        ID_EDIT_SWAP => app.awaitPick(&editor, .swap),
+                        else => if (id >= ID_EDIT_SLIDER and id < ID_EDIT_SLIDER + editor_sliders.len) {
+                            var level: usize = 0;
+                            _ = ib.GetAttr(sl.SLIDER_Level, editor.sliders[id - ID_EDIT_SLIDER], &level);
+                            app.slidEdited(&editor, id - ID_EDIT_SLIDER, @truncate(level));
+                        },
+                    }
+                }
+            }
+        };
+        if (taken) app.takeEdited(&editor.colours);
+    }
+
+    /// The editor's sliders, hex text and swatches set from the colour
+    /// chosen: its hue, saturation and value worked out again with
+    /// `hsv_too`, and the slider `moving` left as the pointer has it.
+    fn showEdited(app: *App, editor: *Editor, hsv_too: bool, moving: ?usize) void {
+        const ib = app.ib;
+        const colour = editor.colours[editor.chosen];
+        if (hsv_too) editor.hsv = palette_zig.toHsv(colour);
+        const levels = [editor_sliders.len]u32{ (colour >> 16) & 0xFF, (colour >> 8) & 0xFF, colour & 0xFF, editor.hsv.hue, editor.hsv.saturation, editor.hsv.value };
+        for (editor.sliders, levels, 0..) |slider, level, place| {
+            if (moving == place) continue;
+            _ = ib.SetGadgetAttrsTagList(slider, editor.window, &[_]TagItem{ .{ .tag = sl.SLIDER_Level, .data = level }, .{} });
+        }
+        _ = palette_zig.hexText(colour, &editor.hex);
+        _ = ib.SetGadgetAttrsTagList(editor.hex_field, editor.window, &[_]TagItem{ .{ .tag = gc.STRINGA_TextVal, .data = @intFromPtr(&editor.hex) }, .{} });
+        _ = ib.SetGadgetAttrsTagList(editor.palette, editor.window, &[_]TagItem{
+            .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&editor.colours) },
+            .{ .tag = pa.PALETTE_Color, .data = editor.chosen },
+            .{},
+        });
+    }
+
+    /// A colour picked in the editor: the run spread to it, the one
+    /// chosen copied onto it or swapped with it when one of those waits;
+    /// then it is the one chosen.
+    fn pickEdited(app: *App, editor: *Editor, place: u32) void {
+        if (place >= palette_zig.size) return;
+        switch (editor.waiting) {
+            .none => {},
+            .spread => palette_zig.spread(&editor.colours, editor.chosen, place),
+            .copy => editor.colours[place] = editor.colours[editor.chosen],
+            .swap => {
+                const held = editor.colours[place];
+                editor.colours[place] = editor.colours[editor.chosen];
+                editor.colours[editor.chosen] = held;
+            },
+        }
+        if (editor.waiting != .none) app.awaitPick(editor, .none);
+        editor.chosen = place;
+        app.showEdited(editor, true, null);
+    }
+
+    /// What the next colour picked in the editor does, said under the
+    /// colours.
+    fn awaitPick(app: *App, editor: *Editor, waiting: Editor.Waiting) void {
+        editor.waiting = waiting;
+        const hint = app.text.get(switch (waiting) {
+            .none => .MSG_PICK_COLOUR,
+            .spread => .MSG_PICK_SPREAD,
+            .copy => .MSG_PICK_COPY,
+            .swap => .MSG_PICK_SWAP,
+        });
+        _ = app.ib.SetGadgetAttrsTagList(editor.hint, editor.window, &[_]TagItem{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(hint) }, .{} });
+    }
+
+    /// One of the editor's sliders moved: red, green or blue, or hue,
+    /// saturation or value.
+    fn slidEdited(app: *App, editor: *Editor, place: usize, level: u32) void {
+        const colour = &editor.colours[editor.chosen];
+        switch (place) {
+            0, 1, 2 => {
+                const shift: u5 = @intCast(16 - place * 8);
+                colour.* = (colour.* & ~(@as(Pixel, 0xFF) << shift)) | @as(Pixel, @min(level, 255)) << shift;
+                app.showEdited(editor, true, place);
+            },
+            else => {
+                switch (place) {
+                    3 => editor.hsv.hue = level,
+                    4 => editor.hsv.saturation = level,
+                    else => editor.hsv.value = level,
+                }
+                colour.* = palette_zig.fromHsv(editor.hsv);
+                app.showEdited(editor, false, place);
+            },
+        }
+    }
+
+    /// The editor's colours taken as the palette. With Change the Pixels
+    /// Too, the pixels of each colour that changed are made the new one
+    /// in every layer first. The foreground, picked from the palette and
+    /// not changed since, becomes its colour's new one.
+    fn takeEdited(app: *App, edited: *const palette_zig.Palette) void {
+        if (app.recolour_pixels) {
+            var old: palette_zig.Palette = undefined;
+            var new: palette_zig.Palette = undefined;
+            var count: usize = 0;
+            for (app.palette, edited) |was, now| {
+                if ((was ^ now) & 0x00FF_FFFF == 0) continue;
+                old[count] = was;
+                new[count] = now;
+                count += 1;
+            }
+            if (count != 0) app.recolourLayers(old[0..count], new[0..count]);
+        }
+        // The foreground, still its colour of the palette, follows it.
+        const place = app.foreground_index;
+        if (place < edited.len and app.palette[place] == app.foreground and edited[place] != app.foreground) {
+            app.foreground = edited[place];
+            app.drawColours();
+        }
+        app.setPalette(edited);
+    }
+
+    /// The pixels of each of `old`'s colours made the colour at the same
+    /// place in `new`, in every layer: one step to undo.
+    fn recolourLayers(app: *App, old: []const Pixel, new: []const Pixel) void {
+        var joined = false;
+        var whole = Area.none;
+        for (app.stack.all()) |*layer| {
+            const picture = &layer.picture;
+            var area = Area.none;
+            var y: u32 = 0;
+            while (y < picture.height) : (y += 1) {
+                const range = palette_zig.find(picture.row(y), old) orelse continue;
+                area = area.add(.{ .min_x = @intCast(range[0]), .min_y = @intCast(y), .max_x = @intCast(range[1]), .max_y = @intCast(y + 1) });
+            }
+            if (area.isEmpty()) continue;
+            if (app.history.remember(layer.id, picture, area, joined)) joined = true else app.tell(.MSG_NO_UNDO);
+            y = @intCast(area.min_y);
+            while (y < area.max_y) : (y += 1) _ = palette_zig.recolour(picture.row(y)[@intCast(area.min_x)..@intCast(area.max_x)], old, new);
+            whole = whole.add(area);
+        }
+        if (whole.isEmpty()) return;
+        app.changed = true;
+        app.paintLayer();
+        app.show(whole);
     }
 
     // --- masks ------------------------------------------------------------------
@@ -2975,7 +3427,7 @@ const App = struct {
             .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
             .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .flip_layer_across, .flip_layer_down => app.endShape(),
             .select_all, .select_layer, .select_colour, .select_see_through, .select_not_in_palette, .deselect, .invert_selection, .copy_to_layer, .cut_to_layer, .copy_to_brush => app.endShape(),
-            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask => app.endShape(),
+            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask, .edit_palette => app.endShape(),
             else => {},
         }
         switch (which) {
@@ -3040,6 +3492,15 @@ const App = struct {
             .paint_mask => app.paintMask(!app.painting_mask),
             .apply_mask => app.takeMask(true),
             .delete_mask => app.takeMask(false),
+            .edit_palette => app.editPalette(),
+            .palette_from_picture => app.paletteFromPicture(),
+            .preset_standard => app.setPalette(&palette_zig.standard),
+            .preset_greys => app.setPalette(&palette_zig.greys),
+            .preset_spectrum => app.setPalette(&palette_zig.spectrum),
+            .preset_pastel => app.setPalette(&palette_zig.pastel),
+            .preset_earth => app.setPalette(&palette_zig.earth),
+            .open_palette => app.openPalette(),
+            .save_palette => app.savePalette(),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -3166,9 +3627,14 @@ const App = struct {
 
     /// A requester saying a library is missing.
     fn tellMissing(app: *App, name: [*:0]const u8) void {
+        app.tellName(.MSG_NO_PART, name);
+    }
+
+    /// A requester whose `message` takes a name.
+    fn tellName(app: *App, comptime message: Id, name: [*:0]const u8) void {
         const gui = app.ui() orelse return;
-        comptime sdk.exec.checkFormat(strings.builtin(.MSG_NO_PART), struct { [*:0]const u8 });
-        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(.MSG_NO_PART), .gadget_format = app.text.get(.MSG_OK) };
+        comptime sdk.exec.checkFormat(strings.builtin(message), struct { [*:0]const u8 });
+        const easy = intuition.requesters.EasyStruct{ .title = COMMAND_NAME, .text_format = app.text.get(message), .gadget_format = app.text.get(.MSG_OK) };
         const args = [_]usize{@intFromPtr(name)};
         _ = app.ib.EasyRequestArgs(gui.window, &easy, null, &args);
     }
@@ -4245,6 +4711,41 @@ fn flipPicture(picture: *Picture, across: bool) void {
         }
     }
 }
+
+/// The bytes of a palette file read: room for 32 colours with a name
+/// each, and a heading.
+const palette_text_size = 2048;
+
+/// A slider of the palette editor: its label and its largest level.
+const EditorSlider = struct { label: Id, most: u32 };
+const editor_sliders = [_]EditorSlider{
+    .{ .label = .MSG_RED, .most = 255 },
+    .{ .label = .MSG_GREEN, .most = 255 },
+    .{ .label = .MSG_BLUE, .most = 255 },
+    .{ .label = .MSG_HUE, .most = 359 },
+    .{ .label = .MSG_SATURATION, .most = 100 },
+    .{ .label = .MSG_VALUE, .most = 100 },
+};
+
+/// The palette editor's colours, what it is doing, and its gadgets.
+const Editor = struct {
+    colours: palette_zig.Palette,
+    /// The colour the sliders show.
+    chosen: u32,
+    /// The colour chosen as hue, saturation and value, kept while those
+    /// sliders move so that a grey keeps its hue.
+    hsv: palette_zig.Hsv = .{},
+    /// What the next colour picked does with the one chosen.
+    waiting: Waiting = .none,
+    hex: [8]u8 = @splat(0),
+    window: *Window = undefined,
+    palette: *Object = undefined,
+    sliders: [editor_sliders.len]*Object = undefined,
+    hex_field: *Object = undefined,
+    hint: *Object = undefined,
+
+    const Waiting = enum { none, spread, copy, swap };
+};
 
 /// The history's way to give back a layer it held: `context` is the App.
 fn releaseLayer(context: *anyopaque, memory: *anyopaque) void {
