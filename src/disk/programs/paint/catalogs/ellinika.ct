@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language ellinika
+## codeset 106
+; Paint's strings in Greek.
+MSG_MENU_FILE
+Αρχείο
+MSG_MENU_NEW
+Δημιουργία...
+MSG_MENU_OPEN
+Άνοιγμα...
+MSG_MENU_SAVE
+Αποθήκευση
+MSG_MENU_SAVE_AS
+Αποθήκευση ως...
+MSG_MENU_QUIT
+Έξοδος
+MSG_MENU_EDIT
+Επεξεργασία
+MSG_MENU_UNDO
+Αναίρεση
+MSG_MENU_REDO
+Επανάληψη
+MSG_MENU_CLEAR
+Απαλοιφή
+MSG_MENU_IMAGE
+Εικόνα
+MSG_MENU_ROTATE
+Περιστροφή
+MSG_TURN_RIGHT
+90° δεξιόστροφα
+MSG_TURN_LEFT
+90° αριστερόστροφα
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Περικοπή στην επιλογή
+MSG_MENU_TRIM
+Περικοπή περιθωρίων
+MSG_MENU_CANVAS_SIZE
+Μέγεθος καμβά...
+MSG_MENU_FLATTEN
+Ισοπέδωση
+MSG_MENU_PICTURE_SIZE
+Μέγεθος εικόνας...
+MSG_MENU_EFFECTS
+Εφέ...
+MSG_MENU_FREE_TRANSFORM
+Ελεύθερος μετασχηματισμός
+MSG_MENU_TOOLS
+Εργαλεία
+MSG_MENU_FREEHAND
+Ελεύθερο σχέδιο
+MSG_MENU_DOTS
+Ελεύθερο σχέδιο με κουκκίδες
+MSG_MENU_LINE
+Γραμμή
+MSG_MENU_CURVE
+Καμπύλη
+MSG_MENU_RECTANGLE
+Ορθογώνιο
+MSG_MENU_ELLIPSE
+Έλλειψη
+MSG_MENU_POLYGON
+Πολύγωνο
+MSG_MENU_FILL
+Γέμισμα
+MSG_MENU_GRADIENT
+Διαβάθμιση
+MSG_MENU_AIRBRUSH
+Αερογράφος
+MSG_MENU_PICK
+Λήψη χρώματος
+MSG_MENU_TEXT
+Κείμενο
+MSG_MENU_GRAB
+Αποκοπή πινέλου
+MSG_MENU_SELECT_BOX
+Ορθογώνια επιλογή
+MSG_MENU_LASSO
+Λάσο
+MSG_MENU_WAND
+Μαγικό ραβδί
+MSG_MENU_HAND
+Χέρι
+MSG_MENU_ERASER
+Γόμα
+MSG_MENU_SMUDGE
+Μουτζούρωμα
+MSG_MENU_ZOOM_TOOL
+Φακός
+MSG_MENU_FILLED
+Γεμάτα σχήματα
+MSG_MENU_ROUND_GRADIENT
+Κυκλική διαβάθμιση
+MSG_MENU_SWAP
+Αντιμετάθεση χρωμάτων
+MSG_MENU_VIEW
+Προβολή
+MSG_MENU_ZOOM_IN
+Μεγέθυνση
+MSG_MENU_ZOOM_OUT
+Σμίκρυνση
+MSG_MENU_ACTUAL_SIZE
+Πραγματικό μέγεθος
+MSG_MENU_FIT
+Προσαρμογή στο παράθυρο
+MSG_MENU_GRID
+Πλέγμα
+MSG_MENU_RULERS
+Χάρακες
+MSG_MENU_SPLIT_SCREEN
+Διαιρεμένη οθόνη
+MSG_MENU_LAYER
+Επίπεδο
+MSG_MENU_NEW_LAYER
+Νέο επίπεδο
+MSG_MENU_DUPLICATE_LAYER
+Διπλασιασμός
+MSG_MENU_DELETE_LAYER
+Διαγραφή
+MSG_MENU_RENAME_LAYER
+Μετονομασία...
+MSG_MENU_LAYER_UP
+Μετακίνηση πάνω
+MSG_MENU_LAYER_DOWN
+Μετακίνηση κάτω
+MSG_MENU_MERGE_DOWN
+Συγχώνευση προς τα κάτω
+MSG_MENU_SELECTION
+Επιλογή
+MSG_MENU_SELECT
+Νέα επιλογή
+MSG_MENU_SELECT_ALL
+Όλα
+MSG_MENU_SELECT_LAYER
+Pixel του επιπέδου
+MSG_MENU_SELECT_COLOUR
+Pixel του χρώματος
+MSG_MENU_SELECT_SEE_THROUGH
+Διαφανή pixel
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixel εκτός παλέτας
+MSG_MENU_DESELECT
+Αποεπιλογή
+MSG_MENU_INVERT
+Αντιστροφή
+MSG_MENU_COPY_TO_LAYER
+Αντιγραφή σε επίπεδο
+MSG_MENU_CUT_TO_LAYER
+Αποκοπή σε επίπεδο
+MSG_MENU_COPY_TO_BRUSH
+Αντιγραφή σε πινέλο
+MSG_MENU_BRUSH
+Πινέλο
+MSG_MENU_ROUND
+Στρογγυλό
+MSG_MENU_SQUARE
+Τετράγωνο
+MSG_MENU_OWN_BRUSH
+Προσαρμοσμένο πινέλο
+MSG_MENU_SIZE
+Μέγεθος
+MSG_MENU_SMALLER
+Μικρότερο
+MSG_MENU_LARGER
+Μεγαλύτερο
+MSG_MENU_OWN_COLOURS
+Δικά του χρώματα
+MSG_MENU_ONE_COLOUR
+Ένα χρώμα
+MSG_MENU_FLIP_ACROSS
+Οριζόντια αναστροφή
+MSG_MENU_FLIP_DOWN
+Κατακόρυφη αναστροφή
+MSG_MENU_ADD_MASK
+Προσθήκη μάσκας
+MSG_MENU_MASK_SHOW_ALL
+Εμφάνιση όλων
+MSG_MENU_MASK_HIDE_ALL
+Απόκρυψη όλων
+MSG_MENU_MASK_SELECTION
+Εμφάνιση της επιλογής
+MSG_MENU_PAINT_MASK
+Ζωγραφική στη μάσκα
+MSG_MENU_APPLY_MASK
+Εφαρμογή της μάσκας
+MSG_MENU_DELETE_MASK
+Διαγραφή της μάσκας
+MSG_MENU_TURN
+Περιστροφή δεξιά
+MSG_MENU_OPEN_BRUSH
+Άνοιγμα πινέλου...
+MSG_MENU_SAVE_BRUSH
+Αποθήκευση πινέλου...
+MSG_MENU_PALETTE
+Παλέτα
+MSG_MENU_EDIT_PALETTE
+Επεξεργασία...
+MSG_MENU_FROM_PICTURE
+Από την εικόνα
+MSG_MENU_PRESETS
+Έτοιμες παλέτες
+MSG_PRESET_STANDARD
+Προεπιλεγμένη
+MSG_PRESET_GREYS
+Αποχρώσεις του γκρι
+MSG_PRESET_SPECTRUM
+Φάσμα
+MSG_PRESET_PASTEL
+Παστέλ
+MSG_PRESET_EARTH
+Γήινοι τόνοι
+MSG_MENU_REDUCE
+Μείωση χρωμάτων
+MSG_DITHER_NONE
+Χωρίς πρόσμειξη
+MSG_DITHER_ORDERED
+Τακτική πρόσμειξη
+MSG_DITHER_DIFFUSED
+Διάχυση σφάλματος
+MSG_MENU_CYCLE
+Κυκλική εναλλαγή χρωμάτων
+MSG_MENU_OPEN_PALETTE
+Άνοιγμα παλέτας...
+MSG_MENU_SAVE_PALETTE
+Αποθήκευση παλέτας...
+MSG_MENU_OWN_SCREEN
+Δική του οθόνη
+MSG_MENU_HELP
+Βοήθεια
+MSG_MENU_ABOUT
+Σχετικά με το Paint...
+MSG_TOOL_FREEHAND
+Ελεύθερο σχέδιο: μια γραμμή όπου περνά ο δείκτης
+MSG_TOOL_DOTS
+Ελεύθερο σχέδιο με κουκκίδες: το πινέλο όπου βρίσκεται ο δείκτης
+MSG_TOOL_LINE
+Γραμμή: από εκεί που πατιέται το κουμπί ως εκεί που αφήνεται
+MSG_TOOL_CURVE
+Καμπύλη: μια γραμμή που λυγίζει με δεύτερο πάτημα
+MSG_TOOL_RECTANGLE
+Ορθογώνιο: από τη μία γωνία στην άλλη
+MSG_TOOL_ELLIPSE
+Έλλειψη: μέσα στο πλαίσιο από τη μία γωνία στην άλλη
+MSG_TOOL_POLYGON
+Πολύγωνο: μια κορυφή σε κάθε άφημα, κλείνει στην πρώτη κορυφή
+MSG_TOOL_FILL
+Γέμισμα: η περιοχή ενός χρώματος όπου γίνεται κλικ
+MSG_TOOL_GRADIENT
+Διαβάθμιση: από το χρώμα προσκηνίου στην αρχή του συρσίματος ως το χρώμα φόντου στο τέλος του
+MSG_TOOL_AIRBRUSH
+Αερογράφος: ψεκασμός όπου βρίσκεται ο δείκτης, όσο κρατιέται το κουμπί
+MSG_TOOL_PICK
+Λήψη χρώματος: το χρώμα κάτω από τον δείκτη
+MSG_TOOL_TEXT
+Κείμενο: πληκτρολογείται και μπαίνει όπου γίνεται κλικ στην εικόνα
+MSG_TOOL_GRAB
+Αποκοπή πινέλου: ένα μέρος της εικόνας γίνεται πινέλο
+MSG_TOOL_SELECT_BOX
+Ορθογώνια επιλογή: ό,τι επιτρέπεται να βαφτεί (Shift προσθέτει, Alt αφαιρεί)
+MSG_TOOL_LASSO
+Λάσο: επιλέγει ένα σχήμα σχεδιασμένο με το χέρι (Shift προσθέτει, Alt αφαιρεί)
+MSG_TOOL_WAND
+Μαγικό ραβδί: επιλέγει τα pixel του χρώματος που συνδέονται με αυτό του κλικ
+MSG_TOOL_HAND
+Χέρι: μετακινεί την εικόνα με τον δείκτη
+MSG_TOOL_ERASER
+Γόμα: κάνει την εικόνα διαφανή όπου περνά το πινέλο
+MSG_TOOL_SMUDGE
+Μουτζούρωμα: τα χρώματα κάτω από το πινέλο σέρνονται μαζί του
+MSG_TOOL_ZOOM
+Φακός: μεγέθυνση όπου γίνεται κλικ, σμίκρυνση με το κουμπί μενού
+MSG_FILLED_HINT
+Γεμάτα ορθογώνια, ελλείψεις και πολύγωνα
+MSG_UNDO_HINT
+Αναίρεση της τελευταίας αλλαγής
+MSG_REDO_HINT
+Επανάληψη της αλλαγής που αναιρέθηκε
+MSG_ZOOM_IN_HINT
+Εμφάνιση της εικόνας μεγαλύτερης
+MSG_ZOOM_OUT_HINT
+Εμφάνιση της εικόνας μικρότερης
+MSG_FIT_HINT
+Εμφάνιση ολόκληρης της εικόνας όσο μεγάλη χωράει
+MSG_SWAP_HINT
+Αντιμετάθεση των δύο χρωμάτων
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Επίπεδα
+MSG_SECTION_BRUSH
+Πινέλο
+MSG_SECTION_COLOUR
+Χρώμα
+MSG_SIZE
+Μέγεθος
+MSG_SOFTNESS
+Απαλότητα
+MSG_OPACITY
+Αδιαφάνεια
+MSG_FLOW
+Ροή
+MSG_JITTER
+Διασπορά
+MSG_ROTATION
+Περιστροφή
+MSG_DITHER
+Πρόσμειξη
+MSG_BLEND
+Ανάμειξη
+MSG_NEW_LAYER_HINT
+Νέο επίπεδο πάνω από αυτό που ζωγραφίζεται
+MSG_DELETE_LAYER_HINT
+Διαγραφή του επιπέδου που ζωγραφίζεται
+MSG_LAYER_NAME
+Επίπεδο %ld
+MSG_LAYER_COPY
+%s αντίγραφο
+MSG_BLEND_NORMAL
+Κανονική
+MSG_BLEND_ADD
+Πρόσθεση
+MSG_BLEND_MULTIPLY
+Πολλαπλασιασμός
+MSG_BLEND_SCREEN
+Οθόνη
+MSG_BLEND_OVERLAY
+Επικάλυψη
+MSG_BLEND_DARKEN
+Σκούρυνση
+MSG_BLEND_LIGHTEN
+Ξάνοιγμα
+MSG_BLEND_DODGE
+Υποφωτισμός χρώματος
+MSG_BLEND_BURN
+Υπερφωτισμός χρώματος
+MSG_BLEND_HARD_LIGHT
+Σκληρό φως
+MSG_BLEND_SOFT_LIGHT
+Απαλό φως
+MSG_BLEND_HUE
+Απόχρωση
+MSG_BLEND_SATURATION
+Κορεσμός
+MSG_BLEND_COLOUR
+Χρώμα
+MSG_BLEND_LUMINOSITY
+Φωτεινότητα
+MSG_STATUS
+%ld x %ld   %ld:1   πινέλο %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   πινέλο %ld   θέση %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   πινέλο %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   πινέλο %ld x %ld   θέση %ld, %ld
+MSG_NEW_TITLE
+Νέα εικόνα
+MSG_CANVAS_TITLE
+Μέγεθος καμβά
+MSG_PLACE
+Εικόνα
+MSG_PLACE_TOP_LEFT
+Πάνω αριστερά
+MSG_PLACE_TOP
+Πάνω
+MSG_PLACE_TOP_RIGHT
+Πάνω δεξιά
+MSG_PLACE_LEFT
+Αριστερά
+MSG_PLACE_MIDDLE
+Στη μέση
+MSG_PLACE_RIGHT
+Δεξιά
+MSG_PLACE_BOTTOM_LEFT
+Κάτω αριστερά
+MSG_PLACE_BOTTOM
+Κάτω
+MSG_PLACE_BOTTOM_RIGHT
+Κάτω δεξιά
+MSG_NO_IMAGE_MEMORY
+Δεν υπάρχει μνήμη\nγια την αλλαγή της εικόνας.
+MSG_PICTURE_SIZE_TITLE
+Μέγεθος εικόνας
+MSG_SCALING
+Pixel
+MSG_SCALE_SMOOTH
+Ομαλά
+MSG_SCALE_HARD
+Σκληρά
+MSG_KEEP_PROPORTIONS
+Διατήρηση αναλογιών
+MSG_EFFECTS_TITLE
+Εφέ
+MSG_RESET
+Επαναφορά
+MSG_FX_BRIGHTNESS
+Φωτεινότητα
+MSG_FX_CONTRAST
+Αντίθεση
+MSG_FX_SATURATION
+Κορεσμός
+MSG_FX_HUE
+Απόχρωση
+MSG_FX_BLUR
+Θόλωμα
+MSG_FX_SHARPEN
+Όξυνση
+MSG_FX_TEXTURE
+Υφή
+MSG_FX_DEHAZE
+Αφαίρεση θολούρας
+MSG_FX_SEPIA
+Σέπια
+MSG_FX_INVERT
+Αντιστροφή
+MSG_FX_CYAN_RED
+Κυανό/Κόκκινο
+MSG_FX_MAGENTA_GREEN
+Ματζέντα/Πράσινο
+MSG_FX_YELLOW_BLUE
+Κίτρινο/Μπλε
+MSG_WIDTH
+Πλάτος
+MSG_HEIGHT
+Ύψος
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nΕικόνες σε πραγματικό χρώμα, ζωγραφισμένες\nμε ενσωματωμένα και αποκομμένα πινέλα.
+MSG_CANCEL
+Άκυρο
+MSG_TEXT_TITLE
+Κείμενο
+MSG_RENAME_TITLE
+Μετονομασία επιπέδου
+MSG_NAME
+Όνομα
+MSG_TEXT
+Κείμενο
+MSG_FONT
+Γραμματοσειρά
+MSG_FONT_TITLE
+Η γραμματοσειρά του κειμένου
+MSG_CHANGED
+Η εικόνα άλλαξε.\nΑποθήκευση πρώτα;
+MSG_CHANGED_BUTTONS
+Αποθήκευση|Χωρίς αποθήκευση|Άκυρο
+MSG_NO_PICTURE
+Δεν υπάρχει μνήμη για εικόνα\n%ld επί %ld pixel.
+MSG_NO_UNDO
+Η αλλαγή ήταν πολύ μεγάλη για να κρατηθεί:\nδεν μπορεί να αναιρεθεί.
+MSG_NO_LAYER
+Δεν υπάρχει μνήμη για άλλο επίπεδο.
+MSG_NO_MASK
+Δεν υπάρχει μνήμη για μάσκα.
+MSG_NO_OWN_SCREEN
+Δεν ήταν δυνατό να ανοίξει δική του οθόνη.
+MSG_NO_FONT
+Δεν ήταν δυνατό να ανοίξει η γραμματοσειρά.
+MSG_FILL_SHORT
+Δεν υπήρχε αρκετή μνήμη για το γέμισμα όλων.
+MSG_CHOICE_SHORT
+Δεν υπήρχε αρκετή μνήμη για την επιλογή όλων.
+MSG_NO_SELECTION
+Δεν υπάρχει μνήμη για επιλογή.
+MSG_OUTLINE
+Περίγραμμα
+MSG_SHOW_MASK
+Μάσκα
+MSG_MASK_ROW
+Μάσκα
+MSG_MASK_PAINTED
+[Μάσκα]
+MSG_OPEN_TITLE
+Άνοιγμα εικόνας
+MSG_SAVE_AS_TITLE
+Αποθήκευση της εικόνας ως
+MSG_NO_OPEN
+Το %s\nδεν μπορεί να ανοίξει:\n%s
+MSG_NO_SAVE
+Η εικόνα δεν μπορεί να αποθηκευτεί\nως %s:\n%s
+MSG_NO_PART
+Το %s\nδεν μπορεί να ανοίξει.
+MSG_UNTITLED
+Χωρίς τίτλο
+MSG_OPEN_BRUSH_TITLE
+Άνοιγμα πινέλου
+MSG_SAVE_BRUSH_TITLE
+Αποθήκευση του πινέλου ως
+MSG_NO_SAVE_BRUSH
+Το πινέλο δεν μπορεί να αποθηκευτεί\nως %s:\n%s
+MSG_NO_SAVE_PALETTE
+Η παλέτα δεν μπορεί να αποθηκευτεί\nως %s:\n%s
+MSG_NO_PALETTE
+Το %s\nδεν περιέχει παλέτα.
+MSG_NO_COUNT
+Δεν υπάρχει μνήμη για την καταμέτρηση των χρωμάτων.
+MSG_OPEN_PALETTE_TITLE
+Άνοιγμα παλέτας
+MSG_SAVE_PALETTE_TITLE
+Αποθήκευση της παλέτας ως
+MSG_PALETTE_TITLE
+Παλέτα
+MSG_RED
+Κόκκινο
+MSG_GREEN
+Πράσινο
+MSG_BLUE
+Μπλε
+MSG_HUE
+Απόχρωση
+MSG_SATURATION
+Κορεσμός
+MSG_VALUE
+Τιμή
+MSG_HEX
+Hex
+MSG_SPREAD
+Διαβάθμιση
+MSG_COPY_COLOUR
+Αντιγραφή
+MSG_SWAP_COLOURS
+Αντιμετάθεση
+MSG_CHANGE_PIXELS
+Αλλαγή και των pixel
+MSG_PICK_COLOUR
+Επιλογή του χρώματος προς αλλαγή.
+MSG_PICK_SPREAD
+Επιλογή του άλλου άκρου της διαβάθμισης.
+MSG_PICK_COPY
+Επιλογή του χρώματος όπου θα αντιγραφεί.
+MSG_PICK_SWAP
+Επιλογή του χρώματος με το οποίο θα αντιμετατεθεί.
+MSG_PICK_RANGE
+Επιλογή του άλλου άκρου του εύρους.
+MSG_RANGE
+Εύρος
+MSG_SET_RANGE
+Ορισμός εύρους
+MSG_SPEED
+Ταχύτητα
+MSG_BACKWARDS
+Αντίστροφα
+MSG_RANGE_SPAN
+Εύρος %ld: χρώματα %ld έως %ld.
+MSG_RANGE_UNSET
+Το εύρος %ld δεν έχει οριστεί.
+MSG_NO_RANGE
+Κανένα εύρος της παλέτας δεν περιστρέφεται:\nορίστε ένα στον επεξεργαστή παλέτας.
+MSG_NO_REDUCE
+Δεν υπάρχει μνήμη για τη διάχυση\nτου σφάλματος κάθε χρώματος.
+MSG_BRUSH_TOO_LARGE
+Ένα πινέλο μπορεί να είναι το πολύ %ld επί %ld pixel.
+MSG_NO_BRUSH
+Δεν υπάρχει μνήμη για πινέλο\n%ld επί %ld pixel.
+MSG_NOLIBRARY
+Δεν υπάρχει %s\n
+MSG_NOSCREEN
+Δεν υπάρχει οθόνη - καμία απεικόνιση\n
+MSG_NOMEMORY
+Δεν υπάρχει μνήμη για το παράθυρο\n
+MSG_BADSCREEN
+Το SCREEN είναι OWN ή DESKTOP\n

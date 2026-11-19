@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language dansk
+## codeset 106
+; Paint's strings in Danish.
+MSG_MENU_FILE
+Filer
+MSG_MENU_NEW
+Ny...
+MSG_MENU_OPEN
+Åbn...
+MSG_MENU_SAVE
+Gem
+MSG_MENU_SAVE_AS
+Gem som...
+MSG_MENU_QUIT
+Afslut
+MSG_MENU_EDIT
+Rediger
+MSG_MENU_UNDO
+Fortryd
+MSG_MENU_REDO
+Gentag
+MSG_MENU_CLEAR
+Ryd
+MSG_MENU_IMAGE
+Billede
+MSG_MENU_ROTATE
+Rotér
+MSG_TURN_RIGHT
+90° med uret
+MSG_TURN_LEFT
+90° mod uret
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Beskær til markeringen
+MSG_MENU_TRIM
+Fjern kanter
+MSG_MENU_CANVAS_SIZE
+Lærredsstørrelse...
+MSG_MENU_FLATTEN
+Gør til ét lag
+MSG_MENU_PICTURE_SIZE
+Billedstørrelse...
+MSG_MENU_EFFECTS
+Effekter...
+MSG_MENU_FREE_TRANSFORM
+Fri transformering
+MSG_MENU_TOOLS
+Værktøjer
+MSG_MENU_FREEHAND
+Frihånd
+MSG_MENU_DOTS
+Prikket frihånd
+MSG_MENU_LINE
+Linje
+MSG_MENU_CURVE
+Kurve
+MSG_MENU_RECTANGLE
+Rektangel
+MSG_MENU_ELLIPSE
+Ellipse
+MSG_MENU_POLYGON
+Polygon
+MSG_MENU_FILL
+Udfyld
+MSG_MENU_GRADIENT
+Farveforløb
+MSG_MENU_AIRBRUSH
+Airbrush
+MSG_MENU_PICK
+Hent farve
+MSG_MENU_TEXT
+Tekst
+MSG_MENU_GRAB
+Klip pensel
+MSG_MENU_SELECT_BOX
+Rektangulær markering
+MSG_MENU_LASSO
+Lasso
+MSG_MENU_WAND
+Tryllestav
+MSG_MENU_HAND
+Hånd
+MSG_MENU_ERASER
+Viskelæder
+MSG_MENU_SMUDGE
+Udtværing
+MSG_MENU_ZOOM_TOOL
+Zoom
+MSG_MENU_FILLED
+Udfyldte figurer
+MSG_MENU_ROUND_GRADIENT
+Rundt farveforløb
+MSG_MENU_SWAP
+Byt farver
+MSG_MENU_VIEW
+Vis
+MSG_MENU_ZOOM_IN
+Zoom ind
+MSG_MENU_ZOOM_OUT
+Zoom ud
+MSG_MENU_ACTUAL_SIZE
+Faktisk størrelse
+MSG_MENU_FIT
+Tilpas til vinduet
+MSG_MENU_GRID
+Gitter
+MSG_MENU_RULERS
+Linealer
+MSG_MENU_SPLIT_SCREEN
+Delt visning
+MSG_MENU_LAYER
+Lag
+MSG_MENU_NEW_LAYER
+Nyt lag
+MSG_MENU_DUPLICATE_LAYER
+Duplikér
+MSG_MENU_DELETE_LAYER
+Slet
+MSG_MENU_RENAME_LAYER
+Omdøb...
+MSG_MENU_LAYER_UP
+Flyt op
+MSG_MENU_LAYER_DOWN
+Flyt ned
+MSG_MENU_MERGE_DOWN
+Flet ned
+MSG_MENU_SELECTION
+Markering
+MSG_MENU_SELECT
+Markér
+MSG_MENU_SELECT_ALL
+Alt
+MSG_MENU_SELECT_LAYER
+Lagets pixels
+MSG_MENU_SELECT_COLOUR
+Farvens pixels
+MSG_MENU_SELECT_SEE_THROUGH
+Gennemsigtige pixels
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixels uden for paletten
+MSG_MENU_DESELECT
+Fjern markering
+MSG_MENU_INVERT
+Invertér
+MSG_MENU_COPY_TO_LAYER
+Kopiér til nyt lag
+MSG_MENU_CUT_TO_LAYER
+Klip til nyt lag
+MSG_MENU_COPY_TO_BRUSH
+Kopiér som pensel
+MSG_MENU_BRUSH
+Pensel
+MSG_MENU_ROUND
+Rund
+MSG_MENU_SQUARE
+Firkantet
+MSG_MENU_OWN_BRUSH
+Egen pensel
+MSG_MENU_SIZE
+Størrelse
+MSG_MENU_SMALLER
+Mindre
+MSG_MENU_LARGER
+Større
+MSG_MENU_OWN_COLOURS
+Egne farver
+MSG_MENU_ONE_COLOUR
+Én farve
+MSG_MENU_FLIP_ACROSS
+Spejlvend vandret
+MSG_MENU_FLIP_DOWN
+Spejlvend lodret
+MSG_MENU_ADD_MASK
+Tilføj maske
+MSG_MENU_MASK_SHOW_ALL
+Vis alt
+MSG_MENU_MASK_HIDE_ALL
+Skjul alt
+MSG_MENU_MASK_SELECTION
+Vis markeringen
+MSG_MENU_PAINT_MASK
+Mal masken
+MSG_MENU_APPLY_MASK
+Anvend masken
+MSG_MENU_DELETE_MASK
+Slet masken
+MSG_MENU_TURN
+Drej til højre
+MSG_MENU_OPEN_BRUSH
+Åbn pensel...
+MSG_MENU_SAVE_BRUSH
+Gem pensel...
+MSG_MENU_PALETTE
+Palet
+MSG_MENU_EDIT_PALETTE
+Rediger...
+MSG_MENU_FROM_PICTURE
+Fra billedet
+MSG_MENU_PRESETS
+Forvalg
+MSG_PRESET_STANDARD
+Paints egen
+MSG_PRESET_GREYS
+Gråtoner
+MSG_PRESET_SPECTRUM
+Spektrum
+MSG_PRESET_PASTEL
+Pastel
+MSG_PRESET_EARTH
+Jordfarver
+MSG_MENU_REDUCE
+Reducér
+MSG_DITHER_NONE
+Uden dithering
+MSG_DITHER_ORDERED
+Ordnet dithering
+MSG_DITHER_DIFFUSED
+Fejlspredning
+MSG_MENU_CYCLE
+Rotér farver
+MSG_MENU_OPEN_PALETTE
+Åbn palet...
+MSG_MENU_SAVE_PALETTE
+Gem palet...
+MSG_MENU_OWN_SCREEN
+Egen skærm
+MSG_MENU_HELP
+Hjælp
+MSG_MENU_ABOUT
+Om Paint...
+MSG_TOOL_FREEHAND
+Frihånd: en linje, hvor markøren går
+MSG_TOOL_DOTS
+Prikket frihånd: penslen, hvor markøren er
+MSG_TOOL_LINE
+Linje: fra hvor knappen trykkes ned, til hvor den slippes
+MSG_TOOL_CURVE
+Kurve: en linje, der derefter bøjes med endnu et tryk
+MSG_TOOL_RECTANGLE
+Rektangel: fra det ene hjørne til det andet
+MSG_TOOL_ELLIPSE
+Ellipse: i boksen fra det ene hjørne til det andet
+MSG_TOOL_POLYGON
+Polygon: et hjørne, hver gang knappen slippes, lukket ved det første hjørne
+MSG_TOOL_FILL
+Udfyld: det ensfarvede område, der klikkes på
+MSG_TOOL_GRADIENT
+Farveforløb: fra forgrundsfarven, hvor trækket begynder, til baggrundsfarven, hvor det slutter
+MSG_TOOL_AIRBRUSH
+Airbrush: en sprøjtesky, hvor markøren er, så længe knappen holdes nede
+MSG_TOOL_PICK
+Hent farve: farven under markøren
+MSG_TOOL_TEXT
+Tekst: skrives og sættes ind, hvor der klikkes i billedet
+MSG_TOOL_GRAB
+Klip pensel: en del af billedet tages som pensel
+MSG_TOOL_SELECT_BOX
+Rektangulær markering: hvad der må males på (Skift tilføjer, Alt fjerner)
+MSG_TOOL_LASSO
+Lasso: en form tegnet i frihånd markeres (Skift tilføjer, Alt fjerner)
+MSG_TOOL_WAND
+Tryllestav: farvens pixels, der hænger sammen med den, der klikkes på, markeres
+MSG_TOOL_HAND
+Hånd: billedet flyttes med markøren
+MSG_TOOL_ERASER
+Viskelæder: billedet gøres gennemsigtigt, hvor penslen går
+MSG_TOOL_SMUDGE
+Udtværing: farverne under penslen trækkes med
+MSG_TOOL_ZOOM
+Zoom: større, hvor der klikkes, mindre med menuknappen
+MSG_FILLED_HINT
+Udfyldte rektangler, ellipser og polygoner
+MSG_UNDO_HINT
+Fortryd den sidste ændring
+MSG_REDO_HINT
+Gentag den fortrudte ændring
+MSG_ZOOM_IN_HINT
+Vis billedet større
+MSG_ZOOM_OUT_HINT
+Vis billedet mindre
+MSG_FIT_HINT
+Vis hele billedet så stort, som der er plads til
+MSG_SWAP_HINT
+Byt om på de to farver
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Lag
+MSG_SECTION_BRUSH
+Pensel
+MSG_SECTION_COLOUR
+Farve
+MSG_SIZE
+Størrelse
+MSG_SOFTNESS
+Blødhed
+MSG_OPACITY
+Uigennemsigtighed
+MSG_FLOW
+Flow
+MSG_JITTER
+Spredning
+MSG_ROTATION
+Rotation
+MSG_DITHER
+Dithering
+MSG_BLEND
+Blanding
+MSG_NEW_LAYER_HINT
+Et nyt lag over det, der males på
+MSG_DELETE_LAYER_HINT
+Slet det lag, der males på
+MSG_LAYER_NAME
+Lag %ld
+MSG_LAYER_COPY
+%s kopi
+MSG_BLEND_NORMAL
+Normal
+MSG_BLEND_ADD
+Addér
+MSG_BLEND_MULTIPLY
+Multiplicer
+MSG_BLEND_SCREEN
+Skærm
+MSG_BLEND_OVERLAY
+Overlejring
+MSG_BLEND_DARKEN
+Mørkere
+MSG_BLEND_LIGHTEN
+Lysere
+MSG_BLEND_DODGE
+Farveundvigelse
+MSG_BLEND_BURN
+Farvebrænding
+MSG_BLEND_HARD_LIGHT
+Hårdt lys
+MSG_BLEND_SOFT_LIGHT
+Blødt lys
+MSG_BLEND_HUE
+Farvetone
+MSG_BLEND_SATURATION
+Mætning
+MSG_BLEND_COLOUR
+Farve
+MSG_BLEND_LUMINOSITY
+Luminans
+MSG_STATUS
+%ld x %ld   %ld:1   pensel %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pensel %ld   ved %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pensel %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pensel %ld x %ld   ved %ld, %ld
+MSG_NEW_TITLE
+Nyt billede
+MSG_CANVAS_TITLE
+Lærredsstørrelse
+MSG_PLACE
+Billede
+MSG_PLACE_TOP_LEFT
+Øverst til venstre
+MSG_PLACE_TOP
+Øverst
+MSG_PLACE_TOP_RIGHT
+Øverst til højre
+MSG_PLACE_LEFT
+Venstre
+MSG_PLACE_MIDDLE
+Midten
+MSG_PLACE_RIGHT
+Højre
+MSG_PLACE_BOTTOM_LEFT
+Nederst til venstre
+MSG_PLACE_BOTTOM
+Nederst
+MSG_PLACE_BOTTOM_RIGHT
+Nederst til højre
+MSG_NO_IMAGE_MEMORY
+Ingen hukommelse\ntil at ændre billedet.
+MSG_PICTURE_SIZE_TITLE
+Billedstørrelse
+MSG_SCALING
+Pixels
+MSG_SCALE_SMOOTH
+Blød
+MSG_SCALE_HARD
+Hård
+MSG_KEEP_PROPORTIONS
+Bevar proportioner
+MSG_EFFECTS_TITLE
+Effekter
+MSG_RESET
+Nulstil
+MSG_FX_BRIGHTNESS
+Lysstyrke
+MSG_FX_CONTRAST
+Kontrast
+MSG_FX_SATURATION
+Mætning
+MSG_FX_HUE
+Farvetone
+MSG_FX_BLUR
+Sløring
+MSG_FX_SHARPEN
+Skarphed
+MSG_FX_TEXTURE
+Tekstur
+MSG_FX_DEHAZE
+Fjern dis
+MSG_FX_SEPIA
+Sepia
+MSG_FX_INVERT
+Invertering
+MSG_FX_CYAN_RED
+Cyan/Rød
+MSG_FX_MAGENTA_GREEN
+Magenta/Grøn
+MSG_FX_YELLOW_BLUE
+Gul/Blå
+MSG_WIDTH
+Bredde
+MSG_HEIGHT
+Højde
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nBilleder i ægte farver, malet med\nindbyggede og udklippede pensler.
+MSG_CANCEL
+Annuller
+MSG_TEXT_TITLE
+Tekst
+MSG_RENAME_TITLE
+Omdøb lag
+MSG_NAME
+Navn
+MSG_TEXT
+Tekst
+MSG_FONT
+Skrifttype
+MSG_FONT_TITLE
+Tekstens skrifttype
+MSG_CHANGED
+Billedet er ændret.\nGem det først?
+MSG_CHANGED_BUTTONS
+Gem|Gem ikke|Annuller
+MSG_NO_PICTURE
+Ingen hukommelse til et billede\npå %ld gange %ld pixels.
+MSG_NO_UNDO
+Ændringen var for stor til at blive husket:\nden kan ikke fortrydes.
+MSG_NO_LAYER
+Ingen hukommelse til endnu et lag.
+MSG_NO_MASK
+Ingen hukommelse til en maske.
+MSG_NO_OWN_SCREEN
+Der kunne ikke åbnes en egen skærm.
+MSG_NO_FONT
+Skrifttypen kunne ikke åbnes.
+MSG_FILL_SHORT
+Hukommelsen rakte ikke til at udfylde det hele.
+MSG_CHOICE_SHORT
+Hukommelsen rakte ikke til at markere det hele.
+MSG_NO_SELECTION
+Ingen hukommelse til en markering.
+MSG_OUTLINE
+Omrids
+MSG_SHOW_MASK
+Maske
+MSG_MASK_ROW
+Maske
+MSG_MASK_PAINTED
+[Maske]
+MSG_OPEN_TITLE
+Åbn et billede
+MSG_SAVE_AS_TITLE
+Gem billedet som
+MSG_NO_OPEN
+%s\nkan ikke åbnes:\n%s
+MSG_NO_SAVE
+Billedet kan ikke gemmes\nsom %s:\n%s
+MSG_NO_PART
+%s\nkan ikke åbnes.
+MSG_UNTITLED
+Unavngivet
+MSG_OPEN_BRUSH_TITLE
+Åbn en pensel
+MSG_SAVE_BRUSH_TITLE
+Gem penslen som
+MSG_NO_SAVE_BRUSH
+Penslen kan ikke gemmes\nsom %s:\n%s
+MSG_NO_SAVE_PALETTE
+Paletten kan ikke gemmes\nsom %s:\n%s
+MSG_NO_PALETTE
+%s\nindeholder ingen palet.
+MSG_NO_COUNT
+Ingen hukommelse til at tælle farverne.
+MSG_OPEN_PALETTE_TITLE
+Åbn en palet
+MSG_SAVE_PALETTE_TITLE
+Gem paletten som
+MSG_PALETTE_TITLE
+Palet
+MSG_RED
+Rød
+MSG_GREEN
+Grøn
+MSG_BLUE
+Blå
+MSG_HUE
+Farvetone
+MSG_SATURATION
+Mætning
+MSG_VALUE
+Værdi
+MSG_HEX
+Hex
+MSG_SPREAD
+Forløb
+MSG_COPY_COLOUR
+Kopiér
+MSG_SWAP_COLOURS
+Byt
+MSG_CHANGE_PIXELS
+Ændr også pixels
+MSG_PICK_COLOUR
+Vælg en farve for at ændre den.
+MSG_PICK_SPREAD
+Vælg den anden ende af forløbet.
+MSG_PICK_COPY
+Vælg den farve, der skal kopieres til.
+MSG_PICK_SWAP
+Vælg den farve, der skal byttes med.
+MSG_PICK_RANGE
+Vælg den anden ende af området.
+MSG_RANGE
+Område
+MSG_SET_RANGE
+Angiv område
+MSG_SPEED
+Hastighed
+MSG_BACKWARDS
+Baglæns
+MSG_RANGE_SPAN
+Område %ld: farve %ld til %ld.
+MSG_RANGE_UNSET
+Område %ld er ikke angivet.
+MSG_NO_RANGE
+Intet område i paletten roterer:\nangiv et i paletteditoren.
+MSG_NO_REDUCE
+Ingen hukommelse til at fordele,\nhvad hver farve mangler.
+MSG_BRUSH_TOO_LARGE
+En pensel kan højst være %ld gange %ld pixels.
+MSG_NO_BRUSH
+Ingen hukommelse til en pensel\npå %ld gange %ld pixels.
+MSG_NOLIBRARY
+Ingen %s\n
+MSG_NOSCREEN
+Ingen skærm - ingen visning\n
+MSG_NOMEMORY
+Ingen hukommelse til vinduet\n
+MSG_BADSCREEN
+SCREEN er OWN eller DESKTOP\n

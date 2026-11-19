@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language bulgarski
+## codeset 106
+; Paint's strings in Bulgarian.
+MSG_MENU_FILE
+Файл
+MSG_MENU_NEW
+Нов...
+MSG_MENU_OPEN
+Отвори...
+MSG_MENU_SAVE
+Запиши
+MSG_MENU_SAVE_AS
+Запиши като...
+MSG_MENU_QUIT
+Изход
+MSG_MENU_EDIT
+Редактиране
+MSG_MENU_UNDO
+Отмени
+MSG_MENU_REDO
+Повтори
+MSG_MENU_CLEAR
+Изчисти
+MSG_MENU_IMAGE
+Изображение
+MSG_MENU_ROTATE
+Завърти
+MSG_TURN_RIGHT
+90° по часовниковата стрелка
+MSG_TURN_LEFT
+90° обратно на часовниковата стрелка
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Изрежи до селекцията
+MSG_MENU_TRIM
+Отрежи краищата
+MSG_MENU_CANVAS_SIZE
+Размер на платното...
+MSG_MENU_FLATTEN
+Слей слоевете
+MSG_MENU_PICTURE_SIZE
+Размер на изображението...
+MSG_MENU_EFFECTS
+Ефекти...
+MSG_MENU_FREE_TRANSFORM
+Свободна трансформация
+MSG_MENU_TOOLS
+Инструменти
+MSG_MENU_FREEHAND
+Свободна ръка
+MSG_MENU_DOTS
+Свободна ръка с точки
+MSG_MENU_LINE
+Линия
+MSG_MENU_CURVE
+Крива
+MSG_MENU_RECTANGLE
+Правоъгълник
+MSG_MENU_ELLIPSE
+Елипса
+MSG_MENU_POLYGON
+Многоъгълник
+MSG_MENU_FILL
+Запълване
+MSG_MENU_GRADIENT
+Градиент
+MSG_MENU_AIRBRUSH
+Аерограф
+MSG_MENU_PICK
+Пипета
+MSG_MENU_TEXT
+Текст
+MSG_MENU_GRAB
+Изрежи четка
+MSG_MENU_SELECT_BOX
+Правоъгълна селекция
+MSG_MENU_LASSO
+Ласо
+MSG_MENU_WAND
+Магическа пръчка
+MSG_MENU_HAND
+Ръка
+MSG_MENU_ERASER
+Гума
+MSG_MENU_SMUDGE
+Размазване
+MSG_MENU_ZOOM_TOOL
+Мащаб
+MSG_MENU_FILLED
+Запълнени фигури
+MSG_MENU_ROUND_GRADIENT
+Радиален градиент
+MSG_MENU_SWAP
+Размени цветовете
+MSG_MENU_VIEW
+Изглед
+MSG_MENU_ZOOM_IN
+Увеличи
+MSG_MENU_ZOOM_OUT
+Намали
+MSG_MENU_ACTUAL_SIZE
+Действителен размер
+MSG_MENU_FIT
+Побери в прозореца
+MSG_MENU_GRID
+Мрежа
+MSG_MENU_RULERS
+Линийки
+MSG_MENU_SPLIT_SCREEN
+Разделен екран
+MSG_MENU_LAYER
+Слой
+MSG_MENU_NEW_LAYER
+Нов слой
+MSG_MENU_DUPLICATE_LAYER
+Дублирай
+MSG_MENU_DELETE_LAYER
+Изтрий
+MSG_MENU_RENAME_LAYER
+Преименувай...
+MSG_MENU_LAYER_UP
+Премести нагоре
+MSG_MENU_LAYER_DOWN
+Премести надолу
+MSG_MENU_MERGE_DOWN
+Слей с долния
+MSG_MENU_SELECTION
+Селекция
+MSG_MENU_SELECT
+Избери
+MSG_MENU_SELECT_ALL
+Всичко
+MSG_MENU_SELECT_LAYER
+Пикселите на слоя
+MSG_MENU_SELECT_COLOUR
+Пикселите на цвета
+MSG_MENU_SELECT_SEE_THROUGH
+Прозрачните пиксели
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Пикселите извън палитрата
+MSG_MENU_DESELECT
+Премахни селекцията
+MSG_MENU_INVERT
+Обърни
+MSG_MENU_COPY_TO_LAYER
+Копирай в нов слой
+MSG_MENU_CUT_TO_LAYER
+Изрежи в нов слой
+MSG_MENU_COPY_TO_BRUSH
+Копирай като четка
+MSG_MENU_BRUSH
+Четка
+MSG_MENU_ROUND
+Кръгла
+MSG_MENU_SQUARE
+Квадратна
+MSG_MENU_OWN_BRUSH
+Собствена четка
+MSG_MENU_SIZE
+Размер
+MSG_MENU_SMALLER
+По-малка
+MSG_MENU_LARGER
+По-голяма
+MSG_MENU_OWN_COLOURS
+Собствени цветове
+MSG_MENU_ONE_COLOUR
+Един цвят
+MSG_MENU_FLIP_ACROSS
+Обърни хоризонтално
+MSG_MENU_FLIP_DOWN
+Обърни вертикално
+MSG_MENU_ADD_MASK
+Добави маска
+MSG_MENU_MASK_SHOW_ALL
+Покажи всичко
+MSG_MENU_MASK_HIDE_ALL
+Скрий всичко
+MSG_MENU_MASK_SELECTION
+Покажи селекцията
+MSG_MENU_PAINT_MASK
+Рисувай върху маската
+MSG_MENU_APPLY_MASK
+Приложи маската
+MSG_MENU_DELETE_MASK
+Изтрий маската
+MSG_MENU_TURN
+Завърти надясно
+MSG_MENU_OPEN_BRUSH
+Отвори четка...
+MSG_MENU_SAVE_BRUSH
+Запиши четката...
+MSG_MENU_PALETTE
+Палитра
+MSG_MENU_EDIT_PALETTE
+Редактирай...
+MSG_MENU_FROM_PICTURE
+От изображението
+MSG_MENU_PRESETS
+Готови палитри
+MSG_PRESET_STANDARD
+Палитрата на Paint
+MSG_PRESET_GREYS
+Сиви тонове
+MSG_PRESET_SPECTRUM
+Спектър
+MSG_PRESET_PASTEL
+Пастел
+MSG_PRESET_EARTH
+Земни тонове
+MSG_MENU_REDUCE
+Сведи до палитрата
+MSG_DITHER_NONE
+Без дитеринг
+MSG_DITHER_ORDERED
+Подреден дитеринг
+MSG_DITHER_DIFFUSED
+Разсейване на грешката
+MSG_MENU_CYCLE
+Цикъл на цветовете
+MSG_MENU_OPEN_PALETTE
+Отвори палитра...
+MSG_MENU_SAVE_PALETTE
+Запиши палитрата...
+MSG_MENU_OWN_SCREEN
+Собствен екран
+MSG_MENU_HELP
+Помощ
+MSG_MENU_ABOUT
+Относно Paint...
+MSG_TOOL_FREEHAND
+Свободна ръка: линия там, където минава показалецът
+MSG_TOOL_DOTS
+Свободна ръка с точки: четката там, където е показалецът
+MSG_TOOL_LINE
+Линия: от мястото, където бутонът се натисне, до мястото, където се пусне
+MSG_TOOL_CURVE
+Крива: линия, която второ натискане огъва
+MSG_TOOL_RECTANGLE
+Правоъгълник: от единия ъгъл до другия
+MSG_TOOL_ELLIPSE
+Елипса: в рамката от единия ъгъл до другия
+MSG_TOOL_POLYGON
+Многоъгълник: ъгъл при всяко пускане, затваря се на първия ъгъл
+MSG_TOOL_FILL
+Запълване: областта от един цвят, върху която се щракне
+MSG_TOOL_GRADIENT
+Градиент: от основния цвят в началото на влаченето до фоновия в края му
+MSG_TOOL_AIRBRUSH
+Аерограф: пръскане там, където е показалецът, докато бутонът е натиснат
+MSG_TOOL_PICK
+Пипета: цветът под показалеца
+MSG_TOOL_TEXT
+Текст: въвежда се и се поставя там, където се щракне в изображението
+MSG_TOOL_GRAB
+Изрежи четка: част от изображението става четка
+MSG_TOOL_SELECT_BOX
+Правоъгълна селекция: къде може да се рисува (Shift добавя, Alt изважда)
+MSG_TOOL_LASSO
+Ласо: избира форма, нарисувана на ръка (Shift добавя, Alt изважда)
+MSG_TOOL_WAND
+Магическа пръчка: избира пикселите на цвета, свързани с щракнатия
+MSG_TOOL_HAND
+Ръка: мести изображението с показалеца
+MSG_TOOL_ERASER
+Гума: прави изображението прозрачно там, където мине четката
+MSG_TOOL_SMUDGE
+Размазване: влачи цветовете под четката след нея
+MSG_TOOL_ZOOM
+Мащаб: по-едро там, където се щракне, по-дребно с бутона на менюто
+MSG_FILLED_HINT
+Запълнени правоъгълници, елипси и многоъгълници
+MSG_UNDO_HINT
+Отмени последната промяна
+MSG_REDO_HINT
+Повтори отменената промяна
+MSG_ZOOM_IN_HINT
+Покажи изображението по-едро
+MSG_ZOOM_OUT_HINT
+Покажи изображението по-дребно
+MSG_FIT_HINT
+Покажи цялото изображение възможно най-едро
+MSG_SWAP_HINT
+Размени двата цвята
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Слоеве
+MSG_SECTION_BRUSH
+Четка
+MSG_SECTION_COLOUR
+Цвят
+MSG_SIZE
+Размер
+MSG_SOFTNESS
+Мекота
+MSG_OPACITY
+Непрозрачност
+MSG_FLOW
+Поток
+MSG_JITTER
+Разпръскване
+MSG_ROTATION
+Завъртане
+MSG_DITHER
+Дитеринг
+MSG_BLEND
+Смесване
+MSG_NEW_LAYER_HINT
+Нов слой над активния
+MSG_DELETE_LAYER_HINT
+Изтрий активния слой
+MSG_LAYER_NAME
+Слой %ld
+MSG_LAYER_COPY
+%s копие
+MSG_BLEND_NORMAL
+Нормален
+MSG_BLEND_ADD
+Добавяне
+MSG_BLEND_MULTIPLY
+Умножение
+MSG_BLEND_SCREEN
+Екран
+MSG_BLEND_OVERLAY
+Наслагване
+MSG_BLEND_DARKEN
+Затъмняване
+MSG_BLEND_LIGHTEN
+Изсветляване
+MSG_BLEND_DODGE
+Цветно изсветляване
+MSG_BLEND_BURN
+Цветно затъмняване
+MSG_BLEND_HARD_LIGHT
+Твърда светлина
+MSG_BLEND_SOFT_LIGHT
+Мека светлина
+MSG_BLEND_HUE
+Оттенък
+MSG_BLEND_SATURATION
+Наситеност
+MSG_BLEND_COLOUR
+Цвят
+MSG_BLEND_LUMINOSITY
+Яркост
+MSG_STATUS
+%ld x %ld   %ld:1   четка %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   четка %ld   в %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   четка %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   четка %ld x %ld   в %ld, %ld
+MSG_NEW_TITLE
+Ново изображение
+MSG_CANVAS_TITLE
+Размер на платното
+MSG_PLACE
+Изображение
+MSG_PLACE_TOP_LEFT
+Горе вляво
+MSG_PLACE_TOP
+Горе
+MSG_PLACE_TOP_RIGHT
+Горе вдясно
+MSG_PLACE_LEFT
+Вляво
+MSG_PLACE_MIDDLE
+В средата
+MSG_PLACE_RIGHT
+Вдясно
+MSG_PLACE_BOTTOM_LEFT
+Долу вляво
+MSG_PLACE_BOTTOM
+Долу
+MSG_PLACE_BOTTOM_RIGHT
+Долу вдясно
+MSG_NO_IMAGE_MEMORY
+Няма памет,\nза да се промени изображението.
+MSG_PICTURE_SIZE_TITLE
+Размер на изображението
+MSG_SCALING
+Пиксели
+MSG_SCALE_SMOOTH
+Гладко
+MSG_SCALE_HARD
+Рязко
+MSG_KEEP_PROPORTIONS
+Запази пропорциите
+MSG_EFFECTS_TITLE
+Ефекти
+MSG_RESET
+Нулирай
+MSG_FX_BRIGHTNESS
+Яркост
+MSG_FX_CONTRAST
+Контраст
+MSG_FX_SATURATION
+Наситеност
+MSG_FX_HUE
+Оттенък
+MSG_FX_BLUR
+Замъгляване
+MSG_FX_SHARPEN
+Изостряне
+MSG_FX_TEXTURE
+Текстура
+MSG_FX_DEHAZE
+Премахване на мъглата
+MSG_FX_SEPIA
+Сепия
+MSG_FX_INVERT
+Инвертиране
+MSG_FX_CYAN_RED
+Циан/Червено
+MSG_FX_MAGENTA_GREEN
+Магента/Зелено
+MSG_FX_YELLOW_BLUE
+Жълто/Синьо
+MSG_WIDTH
+Ширина
+MSG_HEIGHT
+Височина
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nИзображения в истински цветове, рисувани\nс вградени и изрязани четки.
+MSG_CANCEL
+Отказ
+MSG_TEXT_TITLE
+Текст
+MSG_RENAME_TITLE
+Преименуване на слоя
+MSG_NAME
+Име
+MSG_TEXT
+Текст
+MSG_FONT
+Шрифт
+MSG_FONT_TITLE
+Шрифтът на текста
+MSG_CHANGED
+Изображението е променено.\nДа бъде ли записано първо?
+MSG_CHANGED_BUTTONS
+Запиши|Не записвай|Отказ
+MSG_NO_PICTURE
+Няма памет за изображение\nот %ld на %ld пиксела.
+MSG_NO_UNDO
+Тази промяна е твърде голяма, за да се пази:\nне може да бъде отменена.
+MSG_NO_LAYER
+Няма памет за още един слой.
+MSG_NO_MASK
+Няма памет за маска.
+MSG_NO_OWN_SCREEN
+Собствен екран не можа да бъде отворен.
+MSG_NO_FONT
+Шрифтът не можа да бъде отворен.
+MSG_FILL_SHORT
+Нямаше достатъчно памет, за да се запълни всичко.
+MSG_CHOICE_SHORT
+Нямаше достатъчно памет, за да се избере всичко.
+MSG_NO_SELECTION
+Няма памет за селекция.
+MSG_OUTLINE
+Контур
+MSG_SHOW_MASK
+Маска
+MSG_MASK_ROW
+Маска
+MSG_MASK_PAINTED
+[Маска]
+MSG_OPEN_TITLE
+Отваряне на изображение
+MSG_SAVE_AS_TITLE
+Записване на изображението като
+MSG_NO_OPEN
+%s\nне може да бъде отворен:\n%s
+MSG_NO_SAVE
+Изображението не може да бъде записано\nкато %s:\n%s
+MSG_NO_PART
+%s\nне може да бъде отворен.
+MSG_UNTITLED
+Без име
+MSG_OPEN_BRUSH_TITLE
+Отваряне на четка
+MSG_SAVE_BRUSH_TITLE
+Записване на четката като
+MSG_NO_SAVE_BRUSH
+Четката не може да бъде записана\nкато %s:\n%s
+MSG_NO_SAVE_PALETTE
+Палитрата не може да бъде записана\nкато %s:\n%s
+MSG_NO_PALETTE
+%s\nне съдържа палитра.
+MSG_NO_COUNT
+Няма памет, за да се преброят цветовете.
+MSG_OPEN_PALETTE_TITLE
+Отваряне на палитра
+MSG_SAVE_PALETTE_TITLE
+Записване на палитрата като
+MSG_PALETTE_TITLE
+Палитра
+MSG_RED
+Червено
+MSG_GREEN
+Зелено
+MSG_BLUE
+Синьо
+MSG_HUE
+Оттенък
+MSG_SATURATION
+Наситеност
+MSG_VALUE
+Стойност
+MSG_HEX
+Hex
+MSG_SPREAD
+Преливане
+MSG_COPY_COLOUR
+Копирай
+MSG_SWAP_COLOURS
+Размени
+MSG_CHANGE_PIXELS
+Промени и пикселите
+MSG_PICK_COLOUR
+Изберете цвят, който да се промени.
+MSG_PICK_SPREAD
+Изберете другия край на преливането.
+MSG_PICK_COPY
+Изберете цвета, върху който да се копира.
+MSG_PICK_SWAP
+Изберете цвета, с който да се размени.
+MSG_PICK_RANGE
+Изберете другия край на обхвата.
+MSG_RANGE
+Обхват
+MSG_SET_RANGE
+Задай обхват
+MSG_SPEED
+Скорост
+MSG_BACKWARDS
+Обратно
+MSG_RANGE_SPAN
+Обхват %ld: цветове от %ld до %ld.
+MSG_RANGE_UNSET
+Обхват %ld не е зададен.
+MSG_NO_RANGE
+Нито един обхват на палитрата не се върти:\nобхватът се задава в редактора на палитрата.
+MSG_NO_REDUCE
+Няма памет, за да се разпредели\nгрешката на всеки цвят.
+MSG_BRUSH_TOO_LARGE
+Четката може да бъде най-много %ld на %ld пиксела.
+MSG_NO_BRUSH
+Няма памет за четка\nот %ld на %ld пиксела.
+MSG_NOLIBRARY
+Няма %s\n
+MSG_NOSCREEN
+Няма екран - няма дисплей\n
+MSG_NOMEMORY
+Няма памет за прозореца\n
+MSG_BADSCREEN
+SCREEN е OWN или DESKTOP\n

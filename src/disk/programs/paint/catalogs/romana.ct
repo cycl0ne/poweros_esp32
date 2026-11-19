@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language romana
+## codeset 106
+; Paint's strings in Romanian.
+MSG_MENU_FILE
+Fișier
+MSG_MENU_NEW
+Nou...
+MSG_MENU_OPEN
+Deschidere...
+MSG_MENU_SAVE
+Salvare
+MSG_MENU_SAVE_AS
+Salvare ca...
+MSG_MENU_QUIT
+Ieșire
+MSG_MENU_EDIT
+Editare
+MSG_MENU_UNDO
+Anulare
+MSG_MENU_REDO
+Refacere
+MSG_MENU_CLEAR
+Golire
+MSG_MENU_IMAGE
+Imagine
+MSG_MENU_ROTATE
+Rotire
+MSG_TURN_RIGHT
+90° în sens orar
+MSG_TURN_LEFT
+90° în sens antiorar
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Decupare la selecție
+MSG_MENU_TRIM
+Tăiere margini
+MSG_MENU_CANVAS_SIZE
+Dimensiune pânză...
+MSG_MENU_FLATTEN
+Aplatizare
+MSG_MENU_PICTURE_SIZE
+Dimensiune imagine...
+MSG_MENU_EFFECTS
+Efecte...
+MSG_MENU_FREE_TRANSFORM
+Transformare liberă
+MSG_MENU_TOOLS
+Instrumente
+MSG_MENU_FREEHAND
+Mână liberă
+MSG_MENU_DOTS
+Mână liberă punctată
+MSG_MENU_LINE
+Linie
+MSG_MENU_CURVE
+Curbă
+MSG_MENU_RECTANGLE
+Dreptunghi
+MSG_MENU_ELLIPSE
+Elipsă
+MSG_MENU_POLYGON
+Poligon
+MSG_MENU_FILL
+Umplere
+MSG_MENU_GRADIENT
+Gradient
+MSG_MENU_AIRBRUSH
+Aerograf
+MSG_MENU_PICK
+Pipetă
+MSG_MENU_TEXT
+Text
+MSG_MENU_GRAB
+Decupare pensulă
+MSG_MENU_SELECT_BOX
+Selecție dreptunghiulară
+MSG_MENU_LASSO
+Lasou
+MSG_MENU_WAND
+Baghetă magică
+MSG_MENU_HAND
+Mână
+MSG_MENU_ERASER
+Radieră
+MSG_MENU_SMUDGE
+Mânjire
+MSG_MENU_ZOOM_TOOL
+Lupă
+MSG_MENU_FILLED
+Forme pline
+MSG_MENU_ROUND_GRADIENT
+Gradient radial
+MSG_MENU_SWAP
+Interschimbare culori
+MSG_MENU_VIEW
+Vizualizare
+MSG_MENU_ZOOM_IN
+Mărire
+MSG_MENU_ZOOM_OUT
+Micșorare
+MSG_MENU_ACTUAL_SIZE
+Dimensiune reală
+MSG_MENU_FIT
+Potrivire în fereastră
+MSG_MENU_GRID
+Grilă
+MSG_MENU_RULERS
+Rigle
+MSG_MENU_SPLIT_SCREEN
+Ecran divizat
+MSG_MENU_LAYER
+Strat
+MSG_MENU_NEW_LAYER
+Strat nou
+MSG_MENU_DUPLICATE_LAYER
+Duplicare
+MSG_MENU_DELETE_LAYER
+Ștergere
+MSG_MENU_RENAME_LAYER
+Redenumire...
+MSG_MENU_LAYER_UP
+Mutare în sus
+MSG_MENU_LAYER_DOWN
+Mutare în jos
+MSG_MENU_MERGE_DOWN
+Îmbinare în jos
+MSG_MENU_SELECTION
+Selecție
+MSG_MENU_SELECT
+Selectare
+MSG_MENU_SELECT_ALL
+Tot
+MSG_MENU_SELECT_LAYER
+Pixelii stratului
+MSG_MENU_SELECT_COLOUR
+Pixelii culorii
+MSG_MENU_SELECT_SEE_THROUGH
+Pixeli transparenți
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixeli din afara paletei
+MSG_MENU_DESELECT
+Deselectare
+MSG_MENU_INVERT
+Inversare
+MSG_MENU_COPY_TO_LAYER
+Copiere într-un strat nou
+MSG_MENU_CUT_TO_LAYER
+Decupare într-un strat nou
+MSG_MENU_COPY_TO_BRUSH
+Copiere ca pensulă
+MSG_MENU_BRUSH
+Pensulă
+MSG_MENU_ROUND
+Rotundă
+MSG_MENU_SQUARE
+Pătrată
+MSG_MENU_OWN_BRUSH
+Pensulă proprie
+MSG_MENU_SIZE
+Dimensiune
+MSG_MENU_SMALLER
+Mai mică
+MSG_MENU_LARGER
+Mai mare
+MSG_MENU_OWN_COLOURS
+Culori proprii
+MSG_MENU_ONE_COLOUR
+O singură culoare
+MSG_MENU_FLIP_ACROSS
+Oglindire orizontală
+MSG_MENU_FLIP_DOWN
+Oglindire verticală
+MSG_MENU_ADD_MASK
+Adăugare mască
+MSG_MENU_MASK_SHOW_ALL
+Afișare tot
+MSG_MENU_MASK_HIDE_ALL
+Ascundere tot
+MSG_MENU_MASK_SELECTION
+Afișare selecție
+MSG_MENU_PAINT_MASK
+Pictare mască
+MSG_MENU_APPLY_MASK
+Aplicare mască
+MSG_MENU_DELETE_MASK
+Ștergere mască
+MSG_MENU_TURN
+Rotire la dreapta
+MSG_MENU_OPEN_BRUSH
+Deschidere pensulă...
+MSG_MENU_SAVE_BRUSH
+Salvare pensulă...
+MSG_MENU_PALETTE
+Paletă
+MSG_MENU_EDIT_PALETTE
+Editare...
+MSG_MENU_FROM_PICTURE
+Din imagine
+MSG_MENU_PRESETS
+Predefinite
+MSG_PRESET_STANDARD
+A lui Paint
+MSG_PRESET_GREYS
+Nuanțe de gri
+MSG_PRESET_SPECTRUM
+Spectru
+MSG_PRESET_PASTEL
+Pastel
+MSG_PRESET_EARTH
+Tonuri de pământ
+MSG_MENU_REDUCE
+Reducere
+MSG_DITHER_NONE
+Fără dithering
+MSG_DITHER_ORDERED
+Dithering ordonat
+MSG_DITHER_DIFFUSED
+Difuzia erorii
+MSG_MENU_CYCLE
+Ciclare culori
+MSG_MENU_OPEN_PALETTE
+Deschidere paletă...
+MSG_MENU_SAVE_PALETTE
+Salvare paletă...
+MSG_MENU_OWN_SCREEN
+Ecran propriu
+MSG_MENU_HELP
+Ajutor
+MSG_MENU_ABOUT
+Despre Paint...
+MSG_TOOL_FREEHAND
+Mână liberă: o linie pe unde trece indicatorul
+MSG_TOOL_DOTS
+Mână liberă punctată: pensula acolo unde este indicatorul
+MSG_TOOL_LINE
+Linie: de unde se apasă butonul până unde este eliberat
+MSG_TOOL_CURVE
+Curbă: o linie, apoi îndoită cu a doua apăsare
+MSG_TOOL_RECTANGLE
+Dreptunghi: de la un colț la celălalt
+MSG_TOOL_ELLIPSE
+Elipsă: în caseta de la un colț la celălalt
+MSG_TOOL_POLYGON
+Poligon: un colț la fiecare eliberare, închis pe primul colț
+MSG_TOOL_FILL
+Umplere: zona de o singură culoare pe care se face clic
+MSG_TOOL_GRADIENT
+Gradient: de la culoarea din prim-plan unde începe tragerea la cea de fundal unde se termină
+MSG_TOOL_AIRBRUSH
+Aerograf: o pulverizare acolo unde este indicatorul, cât timp butonul este ținut apăsat
+MSG_TOOL_PICK
+Pipetă: culoarea de sub indicator
+MSG_TOOL_TEXT
+Text: tastat și pus acolo unde se face clic pe imagine
+MSG_TOOL_GRAB
+Decupare pensulă: o parte a imaginii luată ca pensulă
+MSG_TOOL_SELECT_BOX
+Selecție dreptunghiulară: ce se poate picta (Shift adaugă, Alt scoate)
+MSG_TOOL_LASSO
+Lasou: o formă desenată de mână, selectată (Shift adaugă, Alt scoate)
+MSG_TOOL_WAND
+Baghetă magică: pixelii culorii legați de cel pe care se face clic, selectați
+MSG_TOOL_HAND
+Mână: imaginea mutată cu indicatorul
+MSG_TOOL_ERASER
+Radieră: imaginea făcută transparentă pe unde trece pensula
+MSG_TOOL_SMUDGE
+Mânjire: culorile de sub pensulă trase odată cu ea
+MSG_TOOL_ZOOM
+Lupă: mai mare unde se face clic, mai mică cu butonul de meniu
+MSG_FILLED_HINT
+Dreptunghiuri, elipse și poligoane pline
+MSG_UNDO_HINT
+Anulează ultima modificare
+MSG_REDO_HINT
+Reface modificarea anulată
+MSG_ZOOM_IN_HINT
+Afișează imaginea mai mare
+MSG_ZOOM_OUT_HINT
+Afișează imaginea mai mică
+MSG_FIT_HINT
+Afișează toată imaginea, cât de mare încape
+MSG_SWAP_HINT
+Interschimbă cele două culori
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Straturi
+MSG_SECTION_BRUSH
+Pensulă
+MSG_SECTION_COLOUR
+Culoare
+MSG_SIZE
+Dimensiune
+MSG_SOFTNESS
+Moliciune
+MSG_OPACITY
+Opacitate
+MSG_FLOW
+Flux
+MSG_JITTER
+Variație
+MSG_ROTATION
+Rotire
+MSG_DITHER
+Dithering
+MSG_BLEND
+Amestec
+MSG_NEW_LAYER_HINT
+Un strat nou peste stratul activ
+MSG_DELETE_LAYER_HINT
+Șterge stratul activ
+MSG_LAYER_NAME
+Strat %ld
+MSG_LAYER_COPY
+%s copie
+MSG_BLEND_NORMAL
+Normal
+MSG_BLEND_ADD
+Adunare
+MSG_BLEND_MULTIPLY
+Multiplicare
+MSG_BLEND_SCREEN
+Ecran
+MSG_BLEND_OVERLAY
+Suprapunere
+MSG_BLEND_DARKEN
+Întunecare
+MSG_BLEND_LIGHTEN
+Luminare
+MSG_BLEND_DODGE
+Eschivare culoare
+MSG_BLEND_BURN
+Ardere culoare
+MSG_BLEND_HARD_LIGHT
+Lumină puternică
+MSG_BLEND_SOFT_LIGHT
+Lumină difuză
+MSG_BLEND_HUE
+Nuanță
+MSG_BLEND_SATURATION
+Saturație
+MSG_BLEND_COLOUR
+Culoare
+MSG_BLEND_LUMINOSITY
+Luminozitate
+MSG_STATUS
+%ld x %ld   %ld:1   pensulă %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pensulă %ld   la %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pensulă %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pensulă %ld x %ld   la %ld, %ld
+MSG_NEW_TITLE
+Imagine nouă
+MSG_CANVAS_TITLE
+Dimensiune pânză
+MSG_PLACE
+Imagine
+MSG_PLACE_TOP_LEFT
+Stânga sus
+MSG_PLACE_TOP
+Sus
+MSG_PLACE_TOP_RIGHT
+Dreapta sus
+MSG_PLACE_LEFT
+Stânga
+MSG_PLACE_MIDDLE
+Centru
+MSG_PLACE_RIGHT
+Dreapta
+MSG_PLACE_BOTTOM_LEFT
+Stânga jos
+MSG_PLACE_BOTTOM
+Jos
+MSG_PLACE_BOTTOM_RIGHT
+Dreapta jos
+MSG_NO_IMAGE_MEMORY
+Memorie insuficientă\npentru a modifica imaginea.
+MSG_PICTURE_SIZE_TITLE
+Dimensiune imagine
+MSG_SCALING
+Pixeli
+MSG_SCALE_SMOOTH
+Netezi
+MSG_SCALE_HARD
+Duri
+MSG_KEEP_PROPORTIONS
+Păstrare proporții
+MSG_EFFECTS_TITLE
+Efecte
+MSG_RESET
+Resetare
+MSG_FX_BRIGHTNESS
+Luminozitate
+MSG_FX_CONTRAST
+Contrast
+MSG_FX_SATURATION
+Saturație
+MSG_FX_HUE
+Nuanță
+MSG_FX_BLUR
+Estompare
+MSG_FX_SHARPEN
+Clarificare
+MSG_FX_TEXTURE
+Textură
+MSG_FX_DEHAZE
+Eliminare ceață
+MSG_FX_SEPIA
+Sepia
+MSG_FX_INVERT
+Inversare
+MSG_FX_CYAN_RED
+Cyan/Roșu
+MSG_FX_MAGENTA_GREEN
+Magenta/Verde
+MSG_FX_YELLOW_BLUE
+Galben/Albastru
+MSG_WIDTH
+Lățime
+MSG_HEIGHT
+Înălțime
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nImagini în culori reale, pictate cu\npensule integrate și decupate.
+MSG_CANCEL
+Anulare
+MSG_TEXT_TITLE
+Text
+MSG_RENAME_TITLE
+Redenumire strat
+MSG_NAME
+Nume
+MSG_TEXT
+Text
+MSG_FONT
+Font
+MSG_FONT_TITLE
+Fontul textului
+MSG_CHANGED
+Imaginea s-a modificat.\nO salvați mai întâi?
+MSG_CHANGED_BUTTONS
+Salvare|Nu salvați|Anulare
+MSG_NO_PICTURE
+Memorie insuficientă pentru o imagine\nde %ld pe %ld pixeli.
+MSG_NO_UNDO
+Modificarea a fost prea mare pentru a fi păstrată:\nnu poate fi anulată.
+MSG_NO_LAYER
+Memorie insuficientă pentru încă un strat.
+MSG_NO_MASK
+Memorie insuficientă pentru o mască.
+MSG_NO_OWN_SCREEN
+Nu s-a putut deschide un ecran propriu.
+MSG_NO_FONT
+Fontul nu s-a putut deschide.
+MSG_FILL_SHORT
+Memoria nu a ajuns pentru a umple tot.
+MSG_CHOICE_SHORT
+Memoria nu a ajuns pentru a selecta tot.
+MSG_NO_SELECTION
+Memorie insuficientă pentru o selecție.
+MSG_OUTLINE
+Contur
+MSG_SHOW_MASK
+Mască
+MSG_MASK_ROW
+Mască
+MSG_MASK_PAINTED
+[Mască]
+MSG_OPEN_TITLE
+Deschideți o imagine
+MSG_SAVE_AS_TITLE
+Salvați imaginea ca
+MSG_NO_OPEN
+%s\nnu se poate deschide:\n%s
+MSG_NO_SAVE
+Imaginea nu se poate salva\nca %s:\n%s
+MSG_NO_PART
+%s\nnu se poate deschide.
+MSG_UNTITLED
+Fără titlu
+MSG_OPEN_BRUSH_TITLE
+Deschideți o pensulă
+MSG_SAVE_BRUSH_TITLE
+Salvați pensula ca
+MSG_NO_SAVE_BRUSH
+Pensula nu se poate salva\nca %s:\n%s
+MSG_NO_SAVE_PALETTE
+Paleta nu se poate salva\nca %s:\n%s
+MSG_NO_PALETTE
+%s\nnu conține nicio paletă.
+MSG_NO_COUNT
+Memorie insuficientă pentru a număra culorile.
+MSG_OPEN_PALETTE_TITLE
+Deschideți o paletă
+MSG_SAVE_PALETTE_TITLE
+Salvați paleta ca
+MSG_PALETTE_TITLE
+Paletă
+MSG_RED
+Roșu
+MSG_GREEN
+Verde
+MSG_BLUE
+Albastru
+MSG_HUE
+Nuanță
+MSG_SATURATION
+Saturație
+MSG_VALUE
+Valoare
+MSG_HEX
+Hex
+MSG_SPREAD
+Gradient
+MSG_COPY_COLOUR
+Copiere
+MSG_SWAP_COLOURS
+Interschimbare
+MSG_CHANGE_PIXELS
+Modifică și pixelii
+MSG_PICK_COLOUR
+Alegeți o culoare pentru a o modifica.
+MSG_PICK_SPREAD
+Alegeți celălalt capăt al gradientului.
+MSG_PICK_COPY
+Alegeți culoarea peste care se copiază.
+MSG_PICK_SWAP
+Alegeți culoarea cu care se interschimbă.
+MSG_PICK_RANGE
+Alegeți celălalt capăt al intervalului.
+MSG_RANGE
+Interval
+MSG_SET_RANGE
+Setare interval
+MSG_SPEED
+Viteză
+MSG_BACKWARDS
+Înapoi
+MSG_RANGE_SPAN
+Intervalul %ld: culorile de la %ld la %ld.
+MSG_RANGE_UNSET
+Intervalul %ld nu este setat.
+MSG_NO_RANGE
+Niciun interval al paletei nu se rotește:\nsetați unul în editorul paletei.
+MSG_NO_REDUCE
+Memorie insuficientă pentru a distribui\nce îi lipsește fiecărei culori.
+MSG_BRUSH_TOO_LARGE
+O pensulă poate avea cel mult %ld pe %ld pixeli.
+MSG_NO_BRUSH
+Memorie insuficientă pentru o pensulă\nde %ld pe %ld pixeli.
+MSG_NOLIBRARY
+Lipsește %s\n
+MSG_NOSCREEN
+Niciun ecran - nicio afișare\n
+MSG_NOMEMORY
+Memorie insuficientă pentru fereastră\n
+MSG_BADSCREEN
+SCREEN este OWN sau DESKTOP\n

@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language magyar
+## codeset 106
+; Paint's strings in Hungarian.
+MSG_MENU_FILE
+Fájl
+MSG_MENU_NEW
+Új...
+MSG_MENU_OPEN
+Megnyitás...
+MSG_MENU_SAVE
+Mentés
+MSG_MENU_SAVE_AS
+Mentés másként...
+MSG_MENU_QUIT
+Kilépés
+MSG_MENU_EDIT
+Szerkesztés
+MSG_MENU_UNDO
+Visszavonás
+MSG_MENU_REDO
+Ismétlés
+MSG_MENU_CLEAR
+Törlés
+MSG_MENU_IMAGE
+Kép
+MSG_MENU_ROTATE
+Forgatás
+MSG_TURN_RIGHT
+90° jobbra
+MSG_TURN_LEFT
+90° balra
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Körbevágás a kijelölésre
+MSG_MENU_TRIM
+Szélek levágása
+MSG_MENU_CANVAS_SIZE
+Vászonméret...
+MSG_MENU_FLATTEN
+Egy rétegre simítás
+MSG_MENU_PICTURE_SIZE
+Képméret...
+MSG_MENU_EFFECTS
+Effektusok...
+MSG_MENU_FREE_TRANSFORM
+Szabad alakítás
+MSG_MENU_TOOLS
+Eszközök
+MSG_MENU_FREEHAND
+Szabadkézi
+MSG_MENU_DOTS
+Pontozott szabadkézi
+MSG_MENU_LINE
+Vonal
+MSG_MENU_CURVE
+Görbe
+MSG_MENU_RECTANGLE
+Téglalap
+MSG_MENU_ELLIPSE
+Ellipszis
+MSG_MENU_POLYGON
+Sokszög
+MSG_MENU_FILL
+Kitöltés
+MSG_MENU_GRADIENT
+Színátmenet
+MSG_MENU_AIRBRUSH
+Festékszóró
+MSG_MENU_PICK
+Szín felvétele
+MSG_MENU_TEXT
+Szöveg
+MSG_MENU_GRAB
+Ecset kivágása
+MSG_MENU_SELECT_BOX
+Téglalap-kijelölés
+MSG_MENU_LASSO
+Lasszó
+MSG_MENU_WAND
+Varázspálca
+MSG_MENU_HAND
+Kéz
+MSG_MENU_ERASER
+Radír
+MSG_MENU_SMUDGE
+Maszatolás
+MSG_MENU_ZOOM_TOOL
+Nagyító
+MSG_MENU_FILLED
+Kitöltött alakzatok
+MSG_MENU_ROUND_GRADIENT
+Körkörös színátmenet
+MSG_MENU_SWAP
+Színek cseréje
+MSG_MENU_VIEW
+Nézet
+MSG_MENU_ZOOM_IN
+Nagyítás
+MSG_MENU_ZOOM_OUT
+Kicsinyítés
+MSG_MENU_ACTUAL_SIZE
+Tényleges méret
+MSG_MENU_FIT
+Ablakhoz igazítás
+MSG_MENU_GRID
+Rács
+MSG_MENU_RULERS
+Vonalzók
+MSG_MENU_SPLIT_SCREEN
+Osztott képernyő
+MSG_MENU_LAYER
+Réteg
+MSG_MENU_NEW_LAYER
+Új réteg
+MSG_MENU_DUPLICATE_LAYER
+Megkettőzés
+MSG_MENU_DELETE_LAYER
+Törlés
+MSG_MENU_RENAME_LAYER
+Átnevezés...
+MSG_MENU_LAYER_UP
+Feljebb
+MSG_MENU_LAYER_DOWN
+Lejjebb
+MSG_MENU_MERGE_DOWN
+Egyesítés lefelé
+MSG_MENU_SELECTION
+Kijelölés
+MSG_MENU_SELECT
+Kiválasztás
+MSG_MENU_SELECT_ALL
+Mind
+MSG_MENU_SELECT_LAYER
+A réteg képpontjai
+MSG_MENU_SELECT_COLOUR
+A szín képpontjai
+MSG_MENU_SELECT_SEE_THROUGH
+Átlátszó képpontok
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Palettán kívüli képpontok
+MSG_MENU_DESELECT
+Kijelölés megszüntetése
+MSG_MENU_INVERT
+Megfordítás
+MSG_MENU_COPY_TO_LAYER
+Másolás rétegre
+MSG_MENU_CUT_TO_LAYER
+Kivágás rétegre
+MSG_MENU_COPY_TO_BRUSH
+Másolás ecsetbe
+MSG_MENU_BRUSH
+Ecset
+MSG_MENU_ROUND
+Kerek
+MSG_MENU_SQUARE
+Négyzetes
+MSG_MENU_OWN_BRUSH
+Saját ecset
+MSG_MENU_SIZE
+Méret
+MSG_MENU_SMALLER
+Kisebb
+MSG_MENU_LARGER
+Nagyobb
+MSG_MENU_OWN_COLOURS
+Saját színek
+MSG_MENU_ONE_COLOUR
+Egy szín
+MSG_MENU_FLIP_ACROSS
+Vízszintes tükrözés
+MSG_MENU_FLIP_DOWN
+Függőleges tükrözés
+MSG_MENU_ADD_MASK
+Maszk hozzáadása
+MSG_MENU_MASK_SHOW_ALL
+Minden felfedése
+MSG_MENU_MASK_HIDE_ALL
+Minden elrejtése
+MSG_MENU_MASK_SELECTION
+A kijelölés felfedése
+MSG_MENU_PAINT_MASK
+Maszk festése
+MSG_MENU_APPLY_MASK
+Maszk alkalmazása
+MSG_MENU_DELETE_MASK
+Maszk törlése
+MSG_MENU_TURN
+Forgatás jobbra
+MSG_MENU_OPEN_BRUSH
+Ecset megnyitása...
+MSG_MENU_SAVE_BRUSH
+Ecset mentése...
+MSG_MENU_PALETTE
+Paletta
+MSG_MENU_EDIT_PALETTE
+Szerkesztés...
+MSG_MENU_FROM_PICTURE
+A képből
+MSG_MENU_PRESETS
+Előbeállítások
+MSG_PRESET_STANDARD
+Alapértelmezett
+MSG_PRESET_GREYS
+Szürkeárnyalatok
+MSG_PRESET_SPECTRUM
+Spektrum
+MSG_PRESET_PASTEL
+Pasztell
+MSG_PRESET_EARTH
+Földszínek
+MSG_MENU_REDUCE
+Színcsökkentés
+MSG_DITHER_NONE
+Raszterezés nélkül
+MSG_DITHER_ORDERED
+Rendezett raszterezés
+MSG_DITHER_DIFFUSED
+Hibaszórás
+MSG_MENU_CYCLE
+Színforgatás
+MSG_MENU_OPEN_PALETTE
+Paletta megnyitása...
+MSG_MENU_SAVE_PALETTE
+Paletta mentése...
+MSG_MENU_OWN_SCREEN
+Saját képernyő
+MSG_MENU_HELP
+Súgó
+MSG_MENU_ABOUT
+A Paint névjegye...
+MSG_TOOL_FREEHAND
+Szabadkézi: vonal ott, ahol a mutató halad
+MSG_TOOL_DOTS
+Pontozott szabadkézi: az ecset ott, ahol a mutató van
+MSG_TOOL_LINE
+Vonal: a gomb lenyomásának helyétől a felengedéséig
+MSG_TOOL_CURVE
+Görbe: egy vonal, majd egy második nyomással ívbe hajlítva
+MSG_TOOL_RECTANGLE
+Téglalap: az egyik saroktól a másikig
+MSG_TOOL_ELLIPSE
+Ellipszis: az egyik saroktól a másikig tartó keretben
+MSG_TOOL_POLYGON
+Sokszög: minden felengedésnél egy csúcs, az első csúcson záródik
+MSG_TOOL_FILL
+Kitöltés: a rákattintott egyszínű terület
+MSG_TOOL_GRADIENT
+Színátmenet: a húzás kezdetén az előtérszíntől a végén a háttérszínig
+MSG_TOOL_AIRBRUSH
+Festékszóró: permet a mutató helyén, amíg a gomb le van nyomva
+MSG_TOOL_PICK
+Szín felvétele: a mutató alatti szín
+MSG_TOOL_TEXT
+Szöveg: begépelve, oda helyezve, ahová a képre kattintanak
+MSG_TOOL_GRAB
+Ecset kivágása: a kép egy része lesz az ecset
+MSG_TOOL_SELECT_BOX
+Téglalap-kijelölés: ahová festeni lehet (Shift hozzáad, Alt elvesz)
+MSG_TOOL_LASSO
+Lasszó: kézzel rajzolt alakzatot jelöl ki (Shift hozzáad, Alt elvesz)
+MSG_TOOL_WAND
+Varázspálca: a kattintotthoz kapcsolódó, azonos színű képpontokat jelöli ki
+MSG_TOOL_HAND
+Kéz: a képet mozgatja a mutatóval
+MSG_TOOL_ERASER
+Radír: átlátszóvá teszi a képet, ahol az ecset halad
+MSG_TOOL_SMUDGE
+Maszatolás: magával húzza az ecset alatti színeket
+MSG_TOOL_ZOOM
+Nagyító: nagyít, ahová kattintanak, a menügombbal kicsinyít
+MSG_FILLED_HINT
+Kitöltött téglalapok, ellipszisek és sokszögek
+MSG_UNDO_HINT
+Az utolsó módosítás visszavonása
+MSG_REDO_HINT
+A visszavont módosítás ismétlése
+MSG_ZOOM_IN_HINT
+A kép nagyobb megjelenítése
+MSG_ZOOM_OUT_HINT
+A kép kisebb megjelenítése
+MSG_FIT_HINT
+Az egész kép megjelenítése akkorára, amekkora elfér
+MSG_SWAP_HINT
+A két szín cseréje
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Rétegek
+MSG_SECTION_BRUSH
+Ecset
+MSG_SECTION_COLOUR
+Szín
+MSG_SIZE
+Méret
+MSG_SOFTNESS
+Lágyság
+MSG_OPACITY
+Átlátszatlanság
+MSG_FLOW
+Áramlás
+MSG_JITTER
+Ingadozás
+MSG_ROTATION
+Elforgatás
+MSG_DITHER
+Raszterezés
+MSG_BLEND
+Keverés
+MSG_NEW_LAYER_HINT
+Új réteg a festett fölé
+MSG_DELETE_LAYER_HINT
+A festett réteg törlése
+MSG_LAYER_NAME
+%ld. réteg
+MSG_LAYER_COPY
+%s másolata
+MSG_BLEND_NORMAL
+Normál
+MSG_BLEND_ADD
+Összeadás
+MSG_BLEND_MULTIPLY
+Szorzás
+MSG_BLEND_SCREEN
+Szita
+MSG_BLEND_OVERLAY
+Átfedés
+MSG_BLEND_DARKEN
+Sötétítés
+MSG_BLEND_LIGHTEN
+Világosítás
+MSG_BLEND_DODGE
+Színtompítás
+MSG_BLEND_BURN
+Színégetés
+MSG_BLEND_HARD_LIGHT
+Kemény fény
+MSG_BLEND_SOFT_LIGHT
+Lágy fény
+MSG_BLEND_HUE
+Színárnyalat
+MSG_BLEND_SATURATION
+Telítettség
+MSG_BLEND_COLOUR
+Szín
+MSG_BLEND_LUMINOSITY
+Fényesség
+MSG_STATUS
+%ld x %ld   %ld:1   ecset %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   ecset %ld   hely: %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   ecset %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   ecset %ld x %ld   hely: %ld, %ld
+MSG_NEW_TITLE
+Új kép
+MSG_CANVAS_TITLE
+Vászonméret
+MSG_PLACE
+Kép
+MSG_PLACE_TOP_LEFT
+Balra fent
+MSG_PLACE_TOP
+Fent
+MSG_PLACE_TOP_RIGHT
+Jobbra fent
+MSG_PLACE_LEFT
+Balra
+MSG_PLACE_MIDDLE
+Középen
+MSG_PLACE_RIGHT
+Jobbra
+MSG_PLACE_BOTTOM_LEFT
+Balra lent
+MSG_PLACE_BOTTOM
+Lent
+MSG_PLACE_BOTTOM_RIGHT
+Jobbra lent
+MSG_NO_IMAGE_MEMORY
+Nincs elég memória\na kép módosításához.
+MSG_PICTURE_SIZE_TITLE
+Képméret
+MSG_SCALING
+Képpontok
+MSG_SCALE_SMOOTH
+Simított
+MSG_SCALE_HARD
+Éles
+MSG_KEEP_PROPORTIONS
+Arányok megtartása
+MSG_EFFECTS_TITLE
+Effektusok
+MSG_RESET
+Alaphelyzet
+MSG_FX_BRIGHTNESS
+Fényerő
+MSG_FX_CONTRAST
+Kontraszt
+MSG_FX_SATURATION
+Telítettség
+MSG_FX_HUE
+Színárnyalat
+MSG_FX_BLUR
+Elmosás
+MSG_FX_SHARPEN
+Élesítés
+MSG_FX_TEXTURE
+Textúra
+MSG_FX_DEHAZE
+Párátlanítás
+MSG_FX_SEPIA
+Szépia
+MSG_FX_INVERT
+Invertálás
+MSG_FX_CYAN_RED
+Cián/Vörös
+MSG_FX_MAGENTA_GREEN
+Bíbor/Zöld
+MSG_FX_YELLOW_BLUE
+Sárga/Kék
+MSG_WIDTH
+Szélesség
+MSG_HEIGHT
+Magasság
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nValódi színes képek, beépített\nés kivágott ecsetekkel festve.
+MSG_CANCEL
+Mégse
+MSG_TEXT_TITLE
+Szöveg
+MSG_RENAME_TITLE
+Réteg átnevezése
+MSG_NAME
+Név
+MSG_TEXT
+Szöveg
+MSG_FONT
+Betűtípus
+MSG_FONT_TITLE
+A szöveg betűtípusa
+MSG_CHANGED
+A kép megváltozott.\nElőbb menti?
+MSG_CHANGED_BUTTONS
+Mentés|Nem mentem|Mégse
+MSG_NO_PICTURE
+Nincs elég memória egy\n%ld x %ld képpontos képhez.
+MSG_NO_UNDO
+A módosítás túl nagy volt a megőrzéshez:\nnem vonható vissza.
+MSG_NO_LAYER
+Nincs elég memória egy újabb réteghez.
+MSG_NO_MASK
+Nincs elég memória egy maszkhoz.
+MSG_NO_OWN_SCREEN
+Saját képernyő nem nyitható meg.
+MSG_NO_FONT
+A betűtípus nem nyitható meg.
+MSG_FILL_SHORT
+Nem volt elég memória mindennek a kitöltéséhez.
+MSG_CHOICE_SHORT
+Nem volt elég memória mindennek a kijelöléséhez.
+MSG_NO_SELECTION
+Nincs elég memória egy kijelöléshez.
+MSG_OUTLINE
+Körvonal
+MSG_SHOW_MASK
+Maszk
+MSG_MASK_ROW
+Maszk
+MSG_MASK_PAINTED
+[Maszk]
+MSG_OPEN_TITLE
+Kép megnyitása
+MSG_SAVE_AS_TITLE
+Kép mentése másként
+MSG_NO_OPEN
+%s\nnem nyitható meg:\n%s
+MSG_NO_SAVE
+A kép nem menthető\n%s néven:\n%s
+MSG_NO_PART
+%s\nnem nyitható meg.
+MSG_UNTITLED
+Névtelen
+MSG_OPEN_BRUSH_TITLE
+Ecset megnyitása
+MSG_SAVE_BRUSH_TITLE
+Ecset mentése másként
+MSG_NO_SAVE_BRUSH
+Az ecset nem menthető\n%s néven:\n%s
+MSG_NO_SAVE_PALETTE
+A paletta nem menthető\n%s néven:\n%s
+MSG_NO_PALETTE
+%s\nnem tartalmaz palettát.
+MSG_NO_COUNT
+Nincs elég memória a színek megszámolásához.
+MSG_OPEN_PALETTE_TITLE
+Paletta megnyitása
+MSG_SAVE_PALETTE_TITLE
+Paletta mentése másként
+MSG_PALETTE_TITLE
+Paletta
+MSG_RED
+Vörös
+MSG_GREEN
+Zöld
+MSG_BLUE
+Kék
+MSG_HUE
+Színárnyalat
+MSG_SATURATION
+Telítettség
+MSG_VALUE
+Érték
+MSG_HEX
+Hex
+MSG_SPREAD
+Átmenet
+MSG_COPY_COLOUR
+Másolás
+MSG_SWAP_COLOURS
+Csere
+MSG_CHANGE_PIXELS
+A képpontok módosítása is
+MSG_PICK_COLOUR
+Válassza ki a módosítandó színt.
+MSG_PICK_SPREAD
+Válassza ki az átmenet másik végét.
+MSG_PICK_COPY
+Válassza ki a színt, amelyre másol.
+MSG_PICK_SWAP
+Válassza ki a színt, amellyel cserél.
+MSG_PICK_RANGE
+Válassza ki a tartomány másik végét.
+MSG_RANGE
+Tartomány
+MSG_SET_RANGE
+Tartomány beállítása
+MSG_SPEED
+Sebesség
+MSG_BACKWARDS
+Visszafelé
+MSG_RANGE_SPAN
+%ld. tartomány: %ld. - %ld. szín.
+MSG_RANGE_UNSET
+%ld. tartomány: nincs beállítva.
+MSG_NO_RANGE
+Egy palettatartomány sem forog:\nállítson be egyet a palettaszerkesztőben.
+MSG_NO_REDUCE
+Nincs elég memória a színek\nhibájának szétosztásához.
+MSG_BRUSH_TOO_LARGE
+Egy ecset legfeljebb %ld x %ld képpontos lehet.
+MSG_NO_BRUSH
+Nincs elég memória egy\n%ld x %ld képpontos ecsethez.
+MSG_NOLIBRARY
+%s hiányzik\n
+MSG_NOSCREEN
+Nincs képernyő - nincs megjelenítés\n
+MSG_NOMEMORY
+Nincs elég memória az ablakhoz\n
+MSG_BADSCREEN
+SCREEN értéke OWN vagy DESKTOP\n

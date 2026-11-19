@@ -2,7 +2,8 @@
 
 `SYS:Programs/Paint/Paint` paints pictures with the pointer: a window
 with the tools and the colours down its left, a side panel for the
-layers, the brush and the colour, and the picture under a zoom bar. Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
+layers, the brush and the colour, and the picture under a zoom bar.
+Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
 it loads only when they are needed sit beside it rather than in `LIBS:`:
 `Libs/paintio.library` opens and saves files, and is loaded the first
 time a file is opened or saved; `Libs/paintfx.library` makes the
@@ -10,8 +11,9 @@ effects, the scaling and the free transform, and is loaded the first
 time one of them is used.
 
 Its menus, hints, requesters and messages are in the language chosen on
-Prefs' Region page when there is a catalog for it, and in English
-otherwise.
+Prefs' Region page when there is a catalog for it - German is in
+`LOCALE:Catalogs/deutsch/programs/Paint.catalog`, and the system's
+other languages beside it - and in English otherwise.
 
 ```
 Paint [FILE] [SCREEN=OWN|DESKTOP]

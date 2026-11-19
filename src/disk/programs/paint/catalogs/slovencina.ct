@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language slovencina
+## codeset 106
+; Paint's strings in Slovak.
+MSG_MENU_FILE
+Súbor
+MSG_MENU_NEW
+Nový...
+MSG_MENU_OPEN
+Otvoriť...
+MSG_MENU_SAVE
+Uložiť
+MSG_MENU_SAVE_AS
+Uložiť ako...
+MSG_MENU_QUIT
+Ukončiť
+MSG_MENU_EDIT
+Upraviť
+MSG_MENU_UNDO
+Späť
+MSG_MENU_REDO
+Znova
+MSG_MENU_CLEAR
+Vymazať
+MSG_MENU_IMAGE
+Obrázok
+MSG_MENU_ROTATE
+Otočiť
+MSG_TURN_RIGHT
+90° v smere hodín
+MSG_TURN_LEFT
+90° proti smeru hodín
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Orezať podľa výberu
+MSG_MENU_TRIM
+Orezať okraje
+MSG_MENU_CANVAS_SIZE
+Veľkosť plátna...
+MSG_MENU_FLATTEN
+Zlúčiť vrstvy
+MSG_MENU_PICTURE_SIZE
+Veľkosť obrázka...
+MSG_MENU_EFFECTS
+Efekty...
+MSG_MENU_FREE_TRANSFORM
+Voľná transformácia
+MSG_MENU_TOOLS
+Nástroje
+MSG_MENU_FREEHAND
+Voľnou rukou
+MSG_MENU_DOTS
+Voľnou rukou bodkovane
+MSG_MENU_LINE
+Čiara
+MSG_MENU_CURVE
+Krivka
+MSG_MENU_RECTANGLE
+Obdĺžnik
+MSG_MENU_ELLIPSE
+Elipsa
+MSG_MENU_POLYGON
+Mnohouholník
+MSG_MENU_FILL
+Výplň
+MSG_MENU_GRADIENT
+Prechod
+MSG_MENU_AIRBRUSH
+Rozprašovač
+MSG_MENU_PICK
+Nabrať farbu
+MSG_MENU_TEXT
+Text
+MSG_MENU_GRAB
+Vystrihnúť štetec
+MSG_MENU_SELECT_BOX
+Obdĺžnikový výber
+MSG_MENU_LASSO
+Laso
+MSG_MENU_WAND
+Čarovná palička
+MSG_MENU_HAND
+Ruka
+MSG_MENU_ERASER
+Guma
+MSG_MENU_SMUDGE
+Rozmazanie
+MSG_MENU_ZOOM_TOOL
+Lupa
+MSG_MENU_FILLED
+Vyplnené tvary
+MSG_MENU_ROUND_GRADIENT
+Kruhový prechod
+MSG_MENU_SWAP
+Vymeniť farby
+MSG_MENU_VIEW
+Zobraziť
+MSG_MENU_ZOOM_IN
+Priblížiť
+MSG_MENU_ZOOM_OUT
+Oddialiť
+MSG_MENU_ACTUAL_SIZE
+Skutočná veľkosť
+MSG_MENU_FIT
+Prispôsobiť oknu
+MSG_MENU_GRID
+Mriežka
+MSG_MENU_RULERS
+Pravítka
+MSG_MENU_SPLIT_SCREEN
+Rozdelená obrazovka
+MSG_MENU_LAYER
+Vrstva
+MSG_MENU_NEW_LAYER
+Nová vrstva
+MSG_MENU_DUPLICATE_LAYER
+Duplikovať
+MSG_MENU_DELETE_LAYER
+Odstrániť
+MSG_MENU_RENAME_LAYER
+Premenovať...
+MSG_MENU_LAYER_UP
+Posunúť nahor
+MSG_MENU_LAYER_DOWN
+Posunúť nadol
+MSG_MENU_MERGE_DOWN
+Zlúčiť nadol
+MSG_MENU_SELECTION
+Výber
+MSG_MENU_SELECT
+Vybrať
+MSG_MENU_SELECT_ALL
+Všetko
+MSG_MENU_SELECT_LAYER
+Pixely vrstvy
+MSG_MENU_SELECT_COLOUR
+Pixely farby
+MSG_MENU_SELECT_SEE_THROUGH
+Priehľadné pixely
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixely mimo palety
+MSG_MENU_DESELECT
+Zrušiť výber
+MSG_MENU_INVERT
+Invertovať
+MSG_MENU_COPY_TO_LAYER
+Kopírovať do vrstvy
+MSG_MENU_CUT_TO_LAYER
+Vystrihnúť do vrstvy
+MSG_MENU_COPY_TO_BRUSH
+Kopírovať do štetca
+MSG_MENU_BRUSH
+Štetec
+MSG_MENU_ROUND
+Okrúhly
+MSG_MENU_SQUARE
+Štvorcový
+MSG_MENU_OWN_BRUSH
+Vlastný štetec
+MSG_MENU_SIZE
+Veľkosť
+MSG_MENU_SMALLER
+Menší
+MSG_MENU_LARGER
+Väčší
+MSG_MENU_OWN_COLOURS
+Vlastné farby
+MSG_MENU_ONE_COLOUR
+Jedna farba
+MSG_MENU_FLIP_ACROSS
+Prevrátiť vodorovne
+MSG_MENU_FLIP_DOWN
+Prevrátiť zvisle
+MSG_MENU_ADD_MASK
+Pridať masku
+MSG_MENU_MASK_SHOW_ALL
+Zobraziť všetko
+MSG_MENU_MASK_HIDE_ALL
+Skryť všetko
+MSG_MENU_MASK_SELECTION
+Zobraziť výber
+MSG_MENU_PAINT_MASK
+Maľovať masku
+MSG_MENU_APPLY_MASK
+Použiť masku
+MSG_MENU_DELETE_MASK
+Odstrániť masku
+MSG_MENU_TURN
+Otočiť doprava
+MSG_MENU_OPEN_BRUSH
+Otvoriť štetec...
+MSG_MENU_SAVE_BRUSH
+Uložiť štetec...
+MSG_MENU_PALETTE
+Paleta
+MSG_MENU_EDIT_PALETTE
+Upraviť...
+MSG_MENU_FROM_PICTURE
+Z obrázka
+MSG_MENU_PRESETS
+Predvoľby
+MSG_PRESET_STANDARD
+Predvolená
+MSG_PRESET_GREYS
+Odtiene sivej
+MSG_PRESET_SPECTRUM
+Spektrum
+MSG_PRESET_PASTEL
+Pastelové farby
+MSG_PRESET_EARTH
+Zemité tóny
+MSG_MENU_REDUCE
+Redukovať
+MSG_DITHER_NONE
+Bez rozptylu
+MSG_DITHER_ORDERED
+Pravidelný rozptyl
+MSG_DITHER_DIFFUSED
+Difúzia chyby
+MSG_MENU_CYCLE
+Rotácia farieb
+MSG_MENU_OPEN_PALETTE
+Otvoriť paletu...
+MSG_MENU_SAVE_PALETTE
+Uložiť paletu...
+MSG_MENU_OWN_SCREEN
+Vlastná obrazovka
+MSG_MENU_HELP
+Pomocník
+MSG_MENU_ABOUT
+O programe Paint...
+MSG_TOOL_FREEHAND
+Voľnou rukou: čiara tam, kade ide ukazovateľ
+MSG_TOOL_DOTS
+Voľnou rukou bodkovane: štetec tam, kde je ukazovateľ
+MSG_TOOL_LINE
+Čiara: od miesta stlačenia tlačidla po miesto jeho uvoľnenia
+MSG_TOOL_CURVE
+Krivka: čiara, potom druhým stlačením ohnutá do oblúka
+MSG_TOOL_RECTANGLE
+Obdĺžnik: od jedného rohu k druhému
+MSG_TOOL_ELLIPSE
+Elipsa: v rámčeku od jedného rohu k druhému
+MSG_TOOL_POLYGON
+Mnohouholník: roh pri každom uvoľnení, uzavretý v prvom rohu
+MSG_TOOL_FILL
+Výplň: oblasť jednej farby, na ktorú sa klikne
+MSG_TOOL_GRADIENT
+Prechod: od farby popredia na začiatku ťahania k farbe pozadia na jeho konci
+MSG_TOOL_AIRBRUSH
+Rozprašovač: sprej tam, kde je ukazovateľ, kým je tlačidlo stlačené
+MSG_TOOL_PICK
+Nabrať farbu: farba pod ukazovateľom
+MSG_TOOL_TEXT
+Text: napísaný a umiestnený tam, kam sa do obrázka klikne
+MSG_TOOL_GRAB
+Vystrihnúť štetec: časť obrázka použitá ako štetec
+MSG_TOOL_SELECT_BOX
+Obdĺžnikový výber: čo sa smie maľovať (Shift pridáva, Alt uberá)
+MSG_TOOL_LASSO
+Laso: vyberie tvar nakreslený voľnou rukou (Shift pridáva, Alt uberá)
+MSG_TOOL_WAND
+Čarovná palička: vyberie pixely farby spojené s tým, na ktorý sa klikne
+MSG_TOOL_HAND
+Ruka: posúva obrázok ukazovateľom
+MSG_TOOL_ERASER
+Guma: obrázok priehľadný tam, kade ide štetec
+MSG_TOOL_SMUDGE
+Rozmazanie: farby pod štetcom ťahané so sebou
+MSG_TOOL_ZOOM
+Lupa: zväčší, kam sa klikne, zmenší tlačidlom ponuky
+MSG_FILLED_HINT
+Vyplnené obdĺžniky, elipsy a mnohouholníky
+MSG_UNDO_HINT
+Vrátiť poslednú zmenu späť
+MSG_REDO_HINT
+Znova vykonať vrátenú zmenu
+MSG_ZOOM_IN_HINT
+Zobraziť obrázok väčší
+MSG_ZOOM_OUT_HINT
+Zobraziť obrázok menší
+MSG_FIT_HINT
+Zobraziť celý obrázok taký veľký, ako sa zmestí
+MSG_SWAP_HINT
+Vymeniť obe farby
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Vrstvy
+MSG_SECTION_BRUSH
+Štetec
+MSG_SECTION_COLOUR
+Farba
+MSG_SIZE
+Veľkosť
+MSG_SOFTNESS
+Mäkkosť
+MSG_OPACITY
+Krytie
+MSG_FLOW
+Tok
+MSG_JITTER
+Kolísanie
+MSG_ROTATION
+Natočenie
+MSG_DITHER
+Rozptyl
+MSG_BLEND
+Prelínanie
+MSG_NEW_LAYER_HINT
+Nová vrstva nad maľovanou
+MSG_DELETE_LAYER_HINT
+Odstrániť maľovanú vrstvu
+MSG_LAYER_NAME
+Vrstva %ld
+MSG_LAYER_COPY
+%s kópia
+MSG_BLEND_NORMAL
+Normálne
+MSG_BLEND_ADD
+Sčítať
+MSG_BLEND_MULTIPLY
+Násobiť
+MSG_BLEND_SCREEN
+Závoj
+MSG_BLEND_OVERLAY
+Prekryť
+MSG_BLEND_DARKEN
+Stmaviť
+MSG_BLEND_LIGHTEN
+Zosvetliť
+MSG_BLEND_DODGE
+Zosvetliť farby
+MSG_BLEND_BURN
+Stmaviť farby
+MSG_BLEND_HARD_LIGHT
+Tvrdé svetlo
+MSG_BLEND_SOFT_LIGHT
+Mäkké svetlo
+MSG_BLEND_HUE
+Odtieň
+MSG_BLEND_SATURATION
+Sýtosť
+MSG_BLEND_COLOUR
+Farba
+MSG_BLEND_LUMINOSITY
+Svietivosť
+MSG_STATUS
+%ld x %ld   %ld:1   štetec %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   štetec %ld   v bode %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   štetec %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   štetec %ld x %ld   v bode %ld, %ld
+MSG_NEW_TITLE
+Nový obrázok
+MSG_CANVAS_TITLE
+Veľkosť plátna
+MSG_PLACE
+Obrázok
+MSG_PLACE_TOP_LEFT
+Vľavo hore
+MSG_PLACE_TOP
+Hore
+MSG_PLACE_TOP_RIGHT
+Vpravo hore
+MSG_PLACE_LEFT
+Vľavo
+MSG_PLACE_MIDDLE
+V strede
+MSG_PLACE_RIGHT
+Vpravo
+MSG_PLACE_BOTTOM_LEFT
+Vľavo dole
+MSG_PLACE_BOTTOM
+Dole
+MSG_PLACE_BOTTOM_RIGHT
+Vpravo dole
+MSG_NO_IMAGE_MEMORY
+Nedostatok pamäte\nna zmenu obrázka.
+MSG_PICTURE_SIZE_TITLE
+Veľkosť obrázka
+MSG_SCALING
+Pixely
+MSG_SCALE_SMOOTH
+Hladké
+MSG_SCALE_HARD
+Ostré
+MSG_KEEP_PROPORTIONS
+Zachovať proporcie
+MSG_EFFECTS_TITLE
+Efekty
+MSG_RESET
+Vynulovať
+MSG_FX_BRIGHTNESS
+Jas
+MSG_FX_CONTRAST
+Kontrast
+MSG_FX_SATURATION
+Sýtosť
+MSG_FX_HUE
+Odtieň
+MSG_FX_BLUR
+Rozostrenie
+MSG_FX_SHARPEN
+Zaostrenie
+MSG_FX_TEXTURE
+Textúra
+MSG_FX_DEHAZE
+Odstrániť opar
+MSG_FX_SEPIA
+Sépia
+MSG_FX_INVERT
+Inverzia
+MSG_FX_CYAN_RED
+Azúrová/Červená
+MSG_FX_MAGENTA_GREEN
+Purpurová/Zelená
+MSG_FX_YELLOW_BLUE
+Žltá/Modrá
+MSG_WIDTH
+Šírka
+MSG_HEIGHT
+Výška
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nObrázky v plných farbách, maľované\nvstavanými a vystrihnutými štetcami.
+MSG_CANCEL
+Zrušiť
+MSG_TEXT_TITLE
+Text
+MSG_RENAME_TITLE
+Premenovať vrstvu
+MSG_NAME
+Názov
+MSG_TEXT
+Text
+MSG_FONT
+Písmo
+MSG_FONT_TITLE
+Písmo textu
+MSG_CHANGED
+Obrázok sa zmenil.\nNajskôr ho uložiť?
+MSG_CHANGED_BUTTONS
+Uložiť|Neukladať|Zrušiť
+MSG_NO_PICTURE
+Nedostatok pamäte pre obrázok\nveľkosti %ld na %ld pixelov.
+MSG_NO_UNDO
+Táto zmena bola príliš veľká na uchovanie:\nnemožno ju vrátiť späť.
+MSG_NO_LAYER
+Nedostatok pamäte pre ďalšiu vrstvu.
+MSG_NO_MASK
+Nedostatok pamäte pre masku.
+MSG_NO_OWN_SCREEN
+Vlastnú obrazovku nemožno otvoriť.
+MSG_NO_FONT
+Písmo nemožno otvoriť.
+MSG_FILL_SHORT
+Nedostatok pamäte na vyplnenie všetkého.
+MSG_CHOICE_SHORT
+Nedostatok pamäte na výber všetkého.
+MSG_NO_SELECTION
+Nedostatok pamäte pre výber.
+MSG_OUTLINE
+Obrys
+MSG_SHOW_MASK
+Maska
+MSG_MASK_ROW
+Maska
+MSG_MASK_PAINTED
+[Maska]
+MSG_OPEN_TITLE
+Otvoriť obrázok
+MSG_SAVE_AS_TITLE
+Uložiť obrázok ako
+MSG_NO_OPEN
+%s\nnemožno otvoriť:\n%s
+MSG_NO_SAVE
+Obrázok nemožno uložiť\nako %s:\n%s
+MSG_NO_PART
+%s\nnemožno otvoriť.
+MSG_UNTITLED
+Bez názvu
+MSG_OPEN_BRUSH_TITLE
+Otvoriť štetec
+MSG_SAVE_BRUSH_TITLE
+Uložiť štetec ako
+MSG_NO_SAVE_BRUSH
+Štetec nemožno uložiť\nako %s:\n%s
+MSG_NO_SAVE_PALETTE
+Paletu nemožno uložiť\nako %s:\n%s
+MSG_NO_PALETTE
+%s\nneobsahuje paletu.
+MSG_NO_COUNT
+Nedostatok pamäte na spočítanie farieb.
+MSG_OPEN_PALETTE_TITLE
+Otvoriť paletu
+MSG_SAVE_PALETTE_TITLE
+Uložiť paletu ako
+MSG_PALETTE_TITLE
+Paleta
+MSG_RED
+Červená
+MSG_GREEN
+Zelená
+MSG_BLUE
+Modrá
+MSG_HUE
+Odtieň
+MSG_SATURATION
+Sýtosť
+MSG_VALUE
+Hodnota
+MSG_HEX
+Hex
+MSG_SPREAD
+Prechod
+MSG_COPY_COLOUR
+Kopírovať
+MSG_SWAP_COLOURS
+Vymeniť
+MSG_CHANGE_PIXELS
+Zmeniť aj pixely
+MSG_PICK_COLOUR
+Zvoliť farbu na zmenu.
+MSG_PICK_SPREAD
+Zvoliť druhý koniec prechodu.
+MSG_PICK_COPY
+Zvoliť farbu, na ktorú sa kopíruje.
+MSG_PICK_SWAP
+Zvoliť farbu, s ktorou sa vymení.
+MSG_PICK_RANGE
+Zvoliť druhý koniec rozsahu.
+MSG_RANGE
+Rozsah
+MSG_SET_RANGE
+Nastaviť rozsah
+MSG_SPEED
+Rýchlosť
+MSG_BACKWARDS
+Dozadu
+MSG_RANGE_SPAN
+Rozsah %ld: farby %ld až %ld.
+MSG_RANGE_UNSET
+Rozsah %ld nie je nastavený.
+MSG_NO_RANGE
+Žiadny rozsah palety nerotuje:\nnastaviť ho v editore palety.
+MSG_NO_REDUCE
+Nedostatok pamäte na rozptýlenie\nodchýlky každej farby.
+MSG_BRUSH_TOO_LARGE
+Štetec môže mať najviac %ld na %ld pixelov.
+MSG_NO_BRUSH
+Nedostatok pamäte pre štetec\nveľkosti %ld na %ld pixelov.
+MSG_NOLIBRARY
+Chýba %s\n
+MSG_NOSCREEN
+Chýba obrazovka - žiadne zobrazenie\n
+MSG_NOMEMORY
+Nedostatok pamäte pre okno\n
+MSG_BADSCREEN
+SCREEN je OWN alebo DESKTOP\n

@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language gaeilge
+## codeset 106
+; Paint's strings in Irish.
+MSG_MENU_FILE
+Comhad
+MSG_MENU_NEW
+Nua...
+MSG_MENU_OPEN
+Oscail...
+MSG_MENU_SAVE
+Sábháil
+MSG_MENU_SAVE_AS
+Sábháil Mar...
+MSG_MENU_QUIT
+Scoir
+MSG_MENU_EDIT
+Eagar
+MSG_MENU_UNDO
+Cealaigh
+MSG_MENU_REDO
+Athdhéan
+MSG_MENU_CLEAR
+Glan
+MSG_MENU_IMAGE
+Pictiúr
+MSG_MENU_ROTATE
+Rothlaigh
+MSG_TURN_RIGHT
+90° Deiseal
+MSG_TURN_LEFT
+90° Tuathal
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Bearr go dtí an Roghnúchán
+MSG_MENU_TRIM
+Bearr na hImill
+MSG_MENU_CANVAS_SIZE
+Méid an Chanbháis...
+MSG_MENU_FLATTEN
+Leacaigh
+MSG_MENU_PICTURE_SIZE
+Méid an Phictiúir...
+MSG_MENU_EFFECTS
+Maisíochtaí...
+MSG_MENU_FREE_TRANSFORM
+Trasfhoirmiú Saor
+MSG_MENU_TOOLS
+Uirlisí
+MSG_MENU_FREEHAND
+Saorlámh
+MSG_MENU_DOTS
+Saorlámh le Poncanna
+MSG_MENU_LINE
+Líne
+MSG_MENU_CURVE
+Cuar
+MSG_MENU_RECTANGLE
+Dronuilleog
+MSG_MENU_ELLIPSE
+Éilips
+MSG_MENU_POLYGON
+Polagán
+MSG_MENU_FILL
+Líon
+MSG_MENU_GRADIENT
+Grádán
+MSG_MENU_AIRBRUSH
+Aerscuab
+MSG_MENU_PICK
+Tóg Dath
+MSG_MENU_TEXT
+Téacs
+MSG_MENU_GRAB
+Gearr Scuab
+MSG_MENU_SELECT_BOX
+Roghnú Dronuilleogach
+MSG_MENU_LASSO
+Lasó
+MSG_MENU_WAND
+Slat Draíochta
+MSG_MENU_HAND
+Lámh
+MSG_MENU_ERASER
+Scriosán
+MSG_MENU_SMUDGE
+Smearadh
+MSG_MENU_ZOOM_TOOL
+Zúmáil
+MSG_MENU_FILLED
+Cruthanna Líonta
+MSG_MENU_ROUND_GRADIENT
+Grádán Ciorclach
+MSG_MENU_SWAP
+Malartaigh na Dathanna
+MSG_MENU_VIEW
+Amharc
+MSG_MENU_ZOOM_IN
+Zúmáil Isteach
+MSG_MENU_ZOOM_OUT
+Zúmáil Amach
+MSG_MENU_ACTUAL_SIZE
+Fíormhéid
+MSG_MENU_FIT
+Oiriúnaigh don Fhuinneog
+MSG_MENU_GRID
+Greille
+MSG_MENU_RULERS
+Rialóirí
+MSG_MENU_SPLIT_SCREEN
+Scáileán Scoilte
+MSG_MENU_LAYER
+Sraith
+MSG_MENU_NEW_LAYER
+Sraith Nua
+MSG_MENU_DUPLICATE_LAYER
+Dúblaigh
+MSG_MENU_DELETE_LAYER
+Scrios
+MSG_MENU_RENAME_LAYER
+Athainmnigh...
+MSG_MENU_LAYER_UP
+Bog Suas
+MSG_MENU_LAYER_DOWN
+Bog Síos
+MSG_MENU_MERGE_DOWN
+Cumaisc Síos
+MSG_MENU_SELECTION
+Roghnúchán
+MSG_MENU_SELECT
+Roghnaigh
+MSG_MENU_SELECT_ALL
+Gach Rud
+MSG_MENU_SELECT_LAYER
+Picteilíní na Sraithe
+MSG_MENU_SELECT_COLOUR
+Picteilíní an Datha
+MSG_MENU_SELECT_SEE_THROUGH
+Picteilíní Trédhearcacha
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Picteilíní Lasmuigh den Phailéad
+MSG_MENU_DESELECT
+Díroghnaigh
+MSG_MENU_INVERT
+Inbhéartaigh
+MSG_MENU_COPY_TO_LAYER
+Cóipeáil go Sraith Nua
+MSG_MENU_CUT_TO_LAYER
+Gearr go Sraith Nua
+MSG_MENU_COPY_TO_BRUSH
+Cóipeáil mar Scuab
+MSG_MENU_BRUSH
+Scuab
+MSG_MENU_ROUND
+Cruinn
+MSG_MENU_SQUARE
+Cearnach
+MSG_MENU_OWN_BRUSH
+Scuab Shaincheaptha
+MSG_MENU_SIZE
+Méid
+MSG_MENU_SMALLER
+Níos Lú
+MSG_MENU_LARGER
+Níos Mó
+MSG_MENU_OWN_COLOURS
+A Dathanna Féin
+MSG_MENU_ONE_COLOUR
+Dath Amháin
+MSG_MENU_FLIP_ACROSS
+Iompaigh go Cothrománach
+MSG_MENU_FLIP_DOWN
+Iompaigh go hIngearach
+MSG_MENU_ADD_MASK
+Cuir Masc Leis
+MSG_MENU_MASK_SHOW_ALL
+Taispeáin Gach Rud
+MSG_MENU_MASK_HIDE_ALL
+Folaigh Gach Rud
+MSG_MENU_MASK_SELECTION
+Taispeáin an Roghnúchán
+MSG_MENU_PAINT_MASK
+Péinteáil an Masc
+MSG_MENU_APPLY_MASK
+Cuir an Masc i bhFeidhm
+MSG_MENU_DELETE_MASK
+Scrios an Masc
+MSG_MENU_TURN
+Cas ar Dheis
+MSG_MENU_OPEN_BRUSH
+Oscail Scuab...
+MSG_MENU_SAVE_BRUSH
+Sábháil an Scuab...
+MSG_MENU_PALETTE
+Pailéad
+MSG_MENU_EDIT_PALETTE
+Cuir in Eagar...
+MSG_MENU_FROM_PICTURE
+Ón bPictiúr
+MSG_MENU_PRESETS
+Réamhshocruithe
+MSG_PRESET_STANDARD
+Pailéad Paint
+MSG_PRESET_GREYS
+Liatha
+MSG_PRESET_SPECTRUM
+Speictream
+MSG_PRESET_PASTEL
+Pastail
+MSG_PRESET_EARTH
+Dathanna Cré
+MSG_MENU_REDUCE
+Laghdaigh
+MSG_DITHER_NONE
+Gan Dithering
+MSG_DITHER_ORDERED
+Dithering Ordaithe
+MSG_DITHER_DIFFUSED
+Idirleathadh Earráide
+MSG_MENU_CYCLE
+Rothlaigh na Dathanna
+MSG_MENU_OPEN_PALETTE
+Oscail Pailéad...
+MSG_MENU_SAVE_PALETTE
+Sábháil an Pailéad...
+MSG_MENU_OWN_SCREEN
+Scáileán ar Leith
+MSG_MENU_HELP
+Cabhair
+MSG_MENU_ABOUT
+Maidir le Paint...
+MSG_TOOL_FREEHAND
+Saorlámh: líne san áit a dtéann an pointeoir
+MSG_TOOL_DOTS
+Saorlámh le poncanna: an scuab san áit a bhfuil an pointeoir
+MSG_TOOL_LINE
+Líne: ón áit a mbrúitear an cnaipe go dtí an áit a scaoiltear é
+MSG_TOOL_CURVE
+Cuar: líne, ansin lúbtha le dara brú
+MSG_TOOL_RECTANGLE
+Dronuilleog: ó choirnéal amháin go dtí an ceann eile
+MSG_TOOL_ELLIPSE
+Éilips: sa bhosca ó choirnéal amháin go dtí an ceann eile
+MSG_TOOL_POLYGON
+Polagán: coirnéal le gach scaoileadh, dúnta ar an gcéad choirnéal
+MSG_TOOL_FILL
+Líon: an limistéar d'aon dath amháin a gcliceáiltear air
+MSG_TOOL_GRADIENT
+Grádán: ón dath tulra ag tús an tarraingthe go dtí an dath cúlra ag a dheireadh
+MSG_TOOL_AIRBRUSH
+Aerscuab: spraeáil san áit a bhfuil an pointeoir, fad a choinnítear an cnaipe síos
+MSG_TOOL_PICK
+Tóg dath: an dath faoin bpointeoir
+MSG_TOOL_TEXT
+Téacs: clóscríofa, agus curtha san áit a gcliceáiltear ar an bpictiúr
+MSG_TOOL_GRAB
+Gearr scuab: cuid den phictiúr tógtha mar an scuab
+MSG_TOOL_SELECT_BOX
+Roghnú dronuilleogach: an méid is féidir a phéinteáil (cuireann Shift leis, baineann Alt de)
+MSG_TOOL_LASSO
+Lasó: cruth a tharraingítear de láimh, roghnaithe (cuireann Shift leis, baineann Alt de)
+MSG_TOOL_WAND
+Slat draíochta: picteilíní an datha atá ceangailte leis an gceann a cliceáladh, roghnaithe
+MSG_TOOL_HAND
+Lámh: an pictiúr bogtha leis an bpointeoir
+MSG_TOOL_ERASER
+Scriosán: an pictiúr déanta trédhearcach san áit a dtéann an scuab
+MSG_TOOL_SMUDGE
+Smearadh: na dathanna faoin scuab tarraingthe in éineacht leis
+MSG_TOOL_ZOOM
+Zúmáil: níos mó san áit a gcliceáiltear, níos lú le cnaipe an roghchláir
+MSG_FILLED_HINT
+Dronuilleoga, éilipsí agus polagáin líonta
+MSG_UNDO_HINT
+Cealaigh an t-athrú deireanach
+MSG_REDO_HINT
+Athdhéan an t-athrú a cealaíodh
+MSG_ZOOM_IN_HINT
+Taispeáin an pictiúr níos mó
+MSG_ZOOM_OUT_HINT
+Taispeáin an pictiúr níos lú
+MSG_FIT_HINT
+Taispeáin an pictiúr ar fad chomh mór agus a luíonn sé
+MSG_SWAP_HINT
+Malartaigh an dá dhath
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Sraitheanna
+MSG_SECTION_BRUSH
+Scuab
+MSG_SECTION_COLOUR
+Dath
+MSG_SIZE
+Méid
+MSG_SOFTNESS
+Boige
+MSG_OPACITY
+Teimhneacht
+MSG_FLOW
+Sreabhadh
+MSG_JITTER
+Creathán
+MSG_ROTATION
+Rothlú
+MSG_DITHER
+Dithering
+MSG_BLEND
+Cumasc
+MSG_NEW_LAYER_HINT
+Sraith nua os cionn na sraithe gníomhaí
+MSG_DELETE_LAYER_HINT
+Scrios an tsraith ghníomhach
+MSG_LAYER_NAME
+Sraith %ld
+MSG_LAYER_COPY
+Cóip de %s
+MSG_BLEND_NORMAL
+Gnáth
+MSG_BLEND_ADD
+Suimiú
+MSG_BLEND_MULTIPLY
+Iolrú
+MSG_BLEND_SCREEN
+Scáileán
+MSG_BLEND_OVERLAY
+Forleagan
+MSG_BLEND_DARKEN
+Dorchaigh
+MSG_BLEND_LIGHTEN
+Gealaigh
+MSG_BLEND_DODGE
+Seachaint Datha
+MSG_BLEND_BURN
+Dó Datha
+MSG_BLEND_HARD_LIGHT
+Solas Crua
+MSG_BLEND_SOFT_LIGHT
+Solas Bog
+MSG_BLEND_HUE
+Lí
+MSG_BLEND_SATURATION
+Sáithiú
+MSG_BLEND_COLOUR
+Dath
+MSG_BLEND_LUMINOSITY
+Lonrachas
+MSG_STATUS
+%ld x %ld   %ld:1   scuab %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   scuab %ld   ag %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   scuab %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   scuab %ld x %ld   ag %ld, %ld
+MSG_NEW_TITLE
+Pictiúr Nua
+MSG_CANVAS_TITLE
+Méid an Chanbháis
+MSG_PLACE
+Pictiúr
+MSG_PLACE_TOP_LEFT
+Barr ar Chlé
+MSG_PLACE_TOP
+Barr
+MSG_PLACE_TOP_RIGHT
+Barr ar Dheis
+MSG_PLACE_LEFT
+Clé
+MSG_PLACE_MIDDLE
+Lár
+MSG_PLACE_RIGHT
+Deis
+MSG_PLACE_BOTTOM_LEFT
+Bun ar Chlé
+MSG_PLACE_BOTTOM
+Bun
+MSG_PLACE_BOTTOM_RIGHT
+Bun ar Dheis
+MSG_NO_IMAGE_MEMORY
+Níl dóthain cuimhne\nchun an pictiúr a athrú.
+MSG_PICTURE_SIZE_TITLE
+Méid an Phictiúir
+MSG_SCALING
+Picteilíní
+MSG_SCALE_SMOOTH
+Mín
+MSG_SCALE_HARD
+Crua
+MSG_KEEP_PROPORTIONS
+Coinnigh na Comhréireanna
+MSG_EFFECTS_TITLE
+Maisíochtaí
+MSG_RESET
+Athshocraigh
+MSG_FX_BRIGHTNESS
+Gile
+MSG_FX_CONTRAST
+Codarsnacht
+MSG_FX_SATURATION
+Sáithiú
+MSG_FX_HUE
+Lí
+MSG_FX_BLUR
+Doiléirigh
+MSG_FX_SHARPEN
+Géaraigh
+MSG_FX_TEXTURE
+Uigeacht
+MSG_FX_DEHAZE
+Bain an Ceo
+MSG_FX_SEPIA
+Seipia
+MSG_FX_INVERT
+Inbhéartaigh
+MSG_FX_CYAN_RED
+Cian/Dearg
+MSG_FX_MAGENTA_GREEN
+Maigeanta/Glas
+MSG_FX_YELLOW_BLUE
+Buí/Gorm
+MSG_WIDTH
+Leithead
+MSG_HEIGHT
+Airde
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nPictiúir i bhfíordhath, péinteáilte le\nscuaba ionsuite agus gearrtha.
+MSG_CANCEL
+Cealaigh
+MSG_TEXT_TITLE
+Téacs
+MSG_RENAME_TITLE
+Athainmnigh an tSraith
+MSG_NAME
+Ainm
+MSG_TEXT
+Téacs
+MSG_FONT
+Cló
+MSG_FONT_TITLE
+Cló an téacs
+MSG_CHANGED
+Athraíodh an pictiúr.\nÉ a shábháil ar dtús?
+MSG_CHANGED_BUTTONS
+Sábháil|Ná Sábháil|Cealaigh
+MSG_NO_PICTURE
+Níl dóthain cuimhne do phictiúr\n%ld x %ld picteilín.
+MSG_NO_UNDO
+Bhí an t-athrú sin rómhór le coinneáil:\nní féidir é a chealú.
+MSG_NO_LAYER
+Níl dóthain cuimhne do shraith eile.
+MSG_NO_MASK
+Níl dóthain cuimhne do mhasc.
+MSG_NO_OWN_SCREEN
+Níorbh fhéidir scáileán ar leith a oscailt.
+MSG_NO_FONT
+Níorbh fhéidir an cló a oscailt.
+MSG_FILL_SHORT
+Ní raibh dóthain cuimhne chun é ar fad a líonadh.
+MSG_CHOICE_SHORT
+Ní raibh dóthain cuimhne chun é ar fad a roghnú.
+MSG_NO_SELECTION
+Níl dóthain cuimhne do roghnúchán.
+MSG_OUTLINE
+Imlíne
+MSG_SHOW_MASK
+Masc
+MSG_MASK_ROW
+Masc
+MSG_MASK_PAINTED
+[Masc]
+MSG_OPEN_TITLE
+Oscail pictiúr
+MSG_SAVE_AS_TITLE
+Sábháil an pictiúr mar
+MSG_NO_OPEN
+%s\nní féidir é a oscailt:\n%s
+MSG_NO_SAVE
+Ní féidir an pictiúr a shábháil\nmar %s:\n%s
+MSG_NO_PART
+%s\nní féidir é a oscailt.
+MSG_UNTITLED
+Gan Teideal
+MSG_OPEN_BRUSH_TITLE
+Oscail scuab
+MSG_SAVE_BRUSH_TITLE
+Sábháil an scuab mar
+MSG_NO_SAVE_BRUSH
+Ní féidir an scuab a shábháil\nmar %s:\n%s
+MSG_NO_SAVE_PALETTE
+Ní féidir an pailéad a shábháil\nmar %s:\n%s
+MSG_NO_PALETTE
+%s\nníl pailéad ann.
+MSG_NO_COUNT
+Níl dóthain cuimhne chun na dathanna a chomhaireamh.
+MSG_OPEN_PALETTE_TITLE
+Oscail pailéad
+MSG_SAVE_PALETTE_TITLE
+Sábháil an pailéad mar
+MSG_PALETTE_TITLE
+Pailéad
+MSG_RED
+Dearg
+MSG_GREEN
+Glas
+MSG_BLUE
+Gorm
+MSG_HUE
+Lí
+MSG_SATURATION
+Sáithiú
+MSG_VALUE
+Luach
+MSG_HEX
+Hex
+MSG_SPREAD
+Grádán
+MSG_COPY_COLOUR
+Cóipeáil
+MSG_SWAP_COLOURS
+Malartaigh
+MSG_CHANGE_PIXELS
+Athraigh na picteilíní freisin
+MSG_PICK_COLOUR
+Roghnaigh dath chun é a athrú.
+MSG_PICK_SPREAD
+Roghnaigh an ceann eile den ghrádán.
+MSG_PICK_COPY
+Roghnaigh an dath le cóipeáil air.
+MSG_PICK_SWAP
+Roghnaigh an dath lena mhalartú.
+MSG_PICK_RANGE
+Roghnaigh an ceann eile den raon.
+MSG_RANGE
+Raon
+MSG_SET_RANGE
+Socraigh an Raon
+MSG_SPEED
+Luas
+MSG_BACKWARDS
+Siar
+MSG_RANGE_SPAN
+Raon %ld: dathanna %ld go %ld.
+MSG_RANGE_UNSET
+Níl raon %ld socraithe.
+MSG_NO_RANGE
+Níl aon raon den phailéad ag rothlú:\nsocraigh ceann in eagarthóir an phailéid.
+MSG_NO_REDUCE
+Níl dóthain cuimhne chun a bhfuil in easnamh\nar gach dath a scaipeadh.
+MSG_BRUSH_TOO_LARGE
+Ní féidir le scuab a bheith níos mó ná %ld x %ld picteilín.
+MSG_NO_BRUSH
+Níl dóthain cuimhne do scuab\n%ld x %ld picteilín.
+MSG_NOLIBRARY
+Níl %s ann\n
+MSG_NOSCREEN
+Níl scáileán ann - níl taispeáint ann\n
+MSG_NOMEMORY
+Níl dóthain cuimhne don fhuinneog\n
+MSG_BADSCREEN
+SCREEN: OWN nó DESKTOP\n

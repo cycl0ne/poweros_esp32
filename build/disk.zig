@@ -298,6 +298,9 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Player.info", .picture = "multimedia-player", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Volume.info", .picture = "audio-card", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Movie.info", .picture = "video-x-generic", .fields = &.{ "KIND=TOOL", icon_stack } },
+    // Paint is a drawer: the program and the libraries it loads.
+    .{ .path = "programs/Paint.info", .picture = "applications-graphics", .fields = &.{"KIND=DRAWER"} },
+    .{ .path = "programs/Paint/Paint.info", .picture = "applications-graphics", .fields = &.{ "KIND=TOOL", icon_stack } },
     // The two that draw in three dimensions are on every disk but the
     // ESP32-S3's, which has no facet.library.
     .{ .path = "programs/Boing.info", .picture = "internet-web-browser", .fields = &.{ "KIND=TOOL", icon_stack }, .chips = &.{ .esp32p4, .rv64sbi, .a64psci, .a64v80, .x64uefi } },
@@ -317,6 +320,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Docs/MultiView.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Movie.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Notepad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "programs/Docs/Paint.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Player.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Prefs.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Sheet.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },

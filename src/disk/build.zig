@@ -145,6 +145,7 @@ pub const translated_strings = [_]Translated{
     .{ .descriptor = "programs/sheet/sheet.cd", .translations = "programs/sheet/catalogs", .name = "programs/Sheet.catalog" },
     .{ .descriptor = "programs/player/player.cd", .translations = "programs/player/catalogs", .name = "programs/Player.catalog" },
     .{ .descriptor = "programs/movie/movie.cd", .translations = "programs/movie/catalogs", .name = "programs/Movie.catalog" },
+    .{ .descriptor = "programs/paint/paint.cd", .translations = "programs/paint/catalogs", .name = "programs/Paint.catalog" },
     .{ .descriptor = "system/clock/clock.cd", .translations = "system/clock/catalogs", .name = "System/Clock.catalog" },
     .{ .descriptor = "commodities/emoji/emoji.cd", .translations = "commodities/emoji/catalogs", .name = "Commodities/Emoji.catalog", .except = &not_emoji },
     .{ .descriptor = "libs/anvil/anvil.cd", .translations = "libs/anvil/catalogs", .name = "sys/anvil.catalog" },

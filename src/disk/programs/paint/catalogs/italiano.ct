@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language italiano
+## codeset 106
+; Paint's strings in Italian.
+MSG_MENU_FILE
+File
+MSG_MENU_NEW
+Nuovo...
+MSG_MENU_OPEN
+Apri...
+MSG_MENU_SAVE
+Salva
+MSG_MENU_SAVE_AS
+Salva con nome...
+MSG_MENU_QUIT
+Esci
+MSG_MENU_EDIT
+Modifica
+MSG_MENU_UNDO
+Annulla
+MSG_MENU_REDO
+Ripeti
+MSG_MENU_CLEAR
+Cancella
+MSG_MENU_IMAGE
+Immagine
+MSG_MENU_ROTATE
+Ruota
+MSG_TURN_RIGHT
+90° in senso orario
+MSG_TURN_LEFT
+90° in senso antiorario
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Ritaglia sulla selezione
+MSG_MENU_TRIM
+Rifila
+MSG_MENU_CANVAS_SIZE
+Dimensione quadro...
+MSG_MENU_FLATTEN
+Unico livello
+MSG_MENU_PICTURE_SIZE
+Dimensione immagine...
+MSG_MENU_EFFECTS
+Effetti...
+MSG_MENU_FREE_TRANSFORM
+Trasformazione libera
+MSG_MENU_TOOLS
+Strumenti
+MSG_MENU_FREEHAND
+Mano libera
+MSG_MENU_DOTS
+Mano libera a punti
+MSG_MENU_LINE
+Linea
+MSG_MENU_CURVE
+Curva
+MSG_MENU_RECTANGLE
+Rettangolo
+MSG_MENU_ELLIPSE
+Ellisse
+MSG_MENU_POLYGON
+Poligono
+MSG_MENU_FILL
+Riempimento
+MSG_MENU_GRADIENT
+Sfumatura
+MSG_MENU_AIRBRUSH
+Aerografo
+MSG_MENU_PICK
+Contagocce
+MSG_MENU_TEXT
+Testo
+MSG_MENU_GRAB
+Ritaglia pennello
+MSG_MENU_SELECT_BOX
+Selezione rettangolare
+MSG_MENU_LASSO
+Lazo
+MSG_MENU_WAND
+Bacchetta magica
+MSG_MENU_HAND
+Mano
+MSG_MENU_ERASER
+Gomma
+MSG_MENU_SMUDGE
+Sfumino
+MSG_MENU_ZOOM_TOOL
+Zoom
+MSG_MENU_FILLED
+Forme piene
+MSG_MENU_ROUND_GRADIENT
+Sfumatura radiale
+MSG_MENU_SWAP
+Scambia colori
+MSG_MENU_VIEW
+Visualizza
+MSG_MENU_ZOOM_IN
+Ingrandisci
+MSG_MENU_ZOOM_OUT
+Riduci
+MSG_MENU_ACTUAL_SIZE
+Dimensioni effettive
+MSG_MENU_FIT
+Adatta alla finestra
+MSG_MENU_GRID
+Griglia
+MSG_MENU_RULERS
+Righelli
+MSG_MENU_SPLIT_SCREEN
+Schermo diviso
+MSG_MENU_LAYER
+Livello
+MSG_MENU_NEW_LAYER
+Nuovo livello
+MSG_MENU_DUPLICATE_LAYER
+Duplica
+MSG_MENU_DELETE_LAYER
+Elimina
+MSG_MENU_RENAME_LAYER
+Rinomina...
+MSG_MENU_LAYER_UP
+Sposta su
+MSG_MENU_LAYER_DOWN
+Sposta giù
+MSG_MENU_MERGE_DOWN
+Unisci sotto
+MSG_MENU_SELECTION
+Selezione
+MSG_MENU_SELECT
+Seleziona
+MSG_MENU_SELECT_ALL
+Tutto
+MSG_MENU_SELECT_LAYER
+Pixel del livello
+MSG_MENU_SELECT_COLOUR
+Pixel del colore
+MSG_MENU_SELECT_SEE_THROUGH
+Pixel trasparenti
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixel fuori dalla tavolozza
+MSG_MENU_DESELECT
+Deseleziona
+MSG_MENU_INVERT
+Inversa
+MSG_MENU_COPY_TO_LAYER
+Copia in un nuovo livello
+MSG_MENU_CUT_TO_LAYER
+Taglia in un nuovo livello
+MSG_MENU_COPY_TO_BRUSH
+Copia come pennello
+MSG_MENU_BRUSH
+Pennello
+MSG_MENU_ROUND
+Tondo
+MSG_MENU_SQUARE
+Quadrato
+MSG_MENU_OWN_BRUSH
+Pennello personale
+MSG_MENU_SIZE
+Dimensione
+MSG_MENU_SMALLER
+Più piccolo
+MSG_MENU_LARGER
+Più grande
+MSG_MENU_OWN_COLOURS
+Colori propri
+MSG_MENU_ONE_COLOUR
+Un solo colore
+MSG_MENU_FLIP_ACROSS
+Rifletti orizzontale
+MSG_MENU_FLIP_DOWN
+Rifletti verticale
+MSG_MENU_ADD_MASK
+Aggiungi maschera
+MSG_MENU_MASK_SHOW_ALL
+Mostra tutto
+MSG_MENU_MASK_HIDE_ALL
+Nascondi tutto
+MSG_MENU_MASK_SELECTION
+Mostra la selezione
+MSG_MENU_PAINT_MASK
+Dipingi la maschera
+MSG_MENU_APPLY_MASK
+Applica la maschera
+MSG_MENU_DELETE_MASK
+Elimina la maschera
+MSG_MENU_TURN
+Ruota a destra
+MSG_MENU_OPEN_BRUSH
+Apri pennello...
+MSG_MENU_SAVE_BRUSH
+Salva pennello...
+MSG_MENU_PALETTE
+Tavolozza
+MSG_MENU_EDIT_PALETTE
+Modifica...
+MSG_MENU_FROM_PICTURE
+Dall'immagine
+MSG_MENU_PRESETS
+Predefinite
+MSG_PRESET_STANDARD
+Quella di Paint
+MSG_PRESET_GREYS
+Grigi
+MSG_PRESET_SPECTRUM
+Spettro
+MSG_PRESET_PASTEL
+Pastello
+MSG_PRESET_EARTH
+Terre
+MSG_MENU_REDUCE
+Riduci
+MSG_DITHER_NONE
+Senza retinatura
+MSG_DITHER_ORDERED
+Retinatura ordinata
+MSG_DITHER_DIFFUSED
+Diffusione dell'errore
+MSG_MENU_CYCLE
+Ciclo dei colori
+MSG_MENU_OPEN_PALETTE
+Apri tavolozza...
+MSG_MENU_SAVE_PALETTE
+Salva tavolozza...
+MSG_MENU_OWN_SCREEN
+Schermo proprio
+MSG_MENU_HELP
+Aiuto
+MSG_MENU_ABOUT
+Informazioni su Paint...
+MSG_TOOL_FREEHAND
+Mano libera: una linea dove passa il puntatore
+MSG_TOOL_DOTS
+Mano libera a punti: il pennello dove si trova il puntatore
+MSG_TOOL_LINE
+Linea: da dove si preme il pulsante a dove lo si rilascia
+MSG_TOOL_CURVE
+Curva: una linea, poi piegata con una seconda pressione
+MSG_TOOL_RECTANGLE
+Rettangolo: da un angolo all'altro
+MSG_TOOL_ELLIPSE
+Ellisse: nel riquadro da un angolo all'altro
+MSG_TOOL_POLYGON
+Poligono: un vertice a ogni rilascio, chiuso sul primo vertice
+MSG_TOOL_FILL
+Riempimento: l'area di un colore su cui si fa clic
+MSG_TOOL_GRADIENT
+Sfumatura: dal colore di primo piano dove inizia il trascinamento a quello di sfondo dove finisce
+MSG_TOOL_AIRBRUSH
+Aerografo: uno spruzzo dove si trova il puntatore, finché il pulsante è premuto
+MSG_TOOL_PICK
+Contagocce: il colore sotto il puntatore
+MSG_TOOL_TEXT
+Testo: digitato e posto dove si fa clic sull'immagine
+MSG_TOOL_GRAB
+Ritaglia pennello: una parte dell'immagine presa come pennello
+MSG_TOOL_SELECT_BOX
+Selezione rettangolare: ciò che si può dipingere (Maiusc aggiunge, Alt toglie)
+MSG_TOOL_LASSO
+Lazo: una forma disegnata a mano, selezionata (Maiusc aggiunge, Alt toglie)
+MSG_TOOL_WAND
+Bacchetta magica: i pixel del colore uniti a quello cliccato, selezionati
+MSG_TOOL_HAND
+Mano: l'immagine spostata con il puntatore
+MSG_TOOL_ERASER
+Gomma: l'immagine resa trasparente dove passa il pennello
+MSG_TOOL_SMUDGE
+Sfumino: i colori sotto il pennello trascinati con esso
+MSG_TOOL_ZOOM
+Zoom: più grande dove si fa clic, più piccolo con il pulsante del menu
+MSG_FILLED_HINT
+Rettangoli, ellissi e poligoni pieni
+MSG_UNDO_HINT
+Annulla l'ultima modifica
+MSG_REDO_HINT
+Ripeti la modifica annullata
+MSG_ZOOM_IN_HINT
+Mostra l'immagine più grande
+MSG_ZOOM_OUT_HINT
+Mostra l'immagine più piccola
+MSG_FIT_HINT
+Mostra l'intera immagine grande quanto ci sta
+MSG_SWAP_HINT
+Scambia i due colori
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Livelli
+MSG_SECTION_BRUSH
+Pennello
+MSG_SECTION_COLOUR
+Colore
+MSG_SIZE
+Dimensione
+MSG_SOFTNESS
+Morbidezza
+MSG_OPACITY
+Opacità
+MSG_FLOW
+Flusso
+MSG_JITTER
+Variazione
+MSG_ROTATION
+Rotazione
+MSG_DITHER
+Retinatura
+MSG_BLEND
+Fusione
+MSG_NEW_LAYER_HINT
+Un nuovo livello sopra il livello attivo
+MSG_DELETE_LAYER_HINT
+Elimina il livello attivo
+MSG_LAYER_NAME
+Livello %ld
+MSG_LAYER_COPY
+%s copia
+MSG_BLEND_NORMAL
+Normale
+MSG_BLEND_ADD
+Addizione
+MSG_BLEND_MULTIPLY
+Moltiplica
+MSG_BLEND_SCREEN
+Scolora
+MSG_BLEND_OVERLAY
+Sovrapponi
+MSG_BLEND_DARKEN
+Scurisci
+MSG_BLEND_LIGHTEN
+Schiarisci
+MSG_BLEND_DODGE
+Scherma colore
+MSG_BLEND_BURN
+Brucia colore
+MSG_BLEND_HARD_LIGHT
+Luce intensa
+MSG_BLEND_SOFT_LIGHT
+Luce soffusa
+MSG_BLEND_HUE
+Tonalità
+MSG_BLEND_SATURATION
+Saturazione
+MSG_BLEND_COLOUR
+Colore
+MSG_BLEND_LUMINOSITY
+Luminosità
+MSG_STATUS
+%ld x %ld   %ld:1   pennello %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pennello %ld   in %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pennello %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pennello %ld x %ld   in %ld, %ld
+MSG_NEW_TITLE
+Nuova immagine
+MSG_CANVAS_TITLE
+Dimensione quadro
+MSG_PLACE
+Immagine
+MSG_PLACE_TOP_LEFT
+In alto a sinistra
+MSG_PLACE_TOP
+In alto
+MSG_PLACE_TOP_RIGHT
+In alto a destra
+MSG_PLACE_LEFT
+A sinistra
+MSG_PLACE_MIDDLE
+Al centro
+MSG_PLACE_RIGHT
+A destra
+MSG_PLACE_BOTTOM_LEFT
+In basso a sinistra
+MSG_PLACE_BOTTOM
+In basso
+MSG_PLACE_BOTTOM_RIGHT
+In basso a destra
+MSG_NO_IMAGE_MEMORY
+Memoria insufficiente\nper modificare l'immagine.
+MSG_PICTURE_SIZE_TITLE
+Dimensione immagine
+MSG_SCALING
+Pixel
+MSG_SCALE_SMOOTH
+Morbidi
+MSG_SCALE_HARD
+Netti
+MSG_KEEP_PROPORTIONS
+Mantieni proporzioni
+MSG_EFFECTS_TITLE
+Effetti
+MSG_RESET
+Ripristina
+MSG_FX_BRIGHTNESS
+Luminosità
+MSG_FX_CONTRAST
+Contrasto
+MSG_FX_SATURATION
+Saturazione
+MSG_FX_HUE
+Tonalità
+MSG_FX_BLUR
+Sfocatura
+MSG_FX_SHARPEN
+Nitidezza
+MSG_FX_TEXTURE
+Texture
+MSG_FX_DEHAZE
+Rimuovi foschia
+MSG_FX_SEPIA
+Seppia
+MSG_FX_INVERT
+Inverti
+MSG_FX_CYAN_RED
+Ciano/Rosso
+MSG_FX_MAGENTA_GREEN
+Magenta/Verde
+MSG_FX_YELLOW_BLUE
+Giallo/Blu
+MSG_WIDTH
+Larghezza
+MSG_HEIGHT
+Altezza
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nImmagini in colori reali, dipinte con\npennelli integrati e ritagliati.
+MSG_CANCEL
+Annulla
+MSG_TEXT_TITLE
+Testo
+MSG_RENAME_TITLE
+Rinomina livello
+MSG_NAME
+Nome
+MSG_TEXT
+Testo
+MSG_FONT
+Carattere
+MSG_FONT_TITLE
+Il carattere del testo
+MSG_CHANGED
+L'immagine è cambiata.\nSalvarla prima?
+MSG_CHANGED_BUTTONS
+Salva|Non salvare|Annulla
+MSG_NO_PICTURE
+Memoria insufficiente per un'immagine\ndi %ld per %ld pixel.
+MSG_NO_UNDO
+Quella modifica era troppo grande da conservare:\nnon si può annullare.
+MSG_NO_LAYER
+Memoria insufficiente per un altro livello.
+MSG_NO_MASK
+Memoria insufficiente per una maschera.
+MSG_NO_OWN_SCREEN
+Impossibile aprire uno schermo proprio.
+MSG_NO_FONT
+Impossibile aprire il carattere.
+MSG_FILL_SHORT
+La memoria non è bastata per riempire tutto.
+MSG_CHOICE_SHORT
+La memoria non è bastata per selezionare tutto.
+MSG_NO_SELECTION
+Memoria insufficiente per una selezione.
+MSG_OUTLINE
+Contorno
+MSG_SHOW_MASK
+Maschera
+MSG_MASK_ROW
+Maschera
+MSG_MASK_PAINTED
+[Maschera]
+MSG_OPEN_TITLE
+Apri un'immagine
+MSG_SAVE_AS_TITLE
+Salva l'immagine con nome
+MSG_NO_OPEN
+%s\nnon si può aprire:\n%s
+MSG_NO_SAVE
+L'immagine non si può salvare\ncome %s:\n%s
+MSG_NO_PART
+%s\nnon si può aprire.
+MSG_UNTITLED
+Senza titolo
+MSG_OPEN_BRUSH_TITLE
+Apri un pennello
+MSG_SAVE_BRUSH_TITLE
+Salva il pennello con nome
+MSG_NO_SAVE_BRUSH
+Il pennello non si può salvare\ncome %s:\n%s
+MSG_NO_SAVE_PALETTE
+La tavolozza non si può salvare\ncome %s:\n%s
+MSG_NO_PALETTE
+%s\nnon contiene alcuna tavolozza.
+MSG_NO_COUNT
+Memoria insufficiente per contare i colori.
+MSG_OPEN_PALETTE_TITLE
+Apri una tavolozza
+MSG_SAVE_PALETTE_TITLE
+Salva la tavolozza con nome
+MSG_PALETTE_TITLE
+Tavolozza
+MSG_RED
+Rosso
+MSG_GREEN
+Verde
+MSG_BLUE
+Blu
+MSG_HUE
+Tonalità
+MSG_SATURATION
+Saturazione
+MSG_VALUE
+Valore
+MSG_HEX
+Hex
+MSG_SPREAD
+Sfumatura
+MSG_COPY_COLOUR
+Copia
+MSG_SWAP_COLOURS
+Scambia
+MSG_CHANGE_PIXELS
+Cambia anche i pixel
+MSG_PICK_COLOUR
+Scegliere un colore per cambiarlo.
+MSG_PICK_SPREAD
+Scegliere l'altro estremo della sfumatura.
+MSG_PICK_COPY
+Scegliere il colore su cui copiarlo.
+MSG_PICK_SWAP
+Scegliere il colore con cui scambiarlo.
+MSG_PICK_RANGE
+Scegliere l'altro estremo dell'intervallo.
+MSG_RANGE
+Intervallo
+MSG_SET_RANGE
+Imposta intervallo
+MSG_SPEED
+Velocità
+MSG_BACKWARDS
+All'indietro
+MSG_RANGE_SPAN
+Intervallo %ld: colori da %ld a %ld.
+MSG_RANGE_UNSET
+L'intervallo %ld non è impostato.
+MSG_NO_RANGE
+Nessun intervallo della tavolozza ruota:\nimpostarne uno nell'editor della tavolozza.
+MSG_NO_REDUCE
+Memoria insufficiente per distribuire\nciò che manca a ogni colore.
+MSG_BRUSH_TOO_LARGE
+Un pennello può misurare al massimo %ld per %ld pixel.
+MSG_NO_BRUSH
+Memoria insufficiente per un pennello\ndi %ld per %ld pixel.
+MSG_NOLIBRARY
+Manca %s\n
+MSG_NOSCREEN
+Nessuno schermo - nessuna visualizzazione\n
+MSG_NOMEMORY
+Memoria insufficiente per la finestra\n
+MSG_BADSCREEN
+SCREEN è OWN o DESKTOP\n

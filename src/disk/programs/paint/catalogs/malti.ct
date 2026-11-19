@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language malti
+## codeset 106
+; Paint's strings in Maltese.
+MSG_MENU_FILE
+Fajl
+MSG_MENU_NEW
+Ġdid...
+MSG_MENU_OPEN
+Iftaħ...
+MSG_MENU_SAVE
+Issejvja
+MSG_MENU_SAVE_AS
+Issejvja bħala...
+MSG_MENU_QUIT
+Oħroġ
+MSG_MENU_EDIT
+Editja
+MSG_MENU_UNDO
+Erġa' lura
+MSG_MENU_REDO
+Erġa' agħmel
+MSG_MENU_CLEAR
+Battal
+MSG_MENU_IMAGE
+Stampa
+MSG_MENU_ROTATE
+Dawwar
+MSG_TURN_RIGHT
+90° favur l-arloġġ
+MSG_TURN_LEFT
+90° kontra l-arloġġ
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Aqta' għall-għażla
+MSG_MENU_TRIM
+Neħħi t-truf
+MSG_MENU_CANVAS_SIZE
+Daqs tal-kanvas...
+MSG_MENU_FLATTEN
+Għaqqad is-saffi
+MSG_MENU_PICTURE_SIZE
+Daqs tal-istampa...
+MSG_MENU_EFFECTS
+Effetti...
+MSG_MENU_FREE_TRANSFORM
+Trasformazzjoni ħielsa
+MSG_MENU_TOOLS
+Għodod
+MSG_MENU_FREEHAND
+Idejn ħielsa
+MSG_MENU_DOTS
+Idejn ħielsa bit-tikek
+MSG_MENU_LINE
+Linja
+MSG_MENU_CURVE
+Kurva
+MSG_MENU_RECTANGLE
+Rettangolu
+MSG_MENU_ELLIPSE
+Ellissi
+MSG_MENU_POLYGON
+Poligonu
+MSG_MENU_FILL
+Imla
+MSG_MENU_GRADIENT
+Gradjent
+MSG_MENU_AIRBRUSH
+Airbrush
+MSG_MENU_PICK
+Ħu kulur
+MSG_MENU_TEXT
+Test
+MSG_MENU_GRAB
+Aqta' pinzell
+MSG_MENU_SELECT_BOX
+Għażla rettangolari
+MSG_MENU_LASSO
+Lazz
+MSG_MENU_WAND
+Bakketta maġika
+MSG_MENU_HAND
+Id
+MSG_MENU_ERASER
+Gomma
+MSG_MENU_SMUDGE
+Ċappas
+MSG_MENU_ZOOM_TOOL
+Zoom
+MSG_MENU_FILLED
+Forom mimlija
+MSG_MENU_ROUND_GRADIENT
+Gradjent tond
+MSG_MENU_SWAP
+Skambja l-kuluri
+MSG_MENU_VIEW
+Dehra
+MSG_MENU_ZOOM_IN
+Kabbar
+MSG_MENU_ZOOM_OUT
+Ċekken
+MSG_MENU_ACTUAL_SIZE
+Daqs reali
+MSG_MENU_FIT
+Daħħal fit-tieqa
+MSG_MENU_GRID
+Grilja
+MSG_MENU_RULERS
+Rigi
+MSG_MENU_SPLIT_SCREEN
+Skrin maqsum
+MSG_MENU_LAYER
+Saff
+MSG_MENU_NEW_LAYER
+Saff ġdid
+MSG_MENU_DUPLICATE_LAYER
+Idduplika
+MSG_MENU_DELETE_LAYER
+Ħassar
+MSG_MENU_RENAME_LAYER
+Semmi mill-ġdid...
+MSG_MENU_LAYER_UP
+Tella' 'l fuq
+MSG_MENU_LAYER_DOWN
+Niżżel 'l isfel
+MSG_MENU_MERGE_DOWN
+Għaqqad ma' ta' taħt
+MSG_MENU_SELECTION
+Għażla
+MSG_MENU_SELECT
+Agħżel
+MSG_MENU_SELECT_ALL
+Kollox
+MSG_MENU_SELECT_LAYER
+Il-pixels tas-saff
+MSG_MENU_SELECT_COLOUR
+Il-pixels tal-kulur
+MSG_MENU_SELECT_SEE_THROUGH
+Pixels trasparenti
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixels barra mill-paletta
+MSG_MENU_DESELECT
+Neħħi l-għażla
+MSG_MENU_INVERT
+Aqleb
+MSG_MENU_COPY_TO_LAYER
+Ikkopja f'saff ġdid
+MSG_MENU_CUT_TO_LAYER
+Aqta' f'saff ġdid
+MSG_MENU_COPY_TO_BRUSH
+Ikkopja bħala pinzell
+MSG_MENU_BRUSH
+Pinzell
+MSG_MENU_ROUND
+Tond
+MSG_MENU_SQUARE
+Kwadru
+MSG_MENU_OWN_BRUSH
+Pinzell proprju
+MSG_MENU_SIZE
+Daqs
+MSG_MENU_SMALLER
+Iżgħar
+MSG_MENU_LARGER
+Ikbar
+MSG_MENU_OWN_COLOURS
+Il-kuluri tiegħu
+MSG_MENU_ONE_COLOUR
+Kulur wieħed
+MSG_MENU_FLIP_ACROSS
+Aqleb orizzontalment
+MSG_MENU_FLIP_DOWN
+Aqleb vertikalment
+MSG_MENU_ADD_MASK
+Żid maskra
+MSG_MENU_MASK_SHOW_ALL
+Uri kollox
+MSG_MENU_MASK_HIDE_ALL
+Aħbi kollox
+MSG_MENU_MASK_SELECTION
+Uri l-għażla
+MSG_MENU_PAINT_MASK
+Pinġi l-maskra
+MSG_MENU_APPLY_MASK
+Applika l-maskra
+MSG_MENU_DELETE_MASK
+Ħassar il-maskra
+MSG_MENU_TURN
+Dawwar lejn il-lemin
+MSG_MENU_OPEN_BRUSH
+Iftaħ pinzell...
+MSG_MENU_SAVE_BRUSH
+Issejvja l-pinzell...
+MSG_MENU_PALETTE
+Paletta
+MSG_MENU_EDIT_PALETTE
+Editja...
+MSG_MENU_FROM_PICTURE
+Mill-istampa
+MSG_MENU_PRESETS
+Paletti lesti
+MSG_PRESET_STANDARD
+Ta' Paint
+MSG_PRESET_GREYS
+Griżi
+MSG_PRESET_SPECTRUM
+Spettru
+MSG_PRESET_PASTEL
+Pastell
+MSG_PRESET_EARTH
+Kuluri tal-art
+MSG_MENU_REDUCE
+Naqqas
+MSG_DITHER_NONE
+Bla dithering
+MSG_DITHER_ORDERED
+Dithering ordnat
+MSG_DITHER_DIFFUSED
+Diffużjoni tal-iżball
+MSG_MENU_CYCLE
+Dawwar il-kuluri
+MSG_MENU_OPEN_PALETTE
+Iftaħ paletta...
+MSG_MENU_SAVE_PALETTE
+Issejvja l-paletta...
+MSG_MENU_OWN_SCREEN
+Skrin proprju
+MSG_MENU_HELP
+Għajnuna
+MSG_MENU_ABOUT
+Dwar Paint...
+MSG_TOOL_FREEHAND
+Idejn ħielsa: linja minn fejn jgħaddi l-pointer
+MSG_TOOL_DOTS
+Idejn ħielsa bit-tikek: il-pinzell fejn hu l-pointer
+MSG_TOOL_LINE
+Linja: minn fejn tingħafas il-buttuna sa fejn tintelaq
+MSG_TOOL_CURVE
+Kurva: linja, imbagħad mgħawġa b'għafsa oħra
+MSG_TOOL_RECTANGLE
+Rettangolu: minn kantuniera għall-oħra
+MSG_TOOL_ELLIPSE
+Ellissi: fil-kaxxa minn kantuniera għall-oħra
+MSG_TOOL_POLYGON
+Poligonu: kantuniera kull darba li tintelaq il-buttuna, magħluq fuq l-ewwel kantuniera
+MSG_TOOL_FILL
+Imla: il-parti ta' kulur wieħed li tiġi kklikkjata
+MSG_TOOL_GRADIENT
+Gradjent: mill-kulur ta' quddiem fejn jibda l-ġbid sal-kulur ta' wara fejn jispiċċa
+MSG_TOOL_AIRBRUSH
+Airbrush: sprej fejn hu l-pointer, sakemm tinżamm il-buttuna
+MSG_TOOL_PICK
+Ħu kulur: il-kulur taħt il-pointer
+MSG_TOOL_TEXT
+Test: ittajpjat, u mqiegħed fejn tiġi kklikkjata l-istampa
+MSG_TOOL_GRAB
+Aqta' pinzell: parti mill-istampa meħuda bħala l-pinzell
+MSG_TOOL_SELECT_BOX
+Għażla rettangolari: dak li jista' jiġi miżbugħ (Shift iżid, Alt inaqqas)
+MSG_TOOL_LASSO
+Lazz: forma mpinġija bl-idejn, magħżula (Shift iżid, Alt inaqqas)
+MSG_TOOL_WAND
+Bakketta maġika: il-pixels tal-kulur magħquda ma' dak ikklikkjat, magħżula
+MSG_TOOL_HAND
+Id: l-istampa mċaqalqa bil-pointer
+MSG_TOOL_ERASER
+Gomma: l-istampa ssir trasparenti fejn jgħaddi l-pinzell
+MSG_TOOL_SMUDGE
+Ċappas: il-kuluri taħt il-pinzell imkaxkra miegħu
+MSG_TOOL_ZOOM
+Zoom: ikbar fejn jiġi kklikkjat, iżgħar bil-buttuna tal-menu
+MSG_FILLED_HINT
+Rettangoli, ellissijiet u poligoni mimlija
+MSG_UNDO_HINT
+Erġa' lura mill-aħħar bidla
+MSG_REDO_HINT
+Erġa' agħmel il-bidla li ġiet imħassra
+MSG_ZOOM_IN_HINT
+Uri l-istampa akbar
+MSG_ZOOM_OUT_HINT
+Uri l-istampa iżgħar
+MSG_FIT_HINT
+Uri l-istampa kollha, kbira kemm tidħol
+MSG_SWAP_HINT
+Skambja ż-żewġ kuluri
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Saffi
+MSG_SECTION_BRUSH
+Pinzell
+MSG_SECTION_COLOUR
+Kulur
+MSG_SIZE
+Daqs
+MSG_SOFTNESS
+Rotobna
+MSG_OPACITY
+Opaċità
+MSG_FLOW
+Fluss
+MSG_JITTER
+Varjazzjoni
+MSG_ROTATION
+Rotazzjoni
+MSG_DITHER
+Dithering
+MSG_BLEND
+Taħlit
+MSG_NEW_LAYER_HINT
+Saff ġdid fuq is-saff attiv
+MSG_DELETE_LAYER_HINT
+Ħassar is-saff attiv
+MSG_LAYER_NAME
+Saff %ld
+MSG_LAYER_COPY
+%s kopja
+MSG_BLEND_NORMAL
+Normali
+MSG_BLEND_ADD
+Żieda
+MSG_BLEND_MULTIPLY
+Multiplikazzjoni
+MSG_BLEND_SCREEN
+Skrin
+MSG_BLEND_OVERLAY
+Sovrappożizzjoni
+MSG_BLEND_DARKEN
+Iktar skur
+MSG_BLEND_LIGHTEN
+Iktar ċar
+MSG_BLEND_DODGE
+Tixgħil tal-kulur
+MSG_BLEND_BURN
+Ħruq tal-kulur
+MSG_BLEND_HARD_LIGHT
+Dawl qawwi
+MSG_BLEND_SOFT_LIGHT
+Dawl artab
+MSG_BLEND_HUE
+Ton
+MSG_BLEND_SATURATION
+Saturazzjoni
+MSG_BLEND_COLOUR
+Kulur
+MSG_BLEND_LUMINOSITY
+Luminożità
+MSG_STATUS
+%ld x %ld   %ld:1   pinzell %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pinzell %ld   f'%ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pinzell %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pinzell %ld x %ld   f'%ld, %ld
+MSG_NEW_TITLE
+Stampa ġdida
+MSG_CANVAS_TITLE
+Daqs tal-kanvas
+MSG_PLACE
+Stampa
+MSG_PLACE_TOP_LEFT
+Fuq, xellug
+MSG_PLACE_TOP
+Fuq
+MSG_PLACE_TOP_RIGHT
+Fuq, lemin
+MSG_PLACE_LEFT
+Xellug
+MSG_PLACE_MIDDLE
+Nofs
+MSG_PLACE_RIGHT
+Lemin
+MSG_PLACE_BOTTOM_LEFT
+Isfel, xellug
+MSG_PLACE_BOTTOM
+Isfel
+MSG_PLACE_BOTTOM_RIGHT
+Isfel, lemin
+MSG_NO_IMAGE_MEMORY
+M'hemmx memorja\nbiex tinbidel l-istampa.
+MSG_PICTURE_SIZE_TITLE
+Daqs tal-istampa
+MSG_SCALING
+Pixels
+MSG_SCALE_SMOOTH
+Lixxi
+MSG_SCALE_HARD
+Iebsin
+MSG_KEEP_PROPORTIONS
+Żomm il-proporzjonijiet
+MSG_EFFECTS_TITLE
+Effetti
+MSG_RESET
+Irrisettja
+MSG_FX_BRIGHTNESS
+Brillanza
+MSG_FX_CONTRAST
+Kuntrast
+MSG_FX_SATURATION
+Saturazzjoni
+MSG_FX_HUE
+Ton
+MSG_FX_BLUR
+Ċajpar
+MSG_FX_SHARPEN
+Ċarezza
+MSG_FX_TEXTURE
+Nisġa
+MSG_FX_DEHAZE
+Neħħi ċ-ċpar
+MSG_FX_SEPIA
+Sepja
+MSG_FX_INVERT
+Aqleb
+MSG_FX_CYAN_RED
+Ċjan/Aħmar
+MSG_FX_MAGENTA_GREEN
+Maġenta/Aħdar
+MSG_FX_YELLOW_BLUE
+Isfar/Blu
+MSG_WIDTH
+Wisa'
+MSG_HEIGHT
+Għoli
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nStampi b'kuluri veri, miżbugħa\nb'pinzelli integrati u maqtugħa.
+MSG_CANCEL
+Ikkanċella
+MSG_TEXT_TITLE
+Test
+MSG_RENAME_TITLE
+Semmi s-saff mill-ġdid
+MSG_NAME
+Isem
+MSG_TEXT
+Test
+MSG_FONT
+Font
+MSG_FONT_TITLE
+Il-font tat-test
+MSG_CHANGED
+L-istampa nbidlet.\nTissejvjaha l-ewwel?
+MSG_CHANGED_BUTTONS
+Issejvja|Tissejvjax|Ikkanċella
+MSG_NO_PICTURE
+M'hemmx memorja għal stampa\nta' %ld b'%ld pixels.
+MSG_NO_UNDO
+Dik il-bidla kienet kbira wisq biex tinżamm:\nma tistax titreġġa' lura.
+MSG_NO_LAYER
+M'hemmx memorja għal saff ieħor.
+MSG_NO_MASK
+M'hemmx memorja għal maskra.
+MSG_NO_OWN_SCREEN
+Skrin proprju ma setax jinfetaħ.
+MSG_NO_FONT
+Il-font ma setax jinfetaħ.
+MSG_FILL_SHORT
+Ma kienx hemm biżżejjed memorja biex jimtela kollox.
+MSG_CHOICE_SHORT
+Ma kienx hemm biżżejjed memorja biex jintgħażel kollox.
+MSG_NO_SELECTION
+M'hemmx memorja għal għażla.
+MSG_OUTLINE
+Kontorn
+MSG_SHOW_MASK
+Maskra
+MSG_MASK_ROW
+Maskra
+MSG_MASK_PAINTED
+[Maskra]
+MSG_OPEN_TITLE
+Iftaħ stampa
+MSG_SAVE_AS_TITLE
+Issejvja l-istampa bħala
+MSG_NO_OPEN
+%s\nma jistax jinfetaħ:\n%s
+MSG_NO_SAVE
+L-istampa ma tistax tiġi ssejvjata\nbħala %s:\n%s
+MSG_NO_PART
+%s\nma jistax jinfetaħ.
+MSG_UNTITLED
+Bla titlu
+MSG_OPEN_BRUSH_TITLE
+Iftaħ pinzell
+MSG_SAVE_BRUSH_TITLE
+Issejvja l-pinzell bħala
+MSG_NO_SAVE_BRUSH
+Il-pinzell ma jistax jiġi ssejvjat\nbħala %s:\n%s
+MSG_NO_SAVE_PALETTE
+Il-paletta ma tistax tiġi ssejvjata\nbħala %s:\n%s
+MSG_NO_PALETTE
+%s\nma fihx paletta.
+MSG_NO_COUNT
+M'hemmx memorja biex jingħaddu l-kuluri.
+MSG_OPEN_PALETTE_TITLE
+Iftaħ paletta
+MSG_SAVE_PALETTE_TITLE
+Issejvja l-paletta bħala
+MSG_PALETTE_TITLE
+Paletta
+MSG_RED
+Aħmar
+MSG_GREEN
+Aħdar
+MSG_BLUE
+Blu
+MSG_HUE
+Ton
+MSG_SATURATION
+Saturazzjoni
+MSG_VALUE
+Valur
+MSG_HEX
+Hex
+MSG_SPREAD
+Gradjent
+MSG_COPY_COLOUR
+Ikkopja
+MSG_SWAP_COLOURS
+Skambja
+MSG_CHANGE_PIXELS
+Ibdel il-pixels ukoll
+MSG_PICK_COLOUR
+Agħżel kulur biex jinbidel.
+MSG_PICK_SPREAD
+Agħżel it-tarf l-ieħor tal-gradjent.
+MSG_PICK_COPY
+Agħżel il-kulur fejn għandu jiġi kkupjat.
+MSG_PICK_SWAP
+Agħżel il-kulur li miegħu jiġi skambjat.
+MSG_PICK_RANGE
+Agħżel it-tarf l-ieħor tal-medda.
+MSG_RANGE
+Medda
+MSG_SET_RANGE
+Issettja l-medda
+MSG_SPEED
+Veloċità
+MSG_BACKWARDS
+Lura
+MSG_RANGE_SPAN
+Medda %ld: kuluri minn %ld sa %ld.
+MSG_RANGE_UNSET
+Il-medda %ld mhix issettjata.
+MSG_NO_RANGE
+L-ebda medda tal-paletta ma ddur:\nissettja waħda fl-editur tal-paletta.
+MSG_NO_REDUCE
+M'hemmx memorja biex jitqassam\ndak li jonqos lil kull kulur.
+MSG_BRUSH_TOO_LARGE
+Pinzell jista' jkun l-aktar %ld b'%ld pixels.
+MSG_NO_BRUSH
+M'hemmx memorja għal pinzell\nta' %ld b'%ld pixels.
+MSG_NOLIBRARY
+M'hemmx %s\n
+MSG_NOSCREEN
+M'hemmx skrin - l-ebda wiri\n
+MSG_NOMEMORY
+M'hemmx memorja għat-tieqa\n
+MSG_BADSCREEN
+SCREEN huwa OWN jew DESKTOP\n

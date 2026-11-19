@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language espanol
+## codeset 106
+; Paint's strings in Spanish.
+MSG_MENU_FILE
+Archivo
+MSG_MENU_NEW
+Nuevo...
+MSG_MENU_OPEN
+Abrir...
+MSG_MENU_SAVE
+Guardar
+MSG_MENU_SAVE_AS
+Guardar como...
+MSG_MENU_QUIT
+Salir
+MSG_MENU_EDIT
+Edición
+MSG_MENU_UNDO
+Deshacer
+MSG_MENU_REDO
+Rehacer
+MSG_MENU_CLEAR
+Borrar
+MSG_MENU_IMAGE
+Imagen
+MSG_MENU_ROTATE
+Girar
+MSG_TURN_RIGHT
+90° en sentido horario
+MSG_TURN_LEFT
+90° en sentido antihorario
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Recortar a la selección
+MSG_MENU_TRIM
+Recortar bordes
+MSG_MENU_CANVAS_SIZE
+Tamaño de lienzo...
+MSG_MENU_FLATTEN
+Acoplar
+MSG_MENU_PICTURE_SIZE
+Tamaño de imagen...
+MSG_MENU_EFFECTS
+Efectos...
+MSG_MENU_FREE_TRANSFORM
+Transformación libre
+MSG_MENU_TOOLS
+Herramientas
+MSG_MENU_FREEHAND
+A mano alzada
+MSG_MENU_DOTS
+A mano alzada con puntos
+MSG_MENU_LINE
+Línea
+MSG_MENU_CURVE
+Curva
+MSG_MENU_RECTANGLE
+Rectángulo
+MSG_MENU_ELLIPSE
+Elipse
+MSG_MENU_POLYGON
+Polígono
+MSG_MENU_FILL
+Relleno
+MSG_MENU_GRADIENT
+Degradado
+MSG_MENU_AIRBRUSH
+Aerógrafo
+MSG_MENU_PICK
+Cuentagotas
+MSG_MENU_TEXT
+Texto
+MSG_MENU_GRAB
+Cortar pincel
+MSG_MENU_SELECT_BOX
+Selección rectangular
+MSG_MENU_LASSO
+Lazo
+MSG_MENU_WAND
+Varita mágica
+MSG_MENU_HAND
+Mano
+MSG_MENU_ERASER
+Borrador
+MSG_MENU_SMUDGE
+Dedo
+MSG_MENU_ZOOM_TOOL
+Zoom
+MSG_MENU_FILLED
+Formas rellenas
+MSG_MENU_ROUND_GRADIENT
+Degradado radial
+MSG_MENU_SWAP
+Intercambiar colores
+MSG_MENU_VIEW
+Ver
+MSG_MENU_ZOOM_IN
+Acercar
+MSG_MENU_ZOOM_OUT
+Alejar
+MSG_MENU_ACTUAL_SIZE
+Tamaño real
+MSG_MENU_FIT
+Ajustar a la ventana
+MSG_MENU_GRID
+Cuadrícula
+MSG_MENU_RULERS
+Reglas
+MSG_MENU_SPLIT_SCREEN
+Pantalla dividida
+MSG_MENU_LAYER
+Capa
+MSG_MENU_NEW_LAYER
+Capa nueva
+MSG_MENU_DUPLICATE_LAYER
+Duplicar
+MSG_MENU_DELETE_LAYER
+Eliminar
+MSG_MENU_RENAME_LAYER
+Cambiar nombre...
+MSG_MENU_LAYER_UP
+Subir
+MSG_MENU_LAYER_DOWN
+Bajar
+MSG_MENU_MERGE_DOWN
+Combinar hacia abajo
+MSG_MENU_SELECTION
+Selección
+MSG_MENU_SELECT
+Seleccionar
+MSG_MENU_SELECT_ALL
+Todo
+MSG_MENU_SELECT_LAYER
+Píxeles de la capa
+MSG_MENU_SELECT_COLOUR
+Píxeles del color
+MSG_MENU_SELECT_SEE_THROUGH
+Píxeles transparentes
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Píxeles fuera de la paleta
+MSG_MENU_DESELECT
+Deseleccionar
+MSG_MENU_INVERT
+Invertir
+MSG_MENU_COPY_TO_LAYER
+Copiar a una capa nueva
+MSG_MENU_CUT_TO_LAYER
+Cortar a una capa nueva
+MSG_MENU_COPY_TO_BRUSH
+Copiar como pincel
+MSG_MENU_BRUSH
+Pincel
+MSG_MENU_ROUND
+Redondo
+MSG_MENU_SQUARE
+Cuadrado
+MSG_MENU_OWN_BRUSH
+Pincel propio
+MSG_MENU_SIZE
+Tamaño
+MSG_MENU_SMALLER
+Más pequeño
+MSG_MENU_LARGER
+Más grande
+MSG_MENU_OWN_COLOURS
+Colores propios
+MSG_MENU_ONE_COLOUR
+Un solo color
+MSG_MENU_FLIP_ACROSS
+Voltear horizontal
+MSG_MENU_FLIP_DOWN
+Voltear vertical
+MSG_MENU_ADD_MASK
+Añadir máscara
+MSG_MENU_MASK_SHOW_ALL
+Mostrar todo
+MSG_MENU_MASK_HIDE_ALL
+Ocultar todo
+MSG_MENU_MASK_SELECTION
+Mostrar la selección
+MSG_MENU_PAINT_MASK
+Pintar la máscara
+MSG_MENU_APPLY_MASK
+Aplicar la máscara
+MSG_MENU_DELETE_MASK
+Eliminar la máscara
+MSG_MENU_TURN
+Girar a la derecha
+MSG_MENU_OPEN_BRUSH
+Abrir pincel...
+MSG_MENU_SAVE_BRUSH
+Guardar pincel...
+MSG_MENU_PALETTE
+Paleta
+MSG_MENU_EDIT_PALETTE
+Editar...
+MSG_MENU_FROM_PICTURE
+De la imagen
+MSG_MENU_PRESETS
+Predefinidas
+MSG_PRESET_STANDARD
+La de Paint
+MSG_PRESET_GREYS
+Grises
+MSG_PRESET_SPECTRUM
+Espectro
+MSG_PRESET_PASTEL
+Pastel
+MSG_PRESET_EARTH
+Tierras
+MSG_MENU_REDUCE
+Reducir
+MSG_DITHER_NONE
+Sin tramado
+MSG_DITHER_ORDERED
+Tramado ordenado
+MSG_DITHER_DIFFUSED
+Difusión de error
+MSG_MENU_CYCLE
+Ciclo de colores
+MSG_MENU_OPEN_PALETTE
+Abrir paleta...
+MSG_MENU_SAVE_PALETTE
+Guardar paleta...
+MSG_MENU_OWN_SCREEN
+Pantalla propia
+MSG_MENU_HELP
+Ayuda
+MSG_MENU_ABOUT
+Acerca de Paint...
+MSG_TOOL_FREEHAND
+Mano alzada: una línea por donde pasa el puntero
+MSG_TOOL_DOTS
+Mano alzada con puntos: el pincel donde está el puntero
+MSG_TOOL_LINE
+Línea: desde donde se pulsa el botón hasta donde se suelta
+MSG_TOOL_CURVE
+Curva: una línea, luego curvada con una segunda pulsación
+MSG_TOOL_RECTANGLE
+Rectángulo: de una esquina a la otra
+MSG_TOOL_ELLIPSE
+Elipse: en el recuadro de una esquina a la otra
+MSG_TOOL_POLYGON
+Polígono: una esquina cada vez que se suelta, cerrado en la primera esquina
+MSG_TOOL_FILL
+Relleno: la zona de un color en la que se hace clic
+MSG_TOOL_GRADIENT
+Degradado: del color frontal donde empieza el arrastre al de fondo donde termina
+MSG_TOOL_AIRBRUSH
+Aerógrafo: un rociado donde está el puntero, mientras se mantenga pulsado
+MSG_TOOL_PICK
+Cuentagotas: el color bajo el puntero
+MSG_TOOL_TEXT
+Texto: escrito y colocado donde se hace clic en la imagen
+MSG_TOOL_GRAB
+Cortar pincel: una parte de la imagen tomada como pincel
+MSG_TOOL_SELECT_BOX
+Selección rectangular: lo que se puede pintar (Mayús añade, Alt quita)
+MSG_TOOL_LASSO
+Lazo: una forma dibujada a mano, seleccionada (Mayús añade, Alt quita)
+MSG_TOOL_WAND
+Varita mágica: los píxeles del color unidos al pulsado, seleccionados
+MSG_TOOL_HAND
+Mano: la imagen movida con el puntero
+MSG_TOOL_ERASER
+Borrador: la imagen vuelta transparente por donde pasa el pincel
+MSG_TOOL_SMUDGE
+Dedo: los colores bajo el pincel arrastrados con él
+MSG_TOOL_ZOOM
+Zoom: más grande donde se hace clic, más pequeño con el botón de menú
+MSG_FILLED_HINT
+Rectángulos, elipses y polígonos rellenos
+MSG_UNDO_HINT
+Deshacer el último cambio
+MSG_REDO_HINT
+Rehacer el cambio deshecho
+MSG_ZOOM_IN_HINT
+Mostrar la imagen más grande
+MSG_ZOOM_OUT_HINT
+Mostrar la imagen más pequeña
+MSG_FIT_HINT
+Mostrar toda la imagen tan grande como quepa
+MSG_SWAP_HINT
+Intercambiar los dos colores
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Capas
+MSG_SECTION_BRUSH
+Pincel
+MSG_SECTION_COLOUR
+Color
+MSG_SIZE
+Tamaño
+MSG_SOFTNESS
+Suavidad
+MSG_OPACITY
+Opacidad
+MSG_FLOW
+Flujo
+MSG_JITTER
+Variación
+MSG_ROTATION
+Rotación
+MSG_DITHER
+Tramado
+MSG_BLEND
+Fusión
+MSG_NEW_LAYER_HINT
+Una capa nueva sobre la capa activa
+MSG_DELETE_LAYER_HINT
+Eliminar la capa activa
+MSG_LAYER_NAME
+Capa %ld
+MSG_LAYER_COPY
+%s copia
+MSG_BLEND_NORMAL
+Normal
+MSG_BLEND_ADD
+Suma
+MSG_BLEND_MULTIPLY
+Multiplicar
+MSG_BLEND_SCREEN
+Trama
+MSG_BLEND_OVERLAY
+Superponer
+MSG_BLEND_DARKEN
+Oscurecer
+MSG_BLEND_LIGHTEN
+Aclarar
+MSG_BLEND_DODGE
+Sobreexponer color
+MSG_BLEND_BURN
+Subexponer color
+MSG_BLEND_HARD_LIGHT
+Luz fuerte
+MSG_BLEND_SOFT_LIGHT
+Luz suave
+MSG_BLEND_HUE
+Tono
+MSG_BLEND_SATURATION
+Saturación
+MSG_BLEND_COLOUR
+Color
+MSG_BLEND_LUMINOSITY
+Luminosidad
+MSG_STATUS
+%ld x %ld   %ld:1   pincel %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pincel %ld   en %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pincel %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pincel %ld x %ld   en %ld, %ld
+MSG_NEW_TITLE
+Imagen nueva
+MSG_CANVAS_TITLE
+Tamaño de lienzo
+MSG_PLACE
+Imagen
+MSG_PLACE_TOP_LEFT
+Arriba a la izquierda
+MSG_PLACE_TOP
+Arriba
+MSG_PLACE_TOP_RIGHT
+Arriba a la derecha
+MSG_PLACE_LEFT
+Izquierda
+MSG_PLACE_MIDDLE
+Centro
+MSG_PLACE_RIGHT
+Derecha
+MSG_PLACE_BOTTOM_LEFT
+Abajo a la izquierda
+MSG_PLACE_BOTTOM
+Abajo
+MSG_PLACE_BOTTOM_RIGHT
+Abajo a la derecha
+MSG_NO_IMAGE_MEMORY
+No hay memoria\npara cambiar la imagen.
+MSG_PICTURE_SIZE_TITLE
+Tamaño de imagen
+MSG_SCALING
+Píxeles
+MSG_SCALE_SMOOTH
+Suaves
+MSG_SCALE_HARD
+Nítidos
+MSG_KEEP_PROPORTIONS
+Mantener proporciones
+MSG_EFFECTS_TITLE
+Efectos
+MSG_RESET
+Restablecer
+MSG_FX_BRIGHTNESS
+Brillo
+MSG_FX_CONTRAST
+Contraste
+MSG_FX_SATURATION
+Saturación
+MSG_FX_HUE
+Tono
+MSG_FX_BLUR
+Desenfocar
+MSG_FX_SHARPEN
+Enfocar
+MSG_FX_TEXTURE
+Textura
+MSG_FX_DEHAZE
+Eliminar neblina
+MSG_FX_SEPIA
+Sepia
+MSG_FX_INVERT
+Invertir
+MSG_FX_CYAN_RED
+Cian/Rojo
+MSG_FX_MAGENTA_GREEN
+Magenta/Verde
+MSG_FX_YELLOW_BLUE
+Amarillo/Azul
+MSG_WIDTH
+Anchura
+MSG_HEIGHT
+Altura
+MSG_OK
+Aceptar
+MSG_ABOUT
+Paint %s\n\nImágenes en color verdadero, pintadas con\npinceles integrados y recortados.
+MSG_CANCEL
+Cancelar
+MSG_TEXT_TITLE
+Texto
+MSG_RENAME_TITLE
+Cambiar nombre de capa
+MSG_NAME
+Nombre
+MSG_TEXT
+Texto
+MSG_FONT
+Fuente
+MSG_FONT_TITLE
+La fuente del texto
+MSG_CHANGED
+La imagen ha cambiado.\n¿Guardarla primero?
+MSG_CHANGED_BUTTONS
+Guardar|No guardar|Cancelar
+MSG_NO_PICTURE
+No hay memoria para una imagen\nde %ld por %ld píxeles.
+MSG_NO_UNDO
+Ese cambio era demasiado grande para guardarlo:\nno se puede deshacer.
+MSG_NO_LAYER
+No hay memoria para otra capa.
+MSG_NO_MASK
+No hay memoria para una máscara.
+MSG_NO_OWN_SCREEN
+No se pudo abrir una pantalla propia.
+MSG_NO_FONT
+No se pudo abrir la fuente.
+MSG_FILL_SHORT
+No hubo memoria suficiente para rellenarlo todo.
+MSG_CHOICE_SHORT
+No hubo memoria suficiente para seleccionarlo todo.
+MSG_NO_SELECTION
+No hay memoria para una selección.
+MSG_OUTLINE
+Contorno
+MSG_SHOW_MASK
+Máscara
+MSG_MASK_ROW
+Máscara
+MSG_MASK_PAINTED
+[Máscara]
+MSG_OPEN_TITLE
+Abrir una imagen
+MSG_SAVE_AS_TITLE
+Guardar la imagen como
+MSG_NO_OPEN
+%s\nno se puede abrir:\n%s
+MSG_NO_SAVE
+La imagen no se puede guardar\ncomo %s:\n%s
+MSG_NO_PART
+%s\nno se puede abrir.
+MSG_UNTITLED
+Sin título
+MSG_OPEN_BRUSH_TITLE
+Abrir un pincel
+MSG_SAVE_BRUSH_TITLE
+Guardar el pincel como
+MSG_NO_SAVE_BRUSH
+El pincel no se puede guardar\ncomo %s:\n%s
+MSG_NO_SAVE_PALETTE
+La paleta no se puede guardar\ncomo %s:\n%s
+MSG_NO_PALETTE
+%s\nno contiene ninguna paleta.
+MSG_NO_COUNT
+No hay memoria para contar los colores.
+MSG_OPEN_PALETTE_TITLE
+Abrir una paleta
+MSG_SAVE_PALETTE_TITLE
+Guardar la paleta como
+MSG_PALETTE_TITLE
+Paleta
+MSG_RED
+Rojo
+MSG_GREEN
+Verde
+MSG_BLUE
+Azul
+MSG_HUE
+Tono
+MSG_SATURATION
+Saturación
+MSG_VALUE
+Valor
+MSG_HEX
+Hex
+MSG_SPREAD
+Degradado
+MSG_COPY_COLOUR
+Copiar
+MSG_SWAP_COLOURS
+Intercambiar
+MSG_CHANGE_PIXELS
+Cambiar también los píxeles
+MSG_PICK_COLOUR
+Elegir un color para cambiarlo.
+MSG_PICK_SPREAD
+Elegir el otro extremo del degradado.
+MSG_PICK_COPY
+Elegir el color sobre el que copiarlo.
+MSG_PICK_SWAP
+Elegir el color con el que intercambiarlo.
+MSG_PICK_RANGE
+Elegir el otro extremo del rango.
+MSG_RANGE
+Rango
+MSG_SET_RANGE
+Fijar rango
+MSG_SPEED
+Velocidad
+MSG_BACKWARDS
+Hacia atrás
+MSG_RANGE_SPAN
+Rango %ld: colores %ld a %ld.
+MSG_RANGE_UNSET
+El rango %ld no está fijado.
+MSG_NO_RANGE
+Ningún rango de la paleta gira:\nfijar uno en el editor de la paleta.
+MSG_NO_REDUCE
+No hay memoria para repartir\nlo que le falta a cada color.
+MSG_BRUSH_TOO_LARGE
+Un pincel puede medir como máximo %ld por %ld píxeles.
+MSG_NO_BRUSH
+No hay memoria para un pincel\nde %ld por %ld píxeles.
+MSG_NOLIBRARY
+Falta %s\n
+MSG_NOSCREEN
+No hay pantalla - no hay imagen\n
+MSG_NOMEMORY
+No hay memoria para la ventana\n
+MSG_BADSCREEN
+SCREEN es OWN o DESKTOP\n

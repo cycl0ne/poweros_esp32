@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language latviesu
+## codeset 106
+; Paint's strings in Latvian.
+MSG_MENU_FILE
+Fails
+MSG_MENU_NEW
+Jauns...
+MSG_MENU_OPEN
+Atvērt...
+MSG_MENU_SAVE
+Saglabāt
+MSG_MENU_SAVE_AS
+Saglabāt kā...
+MSG_MENU_QUIT
+Iziet
+MSG_MENU_EDIT
+Rediģēt
+MSG_MENU_UNDO
+Atsaukt
+MSG_MENU_REDO
+Atcelt atsaukšanu
+MSG_MENU_CLEAR
+Notīrīt
+MSG_MENU_IMAGE
+Attēls
+MSG_MENU_ROTATE
+Pagriezt
+MSG_TURN_RIGHT
+90° pulksteņrādītāja virzienā
+MSG_TURN_LEFT
+90° pretēji pulksteņrādītājam
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Apgriezt līdz atlasei
+MSG_MENU_TRIM
+Apgriezt malas
+MSG_MENU_CANVAS_SIZE
+Audekla izmērs...
+MSG_MENU_FLATTEN
+Apvienot vienā slānī
+MSG_MENU_PICTURE_SIZE
+Attēla izmērs...
+MSG_MENU_EFFECTS
+Efekti...
+MSG_MENU_FREE_TRANSFORM
+Brīvā transformācija
+MSG_MENU_TOOLS
+Rīki
+MSG_MENU_FREEHAND
+Brīvroka
+MSG_MENU_DOTS
+Punktēta brīvroka
+MSG_MENU_LINE
+Līnija
+MSG_MENU_CURVE
+Līkne
+MSG_MENU_RECTANGLE
+Taisnstūris
+MSG_MENU_ELLIPSE
+Elipse
+MSG_MENU_POLYGON
+Daudzstūris
+MSG_MENU_FILL
+Aizpildīšana
+MSG_MENU_GRADIENT
+Krāsu pāreja
+MSG_MENU_AIRBRUSH
+Aerogrāfs
+MSG_MENU_PICK
+Paņemt krāsu
+MSG_MENU_TEXT
+Teksts
+MSG_MENU_GRAB
+Izgriezt otu
+MSG_MENU_SELECT_BOX
+Taisnstūra atlase
+MSG_MENU_LASSO
+Laso
+MSG_MENU_WAND
+Burvju nūjiņa
+MSG_MENU_HAND
+Roka
+MSG_MENU_ERASER
+Dzēšgumija
+MSG_MENU_SMUDGE
+Izsmērēšana
+MSG_MENU_ZOOM_TOOL
+Tālummaiņa
+MSG_MENU_FILLED
+Aizpildītas figūras
+MSG_MENU_ROUND_GRADIENT
+Apaļa krāsu pāreja
+MSG_MENU_SWAP
+Samainīt krāsas
+MSG_MENU_VIEW
+Skats
+MSG_MENU_ZOOM_IN
+Tuvināt
+MSG_MENU_ZOOM_OUT
+Tālināt
+MSG_MENU_ACTUAL_SIZE
+Faktiskais izmērs
+MSG_MENU_FIT
+Ietilpināt logā
+MSG_MENU_GRID
+Režģis
+MSG_MENU_RULERS
+Lineāli
+MSG_MENU_SPLIT_SCREEN
+Dalīts skats
+MSG_MENU_LAYER
+Slānis
+MSG_MENU_NEW_LAYER
+Jauns slānis
+MSG_MENU_DUPLICATE_LAYER
+Dublēt
+MSG_MENU_DELETE_LAYER
+Dzēst
+MSG_MENU_RENAME_LAYER
+Pārdēvēt...
+MSG_MENU_LAYER_UP
+Pārvietot augšup
+MSG_MENU_LAYER_DOWN
+Pārvietot lejup
+MSG_MENU_MERGE_DOWN
+Apvienot ar apakšējo
+MSG_MENU_SELECTION
+Atlase
+MSG_MENU_SELECT
+Atlasīt
+MSG_MENU_SELECT_ALL
+Visu
+MSG_MENU_SELECT_LAYER
+Slāņa pikseļus
+MSG_MENU_SELECT_COLOUR
+Krāsas pikseļus
+MSG_MENU_SELECT_SEE_THROUGH
+Caurspīdīgos pikseļus
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pikseļus ārpus paletes
+MSG_MENU_DESELECT
+Noņemt atlasi
+MSG_MENU_INVERT
+Invertēt
+MSG_MENU_COPY_TO_LAYER
+Kopēt jaunā slānī
+MSG_MENU_CUT_TO_LAYER
+Izgriezt jaunā slānī
+MSG_MENU_COPY_TO_BRUSH
+Kopēt kā otu
+MSG_MENU_BRUSH
+Ota
+MSG_MENU_ROUND
+Apaļa
+MSG_MENU_SQUARE
+Kvadrātveida
+MSG_MENU_OWN_BRUSH
+Sava ota
+MSG_MENU_SIZE
+Izmērs
+MSG_MENU_SMALLER
+Mazāka
+MSG_MENU_LARGER
+Lielāka
+MSG_MENU_OWN_COLOURS
+Savas krāsas
+MSG_MENU_ONE_COLOUR
+Viena krāsa
+MSG_MENU_FLIP_ACROSS
+Apvērst horizontāli
+MSG_MENU_FLIP_DOWN
+Apvērst vertikāli
+MSG_MENU_ADD_MASK
+Pievienot masku
+MSG_MENU_MASK_SHOW_ALL
+Rādīt visu
+MSG_MENU_MASK_HIDE_ALL
+Slēpt visu
+MSG_MENU_MASK_SELECTION
+Rādīt atlasi
+MSG_MENU_PAINT_MASK
+Krāsot masku
+MSG_MENU_APPLY_MASK
+Lietot masku
+MSG_MENU_DELETE_MASK
+Dzēst masku
+MSG_MENU_TURN
+Pagriezt pa labi
+MSG_MENU_OPEN_BRUSH
+Atvērt otu...
+MSG_MENU_SAVE_BRUSH
+Saglabāt otu...
+MSG_MENU_PALETTE
+Palete
+MSG_MENU_EDIT_PALETTE
+Rediģēt...
+MSG_MENU_FROM_PICTURE
+No attēla
+MSG_MENU_PRESETS
+Sagataves
+MSG_PRESET_STANDARD
+Paint palete
+MSG_PRESET_GREYS
+Pelēkie toņi
+MSG_PRESET_SPECTRUM
+Spektrs
+MSG_PRESET_PASTEL
+Pasteļtoņi
+MSG_PRESET_EARTH
+Zemes toņi
+MSG_MENU_REDUCE
+Samazināt krāsas
+MSG_DITHER_NONE
+Bez rastrēšanas
+MSG_DITHER_ORDERED
+Sakārtota rastrēšana
+MSG_DITHER_DIFFUSED
+Kļūdu izkliede
+MSG_MENU_CYCLE
+Krāsu riņķošana
+MSG_MENU_OPEN_PALETTE
+Atvērt paleti...
+MSG_MENU_SAVE_PALETTE
+Saglabāt paleti...
+MSG_MENU_OWN_SCREEN
+Savs ekrāns
+MSG_MENU_HELP
+Palīdzība
+MSG_MENU_ABOUT
+Par Paint...
+MSG_TOOL_FREEHAND
+Brīvroka: līnija pa rādītāja ceļu
+MSG_TOOL_DOTS
+Punktēta brīvroka: ota tur, kur ir rādītājs
+MSG_TOOL_LINE
+Līnija: no vietas, kur poga nospiesta, līdz vietai, kur tā atlaista
+MSG_TOOL_CURVE
+Līkne: līnija, kas pēc tam tiek saliekta ar otru nospiedienu
+MSG_TOOL_RECTANGLE
+Taisnstūris: no viena stūra līdz otram
+MSG_TOOL_ELLIPSE
+Elipse: kastē no viena stūra līdz otram
+MSG_TOOL_POLYGON
+Daudzstūris: stūris pie katras pogas atlaišanas, noslēdzas pie pirmā stūra
+MSG_TOOL_FILL
+Aizpildīšana: noklikšķinātais vienas krāsas apgabals
+MSG_TOOL_GRADIENT
+Krāsu pāreja: no priekšplāna krāsas vilkšanas sākumā līdz fona krāsai tās beigās
+MSG_TOOL_AIRBRUSH
+Aerogrāfs: izsmidzinājums tur, kur ir rādītājs, kamēr poga tiek turēta
+MSG_TOOL_PICK
+Paņemt krāsu: krāsa zem rādītāja
+MSG_TOOL_TEXT
+Teksts: tiek ievadīts un novietots attēlā noklikšķinātajā vietā
+MSG_TOOL_GRAB
+Izgriezt otu: attēla daļa tiek paņemta par otu
+MSG_TOOL_SELECT_BOX
+Taisnstūra atlase: kur drīkst krāsot (Shift pievieno, Alt atņem)
+MSG_TOOL_LASSO
+Laso: tiek atlasīta ar roku zīmēta forma (Shift pievieno, Alt atņem)
+MSG_TOOL_WAND
+Burvju nūjiņa: tiek atlasīti noklikšķinātajam pikselim piegulošie tās pašas krāsas pikseļi
+MSG_TOOL_HAND
+Roka: attēls tiek pārvietots ar rādītāju
+MSG_TOOL_ERASER
+Dzēšgumija: attēls kļūst caurspīdīgs tur, kur iet ota
+MSG_TOOL_SMUDGE
+Izsmērēšana: krāsas zem otas tiek vilktas līdzi
+MSG_TOOL_ZOOM
+Tālummaiņa: lielāks noklikšķinātajā vietā, mazāks ar izvēlnes pogu
+MSG_FILLED_HINT
+Aizpildīti taisnstūri, elipses un daudzstūri
+MSG_UNDO_HINT
+Atsaukt pēdējo izmaiņu
+MSG_REDO_HINT
+Atkārtot atsaukto izmaiņu
+MSG_ZOOM_IN_HINT
+Rādīt attēlu lielāku
+MSG_ZOOM_OUT_HINT
+Rādīt attēlu mazāku
+MSG_FIT_HINT
+Rādīt visu attēlu tik lielu, cik ietilpst
+MSG_SWAP_HINT
+Samainīt abas krāsas
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Slāņi
+MSG_SECTION_BRUSH
+Ota
+MSG_SECTION_COLOUR
+Krāsa
+MSG_SIZE
+Izmērs
+MSG_SOFTNESS
+Maigums
+MSG_OPACITY
+Necaurredzamība
+MSG_FLOW
+Plūsma
+MSG_JITTER
+Izkliede
+MSG_ROTATION
+Pagrieziens
+MSG_DITHER
+Rastrēšana
+MSG_BLEND
+Jaukšana
+MSG_NEW_LAYER_HINT
+Jauns slānis virs krāsojamā
+MSG_DELETE_LAYER_HINT
+Dzēst krāsojamo slāni
+MSG_LAYER_NAME
+Slānis %ld
+MSG_LAYER_COPY
+%s kopija
+MSG_BLEND_NORMAL
+Normāls
+MSG_BLEND_ADD
+Saskaitīšana
+MSG_BLEND_MULTIPLY
+Reizināšana
+MSG_BLEND_SCREEN
+Ekrāns
+MSG_BLEND_OVERLAY
+Pārklājums
+MSG_BLEND_DARKEN
+Tumšāks
+MSG_BLEND_LIGHTEN
+Gaišāks
+MSG_BLEND_DODGE
+Krāsas izgaismošana
+MSG_BLEND_BURN
+Krāsas apdedzināšana
+MSG_BLEND_HARD_LIGHT
+Cietā gaisma
+MSG_BLEND_SOFT_LIGHT
+Mīkstā gaisma
+MSG_BLEND_HUE
+Tonis
+MSG_BLEND_SATURATION
+Piesātinājums
+MSG_BLEND_COLOUR
+Krāsa
+MSG_BLEND_LUMINOSITY
+Spožums
+MSG_STATUS
+%ld x %ld   %ld:1   ota %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   ota %ld   pie %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   ota %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   ota %ld x %ld   pie %ld, %ld
+MSG_NEW_TITLE
+Jauns attēls
+MSG_CANVAS_TITLE
+Audekla izmērs
+MSG_PLACE
+Attēls
+MSG_PLACE_TOP_LEFT
+Augšā pa kreisi
+MSG_PLACE_TOP
+Augšā
+MSG_PLACE_TOP_RIGHT
+Augšā pa labi
+MSG_PLACE_LEFT
+Pa kreisi
+MSG_PLACE_MIDDLE
+Vidū
+MSG_PLACE_RIGHT
+Pa labi
+MSG_PLACE_BOTTOM_LEFT
+Apakšā pa kreisi
+MSG_PLACE_BOTTOM
+Apakšā
+MSG_PLACE_BOTTOM_RIGHT
+Apakšā pa labi
+MSG_NO_IMAGE_MEMORY
+Nav atmiņas,\nlai mainītu attēlu.
+MSG_PICTURE_SIZE_TITLE
+Attēla izmērs
+MSG_SCALING
+Pikseļi
+MSG_SCALE_SMOOTH
+Gludi
+MSG_SCALE_HARD
+Asi
+MSG_KEEP_PROPORTIONS
+Saglabāt proporcijas
+MSG_EFFECTS_TITLE
+Efekti
+MSG_RESET
+Atiestatīt
+MSG_FX_BRIGHTNESS
+Spilgtums
+MSG_FX_CONTRAST
+Kontrasts
+MSG_FX_SATURATION
+Piesātinājums
+MSG_FX_HUE
+Tonis
+MSG_FX_BLUR
+Izpludināšana
+MSG_FX_SHARPEN
+Asināšana
+MSG_FX_TEXTURE
+Tekstūra
+MSG_FX_DEHAZE
+Dūmakas noņemšana
+MSG_FX_SEPIA
+Sēpija
+MSG_FX_INVERT
+Invertēšana
+MSG_FX_CYAN_RED
+Ciāna/Sarkana
+MSG_FX_MAGENTA_GREEN
+Fuksīna/Zaļa
+MSG_FX_YELLOW_BLUE
+Dzeltena/Zila
+MSG_WIDTH
+Platums
+MSG_HEIGHT
+Augstums
+MSG_OK
+Labi
+MSG_ABOUT
+Paint %s\n\nAttēli pilnkrāsās, krāsoti ar\niebūvētām un izgrieztām otām.
+MSG_CANCEL
+Atcelt
+MSG_TEXT_TITLE
+Teksts
+MSG_RENAME_TITLE
+Pārdēvēt slāni
+MSG_NAME
+Nosaukums
+MSG_TEXT
+Teksts
+MSG_FONT
+Fonts
+MSG_FONT_TITLE
+Teksta fonts
+MSG_CHANGED
+Attēls ir mainīts.\nVispirms to saglabāt?
+MSG_CHANGED_BUTTONS
+Saglabāt|Nesaglabāt|Atcelt
+MSG_NO_PICTURE
+Nav atmiņas attēlam\nar izmēru %ld x %ld pikseļi.
+MSG_NO_UNDO
+Šī izmaiņa bija par lielu, lai to paturētu:\nto nevar atsaukt.
+MSG_NO_LAYER
+Nav atmiņas vēl vienam slānim.
+MSG_NO_MASK
+Nav atmiņas maskai.
+MSG_NO_OWN_SCREEN
+Neizdevās atvērt savu ekrānu.
+MSG_NO_FONT
+Neizdevās atvērt fontu.
+MSG_FILL_SHORT
+Atmiņas nepietika, lai aizpildītu visu.
+MSG_CHOICE_SHORT
+Atmiņas nepietika, lai atlasītu visu.
+MSG_NO_SELECTION
+Nav atmiņas atlasei.
+MSG_OUTLINE
+Kontūra
+MSG_SHOW_MASK
+Maska
+MSG_MASK_ROW
+Maska
+MSG_MASK_PAINTED
+[Maska]
+MSG_OPEN_TITLE
+Atvērt attēlu
+MSG_SAVE_AS_TITLE
+Saglabāt attēlu kā
+MSG_NO_OPEN
+%s\nnevar atvērt:\n%s
+MSG_NO_SAVE
+Attēlu nevar saglabāt\nkā %s:\n%s
+MSG_NO_PART
+%s\nnevar atvērt.
+MSG_UNTITLED
+Bez nosaukuma
+MSG_OPEN_BRUSH_TITLE
+Atvērt otu
+MSG_SAVE_BRUSH_TITLE
+Saglabāt otu kā
+MSG_NO_SAVE_BRUSH
+Otu nevar saglabāt\nkā %s:\n%s
+MSG_NO_SAVE_PALETTE
+Paleti nevar saglabāt\nkā %s:\n%s
+MSG_NO_PALETTE
+%s\nnesatur paleti.
+MSG_NO_COUNT
+Nav atmiņas, lai saskaitītu krāsas.
+MSG_OPEN_PALETTE_TITLE
+Atvērt paleti
+MSG_SAVE_PALETTE_TITLE
+Saglabāt paleti kā
+MSG_PALETTE_TITLE
+Palete
+MSG_RED
+Sarkana
+MSG_GREEN
+Zaļa
+MSG_BLUE
+Zila
+MSG_HUE
+Tonis
+MSG_SATURATION
+Piesātinājums
+MSG_VALUE
+Vērtība
+MSG_HEX
+Hex
+MSG_SPREAD
+Pāreja
+MSG_COPY_COLOUR
+Kopēt
+MSG_SWAP_COLOURS
+Samainīt
+MSG_CHANGE_PIXELS
+Mainīt arī pikseļus
+MSG_PICK_COLOUR
+Izvēlēties krāsu, ko mainīt.
+MSG_PICK_SPREAD
+Izvēlēties pārejas otru galu.
+MSG_PICK_COPY
+Izvēlēties krāsu, uz kuru kopēt.
+MSG_PICK_SWAP
+Izvēlēties krāsu, ar kuru samainīt.
+MSG_PICK_RANGE
+Izvēlēties diapazona otru galu.
+MSG_RANGE
+Diapazons
+MSG_SET_RANGE
+Iestatīt diapazonu
+MSG_SPEED
+Ātrums
+MSG_BACKWARDS
+Atpakaļ
+MSG_RANGE_SPAN
+Diapazons %ld: krāsas no %ld līdz %ld.
+MSG_RANGE_UNSET
+Diapazons %ld nav iestatīts.
+MSG_NO_RANGE
+Neviens paletes diapazons negriežas:\nto var iestatīt paletes redaktorā.
+MSG_NO_REDUCE
+Nav atmiņas, lai izkliedētu,\nkas katrai krāsai pietrūkst.
+MSG_BRUSH_TOO_LARGE
+Ota var būt ne lielāka par %ld x %ld pikseļiem.
+MSG_NO_BRUSH
+Nav atmiņas otai\nar izmēru %ld x %ld pikseļi.
+MSG_NOLIBRARY
+Nav %s\n
+MSG_NOSCREEN
+Nav ekrāna - nav displeja\n
+MSG_NOMEMORY
+Nav atmiņas logam\n
+MSG_BADSCREEN
+SCREEN ir OWN vai DESKTOP\n

@@ -252,6 +252,16 @@ the RISC-V 64 one's (`.a64psci.seg` on the AArch64 one's,
 `.x64uefi.seg` on the x86-64 one's), and any other file is on all of
 them, beside the program, where `PROGDIR:` finds it.
 
+A program can keep libraries only it uses in its own drawer instead of
+`LIBS:`, and load them only when they are wanted: it opens one by its
+path, `sys.OpenLibrary("PROGDIR:Libs/paintfx.library", 1)`, and the
+library is loaded in the program's own process, where `PROGDIR:` is
+that drawer. The program stays small, and what it seldom needs costs
+memory only once it is used. Paint is built this way:
+`SYS:Programs/Paint/` holds Paint, and its `Libs/` paintio.library (the
+files it reads and writes) and paintfx.library (its effects, scaling
+and transforms), each opened the first time one of its calls is.
+
 The programs in `src/disk/c/` are all built this way and are the best
 examples: each opens its libraries, reads its arguments with a `ReadArgs`
 template and carries a `$VER:` string.

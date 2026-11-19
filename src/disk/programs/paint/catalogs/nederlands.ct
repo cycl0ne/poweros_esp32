@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language nederlands
+## codeset 106
+; Paint's strings in Dutch.
+MSG_MENU_FILE
+Bestand
+MSG_MENU_NEW
+Nieuw...
+MSG_MENU_OPEN
+Openen...
+MSG_MENU_SAVE
+Opslaan
+MSG_MENU_SAVE_AS
+Opslaan als...
+MSG_MENU_QUIT
+Afsluiten
+MSG_MENU_EDIT
+Bewerken
+MSG_MENU_UNDO
+Ongedaan maken
+MSG_MENU_REDO
+Opnieuw
+MSG_MENU_CLEAR
+Wissen
+MSG_MENU_IMAGE
+Afbeelding
+MSG_MENU_ROTATE
+Roteren
+MSG_TURN_RIGHT
+90° rechtsom
+MSG_TURN_LEFT
+90° linksom
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Bijsnijden tot selectie
+MSG_MENU_TRIM
+Randen bijsnijden
+MSG_MENU_CANVAS_SIZE
+Canvasgrootte...
+MSG_MENU_FLATTEN
+Eén laag maken
+MSG_MENU_PICTURE_SIZE
+Afbeeldingsgrootte...
+MSG_MENU_EFFECTS
+Effecten...
+MSG_MENU_FREE_TRANSFORM
+Vrije transformatie
+MSG_MENU_TOOLS
+Gereedschap
+MSG_MENU_FREEHAND
+Vrije hand
+MSG_MENU_DOTS
+Vrije hand gestippeld
+MSG_MENU_LINE
+Lijn
+MSG_MENU_CURVE
+Kromme
+MSG_MENU_RECTANGLE
+Rechthoek
+MSG_MENU_ELLIPSE
+Ellips
+MSG_MENU_POLYGON
+Veelhoek
+MSG_MENU_FILL
+Vullen
+MSG_MENU_GRADIENT
+Verloop
+MSG_MENU_AIRBRUSH
+Airbrush
+MSG_MENU_PICK
+Pipet
+MSG_MENU_TEXT
+Tekst
+MSG_MENU_GRAB
+Penseel uitknippen
+MSG_MENU_SELECT_BOX
+Rechthoekige selectie
+MSG_MENU_LASSO
+Lasso
+MSG_MENU_WAND
+Toverstaf
+MSG_MENU_HAND
+Hand
+MSG_MENU_ERASER
+Gum
+MSG_MENU_SMUDGE
+Natte vinger
+MSG_MENU_ZOOM_TOOL
+Zoomen
+MSG_MENU_FILLED
+Gevulde vormen
+MSG_MENU_ROUND_GRADIENT
+Radiaal verloop
+MSG_MENU_SWAP
+Kleuren verwisselen
+MSG_MENU_VIEW
+Beeld
+MSG_MENU_ZOOM_IN
+Inzoomen
+MSG_MENU_ZOOM_OUT
+Uitzoomen
+MSG_MENU_ACTUAL_SIZE
+Werkelijke grootte
+MSG_MENU_FIT
+Passend in venster
+MSG_MENU_GRID
+Raster
+MSG_MENU_RULERS
+Linialen
+MSG_MENU_SPLIT_SCREEN
+Gesplitst scherm
+MSG_MENU_LAYER
+Laag
+MSG_MENU_NEW_LAYER
+Nieuwe laag
+MSG_MENU_DUPLICATE_LAYER
+Dupliceren
+MSG_MENU_DELETE_LAYER
+Verwijderen
+MSG_MENU_RENAME_LAYER
+Naam wijzigen...
+MSG_MENU_LAYER_UP
+Omhoog
+MSG_MENU_LAYER_DOWN
+Omlaag
+MSG_MENU_MERGE_DOWN
+Omlaag samenvoegen
+MSG_MENU_SELECTION
+Selectie
+MSG_MENU_SELECT
+Selecteren
+MSG_MENU_SELECT_ALL
+Alles
+MSG_MENU_SELECT_LAYER
+Pixels van de laag
+MSG_MENU_SELECT_COLOUR
+Pixels van de kleur
+MSG_MENU_SELECT_SEE_THROUGH
+Doorzichtige pixels
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixels buiten het palet
+MSG_MENU_DESELECT
+Deselecteren
+MSG_MENU_INVERT
+Omkeren
+MSG_MENU_COPY_TO_LAYER
+Kopiëren naar nieuwe laag
+MSG_MENU_CUT_TO_LAYER
+Knippen naar nieuwe laag
+MSG_MENU_COPY_TO_BRUSH
+Kopiëren als penseel
+MSG_MENU_BRUSH
+Penseel
+MSG_MENU_ROUND
+Rond
+MSG_MENU_SQUARE
+Vierkant
+MSG_MENU_OWN_BRUSH
+Eigen penseel
+MSG_MENU_SIZE
+Grootte
+MSG_MENU_SMALLER
+Kleiner
+MSG_MENU_LARGER
+Groter
+MSG_MENU_OWN_COLOURS
+Eigen kleuren
+MSG_MENU_ONE_COLOUR
+Eén kleur
+MSG_MENU_FLIP_ACROSS
+Horizontaal spiegelen
+MSG_MENU_FLIP_DOWN
+Verticaal spiegelen
+MSG_MENU_ADD_MASK
+Masker toevoegen
+MSG_MENU_MASK_SHOW_ALL
+Alles tonen
+MSG_MENU_MASK_HIDE_ALL
+Alles verbergen
+MSG_MENU_MASK_SELECTION
+De selectie tonen
+MSG_MENU_PAINT_MASK
+Masker schilderen
+MSG_MENU_APPLY_MASK
+Masker toepassen
+MSG_MENU_DELETE_MASK
+Masker verwijderen
+MSG_MENU_TURN
+Rechtsom draaien
+MSG_MENU_OPEN_BRUSH
+Penseel openen...
+MSG_MENU_SAVE_BRUSH
+Penseel opslaan...
+MSG_MENU_PALETTE
+Palet
+MSG_MENU_EDIT_PALETTE
+Bewerken...
+MSG_MENU_FROM_PICTURE
+Uit de afbeelding
+MSG_MENU_PRESETS
+Voorinstellingen
+MSG_PRESET_STANDARD
+Dat van Paint
+MSG_PRESET_GREYS
+Grijstinten
+MSG_PRESET_SPECTRUM
+Spectrum
+MSG_PRESET_PASTEL
+Pastel
+MSG_PRESET_EARTH
+Aardetinten
+MSG_MENU_REDUCE
+Reduceren
+MSG_DITHER_NONE
+Zonder dithering
+MSG_DITHER_ORDERED
+Geordende dithering
+MSG_DITHER_DIFFUSED
+Foutdiffusie
+MSG_MENU_CYCLE
+Kleuren rouleren
+MSG_MENU_OPEN_PALETTE
+Palet openen...
+MSG_MENU_SAVE_PALETTE
+Palet opslaan...
+MSG_MENU_OWN_SCREEN
+Eigen scherm
+MSG_MENU_HELP
+Help
+MSG_MENU_ABOUT
+Over Paint...
+MSG_TOOL_FREEHAND
+Vrije hand: een lijn waar de aanwijzer gaat
+MSG_TOOL_DOTS
+Vrije hand gestippeld: het penseel waar de aanwijzer is
+MSG_TOOL_LINE
+Lijn: van waar de knop ingedrukt wordt tot waar hij losgelaten wordt
+MSG_TOOL_CURVE
+Kromme: een lijn, daarna gebogen met een tweede druk
+MSG_TOOL_RECTANGLE
+Rechthoek: van de ene hoek naar de andere
+MSG_TOOL_ELLIPSE
+Ellips: in het kader van de ene hoek naar de andere
+MSG_TOOL_POLYGON
+Veelhoek: een hoek bij elk loslaten, gesloten op de eerste hoek
+MSG_TOOL_FILL
+Vullen: het gebied van één kleur waarop geklikt wordt
+MSG_TOOL_GRADIENT
+Verloop: van de voorgrondkleur waar het slepen begint naar de achtergrondkleur waar het eindigt
+MSG_TOOL_AIRBRUSH
+Airbrush: een nevel waar de aanwijzer is, zolang de knop ingedrukt blijft
+MSG_TOOL_PICK
+Pipet: de kleur onder de aanwijzer
+MSG_TOOL_TEXT
+Tekst: getypt en neergezet waar in de afbeelding geklikt wordt
+MSG_TOOL_GRAB
+Penseel uitknippen: een deel van de afbeelding als penseel genomen
+MSG_TOOL_SELECT_BOX
+Rechthoekige selectie: wat beschilderd mag worden (Shift voegt toe, Alt haalt weg)
+MSG_TOOL_LASSO
+Lasso: een met de hand getekende vorm geselecteerd (Shift voegt toe, Alt haalt weg)
+MSG_TOOL_WAND
+Toverstaf: de pixels van de kleur die aan de aangeklikte vastzitten geselecteerd
+MSG_TOOL_HAND
+Hand: de afbeelding met de aanwijzer verschoven
+MSG_TOOL_ERASER
+Gum: de afbeelding doorzichtig gemaakt waar het penseel gaat
+MSG_TOOL_SMUDGE
+Natte vinger: de kleuren onder het penseel meegesleept
+MSG_TOOL_ZOOM
+Zoomen: groter waar geklikt wordt, kleiner met de menuknop
+MSG_FILLED_HINT
+Rechthoeken, ellipsen en veelhoeken gevuld
+MSG_UNDO_HINT
+De laatste wijziging ongedaan maken
+MSG_REDO_HINT
+De ongedaan gemaakte wijziging opnieuw doen
+MSG_ZOOM_IN_HINT
+De afbeelding groter tonen
+MSG_ZOOM_OUT_HINT
+De afbeelding kleiner tonen
+MSG_FIT_HINT
+De hele afbeelding zo groot tonen als past
+MSG_SWAP_HINT
+De twee kleuren verwisselen
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Lagen
+MSG_SECTION_BRUSH
+Penseel
+MSG_SECTION_COLOUR
+Kleur
+MSG_SIZE
+Grootte
+MSG_SOFTNESS
+Zachtheid
+MSG_OPACITY
+Dekking
+MSG_FLOW
+Doorvloeiing
+MSG_JITTER
+Spreiding
+MSG_ROTATION
+Rotatie
+MSG_DITHER
+Dithering
+MSG_BLEND
+Overvloeien
+MSG_NEW_LAYER_HINT
+Een nieuwe laag boven de actieve laag
+MSG_DELETE_LAYER_HINT
+De actieve laag verwijderen
+MSG_LAYER_NAME
+Laag %ld
+MSG_LAYER_COPY
+%s kopie
+MSG_BLEND_NORMAL
+Normaal
+MSG_BLEND_ADD
+Optellen
+MSG_BLEND_MULTIPLY
+Vermenigvuldigen
+MSG_BLEND_SCREEN
+Bleken
+MSG_BLEND_OVERLAY
+Bedekken
+MSG_BLEND_DARKEN
+Donkerder
+MSG_BLEND_LIGHTEN
+Lichter
+MSG_BLEND_DODGE
+Kleur tegenhouden
+MSG_BLEND_BURN
+Kleur doordrukken
+MSG_BLEND_HARD_LIGHT
+Fel licht
+MSG_BLEND_SOFT_LIGHT
+Zacht licht
+MSG_BLEND_HUE
+Kleurtoon
+MSG_BLEND_SATURATION
+Verzadiging
+MSG_BLEND_COLOUR
+Kleur
+MSG_BLEND_LUMINOSITY
+Lichtsterkte
+MSG_STATUS
+%ld x %ld   %ld:1   penseel %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   penseel %ld   op %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   penseel %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   penseel %ld x %ld   op %ld, %ld
+MSG_NEW_TITLE
+Nieuwe afbeelding
+MSG_CANVAS_TITLE
+Canvasgrootte
+MSG_PLACE
+Afbeelding
+MSG_PLACE_TOP_LEFT
+Linksboven
+MSG_PLACE_TOP
+Boven
+MSG_PLACE_TOP_RIGHT
+Rechtsboven
+MSG_PLACE_LEFT
+Links
+MSG_PLACE_MIDDLE
+Midden
+MSG_PLACE_RIGHT
+Rechts
+MSG_PLACE_BOTTOM_LEFT
+Linksonder
+MSG_PLACE_BOTTOM
+Onder
+MSG_PLACE_BOTTOM_RIGHT
+Rechtsonder
+MSG_NO_IMAGE_MEMORY
+Geen geheugen\nom de afbeelding te wijzigen.
+MSG_PICTURE_SIZE_TITLE
+Afbeeldingsgrootte
+MSG_SCALING
+Pixels
+MSG_SCALE_SMOOTH
+Vloeiend
+MSG_SCALE_HARD
+Scherp
+MSG_KEEP_PROPORTIONS
+Verhoudingen behouden
+MSG_EFFECTS_TITLE
+Effecten
+MSG_RESET
+Herstellen
+MSG_FX_BRIGHTNESS
+Helderheid
+MSG_FX_CONTRAST
+Contrast
+MSG_FX_SATURATION
+Verzadiging
+MSG_FX_HUE
+Kleurtoon
+MSG_FX_BLUR
+Vervagen
+MSG_FX_SHARPEN
+Verscherpen
+MSG_FX_TEXTURE
+Structuur
+MSG_FX_DEHAZE
+Nevel verwijderen
+MSG_FX_SEPIA
+Sepia
+MSG_FX_INVERT
+Omkeren
+MSG_FX_CYAN_RED
+Cyaan/Rood
+MSG_FX_MAGENTA_GREEN
+Magenta/Groen
+MSG_FX_YELLOW_BLUE
+Geel/Blauw
+MSG_WIDTH
+Breedte
+MSG_HEIGHT
+Hoogte
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nAfbeeldingen in ware kleuren, geschilderd met\ningebouwde en uitgeknipte penselen.
+MSG_CANCEL
+Annuleren
+MSG_TEXT_TITLE
+Tekst
+MSG_RENAME_TITLE
+Laagnaam wijzigen
+MSG_NAME
+Naam
+MSG_TEXT
+Tekst
+MSG_FONT
+Lettertype
+MSG_FONT_TITLE
+Het lettertype van de tekst
+MSG_CHANGED
+De afbeelding is gewijzigd.\nEerst opslaan?
+MSG_CHANGED_BUTTONS
+Opslaan|Niet opslaan|Annuleren
+MSG_NO_PICTURE
+Geen geheugen voor een afbeelding\nvan %ld bij %ld pixels.
+MSG_NO_UNDO
+Die wijziging was te groot om te bewaren:\nze kan niet ongedaan gemaakt worden.
+MSG_NO_LAYER
+Geen geheugen voor nog een laag.
+MSG_NO_MASK
+Geen geheugen voor een masker.
+MSG_NO_OWN_SCREEN
+Er kon geen eigen scherm geopend worden.
+MSG_NO_FONT
+Het lettertype kon niet geopend worden.
+MSG_FILL_SHORT
+Er was niet genoeg geheugen om alles te vullen.
+MSG_CHOICE_SHORT
+Er was niet genoeg geheugen om alles te selecteren.
+MSG_NO_SELECTION
+Geen geheugen voor een selectie.
+MSG_OUTLINE
+Omtrek
+MSG_SHOW_MASK
+Masker
+MSG_MASK_ROW
+Masker
+MSG_MASK_PAINTED
+[Masker]
+MSG_OPEN_TITLE
+Een afbeelding openen
+MSG_SAVE_AS_TITLE
+De afbeelding opslaan als
+MSG_NO_OPEN
+%s\nkan niet geopend worden:\n%s
+MSG_NO_SAVE
+De afbeelding kan niet opgeslagen worden\nals %s:\n%s
+MSG_NO_PART
+%s\nkan niet geopend worden.
+MSG_UNTITLED
+Naamloos
+MSG_OPEN_BRUSH_TITLE
+Een penseel openen
+MSG_SAVE_BRUSH_TITLE
+Het penseel opslaan als
+MSG_NO_SAVE_BRUSH
+Het penseel kan niet opgeslagen worden\nals %s:\n%s
+MSG_NO_SAVE_PALETTE
+Het palet kan niet opgeslagen worden\nals %s:\n%s
+MSG_NO_PALETTE
+%s\nbevat geen palet.
+MSG_NO_COUNT
+Geen geheugen om de kleuren te tellen.
+MSG_OPEN_PALETTE_TITLE
+Een palet openen
+MSG_SAVE_PALETTE_TITLE
+Het palet opslaan als
+MSG_PALETTE_TITLE
+Palet
+MSG_RED
+Rood
+MSG_GREEN
+Groen
+MSG_BLUE
+Blauw
+MSG_HUE
+Kleurtoon
+MSG_SATURATION
+Verzadiging
+MSG_VALUE
+Waarde
+MSG_HEX
+Hex
+MSG_SPREAD
+Verloop
+MSG_COPY_COLOUR
+Kopiëren
+MSG_SWAP_COLOURS
+Verwisselen
+MSG_CHANGE_PIXELS
+Ook de pixels wijzigen
+MSG_PICK_COLOUR
+Een kleur kiezen om te wijzigen.
+MSG_PICK_SPREAD
+Het andere einde van het verloop kiezen.
+MSG_PICK_COPY
+De kleur kiezen waarop gekopieerd wordt.
+MSG_PICK_SWAP
+De kleur kiezen waarmee verwisseld wordt.
+MSG_PICK_RANGE
+Het andere einde van het bereik kiezen.
+MSG_RANGE
+Bereik
+MSG_SET_RANGE
+Bereik instellen
+MSG_SPEED
+Snelheid
+MSG_BACKWARDS
+Achteruit
+MSG_RANGE_SPAN
+Bereik %ld: kleuren %ld tot %ld.
+MSG_RANGE_UNSET
+Bereik %ld is niet ingesteld.
+MSG_NO_RANGE
+Geen bereik van het palet draait:\ner een instellen in de paleteditor.
+MSG_NO_REDUCE
+Geen geheugen om te verdelen\nwat elke kleur mist.
+MSG_BRUSH_TOO_LARGE
+Een penseel kan hoogstens %ld bij %ld pixels groot zijn.
+MSG_NO_BRUSH
+Geen geheugen voor een penseel\nvan %ld bij %ld pixels.
+MSG_NOLIBRARY
+Geen %s\n
+MSG_NOSCREEN
+Geen scherm - geen beeld\n
+MSG_NOMEMORY
+Geen geheugen voor het venster\n
+MSG_BADSCREEN
+SCREEN is OWN of DESKTOP\n

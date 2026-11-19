@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language slovenscina
+## codeset 106
+; Paint's strings in Slovene.
+MSG_MENU_FILE
+Datoteka
+MSG_MENU_NEW
+Novo...
+MSG_MENU_OPEN
+Odpri...
+MSG_MENU_SAVE
+Shrani
+MSG_MENU_SAVE_AS
+Shrani kot...
+MSG_MENU_QUIT
+Končaj
+MSG_MENU_EDIT
+Uredi
+MSG_MENU_UNDO
+Razveljavi
+MSG_MENU_REDO
+Uveljavi
+MSG_MENU_CLEAR
+Počisti
+MSG_MENU_IMAGE
+Slika
+MSG_MENU_ROTATE
+Zasukaj
+MSG_TURN_RIGHT
+90° v desno
+MSG_TURN_LEFT
+90° v levo
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Obreži na izbor
+MSG_MENU_TRIM
+Obreži robove
+MSG_MENU_CANVAS_SIZE
+Velikost platna...
+MSG_MENU_FLATTEN
+Splošči
+MSG_MENU_PICTURE_SIZE
+Velikost slike...
+MSG_MENU_EFFECTS
+Učinki...
+MSG_MENU_FREE_TRANSFORM
+Prosto preoblikovanje
+MSG_MENU_TOOLS
+Orodja
+MSG_MENU_FREEHAND
+Prostoročno
+MSG_MENU_DOTS
+Prostoročno s pikami
+MSG_MENU_LINE
+Črta
+MSG_MENU_CURVE
+Krivulja
+MSG_MENU_RECTANGLE
+Pravokotnik
+MSG_MENU_ELLIPSE
+Elipsa
+MSG_MENU_POLYGON
+Mnogokotnik
+MSG_MENU_FILL
+Zapolni
+MSG_MENU_GRADIENT
+Preliv
+MSG_MENU_AIRBRUSH
+Zračni čopič
+MSG_MENU_PICK
+Prevzemi barvo
+MSG_MENU_TEXT
+Besedilo
+MSG_MENU_GRAB
+Izreži čopič
+MSG_MENU_SELECT_BOX
+Pravokotni izbor
+MSG_MENU_LASSO
+Laso
+MSG_MENU_WAND
+Čarobna palica
+MSG_MENU_HAND
+Roka
+MSG_MENU_ERASER
+Radirka
+MSG_MENU_SMUDGE
+Razmazovanje
+MSG_MENU_ZOOM_TOOL
+Lupa
+MSG_MENU_FILLED
+Zapolnjeni liki
+MSG_MENU_ROUND_GRADIENT
+Krožni preliv
+MSG_MENU_SWAP
+Zamenjaj barvi
+MSG_MENU_VIEW
+Pogled
+MSG_MENU_ZOOM_IN
+Povečaj
+MSG_MENU_ZOOM_OUT
+Pomanjšaj
+MSG_MENU_ACTUAL_SIZE
+Dejanska velikost
+MSG_MENU_FIT
+Prilagodi oknu
+MSG_MENU_GRID
+Mreža
+MSG_MENU_RULERS
+Ravnila
+MSG_MENU_SPLIT_SCREEN
+Razdeljen zaslon
+MSG_MENU_LAYER
+Plast
+MSG_MENU_NEW_LAYER
+Nova plast
+MSG_MENU_DUPLICATE_LAYER
+Podvoji
+MSG_MENU_DELETE_LAYER
+Izbriši
+MSG_MENU_RENAME_LAYER
+Preimenuj...
+MSG_MENU_LAYER_UP
+Premakni gor
+MSG_MENU_LAYER_DOWN
+Premakni dol
+MSG_MENU_MERGE_DOWN
+Spoji navzdol
+MSG_MENU_SELECTION
+Izbor
+MSG_MENU_SELECT
+Izberi
+MSG_MENU_SELECT_ALL
+Vse
+MSG_MENU_SELECT_LAYER
+Piksli plasti
+MSG_MENU_SELECT_COLOUR
+Piksli barve
+MSG_MENU_SELECT_SEE_THROUGH
+Prosojni piksli
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Piksli zunaj palete
+MSG_MENU_DESELECT
+Prekliči izbor
+MSG_MENU_INVERT
+Obrni
+MSG_MENU_COPY_TO_LAYER
+Kopiraj v plast
+MSG_MENU_CUT_TO_LAYER
+Izreži v plast
+MSG_MENU_COPY_TO_BRUSH
+Kopiraj v čopič
+MSG_MENU_BRUSH
+Čopič
+MSG_MENU_ROUND
+Okrogel
+MSG_MENU_SQUARE
+Kvadraten
+MSG_MENU_OWN_BRUSH
+Lasten čopič
+MSG_MENU_SIZE
+Velikost
+MSG_MENU_SMALLER
+Manjši
+MSG_MENU_LARGER
+Večji
+MSG_MENU_OWN_COLOURS
+Lastne barve
+MSG_MENU_ONE_COLOUR
+Ena barva
+MSG_MENU_FLIP_ACROSS
+Zrcali vodoravno
+MSG_MENU_FLIP_DOWN
+Zrcali navpično
+MSG_MENU_ADD_MASK
+Dodaj masko
+MSG_MENU_MASK_SHOW_ALL
+Pokaži vse
+MSG_MENU_MASK_HIDE_ALL
+Skrij vse
+MSG_MENU_MASK_SELECTION
+Pokaži izbor
+MSG_MENU_PAINT_MASK
+Riši masko
+MSG_MENU_APPLY_MASK
+Uporabi masko
+MSG_MENU_DELETE_MASK
+Izbriši masko
+MSG_MENU_TURN
+Zasukaj desno
+MSG_MENU_OPEN_BRUSH
+Odpri čopič...
+MSG_MENU_SAVE_BRUSH
+Shrani čopič...
+MSG_MENU_PALETTE
+Paleta
+MSG_MENU_EDIT_PALETTE
+Uredi...
+MSG_MENU_FROM_PICTURE
+Iz slike
+MSG_MENU_PRESETS
+Prednastavitve
+MSG_PRESET_STANDARD
+Privzeta
+MSG_PRESET_GREYS
+Sivine
+MSG_PRESET_SPECTRUM
+Spekter
+MSG_PRESET_PASTEL
+Pastelne barve
+MSG_PRESET_EARTH
+Zemeljski toni
+MSG_MENU_REDUCE
+Zmanjšaj barve
+MSG_DITHER_NONE
+Brez razprševanja
+MSG_DITHER_ORDERED
+Urejeno razprševanje
+MSG_DITHER_DIFFUSED
+Difuzija napake
+MSG_MENU_CYCLE
+Kroženje barv
+MSG_MENU_OPEN_PALETTE
+Odpri paleto...
+MSG_MENU_SAVE_PALETTE
+Shrani paleto...
+MSG_MENU_OWN_SCREEN
+Lasten zaslon
+MSG_MENU_HELP
+Pomoč
+MSG_MENU_ABOUT
+O programu Paint...
+MSG_TOOL_FREEHAND
+Prostoročno: črta, kjer gre kazalec
+MSG_TOOL_DOTS
+Prostoročno s pikami: čopič, kjer je kazalec
+MSG_TOOL_LINE
+Črta: od mesta, kjer se gumb pritisne, do mesta, kjer se spusti
+MSG_TOOL_CURVE
+Krivulja: črta, nato z drugim pritiskom upognjena v lok
+MSG_TOOL_RECTANGLE
+Pravokotnik: od enega kota do drugega
+MSG_TOOL_ELLIPSE
+Elipsa: v okvirju od enega kota do drugega
+MSG_TOOL_POLYGON
+Mnogokotnik: oglišče ob vsaki sprostitvi, sklenjen na prvem oglišču
+MSG_TOOL_FILL
+Zapolni: območje ene barve, ki se klikne
+MSG_TOOL_GRADIENT
+Preliv: od barve ospredja na začetku vlečenja do barve ozadja na njegovem koncu
+MSG_TOOL_AIRBRUSH
+Zračni čopič: pršenje, kjer je kazalec, dokler je gumb pritisnjen
+MSG_TOOL_PICK
+Prevzemi barvo: barva pod kazalcem
+MSG_TOOL_TEXT
+Besedilo: natipkano in postavljeno, kjer se klikne v sliko
+MSG_TOOL_GRAB
+Izreži čopič: del slike, vzet kot čopič
+MSG_TOOL_SELECT_BOX
+Pravokotni izbor: kar se sme slikati (Shift doda, Alt odvzame)
+MSG_TOOL_LASSO
+Laso: izbere prostoročno narisano obliko (Shift doda, Alt odvzame)
+MSG_TOOL_WAND
+Čarobna palica: izbere piksle barve, povezane s kliknjenim
+MSG_TOOL_HAND
+Roka: premika sliko s kazalcem
+MSG_TOOL_ERASER
+Radirka: slika postane prosojna, kjer gre čopič
+MSG_TOOL_SMUDGE
+Razmazovanje: barve pod čopičem povlečene s seboj
+MSG_TOOL_ZOOM
+Lupa: poveča, kjer se klikne, pomanjša z gumbom menija
+MSG_FILLED_HINT
+Zapolnjeni pravokotniki, elipse in mnogokotniki
+MSG_UNDO_HINT
+Razveljavi zadnjo spremembo
+MSG_REDO_HINT
+Znova uveljavi razveljavljeno spremembo
+MSG_ZOOM_IN_HINT
+Pokaži sliko večjo
+MSG_ZOOM_OUT_HINT
+Pokaži sliko manjšo
+MSG_FIT_HINT
+Pokaži celo sliko tako veliko, kot gre
+MSG_SWAP_HINT
+Zamenjaj obe barvi
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Plasti
+MSG_SECTION_BRUSH
+Čopič
+MSG_SECTION_COLOUR
+Barva
+MSG_SIZE
+Velikost
+MSG_SOFTNESS
+Mehkoba
+MSG_OPACITY
+Prekrivnost
+MSG_FLOW
+Pretok
+MSG_JITTER
+Tresenje
+MSG_ROTATION
+Zasuk
+MSG_DITHER
+Razprševanje
+MSG_BLEND
+Mešanje
+MSG_NEW_LAYER_HINT
+Nova plast nad slikano
+MSG_DELETE_LAYER_HINT
+Izbriši slikano plast
+MSG_LAYER_NAME
+Plast %ld
+MSG_LAYER_COPY
+%s kopija
+MSG_BLEND_NORMAL
+Običajno
+MSG_BLEND_ADD
+Seštevanje
+MSG_BLEND_MULTIPLY
+Množenje
+MSG_BLEND_SCREEN
+Zaslon
+MSG_BLEND_OVERLAY
+Prekrivanje
+MSG_BLEND_DARKEN
+Potemnitev
+MSG_BLEND_LIGHTEN
+Posvetlitev
+MSG_BLEND_DODGE
+Posvetlitev barve
+MSG_BLEND_BURN
+Potemnitev barve
+MSG_BLEND_HARD_LIGHT
+Trda svetloba
+MSG_BLEND_SOFT_LIGHT
+Mehka svetloba
+MSG_BLEND_HUE
+Odtenek
+MSG_BLEND_SATURATION
+Nasičenost
+MSG_BLEND_COLOUR
+Barva
+MSG_BLEND_LUMINOSITY
+Svetilnost
+MSG_STATUS
+%ld x %ld   %ld:1   čopič %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   čopič %ld   v točki %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   čopič %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   čopič %ld x %ld   v točki %ld, %ld
+MSG_NEW_TITLE
+Nova slika
+MSG_CANVAS_TITLE
+Velikost platna
+MSG_PLACE
+Slika
+MSG_PLACE_TOP_LEFT
+Zgoraj levo
+MSG_PLACE_TOP
+Zgoraj
+MSG_PLACE_TOP_RIGHT
+Zgoraj desno
+MSG_PLACE_LEFT
+Levo
+MSG_PLACE_MIDDLE
+Na sredini
+MSG_PLACE_RIGHT
+Desno
+MSG_PLACE_BOTTOM_LEFT
+Spodaj levo
+MSG_PLACE_BOTTOM
+Spodaj
+MSG_PLACE_BOTTOM_RIGHT
+Spodaj desno
+MSG_NO_IMAGE_MEMORY
+Ni pomnilnika\nza spremembo slike.
+MSG_PICTURE_SIZE_TITLE
+Velikost slike
+MSG_SCALING
+Piksli
+MSG_SCALE_SMOOTH
+Gladko
+MSG_SCALE_HARD
+Ostro
+MSG_KEEP_PROPORTIONS
+Ohrani razmerje
+MSG_EFFECTS_TITLE
+Učinki
+MSG_RESET
+Ponastavi
+MSG_FX_BRIGHTNESS
+Svetlost
+MSG_FX_CONTRAST
+Kontrast
+MSG_FX_SATURATION
+Nasičenost
+MSG_FX_HUE
+Odtenek
+MSG_FX_BLUR
+Zameglitev
+MSG_FX_SHARPEN
+Izostritev
+MSG_FX_TEXTURE
+Tekstura
+MSG_FX_DEHAZE
+Odstranitev meglice
+MSG_FX_SEPIA
+Sepija
+MSG_FX_INVERT
+Inverzija
+MSG_FX_CYAN_RED
+Cian/Rdeča
+MSG_FX_MAGENTA_GREEN
+Magenta/Zelena
+MSG_FX_YELLOW_BLUE
+Rumena/Modra
+MSG_WIDTH
+Širina
+MSG_HEIGHT
+Višina
+MSG_OK
+V redu
+MSG_ABOUT
+Paint %s\n\nSlike v polnih barvah, naslikane\nz vgrajenimi in izrezanimi čopiči.
+MSG_CANCEL
+Prekliči
+MSG_TEXT_TITLE
+Besedilo
+MSG_RENAME_TITLE
+Preimenuj plast
+MSG_NAME
+Ime
+MSG_TEXT
+Besedilo
+MSG_FONT
+Pisava
+MSG_FONT_TITLE
+Pisava besedila
+MSG_CHANGED
+Slika je bila spremenjena.\nJo želite najprej shraniti?
+MSG_CHANGED_BUTTONS
+Shrani|Ne shrani|Prekliči
+MSG_NO_PICTURE
+Ni pomnilnika za sliko\nvelikosti %ld krat %ld pikslov.
+MSG_NO_UNDO
+Ta sprememba je bila prevelika za hrambo:\nni je mogoče razveljaviti.
+MSG_NO_LAYER
+Ni pomnilnika za še eno plast.
+MSG_NO_MASK
+Ni pomnilnika za masko.
+MSG_NO_OWN_SCREEN
+Lastnega zaslona ni bilo mogoče odpreti.
+MSG_NO_FONT
+Pisave ni bilo mogoče odpreti.
+MSG_FILL_SHORT
+Premalo pomnilnika, da bi zapolnili vse.
+MSG_CHOICE_SHORT
+Premalo pomnilnika, da bi izbrali vse.
+MSG_NO_SELECTION
+Ni pomnilnika za izbor.
+MSG_OUTLINE
+Obris
+MSG_SHOW_MASK
+Maska
+MSG_MASK_ROW
+Maska
+MSG_MASK_PAINTED
+[Maska]
+MSG_OPEN_TITLE
+Odpri sliko
+MSG_SAVE_AS_TITLE
+Shrani sliko kot
+MSG_NO_OPEN
+%s\nni mogoče odpreti:\n%s
+MSG_NO_SAVE
+Slike ni mogoče shraniti\nkot %s:\n%s
+MSG_NO_PART
+%s\nni mogoče odpreti.
+MSG_UNTITLED
+Neimenovano
+MSG_OPEN_BRUSH_TITLE
+Odpri čopič
+MSG_SAVE_BRUSH_TITLE
+Shrani čopič kot
+MSG_NO_SAVE_BRUSH
+Čopiča ni mogoče shraniti\nkot %s:\n%s
+MSG_NO_SAVE_PALETTE
+Palete ni mogoče shraniti\nkot %s:\n%s
+MSG_NO_PALETTE
+%s\nne vsebuje palete.
+MSG_NO_COUNT
+Ni pomnilnika za štetje barv.
+MSG_OPEN_PALETTE_TITLE
+Odpri paleto
+MSG_SAVE_PALETTE_TITLE
+Shrani paleto kot
+MSG_PALETTE_TITLE
+Paleta
+MSG_RED
+Rdeča
+MSG_GREEN
+Zelena
+MSG_BLUE
+Modra
+MSG_HUE
+Odtenek
+MSG_SATURATION
+Nasičenost
+MSG_VALUE
+Vrednost
+MSG_HEX
+Hex
+MSG_SPREAD
+Preliv
+MSG_COPY_COLOUR
+Kopiraj
+MSG_SWAP_COLOURS
+Zamenjaj
+MSG_CHANGE_PIXELS
+Spremeni tudi piksle
+MSG_PICK_COLOUR
+Izberite barvo za spremembo.
+MSG_PICK_SPREAD
+Izberite drugi konec preliva.
+MSG_PICK_COPY
+Izberite barvo, na katero se kopira.
+MSG_PICK_SWAP
+Izberite barvo, s katero se zamenja.
+MSG_PICK_RANGE
+Izberite drugi konec obsega.
+MSG_RANGE
+Obseg
+MSG_SET_RANGE
+Nastavi obseg
+MSG_SPEED
+Hitrost
+MSG_BACKWARDS
+Nazaj
+MSG_RANGE_SPAN
+Obseg %ld: barve od %ld do %ld.
+MSG_RANGE_UNSET
+Obseg %ld ni nastavljen.
+MSG_NO_RANGE
+Noben obseg palete ne kroži:\nnastavite ga v urejevalniku palete.
+MSG_NO_REDUCE
+Ni pomnilnika za razpršitev\nnapake vsake barve.
+MSG_BRUSH_TOO_LARGE
+Čopič je lahko največ %ld krat %ld pikslov.
+MSG_NO_BRUSH
+Ni pomnilnika za čopič\nvelikosti %ld krat %ld pikslov.
+MSG_NOLIBRARY
+Ni %s\n
+MSG_NOSCREEN
+Ni zaslona - ni prikaza\n
+MSG_NOMEMORY
+Ni pomnilnika za okno\n
+MSG_BADSCREEN
+SCREEN je OWN ali DESKTOP\n

@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language suomi
+## codeset 106
+; Paint's strings in Finnish.
+MSG_MENU_FILE
+Tiedosto
+MSG_MENU_NEW
+Uusi...
+MSG_MENU_OPEN
+Avaa...
+MSG_MENU_SAVE
+Tallenna
+MSG_MENU_SAVE_AS
+Tallenna nimellä...
+MSG_MENU_QUIT
+Lopeta
+MSG_MENU_EDIT
+Muokkaa
+MSG_MENU_UNDO
+Kumoa
+MSG_MENU_REDO
+Tee uudelleen
+MSG_MENU_CLEAR
+Tyhjennä
+MSG_MENU_IMAGE
+Kuva
+MSG_MENU_ROTATE
+Kierrä
+MSG_TURN_RIGHT
+90° myötäpäivään
+MSG_TURN_LEFT
+90° vastapäivään
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Rajaa valintaan
+MSG_MENU_TRIM
+Leikkaa reunat
+MSG_MENU_CANVAS_SIZE
+Kankaan koko...
+MSG_MENU_FLATTEN
+Yhdistä yhdeksi tasoksi
+MSG_MENU_PICTURE_SIZE
+Kuvan koko...
+MSG_MENU_EFFECTS
+Tehosteet...
+MSG_MENU_FREE_TRANSFORM
+Vapaa muunto
+MSG_MENU_TOOLS
+Työkalut
+MSG_MENU_FREEHAND
+Vapaa käsi
+MSG_MENU_DOTS
+Vapaa käsi pisteinä
+MSG_MENU_LINE
+Viiva
+MSG_MENU_CURVE
+Käyrä
+MSG_MENU_RECTANGLE
+Suorakulmio
+MSG_MENU_ELLIPSE
+Ellipsi
+MSG_MENU_POLYGON
+Monikulmio
+MSG_MENU_FILL
+Täyttö
+MSG_MENU_GRADIENT
+Liukuväri
+MSG_MENU_AIRBRUSH
+Ruisku
+MSG_MENU_PICK
+Poimi väri
+MSG_MENU_TEXT
+Teksti
+MSG_MENU_GRAB
+Leikkaa sivellin
+MSG_MENU_SELECT_BOX
+Suorakulmiovalinta
+MSG_MENU_LASSO
+Lasso
+MSG_MENU_WAND
+Taikasauva
+MSG_MENU_HAND
+Käsi
+MSG_MENU_ERASER
+Pyyhekumi
+MSG_MENU_SMUDGE
+Tahraus
+MSG_MENU_ZOOM_TOOL
+Zoomaus
+MSG_MENU_FILLED
+Täytetyt muodot
+MSG_MENU_ROUND_GRADIENT
+Pyöreä liukuväri
+MSG_MENU_SWAP
+Vaihda värit
+MSG_MENU_VIEW
+Näytä
+MSG_MENU_ZOOM_IN
+Lähennä
+MSG_MENU_ZOOM_OUT
+Loitonna
+MSG_MENU_ACTUAL_SIZE
+Todellinen koko
+MSG_MENU_FIT
+Sovita ikkunaan
+MSG_MENU_GRID
+Ruudukko
+MSG_MENU_RULERS
+Viivaimet
+MSG_MENU_SPLIT_SCREEN
+Jaettu näkymä
+MSG_MENU_LAYER
+Taso
+MSG_MENU_NEW_LAYER
+Uusi taso
+MSG_MENU_DUPLICATE_LAYER
+Monista
+MSG_MENU_DELETE_LAYER
+Poista
+MSG_MENU_RENAME_LAYER
+Nimeä uudelleen...
+MSG_MENU_LAYER_UP
+Siirrä ylös
+MSG_MENU_LAYER_DOWN
+Siirrä alas
+MSG_MENU_MERGE_DOWN
+Yhdistä alempaan
+MSG_MENU_SELECTION
+Valinta
+MSG_MENU_SELECT
+Valitse
+MSG_MENU_SELECT_ALL
+Kaikki
+MSG_MENU_SELECT_LAYER
+Tason pikselit
+MSG_MENU_SELECT_COLOUR
+Värin pikselit
+MSG_MENU_SELECT_SEE_THROUGH
+Läpinäkyvät pikselit
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Paletin ulkopuoliset pikselit
+MSG_MENU_DESELECT
+Poista valinta
+MSG_MENU_INVERT
+Käännä valinta
+MSG_MENU_COPY_TO_LAYER
+Kopioi uudelle tasolle
+MSG_MENU_CUT_TO_LAYER
+Leikkaa uudelle tasolle
+MSG_MENU_COPY_TO_BRUSH
+Kopioi siveltimeksi
+MSG_MENU_BRUSH
+Sivellin
+MSG_MENU_ROUND
+Pyöreä
+MSG_MENU_SQUARE
+Neliö
+MSG_MENU_OWN_BRUSH
+Oma sivellin
+MSG_MENU_SIZE
+Koko
+MSG_MENU_SMALLER
+Pienempi
+MSG_MENU_LARGER
+Suurempi
+MSG_MENU_OWN_COLOURS
+Omat värit
+MSG_MENU_ONE_COLOUR
+Yksi väri
+MSG_MENU_FLIP_ACROSS
+Peilaa vaakasuunnassa
+MSG_MENU_FLIP_DOWN
+Peilaa pystysuunnassa
+MSG_MENU_ADD_MASK
+Lisää maski
+MSG_MENU_MASK_SHOW_ALL
+Näytä kaikki
+MSG_MENU_MASK_HIDE_ALL
+Piilota kaikki
+MSG_MENU_MASK_SELECTION
+Näytä valinta
+MSG_MENU_PAINT_MASK
+Maalaa maskia
+MSG_MENU_APPLY_MASK
+Käytä maskia
+MSG_MENU_DELETE_MASK
+Poista maski
+MSG_MENU_TURN
+Käännä oikealle
+MSG_MENU_OPEN_BRUSH
+Avaa sivellin...
+MSG_MENU_SAVE_BRUSH
+Tallenna sivellin...
+MSG_MENU_PALETTE
+Paletti
+MSG_MENU_EDIT_PALETTE
+Muokkaa...
+MSG_MENU_FROM_PICTURE
+Kuvasta
+MSG_MENU_PRESETS
+Valmiit paletit
+MSG_PRESET_STANDARD
+Paintin oma
+MSG_PRESET_GREYS
+Harmaasävyt
+MSG_PRESET_SPECTRUM
+Spektri
+MSG_PRESET_PASTEL
+Pastelli
+MSG_PRESET_EARTH
+Maavärit
+MSG_MENU_REDUCE
+Vähennä värejä
+MSG_DITHER_NONE
+Ei rasterointia
+MSG_DITHER_ORDERED
+Järjestetty rasterointi
+MSG_DITHER_DIFFUSED
+Virheen levitys
+MSG_MENU_CYCLE
+Kierrätä värejä
+MSG_MENU_OPEN_PALETTE
+Avaa paletti...
+MSG_MENU_SAVE_PALETTE
+Tallenna paletti...
+MSG_MENU_OWN_SCREEN
+Oma ruutu
+MSG_MENU_HELP
+Ohje
+MSG_MENU_ABOUT
+Tietoja: Paint...
+MSG_TOOL_FREEHAND
+Vapaa käsi: viiva osoittimen kulkemaa reittiä
+MSG_TOOL_DOTS
+Vapaa käsi pisteinä: sivellin osoittimen kohdalla
+MSG_TOOL_LINE
+Viiva: kohdasta, jossa painike painetaan, kohtaan, jossa se vapautetaan
+MSG_TOOL_CURVE
+Käyrä: viiva, joka taivutetaan sitten toisella painalluksella
+MSG_TOOL_RECTANGLE
+Suorakulmio: kulmasta vastakkaiseen kulmaan
+MSG_TOOL_ELLIPSE
+Ellipsi: laatikkoon kulmasta vastakkaiseen kulmaan
+MSG_TOOL_POLYGON
+Monikulmio: kulma aina, kun painike vapautetaan, sulkeutuu ensimmäiseen kulmaan
+MSG_TOOL_FILL
+Täyttö: napsautettu yksivärinen alue
+MSG_TOOL_GRADIENT
+Liukuväri: edustaväristä vedon alussa taustaväriin vedon lopussa
+MSG_TOOL_AIRBRUSH
+Ruisku: suihke osoittimen kohdalle niin kauan kuin painiketta pidetään pohjassa
+MSG_TOOL_PICK
+Poimi väri: osoittimen alla oleva väri
+MSG_TOOL_TEXT
+Teksti: kirjoitetaan ja sijoitetaan kuvassa napsautettuun kohtaan
+MSG_TOOL_GRAB
+Leikkaa sivellin: osa kuvasta otetaan siveltimeksi
+MSG_TOOL_SELECT_BOX
+Suorakulmiovalinta: alue, jolle saa maalata (Vaihto lisää, Alt vähentää)
+MSG_TOOL_LASSO
+Lasso: käsin piirretty muoto valitaan (Vaihto lisää, Alt vähentää)
+MSG_TOOL_WAND
+Taikasauva: napsautettuun yhtenäisesti liittyvät saman värin pikselit valitaan
+MSG_TOOL_HAND
+Käsi: kuvaa siirretään osoittimella
+MSG_TOOL_ERASER
+Pyyhekumi: kuva muuttuu läpinäkyväksi siveltimen kulkemilta kohdilta
+MSG_TOOL_SMUDGE
+Tahraus: siveltimen alla olevat värit vedetään mukana
+MSG_TOOL_ZOOM
+Zoomaus: suurentaa napsautetusta kohdasta, pienentää valikkopainikkeella
+MSG_FILLED_HINT
+Täytetyt suorakulmiot, ellipsit ja monikulmiot
+MSG_UNDO_HINT
+Kumoa viimeisin muutos
+MSG_REDO_HINT
+Tee kumottu muutos uudelleen
+MSG_ZOOM_IN_HINT
+Näytä kuva suurempana
+MSG_ZOOM_OUT_HINT
+Näytä kuva pienempänä
+MSG_FIT_HINT
+Näytä koko kuva niin suurena kuin se mahtuu
+MSG_SWAP_HINT
+Vaihda kaksi väriä keskenään
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Tasot
+MSG_SECTION_BRUSH
+Sivellin
+MSG_SECTION_COLOUR
+Väri
+MSG_SIZE
+Koko
+MSG_SOFTNESS
+Pehmeys
+MSG_OPACITY
+Peittävyys
+MSG_FLOW
+Virtaus
+MSG_JITTER
+Hajonta
+MSG_ROTATION
+Kierto
+MSG_DITHER
+Rasterointi
+MSG_BLEND
+Sekoitus
+MSG_NEW_LAYER_HINT
+Uusi taso maalattavan tason päälle
+MSG_DELETE_LAYER_HINT
+Poista maalattava taso
+MSG_LAYER_NAME
+Taso %ld
+MSG_LAYER_COPY
+%s kopio
+MSG_BLEND_NORMAL
+Normaali
+MSG_BLEND_ADD
+Lisäys
+MSG_BLEND_MULTIPLY
+Kerro
+MSG_BLEND_SCREEN
+Rasteri
+MSG_BLEND_OVERLAY
+Peitto
+MSG_BLEND_DARKEN
+Tummenna
+MSG_BLEND_LIGHTEN
+Vaalenna
+MSG_BLEND_DODGE
+Värin vaalennus
+MSG_BLEND_BURN
+Värin poltto
+MSG_BLEND_HARD_LIGHT
+Kova valo
+MSG_BLEND_SOFT_LIGHT
+Pehmeä valo
+MSG_BLEND_HUE
+Sävy
+MSG_BLEND_SATURATION
+Kylläisyys
+MSG_BLEND_COLOUR
+Väri
+MSG_BLEND_LUMINOSITY
+Valoisuus
+MSG_STATUS
+%ld x %ld   %ld:1   sivellin %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   sivellin %ld   kohdassa %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   sivellin %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   sivellin %ld x %ld   kohdassa %ld, %ld
+MSG_NEW_TITLE
+Uusi kuva
+MSG_CANVAS_TITLE
+Kankaan koko
+MSG_PLACE
+Kuva
+MSG_PLACE_TOP_LEFT
+Ylhäällä vasemmalla
+MSG_PLACE_TOP
+Ylhäällä
+MSG_PLACE_TOP_RIGHT
+Ylhäällä oikealla
+MSG_PLACE_LEFT
+Vasemmalla
+MSG_PLACE_MIDDLE
+Keskellä
+MSG_PLACE_RIGHT
+Oikealla
+MSG_PLACE_BOTTOM_LEFT
+Alhaalla vasemmalla
+MSG_PLACE_BOTTOM
+Alhaalla
+MSG_PLACE_BOTTOM_RIGHT
+Alhaalla oikealla
+MSG_NO_IMAGE_MEMORY
+Muisti ei riitä\nkuvan muuttamiseen.
+MSG_PICTURE_SIZE_TITLE
+Kuvan koko
+MSG_SCALING
+Pikselit
+MSG_SCALE_SMOOTH
+Pehmeä
+MSG_SCALE_HARD
+Terävä
+MSG_KEEP_PROPORTIONS
+Säilytä mittasuhteet
+MSG_EFFECTS_TITLE
+Tehosteet
+MSG_RESET
+Palauta
+MSG_FX_BRIGHTNESS
+Kirkkaus
+MSG_FX_CONTRAST
+Kontrasti
+MSG_FX_SATURATION
+Kylläisyys
+MSG_FX_HUE
+Sävy
+MSG_FX_BLUR
+Sumennus
+MSG_FX_SHARPEN
+Terävöinti
+MSG_FX_TEXTURE
+Tekstuuri
+MSG_FX_DEHAZE
+Usvanpoisto
+MSG_FX_SEPIA
+Seepia
+MSG_FX_INVERT
+Käänteisyys
+MSG_FX_CYAN_RED
+Syaani/Punainen
+MSG_FX_MAGENTA_GREEN
+Magenta/Vihreä
+MSG_FX_YELLOW_BLUE
+Keltainen/Sininen
+MSG_WIDTH
+Leveys
+MSG_HEIGHT
+Korkeus
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nKuvia täysväreinä, maalattuina\nvalmiilla ja leikatuilla siveltimillä.
+MSG_CANCEL
+Peruuta
+MSG_TEXT_TITLE
+Teksti
+MSG_RENAME_TITLE
+Nimeä taso uudelleen
+MSG_NAME
+Nimi
+MSG_TEXT
+Teksti
+MSG_FONT
+Fontti
+MSG_FONT_TITLE
+Tekstin fontti
+MSG_CHANGED
+Kuvaa on muutettu.\nTallennetaanko ensin?
+MSG_CHANGED_BUTTONS
+Tallenna|Älä tallenna|Peruuta
+MSG_NO_PICTURE
+Muisti ei riitä kuvalle,\njonka koko on %ld x %ld pikseliä.
+MSG_NO_UNDO
+Muutos oli liian suuri säilytettäväksi:\nsitä ei voi kumota.
+MSG_NO_LAYER
+Muisti ei riitä uudelle tasolle.
+MSG_NO_MASK
+Muisti ei riitä maskille.
+MSG_NO_OWN_SCREEN
+Omaa ruutua ei voitu avata.
+MSG_NO_FONT
+Fonttia ei voitu avata.
+MSG_FILL_SHORT
+Muisti ei riittänyt kaiken täyttämiseen.
+MSG_CHOICE_SHORT
+Muisti ei riittänyt kaiken valitsemiseen.
+MSG_NO_SELECTION
+Muisti ei riitä valinnalle.
+MSG_OUTLINE
+Ääriviiva
+MSG_SHOW_MASK
+Maski
+MSG_MASK_ROW
+Maski
+MSG_MASK_PAINTED
+[Maski]
+MSG_OPEN_TITLE
+Avaa kuva
+MSG_SAVE_AS_TITLE
+Tallenna kuva nimellä
+MSG_NO_OPEN
+%s\nei voi avata:\n%s
+MSG_NO_SAVE
+Kuvaa ei voi tallentaa\nnimellä %s:\n%s
+MSG_NO_PART
+%s\nei voi avata.
+MSG_UNTITLED
+Nimetön
+MSG_OPEN_BRUSH_TITLE
+Avaa sivellin
+MSG_SAVE_BRUSH_TITLE
+Tallenna sivellin nimellä
+MSG_NO_SAVE_BRUSH
+Sivellintä ei voi tallentaa\nnimellä %s:\n%s
+MSG_NO_SAVE_PALETTE
+Palettia ei voi tallentaa\nnimellä %s:\n%s
+MSG_NO_PALETTE
+%s\nei sisällä palettia.
+MSG_NO_COUNT
+Muisti ei riitä värien laskemiseen.
+MSG_OPEN_PALETTE_TITLE
+Avaa paletti
+MSG_SAVE_PALETTE_TITLE
+Tallenna paletti nimellä
+MSG_PALETTE_TITLE
+Paletti
+MSG_RED
+Punainen
+MSG_GREEN
+Vihreä
+MSG_BLUE
+Sininen
+MSG_HUE
+Sävy
+MSG_SATURATION
+Kylläisyys
+MSG_VALUE
+Arvo
+MSG_HEX
+Hex
+MSG_SPREAD
+Liukuma
+MSG_COPY_COLOUR
+Kopioi
+MSG_SWAP_COLOURS
+Vaihda
+MSG_CHANGE_PIXELS
+Muuta myös pikselit
+MSG_PICK_COLOUR
+Valitse muutettava väri.
+MSG_PICK_SPREAD
+Valitse liukuman toinen pää.
+MSG_PICK_COPY
+Valitse väri, jonka päälle kopioidaan.
+MSG_PICK_SWAP
+Valitse väri, jonka kanssa vaihdetaan.
+MSG_PICK_RANGE
+Valitse alueen toinen pää.
+MSG_RANGE
+Alue
+MSG_SET_RANGE
+Aseta alue
+MSG_SPEED
+Nopeus
+MSG_BACKWARDS
+Taaksepäin
+MSG_RANGE_SPAN
+Alue %ld: värit %ld - %ld.
+MSG_RANGE_UNSET
+Aluetta %ld ei ole asetettu.
+MSG_NO_RANGE
+Mikään paletin alue ei kierrä:\naseta alue paletin muokkaimessa.
+MSG_NO_REDUCE
+Muisti ei riitä levittämään sitä,\nmitä kultakin väriltä puuttuu.
+MSG_BRUSH_TOO_LARGE
+Sivellin voi olla enintään %ld x %ld pikseliä.
+MSG_NO_BRUSH
+Muisti ei riitä siveltimelle,\njonka koko on %ld x %ld pikseliä.
+MSG_NOLIBRARY
+%s puuttuu\n
+MSG_NOSCREEN
+Ei ruutua - ei näyttöä\n
+MSG_NOMEMORY
+Muisti ei riitä ikkunalle\n
+MSG_BADSCREEN
+SCREEN on OWN tai DESKTOP\n

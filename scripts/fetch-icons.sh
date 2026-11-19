@@ -47,6 +47,7 @@ categories/preferences-desktop
 categories/applications-system
 categories/applications-other
 categories/applications-games
+categories/applications-graphics
 apps/system-software-update
 apps/system-installer
 actions/appointment-new

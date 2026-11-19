@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language islenska
+## codeset 106
+; Paint's strings in Icelandic.
+MSG_MENU_FILE
+Skrá
+MSG_MENU_NEW
+Nýtt...
+MSG_MENU_OPEN
+Opna...
+MSG_MENU_SAVE
+Vista
+MSG_MENU_SAVE_AS
+Vista sem...
+MSG_MENU_QUIT
+Hætta
+MSG_MENU_EDIT
+Breyta
+MSG_MENU_UNDO
+Afturkalla
+MSG_MENU_REDO
+Endurgera
+MSG_MENU_CLEAR
+Hreinsa
+MSG_MENU_IMAGE
+Mynd
+MSG_MENU_ROTATE
+Snúa
+MSG_TURN_RIGHT
+90° réttsælis
+MSG_TURN_LEFT
+90° rangsælis
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Skera að valinu
+MSG_MENU_TRIM
+Snyrta jaðra
+MSG_MENU_CANVAS_SIZE
+Stærð striga...
+MSG_MENU_FLATTEN
+Fletja út
+MSG_MENU_PICTURE_SIZE
+Myndstærð...
+MSG_MENU_EFFECTS
+Áhrif...
+MSG_MENU_FREE_TRANSFORM
+Frjáls umbreyting
+MSG_MENU_TOOLS
+Verkfæri
+MSG_MENU_FREEHAND
+Fríhendis
+MSG_MENU_DOTS
+Fríhendis í punktum
+MSG_MENU_LINE
+Lína
+MSG_MENU_CURVE
+Ferill
+MSG_MENU_RECTANGLE
+Rétthyrningur
+MSG_MENU_ELLIPSE
+Sporbaugur
+MSG_MENU_POLYGON
+Marghyrningur
+MSG_MENU_FILL
+Fylla
+MSG_MENU_GRADIENT
+Litstigull
+MSG_MENU_AIRBRUSH
+Úðabursti
+MSG_MENU_PICK
+Sækja lit
+MSG_MENU_TEXT
+Texti
+MSG_MENU_GRAB
+Klippa pensil
+MSG_MENU_SELECT_BOX
+Rétthyrnt val
+MSG_MENU_LASSO
+Lassó
+MSG_MENU_WAND
+Töfrasproti
+MSG_MENU_HAND
+Hönd
+MSG_MENU_ERASER
+Strokleður
+MSG_MENU_SMUDGE
+Káma
+MSG_MENU_ZOOM_TOOL
+Aðdráttur
+MSG_MENU_FILLED
+Fyllt form
+MSG_MENU_ROUND_GRADIENT
+Hringlaga litstigull
+MSG_MENU_SWAP
+Víxla litum
+MSG_MENU_VIEW
+Skoða
+MSG_MENU_ZOOM_IN
+Auka aðdrátt
+MSG_MENU_ZOOM_OUT
+Minnka aðdrátt
+MSG_MENU_ACTUAL_SIZE
+Raunstærð
+MSG_MENU_FIT
+Passa í glugga
+MSG_MENU_GRID
+Hnitanet
+MSG_MENU_RULERS
+Reglustikur
+MSG_MENU_SPLIT_SCREEN
+Skiptur skjár
+MSG_MENU_LAYER
+Lag
+MSG_MENU_NEW_LAYER
+Nýtt lag
+MSG_MENU_DUPLICATE_LAYER
+Tvöfalda
+MSG_MENU_DELETE_LAYER
+Eyða
+MSG_MENU_RENAME_LAYER
+Endurnefna...
+MSG_MENU_LAYER_UP
+Færa upp
+MSG_MENU_LAYER_DOWN
+Færa niður
+MSG_MENU_MERGE_DOWN
+Sameina niður
+MSG_MENU_SELECTION
+Val
+MSG_MENU_SELECT
+Velja
+MSG_MENU_SELECT_ALL
+Allt
+MSG_MENU_SELECT_LAYER
+Pixla lagsins
+MSG_MENU_SELECT_COLOUR
+Pixla litarins
+MSG_MENU_SELECT_SEE_THROUGH
+Gegnsæja pixla
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixla utan litaspjaldsins
+MSG_MENU_DESELECT
+Afvelja
+MSG_MENU_INVERT
+Umhverfa
+MSG_MENU_COPY_TO_LAYER
+Afrita í nýtt lag
+MSG_MENU_CUT_TO_LAYER
+Klippa í nýtt lag
+MSG_MENU_COPY_TO_BRUSH
+Afrita sem pensil
+MSG_MENU_BRUSH
+Pensill
+MSG_MENU_ROUND
+Hringlaga
+MSG_MENU_SQUARE
+Ferningslaga
+MSG_MENU_OWN_BRUSH
+Eigin pensill
+MSG_MENU_SIZE
+Stærð
+MSG_MENU_SMALLER
+Minni
+MSG_MENU_LARGER
+Stærri
+MSG_MENU_OWN_COLOURS
+Eigin litir
+MSG_MENU_ONE_COLOUR
+Einn litur
+MSG_MENU_FLIP_ACROSS
+Spegla lárétt
+MSG_MENU_FLIP_DOWN
+Spegla lóðrétt
+MSG_MENU_ADD_MASK
+Bæta við maska
+MSG_MENU_MASK_SHOW_ALL
+Sýna allt
+MSG_MENU_MASK_HIDE_ALL
+Fela allt
+MSG_MENU_MASK_SELECTION
+Sýna valið
+MSG_MENU_PAINT_MASK
+Mála maskann
+MSG_MENU_APPLY_MASK
+Beita maskanum
+MSG_MENU_DELETE_MASK
+Eyða maskanum
+MSG_MENU_TURN
+Snúa til hægri
+MSG_MENU_OPEN_BRUSH
+Opna pensil...
+MSG_MENU_SAVE_BRUSH
+Vista pensil...
+MSG_MENU_PALETTE
+Litaspjald
+MSG_MENU_EDIT_PALETTE
+Breyta...
+MSG_MENU_FROM_PICTURE
+Úr myndinni
+MSG_MENU_PRESETS
+Forstillingar
+MSG_PRESET_STANDARD
+Frá Paint
+MSG_PRESET_GREYS
+Gráir tónar
+MSG_PRESET_SPECTRUM
+Litróf
+MSG_PRESET_PASTEL
+Pastellitir
+MSG_PRESET_EARTH
+Jarðlitir
+MSG_MENU_REDUCE
+Fækka litum
+MSG_DITHER_NONE
+Án punktablöndunar
+MSG_DITHER_ORDERED
+Regluleg punktablöndun
+MSG_DITHER_DIFFUSED
+Villudreifing
+MSG_MENU_CYCLE
+Hringsnúa litum
+MSG_MENU_OPEN_PALETTE
+Opna litaspjald...
+MSG_MENU_SAVE_PALETTE
+Vista litaspjald...
+MSG_MENU_OWN_SCREEN
+Eigin skjár
+MSG_MENU_HELP
+Hjálp
+MSG_MENU_ABOUT
+Um Paint...
+MSG_TOOL_FREEHAND
+Fríhendis: lína þar sem bendillinn fer
+MSG_TOOL_DOTS
+Fríhendis í punktum: pensillinn þar sem bendillinn er
+MSG_TOOL_LINE
+Lína: þaðan sem hnappnum er ýtt niður og þangað sem honum er sleppt
+MSG_TOOL_CURVE
+Ferill: lína sem síðan er sveigð með öðru smelli
+MSG_TOOL_RECTANGLE
+Rétthyrningur: frá einu horni til annars
+MSG_TOOL_ELLIPSE
+Sporbaugur: í kassanum frá einu horni til annars
+MSG_TOOL_POLYGON
+Marghyrningur: horn í hvert sinn sem hnappnum er sleppt, lokast á fyrsta horninu
+MSG_TOOL_FILL
+Fylla: einlita svæðið sem smellt er á
+MSG_TOOL_GRADIENT
+Litstigull: frá forgrunnslitnum þar sem dregið er af stað að bakgrunnslitnum þar sem drættinum lýkur
+MSG_TOOL_AIRBRUSH
+Úðabursti: úði þar sem bendillinn er, á meðan hnappnum er haldið niðri
+MSG_TOOL_PICK
+Sækja lit: liturinn undir bendlinum
+MSG_TOOL_TEXT
+Texti: sleginn inn og settur þar sem smellt er á myndina
+MSG_TOOL_GRAB
+Klippa pensil: hluti myndarinnar tekinn sem pensill
+MSG_TOOL_SELECT_BOX
+Rétthyrnt val: það sem má mála (Shift bætir við, Alt dregur frá)
+MSG_TOOL_LASSO
+Lassó: form sem teiknað er fríhendis er valið (Shift bætir við, Alt dregur frá)
+MSG_TOOL_WAND
+Töfrasproti: pixlar litarins sem tengjast þeim sem smellt er á eru valdir
+MSG_TOOL_HAND
+Hönd: myndin færð með bendlinum
+MSG_TOOL_ERASER
+Strokleður: myndin gerð gegnsæ þar sem pensillinn fer
+MSG_TOOL_SMUDGE
+Káma: litirnir undir penslinum dregnir með
+MSG_TOOL_ZOOM
+Aðdráttur: stærra þar sem smellt er, minna með valmyndarhnappnum
+MSG_FILLED_HINT
+Fylltir rétthyrningar, sporbaugar og marghyrningar
+MSG_UNDO_HINT
+Afturkalla síðustu breytingu
+MSG_REDO_HINT
+Endurgera breytinguna sem var afturkölluð
+MSG_ZOOM_IN_HINT
+Sýna myndina stærri
+MSG_ZOOM_OUT_HINT
+Sýna myndina minni
+MSG_FIT_HINT
+Sýna alla myndina eins stóra og hún kemst
+MSG_SWAP_HINT
+Víxla litunum tveimur
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Lög
+MSG_SECTION_BRUSH
+Pensill
+MSG_SECTION_COLOUR
+Litur
+MSG_SIZE
+Stærð
+MSG_SOFTNESS
+Mýkt
+MSG_OPACITY
+Ógegnsæi
+MSG_FLOW
+Flæði
+MSG_JITTER
+Flökt
+MSG_ROTATION
+Snúningur
+MSG_DITHER
+Punktablöndun
+MSG_BLEND
+Blöndun
+MSG_NEW_LAYER_HINT
+Nýtt lag ofan á það sem málað er á
+MSG_DELETE_LAYER_HINT
+Eyða laginu sem málað er á
+MSG_LAYER_NAME
+Lag %ld
+MSG_LAYER_COPY
+%s afrit
+MSG_BLEND_NORMAL
+Venjulegt
+MSG_BLEND_ADD
+Samlagning
+MSG_BLEND_MULTIPLY
+Margföldun
+MSG_BLEND_SCREEN
+Skjár
+MSG_BLEND_OVERLAY
+Yfirlag
+MSG_BLEND_DARKEN
+Dekkra
+MSG_BLEND_LIGHTEN
+Ljósara
+MSG_BLEND_DODGE
+Litlýsing
+MSG_BLEND_BURN
+Litbrennsla
+MSG_BLEND_HARD_LIGHT
+Hart ljós
+MSG_BLEND_SOFT_LIGHT
+Mjúkt ljós
+MSG_BLEND_HUE
+Litblær
+MSG_BLEND_SATURATION
+Litmettun
+MSG_BLEND_COLOUR
+Litur
+MSG_BLEND_LUMINOSITY
+Ljómi
+MSG_STATUS
+%ld x %ld   %ld:1   pensill %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pensill %ld   á %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pensill %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pensill %ld x %ld   á %ld, %ld
+MSG_NEW_TITLE
+Ný mynd
+MSG_CANVAS_TITLE
+Stærð striga
+MSG_PLACE
+Mynd
+MSG_PLACE_TOP_LEFT
+Efst til vinstri
+MSG_PLACE_TOP
+Efst
+MSG_PLACE_TOP_RIGHT
+Efst til hægri
+MSG_PLACE_LEFT
+Vinstri
+MSG_PLACE_MIDDLE
+Miðja
+MSG_PLACE_RIGHT
+Hægri
+MSG_PLACE_BOTTOM_LEFT
+Neðst til vinstri
+MSG_PLACE_BOTTOM
+Neðst
+MSG_PLACE_BOTTOM_RIGHT
+Neðst til hægri
+MSG_NO_IMAGE_MEMORY
+Ekkert minni\ntil að breyta myndinni.
+MSG_PICTURE_SIZE_TITLE
+Myndstærð
+MSG_SCALING
+Pixlar
+MSG_SCALE_SMOOTH
+Mjúkt
+MSG_SCALE_HARD
+Hart
+MSG_KEEP_PROPORTIONS
+Halda hlutföllum
+MSG_EFFECTS_TITLE
+Áhrif
+MSG_RESET
+Endurstilla
+MSG_FX_BRIGHTNESS
+Birtustig
+MSG_FX_CONTRAST
+Birtuskil
+MSG_FX_SATURATION
+Litmettun
+MSG_FX_HUE
+Litblær
+MSG_FX_BLUR
+Óskerpa
+MSG_FX_SHARPEN
+Skerpa
+MSG_FX_TEXTURE
+Áferð
+MSG_FX_DEHAZE
+Mistureyðing
+MSG_FX_SEPIA
+Sepía
+MSG_FX_INVERT
+Umhverfing
+MSG_FX_CYAN_RED
+Blágrænn/Rauður
+MSG_FX_MAGENTA_GREEN
+Blárauður/Grænn
+MSG_FX_YELLOW_BLUE
+Gulur/Blár
+MSG_WIDTH
+Breidd
+MSG_HEIGHT
+Hæð
+MSG_OK
+Í lagi
+MSG_ABOUT
+Paint %s\n\nMyndir í raunlitum, málaðar með\ninnbyggðum og klipptum penslum.
+MSG_CANCEL
+Hætta við
+MSG_TEXT_TITLE
+Texti
+MSG_RENAME_TITLE
+Endurnefna lag
+MSG_NAME
+Heiti
+MSG_TEXT
+Texti
+MSG_FONT
+Letur
+MSG_FONT_TITLE
+Letur textans
+MSG_CHANGED
+Myndinni hefur verið breytt.\nVista hana fyrst?
+MSG_CHANGED_BUTTONS
+Vista|Ekki vista|Hætta við
+MSG_NO_PICTURE
+Ekkert minni fyrir mynd\nsem er %ld sinnum %ld pixlar.
+MSG_NO_UNDO
+Breytingin var of stór til að geyma hana:\nekki er hægt að afturkalla hana.
+MSG_NO_LAYER
+Ekkert minni fyrir annað lag.
+MSG_NO_MASK
+Ekkert minni fyrir maska.
+MSG_NO_OWN_SCREEN
+Ekki tókst að opna eigin skjá.
+MSG_NO_FONT
+Ekki tókst að opna letrið.
+MSG_FILL_SHORT
+Minnið dugði ekki til að fylla allt.
+MSG_CHOICE_SHORT
+Minnið dugði ekki til að velja allt.
+MSG_NO_SELECTION
+Ekkert minni fyrir val.
+MSG_OUTLINE
+Útlína
+MSG_SHOW_MASK
+Maski
+MSG_MASK_ROW
+Maski
+MSG_MASK_PAINTED
+[Maski]
+MSG_OPEN_TITLE
+Opna mynd
+MSG_SAVE_AS_TITLE
+Vista myndina sem
+MSG_NO_OPEN
+%s\nverður ekki opnað:\n%s
+MSG_NO_SAVE
+Ekki er hægt að vista myndina\nsem %s:\n%s
+MSG_NO_PART
+%s\nverður ekki opnað.
+MSG_UNTITLED
+Ónefnt
+MSG_OPEN_BRUSH_TITLE
+Opna pensil
+MSG_SAVE_BRUSH_TITLE
+Vista pensilinn sem
+MSG_NO_SAVE_BRUSH
+Ekki er hægt að vista pensilinn\nsem %s:\n%s
+MSG_NO_SAVE_PALETTE
+Ekki er hægt að vista litaspjaldið\nsem %s:\n%s
+MSG_NO_PALETTE
+%s\ninniheldur ekkert litaspjald.
+MSG_NO_COUNT
+Ekkert minni til að telja litina.
+MSG_OPEN_PALETTE_TITLE
+Opna litaspjald
+MSG_SAVE_PALETTE_TITLE
+Vista litaspjaldið sem
+MSG_PALETTE_TITLE
+Litaspjald
+MSG_RED
+Rauður
+MSG_GREEN
+Grænn
+MSG_BLUE
+Blár
+MSG_HUE
+Litblær
+MSG_SATURATION
+Litmettun
+MSG_VALUE
+Gildi
+MSG_HEX
+Hex
+MSG_SPREAD
+Stigull
+MSG_COPY_COLOUR
+Afrita
+MSG_SWAP_COLOURS
+Víxla
+MSG_CHANGE_PIXELS
+Breyta pixlunum líka
+MSG_PICK_COLOUR
+Velja lit til að breyta honum.
+MSG_PICK_SPREAD
+Velja hinn enda stigulsins.
+MSG_PICK_COPY
+Velja litinn sem afrita á yfir á.
+MSG_PICK_SWAP
+Velja litinn sem víxla á við.
+MSG_PICK_RANGE
+Velja hinn enda bilsins.
+MSG_RANGE
+Bil
+MSG_SET_RANGE
+Setja bil
+MSG_SPEED
+Hraði
+MSG_BACKWARDS
+Afturábak
+MSG_RANGE_SPAN
+Bil %ld: litir %ld til %ld.
+MSG_RANGE_UNSET
+Bil %ld er ekki sett.
+MSG_NO_RANGE
+Ekkert bil litaspjaldsins snýst:\nsetja þarf eitt í ritli litaspjaldsins.
+MSG_NO_REDUCE
+Ekkert minni til að dreifa\nþví sem hvern lit vantar.
+MSG_BRUSH_TOO_LARGE
+Pensill getur mest verið %ld sinnum %ld pixlar.
+MSG_NO_BRUSH
+Ekkert minni fyrir pensil\nsem er %ld sinnum %ld pixlar.
+MSG_NOLIBRARY
+Ekkert %s\n
+MSG_NOSCREEN
+Enginn skjár - engin birting\n
+MSG_NOMEMORY
+Ekkert minni fyrir gluggann\n
+MSG_BADSCREEN
+SCREEN er OWN eða DESKTOP\n

@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language deutsch
+## codeset 106
+; Paint's strings in German.
+MSG_MENU_FILE
+Datei
+MSG_MENU_NEW
+Neu...
+MSG_MENU_OPEN
+Öffnen...
+MSG_MENU_SAVE
+Speichern
+MSG_MENU_SAVE_AS
+Speichern als...
+MSG_MENU_QUIT
+Beenden
+MSG_MENU_EDIT
+Bearbeiten
+MSG_MENU_UNDO
+Rückgängig
+MSG_MENU_REDO
+Wiederholen
+MSG_MENU_CLEAR
+Löschen
+MSG_MENU_IMAGE
+Bild
+MSG_MENU_ROTATE
+Drehen
+MSG_TURN_RIGHT
+90° im Uhrzeigersinn
+MSG_TURN_LEFT
+90° gegen den Uhrzeigersinn
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Auf die Auswahl freistellen
+MSG_MENU_TRIM
+Zuschneiden
+MSG_MENU_CANVAS_SIZE
+Leinwandgröße...
+MSG_MENU_FLATTEN
+Auf eine Ebene reduzieren
+MSG_MENU_PICTURE_SIZE
+Bildgröße...
+MSG_MENU_EFFECTS
+Effekte...
+MSG_MENU_FREE_TRANSFORM
+Frei transformieren
+MSG_MENU_TOOLS
+Werkzeuge
+MSG_MENU_FREEHAND
+Freihand
+MSG_MENU_DOTS
+Freihand gepunktet
+MSG_MENU_LINE
+Linie
+MSG_MENU_CURVE
+Kurve
+MSG_MENU_RECTANGLE
+Rechteck
+MSG_MENU_ELLIPSE
+Ellipse
+MSG_MENU_POLYGON
+Vieleck
+MSG_MENU_FILL
+Füllen
+MSG_MENU_GRADIENT
+Verlauf
+MSG_MENU_AIRBRUSH
+Airbrush
+MSG_MENU_PICK
+Farbe aufnehmen
+MSG_MENU_TEXT
+Text
+MSG_MENU_GRAB
+Pinsel ausschneiden
+MSG_MENU_SELECT_BOX
+Rechteckauswahl
+MSG_MENU_LASSO
+Lasso
+MSG_MENU_WAND
+Zauberstab
+MSG_MENU_HAND
+Hand
+MSG_MENU_ERASER
+Radiergummi
+MSG_MENU_SMUDGE
+Wischfinger
+MSG_MENU_ZOOM_TOOL
+Lupe
+MSG_MENU_FILLED
+Gefüllte Formen
+MSG_MENU_ROUND_GRADIENT
+Runder Verlauf
+MSG_MENU_SWAP
+Farben tauschen
+MSG_MENU_VIEW
+Ansicht
+MSG_MENU_ZOOM_IN
+Vergrößern
+MSG_MENU_ZOOM_OUT
+Verkleinern
+MSG_MENU_ACTUAL_SIZE
+Originalgröße
+MSG_MENU_FIT
+Einpassen
+MSG_MENU_GRID
+Raster
+MSG_MENU_RULERS
+Lineale
+MSG_MENU_SPLIT_SCREEN
+Geteilte Ansicht
+MSG_MENU_LAYER
+Ebene
+MSG_MENU_NEW_LAYER
+Neue Ebene
+MSG_MENU_DUPLICATE_LAYER
+Duplizieren
+MSG_MENU_DELETE_LAYER
+Löschen
+MSG_MENU_RENAME_LAYER
+Umbenennen...
+MSG_MENU_LAYER_UP
+Nach oben
+MSG_MENU_LAYER_DOWN
+Nach unten
+MSG_MENU_MERGE_DOWN
+Nach unten vereinen
+MSG_MENU_SELECTION
+Auswahl
+MSG_MENU_SELECT
+Auswählen
+MSG_MENU_SELECT_ALL
+Alles
+MSG_MENU_SELECT_LAYER
+Pixel der Ebene
+MSG_MENU_SELECT_COLOUR
+Pixel der Farbe
+MSG_MENU_SELECT_SEE_THROUGH
+Durchsichtige Pixel
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixel außerhalb der Palette
+MSG_MENU_DESELECT
+Auswahl aufheben
+MSG_MENU_INVERT
+Umkehren
+MSG_MENU_COPY_TO_LAYER
+In neue Ebene kopieren
+MSG_MENU_CUT_TO_LAYER
+In neue Ebene ausschneiden
+MSG_MENU_COPY_TO_BRUSH
+Als Pinsel kopieren
+MSG_MENU_BRUSH
+Pinsel
+MSG_MENU_ROUND
+Rund
+MSG_MENU_SQUARE
+Eckig
+MSG_MENU_OWN_BRUSH
+Eigener Pinsel
+MSG_MENU_SIZE
+Größe
+MSG_MENU_SMALLER
+Kleiner
+MSG_MENU_LARGER
+Größer
+MSG_MENU_OWN_COLOURS
+Eigene Farben
+MSG_MENU_ONE_COLOUR
+Eine Farbe
+MSG_MENU_FLIP_ACROSS
+Horizontal spiegeln
+MSG_MENU_FLIP_DOWN
+Vertikal spiegeln
+MSG_MENU_ADD_MASK
+Maske hinzufügen
+MSG_MENU_MASK_SHOW_ALL
+Alles zeigen
+MSG_MENU_MASK_HIDE_ALL
+Alles verbergen
+MSG_MENU_MASK_SELECTION
+Die Auswahl zeigen
+MSG_MENU_PAINT_MASK
+Maske malen
+MSG_MENU_APPLY_MASK
+Maske anwenden
+MSG_MENU_DELETE_MASK
+Maske löschen
+MSG_MENU_TURN
+Rechts drehen
+MSG_MENU_OPEN_BRUSH
+Pinsel öffnen...
+MSG_MENU_SAVE_BRUSH
+Pinsel speichern...
+MSG_MENU_PALETTE
+Palette
+MSG_MENU_EDIT_PALETTE
+Bearbeiten...
+MSG_MENU_FROM_PICTURE
+Aus dem Bild
+MSG_MENU_PRESETS
+Vorgaben
+MSG_PRESET_STANDARD
+Paints eigene
+MSG_PRESET_GREYS
+Grautöne
+MSG_PRESET_SPECTRUM
+Spektrum
+MSG_PRESET_PASTEL
+Pastell
+MSG_PRESET_EARTH
+Erdtöne
+MSG_MENU_REDUCE
+Reduzieren
+MSG_DITHER_NONE
+Ohne Rasterung
+MSG_DITHER_ORDERED
+Geordnete Rasterung
+MSG_DITHER_DIFFUSED
+Fehlerstreuung
+MSG_MENU_CYCLE
+Farben rotieren
+MSG_MENU_OPEN_PALETTE
+Palette öffnen...
+MSG_MENU_SAVE_PALETTE
+Palette speichern...
+MSG_MENU_OWN_SCREEN
+Eigener Bildschirm
+MSG_MENU_HELP
+Hilfe
+MSG_MENU_ABOUT
+Über Paint...
+MSG_TOOL_FREEHAND
+Freihand: eine Linie, wo der Zeiger entlanggeht
+MSG_TOOL_DOTS
+Freihand gepunktet: der Pinsel, wo der Zeiger ist
+MSG_TOOL_LINE
+Linie: von wo die Taste gedrückt bis wo sie losgelassen wird
+MSG_TOOL_CURVE
+Kurve: eine Linie, dann mit einem zweiten Druck gebogen
+MSG_TOOL_RECTANGLE
+Rechteck: von einer Ecke zur anderen
+MSG_TOOL_ELLIPSE
+Ellipse: im Kasten von einer Ecke zur anderen
+MSG_TOOL_POLYGON
+Vieleck: eine Ecke bei jedem Loslassen, an der ersten Ecke geschlossen
+MSG_TOOL_FILL
+Füllen: die Fläche einer Farbe, die angeklickt wird
+MSG_TOOL_GRADIENT
+Verlauf: von der Vordergrundfarbe am Anfang des Ziehens zur Hintergrundfarbe an seinem Ende
+MSG_TOOL_AIRBRUSH
+Airbrush: ein Sprühnebel, wo der Zeiger ist, so lange er gehalten wird
+MSG_TOOL_PICK
+Farbe aufnehmen: die Farbe unter dem Zeiger
+MSG_TOOL_TEXT
+Text: getippt und dort gesetzt, wo ins Bild geklickt wird
+MSG_TOOL_GRAB
+Pinsel ausschneiden: ein Teil des Bildes als Pinsel genommen
+MSG_TOOL_SELECT_BOX
+Rechteckauswahl: was bemalt werden darf (Umschalt fügt hinzu, Alt nimmt weg)
+MSG_TOOL_LASSO
+Lasso: eine von Hand gezeichnete Form ausgewählt (Umschalt fügt hinzu, Alt nimmt weg)
+MSG_TOOL_WAND
+Zauberstab: die Pixel der Farbe ausgewählt, die mit dem angeklickten verbunden sind
+MSG_TOOL_HAND
+Hand: das Bild mit dem Zeiger verschoben
+MSG_TOOL_ERASER
+Radiergummi: das Bild durchsichtig gemacht, wo der Pinsel hingeht
+MSG_TOOL_SMUDGE
+Wischfinger: die Farben unter dem Pinsel mitgezogen
+MSG_TOOL_ZOOM
+Lupe: größer, wo geklickt wird, kleiner mit der Menütaste
+MSG_FILLED_HINT
+Rechtecke, Ellipsen und Vielecke gefüllt
+MSG_UNDO_HINT
+Die letzte Änderung rückgängig machen
+MSG_REDO_HINT
+Die rückgängig gemachte Änderung wiederholen
+MSG_ZOOM_IN_HINT
+Das Bild größer zeigen
+MSG_ZOOM_OUT_HINT
+Das Bild kleiner zeigen
+MSG_FIT_HINT
+Das ganze Bild so groß zeigen, wie es passt
+MSG_SWAP_HINT
+Die beiden Farben tauschen
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Ebenen
+MSG_SECTION_BRUSH
+Pinsel
+MSG_SECTION_COLOUR
+Farbe
+MSG_SIZE
+Größe
+MSG_SOFTNESS
+Weichheit
+MSG_OPACITY
+Deckkraft
+MSG_FLOW
+Fluss
+MSG_JITTER
+Streuung
+MSG_ROTATION
+Drehung
+MSG_DITHER
+Rasterung
+MSG_BLEND
+Mischmodus
+MSG_NEW_LAYER_HINT
+Eine neue Ebene über der bemalten
+MSG_DELETE_LAYER_HINT
+Die bemalte Ebene löschen
+MSG_LAYER_NAME
+Ebene %ld
+MSG_LAYER_COPY
+%s Kopie
+MSG_BLEND_NORMAL
+Normal
+MSG_BLEND_ADD
+Addieren
+MSG_BLEND_MULTIPLY
+Multiplizieren
+MSG_BLEND_SCREEN
+Negativ multiplizieren
+MSG_BLEND_OVERLAY
+Ineinanderkopieren
+MSG_BLEND_DARKEN
+Abdunkeln
+MSG_BLEND_LIGHTEN
+Aufhellen
+MSG_BLEND_DODGE
+Farbig abwedeln
+MSG_BLEND_BURN
+Farbig nachbelichten
+MSG_BLEND_HARD_LIGHT
+Hartes Licht
+MSG_BLEND_SOFT_LIGHT
+Weiches Licht
+MSG_BLEND_HUE
+Farbton
+MSG_BLEND_SATURATION
+Sättigung
+MSG_BLEND_COLOUR
+Farbe
+MSG_BLEND_LUMINOSITY
+Luminanz
+MSG_STATUS
+%ld x %ld   %ld:1   Pinsel %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   Pinsel %ld   bei %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   Pinsel %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   Pinsel %ld x %ld   bei %ld, %ld
+MSG_NEW_TITLE
+Neues Bild
+MSG_CANVAS_TITLE
+Leinwandgröße
+MSG_PLACE
+Bild
+MSG_PLACE_TOP_LEFT
+Oben links
+MSG_PLACE_TOP
+Oben
+MSG_PLACE_TOP_RIGHT
+Oben rechts
+MSG_PLACE_LEFT
+Links
+MSG_PLACE_MIDDLE
+Mitte
+MSG_PLACE_RIGHT
+Rechts
+MSG_PLACE_BOTTOM_LEFT
+Unten links
+MSG_PLACE_BOTTOM
+Unten
+MSG_PLACE_BOTTOM_RIGHT
+Unten rechts
+MSG_NO_IMAGE_MEMORY
+Kein Speicher,\num das Bild zu ändern.
+MSG_PICTURE_SIZE_TITLE
+Bildgröße
+MSG_SCALING
+Pixel
+MSG_SCALE_SMOOTH
+Weich
+MSG_SCALE_HARD
+Hart
+MSG_KEEP_PROPORTIONS
+Proportionen beibehalten
+MSG_EFFECTS_TITLE
+Effekte
+MSG_RESET
+Zurücksetzen
+MSG_FX_BRIGHTNESS
+Helligkeit
+MSG_FX_CONTRAST
+Kontrast
+MSG_FX_SATURATION
+Sättigung
+MSG_FX_HUE
+Farbton
+MSG_FX_BLUR
+Weichzeichnen
+MSG_FX_SHARPEN
+Schärfen
+MSG_FX_TEXTURE
+Struktur
+MSG_FX_DEHAZE
+Dunst entfernen
+MSG_FX_SEPIA
+Sepia
+MSG_FX_INVERT
+Umkehren
+MSG_FX_CYAN_RED
+Cyan/Rot
+MSG_FX_MAGENTA_GREEN
+Magenta/Grün
+MSG_FX_YELLOW_BLUE
+Gelb/Blau
+MSG_WIDTH
+Breite
+MSG_HEIGHT
+Höhe
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nBilder in Echtfarben, gemalt mit\neingebauten und ausgeschnittenen Pinseln.
+MSG_CANCEL
+Abbrechen
+MSG_TEXT_TITLE
+Text
+MSG_RENAME_TITLE
+Ebene umbenennen
+MSG_NAME
+Name
+MSG_TEXT
+Text
+MSG_FONT
+Schrift
+MSG_FONT_TITLE
+Die Schrift des Textes
+MSG_CHANGED
+Das Bild wurde geändert.\nZuerst speichern?
+MSG_CHANGED_BUTTONS
+Speichern|Nicht speichern|Abbrechen
+MSG_NO_PICTURE
+Kein Speicher für ein Bild\nvon %ld mal %ld Pixeln.
+MSG_NO_UNDO
+Diese Änderung war zu groß zum Aufbewahren:\nsie kann nicht rückgängig gemacht werden.
+MSG_NO_LAYER
+Kein Speicher für eine weitere Ebene.
+MSG_NO_MASK
+Kein Speicher für eine Maske.
+MSG_NO_OWN_SCREEN
+Ein eigener Bildschirm ließ sich nicht öffnen.
+MSG_NO_FONT
+Die Schrift ließ sich nicht öffnen.
+MSG_FILL_SHORT
+Der Speicher reichte nicht, um alles zu füllen.
+MSG_CHOICE_SHORT
+Der Speicher reichte nicht, um alles auszuwählen.
+MSG_NO_SELECTION
+Kein Speicher für eine Auswahl.
+MSG_OUTLINE
+Umriss
+MSG_SHOW_MASK
+Maske
+MSG_MASK_ROW
+Maske
+MSG_MASK_PAINTED
+[Maske]
+MSG_OPEN_TITLE
+Ein Bild öffnen
+MSG_SAVE_AS_TITLE
+Das Bild speichern als
+MSG_NO_OPEN
+%s\nlässt sich nicht öffnen:\n%s
+MSG_NO_SAVE
+Das Bild lässt sich nicht\nals %s speichern:\n%s
+MSG_NO_PART
+%s\nlässt sich nicht öffnen.
+MSG_UNTITLED
+Unbenannt
+MSG_OPEN_BRUSH_TITLE
+Einen Pinsel öffnen
+MSG_SAVE_BRUSH_TITLE
+Den Pinsel speichern als
+MSG_NO_SAVE_BRUSH
+Der Pinsel lässt sich nicht\nals %s speichern:\n%s
+MSG_NO_SAVE_PALETTE
+Die Palette lässt sich nicht\nals %s speichern:\n%s
+MSG_NO_PALETTE
+%s\nenthält keine Palette.
+MSG_NO_COUNT
+Kein Speicher, um die Farben zu zählen.
+MSG_OPEN_PALETTE_TITLE
+Eine Palette öffnen
+MSG_SAVE_PALETTE_TITLE
+Die Palette speichern als
+MSG_PALETTE_TITLE
+Palette
+MSG_RED
+Rot
+MSG_GREEN
+Grün
+MSG_BLUE
+Blau
+MSG_HUE
+Farbton
+MSG_SATURATION
+Sättigung
+MSG_VALUE
+Hellwert
+MSG_HEX
+Hex
+MSG_SPREAD
+Verlauf
+MSG_COPY_COLOUR
+Kopieren
+MSG_SWAP_COLOURS
+Tauschen
+MSG_CHANGE_PIXELS
+Auch die Pixel ändern
+MSG_PICK_COLOUR
+Eine Farbe wählen, um sie zu ändern.
+MSG_PICK_SPREAD
+Das andere Ende des Verlaufs wählen.
+MSG_PICK_COPY
+Die Farbe wählen, auf die kopiert wird.
+MSG_PICK_SWAP
+Die Farbe wählen, mit der getauscht wird.
+MSG_PICK_RANGE
+Das andere Ende des Bereichs wählen.
+MSG_RANGE
+Bereich
+MSG_SET_RANGE
+Bereich setzen
+MSG_SPEED
+Tempo
+MSG_BACKWARDS
+Rückwärts
+MSG_RANGE_SPAN
+Bereich %ld: Farben %ld bis %ld.
+MSG_RANGE_UNSET
+Bereich %ld ist nicht gesetzt.
+MSG_NO_RANGE
+Kein Bereich der Palette rotiert:\nim Paletteneditor einen setzen.
+MSG_NO_REDUCE
+Kein Speicher, um zu verteilen,\nwas jeder Farbe fehlt.
+MSG_BRUSH_TOO_LARGE
+Ein Pinsel kann höchstens %ld mal %ld Pixel groß sein.
+MSG_NO_BRUSH
+Kein Speicher für einen Pinsel\nvon %ld mal %ld Pixeln.
+MSG_NOLIBRARY
+Kein %s\n
+MSG_NOSCREEN
+Kein Bildschirm - keine Anzeige\n
+MSG_NOMEMORY
+Kein Speicher für das Fenster\n
+MSG_BADSCREEN
+SCREEN ist OWN oder DESKTOP\n

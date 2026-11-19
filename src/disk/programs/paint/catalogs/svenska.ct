@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language svenska
+## codeset 106
+; Paint's strings in Swedish.
+MSG_MENU_FILE
+Arkiv
+MSG_MENU_NEW
+Ny...
+MSG_MENU_OPEN
+Öppna...
+MSG_MENU_SAVE
+Spara
+MSG_MENU_SAVE_AS
+Spara som...
+MSG_MENU_QUIT
+Avsluta
+MSG_MENU_EDIT
+Redigera
+MSG_MENU_UNDO
+Ångra
+MSG_MENU_REDO
+Gör om
+MSG_MENU_CLEAR
+Rensa
+MSG_MENU_IMAGE
+Bild
+MSG_MENU_ROTATE
+Rotera
+MSG_TURN_RIGHT
+90° medurs
+MSG_TURN_LEFT
+90° moturs
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Beskär till markeringen
+MSG_MENU_TRIM
+Ta bort kanter
+MSG_MENU_CANVAS_SIZE
+Arbetsytans storlek...
+MSG_MENU_FLATTEN
+Gör till ett lager
+MSG_MENU_PICTURE_SIZE
+Bildstorlek...
+MSG_MENU_EFFECTS
+Effekter...
+MSG_MENU_FREE_TRANSFORM
+Fri omformning
+MSG_MENU_TOOLS
+Verktyg
+MSG_MENU_FREEHAND
+Frihand
+MSG_MENU_DOTS
+Prickad frihand
+MSG_MENU_LINE
+Linje
+MSG_MENU_CURVE
+Kurva
+MSG_MENU_RECTANGLE
+Rektangel
+MSG_MENU_ELLIPSE
+Ellips
+MSG_MENU_POLYGON
+Polygon
+MSG_MENU_FILL
+Fyll
+MSG_MENU_GRADIENT
+Övertoning
+MSG_MENU_AIRBRUSH
+Airbrush
+MSG_MENU_PICK
+Hämta färg
+MSG_MENU_TEXT
+Text
+MSG_MENU_GRAB
+Klipp ut pensel
+MSG_MENU_SELECT_BOX
+Rektangulär markering
+MSG_MENU_LASSO
+Lasso
+MSG_MENU_WAND
+Trollstav
+MSG_MENU_HAND
+Hand
+MSG_MENU_ERASER
+Suddgummi
+MSG_MENU_SMUDGE
+Smeta ut
+MSG_MENU_ZOOM_TOOL
+Zoom
+MSG_MENU_FILLED
+Fyllda former
+MSG_MENU_ROUND_GRADIENT
+Rund övertoning
+MSG_MENU_SWAP
+Byt färger
+MSG_MENU_VIEW
+Visa
+MSG_MENU_ZOOM_IN
+Zooma in
+MSG_MENU_ZOOM_OUT
+Zooma ut
+MSG_MENU_ACTUAL_SIZE
+Faktisk storlek
+MSG_MENU_FIT
+Anpassa till fönstret
+MSG_MENU_GRID
+Rutnät
+MSG_MENU_RULERS
+Linjaler
+MSG_MENU_SPLIT_SCREEN
+Delad vy
+MSG_MENU_LAYER
+Lager
+MSG_MENU_NEW_LAYER
+Nytt lager
+MSG_MENU_DUPLICATE_LAYER
+Duplicera
+MSG_MENU_DELETE_LAYER
+Ta bort
+MSG_MENU_RENAME_LAYER
+Byt namn...
+MSG_MENU_LAYER_UP
+Flytta upp
+MSG_MENU_LAYER_DOWN
+Flytta ned
+MSG_MENU_MERGE_DOWN
+Sammanfoga nedåt
+MSG_MENU_SELECTION
+Markering
+MSG_MENU_SELECT
+Markera
+MSG_MENU_SELECT_ALL
+Allt
+MSG_MENU_SELECT_LAYER
+Lagrets pixlar
+MSG_MENU_SELECT_COLOUR
+Färgens pixlar
+MSG_MENU_SELECT_SEE_THROUGH
+Genomskinliga pixlar
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pixlar utanför paletten
+MSG_MENU_DESELECT
+Avmarkera
+MSG_MENU_INVERT
+Invertera
+MSG_MENU_COPY_TO_LAYER
+Kopiera till nytt lager
+MSG_MENU_CUT_TO_LAYER
+Klipp ut till nytt lager
+MSG_MENU_COPY_TO_BRUSH
+Kopiera som pensel
+MSG_MENU_BRUSH
+Pensel
+MSG_MENU_ROUND
+Rund
+MSG_MENU_SQUARE
+Fyrkantig
+MSG_MENU_OWN_BRUSH
+Egen pensel
+MSG_MENU_SIZE
+Storlek
+MSG_MENU_SMALLER
+Mindre
+MSG_MENU_LARGER
+Större
+MSG_MENU_OWN_COLOURS
+Egna färger
+MSG_MENU_ONE_COLOUR
+En färg
+MSG_MENU_FLIP_ACROSS
+Vänd horisontellt
+MSG_MENU_FLIP_DOWN
+Vänd vertikalt
+MSG_MENU_ADD_MASK
+Lägg till mask
+MSG_MENU_MASK_SHOW_ALL
+Visa allt
+MSG_MENU_MASK_HIDE_ALL
+Dölj allt
+MSG_MENU_MASK_SELECTION
+Visa markeringen
+MSG_MENU_PAINT_MASK
+Måla masken
+MSG_MENU_APPLY_MASK
+Verkställ masken
+MSG_MENU_DELETE_MASK
+Ta bort masken
+MSG_MENU_TURN
+Vrid åt höger
+MSG_MENU_OPEN_BRUSH
+Öppna pensel...
+MSG_MENU_SAVE_BRUSH
+Spara pensel...
+MSG_MENU_PALETTE
+Palett
+MSG_MENU_EDIT_PALETTE
+Redigera...
+MSG_MENU_FROM_PICTURE
+Från bilden
+MSG_MENU_PRESETS
+Förval
+MSG_PRESET_STANDARD
+Paints egen
+MSG_PRESET_GREYS
+Gråtoner
+MSG_PRESET_SPECTRUM
+Spektrum
+MSG_PRESET_PASTEL
+Pastell
+MSG_PRESET_EARTH
+Jordfärger
+MSG_MENU_REDUCE
+Reducera
+MSG_DITHER_NONE
+Utan dithering
+MSG_DITHER_ORDERED
+Ordnad dithering
+MSG_DITHER_DIFFUSED
+Felspridning
+MSG_MENU_CYCLE
+Rotera färger
+MSG_MENU_OPEN_PALETTE
+Öppna palett...
+MSG_MENU_SAVE_PALETTE
+Spara palett...
+MSG_MENU_OWN_SCREEN
+Egen skärm
+MSG_MENU_HELP
+Hjälp
+MSG_MENU_ABOUT
+Om Paint...
+MSG_TOOL_FREEHAND
+Frihand: en linje där pekaren går
+MSG_TOOL_DOTS
+Prickad frihand: penseln där pekaren är
+MSG_TOOL_LINE
+Linje: från där knappen trycks ned till där den släpps
+MSG_TOOL_CURVE
+Kurva: en linje som sedan böjs med ett andra tryck
+MSG_TOOL_RECTANGLE
+Rektangel: från det ena hörnet till det andra
+MSG_TOOL_ELLIPSE
+Ellips: i rutan från det ena hörnet till det andra
+MSG_TOOL_POLYGON
+Polygon: ett hörn varje gång knappen släpps, stängd vid det första hörnet
+MSG_TOOL_FILL
+Fyll: det enfärgade område som klickas på
+MSG_TOOL_GRADIENT
+Övertoning: från förgrundsfärgen där dragningen börjar till bakgrundsfärgen där den slutar
+MSG_TOOL_AIRBRUSH
+Airbrush: en sprej där pekaren är, så länge knappen hålls ned
+MSG_TOOL_PICK
+Hämta färg: färgen under pekaren
+MSG_TOOL_TEXT
+Text: skrivs in och placeras där det klickas i bilden
+MSG_TOOL_GRAB
+Klipp ut pensel: en del av bilden tas som pensel
+MSG_TOOL_SELECT_BOX
+Rektangulär markering: det som får målas (Skift lägger till, Alt tar bort)
+MSG_TOOL_LASSO
+Lasso: en form ritad på fri hand markeras (Skift lägger till, Alt tar bort)
+MSG_TOOL_WAND
+Trollstav: färgens pixlar som hänger ihop med den som klickas markeras
+MSG_TOOL_HAND
+Hand: bilden flyttas med pekaren
+MSG_TOOL_ERASER
+Suddgummi: bilden görs genomskinlig där penseln går
+MSG_TOOL_SMUDGE
+Smeta ut: färgerna under penseln dras med
+MSG_TOOL_ZOOM
+Zoom: större där det klickas, mindre med menyknappen
+MSG_FILLED_HINT
+Fyllda rektanglar, ellipser och polygoner
+MSG_UNDO_HINT
+Ångra den senaste ändringen
+MSG_REDO_HINT
+Gör om den ångrade ändringen
+MSG_ZOOM_IN_HINT
+Visa bilden större
+MSG_ZOOM_OUT_HINT
+Visa bilden mindre
+MSG_FIT_HINT
+Visa hela bilden så stor som den får plats
+MSG_SWAP_HINT
+Byt plats på de två färgerna
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Lager
+MSG_SECTION_BRUSH
+Pensel
+MSG_SECTION_COLOUR
+Färg
+MSG_SIZE
+Storlek
+MSG_SOFTNESS
+Mjukhet
+MSG_OPACITY
+Opacitet
+MSG_FLOW
+Flöde
+MSG_JITTER
+Spridning
+MSG_ROTATION
+Rotation
+MSG_DITHER
+Dithering
+MSG_BLEND
+Blandning
+MSG_NEW_LAYER_HINT
+Ett nytt lager ovanför det som målas
+MSG_DELETE_LAYER_HINT
+Ta bort lagret som målas
+MSG_LAYER_NAME
+Lager %ld
+MSG_LAYER_COPY
+%s kopia
+MSG_BLEND_NORMAL
+Normal
+MSG_BLEND_ADD
+Addera
+MSG_BLEND_MULTIPLY
+Multiplicera
+MSG_BLEND_SCREEN
+Raster
+MSG_BLEND_OVERLAY
+Täcka över
+MSG_BLEND_DARKEN
+Mörkare
+MSG_BLEND_LIGHTEN
+Ljusare
+MSG_BLEND_DODGE
+Färgskugga
+MSG_BLEND_BURN
+Efterbelys färg
+MSG_BLEND_HARD_LIGHT
+Hårt ljus
+MSG_BLEND_SOFT_LIGHT
+Mjukt ljus
+MSG_BLEND_HUE
+Nyans
+MSG_BLEND_SATURATION
+Mättnad
+MSG_BLEND_COLOUR
+Färg
+MSG_BLEND_LUMINOSITY
+Luminans
+MSG_STATUS
+%ld x %ld   %ld:1   pensel %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pensel %ld   vid %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pensel %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pensel %ld x %ld   vid %ld, %ld
+MSG_NEW_TITLE
+Ny bild
+MSG_CANVAS_TITLE
+Arbetsytans storlek
+MSG_PLACE
+Bild
+MSG_PLACE_TOP_LEFT
+Uppe till vänster
+MSG_PLACE_TOP
+Uppe
+MSG_PLACE_TOP_RIGHT
+Uppe till höger
+MSG_PLACE_LEFT
+Vänster
+MSG_PLACE_MIDDLE
+Mitten
+MSG_PLACE_RIGHT
+Höger
+MSG_PLACE_BOTTOM_LEFT
+Nere till vänster
+MSG_PLACE_BOTTOM
+Nere
+MSG_PLACE_BOTTOM_RIGHT
+Nere till höger
+MSG_NO_IMAGE_MEMORY
+Inget minne\nför att ändra bilden.
+MSG_PICTURE_SIZE_TITLE
+Bildstorlek
+MSG_SCALING
+Pixlar
+MSG_SCALE_SMOOTH
+Mjuk
+MSG_SCALE_HARD
+Hård
+MSG_KEEP_PROPORTIONS
+Behåll proportioner
+MSG_EFFECTS_TITLE
+Effekter
+MSG_RESET
+Återställ
+MSG_FX_BRIGHTNESS
+Ljusstyrka
+MSG_FX_CONTRAST
+Kontrast
+MSG_FX_SATURATION
+Mättnad
+MSG_FX_HUE
+Nyans
+MSG_FX_BLUR
+Oskärpa
+MSG_FX_SHARPEN
+Skärpa
+MSG_FX_TEXTURE
+Struktur
+MSG_FX_DEHAZE
+Ta bort dis
+MSG_FX_SEPIA
+Sepia
+MSG_FX_INVERT
+Invertering
+MSG_FX_CYAN_RED
+Cyan/Röd
+MSG_FX_MAGENTA_GREEN
+Magenta/Grön
+MSG_FX_YELLOW_BLUE
+Gul/Blå
+MSG_WIDTH
+Bredd
+MSG_HEIGHT
+Höjd
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nBilder i äkta färg, målade med\ninbyggda och urklippta penslar.
+MSG_CANCEL
+Avbryt
+MSG_TEXT_TITLE
+Text
+MSG_RENAME_TITLE
+Byt namn på lager
+MSG_NAME
+Namn
+MSG_TEXT
+Text
+MSG_FONT
+Typsnitt
+MSG_FONT_TITLE
+Textens typsnitt
+MSG_CHANGED
+Bilden har ändrats.\nSpara den först?
+MSG_CHANGED_BUTTONS
+Spara|Spara inte|Avbryt
+MSG_NO_PICTURE
+Inget minne för en bild\npå %ld gånger %ld pixlar.
+MSG_NO_UNDO
+Ändringen var för stor för att behållas:\nden kan inte ångras.
+MSG_NO_LAYER
+Inget minne för ännu ett lager.
+MSG_NO_MASK
+Inget minne för en mask.
+MSG_NO_OWN_SCREEN
+Ingen egen skärm kunde öppnas.
+MSG_NO_FONT
+Typsnittet kunde inte öppnas.
+MSG_FILL_SHORT
+Minnet räckte inte för att fylla allt.
+MSG_CHOICE_SHORT
+Minnet räckte inte för att markera allt.
+MSG_NO_SELECTION
+Inget minne för en markering.
+MSG_OUTLINE
+Kontur
+MSG_SHOW_MASK
+Mask
+MSG_MASK_ROW
+Mask
+MSG_MASK_PAINTED
+[Mask]
+MSG_OPEN_TITLE
+Öppna en bild
+MSG_SAVE_AS_TITLE
+Spara bilden som
+MSG_NO_OPEN
+%s\nkan inte öppnas:\n%s
+MSG_NO_SAVE
+Bilden kan inte sparas\nsom %s:\n%s
+MSG_NO_PART
+%s\nkan inte öppnas.
+MSG_UNTITLED
+Namnlös
+MSG_OPEN_BRUSH_TITLE
+Öppna en pensel
+MSG_SAVE_BRUSH_TITLE
+Spara penseln som
+MSG_NO_SAVE_BRUSH
+Penseln kan inte sparas\nsom %s:\n%s
+MSG_NO_SAVE_PALETTE
+Paletten kan inte sparas\nsom %s:\n%s
+MSG_NO_PALETTE
+%s\ninnehåller ingen palett.
+MSG_NO_COUNT
+Inget minne för att räkna färgerna.
+MSG_OPEN_PALETTE_TITLE
+Öppna en palett
+MSG_SAVE_PALETTE_TITLE
+Spara paletten som
+MSG_PALETTE_TITLE
+Palett
+MSG_RED
+Röd
+MSG_GREEN
+Grön
+MSG_BLUE
+Blå
+MSG_HUE
+Nyans
+MSG_SATURATION
+Mättnad
+MSG_VALUE
+Värde
+MSG_HEX
+Hex
+MSG_SPREAD
+Övergång
+MSG_COPY_COLOUR
+Kopiera
+MSG_SWAP_COLOURS
+Byt
+MSG_CHANGE_PIXELS
+Ändra även pixlarna
+MSG_PICK_COLOUR
+Välj en färg för att ändra den.
+MSG_PICK_SPREAD
+Välj den andra änden av övergången.
+MSG_PICK_COPY
+Välj färgen att kopiera till.
+MSG_PICK_SWAP
+Välj färgen att byta med.
+MSG_PICK_RANGE
+Välj den andra änden av intervallet.
+MSG_RANGE
+Intervall
+MSG_SET_RANGE
+Ange intervall
+MSG_SPEED
+Hastighet
+MSG_BACKWARDS
+Baklänges
+MSG_RANGE_SPAN
+Intervall %ld: färg %ld till %ld.
+MSG_RANGE_UNSET
+Intervall %ld är inte angivet.
+MSG_NO_RANGE
+Inget intervall i paletten roterar:\nange ett i paletteditorn.
+MSG_NO_REDUCE
+Inget minne för att fördela\nvad varje färg saknar.
+MSG_BRUSH_TOO_LARGE
+En pensel kan vara högst %ld gånger %ld pixlar.
+MSG_NO_BRUSH
+Inget minne för en pensel\npå %ld gånger %ld pixlar.
+MSG_NOLIBRARY
+Inget %s\n
+MSG_NOSCREEN
+Ingen skärm - ingen visning\n
+MSG_NOMEMORY
+Inget minne för fönstret\n
+MSG_BADSCREEN
+SCREEN är OWN eller DESKTOP\n

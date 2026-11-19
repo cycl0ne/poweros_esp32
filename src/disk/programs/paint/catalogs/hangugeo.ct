@@ -1,0 +1,565 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language hangugeo
+## codeset 106
+; Paint's strings in Korean. A draft: it waits for a reader of
+; Korean to go through it.
+MSG_MENU_FILE
+파일
+MSG_MENU_NEW
+새로 만들기...
+MSG_MENU_OPEN
+열기...
+MSG_MENU_SAVE
+저장
+MSG_MENU_SAVE_AS
+다른 이름으로 저장...
+MSG_MENU_QUIT
+종료
+MSG_MENU_EDIT
+편집
+MSG_MENU_UNDO
+실행 취소
+MSG_MENU_REDO
+다시 실행
+MSG_MENU_CLEAR
+지우기
+MSG_MENU_IMAGE
+이미지
+MSG_MENU_ROTATE
+회전
+MSG_TURN_RIGHT
+시계 방향으로 90°
+MSG_TURN_LEFT
+시계 반대 방향으로 90°
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+선택 영역으로 자르기
+MSG_MENU_TRIM
+재단
+MSG_MENU_CANVAS_SIZE
+캔버스 크기...
+MSG_MENU_FLATTEN
+이미지 병합
+MSG_MENU_PICTURE_SIZE
+이미지 크기...
+MSG_MENU_EFFECTS
+효과...
+MSG_MENU_FREE_TRANSFORM
+자유 변형
+MSG_MENU_TOOLS
+도구
+MSG_MENU_FREEHAND
+자유 그리기
+MSG_MENU_DOTS
+점 자유 그리기
+MSG_MENU_LINE
+직선
+MSG_MENU_CURVE
+곡선
+MSG_MENU_RECTANGLE
+사각형
+MSG_MENU_ELLIPSE
+타원
+MSG_MENU_POLYGON
+다각형
+MSG_MENU_FILL
+채우기
+MSG_MENU_GRADIENT
+그레이디언트
+MSG_MENU_AIRBRUSH
+에어브러시
+MSG_MENU_PICK
+스포이트
+MSG_MENU_TEXT
+텍스트
+MSG_MENU_GRAB
+브러시 잘라내기
+MSG_MENU_SELECT_BOX
+사각형 선택
+MSG_MENU_LASSO
+올가미
+MSG_MENU_WAND
+자동 선택
+MSG_MENU_HAND
+손
+MSG_MENU_ERASER
+지우개
+MSG_MENU_SMUDGE
+손가락
+MSG_MENU_ZOOM_TOOL
+돋보기
+MSG_MENU_FILLED
+채운 도형
+MSG_MENU_ROUND_GRADIENT
+원형 그레이디언트
+MSG_MENU_SWAP
+색 맞바꾸기
+MSG_MENU_VIEW
+보기
+MSG_MENU_ZOOM_IN
+확대
+MSG_MENU_ZOOM_OUT
+축소
+MSG_MENU_ACTUAL_SIZE
+실제 크기
+MSG_MENU_FIT
+화면에 맞추기
+MSG_MENU_GRID
+격자
+MSG_MENU_RULERS
+눈금자
+MSG_MENU_SPLIT_SCREEN
+화면 분할
+MSG_MENU_LAYER
+레이어
+MSG_MENU_NEW_LAYER
+새 레이어
+MSG_MENU_DUPLICATE_LAYER
+복제
+MSG_MENU_DELETE_LAYER
+삭제
+MSG_MENU_RENAME_LAYER
+이름 바꾸기...
+MSG_MENU_LAYER_UP
+위로 이동
+MSG_MENU_LAYER_DOWN
+아래로 이동
+MSG_MENU_MERGE_DOWN
+아래 레이어와 병합
+MSG_MENU_SELECTION
+선택 영역
+MSG_MENU_SELECT
+선택
+MSG_MENU_SELECT_ALL
+모두
+MSG_MENU_SELECT_LAYER
+레이어의 픽셀
+MSG_MENU_SELECT_COLOUR
+색의 픽셀
+MSG_MENU_SELECT_SEE_THROUGH
+투명 픽셀
+MSG_MENU_SELECT_NOT_IN_PALETTE
+팔레트에 없는 픽셀
+MSG_MENU_DESELECT
+선택 해제
+MSG_MENU_INVERT
+반전
+MSG_MENU_COPY_TO_LAYER
+새 레이어로 복사
+MSG_MENU_CUT_TO_LAYER
+새 레이어로 잘라내기
+MSG_MENU_COPY_TO_BRUSH
+브러시로 복사
+MSG_MENU_BRUSH
+브러시
+MSG_MENU_ROUND
+원형
+MSG_MENU_SQUARE
+사각형
+MSG_MENU_OWN_BRUSH
+사용자 브러시
+MSG_MENU_SIZE
+크기
+MSG_MENU_SMALLER
+작게
+MSG_MENU_LARGER
+크게
+MSG_MENU_OWN_COLOURS
+원래 색
+MSG_MENU_ONE_COLOUR
+단색
+MSG_MENU_FLIP_ACROSS
+가로로 뒤집기
+MSG_MENU_FLIP_DOWN
+세로로 뒤집기
+MSG_MENU_ADD_MASK
+마스크 추가
+MSG_MENU_MASK_SHOW_ALL
+모두 표시
+MSG_MENU_MASK_HIDE_ALL
+모두 숨기기
+MSG_MENU_MASK_SELECTION
+선택 영역 표시
+MSG_MENU_PAINT_MASK
+마스크에 그리기
+MSG_MENU_APPLY_MASK
+마스크 적용
+MSG_MENU_DELETE_MASK
+마스크 삭제
+MSG_MENU_TURN
+오른쪽으로 회전
+MSG_MENU_OPEN_BRUSH
+브러시 열기...
+MSG_MENU_SAVE_BRUSH
+브러시 저장...
+MSG_MENU_PALETTE
+팔레트
+MSG_MENU_EDIT_PALETTE
+편집...
+MSG_MENU_FROM_PICTURE
+이미지에서
+MSG_MENU_PRESETS
+사전 설정
+MSG_PRESET_STANDARD
+Paint 기본
+MSG_PRESET_GREYS
+회색조
+MSG_PRESET_SPECTRUM
+스펙트럼
+MSG_PRESET_PASTEL
+파스텔
+MSG_PRESET_EARTH
+어스 톤
+MSG_MENU_REDUCE
+색 줄이기
+MSG_DITHER_NONE
+디더링 없음
+MSG_DITHER_ORDERED
+패턴 디더링
+MSG_DITHER_DIFFUSED
+오차 확산
+MSG_MENU_CYCLE
+색 순환
+MSG_MENU_OPEN_PALETTE
+팔레트 열기...
+MSG_MENU_SAVE_PALETTE
+팔레트 저장...
+MSG_MENU_OWN_SCREEN
+전용 화면
+MSG_MENU_HELP
+도움말
+MSG_MENU_ABOUT
+Paint 정보...
+MSG_TOOL_FREEHAND
+자유 그리기: 포인터가 지나간 자리에 선
+MSG_TOOL_DOTS
+점 자유 그리기: 포인터가 있는 자리에 브러시
+MSG_TOOL_LINE
+직선: 버튼을 누른 곳에서 뗀 곳까지
+MSG_TOOL_CURVE
+곡선: 선을 그은 뒤 한 번 더 눌러 구부림
+MSG_TOOL_RECTANGLE
+사각형: 한쪽 모서리에서 반대쪽 모서리까지
+MSG_TOOL_ELLIPSE
+타원: 한쪽 모서리에서 반대쪽 모서리까지의 상자 안에
+MSG_TOOL_POLYGON
+다각형: 뗄 때마다 꼭짓점, 첫 꼭짓점에서 닫힘
+MSG_TOOL_FILL
+채우기: 클릭한 곳의 같은 색 영역
+MSG_TOOL_GRADIENT
+그레이디언트: 드래그 시작점의 전경색에서 끝점의 배경색까지
+MSG_TOOL_AIRBRUSH
+에어브러시: 누르고 있는 동안 포인터 자리에 분사
+MSG_TOOL_PICK
+스포이트: 포인터 아래의 색
+MSG_TOOL_TEXT
+텍스트: 입력하여 이미지에서 클릭한 곳에 놓음
+MSG_TOOL_GRAB
+브러시 잘라내기: 이미지의 일부를 브러시로 사용
+MSG_TOOL_SELECT_BOX
+사각형 선택: 칠할 수 있는 영역 (Shift는 추가, Alt는 제외)
+MSG_TOOL_LASSO
+올가미: 손으로 그린 모양을 선택 (Shift는 추가, Alt는 제외)
+MSG_TOOL_WAND
+자동 선택: 클릭한 픽셀과 이어진 같은 색 픽셀을 선택
+MSG_TOOL_HAND
+손: 포인터로 이미지를 이동
+MSG_TOOL_ERASER
+지우개: 브러시가 지나간 곳을 투명하게
+MSG_TOOL_SMUDGE
+손가락: 브러시 아래의 색을 끌고 감
+MSG_TOOL_ZOOM
+돋보기: 클릭한 곳을 확대, 메뉴 버튼으로 축소
+MSG_FILLED_HINT
+사각형, 타원, 다각형을 채워서 그리기
+MSG_UNDO_HINT
+마지막 변경을 실행 취소
+MSG_REDO_HINT
+실행 취소한 변경을 다시 실행
+MSG_ZOOM_IN_HINT
+이미지를 크게 표시
+MSG_ZOOM_OUT_HINT
+이미지를 작게 표시
+MSG_FIT_HINT
+이미지 전체를 들어가는 가장 큰 크기로 표시
+MSG_SWAP_HINT
+두 색을 맞바꾸기
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+레이어
+MSG_SECTION_BRUSH
+브러시
+MSG_SECTION_COLOUR
+색
+MSG_SIZE
+크기
+MSG_SOFTNESS
+부드러움
+MSG_OPACITY
+불투명도
+MSG_FLOW
+흐름
+MSG_JITTER
+지터
+MSG_ROTATION
+회전
+MSG_DITHER
+디더링
+MSG_BLEND
+혼합 모드
+MSG_NEW_LAYER_HINT
+작업 중인 레이어 위에 새 레이어
+MSG_DELETE_LAYER_HINT
+작업 중인 레이어 삭제
+MSG_LAYER_NAME
+레이어 %ld
+MSG_LAYER_COPY
+%s 복사본
+MSG_BLEND_NORMAL
+표준
+MSG_BLEND_ADD
+더하기
+MSG_BLEND_MULTIPLY
+곱하기
+MSG_BLEND_SCREEN
+스크린
+MSG_BLEND_OVERLAY
+오버레이
+MSG_BLEND_DARKEN
+어둡게 하기
+MSG_BLEND_LIGHTEN
+밝게 하기
+MSG_BLEND_DODGE
+색상 닷지
+MSG_BLEND_BURN
+색상 번
+MSG_BLEND_HARD_LIGHT
+하드 라이트
+MSG_BLEND_SOFT_LIGHT
+소프트 라이트
+MSG_BLEND_HUE
+색조
+MSG_BLEND_SATURATION
+채도
+MSG_BLEND_COLOUR
+색상
+MSG_BLEND_LUMINOSITY
+광도
+MSG_STATUS
+%ld x %ld   %ld:1   브러시 %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   브러시 %ld   위치 %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   브러시 %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   브러시 %ld x %ld   위치 %ld, %ld
+MSG_NEW_TITLE
+새 이미지
+MSG_CANVAS_TITLE
+캔버스 크기
+MSG_PLACE
+이미지
+MSG_PLACE_TOP_LEFT
+왼쪽 위
+MSG_PLACE_TOP
+위
+MSG_PLACE_TOP_RIGHT
+오른쪽 위
+MSG_PLACE_LEFT
+왼쪽
+MSG_PLACE_MIDDLE
+가운데
+MSG_PLACE_RIGHT
+오른쪽
+MSG_PLACE_BOTTOM_LEFT
+왼쪽 아래
+MSG_PLACE_BOTTOM
+아래
+MSG_PLACE_BOTTOM_RIGHT
+오른쪽 아래
+MSG_NO_IMAGE_MEMORY
+이미지를 바꿀\n메모리가 부족합니다.
+MSG_PICTURE_SIZE_TITLE
+이미지 크기
+MSG_SCALING
+픽셀
+MSG_SCALE_SMOOTH
+부드럽게
+MSG_SCALE_HARD
+선명하게
+MSG_KEEP_PROPORTIONS
+비율 유지
+MSG_EFFECTS_TITLE
+효과
+MSG_RESET
+재설정
+MSG_FX_BRIGHTNESS
+밝기
+MSG_FX_CONTRAST
+대비
+MSG_FX_SATURATION
+채도
+MSG_FX_HUE
+색조
+MSG_FX_BLUR
+흐림
+MSG_FX_SHARPEN
+선명하게
+MSG_FX_TEXTURE
+텍스처
+MSG_FX_DEHAZE
+안개 제거
+MSG_FX_SEPIA
+세피아
+MSG_FX_INVERT
+반전
+MSG_FX_CYAN_RED
+녹청/빨강
+MSG_FX_MAGENTA_GREEN
+마젠타/녹색
+MSG_FX_YELLOW_BLUE
+노랑/파랑
+MSG_WIDTH
+너비
+MSG_HEIGHT
+높이
+MSG_OK
+확인
+MSG_ABOUT
+Paint %s\n\n트루 컬러 이미지를 내장 브러시와\n잘라 낸 브러시로 그립니다.
+MSG_CANCEL
+취소
+MSG_TEXT_TITLE
+텍스트
+MSG_RENAME_TITLE
+레이어 이름 바꾸기
+MSG_NAME
+이름
+MSG_TEXT
+텍스트
+MSG_FONT
+글꼴
+MSG_FONT_TITLE
+텍스트 글꼴
+MSG_CHANGED
+이미지가 변경되었습니다.\n먼저 저장하시겠습니까?
+MSG_CHANGED_BUTTONS
+저장|저장 안 함|취소
+MSG_NO_PICTURE
+%ld x %ld 픽셀 이미지에 필요한\n메모리가 부족합니다.
+MSG_NO_UNDO
+이 변경은 너무 커서 보관할 수 없습니다:\n실행 취소할 수 없습니다.
+MSG_NO_LAYER
+레이어를 하나 더 만들 메모리가 부족합니다.
+MSG_NO_MASK
+마스크에 필요한 메모리가 부족합니다.
+MSG_NO_OWN_SCREEN
+전용 화면을 열 수 없습니다.
+MSG_NO_FONT
+글꼴을 열 수 없습니다.
+MSG_FILL_SHORT
+메모리가 부족해 전부 채우지 못했습니다.
+MSG_CHOICE_SHORT
+메모리가 부족해 전부 선택하지 못했습니다.
+MSG_NO_SELECTION
+선택 영역에 필요한 메모리가 부족합니다.
+MSG_OUTLINE
+윤곽선
+MSG_SHOW_MASK
+마스크
+MSG_MASK_ROW
+마스크
+MSG_MASK_PAINTED
+[마스크]
+MSG_OPEN_TITLE
+이미지 열기
+MSG_SAVE_AS_TITLE
+다른 이름으로 이미지 저장
+MSG_NO_OPEN
+%s\n열 수 없습니다:\n%s
+MSG_NO_SAVE
+이미지를\n%s(으)로 저장할 수 없습니다:\n%s
+MSG_NO_PART
+%s\n열 수 없습니다.
+MSG_UNTITLED
+제목 없음
+MSG_OPEN_BRUSH_TITLE
+브러시 열기
+MSG_SAVE_BRUSH_TITLE
+다른 이름으로 브러시 저장
+MSG_NO_SAVE_BRUSH
+브러시를\n%s(으)로 저장할 수 없습니다:\n%s
+MSG_NO_SAVE_PALETTE
+팔레트를\n%s(으)로 저장할 수 없습니다:\n%s
+MSG_NO_PALETTE
+%s\n팔레트가 들어 있지 않습니다.
+MSG_NO_COUNT
+색을 셀 메모리가 부족합니다.
+MSG_OPEN_PALETTE_TITLE
+팔레트 열기
+MSG_SAVE_PALETTE_TITLE
+다른 이름으로 팔레트 저장
+MSG_PALETTE_TITLE
+팔레트
+MSG_RED
+빨강
+MSG_GREEN
+초록
+MSG_BLUE
+파랑
+MSG_HUE
+색조
+MSG_SATURATION
+채도
+MSG_VALUE
+명도
+MSG_HEX
+Hex
+MSG_SPREAD
+그레이디언트
+MSG_COPY_COLOUR
+복사
+MSG_SWAP_COLOURS
+맞바꾸기
+MSG_CHANGE_PIXELS
+픽셀도 바꾸기
+MSG_PICK_COLOUR
+바꿀 색을 선택합니다.
+MSG_PICK_SPREAD
+그레이디언트의 다른 쪽 끝을 선택합니다.
+MSG_PICK_COPY
+복사해 넣을 색을 선택합니다.
+MSG_PICK_SWAP
+맞바꿀 색을 선택합니다.
+MSG_PICK_RANGE
+범위의 다른 쪽 끝을 선택합니다.
+MSG_RANGE
+범위
+MSG_SET_RANGE
+범위 설정
+MSG_SPEED
+속도
+MSG_BACKWARDS
+역방향
+MSG_RANGE_SPAN
+범위 %ld: 색 %ld~%ld.
+MSG_RANGE_UNSET
+범위 %ld: 설정되지 않음.
+MSG_NO_RANGE
+회전하는 팔레트 범위가 없습니다:\n팔레트 편집기에서 범위를 설정합니다.
+MSG_NO_REDUCE
+각 색의 오차를 확산할\n메모리가 부족합니다.
+MSG_BRUSH_TOO_LARGE
+브러시는 최대 %ld x %ld 픽셀입니다.
+MSG_NO_BRUSH
+%ld x %ld 픽셀 브러시에 필요한\n메모리가 부족합니다.
+MSG_NOLIBRARY
+%s 없음\n
+MSG_NOSCREEN
+화면 없음 - 디스플레이 없음\n
+MSG_NOMEMORY
+창을 열 메모리 부족\n
+MSG_BADSCREEN
+SCREEN은 OWN 또는 DESKTOP입니다\n

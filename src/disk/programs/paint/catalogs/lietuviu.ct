@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language lietuviu
+## codeset 106
+; Paint's strings in Lithuanian.
+MSG_MENU_FILE
+Failas
+MSG_MENU_NEW
+Naujas...
+MSG_MENU_OPEN
+Atidaryti...
+MSG_MENU_SAVE
+Įrašyti
+MSG_MENU_SAVE_AS
+Įrašyti kaip...
+MSG_MENU_QUIT
+Išeiti
+MSG_MENU_EDIT
+Taisa
+MSG_MENU_UNDO
+Anuliuoti
+MSG_MENU_REDO
+Perdaryti
+MSG_MENU_CLEAR
+Valyti
+MSG_MENU_IMAGE
+Paveikslas
+MSG_MENU_ROTATE
+Pasukti
+MSG_TURN_RIGHT
+90° pagal laikrodžio rodyklę
+MSG_TURN_LEFT
+90° prieš laikrodžio rodyklę
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Apkirpti pagal žymėjimą
+MSG_MENU_TRIM
+Apkarpyti kraštus
+MSG_MENU_CANVAS_SIZE
+Drobės dydis...
+MSG_MENU_FLATTEN
+Sulieti į vieną sluoksnį
+MSG_MENU_PICTURE_SIZE
+Paveikslo dydis...
+MSG_MENU_EFFECTS
+Efektai...
+MSG_MENU_FREE_TRANSFORM
+Laisvas transformavimas
+MSG_MENU_TOOLS
+Įrankiai
+MSG_MENU_FREEHAND
+Laisva ranka
+MSG_MENU_DOTS
+Laisva ranka taškais
+MSG_MENU_LINE
+Linija
+MSG_MENU_CURVE
+Kreivė
+MSG_MENU_RECTANGLE
+Stačiakampis
+MSG_MENU_ELLIPSE
+Elipsė
+MSG_MENU_POLYGON
+Daugiakampis
+MSG_MENU_FILL
+Užliejimas
+MSG_MENU_GRADIENT
+Gradientas
+MSG_MENU_AIRBRUSH
+Purkštuvas
+MSG_MENU_PICK
+Paimti spalvą
+MSG_MENU_TEXT
+Tekstas
+MSG_MENU_GRAB
+Iškirpti teptuką
+MSG_MENU_SELECT_BOX
+Stačiakampis žymėjimas
+MSG_MENU_LASSO
+Lasas
+MSG_MENU_WAND
+Burtų lazdelė
+MSG_MENU_HAND
+Ranka
+MSG_MENU_ERASER
+Trintukas
+MSG_MENU_SMUDGE
+Ištepimas
+MSG_MENU_ZOOM_TOOL
+Mastelis
+MSG_MENU_FILLED
+Užpildytos figūros
+MSG_MENU_ROUND_GRADIENT
+Apskritas gradientas
+MSG_MENU_SWAP
+Sukeisti spalvas
+MSG_MENU_VIEW
+Rodinys
+MSG_MENU_ZOOM_IN
+Didinti
+MSG_MENU_ZOOM_OUT
+Mažinti
+MSG_MENU_ACTUAL_SIZE
+Tikrasis dydis
+MSG_MENU_FIT
+Talpinti į langą
+MSG_MENU_GRID
+Tinklelis
+MSG_MENU_RULERS
+Liniuotės
+MSG_MENU_SPLIT_SCREEN
+Padalytas rodinys
+MSG_MENU_LAYER
+Sluoksnis
+MSG_MENU_NEW_LAYER
+Naujas sluoksnis
+MSG_MENU_DUPLICATE_LAYER
+Dubliuoti
+MSG_MENU_DELETE_LAYER
+Naikinti
+MSG_MENU_RENAME_LAYER
+Pervardyti...
+MSG_MENU_LAYER_UP
+Perkelti aukštyn
+MSG_MENU_LAYER_DOWN
+Perkelti žemyn
+MSG_MENU_MERGE_DOWN
+Sulieti su apatiniu
+MSG_MENU_SELECTION
+Žymėjimas
+MSG_MENU_SELECT
+Žymėti
+MSG_MENU_SELECT_ALL
+Viską
+MSG_MENU_SELECT_LAYER
+Sluoksnio pikselius
+MSG_MENU_SELECT_COLOUR
+Spalvos pikselius
+MSG_MENU_SELECT_SEE_THROUGH
+Permatomus pikselius
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Pikselius, kurių nėra paletėje
+MSG_MENU_DESELECT
+Atžymėti
+MSG_MENU_INVERT
+Invertuoti
+MSG_MENU_COPY_TO_LAYER
+Kopijuoti į naują sluoksnį
+MSG_MENU_CUT_TO_LAYER
+Iškirpti į naują sluoksnį
+MSG_MENU_COPY_TO_BRUSH
+Kopijuoti kaip teptuką
+MSG_MENU_BRUSH
+Teptukas
+MSG_MENU_ROUND
+Apvalus
+MSG_MENU_SQUARE
+Kvadratinis
+MSG_MENU_OWN_BRUSH
+Savas teptukas
+MSG_MENU_SIZE
+Dydis
+MSG_MENU_SMALLER
+Mažesnis
+MSG_MENU_LARGER
+Didesnis
+MSG_MENU_OWN_COLOURS
+Savos spalvos
+MSG_MENU_ONE_COLOUR
+Viena spalva
+MSG_MENU_FLIP_ACROSS
+Apversti horizontaliai
+MSG_MENU_FLIP_DOWN
+Apversti vertikaliai
+MSG_MENU_ADD_MASK
+Pridėti kaukę
+MSG_MENU_MASK_SHOW_ALL
+Rodyti viską
+MSG_MENU_MASK_HIDE_ALL
+Slėpti viską
+MSG_MENU_MASK_SELECTION
+Rodyti žymėjimą
+MSG_MENU_PAINT_MASK
+Piešti kaukę
+MSG_MENU_APPLY_MASK
+Taikyti kaukę
+MSG_MENU_DELETE_MASK
+Naikinti kaukę
+MSG_MENU_TURN
+Pasukti dešinėn
+MSG_MENU_OPEN_BRUSH
+Atidaryti teptuką...
+MSG_MENU_SAVE_BRUSH
+Įrašyti teptuką...
+MSG_MENU_PALETTE
+Paletė
+MSG_MENU_EDIT_PALETTE
+Taisyti...
+MSG_MENU_FROM_PICTURE
+Iš paveikslo
+MSG_MENU_PRESETS
+Šablonai
+MSG_PRESET_STANDARD
+Paint paletė
+MSG_PRESET_GREYS
+Pilki tonai
+MSG_PRESET_SPECTRUM
+Spektras
+MSG_PRESET_PASTEL
+Pasteliniai tonai
+MSG_PRESET_EARTH
+Žemės tonai
+MSG_MENU_REDUCE
+Sumažinti spalvas
+MSG_DITHER_NONE
+Be rastravimo
+MSG_DITHER_ORDERED
+Tvarkingas rastravimas
+MSG_DITHER_DIFFUSED
+Klaidų sklaida
+MSG_MENU_CYCLE
+Spalvų sukimas
+MSG_MENU_OPEN_PALETTE
+Atidaryti paletę...
+MSG_MENU_SAVE_PALETTE
+Įrašyti paletę...
+MSG_MENU_OWN_SCREEN
+Savas ekranas
+MSG_MENU_HELP
+Žinynas
+MSG_MENU_ABOUT
+Apie Paint...
+MSG_TOOL_FREEHAND
+Laisva ranka: linija ten, kur eina žymeklis
+MSG_TOOL_DOTS
+Laisva ranka taškais: teptukas ten, kur yra žymeklis
+MSG_TOOL_LINE
+Linija: nuo vietos, kur mygtukas paspaustas, iki vietos, kur atleistas
+MSG_TOOL_CURVE
+Kreivė: linija, paskui sulenkiama antru paspaudimu
+MSG_TOOL_RECTANGLE
+Stačiakampis: nuo vieno kampo iki kito
+MSG_TOOL_ELLIPSE
+Elipsė: stačiakampyje nuo vieno kampo iki kito
+MSG_TOOL_POLYGON
+Daugiakampis: kampas kaskart atleidus mygtuką, uždaromas ties pirmuoju kampu
+MSG_TOOL_FILL
+Užliejimas: spustelėta vienos spalvos sritis
+MSG_TOOL_GRADIENT
+Gradientas: nuo priekinio plano spalvos tempimo pradžioje iki fono spalvos jo pabaigoje
+MSG_TOOL_AIRBRUSH
+Purkštuvas: purškia ten, kur yra žymeklis, kol laikomas mygtukas
+MSG_TOOL_PICK
+Paimti spalvą: spalva po žymekliu
+MSG_TOOL_TEXT
+Tekstas: įvedamas ir padedamas spustelėtoje paveikslo vietoje
+MSG_TOOL_GRAB
+Iškirpti teptuką: paveikslo dalis paimama kaip teptukas
+MSG_TOOL_SELECT_BOX
+Stačiakampis žymėjimas: kur galima piešti (Shift prideda, Alt atima)
+MSG_TOOL_LASSO
+Lasas: pažymima ranka nupiešta forma (Shift prideda, Alt atima)
+MSG_TOOL_WAND
+Burtų lazdelė: pažymimi su spustelėtuoju susijungę tos pačios spalvos pikseliai
+MSG_TOOL_HAND
+Ranka: paveikslas stumiamas žymekliu
+MSG_TOOL_ERASER
+Trintukas: paveikslas tampa permatomas ten, kur eina teptukas
+MSG_TOOL_SMUDGE
+Ištepimas: spalvos po teptuku tempiamos kartu
+MSG_TOOL_ZOOM
+Mastelis: didina spustelėtoje vietoje, mažina meniu mygtuku
+MSG_FILLED_HINT
+Užpildyti stačiakampiai, elipsės ir daugiakampiai
+MSG_UNDO_HINT
+Anuliuoti paskutinį pakeitimą
+MSG_REDO_HINT
+Perdaryti anuliuotą pakeitimą
+MSG_ZOOM_IN_HINT
+Rodyti paveikslą didesnį
+MSG_ZOOM_OUT_HINT
+Rodyti paveikslą mažesnį
+MSG_FIT_HINT
+Rodyti visą paveikslą tokio dydžio, kiek telpa
+MSG_SWAP_HINT
+Sukeisti abi spalvas
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Sluoksniai
+MSG_SECTION_BRUSH
+Teptukas
+MSG_SECTION_COLOUR
+Spalva
+MSG_SIZE
+Dydis
+MSG_SOFTNESS
+Minkštumas
+MSG_OPACITY
+Nepermatomumas
+MSG_FLOW
+Srautas
+MSG_JITTER
+Drebėjimas
+MSG_ROTATION
+Pasukimas
+MSG_DITHER
+Rastravimas
+MSG_BLEND
+Maišymas
+MSG_NEW_LAYER_HINT
+Naujas sluoksnis virš piešiamo
+MSG_DELETE_LAYER_HINT
+Naikinti piešiamą sluoksnį
+MSG_LAYER_NAME
+Sluoksnis %ld
+MSG_LAYER_COPY
+%s kopija
+MSG_BLEND_NORMAL
+Normalus
+MSG_BLEND_ADD
+Sudėtis
+MSG_BLEND_MULTIPLY
+Daugyba
+MSG_BLEND_SCREEN
+Ekranas
+MSG_BLEND_OVERLAY
+Perdengimas
+MSG_BLEND_DARKEN
+Tamsesnis
+MSG_BLEND_LIGHTEN
+Šviesesnis
+MSG_BLEND_DODGE
+Spalvos šviesinimas
+MSG_BLEND_BURN
+Spalvos deginimas
+MSG_BLEND_HARD_LIGHT
+Kieta šviesa
+MSG_BLEND_SOFT_LIGHT
+Minkšta šviesa
+MSG_BLEND_HUE
+Atspalvis
+MSG_BLEND_SATURATION
+Sodrumas
+MSG_BLEND_COLOUR
+Spalva
+MSG_BLEND_LUMINOSITY
+Skaistis
+MSG_STATUS
+%ld x %ld   %ld:1   teptukas %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   teptukas %ld   ties %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   teptukas %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   teptukas %ld x %ld   ties %ld, %ld
+MSG_NEW_TITLE
+Naujas paveikslas
+MSG_CANVAS_TITLE
+Drobės dydis
+MSG_PLACE
+Paveikslas
+MSG_PLACE_TOP_LEFT
+Viršuje kairėje
+MSG_PLACE_TOP
+Viršuje
+MSG_PLACE_TOP_RIGHT
+Viršuje dešinėje
+MSG_PLACE_LEFT
+Kairėje
+MSG_PLACE_MIDDLE
+Viduryje
+MSG_PLACE_RIGHT
+Dešinėje
+MSG_PLACE_BOTTOM_LEFT
+Apačioje kairėje
+MSG_PLACE_BOTTOM
+Apačioje
+MSG_PLACE_BOTTOM_RIGHT
+Apačioje dešinėje
+MSG_NO_IMAGE_MEMORY
+Nėra atminties\npaveikslui pakeisti.
+MSG_PICTURE_SIZE_TITLE
+Paveikslo dydis
+MSG_SCALING
+Pikseliai
+MSG_SCALE_SMOOTH
+Glotnūs
+MSG_SCALE_HARD
+Aštrūs
+MSG_KEEP_PROPORTIONS
+Išlaikyti proporcijas
+MSG_EFFECTS_TITLE
+Efektai
+MSG_RESET
+Atstatyti
+MSG_FX_BRIGHTNESS
+Šviesumas
+MSG_FX_CONTRAST
+Kontrastas
+MSG_FX_SATURATION
+Sodrumas
+MSG_FX_HUE
+Atspalvis
+MSG_FX_BLUR
+Suliejimas
+MSG_FX_SHARPEN
+Ryškinimas
+MSG_FX_TEXTURE
+Tekstūra
+MSG_FX_DEHAZE
+Rūko šalinimas
+MSG_FX_SEPIA
+Sepija
+MSG_FX_INVERT
+Invertavimas
+MSG_FX_CYAN_RED
+Žydra/Raudona
+MSG_FX_MAGENTA_GREEN
+Purpurinė/Žalia
+MSG_FX_YELLOW_BLUE
+Geltona/Mėlyna
+MSG_WIDTH
+Plotis
+MSG_HEIGHT
+Aukštis
+MSG_OK
+Gerai
+MSG_ABOUT
+Paint %s\n\nPaveikslai tikrosiomis spalvomis, piešti\nįtaisytais ir iškirptais teptukais.
+MSG_CANCEL
+Atšaukti
+MSG_TEXT_TITLE
+Tekstas
+MSG_RENAME_TITLE
+Pervardyti sluoksnį
+MSG_NAME
+Pavadinimas
+MSG_TEXT
+Tekstas
+MSG_FONT
+Šriftas
+MSG_FONT_TITLE
+Teksto šriftas
+MSG_CHANGED
+Paveikslas pakeistas.\nPirmiausia jį įrašyti?
+MSG_CHANGED_BUTTONS
+Įrašyti|Neįrašyti|Atšaukti
+MSG_NO_PICTURE
+Nėra atminties paveikslui\n%ld x %ld pikselių.
+MSG_NO_UNDO
+Šis pakeitimas per didelis, kad būtų išlaikytas:\njo negalima anuliuoti.
+MSG_NO_LAYER
+Nėra atminties dar vienam sluoksniui.
+MSG_NO_MASK
+Nėra atminties kaukei.
+MSG_NO_OWN_SCREEN
+Nepavyko atidaryti savo ekrano.
+MSG_NO_FONT
+Nepavyko atidaryti šrifto.
+MSG_FILL_SHORT
+Neužteko atminties viskam užlieti.
+MSG_CHOICE_SHORT
+Neužteko atminties viskam pažymėti.
+MSG_NO_SELECTION
+Nėra atminties žymėjimui.
+MSG_OUTLINE
+Kontūras
+MSG_SHOW_MASK
+Kaukė
+MSG_MASK_ROW
+Kaukė
+MSG_MASK_PAINTED
+[Kaukė]
+MSG_OPEN_TITLE
+Atidaryti paveikslą
+MSG_SAVE_AS_TITLE
+Įrašyti paveikslą kaip
+MSG_NO_OPEN
+%s\nnegalima atidaryti:\n%s
+MSG_NO_SAVE
+Paveikslo negalima įrašyti\nkaip %s:\n%s
+MSG_NO_PART
+%s\nnegalima atidaryti.
+MSG_UNTITLED
+Be pavadinimo
+MSG_OPEN_BRUSH_TITLE
+Atidaryti teptuką
+MSG_SAVE_BRUSH_TITLE
+Įrašyti teptuką kaip
+MSG_NO_SAVE_BRUSH
+Teptuko negalima įrašyti\nkaip %s:\n%s
+MSG_NO_SAVE_PALETTE
+Paletės negalima įrašyti\nkaip %s:\n%s
+MSG_NO_PALETTE
+%s\nneturi paletės.
+MSG_NO_COUNT
+Nėra atminties spalvoms suskaičiuoti.
+MSG_OPEN_PALETTE_TITLE
+Atidaryti paletę
+MSG_SAVE_PALETTE_TITLE
+Įrašyti paletę kaip
+MSG_PALETTE_TITLE
+Paletė
+MSG_RED
+Raudona
+MSG_GREEN
+Žalia
+MSG_BLUE
+Mėlyna
+MSG_HUE
+Atspalvis
+MSG_SATURATION
+Sodrumas
+MSG_VALUE
+Reikšmė
+MSG_HEX
+Hex
+MSG_SPREAD
+Perėjimas
+MSG_COPY_COLOUR
+Kopijuoti
+MSG_SWAP_COLOURS
+Sukeisti
+MSG_CHANGE_PIXELS
+Keisti ir pikselius
+MSG_PICK_COLOUR
+Pasirinkti spalvą, kurią keisti.
+MSG_PICK_SPREAD
+Pasirinkti kitą perėjimo galą.
+MSG_PICK_COPY
+Pasirinkti spalvą, į kurią kopijuoti.
+MSG_PICK_SWAP
+Pasirinkti spalvą, su kuria sukeisti.
+MSG_PICK_RANGE
+Pasirinkti kitą intervalo galą.
+MSG_RANGE
+Intervalas
+MSG_SET_RANGE
+Nustatyti intervalą
+MSG_SPEED
+Greitis
+MSG_BACKWARDS
+Atgal
+MSG_RANGE_SPAN
+Intervalas %ld: spalvos nuo %ld iki %ld.
+MSG_RANGE_UNSET
+Intervalas %ld nenustatytas.
+MSG_NO_RANGE
+Nesisuka nė vienas paletės intervalas:\njį galima nustatyti paletės rengyklėje.
+MSG_NO_REDUCE
+Nėra atminties paskirstyti tai,\nko trūksta kiekvienai spalvai.
+MSG_BRUSH_TOO_LARGE
+Teptukas gali būti ne didesnis nei %ld x %ld pikselių.
+MSG_NO_BRUSH
+Nėra atminties teptukui\n%ld x %ld pikselių.
+MSG_NOLIBRARY
+Nėra %s\n
+MSG_NOSCREEN
+Nėra ekrano - nėra vaizduoklio\n
+MSG_NOMEMORY
+Nėra atminties langui\n
+MSG_BADSCREEN
+SCREEN yra OWN arba DESKTOP\n

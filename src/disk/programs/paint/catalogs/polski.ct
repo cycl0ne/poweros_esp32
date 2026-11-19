@@ -1,0 +1,564 @@
+## version $VER: programs/Paint.catalog 1.0 (19.11.2026)
+## language polski
+## codeset 106
+; Paint's strings in Polish.
+MSG_MENU_FILE
+Plik
+MSG_MENU_NEW
+Nowy...
+MSG_MENU_OPEN
+Otwórz...
+MSG_MENU_SAVE
+Zapisz
+MSG_MENU_SAVE_AS
+Zapisz jako...
+MSG_MENU_QUIT
+Zakończ
+MSG_MENU_EDIT
+Edycja
+MSG_MENU_UNDO
+Cofnij
+MSG_MENU_REDO
+Ponów
+MSG_MENU_CLEAR
+Wyczyść
+MSG_MENU_IMAGE
+Obraz
+MSG_MENU_ROTATE
+Obróć
+MSG_TURN_RIGHT
+90° w prawo
+MSG_TURN_LEFT
+90° w lewo
+MSG_TURN_HALF
+180°
+MSG_MENU_CROP
+Kadruj do zaznaczenia
+MSG_MENU_TRIM
+Przytnij
+MSG_MENU_CANVAS_SIZE
+Rozmiar płótna...
+MSG_MENU_FLATTEN
+Spłaszcz
+MSG_MENU_PICTURE_SIZE
+Rozmiar obrazu...
+MSG_MENU_EFFECTS
+Efekty...
+MSG_MENU_FREE_TRANSFORM
+Przekształcanie swobodne
+MSG_MENU_TOOLS
+Narzędzia
+MSG_MENU_FREEHAND
+Odręcznie
+MSG_MENU_DOTS
+Odręcznie kropkami
+MSG_MENU_LINE
+Linia
+MSG_MENU_CURVE
+Krzywa
+MSG_MENU_RECTANGLE
+Prostokąt
+MSG_MENU_ELLIPSE
+Elipsa
+MSG_MENU_POLYGON
+Wielokąt
+MSG_MENU_FILL
+Wypełnienie
+MSG_MENU_GRADIENT
+Gradient
+MSG_MENU_AIRBRUSH
+Aerograf
+MSG_MENU_PICK
+Pobierz kolor
+MSG_MENU_TEXT
+Tekst
+MSG_MENU_GRAB
+Wytnij pędzel
+MSG_MENU_SELECT_BOX
+Zaznaczenie prostokątne
+MSG_MENU_LASSO
+Lasso
+MSG_MENU_WAND
+Różdżka
+MSG_MENU_HAND
+Rączka
+MSG_MENU_ERASER
+Gumka
+MSG_MENU_SMUDGE
+Rozmazywanie
+MSG_MENU_ZOOM_TOOL
+Lupa
+MSG_MENU_FILLED
+Wypełnione kształty
+MSG_MENU_ROUND_GRADIENT
+Gradient kołowy
+MSG_MENU_SWAP
+Zamień kolory
+MSG_MENU_VIEW
+Widok
+MSG_MENU_ZOOM_IN
+Powiększ
+MSG_MENU_ZOOM_OUT
+Pomniejsz
+MSG_MENU_ACTUAL_SIZE
+Rzeczywisty rozmiar
+MSG_MENU_FIT
+Dopasuj do okna
+MSG_MENU_GRID
+Siatka
+MSG_MENU_RULERS
+Linijki
+MSG_MENU_SPLIT_SCREEN
+Podzielony ekran
+MSG_MENU_LAYER
+Warstwa
+MSG_MENU_NEW_LAYER
+Nowa warstwa
+MSG_MENU_DUPLICATE_LAYER
+Powiel
+MSG_MENU_DELETE_LAYER
+Usuń
+MSG_MENU_RENAME_LAYER
+Zmień nazwę...
+MSG_MENU_LAYER_UP
+Przesuń w górę
+MSG_MENU_LAYER_DOWN
+Przesuń w dół
+MSG_MENU_MERGE_DOWN
+Scal w dół
+MSG_MENU_SELECTION
+Zaznaczenie
+MSG_MENU_SELECT
+Zaznacz
+MSG_MENU_SELECT_ALL
+Wszystko
+MSG_MENU_SELECT_LAYER
+Piksele warstwy
+MSG_MENU_SELECT_COLOUR
+Piksele koloru
+MSG_MENU_SELECT_SEE_THROUGH
+Przezroczyste piksele
+MSG_MENU_SELECT_NOT_IN_PALETTE
+Piksele spoza palety
+MSG_MENU_DESELECT
+Odznacz
+MSG_MENU_INVERT
+Odwróć
+MSG_MENU_COPY_TO_LAYER
+Kopiuj na warstwę
+MSG_MENU_CUT_TO_LAYER
+Wytnij na warstwę
+MSG_MENU_COPY_TO_BRUSH
+Kopiuj jako pędzel
+MSG_MENU_BRUSH
+Pędzel
+MSG_MENU_ROUND
+Okrągły
+MSG_MENU_SQUARE
+Kwadratowy
+MSG_MENU_OWN_BRUSH
+Własny pędzel
+MSG_MENU_SIZE
+Rozmiar
+MSG_MENU_SMALLER
+Mniejszy
+MSG_MENU_LARGER
+Większy
+MSG_MENU_OWN_COLOURS
+Własne kolory
+MSG_MENU_ONE_COLOUR
+Jeden kolor
+MSG_MENU_FLIP_ACROSS
+Odbij w poziomie
+MSG_MENU_FLIP_DOWN
+Odbij w pionie
+MSG_MENU_ADD_MASK
+Dodaj maskę
+MSG_MENU_MASK_SHOW_ALL
+Pokaż wszystko
+MSG_MENU_MASK_HIDE_ALL
+Ukryj wszystko
+MSG_MENU_MASK_SELECTION
+Pokaż zaznaczenie
+MSG_MENU_PAINT_MASK
+Maluj maskę
+MSG_MENU_APPLY_MASK
+Zastosuj maskę
+MSG_MENU_DELETE_MASK
+Usuń maskę
+MSG_MENU_TURN
+Obróć w prawo
+MSG_MENU_OPEN_BRUSH
+Otwórz pędzel...
+MSG_MENU_SAVE_BRUSH
+Zapisz pędzel...
+MSG_MENU_PALETTE
+Paleta
+MSG_MENU_EDIT_PALETTE
+Edytuj...
+MSG_MENU_FROM_PICTURE
+Z obrazu
+MSG_MENU_PRESETS
+Gotowe palety
+MSG_PRESET_STANDARD
+Domyślna
+MSG_PRESET_GREYS
+Odcienie szarości
+MSG_PRESET_SPECTRUM
+Widmo
+MSG_PRESET_PASTEL
+Pastele
+MSG_PRESET_EARTH
+Barwy ziemi
+MSG_MENU_REDUCE
+Redukuj
+MSG_DITHER_NONE
+Bez ditheringu
+MSG_DITHER_ORDERED
+Dithering uporządkowany
+MSG_DITHER_DIFFUSED
+Dyfuzja błędu
+MSG_MENU_CYCLE
+Rotacja kolorów
+MSG_MENU_OPEN_PALETTE
+Otwórz paletę...
+MSG_MENU_SAVE_PALETTE
+Zapisz paletę...
+MSG_MENU_OWN_SCREEN
+Własny ekran
+MSG_MENU_HELP
+Pomoc
+MSG_MENU_ABOUT
+O programie Paint...
+MSG_TOOL_FREEHAND
+Odręcznie: linia tam, gdzie przesuwa się wskaźnik
+MSG_TOOL_DOTS
+Odręcznie kropkami: pędzel tam, gdzie jest wskaźnik
+MSG_TOOL_LINE
+Linia: od miejsca wciśnięcia przycisku do miejsca jego zwolnienia
+MSG_TOOL_CURVE
+Krzywa: linia, potem wygięta drugim naciśnięciem
+MSG_TOOL_RECTANGLE
+Prostokąt: od jednego rogu do drugiego
+MSG_TOOL_ELLIPSE
+Elipsa: w ramce od jednego rogu do drugiego
+MSG_TOOL_POLYGON
+Wielokąt: wierzchołek przy każdym zwolnieniu, zamknięty na pierwszym wierzchołku
+MSG_TOOL_FILL
+Wypełnienie: kliknięty obszar jednego koloru
+MSG_TOOL_GRADIENT
+Gradient: od koloru pierwszego planu na początku przeciągania do koloru tła na jego końcu
+MSG_TOOL_AIRBRUSH
+Aerograf: natrysk tam, gdzie jest wskaźnik, dopóki przycisk jest wciśnięty
+MSG_TOOL_PICK
+Pobierz kolor: kolor pod wskaźnikiem
+MSG_TOOL_TEXT
+Tekst: wpisany i umieszczony w miejscu kliknięcia na obrazie
+MSG_TOOL_GRAB
+Wytnij pędzel: część obrazu wzięta jako pędzel
+MSG_TOOL_SELECT_BOX
+Zaznaczenie prostokątne: to, co można malować (Shift dodaje, Alt odejmuje)
+MSG_TOOL_LASSO
+Lasso: zaznacza kształt narysowany odręcznie (Shift dodaje, Alt odejmuje)
+MSG_TOOL_WAND
+Różdżka: zaznacza piksele koloru połączone z klikniętym
+MSG_TOOL_HAND
+Rączka: przesuwa obraz wskaźnikiem
+MSG_TOOL_ERASER
+Gumka: obraz staje się przezroczysty tam, gdzie przechodzi pędzel
+MSG_TOOL_SMUDGE
+Rozmazywanie: kolory pod pędzlem ciągnięte dalej
+MSG_TOOL_ZOOM
+Lupa: powiększa w miejscu kliknięcia, pomniejsza przyciskiem menu
+MSG_FILLED_HINT
+Wypełnione prostokąty, elipsy i wielokąty
+MSG_UNDO_HINT
+Cofnij ostatnią zmianę
+MSG_REDO_HINT
+Przywróć cofniętą zmianę
+MSG_ZOOM_IN_HINT
+Pokaż obraz większy
+MSG_ZOOM_OUT_HINT
+Pokaż obraz mniejszy
+MSG_FIT_HINT
+Pokaż cały obraz tak duży, jak się mieści
+MSG_SWAP_HINT
+Zamień oba kolory
+MSG_ZOOM
+%ld %%
+MSG_SECTION_LAYERS
+Warstwy
+MSG_SECTION_BRUSH
+Pędzel
+MSG_SECTION_COLOUR
+Kolor
+MSG_SIZE
+Rozmiar
+MSG_SOFTNESS
+Miękkość
+MSG_OPACITY
+Krycie
+MSG_FLOW
+Przepływ
+MSG_JITTER
+Rozrzut
+MSG_ROTATION
+Obrót
+MSG_DITHER
+Dithering
+MSG_BLEND
+Mieszanie
+MSG_NEW_LAYER_HINT
+Nowa warstwa nad malowaną
+MSG_DELETE_LAYER_HINT
+Usuń malowaną warstwę
+MSG_LAYER_NAME
+Warstwa %ld
+MSG_LAYER_COPY
+%s kopia
+MSG_BLEND_NORMAL
+Normalny
+MSG_BLEND_ADD
+Dodawanie
+MSG_BLEND_MULTIPLY
+Mnożenie
+MSG_BLEND_SCREEN
+Ekran
+MSG_BLEND_OVERLAY
+Nakładka
+MSG_BLEND_DARKEN
+Ciemniej
+MSG_BLEND_LIGHTEN
+Jaśniej
+MSG_BLEND_DODGE
+Rozjaśnianie kolorów
+MSG_BLEND_BURN
+Ściemnianie kolorów
+MSG_BLEND_HARD_LIGHT
+Ostre światło
+MSG_BLEND_SOFT_LIGHT
+Łagodne światło
+MSG_BLEND_HUE
+Barwa
+MSG_BLEND_SATURATION
+Nasycenie
+MSG_BLEND_COLOUR
+Kolor
+MSG_BLEND_LUMINOSITY
+Jasność
+MSG_STATUS
+%ld x %ld   %ld:1   pędzel %ld
+MSG_STATUS_AT
+%ld x %ld   %ld:1   pędzel %ld   w punkcie %ld, %ld
+MSG_STATUS_OWN
+%ld x %ld   %ld:1   pędzel %ld x %ld
+MSG_STATUS_OWN_AT
+%ld x %ld   %ld:1   pędzel %ld x %ld   w punkcie %ld, %ld
+MSG_NEW_TITLE
+Nowy obraz
+MSG_CANVAS_TITLE
+Rozmiar płótna
+MSG_PLACE
+Obraz
+MSG_PLACE_TOP_LEFT
+U góry z lewej
+MSG_PLACE_TOP
+U góry
+MSG_PLACE_TOP_RIGHT
+U góry z prawej
+MSG_PLACE_LEFT
+Z lewej
+MSG_PLACE_MIDDLE
+Pośrodku
+MSG_PLACE_RIGHT
+Z prawej
+MSG_PLACE_BOTTOM_LEFT
+U dołu z lewej
+MSG_PLACE_BOTTOM
+U dołu
+MSG_PLACE_BOTTOM_RIGHT
+U dołu z prawej
+MSG_NO_IMAGE_MEMORY
+Brak pamięci,\naby zmienić obraz.
+MSG_PICTURE_SIZE_TITLE
+Rozmiar obrazu
+MSG_SCALING
+Piksele
+MSG_SCALE_SMOOTH
+Gładkie
+MSG_SCALE_HARD
+Ostre
+MSG_KEEP_PROPORTIONS
+Zachowaj proporcje
+MSG_EFFECTS_TITLE
+Efekty
+MSG_RESET
+Resetuj
+MSG_FX_BRIGHTNESS
+Jasność
+MSG_FX_CONTRAST
+Kontrast
+MSG_FX_SATURATION
+Nasycenie
+MSG_FX_HUE
+Barwa
+MSG_FX_BLUR
+Rozmycie
+MSG_FX_SHARPEN
+Wyostrzenie
+MSG_FX_TEXTURE
+Tekstura
+MSG_FX_DEHAZE
+Usuń zamglenie
+MSG_FX_SEPIA
+Sepia
+MSG_FX_INVERT
+Odwrócenie
+MSG_FX_CYAN_RED
+Cyjan/Czerwony
+MSG_FX_MAGENTA_GREEN
+Magenta/Zielony
+MSG_FX_YELLOW_BLUE
+Żółty/Niebieski
+MSG_WIDTH
+Szerokość
+MSG_HEIGHT
+Wysokość
+MSG_OK
+OK
+MSG_ABOUT
+Paint %s\n\nObrazy w pełnym kolorze, malowane\nwbudowanymi i wyciętymi pędzlami.
+MSG_CANCEL
+Anuluj
+MSG_TEXT_TITLE
+Tekst
+MSG_RENAME_TITLE
+Zmień nazwę warstwy
+MSG_NAME
+Nazwa
+MSG_TEXT
+Tekst
+MSG_FONT
+Czcionka
+MSG_FONT_TITLE
+Czcionka tekstu
+MSG_CHANGED
+Obraz został zmieniony.\nNajpierw go zapisać?
+MSG_CHANGED_BUTTONS
+Zapisz|Nie zapisuj|Anuluj
+MSG_NO_PICTURE
+Brak pamięci na obraz\no wymiarach %ld na %ld pikseli.
+MSG_NO_UNDO
+Ta zmiana była zbyt duża, by ją zachować:\nnie można jej cofnąć.
+MSG_NO_LAYER
+Brak pamięci na kolejną warstwę.
+MSG_NO_MASK
+Brak pamięci na maskę.
+MSG_NO_OWN_SCREEN
+Nie można otworzyć własnego ekranu.
+MSG_NO_FONT
+Nie można otworzyć czcionki.
+MSG_FILL_SHORT
+Za mało pamięci, aby wypełnić wszystko.
+MSG_CHOICE_SHORT
+Za mało pamięci, aby zaznaczyć wszystko.
+MSG_NO_SELECTION
+Brak pamięci na zaznaczenie.
+MSG_OUTLINE
+Kontur
+MSG_SHOW_MASK
+Maska
+MSG_MASK_ROW
+Maska
+MSG_MASK_PAINTED
+[Maska]
+MSG_OPEN_TITLE
+Otwórz obraz
+MSG_SAVE_AS_TITLE
+Zapisz obraz jako
+MSG_NO_OPEN
+Nie można otworzyć\n%s:\n%s
+MSG_NO_SAVE
+Nie można zapisać obrazu\njako %s:\n%s
+MSG_NO_PART
+Nie można otworzyć\n%s.
+MSG_UNTITLED
+Bez tytułu
+MSG_OPEN_BRUSH_TITLE
+Otwórz pędzel
+MSG_SAVE_BRUSH_TITLE
+Zapisz pędzel jako
+MSG_NO_SAVE_BRUSH
+Nie można zapisać pędzla\njako %s:\n%s
+MSG_NO_SAVE_PALETTE
+Nie można zapisać palety\njako %s:\n%s
+MSG_NO_PALETTE
+%s\nnie zawiera palety.
+MSG_NO_COUNT
+Brak pamięci, aby policzyć kolory.
+MSG_OPEN_PALETTE_TITLE
+Otwórz paletę
+MSG_SAVE_PALETTE_TITLE
+Zapisz paletę jako
+MSG_PALETTE_TITLE
+Paleta
+MSG_RED
+Czerwony
+MSG_GREEN
+Zielony
+MSG_BLUE
+Niebieski
+MSG_HUE
+Barwa
+MSG_SATURATION
+Nasycenie
+MSG_VALUE
+Wartość
+MSG_HEX
+Hex
+MSG_SPREAD
+Przejście
+MSG_COPY_COLOUR
+Kopiuj
+MSG_SWAP_COLOURS
+Zamień
+MSG_CHANGE_PIXELS
+Zmień również piksele
+MSG_PICK_COLOUR
+Wybierz kolor do zmiany.
+MSG_PICK_SPREAD
+Wybierz drugi koniec przejścia.
+MSG_PICK_COPY
+Wybierz kolor, na który skopiować.
+MSG_PICK_SWAP
+Wybierz kolor do zamiany.
+MSG_PICK_RANGE
+Wybierz drugi koniec zakresu.
+MSG_RANGE
+Zakres
+MSG_SET_RANGE
+Ustaw zakres
+MSG_SPEED
+Prędkość
+MSG_BACKWARDS
+Wstecz
+MSG_RANGE_SPAN
+Zakres %ld: kolory od %ld do %ld.
+MSG_RANGE_UNSET
+Zakres %ld nie jest ustawiony.
+MSG_NO_RANGE
+Żaden zakres palety nie rotuje:\nustaw go w edytorze palety.
+MSG_NO_REDUCE
+Brak pamięci na rozproszenie\nbłędu każdego koloru.
+MSG_BRUSH_TOO_LARGE
+Pędzel może mieć najwyżej %ld na %ld pikseli.
+MSG_NO_BRUSH
+Brak pamięci na pędzel\no wymiarach %ld na %ld pikseli.
+MSG_NOLIBRARY
+Brak %s\n
+MSG_NOSCREEN
+Brak ekranu - brak wyświetlacza\n
+MSG_NOMEMORY
+Brak pamięci na okno\n
+MSG_BADSCREEN
+SCREEN to OWN lub DESKTOP\n
