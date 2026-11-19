@@ -17,6 +17,13 @@
 //! picture's pixels) as the pointer moves, interim, and once more when it
 //! is let go - all a program that draws with the pointer needs.
 //!
+//! **Both buttons.** Made with `GA_MenuButton`, the menu button presses it
+//! too, over its box, and the menus stay shut there: `CANVAS_Button` says
+//! which button holds it, told with every place, and the press ends on
+//! that button's release. `IDCMP_GADGETDOWN`, sent before the gadget
+//! hears of the press, says the same in its qualifier
+//! (`IEQUALIFIER_RBUTTON`, read with `WINDOWA_Qualifier`).
+//!
 //!   const canvas = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &.{
 //!       .{ .tag = cv.CANVAS_Width, .data = 200 },
 //!       .{ .tag = cv.CANVAS_Height, .data = 120 },
@@ -67,3 +74,11 @@ pub const CANVAS_BitMap = CANVAS_Dummy + 0x04;
 /// and read: the last place told.
 pub const CANVAS_X = CANVAS_Dummy + 0x05;
 pub const CANVAS_Y = CANVAS_Dummy + 0x06;
+/// Which button holds it: `CANVAS_SELECT` or, for a gadget made with
+/// `GA_MenuButton`, `CANVAS_MENU`. Told with `CANVAS_X` and `CANVAS_Y`,
+/// and read: the button of the last press. Since canvas.gadget 2.3.
+pub const CANVAS_Button = CANVAS_Dummy + 0x07;
+
+/// `CANVAS_Button`'s values.
+pub const CANVAS_SELECT: u32 = 0;
+pub const CANVAS_MENU: u32 = 1;

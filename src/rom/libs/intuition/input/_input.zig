@@ -900,7 +900,7 @@ fn handleFree(ib: *IntuitionBase, e: *const InputEvent) void {
             } else if (e.code == ie.IECODE_NOBUTTON) {
                 moved(ib, false);
             } else {
-                otherButton(ib, e.code);
+                otherButton(ib, e);
             }
         },
         ie.IECLASS_RAWKEY => if (ib.active_window) |w| key(ib, w, e),
@@ -1781,7 +1781,8 @@ fn focus(ib: *IntuitionBase, o: ?*Object) void {
 /// pointer is. The menu button pressed is the window's with WA_RMBTrap, and
 /// otherwise the menus' - unless the select button is already doing
 /// something - and let go is always told.
-fn otherButton(ib: *IntuitionBase, code: u32) void {
+fn otherButton(ib: *IntuitionBase, e: *const InputEvent) void {
+    const code = e.code;
     const w = ib.active_window orelse return;
     // The menu button takes a popup down, and does nothing else.
     if (code == ie.IECODE_RBUTTON and dismissPopup(ib)) return;
@@ -1794,6 +1795,8 @@ fn otherButton(ib: *IntuitionBase, code: u32) void {
             return;
         }
     }
+    // Over a gadget that takes it, the menu button presses the gadget.
+    if (code == ie.IECODE_RBUTTON and pressMenuButton(ib, w, e)) return;
     if (code == ie.IECODE_RBUTTON and w.flags & _window.WF_RMBTRAP == 0) {
         if (stateOf(ib).mode == .none) menus.menuButton(ib);
         return;
@@ -1807,6 +1810,34 @@ fn otherButton(ib: *IntuitionBase, code: u32) void {
         else => false,
     };
     if (told) _ = _window.sendWith(ib, w, wn.IDCMP_MOUSEBUTTONS, code, null);
+}
+
+/// The menu button pressed over a gadget of the active window that takes
+/// it (`GA_MenuButton`): pressed as the select button presses one, with
+/// the menu button's event, so the class can tell the two apart and ends
+/// on its release. Only the window under the pointer, inside it or on a
+/// border gadget, and only with nothing else under way. It is the
+/// gadget that will have the input that must take the button - the member
+/// of a group the hit test found, not the group. True when one took it.
+fn pressMenuButton(ib: *IntuitionBase, w: *Window, e: *const InputEvent) bool {
+    const st = stateOf(ib);
+    if (st.mode != .none or w.first_request != null) return false;
+    const s = screenAt(ib) orelse return false;
+    if (windowAt(ib, s, st.x, st.y) != w) return false;
+    switch (partAt(w, st.x - w.left, st.y - w.top)) {
+        .inside, .border, .drag => {},
+        else => return false,
+    }
+    switch (_gadget.hit(ib, w, st.x - w.left, st.y - w.top)) {
+        .gadget => |o| {
+            if (sysPartOf(ib, o) != null) return false;
+            const taker = gadgetclass.gadgetOf(ib, _gadget.innermost(ib, o));
+            if (taker.activation & gadgetclass.GACT_MENUBUTTON == 0) return false;
+            pressGadget(ib, w, o, e);
+            return true;
+        },
+        else => return false,
+    }
 }
 
 /// An event while a window is asked IDCMP_SIZEVERIFY: a tick counts down

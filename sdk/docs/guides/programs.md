@@ -328,8 +328,8 @@ them: `checkbox`, `cycle`, `radiobutton`, `string`, `text`, `slider`,
 `meter` (a dial with a scale and a needle), `arc` (a ring filled to a
 level, or turned by its knob), `roller` (a wheel of choices turned by
 dragging), `calendar` (a month to pick a day from), `canvas` (a picture
-the program draws into and the gadget shows - `SYS:Programs/Sheet`'s
-cells), `qrcode` and `barcode` (a text as a QR code, a Code 128 or an
+the program draws into and the gadget shows, pressed with either button
+- `SYS:Programs/Sheet`'s cells), `qrcode` and `barcode` (a text as a QR code, a Code 128 or an
 EAN-13), `chart` (values over time
 as lines or bars, kept by the gadget), `keyboard` (keys on the screen,
 written to input.device as a keyboard's are),

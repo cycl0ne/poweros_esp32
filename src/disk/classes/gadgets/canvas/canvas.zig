@@ -9,7 +9,9 @@
 //! when the gadget is next drawn, which `QueueGadgetRefresh` asks for.
 //!
 //! A press goes active and every move after it, and the release, tell the
-//! target the pointer's place in the picture.
+//! target the pointer's place in the picture, and which button made the
+//! press: the menu button reaches it when it was made with
+//! `GA_MenuButton`, and a press ends on the release of its own button.
 //!
 //! `OM_SET` of `CANVAS_Width` or `CANVAS_Height` makes the picture anew at
 //! the new size (0: the gadget's box, from the GadgetInfo when there is
@@ -44,11 +46,13 @@ const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const Pen = graphics.Pen;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// 2.3: `CANVAS_Button`, and a press of the menu button ends on its own
+/// release.
 pub const Library = gadgets.ClassLibrary(.{
     .name = cv.CANVAS_CLASS,
     .version = 2,
-    .revision = 2,
-    .date = "29.10.2026",
+    .revision = 3,
+    .date = "19.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -69,6 +73,8 @@ pub const Data = extern struct {
     /// Where the pointer was last told to be.
     last_x: i32 = 0,
     last_y: i32 = 0,
+    /// The button of the last press, `CANVAS_SELECT` or `CANVAS_MENU`.
+    button: u32 = cv.CANVAS_SELECT,
 };
 
 const default_width = 160;
@@ -188,6 +194,7 @@ fn tell(base: *gadgets.Base, own: *Data, o: *Object, in: *const gc.GpInput, flag
     const tags = [_]TagItem{
         .{ .tag = cv.CANVAS_X, .data = @bitCast(@as(isize, in.mouse.x)) },
         .{ .tag = cv.CANVAS_Y, .data = @bitCast(@as(isize, in.mouse.y)) },
+        .{ .tag = cv.CANVAS_Button, .data = own.button },
         .{ .tag = gc.GA_ID, .data = gc.gadget(o).id },
         .{},
     };
@@ -277,6 +284,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 cv.CANVAS_Height => get.storage.* = own.height,
                 cv.CANVAS_X => get.storage.* = @bitCast(@as(isize, own.last_x)),
                 cv.CANVAS_Y => get.storage.* = @bitCast(@as(isize, own.last_y)),
+                cv.CANVAS_Button => get.storage.* = own.button,
                 else => return ib.SendSuperMessage(cl, o, msg),
             }
             return 1;
@@ -293,19 +301,23 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
         },
         gc.GM_GOACTIVE => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
-            if (in.event == null) return gc.GMR_NOREUSE;
-            tell(base, classes.instData(Data, cl, o.?), o.?, in, classusr.OPUF_INTERIM);
+            const e = in.event orelse return gc.GMR_NOREUSE;
+            const own = classes.instData(Data, cl, o.?);
+            own.button = if (e.code == ie.IECODE_RBUTTON) cv.CANVAS_MENU else cv.CANVAS_SELECT;
+            tell(base, own, o.?, in, classusr.OPUF_INTERIM);
             return gc.GMR_MEACTIVE;
         },
         gc.GM_HANDLEINPUT => {
             const in: *gc.GpInput = @ptrCast(@alignCast(msg));
             const e = in.event orelse return gc.GMR_MEACTIVE;
             if (e.class != ie.IECLASS_NEWPOINTERPOS) return gc.GMR_MEACTIVE;
-            if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
-                tell(base, classes.instData(Data, cl, o.?), o.?, in, 0);
+            const own = classes.instData(Data, cl, o.?);
+            const held = if (own.button == cv.CANVAS_MENU) ie.IECODE_RBUTTON else ie.IECODE_LBUTTON;
+            if (e.code == held | ie.IECODE_UP_PREFIX) {
+                tell(base, own, o.?, in, 0);
                 return gc.GMR_NOREUSE | gc.GMR_VERIFY;
             }
-            tell(base, classes.instData(Data, cl, o.?), o.?, in, classusr.OPUF_INTERIM);
+            tell(base, own, o.?, in, classusr.OPUF_INTERIM);
             return gc.GMR_MEACTIVE;
         },
         gc.GM_RENDER => {

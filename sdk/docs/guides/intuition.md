@@ -1094,6 +1094,35 @@ wc.WMHI_MENUPICK => {
 },
 ```
 
+### A gadget that takes the menu button
+
+A gadget made with `GA_MenuButton` takes the menu button pressed over
+it (intuition 0.104). Intuition presses it as the select button does -
+`IDCMP_GADGETDOWN` with `IEQUALIFIER_RBUTTON` in its qualifier
+(`WINDOWA_Qualifier` from a window object), then `GM_GOACTIVE` with the
+press as its event - and the menus stay shut. Anywhere else in the
+window the menu button opens them as before, so a picture painted in
+two colours keeps its menus. The class ends the press on that button's
+release, so the tag is for a class that tells the two apart:
+canvas.gadget (2.3) says which button holds it in `CANVAS_Button`, told
+with every place and read with `GetAttr`. `C:test/Widgets` puts white
+dots on its canvas with the select button and black ones with the menu
+button.
+
+```zig
+const canvas = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &.{
+    .{ .tag = gc.GA_MenuButton, .data = 1 },
+    .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+    .{},
+});
+// ...
+wc.WMHI_IDCMPUPDATE => {
+    var button: usize = cv.CANVAS_SELECT;
+    _ = ib.GetAttr(cv.CANVAS_Button, canvas, &button);
+    const pen = if (button == cv.CANVAS_MENU) background else foreground;
+},
+```
+
 ### By a finger
 
 On a touch panel there is no menu button. A tap on the screen's bar - a
@@ -1324,7 +1353,7 @@ requester goes to its drawer with its name in the File field
 | `C:test/Layout` | weights, alignment, labels, wrapping, shapes kept in a sunk frame, and `GRID` |
 | `C:test/Gadgets` | the gadget classes in one layout, each worked by its key |
 | `C:test/Settings` | tabs along a page gadget's top, its pages framed below them (`PAGE_Tabs`), framed groups |
-| `C:test/Widgets` | meters, a canvas drawn into and queued, codes, a chart |
+| `C:test/Widgets` | meters, a canvas drawn into and queued and pressed with either button, codes, a chart |
 | `C:test/Asl` | the file and font requesters; `DRAWERS` a drawer, `ASYNC` asked without waiting, `ABORT` taken down |
 | `SYS:Programs/Notepad` | a window object with menus, border scroll bars, a second window, requesters, a ribbon whose toggles follow the menu's check marks |
 | `SYS:Programs/Sheet` | a canvas drawn into and pressed on, a line of text with an edit hook of its own, border scroll bars telling the window |

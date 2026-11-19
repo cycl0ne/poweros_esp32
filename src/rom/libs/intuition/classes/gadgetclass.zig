@@ -122,6 +122,7 @@ pub const GACT_TOPBORDER = gc.GACT_TOPBORDER;
 pub const GACT_BOTTOMBORDER = gc.GACT_BOTTOMBORDER;
 pub const GACT_BORDER = gc.GACT_BORDER;
 pub const GACT_FOLLOWMOUSE = gc.GACT_FOLLOWMOUSE;
+pub const GACT_MENUBUTTON = gc.GACT_MENUBUTTON;
 
 // `Data` is what `gc.Gadget` shows a class: the same fields at the same
 // places, checked here so that the two cannot drift apart.
@@ -422,6 +423,7 @@ fn setAttrs(ib: *IntuitionBase, g: *Data, tags: ?[*]const TagItem) usize {
             gc.GA_SysGadget => setFlag(&g.flags, GFLG_SYSGADGET, v != 0),
             gc.GA_SysGType => g.sys_type = @truncate(v),
             gc.GA_FollowMouse => setFlag(&g.activation, GACT_FOLLOWMOUSE, v != 0),
+            gc.GA_MenuButton => setFlag(&g.activation, GACT_MENUBUTTON, v != 0),
             gc.GA_Image => {
                 g.image = @ptrFromInt(v);
                 changed = 1;
@@ -480,6 +482,7 @@ fn get(g: *Data, msg: *classusr.OpGet) bool {
         gc.GA_SysGadget => out.* = @intFromBool(g.flags & GFLG_SYSGADGET != 0),
         gc.GA_SysGType => out.* = g.sys_type,
         gc.GA_FollowMouse => out.* = @intFromBool(g.activation & GACT_FOLLOWMOUSE != 0),
+        gc.GA_MenuButton => out.* = @intFromBool(g.activation & GACT_MENUBUTTON != 0),
         gc.GA_GadgetHelp => out.* = @intFromBool(g.flags & GFLG_GADGETHELP != 0),
         gc.GA_Image => out.* = @intFromPtr(g.image),
         gc.GA_Left, gc.GA_RelRight => out.* = @bitCast(@as(isize, g.left)),

@@ -1953,6 +1953,45 @@ test "canvas.gadget: a picture to draw into, kept with the gadget, presses told 
     try rig.down();
 }
 
+test "canvas.gadget: a press of the menu button is told as one, and ends on its own release" {
+    var heard = Heard{ .tag = cv.CANVAS_Button, .ib = undefined };
+    var rig = try Rig.up(&canvas.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const picture = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &[_]TagItem{
+        .{ .tag = cv.CANVAS_Width, .data = 50 },
+        .{ .tag = cv.CANVAS_Height, .data = 40 },
+        .{ .tag = gc.GA_MenuButton, .data = 1 },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 1), attr(ib, picture, gc.GA_MenuButton));
+    const menu_press = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON, .qualifier = ie.IEQUALIFIER_RBUTTON };
+    const menu_release = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX };
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &menu_press, 3, 4, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&down)));
+    try testing.expectEqual(@as(?usize, cv.CANVAS_MENU), heard.value);
+    try testing.expectEqual(@as(usize, cv.CANVAS_MENU), attr(ib, picture, cv.CANVAS_Button));
+    // The select button let go does not end a press of the menu button.
+    var other = input(gc.GM_HANDLEINPUT, &release, 9, 4, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&other)));
+    var up = input(gc.GM_HANDLEINPUT, &menu_release, 11, 4, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(picture, @ptrCast(&up)));
+    try testing.expectEqual(@as(usize, 11), attr(ib, picture, cv.CANVAS_X));
+
+    // The select button's press is told as that, and the menu button let
+    // go meanwhile does not end it.
+    var again = input(gc.GM_GOACTIVE, &press, 5, 5, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&again)));
+    try testing.expectEqual(@as(?usize, cv.CANVAS_SELECT), heard.value);
+    var stray = input(gc.GM_HANDLEINPUT, &menu_release, 6, 5, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(picture, @ptrCast(&stray)));
+    var done = input(gc.GM_HANDLEINPUT, &release, 7, 5, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(picture, @ptrCast(&done)));
+    ib.DisposeObject(picture);
+    try rig.down();
+}
+
 test "canvas.gadget: the picture made anew at another size, 0 its box's, what fits of it kept" {
     var heard = Heard{ .tag = cv.CANVAS_X, .ib = undefined };
     var rig = try Rig.up(&canvas.Library.resident_tag, &heard);

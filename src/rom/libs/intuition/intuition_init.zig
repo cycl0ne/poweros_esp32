@@ -285,8 +285,10 @@ pub const LIBRARY_VERSION = 0;
 /// board is given to it with its buffers (RehomeBitMap), shown there in
 /// the mode nearest its size, the pointer with it. ChangeScreenBuffer
 /// gives a buffer made before the move to the screen's board.
-pub const LIBRARY_REVISION = 103;
-const BUILD_DATE = "18.11.2026";
+/// 104: a gadget made with GA_MenuButton takes the menu button pressed
+/// over it, as the select button presses it, and the menus stay shut.
+pub const LIBRARY_REVISION = 104;
+const BUILD_DATE = "19.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

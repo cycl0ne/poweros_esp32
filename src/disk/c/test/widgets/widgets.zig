@@ -11,7 +11,9 @@
 //! - **Picking**: a roller of the hours that wraps round, and a calendar
 //!   on today.
 //! - **Drawing**: a canvas the program has painted a pattern into; a press
-//!   or a drag on it puts dots down.
+//!   or a drag on it puts dots down, white with the select button and
+//!   black with the menu button, which the canvas takes over its box
+//!   (`GA_MenuButton`) - the menus open everywhere else.
 //! - **Codes**: TEXT (the repository's address unless given) as a QR code,
 //!   as Code 128, and an EAN-13.
 //! - **Looks**: a button whose own style rounds its raised bevel, beside a
@@ -57,7 +59,7 @@ const tx = sdk.gadgets.text;
 const cr = sdk.gadgets.chart;
 
 pub const COMMAND_NAME = "Widgets";
-const VERSION_STRING = "\x00$VER: Widgets 1.0 (2.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Widgets 1.1 (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TEXT/K";
@@ -227,6 +229,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         pair(gc.GA_ID, ID_CANVAS),
         pair(cv.CANVAS_Width, 180),
         pair(cv.CANVAS_Height, 100),
+        pair(gc.GA_MenuButton, 1),
         pair(icc.ICA_TARGET, icc.ICTARGET_IDCMP),
         .{},
     });
@@ -387,13 +390,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                         _ = ib.SetGadgetAttrsTagList(meter.?, window, &[_]TagItem{ pair(mt.METER_Level, @intCast(value)), .{} });
                     }
                 },
-                // A press or a drag on the canvas: a dot where it is.
+                // A press or a drag on the canvas: a dot where it is, its
+                // colour the button's.
                 wc.WMHI_IDCMPUPDATE => {
                     var x: usize = 0;
                     var y: usize = 0;
+                    var button: usize = cv.CANVAS_SELECT;
                     _ = ib.GetAttr(cv.CANVAS_X, canvas.?, &x);
                     _ = ib.GetAttr(cv.CANVAS_Y, canvas.?, &y);
-                    gb.SetRPAttrs(picture, &[_]TagItem{ pair(graphics.RPTAG_APen, graphics.penRGB(255, 255, 255)), .{} });
+                    _ = ib.GetAttr(cv.CANVAS_Button, canvas.?, &button);
+                    const ink: u8 = if (button == cv.CANVAS_MENU) 0 else 255;
+                    gb.SetRPAttrs(picture, &[_]TagItem{ pair(graphics.RPTAG_APen, graphics.penRGB(ink, ink, ink)), .{} });
                     gb.FillArc(picture, &.{ .cx = @bitCast(@as(u32, @truncate(x))), .cy = @bitCast(@as(u32, @truncate(y))), .radius = 3 });
                     ib.QueueGadgetRefresh(canvas.?);
                 },

@@ -196,6 +196,16 @@ pub const GA_Animate = GA_Dummy + 0x32;
 /// makes for the gadget (`clip`), and `ObtainGIRPort` holds the RastPort
 /// to it. Read back: a pointer to the rectangle as kept.
 pub const GA_ClipRect = GA_Dummy + 0x33;
+/// Bool: the gadget takes the menu button as well as the select button
+/// (`GACT_MENUBUTTON`). Pressed over it in the active window, the menu
+/// button presses it as the select button would - `GM_GOACTIVE` with the
+/// press in its event (`IECODE_RBUTTON`), `IDCMP_GADGETDOWN` with
+/// `IEQUALIFIER_RBUTTON` in its qualifier - and the menus stay shut;
+/// anywhere else in the window it opens them as before. For a class that
+/// tells the two buttons apart and ends a press on its own button's
+/// release - canvas.gadget; one that waits for the select button's would
+/// hold the input until then. Since intuition 0.104.
+pub const GA_MenuButton = GA_Dummy + 0x34;
 
 // --- the gadget -------------------------------------------------------------
 
@@ -337,6 +347,8 @@ pub const GACT_BOTTOMBORDER: u32 = 1 << 7;
 pub const GACT_BORDER: u32 = GACT_RIGHTBORDER | GACT_LEFTBORDER | GACT_TOPBORDER | GACT_BOTTOMBORDER;
 /// While held, the window hears the pointer's moves (`GA_FollowMouse`).
 pub const GACT_FOLLOWMOUSE: u32 = 1 << 8;
+/// The menu button presses it too (`GA_MenuButton`).
+pub const GACT_MENUBUTTON: u32 = 1 << 9;
 
 /// The gadget of any object made from gadgetclass.
 pub inline fn gadget(o: *classusr.Object) *Gadget {

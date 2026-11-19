@@ -10494,6 +10494,119 @@ test "input: the menu button is the window's with WA_RMBTrap, let go always; the
     try tearDown(ib);
 }
 
+/// A gadget that ends a press on the release of the button that made it,
+/// and says which in its termination: what a class that takes the menu
+/// button (`GA_MenuButton`) does.
+const BothButtons = extern struct { pressed_by: u32 };
+
+fn bothButtonsDispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+    const ie = sdk.devices.inputevent;
+    const gc = intuition.gadgetclass;
+    const cl: *Class = @ptrCast(hook);
+    const ib: *IntuitionBase = @ptrFromInt(cl.user_data);
+    const msg: *Msg = @ptrCast(@alignCast(message.?));
+    const o: ?*Object = @ptrCast(object);
+    switch (msg.method_id) {
+        gc.GM_GOACTIVE => {
+            const in: *gc.GpInput = @ptrCast(@alignCast(msg));
+            const e = in.event orelse return gc.GMR_NOREUSE;
+            intuition.instData(BothButtons, cl, o.?).pressed_by = e.code;
+            return gc.GMR_MEACTIVE;
+        },
+        gc.GM_HANDLEINPUT => {
+            const in: *gc.GpInput = @ptrCast(@alignCast(msg));
+            const e = in.event orelse return gc.GMR_MEACTIVE;
+            const pressed_by = intuition.instData(BothButtons, cl, o.?).pressed_by;
+            if (e.class != ie.IECLASS_NEWPOINTERPOS or e.code != pressed_by | ie.IECODE_UP_PREFIX) return gc.GMR_MEACTIVE;
+            in.termination.* = @intCast(pressed_by);
+            return gc.GMR_NOREUSE | gc.GMR_VERIFY;
+        },
+        gc.GM_RENDER => return 0,
+        else => return ib.iface().SendSuperMessage(cl, o, msg),
+    }
+}
+
+test "input: a gadget made with GA_MenuButton is pressed by the menu button over it, the menus elsewhere" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const gc = intuition.gadgetclass;
+    const ie = sdk.devices.inputevent;
+    const it = ib.iface();
+    const display = try Display.up(ib);
+
+    const cl = it.MakeClass(null, classusr.GADGETCLASS, null, @sizeOf(BothButtons)).?;
+    cl.dispatcher.entry = &bothButtonsDispatch;
+    cl.user_data = @intFromPtr(ib);
+    const both = it.NewObjectTagList(cl, null, &[_]TagItem{
+        .{ .tag = gc.GA_Left, .data = 4 },
+        .{ .tag = gc.GA_Top, .data = 4 },
+        .{ .tag = gc.GA_Width, .data = 20 },
+        .{ .tag = gc.GA_Height, .data = 10 },
+        .{ .tag = gc.GA_ID, .data = 5 },
+        .{ .tag = gc.GA_Immediate, .data = 1 },
+        .{ .tag = gc.GA_RelVerify, .data = 1 },
+        .{ .tag = gc.GA_MenuButton, .data = 1 },
+        .{},
+    }).?;
+    try testing.expectEqual(@as(usize, 1), getAttr(ib, both, gc.GA_MenuButton));
+    const w = it.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 12 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 28 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{ .tag = wn.WA_Gadgets, .data = @intFromPtr(both) },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_RMBTrap, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_GADGETDOWN | wn.IDCMP_GADGETUP | wn.IDCMP_MOUSEBUTTONS },
+        .{},
+    }).?;
+    var got: [4]intuition.IntuiMessage = undefined;
+    const menu_press = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON, .qualifier = ie.IEQUALIFIER_RBUTTON, .x = 8, .y = 12 + 8 };
+
+    // The menu button over it: pressed, GADGETDOWN saying so in its
+    // qualifier, and done on that button's release - the select button's
+    // meanwhile changes nothing.
+    _input.handle(ib, &menu_press);
+    pointerEvent(ib, ie.IECODE_LBUTTON, 9, 12 + 8);
+    pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 9, 12 + 8);
+    pointerEvent(ib, ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX, 10, 12 + 8);
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_GADGETDOWN, got[0].class);
+    try testing.expect(got[0].qualifier & ie.IEQUALIFIER_RBUTTON != 0);
+    try testing.expectEqual(wn.IDCMP_GADGETUP, got[1].class);
+    try testing.expectEqual(ie.IECODE_RBUTTON, got[1].code);
+
+    // The select button presses it as ever.
+    click(ib, 8, 12 + 8);
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_GADGETDOWN, got[0].class);
+    try testing.expectEqual(ie.IECODE_LBUTTON, got[1].code);
+
+    // Beside it, the menu button is the window's (WA_RMBTrap).
+    pointerEvent(ib, ie.IECODE_RBUTTON, 40, 12 + 20);
+    pointerEvent(ib, ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX, 40, 12 + 20);
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.MENUDOWN, got[0].code);
+
+    // Without GA_MenuButton, over it too.
+    _ = it.SetGadgetAttrsTagList(both, @ptrCast(@alignCast(w)), &[_]TagItem{ .{ .tag = gc.GA_MenuButton, .data = 0 }, .{} });
+    _input.handle(ib, &menu_press);
+    pointerEvent(ib, ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX, 8, 12 + 8);
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_MOUSEBUTTONS, got[0].class);
+    try testing.expectEqual(wn.MENUDOWN, got[0].code);
+
+    const screen: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    it.CloseWindow(w);
+    it.DisposeObject(both);
+    try testing.expect(it.FreeClass(cl));
+    try testing.expect(it.CloseScreen(screen));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 // --- menus --------------------------------------------------------------------------
 
 /// A strip for the menu tests, on a 96 by 64 display with an 11-pixel bar:
