@@ -121,12 +121,20 @@
 //! does.
 //!
 //! **The Image menu** (image.zig) changes every layer: turned, flipped,
-//! cropped to the selection, trimmed, or put on a canvas of another
-//! size. Each layer and its mask is made anew at the new size and
+//! cropped to the selection, trimmed, scaled, or put on a canvas of
+//! another size. Each layer and its mask is made anew at the new size and
 //! swapped in, the old ones held by the history - one step to undo - and
 //! the memory beside the layers (`kept`, the mask, the composite) is
 //! made again for the size (`fitSides`), on undo and redo too
 //! (`followSize`). Flatten makes the layers one as they show.
+//!
+//! **Effects, scaling and transforms** are paintfx.library's, Paint's
+//! own in its drawer like paintio, opened by its path the first time
+//! one is wanted (`paintFX`): Picture Size scales each layer through
+//! `ScalePixels`. The Effects window (`effects`, modal) makes the layer
+//! painted anew from `kept` each time its sliders settle - the colours
+//! (`AdjustColours`), then blur and sharpening - cut to the selection
+//! and shown; OK records it as any change is, Cancel copies `kept` back.
 //!
 //! **The palette** (palette.zig). The Palette menu edits it in a window
 //! of its own (`editPalette`, modal): a colour by red, green and blue,
@@ -194,13 +202,13 @@
 //!   Edit      Undo (Z), Redo (Y), Swap Colours, Clear (K)
 //!   Image     Rotate (90° Clockwise, 90° Anticlockwise, 180°), Flip
 //!             Horizontally, Flip Vertically, Crop to the Selection,
-//!             Trim, Canvas Size..., Flatten
+//!             Trim, Picture Size... (R), Canvas Size..., Flatten
 //!   Tools     the tools, Filled Shapes, Round Gradient
 //!   Layer     New Layer (L), Duplicate (D), Delete, Rename..., Move Up,
 //!             Move Down, Merge Down (M), Flip Horizontally, Flip
-//!             Vertically, Add Mask (Show All, Hide All, Show the
-//!             Selection), Paint the Mask (E), Apply the Mask, Delete
-//!             the Mask
+//!             Vertically, Effects... (F), Add Mask (Show All, Hide All,
+//!             Show the Selection), Paint the Mask (E), Apply the Mask,
+//!             Delete the Mask
 //!   Selection Select (All, Pixels of the Layer, Pixels of the Colour,
 //!             See-through Pixels, Pixels Not in the Palette), Deselect,
 //!             Invert, Copy to Layer, Cut to Layer, Copy to Brush (B)
@@ -260,6 +268,7 @@ const gfo = sdk.gadgets.getfont;
 const command = sdk.images.command;
 const prefs = sdk.prefs;
 const paintio = sdk.paintio;
+const paintfx = sdk.paintfx;
 const asl = sdk.asl;
 const rdargs = dos.rdargs;
 const PixelFormat = sdk.rtg.PixelFormat;
@@ -271,6 +280,7 @@ const UtilityBase = sdk.interface.utility.UtilityBase;
 const IconBase = sdk.interface.icon.IconBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
 const PaintIOBase = sdk.interface.paintio.PaintIOBase;
+const PaintFXBase = sdk.interface.paintfx.PaintFXBase;
 const AslBase = sdk.interface.asl.AslBase;
 const Object = intuition.Object;
 const Window = intuition.Window;
@@ -304,7 +314,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.11";
+const VERSION = "1.12";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -383,6 +393,42 @@ const place_texts = [_]Id{
     .MSG_PLACE_LEFT,        .MSG_PLACE_MIDDLE, .MSG_PLACE_RIGHT,
     .MSG_PLACE_BOTTOM_LEFT, .MSG_PLACE_BOTTOM, .MSG_PLACE_BOTTOM_RIGHT,
 };
+// Picture Size's window: how the pixels are scaled, and whether one
+// side follows the other.
+const ID_SCALING = 77;
+const ID_KEEP = 78;
+const scale_texts = [_]Id{ .MSG_SCALE_SMOOTH, .MSG_SCALE_HARD };
+// The Effects window: Reset, and its sliders from ID_EFFECT on.
+const ID_EFFECT_RESET = 79;
+const ID_EFFECT = 80;
+
+/// The Effects window's sliders, in its order.
+const Effect = enum { brightness, contrast, saturation, hue, blur, sharpen, texture, dehaze, sepia, invert, cyan_red, magenta_green, yellow_blue };
+const EffectSlider = struct { label: Id, least: i32, most: i32 };
+const effect_sliders = [_]EffectSlider{
+    .{ .label = .MSG_FX_BRIGHTNESS, .least = -100, .most = 100 },
+    .{ .label = .MSG_FX_CONTRAST, .least = -100, .most = 100 },
+    .{ .label = .MSG_FX_SATURATION, .least = -100, .most = 100 },
+    .{ .label = .MSG_FX_HUE, .least = -180, .most = 180 },
+    // Its radius in pixels.
+    .{ .label = .MSG_FX_BLUR, .least = 0, .most = 50 },
+    .{ .label = .MSG_FX_SHARPEN, .least = 0, .most = 100 },
+    .{ .label = .MSG_FX_TEXTURE, .least = 0, .most = 100 },
+    .{ .label = .MSG_FX_DEHAZE, .least = 0, .most = 100 },
+    .{ .label = .MSG_FX_SEPIA, .least = 0, .most = 100 },
+    .{ .label = .MSG_FX_INVERT, .least = 0, .most = 100 },
+    .{ .label = .MSG_FX_CYAN_RED, .least = -100, .most = 100 },
+    .{ .label = .MSG_FX_MAGENTA_GREEN, .least = -100, .most = 100 },
+    .{ .label = .MSG_FX_YELLOW_BLUE, .least = -100, .most = 100 },
+};
+comptime {
+    if (effect_sliders.len != @typeInfo(Effect).@"enum".fields.len) @compileError("an effect without its slider");
+}
+/// What Sharpen and Texture ask of SharpenPixels: a level of Sharpen is
+/// twice that many percent over the next pixels, one of Texture that
+/// many over a wide blur.
+const sharpen_radius = 1;
+const texture_radius = 16;
 const ID_OK = 22;
 const ID_CANCEL = 23;
 // The text's window.
@@ -518,13 +564,15 @@ const Command = enum(u32) {
     trim,
     canvas_size,
     flatten,
+    picture_size,
+    effects,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.flatten)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.effects)) return null;
         return @enumFromInt(value);
     }
 };
@@ -752,6 +800,7 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_CROP, null, .crop),
     item(.MSG_MENU_TRIM, null, .trim),
+    item(.MSG_MENU_PICTURE_SIZE, "R", .picture_size),
     item(.MSG_MENU_CANVAS_SIZE, null, .canvas_size),
     bar,
     item(.MSG_MENU_FLATTEN, null, .flatten),
@@ -772,6 +821,7 @@ const menus = [_]MenuEntry{
     bar,
     item(.MSG_MENU_FLIP_ACROSS, null, .flip_layer_across),
     item(.MSG_MENU_FLIP_DOWN, null, .flip_layer_down),
+    item(.MSG_MENU_EFFECTS, "F", .effects),
     bar,
     .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_ADD_MASK) }, .text = .MSG_MENU_ADD_MASK },
     subItem(.MSG_MENU_MASK_SHOW_ALL, .mask_show_all),
@@ -1128,6 +1178,8 @@ const App = struct {
     /// Where Canvas Size puts the picture, 0 to 8 by rows from the top
     /// left: in the middle to begin with.
     canvas_place: u32 = 4,
+    /// How Picture Size scales, as last asked.
+    scaling: Scaling = .{},
     /// The picture pixel under the pointer while it is over the view and
     /// no button is down; null otherwise.
     hover: ?Point = null,
@@ -1154,6 +1206,9 @@ const App = struct {
     /// opened or saved.
     pio_lib: ?*exec.Library = null,
     asl_lib: ?*exec.Library = null,
+    /// paintfx.library, opened the first time an effect, a scale or a
+    /// transform wants it.
+    fx_lib: ?*exec.Library = null,
     /// What the window or the screen's bar says: the file's name.
     title: [path_size + 16:0]u8 = @splat(0),
 
@@ -2333,6 +2388,20 @@ const App = struct {
 
     // --- the Image menu ---------------------------------------------------------
 
+    /// The picture scaled to another size, asked with how - smooth or
+    /// hard, and whether a side left as it was follows the other: every
+    /// layer and mask, one step to undo.
+    fn pictureSize(app: *App) void {
+        _ = app.paintFX() orelse return;
+        var scaling = app.scaling;
+        const asked = app.askSize(.MSG_PICTURE_SIZE_TITLE, .{ .scale = &scaling }) orelse return;
+        app.scaling = scaling;
+        const bottom = app.stack.layers[0].picture;
+        const size = if (scaling.keep) image_zig.proportioned(.{ bottom.width, bottom.height }, asked) else asked;
+        if (size[0] == bottom.width and size[1] == bottom.height) return;
+        app.changeImage(.{ .scale = .{ .width = size[0], .height = size[1], .smooth = scaling.smooth } });
+    }
+
     /// Every layer, with its mask, made anew by `change`; one step to
     /// undo. A requester says when there is no memory for it: nothing
     /// changes then.
@@ -2374,7 +2443,10 @@ const App = struct {
         made.id = app.stack.newId();
         made.mask = null;
         made.mask_memory = null;
-        image_zig.apply(change, &layer.picture, &made.picture, fill);
+        if (!app.changePicture(change, &layer.picture, &made.picture, fill)) {
+            sys.FreeVec(memory);
+            return null;
+        }
         if (layer.mask) |*mask| {
             const mask_memory = sys.AllocVec(bytes, exec.MEMF_ANY) orelse {
                 sys.FreeVec(memory);
@@ -2382,9 +2454,26 @@ const App = struct {
             };
             made.mask = .{ .pixels = @ptrCast(@alignCast(mask_memory)), .width = size[0], .height = size[1] };
             made.mask_memory = mask_memory;
-            image_zig.apply(change, mask, &made.mask.?, 0xFFFFFFFF);
+            if (!app.changePicture(change, mask, &made.mask.?, 0xFFFFFFFF)) {
+                sys.FreeVec(mask_memory);
+                sys.FreeVec(memory);
+                return null;
+            }
         }
         return made;
+    }
+
+    /// `from` made into `into` by `change`: a scale by paintfx.library,
+    /// opened before the change was asked for, anything else by
+    /// image.zig. False when the library had no memory for it.
+    fn changePicture(app: *App, change: image_zig.Change, from: *const Picture, into: *Picture, fill: Pixel) bool {
+        if (change != .scale) {
+            image_zig.apply(change, from, into, fill);
+            return true;
+        }
+        const fx: *PaintFXBase = @ptrCast(app.fx_lib orelse return false);
+        const how = if (change.scale.smooth) paintfx.PFXSCALE_SMOOTH else paintfx.PFXSCALE_HARD;
+        return fx.ScalePixels(&pixelsOf(from, from.whole()), &pixelsOf(into, into.whole()), how) == 0;
     }
 
     /// The layers swapped for `made`, place by place: each taken out and
@@ -2501,7 +2590,7 @@ const App = struct {
     /// in the layers above the bottom one - where it is larger.
     fn canvasSize(app: *App) void {
         var where = app.canvas_place;
-        const size = app.askSize(.MSG_CANVAS_TITLE, &where) orelse return;
+        const size = app.askSize(.MSG_CANVAS_TITLE, .{ .place = &where }) orelse return;
         app.canvas_place = where;
         const bottom = app.stack.layers[0].picture;
         if (size[0] == bottom.width and size[1] == bottom.height) return;
@@ -2633,6 +2722,191 @@ const App = struct {
         app.show(picture.whole());
     }
 
+    /// The Effects window: its sliders change the layer painted - what
+    /// is chosen of it - as they move, the picture showing it; OK keeps
+    /// that, one step to undo, Cancel puts the layer back as it was.
+    fn effects(app: *App) void {
+        const gui = app.ui() orelse return;
+        const fx = app.paintFX() orelse return;
+        const picture = &app.picture;
+        const area = if (app.selection.any()) app.selection.box.clip(picture.width, picture.height) else picture.whole();
+        if (area.isEmpty()) return;
+        const ib = app.ib;
+        var made = Builder{ .ib = ib };
+        var sliders: [effect_sliders.len]?*Object = undefined;
+        for (&sliders, effect_sliders, 0..) |*slider, entry, place| slider.* = made.take(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EFFECT + place },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{ .tag = sl.SLIDER_Min, .data = @bitCast(@as(isize, entry.least)) },
+            .{ .tag = sl.SLIDER_Max, .data = @bitCast(@as(isize, entry.most)) },
+            .{ .tag = sl.SLIDER_Level, .data = 0 },
+            .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld") },
+            .{ .tag = sl.SLIDER_LevelPlace, .data = sl.SLIDER_PLACE_RIGHT },
+            .{ .tag = sl.SLIDER_MaxLevelLen, .data = 4 },
+            .{},
+        }));
+        const reset = made.take(textButton(ib, app.text.get(.MSG_RESET), ID_EFFECT_RESET));
+        const answers = [2]?*Object{ made.take(textButton(ib, app.text.get(.MSG_OK), ID_OK)), made.take(textButton(ib, app.text.get(.MSG_CANCEL), ID_CANCEL)) };
+        var slider_tags: [2 + 3 * effect_sliders.len + 1]TagItem = undefined;
+        slider_tags[0] = .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT };
+        slider_tags[1] = .{ .tag = lg.LAYOUTA_Spacing, .data = 4 };
+        var tag_count: usize = 2;
+        for (sliders, effect_sliders) |slider, entry| {
+            slider_tags[tag_count] = .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(slider) };
+            slider_tags[tag_count + 1] = .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(entry.label)) };
+            slider_tags[tag_count + 2] = .{ .tag = lg.CHILDA_MinWidth, .data = 200 };
+            tag_count += 3;
+        }
+        slider_tags[tag_count] = .{};
+        const values = made.layout(&slider_tags);
+        const answer_row = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(reset) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddSpace, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[0]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[1]) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{},
+        });
+        const layout = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 8 },
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(values) },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answer_row) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{},
+        });
+        if (made.failed or layout == null) {
+            made.drop();
+            return;
+        }
+        const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+            screenTag(gui),
+            .{ .tag = wn.WA_Title, .data = @intFromPtr(app.text.get(.MSG_EFFECTS_TITLE)) },
+            .{ .tag = wn.WA_ScreenTitle, .data = @intFromPtr(SCREEN_TITLE) },
+            // Over the tools and the panel, leaving the picture to be
+            // seen.
+            .{ .tag = wn.WA_Left, .data = 8 },
+            .{ .tag = wn.WA_Top, .data = 40 },
+            .{ .tag = wn.WA_AutoAdjust, .data = 1 },
+            .{ .tag = wn.WA_CloseGadget, .data = 1 },
+            .{ .tag = wn.WA_DragBar, .data = 1 },
+            .{ .tag = wn.WA_DepthGadget, .data = 1 },
+            .{ .tag = wn.WA_Activate, .data = 1 },
+            .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE },
+            .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
+            .{},
+        }) orelse {
+            made.drop();
+            return;
+        };
+        made.keep(layout.?);
+        defer ib.DisposeObject(object);
+        var open = wc.WmOpen{};
+        if (ib.SendMessage(object, @ptrCast(&open)) == 0) return;
+        const window: *Window = @ptrFromInt(windowOf(ib, object));
+
+        var signal: usize = 0;
+        _ = ib.GetAttr(wc.WINDOWA_SigMask, object, &signal);
+        var code: u32 = 0;
+        var handle = wc.WmHandleInput{ .code = &code };
+        var levels: [effect_sliders.len]i32 = @splat(0);
+        var shown = levels;
+        var told = false;
+        const taken = done: {
+            while (true) {
+                _ = app.sys.Wait(@truncate(signal));
+                while (true) {
+                    const word = ib.SendMessage(object, @ptrCast(&handle));
+                    if (word == wc.WMHI_LASTMSG) break;
+                    var gadget: usize = wc.WINDOW_NOGADGET;
+                    _ = ib.GetAttr(wc.WINDOWA_GadgetID, object, &gadget);
+                    const id = switch (word & wc.WMHI_CLASSMASK) {
+                        wc.WMHI_CLOSEWINDOW => break :done false,
+                        wc.WMHI_GADGETUP => word & wc.WMHI_GADGETMASK,
+                        wc.WMHI_IDCMPUPDATE => gadget,
+                        wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
+                            '\r' => break :done true,
+                            0x1B => break :done false,
+                            else => continue,
+                        },
+                        else => continue,
+                    };
+                    switch (id) {
+                        ID_OK => break :done true,
+                        ID_CANCEL => break :done false,
+                        ID_EFFECT_RESET => {
+                            levels = @splat(0);
+                            for (sliders) |slider| _ = ib.SetGadgetAttrsTagList(slider.?, window, &[_]TagItem{ .{ .tag = sl.SLIDER_Level, .data = 0 }, .{} });
+                        },
+                        else => if (id >= ID_EFFECT and id < ID_EFFECT + effect_sliders.len) {
+                            var level: usize = 0;
+                            _ = ib.GetAttr(sl.SLIDER_Level, sliders[id - ID_EFFECT].?, &level);
+                            levels[id - ID_EFFECT] = @truncate(@as(isize, @bitCast(level)));
+                        },
+                    }
+                }
+                // What came in together shown once.
+                if (sameLevels(&levels, &shown)) continue;
+                if (!app.showEffects(fx, &levels, area) and !told) {
+                    told = true;
+                    app.tell(.MSG_NO_IMAGE_MEMORY);
+                }
+                shown = levels;
+                app.flush();
+            }
+        };
+        if (taken and !sameLevels(&levels, &shown)) {
+            _ = app.showEffects(fx, &levels, area);
+            shown = levels;
+        }
+        if (taken and !sameLevels(&shown, &@as([effect_sliders.len]i32, @splat(0)))) {
+            app.changed = true;
+            app.recordWhole(area);
+        } else {
+            picture.copyArea(&app.kept, area);
+            app.show(area);
+        }
+    }
+
+    /// The layer painted over `area` made from `kept` with the effects at
+    /// `levels` - the colours, then the blur, the sharpening and the
+    /// texture - cut to what is chosen and shown. False when
+    /// paintfx.library had no memory for one of the last three: the rest
+    /// is made.
+    fn showEffects(app: *App, fx: *PaintFXBase, levels: *const [effect_sliders.len]i32, area: Area) bool {
+        const picture = &app.picture;
+        picture.copyArea(&app.kept, area);
+        const pixels = pixelsOf(picture, area);
+        fx.AdjustColours(&pixels, &.{
+            .dehaze = @intCast(levelOf(levels, .dehaze)),
+            .red = levelOf(levels, .cyan_red),
+            .green = levelOf(levels, .magenta_green),
+            .blue = levelOf(levels, .yellow_blue),
+            .brightness = levelOf(levels, .brightness),
+            .contrast = levelOf(levels, .contrast),
+            .saturation = levelOf(levels, .saturation),
+            .hue = levelOf(levels, .hue),
+            .sepia = @intCast(levelOf(levels, .sepia)),
+            .invert = @intCast(levelOf(levels, .invert)),
+        });
+        var whole = true;
+        const blur = levelOf(levels, .blur);
+        if (blur > 0 and fx.BlurPixels(&pixels, &pixels, @intCast(blur)) != 0) whole = false;
+        const sharpen = levelOf(levels, .sharpen);
+        if (sharpen > 0 and fx.SharpenPixels(&pixels, &pixels, @intCast(2 * sharpen), sharpen_radius) != 0) whole = false;
+        const texture = levelOf(levels, .texture);
+        if (texture > 0 and fx.SharpenPixels(&pixels, &pixels, @intCast(texture), texture_radius) != 0) whole = false;
+        app.selection.stencil(picture, &app.kept, area);
+        app.show(area);
+        return whole;
+    }
+
     /// The layer at `place` from the bottom painted.
     fn chooseLayer(app: *App, place: u32) void {
         if (place >= app.stack.count or place == app.stack.current) return;
@@ -2728,6 +3002,16 @@ const App = struct {
         if (app.pio_lib == null) app.pio_lib = app.sys.OpenLibrary(paintio.PAINTIOPATH, 1);
         return @ptrCast(app.pio_lib orelse {
             app.tellMissing(paintio.PAINTIOPATH);
+            return null;
+        });
+    }
+
+    /// paintfx.library from Paint's drawer, opened the first time;
+    /// null, said in a requester, when it cannot be.
+    fn paintFX(app: *App) ?*PaintFXBase {
+        if (app.fx_lib == null) app.fx_lib = app.sys.OpenLibrary(paintfx.PAINTFXPATH, 1);
+        return @ptrCast(app.fx_lib orelse {
+            app.tellMissing(paintfx.PAINTFXPATH);
             return null;
         });
     }
@@ -3991,12 +4275,12 @@ const App = struct {
             .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
             .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .flip_layer_across, .flip_layer_down => app.endShape(),
             .select_all, .select_layer, .select_colour, .select_see_through, .select_not_in_palette, .deselect, .invert_selection, .copy_to_layer, .cut_to_layer, .copy_to_brush => app.endShape(),
-            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask, .edit_palette, .reduce_plain, .reduce_ordered, .reduce_diffused, .image_turn_right, .image_turn_left, .image_turn_half, .image_flip_across, .image_flip_down, .crop, .trim, .canvas_size, .flatten => app.endShape(),
+            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask, .edit_palette, .reduce_plain, .reduce_ordered, .reduce_diffused, .image_turn_right, .image_turn_left, .image_turn_half, .image_flip_across, .image_flip_down, .crop, .trim, .canvas_size, .flatten, .picture_size, .effects => app.endShape(),
             else => {},
         }
         switch (which) {
             .new => if (app.mayLeave()) {
-                if (app.askSize(.MSG_NEW_TITLE, null)) |size| {
+                if (app.askSize(.MSG_NEW_TITLE, .plain)) |size| {
                     if (app.newPicture(size[0], size[1])) app.forgetPath() else app.tellSize(.MSG_NO_PICTURE, size);
                 }
             },
@@ -4090,6 +4374,8 @@ const App = struct {
             .trim => app.trim(),
             .canvas_size => app.canvasSize(),
             .flatten => app.flatten(),
+            .picture_size => app.pictureSize(),
+            .effects => app.effects(),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -4255,59 +4541,72 @@ const App = struct {
     }
 
     /// A picture's size, asked in a window of its own titled `title`,
-    /// with where in it the picture goes when `where` is given - read
-    /// from there and written back: null when it was closed or
-    /// cancelled.
-    fn askSize(app: *App, comptime title: Id, where: ?*u32) ?[2]u32 {
+    /// with what `question` asks besides - where on the canvas the
+    /// picture goes, or how it is scaled - read from there and written
+    /// back: null when it was closed or cancelled.
+    fn askSize(app: *App, comptime title: Id, question: SizeQuestion) ?[2]u32 {
         const gui = app.ui() orelse return null;
         const lib = app.sys.OpenLibrary(ig.INTEGER_LIBRARY, 0) orelse return null;
         defer app.sys.CloseLibrary(lib);
         const ib = app.ib;
-        const fields = [2]?*Object{ integerField(ib, ID_WIDTH, app.picture.width), integerField(ib, ID_HEIGHT, app.picture.height) };
-        const answers = [2]?*Object{ textButton(ib, app.text.get(.MSG_OK), ID_OK), textButton(ib, app.text.get(.MSG_CANCEL), ID_CANCEL) };
-        // Made at run time, so the list's end is set as the rest is.
+        var made = Builder{ .ib = ib };
+        const fields = [2]?*Object{ made.take(integerField(ib, ID_WIDTH, app.picture.width)), made.take(integerField(ib, ID_HEIGHT, app.picture.height)) };
+        const answers = [2]?*Object{ made.take(textButton(ib, app.text.get(.MSG_OK), ID_OK)), made.take(textButton(ib, app.text.get(.MSG_CANCEL), ID_CANCEL)) };
+        // Made at run time, so the lists' ends are set as the rest is.
         var place_labels: [place_texts.len:null]?[*:0]const u8 = @splat(null);
         for (&place_labels, place_texts) |*label, text| label.* = app.text.get(text);
-        const place_choice: ?*Object = if (where) |given| ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
-            .{ .tag = gc.GA_ID, .data = ID_PLACE },
-            .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&place_labels) },
-            .{ .tag = ch.CHOOSER_Active, .data = @min(given.*, place_texts.len - 1) },
-            .{},
-        }) else null;
-        if (fields[0] == null or fields[1] == null or answers[0] == null or answers[1] == null or (where != null and place_choice == null)) {
-            for (fields ++ answers) |made| ib.DisposeObject(made);
-            ib.DisposeObject(place_choice);
-            return null;
-        }
-        const row = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        var scale_labels: [scale_texts.len:null]?[*:0]const u8 = @splat(null);
+        for (&scale_labels, scale_texts) |*label, text| label.* = app.text.get(text);
+        const choice: ?*Object = switch (question) {
+            .plain => null,
+            .place => |where| made.take(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+                .{ .tag = gc.GA_ID, .data = ID_PLACE },
+                .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&place_labels) },
+                .{ .tag = ch.CHOOSER_Active, .data = @min(where.*, place_texts.len - 1) },
+                .{},
+            })),
+            .scale => |scaling| made.take(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+                .{ .tag = gc.GA_ID, .data = ID_SCALING },
+                .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&scale_labels) },
+                .{ .tag = ch.CHOOSER_Active, .data = @intFromBool(!scaling.smooth) },
+                .{},
+            })),
+        };
+        const keep_box: ?*Object = switch (question) {
+            .scale => |scaling| made.take(ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+                .{ .tag = gc.GA_ID, .data = ID_KEEP },
+                .{ .tag = cb.CHECKBOX_Checked, .data = @intFromBool(scaling.keep) },
+                .{},
+            })),
+            else => null,
+        };
+        const row = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[0]) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(answers[1]) },
             .{},
-        }) orelse {
-            for (fields ++ answers) |made| ib.DisposeObject(made);
-            ib.DisposeObject(place_choice);
-            return null;
-        };
-        const placing = place_choice != null;
-        const layout = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+        });
+        const choice_label: Id = if (question == .scale) .MSG_SCALING else .MSG_PLACE;
+        const ignore = sdk.utility.TAG_IGNORE;
+        const layout = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Margin, .data = 8 },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[0]) },
             .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_WIDTH)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(fields[1]) },
             .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_HEIGHT)) },
-            .{ .tag = if (placing) lg.LAYOUTA_AddChild else sdk.utility.TAG_IGNORE, .data = @intFromPtr(place_choice) },
-            .{ .tag = if (placing) lg.CHILDA_Label else sdk.utility.TAG_IGNORE, .data = @intFromPtr(app.text.get(.MSG_PLACE)) },
+            .{ .tag = if (choice != null) lg.LAYOUTA_AddChild else ignore, .data = @intFromPtr(choice) },
+            .{ .tag = if (choice != null) lg.CHILDA_Label else ignore, .data = @intFromPtr(app.text.get(choice_label)) },
+            .{ .tag = if (keep_box != null) lg.LAYOUTA_AddChild else ignore, .data = @intFromPtr(keep_box) },
+            .{ .tag = if (keep_box != null) lg.CHILDA_Label else ignore, .data = @intFromPtr(app.text.get(.MSG_KEEP_PROPORTIONS)) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(row) },
             .{},
-        }) orelse {
-            ib.DisposeObject(row);
-            for (fields) |made| ib.DisposeObject(made);
-            ib.DisposeObject(place_choice);
+        });
+        if (made.failed or layout == null) {
+            made.drop();
             return null;
-        };
+        }
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             screenTag(gui),
             .{ .tag = wn.WA_Title, .data = @intFromPtr(app.text.get(title)) },
@@ -4321,13 +4620,15 @@ const App = struct {
             .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
             .{},
         }) orelse {
-            ib.DisposeObject(layout);
+            made.drop();
             return null;
         };
+        made.keep(layout.?);
         defer ib.DisposeObject(object);
         var open = wc.WmOpen{};
         if (ib.SendMessage(object, @ptrCast(&open)) == 0) return null;
         const window: *Window = @ptrFromInt(windowOf(ib, object));
+        const asked = SizeWindow{ .fields = fields, .choice = choice, .keep_box = keep_box, .question = question };
 
         var signal: usize = 0;
         _ = ib.GetAttr(wc.WINDOWA_SigMask, object, &signal);
@@ -4347,12 +4648,12 @@ const App = struct {
                         // Return in the height is OK too; in the width it
                         // goes on to the height.
                         ID_WIDTH => _ = ib.ActivateGadget(fields[1].?, window, null),
-                        ID_OK, ID_HEIGHT => return answered(ib, fields, place_choice, where),
+                        ID_OK, ID_HEIGHT => return answered(ib, &asked),
                         else => {},
                     },
                     // Return with no field typed into is OK, Escape Cancel.
                     wc.WMHI_VANILLAKEY => switch (word & wc.WMHI_KEYMASK) {
-                        '\r' => return answered(ib, fields, place_choice, where),
+                        '\r' => return answered(ib, &asked),
                         0x1B => return null,
                         else => {},
                     },
@@ -5256,13 +5557,55 @@ fn sizeOf(ib: *IntuitionBase, fields: [2]?*Object) [2]u32 {
 
 /// The size typed, and where the picture goes written to `where` when
 /// it was asked.
-fn answered(ib: *IntuitionBase, fields: [2]?*Object, place_choice: ?*Object, where: ?*u32) [2]u32 {
-    if (place_choice) |chooser| if (where) |into| {
-        var active: usize = 0;
-        _ = ib.GetAttr(ch.CHOOSER_Active, chooser, &active);
-        into.* = @intCast(@min(active, place_texts.len - 1));
-    };
-    return sizeOf(ib, fields);
+/// What a size window asks besides the width and the height.
+const SizeQuestion = union(enum) {
+    plain,
+    /// Where on the canvas the picture goes, 0 to 8 by rows from the top
+    /// left.
+    place: *u32,
+    /// How the picture is scaled.
+    scale: *Scaling,
+};
+
+/// How Picture Size scales: smoothly or with the nearest pixel, and
+/// whether a side left as it was follows the other.
+const Scaling = struct { smooth: bool = true, keep: bool = true };
+
+/// A size window's gadgets, and the question they answer.
+const SizeWindow = struct { fields: [2]?*Object, choice: ?*Object, keep_box: ?*Object, question: SizeQuestion };
+
+/// The size typed, and the rest of the question's answer written back.
+fn answered(ib: *IntuitionBase, asked: *const SizeWindow) [2]u32 {
+    var active: usize = 0;
+    if (asked.choice) |chooser| _ = ib.GetAttr(ch.CHOOSER_Active, chooser, &active);
+    switch (asked.question) {
+        .plain => {},
+        .place => |where| where.* = @intCast(@min(active, place_texts.len - 1)),
+        .scale => |scaling| {
+            scaling.smooth = active == 0;
+            var checked: usize = 0;
+            if (asked.keep_box) |box| _ = ib.GetAttr(cb.CHECKBOX_Checked, box, &checked);
+            scaling.keep = checked != 0;
+        },
+    }
+    return sizeOf(ib, asked.fields);
+}
+
+/// A view of `area` of `picture`, for paintfx.library.
+fn pixelsOf(picture: *const Picture, area: Area) paintfx.Pixels {
+    const first = @as(usize, @intCast(area.min_y)) * picture.width + @as(usize, @intCast(area.min_x));
+    return .{ .pixels = picture.pixels + first, .width = area.width(), .height = area.height(), .pitch = picture.width };
+}
+
+/// The level of `effect` among the Effects window's.
+fn levelOf(levels: *const [effect_sliders.len]i32, effect: Effect) i32 {
+    return levels[@intFromEnum(effect)];
+}
+
+/// Whether two sets of the Effects window's levels are alike.
+fn sameLevels(a: *const [effect_sliders.len]i32, b: *const [effect_sliders.len]i32) bool {
+    for (a, b) |one, other| if (one != other) return false;
+    return true;
 }
 
 fn windowOf(ib: *IntuitionBase, object: *Object) usize {
@@ -5737,6 +6080,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         app.freePicture();
         if (app.pio_lib) |lib| sys.CloseLibrary(lib);
         if (app.asl_lib) |lib| sys.CloseLibrary(lib);
+        if (app.fx_lib) |lib| sys.CloseLibrary(lib);
     }
 
     // A picture as large as the screen to begin with.

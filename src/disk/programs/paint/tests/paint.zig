@@ -1387,6 +1387,27 @@ test "image: turned, flipped and placed on a canvas, a pixel at a time" {
     try testing.expectEqual(image_zig.Place{ .width = 1, .height = 1, .left = -1, .top = -1 }, image_zig.placed(3, 2, 1, 1, 4));
 }
 
+test "image: a scale's size, and a side that follows the other in proportion" {
+    const image_zig = @import("../image.zig");
+    const scale = image_zig.Change{ .scale = .{ .width = 640, .height = 400, .smooth = true } };
+    try std.testing.expectEqual([2]u32{ 640, 400 }, image_zig.sizeAfter(scale, 1280, 800));
+    // A scale is the library's to make: apply leaves the picture alone.
+    var pixels = [_]picture_zig.Pixel{0x12345678} ** 4;
+    var into = picture_zig.Picture{ .pixels = &pixels, .width = 2, .height = 2 };
+    const from = into;
+    image_zig.apply(scale, &from, &into, 0);
+    try std.testing.expectEqual(@as(picture_zig.Pixel, 0x12345678), pixels[0]);
+
+    try std.testing.expectEqual([2]u32{ 640, 400 }, image_zig.proportioned(.{ 1280, 800 }, .{ 640, 800 }));
+    try std.testing.expectEqual([2]u32{ 2560, 1600 }, image_zig.proportioned(.{ 1280, 800 }, .{ 1280, 1600 }));
+    // Rounded, and never below a pixel.
+    try std.testing.expectEqual([2]u32{ 333, 208 }, image_zig.proportioned(.{ 1280, 800 }, .{ 333, 800 }));
+    try std.testing.expectEqual([2]u32{ 1, 1 }, image_zig.proportioned(.{ 1000, 10 }, .{ 1, 10 }));
+    // Both or neither changed: as asked.
+    try std.testing.expectEqual([2]u32{ 100, 100 }, image_zig.proportioned(.{ 1280, 800 }, .{ 100, 100 }));
+    try std.testing.expectEqual([2]u32{ 1280, 800 }, image_zig.proportioned(.{ 1280, 800 }, .{ 1280, 800 }));
+}
+
 test "image: trimmed to what is unlike the top left corner" {
     const image_zig = @import("../image.zig");
     var pixels: [6 * 5]Pixel = @splat(7);

@@ -43,6 +43,10 @@ MSG_MENU_CANVAS_SIZE (//)
 Canvas Size...
 MSG_MENU_FLATTEN (//)
 Flatten
+MSG_MENU_PICTURE_SIZE (//)
+Picture Size...
+MSG_MENU_EFFECTS (//)
+Effects...
 MSG_MENU_TOOLS (//)
 Tools
 MSG_MENU_FREEHAND (//)
@@ -388,6 +392,46 @@ MSG_PLACE_BOTTOM_RIGHT (//)
 Bottom Right
 MSG_NO_IMAGE_MEMORY (//)
 There is no memory\nto change the picture.
+MSG_PICTURE_SIZE_TITLE (//)
+Picture Size
+MSG_SCALING (//)
+Pixels
+MSG_SCALE_SMOOTH (//)
+Smooth
+MSG_SCALE_HARD (//)
+Hard
+MSG_KEEP_PROPORTIONS (//)
+Keep Proportions
+MSG_EFFECTS_TITLE (//)
+Effects
+MSG_RESET (//)
+Reset
+MSG_FX_BRIGHTNESS (//)
+Brightness
+MSG_FX_CONTRAST (//)
+Contrast
+MSG_FX_SATURATION (//)
+Saturation
+MSG_FX_HUE (//)
+Hue
+MSG_FX_BLUR (//)
+Blur
+MSG_FX_SHARPEN (//)
+Sharpen
+MSG_FX_TEXTURE (//)
+Texture
+MSG_FX_DEHAZE (//)
+Dehaze
+MSG_FX_SEPIA (//)
+Sepia
+MSG_FX_INVERT (//)
+Invert
+MSG_FX_CYAN_RED (//)
+Cyan/Red
+MSG_FX_MAGENTA_GREEN (//)
+Magenta/Green
+MSG_FX_YELLOW_BLUE (//)
+Yellow/Blue
 MSG_WIDTH (//)
 Width
 MSG_HEIGHT (//)

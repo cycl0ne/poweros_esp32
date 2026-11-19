@@ -10,6 +10,9 @@
 //! the corner at minus the area's own, and so is a larger canvas
 //! (`placed`, which puts the picture in one of nine places).
 //!
+//! Scaling is a change of size too (`sizeAfter`), but its pixels are
+//! paintfx.library's to make: `apply` leaves `into` to the caller then.
+//!
 //! `trimmed` finds what Trim keeps: the least area holding every pixel
 //! unlike the top left one.
 
@@ -27,7 +30,13 @@ pub const Change = union(enum) {
     flip_across,
     flip_down,
     place: Place,
+    /// The picture made another size (paintfx.library's ScalePixels).
+    scale: Scale,
 };
+
+/// The picture scaled to `width` by `height`, smoothly or with the
+/// nearest pixel.
+pub const Scale = struct { width: u32, height: u32, smooth: bool };
 
 /// The picture on a canvas `width` by `height`, its top left corner at
 /// (`left`, `top`) of the canvas.
@@ -39,7 +48,19 @@ pub fn sizeAfter(change: Change, width: u32, height: u32) [2]u32 {
         .turn_right, .turn_left => .{ height, width },
         .turn_half, .flip_across, .flip_down => .{ width, height },
         .place => |place| .{ place.width, place.height },
+        .scale => |scale| .{ scale.width, scale.height },
     };
+}
+
+/// The size `asked` for a picture `was`, the side left as it was
+/// following the other in proportion, at least a pixel; as asked when
+/// both sides or neither changed.
+pub fn proportioned(was: [2]u32, asked: [2]u32) [2]u32 {
+    const across = asked[0] != was[0];
+    const down = asked[1] != was[1];
+    if (across == down) return asked;
+    if (across) return .{ asked[0], @intCast(@max(1, (@as(u64, was[1]) * asked[0] + was[0] / 2) / was[0])) };
+    return .{ @intCast(@max(1, (@as(u64, was[0]) * asked[1] + was[1] / 2) / was[1])), asked[1] };
 }
 
 /// A picture `width` by `height` on a canvas `canvas_width` by
@@ -66,8 +87,10 @@ fn share(spare: i32, third: u32) i32 {
 }
 
 /// `from` made into `into` - the size `sizeAfter` gives - by `change`;
-/// a canvas's new part `fill`.
+/// a canvas's new part `fill`. A scale is not made here: `into` is left
+/// as it is.
 pub fn apply(change: Change, from: *const Picture, into: *Picture, fill: Pixel) void {
+    if (change == .scale) return;
     if (change == .place) {
         const place = change.place;
         into.fill(fill);
@@ -98,7 +121,7 @@ pub fn apply(change: Change, from: *const Picture, into: *Picture, fill: Pixel) 
                 .turn_half => .{ from.width - 1 - x, from.height - 1 - y },
                 .flip_across => .{ from.width - 1 - x, y },
                 .flip_down => .{ x, from.height - 1 - y },
-                .place => unreachable,
+                .place, .scale => unreachable,
             };
             pixel.* = from.get(source[0], source[1]);
         }

@@ -5,7 +5,9 @@ with the tools and the colours down its left, a side panel for the
 layers, the brush and the colour, and the picture under a zoom bar. Paint is a drawer of its own, `SYS:Programs/Paint`, so the parts
 it loads only when they are needed sit beside it rather than in `LIBS:`:
 `Libs/paintio.library` opens and saves files, and is loaded the first
-time a file is opened or saved.
+time a file is opened or saved; `Libs/paintfx.library` makes the
+effects, the scaling and the free transform, and is loaded the first
+time one of them is used.
 
 Its menus, hints, requesters and messages are in the language chosen on
 Prefs' Region page when there is a catalog for it, and in English
@@ -215,6 +217,7 @@ leave the bottom layer the background colour and any other see-through.
 | Move Up, Move Down | | the one painted moved one place in the stack |
 | Merge Down | `M` | the one painted laid into the one under it as it shows, and taken out |
 | Flip Horizontally, Flip Vertically | | the one painted, left to right, top to bottom, with its mask |
+| Effects... | `F` | the one painted - what is chosen of it - changed in colour, blurred or sharpened; see [Effects](#effects) |
 | Add Mask → Show All, Hide All, Show the Selection | | a mask on the one painted, white, black, or as much as each pixel is chosen; the mask painted |
 | Paint the Mask | `E` | the mask painted, or the layer again |
 | Apply the Mask | | the layer left with only what the mask let show, and the mask taken off |
@@ -236,6 +239,32 @@ bar's Mask shows the mask itself, in place of the picture.
 
 Merge Down lays the layer into the one under it as its mask lets it
 show; when the one under has a mask, that is applied first.
+
+### Effects
+
+Layer → Effects... opens a window of sliders over the tools. Each
+changes the layer painted - only what is chosen of it, when something
+is - and the picture shows the change as a slider moves. OK keeps it,
+one step to undo; Cancel, Escape or the close gadget puts the layer
+back; Reset sets every slider to none again.
+
+| Slider | Does |
+|---|---|
+| Brightness | -100 to 100: darker, lighter |
+| Contrast | -100 to 100: towards grey, towards the colours' extremes |
+| Saturation | -100 to 100: towards grey, stronger colours |
+| Hue | -180 to 180: the colours turned round the colour wheel, in degrees |
+| Blur | 0 to 50: soft, over that many pixels round each |
+| Sharpen | 0 to 100: the edges steepened |
+| Texture | 0 to 100: the detail and the texture brought out, as sharpening over a wide reach does |
+| Dehaze | 0 to 100: the haze lifted - the level the darkest channel never goes below taken away, and the rest stretched |
+| Sepia | 0 to 100: towards the browns of an old photograph |
+| Invert | 0 to 100: towards the opposite colours; at 50 all grey |
+| Cyan/Red, Magenta/Green, Yellow/Blue | -100 to 100: the balance of the colours, towards the one or the other |
+
+The colours change first, in the order of the table, then the blur, the
+sharpening and the texture. Colours are mixed by how much each shows,
+so a blur thins an edge into the see-through without darkening it.
 
 ## Selections
 
@@ -366,6 +395,7 @@ The Image menu changes the whole picture, every layer and its mask:
 | Flip Horizontally, Flip Vertically | the picture mirrored left to right, top to bottom |
 | Crop to the Selection | the picture cut to the box round what is chosen |
 | Trim | the edges cut away where all that shows is the colour of the top left corner |
+| Picture Size... | the picture scaled to another width and height, asked with how: Smooth - shrinking, each new pixel the average of what it covers, growing, mixed from its neighbours - or Hard, each new pixel the nearest old one, the colours as they were. With Keep Proportions a side left as it was follows the other |
 | Canvas Size... | the picture put on a canvas of another size, asked with where on it the picture goes - one of nine places; what is past the canvas is cut away, and new canvas is the background colour in the bottom layer and see-through above it |
 | Flatten | the layers made one as they show - hidden ones left out, masks and blend modes laid in |
 
@@ -417,9 +447,9 @@ The letters are the items' keys, pressed with the right command key.
 |---|---|
 | File | New... (N), Open... (O), Save (S), Save As... (A), Quit (Q) |
 | Edit | Undo (Z), Redo (Y), Swap Colours, Clear (K) |
-| Image | Rotate (90° Clockwise, 90° Anticlockwise, 180°), Flip Horizontally, Flip Vertically, Crop to the Selection, Trim, Canvas Size..., Flatten |
+| Image | Rotate (90° Clockwise, 90° Anticlockwise, 180°), Flip Horizontally, Flip Vertically, Crop to the Selection, Trim, Picture Size... (R), Canvas Size..., Flatten |
 | Tools | the tools; Filled Shapes, Round Gradient |
-| Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
+| Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Effects... (F), Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
 | Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
 | Palette | Edit... (P), From the Picture, Presets (Paint's Own, Greys, Spectrum, Pastel, Earth), Reduce (No Dither, Ordered Dither, Error Diffusion), Cycle Colours, Open Palette..., Save Palette... |
