@@ -1255,3 +1255,72 @@ test "view: the outline of what is chosen in dashes over the rows" {
     try testing.expect(line[4] == 0xFF000000 or line[4] == 0xFFFFFFFF);
     try testing.expectEqual(red, line[5]);
 }
+
+test "palette: a range turns its colours along it, either way, and only its own" {
+    var colours: [8]Pixel = @splat(0xFF000000);
+    colours[1] = 0xFF110000;
+    colours[2] = 0xFF220000;
+    colours[3] = 0xFF330000;
+    const forwards = palette_zig.Range{ .first = 1, .last = 3, .speed = 10 };
+    try testing.expect(forwards.turns());
+    try testing.expect(!(palette_zig.Range{ .first = 1, .last = 3 }).turns());
+    try testing.expect(!(palette_zig.Range{ .first = 4, .last = 4, .speed = 5 }).turns());
+    try testing.expect(palette_zig.anyTurns(&.{ .{}, forwards }));
+    // Ten steps a second: a step every five beats of fifty, round the
+    // three colours.
+    try testing.expectEqual(@as(u32, 0), forwards.turnAt(4, 50));
+    try testing.expectEqual(@as(u32, 1), forwards.turnAt(5, 50));
+    try testing.expectEqual(@as(u32, 0), forwards.turnAt(15, 50));
+
+    const turned = palette_zig.Turned.make(&colours, &.{forwards}, &.{1});
+    // A step on: each place shows the colour that was before it.
+    try testing.expectEqual(@as(Pixel, 0xFF330000), turned.map(0xFF110000));
+    try testing.expectEqual(@as(Pixel, 0xFF110000), turned.map(0xFF220000));
+    try testing.expectEqual(@as(Pixel, 0xFF220000), turned.map(0xFF330000));
+    // Its alpha kept, see-through and other colours left.
+    try testing.expectEqual(@as(Pixel, 0x80330000), turned.map(0x80110000));
+    try testing.expectEqual(@as(Pixel, 0x00110000), turned.map(0x00110000));
+    try testing.expectEqual(@as(Pixel, 0xFF000000), turned.map(0xFF000000));
+
+    const back = palette_zig.Turned.make(&colours, &.{.{ .first = 1, .last = 3, .speed = 10, .backwards = true }}, &.{1});
+    try testing.expectEqual(@as(Pixel, 0xFF220000), back.map(0xFF110000));
+    try testing.expectEqual(@as(Pixel, 0xFF110000), back.map(0xFF330000));
+    try testing.expect(!(palette_zig.Turned{}).any);
+}
+
+test "palette: reduced to its colours, plain, by the ordered pattern and by spreading the error" {
+    const two = [_]Pixel{ 0xFF000000, 0xFFFFFFFF };
+    try testing.expectEqual(@as(Pixel, 0xFFFFFFFF), palette_zig.nearest(.{ 200, 190, 210 }, &two));
+    try testing.expectEqual(@as(Pixel, 0xFF000000), palette_zig.nearest(.{ 40, 60, 50 }, &two));
+
+    // Plain: each pixel the nearest, its alpha kept, see-through left.
+    var row = [_]Pixel{ 0xFFC8C8C8, 0x80303030, 0x00C8C8C8 };
+    palette_zig.reduceRow(&row, 0, &two, .none, null);
+    try testing.expectEqualSlices(Pixel, &.{ 0xFFFFFFFF, 0x80000000, 0x00C8C8C8 }, &row);
+
+    // Ordered: a middle grey made half black, half white over the pattern.
+    var whites: u32 = 0;
+    var y: u32 = 0;
+    while (y < 4) : (y += 1) {
+        var grey: [4]Pixel = @splat(0xFF808080);
+        palette_zig.reduceRow(&grey, y, &two, .ordered, null);
+        for (grey) |pixel| whites += @intFromBool(pixel == 0xFFFFFFFF);
+    }
+    try testing.expectEqual(@as(u32, 8), whites);
+
+    // Error diffusion: a dark grey made mostly black, some white, over
+    // rows that carry what was missed down.
+    var this: [16][3]i16 = undefined;
+    var next: [16][3]i16 = undefined;
+    var carried = palette_zig.Diffusion{ .this = &this, .next = &next };
+    carried.start();
+    whites = 0;
+    y = 0;
+    while (y < 4) : (y += 1) {
+        var grey: [16]Pixel = @splat(0xFF404040);
+        palette_zig.reduceRow(&grey, y, &two, .diffused, &carried);
+        for (grey) |pixel| whites += @intFromBool(pixel == 0xFFFFFFFF);
+    }
+    // A quarter of 64, give or take what the edges lose.
+    try testing.expect(whites >= 12 and whites <= 20);
+}

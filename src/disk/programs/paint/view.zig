@@ -14,7 +14,9 @@
 //! of what is chosen (selection.zig): a view pixel on the side of a
 //! chosen picture pixel that faces one not chosen is a dash, four pixels
 //! black and four white along the view's diagonals, which shows on any
-//! colour and at any zoom.
+//! colour and at any zoom. While the palette cycles, each pixel of a
+//! range's colours is shown as the colour that has turned onto its place
+//! (`turned`); the picture itself is left.
 //!
 //! The view's rows are made here into the program's buffer, a band at a
 //! time, and the program writes them into the canvas with
@@ -26,6 +28,7 @@ const Pixel = picture_zig.Pixel;
 const Area = picture_zig.Area;
 const Ghost = @import("brush.zig").Ghost;
 const Outline = @import("selection.zig").Outline;
+const Turned = @import("palette.zig").Turned;
 
 /// The zooms the view steps through.
 pub const zooms = [_]u32{ 1, 2, 3, 4, 6, 8, 12, 16 };
@@ -48,6 +51,9 @@ pub const View = struct {
     offset_x: i32 = 0,
     offset_y: i32 = 0,
     grid: bool = true,
+    /// While the palette cycles, the colours shown in place of its
+    /// ranges' own.
+    turned: ?*const Turned = null,
 
     /// The picture's pixels across and down the view shows whole.
     pub fn columns(view: *const View) u32 {
@@ -174,6 +180,7 @@ pub const View = struct {
                 continue;
             }
             var colour = pixels[@intCast(picture_x)];
+            if (view.turned) |turned| colour = turned.map(colour);
             if (brush) |laid| colour = laid.shown(picture_x, picture_y, colour);
             if (colour >> 24 != 0xFF) colour = overChecks(colour, x, y);
             if (grid_row or (show_grid and @mod(across, zoom) == 0)) colour = gridded(colour);

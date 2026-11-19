@@ -122,7 +122,12 @@
 //! Pixels Too first makes the pixels of each colour changed its new one
 //! in every layer, a step to undo. It also takes the colours what is
 //! shown uses most, a preset, or a file - a palette's text, or the
-//! palette of a picture or project - and writes its text.
+//! palette of a picture or project - and writes its text. Reduce makes
+//! the layer painted of its colours alone, plain or dithered
+//! (`palette.reduceRow`). Its ranges cycle on Tab: timer.device's beat
+//! (`beat`) turns each as far as the E-clock's time since the start
+//! takes it, and the view shows the colours turned (`View.turned`); the
+//! pixels stay. A project keeps the ranges.
 //!
 //! **Selections** (selection.zig). The rectangle selection (`R`), the
 //! lasso (`L`) and the magic wand (`w`) choose pixels - in place of what
@@ -187,8 +192,9 @@
 //!             Own Colours, One Colour, Flip Horizontally, Flip
 //!             Vertically, Turn Right, Open Brush..., Save Brush...
 //!   Palette   Edit... (P), From the Picture, Presets (Paint's Own,
-//!             Greys, Spectrum, Pastel, Earth), Open Palette..., Save
-//!             Palette...
+//!             Greys, Spectrum, Pastel, Earth), Reduce (No Dither,
+//!             Ordered Dither, Error Diffusion), Cycle Colours (Tab),
+//!             Open Palette..., Save Palette...
 //!   View      Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit,
 //!             Grid (G), Own Screen
 //!   Help      About Paint...
@@ -213,6 +219,7 @@ const graphics = sdk.graphics;
 const intuition = sdk.intuition;
 const icon = sdk.icon;
 const ie = sdk.devices.inputevent;
+const timer = sdk.devices.timer;
 const wn = intuition.windows;
 const sc = intuition.screens;
 const gc = intuition.gadgetclass;
@@ -279,7 +286,7 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.9";
+const VERSION = "1.10";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
@@ -340,6 +347,12 @@ const ID_EDIT_PIXELS = 68;
 const ID_EDIT_SPREAD = 69;
 const ID_EDIT_COPY = 70;
 const ID_EDIT_SWAP = 71;
+// Its range: which of them, the button that sets it, its speed, and the
+// box that turns it backwards.
+const ID_EDIT_RANGE = 72;
+const ID_EDIT_SET_RANGE = 73;
+const ID_EDIT_SPEED = 74;
+const ID_EDIT_BACKWARDS = 75;
 // The new picture's window.
 const ID_WIDTH = 20;
 const ID_HEIGHT = 21;
@@ -463,13 +476,17 @@ const Command = enum(u32) {
     preset_earth,
     open_palette,
     save_palette,
+    reduce_plain,
+    reduce_ordered,
+    reduce_diffused,
+    cycle,
 
     fn id(which: Command) u32 {
         return @intFromEnum(which);
     }
 
     fn of(value: usize) ?Command {
-        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.save_palette)) return null;
+        if (value < @intFromEnum(Command.new) or value > @intFromEnum(Command.cycle)) return null;
         return @enumFromInt(value);
     }
 };
@@ -752,6 +769,11 @@ const menus = [_]MenuEntry{
     subItem(.MSG_PRESET_SPECTRUM, .preset_spectrum),
     subItem(.MSG_PRESET_PASTEL, .preset_pastel),
     subItem(.MSG_PRESET_EARTH, .preset_earth),
+    .{ .menu = .{ .type = mn.NM_ITEM, .label = strings.builtin(.MSG_MENU_REDUCE) }, .text = .MSG_MENU_REDUCE },
+    subItem(.MSG_DITHER_NONE, .reduce_plain),
+    subItem(.MSG_DITHER_ORDERED, .reduce_ordered),
+    subItem(.MSG_DITHER_DIFFUSED, .reduce_diffused),
+    toggleItem(.MSG_MENU_CYCLE, null, .cycle),
     bar,
     item(.MSG_MENU_OPEN_PALETTE, null, .open_palette),
     item(.MSG_MENU_SAVE_PALETTE, null, .save_palette),
@@ -797,6 +819,8 @@ const MenuState = struct {
     /// The layer painted has a mask; it is painted in the mask.
     has_mask: bool,
     painting_mask: bool,
+    /// The palette cycles.
+    cycling: bool,
 };
 
 // --- the window ----------------------------------------------------------------
@@ -1030,6 +1054,19 @@ const App = struct {
     palette_path: [path_size:0]u8 = @splat(0),
     /// The palette editor's Change the Pixels Too, kept for the next time.
     recolour_pixels: bool = false,
+    /// The palette's ranges, and whether they cycle: how far each has
+    /// turned since the E-clock's tick cycling started at, and the colours
+    /// shown for theirs.
+    ranges: [palette_zig.max_ranges]palette_zig.Range = @splat(.{}),
+    cycling: bool = false,
+    turns: [palette_zig.max_ranges]u32 = @splat(0),
+    cycle_start: u64 = 0,
+    turned: palette_zig.Turned = .{},
+    /// The beat cycling keeps: timer.device's request, its port, and
+    /// whether the request is out.
+    clock: timer.TimeRequest = .{},
+    clock_port: ?*exec.MsgPort = null,
+    clock_out: bool = false,
     /// The picture pixel under the pointer while it is over the view and
     /// no button is down; null otherwise.
     hover: ?Point = null,
@@ -1609,6 +1646,7 @@ const App = struct {
         for (app.palette[0..given.len], given) |*colour, made| colour.* = made | 0xFF00_0000;
         app.changed = true;
         app.showPalette();
+        app.retune();
     }
 
     /// The palette made the colours what is shown uses most; a requester
@@ -1696,7 +1734,7 @@ const App = struct {
         const string_lib = sys.OpenLibrary(sg.STRING_LIBRARY, 0) orelse return;
         defer sys.CloseLibrary(string_lib);
         const ib = app.ib;
-        var editor = Editor{ .colours = app.palette, .chosen = @min(app.foreground_index, palette_zig.size - 1) };
+        var editor = Editor{ .colours = app.palette, .chosen = @min(app.foreground_index, palette_zig.size - 1), .ranges = app.ranges };
 
         var made = Builder{ .ib = ib };
         const swatches = made.take(ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
@@ -1729,7 +1767,32 @@ const App = struct {
         }));
         const pixels_box = made.take(ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
             .{ .tag = gc.GA_ID, .data = ID_EDIT_PIXELS },
-            .{ .tag = gc.GA_Selected, .data = @intFromBool(app.recolour_pixels) },
+            .{ .tag = cb.CHECKBOX_Checked, .data = @intFromBool(app.recolour_pixels) },
+            .{},
+        }));
+        const range_choice = made.take(ib.NewObjectTagList(null, ch.CHOOSER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EDIT_RANGE },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = ch.CHOOSER_Labels, .data = @intFromPtr(&range_labels) },
+            .{ .tag = ch.CHOOSER_Active, .data = 0 },
+            .{},
+        }));
+        const set_range = made.take(textButton(ib, app.text.get(.MSG_SET_RANGE), ID_EDIT_SET_RANGE));
+        const speed = made.take(ib.NewObjectTagList(null, sl.SLIDER_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EDIT_SPEED },
+            .{ .tag = gc.GA_RelVerify, .data = 1 },
+            .{ .tag = icc.ICA_TARGET, .data = icc.ICTARGET_IDCMP },
+            .{ .tag = sl.SLIDER_Min, .data = 0 },
+            .{ .tag = sl.SLIDER_Max, .data = palette_zig.max_speed },
+            .{ .tag = sl.SLIDER_Level, .data = editor.ranges[0].speed },
+            .{ .tag = sl.SLIDER_LevelFormat, .data = @intFromPtr("%ld") },
+            .{ .tag = sl.SLIDER_LevelPlace, .data = sl.SLIDER_PLACE_RIGHT },
+            .{ .tag = sl.SLIDER_MaxLevelLen, .data = 2 },
+            .{},
+        }));
+        const backwards = made.take(ib.NewObjectTagList(null, cb.CHECKBOX_CLASS, &[_]TagItem{
+            .{ .tag = gc.GA_ID, .data = ID_EDIT_BACKWARDS },
+            .{ .tag = cb.CHECKBOX_Checked, .data = @intFromBool(editor.ranges[0].backwards) },
             .{},
         }));
         const actions = [3]?*Object{
@@ -1775,6 +1838,22 @@ const App = struct {
             .{ .tag = lg.CHILDA_MinWidth, .data = 80 },
             .{},
         });
+        const range_row = made.layout(&[_]TagItem{
+            .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
+            .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(range_choice) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_RANGE)) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(set_range) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(speed) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_SPEED)) },
+            .{ .tag = lg.CHILDA_MinWidth, .data = 100 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(backwards) },
+            .{ .tag = lg.CHILDA_Label, .data = @intFromPtr(app.text.get(.MSG_BACKWARDS)) },
+            .{ .tag = lg.CHILDA_WeightWidth, .data = 0 },
+            .{},
+        });
         const answer_row = made.layout(&[_]TagItem{
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_HORIZ },
             .{ .tag = lg.LAYOUTA_Spacing, .data = 6 },
@@ -1793,6 +1872,8 @@ const App = struct {
             .{ .tag = lg.LAYOUTA_Orientation, .data = lg.LORIENT_VERT },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(top) },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(action_row) },
+            .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
+            .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(range_row) },
             .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
             .{ .tag = lg.LAYOUTA_AddChild, .data = @intFromPtr(hint) },
             .{ .tag = lg.CHILDA_WeightHeight, .data = 0 },
@@ -1829,6 +1910,8 @@ const App = struct {
         for (&editor.sliders, sliders) |*into, slider| into.* = slider.?;
         editor.hex_field = hex_field.?;
         editor.hint = hint.?;
+        editor.speed = speed.?;
+        editor.backwards = backwards.?;
         app.showEdited(&editor, true, null);
 
         var signal: usize = 0;
@@ -1873,6 +1956,17 @@ const App = struct {
                         ID_EDIT_SPREAD => app.awaitPick(&editor, .spread),
                         ID_EDIT_COPY => app.awaitPick(&editor, .copy),
                         ID_EDIT_SWAP => app.awaitPick(&editor, .swap),
+                        ID_EDIT_RANGE => if (code < palette_zig.max_ranges) {
+                            editor.range = code;
+                            app.showRange(&editor);
+                        },
+                        ID_EDIT_SET_RANGE => app.awaitPick(&editor, .range),
+                        ID_EDIT_SPEED => {
+                            var level: usize = 0;
+                            _ = ib.GetAttr(sl.SLIDER_Level, editor.speed, &level);
+                            editor.ranges[editor.range].speed = @intCast(@min(level, palette_zig.max_speed));
+                        },
+                        ID_EDIT_BACKWARDS => editor.ranges[editor.range].backwards = code != 0,
                         else => if (id >= ID_EDIT_SLIDER and id < ID_EDIT_SLIDER + editor_sliders.len) {
                             var level: usize = 0;
                             _ = ib.GetAttr(sl.SLIDER_Level, editor.sliders[id - ID_EDIT_SLIDER], &level);
@@ -1882,7 +1976,10 @@ const App = struct {
                 }
             }
         };
-        if (taken) app.takeEdited(&editor.colours);
+        if (taken) {
+            app.ranges = editor.ranges;
+            app.takeEdited(&editor.colours);
+        }
     }
 
     /// The editor's sliders, hex text and swatches set from the colour
@@ -1911,8 +2008,15 @@ const App = struct {
     /// then it is the one chosen.
     fn pickEdited(app: *App, editor: *Editor, place: u32) void {
         if (place >= palette_zig.size) return;
-        switch (editor.waiting) {
+        const waited = editor.waiting;
+        switch (waited) {
             .none => {},
+            .range => {
+                const range = &editor.ranges[editor.range];
+                range.first = @intCast(@min(editor.chosen, place));
+                range.last = @intCast(@max(editor.chosen, place));
+                if (range.speed == 0) range.speed = palette_zig.first_speed;
+            },
             .spread => palette_zig.spread(&editor.colours, editor.chosen, place),
             .copy => editor.colours[place] = editor.colours[editor.chosen],
             .swap => {
@@ -1921,9 +2025,25 @@ const App = struct {
                 editor.colours[editor.chosen] = held;
             },
         }
-        if (editor.waiting != .none) app.awaitPick(editor, .none);
+        if (waited != .none) app.awaitPick(editor, .none);
         editor.chosen = place;
         app.showEdited(editor, true, null);
+        if (waited == .range) app.showRange(editor);
+    }
+
+    /// The editor's speed and Backwards set from the range chosen, and
+    /// the colours it runs over said under the colours.
+    fn showRange(app: *App, editor: *Editor) void {
+        const ib = app.ib;
+        const range = editor.ranges[editor.range];
+        _ = ib.SetGadgetAttrsTagList(editor.speed, editor.window, &[_]TagItem{ .{ .tag = sl.SLIDER_Level, .data = range.speed }, .{} });
+        _ = ib.SetGadgetAttrsTagList(editor.backwards, editor.window, &[_]TagItem{ .{ .tag = cb.CHECKBOX_Checked, .data = @intFromBool(range.backwards) }, .{} });
+        const number: i64 = editor.range + 1;
+        const said = if (range.last > range.first)
+            app.text.format(&editor.said, .MSG_RANGE_SPAN, .{ number, @as(i64, range.first) + 1, @as(i64, range.last) + 1 })
+        else
+            app.text.format(&editor.said, .MSG_RANGE_UNSET, .{number});
+        _ = ib.SetGadgetAttrsTagList(editor.hint, editor.window, &[_]TagItem{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(said.ptr) }, .{} });
     }
 
     /// What the next colour picked in the editor does, said under the
@@ -1935,6 +2055,7 @@ const App = struct {
             .spread => .MSG_PICK_SPREAD,
             .copy => .MSG_PICK_COPY,
             .swap => .MSG_PICK_SWAP,
+            .range => .MSG_PICK_RANGE,
         });
         _ = app.ib.SetGadgetAttrsTagList(editor.hint, editor.window, &[_]TagItem{ .{ .tag = tx.TEXT_Text, .data = @intFromPtr(hint) }, .{} });
     }
@@ -2010,6 +2131,143 @@ const App = struct {
         app.changed = true;
         app.paintLayer();
         app.show(whole);
+    }
+
+    /// The layer painted made of the palette's colours alone, each pixel
+    /// the nearest, dithered as `dither` says; one step to undo. A
+    /// requester says when there is no memory for error diffusion.
+    fn reduce(app: *App, dither: palette_zig.Dither) void {
+        const layer = app.stack.currentLayer();
+        const picture = &layer.picture;
+        const width: usize = picture.width;
+        var memory: ?*anyopaque = null;
+        var carried: ?palette_zig.Diffusion = null;
+        if (dither == .diffused) {
+            memory = app.sys.AllocVec(width * 2 * @sizeOf([3]i16), exec.MEMF_ANY) orelse {
+                app.tell(.MSG_NO_REDUCE);
+                return;
+            };
+            const rows: [*][3]i16 = @ptrCast(@alignCast(memory));
+            carried = .{ .this = rows[0..width], .next = rows[width .. 2 * width] };
+            carried.?.start();
+        }
+        defer if (memory) |given| app.sys.FreeVec(given);
+        if (!app.history.remember(layer.id, picture, picture.whole(), false)) app.tell(.MSG_NO_UNDO);
+        var y: u32 = 0;
+        while (y < picture.height) : (y += 1) palette_zig.reduceRow(picture.row(y), y, &app.palette, dither, if (carried) |*carry| carry else null);
+        app.changed = true;
+        app.paintLayer();
+        app.show(picture.whole());
+    }
+
+    // --- cycling ----------------------------------------------------------------
+
+    /// The palette's ranges set turning, or stopped; a requester says
+    /// when none of them would turn.
+    fn cycle(app: *App, on: bool) void {
+        if (on == app.cycling) return;
+        if (on) {
+            if (!palette_zig.anyTurns(&app.ranges)) {
+                // The item's check mark, turned by the pick, turned back.
+                if (app.gui) |*gui| gui.shown_menus = null;
+                app.tell(.MSG_NO_RANGE);
+                return;
+            }
+            if (app.clock_port == null and !app.openClock()) {
+                if (app.gui) |*gui| gui.shown_menus = null;
+                return;
+            }
+            app.cycling = true;
+            app.cycle_start = app.eclock()[0];
+            app.turns = @splat(0);
+            app.retune();
+            app.beat();
+            return;
+        }
+        app.stopClock();
+        app.cycling = false;
+        app.turned = .{};
+        app.whole = true;
+    }
+
+    /// The colours cycling shows made again from the palette and its
+    /// ranges, after either changed; cycling stops when no range turns.
+    fn retune(app: *App) void {
+        if (!app.cycling) return;
+        if (!palette_zig.anyTurns(&app.ranges)) return app.cycle(false);
+        app.turned = palette_zig.Turned.make(&app.palette, &app.ranges, &app.turns);
+        app.whole = true;
+    }
+
+    /// The E-clock's tick and its ticks a second.
+    fn eclock(app: *App) [2]u64 {
+        const timer_base: *timer.TimerBase = @ptrCast(app.clock.node.device orelse return .{ 0, 0 });
+        var clock: timer.EClockVal = .{};
+        const rate = timer_base.ReadEClock(&clock);
+        return .{ clock.toTicks(), rate };
+    }
+
+    /// A beat of cycling: the ranges turned on as far as the time since
+    /// it started takes them - a slow redraw makes a range jump, never
+    /// lag - and the next beat asked for.
+    fn beat(app: *App) void {
+        const sys = app.sys;
+        const port = app.clock_port orelse return;
+        if (app.clock_out) {
+            if (sys.CheckIO(&app.clock.node) == null) return;
+            _ = sys.WaitIO(&app.clock.node);
+            app.clock_out = false;
+            const clock = app.eclock();
+            var moved = false;
+            for (app.ranges, &app.turns) |range, *turn| {
+                const now = range.turnAt(clock[0] -% app.cycle_start, clock[1]);
+                if (now == turn.*) continue;
+                turn.* = now;
+                moved = true;
+            }
+            if (moved) app.retune();
+        }
+        if (!app.cycling) return;
+        // A signal left from a beat cut short is not this one's.
+        _ = sys.SetSignal(0, port.sigMask());
+        app.clock.node.command = timer.TR_ADDREQUEST;
+        app.clock.time = .{ .micro = 1_000_000 / beats_per_second };
+        sys.SendIO(&app.clock.node);
+        app.clock_out = true;
+    }
+
+    /// timer.device opened for the beat; false, with nothing open, when
+    /// it cannot be.
+    fn openClock(app: *App) bool {
+        const sys = app.sys;
+        const port = sys.CreateMsgPort() orelse return false;
+        app.clock = .{};
+        app.clock.node.message.reply_port = port;
+        app.clock.node.message.length = @sizeOf(timer.TimeRequest);
+        if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_VBLANK, &app.clock.node, 0) != 0) {
+            sys.DeleteMsgPort(port);
+            return false;
+        }
+        app.clock_port = port;
+        return true;
+    }
+
+    /// The beat waiting called back.
+    fn stopClock(app: *App) void {
+        if (!app.clock_out) return;
+        const sys = app.sys;
+        if (sys.CheckIO(&app.clock.node) == null) _ = sys.AbortIO(&app.clock.node);
+        _ = sys.WaitIO(&app.clock.node);
+        app.clock_out = false;
+    }
+
+    /// timer.device closed, at the end.
+    fn closeClock(app: *App) void {
+        const port = app.clock_port orelse return;
+        app.stopClock();
+        app.sys.CloseDevice(&app.clock.node);
+        app.sys.DeleteMsgPort(port);
+        app.clock_port = null;
     }
 
     // --- masks ------------------------------------------------------------------
@@ -2241,7 +2499,9 @@ const App = struct {
         if (project.palette_count != 0) {
             const count = @min(project.palette_count, app.palette.len);
             @memcpy(app.palette[0..count], project.palette[0..count]);
+            app.ranges = readRanges(&project.ranges);
             app.showPalette();
+            app.retune();
         }
         app.keepPath(name);
         app.writes_back = (project.kind == paintio.PIOKIND_PROJECT) == (formatOf(name) == .project);
@@ -2325,7 +2585,7 @@ const App = struct {
                     for (parts[0..pixels], mask.pixels[0..pixels]) |*part, pixel| part.* = layers_zig.shownBy(pixel);
                     into.mask = parts;
                 }
-                var project = paintio.Project{ .width = width, .height = height, .layer_count = count, .current = app.stack.current, .layers = layers, .palette_count = app.palette.len };
+                var project = paintio.Project{ .width = width, .height = height, .layer_count = count, .current = app.stack.current, .layers = layers, .palette_count = app.palette.len, .ranges = savedRanges(&app.ranges) };
                 @memcpy(project.palette[0..app.palette.len], &app.palette);
                 break :blk pio.SaveProject(name, &project);
             },
@@ -3038,6 +3298,7 @@ const App = struct {
         // made into what is shown where they changed.
         if (app.changeUnderWay()) app.selection.stencil(&app.picture, &app.kept, app.pending);
         app.stack.compose(app.pending);
+        app.view.turned = if (app.cycling and !app.show_mask) &app.turned else null;
         const outline = app.outlineShown();
         const area = if (app.whole) Area{ .max_x = @intCast(app.view.width), .max_y = @intCast(app.view.height) } else app.view.toView(app.pending);
         app.whole = false;
@@ -3145,6 +3406,7 @@ const App = struct {
             .selected = app.selection.any(),
             .has_mask = app.stack.layers[app.stack.current].mask != null,
             .painting_mask = app.painting_mask,
+            .cycling = app.cycling,
         };
     }
 
@@ -3427,7 +3689,7 @@ const App = struct {
             .new, .quit, .redo, .clear, .open, .save, .save_as, .open_brush, .save_brush => app.endShape(),
             .new_layer, .duplicate_layer, .delete_layer, .layer_up, .layer_down, .merge_down, .flip_layer_across, .flip_layer_down => app.endShape(),
             .select_all, .select_layer, .select_colour, .select_see_through, .select_not_in_palette, .deselect, .invert_selection, .copy_to_layer, .cut_to_layer, .copy_to_brush => app.endShape(),
-            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask, .edit_palette => app.endShape(),
+            .mask_show_all, .mask_hide_all, .mask_selection, .paint_mask, .apply_mask, .delete_mask, .edit_palette, .reduce_plain, .reduce_ordered, .reduce_diffused => app.endShape(),
             else => {},
         }
         switch (which) {
@@ -3501,6 +3763,10 @@ const App = struct {
             .preset_earth => app.setPalette(&palette_zig.earth),
             .open_palette => app.openPalette(),
             .save_palette => app.savePalette(),
+            .reduce_plain => app.reduce(.none),
+            .reduce_ordered => app.reduce(.ordered),
+            .reduce_diffused => app.reduce(.diffused),
+            .cycle => app.cycle(!app.cycling),
             .about => app.about(),
             .grid => {
                 app.view.grid = !app.view.grid;
@@ -3563,6 +3829,7 @@ const App = struct {
             '[', '<' => _ = app.perform(.smaller),
             ']', '>' => _ = app.perform(.larger),
             'x', 'X' => _ = app.perform(.swap),
+            '\t' => _ = app.perform(.cycle),
             'F' => _ = app.perform(.filled),
             'h' => _ = app.perform(.flip_across),
             'v' => _ = app.perform(.flip_down),
@@ -4090,7 +4357,9 @@ const App = struct {
             const gui = app.ui() orelse return;
             var signal: usize = 0;
             _ = app.ib.GetAttr(wc.WINDOWA_SigMask, gui.object.?, &signal);
-            const got = app.sys.Wait(@as(u32, @truncate(signal)) | exec.SIGBREAKF_CTRL_C);
+            const clock: u32 = if (app.clock_port) |port| port.sigMask() else 0;
+            const got = app.sys.Wait(@as(u32, @truncate(signal)) | exec.SIGBREAKF_CTRL_C | clock);
+            if (got & clock != 0) app.beat();
             if (got & exec.SIGBREAKF_CTRL_C != 0 and app.mayLeave()) return;
             if (!app.messages()) return;
             if (app.switch_wanted) {
@@ -4727,11 +4996,37 @@ const editor_sliders = [_]EditorSlider{
     .{ .label = .MSG_VALUE, .most = 100 },
 };
 
+/// The ranges the palette editor offers, by number.
+const range_labels = [palette_zig.max_ranges:null]?[*:0]const u8{ "1", "2", "3", "4" };
+
+/// How often cycling looks whether a range has turned a step.
+const beats_per_second = 50;
+
+/// The ranges as a project keeps them.
+fn savedRanges(ranges: *const [palette_zig.max_ranges]palette_zig.Range) [paintio.MAX_RANGES]paintio.Range {
+    comptime if (paintio.MAX_RANGES != palette_zig.max_ranges) @compileError("a project keeps as many ranges as the palette has");
+    var saved: [paintio.MAX_RANGES]paintio.Range = undefined;
+    for (&saved, ranges) |*into, range| into.* = .{ .first = range.first, .last = range.last, .speed = range.speed, .flags = if (range.backwards) paintio.RANGEF_BACKWARDS else 0 };
+    return saved;
+}
+
+/// The ranges a project kept; speeds past the fastest made the fastest.
+fn readRanges(saved: *const [paintio.MAX_RANGES]paintio.Range) [palette_zig.max_ranges]palette_zig.Range {
+    var ranges: [palette_zig.max_ranges]palette_zig.Range = undefined;
+    for (&ranges, saved) |*into, range| into.* = .{ .first = range.first, .last = range.last, .speed = @min(range.speed, palette_zig.max_speed), .backwards = range.flags & paintio.RANGEF_BACKWARDS != 0 };
+    return ranges;
+}
+
 /// The palette editor's colours, what it is doing, and its gadgets.
 const Editor = struct {
     colours: palette_zig.Palette,
     /// The colour the sliders show.
     chosen: u32,
+    /// Its ranges, and the one its range gadgets show.
+    ranges: [palette_zig.max_ranges]palette_zig.Range,
+    range: u32 = 0,
+    /// The text under the colours when it tells a range.
+    said: [64]u8 = @splat(0),
     /// The colour chosen as hue, saturation and value, kept while those
     /// sliders move so that a grey keeps its hue.
     hsv: palette_zig.Hsv = .{},
@@ -4743,8 +5038,10 @@ const Editor = struct {
     sliders: [editor_sliders.len]*Object = undefined,
     hex_field: *Object = undefined,
     hint: *Object = undefined,
+    speed: *Object = undefined,
+    backwards: *Object = undefined,
 
-    const Waiting = enum { none, spread, copy, swap };
+    const Waiting = enum { none, spread, copy, swap, range };
 };
 
 /// The history's way to give back a layer it held: `context` is the App.
@@ -4901,6 +5198,7 @@ fn syncItem(state: MenuState, menu_item: *intuition.MenuItem) void {
             },
             .grid => state.grid,
             .own_screen => state.own,
+            .cycle => state.cycling,
             .paint_mask => {
                 if (state.has_mask) menu_item.flags |= mn.ITEMENABLED else menu_item.flags &= ~mn.ITEMENABLED;
                 break :blk state.painting_mask;
@@ -4957,7 +5255,7 @@ fn sameState(a: MenuState, b: MenuState) bool {
         a.own_brush == b.own_brush and a.has_own == b.has_own and a.one_colour == b.one_colour and
         a.grid == b.grid and a.own == b.own and a.can_undo == b.can_undo and a.can_redo == b.can_redo and
         a.layers == b.layers and a.current == b.current and a.selected == b.selected and
-        a.has_mask == b.has_mask and a.painting_mask == b.painting_mask;
+        a.has_mask == b.has_mask and a.painting_mask == b.painting_mask and a.cycling == b.cycling;
 }
 
 /// Whether the text made and the C string are the same.
@@ -5072,6 +5370,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     app.layer_rows.init(.unknown);
     defer {
+        app.closeClock();
         if (app.gui) |*gui| gui.close(app.ib);
         lb.freeRows(sys, &app.layer_rows);
         if (app.lasso.len != 0) sys.FreeVec(@ptrCast(app.lasso.ptr));

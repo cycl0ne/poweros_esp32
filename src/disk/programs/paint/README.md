@@ -289,6 +289,8 @@ The other items of the Palette menu:
 |---|---|
 | From the Picture | the colours the picture shows most, darkest first, in place of the first ones - all of them when it has no more than 32 |
 | Presets | Paint's Own, Greys, Spectrum, Pastel, Earth |
+| Reduce | the layer painted made of the palette's colours alone: No Dither, Ordered Dither, Error Diffusion - one step to undo |
+| Cycle Colours | the palette's ranges turning, and stopped again; also Tab |
 | Open Palette... | a palette file, or the palette of a picture or a project |
 | Save Palette... | the 32 colours as a palette file |
 
@@ -296,6 +298,32 @@ A palette file is text, a colour a line, six hex digits each
 (`E02828`); a `#` before them and a name after are passed over, so the
 files of other programs that write their colours so are read too.
 Changing the palette is not a change to undo.
+
+### Reducing to the palette
+
+Reduce makes each pixel of the layer painted the palette's nearest
+colour, weighing green most and red least, and keeps how see-through
+it is. **No Dither** stops there: soft edges and gradients fall into
+bands. **Ordered Dither** mixes the two colours either side of a pixel
+in a fine, even 4 by 4 pattern - in the proportion the pixel lies
+between them, so a colour of the palette stays as it is. **Error
+Diffusion** hands what each pixel misses of its colour on to the ones
+to its right and below, which gives a grain without a pattern.
+
+### Cycling
+
+Up to four ranges of the palette turn: their colours move along the
+range, round and round, and every pixel of one of them takes on the
+colour that has come to its place - the way water flows or a fire
+flickers in a picture of a few colours. The pixels themselves do not
+change; Tab, or Palette → Cycle Colours, starts and stops it.
+
+A range is set in the palette's editor: choose its number under
+**Range**, pick one end of it among the colours, press **Set Range**
+and pick the other end. A new range turns ten steps a second;
+**Speed** sets it from none to 60, and **Backwards** turns it the other
+way. The text under the colours says which colours the range chosen
+runs over. A project keeps its ranges.
 
 ## The view
 
@@ -340,7 +368,7 @@ requester.
 
 A project is an IFF `FORM PNTG`: each layer, packed, with its name,
 opacity, blend mode, whether it is shown and its mask, which layer is
-painted, and the palette. Opened, all of it comes back; a mask comes
+painted, and the palette with its ranges. Opened, all of it comes back; a mask comes
 back as greys.
 
 Edit → Clear makes the whole layer painted the background colour - or
@@ -370,7 +398,7 @@ The letters are the items' keys, pressed with the right command key.
 | Layer | New Layer (L), Duplicate (D), Delete, Rename..., Move Up, Move Down, Merge Down (M), Flip Horizontally, Flip Vertically, Add Mask (Show All, Hide All, Show the Selection), Paint the Mask (E), Apply the Mask, Delete the Mask |
 | Selection | Select (All, Pixels of the Layer, Pixels of the Colour, See-through Pixels, Pixels Not in the Palette), Deselect, Invert, Copy to Layer, Cut to Layer, Copy to Brush (B) |
 | Brush | Round, Square, Own Brush, Size, Smaller ([), Larger (]), Own Colours, One Colour, Flip Horizontally, Flip Vertically, Turn Right, Open Brush..., Save Brush... |
-| Palette | Edit... (P), From the Picture, Presets (Paint's Own, Greys, Spectrum, Pastel, Earth), Open Palette..., Save Palette... |
+| Palette | Edit... (P), From the Picture, Presets (Paint's Own, Greys, Spectrum, Pastel, Earth), Reduce (No Dither, Ordered Dither, Error Diffusion), Cycle Colours, Open Palette..., Save Palette... |
 | View | Zoom In (+), Zoom Out (-), Actual Size (1), Zoom to Fit, Grid (G), Own Screen |
 | Help | About Paint... |
 
@@ -382,6 +410,7 @@ The letters are the items' keys, pressed with the right command key.
 | `[`, `]` or `<`, `>` | a brush a size smaller, larger; your own halved, doubled |
 | `h`, `v`, `z` | your own brush flipped across, flipped down, turned right |
 | `x` | swaps the foreground and background colours |
+| Tab | the palette's ranges cycling on and off |
 | a tool's letter | chooses it - see [The tools](#the-tools) |
 | `F` | filled shapes on and off |
 | Return, Escape | end a curve or polygon as it is, put it away; Escape with none chooses nothing |

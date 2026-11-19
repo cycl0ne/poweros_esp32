@@ -181,6 +181,16 @@ MSG_PRESET_PASTEL (//)
 Pastel
 MSG_PRESET_EARTH (//)
 Earth
+MSG_MENU_REDUCE (//)
+Reduce
+MSG_DITHER_NONE (//)
+No Dither
+MSG_DITHER_ORDERED (//)
+Ordered Dither
+MSG_DITHER_DIFFUSED (//)
+Error Diffusion
+MSG_MENU_CYCLE (//)
+Cycle Colours
 MSG_MENU_OPEN_PALETTE (//)
 Open Palette...
 MSG_MENU_SAVE_PALETTE (//)
@@ -446,6 +456,24 @@ MSG_PICK_COPY (//)
 Pick the colour to copy it onto.
 MSG_PICK_SWAP (//)
 Pick the colour to swap it with.
+MSG_PICK_RANGE (//)
+Pick the other end of the range.
+MSG_RANGE (//)
+Range
+MSG_SET_RANGE (//)
+Set Range
+MSG_SPEED (//)
+Speed
+MSG_BACKWARDS (//)
+Backwards
+MSG_RANGE_SPAN (//)
+Range %ld: colours %ld to %ld.
+MSG_RANGE_UNSET (//)
+Range %ld is not set.
+MSG_NO_RANGE (//)
+No range of the palette turns:\nset one in the palette's editor.
+MSG_NO_REDUCE (//)
+There is no memory to spread\nwhat each colour misses.
 MSG_BRUSH_TOO_LARGE (//)
 A brush can be at most %ld by %ld pixels.
 MSG_NO_BRUSH (//)

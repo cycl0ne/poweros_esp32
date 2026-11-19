@@ -17,6 +17,24 @@
 //! Each box gives the mean of its colours. The colours come out darkest
 //! first.
 //!
+//! **Cycling.** Up to four ranges of the palette turn: a range's colours
+//! move along it, so a pixel of one of them is shown as the colour some
+//! places before it (after it, backwards), wrapping round at the ends.
+//! The picture is not changed - the view shows each colour through
+//! `Turned`, a small table from the ranges' colours to those shown,
+//! made again whenever a range has turned a step. A colour in two ranges
+//! goes by the first.
+//!
+//! **Dithering.** The picture is made of the palette's colours alone by
+//! `reduceRow`: each pixel the nearest colour, weighing green most and
+//! red least. An ordered dither also finds the colour on the pixel's
+//! other side - the nearest to the pixel moved as far again away from
+//! the first - and takes it where the pixel lies further along from the
+//! first towards it than a 4 by 4 Bayer pattern's step there; a colour
+//! of the palette stays itself. Error diffusion hands what the nearest
+//! colour missed on to the pixels to the right and below (`Diffusion`),
+//! as Floyd and Steinberg weigh it.
+//!
 //! **A palette file** is text, a colour a line, six hex digits `RRGGBB`
 //! (`toText`, `fromText`); a `#` before them, and whatever follows on the
 //! line, is passed over.
@@ -437,4 +455,201 @@ pub fn fromText(text: []const u8, into: []Pixel) usize {
 
 fn isHex(char: u8) bool {
     return digitOf(char) != null;
+}
+
+/// The most ranges a palette cycles.
+pub const max_ranges = 4;
+/// The fastest a range turns, steps a second.
+pub const max_speed = 60;
+/// How fast a range set while it stood still turns.
+pub const first_speed = 10;
+
+/// Whether any of `ranges` turns.
+pub fn anyTurns(ranges: []const Range) bool {
+    for (ranges) |range| if (range.turns()) return true;
+    return false;
+}
+
+/// A run of the palette's colours that turns while the colours cycle:
+/// places `first` to `last`, `speed` steps a second - none, it stands
+/// still - the other way round with `backwards`.
+pub const Range = struct {
+    first: u8 = 0,
+    last: u8 = 0,
+    speed: u8 = 0,
+    backwards: bool = false,
+
+    pub fn length(range: Range) u32 {
+        return @as(u32, range.last) - range.first + 1;
+    }
+
+    /// Whether it turns: it moves and holds more than one colour.
+    pub fn turns(range: Range) bool {
+        return range.speed != 0 and range.last > range.first and range.last < size;
+    }
+
+    /// How many places it has turned after `ticks` of a clock of
+    /// `per_second` a second.
+    pub fn turnAt(range: Range, ticks: u64, per_second: u64) u32 {
+        if (!range.turns() or per_second == 0) return 0;
+        return @intCast((ticks *| range.speed / per_second) % range.length());
+    }
+};
+
+/// The colours a cycling view shows in place of the ranges' own, keyed
+/// by colour.
+pub const Turned = struct {
+    keys: [slots]Pixel = @splat(0),
+    shown: [slots]Pixel = @splat(0),
+    any: bool = false,
+
+    const slots = 128;
+
+    /// The table for `palette`'s `ranges`, each turned as far as `turns`
+    /// says.
+    pub fn make(palette: []const Pixel, ranges: []const Range, turns: []const u32) Turned {
+        var made = Turned{};
+        for (ranges, turns) |range, turn| {
+            if (!range.turns()) continue;
+            const length = range.length();
+            const step = turn % length;
+            var place: u32 = 0;
+            while (place < length) : (place += 1) {
+                const from = if (range.backwards) (place + step) % length else (place + length - step) % length;
+                made.put(palette[range.first + place], palette[range.first + from]);
+            }
+        }
+        return made;
+    }
+
+    fn slotOf(colour: Pixel) usize {
+        return ((colour & 0x00FF_FFFF) *% 0x9E37_79B1) >> 25;
+    }
+
+    /// `colour` to be shown as `shown`, unless it already has a place.
+    fn put(turned: *Turned, colour: Pixel, shown: Pixel) void {
+        const key = colour | 0xFF00_0000;
+        var slot = slotOf(colour);
+        while (turned.keys[slot] != 0) : (slot = (slot + 1) % slots) {
+            if (turned.keys[slot] == key) return;
+        }
+        turned.keys[slot] = key;
+        turned.shown[slot] = shown;
+        turned.any = true;
+    }
+
+    /// What a pixel is shown as: its colour turned, its alpha kept.
+    pub fn map(turned: *const Turned, pixel: Pixel) Pixel {
+        if (!turned.any or pixel >> 24 == 0) return pixel;
+        const key = pixel | 0xFF00_0000;
+        var slot = slotOf(pixel);
+        while (turned.keys[slot] != 0) : (slot = (slot + 1) % slots) {
+            if (turned.keys[slot] == key) return (pixel & 0xFF00_0000) | (turned.shown[slot] & 0x00FF_FFFF);
+        }
+        return pixel;
+    }
+};
+
+/// How a picture is made of the palette's colours.
+pub const Dither = enum { none, ordered, diffused };
+
+/// The 4 by 4 Bayer pattern, 0 to 15.
+const bayer = [4][4]i32{
+    .{ 0, 8, 2, 10 },
+    .{ 12, 4, 14, 6 },
+    .{ 3, 11, 1, 9 },
+    .{ 15, 7, 13, 5 },
+};
+
+/// What error diffusion carries from a row to the next: the error left
+/// for each pixel of this row and the next, red, green and blue. The
+/// memory is the caller's, two rows as wide as the picture.
+pub const Diffusion = struct {
+    this: [][3]i16,
+    next: [][3]i16,
+
+    /// Nothing carried: a new picture.
+    pub fn start(diffusion: *Diffusion) void {
+        @memset(diffusion.this, .{ 0, 0, 0 });
+        @memset(diffusion.next, .{ 0, 0, 0 });
+    }
+
+    /// On to the next row.
+    fn turn(diffusion: *Diffusion) void {
+        const was = diffusion.this;
+        diffusion.this = diffusion.next;
+        diffusion.next = was;
+        @memset(diffusion.next, .{ 0, 0, 0 });
+    }
+};
+
+/// The palette's colour nearest `colour`, weighing green most and red
+/// least.
+pub fn nearest(colour: [3]i32, palette: []const Pixel) Pixel {
+    var best: Pixel = palette[0];
+    var best_distance: i64 = -1;
+    for (palette) |offered| {
+        const red = colour[0] - @as(i32, @intCast((offered >> 16) & 0xFF));
+        const green = colour[1] - @as(i32, @intCast((offered >> 8) & 0xFF));
+        const blue = colour[2] - @as(i32, @intCast(offered & 0xFF));
+        const distance: i64 = 2 * @as(i64, red) * red + 4 * @as(i64, green) * green + 3 * @as(i64, blue) * blue;
+        if (best_distance < 0 or distance < best_distance) {
+            best_distance = distance;
+            best = offered;
+        }
+    }
+    return best;
+}
+
+/// A colour's red, green and blue.
+fn rgbOf(colour: Pixel) [3]i32 {
+    return .{ @intCast((colour >> 16) & 0xFF), @intCast((colour >> 8) & 0xFF), @intCast(colour & 0xFF) };
+}
+
+/// The ordered dither's choice for `colour`, `first` the palette's
+/// nearest: the colour on its other side where it lies further along
+/// towards that one than the pattern's `step` (0 to 15) of 16.
+fn ordered(colour: [3]i32, first: Pixel, palette: []const Pixel, step: i32) Pixel {
+    const from = rgbOf(first);
+    var beyond: [3]i32 = undefined;
+    for (&beyond, colour, from) |*far, channel, near| far.* = @max(0, @min(255, 2 * channel - near));
+    const second = nearest(beyond, palette);
+    if (second == first) return first;
+    const to = rgbOf(second);
+    var along: i64 = 0;
+    var span: i64 = 0;
+    for (colour, from, to) |channel, near, far| {
+        along += @as(i64, channel - near) * (far - near);
+        span += @as(i64, far - near) * (far - near);
+    }
+    return if (along * 32 > span * (2 * step + 1)) second else first;
+}
+
+/// A row of the picture, the `y`th, made of `palette`'s colours, each
+/// pixel keeping its alpha; see-through pixels are left. Error diffusion
+/// carries what it misses in `diffusion`, given for it.
+pub fn reduceRow(row: []Pixel, y: u32, palette: []const Pixel, dither: Dither, diffusion: ?*Diffusion) void {
+    for (row, 0..) |*pixel, x| {
+        if (pixel.* >> 24 == 0) continue;
+        var colour = rgbOf(pixel.*);
+        if (dither == .diffused) {
+            const carried = diffusion.?.this[x];
+            for (&colour, carried) |*channel, error_part| channel.* = @max(0, @min(255, channel.* + error_part));
+        }
+        var made = nearest(colour, palette);
+        if (dither == .ordered) made = ordered(colour, made, palette, bayer[y % 4][x % 4]);
+        if (dither == .diffused) {
+            const carry = diffusion.?;
+            const reached = rgbOf(made);
+            const missed = [3]i32{ colour[0] - reached[0], colour[1] - reached[1], colour[2] - reached[2] };
+            for (missed, 0..) |part, channel| {
+                if (x + 1 < row.len) carry.this[x + 1][channel] +|= @intCast(@divTrunc(part * 7, 16));
+                if (x > 0) carry.next[x - 1][channel] +|= @intCast(@divTrunc(part * 3, 16));
+                carry.next[x][channel] +|= @intCast(@divTrunc(part * 5, 16));
+                if (x + 1 < row.len) carry.next[x + 1][channel] +|= @intCast(@divTrunc(part, 16));
+            }
+        }
+        pixel.* = (pixel.* & 0xFF00_0000) | (made & 0x00FF_FFFF);
+    }
+    if (dither == .diffused) diffusion.?.turn();
 }
