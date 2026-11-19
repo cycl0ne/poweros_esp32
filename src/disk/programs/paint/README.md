@@ -51,7 +51,9 @@ choice is kept in `ENV:Paint.prefs` and `ENVARC:Paint.prefs`, a line
 
 The select button paints in the foreground colour, the menu button in
 the background colour. Over the picture the menu button paints; the
-menus open with it anywhere else in the window or the screen's bar.
+menus open with it anywhere else in the window or the screen's bar. The
+menu titles stay in the screen's bar while Paint's window is active, and
+a click on one opens it.
 
 The brush is round or square, 1, 2, 3, 4, 6, 8, 12, 16, 24 or 32 pixels
 across: chosen in the Brush menu, or a size smaller and larger with `[`

@@ -2348,6 +2348,9 @@ const App = struct {
             .{ .tag = wn.WA_Activate, .data = 1 },
             // The pointer's moves: where the brush is shown.
             .{ .tag = wn.WA_ReportMouse, .data = 1 },
+            // The menu titles always in the screen's bar, a click opening
+            // them: the picture takes the menu button.
+            .{ .tag = wn.WA_MenuBar, .data = 1 },
             .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_IDCMPUPDATE | wn.IDCMP_NEWSIZE | wn.IDCMP_RAWKEY | wn.IDCMP_MOUSEWHEEL | wn.IDCMP_INACTIVEWINDOW | wn.IDCMP_MOUSEMOVE },
             .{ .tag = wc.WINDOWA_Layout, .data = @intFromPtr(layout) },
             // The bars tell the window as they move, and as they are let go.
