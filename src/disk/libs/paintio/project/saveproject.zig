@@ -2,7 +2,8 @@
 //! SaveProject: a project written as a `FORM PNTG`.
 //!
 //! The form is made with iffparse.library on the open file: `PHDR`,
-//! `PALT` when there is a palette, and an `LHDR` and a `BODY` for each
+//! `PALT` when there is a palette, `CYCL` when a range turns, and an
+//! `LHDR` and a `BODY` for each
 //! layer from the bottom, and an `LMSK` after a layer with a mask. A body
 //! or a mask goes a row at a time - the row turned into the file's bytes,
 //! through compression.library's Deflate, and what comes out written
@@ -36,8 +37,9 @@ const out_size = 32 * 1024;
 /// INPUTS:
 /// - `name`: the file, made anew or written over.
 /// - `project`: the size, the layers from the bottom with their pixels
-///   and their masks, the layer being painted and the palette
-///   (`palette_count` colours of `palette`). `kind` is not written.
+///   and their masks, the layer being painted, the palette
+///   (`palette_count` colours of `palette`) and its ranges. `kind` is not
+///   written.
 ///
 /// RESULT:
 /// 0 when the file is written, otherwise a dos error code: why the file
@@ -51,9 +53,9 @@ const out_size = 32 * 1024;
 ///
 /// BEHAVIOR:
 /// The file is an IFF `FORM PNTG` (`sdk.paintio` has its chunks): the
-/// header, the palette when it has colours, and each layer's header and
-/// pixels, and its mask when it has one, packed by Deflate in a zlib
-/// wrapping. A file that could not
+/// header, the palette when it has colours, its ranges when one turns
+/// (since 1.3), and each layer's header and pixels, and its mask when it
+/// has one, packed by Deflate in a zlib wrapping. A file that could not
 /// be written whole is deleted, so a failure leaves no half a project
 /// behind - nor the file that was there before.
 ///
@@ -132,6 +134,14 @@ fn write(base: *PaintIOBase, ip: *IFFParseBase, cb: *CompressionBase, file: *dos
         _project.toFile(project.palette[0..project.palette_count], &palette);
         failure = chunk(ip, iff, paintio.ID_PALT, palette[0 .. project.palette_count * 4]);
         if (failure != 0) return _project.iffError(dl, failure);
+    }
+
+    for (project.ranges) |range| {
+        if (range.speed == 0) continue;
+        const ranges: *const [paintio.MAX_RANGES * 4]u8 = @ptrCast(&project.ranges);
+        failure = chunk(ip, iff, paintio.ID_CYCL, ranges);
+        if (failure != 0) return _project.iffError(dl, failure);
+        break;
     }
 
     const layers = project.layers.?;

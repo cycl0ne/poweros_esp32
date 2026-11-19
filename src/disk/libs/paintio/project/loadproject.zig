@@ -52,9 +52,10 @@ const in_size = 16 * 1024;
 ///
 /// BEHAVIOR:
 /// A project comes back as it was saved: its size, its layers from the
-/// bottom with their names, opacity, flags, blend modes and masks, the layer
-/// being painted and its palette; `kind` is `PIOKIND_PROJECT`. A picture comes back as
-/// a project of one layer of the picture's size, unnamed and wholly
+/// bottom with their names, opacity, flags, blend modes and masks, the
+/// layer being painted, and its palette with the palette's ranges
+/// (since 1.3); `kind` is `PIOKIND_PROJECT`. A picture comes back as a
+/// project of one layer of the picture's size, unnamed and wholly
 /// opaque, with `kind` `PIOKIND_PICTURE` and, when the file had one, its
 /// palette - up to `MAX_PALETTE` colours, each wholly opaque. Pixels are
 /// `0xAARRGGBB`, a picture's coverage in the alpha.
@@ -145,6 +146,7 @@ fn read(base: *PaintIOBase, file: *dos.FileHandle, project: *paintio.Project) i3
         paintio.ID_PNTG, paintio.ID_LHDR,
         paintio.ID_PNTG, paintio.ID_BODY,
         paintio.ID_PNTG, paintio.ID_LMSK,
+        paintio.ID_PNTG, paintio.ID_CYCL,
     };
     const stopped = ip.StopChunks(iff, &stops, stops.len / 2);
     if (stopped != 0) return _project.iffError(dl, stopped);
@@ -200,6 +202,11 @@ fn read(base: *PaintIOBase, file: *dos.FileHandle, project: *paintio.Project) i3
                 if (failure != 0) return failure;
                 _project.fromFile(pixels[0..count]);
                 bodies += 1;
+            },
+            paintio.ID_CYCL => {
+                const bytes: *[paintio.MAX_RANGES * 4]u8 = @ptrCast(&project.ranges);
+                const length: i32 = @intCast(@min(size, bytes.len));
+                if (ip.ReadChunkBytes(iff, bytes, length) != length) return dos.ERROR_OBJECT_WRONG_TYPE;
             },
             // The mask of the layer whose pixels came last.
             paintio.ID_LMSK => {

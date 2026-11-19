@@ -18,6 +18,9 @@
 //!   - `PHDR`: the width, the height, the number of layers and the layer
 //!     being painted, a `u32` each.
 //!   - `PALT`: the palette, a `u32` `0xAARRGGBB` a colour.
+//!   - `CYCL`: the palette's ranges that cycle, four bytes each - the
+//!     first place, the last, the speed in steps a second, and the flags
+//!     (`RANGEF_`). Only when one turns.
 //!   - For each layer, from the bottom: `LHDR` - its opacity, its flags
 //!     (`LAYERF_`) and its blend mode (`LAYERBLEND_`), a byte each, a byte
 //!     of 0, and its name, UTF-8 - and then its `BODY`: the rows, alpha, red, green and blue a byte each a
@@ -41,6 +44,8 @@ pub const ID_LHDR = iffparse.MakeID("LHDR");
 pub const ID_BODY = iffparse.MakeID("BODY");
 /// A layer's mask. Since 1.2.
 pub const ID_LMSK = iffparse.MakeID("LMSK");
+/// The palette's ranges. Since 1.3.
+pub const ID_CYCL = iffparse.MakeID("CYCL");
 
 /// The largest side of a project.
 pub const MAX_SIDE: u32 = 16384;
@@ -48,12 +53,27 @@ pub const MAX_SIDE: u32 = 16384;
 pub const MAX_LAYERS: u32 = 64;
 /// The most colours a palette has.
 pub const MAX_PALETTE: u32 = 256;
+/// The ranges a project keeps. Since 1.3.
+pub const MAX_RANGES: u32 = 4;
 /// The bytes a layer's name has room for, its NUL among them.
 pub const NAME_SIZE = 32;
 
 /// `Layer.flags`: the layer is not shown, nor counted in a picture made
 /// of the project.
 pub const LAYERF_HIDDEN: u8 = 1 << 0;
+
+/// `Range.flags`: it turns the other way. Since 1.3.
+pub const RANGEF_BACKWARDS: u8 = 1 << 0;
+
+/// A run of the palette's colours that turns while they cycle: the
+/// places `first` to `last`, `speed` steps a second, none for a range
+/// that stands still. Since 1.3.
+pub const Range = extern struct {
+    first: u8 = 0,
+    last: u8 = 0,
+    speed: u8 = 0,
+    flags: u8 = 0,
+};
 
 /// `Layer.blend`: how a layer's colours are put together with those of
 /// what is under it, before its opacity and its alpha lay the result over
@@ -131,4 +151,6 @@ pub const Project = extern struct {
     kind: u32 = PIOKIND_PROJECT,
     palette_count: u32 = 0,
     palette: [MAX_PALETTE]u32 = @splat(0),
+    /// The palette's ranges. Since 1.3.
+    ranges: [MAX_RANGES]Range = @splat(.{}),
 };

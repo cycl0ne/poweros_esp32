@@ -214,6 +214,7 @@ test "paintio: a project of two layers, one with a mask, comes back as it was sa
     project.palette[0] = 0xFF000000;
     project.palette[1] = 0xFFFFFFFF;
     project.palette[2] = 0x80FF8000;
+    project.ranges[1] = .{ .first = 4, .last = 9, .speed = 30, .flags = paintio.RANGEF_BACKWARDS };
     try testing.expectEqual(@as(i32, 0), rig.pio.SaveProject("WORK:two.paint", &project));
 
     // The file starts as a project.
@@ -231,6 +232,7 @@ test "paintio: a project of two layers, one with a mask, comes back as it was sa
     try testing.expectEqual(@as(u32, 1), back.current);
     try testing.expectEqual(@as(u32, 3), back.palette_count);
     try testing.expectEqualSlices(u32, project.palette[0..3], back.palette[0..3]);
+    try testing.expectEqual(project.ranges, back.ranges);
     const read_layers = back.layers.?;
     for (layers, read_layers[0..2]) |saved, read| {
         try testing.expectEqualSlices(u32, saved.pixels.?[0 .. width * height], read.pixels.?[0 .. width * height]);

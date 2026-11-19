@@ -112,9 +112,10 @@ opened.
 **BEHAVIOR**
 
 A project comes back as it was saved: its size, its layers from the
-bottom with their names, opacity, flags, blend modes and masks, the layer
-being painted and its palette; `kind` is `PIOKIND_PROJECT`. A picture comes back as
-a project of one layer of the picture's size, unnamed and wholly
+bottom with their names, opacity, flags, blend modes and masks, the
+layer being painted, and its palette with the palette's ranges
+(since 1.3); `kind` is `PIOKIND_PROJECT`. A picture comes back as a
+project of one layer of the picture's size, unnamed and wholly
 opaque, with `kind` `PIOKIND_PICTURE` and, when the file had one, its
 palette - up to `MAX_PALETTE` colours, each wholly opaque. Pixels are
 `0xAARRGGBB`, a picture's coverage in the alpha.
@@ -252,8 +253,9 @@ fn SaveProject(base: *PaintIOBase, name: [*:0]const u8, project: *const paintio.
 
 - `name`: the file, made anew or written over.
 - `project`: the size, the layers from the bottom with their pixels
-  and their masks, the layer being painted and the palette
-  (`palette_count` colours of `palette`). `kind` is not written.
+  and their masks, the layer being painted, the palette
+  (`palette_count` colours of `palette`) and its ranges. `kind` is not
+  written.
 
 **RESULT**
 
@@ -269,9 +271,9 @@ than `MAX_PALETTE`.
 **BEHAVIOR**
 
 The file is an IFF `FORM PNTG` (`sdk.paintio` has its chunks): the
-header, the palette when it has colours, and each layer's header and
-pixels, and its mask when it has one, packed by Deflate in a zlib
-wrapping. A file that could not
+header, the palette when it has colours, its ranges when one turns
+(since 1.3), and each layer's header and pixels, and its mask when it
+has one, packed by Deflate in a zlib wrapping. A file that could not
 be written whole is deleted, so a failure leaves no half a project
 behind - nor the file that was there before.
 
