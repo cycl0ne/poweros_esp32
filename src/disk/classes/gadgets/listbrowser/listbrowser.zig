@@ -39,6 +39,13 @@
 //! triangle - holds a small triangle pointing right; the text starts after
 //! it.
 //!
+//! **A toggle column** draws its image with IM_DRAWFRAME into a square
+//! the row's height, in the middle of the cell, `IDS_NORMAL` for a row
+//! that is `ROW_ON` and `IDS_DISABLED` for one that is not. A press in a
+//! toggle column's cell turns the flag over, draws the list again, tells
+//! the target and ends there with `GMR_VERIFY`: it neither selects nor
+//! drags.
+//!
 //! **Sorting** puts the program's list in order: the rows are taken into
 //! an array, each level's rows sorted with their branches kept under them
 //! - the branches first, each in its place, then the rows of the level by
@@ -74,8 +81,8 @@ const Row = lb.Row;
 pub const Library = gadgets.ClassLibrary(.{
     .name = lb.LISTBROWSER_CLASS,
     .version = 1,
-    .revision = 4,
-    .date = "12.11.2026",
+    .revision = 5,
+    .date = "19.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -637,9 +644,41 @@ fn drawRow(base: *gadgets.Base, own: *const Data, rp: *graphics.RastPort, info: 
             span.left += indent;
             span.width -= indent;
         }
+        const column = own.columns.?[i];
+        if (column.flags & lb.COLUMN_TOGGLE != 0) {
+            drawToggle(base, rp, info, column, span, at, r.flags & lb.ROW_ON != 0);
+            continue;
+        }
         const text = r.cells[i] orelse continue;
-        drawText(gb, rp, text, span, baseline, own.columns.?[i].flags & lb.COLUMN_RIGHT != 0);
+        drawText(gb, rp, text, span, baseline, column.flags & lb.COLUMN_RIGHT != 0);
     }
+}
+
+/// A toggle column's picture in a row's cell: a square the row's height
+/// in the cell's middle, dimmed when the row is not on.
+fn drawToggle(base: *gadgets.Base, rp: *graphics.RastPort, info: *classusr.GadgetInfo, column: lb.Column, span: Span, at: gc.Box, on: bool) void {
+    const image: *Object = @ptrCast(@alignCast(column.image orelse return));
+    const side = @min(at.height, span.width);
+    if (side <= 0) return;
+    var draw = ic.ImpDraw{
+        .method_id = ic.IM_DRAWFRAME,
+        .rast_port = rp,
+        .offset = .{ .x = span.left + @divTrunc(span.width - side, 2), .y = at.top + @divTrunc(at.height - side, 2) },
+        .state = if (on) ic.IDS_NORMAL else ic.IDS_DISABLED,
+        .draw_info = info.draw_info,
+        .dimensions = .{ .width = side, .height = side },
+    };
+    _ = base.intuition_base.SendMessage(image, @ptrCast(&draw));
+}
+
+/// The target told that the row at `place` had its toggle turned over.
+fn tellToggled(base: *gadgets.Base, o: *Object, gi: ?*classusr.GadgetInfo, place: u32) void {
+    const tags = [_]TagItem{
+        .{ .tag = lb.LISTBROWSER_Toggled, .data = place },
+        .{ .tag = gc.GA_ID, .data = gc.gadget(o).id },
+        .{},
+    };
+    support.notify(base.intuition_base, o, gi, &tags, 0);
 }
 
 fn render(base: *gadgets.Base, own: *const Data, o: *Object, r: *gc.GpRender) void {
@@ -1066,6 +1105,20 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 return gc.GMR_MEACTIVE;
             }
             const row = rowAt(own, parts, in.mouse.y) orelse return gc.GMR_NOREUSE;
+            // A toggle column's cell turns its row over, and that is all
+            // the press does.
+            const slot = @divFloor(in.mouse.y - parts.lines.top, parts.line_height);
+            const on_row = slot >= 0 and own.top + @as(u32, @intCast(@max(slot, 0))) < shownCount(own);
+            if (columnAt(own, parts.lines, in.mouse.x)) |column| {
+                if (on_row and own.columns.?[column].flags & lb.COLUMN_TOGGLE != 0) {
+                    row.flags ^= lb.ROW_ON;
+                    const place = placeOf(own, row);
+                    support.redraw(ib, o.?, in.gadget_info);
+                    tellToggled(base, o.?, in.gadget_info, place);
+                    in.termination.* = @bitCast(place | lb.LISTBROWSER_TOGGLED);
+                    return gc.GMR_NOREUSE | gc.GMR_VERIFY;
+                }
+            }
             // The triangle of a branch opens it or closes it, and selects
             // nothing.
             if (own.tree != 0 and hasBranch(row)) {

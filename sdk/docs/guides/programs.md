@@ -345,7 +345,8 @@ line - what `SYS:Programs/Notepad` is made of), and
 `scrollgroup` (a layout larger than the window, scrolled; `C:test/Scroll`),
 `listbrowser` (a list in columns, sorted by a heading, its rows a
 tree, or a list whose rows are dragged into another order, with a row
-marked as the one in use; `C:test/ListBrowser`), `toolbutton` (a button with a picture and a
+marked as the one in use and a column of pictures each row turns on and
+off; `C:test/ListBrowser`), `toolbutton` (a button with a picture and a
 label, as a tool bar has; `C:test/Gadgets`) and `ribbon` (a program's
 commands in tabs and named groups, made from a table;
 [A ribbon](intuition.md#a-ribbon), `C:test/Ribbon`). Each

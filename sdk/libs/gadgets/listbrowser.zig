@@ -48,6 +48,14 @@
 //! song being heard: its texts are bold, and its first column starts with
 //! a small triangle pointing right.
 //!
+//! **A toggle column** (`COLUMN_TOGGLE`) shows a picture in each row
+//! rather than a text: the column's `image`, an image object drawn to the
+//! row's height, as it is while the row is `ROW_ON` and dimmed while it is
+//! not - a layer shown or hidden. A press on it turns the row's
+//! `ROW_ON` over and reports at once, the selection left as it was: the
+//! code is the row's place with `LISTBROWSER_TOGGLED` added, and the
+//! target is told `LISTBROWSER_Toggled`, the place. Since 1.5.
+//!
 //! **A scroller in the window's border** instead of its own: made with
 //! `LISTBROWSER_Scrollers` false, the gadget is the field alone, and tells
 //! its target where its view is - `LISTBROWSER_Top`, `LISTBROWSER_Total`
@@ -129,6 +137,9 @@ pub const LISTBROWSER_Reorder = LISTBROWSER_Dummy + 0x0C;
 /// `LISTBROWSER_NONE` when that press moved none. Read only; told to the
 /// target with `LISTBROWSER_Selected` when a press ends.
 pub const LISTBROWSER_Moved = LISTBROWSER_Dummy + 0x0D;
+/// u32, told: the place of the row whose toggle column was pressed, its
+/// `ROW_ON` turned over. Since 1.5.
+pub const LISTBROWSER_Toggled = LISTBROWSER_Dummy + 0x0E;
 
 /// No row, no column.
 pub const LISTBROWSER_NONE: u32 = 0xFFFF_FFFF;
@@ -138,6 +149,9 @@ pub const LISTBROWSER_DETACH: usize = ~@as(usize, 0);
 pub const LISTBROWSER_DOUBLE: u32 = 0x8000_0000;
 /// Added to a press's code when it moved its row to another place.
 pub const LISTBROWSER_MOVED: u32 = 0x4000_0000;
+/// Added to a press's code when it turned its row's toggle over. Since
+/// 1.5.
+pub const LISTBROWSER_TOGGLED: u32 = 0x2000_0000;
 
 /// One column: its heading, its share of the width, and its flags. An
 /// array of them ends with one whose `title` is null.
@@ -147,6 +161,9 @@ pub const Column = extern struct {
     /// gets its part of the room.
     weight: u16 = 1,
     flags: u16 = 0,
+    /// A `COLUMN_TOGGLE` column's picture, an image object (`*Object`)
+    /// the program made and disposes of. Since 1.5.
+    image: ?*anyopaque = null,
 };
 
 /// `Column.flags`: its text set to the right of the column - numbers.
@@ -157,6 +174,10 @@ pub const COLUMN_RIGHT: u16 = 1 << 0;
 pub const COLUMN_NUMBER: u16 = 1 << 1;
 /// A press on its heading does not sort.
 pub const COLUMN_NOSORT: u16 = 1 << 2;
+/// Its cells show its `image`, as it is in a row that is `ROW_ON` and
+/// dimmed in one that is not, and a press on one turns that over; its
+/// texts are not shown. Since 1.5.
+pub const COLUMN_TOGGLE: u16 = 1 << 3;
 
 /// One row: the text of each of the columns, how deep it is in the tree,
 /// and whether its branch is open.
@@ -181,6 +202,10 @@ pub const ROW_OPEN: u16 = 1 << 0;
 /// its start. Set by the program, which then gives the list back
 /// (`LISTBROWSER_Rows`, the same list) to have it drawn so.
 pub const ROW_MARKED: u16 = 1 << 1;
+/// `Row.flags`: a toggle column's picture is shown as it is, not dimmed.
+/// Turned over by a press on it; set by the program as `ROW_MARKED` is.
+/// Since 1.5.
+pub const ROW_ON: u16 = 1 << 2;
 
 /// A row holding copies of `texts`, one for each column, `depth` deep:
 /// the row, the column pointers and the texts in one allocation, given
