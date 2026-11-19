@@ -74,6 +74,21 @@ pub fn draw(p: *Painter, glyph: u32) void {
         command.CMD_FORWARD => drawForward(p),
         command.CMD_SHELL => drawShell(p),
         command.CMD_ARRANGE => drawArrange(p),
+        command.CMD_PENCIL => drawPencil(p),
+        command.CMD_BRUSH => drawBrush(p),
+        command.CMD_LINE => drawLine(p),
+        command.CMD_CURVE => drawCurve(p),
+        command.CMD_RECTANGLE => drawRectangle(p),
+        command.CMD_ELLIPSE => drawEllipse(p),
+        command.CMD_POLYGON => drawPolygon(p),
+        command.CMD_FLOOD_FILL => drawFloodFill(p),
+        command.CMD_AIRBRUSH => drawAirbrush(p),
+        command.CMD_PICK_COLOUR => drawPickColour(p),
+        command.CMD_TEXT => drawText(p),
+        command.CMD_GRAB_BRUSH => drawGrabBrush(p),
+        command.CMD_FILLED => drawFilled(p),
+        command.CMD_LAYERS => drawLayers(p),
+        command.CMD_STENCIL => drawStencil(p),
         command.CMD_LAUNCHER => drawLauncher(p),
         else => {},
     }
@@ -559,6 +574,172 @@ fn head(cx: f32, cy: f32, outer: f32, inner: f32, angle: f32, ahead: f32, spread
         .{ cx + middle * @cos(point), cy - middle * @sin(point) },
     };
 }
+
+// --- a paint program's tools ------------------------------------------------------
+
+/// A point `t` of the way along a line from (`x0`, `y0`) to (`x1`, `y1`).
+fn along(x0: f32, y0: f32, x1: f32, y1: f32, t: f32) [2]f32 {
+    return .{ x0 + (x1 - x0) * t, y0 + (y1 - y0) * t };
+}
+
+noinline fn drawPencil(p: *Painter) void {
+    // The wave it has drawn, then the pencil along a diagonal from its
+    // end (92, 8) to its point (10, 90): the rubber, the band that holds
+    // it, the painted wood, the bare wood sharpened, and the lead.
+    p.ink(&.{ p.ring(60, 86, 10, 4, 0, 180), p.ring(80, 86, 10, 4, 180, 360) });
+    const a = along(92, 8, 10, 90, 0.08);
+    const b = along(92, 8, 10, 90, 0.18);
+    const c = along(92, 8, 10, 90, 0.66);
+    const d = along(92, 8, 10, 90, 0.88);
+    p.solid(&.{p.poly(&shapes.bar(92, 8, a[0], a[1], 22))}, .red, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.bar(a[0], a[1], b[0], b[1], 22))}, .metal, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.bar(b[0], b[1], c[0], c[1], 22))}, .yellow, .{});
+    p.solid(&.{p.poly(&shapes.taper(c[0], c[1], d[0], d[1], 22, 7))}, .paper, .{ .no_shadow = true, .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.taper(d[0], d[1], 10, 90, 7, 1))}, .iron, .{ .no_shadow = true, .no_gloss = true });
+}
+
+noinline fn drawBrush(p: *Painter) void {
+    // The dots it has put down, then the handle, the band and the
+    // bristles full of paint, along a diagonal to the tip at (12, 76).
+    p.solid(&.{ p.disc(54, 90, 5), p.disc(70, 90, 5), p.disc(86, 90, 5) }, .blue, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.taper(94, 6, 54, 46, 9, 13))}, .brown, .{});
+    p.solid(&.{p.poly(&shapes.bar(56, 44, 44, 56, 20))}, .metal, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.taper(46, 54, 12, 88, 20, 3))}, .blue, .{});
+}
+
+noinline fn drawLine(p: *Painter) void {
+    p.ink(&.{p.poly(&shapes.bar(16, 84, 84, 16, 8))});
+    p.solid(&.{ p.disc(16, 84, 10), p.disc(84, 16, 10) }, .blue, .{ .no_gloss = true });
+}
+
+noinline fn drawCurve(p: *Painter) void {
+    // Two quarter rings meeting in the middle: up from the lower left,
+    // over, and on up to the upper right.
+    p.ink(&.{ p.ring(50, 86, 40, 32, 90, 180), p.ring(50, 14, 40, 32, 270, 360) });
+    p.solid(&.{ p.disc(14, 86, 10), p.disc(86, 14, 10) }, .blue, .{ .no_gloss = true });
+}
+
+noinline fn drawRectangle(p: *Painter) void {
+    p.solid(&.{
+        p.rr(8, 18, 92, 29, 2),
+        p.rr(8, 71, 92, 82, 2),
+        p.rr(8, 18, 19, 82, 2),
+        p.rr(81, 18, 92, 82, 2),
+    }, .blue, .{ .no_gloss = true });
+}
+
+noinline fn drawEllipse(p: *Painter) void {
+    // An oval of four arcs that meet without a corner: wide ones over and
+    // under, tight ones at the sides. Each is its circle's band, 11 deep,
+    // and runs a little past where it meets the next, so that the next
+    // one's body covers the rim at its end.
+    const wide = 50.17;
+    const tight = 16.0;
+    const meet = 40.45;
+    const past = 6.0;
+    p.solid(&.{
+        p.ring(50, 72.17, wide, wide - 11, meet - past / 3, 180 - meet + past / 3),
+        p.ring(50, 27.83, wide, wide - 11, 180 + meet - past / 3, 360 - meet + past / 3),
+        p.ring(76, 50, tight, tight - 11, -meet - past, meet + past),
+        p.ring(24, 50, tight, tight - 11, 180 - meet - past, 180 + meet + past),
+    }, .blue, .{ .no_gloss = true });
+}
+
+noinline fn drawPolygon(p: *Painter) void {
+    const corners = [_][2]f32{ .{ 12, 42 }, .{ 46, 12 }, .{ 90, 30 }, .{ 80, 86 }, .{ 22, 80 } };
+    var sides: [10]Shape = undefined;
+    for (corners, 0..) |from, i| {
+        const to = corners[(i + 1) % corners.len];
+        sides[i] = p.poly(&shapes.bar(from[0], from[1], to[0], to[1], 9));
+        sides[corners.len + i] = p.disc(from[0], from[1], 8);
+    }
+    p.solid(&sides, .blue, .{ .no_gloss = true });
+}
+
+noinline fn drawFloodFill(p: *Painter) void {
+    // The pool, the paint running down into it, and the bucket tipped to
+    // the right with its mouth at the top right.
+    p.solid(&.{ p.rr(52, 82, 96, 95, 6), p.poly(&shapes.taper(70, 32, 80, 86, 12, 8)) }, .blue, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&.{ .{ 10, 46 }, .{ 54, 18 }, .{ 76, 52 }, .{ 40, 80 } })}, .metal, .{});
+    p.solid(&.{p.poly(&.{ .{ 54, 18 }, .{ 76, 52 }, .{ 72, 56 }, .{ 51, 22 } })}, .blue, .{ .no_shadow = true, .no_gloss = true });
+}
+
+noinline fn drawAirbrush(p: *Painter) void {
+    // The spray, the can, its shoulder and its button.
+    p.solid(&.{
+        p.disc(62, 16, 4.5), p.disc(74, 8, 4),  p.disc(76, 22, 4.5),
+        p.disc(88, 14, 4),   p.disc(90, 30, 4), p.disc(66, 30, 3.5),
+    }, .blue, .{ .no_gloss = true });
+    p.solid(&.{p.rr(12, 34, 52, 95, 7)}, .red, .{});
+    p.solid(&.{p.rr(16, 24, 48, 36, 3)}, .metal, .{ .no_shadow = true });
+    p.solid(&.{p.rr(26, 12, 40, 24, 2)}, .iron, .{ .no_shadow = true, .no_gloss = true });
+}
+
+noinline fn drawPickColour(p: *Painter) void {
+    // The bulb, the collar, the glass with the colour taken up in its
+    // lower half, and its point, along a diagonal to (8, 92).
+    p.solid(&.{p.disc(76, 24, 18)}, .red, .{});
+    p.solid(&.{p.poly(&shapes.bar(64, 36, 56, 44, 22))}, .iron, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&shapes.bar(57, 43, 24, 76, 14))}, .metal, .{ .no_gloss = true });
+    p.fill(p.poly(&shapes.bar(42, 58, 26, 74, 8)), .{ .colour = shapes.tones(.blue).base });
+    p.solid(&.{p.poly(&shapes.taper(24, 76, 8, 92, 14, 3))}, .metal, .{ .no_shadow = true, .no_gloss = true });
+}
+
+noinline fn drawText(p: *Painter) void {
+    // The A's two legs and its bar, then the cursor and its ends.
+    p.ink(&.{
+        p.poly(&shapes.bar(12, 92, 38, 10, 14)),
+        p.poly(&shapes.bar(38, 10, 64, 92, 14)),
+        p.rr(22, 58, 54, 68, 0),
+    });
+    p.solid(&.{ p.rr(80, 10, 88, 90, 1), p.rr(72, 8, 96, 15, 2), p.rr(72, 85, 96, 92, 2) }, .blue, .{ .flat = true, .no_shadow = true });
+}
+
+noinline fn drawGrabBrush(p: *Painter) void {
+    // The sun and the hill, then the frame round them: its corners and a
+    // dash between each two.
+    p.solid(&.{p.disc(36, 38, 12)}, .yellow, .{ .no_gloss = true });
+    p.solid(&.{p.ring(62, 92, 36, 0, 0, 180)}, .green, .{ .no_gloss = true, .no_shadow = true });
+    p.solid(&.{
+        p.poly(&.{ .{ 4, 4 }, .{ 22, 4 }, .{ 22, 11 }, .{ 11, 11 }, .{ 11, 22 }, .{ 4, 22 } }),
+        p.poly(&.{ .{ 78, 4 }, .{ 96, 4 }, .{ 96, 22 }, .{ 89, 22 }, .{ 89, 11 }, .{ 78, 11 } }),
+        p.poly(&.{ .{ 4, 78 }, .{ 11, 78 }, .{ 11, 89 }, .{ 22, 89 }, .{ 22, 96 }, .{ 4, 96 } }),
+        p.poly(&.{ .{ 89, 78 }, .{ 96, 78 }, .{ 96, 96 }, .{ 78, 96 }, .{ 78, 89 }, .{ 89, 89 } }),
+        p.rr(41, 4, 59, 11, 0),
+        p.rr(41, 89, 59, 96, 0),
+        p.rr(4, 41, 11, 59, 0),
+        p.rr(89, 41, 96, 59, 0),
+    }, .blue, .{ .flat = true, .no_shadow = true });
+}
+
+noinline fn drawFilled(p: *Painter) void {
+    p.solid(&.{p.rr(6, 6, 62, 62, 4)}, .blue, .{});
+    p.solid(&.{p.disc(64, 64, 30)}, .orange, .{});
+}
+
+noinline fn drawLayers(p: *Painter) void {
+    // Three sheets seen from above at a slant, the lowest first.
+    for ([_]f32{ 52, 33, 14 }, [_]Hue{ .blue, .green, .orange }) |top, hue| {
+        p.solid(&.{p.poly(&.{ .{ 50, top }, .{ 94, top + 17 }, .{ 50, top + 34 }, .{ 6, top + 17 } })}, hue, .{ .no_gloss = true });
+    }
+}
+
+noinline fn drawStencil(p: *Painter) void {
+    p.solid(&.{p.rr(6, 6, 94, 94, 8)}, .metal, .{ .no_gloss = true });
+    p.solid(&.{p.poly(&star)}, .blue, .{ .no_shadow = true, .no_gloss = true });
+}
+
+/// The stencil's star round (50, 52): five points 38 out, and the five
+/// corners between them 16 in.
+const star = blk: {
+    var out: [10][2]f32 = undefined;
+    for (&out, 0..) |*corner, i| {
+        const a: f32 = (90 + @as(f32, @floatFromInt(i)) * 36) * (3.14159265 / 180.0);
+        const r: f32 = if (i % 2 == 0) 38 else 16;
+        corner.* = .{ 50 + r * @cos(a), 52 - r * @sin(a) };
+    }
+    break :blk out;
+};
 
 /// All Files' eye round (62, 68): two bows meeting in points at its
 /// corners, 34 to each side and 20 up and down.

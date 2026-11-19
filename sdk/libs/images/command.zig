@@ -20,7 +20,10 @@
 //! manager's: the parent, a new drawer, rename, delete, information,
 //! update, the views (icons, a list, by date, by size), all files, clean
 //! up, snap to the grid, snapshot, back and forward, and a shell. Since
-//! 1.8 icons laid out again as their window is sized.
+//! 1.8 icons laid out again as their window is sized. Since 1.9 a paint
+//! program's tools: a pencil, a brush, a line, a curve, a rectangle, an
+//! ellipse, a polygon, a fill, an airbrush, a dropper, text, a brush cut
+//! out, shapes filled, layers and a stencil.
 //!
 //! `IM_DRAWFRAME` draws the picture in the largest square that fits the
 //! box, in its middle; `IM_DRAW` in the image's own box, 24 by 24 unless
@@ -182,5 +185,46 @@ pub const CMD_SHELL: u32 = 55;
 /// A window with its icons in rows, and the arrow out of its corner that
 /// sizes it: icons laid out again as the window is sized. Since 1.8.
 pub const CMD_ARRANGE: u32 = 56;
+/// A yellow pencil, its point down to the left, and a wave in the ink
+/// beside it: drawn by hand, in one line. Since 1.9.
+pub const CMD_PENCIL: u32 = 57;
+/// A paint brush, its tip blue, and three blue dots beside it: drawn by
+/// hand, the brush put down as it goes. Since 1.9.
+pub const CMD_BRUSH: u32 = 58;
+/// A straight line in the ink, a blue handle at each end. Since 1.9.
+pub const CMD_LINE: u32 = 59;
+/// A line bending one way and back, in the ink, a blue handle at each
+/// end. Since 1.9.
+pub const CMD_CURVE: u32 = 60;
+/// A rectangle's outline in blue. Since 1.9.
+pub const CMD_RECTANGLE: u32 = 61;
+/// An ellipse's outline in blue. Since 1.9.
+pub const CMD_ELLIPSE: u32 = 62;
+/// The outline of a five-cornered shape in blue, a dot at each corner.
+/// Since 1.9.
+pub const CMD_POLYGON: u32 = 63;
+/// A bucket tipped over, blue paint running out of it into a pool: an
+/// area filled. Since 1.9.
+pub const CMD_FLOOD_FILL: u32 = 64;
+/// A red spray can, blue dots coming out of it. Since 1.9.
+pub const CMD_AIRBRUSH: u32 = 65;
+/// A dropper, its bulb red and blue in its glass: a colour picked up
+/// from the picture. Since 1.9.
+pub const CMD_PICK_COLOUR: u32 = 66;
+/// An A in the ink and a blue text cursor: text put into the picture.
+/// Since 1.9.
+pub const CMD_TEXT: u32 = 67;
+/// A frame of blue dashes round a sun over a green hill: a part of the
+/// picture taken as a brush. Since 1.9.
+pub const CMD_GRAB_BRUSH: u32 = 68;
+/// A blue square and an orange disc over it, both filled: shapes drawn
+/// filled rather than as outlines. Since 1.9.
+pub const CMD_FILLED: u32 = 69;
+/// Three sheets lying one over another, blue, green and orange: layers.
+/// Since 1.9.
+pub const CMD_LAYERS: u32 = 70;
+/// A metal plate with a star cut out of it, blue showing through: a
+/// stencil. Since 1.9.
+pub const CMD_STENCIL: u32 = 71;
 /// The last picture there is.
-pub const CMD_LAST: u32 = CMD_ARRANGE;
+pub const CMD_LAST: u32 = CMD_STENCIL;

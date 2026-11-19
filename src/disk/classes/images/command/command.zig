@@ -51,11 +51,12 @@ pub const Data = extern struct {
     lock: exec.SignalSemaphore = .{},
 };
 
+/// 1.9: a paint program's tools.
 pub const Library = gadgets.ClassLibrary(.{
     .name = command.COMMAND_CLASS,
     .version = 1,
-    .revision = 8,
-    .date = "09.11.2026",
+    .revision = 9,
+    .date = "19.11.2026",
     .super = classusr.IMAGECLASS,
     .Instance = Data,
     .dispatch = dispatch,
