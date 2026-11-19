@@ -13,6 +13,15 @@
 //! code, and the target `PALETTE_Color`. The right button while choosing
 //! puts the old pick back and ends it, saying nothing.
 //!
+//! **Both buttons.** Made with `GA_MenuButton`, the menu button picks
+//! too, over its box, and the menus stay shut there: the pick follows the
+//! pointer until that button is let go, and the select button meanwhile
+//! puts the old pick back. `PALETTE_Button` says which button made the
+//! pick - a paint program's second colour, say - told with
+//! `PALETTE_Color` and read after the `IDCMP_GADGETUP`. What the gadget
+//! shows as picked afterwards is the box let go on; a program that keeps
+//! the menu button's pick apart sets `PALETTE_Color` back.
+//!
 //!   const colours = [_]graphics.Pen{ red, green, blue, yellow };
 //!   const pick = ib.NewObjectTagList(null, pa.PALETTE_CLASS, &.{
 //!       .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&colours) },
@@ -40,3 +49,11 @@ pub const PALETTE_Color = PALETTE_Dummy + 0x03;
 /// screen's pens are the screen's to say, so without a table there is
 /// nothing to read here.
 pub const PALETTE_Pen = PALETTE_Dummy + 0x04;
+/// Which button made the pick: `PALETTE_SELECT` or, for a gadget made
+/// with `GA_MenuButton`, `PALETTE_MENU`. Told with `PALETTE_Color`, and
+/// read: the button of the last press. Since palette.gadget 1.1.
+pub const PALETTE_Button = PALETTE_Dummy + 0x05;
+
+/// `PALETTE_Button`'s values.
+pub const PALETTE_SELECT: u32 = 0;
+pub const PALETTE_MENU: u32 = 1;

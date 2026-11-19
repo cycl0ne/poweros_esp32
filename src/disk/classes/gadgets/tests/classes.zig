@@ -1446,6 +1446,59 @@ test "palette.gadget: boxes nearest to square, a pick that follows, the right bu
     try rig.down();
 }
 
+test "palette.gadget: a pick of the menu button is told as one, ends on its own release, the select button puts it back" {
+    var heard = Heard{ .tag = pa.PALETTE_Button, .ib = undefined };
+    var rig = try Rig.up(&palette.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const colours = [_]sdk.graphics.Pen{ 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFFFF };
+    const pick = ib.NewObjectTagList(null, pa.PALETTE_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_Width, .data = 84 },
+        .{ .tag = gc.GA_Height, .data = 24 },
+        .{ .tag = gc.GA_MenuButton, .data = 1 },
+        .{ .tag = pa.PALETTE_ColorTable, .data = @intFromPtr(&colours) },
+        .{ .tag = pa.PALETTE_NumColors, .data = colours.len },
+        .{ .tag = icc.ICA_TARGET, .data = @intFromPtr(rig.listener) },
+        .{},
+    }).?;
+    const menu_press = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON, .qualifier = ie.IEQUALIFIER_RBUTTON };
+    const menu_release = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_RBUTTON | ie.IECODE_UP_PREFIX };
+
+    // The menu button on the last box: the select button's release does
+    // not end it, its own does, and it is told as the menu button's.
+    var termination: i32 = -1;
+    var down = input(gc.GM_GOACTIVE, &menu_press, 80, 12, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(pick, @ptrCast(&down)));
+    try testing.expectEqual(@as(usize, pa.PALETTE_MENU), attr(ib, pick, pa.PALETTE_Button));
+    var stray = input(gc.GM_HANDLEINPUT, &release, 80, 12, &termination);
+    try testing.expectEqual(gc.GMR_MEACTIVE, ib.SendMessage(pick, @ptrCast(&stray)));
+    var up = input(gc.GM_HANDLEINPUT, &menu_release, 80, 12, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE | gc.GMR_VERIFY, ib.SendMessage(pick, @ptrCast(&up)));
+    try testing.expectEqual(@as(i32, 3), termination);
+    try testing.expectEqual(@as(?usize, pa.PALETTE_MENU), heard.value);
+
+    // The menu button on the first box, then the select button: back to
+    // the last, nothing reported.
+    termination = -1;
+    var again = input(gc.GM_GOACTIVE, &menu_press, 3, 12, &termination);
+    _ = ib.SendMessage(pick, @ptrCast(&again));
+    try testing.expectEqual(@as(usize, 0), attr(ib, pick, pa.PALETTE_Color));
+    const select = ie.InputEvent{ .class = ie.IECLASS_NEWPOINTERPOS, .code = ie.IECODE_LBUTTON };
+    var back = input(gc.GM_HANDLEINPUT, &select, 3, 12, &termination);
+    try testing.expectEqual(gc.GMR_NOREUSE, ib.SendMessage(pick, @ptrCast(&back)));
+    try testing.expectEqual(@as(usize, 3), attr(ib, pick, pa.PALETTE_Color));
+    try testing.expectEqual(@as(i32, -1), termination);
+
+    // The select button's press is told as that.
+    var plain = input(gc.GM_GOACTIVE, &press, 3, 12, &termination);
+    _ = ib.SendMessage(pick, @ptrCast(&plain));
+    var done = input(gc.GM_HANDLEINPUT, &release, 3, 12, &termination);
+    try testing.expect(ib.SendMessage(pick, @ptrCast(&done)) & gc.GMR_VERIFY != 0);
+    try testing.expectEqual(@as(?usize, pa.PALETTE_SELECT), heard.value);
+
+    ib.DisposeObject(pick);
+    try rig.down();
+}
+
 test "colorwheel.gadget: the colour set and read both ways, a press picks, the right button puts back" {
     var heard = Heard{ .tag = cw.WHEEL_Hue, .ib = undefined };
     var rig = try Rig.up(&colorwheel.Library.resident_tag, &heard);

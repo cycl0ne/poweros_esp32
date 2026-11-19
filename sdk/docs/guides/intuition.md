@@ -1105,9 +1105,11 @@ window the menu button opens them as before, so a picture painted in
 two colours keeps its menus. The class ends the press on that button's
 release, so the tag is for a class that tells the two apart:
 canvas.gadget (2.3) says which button holds it in `CANVAS_Button`, told
-with every place and read with `GetAttr`. `C:test/Widgets` puts white
-dots on its canvas with the select button and black ones with the menu
-button.
+with every place and read with `GetAttr`, and palette.gadget (1.1) which
+button picked a colour in `PALETTE_Button`, read after the
+`IDCMP_GADGETUP` - a paint program's second colour; there the other
+button puts the old pick back. `C:test/Widgets` puts white dots on its
+canvas with the select button and black ones with the menu button.
 
 ```zig
 const canvas = ib.NewObjectTagList(null, cv.CANVAS_CLASS, &.{

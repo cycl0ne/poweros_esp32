@@ -13,6 +13,10 @@
 //! follows the pointer, and let go, it ends the way that counts with the
 //! box's number as the code. The right button while it is held puts back
 //! what was picked when the press began, and ends it without a report.
+//!
+//! Made with `GA_MenuButton`, the menu button presses it too: the press
+//! remembers its button, ends on that button's release, and the other
+//! button puts the pick back. Which button it was is told with the pick.
 
 const sdk = @import("sdk");
 const utility = sdk.utility;
@@ -33,10 +37,12 @@ const TagItem = utility.TagItem;
 const Pen = graphics.Pen;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// 1.1: the menu button picks too (`GA_MenuButton`), `PALETTE_Button`.
 pub const Library = gadgets.ClassLibrary(.{
     .name = pa.PALETTE_CLASS,
     .version = 1,
-    .date = "25.09.2026",
+    .revision = 1,
+    .date = "19.11.2026",
     .super = classusr.GADGETCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -61,7 +67,9 @@ pub const Data = extern struct {
     /// The pick when the press began, for the right button to put back.
     backup: u32 = 0,
     sized: u8 = 0,
-    pad: [3]u8 = @splat(0),
+    /// `PALETTE_Button`: which button made the press.
+    button: u8 = 0,
+    pad: [2]u8 = @splat(0),
     /// The gadget's frame, and the picked box's.
     frame: ?*Object = null,
     pick_frame: ?*Object = null,
@@ -199,6 +207,7 @@ fn boxUnder(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.Ga
 fn tell(base: *gadgets.Base, own: *const Data, o: *Object, gi: ?*classusr.GadgetInfo) void {
     const tags = [_]TagItem{
         .{ .tag = pa.PALETTE_Color, .data = own.color },
+        .{ .tag = pa.PALETTE_Button, .data = own.button },
         .{ .tag = gc.GA_ID, .data = gc.gadget(o).id },
         .{},
     };
@@ -323,6 +332,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
                 pa.PALETTE_Color => get.storage.* = own.color,
                 pa.PALETTE_NumColors => get.storage.* = own.num_colors,
                 pa.PALETTE_ColorTable => get.storage.* = @intFromPtr(own.table),
+                pa.PALETTE_Button => get.storage.* = own.button,
                 pa.PALETTE_Pen => {
                     const table = own.table orelse return 0;
                     if (own.color >= own.num_colors) return 0;
@@ -351,6 +361,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             if (in.event == null) return gc.GMR_NOREUSE;
             const own = classes.instData(Data, cl, o.?);
             own.backup = own.color;
+            own.button = @intCast(if (in.event.?.code == ie.IECODE_RBUTTON) pa.PALETTE_MENU else pa.PALETTE_SELECT);
             const index = boxUnder(base, own, o.?, in.gadget_info, in.mouse.x, in.mouse.y) orelse return gc.GMR_NOREUSE;
             pick(base, own, o.?, in.gadget_info, index);
             return gc.GMR_MEACTIVE;
@@ -360,13 +371,16 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const own = classes.instData(Data, cl, o.?);
             const e = in.event orelse return gc.GMR_MEACTIVE;
             if (e.class != ie.IECLASS_NEWPOINTERPOS) return gc.GMR_MEACTIVE;
-            // The right button: back as it was, and nothing to report.
-            if (e.code == ie.IECODE_RBUTTON) {
+            // The press's own button and the other one.
+            const held = if (own.button == pa.PALETTE_MENU) ie.IECODE_RBUTTON else ie.IECODE_LBUTTON;
+            const other = if (own.button == pa.PALETTE_MENU) ie.IECODE_LBUTTON else ie.IECODE_RBUTTON;
+            // The other button: back as it was, and nothing to report.
+            if (e.code == other) {
                 pick(base, own, o.?, in.gadget_info, own.backup);
                 return gc.GMR_NOREUSE;
             }
             if (boxUnder(base, own, o.?, in.gadget_info, in.mouse.x, in.mouse.y)) |index| pick(base, own, o.?, in.gadget_info, index);
-            if (e.code == ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX) {
+            if (e.code == held | ie.IECODE_UP_PREFIX) {
                 in.termination.* = @intCast(own.color);
                 tell(base, own, o.?, in.gadget_info);
                 return gc.GMR_NOREUSE | gc.GMR_VERIFY;
