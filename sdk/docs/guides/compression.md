@@ -5,8 +5,8 @@ and unpacks them: bare, in a zlib wrapping (RFC 1950: two bytes in front,
 an Adler-32 behind) or in a gzip one (RFC 1952: a header, a CRC-32 and
 the length behind). It is what a PNG's picture, a `.gz` file, a git
 object or an HTTP body sent `gzip` is packed with. icon.library and
-png.datatype unpack their PNGs with it, and `C:ScreenDump` packs its
-pictures.
+png.datatype unpack their PNGs with it, and png.datatype packs the PNGs
+it writes.
 
 This guide is the stream first, then unpacking, packing, the calls that
 do either in one go, and the checksums.

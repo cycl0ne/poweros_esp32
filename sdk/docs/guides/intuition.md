@@ -121,9 +121,10 @@ go. Read the screen locked, and copy what is wanted at once - the
 screen goes on being drawn in. The pointer is not in it: the display
 lays it over.
 
-`C:ScreenDump TO/A,SCREEN/K,DELAY/K/N` saves a public screen this way -
-the default one unless named - as a PNG; DELAY waits that many seconds
-first.
+`C:ScreenDump TO/A,SCREEN/K,DELAY/K/N,QUIET/S` saves a public screen
+this way - the default one unless named - as a PNG, which png.datatype
+writes (see [Pictures](datatypes.md#pictures)); DELAY waits that many
+seconds first.
 
 ```
 ScreenDump RAM:desktop.png

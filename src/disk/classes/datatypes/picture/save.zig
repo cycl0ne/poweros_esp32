@@ -3,8 +3,9 @@
 //!
 //! One form, with a `BMHD` saying what it is, a `CMAP` when the file it
 //! came from had a palette, a `GRAB` when it has a hot spot, and a
-//! `BODY` of 24 or 32 planes - red, green and blue from the top bit
-//! down, and coverage after them when the picture has any. The planes
+//! `BODY` of 24 or 32 planes - eight of red from its lowest bit up, then
+//! green's and blue's, and coverage's after them when the picture has
+//! any, which is the order a reader of deep ILBMs takes them in. The planes
 //! are written as they are, without ByteRun1: a picture of pens is
 //! already four times the size of the file it came from, and a reader
 //! that takes ILBM at all takes an uncompressed one.
@@ -55,18 +56,18 @@ fn headerBytes(own: *const Data, planes: u8, into: *[20]u8) void {
 }
 
 /// One row of pens turned into the planes the file holds: plane 0 is the
-/// lowest bit of blue, and the planes run upwards through green, red and
+/// lowest bit of red, and the planes run upwards through green, blue and
 /// coverage. `into` is `planes * stride` bytes and is written whole.
-fn rowPlanes(row: [*]const graphics.Pen, width: u32, planes: u32, stride: u32, into: [*]u8) void {
+pub fn rowPlanes(row: [*]const graphics.Pen, width: u32, planes: u32, stride: u32, into: [*]u8) void {
     @memset(into[0 .. planes * stride], 0);
     var x: u32 = 0;
     while (x < width) : (x += 1) {
         const pen = row[x];
-        // The channels in the order the planes run: blue lowest.
+        // The channels in the order the planes run: red lowest.
         const channels = [4]u8{
-            @truncate(pen),
-            @truncate(pen >> 8),
             @truncate(pen >> 16),
+            @truncate(pen >> 8),
+            @truncate(pen),
             @truncate(pen >> 24),
         };
         const byte = x >> 3;

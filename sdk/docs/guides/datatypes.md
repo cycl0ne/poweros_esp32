@@ -332,7 +332,61 @@ or `PBPAFMT_GREY8`. It goes with intuition's `SendMessage`, not
 `DoDTMethodA`: its message has no `GadgetInfo`, and the second field
 `DoDTMethodA` would fill is where the rows go. `PDTA_Scale` draws the picture at the size of the
 room it is given rather than its own, and `PDTM_SCALE` makes it another
-size for good. `DTM_WRITE` writes it as an IFF `ILBM`.
+size for good.
+
+**`DTM_WRITE` writes it** to a file the program has opened. `DTWM_IFF`
+is an IFF `ILBM`, whatever the picture came from: 24 planes, eight of
+red from its lowest bit up, then green's and blue's - 32 with
+coverage's after them when the picture has any. `DTWM_RAW` is the
+format's own, written by the format's class: png.datatype (1.3) writes
+a PNG of 8 bits a channel, RGB, or RGBA when the picture has coverage
+(its source mode is RGBA or ARGB, or its header masks with alpha). A
+class that writes no format of its own answers `DTWM_RAW` with 0.
+
+**A picture a program has drawn** goes into an empty object (see
+[An empty object](#an-empty-object)) - png.datatype's, named by
+`DTA_BaseName`, for a PNG. The header comes first, since it gives the
+object its room; then the rows, with `PDTM_WRITEPIXELARRAY` and in any
+of the shapes `PDTM_READPIXELARRAY` takes; then `DTM_WRITE`:
+
+```zig
+const picture = dt.NewDTObjectA(null, &.{
+    .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_RAM },
+    .{ .tag = dtc.DTA_BaseName, .data = @intFromPtr("png") },
+    .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+    .{},
+}) orelse return;
+defer dt.DisposeDTObject(picture);
+const header = pic.BitMapHeader{
+    .width = width, .height = height, .depth = 32,
+    .masking = pic.mskHasAlpha, .x_aspect = 1, .y_aspect = 1,
+    .page_width = width, .page_height = height,
+};
+_ = dt.SetDTAttrsA(picture, null, null, &.{
+    .{ .tag = pic.PDTA_SourceMode, .data = pic.PBPAFMT_ARGB },
+    .{ .tag = pic.PDTA_BitMapHeader, .data = @intFromPtr(&header) },
+    .{},
+});
+var rows = pic.PdtBlitPixelArray{
+    .pixel_data = argb, .format = pic.PBPAFMT_ARGB,
+    .bytes_per_row = width * 4, .width = width, .height = height,
+};
+_ = ib.SendMessage(picture, @ptrCast(&rows));
+const file = dl.Open("RAM:drawn.png", dos.MODE_NEWFILE) orelse return;
+var out = dtc.DtWrite{ .file = file, .mode = dtc.DTWM_RAW };
+const written = dt.DoDTMethodA(picture, null, null, @ptrCast(&out)) != 0;
+_ = dl.Close(file);
+```
+
+`C:ScreenDump` saves a screen this way. `C:test/DTWrite [DIR <dir>]`
+draws a picture with coverage, saves it both ways into DIR (`RAM:`
+unless given), reads both files back and counts the pixels that came
+back the same:
+
+```
+IFF    RAM:dtwrite.iff: 9520 bytes, 2257 of 2257 pixels the same, size 61x37
+PNG    RAM:dtwrite.png: 155 bytes, 2257 of 2257 pixels the same, size 61x37
+```
 
 ## Text
 

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of the PNG decoder png.datatype and icon.library read
 //! with (sdk/libs/datatypes/png/): the chunks' checksum, the header, the
-//! filters, the bits of a pixel and the passes of an interlaced file.
+//! filters, the bits of a pixel and the passes of an interlaced file;
+//! and of png.datatype's writer, whose filtered rows the decoder undoes.
 //! The stream is compression.library's, tested with it; icon.library's
 //! tests read whole files.
 
 const std = @import("std");
 const sdk = @import("sdk");
 const decode = sdk.datatypes.png.decode;
+const write = @import("../write.zig");
 
 const testing = std.testing;
 
@@ -77,4 +79,38 @@ test "the passes of an interlaced file cover every pixel once" {
         total += size.width * size.height;
     }
     try testing.expectEqual(@as(u32, 81), total);
+}
+
+test "a row the writer filters is the row the decoder undoes, whichever filter it chose" {
+    // Rows of RGB and of RGBA: flat, a ramp, noise, and one like the row
+    // above - each makes a different filter the smallest.
+    var seed: u32 = 12345;
+    inline for (.{ 3, 4 }) |pixel| {
+        const width = 37;
+        const bytes = width * pixel;
+        var above: [bytes]u8 = undefined;
+        var row: [bytes]u8 = undefined;
+        for (0..6) |kind| {
+            for (0..bytes) |i| {
+                seed = seed *% 1103515245 +% 12345;
+                const noise: u8 = @truncate(seed >> 16);
+                above[i] = @truncate(i *% 7);
+                row[i] = switch (kind) {
+                    0 => 200,
+                    1 => @truncate(i *% 3),
+                    2 => noise,
+                    3 => above[i] +% 1,
+                    4 => @truncate((i / pixel) *% 5 +% noise / 64),
+                    else => noise / 2 +% above[i] / 2,
+                };
+            }
+            var out: [1 + bytes]u8 = undefined;
+            write.filterRow(&row, if (kind == 0) null else &above, pixel, &out);
+            try testing.expect(out[0] <= 4);
+            var undone = out[1..].*;
+            const zeroes: [bytes]u8 = @splat(0);
+            try decode.unfilter(out[0], &undone, if (kind == 0) &zeroes else &above, pixel);
+            try testing.expectEqualSlices(u8, &row, &undone);
+        }
+    }
 }

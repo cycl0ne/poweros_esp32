@@ -30,7 +30,6 @@ test {
     _ = @import("programs/movie/tests/rate.zig");
     _ = @import("programs/player/tests/csv.zig");
     _ = @import("programs/player/tests/stations.zig");
-    _ = @import("c/screendump/tests/png.zig");
     _ = @import("c/hash/digests.zig");
     _ = @import("c/hash/tests/digests.zig");
     _ = @import("classes/datatypes/8svx/body.zig");
@@ -213,6 +212,7 @@ test {
     _ = @import("system/shares/known.zig");
     _ = @import("system/shares/server.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
+    _ = @import("classes/datatypes/png/tests/write.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");
     _ = @import("classes/datatypes/gif/decode.zig");
     _ = @import("libs/modbus/protocol/pdu.zig");
@@ -226,6 +226,7 @@ test {
     _ = @import("classes/datatypes/lottie/tests/render.zig");
     _ = @import("classes/datatypes/svg/tests/svg.zig");
     _ = @import("classes/datatypes/ilbm/planes.zig");
+    _ = @import("classes/datatypes/picture/tests/save.zig");
     _ = @import("classes/datatypes/bmp/decode.zig");
     _ = @import("classes/datatypes/bmp/icon.zig");
     _ = @import("classes/datatypes/markdown/parse.zig");

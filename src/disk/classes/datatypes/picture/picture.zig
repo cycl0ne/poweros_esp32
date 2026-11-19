@@ -53,10 +53,14 @@ const Base = gadgets.Base;
 /// class's superclass, is made when that library is first opened and
 /// goes with its last close; iffparse.library because `DTM_WRITE`
 /// writes an IFF form.
+///
+/// 1.1: a deep ILBM's planes are written red first, the order they are
+/// read in.
 pub const Library = gadgets.ClassLibrary(.{
     .name = pic.PICTUREDTCLASS,
     .version = 1,
-    .date = "29.09.2026",
+    .revision = 1,
+    .date = "19.11.2026",
     .super = dtc.DATATYPESCLASS,
     .opens = &.{ datatypes.DATATYPESNAME, sdk.iffparse.IFFPARSENAME },
     .Instance = Data,

@@ -11,29 +11,31 @@
 //! The screen's own buffer is reached through `AllocScreenBuffer` with
 //! `SB_SCREEN_BITMAP`, which hands it out rather than making another, and
 //! copied at once into rows of 8-bit RGB - from whatever form the display
-//! keeps it in - so a picture that moves is taken as one moment. Writing
-//! the PNG (png.zig) comes after, from the copy, packed by
-//! compression.library. The pointer is not in
-//! the screen's buffer - the display lays it over - and so is not in the
-//! picture.
+//! keeps it in - so a picture that moves is taken as one moment. The
+//! copy then goes into an empty png.datatype object (`NewDTObjectA` with
+//! `DTST_RAM`), which writes it out as a PNG (`DTM_WRITE`, `DTWM_RAW`).
+//! The pointer is not in the screen's buffer - the display lays it over -
+//! and so is not in the picture.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
 const exec = sdk.exec;
 const intuition = sdk.intuition;
 const rtg = sdk.rtg;
+const datatypes = sdk.datatypes;
+const dtc = datatypes.datatypesclass;
+const pic = datatypes.pictureclass;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
-const CompressionBase = sdk.interface.compression.CompressionBase;
+const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const PixelFormat = rtg.bitmaps.PixelFormat;
 const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 const sc = intuition.screens;
-const png = @import("png.zig");
 
 pub const COMMAND_NAME = "ScreenDump";
-const VERSION_STRING = "\x00$VER: ScreenDump 1.1 (25.10.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ScreenDump 1.2 (19.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "TO/A,SCREEN/K,DELAY/K/N,QUIET/S";
@@ -48,23 +50,8 @@ const MSG_NOBUFFER = "%s: the screen's buffer cannot be had\n";
 const MSG_FORMAT = "%s: the screen's pixels are in a form this does not read\n";
 const MSG_NOMEMORY = "%s: no memory for a picture of %u by %u\n";
 const MSG_NOLIBRARY = "%s: cannot open %s\n";
+const MSG_NOWRITER = "%s: png.datatype cannot be made: %s\n";
 const MSG_DONE = "%s: %u by %u written to %s, %lu bytes\n";
-
-/// What the PNG writer hands over goes to the file, and is counted.
-const Output = struct {
-    dl: *DosBase,
-    file: *dos.FileHandle,
-    written: u64 = 0,
-
-    fn put(context: *anyopaque, bytes: []const u8) bool {
-        const output: *Output = @ptrCast(@alignCast(context));
-        if (bytes.len == 0) return true;
-        const done = output.dl.Write(output.file, bytes.ptr, @intCast(bytes.len));
-        if (done != @as(isize, @intCast(bytes.len))) return false;
-        output.written += bytes.len;
-        return true;
-    }
-};
 
 export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv(.c) i32 {
     _ = args;
@@ -86,12 +73,12 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const intuition_lib = sys.OpenLibrary(intuition.INTUITIONNAME, 0) orelse return dos.RETURN_FAIL;
     defer sys.CloseLibrary(intuition_lib);
     const ib: *IntuitionBase = @ptrCast(intuition_lib);
-    const compression_lib = sys.OpenLibrary(sdk.compression.COMPRESSIONNAME, 1) orelse {
-        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, sdk.compression.COMPRESSIONNAME });
+    const datatypes_lib = sys.OpenLibrary(datatypes.DATATYPESNAME, 1) orelse {
+        _ = Printf(dl, MSG_NOLIBRARY, .{ COMMAND_NAME, datatypes.DATATYPESNAME });
         return dos.RETURN_FAIL;
     };
-    defer sys.CloseLibrary(compression_lib);
-    const cb: *CompressionBase = @ptrCast(compression_lib);
+    defer sys.CloseLibrary(datatypes_lib);
+    const dt: *DataTypesBase = @ptrCast(datatypes_lib);
 
     // Waited out in pieces, so Ctrl-C ends it.
     var waited: u32 = 0;
@@ -121,13 +108,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const bitmap = buffer.bitmap;
     const width = bitmap.width;
     const height = bitmap.height;
-    const stride = png.rowBytes(width);
+    const stride = @as(usize, width) * 3;
     const memory = sys.AllocVec(stride * height, exec.MEMF_ANY) orelse {
         ib.FreeScreenBuffer(screen, buffer);
         _ = Printf(dl, MSG_NOMEMORY, .{ COMMAND_NAME, width, height });
         return dos.RETURN_FAIL;
     };
-    defer sys.FreeVec(memory);
+    var kept = true;
+    defer if (kept) sys.FreeVec(memory);
     const rows: [*]u8 = @ptrCast(memory);
     const copied = copyScreen(bitmap, rows, stride);
     ib.FreeScreenBuffer(screen, buffer);
@@ -138,45 +126,73 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         return dos.RETURN_FAIL;
     }
 
-    const work_memory = sys.AllocVec(@sizeOf(png.Work), exec.MEMF_ANY) orelse {
-        _ = Printf(dl, MSG_NOMEMORY, .{ COMMAND_NAME, width, height });
+    // The copy into an empty PNG picture, which writes itself out.
+    const picture = dt.NewDTObjectA(null, &.{
+        .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_RAM },
+        .{ .tag = dtc.DTA_BaseName, .data = @intFromPtr("png") },
+        .{ .tag = dtc.DTA_GroupID, .data = datatypes.GID_PICTURE },
+        .{},
+    }) orelse {
+        var why: [80]u8 = @splat(0);
+        _ = dl.Fault(dl.IoErr(), null, &why, why.len);
+        _ = Printf(dl, MSG_NOWRITER, .{ COMMAND_NAME, @as([*:0]const u8, @ptrCast(&why)) });
         return dos.RETURN_FAIL;
     };
-    defer sys.FreeVec(work_memory);
-    const work: *png.Work = @ptrCast(@alignCast(work_memory));
+    defer dt.DisposeDTObject(picture);
+    const header = pic.BitMapHeader{
+        .width = @intCast(width),
+        .height = @intCast(height),
+        .depth = 24,
+        .masking = pic.mskNone,
+        .x_aspect = 1,
+        .y_aspect = 1,
+        .page_width = @intCast(width),
+        .page_height = @intCast(height),
+    };
+    _ = dt.SetDTAttrsA(picture, null, null, &.{
+        .{ .tag = pic.PDTA_SourceMode, .data = pic.PBPAFMT_RGB },
+        .{ .tag = pic.PDTA_BitMapHeader, .data = @intFromPtr(&header) },
+        .{},
+    });
+    var rows_in = pic.PdtBlitPixelArray{
+        .pixel_data = rows,
+        .format = pic.PBPAFMT_RGB,
+        .bytes_per_row = @intCast(stride),
+        .width = width,
+        .height = height,
+    };
+    if (ib.SendMessage(picture, @ptrCast(&rows_in)) == 0) {
+        _ = Printf(dl, MSG_NOMEMORY, .{ COMMAND_NAME, width, height });
+        return dos.RETURN_FAIL;
+    }
+    // The copy is in the picture now.
+    sys.FreeVec(memory);
+    kept = false;
 
     const file = dl.Open(to, dos.MODE_NEWFILE) orelse {
         _ = dl.PrintFault(dl.IoErr(), to);
         return dos.RETURN_FAIL;
     };
-    var output = Output{ .dl = dl, .file = file };
-    const result = png.write(work, cb, .{ .context = &output, .put = Output.put }, width, height, rows[0 .. stride * height]);
+    var out = dtc.DtWrite{ .file = file, .mode = dtc.DTWM_RAW };
+    const written_ok = dt.DoDTMethodA(picture, null, null, @ptrCast(&out)) != 0;
     const failure = dl.IoErr();
+    const written: u64 = @intCast(@max(dl.Seek(file, 0, dos.OFFSET_CURRENT), 0));
     _ = dl.Close(file);
-    switch (result) {
-        .written => {},
-        .sink_failed => {
-            _ = dl.PrintFault(failure, to);
-            _ = dl.DeleteFile(to);
-            return dos.RETURN_FAIL;
-        },
-        .no_memory => {
-            _ = Printf(dl, MSG_NOMEMORY, .{ COMMAND_NAME, width, height });
-            _ = dl.DeleteFile(to);
-            return dos.RETURN_FAIL;
-        },
+    if (!written_ok) {
+        _ = dl.PrintFault(failure, to);
+        _ = dl.DeleteFile(to);
+        return dos.RETURN_FAIL;
     }
-    if (argv[arg_quiet] == 0) _ = Printf(dl, MSG_DONE, .{ COMMAND_NAME, width, height, to, output.written });
+    if (argv[arg_quiet] == 0) _ = Printf(dl, MSG_DONE, .{ COMMAND_NAME, width, height, to, written });
     return dos.RETURN_OK;
 }
-
-/// The screen's pixels into rows of 8-bit RGB, each after a byte left for
-/// its filter: false for a form this does not read.
+/// The screen's pixels into rows of 8-bit RGB: false for a form this does
+/// not read.
 fn copyScreen(bitmap: *const rtg.RtgBitMap, rows: [*]u8, stride: usize) bool {
     const pixels = bitmap.pixels orelse return false;
     for (0..bitmap.height) |y| {
         const from = pixels + y * bitmap.pitch;
-        const into = rows + y * stride + 1;
+        const into = rows + y * stride;
         for (0..bitmap.width) |x| {
             const rgb: [3]u8 = switch (bitmap.format) {
                 .rgb565 => blk: {

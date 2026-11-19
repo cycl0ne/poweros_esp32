@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: MIT
 //! png.datatype: a PNG file as a picture.
 //!
-//! A picture.datatype subclass. All it does is read the file in
-//! `OM_NEW` - the chunks, the palette, the compressed rows - and hand
-//! the pixels to its superclass a row at a time with
-//! `PDTM_WRITEPIXELARRAY`. Everything after that, drawing, scrolling,
-//! scaling and writing out, is the superclass's.
+//! A picture.datatype subclass. It reads the file in `OM_NEW` - the
+//! chunks, the palette, the compressed rows - and hands the pixels to its
+//! superclass a row at a time with `PDTM_WRITEPIXELARRAY`. Drawing,
+//! scrolling and scaling are the superclass's from then on, and so is
+//! writing an IFF ILBM (`DTM_WRITE` with `DTWM_IFF`).
+//!
+//! **It writes a PNG** for `DTM_WRITE` with `DTWM_RAW` (write.zig), from
+//! whatever picture the object holds - one it read, or one a program
+//! filled. Made with `DTST_RAM` (`NewDTObjectA` with `DTA_BaseName`
+//! "png") it reads nothing and is an empty picture: the program sets
+//! `PDTA_BitMapHeader`, which gives it its room, hands it the rows with
+//! `PDTM_WRITEPIXELARRAY`, and writes it out.
 //!
 //! Every colour kind and every depth the format defines is read, and
 //! both ways of laying the rows out. What a pixel is written as in the
@@ -40,13 +47,16 @@ const Object = classes.Object;
 const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const CompressionBase = sdk.interface.compression.CompressionBase;
 const Base = gadgets.Base;
+const write = @import("write.zig");
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// 1.3: a PNG written for `DTM_WRITE` with `DTWM_RAW`; made empty under
+/// `DTST_RAM`.
 pub const Library = gadgets.ClassLibrary(.{
     .name = "png.datatype",
     .version = 1,
-    .revision = 2,
-    .date = "28.10.2026",
+    .revision = 3,
+    .date = "19.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, compression.COMPRESSIONNAME },
     .Instance = Data,
@@ -234,6 +244,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const made = ib.SendSuperMessage(cl, o, msg);
             if (made == 0) return 0;
             const obj: *Object = @ptrFromInt(made);
+            // Empty, for the program to fill: nothing to read.
+            if (subclass.superAsk(ib, cl, obj, dtc.DTA_SourceType) == dtc.DTST_RAM) return made;
             const dl = base.sys_base.OpenLibrary(dos.DOSNAME, 0) orelse {
                 ib.DisposeObject(obj);
                 return 0;
@@ -249,6 +261,7 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             }
             return made;
         },
+        dtc.DTM_WRITE => return write.write(base, cl, o.?, @ptrCast(@alignCast(msg))),
         else => return ib.SendSuperMessage(cl, o, msg),
     }
 }
