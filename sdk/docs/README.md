@@ -84,7 +84,7 @@ tags and constants, each with its doc comment.
   stream ends, packing and flushing, the calls that do either in one go,
   CRC-32 and Adler-32.
 - [Network](guides/network.md) - sockets, multicast groups, waiting on
-  them, names, TLS, HTTP requests (http.library), interfaces and their files, the network device API,
+  them, names, TLS, HTTP requests (http.library), JSON (json.library), interfaces and their files, the network device API,
   wireless devices, SLIP over a serial line, writing a network driver,
   telnet.device, SSH both ways (ShellServer SSH with sftp and scp,
   `C:net/SSH`, `C:net/SCP`, ssh.device), a packet filter and the packet hooks under it, and the
@@ -185,6 +185,7 @@ first time something opens it.
 | icon.library | `LIBS:` | icons: the picture a file is shown with and its fields; the default that fits a file without one | [md](autodocs/icon.md) · [doc](autodocs/icon.doc) |
 | diskfont.library | `LIBS:` | fonts from `FONTS:`, bitmap and outline | [md](autodocs/diskfont.md) · [doc](autodocs/diskfont.doc) |
 | iffparse.library | `LIBS:` | reading and writing IFF | [md](autodocs/iffparse.md) · [doc](autodocs/iffparse.doc) |
+| json.library | `LIBS:` | JSON text read into a tree of values - numbers correctly rounded, whole ones kept exact - looked through by name, index or JSON Pointer, built and changed, and written out compact or indented, into memory or a file | [md](autodocs/json.md) · [doc](autodocs/json.doc), [`json.zig`](../libs/json/json.zig), [guide](guides/network.md#json-jsonlibrary) |
 | pci.library | `LIBS:` | PCI Express: every function behind every bridge of the board's host bridges, their memory placed, found by class and claimed by a driver; MSI and MSI-X; a function reset (RISC-V 64 disk) | [md](autodocs/pci.md) · [doc](autodocs/pci.doc), [`pci.zig`](../libs/pci/pci.zig) |
 | rdb.library | `LIBS:` | a disk's RigidDiskBlock and partitions | [md](autodocs/rdb.md) · [doc](autodocs/rdb.doc) |
 | modbus.library | `LIBS:` | Modbus over RTU and TCP, as a client and as a server | [md](autodocs/modbus.md) · [doc](autodocs/modbus.doc) |

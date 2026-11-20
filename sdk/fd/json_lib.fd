@@ -1,0 +1,63 @@
+// SPDX-License-Identifier: MIT
+//! json.library's functions: JSON text read into a tree of values, looked
+//! through, built and changed, and written out again (sdk.json). Open it
+//! with OpenLibrary("json.library", 1).
+##include libs/json/json as json
+##basetype JSONBase
+##name json.library
+##bias 4
+##public
+// Reading
+/// `length` bytes of JSON text read into a new document; null, with `report` filled in, when they are not JSON or there is no memory.
+?*json.Document ParseJSON([*]const u8 text, usize length, u32 flags, ?*json.Error report)
+/// A file of JSON text read into a new document; null, with `report` filled in, when it cannot be read or is not JSON.
+?*json.Document ReadJSONFile([*:0]const u8 name, u32 flags, ?*json.Error report)
+/// A document and every value in it given back. Null does nothing.
+void DisposeJSONDocument(?*json.Document document)
+// Finding
+/// The member of an object called `name`, the last of them when there are several; null for none.
+?*json.Value FindJSONMember(?*const json.Value object, [*:0]const u8 name)
+/// The value at `index`, from 0, in an array or an object; null past the end.
+?*json.Value GetJSONItem(?*const json.Value container, u32 index)
+/// The value a JSON Pointer (RFC 6901) names, from `from` on; null for none.
+?*json.Value FindJSONPointer(?*const json.Value from, [*:0]const u8 pointer)
+/// How many values an array or an object holds; 0 for anything else.
+u32 CountJSONValues(?*const json.Value container)
+// Reading values
+/// A number's value into `number`; false for anything but a number.
+bool GetJSONNumber(?*const json.Value value, *f64 number)
+/// A whole number's value into `integer`; false for anything but a number that is whole and fits 64 bits.
+bool GetJSONInteger(?*const json.Value value, *i64 integer)
+/// A string's text, its length in bytes into `length`; null for anything but a string.
+?[*:0]const u8 GetJSONString(?*const json.Value value, ?*u32 length)
+/// A boolean's value into `truth`; false for anything but a boolean.
+bool GetJSONBool(?*const json.Value value, *bool truth)
+// Building
+/// An empty document to build in; null without the memory.
+?*json.Document CreateJSONDocument()
+/// A new value of `kind` (JSON_*) - null, false, 0, an empty string, array or object - placed nowhere yet.
+?*json.Value CreateJSONValue(*json.Document document, u32 kind)
+/// A new number, placed nowhere yet.
+?*json.Value CreateJSONNumber(*json.Document document, f64 number)
+/// A new whole number, kept exactly, placed nowhere yet.
+?*json.Value CreateJSONInteger(*json.Document document, i64 integer)
+/// A new string of `length` bytes of UTF-8 (JSON_TERMINATED: up to its NUL), copied, placed nowhere yet.
+?*json.Value CreateJSONString(*json.Document document, [*]const u8 text, u32 length)
+/// A new boolean, placed nowhere yet.
+?*json.Value CreateJSONBool(*json.Document document, bool truth)
+/// A copy of a value and all it holds, made in `document`, placed nowhere yet.
+?*json.Value CopyJSONValue(*json.Document document, *const json.Value value)
+/// `value` made the member `name` of an object, in place of a member of that name; false when it cannot be.
+bool SetJSONMember(*json.Value object, [*:0]const u8 name, *json.Value value)
+/// `value` put into an array before the item at `index` (JSON_END: after the last); false when it cannot be.
+bool InsertJSONItem(*json.Value array, *json.Value value, u32 index)
+/// A value taken out of its array or object, or off the root, and placed nowhere.
+void RemoveJSONValue(*json.Value value)
+/// `value` made the document's root, the old root placed nowhere; false when it is another document's.
+bool SetJSONRoot(*json.Document document, ?*json.Value value)
+// Writing
+/// A value as JSON text into `buffer`, cut to `size` with a NUL; the length the whole text has.
+usize FormatJSON(?*const json.Value value, ?[*]u8 buffer, usize size, u32 flags)
+/// A value written as JSON text into a file, a line end after it; false, IoErr saying why, when it cannot be.
+bool WriteJSONFile(?*const json.Value value, [*:0]const u8 name, u32 flags)
+##end

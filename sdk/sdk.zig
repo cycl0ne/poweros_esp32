@@ -40,6 +40,8 @@ pub const compression = @import("libs/compression/compression.zig");
 pub const paintio = @import("libs/paintio/paintio.zig");
 pub const paintfx = @import("libs/paintfx/paintfx.zig");
 pub const http = @import("libs/http/http.zig");
+/// JSON text read into values, built and written out again.
+pub const json = @import("libs/json/json.zig");
 /// LZ4's block format (sdk/libs/lz4).
 pub const lz4 = @import("libs/lz4/lz4.zig");
 pub const diskfont = @import("libs/diskfont/diskfont.zig");

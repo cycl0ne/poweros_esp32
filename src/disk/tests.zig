@@ -70,6 +70,7 @@ test {
     _ = @import("libs/compression/tests/compression.zig");
     _ = @import("libs/paintio/tests/paintio.zig");
     _ = @import("libs/paintfx/tests/paintfx.zig");
+    _ = @import("libs/json/tests/json.zig");
     _ = @import("libs/http/tests/http.zig");
     _ = @import("libs/http/tests/icy.zig");
     _ = @import("libs/crypto/tests/keys.zig");

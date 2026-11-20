@@ -420,6 +420,78 @@ A client and its requests belong to the task whose socket base they use.
 A request takes some 14 KiB, and 8 KiB more while it unpacks; the head
 of an answer must fit in 8 KiB. `C:net/HTTPGet` is written on it.
 
+## JSON: json.library
+
+`LIBS:json.library` reads JSON text (RFC 8259) into a tree of values,
+finds its way about in it, builds and changes a tree, and writes one out
+again. It is what a program reads a web service's answer with, and what
+it keeps its own settings in.
+
+**A document** holds one tree - its outermost value, `root` - and all
+its values, from one memory pool given back by `DisposeJSONDocument`.
+`ParseJSON` reads text in memory, `ReadJSONFile` a file. Every call that
+looks something up takes null and answers null or false for it, so
+lookups go one into the next without a check between them:
+
+```zig
+const json = sdk.json;
+const JSONBase = sdk.interface.json.JSONBase;
+
+const json_lib = sys.OpenLibrary(json.JSONNAME, 1) orelse return;
+defer sys.CloseLibrary(json_lib);
+const jb: *JSONBase = @ptrCast(json_lib);
+
+var report = json.Error{};
+const document = jb.ParseJSON(answer.ptr, answer.len, 0, &report) orelse {
+    // report.code is JSONERR_*, at report.line and report.column
+    return;
+};
+defer jb.DisposeJSONDocument(document);
+
+var celsius: f64 = 0;
+_ = jb.GetJSONNumber(jb.FindJSONMember(jb.FindJSONMember(document.root, "current"), "temperature_2m"), &celsius);
+// or by a JSON Pointer (RFC 6901): "/daily/temperature_2m_max/0"
+const days = jb.FindJSONPointer(document.root, "/daily/time");
+var at: u32 = 0;
+while (jb.GetJSONString(jb.GetJSONItem(days, at), null)) |date| : (at += 1) {
+    // "2026-11-20", ...
+}
+```
+
+A value is one of six kinds (`JSON_NULL`, `JSON_BOOLEAN`, `JSON_NUMBER`,
+`JSON_STRING`, `JSON_ARRAY`, `JSON_OBJECT`), and its fields can be read
+straight from `json.Value` as well: an array's and an object's values
+are a list from `first` to `last`, in the text's order. A string is
+UTF-8 with its escapes undone, its length beside it and a NUL after it.
+A number is read to the double nearest its text, and a whole one that
+fits 64 bits is kept exactly too (`GetJSONInteger`). `FindJSONMember`
+finds the last member of a name, as JSON readers do; `JSONF_COMMENTS`
+lets `//` and `/* */` comments through.
+
+**Building** starts from `CreateJSONDocument`: values are made in it
+(`CreateJSONValue` for an array or an object, `CreateJSONNumber`,
+`CreateJSONString` and the others), put into an object by name with
+`SetJSONMember` - which replaces a member of that name - or into an
+array at an index with `InsertJSONItem`, taken out again with
+`RemoveJSONValue`, and copied from another document with
+`CopyJSONValue`. `FormatJSON` writes a value into memory - asked with no
+buffer it says how long the text is - and `WriteJSONFile` into a file;
+`JSONF_PRETTY` indents it by two spaces a level, `JSONF_ASCII` writes
+everything past ASCII as `\u` escapes. A number is written in the
+fewest digits that read back as the same double.
+
+```zig
+const document = jb.CreateJSONDocument() orelse return;
+defer jb.DisposeJSONDocument(document);
+const root = jb.CreateJSONValue(document, json.JSON_OBJECT) orelse return;
+_ = jb.SetJSONRoot(document, root);
+_ = jb.SetJSONMember(root, "units", jb.CreateJSONString(document, "celsius", json.JSON_TERMINATED) orelse return);
+_ = jb.WriteJSONFile(root, "ENVARC:Weather.json", json.JSONF_PRETTY);
+```
+
+Nothing in it recurses: a tree nested thousands deep is read, copied
+and written in the memory of its values alone.
+
 ## Interfaces
 
 An interface is a network device's unit under a name - `eth0`, `wlan0` -

@@ -331,6 +331,7 @@ const modules = [_]Program{
     .{ .disk = "libs/bsdsocket.library", .source = "libs/bsdsocket/bsdsocket.zig", .name = "bsdsocket.library", .set = .net },
     .{ .disk = "libs/crypto.library", .source = "libs/crypto/crypto.zig", .name = "crypto.library", .set = .net },
     .{ .disk = "libs/compression.library", .source = "libs/compression/compression.zig", .name = "compression.library" },
+    .{ .disk = "libs/json.library", .source = "libs/json/json.zig", .name = "json.library", .set = .gui },
     .{ .disk = "libs/http.library", .source = "libs/http/http.zig", .name = "http.library", .set = .net, .strings = "libs/http/http.cd", .strings_as = "http_strings", .catalog = "sys/http.catalog" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library", .set = .storage },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library", .set = .usb },

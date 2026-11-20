@@ -127,7 +127,7 @@ pub fn programTargetQuery(chip: Chip) std.Target.Query {
 }
 
 /// The libraries with an `.fd` file, each made into `interface/<name>.zig`.
-const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "videodec", "vchiq", "dos", "rtg", "rtgdriver", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "truetypeshaping", "asl", "iffparse", "commodities", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "battmem", "thermal", "power", "amdgpu", "audiocodec", "media", "videoparse", "videocodec", "vcodec", "acodec", "mcontainer", "ramlib", "wpa", "pci", "facet", "compression", "http", "locale", "update", "vector", "paintio", "paintfx" };
+const interfaces = [_][]const u8{ "exec", "utility", "timer", "watchdog", "dma", "platform", "expander", "expansion", "gpio", "jpeg", "videodec", "vchiq", "dos", "rtg", "rtgdriver", "rta", "graphics", "layers", "intuition", "input", "keymap", "console", "colorwheel", "bsdsocket", "crypto", "diskfont", "truetype", "truetypeshaping", "asl", "iffparse", "commodities", "datatypes", "motion", "rdb", "tls", "modbus", "filter", "icon", "anvil", "usb", "usbclass", "battery", "usbport", "battclock", "battmem", "thermal", "power", "amdgpu", "audiocodec", "media", "videoparse", "videocodec", "vcodec", "acodec", "mcontainer", "ramlib", "wpa", "pci", "facet", "compression", "http", "locale", "update", "vector", "paintio", "paintfx", "json" };
 
 pub fn build(b: *std.Build) void {
     const sdk = b.addModule("sdk", .{ .root_source_file = b.path("sdk.zig") });
