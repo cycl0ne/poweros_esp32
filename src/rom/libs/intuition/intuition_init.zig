@@ -294,7 +294,9 @@ pub const LIBRARY_VERSION = 1;
 /// 107, version 1: a sizing with the size gadget ends with an
 /// IDCMP_NEWSIZE without the button in its qualifier, also when its last
 /// step changed nothing.
-pub const LIBRARY_REVISION = 107;
+/// 108: a style's table, a gadget's transition and the beep's sound are
+/// the system's memory, whoever set or drew them.
+pub const LIBRARY_REVISION = 108;
 const BUILD_DATE = "20.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++

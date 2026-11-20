@@ -52,7 +52,7 @@ const rdargs = dos.rdargs;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Mount";
-const VERSION_STRING = "\x00$VER: Mount 1.2 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Mount 1.3 (20.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICE/M,FROM/K";
@@ -245,9 +245,9 @@ fn sameName(a: [*:0]const u8, b: [*:0]const u8) bool {
     return sdk.utility.unicode.equalFolded(a[0..a_length], b[0..b_length]);
 }
 
-/// A copy of the token, for a node to keep.
+/// A copy of the token, for a node to keep: the system's, as the node is.
 fn keepToken(sys: *ExecBase, s: *const Scanner) ?[*:0]u8 {
-    const block = sys.AllocVec(s.len + 1, exec.MEMF_CLEAR) orelse return null;
+    const block = sys.AllocVec(s.len + 1, exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return null;
     const text: [*]u8 = @ptrCast(block);
     for (0..s.len) |i| text[i] = s.token[i];
     return @ptrCast(text);
@@ -343,11 +343,11 @@ fn addNode(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, entry: *const Entr
     node.misc.handler.priority = entry.priority;
     node.misc.handler.startup = entry.startup;
     if (entry.on_device) {
-        const startup_block = sys.AllocVec(@sizeOf(FileSysStartupMsg), exec.MEMF_CLEAR) orelse {
+        const startup_block = sys.AllocVec(@sizeOf(FileSysStartupMsg), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
             dl.FreeDosEntry(node);
             return .memory;
         };
-        const env_block = sys.AllocVec(@sizeOf(DosEnvec), exec.MEMF_CLEAR) orelse {
+        const env_block = sys.AllocVec(@sizeOf(DosEnvec), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
             sys.FreeVec(startup_block);
             dl.FreeDosEntry(node);
             return .memory;

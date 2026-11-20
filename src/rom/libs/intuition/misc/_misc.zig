@@ -151,7 +151,8 @@ pub fn setBeepSound(ib: *IntuitionBase, given: ?*const BeepSound) bool {
         if (sound.channels != 1 and sound.channels != 2) return false;
         if (sound.volume > audio.AUDIO_VOLUME_MAX) return false;
         const samples = @as(usize, sound.frames) * sound.channels;
-        const memory = sys.AllocVec(@sizeOf(BeepSound) + samples * @sizeOf(i16), exec.MEMF_ANY) orelse return false;
+        // Intuition's from now on, whoever set it: the system's.
+        const memory = sys.AllocVec(@sizeOf(BeepSound) + samples * @sizeOf(i16), exec.MEMF_ANY | exec.MEMF_SYSTEM) orelse return false;
         const made: *BeepSound = @ptrCast(@alignCast(memory));
         const into: [*]i16 = @ptrCast(@alignCast(@as([*]u8, @ptrCast(memory)) + @sizeOf(BeepSound)));
         @memcpy(into[0..samples], sound.samples[0..samples]);

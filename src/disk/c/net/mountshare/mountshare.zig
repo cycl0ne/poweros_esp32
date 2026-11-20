@@ -69,7 +69,7 @@ const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const ShareFile = sharefile.ShareFile;
 
 pub const COMMAND_NAME = "MountShare";
-const VERSION_STRING = "\x00$VER: MountShare 1.4 (11.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: MountShare 1.5 (20.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "NAME/M,ALL/S,SHARE/K,USER/K,PASSWORD/K,DOMAIN/K,VOLUME/K,PORT/K/N,READONLY/S,ENCRYPT/S,SAVE/S,QUIET/S,DISMOUNT/S,LIST/S,SERVER/K";
@@ -448,7 +448,8 @@ fn mountOne(sys: *ExecBase, dl: *DosBase, name: [*:0]const u8, options: *const G
         }
     }
 
-    const block = sys.AllocVec(@sizeOf(smb.SmbStartup), exec.MEMF_CLEAR) orelse {
+    // The node's from now on, which is the system's: so is its startup.
+    const block = sys.AllocVec(@sizeOf(smb.SmbStartup), exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse {
         _ = Printf(dl, MSG_NOMEM, .{COMMAND_NAME});
         return dos.RETURN_FAIL;
     };

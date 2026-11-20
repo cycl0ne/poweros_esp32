@@ -7810,7 +7810,9 @@ reads them again and draws it anew.
 **OWNERSHIP**
 
 The list and all it points to stay the caller's: intuition opens fonts
-of its own and copies the pens, the style and the beep's sound.
+of its own and copies the pens, the style and the beep's sound. What
+it keeps, and what the windows drawn again keep of the drawing, are
+the system's memory, so the caller may end at once.
 
 **NOTES**
 
@@ -7948,7 +7950,9 @@ program draws itself, which the paint has cleared.
 
 **OWNERSHIP**
 
-The pens stay the caller's; the screen keeps a copy.
+The pens stay the caller's; the screen keeps a copy. What the windows
+drawn again keep of the drawing is the system's memory, not the
+caller's.
 
 **NOTES**
 
@@ -8030,7 +8034,8 @@ that listens for `IDCMP_NEWPREFS` hears it, for what it draws itself.
 
 The list stays the caller's; intuition keeps its own copy, and frees
 the one it replaces. A screen's style is freed when the screen
-closes.
+closes. The copy, and what the windows drawn again keep of the
+drawing, are the system's memory, not the caller's.
 
 **NOTES**
 

@@ -57,7 +57,8 @@ const Screen = _screen.Screen;
 /// OWNERSHIP:
 /// The list stays the caller's; intuition keeps its own copy, and frees
 /// the one it replaces. A screen's style is freed when the screen
-/// closes.
+/// closes. The copy, and what the windows drawn again keep of the
+/// drawing, are the system's memory, not the caller's.
 ///
 /// NOTES:
 /// - What a program read with `GetStyleAttr(STYLE_BackgroundFill)` points
@@ -106,6 +107,11 @@ pub fn SetStyle(ib: *IntuitionBase, screen: ?*Screen, tags: ?[*]const TagItem) b
 
     _window.lock(ib);
     defer _window.unlock(ib);
+    // Every window drawn again, whoever's: what the drawing keeps - a
+    // picture a gadget's image keeps of itself - is the system's, not the
+    // caller's, which may end long before the windows.
+    ib.sys_base.BeginSystemMemory();
+    defer ib.sys_base.EndSystemMemory();
     var node = ib.screen_list.head;
     while (node) |n| : (node = n.succ) {
         if (n.succ == null) break;

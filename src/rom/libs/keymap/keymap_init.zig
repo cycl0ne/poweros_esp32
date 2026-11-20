@@ -18,9 +18,10 @@ pub const LIBRARY_VERSION = 0;
 /// 1: MapRawKey, MapANSI, the default, FindKeyMap; "usa" and "deutsch".
 /// 3: a keymap from a file of DEVS:Keymaps, the list under a lock,
 /// KeyMapName. 4: NextKeyMap, the list walked. 5: a name finds its
-/// keymap whatever the case of its letters.
-pub const LIBRARY_REVISION = 6;
-const BUILD_DATE = "18.11.2026";
+/// keymap whatever the case of its letters. 7: a keymap's file and node
+/// loaded as the system's memory.
+pub const LIBRARY_REVISION = 7;
+const BUILD_DATE = "20.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

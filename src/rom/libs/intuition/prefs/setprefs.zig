@@ -93,7 +93,9 @@ const _fade = @import("../window/_fade.zig");
 ///
 /// OWNERSHIP:
 /// The list and all it points to stay the caller's: intuition opens fonts
-/// of its own and copies the pens, the style and the beep's sound.
+/// of its own and copies the pens, the style and the beep's sound. What
+/// it keeps, and what the windows drawn again keep of the drawing, are
+/// the system's memory, so the caller may end at once.
 ///
 /// NOTES:
 /// - What `C:SetPrefs` calls at boot, from the files in `ENV:Sys`.
@@ -246,6 +248,11 @@ pub fn SetPrefs(ib: *IntuitionBase, tags: ?[*]const TagItem) bool {
 fn reshape(ib: *IntuitionBase) void {
     _window.lock(ib);
     defer _window.unlock(ib);
+    // Every window drawn again, whoever's: what the drawing keeps - a
+    // picture a gadget's image keeps of itself - is the system's, not the
+    // caller's, which may end long before the windows.
+    ib.sys_base.BeginSystemMemory();
+    defer ib.sys_base.EndSystemMemory();
     var screens = ib.screen_list.head;
     while (screens) |sn| : (screens = sn.succ) {
         if (sn.succ == null) break;
@@ -270,6 +277,11 @@ fn reshape(ib: *IntuitionBase) void {
 fn refit(ib: *IntuitionBase, wide: u32) void {
     _window.lock(ib);
     defer _window.unlock(ib);
+    // Every window drawn again, whoever's: what the drawing keeps - a
+    // picture a gadget's image keeps of itself - is the system's, not the
+    // caller's, which may end long before the windows.
+    ib.sys_base.BeginSystemMemory();
+    defer ib.sys_base.EndSystemMemory();
     ib.wide_gadgets = wide;
     var screens = ib.screen_list.head;
     while (screens) |sn| : (screens = sn.succ) {

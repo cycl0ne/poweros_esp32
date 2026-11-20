@@ -91,7 +91,9 @@ pub fn state(ib: *IntuitionBase, o: *Object, dri: ?*const sc.DrawInfo, part: u32
         // Nothing to remember until the style asks for a transition: the
         // first change after that starts from the state it was seen in.
         if (durationOf(ib, g, dri, part, to) == 0) return to;
-        const memory = ib.sys_base.AllocVec(@sizeOf(Transition), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return to;
+        // The gadget's, freed with it, though made by whichever task draws
+        // it first: the system's.
+        const memory = ib.sys_base.AllocVec(@sizeOf(Transition), exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return to;
         const made: *Transition = @ptrCast(@alignCast(memory));
         made.* = .{ .ib = ib, .gadget = o, .to = to };
         made.hook = .{ .entry = &stepped, .data = made };

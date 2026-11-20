@@ -132,6 +132,10 @@ fn load(kb: *KeymapBase, name: [*:0]const u8) ?*keymap.KeyMap {
     const dos_library = sys.OpenLibrary(dos.DOSNAME, 0) orelse return null;
     defer sys.CloseLibrary(dos_library);
     const dos_lib: *DosBase = @ptrCast(@alignCast(dos_library));
+    // The file and its node stay for as long as the library: the
+    // system's, not the task's that asked first.
+    sys.BeginSystemMemory();
+    defer sys.EndSystemMemory();
     const seg_list = dos_lib.LoadSeg(@ptrCast(&path)) orelse return null;
     const file = fileIn(dos_lib, seg_list, name) orelse {
         dos_lib.UnLoadSeg(seg_list);

@@ -59,7 +59,9 @@ const Screen = _screen.Screen;
 /// - Process: a Task will do.
 ///
 /// OWNERSHIP:
-/// The pens stay the caller's; the screen keeps a copy.
+/// The pens stay the caller's; the screen keeps a copy. What the windows
+/// drawn again keep of the drawing is the system's memory, not the
+/// caller's.
 ///
 /// NOTES:
 /// - With no screen, what `SetPrefs` does with `IPREFS_Pens` - which
@@ -86,6 +88,11 @@ const Screen = _screen.Screen;
 pub fn SetScreenPens(ib: *IntuitionBase, screen: ?*Screen, pens: ?[*]const Pen) void {
     _window.lock(ib);
     defer _window.unlock(ib);
+    // Every window drawn again, whoever's: what the drawing keeps - a
+    // picture a gadget's image keeps of itself - is the system's, not the
+    // caller's, which may end long before the windows.
+    ib.sys_base.BeginSystemMemory();
+    defer ib.sys_base.EndSystemMemory();
     if (screen) |s| {
         s.own_pens = pens != null;
         s.pens = _screen.drawnPens(if (pens) |given| given[0..sc.NUMDRIPENS].* else ib.system_pens);

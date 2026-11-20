@@ -1528,9 +1528,11 @@ caller.
 **BEHAVIOR**
 
 The library holds `loc` once more for as long as it is the default, so
-the caller may give its own hold back at once. A program that opens the
-default locale after this gets `loc`; one that opened it before keeps
-the one it has.
+the caller may give its own hold back at once, and its memory is the
+system's from here (`SetMemOwner`): the library frees it once nothing
+holds it, which may be long after the caller has ended. A program that
+opens the default locale after this gets `loc`; one that opened it
+before keeps the one it has.
 
 From the first call on, dos.library's DateToStr, StrToDate and Fault
 are the library's, and the library stays in memory. DateToStr writes
@@ -1553,7 +1555,8 @@ languages, opened here each time; dos's own text where that has none.
 **OWNERSHIP**
 
 The locale answered is the caller's to give back with CloseLocale; the
-caller's hold on `loc` stays the caller's.
+caller's hold on `loc` stays the caller's, while its memory becomes the
+system's.
 
 **NOTES**
 

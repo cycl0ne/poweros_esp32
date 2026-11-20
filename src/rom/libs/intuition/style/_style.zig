@@ -177,7 +177,8 @@ pub fn keep(ib: *IntuitionBase, tags: ?[*]const TagItem) ?*style.Style {
     const align_fill = @alignOf(graphics.FillStyle);
     const fills_at = (@sizeOf(Kept) + bound * @sizeOf(Entry) + align_fill - 1) / align_fill * align_fill;
     const bytes = fills_at + fill_bound * @sizeOf(graphics.FillStyle);
-    const memory = ib.sys_base.AllocVec(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR) orelse return null;
+    // Intuition's to keep and free, whoever set it: the system's.
+    const memory = ib.sys_base.AllocVec(bytes, exec.MEMF_ANY | exec.MEMF_CLEAR | exec.MEMF_SYSTEM) orelse return null;
     const kept: *Kept = @ptrCast(@alignCast(memory));
     kept.fills_at = @intCast(fills_at);
     kept.alone = @intFromBool(alone);

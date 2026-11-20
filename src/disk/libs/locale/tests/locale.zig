@@ -472,6 +472,10 @@ test "SetDefaultLocale: the new default answered by OpenLocale(null), the one be
     const swedish = lb.OpenLocale("LOCALE:sverige.prefs").?;
     const before = lb.SetDefaultLocale(swedish).?;
     try testing.expectEqualStrings("english", span(before.language_name));
+    // The default's memory is the system's: the caller may end long
+    // before the library lets it go.
+    const ext = _base.extOf(swedish);
+    try testing.expectEqual(exec.MEMOWNER_SYSTEM, exec.MemBlock.of(ext).owner);
     lb.CloseLocale(before);
     lb.CloseLocale(swedish);
     // Still there: the library holds it as the default.

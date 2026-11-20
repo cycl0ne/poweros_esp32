@@ -9108,6 +9108,8 @@ test "styles: DrawPart measures without drawing, and a gadget and a screen keep 
     var kept: usize = 0;
     try testing.expectEqual(@as(u32, 1), it.GetAttr(gc.GA_Style, g, &kept));
     try testing.expectEqual(@as(usize, 5), it.GetStyleAttr(null, @ptrFromInt(kept), style.PART_MAIN, style.STATE_NORMAL, style.STYLE_Radius));
+    // Intuition's to free, whoever made the gadget: the system's memory.
+    try testing.expectEqual(exec.MEMOWNER_SYSTEM, exec.MemBlock.of(@ptrFromInt(kept)).owner);
     it.DisposeObject(g);
 
     // SA_Style: the screen's DrawInfo carries it, and it goes with the

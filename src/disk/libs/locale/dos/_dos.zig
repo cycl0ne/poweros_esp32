@@ -79,8 +79,12 @@ pub fn useCatalog(lb: *LocaleBase, loc: *const locale.Locale) void {
         .{ .tag = locale.OC_Version, .data = dos_catalog_version },
         .{},
     };
-    const catalog = library.OpenCatalogA(loc, dos_catalog_name, &tags);
     const sys = lb.sys_base;
+    // The library's to keep, whoever made the locale the default: the
+    // system's.
+    sys.BeginSystemMemory();
+    const catalog = library.OpenCatalogA(loc, dos_catalog_name, &tags);
+    sys.EndSystemMemory();
     sys.ObtainSemaphore(&lb.lock);
     const before = lb.dos_catalog;
     lb.dos_catalog = catalog;

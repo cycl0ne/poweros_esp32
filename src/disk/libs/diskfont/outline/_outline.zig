@@ -141,7 +141,11 @@ pub fn openEntry(dfb: *DiskfontBase, path: *const [256:0]u8, contents: *const _f
         .{ .tag = truetype.TTA_AxisCount, .data = entry.axis_count },
         .{ .tag = utility.TAG_DONE, .data = 0 },
     };
-    const outline = tb.OpenOutline(data.ptr, @intCast(data.len), &tags) orelse {
+    // What truetype makes for the outline is the system's too.
+    sys.BeginSystemMemory();
+    const opened = tb.OpenOutline(data.ptr, @intCast(data.len), &tags);
+    sys.EndSystemMemory();
+    const outline = opened orelse {
         if (shared == null) sys.FreeVec(data.ptr);
         return null;
     };

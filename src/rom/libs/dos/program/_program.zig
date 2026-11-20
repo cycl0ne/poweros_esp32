@@ -394,6 +394,15 @@ fn stringHandle(db: *DosBase, text: [*:0]const u8) ?*FileHandle {
     return fh;
 }
 
+/// `fh` and the buffer it holds made `task`'s (`SetMemOwner`).
+fn giveHandle(sys: *ExecBase, fh: ?*FileHandle, task: *exec.Task) void {
+    const handle = fh orelse return;
+    _ = sys.SetMemOwner(handle, task);
+    if (handle.buf_owned) if (handle.buf) |buffer| {
+        _ = sys.SetMemOwner(buffer, task);
+    };
+}
+
 /// Whether a foreground shell (a CLI that isn't a background one) reads its
 /// commands from the console at `port`.
 ///
@@ -524,6 +533,13 @@ pub fn startShell(db: *DosBase, command: ?[*:0]const u8, shell_name: [*:0]const 
         if (script) |fh| _ = dos_lib.Close(fh);
         return giveUp(db, input, output, flags, command_fh);
     };
+    // What the shell closes at its end is the shell's from here, so the
+    // tools that show who holds what show it under the shell, and not
+    // under the caller - which may end long before it, as Run's does.
+    giveHandle(sys, command_fh, &proc.task);
+    giveHandle(sys, script, &proc.task);
+    if (flags & dos.SHF_CLOSE_INPUT != 0) giveHandle(sys, input, &proc.task);
+    if (flags & dos.SHF_CLOSE_OUTPUT != 0) giveHandle(sys, output, &proc.task);
     const cli = proc.cli.?;
     cli.standard_input = input;
     cli.current_input = command_fh orelse script orelse input;

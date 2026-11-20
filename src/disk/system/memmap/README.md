@@ -29,7 +29,10 @@ MemMap INTERVAL/K/N
   - **a task** - the ones that hold the most each have a colour of their
     own, the others share grey;
   - **a task that has ended** - red: what it allocated and never gave
-    back, or what a library allocated while working for it and keeps;
+    back. What the system keeps for later, whichever task it was set up
+    for - the look and the fonts a prefs file sets, a keymap, a mounted
+    drive's startup, what a background shell closes at its end - is the
+    system's, so red after a boot or after a program ends is memory lost;
   - **nobody** - light grey: free.
 - A block its owner asked to be private is a darker shade of its colour.
   MemMap's own memory is private, so it shows itself that way.

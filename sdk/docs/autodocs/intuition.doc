@@ -6097,7 +6097,9 @@ intuition.library/ZipWindow
 
    OWNERSHIP
 	The list and all it points to stay the caller's: intuition opens fonts
-	of its own and copies the pens, the style and the beep's sound.
+	of its own and copies the pens, the style and the beep's sound. What
+	it keeps, and what the windows drawn again keep of the drawing, are
+	the system's memory, so the caller may end at once.
 
    NOTES
 	- What `C:SetPrefs` calls at boot, from the files in `ENV:Sys`.
@@ -6205,7 +6207,9 @@ intuition.library/ZipWindow
 	- Process: a Task will do.
 
    OWNERSHIP
-	The pens stay the caller's; the screen keeps a copy.
+	The pens stay the caller's; the screen keeps a copy. What the windows
+	drawn again keep of the drawing is the system's memory, not the
+	caller's.
 
    NOTES
 	- With no screen, what `SetPrefs` does with `IPREFS_Pens` - which
@@ -6272,7 +6276,8 @@ intuition.library/ZipWindow
    OWNERSHIP
 	The list stays the caller's; intuition keeps its own copy, and frees
 	the one it replaces. A screen's style is freed when the screen
-	closes.
+	closes. The copy, and what the windows drawn again keep of the
+	drawing, are the system's memory, not the caller's.
 
    NOTES
 	- What a program read with `GetStyleAttr(STYLE_BackgroundFill)` points
