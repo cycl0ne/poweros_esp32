@@ -46,7 +46,8 @@
 //! - FINDINPUT, FINDOUTPUT, FINDUPDATE: an interactive handle. With AUTO
 //!   the terminal itself waits for the first READ, WRITE, WAIT_CHAR or
 //!   DISK_INFO. END: the handle's pending READs end (0), and the last one
-//!   closes the terminal.
+//!   closes the terminal - a window's console ends there too, one AUTO
+//!   never had to show included.
 //! - READ: waits for a line (cooked) or a byte (raw); one line at most per
 //!   READ, the rest stays. 0 after Ctrl-\. WRITE: out at once, unless
 //!   Ctrl-S is holding the console, and then it waits unanswered - so a
@@ -133,8 +134,8 @@ pub const HANDLER_NAME = "con-handler";
 const HANDLER_VERSION = 1;
 /// 1: Tab completes names. 9: shift with the cursor keys left, right
 /// and down; its window's console keeps the output that scrolled off.
-const HANDLER_REVISION = 9;
-const BUILD_DATE = "13.11.2026";
+const HANDLER_REVISION = 10;
+const BUILD_DATE = "20.11.2026";
 const HANDLER_VERSION_STRING =
     "\x00$VER: " ++ HANDLER_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ HANDLER_VERSION, HANDLER_REVISION }) ++
@@ -435,7 +436,9 @@ pub fn Handler(comptime Io: type) type {
                     h.io.reply(waiting, dos.DOSFALSE, 0);
                 }
                 h.ed.dropPushed();
-                if (h.terminal_open) h.io.close();
+                // A terminal AUTO never had to show has done its work as
+                // well: its process ends as one that was shown does.
+                if (h.terminal_open or h.auto_open) h.io.close();
                 h.terminal_open = false;
                 h.reader = null;
                 h.writer = null;
@@ -1560,6 +1563,22 @@ test "a console only written to gets no banner: a program's output, not a termin
     io.clear();
     h.packet(&write);
     try testing.expectEqualStrings("out\r\n", io.text());
+}
+
+test "an AUTO console nothing was written to ends with its last handle" {
+    var io: TestIo = .{};
+    var h = Handler(TestIo).init(&io, false);
+    h.auto_open = true;
+    var fh: dos.FileHandle = .{};
+    var find = DosPacket.init(.findoutput, .{ .find = .{ .fh = &fh, .lock = null, .name = "CON:40/60/560/240/Tool/AUTO/CLOSE/WAIT" } });
+    h.packet(&find);
+    try testing.expectEqual(dos.DOSTRUE, find.res1);
+    try testing.expectEqual(@as(u32, 0), io.opened); // nothing shown yet
+    var end = DosPacket.init(.end, .{ .file = .{ .fh = &fh } });
+    h.packet(&end);
+    try testing.expectEqual(dos.DOSTRUE, end.res1);
+    try testing.expectEqual(@as(u32, 0), io.opened);
+    try testing.expectEqual(@as(u32, 1), io.closed); // done: the process ends
 }
 
 test "a console set raw before its first write gets no banner" {
