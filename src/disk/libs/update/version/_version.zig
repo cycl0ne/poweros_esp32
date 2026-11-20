@@ -32,6 +32,14 @@ pub const Text = struct {
         return @ptrCast(&text.bytes);
     }
 
+    /// Whether the two say the same.
+    pub fn same(text: *const Text, other: *const Text) bool {
+        for (text.bytes, other.bytes) |mine, theirs| {
+            if (mine != theirs) return false;
+        }
+        return true;
+    }
+
     fn set(text: *Text, from: []const u8) void {
         text.* = .{};
         const length = @min(from.len, install.max_version);

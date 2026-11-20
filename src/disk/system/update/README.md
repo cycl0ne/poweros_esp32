@@ -19,14 +19,17 @@ from.
 machine was given, and the field at the top shows the package that was
 read. The button beside the field asks for the drawer the package is
 in, and checks it once one is picked; an address a server answers is
-typed in, and Return checks it. Every path something would happen to is a row: what would happen to
-it, the path, and how much would be written for it -
+typed in, and Return checks it. Every path something would happen to
+is a row - a drawer to be made only counted, in the lines over the list
+- with what would happen to it, the path, and how much would be written
+for it:
 
 - `new` a file the build has begun to ship, `newer` one it changed,
+  `rebuilt` one it changed whose version reads as the file here does,
   `again` one that went missing here;
 - `kept` a file changed on this machine where the package changed it too,
   which stays as it is;
-- `gone` one the build dropped, `drawer` a drawer to be made;
+- `gone` one the build dropped;
 - `list` the package's list, written as this machine's own at the end.
 
 The two lines over the list say what it comes to - how many files would be

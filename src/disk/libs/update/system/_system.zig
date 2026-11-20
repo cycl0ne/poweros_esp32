@@ -15,7 +15,9 @@
 //!
 //! A file's row says what the file here and the package's say they are
 //! (`version/_version.zig`): the one here found in the read the compare
-//! makes anyway, the package's from its `versions`.
+//! makes anyway, the package's from its `versions`. A file the build
+//! changed whose two say alike is `rebuilt`. A drawer made is counted
+//! and not said.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
@@ -78,6 +80,17 @@ pub fn walk(run: *Run, installed: []const u8, fresh: []const u8, former: bool) i
     return saveList(run, installed, fresh, former);
 }
 
+/// The word a file written is said with: `new` for one the machine was
+/// never given, `again` for one gone here, `rebuilt` for one the build
+/// changed that says it is what the file here says it is, `newer` for
+/// any other it changed.
+fn writtenWord(had: ?manifest.Entry, here: rule.Here, old: *const version.Text, new: *const version.Text) [*:0]const u8 {
+    if (had == null) return "new";
+    if (here == .gone) return "again";
+    if (old.bytes[0] != 0 and old.same(new)) return "rebuilt";
+    return "newer";
+}
+
 /// What is to happen to one path, and the doing of it.
 fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry, gone: *shared.Buffer) i32 {
     const part = install.halfOf(path) orelse {
@@ -104,17 +117,16 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
     switch (rule.actionFor(had, want, here, run.force)) {
         .keep => {},
         .make => {
+            // Counted, not said: what it comes to says how many.
             run.made += 1;
-            shared.row(run, "drawer", where.cstr(), 0);
-            if (!run.check and run.dl.CreateDir(where.cstr()) == null) {
-                // One that is there already is no fault; anything else is.
-                if (run.dl.IoErr() != dos.ERROR_OBJECT_EXISTS) return shared.failed(run, where.cstr(), run.dl.IoErr());
+            if (!run.check) {
+                if (shared.makeDrawer(run, where.cstr())) |code| return code;
             }
         },
         .write => {
             const entry = want.?;
-            const what: [*:0]const u8 = if (had == null) "new" else if (here == .gone) "again" else "newer";
             run.versions.of(path, &new);
+            const what = writtenWord(had, here, &old, &new);
             shared.fileRow(run, what, where.cstr(), entry.size, old.cstr(), new.cstr());
             run.written += 1;
             run.written_bytes += entry.size;

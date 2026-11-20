@@ -173,17 +173,15 @@ fn files(run: *Run, fresh: []const u8, slot: *const Slot, keep: bool) i32 {
         if (part.half != .boot or part.rest.len == 0) continue;
         const where = Name.of(root(run, slot), part.rest);
         if (entry.kind == .drawer) {
-            // One that is there already is left as it is, and not said.
+            // One that is there already is left as it is; one made is
+            // counted, and neither is said.
             if (run.dl.Lock(where.cstr(), dos.SHARED_LOCK)) |lock| {
                 run.dl.UnLock(lock);
                 continue;
             }
             run.made += 1;
-            shared.row(run, "drawer", where.cstr(), 0);
             if (run.check) continue;
-            if (run.dl.CreateDir(where.cstr()) == null and run.dl.IoErr() != dos.ERROR_OBJECT_EXISTS) {
-                return shared.failed(run, where.cstr(), run.dl.IoErr());
-            }
+            if (shared.makeDrawer(run, where.cstr())) |code| return code;
             continue;
         }
         // A file that is already what the list says is left where it is,

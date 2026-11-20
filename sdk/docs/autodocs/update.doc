@@ -231,8 +231,10 @@ update.library/GetUpdateInfo
 	package's list is read whole and held against the list the machine was
 	given, path by path, both sorted alike; the file itself is read only
 	where the two disagree. For each path that something happens to, a row
-	is said: `new`, `newer`, `again`, `kept`, `gone`, `drawer`, then
-	`list` once the package's list is the machine's own.
+	is said: `new`, `newer`, `rebuilt` (changed, its version reading as
+	the file here does), `again`, `kept`, `gone`, then `list` once the
+	package's list is the machine's own. A drawer made is counted in the
+	run's `made` and not said.
 
 	A file's row carries what the file here and the package's say they
 	are - the number of the "$VER:" string, on the output after the path

@@ -40,10 +40,11 @@
 //!
 //! A line is said for every path something happens to, the first word
 //! saying what: `new` for one the build has begun to ship, `newer` for
-//! one it changed, `again` for one that was not there, `kept` for one
-//! changed on this machine, `gone` for one the build dropped, `drawer`
-//! for a drawer made, and `list` for the package's list written as the
-//! machine's own at the end.
+//! one it changed, `rebuilt` for one it changed whose version reads as
+//! it did, `again` for one that was not there, `kept` for one changed on
+//! this machine, `gone` for one the build dropped, and `list` for the
+//! package's list written as the machine's own at the end. Drawers made
+//! are only counted, in the line the run ends with.
 //!
 //! So an edited `ENVARC:Sys/style.prefs` or a `DEVS:NetInterfaces/WLAN0`
 //! with a passphrase in it lives through every update with no list of

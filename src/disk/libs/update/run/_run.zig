@@ -245,6 +245,17 @@ pub fn fileRow(run: *Run, what: [*:0]const u8, where: [*:0]const u8, bytes: u64,
     } else _ = Printf(dl, "  %-7s %s\n", .{ what, where });
 }
 
+/// The drawer `where` made, and the lock CreateDir hands back let go:
+/// null where it was made or was there already, else the run's failure.
+pub fn makeDrawer(run: *Run, where: [*:0]const u8) ?i32 {
+    if (run.dl.CreateDir(where)) |lock| {
+        run.dl.UnLock(lock);
+        return null;
+    }
+    if (run.dl.IoErr() == dos.ERROR_OBJECT_EXISTS) return null;
+    return failed(run, where, run.dl.IoErr());
+}
+
 /// The file `where`, `bytes` long, written whole and put in place: told
 /// to a hook.
 pub fn wrote(run: *Run, where: [*:0]const u8, bytes: u64) void {

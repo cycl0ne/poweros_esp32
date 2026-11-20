@@ -491,11 +491,13 @@ The first run that is not a check writes it to
 `SYS:Storage/installed.manifest` - as it was, when nothing else is to be
 done - says `list` for it, and deletes the old one.
 
-A line is said for every path something happens to, the first word
-saying what: `new` for one the build has begun to ship, `newer` for one
-it changed, `again` for one that was not there, `kept` for one changed on
-this machine, `gone` for one the build dropped, `drawer` for a drawer
-made, `list` for the package's list written as the machine's own, and -
+A line is said for every path something happens to but a drawer made,
+which is only counted, the first word saying what: `new` for one the
+build has begun to ship, `newer` for one it changed, `rebuilt` for one
+it changed whose version reads as the file here does - the same version,
+built again - `again` for one that was not there, `kept` for one changed
+on this machine, `gone` for one the build dropped, `list` for the
+package's list written as the machine's own, and -
 with `BOOT` - `slot` for the partition the firmware reads, `boot` for a
 file written into it, `same` for one already right and `tried` for
 `autoboot.txt`. A file's line ends with what it says it is - the file
@@ -507,10 +509,11 @@ comes from its `versions`:
 ```
   new     SYS:c/Mixer  1.2
   newer   SYS:c/List  1.3 -> 1.4
+  rebuilt SYS:c/Dir  1.2 -> 1.2
   gone    SYS:programs/Docs/Battery.md
   kept    SYS:s/startup-sequence
   list    SYS:Storage/installed.manifest
-Done: 2 written (48K), 1 deleted, 1 kept as they are, 0 drawers made.
+Done: 3 written (55K), 1 deleted, 1 kept as they are, 0 drawers made.
 What is kept was changed on this machine; FORCE takes the package's own.
 ```
 

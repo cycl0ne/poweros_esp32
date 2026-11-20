@@ -68,10 +68,11 @@ pub const UpdateMessage = extern struct {
     /// UPDM_LINE: the line. UPDM_PATH: the path. UPDM_WROTE: the path.
     text: [*:0]const u8 = "",
     /// UPDM_PATH: what happens to it - `new` for a file the build has
-    /// begun to ship, `newer` for one it changed, `again` for one that
-    /// was not there, `kept` for one changed on the machine, `gone` for
-    /// one the build dropped, `drawer` for a drawer made, `list` for the
-    /// package's list written as the machine's own, `back to` for the
+    /// begun to ship, `newer` for one it changed, `rebuilt` for one it
+    /// changed whose version reads as the file here does, `again` for one
+    /// that was not there, `kept` for one changed on the machine, `gone`
+    /// for one the build dropped, `list` for the package's list written as
+    /// the machine's own, `back to` for the
     /// system volume's snapshot; in the firmware's partition `slot` for
     /// the partition written, `boot` for a file written into it, `same`
     /// for one already there, `tried` for the file that has the firmware
@@ -82,7 +83,8 @@ pub const UpdateMessage = extern struct {
     bytes: u64 align(4) = 0,
     /// UPDM_PATH: what the file on this machine says it is - the number
     /// of its "$VER:" string, `1.26` - where it was read for the compare:
-    /// a file the two lists differ about (`newer`, `kept`, `gone`). Empty
+    /// a file the two lists differ about (`newer`, `rebuilt`, `kept`,
+    /// `gone`). Empty
     /// where it was not read or says nothing.
     old_version: [*:0]const u8 = "",
     /// UPDM_PATH: what the package's file says it is, from the package's

@@ -128,11 +128,21 @@ const Shipped = struct { path: []const u8, bytes: []const u8 };
 /// A list of `files` - the two halves' drawers, then the files, in the
 /// order a list keeps - into `into`: its text.
 fn listOf(files: []const Shipped, into: []u8) []const u8 {
+    return listWith(&.{}, files, into);
+}
+
+/// `listOf` with `more` drawers after the two halves', each sorting
+/// before every file.
+fn listWith(more: []const []const u8, files: []const Shipped, into: []u8) []const u8 {
     var at: usize = 0;
     @memcpy(into[0..manifest.preamble.len], manifest.preamble);
     at += manifest.preamble.len;
     var counts: manifest.Counts = .{};
-    const drawers = [_][]const u8{ "system", "system/C" };
+    var drawers_held: [8][]const u8 = undefined;
+    drawers_held[0] = "system";
+    drawers_held[1] = "system/C";
+    for (more, 2..) |path, index| drawers_held[index] = path;
+    const drawers = drawers_held[0 .. 2 + more.len];
     for (drawers) |path| counts.add(.{ .kind = .drawer, .path = path });
     for (files) |file| counts.add(.{ .kind = .file, .path = file.path, .size = file.bytes.len });
     at += manifest.headerLine(.{ .chip = sdk.hardware.chip, .counts = counts }, into[at..]);
@@ -347,6 +357,46 @@ test "each row says what the file here and the package's say they are" {
     heard = .{};
     try testing.expectEqual(dos.RETURN_WARN, upd.DoUpdate(run, &[_]TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} }));
     try testing.expectEqualStrings("new SYS:C/New\ngone SYS:C/Old 7 -\nnewer SYS:C/Tool 1.3 -\n", heard.rowsSaid());
+}
+
+test "a file changed under the version it had is rebuilt, and a drawer made is counted, not said" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const tool_here = "code\x00$VER: Tool 1.4 (18.11.2026)\r\n";
+    const tool_now = "other code\x00$VER: Tool 1.4 (18.11.2026)\r\n";
+    var text: [1024]u8 = undefined;
+    try rig.write("SYS:C/Tool", tool_here);
+    try rig.write(kept_list, listOf(&.{.{ .path = "system/C/Tool", .bytes = tool_here }}, &text));
+    try rig.write("WORK:Package/system/C/Tool", tool_now);
+    try rig.write("WORK:Package/manifest", listWith(&.{"system/C/Aaa"}, &.{.{ .path = "system/C/Tool", .bytes = tool_now }}, &text));
+    try rig.write("WORK:Package/versions", "# what the files are\n1.4 system/C/Tool\n");
+    const upd = rig.upd;
+
+    var heard: Heard = .{};
+    var hook: utility.Hook = .{ .entry = &Heard.entry, .data = &heard };
+    const run = upd.CreateUpdate(&[_]TagItem{
+        .{ .tag = update.UPD_Source, .data = @intFromPtr("WORK:Package") },
+        .{ .tag = update.UPD_Hook, .data = @intFromPtr(&hook) },
+        .{},
+    }) orelse return error.NoRun;
+    defer upd.DeleteUpdate(run);
+
+    try testing.expectEqual(dos.RETURN_WARN, upd.DoUpdate(run, &[_]TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} }));
+    try testing.expectEqualStrings("rebuilt SYS:C/Tool 1.4 1.4\n", heard.rowsSaid());
+    var info: update.UpdateInfo = .{};
+    upd.GetUpdateInfo(run, &info);
+    try testing.expectEqual(@as(u32, 1), info.made);
+    try testing.expectEqual(@as(u32, 1), info.written);
+
+    heard = .{};
+    try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, null));
+    try testing.expectEqualStrings("rebuilt SYS:C/Tool 1.4 1.4\nlist SYS:Storage/installed.manifest\n", heard.rowsSaid());
+    const dl = rig.dosLib();
+    const made = dl.Lock("SYS:C/Aaa", dos.SHARED_LOCK) orelse return error.NoDrawer;
+    dl.UnLock(made);
+    var bytes: [256]u8 = undefined;
+    try testing.expectEqualStrings(tool_now, try rig.read("SYS:C/Tool", &bytes));
 }
 
 test "a version string is found across the pieces a file is read in" {
