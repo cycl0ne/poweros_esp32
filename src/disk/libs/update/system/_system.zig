@@ -101,7 +101,7 @@ fn one(run: *Run, path: []const u8, had: ?manifest.Entry, want: ?manifest.Entry,
     // What the firmware reads is written into its partition, which is
     // the kernel's own step: here it is counted and left alone.
     if (part.half == .boot) {
-        if (want != null and want.?.kind == .file) run.boot += 1;
+        if (want != null and want.?.kind == .file and !manifest.samePath(part.rest, install.disk_image)) run.boot += 1;
         return dos.RETURN_OK;
     }
 

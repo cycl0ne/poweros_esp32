@@ -70,7 +70,8 @@
 //! `install.prefs` kept: the slot
 //! not in use written where the firmware starts from either of a pair,
 //! `autoboot.txt` pointed at it for a single start, and the file being
-//! replaced kept as `<name>.old` where there is no second partition.
+//! replaced kept as `<name>.old` where there is no second partition. The
+//! package's disk image is left out: the machine starts from its medium.
 //!
 //! **CONFIRM** is what the system that came up on a tried partition runs
 //! to keep it: the two numbers in `autoboot.txt` the other way round, so

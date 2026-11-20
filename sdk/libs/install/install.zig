@@ -81,6 +81,21 @@ pub const boot_store = "SYS:Storage/Boot";
 /// machines whose disk is in RAM.
 pub const boot_manifest = "SYS:Storage/manifest";
 
+/// The disk image a machine with no medium of its own runs on in RAM,
+/// under the name its firmware finds it by beside the kernel and a
+/// package's boot half carries it as. An installed machine starts from its
+/// medium, so neither an install nor an update writes the image into a
+/// boot partition: a loader that found it there would read it into RAM at
+/// every start.
+pub const disk_image: []const u8 = switch (@import("../../hardware/hardware.zig").chip) {
+    .rv64sbi => "disk-rv64.bin",
+    .a64psci => "disk-a64.bin",
+    .a64v80 => "disk-a64v80.bin",
+    .x64uefi => "disk-x64.bin",
+    .esp32s3 => "disk.bin",
+    .esp32p4 => "disk-esp32p4.bin",
+};
+
 /// A path in a package, split into the half it is in and the rest of it:
 /// `system/C/List` is `.system` and `C/List`. A half's own drawer - the
 /// line `drawer system`, which a list over a whole package holds - is

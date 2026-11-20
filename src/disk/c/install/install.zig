@@ -47,7 +47,9 @@
 //! FROM names a release package - a directory holding `manifest`,
 //! `system/` and `boot/` - and every file is held against the sum and the
 //! length its list gives, so a package that arrived damaged stops the
-//! install on the file that is wrong. Without FROM the running system is
+//! install on the file that is wrong; its disk image is left out of the
+//! boot partition, since the machine starts from the medium being
+//! written. Without FROM the running system is
 //! the source: `SYS:` for the files and `SYS:Storage/Boot` for what the
 //! firmware reads, which is how a machine installs itself with no network
 //! and no second machine. A package whose kernel was built for another
@@ -85,7 +87,7 @@ const files = @import("files.zig");
 const Run = shared.Run;
 
 pub const COMMAND_NAME = shared.COMMAND_NAME;
-const VERSION_STRING = "\x00$VER: Install 1.6 (10.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Install 1.7 (20.11.2026)\r\n";
 
 /// rdb.library is opened at version 1 and its revision asked after: the
 /// GPT calls came with 1.4 and a FAT partition of a GPT, which the boot

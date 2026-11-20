@@ -23,6 +23,10 @@
 //! on. What loads it then is the firmware's own prompt, over the console
 //! that machine has attached.
 //!
+//! The package's disk image (`install.disk_image`) is left out: it is
+//! what a machine with no medium of its own runs on, and a machine that
+//! is updated was installed onto one.
+//!
 //! Nothing in the partition is deleted: it is the firmware's, and what
 //! else somebody put there is their business.
 
@@ -171,6 +175,9 @@ fn files(run: *Run, fresh: []const u8, slot: *const Slot, keep: bool) i32 {
         if (shared.stopped(run)) return dos.RETURN_WARN;
         const part = install.halfOf(entry.path) orelse continue;
         if (part.half != .boot or part.rest.len == 0) continue;
+        // The disk image is for a machine with no medium of its own; this
+        // one starts from its medium.
+        if (manifest.samePath(part.rest, install.disk_image)) continue;
         const where = Name.of(root(run, slot), part.rest);
         if (entry.kind == .drawer) {
             // One that is there already is left as it is; one made is

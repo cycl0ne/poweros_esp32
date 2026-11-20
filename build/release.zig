@@ -123,7 +123,9 @@ fn addBoardImage(b: *std.Build, with: BoardBuild, board: Board) Image {
 }
 
 /// The name a machine's disk image is read under, which is what its
-/// firmware looks for beside the kernel.
+/// firmware looks for beside the kernel. `sdk.install.disk_image` names
+/// the same file on the machine, which installs and updates leave out of a
+/// boot partition.
 pub fn ramDiskName(chip: Chip) []const u8 {
     return switch (chip) {
         .rv64sbi => "disk-rv64.bin",

@@ -15,6 +15,7 @@ const dos = sdk.dos;
 const utility = sdk.utility;
 const update = sdk.update;
 const manifest = sdk.install.manifest;
+const install = sdk.install;
 const host = @import("host_rom");
 const kexec = host.exec;
 const update_init = @import("../update_init.zig");
@@ -397,6 +398,55 @@ test "a file changed under the version it had is rebuilt, and a drawer made is c
     dl.UnLock(made);
     var bytes: [256]u8 = undefined;
     try testing.expectEqualStrings(tool_now, try rig.read("SYS:C/Tool", &bytes));
+}
+
+test "the package's disk image is not one of the files the firmware reads here" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    var text: [1024]u8 = undefined;
+    try rig.write("SYS:C/Tool", old_tool);
+    try rig.write(kept_list, listOf(&.{.{ .path = "system/C/Tool", .bytes = old_tool }}, &text));
+    try rig.write("WORK:Package/system/C/Tool", old_tool);
+
+    // The package's list by hand: its boot half comes first, the image
+    // and the kernel in it.
+    const image_path = "boot/" ++ install.disk_image;
+    const kernel = "a kernel\n";
+    const image = "a disk image\n";
+    const entries = [_]manifest.Entry{
+        .{ .kind = .drawer, .path = "boot" },
+        .{ .kind = .file, .path = image_path, .crc = crcOf(image), .size = image.len },
+        .{ .kind = .file, .path = "boot/kernel.bin", .crc = crcOf(kernel), .size = kernel.len },
+        .{ .kind = .drawer, .path = "system" },
+        .{ .kind = .drawer, .path = "system/C" },
+        .{ .kind = .file, .path = "system/C/Tool", .crc = crcOf(old_tool), .size = old_tool.len },
+    };
+    var at: usize = 0;
+    @memcpy(text[0..manifest.preamble.len], manifest.preamble);
+    at += manifest.preamble.len;
+    var counts: manifest.Counts = .{};
+    for (entries) |entry| counts.add(entry);
+    at += manifest.headerLine(.{ .chip = sdk.hardware.chip, .counts = counts }, text[at..]);
+    for (entries) |entry| at += manifest.entryLine(entry, text[at..]);
+    try rig.write("WORK:Package/manifest", text[0..at]);
+    const upd = rig.upd;
+
+    const run = upd.CreateUpdate(&[_]TagItem{
+        .{ .tag = update.UPD_Source, .data = @intFromPtr("WORK:Package") },
+        .{ .tag = update.UPD_Quiet, .data = 1 },
+        .{},
+    }) orelse return error.NoRun;
+    defer upd.DeleteUpdate(run);
+    try testing.expectEqual(dos.RETURN_OK, upd.DoUpdate(run, &[_]TagItem{ .{ .tag = update.UPD_Check, .data = 1 }, .{} }));
+    var info: update.UpdateInfo = .{};
+    upd.GetUpdateInfo(run, &info);
+    try testing.expectEqual(@as(u32, 1), info.boot);
+}
+
+/// The CRC-32 a list gives `bytes`.
+fn crcOf(bytes: []const u8) u32 {
+    return dos.flashfs.crcEnd(dos.flashfs.crcAdd(dos.flashfs.crcStart(), bytes));
 }
 
 test "a version string is found across the pieces a file is read in" {

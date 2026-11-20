@@ -278,7 +278,10 @@ disk image or - on a machine whose firmware is UEFI -
 to be there as surely as the kernel: a boot partition written without it
 is one the firmware finds nothing in. `-Dboot=[<name>=]<file>` adds a file this tree does not
 hold - the Compute Module 5's device tree is Raspberry Pi's own - and it
-goes into the list with the rest.
+goes into the list with the rest. The disk image is for a machine with no
+medium of its own: an install from a package and an update leave it out
+of the boot partition, so an installed machine neither reads it into RAM
+at every start nor fills its boot partition with it.
 
 The list is a settings line and then a line per entry:
 

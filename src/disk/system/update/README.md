@@ -39,8 +39,9 @@ written and how much, deleted, kept and made - and what to do about it.
 is looked at, and changing either checks again:
 
 - **With the kernel** writes the files the firmware reads as well, into
-  the partition it reads them from. It starts as `BOOT` in `update.prefs`
-  has it.
+  the partition it reads them from - all but the package's disk image,
+  since this machine starts from its own disk. It starts as `BOOT` in
+  `update.prefs` has it.
 - **Replace changed files** writes the package's own over a file that was
   changed on this machine, where the package changed it too. A file that
   only this machine changed is never touched.

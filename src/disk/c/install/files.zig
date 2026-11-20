@@ -431,6 +431,9 @@ fn fromPackage(run: *Run, buffer: []u8) i32 {
         // A half's own drawer stands for the volume its half is written
         // to, which is there already.
         if (part.rest.len == 0) continue;
+        // The disk image is for a machine with no medium of its own; the
+        // one installed here starts from the medium being written.
+        if (part.half == .boot and manifest.samePath(part.rest, install.disk_image)) continue;
         if (half == null or half.? != part.half) {
             half = part.half;
             shared.say(run, "  the %s\n", .{if (part.half == .system) "system's files" else "boot files"});
