@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language magyar
+## codeset 106
+; Weather's strings in Hungarian.
+MSG_WINDOW_TITLE
+Időjárás
+MSG_PLACE
+_Hely
+MSG_SEARCH
+_Keresés
+MSG_KEPT
+_Mentettek
+MSG_KEEP
+Me_ntés
+MSG_REMOVE
+_Eltávolítás
+MSG_NONE_KEPT
+Nincsenek mentett helyek
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Frissítés
+MSG_MENU_ABOUT
+Névjegy...
+MSG_MENU_QUIT
+Kilépés
+MSG_MENU_SETTINGS
+Beállítások
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Az Időjárás névjegye
+MSG_ABOUT
+%s\n\nAz időjárás most és a következő három napban,\nbármely helyre vagy címre.\n\nIdőjárásadatok: Open-Meteo.com (CC BY 4.0).\nA helyeket az OpenStreetMap Nominatim szolgáltatása keresi meg,\n© OpenStreetMap közreműködők (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Írjon be egy helyet vagy címet, és nyomja meg az Entert.
+MSG_FINDING
+%s keresése...
+MSG_FETCHING
+Időjárás lekérése: %s...
+MSG_NOT_FOUND
+Nem található „%s” nevű hely.
+MSG_NO_NETWORK
+Nincs hálózat: a bsdsocket.library hiányzik.
+MSG_NO_HTTP
+A http.library hiányzik.
+MSG_NO_JSON
+A json.library hiányzik.
+MSG_NO_MEMORY
+Nincs elég memória a lekérdezéshez.
+MSG_UNREACHED
+Az időjárás-szolgáltatás nem érhető el.
+MSG_NONSENSE
+Az időjárás-szolgáltatás válasza nem olvasható.
+MSG_UPDATED
+Frissítve: %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap közreműködők
+MSG_FEELS_LIKE
+Hőérzet: %s
+MSG_HUMIDITY
+Páratartalom
+MSG_WIND
+Szél
+MSG_PRECIPITATION
+Csapadék
+MSG_SUNRISE
+Napkelte
+MSG_SUNSET
+Napnyugta
+MSG_NEXT_HOURS
+A következő 24 óra
+MSG_TOMORROW
+Holnap
+MSG_HIGH_LOW
+Max. %s · Min. %s
+MSG_WIND_N
+É
+MSG_WIND_NE
+ÉK
+MSG_WIND_E
+K
+MSG_WIND_SE
+DK
+MSG_WIND_S
+D
+MSG_WIND_SW
+DNy
+MSG_WIND_W
+Ny
+MSG_WIND_NW
+ÉNy
+MSG_SKY_CLEAR
+Derült
+MSG_SKY_MAINLY_CLEAR
+Kissé felhős
+MSG_SKY_PARTLY_CLOUDY
+Közepesen felhős
+MSG_SKY_OVERCAST
+Borult
+MSG_SKY_FOG
+Köd
+MSG_SKY_RIME_FOG
+Zúzmarás köd
+MSG_SKY_DRIZZLE_LIGHT
+Gyenge szitálás
+MSG_SKY_DRIZZLE
+Szitálás
+MSG_SKY_DRIZZLE_DENSE
+Erős szitálás
+MSG_SKY_FREEZING_DRIZZLE
+Ónos szitálás
+MSG_SKY_RAIN_LIGHT
+Gyenge eső
+MSG_SKY_RAIN
+Eső
+MSG_SKY_RAIN_HEAVY
+Erős eső
+MSG_SKY_FREEZING_RAIN
+Ónos eső
+MSG_SKY_SNOW_LIGHT
+Gyenge havazás
+MSG_SKY_SNOW
+Havazás
+MSG_SKY_SNOW_HEAVY
+Erős havazás
+MSG_SKY_SNOW_GRAINS
+Hószemcse
+MSG_SKY_SHOWERS_LIGHT
+Gyenge zápor
+MSG_SKY_SHOWERS
+Zápor
+MSG_SKY_SHOWERS_VIOLENT
+Heves zápor
+MSG_SKY_SNOW_SHOWERS
+Hózápor
+MSG_SKY_THUNDER
+Zivatar
+MSG_SKY_THUNDER_HAIL
+Zivatar jégesővel
+MSG_SKY_UNKNOWN
+Ismeretlen időjárás
+MSG_NOLIBRARY
+%s: %s nem nyitható meg\n
+MSG_NOMEMORY
+%s: nincs elég memória\n
+MSG_NOWINDOW
+%s: az ablak nem nyitható meg\n

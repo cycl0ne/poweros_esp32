@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language lietuviu
+## codeset 106
+; Weather's strings in Lithuanian.
+MSG_WINDOW_TITLE
+Orai
+MSG_PLACE
+_Vieta
+MSG_SEARCH
+Ieš_koti
+MSG_KEPT
+_Išsaugotos
+MSG_KEEP
+Iš_saugoti
+MSG_REMOVE
+_Pašalinti
+MSG_NONE_KEPT
+Nėra išsaugotų vietų
+MSG_MENU_PROJECT
+Projektas
+MSG_MENU_REFRESH
+Atnaujinti
+MSG_MENU_ABOUT
+Apie...
+MSG_MENU_QUIT
+Išeiti
+MSG_MENU_SETTINGS
+Nuostatos
+MSG_MENU_CELSIUS
+Celsijus
+MSG_MENU_FAHRENHEIT
+Farenheitas
+MSG_ABOUT_TITLE
+Apie Orus
+MSG_ABOUT
+%s\n\nOrai dabar ir artimiausias tris dienas\nbet kuriai vietai ar adresui.\n\nOrų duomenys: Open-Meteo.com (CC BY 4.0).\nVietos randamos naudojant OpenStreetMap Nominatim,\n© OpenStreetMap bendradarbiai (ODbL).
+MSG_OK
+Gerai
+MSG_WELCOME
+Įveskite vietą arba adresą ir paspauskite Enter.
+MSG_FINDING
+Ieškoma: %s...
+MSG_FETCHING
+Gaunami orai: %s...
+MSG_NOT_FOUND
+Vietos „%s“ nerasta.
+MSG_NO_NETWORK
+Nėra tinklo: bsdsocket.library nėra.
+MSG_NO_HTTP
+http.library nėra.
+MSG_NO_JSON
+json.library nėra.
+MSG_NO_MEMORY
+Užklausai nepakanka atminties.
+MSG_UNREACHED
+Nepavyko susisiekti su orų tarnyba.
+MSG_NONSENSE
+Nepavyko perskaityti orų tarnybos atsakymo.
+MSG_UPDATED
+Atnaujinta %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap bendradarbiai
+MSG_FEELS_LIKE
+Jaučiasi kaip %s
+MSG_HUMIDITY
+Drėgmė
+MSG_WIND
+Vėjas
+MSG_PRECIPITATION
+Krituliai
+MSG_SUNRISE
+Saulėtekis
+MSG_SUNSET
+Saulėlydis
+MSG_NEXT_HOURS
+Artimiausios 24 valandos
+MSG_TOMORROW
+Rytoj
+MSG_HIGH_LOW
+Maks. %s · Min. %s
+MSG_WIND_N
+Š
+MSG_WIND_NE
+ŠR
+MSG_WIND_E
+R
+MSG_WIND_SE
+PR
+MSG_WIND_S
+P
+MSG_WIND_SW
+PV
+MSG_WIND_W
+V
+MSG_WIND_NW
+ŠV
+MSG_SKY_CLEAR
+Giedra
+MSG_SKY_MAINLY_CLEAR
+Mažai debesuota
+MSG_SKY_PARTLY_CLOUDY
+Debesuota su pragiedruliais
+MSG_SKY_OVERCAST
+Apsiniaukę
+MSG_SKY_FOG
+Rūkas
+MSG_SKY_RIME_FOG
+Šąlantis rūkas
+MSG_SKY_DRIZZLE_LIGHT
+Silpna dulksna
+MSG_SKY_DRIZZLE
+Dulksna
+MSG_SKY_DRIZZLE_DENSE
+Stipri dulksna
+MSG_SKY_FREEZING_DRIZZLE
+Šąlanti dulksna
+MSG_SKY_RAIN_LIGHT
+Nedidelis lietus
+MSG_SKY_RAIN
+Lietus
+MSG_SKY_RAIN_HEAVY
+Smarkus lietus
+MSG_SKY_FREEZING_RAIN
+Lijundra
+MSG_SKY_SNOW_LIGHT
+Nedidelis sniegas
+MSG_SKY_SNOW
+Sniegas
+MSG_SKY_SNOW_HEAVY
+Smarkus sniegas
+MSG_SKY_SNOW_GRAINS
+Sniego grūdeliai
+MSG_SKY_SHOWERS_LIGHT
+Trumpas nedidelis lietus
+MSG_SKY_SHOWERS
+Trumpas lietus
+MSG_SKY_SHOWERS_VIOLENT
+Trumpas smarkus lietus
+MSG_SKY_SNOW_SHOWERS
+Trumpas sniegas
+MSG_SKY_THUNDER
+Perkūnija
+MSG_SKY_THUNDER_HAIL
+Perkūnija su kruša
+MSG_SKY_UNKNOWN
+Nežinomi orai
+MSG_NOLIBRARY
+%s: nepavyksta atidaryti %s\n
+MSG_NOMEMORY
+%s: nepakanka atminties\n
+MSG_NOWINDOW
+%s: nepavyksta atidaryti lango\n

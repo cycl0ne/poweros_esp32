@@ -34,6 +34,7 @@ mimetypes/package-x-generic
 apps/accessories-text-editor
 apps/internet-web-browser
 status/weather-clear-night
+status/weather-few-clouds
 actions/system-search
 apps/preferences-desktop-font
 apps/preferences-desktop-keyboard-shortcuts

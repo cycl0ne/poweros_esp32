@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language deutsch
+## codeset 106
+; Weather's strings in German.
+MSG_WINDOW_TITLE
+Wetter
+MSG_PLACE
+_Ort
+MSG_SEARCH
+_Suchen
+MSG_KEPT
+_Gemerkt
+MSG_KEEP
+_Merken
+MSG_REMOVE
+_Entfernen
+MSG_NONE_KEPT
+Keine Orte gemerkt
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Aktualisieren
+MSG_MENU_ABOUT
+Über...
+MSG_MENU_QUIT
+Beenden
+MSG_MENU_SETTINGS
+Einstellungen
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Über Wetter
+MSG_ABOUT
+%s\n\nDas Wetter jetzt und für die nächsten drei Tage,\nfür jeden Ort und jede Adresse.\n\nWetterdaten von Open-Meteo.com (CC BY 4.0).\nOrtssuche mit Nominatim von OpenStreetMap,\n© OpenStreetMap-Mitwirkende (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Ort oder Adresse eingeben und die Eingabetaste drücken.
+MSG_FINDING
+Suche nach %s...
+MSG_FETCHING
+Wetter für %s wird abgefragt...
+MSG_NOT_FOUND
+Kein Ort namens "%s" gefunden.
+MSG_NO_NETWORK
+Kein Netzwerk: bsdsocket.library fehlt.
+MSG_NO_HTTP
+http.library fehlt.
+MSG_NO_JSON
+json.library fehlt.
+MSG_NO_MEMORY
+Nicht genug Speicher für die Anfrage.
+MSG_UNREACHED
+Der Wetterdienst ist nicht erreichbar.
+MSG_NONSENSE
+Die Antwort des Wetterdienstes ist nicht lesbar.
+MSG_UPDATED
+Stand %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap-Mitwirkende
+MSG_FEELS_LIKE
+Gefühlt %s
+MSG_HUMIDITY
+Luftfeuchte
+MSG_WIND
+Wind
+MSG_PRECIPITATION
+Niederschlag
+MSG_SUNRISE
+Sonnenaufgang
+MSG_SUNSET
+Sonnenuntergang
+MSG_NEXT_HOURS
+Die nächsten 24 Stunden
+MSG_TOMORROW
+Morgen
+MSG_HIGH_LOW
+Höchst %s · Tiefst %s
+MSG_WIND_N
+N
+MSG_WIND_NE
+NO
+MSG_WIND_E
+O
+MSG_WIND_SE
+SO
+MSG_WIND_S
+S
+MSG_WIND_SW
+SW
+MSG_WIND_W
+W
+MSG_WIND_NW
+NW
+MSG_SKY_CLEAR
+Wolkenlos
+MSG_SKY_MAINLY_CLEAR
+Leicht bewölkt
+MSG_SKY_PARTLY_CLOUDY
+Wolkig
+MSG_SKY_OVERCAST
+Bedeckt
+MSG_SKY_FOG
+Nebel
+MSG_SKY_RIME_FOG
+Gefrierender Nebel
+MSG_SKY_DRIZZLE_LIGHT
+Leichter Sprühregen
+MSG_SKY_DRIZZLE
+Sprühregen
+MSG_SKY_DRIZZLE_DENSE
+Starker Sprühregen
+MSG_SKY_FREEZING_DRIZZLE
+Gefrierender Sprühregen
+MSG_SKY_RAIN_LIGHT
+Leichter Regen
+MSG_SKY_RAIN
+Regen
+MSG_SKY_RAIN_HEAVY
+Starker Regen
+MSG_SKY_FREEZING_RAIN
+Gefrierender Regen
+MSG_SKY_SNOW_LIGHT
+Leichter Schneefall
+MSG_SKY_SNOW
+Schneefall
+MSG_SKY_SNOW_HEAVY
+Starker Schneefall
+MSG_SKY_SNOW_GRAINS
+Schneegriesel
+MSG_SKY_SHOWERS_LIGHT
+Leichte Regenschauer
+MSG_SKY_SHOWERS
+Regenschauer
+MSG_SKY_SHOWERS_VIOLENT
+Heftige Regenschauer
+MSG_SKY_SNOW_SHOWERS
+Schneeschauer
+MSG_SKY_THUNDER
+Gewitter
+MSG_SKY_THUNDER_HAIL
+Gewitter mit Hagel
+MSG_SKY_UNKNOWN
+Wetter unbekannt
+MSG_NOLIBRARY
+%s: %s lässt sich nicht öffnen\n
+MSG_NOMEMORY
+%s: nicht genug Speicher\n
+MSG_NOWINDOW
+%s: kein Fenster\n

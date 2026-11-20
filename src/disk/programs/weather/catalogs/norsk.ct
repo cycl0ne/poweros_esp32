@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language norsk
+## codeset 106
+; Weather's strings in Norwegian (Bokmål).
+MSG_WINDOW_TITLE
+Vær
+MSG_PLACE
+_Sted
+MSG_SEARCH
+Sø_k
+MSG_KEPT
+_Lagrede
+MSG_KEEP
+L_agre
+MSG_REMOVE
+_Fjern
+MSG_NONE_KEPT
+Ingen lagrede steder
+MSG_MENU_PROJECT
+Prosjekt
+MSG_MENU_REFRESH
+Oppdater
+MSG_MENU_ABOUT
+Om...
+MSG_MENU_QUIT
+Avslutt
+MSG_MENU_SETTINGS
+Innstillinger
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Om Vær
+MSG_ABOUT
+%s\n\nVæret nå og de neste tre dagene,\nfor hvilket som helst sted eller adresse.\n\nVærdata fra Open-Meteo.com (CC BY 4.0).\nSteder søkes opp med OpenStreetMaps Nominatim,\n© OpenStreetMap-bidragsytere (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Skriv inn et sted eller en adresse og trykk Enter.
+MSG_FINDING
+Søker etter %s...
+MSG_FETCHING
+Henter været for %s...
+MSG_NOT_FOUND
+Fant ikke noe sted som heter «%s».
+MSG_NO_NETWORK
+Ingen nettverk: bsdsocket.library finnes ikke.
+MSG_NO_HTTP
+http.library finnes ikke.
+MSG_NO_JSON
+json.library finnes ikke.
+MSG_NO_MEMORY
+Det er ikke nok minne til å spørre.
+MSG_UNREACHED
+Fikk ikke kontakt med værtjenesten.
+MSG_NONSENSE
+Svaret fra værtjenesten kunne ikke leses.
+MSG_UPDATED
+Oppdatert %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap-bidragsytere
+MSG_FEELS_LIKE
+Føles som %s
+MSG_HUMIDITY
+Luftfuktighet
+MSG_WIND
+Vind
+MSG_PRECIPITATION
+Nedbør
+MSG_SUNRISE
+Soloppgang
+MSG_SUNSET
+Solnedgang
+MSG_NEXT_HOURS
+De neste 24 timene
+MSG_TOMORROW
+I morgen
+MSG_HIGH_LOW
+Maks %s · Min %s
+MSG_WIND_N
+N
+MSG_WIND_NE
+NØ
+MSG_WIND_E
+Ø
+MSG_WIND_SE
+SØ
+MSG_WIND_S
+S
+MSG_WIND_SW
+SV
+MSG_WIND_W
+V
+MSG_WIND_NW
+NV
+MSG_SKY_CLEAR
+Klarvær
+MSG_SKY_MAINLY_CLEAR
+Lettskyet
+MSG_SKY_PARTLY_CLOUDY
+Delvis skyet
+MSG_SKY_OVERCAST
+Overskyet
+MSG_SKY_FOG
+Tåke
+MSG_SKY_RIME_FOG
+Underkjølt tåke
+MSG_SKY_DRIZZLE_LIGHT
+Lett yr
+MSG_SKY_DRIZZLE
+Yr
+MSG_SKY_DRIZZLE_DENSE
+Tett yr
+MSG_SKY_FREEZING_DRIZZLE
+Underkjølt yr
+MSG_SKY_RAIN_LIGHT
+Lett regn
+MSG_SKY_RAIN
+Regn
+MSG_SKY_RAIN_HEAVY
+Kraftig regn
+MSG_SKY_FREEZING_RAIN
+Underkjølt regn
+MSG_SKY_SNOW_LIGHT
+Lett snø
+MSG_SKY_SNOW
+Snø
+MSG_SKY_SNOW_HEAVY
+Kraftig snø
+MSG_SKY_SNOW_GRAINS
+Kornsnø
+MSG_SKY_SHOWERS_LIGHT
+Lette regnbyger
+MSG_SKY_SHOWERS
+Regnbyger
+MSG_SKY_SHOWERS_VIOLENT
+Kraftige regnbyger
+MSG_SKY_SNOW_SHOWERS
+Snøbyger
+MSG_SKY_THUNDER
+Tordenvær
+MSG_SKY_THUNDER_HAIL
+Tordenvær med hagl
+MSG_SKY_UNKNOWN
+Ukjent vær
+MSG_NOLIBRARY
+%s: kan ikke åpne %s\n
+MSG_NOMEMORY
+%s: ikke nok minne\n
+MSG_NOWINDOW
+%s: kan ikke åpne vinduet sitt\n

@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language polski
+## codeset 106
+; Weather's strings in Polish.
+MSG_WINDOW_TITLE
+Pogoda
+MSG_PLACE
+_Miejsce
+MSG_SEARCH
+_Szukaj
+MSG_KEPT
+_Zapisane
+MSG_KEEP
+Z_apisz
+MSG_REMOVE
+_Usuń
+MSG_NONE_KEPT
+Brak zapisanych miejsc
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Odśwież
+MSG_MENU_ABOUT
+O programie...
+MSG_MENU_QUIT
+Zakończ
+MSG_MENU_SETTINGS
+Ustawienia
+MSG_MENU_CELSIUS
+Celsjusz
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+O programie Pogoda
+MSG_ABOUT
+%s\n\nPogoda teraz i na najbliższe trzy dni\ndla dowolnego miejsca lub adresu.\n\nDane pogodowe: Open-Meteo.com (CC BY 4.0).\nMiejsca wyszukuje Nominatim z OpenStreetMap,\n© autorzy OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Wpisz miejsce lub adres i naciśnij Enter.
+MSG_FINDING
+Wyszukiwanie: %s...
+MSG_FETCHING
+Pobieranie pogody: %s...
+MSG_NOT_FOUND
+Nie znaleziono miejsca „%s”.
+MSG_NO_NETWORK
+Brak sieci: nie ma bsdsocket.library.
+MSG_NO_HTTP
+Brak http.library.
+MSG_NO_JSON
+Brak json.library.
+MSG_NO_MEMORY
+Za mało pamięci, by wysłać zapytanie.
+MSG_UNREACHED
+Nie udało się połączyć z serwisem pogodowym.
+MSG_NONSENSE
+Nie udało się odczytać odpowiedzi serwisu pogodowego.
+MSG_UPDATED
+Zaktualizowano %s
+MSG_SOURCE
+Open-Meteo.com · © autorzy OpenStreetMap
+MSG_FEELS_LIKE
+Odczuwalna %s
+MSG_HUMIDITY
+Wilgotność
+MSG_WIND
+Wiatr
+MSG_PRECIPITATION
+Opady
+MSG_SUNRISE
+Wschód słońca
+MSG_SUNSET
+Zachód słońca
+MSG_NEXT_HOURS
+Najbliższe 24 godziny
+MSG_TOMORROW
+Jutro
+MSG_HIGH_LOW
+Maks. %s · Min. %s
+MSG_WIND_N
+N
+MSG_WIND_NE
+NE
+MSG_WIND_E
+E
+MSG_WIND_SE
+SE
+MSG_WIND_S
+S
+MSG_WIND_SW
+SW
+MSG_WIND_W
+W
+MSG_WIND_NW
+NW
+MSG_SKY_CLEAR
+Bezchmurnie
+MSG_SKY_MAINLY_CLEAR
+Małe zachmurzenie
+MSG_SKY_PARTLY_CLOUDY
+Częściowe zachmurzenie
+MSG_SKY_OVERCAST
+Pochmurno
+MSG_SKY_FOG
+Mgła
+MSG_SKY_RIME_FOG
+Marznąca mgła
+MSG_SKY_DRIZZLE_LIGHT
+Słaba mżawka
+MSG_SKY_DRIZZLE
+Mżawka
+MSG_SKY_DRIZZLE_DENSE
+Gęsta mżawka
+MSG_SKY_FREEZING_DRIZZLE
+Marznąca mżawka
+MSG_SKY_RAIN_LIGHT
+Słaby deszcz
+MSG_SKY_RAIN
+Deszcz
+MSG_SKY_RAIN_HEAVY
+Silny deszcz
+MSG_SKY_FREEZING_RAIN
+Marznący deszcz
+MSG_SKY_SNOW_LIGHT
+Słaby śnieg
+MSG_SKY_SNOW
+Śnieg
+MSG_SKY_SNOW_HEAVY
+Intensywny śnieg
+MSG_SKY_SNOW_GRAINS
+Śnieg ziarnisty
+MSG_SKY_SHOWERS_LIGHT
+Słaby przelotny deszcz
+MSG_SKY_SHOWERS
+Przelotny deszcz
+MSG_SKY_SHOWERS_VIOLENT
+Gwałtowne ulewy
+MSG_SKY_SNOW_SHOWERS
+Przelotny śnieg
+MSG_SKY_THUNDER
+Burza
+MSG_SKY_THUNDER_HAIL
+Burza z gradem
+MSG_SKY_UNKNOWN
+Nieznana pogoda
+MSG_NOLIBRARY
+%s: nie można otworzyć %s\n
+MSG_NOMEMORY
+%s: za mało pamięci\n
+MSG_NOWINDOW
+%s: nie można otworzyć okna\n

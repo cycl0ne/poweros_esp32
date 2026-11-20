@@ -490,7 +490,8 @@ _ = jb.WriteJSONFile(root, "ENVARC:Weather.json", json.JSONF_PRETTY);
 ```
 
 Nothing in it recurses: a tree nested thousands deep is read, copied
-and written in the memory of its values alone.
+and written in the memory of its values alone. `SYS:Programs/Weather`
+is written on it and http.library.
 
 ## Interfaces
 

@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language svenska
+## codeset 106
+; Weather's strings in Swedish.
+MSG_WINDOW_TITLE
+Väder
+MSG_PLACE
+_Plats
+MSG_SEARCH
+_Sök
+MSG_KEPT
+_Favoriter
+MSG_KEEP
+_Lägg till
+MSG_REMOVE
+_Ta bort
+MSG_NONE_KEPT
+Inga favoriter
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Uppdatera
+MSG_MENU_ABOUT
+Om...
+MSG_MENU_QUIT
+Avsluta
+MSG_MENU_SETTINGS
+Inställningar
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Om Väder
+MSG_ABOUT
+%s\n\nVädret nu och de kommande tre dagarna,\nför vilken plats eller adress som helst.\n\nVäderdata från Open-Meteo.com (CC BY 4.0).\nPlatser söks med OpenStreetMaps Nominatim,\n© OpenStreetMap-bidragsgivare (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Skriv en plats eller en adress och tryck på Retur.
+MSG_FINDING
+Söker efter %s...
+MSG_FETCHING
+Hämtar vädret för %s...
+MSG_NOT_FOUND
+Ingen plats med namnet "%s" hittades.
+MSG_NO_NETWORK
+Inget nätverk: bsdsocket.library saknas.
+MSG_NO_HTTP
+http.library saknas.
+MSG_NO_JSON
+json.library saknas.
+MSG_NO_MEMORY
+Inte tillräckligt med minne för förfrågan.
+MSG_UNREACHED
+Vädertjänsten kunde inte nås.
+MSG_NONSENSE
+Vädertjänstens svar kunde inte läsas.
+MSG_UPDATED
+Uppdaterad kl. %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap-bidragsgivare
+MSG_FEELS_LIKE
+Känns som %s
+MSG_HUMIDITY
+Luftfuktighet
+MSG_WIND
+Vind
+MSG_PRECIPITATION
+Nederbörd
+MSG_SUNRISE
+Soluppgång
+MSG_SUNSET
+Solnedgång
+MSG_NEXT_HOURS
+De kommande 24 timmarna
+MSG_TOMORROW
+I morgon
+MSG_HIGH_LOW
+Max %s · Min %s
+MSG_WIND_N
+N
+MSG_WIND_NE
+NO
+MSG_WIND_E
+O
+MSG_WIND_SE
+SO
+MSG_WIND_S
+S
+MSG_WIND_SW
+SV
+MSG_WIND_W
+V
+MSG_WIND_NW
+NV
+MSG_SKY_CLEAR
+Klart
+MSG_SKY_MAINLY_CLEAR
+Nästan klart
+MSG_SKY_PARTLY_CLOUDY
+Halvklart
+MSG_SKY_OVERCAST
+Mulet
+MSG_SKY_FOG
+Dimma
+MSG_SKY_RIME_FOG
+Underkyld dimma
+MSG_SKY_DRIZZLE_LIGHT
+Lätt duggregn
+MSG_SKY_DRIZZLE
+Duggregn
+MSG_SKY_DRIZZLE_DENSE
+Tätt duggregn
+MSG_SKY_FREEZING_DRIZZLE
+Underkylt duggregn
+MSG_SKY_RAIN_LIGHT
+Lätt regn
+MSG_SKY_RAIN
+Regn
+MSG_SKY_RAIN_HEAVY
+Kraftigt regn
+MSG_SKY_FREEZING_RAIN
+Underkylt regn
+MSG_SKY_SNOW_LIGHT
+Lätt snöfall
+MSG_SKY_SNOW
+Snöfall
+MSG_SKY_SNOW_HEAVY
+Kraftigt snöfall
+MSG_SKY_SNOW_GRAINS
+Kornsnö
+MSG_SKY_SHOWERS_LIGHT
+Lätta skurar
+MSG_SKY_SHOWERS
+Skurar
+MSG_SKY_SHOWERS_VIOLENT
+Kraftiga skurar
+MSG_SKY_SNOW_SHOWERS
+Snöbyar
+MSG_SKY_THUNDER
+Åska
+MSG_SKY_THUNDER_HAIL
+Åska med hagel
+MSG_SKY_UNKNOWN
+Okänt väder
+MSG_NOLIBRARY
+%s: kan inte öppna %s\n
+MSG_NOMEMORY
+%s: inte tillräckligt med minne\n
+MSG_NOWINDOW
+%s: inget fönster\n

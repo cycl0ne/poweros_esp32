@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language suomi
+## codeset 106
+; Weather's strings in Finnish.
+MSG_WINDOW_TITLE
+Sää
+MSG_PLACE
+_Paikka
+MSG_SEARCH
+_Hae
+MSG_KEPT
+_Tallennetut
+MSG_KEEP
+T_allenna
+MSG_REMOVE
+P_oista
+MSG_NONE_KEPT
+Ei tallennettuja paikkoja
+MSG_MENU_PROJECT
+Projekti
+MSG_MENU_REFRESH
+Päivitä
+MSG_MENU_ABOUT
+Tietoja...
+MSG_MENU_QUIT
+Lopeta
+MSG_MENU_SETTINGS
+Asetukset
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Tietoja: Sää
+MSG_ABOUT
+%s\n\nSää nyt ja kolmena seuraavana päivänä\nmissä tahansa paikassa tai osoitteessa.\n\nSäätiedot: Open-Meteo.com (CC BY 4.0).\nPaikat haetaan OpenStreetMapin Nominatimilla,\n© OpenStreetMap-kartoittajat (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Kirjoita paikka tai osoite ja paina Enter.
+MSG_FINDING
+Haetaan paikkaa %s...
+MSG_FETCHING
+Haetaan säätietoja: %s...
+MSG_NOT_FOUND
+Paikkaa ”%s” ei löytynyt.
+MSG_NO_NETWORK
+Verkkoa ei ole: bsdsocket.library puuttuu.
+MSG_NO_HTTP
+http.library puuttuu.
+MSG_NO_JSON
+json.library puuttuu.
+MSG_NO_MEMORY
+Muisti ei riitä kyselyyn.
+MSG_UNREACHED
+Sääpalveluun ei saatu yhteyttä.
+MSG_NONSENSE
+Sääpalvelun vastausta ei voitu lukea.
+MSG_UPDATED
+Päivitetty %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap-kartoittajat
+MSG_FEELS_LIKE
+Tuntuu kuin %s
+MSG_HUMIDITY
+Ilmankosteus
+MSG_WIND
+Tuuli
+MSG_PRECIPITATION
+Sademäärä
+MSG_SUNRISE
+Auringonnousu
+MSG_SUNSET
+Auringonlasku
+MSG_NEXT_HOURS
+Seuraavat 24 tuntia
+MSG_TOMORROW
+Huomenna
+MSG_HIGH_LOW
+Ylin %s · Alin %s
+MSG_WIND_N
+P
+MSG_WIND_NE
+KO
+MSG_WIND_E
+I
+MSG_WIND_SE
+KA
+MSG_WIND_S
+E
+MSG_WIND_SW
+LO
+MSG_WIND_W
+L
+MSG_WIND_NW
+LU
+MSG_SKY_CLEAR
+Selkeää
+MSG_SKY_MAINLY_CLEAR
+Melko selkeää
+MSG_SKY_PARTLY_CLOUDY
+Puolipilvistä
+MSG_SKY_OVERCAST
+Pilvistä
+MSG_SKY_FOG
+Sumua
+MSG_SKY_RIME_FOG
+Jäätävää sumua
+MSG_SKY_DRIZZLE_LIGHT
+Heikkoa tihkusadetta
+MSG_SKY_DRIZZLE
+Tihkusadetta
+MSG_SKY_DRIZZLE_DENSE
+Voimakasta tihkusadetta
+MSG_SKY_FREEZING_DRIZZLE
+Jäätävää tihkua
+MSG_SKY_RAIN_LIGHT
+Heikkoa vesisadetta
+MSG_SKY_RAIN
+Vesisadetta
+MSG_SKY_RAIN_HEAVY
+Voimakasta vesisadetta
+MSG_SKY_FREEZING_RAIN
+Jäätävää sadetta
+MSG_SKY_SNOW_LIGHT
+Heikkoa lumisadetta
+MSG_SKY_SNOW
+Lumisadetta
+MSG_SKY_SNOW_HEAVY
+Voimakasta lumisadetta
+MSG_SKY_SNOW_GRAINS
+Lumijyväsiä
+MSG_SKY_SHOWERS_LIGHT
+Heikkoja sadekuuroja
+MSG_SKY_SHOWERS
+Sadekuuroja
+MSG_SKY_SHOWERS_VIOLENT
+Voimakkaita sadekuuroja
+MSG_SKY_SNOW_SHOWERS
+Lumikuuroja
+MSG_SKY_THUNDER
+Ukkosta
+MSG_SKY_THUNDER_HAIL
+Ukkosta ja raekuuroja
+MSG_SKY_UNKNOWN
+Tuntematon sää
+MSG_NOLIBRARY
+%s: kirjastoa %s ei voi avata\n
+MSG_NOMEMORY
+%s: muisti ei riitä\n
+MSG_NOWINDOW
+%s: ikkunaa ei voi avata\n

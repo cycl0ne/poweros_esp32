@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language portugues
+## codeset 106
+; Weather's strings in Portuguese.
+MSG_WINDOW_TITLE
+Meteorologia
+MSG_PLACE
+_Local
+MSG_SEARCH
+_Procurar
+MSG_KEPT
+_Favoritos
+MSG_KEEP
+_Adicionar
+MSG_REMOVE
+_Remover
+MSG_NONE_KEPT
+Sem favoritos
+MSG_MENU_PROJECT
+Projeto
+MSG_MENU_REFRESH
+Atualizar
+MSG_MENU_ABOUT
+Acerca de...
+MSG_MENU_QUIT
+Sair
+MSG_MENU_SETTINGS
+Definições
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Acerca da Meteorologia
+MSG_ABOUT
+%s\n\nO tempo agora e nos próximos três dias,\npara qualquer local ou morada.\n\nDados meteorológicos de Open-Meteo.com (CC BY 4.0).\nLocais encontrados com o Nominatim do OpenStreetMap,\n© contribuidores do OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Escreva um local ou uma morada e prima Enter.
+MSG_FINDING
+A procurar %s...
+MSG_FETCHING
+A obter o tempo para %s...
+MSG_NOT_FOUND
+Não foi encontrado nenhum local chamado "%s".
+MSG_NO_NETWORK
+Sem rede: falta a bsdsocket.library.
+MSG_NO_HTTP
+Falta a http.library.
+MSG_NO_JSON
+Falta a json.library.
+MSG_NO_MEMORY
+Não há memória suficiente para o pedido.
+MSG_UNREACHED
+Não foi possível contactar o serviço meteorológico.
+MSG_NONSENSE
+Não foi possível ler a resposta do serviço meteorológico.
+MSG_UPDATED
+Atualizado às %s
+MSG_SOURCE
+Open-Meteo.com · © contribuidores do OpenStreetMap
+MSG_FEELS_LIKE
+Sensação %s
+MSG_HUMIDITY
+Humidade
+MSG_WIND
+Vento
+MSG_PRECIPITATION
+Precipitação
+MSG_SUNRISE
+Nascer do sol
+MSG_SUNSET
+Pôr do sol
+MSG_NEXT_HOURS
+As próximas 24 horas
+MSG_TOMORROW
+Amanhã
+MSG_HIGH_LOW
+Máx. %s · Mín. %s
+MSG_WIND_N
+N
+MSG_WIND_NE
+NE
+MSG_WIND_E
+E
+MSG_WIND_SE
+SE
+MSG_WIND_S
+S
+MSG_WIND_SW
+SO
+MSG_WIND_W
+O
+MSG_WIND_NW
+NO
+MSG_SKY_CLEAR
+Céu limpo
+MSG_SKY_MAINLY_CLEAR
+Pouco nublado
+MSG_SKY_PARTLY_CLOUDY
+Parcialmente nublado
+MSG_SKY_OVERCAST
+Céu encoberto
+MSG_SKY_FOG
+Nevoeiro
+MSG_SKY_RIME_FOG
+Nevoeiro gelado
+MSG_SKY_DRIZZLE_LIGHT
+Chuvisco fraco
+MSG_SKY_DRIZZLE
+Chuvisco
+MSG_SKY_DRIZZLE_DENSE
+Chuvisco intenso
+MSG_SKY_FREEZING_DRIZZLE
+Chuvisco gelado
+MSG_SKY_RAIN_LIGHT
+Chuva fraca
+MSG_SKY_RAIN
+Chuva
+MSG_SKY_RAIN_HEAVY
+Chuva forte
+MSG_SKY_FREEZING_RAIN
+Chuva gelada
+MSG_SKY_SNOW_LIGHT
+Neve fraca
+MSG_SKY_SNOW
+Neve
+MSG_SKY_SNOW_HEAVY
+Neve forte
+MSG_SKY_SNOW_GRAINS
+Grãos de neve
+MSG_SKY_SHOWERS_LIGHT
+Aguaceiros fracos
+MSG_SKY_SHOWERS
+Aguaceiros
+MSG_SKY_SHOWERS_VIOLENT
+Aguaceiros muito fortes
+MSG_SKY_SNOW_SHOWERS
+Aguaceiros de neve
+MSG_SKY_THUNDER
+Trovoada
+MSG_SKY_THUNDER_HAIL
+Trovoada com granizo
+MSG_SKY_UNKNOWN
+Tempo desconhecido
+MSG_NOLIBRARY
+%s: não é possível abrir %s\n
+MSG_NOMEMORY
+%s: memória insuficiente\n
+MSG_NOWINDOW
+%s: sem janela\n

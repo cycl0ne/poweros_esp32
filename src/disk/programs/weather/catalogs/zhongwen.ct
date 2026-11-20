@@ -1,0 +1,153 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language zhongwen
+## codeset 106
+; Weather's strings in Chinese, simplified. A draft: it waits for a reader of
+; Chinese to go through it.
+MSG_WINDOW_TITLE
+天气
+MSG_PLACE
+地点(_P)
+MSG_SEARCH
+搜索(_S)
+MSG_KEPT
+已收藏(_K)
+MSG_KEEP
+收藏(_E)
+MSG_REMOVE
+移除(_R)
+MSG_NONE_KEPT
+没有收藏的地点
+MSG_MENU_PROJECT
+项目
+MSG_MENU_REFRESH
+刷新
+MSG_MENU_ABOUT
+关于...
+MSG_MENU_QUIT
+退出
+MSG_MENU_SETTINGS
+设置
+MSG_MENU_CELSIUS
+摄氏度
+MSG_MENU_FAHRENHEIT
+华氏度
+MSG_ABOUT_TITLE
+关于天气
+MSG_ABOUT
+%s\n\n任意地点或地址的当前天气\n及未来三天的天气预报。\n\n天气数据来自 Open-Meteo.com (CC BY 4.0)。\n地点由 OpenStreetMap 的 Nominatim 查找，\n© OpenStreetMap 贡献者 (ODbL)。
+MSG_OK
+确定
+MSG_WELCOME
+输入地点或地址，然后按回车键。
+MSG_FINDING
+正在查找 %s...
+MSG_FETCHING
+正在获取 %s 的天气...
+MSG_NOT_FOUND
+找不到名为“%s”的地点。
+MSG_NO_NETWORK
+没有网络：bsdsocket.library 不存在。
+MSG_NO_HTTP
+http.library 不存在。
+MSG_NO_JSON
+json.library 不存在。
+MSG_NO_MEMORY
+内存不足，无法发出请求。
+MSG_UNREACHED
+无法连接天气服务。
+MSG_NONSENSE
+无法读取天气服务的回复。
+MSG_UPDATED
+更新于 %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap 贡献者
+MSG_FEELS_LIKE
+体感 %s
+MSG_HUMIDITY
+湿度
+MSG_WIND
+风
+MSG_PRECIPITATION
+降水量
+MSG_SUNRISE
+日出
+MSG_SUNSET
+日落
+MSG_NEXT_HOURS
+未来 24 小时
+MSG_TOMORROW
+明天
+MSG_HIGH_LOW
+最高 %s · 最低 %s
+MSG_WIND_N
+北
+MSG_WIND_NE
+东北
+MSG_WIND_E
+东
+MSG_WIND_SE
+东南
+MSG_WIND_S
+南
+MSG_WIND_SW
+西南
+MSG_WIND_W
+西
+MSG_WIND_NW
+西北
+MSG_SKY_CLEAR
+晴
+MSG_SKY_MAINLY_CLEAR
+少云
+MSG_SKY_PARTLY_CLOUDY
+多云
+MSG_SKY_OVERCAST
+阴
+MSG_SKY_FOG
+雾
+MSG_SKY_RIME_FOG
+冻雾
+MSG_SKY_DRIZZLE_LIGHT
+小毛毛雨
+MSG_SKY_DRIZZLE
+毛毛雨
+MSG_SKY_DRIZZLE_DENSE
+大毛毛雨
+MSG_SKY_FREEZING_DRIZZLE
+冻毛毛雨
+MSG_SKY_RAIN_LIGHT
+小雨
+MSG_SKY_RAIN
+中雨
+MSG_SKY_RAIN_HEAVY
+大雨
+MSG_SKY_FREEZING_RAIN
+冻雨
+MSG_SKY_SNOW_LIGHT
+小雪
+MSG_SKY_SNOW
+中雪
+MSG_SKY_SNOW_HEAVY
+大雪
+MSG_SKY_SNOW_GRAINS
+米雪
+MSG_SKY_SHOWERS_LIGHT
+小阵雨
+MSG_SKY_SHOWERS
+阵雨
+MSG_SKY_SHOWERS_VIOLENT
+强阵雨
+MSG_SKY_SNOW_SHOWERS
+阵雪
+MSG_SKY_THUNDER
+雷阵雨
+MSG_SKY_THUNDER_HAIL
+雷阵雨伴有冰雹
+MSG_SKY_UNKNOWN
+未知天气
+MSG_NOLIBRARY
+%s: 无法打开 %s\n
+MSG_NOMEMORY
+%s: 内存不足\n
+MSG_NOWINDOW
+%s: 无法打开窗口\n

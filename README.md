@@ -154,8 +154,9 @@ every module is in [the SDK's documentation](sdk/docs/README.md).
 The programs on the disk:
 
 - **`SYS:Programs`** - MultiView, Notepad, Sheet, Paint, Terminal,
-  Player, Movie, FontView, Battery, Prefs, Volume, and Boing and Cobra, a
-  bouncing ball and a ship in space
+  Player, Movie, FontView, Battery, Prefs, Volume, Weather - the weather
+  now and for three days at any address - and Boing and Cobra, a bouncing
+  ball and a ship in space
 - **`SYS:System`** - Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
   MemMap, Clock, and SystemScan on the 64-bit machines
 - **`SYS:Commodities`** - Exchange, Blanker, FKey, Emoji, AutoPoint,

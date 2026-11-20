@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language slovencina
+## codeset 106
+; Weather's strings in Slovak.
+MSG_WINDOW_TITLE
+Počasie
+MSG_PLACE
+_Miesto
+MSG_SEARCH
+_Hľadať
+MSG_KEPT
+_Uložené
+MSG_KEEP
+U_ložiť
+MSG_REMOVE
+_Odobrať
+MSG_NONE_KEPT
+Žiadne uložené miesta
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Obnoviť
+MSG_MENU_ABOUT
+O programe...
+MSG_MENU_QUIT
+Ukončiť
+MSG_MENU_SETTINGS
+Nastavenia
+MSG_MENU_CELSIUS
+Celzius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+O programe Počasie
+MSG_ABOUT
+%s\n\nPočasie teraz a na najbližšie tri dni\npre akékoľvek miesto či adresu.\n\nÚdaje o počasí: Open-Meteo.com (CC BY 4.0).\nMiesta vyhľadáva Nominatim projektu OpenStreetMap,\n© Prispievatelia OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Zadajte miesto alebo adresu a stlačte Enter.
+MSG_FINDING
+Hľadá sa %s...
+MSG_FETCHING
+Zisťuje sa počasie: %s...
+MSG_NOT_FOUND
+Miesto „%s“ sa nenašlo.
+MSG_NO_NETWORK
+Sieť nie je dostupná: chýba bsdsocket.library.
+MSG_NO_HTTP
+Chýba http.library.
+MSG_NO_JSON
+Chýba json.library.
+MSG_NO_MEMORY
+Na dopyt nie je dosť pamäte.
+MSG_UNREACHED
+Nepodarilo sa spojiť so službou počasia.
+MSG_NONSENSE
+Odpoveď služby počasia sa nepodarilo prečítať.
+MSG_UPDATED
+Aktualizované o %s
+MSG_SOURCE
+Open-Meteo.com · © Prispievatelia OpenStreetMap
+MSG_FEELS_LIKE
+Pocitovo %s
+MSG_HUMIDITY
+Vlhkosť
+MSG_WIND
+Vietor
+MSG_PRECIPITATION
+Zrážky
+MSG_SUNRISE
+Východ slnka
+MSG_SUNSET
+Západ slnka
+MSG_NEXT_HOURS
+Najbližších 24 hodín
+MSG_TOMORROW
+Zajtra
+MSG_HIGH_LOW
+Max. %s · Min. %s
+MSG_WIND_N
+S
+MSG_WIND_NE
+SV
+MSG_WIND_E
+V
+MSG_WIND_SE
+JV
+MSG_WIND_S
+J
+MSG_WIND_SW
+JZ
+MSG_WIND_W
+Z
+MSG_WIND_NW
+SZ
+MSG_SKY_CLEAR
+Jasno
+MSG_SKY_MAINLY_CLEAR
+Prevažne jasno
+MSG_SKY_PARTLY_CLOUDY
+Polojasno
+MSG_SKY_OVERCAST
+Zamračené
+MSG_SKY_FOG
+Hmla
+MSG_SKY_RIME_FOG
+Mrznúca hmla
+MSG_SKY_DRIZZLE_LIGHT
+Slabé mrholenie
+MSG_SKY_DRIZZLE
+Mrholenie
+MSG_SKY_DRIZZLE_DENSE
+Silné mrholenie
+MSG_SKY_FREEZING_DRIZZLE
+Mrznúce mrholenie
+MSG_SKY_RAIN_LIGHT
+Slabý dážď
+MSG_SKY_RAIN
+Dážď
+MSG_SKY_RAIN_HEAVY
+Silný dážď
+MSG_SKY_FREEZING_RAIN
+Mrznúci dážď
+MSG_SKY_SNOW_LIGHT
+Slabé sneženie
+MSG_SKY_SNOW
+Sneženie
+MSG_SKY_SNOW_HEAVY
+Silné sneženie
+MSG_SKY_SNOW_GRAINS
+Snehové zrná
+MSG_SKY_SHOWERS_LIGHT
+Slabé prehánky
+MSG_SKY_SHOWERS
+Prehánky
+MSG_SKY_SHOWERS_VIOLENT
+Prudké prehánky
+MSG_SKY_SNOW_SHOWERS
+Snehové prehánky
+MSG_SKY_THUNDER
+Búrka
+MSG_SKY_THUNDER_HAIL
+Búrka s krupobitím
+MSG_SKY_UNKNOWN
+Neznáme počasie
+MSG_NOLIBRARY
+%s: nemožno otvoriť %s\n
+MSG_NOMEMORY
+%s: nedostatok pamäte\n
+MSG_NOWINDOW
+%s: nemožno otvoriť okno\n

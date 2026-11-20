@@ -1,0 +1,153 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language hangugeo
+## codeset 106
+; Weather's strings in Korean. A draft: it waits for a reader of
+; Korean to go through it.
+MSG_WINDOW_TITLE
+날씨
+MSG_PLACE
+장소(_P)
+MSG_SEARCH
+검색(_S)
+MSG_KEPT
+보관한 장소(_K)
+MSG_KEEP
+보관(_E)
+MSG_REMOVE
+제거(_R)
+MSG_NONE_KEPT
+보관한 장소 없음
+MSG_MENU_PROJECT
+프로젝트
+MSG_MENU_REFRESH
+새로 고침
+MSG_MENU_ABOUT
+프로그램 정보...
+MSG_MENU_QUIT
+종료
+MSG_MENU_SETTINGS
+설정
+MSG_MENU_CELSIUS
+섭씨
+MSG_MENU_FAHRENHEIT
+화씨
+MSG_ABOUT_TITLE
+날씨 프로그램 정보
+MSG_ABOUT
+%s\n\n지금의 날씨와 앞으로 3일간의 날씨를\n어떤 장소나 주소에 대해서든 보여 줍니다.\n\n날씨 데이터 제공: Open-Meteo.com (CC BY 4.0).\n장소 검색: OpenStreetMap의 Nominatim,\n© OpenStreetMap 기여자 (ODbL).
+MSG_OK
+확인
+MSG_WELCOME
+장소나 주소를 입력하고 Return 키를 누르세요.
+MSG_FINDING
+%s 찾는 중...
+MSG_FETCHING
+%s의 날씨를 가져오는 중...
+MSG_NOT_FOUND
+"%s"(이)라는 장소를 찾을 수 없습니다.
+MSG_NO_NETWORK
+네트워크가 없습니다: bsdsocket.library가 없습니다.
+MSG_NO_HTTP
+http.library가 없습니다.
+MSG_NO_JSON
+json.library가 없습니다.
+MSG_NO_MEMORY
+요청할 메모리가 부족합니다.
+MSG_UNREACHED
+날씨 서비스에 연결할 수 없습니다.
+MSG_NONSENSE
+날씨 서비스의 응답을 읽을 수 없습니다.
+MSG_UPDATED
+%s 기준
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap 기여자
+MSG_FEELS_LIKE
+체감 %s
+MSG_HUMIDITY
+습도
+MSG_WIND
+바람
+MSG_PRECIPITATION
+강수량
+MSG_SUNRISE
+일출
+MSG_SUNSET
+일몰
+MSG_NEXT_HOURS
+앞으로 24시간
+MSG_TOMORROW
+내일
+MSG_HIGH_LOW
+최고 %s · 최저 %s
+MSG_WIND_N
+북
+MSG_WIND_NE
+북동
+MSG_WIND_E
+동
+MSG_WIND_SE
+남동
+MSG_WIND_S
+남
+MSG_WIND_SW
+남서
+MSG_WIND_W
+서
+MSG_WIND_NW
+북서
+MSG_SKY_CLEAR
+맑음
+MSG_SKY_MAINLY_CLEAR
+대체로 맑음
+MSG_SKY_PARTLY_CLOUDY
+구름 조금
+MSG_SKY_OVERCAST
+흐림
+MSG_SKY_FOG
+안개
+MSG_SKY_RIME_FOG
+어는 안개
+MSG_SKY_DRIZZLE_LIGHT
+약한 이슬비
+MSG_SKY_DRIZZLE
+이슬비
+MSG_SKY_DRIZZLE_DENSE
+강한 이슬비
+MSG_SKY_FREEZING_DRIZZLE
+어는 이슬비
+MSG_SKY_RAIN_LIGHT
+약한 비
+MSG_SKY_RAIN
+비
+MSG_SKY_RAIN_HEAVY
+강한 비
+MSG_SKY_FREEZING_RAIN
+어는 비
+MSG_SKY_SNOW_LIGHT
+약한 눈
+MSG_SKY_SNOW
+눈
+MSG_SKY_SNOW_HEAVY
+강한 눈
+MSG_SKY_SNOW_GRAINS
+쌀알눈
+MSG_SKY_SHOWERS_LIGHT
+약한 소나기
+MSG_SKY_SHOWERS
+소나기
+MSG_SKY_SHOWERS_VIOLENT
+매우 강한 소나기
+MSG_SKY_SNOW_SHOWERS
+소낙눈
+MSG_SKY_THUNDER
+뇌우
+MSG_SKY_THUNDER_HAIL
+우박을 동반한 뇌우
+MSG_SKY_UNKNOWN
+알 수 없는 날씨
+MSG_NOLIBRARY
+%s: %s을(를) 열 수 없음\n
+MSG_NOMEMORY
+%s: 메모리 부족\n
+MSG_NOWINDOW
+%s: 창을 열 수 없음\n

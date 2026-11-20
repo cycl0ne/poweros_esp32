@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language turkce
+## codeset 106
+; Weather's strings in Turkish.
+MSG_WINDOW_TITLE
+Hava Durumu
+MSG_PLACE
+_Yer
+MSG_SEARCH
+_Ara
+MSG_KEPT
+_Kayıtlı
+MSG_KEEP
+Kay_det
+MSG_REMOVE
+Ka_ldır
+MSG_NONE_KEPT
+Kayıtlı yer yok
+MSG_MENU_PROJECT
+Proje
+MSG_MENU_REFRESH
+Yenile
+MSG_MENU_ABOUT
+Hakkında...
+MSG_MENU_QUIT
+Çıkış
+MSG_MENU_SETTINGS
+Ayarlar
+MSG_MENU_CELSIUS
+Santigrat
+MSG_MENU_FAHRENHEIT
+Fahrenhayt
+MSG_ABOUT_TITLE
+Hava Durumu hakkında
+MSG_ABOUT
+%s\n\nŞu anki ve önümüzdeki üç günün hava durumu,\nherhangi bir yer ya da adres için.\n\nHava verileri: Open-Meteo.com (CC BY 4.0).\nYerler OpenStreetMap'in Nominatim'i ile bulunur,\n© OpenStreetMap'e katkıda bulunanlar (ODbL).
+MSG_OK
+Tamam
+MSG_WELCOME
+Bir yer ya da adres yazın ve Return tuşuna basın.
+MSG_FINDING
+%s aranıyor...
+MSG_FETCHING
+%s için hava durumu isteniyor...
+MSG_NOT_FOUND
+"%s" adında bir yer bulunamadı.
+MSG_NO_NETWORK
+Ağ yok: bsdsocket.library bulunmuyor.
+MSG_NO_HTTP
+http.library bulunmuyor.
+MSG_NO_JSON
+json.library bulunmuyor.
+MSG_NO_MEMORY
+İstek için yeterli bellek yok.
+MSG_UNREACHED
+Hava durumu hizmetine ulaşılamadı.
+MSG_NONSENSE
+Hava durumu hizmetinin yanıtı okunamadı.
+MSG_UPDATED
+Güncelleme: %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap'e katkıda bulunanlar
+MSG_FEELS_LIKE
+Hissedilen %s
+MSG_HUMIDITY
+Nem
+MSG_WIND
+Rüzgâr
+MSG_PRECIPITATION
+Yağış
+MSG_SUNRISE
+Gün doğumu
+MSG_SUNSET
+Gün batımı
+MSG_NEXT_HOURS
+Önümüzdeki 24 saat
+MSG_TOMORROW
+Yarın
+MSG_HIGH_LOW
+En yüksek %s · En düşük %s
+MSG_WIND_N
+K
+MSG_WIND_NE
+KD
+MSG_WIND_E
+D
+MSG_WIND_SE
+GD
+MSG_WIND_S
+G
+MSG_WIND_SW
+GB
+MSG_WIND_W
+B
+MSG_WIND_NW
+KB
+MSG_SKY_CLEAR
+Açık
+MSG_SKY_MAINLY_CLEAR
+Az bulutlu
+MSG_SKY_PARTLY_CLOUDY
+Parçalı bulutlu
+MSG_SKY_OVERCAST
+Kapalı
+MSG_SKY_FOG
+Sisli
+MSG_SKY_RIME_FOG
+Dondurucu sis
+MSG_SKY_DRIZZLE_LIGHT
+Hafif çisenti
+MSG_SKY_DRIZZLE
+Çisenti
+MSG_SKY_DRIZZLE_DENSE
+Yoğun çisenti
+MSG_SKY_FREEZING_DRIZZLE
+Dondurucu çisenti
+MSG_SKY_RAIN_LIGHT
+Hafif yağmurlu
+MSG_SKY_RAIN
+Yağmurlu
+MSG_SKY_RAIN_HEAVY
+Kuvvetli yağmurlu
+MSG_SKY_FREEZING_RAIN
+Dondurucu yağmur
+MSG_SKY_SNOW_LIGHT
+Hafif kar yağışlı
+MSG_SKY_SNOW
+Kar yağışlı
+MSG_SKY_SNOW_HEAVY
+Yoğun kar yağışlı
+MSG_SKY_SNOW_GRAINS
+Kar taneleri
+MSG_SKY_SHOWERS_LIGHT
+Hafif sağanak
+MSG_SKY_SHOWERS
+Sağanak yağışlı
+MSG_SKY_SHOWERS_VIOLENT
+Kuvvetli sağanak
+MSG_SKY_SNOW_SHOWERS
+Kar sağanağı
+MSG_SKY_THUNDER
+Gök gürültülü sağanak
+MSG_SKY_THUNDER_HAIL
+Gök gürültülü dolu
+MSG_SKY_UNKNOWN
+Bilinmeyen hava durumu
+MSG_NOLIBRARY
+%s: %s açılamıyor\n
+MSG_NOMEMORY
+%s: yeterli bellek yok\n
+MSG_NOWINDOW
+%s: penceresi açılamıyor\n

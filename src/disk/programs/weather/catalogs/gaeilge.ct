@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language gaeilge
+## codeset 106
+; Weather's strings in Irish.
+MSG_WINDOW_TITLE
+Aimsir
+MSG_PLACE
+Á_it
+MSG_SEARCH
+_Cuardaigh
+MSG_KEPT
+C_oinnithe
+MSG_KEEP
+Coi_nnigh
+MSG_REMOVE
+_Bain
+MSG_NONE_KEPT
+Níl aon áit coinnithe
+MSG_MENU_PROJECT
+Tionscadal
+MSG_MENU_REFRESH
+Athnuaigh
+MSG_MENU_ABOUT
+Maidir Leis...
+MSG_MENU_QUIT
+Scoir
+MSG_MENU_SETTINGS
+Socruithe
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Maidir le hAimsir
+MSG_ABOUT
+%s\n\nAn aimsir anois agus don trí lá atá romhainn,\nd'aon áit nó seoladh.\n\nSonraí aimsire ó Open-Meteo.com (CC BY 4.0).\nÁiteanna aimsithe le Nominatim OpenStreetMap,\n© Rannpháirtithe OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Clóscríobh áit nó seoladh agus brúigh Return.
+MSG_FINDING
+Ag cuardach %s...
+MSG_FETCHING
+Ag fáil na haimsire do %s...
+MSG_NOT_FOUND
+Níor aimsíodh aon áit darb ainm "%s".
+MSG_NO_NETWORK
+Níl aon líonra ann: níl bsdsocket.library ann.
+MSG_NO_HTTP
+Níl http.library ann.
+MSG_NO_JSON
+Níl json.library ann.
+MSG_NO_MEMORY
+Níl dóthain cuimhne ann leis an iarratas a dhéanamh.
+MSG_UNREACHED
+Níorbh fhéidir teagmháil a dhéanamh leis an tseirbhís aimsire.
+MSG_NONSENSE
+Níorbh fhéidir freagra na seirbhíse aimsire a léamh.
+MSG_UPDATED
+Nuashonraithe %s
+MSG_SOURCE
+Open-Meteo.com · © Rannpháirtithe OpenStreetMap
+MSG_FEELS_LIKE
+Mothaítear mar %s
+MSG_HUMIDITY
+Taise
+MSG_WIND
+Gaoth
+MSG_PRECIPITATION
+Deascadh
+MSG_SUNRISE
+Éirí na gréine
+MSG_SUNSET
+Luí na gréine
+MSG_NEXT_HOURS
+Na 24 uair atá romhainn
+MSG_TOMORROW
+Amárach
+MSG_HIGH_LOW
+Uasteocht %s · Íosteocht %s
+MSG_WIND_N
+T
+MSG_WIND_NE
+OT
+MSG_WIND_E
+O
+MSG_WIND_SE
+OD
+MSG_WIND_S
+D
+MSG_WIND_SW
+ID
+MSG_WIND_W
+I
+MSG_WIND_NW
+IT
+MSG_SKY_CLEAR
+Spéir ghlan
+MSG_SKY_MAINLY_CLEAR
+Glan den chuid is mó
+MSG_SKY_PARTLY_CLOUDY
+Breacscamallach
+MSG_SKY_OVERCAST
+Modartha
+MSG_SKY_FOG
+Ceo
+MSG_SKY_RIME_FOG
+Ceo reo
+MSG_SKY_DRIZZLE_LIGHT
+Ceobhrán éadrom
+MSG_SKY_DRIZZLE
+Ceobhrán
+MSG_SKY_DRIZZLE_DENSE
+Ceobhrán trom
+MSG_SKY_FREEZING_DRIZZLE
+Ceobhrán reo
+MSG_SKY_RAIN_LIGHT
+Báisteach éadrom
+MSG_SKY_RAIN
+Báisteach
+MSG_SKY_RAIN_HEAVY
+Báisteach throm
+MSG_SKY_FREEZING_RAIN
+Báisteach reo
+MSG_SKY_SNOW_LIGHT
+Sneachta éadrom
+MSG_SKY_SNOW
+Sneachta
+MSG_SKY_SNOW_HEAVY
+Sneachta trom
+MSG_SKY_SNOW_GRAINS
+Gráinní sneachta
+MSG_SKY_SHOWERS_LIGHT
+Ceathanna éadroma
+MSG_SKY_SHOWERS
+Ceathanna
+MSG_SKY_SHOWERS_VIOLENT
+Ceathanna an-trom
+MSG_SKY_SNOW_SHOWERS
+Ceathanna sneachta
+MSG_SKY_THUNDER
+Stoirm thoirní
+MSG_SKY_THUNDER_HAIL
+Stoirm thoirní le clocha sneachta
+MSG_SKY_UNKNOWN
+Aimsir anaithnid
+MSG_NOLIBRARY
+%s: ní féidir %s a oscailt\n
+MSG_NOMEMORY
+%s: níl dóthain cuimhne ann\n
+MSG_NOWINDOW
+%s: ní féidir a fhuinneog a oscailt\n

@@ -298,6 +298,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Player.info", .picture = "multimedia-player", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Volume.info", .picture = "audio-card", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "programs/Movie.info", .picture = "video-x-generic", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "programs/Weather.info", .picture = "weather-few-clouds", .fields = &.{ "KIND=TOOL", icon_stack } },
     // Paint is a drawer: the program and the libraries it loads.
     .{ .path = "programs/Paint.info", .picture = "applications-graphics", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "programs/Paint/Paint.info", .picture = "applications-graphics", .fields = &.{ "KIND=TOOL", icon_stack } },
@@ -326,6 +327,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "programs/Docs/Sheet.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Terminal.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "programs/Docs/Volume.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "programs/Docs/Weather.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     // The system's tools, and what each is in SYS:System/Docs.
     .{ .path = "System/Shell.info", .picture = "utilities-terminal", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/HDToolBox.info", .picture = "drive-harddisk", .fields = &.{ "KIND=TOOL", icon_stack } },

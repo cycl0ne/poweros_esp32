@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language islenska
+## codeset 106
+; Weather's strings in Icelandic.
+MSG_WINDOW_TITLE
+Veður
+MSG_PLACE
+_Staður
+MSG_SEARCH
+_Leita
+MSG_KEPT
+_Vistaðir
+MSG_KEEP
+V_ista
+MSG_REMOVE
+_Fjarlægja
+MSG_NONE_KEPT
+Engir vistaðir staðir
+MSG_MENU_PROJECT
+Verkefni
+MSG_MENU_REFRESH
+Uppfæra
+MSG_MENU_ABOUT
+Um...
+MSG_MENU_QUIT
+Hætta
+MSG_MENU_SETTINGS
+Stillingar
+MSG_MENU_CELSIUS
+Celsíus
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Um Veður
+MSG_ABOUT
+%s\n\nVeðrið núna og næstu þrjá daga,\nfyrir hvaða stað eða heimilisfang sem er.\n\nVeðurgögn frá Open-Meteo.com (CC BY 4.0).\nStaðir finnast með Nominatim frá OpenStreetMap,\n© OpenStreetMap þátttakendur (ODbL).
+MSG_OK
+Í lagi
+MSG_WELCOME
+Sláðu inn stað eða heimilisfang og ýttu á Enter.
+MSG_FINDING
+Leitar að %s...
+MSG_FETCHING
+Sækir veður fyrir %s...
+MSG_NOT_FOUND
+Enginn staður sem heitir „%s“ fannst.
+MSG_NO_NETWORK
+Ekkert net: bsdsocket.library er ekki til staðar.
+MSG_NO_HTTP
+http.library er ekki til staðar.
+MSG_NO_JSON
+json.library er ekki til staðar.
+MSG_NO_MEMORY
+Ekki er nóg minni til að senda fyrirspurn.
+MSG_UNREACHED
+Ekki náðist samband við veðurþjónustuna.
+MSG_NONSENSE
+Ekki tókst að lesa svar veðurþjónustunnar.
+MSG_UPDATED
+Uppfært %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap þátttakendur
+MSG_FEELS_LIKE
+Upplifaður hiti %s
+MSG_HUMIDITY
+Rakastig
+MSG_WIND
+Vindur
+MSG_PRECIPITATION
+Úrkoma
+MSG_SUNRISE
+Sólarupprás
+MSG_SUNSET
+Sólsetur
+MSG_NEXT_HOURS
+Næstu 24 klukkustundir
+MSG_TOMORROW
+Á morgun
+MSG_HIGH_LOW
+Hæst %s · Lægst %s
+MSG_WIND_N
+N
+MSG_WIND_NE
+NA
+MSG_WIND_E
+A
+MSG_WIND_SE
+SA
+MSG_WIND_S
+S
+MSG_WIND_SW
+SV
+MSG_WIND_W
+V
+MSG_WIND_NW
+NV
+MSG_SKY_CLEAR
+Heiðskírt
+MSG_SKY_MAINLY_CLEAR
+Léttskýjað
+MSG_SKY_PARTLY_CLOUDY
+Hálfskýjað
+MSG_SKY_OVERCAST
+Alskýjað
+MSG_SKY_FOG
+Þoka
+MSG_SKY_RIME_FOG
+Frostþoka
+MSG_SKY_DRIZZLE_LIGHT
+Dálítil súld
+MSG_SKY_DRIZZLE
+Súld
+MSG_SKY_DRIZZLE_DENSE
+Mikil súld
+MSG_SKY_FREEZING_DRIZZLE
+Frostsúld
+MSG_SKY_RAIN_LIGHT
+Dálítil rigning
+MSG_SKY_RAIN
+Rigning
+MSG_SKY_RAIN_HEAVY
+Mikil rigning
+MSG_SKY_FREEZING_RAIN
+Frostrigning
+MSG_SKY_SNOW_LIGHT
+Dálítil snjókoma
+MSG_SKY_SNOW
+Snjókoma
+MSG_SKY_SNOW_HEAVY
+Mikil snjókoma
+MSG_SKY_SNOW_GRAINS
+Kornsnjór
+MSG_SKY_SHOWERS_LIGHT
+Dálitlar skúrir
+MSG_SKY_SHOWERS
+Skúrir
+MSG_SKY_SHOWERS_VIOLENT
+Miklar skúrir
+MSG_SKY_SNOW_SHOWERS
+Snjóél
+MSG_SKY_THUNDER
+Þrumuveður
+MSG_SKY_THUNDER_HAIL
+Þrumuveður með hagli
+MSG_SKY_UNKNOWN
+Óþekkt veður
+MSG_NOLIBRARY
+%s: get ekki opnað %s\n
+MSG_NOMEMORY
+%s: ekki nóg minni\n
+MSG_NOWINDOW
+%s: get ekki opnað gluggann sinn\n

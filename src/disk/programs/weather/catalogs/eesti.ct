@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language eesti
+## codeset 106
+; Weather's strings in Estonian.
+MSG_WINDOW_TITLE
+Ilm
+MSG_PLACE
+_Koht
+MSG_SEARCH
+_Otsi
+MSG_KEPT
+_Salvestatud
+MSG_KEEP
+S_alvesta
+MSG_REMOVE
+_Eemalda
+MSG_NONE_KEPT
+Salvestatud kohti pole
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Värskenda
+MSG_MENU_ABOUT
+Teave...
+MSG_MENU_QUIT
+Välju
+MSG_MENU_SETTINGS
+Sätted
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Teave: Ilm
+MSG_ABOUT
+%s\n\nIlm praegu ja järgmisel kolmel päeval\nmis tahes kohas või aadressil.\n\nIlmaandmed: Open-Meteo.com (CC BY 4.0).\nKohad leitakse OpenStreetMapi Nominatimiga,\n© OpenStreetMapi kaastöölised (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Sisesta koht või aadress ja vajuta Enter.
+MSG_FINDING
+Otsitakse: %s...
+MSG_FETCHING
+Laaditakse ilma: %s...
+MSG_NOT_FOUND
+Kohta nimega „%s“ ei leitud.
+MSG_NO_NETWORK
+Võrku pole: bsdsocket.library puudub.
+MSG_NO_HTTP
+http.library puudub.
+MSG_NO_JSON
+json.library puudub.
+MSG_NO_MEMORY
+Päringu jaoks pole piisavalt mälu.
+MSG_UNREACHED
+Ilmateenusega ei saadud ühendust.
+MSG_NONSENSE
+Ilmateenuse vastust ei õnnestunud lugeda.
+MSG_UPDATED
+Uuendatud %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMapi kaastöölised
+MSG_FEELS_LIKE
+Tundub nagu %s
+MSG_HUMIDITY
+Niiskus
+MSG_WIND
+Tuul
+MSG_PRECIPITATION
+Sademed
+MSG_SUNRISE
+Päikesetõus
+MSG_SUNSET
+Päikeseloojang
+MSG_NEXT_HOURS
+Järgmised 24 tundi
+MSG_TOMORROW
+Homme
+MSG_HIGH_LOW
+Max %s · Min %s
+MSG_WIND_N
+N
+MSG_WIND_NE
+NE
+MSG_WIND_E
+E
+MSG_WIND_SE
+SE
+MSG_WIND_S
+S
+MSG_WIND_SW
+SW
+MSG_WIND_W
+W
+MSG_WIND_NW
+NW
+MSG_SKY_CLEAR
+Selge
+MSG_SKY_MAINLY_CLEAR
+Vähene pilvisus
+MSG_SKY_PARTLY_CLOUDY
+Vahelduv pilvisus
+MSG_SKY_OVERCAST
+Pilves
+MSG_SKY_FOG
+Udu
+MSG_SKY_RIME_FOG
+Jäätuv udu
+MSG_SKY_DRIZZLE_LIGHT
+Nõrk uduvihm
+MSG_SKY_DRIZZLE
+Uduvihm
+MSG_SKY_DRIZZLE_DENSE
+Tugev uduvihm
+MSG_SKY_FREEZING_DRIZZLE
+Jäätuv uduvihm
+MSG_SKY_RAIN_LIGHT
+Nõrk vihm
+MSG_SKY_RAIN
+Vihm
+MSG_SKY_RAIN_HEAVY
+Tugev vihm
+MSG_SKY_FREEZING_RAIN
+Jäätuv vihm
+MSG_SKY_SNOW_LIGHT
+Nõrk lumesadu
+MSG_SKY_SNOW
+Lumesadu
+MSG_SKY_SNOW_HEAVY
+Tugev lumesadu
+MSG_SKY_SNOW_GRAINS
+Lumeterad
+MSG_SKY_SHOWERS_LIGHT
+Nõrk hoovihm
+MSG_SKY_SHOWERS
+Hoovihm
+MSG_SKY_SHOWERS_VIOLENT
+Tugev hoovihm
+MSG_SKY_SNOW_SHOWERS
+Hooglumi
+MSG_SKY_THUNDER
+Äike
+MSG_SKY_THUNDER_HAIL
+Äike rahega
+MSG_SKY_UNKNOWN
+Tundmatu ilm
+MSG_NOLIBRARY
+%s: ei saa avada teeki %s\n
+MSG_NOMEMORY
+%s: mälu ei jätku\n
+MSG_NOWINDOW
+%s: ei saa oma akent avada\n

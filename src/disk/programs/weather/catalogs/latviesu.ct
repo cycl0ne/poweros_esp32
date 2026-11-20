@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language latviesu
+## codeset 106
+; Weather's strings in Latvian.
+MSG_WINDOW_TITLE
+Laikapstākļi
+MSG_PLACE
+_Vieta
+MSG_SEARCH
+_Meklēt
+MSG_KEPT
+_Saglabātās
+MSG_KEEP
+S_aglabāt
+MSG_REMOVE
+_Noņemt
+MSG_NONE_KEPT
+Nav saglabātu vietu
+MSG_MENU_PROJECT
+Projekts
+MSG_MENU_REFRESH
+Atjaunināt
+MSG_MENU_ABOUT
+Par...
+MSG_MENU_QUIT
+Iziet
+MSG_MENU_SETTINGS
+Iestatījumi
+MSG_MENU_CELSIUS
+Celsijs
+MSG_MENU_FAHRENHEIT
+Fārenheits
+MSG_ABOUT_TITLE
+Par Laikapstākļiem
+MSG_ABOUT
+%s\n\nLaikapstākļi tagad un nākamajās trīs dienās\njebkurā vietā vai adresē.\n\nLaikapstākļu dati: Open-Meteo.com (CC BY 4.0).\nVietas atrod OpenStreetMap Nominatim,\n© OpenStreetMap līdzstrādnieki (ODbL).
+MSG_OK
+Labi
+MSG_WELCOME
+Ievadiet vietu vai adresi un nospiediet Enter.
+MSG_FINDING
+Meklē: %s...
+MSG_FETCHING
+Iegūst laikapstākļus: %s...
+MSG_NOT_FOUND
+Netika atrasta vieta ar nosaukumu „%s”.
+MSG_NO_NETWORK
+Nav tīkla: bsdsocket.library nav pieejama.
+MSG_NO_HTTP
+http.library nav pieejama.
+MSG_NO_JSON
+json.library nav pieejama.
+MSG_NO_MEMORY
+Pieprasījumam nepietiek atmiņas.
+MSG_UNREACHED
+Neizdevās sazināties ar laikapstākļu dienestu.
+MSG_NONSENSE
+Neizdevās nolasīt laikapstākļu dienesta atbildi.
+MSG_UPDATED
+Atjaunināts %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap līdzstrādnieki
+MSG_FEELS_LIKE
+Jūtas kā %s
+MSG_HUMIDITY
+Mitrums
+MSG_WIND
+Vējš
+MSG_PRECIPITATION
+Nokrišņi
+MSG_SUNRISE
+Saullēkts
+MSG_SUNSET
+Saulriets
+MSG_NEXT_HOURS
+Nākamās 24 stundas
+MSG_TOMORROW
+Rīt
+MSG_HIGH_LOW
+Maks. %s · Min. %s
+MSG_WIND_N
+Z
+MSG_WIND_NE
+ZA
+MSG_WIND_E
+A
+MSG_WIND_SE
+DA
+MSG_WIND_S
+D
+MSG_WIND_SW
+DR
+MSG_WIND_W
+R
+MSG_WIND_NW
+ZR
+MSG_SKY_CLEAR
+Skaidrs
+MSG_SKY_MAINLY_CLEAR
+Pārsvarā skaidrs
+MSG_SKY_PARTLY_CLOUDY
+Daļēji mākoņains
+MSG_SKY_OVERCAST
+Apmācies
+MSG_SKY_FOG
+Migla
+MSG_SKY_RIME_FOG
+Sasalstoša migla
+MSG_SKY_DRIZZLE_LIGHT
+Neliels smidzinājums
+MSG_SKY_DRIZZLE
+Smidzinājums
+MSG_SKY_DRIZZLE_DENSE
+Stiprs smidzinājums
+MSG_SKY_FREEZING_DRIZZLE
+Sasalstošs smidzinājums
+MSG_SKY_RAIN_LIGHT
+Neliels lietus
+MSG_SKY_RAIN
+Lietus
+MSG_SKY_RAIN_HEAVY
+Stiprs lietus
+MSG_SKY_FREEZING_RAIN
+Sasalstošs lietus
+MSG_SKY_SNOW_LIGHT
+Neliels sniegs
+MSG_SKY_SNOW
+Sniegs
+MSG_SKY_SNOW_HEAVY
+Stiprs sniegs
+MSG_SKY_SNOW_GRAINS
+Sniega graudi
+MSG_SKY_SHOWERS_LIGHT
+Nelielas lietusgāzes
+MSG_SKY_SHOWERS
+Lietusgāzes
+MSG_SKY_SHOWERS_VIOLENT
+Stipras lietusgāzes
+MSG_SKY_SNOW_SHOWERS
+Īslaicīgs sniegs
+MSG_SKY_THUNDER
+Pērkona negaiss
+MSG_SKY_THUNDER_HAIL
+Pērkona negaiss ar krusu
+MSG_SKY_UNKNOWN
+Nezināmi laikapstākļi
+MSG_NOLIBRARY
+%s: nevar atvērt %s\n
+MSG_NOMEMORY
+%s: nepietiek atmiņas\n
+MSG_NOWINDOW
+%s: nevar atvērt savu logu\n

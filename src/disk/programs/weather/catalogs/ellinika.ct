@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language ellinika
+## codeset 106
+; Weather's strings in Greek.
+MSG_WINDOW_TITLE
+Καιρός
+MSG_PLACE
+_Τοποθεσία
+MSG_SEARCH
+_Αναζήτηση
+MSG_KEPT
+Α_ποθηκευμένες
+MSG_KEEP
+Απο_θήκευση
+MSG_REMOVE
+Α_φαίρεση
+MSG_NONE_KEPT
+Καμία αποθηκευμένη τοποθεσία
+MSG_MENU_PROJECT
+Έργο
+MSG_MENU_REFRESH
+Ανανέωση
+MSG_MENU_ABOUT
+Σχετικά...
+MSG_MENU_QUIT
+Έξοδος
+MSG_MENU_SETTINGS
+Ρυθμίσεις
+MSG_MENU_CELSIUS
+Κελσίου
+MSG_MENU_FAHRENHEIT
+Φαρενάιτ
+MSG_ABOUT_TITLE
+Σχετικά με τον Καιρό
+MSG_ABOUT
+%s\n\nΟ καιρός τώρα και τις επόμενες τρεις ημέρες,\nγια οποιοδήποτε μέρος ή διεύθυνση.\n\nΔεδομένα καιρού από το Open-Meteo.com (CC BY 4.0).\nΟι τοποθεσίες βρίσκονται με το Nominatim του OpenStreetMap,\n© Συνεισφέροντες OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Πληκτρολογήστε μια τοποθεσία ή μια διεύθυνση και πατήστε Return.
+MSG_FINDING
+Αναζήτηση για %s...
+MSG_FETCHING
+Λήψη του καιρού για %s...
+MSG_NOT_FOUND
+Δεν βρέθηκε τοποθεσία με το όνομα «%s».
+MSG_NO_NETWORK
+Δεν υπάρχει δίκτυο: το bsdsocket.library λείπει.
+MSG_NO_HTTP
+Το http.library λείπει.
+MSG_NO_JSON
+Το json.library λείπει.
+MSG_NO_MEMORY
+Δεν υπάρχει αρκετή μνήμη για το αίτημα.
+MSG_UNREACHED
+Η υπηρεσία καιρού δεν ήταν προσβάσιμη.
+MSG_NONSENSE
+Η απάντηση της υπηρεσίας καιρού δεν μπόρεσε να διαβαστεί.
+MSG_UPDATED
+Ενημερώθηκε %s
+MSG_SOURCE
+Open-Meteo.com · © Συνεισφέροντες OpenStreetMap
+MSG_FEELS_LIKE
+Αίσθηση %s
+MSG_HUMIDITY
+Υγρασία
+MSG_WIND
+Άνεμος
+MSG_PRECIPITATION
+Υετός
+MSG_SUNRISE
+Ανατολή
+MSG_SUNSET
+Δύση
+MSG_NEXT_HOURS
+Οι επόμενες 24 ώρες
+MSG_TOMORROW
+Αύριο
+MSG_HIGH_LOW
+Μέγ. %s · Ελάχ. %s
+MSG_WIND_N
+Β
+MSG_WIND_NE
+ΒΑ
+MSG_WIND_E
+Α
+MSG_WIND_SE
+ΝΑ
+MSG_WIND_S
+Ν
+MSG_WIND_SW
+ΝΔ
+MSG_WIND_W
+Δ
+MSG_WIND_NW
+ΒΔ
+MSG_SKY_CLEAR
+Αίθριος
+MSG_SKY_MAINLY_CLEAR
+Κυρίως αίθριος
+MSG_SKY_PARTLY_CLOUDY
+Αραιές νεφώσεις
+MSG_SKY_OVERCAST
+Συννεφιά
+MSG_SKY_FOG
+Ομίχλη
+MSG_SKY_RIME_FOG
+Παγωμένη ομίχλη
+MSG_SKY_DRIZZLE_LIGHT
+Ασθενής ψιχάλα
+MSG_SKY_DRIZZLE
+Ψιχάλα
+MSG_SKY_DRIZZLE_DENSE
+Πυκνή ψιχάλα
+MSG_SKY_FREEZING_DRIZZLE
+Παγωμένη ψιχάλα
+MSG_SKY_RAIN_LIGHT
+Ασθενής βροχή
+MSG_SKY_RAIN
+Βροχή
+MSG_SKY_RAIN_HEAVY
+Ισχυρή βροχή
+MSG_SKY_FREEZING_RAIN
+Παγωμένη βροχή
+MSG_SKY_SNOW_LIGHT
+Ασθενής χιονόπτωση
+MSG_SKY_SNOW
+Χιονόπτωση
+MSG_SKY_SNOW_HEAVY
+Ισχυρή χιονόπτωση
+MSG_SKY_SNOW_GRAINS
+Χιονόκοκκοι
+MSG_SKY_SHOWERS_LIGHT
+Ασθενείς μπόρες
+MSG_SKY_SHOWERS
+Μπόρες
+MSG_SKY_SHOWERS_VIOLENT
+Ραγδαίες μπόρες
+MSG_SKY_SNOW_SHOWERS
+Μπόρες χιονιού
+MSG_SKY_THUNDER
+Καταιγίδα
+MSG_SKY_THUNDER_HAIL
+Καταιγίδα με χαλάζι
+MSG_SKY_UNKNOWN
+Άγνωστος καιρός
+MSG_NOLIBRARY
+%s: δεν ανοίγει το %s\n
+MSG_NOMEMORY
+%s: δεν υπάρχει αρκετή μνήμη\n
+MSG_NOWINDOW
+%s: δεν ανοίγει το παράθυρό του\n

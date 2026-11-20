@@ -1,0 +1,169 @@
+; Weather's strings, in English: the program is built with these, and a
+; translation in LOCALE:Catalogs/<language>/programs/Weather.catalog
+; stands in for them. A text with values is written by RawDoFmt, which
+; takes them in order: a translation keeps them so.
+#version 1
+;
+; The window.
+MSG_WINDOW_TITLE (1//)
+Weather
+MSG_PLACE (//)
+_Place
+MSG_SEARCH (//)
+_Search
+MSG_KEPT (//)
+_Kept
+MSG_KEEP (//)
+K_eep
+MSG_REMOVE (//)
+_Remove
+MSG_NONE_KEPT (//)
+No places kept
+;
+; The menus.
+MSG_MENU_PROJECT (//)
+Project
+MSG_MENU_REFRESH (//)
+Refresh
+MSG_MENU_ABOUT (//)
+About...
+MSG_MENU_QUIT (//)
+Quit
+MSG_MENU_SETTINGS (//)
+Settings
+MSG_MENU_CELSIUS (//)
+Celsius
+MSG_MENU_FAHRENHEIT (//)
+Fahrenheit
+;
+; The requesters.
+MSG_ABOUT_TITLE (//)
+About Weather
+MSG_ABOUT (//)
+%s\n\nThe weather now and for the next three days,\nfor any place or address.\n\nWeather data by Open-Meteo.com (CC BY 4.0).\nPlaces found with OpenStreetMap's Nominatim,\n© OpenStreetMap contributors (ODbL).
+MSG_OK (//)
+OK
+;
+; What the window says while it asks, and why it could not.
+MSG_WELCOME (//)
+Type a place or an address and press Return.
+MSG_FINDING (//)
+Looking for %s...
+MSG_FETCHING (//)
+Asking for the weather in %s...
+MSG_NOT_FOUND (//)
+No place called "%s" was found.
+MSG_NO_NETWORK (//)
+There is no network: bsdsocket.library is not there.
+MSG_NO_HTTP (//)
+http.library is not there.
+MSG_NO_JSON (//)
+json.library is not there.
+MSG_NO_MEMORY (//)
+There is not the memory to ask.
+MSG_UNREACHED (//)
+The weather service could not be reached.
+MSG_NONSENSE (//)
+The weather service's answer could not be read.
+MSG_UPDATED (//)
+Updated %s
+MSG_SOURCE (//)
+Open-Meteo.com · © OpenStreetMap contributors
+;
+; The weather now.
+MSG_FEELS_LIKE (//)
+Feels like %s
+MSG_HUMIDITY (//)
+Humidity
+MSG_WIND (//)
+Wind
+MSG_PRECIPITATION (//)
+Precipitation
+MSG_SUNRISE (//)
+Sunrise
+MSG_SUNSET (//)
+Sunset
+MSG_NEXT_HOURS (//)
+The next 24 hours
+MSG_TOMORROW (//)
+Tomorrow
+MSG_HIGH_LOW (//)
+High %s · Low %s
+;
+; Where the wind comes from.
+MSG_WIND_N (//)
+N
+MSG_WIND_NE (//)
+NE
+MSG_WIND_E (//)
+E
+MSG_WIND_SE (//)
+SE
+MSG_WIND_S (//)
+S
+MSG_WIND_SW (//)
+SW
+MSG_WIND_W (//)
+W
+MSG_WIND_NW (//)
+NW
+;
+; The weather, by its WMO code.
+MSG_SKY_CLEAR (//)
+Clear sky
+MSG_SKY_MAINLY_CLEAR (//)
+Mainly clear
+MSG_SKY_PARTLY_CLOUDY (//)
+Partly cloudy
+MSG_SKY_OVERCAST (//)
+Overcast
+MSG_SKY_FOG (//)
+Fog
+MSG_SKY_RIME_FOG (//)
+Freezing fog
+MSG_SKY_DRIZZLE_LIGHT (//)
+Light drizzle
+MSG_SKY_DRIZZLE (//)
+Drizzle
+MSG_SKY_DRIZZLE_DENSE (//)
+Dense drizzle
+MSG_SKY_FREEZING_DRIZZLE (//)
+Freezing drizzle
+MSG_SKY_RAIN_LIGHT (//)
+Light rain
+MSG_SKY_RAIN (//)
+Rain
+MSG_SKY_RAIN_HEAVY (//)
+Heavy rain
+MSG_SKY_FREEZING_RAIN (//)
+Freezing rain
+MSG_SKY_SNOW_LIGHT (//)
+Light snow
+MSG_SKY_SNOW (//)
+Snow
+MSG_SKY_SNOW_HEAVY (//)
+Heavy snow
+MSG_SKY_SNOW_GRAINS (//)
+Snow grains
+MSG_SKY_SHOWERS_LIGHT (//)
+Light showers
+MSG_SKY_SHOWERS (//)
+Showers
+MSG_SKY_SHOWERS_VIOLENT (//)
+Violent showers
+MSG_SKY_SNOW_SHOWERS (//)
+Snow showers
+MSG_SKY_THUNDER (//)
+Thunderstorm
+MSG_SKY_THUNDER_HAIL (//)
+Thunderstorm with hail
+MSG_SKY_UNKNOWN (//)
+Unknown weather
+;
+; Started from a shell.
+MSG_NOLIBRARY (//)
+%s: can't open %s\n
+MSG_NOMEMORY (//)
+%s: no memory\n
+MSG_NOWINDOW (//)
+%s: no window\n

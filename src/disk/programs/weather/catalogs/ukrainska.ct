@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language ukrainska
+## codeset 106
+; Weather's strings in Ukrainian.
+MSG_WINDOW_TITLE
+Погода
+MSG_PLACE
+_Місце
+MSG_SEARCH
+_Знайти
+MSG_KEPT
+_Обране
+MSG_KEEP
+_До обраного
+MSG_REMOVE
+_Видалити
+MSG_NONE_KEPT
+Немає обраних місць
+MSG_MENU_PROJECT
+Проєкт
+MSG_MENU_REFRESH
+Оновити
+MSG_MENU_ABOUT
+Про програму...
+MSG_MENU_QUIT
+Вихід
+MSG_MENU_SETTINGS
+Налаштування
+MSG_MENU_CELSIUS
+Цельсій
+MSG_MENU_FAHRENHEIT
+Фаренгейт
+MSG_ABOUT_TITLE
+Про «Погоду»
+MSG_ABOUT
+%s\n\nПогода зараз і на найближчі три дні\nдля будь-якого місця чи адреси.\n\nДані про погоду: Open-Meteo.com (CC BY 4.0).\nМісця знаходить Nominatim проєкту OpenStreetMap,\n© Учасники OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Введіть місце або адресу й натисніть Enter.
+MSG_FINDING
+Пошук: %s...
+MSG_FETCHING
+Запит погоди: %s...
+MSG_NOT_FOUND
+Місце «%s» не знайдено.
+MSG_NO_NETWORK
+Немає мережі: відсутня bsdsocket.library.
+MSG_NO_HTTP
+Відсутня http.library.
+MSG_NO_JSON
+Відсутня json.library.
+MSG_NO_MEMORY
+Недостатньо пам'яті для запиту.
+MSG_UNREACHED
+Не вдалося зв'язатися з метеосервісом.
+MSG_NONSENSE
+Не вдалося прочитати відповідь метеосервісу.
+MSG_UPDATED
+Оновлено о %s
+MSG_SOURCE
+Open-Meteo.com · © Учасники OpenStreetMap
+MSG_FEELS_LIKE
+Відчувається як %s
+MSG_HUMIDITY
+Вологість
+MSG_WIND
+Вітер
+MSG_PRECIPITATION
+Опади
+MSG_SUNRISE
+Схід сонця
+MSG_SUNSET
+Захід сонця
+MSG_NEXT_HOURS
+Найближчі 24 години
+MSG_TOMORROW
+Завтра
+MSG_HIGH_LOW
+Макс. %s · Мін. %s
+MSG_WIND_N
+Пн
+MSG_WIND_NE
+Пн-Сх
+MSG_WIND_E
+Сх
+MSG_WIND_SE
+Пд-Сх
+MSG_WIND_S
+Пд
+MSG_WIND_SW
+Пд-Зх
+MSG_WIND_W
+Зх
+MSG_WIND_NW
+Пн-Зх
+MSG_SKY_CLEAR
+Ясно
+MSG_SKY_MAINLY_CLEAR
+Малохмарно
+MSG_SKY_PARTLY_CLOUDY
+Мінлива хмарність
+MSG_SKY_OVERCAST
+Похмуро
+MSG_SKY_FOG
+Туман
+MSG_SKY_RIME_FOG
+Туман з памороззю
+MSG_SKY_DRIZZLE_LIGHT
+Слабка мряка
+MSG_SKY_DRIZZLE
+Мряка
+MSG_SKY_DRIZZLE_DENSE
+Сильна мряка
+MSG_SKY_FREEZING_DRIZZLE
+Крижана мряка
+MSG_SKY_RAIN_LIGHT
+Невеликий дощ
+MSG_SKY_RAIN
+Дощ
+MSG_SKY_RAIN_HEAVY
+Сильний дощ
+MSG_SKY_FREEZING_RAIN
+Крижаний дощ
+MSG_SKY_SNOW_LIGHT
+Невеликий сніг
+MSG_SKY_SNOW
+Сніг
+MSG_SKY_SNOW_HEAVY
+Сильний сніг
+MSG_SKY_SNOW_GRAINS
+Снігові зерна
+MSG_SKY_SHOWERS_LIGHT
+Невелика злива
+MSG_SKY_SHOWERS
+Злива
+MSG_SKY_SHOWERS_VIOLENT
+Сильна злива
+MSG_SKY_SNOW_SHOWERS
+Короткочасний сніг
+MSG_SKY_THUNDER
+Гроза
+MSG_SKY_THUNDER_HAIL
+Гроза з градом
+MSG_SKY_UNKNOWN
+Погода невідома
+MSG_NOLIBRARY
+%s: не вдається відкрити %s\n
+MSG_NOMEMORY
+%s: недостатньо пам'яті\n
+MSG_NOWINDOW
+%s: не вдається відкрити вікно\n

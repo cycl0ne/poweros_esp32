@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language bulgarski
+## codeset 106
+; Weather's strings in Bulgarian.
+MSG_WINDOW_TITLE
+Времето
+MSG_PLACE
+_Място
+MSG_SEARCH
+_Търси
+MSG_KEPT
+_Запазени
+MSG_KEEP
+З_апази
+MSG_REMOVE
+_Премахни
+MSG_NONE_KEPT
+Няма запазени места
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_REFRESH
+Обнови
+MSG_MENU_ABOUT
+Относно...
+MSG_MENU_QUIT
+Изход
+MSG_MENU_SETTINGS
+Настройки
+MSG_MENU_CELSIUS
+Целзий
+MSG_MENU_FAHRENHEIT
+Фаренхайт
+MSG_ABOUT_TITLE
+Относно Времето
+MSG_ABOUT
+%s\n\nВремето сега и през следващите три дни\nза всяко място или адрес.\n\nДанни за времето: Open-Meteo.com (CC BY 4.0).\nМестата се търсят с Nominatim на OpenStreetMap,\n© OpenStreetMap сътрудници (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Въведете място или адрес и натиснете Enter.
+MSG_FINDING
+Търсене на %s...
+MSG_FETCHING
+Заявка за времето в %s...
+MSG_NOT_FOUND
+Не е намерено място „%s“.
+MSG_NO_NETWORK
+Няма мрежа: bsdsocket.library липсва.
+MSG_NO_HTTP
+http.library липсва.
+MSG_NO_JSON
+json.library липсва.
+MSG_NO_MEMORY
+Няма достатъчно памет за заявката.
+MSG_UNREACHED
+Няма връзка с метеорологичната услуга.
+MSG_NONSENSE
+Отговорът на метеорологичната услуга не може да бъде прочетен.
+MSG_UPDATED
+Обновено в %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap сътрудници
+MSG_FEELS_LIKE
+Усеща се като %s
+MSG_HUMIDITY
+Влажност
+MSG_WIND
+Вятър
+MSG_PRECIPITATION
+Валежи
+MSG_SUNRISE
+Изгрев
+MSG_SUNSET
+Залез
+MSG_NEXT_HOURS
+Следващите 24 часа
+MSG_TOMORROW
+Утре
+MSG_HIGH_LOW
+Макс. %s · Мин. %s
+MSG_WIND_N
+С
+MSG_WIND_NE
+СИ
+MSG_WIND_E
+И
+MSG_WIND_SE
+ЮИ
+MSG_WIND_S
+Ю
+MSG_WIND_SW
+ЮЗ
+MSG_WIND_W
+З
+MSG_WIND_NW
+СЗ
+MSG_SKY_CLEAR
+Ясно
+MSG_SKY_MAINLY_CLEAR
+Предимно ясно
+MSG_SKY_PARTLY_CLOUDY
+Променлива облачност
+MSG_SKY_OVERCAST
+Облачно
+MSG_SKY_FOG
+Мъгла
+MSG_SKY_RIME_FOG
+Мъгла със скреж
+MSG_SKY_DRIZZLE_LIGHT
+Слаб ръмеж
+MSG_SKY_DRIZZLE
+Ръмеж
+MSG_SKY_DRIZZLE_DENSE
+Силен ръмеж
+MSG_SKY_FREEZING_DRIZZLE
+Замръзващ ръмеж
+MSG_SKY_RAIN_LIGHT
+Слаб дъжд
+MSG_SKY_RAIN
+Дъжд
+MSG_SKY_RAIN_HEAVY
+Силен дъжд
+MSG_SKY_FREEZING_RAIN
+Замръзващ дъжд
+MSG_SKY_SNOW_LIGHT
+Слаб сняг
+MSG_SKY_SNOW
+Сняг
+MSG_SKY_SNOW_HEAVY
+Силен сняг
+MSG_SKY_SNOW_GRAINS
+Снежни зърна
+MSG_SKY_SHOWERS_LIGHT
+Слаби превалявания
+MSG_SKY_SHOWERS
+Превалявания
+MSG_SKY_SHOWERS_VIOLENT
+Поройни превалявания
+MSG_SKY_SNOW_SHOWERS
+Снежни превалявания
+MSG_SKY_THUNDER
+Гръмотевична буря
+MSG_SKY_THUNDER_HAIL
+Гръмотевична буря с градушка
+MSG_SKY_UNKNOWN
+Неизвестно време
+MSG_NOLIBRARY
+%s: %s не може да бъде отворена\n
+MSG_NOMEMORY
+%s: няма достатъчно памет\n
+MSG_NOWINDOW
+%s: прозорецът не може да бъде отворен\n

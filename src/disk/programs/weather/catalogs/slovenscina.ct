@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language slovenscina
+## codeset 106
+; Weather's strings in Slovene.
+MSG_WINDOW_TITLE
+Vreme
+MSG_PLACE
+_Kraj
+MSG_SEARCH
+_Išči
+MSG_KEPT
+_Shranjeni
+MSG_KEEP
+Sh_rani
+MSG_REMOVE
+_Odstrani
+MSG_NONE_KEPT
+Ni shranjenih krajev
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Osveži
+MSG_MENU_ABOUT
+O programu...
+MSG_MENU_QUIT
+Končaj
+MSG_MENU_SETTINGS
+Nastavitve
+MSG_MENU_CELSIUS
+Celzij
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+O programu Vreme
+MSG_ABOUT
+%s\n\nVreme zdaj in za naslednje tri dni\nza kateri koli kraj ali naslov.\n\nVremenski podatki: Open-Meteo.com (CC BY 4.0).\nKraje išče Nominatim projekta OpenStreetMap,\n© Sodelavci OpenStreetMap (ODbL).
+MSG_OK
+V redu
+MSG_WELCOME
+Vnesite kraj ali naslov in pritisnite Enter.
+MSG_FINDING
+Iskanje kraja %s...
+MSG_FETCHING
+Pridobivanje vremena: %s...
+MSG_NOT_FOUND
+Kraja »%s« ni bilo mogoče najti.
+MSG_NO_NETWORK
+Ni omrežja: bsdsocket.library ni na voljo.
+MSG_NO_HTTP
+http.library ni na voljo.
+MSG_NO_JSON
+json.library ni na voljo.
+MSG_NO_MEMORY
+Za poizvedbo ni dovolj pomnilnika.
+MSG_UNREACHED
+Vremenske storitve ni bilo mogoče doseči.
+MSG_NONSENSE
+Odgovora vremenske storitve ni bilo mogoče prebrati.
+MSG_UPDATED
+Posodobljeno ob %s
+MSG_SOURCE
+Open-Meteo.com · © Sodelavci OpenStreetMap
+MSG_FEELS_LIKE
+Občuti se kot %s
+MSG_HUMIDITY
+Vlažnost
+MSG_WIND
+Veter
+MSG_PRECIPITATION
+Padavine
+MSG_SUNRISE
+Sončni vzhod
+MSG_SUNSET
+Sončni zahod
+MSG_NEXT_HOURS
+Naslednjih 24 ur
+MSG_TOMORROW
+Jutri
+MSG_HIGH_LOW
+Maks. %s · Min. %s
+MSG_WIND_N
+S
+MSG_WIND_NE
+SV
+MSG_WIND_E
+V
+MSG_WIND_SE
+JV
+MSG_WIND_S
+J
+MSG_WIND_SW
+JZ
+MSG_WIND_W
+Z
+MSG_WIND_NW
+SZ
+MSG_SKY_CLEAR
+Jasno
+MSG_SKY_MAINLY_CLEAR
+Pretežno jasno
+MSG_SKY_PARTLY_CLOUDY
+Delno oblačno
+MSG_SKY_OVERCAST
+Oblačno
+MSG_SKY_FOG
+Megla
+MSG_SKY_RIME_FOG
+Zmrzovalna megla
+MSG_SKY_DRIZZLE_LIGHT
+Rahlo rosenje
+MSG_SKY_DRIZZLE
+Rosenje
+MSG_SKY_DRIZZLE_DENSE
+Močno rosenje
+MSG_SKY_FREEZING_DRIZZLE
+Zmrzovalno rosenje
+MSG_SKY_RAIN_LIGHT
+Rahel dež
+MSG_SKY_RAIN
+Dež
+MSG_SKY_RAIN_HEAVY
+Močan dež
+MSG_SKY_FREEZING_RAIN
+Zmrzovalni dež
+MSG_SKY_SNOW_LIGHT
+Rahlo sneženje
+MSG_SKY_SNOW
+Sneženje
+MSG_SKY_SNOW_HEAVY
+Močno sneženje
+MSG_SKY_SNOW_GRAINS
+Zrnat sneg
+MSG_SKY_SHOWERS_LIGHT
+Rahle plohe
+MSG_SKY_SHOWERS
+Plohe
+MSG_SKY_SHOWERS_VIOLENT
+Silovite plohe
+MSG_SKY_SNOW_SHOWERS
+Snežne plohe
+MSG_SKY_THUNDER
+Nevihta
+MSG_SKY_THUNDER_HAIL
+Nevihta s točo
+MSG_SKY_UNKNOWN
+Neznano vreme
+MSG_NOLIBRARY
+%s: ni mogoče odpreti %s\n
+MSG_NOMEMORY
+%s: premalo pomnilnika\n
+MSG_NOWINDOW
+%s: ni mogoče odpreti okna\n

@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language russkij
+## codeset 106
+; Weather's strings in Russian.
+MSG_WINDOW_TITLE
+Погода
+MSG_PLACE
+_Место
+MSG_SEARCH
+_Найти
+MSG_KEPT
+_Избранное
+MSG_KEEP
+_В избранное
+MSG_REMOVE
+_Удалить
+MSG_NONE_KEPT
+Нет избранных мест
+MSG_MENU_PROJECT
+Проект
+MSG_MENU_REFRESH
+Обновить
+MSG_MENU_ABOUT
+О программе...
+MSG_MENU_QUIT
+Выход
+MSG_MENU_SETTINGS
+Настройки
+MSG_MENU_CELSIUS
+Цельсий
+MSG_MENU_FAHRENHEIT
+Фаренгейт
+MSG_ABOUT_TITLE
+О программе «Погода»
+MSG_ABOUT
+%s\n\nПогода сейчас и на ближайшие три дня\nдля любого места или адреса.\n\nДанные о погоде: Open-Meteo.com (CC BY 4.0).\nМеста находит Nominatim проекта OpenStreetMap,\n© Авторы OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Введите место или адрес и нажмите Enter.
+MSG_FINDING
+Поиск: %s...
+MSG_FETCHING
+Запрос погоды: %s...
+MSG_NOT_FOUND
+Место «%s» не найдено.
+MSG_NO_NETWORK
+Нет сети: отсутствует bsdsocket.library.
+MSG_NO_HTTP
+Отсутствует http.library.
+MSG_NO_JSON
+Отсутствует json.library.
+MSG_NO_MEMORY
+Недостаточно памяти для запроса.
+MSG_UNREACHED
+Не удалось связаться с метеосервисом.
+MSG_NONSENSE
+Не удалось прочитать ответ метеосервиса.
+MSG_UPDATED
+Обновлено в %s
+MSG_SOURCE
+Open-Meteo.com · © Авторы OpenStreetMap
+MSG_FEELS_LIKE
+Ощущается как %s
+MSG_HUMIDITY
+Влажность
+MSG_WIND
+Ветер
+MSG_PRECIPITATION
+Осадки
+MSG_SUNRISE
+Восход
+MSG_SUNSET
+Закат
+MSG_NEXT_HOURS
+Ближайшие 24 часа
+MSG_TOMORROW
+Завтра
+MSG_HIGH_LOW
+Макс. %s · Мин. %s
+MSG_WIND_N
+С
+MSG_WIND_NE
+СВ
+MSG_WIND_E
+В
+MSG_WIND_SE
+ЮВ
+MSG_WIND_S
+Ю
+MSG_WIND_SW
+ЮЗ
+MSG_WIND_W
+З
+MSG_WIND_NW
+СЗ
+MSG_SKY_CLEAR
+Ясно
+MSG_SKY_MAINLY_CLEAR
+Малооблачно
+MSG_SKY_PARTLY_CLOUDY
+Переменная облачность
+MSG_SKY_OVERCAST
+Пасмурно
+MSG_SKY_FOG
+Туман
+MSG_SKY_RIME_FOG
+Туман с изморозью
+MSG_SKY_DRIZZLE_LIGHT
+Слабая морось
+MSG_SKY_DRIZZLE
+Морось
+MSG_SKY_DRIZZLE_DENSE
+Сильная морось
+MSG_SKY_FREEZING_DRIZZLE
+Замерзающая морось
+MSG_SKY_RAIN_LIGHT
+Небольшой дождь
+MSG_SKY_RAIN
+Дождь
+MSG_SKY_RAIN_HEAVY
+Сильный дождь
+MSG_SKY_FREEZING_RAIN
+Ледяной дождь
+MSG_SKY_SNOW_LIGHT
+Небольшой снег
+MSG_SKY_SNOW
+Снег
+MSG_SKY_SNOW_HEAVY
+Сильный снег
+MSG_SKY_SNOW_GRAINS
+Снежные зёрна
+MSG_SKY_SHOWERS_LIGHT
+Небольшой ливень
+MSG_SKY_SHOWERS
+Ливень
+MSG_SKY_SHOWERS_VIOLENT
+Сильный ливень
+MSG_SKY_SNOW_SHOWERS
+Ливневый снег
+MSG_SKY_THUNDER
+Гроза
+MSG_SKY_THUNDER_HAIL
+Гроза с градом
+MSG_SKY_UNKNOWN
+Погода неизвестна
+MSG_NOLIBRARY
+%s: не удаётся открыть %s\n
+MSG_NOMEMORY
+%s: недостаточно памяти\n
+MSG_NOWINDOW
+%s: не удаётся открыть окно\n

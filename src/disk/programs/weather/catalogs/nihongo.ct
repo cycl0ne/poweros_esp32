@@ -1,0 +1,153 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language nihongo
+## codeset 106
+; Weather's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it.
+MSG_WINDOW_TITLE
+天気
+MSG_PLACE
+場所(_P)
+MSG_SEARCH
+検索(_S)
+MSG_KEPT
+保存した場所(_K)
+MSG_KEEP
+保存(_E)
+MSG_REMOVE
+削除(_R)
+MSG_NONE_KEPT
+保存した場所はありません
+MSG_MENU_PROJECT
+プロジェクト
+MSG_MENU_REFRESH
+更新
+MSG_MENU_ABOUT
+天気について...
+MSG_MENU_QUIT
+終了
+MSG_MENU_SETTINGS
+設定
+MSG_MENU_CELSIUS
+摂氏
+MSG_MENU_FAHRENHEIT
+華氏
+MSG_ABOUT_TITLE
+天気について
+MSG_ABOUT
+%s\n\n現在の天気と今後 3 日間の予報を、\n任意の場所や住所について表示します。\n\n気象データは Open-Meteo.com (CC BY 4.0) によります。\n場所の検索には OpenStreetMap の Nominatim を使用、\n© OpenStreetMap 貢献者 (ODbL)。
+MSG_OK
+OK
+MSG_WELCOME
+場所または住所を入力して Return キーを押してください。
+MSG_FINDING
+%s を検索しています...
+MSG_FETCHING
+%s の天気を取得しています...
+MSG_NOT_FOUND
+「%s」という場所は見つかりませんでした。
+MSG_NO_NETWORK
+ネットワークがありません: bsdsocket.library がありません。
+MSG_NO_HTTP
+http.library がありません。
+MSG_NO_JSON
+json.library がありません。
+MSG_NO_MEMORY
+問い合わせるためのメモリがありません。
+MSG_UNREACHED
+気象サービスに接続できませんでした。
+MSG_NONSENSE
+気象サービスの応答を読み取れませんでした。
+MSG_UPDATED
+%s 更新
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap 貢献者
+MSG_FEELS_LIKE
+体感 %s
+MSG_HUMIDITY
+湿度
+MSG_WIND
+風
+MSG_PRECIPITATION
+降水量
+MSG_SUNRISE
+日の出
+MSG_SUNSET
+日の入り
+MSG_NEXT_HOURS
+今後 24 時間
+MSG_TOMORROW
+明日
+MSG_HIGH_LOW
+最高 %s · 最低 %s
+MSG_WIND_N
+北
+MSG_WIND_NE
+北東
+MSG_WIND_E
+東
+MSG_WIND_SE
+南東
+MSG_WIND_S
+南
+MSG_WIND_SW
+南西
+MSG_WIND_W
+西
+MSG_WIND_NW
+北西
+MSG_SKY_CLEAR
+快晴
+MSG_SKY_MAINLY_CLEAR
+晴れ
+MSG_SKY_PARTLY_CLOUDY
+晴れ時々曇り
+MSG_SKY_OVERCAST
+曇り
+MSG_SKY_FOG
+霧
+MSG_SKY_RIME_FOG
+着氷性の霧
+MSG_SKY_DRIZZLE_LIGHT
+弱い霧雨
+MSG_SKY_DRIZZLE
+霧雨
+MSG_SKY_DRIZZLE_DENSE
+強い霧雨
+MSG_SKY_FREEZING_DRIZZLE
+着氷性の霧雨
+MSG_SKY_RAIN_LIGHT
+弱い雨
+MSG_SKY_RAIN
+雨
+MSG_SKY_RAIN_HEAVY
+強い雨
+MSG_SKY_FREEZING_RAIN
+着氷性の雨
+MSG_SKY_SNOW_LIGHT
+弱い雪
+MSG_SKY_SNOW
+雪
+MSG_SKY_SNOW_HEAVY
+強い雪
+MSG_SKY_SNOW_GRAINS
+霧雪
+MSG_SKY_SHOWERS_LIGHT
+弱いにわか雨
+MSG_SKY_SHOWERS
+にわか雨
+MSG_SKY_SHOWERS_VIOLENT
+激しいにわか雨
+MSG_SKY_SNOW_SHOWERS
+にわか雪
+MSG_SKY_THUNDER
+雷雨
+MSG_SKY_THUNDER_HAIL
+ひょうを伴う雷雨
+MSG_SKY_UNKNOWN
+天気不明
+MSG_NOLIBRARY
+%s: %s を開けません\n
+MSG_NOMEMORY
+%s: メモリが足りません\n
+MSG_NOWINDOW
+%s: ウィンドウを開けません\n

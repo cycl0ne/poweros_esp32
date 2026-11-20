@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language hrvatski
+## codeset 106
+; Weather's strings in Croatian.
+MSG_WINDOW_TITLE
+Vrijeme
+MSG_PLACE
+_Mjesto
+MSG_SEARCH
+_Traži
+MSG_KEPT
+_Spremljeno
+MSG_KEEP
+Sp_remi
+MSG_REMOVE
+_Ukloni
+MSG_NONE_KEPT
+Nema spremljenih mjesta
+MSG_MENU_PROJECT
+Projekt
+MSG_MENU_REFRESH
+Osvježi
+MSG_MENU_ABOUT
+O programu...
+MSG_MENU_QUIT
+Izlaz
+MSG_MENU_SETTINGS
+Postavke
+MSG_MENU_CELSIUS
+Celzij
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+O programu Vrijeme
+MSG_ABOUT
+%s\n\nVrijeme sada i za sljedeća tri dana\nza bilo koje mjesto ili adresu.\n\nPodaci o vremenu: Open-Meteo.com (CC BY 4.0).\nMjesta pronalazi Nominatim projekta OpenStreetMap,\n© OpenStreetMap suradnici (ODbL).
+MSG_OK
+U redu
+MSG_WELCOME
+Upišite mjesto ili adresu i pritisnite Enter.
+MSG_FINDING
+Traži se %s...
+MSG_FETCHING
+Dohvaća se vrijeme: %s...
+MSG_NOT_FOUND
+Mjesto „%s” nije pronađeno.
+MSG_NO_NETWORK
+Nema mreže: nedostaje bsdsocket.library.
+MSG_NO_HTTP
+Nedostaje http.library.
+MSG_NO_JSON
+Nedostaje json.library.
+MSG_NO_MEMORY
+Nema dovoljno memorije za upit.
+MSG_UNREACHED
+Meteorološka usluga nije dostupna.
+MSG_NONSENSE
+Odgovor meteorološke usluge nije moguće pročitati.
+MSG_UPDATED
+Ažurirano u %s
+MSG_SOURCE
+Open-Meteo.com · © OpenStreetMap suradnici
+MSG_FEELS_LIKE
+Osjeća se kao %s
+MSG_HUMIDITY
+Vlažnost
+MSG_WIND
+Vjetar
+MSG_PRECIPITATION
+Oborine
+MSG_SUNRISE
+Izlazak sunca
+MSG_SUNSET
+Zalazak sunca
+MSG_NEXT_HOURS
+Sljedeća 24 sata
+MSG_TOMORROW
+Sutra
+MSG_HIGH_LOW
+Maks. %s · Min. %s
+MSG_WIND_N
+S
+MSG_WIND_NE
+SI
+MSG_WIND_E
+I
+MSG_WIND_SE
+JI
+MSG_WIND_S
+J
+MSG_WIND_SW
+JZ
+MSG_WIND_W
+Z
+MSG_WIND_NW
+SZ
+MSG_SKY_CLEAR
+Vedro
+MSG_SKY_MAINLY_CLEAR
+Pretežno vedro
+MSG_SKY_PARTLY_CLOUDY
+Djelomično oblačno
+MSG_SKY_OVERCAST
+Oblačno
+MSG_SKY_FOG
+Magla
+MSG_SKY_RIME_FOG
+Ledena magla
+MSG_SKY_DRIZZLE_LIGHT
+Slaba rosulja
+MSG_SKY_DRIZZLE
+Rosulja
+MSG_SKY_DRIZZLE_DENSE
+Jaka rosulja
+MSG_SKY_FREEZING_DRIZZLE
+Ledena rosulja
+MSG_SKY_RAIN_LIGHT
+Slaba kiša
+MSG_SKY_RAIN
+Kiša
+MSG_SKY_RAIN_HEAVY
+Jaka kiša
+MSG_SKY_FREEZING_RAIN
+Ledena kiša
+MSG_SKY_SNOW_LIGHT
+Slab snijeg
+MSG_SKY_SNOW
+Snijeg
+MSG_SKY_SNOW_HEAVY
+Jak snijeg
+MSG_SKY_SNOW_GRAINS
+Zrnati snijeg
+MSG_SKY_SHOWERS_LIGHT
+Slabi pljuskovi
+MSG_SKY_SHOWERS
+Pljuskovi
+MSG_SKY_SHOWERS_VIOLENT
+Snažni pljuskovi
+MSG_SKY_SNOW_SHOWERS
+Snježni pljuskovi
+MSG_SKY_THUNDER
+Grmljavina
+MSG_SKY_THUNDER_HAIL
+Grmljavina s tučom
+MSG_SKY_UNKNOWN
+Nepoznato vrijeme
+MSG_NOLIBRARY
+%s: nije moguće otvoriti %s\n
+MSG_NOMEMORY
+%s: nema dovoljno memorije\n
+MSG_NOWINDOW
+%s: nije moguće otvoriti prozor\n

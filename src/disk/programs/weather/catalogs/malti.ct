@@ -1,0 +1,152 @@
+## version $VER: programs/Weather.catalog 1.0 (20.11.2026)
+## language malti
+## codeset 106
+; Weather's strings in Maltese.
+MSG_WINDOW_TITLE
+It-Temp
+MSG_PLACE
+_Post
+MSG_SEARCH
+_Fittex
+MSG_KEPT
+_Miżmumin
+MSG_KEEP
+Ż_omm
+MSG_REMOVE
+_Neħħi
+MSG_NONE_KEPT
+L-ebda post miżmum
+MSG_MENU_PROJECT
+Proġett
+MSG_MENU_REFRESH
+Aġġorna
+MSG_MENU_ABOUT
+Dwar...
+MSG_MENU_QUIT
+Oħroġ
+MSG_MENU_SETTINGS
+Impostazzjonijiet
+MSG_MENU_CELSIUS
+Celsius
+MSG_MENU_FAHRENHEIT
+Fahrenheit
+MSG_ABOUT_TITLE
+Dwar it-Temp
+MSG_ABOUT
+%s\n\nIt-temp issa u għat-tlitt ijiem li ġejjin,\ngħal kull post jew indirizz.\n\nDejta tat-temp minn Open-Meteo.com (CC BY 4.0).\nPostijiet misjuba bin-Nominatim t'OpenStreetMap,\n© kontributuri t'OpenStreetMap (ODbL).
+MSG_OK
+OK
+MSG_WELCOME
+Ikteb post jew indirizz u agħfas Return.
+MSG_FINDING
+Qed infittex %s...
+MSG_FETCHING
+Qed nitlob it-temp għal %s...
+MSG_NOT_FOUND
+Ma nstab l-ebda post jismu "%s".
+MSG_NO_NETWORK
+M'hemmx netwerk: bsdsocket.library mhux disponibbli.
+MSG_NO_HTTP
+http.library mhux disponibbli.
+MSG_NO_JSON
+json.library mhux disponibbli.
+MSG_NO_MEMORY
+M'hemmx biżżejjed memorja għat-talba.
+MSG_UNREACHED
+Is-servizz tat-temp ma setax jintlaħaq.
+MSG_NONSENSE
+It-tweġiba tas-servizz tat-temp ma setgħetx tinqara.
+MSG_UPDATED
+Aġġornat %s
+MSG_SOURCE
+Open-Meteo.com · © kontributuri t'OpenStreetMap
+MSG_FEELS_LIKE
+Tinħass %s
+MSG_HUMIDITY
+Umdità
+MSG_WIND
+Riħ
+MSG_PRECIPITATION
+Preċipitazzjoni
+MSG_SUNRISE
+Tlugħ ix-xemx
+MSG_SUNSET
+Nżul ix-xemx
+MSG_NEXT_HOURS
+Is-24 siegħa li ġejjin
+MSG_TOMORROW
+Għada
+MSG_HIGH_LOW
+Massima %s · Minima %s
+MSG_WIND_N
+Tramuntana
+MSG_WIND_NE
+Grigal
+MSG_WIND_E
+Lvant
+MSG_WIND_SE
+Xlokk
+MSG_WIND_S
+Nofsinhar
+MSG_WIND_SW
+Lbiċ
+MSG_WIND_W
+Punent
+MSG_WIND_NW
+Majjistral
+MSG_SKY_CLEAR
+Sema ċar
+MSG_SKY_MAINLY_CLEAR
+Ftit sħab
+MSG_SKY_PARTLY_CLOUDY
+Parzjalment imsaħħab
+MSG_SKY_OVERCAST
+Imsaħħab
+MSG_SKY_FOG
+Ċpar
+MSG_SKY_RIME_FOG
+Ċpar iffriżat
+MSG_SKY_DRIZZLE_LIGHT
+Raxx ħafif
+MSG_SKY_DRIZZLE
+Raxx
+MSG_SKY_DRIZZLE_DENSE
+Raxx fitt
+MSG_SKY_FREEZING_DRIZZLE
+Raxx iffriżat
+MSG_SKY_RAIN_LIGHT
+Xita ħafifa
+MSG_SKY_RAIN
+Xita
+MSG_SKY_RAIN_HEAVY
+Xita qawwija
+MSG_SKY_FREEZING_RAIN
+Xita ffriżata
+MSG_SKY_SNOW_LIGHT
+Borra ħafifa
+MSG_SKY_SNOW
+Borra
+MSG_SKY_SNOW_HEAVY
+Borra qawwija
+MSG_SKY_SNOW_GRAINS
+Granijiet tal-borra
+MSG_SKY_SHOWERS_LIGHT
+Ħalbiet ħfief
+MSG_SKY_SHOWERS
+Ħalbiet ta' xita
+MSG_SKY_SHOWERS_VIOLENT
+Ħalbiet qawwija ħafna
+MSG_SKY_SNOW_SHOWERS
+Ħalbiet ta' borra
+MSG_SKY_THUNDER
+Maltempata bir-ragħad
+MSG_SKY_THUNDER_HAIL
+Maltempata bir-ragħad u silġ
+MSG_SKY_UNKNOWN
+Temp mhux magħruf
+MSG_NOLIBRARY
+%s: ma jistax jiftaħ %s\n
+MSG_NOMEMORY
+%s: m'hemmx biżżejjed memorja\n
+MSG_NOWINDOW
+%s: ma jistax jiftaħ it-tieqa tiegħu\n
