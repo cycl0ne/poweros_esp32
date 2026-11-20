@@ -1892,6 +1892,10 @@ pub fn sizeVerified(ib: *IntuitionBase, purpose: verify.Purpose, answer: verify.
 
 fn release(ib: *IntuitionBase) void {
     const st = stateOf(ib);
+    // The size before the last step, which says whether it sent
+    // IDCMP_NEWSIZE.
+    const width_before = if (st.window) |w| w.width else 0;
+    const height_before = if (st.window) |w| w.height else 0;
     // A drag or a sizing ends where the pointer was let go: the moves just
     // before the release may have been given up for it, when events came
     // faster than they were handled.
@@ -1930,9 +1934,16 @@ fn release(ib: *IntuitionBase) void {
         },
         .size => {
             _window.drawGadget(ib, w, .size, false);
-            // A window that was asked hears that the sizing is over, even
-            // when its size came out the same.
-            if (w.idcmp & wn.IDCMP_SIZEVERIFY != 0 and w.width == st.box_width and w.height == st.box_height) {
+            // The sizing ends with an IDCMP_NEWSIZE whose qualifier no
+            // longer holds the button, so that a program that drew lightly
+            // while the steps came draws in full now. The last step sent it
+            // when it sized the window; when it changed nothing - the
+            // pointer stood still before it was let go - it is sent here. A
+            // window that was asked hears it even when its size came out
+            // as it was.
+            const stepped = w.width != width_before or w.height != height_before;
+            const sized = w.width != st.box_width or w.height != st.box_height;
+            if (!stepped and (sized or w.idcmp & wn.IDCMP_SIZEVERIFY != 0)) {
                 _window.send(ib, w, wn.IDCMP_NEWSIZE, 0);
             }
         },

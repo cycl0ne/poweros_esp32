@@ -40,7 +40,7 @@ const UTILITY_VERSION = 1;
 /// The name it is opened by, and the name in its ROM tag and on exec's
 /// library list. The SDK's, so a caller and the library cannot disagree.
 pub const LIBRARY_NAME = intuition.INTUITIONNAME;
-pub const LIBRARY_VERSION = 0;
+pub const LIBRARY_VERSION = 1;
 /// 2: the object system. 3: icclass, modelclass and the image calls.
 /// 4: screens. 5: windows, frameiclass and sysiclass. 6: gadgets:
 /// gadgetclass, buttongclass and the gadget calls. 7: the rest of the
@@ -291,8 +291,11 @@ pub const LIBRARY_VERSION = 0;
 /// WINDOWA_MouseY, where the pointer was at the message answered last.
 /// 106: WA_MenuBar - a window's menu titles kept in its screen's bar while
 /// it is active, a click on one opening them.
-pub const LIBRARY_REVISION = 106;
-const BUILD_DATE = "19.11.2026";
+/// 107, version 1: a sizing with the size gadget ends with an
+/// IDCMP_NEWSIZE without the button in its qualifier, also when its last
+/// step changed nothing.
+pub const LIBRARY_REVISION = 107;
+const BUILD_DATE = "20.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

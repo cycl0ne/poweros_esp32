@@ -330,6 +330,14 @@ put on the window with one `BltBitMapRastPort`: drawn in place, the
 window shows it cleared for as long as the drawing takes, and on a
 display that is shown straight from memory that flickers.
 
+Each step's `IDCMP_NEWSIZE` has `IEQUALIFIER_LEFTBUTTON` in its
+qualifier, and the sizing ends with one that has not - also when the
+pointer stood still before it was let go and the last step changed
+nothing. A program whose drawing takes long draws lightly for the
+steps - its last picture stretched to the new size with `BitMapScale`,
+say - and in full at the end. Under windowclass, `WINDOWA_Qualifier` is
+the qualifier of the message `WM_HANDLEINPUT` answered last.
+
 A program need not draw everything again on a size. What the size added,
 where the right and bottom border were, and where a gadget that moves
 with an edge was are the window's ground afterwards, and its damage: the

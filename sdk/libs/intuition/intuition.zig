@@ -88,7 +88,7 @@ pub const Tap = extern struct {
 /// by.
 pub const DOUBLETAP_DISTANCE: u32 = 16;
 /// The version a caller of this SDK asks for.
-pub const INTUITION_VERSION = 0;
+pub const INTUITION_VERSION = 1;
 
 pub const Class = classes.Class;
 pub const Object = classes.Object;

@@ -416,7 +416,10 @@ pub const WPOS_CENTERMOUSE: u32 = 2;
 /// cannot be refused. IDCMP_NEWSIZE says when it is over.
 pub const IDCMP_SIZEVERIFY: u32 = 0x0000_0001;
 /// Its size changed - or, for a window with IDCMP_SIZEVERIFY, the sizing it
-/// was warned of is over, whatever came of it.
+/// was warned of is over, whatever came of it. While the user sizes it with
+/// its size gadget, each step's message has IEQUALIFIER_LEFTBUTTON in its
+/// qualifier; the sizing ends with one that has not, also when the pointer
+/// stood still before it was let go.
 pub const IDCMP_NEWSIZE: u32 = 0x0000_0002;
 /// A simple-refresh window has a part to redraw: BeginRefresh, draw,
 /// EndRefresh. At most one is waiting at a time.

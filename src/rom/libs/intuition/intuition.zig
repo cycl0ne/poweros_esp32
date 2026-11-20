@@ -2937,6 +2937,68 @@ test "windows: a size stops at the screen's edge and leaves the window where it 
     try tearDown(ib);
 }
 
+test "windows: a sizing's steps hold the button in their qualifier, and it ends with a NEWSIZE that does not" {
+    const ib = try setUp();
+    defer kexec.deinit();
+    const wn = intuition.windows;
+    const ie = sdk.devices.inputevent;
+    const display = try Display.up(ib);
+
+    // On a screen of 64 by 40, with its bottom right corner at (49, 34).
+    const w = ib.iface().OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 10 },
+        .{ .tag = wn.WA_Top, .data = 5 },
+        .{ .tag = wn.WA_Width, .data = 40 },
+        .{ .tag = wn.WA_Height, .data = 30 },
+        .{ .tag = wn.WA_SizeGadget, .data = 1 },
+        .{ .tag = wn.WA_MinWidth, .data = 20 },
+        .{ .tag = wn.WA_MinHeight, .data = 15 },
+        .{ .tag = wn.WA_Activate, .data = 1 },
+        .{ .tag = wn.WA_IDCMP, .data = wn.IDCMP_NEWSIZE },
+        .{},
+    }).?;
+    var got: [4]intuition.IntuiMessage = undefined;
+    const held = ie.IEQUALIFIER_LEFTBUTTON;
+    const Pointer = struct {
+        fn at(base: *IntuitionBase, code: u32, qualifier: u32, x: i32, y: i32) void {
+            _input.handle(base, &.{ .class = ie.IECLASS_NEWPOINTERPOS, .code = code, .qualifier = qualifier, .x = x, .y = y });
+        }
+    };
+
+    // A step, then let go where the pointer stood: the step's message
+    // holds the button, and one more says the sizing is over.
+    Pointer.at(ib, ie.IECODE_LBUTTON, held, 48, 33);
+    Pointer.at(ib, ie.IECODE_NOBUTTON, held, 44, 29);
+    Pointer.at(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 0, 44, 29);
+    try testing.expectEqual(@as(usize, 36), windowAttr(ib, w, wn.WA_Width));
+    try testing.expectEqual(@as(usize, 26), windowAttr(ib, w, wn.WA_Height));
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(wn.IDCMP_NEWSIZE, got[0].class);
+    try testing.expect(got[0].qualifier & held != 0);
+    try testing.expectEqual(wn.IDCMP_NEWSIZE, got[1].class);
+    try testing.expect(got[1].qualifier & held == 0);
+
+    // Let go somewhere else: that last step is the end, and nothing more.
+    Pointer.at(ib, ie.IECODE_LBUTTON, held, 44, 29);
+    Pointer.at(ib, ie.IECODE_NOBUTTON, held, 42, 27);
+    Pointer.at(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 0, 40, 25);
+    try testing.expectEqual(@as(usize, 32), windowAttr(ib, w, wn.WA_Width));
+    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expect(got[0].qualifier & held != 0);
+    try testing.expect(got[1].qualifier & held == 0);
+
+    // Pressed and let go without a move: nothing was sized, nothing said.
+    Pointer.at(ib, ie.IECODE_LBUTTON, held, 40, 25);
+    Pointer.at(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 0, 40, 25);
+    try testing.expectEqual(@as(usize, 0), drainMessages(ib, w, &got));
+
+    const s: *intuition.Screen = @ptrFromInt(windowAttr(ib, w, wn.WA_Screen));
+    ib.iface().CloseWindow(w);
+    try testing.expect(ib.iface().CloseScreen(s));
+    display.down(ib);
+    try tearDown(ib);
+}
+
 test "windows: a size draws each gadget where it now is and the ground where it was, leaves the program's drawing alone, and owes it what the ground covered" {
     const ib = try setUp();
     defer kexec.deinit();
@@ -3692,14 +3754,17 @@ test "input: clicks, keys and ticks to the active window; the border gadgets act
     try testing.expectEqual(@as(usize, 1), drainMessages(ib, w, &got));
     try testing.expectEqual(wn.IDCMP_CHANGEWINDOW, got[0].class);
 
-    // The size gadget, now at 6+56-5, 13+26-3: two narrower, two shorter.
+    // The size gadget, now at 6+56-5, 13+26-3: two narrower, two shorter,
+    // and let go where the pointer stood - one more NEWSIZE says the
+    // sizing is over.
     pointerEvent(ib, ie.IECODE_LBUTTON, 57, 36);
     pointerEvent(ib, ie.IECODE_NOBUTTON, 55, 34);
     pointerEvent(ib, ie.IECODE_LBUTTON | ie.IECODE_UP_PREFIX, 55, 34);
     try testing.expectEqual(@as(usize, 54), windowAttr(ib, w, wn.WA_Width));
     try testing.expectEqual(@as(usize, 24), windowAttr(ib, w, wn.WA_Height));
-    try testing.expectEqual(@as(usize, 2), drainMessages(ib, w, &got));
+    try testing.expectEqual(@as(usize, 3), drainMessages(ib, w, &got));
     try testing.expectEqual(wn.IDCMP_NEWSIZE, got[0].class);
+    try testing.expectEqual(wn.IDCMP_NEWSIZE, got[2].class);
 
     // The close gadget let go somewhere else does nothing; let go over it,
     // it says so - and the window stays open until the program closes it.
