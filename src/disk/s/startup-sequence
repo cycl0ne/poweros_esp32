@@ -20,8 +20,12 @@ Resident >NIL: C:Dir PURE
 Resident >NIL: C:List PURE
 
 ; LIBS: is two directories: the libraries, and the classes a program opens
-; as gadgets/<name>.gadget, which live in SYS:classes.
-Assign >NIL: LIBS: SYS:libs SYS:classes
+; as gadgets/<name>.gadget, which live in SYS:classes - on a disk with the
+; desktop.
+Assign >NIL: LIBS: SYS:libs
+If EXISTS SYS:classes
+  Assign >NIL: LIBS: SYS:classes ADD
+EndIf
 
 ; FONTS: - each family a contents file and a directory of its sizes.
 Assign >NIL: FONTS: SYS:fonts
@@ -101,20 +105,24 @@ EndIf
 ; names. A card put in or taken out later is noticed within a second, and
 ; the desktop follows. A board without a slot starts nothing. After
 ; User-Startup, so a drive mounted there by hand (Mount SD0:) is the one
-; the card gets.
-C:BindDrivers
+; the card gets. A disk without cards and sticks has none of it.
+If EXISTS C:BindDrivers
+  C:BindDrivers
+EndIf
 
 ; The USB buses whose socket can only be a host - on a board whose
 ; keyboard and mouse are USB - started before the desktop comes up, so
 ; what is plugged in works from its first picture on. A socket that is
-; the console's too is left to `USB START`.
-C:USB >NIL: AUTO
+; the console's too is left to `USB START`. A disk without USB has none.
+If EXISTS C:USB
+  C:USB >NIL: AUTO
+EndIf
 
 ; The desktop, and this shell's window put away so it shows: a shell is
 ; one double click away (SYS:System/Shell), and the serial console keeps
 ; its own. A desktop that could not start leaves this shell where it is,
-; and so does a disk without one - the ESP32-S3's flash, whose desktop
-; comes onto the card as packages.
+; and so does a disk without one - an ESP32's flash, which holds the
+; base system alone.
 Set Desktop 20
 If EXISTS C:LoadAnvil
   C:LoadAnvil

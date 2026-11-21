@@ -24,8 +24,11 @@ const poweros_sdk = @import("poweros_sdk");
 /// (`builtFor`): a driver of hardware a chip lacks is on no disk of that
 /// chip's, whatever its board names.
 ///
-/// - `base`: what a shell needs - C:, S:, locale.library, the keymaps,
-///   the fonts.
+/// - `base`: what a shell needs - C:, S:, locale.library, the keymaps.
+///   The ROM's fonts draw it.
+/// - `fonts`: FONTS: - the families scripts/fetch-fonts.sh fetched, as
+///   the system's own files; the outlines of the scripts beyond Latin's
+///   and the emoji only on the 64-bit disks, and LOCALE:Emoji with them.
 /// - `languages`: what the system speaks besides English - LOCALE:'s
 ///   languages, countries and catalogs. Without it the system speaks
 ///   English and writes the United States' formats.
@@ -46,7 +49,7 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `dev`: what somebody working on the system wants there - Git.
 /// - `tests`: C:test and SYS:Tests, and the example library and gadget
 ///   they open.
-pub const Set = enum { base, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, svg, dev, tests };
+pub const Set = enum { base, fonts, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, svg, dev, tests };
 
 /// Some of the sets.
 pub const Sets = std.EnumSet(Set);

@@ -187,8 +187,8 @@ board runs is in [Boards](#boards).
 
 | `-Dboard=` | Board | State |
 |---|---|---|
-| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; its flash disk holds the shell, the network and the card ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
-| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; its flash disk holds the shell, the network and the card ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
+| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; its flash disk holds the base system, which boots into a shell ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
+| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; its flash disk holds the base system, which boots into a shell ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); sound into an output that goes nowhere |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file, DVI to a monitor without HDMI's block |
@@ -262,7 +262,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard, mouse and wheel, and the USB controller, at 240 MHz (an older QEMU runs too, without what it lacks - run the script again for the wheel and USB) |
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/esp32s3wifi.device` |
 | `scripts/fetch-aic8800.sh` | the AIC8800 USB Wi-Fi stick's firmware, which `DEVS:usb/aic8800.device` loads into it (the ESP32-P4's disk) |
-| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go, Liberation, Noto Sans Devanagari, Noto Sans Arabic, Noto Sans CJK and Noto Color Emoji on the 64-bit machines' disks), and a font only the host tests read (Source Sans 3) |
+| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` on the disks that hold `fonts` (Spleen and Go; Liberation, Noto Sans Devanagari, Noto Sans Arabic, Noto Sans CJK and Noto Color Emoji on the 64-bit machines' only), and a font only the host tests read (Source Sans 3) |
 | `scripts/fetch-emoji.sh` | Unicode's list of the emoji and the CLDR's names for them, made into `LOCALE:Emoji` - the emoji in their groups and order, and what each is called in the disk's languages (on the 64-bit machines' disks) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
@@ -418,7 +418,8 @@ sets in `src/boards/<board>/disk.zig`:
 
 | Set | What is in it |
 |---|---|
-| `base` | what a shell needs: `C:`, `S:`, locale.library, the keymaps, the fonts |
+| `base` | what a shell needs: `C:`, `S:`, locale.library, the keymaps; the ROM's fonts draw it |
+| `fonts` | `FONTS:`: Spleen and Go, and on the 64-bit machines' disks Liberation, Noto Sans Devanagari, Arabic and CJK and Noto Color Emoji, with `LOCALE:Emoji` |
 | `languages` | what the system speaks besides English: `LOCALE:`'s languages, countries and catalogs |
 | `gui` | the desktop: anvil.library, the gadget and image classes, the datatypes of pictures and text, the programs with windows |
 | `net` | bsdsocket.library and what speaks over it, the network drivers, `C:net` |
@@ -433,17 +434,14 @@ sets in `src/boards/<board>/disk.zig`:
 | `dev` | Git |
 | `tests` | `C:test` and `SYS:Tests`, and the example library and gadget they open |
 
-The two ESP32-S3 boards' flash holds what starts the board and no more -
-`base`, `net`, `wifi`, `storage` and `usb`: the shell on the panel, in
-English, the network over the radio, the card in the slot and USB. The
-desktop, sound and the other languages are to come onto the card as
-packages. The ESP32-P4 boards hold every set but `svg`, `dev` and
-`tests`: svg.datatype is built for them too, to come onto their card
-the same way. The two emulators' disks have `tests`, and are where the test programs are
-run; QEMU's ESP32-S3 keeps the desktop for them and leaves sound, the
-languages and Git off. The 64-bit machines' disks hold every set. `-Dsets=` names other sets for one
-build, and what a chip cannot run is on none of its disks whatever the
-sets say.
+Every ESP32 board's flash - the S3's and the P4's, and the two
+emulators' - holds `base` and no more: the board boots into a shell, in
+English, drawn in the ROM's fonts, and `FONTS:` is an empty drawer.
+Everything else is built for those chips all the same, and is the
+developer's to add: `-Dsets=` for the flash (`-Dsets=base,tests` for
+the test programs in an emulator), or installed apart from it. The
+64-bit machines' disks hold every set. What a chip cannot run is on
+none of its disks whatever the sets say.
 
 A file is on a disk when its set and the set of every drawer it lies in
 are among the disk's: `System/NetLoad` is in `net` and lies in a drawer
