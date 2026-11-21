@@ -175,6 +175,7 @@ pub const LVO = struct {
     pub const DeleteTree = libraries.lvo(158);
     pub const ReadPassword = libraries.lvo(159);
     pub const FindSegResident = libraries.lvo(160);
+    pub const FindLoadedCode = libraries.lvo(161);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -337,6 +338,7 @@ pub const Fn = struct {
     pub const DeleteTree = *const fn (*DosBase, [*:0]const u8, u32, ?*utility.Hook) callconv(.c) bool;
     pub const ReadPassword = *const fn (*DosBase, ?*dos.FileHandle, [*]u8, usize) callconv(.c) isize;
     pub const FindSegResident = *const fn (*DosBase, ?*dos.SegList, ?*const exec.Resident, exec.NodeType) callconv(.c) ?*const exec.Resident;
+    pub const FindLoadedCode = *const fn (*DosBase, usize, [*]u8, u32, *usize) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1322,5 +1324,13 @@ pub const DosBase = opaque {
     /// further one.
     pub fn FindSegResident(self: *DosBase, seg_list: ?*dos.SegList, after: ?*const exec.Resident, kind: exec.NodeType) ?*const exec.Resident {
         return libraries.call(self, LVO.FindSegResident, Fn.FindSegResident, .{ seg_list, after, kind });
+    }
+
+    /// The file loaded from disk whose code holds `address` (SINCE 1.28): its
+    /// name copied into `name` (`size` bytes, NUL included) and the offset
+    /// into its linked code into `offset`. False for the ROM's code and for
+    /// an address in no loaded code.
+    pub fn FindLoadedCode(self: *DosBase, address: usize, name: [*]u8, size: u32, offset: *usize) bool {
+        return libraries.call(self, LVO.FindLoadedCode, Fn.FindLoadedCode, .{ address, name, size, offset });
     }
 };

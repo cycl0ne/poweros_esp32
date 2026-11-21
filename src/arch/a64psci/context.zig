@@ -20,6 +20,7 @@ pub const hardware: exec.TaskHardware = .{
     .leave_exception = leaveException,
     .call_on_stack = callOnStack,
     .leaving = &task_leaving,
+    .spot = taskSpot,
 };
 
 /// The task each core's dispatcher is switching away from, until start.S
@@ -84,4 +85,17 @@ fn pushException(context: *anyopaque, entry: *const anyopaque) *anyopaque {
 fn leaveException(context: *anyopaque) noreturn {
     _ = trap.syscall(@intFromEnum(trap.Syscall.leave_exception), @intFromPtr(context));
     unreachable;
+}
+
+/// GetTaskSpot's reading of a context (`TaskHardware.spot`): the return
+/// address of the exception, the stack pointer and x30 from the frame,
+/// and the frame records up from x29 - AAPCS64 keeps the record before
+/// at the frame pointer and the return address 8 above it.
+fn taskSpot(context: *anyopaque, lower: usize, upper: usize, spot: *@import("sdk").exec.TaskSpot) void {
+    const frame: *const trap.Frame = @ptrCast(@alignCast(context));
+    spot.pc = frame.elr;
+    spot.sp = frame.x[31];
+    spot.link = frame.x[30];
+    exec.walkFrames(u64, spot, frame.x[29], lower, upper, 0, 8);
+    exec.markRom(spot, @import("layout.zig").inKernel);
 }

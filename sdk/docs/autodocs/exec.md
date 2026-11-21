@@ -71,12 +71,14 @@ Generated from the source by `./zig build autodoc`.
 - [FindResident](#findresident) - Finds a resident module by name.
 - [FindSemaphore](#findsemaphore) - Finds a public semaphore by name.
 - [FindTask](#findtask) - Finds a task by name, or answers the calling task.
+- [FindTaskById](#findtaskbyid) - Finds a task by its number.
 - [FlushMemory](#flushmemory) - Frees all the memory that can be freed.
 - [FreeMem](#freemem) - Gives memory back to the system.
 - [FreePooled](#freepooled) - Gives a block from `AllocPooled` back to its pool.
 - [FreeSignal](#freesignal) - Gives a signal bit back.
 - [FreeVec](#freevec) - Gives back memory from `AllocVec` or `AllocMem`, whose size it knows.
 - [GetMsg](#getmsg) - Takes the oldest message off a port, without waiting.
+- [GetTaskSpot](#gettaskspot) - Where a task stands: its instruction, its stack pointer and the calls it came through.
 - [GetTimeBase](#gettimebase) - Tells how many times a second the machine's counter counts.
 - [HoldOtherCores](#holdothercores) - Holds the other cores still until `ReleaseOtherCores`.
 - [InitCode](#initcode) - Starts every resident module of a start class, highest priority first.
@@ -85,6 +87,7 @@ Generated from the source by `./zig build autodoc`.
 - [InitSemaphore](#initsemaphore) - Prepares a semaphore for use.
 - [Insert](#insert) - Puts a node on a list after a given node.
 - [IntVector](#intvector) - Hands back one interrupt number's vector.
+- [KillTask](#killtask) - Ends a task from outside it, whatever it is doing.
 - [LockCoreTasks](#lockcoretasks) - Core `core`'s tasks, with that core's lock taken.
 - [LockExecList](#lockexeclist) - Hands back one of exec's own lists, its lock taken.
 - [LogControl](#logcontrol) - Changes one of the system log's settings, or asks what it is.
@@ -4336,6 +4339,71 @@ const me = sys.FindTask(null).?;
 if (sys.FindTask("timer.device")) |t| sys.Signal(t, 1 << sig);
 ```
 
+## FindTaskById
+
+Finds a task by its number.
+
+**SYNOPSIS**
+
+```zig
+fn FindTaskById(base: *ExecBase, id: u32) ?*Task
+```
+
+**SINCE**
+
+1.46. LVO -620.
+
+**INPUTS**
+
+- `id` - a task's number (`Task.id`), as `C:dbg/Tasks`, `s3> tasks`
+  and the memory listings show it.
+
+**RESULT**
+
+The task, running, ready or waiting, on whichever core; null when no
+task has that number.
+
+**BEHAVIOR**
+
+The tasks running on the cores are looked at first, then each core's
+ready and waiting tasks under that core's lists. A number is given to
+one task only and never again, so a task found is the one meant, not
+a later one that took its place.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: never.
+- Locks: takes each core's lists in turn; the caller holds none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The task is its own: it may end as soon as the call returns, as one
+FindTask answers may.
+
+**NOTES**
+
+The cores' lists are taken one after another, not at once: a task
+that moves to another core just then may be missed, and is found when
+asked again.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindTask`, `GetTaskSpot`, `KillTask`
+
+**EXAMPLES**
+
+```zig
+if (sys.FindTaskById(12)) |task| {
+    // task.name()
+}
+```
+
 ## FlushMemory
 
 Frees all the memory that can be freed.
@@ -4736,6 +4804,99 @@ _ = sys.Wait(mask);
 while (sys.GetMsg(port)) |msg| {
     // ... deal with it ...
     sys.ReplyMsg(msg);
+}
+```
+
+## GetTaskSpot
+
+Where a task stands: its instruction, its stack pointer and the calls it came through.
+
+**SYNOPSIS**
+
+```zig
+fn GetTaskSpot(base: *ExecBase, task: *Task, spot: *TaskSpot) bool
+```
+
+**SINCE**
+
+1.46. LVO -612.
+
+**INPUTS**
+
+- `task` - the task to look at; not the caller. It may have ended
+  since the caller found it.
+- `spot` - filled in: `pc`, `sp`, `link`, the return addresses in
+  `calls` and how many in `depth`, the ROM's ones in `in_rom`, and the
+  core it ran on in `core`.
+
+**RESULT**
+
+True with `spot` filled in; false, `spot` empty, for the caller itself
+and for a task that has ended or is being taken away. True with only
+`core` set and `pc` 0 for a task running on a core that holds its
+interrupts off: it is not read.
+
+**BEHAVIOR**
+
+A task that is not running - waiting, ready, held by a failure - is
+read from the context its last switch saved: `pc` is where it goes on
+once it runs again, which for a task that waits is inside `Wait`, and
+`calls` say who waits. A task running on another core is read there,
+at that core's next exception exit, as the exception saved it, and
+runs on as if nothing had asked; `core` names that core. The caller
+spins for that answer, an interrupt of that core away, and looks again
+when the task left that core first. A core that does not answer within
+100 ms holds its interrupts off - the task runs inside Disable, or
+spins for a lock with its interrupts masked - and the request is taken
+back: the spot names the core, and nothing of the task.
+
+The task is looked for on the lists of the core it names before
+anything of it is read, so one that has ended since the caller found
+it - its memory given back, perhaps another's - answers false.
+
+The calls are found up the task's frame pointers, from the frame `pc`
+is in, and none is read outside the task's stack; `link` is the
+return address the CPU keeps in a register, which a function that has
+made no frame of its own returns to. The ROM's addresses are marked in
+`in_rom` - bit 0 `pc`, bit 1 `link`, bit 2 + i `calls[i]` - and any
+other is in a file loaded from disk: dos's `FindLoadedCode` names it.
+
+**CONTEXT**
+
+- Waits: no; it spins for a running task until its core has read it,
+  100 ms at most.
+- Interrupts: never.
+- Locks: takes the task's core's lists for the moment of the reading;
+  the caller holds none (`LockCoreTasks` included).
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`spot` is the caller's; the addresses in it are the task's code, named
+for as long as that code stays loaded.
+
+**NOTES**
+
+What it answers is a moment: the task may be elsewhere by the time the
+caller reads it. Asked several times, a task that loops shows the same
+few places, and one that waits the same one each time.
+
+**BUGS**
+
+On the ESP32-S3 a task's frames are in its register windows until it
+switches, so `calls` stays empty there: `pc` and `link` are all it
+gets. Code built without frame pointers ends the chain early.
+
+**SEE ALSO**
+
+`KillTask`, `CoreTask`, `LockCoreTasks`, dos's `FindLoadedCode`
+
+**EXAMPLES**
+
+```zig
+var spot = exec.TaskSpot{};
+if (sys.GetTaskSpot(task, &spot)) {
+    // spot.pc, then spot.calls[0..spot.depth], innermost first
 }
 ```
 
@@ -5277,6 +5438,75 @@ None known.
 sys.Disable();
 const count = if (sys.IntVector(n)) |v| v.count else 0;
 sys.Enable();
+```
+
+## KillTask
+
+Ends a task from outside it, whatever it is doing.
+
+**SYNOPSIS**
+
+```zig
+fn KillTask(base: *ExecBase, task: *Task) bool
+```
+
+**SINCE**
+
+1.46. LVO -616.
+
+**INPUTS**
+
+- `task` - the task to end; not the caller, and not one of exec's own.
+
+**RESULT**
+
+True when the task goes; false for the caller itself, one of exec's own
+tasks (the system's number, `MEMOWNER_SYSTEM`), and one that has ended.
+
+**BEHAVIOR**
+
+The task is taken from wherever it is - waiting, ready, held by the
+Software Failure requester, or running on another core, which stops it
+first - and started again at its end on its own stack: what it was
+doing is dropped, its frames with it. It leaves the semaphore queue it
+waited in and lets go of the semaphores it holds, its end hooks run,
+its private memory is freed, and its Task and name stay where they
+are, since a port or a request may still name it. A task killed
+before whose end failed again is removed as it is.
+
+**CONTEXT**
+
+- Waits: yes, for a task running on another core to leave it.
+- Interrupts: never.
+- Locks: takes the task's core's lists; the caller holds none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+What the task allocated and did not free stays allocated, marked with
+its number: `s3> memowners` shows it as an ended task's.
+
+**NOTES**
+
+Nothing the task meant to do on its way out happens: a file it had
+open stays open, a request it had sent may still come back to its
+port. It is the way out of a task that is stuck, not a way to stop
+one that can be asked (Ctrl-C, `Signal`).
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`GetTaskSpot`, `RemTask`, `Signal`
+
+**EXAMPLES**
+
+```zig
+if (!sys.KillTask(task)) {
+    // the caller, exec's own, or ended already
+}
 ```
 
 ## LockCoreTasks

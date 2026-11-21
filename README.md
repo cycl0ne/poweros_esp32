@@ -161,8 +161,10 @@ The programs on the disk:
   MemMap, Clock, and SystemScan on the 64-bit machines
 - **`SYS:Commodities`** - Exchange, Blanker, FKey, Emoji, AutoPoint,
   ClickToFront, MouseBlanker, NoCapsLock and NumericPad
-- **`C:`** - 65 commands, test programs in `C:test` and network tools in
-  `C:net`; scripts, redirection, line editing and file name completion
+- **`C:`** - 65 commands, test programs in `C:test`, network tools in
+  `C:net`, and in `C:dbg` the tools that list the tasks, show where one
+  stands and end one that is stuck; scripts, redirection, line editing
+  and file name completion
 - **Installing** - the Installer and `C:Install` put the running system
   onto a card or an SSD, and `C:Update` brings it up to date from a
   release package, with a way back
@@ -433,7 +435,7 @@ sets in `src/boards/<board>/disk.zig`:
 | `modbus` | modbus.library and the RS-485 line |
 | `commodities` | commodities.library and `SYS:Commodities` |
 | `svg` | svg.datatype: SVG files as pictures |
-| `dev` | Git |
+| `dev` | Git, and `C:dbg`: Tasks, Where, Kill |
 | `tests` | `C:test` and `SYS:Tests`, and the example library and gadget they open |
 
 Every ESP32 board's flash - the S3's and the P4's, and the two

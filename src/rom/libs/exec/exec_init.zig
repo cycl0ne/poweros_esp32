@@ -128,8 +128,13 @@ pub const LIBRARY_VERSION = 1;
 /// 42: UptimeUs and SpinUs - the time since the machine came up and the
 /// wait that does not give the CPU away, as calls, so that a module
 /// counts by the kernel's rate wherever it was loaded from.
-pub const LIBRARY_REVISION = 45;
-const BUILD_DATE = "18.11.2026";
+/// 46: GetTaskSpot - where another task stands, its instruction and the
+/// calls it came through, a running one read on its own core without
+/// being stopped - and KillTask, the Software Failure requester's Kill as
+/// a call, so a tool in a shell can look into a task that is stuck and
+/// end it; FindTaskById, a task by the number the listings show.
+pub const LIBRARY_REVISION = 46;
+const BUILD_DATE = "21.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

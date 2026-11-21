@@ -159,6 +159,9 @@ pub const FindTask = @import("task/findtask.zig").FindTask;
 pub const SetTaskPri = @import("task/settaskpri.zig").SetTaskPri;
 pub const SetTaskAffinity = @import("task/settaskaffinity.zig").SetTaskAffinity;
 pub const CoreTask = @import("task/coretask.zig").CoreTask;
+pub const GetTaskSpot = @import("task/gettaskspot.zig").GetTaskSpot;
+pub const KillTask = @import("task/killtask.zig").KillTask;
+pub const FindTaskById = @import("task/findtaskbyid.zig").FindTaskById;
 pub const ReadCoreTimes = @import("task/readcoretimes.zig").ReadCoreTimes;
 pub const DetachLibrary = @import("library/detachlibrary.zig").DetachLibrary;
 pub const SetTaskEndMsg = @import("task/settaskendmsg.zig").SetTaskEndMsg;
@@ -257,6 +260,10 @@ pub const SFF_TQE = _task.SFF_TQE;
 /// How exec builds and switches task contexts; the kernel sets it before
 /// the bootstrap (the default switches nothing, for host tests).
 pub const task_hardware = &_task.task_hardware;
+/// A context's frames walked, and the ROM's addresses marked: the parts
+/// of a CPU's `TaskHardware.spot`.
+pub const walkFrames = _task.walkFrames;
+pub const markRom = _task.markRom;
 
 /// True once initExec has run (the kernel's trap code checks it).
 pub var initialized = false;
@@ -1850,6 +1857,152 @@ test "Kill: started again at its end on its own stack, out of a semaphore's queu
     try testing.expect(!_task.killTask(SysBase, task)); // ended
     FreeMem(SysBase, task, kept.bytes());
     ReleaseSemaphore(SysBase, &sem);
+    try expectNoLeaks();
+}
+
+/// A CPU's reading of a context, as the host has none: the context's
+/// address as `pc`, the stack's bounds as `sp` and `link`.
+const Spotting = struct {
+    fn read(context: *anyopaque, lower: usize, upper: usize, spot: *sdk.exec.TaskSpot) void {
+        spot.pc = @intFromPtr(context);
+        spot.sp = lower;
+        spot.link = upper;
+    }
+};
+
+test "GetTaskSpot: a task switched out read from its saved context; the caller and an ended task refused" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    task_hardware.spot = Spotting.read;
+    const boot = SysBase.cpu().this_task;
+    const task = CreateTask(SysBase, "looked at", -1, &idleCode, 2048).?;
+
+    var spot: sdk.exec.TaskSpot = .{ .pc = 1, .depth = 3 };
+    try testing.expect(GetTaskSpot(SysBase, task, &spot));
+    try testing.expectEqual(@intFromPtr(task.sp_reg.?), spot.pc);
+    try testing.expectEqual(task.sp_lower, spot.sp);
+    try testing.expectEqual(task.sp_upper, spot.link);
+    try testing.expectEqual(@as(u32, 0), spot.depth);
+    try testing.expectEqual(sdk.exec.ANY_CORE, spot.core);
+
+    // The caller, and a task that has ended: nothing read.
+    try testing.expect(!GetTaskSpot(SysBase, boot, &spot));
+    try testing.expectEqual(@as(usize, 0), spot.pc);
+    var ended: Task = .{ .state = .removed };
+    try testing.expect(!GetTaskSpot(SysBase, &ended, &spot));
+    RemTask(SysBase, task);
+    try expectNoLeaks();
+}
+
+test "GetTaskSpot: a running task asked for is read at its core's exception exit, and runs on" {
+    try setUp();
+    defer deinit();
+    FakeTaskHardware.install();
+    defer FakeTaskHardware.uninstall();
+    task_hardware.spot = Spotting.read;
+    const cpu = SysBase.cpu();
+    const boot = cpu.this_task;
+
+    // As GetTaskSpot on another core leaves this one's state.
+    var spot: sdk.exec.TaskSpot = .{};
+    cpu.peek_into = &spot;
+    cpu.peeking = boot;
+    try testing.expectEqual(boot_ctx, exceptionExit(boot_ctx));
+    try testing.expectEqual(@intFromPtr(boot_ctx), spot.pc);
+    try testing.expectEqual(boot.sp_lower, spot.sp);
+    try testing.expectEqual(@as(u32, 0), spot.core);
+    try testing.expect(cpu.peeking == null and cpu.peek_into == null);
+    try testing.expectEqual(boot, cpu.this_task); // it runs on
+
+    // Gone from the core before the exit: nothing read, the request
+    // cleared all the same, for the asker to look again.
+    const other = CreateTask(SysBase, "elsewhere", -1, &idleCode, 2048).?;
+    var missed: sdk.exec.TaskSpot = .{};
+    cpu.peek_into = &missed;
+    cpu.peeking = other;
+    _ = exceptionExit(boot_ctx);
+    try testing.expectEqual(@as(usize, 0), missed.pc);
+    try testing.expectEqual(sdk.exec.ANY_CORE, missed.core);
+    try testing.expect(cpu.peeking == null);
+
+    // The lists held by the code the exception came into: not read then,
+    // at the next exit instead.
+    cpu.peek_into = &spot;
+    cpu.peeking = boot;
+    spot = .{};
+    interruptEnter(SysBase);
+    _task.takeTaskLists(SysBase, 0);
+    _ = interruptExit(SysBase, boot_ctx);
+    _task.dropTaskLists(SysBase);
+    try testing.expect(cpu.peeking == boot);
+    _ = exceptionExit(boot_ctx);
+    try testing.expect(cpu.peeking == null);
+    try testing.expectEqual(@intFromPtr(boot_ctx), spot.pc);
+    RemTask(SysBase, other);
+    try expectNoLeaks();
+}
+
+test "walkFrames: return addresses up the records inside the stack, the chain ended at one outside it" {
+    var stack: [16]u64 = @splat(0);
+    const lower = @intFromPtr(&stack);
+    const upper = lower + @sizeOf(@TypeOf(stack));
+    // Three records, each {frame pointer before, return address}, the
+    // last pointing out of the stack.
+    stack[2] = lower + 6 * 8;
+    stack[3] = 0x1000;
+    stack[6] = lower + 10 * 8;
+    stack[7] = 0x2000;
+    stack[10] = upper + 64;
+    stack[11] = 0x3000;
+    var spot: sdk.exec.TaskSpot = .{};
+    _task.walkFrames(u64, &spot, lower + 2 * 8, lower, upper, 0, 8);
+    try testing.expectEqual(@as(u32, 3), spot.depth);
+    try testing.expectEqualSlices(usize, &.{ 0x1000, 0x2000, 0x3000 }, spot.calls[0..3]);
+
+    // A record below the one before ends it: no loop.
+    stack[10] = lower + 2 * 8;
+    spot = .{};
+    _task.walkFrames(u64, &spot, lower + 2 * 8, lower, upper, 0, 8);
+    try testing.expectEqual(@as(u32, 3), spot.depth);
+    // A frame pointer outside the stack reads nothing.
+    spot = .{};
+    _task.walkFrames(u64, &spot, upper, lower, upper, 0, 8);
+    try testing.expectEqual(@as(u32, 0), spot.depth);
+    // The RISC-V layout, below the frame pointer.
+    spot = .{};
+    stack[4] = 0;
+    stack[5] = 0x4000;
+    _task.walkFrames(u64, &spot, lower + 6 * 8, lower, upper, -16, -8);
+    try testing.expectEqual(@as(u32, 1), spot.depth);
+    try testing.expectEqual(@as(usize, 0x4000), spot.calls[0]);
+
+    // The ROM's marked: pc, link and calls[1].
+    const Rom = struct {
+        fn holds(address: usize) bool {
+            return address == 0x1000 or address == 0x2000;
+        }
+    };
+    spot = .{ .pc = 0x1000, .link = 0x2000, .depth = 3, .calls = .{ 0x3000, 0x2000, 0x5000 } ++ @as([13]usize, @splat(0)) };
+    _task.markRom(&spot, Rom.holds);
+    try testing.expectEqual(@as(u32, 1 | 2 | 8), spot.in_rom);
+}
+
+test "KillTask, GetTaskSpot, FindTaskById: through the table; the caller refused, a task by its number" {
+    try setUp();
+    defer deinit();
+    const sys = SysBase.iface();
+    try testing.expect(!sys.KillTask(sys.FindTask(null).?));
+    var spot: sdk.exec.TaskSpot = .{};
+    try testing.expect(!sys.GetTaskSpot(sys.FindTask(null).?, &spot));
+    const boot = sys.FindTask(null).?;
+    try testing.expectEqual(boot, sys.FindTaskById(boot.id).?);
+    const task = CreateTask(SysBase, "numbered", -1, &idleCode, 2048).?;
+    try testing.expectEqual(task, sys.FindTaskById(task.id).?);
+    const id = task.id;
+    RemTask(SysBase, task);
+    try testing.expect(sys.FindTaskById(id) == null);
     try expectNoLeaks();
 }
 

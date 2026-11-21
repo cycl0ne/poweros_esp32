@@ -161,6 +161,7 @@ const Execute = @import("program/execute.zig").Execute;
 const LoadSeg = @import("program/loadseg.zig").LoadSeg;
 const UnLoadSeg = @import("program/unloadseg.zig").UnLoadSeg;
 const FindSegResident = @import("program/findsegresident.zig").FindSegResident;
+const FindLoadedCode = @import("program/findloadedcode.zig").FindLoadedCode;
 const ErrorReport = @import("error/errorreport.zig").ErrorReport;
 const StartNotify = @import("notify/startnotify.zig").StartNotify;
 const EndNotify = @import("notify/endnotify.zig").EndNotify;
@@ -371,6 +372,7 @@ const contract_files = [_][]const u8{
     @embedFile("lock/deletetree.zig"),
     @embedFile("file/readpassword.zig"),
     @embedFile("program/findsegresident.zig"),
+    @embedFile("program/findloadedcode.zig"),
 };
 
 fn lvoDoPkt(db: *DosBase, port: *MsgPort, action: i32, arg1: isize, arg2: isize, arg3: isize, arg4: isize, arg5: isize) callconv(.c) isize {
@@ -772,6 +774,9 @@ fn lvoLoadSeg(db: *DosBase, name: [*:0]const u8) callconv(.c) ?*dos.SegList {
 fn lvoFindSegResident(db: *DosBase, seg_list: ?*dos.SegList, after: ?*const exec.Resident, kind: exec.NodeType) callconv(.c) ?*const exec.Resident {
     return FindSegResident(db, seg_list, after, kind);
 }
+fn lvoFindLoadedCode(db: *DosBase, address: usize, name: [*]u8, size: u32, offset: *usize) callconv(.c) bool {
+    return FindLoadedCode(db, address, name, size, offset);
+}
 
 fn lvoUnLoadSeg(db: *DosBase, seg_list: ?*dos.SegList) callconv(.c) void {
     UnLoadSeg(db, seg_list);
@@ -1014,6 +1019,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoDeleteTree),
     vec(lvoReadPassword),
     vec(lvoFindSegResident),
+    vec(lvoFindLoadedCode),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------
@@ -1021,7 +1027,7 @@ pub const vectors = [_]*const anyopaque{
 const testing = std.testing;
 
 test "the jump table: the ROM's slots, every LVO at its function" {
-    try testing.expectEqual(@as(usize, 161), vectors.len);
+    try testing.expectEqual(@as(usize, 162), vectors.len);
     inline for (@typeInfo(LVO).@"struct".decls) |d| {
         const index: usize = @intCast(@divExact(-@field(LVO, d.name), exec.slot_size) - 1);
         try testing.expectEqual(vec(@field(@This(), "lvo" ++ d.name)), vectors[index]);

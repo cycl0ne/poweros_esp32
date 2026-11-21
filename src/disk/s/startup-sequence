@@ -79,8 +79,9 @@ Assign >NIL: LOCALE: SYS:locale
 C:SetPrefs >NIL:
 
 ; Where a command is looked for, before C:. C:test holds the programs that
-; exercise a device or a library, C:net the network's tools, so they are
-; called by name like the rest - each where the disk has it, since Path
+; exercise a device or a library, C:net the network's tools, C:dbg those
+; that look into the running system, so they are called by name like the
+; rest - each where the disk has it, since Path
 ; stops at the first drawer that is not there.
 Path >NIL: RAM: SYS: S:
 If EXISTS C:test
@@ -88,6 +89,9 @@ If EXISTS C:test
 EndIf
 If EXISTS C:net
   Path >NIL: C:net ADD
+EndIf
+If EXISTS C:dbg
+  Path >NIL: C:dbg ADD
 EndIf
 
 SetEnv Kickstart $Kickstart

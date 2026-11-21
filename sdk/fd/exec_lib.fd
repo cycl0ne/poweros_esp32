@@ -318,4 +318,19 @@ void SpinUs(u64 us)
 /// given, is told of each library and device before its Expunge runs and
 /// after. Returns how much more memory is free than before.
 usize FlushMemory(?*exec.FlushHook hook)
+/// Where a task stands (SINCE 1.46): the instruction it runs at or goes
+/// on from, its stack pointer, the return address in its link register,
+/// and the return addresses up its frames, the ROM's ones marked. A task
+/// running on another core is read there at that core's next exception
+/// exit and runs on. False for the caller and for a task that has ended.
+bool GetTaskSpot(*exec.Task task, *exec.TaskSpot spot)
+/// A task ended from outside it (SINCE 1.46), as Kill on the Software
+/// Failure requester ends one: what it was doing is dropped, it lets go
+/// of its semaphores, its end runs on its own stack, and its Task stays.
+/// False for the caller, exec's own tasks and one that has ended.
+bool KillTask(*exec.Task task)
+/// The task with number `id` (`Task.id`) (SINCE 1.46): running, ready or
+/// waiting, on whichever core; null when none has it. It may end as soon
+/// as the call returns.
+?*exec.Task FindTaskById(u32 id)
 ##end

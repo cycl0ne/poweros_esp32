@@ -161,6 +161,9 @@ pub const LVO = struct {
     pub const UptimeUs = libraries.lvo(149);
     pub const SpinUs = libraries.lvo(150);
     pub const FlushMemory = libraries.lvo(151);
+    pub const GetTaskSpot = libraries.lvo(152);
+    pub const KillTask = libraries.lvo(153);
+    pub const FindTaskById = libraries.lvo(154);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -312,6 +315,9 @@ pub const Fn = struct {
     pub const UptimeUs = *const fn (*ExecBase) callconv(.c) u64;
     pub const SpinUs = *const fn (*ExecBase, u64) callconv(.c) void;
     pub const FlushMemory = *const fn (*ExecBase, ?*exec.FlushHook) callconv(.c) usize;
+    pub const GetTaskSpot = *const fn (*ExecBase, *exec.Task, *exec.TaskSpot) callconv(.c) bool;
+    pub const KillTask = *const fn (*ExecBase, *exec.Task) callconv(.c) bool;
+    pub const FindTaskById = *const fn (*ExecBase, u32) callconv(.c) ?*exec.Task;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -1045,5 +1051,29 @@ pub const ExecBase = opaque {
     /// after. Returns how much more memory is free than before.
     pub fn FlushMemory(self: *ExecBase, hook: ?*exec.FlushHook) usize {
         return libraries.call(self, LVO.FlushMemory, Fn.FlushMemory, .{hook});
+    }
+
+    /// Where a task stands (SINCE 1.46): the instruction it runs at or goes
+    /// on from, its stack pointer, the return address in its link register,
+    /// and the return addresses up its frames, the ROM's ones marked. A task
+    /// running on another core is read there at that core's next exception
+    /// exit and runs on. False for the caller and for a task that has ended.
+    pub fn GetTaskSpot(self: *ExecBase, task: *exec.Task, spot: *exec.TaskSpot) bool {
+        return libraries.call(self, LVO.GetTaskSpot, Fn.GetTaskSpot, .{ task, spot });
+    }
+
+    /// A task ended from outside it (SINCE 1.46), as Kill on the Software
+    /// Failure requester ends one: what it was doing is dropped, it lets go
+    /// of its semaphores, its end runs on its own stack, and its Task stays.
+    /// False for the caller, exec's own tasks and one that has ended.
+    pub fn KillTask(self: *ExecBase, task: *exec.Task) bool {
+        return libraries.call(self, LVO.KillTask, Fn.KillTask, .{task});
+    }
+
+    /// The task with number `id` (`Task.id`) (SINCE 1.46): running, ready or
+    /// waiting, on whichever core; null when none has it. It may end as soon
+    /// as the call returns.
+    pub fn FindTaskById(self: *ExecBase, id: u32) ?*exec.Task {
+        return libraries.call(self, LVO.FindTaskById, Fn.FindTaskById, .{id});
     }
 };

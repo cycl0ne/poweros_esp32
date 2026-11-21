@@ -22,6 +22,7 @@ pub const hardware: exec.TaskHardware = .{
     .leave_exception = leaveException,
     .call_on_stack = callOnStack,
     .leaving = &task_leaving,
+    .spot = taskSpot,
 };
 
 /// The task each core's dispatcher is switching away from, until start.S
@@ -77,4 +78,23 @@ fn pushException(context: *anyopaque, entry: *const anyopaque) *anyopaque {
 fn leaveException(context: *anyopaque) noreturn {
     _ = trap.syscall(@intFromEnum(trap.Syscall.leave_exception), @intCast(@intFromPtr(context)));
     unreachable;
+}
+
+/// GetTaskSpot's reading of a context (`TaskHardware.spot`): pc, a1 and
+/// a0 from the frame - a0's top two bits are the window's increment, and
+/// the address's own are pc's. The frames above are in the register
+/// windows until the task switches, so no chain is walked.
+fn taskSpot(context: *anyopaque, _: usize, _: usize, spot: *@import("sdk").exec.TaskSpot) void {
+    const frame: *const trap.Frame = @ptrCast(@alignCast(context));
+    spot.pc = frame.pc;
+    spot.sp = frame.a[1];
+    if (frame.a[0] != 0) spot.link = (frame.a[0] & 0x3FFF_FFFF) | (frame.pc & 0xC000_0000);
+    exec.markRom(spot, inRom);
+}
+
+/// Whether an address is the ROM's code: flash text or IRAM.
+fn inRom(address: usize) bool {
+    const layout = @import("layout.zig");
+    return (address >= layout.flashTextStart() and address < layout.flashTextEnd()) or
+        (address >= layout.iramStart() and address < layout.iramEnd());
 }

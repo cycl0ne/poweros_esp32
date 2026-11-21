@@ -10,7 +10,7 @@ to reach for first.
 
 | Tool | Where | What it needs | Gone when |
 |---|---|---|---|
-| `C:Log`, `C:Top`, `C:Avail OWNERS`, `C:MemDebug`, `ShowInfo TASKS` | a shell, in a window or on the serial console | dos, a console, memory | the shell's console or dos is stuck |
+| `C:Log`, `C:Top`, `C:Avail OWNERS`, `C:MemDebug`, `ShowInfo TASKS`, and `Tasks`, `Where`, `Kill` in `C:dbg` | a shell, in a window, on the serial console or over the network (`ShellServer`) | dos, a console, memory | the shell's console or dos is stuck |
 | `s3>` | the serial console | the scheduler, a console device, memory | the scheduler or memory is broken |
 | `dbg>`, the ROM debugger | both raw ports at once, on the ESP32s | nothing: no task, no device, no memory, no lock; a stack of its own | never |
 | the system log | `Log`, the raw port, a syslog server | nothing: exec writes it | never; on the ESP32s its last 4 KiB survive a dead end's restart |
@@ -128,6 +128,60 @@ take 4 off, or 2 after a call through a pointer, which is often the
 compressed `jalr`.
 A CPU exception's address is exact. The lines `bt` prints in the ROM
 debugger are inside the call already.
+
+## A task that is stuck: `C:dbg`
+
+Three commands look into the running system from a shell, and the
+startup-sequence puts their drawer on the path. They are on the disks
+with the `dev` set.
+
+**`Tasks`** lists every task: its number, its state, the core it is on,
+its priority, the signals it waits for and those it has, how much of its
+stack it used at its last switch, and the semaphore it waits in, if it
+does. `Tasks NAME=Paint` shows those of that name.
+
+```
+     #  state core  pri  waits for received  stack used/size  name
+    12  run      2    0  00000000  00000000        -/65536    Paint
+     7  wait     0   20  00001000  00000000     1520/16384    input.device
+```
+
+A task that waits with signals nobody sends shows them in `waits for`;
+a busy one that never waits is `run` or `ready` each time it is asked.
+
+**`Where <task>`** - its number or its name - shows where it stands
+without stopping it: the instruction it is at, the return address in its
+link register, its stack pointer, and the calls up its frames. Each
+address says `ROM` or the file loaded from disk and the offset into it,
+which the section above turns into a line. `TIMES=50` looks 50 times, a
+tick apart, and counts the places: a task in a loop shows its loop.
+
+```
+1> Where Paint TIMES=50
+Task 12 "Paint", running on core 2
+  at     0x000000004a3c1234  SYS:Programs/Paint +0x3f234
+  link   0x000000004a3c1100  SYS:Programs/Paint +0x3f100
+  stack  0x000000004a5ffa10  1520 of 65536 bytes in use
+  called from
+     1   0x0000000040081234  ROM
+     2   0x000000004a3c0200  SYS:Programs/Paint +0x3e200
+50 looks, at
+     41   0x000000004a3c1234  SYS:Programs/Paint +0x3f234
+      9   0x000000004a3c1238  SYS:Programs/Paint +0x3f238
+```
+
+A task whose core holds its interrupts off - inside Disable, or spinning
+for a lock with its interrupts masked - cannot be read: Where says so,
+and that is the finding. On the ESP32-S3 the frames are in the CPU's
+register windows until the task switches: `called from` stays empty
+there, and `link` is the one caller it shows.
+
+**`Kill <task>`** ends a task as Kill on the Software Failure requester
+does: what it was doing is dropped, its semaphores are let go, its end
+runs and its private memory is freed. A file it had open stays open, and
+what it did not free stays allocated under its number. It is for a task
+that does not answer Ctrl-C (`Break`). The shell Kill runs in and exec's
+own tasks are refused.
 
 ## The ROM debugger
 
@@ -394,8 +448,12 @@ end gives back its semaphores, windows and private memory, and
 shell runs on the shell's process, so Kill ends that shell too.
 
 **The machine or a window stops answering.**
-- `tasks` at `s3>`: a task waiting with signals nobody sends, or a busy
-  one that never waits.
+- `Tasks` in a shell, or `tasks` at `s3>`: a task waiting with signals
+  nobody sends, or a busy one that never waits.
+- `Where <task> TIMES=50`: the code a busy task loops in, or the call a
+  waiting one waits in; `Kill <task>` ends it if it does not answer
+  Ctrl-C. A shell over the network (`ShellServer`) reaches a machine
+  whose screen is held by the stuck program.
 - `locks`: the task holding the semaphore another waits for.
 - `cores`: a core that holds its interrupts off for long, or one whose
   dispatches no longer move.

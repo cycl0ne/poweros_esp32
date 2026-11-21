@@ -74,6 +74,9 @@ const contract_files = [_][]const u8{
     @embedFile("time/uptimeus.zig"),
     @embedFile("time/spinus.zig"),
     @embedFile("memory/flushmemory.zig"),
+    @embedFile("task/gettaskspot.zig"),
+    @embedFile("task/killtask.zig"),
+    @embedFile("task/findtaskbyid.zig"),
     @embedFile("task/lockcoretasks.zig"),
     @embedFile("task/unlockcoretasks.zig"),
     @embedFile("list/lockexeclist.zig"),
@@ -375,6 +378,9 @@ pub const exec_vectors = [_]*const anyopaque{
     vec(lvoUptimeUs),
     vec(lvoSpinUs),
     vec(lvoFlushMemory),
+    vec(lvoGetTaskSpot),
+    vec(lvoKillTask),
+    vec(lvoFindTaskById),
 };
 
 // --- libraries --------------------------------------------------------------
@@ -971,6 +977,15 @@ fn lvoSpinUs(base: *ExecBase, us: u64) callconv(.c) void {
 }
 fn lvoFlushMemory(base: *ExecBase, hook: ?*sdk.exec.FlushHook) callconv(.c) usize {
     return exec.FlushMemory(base, hook);
+}
+fn lvoGetTaskSpot(base: *ExecBase, task: *Task, spot: *sdk.exec.TaskSpot) callconv(.c) bool {
+    return exec.GetTaskSpot(base, task, spot);
+}
+fn lvoKillTask(base: *ExecBase, task: *Task) callconv(.c) bool {
+    return exec.KillTask(base, task);
+}
+fn lvoFindTaskById(base: *ExecBase, id: u32) callconv(.c) ?*Task {
+    return exec.FindTaskById(base, id);
 }
 fn lvoPostWork(base: *ExecBase, job: *sdk.exec.WorkJob) callconv(.c) void {
     exec.PostWork(base, job);

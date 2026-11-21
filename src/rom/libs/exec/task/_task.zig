@@ -213,6 +213,12 @@ pub const TaskHardware = struct {
     /// core may resume the task. As many as the chip's own code has cores
     /// for; none where nothing switches.
     leaving: ?[]usize = null,
+    /// Where the task a context belongs to stands (`GetTaskSpot`): its
+    /// instruction, stack pointer and link register read from `context`,
+    /// its frames walked from there (`walkFrames`) - none read outside
+    /// `lower` to `upper`, its stack - and the ROM's addresses marked
+    /// (`markRom`). Nothing where there is no CPU.
+    spot: *const fn (context: *anyopaque, lower: usize, upper: usize, spot: *sdk.exec.TaskSpot) void = noSpot,
 };
 
 /// Where exec reaches the CPU to switch tasks. The kernel writes it before
@@ -235,6 +241,46 @@ pub const no_task_hardware: TaskHardware = .{
 
 fn taskAsContext(_: usize, _: *const anyopaque, arg: *anyopaque) *anyopaque {
     return arg;
+}
+fn noSpot(_: *anyopaque, _: usize, _: usize, _: *sdk.exec.TaskSpot) void {}
+
+/// The return addresses up a chain of frame records into `spot.calls`,
+/// from the frame pointer `start`: a record keeps the frame pointer of
+/// the frame before `prev_at` bytes from its own, and the return address
+/// `ret_at` bytes from it, each a `Word`. Every word read lies inside
+/// `lower` to `upper`, the task's stack; the chain ends at a record that
+/// does not, at a frame no higher than the one before, at a return
+/// address 0, and at `max_spot_calls`. A task's `spot` hook calls it with
+/// its CPU's layout.
+pub fn walkFrames(comptime Word: type, spot: *sdk.exec.TaskSpot, start: usize, lower: usize, upper: usize, comptime prev_at: isize, comptime ret_at: isize) void {
+    const size = @sizeOf(Word);
+    var fp = start;
+    while (spot.depth < sdk.exec.max_spot_calls) {
+        if (fp % size != 0) return;
+        const prev_word = fp +% @as(usize, @bitCast(@as(isize, prev_at)));
+        const ret_word = fp +% @as(usize, @bitCast(@as(isize, ret_at)));
+        if (prev_word < lower or prev_word +% size > upper) return;
+        if (ret_word < lower or ret_word +% size > upper) return;
+        const ret: usize = @as(*const volatile Word, @ptrFromInt(ret_word)).*;
+        const next: usize = @as(*const volatile Word, @ptrFromInt(prev_word)).*;
+        if (ret == 0) return;
+        spot.calls[spot.depth] = ret;
+        spot.depth += 1;
+        if (next <= fp) return;
+        fp = next;
+    }
+}
+
+/// The ROM's addresses in `spot` marked in its `in_rom`, `in_rom` saying
+/// which addresses are.
+pub fn markRom(spot: *sdk.exec.TaskSpot, in_rom: *const fn (address: usize) bool) void {
+    var bits: u32 = 0;
+    if (spot.pc != 0 and in_rom(spot.pc)) bits |= 1;
+    if (spot.link != 0 and in_rom(spot.link)) bits |= 2;
+    for (spot.calls[0..spot.depth], 0..) |address, i| {
+        if (in_rom(address)) bits |= @as(u32, 4) << @intCast(i);
+    }
+    spot.in_rom = bits;
 }
 fn noSwitch() void {}
 fn noIdle() void {}
@@ -1235,6 +1281,13 @@ pub fn interruptExit(base: *ExecBase, context: *anyopaque) *anyopaque {
     const cpu = base.cpu();
     var resumed = context;
     if (cpu.int_depth == 1) {
+        // A task asked where it stands, read from the context saved as
+        // the exception came; the same rule for the lists as below.
+        if (@atomicLoad(?*Task, &cpu.peeking, .acquire) != null and !taskListsHeld(base)) {
+            takeTaskLists(base, 2);
+            peek(base, context);
+            dropTaskLists(base);
+        }
         // Not while the interrupted code holds the task lists itself:
         // this takes the interrupt lock, which comes before them - so it
         // waits for the next exit, which is what a reap does anyway.
@@ -1764,6 +1817,128 @@ pub fn stopElsewhere(base: *ExecBase, task: *Task) void {
         _ = _interrupt.mask();
         takeTasks(base, core, @returnAddress());
     }
+}
+
+/// How long GetTaskSpot waits for another core to read its running task,
+/// in microseconds, and how often it looks meanwhile: an answer is that
+/// core's next exception exit, an interrupt away, unless the core holds
+/// its interrupts off.
+const peek_patience_us = 100_000;
+const peek_step_us = 20;
+
+/// GetTaskSpot: where `task` stands, into `spot`. Switched out, it is
+/// read from the context its last switch saved on its stack, which stays
+/// there while its core's lists are held. Running on another core, that
+/// core is asked (`peeking`) and reads it at its next exception exit, as
+/// the exception saved it, and the task runs on there; the caller spins
+/// for the answer, and looks again when the task left that core first. A
+/// core that does not answer within `peek_patience_us` holds its
+/// interrupts off: the request is taken back, and the spot names only
+/// the core.
+///
+/// INPUTS:
+/// - `base` - exec: the cores' lists and states, the jump table.
+/// - `task` - the task; not the caller.
+/// - `spot` - filled in.
+///
+/// RESULT:
+/// False for the caller itself and for a task that has ended or is being
+/// taken away, `spot` left empty.
+pub fn spotOf(base: *ExecBase, task: *Task, spot: *sdk.exec.TaskSpot) bool {
+    const sys = base.iface();
+    spot.* = .{};
+    if (task == sys.FindTask(null).?) return false;
+    while (true) {
+        spot.* = .{};
+        // A task that ended since the caller found it is on no core's
+        // lists, and its memory may be another's: its core read is kept
+        // in range, and it is looked for there before anything of it is.
+        if (@atomicLoad(u32, &task.owner, .acquire) >= base.cores_running) return false;
+        const state = _interrupt.mask();
+        const owner = takeOwner(base, task, @returnAddress());
+        if (!isOn(base, owner, task) or task.state == .removed or task.state == .invalid or task.state == .added) {
+            dropTaskLists(base);
+            _interrupt.unmask(state);
+            return false;
+        }
+        const core = runningOn(base, task) orelse {
+            if (task.sp_reg) |context| task_hardware.spot(context, task.sp_lower, task.sp_upper, spot);
+            dropTaskLists(base);
+            _interrupt.unmask(state);
+            return true;
+        };
+        const cpu = &base.cpus_at[core];
+        if (cpu.peeking != null) {
+            // Another task asks that core already: its answer first.
+            dropTaskLists(base);
+            _interrupt.unmask(state);
+            sys.SpinUs(50);
+            continue;
+        }
+        cpu.peek_into = spot;
+        @atomicStore(?*Task, &cpu.peeking, task, .release);
+        pokeCore(core);
+        dropTaskLists(base);
+        _interrupt.unmask(state);
+        var waited: u32 = 0;
+        while (@atomicLoad(?*Task, &cpu.peeking, .acquire) == task and waited < peek_patience_us) : (waited += peek_step_us) {
+            sys.SpinUs(peek_step_us);
+        }
+        if (@atomicLoad(?*Task, &cpu.peeking, .acquire) == task) {
+            // Taken back under that core's lists, so a late answer does
+            // not write into a spot the caller has gone on with.
+            _ = _interrupt.mask();
+            takeTasks(base, core, @returnAddress());
+            const unanswered = cpu.peeking == task;
+            if (unanswered) {
+                cpu.peek_into = null;
+                @atomicStore(?*Task, &cpu.peeking, null, .release);
+            }
+            dropTaskLists(base);
+            _interrupt.unmask(state);
+            if (unanswered) {
+                spot.core = core;
+                return true;
+            }
+        }
+        if (spot.core != sdk.exec.ANY_CORE) return true;
+    }
+}
+
+/// Whether `task` is core `core`'s: running there, or on its ready or
+/// waiting list. The caller holds that core's lists.
+fn isOn(base: *ExecBase, core: u32, task: *const Task) bool {
+    const cpu = &base.cpus_at[core];
+    if (cpu.this_task == task) return true;
+    for ([_]*sdk.exec.List{ &cpu.tasks.ready, &cpu.tasks.wait }) |list| {
+        var it = list.iterator();
+        while (it.next()) |node| {
+            if (node == &task.node) return true;
+        }
+    }
+    return false;
+}
+
+/// The task another core asks about (`spotOf`) read here, at this core's
+/// exception exit, from the context the exception saved, and the request
+/// cleared, which is the asker's answer: still running here, it is read
+/// and runs on; gone from this core meanwhile, the spot keeps `core` at
+/// ANY_CORE and the asker looks again. The caller holds this core's
+/// lists.
+///
+/// INPUTS:
+/// - `base` - exec: this core's state.
+/// - `context` - the running task's context, as the exception saved it.
+fn peek(base: *ExecBase, context: *anyopaque) void {
+    const cpu = base.cpu();
+    const task = cpu.peeking orelse return;
+    const into = cpu.peek_into.?;
+    if (cpu.this_task == task) {
+        task_hardware.spot(context, task.sp_lower, task.sp_upper, into);
+        into.core = exec_base.coreId();
+    }
+    cpu.peek_into = null;
+    @atomicStore(?*Task, &cpu.peeking, null, .release);
 }
 
 // --- task exceptions --------------------------------------------------------

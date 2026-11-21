@@ -106,6 +106,9 @@ const image_dirs = [_][]const u8{
     "c/test",
     // C:net - the network's tools, on the path as well.
     "c/net",
+    // C:dbg - the tools that look into the running system, on the path
+    // too.
+    "c/dbg",
     "s",
     "libs",
     // LIBS:facet - the drivers of GPUs facet.library draws with, beside the

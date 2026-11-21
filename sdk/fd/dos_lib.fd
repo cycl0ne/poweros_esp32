@@ -557,4 +557,9 @@ isize ReadPassword(?*dos.FileHandle file, [*]u8 buffer, usize size)
 /// segments, the first or the one behind `after`: null when there is no
 /// further one.
 ?*const exec.Resident FindSegResident(?*dos.SegList seg_list, ?*const exec.Resident after, exec.NodeType kind)
+/// The file loaded from disk whose code holds `address` (SINCE 1.28): its
+/// name copied into `name` (`size` bytes, NUL included) and the offset
+/// into its linked code into `offset`. False for the ROM's code and for
+/// an address in no loaded code.
+bool FindLoadedCode(usize address, [*]u8 name, u32 size, *usize offset)
 ##end

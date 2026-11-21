@@ -124,6 +124,36 @@ pub const CoreTimes = extern struct {
     interrupts: u64 align(4) = 0,
 };
 
+/// How many return addresses a `TaskSpot` holds.
+pub const max_spot_calls = 16;
+
+/// Where a task stands (`GetTaskSpot`): the instruction it goes on from,
+/// its stack pointer there, the return address the CPU holds for it, and
+/// the return addresses up its chain of frames, the innermost first. An
+/// address that is the ROM's has its bit in `in_rom`: bit 0 for `pc`, bit
+/// 1 for `link`, bit 2 + i for `calls[i]`; any other is in a file loaded
+/// from disk, or in no code at all - dos's `FindLoadedCode` names the
+/// file.
+pub const TaskSpot = extern struct {
+    /// The instruction it runs at, or goes on from once it runs again.
+    pc: usize = 0,
+    /// Its stack pointer there.
+    sp: usize = 0,
+    /// The return address the CPU keeps in a register (AArch64's x30,
+    /// RISC-V's ra, the Xtensa's a0), 0 where it keeps none (x86-64). A
+    /// function that has made no frame yet returns there, so it is the
+    /// call above `pc` that `calls` may not have.
+    link: usize = 0,
+    /// The return addresses up its frames: `depth` of them.
+    calls: [max_spot_calls]usize = @splat(0),
+    depth: u32 = 0,
+    /// Which of the addresses are the ROM's, as above.
+    in_rom: u32 = 0,
+    /// The core it ran on when asked, where it was read without being
+    /// stopped; ANY_CORE when it was not running.
+    core: u32 = ANY_CORE,
+};
+
 /// tc_Switch and tc_Launch. They get the task and SysBase (A3 and A6 in the
 /// ROM). exec calls them from its dispatcher, at the exception exit with
 /// interrupts masked, so they must be short and must not wait, switch, or

@@ -17,6 +17,7 @@ pub const hardware: exec.TaskHardware = .{
     .leave_exception = leaveException,
     .call_on_stack = callOnStack,
     .leaving = &task_leaving,
+    .spot = taskSpot,
 };
 
 /// The task each core's dispatcher is switching away from, until start.S
@@ -67,4 +68,17 @@ fn pushException(context: *anyopaque, entry: *const anyopaque) *anyopaque {
 fn leaveException(context: *anyopaque) noreturn {
     _ = trap.syscall(@intFromEnum(trap.Syscall.leave_exception), @intCast(@intFromPtr(context)));
     unreachable;
+}
+
+/// GetTaskSpot's reading of a context (`TaskHardware.spot`): mepc, sp and
+/// ra from the frame, and the frame records up from s0 - the RISC-V
+/// frame keeps the frame pointer before 8 below its own and the return
+/// address 4 below it.
+fn taskSpot(context: *anyopaque, lower: usize, upper: usize, spot: *@import("sdk").exec.TaskSpot) void {
+    const frame: *const trap.Frame = @ptrCast(@alignCast(context));
+    spot.pc = frame.mepc;
+    spot.sp = frame.x[2];
+    spot.link = frame.x[1];
+    exec.walkFrames(u32, spot, frame.x[8], lower, upper, -8, -4);
+    exec.markRom(spot, @import("layout.zig").inKernel);
 }

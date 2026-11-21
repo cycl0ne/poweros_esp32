@@ -262,6 +262,9 @@ const tests = [_][]const u8{
     "dttime",      "names",       "axes",        "bands",     "vchiq",
     "expunge",     "dtwrite",
 };
+/// C:dbg: the tools that look into the running system - its tasks, where
+/// one stands, and the end of one that is stuck.
+const dbg_tools = [_][]const u8{ "tasks", "where", "kill" };
 const net_tools = [_][]const u8{ "net", "udp", "tcp", "addnetinterface", "remnetinterface", "resolve", "netstatus", "online", "offline", "ping", "timesync", "httpget", "packetcapture", "shellserver", "wireless", "hostname", "ssh", "scp", "filter", "git" };
 
 /// Programs with windows, in SYS:Programs and - the system's own tools -
@@ -748,7 +751,7 @@ fn commandSet(name: []const u8, usual: Set) Set {
 
 pub const programs: []const Program = blk: {
     @setEvalBranchQuota(10_000_000);
-    var list: [commands.len + tests.len + inner_tests.len + inner_commands.len + net_tools.len + window_programs.len + modules.len]Program = undefined;
+    var list: [commands.len + tests.len + inner_tests.len + inner_commands.len + net_tools.len + dbg_tools.len + window_programs.len + modules.len]Program = undefined;
     var n: usize = 0;
     for (commands) |name| {
         list[n] = .{ .disk = "c/" ++ name, .source = "c/" ++ name ++ "/" ++ name ++ ".zig", .name = name, .set = commandSet(name, .base) };
@@ -768,6 +771,10 @@ pub const programs: []const Program = blk: {
     }
     for (net_tools) |name| {
         list[n] = .{ .disk = "c/net/" ++ name, .source = "c/net/" ++ name ++ "/" ++ name ++ ".zig", .name = name, .set = commandSet(name, .net) };
+        n += 1;
+    }
+    for (dbg_tools) |name| {
+        list[n] = .{ .disk = "c/dbg/" ++ name, .source = "c/dbg/" ++ name ++ "/" ++ name ++ ".zig", .name = name, .set = .dev };
         n += 1;
     }
     for (window_programs) |program| {

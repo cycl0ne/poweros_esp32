@@ -223,6 +223,12 @@ pub const CpuState = extern struct {
     stopping: ?*Task = null,
     stopped: ?*Task = null,
     stop_waiter: ?*Task = null,
+    /// The core's task another core's GetTaskSpot asks where it stands,
+    /// read into `peek_into` at this core's next exception exit, which
+    /// then clears it: the asker's answer. Set and taken back under this
+    /// core's lists.
+    peeking: ?*Task = null,
+    peek_into: ?*sdk.exec.TaskSpot = null,
 };
 
 /// A core's state is a whole number of cache lines and starts on one:
