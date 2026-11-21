@@ -19,6 +19,8 @@ pictures="
 devices/drive-harddisk
 places/folder
 places/folder-remote
+devices/network-wireless
+devices/network-wired
 places/user-trash
 mimetypes/application-x-executable
 mimetypes/text-x-generic

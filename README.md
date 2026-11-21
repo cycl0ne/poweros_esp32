@@ -157,8 +157,11 @@ The programs on the disk:
   Player, Movie, FontView, Battery, Prefs, Volume, Weather - the weather
   now and for three days at any address - and Boing and Cobra, a bouncing
   ball and a ship in space
-- **`SYS:System`** - Shell, HDToolBox, Shares, Update, CPULoad, NetLoad,
-  MemMap, Clock, and SystemScan on the 64-bit machines
+- **`SYS:System`** - Shell, HDToolBox, Shares, WiFi - the networks in
+  range, joined and left, and the one joined at start - Network - an
+  interface's addresses, DHCP or fixed, its name servers and IPv6 -
+  Update, CPULoad, NetLoad, MemMap, Clock, and SystemScan on the 64-bit
+  machines
 - **`SYS:Commodities`** - Exchange, Blanker, FKey, Emoji, AutoPoint,
   ClickToFront, MouseBlanker, NoCapsLock and NumericPad
 - **`C:`** - 65 commands, test programs in `C:test`, network tools in

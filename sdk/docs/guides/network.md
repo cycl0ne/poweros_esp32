@@ -560,7 +560,11 @@ minutes.
 | `ENVARC:Sys/timezone` | the local time, as a POSIX TZ rule, copied to `ENV:Sys/timezone` at boot; `SetClock ZONE` in the startup sequence keeps it in battmem.resource, where utility.library's `ZoneOffset`, `DateToUtc` and `UtcToDate` read it for every program and file system. Prefs' Region page writes both and runs `SetClock ZONE`; after changing the file by hand, copy it to ENV: and run that too |
 | `S:Network-Startup` | run by the Startup-Sequence in a shell of its own, once the desktop is up: `AddNetInterface ALL QUIET`, then `TimeSync REDATE` - the files the start wrote on SYS: and RAM: before the clock was right move with it - and, when a server answered, `SetClock SAVE`, then `MountShare ALL` for the shares in `DEVS:Shares/`, then `Log SYSLOG` when `Sys/net/syslog` names a server |
 
-An interface file is keywords, one to a line, and `/* */` comments:
+An interface file is keywords, one to a line, and `/* */` comments.
+`SYS:System/Network` sets the addresses in a window - DHCP or a fixed
+address, the name servers and the domain, IPv6 - changing only those
+keywords and leaving the rest of the file as written, and starts the
+interface again with them when asked (`SYS:System/Docs/Network.md`):
 
 ```
 Device     = networks/openeth.device
@@ -857,6 +861,10 @@ a carrier, so a program (and the stack) waits for the event rather than
 for the request. `C:net/Wireless` scans, joins and leaves by hand; a
 network in an interface file's `Network` keyword is joined at every boot,
 its passphrase read from `ENVARC:Sys/net/networks/<network>`.
+`SYS:System/WiFi` does all of that in a window: the networks in range, a
+join with the passphrase asked for and kept once it worked, a leave, a
+network forgotten, and the `Network` the radio joins at start
+(`SYS:System/Docs/WiFi.md`).
 
 `DEVS:networks/esp32s3wifi.device` is the ESP32-S3's radio as such a
 unit; its build and inside are described in `docs/esp32s3wifi.md`.

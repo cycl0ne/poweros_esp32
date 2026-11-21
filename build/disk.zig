@@ -340,6 +340,8 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/MemMap.info", .picture = "computer", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Clock.info", .picture = "appointment-new", .fields = &.{ "KIND=TOOL", icon_stack, "TYPE=MODE=ANALOG", "TYPE=SECONDS=YES", "TYPE=DATE=YES" } },
     .{ .path = "System/Shares.info", .picture = "folder-remote", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/WiFi.info", .picture = "network-wireless", .fields = &.{ "KIND=TOOL", icon_stack } },
+    .{ .path = "System/Network.info", .picture = "network-wired", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Update.info", .picture = "system-software-update", .fields = &.{ "KIND=TOOL", icon_stack }, .pointer_bytes = 8 },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
@@ -348,6 +350,8 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Docs/MemMap.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Clock.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Shares.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/WiFi.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
+    .{ .path = "System/Docs/Network.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Update.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .pointer_bytes = 8 },
     // The commodities, each icon with the tool types it reads, and what
     // each is in SYS:Commodities/Docs. The pictures are the ones the

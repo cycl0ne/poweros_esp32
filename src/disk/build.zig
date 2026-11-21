@@ -188,7 +188,9 @@ pub const catalogs = catalogsOf(&translated_strings);
 /// drawing is the library itself, kept apart so that it is tested on the
 /// host and used by host tools as it is. The SMB client is
 /// the protocol and the share files, which smb-handler, C:net/MountShare
-/// and SYS:System/Shares each need all or part of. The JPEG decoder is
+/// and SYS:System/Shares each need all or part of. The interface files
+/// are changed in place by SYS:System/Network and SYS:System/WiFi. The
+/// JPEG decoder is
 /// jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
 /// film's sound is the process Movie and videocodec.datatype both play one
 /// with. The
@@ -219,6 +221,7 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "vp9header", .source = "libs/videoparse/vp9/header.zig" },
     .{ .name = "av1header", .source = "libs/videoparse/av1/header.zig" },
     .{ .name = "smbclient", .source = "libs/smb/smbclient.zig" },
+    .{ .name = "netinterface", .source = "libs/netinterface/netinterface.zig" },
     .{ .name = "commodity", .source = "commodities/_frame/frame.zig" },
 };
 
@@ -299,6 +302,8 @@ const window_programs = [_]Program{
     .{ .disk = "System/MemMap", .source = "system/memmap/memmap.zig", .name = "memmap", .set = .gui },
     .{ .disk = "System/Clock", .source = "system/clock/clock.zig", .name = "clock", .set = .gui, .strings = "system/clock/clock.cd" },
     .{ .disk = "System/Shares", .source = "system/shares/shares.zig", .name = "shares", .set = .net, .imports = &.{"smbclient"} },
+    .{ .disk = "System/WiFi", .source = "system/wifi/wifi.zig", .name = "wifi", .set = .wifi, .imports = &.{"netinterface"} },
+    .{ .disk = "System/Network", .source = "system/network/network.zig", .name = "network", .set = .net, .imports = &.{"netinterface"} },
     .{ .disk = "System/Update", .source = "system/update/update.zig", .name = "sysupdate", .set = .storage },
     .{ .disk = "Installer", .source = "installer/installer.zig", .name = "installer", .set = .storage, .imports = &.{"install"}, .strings = "installer/installer.cd" },
     .{ .disk = "System/SystemScan", .source = "system/systemscan/systemscan.zig", .name = "systemscan", .set = .gui },
@@ -1061,6 +1066,8 @@ pub const files = [_]File{
     .{ .disk = "System/Docs/MemMap.md", .source = "system/memmap/README.md" },
     .{ .disk = "System/Docs/Clock.md", .source = "system/clock/README.md" },
     .{ .disk = "System/Docs/Shares.md", .source = "system/shares/README.md" },
+    .{ .disk = "System/Docs/WiFi.md", .source = "system/wifi/README.md" },
+    .{ .disk = "System/Docs/Network.md", .source = "system/network/README.md" },
     .{ .disk = "System/Docs/Update.md", .source = "system/update/README.md" },
     .{ .disk = "System/Docs/SystemScan.md", .source = "system/systemscan/README.md" },
     // SYS:Commodities/Docs - the same for the commodities.

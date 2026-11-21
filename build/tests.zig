@@ -199,6 +199,10 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     smbclient_mod.addImport("sdk", sdk);
     disk_test_mod.addImport("smbclient", smbclient_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = smbclient_mod })).step);
+    const netinterface_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/netinterface/netinterface.zig"), .target = b.graph.host });
+    netinterface_mod.addImport("sdk", sdk);
+    disk_test_mod.addImport("netinterface", netinterface_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = netinterface_mod })).step);
     disk_test_mod.addOptions("test_options", test_options);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = disk_test_mod })).step);
     test_step.dependOn(&posfsck.step);

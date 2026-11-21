@@ -219,6 +219,9 @@ test {
     _ = @import("libs/smb/tests/smb.zig");
     _ = @import("system/shares/known.zig");
     _ = @import("system/shares/server.zig");
+    _ = @import("system/wifi/passphrase.zig");
+    _ = @import("system/network/settings.zig");
+    _ = @import("system/wifi/radio.zig");
     _ = @import("classes/datatypes/jpeg/tests/jpeg.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/png/tests/write.zig");
