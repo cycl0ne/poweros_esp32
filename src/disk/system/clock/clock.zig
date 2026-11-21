@@ -29,6 +29,13 @@
 //! each minute with neither - and puts the picture together off the
 //! screen before it is copied into the window, so nothing flickers. The
 //! close gadget, Quit or Ctrl-C end it.
+//!
+//! **While the size gadget is held** the picture keeps the size it had:
+//! it goes on being put together at that size, the time going on in it,
+//! and is shown stretched to the window's inside. The sizing's end makes
+//! it anew at the size it ended at. Each step's IDCMP_NEWSIZE is replied
+//! once the picture for it is in the window, so the next step comes when
+//! this one is drawn.
 
 const sdk = @import("sdk");
 const strings = @import("strings");
@@ -43,6 +50,7 @@ const intuition = sdk.intuition;
 const icon = sdk.icon;
 const locale = sdk.locale;
 const timer = sdk.devices.timer;
+const ie = sdk.devices.inputevent;
 const mn = intuition.menus;
 const wn = intuition.windows;
 const sc = intuition.screens;
@@ -59,8 +67,8 @@ const Id = strings.Id;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Clock";
-const VERSION = "1.0";
-const DATE = "09.11.2026";
+const VERSION = "1.1";
+const DATE = "21.11.2026";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (" ++ DATE ++ ")\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while its window is active.
@@ -271,11 +279,24 @@ const App = struct {
     font_height: i32 = 0,
     baseline: i32 = 0,
 
-    /// The inside, and the picture of it put together off the screen.
+    /// The picture put together off the screen, and its size: the
+    /// window's inside, but while the window is sized, the inside it had.
     width: i32 = 0,
     height: i32 = 0,
     canvas: ?*picture.Surface = null,
     canvas_rp: ?*graphics.RastPort = null,
+    /// The window's inside as it is now, which the picture is shown in.
+    inside_width: i32 = 0,
+    inside_height: i32 = 0,
+    /// The size gadget held: the picture keeps its size, shown stretched.
+    sizing: bool = false,
+    /// The window given another box by the program (`setMode`): the
+    /// IDCMP_NEWSIZE that follows is no step of a sizing, whether the
+    /// button is held or not - a double click's second press may be.
+    boxed: bool = false,
+    /// The step of a sizing whose picture is not in the window yet,
+    /// replied once it is.
+    held: ?*wn.IntuiMessage = null,
     face: faces.Face = .{},
     panel: panels.Panel = .{},
 
@@ -325,9 +346,8 @@ const App = struct {
 
     // --- the picture ---------------------------------------------------------------
 
-    /// The off-screen picture made the size of the window's inside, as it
-    /// is now; false without the memory for it.
-    fn fit(app: *App) bool {
+    /// The window's inside, as it is now.
+    fn measure(app: *App) void {
         var width: usize = 0;
         var height: usize = 0;
         app.ib.GetWindowAttrs(app.window, &[_]TagItem{
@@ -335,8 +355,16 @@ const App = struct {
             .{ .tag = wn.WA_InnerHeight, .data = @intFromPtr(&height) },
             .{},
         });
-        const w: i32 = @intCast(@max(width, 1));
-        const h: i32 = @intCast(@max(height, 1));
+        app.inside_width = @intCast(@max(width, 1));
+        app.inside_height = @intCast(@max(height, 1));
+    }
+
+    /// The off-screen picture made the size of the window's inside, as it
+    /// is now; false without the memory for it.
+    fn fit(app: *App) bool {
+        app.measure();
+        const w = app.inside_width;
+        const h = app.inside_height;
         if (app.canvas != null and w == app.width and h == app.height) return true;
         app.dropCanvas();
         app.width = w;
@@ -404,9 +432,10 @@ const App = struct {
     /// then copied in. Without the memory for that, its ground only.
     fn draw(app: *App, now: dos.DateStamp) void {
         const gb = app.gb;
-        if (!app.fit()) {
+        const ready = if (app.sizing) app.canvas != null else app.fit();
+        if (!ready) {
             support.setPen(gb, app.rp, app.ground);
-            gb.RectFill(app.rp, &.{ .max_x = app.width, .max_y = app.height });
+            gb.RectFill(app.rp, &.{ .max_x = app.inside_width, .max_y = app.inside_height });
             return;
         }
         const rp = app.canvas_rp.?;
@@ -414,7 +443,18 @@ const App = struct {
         support.setPen(gb, rp, app.ground);
         gb.RectFill(rp, &.{ .max_x = app.width, .max_y = app.height });
         if (app.settings.digital) app.drawFigures(rp, now, shown) else app.drawDial(rp, now, shown);
-        gb.BltBitMapRastPort(app.canvas.?, 0, 0, app.rp, 0, 0, app.width, app.height);
+        app.show();
+    }
+
+    /// The picture put together copied into the window: as it is, or
+    /// stretched to the inside when a sizing has made that another size.
+    fn show(app: *App) void {
+        const canvas = app.canvas orelse return;
+        if (app.inside_width == app.width and app.inside_height == app.height) {
+            app.gb.BltBitMapRastPort(canvas, 0, 0, app.rp, 0, 0, app.width, app.height);
+        } else {
+            app.gb.BitMapScale(canvas, &.{ .max_x = app.width, .max_y = app.height }, app.rp, &.{ .max_x = app.inside_width, .max_y = app.inside_height });
+        }
     }
 
     fn drawDial(app: *App, rp: *graphics.RastPort, now: dos.DateStamp, shown: time.Shown) void {
@@ -453,11 +493,26 @@ const App = struct {
     fn refresh(app: *App) void {
         app.ib.BeginRefresh(app.window);
         defer app.ib.EndRefresh(app.window, true);
-        const canvas = app.canvas orelse return;
-        app.gb.BltBitMapRastPort(canvas, 0, 0, app.rp, 0, 0, app.width, app.height);
+        app.show();
     }
 
     // --- the window ----------------------------------------------------------------
+
+    /// A sizing over, or a size given: the picture made at the inside's
+    /// size, and that kept as the mode's.
+    fn sized(app: *App) void {
+        app.sizing = false;
+        _ = app.fit();
+        app.keepSize();
+    }
+
+    /// The step of a sizing held, now that its picture is in the window,
+    /// replied.
+    fn replyHeld(app: *App) void {
+        const message = app.held orelse return;
+        app.held = null;
+        app.ib.ReplyIMsg(message);
+    }
 
     /// The window's inside, as it is now, kept as the size of the mode it
     /// is in.
@@ -488,6 +543,7 @@ const App = struct {
         const top: i32 = @bitCast(@as(u32, @truncate(place[1])));
         const across: i32 = @intCast(place[2] + place[4]);
         const down: i32 = @intCast(place[3] + place[5]);
+        app.boxed = true;
         app.ib.ChangeWindowBox(app.window, left, top, size.width + across, size.height + down);
     }
 
@@ -825,6 +881,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         .due = due,
     };
     defer app.disarm();
+    defer app.replyHeld();
     defer app.dropCanvas();
     defer app.face.free(gb);
     defer app.panel.free(gb);
@@ -858,6 +915,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         var now: dos.DateStamp = .{};
         _ = dl.DateStamp(&now);
         app.draw(now);
+        app.replyHeld();
         app.arm(time.untilNext(now, app.step()));
         const got = sys.Wait(masks.window | masks.due | masks.public | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) break;
@@ -885,12 +943,20 @@ fn windowMessages(app: *App) bool {
         const code = message.code;
         const seconds = message.seconds;
         const micros = message.micros;
-        ib.ReplyIMsg(message);
+        const qualifier = message.qualifier;
+        if (class == wn.IDCMP_NEWSIZE) {
+            app.replyHeld();
+            app.held = message;
+        } else {
+            ib.ReplyIMsg(message);
+        }
         switch (class) {
             wn.IDCMP_CLOSEWINDOW => return false,
             wn.IDCMP_NEWSIZE => {
-                _ = app.fit();
-                app.keepSize();
+                // The steps of a sizing hold the button; its end not.
+                app.measure();
+                if (!app.boxed and qualifier & ie.IEQUALIFIER_LEFTBUTTON != 0) app.sizing = true else app.sized();
+                app.boxed = false;
             },
             wn.IDCMP_REFRESHWINDOW => app.refresh(),
             wn.IDCMP_MENUPICK => if (!app.picked(code)) return false,
@@ -901,6 +967,9 @@ fn windowMessages(app: *App) bool {
                 } else {
                     app.pressed = .{ seconds, micros };
                 }
+            } else if (code == wn.SELECTUP and app.sizing) {
+                // The button let go without a sizing's end.
+                app.sized();
             },
             else => {},
         }

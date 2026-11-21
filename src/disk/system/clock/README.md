@@ -43,7 +43,9 @@ one is open - brings its window to the front.
 The date stands under the dial, or along the foot of the panel: in full
 when it fits, short when only that fits, and left out when neither does.
 
-The dial and the figures are drawn to fit the window, whatever its size.
+The dial and the figures are drawn to fit the window, whatever its size. While
+the window is being sized, the picture it had is shown stretched to it,
+the time going on in it, and drawn anew at the size the sizing ends at.
 
 ## The menus
 
