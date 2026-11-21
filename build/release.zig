@@ -541,7 +541,7 @@ pub fn addPackageSteps(b: *std.Build, with: PackageStepsWith) MadePackageSteps {
     switch (chipOf(board)) {
         .esp32s3, .esp32p4 => {
             const no_package = b.addFail(
-                "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it, and `esp-package` packs it to be written elsewhere. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, qemu_virt, qemu_virt_a64 or qemu_q35.",
+                "package: this board's disk is the flash its kernel is written with - `flash-disk` writes it, and `esp-package` packs it to be written elsewhere. A package is for a machine whose disk is in RAM: -Dboard=visionfive2, rpi_cm5, rpi_cm4, rpi4b, qemu_virt, qemu_virt_a64 or qemu_q35.",
             );
             package_step.dependOn(&no_package.step);
             serve_step.dependOn(&no_package.step);
