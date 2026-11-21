@@ -45,6 +45,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const Tag = sdk.utility.FixedTagItem;
 const st = sdk.expansion.systemtags;
+const boardpin = sdk.expansion.boardpin;
 
 /// The board, as its maker names it.
 const name = "Raspberry Pi 4 Model B";
@@ -59,16 +60,19 @@ pub const mailbox: usize = 0xFE00_B880;
 /// (`reset.zig`).
 pub const power_manager: usize = 0xFE10_0000;
 
-/// The Ethernet port's station address, which the kernel copies in from
-/// the device tree the firmware passes - the `local-mac-address` the
-/// firmware writes into ethernet@7d580000, the GENET's - before anything
-/// runs; all zero when the tree has none.
+/// The Ethernet port's station address and the radio's, which the kernel
+/// copies in from the device tree the firmware passes - the
+/// `local-mac-address` the firmware writes into ethernet@7d580000, the
+/// GENET's, and into wifi@1 on the SD host mmcnr@7e300000 - before
+/// anything runs; all zero when the tree has none, and the radio then
+/// takes its own.
 pub var ethernet_station: [6]u8 = @splat(0);
+pub var wifi_station: [6]u8 = @splat(0);
 
 /// The station addresses the kernel takes from the device tree: for the
 /// port whose registers are at the first - by the address in the tree's
 /// name for it - into the second.
-pub const stations = .{.{ 0x7D58_0000, &ethernet_station }};
+pub const stations = .{ .{ 0x7D58_0000, &ethernet_station }, .{ 0x7E30_0000, &wifi_station } };
 
 /// Where the bootloader started this system from: the kernel copies the
 /// device tree's `/chosen/bootloader` `partition` and `tryboot` in before
@@ -115,6 +119,28 @@ const sd_slot = [_]Tag{
     .value(st.PART_Address, 0xFE34_0000),
     .value(st.PART_Irq, 32 + 126),
     .pointer(st.PART_Label, "SD card"),
+    .done,
+};
+
+/// The radio, an Infineon CYW43455 (on a module of its own), on the
+/// BCM2711's older SD host ("mmcnr") at 0xFE30_0000, whose interrupt, GIC
+/// 126, it shares with the card slot's EMMC2. Its lines are GPIO34 to 39,
+/// the host's in their ALT3 function; WL_REG_ON is line 1 of the
+/// firmware's GPIO expander (WL_ON), which the firmware raises as it
+/// starts the ARM. No antenna switch. cyw43455.device's unit 0.
+const wifi = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_NET),
+    .value(st.PART_Chip, st.CHIP_CYW43455),
+    .pointer(st.PART_ChipName, "cyw43455"),
+    .value(st.PART_Bus, st.BUS_SDIO),
+    .value(st.PART_Address, 0xFE30_0000),
+    .value(st.PART_Irq, 32 + 126),
+    .value(st.PART_PinPower, boardpin.expander(1)),
+    .value(st.PART_PinClock, boardpin.gpio(34)),
+    .value(st.PART_PinCommand, boardpin.gpio(35)),
+    .value(st.PART_PinData0, boardpin.gpio(36)),
+    .pointer(st.PART_StationAddress, &wifi_station),
+    .pointer(st.PART_Label, "Wi-Fi"),
     .done,
 };
 
@@ -275,6 +301,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_BootStart, &boot_start),
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &sd_slot),
+    .pointer(st.SYSTAG_Part, &wifi),
     .pointer(st.SYSTAG_Part, &pcie),
     .pointer(st.SYSTAG_Part, &usb),
     .pointer(st.SYSTAG_Part, &firmware),

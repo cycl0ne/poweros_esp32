@@ -859,7 +859,12 @@ network in an interface file's `Network` keyword is joined at every boot,
 its passphrase read from `ENVARC:Sys/net/networks/<network>`.
 
 `DEVS:networks/esp32s3wifi.device` is the ESP32-S3's radio as such a
-unit; its build and inside are described in `docs/esp32s3wifi.md`. `DEVS:usb/aic8800.device` is
+unit; its build and inside are described in `docs/esp32s3wifi.md`.
+`DEVS:networks/cyw43455.device` is the radio of the Raspberry Pi CM5
+and 4 Model B, a CYW43455 on SDIO, as one: it loads the chip's firmware
+from `DEVS:networks/firmware/cyw43455/` (`scripts/fetch-cyw43455.sh`
+fetches it for a build), takes WPA2-Personal from wpa.library as below,
+and its interface is `DEVS:NetInterfaces/WLAN0`. `DEVS:usb/aic8800.device` is
 an AIC8800 USB Wi-Fi stick as one, on the ESP32-P4's high-speed ports
 (`docs/aic8800.md`): its interface is `DEVS:NetInterfaces/WLAN1`, brought
 up by the device when the stick first comes (`Start = DEVICE`), and a

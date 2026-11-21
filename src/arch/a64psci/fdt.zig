@@ -258,9 +258,12 @@ pub fn read(address: usize) Facts {
                     station = std.fmt.parseInt(usize, name["ethernet@".len..], 16) catch null;
                     station_depth = depth;
                 }
-                if (std.mem.startsWith(u8, name, "mmc@")) {
-                    sd_host = std.fmt.parseInt(usize, name["mmc@".len..], 16) catch null;
-                    sd_host_depth = depth;
+                // An SD host: "mmc@", or the BCM2711's older one "mmcnr@".
+                for ([_][]const u8{ "mmc@", "mmcnr@" }) |host_name| {
+                    if (std.mem.startsWith(u8, name, host_name)) {
+                        sd_host = std.fmt.parseInt(usize, name[host_name.len..], 16) catch null;
+                        sd_host_depth = depth;
+                    }
                 }
                 if (std.mem.startsWith(u8, name, "wifi@") and sd_host != null and depth == sd_host_depth + 1) {
                     station = sd_host;

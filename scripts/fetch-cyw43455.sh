@@ -1,8 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: MPL-2.0
-# Fetch what the Raspberry Pi CM5's radio, a CYW43455, runs: Infineon's
-# firmware for it, its CLM blob (the rules of each country's channels
-# and powers) and the board's NVRAM, as Raspberry Pi's firmware-nonfree
+# Fetch what the Raspberry Pi CM5's and 4 Model B's radio, a CYW43455,
+# runs: Infineon's firmware for it, its CLM blob (the rules of each
+# country's channels and powers) and the boards' NVRAM - one file for
+# both - as Raspberry Pi's firmware-nonfree
 # package has them, at a pinned commit and each checked against its
 # sha256. Nothing of it is committed - its licence for passing it on is
 # Infineon's - it lands in toolchain/cyw43455, which the build looks for;

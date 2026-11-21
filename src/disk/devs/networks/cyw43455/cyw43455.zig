@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
-//! cyw43455.device: the Raspberry Pi CM5's Wi-Fi, an Infineon CYW43455 on
-//! the BCM2712's second SD host, as a network device. It is in
+//! cyw43455.device: the Wi-Fi of the Raspberry Pi CM5 and of the
+//! Raspberry Pi 4 Model B, an Infineon CYW43455 on an SD host of the
+//! BCM2712 or the BCM2711 (host.zig), as a network device. It is in
 //! DEVS:networks/, and the board's system tag list says whether there is
 //! one and how it is wired (a PARTKIND_NET part with CHIP_CYW43455); a
 //! board without one gets no device.
@@ -31,6 +32,7 @@ const dos = sdk.dos;
 const timer = sdk.devices.timer;
 const expansion = sdk.expansion;
 const st = expansion.systemtags;
+const videocore = sdk.hardware.videocore;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
@@ -47,8 +49,8 @@ const CywBase = _cyw.CywBase;
 
 pub const DEVICE_NAME = _cyw.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
-const BUILD_DATE = "09.11.2026";
+const DEVICE_REVISION = 4;
+const BUILD_DATE = "21.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -106,7 +108,7 @@ fn start(base: *CywBase) ?*radio.Work {
     const sys = base.sys_base;
     if (!openTimer(base)) return null;
     if (!bringUp(base)) {
-        host_file.power(sys, &base.host, false);
+        _ = host_file.power(sys, &base.host, false);
         return null;
     }
     base.found = 1;
@@ -184,9 +186,12 @@ fn bringUp(base: *CywBase) bool {
         say(sys, "the SD host stays in reset");
         return false;
     }
-    host_file.power(sys, host, false);
+    if (!host_file.power(sys, host, false)) {
+        say(sys, "the radio's power line does not answer");
+        return false;
+    }
     base.delay(power_off_us);
-    host_file.power(sys, host, true);
+    _ = host_file.power(sys, host, true);
     base.delay(power_on_us);
     host_file.busPower(host);
     base.delay(bus_power_us);
@@ -437,9 +442,31 @@ fn findPart(sys: *ExecBase, utility: *UtilityBase, base: *CywBase) bool {
         return false;
     };
     base.host.sys = sys;
+    if (host_file.uses_firmware and !firmwareFor(sys, utility, eb, &base.host)) {
+        say(sys, "the board's firmware mailbox is not found");
+        return false;
+    }
     const station = utility.GetTagData(st.PART_StationAddress, 0, part.tags);
     if (station != 0) base.station = @as(*const [6]u8, @ptrFromInt(station)).*;
     base.irq = @truncate(utility.GetTagData(st.PART_Irq, 0, part.tags));
+    return true;
+}
+
+/// The VideoCore's mailbox, as the board's firmware part names it, and a
+/// buffer for its messages where the firmware reaches it, into the host:
+/// for the host that `uses_firmware`. The buffer stays, as the device
+/// does. False without the part, or memory.
+fn firmwareFor(sys: *ExecBase, utility: *UtilityBase, eb: *sdk.interface.expansion.ExpansionBase, host: *host_file.Host) bool {
+    const part = eb.FindBoardPart(null, st.PARTKIND_FIRMWARE, st.CHIP_RPI_FIRMWARE) orelse return false;
+    const mailbox = utility.GetTagData(st.PART_Address, 0, part.tags);
+    if (mailbox == 0) return false;
+    const memory = sys.AllocMem(2 * videocore.buffer_bytes, exec.MEMF_DMA | exec.MEMF_CLEAR) orelse return false;
+    const buffer = videocore.bufferIn(memory) orelse {
+        sys.FreeMem(memory, 2 * videocore.buffer_bytes);
+        return false;
+    };
+    host.mailbox = mailbox;
+    host.mail = @intFromPtr(buffer);
     return true;
 }
 

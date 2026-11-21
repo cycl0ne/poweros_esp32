@@ -1,33 +1,53 @@
 // SPDX-License-Identifier: MIT
-//! The BCM2712's side of the radio, for cyw43455.device: the SD host the
-//! chip is on (an SDHCI, "sdio2"), the host's lines in the SoC's pin
-//! controller, and the radio's power pin, WL_REG_ON, on the SoC's GPIO.
+//! The SoC's side of the radio, for cyw43455.device: the SD host the chip
+//! is on (an SDHCI), the host's lines in the SoC's pin controller, and the
+//! radio's power line, WL_REG_ON. Two SoCs carry the radio, and the one
+//! this is for is the chip the device is built for (`soc`): the BCM2712
+//! of the Compute Module 5 (`a64psci`) and the BCM2711 of the Raspberry
+//! Pi 4 Model B (`a64v80`). The SDHCI and how it is driven are the same
+//! on both; the lines, the power and how the registers are reached are
+//! each SoC's.
 //!
-//! **What the bootloader leaves.** The radio off and the host's six lines
-//! GPIOs with pull-downs: they are given to the host here (`pinsUp`, their
-//! "sd2" function, CLK without a pull and the rest pulled up, as Raspberry
-//! Pi's device tree has them), and WL_REG_ON driven low and then high
-//! (`power`), so the chip starts from its reset whatever came before.
-//! The antenna switch's two lines, which the bootloader leaves inputs, are
-//! pins of the SoC's always-on GPIO block (lines the board leaves to this
-//! driver): the one for the module's own antenna driven high, the other
-//! low (`antenna`).
+//! **The BCM2712: what the bootloader leaves.** The radio off and the
+//! host's six lines GPIOs with pull-downs: they are given to the host here
+//! (`pinsUp`, their "sd2" function, CLK without a pull and the rest pulled
+//! up, as Raspberry Pi's device tree has them), and WL_REG_ON, a pin of
+//! the SoC's GPIO block, driven low and then high (`power`), so the chip
+//! starts from its reset whatever came before. The antenna switch's two
+//! lines, which the bootloader leaves inputs, are pins of the SoC's
+//! always-on GPIO block (lines the board leaves to this driver): the one
+//! for the module's own antenna driven high, the other low (`antenna`).
 //!
-//! **The host.** A standard SDHCI of version 3 at the part's address and,
-//! 0x400 above it, the Broadcom configuration registers around it, of
-//! which two matter: the card is soldered on, so its presence is forced
-//! (the controller powers no bus without a card), and the lines' timing
-//! is the SD one. Its clock is 200 MHz, the card's that divided by an
-//! even number. Commands are polled and data moves through the
+//! **The BCM2712's host.** A standard SDHCI of version 3 at the part's
+//! address ("sdio2") and, 0x400 above it, the Broadcom configuration
+//! registers around it, of which two matter: the card is soldered on, so
+//! its presence is forced (the controller powers no bus without a card),
+//! and the lines' timing is the SD one. Its clock is 200 MHz, the card's
+//! that divided by an even number. The pin controller's layout is the D0
+//! stepping's - seven registers, which a CM5 has; another stepping's would
+//! be read wrongly, and a register past them faults the machine.
+//!
+//! **The BCM2711.** The radio is on the chip's older SD host ("mmcnr" in
+//! the device tree), whose clock is the firmware's EMMC clock, asked of
+//! the firmware (`reset`). Its lines are GPIO34 to 39 in their ALT3
+//! function, CLK without a pull and the rest pulled up. WL_REG_ON is line
+//! 1 of the firmware's GPIO expander (WL_ON), which the firmware raises as
+//! it starts the ARM and which is switched through the VideoCore's mailbox
+//! (`power`). There are no configuration registers and no antenna switch.
+//! The host takes its registers a word at a time: a byte or half-word
+//! written alone may be lost, so every narrower write is a read-modify-
+//! write of its word (`writeNarrow`), and the block size goes with the
+//! block count, as the transfer mode goes with its command on both. Two
+//! writes to one register within two of the card's clock cycles may lose
+//! the first: while the card's clock is slow - identification's 400 kHz,
+//! or stopped - every write is followed by four of its cycles (`settle`).
+//!
+//! **On both**, commands are polled and data moves through the
 //! controller's buffer port, a word at a time: the interrupt line is for
 //! the chip's own interrupt, the card's (`cardInterrupt`), which it
 //! signals by holding DAT1 low between commands.
 //!
-//! **Which BCM2712.** The pin controller's layout is the D0 stepping's -
-//! seven registers, which a CM5 has; another stepping's would be read
-//! wrongly, and a register past them faults the machine.
-//!
-//! The pin controller and the GPIO block are shared with whatever else
+//! The pin controllers and the GPIO blocks are shared with whatever else
 //! uses the SoC's pins, so every change is a masked read-modify-write
 //! inside exec's Disable.
 
@@ -35,9 +55,20 @@ const std = @import("std");
 const sdk = @import("sdk");
 const st = sdk.expansion.systemtags;
 const boardpin = sdk.expansion.boardpin;
+const videocore = sdk.hardware.videocore;
 const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+
+/// The SoCs the radio is on.
+pub const Soc = enum { bcm2711, bcm2712 };
+/// The one the device is built for: the a64v80 machines' is the BCM2711,
+/// every other's the BCM2712.
+pub const soc: Soc = if (sdk.hardware.chip == .a64v80) .bcm2711 else .bcm2712;
+/// Whether the host needs the VideoCore's firmware - its mailbox and a
+/// buffer for its messages in the Host - for the radio's power and the
+/// host's clock: the BCM2711's does.
+pub const uses_firmware = soc == .bcm2711;
 
 /// The parts on this kind of bus.
 pub const bus = st.BUS_SDIO;
@@ -95,19 +126,54 @@ const gio_aon_pins = 17;
 /// No antenna line.
 const no_pin: u8 = 0xFF;
 
+/// The BCM2711's GPIO block: a 3-bit function field per pin, ten pins a
+/// register, and a 2-bit pull field per pin, sixteen pins a register.
+const bcm2711_gpio: usize = 0xFE20_0000;
+const GPFSEL0 = 0x00;
+const GPIO_PUP_PDN_CNTRL_REG0 = 0xE4;
+const bcm2711_fsel_alt3: u32 = 7;
+const bcm2711_pull_none: u32 = 0;
+const bcm2711_pull_up: u32 = 1;
+/// The BCM2711's older SD host's lines start at GPIO34.
+const bcm2711_first_pin = 34;
+/// The firmware's expander: its lines numbered past the SoC's own when
+/// the firmware is asked about them (Linux's RPI_EXP_GPIO_BASE), and how
+/// many it has.
+const expander_base: u32 = 128;
+const expander_lines = 8;
+/// The firmware's tags: an expander line's level set, the answer's first
+/// word - the line's number in the message - 0 when it was done (the
+/// line is an output: the firmware has it as one from its start); a
+/// clock's rate, and the EMMC clock's number.
+const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
+const TAG_GET_CLOCK_RATE: u32 = 0x0003_0002;
+const CLOCK_EMMC: u32 = 1;
+/// A message's code once the firmware has answered it.
+const code_answered: u32 = 0x8000_0000;
+
 /// What the radio is wired to: the host, its clock line (the command and
-/// data lines follow it on the D0's pins), and WL_REG_ON.
+/// data lines follow it), and WL_REG_ON.
 pub const Host = extern struct {
     /// exec, for the waits; the device sets it as it takes the host.
     sys: ?*ExecBase = null,
-    /// The SDHCI's registers, and the configuration registers above them.
+    /// The SDHCI's registers, and the BCM2712's configuration registers
+    /// above them (0 on the BCM2711).
     regs: usize = 0,
     cfg: usize = 0,
-    /// The host's clock line, and WL_REG_ON on the GPIO block.
+    /// The VideoCore's mailbox, and the buffer its messages are written
+    /// in (`videocore.bufferIn`): the device sets both where the host
+    /// `uses_firmware`, and they are 0 elsewhere.
+    mailbox: usize = 0,
+    mail: usize = 0,
+    /// The host's clock line, and WL_REG_ON: a pin of the BCM2712's GPIO
+    /// block, or a line of the BCM2711's firmware expander.
     clock_pin: u32 = 0,
     power_pin: u32 = 0,
-    /// The controller's clock, from its capabilities.
+    /// The controller's clock: the firmware's on the BCM2711, else from
+    /// its capabilities.
     base_hz: u32 = 0,
+    /// The card's clock as it was last set; 0 while it is stopped.
+    card_hz: u32 = 0,
     /// The antenna switch's lines on the always-on GPIO block: the one
     /// for the board's antenna, and the connector's; `no_pin` for none.
     antenna_pin: u8 = no_pin,
@@ -116,7 +182,9 @@ pub const Host = extern struct {
 };
 
 /// The host a part names, or null where its lines are not the ones the
-/// host has on the D0 - GPIO30 to 35 - or its power pin no GPIO.
+/// host has - GPIO30 to 35 on the BCM2712 D0, GPIO34 to 39 on the
+/// BCM2711 - or its power line is not where this can switch it: a GPIO
+/// on the BCM2712, a line of the firmware's expander on the BCM2711.
 pub fn hostOf(utility: *UtilityBase, tags: ?[*]const TagItem) ?Host {
     const address = utility.GetTagData(st.PART_Address, 0, tags);
     if (address == 0) return null;
@@ -124,13 +192,21 @@ pub fn hostOf(utility: *UtilityBase, tags: ?[*]const TagItem) ?Host {
     const command_pin = boardpin.BoardPin.of(utility.GetTagData(st.PART_PinCommand, 0, tags));
     const data_pin = boardpin.BoardPin.of(utility.GetTagData(st.PART_PinData0, 0, tags));
     const power_pin = boardpin.BoardPin.of(utility.GetTagData(st.PART_PinPower, 0, tags));
-    if (clock_pin.kind != boardpin.BPIN_GPIO or clock_pin.number != 30) return null;
-    if (command_pin.kind != boardpin.BPIN_GPIO or command_pin.number != 31) return null;
-    if (data_pin.kind != boardpin.BPIN_GPIO or data_pin.number != 32) return null;
-    if (power_pin.kind != boardpin.BPIN_GPIO or power_pin.number >= gio_pins or power_pin.active_low != 0) return null;
+    const first = switch (soc) {
+        .bcm2712 => 30,
+        .bcm2711 => bcm2711_first_pin,
+    };
+    if (clock_pin.kind != boardpin.BPIN_GPIO or clock_pin.number != first) return null;
+    if (command_pin.kind != boardpin.BPIN_GPIO or command_pin.number != first + 1) return null;
+    if (data_pin.kind != boardpin.BPIN_GPIO or data_pin.number != first + 2) return null;
+    if (power_pin.active_low != 0) return null;
+    switch (soc) {
+        .bcm2712 => if (power_pin.kind != boardpin.BPIN_GPIO or power_pin.number >= gio_pins) return null,
+        .bcm2711 => if (power_pin.kind != boardpin.BPIN_EXPANDER or power_pin.number >= expander_lines) return null,
+    }
     return .{
         .regs = address,
-        .cfg = address + 0x400,
+        .cfg = if (soc == .bcm2712) address + 0x400 else 0,
         .clock_pin = clock_pin.number,
         .power_pin = power_pin.number,
         .antenna_pin = aonPin(utility.GetTagData(st.PART_PinAntenna, 0, tags)),
@@ -159,30 +235,82 @@ fn setPin(sys: *ExecBase, pin: u32, fsel: u32, pull: u32) void {
     pad.* = (pad.* & ~(@as(u32, 0x3) << pad_shift)) | (pull << pad_shift);
 }
 
+/// The BCM2711's pin `pin` given to the older SD host - its ALT3
+/// function - with its pull set.
+fn setPinBcm2711(sys: *ExecBase, pin: u32, pull: u32) void {
+    sys.Disable();
+    defer sys.Enable();
+    const fsel = reg32(bcm2711_gpio + GPFSEL0 + (pin / 10) * 4);
+    const fsel_shift: u5 = @intCast((pin % 10) * 3);
+    fsel.* = (fsel.* & ~(@as(u32, 7) << fsel_shift)) | (bcm2711_fsel_alt3 << fsel_shift);
+    const pulls = reg32(bcm2711_gpio + GPIO_PUP_PDN_CNTRL_REG0 + (pin / 16) * 4);
+    const pull_shift: u5 = @intCast((pin % 16) * 2);
+    pulls.* = (pulls.* & ~(@as(u32, 3) << pull_shift)) | (pull << pull_shift);
+}
+
 /// The host's lines given to it: CLK without a pull, CMD and the four
-/// data lines pulled up; and the power pin a GPIO.
+/// data lines pulled up; and on the BCM2712 the power pin a GPIO.
 pub fn pinsUp(sys: *ExecBase, host: *const Host) void {
-    setPin(sys, host.clock_pin, fsel_sd2, pull_none);
-    for (host.clock_pin + 1..host.clock_pin + 6) |pin| setPin(sys, @intCast(pin), fsel_sd2, pull_up);
-    if (host.power_pin >= first_pin and host.power_pin < first_pin + d0_pins.len) {
-        setPin(sys, host.power_pin, fsel_gpio, pull_none);
+    switch (soc) {
+        .bcm2712 => {
+            setPin(sys, host.clock_pin, fsel_sd2, pull_none);
+            for (host.clock_pin + 1..host.clock_pin + 6) |pin| setPin(sys, @intCast(pin), fsel_sd2, pull_up);
+            if (host.power_pin >= first_pin and host.power_pin < first_pin + d0_pins.len) {
+                setPin(sys, host.power_pin, fsel_gpio, pull_none);
+            }
+        },
+        .bcm2711 => {
+            setPinBcm2711(sys, host.clock_pin, bcm2711_pull_none);
+            for (host.clock_pin + 1..host.clock_pin + 6) |pin| setPinBcm2711(sys, @intCast(pin), bcm2711_pull_up);
+        },
     }
 }
 
-/// WL_REG_ON driven high or low: the radio's power, and its reset.
-pub fn power(sys: *ExecBase, host: *const Host, on: bool) void {
-    const bank = gio + (host.power_pin / 32) * gio_bank_bytes;
-    const bit = @as(u32, 1) << @intCast(host.power_pin % 32);
-    sys.Disable();
-    defer sys.Enable();
-    const data = reg32(bank + GIO_DATA);
-    data.* = if (on) data.* | bit else data.* & ~bit;
-    reg32(bank + GIO_IODIR).* &= ~bit;
+/// WL_REG_ON driven high or low: the radio's power, and its reset. False
+/// where the firmware did not answer, and the line is as it was.
+pub fn power(sys: *ExecBase, host: *const Host, on: bool) bool {
+    switch (soc) {
+        .bcm2712 => {
+            const bank = gio + (host.power_pin / 32) * gio_bank_bytes;
+            const bit = @as(u32, 1) << @intCast(host.power_pin % 32);
+            sys.Disable();
+            defer sys.Enable();
+            const data = reg32(bank + GIO_DATA);
+            data.* = if (on) data.* | bit else data.* & ~bit;
+            reg32(bank + GIO_IODIR).* &= ~bit;
+            return true;
+        },
+        .bcm2711 => {
+            var value = [_]u32{ expander_base + host.power_pin, @intFromBool(on) };
+            return setExpander(sys, host, TAG_SET_GPIO_STATE, &value);
+        },
+    }
+}
+
+/// The firmware asked tag `tag` with `value`, its answer read back into
+/// it: false without a mailbox, or when it did not answer.
+fn askFirmware(sys: *ExecBase, host: *const Host, tag: u32, value: []u32) bool {
+    if (host.mailbox == 0 or host.mail == 0) return false;
+    const buffer: *align(videocore.buffer_bytes) videocore.Buffer = @ptrFromInt(host.mail);
+    return videocore.call(sys, host.mailbox, buffer, tag, value);
+}
+
+/// A set tag of the firmware's expander sent: done when the firmware has
+/// answered the message and its status, written over the line's number,
+/// is 0. It leaves the tag's own answered bit clear, so the message's
+/// code is what says it was read.
+fn setExpander(sys: *ExecBase, host: *const Host, tag: u32, value: []u32) bool {
+    if (askFirmware(sys, host, tag, value)) return value[0] == 0;
+    if (host.mail == 0) return false;
+    const buffer: *const videocore.Buffer = @ptrFromInt(host.mail);
+    return buffer[1] == code_answered and buffer[5] == 0;
 }
 
 /// The board's own antenna picked: its line driven high, the
 /// connector's low, the level set before the line is made an output.
+/// The BCM2711's radio has no switch.
 pub fn antenna(sys: *ExecBase, host: *const Host) void {
+    if (soc == .bcm2711) return;
     sys.Disable();
     defer sys.Enable();
     const data = reg32(gio_aon + GIO_DATA);
@@ -248,6 +376,9 @@ const CLOCK_INT_EN: u32 = 1 << 0;
 const CLOCK_INT_STABLE: u32 = 1 << 1;
 const CLOCK_CARD_EN: u32 = 1 << 2;
 
+/// The resets' byte of the clock's word: it clears itself, and is never
+/// written back as it was read.
+const RESET_BYTE: u32 = 0xFF00_0000;
 const RESET_ALL: u32 = 1 << 0;
 const RESET_CMD: u32 = 1 << 1;
 const RESET_DATA: u32 = 1 << 2;
@@ -285,9 +416,12 @@ pub const Response = enum(u32) {
 };
 const CMD_DATA: u32 = 1 << 5;
 
-/// The controller's clock when its capabilities give none: the device
+/// The controller's clock when nothing gives one: the BCM2712 device
 /// tree's 200 MHz.
 const default_base_hz = 200_000_000;
+/// The card's clock up to which the BCM2711's host is given time after
+/// each write (`settle`).
+const slow_card_hz = 400_000;
 
 /// How long the controller may take: a reset, its clock to settle, a
 /// command's answer, a block of data.
@@ -301,16 +435,28 @@ const data_us = 1_000_000;
 /// none signalled, and the longest data timeout. False if the reset never
 /// ends.
 pub fn reset(host: *Host) bool {
-    const cfg_ctrl = reg32(host.cfg + CFG_CTRL);
-    cfg_ctrl.* = (cfg_ctrl.* & ~CFG_SDCD_N_TEST_LEV) | CFG_SDCD_N_TEST_EN;
+    if (soc == .bcm2712) {
+        const cfg_ctrl = reg32(host.cfg + CFG_CTRL);
+        cfg_ctrl.* = (cfg_ctrl.* & ~CFG_SDCD_N_TEST_LEV) | CFG_SDCD_N_TEST_EN;
+    }
+    host.card_hz = 0;
     if (!resetLines(host, RESET_ALL)) return false;
-    const caps = reg32(host.regs + CAPABILITIES).*;
+    const caps = read32(host, CAPABILITIES);
     const caps_mhz = (caps >> 8) & 0xFF;
-    host.base_hz = if (caps_mhz != 0) caps_mhz * 1_000_000 else default_base_hz;
-    reg32(host.regs + INT_ENABLE).* = ERR_ALL | INT_POLLED;
-    reg32(host.regs + SIGNAL_ENABLE).* = 0;
-    reg8(host.regs + TIMEOUT).* = 0x0E;
+    host.base_hz = firmwareClock(host) orelse if (caps_mhz != 0) caps_mhz * 1_000_000 else default_base_hz;
+    write32(host, INT_ENABLE, ERR_ALL | INT_POLLED);
+    write32(host, SIGNAL_ENABLE, 0);
+    write8(host, TIMEOUT, 0x0E);
     return true;
+}
+
+/// The host's clock as the firmware has set it: the BCM2711's EMMC
+/// clock. Null on the BCM2712, and where the firmware does not say.
+fn firmwareClock(host: *const Host) ?u32 {
+    if (soc != .bcm2711) return null;
+    var value = [_]u32{ CLOCK_EMMC, 0 };
+    if (!askFirmware(host.sys.?, host, TAG_GET_CLOCK_RATE, &value) or value[1] == 0) return null;
+    return value[1];
 }
 
 /// The card's interrupt reported and signalled on the host's interrupt
@@ -321,70 +467,79 @@ pub fn reset(host: *Host) bool {
 /// other's bits.
 pub fn cardInterrupt(host: *const Host, on: bool) void {
     if (on) {
-        reg32(host.regs + INT_ENABLE).* = ERR_ALL | INT_POLLED | INT_CARD;
-        reg32(host.regs + SIGNAL_ENABLE).* = INT_CARD;
+        write32(host, INT_ENABLE, ERR_ALL | INT_POLLED | INT_CARD);
+        write32(host, SIGNAL_ENABLE, INT_CARD);
     } else {
-        reg32(host.regs + SIGNAL_ENABLE).* = 0;
-        reg32(host.regs + INT_ENABLE).* = ERR_ALL | INT_POLLED;
+        write32(host, SIGNAL_ENABLE, 0);
+        write32(host, INT_ENABLE, ERR_ALL | INT_POLLED);
     }
 }
 
 /// Whether the host's interrupt is the card's: signalled, and the card
 /// holding it.
 pub fn cardInterrupting(host: *const Host) bool {
-    if (reg32(host.regs + SIGNAL_ENABLE).* & INT_CARD == 0) return false;
-    return reg32(host.regs + INT_STATUS).* & INT_CARD != 0;
+    if (read32(host, SIGNAL_ENABLE) & INT_CARD == 0) return false;
+    return read32(host, INT_STATUS) & INT_CARD != 0;
 }
 
 /// The controller's version, as its register numbers it (2 for 3.00).
 pub fn version(host: *const Host) u32 {
-    return reg16(host.regs + VERSION).* & 0xFF;
+    return read16(host, VERSION) & 0xFF;
 }
 
 /// The bus powered at 3.3 V: the voltage first, then the power.
 pub fn busPower(host: *const Host) void {
-    const power_reg = reg8(host.regs + POWER);
-    power_reg.* = 0;
-    power_reg.* = POWER_330;
-    power_reg.* = POWER_330 | POWER_ON;
+    write8(host, POWER, 0);
+    write8(host, POWER, POWER_330);
+    write8(host, POWER, POWER_330 | POWER_ON);
 }
 
 /// The card's clock stopped and started again at `hz` or the nearest
-/// below it the divider makes: the base clock over an even number. The
+/// below it the divider makes: the base clock over an even number - over
+/// twice a power of two, up to 256, on a host before version 3. The
 /// clock that runs, or null when the controller's never settles.
-pub fn setClock(host: *const Host, hz: u32) ?u32 {
-    const clock = reg16(host.regs + CLOCK);
-    clock.* = 0;
-    const pin_sel = reg32(host.cfg + CFG_SD_PIN_SEL);
-    pin_sel.* = (pin_sel.* & ~CFG_PIN_SEL_MASK) | CFG_PIN_SEL_SD;
+pub fn setClock(host: *Host, hz: u32) ?u32 {
+    write16(host, CLOCK, 0);
+    host.card_hz = 0;
+    if (soc == .bcm2712) {
+        const pin_sel = reg32(host.cfg + CFG_SD_PIN_SEL);
+        pin_sel.* = (pin_sel.* & ~CFG_PIN_SEL_MASK) | CFG_PIN_SEL_SD;
+    }
     var divider: u32 = 0;
-    if (hz < host.base_hz) divider = @min((host.base_hz + 2 * hz - 1) / (2 * hz), 1023);
+    if (hz < host.base_hz) {
+        divider = (host.base_hz + 2 * hz - 1) / (2 * hz);
+        if (version(host) < 2) {
+            var step: u32 = 1;
+            while (step < divider and step < 128) step <<= 1;
+            divider = step;
+        } else divider = @min(divider, 1023);
+    }
     const control: u32 = ((divider & 0xFF) << 8) | ((divider >> 8) << 6) | CLOCK_INT_EN;
-    clock.* = @intCast(control);
-    if (!waitFor(host.sys.?, clock, CLOCK_INT_STABLE, clock_us)) return null;
-    clock.* = @intCast(control | CLOCK_CARD_EN);
-    return if (divider == 0) host.base_hz else host.base_hz / (2 * divider);
+    write16(host, CLOCK, @intCast(control));
+    if (!clockStable(host)) return null;
+    write16(host, CLOCK, @intCast(control | CLOCK_CARD_EN));
+    host.card_hz = if (divider == 0) host.base_hz else host.base_hz / (2 * divider);
+    return host.card_hz;
 }
 
 /// The data bus four lines wide, or one; and the host's high-speed timing
 /// on or off.
 pub fn setBus(host: *const Host, wide: bool, high_speed: bool) void {
-    const control = reg8(host.regs + HOST_CONTROL);
-    var value = control.* & ~(HOST_WIDE | HOST_HIGH_SPEED);
+    var value = read8(host, HOST_CONTROL) & ~(HOST_WIDE | HOST_HIGH_SPEED);
     if (wide) value |= HOST_WIDE;
     if (high_speed) value |= HOST_HIGH_SPEED;
-    control.* = value;
+    write8(host, HOST_CONTROL, value);
 }
 
 /// A command without data: its response's first word.
 pub fn command(host: *const Host, index: u32, argument: u32, response: Response) Error!u32 {
     const inhibit = if (response == .r1b) PRESENT_CMD_INHIBIT | PRESENT_DAT_INHIBIT else PRESENT_CMD_INHIBIT;
     try idle(host, inhibit);
-    reg32(host.regs + INT_STATUS).* = ~@as(u32, 0);
-    reg32(host.regs + ARGUMENT).* = argument;
-    reg32(host.regs + TRANSFER).* = (index << 8 | @intFromEnum(response)) << 16;
+    write32(host, INT_STATUS, ~@as(u32, 0));
+    write32(host, ARGUMENT, argument);
+    write32(host, TRANSFER, (index << 8 | @intFromEnum(response)) << 16);
     try take(host, INT_CMD_DONE, command_us, RESET_CMD);
-    const answer = reg32(host.regs + RESPONSE).*;
+    const answer = read32(host, RESPONSE);
     if (response == .r1b) try take(host, INT_XFER_DONE, data_us, RESET_CMD | RESET_DATA);
     return answer;
 }
@@ -402,16 +557,22 @@ pub const Data = struct {
 /// first word.
 pub fn transfer(host: *const Host, index: u32, argument: u32, data: Data) Error!u32 {
     try idle(host, PRESENT_CMD_INHIBIT | PRESENT_DAT_INHIBIT);
-    reg32(host.regs + INT_STATUS).* = ~@as(u32, 0);
-    reg16(host.regs + BLOCK_SIZE).* = @intCast(data.block_bytes);
-    reg16(host.regs + BLOCK_COUNT).* = @intCast(data.blocks);
-    reg32(host.regs + ARGUMENT).* = argument;
+    write32(host, INT_STATUS, ~@as(u32, 0));
+    switch (soc) {
+        .bcm2712 => {
+            reg16(host.regs + BLOCK_SIZE).* = @intCast(data.block_bytes);
+            reg16(host.regs + BLOCK_COUNT).* = @intCast(data.blocks);
+        },
+        // One word: the size and the count share it.
+        .bcm2711 => write32(host, BLOCK_SIZE, data.block_bytes | data.blocks << 16),
+    }
+    write32(host, ARGUMENT, argument);
     var mode = MODE_BLOCK_COUNT;
     if (!data.write) mode |= MODE_READ;
     if (data.blocks > 1) mode |= MODE_MULTI;
-    reg32(host.regs + TRANSFER).* = (index << 8 | CMD_DATA | @intFromEnum(Response.r1)) << 16 | mode;
+    write32(host, TRANSFER, (index << 8 | CMD_DATA | @intFromEnum(Response.r1)) << 16 | mode);
     try take(host, INT_CMD_DONE, command_us, RESET_CMD | RESET_DATA);
-    const answer = reg32(host.regs + RESPONSE).*;
+    const answer = read32(host, RESPONSE);
     const port = reg32(host.regs + BUFFER);
     var at: usize = 0;
     for (0..data.blocks) |_| {
@@ -438,9 +599,8 @@ pub fn transfer(host: *const Host, index: u32, argument: u32, data: Data) Error!
 
 /// Until the lines in `inhibit` are free.
 fn idle(host: *const Host, inhibit: u32) Error!void {
-    const present = reg32(host.regs + PRESENT);
     const until = host.sys.?.UptimeUs() + command_us;
-    while (present.* & inhibit != 0) {
+    while (read32(host, PRESENT) & inhibit != 0) {
         if (host.sys.?.UptimeUs() > until) {
             _ = resetLines(host, RESET_CMD | RESET_DATA);
             return error.Timeout;
@@ -452,19 +612,18 @@ fn idle(host: *const Host, inhibit: u32) Error!void {
 /// is taken with every other bit, the lines in `lines` reset, and
 /// returned.
 fn take(host: *const Host, bit: u32, timeout_us: u64, lines: u32) Error!void {
-    const status = reg32(host.regs + INT_STATUS);
     const until = host.sys.?.UptimeUs() + timeout_us;
     while (true) {
-        const now = status.*;
+        const now = read32(host, INT_STATUS);
         if (now & INT_ERROR != 0) {
-            status.* = now;
+            write32(host, INT_STATUS, now);
             _ = resetLines(host, lines);
             if (now & (ERR_CMD_TIMEOUT | ERR_DATA_TIMEOUT) != 0) return error.Timeout;
             if (now & (ERR_CMD_CRC | ERR_DATA_CRC) != 0) return error.Crc;
             return error.Failed;
         }
         if (now & bit != 0) {
-            status.* = bit;
+            write32(host, INT_STATUS, bit);
             return;
         }
         if (host.sys.?.UptimeUs() > until) {
@@ -477,23 +636,87 @@ fn take(host: *const Host, bit: u32, timeout_us: u64, lines: u32) Error!void {
 /// The controller's lines in `lines` reset: written with the clock's
 /// enables in the same word, as the BCM2712 wants, and waited for.
 fn resetLines(host: *const Host, lines: u32) bool {
-    const word = reg32(host.regs + CLOCK);
-    word.* = word.* | (lines << 24);
-    const resets = reg8(host.regs + RESET);
+    write32(host, CLOCK, (read32(host, CLOCK) & ~RESET_BYTE) | (lines << 24));
     const until = host.sys.?.UptimeUs() + reset_us;
-    while (resets.* & lines != 0) {
+    while (read8(host, RESET) & lines != 0) {
         if (host.sys.?.UptimeUs() > until) return false;
     }
     return true;
 }
 
-/// Until `bit` is set in a 16-bit register.
-fn waitFor(sys: *ExecBase, register: *volatile u16, bit: u32, timeout_us: u64) bool {
-    const until = sys.UptimeUs() + timeout_us;
-    while (register.* & bit == 0) {
-        if (sys.UptimeUs() > until) return false;
+/// Until the controller's own clock is stable.
+fn clockStable(host: *const Host) bool {
+    const until = host.sys.?.UptimeUs() + clock_us;
+    while (read16(host, CLOCK) & CLOCK_INT_STABLE == 0) {
+        if (host.sys.?.UptimeUs() > until) return false;
     }
     return true;
+}
+
+// --- the registers ----------------------------------------------------------
+
+fn read32(host: *const Host, offset: usize) u32 {
+    return reg32(host.regs + offset).*;
+}
+
+fn write32(host: *const Host, offset: usize, value: u32) void {
+    reg32(host.regs + offset).* = value;
+    settle(host);
+}
+
+/// A half-word register read: on the BCM2711 out of its word.
+fn read16(host: *const Host, offset: usize) u16 {
+    return switch (soc) {
+        .bcm2712 => reg16(host.regs + offset).*,
+        .bcm2711 => @truncate(read32(host, offset & ~@as(usize, 3)) >> shiftOf(offset)),
+    };
+}
+
+/// A byte register read: on the BCM2711 out of its word.
+fn read8(host: *const Host, offset: usize) u8 {
+    return switch (soc) {
+        .bcm2712 => reg8(host.regs + offset).*,
+        .bcm2711 => @truncate(read32(host, offset & ~@as(usize, 3)) >> shiftOf(offset)),
+    };
+}
+
+fn write16(host: *const Host, offset: usize, value: u16) void {
+    switch (soc) {
+        .bcm2712 => reg16(host.regs + offset).* = value,
+        .bcm2711 => writeNarrow(host, offset, value, 0xFFFF),
+    }
+}
+
+fn write8(host: *const Host, offset: usize, value: u8) void {
+    switch (soc) {
+        .bcm2712 => reg8(host.regs + offset).* = value,
+        .bcm2711 => writeNarrow(host, offset, value, 0xFF),
+    }
+}
+
+/// A byte or half-word written into its word on the BCM2711: the word
+/// read, the part replaced, the word written - the resets' byte left 0,
+/// so a reset that runs is not started again.
+fn writeNarrow(host: *const Host, offset: usize, value: u32, mask: u32) void {
+    const word_offset = offset & ~@as(usize, 3);
+    const shift = shiftOf(offset);
+    var word = read32(host, word_offset);
+    if (word_offset == CLOCK) word &= ~RESET_BYTE;
+    write32(host, word_offset, (word & ~(mask << shift)) | (value << shift));
+}
+
+fn shiftOf(offset: usize) u5 {
+    return @intCast((offset & 3) * 8);
+}
+
+/// After a write to the BCM2711's host while the card's clock is slow:
+/// four of its cycles, or 10 us while it is stopped, so a second write to
+/// the same register is not lost. Nothing on the BCM2712, nor once the
+/// clock runs fast.
+fn settle(host: *const Host) void {
+    if (soc != .bcm2711 or host.card_hz > slow_card_hz) return;
+    const us: u64 = if (host.card_hz == 0) 10 else (4_000_000 + host.card_hz - 1) / host.card_hz;
+    host.sys.?.SpinUs(us);
 }
 
 fn reg32(address: usize) *volatile u32 {

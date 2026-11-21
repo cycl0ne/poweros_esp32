@@ -1,6 +1,6 @@
 /* DEVS:NetInterfaces/WLAN0 - the interface C:net/AddNetInterface WLAN0
- * brings up as wlan0: the Raspberry Pi CM5's radio, a CYW43455, as a
- * station. The startup-sequence brings up every file here.
+ * brings up as wlan0: the radio of the Raspberry Pi CM5 or 4 Model B, a
+ * CYW43455, as a station. The startup-sequence brings up every file here.
  *
  * A line
  *   Network = "<network>"

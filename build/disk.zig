@@ -1243,13 +1243,16 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         }
         make_x64_disk.addPrefixedFileArg("devs/firmware/amdgpu.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENSE.amdgpu" }) });
     }
-    // DEVS:networks/firmware/cyw43455/ - what the Raspberry Pi CM5's radio
-    // runs, as scripts/fetch-cyw43455.sh fetched it. On the AArch64 disk
-    // alone, whose networks/cyw43455.device loads it.
+    // DEVS:networks/firmware/cyw43455/ - what the radio of the Raspberry
+    // Pi CM5 and of the 4 Model B runs, as scripts/fetch-cyw43455.sh
+    // fetched it. On the two AArch64 disks alone, whose
+    // networks/cyw43455.device loads it.
     if (cyw43455Dir(b)) |dir| {
-        make_a64_disk.addArgs(&.{ "devs/networks/firmware", "devs/networks/firmware/cyw43455" });
-        for (cyw43455_files) |name| {
-            make_a64_disk.addPrefixedFileArg(b.fmt("devs/networks/firmware/cyw43455/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+        for ([_]*std.Build.Step.Run{ make_a64_disk, make_a64v80_disk }) |make| {
+            make.addArgs(&.{ "devs/networks/firmware", "devs/networks/firmware/cyw43455" });
+            for (cyw43455_files) |name| {
+                make.addPrefixedFileArg(b.fmt("devs/networks/firmware/cyw43455/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+            }
         }
     }
     // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names
