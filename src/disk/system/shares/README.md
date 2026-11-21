@@ -48,7 +48,7 @@ first. **Read only** writes nothing to the share whatever the server would
 allow; **Encrypted** mounts it only if every message can be encrypted.
 
 **Mount** writes the share's file in `DEVS:Shares/` and, when there is a
-password to keep, its hash in `ENVARC:Sys/net/shares/`, then mounts it. The
+password, its hash in `ENVARC:Sys/net/shares/`, then mounts it. The
 share is on the device list at once, and it comes back at every start,
 since the startup mounts every share there is a file for. A mount that does
 not come off takes those files away again and says why.
@@ -82,8 +82,9 @@ be dismounted, and is then left as it was, the window still open.
 The password is never kept as it was typed. It is hashed - MD4 over its
 UTF-16, which is all the logon needs - and the hash is what is written in
 `ENVARC:Sys/net/shares/<name>`, where the next start reads it. **Keep the
-password** in the logon window says whether to write it down at all; with
-it off, the share is mounted now and the next start asks for nothing,
+password** in the logon window says whether to keep it there; with it
+off, the share is mounted now with the password - the hash stands in the
+file only while the mount takes it - and the next start asks for nothing,
 mounting it anonymously or not at all.
 
 ## What it is built on

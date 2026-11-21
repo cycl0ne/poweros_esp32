@@ -27,9 +27,10 @@
 //! not hold made an underscore, cut to the longest a device name may be -
 //! which can be typed over. Mount writes the share's file in
 //! `DEVS:Shares/`, the password's hash in `ENVARC:Sys/net/shares/` when
-//! there is a password to keep, and then runs `C:net/MountShare`, which
-//! mounts it: the share is on the device list at once and comes back at
-//! every start, since the startup mounts every share there is a file for.
+//! there is a password, and then runs `C:net/MountShare`, which mounts
+//! it: the share is on the device list at once and comes back at every
+//! start, since the startup mounts every share there is a file for. A
+//! hash that is not to be kept goes again once the share is mounted.
 //! A mount that fails takes the files back off and says why.
 //!
 //! **What this machine knows** is the lower list: a line for every share
@@ -89,7 +90,7 @@ const tx = sdk.gadgets.text;
 const cb_class = sdk.gadgets.checkbox;
 
 pub const COMMAND_NAME = "Shares";
-const VERSION = "1.4";
+const VERSION = "1.5";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (21.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -334,7 +335,7 @@ const App = struct {
             pair(lb.LISTBROWSER_Selected, selected),
             .{},
         });
-        app.showPicked();
+        app.showPicked(false);
     }
 
     /// Which device a share of the server being looked at is mounted as,
@@ -352,8 +353,11 @@ const App = struct {
     }
 
     /// The fields under the upper list follow the share picked in it: the
-    /// name it suggests, and whether it can be mounted at all.
-    fn showPicked(app: *App) void {
+    /// name it suggests, and whether it can be mounted at all. With `tell`
+    /// - the share has just been picked - the status line says why it
+    /// cannot be, or that its name is taken; a list made anew leaves the
+    /// line to what was done.
+    fn showPicked(app: *App, tell: bool) void {
         const share = app.pickedShare();
         const mountable = share != null and share.?.isDisk() and client.names.fits(share.?.name);
         if (share) |picked| {
@@ -362,7 +366,7 @@ const App = struct {
             _ = known.deviceNameOf(name, &app.suggested);
             // A name already taken is left as it is: typing over it is
             // the one way to mount the same share twice.
-            if (known.standingOf(app.dl, words.untilNul(&app.suggested)) != .none) {
+            if (tell and known.standingOf(app.dl, words.untilNul(&app.suggested)) != .none) {
                 app.say("%s: is taken already - another name mounts the share beside it", .{@as([*:0]const u8, @ptrCast(&app.suggested))});
             }
             app.set(app.name_field, &.{ pair(gc.STRINGA_TextVal, @intFromPtr(@as([*:0]const u8, @ptrCast(&app.suggested)))), .{} });
@@ -371,7 +375,7 @@ const App = struct {
         app.enable(app.readonly_box, mountable);
         app.enable(app.encrypt_box, mountable);
         app.enable(app.mount_button, mountable);
-        if (share != null and !mountable) {
+        if (tell and share != null and !mountable) {
             if (!share.?.isDisk()) {
                 app.say("that one holds no files: only a disk share can be mounted", .{});
             } else {
@@ -544,21 +548,26 @@ const App = struct {
             app.sayFault("%s: could not be written", .{share_path});
             return;
         }
-        // The hash, so that a start after this one logs on by itself.
-        var kept_password = false;
-        if (app.account.has_hash and app.account.keep) {
-            var hash_path: known.Path = undefined;
-            const password_path = known.pathOf(&hash_path, sharefile.password_directory, words.untilNul(&name));
+        // The hash beside the share file, where MountShare reads what it
+        // logs on with. Kept, a start after this one logs on by itself;
+        // not kept, it goes again once the share is mounted - the mount
+        // holds the hash it was given and reads the file no more.
+        var hash_path: known.Path = undefined;
+        const password_path = known.pathOf(&hash_path, sharefile.password_directory, words.untilNul(&name));
+        var wrote_password = false;
+        if (app.account.has_hash) {
             if (sharefile.writePassword(app.dl, password_path, &app.account.nt_hash)) {
-                kept_password = true;
+                wrote_password = true;
             } else {
                 app.sayFault("%s: could not be written", .{password_path});
                 known.unwrite(app.dl, words.untilNul(&name), false);
                 return;
             }
         }
-        if (!app.runMountShare(words.untilNul(&name), false)) {
-            known.unwrite(app.dl, words.untilNul(&name), kept_password);
+        const mounted = app.runMountShare(words.untilNul(&name), false);
+        if (wrote_password and !app.account.keep) _ = app.dl.DeleteFile(password_path);
+        if (!mounted) {
+            known.unwrite(app.dl, words.untilNul(&name), wrote_password);
             app.showMine();
             return;
         }
@@ -1357,7 +1366,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.closeEdit();
 
     app.showMine();
-    app.showPicked();
+    app.showPicked(false);
     if (asked_server != null) app.connect();
 
     var code_word: u32 = 0;
@@ -1444,7 +1453,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                     ID_LOGON => app.openLogon(),
                     ID_FOUND => {
                         if (app.selectedOf(app.found)) |row| app.picked = row.user_data;
-                        app.showPicked();
+                        app.showPicked(true);
                     },
                     ID_MOUNT => app.mount(),
                     ID_NAME => if (entered(code_word)) app.mount(),
