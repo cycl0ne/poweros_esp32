@@ -219,6 +219,7 @@ test {
     _ = @import("libs/smb/tests/smb.zig");
     _ = @import("system/shares/known.zig");
     _ = @import("system/shares/server.zig");
+    _ = @import("classes/datatypes/jpeg/tests/jpeg.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/png/tests/write.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");

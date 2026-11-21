@@ -185,11 +185,12 @@ pub const catalogs = catalogsOf(&translated_strings);
 /// drawing is the library itself, kept apart so that it is tested on the
 /// host and used by host tools as it is. The SMB client is
 /// the protocol and the share files, which smb-handler, C:net/MountShare
-/// and SYS:System/Shares each need all or part of. The baseline JPEG
-/// decoder is jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
+/// and SYS:System/Shares each need all or part of. The JPEG decoder is
+/// jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
 /// film's sound is the process Movie and videocodec.datatype both play one
 /// with. The
-/// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's, the VP9
+/// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's - and
+/// webp.datatype's and webpanim.datatype's, a lossy WebP's - the VP9
 /// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
 /// decoder hevc.vcodec's, kept apart from the system so that they are
 /// tested on the host as they are. The readers of H.264's and H.265's
@@ -442,6 +443,8 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/lottie.datatype", .source = "classes/datatypes/lottie/lottie.zig", .name = "lottie.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype", .set = .svg },
     .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype", .set = .gui, .imports = &.{"jpegdecode"} },
+    .{ .disk = "classes/datatypes/webp.datatype", .source = "classes/datatypes/webp/webp.zig", .name = "webp.datatype", .set = .gui, .imports = &.{"vp8core"} },
+    .{ .disk = "classes/datatypes/webpanim.datatype", .source = "classes/datatypes/webp/webpanim.zig", .name = "webpanim.datatype", .set = .gui, .imports = &.{"vp8core"} },
     .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/markdown.datatype", .source = "classes/datatypes/markdown/markdown.zig", .name = "markdown.datatype", .set = .gui },
@@ -850,6 +853,8 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/SVG", .source = "devs/datatypes/SVG" },
     .{ .disk = "devs/datatypes/SVGZ", .source = "devs/datatypes/SVGZ" },
     .{ .disk = "devs/datatypes/JPEG", .source = "devs/datatypes/JPEG" },
+    .{ .disk = "devs/datatypes/WebP", .source = "devs/datatypes/WebP" },
+    .{ .disk = "devs/datatypes/WebPAnim", .source = "devs/datatypes/WebPAnim" },
     .{ .disk = "devs/datatypes/Markdown", .source = "devs/datatypes/Markdown" },
     .{ .disk = "devs/datatypes/HTML", .source = "devs/datatypes/HTML" },
     .{ .disk = "devs/datatypes/OBJ", .source = "devs/datatypes/OBJ" },
@@ -994,6 +999,8 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Shapes.gif", .source = "tests/datatypes/Shapes.gif" },
     .{ .disk = "tests/datatypes/Weave.gif", .source = "tests/datatypes/Weave.gif" },
     .{ .disk = "tests/datatypes/Bounce.gif", .source = "tests/datatypes/Bounce.gif" },
+    .{ .disk = "tests/datatypes/Disc.webp", .source = "tests/datatypes/Disc.webp" },
+    .{ .disk = "tests/datatypes/Bounce.webp", .source = "tests/datatypes/Bounce.webp" },
     .{ .disk = "tests/datatypes/Spinner.json", .source = "tests/datatypes/Spinner.json" },
     .{ .disk = "tests/datatypes/Paints.json", .source = "tests/datatypes/Paints.json" },
     .{ .disk = "tests/datatypes/Drawing.svg", .source = "tests/datatypes/Drawing.svg" },
@@ -1007,6 +1014,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Icosahedron.obj", .source = "tests/datatypes/Icosahedron.obj" },
     .{ .disk = "tests/datatypes/Garden.jpg", .source = "tests/datatypes/Garden.jpg" },
     .{ .disk = "tests/datatypes/Grey.jpg", .source = "tests/datatypes/Grey.jpg" },
+    .{ .disk = "tests/datatypes/Progressive.jpg", .source = "tests/datatypes/Progressive.jpg" },
     .{ .disk = "tests/datatypes/Tiles.bmp", .source = "tests/datatypes/Tiles.bmp" },
     .{ .disk = "tests/datatypes/Runs.bmp", .source = "tests/datatypes/Runs.bmp" },
     .{ .disk = "tests/datatypes/Nibbles.bmp", .source = "tests/datatypes/Nibbles.bmp" },

@@ -4,8 +4,8 @@
 //! A file is a run of segments, each named by a marker: the tables that
 //! say how finely each of the sixty-four numbers of a block was kept
 //! (`DQT`), the codes the numbers are written in (`DHT`), what the
-//! picture is (`SOF0`), and then the scan itself (`SOS`), which is the
-//! whole picture as one stream of codes.
+//! picture is (`SOF0`, `SOF1`, `SOF2`), and then the scan itself (`SOS`),
+//! a stream of codes.
 //!
 //! A picture is not read as pixels but as **blocks of eight by eight**,
 //! one set for brightness and one for each of the two colour differences
@@ -14,9 +14,17 @@
 //! its own at its own size, and the pixels are made at the end by
 //! reading all three and turning them into red, green and blue.
 //!
-//! **Baseline only.** A file whose picture is written in several passes
-//! of increasing detail (`SOF2`, progressive) says so and is refused
-//! rather than half read: that is a second decoder, not a flag.
+//! **One scan, or several.** Most files are one scan, the whole picture
+//! a unit at a time, and each block is transformed into its plane the
+//! moment it is read. A file whose picture comes in passes of
+//! increasing detail (`SOF2`, progressive) - first the flat numbers of
+//! every block, then bands of the others, then their lower bits - or
+//! one that writes a component a scan, cannot be transformed until its
+//! last scan is read: its numbers are gathered first (`in_passes`), in
+//! memory the caller gives each component (`coefficientBytes`), and
+//! transformed once the file ends. A file that stops early leaves what
+//! its scans did say. Arithmetic coding, lossless JPEG and twelve bits a
+//! number are refused (`Unsupported`).
 //!
 //! Numbers in the segments are two bytes, high byte first. Inside the
 //! scan a 0xFF byte is written as 0xFF 0x00, so that a marker can still
@@ -37,6 +45,7 @@ pub const Error = error{
 pub const M_SOF0: u8 = 0xC0;
 pub const M_SOF1: u8 = 0xC1;
 pub const M_SOF2: u8 = 0xC2;
+pub const M_DNL: u8 = 0xDC;
 pub const M_DHT: u8 = 0xC4;
 pub const M_SOI: u8 = 0xD8;
 pub const M_EOI: u8 = 0xD9;
@@ -96,6 +105,11 @@ pub const Component = struct {
     /// What the last block's flat number was, which the next one is
     /// written as a difference from.
     predicted: i32 = 0,
+    /// The numbers of its blocks, gathered across the scans of a picture
+    /// that comes in several (`Work.in_passes`): sixty-four a block in
+    /// the order the file writes them, the blocks row by row as the plane
+    /// has them. The caller's memory, `coefficientBytes` of it, cleared.
+    coefficients: ?[*]i16 = null,
 };
 
 /// Everything reading a file needs besides the file: the tables, the
@@ -118,6 +132,25 @@ pub const Work = struct {
     /// Where the scan's codes begin.
     scan_at: usize = 0,
     block: [64]i32 = @splat(0),
+    /// The picture comes in passes of increasing detail (`SOF2`).
+    progressive: bool = false,
+    /// It comes in more than one scan - progressive, or a component a
+    /// scan: its numbers are gathered and transformed once the last scan
+    /// is read, into the components' `coefficients`.
+    in_passes: bool = false,
+    /// The scan being read: its components, by their place in
+    /// `component`; the band of the sixty-four numbers it holds; and,
+    /// for a pass of lower bits, the bit it was last at and the one it
+    /// is at now.
+    scan_components: [4]u8 = @splat(0),
+    scan_count: u32 = 0,
+    spectral_start: u8 = 0,
+    spectral_end: u8 = 63,
+    approx_high: u8 = 0,
+    approx_low: u8 = 0,
+    /// How many more blocks have nothing further in this band: a
+    /// progressive scan's run of blocks ended at once.
+    eob_run: u32 = 0,
 };
 
 /// A two-byte number as the file holds it, high byte first.
@@ -148,17 +181,20 @@ pub fn readHeaders(file: []const u8, work: *Work) Error!void {
             M_DQT => try readQuant(work, body),
             M_DHT => try readCodes(work, body),
             M_DRI => work.restart = if (body.len >= 2) half(body) else 0,
-            M_SOF0, M_SOF1 => {
+            M_SOF0, M_SOF1, M_SOF2 => {
+                if (seen_frame) return Error.Corrupt;
                 try readFrame(work, body);
+                work.progressive = marker == M_SOF2;
                 seen_frame = true;
             },
-            // Written in passes of increasing detail, or with a
-            // different kind of coding: a second decoder either way.
-            M_SOF2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF => return Error.Unsupported,
+            // Lossless, hierarchical, or arithmetic coding: another
+            // decoder.
+            0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF => return Error.Unsupported,
             M_SOS => {
                 if (!seen_frame) return Error.Corrupt;
                 try readScanHeader(work, body);
                 work.scan_at = at + 2 + length;
+                work.in_passes = work.progressive or work.scan_count != work.count;
                 return;
             },
             else => {},
@@ -227,25 +263,47 @@ fn readFrame(work: *Work, body: []const u8) Error!void {
     }
 }
 
-/// `SOS`: which code each component's numbers are written in.
+/// `SOS`: which components the scan holds, the code each one's numbers
+/// are written in, and - in a progressive file - which band of them and
+/// which bits.
 fn readScanHeader(work: *Work, body: []const u8) Error!void {
     if (body.len < 1) return Error.Corrupt;
     const count = body[0];
-    if (count != work.count) return Error.Unsupported;
+    if (count == 0 or count > work.count) return Error.Corrupt;
     if (body.len < 1 + @as(usize, count) * 2 + 3) return Error.Corrupt;
     for (0..count) |i| {
         const id = body[1 + i * 2];
         const tables = body[2 + i * 2];
         var found = false;
-        for (work.component[0..work.count]) |*component| {
+        for (work.component[0..work.count], 0..) |*component, place| {
             if (component.id != id) continue;
             component.dc_table = tables >> 4;
             component.ac_table = tables & 0x0F;
             if (component.dc_table >= work.dc.len or component.ac_table >= work.ac.len) return Error.Corrupt;
+            work.scan_components[i] = @intCast(place);
             found = true;
+            break;
         }
         if (!found) return Error.Corrupt;
     }
+    work.scan_count = count;
+    const band = body[1 + @as(usize, count) * 2 ..];
+    if (!work.progressive) {
+        work.spectral_start = 0;
+        work.spectral_end = 63;
+        work.approx_high = 0;
+        work.approx_low = 0;
+        return;
+    }
+    work.spectral_start = band[0];
+    work.spectral_end = band[1];
+    work.approx_high = band[2] >> 4;
+    work.approx_low = band[2] & 0x0F;
+    // The flat numbers alone, or a band of the others of one component.
+    if (work.spectral_start > work.spectral_end or work.spectral_end > 63) return Error.Corrupt;
+    if (work.spectral_start == 0 and work.spectral_end != 0) return Error.Corrupt;
+    if (work.spectral_start != 0 and count != 1) return Error.Corrupt;
+    if (work.approx_low > 13 or work.approx_high > 13) return Error.Corrupt;
 }
 
 /// How wide one unit of the picture is, in pixels, and how tall.
@@ -272,6 +330,12 @@ pub fn planeStride(work: *const Work, component: *const Component) u32 {
 }
 pub fn planeLines(work: *const Work, component: *const Component) u32 {
     return unitsDown(work) * component.down * 8;
+}
+
+/// How many bytes a component's gathered numbers take: two a number,
+/// sixty-four a block, a block for each eight by eight of its plane.
+pub fn coefficientBytes(work: *const Work, component: *const Component) usize {
+    return @as(usize, planeStride(work, component)) * planeLines(work, component) * 2;
 }
 
 // --- the scan ---------------------------------------------------------------
@@ -371,8 +435,11 @@ fn extend(value: u32, bits: u5) i32 {
     return signed;
 }
 
-/// The whole scan unpacked into the components' planes.
+/// The whole picture unpacked into the components' planes: its one scan,
+/// or every scan of one that comes in several (`in_passes`), for which
+/// each component must have its `coefficients`.
 pub fn readScan(file: []const u8, work: *Work) Error!void {
+    if (work.in_passes) return readPasses(file, work);
     var bits = Bits{ .from = file, .at = work.scan_at };
     const across = unitsAcross(work);
     const down = unitsDown(work);
@@ -410,8 +477,8 @@ fn readBlock(bits: *Bits, work: *Work, component: *Component, block_x: u32, bloc
     // The flat number, as a difference from the block before it.
     const size = try bits.takeSymbol(&work.dc[component.dc_table]);
     if (size > 16) return Error.Corrupt;
-    component.predicted += extend(bits.take(@truncate(size)), @truncate(size));
-    numbers[0] = component.predicted * quant[0];
+    component.predicted +%= extend(bits.take(@truncate(size)), @truncate(size));
+    numbers[0] = component.predicted *% quant[0];
 
     // The rest, as runs of nothing and a number.
     var k: usize = 1;
@@ -427,13 +494,309 @@ fn readBlock(bits: *Bits, work: *Work, component: *Component, block_x: u32, bloc
         }
         k += run;
         if (k >= 64) break;
-        numbers[zigzag[k]] = extend(bits.take(@truncate(width)), @truncate(width)) * quant[k];
+        numbers[zigzag[k]] = extend(bits.take(@truncate(width)), @truncate(width)) *% quant[k];
         k += 1;
     }
 
     const at = block_y * 8 * component.stride + block_x * 8;
     if (at + 7 * component.stride + 8 > component.stride * component.lines) return;
     idct.block(numbers, component.plane + at, component.stride);
+}
+
+// --- a picture in several scans ---------------------------------------------
+
+/// Every scan of the file read into the components' gathered numbers,
+/// from the one `readHeaders` stopped at to the end of the file, and the
+/// numbers transformed into the planes. A file that ends without saying
+/// so ends its picture where it stops.
+fn readPasses(file: []const u8, work: *Work) Error!void {
+    for (work.component[0..work.count]) |*component| {
+        if (component.coefficients == null) return Error.Unsupported;
+    }
+    var at = work.scan_at;
+    while (true) {
+        at = try readPass(file, work, at);
+        at = try nextScan(file, work, at) orelse break;
+    }
+    transformAll(work);
+}
+
+/// Past the segments between one scan and the next - tables that change,
+/// a new restart interval - to the next scan's codes, its header read.
+/// Null at the end of the file.
+fn nextScan(file: []const u8, work: *Work, from: usize) Error!?usize {
+    var at = from;
+    while (at + 1 < file.len) {
+        if (file[at] != 0xFF) {
+            at += 1;
+            continue;
+        }
+        const marker = file[at + 1];
+        if (marker == 0xFF or marker == 0 or (marker >= M_RST0 and marker <= M_RST7)) {
+            at += if (marker == 0xFF) 1 else 2;
+            continue;
+        }
+        if (marker == M_EOI) return null;
+        if (at + 4 > file.len) return null;
+        const length = half(file[at + 2 ..]);
+        if (length < 2 or at + 2 + length > file.len) return null;
+        const body = file[at + 4 ..][0 .. length - 2];
+        switch (marker) {
+            M_DQT => try readQuant(work, body),
+            M_DHT => try readCodes(work, body),
+            M_DRI => work.restart = if (body.len >= 2) half(body) else 0,
+            M_SOS => {
+                try readScanHeader(work, body);
+                return at + 2 + length;
+            },
+            else => {},
+        }
+        at += 2 + length;
+    }
+    return null;
+}
+
+/// Where a scan's codes end: the first marker past `from` that is not a
+/// restart, which is where the segments after it begin.
+fn scanEnd(file: []const u8, from: usize) usize {
+    var at = from;
+    while (at + 1 < file.len) : (at += 1) {
+        if (file[at] != 0xFF) continue;
+        const next = file[at + 1];
+        if (next == 0 or next == 0xFF or (next >= M_RST0 and next <= M_RST7)) continue;
+        return at;
+    }
+    return file.len;
+}
+
+/// The blocks of a component's plane in a row, which is how its numbers
+/// are kept.
+fn blocksAcross(work: *const Work, component: *const Component) u32 {
+    return planeStride(work, component) / 8;
+}
+
+/// How many blocks a component has of its own, across and down: a scan
+/// of it alone holds these and not the ones that only fill out a unit.
+fn ownBlocks(whole: u32, part: u32, most: u32) u32 {
+    const samples = (whole * part + most - 1) / most;
+    return (samples + 7) / 8;
+}
+
+/// One scan read into the gathered numbers: a unit at a time when it
+/// holds several components, a block at a time - in the component's own
+/// rows - when it holds one. Codes that run out leave the blocks after
+/// them as the scans before had them. Where its codes end.
+fn readPass(file: []const u8, work: *Work, at: usize) Error!usize {
+    var bits = Bits{ .from = file, .at = at };
+    work.eob_run = 0;
+    for (work.component[0..work.count]) |*component| component.predicted = 0;
+    var since_restart: u32 = 0;
+    if (work.scan_count == 1) {
+        const component = &work.component[work.scan_components[0]];
+        const across = ownBlocks(work.width, component.across, work.max_across);
+        const down = ownBlocks(work.height, component.down, work.max_down);
+        var block_y: u32 = 0;
+        while (block_y < down) : (block_y += 1) {
+            var block_x: u32 = 0;
+            while (block_x < across) : (block_x += 1) {
+                if (work.restart != 0 and since_restart == work.restart) {
+                    restartPass(&bits, work);
+                    since_restart = 0;
+                }
+                if (bits.ended) return scanEnd(file, bits.at);
+                try passBlock(&bits, work, component, block_x, block_y);
+                since_restart += 1;
+            }
+        }
+    } else {
+        const across = unitsAcross(work);
+        const down = unitsDown(work);
+        var unit_y: u32 = 0;
+        while (unit_y < down) : (unit_y += 1) {
+            var unit_x: u32 = 0;
+            while (unit_x < across) : (unit_x += 1) {
+                if (work.restart != 0 and since_restart == work.restart) {
+                    restartPass(&bits, work);
+                    since_restart = 0;
+                }
+                if (bits.ended) return scanEnd(file, bits.at);
+                for (work.scan_components[0..work.scan_count]) |place| {
+                    const component = &work.component[place];
+                    var y: u32 = 0;
+                    while (y < component.down) : (y += 1) {
+                        var x: u32 = 0;
+                        while (x < component.across) : (x += 1) {
+                            try passBlock(&bits, work, component, unit_x * component.across + x, unit_y * component.down + y);
+                        }
+                    }
+                }
+                since_restart += 1;
+            }
+        }
+    }
+    return scanEnd(file, bits.at);
+}
+
+/// The codes start again: the bits, the run of ended blocks and every
+/// flat number's prediction.
+fn restartPass(bits: *Bits, work: *Work) void {
+    bits.restart();
+    work.eob_run = 0;
+    for (work.component[0..work.count]) |*component| component.predicted = 0;
+}
+
+/// One block's part of the scan read into its gathered numbers, by what
+/// the scan holds of it.
+fn passBlock(bits: *Bits, work: *Work, component: *Component, block_x: u32, block_y: u32) Error!void {
+    const index = (@as(usize, block_y) * blocksAcross(work, component) + block_x) * 64;
+    if (index + 64 > coefficientBytes(work, component) / 2) return;
+    const numbers: *[64]i16 = (component.coefficients.? + index)[0..64];
+    if (!work.progressive) return gatherBlock(bits, work, component, numbers);
+    if (work.spectral_start == 0) {
+        if (work.approx_high == 0) return firstFlat(bits, work, component, numbers);
+        if (bits.takeBit() != 0) numbers[0] |= @as(i16, 1) << @intCast(work.approx_low);
+        return;
+    }
+    const table = &work.ac[component.ac_table];
+    if (work.approx_high == 0) return firstBand(bits, work, table, numbers);
+    return refineBand(bits, work, table, numbers);
+}
+
+/// A block of a sequential scan that holds one component, as `readBlock`
+/// reads it, kept as the file has it rather than transformed.
+fn gatherBlock(bits: *Bits, work: *Work, component: *Component, numbers: *[64]i16) Error!void {
+    const size = try bits.takeSymbol(&work.dc[component.dc_table]);
+    if (size > 16) return Error.Corrupt;
+    component.predicted +%= extend(bits.take(@truncate(size)), @truncate(size));
+    numbers[0] = @truncate(component.predicted);
+    var k: usize = 1;
+    while (k < 64) {
+        const symbol = try bits.takeSymbol(&work.ac[component.ac_table]);
+        const run = symbol >> 4;
+        const width = symbol & 0x0F;
+        if (width == 0) {
+            if (run != 15) break;
+            k += 16;
+            continue;
+        }
+        k += run;
+        if (k >= 64) break;
+        numbers[k] = @truncate(extend(bits.take(@truncate(width)), @truncate(width)));
+        k += 1;
+    }
+}
+
+/// A block's flat number, the first time a progressive file gives it:
+/// its upper bits, a difference from the block before.
+fn firstFlat(bits: *Bits, work: *Work, component: *Component, numbers: *[64]i16) Error!void {
+    const size = try bits.takeSymbol(&work.dc[component.dc_table]);
+    if (size > 16) return Error.Corrupt;
+    component.predicted +%= extend(bits.take(@truncate(size)), @truncate(size));
+    numbers[0] = @truncate(@as(i64, component.predicted) << @intCast(work.approx_low));
+}
+
+/// A band of a block's numbers, the first time a progressive file gives
+/// it: runs of nothing and a number, or a run of whole blocks that have
+/// nothing in the band (`eob_run`).
+fn firstBand(bits: *Bits, work: *Work, table: *const Huffman, numbers: *[64]i16) Error!void {
+    if (work.eob_run > 0) {
+        work.eob_run -= 1;
+        return;
+    }
+    const shift: u6 = @intCast(work.approx_low);
+    var k: u32 = work.spectral_start;
+    while (k <= work.spectral_end) : (k += 1) {
+        const symbol = try bits.takeSymbol(table);
+        const run = symbol >> 4;
+        const width = symbol & 0x0F;
+        if (width != 0) {
+            k += run;
+            if (k > work.spectral_end) return Error.Corrupt;
+            numbers[k] = @truncate(@as(i64, extend(bits.take(@truncate(width)), @truncate(width))) << shift);
+        } else if (run == 15) {
+            k += 15;
+        } else {
+            // This block and as many more as the bits say have nothing
+            // further in the band.
+            work.eob_run = (@as(u32, 1) << @intCast(run)) - 1;
+            if (run != 0) work.eob_run += bits.take(@intCast(run));
+            return;
+        }
+    }
+}
+
+/// A band of a block's numbers one bit finer: each number already there
+/// takes a bit more, and each that was nothing so far and now is one
+/// comes in as a run and its sign.
+fn refineBand(bits: *Bits, work: *Work, table: *const Huffman, numbers: *[64]i16) Error!void {
+    const plus: i16 = @as(i16, 1) << @intCast(work.approx_low);
+    const minus: i16 = -plus;
+    const end = work.spectral_end;
+    var k: u32 = work.spectral_start;
+    if (work.eob_run == 0) {
+        while (k <= end) : (k += 1) {
+            const symbol = try bits.takeSymbol(table);
+            var run: i32 = symbol >> 4;
+            const width = symbol & 0x0F;
+            var value: i16 = 0;
+            if (width != 0) {
+                value = if (bits.takeBit() != 0) plus else minus;
+            } else if (run != 15) {
+                work.eob_run = @as(u32, 1) << @intCast(run);
+                if (run != 0) work.eob_run += bits.take(@intCast(run));
+                break;
+            }
+            // Past the numbers that are not nothing, each taking its
+            // bit, and `run` of those that still are, to where the new
+            // one goes.
+            while (k <= end) : (k += 1) {
+                if (numbers[k] != 0) {
+                    refineNumber(bits, &numbers[k], plus, minus);
+                } else {
+                    run -= 1;
+                    if (run < 0) break;
+                }
+            }
+            if (value != 0 and k <= end) numbers[k] = value;
+        }
+    }
+    if (work.eob_run > 0) {
+        // The rest of the band has nothing new: only the bits of the
+        // numbers already there.
+        while (k <= end) : (k += 1) {
+            if (numbers[k] != 0) refineNumber(bits, &numbers[k], plus, minus);
+        }
+        work.eob_run -= 1;
+    }
+}
+
+/// A number already there one bit finer, away from nothing when the bit
+/// is set and it does not have it yet.
+fn refineNumber(bits: *Bits, number: *i16, plus: i16, minus: i16) void {
+    if (bits.takeBit() == 0) return;
+    if ((number.* & plus) != 0) return;
+    number.* +%= if (number.* >= 0) plus else minus;
+}
+
+/// Every component's gathered numbers undone by its table and
+/// transformed into its plane.
+fn transformAll(work: *Work) void {
+    for (work.component[0..work.count]) |*component| {
+        const quant = &work.quant[component.quant];
+        const across = blocksAcross(work, component);
+        const down = component.lines / 8;
+        const gathered = component.coefficients.?;
+        var block_y: u32 = 0;
+        while (block_y < down) : (block_y += 1) {
+            var block_x: u32 = 0;
+            while (block_x < across) : (block_x += 1) {
+                const numbers = gathered + (@as(usize, block_y) * across + block_x) * 64;
+                for (0..64) |k| work.block[zigzag[k]] = @as(i32, numbers[k]) *% quant[k];
+                const at = block_y * 8 * component.stride + block_x * 8;
+                idct.block(&work.block, component.plane + at, component.stride);
+            }
+        }
+    }
 }
 
 // --- what the planes make ---------------------------------------------------
@@ -496,8 +859,35 @@ test "what is not a JPEG says so" {
     try testing.expectError(Error.NotJpeg, readHeaders(&file, &work));
 }
 
-test "a picture written in passes is refused rather than half read" {
+test "a picture coded some other way is refused rather than half read" {
     var work = Work{};
-    const file = [_]u8{ 0xFF, M_SOI, 0xFF, M_SOF2, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0 };
+    // Arithmetic coding.
+    const file = [_]u8{ 0xFF, M_SOI, 0xFF, 0xC9, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0 };
     try testing.expectError(Error.Unsupported, readHeaders(&file, &work));
+}
+
+test "a picture in passes without memory for its numbers is refused" {
+    var work = Work{ .in_passes = true, .count = 1 };
+    try testing.expectError(Error.Unsupported, readScan(&.{}, &work));
+}
+
+test "a band's lower bit: a number away from nothing, one that has the bit left alone" {
+    // Bits 1, 1, 0: the first two take the bit, the third does not.
+    const stream = [_]u8{0b1100_0000};
+    var bits = Bits{ .from = &stream, .at = 0 };
+    var positive: i16 = 4;
+    var negative: i16 = -4;
+    var kept: i16 = 6;
+    refineNumber(&bits, &positive, 2, -2);
+    refineNumber(&bits, &negative, 2, -2);
+    refineNumber(&bits, &kept, 2, -2);
+    try testing.expectEqual(@as(i16, 6), positive);
+    try testing.expectEqual(@as(i16, -6), negative);
+    try testing.expectEqual(@as(i16, 6), kept);
+}
+
+test "a component's own blocks: what it covers, not what fills out a unit" {
+    // 100 pixels across, colour at half: 50 samples, seven blocks.
+    try testing.expectEqual(@as(u32, 7), ownBlocks(100, 1, 2));
+    try testing.expectEqual(@as(u32, 13), ownBlocks(100, 2, 2));
 }

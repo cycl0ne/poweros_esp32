@@ -62,8 +62,8 @@ patterns, and when none matches it the bytes are tried as bytes without
 one (1.4) - so `README.md`, the end of an address, says what the bytes
 are, and `HTML` or `index.php` leaves it to them. The object
 reads the bytes while it is made: when the call returns they are the
-program's again. JPEG, PNG, GIF, BMP, ICO, SVG, text, models, Markdown,
-HTML and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
+program's again. JPEG, PNG, WebP, GIF, BMP, ICO, SVG, text, models,
+Markdown, HTML and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
 a film is read as it is played, and a font's sizes are files beside its
 contents file, so these refuse bytes in memory with
 `DTERROR_COULDNT_OPEN`.
@@ -240,6 +240,24 @@ Datatype, codec: 1024 x 600 in 198387 us, read by the codec
 Compared: worst 35, mean 107/100, 559 of 614400 pixels more than 24 apart
 ```
 
+**A JPEG** is read by `jpeg.datatype` whether it is one scan - the
+whole picture a unit at a time - or comes in several: in passes of
+increasing detail (progressive, since 1.3), or a component a scan.
+Such a file's numbers are gathered, two bytes a sample, until its last
+scan, and that memory goes again before the picture's is asked for; a
+file that stops early shows what its scans said. Arithmetic coding,
+lossless JPEG and twelve bits a sample are refused with
+`DTERROR_UNKNOWN_COMPRESSION`.
+
+**A WebP** is read by `webp.datatype`: a lossy picture - a VP8 key
+frame, decoded by the decoder vp8.vcodec has, its colour brought to
+full size as the format's own decoder does - with its coverage when it
+has one, and a lossless one with every transform, the colour cache and
+the groups of codes across the picture. The pixels are the format's
+own decoder's, to the bit. A picture with coverage is drawn mixed into
+what is under it. An animation is a picture of its first frame here and
+plays in `webpanim.datatype` (see *Animations*).
+
 **A Windows icon** - a `.ico`, the favicon a web site names among them -
 is read by `ico.datatype` as the largest picture its directory holds,
 the deepest of the largest. A bitmap in it is one, four or eight bits
@@ -303,7 +321,7 @@ language changes. Since 1.5 a glyph's outline may be of any length:
 one of more than the picture's work memory holds (1024 verbs, 2048
 points) is read into memory of its own while it is drawn, and is left
 out only when there is none. An `image` of a `data:` address is made a
-picture by datatypes.library from its bytes - PNG, JPEG, GIF, BMP,
+picture by datatypes.library from its bytes - PNG, JPEG, WebP, GIF, BMP,
 whatever the disk reads - and drawn in its place with its
 `preserveAspectRatio`, through vector.library's `PAINT_IMAGE`.
 
@@ -598,6 +616,14 @@ the object pauses it and a second goes on. `ADTA_Frames`,
 laid on what the last left, disposed of as the file says, up for its
 own delay. A GIF with one picture is a still picture and goes to
 `gif.datatype`.
+
+`webpanim.datatype` plays a WebP that says it is an animation - each
+frame laid where the file puts it, over what is there by its coverage
+or in its place, its area cleared after it when it says so, up for its
+own time (ten thousandths of a second or less are a tenth of one). A
+frame that covers the whole canvas starts it afresh, and the frames
+come out as the format's own decoder lays them, to the bit. Any other
+WebP is a still picture and goes to `webp.datatype`.
 
 `lottie.datatype` plays a Lottie file, the JSON a design tool writes a
 vector animation as. It draws shape, solid and precomposition layers;

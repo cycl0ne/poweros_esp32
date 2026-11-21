@@ -20,8 +20,9 @@
 //! own code and shaped by truetypeshaping.library's, and without
 //! --fonts text is left out. A
 //! picture of a `data:` address, or of a file an address names from the
-//! SVG file's directory, is drawn when it is a PNG, a GIF, a JPEG the
-//! disk's jpeg.datatype reads, or an SVG document.
+//! SVG file's directory, is drawn when it is a PNG, a GIF, a JPEG or a
+//! WebP the disk's datatypes read - an animated WebP as its first frame -
+//! or an SVG document.
 //!
 //! The two are compared premultiplied - a channel times its coverage -
 //! so that the colour of what is nearly clear does not count for more
@@ -58,6 +59,7 @@ const decode = sdk.datatypes.png.decode;
 const gif = @import("gif");
 const lzw = @import("lzw");
 const jpeg = @import("jpeg");
+const webp = @import("webp");
 const Io = std.Io;
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
@@ -666,7 +668,7 @@ const Sources = struct {
             const copy = gpa.dupe(u8, bytes) catch return null;
             return .{ .document = copy, .handle = null };
         }
-        const picture = readPng(gpa, bytes) catch readGif(gpa, bytes) catch readJpeg(gpa, bytes) catch return null;
+        const picture = readPng(gpa, bytes) catch readGif(gpa, bytes) catch readJpeg(gpa, bytes) catch readWebp(gpa, bytes) catch return null;
         defer gpa.free(picture.rgba);
         const pens = gpa.alloc(graphics.Pen, @as(usize, picture.width) * picture.height) catch return null;
         for (pens, 0..) |*pen, i| {
@@ -797,6 +799,8 @@ fn readJpeg(gpa: std.mem.Allocator, file: []const u8) !Picture {
     try jpeg.readHeaders(file, work);
     var planes: [4]?[]u8 = @splat(null);
     defer for (planes) |plane| if (plane) |held| gpa.free(held);
+    var gathered: [4]?[]i16 = @splat(null);
+    defer for (gathered) |numbers| if (numbers) |held| gpa.free(held);
     for (work.component[0..work.count], 0..) |*component, index| {
         component.stride = jpeg.planeStride(work, component);
         component.lines = jpeg.planeLines(work, component);
@@ -804,6 +808,12 @@ fn readJpeg(gpa: std.mem.Allocator, file: []const u8) !Picture {
         @memset(plane, 0);
         planes[index] = plane;
         component.plane = plane.ptr;
+        if (work.in_passes) {
+            const numbers = try gpa.alloc(i16, jpeg.coefficientBytes(work, component) / 2);
+            @memset(numbers, 0);
+            gathered[index] = numbers;
+            component.coefficients = numbers.ptr;
+        }
     }
     try jpeg.readScan(file, work);
     const rgba = try gpa.alloc(u8, @as(usize, work.width) * work.height * 4);
@@ -825,6 +835,43 @@ fn readJpeg(gpa: std.mem.Allocator, file: []const u8) !Picture {
         }
     }
     return .{ .width = work.width, .height = work.height, .rgba = rgba };
+}
+
+/// A WebP as the disk's webp.datatype reads one: the picture, or an
+/// animation's first frame on its canvas.
+fn readWebp(gpa: std.mem.Allocator, file: []const u8) !Picture {
+    const info = try webp.readInfo(file);
+    const total = @as(usize, info.width) * info.height;
+    const words = try gpa.alloc(u32, total);
+    defer gpa.free(words);
+    @memset(words, 0);
+    if (info.image) |image| {
+        try webp.decodeImage(webp_env, image, info.width, info.height, words);
+    } else {
+        const frame = try webp.readFrame(file, &info, info.frames_at) orelse return error.NoFrame;
+        const frame_words = try gpa.alloc(u32, @as(usize, frame.width) * frame.height);
+        defer gpa.free(frame_words);
+        try webp.decodeImage(webp_env, frame.image, frame.width, frame.height, frame_words);
+        var canvas = webp.Canvas{ .pixels = words, .width = info.width, .height = info.height };
+        canvas.add(&frame, frame_words);
+    }
+    const rgba = try gpa.alloc(u8, total * 4);
+    for (words, 0..) |word, i| rgba[i * 4 ..][0..4].* = .{ @truncate(word >> 16), @truncate(word >> 8), @truncate(word), @truncate(word >> 24) };
+    return .{ .width = info.width, .height = info.height, .rgba = rgba };
+}
+
+/// The WebP decoder's memory, from the host's, on 16 bytes.
+const webp_env = webp.Env{ .ctx = undefined, .alloc = webpAlloc, .free = webpFree };
+
+fn webpAlloc(_: *anyopaque, length: usize, clear: bool) ?[*]u8 {
+    const block = std.heap.page_allocator.alignedAlloc(u8, .@"16", length) catch return null;
+    if (clear) @memset(block, 0);
+    return block.ptr;
+}
+
+fn webpFree(_: *anyopaque, block: [*]u8, length: usize) void {
+    const aligned: [*]align(16) u8 = @alignCast(block);
+    std.heap.page_allocator.free(aligned[0..length]);
 }
 
 fn readPng(gpa: std.mem.Allocator, file: []const u8) !Picture {
