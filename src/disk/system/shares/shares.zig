@@ -34,8 +34,18 @@
 //!
 //! **What this machine knows** is the lower list: a line for every share
 //! file, whether its device is mounted or not. Mount and Dismount put one
-//! on the device list and take it off; Forget takes the share off this
-//! machine altogether, its file and its kept password with it.
+//! on the device list and take it off; Delete takes the share off this
+//! machine altogether, its file and its kept password with it, and
+//! leaves the server as it is.
+//!
+//! **A share changed.** Edit opens a window with what the share's file
+//! says - the device's name, where the share is, who logs on, read only
+//! and encrypted - and Save writes it back. A mounted share is dismounted
+//! first and mounted again after, so what was changed holds at once; one
+//! that cannot be dismounted, since something is open on it, is left as
+//! it was. A password field left empty keeps the password there is, one
+//! typed in replaces it, and with no user there is none to keep. Under
+//! another name the old file goes and the kept password moves with it.
 //!
 //! The password is never kept as it was typed. It is hashed - MD4 over
 //! its UTF-16, which is all a logon needs - and it is the hash that is
@@ -79,8 +89,8 @@ const tx = sdk.gadgets.text;
 const cb_class = sdk.gadgets.checkbox;
 
 pub const COMMAND_NAME = "Shares";
-const VERSION = "1.3";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (11.11.2026)\r\n";
+const VERSION = "1.4";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (21.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -117,13 +127,23 @@ const ID_MOUNT = 8;
 const ID_MINE = 9;
 const ID_REMOUNT = 10;
 const ID_DISMOUNT = 11;
-const ID_FORGET = 12;
+const ID_DELETE = 12;
+const ID_EDIT = 13;
 const ID_USER = 20;
 const ID_PASSWORD = 21;
 const ID_DOMAIN = 22;
 const ID_KEEP = 23;
 const ID_OK = 24;
 const ID_CANCEL = 25;
+const ID_EDIT_NAME = 30;
+const ID_EDIT_SHARE = 31;
+const ID_EDIT_USER = 32;
+const ID_EDIT_PASSWORD = 33;
+const ID_EDIT_DOMAIN = 34;
+const ID_EDIT_READONLY = 35;
+const ID_EDIT_ENCRYPT = 36;
+const ID_SAVE = 37;
+const ID_EDIT_CANCEL = 38;
 
 /// No share picked.
 const none_picked: usize = ~@as(usize, 0);
@@ -137,6 +157,9 @@ const raw_enter: u32 = 0x43;
 fn entered(code: u32) bool {
     return code == raw_return or code == raw_enter;
 }
+
+/// What the edit window says under its fields.
+const edit_hint = "An empty password keeps the one there is; with no user, none is kept.";
 
 /// How many rows each list shows without being made taller.
 const found_rows_shown = 6;
@@ -211,7 +234,22 @@ const App = struct {
     picked_known: usize = none_picked,
     remount_button: ?*Object = null,
     dismount_button: ?*Object = null,
-    forget_button: ?*Object = null,
+    delete_button: ?*Object = null,
+    edit_button: ?*Object = null,
+
+    /// The window that changes a share this machine knows, and the
+    /// device it was opened for.
+    edit_object: ?*Object = null,
+    edit_window: ?*intuition.Window = null,
+    edit_device: [known.device_max + 1:0]u8 = @splat(0),
+    edit_title: Line = .{},
+    edit_name: ?*Object = null,
+    edit_share: ?*Object = null,
+    edit_user: ?*Object = null,
+    edit_password: ?*Object = null,
+    edit_domain: ?*Object = null,
+    edit_readonly: ?*Object = null,
+    edit_encrypt: ?*Object = null,
 
     /// The window that asks who to log on as.
     logon_object: ?*Object = null,
@@ -400,7 +438,19 @@ const App = struct {
         const item = app.pickedKnown();
         app.enable(app.remount_button, item != null and !item.?.mounted and !item.?.wrong);
         app.enable(app.dismount_button, item != null and item.?.mounted);
-        app.enable(app.forget_button, item != null);
+        app.enable(app.delete_button, item != null);
+        app.enable(app.edit_button, item != null);
+    }
+
+    /// The share known by `device` picked in the lower list, as made anew.
+    fn pickKnown(app: *App, device: []const u8) void {
+        app.picked_known = none_picked;
+        for (app.known_list.items[0..app.known_list.count], 0..) |*item, index| {
+            if (known.sameName(item.name(), device)) app.picked_known = index;
+        }
+        const selected: u32 = if (app.picked_known == none_picked) lb.LISTBROWSER_NONE else @intCast(app.picked_known);
+        app.set(app.mine, &.{ pair(lb.LISTBROWSER_Selected, selected), .{} });
+        app.showPickedKnown();
     }
 
     // --- the things the buttons do ------------------------------------------------
@@ -533,27 +583,28 @@ const App = struct {
         app.showFound();
     }
 
-    /// Forget: the share off this machine, dismounted first if it is on
+    /// Delete: the share off this machine, dismounted first if it is on
     /// the device list. Asked for first, since a kept password goes with
-    /// it.
-    fn forget(app: *App) void {
+    /// it; the server is not touched.
+    fn deleteShare(app: *App) void {
         const item = app.pickedKnown() orelse return;
         var name: [known.device_max + 1:0]u8 = @splat(0);
         _ = words.copyInto(&name, item.name());
         const mounted = item.mounted;
         const asked = requesters.EasyRequest(app.ib, app.window, .{
             .title = COMMAND_NAME,
-            .text_format = "Forget %s:?\nIts share file goes, and the password kept for it.",
-            .gadget_format = "Forget|Cancel",
+            .text_format = "Delete %s:?\nIts share file goes from this machine, and the password\nkept for it. Nothing on the server is touched.",
+            .gadget_format = "Delete|Cancel",
         }, null, .{@as([*:0]const u8, @ptrCast(&name))});
         if (asked != 1) return;
         if (mounted and !app.runMountShare(words.untilNul(&name), true)) {
             app.showMine();
             return;
         }
-        known.forget(app.dl, words.untilNul(&name));
+        known.delete(app.dl, words.untilNul(&name));
+        if (known.sameName(words.untilNul(&app.edit_device), words.untilNul(&name))) app.closeEdit();
         app.picked_known = none_picked;
-        app.say("%s: is forgotten", .{@as([*:0]const u8, @ptrCast(&name))});
+        app.say("%s: is deleted", .{@as([*:0]const u8, @ptrCast(&name))});
         app.showMine();
         app.showFound();
     }
@@ -622,6 +673,252 @@ const App = struct {
             app.status.put(words.untilNul(&fault));
         }
         app.set(app.status_gadget, &.{ pair(tx.TEXT_Text, @intFromPtr(app.status.ptr())), .{} });
+    }
+
+    // --- a share changed --------------------------------------------------------------
+
+    /// Edit: the window that changes the share picked in the lower list,
+    /// filled in with what its file says - nothing but its name when the
+    /// file says nothing this understands. It stands beside the main one,
+    /// which goes on answering; Edit on another share opens it anew.
+    fn openEdit(app: *App) void {
+        const item = app.pickedKnown() orelse return;
+        app.closeEdit();
+        const file: sharefile.ShareFile = if (item.wrong) .{} else item.file;
+        _ = words.copyInto(&app.edit_device, item.name());
+        const ib = app.ib;
+        app.edit_name = field(ib, ID_EDIT_NAME, known.device_max, @ptrCast(&app.edit_device), false);
+        app.edit_share = field(ib, ID_EDIT_SHARE, sdk.dos.keywords.max_token - 1, @ptrCast(&file.share), false);
+        app.edit_user = field(ib, ID_EDIT_USER, smb.SMB_USER_MAX, @ptrCast(&file.user), false);
+        app.edit_password = field(ib, ID_EDIT_PASSWORD, sharefile.password_max, "", true);
+        app.edit_domain = field(ib, ID_EDIT_DOMAIN, 64, @ptrCast(&file.domain), false);
+        app.edit_readonly = ib.NewObjectTagList(null, cb_class.CHECKBOX_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_EDIT_READONLY),
+            pair(cb_class.CHECKBOX_Checked, @intFromBool(file.readonly)),
+            .{},
+        });
+        app.edit_encrypt = ib.NewObjectTagList(null, cb_class.CHECKBOX_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_EDIT_ENCRYPT),
+            pair(cb_class.CHECKBOX_Checked, @intFromBool(file.encrypt)),
+            .{},
+        });
+        const hint = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+            pair(tx.TEXT_Text, @intFromPtr(edit_hint)),
+            .{},
+        });
+        const field_width = fontWidth(app) * logon_columns + 12;
+        const fields = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
+            pair(lg.LAYOUTA_Orientation, lg.LORIENT_VERT),
+            pair(lg.LAYOUTA_Margin, 6),
+            pair(lg.LAYOUTA_Spacing, 4),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_name orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_Label, @intFromPtr("Mount _as")),
+            pair(lg.CHILDA_MinWidth, field_width),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_share orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_Label, @intFromPtr("_Share")),
+            pair(lg.CHILDA_MinWidth, field_width),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_user orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_Label, @intFromPtr("_User")),
+            pair(lg.CHILDA_MinWidth, field_width),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_password orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_Label, @intFromPtr("_Password")),
+            pair(lg.CHILDA_MinWidth, field_width),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_domain orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_Label, @intFromPtr("_Domain")),
+            pair(lg.CHILDA_MinWidth, field_width),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_readonly orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_Label, @intFromPtr("_Read only")),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_encrypt orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_Label, @intFromPtr("_Encrypted")),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(hint orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_WeightHeight, 0),
+            pair(lg.LAYOUTA_AddChild, @intFromPtr(buttonRow(ib, "Save", ID_SAVE, "Cancel", ID_EDIT_CANCEL) orelse return app.dropEditParts(hint))),
+            pair(lg.CHILDA_WeightHeight, 0),
+            .{},
+        }) orelse {
+            // What the layout was given is its own from here, as in the
+            // logon window.
+            app.forgetEditParts();
+            app.say("no memory for the window", .{});
+            return;
+        };
+        app.edit_title.say(app.sys, "Edit %s:", .{@as([*:0]const u8, @ptrCast(&app.edit_device))});
+        app.edit_object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
+            pair(wn.WA_Title, @intFromPtr(app.edit_title.ptr())),
+            pair(wn.WA_ScreenTitle, @intFromPtr(SCREEN_TITLE)),
+            pair(wn.WA_CloseGadget, 1),
+            pair(wn.WA_DragBar, 1),
+            pair(wn.WA_DepthGadget, 1),
+            pair(wn.WA_Activate, 1),
+            pair(wc.WINDOWA_Layout, @intFromPtr(fields)),
+            .{},
+        }) orelse {
+            ib.DisposeObject(fields);
+            app.forgetEditParts();
+            return;
+        };
+        var open = wc.WmOpen{};
+        if (ib.SendMessage(app.edit_object.?, @ptrCast(&open)) == 0) {
+            app.closeEdit();
+            app.say("no window to change it in", .{});
+            return;
+        }
+        var at: usize = 0;
+        _ = ib.GetAttr(wc.WINDOWA_Window, app.edit_object.?, &at);
+        app.edit_window = @ptrFromInt(at);
+    }
+
+    /// The parts made for the window before one of them could not be:
+    /// none is in a layout yet, so each goes by itself.
+    fn dropEditParts(app: *App, hint: ?*Object) void {
+        for ([_]?*Object{ app.edit_name, app.edit_share, app.edit_user, app.edit_password, app.edit_domain, app.edit_readonly, app.edit_encrypt, hint }) |part| {
+            app.ib.DisposeObject(part);
+        }
+        app.forgetEditParts();
+        app.say("no memory for the window", .{});
+    }
+
+    fn forgetEditParts(app: *App) void {
+        app.edit_name = null;
+        app.edit_share = null;
+        app.edit_user = null;
+        app.edit_password = null;
+        app.edit_domain = null;
+        app.edit_readonly = null;
+        app.edit_encrypt = null;
+    }
+
+    fn closeEdit(app: *App) void {
+        // The password typed, if any, wiped from the field's buffer first.
+        app.setIn(app.edit_window, app.edit_password, &.{ pair(gc.STRINGA_TextVal, @intFromPtr("")), .{} });
+        const object = app.edit_object orelse return app.forgetEditParts();
+        app.ib.DisposeObject(object);
+        app.edit_object = null;
+        app.edit_window = null;
+        app.forgetEditParts();
+    }
+
+    /// Save: what the window says written as the share's file, under the
+    /// name it says. A share that is mounted is dismounted first and
+    /// mounted again after; one that cannot be dismounted is left as it
+    /// was. The window closes once the files are written.
+    fn saveEdit(app: *App) void {
+        var old: [known.device_max + 1:0]u8 = @splat(0);
+        _ = words.copyInto(&old, words.untilNul(&app.edit_device));
+        const old_name = words.untilNul(&old);
+        // What the files and the device list say now: the share may have
+        // been dismounted or deleted since the window opened.
+        app.known_list.read(app.dl);
+        const item = app.known_list.find(old_name) orelse {
+            app.say("%s: is not known any more", .{@as([*:0]const u8, @ptrCast(&old))});
+            app.closeEdit();
+            app.showMine();
+            return;
+        };
+        const was_mounted = item.mounted;
+        const had_password = item.password;
+        const had_port = if (item.wrong) 0 else item.file.port;
+        var volume: [dos.name_max:0]u8 = @splat(0);
+        if (!item.wrong) _ = words.copyInto(&volume, words.untilNul(&item.file.volume));
+
+        const typed_name = app.textOf(app.edit_name);
+        if (!known.nameAllowed(typed_name)) {
+            app.say("a device's name has letters, digits, %s in it, and nothing else", .{"- _ ."});
+            return;
+        }
+        var name: [known.device_max + 1:0]u8 = @splat(0);
+        _ = words.copyInto(&name, typed_name);
+        for (name[0..typed_name.len]) |*char| char.* = upperCase(char.*);
+        const new_name = words.untilNul(&name);
+        const renamed = !known.sameName(old_name, new_name);
+        if (renamed and (app.known_list.find(new_name) != null or known.standingOf(app.dl, new_name) != .none)) {
+            app.say("%s: is taken already", .{@as([*:0]const u8, @ptrCast(&name))});
+            return;
+        }
+        const share = app.textOf(app.edit_share);
+        const place = client.place.placeOf(share) orelse {
+            app.say("where the share is reads %s", .{"//server/share"});
+            return;
+        };
+        if (place.share.len == 0) {
+            app.say("where the share is reads %s", .{"//server/share"});
+            return;
+        }
+        const user = app.textOf(app.edit_user);
+        const domain = app.textOf(app.edit_domain);
+        if (!sharefile.savable(share) or !sharefile.savable(user) or !sharefile.savable(domain)) {
+            app.say("a quote in the share, the user or the domain cannot be written down", .{});
+            return;
+        }
+
+        if (was_mounted and !app.runMountShare(old_name, true)) {
+            app.showMine();
+            return;
+        }
+
+        var path: known.Path = undefined;
+        const share_path = known.pathOf(&path, sharefile.directory, new_name);
+        const written = sharefile.writeTo(app.dl, share_path, new_name, &.{
+            .share = share,
+            .user = given(user),
+            .domain = given(domain),
+            .volume = given(words.untilNul(&volume)),
+            .port = known.portKept(share, had_port),
+            .readonly = app.checked(app.edit_readonly),
+            .encrypt = app.checked(app.edit_encrypt),
+        });
+        if (!written) {
+            app.sayFault("%s: could not be written", .{share_path});
+            app.showMine();
+            return;
+        }
+
+        // The password: none without a user, the one typed in, or the one
+        // there was, under the name the share has now.
+        var old_path: known.Path = undefined;
+        var new_path: known.Path = undefined;
+        const old_password = known.pathOf(&old_path, sharefile.password_directory, old_name);
+        const new_password = known.pathOf(&new_path, sharefile.password_directory, new_name);
+        const typed_password = app.textOf(app.edit_password);
+        if (user.len == 0) {
+            if (had_password) _ = app.dl.DeleteFile(old_password);
+        } else if (typed_password.len > 0) {
+            var account: server.Account = .{};
+            _ = words.copyInto(&account.password, typed_password);
+            const hash = account.takePassword(app.cb);
+            account.forgetPassword();
+            if (!sharefile.writePassword(app.dl, new_password, &hash)) {
+                app.sayFault("%s: could not be written", .{new_password});
+                app.showMine();
+                return;
+            }
+            if (renamed and had_password) _ = app.dl.DeleteFile(old_password);
+        } else if (renamed and had_password) {
+            if (!app.dl.Rename(old_password, new_password)) {
+                app.sayFault("%s: could not be moved", .{old_password});
+                app.showMine();
+                return;
+            }
+        }
+        if (renamed) {
+            var gone: known.Path = undefined;
+            _ = app.dl.DeleteFile(known.pathOf(&gone, sharefile.directory, old_name));
+        }
+
+        app.closeEdit();
+        if (!was_mounted or app.runMountShare(new_name, false)) {
+            app.say("%s: is changed", .{@as([*:0]const u8, @ptrCast(&name))});
+        }
+        app.showMine();
+        app.pickKnown(new_name);
+        app.showFound();
     }
 
     // --- who logs on --------------------------------------------------------------
@@ -750,6 +1047,24 @@ fn given(text: []const u8) ?[]const u8 {
     return if (text.len == 0) null else text;
 }
 
+fn upperCase(char: u8) u8 {
+    return if (char >= 'a' and char <= 'z') char - 0x20 else char;
+}
+
+/// A string gadget of the edit window: at most `max` characters, `text`
+/// in it to begin with, its characters hidden when `secret`.
+fn field(ib: *IntuitionBase, id: usize, max: usize, text: [*:0]const u8, secret: bool) ?*Object {
+    return ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+        pair(gc.GA_ID, id),
+        pair(gc.GA_RelVerify, 1),
+        pair(gc.GA_TabCycle, 1),
+        pair(gc.STRINGA_MaxChars, max),
+        pair(gc.STRINGA_TextVal, @intFromPtr(text)),
+        pair(gc.STRINGA_Secret, @intFromBool(secret)),
+        .{},
+    });
+}
+
 fn countOf(list: *exec.List) usize {
     var count: usize = 0;
     var node = list.first();
@@ -822,7 +1137,8 @@ fn buildLayout(app: *App) ?*Object {
     });
     app.remount_button = button(ib, "Mount", ID_REMOUNT);
     app.dismount_button = button(ib, "Dismount", ID_DISMOUNT);
-    app.forget_button = button(ib, "Forget", ID_FORGET);
+    app.delete_button = button(ib, "Delete...", ID_DELETE);
+    app.edit_button = button(ib, "Edit...", ID_EDIT);
 
     const row_height = fontHeight(app);
     const top = ib.NewObjectTagList(null, classusr.LAYOUTGCLASS, &[_]TagItem{
@@ -859,7 +1175,9 @@ fn buildLayout(app: *App) ?*Object {
         pair(lg.CHILDA_WeightWidth, 0),
         pair(lg.LAYOUTA_AddChild, @intFromPtr(app.dismount_button orelse return null)),
         pair(lg.CHILDA_WeightWidth, 0),
-        pair(lg.LAYOUTA_AddChild, @intFromPtr(app.forget_button orelse return null)),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(app.edit_button orelse return null)),
+        pair(lg.CHILDA_WeightWidth, 0),
+        pair(lg.LAYOUTA_AddChild, @intFromPtr(app.delete_button orelse return null)),
         pair(lg.CHILDA_WeightWidth, 0),
         .{},
     }) orelse return null;
@@ -1036,6 +1354,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     _ = ib.GetAttr(wc.WINDOWA_Window, app.object.?, &at);
     app.window = @ptrFromInt(at);
     defer app.closeLogon();
+    defer app.closeEdit();
 
     app.showMine();
     app.showPicked();
@@ -1048,7 +1367,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         _ = ib.GetAttr(wc.WINDOWA_SigMask, app.object.?, &mask);
         var logon_mask: usize = 0;
         if (app.logon_object) |object| _ = ib.GetAttr(wc.WINDOWA_SigMask, object, &logon_mask);
-        const got = sys.Wait(@as(u32, @intCast(mask | logon_mask)) | exec.SIGBREAKF_CTRL_C);
+        var edit_mask: usize = 0;
+        if (app.edit_object) |object| _ = ib.GetAttr(wc.WINDOWA_SigMask, object, &edit_mask);
+        const got = sys.Wait(@as(u32, @intCast(mask | logon_mask | edit_mask)) | exec.SIGBREAKF_CTRL_C);
         if (got & exec.SIGBREAKF_CTRL_C != 0) return dos.RETURN_OK;
 
         // The window that asks who to log on as, while it is up.
@@ -1081,6 +1402,37 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
             }
         }
 
+        // The window that changes a share, while it is up. Save keeps it
+        // open when what it says cannot be written.
+        if (app.edit_object) |object| {
+            while (true) {
+                const word = ib.SendMessage(object, @ptrCast(&handle));
+                if (word == wc.WMHI_LASTMSG) break;
+                switch (word & wc.WMHI_CLASSMASK) {
+                    wc.WMHI_CLOSEWINDOW => {
+                        app.closeEdit();
+                        break;
+                    },
+                    wc.WMHI_GADGETUP => switch (word & wc.WMHI_GADGETMASK) {
+                        ID_SAVE => {
+                            app.saveEdit();
+                            if (app.edit_object != object) break;
+                        },
+                        ID_EDIT_PASSWORD => if (entered(code_word)) {
+                            app.saveEdit();
+                            if (app.edit_object != object) break;
+                        },
+                        ID_EDIT_CANCEL => {
+                            app.closeEdit();
+                            break;
+                        },
+                        else => {},
+                    },
+                    else => {},
+                }
+            }
+        }
+
         while (true) {
             const word = ib.SendMessage(app.object.?, @ptrCast(&handle));
             if (word == wc.WMHI_LASTMSG) break;
@@ -1102,7 +1454,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                     },
                     ID_REMOUNT => app.remount(false),
                     ID_DISMOUNT => app.remount(true),
-                    ID_FORGET => app.forget(),
+                    ID_DELETE => app.deleteShare(),
+                    ID_EDIT => app.openEdit(),
                     else => {},
                 },
                 else => {},

@@ -54,10 +54,28 @@ since the startup mounts every share there is a file for. A mount that does
 not come off takes those files away again and says why.
 
 **Shares on this machine** is everything this machine knows: a line for
-every share file, whether its device is mounted or not. **Mount** and
+every share file, whether its device is mounted or not. Pick one first;
+the buttons under the list work on the line picked. **Mount** and
 **Dismount** put one on the device list and take it off - a share with
-anything open or locked on it is not dismounted - and **Forget** takes the
-share off the machine altogether, its file and its kept password with it.
+anything open or locked on it is not dismounted - and **Delete...** takes
+the share off the machine altogether, its file and its kept password with
+it, once it has asked. Nothing on the server is touched.
+
+**Edit...** opens a window with what the share's file says, to be changed:
+
+- **Mount as** - the device's name. Another name moves the share to it:
+  its old file goes, and the password kept for it moves along.
+- **Share** - where it is, written as the server field takes it
+  (`//nas.lan/public`, with `:port` after the server where it is not on
+  SMB's own).
+- **User**, **Password**, **Domain** - who logs on. The password field
+  starts empty: left so, the password kept stays; typed in, it replaces
+  that one. With no user the logon is anonymous, and no password is kept.
+- **Read only** and **Encrypted**, as when it was mounted.
+
+**Save** writes it down. A share that is mounted is dismounted first and
+mounted again with what was changed; one with anything open on it cannot
+be dismounted, and is then left as it was, the window still open.
 
 ## The password
 

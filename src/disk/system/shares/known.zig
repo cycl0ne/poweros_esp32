@@ -5,8 +5,12 @@
 //!
 //! **A share is known once its file is written**, whether or not it is
 //! mounted: `C:net/MountShare ALL` at every start mounts what the files
-//! say, so a share added here comes back by itself. Forgetting one is
+//! say, so a share added here comes back by itself. Deleting one is
 //! deleting its two files.
+//!
+//! **A share changed** is its file written again: under another name the
+//! old file goes and the password file moves with it (`portKept` says
+//! what becomes of a `Port` the file had).
 //!
 //! **A device name** is made from the share's name
 //! (`deviceNameOf`): in capitals, with anything a name may not hold - a
@@ -147,7 +151,7 @@ pub fn standingOf(dl: *DosBase, device: []const u8) Standing {
 
 /// The share file and the password file of a device deleted: what it was
 /// is forgotten, and the next start does not mount it.
-pub fn forget(dl: *DosBase, device: []const u8) void {
+pub fn delete(dl: *DosBase, device: []const u8) void {
     var path: Path = undefined;
     _ = dl.DeleteFile(pathOf(&path, sharefile.directory, device));
     _ = dl.DeleteFile(pathOf(&path, sharefile.password_directory, device));
@@ -159,6 +163,15 @@ pub fn unwrite(dl: *DosBase, device: []const u8, password_too: bool) void {
     var path: Path = undefined;
     _ = dl.DeleteFile(pathOf(&path, sharefile.directory, device));
     if (password_too) _ = dl.DeleteFile(pathOf(&path, sharefile.password_directory, device));
+}
+
+/// The `Port` a share file keeps when its `Share` is written anew: the
+/// one it had, unless the place now names a port of its own - the
+/// `Share`'s port is the one a mount takes - or is no place at all.
+pub fn portKept(share: []const u8, had: u16) ?u16 {
+    if (had == 0) return null;
+    const place = client.place.placeOf(share) orelse return null;
+    return if (place.port == 0) had else null;
 }
 
 /// `directory` and `name` joined, with a NUL.
@@ -260,4 +273,13 @@ test "a path joined, and names compared in either case" {
     try testing.expectEqualStrings("ENVARC:Sys/net/shares/NAS", words.spanOf(pathOf(&path, sharefile.password_directory, "NAS")));
     try testing.expect(sameName("nas", "NAS"));
     try testing.expect(!sameName("nas", "nas1"));
+}
+
+test "a share's port kept when its place is written anew" {
+    try testing.expectEqual(@as(?u16, 4450), portKept("//nas.lan/public", 4450));
+    try testing.expectEqual(@as(?u16, null), portKept("//nas.lan:445/public", 4450));
+    try testing.expectEqual(@as(?u16, null), portKept("//[fd00::1]:4450/public", 4450));
+    try testing.expectEqual(@as(?u16, 4450), portKept("//[fd00::1]/public", 4450));
+    try testing.expectEqual(@as(?u16, null), portKept("//nas.lan/public", 0));
+    try testing.expectEqual(@as(?u16, null), portKept("", 4450));
 }
