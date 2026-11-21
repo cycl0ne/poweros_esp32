@@ -221,7 +221,11 @@ fn decode(m: *Decoder, frame: *vc.VideoFrame, slot: u32) i32 {
     const planes = &m.planes[slot];
     const made = make(m.sys, planes, work, sampling);
     if (made != vc.VCERR_OK) return made;
-    jpeg.readScan(bytes, work) catch return vc.VCERR_CORRUPT;
+    // A frame in several scans has no memory for its numbers here.
+    jpeg.readScan(bytes, work) catch |failure| return switch (failure) {
+        jpeg.Error.Unsupported => vc.VCERR_UNSUPPORTED,
+        else => vc.VCERR_CORRUPT,
+    };
 
     const luma = &work.component[0];
     const half_width = (work.width + 1) / 2;

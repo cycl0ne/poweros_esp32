@@ -24,11 +24,16 @@ Generated from the source by `./zig build autodoc`.
 - [DisposePath](#disposepath) - A path given back. Null does nothing.
 - [EndMask](#endmask) - The drawing since BeginMask made a mask (MASK_*) that clips what is drawn until PopClip.
 - [FillPath](#fillpath) - The path filled through the matrix (null: the identity) in the paint, by the rule (RULE_*).
+- [FilterLayer](#filterlayer) - What is drawn on the last layer pushed put through filter primitives, one after another.
 - [LineTo](#lineto) - A line from the current point to (x, y).
 - [MoveTo](#moveto) - A new contour started at (x, y).
 - [PathBounds](#pathbounds) - The bounds of the path's curves through the matrix (null: the identity); false for an empty path.
+- [PathLength](#pathlength) - The length of the path through the matrix (null: the identity).
+- [PathPointAt](#pathpointat) - The point a distance along the path comes to through the matrix, and the way the path goes there.
+- [PathVertices](#pathvertices) - The path's vertices, with the directions into and out of each, as many as there is room for; how many it has.
 - [PopClip](#popclip) - The last clip or mask pushed taken off.
 - [PopLayer](#poplayer) - The last layer pushed put down on what is under it.
+- [PushBlendLayer](#pushblendlayer) - What is drawn until PopLayer goes onto a layer of its own, put down at the opacity in a blend mode.
 - [PushClip](#pushclip) - What is drawn until PopClip shows only inside the path, through the matrix (null: the identity), by the rule (RULE_*).
 - [PushLayer](#pushlayer) - What is drawn until PopLayer goes onto a layer of its own, put down at the opacity.
 - [QuadTo](#quadto) - A quadratic curve from the current point to (x, y), pulled toward (x1, y1).
@@ -483,7 +488,9 @@ fn BlurLayer(vb: *VectorBase, canvas: *vector.Canvas, deviation_x: f32, deviatio
 The layer's pens are blurred in place, as SVG's `feGaussianBlur` is
 made: three box blurs one after another, across and then down, each
 of the size SVG gives for the deviation - within a few per cent of a
-Gaussian, and costing the same whatever its size. They are blurred
+Gaussian, and costing the same whatever its size. A deviation under
+two pixels, which boxes come to too coarsely, is blurred by the
+Gaussian's own kernel (since 1.5). They are blurred
 premultiplied, so a clear pixel's colour goes nowhere. What is past
 the canvas's edge is clear, and what is blurred past it is lost. The
 layer is then put down by `PopLayer` as any other, at its opacity and
@@ -510,13 +517,14 @@ before the call returns.
 
 Blurred in the pens' colours as they are (sRGB), which SVG asks for
 with `color-interpolation-filters: sRGB`; its default, linearRGB,
-blurs two colours' edge a little lighter. The deviations are the
+blurs two colours' edge a little lighter - `FilterLayer` blurs in
+either. The deviations are the
 pixels' across and down: a picture drawn turned is blurred along the
 canvas's rows and columns, not its own.
 
 **SEE ALSO**
 
-`PushLayer`, `PopLayer`, `PushClip`
+`PushLayer`, `PopLayer`, `PushClip`, `FilterLayer`
 
 **EXAMPLES**
 
@@ -1038,7 +1046,8 @@ fn FillPath(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path, m
 - `matrix` - the path's units to pixels, or null when they are pixels.
 - `paint` - what it is painted in (`vector.Paint`): one colour, or
   since 1.1 a linear or radial gradient with its stops, spread and
-  matrix (1.0 paints a gradient's colour), at the paint's opacity.
+  matrix (1.0 paints a gradient's colour), since 1.5 a sweep round a
+  point, at the paint's opacity.
   A gradient with no stops paints nothing, one with one paints its
   colour, and one of no length or radius its last stop's colour, as
   SVG has it.
@@ -1066,7 +1075,9 @@ paint's matrix and then to pixels by this one: each pixel's centre
 is taken back to see where along it the pixel is. Its colour there
 comes from 256 made from the stops for the fill, mixed as they are
 and not premultiplied. A radial gradient's focus outside its circle
-makes a cone, beside which nothing is painted, as SVG 2 draws it.
+makes a cone, beside which nothing is painted, as SVG 2 draws it. A
+sweep is how far round the pixel is about its centre, from its start
+angle to its end, those of one turn drawn.
 
 With a layer pushed (`PushLayer`) it is drawn on the layer.
 
@@ -1096,6 +1107,119 @@ None known.
 const red = vector.Paint{ .colour = .{ .r = 1 } };
 const twice = vector.Matrix.scale(2, 2);
 _ = vb.FillPath(canvas, path, &twice, &red, vector.RULE_NONZERO);
+```
+
+## FilterLayer
+
+What is drawn on the last layer pushed put through filter primitives, one after another.
+
+**SYNOPSIS**
+
+```zig
+fn FilterLayer(vb: *VectorBase, canvas: *vector.Canvas, primitives: [*]const vector.FilterPrimitive, count: u32, region: *const vector.Rect) i32
+```
+
+**SINCE**
+
+1.5. LVO -128.
+
+**INPUTS**
+
+- `canvas` - the canvas.
+- `primitives` - the filter's steps, `count` of them, in order: each
+  one's kind (`FILTER_*`), inputs, subregion, flags and what it reads.
+- `count` - how many; at most `MAX_FILTER_PRIMITIVES`.
+- `region` - the filter region, in the canvas's pixels: from the pixel
+  its corner is in, as many whole pixels as it is wide and high. A
+  primitive's subregion likewise.
+
+**RESULT**
+
+- `VECTOR_OK` - the layer holds what the filter made.
+- `VECTORERR_DEPTH` - no layer is pushed, or `count` is past
+  `MAX_FILTER_PRIMITIVES`; the layer is as it was.
+- `VECTORERR_NOMEM` - the layer had no memory of its own, or there was
+  not the memory for the filter's work; the layer is as it was.
+
+**BEHAVIOR**
+
+SVG's filter effects, run over what is drawn on the layer. The steps
+go in order, each making a result the size of the region, clear
+outside its own subregion (`FilterPrimitive.region`, cut to the
+filter region). A step reads the layer's drawing (`FILTERIN_SOURCE`),
+its coverage alone in black (`FILTERIN_SOURCEALPHA`), or an earlier
+step's result by its place in the list; one that names a later step,
+or itself, reads clear. The last step's result takes the place of
+the drawing, and the layer is clear outside it - the filter region
+cuts what was drawn, as SVG has it. `count` 0 leaves nothing.
+
+Each step works in linear light (`FILTERF_LINEARRGB`, SVG's default)
+or in the colours as written, its inputs turned into its space first
+and the colours it is given - a flood's, a light's, a shadow's - with
+them. Distances - offsets, deviations, radii, a light's place, a
+turbulence's matrix - are the canvas's pixels: the caller turns a
+filter's units into them, as `primitiveUnits` and the drawing's
+matrix say.
+
+What each kind does is SVG's: `FILTER_OFFSET` moves its input by
+whole pixels; `FILTER_GAUSSIAN_BLUR` blurs it, a negative deviation
+making nothing; `FILTER_COLOUR_MATRIX` and
+`FILTER_COMPONENT_TRANSFER` change each pixel's colour, not
+premultiplied; `FILTER_COMPOSITE` is Porter and Duff's or the sum of
+products; `FILTER_BLEND` the blend modes of `PushBlendLayer`;
+`FILTER_MERGE` its inputs one over another; `FILTER_FLOOD` one colour;
+`FILTER_IMAGE` the caller's pixels where it puts them; `FILTER_TILE`
+its input's subregion repeated; `FILTER_MORPHOLOGY` the least or the
+most in a box round each pixel; `FILTER_CONVOLVE` a kernel, turned
+round as SVG has it; `FILTER_DISPLACEMENT_MAP` its input moved by
+another's channels; `FILTER_TURBULENCE` Perlin's noise by SVG's own
+code; the two lightings the input's coverage as a surface, lit; and
+`FILTER_DROP_SHADOW` the input's coverage blurred, moved and coloured,
+under it.
+
+A layer past the most, or one inside a mask begun past them, is
+drawn nowhere, and `VECTOR_OK` is answered.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The primitives, and the tables, kernels, input lists and pixels they
+point at, are the caller's and only read during the call. The
+filter's results are allocated and given back before it returns.
+
+**NOTES**
+
+Each result held at once is four bytes a pixel of the region; a
+result no later step reads is given back as soon as it is not.
+
+**BUGS**
+
+A filter's pixels are eight bits a channel, as browsers filter: a
+long chain in linear light bands a little in the dark.
+
+**SEE ALSO**
+
+`PushLayer`, `BlurLayer`, `PushBlendLayer`, `PopLayer`
+
+**EXAMPLES**
+
+```zig
+// A drop shadow: the drawing's coverage blurred, moved, under it.
+const steps = [_]vector.FilterPrimitive{
+    .{ .kind = vector.FILTER_GAUSSIAN_BLUR, .in = vector.FILTERIN_SOURCEALPHA, .region = region, .as = .{ .blur = .{ .deviation_x = 3, .deviation_y = 3 } } },
+    .{ .kind = vector.FILTER_OFFSET, .in = 0, .region = region, .as = .{ .offset = .{ .dx = 4, .dy = 4 } } },
+    .{ .kind = vector.FILTER_COMPOSITE, .in = vector.FILTERIN_SOURCE, .in2 = 1, .region = region, .as = .{ .composite = .{} } },
+};
+_ = vb.PushLayer(canvas, 1);
+_ = vb.FillPath(canvas, shape, &matrix, &paint, vector.RULE_NONZERO);
+_ = vb.FilterLayer(canvas, &steps, steps.len, &region);
+vb.PopLayer(canvas);
 ```
 
 ## LineTo
@@ -1286,6 +1410,222 @@ if (vb.PathBounds(path, null, &box)) {
 }
 ```
 
+## PathLength
+
+The length of the path through the matrix (null: the identity).
+
+**SYNOPSIS**
+
+```zig
+fn PathLength(vb: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix) f32
+```
+
+**SINCE**
+
+1.5. LVO -132.
+
+**INPUTS**
+
+- `path` - the path.
+- `matrix` - the path's units to the ones the length is wanted in, or
+  null for the path's own.
+
+**RESULT**
+
+The length; 0 for an empty path or one of points alone.
+
+**BEHAVIOR**
+
+Every contour's lines and curves are measured through the matrix,
+each curve to within a hundredth of a unit, and added up. A close is
+the line back to where its contour began; a move adds nothing. This
+is the length SVG's `pathLength` stands for, and what a text on a
+path is laid along.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The path and the matrix are the caller's and only read.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PathPointAt`, `PathVertices`, `PathBounds`
+
+**EXAMPLES**
+
+```zig
+// A dash pattern given for pathLength="100", made the path's own.
+const k = vb.PathLength(path, null) / 100;
+```
+
+## PathPointAt
+
+The point a distance along the path comes to through the matrix, and the way the path goes there.
+
+**SYNOPSIS**
+
+```zig
+fn PathPointAt(vb: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix, distance: f32, point: *vector.Point, angle: *f32) bool
+```
+
+**SINCE**
+
+1.5. LVO -136.
+
+**INPUTS**
+
+- `path` - the path.
+- `matrix` - the path's units to the ones wanted, or null for the
+  path's own.
+- `distance` - how far along, in those units.
+- `point` - where the place is put.
+- `angle` - where the way the path goes there is put, in degrees
+  clockwise from across, 0 up to 360.
+
+**RESULT**
+
+True and both filled in; false for a distance before the start or
+past the end, or a path of no length, and both left as they were.
+
+**BEHAVIOR**
+
+The path is walked as `PathLength` measures it, the contours one after
+another, to the place `distance` along it. At a vertex the way is the
+one out of it; at the path's very end, the one into it. On a curve
+the place is on the curve itself and the way is its tangent there,
+not that of the short lines it is measured by. A segment of no length
+has no way and is passed over. This is how SVG's
+`textPath` places each glyph: its middle at the distance, turned the
+way the path goes.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The path and the matrix are the caller's and only read.
+
+**NOTES**
+
+Each call walks the path from its start: a text of many glyphs on a
+long path costs the glyphs times the path.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PathLength`, `PathVertices`
+
+**EXAMPLES**
+
+```zig
+var at: vector.Point = undefined;
+var turn: f32 = undefined;
+if (vb.PathPointAt(path, null, offset + advance / 2, &at, &turn)) {
+    // The glyph drawn turned by `turn` about `at`.
+}
+```
+
+## PathVertices
+
+The path's vertices, with the directions into and out of each, as many as there is room for; how many it has.
+
+**SYNOPSIS**
+
+```zig
+fn PathVertices(vb: *VectorBase, path: *const vector.Path, vertices: ?[*]vector.Vertex, room: u32) u32
+```
+
+**SINCE**
+
+1.5. LVO -140.
+
+**INPUTS**
+
+- `path` - the path.
+- `vertices` - where they are put, or null to count them.
+- `room` - how many it holds.
+
+**RESULT**
+
+How many vertices the path has, whatever the room: a call with more
+room gets the rest.
+
+**BEHAVIOR**
+
+A vertex for each segment, in order: a move's point (`VERTEXF_START`),
+the end of each line and curve, and a close's - where its contour
+began (`VERTEXF_CLOSED`). The last of each contour is marked
+`VERTEXF_END`. An arc is the curves it was added as, each a quarter
+turn or less, and where they meet are vertices too.
+
+`in_angle` is the way the path comes into the vertex - toward its end
+from the last control point not on it - and `out_angle` the way it
+goes out along the next segment, in degrees clockwise from across, 0
+up to 360. A segment of no length takes the way of the one before it,
+or the one after. The first and the last vertex of a closed contour
+are come into by its close and left by its first segment. Where
+nothing comes in or goes out, the flag says so (`VERTEXF_NO_IN`,
+`VERTEXF_NO_OUT`) and the angle is the other one; where neither, both
+are 0.
+
+This is what SVG's markers need: `marker-start` at the first vertex,
+`marker-end` at the last, `marker-mid` at those between, and
+`orient="auto"` the way halfway between in and out.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The path is the caller's and only read; the vertices are written into
+the caller's room. A table of where each segment's points are is
+allocated and given back before the call returns.
+
+**NOTES**
+
+The points are the path's own units: no matrix is taken, since the
+angles a marker is turned by are in them too.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`PathLength`, `PathPointAt`, `AddPathData`
+
+**EXAMPLES**
+
+```zig
+var room: [64]vector.Vertex = undefined;
+const n = @min(vb.PathVertices(path, &room, room.len), room.len);
+for (room[0..n]) |vertex| {
+    // A marker drawn at vertex.point.
+    _ = vertex;
+}
+```
+
 ## PopClip
 
 The last clip or mask pushed taken off.
@@ -1397,6 +1737,90 @@ None known.
 **EXAMPLES**
 
 ```zig
+vb.PopLayer(canvas);
+```
+
+## PushBlendLayer
+
+What is drawn until PopLayer goes onto a layer of its own, put down at the opacity in a blend mode.
+
+**SYNOPSIS**
+
+```zig
+fn PushBlendLayer(vb: *VectorBase, canvas: *vector.Canvas, opacity: f32, mode: u32) i32
+```
+
+**SINCE**
+
+1.5. LVO -124.
+
+**INPUTS**
+
+- `canvas` - the canvas.
+- `opacity` - how much of the layer shows when it is put down, 0 to 1.
+- `mode` - how its colours go onto those under it, `BLEND_*`: CSS's
+  `mix-blend-mode`, or one of Porter and Duff's operators. A number
+  past the last is `BLEND_NORMAL`.
+
+**RESULT**
+
+As `PushLayer`'s: `VECTOR_OK`; `VECTORERR_NOMEM` without the memory
+for the layer; `VECTORERR_DEPTH` past `MAX_LAYERS`. A `PopLayer` goes
+with it whatever it answers.
+
+**BEHAVIOR**
+
+`PushLayer`, and the pop that goes with it puts the layer down in
+`mode`: where the layer and what is under it are both, the two
+colours are mixed by the mode - multiplied, screened, the darker of
+the two, the layer's hue with the luminosity under it, and the rest
+as CSS has them - and that is laid over what is under at the layer's
+coverage and opacity. Where only one of them is, it shows as it is.
+`BLEND_PLUS_LIGHTER` adds the two instead, colours and coverage, held
+at full.
+
+Porter and Duff's operators (`BLEND_CLEAR` to `BLEND_XOR`) put the
+layer, at its opacity, and what is under it together by their
+coverage: the layer where what is under is, what is under where the
+layer is not, and the rest. Inside the clips the result takes the
+place of what was under, so that the ones keeping nothing of what is
+under where the layer is not - `BLEND_CLEAR`, `BLEND_COPY`,
+`BLEND_SOURCE_IN`, `BLEND_DESTINATION_IN`, `BLEND_SOURCE_OUT` and
+`BLEND_DESTINATION_ATOP` - clear it there, on all of the layer it
+goes down on, or of the canvas's pens.
+
+What a layer is blended with is what is under it on the layer it is
+put down on: a group drawn on a layer of its own - SVG's `isolation:
+isolate`, or a group with an opacity, a filter or a mask - is the
+backdrop for what is blended inside it, starting clear.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none needed.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The layer is the canvas's, given back by the pop or by
+`DisposeCanvas`.
+
+**BUGS**
+
+Without the memory for the layer, what is drawn on it goes straight
+onto what is under it, as `PushLayer` draws then, and is not blended.
+
+**SEE ALSO**
+
+`PushLayer`, `PopLayer`, `FilterLayer`
+
+**EXAMPLES**
+
+```zig
+// A shape multiplied onto the picture under it.
+_ = vb.PushBlendLayer(canvas, 1, vector.BLEND_MULTIPLY);
+_ = vb.FillPath(canvas, shape, &matrix, &paint, vector.RULE_NONZERO);
 vb.PopLayer(canvas);
 ```
 
@@ -1696,7 +2120,8 @@ fn StrokePath(vb: *VectorBase, canvas: *vector.Canvas, path: *const vector.Path,
 - `matrix` - the path's units to pixels, or null when they are pixels.
 - `paint` - what it is painted in, as `FillPath` paints.
 - `stroke` - how (`vector.Stroke`), in the path's own units: the
-  width, the joins (`JOIN_MITER`, `JOIN_ROUND`, `JOIN_BEVEL`), the caps
+  width, the joins (`JOIN_MITER`, `JOIN_ROUND`, `JOIN_BEVEL`, since
+  1.5 `JOIN_MITER_CLIP`), the caps
   (`CAP_BUTT`, `CAP_ROUND`, `CAP_SQUARE`), the miter limit, in stroke
   widths, and since 1.1 the dashes (1.0 draws a dashed stroke whole).
 
@@ -1719,8 +2144,11 @@ Since 1.2 the pieces meet edge to edge: a line's is cut on the inside
 of a corner where the next one's begins, so no pixel at the stroke's
 edge is painted by two (1.1's overlapped there, and came out a little
 heavy). A corner whose lines are too short for that - a curve tighter
-than the stroke is wide, a sharp turn between short lines - still
-overlaps.
+than the stroke is wide, a sharp turn between short lines, a line
+that runs back over the one before - still overlaps; since 1.5 such a
+stroke is summed in four strips a pixel row, each held to full
+coverage on its own, so an edge where its pieces overlap comes out
+within an eighth of a pixel of right rather than heavy.
 
 Dashes are cut from each contour in the path's units, from
 `dash_offset` along it, before it is stroked, so each dash has its
@@ -1729,6 +2157,10 @@ contour, whose last dash is joined to its first. An odd count of
 lengths is gone through twice, and lengths that are negative or come
 to nothing draw the stroke whole, as SVG has it. A stroke is cut at
 most 65536 times; past that it goes on as the dash or gap it is in.
+
+Since 1.5 an open end inside a curve - the path's, or a dash's - is
+cut, and capped, across the way the curve goes there rather than the
+way the line of it the end lies on does.
 
 With a layer pushed (`PushLayer`) it is drawn on the layer.
 

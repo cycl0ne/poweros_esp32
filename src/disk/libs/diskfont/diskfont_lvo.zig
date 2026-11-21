@@ -21,6 +21,10 @@ const DisposeFontContents = @import("contents/disposefontcontents.zig").DisposeF
 const NewScaledDiskFont = @import("font/newscaleddiskfont.zig").NewScaledDiskFont;
 const OpenOutlineFont = @import("outline/openoutlinefont.zig").OpenOutlineFont;
 const CloseOutlineFont = @import("outline/closeoutlinefont.zig").CloseOutlineFont;
+const FallbackFamily = @import("font/fallbackfamily.zig").FallbackFamily;
+const FindFamily = @import("font/findfamily.zig").FindFamily;
+const GenericFamily = @import("font/genericfamily.zig").GenericFamily;
+const OpenOutlineFontTagList = @import("outline/openoutlinefonttaglist.zig").OpenOutlineFontTagList;
 
 /// diskfont.library's interface, as the SDK generates it from
 /// sdk/fd/diskfont_lib.fd.
@@ -52,6 +56,10 @@ const contract_files = [_][]const u8{
     @embedFile("font/newscaleddiskfont.zig"),
     @embedFile("outline/openoutlinefont.zig"),
     @embedFile("outline/closeoutlinefont.zig"),
+    @embedFile("font/fallbackfamily.zig"),
+    @embedFile("font/findfamily.zig"),
+    @embedFile("font/genericfamily.zig"),
+    @embedFile("outline/openoutlinefonttaglist.zig"),
 };
 
 fn lvoOpenDiskFont(dfb: *DiskfontBase, text_attr: *const graphics.TextAttr) callconv(.c) ?*graphics.TextFont {
@@ -75,6 +83,18 @@ fn lvoOpenOutlineFont(dfb: *DiskfontBase, name: [*:0]const u8, style: graphics.F
 fn lvoCloseOutlineFont(dfb: *DiskfontBase, font: ?*sdk.diskfont.OutlineFont) callconv(.c) void {
     return CloseOutlineFont(dfb, font);
 }
+fn lvoFallbackFamily(dfb: *DiskfontBase, index: u32, name: [*]u8, size: u32) callconv(.c) bool {
+    return FallbackFamily(dfb, index, name, size);
+}
+fn lvoFindFamily(dfb: *DiskfontBase, name: [*:0]const u8, into: [*]u8, size: u32) callconv(.c) bool {
+    return FindFamily(dfb, name, into, size);
+}
+fn lvoGenericFamily(dfb: *DiskfontBase, generic: u32, into: [*]u8, size: u32) callconv(.c) bool {
+    return GenericFamily(dfb, generic, into, size);
+}
+fn lvoOpenOutlineFontTagList(dfb: *DiskfontBase, name: [*:0]const u8, tags: ?[*]const sdk.utility.TagItem) callconv(.c) ?*sdk.diskfont.OutlineFont {
+    return OpenOutlineFontTagList(dfb, name, tags);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -88,6 +108,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoNewScaledDiskFont),
     vec(lvoOpenOutlineFont),
     vec(lvoCloseOutlineFont),
+    vec(lvoFallbackFamily),
+    vec(lvoFindFamily),
+    vec(lvoGenericFamily),
+    vec(lvoOpenOutlineFontTagList),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

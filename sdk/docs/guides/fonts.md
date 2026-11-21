@@ -328,6 +328,8 @@ FONTS:sans.font          Liberation Sans, and its faces sans-bold, -italic
 FONTS:sans/LiberationSans-Regular.ttf   and -bolditalic; serif and mono the same
 FONTS:devanagari.font    Noto Sans Devanagari, and its bold face devanagari-bold
 FONTS:devanagari/NotoSansDevanagari-Regular.ttf
+FONTS:arabic.font        Noto Sans Arabic, and its bold face arabic-bold
+FONTS:arabic/NotoSansArabic-Regular.ttf
 FONTS:cjk-jp.font        Noto Sans CJK in Japan's forms: the first font of a collection
 FONTS:cjk-jp/NotoSansCJK-Regular.ttc
 FONTS:cjk-kr.font        another font of that file: a contents file alone
@@ -346,7 +348,13 @@ They carry Noto Sans Devanagari too, as the families `devanagari` and
 the letters and signs of Hindi, Marathi and Nepali with their conjuncts
 and half forms, the Vedic signs, and `₹`. It has no Latin letters, and
 the disk's `font.prefs` names it as a [fallback](#fallback-fonts), so
-a text in any font draws these characters from it.
+a text in any font draws these characters from it. Noto Sans Arabic is
+there the same way, as `arabic` and `arabic-bold`
+(`FONTS:arabic.licence`): the letters of Arabic, Persian and Urdu, the
+forms truetypeshaping.library joins them by, the Arabic-Indic digits
+and the marks of the vowels, and a fallback after Devanagari's. Its
+files carry no hinting, whose programs are not run: the same glyphs in
+40 % less room.
 
 Noto Sans CJK Regular (`FONTS:cjk.licence`, the same licence) is kana,
 Hangul and the Han characters of Japanese, Chinese and Korean, with
@@ -354,7 +362,7 @@ Latin letters of its own: one file of 19.5 MB, a collection whose fonts
 draw the characters the three languages share in one region's forms
 each. Five of them are families - `cjk-jp` Japan's, `cjk-kr` Korea's,
 `cjk-sc` China's, `cjk-tc` Taiwan's, `cjk-hk` Hong Kong's - and
-`font.prefs` names `cjk-jp.font` as a fallback after Devanagari's. It
+`font.prefs` names `cjk-jp.font` as a fallback after Arabic's. It
 is on every 64-bit machine's disk, the image one starts from out of RAM
 among them.
 
@@ -387,14 +395,17 @@ into one allocation, checked (`check` and `sound`), and drawn from where
 it lies; nothing in it is fixed up.
 
 **A contents file** (`sdk/libs/diskfont/fontfile.zig`) is a
-`ContentsHeader` - magic `PFCT`, version 2, count, checksum - and one
-144-byte `FontContents` per entry: the file's path from `FONTS:`, its
-height, drawn styles, flags, kind of pixels, nominal width, `outline`
-set for an entry that is a TrueType or OpenType file (whose height is
-then 0, and its styles the ones the file says it is drawn in), `face`
-for which font of a collection that is, from 0, and the
-entry's place on a variable font's axes: `axis_count` and up to
-`MAXFONTAXES` (8) `AxisValue`, an axis' tag and its value. Its
+`ContentsHeader` - magic `PFCT`, version 3, count, checksum, and the
+name the family's fonts give themselves (`family`, the typographic
+family of its first file of outlines: "Noto Sans") - and one 144-byte
+`FontContents` per entry: the file's path from `FONTS:`, its height,
+drawn styles, flags, kind of pixels, nominal width, `outline` set for
+an entry that is a TrueType or OpenType file (whose height is then 0,
+and its styles the ones the file says it is drawn in), `face` for which
+font of a collection that is, from 0, how heavy (`weight`, 1 to 1000)
+and how wide (`stretch`, in tenths of a percent) an outline entry is
+drawn, and the entry's place on a variable font's axes: `axis_count`
+and up to `MAXFONTAXES` (8) `AxisValue`, an axis' tag and its value. Its
 longwords add up to zero too. `fontfile.sound` checks one, `seal` sets
 its checksum, `entryFor` and `outlineEntry` make entries. A contents
 file of another version is refused: `C:FixFonts` writes it again.
@@ -518,7 +529,50 @@ it was added).
 **`NewFontContents(lock, "name.font")`** makes a contents file's image from
 the family's directory; `DisposeFontContents` frees it. A variable font
 there is read with truetype.library - its axes and named instances -
-and listed an entry a style (since 1.13).
+and listed an entry a style (since 1.13). Since 1.16 the file holds the
+name the family's fonts give themselves, and each outline entry how
+heavy and how wide it is drawn - its `OS/2` weight and width classes,
+or its `wght` and `wdth` at the entry's place.
+
+### A family by name, and the face nearest a weight
+
+A program that names fonts as a document does - CSS's `font-family`,
+`font-weight`, `font-stretch` and `font-style`, as svg.datatype reads
+them - finds and opens a face with three calls (since 1.16):
+
+- **`FindFamily(name, into, size)`** finds the family the name stands
+  for: the one whose fonts call themselves that ("Noto Sans", in any
+  case), else the contents file of the name with ".font" ("sans"). It
+  answers the contents file's name, "noto-sans.font". Of a family and
+  its faces, which give the same name, the family is the answer.
+- **`GenericFamily(generic, into, size)`** names the family a generic
+  one is: `GENERIC_SERIF`, `GENERIC_SANS`, `GENERIC_MONO`,
+  `GENERIC_CURSIVE`, `GENERIC_FANTASY`, as `font.prefs` sets them (see
+  [The system's fonts](#the-systems-fonts)). Left out, the first three
+  are `serif.font`, `sans.font` and `mono.font`; the other two are none.
+- **`OpenOutlineFontTagList(name, tags)`** opens the face of a family
+  nearest what the tags ask - `DFA_Weight` (1 to 1000), `DFA_Stretch`
+  (tenths of a percent), `DFA_Italic` - from the family's own outline
+  entries and those of its faces (`-bold`, `-italic`, `-bolditalic`),
+  as CSS chooses: the nearest width, then the slant, then the nearest
+  weight in the order CSS gives. A variable face is then set on its
+  `wght` and `wdth` to what was asked, and to the values `DFA_Axes`
+  names after that - the later of two for an axis winning, so a
+  document's own settings come last. The outline is closed with
+  `CloseOutlineFont`; truetype.library's `FontMetrics` says the weight
+  and width it is drawn at.
+
+```zig
+var family: [64]u8 = undefined;
+if (!dfb.FindFamily("Noto Sans", &family, family.len) and
+    !dfb.GenericFamily(diskfont.GENERIC_SANS, &family, family.len)) return;
+const tags = [_]utility.TagItem{
+    .{ .tag = diskfont.DFA_Weight, .data = 600 },
+    .{ .tag = utility.TAG_DONE, .data = 0 },
+};
+const font = dfb.OpenOutlineFontTagList(@ptrCast(&family), &tags) orelse return;
+defer dfb.CloseOutlineFont(font);
+```
 
 ## Outline fonts
 
@@ -614,6 +668,17 @@ ascender, descender, line gap, x and cap height, underline and strikeout
 lines, and the most verbs and points one glyph takes; `Kerning(outline,
 left, right)` what the `kern` table says of a pair.
 
+**A glyph standing upright in a column** (truetype.library 1.17):
+`GlyphVerticalMetrics(outline, glyph, &metrics)` is how far it moves the
+point down the column (`advance`) and its vertical origin, the point of
+the glyph set on the column's point: across, the middle of its
+horizontal advance (`origin_x`); up, the top of its place
+(`origin_y`). A font with vertical metrics (`vhea`, `vmtx`, `VORG`, and
+a variable one's `VVAR`) gives them; in one without, the advance is the
+line's height, ascender less descender, and the glyph's box is set in
+its middle. A glyph turned sideways with the line takes its horizontal
+measures instead.
+
 **Fonts of cubic curves** (truetype.library 1.6). A font file keeps its
 glyphs in one of two ways: as contours of quadratic curves (its `glyf`
 table), or as programs that draw lines and cubic curves (its `CFF `
@@ -672,9 +737,38 @@ any glyph's. `GlyphSegments` gives no verbs.
 
 `OpenOutline` opens `compression.library` for a font of colour pictures
 - it unpacks the PNG files - and holds it until `CloseOutline`; without
-the library such a font does not open. Not read: pictures in `sbix`, in
-`bloc` and `bdat`, the formats 3 and 4 of a picture, and strikes of
-other bits a pixel than their pair of tables has.
+the library such a font does not open. Not rendered: pictures in
+`sbix` (`GlyphPicture` hands them out, below), in `bloc` and `bdat`,
+the formats 3 and 4 of a picture, and strikes of other bits a pixel
+than their pair of tables has.
+
+**Glyphs in colour** (truetype.library 1.17). A font that has outlines
+may draw some of its glyphs in colour as well, in one of three ways,
+and hands out how - for a program that draws vector shapes, as
+svg.datatype does; `RenderGlyph` draws the outline.
+
+- `GlyphPaints`: the glyph's layers of the `COLR` table, coloured from
+  the first palette of `CPAL`, as steps (`STEP_*`, a `PaintStep` each)
+  in the font's units, y up: other glyphs' outlines filled with a
+  colour or a linear, radial or sweeping gradient, inside clips of
+  outlines and of boxes, through transforms, on layers put down in one
+  of Porter and Duff's operators or a blend mode - what vector.library
+  1.5 draws (`PAINT_SWEEP`, `BLEND_CLEAR` to `BLEND_XOR`). A gradient's
+  stops follow it, sorted and spread from 0 to 1, and a colour the
+  palette lacks is the text's own (`STEPF_FOREGROUND`). Both versions of
+  the table are read, the second's variable paints at the outline's
+  place on its axes; a graph deeper than 64 paints, of more than 16384
+  or that reaches itself is no drawing.
+- `GlyphDocument`: the SVG document of the `SVG ` table that draws the
+  glyph - whole for one glyph, its element `glyph<n>` for a range - in
+  the font's units from the glyph's point, y down; packed with gzip or
+  not, as the table has it.
+- `GlyphPicture`: the glyph's largest picture in colour, of `sbix` or of
+  `CBDT` - a PNG file, or of `sbix` a JPEG or TIFF one - and where it
+  goes in the font's units, a pixel's width and height with it.
+
+A program draws a glyph by the first of the three the font has, and its
+outline when it has none.
 
 **Variable fonts** (truetype.library 1.8, those of cubic curves 1.9).
 One file may hold a whole
@@ -983,13 +1077,46 @@ if (sb.ShapeText(outline, text.ptr, text.len, tts.TTS_LEFT_TO_RIGHT, tts.TTS_LAN
 ```
 
 The whole text is read in the one `direction`, and one read from right
-to left comes back turned around, its last stretch first: a text of both
-directions is the caller's to cut and to order, and no bracket is
-mirrored. Every script but Devanagari is shaped by the features above:
-the joined forms of Arabic and the syllables of the other scripts of
-India are not made. A syllable that is not whole is drawn as written,
-with no dotted circle for the letter it lacks. A
-character the font has no form of is the missing glyph. Where a font
+to left comes back turned around, its last stretch first, a bracket and
+the other characters Unicode mirrors drawn as their mirror images
+(since 1.11). Since 1.11 a stretch of Arabic, Syriac, N'Ko, Mongolian
+or another script whose letters join is shaped with its joined forms:
+each letter takes `isol`, `init`, `medi` or `fina` by its neighbours'
+joining types, the marks between them passed over, Syriac's Alaph also
+`fin2`, `fin3` and `med2`, and each form's lookups are applied before
+the next form's and before the ligatures. The marks of Arabic that
+change their letter - the hamza above and below, the small high seen
+and their kind - go before the other marks on their side of it. Syriac's
+abbreviation mark, cut into pieces by the font's `stch`, is drawn over
+the whole word behind it: the pieces repeated to its width, in the
+middle of it. A text of Arabic in a font without the joining forms'
+features - an older font made of the presentation forms - is drawn with
+the glyphs it has for those characters: each letter in its form, then
+66 ligatures of the forms put together, lam with alef among them. The syllables of the
+scripts of India other than Devanagari are not made. A syllable that is not
+whole is drawn as written, with no dotted circle for the letter it
+lacks. A character the font has no form of is the missing glyph.
+
+**A text of both directions** (truetypeshaping.library 1.11) is cut by
+`BidiLevels(text, length, direction, levels)`: Unicode's bidirectional
+algorithm gives each character of the UTF-8 text a level - even read
+from left to right, odd from right to left - written to `levels`, a
+byte for each byte of the text. `direction` is the paragraphs' own:
+`TTS_LEFT_TO_RIGHT`, `TTS_RIGHT_TO_LEFT`, or `TTS_FIRST_STRONG` for
+each by its first letter that has one. Embeddings, overrides and
+isolates (U+202A to U+202E, U+2066 to U+2069) are followed 125 deep, and
+paired brackets take the direction of what they hold. The caller
+shapes each stretch of one level in its direction and orders the
+stretches: from the highest level down to the lowest odd one, each row
+at that level or above is turned around.
+
+```zig
+const text = "Hello, \xd7\xa9\xd7\x9c\xd7\x95\xd7\x9d!";
+var levels: [text.len]u8 = undefined;
+if (sb.BidiLevels(text, text.len, tts.TTS_LEFT_TO_RIGHT, &levels) == tts.TTS_OK) {
+    // The Hebrew word's bytes are at 1, the rest at 0.
+}
+``` Where a font
 has no `GPOS`, a mark left on its letter moves back onto it by its
 advance and is not set by its outline's box. svg.datatype lays its text
 out with this call.
@@ -1077,7 +1204,16 @@ style over the nearest face it has where there is none. The disk's line:
 SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 DOCUMENT=go.font/18 CODE=go-mono.font/15
 ```
 
-Prefs' Fonts page sets all six. `SetPrefs SHOW` prints the three in use; a program reads and sets them with `GetPrefs` and
+The line may also name what CSS's generic families are for a document
+that asks for them - an SVG picture's text - each a family without a
+size: `SERIF=`, `SANS=`, `MONO=`, `CURSIVE=` and `FANTASY=`. Left out,
+the first three are `serif.font`, `sans.font` and `mono.font`, and a
+document that asks for a handwriting or a decorative font gets none -
+svg.datatype then draws it in a serif. diskfont.library's
+`GenericFamily` reads them as they are now. The disk's line names the
+first three.
+
+Prefs' Fonts page sets all six, and the generic families. `SetPrefs SHOW` prints the three in use; a program reads and sets them with `GetPrefs` and
 `SetPrefs` (`IPREFS_ScreenFont`, `IPREFS_DefaultFont`,
 `IPREFS_FixedFont`). The boot shell's window opens after `C:SetPrefs`,
 so it is in the fonts the file names.
@@ -1092,8 +1228,8 @@ SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 FALLBACK=sans.font,sp
 ```
 
 The line the disk carries ends with
-`FALLBACK=devanagari.font,cjk-jp.font,emoji.font`: Devanagari, then
-kana, Hangul and Han characters in Japan's forms - `cjk-sc.font`,
+`FALLBACK=devanagari.font,arabic.font,cjk-jp.font,emoji.font`:
+Devanagari, Arabic, then kana, Hangul and Han characters in Japan's forms - `cjk-sc.font`,
 `cjk-tc.font`, `cjk-hk.font` or `cjk-kr.font` in its place draws them
 in China's, Taiwan's, Hong Kong's or Korea's - and last the emoji as
 pictures in their own colours. A family a disk does not have is passed
@@ -1415,7 +1551,7 @@ cursor = gb.TextXToOffset(rp, line.ptr, @intCast(line.len), mouse_x - left);
 | | |
 |---|---|
 | `tools/fontconv` | on the host: BDF, bitmap fonts kept as load files (a contents file and one file a size, colour too) and TrueType and OpenType files into size files and a contents file; `--alpha N` for coverage from a larger drawing, `--shadow` for a shadowed colour font, `--rgba` to write a colour font with 32-bit pixels, `--face N` for a font of a collection and `--in <family>` for the family whose directory holds the file |
-| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType) and Noto Sans CJK (a collection), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts`; Liberation, Noto Sans Devanagari, Noto Sans CJK and Noto Color Emoji (a font of colour pictures, which the host tests read too) only onto the 64-bit machines' disks. With them a font only the host tests read, which goes on no disk: Source Sans 3, as a font of one weight and as variable fonts |
+| `scripts/fetch-fonts.sh` | fetches the fonts the disk carries - Spleen (BDF), the Go faces, Liberation's and Noto Sans Devanagari's (TrueType) and Noto Sans CJK (a collection), pinned and checked - into `toolchain/fonts/`, which the build converts into `SYS:fonts` on the disks that hold the `fonts` set - the 64-bit machines', not an ESP32's flash; Liberation, Noto Sans Devanagari, Noto Sans CJK and Noto Color Emoji (a font of colour pictures, which the host tests read too) only onto the 64-bit machines' disks. With them a font only the host tests read, which goes on no disk: Source Sans 3, as a font of one weight and as variable fonts |
 | `scripts/font-reference.py` | on the host: writes what fontTools reads from the fetched fonts - tables, measures, character maps, variation sequences, names, each glyph's measures, of a variable font the same at places on its axes with every glyph's points there (worked out in the library's order and held against fontTools' instancer, or for a font of cubic curves against fontTools' drawing of it at the place), of a font of cubic curves each glyph's outline and what libfreetype renders of a part of them, and of a font of pictures every picture's measures and pixels (a PNG file's as Pillow reads them) and a part of them scaled to another size - as the Zig files `truetype.library`'s host tests compare its answers with (`src/disk/libs/truetype/tests/reference/`), each headed by its font's file name and SHA-256. Run again when a font's pin changes; the tests need neither Python nor fontTools, and one that needs a font not fetched is skipped |
 | `scripts/shape-reference.py` | on the host: applies the fetched fonts' `GSUB` and `GPOS` lookups to runs of glyphs - every glyph of a font, and sequences its lookups have rules for - with an applier of its own on fontTools' reading of the tables, and writes what comes out, a digest for each script, language and feature list, as the Zig files `truetypeshaping.library`'s host tests compare its shaping with (`src/disk/libs/truetypeshaping/tests/reference/`). `--check` says whether the files are the ones it would write, `--show <font> <case>` prints a case's runs |
 | `scripts/shape-text-reference.py` | on the host: shapes texts with libharfbuzz - in the fetched fonts Latin with its kerning and marks, letters and marks spelled apart and together, Greek, Cyrillic, Hebrew read from right to left, Devanagari in words and in syllables drawn by lot, emoji, features switched for a part of a text; and in a font made of a rule, which is told the characters it lacks, texts whose characters are taken apart, sorted and put together - and writes the glyphs, clusters, advances and offsets as the Zig files `truetypeshaping.library`'s host tests compare `ShapeText`'s answers with (`src/disk/libs/truetypeshaping/tests/text_reference/`); `--check` says whether they are up to date |

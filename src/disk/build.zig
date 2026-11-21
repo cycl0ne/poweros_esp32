@@ -24,8 +24,11 @@ const poweros_sdk = @import("poweros_sdk");
 /// (`builtFor`): a driver of hardware a chip lacks is on no disk of that
 /// chip's, whatever its board names.
 ///
-/// - `base`: what a shell needs - C:, S:, locale.library, the keymaps,
-///   the fonts.
+/// - `base`: what a shell needs - C:, S:, locale.library, the keymaps.
+///   The ROM's fonts draw it.
+/// - `fonts`: FONTS: - the families scripts/fetch-fonts.sh fetched, as
+///   the system's own files; the outlines of the scripts beyond Latin's
+///   and the emoji only on the 64-bit disks, and LOCALE:Emoji with them.
 /// - `languages`: what the system speaks besides English - LOCALE:'s
 ///   languages, countries and catalogs. Without it the system speaks
 ///   English and writes the United States' formats.
@@ -41,10 +44,12 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `3d`: facet.library, its drivers and what draws with it.
 /// - `modbus`: modbus.library and the RS-485 line.
 /// - `commodities`: commodities.library and SYS:Commodities.
+/// - `svg`: svg.datatype, SVG files as pictures - built for every chip,
+///   on the disks of the boards that name it, and on the others' cards.
 /// - `dev`: what somebody working on the system wants there - Git.
 /// - `tests`: C:test and SYS:Tests, and the example library and gadget
 ///   they open.
-pub const Set = enum { base, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, dev, tests };
+pub const Set = enum { base, fonts, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, svg, dev, tests };
 
 /// Some of the sets.
 pub const Sets = std.EnumSet(Set);
@@ -183,11 +188,12 @@ pub const catalogs = catalogsOf(&translated_strings);
 /// drawing is the library itself, kept apart so that it is tested on the
 /// host and used by host tools as it is. The SMB client is
 /// the protocol and the share files, which smb-handler, C:net/MountShare
-/// and SYS:System/Shares each need all or part of. The baseline JPEG
-/// decoder is jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
+/// and SYS:System/Shares each need all or part of. The JPEG decoder is
+/// jpeg.datatype's, and mjpeg.vcodec's for Motion JPEG. The
 /// film's sound is the process Movie and videocodec.datatype both play one
 /// with. The
-/// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's, the VP9
+/// H.264 decoder is h264.vcodec's, the VP8 decoder vp8.vcodec's - and
+/// webp.datatype's and webpanim.datatype's, a lossy WebP's - the VP9
 /// decoder vp9.vcodec's, the AV1 decoder av1.vcodec's and the H.265
 /// decoder hevc.vcodec's, kept apart from the system so that they are
 /// tested on the host as they are. The readers of H.264's and H.265's
@@ -438,8 +444,10 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/gif.datatype", .source = "classes/datatypes/gif/gif.zig", .name = "gif.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/gifanim.datatype", .source = "classes/datatypes/gif/gifanim.zig", .name = "gifanim.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/lottie.datatype", .source = "classes/datatypes/lottie/lottie.zig", .name = "lottie.datatype", .set = .gui },
-    .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype", .set = .svg },
     .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype", .set = .gui, .imports = &.{"jpegdecode"} },
+    .{ .disk = "classes/datatypes/webp.datatype", .source = "classes/datatypes/webp/webp.zig", .name = "webp.datatype", .set = .gui, .imports = &.{"vp8core"} },
+    .{ .disk = "classes/datatypes/webpanim.datatype", .source = "classes/datatypes/webp/webpanim.zig", .name = "webpanim.datatype", .set = .gui, .imports = &.{"vp8core"} },
     .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/markdown.datatype", .source = "classes/datatypes/markdown/markdown.zig", .name = "markdown.datatype", .set = .gui },
@@ -531,10 +539,8 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
 /// chip.vcodec goes with them: it drives videodec.resource, which no
 /// ESP32 has, and carries the parameter-set readers it reads a stream's
-/// colours with - 60 KB for a chip that is not there. svg.datatype as
-/// well: what goes on an ESP32's flash disk is what that board is meant
-/// to do, and showing SVG files is not among it.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
+/// colours with - 60 KB for a chip that is not there.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "dttime" };
 /// Drivers of what only the Raspberry Pi CM5's BCM2712 has among the
 /// AArch64 machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host, and its V3D 7.1 - the CM4's BCM2711 has neither
@@ -551,17 +557,11 @@ const bcm2712_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "
 const no_3d = [_][]const u8{ "facet.library", "raster", "cube", "facetcube", "facetwindow", "facetmany", "facetprobe", "model.datatype", "obj.datatype", "boing", "cobra" };
 
 /// What goes with the programs only the 64-bit machines have
-/// (`rv64_only`) - what they are, in SYS:System/Docs, the descriptors
-/// and the test pictures of svg.datatype, plain, packed and of text, and
-/// Lottie's paints: left off the ESP32s' disks with them.
+/// (`rv64_only`) - what they are, in SYS:System/Docs, and Lottie's
+/// paints: left off the ESP32s' disks with them.
 const rv64_only_files = [_][]const u8{
     "System/Docs/Update.md",
     "System/Docs/SystemScan.md",
-    "devs/datatypes/SVG",
-    "devs/datatypes/SVGZ",
-    "tests/datatypes/Drawing.svg",
-    "tests/datatypes/Drawing.svgz",
-    "tests/datatypes/Text.svg",
     "tests/datatypes/Paints.json",
 };
 
@@ -638,6 +638,11 @@ const path_sets = [_]struct { []const u8, Set }{
     .{ "tests/datatypes/Torus.mtl", .@"3d" },
     .{ "tests/datatypes/Icosahedron.obj", .@"3d" },
     .{ "devs/datatypes/OBJ", .@"3d" },
+    // svg.datatype's descriptors and test pictures, plain, packed and of
+    // text: with it.
+    .{ "devs/datatypes/SVG", .svg },
+    .{ "tests/datatypes/Drawing.svg", .svg },
+    .{ "tests/datatypes/Text.svg", .svg },
     .{ "libs/facet", .@"3d" },
     .{ "tests", .tests },
     .{ "c/test", .tests },
@@ -851,6 +856,8 @@ pub const files = [_]File{
     .{ .disk = "devs/datatypes/SVG", .source = "devs/datatypes/SVG" },
     .{ .disk = "devs/datatypes/SVGZ", .source = "devs/datatypes/SVGZ" },
     .{ .disk = "devs/datatypes/JPEG", .source = "devs/datatypes/JPEG" },
+    .{ .disk = "devs/datatypes/WebP", .source = "devs/datatypes/WebP" },
+    .{ .disk = "devs/datatypes/WebPAnim", .source = "devs/datatypes/WebPAnim" },
     .{ .disk = "devs/datatypes/Markdown", .source = "devs/datatypes/Markdown" },
     .{ .disk = "devs/datatypes/HTML", .source = "devs/datatypes/HTML" },
     .{ .disk = "devs/datatypes/OBJ", .source = "devs/datatypes/OBJ" },
@@ -995,6 +1002,8 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Shapes.gif", .source = "tests/datatypes/Shapes.gif" },
     .{ .disk = "tests/datatypes/Weave.gif", .source = "tests/datatypes/Weave.gif" },
     .{ .disk = "tests/datatypes/Bounce.gif", .source = "tests/datatypes/Bounce.gif" },
+    .{ .disk = "tests/datatypes/Disc.webp", .source = "tests/datatypes/Disc.webp" },
+    .{ .disk = "tests/datatypes/Bounce.webp", .source = "tests/datatypes/Bounce.webp" },
     .{ .disk = "tests/datatypes/Spinner.json", .source = "tests/datatypes/Spinner.json" },
     .{ .disk = "tests/datatypes/Paints.json", .source = "tests/datatypes/Paints.json" },
     .{ .disk = "tests/datatypes/Drawing.svg", .source = "tests/datatypes/Drawing.svg" },
@@ -1008,6 +1017,7 @@ pub const files = [_]File{
     .{ .disk = "tests/datatypes/Icosahedron.obj", .source = "tests/datatypes/Icosahedron.obj" },
     .{ .disk = "tests/datatypes/Garden.jpg", .source = "tests/datatypes/Garden.jpg" },
     .{ .disk = "tests/datatypes/Grey.jpg", .source = "tests/datatypes/Grey.jpg" },
+    .{ .disk = "tests/datatypes/Progressive.jpg", .source = "tests/datatypes/Progressive.jpg" },
     .{ .disk = "tests/datatypes/Tiles.bmp", .source = "tests/datatypes/Tiles.bmp" },
     .{ .disk = "tests/datatypes/Runs.bmp", .source = "tests/datatypes/Runs.bmp" },
     .{ .disk = "tests/datatypes/Nibbles.bmp", .source = "tests/datatypes/Nibbles.bmp" },

@@ -21,6 +21,12 @@
 //! **A picture with no colour planes is grey** and is handed over as it
 //! is, which costs neither the conversion nor the two planes.
 //!
+//! **A picture that comes in several scans** - progressive, or a
+//! component a scan - has its numbers gathered first, in memory of their
+//! own two bytes a sample, which goes again before the picture's memory
+//! is asked for: what it needs at once is the planes and the numbers,
+//! or the planes and the picture.
+//!
 //! A JPEG says nothing about coverage, so the picture is always solid.
 //!
 //! **On a machine with a JPEG codec** (jpeg.resource) the file goes to
@@ -54,11 +60,13 @@ const Object = classes.Object;
 const Base = gadgets.Base;
 
 /// The library the class is in; its ROM tag is `Library.resident_tag`.
+/// 1.3: a picture that comes in several scans, progressive or a
+/// component a scan.
 pub const Library = gadgets.ClassLibrary(.{
     .name = "jpeg.datatype",
     .version = 1,
-    .revision = 2,
-    .date = "28.10.2026",
+    .revision = 3,
+    .date = "21.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{pic.PICTURE_LIBRARY},
     .Instance = Data,
@@ -176,9 +184,12 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
     // file says whatever size the picture is kept at, so they are the
     // floor under how small it can usefully be.
     var planes_bytes: usize = 0;
+    var gathered_bytes: usize = 0;
     for (work.component[0..work.count]) |*component| {
         planes_bytes += @as(usize, decode.planeStride(work, component)) * decode.planeLines(work, component);
+        if (work.in_passes) gathered_bytes += decode.coefficientBytes(work, component);
     }
+    if (gathered_bytes != 0 and !subclass.roomFor(sys, planes_bytes + gathered_bytes)) return datatypes.DTERROR_TOO_LARGE;
     const by = subclass.shrinkFor(sys, work.width, work.height, planes_bytes);
     if (by == 0) return datatypes.DTERROR_TOO_LARGE;
     const kept_width = subclass.shrunk(work.width, by);
@@ -198,7 +209,25 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file: []const u8) i32 {
         component.plane = @ptrCast(memory);
     }
 
-    decode.readScan(file, work) catch return datatypes.DTERROR_INVALID_DATA;
+    // The numbers of a picture in several scans, gathered until the last.
+    var gathered: [4]?*anyopaque = @splat(null);
+    defer for (gathered) |memory| sys.FreeVec(memory);
+    if (work.in_passes) for (work.component[0..work.count], 0..) |*component, i| {
+        const memory = sys.AllocVec(decode.coefficientBytes(work, component), exec.MEMF_ANY | exec.MEMF_CLEAR) orelse
+            return datatypes.DTERROR_NOT_ENOUGH_DATA;
+        gathered[i] = memory;
+        component.coefficients = @ptrCast(@alignCast(memory));
+    };
+
+    decode.readScan(file, work) catch |failure| return switch (failure) {
+        decode.Error.Unsupported => datatypes.DTERROR_UNKNOWN_COMPRESSION,
+        else => datatypes.DTERROR_INVALID_DATA,
+    };
+    // In the planes now: their memory goes before the picture's is asked.
+    for (&gathered) |*memory| {
+        sys.FreeVec(memory.*);
+        memory.* = null;
+    }
 
     const header = pic.BitMapHeader{
         .width = @intCast(kept_width),

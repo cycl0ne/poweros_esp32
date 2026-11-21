@@ -3,9 +3,10 @@
 //! (`src/disk/build.zig`'s `Set`), which the build reads; `-Dsets=` names
 //! others for one build.
 //!
-//! What the board starts with and no more: the shell, the network over
-//! the chip's radio, cards and sticks, and USB. The desktop, sound, the
-//! languages besides English and the rest go onto the card in the slot
-//! as packages; the flash holds what boots the board and fetches them.
+//! The base system and no more: the board boots into a shell, in
+//! English, drawn in the ROM's fonts. Everything else - the fonts, the
+//! desktop, the network, cards and sticks, USB, sound, the languages -
+//! is built for the chip all the same, and is the developer's to add:
+//! `-Dsets=` for the flash, or installed apart from it.
 
-pub const sets = "base,net,wifi,storage,usb";
+pub const sets = "base";

@@ -31,6 +31,7 @@ Generated from the source by `./zig build autodoc`.
 - [IsSpace](#isspace) - Says whether a character is blank.
 - [IsUpper](#isupper) - Says whether a character is a capital letter.
 - [IsXDigit](#isxdigit) - Says whether a character is a hexadecimal digit.
+- [LanguageCode](#languagecode) - The ISO 639-1 code of a language, by its name.
 - [OpenCatalogA](#opencataloga) - Opens a program's catalog in the first of the locale's languages that has one.
 - [OpenLocale](#openlocale) - Makes a locale from a settings file, or answers the default one.
 - [ParseDate](#parsedate) - Reads a date by a template, in the locale's words.
@@ -1243,6 +1244,65 @@ None known.
 ```zig
 var after = at;
 while (at < text.len and lb.IsXDigit(loc, utf8.next(text, &after))) at = after;
+```
+
+## LanguageCode
+
+The ISO 639-1 code of a language, by its name.
+
+**SYNOPSIS**
+
+```zig
+fn LanguageCode(_: *LocaleBase, language: [*:0]const u8) ?[*:0]const u8
+```
+
+**SINCE**
+
+1.7. LVO -120.
+
+**INPUTS**
+
+- `language` - a language's name as the library gives it: a locale's
+  `language_name` or one of its `pref_languages` (`deutsch`). Case
+  does not count.
+
+**RESULT**
+
+Its two letters, lower case (`de`); null for a language the library
+has no file for and that is not English. Chinese in either of its
+scripts is `zh`.
+
+**BEHAVIOR**
+
+A program that speaks to the world in its codes - a document's
+language, a service asked for its answers in one - takes the user's
+language from the locale and its code from here.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: safe.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The code is the library's, good while it is open.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenLocale`
+
+**EXAMPLES**
+
+```zig
+const loc = lb.OpenLocale(null) orelse return;
+defer lb.CloseLocale(loc);
+const code = lb.LanguageCode(loc.language_name) orelse "en";
 ```
 
 ## OpenCatalogA

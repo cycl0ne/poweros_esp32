@@ -14,7 +14,8 @@ cd "$out"
 for name in UnicodeData.txt CaseFolding.txt EastAsianWidth.txt Scripts.txt PropertyValueAliases.txt \
     CompositionExclusions.txt NormalizationTest.txt DerivedCoreProperties.txt \
     auxiliary/GraphemeBreakProperty.txt auxiliary/GraphemeBreakTest.txt emoji/emoji-data.txt \
-    emoji/emoji-variation-sequences.txt; do
+    emoji/emoji-variation-sequences.txt ArabicShaping.txt extracted/DerivedBidiClass.txt \
+    BidiBrackets.txt BidiMirroring.txt BidiCharacterTest.txt; do
     curl -sSfL -o "${name##*/}" "https://www.unicode.org/Public/$version/ucd/$name"
 done
 # The collation element table is beside the database, not in it.
@@ -32,6 +33,11 @@ c29360bd6f7132811d701d29069541e827eb44bfc4c8fbde8c370d6982689dc1  GraphemeBreakP
 ee2b9354d270ac061b29f09662cafea06341d77e704b8cc6bd72aaeeda363cb5  GraphemeBreakTest.txt
 f1365a5173eee18e1f98b240cdc492e84a25f1ce7e0c9d1094eb29c41a22696a  emoji-data.txt
 71d93ec015011371a027ba2bc0a63155d381c6e0b94a586c1a88a49400cd6864  emoji-variation-sequences.txt
+764f420cedfc8b43d9fec251c957a5d55fc45d40f6573f162990ed1dce7e36e0  ArabicShaping.txt
+71ed943a49c58568d8d92e80ecc2ba2f06e62aee9c8ebb0e6e8bd2c3ed8b180e  DerivedBidiClass.txt
+b8f32554c6f658821fb0ee742d21c5b1f2086b9bf13071fed04894b022f93d67  BidiBrackets.txt
+d7afdadd1bbd66f5a663ac0e8f7958f18fd9491fc0bc59ec5877cb82db71db7d  BidiMirroring.txt
+d04a51a90052dcd71c4e91ee5b3a9d973ee35c12406b5a99875ac8163c8f2804  BidiCharacterTest.txt
 7b47769f4a95615ada83b6812dea1d2a76d74580b1e4d7af48d383eb902017f0  allkeys.txt
 EOF
 echo "Unicode $version in $out"

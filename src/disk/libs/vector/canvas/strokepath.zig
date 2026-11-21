@@ -22,7 +22,8 @@ const VectorBase = _base.VectorBase;
 /// - `matrix` - the path's units to pixels, or null when they are pixels.
 /// - `paint` - what it is painted in, as `FillPath` paints.
 /// - `stroke` - how (`vector.Stroke`), in the path's own units: the
-///   width, the joins (`JOIN_MITER`, `JOIN_ROUND`, `JOIN_BEVEL`), the caps
+///   width, the joins (`JOIN_MITER`, `JOIN_ROUND`, `JOIN_BEVEL`, since
+///   1.5 `JOIN_MITER_CLIP`), the caps
 ///   (`CAP_BUTT`, `CAP_ROUND`, `CAP_SQUARE`), the miter limit, in stroke
 ///   widths, and since 1.1 the dashes (1.0 draws a dashed stroke whole).
 ///
@@ -43,8 +44,11 @@ const VectorBase = _base.VectorBase;
 /// of a corner where the next one's begins, so no pixel at the stroke's
 /// edge is painted by two (1.1's overlapped there, and came out a little
 /// heavy). A corner whose lines are too short for that - a curve tighter
-/// than the stroke is wide, a sharp turn between short lines - still
-/// overlaps.
+/// than the stroke is wide, a sharp turn between short lines, a line
+/// that runs back over the one before - still overlaps; since 1.5 such a
+/// stroke is summed in four strips a pixel row, each held to full
+/// coverage on its own, so an edge where its pieces overlap comes out
+/// within an eighth of a pixel of right rather than heavy.
 ///
 /// Dashes are cut from each contour in the path's units, from
 /// `dash_offset` along it, before it is stroked, so each dash has its
@@ -53,6 +57,10 @@ const VectorBase = _base.VectorBase;
 /// lengths is gone through twice, and lengths that are negative or come
 /// to nothing draw the stroke whole, as SVG has it. A stroke is cut at
 /// most 65536 times; past that it goes on as the dash or gap it is in.
+///
+/// Since 1.5 an open end inside a curve - the path's, or a dash's - is
+/// cut, and capped, across the way the curve goes there rather than the
+/// way the line of it the end lies on does.
 ///
 /// With a layer pushed (`PushLayer`) it is drawn on the layer.
 ///

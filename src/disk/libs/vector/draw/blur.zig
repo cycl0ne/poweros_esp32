@@ -9,10 +9,16 @@
 //! d + 1 centred. Each is a running sum along the row or the column, so
 //! a blur costs the same whatever its size.
 //!
+//! A deviation under two pixels, which three boxes come to too coarsely,
+//! is blurred by the Gaussian itself (since 1.5): a kernel three
+//! deviations each way.
+//!
 //! The pens are blurred premultiplied - a channel times its coverage -
 //! so a clear pixel's colour goes nowhere, and turned back after. What
 //! is past the canvas's edge is clear. The blur spreads what was drawn by
-//! its reach each way: the region it returns holds all of it.
+//! its reach each way: the region it returns holds all of it. A filter's
+//! pixels, premultiplied already, are blurred as they are
+//! (`blurPremultiplied`).
 
 const sdk = @import("sdk");
 const Pen = sdk.graphics.Pen;
@@ -52,57 +58,124 @@ fn reachOf(boxes: ?[3]Box) Box {
     return .{ .back = b[0].back + b[1].back + b[2].back, .forward = b[0].forward + b[1].forward + b[2].forward };
 }
 
+/// The largest reach of a Gaussian's own kernel: three deviations of
+/// under two pixels.
+const most_kernel = 6;
+
+/// How one way is blurred: not at all, by three boxes, or by a kernel of
+/// `reach` pixels each side, `weights[0]` the pixel's own.
+const Axis = union(enum) {
+    none,
+    boxes: [3]Box,
+    kernel: struct { reach: u32, weights: [most_kernel + 1]f32 },
+
+    fn of(deviation: f32) Axis {
+        if (!(deviation > 0)) return .none;
+        if (deviation >= 2) return if (boxesOf(deviation)) |boxes| .{ .boxes = boxes } else .none;
+        const pixels: u32 = @intFromFloat(@min(@ceil(deviation * 3), most_kernel));
+        if (pixels == 0) return .none;
+        var weights: [most_kernel + 1]f32 = @splat(0);
+        var sum: f32 = 0;
+        for (0..pixels + 1) |offset| {
+            const distance: f32 = @floatFromInt(offset);
+            weights[offset] = @exp(-distance * distance / (2 * deviation * deviation));
+            sum += if (offset == 0) weights[offset] else 2 * weights[offset];
+        }
+        for (&weights) |*weight| weight.* /= sum;
+        return .{ .kernel = .{ .reach = pixels, .weights = weights } };
+    }
+
+    fn reach(axis: Axis) Box {
+        return switch (axis) {
+            .none => .{ .back = 0, .forward = 0 },
+            .boxes => |boxes| reachOf(boxes),
+            .kernel => |kernel| .{ .back = kernel.reach, .forward = kernel.reach },
+        };
+    }
+
+    /// `n` pixels of four channels blurred from `a`, ending in `b`.
+    fn run(axis: Axis, from: []u32, into: []u32, count: u32) void {
+        switch (axis) {
+            .none => @memcpy(into[0 .. @as(usize, count) * 4], from[0 .. @as(usize, count) * 4]),
+            .boxes => |boxes| runBoxes(boxes, from, into, count),
+            .kernel => |kernel| {
+                var pixel: u32 = 0;
+                while (pixel < count) : (pixel += 1) {
+                    var sum: [4]f32 = .{ 0, 0, 0, 0 };
+                    var offset: i32 = -@as(i32, @intCast(kernel.reach));
+                    while (offset <= kernel.reach) : (offset += 1) {
+                        const at = @as(i32, @intCast(pixel)) + offset;
+                        if (at < 0 or at >= count) continue;
+                        const weight = kernel.weights[@abs(offset)];
+                        for (0..4) |lane| sum[lane] += weight * @as(f32, @floatFromInt(from[@as(usize, @intCast(at)) * 4 + lane]));
+                    }
+                    for (0..4) |lane| into[pixel * 4 + lane] = @intFromFloat(@min(@max(sum[lane] + 0.5, 0), 255));
+                }
+            },
+        }
+    }
+};
+
 /// The pens of a `width` by `height` layer, drawn on in `region`, blurred
 /// by `deviation_x` across and `deviation_y` down, in pixels. The region
 /// they now cover, or null without the memory for a row's work - and
 /// then they are as they were.
 pub fn blur(pens: []Pen, width: u32, height: u32, region: Region, deviation_x: f32, deviation_y: f32, memory: Memory) ?Region {
-    const across = boxesOf(deviation_x);
-    const down = boxesOf(deviation_y);
-    const rx = reachOf(across);
-    const ry = reachOf(down);
+    // Premultiplied, where anything was drawn; clear everywhere else.
+    var y = region.top;
+    while (y < region.bottom) : (y += 1) {
+        for (pens[@as(usize, y) * width ..][region.left..region.right]) |*pen| pen.* = premultiply(pen.*);
+    }
+    const out = blurPremultiplied(pens, width, height, region, deviation_x, deviation_y, memory);
+    const back = out orelse region;
+    y = back.top;
+    while (y < back.bottom) : (y += 1) {
+        for (pens[@as(usize, y) * width ..][back.left..back.right]) |*pen| pen.* = unpremultiply(pen.*);
+    }
+    return out;
+}
+
+/// `blur` of pixels premultiplied already, `width` by `height`, which
+/// stay so.
+pub fn blurPremultiplied(pens: []Pen, width: u32, height: u32, region: Region, deviation_x: f32, deviation_y: f32, memory: Memory) ?Region {
+    const across = Axis.of(deviation_x);
+    const down = Axis.of(deviation_y);
+    const rx = across.reach();
+    const ry = down.reach();
     const out = Region{
         .left = region.left -| rx.back,
         .top = region.top -| ry.back,
         .right = @min(region.right +| rx.forward, width),
         .bottom = @min(region.bottom +| ry.forward, height),
     };
-    if (across == null and down == null) return region;
+    if (across == .none and down == .none) return region;
+    if (out.left >= out.right or out.top >= out.bottom) return region;
     const longest = @max(out.right - out.left, out.bottom - out.top);
     const work = memory.alloc(u32, @as(usize, longest) * 8) orelse return null;
     defer memory.free(u32, work);
     const a = work[0 .. @as(usize, longest) * 4];
     const b = work[@as(usize, longest) * 4 ..];
 
-    // Premultiplied, where anything was drawn; clear everywhere else.
-    var y = region.top;
-    while (y < region.bottom) : (y += 1) {
-        for (pens[@as(usize, y) * width ..][region.left..region.right]) |*pen| pen.* = premultiply(pen.*);
-    }
     // Across, the rows drawn on; down, every column the rows now reach.
-    if (across) |boxes| {
+    if (across != .none) {
         const n = out.right - out.left;
-        y = region.top;
+        var y = region.top;
         while (y < region.bottom) : (y += 1) {
             const row = pens[@as(usize, y) * width + out.left ..][0..n];
             load(a, row, 1);
-            run(boxes, a, b, n);
+            across.run(a, b, n);
             store(b, row, 1);
         }
     }
-    if (down) |boxes| {
+    if (down != .none) {
         const n = out.bottom - out.top;
         var x = out.left;
         while (x < out.right) : (x += 1) {
             const column = pens[@as(usize, out.top) * width + x ..];
             load(a, column, width);
-            run(boxes, a, b, n);
+            down.run(a, b, n);
             store(b, column[0 .. (@as(usize, n) - 1) * width + 1], width);
         }
-    }
-    y = out.top;
-    while (y < out.bottom) : (y += 1) {
-        for (pens[@as(usize, y) * width ..][out.left..out.right]) |*pen| pen.* = unpremultiply(pen.*);
     }
     return out;
 }
@@ -135,7 +208,7 @@ fn channel(v: u32) u32 {
 }
 
 /// The three boxes, from `a` through `b` and back to end in `b`.
-fn run(boxes: [3]Box, a: []u32, b: []u32, n: u32) void {
+fn runBoxes(boxes: [3]Box, a: []u32, b: []u32, n: u32) void {
     pass(a, b, n, boxes[0]);
     pass(b, a, n, boxes[1]);
     pass(a, b, n, boxes[2]);
@@ -165,7 +238,7 @@ fn pass(from: []const u32, into: []u32, n: u32, box: Box) void {
     }
 }
 
-fn premultiply(pen: Pen) Pen {
+pub fn premultiply(pen: Pen) Pen {
     const a = pen >> 24;
     if (a == 255) return pen;
     const r = ((pen >> 16) & 0xFF) * a / 255;
@@ -174,7 +247,7 @@ fn premultiply(pen: Pen) Pen {
     return a << 24 | r << 16 | g << 8 | b;
 }
 
-fn unpremultiply(pen: Pen) Pen {
+pub fn unpremultiply(pen: Pen) Pen {
     const a = pen >> 24;
     if (a == 255) return pen;
     if (a == 0) return 0;

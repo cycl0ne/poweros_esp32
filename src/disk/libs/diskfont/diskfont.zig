@@ -7,7 +7,10 @@
 //! handed to graphics.library's list. OpenDiskFont finds the nearest
 //! size, loading or scaling it; AvailFonts lists what there is;
 //! NewFontContents makes a contents file from a family's directory;
-//! NewScaledDiskFont makes a new size from any font.
+//! NewScaledDiskFont makes a new size from any font. A program that
+//! names fonts as a document does finds a family by its fonts' own name
+//! (FindFamily) or a generic one (GenericFamily), and opens the face
+//! nearest a weight, a width and a slant (OpenOutlineFontTagList).
 //!
 //! Fonts nobody holds stay loaded until memory runs short, when the
 //! library's own low-memory handler frees them one at a time.

@@ -232,6 +232,18 @@ fn fallbackOf(dfb: *DiskfontBase, record: *const DiskFont) ?*TextFont {
     return next;
 }
 
+/// The name of the fallback family at `index` of the list, read first
+/// if it has not been since it was last marked to be; null past its end.
+/// The caller holds the load lock.
+pub fn fallbackFamily(dfb: *DiskfontBase, index: u32) ?[]const u8 {
+    if (!dfb.fallbacks_read) readFallbacks(dfb);
+    if (index >= dfb.fallback_count) return null;
+    const name = &dfb.fallback_names[index];
+    var length: usize = 0;
+    while (length < name.len and name[length] != 0) length += 1;
+    return name[0..length];
+}
+
 /// The name of the fallback family at `index` of the list.
 fn fallbackName(dfb: *DiskfontBase, index: u32) [*:0]const u8 {
     return @ptrCast(&dfb.fallback_names[index]);

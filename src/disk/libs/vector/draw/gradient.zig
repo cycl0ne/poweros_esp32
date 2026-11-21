@@ -8,17 +8,24 @@
 //! point lies, and a radial one which of the circles going from the focus
 //! circle (fx, fy, fr) out to (cx, cy, r) it is on - the furthest, as SVG
 //! 2 has it; a focus outside the circle makes a cone, and nothing is
-//! painted beside it. Past either end the spread pads, reflects or
-//! repeats.
+//! painted beside it; a focus circle that is the end circle paints the
+//! first stop inside it and the last outside. A sweep (since 1.5) is how
+//! far round from its start angle to its end the point's angle about
+//! the centre is, from the x axis towards the y axis, 0 to 360; one
+//! whose two angles are one pads its first stop before it and its last
+//! after. Past either end the spread pads, reflects or repeats.
 //!
 //! The stops' colours are mixed as they are, not premultiplied, as SVG
-//! 1.1 mixes them. A stop's offset is held to 0 to 1 and to no less than
-//! the one before.
+//! 1.1 mixes them - or, for a paint that asks (`PAINTF_LINEARRGB`, since
+//! 1.5), in linear light, each colour of the ramp turned back into sRGB.
+//! A stop's offset is held to 0 to 1 and to no less than the one before.
 
 const sdk = @import("sdk");
 const vector = sdk.vector;
 const Matrix = vector.Matrix;
 const image = @import("image.zig");
+const blend = @import("blend.zig");
+const measure = @import("measure.zig");
 
 /// A colour of the ramp: red, green and blue 0 to 255, alpha 0 to 1.
 pub const Entry = struct { r: f32, g: f32, b: f32, a: f32 };
@@ -35,23 +42,27 @@ pub const Kind = union(enum) {
 
 /// What `paint` comes to drawn through `matrix`, as SVG has it: one stop
 /// a colour, a gradient of no length or no radius its last stop's colour,
-/// no stops nothing; an image of no pixels nothing.
+/// no stops nothing; a sweep of no angle that does not pad nothing; an
+/// image of no pixels nothing.
 pub fn kindOf(paint: *const vector.Paint, matrix: Matrix) Kind {
     if (paint.kind == vector.PAINT_IMAGE) return if (image.Sampler.of(paint, matrix)) |s| .{ .image = s } else .none;
-    if (paint.kind != vector.PAINT_LINEAR and paint.kind != vector.PAINT_RADIAL) return .{ .solid = paint.colour };
+    if (paint.kind != vector.PAINT_LINEAR and paint.kind != vector.PAINT_RADIAL and paint.kind != vector.PAINT_SWEEP) return .{ .solid = paint.colour };
     const stops = paint.stops orelse return .none;
     if (paint.stop_count == 0) return .none;
     const last = stops[paint.stop_count - 1].colour;
     if (paint.stop_count == 1) return .{ .solid = stops[0].colour };
     if (paint.kind == vector.PAINT_LINEAR) {
         if (paint.x1 == paint.x2 and paint.y1 == paint.y2) return .{ .solid = last };
+    } else if (paint.kind == vector.PAINT_SWEEP) {
+        if (!(paint.end_angle != paint.start_angle) and paint.spread != vector.SPREAD_PAD) return .none;
     } else if (!(paint.r > 0)) return .{ .solid = last };
     const inverse = matrix.then(paint.matrix).invert() orelse return .none;
     return .{ .gradient = Sampler.of(paint, inverse) };
 }
 
-/// The paint's stops spread over 256 colours.
-pub fn fillRamp(ramp: *Ramp, stops: []const vector.Stop) void {
+/// The paint's stops spread over 256 colours, mixed in linear light when
+/// `linear`.
+pub fn fillRamp(ramp: *Ramp, stops: []const vector.Stop, linear: bool) void {
     var low: usize = 0;
     var low_offset = offsetOf(stops[0], 0);
     var high: usize = 0;
@@ -64,12 +75,20 @@ pub fn fillRamp(ramp: *Ramp, stops: []const vector.Stop) void {
             high += 1;
             high_offset = offsetOf(stops[high], high_offset);
         }
-        const colour = if (t <= low_offset or high == low)
+        var colour = if (t <= low_offset or high == low)
             stops[low].colour
         else if (t >= high_offset or high_offset == low_offset)
             stops[high].colour
+        else if (linear)
+            mix(blend.linearColour(stops[low].colour), blend.linearColour(stops[high].colour), (t - low_offset) / (high_offset - low_offset))
         else
             mix(stops[low].colour, stops[high].colour, (t - low_offset) / (high_offset - low_offset));
+        if (linear and t > low_offset and high != low and t < high_offset and high_offset != low_offset) colour = .{
+            .r = blend.linearToSrgb(channel(colour.r)),
+            .g = blend.linearToSrgb(channel(colour.g)),
+            .b = blend.linearToSrgb(channel(colour.b)),
+            .a = colour.a,
+        };
         entry.* = .{
             .r = channel(colour.r) * 255,
             .g = channel(colour.g) * 255,
@@ -99,6 +118,7 @@ fn mix(a: vector.Colour, b: vector.Colour, t: f32) vector.Colour {
 /// Where a pixel is along a gradient.
 pub const Sampler = struct {
     radial: bool,
+    sweep: bool = false,
     spread: u32,
     /// Pixels into the gradient's units.
     inverse: Matrix,
@@ -116,10 +136,18 @@ pub const Sampler = struct {
     cdy: f32 = 0,
     dr: f32 = 0,
     a: f32 = 0,
+    // A sweep: its centre is the focus; its start, and how far it goes.
+    start: f32 = 0,
+    turn: f32 = 0,
 
     fn of(paint: *const vector.Paint, inverse: Matrix) Sampler {
-        var s = Sampler{ .radial = paint.kind == vector.PAINT_RADIAL, .spread = paint.spread, .inverse = inverse };
-        if (!s.radial) {
+        var s = Sampler{ .radial = paint.kind == vector.PAINT_RADIAL, .sweep = paint.kind == vector.PAINT_SWEEP, .spread = paint.spread, .inverse = inverse };
+        if (s.sweep) {
+            s.fx = paint.cx;
+            s.fy = paint.cy;
+            s.start = paint.start_angle;
+            s.turn = paint.end_angle - paint.start_angle;
+        } else if (!s.radial) {
             const dx = paint.x2 - paint.x1;
             const dy = paint.y2 - paint.y1;
             const length2 = dx * dx + dy * dy;
@@ -143,7 +171,7 @@ pub const Sampler = struct {
     /// where the gradient paints nothing.
     pub fn index(s: *const Sampler, x: u32, y: u32) ?u8 {
         const p = s.inverse.apply(.{ .x = @as(f32, @floatFromInt(x)) + 0.5, .y = @as(f32, @floatFromInt(y)) + 0.5 });
-        const t = (if (s.radial) s.circle(p.x, p.y) else (p.x - s.x1) * s.dx + (p.y - s.y1) * s.dy) orelse return null;
+        const t = (if (s.sweep) s.around(p.x, p.y) else if (s.radial) s.circle(p.x, p.y) else (p.x - s.x1) * s.dx + (p.y - s.y1) * s.dy) orelse return null;
         if (t != t) return null;
         const spread: f32 = switch (s.spread) {
             vector.SPREAD_REPEAT => t - @floor(t),
@@ -156,6 +184,13 @@ pub const Sampler = struct {
         return @intFromFloat(@min(@max(spread * 255 + 0.5, 0), 255));
     }
 
+    /// How far round from the start to the end (x, y) is.
+    fn around(s: *const Sampler, x: f32, y: f32) ?f32 {
+        const angle = measure.angleOf(x - s.fx, y - s.fy);
+        if (s.turn == 0) return if (angle < s.start) 0 else 1;
+        return (angle - s.start) / s.turn;
+    }
+
     /// The furthest circle through (x, y), as how far it is from the
     /// focus circle to the end one; null for none.
     fn circle(s: *const Sampler, x: f32, y: f32) ?f32 {
@@ -164,7 +199,9 @@ pub const Sampler = struct {
         const b = px * s.cdx + py * s.cdy + s.fr * s.dr;
         const c = px * px + py * py - s.fr * s.fr;
         if (@abs(s.a) < 1e-9) {
-            if (b == 0) return null;
+            // The focus circle the end one: the first stop inside it, the
+            // last outside, as a band grown thin.
+            if (b == 0) return if (s.cdx == 0 and s.cdy == 0 and s.dr == 0) (if (c <= 0) @as(f32, 0) else 1) else null;
             const t = c / (2 * b);
             return if (s.fr + t * s.dr >= 0) t else null;
         }
@@ -191,16 +228,40 @@ const blue = vector.Colour{ .b = 1 };
 test "a ramp holds its ends past the first and last stops, and mixes between" {
     var ramp: Ramp = undefined;
     const stops = [_]vector.Stop{ .{ .offset = 0.25, .colour = red }, .{ .offset = 0.75, .colour = blue } };
-    fillRamp(&ramp, &stops);
+    fillRamp(&ramp, &stops, false);
     try testing.expectEqual(@as(f32, 255), ramp[0].r);
     try testing.expectEqual(@as(f32, 255), ramp[60].r);
     try testing.expectEqual(@as(f32, 255), ramp[255].b);
     try testing.expectApproxEqAbs(@as(f32, 127.5), ramp[128].r, 1.5);
     // A stop before the one before it is moved up to it: a step.
     const step = [_]vector.Stop{ .{ .offset = 0.5, .colour = red }, .{ .offset = 0.2, .colour = blue } };
-    fillRamp(&ramp, &step);
+    fillRamp(&ramp, &step, false);
     try testing.expectEqual(@as(f32, 255), ramp[127].r);
     try testing.expectEqual(@as(f32, 255), ramp[128].b);
+}
+
+test "a sweep: round from its start angle to its end, padded past them, none of no angle that does not pad" {
+    const stops = [_]vector.Stop{ .{ .offset = 0, .colour = red }, .{ .offset = 1, .colour = blue } };
+    var paint = vector.Paint{ .kind = vector.PAINT_SWEEP, .stops = &stops, .stop_count = 2, .cx = 5, .cy = 5 };
+    var sampler = kindOf(&paint, .{}).gradient;
+    // Pixel (5, 9)'s centre is 83 degrees round from x towards y.
+    try testing.expectEqual(@as(u8, 59), sampler.index(5, 9).?);
+    try testing.expectEqual(@as(u8, 122), sampler.index(1, 5).?);
+    // A quarter turn from 90 degrees: before it the first stop, past it
+    // the last.
+    paint.start_angle = 90;
+    paint.end_angle = 180;
+    sampler = kindOf(&paint, .{}).gradient;
+    try testing.expectEqual(@as(u8, 0), sampler.index(9, 6).?);
+    try testing.expectEqual(@as(u8, 255), sampler.index(5, 1).?);
+    try testing.expectEqual(@as(u8, 128), sampler.index(1, 8).?);
+    // No angle: the first stop before it, the last from it on.
+    paint.end_angle = 90;
+    sampler = kindOf(&paint, .{}).gradient;
+    try testing.expectEqual(@as(u8, 0), sampler.index(9, 6).?);
+    try testing.expectEqual(@as(u8, 255), sampler.index(1, 6).?);
+    paint.spread = vector.SPREAD_REPEAT;
+    try testing.expect(kindOf(&paint, .{}) == .none);
 }
 
 test "linear and radial, padded, reflected and repeated" {
@@ -231,6 +292,13 @@ test "linear and radial, padded, reflected and repeated" {
     focused.fx = 5;
     s = kindOf(&focused, .{}).gradient;
     try testing.expectEqual(@as(u8, 14), s.index(5, 9).?);
+    // A focus circle that is the end circle: the first stop inside, the
+    // last outside.
+    var even = round;
+    even.fr = 10;
+    s = kindOf(&even, .{}).gradient;
+    try testing.expectEqual(@as(u8, 0), s.index(10, 10).?);
+    try testing.expectEqual(@as(u8, 255), s.index(25, 10).?);
 }
 
 test "what SVG paints for stops of none, one, and a gradient of no length" {

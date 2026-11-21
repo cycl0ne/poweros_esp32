@@ -27,6 +27,64 @@ pub const MadeHostTools = struct {
 /// The tools that run on the host and their steps: mkfs and posfsck, the
 /// icon maker, the stick maker, the benches of audio.device and
 /// graphics.library, and svgcompare.
+/// Where scripts/fetch-svg-suite.sh puts resvg's test suite: `tests/`,
+/// `resources/` and `fonts/` as the suite keeps them, and `commit`, the
+/// one it is.
+const svg_suite_dir = "toolchain/svg-suite";
+
+/// The `svg-suite` step: a `svgcompare --suite` for each folder of the
+/// suite's tests, two deep as the suite keeps them, so that they run side
+/// by side - each a step that runs again when svgcompare or the suite
+/// changes - and a `--summary` of their reports against the files that
+/// are not close today. Without the suite the step says how to fetch it.
+fn addSvgSuite(b: *std.Build, step: *std.Build.Step, svgcompare: *std.Build.Step.Compile) void {
+    const io = b.graph.io;
+    var tests = b.build_root.handle.openDir(io, svg_suite_dir ++ "/tests", .{ .iterate = true }) catch {
+        step.dependOn(&b.addFail("svg-suite: there is no " ++ svg_suite_dir ++ "/tests - scripts/fetch-svg-suite.sh fetches it").step);
+        return;
+    };
+    defer tests.close(io);
+    var folders: std.ArrayList([]const u8) = .empty;
+    var tops = tests.iterate();
+    while (tops.next(io) catch null) |top| {
+        if (top.kind != .directory) continue;
+        var inner = tests.openDir(io, top.name, .{ .iterate = true }) catch continue;
+        defer inner.close(io);
+        var subs = inner.iterate();
+        while (subs.next(io) catch null) |sub| {
+            if (sub.kind == .directory) folders.append(b.allocator, b.fmt("{s}/{s}", .{ top.name, sub.name })) catch @panic("OOM");
+        }
+    }
+    std.mem.sort([]const u8, folders.items, {}, earlierPath);
+
+    const summary = b.addRunArtifact(svgcompare);
+    summary.setName("svgcompare --summary");
+    summary.addArg("--summary");
+    summary.addFileArg(b.path("tools/svgcompare/suite-far.txt"));
+    summary.has_side_effects = true;
+    summary.stdio = .inherit;
+    // The reports in one directory, a file a folder, which is what the
+    // summary is handed.
+    const reports = b.addWriteFiles();
+    for (folders.items) |folder| {
+        const run = b.addRunArtifact(svgcompare);
+        run.setName(b.fmt("svgcompare --suite {s}", .{folder}));
+        run.addArgs(&.{ "--fonts", b.pathFromRoot(svg_suite_dir ++ "/fonts"), "--suite", b.pathFromRoot(svg_suite_dir ++ "/tests"), "--report" });
+        const report = run.addOutputFileArg("report");
+        run.addArg(folder);
+        // The suite's files are no inputs the build follows; the commit
+        // they are of is.
+        run.addFileInput(b.path(svg_suite_dir ++ "/commit"));
+        _ = reports.addCopyFile(report, b.fmt("{s}.txt", .{folder}));
+    }
+    summary.addDirectoryArg(reports.getDirectory());
+    step.dependOn(&summary.step);
+}
+
+fn earlierPath(_: void, one: []const u8, other: []const u8) bool {
+    return std.mem.lessThan(u8, one, other);
+}
+
 pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
     const disk_dep = with.disk_dep;
     const sdk = with.sdk;
@@ -167,6 +225,13 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
     svgcompare_truetype.addImport("sdk", sdk);
     const svgcompare_shaping = b.createModule(.{ .root_source_file = disk_dep.path("libs/truetypeshaping/shaping.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
     svgcompare_shaping.addImport("sdk", sdk);
+    // The disk's GIF, JPEG and WebP readers, for the pictures a file names.
+    const svgcompare_gif = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/gif/decode.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    const svgcompare_lzw = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/gif/lzw.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    const svgcompare_jpeg = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/jpeg/decode.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    const svgcompare_vp8 = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp8/core.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    const svgcompare_webp = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/webp/decode.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    svgcompare_webp.addImport("vp8core", svgcompare_vp8);
     const svgcompare = b.addExecutable(.{
         .name = "svgcompare",
         .root_module = b.createModule(.{
@@ -180,6 +245,10 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
     svgcompare.root_module.addImport("svg", svgcompare_svg);
     svgcompare.root_module.addImport("truetype", svgcompare_truetype);
     svgcompare.root_module.addImport("shaping", svgcompare_shaping);
+    svgcompare.root_module.addImport("gif", svgcompare_gif);
+    svgcompare.root_module.addImport("lzw", svgcompare_lzw);
+    svgcompare.root_module.addImport("jpeg", svgcompare_jpeg);
+    svgcompare.root_module.addImport("webp", svgcompare_webp);
     const run_svgcompare = b.addRunArtifact(svgcompare);
     // Text in the disk's Liberation fonts, when scripts/fetch-fonts.sh
     // fetched them.
@@ -188,6 +257,7 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
     }
     if (b.args) |args| run_svgcompare.addArgs(args);
     b.step("svgcompare", "Draw SVG files as svg.datatype does and compare them with PNGs of them: svgcompare [--size N] [--out DIR] <file.svg> <drawn.png> ...").dependOn(&run_svgcompare.step);
+    addSvgSuite(b, b.step("svg-suite", "Draw resvg's test suite (scripts/fetch-svg-suite.sh) as svg.datatype does; fails on a file further from resvg's picture than tools/svgcompare/suite-far.txt allows"), svgcompare);
 
     // tools/mkicon, which makes the disk's icons from pictures.
     const mkicon = b.addExecutable(.{

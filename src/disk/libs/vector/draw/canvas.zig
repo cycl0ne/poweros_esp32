@@ -9,7 +9,10 @@
 //! `band_floats` floats (512 KiB), so a canvas of 360 by 360 - the
 //! largest a Lottie frame is drawn - is one band, and one of 1024 by 1024
 //! is nine of 113 rows rather than 4 MiB of coverage at once. Only the
-//! bands the path can reach are drawn.
+//! bands the path can reach are drawn. A stroke whose pieces were left
+//! overlapping (`stroke.zig`) is drawn again from that band on in
+//! `overlap_strips` strips a row (since 1.5), bands of as many times
+//! fewer rows: an overlap at its edge is counted once.
 //!
 //! **Laid down by coverage**: a pixel's share of the shape times the
 //! paint's opacity is how much of the paint goes over what the pen held,
@@ -41,6 +44,22 @@
 //! **Blurs** (since 1.4). A layer's pens can be blurred before it is put
 //! down (`blurLayer`, `blur.zig`): SVG's `feGaussianBlur` of what a group
 //! drew.
+//!
+//! **Blend modes and filters** (since 1.5). A layer is put down in a
+//! blend mode (`pushBlendLayer`, `blend.zig`): its colours mixed with
+//! those under it, premultiplied, as CSS's `mix-blend-mode` has it. And
+//! a layer's pens go through a filter of SVG's primitives before it is
+//! put down (`filterLayer`, `filter.zig`), what the filter makes taking
+//! the place of what was drawn.
+//!
+//! **Paints' flags** (since 1.5): a shape's edges can be laid down
+//! whole or not at all, by whether the shape covers a pixel's middle -
+//! more than half of it - rather than smoothed; an image read at the
+//! pixel nearest rather than between four; a gradient's stops mixed in
+//! linear light. A clip can be cut so too (`RULEF_ALIASED`), and a
+//! mask's luminance taken in linear light. An edge through a pixel's
+//! middle leaves it to the side right of or below the edge: the shape
+//! is moved a hair that way first (`tie`).
 
 const sdk = @import("sdk");
 const vector = sdk.vector;
@@ -58,10 +77,16 @@ const stroke_ = @import("stroke.zig");
 const gradient = @import("gradient.zig");
 const image = @import("image.zig");
 const blur = @import("blur.zig");
+const blend = @import("blend.zig");
+const filter = @import("filter.zig");
 const dash_ = @import("dash.zig");
 
 /// The most floats a band of coverage holds.
 pub const band_floats: usize = 128 * 1024;
+
+/// Strips a row of a stroke whose pieces overlap: a pixel at its edge out
+/// by at most an eighth.
+pub const overlap_strips: u32 = 4;
 
 pub const Canvas = struct {
     memory: Memory,
@@ -146,12 +171,13 @@ pub const Canvas = struct {
         const target = canvas.drawTarget();
         if (target.pens == null) return result;
         const look = canvas.lookOf(paint, matrix, target.fade, &result) orelse return result;
-        const span = canvas.rowsOf(path, matrix, 0) orelse return result;
+        const shape = tied(matrix, look.aliased);
+        const span = canvas.rowsOf(path, shape, 0) orelse return result;
         var top = span.first;
         while (top < span.end) : (top += canvas.band_rows) {
-            var coverage = canvas.band(top);
-            if (!flatten.contours(path, flatten.Flatten.fill(matrix), &canvas.points, &canvas.smooth, canvas.memory, &coverage, filled)) result = vector.VECTORERR_NOMEM;
-            canvas.lay(&coverage, &look, rule == vector.RULE_EVENODD, target);
+            var coverage = canvas.band(top, 1);
+            if (!flatten.contours(path, flatten.Flatten.fill(shape), &canvas.points, &canvas.smooth, canvas.memory, &coverage, filled)) result = vector.VECTORERR_NOMEM;
+            canvas.lay(&coverage, &look, rule & 0xFF == vector.RULE_EVENODD, target);
         }
         return result;
     }
@@ -169,11 +195,13 @@ pub const Canvas = struct {
         // As far as a piece reaches past the path: a miter at its longest,
         // a square cap's corner, through the matrix at its most stretching.
         const reach = pieces.half * stretch(matrix) * @max(pieces.miter_limit, 1.5) + 1;
-        const span = canvas.rowsOf(path, matrix, reach) orelse return result;
+        const shape = tied(matrix, look.aliased);
+        const span = canvas.rowsOf(path, shape, reach) orelse return result;
+        var strips: u32 = 1;
         var top = span.first;
-        while (top < span.end) : (top += canvas.band_rows) {
-            var coverage = canvas.band(top);
-            var stroker = Stroker{ .sink = stroke_.Sink.of(&coverage, matrix), .how = pieces };
+        while (top < span.end) {
+            var coverage = canvas.band(top, strips);
+            var stroker = Stroker{ .sink = stroke_.Sink.of(&coverage, shape), .how = pieces };
             if (pattern) |dashes| stroker.dasher = .{
                 .pattern = dashes,
                 .memory = canvas.memory,
@@ -182,11 +210,19 @@ pub const Canvas = struct {
                 .first = &canvas.dash_first,
                 .first_smooth = &canvas.dash_first_smooth,
             };
-            if (!flatten.contours(path, flatten.Flatten.stroke(matrix), &canvas.points, &canvas.smooth, canvas.memory, &stroker, Stroker.emit)) result = vector.VECTORERR_NOMEM;
+            if (!flatten.contours(path, flatten.Flatten.stroke(shape), &canvas.points, &canvas.smooth, canvas.memory, &stroker, Stroker.emit)) result = vector.VECTORERR_NOMEM;
             if (stroker.dasher) |d| if (d.failed) {
                 result = vector.VECTORERR_NOMEM;
             };
+            // Pieces left overlapping count the stroke's edge twice where
+            // they meet: this band again, and the rest, in strips.
+            if (strips == 1 and stroker.sink.overlapped and canvas.band_rows >= overlap_strips) {
+                coverage.clear();
+                strips = overlap_strips;
+                continue;
+            }
             canvas.lay(&coverage, &look, false, target);
+            top = coverage.band_end / strips;
         }
         return result;
     }
@@ -205,6 +241,14 @@ pub const Canvas = struct {
         return if (pens == null) vector.VECTORERR_NOMEM else vector.VECTOR_OK;
     }
 
+    /// `pushLayer`, the layer put down in blend mode `mode` (`BLEND_*`).
+    pub fn pushBlendLayer(canvas: *Canvas, opacity: f32, mode: u32) i32 {
+        const pushed = canvas.depth;
+        const result = canvas.pushLayer(opacity);
+        if (canvas.depth > pushed) canvas.layers[pushed].blend = if (mode <= vector.BLEND_XOR) mode else vector.BLEND_NORMAL;
+        return result;
+    }
+
     /// The last layer pushed put down on what is under it, and given back.
     pub fn popLayer(canvas: *Canvas) void {
         if (canvas.beyond > 0) {
@@ -220,6 +264,7 @@ pub const Canvas = struct {
         layer.pens = null;
         // A mask ended by a pop rather than `endMask` is no mask.
         if (layer.mask) return;
+        if (blend.isPorterDuff(layer.blend)) return canvas.composeLayer(layer, own);
         if (layer.top >= layer.bottom) return;
         const under = canvas.targetAt(canvas.depth);
         if (under.pens == null) return;
@@ -241,9 +286,84 @@ pub const Canvas = struct {
                 const r: f32 = @floatFromInt((pen >> 16) & 0xFF);
                 const g: f32 = @floatFromInt((pen >> 8) & 0xFF);
                 const b: f32 = @floatFromInt(pen & 0xFF);
-                to[x] = over(to[x], r, g, b, a);
+                to[x] = if (layer.blend == vector.BLEND_NORMAL) over(to[x], r, g, b, a) else blended(to[x], r, g, b, a, layer.blend);
             }
         }
+    }
+
+    /// A layer of Porter and Duff's operator put down, `own` its pens:
+    /// over what was drawn on it - and, for an operator that clears what
+    /// is under where there is nothing of the layer, over all of the
+    /// layer under it, or of the caller's pens - each pixel the operator's
+    /// of the two, inside the clips.
+    fn composeLayer(canvas: *Canvas, layer: *const Layer, own: []const Pen) void {
+        const under = canvas.targetAt(canvas.depth);
+        if (under.pens == null) return;
+        var top = layer.top;
+        var bottom = @min(layer.bottom, canvas.height);
+        var left = layer.left;
+        var right = @min(layer.right, canvas.width);
+        if (blend.clearsUncovered(layer.blend)) {
+            if (under.layer) |below| {
+                top = @min(top, below.top);
+                bottom = @max(bottom, @min(below.bottom, canvas.height));
+                left = @min(left, below.left);
+                right = @max(right, @min(below.right, canvas.width));
+            } else {
+                top = 0;
+                bottom = canvas.height;
+                left = 0;
+                right = canvas.width;
+            }
+        }
+        if (top >= bottom or left >= right) return;
+        const opacity = layer.opacity * under.fade;
+        if (under.layer) |below| below.mark(top, bottom, left, right);
+        var through: [vector.MAX_LAYERS + 1][]const u8 = undefined;
+        const clip_count = canvas.clipsFor(under.level, canvas.depth, &through);
+        var y = top;
+        while (y < bottom) : (y += 1) {
+            const from = own[@as(usize, y) * canvas.width ..];
+            const to = rowOf(under, y);
+            const at = @as(usize, y) * canvas.width;
+            var x = left;
+            while (x < right) : (x += 1) {
+                var inside: f32 = 1;
+                for (through[0..clip_count]) |clip| inside *= @as(f32, @floatFromInt(clip[at + x])) * (1.0 / 255.0);
+                if (inside < 1.0 / 512.0) continue;
+                to[x] = composed(to[x], from[x], opacity, inside, layer.blend);
+            }
+        }
+    }
+
+    /// The innermost layer's pens through the filter `primitives`, over
+    /// `region` in pixels (since 1.5, `filter.zig`): what the last of them
+    /// makes there takes the place of what was drawn, and the layer is
+    /// clear outside it.
+    pub fn filterLayer(canvas: *Canvas, primitives: []const vector.FilterPrimitive, region: vector.Rect) i32 {
+        if (canvas.beyond > 0 or canvas.muted > 0) return vector.VECTOR_OK;
+        if (canvas.depth == 0) return vector.VECTORERR_DEPTH;
+        if (primitives.len > vector.MAX_FILTER_PRIMITIVES) return vector.VECTORERR_DEPTH;
+        const layer = &canvas.layers[canvas.depth - 1];
+        const pens = layer.pens orelse return vector.VECTORERR_NOMEM;
+        const drawn: filter.Box = if (layer.top < layer.bottom and layer.left < layer.right)
+            .{ .left = layer.left, .top = layer.top, .right = @min(layer.right, canvas.width), .bottom = @min(layer.bottom, canvas.height) }
+        else
+            .{};
+        const now: filter.Box = if (filter.areaOf(region, canvas.width, canvas.height)) |area|
+            filter.run(canvas.memory, pens, canvas.width, drawn, area, primitives) catch return vector.VECTORERR_NOMEM
+        else cleared: {
+            // The region is off the canvas: nothing of the layer is left.
+            var y = drawn.top;
+            while (y < drawn.bottom) : (y += 1) @memset(pens[@as(usize, y) * canvas.width ..][drawn.left..drawn.right], 0);
+            break :cleared .{};
+        };
+        layer.top = 0xFFFF_FFFF;
+        layer.bottom = 0;
+        layer.left = 0xFFFF_FFFF;
+        layer.right = 0;
+        if (now.left < now.right and now.top < now.bottom) layer.mark(now.top, now.bottom, now.left, now.right);
+        return vector.VECTOR_OK;
     }
 
     /// The innermost layer's pens blurred, `deviation_x` across and
@@ -269,12 +389,13 @@ pub const Canvas = struct {
             .failed => |result| return result,
         };
         var result: i32 = if (path.failed) vector.VECTORERR_NOMEM else vector.VECTOR_OK;
-        if (canvas.rowsOf(path, matrix, 0)) |span| {
+        const shape = tied(matrix, rule & vector.RULEF_ALIASED != 0);
+        if (canvas.rowsOf(path, shape, 0)) |span| {
             var top = span.first;
             while (top < span.end) : (top += canvas.band_rows) {
-                var coverage = canvas.band(top);
-                if (!flatten.contours(path, flatten.Flatten.fill(matrix), &canvas.points, &canvas.smooth, canvas.memory, &coverage, filled)) result = vector.VECTORERR_NOMEM;
-                canvas.layCover(&coverage, rule == vector.RULE_EVENODD, all);
+                var coverage = canvas.band(top, 1);
+                if (!flatten.contours(path, flatten.Flatten.fill(shape), &canvas.points, &canvas.smooth, canvas.memory, &coverage, filled)) result = vector.VECTORERR_NOMEM;
+                canvas.layCover(&coverage, rule & 0xFF == vector.RULE_EVENODD, rule & vector.RULEF_ALIASED != 0, all);
             }
         }
         canvas.combineWithBelow(all);
@@ -338,6 +459,7 @@ pub const Canvas = struct {
             .failed => |result| return result,
         };
         const luminance = kind & 0xF == vector.MASK_LUMINANCE;
+        const linear = kind & vector.MASK_LINEARRGB != 0;
         const invert: u8 = if (kind & vector.MASK_INVERT != 0) 0xFF else 0;
         if (invert != 0) @memset(all, 0xFF);
         var y = layer.top;
@@ -348,9 +470,17 @@ pub const Canvas = struct {
                 const pen = own.?[at + x];
                 var value: f32 = @floatFromInt(pen >> 24);
                 if (luminance) {
-                    const r: f32 = @floatFromInt((pen >> 16) & 0xFF);
-                    const g: f32 = @floatFromInt((pen >> 8) & 0xFF);
-                    const b: f32 = @floatFromInt(pen & 0xFF);
+                    var r8: u8 = @truncate(pen >> 16);
+                    var g8: u8 = @truncate(pen >> 8);
+                    var b8: u8 = @truncate(pen);
+                    if (linear) {
+                        r8 = blend.to_linear[r8];
+                        g8 = blend.to_linear[g8];
+                        b8 = blend.to_linear[b8];
+                    }
+                    const r: f32 = @floatFromInt(r8);
+                    const g: f32 = @floatFromInt(g8);
+                    const b: f32 = @floatFromInt(b8);
                     value *= (0.2125 * r + 0.7154 * g + 0.0721 * b) / 255;
                 }
                 all[at + x] = byte(value) ^ invert;
@@ -432,7 +562,7 @@ pub const Canvas = struct {
 
     /// What the band holds put into a clip, a byte a pixel, and the band
     /// cleared where it was.
-    fn layCover(canvas: *Canvas, coverage: *Coverage, even_odd: bool, cover: []u8) void {
+    fn layCover(canvas: *Canvas, coverage: *Coverage, even_odd: bool, aliased: bool, cover: []u8) void {
         if (!coverage.touched()) return coverage.forget();
         const stride_width = coverage.stride();
         var y = coverage.top;
@@ -450,19 +580,24 @@ pub const Canvas = struct {
                     c -= 2 * @floor(c / 2);
                     if (c > 1) c = 2 - c;
                 } else if (c > 1) c = 1;
+                if (aliased) c = if (c > 0.5) 1 else 0;
                 cover[at + x] = byte(c * 255);
             }
         }
         coverage.forget();
     }
 
-    fn band(canvas: *Canvas, top: u32) Coverage {
+    /// The band from row `top`, `strips` strips a row: as many times
+    /// fewer rows.
+    fn band(canvas: *Canvas, top: u32, strips: u32) Coverage {
+        const rows = @max(canvas.band_rows / strips, 1);
         return .{
             .acc = canvas.acc.ptr,
             .width = canvas.width,
-            .height = canvas.height,
-            .band_top = top,
-            .band_end = @min(top + canvas.band_rows, canvas.height),
+            .height = canvas.height * strips,
+            .band_top = top * strips,
+            .band_end = @min(top + rows, canvas.height) * strips,
+            .strips = strips,
         };
     }
 
@@ -504,18 +639,22 @@ pub const Canvas = struct {
                     canvas.ramp = made;
                     break :made made;
                 };
-                gradient.fillRamp(ramp, paint.stops.?[0..paint.stop_count]);
+                gradient.fillRamp(ramp, paint.stops.?[0..paint.stop_count], paint.flags & vector.PAINTF_LINEARRGB != 0);
             },
         }
-        return .{ .kind = kind, .opacity = paint.opacity * fade };
+        return .{ .kind = kind, .opacity = paint.opacity * fade, .aliased = paint.flags & vector.PAINTF_ALIASED != 0 };
     }
 
     /// What the band holds laid onto the pens, and the band cleared where
     /// it was.
     fn lay(canvas: *Canvas, coverage: *Coverage, look: *const Look, even_odd: bool, target: Target) void {
         if (!coverage.touched()) return coverage.forget();
-        if (target.layer) |layer| layer.mark(coverage.top, coverage.bottom, coverage.left, canvas.width);
+        const strips = coverage.strips;
+        const first_row = coverage.top / strips;
+        const end_row = (coverage.bottom + strips - 1) / strips;
+        if (target.layer) |layer| layer.mark(first_row, end_row, coverage.left, canvas.width);
         const stride_width = coverage.stride();
+        const strip_share = 1 / @as(f32, @floatFromInt(strips));
         var red: f32 = 0;
         var green: f32 = 0;
         var blue: f32 = 0;
@@ -542,22 +681,30 @@ pub const Canvas = struct {
         const ramp = canvas.ramp;
         var through: [vector.MAX_LAYERS + 1][]const u8 = undefined;
         const clip_count = canvas.clipsFor(target.level, canvas.depth, &through);
-        var y = coverage.top;
-        while (y < coverage.bottom) : (y += 1) {
-            const row = coverage.row(y);
+        var y = first_row;
+        while (y < end_row) : (y += 1) {
+            var strip_rows: [overlap_strips][*]f32 = undefined;
+            for (strip_rows[0..strips], 0..) |*strip_row, strip| strip_row.* = coverage.row(y * strips + @as(u32, @intCast(strip)));
+            var sums: [overlap_strips]f32 = @splat(0);
             const pens = rowOf(target, y);
             const at = @as(usize, y) * canvas.width;
-            var sum: f32 = 0;
             var x = coverage.left;
             while (x < stride_width) : (x += 1) {
-                sum += row[x];
-                row[x] = 0;
+                var cover: f32 = 0;
+                if (strips == 1) {
+                    sums[0] += strip_rows[0][x];
+                    strip_rows[0][x] = 0;
+                    cover = covered(sums[0], even_odd);
+                } else {
+                    for (strip_rows[0..strips], sums[0..strips]) |strip_row, *sum| {
+                        sum.* += strip_row[x];
+                        strip_row[x] = 0;
+                        cover += covered(sum.*, even_odd);
+                    }
+                    cover *= strip_share;
+                }
                 if (x >= canvas.width) continue;
-                var cover = @abs(sum);
-                if (even_odd) {
-                    cover -= 2 * @floor(cover / 2);
-                    if (cover > 1) cover = 2 - cover;
-                } else if (cover > 1) cover = 1;
+                if (look.aliased) cover = if (cover > 0.5) 1 else 0;
                 var a = cover * opacity;
                 for (through[0..clip_count]) |clip| a *= @as(f32, @floatFromInt(clip[at + x])) * (1.0 / 255.0);
                 if (a < 1.0 / 512.0) continue;
@@ -608,6 +755,9 @@ pub const Canvas = struct {
 const Look = struct {
     kind: gradient.Kind,
     opacity: f32,
+    /// Laid down whole where it covers a pixel's middle, and not at all
+    /// elsewhere (`PAINTF_ALIASED`).
+    aliased: bool = false,
 };
 
 const Layer = struct {
@@ -616,6 +766,8 @@ const Layer = struct {
     opacity: f32,
     /// Drawn on to make a mask (`beginMask`), never put down.
     mask: bool = false,
+    /// How it is put down (`BLEND_*`, since 1.5).
+    blend: u32 = vector.BLEND_NORMAL,
     /// The rows and columns drawn on.
     top: u32 = 0xFFFF_FFFF,
     bottom: u32 = 0,
@@ -657,6 +809,17 @@ fn rowOf(target: Target, y: u32) [*]Pen {
 
 /// How far the matrix stretches a length at most - its largest singular
 /// value, or a little over: the root of its four scales' squares.
+/// How far an unsmoothed shape is moved right and down: a pixel whose
+/// middle an edge goes through is half covered, and so becomes the
+/// shape's when the edge is its right or lower one, not when it is its
+/// left or upper one.
+const tie = 1.0 / 256.0;
+
+/// `matrix`, moved by `tie` when the edges are not smoothed.
+fn tied(matrix: Matrix, aliased: bool) Matrix {
+    return if (aliased) Matrix.translate(tie, tie).then(matrix) else matrix;
+}
+
 fn stretch(m: Matrix) f32 {
     return @sqrt(m.a * m.a + m.b * m.b + m.c * m.c + m.d * m.d);
 }
@@ -677,10 +840,26 @@ const Stroker = struct {
         piece(stroker, points, smooth, closed);
     }
 
+    /// A contour of no length is squared along the path where a dash
+    /// of none is, along the x axis where the path itself has none.
     fn piece(stroker: *Stroker, points: []const P, smooth: []const bool, closed: bool) void {
-        stroke_.contour(&stroker.sink, points, smooth, closed, stroker.how);
+        const ends: stroke_.Ends = if (stroker.dasher) |dasher| dasher.ends else .{};
+        const lone: P = if (stroker.dasher) |dasher| ends.head orelse dasher.along else .{ .x = 1, .y = 0 };
+        stroke_.contour(&stroker.sink, points, smooth, closed, stroker.how, lone, ends);
     }
 };
+
+/// How much of a pixel a winding of `sum` puts in the shape: its size
+/// held to 1 by the non-zero rule, its distance from the nearest even
+/// number by the even-odd one.
+fn covered(sum: f32, even_odd: bool) f32 {
+    var cover = @abs(sum);
+    if (even_odd) {
+        cover -= 2 * @floor(cover / 2);
+        if (cover > 1) cover = 2 - cover;
+    } else if (cover > 1) cover = 1;
+    return cover;
+}
 
 /// A colour at `a` laid over a pen.
 pub fn over(pen: Pen, red: f32, green: f32, blue: f32, a: f32) Pen {
@@ -692,6 +871,48 @@ pub fn over(pen: Pen, red: f32, green: f32, blue: f32, a: f32) Pen {
     const g = (green * a + @as(f32, @floatFromInt((pen >> 8) & 0xFF)) * below) / out_alpha;
     const b = (blue * a + @as(f32, @floatFromInt(pen & 0xFF)) * below) / out_alpha;
     return @as(Pen, byte(out_alpha * 255)) << 24 | @as(Pen, byte(r)) << 16 | @as(Pen, byte(g)) << 8 | byte(b);
+}
+
+/// A colour at `a`, red, green and blue 0 to 255, laid over a pen in
+/// blend mode `mode`.
+fn blended(pen: Pen, red: f32, green: f32, blue: f32, alpha: f32, mode: u32) Pen {
+    const below_alpha = @as(f32, @floatFromInt(pen >> 24)) / 255;
+    const under = [4]f32{
+        @as(f32, @floatFromInt((pen >> 16) & 0xFF)) / 255 * below_alpha,
+        @as(f32, @floatFromInt((pen >> 8) & 0xFF)) / 255 * below_alpha,
+        @as(f32, @floatFromInt(pen & 0xFF)) / 255 * below_alpha,
+        below_alpha,
+    };
+    const top = [4]f32{ red / 255 * alpha, green / 255 * alpha, blue / 255 * alpha, alpha };
+    const out = blend.compose(mode, under, top);
+    if (out[3] <= 0) return 0;
+    const scale = 255 / out[3];
+    return @as(Pen, byte(out[3] * 255)) << 24 | @as(Pen, byte(out[0] * scale)) << 16 | @as(Pen, byte(out[1] * scale)) << 8 | byte(out[2] * scale);
+}
+
+/// A layer's pen at `opacity` put on a pen by Porter and Duff's operator
+/// `mode`, `inside` of it through the clips and the rest as it was.
+fn composed(pen: Pen, layer_pen: Pen, opacity: f32, inside: f32, mode: u32) Pen {
+    const below_alpha = @as(f32, @floatFromInt(pen >> 24)) / 255;
+    const under = [4]f32{
+        @as(f32, @floatFromInt((pen >> 16) & 0xFF)) / 255 * below_alpha,
+        @as(f32, @floatFromInt((pen >> 8) & 0xFF)) / 255 * below_alpha,
+        @as(f32, @floatFromInt(pen & 0xFF)) / 255 * below_alpha,
+        below_alpha,
+    };
+    const alpha = @as(f32, @floatFromInt(layer_pen >> 24)) / 255 * opacity;
+    const top = [4]f32{
+        @as(f32, @floatFromInt((layer_pen >> 16) & 0xFF)) / 255 * alpha,
+        @as(f32, @floatFromInt((layer_pen >> 8) & 0xFF)) / 255 * alpha,
+        @as(f32, @floatFromInt(layer_pen & 0xFF)) / 255 * alpha,
+        alpha,
+    };
+    const made = blend.porterDuff(mode, under, top);
+    var out: [4]f32 = undefined;
+    for (0..4) |channel| out[channel] = made[channel] * inside + under[channel] * (1 - inside);
+    if (out[3] <= 0) return 0;
+    const scale = 255 / out[3];
+    return @as(Pen, byte(out[3] * 255)) << 24 | @as(Pen, byte(out[0] * scale)) << 16 | @as(Pen, byte(out[1] * scale)) << 8 | byte(out[2] * scale);
 }
 
 fn byte(value: f32) u8 {
@@ -920,6 +1141,57 @@ test "shapes on a layer overlap at its opacity once; without the memory for it, 
         try testing.expectEqual(@as(Pen, 0), pens[1 * 10 + 8]);
     }
     refused_size = 0;
+}
+
+test "Porter and Duff's operators: a layer in clears what it is not over, one out cuts a hole, a clip keeps the rest" {
+    const canvas = Canvas.create(test_memory, 10, 10).?;
+    defer canvas.destroy();
+    var pens: [100]Pen = @splat(0);
+    canvas.setPens(&pens, 0);
+    const under = Path.create(test_memory).?;
+    defer under.destroy();
+    addSquare(under, 0, 0, 6);
+    const over_it = Path.create(test_memory).?;
+    defer over_it.destroy();
+    addSquare(over_it, 4, 4, 6);
+
+    // Blue in red: blue where both were, nothing anywhere else.
+    _ = canvas.fill(under, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    try testing.expectEqual(vector.VECTOR_OK, canvas.pushBlendLayer(1, vector.BLEND_SOURCE_IN));
+    _ = canvas.fill(over_it, .{}, &solid(0, 0, 1), vector.RULE_NONZERO);
+    canvas.popLayer();
+    try testing.expectEqual(@as(Pen, 0xFF0000FF), pens[5 * 10 + 5]);
+    try testing.expectEqual(@as(Pen, 0), pens[1 * 10 + 1]);
+    try testing.expectEqual(@as(Pen, 0), pens[8 * 10 + 8]);
+
+    // Out: a hole where the layer is.
+    @memset(&pens, 0);
+    _ = canvas.fill(under, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    _ = canvas.pushBlendLayer(1, vector.BLEND_DESTINATION_OUT);
+    _ = canvas.fill(over_it, .{}, &solid(0, 0, 1), vector.RULE_NONZERO);
+    canvas.popLayer();
+    try testing.expectEqual(@as(Pen, 0), pens[5 * 10 + 5]);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[1 * 10 + 1]);
+    try testing.expectEqual(@as(Pen, 0), pens[8 * 10 + 8]);
+
+    // In again, inside a clip of the top rows: below it all is as it was.
+    @memset(&pens, 0);
+    _ = canvas.fill(under, .{}, &solid(1, 0, 0), vector.RULE_NONZERO);
+    const top = Path.create(test_memory).?;
+    defer top.destroy();
+    top.moveTo(.{ .x = 0, .y = 0 });
+    top.lineTo(.{ .x = 10, .y = 0 });
+    top.lineTo(.{ .x = 10, .y = 3 });
+    top.lineTo(.{ .x = 0, .y = 3 });
+    top.close();
+    _ = canvas.pushClip(top, .{}, vector.RULE_NONZERO);
+    _ = canvas.pushBlendLayer(1, vector.BLEND_SOURCE_IN);
+    _ = canvas.fill(over_it, .{}, &solid(0, 0, 1), vector.RULE_NONZERO);
+    canvas.popLayer();
+    canvas.popClip();
+    try testing.expectEqual(@as(Pen, 0), pens[1 * 10 + 1]);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[4 * 10 + 1]);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[5 * 10 + 5]);
 }
 
 test "layers nested past the most hold nothing, and pops still match pushes" {

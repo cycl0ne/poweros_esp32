@@ -4,8 +4,9 @@
 //! a `style` attribute.
 //!
 //! **Lengths** are in user units, which are pixels: `px` and none, and
-//! `pt`, `pc`, `mm`, `cm` and `in` at 96 to the inch, `em` as 16 and `ex`
-//! as 8 of them, the size of no font. A percentage is of the viewport's
+//! `pt`, `pc`, `mm`, `cm` and `in` at 96 to the inch, and `em` and `ex`
+//! the font's size and half of it - `resolveAt` given the size, 16 for
+//! no font (since 1.7). A percentage is of the viewport's
 //! width, height, or the length SVG takes for neither - its diagonal
 //! over the square root of two - and is turned into units by whoever
 //! knows the viewport.
@@ -152,11 +153,22 @@ pub const Axis = enum { x, y, other };
 /// A length: a number of units, or a percentage still to be taken of
 /// the viewport.
 pub const Length = struct {
+    /// In units, a font's size taken as 16; or a percentage.
     value: f32,
     percent: bool = false,
+    /// How many of the font's size it is - an `em` one, an `ex` a half;
+    /// 0 for a length not of the font.
+    per_font: f32 = 0,
 
-    /// In units, `viewport` being the viewport's width and height.
+    /// In units, `viewport` being the viewport's width and height, and
+    /// the font 16.
     pub fn resolve(l: Length, axis: Axis, viewport: [2]f32) f32 {
+        return l.resolveAt(axis, viewport, 16);
+    }
+
+    /// The same, of a font `font_size` in size.
+    pub fn resolveAt(l: Length, axis: Axis, viewport: [2]f32, font_size: f32) f32 {
+        if (l.per_font != 0) return l.per_font * font_size;
         if (!l.percent) return l.value;
         const of = switch (axis) {
             .x => viewport[0],
@@ -184,9 +196,9 @@ pub fn lengthAt(s: *Scanner) ?Length {
     else if (eqlLower(u, "in"))
         96
     else if (eqlLower(u, "em"))
-        16
+        return .{ .value = n * 16, .per_font = n }
     else if (eqlLower(u, "ex"))
-        8
+        return .{ .value = n * 8, .per_font = n / 2 }
     else
         return null;
     return .{ .value = n * per };
@@ -224,8 +236,58 @@ pub fn clamp01(v: f32) f32 {
 
 /// A colour, or null when the text is none. `currentColor` is null as
 /// well: the caller knows the colour it stands for.
+/// Where `word`, lower case, starts in `text` in either case; null for
+/// nowhere.
+fn indexOfLower(text: []const u8, word: []const u8) ?usize {
+    if (text.len < word.len) return null;
+    var at: usize = 0;
+    while (at + word.len <= text.len) : (at += 1) {
+        if (eqlLower(text[at..][0..word.len], word)) return at;
+    }
+    return null;
+}
+
+/// An ICC colour: the name of the profile its values are in, and the
+/// values.
+pub const IccColour = struct {
+    name: []const u8,
+    values: [max_icc_values]f32 = undefined,
+    count: u32 = 0,
+};
+
+pub const max_icc_values = 8;
+
+/// The `icc-color(name, value, ...)` after a colour; null for none, or
+/// one that does not read.
+pub fn iccColour(text: []const u8) ?IccColour {
+    const at = indexOfLower(text, "icc-color(") orelse return null;
+    var s = Scanner{ .text = text[at + "icc-color(".len ..] };
+    s.skipSpace();
+    const start = s.at;
+    while (s.at < s.text.len and s.text[s.at] != ',' and s.text[s.at] != ')' and s.text[s.at] != ' ') s.at += 1;
+    var made = IccColour{ .name = s.text[start..s.at] };
+    if (made.name.len == 0) return null;
+    while (true) {
+        s.skipSpace();
+        if (s.take(')')) break;
+        if (!s.take(',')) return null;
+        s.skipSpace();
+        if (made.count == max_icc_values) return null;
+        made.values[made.count] = s.number() orelse return null;
+        made.count += 1;
+    }
+    if (made.count == 0) return null;
+    return made;
+}
+
 pub fn colour(text_in: []const u8) ?Colour {
-    const text = trim(text_in);
+    var text = trim(text_in);
+    // An ICC colour after it is a printer's: the colour before it is
+    // the one drawn.
+    if (indexOfLower(text, "icc-color(")) |at| {
+        if (at == 0) return null;
+        text = trim(text[0..at]);
+    }
     if (text.len == 0) return null;
     if (text[0] == '#') return hexColour(text[1..]);
     var s = Scanner{ .text = text };
@@ -237,10 +299,14 @@ pub fn colour(text_in: []const u8) ?Colour {
         var v: [4]f32 = .{ 0, 0, 0, 1 };
         var percent: [4]bool = .{ false, false, false, false };
         var n: usize = 0;
+        var commas = false;
         while (n < 4) : (n += 1) {
             if (n > 0) {
                 s.skipSpace();
-                if (s.at < s.text.len and (s.text[s.at] == ',' or s.text[s.at] == '/')) s.at += 1;
+                if (s.at < s.text.len and (s.text[s.at] == ',' or s.text[s.at] == '/')) {
+                    if (s.text[s.at] == ',') commas = true;
+                    s.at += 1;
+                }
             }
             if (s.take(')')) break;
             v[n] = s.number() orelse return null;
@@ -248,6 +314,9 @@ pub fn colour(text_in: []const u8) ?Colour {
             percent[n] = s.take('%');
         } else if (!s.take(')')) return null;
         if (n < 3) return null;
+        // With commas, red, green and blue are all numbers or all
+        // percentages.
+        if (rgb and commas and (percent[0] != percent[1] or percent[1] != percent[2])) return null;
         const alpha = clamp01(if (percent[3]) v[3] / 100 else v[3]);
         if (rgb) {
             var c: [3]f32 = undefined;
@@ -370,7 +439,12 @@ pub const Paint = union(enum) {
     colour: Colour,
     /// The `color` property's.
     current,
-    /// A gradient by its id, and what to paint if there is none by it.
+    /// The paint of the shape a marker is on, or of the `use` that draws
+    /// the element (SVG 2; since 1.7).
+    context_fill,
+    context_stroke,
+    /// A gradient or a pattern by its id, and what to paint if there is
+    /// none by it.
     url: struct { id: []const u8, fallback: Fallback },
 
     pub const Fallback = union(enum) { none, colour: Colour, current, absent };
@@ -382,6 +456,8 @@ pub fn paint(text_in: []const u8) ?Paint {
     const text = trim(text_in);
     if (eqlLower(text, "none")) return .none;
     if (eqlLower(text, "currentcolor")) return .current;
+    if (eqlLower(text, "context-fill")) return .context_fill;
+    if (eqlLower(text, "context-stroke")) return .context_stroke;
     if (text.len > 4 and eqlLower(text[0..4], "url(")) {
         const close = std.mem.indexOfScalar(u8, text, ')') orelse return null;
         var id = trim(text[4..close]);
@@ -449,7 +525,8 @@ pub const Declarations = struct {
     text: []const u8,
     at: usize = 0,
 
-    pub const Declaration = struct { name: []const u8, value: []const u8 };
+    /// A declaration, and whether it was marked `!important`.
+    pub const Declaration = struct { name: []const u8, value: []const u8, important: bool = false };
 
     pub fn next(d: *Declarations) ?Declaration {
         while (d.at < d.text.len) {
@@ -459,11 +536,15 @@ pub const Declarations = struct {
             const colon = std.mem.indexOfScalar(u8, one, ':') orelse continue;
             const name = trim(withoutComments(one[0..colon]));
             var value = trim(withoutComments(one[colon + 1 ..]));
+            var important = false;
             if (std.mem.lastIndexOfScalar(u8, value, '!')) |bang| {
-                if (eqlLower(trim(value[bang + 1 ..]), "important")) value = trim(value[0..bang]);
+                if (eqlLower(trim(value[bang + 1 ..]), "important")) {
+                    value = trim(value[0..bang]);
+                    important = true;
+                }
             }
             if (name.len == 0) continue;
-            return .{ .name = name, .value = value };
+            return .{ .name = name, .value = value, .important = important };
         }
         return null;
     }
@@ -592,6 +673,17 @@ test "paints: none, a colour, currentColor, a gradient with and without a fallba
     try testing.expect(paint("bogus") == null);
 }
 
+test "ICC colours: the colour before it drawn, its profile's name and values read" {
+    try testing.expectEqual(Colour{ .r = 1 }, colour("red icc-color(acmecmyk, 0.11, 0.48, 0.83, 0.00)").?);
+    const icc = iccColour("#f00 icc-color( acmecmyk , 0.11,0.48, 0.83 ,0)").?;
+    try testing.expectEqualStrings("acmecmyk", icc.name);
+    try testing.expectEqual(@as(u32, 4), icc.count);
+    try testing.expectEqual(@as(f32, 0.48), icc.values[1]);
+    try testing.expect(iccColour("red") == null);
+    try testing.expect(iccColour("red icc-color(acmecmyk)") == null);
+    try testing.expect(iccColour("red icc-color(acmecmyk, 0.1") == null);
+}
+
 test "transforms: a list applied right to left, and one in error" {
     const m = transform("translate(10,20) scale(2)").?;
     try testing.expectEqual(vector.Point{ .x = 12, .y = 22 }, m.apply(.{ .x = 1, .y = 1 }));
@@ -608,7 +700,7 @@ test "transforms: a list applied right to left, and one in error" {
     try testing.expect(transform("").?.isIdentity());
 }
 
-test "a style attribute's declarations, comments and !important left off" {
+test "a style attribute's declarations, comments left off, !important told" {
     var d = Declarations{ .text = "fill:#fff; /* x */ stroke : url(#a;b) ;opacity:0.5 !important;;bad" };
     const first = d.next().?;
     try testing.expectEqualStrings("fill", first.name);
@@ -619,5 +711,6 @@ test "a style attribute's declarations, comments and !important left off" {
     const third = d.next().?;
     try testing.expectEqualStrings("opacity", third.name);
     try testing.expectEqualStrings("0.5", third.value);
+    try testing.expect(third.important and !first.important);
     try testing.expect(d.next() == null);
 }

@@ -227,3 +227,25 @@ test "a character without a mark behind it is the font's own glyph, whatever it 
     count = try harness.charactersOf("\u{E9}", &.{ 0xE9, 0x301 }, &found);
     try testing.expectEqualSlices(u32, &.{0xE9}, found[0..count]);
 }
+
+test "a mark of Arabic that changes its letter goes before the vowel signs, and is put together with the letter" {
+    var found: [8]u32 = undefined;
+    // Alef, fatha, hamza above: the hamza before the fatha, which its
+    // class puts behind it; with the alef with hamza, the two that one.
+    var count = try harness.joinedCharactersOf("\u{0627}\u{064E}\u{0654}", &.{0x0623}, &found);
+    try testing.expectEqualSlices(u32, &.{ 0x0627, 0x0654, 0x064E }, found[0..count]);
+    count = try harness.joinedCharactersOf("\u{0627}\u{064E}\u{0654}", &.{}, &found);
+    try testing.expectEqualSlices(u32, &.{ 0x0623, 0x064E }, found[0..count]);
+    // Below, then above: the hamza below and the small high seen first,
+    // in that order, before the kasra and the fatha.
+    count = try harness.joinedCharactersOf("\u{0628}\u{064E}\u{0650}\u{06DC}\u{0655}", &.{}, &found);
+    try testing.expectEqualSlices(u32, &.{ 0x0628, 0x0655, 0x06DC, 0x064E, 0x0650 }, found[0..count]);
+    // One that comes after another mark of its class stays where its
+    // class puts it.
+    count = try harness.joinedCharactersOf("\u{0628}\u{0300}\u{0654}", &.{}, &found);
+    try testing.expectEqualSlices(u32, &.{ 0x0628, 0x0300, 0x0654 }, found[0..count]);
+    // In a stretch of a script whose letters do not join, every mark
+    // keeps the place its class gives it.
+    count = try harness.charactersOf("\u{0627}\u{064E}\u{0654}", &.{0x0623}, &found);
+    try testing.expectEqualSlices(u32, &.{ 0x0627, 0x064E, 0x0654 }, found[0..count]);
+}

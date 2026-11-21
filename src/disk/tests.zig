@@ -138,6 +138,7 @@ test {
     _ = @import("libs/truetype/tests/cff.zig");
     _ = @import("libs/truetype/tests/cff2.zig");
     _ = @import("libs/truetype/tests/strike.zig");
+    _ = @import("libs/truetype/tests/colour.zig");
     _ = @import("libs/truetype/tests/variation.zig");
     _ = @import("libs/truetype/tests/fuzz.zig");
     _ = @import("libs/truetypeshaping/tests/layout.zig");
@@ -155,6 +156,8 @@ test {
     _ = @import("libs/truetypeshaping/tests/model.zig");
     _ = @import("libs/truetypeshaping/tests/normal.zig");
     _ = @import("libs/truetypeshaping/tests/fuzz.zig");
+    _ = @import("libs/truetypeshaping/tests/joining.zig");
+    _ = @import("libs/truetypeshaping/tests/bidi.zig");
     _ = @import("libs/vector/tests/vector.zig");
     _ = @import("libs/asl/tests/asl.zig");
     _ = @import("libs/iffparse/tests/iffparse.zig");
@@ -216,6 +219,7 @@ test {
     _ = @import("libs/smb/tests/smb.zig");
     _ = @import("system/shares/known.zig");
     _ = @import("system/shares/server.zig");
+    _ = @import("classes/datatypes/jpeg/tests/jpeg.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/png/tests/write.zig");
     _ = @import("classes/datatypes/gif/lzw.zig");

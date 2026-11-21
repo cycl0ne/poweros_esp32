@@ -10,9 +10,16 @@
 //! it is, closed if it was.
 //!
 //! As SVG has it, an odd count of lengths is gone through twice, and
-//! lengths that are negative or come to nothing draw the stroke whole.
+//! lengths that are negative or come to nothing draw the stroke whole. A
+//! dash of no length is still handed on, with the way the path goes
+//! there (`along`), so that its caps are drawn: a dot, or a square turned
+//! with the path.
 //! A stroke is cut at most `max_cuts` times; past that it goes on as the
 //! dash or the gap it is in.
+//!
+//! Since 1.5 a dash goes with the way the curve it was cut from goes at
+//! its ends (`ends`, from `stroke.tangentAt`), which its ends are cut
+//! across.
 
 const sdk = @import("sdk");
 const vector = sdk.vector;
@@ -21,6 +28,7 @@ const memory_ = @import("memory.zig");
 const Memory = memory_.Memory;
 const List = memory_.List;
 const flatten = @import("flatten.zig");
+const stroke_ = @import("stroke.zig");
 
 pub const max_cuts = 1 << 16;
 
@@ -52,7 +60,8 @@ pub const Pattern = struct {
         phase -= total * @floor(phase / total);
         var i: usize = 0;
         var guard: usize = 0;
-        while (phase >= pattern.value(i) and guard < 2 * count) : (guard += 1) {
+        // A dash of no length where the dashes start is drawn.
+        while (phase > 0 and phase >= pattern.value(i) and guard < 2 * count) : (guard += 1) {
             phase -= pattern.value(i);
             i = (i + 1) % count;
         }
@@ -79,6 +88,11 @@ pub const Dasher = struct {
     cuts: u32 = 0,
     /// Something did not fit.
     failed: bool = false,
+    /// The way the path goes where the dash handed on is (a unit
+    /// length): a dash of no length is capped across it.
+    along: P = .{ .x = 1, .y = 0 },
+    /// The way the curve goes at the ends of the dash handed on.
+    ends: stroke_.Ends = .{},
 
     /// One contour's dashes handed to `emit`.
     pub fn contour(d: *Dasher, points: []const P, smooth: []const bool, closed: bool, context: anytype, comptime emit: flatten.Emit(@TypeOf(context))) void {
@@ -95,8 +109,21 @@ pub const Dasher = struct {
         d.dash_smooth.clear();
         d.first.clear();
         d.first_smooth.clear();
-        if (on and !d.add(points[0], smooth[0])) return;
+        d.along = .{ .x = 1, .y = 0 };
+        d.ends = .{};
+        var first_along = d.along;
+        // The way the curve goes where the dash being made began, and the
+        // ends of a closed contour's first.
+        var dash_head: ?P = null;
+        var first_ends: stroke_.Ends = .{};
+        if (on) {
+            if (!d.add(points[0], smooth[0])) return;
+            dash_head = stroke_.tangentAt(points, smooth, closed, 0, 0);
+        }
         const segments = if (closed) points.len else points.len - 1;
+        // The last line passed that has a length: a dash that ends where
+        // the next begins ends the way it does.
+        var arrived: ?usize = null;
         var k: usize = 0;
         while (k < segments) : (k += 1) {
             const a = points[k];
@@ -104,15 +131,22 @@ pub const Dasher = struct {
             const b = points[next];
             const length = @sqrt((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y));
             if (!(length > 0)) continue;
+            defer arrived = k;
+            d.along = .{ .x = (b.x - a.x) / length, .y = (b.y - a.y) / length };
             var pos: f32 = 0;
             while (length - pos > left) {
                 pos += left;
                 const t = pos / length;
                 const q = P{ .x = a.x + (b.x - a.x) * t, .y = a.y + (b.y - a.y) * t };
+                const way_here = stroke_.tangentAt(points, smooth, closed, k, t);
                 if (on) {
                     if (!d.add(q, false)) return;
+                    const way_in = if (pos == 0) if (arrived) |line| stroke_.tangentAt(points, smooth, closed, line, 1) else way_here else way_here;
+                    d.ends = .{ .head = dash_head, .tail = way_in };
                     if (hold and !held) {
                         held = true;
+                        first_along = d.along;
+                        first_ends = d.ends;
                         if (!d.first.reserve(d.memory, d.dash.len) or !d.first_smooth.reserve(d.memory, d.dash.len)) return d.fail();
                         for (d.dash.items(), d.dash_smooth.items()) |p, inside| {
                             _ = d.first.append(d.memory, p);
@@ -125,6 +159,7 @@ pub const Dasher = struct {
                     d.dash.clear();
                     d.dash_smooth.clear();
                     if (!d.add(q, false)) return;
+                    dash_head = way_here;
                 }
                 cut = true;
                 d.cuts += 1;
@@ -142,10 +177,15 @@ pub const Dasher = struct {
             if (on and !d.add(b, smooth[next])) return;
         }
         if (!cut) {
+            d.ends = .{};
             if (on) emit(context, points, smooth, closed);
             return;
         }
         if (on) {
+            d.ends = .{
+                .head = dash_head,
+                .tail = if (held) first_ends.tail else stroke_.tangentAt(points, smooth, closed, segments - 1, 1),
+            };
             if (held) {
                 const rest = d.first.items();
                 const rest_smooth = d.first_smooth.items();
@@ -158,7 +198,11 @@ pub const Dasher = struct {
                 }
             }
             emit(context, d.dash.items(), d.dash_smooth.items(), false);
-        } else if (held) emit(context, d.first.items(), d.first_smooth.items(), false);
+        } else if (held) {
+            d.along = first_along;
+            d.ends = first_ends;
+            emit(context, d.first.items(), d.first_smooth.items(), false);
+        }
     }
 
     /// A point and its smoothness onto the dash, both or neither.
@@ -246,9 +290,64 @@ test "a closed contour's last dash is joined to its first, and one no dash ends 
     try testing.expectEqual(@as(u32, 4), seen.dashes);
     try testing.expectEqual(P{ .x = 0, .y = 3 }, seen.starts[3]);
     try testing.expectEqual(P{ .x = 3, .y = 0 }, seen.ends[3]);
+    // Dashes of no length, one a corner: the first where it begins.
+    const dots = [_]f32{ 0, 10 };
+    seen = try cutUp(&square, true, .{ .dashes = &dots, .dash_count = 2 });
+    try testing.expectEqual(@as(u32, 4), seen.dashes);
+    try testing.expectEqual(P{ .x = 0, .y = 0 }, seen.starts[3]);
+    try testing.expectEqual(P{ .x = 10, .y = 0 }, seen.starts[0]);
     const long = [_]f32{ 100, 1 };
     seen = try cutUp(&square, true, .{ .dashes = &long, .dash_count = 2 });
     try testing.expectEqual(@as(u32, 1), seen.closed);
+}
+
+/// Each dash's ends checked against the circle round the origin its
+/// points lie near: the way it goes there, across its radius.
+const AcrossRadii = struct {
+    dasher: *const Dasher,
+    dashes: u32 = 0,
+    worst: f32 = 0,
+
+    fn emit(across: *AcrossRadii, points: []const P, _: []const bool, _: bool) void {
+        across.dashes += 1;
+        const ends = across.dasher.ends;
+        for ([_]P{ points[0], points[points.len - 1] }, [_]?P{ ends.head, ends.tail }) |at, given| {
+            const way = given orelse {
+                across.worst = 1;
+                continue;
+            };
+            const radius = @sqrt(at.x * at.x + at.y * at.y);
+            const along = P{ .x = -at.y / radius, .y = at.x / radius };
+            across.worst = @max(across.worst, @abs(way.x - along.x) + @abs(way.y - along.y));
+        }
+    }
+};
+
+test "a dash cut inside a curve goes the way the curve does at its ends" {
+    // A circle of radius 20 in 24 lines, cut into dashes of 5.
+    var circle: [24]P = undefined;
+    var flags: [24]bool = undefined;
+    for (&circle, &flags, 0..) |*p, *f, i| {
+        const angle = @as(f32, @floatFromInt(i)) / 24 * 2 * @import("std").math.pi;
+        p.* = .{ .x = 20 * @cos(angle), .y = 20 * @sin(angle) };
+        f.* = i % 6 != 0;
+    }
+    var dash: List(P) = .{};
+    defer dash.deinit(test_memory);
+    var dash_smooth: List(bool) = .{};
+    defer dash_smooth.deinit(test_memory);
+    var first: List(P) = .{};
+    defer first.deinit(test_memory);
+    var first_smooth: List(bool) = .{};
+    defer first_smooth.deinit(test_memory);
+    const dashes = [_]f32{ 5, 5 };
+    const stroke = vector.Stroke{ .dashes = &dashes, .dash_count = 2, .dash_offset = 1 };
+    var d = Dasher{ .pattern = Pattern.of(&stroke).?, .memory = test_memory, .dash = &dash, .dash_smooth = &dash_smooth, .first = &first, .first_smooth = &first_smooth };
+    var across = AcrossRadii{ .dasher = &d };
+    d.contour(&circle, &flags, true, &across, AcrossRadii.emit);
+    try testing.expect(!d.failed);
+    try testing.expect(across.dashes >= 12);
+    try testing.expect(across.worst < 0.01);
 }
 
 test "lengths that are negative or come to nothing draw the stroke whole" {

@@ -32,7 +32,9 @@ const VectorBase = _base.VectorBase;
 /// The layer's pens are blurred in place, as SVG's `feGaussianBlur` is
 /// made: three box blurs one after another, across and then down, each
 /// of the size SVG gives for the deviation - within a few per cent of a
-/// Gaussian, and costing the same whatever its size. They are blurred
+/// Gaussian, and costing the same whatever its size. A deviation under
+/// two pixels, which boxes come to too coarsely, is blurred by the
+/// Gaussian's own kernel (since 1.5). They are blurred
 /// premultiplied, so a clear pixel's colour goes nowhere. What is past
 /// the canvas's edge is clear, and what is blurred past it is lost. The
 /// layer is then put down by `PopLayer` as any other, at its opacity and
@@ -56,12 +58,13 @@ const VectorBase = _base.VectorBase;
 /// BUGS:
 /// Blurred in the pens' colours as they are (sRGB), which SVG asks for
 /// with `color-interpolation-filters: sRGB`; its default, linearRGB,
-/// blurs two colours' edge a little lighter. The deviations are the
+/// blurs two colours' edge a little lighter - `FilterLayer` blurs in
+/// either. The deviations are the
 /// pixels' across and down: a picture drawn turned is blurred along the
 /// canvas's rows and columns, not its own.
 ///
 /// SEE ALSO:
-/// `PushLayer`, `PopLayer`, `PushClip`
+/// `PushLayer`, `PopLayer`, `PushClip`, `FilterLayer`
 ///
 /// EXAMPLES:
 /// ```zig

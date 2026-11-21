@@ -11,7 +11,10 @@
 //! reads across it, as many as it covers each way up to `max_taps`, so
 //! a large image drawn small is not a scatter of its pixels. Past the
 //! image's edges the spread pads with its edge pixels, repeats it or
-//! reflects it.
+//! reflects it. A paint that asks for it (`PAINTF_NEAREST`, since 1.5)
+//! is read at the one pixel the centre falls in, as it is, and so is
+//! one only moved, neither scaled nor turned (since 1.5): a fraction of
+//! a pixel's move does not blur it.
 
 const sdk = @import("sdk");
 const vector = sdk.vector;
@@ -37,6 +40,8 @@ pub const Sampler = struct {
     /// Reads a pixel takes across and down.
     taps_x: u32,
     taps_y: u32,
+    /// The pixel the centre falls in, rather than between four.
+    nearest: bool = false,
 
     /// The sampler for `paint` drawn through `matrix`; null for an image
     /// of no pixels or a matrix that flattens it.
@@ -58,7 +63,16 @@ pub const Sampler = struct {
             .inverse = inverse,
             .taps_x = taps(across),
             .taps_y = taps(down),
+            .nearest = paint.flags & vector.PAINTF_NEAREST != 0 or unscaled(inverse),
         };
+    }
+
+    /// Whether a matrix only moves: an image drawn so has a pixel for
+    /// each of the canvas's, and is read at the one each centre falls
+    /// in - a fraction of a pixel's move would only blur it.
+    fn unscaled(matrix: Matrix) bool {
+        const near = 1.0 / 4096.0;
+        return @abs(matrix.a - 1) < near and @abs(matrix.d - 1) < near and @abs(matrix.b) < near and @abs(matrix.c) < near;
     }
 
     fn taps(span: f32) u32 {
@@ -71,6 +85,19 @@ pub const Sampler = struct {
     pub fn sample(s: *const Sampler, x: u32, y: u32) ?Read {
         const cx = @as(f32, @floatFromInt(x)) + 0.5;
         const cy = @as(f32, @floatFromInt(y)) + 0.5;
+        if (s.nearest) {
+            const p = s.inverse.apply(.{ .x = cx, .y = cy });
+            if (p.x != p.x or p.y != p.y) return null;
+            const limit: f32 = 1 << 24;
+            // A centre on the edge between two pixels is the second's,
+            // though rounding put it a hair short.
+            const hair = 1.0 / 256.0;
+            const ix: i32 = @intFromFloat(@floor(@min(@max(p.x + hair, -limit), limit)));
+            const iy: i32 = @intFromFloat(@floor(@min(@max(p.y + hair, -limit), limit)));
+            const one = s.texel(s.wrap(ix, s.width), s.wrap(iy, s.height));
+            if (one.a < 1.0 / 512.0) return null;
+            return one;
+        }
         var sum = Read{ .r = 0, .g = 0, .b = 0, .a = 0 };
         const nx: f32 = @floatFromInt(s.taps_x);
         const ny: f32 = @floatFromInt(s.taps_y);
@@ -163,6 +190,14 @@ test "an image read at its pixels' centres, between them, past its edges, and dr
     var paint = vector.Paint{ .kind = vector.PAINT_IMAGE, .image = &pens, .image_width = 2, .image_height = 2, .image_bytes_per_row = 8 };
     var s = Sampler.of(&paint, .{}).?;
     try testing.expectEqual(@as(u32, 1), s.taps_x);
+    // At its own size, moved half a pixel: each pixel one of the
+    // image's, not a mix of two.
+    try testing.expect(s.nearest);
+    const moved = Sampler.of(&paint, Matrix.translate(0.5, 0)).?;
+    try testing.expectApproxEqAbs(@as(f32, 255), moved.sample(0, 0).?.r, 0.01);
+    try testing.expectApproxEqAbs(@as(f32, 255), moved.sample(1, 0).?.g, 0.01);
+    try testing.expectApproxEqAbs(@as(f32, 0), moved.sample(1, 0).?.r, 0.01);
+    s.nearest = false;
     const red = s.sample(0, 0).?;
     try testing.expectApproxEqAbs(@as(f32, 255), red.r, 0.01);
     try testing.expectApproxEqAbs(@as(f32, 1), red.a, 0.01);

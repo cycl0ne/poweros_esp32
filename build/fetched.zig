@@ -63,7 +63,7 @@ pub const FontPlace = struct {
 /// What scripts/fetch-fonts.sh fetches, as far as a tree may have one
 /// part and not another: `base` is what every fetch brought, the others
 /// came later and a tree fetched before them lacks them.
-const FontSet = enum { base, liberation, devanagari, cjk, emoji };
+const FontSet = enum { base, liberation, devanagari, arabic, cjk, emoji };
 
 /// Noto Sans CJK Regular as scripts/fetch-fonts.sh names it, in
 /// `devanagari_dir`: one file of ten fonts.
@@ -108,8 +108,9 @@ fn liberationFamily(comptime name: []const u8, comptime file: []const u8) [4]Dis
 /// drawn partly in the pen; the Go faces as outlines, at any size; and on
 /// the 64-bit disks the Liberation fonts as outlines - sans, serif and
 /// mono, each with its bold, italic and bold italic faces - which SVG's
-/// text is drawn in, Noto Sans Devanagari, regular and bold, which
-/// `font.prefs` names as the font a text falls back to for the script,
+/// text is drawn in, Noto Sans Devanagari and Noto Sans Arabic, regular
+/// and bold, which `font.prefs` names as the fonts a text falls back to
+/// for their scripts,
 /// Noto Sans CJK - Japanese, Chinese and Korean - as five families of the one file, a region's forms each:
 /// Japan's, Korea's, China's, Taiwan's and Hong Kong's - and Noto Color
 /// Emoji, 10.7 MB of glyphs in their own colours, which `font.prefs`
@@ -129,6 +130,8 @@ pub const disk_fonts = liberationFamily("sans", "Sans") ++ liberationFamily("ser
     .{ .name = "go-mono-bold", .sources = &.{"go/Go-Mono-Bold.ttf"}, .outlines = &.{"Go-Mono-Bold.ttf"} },
     .{ .name = "devanagari", .sources = &.{devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf"}, .outlines = &.{"NotoSansDevanagari-Regular.ttf"}, .wide = true, .set = .devanagari },
     .{ .name = "devanagari-bold", .sources = &.{devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf"}, .outlines = &.{"NotoSansDevanagari-Bold.ttf"}, .wide = true, .set = .devanagari },
+    .{ .name = "arabic", .sources = &.{devanagari_dir ++ "/NotoSansArabic-Regular.ttf"}, .outlines = &.{"NotoSansArabic-Regular.ttf"}, .wide = true, .set = .arabic },
+    .{ .name = "arabic-bold", .sources = &.{devanagari_dir ++ "/NotoSansArabic-Bold.ttf"}, .outlines = &.{"NotoSansArabic-Bold.ttf"}, .wide = true, .set = .arabic },
     cjkFamily("cjk-jp", "0"),
     cjkFamily("cjk-kr", "1"),
     cjkFamily("cjk-sc", "2"),

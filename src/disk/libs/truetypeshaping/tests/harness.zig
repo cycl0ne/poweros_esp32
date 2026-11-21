@@ -91,8 +91,13 @@ pub const Run = struct {
 };
 
 /// The memory a call gets: the tests' allocator, counted.
-const Lender = struct {
+pub const Lender = struct {
     left: ?u32,
+
+    /// The memory, for a test that makes a buffer itself.
+    pub fn memory(lender: *Lender) _buffer.Memory {
+        return .{ .context = lender, .allocFn = allocate, .freeFn = release };
+    }
 };
 
 /// A block's length is kept in the 16 bytes before it.
@@ -338,6 +343,15 @@ fn noAdvance(context: *anyopaque, glyph: u32) i32 {
 /// which is sorted. The characters are written to `found`, as many as
 /// it holds, and their number is answered.
 pub fn charactersOf(text: []const u8, lacking: []const u32, found: []u32) !usize {
+    return listed(text, lacking, found, false);
+}
+
+/// The same for a stretch of a script whose letters join.
+pub fn joinedCharactersOf(text: []const u8, lacking: []const u32, found: []u32) !usize {
+    return listed(text, lacking, found, true);
+}
+
+fn listed(text: []const u8, lacking: []const u32, found: []u32, joining: bool) !usize {
     var lender: Lender = .{ .left = null };
     var sorted = lacking;
     const font: _shape.Font = .{ .context = @ptrCast(&sorted), .advanceFn = noAdvance, .glyphFn = glyphUnlessLacking };
@@ -348,6 +362,7 @@ pub fn charactersOf(text: []const u8, lacking: []const u32, found: []u32) !usize
     var list = _normal.List.init(.{ .context = &lender, .allocFn = allocate, .freeFn = release }, &font, chars) orelse
         return error.OutOfMemory;
     defer list.deinit();
+    list.joining = joining;
     list.fill(text, 0, text.len);
     if (list.failed) return error.OutOfMemory;
     for (list.slice(), 0..) |entry, index| {

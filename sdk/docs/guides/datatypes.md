@@ -62,8 +62,8 @@ patterns, and when none matches it the bytes are tried as bytes without
 one (1.4) - so `README.md`, the end of an address, says what the bytes
 are, and `HTML` or `index.php` leaves it to them. The object
 reads the bytes while it is made: when the call returns they are the
-program's again. JPEG, PNG, GIF, BMP, ICO, SVG, text, models, Markdown,
-HTML and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
+program's again. JPEG, PNG, WebP, GIF, BMP, ICO, SVG, text, models,
+Markdown, HTML and Lottie read from memory; ILBM, 8SVX and a codec's sound read a file as they go,
 a film is read as it is played, and a font's sizes are files beside its
 contents file, so these refuse bytes in memory with
 `DTERROR_COULDNT_OPEN`.
@@ -240,6 +240,24 @@ Datatype, codec: 1024 x 600 in 198387 us, read by the codec
 Compared: worst 35, mean 107/100, 559 of 614400 pixels more than 24 apart
 ```
 
+**A JPEG** is read by `jpeg.datatype` whether it is one scan - the
+whole picture a unit at a time - or comes in several: in passes of
+increasing detail (progressive, since 1.3), or a component a scan.
+Such a file's numbers are gathered, two bytes a sample, until its last
+scan, and that memory goes again before the picture's is asked for; a
+file that stops early shows what its scans said. Arithmetic coding,
+lossless JPEG and twelve bits a sample are refused with
+`DTERROR_UNKNOWN_COMPRESSION`.
+
+**A WebP** is read by `webp.datatype`: a lossy picture - a VP8 key
+frame, decoded by the decoder vp8.vcodec has, its colour brought to
+full size as the format's own decoder does - with its coverage when it
+has one, and a lossless one with every transform, the colour cache and
+the groups of codes across the picture. The pixels are the format's
+own decoder's, to the bit. A picture with coverage is drawn mixed into
+what is under it. An animation is a picture of its first frame here and
+plays in `webpanim.datatype` (see *Animations*).
+
 **A Windows icon** - a `.ico`, the favicon a web site names among them -
 is read by `ico.datatype` as the largest picture its directory holds,
 the deepest of the largest. A bitmap in it is one, four or eight bits
@@ -257,8 +275,10 @@ to 64 rows. The sizes are opened through diskfont.library, so the
 picture is the font as every program gets it, and MultiView shows a font
 as it shows any picture.
 
-**An SVG picture is drawn when it is read.** svg.datatype - on the
-64-bit machines' disks - reads the file's elements and draws them with
+**An SVG picture is drawn when it is read.** svg.datatype - built for
+every machine, on the disks of the boards that hold the set `svg`, the
+64-bit machines', and on the ESP32s' cards - reads the file's elements
+and draws them with
 vector.library onto the picture's pens, at the size the file gives:
 its `width` and `height`, made from its `viewBox` when it has not both,
 or 300 by 150. It draws paths, rectangles, circles, ellipses, lines,
@@ -271,15 +291,15 @@ alpha`, by coverage, in the user's units or the box's - through
 vector.library 1.3's clips, `use` and `symbol`, and a nested `svg`'s
 or a symbol's viewport clips what is in it. The presentation attributes
 are read first, then the rules of the file's `<style>` sheets that are
-for the element - selectors of a type, classes and an id, as
-Illustrator writes them - then its style attribute's declarations. A
+for the element - selectors of types, classes, ids and attributes,
+joined by descendant, child and sibling combinators, and
+`:first-child` - then its style attribute's declarations. A
 file packed with gzip, an `.svgz`, is unpacked by compression.library
 and drawn the same (the SVGZ descriptor). Since 1.3 it draws text, in
 the families of `FONTS:` through diskfont.library's outlines and
 truetype.library's glyphs: `font-family` lists, the generic families and
 the common names (Arial, Helvetica, Times, Courier and their kind) on
-the Liberation families, any other name on the one it looks like, and
-serif without one, as browsers have it; sizes, bold and italic - leaned
+the families that stand in for them; sizes, bold and italic - leaned
 or thickened where a family has no such face - `tspan`s with their own
 style and place, `x`, `y`, `dx` and `dy` lists a character each,
 `text-anchor`, kerning, letter and word spacing, underlines, lines
@@ -293,28 +313,88 @@ the font has for them - and each glyph is drawn in the style of the
 span its character is in.
 A character with an `x`, `y`, `dx` or `dy` of its own starts a new
 stretch; a `letter-spacing` leaves the ligatures apart and comes once
-behind each character or ligature. Since 1.6 a text's language
-(`xml:lang`, or `lang`, on the text or anything around it) is handed
-to the font, which may have forms of its own for it - a stretch ends
-where the language changes. Text is read from left to right. A
-`textPath` is not drawn. Since 1.5 a glyph's outline may be of any
-length: one of more than the picture's work memory holds (1024 verbs,
-2048 points) is read into memory of its own while it is drawn, and is
-left out only when there is none. It draws a
-filter's blur - `feGaussianBlur` alone, or as Inkscape and Figma write
-one - in its region, through vector.library 1.4's `BlurLayer`; a filter
-of nothing leaves its element out, and one it cannot make - a drop
-shadow, lighting - is passed over and the element drawn without it. An
-`image` of a `data:` address is made a picture by datatypes.library from
-its bytes - PNG, JPEG, GIF, BMP, whatever the disk reads, but not another
-SVG - and drawn in its place with its `preserveAspectRatio`, through
-vector.library 1.4's `PAINT_IMAGE`; an `image` of a file or an address
-is not followed. `paint-order` puts a stroke under its fill. Without
-truetype.library 1.2, truetypeshaping.library 1.1 and diskfont.library
-1.4 - the ESP32s' disks - text is left out and the rest drawn. Patterns
-and markers are not drawn. A
-picture too large to keep is drawn smaller, as any is, and one wanted
-at a size (above) is drawn at it.
+behind each character or ligature, but not between the letters of a
+script whose letters join. Since 1.6 a text's language (`xml:lang`, or
+`lang`, on the text or anything around it) is handed to the font,
+which may have forms of its own for it - a stretch ends where the
+language changes. Since 1.5 a glyph's outline may be of any length:
+one of more than the picture's work memory holds (1024 verbs, 2048
+points) is read into memory of its own while it is drawn, and is left
+out only when there is none. An `image` of a `data:` address is made a
+picture by datatypes.library from its bytes - PNG, JPEG, WebP, GIF, BMP,
+whatever the disk reads - and drawn in its place with its
+`preserveAspectRatio`, through vector.library's `PAINT_IMAGE`.
+
+Since 1.7 it draws every filter primitive - blurs, offsets, floods,
+blends, composites, colour matrices and component transfers,
+morphology, convolution, displacement, turbulence, tiles, merges,
+lighting, `feImage` and `feDropShadow` - and the filter functions
+(`blur()`, `drop-shadow()`, `grayscale()` and the rest), through
+vector.library 1.5's `FilterLayer`; a turned or slanted element is
+filtered along its own axes. It draws patterns, markers at a shape's
+vertices, `context-fill` and `context-stroke`, `mix-blend-mode` and
+`isolation`, the root's `background-color`, text in a `clipPath`, and
+an `image` of another SVG file as a picture of its own. An `image`
+whose address names a file is read: a relative address
+(`pictures/sun.png`, `../sun.png`) from the directory of the file the
+picture was made from, one from the root (`/pictures/sun.png`) from
+that file's volume, and a `file:` URL or a dos path
+(`Work:pictures/sun.png`) as it stands; a picture made from memory
+reads only the last two, and an address on a network (`http:`,
+`https:`) is not followed. Text is set in the face CSS picks: each name
+of `font-family` is a family by the name its fonts give themselves
+("Noto Sans") or by its contents file's ("sans"), through
+diskfont.library's `FindFamily`, or one of the generic families -
+`serif`, `sans-serif`, `monospace`, `cursive`, `fantasy` - as
+`font.prefs` names them (`GenericFamily`); a name FONTS: has no family
+for is passed over, and a list without one ends in the generic family
+the first such name looks like, else a serif. Of the family and its
+faces, diskfont.library's `OpenOutlineFontTagList` opens the one
+nearest `font-stretch`, `font-style` and `font-weight` (any of 1 to
+1000, `bolder` and `lighter` from the parent's) as CSS orders them, and
+sets a variable face on its `wght`, `wdth`, `slnt` or `ital` and, under
+`font-optical-sizing: auto`, its `opsz` to the size - then on the axes
+`font-variation-settings` names, which win; the `font` shorthand sets
+them all. Text gets a character its font lacks from the rest of its
+`font-family` list, then from the families diskfont.library names for
+it. A glyph its font draws in colour is drawn so, through
+truetype.library's `GlyphPaints`, `GlyphDocument` and `GlyphPicture`:
+its layers of `COLR` - gradients and sweeps, clips, transforms, and
+layers put down in Porter and Duff's operators and the blend modes -
+through vector.library, the text's fill the colour a layer calls the
+text's own; the SVG document of its `SVG ` table, drawn as any other;
+or its picture of `sbix` or `CBDT`, read by datatypes.library. In a
+`clipPath` only its outline counts. Text follows a `textPath`, takes a `tref`'s characters, is fitted to a
+`textLength`, set on the baseline `dominant-baseline`,
+`alignment-baseline` and `baseline-shift` name, in columns with
+`writing-mode` - read from the bottom up where `direction` is `rtl`,
+each glyph upright or turned with the line as `text-orientation` or
+`glyph-orientation-vertical` says, an upright one by the font's
+vertical measures (truetype.library's `GlyphVerticalMetrics`) - and with `font-kerning`, `font-variant: small-caps` and
+`text-rendering`. A text of both directions - Arabic or Hebrew with
+Latin and numbers - is read by Unicode's bidirectional algorithm
+through truetypeshaping.library 1.11's `BidiLevels`, each piece at a
+place of its own a paragraph of the text's `direction`, a span's
+`unicode-bidi` the embedding, override or isolate it names; each run
+of one direction is shaped in it, Arabic's letters in their joined
+forms, and a text whose `direction` is `rtl` is anchored by its right
+end. A colour followed by an `icc-color` is the colour of the ICC profile
+the `color-profile` of that name holds - a file read as an `image`'s
+is, or a `data:` address - at its `rendering-intent`: a profile of
+tables of 8 or 16 bits or of the fourth version takes CMYK or any other
+colour space of up to eight values to the screen's, one of curves and a
+matrix RGB or grey. Each value runs from 0 to 1, a Lab colour's as Lab
+does (L 0 to 100, a and b -128 to 127). Without such a profile, or for
+a colour it does not take, the colour before it is drawn.
+`systemLanguage` and `requiredExtensions` choose what is drawn, a
+DOCTYPE's entities are put in where they are named, and a clip, mask,
+pattern, filter or marker that reaches itself through what it draws
+has that reference dropped. `paint-order` puts a stroke under its fill
+and the markers under or between them. Without truetype.library 1.17,
+truetypeshaping.library 1.11 and diskfont.library 1.16, text is left
+out and the rest drawn. A picture too large to
+keep is drawn smaller, as any is, and one wanted at a size (above) is
+drawn at it.
 `scripts/svg-compare.sh` draws the Tango icons both ways - here and by
 rsvg-convert - and says how far apart each pair is; given files, it
 compares those. An edge a clip shares with what is drawn through it -
@@ -326,6 +406,14 @@ other first. Text is compared in the Liberation fonts when
 font where the PC has it, draws a list of `x` or `dx` as one value,
 and shapes each span on its own - no pair kerned across a span's
 border.
+`scripts/fetch-svg-suite.sh` fetches resvg's test suite - some 1800
+files, each with resvg's picture of it, and the fonts their text is
+drawn in - and `./zig build svg-suite` draws every one of them with this
+code, a folder a run, the runs side by side, and compares
+(`tools/svgcompare --suite`). It counts the files close to resvg's
+picture by folder and fails when one has come further away than
+`tools/svgcompare/suite-far.txt`, the list of those not close today,
+allows; one on that list that has come close is named, to be taken off.
 `C:test/DTTime
 <file> ...` times how long any file takes to be made into its object,
 and for an animation - a Lottie file's among them - how long each frame
@@ -536,6 +624,14 @@ the object pauses it and a second goes on. `ADTA_Frames`,
 laid on what the last left, disposed of as the file says, up for its
 own delay. A GIF with one picture is a still picture and goes to
 `gif.datatype`.
+
+`webpanim.datatype` plays a WebP that says it is an animation - each
+frame laid where the file puts it, over what is there by its coverage
+or in its place, its area cleared after it when it says so, up for its
+own time (ten thousandths of a second or less are a tenth of one). A
+frame that covers the whole canvas starts it afresh, and the frames
+come out as the format's own decoder lays them, to the bit. Any other
+WebP is a still picture and goes to `webp.datatype`.
 
 `lottie.datatype` plays a Lottie file, the JSON a design tool writes a
 vector animation as. It draws shape, solid and precomposition layers;

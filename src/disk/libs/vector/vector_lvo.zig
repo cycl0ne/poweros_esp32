@@ -40,6 +40,11 @@ const PopClip = @import("canvas/popclip.zig").PopClip;
 const BeginMask = @import("canvas/beginmask.zig").BeginMask;
 const EndMask = @import("canvas/endmask.zig").EndMask;
 const BlurLayer = @import("canvas/blurlayer.zig").BlurLayer;
+const PushBlendLayer = @import("canvas/pushblendlayer.zig").PushBlendLayer;
+const FilterLayer = @import("canvas/filterlayer.zig").FilterLayer;
+const PathLength = @import("path/pathlength.zig").PathLength;
+const PathPointAt = @import("path/pathpointat.zig").PathPointAt;
+const PathVertices = @import("path/pathvertices.zig").PathVertices;
 
 /// vector.library's interface, as the SDK generates it from
 /// sdk/fd/vector_lib.fd.
@@ -90,6 +95,11 @@ const contract_files = [_][]const u8{
     @embedFile("canvas/beginmask.zig"),
     @embedFile("canvas/endmask.zig"),
     @embedFile("canvas/blurlayer.zig"),
+    @embedFile("canvas/pushblendlayer.zig"),
+    @embedFile("canvas/filterlayer.zig"),
+    @embedFile("path/pathlength.zig"),
+    @embedFile("path/pathpointat.zig"),
+    @embedFile("path/pathvertices.zig"),
 };
 
 fn lvoCreatePath(vb: *VectorBase) callconv(.c) ?*vector.Path {
@@ -171,6 +181,26 @@ fn lvoBlurLayer(vb: *VectorBase, canvas: *vector.Canvas, deviation_x: f32, devia
     return BlurLayer(vb, canvas, deviation_x, deviation_y);
 }
 
+fn lvoPushBlendLayer(vb: *VectorBase, canvas: *vector.Canvas, opacity: f32, mode: u32) callconv(.c) i32 {
+    return PushBlendLayer(vb, canvas, opacity, mode);
+}
+
+fn lvoFilterLayer(vb: *VectorBase, canvas: *vector.Canvas, primitives: [*]const vector.FilterPrimitive, count: u32, region: *const vector.Rect) callconv(.c) i32 {
+    return FilterLayer(vb, canvas, primitives, count, region);
+}
+
+fn lvoPathLength(vb: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix) callconv(.c) f32 {
+    return PathLength(vb, path, matrix);
+}
+
+fn lvoPathPointAt(vb: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix, distance: f32, point: *vector.Point, angle: *f32) callconv(.c) bool {
+    return PathPointAt(vb, path, matrix, distance, point, angle);
+}
+
+fn lvoPathVertices(vb: *VectorBase, path: *const vector.Path, vertices: ?[*]vector.Vertex, room: u32) callconv(.c) u32 {
+    return PathVertices(vb, path, vertices, room);
+}
+
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
     vec(exec.libClose),
@@ -202,6 +232,11 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoBeginMask),
     vec(lvoEndMask),
     vec(lvoBlurLayer),
+    vec(lvoPushBlendLayer),
+    vec(lvoFilterLayer),
+    vec(lvoPathLength),
+    vec(lvoPathPointAt),
+    vec(lvoPathVertices),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

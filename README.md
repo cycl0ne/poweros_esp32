@@ -142,13 +142,13 @@ every module is in [the SDK's documentation](sdk/docs/README.md).
 | **Kernel** | tasks on every core, message ports, memory, libraries and devices; tag lists, hooks, dates and time zones, UTF-8 strings; the board's parts, described as data ([exec](sdk/docs/guides/exec.md), [utility](sdk/docs/guides/utility.md)) |
 | **Files** | processes, handlers and the shell's arguments; posfs - journaling, copy-on-write, checksummed, with snapshots; FAT32 and exFAT on cards and sticks; `RAM:` and `PIPE:`; SMB 2 and 3 shares as volumes; partitions from an RDB or a GPT on any drive ([dos](sdk/docs/guides/dos.md), [posfs](sdk/docs/guides/posfs.md), [disks](sdk/docs/guides/rdb.md)) |
 | **Screens** | one interface for every display, from a 3.5" panel to an HDMI monitor; screens, windows and gadgets in styles; animations; 3D in Vulkan's model, on the cores or a GPU ([displays](sdk/docs/guides/rtg.md), [intuition](sdk/docs/guides/intuition.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md)) |
-| **Text** | UTF-8 everywhere; bitmap and outline fonts - TrueType, OpenType, variable fonts, colour emoji - shaped with ligatures, kerning and marks, and fallback fonts, so Devanagari, Chinese, Japanese, Korean and emoji show in any font ([fonts](sdk/docs/guides/fonts.md)) |
+| **Text** | UTF-8 everywhere; bitmap and outline fonts - TrueType, OpenType, variable fonts, colour emoji - shaped with ligatures, kerning and marks, Arabic's joined forms and text of both directions, and fallback fonts, so Devanagari, Arabic, Chinese, Japanese, Korean and emoji show in any font ([fonts](sdk/docs/guides/fonts.md)) |
 | **Languages** | 47 countries and 33 languages besides English: dates, numbers, money and sorting as each country has them; programs translated through catalogs, German complete and the others as drafts; a keymap for every European layout and for Devanagari ([locale](sdk/docs/guides/locale.md)) |
 | **Sound** | up to sixteen streams mixed into an output, each output with its own volume and a ten-band equalizer; recording; WAV, MP3, FLAC and Ogg Vorbis, from files or internet radio ([sound](sdk/docs/guides/audio.md)) |
 | **Video** | films in MP4, MOV and Matroska - H.264, H.265, VP9 and AV1 - with their sound and subtitles, on the chip's own decoder where it has one |
 | **Network** | TCP/IP with IPv4 and IPv6, TLS 1.3 and 1.2, HTTP, WPA2 Wi-Fi, a packet filter; a shell over Telnet or SSH; a git client that clones, fetches, commits and pushes; SMB shares ([network](sdk/docs/guides/network.md)) |
 | **Devices** | USB hosts up to SuperSpeed with keyboards, mice, sticks and disks, serial and Ethernet adapters, Wi-Fi sticks, speakers and headsets; PCI Express; NVMe, SD cards and flash; Ethernet up to 1000 Mbit/s; I2C, RS-485 and Modbus ([USB](sdk/docs/guides/usb.md), [Modbus](sdk/docs/guides/modbus.md)) |
-| **Desktop** | the desktop with icons and a dock; requesters; datatypes for pictures, text, Markdown, HTML, animations and sounds; commodities, hotkeys and filters on the input ([desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [datatypes](sdk/docs/guides/datatypes.md), [commodities](sdk/docs/guides/commodities.md)) |
+| **Desktop** | the desktop with icons and a dock; requesters; datatypes for pictures - JPEG, progressive too, PNG, WebP, GIF, BMP, ICO, ILBM -, SVG drawings - their text in colour fonts too -, text, Markdown, HTML, animations - GIF, WebP, Lottie - and sounds; commodities, hotkeys and filters on the input ([desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [datatypes](sdk/docs/guides/datatypes.md), [commodities](sdk/docs/guides/commodities.md)) |
 | **When something fails** | a Guru and a ROM debugger on the serial port, memory debugging, the system log, and a failed program held for Suspend, Kill or Reboot ([debugging](sdk/docs/guides/debugging.md)) |
 
 The programs on the disk:
@@ -187,8 +187,8 @@ board runs is in [Boards](#boards).
 
 | `-Dboard=` | Board | State |
 |---|---|---|
-| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; its flash disk holds the shell, the network and the card ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
-| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; its flash disk holds the shell, the network and the card ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
+| `waveshare_7b` (default) | Waveshare ESP32-S3-Touch-LCD-7B: 7" 1024×600 RGB panel, GT911 touch, 16 MB flash, 8 MB PSRAM, microSD slot on SPI, RS-485, CAN, battery charger | runs: panel, touch, Wi-Fi, the card slot; its flash disk holds the base system, which boots into a shell ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: RS-485, the battery's voltage, a USB host on its USB-C socket; CAN not driven |
+| `es3c35p` | LCDwiki ES3C35P: 3.5" 480×320 QSPI panel, touch, ES8311 audio codec, SD card slot | runs: panel, touch, speaker, card; its flash disk holds the base system, which boots into a shell ([what a disk holds](#what-a-disk-holds)); not yet tried on the board: audio.device 2's streams, recording from the microphone, playing into a file, the battery's voltage, a USB host |
 | `qemu` | Espressif QEMU's ESP32-S3, with display, keyboard and a mouse with a wheel, an RS-485 port on its second serial port, and a USB controller with what `-Dusb` plugs in | runs, USB devices plugged in and out while it does (`-Dusb`, `-Dusb-disk`); sound into an output that goes nowhere |
 | `esp32p4_emu` | Espressif's esp-emulator running an ESP32-P4 on the boards' v1.x ROM: both cores, UART0, 32 MB PSRAM (`./zig build emu`) | the shell on UART0, dos with the flash disk and its RISC-V commands, a Guru with the ROM debugger; `-Dselftest` checks the chip; no screen |
 | `olimex_p4pc` | Olimex ESP32-P4-PC: ESP32-P4NRW32 (16 MB flash, 32 MB PSRAM), console on the chip's USB port, 10/100 Ethernet (IP101GRR), HDMI, a MIPI-DSI connector (here Olimex's MIPI-LCD2.8, 480×640), four USB host ports, ES8311 audio, microSD | runs: the USB console, Ethernet, the desktop on the DSI panel or over HDMI, in the largest of 1360×768, 1280×720, 1024×768 and 800×600 the monitor names ([photo](docs/screenshots/README.md#on-the-board)), both cores, PSRAM at 200 MHz, the 2D engine and the JPEG codec, USB keyboards, mice and sticks through its hub, the microSD card, sound on the jack (the codec's one output on both sides) - the [Player](docs/screenshots/README.md#music-sysprogramsplayer) on its panel; an AIC8800 USB Wi-Fi stick, joined to WPA2 networks; the battery once its solder jumpers are closed; not yet tried on the board: recording, playing into a file, DVI to a monitor without HDMI's block |
@@ -262,7 +262,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/build-qemu.sh` | QEMU with the 1024×600 display, keyboard, mouse and wheel, and the USB controller, at 240 MHz (an older QEMU runs too, without what it lacks - run the script again for the wheel and USB) |
 | `scripts/fetch-wifi.sh` | the radio's vendor libraries for `DEVS:networks/esp32s3wifi.device` |
 | `scripts/fetch-aic8800.sh` | the AIC8800 USB Wi-Fi stick's firmware, which `DEVS:usb/aic8800.device` loads into it (the ESP32-P4's disk) |
-| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` (Spleen, Go, Liberation, Noto Sans Devanagari, Noto Sans CJK and Noto Color Emoji on the 64-bit machines' disks), and a font only the host tests read (Source Sans 3) |
+| `scripts/fetch-fonts.sh` | the fonts in `FONTS:` on the disks that hold `fonts` (Spleen and Go; Liberation, Noto Sans Devanagari, Noto Sans Arabic, Noto Sans CJK and Noto Color Emoji on the 64-bit machines' only), and a font only the host tests read (Source Sans 3) |
 | `scripts/fetch-emoji.sh` | Unicode's list of the emoji and the CLDR's names for them, made into `LOCALE:Emoji` - the emoji in their groups and order, and what each is called in the disk's languages (on the 64-bit machines' disks) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the Compute Module 5's radio firmware, which `DEVS:networks/cyw43455.device` loads into it (the AArch64 disk) |
@@ -270,6 +270,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-amdgpu.sh` | an AMD graphics device's video decoder firmware and its security processor's table of contents, which `amdgpu.resource` loads (the x86-64 disk) |
 | `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the 64-bit machines' disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
+| `scripts/fetch-svg-suite.sh` | resvg's test suite - some 1800 SVG files, each with resvg's picture of it, and the fonts their text is in - which `./zig build svg-suite` compares svg.datatype's drawing with; on no disk |
 | `scripts/fetch-novnc.sh` | noVNC, the VNC client that runs in a browser, which `scripts/qemu-web.sh` serves beside a QEMU machine to show its display in a browser tab |
 | `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display. With it the v1.x chips' ROM (Espressif's ROM ELFs), which `./zig build emu` boots |
 
@@ -378,6 +379,7 @@ The [install guide](sdk/docs/guides/install.md) has the details, and the
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
+| `./zig build svg-suite` | every file of resvg's test suite (`scripts/fetch-svg-suite.sh`) drawn as svg.datatype draws it, compared with resvg's picture and counted by folder; fails on a file further away than `tools/svgcompare/suite-far.txt`, the files not close today, allows |
 | `./zig build stick -Dboard=qemu_q35` | the medium a UEFI machine starts from, into `release/stick-<board>.img`: a GPT with an EFI System partition holding the loader and the kernel, and a PowerOS container with the system on a posfs partition, which the machine runs from and installs itself from ([the install guide](sdk/docs/guides/install.md#the-medium-a-machine-is-first-reached-with)) |
 | `-Dstick-size=320` | how many mebibytes that medium's EFI System partition is |
 | `-Dstick-ram` | the system on that medium as a disk image beside the kernel too, which the loader reads into RAM: for a machine whose USB controller the system does not drive |
@@ -418,7 +420,8 @@ sets in `src/boards/<board>/disk.zig`:
 
 | Set | What is in it |
 |---|---|
-| `base` | what a shell needs: `C:`, `S:`, locale.library, the keymaps, the fonts |
+| `base` | what a shell needs: `C:`, `S:`, locale.library, the keymaps; the ROM's fonts draw it |
+| `fonts` | `FONTS:`: Spleen and Go, and on the 64-bit machines' disks Liberation, Noto Sans Devanagari, Arabic and CJK and Noto Color Emoji, with `LOCALE:Emoji` |
 | `languages` | what the system speaks besides English: `LOCALE:`'s languages, countries and catalogs |
 | `gui` | the desktop: anvil.library, the gadget and image classes, the datatypes of pictures and text, the programs with windows |
 | `net` | bsdsocket.library and what speaks over it, the network drivers, `C:net` |
@@ -429,19 +432,18 @@ sets in `src/boards/<board>/disk.zig`:
 | `3d` | facet.library, its drivers and what draws with it |
 | `modbus` | modbus.library and the RS-485 line |
 | `commodities` | commodities.library and `SYS:Commodities` |
+| `svg` | svg.datatype: SVG files as pictures |
 | `dev` | Git |
 | `tests` | `C:test` and `SYS:Tests`, and the example library and gadget they open |
 
-The two ESP32-S3 boards' flash holds what starts the board and no more -
-`base`, `net`, `wifi`, `storage` and `usb`: the shell on the panel, in
-English, the network over the radio, the card in the slot and USB. The
-desktop, sound and the other languages are to come onto the card as
-packages. The ESP32-P4 boards hold every set but `dev` and `tests`. The
-two emulators' disks have `tests`, and are where the test programs are
-run; QEMU's ESP32-S3 keeps the desktop for them and leaves sound, the
-languages and Git off. The 64-bit machines' disks hold every set. `-Dsets=` names other sets for one
-build, and what a chip cannot run is on none of its disks whatever the
-sets say.
+Every ESP32 board's flash - the S3's and the P4's, and the two
+emulators' - holds `base` and no more: the board boots into a shell, in
+English, drawn in the ROM's fonts, and `FONTS:` is an empty drawer.
+Everything else is built for those chips all the same, and is the
+developer's to add: `-Dsets=` for the flash (`-Dsets=base,tests` for
+the test programs in an emulator), or installed apart from it. The
+64-bit machines' disks hold every set. What a chip cannot run is on
+none of its disks whatever the sets say.
 
 A file is on a disk when its set and the set of every drawer it lies in
 are among the disk's: `System/NetLoad` is in `net` and lies in a drawer

@@ -33,4 +33,20 @@ void DisposeFontContents(?*diskfont.fontfile.ContentsHeader contents)
 ?*diskfont.OutlineFont OpenOutlineFont([*:0]const u8 name, graphics.FontStyle style)
 /// What OpenOutlineFont gave, given back. Null does nothing. Since 1.4.
 void CloseOutlineFont(?*diskfont.OutlineFont font)
+/// Family `index` of those font.prefs names under FALLBACK, its name and
+/// a NUL into `name`; false past the list's end or for too little room.
+/// Since 1.16.
+bool FallbackFamily(u32 index, [*]u8 name, u32 size)
+/// The family whose fonts call themselves `name` - "Noto Sans" - or
+/// whose contents file is `name` with ".font": that file's name and a
+/// NUL into `into`; false for none or too little room. Since 1.16.
+bool FindFamily([*:0]const u8 name, [*]u8 into, u32 size)
+/// The family font.prefs names for the generic family `generic`
+/// (GENERIC_*), its name and a NUL into `into`; false where it names
+/// none and there is no default. Since 1.16.
+bool GenericFamily(u32 generic, [*]u8 into, u32 size)
+/// A family's outline in the face nearest the weight, width and slant
+/// the tags ask (DFA_*), from the family and its faces, a variable font
+/// at the place asked. Null if it has no outline. Since 1.16.
+?*diskfont.OutlineFont OpenOutlineFontTagList([*:0]const u8 name, ?[*]const utility.TagItem tags)
 ##end

@@ -1054,3 +1054,69 @@ test "truetype: a font that lacks what every font has is not opened" {
     try testing.expect(tb.OpenOutline(&sound.bytes, 60, null) == null);
     try rig.down();
 }
+
+test "truetype: a glyph's measures in a column, from the vertical metrics or the line's height" {
+    var rig = try Rig.up();
+    const tb = rig.tb;
+    var cmap = builder.Cmap.init(1);
+    cmap.begin(3, 1);
+    letter(&cmap, 4, 1);
+    var column: truetype.VerticalMetrics = undefined;
+
+    // Without vertical metrics: the line's height, 800 over the baseline
+    // and 200 under it, and the square, 700 tall, in its middle; the
+    // glyph of no outline from the ascender.
+    var plain: builder.File = .{};
+    _ = builder.font(&plain, .{ .cmap = cmap.written() });
+    const without = tb.OpenOutline(&plain.bytes, plain.len, null) orelse return error.NotRead;
+    try testing.expect(tb.GlyphVerticalMetrics(without, 1, &column));
+    try testing.expectEqual(truetype.VerticalMetrics{ .advance = 1000, .origin_x = 300, .origin_y = 850 }, column);
+    try testing.expect(tb.GlyphVerticalMetrics(without, 0, &column));
+    try testing.expectEqual(truetype.VerticalMetrics{ .advance = 1000, .origin_x = 300, .origin_y = 800 }, column);
+    try testing.expect(!tb.GlyphVerticalMetrics(without, 8, &column));
+    try testing.expectEqual(truetype.VerticalMetrics{}, column);
+    tb.CloseOutline(without);
+
+    // Two records of `vmtx`, then the top side bearings of the glyphs
+    // after them: the box's top and the bearing, the last record's
+    // advance for the glyphs past the records.
+    var vhea: builder.File = .{};
+    vhea.long(0x0001_1000);
+    vhea.skip(30);
+    vhea.word(2);
+    var vmtx: builder.File = .{};
+    for ([_][2]u16{ .{ 1000, 50 }, .{ 900, 80 } }) |record| {
+        vmtx.word(record[0]);
+        vmtx.word(record[1]);
+    }
+    for ([_]i16{ 60, 70, -10, 0, 0, 0 }) |bearing| vmtx.signed(bearing);
+    var columns: builder.File = .{};
+    _ = builder.font(&columns, .{ .cmap = cmap.written(), .more = &.{ .{ .tag = "vhea", .bytes = vhea.written() }, .{ .tag = "vmtx", .bytes = vmtx.written() } } });
+    const with = tb.OpenOutline(&columns.bytes, columns.len, null) orelse return error.NotRead;
+    try testing.expect(tb.GlyphVerticalMetrics(with, 1, &column));
+    try testing.expectEqual(truetype.VerticalMetrics{ .advance = 900, .origin_x = 300, .origin_y = 780 }, column);
+    try testing.expect(tb.GlyphVerticalMetrics(with, 3, &column));
+    try testing.expectEqual(truetype.VerticalMetrics{ .advance = 900, .origin_x = 300, .origin_y = 770 }, column);
+    try testing.expect(tb.GlyphVerticalMetrics(with, 4, &column));
+    try testing.expectEqual(@as(i32, 690), column.origin_y);
+    tb.CloseOutline(with);
+
+    // `VORG`'s origins come first: a glyph's own record, the default for
+    // the others.
+    var vorg: builder.File = .{};
+    vorg.word(1);
+    vorg.word(0);
+    vorg.signed(880);
+    vorg.word(1);
+    vorg.word(2);
+    vorg.signed(900);
+    var origins: builder.File = .{};
+    _ = builder.font(&origins, .{ .cmap = cmap.written(), .more = &.{ .{ .tag = "vhea", .bytes = vhea.written() }, .{ .tag = "vmtx", .bytes = vmtx.written() }, .{ .tag = "VORG", .bytes = vorg.written() } } });
+    const kept = tb.OpenOutline(&origins.bytes, origins.len, null) orelse return error.NotRead;
+    try testing.expect(tb.GlyphVerticalMetrics(kept, 2, &column));
+    try testing.expectEqual(truetype.VerticalMetrics{ .advance = 900, .origin_x = 300, .origin_y = 900 }, column);
+    try testing.expect(tb.GlyphVerticalMetrics(kept, 1, &column));
+    try testing.expectEqual(@as(i32, 880), column.origin_y);
+    tb.CloseOutline(kept);
+    try rig.down();
+}

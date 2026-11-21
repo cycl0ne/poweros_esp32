@@ -172,7 +172,8 @@ const image_dirs = [_][]const u8{
     "tests",
     "tests/datatypes",
     // FONTS: - a contents file and a directory of sizes per family;
-    // empty without scripts/fetch-fonts.sh.
+    // empty without scripts/fetch-fonts.sh, and on a disk without the
+    // `fonts` set, where FONTS: is still a place to install them.
     "fonts",
     // ENVARC: lives here: the global variables that survive a reboot.
     // Sys/ holds the system's settings, Sys/net/ the network's,
@@ -795,6 +796,15 @@ pub const DiskImages = struct {
             for (images.runs) |run| run.addPrefixedFileArg(prefix, path);
         }
 
+        /// Those of these disks that hold `set`.
+        pub fn holding(images: Some, b: *std.Build, set: poweros_userland.Set) []const *std.Build.Step.Run {
+            var runs: std.ArrayList(*std.Build.Step.Run) = .empty;
+            for (images.runs, images.sets) |run, sets| {
+                if (sets.contains(set)) runs.append(b.allocator, run) catch @panic("OOM");
+            }
+            return runs.items;
+        }
+
         /// The file `from` at `path` on each of these disks that holds
         /// `set` and the sets of the drawers it lies in.
         pub fn addFileIn(images: Some, set: poweros_userland.Set, path: []const u8, from: std.Build.LazyPath) void {
@@ -1098,6 +1108,8 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         if (!liberation) std.log.info("no Liberation fonts (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:sans, serif or mono", .{});
         const devanagari = hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf");
         if (!devanagari) std.log.info("no Noto Sans Devanagari, Regular and Bold (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:devanagari", .{});
+        const arabic = hasFontFile(b, dir, devanagari_dir ++ "/NotoSansArabic-Regular.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansArabic-Bold.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansArabic.licence");
+        if (!arabic) std.log.info("no Noto Sans Arabic, Regular and Bold, and its licence (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:arabic", .{});
         const cjk = hasFontFile(b, dir, devanagari_dir ++ "/" ++ cjk_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansCJK.licence");
         if (!cjk) std.log.info("no Noto Sans CJK Regular and its licence (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:cjk-jp, -kr, -sc, -tc and -hk", .{});
         const emoji = hasFontFile(b, dir, devanagari_dir ++ "/" ++ emoji_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoColorEmoji.licence");
@@ -1107,12 +1119,13 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
                 .base => {},
                 .liberation => if (!liberation) continue,
                 .devanagari => if (!devanagari) continue,
+                .arabic => if (!arabic) continue,
                 .cjk => if (!cjk) continue,
                 .emoji => if (!emoji) continue,
             }
-            // The 64-bit disks take every family; the ESP32s' the ones
-            // that are not `wide`.
-            const onto: FontPlace = .{ .runs = disks.some(family.wide).runs };
+            // The disks that hold `fonts`: the 64-bit ones every family,
+            // an ESP32's the ones that are not `wide`.
+            const onto: FontPlace = .{ .runs = disks.some(family.wide).holding(b, .fonts) };
             const run = b.addRunArtifact(fontconv);
             const out = run.addOutputDirectoryArg(family.name);
             run.addArg(family.name);
@@ -1129,12 +1142,15 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
                 onto.file(b.fmt("fonts/{s}", .{at}), out.path(b, at));
             }
         }
-        disks.addPrefixedFileArg("fonts/spleen.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
-        disks.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
-        if (liberation) disks.some(true).addPrefixedFileArg("fonts/liberation.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
-        if (devanagari) disks.some(true).addPrefixedFileArg("fonts/devanagari.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansDevanagari.licence" }) });
-        if (cjk) disks.some(true).addPrefixedFileArg("fonts/cjk.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansCJK.licence" }) });
-        if (emoji) disks.some(true).addPrefixedFileArg("fonts/emoji.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoColorEmoji.licence" }) });
+        const every: FontPlace = .{ .runs = disks.some(false).holding(b, .fonts) };
+        const wide: FontPlace = .{ .runs = disks.some(true).holding(b, .fonts) };
+        every.file("fonts/spleen.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, "spleen-2.2.0/LICENSE" }) });
+        every.file("fonts/go.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
+        if (liberation) wide.file("fonts/liberation.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
+        if (devanagari) wide.file("fonts/devanagari.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansDevanagari.licence" }) });
+        if (arabic) wide.file("fonts/arabic.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansArabic.licence" }) });
+        if (cjk) wide.file("fonts/cjk.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansCJK.licence" }) });
+        if (emoji) wide.file("fonts/emoji.licence", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoColorEmoji.licence" }) });
     }
     // SYS:Certificates/Roots - Mozilla's roots, which
     // scripts/fetch-certs.sh fetched, as the trust store tools/anchors
@@ -1163,7 +1179,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     // LOCALE:Emoji/ - the emoji in their groups and order, and their
     // names in the disk's languages, which tools/emojigen makes of what
     // scripts/fetch-emoji.sh fetched - and the licence of that beside
-    // them. Where FONTS:emoji is: on the 64-bit disks.
+    // them. Where FONTS:emoji is: on the 64-bit disks that hold `fonts`.
     if (emojiDir(b)) |dir| {
         const emojigen = b.addExecutable(.{
             .name = "emojigen",
@@ -1177,7 +1193,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         const run = b.addRunArtifact(emojigen);
         run.addFileArg(.{ .cwd_relative = b.pathJoin(&.{ dir, "emoji-test.txt" }) });
         const out = run.addOutputDirectoryArg("emoji");
-        const onto: FontPlace = .{ .runs = disks.some(true).runs };
+        const onto: FontPlace = .{ .runs = disks.some(true).holding(b, .fonts) };
         onto.drawer("locale/Emoji");
         onto.file("locale/Emoji/emoji.list", out.path(b, "emoji.list"));
         for (emoji_languages) |language| {

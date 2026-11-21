@@ -31,6 +31,10 @@ const FontInstance = @import("outline/fontinstance.zig").FontInstance;
 const FontCoordinates = @import("outline/fontcoordinates.zig").FontCoordinates;
 const GlyphAdvance = @import("glyph/glyphadvance.zig").GlyphAdvance;
 const VariationDelta = @import("outline/variationdelta.zig").VariationDelta;
+const GlyphVerticalMetrics = @import("glyph/glyphverticalmetrics.zig").GlyphVerticalMetrics;
+const GlyphPaints = @import("colour/glyphpaints.zig").GlyphPaints;
+const GlyphPicture = @import("colour/glyphpicture.zig").GlyphPicture;
+const GlyphDocument = @import("colour/glyphdocument.zig").GlyphDocument;
 
 /// truetype.library's interface, as the SDK generates it from
 /// sdk/fd/truetype_lib.fd.
@@ -72,6 +76,10 @@ const contract_files = [_][]const u8{
     @embedFile("outline/fontcoordinates.zig"),
     @embedFile("glyph/glyphadvance.zig"),
     @embedFile("outline/variationdelta.zig"),
+    @embedFile("glyph/glyphverticalmetrics.zig"),
+    @embedFile("colour/glyphpaints.zig"),
+    @embedFile("colour/glyphpicture.zig"),
+    @embedFile("colour/glyphdocument.zig"),
 };
 
 fn lvoOpenOutline(tb: *TrueTypeBase, file: [*]const u8, size: u32, tags: ?[*]const utility.TagItem) callconv(.c) ?*truetype.Outline {
@@ -125,6 +133,21 @@ fn lvoGlyphAdvance(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32) ca
 fn lvoVariationDelta(tb: *TrueTypeBase, outline: *truetype.Outline, store: [*]const u8, size: u32, item: u32, regions: ?*u32) callconv(.c) i32 {
     return VariationDelta(tb, outline, store, size, item, regions);
 }
+fn lvoGlyphVerticalMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.VerticalMetrics) callconv(.c) bool {
+    return GlyphVerticalMetrics(tb, outline, glyph, metrics);
+}
+
+fn lvoGlyphPaints(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, steps: ?[*]truetype.PaintStep, room: u32) callconv(.c) u32 {
+    return GlyphPaints(tb, outline, glyph, steps, room);
+}
+
+fn lvoGlyphPicture(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, picture: *truetype.Picture) callconv(.c) bool {
+    return GlyphPicture(tb, outline, glyph, picture);
+}
+
+fn lvoGlyphDocument(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, document: *truetype.Document) callconv(.c) bool {
+    return GlyphDocument(tb, outline, glyph, document);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
@@ -148,6 +171,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFontCoordinates),
     vec(lvoGlyphAdvance),
     vec(lvoVariationDelta),
+    vec(lvoGlyphVerticalMetrics),
+    vec(lvoGlyphPaints),
+    vec(lvoGlyphPicture),
+    vec(lvoGlyphDocument),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

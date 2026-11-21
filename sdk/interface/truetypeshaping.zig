@@ -18,6 +18,7 @@ pub const LVO = struct {
     pub const ShapeGlyphs = libraries.lvo(4);
     pub const ShapeText = libraries.lvo(5);
     pub const LigatureCarets = libraries.lvo(6);
+    pub const BidiLevels = libraries.lvo(7);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -26,6 +27,7 @@ pub const Fn = struct {
     pub const ShapeGlyphs = *const fn (*TrueTypeShapingBase, *truetype.Outline, u32, u32, u32, ?[*]const truetypeshaping.Feature, *truetypeshaping.ShapedRun) callconv(.c) i32;
     pub const ShapeText = *const fn (*TrueTypeShapingBase, *truetype.Outline, [*]const u8, u32, u32, u32, ?[*]const truetypeshaping.Feature, *truetypeshaping.ShapedRun) callconv(.c) i32;
     pub const LigatureCarets = *const fn (*TrueTypeShapingBase, *truetype.Outline, u32, [*]i32, u32) callconv(.c) u32;
+    pub const BidiLevels = *const fn (*TrueTypeShapingBase, [*]const u8, u32, u32, [*]u8) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -61,5 +63,15 @@ pub const TrueTypeShapingBase = opaque {
     /// many there are, the first `room` of them written to `carets`.
     pub fn LigatureCarets(self: *TrueTypeShapingBase, outline: *truetype.Outline, glyph: u32, carets: [*]i32, room: u32) u32 {
         return libraries.call(self, LVO.LigatureCarets, Fn.LigatureCarets, .{ outline, glyph, carets, room });
+    }
+
+    /// The bidirectional level of each character of the `length` bytes of
+    /// UTF-8 at `text`, written to `levels`, a byte for each byte of the
+    /// text: even for a character read from left to right, odd for one read
+    /// from right to left. `direction` gives the paragraphs' own: TTS_LEFT_TO_RIGHT,
+    /// TTS_RIGHT_TO_LEFT or TTS_FIRST_STRONG. TTS_OK, or TTSERR_NOMEM,
+    /// TTSERR_DIRECTION.
+    pub fn BidiLevels(self: *TrueTypeShapingBase, text: [*]const u8, length: u32, direction: u32, levels: [*]u8) i32 {
+        return libraries.call(self, LVO.BidiLevels, Fn.BidiLevels, .{ text, length, direction, levels });
     }
 };

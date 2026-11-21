@@ -105,6 +105,15 @@ pub const Font = struct {
     underline_thickness: i32,
     strikeout_position: i32,
     strikeout_thickness: i32,
+    /// From `OS/2` (since 1.17).
+    subscript_offset: i32,
+    superscript_offset: i32,
+    /// How heavy and how wide the font is drawn (since 1.17): its weight
+    /// class, 1 to 1000, and its width in tenths of a percent of normal,
+    /// from `OS/2`, or at the outline's place on a `wght` and a `wdth`
+    /// axis; 400 and 1000 where neither says.
+    weight: u16,
+    stretch: u16,
     /// The most points and contours of a glyph, simple or composite, from
     /// `maxp`; `default_points` and `default_contours` when it has none.
     max_points: u32,
@@ -317,7 +326,23 @@ fn readMeasures(font: *Font, maxp: Table) void {
     font.underline_thickness = 0;
     font.strikeout_position = 0;
     font.strikeout_thickness = 0;
+    font.subscript_offset = 0;
+    font.superscript_offset = 0;
+    font.weight = 400;
+    font.stretch = 1000;
     if (findTable(font, "OS/2")) |os2| {
+        if (os2.len >= 8) {
+            const weight = wordIn(font, os2, 4);
+            if (weight >= 1 and weight <= 1000) font.weight = @intCast(weight);
+            // The width classes, 1 to 9, in tenths of a percent.
+            const widths = [9]u16{ 500, 625, 750, 875, 1000, 1125, 1250, 1500, 2000 };
+            const width = wordIn(font, os2, 6);
+            if (width >= 1 and width <= 9) font.stretch = widths[width - 1];
+        }
+        if (os2.len >= 26) {
+            font.subscript_offset = signedIn(font, os2, 16);
+            font.superscript_offset = signedIn(font, os2, 24);
+        }
         if (os2.len >= 30) {
             font.strikeout_thickness = signedIn(font, os2, 26);
             font.strikeout_position = signedIn(font, os2, 28);
@@ -718,7 +743,7 @@ fn pairValue(font: *const Font, kern: Table, first: u32, count: u32, key: u32) ?
 
 /// Where a glyph's data is in `glyf`, and how long; null for a glyph of
 /// no outline.
-fn glyphData(font: *const Font, glyph: u32) ?Table {
+pub fn glyphData(font: *const Font, glyph: u32) ?Table {
     if (glyph >= font.glyph_count) return null;
     const start, const end = if (font.loca_long)
         .{ longIn(font, font.loca, glyph * 4), longIn(font, font.loca, glyph * 4 + 4) }

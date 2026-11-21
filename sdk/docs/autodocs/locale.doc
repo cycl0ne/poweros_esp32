@@ -19,6 +19,7 @@ locale.library/IsPunct
 locale.library/IsSpace
 locale.library/IsUpper
 locale.library/IsXDigit
+locale.library/LanguageCode
 locale.library/OpenCatalogA
 locale.library/OpenLocale
 locale.library/ParseDate
@@ -947,6 +948,51 @@ locale.library/StrnCmp
    EXAMPLES
 	    var after = at;
 	    while (at < text.len and lb.IsXDigit(loc, utf8.next(text, &after))) at = after;
+locale.library/LanguageCode                        locale.library/LanguageCode
+
+   NAME
+	LanguageCode -- The ISO 639-1 code of a language, by its name.
+
+   SYNOPSIS
+	    fn LanguageCode(_: *LocaleBase, language: [*:0]const u8) ?[*:0]const u8
+
+   SINCE
+	1.7. LVO -120.
+
+   INPUTS
+	- `language` - a language's name as the library gives it: a locale's
+	  `language_name` or one of its `pref_languages` (`deutsch`). Case
+	  does not count.
+
+   RESULT
+	Its two letters, lower case (`de`); null for a language the library
+	has no file for and that is not English. Chinese in either of its
+	scripts is `zh`.
+
+   BEHAVIOR
+	A program that speaks to the world in its codes - a document's
+	language, a service asked for its answers in one - takes the user's
+	language from the locale and its code from here.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: safe.
+	- Locks: none.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	The code is the library's, good while it is open.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenLocale`
+
+   EXAMPLES
+	    const loc = lb.OpenLocale(null) orelse return;
+	    defer lb.CloseLocale(loc);
+	    const code = lb.LanguageCode(loc.language_name) orelse "en";
 locale.library/OpenCatalogA                        locale.library/OpenCatalogA
 
    NAME

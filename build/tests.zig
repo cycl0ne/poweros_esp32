@@ -142,8 +142,8 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     const v3d_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/facet/driver/v3d/v3d.zig"), .target = b.graph.host });
     v3d_mod.addImport("sdk", sdk);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = v3d_mod })).step);
-    // The baseline JPEG decoder, jpeg.datatype's and videocodec.library's,
-    // tested on its own as well.
+    // The JPEG decoder, jpeg.datatype's and mjpeg.vcodec's, tested on its
+    // own as well.
     const jpegdecode_mod = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/jpeg/decode.zig"), .target = b.graph.host });
     disk_test_mod.addImport("jpegdecode", jpegdecode_mod);
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = jpegdecode_mod })).step);
@@ -155,6 +155,11 @@ pub fn addCheckSteps(b: *std.Build, with: CheckStepsWith) void {
     // The VP8 decoder, vp8.vcodec's, likewise.
     const vp8core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp8/core.zig"), .target = b.graph.host });
     test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = vp8core_mod })).step);
+    // The WebP decoder, webp.datatype's and webpanim.datatype's, with the
+    // VP8 decoder its lossy pictures are, and its tests of whole files.
+    const webpdecode_mod = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/webp/decode.zig"), .target = b.graph.host });
+    webpdecode_mod.addImport("vp8core", vp8core_mod);
+    test_step.dependOn(&b.addRunArtifact(b.addTest(.{ .root_module = webpdecode_mod })).step);
     // The VP9 decoder, vp9.vcodec's, likewise.
     const vp9core_mod = b.createModule(.{ .root_source_file = disk_dep.path("libs/codecs/vp9/core.zig"), .target = b.graph.host });
     vp9core_mod.addImport("sdk", sdk);

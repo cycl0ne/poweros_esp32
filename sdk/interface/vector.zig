@@ -42,6 +42,11 @@ pub const LVO = struct {
     pub const BeginMask = libraries.lvo(27);
     pub const EndMask = libraries.lvo(28);
     pub const BlurLayer = libraries.lvo(29);
+    pub const PushBlendLayer = libraries.lvo(30);
+    pub const FilterLayer = libraries.lvo(31);
+    pub const PathLength = libraries.lvo(32);
+    pub const PathPointAt = libraries.lvo(33);
+    pub const PathVertices = libraries.lvo(34);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -73,6 +78,11 @@ pub const Fn = struct {
     pub const BeginMask = *const fn (*VectorBase, *vector.Canvas) callconv(.c) i32;
     pub const EndMask = *const fn (*VectorBase, *vector.Canvas, u32) callconv(.c) i32;
     pub const BlurLayer = *const fn (*VectorBase, *vector.Canvas, f32, f32) callconv(.c) i32;
+    pub const PushBlendLayer = *const fn (*VectorBase, *vector.Canvas, f32, u32) callconv(.c) i32;
+    pub const FilterLayer = *const fn (*VectorBase, *vector.Canvas, [*]const vector.FilterPrimitive, u32, *const vector.Rect) callconv(.c) i32;
+    pub const PathLength = *const fn (*VectorBase, *const vector.Path, ?*const vector.Matrix) callconv(.c) f32;
+    pub const PathPointAt = *const fn (*VectorBase, *const vector.Path, ?*const vector.Matrix, f32, *vector.Point, *f32) callconv(.c) bool;
+    pub const PathVertices = *const fn (*VectorBase, *const vector.Path, ?[*]vector.Vertex, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -213,5 +223,38 @@ pub const VectorBase = opaque {
     /// VECTOR_OK, or VECTORERR_DEPTH with no layer. Since 1.4.
     pub fn BlurLayer(self: *VectorBase, canvas: *vector.Canvas, deviation_x: f32, deviation_y: f32) i32 {
         return libraries.call(self, LVO.BlurLayer, Fn.BlurLayer, .{ canvas, deviation_x, deviation_y });
+    }
+
+    /// What is drawn until PopLayer goes onto a layer of its own, put down at
+    /// the opacity in a blend mode (BLEND_*), CSS's mix-blend-mode. Since 1.5.
+    pub fn PushBlendLayer(self: *VectorBase, canvas: *vector.Canvas, opacity: f32, mode: u32) i32 {
+        return libraries.call(self, LVO.PushBlendLayer, Fn.PushBlendLayer, .{ canvas, opacity, mode });
+    }
+
+    /// What is drawn on the last layer pushed through a filter's primitives
+    /// (FILTER_*), one after another, the last one's result left on it inside
+    /// the region, in pixels, and nothing outside: VECTOR_OK, VECTORERR_DEPTH
+    /// with no layer, VECTORERR_NOMEM. Since 1.5.
+    pub fn FilterLayer(self: *VectorBase, canvas: *vector.Canvas, primitives: [*]const vector.FilterPrimitive, count: u32, region: *const vector.Rect) i32 {
+        return libraries.call(self, LVO.FilterLayer, Fn.FilterLayer, .{ canvas, primitives, count, region });
+    }
+
+    /// How long the path is through the matrix (null: the identity), its
+    /// contours' lengths summed. Since 1.5.
+    pub fn PathLength(self: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix) f32 {
+        return libraries.call(self, LVO.PathLength, Fn.PathLength, .{ path, matrix });
+    }
+
+    /// Where the path is, `distance` along it through the matrix, and which
+    /// way it goes there in degrees: false before its start, past its end and
+    /// for an empty path. Since 1.5.
+    pub fn PathPointAt(self: *VectorBase, path: *const vector.Path, matrix: ?*const vector.Matrix, distance: f32, point: *vector.Point, angle: *f32) bool {
+        return libraries.call(self, LVO.PathPointAt, Fn.PathPointAt, .{ path, matrix, distance, point, angle });
+    }
+
+    /// The path's vertices, with the directions in and out of each
+    /// (vector.Vertex), as many as `room` holds: how many it has. Since 1.5.
+    pub fn PathVertices(self: *VectorBase, path: *const vector.Path, vertices: ?[*]vector.Vertex, room: u32) u32 {
+        return libraries.call(self, LVO.PathVertices, Fn.PathVertices, .{ path, vertices, room });
     }
 };
