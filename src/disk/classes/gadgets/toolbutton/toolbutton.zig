@@ -19,6 +19,9 @@
 //! shows is in the middle of its box - a medium one's at the left of it,
 //! since a column of them lines up there. The label's room is its own
 //! width or that of `TOOLBUTTON_RoomFor`'s text, whichever is wider.
+//! What the label and that text measure is kept with the font they were
+//! measured in (`widthsOf`): a layout asks a button its size many times
+//! over while a window is sized, and the words are the same each time.
 //!
 //! It is drawn as `imageclass.PART_TOOL`, by a frameiclass frame of that
 //! part, in the style state its press, its toggle and the pointer put it
@@ -71,8 +74,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = tb.TOOLBUTTON_CLASS,
     .version = 1,
-    .revision = 4,
-    .date = "11.11.2026",
+    .revision = 5,
+    .date = "21.11.2026",
     .super = classusr.BUTTONGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -111,6 +114,21 @@ const Data = extern struct {
     /// while it is down.
     list_frame: ?*Object = null,
     panel: listpanel.Panel = .{},
+    /// What the label and `room_for` measured, and the font and the
+    /// line's height they were measured at; null when they are to be
+    /// measured again (`widthsOf`).
+    widths: Widths = .{},
+    measured_font: ?*const graphics.TextFont = null,
+    measured_line: i32 = 0,
+};
+
+/// What the label measures: the whole of it, its lines under a large
+/// button's picture - the whole label again where it is not broken -
+/// and `TOOLBUTTON_RoomFor`'s text.
+const Widths = extern struct {
+    whole: i32 = 0,
+    lines: [2]i32 = .{ 0, 0 },
+    room: i32 = 0,
 };
 
 fn layersOf(base: *gadgets.Base) *LayersBase {
@@ -213,8 +231,32 @@ fn measuredWidth(ib: *sdk.interface.intuition.IntuitionBase, m: support.Measure,
     return m.width(ib, @ptrCast(&buffer));
 }
 
+/// What the label and `room_for` measure in the font measured with:
+/// kept from the last time they were measured in it, and measured again
+/// in another font or at another height, or after a new label or room
+/// text (`OM_SET`).
+fn widthsOf(ib: *sdk.interface.intuition.IntuitionBase, own: *Data, g: *const gc.Gadget, m: support.Measure, line: i32) Widths {
+    const font = m.font orelse return .{};
+    if (own.measured_font == font and own.measured_line == line) return own.widths;
+    var widths = Widths{};
+    if (g.text) |text| {
+        widths.whole = measuredWidth(ib, m, text, .{ .from = 0, .to = textLen(text) });
+        const lines = linesOf(text, true);
+        widths.lines[0] = widths.whole;
+        if (lines[1]) |second| {
+            widths.lines[0] = measuredWidth(ib, m, text, lines[0].?);
+            widths.lines[1] = measuredWidth(ib, m, text, second);
+        }
+    }
+    if (own.room_for) |kept| widths.room = m.width(ib, kept);
+    own.widths = widths;
+    own.measured_font = font;
+    own.measured_line = line;
+    return widths;
+}
+
 /// How big what it shows is at `size`, in the font measured with.
-fn contents(base: *gadgets.Base, own: *const Data, size: u32, g: *const gc.Gadget, m: support.Measure) gc.Box {
+fn contents(base: *gadgets.Base, own: *Data, size: u32, g: *const gc.Gadget, m: support.Measure) gc.Box {
     const ib = base.intuition_base;
     const line = m.lineHeight(base.graphics_base);
     const picture = pictureSize(own, size, line);
@@ -227,18 +269,21 @@ fn contents(base: *gadgets.Base, own: *const Data, size: u32, g: *const gc.Gadge
             return .{ .width = @max(picture, mark_width), .height = picture + gap_under + line };
         };
         const lines = linesOf(text, true);
+        const widths = widthsOf(ib, own, g, m, line);
         var widest: i32 = if (mark != 0) mark_width else 0;
-        for (lines, 0..) |maybe, i| if (maybe) |l| {
+        for (lines, 0..) |maybe, i| if (maybe != null) {
             const after: i32 = if (i == 1) mark else 0;
-            widest = @max(widest, measuredWidth(ib, m, text, l) + after);
+            widest = @max(widest, widths.lines[i] + after);
         };
-        if (own.room_for) |kept| widest = @max(widest, m.width(ib, kept));
+        if (own.room_for != null) widest = @max(widest, widths.room);
         return .{ .width = @max(picture, widest), .height = picture + gap_under + 2 * line };
     }
-    var label_width = if (label) |text| measuredWidth(ib, m, text, .{ .from = 0, .to = textLen(text) }) else 0;
-    if (label != null) if (own.room_for) |kept| {
-        label_width = @max(label_width, m.width(ib, kept));
-    };
+    var label_width: i32 = 0;
+    if (label != null) {
+        const widths = widthsOf(ib, own, g, m, line);
+        label_width = widths.whole;
+        if (own.room_for != null) label_width = @max(label_width, widths.room);
+    }
     const beside: i32 = if (picture > 0 and label != null) gap_beside else 0;
     const height = if (label != null or mark != 0) @max(picture, line) else picture;
     return .{ .width = picture + beside + label_width + mark, .height = height };
@@ -253,7 +298,7 @@ fn inset(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*const
 
 /// The button's size at `size` for the gadget's font: its frame round
 /// what it shows.
-fn nominal(base: *gadgets.Base, own: *const Data, size: u32, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) gc.Box {
+fn nominal(base: *gadgets.Base, own: *Data, size: u32, g: *const gc.Gadget, gi: ?*const classusr.GadgetInfo) gc.Box {
     const ib = base.intuition_base;
     const m = support.Measure.of(ib, g, gi);
     defer m.done(ib);
@@ -488,7 +533,7 @@ const Placed = struct {
     }
 };
 
-fn place(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*classusr.GadgetInfo, b: gc.Box) Placed {
+fn place(base: *gadgets.Base, own: *Data, g: *const gc.Gadget, gi: ?*classusr.GadgetInfo, b: gc.Box) Placed {
     const ib = base.intuition_base;
     const m = support.Measure.of(ib, g, gi);
     defer m.done(ib);
@@ -510,10 +555,11 @@ fn place(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*class
         const text_top = top + picture + gap_under;
         if (label) |text| {
             const lines = linesOf(text, true);
+            const widths = widthsOf(ib, own, g, m, line);
             // One line sits where the first of two would.
             for (lines, 0..) |maybe, i| {
                 const l = maybe orelse continue;
-                const width = measuredWidth(ib, m, text, l);
+                const width = widths.lines[i];
                 const after: i32 = if (drops and i == 1) gap_mark + mark_width else 0;
                 const left = inner.left + @divTrunc(inner.width - width - after, 2);
                 const y = text_top + @as(i32, @intCast(i)) * line;
@@ -532,7 +578,7 @@ fn place(base: *gadgets.Base, own: *const Data, g: *const gc.Gadget, gi: ?*class
     // middle of the height: at the left of a medium button, in the middle
     // of any other.
     const whole = Line{ .from = 0, .to = if (label) |text| textLen(text) else 0 };
-    const label_width = if (label) |text| measuredWidth(ib, m, text, whole) else 0;
+    const label_width = if (label != null) widthsOf(ib, own, g, m, line).whole else 0;
     const beside: i32 = if (picture > 0 and label != null) gap_beside else 0;
     const after: i32 = if (drops) gap_mark + mark_width else 0;
     const width = picture + beside + label_width + after;
@@ -678,6 +724,7 @@ fn setAttrs(base: *gadgets.Base, o: *Object, own: *Data, tags: ?[*]const TagItem
     if (ub.FindTagItem(tb.TOOLBUTTON_Hint, tags)) |item| own.hint = @ptrFromInt(item.data);
     if (ub.FindTagItem(tb.TOOLBUTTON_RoomFor, tags)) |item| {
         own.room_for = @ptrFromInt(item.data);
+        own.measured_font = null;
         changed = true;
     }
     if (ub.FindTagItem(tb.TOOLBUTTON_Checked, tags)) |item| {
@@ -768,6 +815,8 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             const set: *classusr.OpSet = @ptrCast(@alignCast(msg));
             var changed = ib.SendSuperMessage(cl, o, msg);
             const own = classes.instData(Data, cl, o.?);
+            // A new label is measured again, even at the same address.
+            if (base.utility_base.FindTagItem(gc.GA_Text, set.attr_list) != null) own.measured_font = null;
             if (setAttrs(base, o.?, own, set.attr_list)) changed = 1;
             // A new label or size is a new size, unless it was given one.
             const ub = base.utility_base;

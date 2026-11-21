@@ -125,7 +125,8 @@ pub const RIBBON_CLASS = "ribbon.gadget";
 pub const RIBBON_Dummy = gadgets.GADGETS_Dummy + 34 * gadgets.GADGETS_Step;
 /// `[*]const RibbonTab`: the tabs, ending in one whose `label` is null.
 /// Not copied: the program keeps the tabs and groups for as long as the
-/// ribbon has them. The entries in them are the ribbon's from when it is
+/// ribbon has them, their names unchanged - what a name measures is kept
+/// for the font. The entries in them are the ribbon's from when it is
 /// made, and go with it. Made only.
 pub const RIBBON_Tabs = RIBBON_Dummy + 0x01;
 /// The tab in front, counted from 0. Made, set and read; told to the

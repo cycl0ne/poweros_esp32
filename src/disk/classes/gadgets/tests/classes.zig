@@ -3614,6 +3614,63 @@ test "toolbutton.gadget: three sizes to the font, a large label in two lines, th
     try rig.down();
 }
 
+/// A font as tall as pospaz 8 and far wider: every character is its one
+/// glyph, 20 pixels on. Measured in it, a text is wider than in pospaz,
+/// and the line just as tall - so only the font tells the two apart.
+const wide_spec = sdk.graphics.fontimage.Spec{
+    .height = 8,
+    .baseline = 6,
+    .x_size = 20,
+    .default_char = 'x',
+    .glyphs = &.{.{ .code = 'x', .advance = 20, .width = 1, .rows = 1, .pixels = &.{0x80} }},
+};
+const wide_image: [sdk.graphics.fontimage.imageSize(wide_spec)]u8 align(4) = sdk.graphics.fontimage.build(wide_spec);
+
+test "toolbutton.gadget: what its label measures is kept, and measured again for a new label - in place or not - for room kept, and in another font" {
+    var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
+    var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
+    const ib = rig.ib;
+    const graphics = sdk.graphics;
+    const gb = rig.kib.graphics_base;
+    const eight = gb.OpenFont(&.{ .name = graphics.POSPAZNAME, .y_size = 8 }).?;
+    var wide = graphics.TextFont{ .node = .{ .name = "wide.font" }, .image = @ptrCast(&wide_image) };
+    const in_eight = sdk.gadgets.support.Measure{ .font = eight };
+    const in_wide = sdk.gadgets.support.Measure{ .font = &wide };
+    var pens: [sdk.intuition.screens.NUMDRIPENS]graphics.Pen = @splat(0);
+    var dri = sdk.intuition.screens.DrawInfo{ .pens = &pens, .font = eight };
+    var label: [16:0]u8 = @splat(0);
+    @memcpy(label[0..3], "Cut");
+    // Without a picture the label is all there is, with four pixels of
+    // the frame's room at each side.
+    const button = ib.NewObjectTagList(null, tbg.TOOLBUTTON_CLASS, &[_]TagItem{
+        .{ .tag = gc.GA_DrawInfo, .data = @intFromPtr(&dri) },
+        .{ .tag = gc.GA_Text, .data = @intFromPtr(&label) },
+        .{ .tag = tbg.TOOLBUTTON_Size, .data = tbg.TBSIZE_SMALL },
+        .{},
+    }).?;
+    try testing.expectEqual(in_eight.width(ib, "Cut") + 8, domainOf(ib, button, gc.GDOMAIN_NOMINAL).width);
+    try testing.expectEqual(in_eight.width(ib, "Cut") + 8, domainOf(ib, button, gc.GDOMAIN_MINIMUM).width);
+    // Written over where it is, and set again.
+    @memcpy(label[0..6], "Select");
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = gc.GA_Text, .data = @intFromPtr(&label) }, .{} });
+    try testing.expectEqual(in_eight.width(ib, "Select") + 8, domainOf(ib, button, gc.GDOMAIN_NOMINAL).width);
+    // Another label.
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = gc.GA_Text, .data = @intFromPtr("Paste") }, .{} });
+    try testing.expectEqual(in_eight.width(ib, "Paste") + 8, domainOf(ib, button, gc.GDOMAIN_NOMINAL).width);
+    // Another font, and back.
+    try testing.expect(in_wide.width(ib, "Paste") > in_eight.width(ib, "Paste"));
+    dri.font = &wide;
+    try testing.expectEqual(in_wide.width(ib, "Paste") + 8, domainOf(ib, button, gc.GDOMAIN_NOMINAL).width);
+    dri.font = eight;
+    try testing.expectEqual(in_eight.width(ib, "Paste") + 8, domainOf(ib, button, gc.GDOMAIN_NOMINAL).width);
+    // Room kept for a longer text.
+    _ = ib.SetAttrsTagList(button, &[_]TagItem{ .{ .tag = tbg.TOOLBUTTON_RoomFor, .data = @intFromPtr("Paste Special") }, .{} });
+    try testing.expectEqual(in_eight.width(ib, "Paste Special") + 8, domainOf(ib, button, gc.GDOMAIN_NOMINAL).width);
+    ib.DisposeObject(button);
+    gb.CloseFont(eight);
+    try rig.down();
+}
+
 test "toolbutton.gadget: flat at rest; under the pointer and on, an edge round a ground of its own" {
     var heard = Heard{ .tag = tbg.TOOLBUTTON_Checked, .ib = undefined };
     var rig = try Rig.up(&toolbutton.Library.resident_tag, &heard);
@@ -4336,6 +4393,64 @@ test "ribbon.gadget: the tabs the row has no room for are behind a », which dro
     try testing.expect(ib.CloseScreen(screen));
     display.down(rig.kib);
     ib.DisposeObject(bar);
+    try rig.down();
+}
+
+test "ribbon.gadget: what its tabs' and groups' names measure is kept, and measured again in another font" {
+    var heard = Heard{ .tag = rbn.RIBBON_Current, .ib = undefined };
+    var rig = try Rig.upAfter(&ribbon.Library.resident_tag, &heard, &ribbon_needs);
+    const ib = rig.ib;
+    const display = try Display.up(rig.kib);
+    const wn = intuition.windows;
+    const w = ib.OpenWindowTagList(&[_]TagItem{
+        .{ .tag = wn.WA_Left, .data = 0 },
+        .{ .tag = wn.WA_Top, .data = 0 },
+        .{ .tag = wn.WA_Width, .data = 64 },
+        .{ .tag = wn.WA_Height, .data = 40 },
+        .{ .tag = wn.WA_Borderless, .data = 1 },
+        .{},
+    }).?;
+    const screen: *intuition.Screen = @ptrFromInt(windowAttrOf(ib, w, wn.WA_Screen));
+    const dri = ib.GetScreenDrawInfo(screen);
+    var info = infoOf(ib, w, dri);
+    var wide = sdk.graphics.TextFont{ .node = .{ .name = "wide.font" }, .image = @ptrCast(&wide_image) };
+    var large_dri = dri.*;
+    large_dri.font = &wide;
+    var large_info = infoOf(ib, w, &large_dri);
+
+    // Two ribbons alike, each a tab with a long name and a group whose
+    // name is longer than its one button.
+    var bars: [2]*Object = undefined;
+    var items: [2][1:null]?*Object = undefined;
+    var groups: [2][2]rbn.RibbonGroup = undefined;
+    var tabs: [2][2]rbn.RibbonTab = undefined;
+    for (&bars, 0..) |*bar, i| {
+        items[i] = .{ribbonTool(ib, 10, "Cut", tbg.TBSIZE_SMALL)};
+        groups[i] = .{ .{ .label = "Clipboard and more", .items = &items[i] }, .{} };
+        tabs[i] = .{ .{ .label = "_Home and the rest of it", .groups = &groups[i] }, .{} };
+        bar.* = ib.NewObjectTagList(null, rbn.RIBBON_CLASS, &[_]TagItem{
+            .{ .tag = rbn.RIBBON_Tabs, .data = @intFromPtr(&tabs[i]) },
+            .{},
+        }).?;
+    }
+    const whiches = [_]u32{ gc.GDOMAIN_MINIMUM, gc.GDOMAIN_NOMINAL };
+    // The one measured in the screen's font, then in the wide one, is as
+    // large there as the one only ever measured in that; and back.
+    var small: [2]gc.Box = undefined;
+    for (whiches, &small) |which, *box| box.* = ribbonDomain(ib, bars[0], &info, which);
+    for (whiches, small) |which, box| {
+        const large = ribbonDomain(ib, bars[1], &large_info, which);
+        try testing.expect(large.width > box.width);
+        try testing.expectEqual(large, ribbonDomain(ib, bars[0], &large_info, which));
+        try testing.expectEqual(box, ribbonDomain(ib, bars[0], &info, which));
+        try testing.expectEqual(box, ribbonDomain(ib, bars[1], &info, which));
+    }
+
+    for (bars) |bar| ib.DisposeObject(bar);
+    ib.FreeScreenDrawInfo(screen, dri);
+    ib.CloseWindow(w);
+    try testing.expect(ib.CloseScreen(screen));
+    display.down(rig.kib);
     try rig.down();
 }
 

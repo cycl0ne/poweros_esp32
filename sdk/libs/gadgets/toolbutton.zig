@@ -12,7 +12,9 @@
 //! the font and never under 16 pixels, so the sizes follow the screen's
 //! font. A button with no picture is its label in every size; one whose
 //! label changes - a time, a count - keeps room for `TOOLBUTTON_RoomFor`'s
-//! text, so it never grows.
+//! text, so it never grows. What the label measures is measured when it
+//! is set and kept for the font: a label written over where it is is set
+//! again with `GA_Text`.
 //!
 //! The picture is any imageclass image (`TOOLBUTTON_Image`), drawn to the
 //! size with `IM_DRAWFRAME` - a drawn one, as a docklet or a command image

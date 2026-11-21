@@ -40,6 +40,13 @@
 //! on every tab (`roomHeight`), so the ribbon never changes height when
 //! the tab does.
 //!
+//! **What a name measures is kept**: a tab's and a group's, with the
+//! font and the line's height it was measured at (`KeptWidth`), and
+//! measured again only in another. A layout asks the ribbon its size
+//! three times over and lays it out once at every step of a window's
+//! sizing, and each of them goes through every tab and group; the names
+//! are the same each time, as the tabs and groups are from `OM_NEW` on.
+//!
 //! **Too narrow, groups are made smaller** by `reduce`, from what each
 //! measures at every step (`levels`): its large tool buttons medium, then
 //! every tool button small - asked of the buttons with `GM_DOMAIN`'s
@@ -92,8 +99,8 @@ const LayersBase = sdk.interface.layers.LayersBase;
 pub const Library = gadgets.ClassLibrary(.{
     .name = rb.RIBBON_CLASS,
     .version = 1,
-    .revision = 6,
-    .date = "11.11.2026",
+    .revision = 7,
+    .date = "21.11.2026",
     .super = classusr.GROUPGCLASS,
     .Instance = Data,
     .dispatch = dispatch,
@@ -172,6 +179,27 @@ const Part = extern struct {
     /// The size each entry was made at, `not_tool` for one that is not a
     /// tool button.
     sizes: [max_entries]u8 = @splat(not_tool),
+    /// What the group's name measures.
+    name: KeptWidth = .{},
+};
+
+/// What a name measures, with the font and the line's height it was
+/// measured at; measured again in another.
+const KeptWidth = extern struct {
+    font: ?*const graphics.TextFont = null,
+    line: i32 = 0,
+    width: i32 = 0,
+
+    /// Whether it holds the width in `m`'s font.
+    fn holds(kept: *const KeptWidth, m: Measures) bool {
+        return m.measure.font != null and kept.font == m.measure.font and kept.line == m.line;
+    }
+
+    /// `width`, kept as the width in `m`'s font.
+    fn keep(kept: *KeptWidth, m: Measures, width: i32) i32 {
+        kept.* = .{ .font = m.measure.font, .line = m.line, .width = width };
+        return width;
+    }
 };
 
 /// ribbon.gadget's part of an object.
@@ -186,6 +214,8 @@ pub const Data = extern struct {
     /// A part for every group of every tab.
     parts: ?[*]Part = null,
     part_count: u32 = 0,
+    /// What each tab's name measures, made with the parts.
+    tab_widths: ?[*]KeptWidth = null,
     /// `RIBBON_Row`, `RIBBON_OwnsEntries`, `RIBBON_Minimized`,
     /// `RIBBON_MinimizeBelow`.
     row: u32 = 1,
@@ -397,7 +427,7 @@ const RowPlan = struct {
         var x: i32 = tab_indent;
         for (0..rowTabs(own)) |i| {
             if (!showsTab(own, @intCast(i))) continue;
-            const w = m.tabWidth(ib, own.tabs.?[i].label);
+            const w = m.tabWidth(ib, own, i);
             if (x + w > end) break;
             plan.in_row |= bit(i);
             x += w + tab_gap;
@@ -407,7 +437,7 @@ const RowPlan = struct {
         // the left until one does not fit.
         x = tab_indent;
         if (own.current < rowTabs(own) and showsTab(own, own.current)) {
-            const w = m.tabWidth(ib, own.tabs.?[own.current].label);
+            const w = m.tabWidth(ib, own, own.current);
             if (x + w <= plan.more_left) {
                 plan.in_row |= bit(own.current);
                 x += w + tab_gap;
@@ -415,7 +445,7 @@ const RowPlan = struct {
         }
         for (0..rowTabs(own)) |i| {
             if (i == own.current or !showsTab(own, @intCast(i))) continue;
-            const w = m.tabWidth(ib, own.tabs.?[i].label);
+            const w = m.tabWidth(ib, own, i);
             if (x + w > plan.more_left) break;
             plan.in_row |= bit(i);
             x += w + tab_gap;
@@ -450,7 +480,7 @@ const RowWalk = struct {
             const i = walk.which;
             walk.which += 1;
             if (!walk.plan.has(i)) continue;
-            const width = walk.m.tabWidth(walk.ib, walk.own.tabs.?[i].label);
+            const width = walk.m.tabWidth(walk.ib, walk.own, i);
             const at = Tab{ .which = @intCast(i), .left = walk.x, .width = width };
             walk.x += width + tab_gap;
             return at;
@@ -518,6 +548,11 @@ fn disposeEntries(ib: *IntuitionBase, tabs: ?[*]const rb.RibbonTab) void {
 /// could not be made; what was made is the ribbon's to dispose of then.
 noinline fn makeParts(base: *gadgets.Base, o: *Object, own: *Data) bool {
     const ib = base.intuition_base;
+    if (own.count > 0) {
+        const widths = base.sys_base.AllocVec(own.count * @sizeOf(KeptWidth), exec.MEMF_ANY) orelse return false;
+        own.tab_widths = @ptrCast(@alignCast(widths));
+        for (own.tab_widths.?[0..own.count]) |*kept| kept.* = .{};
+    }
     var n: usize = 0;
     for (0..own.count) |t| n += groupsOf(&own.tabs.?[t]).len;
     if (n == 0) return true;
@@ -563,6 +598,8 @@ noinline fn makeParts(base: *gadgets.Base, o: *Object, own: *Data) bool {
 
 fn disposeParts(base: *gadgets.Base, own: *Data) void {
     const ib = base.intuition_base;
+    if (own.tab_widths) |widths| base.sys_base.FreeVec(widths);
+    own.tab_widths = null;
     const parts = own.parts orelse return;
     for (parts[0..own.part_count]) |*part| {
         ib.DisposeObject(part.launcher);
@@ -726,9 +763,12 @@ const Measures = struct {
     }
 
     /// How wide a tab is: its name, without the `_`, and its margins.
-    fn tabWidth(m: Measures, ib: *IntuitionBase, text: ?[*:0]const u8) i32 {
-        const name = text orelse return 2 * tab_margin;
-        return plainWidth(ib, m.measure, name) + 2 * tab_margin;
+    fn tabWidth(m: Measures, ib: *IntuitionBase, own: *const Data, which: usize) i32 {
+        const name = own.tabs.?[which].label orelse return 2 * tab_margin;
+        const widths = own.tab_widths orelse return plainWidth(ib, m.measure, name) + 2 * tab_margin;
+        const kept = &widths[which];
+        const width = if (kept.holds(m)) kept.width else kept.keep(m, plainWidth(ib, m.measure, name));
+        return width + 2 * tab_margin;
     }
 
     /// How narrow the row can be: the widest tab, the » and the mark at
@@ -736,7 +776,7 @@ const Measures = struct {
     fn leastRowWidth(m: Measures, ib: *IntuitionBase, own: *const Data) i32 {
         var widest: i32 = 0;
         for (0..rowTabs(own)) |i| {
-            if (showsTab(own, @intCast(i))) widest = @max(widest, m.tabWidth(ib, own.tabs.?[i].label));
+            if (showsTab(own, @intCast(i))) widest = @max(widest, m.tabWidth(ib, own, i));
         }
         return @min(m.rowWidth(ib, own), 2 * tab_indent + widest + more_width + fold_width);
     }
@@ -749,7 +789,7 @@ const Measures = struct {
             if (!showsTab(own, @intCast(i))) continue;
             if (!first) width += tab_gap;
             first = false;
-            width += m.tabWidth(ib, own.tabs.?[i].label);
+            width += m.tabWidth(ib, own, i);
         }
         return width;
     }
@@ -815,7 +855,7 @@ const Laid = struct {
     launcher: ?*Object = null,
 
     /// Worked out in place, as it is too big to hand about.
-    fn set(laid: *Laid, base: *gadgets.Base, group: *const rb.RibbonGroup, part: *const Part, level: u32, m: Measures, gi: ?*classusr.GadgetInfo, room: i32) void {
+    fn set(laid: *Laid, base: *gadgets.Base, group: *const rb.RibbonGroup, part: *Part, level: u32, m: Measures, gi: ?*classusr.GadgetInfo, room: i32) void {
         if (level == level_folded) {
             const e = entryOf(base, part.button.?, gi, not_tool);
             laid.items = @as([*]const ?*Object, @ptrCast(&part.button))[0..1];
@@ -832,7 +872,10 @@ const Laid = struct {
         var entries: [max_entries]Entry = undefined;
         for (laid.items, 0..) |item, i| entries[i] = entryOf(base, item.?, gi, sizeAt(level, part.sizes[i]));
         laid.entries = arrange(entries[0..laid.items.len], room, laid.spots[0..laid.items.len]);
-        var name: i32 = if (group.label) |text| m.measure.width(base.intuition_base, text) else 0;
+        var name: i32 = 0;
+        if (group.label) |text| {
+            name = if (part.name.holds(m)) part.name.width else part.name.keep(m, m.measure.width(base.intuition_base, text));
+        }
         // The launcher at the right of the name, and as much room at its
         // left, so that the name stays in the middle.
         if (part.launcher != null) name += 2 * (m.launcher() + 2 * launcher_gap);
@@ -1059,7 +1102,7 @@ fn placeEntry(base: *gadgets.Base, item: *Object, box: gc.Box, lay: *gc.GpLayout
 const Walk = struct {
     base: *gadgets.Base,
     groups: []const rb.RibbonGroup,
-    parts: []const Part,
+    parts: []Part,
     m: Measures,
     info: *classusr.GadgetInfo,
     room: i32,
