@@ -144,8 +144,12 @@ pub const LIBRARY_VERSION = 1;
 /// switched a device's drivers from the disk off.
 /// 40: RunPanelSequence and RtgDelay: a panel's bring-up checked and
 /// walked, and a wait that gives the CPU away, for every driver.
-pub const LIBRARY_REVISION = 41;
-const BUILD_DATE = "17.11.2026";
+/// 42: the image SetBoardPointer and SetBoardOverlay make is the
+/// system's memory: the board keeps it, and it was counted as the memory
+/// of whichever task last changed the pointer - left behind when that
+/// task ended.
+pub const LIBRARY_REVISION = 42;
+const BUILD_DATE = "21.11.2026";
 const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ LIBRARY_VERSION, LIBRARY_REVISION }) ++

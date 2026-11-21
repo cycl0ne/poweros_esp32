@@ -61,7 +61,8 @@ const composer = @import("../compose/_compose.zig");
 ///
 /// OWNERSHIP:
 /// The caller's image is read and not kept. The converted one is the
-/// library's - in internal memory where a driver whose interrupts read
+/// library's - the system's memory, which the board keeps past the task
+/// that set it, in internal memory where a driver whose interrupts read
 /// it lays it - freed by the next SetBoardOverlay or by DeleteBoard.
 ///
 /// NOTES:

@@ -65,7 +65,8 @@ const composer = @import("../compose/_compose.zig");
 ///
 /// OWNERSHIP:
 /// The caller's image is read and not kept; it may be freed on return.
-/// The converted one is the library's - in internal memory where a
+/// The converted one is the library's - the system's memory, which the
+/// board keeps past the task that set it, in internal memory where a
 /// driver whose interrupts read its handles lays it
 /// (`RTGDF_INTERNAL_INSTANCE`) - freed by the next SetBoardPointer or by
 /// DeleteBoard.
@@ -185,8 +186,9 @@ pub fn pack(format: rtg.PixelFormat, colour: Colour) u32 {
 /// the header, the pixels, the mask. An image the board's driver lays
 /// goes where the driver's handles go - internal memory for a driver
 /// whose interrupts read them; one the library lays (`composed`) is read
-/// by tasks alone, and goes anywhere. Shared with SetBoardOverlay, which
-/// takes a larger image and dithers.
+/// by tasks alone, and goes anywhere. Either way it is the system's
+/// memory: the board keeps it after the task that set it has ended.
+/// Shared with SetBoardOverlay, which takes a larger image and dithers.
 pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, hot_x: u32, hot_y: u32, most: u32, rule: MaskRule, composed: bool) Converted {
     const sys = rb.sys_base;
     const width = source.width;
@@ -207,7 +209,7 @@ pub fn convert(rb: *RtgBase, board: *rtg.RtgBoard, source: *const rtg.Surface, h
     const mask_pitch = (width + 7) / 8;
     const header = (@sizeOf(rtg.RtgPointerImage) + 7) & ~@as(usize, 7);
     const size = header + @as(usize, pitch) * height + @as(usize, mask_pitch) * height;
-    const where = if (composed) exec.MEMF_ANY | exec.MEMF_CLEAR else registry.memoryFor(board.driver.?.spec);
+    const where = exec.MEMF_SYSTEM | if (composed) exec.MEMF_ANY | exec.MEMF_CLEAR else registry.memoryFor(board.driver.?.spec);
     const memory = sys.AllocVec(@intCast(size), where) orelse return .{ .code = err.RTGERR_NO_MEMORY };
     const base: [*]u8 = @ptrCast(memory);
     const pixels = base + header;
