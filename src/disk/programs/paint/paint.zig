@@ -331,8 +331,8 @@ const View = view_zig.View;
 const Point = shapes.Point;
 
 pub const COMMAND_NAME = "Paint";
-const VERSION = "1.14";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (19.11.2026)\r\n";
+const VERSION = "1.15";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (21.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while the window is active, and the own
 /// screen's title.
@@ -5904,6 +5904,7 @@ const App = struct {
             .{ .tag = sdk.utility.TAG_IGNORE, .data = 0 },
             .{ .tag = sdk.utility.TAG_IGNORE, .data = 0 },
             .{ .tag = sdk.utility.TAG_IGNORE, .data = 0 },
+            .{},
         } else [_]TagItem{
             .{ .tag = wn.WA_Width, .data = screen_width * 7 / 8 },
             .{ .tag = wn.WA_Height, .data = (screen_height -| top) * 7 / 8 },
@@ -5918,6 +5919,7 @@ const App = struct {
             // right one thin.
             .{ .tag = wn.WA_SizeBBottom, .data = 1 },
             .{ .tag = wn.WA_AutoAdjust, .data = 1 },
+            .{},
         };
         const object = ib.NewObjectTagList(null, classusr.WINDOWCLASS, &[_]TagItem{
             screenTag(gui),
