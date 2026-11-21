@@ -406,6 +406,14 @@ other first. Text is compared in the Liberation fonts when
 font where the PC has it, draws a list of `x` or `dx` as one value,
 and shapes each span on its own - no pair kerned across a span's
 border.
+`scripts/fetch-svg-suite.sh` fetches resvg's test suite - some 1800
+files, each with resvg's picture of it, and the fonts their text is
+drawn in - and `./zig build svg-suite` draws every one of them with this
+code, a folder a run, the runs side by side, and compares
+(`tools/svgcompare --suite`). It counts the files close to resvg's
+picture by folder and fails when one has come further away than
+`tools/svgcompare/suite-far.txt`, the list of those not close today,
+allows; one on that list that has come close is named, to be taken off.
 `C:test/DTTime
 <file> ...` times how long any file takes to be made into its object,
 and for an animation - a Lottie file's among them - how long each frame

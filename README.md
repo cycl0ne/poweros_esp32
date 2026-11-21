@@ -270,6 +270,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-amdgpu.sh` | an AMD graphics device's video decoder firmware and its security processor's table of contents, which `amdgpu.resource` loads (the x86-64 disk) |
 | `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the 64-bit machines' disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
 | `scripts/fetch-icons.sh` | the pictures of the disk's icons (Tango, public domain), drawn at the boards' sizes |
+| `scripts/fetch-svg-suite.sh` | resvg's test suite - some 1800 SVG files, each with resvg's picture of it, and the fonts their text is in - which `./zig build svg-suite` compares svg.datatype's drawing with; on no disk |
 | `scripts/fetch-novnc.sh` | noVNC, the VNC client that runs in a browser, which `scripts/qemu-web.sh` serves beside a QEMU machine to show its display in a browser tab |
 | `scripts/fetch-esp-emu.sh` | Espressif's esp-emulator, which runs the ESP32-P4: both cores, its interrupt controller, UART0 on the terminal, the system timer, flash, PSRAM, the Ethernet MAC and a GDB stub, from the chip's own ROM; no display. With it the v1.x chips' ROM (Espressif's ROM ELFs), which `./zig build emu` boots |
 
@@ -378,6 +379,7 @@ The [install guide](sdk/docs/guides/install.md) has the details, and the
 | `./zig build fd` | regenerate the SDK's interfaces from its `.fd` files |
 | `./zig build autodoc` | regenerate the SDK's autodocs from the doc comments |
 | `./zig build modchart` | regenerate the charts of which module uses which (`sdk/docs/modules.md`) |
+| `./zig build svg-suite` | every file of resvg's test suite (`scripts/fetch-svg-suite.sh`) drawn as svg.datatype draws it, compared with resvg's picture and counted by folder; fails on a file further away than `tools/svgcompare/suite-far.txt`, the files not close today, allows |
 | `./zig build stick -Dboard=qemu_q35` | the medium a UEFI machine starts from, into `release/stick-<board>.img`: a GPT with an EFI System partition holding the loader and the kernel, and a PowerOS container with the system on a posfs partition, which the machine runs from and installs itself from ([the install guide](sdk/docs/guides/install.md#the-medium-a-machine-is-first-reached-with)) |
 | `-Dstick-size=320` | how many mebibytes that medium's EFI System partition is |
 | `-Dstick-ram` | the system on that medium as a disk image beside the kernel too, which the loader reads into RAM: for a machine whose USB controller the system does not drive |

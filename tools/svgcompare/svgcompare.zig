@@ -4,6 +4,8 @@
 //! is what the disk's icons are made with.
 //!
 //!   svgcompare [--size N|WxH] [--detail] [--hash] [--fonts DIR] [--out DIR [--zoom Z]] <file.svg> <drawn.png> ...
+//!   svgcompare [--fonts DIR] --suite DIR --report FILE <folder>
+//!   svgcompare --summary LIST <directory of reports>
 //!
 //! Each SVG file is drawn N by N pixels (48 if not given), or W by H,
 //! stretched to that as `rsvg-convert -w N -h N` stretches it, with svg.datatype's
@@ -42,6 +44,21 @@
 //!
 //! scripts/svg-compare.sh draws the Tango release's files with
 //! rsvg-convert and runs this over them.
+//!
+//! **A suite of files.** --suite draws every SVG file under DIR/folder
+//! that has a PNG of its name beside it, at that PNG's size, and writes a
+//! line a file into FILE: `close`, `far`, or `unread` for a file this
+//! reader or the PNG's cannot read, then the mean, the largest difference
+//! and the pixels a quarter apart, then the file's path from DIR.
+//! --summary reads every report in a directory, counts them by their
+//! first folder, and
+//! holds them against LIST, the files that are not close today, a path
+//! from DIR a line (`#` begins a comment): a file not close and not on it
+//! has come further away - it is named, and the run fails - and one on
+//! it that came close is named to be taken off it. `zig build svg-suite`
+//! runs a --suite a folder of resvg's suite (scripts/fetch-svg-suite.sh),
+//! side by side, and a --summary of them against
+//! tools/svgcompare/suite-far.txt.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -1037,6 +1054,149 @@ fn putChunk(gpa: std.mem.Allocator, out: *std.ArrayList(u8), id: *const [4]u8, d
     try out.appendSlice(gpa, &sum);
 }
 
+/// --suite: every SVG file under `root`/`folder` with a PNG of its name
+/// beside it, drawn at that PNG's size and compared, a line a file into
+/// the report at `report_path`.
+fn runSuite(io: Io, arena: std.mem.Allocator, sources: *Sources, root: []const u8, folder: []const u8, report_path: []const u8) !void {
+    const gpa = std.heap.page_allocator;
+    const cwd = Io.Dir.cwd();
+    const start = try std.fs.path.join(arena, &.{ root, folder });
+    var dir = cwd.openDir(io, start, .{ .iterate = true }) catch |e| fatal("{s}: {t}", .{ start, e });
+    defer dir.close(io);
+    var names: std.ArrayList([]const u8) = .empty;
+    var walker = try dir.walk(arena);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file or !std.mem.endsWith(u8, entry.basename, ".svg")) continue;
+        try names.append(arena, try arena.dupe(u8, entry.path));
+    }
+    std.mem.sort([]const u8, names.items, {}, earlierName);
+
+    var report: std.ArrayList(u8) = .empty;
+    for (names.items) |name| {
+        const svg_path = try std.fs.path.join(arena, &.{ start, name });
+        const png_path = try std.mem.concat(arena, u8, &.{ svg_path[0 .. svg_path.len - ".svg".len], ".png" });
+        const relative = try std.fs.path.join(arena, &.{ folder, name });
+        // A file without a picture beside it is one a test names, not a
+        // test.
+        const reference = cwd.readFileAlloc(io, png_path, gpa, .limited(64 << 20)) catch continue;
+        defer gpa.free(reference);
+        const theirs = readPng(gpa, reference) catch {
+            try report.print(arena, "unread 0 0 0 {s}\n", .{relative});
+            continue;
+        };
+        defer gpa.free(theirs.rgba);
+        if (theirs.width == 0 or theirs.width > 4096 or theirs.height == 0 or theirs.height > 4096) {
+            try report.print(arena, "unread 0 0 0 {s}\n", .{relative});
+            continue;
+        }
+        sources.directory = std.fs.path.dirname(svg_path) orelse ".";
+        const text = cwd.readFileAlloc(io, svg_path, gpa, .limited(16 << 20)) catch |e| fatal("{s}: {t}", .{ svg_path, e });
+        defer gpa.free(text);
+        const ours = (try drawSvg(gpa, sources, text, theirs.width, theirs.height)) orelse {
+            try report.print(arena, "unread 0 0 0 {s}\n", .{relative});
+            continue;
+        };
+        defer gpa.free(ours.rgba);
+        const d = compare(ours, theirs, null);
+        try report.print(arena, "{s} {d:.2} {d:.1} {d} {s}\n", .{
+            if (d.closeEnough()) "close" else "far",
+            d.mean,
+            @as(f64, @floatFromInt(d.largest)) * 100 / 255,
+            d.far,
+            relative,
+        });
+    }
+    cwd.writeFile(io, .{ .sub_path = report_path, .data = report.items }) catch |e| fatal("{s}: {t}", .{ report_path, e });
+}
+
+fn earlierName(_: void, one: []const u8, other: []const u8) bool {
+    return std.mem.lessThan(u8, one, other);
+}
+
+/// A folder's count in a --summary.
+const FolderCount = struct { name: []const u8, close: u32 = 0, total: u32 = 0 };
+
+/// --summary: the reports in `reports_path` counted by their first folder
+/// and held against the list at `list_path`; the run fails when a file has
+/// come further away.
+fn summarize(io: Io, arena: std.mem.Allocator, list_path: []const u8, reports_path: []const u8) !void {
+    const cwd = Io.Dir.cwd();
+    const list = cwd.readFileAlloc(io, list_path, arena, .limited(1 << 20)) catch |e| fatal("{s}: {t}", .{ list_path, e });
+    var known: std.StringHashMapUnmanaged(bool) = .empty;
+    var lines = std.mem.tokenizeAny(u8, list, "\r\n");
+    while (lines.next()) |line| {
+        const path = std.mem.trim(u8, line, " \t");
+        if (path.len == 0 or path[0] == '#') continue;
+        try known.put(arena, path, false);
+    }
+
+    var folders: std.ArrayList(FolderCount) = .empty;
+    var worse: std.ArrayList([]const u8) = .empty;
+    var better: std.ArrayList([]const u8) = .empty;
+    var close: u32 = 0;
+    var total: u32 = 0;
+    var reports = cwd.openDir(io, reports_path, .{ .iterate = true }) catch |e| fatal("{s}: {t}", .{ reports_path, e });
+    defer reports.close(io);
+    var walker = try reports.walk(arena);
+    defer walker.deinit();
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        const report = reports.readFileAlloc(io, entry.path, arena, .limited(16 << 20)) catch |e| fatal("{s}: {t}", .{ entry.path, e });
+        var report_lines = std.mem.tokenizeScalar(u8, report, '\n');
+        while (report_lines.next()) |line| {
+            var fields = std.mem.splitScalar(u8, line, ' ');
+            const verdict = fields.first();
+            for (0..3) |_| _ = fields.next();
+            const path = fields.rest();
+            const is_close = std.mem.eql(u8, verdict, "close");
+            const first = path[0 .. std.mem.indexOfScalar(u8, path, '/') orelse path.len];
+            const count = for (folders.items) |*folder| {
+                if (std.mem.eql(u8, folder.name, first)) break folder;
+            } else blk: {
+                try folders.append(arena, .{ .name = first });
+                break :blk &folders.items[folders.items.len - 1];
+            };
+            count.total += 1;
+            total += 1;
+            if (is_close) {
+                count.close += 1;
+                close += 1;
+            }
+            if (known.getPtr(path)) |seen| {
+                seen.* = true;
+                if (is_close) try better.append(arena, path);
+            } else if (!is_close) {
+                try worse.append(arena, line);
+            }
+        }
+    }
+    std.mem.sort(FolderCount, folders.items, {}, earlierFolder);
+    std.debug.print("{d} of {d} close\n", .{ close, total });
+    for (folders.items) |folder| std.debug.print("  {s:<16} {d:>4} of {d}\n", .{ folder.name, folder.close, folder.total });
+    if (better.items.len != 0) {
+        std.debug.print("close now, to be taken off {s}:\n", .{list_path});
+        for (better.items) |path| std.debug.print("  {s}\n", .{path});
+    }
+    var stale = known.iterator();
+    var named_stale = false;
+    while (stale.next()) |entry| {
+        if (entry.value_ptr.*) continue;
+        if (!named_stale) std.debug.print("on {s} and in no report:\n", .{list_path});
+        named_stale = true;
+        std.debug.print("  {s}\n", .{entry.key_ptr.*});
+    }
+    if (worse.items.len != 0) {
+        std.debug.print("further away than {s} allows - verdict, mean %, largest %, pixels a quarter apart, file:\n", .{list_path});
+        for (worse.items) |line| std.debug.print("  {s}\n", .{line});
+        std.process.exit(1);
+    }
+}
+
+fn earlierFolder(_: void, one: FolderCount, other: FolderCount) bool {
+    return std.mem.lessThan(u8, one.name, other.name);
+}
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
@@ -1049,6 +1209,9 @@ pub fn main(init: std.process.Init) !void {
     var detail = false;
     var hash = false;
     var fonts: ?[]const u8 = null;
+    var suite: ?[]const u8 = null;
+    var report: ?[]const u8 = null;
+    var summary: ?[]const u8 = null;
     var files: std.ArrayList([]const u8) = .empty;
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
@@ -1073,7 +1236,25 @@ pub fn main(init: std.process.Init) !void {
         } else if (std.mem.eql(u8, args[i], "--out") and i + 1 < args.len) {
             i += 1;
             out_dir = args[i];
+        } else if (std.mem.eql(u8, args[i], "--suite") and i + 1 < args.len) {
+            i += 1;
+            suite = args[i];
+        } else if (std.mem.eql(u8, args[i], "--report") and i + 1 < args.len) {
+            i += 1;
+            report = args[i];
+        } else if (std.mem.eql(u8, args[i], "--summary") and i + 1 < args.len) {
+            i += 1;
+            summary = args[i];
         } else try files.append(arena, args[i]);
+    }
+    if (summary) |list| {
+        if (files.items.len != 1) fatal("usage: svgcompare --summary LIST <directory of reports>", .{});
+        return summarize(io, arena, list, files.items[0]);
+    }
+    if (suite) |root| {
+        if (files.items.len != 1 or report == null) fatal("usage: svgcompare [--fonts DIR] --suite DIR --report FILE <folder>", .{});
+        var suite_sources = Sources{ .io = io, .fonts = fonts };
+        return runSuite(io, arena, &suite_sources, root, files.items[0], report.?);
     }
     if (files.items.len == 0 or files.items.len % 2 != 0 or width == 0 or width > 4096 or height == 0 or height > 4096) {
         fatal("usage: svgcompare [--size N|WxH] [--out DIR] <file.svg> <drawn.png> ...", .{});
