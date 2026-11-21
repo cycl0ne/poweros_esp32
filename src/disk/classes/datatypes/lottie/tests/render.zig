@@ -256,9 +256,9 @@ test "gradient fills and strokes, opacity stops, a highlight, dashes going round
     try large.close();
 }
 
-const spinner_hash = 0x5fcbceca335c37c2;
-const strokes_hash = 0x2c842b765d73af09;
-const paints_hash = 0x9cb68336e2200b46;
+const spinner_hash = 0x668fcc5bb5030c7e;
+const strokes_hash = 0x5d6c48390db4d7a3;
+const paints_hash = 0xbd11db5896e2b37a;
 
 test "masks added and taken away, one that starts from the whole frame, an alpha matte, an inverted luma matte" {
     const text =

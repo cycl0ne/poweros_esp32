@@ -332,7 +332,7 @@ test "revision 3: a clip and a mask through the jump table, and both left pushed
 test "revision 4: an image painted, placed by its matrix; a layer blurred; neither without what it needs" {
     const rig = try Rig.open();
     const vb = rig.vb;
-    try testing.expectEqual(@as(u16, 4), rig.library.revision);
+    try testing.expect(rig.library.revision >= 4);
     var pens: [16 * 16]Pen = @splat(0);
     const canvas = try canvasOver(vb, &pens, 16, 16);
     const square = vb.CreatePath() orelse return error.NoPath;
@@ -368,8 +368,68 @@ test "revision 4: an image painted, placed by its matrix; a layer blurred; neith
     vb.PopLayer(canvas);
     try testing.expect(pens[8 * 16 + 2] >> 24 > 0);
     try testing.expect(pens[4 * 16 + 4] >> 24 < 0xFF);
-    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[8 * 16 + 8]);
+    // Four pixels in from the edge, a Gaussian of 1.5 leaves a little out.
+    try testing.expect(pens[8 * 16 + 8] >> 24 >= 0xF0);
+    try testing.expectEqual(@as(u32, 0xFF0000), pens[8 * 16 + 8] & 0xFFFFFF);
     try testing.expectEqual(@as(u32, 0xFF0000), pens[8 * 16 + 2] & 0xFFFFFF);
+
+    vb.DisposePath(square);
+    vb.DisposeCanvas(canvas);
+    try rig.close();
+}
+
+test "revision 5: a layer multiplied down, filtered, a path measured and its vertices read" {
+    const rig = try Rig.open();
+    const vb = rig.vb;
+    try testing.expectEqual(@as(u16, 5), rig.library.revision);
+    var pens: [16 * 16]Pen = @splat(0xFFFFFF00);
+    const canvas = try canvasOver(vb, &pens, 16, 16);
+    const square = vb.CreatePath() orelse return error.NoPath;
+    vb.AddRect(square, &.{ .x = 4, .y = 4, .width = 8, .height = 8 }, 0, 0);
+
+    // Cyan multiplied onto yellow: green.
+    const cyan = vector.Paint{ .colour = .{ .g = 1, .b = 1 } };
+    try testing.expectEqual(vector.VECTOR_OK, vb.PushBlendLayer(canvas, 1, vector.BLEND_MULTIPLY));
+    _ = vb.FillPath(canvas, square, null, &cyan, vector.RULE_NONZERO);
+    vb.PopLayer(canvas);
+    try testing.expectEqual(@as(Pen, 0xFF00FF00), pens[8 * 16 + 8]);
+    try testing.expectEqual(@as(Pen, 0xFFFFFF00), pens[1 * 16 + 1]);
+
+    // A filter: the square moved two pixels right, in a flood's colour
+    // where it was, and cut to the region.
+    @memset(&pens, 0);
+    const region = vector.Rect{ .x = 0, .y = 0, .width = 13, .height = 16 };
+    const steps = [_]vector.FilterPrimitive{
+        .{ .kind = vector.FILTER_OFFSET, .region = region, .flags = 0, .as = .{ .offset = .{ .dx = 2, .dy = 0 } } },
+    };
+    try testing.expectEqual(vector.VECTORERR_DEPTH, vb.FilterLayer(canvas, &steps, steps.len, &region));
+    const red = vector.Paint{ .colour = .{ .r = 1 } };
+    _ = vb.PushLayer(canvas, 1);
+    _ = vb.FillPath(canvas, square, null, &red, vector.RULE_NONZERO);
+    try testing.expectEqual(vector.VECTOR_OK, vb.FilterLayer(canvas, &steps, steps.len, &region));
+    vb.PopLayer(canvas);
+    try testing.expectEqual(@as(Pen, 0), pens[8 * 16 + 4]);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[8 * 16 + 6]);
+    try testing.expectEqual(@as(Pen, 0xFFFF0000), pens[8 * 16 + 12]);
+    try testing.expectEqual(@as(Pen, 0), pens[8 * 16 + 13]);
+
+    // The square is 32 round; 10 along is the right side's middle-ish,
+    // going down.
+    try testing.expectApproxEqAbs(@as(f32, 32), vb.PathLength(square, null), 0.001);
+    const twice = vector.Matrix.scale(2, 2);
+    try testing.expectApproxEqAbs(@as(f32, 64), vb.PathLength(square, &twice), 0.001);
+    var at: vector.Point = undefined;
+    var angle: f32 = undefined;
+    try testing.expect(vb.PathPointAt(square, null, 10, &at, &angle));
+    try testing.expectEqual(vector.Point{ .x = 12, .y = 6 }, at);
+    try testing.expectApproxEqAbs(@as(f32, 90), angle, 0.001);
+    try testing.expect(!vb.PathPointAt(square, null, 33, &at, &angle));
+    var room: [8]vector.Vertex = undefined;
+    const count = vb.PathVertices(square, &room, room.len);
+    try testing.expectEqual(count, vb.PathVertices(square, null, 0));
+    try testing.expect(count >= 5);
+    try testing.expect(room[0].flags & vector.VERTEXF_START != 0);
+    try testing.expect(room[count - 1].flags & vector.VERTEXF_END != 0);
 
     vb.DisposePath(square);
     vb.DisposeCanvas(canvas);

@@ -81,7 +81,10 @@ const Source = @import("_source.zig").Source;
 /// Then each character becomes the glyph `GlyphIndex` has for it. Where
 /// a variation selector follows and `GlyphVariant` has a glyph for the
 /// two, that glyph stands for both, and the character and its marks
-/// stay as they were written.
+/// stay as they were written. In a text read from right to left a
+/// character Unicode mirrors there - a bracket, a sign that points one
+/// way - is the glyph of its mirror image where the font has one
+/// (since 1.11).
 ///
 /// The features applied, where the font lists them for the script and
 /// the language: `rvrn`, `ccmp`, `locl`, `rlig`, `liga`, `clig`, `calt`,
@@ -108,6 +111,38 @@ const Source = @import("_source.zig").Source;
 /// lookup replaces, though not what it looks at before and behind
 /// them; and Mongolian's variation selectors (U+180B to U+180D, U+180F)
 /// and the tag characters (U+E0020 to U+E007F) end both.
+///
+/// A stretch of a script whose letters join - Arabic, Syriac, N'Ko,
+/// Mongolian and the others whose letters Unicode gives a joining type
+/// - is shaped with their joined forms (since 1.11). Each letter takes
+/// the form for where it stands in its join, by its own joining type
+/// and its neighbours', the marks between them passed over: `isol`
+/// alone, `init` at the start, `medi` in the middle, `fina` at the end;
+/// Syriac's Alaph also `fin2` and `fin3` by the letter before it, and
+/// `med2`. The tatweel and the joiner (U+200D) make the letters round
+/// them join, the non-joiner (U+200C) keeps them apart. `GSUB` is then
+/// applied in goes, each in the order the table lists its lookups:
+/// `rvrn`; the forms by direction and the fractions; `stch`; `ccmp` and
+/// `locl`; each joined form a go of its own, in the order above; `rlig`;
+/// `rclt` and `calt`, which outside Arabic share `rlig`'s go; and the
+/// rest. The forms are found within the stretch: a letter at its start
+/// or end joins nothing beyond it.
+///
+/// In such a stretch the marks of Arabic that change the letter they
+/// stand on (Unicode's report 53: the hamza above and below, the small
+/// high seen and their kind) go before the other marks on their side of
+/// the letter, which keep their order. A character drawn across the word
+/// behind it - Syriac's abbreviation mark (U+070F) - is cut into pieces
+/// by the font's `stch`; once the glyphs have their places, the pieces
+/// are repeated over the width of the word behind it (its letters of no
+/// case, marks, numbers and symbols), taking no advance of their own,
+/// the whole in the middle of the word and of 256 glyphs at most. A text
+/// of Arabic in a font with none of `isol`, `fina`, `medi` and `init`
+/// for the script is drawn with the characters Unicode encodes the
+/// forms as, the presentation forms, where the font has their glyphs:
+/// after the font's `rlig`, each letter's form, then 66 ligatures of
+/// those forms - lam with alef among them - and of shadda with a vowel
+/// sign.
 ///
 /// A stretch of Devanagari is shaped by its syllables. A syllable is
 /// a consonant or a vowel letter with what is written on it: the
@@ -202,16 +237,15 @@ const Source = @import("_source.zig").Source;
 ///
 /// NOTES:
 /// The whole text is read in the one direction: a text of both
-/// directions is the caller's to cut and to order, and a bracket in a
-/// text read from right to left is not mirrored. Stretches are shaped
-/// apart, so no pair is kerned and no sequence found across the border
-/// of two scripts.
+/// directions is the caller's to cut, by `BidiLevels`, and to order.
+/// Stretches are shaped apart, so no pair is kerned and no sequence
+/// found across the border of two scripts.
 ///
-/// Devanagari is the one script shaped by its syllables. Every other
-/// one is shaped by the features above and nothing is rearranged or
-/// told apart by its place in a word: the joined forms of Arabic and
-/// the syllables of the other scripts of India are not made. A
-/// syllable that is not whole - a vowel sign or a halant with no
+/// Devanagari is the one script shaped by its syllables, and the
+/// scripts whose letters join the ones shaped by their places in a
+/// word. Every other one is shaped by the features above and nothing is
+/// rearranged: the syllables of the other scripts of India are not
+/// made. A syllable that is not whole - a vowel sign or a halant with no
 /// consonant before it - gets the font's dotted circle (U+25CC) for the
 /// missing letter, of the sign's cluster, and is shaped as a sign on
 /// it; in a font without that glyph it is drawn as it is written.

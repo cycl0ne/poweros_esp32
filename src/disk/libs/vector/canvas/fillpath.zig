@@ -22,7 +22,8 @@ const VectorBase = _base.VectorBase;
 /// - `matrix` - the path's units to pixels, or null when they are pixels.
 /// - `paint` - what it is painted in (`vector.Paint`): one colour, or
 ///   since 1.1 a linear or radial gradient with its stops, spread and
-///   matrix (1.0 paints a gradient's colour), at the paint's opacity.
+///   matrix (1.0 paints a gradient's colour), since 1.5 a sweep round a
+///   point, at the paint's opacity.
 ///   A gradient with no stops paints nothing, one with one paints its
 ///   colour, and one of no length or radius its last stop's colour, as
 ///   SVG has it.
@@ -48,7 +49,9 @@ const VectorBase = _base.VectorBase;
 /// is taken back to see where along it the pixel is. Its colour there
 /// comes from 256 made from the stops for the fill, mixed as they are
 /// and not premultiplied. A radial gradient's focus outside its circle
-/// makes a cone, beside which nothing is painted, as SVG 2 draws it.
+/// makes a cone, beside which nothing is painted, as SVG 2 draws it. A
+/// sweep is how far round the pixel is about its centre, from its start
+/// angle to its end, those of one turn drawn.
 ///
 /// With a layer pushed (`PushLayer`) it is drawn on the layer.
 ///

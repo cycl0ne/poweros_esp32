@@ -22,6 +22,12 @@
 //! how far from the point it is drawn, and which part of the text it
 //! stands for.
 //!
+//! A text of both directions - Arabic or Hebrew with Latin or numbers
+//! in it - is cut by `BidiLevels` (since 1.11): the level of each of its
+//! characters, even for one read from left to right, odd for one read
+//! from right to left. The caller shapes each stretch of one level in
+//! its direction, and puts the stretches in the order they are drawn.
+//!
 //! Open it with OpenLibrary(TRUETYPESHAPINGNAME, 1); its functions are in
 //! sdk/interface/truetypeshaping.zig.
 
@@ -153,6 +159,10 @@ pub const TTS_LANGUAGE_DEFAULT: u32 = 0;
 /// right.
 pub const TTS_LEFT_TO_RIGHT: u32 = 0;
 pub const TTS_RIGHT_TO_LEFT: u32 = 1;
+/// For `BidiLevels` alone (since 1.11): each paragraph is read in the
+/// direction of its first letter that has one, from left to right where
+/// none has.
+pub const TTS_FIRST_STRONG: u32 = 2;
 
 /// What the shaping calls answer.
 pub const TTS_OK: i32 = 0;

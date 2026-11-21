@@ -45,6 +45,7 @@ pub const LVO = struct {
     pub const OpenCatalogA = libraries.lvo(26);
     pub const CloseCatalog = libraries.lvo(27);
     pub const GetCatalogStr = libraries.lvo(28);
+    pub const LanguageCode = libraries.lvo(29);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -75,6 +76,7 @@ pub const Fn = struct {
     pub const OpenCatalogA = *const fn (*LocaleBase, ?*const locale.Locale, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) ?*locale.Catalog;
     pub const CloseCatalog = *const fn (*LocaleBase, ?*locale.Catalog) callconv(.c) void;
     pub const GetCatalogStr = *const fn (*LocaleBase, ?*const locale.Catalog, i32, [*:0]const u8) callconv(.c) [*:0]const u8;
+    pub const LanguageCode = *const fn (*LocaleBase, [*:0]const u8) callconv(.c) ?[*:0]const u8;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -223,5 +225,11 @@ pub const LocaleBase = opaque {
     /// none or `catalog` is null.
     pub fn GetCatalogStr(self: *LocaleBase, catalog: ?*const locale.Catalog, string_num: i32, default_string: [*:0]const u8) [*:0]const u8 {
         return libraries.call(self, LVO.GetCatalogStr, Fn.GetCatalogStr, .{ catalog, string_num, default_string });
+    }
+
+    /// The ISO 639-1 code of a language by the name a locale gives it
+    /// (`deutsch` is `de`); null for one the library does not know. Since 1.7.
+    pub fn LanguageCode(self: *LocaleBase, language: [*:0]const u8) ?[*:0]const u8 {
+        return libraries.call(self, LVO.LanguageCode, Fn.LanguageCode, .{language});
     }
 };

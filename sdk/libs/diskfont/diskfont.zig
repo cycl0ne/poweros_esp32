@@ -19,6 +19,7 @@
 
 const graphics = @import("../graphics/graphics.zig");
 const truetype = @import("../truetype/truetype.zig");
+const utility = @import("../utility/utility.zig");
 
 /// The name to open it by.
 pub const DISKFONTNAME = "diskfont.library";
@@ -81,6 +82,33 @@ pub const OutlineFont = extern struct {
     /// a program draws itself, if it will - leaning it for italic.
     style: graphics.FontStyle,
 };
+
+// --- choosing a face (since 1.16) ------------------------------------------------
+
+/// The generic families `GenericFamily` names, as a document asks for
+/// them: a serif, a sans-serif, a fixed-width font, a handwriting one,
+/// a decorative one.
+pub const GENERIC_SERIF: u32 = 0;
+pub const GENERIC_SANS: u32 = 1;
+pub const GENERIC_MONO: u32 = 2;
+pub const GENERIC_CURSIVE: u32 = 3;
+pub const GENERIC_FANTASY: u32 = 4;
+
+/// The tags of `OpenOutlineFontTagList`: the face asked for.
+pub const DFA_Dummy = utility.TAG_USER + 0x61300;
+/// How heavy, 1 to 1000: 400 regular, 700 bold. Default 400.
+pub const DFA_Weight = DFA_Dummy + 1;
+/// How wide, in tenths of a percent of the normal width: 1000 normal,
+/// 750 condensed, 1250 expanded. Default 1000.
+pub const DFA_Stretch = DFA_Dummy + 2;
+/// Nonzero: an italic face. Default 0.
+pub const DFA_Italic = DFA_Dummy + 3;
+/// `[*]const truetype.AxisValue`: values on the axes of a variable font,
+/// set after the weight and the width it was chosen by and the later of
+/// two for one axis winning. An axis the font has not is passed over.
+pub const DFA_Axes = DFA_Dummy + 4;
+/// How many values `DFA_Axes` holds. Default 0.
+pub const DFA_AxisCount = DFA_Dummy + 5;
 
 /// The layout of a family's contents file.
 pub const fontfile = @import("fontfile.zig");

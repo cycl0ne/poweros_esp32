@@ -1098,6 +1098,8 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         if (!liberation) std.log.info("no Liberation fonts (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:sans, serif or mono", .{});
         const devanagari = hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Regular.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansDevanagari-Bold.ttf");
         if (!devanagari) std.log.info("no Noto Sans Devanagari, Regular and Bold (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:devanagari", .{});
+        const arabic = hasFontFile(b, dir, devanagari_dir ++ "/NotoSansArabic-Regular.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansArabic-Bold.ttf") and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansArabic.licence");
+        if (!arabic) std.log.info("no Noto Sans Arabic, Regular and Bold, and its licence (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:arabic", .{});
         const cjk = hasFontFile(b, dir, devanagari_dir ++ "/" ++ cjk_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoSansCJK.licence");
         if (!cjk) std.log.info("no Noto Sans CJK Regular and its licence (scripts/fetch-fonts.sh): the 64-bit disks have no FONTS:cjk-jp, -kr, -sc, -tc and -hk", .{});
         const emoji = hasFontFile(b, dir, devanagari_dir ++ "/" ++ emoji_file) and hasFontFile(b, dir, devanagari_dir ++ "/NotoColorEmoji.licence");
@@ -1107,6 +1109,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
                 .base => {},
                 .liberation => if (!liberation) continue,
                 .devanagari => if (!devanagari) continue,
+                .arabic => if (!arabic) continue,
                 .cjk => if (!cjk) continue,
                 .emoji => if (!emoji) continue,
             }
@@ -1133,6 +1136,7 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
         disks.addPrefixedFileArg("fonts/go.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "go/README" }) });
         if (liberation) disks.some(true).addPrefixedFileArg("fonts/liberation.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, liberation_dir ++ "/LICENSE" }) });
         if (devanagari) disks.some(true).addPrefixedFileArg("fonts/devanagari.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansDevanagari.licence" }) });
+        if (arabic) disks.some(true).addPrefixedFileArg("fonts/arabic.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansArabic.licence" }) });
         if (cjk) disks.some(true).addPrefixedFileArg("fonts/cjk.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoSansCJK.licence" }) });
         if (emoji) disks.some(true).addPrefixedFileArg("fonts/emoji.licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, devanagari_dir ++ "/NotoColorEmoji.licence" }) });
     }

@@ -40,6 +40,20 @@
 //! `image`. And a layer can be blurred before it is put down
 //! (`BlurLayer`): SVG's `feGaussianBlur`.
 //!
+//! Since 1.5 a layer is put down in a blend mode (`PushBlendLayer`):
+//! CSS's `mix-blend-mode`, or one of Porter and Duff's operators. A
+//! gradient may sweep round a point (`PAINT_SWEEP`). A layer goes through a filter of any of SVG's
+//! primitives - offset, colour matrix, transfer, composite, blend,
+//! merge, flood, tile, image, morphology, convolution, displacement,
+//! turbulence, lighting, drop shadow and blur - one after another, each
+//! reading what the ones before made (`FilterLayer`). A path is measured
+//! and walked (`PathLength`, `PathPointAt`), and its vertices read with
+//! the directions in and out of each (`PathVertices`): SVG's `textPath`,
+//! `pathLength` and markers. And a paint may be drawn without smoothed
+//! edges, an image read pixel by pixel, a gradient mixed in linear light
+//! (`Paint.flags`), a clip cut without smoothing, and a mask's luminance
+//! read in linear light.
+//!
 //! Open it with OpenLibrary(VECTORNAME, VECTOR_VERSION); its functions
 //! are in sdk/interface/vector.zig. A path and a canvas are one task's at
 //! a time: the library holds no lock, and two tasks drawing on two
@@ -188,6 +202,11 @@ pub const PAINT_RADIAL: u32 = 2;
 
 /// The image `Paint.image` (since 1.4; 1.3 and before paint its colour).
 pub const PAINT_IMAGE: u32 = 3;
+/// Round `cx`, `cy` from `start_angle` to `end_angle`, in degrees from
+/// the x axis towards the y axis (since 1.5; 1.4 and before paint its
+/// colour). Only the angles of one turn, 0 to 360, are drawn: past the
+/// two the spread pads, reflects or repeats.
+pub const PAINT_SWEEP: u32 = 4;
 
 /// Past a gradient's ends: its end colours go on. Past an image's edges:
 /// its edge pixels do.
@@ -226,6 +245,9 @@ pub const Paint = extern struct {
     fy: f32 = 0,
     /// The focus's own radius (SVG 2's `fr`), 0 for a point.
     fr: f32 = 0,
+    /// A sweep's angles, in degrees (since 1.5).
+    start_angle: f32 = 0,
+    end_angle: f32 = 360,
     /// The gradient's units into the path's: SVG's `gradientTransform`.
     /// An image's units - a pixel each, (0, 0) its top left corner - into
     /// the path's.
@@ -238,7 +260,20 @@ pub const Paint = extern struct {
     image_width: u32 = 0,
     image_height: u32 = 0,
     image_bytes_per_row: u32 = 0,
+    /// `PAINTF_*` (since 1.5; 1.4 and before read none).
+    flags: u32 = 0,
 };
+
+/// `Paint.flags`: the edges not smoothed - a pixel is painted whole when
+/// the shape covers its middle, and not at all when not: SVG's
+/// `shape-rendering: crispEdges`.
+pub const PAINTF_ALIASED: u32 = 1;
+/// An image read pixel by pixel, each the one nearest, not smoothly
+/// between them: SVG's `image-rendering: pixelated`.
+pub const PAINTF_NEAREST: u32 = 2;
+/// A gradient's colours mixed in linear light rather than as they are
+/// written: SVG's `color-interpolation: linearRGB`.
+pub const PAINTF_LINEARRGB: u32 = 4;
 
 // --- how a fill covers, and a stroke -------------------------------------
 
@@ -247,10 +282,17 @@ pub const RULE_NONZERO: u32 = 0;
 /// Inside where it winds round a point an odd number of times: a contour
 /// inside another is a hole.
 pub const RULE_EVENODD: u32 = 1;
+/// With either rule, for `PushClip` (since 1.5): the clip cut without
+/// smoothing, as `PAINTF_ALIASED` paints.
+pub const RULEF_ALIASED: u32 = 0x100;
 
 pub const JOIN_MITER: u32 = 0;
 pub const JOIN_ROUND: u32 = 1;
 pub const JOIN_BEVEL: u32 = 2;
+/// A miter cut off square where it passes the miter limit, rather than
+/// bevelled (since 1.5; 1.4 and before join it as `JOIN_MITER`): SVG 2's
+/// `miter-clip`.
+pub const JOIN_MITER_CLIP: u32 = 3;
 
 pub const CAP_BUTT: u32 = 0;
 pub const CAP_ROUND: u32 = 1;
@@ -319,3 +361,333 @@ pub const MAX_CLIPS = 16;
 pub const MASK_ALPHA: u32 = 0;
 pub const MASK_LUMINANCE: u32 = 1;
 pub const MASK_INVERT: u32 = 0x10;
+/// With `MASK_LUMINANCE` (since 1.5): the luminance of the colours in
+/// linear light, SVG's `color-interpolation: linearRGB` on a mask.
+pub const MASK_LINEARRGB: u32 = 0x20;
+
+// --- blend modes (since 1.5) ------------------------------------------------
+
+/// How a layer's colours go onto what is under them (`PushBlendLayer`),
+/// and a filter's `FILTER_BLEND`: CSS's blend modes, by their names.
+/// Each mixes the layer's colour with the one under it where both are,
+/// and is laid over it at the layer's coverage, as `BLEND_NORMAL` is.
+pub const BLEND_NORMAL: u32 = 0;
+pub const BLEND_MULTIPLY: u32 = 1;
+pub const BLEND_SCREEN: u32 = 2;
+pub const BLEND_OVERLAY: u32 = 3;
+pub const BLEND_DARKEN: u32 = 4;
+pub const BLEND_LIGHTEN: u32 = 5;
+pub const BLEND_COLOUR_DODGE: u32 = 6;
+pub const BLEND_COLOUR_BURN: u32 = 7;
+pub const BLEND_HARD_LIGHT: u32 = 8;
+pub const BLEND_SOFT_LIGHT: u32 = 9;
+pub const BLEND_DIFFERENCE: u32 = 10;
+pub const BLEND_EXCLUSION: u32 = 11;
+/// The non-separable four: the layer's hue, saturation, both, or its
+/// luminosity, with the rest of the colour under it.
+pub const BLEND_HUE: u32 = 12;
+pub const BLEND_SATURATION: u32 = 13;
+pub const BLEND_COLOUR: u32 = 14;
+pub const BLEND_LUMINOSITY: u32 = 15;
+/// The two added, each channel and the coverage, and held at full.
+pub const BLEND_PLUS_LIGHTER: u32 = 16;
+/// Porter and Duff's ways of putting a layer down, the layer being the
+/// source and what is under it the destination: nothing; the layer
+/// alone; what is under alone; what is under over the layer; the layer
+/// where what is under is, or what is under where the layer is; the
+/// layer where what is under is not, or the other way round; the layer
+/// atop what is under, or the other way round; each where the other is
+/// not. Where the layer is not, those that keep only what is of both or
+/// of the layer clear what is under it - inside the clips, to the edges
+/// of the layer it goes down on.
+pub const BLEND_CLEAR: u32 = 17;
+pub const BLEND_COPY: u32 = 18;
+pub const BLEND_DESTINATION: u32 = 19;
+pub const BLEND_DESTINATION_OVER: u32 = 20;
+pub const BLEND_SOURCE_IN: u32 = 21;
+pub const BLEND_DESTINATION_IN: u32 = 22;
+pub const BLEND_SOURCE_OUT: u32 = 23;
+pub const BLEND_DESTINATION_OUT: u32 = 24;
+pub const BLEND_SOURCE_ATOP: u32 = 25;
+pub const BLEND_DESTINATION_ATOP: u32 = 26;
+pub const BLEND_XOR: u32 = 27;
+
+// --- filters (since 1.5) ----------------------------------------------------
+
+/// The most primitives one `FilterLayer` runs.
+pub const MAX_FILTER_PRIMITIVES = 64;
+
+/// A primitive's input: what was drawn on the layer, its coverage alone
+/// (black where it is), or - 0 up - the result of an earlier primitive
+/// by its place in the list.
+pub const FILTERIN_SOURCE: i32 = -1;
+pub const FILTERIN_SOURCEALPHA: i32 = -2;
+
+/// `FilterPrimitive.flags`: the primitive works in linear light, its
+/// inputs turned into it first - SVG's `color-interpolation-filters`,
+/// whose default this is. Without it, in the colours as written (sRGB).
+pub const FILTERF_LINEARRGB: u32 = 1;
+
+/// `FilterPrimitive.kind`, and which of its `as` it reads.
+pub const FILTER_BLEND: u32 = 0; // .blend: in over in2 in a blend mode
+pub const FILTER_COLOUR_MATRIX: u32 = 1; // .colour_matrix
+pub const FILTER_COMPONENT_TRANSFER: u32 = 2; // .transfer
+pub const FILTER_COMPOSITE: u32 = 3; // .composite: in with in2
+pub const FILTER_CONVOLVE: u32 = 4; // .convolve
+pub const FILTER_DIFFUSE_LIGHTING: u32 = 5; // .lighting
+pub const FILTER_DISPLACEMENT_MAP: u32 = 6; // .displacement: in moved by in2
+pub const FILTER_DROP_SHADOW: u32 = 7; // .drop_shadow
+pub const FILTER_FLOOD: u32 = 8; // .flood: no input
+pub const FILTER_GAUSSIAN_BLUR: u32 = 9; // .blur
+pub const FILTER_IMAGE: u32 = 10; // .image: no input
+pub const FILTER_MERGE: u32 = 11; // .merge: its inputs, the first lowest
+pub const FILTER_MORPHOLOGY: u32 = 12; // .morphology
+pub const FILTER_OFFSET: u32 = 13; // .offset
+pub const FILTER_SPECULAR_LIGHTING: u32 = 14; // .lighting
+pub const FILTER_TILE: u32 = 15; // none: in's region repeated over this one
+pub const FILTER_TURBULENCE: u32 = 16; // .turbulence: no input
+
+/// `FilterComposite.operator`: Porter and Duff's, in over in2 and the
+/// rest, a sum of the products (`k1` to `k4`), and the two added.
+pub const COMPOSITE_OVER: u32 = 0;
+pub const COMPOSITE_IN: u32 = 1;
+pub const COMPOSITE_OUT: u32 = 2;
+pub const COMPOSITE_ATOP: u32 = 3;
+pub const COMPOSITE_XOR: u32 = 4;
+pub const COMPOSITE_ARITHMETIC: u32 = 5;
+pub const COMPOSITE_LIGHTER: u32 = 6;
+
+/// `FilterTransfer.kind`: a channel as it is, through a table of values
+/// it goes between, a table of steps, a line, or a curve.
+pub const TRANSFER_IDENTITY: u32 = 0;
+pub const TRANSFER_TABLE: u32 = 1;
+pub const TRANSFER_DISCRETE: u32 = 2;
+pub const TRANSFER_LINEAR: u32 = 3;
+pub const TRANSFER_GAMMA: u32 = 4;
+
+/// What a convolution reads past the input's edge: its nearest pixel,
+/// the other side's, or clear.
+pub const EDGE_DUPLICATE: u32 = 0;
+pub const EDGE_WRAP: u32 = 1;
+pub const EDGE_NONE: u32 = 2;
+
+/// A displacement map's channels.
+pub const CHANNEL_R: u32 = 0;
+pub const CHANNEL_G: u32 = 1;
+pub const CHANNEL_B: u32 = 2;
+pub const CHANNEL_A: u32 = 3;
+
+/// `FilterMorphology.operator`: thinner or fatter.
+pub const MORPHOLOGY_ERODE: u32 = 0;
+pub const MORPHOLOGY_DILATE: u32 = 1;
+
+/// `FilterLight.kind`: a light from far off in one direction, from a
+/// point, or a spot from a point toward another.
+pub const LIGHT_DISTANT: u32 = 0;
+pub const LIGHT_POINT: u32 = 1;
+pub const LIGHT_SPOT: u32 = 2;
+
+/// In over in2 in `mode` (`BLEND_*`).
+pub const FilterBlend = extern struct { mode: u32 = BLEND_NORMAL };
+
+/// Each pixel's red, green, blue and alpha, not premultiplied and 0 to
+/// 1, times the matrix's four rows of five: SVG's `feColorMatrix`, whose
+/// other types are matrices too.
+pub const FilterColourMatrix = extern struct { values: [20]f32 = .{ 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0 } };
+
+/// One channel's function, SVG's `feFuncR` and the rest. `table` is read
+/// by the call and not kept.
+pub const FilterTransfer = extern struct {
+    kind: u32 = TRANSFER_IDENTITY,
+    table: ?[*]const f32 = null,
+    table_count: u32 = 0,
+    slope: f32 = 1,
+    intercept: f32 = 0,
+    amplitude: f32 = 1,
+    exponent: f32 = 1,
+    offset: f32 = 0,
+};
+
+/// Red, green, blue and alpha, each through its own function, not
+/// premultiplied.
+pub const FilterComponentTransfer = extern struct { functions: [4]FilterTransfer = @splat(.{}) };
+
+pub const FilterComposite = extern struct {
+    operator: u32 = COMPOSITE_OVER,
+    /// `COMPOSITE_ARITHMETIC`'s k1 * in * in2 + k2 * in + k3 * in2 + k4.
+    k: [4]f32 = .{ 0, 0, 0, 0 },
+};
+
+/// Each pixel the sum of those round it times the kernel, `order_x` by
+/// `order_y` numbers read by the call and not kept, over `divisor`, and
+/// `bias` added; the kernel's `target_x`, `target_y` is the pixel's own
+/// place in it. `preserve_alpha` leaves the coverage as it is and
+/// convolves the colours alone.
+pub const FilterConvolve = extern struct {
+    order_x: u32 = 3,
+    order_y: u32 = 3,
+    kernel: ?[*]const f32 = null,
+    divisor: f32 = 1,
+    bias: f32 = 0,
+    target_x: i32 = 1,
+    target_y: i32 = 1,
+    edge: u32 = EDGE_DUPLICATE,
+    preserve_alpha: u32 = 0,
+};
+
+/// A light, in pixels: a distant one by its direction in degrees, a
+/// point and a spot by where they are - z up from the canvas - and a
+/// spot by where it points, how its light falls off round that
+/// (`spot_exponent`) and the cone it is held to (`cone`, in degrees; 0
+/// for none).
+pub const FilterLight = extern struct {
+    kind: u32 = LIGHT_DISTANT,
+    azimuth: f32 = 0,
+    elevation: f32 = 0,
+    x: f32 = 0,
+    y: f32 = 0,
+    z: f32 = 0,
+    at_x: f32 = 0,
+    at_y: f32 = 0,
+    at_z: f32 = 0,
+    spot_exponent: f32 = 1,
+    cone: f32 = 0,
+};
+
+/// The input's coverage taken as a surface, `surface_scale` high where
+/// it is whole, lit by `light` in `colour` (in sRGB): diffusely by
+/// `constant`, or as a shine, by `constant` to the power of `exponent`.
+pub const FilterLighting = extern struct {
+    surface_scale: f32 = 1,
+    constant: f32 = 1,
+    exponent: f32 = 1,
+    colour: Colour = .{ .r = 1, .g = 1, .b = 1 },
+    light: FilterLight = .{},
+};
+
+/// Each pixel of in taken from as far off as in2's channels say -
+/// `x_channel` across, `y_channel` down, each times `scale_x` or
+/// `scale_y` pixels round its middle.
+pub const FilterDisplacement = extern struct {
+    scale_x: f32 = 0,
+    scale_y: f32 = 0,
+    x_channel: u32 = CHANNEL_A,
+    y_channel: u32 = CHANNEL_A,
+};
+
+/// In's coverage blurred, moved, in `colour`, and in over it.
+pub const FilterDropShadow = extern struct {
+    dx: f32 = 2,
+    dy: f32 = 2,
+    deviation_x: f32 = 2,
+    deviation_y: f32 = 2,
+    colour: Colour = .{},
+};
+
+/// The region in one colour, in sRGB.
+pub const FilterFlood = extern struct { colour: Colour = .{ .a = 0 } };
+
+/// In blurred, a deviation in pixels each way.
+pub const FilterBlur = extern struct { deviation_x: f32 = 0, deviation_y: f32 = 0 };
+
+/// A program's pixels - 0xAARRGGBB, not premultiplied, in sRGB -
+/// `width` by `height`, their top left corner at `x`, `y` on the canvas.
+/// Read by the call and not kept.
+pub const FilterImage = extern struct {
+    pens: ?[*]const graphics.Pen = null,
+    width: u32 = 0,
+    height: u32 = 0,
+    bytes_per_row: u32 = 0,
+    x: i32 = 0,
+    y: i32 = 0,
+};
+
+/// The inputs, by their numbers as `in` has them, put down one over the
+/// other, the first lowest. Read by the call and not kept.
+pub const FilterMerge = extern struct { inputs: ?[*]const i32 = null, count: u32 = 0 };
+
+/// Each pixel the least, or the most, of those within a box this many
+/// pixels round it, each channel on its own.
+pub const FilterMorphology = extern struct {
+    operator: u32 = MORPHOLOGY_ERODE,
+    radius_x: f32 = 0,
+    radius_y: f32 = 0,
+};
+
+/// In moved, in pixels.
+pub const FilterOffset = extern struct { dx: f32 = 0, dy: f32 = 0 };
+
+/// Perlin's noise, as SVG's `feTurbulence` makes it: in the units
+/// `matrix` takes to pixels, at `base_x`, `base_y` waves a unit, `octaves`
+/// of it, from `seed`; its sum (`fractal`) or the sum of its sizes. With
+/// `stitch`, made to repeat over the tile `tile_*`, in the same units.
+pub const FilterTurbulence = extern struct {
+    base_x: f32 = 0,
+    base_y: f32 = 0,
+    octaves: u32 = 1,
+    seed: f32 = 0,
+    fractal: u32 = 0,
+    stitch: u32 = 0,
+    matrix: Matrix = .{},
+    tile_x: f32 = 0,
+    tile_y: f32 = 0,
+    tile_width: f32 = 0,
+    tile_height: f32 = 0,
+};
+
+/// What one kind of primitive reads.
+pub const FilterParameters = extern union {
+    blend: FilterBlend,
+    colour_matrix: FilterColourMatrix,
+    transfer: FilterComponentTransfer,
+    composite: FilterComposite,
+    convolve: FilterConvolve,
+    lighting: FilterLighting,
+    displacement: FilterDisplacement,
+    drop_shadow: FilterDropShadow,
+    flood: FilterFlood,
+    blur: FilterBlur,
+    image: FilterImage,
+    merge: FilterMerge,
+    morphology: FilterMorphology,
+    offset: FilterOffset,
+    turbulence: FilterTurbulence,
+};
+
+/// One step of a filter (`FilterLayer`): what it does (`FILTER_*`) and
+/// with what. Its result is clear outside `region` - pixels of the
+/// canvas, SVG's primitive subregion - and the next steps read it by its
+/// place in the list.
+pub const FilterPrimitive = extern struct {
+    kind: u32 = FILTER_FLOOD,
+    /// `FILTERIN_*`, or an earlier step's place.
+    in: i32 = FILTERIN_SOURCE,
+    in2: i32 = FILTERIN_SOURCE,
+    region: Rect = .{},
+    /// `FILTERF_*`.
+    flags: u32 = FILTERF_LINEARRGB,
+    as: FilterParameters = .{ .flood = .{} },
+};
+
+// --- a path's vertices (since 1.5) ------------------------------------------
+
+/// A vertex of a path (`PathVertices`): where a segment ends or a
+/// contour starts, and the directions the path comes in and goes out
+/// there, in degrees clockwise from across.
+pub const Vertex = extern struct {
+    point: Point = .{},
+    in_angle: f32 = 0,
+    out_angle: f32 = 0,
+    /// `VERTEXF_*`.
+    flags: u32 = 0,
+};
+
+/// A contour's first vertex, and its last.
+pub const VERTEXF_START: u32 = 1;
+pub const VERTEXF_END: u32 = 2;
+/// The contour is closed: its first vertex is come into by the close,
+/// and its last is where the close begins.
+pub const VERTEXF_CLOSED: u32 = 4;
+/// Nothing comes in, or nothing goes out: the angle is the other one.
+pub const VERTEXF_NO_IN: u32 = 8;
+pub const VERTEXF_NO_OUT: u32 = 16;

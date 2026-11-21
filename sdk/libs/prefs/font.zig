@@ -17,6 +17,13 @@
 //! `graphics.FONT_FALLBACKS` of them. diskfont.library reads the key as
 //! it opens a font and gives the font those families at its own height.
 //!
+//! It may name the families CSS's generic families are - `SERIF=`,
+//! `SANS=`, `MONO=`, `CURSIVE=` and `FANTASY=`, each a family without a
+//! size: what a document that asks for a serif or a cursive font is
+//! drawn in (diskfont.library's `GenericFamily`). Left out, the first
+//! three are `serif.font`, `sans.font` and `mono.font`, and the other
+//! two none.
+//!
 //! `parse` reads the line into a `Line`, `attrOf` turns one of its fonts
 //! into the `TextAttr` that asks for it, `standIn` names the font that
 //! stands in for one left out, `Families` walks the fallback families,
@@ -37,6 +44,13 @@ pub const which_names = [6][]const u8{ "SCREEN", "DEFAULT", "FIXED", "ICON", "DO
 
 pub const value_len = 64;
 
+/// The generic families, in the line's order.
+pub const Generic = enum(u8) { serif, sans, mono, cursive, fantasy };
+pub const generic_names = [5][]const u8{ "SERIF", "SANS", "MONO", "CURSIVE", "FANTASY" };
+
+/// What a generic family left out is.
+pub const generic_defaults = [5]?[]const u8{ "serif.font", "sans.font", "mono.font", null, null };
+
 /// The key of the fallback families.
 pub const fallback_name = "FALLBACK";
 /// The room for the fallback families' text: as many names as there can
@@ -49,6 +63,31 @@ pub const Line = struct {
     values: [which_names.len][value_len]u8 = @splat(@splat(0)),
     /// The fallback families, commas between; empty when there are none.
     fallback: [fallback_len]u8 = @splat(0),
+    /// The generic families, each a family's name; empty where left out.
+    generics: [generic_names.len][value_len]u8 = @splat(@splat(0)),
+
+    /// The family a generic family is, as the line names it; null where
+    /// it is left out (`generic_defaults` says what it is then).
+    pub fn generic(line: *const Line, which: Generic) ?[]const u8 {
+        const v = &line.generics[@intFromEnum(which)];
+        var n: usize = 0;
+        while (n < value_len and v[n] != 0) n += 1;
+        return if (n == 0) null else v[0..n];
+    }
+
+    /// A generic family set to `text`, a family's name without a size;
+    /// empty leaves it out. Null when it is taken, else what is wrong,
+    /// the line left as it was.
+    pub fn setGeneric(line: *Line, which: Generic, text: []const u8) ?[*:0]const u8 {
+        for (text) |c| {
+            if (c == '/' or c == ' ' or c == '\t' or c == ',') return generic_form;
+        }
+        if (text.len >= value_len) return "a font's name too long";
+        const v = &line.generics[@intFromEnum(which)];
+        @memset(v, 0);
+        @memcpy(v[0..text.len], text);
+        return null;
+    }
 
     pub fn get(line: *const Line, which: Which) ?[]const u8 {
         const v = &line.values[@intFromEnum(which)];
@@ -114,6 +153,7 @@ pub const Line = struct {
 };
 
 const fallback_form = "FALLBACK is families with commas between and no sizes, as sans.font,mono.font";
+const generic_form = "SERIF, SANS, MONO, CURSIVE and FANTASY are a family each, without a size, as serif.font";
 const fallback_many = "FALLBACK takes at most 8 families";
 
 comptime {
@@ -191,9 +231,16 @@ pub fn parse(ub: *UtilityBase, text: []const u8, line: *Line) ?[*:0]const u8 {
             if (line.setFallbacks(value)) |wrong| return wrong;
             continue;
         }
+        const named_generic: ?Generic = for (generic_names, 0..) |name, k| {
+            if (style.same(word, name)) break @enumFromInt(k);
+        } else null;
+        if (named_generic) |which| {
+            if (line.setGeneric(which, value)) |wrong| return wrong;
+            continue;
+        }
         const which: Which = for (which_names, 0..) |name, k| {
             if (style.same(word, name)) break @enumFromInt(k);
-        } else return "not in the form SCREEN=family/size DEFAULT=... FIXED=... ICON=... DOCUMENT=... CODE=... FALLBACK=family,family";
+        } else return "not in the form SCREEN=family/size DEFAULT=... FIXED=... ICON=... DOCUMENT=... CODE=... SERIF=family SANS=... MONO=... CURSIVE=... FANTASY=... FALLBACK=family,family";
         var name: [value_len:0]u8 = undefined;
         if (attrOf(value, &name) == null) return "a font is written family/size, as spleen.font/16 or spleen.font/10P";
         if (!line.set(which, value)) return "a font's name too long";
@@ -207,6 +254,21 @@ pub fn write(line: *const Line, into: []u8) usize {
     for (0..which_names.len) |k| {
         const text = line.get(@enumFromInt(k)) orelse continue;
         const name = which_names[k];
+        if (n + name.len + text.len + 2 > into.len) break;
+        if (n > 0) {
+            into[n] = ' ';
+            n += 1;
+        }
+        @memcpy(into[n..][0..name.len], name);
+        n += name.len;
+        into[n] = '=';
+        n += 1;
+        @memcpy(into[n..][0..text.len], text);
+        n += text.len;
+    }
+    for (0..generic_names.len) |k| {
+        const text = line.generic(@enumFromInt(k)) orelse continue;
+        const name = generic_names[k];
         if (n + name.len + text.len + 2 > into.len) break;
         if (n > 0) {
             into[n] = ' ';
@@ -246,7 +308,11 @@ pub const header =
     \\# and plain text. Each is family/size, the size in rows, or in points
     \\# with a P after it: spleen.font/16, spleen.font/10P. One of the first
     \\# three left out, or no line at all, is pospaz from the ROM; ICON left
-    \\# out is DEFAULT's, DOCUMENT DEFAULT's and CODE FIXED's. FALLBACK names
+    \\# out is DEFAULT's, DOCUMENT DEFAULT's and CODE FIXED's. SERIF, SANS,
+    \\# MONO, CURSIVE and FANTASY name a family each, without a size, for the
+    \\# generic families a document asks for - a picture's text: left out,
+    \\# the first three are serif.font, sans.font and mono.font, the other two
+    \\# none. FALLBACK names
     \\# the families a character is looked for in that the font of a text has
     \\# no glyph for, in the order written, with commas between and no sizes:
     \\# FALLBACK=sans.font,mono.font. diskfont.library reads it as it opens a

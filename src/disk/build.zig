@@ -41,10 +41,12 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `3d`: facet.library, its drivers and what draws with it.
 /// - `modbus`: modbus.library and the RS-485 line.
 /// - `commodities`: commodities.library and SYS:Commodities.
+/// - `svg`: svg.datatype, SVG files as pictures - built for every chip,
+///   on the disks of the boards that name it, and on the others' cards.
 /// - `dev`: what somebody working on the system wants there - Git.
 /// - `tests`: C:test and SYS:Tests, and the example library and gadget
 ///   they open.
-pub const Set = enum { base, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, dev, tests };
+pub const Set = enum { base, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, svg, dev, tests };
 
 /// Some of the sets.
 pub const Sets = std.EnumSet(Set);
@@ -438,7 +440,7 @@ const modules = [_]Program{
     .{ .disk = "classes/datatypes/gif.datatype", .source = "classes/datatypes/gif/gif.zig", .name = "gif.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/gifanim.datatype", .source = "classes/datatypes/gif/gifanim.zig", .name = "gifanim.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/lottie.datatype", .source = "classes/datatypes/lottie/lottie.zig", .name = "lottie.datatype", .set = .gui },
-    .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype", .set = .gui },
+    .{ .disk = "classes/datatypes/svg.datatype", .source = "classes/datatypes/svg/svg.zig", .name = "svg.datatype", .set = .svg },
     .{ .disk = "classes/datatypes/jpeg.datatype", .source = "classes/datatypes/jpeg/jpeg.zig", .name = "jpeg.datatype", .set = .gui, .imports = &.{"jpegdecode"} },
     .{ .disk = "classes/datatypes/text.datatype", .source = "classes/datatypes/text/text.zig", .name = "text.datatype", .set = .gui },
     .{ .disk = "classes/datatypes/ascii.datatype", .source = "classes/datatypes/ascii/ascii.zig", .name = "ascii.datatype", .set = .gui },
@@ -531,10 +533,8 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// disks nor the speed, and the 64-bit machines' disks are RAM.
 /// chip.vcodec goes with them: it drives videodec.resource, which no
 /// ESP32 has, and carries the parameter-set readers it reads a stream's
-/// colours with - 60 KB for a chip that is not there. svg.datatype as
-/// well: what goes on an ESP32's flash disk is what that board is meant
-/// to do, and showing SVG files is not among it.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "svg.datatype", "dttime" };
+/// colours with - 60 KB for a chip that is not there.
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "dttime" };
 /// Drivers of what only the Raspberry Pi CM5's BCM2712 has among the
 /// AArch64 machines and no other chip does: its radio, a CYW43455 on the
 /// BCM2712's SD host, and its V3D 7.1 - the CM4's BCM2711 has neither
@@ -551,17 +551,11 @@ const bcm2712_only = [_][]const u8{ "cyw43455.device", "v3dtest", "facetboth", "
 const no_3d = [_][]const u8{ "facet.library", "raster", "cube", "facetcube", "facetwindow", "facetmany", "facetprobe", "model.datatype", "obj.datatype", "boing", "cobra" };
 
 /// What goes with the programs only the 64-bit machines have
-/// (`rv64_only`) - what they are, in SYS:System/Docs, the descriptors
-/// and the test pictures of svg.datatype, plain, packed and of text, and
-/// Lottie's paints: left off the ESP32s' disks with them.
+/// (`rv64_only`) - what they are, in SYS:System/Docs, and Lottie's
+/// paints: left off the ESP32s' disks with them.
 const rv64_only_files = [_][]const u8{
     "System/Docs/Update.md",
     "System/Docs/SystemScan.md",
-    "devs/datatypes/SVG",
-    "devs/datatypes/SVGZ",
-    "tests/datatypes/Drawing.svg",
-    "tests/datatypes/Drawing.svgz",
-    "tests/datatypes/Text.svg",
     "tests/datatypes/Paints.json",
 };
 
@@ -638,6 +632,11 @@ const path_sets = [_]struct { []const u8, Set }{
     .{ "tests/datatypes/Torus.mtl", .@"3d" },
     .{ "tests/datatypes/Icosahedron.obj", .@"3d" },
     .{ "devs/datatypes/OBJ", .@"3d" },
+    // svg.datatype's descriptors and test pictures, plain, packed and of
+    // text: with it.
+    .{ "devs/datatypes/SVG", .svg },
+    .{ "tests/datatypes/Drawing.svg", .svg },
+    .{ "tests/datatypes/Text.svg", .svg },
     .{ "libs/facet", .@"3d" },
     .{ "tests", .tests },
     .{ "c/test", .tests },

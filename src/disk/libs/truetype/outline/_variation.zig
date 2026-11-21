@@ -240,6 +240,9 @@ pub fn open(font: *Font, values: ?[*]const truetype.AxisValue, count: u32) void 
         if (!(value >= lower)) value = lower;
         if (value > upper) value = upper;
         vary.values[axis] = @floatCast(value);
+        // The weight and the width it is drawn at, as the axes say.
+        if (tag == truetype.tableTag("wght")) font.weight = @intFromFloat(@max(1, @min(1000, @round(value))));
+        if (tag == truetype.tableTag("wdth")) font.stretch = @intFromFloat(@max(1, @min(65535, @round(value * 10))));
         const bent = mapped(font, avar, axis, normalized(value, lower, middle, upper));
         const whole = rounded(bent * 16384.0);
         vary.coords[axis] = @intCast(@max(-16384, @min(16384, whole)));
@@ -307,12 +310,12 @@ fn bendTogether(font: *Font, avar: Table) void {
 }
 
 /// An item of a store of deltas: its data, and its row there.
-const Item = struct { outer: u32, inner: u32 };
+pub const Item = struct { outer: u32, inner: u32 };
 
 /// The item a map of items names for the entry `index` - one past the
 /// map's end has its last entry's - or, without a map, row `index` of
 /// the first data. Null for a map that cannot be read.
-fn itemOf(font: *const Font, map: ?Table, index: u32) ?Item {
+pub fn itemOf(font: *const Font, map: ?Table, index: u32) ?Item {
     const table = map orelse return .{ .outer = 0, .inner = index };
     const form = byteIn(font, table, 0);
     const entry_form: u32 = byteIn(font, table, 1);
@@ -594,6 +597,24 @@ fn advanceDelta(font: *const Font, glyph: u32) f64 {
     const map: ?Table = if (map_at != 0) partOf(hvar, map_at) orelse return 0 else null;
     const item = itemOf(font, map, glyph) orelse return 0;
     return storeDelta(font, store, item.outer, item.inner);
+}
+
+/// What a glyph's vertical advance, or its top side bearing, changes by
+/// at the font's place, from `VVAR`, rounded: the store's item the
+/// table's map of that measure names for the glyph - without a map of
+/// the advances, row `glyph` of the first data. 0 for a font at its
+/// default, one without the table, and for the bearing of one without
+/// a map of them.
+pub fn verticalDelta(font: *const Font, glyph: u32, which: enum { advance, top }) i32 {
+    if (!font.vary.varied) return 0;
+    const vvar = _outline.findTable(font, "VVAR") orelse return 0;
+    if (vvar.len < 24 or wordIn(font, vvar, 0) != 1) return 0;
+    const store = partOf(vvar, longIn(font, vvar, 4)) orelse return 0;
+    const map_at = longIn(font, vvar, if (which == .advance) 8 else 12);
+    if (which == .top and map_at == 0) return 0;
+    const map: ?Table = if (map_at != 0) partOf(vvar, map_at) orelse return 0 else null;
+    const item = itemOf(font, map, glyph) orelse return 0;
+    return rounded(storeDelta(font, store, item.outer, item.inner));
 }
 
 // --- a glyph's deltas ----------------------------------------------------------

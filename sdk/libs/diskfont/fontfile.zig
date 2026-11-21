@@ -21,6 +21,14 @@
 //! one collection each have a contents file, and the file is on the
 //! disk once, with the first of them.
 //!
+//! **What the family's fonts call themselves** (version 3): the header
+//! holds the family name its font files give - a TrueType or OpenType
+//! file's typographic family, "Noto Sans Arabic" - by which a program
+//! that names fonts as a document does finds the family
+//! (`FindFamily`); and each outline entry how heavy and how wide it is
+//! drawn, by which one is chosen for the weight and width a text asks
+//! (`OpenOutlineFontTagList`).
+//!
 //! A `ContentsHeader`, then `count` `FontContents`, little-endian and in
 //! 32-bit alignment. The longwords of the whole file add up to zero, the
 //! header's `checksum` making them, so a file that lost a byte is refused
@@ -33,7 +41,10 @@ const truetype = @import("../truetype/truetype.zig");
 pub const MAGIC: u32 = 0x5443_4650;
 
 /// The layout this file describes.
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
+
+/// How long the family's name can be, its NUL included.
+pub const MAXFONTFAMILY = 64;
 
 /// How long an entry's path can be, its NUL included.
 pub const MAXFONTPATH = 64;
@@ -52,6 +63,10 @@ pub const ContentsHeader = extern struct {
     count: u16 = 0,
     /// What makes the longwords of the file add up to zero.
     checksum: u32 = 0,
+    /// The name the family's fonts give themselves, NUL-padded: a font
+    /// file's typographic family, or its family where it gives none.
+    /// Empty for a family of sizes alone.
+    family: [MAXFONTFAMILY]u8 = @splat(0),
 };
 
 /// One size of the family.
@@ -66,7 +81,12 @@ pub const FontContents = extern struct {
     flags: graphics.FontFlags = 0,
     /// Its pixels: a `fontimage.Kind`.
     kind: u8 = 0,
-    pad: [3]u8 = .{ 0, 0, 0 },
+    pad: u8 = 0,
+    /// How heavy an outline entry is drawn, 1 to 1000: 400 regular, 700
+    /// bold, the font's own weight class or its `wght` at the entry's
+    /// place. 0: not said, which is 700 for a bold entry and 400 for the
+    /// others (`weightOf`).
+    weight: u16 = 0,
     /// The nominal width.
     x_size: u16 = 0,
     /// 1: `path` is a TrueType or OpenType file, rendered at whatever
@@ -81,8 +101,12 @@ pub const FontContents = extern struct {
     /// holds several, a TrueType file the one (truetype.library's
     /// `TTA_FontIndex`).
     face: u8 = 0,
-    /// Nothing yet; zero.
-    reserved: [3]u8 = @splat(0),
+    reserved: u8 = 0,
+    /// How wide an outline entry is drawn, in tenths of a percent of the
+    /// font's normal width: 1000 normal, 750 condensed, 1250 expanded -
+    /// its width class or its `wdth` at the entry's place. 0: not said,
+    /// which is normal (`stretchOf`).
+    stretch: u16 = 0,
     /// The entry's place on a variable font's axes: the first
     /// `axis_count` name an axis by its tag and its value there, in the
     /// form truetype.library's `TTA_Axes` takes. The others are zero.
@@ -90,7 +114,8 @@ pub const FontContents = extern struct {
 };
 
 comptime {
-    if (@sizeOf(ContentsHeader) != 12) @compileError("ContentsHeader is not 12 bytes");
+    if (@sizeOf(ContentsHeader) != 76) @compileError("ContentsHeader is not 76 bytes");
+    if (@offsetOf(FontContents, "weight") != 70 or @offsetOf(FontContents, "stretch") != 78) @compileError("FontContents moved");
     if (@sizeOf(FontContents) != 144) @compileError("FontContents is not 144 bytes");
 }
 
@@ -110,6 +135,48 @@ pub fn entriesOf(block: [*]const u8) []const FontContents {
     const header: *const ContentsHeader = @ptrCast(@alignCast(block));
     const at: [*]const FontContents = @ptrCast(@alignCast(block + @sizeOf(ContentsHeader)));
     return at[0..header.count];
+}
+
+/// How heavy an entry is drawn: what it says, else 700 for a bold one
+/// and 400 for the others.
+///
+/// INPUTS:
+/// - `entry` - the entry.
+pub fn weightOf(entry: *const FontContents) u16 {
+    if (entry.weight != 0) return entry.weight;
+    return if (entry.style & graphics.FSF_BOLD != 0) 700 else 400;
+}
+
+/// How wide an entry is drawn, in tenths of a percent: what it says,
+/// else normal, 1000.
+///
+/// INPUTS:
+/// - `entry` - the entry.
+pub fn stretchOf(entry: *const FontContents) u16 {
+    return if (entry.stretch != 0) entry.stretch else 1000;
+}
+
+/// The family's name, without the padding: empty when it gives none.
+///
+/// INPUTS:
+/// - `header` - the start of a file `sound` has passed.
+pub fn familyOf(header: *const ContentsHeader) []const u8 {
+    var len: usize = 0;
+    while (len < MAXFONTFAMILY - 1 and header.family[len] != 0) len += 1;
+    return header.family[0..len];
+}
+
+/// `name` written as the family's, cut to what the field holds.
+///
+/// INPUTS:
+/// - `header` - the header being made.
+/// - `name` - the name, UTF-8.
+pub fn setFamily(header: *ContentsHeader, name: []const u8) void {
+    header.family = @splat(0);
+    var len = @min(name.len, MAXFONTFAMILY - 1);
+    // Not inside a character.
+    while (len > 0 and len < name.len and name[len] & 0xC0 == 0x80) len -= 1;
+    @memcpy(header.family[0..len], name[0..len]);
 }
 
 /// An entry's path, without the padding.
@@ -136,6 +203,7 @@ pub fn sound(block: [*]const u8, size: u32) bool {
     if (header.magic != MAGIC or header.version != VERSION) return false;
     if (size != contentsSize(header.count)) return false;
     if (graphics.fontimage.sumOf(block, size) != 0) return false;
+    if (header.family[MAXFONTFAMILY - 1] != 0) return false;
     for (entriesOf(block)) |*entry| {
         if (entry.path[MAXFONTPATH - 1] != 0 or entry.path[0] == 0) return false;
         if (entry.axis_count > MAXFONTAXES) return false;
@@ -161,11 +229,15 @@ pub fn seal(block: [*]u8, size: u32) void {
 /// - `style` - the styles the file is drawn in at `place`: what every
 ///   size rendered from the entry is. For a file without axes, what the
 ///   font says of itself (`truetype.styleOfFont`).
+/// - `weight`, `stretch` - how heavy and how wide it is drawn there, as
+///   truetype.library's `FontMetrics` says; 0 for not said.
 /// - `place` - where on the file's axes; `.{}` for its default.
 /// - `face` - which font of the file, from 0; 0 for a file of one font.
-pub fn outlineEntry(path: []const u8, style: graphics.FontStyle, place: Place, face: u8) FontContents {
+pub fn outlineEntry(path: []const u8, style: graphics.FontStyle, place: Place, face: u8, weight: u16, stretch: u16) FontContents {
     var entry = FontContents{
         .style = style,
+        .weight = weight,
+        .stretch = stretch,
         .flags = graphics.FPF_DESIGNED,
         .kind = @intFromEnum(graphics.fontimage.Kind.alpha4),
         .outline = 1,
@@ -292,6 +364,9 @@ pub fn placeOf(axes: []const truetype.Axis, values: []const truetype.AxisValue) 
 /// - `named` - the places of the file's named instances whose names say
 ///   a style (`styleOfName`, `placeOf`), at the index that is the style's
 ///   bold and italic bits; null where the file names none.
+/// - `weight`, `stretch` - how heavy and how wide the file is drawn at
+///   its default (`FontMetrics`): an entry's own are its `wght` and
+///   `wdth` where its place names them, these where it does not.
 /// - `into` - where the entries go.
 ///
 /// RESULT:
@@ -317,7 +392,7 @@ pub fn placeOf(axes: []const truetype.Axis, values: []const truetype.AxisValue) 
 ///
 /// A style left out is drawn from another by graphics' soft styles, as
 /// for any font.
-pub fn variableEntries(path: []const u8, style: graphics.FontStyle, axes: []const truetype.Axis, named: *const [4]?Place, into: *[4]FontContents) u32 {
+pub fn variableEntries(path: []const u8, style: graphics.FontStyle, axes: []const truetype.Axis, named: *const [4]?Place, weight: u16, stretch: u16, into: *[4]FontContents) u32 {
     const bold = graphics.FSF_BOLD;
     const italic = graphics.FSF_ITALIC;
     const own = style & listed_styles;
@@ -332,7 +407,13 @@ pub fn variableEntries(path: []const u8, style: graphics.FontStyle, axes: []cons
     var count: u32 = 0;
     for (places, 0..) |place, add| {
         const at = place orelse continue;
-        into[count] = outlineEntry(path, style | @as(graphics.FontStyle, @intCast(add)), at, 0);
+        var heavy = weight;
+        var wide = stretch;
+        for (at.axes[0..at.count]) |axis| {
+            if (axis.tag == truetype.tableTag("wght")) heavy = @intFromFloat(@max(1, @min(1000, @round(axis.value))));
+            if (axis.tag == truetype.tableTag("wdth")) wide = @intFromFloat(@max(1, @min(65535, @round(axis.value * 10))));
+        }
+        into[count] = outlineEntry(path, style | @as(graphics.FontStyle, @intCast(add)), at, 0, heavy, wide);
         count += 1;
     }
     return count;
@@ -394,7 +475,12 @@ fn valueAt(place: *const Place, axis: *const truetype.Axis) f32 {
 /// `place` moved to `value` on `axis`, held to its range: the axis
 /// named, or no longer named when that is its default. False when the
 /// place names as many axes as it can and this is another.
-fn move(place: *Place, axis: *const truetype.Axis, value: f32) bool {
+///
+/// INPUTS:
+/// - `place` - the place, changed.
+/// - `axis` - the axis, as `FontAxes` gives it.
+/// - `value` - where on it; what is not a number is its default.
+pub fn move(place: *Place, axis: *const truetype.Axis, value: f32) bool {
     const to = held(axis, value);
     if (to != axis.default) return place.put(axis.tag, to);
     for (place.axes[0..place.count], 0..) |one, index| {

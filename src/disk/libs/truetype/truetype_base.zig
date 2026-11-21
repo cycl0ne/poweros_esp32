@@ -22,3 +22,9 @@ pub const TrueTypeBase = extern struct {
 pub fn trueTypeBase(lib: *exec.Library) *TrueTypeBase {
     return @fieldParentPtr("lib", lib);
 }
+
+/// The library's own jump table, for a call that uses another of its
+/// calls: those go through the table like anyone's.
+pub fn iface(tb: *TrueTypeBase) *sdk.interface.truetype.TrueTypeBase {
+    return @ptrCast(tb);
+}

@@ -36,6 +36,16 @@
 //! whether the stretch before ended within a word (`Order.after_letter`):
 //! the form of a word's first vowel sign depends on it.
 //!
+//! A stretch of a script whose letters join (`_joining.zig`) is shaped
+//! with the joining forms besides the defaults, each of its letters
+//! marked with the form it takes there; the forms are found within the
+//! stretch, as if no letter stood before or after it.
+//!
+//! In a text read from right to left, a character Unicode mirrors there
+//! - a bracket, a sign that points one way - is drawn as its mirror
+//! image, the character it mirrors to, where the font has a glyph for
+//! that; `rtlm` is left to do the rest.
+//!
 //! The stretches follow each other in the answer as they are drawn: from
 //! the first to the last, or from the last to the first in a text read
 //! from right to left.
@@ -54,6 +64,8 @@ const _scripts = @import("_scripts.zig");
 const _normal = @import("_normal.zig");
 const _plan = @import("_plan.zig");
 const _indic = @import("_indic.zig");
+const _joining = @import("_joining.zig");
+const _bidi = @import("../bidi/_bidi.zig");
 const _syllable = @import("_syllable.zig");
 
 const featureTag = truetypeshaping.featureTag;
@@ -201,15 +213,24 @@ const Merged = struct {
     own: u32,
 };
 
+/// Which list a stretch is shaped with: that of any stretch, of one a
+/// script's model shapes, or of one whose letters join.
+const Kind = enum { plain, model, joining };
+
 /// Writes the features the text is shaped with to `merged`: the defaults
-/// the caller's list leaves standing, then the caller's. With
-/// `by_model`, the list of a stretch a script's model shapes: the
-/// model's features are defaults too, and the one it never applies is
-/// left out, the caller's as well.
-fn merge(text: *const Text, merged: []Feature, by_model: bool) Merged {
+/// the caller's list leaves standing, then the caller's. For `.model`,
+/// the list of a stretch a script's model shapes: the model's features
+/// are defaults too, and the one it never applies is left out, the
+/// caller's as well. For `.joining`, the joining forms are defaults too.
+fn merge(text: *const Text, merged: []Feature, kind: Kind) Merged {
+    const by_model = kind == .model;
     var count: u32 = 0;
     const by_direction = if (text.backward) &backward else &forward;
-    const of_model: []const u32 = if (by_model) &_indic.own_tags else &.{};
+    const of_model: []const u32 = switch (kind) {
+        .plain => &.{},
+        .model => &_indic.own_tags,
+        .joining => &_joining.own_tags,
+    };
     for ([_][]const u32{ &defaults, by_direction, of_model }) |tags| {
         for (tags) |tag| {
             if (by_model and tag == _indic.left_out) continue;
@@ -238,12 +259,22 @@ fn inWord(char: u32) bool {
 }
 
 /// Fills `buffer` with the glyphs of the stretch's characters in
-/// `list`. The buffer was made with the room.
-fn fill(list: *const _normal.List, buffer: *_buffer.Buffer) void {
+/// `list`, mirrored ones as their mirror images with `mirrored`. The
+/// buffer was made with the room.
+fn fill(list: *const _normal.List, buffer: *_buffer.Buffer, font: *const _shape.Font, mirrored: bool) void {
     for (list.slice()) |entry| {
         const hidden: u8 = if (entry.hidden) _buffer.ITEM_HIDDEN else 0;
+        var glyph = entry.glyph;
+        if (mirrored) {
+            if (_bidi.mirrorOf(entry.char)) |mirror| {
+                if (font.glyphFn) |glyphFn| {
+                    const its = glyphFn(font.context, mirror);
+                    if (its != 0) glyph = its;
+                }
+            }
+        }
         var item: _buffer.Item = .{
-            .glyph = entry.glyph,
+            .glyph = glyph,
             .cluster = entry.cluster,
             .mask = 0,
             .class = _scripts.classOf(entry.char),
@@ -259,8 +290,19 @@ fn fill(list: *const _normal.List, buffer: *_buffer.Buffer) void {
             item.position = kind.position;
             if (inWord(entry.char)) item.flags |= _buffer.ITEM_LETTER;
         }
+        // What a stretch of `stch` is drawn over.
+        item.stretch = _joining.wordOf(entry.char);
         buffer.append(item);
     }
+}
+
+/// Marks each item of a stretch whose letters join with its form. The
+/// items are the list's entries, one each, as `fill` made them.
+fn markForms(list: *const _normal.List, buffer: *_buffer.Buffer) void {
+    const entries = list.slice();
+    const items = buffer.slice();
+    var state: _joining.State = .{};
+    for (entries, 0..) |entry, index| state.next(entry.char, items, index);
 }
 
 /// Shapes `text` into `run`, whose `glyphs` has room for `room` of them.
@@ -270,14 +312,16 @@ fn fill(list: *const _normal.List, buffer: *_buffer.Buffer) void {
 /// was.
 pub fn shapeText(text: *const Text, run: *ShapedRun) i32 {
     const memory = text.memory;
-    // Two lists: the one of any stretch, and the one of a stretch a
-    // script's model shapes.
-    const room = defaults.len + forward.len + _indic.own_tags.len + 3 * slashes(text.bytes) + text.features.len;
-    const block = memory.alloc(2 * room * @sizeOf(Feature)) orelse return truetypeshaping.TTSERR_NOMEM;
+    // Three lists: the one of any stretch, the one of a stretch a
+    // script's model shapes, and the one of a stretch whose letters
+    // join.
+    const room = defaults.len + forward.len + @max(_indic.own_tags.len, _joining.own_tags.len) + 3 * slashes(text.bytes) + text.features.len;
+    const block = memory.alloc(3 * room * @sizeOf(Feature)) orelse return truetypeshaping.TTSERR_NOMEM;
     defer memory.free(block);
     const merged_block: [*]Feature = @ptrCast(@alignCast(block));
-    const merged = merge(text, merged_block[0..room], false);
-    const for_model = merge(text, merged_block[room .. 2 * room], true);
+    const merged = merge(text, merged_block[0..room], .plain);
+    const for_model = merge(text, merged_block[room .. 2 * room], .model);
+    const for_joining = merge(text, merged_block[2 * room .. 3 * room], .joining);
 
     var order: _shape.Order = .{
         .memory = memory,
@@ -303,20 +347,24 @@ pub fn shapeText(text: *const Text, run: *ShapedRun) i32 {
             const layout = _plan.Layout.init(text.font.gsub, tags.first, tags.other, text.language, text.font.coords);
             by_model = _indic.chosen(layout.script);
         }
-        const its = if (by_model) for_model else merged;
+        const joining = !by_model and _joining.ofScript(tags.first);
+        const its = if (by_model) for_model else if (joining) for_joining else merged;
         order.features = its.features;
         order.own = its.own;
         order.model = by_model;
+        order.joining = joining;
         order.after_letter = after_letter;
         after_letter = inWord(stretch.last);
         var list = _normal.List.init(memory, &text.font, stretch.chars) orelse return truetypeshaping.TTSERR_NOMEM;
         defer list.deinit();
         list.model = by_model;
+        list.joining = joining;
         list.fill(text.bytes, start, stretch.end);
         if (list.failed) return truetypeshaping.TTSERR_NOMEM;
         var buffer = _buffer.Buffer.init(memory, list.len) orelse return truetypeshaping.TTSERR_NOMEM;
         defer buffer.deinit();
-        fill(&list, &buffer);
+        fill(&list, &buffer, &text.font, text.backward);
+        if (joining) markForms(&list, &buffer);
         const result = _shape.shape(&order, &buffer);
         if (result != truetypeshaping.TTS_OK) return result;
         for (buffer.slice()) |item| {

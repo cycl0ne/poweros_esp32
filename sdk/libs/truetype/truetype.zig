@@ -64,6 +64,13 @@
 //! hands out, by the rule the library varies its own advances and
 //! measures by.
 //!
+//! Since 1.17 a glyph's measures down a column of text are read
+//! (`GlyphVerticalMetrics`), and a glyph drawn in colour is handed out
+//! as the font draws it, for a program to draw: the steps of its colour
+//! layers (`GlyphPaints`, from `COLR` and `CPAL`), its largest picture
+//! (`GlyphPicture`, from `sbix` or `CBDT`), or the SVG document that
+//! draws it (`GlyphDocument`, from `SVG `).
+//!
 //! Open it with OpenLibrary(TRUETYPENAME, 1); its functions are in
 //! sdk/interface/truetype.zig.
 
@@ -103,6 +110,20 @@ pub const GlyphMetrics = extern struct {
     y_max: i32 = 0,
 };
 
+/// A glyph's measures in a column of text, standing upright (since
+/// 1.17), in the font's units, y up from the baseline: the glyph is drawn
+/// with its point (`origin_x`, `origin_y`) on the point of the column,
+/// and moves it `advance` down.
+pub const VerticalMetrics = extern struct {
+    /// How far the glyph moves the point down the column.
+    advance: i32 = 0,
+    /// Where the glyph's vertical origin is: the middle of its
+    /// horizontal advance, and the height of the top of its place in
+    /// the column.
+    origin_x: i32 = 0,
+    origin_y: i32 = 0,
+};
+
 /// A font's measures, in its units, y up from the baseline. A measure
 /// the file does not give is 0.
 pub const FontMetrics = extern struct {
@@ -125,6 +146,10 @@ pub const FontMetrics = extern struct {
     /// The bottom of a line struck through, and how thick it is.
     strikeout_position: i32 = 0,
     strikeout_thickness: i32 = 0,
+    /// How far below the baseline a subscript is set, and above it a
+    /// superscript, both positive (since 1.17).
+    subscript_offset: i32 = 0,
+    superscript_offset: i32 = 0,
     /// The most verbs and points `GlyphSegments` gives for any glyph of
     /// the font: arrays this long hold every one. A font of cubic curves
     /// does not say how large its glyphs are: these hold one of 1024
@@ -134,6 +159,13 @@ pub const FontMetrics = extern struct {
     most_points: u32 = 0,
     /// The styles the file says it is drawn in, as `styleOf`.
     style: graphics.FontStyle = graphics.FS_NORMAL,
+    /// How heavy the font is drawn, 1 to 1000 - 400 regular, 700 bold -
+    /// and how wide, in tenths of a percent of its normal width, 1000
+    /// normal: its `wght` and `wdth` where the outline was opened, or
+    /// what `OS/2` says of a font without the axis; 400 and 1000 where
+    /// neither says (since 1.17).
+    weight: u16 = 400,
+    stretch: u16 = 1000,
 };
 
 /// A glyph's outline, as `GlyphSegments` gives it: in the caller's
@@ -262,6 +294,171 @@ pub const TTNAME_LICENCE_URL: u32 = 14;
 /// they differ from `TTNAME_FAMILY` and `TTNAME_STYLE`.
 pub const TTNAME_TYPO_FAMILY: u32 = 16;
 pub const TTNAME_TYPO_STYLE: u32 = 17;
+
+// --- glyphs in colour (since 1.17) ---------------------------------------------
+
+/// `PaintStep.kind`: what one step of drawing a glyph of colour layers
+/// (`GlyphPaints`) does. The steps are drawn in their order, in the
+/// font's units, y up, through every transform pushed before them and
+/// not yet popped - the one pushed last applied first.
+///
+/// A transform pushed: `matrix`, until its pop.
+pub const STEP_PUSH_TRANSFORM: u32 = 1;
+pub const STEP_POP_TRANSFORM: u32 = 2;
+/// What is drawn until the pop cut to the outline of `glyph`.
+pub const STEP_PUSH_CLIP_GLYPH: u32 = 3;
+/// What is drawn until the pop cut to the box `x0`, `y0` (its lower left
+/// corner) to `x1`, `y1` (its upper right).
+pub const STEP_PUSH_CLIP_BOX: u32 = 4;
+pub const STEP_POP_CLIP: u32 = 5;
+/// Everything inside the clips pushed painted with the step's brush.
+pub const STEP_FILL: u32 = 6;
+/// The outline of `glyph` filled with the step's brush, the brush
+/// placed through `matrix` on top of the transforms pushed.
+pub const STEP_FILL_GLYPH: u32 = 7;
+/// What is drawn until the pop drawn apart, on a layer of its own, and
+/// then put down on what is under it in the way `mode` says.
+pub const STEP_PUSH_LAYER: u32 = 8;
+pub const STEP_POP_LAYER: u32 = 9;
+/// One of a gradient's stops, which follow its step in their order:
+/// `offset` along it, and its colour.
+pub const STEP_STOP: u32 = 10;
+
+/// `PaintStep.brush`: one colour; a linear gradient from (`x0`, `y0`) to
+/// (`x1`, `y1`); a radial one from the circle at (`x0`, `y0`) of radius
+/// `r0` to the one at (`x1`, `y1`) of `r1`; a sweep around (`x0`, `y0`)
+/// from `start_angle` to `end_angle`, in degrees from the x axis towards
+/// the y axis - counter-clockwise, y being up - of which the angles of
+/// 0 to 360 are drawn. A gradient's stops are from 0 to 1 along it, in
+/// their order.
+pub const BRUSH_SOLID: u32 = 0;
+pub const BRUSH_LINEAR: u32 = 1;
+pub const BRUSH_RADIAL: u32 = 2;
+pub const BRUSH_SWEEP: u32 = 3;
+
+/// `PaintStep.extend`: past a gradient's ends its end colours go on; it
+/// starts again; it comes back the other way.
+pub const EXTEND_PAD: u32 = 0;
+pub const EXTEND_REPEAT: u32 = 1;
+pub const EXTEND_REFLECT: u32 = 2;
+
+/// `PaintStep.mode`: how a layer goes down on what is under it - one of
+/// Porter and Duff's ways of putting two together, the two added
+/// (`COMPOSE_PLUS`), or a blend of CSS's.
+pub const COMPOSE_CLEAR: u32 = 0;
+pub const COMPOSE_SOURCE: u32 = 1;
+pub const COMPOSE_DESTINATION: u32 = 2;
+pub const COMPOSE_SOURCE_OVER: u32 = 3;
+pub const COMPOSE_DESTINATION_OVER: u32 = 4;
+pub const COMPOSE_SOURCE_IN: u32 = 5;
+pub const COMPOSE_DESTINATION_IN: u32 = 6;
+pub const COMPOSE_SOURCE_OUT: u32 = 7;
+pub const COMPOSE_DESTINATION_OUT: u32 = 8;
+pub const COMPOSE_SOURCE_ATOP: u32 = 9;
+pub const COMPOSE_DESTINATION_ATOP: u32 = 10;
+pub const COMPOSE_XOR: u32 = 11;
+pub const COMPOSE_PLUS: u32 = 12;
+pub const COMPOSE_SCREEN: u32 = 13;
+pub const COMPOSE_OVERLAY: u32 = 14;
+pub const COMPOSE_DARKEN: u32 = 15;
+pub const COMPOSE_LIGHTEN: u32 = 16;
+pub const COMPOSE_COLOUR_DODGE: u32 = 17;
+pub const COMPOSE_COLOUR_BURN: u32 = 18;
+pub const COMPOSE_HARD_LIGHT: u32 = 19;
+pub const COMPOSE_SOFT_LIGHT: u32 = 20;
+pub const COMPOSE_DIFFERENCE: u32 = 21;
+pub const COMPOSE_EXCLUSION: u32 = 22;
+pub const COMPOSE_MULTIPLY: u32 = 23;
+pub const COMPOSE_HUE: u32 = 24;
+pub const COMPOSE_SATURATION: u32 = 25;
+pub const COMPOSE_COLOUR: u32 = 26;
+pub const COMPOSE_LUMINOSITY: u32 = 27;
+
+/// `PaintStep.flags`: the colour is the one the text is drawn in, its
+/// alpha times `alpha`; `red`, `green` and `blue` are 0.
+pub const STEPF_FOREGROUND: u32 = 1;
+
+/// One step of drawing a glyph of colour layers (`GlyphPaints`). What a
+/// step does not use is as it is here.
+pub const PaintStep = extern struct {
+    /// `STEP_*`.
+    kind: u32 = 0,
+    /// `STEP_PUSH_CLIP_GLYPH`, `STEP_FILL_GLYPH`: the glyph whose outline
+    /// it is, by its number.
+    glyph: u32 = 0,
+    /// `STEP_PUSH_LAYER`: `COMPOSE_*`.
+    mode: u32 = COMPOSE_SOURCE_OVER,
+    /// `STEP_FILL`, `STEP_FILL_GLYPH`: `BRUSH_*`; a gradient's `EXTEND_*`,
+    /// and how many `STEP_STOP` steps follow it.
+    brush: u32 = BRUSH_SOLID,
+    extend: u32 = EXTEND_PAD,
+    stop_count: u32 = 0,
+    /// `STEPF_*`.
+    flags: u32 = 0,
+    /// A solid brush's colour, and a stop's: red, green, blue and alpha,
+    /// 0 to 1, not premultiplied.
+    red: f32 = 0,
+    green: f32 = 0,
+    blue: f32 = 0,
+    alpha: f32 = 1,
+    /// A stop's place along its gradient.
+    offset: f32 = 0,
+    /// `STEP_PUSH_TRANSFORM`'s transform, `STEP_FILL_GLYPH`'s brush's.
+    matrix: vector.Matrix = .{},
+    /// A box's corners, a gradient's points, circles or centre, in the
+    /// font's units (`BRUSH_*`, `STEP_PUSH_CLIP_BOX`).
+    x0: f32 = 0,
+    y0: f32 = 0,
+    r0: f32 = 0,
+    x1: f32 = 0,
+    y1: f32 = 0,
+    r1: f32 = 0,
+    start_angle: f32 = 0,
+    end_angle: f32 = 0,
+};
+
+/// `Picture.flags`: `y` is where the picture's bottom edge goes, not its
+/// top.
+pub const PICTUREF_BOTTOM: u32 = 1;
+
+/// A glyph's picture in colour (`GlyphPicture`): a file within the
+/// font's bytes, and where the picture goes.
+pub const Picture = extern struct {
+    /// The file: a PNG file, or one of the kind `kind` names.
+    bytes: ?[*]const u8 = null,
+    size: u32 = 0,
+    /// Its kind, as `tableTag` makes it: "png ", or of a font's `sbix`
+    /// table "jpg " or "tiff".
+    kind: u32 = 0,
+    /// Its width and height in pixels, as a PNG file's header says them;
+    /// 0 for a file of another kind.
+    width: u32 = 0,
+    height: u32 = 0,
+    /// The font's units a pixel of it covers, across and down: an em
+    /// over the pixels of an em it was drawn at.
+    pixel_x: f32 = 0,
+    pixel_y: f32 = 0,
+    /// Where it goes from the glyph's point, in the font's units, y up:
+    /// its left edge, and its top edge - or, with `PICTUREF_BOTTOM`, its
+    /// bottom.
+    x: f32 = 0,
+    y: f32 = 0,
+    /// `PICTUREF_*`.
+    flags: u32 = 0,
+};
+
+/// The SVG document a glyph is drawn by (`GlyphDocument`): its text
+/// within the font's bytes, as the font has it - plain, or packed with
+/// gzip - and the glyphs it draws.
+pub const Document = extern struct {
+    bytes: ?[*]const u8 = null,
+    size: u32 = 0,
+    /// The glyphs it is for, `first` to `last`. A document for one glyph
+    /// is that glyph whole; one for more draws each as its element whose
+    /// `id` is "glyph" and the glyph's number, "glyph12".
+    first: u32 = 0,
+    last: u32 = 0,
+};
 
 /// A table's four-letter tag as `FontTable` takes it: the first letter
 /// highest.

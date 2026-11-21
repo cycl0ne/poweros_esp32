@@ -11,8 +11,14 @@
 //!
 //! An element in a namespace other than SVG's - `inkscape:`,
 //! `sodipodi:`, `rdf:` and the rest - is an element of no kind, which is
-//! never drawn and nor is anything in it; `svg:rect` is a `rect`. Of an
-//! attribute's names both `href` and `xlink:href` are known; one in
+//! never drawn and nor is anything in it. Since 1.7 a name's namespace
+//! is the one its prefix is bound to by the `xmlns` attributes of the
+//! elements it is in (`Namespaces`): `s:rect` is a `rect` where `s` is
+//! bound to SVG's, and a `rect` is none where the default namespace is
+//! another. A prefix bound nowhere is taken at its word - `svg:` is
+//! SVG's, `xlink:` XLink's - and so is a name without one in a file that
+//! binds no default. Of an attribute's names both `href` and XLink's
+//! `href` are known - an element with both is `href`'s - and one in
 //! another namespace is not.
 //!
 //! **A `style` element's text** - its CSS, a CDATA section's as it is,
@@ -65,11 +71,38 @@ pub const Tag = enum(u8) {
     // Since 1.3.
     tspan,
     textPath,
+    /// Since 1.7.
+    tref,
     feGaussianBlur,
     feFlood,
     feBlend,
     /// A filter primitive of any other kind.
     feOther,
+    // Since 1.7: every filter primitive, and what goes inside them.
+    feColorMatrix,
+    feComponentTransfer,
+    feComposite,
+    feConvolveMatrix,
+    feDiffuseLighting,
+    feDisplacementMap,
+    feDropShadow,
+    feImage,
+    feMerge,
+    feMergeNode,
+    feMorphology,
+    feOffset,
+    feSpecularLighting,
+    feTile,
+    feTurbulence,
+    feFuncR,
+    feFuncG,
+    feFuncB,
+    feFuncA,
+    feDistantLight,
+    fePointLight,
+    feSpotLight,
+    /// An ICC profile the colours of `icc-color` are given in (since 1.7).
+    @"color-profile",
     /// A piece of a `text` element's characters, not an element.
     @"#text",
 };
@@ -148,6 +181,11 @@ pub const Name = enum(u8) {
     @"text-decoration",
     @"white-space",
     @"xml:space",
+    /// The root's colour under what it draws (since 1.7).
+    @"background-color",
+    /// `xlink:href`, which `get(.href)` answers for when there is no
+    /// `href` (since 1.7).
+    @"xlink:href",
     /// The language a text is in (`xml:lang`, or `lang`): since 1.6.
     lang,
     dx,
@@ -161,6 +199,102 @@ pub const Name = enum(u8) {
     mode,
     @"flood-opacity",
     @"paint-order",
+    // Since 1.7: filters' attributes and properties.
+    type,
+    values,
+    tableValues,
+    slope,
+    intercept,
+    amplitude,
+    exponent,
+    k1,
+    k2,
+    k3,
+    k4,
+    operator,
+    order,
+    kernelMatrix,
+    divisor,
+    bias,
+    targetX,
+    targetY,
+    edgeMode,
+    preserveAlpha,
+    surfaceScale,
+    diffuseConstant,
+    specularConstant,
+    specularExponent,
+    @"lighting-color",
+    azimuth,
+    elevation,
+    z,
+    pointsAtX,
+    pointsAtY,
+    pointsAtZ,
+    limitingConeAngle,
+    scale,
+    xChannelSelector,
+    yChannelSelector,
+    baseFrequency,
+    numOctaves,
+    seed,
+    stitchTiles,
+    radius,
+    @"flood-color",
+    @"color-interpolation-filters",
+    // Painting and compositing.
+    @"color-interpolation",
+    @"mix-blend-mode",
+    isolation,
+    @"image-rendering",
+    @"shape-rendering",
+    @"transform-origin",
+    // Markers.
+    marker,
+    @"marker-start",
+    @"marker-mid",
+    @"marker-end",
+    markerWidth,
+    markerHeight,
+    markerUnits,
+    refX,
+    refY,
+    orient,
+    // Patterns.
+    patternUnits,
+    patternContentUnits,
+    patternTransform,
+    // Text.
+    rotate,
+    textLength,
+    lengthAdjust,
+    startOffset,
+    method,
+    spacing,
+    side,
+    path,
+    @"dominant-baseline",
+    @"alignment-baseline",
+    @"baseline-shift",
+    @"writing-mode",
+    @"text-rendering",
+    @"font-variant",
+    @"font-stretch",
+    @"font-variation-settings",
+    @"font-optical-sizing",
+    @"font-kerning",
+    kerning,
+    direction,
+    @"unicode-bidi",
+    @"text-orientation",
+    @"glyph-orientation-vertical",
+    /// Conditions an element is drawn on (since 1.7).
+    requiredExtensions,
+    systemLanguage,
+    /// A `color-profile`'s name, and how its colours are taken to the
+    /// screen's (since 1.7).
+    name,
+    @"rendering-intent",
 };
 
 pub const none: u32 = std.math.maxInt(u32);
@@ -205,6 +339,7 @@ pub const Document = struct {
     /// The value of an element's attribute, or null.
     pub fn get(doc: *const Document, node: u32, name: Name) ?[]const u8 {
         for (doc.attributesOf(node)) |a| if (a.name == name) return a.value;
+        if (name == .href) return doc.get(node, .@"xlink:href");
         return null;
     }
 
@@ -243,24 +378,29 @@ pub fn count(text: []u8) ?Counts {
     var in_style = false;
     var texts = Texts{};
     var r = xml.Reader{ .text = text };
+    var spaces = Namespaces{};
     while (r.next() catch return null) |event| switch (event) {
         .open => |open| {
-            if (counts.nodes == 0 and tagOf(open.name) != .svg) return null;
+            spaces.open(open.attributes);
+            defer if (open.empty) spaces.close();
+            const tag = spaces.elementTag(open.name);
+            if (counts.nodes == 0 and tag != .svg) return null;
             counts.nodes += 1;
             if (counts.nodes == none) return null;
             var attributes = xml.Attributes{ .text = open.attributes };
             while (attributes.next() catch return null) |a| {
-                const name = nameOf(a.name);
+                const name = spaces.attributeName(a.name);
                 if (name == .other) continue;
                 counts.attributes += 1;
                 if (name == .id) counts.ids += 1;
             }
-            in_style = !open.empty and tagOf(open.name) == .style;
-            texts.open(tagOf(open.name), open.empty);
+            in_style = !open.empty and tag == .style;
+            texts.open(tag, open.empty);
         },
         .close => {
             in_style = false;
             texts.close();
+            spaces.close();
         },
         .text => if (in_style) {
             counts.attributes += 1;
@@ -325,15 +465,18 @@ pub fn build(text: []u8, counts: Counts, block: []align(8) u8) Document {
     var in_style = false;
     var texts = Texts{};
     var r = xml.Reader{ .text = text };
+    var spaces = Namespaces{};
     while (r.next() catch null) |event| switch (event) {
         .open => |open| {
             if (n == counts.nodes) break;
+            spaces.open(open.attributes);
+            defer if (open.empty) spaces.close();
             const node = n;
             n += 1;
-            nodes[node] = .{ .tag = tagOf(open.name), .parent = open_node, .first_attribute = a, .attribute_count = 0 };
+            nodes[node] = .{ .tag = spaces.elementTag(open.name), .parent = open_node, .first_attribute = a, .attribute_count = 0 };
             var list = xml.Attributes{ .text = open.attributes };
             while (list.next() catch null) |attribute| {
-                const name = nameOf(attribute.name);
+                const name = spaces.attributeName(attribute.name);
                 if (name == .other or a == counts.attributes) continue;
                 const value = xml.decode(attribute.value);
                 attributes[a] = .{ .name = name, .value = value };
@@ -361,6 +504,7 @@ pub fn build(text: []u8, counts: Counts, block: []align(8) u8) Document {
         .close => {
             in_style = false;
             texts.close();
+            spaces.close();
             if (open_node == none) break;
             last_child = open_node;
             open_node = nodes[open_node].parent;
@@ -406,6 +550,79 @@ fn idBefore(_: void, x: Id, y: Id) bool {
     };
 }
 
+/// SVG's namespace and XLink's.
+pub const svg_namespace = "http://www.w3.org/2000/svg";
+pub const xlink_namespace = "http://www.w3.org/1999/xlink";
+
+/// The namespaces bound where the reader is: each `xmlns` and
+/// `xmlns:prefix` of the elements open, the innermost last. Past
+/// `max_bindings` a binding is not kept, and its prefix is taken at its
+/// word.
+const Namespaces = struct {
+    const max_bindings = 32;
+    const Binding = struct { prefix: []const u8, uri: []const u8, depth: u32 };
+    bindings: [max_bindings]Binding = undefined,
+    count: u32 = 0,
+    depth: u32 = 0,
+
+    /// An element opened: the namespaces its attributes bind, bound.
+    fn open(ns: *Namespaces, attributes: []u8) void {
+        ns.depth += 1;
+        var list = xml.Attributes{ .text = attributes };
+        while (list.next() catch null) |attribute| {
+            const prefix = if (std.mem.eql(u8, attribute.name, "xmlns"))
+                ""
+            else if (std.mem.startsWith(u8, attribute.name, "xmlns:"))
+                attribute.name[6..]
+            else
+                continue;
+            if (ns.count == max_bindings) continue;
+            ns.bindings[ns.count] = .{ .prefix = prefix, .uri = std.mem.trim(u8, attribute.value, " \t\r\n"), .depth = ns.depth };
+            ns.count += 1;
+        }
+    }
+
+    /// The element closed: what it bound, unbound.
+    fn close(ns: *Namespaces) void {
+        while (ns.count > 0 and ns.bindings[ns.count - 1].depth == ns.depth) ns.count -= 1;
+        ns.depth -|= 1;
+    }
+
+    /// The namespace a prefix is bound to, "" the default's; null for
+    /// one bound nowhere.
+    fn uriOf(ns: *const Namespaces, prefix: []const u8) ?[]const u8 {
+        var index = ns.count;
+        while (index > 0) {
+            index -= 1;
+            if (std.mem.eql(u8, ns.bindings[index].prefix, prefix)) return ns.bindings[index].uri;
+        }
+        return null;
+    }
+
+    /// An element's kind by its name, in the namespace it is in.
+    fn elementTag(ns: *const Namespaces, full: []const u8) Tag {
+        const colon = std.mem.indexOfScalar(u8, full, ':');
+        const prefix = if (colon) |at| full[0..at] else "";
+        const local = if (colon) |at| full[at + 1 ..] else full;
+        const uri = ns.uriOf(prefix) orelse
+            (if (prefix.len == 0 or std.mem.eql(u8, prefix, "svg")) svg_namespace else return .other);
+        if (!std.mem.eql(u8, uri, svg_namespace)) return .other;
+        return tagOf(local);
+    }
+
+    /// An attribute's name: one of no prefix as it is, `xml:`'s, and
+    /// XLink's `href`; any other in a namespace is none.
+    fn attributeName(ns: *const Namespaces, full: []const u8) Name {
+        const colon = std.mem.indexOfScalar(u8, full, ':') orelse return nameOf(full);
+        const prefix = full[0..colon];
+        if (std.mem.eql(u8, prefix, "xml")) return nameOf(full);
+        const uri = ns.uriOf(prefix) orelse
+            (if (std.mem.eql(u8, prefix, "xlink")) xlink_namespace else return .other);
+        if (std.mem.eql(u8, uri, xlink_namespace) and std.mem.eql(u8, full[colon + 1 ..], "href")) return .@"xlink:href";
+        return .other;
+    }
+};
+
 /// An element's kind by its name, `svg:` before it or not.
 pub fn tagOf(full: []const u8) Tag {
     const name = if (std.mem.startsWith(u8, full, "svg:")) full[4..] else full;
@@ -418,7 +635,7 @@ pub fn tagOf(full: []const u8) Tag {
 
 /// An attribute's or a property's name by number.
 pub fn nameOf(full: []const u8) Name {
-    if (std.mem.eql(u8, full, "xlink:href")) return .href;
+    if (std.mem.eql(u8, full, "xlink:href")) return .@"xlink:href";
     if (std.mem.eql(u8, full, "xml:space")) return .@"xml:space";
     if (std.mem.eql(u8, full, "xml:lang")) return .lang;
     if (std.mem.indexOfScalar(u8, full, ':') != null) return .other;
@@ -533,6 +750,32 @@ test "a tree of elements, namespaced ones of no kind, ids looked up" {
     try testing.expect(doc.byHref("other.svg#a") == null);
 }
 
+test "namespaces by their bindings: a bound prefix, a default of another, XLink's href by any prefix, href first" {
+    var text =
+        \\<svg xmlns="http://www.w3.org/2000/svg" xmlns:k="http://www.w3.org/1999/xlink">
+        \\  <s:g xmlns="http://example.org/other" xmlns:s="http://www.w3.org/2000/svg">
+        \\    <s:rect/><rect/>
+        \\  </s:g>
+        \\  <use k:href="#a"/><use xlink:href="#b" href="#c"/>
+        \\  <a xmlns:xlink="http://example.org/notxlink" xlink:href="#d"/>
+        \\</svg>
+    .*;
+    var block: [4096]u8 align(8) = undefined;
+    const doc = try parse(&text, &block);
+    const group = doc.nodes[0].first_child;
+    try testing.expectEqual(Tag.g, doc.nodes[group].tag);
+    const inner = doc.nodes[group].first_child;
+    try testing.expectEqual(Tag.rect, doc.nodes[inner].tag);
+    try testing.expectEqual(Tag.other, doc.nodes[doc.nodes[inner].next].tag);
+    const first_use = doc.nodes[group].next;
+    try testing.expectEqualStrings("#a", doc.get(first_use, .href).?);
+    const second_use = doc.nodes[first_use].next;
+    try testing.expectEqualStrings("#c", doc.get(second_use, .href).?);
+    const link = doc.nodes[second_use].next;
+    try testing.expectEqual(Tag.a, doc.nodes[link].tag);
+    try testing.expect(doc.get(link, .href) == null);
+}
+
 test "a style element's text kept as its own, CDATA as it is" {
     var text =
         \\<svg><style type="text/css">.a{fill:red} b&gt;c{}<![CDATA[ .b>.c{fill:&amp;} ]]></style><rect class="a"/></svg>
@@ -542,10 +785,11 @@ test "a style element's text kept as its own, CDATA as it is" {
     const style = doc.nodes[0].first_child;
     try testing.expectEqual(Tag.style, doc.nodes[style].tag);
     const kept = doc.attributesOf(style);
-    try testing.expectEqual(@as(usize, 2), kept.len);
-    try testing.expectEqual(Name.@"#text", kept[0].name);
-    try testing.expectEqualStrings(".a{fill:red} b>c{}", kept[0].value);
-    try testing.expectEqualStrings(" .b>.c{fill:&amp;} ", kept[1].value);
+    try testing.expectEqual(@as(usize, 3), kept.len);
+    try testing.expectEqual(Name.type, kept[0].name);
+    try testing.expectEqual(Name.@"#text", kept[1].name);
+    try testing.expectEqualStrings(".a{fill:red} b>c{}", kept[1].value);
+    try testing.expectEqualStrings(" .b>.c{fill:&amp;} ", kept[2].value);
     const rect = doc.nodes[style].next;
     try testing.expectEqualStrings("a", doc.get(rect, .class).?);
     try testing.expectEqual(none, doc.nodes[rect].first_child);
@@ -553,7 +797,7 @@ test "a style element's text kept as its own, CDATA as it is" {
 
 test "a text's characters as nodes among its tspans, in the order they come" {
     var text =
-        \\<svg><text x="1">Hello, <tspan font-weight="bold">big</tspan> <![CDATA[w<o>rld]]> &amp; you</text><g>no</g><text/><feTile/></svg>
+        \\<svg><text x="1">Hello, <tspan font-weight="bold">big</tspan> <![CDATA[w<o>rld]]> &amp; you</text><g>no</g><text/><feTile/><feFancy/></svg>
     .*;
     var block: [4096]u8 align(8) = undefined;
     const doc = try parse(&text, &block);
@@ -576,7 +820,9 @@ test "a text's characters as nodes among its tspans, in the order they come" {
     try testing.expectEqual(none, doc.nodes[g].first_child);
     const empty = doc.nodes[g].next;
     try testing.expectEqual(none, doc.nodes[empty].first_child);
-    try testing.expectEqual(Tag.feOther, doc.nodes[doc.nodes[empty].next].tag);
+    const tile = doc.nodes[empty].next;
+    try testing.expectEqual(Tag.feTile, doc.nodes[tile].tag);
+    try testing.expectEqual(Tag.feOther, doc.nodes[doc.nodes[tile].next].tag);
     try testing.expectEqual(Tag.other, tagOf("#text"));
 }
 

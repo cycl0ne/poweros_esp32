@@ -38,15 +38,20 @@ keep away from it:
   - HarfBuzz mirrors brackets in a text read from right to left.
   - A text of a script written from left to right that is told to be read
     from right to left HarfBuzz turns around before it shapes it, a letter
-    with its marks at a time; ShapeText turns the shaped glyphs around one
-    by one. The made font's texts read from right to left are therefore
-    given to HarfBuzz as Thaana, a script that is written that way and has
-    no model of its own.
+    with its marks at a time, and a text of one written from right to left
+    told to be read from left to right too; ShapeText turns the shaped
+    glyphs around one by one. The made font's texts read from right to left
+    are therefore given to HarfBuzz as Thaana, a script that is written
+    that way and has no model of its own, and its texts of Arabic are read
+    from right to left.
   - For some scripts HarfBuzz has a model of the script: syllables put in
     order, forms picked by the place in a word. ShapeText has the model of
     Devanagari. The made font's texts are therefore given to HarfBuzz as
     Latin whatever they are written in - but those with a Devanagari
-    character, which are given as Devanagari and read from left to right.
+    character, which are given as Devanagari and read from left to right,
+    and those with a letter of Arabic, which are given as Arabic: both
+    join Arabic's letters, and draw them with the presentation forms a
+    font without the joining forms has glyphs for, as the made font has.
   - With `half` asked for the whole of a Devanagari text, HarfBuzz
     switches every feature that holds for the whole text off on a
     consonant before a non-joiner. No text here asks for it.
@@ -270,8 +275,9 @@ class MadeCase(Case):
     number leaves over 37; `em` units are an em. It has no tables.
 
     HarfBuzz is told a script it has no model for, whatever the text's is:
-    Latin, and Thaana for a text read from right to left. `script` names
-    another: the one ShapeText has a model for too.
+    Latin, and Thaana for a text read from right to left - but Arabic for
+    a text with a letter of Arabic. `script` names another: the one
+    ShapeText has a model for too.
 
     `drawn` says the lists are longer than the text needs: of them, only
     what HarfBuzz asked for, the text's own characters and those a space
@@ -279,7 +285,9 @@ class MadeCase(Case):
     """
 
     def __init__(self, name, text, lacking=(), having=(), variants=(), em=1000, backward=False, drawn=False, script=""):
-        super().__init__(name, text, script or ("Thaa" if backward else "Latn"), backward=backward)
+        super().__init__(name, text, script or "Latn", backward=backward)
+        if not script:
+            self.script = "Arab" if arabic_letter_in(self.data) else "Thaa" if backward else "Latn"
         self.lacking = frozenset(lacking)
         self.having = frozenset(having)
         self.variants = {(char, selector): glyph for char, selector, glyph in variants}
@@ -290,6 +298,16 @@ class MadeCase(Case):
         if char <= 0xFFFF:
             return 0 if char in self.lacking else char
         return char if char in self.having else 0
+
+
+def arabic_letter_in(data):
+    """Whether UTF-8 bytes have a letter of Arabic: a character of the
+    script that is no mark and no character the scripts share."""
+    for char in data.decode("utf-8", errors="ignore"):
+        code = ord(char)
+        if 0x620 <= code <= 0x64A or 0x66E <= code <= 0x66F or 0x671 <= code <= 0x6D3 or code == 0x6D5 or 0x6EE <= code <= 0x6FF:
+            return True
+    return False
 
 
 def made_advance(glyph):
@@ -633,8 +651,23 @@ MADE = [
     MadeCase("Hebrew points put in order", "{5D1}{5B8}{5BC} {5E9}{5C1}{5BC}{5B8}"),
     MadeCase("Hebrew letters with a point taken apart", "{FB31}{FB2C}{FB4B}", lacking=[0xFB31, 0xFB2C, 0xFB49, 0xFB4B]),
     MadeCase("Hebrew letters with a point are not put together", "{5D1}{5BC}{5E9}{5BC}{5C1}"),
-    MadeCase("Arabic marks put in order", "{628}{64E}{651} {628}{650}{651}{670}"),
-    MadeCase("Arabic letters with a sign above", "{627}{653}{627}{654}{648}{654}", lacking=[0x623]),
+    MadeCase("Arabic marks put in order", "{628}{64E}{651} {628}{650}{651}{670}", backward=True),
+    MadeCase("Arabic letters with a sign above", "{627}{653}{627}{654}{648}{654}", lacking=[0x623], backward=True),
+    MadeCase("Arabic marks that change their letter go first", "{628}{64E}{650}{6DC}{655} {627}{64E}{654}", lacking=[0x623], backward=True),
+    MadeCase("Arabic letters in their presentation forms", "{628}{64A}{62A} {627}{644}{639}{631}{628}{64A}{629}", backward=True),
+    MadeCase("Persian letters in their presentation forms", "{67E}{686}{698}{6AF}{6CC} {6A9}{6CC}{6A9}", backward=True),
+    MadeCase("a form the font lacks", "{628}{628}{628} {62A}{62A}", lacking=[0xFE91, 0xFE96], backward=True),
+    MadeCase("a letter the font lacks, with its forms", "{628}{628}{628}", lacking=[0x628], backward=True),
+    MadeCase("lam with alef", "{644}{627} {628}{644}{627} {644}{622}{644}{623}{644}{625}", backward=True),
+    MadeCase("lam with alef where the font lacks the ligatures", "{644}{627} {628}{644}{627}", lacking=[0xFEFB, 0xFEFC], backward=True),
+    MadeCase("lam with alef, a mark between", "{644}{64E}{627} {644}{651}{64E}{627}", backward=True),
+    MadeCase("lam with alef, a joiner between", "{644}{200D}{627} {644}{200C}{627}", backward=True),
+    MadeCase("lam with alef, a tatweel between", "{644}{640}{627}", backward=True),
+    MadeCase("ligatures of two letters", "{628}{645} {628}{62C}{628} {646}{64A} {628}{64A}{631} {64A}{646} {641}{64A}", backward=True),
+    MadeCase("ligatures of three letters", "{644}{645}{62D}{628} {644}{644}{647} {644}{645}{62C}{628}", backward=True),
+    MadeCase("ligatures of three letters where the font lacks one", "{644}{645}{62D}{628} {644}{644}{647}", lacking=[0xFD88, 0xF201], backward=True),
+    MadeCase("shadda with a vowel sign", "{628}{651}{64E} {628}{64B}{651} {62A}{650}{651} {628}{651}{64F}{651}{64C}", backward=True),
+    MadeCase("shadda with a vowel sign where the font lacks the ligature", "{628}{651}{64E}", lacking=[0xFC60], backward=True),
     MadeCase("Tibetan vowel signs put in order", "{F40}{F72}{F74} {F40}{F74}{F72}{F71}{F39}"),
     MadeCase("Tibetan vowel signs taken apart", "{F40}{F73}{F42}{F75}{F81}", lacking=[0xF73, 0xF75]),
     MadeCase("Thai marks put in order", "{E01}{E48}{E38} {E02}{E3A}{E49}"),
@@ -740,14 +773,15 @@ def drawn(number):
     # A text ShapeText takes as Devanagari: one with a character of that
     # script, which the signs every script of India shares are not.
     devanagari = any(0x900 <= char <= 0x97F and char not in (0x951, 0x952, 0x964, 0x965) for char in chars)
+    text = "".join(chr(char) for char in chars).encode("utf-8")
     return MadeCase(
         "drawn %d" % number,
-        "".join(chr(char) for char in chars).encode("utf-8"),
+        text,
         lacking=lacking,
         having=having,
         variants=variants,
         em=em,
-        backward=backward and not devanagari,
+        backward=(backward and not devanagari) or arabic_letter_in(text),
         drawn=True,
         script="Deva" if devanagari else "",
     )

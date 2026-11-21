@@ -21,7 +21,8 @@ const _font = @import("../font/_font.zig");
 ///
 /// SINCE: 1.0, a file of outlines of up to 64 MiB since 1.12, a
 /// variable font listed a style since 1.13, a collection as its first
-/// font since 1.14. LVO -28.
+/// font since 1.14, the family's name and each outline's weight and
+/// width since 1.16. LVO -28.
 ///
 /// INPUTS:
 /// - `lock` - the directory the family is in: `FONTS:`, or wherever its
@@ -46,6 +47,15 @@ const _font = @import("../font/_font.zig");
 /// 4 MiB, a file of outlines of more than 64 MiB or than there is
 /// memory to read it into. The entries are in order of height. At most
 /// 64 entries are listed.
+///
+/// **The family's name** is the one its first file of outlines gives -
+/// its typographic family, or its family where it gives none - and each
+/// outline entry says how heavy and how wide it is drawn, as
+/// truetype.library's `FontMetrics` says of the file at the entry's
+/// place: what the family is found by and its faces chosen by
+/// (`FindFamily`, `OpenOutlineFontTagList`). A family of sizes alone
+/// has no name. truetype.library is opened for the first file of
+/// outlines found; without it the entries say neither.
 ///
 /// **A variable font becomes an entry for each style it has**: the
 /// file's own, then with bold, with italic and with both, all naming
@@ -117,13 +127,14 @@ pub fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]cons
     defer sys.FreeVec(work);
     const found: [*]fontfile.FontContents = @ptrCast(@alignCast(work));
     var count: usize = 0;
+    var called: [fontfile.MAXFONTFAMILY]u8 = @splat(0);
     _ = dl.CurrentDir(dir);
     while (count < max_sizes and dl.ExNext(dir, &fib)) {
         if (dos.isDirectory(fib.dir_entry_type)) continue;
         var path: [fontfile.MAXFONTPATH]u8 = @splat(0);
         const path_len = joinPath(&path, family[0..stem], &fib.file_name) orelse continue;
         var made: [4]fontfile.FontContents = undefined;
-        const made_count = readEntries(dfb, @ptrCast(&fib.file_name), path[0..path_len], &made);
+        const made_count = readEntries(dfb, @ptrCast(&fib.file_name), path[0..path_len], &made, &called);
         for (made[0..made_count]) |entry| {
             if (count == max_sizes) break;
             // In order of height, as they are found.
@@ -140,6 +151,9 @@ pub fn NewFontContents(dfb: *DiskfontBase, lock: ?*dos.FileLock, name: [*:0]cons
     const block: [*]align(4) u8 = @ptrCast(@alignCast(memory));
     const header: *fontfile.ContentsHeader = @ptrCast(block);
     header.* = .{ .count = @intCast(count) };
+    var called_len: usize = 0;
+    while (called_len < called.len and called[called_len] != 0) called_len += 1;
+    fontfile.setFamily(header, called[0..called_len]);
     const entries: [*]fontfile.FontContents = @ptrCast(@alignCast(block + @sizeOf(fontfile.ContentsHeader)));
     for (found[0..count], 0..) |entry, i| entries[i] = entry;
     fontfile.seal(block, size);
@@ -156,12 +170,13 @@ const max_axes = 32;
 /// A file's entries, into `into`, and how many they are: a font file of
 /// outlines is an outline of the family, in the styles it says it is
 /// drawn in - a variable one an entry for each style it has
-/// (`variableStyles`); a size file is listed as its image header says, if
-/// the file is a whole font. The file is read whole - a size file's sum
-/// covers every byte - into memory that goes again at once. A file
+/// (`variableStyles`) - and gives the family its name in `called`, when
+/// that is empty still; a size file is listed as its image header says,
+/// if the file is a whole font. The file is read whole - a size file's
+/// sum covers every byte - into memory that goes again at once. A file
 /// larger than its kind is read at (`_font.max_outline_file`,
 /// `_font.max_size_file`), or than there is memory for, is passed over.
-fn readEntries(dfb: *DiskfontBase, file: [*:0]const u8, path: []const u8, into: *[4]fontfile.FontContents) u32 {
+fn readEntries(dfb: *DiskfontBase, file: [*:0]const u8, path: []const u8, into: *[4]fontfile.FontContents, called: *[fontfile.MAXFONTFAMILY]u8) u32 {
     const dl = dfb.dos_base;
     const fh = dl.Open(file, dos.MODE_OLDFILE) orelse return 0;
     defer _ = dl.Close(fh);
@@ -176,9 +191,25 @@ fn readEntries(dfb: *DiskfontBase, file: [*:0]const u8, path: []const u8, into: 
     // of their own, whose contents files name this file and their font.
     if (sdk.truetype.fontCount(block[0..size]) != 0) {
         const style = sdk.truetype.styleOfFont(block[0..size], 0);
-        const styles = variableStyles(dfb, block, size, path, style, into);
+        const tb = _font.trueType(dfb) orelse {
+            into[0] = fontfile.outlineEntry(path, style, .{}, 0, 0, 0);
+            return 1;
+        };
+        const outline = tb.OpenOutline(block, size, null) orelse {
+            into[0] = fontfile.outlineEntry(path, style, .{}, 0, 0, 0);
+            return 1;
+        };
+        defer tb.CloseOutline(outline);
+        var metrics: truetype.FontMetrics = .{};
+        tb.FontMetrics(outline, &metrics);
+        if (called[0] == 0) {
+            if (tb.FontName(outline, truetype.TTNAME_TYPO_FAMILY, called, called.len) == 0) {
+                _ = tb.FontName(outline, truetype.TTNAME_FAMILY, called, called.len);
+            }
+        }
+        const styles = variableStyles(dfb, outline, path, style, metrics.weight, metrics.stretch, into);
         if (styles != 0) return styles;
-        into[0] = fontfile.outlineEntry(path, style, .{}, 0);
+        into[0] = fontfile.outlineEntry(path, style, .{}, 0, metrics.weight, metrics.stretch);
         return 1;
     }
     if (size < @sizeOf(fontimage.FontImage) or size > _font.max_size_file) return 0;
@@ -189,13 +220,12 @@ fn readEntries(dfb: *DiskfontBase, file: [*:0]const u8, path: []const u8, into: 
 
 /// The entries of a variable font, one for each style it has
 /// (`fontfile.variableEntries`), from the axes and the named instances
-/// truetype.library reads of the file at `block`. 0 for a file without
-/// axes, one with more than are read, or one that cannot be opened: it
-/// is listed once, at its default.
-fn variableStyles(dfb: *DiskfontBase, block: [*]const u8, size: u32, path: []const u8, style: graphics.FontStyle, into: *[4]fontfile.FontContents) u32 {
+/// truetype.library reads of `outline`, the file opened at its default,
+/// where it is drawn `weight` heavy and `stretch` wide. 0 for a file
+/// without axes, or one with more than are read: it is listed once, at
+/// its default.
+fn variableStyles(dfb: *DiskfontBase, outline: *truetype.Outline, path: []const u8, style: graphics.FontStyle, weight: u16, stretch: u16, into: *[4]fontfile.FontContents) u32 {
     const tb = _font.trueType(dfb) orelse return 0;
-    const outline = tb.OpenOutline(block, size, null) orelse return 0;
-    defer tb.CloseOutline(outline);
     var axes: [max_axes]truetype.Axis = undefined;
     const axis_count = tb.FontAxes(outline, &axes, axes.len);
     if (axis_count == 0 or axis_count > max_axes) return 0;
@@ -214,7 +244,7 @@ fn variableStyles(dfb: *DiskfontBase, block: [*]const u8, size: u32, path: []con
         if (named[said] != null) continue;
         named[said] = fontfile.placeOf(axes[0..axis_count], values[0..axis_count]);
     }
-    return fontfile.variableEntries(path, style, axes[0..axis_count], &named, into);
+    return fontfile.variableEntries(path, style, axes[0..axis_count], &named, weight, stretch, into);
 }
 
 /// "<family>/<file>" into `out`, or null if it does not fit.

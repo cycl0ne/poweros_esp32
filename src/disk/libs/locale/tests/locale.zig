@@ -1274,6 +1274,19 @@ fn languageOf(comptime text: []const u8) []const u8 {
     return rest[0..end];
 }
 
+test "revision 7: LanguageCode gives a language's two letters by its name, case not counting; null for one unknown" {
+    var rig: Rig = undefined;
+    try rig.init();
+    defer rig.deinit() catch unreachable;
+    const lb = rig.lb;
+    try testing.expectEqualStrings("de", span(lb.LanguageCode("deutsch").?));
+    try testing.expectEqualStrings("en", span(lb.LanguageCode("English").?));
+    try testing.expectEqualStrings("ja", span(lb.LanguageCode("nihongo").?));
+    try testing.expect(lb.LanguageCode("klingon") == null);
+    try testing.expect(lb.LanguageCode("deutschland") == null);
+    try testing.expect(lb.LanguageCode("") == null);
+}
+
 test "the countries and languages shipped: each read whole, in a language shipped, its short forms fitting dos's strings" {
     var rig: Rig = undefined;
     try rig.init();
@@ -1294,6 +1307,8 @@ test "the countries and languages shipped: each read whole, in a language shippe
         };
         defer lb.CloseLocale(loc);
         try testing.expectEqualStrings(name, span(loc.language_name));
+        // Each language shipped has its code (revision 7).
+        try testing.expect(lb.LanguageCode(loc.language_name) != null);
     }
     inline for (shipped_countries) |name| {
         const country_text = @embedFile("../../../locale/countries/" ++ name ++ ".country");

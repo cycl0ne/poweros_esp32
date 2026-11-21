@@ -26,4 +26,11 @@ i32 ShapeText(*truetype.Outline outline, [*]const u8 text, u32 length, u32 direc
 /// the font's GDEF names them, in its units from the glyph's point: how
 /// many there are, the first `room` of them written to `carets`.
 u32 LigatureCarets(*truetype.Outline outline, u32 glyph, [*]i32 carets, u32 room)
+/// The bidirectional level of each character of the `length` bytes of
+/// UTF-8 at `text`, written to `levels`, a byte for each byte of the
+/// text: even for a character read from left to right, odd for one read
+/// from right to left. `direction` gives the paragraphs' own: TTS_LEFT_TO_RIGHT,
+/// TTS_RIGHT_TO_LEFT or TTS_FIRST_STRONG. TTS_OK, or TTSERR_NOMEM,
+/// TTSERR_DIRECTION.
+i32 BidiLevels([*]const u8 text, u32 length, u32 direction, [*]u8 levels)
 ##end

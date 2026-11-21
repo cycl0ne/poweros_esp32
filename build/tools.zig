@@ -167,6 +167,10 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
     svgcompare_truetype.addImport("sdk", sdk);
     const svgcompare_shaping = b.createModule(.{ .root_source_file = disk_dep.path("libs/truetypeshaping/shaping.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
     svgcompare_shaping.addImport("sdk", sdk);
+    // The disk's GIF and JPEG readers, for the pictures a file names.
+    const svgcompare_gif = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/gif/decode.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    const svgcompare_lzw = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/gif/lzw.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
+    const svgcompare_jpeg = b.createModule(.{ .root_source_file = disk_dep.path("classes/datatypes/jpeg/decode.zig"), .target = b.graph.host, .optimize = .ReleaseSafe });
     const svgcompare = b.addExecutable(.{
         .name = "svgcompare",
         .root_module = b.createModule(.{
@@ -180,6 +184,9 @@ pub fn addHostTools(b: *std.Build, with: HostToolsWith) MadeHostTools {
     svgcompare.root_module.addImport("svg", svgcompare_svg);
     svgcompare.root_module.addImport("truetype", svgcompare_truetype);
     svgcompare.root_module.addImport("shaping", svgcompare_shaping);
+    svgcompare.root_module.addImport("gif", svgcompare_gif);
+    svgcompare.root_module.addImport("lzw", svgcompare_lzw);
+    svgcompare.root_module.addImport("jpeg", svgcompare_jpeg);
     const run_svgcompare = b.addRunArtifact(svgcompare);
     // Text in the disk's Liberation fonts, when scripts/fetch-fonts.sh
     // fetched them.

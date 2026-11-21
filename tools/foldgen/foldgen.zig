@@ -16,6 +16,8 @@
 //!   foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig>
 //!   foldgen collate <allkeys.txt> <out.zig>
 //!   foldgen kana <allkeys.txt> <out.zig>
+//!   foldgen joining <ArabicShaping.txt> <UnicodeData.txt> <out.zig>
+//!   foldgen bidi <DerivedBidiClass.txt> <BidiBrackets.txt> <BidiMirroring.txt> <out.zig>
 //!
 //! `posfs` writes posfs's case fold table (sdk/libs/dos/posfs/fold1.zig):
 //! simple case folding, the file's C and S lines, one code point to one,
@@ -148,6 +150,45 @@
 //! one weight, the small letter and the voiced one their letter's. A
 //! character of two letters (`ゟ`, `ヿ`) has its first letter's place.
 //!
+//! `joining` writes how each character joins its neighbours
+//! (src/disk/libs/truetypeshaping/shape/_joining_table.zig), which
+//! truetypeshaping.library gives the letters of Arabic and the other
+//! scripts whose letters join their forms by: ArabicShaping.txt's
+//! Joining_Type - joining on both sides, on the right (to the
+//! character before it), on the left (to the one after), causing the
+//! characters round it to join, transparent, or none - and the two
+//! Joining_Groups of Syriac whose letters take forms of their own,
+//! Alaph and Dalath Rish, each a type of its own. A character the
+//! file leaves out is transparent where UnicodeData.txt gives it the
+//! general category Mn, Me or Cf, and joins none otherwise. The table is
+//! where the type changes, as `class`'s is. The version is
+//! ArabicShaping.txt's.
+//!
+//! The same file gets the forms Unicode encodes Arabic's letters in
+//! where they join, by which the shaping draws a text in a font that has
+//! glyphs for those characters and no joining forms of its own: from
+//! UnicodeData.txt's decompositions tagged `<initial>`, `<medial>`,
+//! `<final>` and `<isolated>`, the character of each form of a letter,
+//! and of the ligatures of those forms the ones named in
+//! `chosen_ligatures` - three of them at code points of the private use
+//! area, which UnicodeData.txt has no line for and `private_ligatures`
+//! writes as it would. A ligature is written as the forms it is made
+//! of: the first letter in its initial form, or its medial one in a
+//! final ligature; the last in its final form, or its medial one in an
+//! initial ligature; any between in its medial one. A ligature of two
+//! marks (written in visual order, after a space) is the marks
+//! themselves, in the order they are read.
+//!
+//! `bidi` writes what the bidirectional algorithm reads
+//! (src/disk/libs/truetypeshaping/bidi/_bidi_table.zig): each
+//! character's Bidi_Class from DerivedBidiClass.txt - its @missing
+//! lines first, in their order, for the code points no line names, then
+//! its lines - where the class changes, as `class`'s table is; the
+//! paired brackets of BidiBrackets.txt, each opening one with its
+//! closing one; and BidiMirroring.txt's characters with the one each is
+//! drawn as in a text read from right to left. The version is
+//! DerivedBidiClass.txt's, and the other two must be of it.
+//!
 //! A case table is runs: code points one or two apart that all move by the same
 //! amount (A-Z by +32; Ā, Ă, Ą... by +1 every second one), each run packed
 //! into a u64 and found by a binary search - 210 runs for Unicode 16's 1484
@@ -165,7 +206,7 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-const usage = "usage: foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal|compose <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig> | foldgen collate|kana <allkeys.txt> <out.zig>";
+const usage = "usage: foldgen joining <ArabicShaping.txt> <UnicodeData.txt> <out.zig> | foldgen bidi <DerivedBidiClass.txt> <BidiBrackets.txt> <BidiMirroring.txt> <out.zig> | foldgen posfs <CaseFolding.txt> <out.zig> | foldgen case|base <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen width <UnicodeData.txt> <EastAsianWidth.txt> <out.zig> | foldgen class <CaseFolding.txt> <UnicodeData.txt> <out.zig> | foldgen script <Scripts.txt> <PropertyValueAliases.txt> <out.zig> | foldgen normal|compose <UnicodeData.txt> <CompositionExclusions.txt> <out.zig> | foldgen cluster <GraphemeBreakProperty.txt> <emoji-data.txt> <DerivedCoreProperties.txt> <out.zig> | foldgen emoji <emoji-data.txt> <emoji-variation-sequences.txt> <out.zig> | foldgen collate|kana <allkeys.txt> <out.zig>";
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -605,6 +646,129 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
+    if (mem.eql(u8, args[1], "joining")) {
+        if (args.len != 5) fatal(usage, .{});
+        const shaping = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const data = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const version = try versionNamed(shaping, "# ArabicShaping-", args[2]);
+        const types = try joiningOf(arena, shaping, data);
+        const starts = try kindStarts(arena, types);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! How each character joins its neighbours, from Unicode {s}: the
+            \\//! Joining_Type of ArabicShaping.txt, a character it leaves out
+            \\//! transparent where UnicodeData.txt makes it a mark (Mn, Me) or a
+            \\//! format character (Cf), and joining none otherwise. And the
+            \\//! forms Unicode encodes Arabic's letters in where they join, with
+            \\//! the ligatures of them a text is drawn with, from UnicodeData.txt.
+            \\//! Written by tools/foldgen (`foldgen joining`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! `starts` is where the type changes, sorted: each entry the code
+            \\//! point it starts at shifted up by 8, the type in the low byte, the
+            \\//! type good up to the next entry's code point. {d} entries.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// The types: joining none; joining the character before it (on the
+            \\/// right, in the scripts read from right to left); joining the one
+            \\/// after it; joining both; making the ones round it join, without
+            \\/// forms of its own; and passed over, a mark on a letter.
+            \\pub const none: u8 = {d};
+            \\pub const right: u8 = {d};
+            \\pub const left: u8 = {d};
+            \\pub const dual: u8 = {d};
+            \\pub const causing: u8 = {d};
+            \\pub const transparent: u8 = {d};
+            \\
+            \\/// Syriac's letters that join on the right and take forms of their
+            \\/// own by what comes before them: Alaph, and Dalath and Rish.
+            \\pub const alaph: u8 = {d};
+            \\pub const dalath_rish: u8 = {d};
+            \\
+            \\
+        , .{ version, starts.len, version, join_none, join_right, join_left, join_dual, join_causing, join_transparent, join_alaph, join_dalath_rish });
+        try writeStarts(arena, &out, "Where the type changes: `code << 8 | type`, sorted.", starts);
+        const presentation = try presentationOf(arena, data);
+        try out.print(arena,
+            \\
+            \\/// The forms Unicode encodes Arabic's letters in where they join
+            \\/// (UnicodeData.txt's presentation forms): for each letter from
+            \\/// `forms_first` on, the character of its initial, medial, final and
+            \\/// isolated form, 0 for a form it has none of.
+            \\pub const forms_first: u32 = 0x{X:0>4};
+            \\pub const forms = [_][4]u16{{
+            \\
+        , .{presentation.first});
+        for (presentation.forms, 0..) |row, at| {
+            if (at % 2 == 0) try out.appendSlice(arena, "   ");
+            try out.print(arena, " .{{ 0x{X:0>4}, 0x{X:0>4}, 0x{X:0>4}, 0x{X:0>4} }},", .{ row[0], row[1], row[2], row[3] });
+            if (at % 2 == 1 or at + 1 == presentation.forms.len) try out.appendSlice(arena, "\n");
+        }
+        try out.appendSlice(arena,
+            \\};
+            \\
+            \\/// A ligature of presentation forms: the characters it is made of,
+            \\/// in the order they are read, 0 behind the last; and its own.
+            \\pub const Ligature = struct { parts: [3]u16, ligature: u16 };
+            \\
+            \\
+        );
+        try writeLigatures(arena, &out, "of_three", "The ligatures of three letters' forms, by their first part.", presentation.of_three);
+        try writeLigatures(arena, &out, "of_two", "The ligatures of two letters' forms, by their first part.", presentation.of_two);
+        try writeLigatures(arena, &out, "of_marks", "The ligatures of two marks, by their first.", presentation.of_marks);
+        try cwd.writeFile(io, .{ .sub_path = args[4], .data = out.items });
+        return;
+    }
+    if (mem.eql(u8, args[1], "bidi")) {
+        if (args.len != 6) fatal(usage, .{});
+        const derived = try cwd.readFileAlloc(io, args[2], arena, limit);
+        const bracket_lines = try cwd.readFileAlloc(io, args[3], arena, limit);
+        const mirror_lines = try cwd.readFileAlloc(io, args[4], arena, limit);
+        const version = try versionNamed(derived, "# DerivedBidiClass-", args[2]);
+        const bracket_version = try versionNamed(bracket_lines, "# BidiBrackets-", args[3]);
+        const mirror_version = try versionNamed(mirror_lines, "# BidiMirroring-", args[4]);
+        if (!mem.eql(u8, version, bracket_version) or !mem.eql(u8, version, mirror_version)) {
+            fatal("the three files are of Unicode {s}, {s} and {s}", .{ version, bracket_version, mirror_version });
+        }
+        const classes = try bidiClassesOf(arena, derived);
+        const starts = try kindStarts(arena, classes);
+        const brackets = try pairsOf(arena, bracket_lines, true);
+        const mirrors = try pairsOf(arena, mirror_lines, false);
+        try out.print(arena,
+            \\// SPDX-License-Identifier: MIT
+            \\//! What the bidirectional algorithm reads, from Unicode {s}: each
+            \\//! character's Bidi_Class (DerivedBidiClass.txt), the paired
+            \\//! brackets (BidiBrackets.txt), and the character each mirrored one
+            \\//! is drawn as in a text read from right to left (BidiMirroring.txt).
+            \\//! Written by tools/foldgen (`foldgen bidi`) from the files
+            \\//! scripts/fetch-unicode.sh fetches; never edited by hand.
+            \\//!
+            \\//! `starts` is where the class changes, sorted: each entry the code
+            \\//! point it starts at shifted up by 8, the class in the low byte, the
+            \\//! class good up to the next entry's code point. {d} entries.
+            \\//!
+            \\//! `brackets` is each opening bracket shifted up by 21 with its
+            \\//! closing one in the low bits, sorted. {d} entries.
+            \\//!
+            \\//! `mirrors` is each mirrored character shifted up by 21 with the one
+            \\//! it is drawn as in the low bits, sorted. {d} entries.
+            \\
+            \\/// The Unicode version the table is from.
+            \\pub const unicode_version = "{s}";
+            \\
+            \\/// The classes, by the short names Unicode gives them.
+            \\
+        , .{ version, starts.len, brackets.len, mirrors.len, version });
+        for (bidi_classes, 0..) |class, number| try out.print(arena, "pub const {s}: u8 = {d};\n", .{ class.short, number });
+        try out.appendSlice(arena, "\n");
+        try writeStarts(arena, &out, "Where the class changes: `code << 8 | class`, sorted.", starts);
+        try writePairs(arena, &out, "The paired brackets: `opening << 21 | closing`, sorted.", "brackets", brackets);
+        try writePairs(arena, &out, "The mirrored characters: `char << 21 | mirror`, sorted.", "mirrors", mirrors);
+        try cwd.writeFile(io, .{ .sub_path = args[5], .data = out.items });
+        return;
+    }
     if (mem.eql(u8, args[1], "script")) {
         if (args.len != 5) fatal(usage, .{});
         const listing = try cwd.readFileAlloc(io, args[2], arena, limit);
@@ -1235,6 +1399,296 @@ fn partStarts(arena: mem.Allocator, parts: []const u8) ![]u32 {
         while (code < parts.len and parts[code] == here) code += 1;
     }
     return starts.items;
+}
+
+const join_none: u8 = 0;
+const join_right: u8 = 1;
+const join_left: u8 = 2;
+const join_dual: u8 = 3;
+const join_causing: u8 = 4;
+const join_transparent: u8 = 5;
+const join_alaph: u8 = 6;
+const join_dalath_rish: u8 = 7;
+
+/// Every code point's joining type: ArabicShaping.txt's; for one it
+/// leaves out, transparent where UnicodeData.txt makes it a mark (Mn,
+/// Me) or a format character (Cf), none otherwise.
+fn joiningOf(arena: mem.Allocator, shaping: []const u8, data: []const u8) ![]u8 {
+    const types = try arena.alloc(u8, 0x110000);
+    @memset(types, join_none);
+    var first: ?u21 = null;
+    var lines = mem.splitScalar(u8, data, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const code = try std.fmt.parseInt(u21, fields.next() orelse continue, 16);
+        const name = fields.next() orelse continue;
+        const category = fields.next() orelse continue;
+        const passed = mem.eql(u8, category, "Mn") or mem.eql(u8, category, "Me") or mem.eql(u8, category, "Cf");
+        const kind = if (passed) join_transparent else join_none;
+        if (mem.endsWith(u8, name, ", First>")) {
+            first = code;
+            continue;
+        }
+        if (mem.endsWith(u8, name, ", Last>")) {
+            const from = first orelse fatal("a Last line without its First: {X}", .{code});
+            @memset(types[from .. @as(usize, code) + 1], kind);
+            first = null;
+            continue;
+        }
+        types[code] = kind;
+    }
+    lines = mem.splitScalar(u8, shaping, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const code = try std.fmt.parseInt(u21, mem.trim(u8, fields.next() orelse continue, " "), 16);
+        _ = fields.next() orelse continue;
+        const letter = mem.trim(u8, fields.next() orelse continue, " ");
+        const group = mem.trim(u8, fields.next() orelse "", " ");
+        if (mem.eql(u8, group, "ALAPH") or mem.eql(u8, group, "DALATH RISH")) {
+            if (!mem.eql(u8, letter, "R")) fatal("the Syriac letter {X} joins as {s}, not on the right", .{ code, letter });
+            types[code] = if (mem.eql(u8, group, "ALAPH")) join_alaph else join_dalath_rish;
+            continue;
+        }
+        types[code] = if (mem.eql(u8, letter, "U")) join_none else if (mem.eql(u8, letter, "R")) join_right else if (mem.eql(u8, letter, "L")) join_left else if (mem.eql(u8, letter, "D")) join_dual else if (mem.eql(u8, letter, "C")) join_causing else if (mem.eql(u8, letter, "T")) join_transparent else fatal("joining type {s} of {X}", .{ letter, code });
+    }
+    return types;
+}
+
+/// A ligature of presentation forms: what it is made of, 0 behind the
+/// last part, and its character.
+const FormLigature = struct { parts: [3]u21, ligature: u21 };
+
+const Presentation = struct {
+    first: u21,
+    /// From `first` on, a letter's initial, medial, final and isolated
+    /// form.
+    forms: []const [4]u21,
+    of_three: []const FormLigature,
+    of_two: []const FormLigature,
+    of_marks: []const FormLigature,
+};
+
+/// The ligatures of presentation forms a text is drawn with: those the
+/// fonts made of presentation forms commonly have - lam with alef, and
+/// the letters before meem, jeem, hah, khah, reh, noon and yeh that are
+/// written as one - and not the hundreds of others, which would make an
+/// ordinary text look out of the way.
+const chosen_ligatures = [_]u21{
+    0xF201, 0xF211, 0xF2EE, 0xFC08, 0xFC0E, 0xFC12, 0xFC32, 0xFC3F, 0xFC40, 0xFC41, 0xFC42, 0xFC43,
+    0xFC44, 0xFC4E, 0xFC5E, 0xFC60, 0xFC61, 0xFC62, 0xFC6A, 0xFC6D, 0xFC6F, 0xFC70, 0xFC73, 0xFC75,
+    0xFC86, 0xFC8F, 0xFC91, 0xFC94, 0xFC9C, 0xFC9D, 0xFC9E, 0xFC9F, 0xFCA1, 0xFCA2, 0xFCA3, 0xFCA4,
+    0xFCA8, 0xFCAA, 0xFCAC, 0xFCB0, 0xFCC9, 0xFCCA, 0xFCCB, 0xFCCC, 0xFCCD, 0xFCCE, 0xFCCF, 0xFCD0,
+    0xFCD1, 0xFCD2, 0xFCD3, 0xFCD5, 0xFCDA, 0xFCDB, 0xFCDC, 0xFCDD, 0xFD30, 0xFD88, 0xFEF5, 0xFEF6,
+    0xFEF7, 0xFEF8, 0xFEF9, 0xFEFA, 0xFEFB, 0xFEFC,
+};
+
+/// The three ligatures fonts draw at code points of the private use
+/// area - lam lam heh, lam meem jeem, shadda with fathatan - as
+/// UnicodeData.txt would write them.
+const private_ligatures =
+    \\F201;PUA ARABIC LIGATURE LELLAH ISOLATED FORM;Lo;0;AL;<isolated> 0644 0644 0647;;;;N;;;;;
+    \\F211;PUA ARABIC LIGATURE LAM WITH MEEM WITH JEEM INITIAL FORM;Lo;0;AL;<initial> 0644 0645 062C;;;;N;;;;;
+    \\F2EE;PUA ARABIC LIGATURE SHADDA WITH FATHATAN ISOLATED FORM;Lo;0;AL;<isolated> 0020 064B 0651;;;;N;;;;;
+;
+
+const shape_initial = 0;
+const shape_medial = 1;
+const shape_final = 2;
+const shape_isolated = 3;
+
+/// The presentation forms of UnicodeData.txt, and the chosen ligatures
+/// of them.
+fn presentationOf(arena: mem.Allocator, data: []const u8) !Presentation {
+    const forms = try arena.alloc([4]u21, 0x10000);
+    @memset(forms, .{ 0, 0, 0, 0 });
+    var low: u21 = 0xFFFF;
+    var high: u21 = 0;
+    const Pending = struct { code: u21, shape: ?u8, items: [3]u21, count: usize };
+    var pending: std.ArrayList(Pending) = .empty;
+    for ([2][]const u8{ data, private_ligatures }) |source| {
+        var lines = mem.splitScalar(u8, source, '\n');
+        while (lines.next()) |raw| {
+            const line = mem.trim(u8, raw, " \t\r");
+            if (line.len == 0) continue;
+            var fields = mem.splitScalar(u8, line, ';');
+            const code = try std.fmt.parseInt(u21, fields.next() orelse continue, 16);
+            for (0..4) |_| _ = fields.next() orelse continue;
+            const decomposition = fields.next() orelse continue;
+            if (decomposition.len == 0 or decomposition[0] != '<') continue;
+            const close = mem.indexOfScalar(u8, decomposition, '>') orelse continue;
+            const tag = decomposition[1..close];
+            var shape: ?u8 = if (mem.eql(u8, tag, "initial")) shape_initial else if (mem.eql(u8, tag, "medial")) shape_medial else if (mem.eql(u8, tag, "final")) shape_final else if (mem.eql(u8, tag, "isolated")) shape_isolated else continue;
+            var items: [32]u21 = undefined;
+            var count: usize = 0;
+            var parts = mem.tokenizeScalar(u8, decomposition[close + 1 ..], ' ');
+            while (parts.next()) |part| {
+                if (count == items.len) fatal("the presentation form {X} has more than {d} parts", .{ code, items.len });
+                items[count] = try std.fmt.parseInt(u21, part, 16);
+                count += 1;
+            }
+            if (count == 1) {
+                const letter = items[0];
+                if (letter > 0xFFFF) fatal("the presentation form {X} is of {X}", .{ code, letter });
+                if (forms[letter][shape.?] != 0) fatal("{X} has two forms of one shape: {X} and {X}", .{ letter, forms[letter][shape.?], code });
+                forms[letter][shape.?] = code;
+                low = @min(low, letter);
+                high = @max(high, letter);
+                continue;
+            }
+            if (mem.indexOfScalar(u21, &chosen_ligatures, code) == null) continue;
+            // A ligature of marks is written in visual order, after a
+            // space.
+            if (items[0] == 0x20) {
+                if (count != 3) fatal("the ligature of marks {X} has {d} parts", .{ code, count - 1 });
+                items[0] = items[2];
+                count = 2;
+                shape = null;
+            }
+            if (count > 3) fatal("the ligature {X} has {d} parts", .{ code, count });
+            try pending.append(arena, .{ .code = code, .shape = shape, .items = items[0..3].*, .count = count });
+        }
+    }
+    var of_three: std.ArrayList(FormLigature) = .empty;
+    var of_two: std.ArrayList(FormLigature) = .empty;
+    var of_marks: std.ArrayList(FormLigature) = .empty;
+    for (pending.items) |ligature| {
+        var made: FormLigature = .{ .parts = .{ 0, 0, 0 }, .ligature = ligature.code };
+        const shape = ligature.shape orelse {
+            made.parts = .{ ligature.items[0], ligature.items[1], 0 };
+            try of_marks.append(arena, made);
+            continue;
+        };
+        const last = ligature.count - 1;
+        for (0..ligature.count) |at| {
+            const wanted: u8 = if (at == 0)
+                (if (shape == shape_final) shape_medial else if (shape == shape_initial or shape == shape_isolated) shape_initial else fatal("the ligature {X} is medial", .{ligature.code}))
+            else if (at == last)
+                (if (shape == shape_initial) shape_medial else shape_final)
+            else
+                shape_medial;
+            made.parts[at] = forms[ligature.items[at]][wanted];
+            if (made.parts[at] == 0) fatal("the ligature {X} needs a form {d} of {X}", .{ ligature.code, wanted, ligature.items[at] });
+        }
+        try (if (ligature.count == 3) &of_three else &of_two).append(arena, made);
+    }
+    if (of_three.items.len + of_two.items.len + of_marks.items.len != chosen_ligatures.len) {
+        fatal("{d} of the {d} chosen ligatures found", .{ of_three.items.len + of_two.items.len + of_marks.items.len, chosen_ligatures.len });
+    }
+    for ([_]*std.ArrayList(FormLigature){ &of_three, &of_two, &of_marks }) |list| {
+        mem.sort(FormLigature, list.items, {}, struct {
+            fn before(_: void, left: FormLigature, right: FormLigature) bool {
+                if (left.parts[0] != right.parts[0]) return left.parts[0] < right.parts[0];
+                return left.ligature < right.ligature;
+            }
+        }.before);
+    }
+    return .{
+        .first = low,
+        .forms = forms[low .. @as(usize, high) + 1],
+        .of_three = of_three.items,
+        .of_two = of_two.items,
+        .of_marks = of_marks.items,
+    };
+}
+
+fn writeLigatures(arena: mem.Allocator, out: *std.ArrayList(u8), name: []const u8, doc: []const u8, ligatures: []const FormLigature) !void {
+    try out.print(arena, "/// {s}\npub const {s} = [_]Ligature{{\n", .{ doc, name });
+    for (ligatures) |ligature| {
+        try out.print(arena, "    .{{ .parts = .{{ 0x{X:0>4}, 0x{X:0>4}, 0x{X:0>4} }}, .ligature = 0x{X:0>4} }},\n", .{ ligature.parts[0], ligature.parts[1], ligature.parts[2], ligature.ligature });
+    }
+    try out.appendSlice(arena, "};\n");
+}
+
+/// The bidirectional classes, numbered in this order, by their short and
+/// long names.
+const bidi_classes = [_]struct { short: []const u8, long: []const u8 }{
+    .{ .short = "L", .long = "Left_To_Right" },             .{ .short = "R", .long = "Right_To_Left" },
+    .{ .short = "AL", .long = "Arabic_Letter" },            .{ .short = "EN", .long = "European_Number" },
+    .{ .short = "ES", .long = "European_Separator" },       .{ .short = "ET", .long = "European_Terminator" },
+    .{ .short = "AN", .long = "Arabic_Number" },            .{ .short = "CS", .long = "Common_Separator" },
+    .{ .short = "NSM", .long = "Nonspacing_Mark" },         .{ .short = "BN", .long = "Boundary_Neutral" },
+    .{ .short = "B", .long = "Paragraph_Separator" },       .{ .short = "S", .long = "Segment_Separator" },
+    .{ .short = "WS", .long = "White_Space" },              .{ .short = "ON", .long = "Other_Neutral" },
+    .{ .short = "LRE", .long = "Left_To_Right_Embedding" }, .{ .short = "LRO", .long = "Left_To_Right_Override" },
+    .{ .short = "RLE", .long = "Right_To_Left_Embedding" }, .{ .short = "RLO", .long = "Right_To_Left_Override" },
+    .{ .short = "PDF", .long = "Pop_Directional_Format" },  .{ .short = "LRI", .long = "Left_To_Right_Isolate" },
+    .{ .short = "RLI", .long = "Right_To_Left_Isolate" },   .{ .short = "FSI", .long = "First_Strong_Isolate" },
+    .{ .short = "PDI", .long = "Pop_Directional_Isolate" },
+};
+
+fn bidiClassNumber(name: []const u8) u8 {
+    for (bidi_classes, 0..) |class, number| {
+        if (mem.eql(u8, class.short, name) or mem.eql(u8, class.long, name)) return @intCast(number);
+    }
+    fatal("unknown bidirectional class {s}", .{name});
+}
+
+/// A span `XXXX..YYYY` or `XXXX`.
+fn spanOf(text: []const u8) !Range {
+    const span = mem.trim(u8, text, " ");
+    const dots = mem.indexOf(u8, span, "..");
+    const first = try std.fmt.parseInt(u21, span[0 .. dots orelse span.len], 16);
+    const last = if (dots) |at| try std.fmt.parseInt(u21, span[at + 2 ..], 16) else first;
+    return .{ .first = first, .last = last };
+}
+
+/// Every code point's bidirectional class: the @missing lines, in their
+/// order, then the lines.
+fn bidiClassesOf(arena: mem.Allocator, derived: []const u8) ![]u8 {
+    const classes = try arena.alloc(u8, 0x110000);
+    @memset(classes, 0);
+    const missing = "# @missing:";
+    var lines = mem.splitScalar(u8, derived, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw, " \t\r");
+        if (!mem.startsWith(u8, line, missing)) continue;
+        var fields = mem.splitScalar(u8, line[missing.len..], ';');
+        const span = try spanOf(fields.next() orelse continue);
+        const number = bidiClassNumber(mem.trim(u8, fields.next() orelse continue, " "));
+        @memset(classes[span.first .. @as(usize, span.last) + 1], number);
+    }
+    lines = mem.splitScalar(u8, derived, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const span = try spanOf(fields.next() orelse continue);
+        const number = bidiClassNumber(mem.trim(u8, fields.next() orelse continue, " "));
+        @memset(classes[span.first .. @as(usize, span.last) + 1], number);
+    }
+    return classes;
+}
+
+/// The pairs of a file of `XXXX; YYYY` lines - with `opening`, only
+/// those whose third field is `o` - as `first << 21 | second`, sorted.
+fn pairsOf(arena: mem.Allocator, text: []const u8, opening: bool) ![]u64 {
+    var pairs: std.ArrayList(u64) = .empty;
+    var lines = mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = mem.trim(u8, raw[0 .. mem.indexOfScalar(u8, raw, '#') orelse raw.len], " \t\r");
+        if (line.len == 0) continue;
+        var fields = mem.splitScalar(u8, line, ';');
+        const first = try std.fmt.parseInt(u21, mem.trim(u8, fields.next() orelse continue, " "), 16);
+        const second = try std.fmt.parseInt(u21, mem.trim(u8, fields.next() orelse continue, " "), 16);
+        if (opening and !mem.eql(u8, mem.trim(u8, fields.next() orelse continue, " "), "o")) continue;
+        try pairs.append(arena, @as(u64, first) << 21 | second);
+    }
+    mem.sort(u64, pairs.items, {}, std.sort.asc(u64));
+    return pairs.items;
+}
+
+fn writePairs(arena: mem.Allocator, out: *std.ArrayList(u8), doc: []const u8, name: []const u8, pairs: []const u64) !void {
+    try out.print(arena, "\n/// {s}\npub const {s} = [_]u64{{\n", .{ doc, name });
+    for (pairs, 0..) |pair, at| {
+        if (at % 4 == 0) try out.appendSlice(arena, "   ");
+        try out.print(arena, " 0x{X:0>16},", .{pair});
+        if (at % 4 == 3 or at + 1 == pairs.len) try out.appendSlice(arena, "\n");
+    }
+    try out.appendSlice(arena, "};\n");
 }
 
 fn scriptsOf(arena: mem.Allocator, listing: []const u8, aliases: []const u8) !Scripts {

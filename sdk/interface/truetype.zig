@@ -39,6 +39,10 @@ pub const LVO = struct {
     pub const FontCoordinates = libraries.lvo(18);
     pub const GlyphAdvance = libraries.lvo(19);
     pub const VariationDelta = libraries.lvo(20);
+    pub const GlyphVerticalMetrics = libraries.lvo(21);
+    pub const GlyphPaints = libraries.lvo(22);
+    pub const GlyphPicture = libraries.lvo(23);
+    pub const GlyphDocument = libraries.lvo(24);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -61,6 +65,10 @@ pub const Fn = struct {
     pub const FontCoordinates = *const fn (*TrueTypeBase, *truetype.Outline, ?[*]i16, u32) callconv(.c) u32;
     pub const GlyphAdvance = *const fn (*TrueTypeBase, *truetype.Outline, u32) callconv(.c) i32;
     pub const VariationDelta = *const fn (*TrueTypeBase, *truetype.Outline, [*]const u8, u32, u32, ?*u32) callconv(.c) i32;
+    pub const GlyphVerticalMetrics = *const fn (*TrueTypeBase, *truetype.Outline, u32, *truetype.VerticalMetrics) callconv(.c) bool;
+    pub const GlyphPaints = *const fn (*TrueTypeBase, *truetype.Outline, u32, ?[*]truetype.PaintStep, u32) callconv(.c) u32;
+    pub const GlyphPicture = *const fn (*TrueTypeBase, *truetype.Outline, u32, *truetype.Picture) callconv(.c) bool;
+    pub const GlyphDocument = *const fn (*TrueTypeBase, *truetype.Outline, u32, *truetype.Document) callconv(.c) bool;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -190,5 +198,33 @@ pub const TrueTypeBase = opaque {
     /// `regions` when it is not null. Since 1.11.
     pub fn VariationDelta(self: *TrueTypeBase, outline: *truetype.Outline, store: [*]const u8, size: u32, item: u32, regions: ?*u32) i32 {
         return libraries.call(self, LVO.VariationDelta, Fn.VariationDelta, .{ outline, store, size, item, regions });
+    }
+
+    /// A glyph's advance down a column of text and its vertical origin, for
+    /// the glyph drawn upright there, into `metrics`, in the font's units;
+    /// false for no glyph of that number. Since 1.17.
+    pub fn GlyphVerticalMetrics(self: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.VerticalMetrics) bool {
+        return libraries.call(self, LVO.GlyphVerticalMetrics, Fn.GlyphVerticalMetrics, .{ outline, glyph, metrics });
+    }
+
+    /// The steps that draw a glyph of colour layers - the font's `COLR`
+    /// table, in the first palette of its `CPAL` - into `steps`, as many as
+    /// `room` holds; answers how many there are, 0 for a glyph not drawn so.
+    /// Since 1.17.
+    pub fn GlyphPaints(self: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, steps: ?[*]truetype.PaintStep, room: u32) u32 {
+        return libraries.call(self, LVO.GlyphPaints, Fn.GlyphPaints, .{ outline, glyph, steps, room });
+    }
+
+    /// The largest picture in colour the font has of a glyph (`sbix`,
+    /// `CBDT`) into `picture`: its file within the font's bytes and where it
+    /// goes; false for none. Since 1.17.
+    pub fn GlyphPicture(self: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, picture: *truetype.Picture) bool {
+        return libraries.call(self, LVO.GlyphPicture, Fn.GlyphPicture, .{ outline, glyph, picture });
+    }
+
+    /// The SVG document of the font's `SVG ` table that draws a glyph into
+    /// `document`; false for none. Since 1.17.
+    pub fn GlyphDocument(self: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, document: *truetype.Document) bool {
+        return libraries.call(self, LVO.GlyphDocument, Fn.GlyphDocument, .{ outline, glyph, document });
     }
 };

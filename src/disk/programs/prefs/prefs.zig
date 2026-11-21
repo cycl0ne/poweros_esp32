@@ -158,8 +158,8 @@ const looks = intuition.style;
 const Pen = graphics.Pen;
 
 pub const COMMAND_NAME = "Prefs";
-const VERSION = "1.28";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (12.11.2026)\r\n";
+const VERSION = "1.29";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (20.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 /// What the screen's bar says while one of its windows is active.
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -215,6 +215,8 @@ const ID_TEST = 150;
 const ID_FONT = 152;
 /// The field of the fallback families.
 const ID_FALLBACK = 158;
+/// A generic family's field: this and which (`font_file.Generic`).
+const ID_GENERIC = 186;
 /// The equalizer's: the output it shows, Flat, the presets, and a band's
 /// slider (this and the band).
 const ID_EQ_OUTPUT = 160;
@@ -494,6 +496,9 @@ const Editor = struct {
     /// page's line for what is wrong with a list typed.
     fallback_field: *Object = undefined,
     fallback_text: [font_file.fallback_len:0]u8 = @splat(0),
+    /// The generic families' fields and their text.
+    generic_fields: [font_file.generic_names.len]*Object = undefined,
+    generic_text: [font_file.generic_names.len][font_file.value_len:0]u8 = @splat(@splat(0)),
     fonts_status: *Object = undefined,
     fonts_status_text: [80:0]u8 = @splat(0),
     /// The desktop's settings as the file had them, the ground as the
@@ -1010,6 +1015,41 @@ const Editor = struct {
         e.fallbackText();
         e.set(page_fonts, e.fallback_field, &.{ pair(gc.STRINGA_TextVal, @intFromPtr(&e.fallback_text)), .{} });
         e.sayFonts("");
+        return true;
+    }
+
+    /// The fields' text made the generic families of the fonts' line.
+    fn genericText(e: *Editor) void {
+        for (&e.generic_text, 0..) |*text, which| {
+            text.* = @splat(0);
+            if (e.font_line.generic(@enumFromInt(which))) |family| @memcpy(text[0..family.len], family);
+        }
+    }
+
+    /// A generic family typed taken into the fonts' line: false, with
+    /// the text left as it was typed and the page's line saying why, for
+    /// one that is no family's name.
+    fn takeGeneric(e: *Editor, which: font_file.Generic) bool {
+        const index = @intFromEnum(which);
+        var got: usize = 0;
+        _ = e.ib.GetAttr(gc.STRINGA_TextVal, e.generic_fields[index], &got);
+        const typed = if (got != 0) trimmed(std_span(@ptrFromInt(got))) else "";
+        if (e.font_line.setGeneric(which, typed)) |why| {
+            e.sayFonts(std_span(why));
+            return false;
+        }
+        e.genericText();
+        e.set(page_fonts, e.generic_fields[index], &.{ pair(gc.STRINGA_TextVal, @intFromPtr(&e.generic_text[index])), .{} });
+        e.sayFonts("");
+        return true;
+    }
+
+    /// Every generic family's field taken: false at the first that is
+    /// not.
+    fn takeGenerics(e: *Editor) bool {
+        for (0..font_file.generic_names.len) |which| {
+            if (!e.takeGeneric(@enumFromInt(which))) return false;
+        }
         return true;
     }
 
@@ -2386,6 +2426,24 @@ noinline fn build(e: *Editor) ?*Object {
         .{},
     }) orelse return null;
     const fallback_fonts = column(ib, "Fallback fonts", &.{e.fallback_field}, &.{"_Families"}) orelse return null;
+    e.genericText();
+    for (&e.generic_fields, 0..) |*field, which| {
+        field.* = ib.NewObjectTagList(null, st.STRING_CLASS, &[_]TagItem{
+            pair(gc.GA_ID, ID_GENERIC + which),
+            pair(gc.GA_RelVerify, 1),
+            pair(gc.STRINGA_TextVal, @intFromPtr(&e.generic_text[which])),
+            pair(gc.STRINGA_MaxChars, font_file.value_len - 1),
+            .{},
+        }) orelse return null;
+    }
+    const generic_fonts = column(ib, "Families a document names", &.{ e.generic_fields[0], e.generic_fields[1], e.generic_fields[2], e.generic_fields[3], e.generic_fields[4] }, &.{ "_Serif", "Sa_ns-serif", "_Monospace", "C_ursive", "F_antasy" }) orelse return null;
+    const generic_note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
+        pair(tx.TEXT_Markup, 1),
+        pair(tx.TEXT_Wrap, 1),
+        pair(gc.GA_Width, 220),
+        pair(tx.TEXT_Text, @intFromPtr("A document that asks for a serif, a handwriting or another kind of font - an SVG picture's text - is drawn in the family named for it here: serif.font. Left empty, the first three are serif.font, sans.font and mono.font, and the other two are none.")),
+        .{},
+    }) orelse return null;
     const fallback_note = ib.NewObjectTagList(null, tx.TEXT_CLASS, &[_]TagItem{
         pair(tx.TEXT_Markup, 1),
         pair(tx.TEXT_Wrap, 1),
@@ -2398,7 +2456,7 @@ noinline fn build(e: *Editor) ?*Object {
         pair(tx.TEXT_Clipped, 1),
         .{},
     }) orelse return null;
-    pages[page_fonts] = column(ib, null, &.{ system_fonts, document_fonts, fallback_fonts, fallback_note, e.fonts_status }, &.{}) orelse return null;
+    pages[page_fonts] = column(ib, null, &.{ system_fonts, document_fonts, fallback_fonts, fallback_note, generic_fonts, generic_note, e.fonts_status }, &.{}) orelse return null;
 
     // The desktop page.
     var ground_text: [20:0]u8 = @splat(0);
@@ -3287,7 +3345,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                                 e.turnTo(page_region);
                                 continue;
                             }
-                            if (!e.takeFallbacks()) {
+                            if (!e.takeFallbacks() or !e.takeGenerics()) {
                                 e.turnTo(page_fonts);
                                 continue;
                             }
@@ -3337,6 +3395,8 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
                             e.takeVolume(id - ID_OUT_VOLUME, code);
                         } else if (id >= ID_BAND and id < ID_BAND + band_count) {
                             e.readBand(id - ID_BAND);
+                        } else if (id >= ID_GENERIC and id < ID_GENERIC + font_file.generic_names.len) {
+                            _ = e.takeGeneric(@enumFromInt(id - ID_GENERIC));
                         },
                     }
                 },

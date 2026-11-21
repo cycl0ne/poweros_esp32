@@ -19,8 +19,8 @@
 //! What is not drawn on is clear, so the picture is shown over what is
 //! under it.
 //!
-//! **What is drawn** is SVG 1.1's static pictures, without patterns:
-//! see `draw.zig`. Since 1.2 clips and masks are drawn, `use` and
+//! **What is drawn** is SVG's static pictures: see `draw.zig`. Since
+//! 1.2 clips and masks are drawn, `use` and
 //! `symbol`, and the rules of the file's `style` elements. Since 1.3
 //! text is, in the fonts of `FONTS:` - diskfont.library's outlines,
 //! drawn by truetype.library's glyphs - and blurs, and pictures in the
@@ -28,10 +28,20 @@
 //! datatypes.library from its bytes. Since 1.4 a text is shaped by its
 //! font, through truetypeshaping.library: kerned, its ligatures joined,
 //! its marks put on their letters, and since 1.5 a glyph of any number
-//! of points is drawn. Without those libraries, or a font, the text or
-//! the picture is left out and the rest is drawn. A
-//! picture reads no other file and goes to no address on a network: an
-//! `href` is followed only within the file.
+//! of points is drawn. Since 1.7 every filter primitive is drawn
+//! (`filter.zig`), patterns, markers and context paint, blend modes,
+//! text along a path, in columns, on its baselines and in both
+//! directions - Arabic's letters joined, through truetypeshaping.library
+//! 1.11 - and a picture of an SVG file inside another; the CSS of
+//! `style` elements takes the selectors `css.zig` reads, the entities of
+//! a DOCTYPE are put in (`entity.zig`), and references that close a
+//! loop are dropped (`loops.zig`). Without those libraries, or a font,
+//! the text or the picture is left out and the rest is drawn. Since 1.7
+//! an `image` whose address names a file reads it (`address.zig`): one
+//! from a relative address is found from the directory of the file the
+//! picture was made from - the source's lock; a picture made from memory
+//! reads only one of an address with a volume's name. No address on a
+//! network is followed.
 //!
 //! **.svgz** (since 1.2): a file packed with gzip is unpacked whole by
 //! compression.library first, into as much memory as gzip's trailer
@@ -59,11 +69,13 @@ const compression = sdk.compression;
 const truetype = sdk.truetype;
 const tts = sdk.truetypeshaping;
 const diskfont = sdk.diskfont;
+const locale = sdk.locale;
 const dtc = datatypes.datatypesclass;
 const xml = @import("xml.zig");
 const document = @import("document.zig");
 const draw = @import("draw.zig");
 const data = @import("data.zig");
+const address = @import("address.zig");
 const DosBase = sdk.interface.dos.DosBase;
 const ExecBase = sdk.interface.exec.ExecBase;
 const VectorBase = sdk.interface.vector.VectorBase;
@@ -71,6 +83,7 @@ const CompressionBase = sdk.interface.compression.CompressionBase;
 const TrueTypeBase = sdk.interface.truetype.TrueTypeBase;
 const TrueTypeShapingBase = sdk.interface.truetypeshaping.TrueTypeShapingBase;
 const DiskfontBase = sdk.interface.diskfont.DiskfontBase;
+const LocaleBase = sdk.interface.locale.LocaleBase;
 const DataTypesBase = sdk.interface.datatypes.DataTypesBase;
 const Class = classes.Class;
 const Object = classes.Object;
@@ -84,8 +97,8 @@ const Pen = graphics.Pen;
 pub const Library = gadgets.ClassLibrary(.{
     .name = "svg.datatype",
     .version = 1,
-    .revision = 6,
-    .date = "12.11.2026",
+    .revision = 7,
+    .date = "21.11.2026",
     .super = pic.PICTUREDTCLASS,
     .opens = &.{ pic.PICTURE_LIBRARY, vector.VECTORNAME, compression.COMPRESSIONNAME },
     .Instance = Data,
@@ -106,14 +119,20 @@ fn compressionBase(base: *const Base) *CompressionBase {
     return @ptrCast(base.opened[2].?);
 }
 
-/// The vector.library revision the class needs: blurs and pictures are
-/// 1.4's.
-const vector_revision = 4;
-/// The revisions text needs: truetype.library's glyphs,
-/// truetypeshaping.library's `ShapeText`, diskfont's outlines.
-const truetype_revision = 2;
-const shaping_revision = 1;
-const diskfont_revision = 4;
+/// The vector.library revision the class needs: filters, blend modes
+/// and a path's vertices are 1.5's.
+const vector_revision = 5;
+/// The revisions text needs: truetype.library's glyphs, a font's weight
+/// and a glyph's measures in a column, truetypeshaping.library's
+/// `ShapeText`, diskfont's outlines, the families a character missing
+/// from its font is looked for in, and the face nearest a weight, a
+/// width and a slant of a family found by its name.
+const truetype_revision = 17;
+const shaping_revision = 11;
+const diskfont_revision = 16;
+/// locale.library's `LanguageCode`: the user's languages, which
+/// `systemLanguage` is held to.
+const locale_revision = 7;
 
 /// How much of a file recognise reads to find its first element.
 const recognise_most = 16 << 10;
@@ -133,8 +152,10 @@ const Wanted = struct {
     height: u32 = 0,
 };
 
-/// The file read, drawn and handed over. What went wrong, or 0.
-fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wanted) i32 {
+/// The file read, drawn and handed over, the files its `image`s name
+/// read from `directory`, the directory of the file it was read from, if
+/// any. What went wrong, or 0.
+fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wanted, dl: *DosBase, directory: ?*dos.FileLock) i32 {
     const sys = base.sys_base;
     const vb = vectorBase(base);
     const vector_lib = vb.lib();
@@ -149,6 +170,18 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wante
             .bad => return datatypes.DTERROR_INVALID_DATA,
         };
         bytes = unpacked.?;
+    }
+    // The entities its DOCTYPE declares put in: a text of its own.
+    var grown: ?[]u8 = null;
+    defer if (grown) |text| sys.FreeVec(text.ptr);
+    if (draw.entity.declared(bytes)) |declared| {
+        if (draw.entity.expandedSize(bytes, &declared)) |size| {
+            if (!subclass.roomFor(sys, size)) return datatypes.DTERROR_TOO_LARGE;
+            const memory = sys.AllocVec(@max(size, 1), exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
+            const text: [*]u8 = @ptrCast(memory);
+            grown = draw.entity.expand(bytes, &declared, text[0..size]);
+            bytes = grown.?;
+        }
     }
     const counts = document.count(bytes) orelse return datatypes.DTERROR_INVALID_DATA;
     const doc_bytes = document.bytesFor(counts);
@@ -191,9 +224,9 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wante
     const work_memory = sys.AllocVec(@sizeOf(draw.Work), exec.MEMF_ANY) orelse return datatypes.DTERROR_NOT_ENOUGH_DATA;
     defer sys.FreeVec(work_memory);
     const work: *draw.Work = @ptrCast(@alignCast(work_memory));
-    var sources = Sources.open(base);
+    var sources = Sources.open(base, dl, directory);
     defer sources.close();
-    draw.draw(vb, &sources, &doc, canvas, path, work, draw.baseMatrix(intrinsic, width, height), intrinsic.viewport);
+    draw.draw(vb, &sources, &doc, canvas, .{ width, height }, path, work, draw.baseMatrix(intrinsic, width, height), intrinsic.viewport);
 
     const header = pic.BitMapHeader{
         .width = @intCast(width),
@@ -231,18 +264,27 @@ fn readFile(base: *Base, cl: *Class, o: *Object, file_bytes: []u8, wanted: Wante
 /// fonts, is opened only beside the other two.
 const Sources = struct {
     base: *Base,
+    /// For the files an `image` names, and the directory of the file the
+    /// picture was read from, which a relative address starts at: null
+    /// for a picture made from memory. The lock is the caller's.
+    dl: *DosBase,
+    directory: ?*dos.FileLock,
     tb: ?*TrueTypeBase = null,
     sb: ?*TrueTypeShapingBase = null,
     dfb: ?*DiskfontBase = null,
     dt: ?*DataTypesBase = null,
+    lb: ?*LocaleBase = null,
+    loc: ?*locale.Locale = null,
 
-    fn open(base: *Base) Sources {
+    fn open(base: *Base, dl: *DosBase, directory: ?*dos.FileLock) Sources {
         const sys = base.sys_base;
-        var s = Sources{ .base = base };
+        var s = Sources{ .base = base, .dl = dl, .directory = directory };
         s.tb = @ptrCast(openAt(sys, truetype.TRUETYPENAME, truetype_revision));
         if (s.tb != null) s.sb = @ptrCast(openAt(sys, tts.TRUETYPESHAPINGNAME, shaping_revision));
         if (s.sb != null) s.dfb = @ptrCast(openAt(sys, diskfont.DISKFONTNAME, diskfont_revision));
         s.dt = @ptrCast(sys.OpenLibrary(datatypes.DATATYPESNAME, 0));
+        s.lb = @ptrCast(openAt(sys, locale.LOCALENAME, locale_revision));
+        if (s.lb) |lb| s.loc = lb.OpenLocale(null);
         return s;
     }
 
@@ -252,6 +294,10 @@ const Sources = struct {
         if (s.sb) |l| sys.CloseLibrary(l.lib());
         if (s.tb) |l| sys.CloseLibrary(l.lib());
         if (s.dt) |l| sys.CloseLibrary(l.lib());
+        if (s.lb) |lb| {
+            lb.CloseLocale(s.loc);
+            sys.CloseLibrary(lb.lib());
+        }
     }
 
     /// A library of version 1 at `revision` at least, or a later version.
@@ -264,26 +310,80 @@ const Sources = struct {
         return lib;
     }
 
-    pub fn OpenFace(s: *Sources, name: [*:0]const u8, style: graphics.FontStyle) ?*diskfont.OutlineFont {
+    /// The face of the family `name` nearest what `want` asks, as
+    /// diskfont.library chooses it.
+    pub fn OpenFace(s: *Sources, name: [*:0]const u8, want: *const draw.Want) ?*diskfont.OutlineFont {
         const dfb = s.dfb orelse return null;
-        return dfb.OpenOutlineFont(name, style);
+        var axes: [draw.max_axes + 1]truetype.AxisValue = undefined;
+        const count = want.axesInto(&axes);
+        const tags = [_]TagItem{
+            .{ .tag = diskfont.DFA_Weight, .data = want.weight },
+            .{ .tag = diskfont.DFA_Stretch, .data = want.stretch },
+            .{ .tag = diskfont.DFA_Italic, .data = @intFromBool(want.italic) },
+            .{ .tag = diskfont.DFA_Axes, .data = @intFromPtr(&axes) },
+            .{ .tag = diskfont.DFA_AxisCount, .data = count },
+            .{ .tag = utility.TAG_DONE, .data = 0 },
+        };
+        return dfb.OpenOutlineFontTagList(name, &tags);
+    }
+    pub fn FindFamily(s: *Sources, name: [*:0]const u8, into: [*]u8, size: u32) bool {
+        const dfb = s.dfb orelse return false;
+        return dfb.FindFamily(name, into, size);
+    }
+    pub fn GenericFamily(s: *Sources, generic: u32, into: [*]u8, size: u32) bool {
+        const dfb = s.dfb orelse return false;
+        return dfb.GenericFamily(generic, into, size);
+    }
+    pub fn FontAxes(s: *Sources, outline: *truetype.Outline, axes: ?[*]truetype.Axis, room: u32) u32 {
+        return s.tb.?.FontAxes(outline, axes, room);
     }
     pub fn CloseFace(s: *Sources, font: *diskfont.OutlineFont) void {
         s.dfb.?.CloseOutlineFont(font);
     }
-    /// A stretch of text shaped by its font, read from left to right
-    /// in no language of its own.
-    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, language: u32, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
-        return s.sb.?.ShapeText(outline, text.ptr, @intCast(text.len), tts.TTS_LEFT_TO_RIGHT, language, features, run);
+    pub fn FallbackFamily(s: *Sources, index: u32, name: [*]u8, size: u32) bool {
+        const dfb = s.dfb orelse return false;
+        return dfb.FallbackFamily(index, name, size);
+    }
+    pub fn GlyphIndex(s: *Sources, outline: *truetype.Outline, code: u32) u32 {
+        return s.tb.?.GlyphIndex(outline, code);
+    }
+    /// The user's language `index`, in the order preferred, as its
+    /// ISO 639-1 code; English alone without a locale.
+    pub fn UserLanguage(s: *Sources, index: u32) ?[*:0]const u8 {
+        const lb = s.lb orelse return if (index == 0) "en" else null;
+        const loc = s.loc orelse return if (index == 0) "en" else null;
+        if (index >= loc.pref_languages.len) return null;
+        const name = loc.pref_languages[index] orelse return if (index == 0) lb.LanguageCode(loc.language_name) orelse "en" else null;
+        return lb.LanguageCode(name) orelse "";
+    }
+    /// A stretch of text shaped by its font, read in `direction`.
+    pub fn ShapeText(s: *Sources, outline: *truetype.Outline, text: []const u8, direction: u32, language: u32, features: ?[*]const tts.Feature, run: *tts.ShapedRun) i32 {
+        return s.sb.?.ShapeText(outline, text.ptr, @intCast(text.len), direction, language, features, run);
+    }
+    /// The bidirectional level of each byte of a chunk's text.
+    pub fn BidiLevels(s: *Sources, text: []const u8, direction: u32, levels: []u8) i32 {
+        return s.sb.?.BidiLevels(text.ptr, @intCast(text.len), direction, levels.ptr);
     }
     pub fn GlyphMetrics(s: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.GlyphMetrics) bool {
         return s.tb.?.GlyphMetrics(outline, glyph, metrics);
+    }
+    pub fn GlyphVerticalMetrics(s: *Sources, outline: *truetype.Outline, glyph: u32, metrics: *truetype.VerticalMetrics) bool {
+        return s.tb.?.GlyphVerticalMetrics(outline, glyph, metrics);
     }
     pub fn GlyphSegments(s: *Sources, outline: *truetype.Outline, glyph: u32, segments: *truetype.Segments) i32 {
         return s.tb.?.GlyphSegments(outline, glyph, segments);
     }
     pub fn FontMetrics(s: *Sources, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void {
         s.tb.?.FontMetrics(outline, metrics);
+    }
+    pub fn GlyphPaints(s: *Sources, outline: *truetype.Outline, glyph: u32, steps: ?[*]truetype.PaintStep, room: u32) u32 {
+        return s.tb.?.GlyphPaints(outline, glyph, steps, room);
+    }
+    pub fn GlyphPicture(s: *Sources, outline: *truetype.Outline, glyph: u32, picture: *truetype.Picture) bool {
+        return s.tb.?.GlyphPicture(outline, glyph, picture);
+    }
+    pub fn GlyphDocument(s: *Sources, outline: *truetype.Outline, glyph: u32, glyph_document: *truetype.Document) bool {
+        return s.tb.?.GlyphDocument(outline, glyph, glyph_document);
     }
     /// Memory for a glyph the work block is too short for; null when
     /// there is none.
@@ -296,21 +396,96 @@ const Sources = struct {
         s.base.sys_base.FreeVec(room.ptr);
     }
 
-    /// The picture of a `data:` address: its bytes decoded, made a
-    /// picture of their own by datatypes.library, and its pixels taken
-    /// into pens. Null for an address of another kind, bytes no
-    /// datatype reads, an SVG file - a picture is not drawn inside
-    /// another - or no memory.
+    /// The picture an `image`'s address holds: the bytes of a `data:`
+    /// address, or of the file it names, found from the directory of the
+    /// picture's own file. An SVG document's text, unpacked when it is
+    /// packed, or a picture datatypes.library makes pens of. Null for no
+    /// such file, bytes no datatype reads, or no memory.
     pub fn OpenImage(s: *Sources, href: []const u8) ?draw.Image {
-        const dt = s.dt orelse return null;
+        const read = s.readAddress(href) orelse return null;
+        return s.imageOf(read.memory, read.bytes);
+    }
+
+    /// The bytes an address holds as they are - an ICC profile - read as
+    /// `OpenImage` reads a picture's.
+    pub fn OpenFile(s: *Sources, href: []const u8) ?draw.Bytes {
+        const read = s.readAddress(href) orelse return null;
+        return .{ .bytes = read.bytes, .handle = read.memory };
+    }
+    pub fn CloseFile(s: *Sources, file: draw.Bytes) void {
+        if (file.handle) |memory| s.base.sys_base.FreeVec(memory);
+    }
+
+    /// The bytes of a `data:` address, or of the file it names, in
+    /// memory of AllocVec's; null for none.
+    fn readAddress(s: *Sources, href: []const u8) ?struct { memory: *anyopaque, bytes: []u8 } {
+        const sys = s.base.sys_base;
+        const dl = s.dl;
+        if (data.payloadOf(href)) |payload| {
+            const most = data.payloadMost(payload);
+            const memory = sys.AllocVec(@max(most, 1), exec.MEMF_ANY) orelse return null;
+            const bytes = data.decodePayload(payload, @as([*]u8, @ptrCast(memory))[0..most]) orelse {
+                sys.FreeVec(memory);
+                return null;
+            };
+            return .{ .memory = memory, .bytes = bytes };
+        }
+        const place = address.placeOf(href) orelse return null;
+        var path_room: [512]u8 = undefined;
+        const path = address.dosPath(place, &path_room) orelse return null;
+        // A relative path, and one from the root of a volume, start at
+        // the picture's directory; one of a volume's name at that.
+        const lock = if (s.directory) |directory| found: {
+            const before = dl.CurrentDir(directory);
+            defer _ = dl.CurrentDir(before);
+            break :found dl.Lock(path.ptr, dos.SHARED_LOCK);
+        } else if (place.kind == .volume) dl.Lock(path.ptr, dos.SHARED_LOCK) else null;
+        const file = lock orelse return null;
+        defer dl.UnLock(file);
+        const bytes = switch (subclass.readWhole(sys, dl, file)) {
+            .got => |whole| whole,
+            .too_large, .no_file => return null,
+        };
+        return .{ .memory = bytes.ptr, .bytes = bytes };
+    }
+
+    /// The picture a file in memory is - a font's picture of a glyph, or
+    /// the SVG document that draws one - as `OpenImage` gives the one an
+    /// address holds; the bytes stay the caller's.
+    pub fn OpenImageBytes(s: *Sources, bytes: []const u8) ?draw.Image {
+        const sys = s.base.sys_base;
+        const memory = sys.AllocVec(@max(bytes.len, 1), exec.MEMF_ANY) orelse return null;
+        const copy = @as([*]u8, @ptrCast(memory))[0..bytes.len];
+        @memcpy(copy, bytes);
+        return s.imageOf(memory, copy);
+    }
+
+    /// The picture `bytes` are, in the memory `memory` AllocVec gave,
+    /// which is kept or freed: an SVG document's text, unpacked when it
+    /// is packed, or a picture datatypes.library makes pens of.
+    fn imageOf(s: *Sources, memory: *anyopaque, bytes: []u8) ?draw.Image {
         const sys = s.base.sys_base;
         const ib = s.base.intuition_base;
-        const text = data.base64Of(href) orelse return null;
-        const most = data.decodedMost(text);
-        const bytes_memory = sys.AllocVec(@max(most, 1), exec.MEMF_ANY) orelse return null;
-        defer sys.FreeVec(bytes_memory);
-        const bytes = data.decode(text, @as([*]u8, @ptrCast(bytes_memory))[0..most]) orelse return null;
-        if (bytes.len == 0 or isGzip(bytes) or document.startsSvg(bytes)) return null;
+        const bytes_memory = memory;
+        var kept = false;
+        defer if (!kept) sys.FreeVec(bytes_memory);
+        if (bytes.len == 0) return null;
+        if (isGzip(bytes)) {
+            const unpacked = switch (gunzip(s.base, bytes)) {
+                .got => |whole| whole,
+                .too_large, .bad => return null,
+            };
+            if (!document.startsSvg(unpacked)) {
+                sys.FreeVec(unpacked.ptr);
+                return null;
+            }
+            return .{ .document = unpacked, .handle = unpacked.ptr };
+        }
+        if (document.startsSvg(bytes)) {
+            kept = true;
+            return .{ .document = bytes, .handle = bytes_memory };
+        }
+        const dt = s.dt orelse return null;
         const picture = dt.NewDTObjectA(null, &[_]TagItem{
             .{ .tag = dtc.DTA_SourceType, .data = dtc.DTST_MEMORY },
             .{ .tag = dtc.DTA_Handle, .data = @intFromPtr(bytes.ptr) },
@@ -444,10 +619,17 @@ fn dispatch(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) call
             };
             const dl: *DosBase = @ptrCast(dos_lib);
             defer sys.CloseLibrary(dos_lib);
+            // The directory of the file it is read from, for the files
+            // its `image`s name.
+            const directory: ?*dos.FileLock = if (subclass.superAsk(ib, cl, obj, dtc.DTA_SourceType) == dtc.DTST_FILE)
+                dl.ParentDir(@ptrFromInt(subclass.superAsk(ib, cl, obj, dtc.DTA_Handle)))
+            else
+                null;
+            defer if (directory) |lock| dl.UnLock(lock);
             const failure = switch (subclass.readSource(sys, dl, ib, cl, obj)) {
                 .got => |bytes| failed: {
                     defer sys.FreeVec(bytes.ptr);
-                    break :failed readFile(base, cl, obj, bytes, wanted);
+                    break :failed readFile(base, cl, obj, bytes, wanted, dl, directory);
                 },
                 .too_large => datatypes.DTERROR_TOO_LARGE,
                 .no_file => datatypes.DTERROR_COULDNT_OPEN,

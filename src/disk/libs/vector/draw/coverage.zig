@@ -19,6 +19,14 @@
 //! that starts above the band is followed down to it row by row, as it
 //! would be were the band the whole canvas, so a row comes out the same
 //! whichever band it is drawn in.
+//!
+//! **Strips** (since 1.5). Where two pieces of one shape overlap in a
+//! pixel at its edge, their shares are summed there and the pixel comes
+//! out darker than either makes it. A coverage of `strips` rows a pixel
+//! takes every line's y that many times over, so each pixel row is that
+//! many strips: each summed and held to 1 on its own, their mean is the
+//! pixel's coverage. Where nothing overlaps that is the same area as one
+//! row's; where pieces do, a pixel is out by at most half a strip.
 
 const sdk = @import("sdk");
 const P = sdk.vector.Point;
@@ -43,6 +51,9 @@ pub const Coverage = struct {
     height: u32,
     band_top: u32 = 0,
     band_end: u32,
+    /// Strips a pixel row: `height`, `band_top`, `band_end` and the rows
+    /// touched count strips.
+    strips: u32 = 1,
     top: u32 = 0xFFFF_FFFF,
     bottom: u32 = 0,
     left: u32 = 0xFFFF_FFFF,
@@ -67,8 +78,24 @@ pub const Coverage = struct {
         coverage.left = 0xFFFF_FFFF;
     }
 
-    /// A line, cut at the canvas's sides.
+    /// A line in pixels, its y taken to the strips.
     pub fn line(coverage: *Coverage, p0: P, p1: P) void {
+        if (coverage.strips == 1) return coverage.cut(p0, p1);
+        const scale: f32 = @floatFromInt(coverage.strips);
+        coverage.cut(.{ .x = p0.x, .y = p0.y * scale }, .{ .x = p1.x, .y = p1.y * scale });
+    }
+
+    /// What was added since the last `forget` taken back, and forgotten.
+    pub fn clear(coverage: *Coverage) void {
+        if (coverage.touched()) {
+            var y = coverage.top;
+            while (y < coverage.bottom) : (y += 1) @memset(coverage.row(y)[coverage.left..coverage.stride()], 0);
+        }
+        coverage.forget();
+    }
+
+    /// A line, cut at the canvas's sides.
+    fn cut(coverage: *Coverage, p0: P, p1: P) void {
         if (p0.y == p1.y) return;
         if (p0.y != p0.y or p1.y != p1.y or p0.x != p0.x or p1.x != p1.x) return;
         // Wholly above or below the band: nothing of it is here.
@@ -80,8 +107,8 @@ pub const Coverage = struct {
             if ((p0.x < side) != (p1.x < side) and p0.x != side and p1.x != side) {
                 const t = (side - p0.x) / (p1.x - p0.x);
                 const middle = P{ .x = side, .y = p0.y + t * (p1.y - p0.y) };
-                coverage.line(p0, middle);
-                coverage.line(middle, p1);
+                coverage.cut(p0, middle);
+                coverage.cut(middle, p1);
                 return;
             }
         }
@@ -211,6 +238,32 @@ test "a square half off the canvas covers its pixels on it, whole" {
     try testing.expectEqual(@as(f32, 1), @abs(summed(&coverage, 5, 3)));
     try testing.expectEqual(@as(f32, 0), summed(&coverage, 3, 4));
     try testing.expectEqual(@as(f32, 0), summed(&coverage, 1, 0));
+}
+
+/// Pixel (`x`, `y`)'s coverage by the non-zero rule: the mean of its
+/// strips', each held to 1.
+fn stripCover(coverage: *Coverage, y: u32, x: u32) f32 {
+    var total: f32 = 0;
+    for (0..coverage.strips) |strip| total += @min(@abs(summed(coverage, y * coverage.strips + @as(u32, @intCast(strip)), x)), 1);
+    return total / @as(f32, @floatFromInt(coverage.strips));
+}
+
+test "strips: a shape covers what one row says, and two over each other at an edge cover it once, near enough" {
+    const box = [_]P{ .{ .x = 1, .y = 1.3 }, .{ .x = 5, .y = 1.3 }, .{ .x = 5, .y = 4 }, .{ .x = 1, .y = 4 } };
+    var acc: [10 * 24]f32 = @splat(0);
+    var once = Coverage{ .acc = &acc, .width = 8, .height = 24, .band_end = 24, .strips = 4 };
+    once.polygon(&box);
+    try testing.expectApproxEqAbs(@as(f32, 0.7), stripCover(&once, 1, 2), 1e-5);
+    try testing.expectApproxEqAbs(@as(f32, 1), stripCover(&once, 2, 2), 1e-5);
+    try testing.expectEqual(@as(f32, 0), stripCover(&once, 0, 2));
+    once.clear();
+    for (acc) |float| try testing.expectEqual(@as(f32, 0), float);
+    var twice = Coverage{ .acc = &acc, .width = 8, .height = 24, .band_end = 24, .strips = 4 };
+    twice.polygon(&box);
+    twice.polygon(&box);
+    // One row would sum 1.4 there and hold it to 1.
+    try testing.expectApproxEqAbs(@as(f32, 0.7), stripCover(&twice, 1, 2), 1.0 / 8.0);
+    try testing.expectApproxEqAbs(@as(f32, 1), stripCover(&twice, 2, 2), 1e-5);
 }
 
 test "a band adds the same to its rows as the whole canvas does" {

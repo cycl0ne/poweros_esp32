@@ -520,3 +520,78 @@ test "ShapeText: tables cut short end the call" {
 
     try rig.down();
 }
+
+test "ShapeText: the joined forms of Arabic, and a bracket mirrored from right to left" {
+    var rig = try Rig.up();
+    // The brackets as the glyphs 1 and 2, the alef and the beh as 3 and
+    // 4; the beh's forms at the start, in the middle and at the end of
+    // a join are 5, 6 and 7, under the script `arab`.
+    var letters = builder.Cmap.init(1);
+    letters.begin(3, 1);
+    letters.segments(&.{
+        .{ .first = '(', .last = ')', .delta = 1 -% @as(u16, '(') },
+        .{ .first = 0x0627, .last = 0x0628, .delta = 3 -% @as(u16, 0x0627) },
+        .{ .first = 0xFFFF, .last = 0xFFFF, .delta = 1 },
+    });
+    var initial: File = .{};
+    var medial: File = .{};
+    var final: File = .{};
+    subtables.singleList(&initial, &.{4}, &.{5});
+    subtables.singleList(&medial, &.{4}, &.{6});
+    subtables.singleList(&final, &.{4}, &.{7});
+    var gsub: File = .{};
+    layout.tableOf(&gsub, &.{.{ .tag = "arab", .languages = &.{.{ .features = &.{ 0, 1, 2 } }} }}, &.{
+        .{ .tag = "fina", .lookups = &.{2} },
+        .{ .tag = "init", .lookups = &.{0} },
+        .{ .tag = "medi", .lookups = &.{1} },
+    }, &.{
+        .{ .kind = 1, .subtables = &.{initial.written()} },
+        .{ .kind = 1, .subtables = &.{medial.written()} },
+        .{ .kind = 1, .subtables = &.{final.written()} },
+    });
+    var file: builder.File = .{};
+    _ = builder.font(&file, .{ .cmap = letters.written(), .more = &.{.{ .tag = "GSUB", .bytes = gsub.written() }} });
+    const outline = rig.tb.OpenOutline(&file.bytes, file.len, null) orelse return error.NotRead;
+
+    // Three behs: the first at the start, the last at the end, drawn
+    // from the right.
+    var room: [8]tts.ShapedGlyph = undefined;
+    var run = runFor(&room);
+    const behs = "\u{0628}\u{0628}\u{0628}";
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, behs, behs.len, tts.TTS_RIGHT_TO_LEFT, tts.TTS_LANGUAGE_DEFAULT, null, &run));
+    try expectShaped(&run, &.{ .{ 7, 4, 600 }, .{ 6, 2, 600 }, .{ 5, 0, 600 } });
+    // An alef joins only the letter before it: the behs after it start a
+    // join of their own. The brackets are each other's mirror images.
+    run = runFor(&room);
+    const word = "(\u{0627}\u{0628}\u{0628})";
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, word, word.len, tts.TTS_RIGHT_TO_LEFT, tts.TTS_LANGUAGE_DEFAULT, null, &run));
+    try expectShaped(&run, &.{ .{ 1, 7, 600 }, .{ 7, 5, 600 }, .{ 5, 3, 600 }, .{ 3, 1, 600 }, .{ 2, 0, 600 } });
+    // The forms turned off by the caller.
+    const plain = [_]tts.Feature{ .{ .tag = tts.featureTag("init"), .value = 0 }, .{ .tag = 0 } };
+    run = runFor(&room);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.ShapeText(outline, behs, behs.len, tts.TTS_RIGHT_TO_LEFT, tts.TTS_LANGUAGE_DEFAULT, &plain, &run));
+    try expectShaped(&run, &.{ .{ 7, 4, 600 }, .{ 6, 2, 600 }, .{ 4, 0, 600 } });
+    rig.tb.CloseOutline(outline);
+    try rig.down();
+}
+
+test "BidiLevels: the levels of a text's bytes, and the errors of the call" {
+    var rig = try Rig.up();
+    // Latin with a Hebrew word in it: the word's four bytes one level up.
+    const text = "ab \u{05D0}\u{05D1}.";
+    var levels: [text.len]u8 = @splat(0xEE);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.BidiLevels(text, text.len, tts.TTS_LEFT_TO_RIGHT, &levels));
+    try testing.expectEqualSlices(u8, &.{ 0, 0, 0, 1, 1, 1, 1, 0 }, &levels);
+    // Read from right to left, the Latin two up and the rest at 1; by
+    // its first letter, from left to right.
+    try testing.expectEqual(tts.TTS_OK, rig.sb.BidiLevels(text, text.len, tts.TTS_RIGHT_TO_LEFT, &levels));
+    try testing.expectEqualSlices(u8, &.{ 2, 2, 1, 1, 1, 1, 1, 1 }, &levels);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.BidiLevels(text, text.len, tts.TTS_FIRST_STRONG, &levels));
+    try testing.expectEqual(@as(u8, 0), levels[0]);
+    // A direction of no such number leaves the levels as they were.
+    levels = @splat(0xEE);
+    try testing.expectEqual(tts.TTSERR_DIRECTION, rig.sb.BidiLevels(text, text.len, 7, &levels));
+    try testing.expectEqual(@as(u8, 0xEE), levels[0]);
+    try testing.expectEqual(tts.TTS_OK, rig.sb.BidiLevels(text, 0, tts.TTS_LEFT_TO_RIGHT, &levels));
+    try rig.down();
+}

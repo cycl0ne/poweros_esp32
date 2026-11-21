@@ -25,6 +25,10 @@ pub const LVO = struct {
     pub const NewScaledDiskFont = libraries.lvo(8);
     pub const OpenOutlineFont = libraries.lvo(9);
     pub const CloseOutlineFont = libraries.lvo(10);
+    pub const FallbackFamily = libraries.lvo(11);
+    pub const FindFamily = libraries.lvo(12);
+    pub const GenericFamily = libraries.lvo(13);
+    pub const OpenOutlineFontTagList = libraries.lvo(14);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -37,6 +41,10 @@ pub const Fn = struct {
     pub const NewScaledDiskFont = *const fn (*DiskfontBase, *graphics.TextFont, *const graphics.TextAttr) callconv(.c) ?*graphics.TextFont;
     pub const OpenOutlineFont = *const fn (*DiskfontBase, [*:0]const u8, graphics.FontStyle) callconv(.c) ?*diskfont.OutlineFont;
     pub const CloseOutlineFont = *const fn (*DiskfontBase, ?*diskfont.OutlineFont) callconv(.c) void;
+    pub const FallbackFamily = *const fn (*DiskfontBase, u32, [*]u8, u32) callconv(.c) bool;
+    pub const FindFamily = *const fn (*DiskfontBase, [*:0]const u8, [*]u8, u32) callconv(.c) bool;
+    pub const GenericFamily = *const fn (*DiskfontBase, u32, [*]u8, u32) callconv(.c) bool;
+    pub const OpenOutlineFontTagList = *const fn (*DiskfontBase, [*:0]const u8, ?[*]const utility.TagItem) callconv(.c) ?*diskfont.OutlineFont;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -88,5 +96,33 @@ pub const DiskfontBase = opaque {
     /// What OpenOutlineFont gave, given back. Null does nothing. Since 1.4.
     pub fn CloseOutlineFont(self: *DiskfontBase, font: ?*diskfont.OutlineFont) void {
         return libraries.call(self, LVO.CloseOutlineFont, Fn.CloseOutlineFont, .{font});
+    }
+
+    /// Family `index` of those font.prefs names under FALLBACK, its name and
+    /// a NUL into `name`; false past the list's end or for too little room.
+    /// Since 1.16.
+    pub fn FallbackFamily(self: *DiskfontBase, index: u32, name: [*]u8, size: u32) bool {
+        return libraries.call(self, LVO.FallbackFamily, Fn.FallbackFamily, .{ index, name, size });
+    }
+
+    /// The family whose fonts call themselves `name` - "Noto Sans" - or
+    /// whose contents file is `name` with ".font": that file's name and a
+    /// NUL into `into`; false for none or too little room. Since 1.16.
+    pub fn FindFamily(self: *DiskfontBase, name: [*:0]const u8, into: [*]u8, size: u32) bool {
+        return libraries.call(self, LVO.FindFamily, Fn.FindFamily, .{ name, into, size });
+    }
+
+    /// The family font.prefs names for the generic family `generic`
+    /// (GENERIC_*), its name and a NUL into `into`; false where it names
+    /// none and there is no default. Since 1.16.
+    pub fn GenericFamily(self: *DiskfontBase, generic: u32, into: [*]u8, size: u32) bool {
+        return libraries.call(self, LVO.GenericFamily, Fn.GenericFamily, .{ generic, into, size });
+    }
+
+    /// A family's outline in the face nearest the weight, width and slant
+    /// the tags ask (DFA_*), from the family and its faces, a variable font
+    /// at the place asked. Null if it has no outline. Since 1.16.
+    pub fn OpenOutlineFontTagList(self: *DiskfontBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) ?*diskfont.OutlineFont {
+        return libraries.call(self, LVO.OpenOutlineFontTagList, Fn.OpenOutlineFontTagList, .{ name, tags });
     }
 };

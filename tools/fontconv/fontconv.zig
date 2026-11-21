@@ -138,8 +138,17 @@ pub fn main(init: std.process.Init) !void {
 
 /// One outline entry of a family: where its font file is, the styles it
 /// is drawn in, and where on the file's axes - nowhere but the default
-/// for a file without axes, which is in the styles it says of itself.
-const Outline = struct { file: File, style: sdk.graphics.FontStyle, place: fontfile.Place = .{} };
+/// for a file without axes, which is in the styles it says of itself -
+/// how heavy and how wide it is drawn there, and the name its font gives
+/// its family.
+const Outline = struct {
+    file: File,
+    style: sdk.graphics.FontStyle,
+    place: fontfile.Place = .{},
+    weight: u16 = 0,
+    stretch: u16 = 0,
+    family: []const u8 = "",
+};
 
 /// A font of a font file on the disk: the family whose directory holds
 /// the file, its name there, and which of its fonts.
@@ -156,9 +165,20 @@ const max_axes = 32;
 fn listOutline(gpa: Allocator, outlines: *std.ArrayList(Outline), file: File, bytes: []const u8) !void {
     const style = sdk.truetype.styleOfFont(bytes, file.face);
     const font = try gpa.create(tt.outline.Font);
-    const axis_count: u32 = if (tt.outline.open(font, bytes.ptr, @intCast(bytes.len), file.face, null, 0)) font.vary.axis_count else 0;
+    const opened = tt.outline.open(font, bytes.ptr, @intCast(bytes.len), file.face, null, 0);
+    // The family's name: its typographic one, or its plain one.
+    var called: [fontfile.MAXFONTFAMILY]u8 = @splat(0);
+    var called_len: u32 = 0;
+    if (opened) {
+        called_len = tt.names.nameOf(font, sdk.truetype.TTNAME_TYPO_FAMILY, &called, called.len);
+        if (called_len == 0) called_len = tt.names.nameOf(font, sdk.truetype.TTNAME_FAMILY, &called, called.len);
+    }
+    const family = try gpa.dupe(u8, called[0..@min(called_len, called.len - 1)]);
+    const weight: u16 = if (opened) font.weight else 0;
+    const stretch: u16 = if (opened) font.stretch else 0;
+    const axis_count: u32 = if (opened) font.vary.axis_count else 0;
     if (axis_count == 0 or axis_count > max_axes) {
-        try outlines.append(gpa, .{ .file = file, .style = style });
+        try outlines.append(gpa, .{ .file = file, .style = style, .weight = weight, .stretch = stretch, .family = family });
         return;
     }
     var axes: [max_axes]sdk.truetype.Axis = undefined;
@@ -179,9 +199,9 @@ fn listOutline(gpa: Allocator, outlines: *std.ArrayList(Outline), file: File, by
         named[said] = fontfile.placeOf(axes[0..axis_count], values[0..axis_count]);
     }
     var made: [4]fontfile.FontContents = undefined;
-    const count = fontfile.variableEntries("", style, axes[0..axis_count], &named, &made);
+    const count = fontfile.variableEntries("", style, axes[0..axis_count], &named, weight, stretch, &made);
     for (made[0..count]) |*entry| {
-        try outlines.append(gpa, .{ .file = file, .style = entry.style, .place = fontfile.placeOfEntry(entry) });
+        try outlines.append(gpa, .{ .file = file, .style = entry.style, .place = fontfile.placeOfEntry(entry), .weight = entry.weight, .stretch = entry.stretch, .family = family });
     }
 }
 
@@ -220,6 +240,12 @@ fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []co
     @memset(contents, 0);
     const header: *fontfile.ContentsHeader = @ptrCast(contents.ptr);
     header.* = .{ .count = @intCast(fonts.len + outlines.len) };
+    // The family is called what its first outline calls it.
+    for (outlines) |outline| {
+        if (outline.family.len == 0) continue;
+        fontfile.setFamily(header, outline.family);
+        break;
+    }
     const entries: [*]fontfile.FontContents = @ptrCast(@alignCast(contents.ptr + @sizeOf(fontfile.ContentsHeader)));
     for (fonts, 0..) |*font, i| {
         if (i != 0 and fonts[i - 1].height == font.height) return error.TwoOfOneHeight;
@@ -233,7 +259,7 @@ fn writeFamily(gpa: Allocator, family: []const u8, fonts: []Font, outlines: []co
     for (outlines, fonts.len..) |outline, i| {
         const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ outline.file.dir, outline.file.name });
         if (path.len >= fontfile.MAXFONTPATH) return error.NameTooLong;
-        entries[i] = fontfile.outlineEntry(path, outline.style, outline.place, outline.file.face);
+        entries[i] = fontfile.outlineEntry(path, outline.style, outline.place, outline.file.face, outline.weight, outline.stretch);
     }
     fontfile.seal(contents.ptr, size);
     return contents;

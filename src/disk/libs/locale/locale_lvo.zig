@@ -39,6 +39,7 @@ const FormatString = @import("format/formatstring.zig").FormatString;
 const OpenCatalogA = @import("catalog/opencataloga.zig").OpenCatalogA;
 const CloseCatalog = @import("catalog/closecatalog.zig").CloseCatalog;
 const GetCatalogStr = @import("catalog/getcatalogstr.zig").GetCatalogStr;
+const LanguageCode = @import("locale/languagecode.zig").LanguageCode;
 
 /// locale.library's interface, as the SDK generates it from
 /// sdk/fd/locale_lib.fd.
@@ -88,6 +89,7 @@ const contract_files = [_][]const u8{
     @embedFile("catalog/opencataloga.zig"),
     @embedFile("catalog/closecatalog.zig"),
     @embedFile("catalog/getcatalogstr.zig"),
+    @embedFile("locale/languagecode.zig"),
 };
 
 // --- the locale ---------------------------------------------------------------
@@ -182,6 +184,9 @@ fn lvoCloseCatalog(lb: *LocaleBase, catalog: ?*locale.Catalog) callconv(.c) void
 fn lvoGetCatalogStr(lb: *LocaleBase, catalog: ?*const locale.Catalog, string_num: i32, default_string: [*:0]const u8) callconv(.c) [*:0]const u8 {
     return GetCatalogStr(lb, catalog, string_num, default_string);
 }
+fn lvoLanguageCode(lb: *LocaleBase, language: [*:0]const u8) callconv(.c) ?[*:0]const u8 {
+    return LanguageCode(lb, language);
+}
 
 pub const vectors = [_]*const anyopaque{
     vec(locale_init.openVector),
@@ -213,6 +218,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoOpenCatalogA),
     vec(lvoCloseCatalog),
     vec(lvoGetCatalogStr),
+    vec(lvoLanguageCode),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

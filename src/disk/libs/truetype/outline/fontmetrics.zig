@@ -15,7 +15,8 @@ const _segments = @import("../glyph/_segments.zig");
 /// fn FontMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void
 /// ```
 ///
-/// SINCE: 1.2, fonts of cubic curves since 1.6. LVO -44.
+/// SINCE: 1.2, fonts of cubic curves since 1.6, the weight and the
+/// width since 1.17. LVO -44.
 ///
 /// INPUTS:
 /// - `outline` - what `OpenOutline` answered.
@@ -27,12 +28,16 @@ const _segments = @import("../glyph/_segments.zig");
 /// BEHAVIOR:
 /// The units per em and the number of glyphs; the ascender, descender
 /// and line gap of the horizontal header (`hhea`), which is what
-/// `RenderFontImage` sets its lines by; the x and capital heights and
-/// the strike-out of `OS/2`, the underline of `post`, each 0 where the
-/// font does not give it; the most verbs and points `GlyphSegments`
+/// `RenderFontImage` sets its lines by; the x and capital heights, the
+/// strike-out and - since 1.17 - the sub- and superscript offsets of
+/// `OS/2`, the underline of `post`, each 0 where the font does not give
+/// it; the most verbs and points `GlyphSegments`
 /// gives for a glyph of the font, from what `maxp` says the largest
 /// glyph is (or as for 1024 points and 128 contours, when it does not
-/// say); and the styles the file says it is drawn in.
+/// say); the styles the file says it is drawn in; and since 1.17 how
+/// heavy and how wide it is drawn - `OS/2`'s weight and width classes,
+/// or the values of the `wght` and `wdth` axes where the outline was
+/// opened, 400 and 1000 where neither says.
 ///
 /// A font of cubic curves does not say how large its largest glyph is:
 /// `most_verbs` and `most_points` are 1283 and 2179 for it, as for 1024
@@ -78,8 +83,12 @@ pub fn FontMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *true
         .underline_thickness = font.underline_thickness,
         .strikeout_position = font.strikeout_position,
         .strikeout_thickness = font.strikeout_thickness,
+        .subscript_offset = font.subscript_offset,
+        .superscript_offset = font.superscript_offset,
         .most_verbs = most[0],
         .most_points = most[1],
         .style = font.style,
+        .weight = font.weight,
+        .stretch = font.stretch,
     };
 }

@@ -85,4 +85,20 @@ i32 GlyphAdvance(*truetype.Outline outline, u32 glyph)
 /// the low. 0 at the default. The number of the row's deltas goes into
 /// `regions` when it is not null. Since 1.11.
 i32 VariationDelta(*truetype.Outline outline, [*]const u8 store, u32 size, u32 item, ?*u32 regions)
+/// A glyph's advance down a column of text and its vertical origin, for
+/// the glyph drawn upright there, into `metrics`, in the font's units;
+/// false for no glyph of that number. Since 1.17.
+bool GlyphVerticalMetrics(*truetype.Outline outline, u32 glyph, *truetype.VerticalMetrics metrics)
+/// The steps that draw a glyph of colour layers - the font's `COLR`
+/// table, in the first palette of its `CPAL` - into `steps`, as many as
+/// `room` holds; answers how many there are, 0 for a glyph not drawn so.
+/// Since 1.17.
+u32 GlyphPaints(*truetype.Outline outline, u32 glyph, ?[*]truetype.PaintStep steps, u32 room)
+/// The largest picture in colour the font has of a glyph (`sbix`,
+/// `CBDT`) into `picture`: its file within the font's bytes and where it
+/// goes; false for none. Since 1.17.
+bool GlyphPicture(*truetype.Outline outline, u32 glyph, *truetype.Picture picture)
+/// The SVG document of the font's `SVG ` table that draws a glyph into
+/// `document`; false for none. Since 1.17.
+bool GlyphDocument(*truetype.Outline outline, u32 glyph, *truetype.Document document)
 ##end

@@ -77,4 +77,7 @@ void CloseCatalog(?*locale.Catalog catalog)
 /// The catalog's string `string_num`, or `default_string` when it has
 /// none or `catalog` is null.
 [*:0]const u8 GetCatalogStr(?*const locale.Catalog catalog, i32 string_num, [*:0]const u8 default_string)
+/// The ISO 639-1 code of a language by the name a locale gives it
+/// (`deutsch` is `de`); null for one the library does not know. Since 1.7.
+?[*:0]const u8 LanguageCode([*:0]const u8 language)
 ##end

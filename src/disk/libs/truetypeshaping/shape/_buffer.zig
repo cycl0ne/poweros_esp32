@@ -99,6 +99,9 @@ pub const Item = struct {
     /// The forms a script's model asks of it, a bit each
     /// (`_syllable.zig`): features that hold for it besides `mask`'s.
     forms: u8 = 0,
+    /// What it is of a glyph `stch` stretches (`_joining.zig`): a piece
+    /// drawn once or one repeated; 0 for every other glyph.
+    stretch: u8 = 0,
 
     /// Which part of a ligature it sits on; 0 for a ligature itself.
     pub fn partOn(item: *const Item) u32 {

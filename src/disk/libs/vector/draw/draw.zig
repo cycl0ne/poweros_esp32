@@ -20,6 +20,10 @@
 //! - `dash.zig` - a stroke's contours cut into dashes.
 //! - `image.zig` - where a pixel is in an image painted, and its colour.
 //! - `blur.zig` - a layer's pens blurred.
+//! - `blend.zig` - the blend modes, and colours into linear light and
+//!   back.
+//! - `filter.zig` - a layer's pens through SVG's filter primitives.
+//! - `measure.zig` - a path's length, a place along it, its vertices.
 //!
 //! lottie.datatype drew with the coverage, the flattening and the stroker
 //! before vector.library 1.0 (in its raster.zig); they were moved here
@@ -31,6 +35,7 @@ pub const Canvas = @import("canvas.zig").Canvas;
 pub const shapes = @import("shapes.zig");
 pub const pathdata = @import("pathdata.zig");
 pub const bounds = @import("bounds.zig").bounds;
+pub const measure = @import("measure.zig");
 
 test {
     _ = @import("memory.zig");
@@ -46,4 +51,7 @@ test {
     _ = @import("dash.zig");
     _ = @import("image.zig");
     _ = @import("blur.zig");
+    _ = @import("blend.zig");
+    _ = @import("filter.zig");
+    _ = @import("measure.zig");
 }

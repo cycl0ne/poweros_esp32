@@ -33,7 +33,13 @@
 //! Round 2, in order. A run of marks - up to 32 of them - is sorted by
 //! the marks' order (`orderOf`), those of one order staying as they
 //! were. A mark that moves forward and the ones it passes all get the
-//! lowest of their clusters.
+//! lowest of their clusters. Then the marks of Arabic that change the
+//! letter they stand on rather than sound with it (`modifies`, Unicode's
+//! report 53: the hamza above and below, the small high seen and the
+//! others) go before every other mark of the run: those that come first
+//! of the marks below, then those that come first of the marks above,
+//! each taking an order that keeps the run sorted (22 and 26) - so a
+//! font's lookups find the hamza on its letter before a vowel sign.
 //!
 //! The combining grapheme joiner (U+034F) has the order 0, so it ends a
 //! run and the marks on its two sides are not sorted across it. Where
@@ -97,6 +103,24 @@ const syllable_count = 19 * vowel_span;
 /// of Arabic's, by 27 to 35.
 const hebrew = [17]u8{ 22, 15, 16, 17, 23, 18, 19, 20, 21, 14, 24, 12, 25, 13, 10, 11, 26 };
 const arabic = [9]u8{ 28, 29, 30, 31, 32, 33, 27, 34, 35 };
+
+/// The marks of Arabic that change the letter they stand on (Unicode's
+/// report 53), and the orders they take once they go first: of the
+/// marks below, of the marks above.
+const modifiers = [_]u32{ 0x0654, 0x0655, 0x0658, 0x06DC, 0x06E3, 0x06E7, 0x06E8, 0x08CA, 0x08CB, 0x08CD, 0x08CE, 0x08CF, 0x08D3, 0x08F3 };
+const below = 220;
+const above = 230;
+const raised_below = 22;
+const raised_above = 26;
+
+/// Whether `char` is a mark of Arabic that changes the letter it stands
+/// on, and goes before the run's other marks.
+pub fn modifies(char: u32) bool {
+    for (modifiers) |modifier| {
+        if (char == modifier) return true;
+    }
+    return false;
+}
 
 /// Whether `char` is a mark: a character that goes with the one before
 /// it.
@@ -279,6 +303,10 @@ pub const List = struct {
     /// make a reph the character does not; and nothing is put together
     /// with a mark.
     model: bool = false,
+    /// The stretch is of a script whose letters join (`_joining.zig`):
+    /// the marks of Arabic that change their letter go before the
+    /// others of their run (`raiseModifiers`).
+    joining: bool = false,
 
     /// A list for a stretch of `chars` characters, with none in it yet.
     /// Null without the memory.
@@ -458,8 +486,39 @@ pub const List = struct {
                     while (index > place) : (index -= 1) entries[index] = entries[index - 1];
                     entries[place] = entry;
                 }
+                if (list.joining) list.raiseModifiers(at, end);
             }
             at = end;
+        }
+    }
+
+    /// The end of round 2 for the sorted run of marks `start` to `end`:
+    /// the marks that change their letter that come first of the run's
+    /// marks below, then of those above, moved before all the others,
+    /// with the clusters of what they pass, and given the orders that
+    /// keep the run sorted.
+    fn raiseModifiers(list: *List, start: usize, end: usize) void {
+        const entries = list.slice();
+        var first = start;
+        var at = start;
+        for ([2]u8{ below, above }) |order| {
+            while (at < end and entries[at].order < order) at += 1;
+            if (at == end) return;
+            if (entries[at].order > order) continue;
+            var past = at;
+            while (past < end and entries[past].order == order and modifies(entries[past].char)) past += 1;
+            if (past == at) continue;
+            list.mergeClusters(first, past);
+            for (at..past) |moved| {
+                const entry = entries[moved];
+                var index = moved;
+                const place = first + (moved - at);
+                while (index > place) : (index -= 1) entries[index] = entries[index - 1];
+                entries[place] = entry;
+                entries[place].order = if (order == below) raised_below else raised_above;
+            }
+            first += past - at;
+            at = past;
         }
     }
 

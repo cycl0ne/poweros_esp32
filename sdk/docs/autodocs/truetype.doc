@@ -8,10 +8,14 @@ truetype.library/FontMetrics
 truetype.library/FontName
 truetype.library/FontTable
 truetype.library/GlyphAdvance
+truetype.library/GlyphDocument
 truetype.library/GlyphIndex
 truetype.library/GlyphMetrics
+truetype.library/GlyphPaints
+truetype.library/GlyphPicture
 truetype.library/GlyphSegments
 truetype.library/GlyphVariant
+truetype.library/GlyphVerticalMetrics
 truetype.library/Kerning
 truetype.library/OpenOutline
 truetype.library/RenderFontImage
@@ -240,7 +244,8 @@ truetype.library/VariationDelta
 	    fn FontMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, metrics: *truetype.FontMetrics) void
 
    SINCE
-	1.2, fonts of cubic curves since 1.6. LVO -44.
+	1.2, fonts of cubic curves since 1.6, the weight and the
+	width since 1.17. LVO -44.
 
    INPUTS
 	- `outline` - what `OpenOutline` answered.
@@ -252,12 +257,16 @@ truetype.library/VariationDelta
    BEHAVIOR
 	The units per em and the number of glyphs; the ascender, descender
 	and line gap of the horizontal header (`hhea`), which is what
-	`RenderFontImage` sets its lines by; the x and capital heights and
-	the strike-out of `OS/2`, the underline of `post`, each 0 where the
-	font does not give it; the most verbs and points `GlyphSegments`
+	`RenderFontImage` sets its lines by; the x and capital heights, the
+	strike-out and - since 1.17 - the sub- and superscript offsets of
+	`OS/2`, the underline of `post`, each 0 where the font does not give
+	it; the most verbs and points `GlyphSegments`
 	gives for a glyph of the font, from what `maxp` says the largest
 	glyph is (or as for 1024 points and 128 contours, when it does not
-	say); and the styles the file says it is drawn in.
+	say); the styles the file says it is drawn in; and since 1.17 how
+	heavy and how wide it is drawn - `OS/2`'s weight and width classes,
+	or the values of the `wght` and `wdth` axes where the outline was
+	opened, 400 and 1000 where neither says.
 
 	A font of cubic curves does not say how large its largest glyph is:
 	`most_verbs` and `most_points` are 1283 and 2179 for it, as for 1024
@@ -446,6 +455,63 @@ truetype.library/VariationDelta
    EXAMPLES
 	    var width: i32 = 0;
 	    for (text) |code| width += tb.GlyphAdvance(outline, tb.GlyphIndex(outline, code));
+truetype.library/GlyphDocument                  truetype.library/GlyphDocument
+
+   NAME
+	GlyphDocument -- The SVG document that draws a glyph.
+
+   SYNOPSIS
+	    fn GlyphDocument(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, document: *truetype.Document) bool
+
+   SINCE
+	1.17. LVO -100.
+
+   INPUTS
+	- `outline` - what `OpenOutline` answered.
+	- `glyph` - the glyph's number, from `GlyphIndex`.
+	- `document` - where the document goes.
+
+   RESULT
+	True, the document in `document`. False for a glyph the font's
+	`SVG ` table does not draw, and for a font without one; `document`
+	is then all 0.
+
+   BEHAVIOR
+	The document is its text within the font's bytes, as the table has
+	it: an SVG document, or one packed with gzip (it starts 0x1F 0x8B).
+	`first` and `last` are the glyphs it is for. One for a single glyph
+	is that glyph whole; one for more draws each as the element whose
+	`id` is "glyph" and the glyph's number.
+
+	The document is drawn in the font's units from the glyph's point, y
+	down, as SVG has it: the glyph stands on the line y = 0, above it.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`document` is the caller's; the text it points at is the font's, and
+	lasts until `CloseOutline`.
+
+   NOTES
+	A program draws a glyph by the first of `GlyphPaints`,
+	`GlyphDocument` and `GlyphPicture` that has it.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`GlyphPaints`, `GlyphPicture`
+
+   EXAMPLES
+	    var document: truetype.Document = undefined;
+	    if (tb.GlyphDocument(outline, glyph, &document)) {
+	        const text = document.bytes.?[0..document.size];
+	        _ = text;
+	    }
 truetype.library/GlyphIndex                        truetype.library/GlyphIndex
 
    NAME
@@ -575,6 +641,147 @@ truetype.library/VariationDelta
    EXAMPLES
 	    var m: sdk.truetype.GlyphMetrics = .{};
 	    if (tb.GlyphMetrics(outline, glyph, &m)) x += m.advance;
+truetype.library/GlyphPaints                      truetype.library/GlyphPaints
+
+   NAME
+	GlyphPaints -- The steps that draw a glyph of colour layers.
+
+   SYNOPSIS
+	    fn GlyphPaints(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, steps: ?[*]truetype.PaintStep, room: u32) u32
+
+   SINCE
+	1.17. LVO -92.
+
+   INPUTS
+	- `outline` - what `OpenOutline` answered.
+	- `glyph` - the glyph's number, from `GlyphIndex`.
+	- `steps` - where the steps go, or null to count them.
+	- `room` - how many steps `steps` holds.
+
+   RESULT
+	How many steps draw the glyph, whatever `room` is: the first `room`
+	of them are in `steps`. 0 for a glyph the font does not draw in
+	colour, and for one whose drawing cannot be read.
+
+   BEHAVIOR
+	The font's `COLR` table draws a glyph in layers of colour, from the
+	first palette of its `CPAL` table. The steps are that drawing, in
+	the font's units, y up, from the glyph's point (`STEP_*`): outlines
+	of glyphs filled with a colour or a gradient, inside clips of other
+	outlines and of boxes, through transforms, on layers put down in one
+	of Porter and Duff's ways or a blend.
+
+	- A glyph of the table's first version is its layers, each glyph
+	  filled with its colour (`STEP_FILL_GLYPH`).
+	- One of its second version is its graph of paints, inside the clip
+	  box the table gives it. A glyph holding a colour or a gradient,
+	  through transforms or not, is the glyph filled with it; one
+	  holding more is its outline as a clip around the rest.
+	- A composite is a layer of its backdrop, and on it a layer of its
+	  source put down in its mode (`STEP_PUSH_LAYER`).
+	- A gradient comes as a program draws one: its stops sorted, from 0
+	  to 1 along it, and a linear one from one point to another
+	  (`BRUSH_*`), each followed by its stops (`STEP_STOP`). A colour
+	  the palette lacks, and the number 0xFFFF, is the text's own
+	  (`STEPF_FOREGROUND`).
+	- A variable font's paints are its instance's: each value plus the
+	  delta the table's store gives it at the outline's place.
+
+	A step's transform, clip and layer each end with a pop of their own,
+	in the order they were pushed, the last first.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`steps` is the caller's.
+
+   NOTES
+	The caller asks twice: with no `steps` for the count, then with room
+	for that many. A font has a glyph's outline too, for a program that
+	does not draw in colour. A program draws a glyph by the first of
+	`GlyphPaints`, `GlyphDocument` and `GlyphPicture` that has it.
+
+   BUGS
+	A graph deeper than 64 paints, or of more than 16384, is read as no
+	drawing, as is one that goes round in a circle.
+
+   SEE ALSO
+	`GlyphDocument`, `GlyphPicture`, `GlyphSegments`
+
+   EXAMPLES
+	    const count = tb.GlyphPaints(outline, glyph, null, 0);
+	    if (count != 0) {
+	        const steps: [*]truetype.PaintStep = @ptrCast(@alignCast(sys.AllocVec(count * @sizeOf(truetype.PaintStep), exec.MEMF_ANY) orelse return));
+	        defer sys.FreeVec(steps);
+	        _ = tb.GlyphPaints(outline, glyph, steps, count);
+	    }
+truetype.library/GlyphPicture                    truetype.library/GlyphPicture
+
+   NAME
+	GlyphPicture -- A glyph's largest picture in colour, and where it goes.
+
+   SYNOPSIS
+	    fn GlyphPicture(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, picture: *truetype.Picture) bool
+
+   SINCE
+	1.17. LVO -96.
+
+   INPUTS
+	- `outline` - what `OpenOutline` answered.
+	- `glyph` - the glyph's number, from `GlyphIndex`.
+	- `picture` - where the picture's file and place go.
+
+   RESULT
+	True, the picture in `picture`. False for a glyph without one;
+	`picture` is then all 0.
+
+   BEHAVIOR
+	Of the sizes the font's pictures were drawn at, the largest that has
+	one of the glyph is taken, the first of two alike: of the font's
+	`sbix` table where it has one, else of its `CBDT`. The picture is a
+	file within the font's bytes - a PNG file; of `sbix` also one of the
+	kind the table names, "jpg " or "tiff" - with its width and height
+	where it is a PNG file.
+
+	Where it goes is in the font's units from the glyph's point, y up
+	(`x`, `y`), with how many units a pixel covers (`pixel_x`,
+	`pixel_y`): of `CBDT` its top left corner, at the place its measures
+	give in pixels; of `sbix` its bottom left (`PICTUREF_BOTTOM`), at the
+	glyph's offsets in pixels from the left side bearing and the bottom
+	of the glyph's outline, or from the point for a glyph without one.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`picture` is the caller's; the file it points at is the font's, and
+	lasts until `CloseOutline`.
+
+   NOTES
+	`RenderGlyph` draws a font's `CBDT` pictures itself, of a font that
+	has no outlines. A program draws a glyph by the first of
+	`GlyphPaints`, `GlyphDocument` and `GlyphPicture` that has it.
+
+   BUGS
+	Pictures of coverage (`EBDT`), and `CBDT`'s pictures of raw pixels
+	rather than PNG files, are not handed out.
+
+   SEE ALSO
+	`GlyphPaints`, `GlyphDocument`, `RenderGlyph`
+
+   EXAMPLES
+	    var picture: truetype.Picture = undefined;
+	    if (tb.GlyphPicture(outline, glyph, &picture)) {
+	        const file = picture.bytes.?[0..picture.size];
+	        _ = file;
+	    }
 truetype.library/GlyphSegments                  truetype.library/GlyphSegments
 
    NAME
@@ -696,6 +903,72 @@ truetype.library/VariationDelta
 	    // A heart, asked for in colour.
 	    var glyph = tb.GlyphVariant(outline, 0x2764, 0xFE0F);
 	    if (glyph == 0) glyph = tb.GlyphIndex(outline, 0x2764);
+truetype.library/GlyphVerticalMetrics    truetype.library/GlyphVerticalMetrics
+
+   NAME
+	GlyphVerticalMetrics -- A glyph's advance down a column of text and its vertical origin.
+
+   SYNOPSIS
+	    fn GlyphVerticalMetrics(tb: *TrueTypeBase, outline: *truetype.Outline, glyph: u32, metrics: *truetype.VerticalMetrics) bool
+
+   SINCE
+	1.17. LVO -88.
+
+   INPUTS
+	- `outline` - what `OpenOutline` answered.
+	- `glyph` - the glyph's number, from `GlyphIndex`.
+	- `metrics` - where the measures go, in the font's units, y up.
+
+   RESULT
+	True, the measures in `metrics`. False for a number past the font's
+	glyphs; `metrics` is then all 0.
+
+   BEHAVIOR
+	For a glyph drawn upright in a column: `advance` is how far it moves
+	the point down, and the glyph is drawn with its point (`origin_x`,
+	`origin_y`) on the column's point.
+
+	- `advance` is the font's vertical metrics' (`vmtx`, as many as
+	  `vhea` says, the last one's for the glyphs after them); a font
+	  without them has its line's height, ascender less descender, as
+	  `FontMetrics` gives them.
+	- `origin_x` is the middle of the glyph's horizontal advance.
+	- `origin_y` is the font's `VORG` table's for the glyph where it has
+	  one; else the top of the glyph's box and its top side bearing from
+	  `vmtx`; else, in a font without vertical metrics, the height that
+	  sets the glyph's box in the middle of the line's height. A glyph
+	  of no outline, a space, has its origin at the ascender.
+
+	A variable font away from its default has the advance and the top
+	side bearing its `VVAR` table moves them to, and the box its deltas
+	make.
+
+   CONTEXT
+	- Waits: no.
+	- Interrupts: no.
+	- Locks: none needed.
+	- Process: a Task will do.
+
+   OWNERSHIP
+	`metrics` is the caller's.
+
+   NOTES
+	A glyph set sideways in a column - a Latin letter turned with the
+	line - takes its horizontal measures, `GlyphMetrics`', not these.
+
+   BUGS
+	A variable font without `VVAR` keeps its default's vertical advances:
+	the deltas of the glyphs' top and bottom points in `gvar` are not
+	read.
+
+   SEE ALSO
+	`GlyphMetrics`, `GlyphAdvance`, `FontMetrics`
+
+   EXAMPLES
+	    var column: truetype.VerticalMetrics = undefined;
+	    if (tb.GlyphVerticalMetrics(outline, tb.GlyphIndex(outline, 0x6587), &column)) {
+	        y += column.advance;
+	    }
 truetype.library/Kerning                              truetype.library/Kerning
 
    NAME

@@ -58,6 +58,16 @@
 //! (`substituteByModel`), with the syllables numbered, arranged and
 //! finished between them, and its marks keep the advances the font
 //! gives them and stay where they are.
+//!
+//! A text of a script whose letters join (`Order.joining`,
+//! `_joining.zig`) carries the form each letter takes in its items, and
+//! `GSUB` is applied in the joining model's goes (`substituteInGoes`):
+//! a joining form's feature holds for the items of that form alone. A
+//! text of Arabic in a font without the joining forms' features is drawn
+//! with the presentation forms the font has glyphs for
+//! (`_forms.zig`), after its `rlig`.
+//! The pieces its `stch` lookups made are repeated over the word behind
+//! them once the glyphs have their places (`_joining.stretch`).
 
 const sdk = @import("sdk");
 const truetypeshaping = sdk.truetypeshaping;
@@ -75,6 +85,8 @@ const _gpos = @import("_gpos.zig");
 const _normal = @import("_normal.zig");
 const _variation = @import("_variation.zig");
 const _indic = @import("_indic.zig");
+const _joining = @import("_joining.zig");
+const _forms = @import("_forms.zig");
 const _syllable = @import("_syllable.zig");
 
 /// What a font gives the shaping: its tables, of no length where it has
@@ -227,6 +239,10 @@ pub const Order = struct {
     /// items say what their characters are, and the first `own` of the
     /// features are the model's.
     model: bool = false,
+    /// The run is a text of a script whose letters join
+    /// (`_joining.zig`): its items carry their forms, and the first
+    /// `own` of the features are the text's defaults and the model's.
+    joining: bool = false,
     own: u32 = 0,
     /// The text before the run ends in the middle of a word.
     after_letter: bool = false,
@@ -248,7 +264,7 @@ const own_bits = 31;
 
 /// How much work a table may do on a run of `length` glyphs
 /// (`Apply.spend`): 65536 pieces a glyph, and a million for a short run.
-fn workFor(length: u32) u32 {
+pub fn workFor(length: u32) u32 {
     const work = @as(u64, length) * 0x0001_0000;
     return if (work < 0x0010_0000) 0x0010_0000 else if (work > 0xFFFF_FFFF) 0xFFFF_FFFF else @intCast(work);
 }
@@ -491,6 +507,30 @@ fn substituteByModel(call: *const Call, wanted: []_plan.Wanted) i32 {
     return truetypeshaping.TTS_OK;
 }
 
+/// Applies `GSUB` to a text whose letters join, in the joining model's
+/// goes: the lookups of one go all before those of the next.
+fn substituteInGoes(call: *const Call, wanted: []_plan.Wanted) i32 {
+    _joining.inGoes(wanted);
+    var first: usize = 0;
+    var go: u8 = 0;
+    while (go < _joining.go_count) : (go += 1) {
+        var last = first;
+        while (last < wanted.len and wanted[last].go == go) last += 1;
+        if (last > first or go == 0) {
+            if (go == _joining.GO_STRETCH) _joining.beforeStretch(call.buffer);
+            const result = stage(call, call.order.font.gsub, .substitute, wanted[first..last], go == 0);
+            if (result != truetypeshaping.TTS_OK) return result;
+            if (go == _joining.GO_STRETCH) _joining.afterStretch(call.buffer);
+        }
+        if (go == _joining.GO_REQUIRED and _forms.needed(call.order)) {
+            const result = _forms.substitute(call.order, call.gdef, call.buffer, call.places, wanted);
+            if (result != truetypeshaping.TTS_OK) return result;
+        }
+        first = last;
+    }
+    return truetypeshaping.TTS_OK;
+}
+
 /// Shapes the glyphs in `buffer` - each with its number and its cluster,
 /// in the order they are read - as `order` says. Answers `TTS_OK` with
 /// the buffer holding the shaped run in the order it is drawn, or one of
@@ -507,6 +547,7 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
     const wanted = wanted_block[0..features.len];
     if (!assignBits(features, wanted)) return truetypeshaping.TTSERR_FEATURES;
     if (order.model) _indic.plan(wanted, order.own);
+    if (order.joining) _joining.plan(wanted, order.own, order.script);
 
     const gdef = Gdef.init(font.gdef);
     for (buffer.slice()) |*item| {
@@ -519,6 +560,10 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
     var result: i32 = truetypeshaping.TTS_OK;
     if (order.model) {
         result = substituteByModel(&call, wanted);
+        if (result != truetypeshaping.TTS_OK) return result;
+        buffer.removeIgnorables(order.backward);
+    } else if (order.joining) {
+        result = substituteInGoes(&call, wanted);
         if (result != truetypeshaping.TTS_OK) return result;
         buffer.removeIgnorables(order.backward);
     } else {
@@ -551,6 +596,10 @@ pub fn shape(order: *const Order, buffer: *Buffer) i32 {
         }
     }
     _gpos.finish(buffer, order.backward);
+    if (order.joining) {
+        _joining.stretch(font, buffer, order.backward);
+        if (buffer.failed) return truetypeshaping.TTSERR_NOMEM;
+    }
     if (order.backward and !order.unturned) buffer.reverse();
     return truetypeshaping.TTS_OK;
 }

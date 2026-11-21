@@ -16,6 +16,7 @@ const truetypeshaping_init = @import("truetypeshaping_init.zig");
 const ShapeGlyphs = @import("shape/shapeglyphs.zig").ShapeGlyphs;
 const ShapeText = @import("shape/shapetext.zig").ShapeText;
 const LigatureCarets = @import("shape/ligaturecarets.zig").LigatureCarets;
+const BidiLevels = @import("bidi/bidilevels.zig").BidiLevels;
 
 /// truetypeshaping.library's interface, as the SDK generates it from
 /// sdk/fd/truetypeshaping_lib.fd.
@@ -43,6 +44,7 @@ const contract_files = [_][]const u8{
     @embedFile("shape/shapeglyphs.zig"),
     @embedFile("shape/shapetext.zig"),
     @embedFile("shape/ligaturecarets.zig"),
+    @embedFile("bidi/bidilevels.zig"),
 };
 
 fn lvoShapeGlyphs(sb: *TrueTypeShapingBase, outline: *truetype.Outline, script: u32, direction: u32, language: u32, features: ?[*]const truetypeshaping.Feature, run: *truetypeshaping.ShapedRun) callconv(.c) i32 {
@@ -57,6 +59,10 @@ fn lvoLigatureCarets(sb: *TrueTypeShapingBase, outline: *truetype.Outline, glyph
     return LigatureCarets(sb, outline, glyph, carets, room);
 }
 
+fn lvoBidiLevels(sb: *TrueTypeShapingBase, text: [*]const u8, length: u32, direction: u32, levels: [*]u8) callconv(.c) i32 {
+    return BidiLevels(sb, text, length, direction, levels);
+}
+
 pub const vectors = [_]*const anyopaque{
     vec(exec.libOpen),
     vec(exec.libClose),
@@ -65,6 +71,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoShapeGlyphs),
     vec(lvoShapeText),
     vec(lvoLigatureCarets),
+    vec(lvoBidiLevels),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

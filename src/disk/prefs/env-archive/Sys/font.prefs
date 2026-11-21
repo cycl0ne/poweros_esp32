@@ -6,7 +6,11 @@
 # and plain text. Each is family/size, the size in rows, or in points
 # with a P after it: spleen.font/16, spleen.font/10P. One of the first
 # three left out, or no line at all, is pospaz from the ROM; ICON left
-# out is DEFAULT's, DOCUMENT DEFAULT's and CODE FIXED's. FALLBACK names
+# out is DEFAULT's, DOCUMENT DEFAULT's and CODE FIXED's. SERIF, SANS,
+# MONO, CURSIVE and FANTASY name a family each, without a size, for the
+# generic families a document asks for - a picture's text: left out,
+# the first three are serif.font, sans.font and mono.font, the other two
+# none. FALLBACK names
 # the families a character is looked for in that the font of a text has
 # no glyph for, in the order written, with commas between and no sizes:
 # FALLBACK=sans.font,mono.font. diskfont.library reads it as it opens a
@@ -14,4 +18,4 @@
 # the one below to use it.
 #
 # SCREEN=spleen.font/16 DEFAULT=spleen.font/16 FIXED=spleen.font/16
-SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 DOCUMENT=go.font/18 CODE=go-mono.font/15 FALLBACK=devanagari.font,cjk-jp.font,emoji.font
+SCREEN=go.font/16 DEFAULT=go.font/16 FIXED=go-mono.font/16 DOCUMENT=go.font/18 CODE=go-mono.font/15 SERIF=serif.font SANS=sans.font MONO=mono.font FALLBACK=devanagari.font,arabic.font,cjk-jp.font,emoji.font

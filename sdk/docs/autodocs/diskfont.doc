@@ -3,10 +3,14 @@ TABLE OF CONTENTS
 diskfont.library/AvailFonts
 diskfont.library/CloseOutlineFont
 diskfont.library/DisposeFontContents
+diskfont.library/FallbackFamily
+diskfont.library/FindFamily
+diskfont.library/GenericFamily
 diskfont.library/NewFontContents
 diskfont.library/NewScaledDiskFont
 diskfont.library/OpenDiskFont
 diskfont.library/OpenOutlineFont
+diskfont.library/OpenOutlineFontTagList
 diskfont.library/AvailFonts                        diskfont.library/AvailFonts
 
    NAME
@@ -143,6 +147,170 @@ diskfont.library/OpenOutlineFont
 
    EXAMPLES
 	    dfb.DisposeFontContents(made);
+diskfont.library/FallbackFamily                diskfont.library/FallbackFamily
+
+   NAME
+	FallbackFamily -- A family a character is looked for in that a font has no glyph for: one of those `font.prefs` names under FALLBACK.
+
+   SYNOPSIS
+	    fn FallbackFamily(dfb: *DiskfontBase, index: u32, name: [*]u8, size: u32) bool
+
+   SINCE
+	1.16. LVO -48.
+
+   INPUTS
+	- `index` - which of them, from 0, in the list's order.
+	- `name` - where its name goes: "cjk-jp.font", a NUL after it.
+	- `size` - how many bytes `name` holds.
+
+   RESULT
+	True, the name in `name`. False past the end of the list, with no
+	list, or for a name and its NUL that `size` cannot hold; `name` is
+	then left as it was.
+
+   BEHAVIOR
+	The list is read from ENV:Sys/font.prefs again when `index` is 0, so
+	a program that walks it from the start has it as the prefs are now,
+	and then kept: the same list the fonts `OpenDiskFont` makes fall back
+	to, in the same order. A program that draws a family's outline itself
+	- `OpenOutlineFont` - looks for a character the family lacks in
+	these, one after another.
+
+   CONTEXT
+	- Waits: yes: for another task loading a font, and for the disk.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Process, since it reads a file.
+
+   OWNERSHIP
+	`name` is the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	`OpenOutlineFont`, `OpenDiskFont`
+
+   EXAMPLES
+	    var family: [32]u8 = undefined;
+	    var index: u32 = 0;
+	    while (dfb.FallbackFamily(index, &family, family.len)) : (index += 1) {
+	        const face = dfb.OpenOutlineFont(@ptrCast(&family), sdk.graphics.FS_NORMAL) orelse continue;
+	        defer dfb.CloseOutlineFont(face);
+	        // Look for the character in face.outline.
+	    }
+diskfont.library/FindFamily                        diskfont.library/FindFamily
+
+   NAME
+	FindFamily -- The family a name stands for: what its fonts call themselves, or its contents file's name.
+
+   SYNOPSIS
+	    fn FindFamily(dfb: *DiskfontBase, name: [*:0]const u8, into: [*]u8, size: u32) bool
+
+   SINCE
+	1.16. LVO -52.
+
+   INPUTS
+	- `name` - the family as a document names it: "Noto Sans", "noto
+	  sans", or a contents file's name without ".font", "sans". UTF-8.
+	- `into` - where the family's contents file's name goes:
+	  "noto-sans.font", a NUL after it.
+	- `size` - how many bytes `into` holds.
+
+   RESULT
+	True, the name in `into`. False when FONTS: has no such family, or
+	for a name and its NUL that `size` cannot hold; `into` is then left
+	as it was.
+
+   BEHAVIOR
+	A family is found by the name its contents file says its fonts give
+	themselves - a TrueType or OpenType file's typographic family, as
+	`NewFontContents` reads it - compared without regard to the case of
+	ASCII letters. The faces of a family give the same name: of
+	several, the family that is no face of another one (`sans.font`
+	before `sans-bold.font`) is the answer, else the first found. Failing
+	that, a contents file of the name and ".font", in any case. Every
+	directory FONTS: is assigned to is looked in, in the assign's order.
+
+	The name answered is what `OpenOutlineFont`,
+	`OpenOutlineFontTagList` and `OpenDiskFont` take.
+
+   CONTEXT
+	- Waits: yes: for the disk.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Process, since it reads files.
+
+   OWNERSHIP
+	`name` and `into` are the caller's.
+
+   NOTES
+	It reads the header of every contents file in FONTS: each time; a
+	program that looks up the same names often keeps the answers.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	GenericFamily, OpenOutlineFontTagList, NewFontContents, AvailFonts
+
+   EXAMPLES
+	    var family: [64]u8 = undefined;
+	    if (dfb.FindFamily("Noto Sans", &family, family.len)) {
+	        const font = dfb.OpenOutlineFontTagList(@ptrCast(&family), null);
+	        defer dfb.CloseOutlineFont(font);
+	    }
+diskfont.library/GenericFamily                  diskfont.library/GenericFamily
+
+   NAME
+	GenericFamily -- The family a generic family is.
+
+   SYNOPSIS
+	    fn GenericFamily(dfb: *DiskfontBase, generic: u32, into: [*]u8, size: u32) bool
+
+   SINCE
+	1.16. LVO -56.
+
+   INPUTS
+	- `generic` - which: `GENERIC_SERIF`, `GENERIC_SANS`, `GENERIC_MONO`,
+	  `GENERIC_CURSIVE` or `GENERIC_FANTASY`.
+	- `into` - where the family's name goes: "serif.font", a NUL after it.
+	- `size` - how many bytes `into` holds.
+
+   RESULT
+	True, the name in `into`. False for a `generic` that is none of
+	them, one font.prefs names no family for and that has no default,
+	or a name and its NUL that `size` cannot hold; `into` is then left as
+	it was.
+
+   BEHAVIOR
+	font.prefs names them under SERIF, SANS, MONO, CURSIVE and FANTASY.
+	One it leaves out - or all, with no file or a line that cannot be
+	read - is `serif.font`, `sans.font` and `mono.font` for the first
+	three, and none for the other two. The file is read at each call, so
+	the answer is what the prefs say now. Whether the family is in FONTS:
+	is not looked at: the caller finds that out by opening it.
+
+   CONTEXT
+	- Waits: yes: for the disk.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Process, since it reads a file.
+
+   OWNERSHIP
+	`into` is the caller's.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	FindFamily, FallbackFamily, OpenOutlineFontTagList
+
+   EXAMPLES
+	    var family: [64]u8 = undefined;
+	    if (dfb.GenericFamily(diskfont.GENERIC_CURSIVE, &family, family.len)) {
+	        // A handwriting font is set: draw in it.
+	    }
 diskfont.library/NewFontContents              diskfont.library/NewFontContents
 
    NAME
@@ -154,7 +322,8 @@ diskfont.library/OpenOutlineFont
    SINCE
 	1.0, a file of outlines of up to 64 MiB since 1.12, a
 	variable font listed a style since 1.13, a collection as its first
-	font since 1.14. LVO -28.
+	font since 1.14, the family's name and each outline's weight and
+	width since 1.16. LVO -28.
 
    INPUTS
 	- `lock` - the directory the family is in: `FONTS:`, or wherever its
@@ -179,6 +348,15 @@ diskfont.library/OpenOutlineFont
 	4 MiB, a file of outlines of more than 64 MiB or than there is
 	memory to read it into. The entries are in order of height. At most
 	64 entries are listed.
+
+	**The family's name** is the one its first file of outlines gives -
+	its typographic family, or its family where it gives none - and each
+	outline entry says how heavy and how wide it is drawn, as
+	truetype.library's `FontMetrics` says of the file at the entry's
+	place: what the family is found by and its faces chosen by
+	(`FindFamily`, `OpenOutlineFontTagList`). A family of sizes alone
+	has no name. truetype.library is opened for the first file of
+	outlines found; without it the entries say neither.
 
 	**A variable font becomes an entry for each style it has**: the
 	file's own, then with bold, with italic and with both, all naming
@@ -447,3 +625,88 @@ diskfont.library/OpenOutlineFont
 	    const face = dfb.OpenOutlineFont("serif.font", sdk.graphics.FSF_ITALIC) orelse return error.NoFont;
 	    defer dfb.CloseOutlineFont(face);
 	    const glyph = tb.GlyphIndex(face.outline, 'g');
+diskfont.library/OpenOutlineFontTagList diskfont.library/OpenOutlineFontTagList
+
+   NAME
+	OpenOutlineFontTagList -- A family's outline in the face nearest the weight, width and slant asked.
+
+   SYNOPSIS
+	    fn OpenOutlineFontTagList(dfb: *DiskfontBase, name: [*:0]const u8, tags: ?[*]const utility.TagItem) ?*diskfont.OutlineFont
+
+   SINCE
+	1.16. LVO -60.
+
+   INPUTS
+	- `name` - the family, "sans.font", as `OpenOutlineFont` takes it.
+	- `tags` - what is asked, `DFA_` tags; null asks for regular:
+	  - `DFA_Weight` (u32) - how heavy, 1 to 1000; default 400.
+	  - `DFA_Stretch` (u32) - how wide, in tenths of a percent; default
+	    1000.
+	  - `DFA_Italic` (bool) - an italic face; default false.
+	  - `DFA_Axes` (`[*]const truetype.AxisValue`) and `DFA_AxisCount`
+	    (u32) - values on a variable font's axes; default none.
+
+   RESULT
+	The outline, for truetype.library's calls, given back with
+	`CloseOutlineFont`; null when the family has no outline, or its file
+	cannot be read or opened.
+
+   BEHAVIOR
+	The faces looked at are the family's outline entries and those of
+	its faces' families, `name` with "-bold", "-italic" and
+	"-bolditalic" before its ".font". Each entry says how heavy and how
+	wide it is drawn (`NewFontContents`). Of them, as CSS chooses:
+
+	1. the nearest width: the width asked, else for a width at or below
+	   normal the nearest narrower one, then the nearest wider; for a
+	   wider one the other way round;
+	2. of those, an italic face for italic, a plain one for plain, the
+	   other where there is none;
+	3. of those, the nearest weight: for 400 to 500 the weight asked or
+	   the nearest heavier up to 500, then the nearest lighter, then the
+	   nearest heavier past 500; below 400 the nearest lighter, then the
+	   nearest heavier; above 500 the nearest heavier, then the nearest
+	   lighter.
+
+	A face that is a variable font is then opened where the asked
+	weight and width are on its `wght` and `wdth`, held to their
+	ranges, and then where `DFA_Axes` puts it - so a value it names wins
+	over the weight and the width, and the later of two for one axis
+	over the earlier. An axis the font has not is passed over.
+
+	The outline's `style` says it is bold when it is drawn at 600 or
+	heavier, and italic for an italic face or one leaned on its `slnt`
+	or `ital`; truetype.library's
+	`FontMetrics` says the weight and width it is drawn at. What was
+	asked and is not drawn a program draws itself, if it will.
+
+   CONTEXT
+	- Waits: yes: for another task loading a font, and for the disk.
+	- Interrupts: no.
+	- Locks: no spinlock may be held.
+	- Process: a Process, since it reads files.
+
+   OWNERSHIP
+	The outline is the library's, shared by everyone who opened it at
+	that place; the caller holds it until `CloseOutlineFont`. `tags` and
+	what they point to are the caller's, read during the call only.
+
+   NOTES
+	diskfont.library opens truetype.library for the first outline it
+	opens.
+
+   BUGS
+	None known.
+
+   SEE ALSO
+	OpenOutlineFont, CloseOutlineFont, FindFamily, GenericFamily,
+	truetype.library/FontMetrics
+
+   EXAMPLES
+	    const tags = [_]utility.TagItem{
+	        .{ .tag = diskfont.DFA_Weight, .data = 600 },
+	        .{ .tag = diskfont.DFA_Italic, .data = 1 },
+	        .{ .tag = utility.TAG_DONE, .data = 0 },
+	    };
+	    const font = dfb.OpenOutlineFontTagList("sans.font", &tags) orelse return;
+	    defer dfb.CloseOutlineFont(font);
