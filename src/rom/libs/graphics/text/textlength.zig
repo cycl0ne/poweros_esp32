@@ -52,8 +52,9 @@ const softStyles = _text.softStyles;
 /// length of the text; `TextOffsetToX` says where in it a piece starts.
 ///
 /// CONTEXT:
-/// - Waits: only for a font that makes glyphs, while another task makes
-///   one of the same font.
+/// - Waits: only for a font that makes glyphs or shapes its text: while
+///   another task makes a glyph of the same font, and for a moment while
+///   one takes a laid-out text from the font or keeps one with it.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt does
 ///   not share, and allocates for a font that shapes its text.
 /// - Locks: none needed; no spinlock may be held with a font that makes
@@ -63,7 +64,8 @@ const softStyles = _text.softStyles;
 /// OWNERSHIP:
 /// Nothing the caller has to free. A glyph made for the measuring is
 /// the library's, kept with the font. The glyphs a text is shaped into
-/// are allocated and freed within the call.
+/// are allocated and freed within the call; a font on the list keeps a
+/// copy of them for the next call with the same text (since 0.55).
 ///
 /// BUGS:
 /// None known.

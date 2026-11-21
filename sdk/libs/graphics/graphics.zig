@@ -186,8 +186,9 @@ pub const GERR_LAST: i32 = GERR_NO_FONT;
 /// says which glyphs a text is drawn with, and hands it to `AddFont`.
 /// The record, the name, the image and the hooks stay the builder's:
 /// graphics only holds the font on its list, counts who has it open and
-/// keeps the glyphs the hook made, and the builder frees what is its
-/// own once `RemFont` has taken the font off.
+/// keeps the glyphs the hook made and the texts last laid out in it,
+/// and the builder frees what is its own once `RemFont` has taken the
+/// font off.
 ///
 /// What a caller drawing with a font wants to know about it - how tall it
 /// is and where its baseline sits - is read from the RastPort it is set
@@ -236,12 +237,16 @@ pub const TextFont = extern struct {
     /// measures, once or more for each text, and several tasks may be
     /// in it at once: it keeps what it works with to itself, waits for
     /// no file and no lock a drawing task could hold, and draws no
-    /// text. The builder sets it before `AddFont` and never again. Null
-    /// for a font whose characters each stand alone, one after the
-    /// other. Since graphics.library 0.42.
+    /// text. A font on the list keeps the texts last laid out in it, so
+    /// a text is asked for again only once it is no longer kept (since
+    /// graphics.library 0.55): the hook answers a text the same way
+    /// every time. The builder sets it before `AddFont` and never
+    /// again. Null for a font whose characters each stand alone, one
+    /// after the other. Since graphics.library 0.42.
     shape: ?*Hook = null,
-    /// The glyphs `render` made, kept by graphics from `AddFont` to
-    /// `RemFont`: graphics' own. A builder leaves it null.
+    /// The glyphs `render` made and the texts last laid out in the
+    /// font, kept by graphics from `AddFont` to `RemFont`: graphics'
+    /// own. A builder leaves it null.
     cache: ?*anyopaque = null,
 
     /// Whether a text in this font may be shaped: the font, or one it

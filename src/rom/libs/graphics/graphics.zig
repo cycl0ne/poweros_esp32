@@ -55,6 +55,7 @@ const interface = sdk.interface.graphics;
 const rastport = @import("rastport/_rastport.zig");
 const fonts = @import("text/_text.zig");
 const kept_glyphs = @import("text/_kept.zig");
+const kept_lines = @import("text/_lines.zig");
 const drawing = @import("draw/_draw.zig");
 const rom_fonts = @import("fonts/_fonts.zig");
 const regions = @import("region/_region.zig");
@@ -4785,7 +4786,8 @@ test "a font's shape hook: text is drawn, measured and fitted as the glyphs it l
     base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextDirection, .data = 7 }, .{} });
     base(gb).GetRPAttrs(rp, &ask_direction);
     try testing.expectEqual(graphics.TEXTDIR_RIGHT_TO_LEFT, direction);
-    try testing.expectEqual(@as(i32, 14), base(gb).TextLength(rp, "AV", 2));
+    shaper.direction = 99;
+    try testing.expectEqual(@as(i32, 16), base(gb).TextLength(rp, "VA", 2));
     try testing.expectEqual(graphics.TEXTDIR_LEFT_TO_RIGHT, shaper.direction);
     const leftward = [_]TagItem{
         .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
@@ -4820,6 +4822,109 @@ test "a font's shape hook: text is drawn, measured and fitted as the glyphs it l
 
     try testing.expect(base(gb).RemFont(&line));
     base(gb).FreeRastPort(other);
+    base(gb).FreeRastPort(rp);
+    try tearDown(gb);
+}
+
+/// The shaper's glyphs, but U+0915 cannot be made the first time it is
+/// asked for.
+const Missing = struct {
+    left: u32 = 1,
+
+    fn make(hook: *sdk.utility.Hook, object: ?*anyopaque, message: ?*anyopaque) callconv(.c) usize {
+        const missing: *Missing = @ptrCast(@alignCast(hook.data.?));
+        const request: *graphics.GlyphRequest = @ptrCast(@alignCast(message.?));
+        if (request.flags & graphics.GLYPHREQ_NUMBER == 0 and request.which == 0x915 and missing.left != 0) {
+            missing.left -= 1;
+            return graphics.GLYPH_LATER;
+        }
+        return Shaper.make(hook, object, message);
+    }
+};
+
+test "a font's shape hook: a text laid out is kept with the font, until a hand makes room" {
+    const gb = try setUp();
+    defer kexec.deinit();
+
+    var pixels: [64 * 32 * 2]u8 = @splat(0);
+    var surface = rtg.Surface{ .pixels = &pixels, .width = 64, .height = 32, .pitch = 128, .size_bytes = pixels.len, .format = .rgb565 };
+    const tags = [_]TagItem{
+        .{ .tag = graphics.RPTAG_Surface, .data = @intFromPtr(&surface) },
+        .{ .tag = graphics.RPTAG_APen, .data = graphics.penRGB(255, 255, 255) },
+        .{},
+    };
+    const rp = base(gb).CreateRastPortTagList(&tags) orelse return error.NoRastPort;
+    var shaper = Shaper{};
+    var missing = Missing{};
+    var shape_hook = sdk.utility.Hook{ .entry = &Shaper.shape, .data = &shaper };
+    var make_hook = sdk.utility.Hook{ .entry = &Missing.make, .data = &missing };
+    var tall = fonts.TextFont{ .node = .{ .name = "tall.font" }, .image = @ptrCast(&tall_font) };
+    var line = fonts.TextFont{ .node = .{ .name = "shaped.font" }, .image = @ptrCast(&shape_font), .fallback = &tall, .render = &make_hook, .shape = &shape_hook };
+    try testing.expect(base(gb).AddFont(&line));
+    const store = kept_glyphs.storeOf(&line) orelse return error.NoStore;
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_Font, .data = @intFromPtr(&line) }, .{} });
+
+    // Shaped once: measured, drawn and placed again from what was kept.
+    try testing.expectEqual(@as(i32, 14), base(gb).TextLength(rp, "AV", 2));
+    try testing.expectEqual(@as(u32, 1), shaper.calls);
+    try testing.expectEqual(@as(u32, 1), kept_lines.countOf(store));
+    try testing.expectEqual(@as(i32, 14), base(gb).TextLength(rp, "AV", 2));
+    base(gb).Move(rp, 2, 10);
+    base(gb).Text(rp, "AV", 2);
+    try testing.expectEqual(@as(u32, 2), litCount(&surface));
+    try testing.expect(pixelAt(&surface, 2, 6) != 0 and pixelAt(&surface, 8, 6) != 0);
+    try testing.expectEqual(@as(i32, 6), base(gb).TextOffsetToX(rp, "AV", 2, 1));
+    try testing.expectEqual(@as(u32, 1), shaper.calls);
+    // A style is drawn over the line kept, not kept apart.
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FSF_BOLD }, .{} });
+    try testing.expectEqual(@as(i32, 16), base(gb).TextLength(rp, "AV", 2));
+    base(gb).SetRPAttrs(rp, &.{ .{ .tag = graphics.RPTAG_TextStyle, .data = graphics.FS_NORMAL }, .{} });
+    try testing.expectEqual(@as(u32, 1), shaper.calls);
+    // Another text, if only a piece of this one, is shaped for itself.
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "A", 1));
+    try testing.expectEqual(@as(u32, 2), shaper.calls);
+    try testing.expectEqual(@as(u32, 2), kept_lines.countOf(store));
+
+    // A glyph that could not be made this time: the text is laid out
+    // without the font's hook, and not kept. The next call has the
+    // glyph, shapes the text and keeps it.
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "\u{0915}", 3));
+    try testing.expectEqual(@as(u32, 0), missing.left);
+    try testing.expectEqual(@as(u32, 2), shaper.calls);
+    try testing.expectEqual(@as(u32, 2), kept_lines.countOf(store));
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "\u{0915}", 3));
+    try testing.expectEqual(@as(u32, 3), shaper.calls);
+    try testing.expectEqual(@as(i32, 5), base(gb).TextLength(rp, "\u{0915}", 3));
+    try testing.expectEqual(@as(u32, 3), shaper.calls);
+    try testing.expectEqual(@as(u32, 3), kept_lines.countOf(store));
+
+    // Room for more: a line used since the hand last passed it is
+    // passed over once, and the first one that was not goes. "AV" was
+    // used, "A" was not.
+    const letters = "Veif";
+    var text: [4]u8 = undefined;
+    var made: u32 = 0;
+    var number: u32 = 0;
+    while (kept_lines.countOf(store) < kept_lines.slot_count) : (number += 1) {
+        var left = number;
+        for (&text) |*byte| {
+            byte.* = letters[left % letters.len];
+            left /= letters.len;
+        }
+        _ = base(gb).TextLength(rp, &text, text.len);
+        made += 1;
+    }
+    try testing.expectEqual(kept_lines.slot_count - 3, made);
+    _ = base(gb).TextLength(rp, "AAA", 3);
+    try testing.expectEqual(kept_lines.slot_count, kept_lines.countOf(store));
+    const calls = shaper.calls;
+    try testing.expectEqual(@as(i32, 14), base(gb).TextLength(rp, "AV", 2));
+    try testing.expectEqual(calls, shaper.calls);
+    try testing.expectEqual(@as(i32, 8), base(gb).TextLength(rp, "A", 1));
+    try testing.expectEqual(calls + 1, shaper.calls);
+
+    // Taken off the list, the font gives its lines back with its glyphs.
+    try testing.expect(base(gb).RemFont(&line));
     base(gb).FreeRastPort(rp);
     try tearDown(gb);
 }

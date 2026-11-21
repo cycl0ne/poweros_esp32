@@ -152,7 +152,9 @@ gb.Text(rp, "Hello", 5);
   `TextFit` all go through it, so what is measured is what is drawn -
   for the text as a whole. A text measured in pieces and added up is
   not the text drawn in one, and a piece drawn by itself is shaped by
-  itself. See [Text a font shapes](#text-a-font-shapes).
+  itself. A font keeps the texts last laid out in it, so a label
+  measured and drawn again and again is shaped once. See
+  [Text a font shapes](#text-a-font-shapes).
 - **Where a byte of a text is drawn** is `TextOffsetToX`'s to answer,
   and which byte a column is nearest `TextXToOffset`'s: a cursor, the
   edges of a selection, an underline under part of a text, a click
@@ -1427,8 +1429,8 @@ mine.font.render = &mine.hook; // before AddFont, and never again
 
 A font may say how a whole text is set, not only what each character
 looks like (graphics.library 0.42). Set `TextFont.shape` to a hook
-before `AddFont`, and graphics calls it for every text drawn or
-measured with the font - with the font as the hook's object and a
+before `AddFont`, and graphics calls it for a text drawn or measured
+with the font - with the font as the hook's object and a
 `ShapeRequest` as its message:
 
 ```zig
@@ -1494,7 +1496,8 @@ mine.font.shape = &mine.shaper; // before AddFont, and never again
 - **The hook runs on the task that draws or measures**, on its stack,
   and several tasks may be in it at once. It keeps what it works with
   to itself, waits for no file and no lock a drawing task could hold,
-  and draws no text.
+  and draws no text. What it answers for a text is kept (below), so it
+  answers a text the same way every time.
 - **A cluster the font lacks goes to the fallbacks.** Each cluster is
   drawn by the first font of the chain that has a glyph for each of
   its characters - or, a letter with marks that none has whole, by the
@@ -1519,11 +1522,18 @@ mine.font.shape = &mine.shaper; // before AddFont, and never again
 - **The styles are drawn as for any text**: bold widens every glyph
   that has an advance, a glyph without one - a mark - stays on its
   letter.
-- **Every call lays its text out anew**: `Text`, `TextLength`,
-  `TextExtent`, `TextFit`, `TextOffsetToX` and `TextXToOffset` each ask
-  the hook, and allocate the glyphs for the length of the call. No
-  spinlock may be held around them, and a caller that needs several
-  places in one text asks for each.
+- **A text laid out is kept with the font** (graphics.library 0.55).
+  `Text`, `TextLength`, `TextExtent`, `TextFit`, `TextOffsetToX` and
+  `TextXToOffset` lay a text out - or take it from the texts the font
+  last laid out, and then no hook is asked - and allocate the glyphs
+  for the length of the call. A font on the list keeps up to 128 texts
+  of up to 256 bytes each, 128 KiB at most; the ones used again stay
+  longest, and all of them go when the font leaves the list. A text
+  laid out while a hook could not answer for lack of memory is not
+  kept, and is laid out again by the next call. So a window whose
+  layout measures every label at each step of a sizing shapes each
+  label once. No spinlock may be held around these calls, and a
+  caller that needs several places in one text asks for each.
 - **A font that falls back to one that shapes is shaped too**, for the
   characters the fallback draws. `TextFont.shapes()` says whether a
   font's text may be: the font or one of its fallbacks has the hook. A

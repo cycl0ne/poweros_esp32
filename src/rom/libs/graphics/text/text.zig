@@ -130,10 +130,18 @@ const Piece = drawing.Piece;
 /// for the glyphs, or when the hook cannot shape this time, this one
 /// text is drawn a glyph a character.
 ///
+/// **A text laid out is kept.** A font on the list keeps the texts last
+/// laid out in it, the ones used again the longest: a text drawn or
+/// measured again is taken from there, and the hooks are not asked
+/// again. So a window that measures and draws its labels at every step
+/// of a sizing shapes each of them once. A text laid out while a hook
+/// could not answer for lack of memory is not kept.
+///
 /// CONTEXT:
 /// - Waits: yes, while another task holds the RastPort's lock
-///   (`RPTAG_Lock`), if it has one, and while another task makes a glyph
-///   of the same font.
+///   (`RPTAG_Lock`), if it has one, while another task makes a glyph of
+///   the same font, and for a moment while one takes a laid-out text
+///   from the font or keeps one with it.
 /// - Interrupts: no. The work is unbounded, it may allocate, and it
 ///   hands the rows it wrote on to the display at the end.
 /// - Locks: the RastPort's own, taken here; no spinlock may be held.
@@ -142,7 +150,9 @@ const Piece = drawing.Piece;
 /// OWNERSHIP:
 /// Nothing the caller has to free: the string is only read. A glyph
 /// made for the text is the library's, kept with the font. The glyphs a
-/// text is shaped into are allocated and freed within the call.
+/// text is shaped into are allocated and freed within the call; a font
+/// on the list keeps a copy of them for the next call with the same
+/// text (since 0.55).
 ///
 /// NOTES:
 /// - A font's hooks run on the caller's stack.

@@ -49,7 +49,9 @@
 //! its font, the byte its cluster starts at, its advance, and where it
 //! is drawn from the point. The list lives in memory allocated for the
 //! one call (`layOut`, `free`); with no memory for it, or a hook that
-//! could not shape, the call takes the other way this once.
+//! could not shape, the call takes the other way this once. A font on
+//! the list keeps the texts last laid out in it (`_lines.zig`): a text
+//! it has is copied out, and its hooks are not asked again.
 //!
 //! **Places in a text** (`xOf`, `offsetAt`). A cluster's width is the
 //! advances of its glyphs, and the place between two clusters is where
@@ -73,6 +75,8 @@ const utf8 = sdk.utility.utf8;
 const unicode = sdk.utility.unicode;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
 const _text = @import("_text.zig");
+const kept = @import("_kept.zig");
+const _lines = @import("_lines.zig");
 
 const Glyph = graphics.fontimage.Glyph;
 const TextFont = graphics.TextFont;
@@ -120,10 +124,13 @@ pub fn wanted(font: *const TextFont) bool {
     return font.shapes();
 }
 
-/// The glyphs the `count` bytes of `string` are drawn with in `font`.
-/// Null when they are not to be had this time - no memory, a hook that
-/// could not shape, a text of no bytes or of too many - and the caller
-/// takes the way of a glyph for each character.
+/// The glyphs the `count` bytes of `string` are drawn with in `font`:
+/// a copy of the line the font keeps for the text, or the text laid
+/// out now - and then kept, where the font has a store and no hook
+/// missed an answer meanwhile. Null when they are not to be had this
+/// time - no memory, a hook that could not shape, a text of no bytes or
+/// of too many - and the caller takes the way of a glyph for each
+/// character.
 ///
 /// INPUTS:
 /// - `gb` - the library.
@@ -135,6 +142,12 @@ pub fn wanted(font: *const TextFont) bool {
 /// The caller hands the line to `free`.
 pub fn layOut(gb: *GraphicsBase, font: *const TextFont, string: [*]const u8, count: u32) ?Line {
     if (count == 0 or count > most_bytes) return null;
+    const bytes = string[0..count];
+    const store = kept.storeOf(font);
+    if (store) |held| {
+        if (_lines.copyOf(gb, held, bytes)) |line| return line;
+    }
+    const misses = @atomicLoad(u32, &gb.misses, .acquire);
     const sys = gb.sys_base;
     // A glyph for each byte is more than most texts have; one that has
     // more says how many.
@@ -145,8 +158,13 @@ pub fn layOut(gb: *GraphicsBase, font: *const TextFont, string: [*]const u8, cou
         const block = sys.AllocVec(room * each, exec.MEMF_ANY) orelse return null;
         const placed: [*]Placed = @ptrCast(@alignCast(block));
         const scratch: [*]PlacedGlyph = @ptrFromInt(@intFromPtr(block) + room * @sizeOf(Placed));
-        switch (fill(gb, font, string[0..count], placed[0..room], scratch[0..room])) {
-            .done => |made| return .{ .placed = placed[0..made], .block = block },
+        switch (fill(gb, font, bytes, placed[0..room], scratch[0..room])) {
+            .done => |made| {
+                if (store) |held| {
+                    if (@atomicLoad(u32, &gb.misses, .acquire) == misses) _lines.keep(gb, held, bytes, placed[0..made]);
+                }
+                return .{ .placed = placed[0..made], .block = block };
+            },
             .room => |need| {
                 sys.FreeVec(block);
                 if (need <= room or need > most_glyphs) return null;
@@ -206,7 +224,7 @@ fn fill(gb: *GraphicsBase, line: *const TextFont, bytes: []const u8, placed: []P
                 .glyphs = scratch.ptr,
                 .room = @intCast(scratch.len),
             };
-            switch (gb.utility_base.CallHookPkt(hook, @constCast(one), &request)) {
+            switch (shapeIn(gb, hook, one, &request)) {
                 graphics.SHAPE_OK => {},
                 graphics.SHAPE_ROOM => {
                     // A text that fits and is said not to would be
@@ -333,7 +351,7 @@ fn drawnBy(gb: *GraphicsBase, font: *const TextFont, cluster: []const u8, scratc
             .glyphs = scratch.ptr,
             .room = @intCast(scratch.len),
         };
-        if (gb.utility_base.CallHookPkt(hook, @constCast(font), &request) != graphics.SHAPE_OK) return .no;
+        if (shapeIn(gb, hook, font, &request) != graphics.SHAPE_OK) return .no;
         if (request.count > scratch.len) return .no;
         for (scratch[0..request.count]) |*from| {
             const by_number = from.flags & graphics.GLYPHREQ_NUMBER != 0;
@@ -350,6 +368,15 @@ fn drawnBy(gb: *GraphicsBase, font: *const TextFont, cluster: []const u8, scratc
         }
     }
     return if (coloured) .coloured else .plain;
+}
+
+/// A font's `shape` hook asked. An answer of `SHAPE_LATER` is counted
+/// (`GraphicsBase.misses`): what is laid out meanwhile is laid out
+/// otherwise once there is memory again, and is not kept.
+fn shapeIn(gb: *GraphicsBase, hook: *sdk.utility.Hook, font: *const TextFont, request: *graphics.ShapeRequest) usize {
+    const answer = gb.utility_base.CallHookPkt(hook, @constCast(font), request);
+    if (answer == graphics.SHAPE_LATER) _ = @atomicRmw(u32, &gb.misses, .Add, 1, .monotonic);
+    return answer;
 }
 
 /// The font that draws one cluster, or null for a cluster none of the
@@ -422,7 +449,7 @@ fn shapesAlone(gb: *GraphicsBase, font: *const TextFont, cluster: []const u8, sc
         .glyphs = scratch.ptr,
         .room = @intCast(scratch.len),
     };
-    if (gb.utility_base.CallHookPkt(hook, @constCast(font), &request) != graphics.SHAPE_OK) return false;
+    if (shapeIn(gb, hook, font, &request) != graphics.SHAPE_OK) return false;
     if (request.count > scratch.len) return false;
     for (scratch[0..request.count]) |*glyph| {
         if (glyph.flags & graphics.GLYPHREQ_NUMBER != 0 and glyph.which == 0) return false;

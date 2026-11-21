@@ -5238,11 +5238,19 @@ widen each glyph that moves the point, and no other. Without memory
 for the glyphs, or when the hook cannot shape this time, this one
 text is drawn a glyph a character.
 
+**A text laid out is kept.** A font on the list keeps the texts last
+laid out in it, the ones used again the longest: a text drawn or
+measured again is taken from there, and the hooks are not asked
+again. So a window that measures and draws its labels at every step
+of a sizing shapes each of them once. A text laid out while a hook
+could not answer for lack of memory is not kept.
+
 **CONTEXT**
 
 - Waits: yes, while another task holds the RastPort's lock
-  (`RPTAG_Lock`), if it has one, and while another task makes a glyph
-  of the same font.
+  (`RPTAG_Lock`), if it has one, while another task makes a glyph of
+  the same font, and for a moment while one takes a laid-out text
+  from the font or keeps one with it.
 - Interrupts: no. The work is unbounded, it may allocate, and it
   hands the rows it wrote on to the display at the end.
 - Locks: the RastPort's own, taken here; no spinlock may be held.
@@ -5252,7 +5260,9 @@ text is drawn a glyph a character.
 
 Nothing the caller has to free: the string is only read. A glyph
 made for the text is the library's, kept with the font. The glyphs a
-text is shaped into are allocated and freed within the call.
+text is shaped into are allocated and freed within the call; a font
+on the list keeps a copy of them for the next call with the same
+text (since 0.55).
 
 **NOTES**
 
@@ -5334,8 +5344,9 @@ and there is no `+ 1` anywhere.
 
 **CONTEXT**
 
-- Waits: only for a font that makes glyphs, while another task makes
-  one of the same font.
+- Waits: only for a font that makes glyphs or shapes its text: while
+  another task makes a glyph of the same font, and for a moment while
+  one takes a laid-out text from the font or keeps one with it.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share, and allocates for a font that shapes its text.
 - Locks: none needed; no spinlock may be held with a font that makes
@@ -5346,7 +5357,8 @@ and there is no `+ 1` anywhere.
 
 Nothing the caller has to free. A glyph made for the measuring is
 the library's, kept with the font. The glyphs a text is shaped into
-are allocated and freed within the call.
+are allocated and freed within the call; a font on the list keeps a
+copy of them for the next call with the same text (since 0.55).
 
 **BUGS**
 
@@ -5433,8 +5445,9 @@ much fits, draw that, and put an ellipsis after it.
 
 **CONTEXT**
 
-- Waits: only for a font that makes glyphs, while another task makes
-  one of the same font.
+- Waits: only for a font that makes glyphs or shapes its text: while
+  another task makes a glyph of the same font, and for a moment while
+  one takes a laid-out text from the font or keeps one with it.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share, and allocates for a font that shapes its text.
 - Locks: none needed; no spinlock may be held with a font that makes
@@ -5445,7 +5458,8 @@ much fits, draw that, and put an ellipsis after it.
 
 Nothing the caller has to free. A glyph made for the measuring is
 the library's, kept with the font. The glyphs a text is shaped into
-are allocated and freed within the call.
+are allocated and freed within the call; a font on the list keeps a
+copy of them for the next call with the same text (since 0.55).
 
 **NOTES**
 
@@ -5592,8 +5606,9 @@ length of the text; `TextOffsetToX` says where in it a piece starts.
 
 **CONTEXT**
 
-- Waits: only for a font that makes glyphs, while another task makes
-  one of the same font.
+- Waits: only for a font that makes glyphs or shapes its text: while
+  another task makes a glyph of the same font, and for a moment while
+  one takes a laid-out text from the font or keeps one with it.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt does
   not share, and allocates for a font that shapes its text.
 - Locks: none needed; no spinlock may be held with a font that makes
@@ -5604,7 +5619,8 @@ length of the text; `TextOffsetToX` says where in it a piece starts.
 
 Nothing the caller has to free. A glyph made for the measuring is
 the library's, kept with the font. The glyphs a text is shaped into
-are allocated and freed within the call.
+are allocated and freed within the call; a font on the list keeps a
+copy of them for the next call with the same text (since 0.55).
 
 **BUGS**
 
@@ -5669,8 +5685,9 @@ of its own and the place is the advances before it added up.
 
 **CONTEXT**
 
-- Waits: only for a font that makes glyphs, while another task makes
-  one of the same font.
+- Waits: only for a font that makes glyphs or shapes its text: while
+  another task makes a glyph of the same font, and for a moment while
+  one takes a laid-out text from the font or keeps one with it.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt
   does not share, and may allocate.
 - Locks: none needed; no spinlock may be held with a font that makes
@@ -5680,7 +5697,9 @@ of its own and the place is the advances before it added up.
 **OWNERSHIP**
 
 Nothing the caller has to free. For a font that shapes its text the
-laid-out glyphs are allocated and freed within the call.
+laid-out glyphs are allocated and freed within the call; a font on
+the list keeps a copy of them for the next call with the same text
+(since 0.55).
 
 **NOTES**
 
@@ -5755,8 +5774,9 @@ of its own, a mark too.
 
 **CONTEXT**
 
-- Waits: only for a font that makes glyphs, while another task makes
-  one of the same font.
+- Waits: only for a font that makes glyphs or shapes its text: while
+  another task makes a glyph of the same font, and for a moment while
+  one takes a laid-out text from the font or keeps one with it.
 - Interrupts: no. It reads the caller's RastPort, which an interrupt
   does not share, and may allocate.
 - Locks: none needed; no spinlock may be held with a font that makes
@@ -5766,7 +5786,9 @@ of its own, a mark too.
 **OWNERSHIP**
 
 Nothing the caller has to free. For a font that shapes its text the
-laid-out glyphs are allocated and freed within the call.
+laid-out glyphs are allocated and freed within the call; a font on
+the list keeps a copy of them for the next call with the same text
+(since 0.55).
 
 **NOTES**
 

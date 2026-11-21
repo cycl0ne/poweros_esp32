@@ -63,6 +63,11 @@ pub const GraphicsBase = extern struct {
     /// one held onto, because a board can be deleted. Null until something
     /// asks, and null on a machine that has no display at all.
     view: ?*RtgBoard,
+    /// How many times a font's hook could not answer for lack of memory:
+    /// a glyph not made, a text not shaped. A text laid out while it
+    /// moved is not kept with its font (`text/_lines.zig`), since it is
+    /// laid out otherwise once there is memory again.
+    misses: u32,
 
     /// This library as a caller sees it, to call its own functions through
     /// the jump table.

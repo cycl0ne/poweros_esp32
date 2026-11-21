@@ -50,8 +50,9 @@ const utf8 = sdk.utility.utf8;
 /// of its own and the place is the advances before it added up.
 ///
 /// CONTEXT:
-/// - Waits: only for a font that makes glyphs, while another task makes
-///   one of the same font.
+/// - Waits: only for a font that makes glyphs or shapes its text: while
+///   another task makes a glyph of the same font, and for a moment while
+///   one takes a laid-out text from the font or keeps one with it.
 /// - Interrupts: no. It reads the caller's RastPort, which an interrupt
 ///   does not share, and may allocate.
 /// - Locks: none needed; no spinlock may be held with a font that makes
@@ -60,7 +61,9 @@ const utf8 = sdk.utility.utf8;
 ///
 /// OWNERSHIP:
 /// Nothing the caller has to free. For a font that shapes its text the
-/// laid-out glyphs are allocated and freed within the call.
+/// laid-out glyphs are allocated and freed within the call; a font on
+/// the list keeps a copy of them for the next call with the same text
+/// (since 0.55).
 ///
 /// NOTES:
 /// - A cursor, a selection's edges and an underline under part of a text

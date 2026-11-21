@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
-//! The glyphs a font's `render` hook made, kept with the font.
+//! What graphics keeps with a font: the glyphs its `render` hook made,
+//! and the texts last laid out in it (`_lines.zig`).
 //!
 //! A font's image holds the glyphs it was built with. A font whose
-//! builder can make more (`TextFont.render`) gets a store here when
-//! `AddFont` takes it (`make`) and loses it when the font leaves the list
-//! (`free`). A glyph the image lacks is asked of the hook the first time
+//! builder can make more (`TextFont.render`), or that shapes its text
+//! (`TextFont.shapes`), gets a store here when `AddFont` takes it
+//! (`make`) and loses it when the font leaves the list (`free`). A glyph
+//! the image lacks is asked of the hook the first time
 //! a text wants it, and kept: its box and its pixels - or, for a glyph
 //! the font does not have, the fact that there is none, so a text of
 //! characters a font lacks asks once for each of them and not once each
@@ -32,6 +34,11 @@
 //! pixels are written once. A glyph that needs more gets a block that
 //! holds it, and the hook is asked a second time.
 //!
+//! **A glyph not made is counted.** Where the hook could not make one
+//! this time, or there was no memory to keep it in, nothing is kept and
+//! `GraphicsBase.misses` goes up by one, so that no line laid out
+//! meanwhile is kept with the glyph missing from it.
+//!
 //! **What the hook answers is checked**, as `AddFont` checks an image:
 //! the kind is the image's, a row is at least the bytes its pixels take,
 //! and the rows lie inside the bytes the hook said it wrote. An answer
@@ -41,6 +48,7 @@ const sdk = @import("sdk");
 const graphics = sdk.graphics;
 const exec = sdk.exec;
 const GraphicsBase = @import("../graphics.zig").GraphicsBase;
+const _lines = @import("_lines.zig");
 
 const fontimage = graphics.fontimage;
 const Glyph = fontimage.Glyph;
@@ -78,6 +86,8 @@ pub const Store = extern struct {
     blocks: ?*Block,
     /// The entries, each on the chain its key falls on, newest first.
     chains: [chain_count]?*Kept,
+    /// The texts last laid out in the font, once one is kept.
+    lines: ?*_lines.Lines,
 };
 
 /// A block of entries, written from the front.
@@ -108,19 +118,20 @@ comptime {
     if (@sizeOf(Kept) % 8 != 0 and @alignOf(Kept) == 8) @compileError("an entry's head must end on its alignment");
 }
 
-/// The store of a font that has a `render` hook, made as the font goes
-/// on the list. The caller holds the font list's lock.
+/// The store of a font that has a `render` hook or shapes its text,
+/// made as the font goes on the list. The caller holds the font list's
+/// lock.
 ///
 /// INPUTS:
 /// - `gb` - the library.
 /// - `font` - the font, whose `cache` is set: to the store, or to null
-///   for a font without a hook.
+///   for a font that is its image and nothing more.
 ///
 /// RESULT:
 /// False without memory for the store.
 pub fn make(gb: *GraphicsBase, font: *TextFont) bool {
     font.cache = null;
-    if (font.render == null) return true;
+    if (font.render == null and !font.shapes()) return true;
     const sys = gb.sys_base;
     // The system's, not the caller's: the font outlives the task that
     // added it.
@@ -131,9 +142,9 @@ pub fn make(gb: *GraphicsBase, font: *TextFont) bool {
     return true;
 }
 
-/// A font's store and every glyph in it given back, as the font leaves
-/// the list. Nothing draws with the font any more: the caller holds the
-/// font list's lock and nobody has the font open.
+/// A font's store and every glyph and line in it given back, as the
+/// font leaves the list. Nothing draws with the font any more: the
+/// caller holds the font list's lock and nobody has the font open.
 ///
 /// INPUTS:
 /// - `gb` - the library.
@@ -141,6 +152,7 @@ pub fn make(gb: *GraphicsBase, font: *TextFont) bool {
 pub fn free(gb: *GraphicsBase, font: *TextFont) void {
     const store: *Store = @ptrCast(@alignCast(font.cache orelse return));
     font.cache = null;
+    _lines.free(gb, store);
     const sys = gb.sys_base;
     var at = store.blocks;
     while (at) |block| {
@@ -160,17 +172,31 @@ pub fn free(gb: *GraphicsBase, font: *TextFont) void {
 ///
 /// RESULT:
 /// The glyph, good until the font leaves the list; `pixelsOf` finds its
-/// pixels. Null for a font without a store, for a glyph the font does
-/// not have, and for one that could not be made this time.
+/// pixels. Null for a font without a store or a hook, for a glyph the
+/// font does not have, and for one that could not be made this time.
 pub fn glyphFor(gb: *GraphicsBase, font: *const TextFont, key: u32) ?*const Glyph {
-    const store: *Store = @ptrCast(@alignCast(font.cache orelse return null));
+    if (font.render == null) return null;
+    const store = storeOf(font) orelse return null;
     if (find(store, key)) |entry| return glyphIn(entry);
     const sys = gb.sys_base;
     sys.ObtainSemaphore(&store.lock);
     defer sys.ReleaseSemaphore(&store.lock);
     // Another task may have made it while this one waited for the lock.
     if (find(store, key)) |entry| return glyphIn(entry);
-    return glyphIn(render(gb, store, font, key) orelse return null);
+    const entry = render(gb, store, font, key) orelse {
+        _ = @atomicRmw(u32, &gb.misses, .Add, 1, .monotonic);
+        return null;
+    };
+    return glyphIn(entry);
+}
+
+/// A font's store, or null for a font that has none: one not on the
+/// list, or that is its image and nothing more.
+///
+/// INPUTS:
+/// - `font` - the font.
+pub fn storeOf(font: *const TextFont) ?*Store {
+    return @ptrCast(@alignCast(font.cache orelse return null));
 }
 
 /// Where a glyph's first row starts: in the font's image, or behind the
