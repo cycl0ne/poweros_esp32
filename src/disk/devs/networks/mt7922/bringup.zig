@@ -5,14 +5,15 @@
 //! made (station.zig).
 //!
 //! **Who holds the chip.** The chip's power is either the firmware's or
-//! the driver's. It is handed to the firmware and taken back once, so
-//! that whatever state the machine's start left it in, the driver holds
-//! it after; it is then asked for again from the chip's side before the
-//! download. A chip whose firmware still runs in the driver's hold - the
-//! machine restarted over it - is not handed over: it needs no hand-over,
-//! and power handed to a firmware that is then reset may never come back,
-//! short of taking the machine's power away. Nothing here hands it over
-//! when it stops, for the same reason.
+//! the driver's. While the firmware holds it - the machine's start leaves
+//! it so - it is handed to the firmware once more and taken back, so that
+//! the driver holds it after; it is then asked for again from the chip's
+//! side before the download. A chip the driver holds already - an earlier
+//! load of this device, the machine restarted over a running firmware, a
+//! start that failed - is not handed over: power handed to a firmware
+//! that is not running, or was reset, may never come back, short of
+//! taking the machine's power away. Nothing here hands it over when it
+//! stops, for the same reason.
 //!
 //! **The order** is the chip's: the reset before the rings, the rings
 //! before the first command, the firmware before anything the running
@@ -51,9 +52,7 @@ const own_tries = 10;
 pub fn bringUp(work: *Work) Error!void {
     const sys = work.sys;
     const regs = work.regs;
-    const own = regs.rd(regs_file.CONN_ON_LPCTL);
-    const state = regs.rd(regs_file.CONN_ON_MISC);
-    const held = own & regs_file.LPCTL_OWN_SYNC == 0 and state & regs_file.MISC_FW_N9_RDY == regs_file.MISC_FW_N9_RDY;
+    const held = regs.rd(regs_file.CONN_ON_LPCTL) & regs_file.LPCTL_OWN_SYNC == 0;
     if (!held) handOver(work) catch |failure| {
         say(sys, "the chip does not hand over its power: switch the machine off and on", .{});
         report(work);

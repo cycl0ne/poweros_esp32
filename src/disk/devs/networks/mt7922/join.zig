@@ -4,14 +4,16 @@
 //! frames to and from the access point.
 //!
 //! **A join** (S2_SETOPTIONS) is answered at once and made after, on the
-//! worker, from start to end: a scan for the network, its strongest
-//! access point taken (or the one asked for), its entry made in the
-//! chip's table (peer.zig); then its channel asked for, the station
-//! authenticated with the open system, the channel given back and asked
-//! for again, and the station associated - each frame sent up to three
-//! times, an answer waited for after each. Once the access point has the
-//! station, the firmware is told the network, and the access point's
-//! entry made again with what the association settled.
+//! worker, from start to end: a scan for the network, its best access
+//! point taken (or the one asked for; see scan.zig's `Heard`), one that
+//! refused or did not answer the last try passed over if the network has
+//! another, its entry made in the chip's table (peer.zig); then its
+//! channel asked for, the station authenticated with the open system, the
+//! channel given back and asked for again, and the station associated -
+//! each frame sent up to three times, an answer waited for after each.
+//! Once the access point has the station, the firmware is told the
+//! network, and the access point's entry made again with what the
+//! association settled.
 //!
 //! **An open network** is then joined: the channel given back, the unit
 //! has its carrier. **A WPA2-Personal network** is joined with
@@ -37,8 +39,13 @@
 //! **A network asked for stays wanted** until it is left
 //! (S2INFO_Disassociate). Coming off it for any reason but its own leave -
 //! put off by the access point, refused, not found, not joined in time,
-//! its beacons gone - the station tries again after a pause: a second,
-//! twice as long each time, up to a minute; joining resets it.
+//! the handshake given up, its beacons gone - the station tries again
+//! after a pause: a second, twice as long each time, up to a minute;
+//! joining resets it.
+//!
+//! **While joined**, the signal is the access point's frames' as they
+//! come, each a quarter of it, and the link's speed what the two share:
+//! HT's streams on 20 MHz, or the network's fastest rate without.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -102,6 +109,8 @@ pub const Join = struct {
     want_ssid: [scan.ssid_max]u8 = @splat(0),
     want_len: usize = 0,
     want_bssid: ?[6]u8 = null,
+    /// The access point that refused the last join, or did not answer.
+    refused_by: ?[6]u8 = null,
     want_pass: [wpa.WPA_PASSPHRASE_MAX + 1]u8 = @splat(0),
     /// The pause before the next join, and when it ends.
     pause_s: u32 = pause_first_s,
@@ -181,6 +190,29 @@ pub fn carrying(work: *const Work) bool {
     return work.join.state == .joined and work.running;
 }
 
+/// The fastest the link carries, in bit/s: on HT, 20 MHz with every
+/// stream the station and the access point share, the short guard
+/// interval where it has it; without, the network's fastest rate. Before
+/// a network is joined, what the card does on 20 MHz.
+pub fn linkBps(work: *const Work) u64 {
+    const join = &work.join;
+    const short_guard: u64 = 72_200_000;
+    const long_guard: u64 = 65_000_000;
+    if (join.state != .joined) return short_guard * @max(work.streams, 1);
+    const facts = &join.facts;
+    if (facts.ht) {
+        var streams: u64 = 0;
+        for (facts.mcs[0..@min(work.streams, 4)]) |bits| {
+            if (bits != 0) streams += 1;
+        }
+        const per_stream = if (facts.ht_info & frames.HT_SGI_20 != 0) short_guard else long_guard;
+        return per_stream * @max(streams, 1);
+    }
+    var fastest: u64 = 0;
+    for (join.target.rateList()) |rate| fastest = @max(fastest, rate & 0x7f);
+    return fastest * 500_000;
+}
+
 /// What a data frame to the access point asks of the chip.
 pub fn dataTo(work: *const Work, tid: u8) tx.Data {
     return .{ .wcid = peer.WCID_AP, .tid = tid, .qos = work.join.facts.qos, .protect = work.join.pairwise_in };
@@ -254,6 +286,7 @@ fn setOptions(work: *Work, req: *net.IOSana2Req) i8 {
     join.join_due = true;
     join.retry_waiting = false;
     join.pause_s = pause_first_s;
+    join.refused_by = null;
     return 0;
 }
 
@@ -289,6 +322,9 @@ pub fn due(work: *Work) bool {
     if (join.leave_due) |reason| {
         join.leave_due = null;
         leave(work, reason, true);
+        // The station's own leave wants it no longer; any other comes
+        // back after the pause.
+        cameOff(work);
         return true;
     }
     if (join.thrown_due) |reason| {
@@ -351,10 +387,6 @@ pub fn tick(work: *Work) bool {
     if ((join.state == .joining or join.state == .keying) and passed(now, join.deadline)) {
         say(work.sys, "the network was not joined in time", .{});
         join.leave_due = REASON_UNSPECIFIED;
-        // Joined again after the pause, as for any other way off.
-        join.retry_waiting = join.wanted;
-        join.retry_at = now +% join.pause_s * 1000;
-        join.pause_s = @min(join.pause_s * 2, pause_most_s);
     }
     if (join.retry_waiting and passed(now, join.retry_at)) {
         join.retry_waiting = false;
@@ -399,7 +431,8 @@ fn run(work: *Work) void {
     const name = join.want_ssid[0..join.want_len];
     radio.scanFor(work, name);
     const wanted_bssid: ?*const [6]u8 = if (join.want_bssid) |*address| address else null;
-    const found = work.heard.strongest(name, wanted_bssid) orelse {
+    const avoided: ?*const [6]u8 = if (join.refused_by) |*address| address else null;
+    const found = work.heard.strongest(name, wanted_bssid, avoided) orelse {
         say(work.sys, "the network asked for was not found", .{});
         return cameOff(work);
     };
@@ -416,9 +449,10 @@ fn run(work: *Work) void {
     join.state = .joining;
     join.deadline = radio.elapsed(work) +% join_ms;
     radio.keepTime(work);
-    say(work.sys, "joining on channel %u, at %d dBm", .{ @as(u32, join.target.channel), @as(i32, join.target.signal) });
+    say(work.sys, "joining on channel %u, at %d dBm, the best of %u access points heard", .{ @as(u32, join.target.channel), @as(i32, join.target.signal), work.heard.countOf(name) });
     associate(work) catch |failure| {
         say(work.sys, "the network is not joined: %s", .{@as([*:0]const u8, @errorName(failure))});
+        if (failure == error.Refused or failure == error.NoAnswer) join.refused_by = join.target.bssid;
         leave(work, REASON_LEAVING, false);
         return cameOff(work);
     };
@@ -492,6 +526,7 @@ fn joined(work: *Work) void {
     const join = &work.join;
     join.state = .joined;
     join.pause_s = pause_first_s;
+    join.refused_by = null;
     say(work.sys, "joined the network", .{});
     work.base.net.setCarrier(true);
     tx.startWrites(work);
@@ -563,6 +598,11 @@ fn leave(work: *Work, reason: u16, tell: bool) void {
 pub fn frame(work: *Work, received: rxd.Received) void {
     const join = &work.join;
     if (join.state == .idle) return;
+    if (join.state == .joined and received.wcid == peer.WCID_AP and received.signal != -128) {
+        // The signal now: each frame from the access point a quarter of it.
+        const before: i32 = join.target.signal;
+        join.target.signal = @intCast(@divTrunc(3 * before + received.signal, 4));
+    }
     const bytes = received.frame;
     if (received.translated) {
         if (received.wcid == peer.WCID_AP) dataIn(work, bytes);

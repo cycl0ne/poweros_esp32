@@ -47,7 +47,7 @@ const say = _mt.say;
 
 pub const DEVICE_NAME = _mt.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 3;
+const DEVICE_REVISION = 4;
 const BUILD_DATE = "22.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++

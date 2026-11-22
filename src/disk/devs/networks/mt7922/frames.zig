@@ -76,7 +76,7 @@ const rates_in_first = 8;
 const HT_LDPC: u16 = 0x0001;
 /// The streams' power save, two bits: 1 dynamic, 3 none.
 const HT_SM_POWER_SAVE: u16 = 0x000c;
-const HT_SGI_20: u16 = 0x0020;
+pub const HT_SGI_20: u16 = 0x0020;
 const HT_TX_STBC: u16 = 0x0080;
 const HT_RX_STBC_ONE: u16 = 0x0100;
 const HT_RX_STBC: u16 = 0x0300;

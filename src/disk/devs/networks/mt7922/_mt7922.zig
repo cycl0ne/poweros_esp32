@@ -110,9 +110,11 @@ pub const Mt7922Base = extern struct {
 
     // --- the unit's link ------------------------------------------------------
 
-    /// Two streams at 80 MHz, as far as the unit is told until a network
-    /// says otherwise.
-    pub const bps: u64 = 1_200_000_000;
+    /// The link's speed, as the network joined has it (join.zig).
+    pub fn bps(base: *Mt7922Base) u64 {
+        const work = base.work orelse return 0;
+        return join_file.linkBps(work);
+    }
 
     /// The firmware answers to the address it was told when the station
     /// was set up.

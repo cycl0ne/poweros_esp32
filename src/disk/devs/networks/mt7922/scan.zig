@@ -16,6 +16,13 @@
 //! in them - and says with its scan-done event when it has been
 //! everywhere.
 //!
+//! **How long on a channel**: up to `dwell_ms`, a beacon interval
+//! (102.4 ms) and the time the channel change takes, so that a channel
+//! only listened on hears every access point's beacon at least once; a
+//! channel probed with nothing heard after `min_dwell_ms` is left early.
+//! The firmware's own times listen on a channel for about 70 ms, which
+//! misses an access point there in about every third scan.
+//!
 //! **What it hears** comes in on the data ring like any frame: a beacon
 //! or a probe response is a network (`network`) - its name, its access
 //! point, its channel (the one the access point names, since a 2.4 GHz
@@ -23,7 +30,10 @@
 //! the RSN element whole, which says how it is protected and which
 //! joining it needs - and what a join asks of it: its rates, whether it
 //! does HT and QoS, how often it beacons. `Heard` keeps each access
-//! point once, at the strongest it was heard.
+//! point once, at the strongest it was heard, and picks a network's best
+//! for a join: the strongest, a 5 GHz one counted `five_bonus_db`
+//! stronger while it is heard well - it is the faster band, and the one a
+//! network with both steers its stations to.
 
 const sdk = @import("sdk");
 const wireless = sdk.devices.wireless;
@@ -77,12 +87,15 @@ const REQ_PROBE_REQ_NUM = 5;
 const REQ_SCAN_FUNC = 6;
 const REQ_VERSION = 7;
 const REQ_SSIDS = 8;
+const REQ_DWELL = 154;
+const REQ_TIMEOUT = 156;
 const REQ_CHANNEL_TYPE = 158;
 const REQ_CHANNELS_NUM = 159;
 const REQ_CHANNELS = 160;
 const REQ_IES_LEN = 224;
 const REQ_IES = 226;
 const REQ_EXT_CHANNELS_NUM = 826;
+const REQ_MIN_DWELL = 828;
 const REQ_EXT_CHANNELS = 830;
 const REQ_BSSID = 1110;
 const REQ_SSID_TYPE_EXT = 1185;
@@ -93,6 +106,10 @@ const SSID_SPECIFIED = 1 << 2;
 const SCAN_FUNC_SPLIT = 1 << 5;
 const CHANNELS_LISTED = 4;
 const listed_max = 32;
+
+/// The longest and the shortest time on a channel, in milliseconds.
+const dwell_ms = 110;
+const min_dwell_ms = 40;
 
 /// What the probe requests carry after the name: the rates the station
 /// speaks, the first eight, then the rest.
@@ -124,6 +141,9 @@ pub fn request(into: *[request_bytes]u8, seq: u8, has_5g: bool, ssid: []const u8
         into[at] = channel.band;
         into[at + 1] = channel.number;
     }
+    mcu.put16(into, REQ_DWELL, dwell_ms);
+    mcu.put16(into, REQ_MIN_DWELL, min_dwell_ms);
+    mcu.put16(into, REQ_TIMEOUT, @intCast(count * dwell_ms));
     mcu.put16(into, REQ_IES_LEN, probe_elements.len);
     @memcpy(into[REQ_IES..][0..probe_elements.len], &probe_elements);
     @memset(into[REQ_BSSID..][0..6], 0xff);
@@ -341,21 +361,48 @@ pub const Heard = struct {
         return heard.networks[0..heard.count];
     }
 
-    /// The access point of the network `name` heard strongest - or the one
-    /// `bssid` names, if it is that network's.
-    pub fn strongest(heard: *const Heard, name: []const u8, bssid: ?*const [6]u8) ?*const Network {
+    /// The access point of the network `name` to join: the one `bssid`
+    /// names, if it is that network's; else the best heard, `avoid` only
+    /// when it is the network's one access point.
+    pub fn strongest(heard: *const Heard, name: []const u8, bssid: ?*const [6]u8, avoid: ?*const [6]u8) ?*const Network {
         var best: ?*const Network = null;
+        var avoided: ?*const Network = null;
         for (heard.list()) |*known| {
             if (!sameBytes(known.name(), name)) continue;
             if (bssid) |wanted| {
                 if (sameBytes(&known.bssid, wanted)) return known;
                 continue;
             }
-            if (best == null or known.signal > best.?.signal) best = known;
+            if (avoid) |shunned| {
+                if (sameBytes(&known.bssid, shunned)) {
+                    avoided = known;
+                    continue;
+                }
+            }
+            if (best == null or rank(known) > rank(best.?)) best = known;
         }
-        return best;
+        return best orelse avoided;
+    }
+
+    /// How many access points of the network `name` were heard.
+    pub fn countOf(heard: *const Heard, name: []const u8) u32 {
+        var count: u32 = 0;
+        for (heard.list()) |*known| {
+            if (sameBytes(known.name(), name)) count += 1;
+        }
+        return count;
+    }
+
+    fn rank(known: *const Network) i32 {
+        const bonus: i32 = if (known.onFive() and known.signal >= five_well_dbm) five_bonus_db else 0;
+        return @as(i32, known.signal) + bonus;
     }
 };
+
+/// How much stronger a 5 GHz access point counts, while it is heard at
+/// least this well.
+const five_bonus_db = 10;
+const five_well_dbm = -70;
 
 pub fn sameBytes(one: []const u8, other: []const u8) bool {
     if (one.len != other.len) return false;
@@ -398,6 +445,25 @@ test "a beacon's elements: name, rates, channel, DTIM, HT, RSN, WPA and WMM" {
     try testing.expect(found.wpa and found.wmm);
 }
 
+test "a scan's request: every channel, a beacon interval on each, the name asked for" {
+    var into: [request_bytes]u8 = undefined;
+    request(&into, 0x85, true, "net");
+    try testing.expectEqual(@as(u8, 5), into[REQ_SEQ]);
+    try testing.expectEqual(@as(u8, SSID_SPECIFIED), into[REQ_SSID_TYPE]);
+    try testing.expectEqual(@as(u32, 3), mcu.get32(&into, REQ_SSIDS));
+    try testing.expectEqualSlices(u8, "net", into[REQ_SSIDS + 4 ..][0..3]);
+    try testing.expectEqual(@as(u8, listed_max), into[REQ_CHANNELS_NUM]);
+    try testing.expectEqual(@as(u8, channels.len - listed_max), into[REQ_EXT_CHANNELS_NUM]);
+    try testing.expectEqualSlices(u8, &.{ BAND_5G, 36 }, into[REQ_CHANNELS + channels_2g4 * 2 ..][0..2]);
+    try testing.expectEqualSlices(u8, &.{ BAND_5G, 165 }, into[REQ_EXT_CHANNELS + (channels.len - listed_max - 1) * 2 ..][0..2]);
+    try testing.expect(mcu.get16(&into, REQ_DWELL) > 1024 / 10);
+    try testing.expectEqual(@as(u16, channels.len * dwell_ms), mcu.get16(&into, REQ_TIMEOUT));
+    request(&into, 1, false, "");
+    try testing.expectEqual(@as(u8, SSID_WILDCARD), into[REQ_SSID_TYPE]);
+    try testing.expectEqual(@as(u8, channels_2g4), into[REQ_CHANNELS_NUM]);
+    try testing.expectEqual(@as(u8, 0), into[REQ_EXT_CHANNELS_NUM]);
+}
+
 test "the strongest access point of a network, or the one asked for" {
     var heard = Heard{};
     for ([_]i8{ -70, -40, -55 }, 0..) |signal, index| {
@@ -412,8 +478,31 @@ test "the strongest access point of a network, or the one asked for" {
     again.signal = -90;
     heard.add(again);
     try testing.expectEqual(@as(usize, 3), heard.count);
-    try testing.expectEqual(@as(i8, -40), heard.strongest("net", null).?.signal);
+    try testing.expectEqual(@as(i8, -40), heard.strongest("net", null, null).?.signal);
     const wanted = [6]u8{ 0, 0, 0, 0, 0, 2 };
-    try testing.expectEqual(@as(i8, -55), heard.strongest("net", &wanted).?.signal);
-    try testing.expect(heard.strongest("other", null) == null);
+    try testing.expectEqual(@as(i8, -55), heard.strongest("net", &wanted, null).?.signal);
+    try testing.expect(heard.strongest("other", null, null) == null);
+    // One that refused is passed over, unless it is the only one.
+    const refused = [6]u8{ 0, 0, 0, 0, 0, 1 };
+    try testing.expectEqual(@as(i8, -55), heard.strongest("net", null, &refused).?.signal);
+    var alone = Heard{};
+    alone.add(heard.networks[1]);
+    try testing.expectEqual(@as(i8, -40), alone.strongest("net", null, &refused).?.signal);
+}
+
+test "a 5 GHz access point counts stronger while it is heard well" {
+    var heard = Heard{};
+    for ([_]i8{ -50, -58 }, [_]u8{ 6, 36 }, 0..) |signal, channel, index| {
+        var found = Network{ .signal = signal, .channel = channel };
+        found.bssid[5] = @intCast(index);
+        @memcpy(found.ssid[0..3], "net");
+        found.ssid_len = 3;
+        heard.add(found);
+    }
+    try testing.expectEqual(@as(u8, 36), heard.strongest("net", null, null).?.channel);
+    heard.networks[0].signal = -35;
+    try testing.expectEqual(@as(u8, 6), heard.strongest("net", null, null).?.channel);
+    heard.networks[0].signal = -70;
+    heard.networks[1].signal = -75;
+    try testing.expectEqual(@as(u8, 6), heard.strongest("net", null, null).?.channel);
 }
