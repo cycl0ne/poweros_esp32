@@ -875,7 +875,13 @@ unit; its build and inside are described in `docs/esp32s3wifi.md`.
 and 4 Model B, a CYW43455 on SDIO, as one: it loads the chip's firmware
 from `DEVS:networks/firmware/cyw43455/` (`scripts/fetch-cyw43455.sh`
 fetches it for a build), takes WPA2-Personal from wpa.library as below,
-and its interface is `DEVS:NetInterfaces/WLAN0`. `DEVS:usb/aic8800.device` is
+and its interface is `DEVS:NetInterfaces/WLAN0`. `DEVS:networks/mt7922.device`
+is a MediaTek MT7922 card on PCI Express, the M.2 card of many x86-64
+PCs: it loads the card's firmware from `DEVS:networks/firmware/mt7922/`
+(`scripts/fetch-mt7922.sh` fetches it for a build) and gives the unit the
+station address the firmware reads from the card; it neither scans nor
+joins yet - its wireless requests are answered as out of service.
+`DEVS:usb/aic8800.device` is
 an AIC8800 USB Wi-Fi stick as one, on the ESP32-P4's high-speed ports
 (`docs/aic8800.md`): its interface is `DEVS:NetInterfaces/WLAN1`, brought
 up by the device when the stick first comes (`Start = DEVICE`), and a

@@ -271,6 +271,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-emoji.sh` | Unicode's list of the emoji and the CLDR's names for them, made into `LOCALE:Emoji` - the emoji in their groups and order, and what each is called in the disk's languages (on the 64-bit machines' disks) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the radio firmware of the Compute Module 5 and the Raspberry Pi 4 Model B, which `DEVS:networks/cyw43455.device` loads into it (the two AArch64 disks) |
+| `scripts/fetch-mt7922.sh` | the firmware of a MediaTek MT7922 Wi-Fi card, which `DEVS:networks/mt7922.device` loads into it (the 64-bit machines' disks) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
 | `scripts/fetch-amdgpu.sh` | an AMD graphics device's video decoder firmware and its security processor's table of contents, which `amdgpu.resource` loads (the x86-64 disk) |
 | `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the 64-bit machines' disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |

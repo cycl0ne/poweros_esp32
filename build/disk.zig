@@ -31,6 +31,8 @@ const certsFile = build_fetched.certsFile;
 const cjk_file = build_fetched.cjk_file;
 const cyw43455Dir = build_fetched.cyw43455Dir;
 const cyw43455_files = build_fetched.cyw43455_files;
+const mt7922Dir = build_fetched.mt7922Dir;
+const mt7922_files = build_fetched.mt7922_files;
 const devanagari_dir = build_fetched.devanagari_dir;
 const disk_fonts = build_fetched.disk_fonts;
 const emojiDir = build_fetched.emojiDir;
@@ -1251,12 +1253,28 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
     // Pi CM5 and of the 4 Model B runs, as scripts/fetch-cyw43455.sh
     // fetched it. On the two AArch64 disks alone, whose
     // networks/cyw43455.device loads it.
-    if (cyw43455Dir(b)) |dir| {
+    const cyw43455 = cyw43455Dir(b);
+    if (cyw43455) |dir| {
         for ([_]*std.Build.Step.Run{ make_a64_disk, make_a64v80_disk }) |make| {
             make.addArgs(&.{ "devs/networks/firmware", "devs/networks/firmware/cyw43455" });
             for (cyw43455_files) |name| {
                 make.addPrefixedFileArg(b.fmt("devs/networks/firmware/cyw43455/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
             }
+        }
+    }
+    // DEVS:networks/firmware/mt7922/ - what a MediaTek MT7922 Wi-Fi card
+    // runs, as scripts/fetch-mt7922.sh fetched it, with MediaTek's
+    // licence. On every 64-bit disk: the card is a PCI Express one, and
+    // networks/mt7922.device is on each of them.
+    if (mt7922Dir(b)) |dir| {
+        for ([_]*std.Build.Step.Run{ make_rv64_disk, make_a64_disk, make_a64v80_disk, make_x64_disk }) |make| {
+            const has_firmware_dir = cyw43455 != null and (make == make_a64_disk or make == make_a64v80_disk);
+            if (!has_firmware_dir) make.addArg("devs/networks/firmware");
+            make.addArg("devs/networks/firmware/mt7922");
+            for (mt7922_files) |name| {
+                make.addPrefixedFileArg(b.fmt("devs/networks/firmware/mt7922/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
+            }
+            make.addPrefixedFileArg("devs/networks/firmware/mt7922/licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENCE.mediatek" }) });
         }
     }
     // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names

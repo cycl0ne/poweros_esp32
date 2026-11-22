@@ -249,6 +249,23 @@ pub fn cyw43455Dir(b: *std.Build) ?[]const u8 {
     return path;
 }
 
+/// What scripts/fetch-mt7922.sh fetches for the card: the ROM's patch and
+/// the RAM code. MediaTek's licence for them, LICENCE.mediatek, is beside
+/// them.
+pub const mt7922_files = [_][]const u8{ "WIFI_MT7922_patch_mcu_1_1_hdr.bin", "WIFI_RAM_CODE_MT7922_1.bin" };
+
+/// Where scripts/fetch-mt7922.sh put the MT7922's firmware, or null
+/// without it.
+pub fn mt7922Dir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/mt7922");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "WIFI_RAM_CODE_MT7922_1.bin" }), .{}) catch {
+        std.log.info("no MT7922 firmware (scripts/fetch-mt7922.sh): the 64-bit disks have no DEVS:networks/firmware/mt7922/", .{});
+        return null;
+    };
+    return path;
+}
+
 /// Where scripts/fetch-aic8800.sh put the AIC8800's firmware, or null
 /// without it.
 pub fn aic8800Dir(b: *std.Build) ?[]const u8 {

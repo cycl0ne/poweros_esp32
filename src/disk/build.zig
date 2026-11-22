@@ -469,6 +469,7 @@ const modules = [_]Program{
     .{ .disk = "devs/networks/emac.device", .source = "devs/networks/emac/emac.zig", .name = "emac.device", .set = .net },
     .{ .disk = "devs/networks/slip.device", .source = "devs/networks/slip/slip.zig", .name = "slip.device", .set = .net },
     .{ .disk = "devs/networks/cyw43455.device", .source = "devs/networks/cyw43455/cyw43455.zig", .name = "cyw43455.device", .set = .wifi },
+    .{ .disk = "devs/networks/mt7922.device", .source = "devs/networks/mt7922/mt7922.zig", .name = "mt7922.device", .set = .wifi },
     .{ .disk = "devs/telnet.device", .source = "devs/telnet/telnet.zig", .name = "telnet.device", .set = .net },
     .{ .disk = "devs/ssh.device", .source = "devs/ssh/ssh.zig", .name = "ssh.device", .set = .net },
     .{ .disk = "devs/clipboard.device", .source = "devs/clipboard/clipboard.zig", .name = "clipboard.device", .set = .gui },
@@ -548,7 +549,7 @@ const esp_only = [_][]const u8{ "usbotg.device", "sdcard.device", "programs/Dock
 /// chip.vcodec goes with them: it drives videodec.resource, which no
 /// ESP32 has, and carries the parameter-set readers it reads a stream's
 /// colours with - 60 KB for a chip that is not there.
-const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "dttime" };
+const rv64_only = [_][]const u8{ "pci.library", "pciinfo", "xhci.device", "nvme.device", "intelnet.device", "realnet.device", "mt7922.device", "install", "update", "update.library", "System/Update", "Installer", "System/SystemScan", "WBStartup/Dock", "videodec", "vchiq", "dts.acodec", "chip.vcodec", "h264.vcodec", "hevc.vcodec", "vp8.vcodec", "vp9.vcodec", "av1.vcodec", "dttime" };
 /// Drivers of what only the Raspberry Pi CM5's BCM2712 has among the
 /// AArch64 machines and no other chip does: its V3D 7.1 - the BCM2711's
 /// is older.
