@@ -21,8 +21,9 @@
 //! point, its channel (the one the access point names, since a 2.4 GHz
 //! frame is heard on the channels beside its own too), how strong, and
 //! the RSN element whole, which says how it is protected and which
-//! joining it needs. `Heard` keeps each access point once, at the
-//! strongest it was heard.
+//! joining it needs - and what a join asks of it: its rates, whether it
+//! does HT and QoS, how often it beacons. `Heard` keeps each access
+//! point once, at the strongest it was heard.
 
 const sdk = @import("sdk");
 const wireless = sdk.devices.wireless;
@@ -130,6 +131,8 @@ pub fn request(into: *[request_bytes]u8, seq: u8, has_5g: bool, ssid: []const u8
 
 pub const ssid_max = 32;
 pub const rsn_max = 64;
+pub const rates_max = 16;
+pub const ht_cap_bytes = 26;
 
 /// A network a scan heard.
 pub const Network = struct {
@@ -145,9 +148,32 @@ pub const Network = struct {
     /// Its RSN element, whole (id and length too); empty for none.
     rsn: [rsn_max]u8 = @splat(0),
     rsn_len: u8 = 0,
+    /// Its capability field, how often it beacons (in units of 1024 us)
+    /// and every how many beacons it sends what it kept for sleepers (0
+    /// until a beacon says).
+    capability: u16 = 0,
+    beacon_interval: u16 = 0,
+    dtim: u8 = 0,
+    /// Its rates, as its elements give them: 500 kbit/s steps, the top bit
+    /// set on those every station must have.
+    rates: [rates_max]u8 = @splat(0),
+    rates_len: u8 = 0,
+    /// Its HT capabilities element's body, if it does HT.
+    ht_cap: [ht_cap_bytes]u8 = @splat(0),
+    ht: bool = false,
+    /// It does QoS (a WMM element).
+    wmm: bool = false,
 
     pub fn name(heard: *const Network) []const u8 {
         return heard.ssid[0..heard.ssid_len];
+    }
+
+    pub fn onFive(heard: *const Network) bool {
+        return heard.channel > 14;
+    }
+
+    pub fn rateList(heard: *const Network) []const u8 {
+        return heard.rates[0..heard.rates_len];
     }
 
     /// What its RSN element offers, as wpa.library reads it; null for a
@@ -193,15 +219,24 @@ const FC_BEACON = 0x80;
 const FC_PROBE_RESPONSE = 0x50;
 const header_bytes = 24;
 const BSSID = 16;
+const BEACON_INTERVAL = 32;
 const CAPABILITY = 34;
 const ELEMENTS = 36;
 const CAPABILITY_PRIVACY: u16 = 0x0010;
 
 const EID_SSID = 0;
+const EID_RATES = 1;
 const EID_DS_PARAMETERS = 3;
+const EID_TIM = 5;
+const EID_HT_CAPABILITIES = 45;
 const EID_RSN = 48;
+const EID_EXTENDED_RATES = 50;
 const EID_HT_OPERATION = 61;
 const EID_VENDOR = 221;
+
+/// The fastest rate there is without HT, in 500 kbit/s steps: a larger
+/// value in a rates element is no rate but a feature the network asks for.
+const rate_highest = 108;
 
 /// The network a received frame is: null when it is not a beacon or a
 /// probe response.
@@ -212,38 +247,64 @@ pub fn network(received: rxd.Received) ?Network {
     if (frame[0] != FC_BEACON and frame[0] != FC_PROBE_RESPONSE) return null;
     var found = Network{ .channel = received.channel, .signal = received.signal };
     @memcpy(&found.bssid, frame[BSSID..][0..6]);
-    found.privacy = mcu.get16(frame, CAPABILITY) & CAPABILITY_PRIVACY != 0;
+    found.beacon_interval = mcu.get16(frame, BEACON_INTERVAL);
+    found.capability = mcu.get16(frame, CAPABILITY);
+    found.privacy = found.capability & CAPABILITY_PRIVACY != 0;
+    const named_channel = readElements(&found, frame[ELEMENTS..]);
+    if (named_channel != 0) found.channel = named_channel;
+    return found;
+}
+
+/// A frame's elements read into `found`: its name, rates, HT and QoS,
+/// how it is protected. The channel the elements name, 0 for none. Rates
+/// are added to those `found` holds.
+pub fn readElements(found: *Network, elements: []const u8) u8 {
     var named_channel: u8 = 0;
-    var at: usize = ELEMENTS;
-    while (at + 2 <= frame.len) {
-        const element = frame[at];
-        const size = frame[at + 1];
-        if (at + 2 + size > frame.len) break;
-        const body = frame[at + 2 ..][0..size];
+    var at: usize = 0;
+    while (at + 2 <= elements.len) {
+        const element = elements[at];
+        const size = elements[at + 1];
+        if (at + 2 + size > elements.len) break;
+        const body = elements[at + 2 ..][0..size];
         switch (element) {
             EID_SSID => if (size <= ssid_max) {
                 @memcpy(found.ssid[0..size], body);
                 found.ssid_len = size;
             },
+            EID_RATES, EID_EXTENDED_RATES => for (body) |rate| {
+                if (rate & 0x7f > rate_highest or found.rates_len == rates_max) continue;
+                found.rates[found.rates_len] = rate;
+                found.rates_len += 1;
+            },
             EID_DS_PARAMETERS => if (size == 1) {
                 named_channel = body[0];
+            },
+            EID_TIM => if (size >= 2) {
+                found.dtim = body[1];
+            },
+            EID_HT_CAPABILITIES => if (size >= ht_cap_bytes) {
+                @memcpy(&found.ht_cap, body[0..ht_cap_bytes]);
+                found.ht = true;
             },
             EID_HT_OPERATION => if (size >= 1 and named_channel == 0) {
                 named_channel = body[0];
             },
             EID_RSN => if (size + 2 <= rsn_max) {
-                @memcpy(found.rsn[0 .. size + 2], frame[at..][0 .. size + 2]);
+                @memcpy(found.rsn[0 .. size + 2], elements[at..][0 .. size + 2]);
                 found.rsn_len = size + 2;
             },
-            EID_VENDOR => if (size >= 4 and body[0] == 0x00 and body[1] == 0x50 and body[2] == 0xF2 and body[3] == 1) {
-                found.wpa = true;
+            EID_VENDOR => if (size >= 4 and body[0] == 0x00 and body[1] == 0x50 and body[2] == 0xF2) {
+                switch (body[3]) {
+                    1 => found.wpa = true,
+                    2 => found.wmm = true,
+                    else => {},
+                }
             },
             else => {},
         }
         at += 2 + size;
     }
-    if (named_channel != 0) found.channel = named_channel;
-    return found;
+    return named_channel;
 }
 
 /// The networks a scan heard, each access point once - at the strongest
@@ -259,11 +320,15 @@ pub const Heard = struct {
             if (found.signal > known.signal or known.ssid_len == 0) {
                 const before = known.*;
                 known.* = found;
-                // A probe response names a network its beacons keep quiet.
+                // A probe response names a network its beacons keep quiet,
+                // and only a beacon says its DTIM.
                 if (found.ssid_len == 0) {
                     known.ssid = before.ssid;
                     known.ssid_len = before.ssid_len;
                 }
+                if (found.dtim == 0) known.dtim = before.dtim;
+            } else if (known.dtim == 0) {
+                known.dtim = found.dtim;
             }
             return;
         }
@@ -274,6 +339,21 @@ pub const Heard = struct {
 
     pub fn list(heard: *const Heard) []const Network {
         return heard.networks[0..heard.count];
+    }
+
+    /// The access point of the network `name` heard strongest - or the one
+    /// `bssid` names, if it is that network's.
+    pub fn strongest(heard: *const Heard, name: []const u8, bssid: ?*const [6]u8) ?*const Network {
+        var best: ?*const Network = null;
+        for (heard.list()) |*known| {
+            if (!sameBytes(known.name(), name)) continue;
+            if (bssid) |wanted| {
+                if (sameBytes(&known.bssid, wanted)) return known;
+                continue;
+            }
+            if (best == null or known.signal > best.?.signal) best = known;
+        }
+        return best;
     }
 };
 

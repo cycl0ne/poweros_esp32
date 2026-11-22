@@ -30,6 +30,8 @@ const regs_file = @import("regs.zig");
 const dma = @import("dma.zig");
 const scan = @import("scan.zig");
 const station = @import("station.zig");
+const tx = @import("tx.zig");
+const join_file = @import("join.zig");
 const Regs = regs_file.Regs;
 const Ring = dma.Ring;
 
@@ -127,14 +129,17 @@ pub const Mt7922Base = extern struct {
         _ = promiscuous;
     }
 
+    /// The unit online or not: its writes go out while it is and the
+    /// station is on a network.
     pub fn setRunning(base: *Mt7922Base, on: bool) void {
-        _ = base;
-        _ = on;
+        const work = base.work orelse return;
+        work.running = on;
+        if (on) tx.startWrites(work);
     }
 
-    /// Nothing is sent until the station is on a network.
     pub fn startWrites(base: *Mt7922Base) void {
-        _ = base;
+        const work = base.work orelse return;
+        tx.startWrites(work);
     }
 
     pub fn now(base: *Mt7922Base) timer.TimeVal {
@@ -210,7 +215,7 @@ pub const answer_max = 2048;
 const scratch_bytes = @max(station.power_bytes, scan.request_bytes);
 
 /// The worker's block: the chip, its rings, what the firmware said, the
-/// scans.
+/// scans, the frames out, the network.
 pub const Work = struct {
     base: *Mt7922Base,
     sys: *ExecBase,
@@ -260,6 +265,12 @@ pub const Work = struct {
     scan_ends: u32 = 0,
     scans: exec.List = .{},
     heard: scan.Heard = .{},
+
+    /// The data ring's slots, the network joined, and whether the unit is
+    /// online.
+    sending: tx.Sending = .{},
+    join: join_file.Join = .{},
+    running: bool = false,
 
     /// The rings laid out in the device's DMA memory.
     pub fn layRings(work: *Work, memory: usize) void {

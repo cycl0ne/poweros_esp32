@@ -9,7 +9,9 @@
 //! eighteen), which this device turns off. The frame starts after them,
 //! moved on by the pad the third word counts in two-byte steps.
 //!
-//! **The channel** the radio was on is in the fourth word: up to 14 a
+//! **The sender** is named by the entry of the chip's station table its
+//! address matched, in the second word. **The channel** the radio was on
+//! is in the fourth word: up to 14 a
 //! 2.4 GHz channel, up to 180 a 5 GHz one, above that 6 GHz in steps of
 //! four from 181. **The signal** is the channels' RCPI in group 3, half a
 //! dB per step from -110 dBm, the chains the card has combined: the
@@ -20,6 +22,7 @@ const mcu = @import("mcu.zig");
 const descriptor_words = 6;
 
 const RXD0_LENGTH: u32 = 0xffff;
+const RXD1_WLAN_IDX: u32 = 0x3ff;
 const RXD1_GROUP_1: u32 = 1 << 11;
 const RXD1_GROUP_2: u32 = 1 << 12;
 const RXD1_GROUP_3: u32 = 1 << 13;
@@ -48,6 +51,8 @@ pub const Received = struct {
     channel: u8,
     /// dBm; -128 when the descriptor has no signal.
     signal: i8,
+    /// The entry of the chip's station table its sender matched.
+    wcid: u16,
 };
 
 /// The frame in `bytes` - a buffer of the data ring - and what its
@@ -90,6 +95,7 @@ pub fn read(bytes: []const u8, chains: u8) ?Received {
         .decrypted = sec_mode != 0 and rxd1 & (RXD1_CLM | RXD1_CM) == 0,
         .channel = channelOf(@truncate(rxd3 >> RXD3_CH_FREQ_SHIFT)),
         .signal = signal,
+        .wcid = @intCast(rxd1 & RXD1_WLAN_IDX),
     };
 }
 

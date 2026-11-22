@@ -14,7 +14,9 @@
 //! does not come up is given back and the device refused.
 //!
 //! **The worker does everything** the chip is asked: the commands to its
-//! firmware (mcu.zig), the unit's requests and the scans (radio.zig). The
+//! firmware (mcu.zig), the unit's requests and the scans (radio.zig), the
+//! frames out (tx.zig), joining and leaving a network (join.zig, with the
+//! 802.11 frames of frames.zig and the firmware's records of peer.zig). The
 //! interrupt turns the chip's interrupts off and signals it; it reads the
 //! causes, takes what the rings hold, and turns them on again - the
 //! bring-up's too, which come before there is a worker to tell.
@@ -38,13 +40,14 @@ const regs_file = @import("regs.zig");
 const mcu = @import("mcu.zig");
 const bringup = @import("bringup.zig");
 const radio = @import("radio.zig");
+const join = @import("join.zig");
 const Mt7922Base = _mt.Mt7922Base;
 const Work = _mt.Work;
 const say = _mt.say;
 
 pub const DEVICE_NAME = _mt.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "22.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -84,6 +87,7 @@ fn workerMain(sys: *ExecBase) callconv(.c) void {
     work.clock_io.node.message.reply_port = &work.clock_port;
     const clock_mask = @as(u32, 1) << @intCast(clock_signal);
     work.scans.init(.message);
+    join.setUp(work);
 
     bringup.bringUp(work) catch |failure| {
         say(sys, "the card does not come up: %s", .{@as([*:0]const u8, @errorName(failure))});

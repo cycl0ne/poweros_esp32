@@ -882,8 +882,13 @@ PCs: it loads the card's firmware from `DEVS:networks/firmware/mt7922/`
 station address the firmware reads from the card, and scans: the 2.4 GHz
 channels 1 to 13 and the 5 GHz ones, sending probe requests only on 2.4
 GHz 1 to 11 and listening on the rest, since it does not know which
-country it is in. It does not join yet - its other wireless requests are
-answered as out of service.
+country it is in. It joins a network by itself - the firmware keeps the
+channel, the device authenticates and associates with the access point
+(HT on 20 MHz and QoS when the network has them) and turns the chip's
+802.11 frames into Ethernet ones and back - and runs the key handshake
+of a WPA2-Personal network with wpa.library, as below; it does not yet
+put the keys into the card, so a protected network is not joined. An
+access point's offer of block acknowledgement is declined.
 `DEVS:usb/aic8800.device` is
 an AIC8800 USB Wi-Fi stick as one, on the ESP32-P4's high-speed ports
 (`docs/aic8800.md`): its interface is `DEVS:NetInterfaces/WLAN1`, brought

@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! The radio: what the chip receives besides the answers to commands,
 //! the events the firmware sends by itself, the unit's requests, and
-//! scans.
+//! scans. What the chip received goes where it belongs: a note of frames
+//! sent to the sending (tx.zig), a frame to the scan while one runs and
+//! to the join (join.zig), the firmware's grant of a channel and its loss
+//! of a network's beacons to the join.
 //!
 //! **A scan** is started by the first S2_GETNETWORKS while none runs,
 //! for the network that request names if it names one (scan.zig); every
@@ -14,12 +17,13 @@
 //! read by wpa.library. A scan the firmware has not ended after
 //! `scan_limit_ms` is cancelled and answered the same way.
 //!
-//! **The clock** wakes the worker for a scan's limit; it is not asked to
-//! wake it at any other time, so the worker sleeps while nothing waits.
+//! **A join's scan** is the same, waited for by the join itself
+//! (`scanFor`).
 //!
-//! The station is not on any network yet: frames that are not a scan's
-//! are dropped, and the other wireless requests are answered as out of
-//! service.
+//! **The clock** wakes the worker every `tick_ms` while something waits
+//! for time - a scan's limit, a join's deadline, the channel's time, the
+//! pause before joining again - and not otherwise, so the worker sleeps
+//! while nothing waits.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -33,33 +37,47 @@ const mcu = @import("mcu.zig");
 const rxd = @import("rxd.zig");
 const scan = @import("scan.zig");
 const station = @import("station.zig");
+const peer = @import("peer.zig");
+const tx = @import("tx.zig");
+const joining = @import("join.zig");
 const Work = _mt.Work;
 const say = _mt.say;
 
 /// How long a scan may take before it is cancelled: every channel
 /// listened on for longer than the firmware takes.
 const scan_limit_ms = 20_000;
+/// How often the clock wakes the worker while something waits for time.
+const tick_ms = 250;
 
 /// A buffer the chip filled that is not an event: a frame, a send's
 /// status, a note of frames sent.
 pub fn received(work: *Work, kind: u32, bytes: []const u8) void {
-    if (!work.scanning) return;
     switch (kind) {
+        mcu.PKT_TYPE_TXRX_NOTIFY => return tx.freed(work, bytes),
         mcu.PKT_TYPE_NORMAL, mcu.PKT_TYPE_NORMAL_MCU, mcu.PKT_TYPE_RX_EVENT => {},
         else => return,
     }
     const frame = rxd.read(bytes, station.chainMask(work)) orelse return;
-    const found = scan.network(frame) orelse return;
-    work.heard.add(found);
+    if (work.scanning) {
+        if (scan.network(frame)) |found| work.heard.add(found);
+    }
+    joining.frame(work, frame);
 }
 
-/// An event the firmware sent by itself.
-pub fn event(work: *Work, eid: u8, bytes: []const u8) void {
-    _ = bytes;
+/// An event the firmware sent by itself: a unified one, or one of the
+/// older kind, by its id.
+pub fn event(work: *Work, eid: u8, unified: bool, bytes: []const u8) void {
+    if (unified) {
+        if (eid == mcu.UNI_EVENT_ROC) {
+            if (peer.grantOf(bytes)) |token| joining.granted(work, token);
+        }
+        return;
+    }
     switch (eid) {
         mcu.EVENT_SCAN_DONE => if (work.scanning) {
             work.scan_done = true;
         },
+        mcu.EVENT_BSS_BEACON_LOSS => joining.beaconsLost(work),
         else => {},
     }
 }
@@ -67,18 +85,26 @@ pub fn event(work: *Work, eid: u8, bytes: []const u8) void {
 /// What the events and frames just taken leave to be done, done.
 pub fn due(work: *Work) void {
     if (work.scan_done) endScan(work, 0);
+    while (joining.due(work)) {}
 }
 
-/// The clock came back: a scan past its limit is cancelled, and the
-/// clock asked again while one runs.
+/// The clock came back: a scan past its limit is cancelled, the join's
+/// times looked at, and the clock asked again while anything waits.
 pub fn tick(work: *Work) void {
-    if (!work.scanning) return;
-    const now = elapsed(work);
-    const left: i32 = @bitCast(work.scan_ends -% now);
-    if (left > 0) return armClock(work, @intCast(left));
-    say(work.sys, "the scan is not done in time: cancelled", .{});
-    _ = mcu.send(work, mcu.ce(mcu.CE_CANCEL_HW_SCAN), &[_]u8{ work.scan_seq & 0x7f, 0, 0, 0 }, false) catch {};
-    endScan(work, 0);
+    if (work.scanning and passed(elapsed(work), work.scan_ends)) cancelScan(work);
+    const join_waits = joining.tick(work);
+    if (work.scanning or join_waits) armClock(work, tick_ms);
+}
+
+/// The clock asked to wake the worker, if it is not asked already: a
+/// scan or a join has started to wait for time.
+pub fn keepTime(work: *Work) void {
+    armClock(work, tick_ms);
+}
+
+fn passed(now: u32, at: u32) bool {
+    const left: i32 = @bitCast(at -% now);
+    return left <= 0;
 }
 
 /// A request of the unit's openers.
@@ -90,17 +116,14 @@ pub fn request(work: *Work, req: *net.IOSana2Req) void {
             sys.AddTail(&work.scans, &req.req.message.node);
             if (!work.scanning) startScan(work, wantedName(work, req));
         },
-        wireless.S2_SETOPTIONS, wireless.S2_GETNETWORKINFO, wireless.S2_GETSIGNALQUALITY => {
-            req.req.err = net.S2ERR_OUTOFSERVICE;
-            req.wire_error = net.S2WERR_UNIT_OFFLINE;
-            sys.ReplyMsg(&req.req.message);
-        },
-        else => base.net.perform(req),
+        else => if (!joining.request(work, req)) base.net.perform(req),
     }
 }
 
-/// Everything waiting answered as out of service: the device is going.
+/// The network left and everything waiting answered as out of service:
+/// the device is going.
 pub fn stop(work: *Work) void {
+    joining.stop(work);
     work.scanning = false;
     work.scan_done = false;
     answerScans(work, net.S2ERR_OUTOFSERVICE);
@@ -108,8 +131,21 @@ pub fn stop(work: *Work) void {
 
 // --- scanning -------------------------------------------------------------------
 
+/// A scan for the network `name`, waited for: its networks in `heard`.
+/// One already running is waited for instead.
+pub fn scanFor(work: *Work, name: []const u8) void {
+    if (!work.scanning) startScan(work, name);
+    while (work.scanning and !work.scan_done) {
+        if (passed(elapsed(work), work.scan_ends)) return cancelScan(work);
+        _ = mcu.takeEvents(work, 0);
+        if (work.scan_done) break;
+        work.pause(1000);
+    }
+    if (work.scanning) endScan(work, 0);
+}
+
 fn startScan(work: *Work, ssid: []const u8) void {
-    work.heard = .{};
+    work.heard.count = 0;
     work.scan_done = false;
     work.scan_seq = (work.scan_seq +% 1) & 0x7f;
     if (work.scan_seq == 0) work.scan_seq = 1;
@@ -124,7 +160,13 @@ fn startScan(work: *Work, ssid: []const u8) void {
         return answerScans(work, net.S2ERR_SOFTWARE);
     };
     work.scan_ends = elapsed(work) +% scan_limit_ms;
-    armClock(work, scan_limit_ms);
+    keepTime(work);
+}
+
+fn cancelScan(work: *Work) void {
+    say(work.sys, "the scan is not done in time: cancelled", .{});
+    _ = mcu.send(work, mcu.ce(mcu.CE_CANCEL_HW_SCAN), &[_]u8{ work.scan_seq & 0x7f, 0, 0, 0 }, false) catch {};
+    endScan(work, 0);
 }
 
 fn endScan(work: *Work, err: i8) void {
@@ -212,7 +254,7 @@ fn answerNetworks(work: *Work, req: *net.IOSana2Req) void {
 
 /// wpa.library, opened the first time a network's security is read; null
 /// without it, when the networks are listed by their privacy alone.
-fn wpaBase(work: *Work) ?*sdk.interface.wpa.WPABase {
+pub fn wpaBase(work: *Work) ?*sdk.interface.wpa.WPABase {
     const base = work.base;
     if (base.wpa_base == null) base.wpa_base = @ptrCast(@alignCast(work.sys.OpenLibrary(wpa.WPANAME, 1)));
     return base.wpa_base;
@@ -232,6 +274,6 @@ fn armClock(work: *Work, ms: u32) void {
 
 /// Milliseconds since the system started, as the system timer counts
 /// them: not the system time, which moves when it is set.
-fn elapsed(work: *const Work) u32 {
+pub fn elapsed(work: *const Work) u32 {
     return @truncate(work.sys.UptimeUs() / 1000);
 }

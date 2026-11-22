@@ -13,9 +13,11 @@
 //! firmware's): the 24-byte receive descriptor, then the event's id, its
 //! sequence number and options, its payload at +36. One whose sequence
 //! number is a command's is that command's answer; one the firmware sends
-//! by itself - its option says so, or its sequence number is 0 - is
+//! by itself - its option says so, which makes it a unified event, or its
+//! sequence number is 0, or it is of a kind only ever sent that way - is
 //! handed to the radio (radio.zig's `event`), and so is every frame the
-//! chip received, on whichever ring it came.
+//! chip received and every note of frames it sent, on whichever ring it
+//! came.
 //!
 //! The worker sends one command at a time and waits for its answer
 //! before the next, up to three seconds; a command not waited for may
@@ -85,8 +87,11 @@ pub const EXT_EFUSE_BUFFER_MODE = 0x21;
 pub const EXT_PROTECT_CTRL = 0x3e;
 pub const EXT_MAC_INIT_CTRL = 0x46;
 pub const EXT_SET_RX_PATH = 0x4e;
+pub const CE_SET_BSS_ABORT = 0x17;
 pub const UNI_DEV_INFO_UPDATE = 0x01;
 pub const UNI_BSS_INFO_UPDATE = 0x02;
+pub const UNI_STA_REC_UPDATE = 0x03;
+pub const UNI_ROC = 0x27;
 
 /// The events.
 pub const EVENT_RESPONSE = 0x06;
@@ -98,6 +103,8 @@ pub const EVENT_SCHED_SCAN_DONE = 0x23;
 pub const EVENT_DBG_MSG = 0x27;
 pub const EVENT_RSSI_NOTIFY = 0x96;
 pub const EVENT_COREDUMP = 0xf0;
+/// The unified events the firmware sends by itself.
+pub const UNI_EVENT_ROC = 0x27;
 
 /// What a receive descriptor's first word says: the buffer's length, its
 /// flag and its type - 7 an event.
@@ -107,7 +114,7 @@ pub const PKT_TYPE_TXS = 0;
 pub const PKT_TYPE_NORMAL = 2;
 pub const PKT_TYPE_RX_EVENT = 7;
 pub const PKT_TYPE_NORMAL_MCU = 8;
-pub const PKT_TYPE_TXRX_NOTIFY = 4;
+pub const PKT_TYPE_TXRX_NOTIFY = 6;
 
 const legacy_header = 64;
 const uni_header = 48;
@@ -267,12 +274,13 @@ fn one(work: *Work, bytes: []const u8, seq: u8) bool {
     const eid = bytes[28];
     const event_seq = bytes[29];
     const option = bytes[30];
-    const by_itself = option & option_unsolicited != 0 or event_seq == 0 or switch (eid) {
+    const unified = option & option_unsolicited != 0;
+    const by_itself = unified or event_seq == 0 or switch (eid) {
         EVENT_SCAN_DONE, EVENT_SCHED_SCAN_DONE, EVENT_BSS_BEACON_LOSS, EVENT_RSSI_NOTIFY, EVENT_TX_DONE, EVENT_DBG_MSG, EVENT_LP_INFO, EVENT_COREDUMP => true,
         else => false,
     };
     if (by_itself) {
-        radio.event(work, eid, bytes);
+        radio.event(work, eid, unified, bytes);
         return false;
     }
     if (seq == 0 or event_seq != seq) return false;
@@ -300,6 +308,10 @@ pub fn get16(bytes: []const u8, at: usize) u16 {
 
 pub fn get32(bytes: []const u8, at: usize) u32 {
     return @as(u32, bytes[at]) | @as(u32, bytes[at + 1]) << 8 | @as(u32, bytes[at + 2]) << 16 | @as(u32, bytes[at + 3]) << 24;
+}
+
+pub fn getBe16(bytes: []const u8, at: usize) u16 {
+    return @as(u16, bytes[at]) << 8 | @as(u16, bytes[at + 1]);
 }
 
 pub fn getBe32(bytes: []const u8, at: usize) u32 {
