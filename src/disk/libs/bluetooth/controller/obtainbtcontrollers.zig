@@ -5,6 +5,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _controller = @import("_controller.zig");
+const _task = @import("../task/_task.zig");
 
 /// Lists the controllers: a copy of each as it is at the moment of the
 /// call.
@@ -68,12 +69,13 @@ pub fn ObtainBTControllers(base: *BluetoothBase) ?*exec.List {
     const list: *exec.List = @ptrCast(@alignCast(memory));
     list.init(.unknown);
     const entries: [*]_controller.Entry = @ptrFromInt(@intFromPtr(memory) + @sizeOf(exec.List));
+    const now = _task.clock(sys);
     var index: usize = 0;
     it = base.controllers.iterator();
     while (it.next()) |node| : (index += 1) {
         const entry = &entries[index];
         entry.* = .{};
-        _controller.describe(_controller.fromNode(node), entry);
+        _controller.describe(_controller.fromNode(node), entry, now);
         sys.AddTail(list, &entry.public.node);
     }
     return list;

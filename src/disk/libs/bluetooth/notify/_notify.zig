@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Who is told when the controllers change: a record per AddBTNotify on
 //! the base's list, and the signals each wants. A change - a controller
-//! added, up, failed or gone - sends every record's signals to its task;
-//! the task then lists the controllers again. A signal says something
-//! changed, not what: two changes before the task looks are one.
+//! added, up, failed or gone, set otherwise, a device it found or named,
+//! its discovery begun or over - sends every record's signals to its
+//! task; the task then lists again. A signal says something changed, not
+//! what: two changes before the task looks are one.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;

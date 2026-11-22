@@ -10,11 +10,16 @@ Generated from the source by `./zig build autodoc`.
 ## Index
 
 - [AddBTController](#addbtcontroller) - Offers a controller to the stack: the library's task opens the unit and brings the controller up.
-- [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes.
+- [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
 - [ObtainBTControllers](#obtainbtcontrollers) - Lists the controllers: a copy of each as it is at the moment of the call.
+- [ObtainBTDevices](#obtainbtdevices) - Lists the devices a controller found: a copy of each as it is at the moment of the call.
 - [ReleaseBTControllers](#releasebtcontrollers) - Gives back what ObtainBTControllers answered.
+- [ReleaseBTDevices](#releasebtdevices) - Gives back what ObtainBTDevices answered.
 - [RemBTController](#rembtcontroller) - Takes a controller from the stack: everything the library had out on the unit is taken back, the unit closed, and the controller gone from the list.
 - [RemBTNotify](#rembtnotify) - Ends what AddBTNotify asked for.
+- [SetBTControllerAttrs](#setbtcontrollerattrs) - Changes what a controller does: whether it is on, the name it shows others, whether they find it.
+- [StartBTDiscovery](#startbtdiscovery) - Makes a controller look for the devices around it: LE's advertisers, then the BR/EDR devices that answer an inquiry, then the names not yet heard.
+- [StopBTDiscovery](#stopbtdiscovery) - Ends a controller's discovery now.
 
 ## AddBTController
 
@@ -103,7 +108,7 @@ if (id < 0) return; // not taken
 
 ## AddBTNotify
 
-Asks for signals whenever a controller is added, comes up, fails or goes.
+Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
 
 **SYNOPSIS**
 
@@ -126,9 +131,12 @@ A handle for RemBTNotify, or null without memory.
 
 **BEHAVIOR**
 
-On every change of any controller the signals are sent. They say that
-something changed, not what; the task lists the controllers again with
-ObtainBTControllers. Changes close together may come as one signal.
+On every change of any controller the signals are sent: one added,
+up, failed or gone; on or off, visible or not, its name; its discovery
+begun or over, a device it found, a name it heard. They say that
+something changed, not what; the task lists again, with
+ObtainBTControllers and ObtainBTDevices. Changes close together may
+come as one signal.
 
 **CONTEXT**
 
@@ -148,7 +156,7 @@ None known.
 
 **SEE ALSO**
 
-`RemBTNotify`, `ObtainBTControllers`
+`RemBTNotify`, `ObtainBTControllers`, `ObtainBTDevices`
 
 **EXAMPLES**
 
@@ -221,6 +229,82 @@ while (it.next()) |node| {
 }
 ```
 
+## ObtainBTDevices
+
+Lists the devices a controller found: a copy of each as it is at the moment of the call.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainBTDevices(base: *BluetoothBase, controller: u32) ?*exec.List
+```
+
+**SINCE**
+
+1.2. LVO -56.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for every controller's, one controller's after the other's.
+
+**RESULT**
+
+A list of `bluetooth.BTDevice` nodes - empty when nothing was found or
+there is no such controller - or null without memory.
+
+**BEHAVIOR**
+
+The devices are those of the controller's last discovery
+(StartBTDiscovery), kept until its next begins: each with its address,
+how it was heard (BTDF_*), its signal, and what it said of itself -
+its name, class of device, services, appearance, maker - and how long
+ago it was last heard. A device heard both ways, BR/EDR and LE from
+the same public address, is one node. A discovery still running shows
+what it has heard so far: a name may come later, and the list again
+then has it.
+
+Each node is a copy, its name with it: what it says does not change
+after the call, and nothing the library does later reaches it.
+
+**CONTEXT**
+
+- Waits: yes, for the controllers' lock, which the task holds while it
+  takes a packet.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list and its nodes are the caller's, given back whole with
+ReleaseBTDevices.
+
+**NOTES**
+
+A controller keeps up to 64 devices; when more are heard it keeps
+those heard strongest.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseBTDevices`, `StartBTDiscovery`, `AddBTNotify`
+
+**EXAMPLES**
+
+```zig
+const list = bt.ObtainBTDevices(0) orelse return;
+defer bt.ReleaseBTDevices(list);
+var it = list.iterator();
+while (it.next()) |node| {
+    const found: *bluetooth.BTDevice = @fieldParentPtr("node", node);
+    _ = found.rssi;
+}
+```
+
 ## ReleaseBTControllers
 
 Gives back what ObtainBTControllers answered.
@@ -270,6 +354,57 @@ None known.
 
 ```zig
 bt.ReleaseBTControllers(list);
+```
+
+## ReleaseBTDevices
+
+Gives back what ObtainBTDevices answered.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseBTDevices(base: *BluetoothBase, list: ?*exec.List) void
+```
+
+**SINCE**
+
+1.2. LVO -60.
+
+**INPUTS**
+
+- `list` - from ObtainBTDevices; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The list and every node on it are freed in one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is gone, and so is every node and name it held.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainBTDevices`
+
+**EXAMPLES**
+
+```zig
+bt.ReleaseBTDevices(list);
 ```
 
 ## RemBTController
@@ -383,4 +518,231 @@ None known.
 
 ```zig
 bt.RemBTNotify(handle);
+```
+
+## SetBTControllerAttrs
+
+Changes what a controller does: whether it is on, the name it shows others, whether they find it.
+
+**SYNOPSIS**
+
+```zig
+fn SetBTControllerAttrs(base: *BluetoothBase, controller: u32, tags: ?[*]const utility.TagItem) i32
+```
+
+**SINCE**
+
+1.2. LVO -44.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for every controller that is up.
+- `tags` - what is to change; a tag not given leaves its setting as
+  it is:
+  - `BTCA_Powered` (bool) - on, or off: off, it answers nobody and
+    looks for nothing, and a discovery it runs is stopped.
+  - `BTCA_Name` ([*:0]const u8) - the name it shows others, UTF-8, cut
+    to 247 bytes (whole characters); an empty one, or null, gives it
+    the machine's again (`ENVARC:Sys/net/hostname`, or "PowerOS").
+  - `BTCA_Visible` (u32) - found by others who look, for that many
+    seconds; 0 for not at all, BT_VISIBLE_ALWAYS until told otherwise.
+
+**RESULT**
+
+0 once it is done; BTERR_NOCONTROLLER for no such controller,
+BTERR_NOTUP for one that is not up (or, with BT_ALL_CONTROLLERS, when
+none is), BTERR_UNSUPPORTED for visible asked of a controller without
+BR/EDR, BTERR_NOMEM when its commands could not be queued. With
+BT_ALL_CONTROLLERS, the first failure of any.
+
+**BEHAVIOR**
+
+The controller is told at once: Write Scan Enable for on and visible -
+pages answered while it is on, inquiries too while it is visible -
+Write Local Name and its extended inquiry response for the name. The
+call returns once the commands are queued, not when they are answered.
+
+On, visible until told otherwise and the name are kept for the
+controller's next start, by its address: in
+`ENVARC:Sys/bluetooth/<address>/` (`settings`, `name`). Visible for a
+time is not: it ends at its time, and a start ends it. Over LE the
+controller is not seen at all: it does not advertise.
+
+Whoever asked with AddBTNotify is told, and BTController's `flags`,
+`visible_left` and `name` say what it does now.
+
+**CONTEXT**
+
+- Waits: yes, for the library's task, which writes the settings'
+  files before it answers.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The tags and the name are the caller's: the name is copied.
+
+**NOTES**
+
+A controller without settings of its own is on and not visible.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainBTControllers`, `StartBTDiscovery`, `AddBTNotify`
+
+**EXAMPLES**
+
+```zig
+// Found by others for two minutes.
+_ = bt.SetBTControllerAttrs(0, &[_]utility.TagItem{
+    .{ .tag = bluetooth.BTCA_Visible, .data = 120 },
+    .{},
+});
+```
+
+## StartBTDiscovery
+
+Makes a controller look for the devices around it: LE's advertisers, then the BR/EDR devices that answer an inquiry, then the names not yet heard.
+
+**SYNOPSIS**
+
+```zig
+fn StartBTDiscovery(base: *BluetoothBase, controller: u32, seconds: u32) i32
+```
+
+**SINCE**
+
+1.2. LVO -48.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for every controller that is up and on.
+- `seconds` - how long the first two parts take together, from 2 to
+  60; 0 for about ten.
+
+**RESULT**
+
+0 once it looks; BTERR_NOCONTROLLER for no such controller,
+BTERR_NOTUP for one that is not up (or, with BT_ALL_CONTROLLERS, when
+none is), BTERR_OFF for one that is off (or, with BT_ALL_CONTROLLERS,
+when every one that is up is), BTERR_UNSUPPORTED
+for one that can neither scan LE's advertising nor inquire,
+BTERR_NOMEM when its commands could not be queued. With
+BT_ALL_CONTROLLERS, the first failure of any.
+
+**BEHAVIOR**
+
+The devices the controller found before are forgotten, and it looks
+in three parts, one after the other:
+
+- LE's advertising listened to, actively - every advertiser asked for
+  its scan response, which often has its name - for a third of the
+  time;
+- an inquiry for the rest: the BR/EDR devices that are visible answer,
+  with their signal and, from a controller that has extended results,
+  their names and services;
+- each BR/EDR device that has said no complete name asked for it, the
+  strongest first, up to ten seconds each.
+
+A controller without LE, or without BR/EDR, gives all of the time to
+the part it has. Each device found, and each name, is in the list
+ObtainBTDevices answers as soon as it is heard, and whoever asked with
+AddBTNotify is told; BTCF_DISCOVERING is set on the controller until
+the last part is over. A controller that looks already goes on as it
+is.
+
+**CONTEXT**
+
+- Waits: yes, for the library's task.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**NOTES**
+
+Two controllers that look at the same time can miss each other: one
+that inquires has little of its radio left for answering inquiries.
+The names take longer where many devices have not said theirs.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StopBTDiscovery`, `ObtainBTDevices`, `AddBTNotify`
+
+**EXAMPLES**
+
+```zig
+if (bt.StartBTDiscovery(0, 10) != 0) return;
+// ... Wait for the notify's signal, then ObtainBTDevices(0).
+```
+
+## StopBTDiscovery
+
+Ends a controller's discovery now.
+
+**SYNOPSIS**
+
+```zig
+fn StopBTDiscovery(base: *BluetoothBase, controller: u32) void
+```
+
+**SINCE**
+
+1.2. LVO -52.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for every controller.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+Whatever part of it runs is taken back from the controller - LE's
+scan turned off, the inquiry cancelled, the name being asked for too
+- and BTCF_DISCOVERING cleared; whoever asked with AddBTNotify is
+told. The devices found stay in the list ObtainBTDevices answers. A
+controller that does not look, or that is not there, is left as it
+is.
+
+**CONTEXT**
+
+- Waits: yes, for the library's task.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`StartBTDiscovery`, `ObtainBTDevices`
+
+**EXAMPLES**
+
+```zig
+bt.StopBTDiscovery(bluetooth.BT_ALL_CONTROLLERS);
 ```

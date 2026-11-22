@@ -15,6 +15,8 @@ const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
 const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _hci = @import("../hci/_hci.zig");
+const discovery = @import("../hci/discovery.zig");
+const local = @import("../hci/local.zig");
 
 /// How many reads are kept queued on a controller, and how many packets
 /// may be on their way to it at once.
@@ -72,6 +74,9 @@ pub const Controller = struct {
     leaving: bool = false,
     /// The state last said in the log.
     reported: u32 = bluetooth.BTCS_OPENING,
+    /// Whether its name is one it was given (BTCA_Name), kept in its
+    /// settings, rather than the machine's.
+    own_name: bool = false,
     /// What the device's HCICMD_QUERY said.
     bus: u32 = 0,
     baud: u32 = 0,
@@ -137,8 +142,22 @@ pub const Entry = extern struct {
     firmware: [FIRMWARE_SIZE + 1]u8 = @splat(0),
 };
 
-/// A controller copied into an entry, under the base's lock.
-pub fn describe(controller: *const Controller, entry: *Entry) void {
+/// What it does now: BTCF_*.
+pub fn flagsOf(layer: *const _hci.Hci) u32 {
+    if (layer.state != bluetooth.BTCS_UP) return 0;
+    var flags: u32 = 0;
+    if (layer.powered) {
+        flags |= bluetooth.BTCF_POWERED;
+        if (_hci.bredr(layer)) flags |= bluetooth.BTCF_CONNECTABLE;
+        if (layer.visible) flags |= bluetooth.BTCF_VISIBLE;
+    }
+    if (discovery.running(layer)) flags |= bluetooth.BTCF_DISCOVERING;
+    return flags;
+}
+
+/// A controller copied into an entry, under the base's lock; `now` the
+/// time in milliseconds, which its time left visible is counted from.
+pub fn describe(controller: *const Controller, entry: *Entry, now: u64) void {
     const layer = &controller.layer;
     copyString(&entry.device_name, &controller.device_name);
     copyString(&entry.name, @ptrCast(&layer.name));
@@ -157,6 +176,8 @@ pub fn describe(controller: *const Controller, entry: *Entry) void {
         .lmp_subversion = layer.lmp_subversion,
         .manufacturer = layer.manufacturer,
         .class_of_device = layer.class_of_device,
+        .flags = flagsOf(layer),
+        .visible_left = if (layer.state == bluetooth.BTCS_UP and layer.powered) local.visibleLeft(layer, now) else 0,
         .name = @ptrCast(&entry.name),
         .bus = controller.bus,
         .baud = controller.baud,

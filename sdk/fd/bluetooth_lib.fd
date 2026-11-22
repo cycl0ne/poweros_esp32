@@ -4,6 +4,7 @@
 //! it with OpenLibrary("bluetooth.library", 1); the structures are in
 //! sdk.bluetooth.
 ##include libs/exec/exec as exec
+##include libs/utility/utility as utility
 ##include libs/bluetooth/bluetooth as bluetooth
 ##basetype BluetoothBase
 ##name bluetooth.library
@@ -23,4 +24,16 @@ void ReleaseBTControllers(?*exec.List list)
 ?*bluetooth.BTNotify AddBTNotify(*exec.Task task, u32 signals)
 /// A notification given back: its task is told no more. Null does nothing.
 void RemBTNotify(?*bluetooth.BTNotify notify)
+// Settings
+/// A controller's settings changed by the tags (BTCA_*): on or off, its name, whether others find it. 0, or BTERR_*.
+i32 SetBTControllerAttrs(u32 controller, ?[*]const utility.TagItem tags)
+// Discovery
+/// A controller made to look for the devices around for about `seconds`: LE's advertising, an inquiry, the names not heard. 0, or BTERR_*.
+i32 StartBTDiscovery(u32 controller, u32 seconds)
+/// A controller's discovery ended now; what it found stays listed.
+void StopBTDiscovery(u32 controller)
+/// The devices a controller found - or every controller, BT_ALL_CONTROLLERS: a list of BTDevice, the caller's until ReleaseBTDevices; null for no memory.
+?*exec.List ObtainBTDevices(u32 controller)
+/// A list from ObtainBTDevices given back. Null does nothing.
+void ReleaseBTDevices(?*exec.List list)
 ##end

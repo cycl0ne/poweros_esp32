@@ -5,11 +5,19 @@
 //!   Reset; Read Local Version Information; Read Local Supported Commands
 //!   (from HCI 1.2 on); Read Local Supported Features, and the extended
 //!   pages 1 and 2 where it has them; Read Buffer Size (BR/EDR);
-//!   Read BD_ADDR; LE Read Buffer Size and LE Read Local Supported
-//!   Features (LE); Set Event Mask; LE Set Event Mask; Write Simple
-//!   Pairing Mode; Write LE Host Supported; Write Class of Device and
-//!   Write Local Name (BR/EDR); feature page 1 read again, now with what
+//!   Read BD_ADDR; - a pause for the controller's settings - LE Read
+//!   Buffer Size and LE Read Local Supported Features (LE); Set Event
+//!   Mask; LE Set Event Mask; Write Simple Pairing Mode; Write LE Host
+//!   Supported; Write Class of Device, Write Local Name, Write Inquiry
+//!   Mode, Write Inquiry Scan Type, Write Extended Inquiry Response and
+//!   Write Scan Enable (BR/EDR); feature page 1 read again, now with what
 //!   the host switched on.
+//!
+//! **The pause** comes once the address is known: the controller's
+//! settings are kept by it, and the task reads them then - whether it is
+//! on, visible, its name - into the layer (`wants_settings`, `settled`),
+//! from which the steps after it write them. A bring-up that has them
+//! already, after a hardware error, does not stop there.
 //!
 //! **A step is sent only where it belongs**: a step for LE only to a
 //! controller that has LE, one for BR/EDR only to one that has BR/EDR,
@@ -31,14 +39,17 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
+const local = @import("local.zig");
 
 /// The reset can take a controller longer than another command.
 const RESET_TIMEOUT_MS: u32 = 5000;
 
 const Step = struct {
-    opcode: u16,
+    opcode: u16 = 0,
     /// The command's bit in the supported-commands mask.
-    bit: u16,
+    bit: u16 = 0,
+    /// The pause for the settings, which sends nothing.
+    settings: bool = false,
     /// Whether the step is a fault when it fails.
     required: bool = false,
     timeout_ms: u32 = _hci.COMMAND_TIMEOUT_MS,
@@ -60,6 +71,7 @@ const steps = [_]Step{
     .{ .opcode = hci.HCI_OP_READ_LOCAL_EXT_FEATURES, .bit = hci.CMDBIT_READ_LOCAL_EXT_FEATURES, .wanted = hasPageTwo, .params = pageTwo, .took = tookPage },
     .{ .opcode = hci.HCI_OP_READ_BUFFER_SIZE, .bit = hci.CMDBIT_READ_BUFFER_SIZE, .required = true, .wanted = _hci.bredr, .took = tookBufferSize },
     .{ .opcode = hci.HCI_OP_READ_BD_ADDR, .bit = hci.CMDBIT_READ_BD_ADDR, .required = true, .took = tookAddress },
+    .{ .settings = true },
     .{ .opcode = hci.HCI_OP_LE_READ_BUFFER_SIZE, .bit = hci.CMDBIT_LE_READ_BUFFER_SIZE, .wanted = _hci.le, .took = tookLeBufferSize },
     .{ .opcode = hci.HCI_OP_LE_READ_LOCAL_FEATURES, .bit = hci.CMDBIT_LE_READ_LOCAL_FEATURES, .wanted = _hci.le, .took = tookLeFeatures },
     .{ .opcode = hci.HCI_OP_SET_EVENT_MASK, .bit = hci.CMDBIT_SET_EVENT_MASK, .wanted = hasEventMask, .params = eventMask },
@@ -67,7 +79,11 @@ const steps = [_]Step{
     .{ .opcode = hci.HCI_OP_WRITE_SIMPLE_PAIRING_MODE, .bit = hci.CMDBIT_WRITE_SIMPLE_PAIRING_MODE, .wanted = hasSimplePairing, .params = switchedOn },
     .{ .opcode = hci.HCI_OP_WRITE_LE_HOST_SUPPORTED, .bit = hci.CMDBIT_WRITE_LE_HOST_SUPPORTED, .wanted = isDualMode, .params = leHost },
     .{ .opcode = hci.HCI_OP_WRITE_CLASS_OF_DEVICE, .bit = hci.CMDBIT_WRITE_CLASS_OF_DEVICE, .wanted = _hci.bredr, .params = classOfDevice },
-    .{ .opcode = hci.HCI_OP_WRITE_LOCAL_NAME, .bit = hci.CMDBIT_WRITE_LOCAL_NAME, .wanted = _hci.bredr, .params = localName },
+    .{ .opcode = hci.HCI_OP_WRITE_LOCAL_NAME, .bit = hci.CMDBIT_WRITE_LOCAL_NAME, .wanted = _hci.bredr, .params = local.nameParams },
+    .{ .opcode = hci.HCI_OP_WRITE_INQUIRY_MODE, .bit = hci.CMDBIT_WRITE_INQUIRY_MODE, .wanted = hasInquiryMode, .params = inquiryMode },
+    .{ .opcode = hci.HCI_OP_WRITE_INQUIRY_SCAN_TYPE, .bit = hci.CMDBIT_WRITE_INQUIRY_SCAN_TYPE, .wanted = hasInterlacedScan, .params = interlaced },
+    .{ .opcode = hci.HCI_OP_WRITE_EXTENDED_INQUIRY_RESPONSE, .bit = hci.CMDBIT_WRITE_EXTENDED_INQUIRY_RESPONSE, .wanted = local.hasResponse, .params = local.responseParams },
+    .{ .opcode = hci.HCI_OP_WRITE_SCAN_ENABLE, .bit = hci.CMDBIT_WRITE_SCAN_ENABLE, .wanted = _hci.bredr, .params = local.scanParams },
     .{ .opcode = hci.HCI_OP_READ_LOCAL_EXT_FEATURES, .bit = hci.CMDBIT_READ_LOCAL_EXT_FEATURES, .wanted = hasPages, .params = pageOne, .took = tookPage },
 };
 
@@ -76,6 +92,11 @@ const steps = [_]Step{
 pub fn next(layer: *Hci) void {
     while (layer.step < steps.len) : (layer.step += 1) {
         const step = steps[layer.step];
+        if (step.settings) {
+            if (layer.settled) continue;
+            layer.wants_settings = true;
+            return;
+        }
         if (step.wanted) |wanted| {
             if (!wanted(layer)) continue;
         }
@@ -115,6 +136,16 @@ pub fn timedOut(layer: *Hci, opcode: u16) void {
     _hci.fail(layer, bluetooth.BTERR_TIMEOUT);
 }
 
+/// The controller's settings put into the layer while the bring-up waits
+/// for them: it goes on past its pause.
+pub fn settled(layer: *Hci) void {
+    if (layer.state != bluetooth.BTCS_STARTING or !layer.wants_settings) return;
+    layer.wants_settings = false;
+    layer.settled = true;
+    layer.step += 1;
+    next(layer);
+}
+
 // --- whether a step is wanted -------------------------------------------------
 
 fn hasCommandMask(layer: *const Hci) bool {
@@ -139,6 +170,25 @@ fn hasSimplePairing(layer: *const Hci) bool {
 
 fn isDualMode(layer: *const Hci) bool {
     return _hci.bredr(layer) and _hci.le(layer);
+}
+
+/// Visible, a controller that can listens on a frequency of each of the
+/// inquiry's two trains in every interval: a device that inquires finds
+/// it within the first interval, not only once it has gone over to the
+/// train the controller listens on - seconds later.
+fn hasInterlacedScan(layer: *const Hci) bool {
+    return _hci.bredr(layer) and _hci.feature(layer, 0, hci.LMP_INTERLACED_INQUIRY_SCAN);
+}
+
+fn interlaced(_: *const Hci, into: *[hci.HCI_MAX_PARAMS]u8) usize {
+    into[0] = hci.INQUIRY_SCAN_INTERLACED;
+    return 1;
+}
+
+/// Inquiry results with RSSI, or extended ones: a controller with
+/// neither keeps the standard results it starts with.
+fn hasInquiryMode(layer: *const Hci) bool {
+    return _hci.bredr(layer) and (_hci.feature(layer, 0, hci.LMP_RSSI_INQUIRY) or _hci.feature(layer, 0, hci.LMP_EXTENDED_INQUIRY));
 }
 
 // --- the parameters -----------------------------------------------------------
@@ -173,14 +223,10 @@ fn classOfDevice(layer: *const Hci, into: *[hci.HCI_MAX_PARAMS]u8) usize {
     return 3;
 }
 
-/// The name, up to its NUL, the rest of the 248 bytes zeros.
-fn localName(layer: *const Hci, into: *[hci.HCI_MAX_PARAMS]u8) usize {
-    var ended = false;
-    for (0..hci.HCI_MAX_NAME) |index| {
-        if (layer.name[index] == 0) ended = true;
-        into[index] = if (ended) 0 else layer.name[index];
-    }
-    return hci.HCI_MAX_NAME;
+/// Extended results where the controller has them, else with RSSI.
+fn inquiryMode(layer: *const Hci, into: *[hci.HCI_MAX_PARAMS]u8) usize {
+    into[0] = if (_hci.feature(layer, 0, hci.LMP_EXTENDED_INQUIRY)) hci.INQUIRY_MODE_EXTENDED else hci.INQUIRY_MODE_RSSI;
+    return 1;
 }
 
 fn bit(n: u6) u64 {

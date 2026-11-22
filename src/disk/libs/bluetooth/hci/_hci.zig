@@ -2,7 +2,9 @@
 //! The HCI as the library speaks it to one controller: the commands it
 //! sends, within the controller's credits; the events it takes, each
 //! answer matched to the command it answers; a time-out for each command;
-//! and what the controller said it is, which bringup.zig asks for.
+//! what the controller said it is, which bringup.zig asks for; what it
+//! shows others and whether it is on (local.zig); and the devices it
+//! found (discovery.zig, devices.zig).
 //!
 //! **Pure.** Nothing here calls exec or waits: the task hands in each
 //! packet that came (`received`), the time (`now`) and the time-outs
@@ -19,12 +21,19 @@
 //! **Under the controllers' lock.** The task changes a layer under the
 //! base's lock and ObtainBTControllers reads it under the lock shared, so
 //! a lister sees a controller between two packets, never inside one.
+//!
+//! **Its own times** - a discovery's phase, the end of being visible for
+//! a time - are deadlines like a command's: `nextDeadline` answers the
+//! earliest of them all, and `tick` runs whichever has passed.
 
 const sdk = @import("sdk");
 const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
 const bringup = @import("bringup.zig");
+const devices = @import("devices.zig");
+const discovery = @import("discovery.zig");
+const local = @import("local.zig");
 
 /// How many commands wait for their turn, and how many may be out at once.
 pub const QUEUE = 8;
@@ -101,6 +110,20 @@ pub const Hci = struct {
     /// a NUL - set by the task before the bring-up writes them.
     class_of_device: u32 = 0,
     name: [hci.HCI_MAX_NAME + 1]u8 = @splat(0),
+
+    // Its settings (local.zig): on, visible and until when - null for no
+    // end. The bring-up stops once the address is known and asks for
+    // them (`wants_settings`); the task puts them here and lets it go on
+    // (bringup.settled), and a bring-up after that one has them.
+    powered: bool = true,
+    visible: bool = false,
+    visible_until: ?u64 = null,
+    wants_settings: bool = false,
+    settled: bool = false,
+
+    /// Its discovery, and what it found.
+    discovery: discovery.Discovery = .{},
+    devices: [devices.DEVICES]devices.Device = @splat(.{}),
 };
 
 /// Whether feature `n` of page `page` is set.
@@ -140,6 +163,8 @@ pub fn start(layer: *Hci) void {
     layer.queue_head = 0;
     for (&layer.pending) |*pending| pending.used = false;
     layer.step = 0;
+    layer.wants_settings = false;
+    discovery.reset(layer);
     bringup.next(layer);
 }
 
@@ -151,6 +176,8 @@ pub fn fail(layer: *Hci, failure: i32) void {
     layer.changed = true;
     layer.queue_count = 0;
     for (&layer.pending) |*pending| pending.used = false;
+    layer.wants_settings = false;
+    discovery.reset(layer);
 }
 
 /// A command queued, and sent if the controller takes it now: false when
@@ -208,17 +235,24 @@ fn takePending(layer: *Hci, opcode: u16) bool {
     return true;
 }
 
-/// The earliest time a command out must be answered by; null for none.
+/// The earliest time something is due: a command out to be answered, a
+/// discovery's phase to end, being visible to end; null for none.
 pub fn nextDeadline(layer: *const Hci) ?u64 {
     var earliest: ?u64 = null;
     for (&layer.pending) |*pending| {
         if (!pending.used) continue;
         if (earliest == null or pending.deadline < earliest.?) earliest = pending.deadline;
     }
+    if (layer.state != bluetooth.BTCS_UP) return earliest;
+    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer) }) |due| {
+        const time = due orelse continue;
+        if (earliest == null or time < earliest.?) earliest = time;
+    }
     return earliest;
 }
 
-/// The commands whose time has passed given up on, at `layer.now`.
+/// Whatever is due at `layer.now` done: the commands whose time has
+/// passed given up on, a discovery's phase ended, being visible ended.
 pub fn tick(layer: *Hci) void {
     for (&layer.pending) |*pending| {
         if (!pending.used or pending.deadline > layer.now) continue;
@@ -228,11 +262,19 @@ pub fn tick(layer: *Hci) void {
         if (layer.credits == 0) layer.credits = 1;
         timedOut(layer, pending.opcode);
     }
+    if (layer.state == bluetooth.BTCS_UP) {
+        discovery.tick(layer);
+        local.tick(layer);
+    }
     pump(layer);
 }
 
 fn timedOut(layer: *Hci, opcode: u16) void {
-    if (layer.state == bluetooth.BTCS_STARTING) bringup.timedOut(layer, opcode);
+    switch (layer.state) {
+        bluetooth.BTCS_STARTING => bringup.timedOut(layer, opcode),
+        bluetooth.BTCS_UP => discovery.timedOut(layer, opcode),
+        else => {},
+    }
 }
 
 /// A packet the controller sent, from its header on.
@@ -267,13 +309,32 @@ fn event(layer: *Hci, code: u8, params: []const u8) void {
             pump(layer);
         },
         hci.HCI_EV_HARDWARE_ERROR => hardwareError(layer),
+        else => if (layer.state == bluetooth.BTCS_UP) discovered(layer, code, params),
+    }
+}
+
+/// The events of a controller that is up: what its discovery hears.
+fn discovered(layer: *Hci, code: u8, params: []const u8) void {
+    switch (code) {
+        hci.HCI_EV_INQUIRY_COMPLETE => discovery.inquiryComplete(layer),
+        hci.HCI_EV_INQUIRY_RESULT => discovery.inquiryResult(layer, params, .plain),
+        hci.HCI_EV_INQUIRY_RESULT_WITH_RSSI => discovery.inquiryResult(layer, params, .rssi),
+        hci.HCI_EV_EXTENDED_INQUIRY_RESULT => discovery.inquiryResult(layer, params, .extended),
+        hci.HCI_EV_REMOTE_NAME_REQUEST_COMPLETE => discovery.nameComplete(layer, params),
+        hci.HCI_EV_LE_META => {
+            if (params.len >= 1 and params[0] == hci.HCI_LE_EV_ADVERTISING_REPORT) discovery.advertisingReport(layer, params[1..]);
+        },
         else => {},
     }
 }
 
 /// A command's answer: its return parameters, the status first.
 fn completed(layer: *Hci, opcode: u16, returned: []const u8) void {
-    if (layer.state == bluetooth.BTCS_STARTING) bringup.answered(layer, opcode, returned);
+    switch (layer.state) {
+        bluetooth.BTCS_STARTING => bringup.answered(layer, opcode, returned),
+        bluetooth.BTCS_UP => discovery.answered(layer, opcode, returned),
+        else => {},
+    }
 }
 
 /// The controller's own trouble: it is brought up again from its reset,

@@ -9,6 +9,7 @@
 
 const libraries = @import("../libs/exec/libraries.zig");
 const exec = @import("../libs/exec/exec.zig");
+const utility = @import("../libs/utility/utility.zig");
 const bluetooth = @import("../libs/bluetooth/bluetooth.zig");
 
 /// The name to open it by (OpenLibrary, OpenDevice).
@@ -22,6 +23,11 @@ pub const LVO = struct {
     pub const ReleaseBTControllers = libraries.lvo(7);
     pub const AddBTNotify = libraries.lvo(8);
     pub const RemBTNotify = libraries.lvo(9);
+    pub const SetBTControllerAttrs = libraries.lvo(10);
+    pub const StartBTDiscovery = libraries.lvo(11);
+    pub const StopBTDiscovery = libraries.lvo(12);
+    pub const ObtainBTDevices = libraries.lvo(13);
+    pub const ReleaseBTDevices = libraries.lvo(14);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -33,6 +39,11 @@ pub const Fn = struct {
     pub const ReleaseBTControllers = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
     pub const AddBTNotify = *const fn (*BluetoothBase, *exec.Task, u32) callconv(.c) ?*bluetooth.BTNotify;
     pub const RemBTNotify = *const fn (*BluetoothBase, ?*bluetooth.BTNotify) callconv(.c) void;
+    pub const SetBTControllerAttrs = *const fn (*BluetoothBase, u32, ?[*]const utility.TagItem) callconv(.c) i32;
+    pub const StartBTDiscovery = *const fn (*BluetoothBase, u32, u32) callconv(.c) i32;
+    pub const StopBTDiscovery = *const fn (*BluetoothBase, u32) callconv(.c) void;
+    pub const ObtainBTDevices = *const fn (*BluetoothBase, u32) callconv(.c) ?*exec.List;
+    pub const ReleaseBTDevices = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -71,5 +82,30 @@ pub const BluetoothBase = opaque {
     /// A notification given back: its task is told no more. Null does nothing.
     pub fn RemBTNotify(self: *BluetoothBase, notify: ?*bluetooth.BTNotify) void {
         return libraries.call(self, LVO.RemBTNotify, Fn.RemBTNotify, .{notify});
+    }
+
+    /// A controller's settings changed by the tags (BTCA_*): on or off, its name, whether others find it. 0, or BTERR_*.
+    pub fn SetBTControllerAttrs(self: *BluetoothBase, controller: u32, tags: ?[*]const utility.TagItem) i32 {
+        return libraries.call(self, LVO.SetBTControllerAttrs, Fn.SetBTControllerAttrs, .{ controller, tags });
+    }
+
+    /// A controller made to look for the devices around for about `seconds`: LE's advertising, an inquiry, the names not heard. 0, or BTERR_*.
+    pub fn StartBTDiscovery(self: *BluetoothBase, controller: u32, seconds: u32) i32 {
+        return libraries.call(self, LVO.StartBTDiscovery, Fn.StartBTDiscovery, .{ controller, seconds });
+    }
+
+    /// A controller's discovery ended now; what it found stays listed.
+    pub fn StopBTDiscovery(self: *BluetoothBase, controller: u32) void {
+        return libraries.call(self, LVO.StopBTDiscovery, Fn.StopBTDiscovery, .{controller});
+    }
+
+    /// The devices a controller found - or every controller, BT_ALL_CONTROLLERS: a list of BTDevice, the caller's until ReleaseBTDevices; null for no memory.
+    pub fn ObtainBTDevices(self: *BluetoothBase, controller: u32) ?*exec.List {
+        return libraries.call(self, LVO.ObtainBTDevices, Fn.ObtainBTDevices, .{controller});
+    }
+
+    /// A list from ObtainBTDevices given back. Null does nothing.
+    pub fn ReleaseBTDevices(self: *BluetoothBase, list: ?*exec.List) void {
+        return libraries.call(self, LVO.ReleaseBTDevices, Fn.ReleaseBTDevices, .{list});
     }
 };

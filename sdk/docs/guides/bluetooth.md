@@ -7,23 +7,27 @@ it - over whatever carries them, USB or a UART. `bluetooth.library`, in
 device that drives it, brings it up and keeps what it learned, and tells
 the programs that asked when a controller comes, goes or changes.
 
-The library brings controllers up and lists them. It does not yet look
-for devices, pair with them or connect to them: those are the stack's
-next parts.
+The library brings controllers up, lists them, sets them - on or off,
+their name, whether others find them - and finds the devices around
+them. It does not yet pair with devices or connect to them: those are
+the stack's next parts.
 
 This guide is the pieces first, then what a controller device is, how a
-controller is brought up, listing the controllers from a program, the USB
-controllers and the MediaTek MT7922's firmware, the Raspberry Pi 4 Model
-B's controller, and `C:Bluetooth`.
+controller is brought up, listing the controllers from a program, a
+controller's settings, finding devices, the USB controllers and the
+MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
+`C:Bluetooth`.
 
 ## The pieces
 
 ```
  programs          C:Bluetooth                    a program
                           \                          /
-                    ObtainBTControllers, AddBTNotify
+           ObtainBTControllers, SetBTControllerAttrs, AddBTNotify,
+           StartBTDiscovery, ObtainBTDevices
  the stack          bluetooth.library: its own task, every controller's
-                    HCI traffic, the bring-up
+                    HCI traffic, the bring-up, the settings, the
+                    discoveries
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
                           |  AddBTController, RemBTController
  the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
@@ -35,12 +39,13 @@ B's controller, and `C:Bluetooth`.
 
 | Piece | Where | What it is |
 |---|---|---|
-| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up and listed, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
+| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
+| `ENVARC:Sys/bluetooth/` | | each controller's settings, kept by its address |
 | `usb/bluetooth.device` | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller; a class driver |
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
-| `C:Bluetooth` | | the controllers, and with `INFO` what each is |
+| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - and the devices around them (`SCAN`) |
 
 The library, the devices, their firmware and the command are the disk's
 `bluetooth` set.
@@ -119,13 +124,22 @@ A controller is brought up command by command:
 1. **Reset**, and what it is: its local version, the commands it takes,
    its features (pages 1 and 2 where it has them), its buffers for ACL
    and SCO data, its address; for LE, its LE buffers (none of its own:
-   it shares the BR/EDR ones) and its LE features.
+   it shares the BR/EDR ones) and its LE features. Once its address is
+   known, the settings kept for it are read, and the rest waits for
+   them.
 2. **What it is to tell**: the events the stack takes, BR/EDR's and LE's,
    chosen by what it can do.
 3. **What it is to be**: Secure Simple Pairing on, LE host support on a
    controller with BR/EDR and LE both, its class of device (a desktop
-   computer), and its name: the machine's, the first line of
-   `ENVARC:Sys/net/hostname`, or `PowerOS` without one.
+   computer), and its name: the one kept for it, or the machine's - the
+   first line of `ENVARC:Sys/net/hostname` that is neither blank nor a
+   comment, or `PowerOS` without one.
+   For BR/EDR also: inquiry results with each device's signal, and with
+   what it says of itself where the controller has extended results;
+   inquiries listened for on both of the inquiry's trains in each
+   interval (interlaced), so that a device that looks finds it within
+   the first; its extended inquiry response - its name - and what it
+   answers: pages while it is on, inquiries too while it is visible.
 
 A step the controller does not take - by the commands it said it takes,
 or by `Unknown HCI Command` - is passed over, unless the controller is
@@ -170,6 +184,111 @@ const notify = bt.AddBTNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(sign
 // ... Wait for it, then ObtainBTControllers again
 bt.RemBTNotify(notify);
 ```
+
+The signal comes for every change of any controller: one added, up,
+failed or gone; set otherwise; a discovery begun or over, a device it
+found, a name it heard. It says that something changed, not what, and
+changes close together may come as one.
+
+## A controller's settings
+
+What a controller shows others is set with `SetBTControllerAttrs`, for
+one controller or for every one that is up (`BT_ALL_CONTROLLERS`), with
+a tag for each setting that is to change:
+
+```zig
+const tags = [_]utility.TagItem{
+    .{ .tag = bluetooth.BTCA_Name, .data = @intFromPtr("Desk") },
+    .{ .tag = bluetooth.BTCA_Visible, .data = 120 }, // seconds
+    .{},
+};
+const result = bt.SetBTControllerAttrs(bluetooth.BT_ALL_CONTROLLERS, &tags);
+// 0, or BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_UNSUPPORTED, BTERR_NOMEM
+```
+
+- **`BTCA_Powered`** - on, or off. Off, the controller answers nobody
+  and looks for nothing: a discovery it runs stops.
+- **`BTCA_Name`** - the name it shows others, UTF-8, cut at a whole
+  character to 247 bytes - one fewer than a name may have, so that a NUL
+  always ends it: a controller that reads its own to a NUL, as the
+  CYW43455 does, tells others a wrong length for one of 248 - and an
+  empty one is the machine's again.
+- **`BTCA_Visible`** - found by others who look - inquiries answered -
+  for that many seconds, until told otherwise (`BT_VISIBLE_ALWAYS`), or
+  not at all (0). Only BR/EDR is found: the controller does not
+  advertise on LE, and one without BR/EDR answers `BTERR_UNSUPPORTED`.
+
+A controller that is up says how it is now in its `flags` -
+`BTCF_POWERED`, `BTCF_CONNECTABLE` (pages answered), `BTCF_VISIBLE` with
+`visible_left` the seconds left or `BT_VISIBLE_ALWAYS`, and
+`BTCF_DISCOVERING` - and its name in `name`.
+
+**What is set is kept** for the controller's next start, by its address,
+in `ENVARC:Sys/bluetooth/<address>/` - the address's twelve hex digits,
+the most significant first (`00005EEF1042`):
+
+| File | What it holds |
+|---|---|
+| `settings` | `Powered = YES` or `NO`, and `Visible = YES` - found until told otherwise - or `NO` |
+| `name` | the name, its first line; without the file, the machine's |
+
+Visible for a time is not kept: it ends at its time, and a start ends it.
+A controller without files starts on, not visible, with the machine's
+name.
+
+## Finding devices
+
+`StartBTDiscovery` makes a controller - or every one that is up and on -
+look for the devices around it, for about as many seconds as it is
+given (2 to 60; 0 for about ten), in three parts:
+
+1. **LE's advertising**, for a third of the time: listened to actively,
+   every advertiser asked for its scan response, which often has its
+   name.
+2. **An inquiry**, for the rest: the BR/EDR devices that are visible
+   answer, with their signal and, from a controller with extended
+   results, their names and services.
+3. **The names**: each BR/EDR device that has said no complete name is
+   asked for it, the strongest first, up to ten seconds each.
+
+A controller without LE, or without BR/EDR, gives the whole time to the
+part it has. The devices it found before are forgotten as it begins;
+`BTCF_DISCOVERING` is set on it until the last part is over, and
+`StopBTDiscovery` ends it before. A device is in the list as soon as it
+is heard, and a name as soon as it comes:
+
+```zig
+const list = bt.ObtainBTDevices(bluetooth.BT_ALL_CONTROLLERS) orelse return;
+defer bt.ReleaseBTDevices(list);
+var it = list.iterator();
+while (it.next()) |node| {
+    const found: *const bluetooth.BTDevice = @fieldParentPtr("node", node);
+    // found.node.name, .address (.kind: BTADDR_BREDR, _LE_PUBLIC, _LE_RANDOM),
+    // .flags (BTDF_*), .rssi, .class_of_device, .appearance, .company,
+    // .uuid16[0..uuid16_count], .uuid128[0..uuid128_count], .age, ...
+}
+```
+
+Each node is a copy made for the caller, as the device was at the call.
+What a device is heard to say of itself is gathered, over BR/EDR from
+its extended inquiry response and over LE from its advertising and its
+scan response:
+
+| Field | What it is |
+|---|---|
+| `node.name` | its name; `BTDF_SHORT_NAME` while only a shortened one has come, `BTDF_NO_NAME` when it was asked and had none |
+| `flags` | `BTDF_BREDR`, `BTDF_LE` - how it was heard, both for a device that answered an inquiry and advertised from the same public address - and `BTDF_CONNECTABLE` for an advertiser that takes connections |
+| `rssi` | its signal as last heard, in dBm; `BT_RSSI_NONE` for none |
+| `tx_power` | the power it says it sends at, in dBm; `BT_TX_POWER_NONE` for none |
+| `class_of_device` | BR/EDR's class: what it is (`COD_MAJOR_*`) and which services it has |
+| `appearance` | LE's word for what it is: a category and a kind in it |
+| `company` | the maker named in its manufacturer data; `BT_COMPANY_NONE` for none |
+| `uuid16`, `uuid128` | the services it named, eight 16-bit and two 128-bit at most; 32-bit ones are kept as 128-bit |
+| `ad_flags` | LE's flags: found for a time or in general, and without BR/EDR |
+| `age` | how many milliseconds ago it was last heard |
+
+A controller keeps up to 64 devices; when more are heard, it keeps those
+heard strongest. The list stays until its next discovery.
 
 ## Controllers on USB
 
@@ -259,9 +378,9 @@ them.
 
 ```
 1> Bluetooth
-0: 00:00:5E:EF:10:42  up  usb/bluetooth.device unit 0
+0: 00:00:5E:EF:10:42  up, on  usb/bluetooth.device unit 0
 1> Bluetooth INFO
-0: 00:00:5E:EF:10:42  up  usb/bluetooth.device unit 0
+0: 00:00:5E:EF:10:42  up, on  usb/bluetooth.device unit 0
   chip        MediaTek MT7922
   firmware    BT_RAM_CODE_MT7922_1_1_hdr.bin (20261027203403)
   bus         USB
@@ -275,12 +394,14 @@ them.
               (on) Secure Connections extended inquiry sniff subrating
               LE encryption LE data length LE privacy LE 2M PHY
               LE Coded PHY extended advertising
-  name        PowerOS
+  name        poweros
   class       000104
 ```
 
 `Bluetooth` lists the controllers: number, address - dashes until the
-controller has said it - state and the device and unit each is. `INFO`
+controller has said it - state, and once it is up whether it is on or
+off, visible - for how long more - and looking, and the device and unit
+each is. `INFO`
 adds what each is: the chip and firmware its device gave it, how it is
 reached - USB, or a UART and its rate - the versions of its HCI and link
 manager and who made it, its buffers, what it can do of note - `(on)`
@@ -294,7 +415,7 @@ still setting the controller up - and a moment later:
 1> Bluetooth
 0: --:--:--:--:--:--  opening  bluetooth/cyw43455bt.device unit 0
 1> Bluetooth INFO
-0: 98:FE:54:CF:67:48  up  bluetooth/cyw43455bt.device unit 0
+0: 98:FE:54:CF:67:48  up, on  bluetooth/cyw43455bt.device unit 0
   chip        Infineon CYW43455 (BCM4345C0)
   firmware    BCM4345C0.hcd (build 0382)
   bus         UART, 919117 bit/s
@@ -307,6 +428,47 @@ still setting the controller up - and a moment later:
   features    EDR 2 Mbit/s EDR 3 Mbit/s eSCO Secure Simple Pairing
               (on) Secure Connections extended inquiry sniff subrating
               LE encryption LE data length
-  name        PowerOS
+  name        poweros
   class       000104
 ```
+
+Set, and looking:
+
+```
+1> Bluetooth NAME Desk VISIBLE 120
+0: 00:00:5E:EF:10:42  up, on, visible for 120 s  usb/bluetooth.device unit 0
+1> Bluetooth SCAN INFO
+Looking for about 10 s, then for the names; CTRL-C stops
+  F2:03:00:00:10:01  LE random   -32 dBm  Sensor
+  00:00:5E:EF:10:43  BR/EDR      -42 dBm  poweros                   computer
+2 found
+
+  F2:03:00:00:10:01  LE random   -32 dBm  Sensor
+      controller 0, heard 10852 ms ago, connectable
+      service 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
+
+  00:00:5E:EF:10:43  BR/EDR      -42 dBm  poweros                   computer
+      controller 0, heard 6725 ms ago, class 000104
+```
+
+`POWER ON` or `OFF`, `NAME` and `VISIBLE` - `ON` until told otherwise,
+`OFF`, or a number of seconds - set the controllers
+(`SetBTControllerAttrs`), which are then listed; `NAME ""` gives a
+controller the machine's name again.
+
+`SCAN` makes them look (`StartBTDiscovery`) for about `TIME` seconds -
+ten without - and shows each device as it is found: its address, how it
+was heard (`BR/EDR`, `LE`, `LE random` for an LE device's random
+address, `BR/EDR+LE` for one heard both ways), its signal, its name -
+`-` until one has come, `(no name)` for one that was asked and has none
+- and what it is, by its class of device or its LE appearance. A device
+is shown again when its name comes, and when its whole name comes after
+a shortened one. After the inquiry, the names not yet heard are asked
+for; CTRL-C stops it all. With `INFO`, what each device said of itself
+follows: its whole name where its line has no room for it, the
+controller that heard it and how long ago, its class and appearance,
+the power it sends at, whether it takes connections, its maker, and its
+services, named where they are well known.
+
+`CONTROLLER` makes any of these for one controller, by its number;
+without it, they are for every one.

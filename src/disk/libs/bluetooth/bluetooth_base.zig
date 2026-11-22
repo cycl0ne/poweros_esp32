@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
-//! bluetooth.library's base: exec's Library header, the controllers and
-//! their lock, the library's task and how it is started and ended, and
-//! who wants to be told of a change. One base, shared by every opener.
+//! bluetooth.library's base: exec's Library header, utility.library for
+//! the calls' tags, the controllers and their lock, the library's task and
+//! how it is started and ended, and who wants to be told of a change. One
+//! base, shared by every opener.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// The task's priority: above the programs, so that a keyboard's events
 /// are not kept waiting behind them.
@@ -15,6 +17,8 @@ pub const task_pri: i8 = 5;
 pub const BluetoothBase = extern struct {
     lib: exec.Library,
     sys_base: *ExecBase,
+    /// Opened by the init, closed at the expunge.
+    utility_base: *UtilityBase,
     /// What LoadSeg made, handed back at the expunge.
     seg_list: ?*anyopaque = null,
     /// dos.library, opened by the first start of the task and closed at

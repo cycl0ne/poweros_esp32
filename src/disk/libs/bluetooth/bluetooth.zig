@@ -5,9 +5,10 @@
 //! (sdk/devices/hci.zig), offered by their drivers (`controller/`). The
 //! library's task (`task/`) owns them all: it keeps reads queued on each,
 //! runs the HCI (`hci/`) - the commands within the controller's credits,
-//! each answer matched to its command, a time-out for each - and brings
-//! each controller up. Whoever asked is told when the controllers change
-//! (`notify/`).
+//! each answer matched to its command, a time-out for each - brings each
+//! controller up with the settings kept for it, and sets what it shows
+//! others. Its discoveries (`discovery/`) find the devices around. Whoever
+//! asked is told when the controllers change (`notify/`).
 //!
 //! The jump table is bluetooth_lvo.zig, the ROM tag, init and expunge
 //! bluetooth_init.zig, the base bluetooth_base.zig. Each call is a file

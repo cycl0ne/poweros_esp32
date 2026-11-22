@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! Host tests of bluetooth.library's HCI layer: the bring-up's commands,
 //! in order and with their parameters, against a controller that answers
-//! from a script; what the answers say kept; the steps a controller
-//! without LE or without a command is not given; refusals, time-outs,
-//! credits, a transport that cannot take a packet, and a hardware error.
+//! from a script; what the answers say kept; the pause for the settings;
+//! the steps a controller without LE or without a command is not given;
+//! refusals, time-outs, credits, a transport that cannot take a packet,
+//! and a hardware error.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -11,6 +12,7 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
 const _hci = @import("../hci/_hci.zig");
+const bringup = @import("../hci/bringup.zig");
 const Hci = _hci.Hci;
 
 const testing = std.testing;
@@ -58,12 +60,17 @@ const Script = struct {
     }
 
     /// Every command sent and not yet answered, answered - and those the
-    /// answers make it send, until it sends nothing more.
+    /// answers make it send, until it sends nothing more; the bring-up's
+    /// pause for the settings let go, with the layer's as they are.
     fn run(script: *Script, layer: *Hci) void {
-        while (script.answered < script.count) {
-            const sent = script.sent[script.answered];
-            script.answered += 1;
-            script.answer(layer, sent);
+        while (true) {
+            while (script.answered < script.count) {
+                const sent = script.sent[script.answered];
+                script.answered += 1;
+                script.answer(layer, sent);
+            }
+            if (!layer.wants_settings) return;
+            bringup.settled(layer);
         }
     }
 
@@ -154,6 +161,10 @@ const dual_mode = [_]u16{
     hci.HCI_OP_WRITE_LE_HOST_SUPPORTED,
     hci.HCI_OP_WRITE_CLASS_OF_DEVICE,
     hci.HCI_OP_WRITE_LOCAL_NAME,
+    hci.HCI_OP_WRITE_INQUIRY_MODE,
+    hci.HCI_OP_WRITE_INQUIRY_SCAN_TYPE,
+    hci.HCI_OP_WRITE_EXTENDED_INQUIRY_RESPONSE,
+    hci.HCI_OP_WRITE_SCAN_ENABLE,
     hci.HCI_OP_READ_LOCAL_EXT_FEATURES,
 };
 
@@ -208,6 +219,70 @@ test "a dual-mode controller is brought up command by command, and what it says 
     try testing.expectEqual(@as(u8, 0), name.params[hci.HCI_MAX_NAME - 1]);
     const host = sentWith(&script, hci.HCI_OP_WRITE_LE_HOST_SUPPORTED).?;
     try testing.expectEqualSlices(u8, &.{ 1, 0 }, host.params[0..host.length]);
+    // Extended results, its name in its response, and pages answered: on,
+    // not visible.
+    const mode = sentWith(&script, hci.HCI_OP_WRITE_INQUIRY_MODE).?;
+    try testing.expectEqualSlices(u8, &.{hci.INQUIRY_MODE_EXTENDED}, mode.params[0..mode.length]);
+    const response = sentWith(&script, hci.HCI_OP_WRITE_EXTENDED_INQUIRY_RESPONSE).?;
+    try testing.expectEqual(@as(usize, 1 + hci.EIR_SIZE), response.length);
+    try testing.expectEqualSlices(u8, &.{ 0, 4, hci.AD_NAME_COMPLETE, 'n', 'u', 'c', 0 }, response.params[0..7]);
+    const scan = sentWith(&script, hci.HCI_OP_WRITE_SCAN_ENABLE).?;
+    try testing.expectEqualSlices(u8, &.{hci.SCAN_PAGE}, scan.params[0..scan.length]);
+}
+
+test "the bring-up waits for the settings once the address is known, and writes them" {
+    var script = Script{};
+    var layer = makeLayer(&script);
+    _hci.start(&layer);
+    while (script.answered < script.count) {
+        const sent = script.sent[script.answered];
+        script.answered += 1;
+        script.answer(&layer, sent);
+    }
+    // Stopped after Read BD_ADDR, nothing more out.
+    try testing.expect(layer.wants_settings);
+    try testing.expectEqual(bluetooth.BTCS_STARTING, layer.state);
+    try testing.expectEqual(hci.HCI_OP_READ_BD_ADDR, script.sent[script.count - 1].opcode);
+    try testing.expectEqualSlices(u8, &.{ 0x13, 0x71, 0xDA, 0x7D, 0x1A, 0x00 }, &layer.address);
+    // The task's: visible, and a name of its own.
+    layer.visible = true;
+    @memcpy(layer.name[0..6], "Desk\x00\x00");
+    bringup.settled(&layer);
+    script.run(&layer);
+    try testing.expectEqual(bluetooth.BTCS_UP, layer.state);
+    const scan = sentWith(&script, hci.HCI_OP_WRITE_SCAN_ENABLE).?;
+    try testing.expectEqualSlices(u8, &.{hci.SCAN_PAGE | hci.SCAN_INQUIRY}, scan.params[0..scan.length]);
+    const name = sentWith(&script, hci.HCI_OP_WRITE_LOCAL_NAME).?;
+    try testing.expectEqualSlices(u8, "Desk\x00", name.params[0..5]);
+
+    // Brought up again after a hardware error, it has them: no pause.
+    const before = script.count;
+    _hci.received(&layer, hcidev.HCI_EVENT_PKT, &.{ hci.HCI_EV_HARDWARE_ERROR, 1, 0 });
+    while (script.answered < script.count) {
+        const sent = script.sent[script.answered];
+        script.answered += 1;
+        script.answer(&layer, sent);
+    }
+    try testing.expect(!layer.wants_settings);
+    try testing.expectEqual(bluetooth.BTCS_UP, layer.state);
+    try testing.expect(script.count > before);
+}
+
+test "a controller that is off answers nothing" {
+    var script = Script{};
+    var layer = makeLayer(&script);
+    _hci.start(&layer);
+    while (script.answered < script.count) {
+        const sent = script.sent[script.answered];
+        script.answered += 1;
+        script.answer(&layer, sent);
+    }
+    layer.powered = false;
+    layer.visible = true;
+    bringup.settled(&layer);
+    script.run(&layer);
+    const scan = sentWith(&script, hci.HCI_OP_WRITE_SCAN_ENABLE).?;
+    try testing.expectEqualSlices(u8, &.{0}, scan.params[0..scan.length]);
 }
 
 test "a controller without LE is not given LE's steps" {
@@ -217,6 +292,7 @@ test "a controller without LE is not given LE's steps" {
     _hci.start(&layer);
     script.run(&layer);
     try testing.expectEqual(bluetooth.BTCS_UP, layer.state);
+    try testing.expect(sentWith(&script, hci.HCI_OP_WRITE_SCAN_ENABLE) != null);
     try testing.expect(sentWith(&script, hci.HCI_OP_LE_READ_BUFFER_SIZE) == null);
     try testing.expect(sentWith(&script, hci.HCI_OP_LE_SET_EVENT_MASK) == null);
     try testing.expect(sentWith(&script, hci.HCI_OP_WRITE_LE_HOST_SUPPORTED) == null);

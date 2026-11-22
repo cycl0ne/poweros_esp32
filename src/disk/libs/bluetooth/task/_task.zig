@@ -14,8 +14,16 @@
 //! under it too, with its port empty: so no command is left on the port
 //! of a task that has ended.
 //!
-//! **Time-outs.** Its timer is out while any command of any controller
-//! waits for its answer, due when the earliest of them is.
+//! **Time-outs.** Its timer is out while anything of any controller is
+//! due - a command's answer, a discovery's phase, the end of being
+//! visible for a time - due when the earliest of them is. The time is
+//! exec's (UptimeUs), in milliseconds: the calls that answer how long
+//! ago something was read the same clock.
+//!
+//! **Settings.** A controller's bring-up stops once its address is known
+//! until the task has read the settings kept for it (settings.zig) and
+//! put them into its layer; SetBTControllerAttrs's changes are written
+//! back there.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -25,14 +33,17 @@ const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
-const TimerBase = sdk.interface.timer.TimerBase;
 const _base = @import("../bluetooth_base.zig");
 const BluetoothBase = _base.BluetoothBase;
 const _controller = @import("../controller/_controller.zig");
 const Controller = _controller.Controller;
 const _hci = @import("../hci/_hci.zig");
+const bringup = @import("../hci/bringup.zig");
+const discovery = @import("../hci/discovery.zig");
+const local = @import("../hci/local.zig");
 const _notify = @import("../notify/_notify.zig");
 const device = @import("device.zig");
+const settings = @import("settings.zig");
 
 const task_name = "bluetooth.library";
 const stack_bytes = 8192;
@@ -42,21 +53,45 @@ const stack_bytes = 8192;
 /// name there, so.
 const class_of_device = hci.COD_MAJOR_COMPUTER << 8 | hci.COD_COMPUTER_DESKTOP << 2;
 const hostname_file = sdk.bsdsocket.HOSTNAME_FILE;
+/// The most of the hostname file read: room for the comments above its
+/// name.
+const hostname_most = 1024;
 const default_name = "PowerOS";
 
 /// A call's command to the task.
 pub const Command = extern struct {
     message: exec.Message = .{},
     kind: Kind = .add,
+    /// add, remove: the device's unit.
     unit: u32 = 0,
     device_name: [*:0]const u8 = "",
+    /// set, discover, stop: the controller (BTController.id), or
+    /// BT_ALL_CONTROLLERS.
+    controller: u32 = 0,
+    /// discover: for how long, in milliseconds (0: the default).
+    time_ms: u32 = 0,
+    /// set: what is wanted.
+    wanted: Wanted = .{},
     /// What the call answers.
     result: i32 = 0,
 
-    pub const Kind = enum(u32) { add, remove };
+    pub const Kind = enum(u32) { add, remove, set, discover, stop };
 };
 
-/// The task's own: its ports, its timer.
+/// What SetBTControllerAttrs wants of a controller: `which` says which of
+/// the rest is set (WANT_*). The name is the caller's, who waits.
+pub const Wanted = extern struct {
+    which: u32 = 0,
+    powered: u32 = 0,
+    visible: u32 = 0,
+    name: [*:0]const u8 = "",
+};
+pub const WANT_POWERED: u32 = 1 << 0;
+pub const WANT_NAME: u32 = 1 << 1;
+pub const WANT_VISIBLE: u32 = 1 << 2;
+
+/// The task's own: its ports, its timer, and its room for a controller's
+/// settings and a name.
 const Work = struct {
     base: *BluetoothBase,
     commands: *exec.MsgPort,
@@ -66,6 +101,10 @@ const Work = struct {
     timer_out: bool = false,
     /// When the timer out is due, in milliseconds.
     timer_due: u64 = 0,
+    kept: settings.Kept = .{},
+    name: [hci.HCI_MAX_NAME + 1]u8 = @splat(0),
+    /// The hostname file's start, as it was last read.
+    hostname: [hostname_most]u8 = undefined,
 };
 
 /// A command handed to the task, which is started if it does not run,
@@ -96,6 +135,33 @@ pub fn running(base: *BluetoothBase) bool {
     sys.ObtainSemaphore(&base.start_lock);
     defer sys.ReleaseSemaphore(&base.start_lock);
     return base.port != null;
+}
+
+/// A command handed to the task if it runs, and its answer waited for:
+/// false if it does not - there is no controller to act on - or no reply
+/// port could be made.
+pub fn tell(base: *BluetoothBase, command: *Command) bool {
+    const sys = base.sys_base;
+    const reply = sys.CreateMsgPort() orelse return false;
+    defer sys.DeleteMsgPort(reply);
+    command.message.reply_port = reply;
+    command.message.length = @sizeOf(Command);
+    sys.ObtainSemaphore(&base.start_lock);
+    const port = base.port orelse {
+        sys.ReleaseSemaphore(&base.start_lock);
+        return false;
+    };
+    sys.PutMsg(port, &command.message);
+    sys.ReleaseSemaphore(&base.start_lock);
+    _ = sys.WaitPort(reply);
+    _ = sys.GetMsg(reply);
+    return true;
+}
+
+/// The time in milliseconds: exec's, so that the task and the calls read
+/// the same clock.
+pub fn clock(sys: *ExecBase) u64 {
+    return sys.UptimeUs() / 1000;
 }
 
 /// The task started, under `start_lock`, and waited for until it is
@@ -170,6 +236,9 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                 switch (command.kind) {
                     .add => command.result = add(work, command.device_name, command.unit),
                     .remove => remove(work, command.device_name, command.unit),
+                    .set => command.result = setAttrs(work, command.controller, &command.wanted),
+                    .discover => command.result = discover(work, command.controller, command.time_ms),
+                    .stop => stopDiscovery(work, command.controller),
                 }
                 sys.ReplyMsg(message);
                 worked = true;
@@ -179,6 +248,7 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                 worked = true;
             }
         }
+        settle(work);
         report(work);
         armTimer(work);
         if (ending(work)) break;
@@ -239,14 +309,8 @@ fn ending(work: *Work) bool {
     return true;
 }
 
-/// The time in milliseconds, from the E-clock.
 fn now(work: *Work) u64 {
-    if (!work.timer_open) return 0;
-    const timer_base: *TimerBase = @ptrCast(@alignCast(work.timer_io.node.device.?));
-    var clock: timer.EClockVal = .{};
-    const rate = timer_base.ReadEClock(&clock);
-    if (rate < 1000) return 0;
-    return clock.toTicks() / (rate / 1000);
+    return clock(work.base.sys_base);
 }
 
 // --- the calls' commands --------------------------------------------------------
@@ -298,9 +362,11 @@ fn bringUp(work: *Work, controller: *Controller) void {
     const base = work.base;
     const sys = base.sys_base;
     const layer = &controller.layer;
-    layer.class_of_device = class_of_device;
-    machineName(work, &layer.name);
+    // Read before the lock, which ObtainBTControllers copies the name under.
+    machineName(work, &work.name);
     sys.ObtainSemaphore(&base.lock);
+    layer.class_of_device = class_of_device;
+    _controller.copyString(&layer.name, @ptrCast(&work.name));
     layer.now = now(work);
     _hci.start(layer);
     sys.ReleaseSemaphore(&base.lock);
@@ -323,21 +389,156 @@ fn remove(work: *Work, device_name: [*:0]const u8, unit: u32) void {
     _notify.changed(base);
 }
 
-/// The machine's name on the network, its first line, into `into`; the
-/// system's own name where it has none.
+// --- the settings ---------------------------------------------------------------
+
+/// Every controller whose bring-up waits for its settings given them:
+/// read from its files outside the lock, put into its layer under it.
+fn settle(work: *Work) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        const layer = &controller.layer;
+        if (!layer.wants_settings) continue;
+        const kept = &work.kept;
+        kept.* = .{};
+        if (base.dos) |dl| settings.read(dl, &layer.address, kept);
+        sys.ObtainSemaphore(&base.lock);
+        layer.now = now(work);
+        layer.powered = kept.powered;
+        layer.visible = kept.visible;
+        layer.visible_until = null;
+        if (kept.name[0] != 0) {
+            _controller.copyString(&layer.name, @ptrCast(&kept.name));
+            controller.own_name = true;
+        }
+        bringup.settled(layer);
+        sys.ReleaseSemaphore(&base.lock);
+    }
+}
+
+/// SetBTControllerAttrs: what is wanted done to the controller - or to
+/// every controller that is up - and kept: 0, or the first BTERR_* one
+/// of them answered.
+fn setAttrs(work: *Work, id: u32, wanted: *const Wanted) i32 {
+    var matched = false;
+    var done = false;
+    var failure: i32 = 0;
+    var it = work.base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        if (id != bluetooth.BT_ALL_CONTROLLERS and controller.id != id) continue;
+        matched = true;
+        if (id == bluetooth.BT_ALL_CONTROLLERS and controller.layer.state != bluetooth.BTCS_UP) continue;
+        const result = setOne(work, controller, wanted);
+        if (result == 0) done = true else if (failure == 0) failure = result;
+    }
+    if (!matched) return bluetooth.BTERR_NOCONTROLLER;
+    if (failure != 0) return failure;
+    return if (done) 0 else bluetooth.BTERR_NOTUP;
+}
+
+fn setOne(work: *Work, controller: *Controller, wanted: *const Wanted) i32 {
+    const base = work.base;
+    const sys = base.sys_base;
+    const layer = &controller.layer;
+    if (layer.state != bluetooth.BTCS_UP) return bluetooth.BTERR_NOTUP;
+    const naming = wanted.which & WANT_NAME != 0;
+    const own = naming and wanted.name[0] != 0;
+    // An empty name is the machine's again.
+    if (naming and !own) machineName(work, &work.name);
+    var result: i32 = 0;
+    sys.ObtainSemaphore(&base.lock);
+    layer.now = now(work);
+    if (wanted.which & WANT_POWERED != 0) result = firstFailure(result, local.setPowered(layer, wanted.powered != 0));
+    if (wanted.which & WANT_VISIBLE != 0) result = firstFailure(result, local.setVisible(layer, wanted.visible));
+    if (naming) {
+        controller.own_name = own;
+        result = firstFailure(result, local.setName(layer, if (own) wanted.name else @ptrCast(&work.name)));
+    }
+    const powered = layer.powered;
+    const visible_always = layer.visible and layer.visible_until == null;
+    sys.ReleaseSemaphore(&base.lock);
+    // Kept for the next start.
+    const dl = base.dos orelse return result;
+    var saved = true;
+    if (wanted.which & (WANT_POWERED | WANT_VISIBLE) != 0) saved = settings.writeSettings(dl, &layer.address, powered, visible_always);
+    if (naming) saved = settings.writeName(dl, &layer.address, if (own) wanted.name else "") and saved;
+    if (!saved) exec.kprintf(sys, "%s: the settings of controller %u could not be kept\n", .{ @as([*:0]const u8, task_name), controller.id });
+    return result;
+}
+
+fn firstFailure(so_far: i32, result: i32) i32 {
+    return if (so_far != 0) so_far else result;
+}
+
+/// StartBTDiscovery: the controller - or every one that is up and on -
+/// made to look for devices: 0, or the first BTERR_* one answered.
+fn discover(work: *Work, id: u32, ms: u32) i32 {
+    const base = work.base;
+    const sys = base.sys_base;
+    var matched = false;
+    var done = false;
+    // Every controller passed over that is up, but off.
+    var off = false;
+    var failure: i32 = 0;
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        if (id != bluetooth.BT_ALL_CONTROLLERS and controller.id != id) continue;
+        matched = true;
+        const layer = &controller.layer;
+        if (id == bluetooth.BT_ALL_CONTROLLERS and (layer.state != bluetooth.BTCS_UP or !layer.powered)) {
+            if (layer.state == bluetooth.BTCS_UP) off = true;
+            continue;
+        }
+        sys.ObtainSemaphore(&base.lock);
+        layer.now = now(work);
+        const result = discovery.start(layer, ms);
+        sys.ReleaseSemaphore(&base.lock);
+        if (result == 0) done = true else if (failure == 0) failure = result;
+    }
+    if (!matched) return bluetooth.BTERR_NOCONTROLLER;
+    if (failure != 0) return failure;
+    if (done) return 0;
+    return if (off) bluetooth.BTERR_OFF else bluetooth.BTERR_NOTUP;
+}
+
+/// StopBTDiscovery: the controller's discovery - or every one's - ended.
+fn stopDiscovery(work: *Work, id: u32) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        if (id != bluetooth.BT_ALL_CONTROLLERS and controller.id != id) continue;
+        sys.ObtainSemaphore(&base.lock);
+        controller.layer.now = now(work);
+        discovery.stop(&controller.layer);
+        sys.ReleaseSemaphore(&base.lock);
+    }
+}
+
+/// The machine's name on the network - the hostname file's first line
+/// that is neither blank nor a comment - into `into`, cut as the
+/// controller's name is; the system's own name where it has none.
 fn machineName(work: *Work, into: *[hci.HCI_MAX_NAME + 1]u8) void {
-    const sys = work.base.sys_base;
-    _controller.copyString(into, default_name);
-    const dos_base = work.base.dos orelse return;
-    var length: usize = 0;
-    const bytes = dos_base.ReadFile(hostname_file, hci.HCI_MAX_NAME, exec.MEMF_ANY, &length) orelse return;
-    defer sys.FreeVec(bytes);
-    var end: usize = 0;
-    while (end < length and bytes[end] != '\n' and bytes[end] != '\r' and bytes[end] != 0) : (end += 1) {}
-    while (end > 0 and bytes[end - 1] == ' ') end -= 1;
-    if (end == 0) return;
-    for (bytes[0..end], 0..) |byte, index| into[index] = byte;
-    into[end] = 0;
+    const found = hostName(work) orelse return _controller.copyString(into, default_name);
+    const length = local.fitName(found);
+    @memcpy(into[0..length], found[0..length]);
+    into[length] = 0;
+}
+
+/// The name in the hostname file, read into the work's room for it; null
+/// without the file, or without a name in it.
+fn hostName(work: *Work) ?[]const u8 {
+    const dl = work.base.dos orelse return null;
+    const file = dl.Open(hostname_file, dos.MODE_OLDFILE) orelse return null;
+    const got = dl.Read(file, &work.hostname, work.hostname.len);
+    _ = dl.Close(file);
+    if (got <= 0) return null;
+    return settings.hostNameIn(work.hostname[0..@intCast(got)]);
 }
 
 // --- the requests' answers ------------------------------------------------------
