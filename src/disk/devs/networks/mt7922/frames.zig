@@ -305,3 +305,142 @@ pub fn managementRate(target: *const scan.Network) u16 {
     if (lowest < 4) return lowest;
     return RATE_MODE_OFDM | ofdm_index[lowest - 4];
 }
+
+// --- tests ----------------------------------------------------------------------
+
+const std = @import("std");
+const testing = std.testing;
+
+const test_bssid = [6]u8{ 0x02, 0x11, 0x22, 0x33, 0x44, 0x55 };
+const test_own = [6]u8{ 0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee };
+
+fn testNetwork(channel: u8) scan.Network {
+    var network = scan.Network{ .bssid = test_bssid, .channel = channel, .privacy = true };
+    @memcpy(network.ssid[0..4], "home");
+    network.ssid_len = 4;
+    const rates: []const u8 = if (channel > 14)
+        &.{ 0x8c, 0x12, 0x98, 0x24, 0xb0, 0x48, 0x60, 0x6c }
+    else
+        &.{ 0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24, 0x30, 0x48, 0x60, 0x6c };
+    @memcpy(network.rates[0..rates.len], rates);
+    network.rates_len = @intCast(rates.len);
+    return network;
+}
+
+test "the authentication: the open system's first frame" {
+    var out: [64]u8 = undefined;
+    try testing.expectEqual(@as(usize, 30), authentication(&out, &test_bssid, &test_own));
+    try testing.expectEqual(FC_AUTH, out[0]);
+    try testing.expectEqualSlices(u8, &test_bssid, out[4..10]);
+    try testing.expectEqualSlices(u8, &test_own, out[10..16]);
+    try testing.expectEqualSlices(u8, &test_bssid, out[16..22]);
+    try testing.expectEqualSlices(u8, &.{ 0, 0, 1, 0, 0, 0 }, out[24..30]);
+}
+
+test "the association request: name, rates split, the RSN element, HT, WMM" {
+    const network = testNetwork(11);
+    const rsn = [_]u8{ 48, 2, 1, 0 };
+    var out: [512]u8 = undefined;
+    const length = associationRequest(&out, &network, &test_own, .{ .element = &rsn, .ht = true, .streams = 2, .qos = true });
+    try testing.expectEqual(FC_ASSOC_REQUEST, out[0]);
+    try testing.expect(mcu.get16(&out, header_bytes) & CAPABILITY_PRIVACY != 0);
+    try testing.expectEqual(listen_interval, mcu.get16(&out, header_bytes + 2));
+    var at: usize = header_bytes + 4;
+    try testing.expectEqualSlices(u8, &.{ EID_SSID, 4, 'h', 'o', 'm', 'e' }, out[at..][0..6]);
+    at += 6;
+    try testing.expectEqual(EID_RATES, out[at]);
+    try testing.expectEqual(@as(u8, 8), out[at + 1]);
+    at += 10;
+    try testing.expectEqual(EID_EXTENDED_RATES, out[at]);
+    try testing.expectEqualSlices(u8, &.{ 0x30, 0x48, 0x60, 0x6c }, out[at + 2 ..][0..4]);
+    at += 6;
+    try testing.expectEqualSlices(u8, &rsn, out[at..][0..4]);
+    at += 4;
+    try testing.expectEqual(EID_HT_CAPABILITIES, out[at]);
+    try testing.expectEqual(@as(u8, scan.ht_cap_bytes), out[at + 1]);
+    try testing.expect(mcu.get16(&out, at + 2) & HT_TX_STBC != 0);
+    try testing.expectEqualSlices(u8, &.{ 0xff, 0xff, 0x00 }, out[at + 5 ..][0..3]);
+    at += 2 + scan.ht_cap_bytes;
+    try testing.expectEqualSlices(u8, &.{ EID_VENDOR, 7, 0x00, 0x50, 0xF2, 0x02, 0x00, 0x01, 0x00 }, out[at..][0..9]);
+    try testing.expectEqual(at + 9, length);
+}
+
+test "the access point's answers: authentication, association, a leave" {
+    var frame: [40]u8 = @splat(0);
+    frame[0] = FC_AUTH;
+    @memcpy(frame[4..10], &test_own);
+    @memcpy(frame[10..16], &test_bssid);
+    @memcpy(frame[16..22], &test_bssid);
+    frame[header_bytes + 2] = 2;
+    frame[header_bytes + 4] = 17;
+    try testing.expectEqual(@as(?u16, 17), authenticationAnswer(frame[0..30], &test_bssid, &test_own));
+    // Its own first frame, or one from another network, is no answer.
+    frame[header_bytes + 2] = 1;
+    try testing.expectEqual(@as(?u16, null), authenticationAnswer(frame[0..30], &test_bssid, &test_own));
+    frame[header_bytes + 2] = 2;
+    try testing.expectEqual(@as(?u16, null), authenticationAnswer(frame[0..30], &test_own, &test_own));
+
+    @memset(frame[header_bytes..], 0);
+    frame[0] = FC_ASSOC_RESPONSE;
+    mcu.put16(&frame, header_bytes + 4, 0xc003);
+    frame[header_bytes + 6] = EID_RATES;
+    const answer = associationAnswer(frame[0 .. header_bytes + 8], &test_bssid, &test_own).?;
+    try testing.expectEqual(@as(u16, 0), answer.status);
+    try testing.expectEqual(@as(u16, 3), answer.aid);
+    try testing.expectEqual(@as(usize, 2), answer.elements.len);
+
+    frame[0] = FC_DEAUTH;
+    @memset(frame[4..10], 0xff);
+    mcu.put16(&frame, header_bytes, 7);
+    try testing.expectEqual(@as(?u16, 7), leaveReason(frame[0..26], &test_bssid, &test_own));
+    try testing.expectEqual(@as(?u16, null), leaveReason(frame[0..26], &test_own, &test_own));
+}
+
+test "a block-ack offer declined, its parameters kept" {
+    var frame: [header_bytes + 9]u8 = @splat(0);
+    frame[0] = FC_ACTION;
+    @memcpy(frame[4..10], &test_own);
+    @memcpy(frame[10..16], &test_bssid);
+    @memcpy(frame[header_bytes..], &[_]u8{ CATEGORY_BLOCK_ACK, ADDBA_REQUEST, 9, 0x02, 0x10, 0x00, 0x00, 0, 0 });
+    var out: [64]u8 = undefined;
+    const length = declineBlockAck(&out, &frame, &test_bssid, &test_own);
+    try testing.expectEqual(@as(usize, header_bytes + 9), length);
+    try testing.expectEqualSlices(u8, &.{ CATEGORY_BLOCK_ACK, ADDBA_RESPONSE, 9, STATUS_REQUEST_DECLINED, 0, 0x02, 0x10, 0x00, 0x00 }, out[header_bytes..][0..9]);
+    try testing.expectEqualSlices(u8, &test_bssid, out[4..10]);
+}
+
+test "a QoS data frame from the network: Ethernet's" {
+    var frame: [header_bytes + 2 + 8 + 4]u8 = @splat(0);
+    frame[0] = 0x88;
+    frame[1] = FC1_FROM_DS;
+    @memcpy(frame[4..10], &test_own);
+    @memcpy(frame[10..16], &test_bssid);
+    @memset(frame[16..22], 7);
+    @memcpy(frame[26..34], &[_]u8{ 0xAA, 0xAA, 0x03, 0, 0, 0, 0x08, 0x06 });
+    @memcpy(frame[34..38], "arp!");
+    var out: [64]u8 = undefined;
+    const length = ethernetOf(&out, &frame, false);
+    try testing.expectEqual(@as(usize, 14 + 4), length);
+    try testing.expectEqualSlices(u8, &test_own, out[0..6]);
+    try testing.expectEqualSlices(u8, &[_]u8{7} ** 6, out[6..12]);
+    try testing.expectEqualSlices(u8, &.{ 0x08, 0x06, 'a', 'r', 'p', '!' }, out[12..18]);
+    // Still encrypted, or to the network: nothing.
+    frame[1] = FC1_FROM_DS | FC1_PROTECTED;
+    try testing.expectEqual(@as(usize, 0), ethernetOf(&out, &frame, false));
+    try testing.expectEqual(@as(usize, 18), ethernetOf(&out, &frame, true));
+    frame[1] = 0;
+    try testing.expectEqual(@as(usize, 0), ethernetOf(&out, &frame, false));
+}
+
+test "the rates: bits over the band's, the management frames' rate" {
+    const slow = testNetwork(6);
+    try testing.expectEqual(@as(u16, 0x0fff), rateBits(&slow, false));
+    try testing.expectEqual(@as(u16, 0x000f), rateBits(&slow, true));
+    // 1 Mbit/s, DSSS.
+    try testing.expectEqual(@as(u16, 0), managementRate(&slow));
+    const five = testNetwork(36);
+    try testing.expectEqual(@as(u16, 0x00ff), rateBits(&five, false));
+    try testing.expectEqual(@as(u16, 0x0015), rateBits(&five, true));
+    // 6 Mbit/s, OFDM.
+    try testing.expectEqual(RATE_MODE_OFDM | 11, managementRate(&five));
+}

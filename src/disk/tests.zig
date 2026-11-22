@@ -110,6 +110,9 @@ test {
     _ = @import("devs/usb/aic8800/scan.zig");
     _ = @import("devs/usb/aic8800/frames.zig");
     _ = @import("devs/usb/aic8800/lmac.zig");
+    _ = @import("devs/networks/mt7922/frames.zig");
+    _ = @import("devs/networks/mt7922/scan.zig");
+    _ = @import("devs/networks/mt7922/peer.zig");
     _ = @import("libs/modbus/tests/modbus.zig");
     _ = @import("libs/filter/tests/filter.zig");
     _ = @import("libs/update/update_lvo.zig");

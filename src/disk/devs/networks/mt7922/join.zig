@@ -24,8 +24,11 @@
 //! answers with go out as the station's own; when the chip is through
 //! with one, the handshake is told it has gone (`HandshakeSent`). The
 //! channel is kept for the handshake until the time the firmware granted
-//! it is up. The keys it hands over are not installed yet: the network
-//! is not joined.
+//! it is up. The keys it hands over go into the chip (peer.zig), the
+//! pairwise one first: from then on the station's frames to the access
+//! point are encrypted. Once the handshake says both are in, the channel
+//! is given back and the unit has its carrier. A new group key the access
+//! point hands over later goes in the same way.
 //!
 //! **What the frames' handlers find** - an answer, a key, a leave - is
 //! noted and done by `due` once the worker is back in its loop, as the
@@ -87,6 +90,7 @@ const Key = struct {
     bytes: [32]u8 = @splat(0),
     length: u8 = 0,
     index: u8 = 0,
+    cipher: u32 = 0,
     due: bool = false,
 };
 
@@ -145,6 +149,9 @@ pub const Join = struct {
     /// An EAPOL frame that came before the handshake could take it.
     eapol: [eapol_max]u8 = @splat(0),
     eapol_len: usize = 0,
+    /// Whether the pairwise key and a group key are in the chip.
+    pairwise_in: bool = false,
+    group_in: bool = false,
 
     /// What the handlers noted for `due`: a frame of the handshake's
     /// gone, keys handed over, the handshake done, a leave of the
@@ -176,7 +183,7 @@ pub fn carrying(work: *const Work) bool {
 
 /// What a data frame to the access point asks of the chip.
 pub fn dataTo(work: *const Work, tid: u8) tx.Data {
-    return .{ .wcid = peer.WCID_AP, .tid = tid, .qos = work.join.facts.qos };
+    return .{ .wcid = peer.WCID_AP, .tid = tid, .qos = work.join.facts.qos, .protect = work.join.pairwise_in };
 }
 
 // --- the requests ---------------------------------------------------------------
@@ -305,16 +312,23 @@ pub fn due(work: *Work) bool {
         if (join.handshake) |handshake| radio.wpaBase(work).?.HandshakeSent(handshake, join.sent_number);
         return true;
     }
-    if (join.pairwise_key.due or join.group_key.due) {
-        // Installing the keys is the next step; until then the network is
-        // not joined.
-        wipe(&join.pairwise_key);
-        wipe(&join.group_key);
+    if (join.pairwise_key.due) {
+        if (install(work, &join.pairwise_key, true)) join.pairwise_in = true;
+        return true;
+    }
+    if (join.group_key.due) {
+        if (install(work, &join.group_key, false)) join.group_in = true;
         return true;
     }
     if (join.authorized_due) {
         join.authorized_due = false;
-        say(work.sys, "the key handshake is done; its keys are not installed yet", .{});
+        if (join.state != .keying) return true;
+        if (!join.pairwise_in or !join.group_in) {
+            join.leave_due = REASON_UNSPECIFIED;
+            return true;
+        }
+        giveChannelBack(work);
+        joined(work);
         return true;
     }
     if (join.join_due) {
@@ -530,6 +544,9 @@ fn leave(work: *Work, reason: u16, tell: bool) void {
         }
     }
     giveChannelBack(work);
+    if (join.group_in) peer.removeGroupKey(work);
+    join.pairwise_in = false;
+    join.group_in = false;
     if (join.entry) peer.left(work, &join.facts, join.told);
     join.entry = false;
     join.told = false;
@@ -675,6 +692,7 @@ fn handshakeHook(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque)
             @memcpy(key.bytes[0..length], (asked.data orelse return 0)[0..length]);
             key.length = @intCast(length);
             key.index = @truncate(asked.index);
+            key.cipher = asked.cipher;
             key.due = true;
         },
         wpa.WPAHM_AUTHORIZED => join.authorized_due = true,
@@ -750,6 +768,23 @@ fn dropHandshake(work: *Work) void {
     join.eapol_len = 0;
     wipe(&join.pairwise_key);
     wipe(&join.group_key);
+}
+
+/// A key the handshake handed over put into the chip, and wiped: whether
+/// it went in. One that does not leaves the network.
+fn install(work: *Work, key: *Key, pairwise: bool) bool {
+    defer wipe(key);
+    const cipher = peer.cipherId(key.cipher) orelse {
+        say(work.sys, "the network's key is of a cipher the card is not given", .{});
+        work.join.leave_due = REASON_UNSPECIFIED;
+        return false;
+    };
+    peer.installKey(work, pairwise, cipher, key.index, key.bytes[0..key.length]) catch |failure| {
+        say(work.sys, "the card does not take the key: %s", .{@as([*:0]const u8, @errorName(failure))});
+        work.join.leave_due = REASON_UNSPECIFIED;
+        return false;
+    };
+    return true;
 }
 
 fn wipe(key: *Key) void {

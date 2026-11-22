@@ -20,11 +20,20 @@
 //! (`WCID_STATION`), which the network's group frames go by, is given the
 //! access point's address.
 //!
+//! **The keys** a protected network's handshake hands over go into the
+//! entries: the pairwise key into the access point's, which the chip
+//! then encrypts the station's frames to it with and decrypts its frames
+//! with; the group key into the station's own, for the network's group
+//! frames. A TKIP key's two MIC halves are the other way round in the
+//! chip. The group key is taken out again when the station leaves; the
+//! access point's goes with its entry.
+//!
 //! **The channel** is the firmware's to manage: while the station joins,
 //! it asks for the network's (`requestChannel`) and is told when it has
 //! it; once the network is told the firmware, it keeps it there.
 
 const sdk = @import("sdk");
+const wpa = sdk.wpa;
 const _mt = @import("_mt7922.zig");
 const mcu = @import("mcu.zig");
 const station = @import("station.zig");
@@ -120,6 +129,15 @@ const STATE_ASSOC = 2;
 /// particular.
 const MUAR_OWN = 0;
 const MUAR_ANY = 0x0e;
+
+const STA_REC_KEY_V2: u16 = 17;
+const KEY_SET = 0;
+const KEY_REMOVE = 1;
+const KEY_CIPHER_TKIP = 4;
+const KEY_CIPHER_CCMP = 5;
+/// A key record's header, and each key in it.
+const key_header_bytes = 8;
+const key_bytes = 36;
 
 const PHY_TYPE_HR_DSSS: u8 = 1 << 0;
 const PHY_TYPE_ERP: u8 = 1 << 1;
@@ -238,6 +256,48 @@ pub fn left(work: *Work, facts: *const Facts, told: bool) void {
     record.send(work) catch {};
     station.clearCounts(work, WCID_AP);
     if (told) network(work, facts, false) catch {};
+}
+
+/// The chip's number for a cipher wpa.library names (a WPA_CIPHER_*
+/// bit); null for one the station does not install.
+pub fn cipherId(cipher: u32) ?u8 {
+    return switch (cipher) {
+        wpa.WPA_CIPHER_CCMP => KEY_CIPHER_CCMP,
+        wpa.WPA_CIPHER_TKIP => KEY_CIPHER_TKIP,
+        else => null,
+    };
+}
+
+/// A key put in: the pairwise one into the access point's entry, the
+/// group's key number `index` into the station's own.
+pub fn installKey(work: *Work, pairwise: bool, cipher: u8, index: u8, key: []const u8) Error!void {
+    var record = if (pairwise) Record.begin(work, WCID_AP, MUAR_OWN) else Record.begin(work, WCID_STATION, MUAR_ANY);
+    const body = record.add(STA_REC_KEY_V2, key_header_bytes + key_bytes);
+    body[4] = KEY_SET;
+    body[5] = 1;
+    const entry = body[key_header_bytes..];
+    entry[0] = cipher;
+    entry[1] = key_bytes;
+    entry[2] = index;
+    entry[3] = @intCast(key.len);
+    @memcpy(entry[4..][0..key.len], key);
+    if (cipher == KEY_CIPHER_TKIP and key.len == 32) {
+        @memcpy(entry[4 + 16 ..][0..8], key[24..32]);
+        @memcpy(entry[4 + 24 ..][0..8], key[16..24]);
+    }
+    defer {
+        const secret: [*]volatile u8 = @ptrCast(entry.ptr);
+        @memset(secret[0..key_bytes], 0);
+    }
+    try record.send(work);
+}
+
+/// The group key taken out of the station's own entry.
+pub fn removeGroupKey(work: *Work) void {
+    var record = Record.begin(work, WCID_STATION, MUAR_ANY);
+    const body = record.add(STA_REC_KEY_V2, key_header_bytes);
+    body[4] = KEY_REMOVE;
+    record.send(work) catch {};
 }
 
 fn accessPointRecord(work: *Work, facts: *const Facts, state: u8) Error!void {
@@ -398,4 +458,37 @@ pub fn grantOf(bytes: []const u8) ?u8 {
     if (bytes.len < at + 8) return null;
     if (mcu.get16(bytes, at) != 0) return null;
     return bytes[at + 5];
+}
+
+// --- tests ----------------------------------------------------------------------
+
+const testing = @import("std").testing;
+
+test "the firmware's grant of the channel, by its token" {
+    var event: [64]u8 = @splat(0);
+    event[45] = 9;
+    try testing.expectEqual(@as(?u8, 9), grantOf(&event));
+    // Another record, or one too short, is no grant.
+    event[40] = 1;
+    try testing.expectEqual(@as(?u8, null), grantOf(&event));
+    try testing.expectEqual(@as(?u8, null), grantOf(event[0..44]));
+}
+
+test "the ciphers the card is given" {
+    try testing.expectEqual(@as(?u8, KEY_CIPHER_CCMP), cipherId(wpa.WPA_CIPHER_CCMP));
+    try testing.expectEqual(@as(?u8, KEY_CIPHER_TKIP), cipherId(wpa.WPA_CIPHER_TKIP));
+    try testing.expectEqual(@as(?u8, null), cipherId(wpa.WPA_CIPHER_GCMP));
+}
+
+test "the access point's facts: HT only with QoS, its MCS per stream" {
+    var target = scan.Network{ .channel = 36, .ht = true, .wmm = true };
+    target.ht_cap[2] = 0x17;
+    @memset(target.ht_cap[3..5], 0xff);
+    const facts = factsOf(&target, 2);
+    try testing.expect(facts.five and facts.ht and facts.qos);
+    try testing.expectEqual(@as(u8, 0x17), facts.ampdu);
+    try testing.expectEqualSlices(u8, &.{ 0xff, 0xff, 0 }, facts.mcs[0..3]);
+    target.wmm = false;
+    try testing.expect(!factsOf(&target, 2).ht);
+    try testing.expectEqual(@as(u8, 220 - 80), rcpiOf(-40));
 }

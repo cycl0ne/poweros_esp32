@@ -885,10 +885,11 @@ GHz 1 to 11 and listening on the rest, since it does not know which
 country it is in. It joins a network by itself - the firmware keeps the
 channel, the device authenticates and associates with the access point
 (HT on 20 MHz and QoS when the network has them) and turns the chip's
-802.11 frames into Ethernet ones and back - and runs the key handshake
-of a WPA2-Personal network with wpa.library, as below; it does not yet
-put the keys into the card, so a protected network is not joined. An
-access point's offer of block acknowledgement is declined.
+802.11 frames into Ethernet ones and back - and joins WPA2-Personal
+networks with wpa.library, as below, the card encrypting and decrypting
+with the keys the handshake hands over (CCMP, and TKIP for a network's
+group frames). An access point's offer of block acknowledgement is
+declined.
 `DEVS:usb/aic8800.device` is
 an AIC8800 USB Wi-Fi stick as one, on the ESP32-P4's high-speed ports
 (`docs/aic8800.md`): its interface is `DEVS:NetInterfaces/WLAN1`, brought

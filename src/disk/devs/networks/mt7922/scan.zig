@@ -364,3 +364,56 @@ pub fn sameBytes(one: []const u8, other: []const u8) bool {
     }
     return true;
 }
+
+// --- tests ----------------------------------------------------------------------
+
+const testing = @import("std").testing;
+
+test "a beacon's elements: name, rates, channel, DTIM, HT, RSN, WPA and WMM" {
+    const ht = comptime ht: {
+        var bytes: [2 + ht_cap_bytes]u8 = @splat(0);
+        bytes[0] = EID_HT_CAPABILITIES;
+        bytes[1] = ht_cap_bytes;
+        bytes[2] = 0x6f;
+        break :ht bytes;
+    };
+    const elements = [_]u8{ EID_SSID, 3, 'n', 'e', 't' } ++
+        [_]u8{ EID_RATES, 3, 0x82, 0x84, 0xff } ++
+        [_]u8{ EID_DS_PARAMETERS, 1, 6 } ++
+        [_]u8{ EID_TIM, 4, 0, 3, 0, 0 } ++ ht ++
+        [_]u8{ EID_RSN, 2, 1, 0 } ++
+        [_]u8{ EID_EXTENDED_RATES, 1, 0x6c } ++
+        [_]u8{ EID_VENDOR, 4, 0x00, 0x50, 0xF2, 1 } ++
+        [_]u8{ EID_VENDOR, 4, 0x00, 0x50, 0xF2, 2 } ++
+        [_]u8{ EID_HT_OPERATION, 1, 11 };
+    var found = Network{};
+    try testing.expectEqual(@as(u8, 6), readElements(&found, &elements));
+    try testing.expectEqualSlices(u8, "net", found.name());
+    // 0xff is a selector, not a rate.
+    try testing.expectEqualSlices(u8, &.{ 0x82, 0x84, 0x6c }, found.rateList());
+    try testing.expectEqual(@as(u8, 3), found.dtim);
+    try testing.expect(found.ht);
+    try testing.expectEqual(@as(u8, 0x6f), found.ht_cap[0]);
+    try testing.expectEqualSlices(u8, &.{ EID_RSN, 2, 1, 0 }, found.rsn[0..found.rsn_len]);
+    try testing.expect(found.wpa and found.wmm);
+}
+
+test "the strongest access point of a network, or the one asked for" {
+    var heard = Heard{};
+    for ([_]i8{ -70, -40, -55 }, 0..) |signal, index| {
+        var found = Network{ .signal = signal };
+        found.bssid[5] = @intCast(index);
+        @memcpy(found.ssid[0..3], "net");
+        found.ssid_len = 3;
+        heard.add(found);
+    }
+    // The same access point heard again, weaker: kept as it was.
+    var again = heard.networks[1];
+    again.signal = -90;
+    heard.add(again);
+    try testing.expectEqual(@as(usize, 3), heard.count);
+    try testing.expectEqual(@as(i8, -40), heard.strongest("net", null).?.signal);
+    const wanted = [6]u8{ 0, 0, 0, 0, 0, 2 };
+    try testing.expectEqual(@as(i8, -55), heard.strongest("net", &wanted).?.signal);
+    try testing.expect(heard.strongest("other", null) == null);
+}
