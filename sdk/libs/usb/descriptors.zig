@@ -300,7 +300,12 @@ pub const USB_CLASS_PRINTER: u8 = 0x07;
 pub const USB_CLASS_MASS_STORAGE: u8 = 0x08;
 pub const USB_CLASS_HUB: u8 = 0x09;
 pub const USB_CLASS_CDC_DATA: u8 = 0x0A;
+pub const USB_CLASS_WIRELESS_CONTROLLER: u8 = 0xE0;
 pub const USB_CLASS_VENDOR_SPEC: u8 = 0xFF;
+
+/// The wireless class's radio controllers, and among them Bluetooth's.
+pub const USB_SUBCLASS_RF_CONTROLLER: u8 = 0x01;
+pub const USB_PROTOCOL_BLUETOOTH: u8 = 0x01;
 
 // --- hubs ------------------------------------------------------------------------
 

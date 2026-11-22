@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: MIT
+//! bluetooth.library's functions: the Bluetooth controllers, brought up
+//! and run by the library's task, and who is told when they change. Open
+//! it with OpenLibrary("bluetooth.library", 1); the structures are in
+//! sdk.bluetooth.
+##include libs/exec/exec as exec
+##include libs/bluetooth/bluetooth as bluetooth
+##basetype BluetoothBase
+##name bluetooth.library
+##bias 4
+##public
+// Controllers
+/// A controller offered by its driver: the device's unit opened by the library's task, which brings it up. The controller's number, or BTERR_*.
+i32 AddBTController([*:0]const u8 device_name, u32 unit)
+/// A controller taken back by its driver: closed, and gone from the list, before the call returns.
+void RemBTController([*:0]const u8 device_name, u32 unit)
+/// The controllers as they are now: a list of BTController, the caller's until ReleaseBTControllers; null for no memory.
+?*exec.List ObtainBTControllers()
+/// A list from ObtainBTControllers given back. Null does nothing.
+void ReleaseBTControllers(?*exec.List list)
+// Notification
+/// A task signalled whenever the controllers change; null for no memory.
+?*bluetooth.BTNotify AddBTNotify(*exec.Task task, u32 signals)
+/// A notification given back: its task is told no more. Null does nothing.
+void RemBTNotify(?*bluetooth.BTNotify notify)
+##end

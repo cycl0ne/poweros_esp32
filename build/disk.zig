@@ -33,6 +33,8 @@ const cyw43455Dir = build_fetched.cyw43455Dir;
 const cyw43455_files = build_fetched.cyw43455_files;
 const mt7922Dir = build_fetched.mt7922Dir;
 const mt7922_files = build_fetched.mt7922_files;
+const mt7922BluetoothDir = build_fetched.mt7922BluetoothDir;
+const mt7922_bluetooth_file = build_fetched.mt7922_bluetooth_file;
 const devanagari_dir = build_fetched.devanagari_dir;
 const disk_fonts = build_fetched.disk_fonts;
 const emojiDir = build_fetched.emojiDir;
@@ -1275,6 +1277,17 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
                 make.addPrefixedFileArg(b.fmt("devs/networks/firmware/mt7922/{s}=", .{name}), .{ .cwd_relative = b.pathJoin(&.{ dir, name }) });
             }
             make.addPrefixedFileArg("devs/networks/firmware/mt7922/licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENCE.mediatek" }) });
+        }
+    }
+    // DEVS:usb/firmware/mediatek/ - the RAM code of the MT7922's
+    // Bluetooth, which usb/bluetooth.device gives it, with MediaTek's
+    // licence; on every 64-bit disk, as the card's Wi-Fi firmware is. Not
+    // in DEVS:usb/ itself, where every file is looked at as a driver.
+    if (mt7922BluetoothDir(b)) |dir| {
+        for ([_]*std.Build.Step.Run{ make_rv64_disk, make_a64_disk, make_a64v80_disk, make_x64_disk }) |make| {
+            make.addArgs(&.{ "devs/usb/firmware", "devs/usb/firmware/mediatek" });
+            make.addPrefixedFileArg(b.fmt("devs/usb/firmware/mediatek/{s}=", .{mt7922_bluetooth_file}), .{ .cwd_relative = b.pathJoin(&.{ dir, mt7922_bluetooth_file }) });
+            make.addPrefixedFileArg("devs/usb/firmware/mediatek/licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENCE.mediatek" }) });
         }
     }
     // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names

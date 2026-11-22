@@ -94,6 +94,8 @@ test {
     _ = @import("libs/facet/tests/present.zig");
     _ = @import("libs/facet/facet_lvo.zig");
     _ = @import("libs/usb/tests/usb.zig");
+    _ = @import("libs/bluetooth/tests/hci.zig");
+    _ = @import("libs/bluetooth/bluetooth_lvo.zig");
     _ = @import("devs/xhci/tests/xhci.zig");
     _ = @import("devs/nvme/prp.zig");
     _ = @import("devs/nvme/dsm.zig");
@@ -110,6 +112,8 @@ test {
     _ = @import("devs/usb/aic8800/scan.zig");
     _ = @import("devs/usb/aic8800/frames.zig");
     _ = @import("devs/usb/aic8800/lmac.zig");
+    _ = @import("devs/usb/bluetooth/transport.zig");
+    _ = @import("devs/usb/bluetooth/mediatek.zig");
     _ = @import("devs/networks/mt7922/frames.zig");
     _ = @import("devs/networks/mt7922/scan.zig");
     _ = @import("devs/networks/mt7922/peer.zig");

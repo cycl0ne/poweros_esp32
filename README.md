@@ -41,7 +41,7 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 | [Debugging](sdk/docs/guides/debugging.md) | what a failure prints, from an address to a line, the ROM debugger, `s3>`, memory debugging, JTAG |
 | [The SDK](sdk/) | the package a program builds against |
 | [Autodocs](sdk/docs/README.md) | every call, and every module by kind |
-| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [posfs](sdk/docs/guides/posfs.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [installing](sdk/docs/guides/install.md), [Modbus](sdk/docs/guides/modbus.md), [sound](sdk/docs/guides/audio.md), [displays](sdk/docs/guides/rtg.md), [locale](sdk/docs/guides/locale.md), [commodities](sdk/docs/guides/commodities.md) |
+| [Guides](sdk/docs/README.md#guides) | how the calls work together: [exec](sdk/docs/guides/exec.md), [dos](sdk/docs/guides/dos.md), [posfs](sdk/docs/guides/posfs.md), [utility](sdk/docs/guides/utility.md), [intuition](sdk/docs/guides/intuition.md), [desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [fonts](sdk/docs/guides/fonts.md), [styles](sdk/docs/guides/styles.md), [motion](sdk/docs/guides/motion.md), [datatypes](sdk/docs/guides/datatypes.md), [network](sdk/docs/guides/network.md), [USB](sdk/docs/guides/usb.md), [disks](sdk/docs/guides/rdb.md), [installing](sdk/docs/guides/install.md), [Modbus](sdk/docs/guides/modbus.md), [sound](sdk/docs/guides/audio.md), [displays](sdk/docs/guides/rtg.md), [locale](sdk/docs/guides/locale.md), [commodities](sdk/docs/guides/commodities.md), [Bluetooth](sdk/docs/guides/bluetooth.md) |
 | [Wi-Fi](docs/esp32s3wifi.md) | the ESP32-S3's radio's device, and how it is built |
 | [USB Wi-Fi](docs/aic8800.md) | the AIC8800 stick's device, and how it is built |
 | [posfs](docs/posfs.md) | the PowerOS file system: its format on the medium, field by field, and how it works |
@@ -78,7 +78,8 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
   Amiga software.
 - **It is not** a protected system. All tasks share one address space; it
   is a machine for one person at a time.
-- **It does not (yet)** have Bluetooth.
+- **It does not (yet)** find or pair Bluetooth devices: bluetooth.library
+  brings its controllers up, and the rest of the stack is being built.
 
 ### What is in it
 
@@ -86,7 +87,7 @@ AArch64 `virt` machines and in its x86-64 q35 machine.
 flowchart TB
     subgraph programs ["Programs"]
         direction TB
-        p_shell["the shell<br/>65 commands in C:"]
+        p_shell["the shell<br/>66 commands in C:"]
         p_desktop["the desktop<br/>and its programs"]
         p_net["network tools<br/>Git, SSH, shares"]
     end
@@ -147,7 +148,7 @@ every module is in [the SDK's documentation](sdk/docs/README.md).
 | **Sound** | up to sixteen streams mixed into an output, each output with its own volume and a ten-band equalizer; recording; WAV, MP3, FLAC and Ogg Vorbis, from files or internet radio ([sound](sdk/docs/guides/audio.md)) |
 | **Video** | films in MP4, MOV and Matroska - H.264, H.265, VP9 and AV1 - with their sound and subtitles, on the chip's own decoder where it has one |
 | **Network** | TCP/IP with IPv4 and IPv6, TLS 1.3 and 1.2, HTTP, WPA2 Wi-Fi, a packet filter; a shell over Telnet or SSH; a git client that clones, fetches, commits and pushes; SMB shares ([network](sdk/docs/guides/network.md)) |
-| **Devices** | USB hosts up to SuperSpeed with keyboards, mice, sticks and disks, serial and Ethernet adapters, Wi-Fi sticks, speakers and headsets; PCI Express, with Wi-Fi cards on it (MediaTek MT7922); NVMe, SD cards and flash; Ethernet up to 1000 Mbit/s; I2C, RS-485 and Modbus ([USB](sdk/docs/guides/usb.md), [Modbus](sdk/docs/guides/modbus.md)) |
+| **Devices** | USB hosts up to SuperSpeed with keyboards, mice, sticks and disks, serial and Ethernet adapters, Wi-Fi sticks, speakers and headsets; PCI Express, with Wi-Fi cards on it (MediaTek MT7922); Bluetooth controllers on USB (the MT7922's); NVMe, SD cards and flash; Ethernet up to 1000 Mbit/s; I2C, RS-485 and Modbus ([USB](sdk/docs/guides/usb.md), [Modbus](sdk/docs/guides/modbus.md)) |
 | **Desktop** | the desktop with icons and a dock; requesters; datatypes for pictures - JPEG, progressive too, PNG, WebP, GIF, BMP, ICO, ILBM -, SVG drawings - their text in colour fonts too -, text, Markdown, HTML, animations - GIF, WebP, Lottie - and sounds; commodities, hotkeys and filters on the input ([desktop](sdk/docs/guides/anvil.md), [icons](sdk/docs/guides/icons.md), [datatypes](sdk/docs/guides/datatypes.md), [commodities](sdk/docs/guides/commodities.md)) |
 | **When something fails** | a Guru and a ROM debugger on the serial port, memory debugging, the system log, and a failed program held for Suspend, Kill or Reboot ([debugging](sdk/docs/guides/debugging.md)) |
 
@@ -271,7 +272,7 @@ Fetched once into `toolchain/`, pinned and checked, never committed:
 | `scripts/fetch-emoji.sh` | Unicode's list of the emoji and the CLDR's names for them, made into `LOCALE:Emoji` - the emoji in their groups and order, and what each is called in the disk's languages (on the 64-bit machines' disks) |
 | `scripts/fetch-certs.sh` | Mozilla's root certificates, made into the trust store `SYS:Certificates/Roots` |
 | `scripts/fetch-cyw43455.sh` | the radio firmware of the Compute Module 5 and the Raspberry Pi 4 Model B, which `DEVS:networks/cyw43455.device` loads into it (the two AArch64 disks) |
-| `scripts/fetch-mt7922.sh` | the firmware of a MediaTek MT7922 Wi-Fi card, which `DEVS:networks/mt7922.device` loads into it (the 64-bit machines' disks) |
+| `scripts/fetch-mt7922.sh` | the firmware of a MediaTek MT7922 card: its Wi-Fi's, which `DEVS:networks/mt7922.device` loads into it, and its Bluetooth's, which `DEVS:usb/bluetooth.device` does (the 64-bit machines' disks) |
 | `scripts/fetch-vpu.sh` | the JH7110's video decoder firmware, which `videodec.resource` loads (the RISC-V 64 disk) |
 | `scripts/fetch-amdgpu.sh` | an AMD graphics device's video decoder firmware and its security processor's table of contents, which `amdgpu.resource` loads (the x86-64 disk) |
 | `scripts/fetch-pciids.sh` | the PCI ID Repository's list, `DEVS:pci.ids` on the 64-bit machines' disks, which `C:PCIInfo` names vendors and devices from - the host's copy where it has one, the current list otherwise: not pinned |
@@ -432,6 +433,7 @@ sets in `src/boards/<board>/disk.zig`:
 | `gui` | the desktop: anvil.library, the gadget and image classes, the datatypes of pictures and text, the programs with windows |
 | `net` | bsdsocket.library and what speaks over it, the network drivers, `C:net` |
 | `wifi` | the radios' drivers and what joins a network with them |
+| `bluetooth` | bluetooth.library, the controllers' drivers and their firmware, `C:Bluetooth` |
 | `media` | sound and film: the codecs, Player, Movie |
 | `storage` | cards, sticks and SSDs: the partition table, the file systems beside the flash's own, HDToolBox, the install |
 | `usb` | usb.library, the host controllers and the class drivers |

@@ -44,6 +44,10 @@ pub const DEVIF_USBCLASS: u32 = 13;
 /// (sdk/devices/wireless.zig). A device that speaks it speaks
 /// DEVIF_SANA2 too.
 pub const DEVIF_WIRELESS: u32 = 14;
+/// A Bluetooth controller: HCI packets, one a request - commands and data
+/// out, events and data in (sdk/devices/hci.zig). bluetooth.library runs
+/// the stack on its units.
+pub const DEVIF_HCI: u32 = 15;
 
 /// Each command set's name, for a program that lists or asks for them:
 /// "serial" for DEVIF_SERIAL; null past the last.
@@ -63,6 +67,7 @@ pub fn devifName(set: u32) ?[*:0]const u8 {
         DEVIF_USBHC => "usbhc",
         DEVIF_USBCLASS => "usbclass",
         DEVIF_WIRELESS => "wireless",
+        DEVIF_HCI => "hci",
         else => null,
     };
 }

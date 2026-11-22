@@ -266,6 +266,23 @@ pub fn mt7922Dir(b: *std.Build) ?[]const u8 {
     return path;
 }
 
+/// The RAM code scripts/fetch-mt7922.sh fetches for the card's Bluetooth,
+/// beside its Wi-Fi's.
+pub const mt7922_bluetooth_file = "BT_RAM_CODE_MT7922_1_1_hdr.bin";
+
+/// Where scripts/fetch-mt7922.sh put the MT7922's Bluetooth firmware, or
+/// null without it - fetched before the script took it too, or not at
+/// all.
+pub fn mt7922BluetoothDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/mt7922");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, mt7922_bluetooth_file }), .{}) catch {
+        std.log.info("no MT7922 Bluetooth firmware (scripts/fetch-mt7922.sh): the 64-bit disks have no DEVS:usb/firmware/mediatek/", .{});
+        return null;
+    };
+    return path;
+}
+
 /// Where scripts/fetch-aic8800.sh put the AIC8800's firmware, or null
 /// without it.
 pub fn aic8800Dir(b: *std.Build) ?[]const u8 {

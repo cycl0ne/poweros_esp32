@@ -37,6 +37,8 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `net`: bsdsocket.library and what speaks over it, the network
 ///   drivers, C:net.
 /// - `wifi`: the radios' drivers and what joins a network with them.
+/// - `bluetooth`: bluetooth.library, the controllers' drivers and their
+///   firmware, and what finds and pairs devices.
 /// - `media`: sound and film - the codecs, Player, Movie.
 /// - `storage`: cards, sticks and SSDs - the partition table, the file
 ///   systems beside the flash's own, HDToolBox, the install.
@@ -49,7 +51,7 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `dev`: what somebody working on the system wants there - Git.
 /// - `tests`: C:test and SYS:Tests, and the example library and gadget
 ///   they open.
-pub const Set = enum { base, fonts, languages, gui, net, wifi, media, storage, usb, @"3d", modbus, commodities, svg, dev, tests };
+pub const Set = enum { base, fonts, languages, gui, net, wifi, bluetooth, media, storage, usb, @"3d", modbus, commodities, svg, dev, tests };
 
 /// Some of the sets.
 pub const Sets = std.EnumSet(Set);
@@ -246,6 +248,7 @@ const commands = [_][]const u8{
     "makelink",      "posfs",       "binddrivers", "pciinfo",       "record",
     "audio",         "temperature", "hash",        "break",         "status",
     "cpuclock",      "install",     "update",      "reboot",        "shutdown",
+    "bluetooth",
 };
 const tests = [_][]const u8{
     "hello",       "echoargs",    "testlib",     "gfx",       "anim",
@@ -351,6 +354,7 @@ const modules = [_]Program{
     .{ .disk = "libs/http.library", .source = "libs/http/http.zig", .name = "http.library", .set = .net, .strings = "libs/http/http.cd", .strings_as = "http_strings", .catalog = "sys/http.catalog" },
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library", .set = .storage },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library", .set = .usb },
+    .{ .disk = "libs/bluetooth.library", .source = "libs/bluetooth/bluetooth.zig", .name = "bluetooth.library", .set = .bluetooth },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
     .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .set = .@"3d", .imports = &.{"raster"} },
     .{ .disk = "libs/facet/v3d.fdriver", .source = "libs/facet/v3d_fdriver.zig", .name = "v3d.fdriver", .set = .@"3d", .imports = &.{ "v3d", "raster" } },
@@ -483,6 +487,7 @@ const modules = [_]Program{
     .{ .disk = "devs/usb/ecm.device", .source = "devs/usb/ecm/ecm.zig", .name = "ecm.device", .set = .net },
     .{ .disk = "devs/usb/uac.device", .source = "devs/usb/audio/uac.zig", .name = "uac.device", .set = .media },
     .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device", .set = .wifi },
+    .{ .disk = "devs/usb/bluetooth.device", .source = "devs/usb/bluetooth/bluetooth.zig", .name = "bluetooth.device", .set = .bluetooth },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler", .set = .storage },
     .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler", .set = .storage },
     .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler", .set = .net, .imports = &.{"smbclient"} },
@@ -666,6 +671,7 @@ const path_sets = [_]struct { []const u8, Set }{
     .{ "devs/networks/esp32s3wifi.device", .wifi },
     .{ "devs/networks", .net },
     .{ "devs/usb/firmware/aic8800", .wifi },
+    .{ "devs/usb/firmware/mediatek", .bluetooth },
     .{ "devs/usb/firmware", .wifi },
     .{ "devs/usb", .usb },
     .{ "s/network-startup", .net },
@@ -745,6 +751,7 @@ const command_sets = [_]struct { []const u8, Set }{
     .{ "install", .storage },
     .{ "update", .storage },
     .{ "wireless", .wifi },
+    .{ "bluetooth", .bluetooth },
     .{ "git", .dev },
 };
 

@@ -101,6 +101,8 @@ pub const icon = @import("libs/icon/icon.zig");
 pub const anvil = @import("libs/anvil/anvil.zig");
 /// usb.library: the USB buses, their devices, pipes to their endpoints.
 pub const usb = @import("libs/usb/usb.zig");
+/// bluetooth.library: the controllers, and the HCI's numbers.
+pub const bluetooth = @import("libs/bluetooth/bluetooth.zig");
 /// The machine's PCI functions, through pci.library.
 pub const pci = @import("libs/pci/pci.zig");
 /// Three-dimensional drawing on the machine's cores, through facet.library.
