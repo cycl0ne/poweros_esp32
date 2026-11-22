@@ -61,8 +61,8 @@ pub const own_memory_calls = true;
 
 pub const DEVICE_NAME = _wifi.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
-const BUILD_DATE = "14.10.2026";
+const DEVICE_REVISION = 2;
+const BUILD_DATE = "22.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -423,7 +423,7 @@ const init_table = exec.InitTable{
 
 /// What the device speaks, for ObtainDeviceUnits (expansion.library),
 /// and where its units come from: a unit per ESP32-S3 radio the board lists.
-const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_SANA2, 0 };
+const device_speaks = [_]u32{ sdk.expansion.devices.DEVIF_SANA2, sdk.expansion.devices.DEVIF_WIRELESS, 0 };
 
 /// No flags but AUTOINIT: the device is on the disk, in DEVS:networks/,
 /// and is made when something opens it - ramlib loads the file and hands

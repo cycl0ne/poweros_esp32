@@ -864,7 +864,10 @@ its passphrase read from `ENVARC:Sys/net/networks/<network>`.
 `SYS:System/WiFi` does all of that in a window: the networks in range, a
 join with the passphrase asked for and kept once it worked, a leave, a
 network forgotten, and the `Network` the radio joins at start
-(`SYS:System/Docs/WiFi.md`).
+(`SYS:System/Docs/WiFi.md`). It finds a radio whose interface is not up
+too - a device that lists `DEVIF_WIRELESS` among what it speaks, which
+`ShowConfig SPEAKS=wireless` shows - and brings its interface up as it
+joins, writing it a file that asks DHCP when it has none.
 
 `DEVS:networks/esp32s3wifi.device` is the ESP32-S3's radio as such a
 unit; its build and inside are described in `docs/esp32s3wifi.md`.

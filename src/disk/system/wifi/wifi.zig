@@ -4,12 +4,13 @@
 //!
 //!   WiFi INTERFACE/K
 //!
-//! INTERFACE is the radio's interface to start on (`wlan0`); without it,
-//! the first one there is.
+//! INTERFACE is the radio to start on, by its interface (`wlan0`) or its
+//! file in DEVS:NetInterfaces/ (`WLAN0`); without it, the first one there
+//! is.
 //!
-//! **The radios** are the network interfaces whose device answers the
-//! wireless requests (radio.zig): a radio is found once its interface is
-//! up, which is also what gives the station its address. With more than
+//! **The radios** are the devices that answer the wireless requests
+//! (radio.zig): those an interface is up on, and those that say they speak
+//! them with none up - not up yet, which scan all the same. With more than
 //! one, the chooser at the top picks the one the window works on.
 //!
 //! **The line under it** says where the station is: the network it is on,
@@ -27,7 +28,11 @@
 //! open one at once, a protected one with the passphrase kept for it, or
 //! else with one asked for in a window of its own - where Keep the
 //! passphrase keeps it for the next time, written once the station is on
-//! the network with it. A join that has not come off after twenty seconds
+//! the network with it. A radio not up is brought up first: its file in
+//! DEVS:NetInterfaces/ started by C:net/AddNetInterface, and where it has
+//! none, one written for it that asks DHCP for the address - WLAN0, or the
+//! first such name free - which the boot then brings up at every start.
+//! A join that has not come off after twenty seconds
 //! is given up, and the network left, so the radio does not go on trying
 //! a passphrase that is wrong. **Leave** leaves the network the station is
 //! on. **Forget** deletes a network's kept passphrase, once it has asked,
@@ -62,6 +67,7 @@ const IntuitionBase = sdk.interface.intuition.IntuitionBase;
 const GraphicsBase = sdk.interface.graphics.GraphicsBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const TagItem = sdk.utility.TagItem;
 const Object = intuition.Object;
 const rdargs = dos.rdargs;
@@ -79,8 +85,8 @@ const cb_class = sdk.gadgets.checkbox;
 const ch = sdk.gadgets.chooser;
 
 pub const COMMAND_NAME = "WiFi";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (21.11.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (22.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -176,11 +182,13 @@ fn passphraseFits(passphrase: []const u8) bool {
     return true;
 }
 
-/// The radio's interface file and the buffer it is changed in: kept apart
-/// from the stack, which on a 32-bit machine has no room for them.
+/// The radio's interface file and the buffer it is changed in, and what
+/// starting its interface takes: kept apart from the stack, which on a
+/// 32-bit machine has no room for them.
 const Files = struct {
     bytes: [netinterface.file_max]u8,
     changed: [netinterface.file_max]u8,
+    work: netinterface.Work,
 };
 
 const App = struct {
@@ -328,7 +336,7 @@ const App = struct {
         app.current = index;
         const picked_radio = app.radio() orelse return;
         if (!app.link.open(picked_radio)) {
-            app.say("%s: its device does not open", .{@as([*:0]const u8, @ptrCast(&picked_radio.interface))});
+            app.say("%s: the device does not open", .{@as([*:0]const u8, @ptrCast(&picked_radio.device))});
             app.showList();
             return;
         }
@@ -343,8 +351,9 @@ const App = struct {
         app.start_file = false;
         app.start_network[0] = 0;
         const picked_radio = app.radio() orelse return;
+        if (picked_radio.file[0] == 0) return;
         var path: netinterface.Path = undefined;
-        const file = netinterface.readFile(app.dl, netinterface.pathOf(text.untilNul(&picked_radio.interface), &path), &app.files.bytes) orelse return;
+        const file = netinterface.readFile(app.dl, netinterface.pathOf(text.untilNul(&picked_radio.file), &path), &app.files.bytes) orelse return;
         app.start_file = true;
         if (netinterface.valueOf(file, "Network")) |name| _ = text.copyInto(&app.start_network, name);
     }
@@ -397,7 +406,11 @@ const App = struct {
         const picked_radio = app.radio() orelse return;
         const interface: [*:0]const u8 = @ptrCast(&picked_radio.interface);
         if (!app.on) {
-            app.status.say(app.sys, "%s is on no network - pick one and Join", .{interface});
+            if (picked_radio.up) {
+                app.status.say(app.sys, "%s is on no network - pick one and Join", .{interface});
+            } else {
+                app.status.say(app.sys, "The radio is not up - Join brings it up with the network picked", .{});
+            }
             app.showStatus();
             return;
         }
@@ -417,7 +430,9 @@ const App = struct {
             pair(bsd.IFQ_State, @intFromPtr(&state)),
             .{},
         };
-        if (app.sb.QueryInterfaceTagList(interface, &tags) != 0 or address == 0) {
+        if (!picked_radio.up) {
+            line.put("no address: its interface is not up - Join brings it up");
+        } else if (app.sb.QueryInterfaceTagList(interface, &tags) != 0 or address == 0) {
             line.put("no address yet");
         } else {
             const octets: [4]u8 = @bitCast(address);
@@ -483,7 +498,8 @@ const App = struct {
         const network = app.pickedNetwork();
         const has_radio = app.link.opened;
         const is_on = network != null and app.on and text.same(network.?.name(), app.joined.name());
-        app.enable(app.join_button, has_radio and network != null and !is_on);
+        const is_up = if (app.radio()) |picked_radio| picked_radio.up else false;
+        app.enable(app.join_button, has_radio and network != null and (!is_on or !is_up));
         app.enable(app.leave_button, has_radio and (app.on or app.joining[0] != 0));
         const at_start = network != null and text.same(network.?.name(), text.untilNul(&app.start_network));
         app.enable(app.forget_button, network != null and (app.known(network.?.name()) or at_start));
@@ -493,7 +509,8 @@ const App = struct {
             .{},
         });
         app.enable(app.scan_button, has_radio and !app.link.scanning);
-        app.enable(app.settings_button, app.radio() != null);
+        const picked_radio = app.radio();
+        app.enable(app.settings_button, picked_radio != null and picked_radio.?.file[0] != 0);
     }
 
     fn pickedNetwork(app: *App) ?*Network {
@@ -544,20 +561,91 @@ const App = struct {
         app.openAsk(network.name());
     }
 
-    /// The join of `name` asked of the radio, and then watched.
+    /// The join of `name` asked of the radio - brought up first, when it is
+    /// not - and then watched. A radio just brought up from a file that
+    /// names the network is joined to it by C:net/AddNetInterface with the
+    /// passphrase kept, and one still on it from a file that names none
+    /// stays on it: neither is asked again, which would leave the network
+    /// and join it anew.
     fn startJoin(app: *App, name: []const u8, passphrase: ?[*:0]const u8) void {
-        var ssid: [radio_file.ssid_max:0]u8 = @splat(0);
-        _ = text.copyInto(&ssid, name);
-        const refused = app.link.join(@ptrCast(&ssid), passphrase);
-        if (refused != 0) {
-            app.say("The radio refused to join \"%s\": error %d", .{ @as([*:0]const u8, @ptrCast(&ssid)), @as(i32, refused) });
+        const brought = if (app.radio()) |picked_radio| !picked_radio.up else false;
+        if (!app.bringUp()) {
             text.wipe(&app.typed);
             return;
+        }
+        var ssid: [radio_file.ssid_max:0]u8 = @splat(0);
+        _ = text.copyInto(&ssid, name);
+        const typed = passphrase != null and passphrase.? == @as([*:0]const u8, @ptrCast(&app.typed));
+        const joined_by_file = brought and !typed and text.same(name, text.untilNul(&app.start_network));
+        const still_on = brought and app.start_network[0] == 0 and app.on and text.same(name, app.joined.name());
+        if (!joined_by_file and !still_on) {
+            const refused = app.link.join(@ptrCast(&ssid), passphrase);
+            if (refused != 0) {
+                app.say("The radio refused to join \"%s\": error %d", .{ @as([*:0]const u8, @ptrCast(&ssid)), @as(i32, refused) });
+                text.wipe(&app.typed);
+                return;
+            }
         }
         app.joining = ssid;
         app.join_ticks = 0;
         app.say("Joining \"%s\"...", .{@as([*:0]const u8, @ptrCast(&ssid))});
         app.showList();
+    }
+
+    /// The radio's interface brought up, when it is not: its file started
+    /// by C:net/AddNetInterface - written first where it has none, under
+    /// the first of WLAN0 to WLAN9 free, asking DHCP for the address. False,
+    /// said, when it could not be.
+    fn bringUp(app: *App) bool {
+        const picked_radio = app.radio() orelse return false;
+        if (picked_radio.up) return true;
+        const window = app.window orelse return false;
+        app.ib.SetWindowPointerA(window, &[_]TagItem{ pair(wn.WA_BusyPointer, 1), .{} });
+        defer app.ib.SetWindowPointerA(window, &[_]TagItem{.{}});
+        if (picked_radio.file[0] == 0) {
+            var name: netinterface.Name = undefined;
+            if (!netinterface.freeName(app.dl, "WLAN", &name)) {
+                app.say("No interface file can be written: WLAN0 to WLAN9 are all taken", .{});
+                return false;
+            }
+            var path: netinterface.Path = undefined;
+            const at = netinterface.pathOf(text.untilNul(&name), &path);
+            const bytes = netinterface.newFile(text.untilNul(&name), text.untilNul(&picked_radio.device), picked_radio.unit, &app.files.changed) orelse {
+                app.say("%s cannot be made for %s", .{ at, @as([*:0]const u8, @ptrCast(&picked_radio.device)) });
+                return false;
+            };
+            if (!netinterface.writeFile(app.dl, at, bytes)) {
+                app.say("%s cannot be written", .{at});
+                return false;
+            }
+            picked_radio.file = name;
+        }
+        const started = netinterface.addInterface(app.dl, text.untilNul(&picked_radio.file), COMMAND_NAME, &app.files.work);
+        if (started.code != dos.RETURN_OK) {
+            if (started.said.len != 0) {
+                app.status.clear();
+                app.status.put(started.said);
+            } else {
+                app.status.say(app.sys, "C:net/AddNetInterface failed: %ld", .{@as(i64, started.code)});
+            }
+            app.held = message_ticks;
+            app.showStatus();
+            return false;
+        }
+        picked_radio.up = true;
+        @memset(&picked_radio.interface, 0);
+        for (text.untilNul(&picked_radio.file), 0..) |char, at| {
+            if (at + 1 < picked_radio.interface.len) picked_radio.interface[at] = netinterface.lower(char);
+        }
+        picked_radio.labelUp(app.sys);
+        app.set(app.chooser, &.{
+            pair(ch.CHOOSER_Labels, @intFromPtr(&app.radio_labels)),
+            pair(ch.CHOOSER_Active, app.current),
+            .{},
+        });
+        app.readStart();
+        app.showButtons();
+        return true;
     }
 
     /// A tick of the join under way: done once the station is on the
@@ -684,7 +772,7 @@ const App = struct {
     fn writeStart(app: *App, network: ?[]const u8) bool {
         const picked_radio = app.radio() orelse return false;
         var path: netinterface.Path = undefined;
-        const at = netinterface.pathOf(text.untilNul(&picked_radio.interface), &path);
+        const at = netinterface.pathOf(text.untilNul(&picked_radio.file), &path);
         const file = netinterface.readFile(app.dl, at, &app.files.bytes) orelse {
             app.say("%s cannot be read, or is too long to change here", .{at});
             return false;
@@ -709,7 +797,7 @@ const App = struct {
         const picked_radio = app.radio() orelse return;
         const dl = app.dl;
         const command = &app.command;
-        command.say(app.sys, "SYS:System/Network INTERFACE=%s", .{@as([*:0]const u8, @ptrCast(&picked_radio.interface))});
+        command.say(app.sys, "SYS:System/Network INTERFACE=%s", .{@as([*:0]const u8, @ptrCast(&picked_radio.file))});
         const input = dl.Open("NIL:", dos.MODE_OLDFILE) orelse return app.say("SYS:System/Network could not be started", .{});
         const output = dl.Open("NIL:", dos.MODE_NEWFILE) orelse {
             _ = dl.Close(input);
@@ -1008,12 +1096,13 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     };
     defer dl.FreeArgs(rda);
 
-    var libraries: [9]?*exec.Library = @splat(null);
+    var libraries: [10]?*exec.Library = @splat(null);
     defer for (libraries) |lib| sys.CloseLibrary(lib);
     const wanted = [_][*:0]const u8{
-        intuition.INTUITIONNAME,    graphics.GRAPHICSNAME,     bsd.SOCKETNAME,
-        sdk.interface.utility.NAME, lb.LISTBROWSER_LIBRARY,    st.STRING_LIBRARY,
-        tx.TEXT_LIBRARY,            cb_class.CHECKBOX_LIBRARY, ch.CHOOSER_LIBRARY,
+        intuition.INTUITIONNAME,     graphics.GRAPHICSNAME,     bsd.SOCKETNAME,
+        sdk.interface.utility.NAME,  lb.LISTBROWSER_LIBRARY,    st.STRING_LIBRARY,
+        tx.TEXT_LIBRARY,             cb_class.CHECKBOX_LIBRARY, ch.CHOOSER_LIBRARY,
+        sdk.expansion.EXPANSIONNAME,
     };
     for (wanted, 0..) |name, index| {
         libraries[index] = sys.OpenLibrary(name, 0) orelse {
@@ -1024,6 +1113,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const ib: *IntuitionBase = @ptrCast(libraries[0].?);
     const sb: *SocketBase = @ptrCast(libraries[2].?);
     const utility: *UtilityBase = @ptrCast(libraries[3].?);
+    const eb: *ExpansionBase = @ptrCast(libraries[9].?);
 
     const files_memory = sys.AllocVec(@sizeOf(Files), exec.MEMF_ANY) orelse {
         _ = Printf(dl, MSG_NOMEMORY, .{COMMAND_NAME});
@@ -1050,16 +1140,17 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer app.link.close();
     defer text.wipe(&app.typed);
 
-    app.radio_count = radio_file.find(sys, sb, &app.radios);
+    app.radio_count = radio_file.find(sys, dl, sb, eb, &app.files.bytes, &app.radios);
     for (app.radios[0..app.radio_count], 0..) |*one, index| {
         app.radio_labels[index] = one.label.ptr();
         if (rdargs.string(argv[arg_interface])) |asked| {
-            if (text.sameWord(text.untilNul(&one.interface), text.spanOf(asked))) app.current = index;
+            const name = text.spanOf(asked);
+            if (text.sameWord(text.untilNul(&one.interface), name) or text.sameWord(text.untilNul(&one.file), name)) app.current = index;
         }
     }
     if (app.radio_count == 0) {
         app.radio_labels[0] = "no radio";
-        app.status.put("No radio is up: C:net/AddNetInterface brings one up from DEVS:NetInterfaces/");
+        app.status.put("No radio: no device here answers the wireless requests");
     }
     app.shown_status = app.status;
 

@@ -39,6 +39,11 @@ pub const DEVIF_USBHC: u32 = 12;
 /// AbortIO, and a `ResidentUSBClass` tag whose match table says what it
 /// drives (sdk/devices/usbclass.zig).
 pub const DEVIF_USBCLASS: u32 = 13;
+/// A radio: the wireless requests beside the network device API's - the
+/// networks in range, a join, a leave, the link's quality
+/// (sdk/devices/wireless.zig). A device that speaks it speaks
+/// DEVIF_SANA2 too.
+pub const DEVIF_WIRELESS: u32 = 14;
 
 /// Each command set's name, for a program that lists or asks for them:
 /// "serial" for DEVIF_SERIAL; null past the last.
@@ -57,6 +62,7 @@ pub fn devifName(set: u32) ?[*:0]const u8 {
         DEVIF_TIMER => "timer",
         DEVIF_USBHC => "usbhc",
         DEVIF_USBCLASS => "usbclass",
+        DEVIF_WIRELESS => "wireless",
         else => null,
     };
 }

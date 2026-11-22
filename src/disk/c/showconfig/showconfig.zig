@@ -38,7 +38,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.11 (18.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.12 (22.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICES/S,SPEAKS/K";
@@ -152,7 +152,7 @@ fn printDevices(dl: *DosBase, eb: *ExpansionBase, speaks: ?[*:0]const u8) i32 {
         _ = dl.PutStr("no device\n");
         return dos.RETURN_WARN;
     }
-    _ = dl.PutStr("device                   unit  version  where  speaks           unit is\n");
+    _ = dl.PutStr("device                   unit  version  where  speaks                    unit is\n");
     var it = list.iterator();
     while (it.next()) |node| {
         const unit: *const devices.DeviceUnit = @ptrCast(@alignCast(node));
@@ -172,7 +172,7 @@ fn printDevices(dl: *DosBase, eb: *ExpansionBase, speaks: ?[*:0]const u8) i32 {
             }
         }
         const where: [*:0]const u8 = if (unit.flags & devices.DUF_ROM != 0) "ROM" else "DEVS:";
-        _ = Printf(dl, "%-24s %4u  %3u.%-3u  %-5s  %-15s  %s\n", .{
+        _ = Printf(dl, "%-24s %4u  %3u.%-3u  %-5s  %-24s  %s\n", .{
             unit.node.name.?,
             unit.unit,
             @as(u32, unit.version),

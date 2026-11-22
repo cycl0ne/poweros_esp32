@@ -2,12 +2,19 @@
 //! The radios WiFi works on, and what it asks of them through the wireless
 //! requests (`sdk/devices/wireless.zig`).
 //!
-//! **A radio is a network interface whose device answers them.** The
-//! interfaces are bsdsocket.library's (`find`): each one's device is
-//! opened and asked for the network it is on, S2_GETNETWORKINFO, and a
-//! device that does not know the request (IOERR_NOCMD) is a wire, not a
-//! radio. So a radio is only found once its interface is up - which is
-//! also what gives the station an address once it is on a network.
+//! **A radio is a device unit that answers them** (`find`), found two
+//! ways. First the network interfaces that are up, bsdsocket.library's:
+//! each one's device is opened and asked for the network it is on,
+//! S2_GETNETWORKINFO, and a device that does not know the request
+//! (IOERR_NOCMD) is a wire, not a radio. Then every unit of a device that
+//! says it speaks the wireless requests (DEVIF_WIRELESS, which
+//! expansion.library's ObtainDeviceUnits lists without opening anything)
+//! and has no interface up on it - opened and asked the same, and asked
+//! for its address as well: a unit whose hardware is not there, a USB
+//! stick's before the stick comes, has none yet, and is not taken.
+//! Such a radio scans and joins as well; its interface, which gives the
+//! station an address, is brought up by the window when it joins. Each
+//! radio is named by its file in DEVS:NetInterfaces/ where it has one.
 //!
 //! **A link is one radio opened** (`Link`): one request for what is
 //! answered at once - the network joined, the signal, a join and a leave -
@@ -21,12 +28,16 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const net = sdk.devices.network;
 const wireless = sdk.devices.wireless;
+const devices = sdk.expansion.devices;
 const bsd = sdk.bsdsocket;
+const netinterface = @import("netinterface");
 const text = @import("text.zig");
 const TagItem = sdk.utility.TagItem;
 const ExecBase = sdk.interface.exec.ExecBase;
+const DosBase = sdk.interface.dos.DosBase;
 const SocketBase = sdk.interface.bsdsocket.SocketBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 
 /// The most radios one machine is looked at for.
 pub const max_radios = 4;
@@ -37,11 +48,20 @@ pub const ssid_max = 32;
 
 /// One radio: its interface, and the device and unit under it.
 pub const Radio = struct {
+    /// The interface up on it, `wlan0` - empty while there is none.
     interface: [16:0]u8 = @splat(0),
+    /// Its file in DEVS:NetInterfaces/, `WLAN0` - empty while it has none.
+    file: netinterface.Name = @splat(0),
     device: [64:0]u8 = @splat(0),
     unit: u32 = 0,
+    up: bool = false,
     /// What the window's chooser shows for it.
     label: text.Line = .{},
+
+    /// The label for an interface that is up on it.
+    pub fn labelUp(radio: *Radio, sys: *ExecBase) void {
+        radio.label.say(sys, "%s - %s unit %u", .{ @as([*:0]const u8, @ptrCast(&radio.interface)), @as([*:0]const u8, @ptrCast(&radio.device)), radio.unit });
+    }
 };
 
 /// The device's copy calls: nothing is read or written through them, but
@@ -61,39 +81,71 @@ fn buffersInto(tags: *[3]TagItem) void {
     };
 }
 
-/// The radios among the interfaces, into `into`: how many there are.
-pub fn find(sys: *ExecBase, sb: *SocketBase, into: *[max_radios]Radio) usize {
-    const list = sb.ObtainInterfaceList() orelse return 0;
-    defer sb.ReleaseInterfaceList(list);
+/// The radios: the interfaces up whose device answers the wireless
+/// requests, then the units of the devices that speak them with no
+/// interface up, which answer them too. Each one's file in
+/// DEVS:NetInterfaces/ is looked for, the files read into `buffer`.
+pub fn find(sys: *ExecBase, dl: *DosBase, sb: *SocketBase, eb: *ExpansionBase, buffer: []u8, into: *[max_radios]Radio) usize {
     var count: usize = 0;
-    var it = list.iterator();
+    if (sb.ObtainInterfaceList()) |list| {
+        defer sb.ReleaseInterfaceList(list);
+        var it = list.iterator();
+        while (it.next()) |node| {
+            if (count == into.len) break;
+            const name = node.name orelse continue;
+            var device: ?[*:0]const u8 = null;
+            var unit: u32 = 0;
+            const tags = [_]TagItem{
+                .{ .tag = bsd.IFQ_DeviceName, .data = @intFromPtr(&device) },
+                .{ .tag = bsd.IFQ_DeviceUnit, .data = @intFromPtr(&unit) },
+                .{},
+            };
+            if (sb.QueryInterfaceTagList(name, &tags) != 0) continue;
+            const device_name = device orelse continue;
+            if (!isRadio(sys, device_name, unit, false)) continue;
+            const radio = &into[count];
+            radio.* = .{ .unit = unit, .up = true };
+            _ = text.copyInto(&radio.interface, text.spanOf(name));
+            _ = text.copyInto(&radio.device, text.spanOf(device_name));
+            // The file the interface was brought up from: its name in
+            // capitals.
+            for (text.spanOf(name), 0..) |char, at| {
+                if (at + 1 < radio.file.len) radio.file[at] = netinterface.upper(char);
+            }
+            radio.labelUp(sys);
+            count += 1;
+        }
+    }
+    const units = eb.ObtainDeviceUnits(devices.DEVIF_WIRELESS, null) orelse return count;
+    defer eb.ReleaseDeviceUnits(units);
+    var it = units.iterator();
     while (it.next()) |node| {
         if (count == into.len) break;
-        const name = node.name orelse continue;
-        var device: ?[*:0]const u8 = null;
-        var unit: u32 = 0;
-        const tags = [_]TagItem{
-            .{ .tag = bsd.IFQ_DeviceName, .data = @intFromPtr(&device) },
-            .{ .tag = bsd.IFQ_DeviceUnit, .data = @intFromPtr(&unit) },
-            .{},
-        };
-        if (sb.QueryInterfaceTagList(name, &tags) != 0) continue;
-        const device_name = device orelse continue;
-        if (!answersWireless(sys, device_name, unit)) continue;
+        const unit: *const devices.DeviceUnit = @ptrCast(@alignCast(node));
+        const device_name = unit.node.name orelse continue;
+        const device = text.spanOf(device_name);
+        const running = for (into[0..count]) |*one| {
+            if (one.unit == unit.unit and netinterface.sameWord(text.untilNul(&one.device), device)) break true;
+        } else false;
+        if (running or !isRadio(sys, device_name, unit.unit, true)) continue;
         const radio = &into[count];
-        radio.* = .{ .unit = unit };
-        _ = text.copyInto(&radio.interface, text.spanOf(name));
-        _ = text.copyInto(&radio.device, text.spanOf(device_name));
-        radio.label.say(sys, "%s - %s unit %u", .{ name, device_name, unit });
+        radio.* = .{ .unit = unit.unit };
+        _ = text.copyInto(&radio.device, device);
+        if (netinterface.fileNaming(dl, device, unit.unit, &radio.file, buffer)) {
+            radio.label.say(sys, "%s - %s unit %u, not up", .{ @as([*:0]const u8, @ptrCast(&radio.file)), device_name, unit.unit });
+        } else {
+            radio.label.say(sys, "%s unit %u - %s, not up", .{ device_name, unit.unit, unit.label orelse "a radio" });
+        }
         count += 1;
     }
     return count;
 }
 
-/// Whether `device`'s `unit` knows the wireless requests: it is opened
-/// and asked for the network it is on, which a radio answers whether it
-/// is on one or not.
-fn answersWireless(sys: *ExecBase, device: [*:0]const u8, unit: u32) bool {
+/// Whether `device`'s `unit` is a radio: it is opened and asked for the
+/// network it is on, which a radio answers whether it is on one or not;
+/// with `present`, also for its hardware address, which a unit whose
+/// hardware is not there yet does not have - all noughts.
+fn isRadio(sys: *ExecBase, device: [*:0]const u8, unit: u32, present: bool) bool {
     const port = sys.CreateMsgPort() orelse return false;
     defer sys.DeleteMsgPort(port);
     const pool = sys.CreatePool(exec.MEMF_ANY, 512, 256) orelse return false;
@@ -110,7 +162,16 @@ fn answersWireless(sys: *ExecBase, device: [*:0]const u8, unit: u32) bool {
     req.data = pool;
     req.stat_data = null;
     _ = sys.DoIO(&req.req);
-    return req.req.err != exec.IOERR_NOCMD;
+    if (req.req.err == exec.IOERR_NOCMD) return false;
+    if (!present) return true;
+    req.req.command = net.S2_GETSTATIONADDRESS;
+    req.src_addr = @splat(0);
+    req.dst_addr = @splat(0);
+    if (sys.DoIO(&req.req) != 0) return false;
+    for (req.src_addr ++ req.dst_addr) |byte| {
+        if (byte != 0) return true;
+    }
+    return false;
 }
 
 /// How a station joins a network, in a word.

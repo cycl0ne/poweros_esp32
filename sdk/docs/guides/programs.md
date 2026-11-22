@@ -740,11 +740,11 @@ reads DEVS: each time, so a program asks once and keeps the answer.
 
 ```
 1.System:> ShowConfig SPEAKS=serial
-device                   unit  version  where  speaks           unit is
-serial.device               1    1.3    ROM    stream,serial    QEMU's second serial port
-serial.device               2    1.3    ROM    stream,serial    QEMU's third serial port
-usb/acm.device              0    1.0    DEVS:  serial,usbclass  ACM 0
-usbserial.device            0    1.3    ROM    stream,serial    USB-Serial-JTAG
+device                   unit  version  where  speaks                    unit is
+serial.device               1    1.3    ROM    stream,serial             QEMU's second serial port
+serial.device               2    1.3    ROM    stream,serial             QEMU's third serial port
+usb/acm.device              0    1.0    DEVS:  serial,usbclass           ACM 0
+usbserial.device            0    1.3    ROM    stream,serial             USB-Serial-JTAG
 ```
 
 For a person to pick from, asl.library's device requester shows the

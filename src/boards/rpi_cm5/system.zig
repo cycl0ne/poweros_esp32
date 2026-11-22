@@ -139,12 +139,14 @@ const ethernet = [_]Tag{
 /// antenna switch is on the always-on GPIO block, which the radio's
 /// driver drives itself: pin 5 (ANT1) picks the module's own antenna, pin
 /// 6 (ANT2) the U.FL connector's - the first, as Raspberry Pi's device
-/// tree has it unless told otherwise.
+/// tree has it unless told otherwise. cyw43455.device's unit 0, which
+/// PART_BusUnit says - by its place it would be the second network part.
 const wifi = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_NET),
     .value(st.PART_Chip, st.CHIP_CYW43455),
     .pointer(st.PART_ChipName, "cyw43455"),
     .value(st.PART_Bus, st.BUS_SDIO),
+    .value(st.PART_BusUnit, 0),
     .value(st.PART_Address, 0x10_0110_0000),
     .value(st.PART_Irq, 306),
     .value(st.PART_PinPower, pins.gpio(28)),

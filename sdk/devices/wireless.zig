@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: MIT
 //! Wireless network devices (devices/sana2wireless.h): the requests a
 //! radio's unit takes beside the network device API's (network.zig), to
-//! find networks, join one and see how the link is. esp32s3wifi.device and
-//! usb/aic8800.device speak them.
+//! find networks, join one and see how the link is. esp32s3wifi.device,
+//! cyw43455.device and usb/aic8800.device speak them, and say so: each
+//! lists DEVIF_WIRELESS (sdk/libs/expansion/devices.zig), so
+//! ObtainDeviceUnits finds the radios whether an interface runs on them
+//! or not.
 //!
 //! Information goes both ways as tag lists of `S2INFO_*`. What a device
 //! hands back - a scan's networks, the current one - it builds in an exec

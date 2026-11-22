@@ -58,8 +58,8 @@ const tx = sdk.gadgets.text;
 const ch = sdk.gadgets.chooser;
 
 pub const COMMAND_NAME = "Network";
-const VERSION = "1.0";
-const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (21.11.2026)\r\n";
+const VERSION = "1.1";
+const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (22.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
 
@@ -97,10 +97,6 @@ const message_ticks: u32 = 3;
 /// characters wide the name servers' field is at the least.
 const status_room = "x" ** 80;
 const servers_columns: usize = 48;
-
-/// Where the commands that start the interface again say what went wrong.
-const out_file = "T:Network.out";
-const err_file = "T:Network.err";
 
 const configure_labels = [_:null]?[*:0]const u8{ "DHCP", "Fixed address" };
 const ipv6_labels = [_:null]?[*:0]const u8{ "Automatic", "Fixed address", "Off" };
@@ -176,14 +172,14 @@ const Interface = struct {
     label: Line = .{},
 };
 
-/// The interface file and the two buffers it is changed in, and what a
-/// command wrote: kept apart from the stack, which on a 32-bit machine has
-/// no room for them.
+/// The interface file and the two buffers it is changed in, and what
+/// starting the interface again takes: kept apart from the stack, which on
+/// a 32-bit machine has no room for them.
 const Files = struct {
     bytes: [netinterface.file_max]u8,
     first: [netinterface.file_max]u8,
     second: [netinterface.file_max]u8,
-    said: [256]u8,
+    work: netinterface.Work,
 };
 
 const App = struct {
@@ -210,8 +206,8 @@ const App = struct {
     ipv6: usize = 0,
     /// What the window says, read and checked for Save (`gather`).
     gathered: Settings = .{},
-    /// A line put together and used at once: a command, a net mask written
-    /// out, a name server's text to check.
+    /// A line put together and used at once: a net mask written out, a
+    /// name server's text to check.
     scratch: Line = .{},
 
     status: Line = .{},
@@ -567,56 +563,21 @@ const App = struct {
         const window = app.window orelse return;
         app.ib.SetWindowPointerA(window, &[_]TagItem{ pair(wn.WA_BusyPointer, 1), .{} });
         defer app.ib.SetWindowPointerA(window, &[_]TagItem{.{}});
-        const command = &app.scratch;
-        command.say(app.sys, "C:net/RemNetInterface %s QUIET <NIL: >NIL:", .{@as([*:0]const u8, @ptrCast(&picked.name))});
-        _ = app.run(command);
-        command.say(app.sys, "C:net/AddNetInterface %s NOWAIT <NIL: >" ++ out_file ++ " *>" ++ err_file, .{@as([*:0]const u8, @ptrCast(&picked.file))});
-        const code = app.run(command);
-        defer {
-            _ = app.dl.DeleteFile(out_file);
-            _ = app.dl.DeleteFile(err_file);
-        }
-        if (code != dos.RETURN_OK) {
-            // What it said: on its error stream, else on its output.
-            if (!app.firstLine(err_file, &app.status) and !app.firstLine(out_file, &app.status)) {
-                app.status.say(app.sys, "C:net/AddNetInterface failed: %ld", .{@as(i64, code)});
+        const work = &app.files.work;
+        netinterface.remInterface(app.dl, untilNul(&picked.name), work);
+        const started = netinterface.addInterface(app.dl, untilNul(&picked.file), COMMAND_NAME, work);
+        if (started.code != dos.RETURN_OK) {
+            if (started.said.len != 0) {
+                app.status.clear();
+                app.status.put(started.said);
+            } else {
+                app.status.say(app.sys, "C:net/AddNetInterface failed: %ld", .{@as(i64, started.code)});
             }
             app.held = message_ticks;
             app.showStatus();
             return;
         }
         app.say("%s started again with the saved settings", .{@as([*:0]const u8, @ptrCast(&picked.name))});
-    }
-
-    fn run(app: *App, command: *const Line) i32 {
-        return app.dl.SystemTagList(command.ptr(), &[_]TagItem{
-            pair(dos.NP_StackSize, dos.CLI_DEFAULT_STACK),
-            .{},
-        });
-    }
-
-    /// The first line with something on it of a file a command wrote,
-    /// into `into`, which is left as it was without one: whether there was.
-    fn firstLine(app: *App, path: [*:0]const u8, into: *Line) bool {
-        const bytes = &app.files.said;
-        const file = app.dl.Open(path, dos.MODE_OLDFILE) orelse return false;
-        const got = app.dl.Read(file, bytes, bytes.len);
-        _ = app.dl.Close(file);
-        if (got <= 0) return false;
-        var start: usize = 0;
-        const length: usize = @intCast(got);
-        while (start < length) {
-            var end = start;
-            while (end < length and bytes[end] != '\n') end += 1;
-            const line = trimmed(bytes[start..end]);
-            if (line.len != 0) {
-                into.clear();
-                into.put(line);
-                return true;
-            }
-            start = end + 1;
-        }
-        return false;
     }
 
     // --- the tick ---------------------------------------------------------------

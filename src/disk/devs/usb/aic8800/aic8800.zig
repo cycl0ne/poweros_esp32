@@ -41,8 +41,8 @@ const Command = _aic.Command;
 
 pub const DEVICE_NAME = _aic.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
-const BUILD_DATE = "09.11.2026";
+const DEVICE_REVISION = 3;
+const BUILD_DATE = "22.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -614,7 +614,7 @@ const init_table = exec.InitTable{
     .init = &init,
 };
 
-const speaks = [_]u32{ devices.DEVIF_SANA2, devices.DEVIF_USBCLASS, 0 };
+const speaks = [_]u32{ devices.DEVIF_SANA2, devices.DEVIF_WIRELESS, devices.DEVIF_USBCLASS, 0 };
 
 /// The stick, as its boot ROM and as the Wi-Fi.
 const matches = [_]usbclass.USBMatch{

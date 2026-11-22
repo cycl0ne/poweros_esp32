@@ -49,8 +49,8 @@ const CywBase = _cyw.CywBase;
 
 pub const DEVICE_NAME = _cyw.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 4;
-const BUILD_DATE = "21.11.2026";
+const DEVICE_REVISION = 5;
+const BUILD_DATE = "22.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
     std.fmt.comptimePrint("{d}.{d}", .{ DEVICE_VERSION, DEVICE_REVISION }) ++
@@ -534,9 +534,10 @@ const init_table = exec.InitTable{
 };
 
 /// What the device speaks, for ObtainDeviceUnits (expansion.library),
-/// and where its units come from: a unit per network part the board
-/// lists - its radio.
-const device_speaks = [_]u32{ expansion.devices.DEVIF_SANA2, 0 };
+/// and where its units come from: a unit per CYW43455 the board lists -
+/// its radio, numbered by the part's PART_BusUnit, which is 0: the one
+/// unit `open` takes.
+const device_speaks = [_]u32{ expansion.devices.DEVIF_SANA2, expansion.devices.DEVIF_WIRELESS, 0 };
 
 /// No flags but AUTOINIT: the device is on the disk, in DEVS:networks/,
 /// and is made when something opens it - ramlib loads the file and hands
@@ -554,6 +555,7 @@ export const cyw43455_device_tag: exec.ResidentDevice linksection(".resident") =
     },
     .speaks = &device_speaks,
     .unit_part = st.PARTKIND_NET,
+    .unit_chip = st.CHIP_CYW43455,
 };
 
 /// A device is not a command.

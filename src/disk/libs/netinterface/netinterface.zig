@@ -20,9 +20,19 @@
 //! and writing it back whole is the caller's (`readFile`, `writeFile`), in
 //! buffers of its own: `file_max` bytes, which the 16 KiB stack of a 32-bit
 //! machine has no room for twice.
+//!
+//! **A device's file** (`fileNaming`) is the one whose `Device` and `Unit`
+//! are that device's unit; a new one (`newFile`) asks DHCP for the
+//! address, under the first name of a stem that is free (`freeName`).
+//!
+//! **An interface is started and stopped** by the commands that do it at
+//! every boot (`addInterface`, `remInterface`), run as a shell would run
+//! them, and what C:net/AddNetInterface says when it fails is read back
+//! from the files it was sent to.
 
 const sdk = @import("sdk");
 const dos = sdk.dos;
+const TagItem = sdk.utility.TagItem;
 const DosBase = sdk.interface.dos.DosBase;
 
 pub const directory = "DEVS:NetInterfaces/";
@@ -384,6 +394,214 @@ pub fn writeFile(dl: *DosBase, path: [*:0]const u8, bytes: []const u8) bool {
     return written == bytes.len and closed;
 }
 
+// --- the file of a device ------------------------------------------------------
+
+/// A file's name in DEVS:NetInterfaces/.
+pub const Name = [32:0]u8;
+
+/// The number `text` says in decimal, or null for anything else.
+pub fn numberOf(text: []const u8) ?u32 {
+    if (text.len == 0 or text.len > 9) return null;
+    var value: u32 = 0;
+    for (text) |char| {
+        if (char < '0' or char > '9') return null;
+        value = value * 10 + (char - '0');
+    }
+    return value;
+}
+
+/// Whether the file `bytes` is an interface on `device`'s `unit`: its
+/// `Device` the same but for the case of its letters, its `Unit` the same
+/// number - 0 when it names none, as C:net/AddNetInterface takes it.
+pub fn names(bytes: []const u8, device: []const u8, unit: u32) bool {
+    const said = valueOf(bytes, "Device") orelse return false;
+    if (!sameWord(said, device)) return false;
+    return (numberOf(valueOf(bytes, "Unit") orelse "0") orelse return false) == unit;
+}
+
+/// The file in DEVS:NetInterfaces/ whose interface is on `device`'s
+/// `unit`, its name into `name`, each file read into `buffer` as it is
+/// looked at: whether there is one. A name with a dot in it is no
+/// interface's and is passed over, as a drawer is.
+pub fn fileNaming(dl: *DosBase, device: []const u8, unit: u32, name: *Name, buffer: []u8) bool {
+    const lock = dl.Lock("DEVS:NetInterfaces", dos.ACCESS_READ) orelse return false;
+    defer dl.UnLock(lock);
+    const fib: *dos.FileInfoBlock = @ptrCast(@alignCast(dl.AllocDosObject(dos.DOS_FIB, null) orelse return false));
+    defer dl.FreeDosObject(dos.DOS_FIB, fib);
+    if (!dl.Examine(lock, fib)) return false;
+    while (dl.ExNext(lock, fib)) {
+        if (dos.isDirectory(fib.dir_entry_type)) continue;
+        const found = untilNul(&fib.file_name);
+        if (found.len == 0 or found.len >= name.len) continue;
+        const dot = for (found) |char| {
+            if (char == '.') break true;
+        } else false;
+        if (dot) continue;
+        var path: Path = undefined;
+        const bytes = readFile(dl, pathOf(found, &path), buffer) orelse continue;
+        if (!names(bytes, device, unit)) continue;
+        @memset(name, 0);
+        @memcpy(name[0..found.len], found);
+        return true;
+    }
+    return false;
+}
+
+/// The first of `stem` followed by a digit - WLAN0, WLAN1, ... - that no
+/// file in DEVS:NetInterfaces/ has, into `name`; false when all ten are
+/// taken.
+pub fn freeName(dl: *DosBase, stem: []const u8, name: *Name) bool {
+    if (stem.len + 1 >= name.len) return false;
+    var digit: u8 = '0';
+    while (digit <= '9') : (digit += 1) {
+        @memset(name, 0);
+        @memcpy(name[0..stem.len], stem);
+        name[stem.len] = digit;
+        var path: Path = undefined;
+        const lock = dl.Lock(pathOf(untilNul(name), &path), dos.ACCESS_READ) orelse {
+            if (dl.IoErr() == dos.ERROR_OBJECT_NOT_FOUND) return true;
+            continue;
+        };
+        dl.UnLock(lock);
+    }
+    return false;
+}
+
+/// A new interface file `name` on `device`'s `unit`, whose address DHCP
+/// gives, into `into`: null when it does not fit, or `device` cannot be
+/// written as a value.
+pub fn newFile(name: []const u8, device: []const u8, unit: u32, into: []u8) ?[]const u8 {
+    if (!writable(device)) return null;
+    var out = Out{ .into = into };
+    out.put("/* " ++ directory);
+    out.put(name);
+    out.put(": ");
+    out.put(device);
+    out.put(" unit ");
+    var digits: [10]u8 = undefined;
+    const unit_text = decimal(unit, &digits);
+    out.put(unit_text);
+    out.put(", brought up as ");
+    for (name) |char| out.put(&[_]u8{lower(char)});
+    out.put("\n * at every start. SYS:System/Network sets its addresses. */\n");
+    out.statement("Device", .{ .text = device });
+    out.put("\n");
+    out.statement("Unit", .{ .text = unit_text });
+    out.put("\n");
+    out.statement("Configure", .{ .text = "DHCP" });
+    out.put("\n");
+    return out.done();
+}
+
+fn decimal(number: u32, into: *[10]u8) []const u8 {
+    var at: usize = into.len;
+    var rest = number;
+    while (true) {
+        at -= 1;
+        into[at] = '0' + @as(u8, @intCast(rest % 10));
+        rest /= 10;
+        if (rest == 0) break;
+    }
+    return into[at..];
+}
+
+pub fn untilNul(bytes: []const u8) []const u8 {
+    for (bytes, 0..) |byte, at| if (byte == 0) return bytes[0..at];
+    return bytes;
+}
+
+// --- starting and stopping ------------------------------------------------------
+
+/// What starting an interface takes beside the stack, kept by the caller
+/// where it has room: the command's line, and the room a file the command
+/// wrote is read into.
+pub const Work = struct {
+    command: [192:0]u8 = @splat(0),
+    said: [256]u8 = @splat(0),
+};
+
+/// How a start went: the command's return code, and the first line it
+/// said - on its error stream, else on its output - or "" for none.
+pub const Started = struct {
+    code: i32,
+    said: []const u8 = "",
+};
+
+/// The interface of the file `file` in DEVS:NetInterfaces/ started by
+/// C:net/AddNetInterface NOWAIT: what it answered. What it says goes to
+/// T:`owner`.out and T:`owner`.err, read for the first line said, and
+/// deleted.
+pub fn addInterface(dl: *DosBase, file: []const u8, comptime owner: []const u8, work: *Work) Started {
+    const out_file = "T:" ++ owner ++ ".out";
+    const err_file = "T:" ++ owner ++ ".err";
+    var line = Out{ .into = work.command[0 .. work.command.len - 1] };
+    line.put("C:net/AddNetInterface ");
+    line.put(file);
+    line.put(" NOWAIT <NIL: >" ++ out_file ++ " *>" ++ err_file);
+    const length = (line.done() orelse return .{ .code = dos.RETURN_FAIL }).len;
+    work.command[length] = 0;
+    const code = run(dl, &work.command);
+    defer {
+        _ = dl.DeleteFile(out_file);
+        _ = dl.DeleteFile(err_file);
+    }
+    if (code == dos.RETURN_OK) return .{ .code = code };
+    const said = firstLine(dl, err_file, &work.said) orelse firstLine(dl, out_file, &work.said) orelse "";
+    return .{ .code = code, .said = said };
+}
+
+/// The interface `interface` taken down by C:net/RemNetInterface, which
+/// says nothing - one that is not up is no fault.
+pub fn remInterface(dl: *DosBase, interface: []const u8, work: *Work) void {
+    var line = Out{ .into = work.command[0 .. work.command.len - 1] };
+    line.put("C:net/RemNetInterface ");
+    line.put(interface);
+    line.put(" QUIET <NIL: >NIL:");
+    const length = (line.done() orelse return).len;
+    work.command[length] = 0;
+    _ = run(dl, &work.command);
+}
+
+/// `command` run to its end, as a shell runs a line, on a stack as large
+/// as a shell's.
+fn run(dl: *DosBase, command: [*:0]const u8) i32 {
+    return dl.SystemTagList(command, &[_]TagItem{
+        .{ .tag = dos.NP_StackSize, .data = dos.CLI_DEFAULT_STACK },
+        .{},
+    });
+}
+
+/// The first line with something on it of the file at `path`, read into
+/// `into`; null when there is none.
+fn firstLine(dl: *DosBase, path: [*:0]const u8, into: []u8) ?[]const u8 {
+    const file = dl.Open(path, dos.MODE_OLDFILE) orelse return null;
+    const got = dl.Read(file, into.ptr, @intCast(into.len));
+    _ = dl.Close(file);
+    if (got <= 0) return null;
+    const length: usize = @intCast(got);
+    var start: usize = 0;
+    while (start < length) {
+        var end = start;
+        while (end < length and into[end] != '\n') end += 1;
+        const line = trimmed(into[start..end]);
+        if (line.len != 0) return line;
+        start = end + 1;
+    }
+    return null;
+}
+
+fn trimmed(bytes: []const u8) []const u8 {
+    var start: usize = 0;
+    var end = bytes.len;
+    while (start < end and isSpace(bytes[start])) start += 1;
+    while (end > start and isSpace(bytes[end - 1])) end -= 1;
+    return bytes[start..end];
+}
+
+fn isSpace(char: u8) bool {
+    return char == ' ' or char == '\t' or char == '\r';
+}
+
 // --- tests (host) -------------------------------------------------------------
 
 const testing = @import("std").testing;
@@ -491,4 +709,29 @@ test "an interface's file, by its name in capitals" {
     try testing.expect(writable("Home net"));
     try testing.expect(!writable("say \"hi\""));
     try testing.expect(!writable(""));
+}
+
+test "a file names a device's unit: the device's case aside, unit 0 without one" {
+    try testing.expect(names(sample, "networks/CYW43455.device", 0));
+    try testing.expect(!names(sample, "networks/cyw43455.device", 1));
+    try testing.expect(!names(sample, "networks/emac.device", 0));
+    try testing.expect(names("Device = usb/aic8800.device; Unit = 2", "usb/aic8800.device", 2));
+    try testing.expect(!names("Unit = 0", "usb/aic8800.device", 0));
+}
+
+test "a new file asks DHCP, and reads back as the device's" {
+    var room: [512]u8 = undefined;
+    const made = newFile("WLAN1", "networks/cyw43455.device", 0, &room).?;
+    try testing.expectEqualStrings(
+        \\/* DEVS:NetInterfaces/WLAN1: networks/cyw43455.device unit 0, brought up as wlan1
+        \\ * at every start. SYS:System/Network sets its addresses. */
+        \\Device     = networks/cyw43455.device
+        \\Unit       = 0
+        \\Configure  = DHCP
+        \\
+    , made);
+    try testing.expect(names(made, "networks/cyw43455.device", 0));
+    try testing.expectEqualStrings("DHCP", valueOf(made, "Configure").?);
+    var small: [40]u8 = undefined;
+    try testing.expect(newFile("WLAN1", "networks/cyw43455.device", 0, &small) == null);
 }

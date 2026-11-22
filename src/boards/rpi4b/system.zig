@@ -127,12 +127,14 @@ const sd_slot = [_]Tag{
 /// 126, it shares with the card slot's EMMC2. Its lines are GPIO34 to 39,
 /// the host's in their ALT3 function; WL_REG_ON is line 1 of the
 /// firmware's GPIO expander (WL_ON), which the firmware raises as it
-/// starts the ARM. No antenna switch. cyw43455.device's unit 0.
+/// starts the ARM. No antenna switch. cyw43455.device's unit 0, which
+/// PART_BusUnit says - by its place it would be the second network part.
 const wifi = [_]Tag{
     .value(st.PART_Kind, st.PARTKIND_NET),
     .value(st.PART_Chip, st.CHIP_CYW43455),
     .pointer(st.PART_ChipName, "cyw43455"),
     .value(st.PART_Bus, st.BUS_SDIO),
+    .value(st.PART_BusUnit, 0),
     .value(st.PART_Address, 0xFE30_0000),
     .value(st.PART_Irq, 32 + 126),
     .value(st.PART_PinPower, boardpin.expander(1)),
