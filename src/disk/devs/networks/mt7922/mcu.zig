@@ -14,7 +14,8 @@
 //! sequence number and options, its payload at +36. One whose sequence
 //! number is a command's is that command's answer; one the firmware sends
 //! by itself - its option says so, or its sequence number is 0 - is
-//! handed to `unsolicited`.
+//! handed to the radio (radio.zig's `event`), and so is every frame the
+//! chip received, on whichever ring it came.
 //!
 //! The worker sends one command at a time and waits for its answer
 //! before the next, up to three seconds; a command not waited for may
@@ -71,7 +72,21 @@ pub const PATCH_SEM_CONTROL = 0x10;
 const EXT_CID = 0xed;
 
 // The running firmware's.
+pub const CE_START_HW_SCAN = 0x03;
+pub const CE_SET_RX_FILTER = 0x0a;
+pub const CE_SET_CHAN_DOMAIN = 0x0f;
+pub const CE_CANCEL_HW_SCAN = 0x1b;
+pub const CE_SET_RATE_TX_POWER = 0x5d;
 pub const CE_GET_NIC_CAPAB = 0x8a;
+pub const CE_REG_READ = 0xc0;
+pub const CE_CHIP_CONFIG = 0xca;
+pub const EXT_RADIO_ON_OFF_CTRL = 0x05;
+pub const EXT_EFUSE_BUFFER_MODE = 0x21;
+pub const EXT_PROTECT_CTRL = 0x3e;
+pub const EXT_MAC_INIT_CTRL = 0x46;
+pub const EXT_SET_RX_PATH = 0x4e;
+pub const UNI_DEV_INFO_UPDATE = 0x01;
+pub const UNI_BSS_INFO_UPDATE = 0x02;
 
 /// The events.
 pub const EVENT_RESPONSE = 0x06;

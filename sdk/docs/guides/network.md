@@ -878,9 +878,12 @@ fetches it for a build), takes WPA2-Personal from wpa.library as below,
 and its interface is `DEVS:NetInterfaces/WLAN0`. `DEVS:networks/mt7922.device`
 is a MediaTek MT7922 card on PCI Express, the M.2 card of many x86-64
 PCs: it loads the card's firmware from `DEVS:networks/firmware/mt7922/`
-(`scripts/fetch-mt7922.sh` fetches it for a build) and gives the unit the
-station address the firmware reads from the card; it neither scans nor
-joins yet - its wireless requests are answered as out of service.
+(`scripts/fetch-mt7922.sh` fetches it for a build), gives the unit the
+station address the firmware reads from the card, and scans: the 2.4 GHz
+channels 1 to 13 and the 5 GHz ones, sending probe requests only on 2.4
+GHz 1 to 11 and listening on the rest, since it does not know which
+country it is in. It does not join yet - its other wireless requests are
+answered as out of service.
 `DEVS:usb/aic8800.device` is
 an AIC8800 USB Wi-Fi stick as one, on the ESP32-P4's high-speed ports
 (`docs/aic8800.md`): its interface is `DEVS:NetInterfaces/WLAN1`, brought

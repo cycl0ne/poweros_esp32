@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
-//! The card brought up to a firmware that answers: who holds the chip,
+//! The card brought up to a radio that can scan: who holds the chip,
 //! what it is, its Wi-Fi part reset, the DMA engine on its rings, the
-//! firmware loaded, and what the firmware says the card has.
+//! firmware loaded, what the firmware says the card has, and the station
+//! made (station.zig).
 //!
 //! **Who holds the chip.** The chip's power is either the firmware's or
 //! the driver's. It is handed to the firmware and taken back once, so
@@ -37,10 +38,11 @@ const regs_file = @import("regs.zig");
 const dma = @import("dma.zig");
 const mcu = @import("mcu.zig");
 const firmware = @import("firmware.zig");
+const station = @import("station.zig");
 const Work = _mt.Work;
 const say = _mt.say;
 
-pub const Error = error{ NotOwned, NoChip, NoReset, DmaBusy, NoCapability } || firmware.Error;
+pub const Error = error{ NotOwned, NoChip, NoReset, DmaBusy, NoCapability } || firmware.Error || station.Error;
 
 /// How often a hand-over of the chip's power is asked for before it is
 /// given up.
@@ -77,7 +79,7 @@ pub fn bringUp(work: *Work) Error!void {
 
 const attempts = 2;
 
-/// One start from the Wi-Fi part's reset to the firmware's answer.
+/// One start from the Wi-Fi part's reset to a radio ready to scan.
 fn start(work: *Work) Error!void {
     const regs = work.regs;
     try resetWifi(work);
@@ -87,6 +89,7 @@ fn start(work: *Work) Error!void {
     regs.set(regs_file.PCIE_MAC_PM, regs_file.PCIE_L0S_DIS);
     try firmware.load(work);
     try capability(work);
+    try station.setUp(work);
 }
 
 /// The chip's state in the log: who holds it, what its firmware says,
@@ -94,9 +97,9 @@ fn start(work: *Work) Error!void {
 fn report(work: *Work) void {
     const regs = work.regs;
     say(work.sys, "  own %x, firmware state %x, host own %x, reset %x, engine %x, causes %x", .{
-        regs.rd(regs_file.CONN_ON_LPCTL),        regs.rd(regs_file.CONN_ON_MISC),
+        regs.rd(regs_file.CONN_ON_LPCTL),          regs.rd(regs_file.CONN_ON_MISC),
         regs.rdFar(regs_file.TOP_LPCR_HOST_BAND0), regs.rdFar(regs_file.WFSYS_SW_RST),
-        regs.rd(regs_file.GLO_CFG),              regs.rd(regs_file.HOST_INT_STA),
+        regs.rd(regs_file.GLO_CFG),                regs.rd(regs_file.HOST_INT_STA),
     });
     say(work.sys, "  commands %u/%u, firmware %u/%u, events %u/%u and %u/%u (cpu/dma)", .{
         regs.rd(work.tx_wm.at + regs_file.RING_CPU_IDX),   regs.rd(work.tx_wm.at + regs_file.RING_DMA_IDX),

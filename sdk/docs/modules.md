@@ -422,6 +422,7 @@ flowchart TB
     m_mt7922_device --> m_dos_library
     m_mt7922_device --> m_pci_library
     m_mt7922_device --> m_timer_device
+    m_mt7922_device --> m_wpa_library
     m_network_docklet --> m_bsdsocket_library
     m_network_docklet --> m_dos_library
     m_nvme_device --> m_dos_library

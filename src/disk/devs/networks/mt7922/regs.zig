@@ -144,6 +144,46 @@ pub const TOP_LPCR_HOST_BAND0: u32 = 0x18060010;
 pub const LPCR_FW_OWN: u32 = 1 << 0;
 pub const LPCR_DRV_OWN: u32 = 1 << 1;
 
+// The MAC, band 0 (chip addresses, all in the fixed map).
+
+/// The receive data path: aggregates taken apart, data frames' headers
+/// made Ethernet ones, and the longest frame.
+pub const MDP_DCR0: u32 = 0x820cd000;
+pub const MDP_DCR0_DAMSDU_EN: u32 = 1 << 15;
+pub const MDP_DCR0_RX_HDR_TRANS_EN: u32 = 1 << 19;
+pub const MDP_DCR1: u32 = 0x820cd004;
+pub const MAX_RX_LEN_MASK: u32 = 0xfff8;
+pub const MAX_RX_LEN_SHIFT: u5 = 3;
+/// The station table's commands: an entry's number, its counters
+/// cleared, and busy until done.
+pub const WTBL_UPDATE: u32 = 0x820d4230;
+pub const WTBL_UPDATE_WLAN_IDX: u32 = 0x3ff;
+pub const WTBL_UPDATE_ADM_COUNT_CLEAR: u32 = 1 << 12;
+pub const WTBL_UPDATE_BUSY: u32 = 1 << 31;
+/// The sender's limit on how long a frame may wait.
+pub const TMAC_CTCR0: u32 = 0x820e40f4;
+pub const CTCR0_INS_DDLMT_REFTIME: u32 = 0x3f;
+pub const CTCR0_INS_DDLMT_EN: u32 = 1 << 17;
+pub const CTCR0_INS_DDLMT_VHT_SMPDU_EN: u32 = 1 << 18;
+/// The receiver's time counters.
+pub const RMAC_MIB_TIME0: u32 = 0x820e53c4;
+pub const RMAC_MIB_AIRTIME0: u32 = 0x820e5380;
+pub const RMAC_MIB_RXTIME_EN: u32 = 1 << 30;
+pub const MIB_SCR1: u32 = 0x820ed004;
+pub const MIB_TXDUR_EN: u32 = 1 << 8;
+pub const MIB_RXDUR_EN: u32 = 1 << 9;
+/// The receive descriptor: the longest frame, and the long rate report.
+pub const DMA_DCR0: u32 = 0x820e7000;
+pub const DMA_DCR0_RXD_G5_EN: u32 = 1 << 23;
+/// How a frame's signal is measured.
+pub const WTBLOFF_TOP_RSCR: u32 = 0x820e9008;
+pub const RSCR_RCPI_MODE: u32 = 0x3 << 30;
+pub const RSCR_RCPI_PARAM: u32 = 0x3 << 24;
+pub const RSCR_RCPI_PARAM_SHIFT: u5 = 24;
+/// A register of the frame buffers' manager, which the firmware is asked
+/// to read between the power limits.
+pub const PSE_BASE: u32 = 0x820c8000;
+
 /// The blocks the bus maps at a fixed place in BAR0: a chip address
 /// from `chip` up to `chip + size` is at `bar + (address - chip)`.
 const Fixed = struct { chip: u32, bar: u32, size: u32 };

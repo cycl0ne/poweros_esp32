@@ -8,15 +8,16 @@
 //! hooks its interrupt, sets aside the memory its rings take (below
 //! 4 GiB) and starts the worker, a DOS process, which brings the card up
 //! (bringup.zig): the chip's power, its reset, the DMA engine, the
-//! firmware from `DEVS:networks/firmware/mt7922/` (firmware.zig), and
-//! what the firmware says the card has - its address among it. The init
-//! waits for that; a card that does not come up is given back and the
-//! device refused.
+//! firmware from `DEVS:networks/firmware/mt7922/` (firmware.zig), what
+//! the firmware says the card has - its address among it - and the radio
+//! made ready to scan (station.zig). The init waits for that; a card that
+//! does not come up is given back and the device refused.
 //!
 //! **The worker does everything** the chip is asked: the commands to its
-//! firmware (mcu.zig) and the unit's requests (radio.zig). The interrupt
-//! turns the chip's interrupts off and signals it; it reads the causes,
-//! takes what the rings hold, and turns them on again.
+//! firmware (mcu.zig), the unit's requests and the scans (radio.zig). The
+//! interrupt turns the chip's interrupts off and signals it; it reads the
+//! causes, takes what the rings hold, and turns them on again - the
+//! bring-up's too, which come before there is a worker to tell.
 //!
 //! **The device goes** when the last opener has closed it and it is
 //! expunged: the worker stops, the chip is left quiet - its engine
@@ -43,7 +44,7 @@ const say = _mt.say;
 
 pub const DEVICE_NAME = _mt.DEVICE_NAME;
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "22.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -66,7 +67,8 @@ fn workerMain(sys: *ExecBase) callconv(.c) void {
     const int_signal = sys.AllocSignal(-1);
     const work_signal = sys.AllocSignal(-1);
     const timer_signal = sys.AllocSignal(-1);
-    if (int_signal < 0 or work_signal < 0 or timer_signal < 0) return started(base, false);
+    const clock_signal = sys.AllocSignal(-1);
+    if (int_signal < 0 or work_signal < 0 or timer_signal < 0 or clock_signal < 0) return started(base, false);
     work.timer_port = .{ .flags = exec.PA_SIGNAL, .sig_bit = @intCast(timer_signal), .sig_task = me };
     work.timer_port.msg_list.init(.message);
     work.timer_io = .{};
@@ -74,6 +76,14 @@ fn workerMain(sys: *ExecBase) callconv(.c) void {
     work.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &work.timer_io.node, 0) != 0) return started(base, false);
     work.timer_open = true;
+    // The clock is a second request of the same opening, answered on its
+    // own port.
+    work.clock_port = .{ .flags = exec.PA_SIGNAL, .sig_bit = @intCast(clock_signal), .sig_task = me };
+    work.clock_port.msg_list.init(.message);
+    work.clock_io = work.timer_io;
+    work.clock_io.node.message.reply_port = &work.clock_port;
+    const clock_mask = @as(u32, 1) << @intCast(clock_signal);
+    work.scans.init(.message);
 
     bringup.bringUp(work) catch |failure| {
         say(sys, "the card does not come up: %s", .{@as([*:0]const u8, @errorName(failure))});
@@ -84,12 +94,11 @@ fn workerMain(sys: *ExecBase) callconv(.c) void {
     };
     const address = work.station;
     say(sys, "MT7922 revision %u, firmware %s, %u streams%s%s, %02x:%02x:%02x:%02x:%02x:%02x", .{
-        work.revision,                          @as([*:0]const u8, &work.ram_build),
-        @as(u32, work.streams),                 @as([*:0]const u8, if (work.has_5g) ", 5 GHz" else ""),
-        @as([*:0]const u8, if (work.has_6g) ", 6 GHz" else ""),
-        @as(u32, address[0]),
-        @as(u32, address[1]),                   @as(u32, address[2]),
-        @as(u32, address[3]),                   @as(u32, address[4]),
+        work.revision,                                          @as([*:0]const u8, &work.ram_build),
+        @as(u32, work.streams),                                 @as([*:0]const u8, if (work.has_5g) ", 5 GHz" else ""),
+        @as([*:0]const u8, if (work.has_6g) ", 6 GHz" else ""), @as(u32, address[0]),
+        @as(u32, address[1]),                                   @as(u32, address[2]),
+        @as(u32, address[3]),                                   @as(u32, address[4]),
         @as(u32, address[5]),
     });
 
@@ -103,17 +112,31 @@ fn workerMain(sys: *ExecBase) callconv(.c) void {
     }
     sys.Enable();
     base.worker = me;
+    // The interrupts the bring-up raised were turned off by the server
+    // with no worker to tell: what they brought is taken and they are on
+    // again.
+    serviceInterrupt(work);
     started(base, true);
 
     while (true) {
-        const got = sys.Wait(base.int_mask | base.work_mask);
+        const got = sys.Wait(base.int_mask | base.work_mask | clock_mask);
         if (got & base.int_mask != 0) serviceInterrupt(work);
+        if (sys.GetMsg(&work.clock_port) != null) {
+            work.clock_busy = false;
+            radio.tick(work);
+        }
         while (sys.GetMsg(&base.commands)) |message| {
             const command: *_mt.Command = @fieldParentPtr("message", message);
             switch (command.kind) {
                 // The process ends; dos says so to the expunge with
                 // `ended` once nothing of it runs any more.
                 .quit => {
+                    radio.stop(work);
+                    if (work.clock_busy) {
+                        _ = sys.AbortIO(&work.clock_io.node);
+                        _ = sys.WaitIO(&work.clock_io.node);
+                        work.clock_busy = false;
+                    }
                     bringup.quiet(work);
                     sys.CloseDevice(&work.timer_io.node);
                     work.timer_open = false;
@@ -125,6 +148,7 @@ fn workerMain(sys: *ExecBase) callconv(.c) void {
         while (sys.GetMsg(&base.unit.msg_port)) |message| {
             radio.request(work, _mt.sanaReq(_mt.requestOf(message)));
         }
+        radio.due(work);
     }
 }
 
@@ -233,6 +257,10 @@ fn release(base: *Mt7922Base) void {
     if (base.work) |work| {
         sys.FreeVec(work);
         base.work = null;
+    }
+    if (base.wpa_base) |wb| {
+        sys.CloseLibrary(@ptrCast(@alignCast(wb)));
+        base.wpa_base = null;
     }
     if (base.dma_memory) |memory| {
         sys.FreeMem(memory, base.dma_bytes);

@@ -21,12 +21,15 @@ const timer = sdk.devices.timer;
 const pci = sdk.pci;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const WPABase = sdk.interface.wpa.WPABase;
 const PCIBase = sdk.interface.pci.PCIBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 const TimerBase = sdk.interface.timer.TimerBase;
 const unit_file = net.unit;
 const regs_file = @import("regs.zig");
 const dma = @import("dma.zig");
+const scan = @import("scan.zig");
+const station = @import("station.zig");
 const Regs = regs_file.Regs;
 const Ring = dma.Ring;
 
@@ -62,6 +65,9 @@ pub const Mt7922Base = extern struct {
     /// utility.library, for the tag lists OpenDevice and the wireless
     /// requests are handed.
     utility: ?*UtilityBase = null,
+    /// wpa.library, which reads how a network is protected; opened by the
+    /// worker when it first needs it.
+    wpa_base: ?*WPABase = null,
     /// The card: its function, claimed, and its registers.
     function: ?*pci.PCIDevice = null,
     regs: usize = 0,
@@ -199,7 +205,12 @@ pub fn dmaBytes() usize {
 /// The largest answer of the firmware that is kept.
 pub const answer_max = 2048;
 
-/// The worker's block: the chip, its rings, what the firmware said.
+/// What the worker builds its larger commands in: the power limits, a
+/// scan's request.
+const scratch_bytes = @max(station.power_bytes, scan.request_bytes);
+
+/// The worker's block: the chip, its rings, what the firmware said, the
+/// scans.
 pub const Work = struct {
     base: *Mt7922Base,
     sys: *ExecBase,
@@ -209,6 +220,10 @@ pub const Work = struct {
     timer_io: timer.TimeRequest = .{},
     timer_port: exec.MsgPort = .{},
     timer_open: bool = false,
+    /// What wakes the worker at a scan's limit, on a port of its own.
+    clock_io: timer.TimeRequest = .{},
+    clock_port: exec.MsgPort = .{},
+    clock_busy: bool = false,
 
     tx_data: Ring = .{},
     tx_wm: Ring = .{},
@@ -224,6 +239,7 @@ pub const Work = struct {
     seq: u8 = 0,
     answer: [answer_max]u8 = undefined,
     answer_len: u32 = 0,
+    scratch: [scratch_bytes]u8 = undefined,
 
     /// What the chip and its firmware said about themselves.
     chip: u32 = 0,
@@ -234,6 +250,16 @@ pub const Work = struct {
     has_5g: bool = false,
     has_6g: bool = false,
     streams: u8 = 0,
+
+    /// A scan: whether one runs, its number, when it is given up, whether
+    /// the firmware said it is done; the requests waiting for it, and what
+    /// it heard.
+    scanning: bool = false,
+    scan_done: bool = false,
+    scan_seq: u8 = 0,
+    scan_ends: u32 = 0,
+    scans: exec.List = .{},
+    heard: scan.Heard = .{},
 
     /// The rings laid out in the device's DMA memory.
     pub fn layRings(work: *Work, memory: usize) void {
