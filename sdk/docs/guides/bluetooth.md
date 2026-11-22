@@ -13,7 +13,8 @@ next parts.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, the USB
-controllers and the MediaTek MT7922's firmware, and `C:Bluetooth`.
+controllers and the MediaTek MT7922's firmware, the Raspberry Pi 4 Model
+B's controller, and `C:Bluetooth`.
 
 ## The pieces
 
@@ -24,11 +25,12 @@ controllers and the MediaTek MT7922's firmware, and `C:Bluetooth`.
  the stack          bluetooth.library: its own task, every controller's
                     HCI traffic, the bring-up
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
- the controllers    usb/bluetooth.device: a unit per controller plugged in,
-                    the MT79xx's setup and firmware
                           |  AddBTController, RemBTController
-                          |  pipes (usb.library)
- the bus            usb.library, xhci.device
+ the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
+                    a unit per controller plugged   the board's own controller,
+                    in, the MT79xx's firmware       its setup and its patch
+                          |  pipes (usb.library)          |  the mini UART
+ the bus            usb.library, xhci.device        the BCM2711's AUX block
 ```
 
 | Piece | Where | What it is |
@@ -36,9 +38,11 @@ controllers and the MediaTek MT7922's firmware, and `C:Bluetooth`.
 | `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up and listed, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
 | `usb/bluetooth.device` | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller; a class driver |
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
+| `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
+| `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
 | `C:Bluetooth` | | the controllers, and with `INFO` what each is |
 
-The library, the device, the firmware and the command are the disk's
+The library, the devices, their firmware and the command are the disk's
 `bluetooth` set.
 
 ## A controller device
@@ -72,7 +76,7 @@ when it is ready, and takes it back before it closes its pipes:
 
 ```zig
 const bt: *BluetoothBase = @ptrCast(sys.OpenLibrary(sdk.bluetooth.BLUETOOTHNAME, 1) orelse return);
-if (bt.AddBTController("usb/bluetooth.device", unit_number) != 0) {
+if (bt.AddBTController("usb/bluetooth.device", unit_number) < 0) {
     // not taken: no memory, or the unit would not open
 }
 // ... unplugged: every request the unit held answered first
@@ -85,6 +89,21 @@ device must answer the open and `HCICMD_QUERY` without waiting for the
 task that called `AddBTController`, and `AbortIO` must take back a read
 or a write it has not started, since `RemBTController` closes the unit
 before it returns.
+
+**A controller on the board** is there from the start, before anything
+has loaded its device. Its device's ROM tag names the board's part its
+units are (`unit_part`, `unit_chip`: a `PARTKIND_BLUETOOTH` part and its
+chip), and the library adds every such unit itself, the first time a
+process opens it (`ObtainDeviceUnits` lists them): opening the unit loads
+the device, whose init starts setting the controller up. Until it is set
+up, the open answers `HCIERR_NOTREADY` and the controller waits on the
+list as `BTCS_OPENING`; the device then offers it with `AddBTController`,
+and the library opens it and brings it up. A controller its device could
+not set up is offered all the same, its open answering `IOERR_OPENFAIL`:
+it stays on the list as `BTCS_FAILED`, with `BTERR_OPENFAIL`, and the log
+says what of the setup failed. Nothing opens the library at the start, so
+a board's controller comes up with the first program that does -
+`C:Bluetooth`, for one.
 
 ## Bringing a controller up
 
@@ -134,7 +153,8 @@ while (it.next()) |node| {
 
 A controller's `id` is its number from 0, the same for as long as it is
 there; `ln_Name` and `unit` say which device's unit it is. Its `state` is
-`BTCS_OPENING`, `BTCS_STARTING` while it is brought up, `BTCS_UP`, or
+`BTCS_OPENING` - while its device sets it up, for one on the board -
+`BTCS_STARTING` while it is brought up, `BTCS_UP`, or
 `BTCS_FAILED` with the reason in `failure`: a `BTERR_*`, or the status
 the controller answered the command that did not work. Its features are
 the bits it answered, feature `n` bit `n % 8` of byte `n / 8`
@@ -184,6 +204,57 @@ USB device that nothing uses, and the log says which file was missing.
 commit of linux-firmware, checked against its sha256, with MediaTek's
 licence; the 64-bit machines' disks have them.
 
+## The Raspberry Pi 4 Model B's controller
+
+The board's radio, an Infineon CYW43455, has its Bluetooth as a
+controller of its own beside the Wi-Fi: on the BCM2711's mini UART (GPIO
+32 and 33 for the data, 30 and 31 for CTS and RTS, each in its ALT5
+function), its power on line 0 of the firmware's GPIO expander
+(BT_REG_ON), which the VideoCore's mailbox switches. The PL011 stays the
+console on the header's pins 8 and 10 (`dtoverlay=disable-bt` in
+`config.txt`). The board's system tag list has it as a
+`PARTKIND_BLUETOOTH` part with `CHIP_CYW43455` on `BUS_UART`, with the
+UART's registers and interrupt, its four pins and the power line.
+
+`bluetooth/cyw43455bt.device` sets it up on a worker of its own:
+
+1. The pins given to the mini UART, the line started at 115200 bit/s
+   with RTS held up, and the controller's power taken away for 50 ms and
+   given back, with 120 ms for it to start: a controller that finds its
+   CTS asserted as it starts would wait to learn the line's rate from
+   the first command.
+2. RTS and CTS handed to the mini UART - RTS let go when its receive FIFO
+   has four places left, the transmitter held while the controller's RTS
+   is up - so that a late interrupt costs time and no bytes. Both are
+   asserted low, which the mini UART is told: by itself it asserts its
+   own high.
+3. A reset, the line raised to 921600 bit/s on both ends (919117 from
+   the core clock), and the controller asked what it is: an LMP
+   subversion of 0x6119 is a BCM4345C0.
+4. Its patch, `DEVS:bluetooth/firmware/broadcom/BCM4345C0.hcd`, given
+   command by command - Download Minidriver, then the file's Write RAM
+   commands and its Launch RAM, each waiting for its answer. The patched
+   controller starts again at 115200 bit/s, and is reset and raised to
+   the working rate again. Without the file it runs the firmware in its
+   ROM, and the log says which file was missing.
+5. Its address: the one the VideoCore's firmware writes into the device
+   tree (`local-bd-address`), which the kernel hands to the board's part
+   (`PART_StationAddress`). It outlasts the reset the library brings the
+   controller up with.
+
+The mini UART counts its rate from the chip's core clock, which the
+firmware lowers while the chip is idle unless `config.txt` holds it:
+`core_freq_min=500` keeps it at 500 MHz. The packets in are put together
+from the bytes the interrupt takes - the Broadcom controller's own kinds
+of packet passed over - and kept, eight at most, while none is read;
+the packets out go one at a time.
+
+`scripts/fetch-cyw43455.sh` fetches the patch with the Wi-Fi's firmware,
+at a pinned commit of Raspberry Pi's bluez-firmware package, checked
+against its sha256, with the licence that package names for it
+(`LICENCE.cypress`, from linux-firmware); the BCM2711 boards' disk has
+them.
+
 ## C:Bluetooth
 
 ```
@@ -208,9 +279,34 @@ licence; the 64-bit machines' disks have them.
   class       000104
 ```
 
-`Bluetooth` lists the controllers: number, address, state and the device
-and unit each is. `INFO` adds what each is: the chip and firmware its
-device gave it, the versions of its HCI and link manager and who made
-it, its buffers, what it can do of note - `(on)` after Secure Simple
-Pairing when the stack has switched it on - its name and its class
-(`000104`: a desktop computer).
+`Bluetooth` lists the controllers: number, address - dashes until the
+controller has said it - state and the device and unit each is. `INFO`
+adds what each is: the chip and firmware its device gave it, how it is
+reached - USB, or a UART and its rate - the versions of its HCI and link
+manager and who made it, its buffers, what it can do of note - `(on)`
+after Secure Simple Pairing when the stack has switched it on - its name
+and its class (`000104`: a desktop computer).
+
+The Raspberry Pi 4 Model B's, the first time it is asked - its device
+still setting the controller up - and a moment later:
+
+```
+1> Bluetooth
+0: --:--:--:--:--:--  opening  bluetooth/cyw43455bt.device unit 0
+1> Bluetooth INFO
+0: 98:FE:54:CF:67:48  up  bluetooth/cyw43455bt.device unit 0
+  chip        Infineon CYW43455 (BCM4345C0)
+  firmware    BCM4345C0.hcd (build 0382)
+  bus         UART, 919117 bit/s
+  HCI         5.0, revision 382
+  LMP         5.0, subversion 24857
+  made by     Cypress (305)
+  radio       BR/EDR and LE
+  ACL         8 packets of 1021 bytes; SCO 1 of 64
+  LE ACL      7 packets of 251 bytes
+  features    EDR 2 Mbit/s EDR 3 Mbit/s eSCO Secure Simple Pairing
+              (on) Secure Connections extended inquiry sniff subrating
+              LE encryption LE data length
+  name        PowerOS
+  class       000104
+```

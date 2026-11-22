@@ -38,6 +38,17 @@ const _task = @import("../task/_task.zig");
 /// controller is up or has failed. A controller already added answers
 /// its own number.
 ///
+/// A unit whose open answers HCIERR_NOTREADY - a controller on the board,
+/// which its device is still setting up - is kept on the list unopened,
+/// BTCS_OPENING, and the call answers its number: the device offers it
+/// with this call once it is ready, and the task opens it then. A device
+/// that could not set its controller up offers it all the same, its open
+/// answering an error: the controller stays on the list, BTCS_FAILED with
+/// BTERR_OPENFAIL, and the call answers BTERR_OPENFAIL. The library adds
+/// the board's controllers itself, at its first open from a process:
+/// every unit of a device that speaks DEVIF_HCI for a part of the board
+/// (ObtainDeviceUnits).
+///
 /// CONTEXT:
 /// - Waits: yes, for the task.
 /// - Interrupts: no.
@@ -50,7 +61,10 @@ const _task = @import("../task/_task.zig");
 ///
 /// NOTES:
 /// The device's Open and BeginIO are called on the library's task while
-/// the caller waits: they must not wait for the caller.
+/// the caller waits: they must not wait for the caller. A board device's
+/// init runs there too, under the library's lock (the first Open adds
+/// its controllers): it must not open the library itself - its own task
+/// does, later.
 ///
 /// BUGS:
 /// None known.

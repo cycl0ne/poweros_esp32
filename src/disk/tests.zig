@@ -114,6 +114,9 @@ test {
     _ = @import("devs/usb/aic8800/lmac.zig");
     _ = @import("devs/usb/bluetooth/transport.zig");
     _ = @import("devs/usb/bluetooth/mediatek.zig");
+    _ = @import("devs/bluetooth/cyw43455bt/h4.zig");
+    _ = @import("devs/bluetooth/cyw43455bt/broadcom.zig");
+    _ = @import("devs/bluetooth/cyw43455bt/miniuart.zig");
     _ = @import("devs/networks/mt7922/frames.zig");
     _ = @import("devs/networks/mt7922/scan.zig");
     _ = @import("devs/networks/mt7922/peer.zig");

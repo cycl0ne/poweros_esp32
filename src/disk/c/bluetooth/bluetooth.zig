@@ -26,7 +26,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.0 (22.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.1 (22.11.2026)\r\n";
 
 const template = "INFO/S";
 const arg_info = 0;
@@ -70,19 +70,24 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     return dos.RETURN_OK;
 }
 
-/// Its number, address, state and device.
+/// Its number, address - dashes until the controller has said it - state
+/// and device.
 fn line(dl: *DosBase, controller: *const bluetooth.BTController) void {
     const address = controller.address.bytes;
-    _ = Printf(dl, "%u: %02X:%02X:%02X:%02X:%02X:%02X  %s", .{
-        controller.id,
-        @as(u32, address[5]),
-        @as(u32, address[4]),
-        @as(u32, address[3]),
-        @as(u32, address[2]),
-        @as(u32, address[1]),
-        @as(u32, address[0]),
-        stateName(controller.state),
-    });
+    if (address[0] | address[1] | address[2] | address[3] | address[4] | address[5] == 0) {
+        _ = Printf(dl, "%u: --:--:--:--:--:--  %s", .{ controller.id, stateName(controller.state) });
+    } else {
+        _ = Printf(dl, "%u: %02X:%02X:%02X:%02X:%02X:%02X  %s", .{
+            controller.id,
+            @as(u32, address[5]),
+            @as(u32, address[4]),
+            @as(u32, address[3]),
+            @as(u32, address[2]),
+            @as(u32, address[1]),
+            @as(u32, address[0]),
+            stateName(controller.state),
+        });
+    }
     if (controller.state == bluetooth.BTCS_FAILED) _ = Printf(dl, " (%s)", .{failureName(controller.failure)});
     _ = Printf(dl, "  %s unit %u\n", .{ controller.node.name orelse @as([*:0]const u8, "?"), controller.unit });
 }
@@ -138,11 +143,15 @@ fn has(bits: []const u8, n: u32) bool {
 fn info(dl: *DosBase, controller: *const bluetooth.BTController) void {
     if (controller.chip) |chip| _ = Printf(dl, "  chip        %s\n", .{chip});
     if (controller.firmware) |firmware| _ = Printf(dl, "  firmware    %s\n", .{firmware});
-    _ = Printf(dl, "  bus         %s\n", .{@as([*:0]const u8, switch (controller.bus) {
-        hcidev.HCIBUS_USB => "USB",
-        hcidev.HCIBUS_UART => "UART",
-        else => "?",
-    })});
+    switch (controller.bus) {
+        hcidev.HCIBUS_USB => _ = Printf(dl, "  bus         USB\n", .{}),
+        hcidev.HCIBUS_UART => if (controller.baud != 0) {
+            _ = Printf(dl, "  bus         UART, %u bit/s\n", .{controller.baud});
+        } else {
+            _ = Printf(dl, "  bus         UART\n", .{});
+        },
+        else => _ = Printf(dl, "  bus         ?\n", .{}),
+    }
     if (controller.state != bluetooth.BTCS_UP and controller.hci_version == 0 and controller.manufacturer == 0) return;
     _ = Printf(dl, "  HCI         %s, revision %u\n", .{ versionName(controller.hci_version), @as(u32, controller.hci_revision) });
     _ = Printf(dl, "  LMP         %s, subversion %u\n", .{ versionName(controller.lmp_version), @as(u32, controller.lmp_subversion) });

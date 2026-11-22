@@ -2,8 +2,11 @@
 //! A controller as the task keeps it: the device's unit it opened, the
 //! reads kept queued there and the writes that carry its commands, what
 //! the device said of it, and its HCI (`hci/_hci.zig`). Made by the task
-//! when a driver adds the controller, on the base's list until the driver
-//! removes it; ObtainBTControllers copies what a lister sees from it.
+//! when a driver adds the controller, or when the board has one
+//! (`board.zig`), on the base's list until the driver removes it;
+//! ObtainBTControllers copies what a lister sees from it. A board's
+//! controller whose device is still setting it up is on the list unopened,
+//! BTCS_OPENING, until the device offers it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -71,6 +74,7 @@ pub const Controller = struct {
     reported: u32 = bluetooth.BTCS_OPENING,
     /// What the device's HCICMD_QUERY said.
     bus: u32 = 0,
+    baud: u32 = 0,
     chip: [CHIP_SIZE:0]u8 = @splat(0),
     firmware: [FIRMWARE_SIZE:0]u8 = @splat(0),
     reads: [READS]Read = @splat(.{}),
@@ -155,6 +159,7 @@ pub fn describe(controller: *const Controller, entry: *Entry) void {
         .class_of_device = layer.class_of_device,
         .name = @ptrCast(&entry.name),
         .bus = controller.bus,
+        .baud = controller.baud,
         .chip = if (entry.chip[0] != 0) @ptrCast(&entry.chip) else null,
         .firmware = if (entry.firmware[0] != 0) @ptrCast(&entry.firmware) else null,
         .acl_mtu = layer.acl_mtu,

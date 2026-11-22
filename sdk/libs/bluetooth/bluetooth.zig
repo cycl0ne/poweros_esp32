@@ -84,9 +84,11 @@ pub const BTController = extern struct {
     class_of_device: u32 = 0,
     /// The name it shows others, UTF-8; empty until it is set.
     name: [*:0]const u8 = "",
-    /// How it is reached (HCIBUS_*), and the device's word for its chip
-    /// and firmware (sdk/devices/hci.zig's HCIInfo); null for none.
+    /// How it is reached (HCIBUS_*) and, on a UART, the line's rate in
+    /// bits a second; the device's word for its chip and firmware
+    /// (sdk/devices/hci.zig's HCIInfo), null for none.
     bus: u32 = 0,
+    baud: u32 = 0,
     chip: ?[*:0]const u8 = null,
     firmware: ?[*:0]const u8 = null,
     /// Its buffers for data sent to it: how long a BR/EDR ACL packet may

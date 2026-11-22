@@ -249,6 +249,25 @@ pub fn cyw43455Dir(b: *std.Build) ?[]const u8 {
     return path;
 }
 
+/// The patch scripts/fetch-cyw43455.sh fetches for the CYW43455's
+/// Bluetooth, beside the radio's firmware; the licence for passing it on,
+/// LICENCE.cypress, is beside it.
+pub const cyw43455_bluetooth_file = "BCM4345C0.hcd";
+
+/// Where scripts/fetch-cyw43455.sh put the CYW43455's Bluetooth patch, or
+/// null without it - fetched before the script took it too, or not at
+/// all.
+pub fn cyw43455BluetoothDir(b: *std.Build) ?[]const u8 {
+    const io = b.graph.io;
+    const path = b.pathFromRoot("toolchain/cyw43455");
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, cyw43455_bluetooth_file }), .{}) catch {
+        std.log.info("no CYW43455 Bluetooth patch (scripts/fetch-cyw43455.sh): the AArch64 disks have no DEVS:bluetooth/firmware/broadcom/", .{});
+        return null;
+    };
+    std.Io.Dir.cwd().access(io, b.pathJoin(&.{ path, "LICENCE.cypress" }), .{}) catch return null;
+    return path;
+}
+
 /// What scripts/fetch-mt7922.sh fetches for the card: the ROM's patch and
 /// the RAM code. MediaTek's licence for them, LICENCE.mediatek, is beside
 /// them.

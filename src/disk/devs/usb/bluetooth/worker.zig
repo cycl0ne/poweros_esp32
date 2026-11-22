@@ -157,7 +157,7 @@ fn offer(base: *BtBase, unit: *Unit) void {
         }
     }
     const result = base.bt_base.?.AddBTController(_bt.OPEN_NAME, unit.number);
-    if (result != 0) {
+    if (result < 0) {
         exec.kprintf(sys, "%s: bluetooth.library did not take unit %u (%ld)\n", .{ name(), unit.number, @as(i64, result) });
         return;
     }

@@ -15,7 +15,10 @@
 //! there). And each network port's station address: the
 //! `local-mac-address` of every `ethernet@<address>` node, and of every
 //! radio on an SD host - a `wifi@` node in an `mmc@<address>` one, which
-//! the Pi's firmware writes - by its host's address. And where the Pi's
+//! the Pi's firmware writes - by its host's address; and each Bluetooth
+//! controller's on a UART - the `local-bd-address` of a `bluetooth` node
+//! in a `serial@<address>` one, which the Pi's firmware writes too - by
+//! the UART's address. An address of all zeros is none. And where the Pi's
 //! bootloader started the kernel from: `/chosen/bootloader`'s `partition`
 //! and `tryboot`, each a 32-bit number, and how: its `boot-mode`. Read
 //! once in
@@ -50,12 +53,13 @@ pub const max_cores = 8;
 /// The most ranges of RAM kept; more are left out.
 pub const max_memory = 8;
 
-/// The most network ports whose station address is kept.
-pub const max_stations = 4;
+/// The most network ports and Bluetooth controllers whose station
+/// address is kept.
+pub const max_stations = 6;
 
-/// A network port's station address, and where the port's registers
-/// are: the address in its node's name - an SD host's, for a radio on
-/// one.
+/// A network port's or a Bluetooth controller's station address, and
+/// where its registers are: the address in its node's name - an SD
+/// host's, for a radio on one, and a UART's for a controller on one.
 pub const Station = struct { address: usize, bytes: [6]u8 };
 
 /// The bootloader's `boot-mode` for a kernel a PC sent over USB
@@ -222,12 +226,17 @@ pub fn read(address: usize) Facts {
     var cpu_kind = false;
     var cpu_spins = false;
     var cpu_release: u64 = 0;
-    // The network port being read, by the address in its name - or its
-    // SD host's, for a radio; and the SD host being read.
+    // The network port or Bluetooth controller being read, by the
+    // address in its name - or its SD host's, for a radio, its UART's for
+    // a controller - and the property that holds its address; the SD host
+    // and the UART being read.
     var station: ?usize = null;
     var station_depth: u32 = 0;
+    var station_property: []const u8 = "local-mac-address";
     var sd_host: ?usize = null;
     var sd_host_depth: u32 = 0;
+    var uart: ?usize = null;
+    var uart_depth: u32 = 0;
     // Whether /chosen/bootloader is being read.
     var in_bootloader = false;
     while (at + 4 <= tree.len) {
@@ -257,6 +266,16 @@ pub fn read(address: usize) Facts {
                 if (std.mem.startsWith(u8, name, "ethernet@")) {
                     station = std.fmt.parseInt(usize, name["ethernet@".len..], 16) catch null;
                     station_depth = depth;
+                    station_property = "local-mac-address";
+                }
+                if (std.mem.startsWith(u8, name, "serial@")) {
+                    uart = std.fmt.parseInt(usize, name["serial@".len..], 16) catch null;
+                    uart_depth = depth;
+                }
+                if (std.mem.eql(u8, name, "bluetooth") and uart != null and depth == uart_depth + 1) {
+                    station = uart;
+                    station_depth = depth;
+                    station_property = "local-bd-address";
                 }
                 // An SD host: "mmc@", or the BCM2711's older one "mmcnr@".
                 for ([_][]const u8{ "mmc@", "mmcnr@" }) |host_name| {
@@ -268,6 +287,7 @@ pub fn read(address: usize) Facts {
                 if (std.mem.startsWith(u8, name, "wifi@") and sd_host != null and depth == sd_host_depth + 1) {
                     station = sd_host;
                     station_depth = depth;
+                    station_property = "local-mac-address";
                 }
                 if (depth == 3 and node == .chosen and std.mem.eql(u8, name, "bootloader")) in_bootloader = true;
                 if (depth == 3 and node == .cpus and std.mem.startsWith(u8, name, "cpu@")) {
@@ -291,6 +311,7 @@ pub fn read(address: usize) Facts {
                 if (depth == 3) in_bootloader = false;
                 if (station != null and depth == station_depth) station = null;
                 if (sd_host != null and depth == sd_host_depth) sd_host = null;
+                if (uart != null and depth == uart_depth) uart = null;
                 depth -|= 1;
                 if (depth < 2) node = .other;
             },
@@ -300,7 +321,8 @@ pub fn read(address: usize) Facts {
                 const value = tree[at + 8 ..][0..len];
                 at = std.mem.alignForward(usize, at + 8 + len, 4);
                 if (station != null and depth == station_depth and len == 6 and
-                    std.mem.eql(u8, name, "local-mac-address") and facts.station_count < max_stations)
+                    std.mem.eql(u8, name, station_property) and facts.station_count < max_stations and
+                    !std.mem.allEqual(u8, value[0..6], 0))
                 {
                     facts.stations[facts.station_count] = .{ .address = station.?, .bytes = value[0..6].* };
                     facts.station_count += 1;

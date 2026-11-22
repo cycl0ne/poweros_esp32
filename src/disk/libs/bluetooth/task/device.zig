@@ -28,8 +28,9 @@ pub fn requestOf(message: *exec.Message) *Request {
 
 /// The controller's unit opened on its first read, and the other
 /// requests made from it; the device asked what it knows of the
-/// controller. False when the unit would not open.
-pub fn open(controller: *Controller, replies: *exec.MsgPort) bool {
+/// controller. 0, or what the open answered: HCIERR_NOTREADY for a
+/// controller its device is still setting up.
+pub fn open(controller: *Controller, replies: *exec.MsgPort) i32 {
     const sys = controller.base.sys_base;
     for (&controller.reads) |*read| {
         read.request.controller = controller;
@@ -42,7 +43,8 @@ pub fn open(controller: *Controller, replies: *exec.MsgPort) bool {
         write.request.io.std.req.message.length = @sizeOf(hcidev.IOHciReq);
     }
     const first = &controller.reads[0].request.io;
-    if (sys.OpenDevice(&controller.device_name, controller.unit, &first.std.req, 0) != 0) return false;
+    const opened = sys.OpenDevice(&controller.device_name, controller.unit, &first.std.req, 0);
+    if (opened != 0) return opened;
     controller.open = true;
     for (controller.reads[1..]) |*read| copyOpen(&read.request.io, first);
     for (&controller.writes) |*write| copyOpen(&write.request.io, first);
@@ -53,10 +55,11 @@ pub fn open(controller: *Controller, replies: *exec.MsgPort) bool {
     first.std.length = @sizeOf(hcidev.HCIInfo);
     if (sys.DoIO(&first.std.req) == 0) {
         controller.bus = info.bus;
+        controller.baud = info.baud;
         _controller.copyString(&controller.chip, info.chip);
         _controller.copyString(&controller.firmware, info.firmware);
     }
-    return true;
+    return 0;
 }
 
 fn copyOpen(into: *hcidev.IOHciReq, from: *const hcidev.IOHciReq) void {

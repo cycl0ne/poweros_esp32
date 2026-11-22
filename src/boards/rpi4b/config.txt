@@ -32,6 +32,13 @@ enable_uart=1
 dtoverlay=disable-bt
 uart_2ndstage=1
 
+# The chip's core clock held at 500 MHz, its fastest: the radio's
+# Bluetooth is on the mini UART (cyw43455bt.device), which counts its
+# rate from that clock, and a clock that changed under it would change
+# the rate. Without it the firmware lowers the clock while the chip is
+# idle.
+core_freq_min=500
+
 # The picture the firmware lights and hands the kernel: the whole of the
 # monitor's preferred mode, no border.
 disable_overscan=1

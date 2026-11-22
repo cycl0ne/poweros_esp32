@@ -38,7 +38,7 @@ const ExpansionBase = sdk.interface.expansion.ExpansionBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "ShowConfig";
-const VERSION_STRING = "\x00$VER: ShowConfig 1.12 (22.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: ShowConfig 1.13 (22.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICES/S,SPEAKS/K";
@@ -273,7 +273,15 @@ fn kindName(kind: u32) [*:0]const u8 {
         st.PARTKIND_RNG => "rng",
         st.PARTKIND_PCI => "pci",
         st.PARTKIND_DMA => "dma",
+        st.PARTKIND_THERMAL => "thermal",
+        st.PARTKIND_CRYPTO => "crypto",
+        st.PARTKIND_JPEG => "jpeg",
+        st.PARTKIND_VIDEODEC => "video decoder",
+        st.PARTKIND_FAN => "fan",
+        st.PARTKIND_GPU => "gpu",
+        st.PARTKIND_POWER => "power",
         st.PARTKIND_FIRMWARE => "firmware",
+        st.PARTKIND_BLUETOOTH => "bluetooth",
         else => "?",
     };
 }
@@ -294,6 +302,7 @@ fn busName(bus: u32) [*:0]const u8 {
         st.BUS_MIPI_DSI => "mipi-dsi",
         st.BUS_PCI => "pci",
         st.BUS_RGMII => "rgmii",
+        st.BUS_PORT => "port",
         else => "?",
     };
 }

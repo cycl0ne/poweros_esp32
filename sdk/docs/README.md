@@ -136,7 +136,8 @@ tags and constants, each with its doc comment.
 - [Bluetooth](guides/bluetooth.md) - bluetooth.library and its
   controllers: what a controller device is (HCI packets, one a
   request), how one is offered and brought up, listing them and being
-  told of changes, the USB controllers and the MT7922's firmware, and
+  told of changes, the USB controllers and the MT7922's firmware, the
+  Raspberry Pi 4 Model B's controller on its mini UART, and
   `C:Bluetooth`.
 - [Displays](guides/rtg.md) - rtg.library, in three parts. What a
   program does with a board: the machine's display, modes, the monitor,
@@ -242,6 +243,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | usb/ecm.device | `DEVS:usb/` | USB Ethernet adapters (CDC-ECM) as a network device, a unit a link; a class driver | [`network.zig`](../devices/network.zig) |
 | usb/aic8800.device | `DEVS:usb/` | AIC8800 USB Wi-Fi sticks, WPA2, their firmware loaded; a class driver | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
 | usb/bluetooth.device | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller, offered to bluetooth.library; a MediaTek MT79xx given its firmware; a class driver | [`hci.zig`](../devices/hci.zig), [guide](guides/bluetooth.md) |
+| bluetooth/cyw43455bt.device | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's Bluetooth controller - its CYW43455's, on the BCM2711's mini UART - as an HCI unit: set up, given its patch and offered to bluetooth.library (the BCM2711 boards' disk) | [`hci.zig`](../devices/hci.zig), [guide](guides/bluetooth.md) |
 
 ## Resources
 

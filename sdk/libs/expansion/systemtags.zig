@@ -397,6 +397,11 @@ pub const PART_Blocks = PART_Dummy + 0x57;
 /// without caches, so that both sides' writes reach the other as they
 /// are made. On the AArch64 machines.
 pub const PART_SharedMemory = PART_Dummy + 0x58;
+/// A UART's flow control lines, beside PART_PinDataOut and
+/// PART_PinDataIn, its data: RTS, which the chip holds asserted while it
+/// can take more, and CTS, which tells it it may send.
+pub const PART_PinRts = PART_Dummy + 0x59;
+pub const PART_PinCts = PART_Dummy + 0x5A;
 
 /// What PART_SharedMemory points at.
 pub const SharedMemory = extern struct {
@@ -453,6 +458,8 @@ pub fn lineName(tag: u32) ?[*:0]const u8 {
         PART_PinRight => "RIGHT",
         PART_PinAntenna => "ANT",
         PART_PinAntennaExternal => "ANT_EXT",
+        PART_PinRts => "RTS",
+        PART_PinCts => "CTS",
         else => null,
     };
 }
@@ -547,6 +554,14 @@ pub const PARTKIND_POWER: u32 = 29;
 /// mailbox - the next start's flags, the cores' clocks, power to a
 /// block: PART_Chip which firmware, PART_Address its mailbox.
 pub const PARTKIND_FIRMWARE: u32 = 30;
+/// A Bluetooth controller on the board, spoken to in HCI over one of the
+/// chip's UARTs: PART_Chip which controller, PART_Bus BUS_UART with
+/// PART_Address the UART's registers and PART_Irq its interrupt,
+/// PART_PinDataOut, PART_PinDataIn, PART_PinRts and PART_PinCts the
+/// UART's lines, PART_PinPower the line that powers the controller, and
+/// PART_StationAddress its address where the board's firmware gives it
+/// one (six bytes, the least significant first, all 0 for none).
+pub const PARTKIND_BLUETOOTH: u32 = 31;
 
 // Which chip. CHIP_NONE is a part that is no chip of its own: a bus, a
 // slot, a pad.
@@ -699,7 +714,10 @@ pub const CHIP_BCM2712_PCIE: u32 = 41;
 /// is on (an SDHCI, its configuration registers 0x400 above), PART_Irq
 /// that host's interrupt, PART_PinPower its WL_REG_ON on the BCM2712's
 /// own GPIO block, PART_PinClock, PART_PinCommand and PART_PinData0 the
-/// host's lines - the data's four in a row from it.
+/// host's lines - the data's four in a row from it. Its Bluetooth is a
+/// controller of its own on a UART (PARTKIND_BLUETOOTH on BUS_UART): on
+/// the Raspberry Pi 4 Model B the BCM2711's mini UART, PART_PinPower its
+/// BT_REG_ON on the firmware's expander.
 pub const CHIP_CYW43455: u32 = 42;
 /// The Raspberry Pi 5's and Compute Module 5's RTC (PARTKIND_RTC on
 /// BUS_MEMORY, PART_Address the VideoCore's mailbox, as the board's

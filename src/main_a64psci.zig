@@ -148,8 +148,8 @@ fn takeBoard(tree: device_tree.Facts) void {
     a64_stack_high = ram.ramEnd();
     cpu1.takeCores(tree.coreIds(), tree.coreReleases(), cpu.mpidrs[0]);
     psci_there = tree.psci != .unknown or !cpu1.spinTables();
-    // The Ethernet ports' station addresses, into the bytes the board's
-    // parts point at.
+    // The network ports' and Bluetooth controllers' station addresses,
+    // into the bytes the board's parts point at.
     if (@hasDecl(boards.system, "stations")) {
         inline for (boards.system.stations) |station| {
             if (tree.stationAt(station[0])) |bytes| station[1].* = bytes;

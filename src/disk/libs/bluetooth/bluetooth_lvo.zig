@@ -77,7 +77,7 @@ fn lvoRemBTNotify(base: *BluetoothBase, notify: ?*bluetooth.BTNotify) callconv(.
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
-    vec(exec.libOpen),
+    vec(bluetooth_init.openVector),
     vec(exec.libClose),
     vec(bluetooth_init.expungeVector),
     vec(exec.libExtFunc),

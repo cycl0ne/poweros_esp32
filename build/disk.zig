@@ -34,6 +34,8 @@ const cyw43455_files = build_fetched.cyw43455_files;
 const mt7922Dir = build_fetched.mt7922Dir;
 const mt7922_files = build_fetched.mt7922_files;
 const mt7922BluetoothDir = build_fetched.mt7922BluetoothDir;
+const cyw43455BluetoothDir = build_fetched.cyw43455BluetoothDir;
+const cyw43455_bluetooth_file = build_fetched.cyw43455_bluetooth_file;
 const mt7922_bluetooth_file = build_fetched.mt7922_bluetooth_file;
 const devanagari_dir = build_fetched.devanagari_dir;
 const disk_fonts = build_fetched.disk_fonts;
@@ -139,6 +141,10 @@ const image_dirs = [_][]const u8{
     // The USB class drivers, opened as usb/<name>.device, whose ROM tags
     // usb.library reads to know what each drives.
     "devs/usb",
+    // The Bluetooth controllers' devices that are not on USB, opened as
+    // bluetooth/<name>.device, whose ROM tags bluetooth.library has
+    // expansion.library read to find the board's own controllers.
+    "devs/bluetooth",
     // DEVS:DataTypes - one text descriptor per kind of file, which
     // C:AddDataTypes reads into datatypes.library's list.
     "devs/datatypes",
@@ -1289,6 +1295,16 @@ pub fn addDiskImages(b: *std.Build, with: DiskImagesWith) MadeDiskImages {
             make.addPrefixedFileArg(b.fmt("devs/usb/firmware/mediatek/{s}=", .{mt7922_bluetooth_file}), .{ .cwd_relative = b.pathJoin(&.{ dir, mt7922_bluetooth_file }) });
             make.addPrefixedFileArg("devs/usb/firmware/mediatek/licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENCE.mediatek" }) });
         }
+    }
+    // DEVS:bluetooth/firmware/broadcom/ - the patch of the CYW43455's
+    // Bluetooth, which bluetooth/cyw43455bt.device gives it, with the
+    // licence for passing it on; on the Raspberry Pi 4 Model B's disk,
+    // whose controller it is. Not in DEVS:bluetooth/ itself, where every
+    // file is looked at as a device.
+    if (cyw43455BluetoothDir(b)) |dir| {
+        make_a64v80_disk.addArgs(&.{ "devs/bluetooth/firmware", "devs/bluetooth/firmware/broadcom" });
+        make_a64v80_disk.addPrefixedFileArg(b.fmt("devs/bluetooth/firmware/broadcom/{s}=", .{cyw43455_bluetooth_file}), .{ .cwd_relative = b.pathJoin(&.{ dir, cyw43455_bluetooth_file }) });
+        make_a64v80_disk.addPrefixedFileArg("devs/bluetooth/firmware/broadcom/licence=", .{ .cwd_relative = b.pathJoin(&.{ dir, "LICENCE.cypress" }) });
     }
     // DEVS:pci.ids - the PCI ID Repository's list, which C:PCIInfo names
     // vendors and devices from, as scripts/fetch-pciids.sh fetched it. On

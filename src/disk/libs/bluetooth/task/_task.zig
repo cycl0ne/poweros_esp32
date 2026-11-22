@@ -22,6 +22,7 @@ const exec = sdk.exec;
 const dos = sdk.dos;
 const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
+const hcidev = sdk.devices.hci;
 const timer = sdk.devices.timer;
 const ExecBase = sdk.interface.exec.ExecBase;
 const TimerBase = sdk.interface.timer.TimerBase;
@@ -251,31 +252,60 @@ fn now(work: *Work) u64 {
 // --- the calls' commands --------------------------------------------------------
 
 /// A controller made, its device opened, its reads sent and its bring-up
-/// begun: its number, or BTERR_*. One already there answers its own.
+/// begun: its number, or BTERR_*. One already there answers its own; one
+/// whose device is still setting it up (HCIERR_NOTREADY) is kept unopened
+/// and opened when the device offers it - this command again. One the
+/// device offers that still does not open is one it could not set up: it
+/// stays on the list, failed, so that its listers see why.
 fn add(work: *Work, device_name: [*:0]const u8, unit: u32) i32 {
     const base = work.base;
     const sys = base.sys_base;
-    if (_controller.find(base, device_name, unit)) |known| return @intCast(known.id);
+    if (_controller.find(base, device_name, unit)) |known| {
+        if (known.open) return @intCast(known.id);
+        if (device.open(known, work.replies) != 0) {
+            sys.ObtainSemaphore(&base.lock);
+            _hci.fail(&known.layer, bluetooth.BTERR_OPENFAIL);
+            sys.ReleaseSemaphore(&base.lock);
+            return bluetooth.BTERR_OPENFAIL;
+        }
+        bringUp(work, known);
+        return @intCast(known.id);
+    }
     const memory = sys.AllocVec(@sizeOf(Controller), exec.MEMF_CLEAR) orelse return bluetooth.BTERR_NOMEM;
     const controller: *Controller = @ptrCast(@alignCast(memory));
     controller.* = .{ .base = base, .unit = unit, .layer = .{ .port = device.port(controller) } };
     _controller.copyString(&controller.device_name, device_name);
-    if (!device.open(controller, work.replies)) {
+    const opened = device.open(controller, work.replies);
+    if (opened != 0 and opened != hcidev.HCIERR_NOTREADY) {
         sys.FreeVec(memory);
         return bluetooth.BTERR_OPENFAIL;
     }
+    sys.ObtainSemaphore(&base.lock);
+    controller.id = _controller.freeId(base);
+    sys.AddTail(&base.controllers, &controller.node);
+    sys.ReleaseSemaphore(&base.lock);
+    if (opened == 0) {
+        bringUp(work, controller);
+    } else {
+        exec.kprintf(sys, "%s: controller %u is %s unit %u, which its device is setting up\n", .{ @as([*:0]const u8, task_name), controller.id, @as([*:0]const u8, &controller.device_name), unit });
+        _notify.changed(base);
+    }
+    return @intCast(controller.id);
+}
+
+/// An opened controller's bring-up begun and its reads sent.
+fn bringUp(work: *Work, controller: *Controller) void {
+    const base = work.base;
+    const sys = base.sys_base;
     const layer = &controller.layer;
     layer.class_of_device = class_of_device;
     machineName(work, &layer.name);
     sys.ObtainSemaphore(&base.lock);
-    controller.id = _controller.freeId(base);
-    sys.AddTail(&base.controllers, &controller.node);
     layer.now = now(work);
     _hci.start(layer);
     sys.ReleaseSemaphore(&base.lock);
     device.startReads(controller);
-    exec.kprintf(sys, "%s: controller %u is %s unit %u\n", .{ @as([*:0]const u8, task_name), controller.id, @as([*:0]const u8, &controller.device_name), unit });
-    return @intCast(controller.id);
+    exec.kprintf(sys, "%s: controller %u is %s unit %u\n", .{ @as([*:0]const u8, task_name), controller.id, @as([*:0]const u8, &controller.device_name), controller.unit });
 }
 
 /// A controller's requests taken back, its device closed, and it gone
@@ -389,11 +419,11 @@ fn say(sys: *ExecBase, controller: *Controller) void {
     const address = layer.address;
     switch (layer.state) {
         bluetooth.BTCS_UP => exec.kprintf(sys, "%s: controller %u up, %02x:%02x:%02x:%02x:%02x:%02x, HCI %u.%u, maker %u\n", .{
-            @as([*:0]const u8, task_name),          controller.id,
-            @as(u32, address[5]),                   @as(u32, address[4]),
-            @as(u32, address[3]),                   @as(u32, address[2]),
-            @as(u32, address[1]),                   @as(u32, address[0]),
-            @as(u32, layer.hci_version),            @as(u32, layer.hci_revision),
+            @as([*:0]const u8, task_name), controller.id,
+            @as(u32, address[5]),          @as(u32, address[4]),
+            @as(u32, address[3]),          @as(u32, address[2]),
+            @as(u32, address[1]),          @as(u32, address[0]),
+            @as(u32, layer.hci_version),   @as(u32, layer.hci_revision),
             @as(u32, layer.manufacturer),
         }),
         bluetooth.BTCS_FAILED => exec.kprintf(sys, "%s: controller %u failed (%ld), at step %u\n", .{

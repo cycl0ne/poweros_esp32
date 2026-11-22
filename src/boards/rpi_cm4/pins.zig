@@ -9,8 +9,9 @@
 //! GPIO 14 and 15 to the mini UART, and start4.elf does so after
 //! config.txt's `gpio=` lines have been carried out, so the kernel takes
 //! the pins back itself, before its first line. GPIO 30 to 33 go back to
-//! being inputs, so that the PL011 hears GPIO 15 alone; nothing here
-//! drives the Bluetooth. Where the module has no wireless chip the pins
+//! being inputs, so that the PL011 hears GPIO 15 alone; the Bluetooth's
+//! device gives them to the mini UART later, on the board whose system
+//! tag list has its part (the 4B's). Where the module has no wireless chip the pins
 //! are the PL011's already, GPIO 30 to 33 lead nowhere, and this changes
 //! nothing. The CM4-NANO-B brings out neither pair.
 //!

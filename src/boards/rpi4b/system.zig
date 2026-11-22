@@ -60,19 +60,27 @@ pub const mailbox: usize = 0xFE00_B880;
 /// (`reset.zig`).
 pub const power_manager: usize = 0xFE10_0000;
 
-/// The Ethernet port's station address and the radio's, which the kernel
-/// copies in from the device tree the firmware passes - the
-/// `local-mac-address` the firmware writes into ethernet@7d580000, the
-/// GENET's, and into wifi@1 on the SD host mmcnr@7e300000 - before
-/// anything runs; all zero when the tree has none, and the radio then
-/// takes its own.
+/// The Ethernet port's station address, the radio's and its Bluetooth's,
+/// which the kernel copies in from the device tree the firmware passes -
+/// the `local-mac-address` the firmware writes into ethernet@7d580000,
+/// the GENET's, and into wifi@1 on the SD host mmcnr@7e300000, and the
+/// `local-bd-address` it writes into the `bluetooth` node of both UARTs
+/// it could be on, serial@7e201000 and serial@7e215040 - before anything
+/// runs; all zero when the tree has none, and the radio and its
+/// Bluetooth then keep their own.
 pub var ethernet_station: [6]u8 = @splat(0);
 pub var wifi_station: [6]u8 = @splat(0);
+pub var bluetooth_address: [6]u8 = @splat(0);
 
 /// The station addresses the kernel takes from the device tree: for the
 /// port whose registers are at the first - by the address in the tree's
 /// name for it - into the second.
-pub const stations = .{ .{ 0x7D58_0000, &ethernet_station }, .{ 0x7E30_0000, &wifi_station } };
+pub const stations = .{
+    .{ 0x7D58_0000, &ethernet_station },
+    .{ 0x7E30_0000, &wifi_station },
+    .{ 0x7E20_1000, &bluetooth_address },
+    .{ 0x7E21_5040, &bluetooth_address },
+};
 
 /// Where the bootloader started this system from: the kernel copies the
 /// device tree's `/chosen/bootloader` `partition` and `tryboot` in before
@@ -143,6 +151,32 @@ const wifi = [_]Tag{
     .value(st.PART_PinData0, boardpin.gpio(36)),
     .pointer(st.PART_StationAddress, &wifi_station),
     .pointer(st.PART_Label, "Wi-Fi"),
+    .done,
+};
+
+/// The radio's Bluetooth, a controller of its own on the BCM2711's mini
+/// UART: its registers at 0xFE21_5040 in the AUX block, GIC interrupt 125
+/// (SPI 93, shared with the AUX block's SPIs), GPIO 32 sending, 33
+/// receiving, 31 the UART's RTS and 30 its CTS, in their ALT5 function -
+/// config.txt keeps the PL011 on the console's pins (`disable-bt`) and
+/// the chip's core clock, which the mini UART counts its rate from, at
+/// 500 MHz (`core_freq_min`). BT_REG_ON is line 0 of the firmware's GPIO
+/// expander (BT_ON). The address the firmware gives it is
+/// `bluetooth_address`. cyw43455bt.device's unit 0.
+const bluetooth = [_]Tag{
+    .value(st.PART_Kind, st.PARTKIND_BLUETOOTH),
+    .value(st.PART_Chip, st.CHIP_CYW43455),
+    .pointer(st.PART_ChipName, "cyw43455"),
+    .value(st.PART_Bus, st.BUS_UART),
+    .value(st.PART_Address, 0xFE21_5040),
+    .value(st.PART_Irq, 32 + 93),
+    .value(st.PART_PinPower, boardpin.expander(0)),
+    .value(st.PART_PinDataOut, boardpin.gpio(32)),
+    .value(st.PART_PinDataIn, boardpin.gpio(33)),
+    .value(st.PART_PinRts, boardpin.gpio(31)),
+    .value(st.PART_PinCts, boardpin.gpio(30)),
+    .pointer(st.PART_StationAddress, &bluetooth_address),
+    .pointer(st.PART_Label, "Bluetooth"),
     .done,
 };
 
@@ -304,6 +338,7 @@ pub const root = [_]Tag{
     .pointer(st.SYSTAG_Part, &ethernet),
     .pointer(st.SYSTAG_Part, &sd_slot),
     .pointer(st.SYSTAG_Part, &wifi),
+    .pointer(st.SYSTAG_Part, &bluetooth),
     .pointer(st.SYSTAG_Part, &pcie),
     .pointer(st.SYSTAG_Part, &usb),
     .pointer(st.SYSTAG_Part, &firmware),

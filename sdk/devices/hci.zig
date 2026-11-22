@@ -21,6 +21,11 @@
 //! controller looks alike from the stack: what getting there takes is the
 //! device's. A controller that goes away, unplugged, answers every request
 //! HCIERR_DETACHED from then on, and those it held are answered so too.
+//! A controller on the board (PARTKIND_BLUETOOTH) is set up from the time
+//! its device is loaded: opened before it is ready, its unit answers
+//! HCIERR_NOTREADY, and the device offers it to the stack itself
+//! (AddBTController) once it is - or once it could not be, its unit
+//! answering IOERR_OPENFAIL from then on.
 //!
 //! The commands:
 //!
@@ -87,3 +92,6 @@ pub const HCIERR_DETACHED: i8 = 2;
 pub const HCIERR_PACKET: i8 = 3;
 /// The transport could not send the packet.
 pub const HCIERR_SEND: i8 = 4;
+/// The unit's controller is being set up: its device offers it with
+/// AddBTController once it is ready.
+pub const HCIERR_NOTREADY: i8 = 5;

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! bluetooth.library's ROM tag, its init and its Expunge. Open and Close
-//! are exec's standard ones: every opener shares the one base. While the
-//! task runs it holds the library open, so the library cannot go under
-//! it.
+//! bluetooth.library's ROM tag, its init, its Open and its Expunge. Close
+//! is exec's standard one, and so is Open but for its first time on a
+//! process, which adds the board's own controllers (controller/board.zig):
+//! every opener shares the one base. While the task runs it holds the
+//! library open, so the library cannot go under it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -12,10 +13,11 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const _base = @import("bluetooth_base.zig");
 const BluetoothBase = _base.BluetoothBase;
 const bluetooth_lvo = @import("bluetooth_lvo.zig");
+const board = @import("controller/board.zig");
 
 pub const LIBRARY_NAME = bluetooth.BLUETOOTHNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 0;
+pub const LIBRARY_REVISION = 1;
 pub const BUILD_DATE = "22.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -36,6 +38,18 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     sys_base.InitSemaphore(&base.notify_lock);
     return lib;
 }
+
+/// exec's standard Open; the first one on a process adds the board's own
+/// controllers before it answers, so that its opener lists them. It runs
+/// under the library's lock, which the devices those controllers are on
+/// take only from tasks of their own, never in their Open.
+fn open(lib: *exec.Library, version: u32) callconv(.c) ?*exec.Library {
+    const opened = exec.libOpen(lib, version);
+    board.look(_base.bluetoothBase(lib));
+    return opened;
+}
+
+pub const openVector = open;
 
 /// The library goes when nobody has it open - the task, which holds it
 /// open, has ended by then: dos.library closed, the base freed, and the

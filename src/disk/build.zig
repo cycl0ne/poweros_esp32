@@ -488,6 +488,7 @@ const modules = [_]Program{
     .{ .disk = "devs/usb/uac.device", .source = "devs/usb/audio/uac.zig", .name = "uac.device", .set = .media },
     .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device", .set = .wifi },
     .{ .disk = "devs/usb/bluetooth.device", .source = "devs/usb/bluetooth/bluetooth.zig", .name = "bluetooth.device", .set = .bluetooth },
+    .{ .disk = "devs/bluetooth/cyw43455bt.device", .source = "devs/bluetooth/cyw43455bt/cyw43455bt.zig", .name = "cyw43455bt.device", .set = .bluetooth },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler", .set = .storage },
     .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler", .set = .storage },
     .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler", .set = .net, .imports = &.{"smbclient"} },
@@ -562,6 +563,9 @@ const bcm2712_only = [_][]const u8{ "v3dtest", "facetboth", "v3d.fdriver" };
 /// The Raspberry Pis' radio, a CYW43455 on an SD host of the BCM2712 or
 /// the BCM2711: on the two AArch64 chips alone.
 const rpi_only = [_][]const u8{"cyw43455.device"};
+/// The radio's Bluetooth on the BCM2711's mini UART, the Raspberry Pi 4
+/// Model B's: on its chip alone.
+const bcm2711_only = [_][]const u8{"cyw43455bt.device"};
 
 /// What draws in three dimensions - facet.library, the programs that
 /// drive its rasterizer, the two that fly a scene past the eye, and the
@@ -672,6 +676,7 @@ const path_sets = [_]struct { []const u8, Set }{
     .{ "devs/networks", .net },
     .{ "devs/usb/firmware/aic8800", .wifi },
     .{ "devs/usb/firmware/mediatek", .bluetooth },
+    .{ "devs/bluetooth", .bluetooth },
     .{ "devs/usb/firmware", .wifi },
     .{ "devs/usb", .usb },
     .{ "s/network-startup", .net },
@@ -696,11 +701,11 @@ const path_sets = [_]struct { []const u8, Set }{
 /// name, or by its place on the disk where one program has two.
 pub fn builtFor(program: Program, chip: poweros_sdk.Chip) bool {
     const others = switch (chip) {
-        .esp32s3 => &(mac_only ++ rv64_only ++ bcm2712_only ++ rpi_only ++ no_3d),
-        .esp32p4 => &(s3_only ++ rv64_only ++ bcm2712_only ++ rpi_only),
-        .rv64sbi => &(s3_only ++ esp_only ++ bcm2712_only ++ rpi_only),
-        .x64uefi => &(s3_only ++ esp_only ++ bcm2712_only ++ rpi_only ++ mac_only),
-        .a64psci => &(s3_only ++ esp_only),
+        .esp32s3 => &(mac_only ++ rv64_only ++ bcm2712_only ++ rpi_only ++ bcm2711_only ++ no_3d),
+        .esp32p4 => &(s3_only ++ rv64_only ++ bcm2712_only ++ rpi_only ++ bcm2711_only),
+        .rv64sbi => &(s3_only ++ esp_only ++ bcm2712_only ++ rpi_only ++ bcm2711_only),
+        .x64uefi => &(s3_only ++ esp_only ++ bcm2712_only ++ rpi_only ++ bcm2711_only ++ mac_only),
+        .a64psci => &(s3_only ++ esp_only ++ bcm2711_only),
         .a64v80 => &(s3_only ++ esp_only ++ bcm2712_only),
     };
     for (others) |name| {

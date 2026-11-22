@@ -36,7 +36,10 @@ pub const BluetoothBase = extern struct {
     /// ready.
     starter: ?*exec.Task = null,
     start_signal: i8 = -1,
-    pad: [3]u8 = .{ 0, 0, 0 },
+    /// Whether the board's own controllers have been looked for
+    /// (controller/board.zig).
+    board_looked: u8 = 0,
+    pad: [2]u8 = .{ 0, 0 },
     /// AddBTNotify's records, and their lock.
     notify: exec.List = .{},
     notify_lock: exec.SignalSemaphore = .{},
