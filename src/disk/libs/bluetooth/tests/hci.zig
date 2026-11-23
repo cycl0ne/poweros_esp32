@@ -20,7 +20,7 @@ const testing = std.testing;
 /// A controller that keeps the commands it is sent, and how it answers
 /// the bring-up's questions.
 const Script = struct {
-    sent: [64]Sent = undefined,
+    sent: [96]Sent = undefined,
     count: usize = 0,
     /// How many of `sent` have been answered.
     answered: usize = 0,
@@ -142,8 +142,8 @@ fn makeLayer(script: *Script) Hci {
     return layer;
 }
 
-/// The bring-up of a controller with BR/EDR, LE, Secure Simple Pairing
-/// and every command.
+/// The bring-up of a controller with BR/EDR, LE, Secure Simple Pairing,
+/// Secure Connections and every command.
 const dual_mode = [_]u16{
     hci.HCI_OP_RESET,
     hci.HCI_OP_READ_LOCAL_VERSION,
@@ -158,6 +158,7 @@ const dual_mode = [_]u16{
     hci.HCI_OP_SET_EVENT_MASK,
     hci.HCI_OP_LE_SET_EVENT_MASK,
     hci.HCI_OP_WRITE_SIMPLE_PAIRING_MODE,
+    hci.HCI_OP_WRITE_SECURE_CONNECTIONS_HOST_SUPPORT,
     hci.HCI_OP_WRITE_LE_HOST_SUPPORTED,
     hci.HCI_OP_WRITE_CLASS_OF_DEVICE,
     hci.HCI_OP_WRITE_LOCAL_NAME,

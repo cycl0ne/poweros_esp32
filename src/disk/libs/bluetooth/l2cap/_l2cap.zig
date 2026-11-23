@@ -5,11 +5,12 @@
 //!
 //! **The channels** are the fixed ones: the signalling channels, BR/EDR's
 //! and LE's (signalling.zig), and over LE the attribute protocol's and
-//! the security manager's. A device that asks for a channel to a
-//! protocol (a PSM) is told there is none. A request of the attribute
-//! protocol is answered that it is not supported, and an indication
-//! confirmed; a pairing the security manager is asked for is refused as
-//! not supported. Frames on any other channel are let go.
+//! the security manager's (hci/smp.zig). A device that asks for a channel
+//! to a protocol (a PSM) is told there is none. A request of the
+//! attribute protocol is answered that it is not supported, and an
+//! indication confirmed; a pairing BR/EDR's security manager channel is
+//! asked for is refused as not supported. Frames on any other channel are
+//! let go.
 //!
 //! Pure, as the rest of the layer.
 
@@ -20,6 +21,7 @@ const Hci = _hci.Hci;
 const acl = @import("../hci/acl.zig");
 const connections = @import("../hci/connections.zig");
 const Connection = connections.Connection;
+const smp = @import("../hci/smp.zig");
 const signalling = @import("signalling.zig");
 
 /// The attribute protocol's Error Response, the indication and its
@@ -28,12 +30,6 @@ const ATT_ERROR_RESPONSE: u8 = 0x01;
 const ATT_HANDLE_VALUE_INDICATION: u8 = 0x1D;
 const ATT_HANDLE_VALUE_CONFIRMATION: u8 = 0x1E;
 const ATT_REQUEST_NOT_SUPPORTED: u8 = 0x06;
-/// The security manager's requests - Pairing Request, Security Request -
-/// and Pairing Failed, with its reason.
-const SMP_PAIRING_REQUEST: u8 = 0x01;
-const SMP_SECURITY_REQUEST: u8 = 0x0B;
-const SMP_PAIRING_FAILED: u8 = 0x05;
-const SMP_PAIRING_NOT_SUPPORTED: u8 = 0x05;
 
 /// A whole frame of the link, from its L2CAP header on, handed to its
 /// channel.
@@ -45,13 +41,13 @@ pub fn received(layer: *Hci, connection: *Connection, frame: []const u8) void {
         switch (cid) {
             l2cap.CID_LE_SIGNALING => signalling.le(layer, connection, payload),
             l2cap.CID_ATT => attribute(layer, connection, payload),
-            l2cap.CID_SMP => refusePairing(layer, connection, cid, payload),
+            l2cap.CID_SMP => smp.received(layer, connection, payload),
             else => {},
         }
     } else {
         switch (cid) {
             l2cap.CID_SIGNALING => signalling.bredr(layer, connection, payload),
-            l2cap.CID_SMP_BREDR => refusePairing(layer, connection, cid, payload),
+            l2cap.CID_SMP_BREDR => refusePairing(layer, connection, payload),
             else => {},
         }
     }
@@ -84,8 +80,10 @@ fn isAttRequest(opcode: u8) bool {
     };
 }
 
-fn refusePairing(layer: *Hci, connection: *Connection, cid: u16, payload: []const u8) void {
+/// A pairing over BR/EDR's security manager channel - LE's keys made from
+/// a BR/EDR link - refused as not supported.
+fn refusePairing(layer: *Hci, connection: *Connection, payload: []const u8) void {
     if (payload.len == 0) return;
-    if (payload[0] != SMP_PAIRING_REQUEST and payload[0] != SMP_SECURITY_REQUEST) return;
-    _ = send(layer, connection, cid, &.{ SMP_PAIRING_FAILED, SMP_PAIRING_NOT_SUPPORTED });
+    if (payload[0] != smp.PAIRING_REQUEST and payload[0] != smp.SECURITY_REQUEST) return;
+    _ = send(layer, connection, l2cap.CID_SMP_BREDR, &.{ smp.PAIRING_FAILED, smp.REASON_PAIRING_NOT_SUPPORTED });
 }

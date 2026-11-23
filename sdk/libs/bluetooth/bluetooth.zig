@@ -358,6 +358,9 @@ pub const BTBF_AUTHENTICATED: u32 = 1 << 0;
 pub const BTBF_SECURE: u32 = 1 << 1;
 /// Made with a PIN, by a device without Secure Simple Pairing.
 pub const BTBF_LEGACY: u32 = 1 << 2;
+/// An LE bond that keeps the device's identity resolving key: the
+/// private addresses it makes are known as its own.
+pub const BTBF_IDENTITY: u32 = 1 << 3;
 
 /// A bond, as ObtainBTBonds lists it.
 pub const BTBond = extern struct {
@@ -369,10 +372,14 @@ pub const BTBond = extern struct {
     /// BTBF_*.
     flags: u32 = 0,
     address: BTAddress = .{},
-    /// The device's class of device, as it was at the pairing.
+    /// The device's class of device, as it was at the pairing; 0 when it
+    /// was not known.
     class_of_device: u32 = 0,
-    /// The kind of its link key (hci.LINK_KEY_*).
+    /// The kind of its link key (hci.LINK_KEY_*); 0 for an LE bond.
     key_type: u32 = 0,
+    /// The size of its key in bytes: 16 for a link key, an LE key's as
+    /// its pairing agreed, from 7 to 16.
+    key_size: u32 = 0,
 };
 
 // What the calls answer, and BTController.failure: 0, or one of these.

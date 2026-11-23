@@ -8,6 +8,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
+const CryptoBase = sdk.interface.crypto.CryptoBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
 
 /// The task's priority: above the programs, so that a keyboard's events
@@ -24,6 +25,10 @@ pub const BluetoothBase = extern struct {
     /// dos.library, opened by the first start of the task and closed at
     /// the expunge.
     dos: ?*DosBase = null,
+    /// crypto.library, for LE's pairings: opened by the task as it sets up
+    /// a controller (task/crypto.zig), closed at the expunge; null while it
+    /// is not, or could not be.
+    crypto: ?*CryptoBase = null,
     /// The controllers: `controller/_controller.zig` records, the task's.
     /// It changes them under `lock`; ObtainBTControllers reads them under
     /// it shared.

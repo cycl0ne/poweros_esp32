@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 //! A controller's bonds: a table in its HCI layer, a record a device it
-//! has paired with and kept the link key of - the device's address, the
-//! key and its kind, the device's class and name as they were at the
-//! pairing.
+//! has paired with and kept the key of - the device's address, the key
+//! and its kind, the device's class and name as they were at the
+//! pairing. Over BR/EDR the key is the link key; over LE it is the long
+//! term key, with what names it to the device's controller (EDIV and
+//! Rand), its size, how it was made, and the device's identity
+//! resolving key where it gave one - the bond's address is then the
+//! device's identity.
 //!
 //! **Read and written by the task.** The task fills the table from the
 //! bond files once the controller's address is known (`loaded`), and
@@ -28,10 +32,22 @@ pub const BONDS = 32;
 pub const Bond = struct {
     used: bool = false,
     address: bluetooth.BTAddress = .{},
+    /// The link key; an LE bond's long term key.
     key: [hci.LINK_KEY_SIZE]u8 = @splat(0),
     key_type: u8 = 0,
     /// Made with a PIN.
     legacy: bool = false,
+    /// LE: what the long term key goes by (EDIV, Rand: 0 for one Secure
+    /// Connections made), its size in bytes, whether its pairing was
+    /// protected from a man in the middle and used Secure Connections.
+    ediv: u16 = 0,
+    rand: [8]u8 = @splat(0),
+    key_size: u8 = hci.LINK_KEY_SIZE,
+    le_authenticated: bool = false,
+    le_secure: bool = false,
+    /// LE: the device's identity resolving key, where it gave one.
+    irk: [16]u8 = @splat(0),
+    has_irk: bool = false,
     class_of_device: u32 = 0,
     /// The device's name, UTF-8, ended by a NUL; empty when none was
     /// known.
@@ -94,6 +110,40 @@ fn setName(bond: *Bond, name: []const u8) void {
     bond.name[length] = 0;
 }
 
+/// What an LE pairing keeps.
+pub const LeKeys = struct {
+    ltk: [16]u8,
+    ediv: u16 = 0,
+    rand: [8]u8 = @splat(0),
+    key_size: u8,
+    authenticated: bool,
+    secure: bool,
+    irk: ?[16]u8 = null,
+};
+
+/// An LE bond kept - made, or new keys for one there is - and marked to
+/// be written; null when the table is full.
+pub fn keepLe(layer: *Hci, address: bluetooth.BTAddress, keys: *const LeKeys, name: []const u8) ?*Bond {
+    const bond = find(layer, address) orelse freePlace(layer) orelse return null;
+    bond.* = .{
+        .used = true,
+        .address = address,
+        .key = keys.ltk,
+        .ediv = keys.ediv,
+        .rand = keys.rand,
+        .key_size = keys.key_size,
+        .le_authenticated = keys.authenticated,
+        .le_secure = keys.secure,
+        .irk = keys.irk orelse @splat(0),
+        .has_irk = keys.irk != null,
+        .dirty = true,
+    };
+    setName(bond, name);
+    layer.bonds_changed = true;
+    layer.changed = true;
+    return bond;
+}
+
 /// The bond with `address` ended: marked gone, its file to be deleted.
 /// False when there is none.
 pub fn forget(layer: *Hci, address: bluetooth.BTAddress) bool {
@@ -139,8 +189,14 @@ pub fn written(bond: *Bond) void {
     if (bond.gone) bond.* = .{};
 }
 
+/// Whether a bond is an LE one.
+pub fn le(bond: *const Bond) bool {
+    return bond.address.kind != bluetooth.BTADDR_BREDR;
+}
+
 /// Whether a bond's key was made with its pairing confirmed.
 pub fn authenticated(bond: *const Bond) bool {
+    if (le(bond)) return bond.le_authenticated;
     return switch (bond.key_type) {
         hci.LINK_KEY_AUTHENTICATED_P192, hci.LINK_KEY_AUTHENTICATED_P256 => true,
         hci.LINK_KEY_COMBINATION => bond.legacy,
@@ -150,5 +206,6 @@ pub fn authenticated(bond: *const Bond) bool {
 
 /// Whether it was made with Secure Connections (P-256).
 pub fn secure(bond: *const Bond) bool {
+    if (le(bond)) return bond.le_secure;
     return bond.key_type == hci.LINK_KEY_UNAUTHENTICATED_P256 or bond.key_type == hci.LINK_KEY_AUTHENTICATED_P256;
 }

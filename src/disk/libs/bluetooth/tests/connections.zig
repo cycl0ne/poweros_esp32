@@ -463,7 +463,9 @@ test "LE: the peripheral's parameters taken within the bounds; the attribute pro
     try testing.expectEqualSlices(u8, &.{ 0x40, 0x00, hci.HCI_ERR_UNACCEPTABLE_PARAMETERS }, recorder.last().bytes());
 
     // A request of the attribute protocol: not supported; an indication
-    // confirmed; a notification let go. A pairing refused.
+    // confirmed; a notification let go. A Pairing Request - the central's
+    // to send - not supported, and a Security Request refused, there being
+    // no agent.
     frameIn(&layer, 0x0040, l2cap.CID_ATT, &.{ 0x0A, 0x03, 0x00 });
     try expectFrame(&recorder, 0x0040, l2cap.CID_ATT, &.{ 0x01, 0x0A, 0x00, 0x00, 0x06 });
     frameIn(&layer, 0x0040, l2cap.CID_ATT, &.{ 0x1D, 0x03, 0x00, 0x01 });
@@ -472,10 +474,12 @@ test "LE: the peripheral's parameters taken within the bounds; the attribute pro
     frameIn(&layer, 0x0040, l2cap.CID_ATT, &.{ 0x1B, 0x03, 0x00, 0x01 });
     try testing.expectEqual(packets, recorder.packet_count);
     frameIn(&layer, 0x0040, l2cap.CID_SMP, &.{ 0x01, 0x03, 0x00, 0x01, 0x10, 0x07, 0x07 });
+    try expectFrame(&recorder, 0x0040, l2cap.CID_SMP, &.{ 0x05, 0x07 });
+    frameIn(&layer, 0x0040, l2cap.CID_SMP, &.{ 0x0B, 0x05 });
     try expectFrame(&recorder, 0x0040, l2cap.CID_SMP, &.{ 0x05, 0x05 });
     // LE's packets take LE's buffers.
     try testing.expectEqual(@as(u16, 6), layer.acl_credits);
-    try testing.expectEqual(@as(u16, 8 - 6), layer.le_credits);
+    try testing.expectEqual(@as(u16, 8 - 7), layer.le_credits);
 }
 
 test "the specification's bounds for an LE link's parameters" {

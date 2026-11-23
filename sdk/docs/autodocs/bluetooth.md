@@ -19,7 +19,7 @@ Generated from the source by `./zig build autodoc`.
 - [ObtainBTConnections](#obtainbtconnections) - Lists a controller's links to devices: a copy of each as it is at the moment of the call.
 - [ObtainBTControllers](#obtainbtcontrollers) - Lists the controllers: a copy of each as it is at the moment of the call.
 - [ObtainBTDevices](#obtainbtdevices) - Lists the devices a controller found: a copy of each as it is at the moment of the call.
-- [PairBTDevice](#pairbtdevice) - Begins a pairing with a device over BR/EDR: a bond the two keep, which authenticates and encrypts their links from then on.
+- [PairBTDevice](#pairbtdevice) - Begins a pairing with a device, over BR/EDR or LE: a bond the two keep, which authenticates and encrypts their links from then on.
 - [ReleaseBTBonds](#releasebtbonds) - Gives back a list from ObtainBTBonds.
 - [ReleaseBTConnections](#releasebtconnections) - Gives back what ObtainBTConnections answered.
 - [ReleaseBTControllers](#releasebtcontrollers) - Gives back what ObtainBTControllers answered.
@@ -84,7 +84,7 @@ until then, and what comes to it replied.
 **NOTES**
 
 With BTIO_KEYBOARDDISPLAY, BR/EDR's pairings ask as for
-BTIO_DISPLAYYESNO: they have no such capability.
+BTIO_DISPLAYYESNO: they have no such capability; LE's have it.
 
 **BUGS**
 
@@ -307,7 +307,10 @@ link is up, and again when it is down.
 
 Since 1.4, a BR/EDR link to a device the controller has a bond with
 (PairBTDevice) is authenticated with the bond's key and encrypted
-before the call returns; one that could not be stays up.
+before the call returns; one that could not be stays up. Since 1.5 an
+LE link to one is encrypted with the bond's long term key the same
+way - the device found by its address, or by the identity resolving
+key that made the private address it uses.
 
 **CONTEXT**
 
@@ -433,10 +436,13 @@ A list of BTBond, empty for none; null without memory.
 **BEHAVIOR**
 
 Each bond the device's address, its name and class of device as they
-were at its pairing, the kind of its key, and whether its pairing was
-confirmed (BTBF_AUTHENTICATED), made with Secure Connections
-(BTBF_SECURE) or with a PIN (BTBF_LEGACY). A controller's bonds are
-there once it has read them, as it comes up.
+were at its pairing, the kind of its key and its size, and whether its
+pairing was confirmed (BTBF_AUTHENTICATED), made with Secure
+Connections (BTBF_SECURE) or with a PIN (BTBF_LEGACY). An LE bond's
+address is an LE one - the device's identity where it gave it, with
+the key that resolves its private addresses (BTBF_IDENTITY) - its key
+kind 0. A controller's bonds are there once it has read them, as it
+comes up.
 
 **CONTEXT**
 
@@ -690,7 +696,7 @@ while (it.next()) |node| {
 
 ## PairBTDevice
 
-Begins a pairing with a device over BR/EDR: a bond the two keep, which authenticates and encrypts their links from then on.
+Begins a pairing with a device, over BR/EDR or LE: a bond the two keep, which authenticates and encrypts their links from then on.
 
 **SYNOPSIS**
 
@@ -707,7 +713,9 @@ fn PairBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth
 - `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
   for the one that has a link to the device already, else the one
   whose discovery found it, else the first that is up and on.
-- `address` - the device's, a BTADDR_BREDR address.
+- `address` - the device's: a BTADDR_BREDR address for a pairing over
+  BR/EDR, an LE address (BTADDR_LE_PUBLIC, BTADDR_LE_RANDOM) for one
+  over LE.
 - `agent` - from AddBTAgent: asked what the pairing needs to know, and
   told its end; null for a pairing that asks nobody.
 
@@ -716,8 +724,9 @@ fn PairBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth
 0 once the pairing has begun: its end comes to the agent. Otherwise
 why it has not: BTERR_BONDED for a device the controller has a bond
 with already, BTERR_BUSY while the device is being paired or its link
-ended, BTERR_UNSUPPORTED for an LE address or a controller without
-BR/EDR, BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_OFF, BTERR_NOMEM.
+ended, BTERR_UNSUPPORTED for a controller without the kind of link -
+or, over LE, without its encryption or crypto.library -
+BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_OFF, BTERR_NOMEM.
 
 **BEHAVIOR**
 
@@ -733,14 +742,32 @@ that can show or type nothing - the pairing is confirmed by nobody
 authenticated and encrypted; an encryption key shorter than 7 bytes
 ends it.
 
+Over LE the library is the link's central and asks the device to pair
+- with Secure Connections where the device has it, a P-256 key pair of
+the pairing's own, and with legacy pairing otherwise - for a key of up
+to 16 bytes; a device that takes fewer than 7 is refused. The agent is
+asked as over BR/EDR: BTAK_CONFIRM for the number both show,
+BTAK_PASSKEY for one the device shows, BTAK_SHOW for one to be typed
+on it. The link is encrypted with the key the pairing made, and the
+device's keys are taken: its long term key where Secure Connections
+did not make one, and its identity - the address the bond is then
+kept by, and the key that resolves the private addresses it uses.
+
 The end goes to the agent as BTAK_DONE, its `result` 0 for a bond
 made - kept by the controller's address and the device's in
 `ENVARC:Sys/bluetooth/` - or why not: the controller's status
 (hci.HCI_ERR_AUTHENTICATION_FAILURE when the numbers did not match or
 the device said no, HCI_ERR_PAGE_TIMEOUT for a device that did not
-answer its page), BTERR_REFUSED when the agent said no or did not
-answer within 30 seconds, BTERR_TIMEOUT for a pairing not over within
-a minute, BTERR_NOMEM when the controller has its 32 bonds already.
+answer its page, HCI_ERR_FAILED_TO_ESTABLISH for an LE link the
+device never answered on), BTERR_REFUSED when the agent said no or did
+not answer within 30 seconds, BTERR_TIMEOUT for a pairing not over
+within a minute - or an LE device not heard advertising within 20
+seconds - BTERR_NOMEM when the controller has its 32 bonds already.
+Over LE the device's reasons are the same statuses: a confirm or check
+that did not match, or a passkey that failed, is
+HCI_ERR_AUTHENTICATION_FAILURE; a device that does not pair, or not
+so, HCI_ERR_PAIRING_NOT_ALLOWED; too short a key
+HCI_ERR_INSUFFICIENT_SECURITY; HCI_ERR_REPEATED_ATTEMPTS.
 AddBTNotify's signal comes when the bond is made.
 
 **CONTEXT**
@@ -758,11 +785,17 @@ or until RemBTAgent, which refuses the pairing.
 **NOTES**
 
 The link stays up after the pairing; DisconnectBTDevice ends it. A
-pairing a device begins goes to the agent added last.
+pairing a device begins goes to the agent added last - over LE, a
+device asks for it with a Security Request. A bond is kept only where
+both sides ask for one; a pairing with the specification's debug key
+keeps none.
 
 **BUGS**
 
-LE devices are not paired yet.
+Over LE this side gives the device none of its own keys: it uses its
+public address and signs nothing. A device that advertises only
+private addresses is reached by the address a discovery heard, not by
+its identity.
 
 **SEE ALSO**
 

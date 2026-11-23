@@ -57,6 +57,7 @@ const acl = @import("acl.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const pairing = @import("pairing.zig");
+const smp = @import("smp.zig");
 
 /// How many links a controller keeps, and how many calls may wait on
 /// them at once.
@@ -93,6 +94,8 @@ pub const Connection = struct {
     authenticated: bool = false,
     /// Its pairing, or its being made secure (pairing.zig).
     pairing: pairing.Pairing = .{},
+    /// Over LE, the security manager's part of its pairing (smp.zig).
+    smp: smp.Smp = .{},
     /// Its making taken back at its time: it failed by BTERR_TIMEOUT.
     cancelled: bool = false,
     /// Ended as soon as it is up: DisconnectBTDevice, or the power going

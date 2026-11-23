@@ -7,8 +7,10 @@
 //!   pages 1 and 2 where it has them; Read Buffer Size (BR/EDR);
 //!   Read BD_ADDR; - a pause for the controller's settings - LE Read
 //!   Buffer Size and LE Read Local Supported Features (LE); Set Event
-//!   Mask; LE Set Event Mask; Write Simple Pairing Mode; Write LE Host
-//!   Supported; Write Class of Device, Write Local Name, Write Inquiry
+//!   Mask; LE Set Event Mask; Write Simple Pairing Mode; Write Secure
+//!   Connections Host Support (BR/EDR's pairings with P-256, where the
+//!   controller has them); Write LE Host Supported; Write Class of
+//!   Device, Write Local Name, Write Inquiry
 //!   Mode, Write Inquiry Scan Type, Write Extended Inquiry Response and
 //!   Write Scan Enable (BR/EDR); feature page 1 read again, now with what
 //!   the host switched on.
@@ -78,6 +80,7 @@ const steps = [_]Step{
     .{ .opcode = hci.HCI_OP_SET_EVENT_MASK, .bit = hci.CMDBIT_SET_EVENT_MASK, .wanted = hasEventMask, .params = eventMask },
     .{ .opcode = hci.HCI_OP_LE_SET_EVENT_MASK, .bit = hci.CMDBIT_LE_SET_EVENT_MASK, .wanted = _hci.le, .params = leEventMask },
     .{ .opcode = hci.HCI_OP_WRITE_SIMPLE_PAIRING_MODE, .bit = hci.CMDBIT_WRITE_SIMPLE_PAIRING_MODE, .wanted = hasSimplePairing, .params = switchedOn },
+    .{ .opcode = hci.HCI_OP_WRITE_SECURE_CONNECTIONS_HOST_SUPPORT, .bit = hci.CMDBIT_WRITE_SECURE_CONNECTIONS_HOST_SUPPORT, .wanted = hasSecureConnections, .params = switchedOn },
     .{ .opcode = hci.HCI_OP_WRITE_LE_HOST_SUPPORTED, .bit = hci.CMDBIT_WRITE_LE_HOST_SUPPORTED, .wanted = isDualMode, .params = leHost },
     .{ .opcode = hci.HCI_OP_WRITE_CLASS_OF_DEVICE, .bit = hci.CMDBIT_WRITE_CLASS_OF_DEVICE, .wanted = _hci.bredr, .params = classOfDevice },
     .{ .opcode = hci.HCI_OP_WRITE_LOCAL_NAME, .bit = hci.CMDBIT_WRITE_LOCAL_NAME, .wanted = _hci.bredr, .params = local.nameParams },
@@ -167,6 +170,12 @@ fn hasEventMask(layer: *const Hci) bool {
 
 fn hasSimplePairing(layer: *const Hci) bool {
     return _hci.bredr(layer) and _hci.feature(layer, 0, hci.LMP_SIMPLE_PAIRING);
+}
+
+/// Secure Connections over BR/EDR: Secure Simple Pairing, and the
+/// controller's support on feature page 2.
+fn hasSecureConnections(layer: *const Hci) bool {
+    return hasSimplePairing(layer) and _hci.feature(layer, 2, hci.LMP_SECURE_CONNECTIONS);
 }
 
 fn isDualMode(layer: *const Hci) bool {

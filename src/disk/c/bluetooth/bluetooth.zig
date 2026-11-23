@@ -38,18 +38,20 @@
 //!                      who made it, whether it is encrypted and
 //!                      authenticated, to a device with a bond, its
 //!                      handle and its class, LE's parameters
-//!   PAIR <device>      a bond made with the device over BR/EDR - its
-//!                      address, or the name a scan heard - what the
-//!                      pairing needs asked here: whether the device shows
-//!                      the same number (y or n), the number it shows, its
-//!                      PIN; or a number to type on the device. CTRL-C
-//!                      stops.
+//!   PAIR <device>      a bond made with the device - its address, or the
+//!                      name a scan heard, over LE where CONNECT would
+//!                      link over LE - what the pairing needs asked here:
+//!                      whether the device shows the same number (y or
+//!                      n), the number it shows, its PIN; or a number to
+//!                      type on the device. CTRL-C stops.
 //!   PIN <pin>          the PIN given to a device that asks for one
 //!   UNPAIR <device>    the bond ended - by its address, or the device's
 //!                      name - and a link to the device
 //!   BONDS              the bonds, each on a line: the device's address,
-//!                      how its pairing was confirmed, the device's name;
-//!                      with INFO, its controller, class and key
+//!                      the kind of link it is for, how its pairing was
+//!                      confirmed, the device's name; with INFO, its
+//!                      controller, class and key - an LE key's size, and
+//!                      whether the device gave its identity
 //!   AGENT              the pairings the devices begin answered here, as
 //!                      PAIR's are, until CTRL-C
 //!   CONTROLLER <n>     the one controller these are for; without it,
@@ -77,7 +79,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.4 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.5 (23.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S";
@@ -258,6 +260,7 @@ fn linkFailure(dl: *DosBase, result: i32, controller: u32) void {
         bluetooth.BTERR_UNSUPPORTED => "the controller cannot make that kind of link",
         hci.HCI_ERR_PAGE_TIMEOUT => "the device did not answer",
         hci.HCI_ERR_CONNECTION_TIMEOUT => "the link was lost",
+        hci.HCI_ERR_FAILED_TO_ESTABLISH => "the link was made but the device was not heard on it",
         hci.HCI_ERR_LOCAL_HOST_TERMINATED => "taken back",
         hci.HCI_ERR_REJECTED_LIMITED_RESOURCES, hci.HCI_ERR_REJECTED_SECURITY, hci.HCI_ERR_REJECTED_ADDRESS => "the device refused",
         hci.HCI_ERR_CONNECTION_EXISTS => "there is a link to that device already",
@@ -475,9 +478,9 @@ fn sameBytes(one: *const [6]u8, other: *const [6]u8) bool {
     return true;
 }
 
-/// The device CONNECT names: its address - of the kind LE or RANDOM says,
-/// else of the kind a scan heard it as, else BR/EDR's - or a name a scan
-/// heard; null for neither.
+/// The device CONNECT or PAIR names: its address - of the kind LE or
+/// RANDOM says, else of the kind a scan heard it as, else BR/EDR's - or a
+/// name a scan heard; null for neither.
 fn deviceNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
     const bytes = parseAddress(text);
     if (bytes != null and (argv[arg_le] != 0 or argv[arg_random] != 0)) {
@@ -634,9 +637,9 @@ fn pairFailure(dl: *DosBase, result: i32, controller: u32) void {
     const reason: ?[*:0]const u8 = switch (result) {
         bluetooth.BTERR_BONDED => "this machine has a bond with that device already (UNPAIR first)",
         bluetooth.BTERR_BUSY => "the device is being paired, or its link ended",
-        bluetooth.BTERR_UNSUPPORTED => "the controller cannot pair over BR/EDR",
+        bluetooth.BTERR_UNSUPPORTED => "the controller cannot pair over that kind of link",
         bluetooth.BTERR_REFUSED => "refused, or not answered in time",
-        bluetooth.BTERR_TIMEOUT => "the pairing took too long",
+        bluetooth.BTERR_TIMEOUT => "the device was not heard, or the pairing took too long",
         bluetooth.BTERR_NOMEM => "no room: the controller has its 32 bonds, or no memory",
         bluetooth.BTERR_DETACHED => "the controller has gone",
         hci.HCI_ERR_AUTHENTICATION_FAILURE => "the device refused, or the numbers did not match",
@@ -655,23 +658,18 @@ fn pairFailure(dl: *DosBase, result: i32, controller: u32) void {
 /// PAIR: the pairing begun, and what it asks answered here until it is
 /// over.
 fn pairWith(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8, pin: ?[*:0]const u8, argv: *const [arg_count]usize) i32 {
-    if (argv[arg_le] != 0 or argv[arg_random] != 0) {
-        _ = Printf(dl, "%s: LE devices are not paired yet\n", .{@as([*:0]const u8, COMMAND_NAME)});
-        return dos.RETURN_ERROR;
-    }
-    const named = deviceNamed(bt, controller, text, argv) orelse {
+    // Of the kind CONNECT takes it as.
+    const address = deviceNamed(bt, controller, text, argv) orelse {
         _ = Printf(dl, "%s: no device %s (an address, or a name a SCAN heard)\n", .{ @as([*:0]const u8, COMMAND_NAME), text });
         return dos.RETURN_ERROR;
     };
-    // Over BR/EDR, whichever way a scan heard it.
-    const address = bluetooth.BTAddress{ .bytes = named.bytes };
     var answering = Answering.open(sys, bt) orelse {
         _ = dl.PutStr("no memory\n");
         return dos.RETURN_FAIL;
     };
     defer answering.close();
     var shown: [18]u8 = undefined;
-    _ = Printf(dl, "Pairing with %s; CTRL-C stops\n", .{addressText(&address.bytes, &shown)});
+    _ = Printf(dl, "Pairing with %s over %s; CTRL-C stops\n", .{ addressText(&address.bytes, &shown), @as([*:0]const u8, if (address.kind == bluetooth.BTADDR_BREDR) "BR/EDR" else "LE") });
     const result = bt.PairBTDevice(controller, &address, answering.agent);
     if (result != 0) {
         pairFailure(dl, result, controller);
@@ -868,8 +866,10 @@ fn showBonds(dl: *DosBase, bt: *BluetoothBase, controller: u32, with_info: bool)
         const bond: *bluetooth.BTBond = @fieldParentPtr("node", node);
         any = true;
         var text: [18]u8 = undefined;
+        const le = bond.address.kind != bluetooth.BTADDR_BREDR;
+        const kind: [*:0]const u8 = if (!le) "BR/EDR" else if (bond.address.kind == bluetooth.BTADDR_LE_RANDOM) "LE random" else "LE";
         const how: [*:0]const u8 = if (bond.flags & bluetooth.BTBF_LEGACY != 0) "PIN" else if (bond.flags & bluetooth.BTBF_AUTHENTICATED != 0) "confirmed" else "unconfirmed";
-        _ = Printf(dl, "  %s  %-11s", .{ addressText(&bond.address.bytes, &text), how });
+        _ = Printf(dl, "  %s  %-9s  %-11s", .{ addressText(&bond.address.bytes, &text), kind, how });
         const name: [*:0]const u8 = bond.node.name orelse "";
         if (name[0] != 0) _ = Printf(dl, "  %s", .{name});
         _ = dl.PutStr("\n");
@@ -878,7 +878,12 @@ fn showBonds(dl: *DosBase, bt: *BluetoothBase, controller: u32, with_info: bool)
             // A link this machine made is not told the device's class.
             if (bond.class_of_device != 0) _ = Printf(dl, ", class %06lx", .{@as(u64, bond.class_of_device)});
             const secure: [*:0]const u8 = if (bond.flags & bluetooth.BTBF_SECURE != 0) ", Secure Connections" else "";
-            _ = Printf(dl, ", key type %u%s\n", .{ bond.key_type, secure });
+            if (le) {
+                const identity: [*:0]const u8 = if (bond.flags & bluetooth.BTBF_IDENTITY != 0) ", its identity kept" else "";
+                _ = Printf(dl, ", a key of %u bytes%s%s\n", .{ bond.key_size, secure, identity });
+            } else {
+                _ = Printf(dl, ", key type %u%s\n", .{ bond.key_type, secure });
+            }
         }
     }
     if (!any) _ = dl.PutStr("no bond\n");

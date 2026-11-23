@@ -17,7 +17,7 @@ const board = @import("controller/board.zig");
 
 pub const LIBRARY_NAME = bluetooth.BLUETOOTHNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 4;
+pub const LIBRARY_REVISION = 5;
 pub const BUILD_DATE = "23.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -56,8 +56,9 @@ fn open(lib: *exec.Library, version: u32) callconv(.c) ?*exec.Library {
 pub const openVector = open;
 
 /// The library goes when nobody has it open - the task, which holds it
-/// open, has ended by then: dos.library and utility.library closed, the
-/// base freed, and the file it was loaded from handed back.
+/// open, has ended by then: dos.library, crypto.library and
+/// utility.library closed, the base freed, and the file it was loaded
+/// from handed back.
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     if (lib.open_cnt != 0) {
         lib.flags |= exec.LIBF_DELEXP;
@@ -67,6 +68,7 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const sys = base.sys_base;
     const seg_list = base.seg_list;
     if (base.dos) |library| sys.CloseLibrary(@ptrCast(@alignCast(library)));
+    if (base.crypto) |library| sys.CloseLibrary(@ptrCast(@alignCast(library)));
     sys.CloseLibrary(@ptrCast(@alignCast(base.utility_base)));
     sys.DetachLibrary(lib);
     const start: *anyopaque = @ptrFromInt(@intFromPtr(lib) - lib.neg_size);

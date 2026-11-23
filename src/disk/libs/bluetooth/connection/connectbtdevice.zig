@@ -55,7 +55,10 @@ const _task = @import("../task/_task.zig");
 ///
 /// Since 1.4, a BR/EDR link to a device the controller has a bond with
 /// (PairBTDevice) is authenticated with the bond's key and encrypted
-/// before the call returns; one that could not be stays up.
+/// before the call returns; one that could not be stays up. Since 1.5 an
+/// LE link to one is encrypted with the bond's long term key the same
+/// way - the device found by its address, or by the identity resolving
+/// key that made the private address it uses.
 ///
 /// CONTEXT:
 /// - Waits: yes, until the link is up or not made.

@@ -6,12 +6,14 @@
 //! shows others and whether it is on (local.zig); the devices it found
 //! (discovery.zig, devices.zig); its links to devices (connections.zig)
 //! and the data on them (acl.zig), which L2CAP's channels carry
-//! (l2cap/); its pairings (pairing.zig) and the bonds they leave
-//! (bonds.zig).
+//! (l2cap/); its pairings (pairing.zig; over LE the security manager,
+//! smp.zig) and the bonds they leave (bonds.zig).
 //!
 //! **Pure.** Nothing here calls exec or waits: the task hands in each
 //! packet that came (`received`), the time (`now`) and the time-outs
-//! (`tick`), and the layer sends through its `Port`, a packet at a time.
+//! (`tick`), and the layer sends through its `Port`, a packet at a time;
+//! the security manager's cipher, random bytes and curve come through
+//! its `crypto` port (smpcrypto.zig).
 //! So the host tests run it against a script, and the task runs it on
 //! the controller's requests.
 //!
@@ -43,6 +45,7 @@ const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const local = @import("local.zig");
 const pairing = @import("pairing.zig");
+const smpcrypto = @import("smpcrypto.zig");
 
 /// How many commands wait for their turn - room for every link's end
 /// when the power goes off - and how many may be out at once.
@@ -77,6 +80,9 @@ const Pending = struct {
 
 pub const Hci = struct {
     port: Port,
+    /// The security manager's cryptography; null where there is none, and
+    /// LE pairs with nobody.
+    crypto: ?smpcrypto.Crypto = null,
     /// The time in milliseconds, as the task last read it.
     now: u64 = 0,
     /// BTCS_*, and BTController.failure.

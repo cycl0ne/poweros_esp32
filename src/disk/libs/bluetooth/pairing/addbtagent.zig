@@ -50,7 +50,7 @@ const _pairing = @import("_pairing.zig");
 ///
 /// NOTES:
 /// With BTIO_KEYBOARDDISPLAY, BR/EDR's pairings ask as for
-/// BTIO_DISPLAYYESNO: they have no such capability.
+/// BTIO_DISPLAYYESNO: they have no such capability; LE's have it.
 ///
 /// BUGS:
 /// None known.

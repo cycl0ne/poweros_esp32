@@ -66,12 +66,14 @@ pub fn describe(id: u32, bond: *const bonds.Bond, entry: *Entry) void {
     if (bonds.authenticated(bond)) flags |= bluetooth.BTBF_AUTHENTICATED;
     if (bonds.secure(bond)) flags |= bluetooth.BTBF_SECURE;
     if (bond.legacy) flags |= bluetooth.BTBF_LEGACY;
+    if (bond.has_irk) flags |= bluetooth.BTBF_IDENTITY;
     entry.public = .{
         .controller = id,
         .flags = flags,
         .address = bond.address,
         .class_of_device = bond.class_of_device,
-        .key_type = bond.key_type,
+        .key_type = if (bonds.le(bond)) 0 else bond.key_type,
+        .key_size = bond.key_size,
     };
     entry.public.node.name = @ptrCast(&entry.name);
 }

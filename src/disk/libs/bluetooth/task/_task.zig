@@ -62,12 +62,17 @@ const hci_pairing = @import("../hci/pairing.zig");
 const _notify = @import("../notify/_notify.zig");
 const _pairing = @import("../pairing/_pairing.zig");
 const bondfiles = @import("bondfiles.zig");
+const cryptoport = @import("crypto.zig");
 const device = @import("device.zig");
 const settings = @import("settings.zig");
 const DosBase = sdk.interface.dos.DosBase;
 
 const task_name = "bluetooth.library";
-const stack_bytes = 8192;
+/// An LE pairing's calls into crypto.library run on the task's stack -
+/// a P-256 multiplication under the frames of the packet that asked for
+/// it: about 5 KiB at the deepest, measured on aarch64 and x86-64, with
+/// room above it for an interrupt.
+const stack_bytes = 16384;
 
 /// What the controllers show others until they are told otherwise: a
 /// desktop computer, named as the machine is on the network - or, with no
@@ -406,7 +411,7 @@ fn add(work: *Work, device_name: [*:0]const u8, unit: u32) i32 {
     }
     const memory = sys.AllocVec(@sizeOf(Controller), exec.MEMF_CLEAR) orelse return bluetooth.BTERR_NOMEM;
     const controller: *Controller = @ptrCast(@alignCast(memory));
-    controller.* = .{ .base = base, .unit = unit, .layer = .{ .port = device.port(controller) } };
+    controller.* = .{ .base = base, .unit = unit, .layer = .{ .port = device.port(controller), .crypto = cryptoport.port(base) } };
     _controller.copyString(&controller.device_name, device_name);
     const opened = device.open(controller, work.replies);
     if (opened != 0 and opened != hcidev.HCIERR_NOTREADY) {
@@ -815,7 +820,7 @@ fn keepBonds(work: *Work) void {
             const next = bonds.nextDirty(layer);
             sys.ReleaseSemaphore(&base.lock);
             const bond = next orelse break;
-            const done = if (bond.gone) bondfiles.delete(dl, &layer.address, &bond.address.bytes) else bondfiles.write(dl, &layer.address, bond, &work.bond_text);
+            const done = if (bond.gone) bondfiles.delete(dl, &layer.address, &bond.address) else bondfiles.write(dl, &layer.address, bond, &work.bond_text);
             if (!done) kept = false;
             sys.ObtainSemaphore(&base.lock);
             bonds.written(bond);

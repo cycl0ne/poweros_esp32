@@ -2,7 +2,9 @@
 //! A controller's pairings over BR/EDR - Secure Simple Pairing, and a
 //! PIN's for a device without it - begun by the library (PairBTDevice)
 //! or by the device; and a bonded device's link authenticated with the
-//! bond's key and encrypted.
+//! bond's key and encrypted. Over LE the security manager pairs and
+//! encrypts (smp.zig); the pairing's record, its agent, its questions,
+//! its notices and its end are this file's for both.
 //!
 //! **Begun by the library** (`pair`): Authentication Requested on the
 //! link, made first where there is none. The controller asks for a key
@@ -58,6 +60,7 @@ const Hci = _hci.Hci;
 const bonds = @import("bonds.zig");
 const connections = @import("connections.zig");
 const Connection = connections.Connection;
+const smp = @import("smp.zig");
 
 /// How long a pairing may take, and how long the agent has to answer.
 pub const PAIR_WAIT_MS: u32 = 60_000;
@@ -144,19 +147,21 @@ pub fn ioOf(capability: ?u32) u8 {
 // --- the calls ------------------------------------------------------------------
 
 /// PairBTDevice: a pairing with the device at `address` begun - its link
-/// made first where there is none - asking and telling `agent`, whose
-/// capability is `capability` (null for no agent). 0, or why not.
+/// made first where there is none, over LE for an LE address - asking
+/// and telling `agent`, whose capability is `capability` (null for no
+/// agent). 0, or why not.
 pub fn pair(layer: *Hci, address: bluetooth.BTAddress, agent: u32, capability: ?u32) i32 {
     if (layer.state != bluetooth.BTCS_UP) return bluetooth.BTERR_NOTUP;
     if (!layer.powered) return bluetooth.BTERR_OFF;
-    if (address.kind != bluetooth.BTADDR_BREDR or !canPair(layer)) return bluetooth.BTERR_UNSUPPORTED;
+    const able = if (address.kind == bluetooth.BTADDR_BREDR) canPair(layer) else smp.canPair(layer);
+    if (!able) return bluetooth.BTERR_UNSUPPORTED;
     if (bonds.find(layer, address) != null) return bluetooth.BTERR_BONDED;
     if (connections.find(layer, address)) |connection| {
         if (connection.pairing.stage != .idle) return bluetooth.BTERR_BUSY;
         switch (connection.state) {
             .up => {
                 begin(layer, connection, .pair, true, agent, capability);
-                if (!authenticate(layer, connection)) {
+                if (!startOn(layer, connection)) {
                     connection.pairing = .{};
                     return bluetooth.BTERR_NOMEM;
                 }
@@ -231,15 +236,30 @@ pub fn unasked(layer: *Hci, connection: *Connection) void {
 /// waits on for that.
 pub fn linkUp(layer: *Hci, connection: *Connection) bool {
     if (connection.pairing.stage == .linking) {
-        if (!authenticate(layer, connection)) finish(layer, connection, bluetooth.BTERR_NOMEM);
+        if (!startOn(layer, connection)) finish(layer, connection, bluetooth.BTERR_NOMEM);
         return false;
     }
-    if (connection.le or connection.incoming or !_hci.supports(layer, hci.CMDBIT_AUTHENTICATION_REQUESTED)) return false;
+    if (connection.incoming) return false;
+    if (connection.le) {
+        if (!_hci.supports(layer, hci.CMDBIT_LE_ENABLE_ENCRYPTION)) return false;
+        const bond = smp.bondOf(layer, connection) orelse return false;
+        begin(layer, connection, .secure, true, 0, null);
+        if (smp.encryptBond(layer, connection, bond)) return true;
+        connection.pairing = .{};
+        return false;
+    }
+    if (!_hci.supports(layer, hci.CMDBIT_AUTHENTICATION_REQUESTED)) return false;
     if (bonds.find(layer, connection.address) == null) return false;
     begin(layer, connection, .secure, true, 0, null);
     if (authenticate(layer, connection)) return true;
     connection.pairing = .{};
     return false;
+}
+
+/// A pairing begun on a link that is up: the security manager's over LE,
+/// an authentication over BR/EDR. False when it could not be.
+fn startOn(layer: *Hci, connection: *Connection) bool {
+    return if (connection.le) smp.start(layer, connection) else authenticate(layer, connection);
 }
 
 /// A link not made, or down: its pairing over, `result` why.
@@ -248,7 +268,10 @@ pub fn linkGone(layer: *Hci, connection: *Connection, result: i32) void {
     finish(layer, connection, if (result == 0) bluetooth.BTERR_NOTCONNECTED else result);
 }
 
-fn begin(layer: *Hci, connection: *Connection, purpose: Purpose, ours: bool, agent: u32, capability: ?u32) void {
+/// The link's record set for a pairing, or for its being made secure:
+/// whose it is, its agent, and this side's IO capability - LE's own over
+/// LE.
+pub fn begin(layer: *Hci, connection: *Connection, purpose: Purpose, ours: bool, agent: u32, capability: ?u32) void {
     const peer_io = connection.pairing.peer_io;
     const peer_auth = connection.pairing.peer_auth;
     connection.pairing = .{
@@ -256,7 +279,7 @@ fn begin(layer: *Hci, connection: *Connection, purpose: Purpose, ours: bool, age
         .purpose = purpose,
         .ours = ours,
         .agent = agent,
-        .our_io = ioOf(capability),
+        .our_io = if (connection.le) smp.ioOf(capability) else ioOf(capability),
         // What the device said, where it spoke first.
         .peer_io = peer_io,
         .peer_auth = peer_auth,
@@ -266,10 +289,12 @@ fn begin(layer: *Hci, connection: *Connection, purpose: Purpose, ours: bool, age
 }
 
 /// A pairing over: the agent told - or, for a link made secure,
-/// ConnectBTDevice's wait answered.
-fn finish(layer: *Hci, connection: *Connection, result: i32) void {
+/// ConnectBTDevice's wait answered. What the security manager kept of it
+/// is cleared.
+pub fn finish(layer: *Hci, connection: *Connection, result: i32) void {
     const was = connection.pairing;
     connection.pairing = .{};
+    connection.smp = .{};
     layer.changed = true;
     var outcome = result;
     if (was.refused and result != 0) outcome = bluetooth.BTERR_REFUSED;
@@ -286,14 +311,14 @@ fn finish(layer: *Hci, connection: *Connection, result: i32) void {
     }
 }
 
-fn notice(layer: *Hci, item: Notice) void {
+pub fn notice(layer: *Hci, item: Notice) void {
     if (item.agent == 0 or layer.notice_count == NOTICES) return;
     layer.notices[layer.notice_count] = item;
     layer.notice_count += 1;
 }
 
 /// A question for the agent, which the task sends.
-fn ask(layer: *Hci, connection: *Connection, kind: u32, number: u32) void {
+pub fn ask(layer: *Hci, connection: *Connection, kind: u32, number: u32) void {
     connection.pairing.question = .{ .kind = kind, .number = number, .deadline = layer.now + QUESTION_WAIT_MS };
 }
 
@@ -336,6 +361,7 @@ fn reply(layer: *Hci, connection: *Connection, accept: bool, passkey: u32, pin: 
     const question = connection.pairing.question;
     connection.pairing.question = .{};
     if (!accept) connection.pairing.refused = true;
+    if (connection.le) return smp.answered(layer, connection, question.kind, accept, passkey);
     const address = connection.address;
     switch (question.kind) {
         bluetooth.BTAK_CONFIRM => confirm(layer, address, accept),
@@ -560,8 +586,10 @@ pub fn authenticationComplete(layer: *Hci, params: []const u8) void {
 }
 
 /// Encryption Change on a link being paired or made secure: its key's
-/// size checked next - or the pairing over, unencrypted.
+/// size checked next - or the pairing over, unencrypted. An LE link's is
+/// the security manager's.
 pub fn encryptionChanged(layer: *Hci, connection: *Connection, status: u8) void {
+    if (connection.le) return smp.encryptionChanged(layer, connection, status);
     if (connection.pairing.stage != .encrypting) return;
     if (status != hci.HCI_SUCCESS) return finish(layer, connection, status);
     if (!connection.encrypted) return finish(layer, connection, hci.HCI_ERR_INSUFFICIENT_SECURITY);
@@ -582,10 +610,11 @@ pub fn answered(layer: *Hci, opcode: u16, returned: []const u8) void {
             }
             finish(layer, connection, 0);
         },
-        hci.HCI_OP_AUTHENTICATION_REQUESTED, hci.HCI_OP_SET_CONNECTION_ENCRYPTION => {
+        hci.HCI_OP_AUTHENTICATION_REQUESTED, hci.HCI_OP_SET_CONNECTION_ENCRYPTION, hci.HCI_OP_LE_ENABLE_ENCRYPTION => {
             const status: i32 = if (returned.len == 0) bluetooth.BTERR_TIMEOUT else returned[0];
             if (status == hci.HCI_SUCCESS) return;
             const connection = sentBy(layer, opcode) orelse return;
+            if (connection.le) return smp.abandon(layer, connection, status);
             finish(layer, connection, status);
         },
         else => {},
@@ -610,7 +639,9 @@ pub fn tick(layer: *Hci) void {
         if (pairing.stage == .idle) continue;
         if (pairing.question.kind != 0 and layer.now >= pairing.question.deadline) unasked(layer, connection);
         if (pairing.deadline) |due| {
-            if (layer.now >= due) finish(layer, connection, bluetooth.BTERR_TIMEOUT);
+            if (layer.now >= due) {
+                if (connection.le) smp.abandon(layer, connection, bluetooth.BTERR_TIMEOUT) else finish(layer, connection, bluetooth.BTERR_TIMEOUT);
+            }
         }
     }
 }

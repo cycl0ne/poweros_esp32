@@ -10,9 +10,9 @@ the programs that asked when a controller comes, goes or changes.
 The library brings controllers up, lists them, sets them - on or off,
 their name, whether others find them - finds the devices around them,
 makes links to them and takes the links they make, and pairs with them
-over BR/EDR, keeping the bonds. A link carries nothing but what the
-link itself needs: the protocols over a link, and LE's pairing, are the
-stack's next parts.
+over BR/EDR and LE, keeping the bonds. A link carries nothing but what
+the link itself needs and its pairing: the protocols over a link are
+the stack's next part.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
@@ -372,16 +372,17 @@ A channel to a protocol is refused, there being none yet, and so is
 LE's credit-based one. Over LE, a peripheral's wish for other
 parameters is taken while they are within the specification's bounds
 and the controller is the link's central; a request of the attribute
-protocol is answered as not supported, and LE's pairing is refused. A
-device may end a link it has no use for.
+protocol is answered as not supported; the security manager's channel
+is the pairing's (below). A device may end a link it has no use for.
 
 ## Pairing and bonds
 
-Pairing makes a bond with a device: a link key the two keep, which
+Pairing makes a bond with a device: a key the two keep, which
 authenticates their links from then on and encrypts them. The library
-pairs over BR/EDR - with Secure Simple Pairing, or with a PIN for a
-device without it - and keeps each bond by the controller's address and
-the device's.
+pairs over BR/EDR - with Secure Simple Pairing, P-256's Secure
+Connections where the controller has them, or with a PIN for a device
+without it - and over LE with the security manager; it keeps each bond
+by the controller's address and the device's.
 
 **An agent** answers what a pairing needs to know. `AddBTAgent` gives the
 library a port, and what the agent's user can do - see a number, answer
@@ -449,8 +450,37 @@ returns; a device that lost the bond answers
 `HCI_ERR_PIN_OR_KEY_MISSING`, the link staying up. A device with a bond
 that makes a link and authenticates it is given the bond's key.
 
-The log says each pairing over, and why one failed (`C:Log`). LE's
-pairing is not there yet: an LE device that asks for it is refused.
+**Over LE** the library is the link's central and begins every pairing
+as the security manager's initiator: for `PairBTDevice` with an LE
+address, or for a device's Security Request - which goes to the agent as
+a device's pairing does. It asks for a bond, for protection from a man
+in the middle where the agent's user can give it, for Secure
+Connections, and for a key of up to 16 bytes; a device that takes fewer
+than 7 is refused. With Secure Connections - where the device has them
+- each side makes a P-256 key pair and the two share a secret; the
+methods are BR/EDR's: a number both show (`BTAK_CONFIRM`), a passkey the
+device shows (`BTAK_PASSKEY`) or one shown here to be typed on it
+(`BTAK_SHOW`), or nothing to compare. Without them it is legacy
+pairing, with a passkey or none. The link is encrypted with the key the
+pairing made, and the device's keys are taken: its long term key where
+Secure Connections did not make one, and its identity - the address its
+bond is kept by, and the key that resolves the private addresses it
+uses. A pairing with the specification's debug key keeps no bond.
+
+An LE bond's file is `<device>.le` for a public address, `<device>.random`
+for a static random one: the device's name, the long term key and what
+it goes by (`LTK`, `EDIV`, `Rand`), the key's size, whether the pairing
+was protected (`Authenticated`) and used Secure Connections, and the
+device's identity resolving key (`IRK`). `ConnectBTDevice` to an LE
+device with a bond encrypts the link with the bond's key before it
+returns, as over BR/EDR; a link from a private address the bond's key
+resolves is that bond's, and so is a Security Request on it.
+
+The log says each pairing over, and why one failed (`C:Log`). Over LE
+this side gives a device none of its own keys - it uses its public
+address and signs nothing - and a device that advertises only private
+addresses is reached by the address a discovery heard, not by its
+identity.
 
 ## Controllers on USB
 
@@ -529,6 +559,15 @@ firmware lowers while the chip is idle unless `config.txt` holds it:
 from the bytes the interrupt takes - the Broadcom controller's own kinds
 of packet passed over - and kept, eight at most, while none is read;
 the packets out go one at a time.
+
+**The radio is shared** with the board's Wi-Fi, which takes turns with
+the Bluetooth at the air of 2.4 GHz. `networks/cyw43455.device` keeps its
+radio awake - no power saving - and while its station is on a 2.4 GHz
+channel, most of the LE links the controller makes are not established:
+the device never hears from it on them, and the controller gives each up
+after six of its connection events (`HCI_ERR_FAILED_TO_ESTABLISH`,
+0x3E), as `ConnectBTDevice` and `PairBTDevice` then say. With the
+station on 5 GHz the two do not meet, and the links come up.
 
 `scripts/fetch-cyw43455.sh` fetches the patch with the Wi-Fi's firmware,
 at a pinned commit of Raspberry Pi's bluez-firmware package, checked
@@ -691,30 +730,39 @@ Paired with poweros
 
 ```
 1> Bluetooth PAIR 00:00:5E:EF:10:43
-Pairing with 00:00:5E:EF:10:43; CTRL-C stops
+Pairing with 00:00:5E:EF:10:43 over BR/EDR; CTRL-C stops
 Does poweros show 492187? (y/n) y
 Paired with poweros
+1> Bluetooth PAIR Sensor
+Pairing with 00:00:5E:EF:10:44 over LE; CTRL-C stops
+Type 058213 on 00:00:5E:EF:10:44
+Paired with 00:00:5E:EF:10:44
 1> Bluetooth BONDS INFO
-  00:00:5E:EF:10:43  confirmed    poweros
-      controller 0, class 000104, key type 5
+  00:00:5E:EF:10:43  BR/EDR     confirmed    poweros
+      controller 0, class 000104, key type 8, Secure Connections
+  00:00:5E:EF:10:44  LE         confirmed    Sensor
+      controller 0, a key of 16 bytes, Secure Connections, its identity kept
 1> Bluetooth LIST INFO
   00:00:5E:EF:10:43  BR/EDR     central         12 s  poweros
       made by this machine, encrypted, authenticated, bonded; controller 0, handle 51
 ```
 
-`PAIR` makes a bond with a device over BR/EDR (`PairBTDevice`), by its
-address or a name a `SCAN` heard, and asks here what the pairing needs:
+`PAIR` makes a bond with a device (`PairBTDevice`), by its address or a
+name a `SCAN` heard - over LE where `CONNECT` would link over LE, a
+device a scan heard over LE or an address with `LE` or `RANDOM` - and
+asks here what the pairing needs:
 whether the device shows the same number - `y` or `n` - the number it
 shows, its PIN - `PIN` gives that beforehand - or it shows a number to
 type on the device. It ends when the pairing is over, saying why one
 failed; CTRL-C stops it. `AGENT` answers the pairings devices begin the
 same way, until CTRL-C. `BONDS` lists the bonds (`ObtainBTBonds`): the
-device's address, how its pairing was confirmed - `confirmed`,
-`unconfirmed`, or `PIN` - and its name; with `INFO`, the controller, the
-device's class where the pairing learned it - a link the device made
-says it - the kind of its key, and whether it was made with Secure
-Connections. `UNPAIR` ends a bond, by the device's address or
-name (`UnpairBTDevice`).
+device's address, the kind of link the bond is for, how its pairing was
+confirmed - `confirmed`, `unconfirmed`, or `PIN` - and its name; with
+`INFO`, the controller, the device's class where the pairing learned it
+- a link the device made says it - the kind of its key, or an LE key's
+size, whether it was made with Secure Connections, and whether the
+device gave its identity. `UNPAIR` ends a bond, by the device's address
+or name (`UnpairBTDevice`).
 
 `CONTROLLER` makes any of these for one controller, by its number;
 without it, they are for every one - for `CONNECT` and `PAIR`, the one

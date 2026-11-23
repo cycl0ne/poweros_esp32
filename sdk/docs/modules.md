@@ -346,6 +346,7 @@ flowchart TB
     m_bluetooth_device --> m_dos_library
     m_bluetooth_device --> m_timer_device
     m_bluetooth_device --> m_usb_library
+    m_bluetooth_library --> m_crypto_library
     m_bluetooth_library --> m_dos_library
     m_bluetooth_library --> m_timer_device
     m_bsdsocket_library -.-> m_aic8800_device

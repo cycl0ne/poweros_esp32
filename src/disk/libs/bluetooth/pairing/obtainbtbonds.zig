@@ -25,10 +25,13 @@ const _pairing = @import("_pairing.zig");
 ///
 /// BEHAVIOR:
 /// Each bond the device's address, its name and class of device as they
-/// were at its pairing, the kind of its key, and whether its pairing was
-/// confirmed (BTBF_AUTHENTICATED), made with Secure Connections
-/// (BTBF_SECURE) or with a PIN (BTBF_LEGACY). A controller's bonds are
-/// there once it has read them, as it comes up.
+/// were at its pairing, the kind of its key and its size, and whether its
+/// pairing was confirmed (BTBF_AUTHENTICATED), made with Secure
+/// Connections (BTBF_SECURE) or with a PIN (BTBF_LEGACY). An LE bond's
+/// address is an LE one - the device's identity where it gave it, with
+/// the key that resolves its private addresses (BTBF_IDENTITY) - its key
+/// kind 0. A controller's bonds are there once it has read them, as it
+/// comes up.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the controllers' lock.

@@ -98,6 +98,8 @@ test {
     _ = @import("libs/bluetooth/tests/discovery.zig");
     _ = @import("libs/bluetooth/tests/connections.zig");
     _ = @import("libs/bluetooth/tests/pairing.zig");
+    _ = @import("libs/bluetooth/tests/smpcrypto.zig");
+    _ = @import("libs/bluetooth/tests/smp.zig");
     _ = @import("libs/bluetooth/bluetooth_lvo.zig");
     _ = @import("devs/xhci/tests/xhci.zig");
     _ = @import("devs/nvme/prp.zig");

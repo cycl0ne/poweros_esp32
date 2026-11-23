@@ -491,7 +491,12 @@ test "a bond's file: written, and read back the same" {
     // Without a whole key, no bond.
     var short = Scanner.ofText("LinkKey = 0011\nKeyType = 4\n");
     try testing.expect(!bondfiles.parse(&short, &read));
-    try testing.expectEqual(@as(?[6]u8, peer.bytes), bondfiles.addressOf("00005EEF1001"));
-    try testing.expectEqual(@as(?[6]u8, null), bondfiles.addressOf("settings"));
-    try testing.expectEqual(@as(?[6]u8, null), bondfiles.addressOf("00005EEF100G"));
+    try testing.expectEqual(@as(?bluetooth.BTAddress, peer), bondfiles.addressOf("00005EEF1001"));
+    try testing.expectEqual(@as(?bluetooth.BTAddress, null), bondfiles.addressOf("settings"));
+    try testing.expectEqual(@as(?bluetooth.BTAddress, null), bondfiles.addressOf("00005EEF100G"));
+    try testing.expectEqual(@as(?bluetooth.BTAddress, null), bondfiles.addressOf("00005EEF1001.lee"));
+    const le_peer = bluetooth.BTAddress{ .bytes = peer.bytes, .kind = bluetooth.BTADDR_LE_PUBLIC };
+    try testing.expectEqual(@as(?bluetooth.BTAddress, le_peer), bondfiles.addressOf("00005EEF1001.le"));
+    const random_peer = bluetooth.BTAddress{ .bytes = peer.bytes, .kind = bluetooth.BTADDR_LE_RANDOM };
+    try testing.expectEqual(@as(?bluetooth.BTAddress, random_peer), bondfiles.addressOf("00005EEF1001.random"));
 }
