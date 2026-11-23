@@ -70,7 +70,7 @@ MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
-| `SYS:System/Bluetooth` | | the controllers set - on or off, their name, visible - and the devices around found, in a window |
+| `SYS:System/Bluetooth` | | the controllers set - on or off, their name, visible - and the devices around found, paired with, linked to and forgotten, in a window that answers the pairings |
 | `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`), over LE with its characteristics |
 | `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
 | `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change, with `WAIT` across the link's ends; in the disk's `tests` set |
@@ -467,8 +467,10 @@ if (bt.PairBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device, agent) != 0) return;
 // result 0 for a bond made, else the controller's status, BTERR_REFUSED, ...
 ```
 
-A link to the device is made first where there is none. The two say
-what their users can do, and that decides what is asked: where both can
+A link to the device is made first where there is none; it ends two
+seconds after a pairing that made no bond, unless `ConnectBTDevice`
+asked for it, or a channel or a GATT block uses it, meanwhile. The two
+say what their users can do, and that decides what is asked: where both can
 show a number and answer, and one of them wants protection from a man
 in the middle, each user confirms that the two show the same number
 (`BTAK_CONFIRM`); where one side can only type, the other shows the
@@ -1045,6 +1047,21 @@ links and what its last **Search** found - ten seconds of
 (`BTDeviceKind`), the signal it was heard with, its state - paired,
 connected, encrypted, the drivers that drive it - and its address. A
 device reached over BR/EDR and over LE at one address is one line.
+
+The window is an agent while it runs (`AddBTAgent` with
+`BTIO_KEYBOARDDISPLAY`): **Pair** begins a pairing with the device
+picked (`PairBTDevice`), and the pairings devices begin are answered
+there too. What a pairing asks opens a window of its own - the number to
+compare, with Yes and No; a field for the passkey the device shows, or
+for a PIN; the number to type on the device; whether a device with
+nothing to compare may pair - which closes at the pairing's end
+(`BTAK_DONE`), the line saying how it ended. **Connect**,
+**Disconnect** and **Forget...** call `ConnectBTDevice`,
+`DisconnectBTDevice` and `UnpairBTDevice` - Forget once a requester has
+asked - on a process of the window's own, "Bluetooth worker", one call
+at a time, so that the window draws and answers the pairings while a
+device is paged or does not answer. A double click pairs with a device
+without a bond and connects to a bonded one without a link.
 
 The window follows the library through `AddBTNotify`: whatever changes,
 it lists again - twice a second at the most - and hands the list gadget

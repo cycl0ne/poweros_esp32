@@ -5,8 +5,9 @@
 //! pairing; a device's pairing with nothing to compare, its agent saying
 //! no; a device's pairing without an agent; a bonded device's link made
 //! secure, and one whose device lost the bond; too short a key; an agent
-//! that does not answer, one that goes; the calls' refusals; a bond ended;
-//! the bond file written and read again.
+//! that does not answer, one that goes; a pairing that made its link and
+//! no bond, and one on a link there before; the calls' refusals; a bond
+//! ended; the bond file written and read again.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -443,6 +444,36 @@ test "an agent that does not answer, and one that goes: refused" {
     try expectSent(&layer, &recorder, hci.HCI_OP_USER_CONFIRMATION_NEGATIVE_REPLY, &peer.bytes);
     handled(&layer, hci.HCI_EV_AUTHENTICATION_COMPLETE, hci.HCI_ERR_AUTHENTICATION_FAILURE, 0x13, &.{});
     try testing.expectEqual(@as(u8, 0), layer.notice_count);
+}
+
+test "a pairing that made its link and no bond: the link ended IDLE_MS after; one there before stays" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    try testing.expectEqual(@as(i32, 0), pairing.pair(&layer, peer, 7, bluetooth.BTIO_DISPLAYYESNO));
+    try testing.expectEqual(hci.HCI_OP_CREATE_CONNECTION, recorder.last().opcode);
+    done(&layer, &recorder);
+    connectionComplete(&layer, 0x0B, peer.bytes);
+    try authenticating(&layer, &recorder, 0x0B);
+    // The device does not pair now.
+    handled(&layer, hci.HCI_EV_AUTHENTICATION_COMPLETE, hci.HCI_ERR_PAIRING_NOT_ALLOWED, 0x0B, &.{});
+    try expectNotice(&layer, .done, 7, true, hci.HCI_ERR_PAIRING_NOT_ALLOWED);
+    try testing.expectEqual(@as(?u64, layer.now + connections.IDLE_MS), connections.find(&layer, peer).?.idle_until);
+    layer.now += connections.IDLE_MS;
+    _hci.tick(&layer);
+    try testing.expectEqual(hci.HCI_OP_DISCONNECT, recorder.last().opcode);
+    try testing.expectEqualSlices(u8, &.{ 0x0B, 0, hci.HCI_ERR_REMOTE_USER_TERMINATED }, recorder.last().bytes());
+    done(&layer, &recorder);
+    event(&layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, 0x0B, 0, hci.HCI_ERR_LOCAL_HOST_TERMINATED });
+
+    // A link there before the pairing stays after it.
+    layer.notice_count = 0;
+    try linked(&layer, &recorder, peer, 0x0C);
+    try testing.expectEqual(@as(i32, 0), pairing.pair(&layer, peer, 7, bluetooth.BTIO_DISPLAYYESNO));
+    try testing.expectEqual(hci.HCI_OP_AUTHENTICATION_REQUESTED, recorder.last().opcode);
+    done(&layer, &recorder);
+    handled(&layer, hci.HCI_EV_AUTHENTICATION_COMPLETE, hci.HCI_ERR_PAIRING_NOT_ALLOWED, 0x0C, &.{});
+    try expectNotice(&layer, .done, 7, true, hci.HCI_ERR_PAIRING_NOT_ALLOWED);
+    try testing.expectEqual(@as(?u64, null), connections.find(&layer, peer).?.idle_until);
 }
 
 test "a pairing refused: not up, off, LE, bonded already, being paired" {

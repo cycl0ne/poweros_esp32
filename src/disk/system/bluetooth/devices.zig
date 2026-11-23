@@ -8,7 +8,10 @@
 //! **One device, two kinds of address.** A device reached over BR/EDR
 //! and over LE has one public address for both: a BR/EDR address and a
 //! public LE address of the same bytes are one device. A random LE
-//! address is a device of its own.
+//! address is a device of its own. The entry keeps the address of its
+//! bond, or else of its link - what pairing, linking and forgetting it
+//! again go by - and a device a search heard both ways is listed by its
+//! BR/EDR address, which its profiles for both, sound and input, use.
 //!
 //! **Its name** is the one known last: the bond's, as it was at the
 //! pairing, then the link's, then the one a search heard - a name each
@@ -129,6 +132,9 @@ pub const Table = struct {
 
     pub fn addFound(table: *Table, found: *const bluetooth.BTDevice) void {
         const device = table.entry(&found.address) orelse return;
+        if (!device.bonded and !device.linked and found.address.kind == bluetooth.BTADDR_BREDR) {
+            device.address = found.address;
+        }
         device.found = true;
         device.found_flags |= found.flags;
         device.takeName(found.node.name, found.flags & bluetooth.BTDF_SHORT_NAME != 0);
@@ -191,6 +197,23 @@ test "a BR/EDR address and a public LE one of the same bytes are one device; a r
     const other = madeAddress(bluetooth.BTADDR_BREDR, 0x06);
     try testing.expect(table.find(&public) == &table.devices[0]);
     try testing.expect(table.find(&other) == null);
+}
+
+test "a device a search heard both ways is listed by its BR/EDR address, one with a bond by its bond's" {
+    var table: Table = .{};
+    const heard_le: bluetooth.BTDevice = .{ .address = madeAddress(bluetooth.BTADDR_LE_PUBLIC, 0x08) };
+    const heard_bredr: bluetooth.BTDevice = .{ .address = madeAddress(bluetooth.BTADDR_BREDR, 0x08) };
+    const bond_le: bluetooth.BTBond = .{ .address = madeAddress(bluetooth.BTADDR_LE_PUBLIC, 0x09) };
+    const heard_bonded: bluetooth.BTDevice = .{ .address = madeAddress(bluetooth.BTADDR_BREDR, 0x09) };
+    table.addBond(&bond_le);
+    table.addFound(&heard_le);
+    table.addFound(&heard_bredr);
+    table.addFound(&heard_bonded);
+    try testing.expectEqual(@as(usize, 2), table.count);
+    try testing.expectEqual(bluetooth.BTADDR_LE_PUBLIC, table.devices[0].address.kind);
+    try testing.expect(table.devices[0].bonded and table.devices[0].found);
+    try testing.expectEqual(bluetooth.BTADDR_BREDR, table.devices[1].address.kind);
+    try testing.expectEqual(@as(u8, 0x08), table.devices[1].address.bytes[0]);
 }
 
 test "a shortened name leaves a whole one be, and stands in for another shortened one" {

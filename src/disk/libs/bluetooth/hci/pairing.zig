@@ -21,7 +21,9 @@
 //! Authentication Complete follow; the link is then encrypted (Set
 //! Connection Encryption) and its key's size read, a key shorter than
 //! MIN_ENCRYPTION_KEY_SIZE ending the link. A device without Secure
-//! Simple Pairing asks for a PIN instead (PIN Code Request).
+//! Simple Pairing asks for a PIN instead (PIN Code Request). A link the
+//! pairing made is ended once it has made no bond, as a link made for
+//! channels is (connections.zig); a link there before it stays.
 //!
 //! **Begun by the device**: an IO Capability Request - or a PIN Code
 //! Request - with no pairing of the library's on the link is answered
@@ -109,6 +111,9 @@ pub const Pairing = struct {
     legacy: bool = false,
     refused: bool = false,
     full: bool = false,
+    /// PairBTDevice made the link for it: ended as one made for channels
+    /// is where the pairing makes no bond.
+    made_link: bool = false,
     /// The command sent last, whose refusal ends it.
     command: u16 = 0,
     question: Question = .{},
@@ -191,6 +196,7 @@ pub fn pair(layer: *Hci, address: bluetooth.BTAddress, agent: u32, capability: ?
     const connection = connections.find(layer, address).?;
     begin(layer, connection, .pair, true, agent, capability);
     connection.pairing.stage = .linking;
+    connection.pairing.made_link = true;
     return 0;
 }
 
@@ -335,6 +341,13 @@ pub fn finish(layer: *Hci, connection: *Connection, result: i32) void {
         .pair => {
             connections.note(layer, connection, if (outcome == 0) .paired else .not_paired, outcome);
             notice(layer, .{ .kind = .done, .agent = was.agent, .address = connection.address, .ours = was.ours, .result = outcome });
+            // A link made for a pairing that made no bond goes as one made
+            // for channels does: unless ConnectBTDevice asks for it, or a
+            // channel or a GATT block uses it, meanwhile.
+            if (outcome != 0 and was.made_link) {
+                connection.for_channels = true;
+                connections.idle(layer, connection.address);
+            }
             // The bond it made: its device's services for the profile
             // drivers (the task's toBinder).
             if (outcome == 0) {

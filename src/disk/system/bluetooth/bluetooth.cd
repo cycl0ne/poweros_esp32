@@ -19,6 +19,14 @@ MSG_DEVICES (//)
 Devices
 MSG_SEARCH (//)
 _Search
+MSG_PAIR (//)
+_Pair
+MSG_CONNECT (//)
+Conn_ect
+MSG_DISCONNECT (//)
+_Disconnect
+MSG_FORGET (//)
+_Forget...
 ;
 ; The list's columns.
 MSG_COLUMN_NAME (//)
@@ -57,12 +65,43 @@ MSG_SEARCHING (//)
 Searching for devices...
 MSG_FOUND (//)
 The search found %u devices
+MSG_FOUND_ONE (//)
+The search found one device
+MSG_FOUND_NONE (//)
+The search found no devices
 ;
 ; What a call that did not work says, after what it was.
 MSG_NOT_SET (//)
 Not changed: %s
 MSG_NOT_SEARCHING (//)
 No search: %s
+;
+; What is under way with a device, and how it went: its name, and why
+; where it did not work.
+MSG_PAIRING (//)
+Pairing with %s...
+MSG_PAIRED (//)
+Paired with %s
+MSG_NOT_PAIRED (//)
+Not paired with %s: %s
+MSG_CONNECTING (//)
+Connecting to %s...
+MSG_CONNECTED (//)
+Connected to %s
+MSG_NOT_CONNECTED (//)
+Not connected to %s: %s
+MSG_DISCONNECTING (//)
+Disconnecting from %s...
+MSG_DISCONNECTED (//)
+Disconnected from %s
+MSG_NOT_DISCONNECTED (//)
+Not disconnected from %s: %s
+MSG_FORGETTING (//)
+Forgetting %s...
+MSG_FORGOTTEN (//)
+%s is forgotten
+MSG_NOT_FORGOTTEN (//)
+%s is not forgotten: %s
 ;
 ; Why: what went wrong.
 MSG_WHY_NOMEM (//)
@@ -91,6 +130,36 @@ MSG_WHY_HARDWARE (//)
 a hardware failure
 MSG_WHY_REFUSED (//)
 the controller refused
+MSG_WHY_NO_ROOM (//)
+the controller has no room for another, or there is not the memory
+MSG_WHY_BONDED (//)
+this machine has a bond with it already
+MSG_WHY_NOT_BONDED (//)
+this machine has no bond with it
+MSG_WHY_NOT_LINKED (//)
+there is no link to it
+MSG_WHY_ANSWER_REFUSED (//)
+refused, or not answered in time
+MSG_WHY_NO_ANSWER (//)
+the device did not answer
+MSG_WHY_LOST (//)
+the link was lost
+MSG_WHY_DEVICE_ENDED (//)
+the device ended the link
+MSG_WHY_ENDED_HERE (//)
+the link was ended here
+MSG_WHY_DEVICE_REFUSED (//)
+the device refused
+MSG_WHY_NUMBERS (//)
+the device refused, or the numbers did not match
+MSG_WHY_KEY_MISSING (//)
+no PIN, or the device no longer has the key: forget it and pair again
+MSG_WHY_NOT_PAIRING (//)
+the device does not pair now
+MSG_WHY_REPEATED (//)
+the device wants a pause before the next try
+MSG_WHY_SHORT_KEY (//)
+the key is too short
 ;
 ; A device's row: its name where it has none, its signal, its state and
 ; its address.
@@ -200,6 +269,32 @@ MSG_KIND_AUDIO_SOURCE (//)
 audio source
 MSG_KIND_HEARING_AID (//)
 hearing aid
+;
+; The window that asks what a pairing needs: the device's name in bold.
+MSG_PAIRING_TITLE (//)
+Pairing
+MSG_ASK_COMPARE (//)
+Does %s show this number?
+MSG_ASK_CONSENT (//)
+%s asks to pair with this machine.
+MSG_ASK_PASSKEY (//)
+Type the number %s shows:
+MSG_ASK_SHOW (//)
+Type this number on %s, then its Enter key:
+MSG_ASK_PIN (//)
+Type the PIN of %s - 0000 for most devices without keys:
+MSG_YES (//)
+_Yes
+MSG_NO (//)
+_No
+MSG_CANCEL (//)
+_Cancel
+;
+; The requester Forget asks with.
+MSG_FORGET_ASK (//)
+Forget %s?\nThe key the two share is deleted: to be\nused again, they are paired again.
+MSG_FORGET_BUTTONS (//)
+Forget|Cancel
 ;
 ; Said in the shell it was started from.
 MSG_NO_LIBRARY (//)

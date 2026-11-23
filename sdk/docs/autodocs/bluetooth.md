@@ -1688,6 +1688,11 @@ so, HCI_ERR_PAIRING_NOT_ALLOWED; too short a key
 HCI_ERR_INSUFFICIENT_SECURITY; HCI_ERR_REPEATED_ATTEMPTS.
 AddBTNotify's signal comes when the bond is made.
 
+Since 1.12 a link the pairing made is ended two seconds after a
+pairing that made no bond, unless ConnectBTDevice asked for it, or a
+channel or a GATT block uses it, meanwhile; a link that was there
+before the pairing stays, as does the link of a bond made.
+
 **CONTEXT**
 
 - Waits: yes, for the library's task - not for the pairing.

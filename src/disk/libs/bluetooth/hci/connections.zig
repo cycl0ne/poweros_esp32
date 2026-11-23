@@ -40,11 +40,12 @@
 //!
 //! **A link made for channels** - by a channel this machine opens, a
 //! service query, or GATT's client (l2cap/channels.zig, sdp/client.zig,
-//! att/client.zig), or by the scan for a device a GATT block waits for
-//! (scan.zig) - ends IDLE_MS after the last of its channels, GATT
-//! blocks and procedures has ended, unless ConnectBTDevice asked for it
-//! meanwhile; a link ConnectBTDevice made, or the device, stays. The
-//! background scan is turned off before an LE link is initiated.
+//! att/client.zig), by the scan for a device a GATT block waits for
+//! (scan.zig), or by a pairing that made no bond (pairing.zig) - ends
+//! IDLE_MS after the last of its channels, GATT blocks and procedures
+//! has ended, unless ConnectBTDevice asked for it meanwhile; a link
+//! ConnectBTDevice made, or the device, stays. The background scan is
+//! turned off before an LE link is initiated.
 //!
 //! **A device's identity.** An LE link to a resolvable private address
 //! that a bond's identity resolving key made keeps the bond's address as

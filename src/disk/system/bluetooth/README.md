@@ -61,6 +61,45 @@ advertise over LE, the ones that answer an inquiry over BR/EDR, and the
 names of those that sent none. The list grows as they are found; the line
 says how many there were once it is over.
 
+**Pair** pairs with the device picked: what the pairing asks comes in a
+window of its own, which closes at the pairing's end, and the line says
+how it ended - `Paired with <device>`, or why not. **Connect** makes a
+link to the device picked - encrypted with the bond's key where there is
+one - and **Disconnect** ends it. **Forget...** ends the device's bond
+once a requester has asked: the key the two share is deleted and a link
+to the device ended, and the two are paired again to be used again. A
+double click on a device pairs with it where it has no bond, and connects
+to it where it has one and no link. A button is dimmed where it would do
+nothing - Pair for a device with a bond, Disconnect for one without a
+link - and while a call is under way, which the line says
+(`Connecting to <device>...`); the window goes on drawing and answering
+meanwhile.
+
+## Pairing
+
+While it is open the window answers the pairings: the ones Pair begins,
+and the ones a device begins - another machine pairing with this one,
+which finds it while it is visible. What a pairing asks depends on what
+the two can do:
+
+- **A number both show** - `Does <device> show this number?` - Yes where
+  the device shows the same number, No where it does not. The device's
+  user is asked the same.
+- **A number to type** - `Type the number <device> shows:` - its digits
+  typed, then Pair or Return.
+- **A number to show** - `Type this number on <device>, then its Enter
+  key:` - nothing to answer here; the window closes once the device has
+  taken it.
+- **A PIN**, for a device without Secure Simple Pairing - up to 16
+  characters, 0000 for most devices without keys.
+- **Nothing to compare**, where a device with no display and no keys
+  began it - `<device> asks to pair with this machine.` - Pair, or
+  Cancel.
+
+A question not answered within 30 seconds is refused, as is one answered
+No or Cancel, or whose window is closed. The questions of several devices
+come one after another.
+
 The window follows the library: whatever changes - a controller coming or
 going, a device found, a link made or ended, a bond made or forgotten -
 it reads again, twice a second at the most, so the list stays as it is
