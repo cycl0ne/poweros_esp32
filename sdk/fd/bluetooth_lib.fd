@@ -63,7 +63,7 @@ void ReleaseBTBonds(?*exec.List list)
 // Channels
 /// A channel opened to a protocol of a device, by its PSM, over BR/EDR, its link made first where there is none: 0 once it is open and `channel` set, BTERR_*, or the controller's status. Its frames come to `port`.
 i32 OpenBTChannel(u32 controller, *const bluetooth.BTAddress address, u32 psm, *exec.MsgPort port, *?*bluetooth.BTChannel channel)
-/// A channel closed and given back; the messages about it still on its port taken back. Null does nothing.
+/// A channel closed - the device asked, its answer not waited for - and given back; the messages about it still on its port taken back. Null does nothing.
 void CloseBTChannel(?*bluetooth.BTChannel channel)
 /// A frame sent on a channel, waiting while the controller's queue is full: 0 once it is queued, or BTERR_*.
 i32 SendBTChannel(*bluetooth.BTChannel channel, [*]const u8 data, u32 length)
@@ -105,7 +105,9 @@ void RemBTService(?*bluetooth.BTRecord record)
 // Devices
 /// What a device is, from its class of device or its LE appearance: BTDK_*, BTDK_NONE where it says neither.
 u32 BTDeviceKind(u32 class_of_device, u32 appearance)
-// Channels, opened without waiting
+// Channels, without waiting
 /// A channel's opening begun as OpenBTChannel's, and not waited for: 0 and `channel` set once it has begun - BTCM_OPENED comes to `port` once it is open, BTCM_CLOSED with why where it is not - or BTERR_*.
 i32 StartBTChannel(u32 controller, *const bluetooth.BTAddress address, u32 psm, *exec.MsgPort port, *?*bluetooth.BTChannel channel)
+/// A frame sent on a channel where the controller's queue has room for it now: 0 once it is queued, BTERR_BUSY at once - the frame not sent - where it would have to wait, or BTERR_*.
+i32 AttemptSendBTChannel(*bluetooth.BTChannel channel, [*]const u8 data, u32 length)
 ##end

@@ -30,7 +30,8 @@ const _task = @import("../task/_task.zig");
 /// The frame is copied, and the call waits while the controller's queue
 /// is full - until the controller has sent what is before it, or the
 /// channel has closed. Frames go in the order they are sent, the channel's
-/// and every other channel's on the controller.
+/// and every other channel's on the controller. AttemptSendBTChannel
+/// answers at once instead, for a caller that must not wait.
 ///
 /// CONTEXT:
 /// - Waits: yes, for room in the controller's queue.
@@ -50,7 +51,7 @@ const _task = @import("../task/_task.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenBTChannel`, `CloseBTChannel`
+/// `AttemptSendBTChannel`, `OpenBTChannel`, `CloseBTChannel`
 ///
 /// EXAMPLES:
 /// ```zig

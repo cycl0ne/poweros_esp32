@@ -39,12 +39,14 @@
 //! controller's bonds are read with its settings and written as they
 //! change (bondfiles.zig).
 //!
-//! **Channels.** OpenBTChannel, CloseBTChannel and ObtainBTServices are
-//! parked as the links' calls are; StartBTChannel is answered once the
-//! opening has begun, which its channel's port hears the end of;
-//! SendBTChannel waits on a list of its own while its controller's queue
-//! is full, tried again in its order as
-//! the queue empties. What the layer tells of a channel goes to the
+//! **Channels.** OpenBTChannel and ObtainBTServices are parked as the
+//! links' calls are; StartBTChannel is answered once the opening has
+//! begun, which its channel's port hears the end of, and CloseBTChannel
+//! once the device is asked to close the channel - its answer is the
+//! layer's. SendBTChannel waits on a list of its own while its
+//! controller's queue is full, tried again in its order as the queue
+//! empties; AttemptSendBTChannel is answered BTERR_BUSY at once where a
+//! send would wait. What the layer tells of a channel goes to the
 //! channel's port as messages of the task's, which come back on a port of
 //! their own (channels.zig); the task does not end while one is out.
 //!
@@ -152,7 +154,8 @@ pub const Command = extern struct {
     configuration: u32 = 0,
     /// open_gatt: BTGO_*; write_attribute: BTGW_*; subscribe: BTGS_*.
     flags: u32 = 0,
-    /// send_channel, write_attribute: the frame or the value; services,
+    /// send_channel, attempt_send_channel, write_attribute: the frame or
+    /// the value; services,
     /// characteristics, read_attribute: the caller's room, and how much
     /// of it is filled.
     data: ?[*]const u8 = null,
@@ -162,7 +165,7 @@ pub const Command = extern struct {
     /// What the call answers.
     result: i32 = 0,
 
-    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents, open_channel, start_channel, close_channel, send_channel, services, open_gatt, close_gatt, characteristics, read_attribute, write_attribute, subscribe, unsubscribe };
+    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents, open_channel, start_channel, close_channel, send_channel, attempt_send_channel, services, open_gatt, close_gatt, characteristics, read_attribute, write_attribute, subscribe, unsubscribe };
 };
 
 /// What SetBTControllerAttrs wants of a controller: `which` says which of
@@ -352,14 +355,16 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                         keepBonds(work);
                     },
                     .agents => agentsChanged(work, command.agent),
-                    .open_channel, .start_channel, .close_channel, .services => if (channelCommand(work, command)) {
+                    .open_channel, .start_channel, .services => if (channelCommand(work, command)) {
                         worked = true;
                         continue;
                     },
+                    .close_channel => closeChannel(work, command),
                     .send_channel => if (sendChannel(work, command)) {
                         worked = true;
                         continue;
                     },
+                    .attempt_send_channel => command.result = attemptSend(work, command),
                     .close_gatt => closeGatt(work, command),
                     .open_gatt, .characteristics, .read_attribute, .write_attribute, .subscribe, .unsubscribe => if (gattCommand(work, command)) {
                         worked = true;
@@ -744,13 +749,12 @@ fn park(work: *Work, command: *Command, controller: *Controller, begun: connecti
 // --- channels ---------------------------------------------------------------------
 
 /// OpenBTChannel, ObtainBTServices - asked of the controller a link is,
-/// or would be, made by - and CloseBTChannel: the command parked until
-/// the controller has done it - true - or answered at once.
-/// StartBTChannel, asked of the same controller, is answered at once.
+/// or would be, made by: the command parked until the controller has
+/// done it - true - or answered at once. StartBTChannel, asked of the
+/// same controller, is answered at once.
 fn channelCommand(work: *Work, command: *Command) bool {
     const base = work.base;
     const sys = base.sys_base;
-    if (command.kind == .close_channel) return closeChannel(work, command);
     const controller = linkController(work, command) orelse return false;
     sys.ObtainSemaphore(&base.lock);
     defer sys.ReleaseSemaphore(&base.lock);
@@ -763,24 +767,21 @@ fn channelCommand(work: *Work, command: *Command) bool {
     return park(work, command, controller, begun);
 }
 
-/// CloseBTChannel: the block's channel closed by its controller - parked
-/// for the device's answer, true, where it is open - and its messages
-/// still on its port taken back. A channel whose controller is gone is
-/// closed already.
-fn closeChannel(work: *Work, command: *Command) bool {
+/// CloseBTChannel: the block's channel closed by its controller - the
+/// device asked, its answer not waited for - and its messages still on
+/// its port taken back; answered at once. A channel whose controller is
+/// gone is closed already.
+fn closeChannel(work: *Work, command: *Command) void {
     const base = work.base;
     const sys = base.sys_base;
     sys.ObtainSemaphore(&base.lock);
     defer sys.ReleaseSemaphore(&base.lock);
-    const controller = taskchannels.byId(base, command.controller) orelse {
-        taskchannels.takeBack(base, command.block.?);
-        command.result = 0;
-        return false;
-    };
-    controller.layer.now = now(work);
-    const begun = taskchannels.close(controller, command);
+    if (taskchannels.byId(base, command.controller)) |controller| {
+        controller.layer.now = now(work);
+        taskchannels.close(controller, command);
+    }
     taskchannels.takeBack(base, command.block.?);
-    return park(work, command, controller, begun);
+    command.result = 0;
 }
 
 /// SendBTChannel: the frame queued - answered - or the command put on the
@@ -803,6 +804,19 @@ fn sendChannel(work: *Work, command: *Command) bool {
     }
     sys.AddTail(&work.sending, &command.message.node);
     return true;
+}
+
+/// AttemptSendBTChannel: the frame queued where the controller's queue
+/// has room and no send waits for room before it - 0 - or BTERR_BUSY at
+/// once; never put on the list of sends waiting.
+fn attemptSend(work: *Work, command: *Command) i32 {
+    const base = work.base;
+    const sys = base.sys_base;
+    const controller = taskchannels.byId(base, command.controller) orelse return bluetooth.BTERR_NOTCONNECTED;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    controller.layer.now = now(work);
+    return taskchannels.attempt(controller, command, !work.sending.isEmpty());
 }
 
 // --- GATT -------------------------------------------------------------------------

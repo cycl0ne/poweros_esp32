@@ -139,9 +139,9 @@ tags and constants, each with its doc comment.
   listing them and being told of changes, their settings and the files
   they are kept in, finding the devices around them, links to them and
   what a link carries, pairing over BR/EDR and LE - agents and bonds -
-  L2CAP's channels - their opening waited for or not (`StartBTChannel`) -
-  and listeners, SDP's server, records of one's own and
-  a device's services, GATT's client and server over LE - services,
+  L2CAP's channels - their opening and their frames waited for or not
+  (`StartBTChannel`, `AttemptSendBTChannel`) - and listeners, SDP's
+  server, records of one's own and a device's services, GATT's client and server over LE - services,
   characteristics, values read, written and watched, blocks that wait
   for their device - profile drivers and the services offered to them,
   keyboards and mice over BR/EDR and LE (`bthid.device`), sound to a

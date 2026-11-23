@@ -36,10 +36,13 @@
 //! time one would have played - on timer.device's E-clock, counted from
 //! the start, and one it was late for at once, 16 at the most, so that
 //! the sound stays whole - and hands it back filled; the sink puts it in
-//! a ring of 32
-//! and signals the driver's task, which gathers the frames into packets -
-//! as many SBC frames as the media channel takes - and sends them. The
-//! stream is started when a buffer that is not silence comes, the ring
+//! a ring of 32 and signals the driver's task, which gathers the frames
+//! into packets - as many SBC frames as the media channel takes - and
+//! sends them without waiting for room (AttemptSendBTChannel): a packet
+//! that finds the controller's queue full - the radio scanning, paging or
+//! pairing, the link busy - is let go of, the stream keeping its time,
+//! and the log says how many were once the sound stops. The stream is
+//! started when a buffer that is not silence comes, the ring
 //! holding what comes meanwhile, which is sent once it has; it is
 //! suspended after five seconds without sound - stopped by audio.device,
 //! the sink hands over nothing, and that is silence too. A device that
@@ -71,8 +74,10 @@
 //! it first where it plays through it - the channels closed, the memory
 //! freed; the listeners and the records go with the last device. A
 //! channel opened from here is begun (StartBTChannel) and taken once its
-//! port says it is open, so that a device slow to answer - one that holds
-//! a channel pending for a minute - holds up no other device's sound.
+//! port says it is open, a channel closed is not waited for, and a packet
+//! never waits for room, so that a device slow to answer - one that holds
+//! a channel pending for a minute - or a radio busy holds up no other
+//! device's sound.
 //!
 //! The device's own units are none: bluetooth.library opens it on
 //! `BTPROFILE_UNIT_BIND` for its two calls. It stays once loaded.
@@ -106,7 +111,7 @@ const remote_control = a2dp.avrcp;
 pub const DEVICE_NAME = "btaudio.device";
 const DRIVER_NAME = "btaudio";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 2;
+const DEVICE_REVISION = 3;
 const BUILD_DATE = "23.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -235,11 +240,13 @@ const Headphone = struct {
     last_sound: u64,
     quiet_since: u64,
     held: bool,
-    /// Since the stream last started: packets sent, and those the channel
-    /// would not take; when the last went, and the most E-clock ticks
-    /// between two; the sink's missed buffers then.
+    /// Since the stream last started: packets sent, those the channel
+    /// would not take, and of them those the controller's queue had no
+    /// room for; when the last went, and the most E-clock ticks between
+    /// two; the sink's missed buffers then.
     sent: u32,
     lost: u32,
+    no_room: u32,
     last_sent: u64,
     widest: u64,
     missed_before: u32,
@@ -938,6 +945,7 @@ fn outcome(base: *Base, device: *Headphone, what: a2dp.source.Outcome, by_device
             device.held = false;
             device.sent = 0;
             device.lost = 0;
+            device.no_room = 0;
             device.last_sent = 0;
             device.widest = 0;
             device.missed_before = if (device.sink) |sink| sink.underruns else 0;
@@ -1109,8 +1117,9 @@ fn pump(base: *Base, device: *Headphone) void {
 
 /// What the stream's playing came to, in the log's debug lines: the
 /// packets sent and not, the widest gap between two sent, and the buffers
-/// audio.device was later for than the sink catches up; counted afresh
-/// from the next start.
+/// audio.device was later for than the sink catches up - and in its
+/// lines the packets the controller's queue had no room for; counted
+/// afresh from the next start.
 fn tally(base: *Base, device: *Headphone) void {
     if (device.sent == 0 and device.lost == 0) return;
     const missed: u32 = if (device.sink) |sink| sink.underruns -% device.missed_before else 0;
@@ -1118,11 +1127,14 @@ fn tally(base: *Base, device: *Headphone) void {
     sayAt(base, exec.LOG_DEBUG, "%s: %02x:%02x:%02x:%02x:%02x:%02x: %ld packets sent, %ld not, at most %ld ms apart; %ld buffers missed\n", device.address, .{
         @as(i64, device.sent), @as(i64, device.lost), @as(i64, @intCast(widest_ms)), @as(i64, missed),
     });
+    if (device.no_room != 0) say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: %ld packets found no room in the controller's queue\n", device.address, .{@as(i64, device.no_room)});
     device.sent = 0;
     device.lost = 0;
+    device.no_room = 0;
 }
 
-/// A buffer's frames gathered into packets, each sent as it is full.
+/// A buffer's frames gathered into packets, each sent as it is full -
+/// let go of, never waited for, where the controller's queue has no room.
 fn sendBuffer(base: *Base, device: *Headphone, channel: *bluetooth.BTChannel, buffer: *const [buffer_samples]i16) void {
     const bt = base.bt_base.?;
     var at: usize = 0;
@@ -1132,13 +1144,15 @@ fn sendBuffer(base: *Base, device: *Headphone, channel: *bluetooth.BTChannel, bu
         // come with the next.
         if (!device.media.full()) break;
         const packet = device.media.packetGathered();
-        if (bt.SendBTChannel(channel, packet.ptr, @intCast(packet.len)) == 0) {
+        const result = bt.AttemptSendBTChannel(channel, packet.ptr, @intCast(packet.len));
+        if (result == 0) {
             device.sent +%= 1;
             const time = now(base);
             if (device.last_sent != 0) device.widest = @max(device.widest, time -% device.last_sent);
             device.last_sent = time;
         } else {
             device.lost +%= 1;
+            if (result == bluetooth.BTERR_BUSY) device.no_room +%= 1;
         }
     }
 }

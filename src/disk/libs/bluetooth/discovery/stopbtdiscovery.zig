@@ -22,8 +22,8 @@ const _task = @import("../task/_task.zig");
 ///
 /// BEHAVIOR:
 /// Whatever part of it runs is taken back from the controller - LE's
-/// scan turned off, the inquiry cancelled, the name being asked for too
-/// - and BTCF_DISCOVERING cleared; whoever asked with AddBTNotify is
+/// scan turned off, the inquiry cancelled, the name being asked for too -
+/// and BTCF_DISCOVERING cleared; whoever asked with AddBTNotify is
 /// told. The devices found stay in the list ObtainBTDevices answers. A
 /// controller that does not look, or that is not there, is left as it
 /// is.

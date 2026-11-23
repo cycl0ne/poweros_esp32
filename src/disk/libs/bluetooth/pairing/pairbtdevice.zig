@@ -48,8 +48,8 @@ const _pairing = @import("_pairing.zig");
 /// authenticated and encrypted; an encryption key shorter than 7 bytes
 /// ends it.
 ///
-/// Over LE the library is the link's central and asks the device to pair
-/// - with Secure Connections where the device has it, a P-256 key pair of
+/// Over LE the library is the link's central and asks the device to pair -
+/// with Secure Connections where the device has it, a P-256 key pair of
 /// the pairing's own, and with legacy pairing otherwise - for a key of up
 /// to 16 bytes; a device that takes fewer than 7 is refused. The agent is
 /// asked as over BR/EDR: BTAK_CONFIRM for the number both show,

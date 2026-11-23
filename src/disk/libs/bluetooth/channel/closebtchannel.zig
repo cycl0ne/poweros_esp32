@@ -24,16 +24,18 @@ const _task = @import("../task/_task.zig");
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A channel that is open is closed, and the device's answer waited for -
-/// five seconds at the most. A channel closed already - by the device,
-/// with its link or its controller - is only given back. One that
-/// StartBTChannel began and is not open yet is given up: a device that
-/// takes it after is told it is closed. Either way nothing about it is on
-/// its port once the call returns: the messages about it the caller has
-/// not taken (GetMsg) are taken back, and no more come.
+/// A channel that is open is closed: the device is asked to close it, and
+/// the call returns without waiting for its answer. A channel closed
+/// already - by the device, with its link or its controller - is only
+/// given back. One that StartBTChannel began and is not open yet is given
+/// up: a device that takes it after is told it is closed. Either way
+/// nothing about it is on its port once the call returns: the messages
+/// about it the caller has not taken (GetMsg) are taken back, and no more
+/// come.
 ///
 /// CONTEXT:
-/// - Waits: yes, for the device's answer.
+/// - Waits: only for the library's task to take the call, not for the
+///   device.
 /// - Interrupts: no.
 /// - Locks: none may be held.
 /// - Process: a Task will do.
@@ -42,6 +44,11 @@ const _task = @import("../task/_task.zig");
 /// The channel is gone, and the messages about it that were taken back.
 /// One the caller took before the call is still replied, without reading
 /// its `channel`, whose block is gone with the channel.
+///
+/// NOTES:
+/// The device answers after the call has returned. Until it does - five
+/// seconds at the most - its link counts the channel as its own: a link
+/// made for the channel ends two seconds after that.
 ///
 /// BUGS:
 /// None known.

@@ -30,8 +30,8 @@ const _task = @import("../task/_task.zig");
 /// The task is started if it does not run. It opens the unit, asks the
 /// device what it knows of the controller (HCICMD_QUERY), keeps reads
 /// queued on it and begins the bring-up: the controller is reset and
-/// asked what it is - its address, versions, features, commands, buffers
-/// - then told which events to send, what it is (a desktop computer) and
+/// asked what it is - its address, versions, features, commands, buffers -
+/// then told which events to send, what it is (a desktop computer) and
 /// what it is called (the machine's network name, `ENVARC:Sys/net/hostname`,
 /// or "PowerOS"). The call returns once the unit is open; the bring-up
 /// goes on, and whoever asked with AddBTNotify is told when the

@@ -29,8 +29,8 @@ const _task = @import("../task/_task.zig");
 /// RESULT:
 /// 0 once it is read. Otherwise why not: BTERR_ATT less the device's
 /// reason for a value it does not give - BTERR_ATT -
-/// att.ATT_ERR_READ_NOT_PERMITTED for one that may not be read, BTERR_ATT
-/// - att.ATT_ERR_INSUFFICIENT_ENCRYPTION or
+/// att.ATT_ERR_READ_NOT_PERMITTED for one that may not be read, BTERR_ATT -
+/// att.ATT_ERR_INSUFFICIENT_ENCRYPTION or
 /// att.ATT_ERR_INSUFFICIENT_AUTHENTICATION for one that needs the link
 /// encrypted by a bond (PairBTDevice), BTERR_ATT -
 /// att.ATT_ERR_INVALID_HANDLE for a handle the device does not have;

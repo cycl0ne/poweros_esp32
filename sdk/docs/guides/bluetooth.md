@@ -617,10 +617,17 @@ A channel has at most 32 of its frames out unreplied: those past them
 are let go and counted in its block (`dropped`). `SendBTChannel` sends
 a frame of at most `mtu_out` bytes - `BTERR_TOOLONG` past it - waiting
 while the controller's queue is full, and answers `BTERR_NOTCONNECTED`
-once the channel is closed. `CloseBTChannel` closes the channel - five
-seconds at the most for the device's answer - and gives its block back;
-what was on the port about it and not taken is taken back, so that a
-port several channels share holds nothing of one that is closed.
+once the channel is closed. The queue fills where the controller sends
+more slowly than frames come: a link far off or busy, the radio
+scanning, paging or pairing. `AttemptSendBTChannel` answers
+`BTERR_BUSY` at once instead, the frame not sent, for a caller that must
+not wait - a stream lets the frame go and keeps its time.
+`CloseBTChannel` asks the device to close the channel and gives its
+block back without waiting for the answer; what was on the port about
+it and not taken is taken back, so that a port several channels share
+holds nothing of one that is closed. Until the device answers - five
+seconds at the most - the channel is its link's, and a link made for it
+ends two seconds after.
 
 **A listener** takes the channels devices open to a PSM:
 
@@ -1004,9 +1011,11 @@ first - a byte counting its frames, and as many SBC frames as the media
 channel's MTU takes, 15 at the most. At 48 kHz in joint stereo, with 16
 blocks, 8 subbands and a bitpool of 53, a frame is 119 bytes for 128
 samples of each channel - 357 kbit/s - and a channel taking 1021 bytes
-carries 8 of them a packet, 21.3 ms of sound. A packet not sent before
-its time has gone is let go of and counted in the timestamp alone: the
-device hears the gap, and the sound after it stays in time.
+carries 8 of them a packet, 21.3 ms of sound. A packet that finds no
+room in the controller's queue is let go of, its number and its samples
+counted all the same: the device hears the gap, and the sound after it
+stays in time. The log says how many packets found no room once the
+sound stops.
 
 ## Headphones and speakers as outputs
 
@@ -1016,8 +1025,9 @@ outputs: while a device's stream is open it is a sink of rta.library,
 which audio.device plays through as it does any other (the [sound
 guide](audio.md#bluetooth-headphones-and-speakers)). It drives four
 devices at most, a stream each, on a task of its own, which waits for
-no channel it opens (`StartBTChannel`): a device slow to answer - one
-that holds a channel pending while its user is asked - stops no other
+no channel it opens (`StartBTChannel`) or closes, and for no room for a
+packet (`AttemptSendBTChannel`): a device slow to answer - one that
+holds a channel pending while its user is asked - stops no other
 device's sound.
 
 **The stream** is set up by whichever side comes first. The driver

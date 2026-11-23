@@ -178,10 +178,10 @@ pub const Connection = struct {
     name_asked: bool = false,
 };
 
-pub const WaitKind = enum(u8) { connect, disconnect, open, close, services, gatt };
+pub const WaitKind = enum(u8) { connect, disconnect, open, services, gatt };
 
 /// A call waiting for a link to `address` to be up, or down - or for the
-/// channel the task knows as `serial` to be open or closed, for the
+/// channel the task knows as `serial` to be open, for the
 /// services of the device at `address`, or for the GATT procedure
 /// numbered `serial` (att/client.zig).
 pub const Wait = struct {

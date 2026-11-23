@@ -55,6 +55,7 @@ const AddBTService = @import("service/addbtservice.zig").AddBTService;
 const RemBTService = @import("service/rembtservice.zig").RemBTService;
 const BTDeviceKind = @import("discovery/btdevicekind.zig").BTDeviceKind;
 const StartBTChannel = @import("channel/startbtchannel.zig").StartBTChannel;
+const AttemptSendBTChannel = @import("channel/attemptsendbtchannel.zig").AttemptSendBTChannel;
 
 /// bluetooth.library's interface, as the SDK generates it from
 /// sdk/fd/bluetooth_lib.fd.
@@ -121,6 +122,7 @@ const contract_files = [_][]const u8{
     @embedFile("service/rembtservice.zig"),
     @embedFile("discovery/btdevicekind.zig"),
     @embedFile("channel/startbtchannel.zig"),
+    @embedFile("channel/attemptsendbtchannel.zig"),
 };
 
 // --- controllers ----------------------------------------------------------------
@@ -304,6 +306,10 @@ fn lvoStartBTChannel(base: *BluetoothBase, controller: u32, address: *const blue
     return StartBTChannel(base, controller, address, psm, port, channel);
 }
 
+fn lvoAttemptSendBTChannel(base: *BluetoothBase, channel: *bluetooth.BTChannel, data: [*]const u8, length: u32) callconv(.c) i32 {
+    return AttemptSendBTChannel(base, channel, data, length);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -353,6 +359,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemBTService),
     vec(lvoBTDeviceKind),
     vec(lvoStartBTChannel),
+    vec(lvoAttemptSendBTChannel),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

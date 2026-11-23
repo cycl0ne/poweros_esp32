@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! The task's side of the channels (l2cap/channels.zig) and the service
 //! queries (sdp/client.zig; att/client.zig over LE): the commands of
-//! OpenBTChannel, StartBTChannel, CloseBTChannel, SendBTChannel and
-//! ObtainBTServices handed to the layer, what the layer tells of the channels sent to
+//! OpenBTChannel, StartBTChannel, CloseBTChannel, SendBTChannel,
+//! AttemptSendBTChannel and ObtainBTServices handed to the layer, what the layer tells of the channels sent to
 //! their ports as BTChannelMessages, and those messages - and GATT's
 //! (gatt.zig) - freed as they come back.
 //!
@@ -275,13 +275,13 @@ pub fn start(controller: *Controller, command: *Command) i32 {
     }
 }
 
-/// CloseBTChannel: the block's channel closed - the call's wait for the
-/// device's answer - or done, where it is closed already. Nothing more is
-/// put about it either way: its record no longer names the block.
-pub fn close(controller: *Controller, command: *Command) connections.Begun {
+/// CloseBTChannel: the block's channel closed - the device asked, its
+/// answer not waited for - where it is not closed already. Nothing more
+/// is put about it either way: its record no longer names the block.
+pub fn close(controller: *Controller, command: *const Command) void {
     const layer = &controller.layer;
-    const record = l2cap_channels.byOwner(layer, command.block.?) orelse return .{ .done = 0 };
-    return l2cap_channels.closeFor(layer, record);
+    const record = l2cap_channels.byOwner(layer, command.block.?) orelse return;
+    l2cap_channels.closeFor(layer, record);
 }
 
 /// SendBTChannel: the frame queued on the block's channel - 0, BTERR_BUSY
@@ -289,6 +289,16 @@ pub fn close(controller: *Controller, command: *Command) connections.Begun {
 pub fn send(controller: *Controller, command: *Command) i32 {
     const layer = &controller.layer;
     const record = l2cap_channels.byOwner(layer, command.block.?) orelse return bluetooth.BTERR_NOTCONNECTED;
+    return l2cap_channels.send(layer, record, command.data.?[0..command.length]);
+}
+
+/// AttemptSendBTChannel: the frame queued on the block's channel - 0 - or
+/// BTERR_BUSY where the controller's queue is full or `behind` says sends
+/// wait for room before it; BTERR_NOTCONNECTED for a channel closed.
+pub fn attempt(controller: *Controller, command: *Command, behind: bool) i32 {
+    const layer = &controller.layer;
+    const record = l2cap_channels.byOwner(layer, command.block.?) orelse return bluetooth.BTERR_NOTCONNECTED;
+    if (behind) return bluetooth.BTERR_BUSY;
     return l2cap_channels.send(layer, record, command.data.?[0..command.length]);
 }
 

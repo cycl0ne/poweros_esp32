@@ -68,8 +68,8 @@ const _task = @import("../task/_task.zig");
 /// makes, or ConnectBTDevice, or the library itself: while a block
 /// waits for a device without a link the library listens for LE's
 /// advertising (a passive scan, off while a discovery runs or an LE link
-/// is being made), and makes the link as soon as the device advertises
-/// - at its address, or at a private one its bond's identity resolving
+/// is being made), and makes the link as soon as the device advertises -
+/// at its address, or at a private one its bond's identity resolving
 /// key made. Such a link is made secure with the bond's key and ends two
 /// seconds after the last block on it closes. Each time the block opens
 /// it is told BTGM_OPENED, BTGF_WAITING cleared and its `mtu` the link's;

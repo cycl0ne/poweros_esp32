@@ -21,8 +21,8 @@ const _task = @import("../task/_task.zig");
 /// None.
 ///
 /// RESULT:
-/// A list of `bluetooth.BTController` nodes in the order they were added
-/// - empty when there is none - or null without memory.
+/// A list of `bluetooth.BTController` nodes in the order they were added -
+/// empty when there is none - or null without memory.
 ///
 /// BEHAVIOR:
 /// Each node is a copy, its strings with it: what it says does not change

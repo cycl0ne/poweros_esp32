@@ -16,6 +16,7 @@ Generated from the source by `./zig build autodoc`.
 - [AddBTListener](#addbtlistener) - Serves a PSM: the channels devices open to it are taken, and come to a port.
 - [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, finds a device, or a link, a pairing or a bond begins or ends.
 - [AddBTService](#addbtservice) - Serves a record of the program's own: the SDP server answers devices with it beside its own.
+- [AttemptSendBTChannel](#attemptsendbtchannel) - Sends a frame on a channel to the device's protocol where the controller's queue has room for it now, and answers at once where it has none.
 - [BTDeviceKind](#btdevicekind) - Says what a device is, as one of the kinds programs name.
 - [CloseBTChannel](#closebtchannel) - Closes a channel - one OpenBTChannel opened or StartBTChannel began, or one a device opened to a listener - and gives it back.
 - [CloseBTGatt](#closebtgatt) - Closes a block OpenBTGatt opened, and gives it back.
@@ -159,8 +160,8 @@ when the unit would not open.
 The task is started if it does not run. It opens the unit, asks the
 device what it knows of the controller (HCICMD_QUERY), keeps reads
 queued on it and begins the bring-up: the controller is reset and
-asked what it is - its address, versions, features, commands, buffers
-- then told which events to send, what it is (a desktop computer) and
+asked what it is - its address, versions, features, commands, buffers -
+then told which events to send, what it is (a desktop computer) and
 what it is called (the machine's network name, `ENVARC:Sys/net/hostname`,
 or "PowerOS"). The call returns once the unit is open; the bring-up
 goes on, and whoever asked with AddBTNotify is told when the
@@ -436,6 +437,78 @@ const served = bt.AddBTService(&record, record.len) orelse return;
 defer bt.RemBTService(served);
 ```
 
+## AttemptSendBTChannel
+
+Sends a frame on a channel to the device's protocol where the controller's queue has room for it now, and answers at once where it has none.
+
+**SYNOPSIS**
+
+```zig
+fn AttemptSendBTChannel(base: *BluetoothBase, channel: *bluetooth.BTChannel, data: [*]const u8, length: u32) i32
+```
+
+**SINCE**
+
+1.14. LVO -188.
+
+**INPUTS**
+
+- `channel` - an open one, from OpenBTChannel or a BTCM_OPENED
+  message.
+- `data`, `length` - the frame: as long as the device takes at the
+  most (BTChannel.mtu_out), an empty one too.
+
+**RESULT**
+
+0 once the frame is in the controller's queue. BTERR_BUSY where it
+would have to wait for room, and the frame is not sent. Otherwise
+BTERR_TOOLONG for a frame longer than the device takes, or
+BTERR_NOTCONNECTED for a channel that is closed.
+
+**BEHAVIOR**
+
+The frame is copied into the controller's queue where the queue has
+room and no frame SendBTChannel waits to queue is before it - frames
+go in the order they are queued, the channel's and every other
+channel's on the controller. Otherwise nothing is sent, and the caller
+decides: a stream lets the frame go and keeps its time, a protocol
+sends it again later or with SendBTChannel. The queue fills where the
+controller sends more slowly than frames come - a link far off or
+busy, the radio scanning, paging or pairing - and empties as it
+catches up.
+
+**CONTEXT**
+
+- Waits: only for the library's task to take the call, not for room.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The data is the caller's again once the call returns.
+
+**NOTES**
+
+In the queue is not at the device: a frame queued when the link goes
+down is lost, and nothing says it was.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SendBTChannel`, `StartBTChannel`, `OpenBTChannel`
+
+**EXAMPLES**
+
+```zig
+// A packet of a stream: one that finds no room is let go of, and the
+// stream keeps its time.
+if (bt.AttemptSendBTChannel(channel, packet.ptr, @intCast(packet.len)) != 0) lost += 1;
+```
+
 ## BTDeviceKind
 
 Says what a device is, as one of the kinds programs name.
@@ -530,17 +603,19 @@ Nothing.
 
 **BEHAVIOR**
 
-A channel that is open is closed, and the device's answer waited for -
-five seconds at the most. A channel closed already - by the device,
-with its link or its controller - is only given back. One that
-StartBTChannel began and is not open yet is given up: a device that
-takes it after is told it is closed. Either way nothing about it is on
-its port once the call returns: the messages about it the caller has
-not taken (GetMsg) are taken back, and no more come.
+A channel that is open is closed: the device is asked to close it, and
+the call returns without waiting for its answer. A channel closed
+already - by the device, with its link or its controller - is only
+given back. One that StartBTChannel began and is not open yet is given
+up: a device that takes it after is told it is closed. Either way
+nothing about it is on its port once the call returns: the messages
+about it the caller has not taken (GetMsg) are taken back, and no more
+come.
 
 **CONTEXT**
 
-- Waits: yes, for the device's answer.
+- Waits: only for the library's task to take the call, not for the
+  device.
 - Interrupts: no.
 - Locks: none may be held.
 - Process: a Task will do.
@@ -550,6 +625,12 @@ not taken (GetMsg) are taken back, and no more come.
 The channel is gone, and the messages about it that were taken back.
 One the caller took before the call is still replied, without reading
 its `channel`, whose block is gone with the channel.
+
+**NOTES**
+
+The device answers after the call has returned. Until it does - five
+seconds at the most - its link counts the channel as its own: a link
+made for the channel ends two seconds after that.
 
 **BUGS**
 
@@ -1176,8 +1257,8 @@ None.
 
 **RESULT**
 
-A list of `bluetooth.BTController` nodes in the order they were added
-- empty when there is none - or null without memory.
+A list of `bluetooth.BTController` nodes in the order they were added -
+empty when there is none - or null without memory.
 
 **BEHAVIOR**
 
@@ -1556,8 +1637,8 @@ set, and opens whenever a link to its device is up - one the device
 makes, or ConnectBTDevice, or the library itself: while a block
 waits for a device without a link the library listens for LE's
 advertising (a passive scan, off while a discovery runs or an LE link
-is being made), and makes the link as soon as the device advertises
-- at its address, or at a private one its bond's identity resolving
+is being made), and makes the link as soon as the device advertises -
+at its address, or at a private one its bond's identity resolving
 key made. Such a link is made secure with the bond's key and ends two
 seconds after the last block on it closes. Each time the block opens
 it is told BTGM_OPENED, BTGF_WAITING cleared and its `mtu` the link's;
@@ -1664,8 +1745,8 @@ that can show or type nothing - the pairing is confirmed by nobody
 authenticated and encrypted; an encryption key shorter than 7 bytes
 ends it.
 
-Over LE the library is the link's central and asks the device to pair
-- with Secure Connections where the device has it, a P-256 key pair of
+Over LE the library is the link's central and asks the device to pair -
+with Secure Connections where the device has it, a P-256 key pair of
 the pairing's own, and with legacy pairing otherwise - for a key of up
 to 16 bytes; a device that takes fewer than 7 is refused. The agent is
 asked as over BR/EDR: BTAK_CONFIRM for the number both show,
@@ -1764,8 +1845,8 @@ fn ReadBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, handle: u32,
 
 0 once it is read. Otherwise why not: BTERR_ATT less the device's
 reason for a value it does not give - BTERR_ATT -
-att.ATT_ERR_READ_NOT_PERMITTED for one that may not be read, BTERR_ATT
-- att.ATT_ERR_INSUFFICIENT_ENCRYPTION or
+att.ATT_ERR_READ_NOT_PERMITTED for one that may not be read, BTERR_ATT -
+att.ATT_ERR_INSUFFICIENT_ENCRYPTION or
 att.ATT_ERR_INSUFFICIENT_AUTHENTICATION for one that needs the link
 encrypted by a bond (PairBTDevice), BTERR_ATT -
 att.ATT_ERR_INVALID_HANDLE for a handle the device does not have;
@@ -2429,7 +2510,8 @@ BTERR_NOTCONNECTED for a channel that is closed.
 The frame is copied, and the call waits while the controller's queue
 is full - until the controller has sent what is before it, or the
 channel has closed. Frames go in the order they are sent, the channel's
-and every other channel's on the controller.
+and every other channel's on the controller. AttemptSendBTChannel
+answers at once instead, for a caller that must not wait.
 
 **CONTEXT**
 
@@ -2454,7 +2536,7 @@ None known.
 
 **SEE ALSO**
 
-`OpenBTChannel`, `CloseBTChannel`
+`AttemptSendBTChannel`, `OpenBTChannel`, `CloseBTChannel`
 
 **EXAMPLES**
 
@@ -2751,8 +2833,8 @@ Nothing.
 **BEHAVIOR**
 
 Whatever part of it runs is taken back from the controller - LE's
-scan turned off, the inquiry cancelled, the name being asked for too
-- and BTCF_DISCOVERING cleared; whoever asked with AddBTNotify is
+scan turned off, the inquiry cancelled, the name being asked for too -
+and BTCF_DISCOVERING cleared; whoever asked with AddBTNotify is
 told. The devices found stay in the list ObtainBTDevices answers. A
 controller that does not look, or that is not there, is left as it
 is.

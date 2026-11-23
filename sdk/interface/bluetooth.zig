@@ -61,6 +61,7 @@ pub const LVO = struct {
     pub const RemBTService = libraries.lvo(43);
     pub const BTDeviceKind = libraries.lvo(44);
     pub const StartBTChannel = libraries.lvo(45);
+    pub const AttemptSendBTChannel = libraries.lvo(46);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -108,6 +109,7 @@ pub const Fn = struct {
     pub const RemBTService = *const fn (*BluetoothBase, ?*bluetooth.BTRecord) callconv(.c) void;
     pub const BTDeviceKind = *const fn (*BluetoothBase, u32, u32) callconv(.c) u32;
     pub const StartBTChannel = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, u32, *exec.MsgPort, *?*bluetooth.BTChannel) callconv(.c) i32;
+    pub const AttemptSendBTChannel = *const fn (*BluetoothBase, *bluetooth.BTChannel, [*]const u8, u32) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -228,7 +230,7 @@ pub const BluetoothBase = opaque {
         return libraries.call(self, LVO.OpenBTChannel, Fn.OpenBTChannel, .{ controller, address, psm, port, channel });
     }
 
-    /// A channel closed and given back; the messages about it still on its port taken back. Null does nothing.
+    /// A channel closed - the device asked, its answer not waited for - and given back; the messages about it still on its port taken back. Null does nothing.
     pub fn CloseBTChannel(self: *BluetoothBase, channel: ?*bluetooth.BTChannel) void {
         return libraries.call(self, LVO.CloseBTChannel, Fn.CloseBTChannel, .{channel});
     }
@@ -326,5 +328,10 @@ pub const BluetoothBase = opaque {
     /// A channel's opening begun as OpenBTChannel's, and not waited for: 0 and `channel` set once it has begun - BTCM_OPENED comes to `port` once it is open, BTCM_CLOSED with why where it is not - or BTERR_*.
     pub fn StartBTChannel(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, psm: u32, port: *exec.MsgPort, channel: *?*bluetooth.BTChannel) i32 {
         return libraries.call(self, LVO.StartBTChannel, Fn.StartBTChannel, .{ controller, address, psm, port, channel });
+    }
+
+    /// A frame sent on a channel where the controller's queue has room for it now: 0 once it is queued, BTERR_BUSY at once - the frame not sent - where it would have to wait, or BTERR_*.
+    pub fn AttemptSendBTChannel(self: *BluetoothBase, channel: *bluetooth.BTChannel, data: [*]const u8, length: u32) i32 {
+        return libraries.call(self, LVO.AttemptSendBTChannel, Fn.AttemptSendBTChannel, .{ channel, data, length });
     }
 };

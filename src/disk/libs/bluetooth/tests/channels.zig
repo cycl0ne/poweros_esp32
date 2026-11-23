@@ -2,8 +2,12 @@
 //! Host tests of L2CAP's dynamic channels and of SDP, the test playing
 //! the device and the controller: a channel opened over a link that is
 //! up, waited for while the device says it is pending, configured both
-//! ways, carrying frames each way and closed; one over a link made for it,
-//! which ends two seconds after it; the device's refusals, a Command
+//! ways, carrying frames each way and closed - the device asked, nothing
+//! waiting for its answer - and one whose close the device never answers,
+//! let go of in its time; one over a link made for it, which ends two
+//! seconds after it; frames attempted while the controller's queue is
+//! full, or behind a send that waits, answered BTERR_BUSY at once and not
+//! sent; the device's refusals, a Command
 //! Reject, requests not answered in their time; a device's channel to a
 //! listener, to a PSM nobody serves, with a CID it uses already, and one
 //! the task does not take; what a configuration does not take answered
@@ -34,6 +38,9 @@ const channels = @import("../l2cap/channels.zig");
 const sdp_client = @import("../sdp/client.zig");
 const _sdp = @import("../sdp/_sdp.zig");
 const _service = @import("../service/_service.zig");
+const _controller = @import("../controller/_controller.zig");
+const _task = @import("../task/_task.zig");
+const taskchannels = @import("../task/channels.zig");
 
 const testing = std.testing;
 
@@ -343,17 +350,19 @@ test "a channel opened over a link that is up: pending, configured both ways, fr
     // Longer than the device takes.
     var long: [513]u8 = @splat(0);
     try testing.expectEqual(bluetooth.BTERR_TOOLONG, channels.send(&layer, record, &long));
-    // Closed: the call waits for the device's answer; a frame meanwhile
-    // goes nowhere, and nothing is told.
+    // Closed: the device asked, and nothing waits for its answer. Until
+    // it comes the record stays - a frame meanwhile goes nowhere, none
+    // goes to the device - and nothing is told.
     const told = recorder.event_count;
-    const closing = channels.closeFor(&layer, record);
-    try testing.expect(closing == .waiting);
+    const waits = waitsUsed(&layer);
+    channels.closeFor(&layer, record);
+    try testing.expectEqual(waits, waitsUsed(&layer));
     const ending = try sent(&recorder, l2cap.DISCONNECTION_REQUEST);
     try testing.expectEqualSlices(u8, &.{ 0x50, 0x00, 0x40, 0x00 }, ending.data);
+    try testing.expectEqual(@as(usize, 1), channels.count(&layer));
     frameIn(&layer, 0x0042, 0x0040, "late");
+    try testing.expectEqual(bluetooth.BTERR_NOTCONNECTED, channels.send(&layer, record, "more"));
     signalIn(&layer, 0x0042, l2cap.DISCONNECTION_RESPONSE, ending.ident, &.{ 0x50, 0x00, 0x40, 0x00 });
-    try testing.expect(layer.waits[closing.waiting].done);
-    connections.release(&layer, closing.waiting);
     try testing.expectEqual(told, recorder.event_count);
     try testing.expectEqual(@as(usize, 0), channels.count(&layer));
     // The link ConnectBTDevice made stays.
@@ -391,6 +400,74 @@ test "a channel over a link made for it, which ends two seconds after it" {
     layer.now += 1;
     _hci.tick(&layer);
     try testing.expectEqual(hci.HCI_OP_DISCONNECT, recorder.lastCommand());
+}
+
+test "a channel closed and never answered: let go of after its time, nothing told, and its link ended two seconds on" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    const begun = channels.open(&layer, peer, 0x1001);
+    linkUp(&layer, &recorder, peer, 0x0042);
+    const asked = try sent(&recorder, l2cap.CONNECTION_REQUEST);
+    signalIn(&layer, 0x0042, l2cap.CONNECTION_RESPONSE, asked.ident, &.{ 0x50, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00 });
+    try configured(&layer, &recorder, 0x0042, 0x0040, 0x0050, 672);
+    const record = channels.bySerial(&layer, layer.waits[begun.waiting].serial).?;
+    connections.release(&layer, begun.waiting);
+    const told = recorder.event_count;
+    channels.closeFor(&layer, record);
+    _ = try sent(&recorder, l2cap.DISCONNECTION_REQUEST);
+    // The channel is the link's while the device may still answer: the
+    // link stays.
+    layer.now += channels.CLOSE_WAIT_MS - 1;
+    _hci.tick(&layer);
+    try testing.expectEqual(@as(usize, 1), channels.count(&layer));
+    try testing.expect(recorder.lastCommand() != hci.HCI_OP_DISCONNECT);
+    layer.now += 1;
+    _hci.tick(&layer);
+    try testing.expectEqual(@as(usize, 0), channels.count(&layer));
+    try testing.expectEqual(told, recorder.event_count);
+    // Two seconds on, the link made for it is ended.
+    const link = connections.find(&layer, peer).?;
+    try testing.expectEqual(layer.now + connections.IDLE_MS, link.idle_until.?);
+    layer.now += connections.IDLE_MS;
+    _hci.tick(&layer);
+    try testing.expectEqual(hci.HCI_OP_DISCONNECT, recorder.lastCommand());
+}
+
+test "frames attempted: queued while the controller's queue has room; BTERR_BUSY at once, not sent, where it is full or a send waits before them" {
+    var recorder = Recorder{};
+    var controller = _controller.Controller{ .base = undefined, .id = 1, .layer = upLayer(&recorder) };
+    const layer = &controller.layer;
+    linkUp(layer, &recorder, peer, 0x0042);
+    const begun = channels.open(layer, peer, 0x1001);
+    const asked = try sent(&recorder, l2cap.CONNECTION_REQUEST);
+    signalIn(layer, 0x0042, l2cap.CONNECTION_RESPONSE, asked.ident, &.{ 0x50, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00 });
+    try configured(layer, &recorder, 0x0042, 0x0040, 0x0050, 672);
+    const record = channels.bySerial(layer, layer.waits[begun.waiting].serial).?;
+    connections.release(layer, begun.waiting);
+    var block: bluetooth.BTChannel = .{};
+    record.owner = &block;
+    var command = _task.Command{ .kind = .attempt_send_channel, .block = &block, .data = "frame", .length = 5 };
+
+    // The controller takes no more: the layer's queue fills, and the
+    // next is answered at once and not sent.
+    layer.acl_credits = 0;
+    const frames = recorder.frame_count;
+    for (0..acl.OUT) |_| try testing.expectEqual(@as(i32, 0), taskchannels.attempt(&controller, &command, false));
+    try testing.expectEqual(bluetooth.BTERR_BUSY, taskchannels.attempt(&controller, &command, false));
+    try testing.expectEqual(frames, recorder.frame_count);
+    // A buffer given back: the first goes, which leaves room for one -
+    // not for a frame a send waits to queue before.
+    layer.acl_credits = 1;
+    acl.pump(layer);
+    try testing.expectEqual(frames + 1, recorder.frame_count);
+    try expectFrame(&recorder, 0x0042, 0x0050, "frame");
+    try testing.expectEqual(bluetooth.BTERR_BUSY, taskchannels.attempt(&controller, &command, true));
+    try testing.expectEqual(@as(i32, 0), taskchannels.attempt(&controller, &command, false));
+    try testing.expectEqual(bluetooth.BTERR_BUSY, taskchannels.attempt(&controller, &command, false));
+    // A block whose channel is closed.
+    var closed: bluetooth.BTChannel = .{};
+    command.block = &closed;
+    try testing.expectEqual(bluetooth.BTERR_NOTCONNECTED, taskchannels.attempt(&controller, &command, false));
 }
 
 test "a link made for channels and asked for by ConnectBTDevice meanwhile stays" {
@@ -604,7 +681,7 @@ test "a channel started: the task told once it is open, its frames after; one gi
     const second_cid = second.local_cid;
     const second_asked = try sent(&recorder, l2cap.CONNECTION_REQUEST);
     const told = recorder.event_count;
-    try testing.expect(channels.closeFor(&layer, second) == .done);
+    channels.closeFor(&layer, second);
     var late: [8]u8 = @splat(0);
     put16(late[0..2], 0x0051);
     put16(late[2..4], second_cid);

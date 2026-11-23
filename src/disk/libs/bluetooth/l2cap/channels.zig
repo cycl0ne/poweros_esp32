@@ -37,10 +37,13 @@
 //! the task's record of it, and the task is told what happens through the
 //! port's `channel` - or the layer's own: the SDP server's or the SDP
 //! client's (sdp/). A user is told of a channel's end once, with why; a
-//! call waiting for one to open or close is known by its serial.
+//! call waiting for one to open is known by its serial.
 //!
 //! **Closed** by a Disconnection Request either way, each answered; with
-//! its link; or when a request of ours is not answered in its time.
+//! its link; or when a request of ours is not answered in its time. The
+//! task's close (`closeFor`) is waited for by nobody: the record stays
+//! until the device has answered, or CLOSE_WAIT_MS on, and its link with
+//! it.
 //!
 //! Pure, as the rest of the layer.
 
@@ -68,7 +71,7 @@ pub const MTU_IN: u16 = acl.FRAME_MOST;
 /// said is pending.
 pub const REQUEST_WAIT_MS: u32 = 10_000;
 pub const PENDING_WAIT_MS: u32 = 60_000;
-/// How long a channel's close is waited for.
+/// How long the device's answer to a close of ours is waited for.
 pub const CLOSE_WAIT_MS: u32 = 5_000;
 
 pub const State = enum(u8) { free, linking, securing, connecting, configuring, open, disconnecting };
@@ -662,31 +665,20 @@ pub fn frame(layer: *Hci, channel: *const Channel, data: []const u8) bool {
 
 // --- closed -----------------------------------------------------------------------
 
-/// CloseBTChannel: the task's channel closed - the call's wait for the
-/// device's answer, or done at once. Its user is told nothing more, and
-/// its owner is no longer known.
-pub fn closeFor(layer: *Hci, channel: *Channel) connections.Begun {
-    const serial = channel.serial;
+/// CloseBTChannel: the task's channel closed - the device asked, its
+/// record kept until the device has answered or CLOSE_WAIT_MS has gone -
+/// or given up on where it is not open yet. Nothing waits for it: its
+/// user is told nothing more, and its owner is no longer known.
+pub fn closeFor(layer: *Hci, channel: *Channel) void {
     channel.told = false;
     channel.started = false;
     channel.owner = null;
     switch (channel.state) {
         .open, .configuring => close(layer, channel, 0),
-        .connecting => {
-            channel.unwanted = true;
-            return .{ .done = 0 };
-        },
-        .linking, .securing => {
-            gone(layer, channel, 0);
-            return .{ .done = 0 };
-        },
-        .disconnecting => {},
-        .free => return .{ .done = 0 },
+        .connecting => channel.unwanted = true,
+        .linking, .securing => gone(layer, channel, 0),
+        .disconnecting, .free => {},
     }
-    // Closed at once, its record another's by now, or waited for.
-    if (channel.state != .disconnecting or channel.serial != serial) return .{ .done = 0 };
-    if (!connections.canWait(layer)) return .{ .done = 0 };
-    return connections.waitForSerial(layer, .close, serial);
 }
 
 /// The channel closed by a request of ours - its user told `result` once
@@ -771,7 +763,6 @@ fn gone(layer: *Hci, channel: *Channel, result: i32) void {
             } else if (!channel.incoming) {
                 connections.answerSerial(layer, .open, channel.serial, unopened);
             }
-            connections.answerSerial(layer, .close, channel.serial, 0);
         },
         .sdp_server => {},
         .sdp_client => sdp_client.channelGone(layer, channel, result),
