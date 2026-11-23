@@ -19,6 +19,7 @@ and writing a controller.
 ```
  above them             keyboard.device,   fat-handler      con-handler       bsdsocket.library  audio.device
                         mouse.device       on DU<n>:        on AUX2:, AUX3:   on usb0            (rta.library)
+                        (hid.library)
                              ^                  ^                ^                 ^                  ^
  class drivers,         usb/hid.device     usb/disk.device  usb/ftdi.device   usb/ecm.device     usb/uac.device
  DEVS:usb/                                                  usb/acm.device    usb/aic8800.device
@@ -43,6 +44,7 @@ and writing a controller.
 | `pci.library` | `LIBS:` | the machine's PCI functions, among which xhci.device finds its controllers ([pci](../autodocs/pci.md)); on the RISC-V 64 disk |
 | `usb.library` | `LIBS:` | the bus: devices, hubs, descriptors, pipes, binding, notification |
 | `usb/hid.device` | `DEVS:usb/` | keyboards, mice and tablets, into keyboard.device and mouse.device |
+| `hid.library` | `LIBS:` | what hid.device reads with: a report descriptor read, each report made into keyboard.device's and mouse.device's events ([hid](../autodocs/hid.md)) |
 | `usb/disk.device` | `DEVS:usb/` | sticks, card readers and disks (mass storage, SCSI over Bulk-Only or USB Attached SCSI) as block devices, a drive `DU<n>:` each |
 | `usb/ftdi.device` | `DEVS:usb/` | FTDI's serial chips as serial lines, with serial.device's API |
 | `usb/acm.device` | `DEVS:usb/` | the communications class's serial lines (CDC-ACM), with serial.device's API |
@@ -402,16 +404,20 @@ driver itself, none of its units - and calls through its jump table:
   task that takes them back: the call asks the task and waits for it.
 
 `usb/hid.device` is the example: one task for every keyboard and mouse
-it drives, a source on keyboard.device or mouse.device per interface
-(`KBDF_SOURCE`, `KBD_ADDEVENT`), each report turned into key-downs and
-key-ups, or into moves, buttons and the wheel. A keyboard or a mouse
-is read by its own report descriptor - where its report keeps the
-keys, or the buttons, X, Y and the wheel, and its report ID - since
-many send another report than the boot one (a mouse 16-bit moves, a
-keyboard a bit for every key, or its keys in a report of their own)
-and do not switch when asked; only one whose descriptor says nothing
-it can use is put in the boot protocol. A keyboard's Caps Lock light
-goes out in the LED report its descriptor gives.
+it drives. Each interface's report descriptor goes to hid.library
+(`OpenHID`), which opens its sources on keyboard.device and
+mouse.device (`KBDF_SOURCE`, `KBD_ADDEVENT`), and each report read goes
+on to it (`HIDInput`), to be turned into key-downs and key-ups, or into
+moves, buttons and the wheel. A keyboard or a mouse is read by its own
+report descriptor - where its report keeps the keys, or the buttons,
+X, Y and the wheel, and its report ID - since many send another report
+than the boot one (a mouse 16-bit moves, a keyboard a bit for every
+key, or its keys in a report of their own, a receiver a keyboard and a
+mouse in one) and do not switch when asked; only one whose descriptor
+says nothing the library can use is put in the boot protocol
+(`HIDF_BOOT`). A keyboard's Caps Lock light comes back from the library
+as an output report (`HIDA_OutputHook`), which the driver sends with
+SET_REPORT.
 
 A device's name in exec is its name after the last `/`: a driver in
 `DEVS:usb/` must not be called as a device in the ROM is -
@@ -428,12 +434,13 @@ stay keyboard.device's and input.device's, whichever keyboard the keys
 came from. A USB mouse says how far it went; intuition adds that up into
 where the pointer is. A tablet says where it is on a surface of its own
 - QEMU's `usb-tablet`, which follows the host's pointer over the
-emulator's window: hid.device hands mouse.device that place as a
+emulator's window: hid.library hands mouse.device that place as a
 fraction of the surface (`IESUBCLASS_TABLET`, 0 to `IETABLET_MAX`), and
 intuition puts the pointer as far across the front screen. hid.device
 takes the boot subclass's keyboards and mice, and any other HID interface
-whose report descriptor describes a keyboard or a mouse; a mouse with an
-absolute X and Y is a tablet. `C:test/KeySource` is a source from the shell, and
+whose report descriptor describes a keyboard or a mouse, or both - told
+apart by their reports' IDs; a mouse with an absolute X and Y is a
+tablet. `C:test/KeySource` is a source from the shell, and
 `KBD_READSOURCES` says how many keyboards there are - the keyboard on
 the screen comes up only while there is none.
 

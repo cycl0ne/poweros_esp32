@@ -283,7 +283,7 @@ started.
 | The disk | `flash.device` | the ESPs' flash, and an image in RAM |
 | Programs | section 6 | - |
 | A display | `rtg.library` and a driver | `fwboard` (a framebuffer someone else set up: the firmware's own, QEMU's ramfb), `virtioboard` (virtio over MMIO and over PCI), `jh7110board` (the JH7110's DC8200), `bcm2712board` (the BCM2712's HVS), `amdboard`, `rgbboard`, `dsiboard`, `dcsboard`. `fakeboard` is the one to read first: it exists for the host tests and is written the way a real driver is, with nothing in the module's own image |
-| Keyboard and mouse | `xhci.device` + `usb.library` + `hid.device` | **nothing to write** where the machine's USB is xHCI: the controller is found by PCI class |
+| Keyboard and mouse | `xhci.device` + `usb.library` + `hid.device` + `hid.library` | **nothing to write** where the machine's USB is xHCI: the controller is found by PCI class |
 | A system disk | `pci.library` + `nvme.device`, or `sdcard.device` | the generic ECAM host is 18 lines; `nvme.device` claims its PCI class |
 | Network | one of `networks/` | `emac` (three machines' MACs), `intelnet` and `realnet` (Intel's and Realtek's controllers on PCI, found by their PCI IDs), `openeth`, `cyw43455`, `esp32s3wifi`, `aic8800`, and `usb/ecm.device` for any adapter |
 | Sound | `rta.library` + a sink, `audio.device` | the ESPs' I2S, HDMI, a PC's high definition audio controllers, USB audio, and the null and file sinks, which mean a program that plays sound still runs |

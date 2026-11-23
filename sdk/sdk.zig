@@ -42,6 +42,8 @@ pub const paintfx = @import("libs/paintfx/paintfx.zig");
 pub const http = @import("libs/http/http.zig");
 /// JSON text read into values, built and written out again.
 pub const json = @import("libs/json/json.zig");
+/// A keyboard's or a mouse's reports made into keys, moves and buttons.
+pub const hid = @import("libs/hid/hid.zig");
 /// LZ4's block format (sdk/libs/lz4).
 pub const lz4 = @import("libs/lz4/lz4.zig");
 pub const diskfont = @import("libs/diskfont/diskfont.zig");

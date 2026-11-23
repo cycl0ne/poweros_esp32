@@ -22,17 +22,17 @@
 //!   that carries the first of them. X and Y relative are a mouse's move;
 //!   both absolute, with their logical range, a tablet's place - QEMU's
 //!   `usb-tablet`. A descriptor with no such mouse, an X and a Y of two
-//!   kinds, or one wider than 32 bits gives no layout; a mouse of the boot
-//!   subclass is then put in its boot protocol, whose report `boot_mouse`
-//!   describes.
+//!   kinds, or one wider than 32 bits gives no layout; a mouse whose driver
+//!   says it has the boot protocol (HIDA_Boot) is then read by that
+//!   protocol's report, which `boot_mouse` describes.
 //! - **A keyboard** (Generic Desktop, Keyboard): its keys on the
 //!   keyboard page, from the report that carries the first of them -
 //!   as runs of bits, a key each, held down while set (the modifiers,
 //!   and every key of a keyboard that reports them all), and as an
 //!   array of slots, each the usage of a key held down; and whether it
 //!   has an LED output report, and that report's ID. Without keys this
-//!   reads, the keyboard is put in its boot protocol, whose report
-//!   `boot_keyboard` describes.
+//!   reads, a keyboard whose driver says it has the boot protocol is read
+//!   by that protocol's report, which `boot_keyboard` describes.
 
 /// One field of a report.
 pub const Field = struct {

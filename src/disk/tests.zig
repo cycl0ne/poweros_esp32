@@ -108,7 +108,7 @@ test {
     _ = @import("devs/nvme/prp.zig");
     _ = @import("devs/nvme/dsm.zig");
     _ = @import("devs/nvme/tests/nvme.zig");
-    _ = @import("devs/usb/hid/report.zig");
+    _ = @import("libs/hid/tests/hid.zig");
     _ = @import("devs/usb/audio/stream.zig");
     _ = @import("devs/usb/disk/scsi.zig");
     _ = @import("devs/usb/disk/bot.zig");

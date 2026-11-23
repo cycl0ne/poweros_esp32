@@ -440,7 +440,7 @@ sets in `src/boards/<board>/disk.zig`:
 | `bluetooth` | bluetooth.library, the controllers' drivers and their firmware, `C:Bluetooth` |
 | `media` | sound and film: the codecs, Player, Movie |
 | `storage` | cards, sticks and SSDs: the partition table, the file systems beside the flash's own, HDToolBox, the install |
-| `usb` | usb.library, the host controllers and the class drivers |
+| `usb` | usb.library, the host controllers and the class drivers, and hid.library, which a keyboard's and a mouse's drivers share |
 | `3d` | facet.library, its drivers and what draws with it |
 | `modbus` | modbus.library and the RS-485 line |
 | `commodities` | commodities.library and `SYS:Commodities` |

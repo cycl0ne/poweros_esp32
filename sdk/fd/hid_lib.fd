@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+//! hid.library's functions: a keyboard's or a mouse's report descriptor
+//! read, and each of its reports made into keys, moves and buttons for
+//! keyboard.device and mouse.device (sdk.hid). Open it with
+//! OpenLibrary("hid.library", 1).
+##include libs/utility/utility as utility
+##include libs/hid/hid as hid
+##basetype HIDBase
+##name hid.library
+##bias 4
+##public
+/// A function for a device by its report descriptor: the sources of what it describes opened; null where it describes nothing the library drives.
+?*hid.HIDFunction OpenHID(?[*]const u8 descriptor, u32 length, ?[*]const utility.TagItem tags)
+/// A function closed: its sources let go of what the device held, and closed. Null does nothing.
+void CloseHID(?*hid.HIDFunction function)
+/// One input report, as the descriptor lays it out, made into events for the sources.
+void HIDInput(*hid.HIDFunction function, [*]const u8 report, u32 length)
+##end

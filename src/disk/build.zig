@@ -42,7 +42,8 @@ const poweros_sdk = @import("poweros_sdk");
 /// - `media`: sound and film - the codecs, Player, Movie.
 /// - `storage`: cards, sticks and SSDs - the partition table, the file
 ///   systems beside the flash's own, HDToolBox, the install.
-/// - `usb`: usb.library, the host controllers and the class drivers.
+/// - `usb`: usb.library, the host controllers and the class drivers, and
+///   hid.library, which a keyboard's and a mouse's drivers share.
 /// - `3d`: facet.library, its drivers and what draws with it.
 /// - `modbus`: modbus.library and the RS-485 line.
 /// - `commodities`: commodities.library and SYS:Commodities.
@@ -355,6 +356,7 @@ const modules = [_]Program{
     .{ .disk = "libs/rdb.library", .source = "libs/rdb/rdb.zig", .name = "rdb.library", .set = .storage },
     .{ .disk = "libs/usb.library", .source = "libs/usb/usb.zig", .name = "usb.library", .set = .usb },
     .{ .disk = "libs/bluetooth.library", .source = "libs/bluetooth/bluetooth.zig", .name = "bluetooth.library", .set = .bluetooth },
+    .{ .disk = "libs/hid.library", .source = "libs/hid/hid.zig", .name = "hid.library", .set = .usb },
     .{ .disk = "libs/pci.library", .source = "libs/pci/pci.zig", .name = "pci.library" },
     .{ .disk = "libs/facet.library", .source = "libs/facet/facet.zig", .name = "facet.library", .set = .@"3d", .imports = &.{"raster"} },
     .{ .disk = "libs/facet/v3d.fdriver", .source = "libs/facet/v3d_fdriver.zig", .name = "v3d.fdriver", .set = .@"3d", .imports = &.{ "v3d", "raster" } },
