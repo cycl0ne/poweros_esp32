@@ -244,6 +244,7 @@ test {
     _ = @import("system/wifi/radio.zig");
     _ = @import("system/bluetooth/devices.zig");
     _ = @import("system/bluetooth/pairing.zig");
+    _ = @import("devs/bluetooth/btaudio/sbc.zig");
     _ = @import("classes/datatypes/jpeg/tests/jpeg.zig");
     _ = @import("classes/datatypes/png/tests/png.zig");
     _ = @import("classes/datatypes/png/tests/write.zig");
