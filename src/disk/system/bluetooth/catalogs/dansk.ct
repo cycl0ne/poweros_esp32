@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language dansk
+## codeset 106
+; Bluetooth's strings in Danish.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Controller
+MSG_ON
+_Til
+MSG_NAME
+_Navn
+MSG_VISIBLE
+S_ynlig for andre
+MSG_DEVICES
+Enheder
+MSG_SEARCH
+_Søg
+MSG_PAIR
+_Par
+MSG_CONNECT
+_Forbind
+MSG_DISCONNECT
+_Afbryd
+MSG_FORGET
+_Glem...
+MSG_COLUMN_NAME
+Navn
+MSG_COLUMN_KIND
+Type
+MSG_COLUMN_SIGNAL
+Signal
+MSG_COLUMN_STATE
+Tilstand
+MSG_COLUMN_ADDRESS
+Adresse
+MSG_CONTROLLER_LABEL
+%u: %s - %s nr. %u
+MSG_NO_CONTROLLER_LABEL
+Ingen controller
+MSG_NO_CONTROLLER
+Ingen Bluetooth-controller: en vises her, så snart dens enhed tilbyder den
+MSG_STARTING
+Controlleren sættes op...
+MSG_FAILED
+Controlleren svigtede: %s
+MSG_OFF
+Fra - sæt kryds ved "Til" for at bruge controlleren
+MSG_HIDDEN
+Til - enheder, der søger, finder ikke denne computer
+MSG_SHOWN
+Til - enheder, der søger, finder denne computer
+MSG_SHOWN_FOR
+Til - enheder, der søger, finder denne computer i %u sekunder endnu
+MSG_SEARCHING
+Søger efter enheder...
+MSG_FOUND
+Søgningen fandt %u enheder
+MSG_FOUND_ONE
+Søgningen fandt én enhed
+MSG_FOUND_NONE
+Søgningen fandt ingen enheder
+MSG_NOT_SET
+Ikke ændret: %s
+MSG_NOT_SEARCHING
+Ingen søgning: %s
+MSG_PAIRING
+Parrer med %s...
+MSG_PAIRED
+Parret med %s
+MSG_NOT_PAIRED
+Ikke parret med %s: %s
+MSG_CONNECTING
+Opretter forbindelse til %s...
+MSG_CONNECTED
+Forbundet til %s
+MSG_NOT_CONNECTED
+Ikke forbundet til %s: %s
+MSG_DISCONNECTING
+Afbryder forbindelsen til %s...
+MSG_DISCONNECTED
+Forbindelsen til %s er afbrudt
+MSG_NOT_DISCONNECTED
+Forbindelsen til %s er ikke afbrudt: %s
+MSG_FORGETTING
+Glemmer %s...
+MSG_FORGOTTEN
+%s er glemt
+MSG_NOT_FORGOTTEN
+%s er ikke glemt: %s
+MSG_WHY_NOMEM
+ikke nok hukommelse
+MSG_WHY_OPENFAIL
+dens enhed kunne ikke åbnes
+MSG_WHY_TIMEOUT
+der kom ikke svar i tide
+MSG_WHY_DETACHED
+controlleren er væk
+MSG_WHY_PROTOCOL
+dens enhed fejlede
+MSG_WHY_NOCONTROLLER
+der er ingen sådan controller
+MSG_WHY_NOTUP
+controlleren er ikke klar
+MSG_WHY_OFF
+controlleren er slået fra
+MSG_WHY_UNSUPPORTED
+det kan controlleren ikke
+MSG_WHY_BUSY
+controlleren er optaget af noget andet
+MSG_WHY_UNKNOWN_COMMAND
+den kender ikke en nødvendig kommando
+MSG_WHY_HARDWARE
+en hardwarefejl
+MSG_WHY_REFUSED
+controlleren afviste
+MSG_WHY_NO_ROOM
+controlleren har ikke plads til flere, eller der er ikke nok hukommelse
+MSG_WHY_BONDED
+denne computer er allerede parret med den
+MSG_WHY_NOT_BONDED
+denne computer er ikke parret med den
+MSG_WHY_NOT_LINKED
+der er ingen forbindelse til den
+MSG_WHY_ANSWER_REFUSED
+afvist eller ikke besvaret i tide
+MSG_WHY_NO_ANSWER
+enheden svarede ikke
+MSG_WHY_LOST
+forbindelsen gik tabt
+MSG_WHY_DEVICE_ENDED
+enheden afsluttede forbindelsen
+MSG_WHY_ENDED_HERE
+forbindelsen blev afsluttet her
+MSG_WHY_DEVICE_REFUSED
+enheden afviste
+MSG_WHY_NUMBERS
+enheden afviste, eller tallene passede ikke sammen
+MSG_WHY_KEY_MISSING
+ingen PIN, eller enheden har ikke længere nøglen: glem den og par igen
+MSG_WHY_NOT_PAIRING
+enheden kan ikke parres nu
+MSG_WHY_REPEATED
+enheden vil have en pause før næste forsøg
+MSG_WHY_SHORT_KEY
+nøglen er for kort
+MSG_NO_NAME
+(intet navn)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+fremragende
+MSG_SIGNAL_GOOD
+god
+MSG_SIGNAL_FAIR
+middel
+MSG_SIGNAL_WEAK
+svag
+MSG_STATE_PAIRED
+parret
+MSG_STATE_CONNECTED
+forbundet
+MSG_STATE_ENCRYPTED
+krypteret
+MSG_STATE_PAIRING
+parrer
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, tilfældig)
+MSG_KIND_COMPUTER
+computer
+MSG_KIND_LAPTOP
+bærbar computer
+MSG_KIND_HANDHELD
+håndholdt computer
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+netværksadgangspunkt
+MSG_KIND_HEADSET
+headset
+MSG_KIND_HANDS_FREE
+håndfri
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+højttaler
+MSG_KIND_HEADPHONES
+høretelefoner
+MSG_KIND_PORTABLE_AUDIO
+bærbar lydenhed
+MSG_KIND_CAR_AUDIO
+bilradio
+MSG_KIND_HIFI
+hi-fi-anlæg
+MSG_KIND_DISPLAY
+skærm
+MSG_KIND_GAME_CONSOLE
+spillekonsol
+MSG_KIND_AUDIO_VIDEO
+lyd og video
+MSG_KIND_KEYBOARD
+tastatur
+MSG_KIND_MOUSE
+mus
+MSG_KIND_KEYBOARD_MOUSE
+tastatur og mus
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+gamepad
+MSG_KIND_REMOTE
+fjernbetjening
+MSG_KIND_TABLET
+tegneplade
+MSG_KIND_PERIPHERAL
+inputenhed
+MSG_KIND_IMAGING
+printer eller kamera
+MSG_KIND_WEARABLE
+wearable
+MSG_KIND_TOY
+legetøj
+MSG_KIND_HEALTH
+sundhedsenhed
+MSG_KIND_EARBUDS
+earbuds
+MSG_KIND_WATCH
+armbåndsur
+MSG_KIND_CLOCK
+ur
+MSG_KIND_TAG
+tracker
+MSG_KIND_KEYRING
+nøglering
+MSG_KIND_MEDIA_PLAYER
+medieafspiller
+MSG_KIND_THERMOMETER
+termometer
+MSG_KIND_HEART_RATE
+pulssensor
+MSG_KIND_SENSOR
+sensor
+MSG_KIND_LIGHT
+lampe
+MSG_KIND_AUDIO_SOURCE
+lydkilde
+MSG_KIND_HEARING_AID
+høreapparat
+MSG_PAIRING_TITLE
+Parring
+MSG_ASK_COMPARE
+Viser %s dette tal?
+MSG_ASK_CONSENT
+%s beder om at blive parret med denne computer.
+MSG_ASK_PASSKEY
+Skriv det tal, som %s viser:
+MSG_ASK_SHOW
+Skriv dette tal på %s, og tryk derefter på Enter:
+MSG_ASK_PIN
+Skriv PIN-koden til %s - 0000 for de fleste enheder uden taster:
+MSG_YES
+_Ja
+MSG_NO
+_Nej
+MSG_CANCEL
+_Annuller
+MSG_FORGET_ASK
+Glem %s?\nNøglen, de to deler, slettes: For at\nblive brugt igen skal de parres igen.
+MSG_FORGET_BUTTONS
+Glem|Annuller
+MSG_NO_LIBRARY
+%s: kan ikke åbne %s\n
+MSG_NO_MEMORY
+%s: ikke nok hukommelse\n
+MSG_NO_WINDOW
+%s: der kunne ikke åbnes et vindue\n

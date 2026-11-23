@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language magyar
+## codeset 106
+; Bluetooth's strings in Hungarian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Vezérlő
+MSG_ON
+_Bekapcsolva
+MSG_NAME
+_Név
+MSG_VISIBLE
+_Mások számára látható
+MSG_DEVICES
+Eszközök
+MSG_SEARCH
+_Keresés
+MSG_PAIR
+_Párosítás
+MSG_CONNECT
+_Csatlakozás
+MSG_DISCONNECT
+_Leválasztás
+MSG_FORGET
+_Elfelejtés...
+MSG_COLUMN_NAME
+Név
+MSG_COLUMN_KIND
+Típus
+MSG_COLUMN_SIGNAL
+Jel
+MSG_COLUMN_STATE
+Állapot
+MSG_COLUMN_ADDRESS
+Cím
+MSG_CONTROLLER_LABEL
+%u: %s - %s, egység: %u
+MSG_NO_CONTROLLER_LABEL
+Nincs vezérlő
+MSG_NO_CONTROLLER
+Nincs Bluetooth-vezérlő: amint az eszköze elérhetővé teszi, itt megjelenik
+MSG_STARTING
+A vezérlő beállítása folyamatban...
+MSG_FAILED
+Vezérlőhiba: %s
+MSG_OFF
+Kikapcsolva - a vezérlő használatához jelölje be a Bekapcsolva mezőt
+MSG_HIDDEN
+Bekapcsolva - a kereső eszközök nem találják meg ezt a számítógépet
+MSG_SHOWN
+Bekapcsolva - a kereső eszközök megtalálják ezt a számítógépet
+MSG_SHOWN_FOR
+Bekapcsolva - a kereső eszközök még %u másodpercig megtalálják ezt a számítógépet
+MSG_SEARCHING
+Eszközök keresése...
+MSG_FOUND
+A keresés %u eszközt talált
+MSG_FOUND_ONE
+A keresés egy eszközt talált
+MSG_FOUND_NONE
+A keresés nem talált eszközt
+MSG_NOT_SET
+Nem változott: %s
+MSG_NOT_SEARCHING
+A keresés nem indult el: %s
+MSG_PAIRING
+Párosítás a(z) %s eszközzel...
+MSG_PAIRED
+Párosítva a(z) %s eszközzel
+MSG_NOT_PAIRED
+Nem sikerült a párosítás a(z) %s eszközzel: %s
+MSG_CONNECTING
+Csatlakozás a(z) %s eszközhöz...
+MSG_CONNECTED
+Csatlakoztatva a(z) %s eszközhöz
+MSG_NOT_CONNECTED
+Nem sikerült a csatlakozás a(z) %s eszközhöz: %s
+MSG_DISCONNECTING
+Leválasztás a(z) %s eszközről...
+MSG_DISCONNECTED
+Leválasztva a(z) %s eszközről
+MSG_NOT_DISCONNECTED
+Nem sikerült a leválasztás a(z) %s eszközről: %s
+MSG_FORGETTING
+A(z) %s eszköz elfelejtése...
+MSG_FORGOTTEN
+A(z) %s eszköz elfelejtve
+MSG_NOT_FORGOTTEN
+Nem sikerült elfelejteni a(z) %s eszközt: %s
+MSG_WHY_NOMEM
+nincs elég memória
+MSG_WHY_OPENFAIL
+az eszköze nem nyitható meg
+MSG_WHY_TIMEOUT
+nem érkezett időben válasz
+MSG_WHY_DETACHED
+a vezérlő eltűnt
+MSG_WHY_PROTOCOL
+az eszköze hibát jelzett
+MSG_WHY_NOCONTROLLER
+nincs ilyen vezérlő
+MSG_WHY_NOTUP
+a vezérlő nem fut
+MSG_WHY_OFF
+a vezérlő ki van kapcsolva
+MSG_WHY_UNSUPPORTED
+a vezérlő erre nem képes
+MSG_WHY_BUSY
+a vezérlő mással van elfoglalva
+MSG_WHY_UNKNOWN_COMMAND
+nem fogad el egy szükséges parancsot
+MSG_WHY_HARDWARE
+hardverhiba
+MSG_WHY_REFUSED
+a vezérlő elutasította
+MSG_WHY_NO_ROOM
+a vezérlőnek nincs helye újabb eszköz számára, vagy nincs elég memória
+MSG_WHY_BONDED
+ez a számítógép már párosítva van vele
+MSG_WHY_NOT_BONDED
+ez a számítógép nincs párosítva vele
+MSG_WHY_NOT_LINKED
+nincs vele kapcsolat
+MSG_WHY_ANSWER_REFUSED
+elutasítva, vagy nem érkezett időben válasz
+MSG_WHY_NO_ANSWER
+az eszköz nem válaszolt
+MSG_WHY_LOST
+a kapcsolat megszakadt
+MSG_WHY_DEVICE_ENDED
+az eszköz bontotta a kapcsolatot
+MSG_WHY_ENDED_HERE
+a kapcsolatot ez az oldal bontotta
+MSG_WHY_DEVICE_REFUSED
+az eszköz elutasította
+MSG_WHY_NUMBERS
+az eszköz elutasította, vagy a számok nem egyeztek
+MSG_WHY_KEY_MISSING
+nincs PIN, vagy az eszköznek már nincs meg a kulcsa: felejtse el, és párosítsa újra
+MSG_WHY_NOT_PAIRING
+az eszköz most nem párosítható
+MSG_WHY_REPEATED
+az eszköz szünetet kér a következő próbálkozás előtt
+MSG_WHY_SHORT_KEY
+a kulcs túl rövid
+MSG_NO_NAME
+(névtelen)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+kiváló
+MSG_SIGNAL_GOOD
+jó
+MSG_SIGNAL_FAIR
+közepes
+MSG_SIGNAL_WEAK
+gyenge
+MSG_STATE_PAIRED
+párosítva
+MSG_STATE_CONNECTED
+csatlakoztatva
+MSG_STATE_ENCRYPTED
+titkosítva
+MSG_STATE_PAIRING
+párosítás
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, véletlen)
+MSG_KIND_COMPUTER
+számítógép
+MSG_KIND_LAPTOP
+laptop
+MSG_KIND_HANDHELD
+kézi számítógép
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+hálózati hozzáférési pont
+MSG_KIND_HEADSET
+mikrofonos fejhallgató
+MSG_KIND_HANDS_FREE
+kihangosító
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+hangszóró
+MSG_KIND_HEADPHONES
+fejhallgató
+MSG_KIND_PORTABLE_AUDIO
+hordozható audioeszköz
+MSG_KIND_CAR_AUDIO
+autórádió
+MSG_KIND_HIFI
+hifi
+MSG_KIND_DISPLAY
+kijelző
+MSG_KIND_GAME_CONSOLE
+játékkonzol
+MSG_KIND_AUDIO_VIDEO
+audio és videó
+MSG_KIND_KEYBOARD
+billentyűzet
+MSG_KIND_MOUSE
+egér
+MSG_KIND_KEYBOARD_MOUSE
+billentyűzet és egér
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+gamepad
+MSG_KIND_REMOTE
+távirányító
+MSG_KIND_TABLET
+digitalizáló tábla
+MSG_KIND_PERIPHERAL
+beviteli eszköz
+MSG_KIND_IMAGING
+nyomtató vagy fényképezőgép
+MSG_KIND_WEARABLE
+viselhető eszköz
+MSG_KIND_TOY
+játékszer
+MSG_KIND_HEALTH
+egészségügyi eszköz
+MSG_KIND_EARBUDS
+fülhallgató
+MSG_KIND_WATCH
+karóra
+MSG_KIND_CLOCK
+óra
+MSG_KIND_TAG
+címke
+MSG_KIND_KEYRING
+kulcstartó
+MSG_KIND_MEDIA_PLAYER
+médialejátszó
+MSG_KIND_THERMOMETER
+hőmérő
+MSG_KIND_HEART_RATE
+pulzusmérő
+MSG_KIND_SENSOR
+érzékelő
+MSG_KIND_LIGHT
+lámpa
+MSG_KIND_AUDIO_SOURCE
+hangforrás
+MSG_KIND_HEARING_AID
+hallókészülék
+MSG_PAIRING_TITLE
+Párosítás
+MSG_ASK_COMPARE
+Ezt a számot mutatja a(z) %s eszköz?
+MSG_ASK_CONSENT
+A(z) %s eszköz párosítást kér ezzel a számítógéppel.
+MSG_ASK_PASSKEY
+Írja be a számot, amelyet a(z) %s eszköz mutat:
+MSG_ASK_SHOW
+Írja be ezt a számot a(z) %s eszközön, majd nyomja meg rajta az Entert:
+MSG_ASK_PIN
+Írja be a(z) %s eszköz PIN-kódját - 0000 a legtöbb billentyűk nélküli eszköznél:
+MSG_YES
+_Igen
+MSG_NO
+_Nem
+MSG_CANCEL
+Mé_gse
+MSG_FORGET_ASK
+Elfelejti a(z) %s eszközt?\nA két eszköz közös kulcsa törlődik: a további\nhasználathoz újra párosítani kell őket.
+MSG_FORGET_BUTTONS
+Elfelejtés|Mégse
+MSG_NO_LIBRARY
+%s: %s nem nyitható meg\n
+MSG_NO_MEMORY
+%s: nincs elég memória\n
+MSG_NO_WINDOW
+%s: az ablak nem nyitható meg\n

@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language gaeilge
+## codeset 106
+; Bluetooth's strings in Irish.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Rialaitheoir
+MSG_ON
+_Air
+MSG_NAME
+Ai_nm
+MSG_VISIBLE
+_Infheicthe do ghléasanna eile
+MSG_DEVICES
+Gléasanna
+MSG_SEARCH
+_Cuardaigh
+MSG_PAIR
+_Péireáil
+MSG_CONNECT
+C_eangail
+MSG_DISCONNECT
+_Dícheangail
+MSG_FORGET
+_Lig i nDearmad...
+MSG_COLUMN_NAME
+Ainm
+MSG_COLUMN_KIND
+Cineál
+MSG_COLUMN_SIGNAL
+Comhartha
+MSG_COLUMN_STATE
+Staid
+MSG_COLUMN_ADDRESS
+Seoladh
+MSG_CONTROLLER_LABEL
+%u: %s - %s aonad %u
+MSG_NO_CONTROLLER_LABEL
+Gan rialaitheoir
+MSG_NO_CONTROLLER
+Níl rialaitheoir Bluetooth ann: taispeánfar anseo é chomh luath agus a thairgeann a ghléas é
+MSG_STARTING
+Tá an rialaitheoir á shocrú...
+MSG_FAILED
+Theip ar an rialaitheoir: %s
+MSG_OFF
+As - roghnaigh Air chun an rialaitheoir a úsáid
+MSG_HIDDEN
+Air - ní aimsíonn gléasanna atá ag cuardach é
+MSG_SHOWN
+Air - aimsíonn gléasanna atá ag cuardach é
+MSG_SHOWN_FOR
+Air - aimsíonn gléasanna atá ag cuardach é ar feadh %u soicind eile
+MSG_SEARCHING
+Ag cuardach gléasanna...
+MSG_FOUND
+Gléasanna a d'aimsigh an cuardach: %u
+MSG_FOUND_ONE
+D'aimsigh an cuardach gléas amháin
+MSG_FOUND_NONE
+Níor aimsigh an cuardach aon ghléas
+MSG_NOT_SET
+Níor athraíodh: %s
+MSG_NOT_SEARCHING
+Níorbh fhéidir cuardach a dhéanamh: %s
+MSG_PAIRING
+Ag péireáil le %s...
+MSG_PAIRED
+Péireáilte le %s
+MSG_NOT_PAIRED
+Níor péireáladh le %s: %s
+MSG_CONNECTING
+Ag ceangal le %s...
+MSG_CONNECTED
+Ceangailte le %s
+MSG_NOT_CONNECTED
+Níor ceanglaíodh le %s: %s
+MSG_DISCONNECTING
+Ag dícheangal ó %s...
+MSG_DISCONNECTED
+Dícheangailte ó %s
+MSG_NOT_DISCONNECTED
+Níor dícheanglaíodh ó %s: %s
+MSG_FORGETTING
+Ag ligean %s i ndearmad...
+MSG_FORGOTTEN
+Ligeadh %s i ndearmad
+MSG_NOT_FORGOTTEN
+Níor ligeadh %s i ndearmad: %s
+MSG_WHY_NOMEM
+níl dóthain cuimhne ann
+MSG_WHY_OPENFAIL
+níorbh fhéidir a ghléas a oscailt
+MSG_WHY_TIMEOUT
+níor tugadh freagra in am
+MSG_WHY_DETACHED
+níl an rialaitheoir ann a thuilleadh
+MSG_WHY_PROTOCOL
+theip ar a ghléas
+MSG_WHY_NOCONTROLLER
+níl a leithéid de rialaitheoir ann
+MSG_WHY_NOTUP
+níl an rialaitheoir réidh
+MSG_WHY_OFF
+tá an rialaitheoir as
+MSG_WHY_UNSUPPORTED
+ní féidir leis an rialaitheoir é sin a dhéanamh
+MSG_WHY_BUSY
+tá an rialaitheoir gnóthach le rud éigin eile
+MSG_WHY_UNKNOWN_COMMAND
+ní ghlacann sé le hordú atá de dhíth air
+MSG_WHY_HARDWARE
+teip crua-earraí
+MSG_WHY_REFUSED
+dhiúltaigh an rialaitheoir
+MSG_WHY_NO_ROOM
+níl spás ag an rialaitheoir do cheann eile, nó níl dóthain cuimhne ann
+MSG_WHY_BONDED
+tá sé péireáilte leis an ríomhaire seo cheana
+MSG_WHY_NOT_BONDED
+níl sé péireáilte leis an ríomhaire seo
+MSG_WHY_NOT_LINKED
+níl sé ceangailte
+MSG_WHY_ANSWER_REFUSED
+diúltaíodh, nó níor tugadh freagra in am
+MSG_WHY_NO_ANSWER
+níor fhreagair an gléas
+MSG_WHY_LOST
+cailleadh an ceangal
+MSG_WHY_DEVICE_ENDED
+chríochnaigh an gléas an ceangal
+MSG_WHY_ENDED_HERE
+críochnaíodh an ceangal anseo
+MSG_WHY_DEVICE_REFUSED
+dhiúltaigh an gléas
+MSG_WHY_NUMBERS
+dhiúltaigh an gléas, nó ní raibh na huimhreacha mar an gcéanna
+MSG_WHY_KEY_MISSING
+gan PIN, nó níl an eochair ag an ngléas a thuilleadh: lig i ndearmad é agus péireáil arís é
+MSG_WHY_NOT_PAIRING
+níl an gléas ag péireáil anois
+MSG_WHY_REPEATED
+tá sos ag teastáil ón ngléas roimh an gcéad iarracht eile
+MSG_WHY_SHORT_KEY
+tá an eochair róghearr
+MSG_NO_NAME
+(gan ainm)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+ar fheabhas
+MSG_SIGNAL_GOOD
+maith
+MSG_SIGNAL_FAIR
+measartha
+MSG_SIGNAL_WEAK
+lag
+MSG_STATE_PAIRED
+péireáilte
+MSG_STATE_CONNECTED
+ceangailte
+MSG_STATE_ENCRYPTED
+criptithe
+MSG_STATE_PAIRING
+ag péireáil
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, randamach)
+MSG_KIND_COMPUTER
+ríomhaire
+MSG_KIND_LAPTOP
+ríomhaire glúine
+MSG_KIND_HANDHELD
+ríomhaire boise
+MSG_KIND_PHONE
+fón
+MSG_KIND_ACCESS_POINT
+pointe rochtana líonra
+MSG_KIND_HEADSET
+cluasán le micreafón
+MSG_KIND_HANDS_FREE
+saor ó lámha
+MSG_KIND_MICROPHONE
+micreafón
+MSG_KIND_LOUDSPEAKER
+callaire
+MSG_KIND_HEADPHONES
+cluasáin
+MSG_KIND_PORTABLE_AUDIO
+fuaim iniompartha
+MSG_KIND_CAR_AUDIO
+fuaim cairr
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+scáileán
+MSG_KIND_GAME_CONSOLE
+consól cluichí
+MSG_KIND_AUDIO_VIDEO
+fuaim agus físeán
+MSG_KIND_KEYBOARD
+méarchlár
+MSG_KIND_MOUSE
+luch
+MSG_KIND_KEYBOARD_MOUSE
+méarchlár agus luch
+MSG_KIND_JOYSTICK
+luamhán stiúrtha
+MSG_KIND_GAMEPAD
+ceap cluichí
+MSG_KIND_REMOTE
+cianrialtán
+MSG_KIND_TABLET
+táibléad
+MSG_KIND_PERIPHERAL
+gléas ionchuir
+MSG_KIND_IMAGING
+printéir nó ceamara
+MSG_KIND_WEARABLE
+gléas inchaite
+MSG_KIND_TOY
+bréagán
+MSG_KIND_HEALTH
+gléas sláinte
+MSG_KIND_EARBUDS
+cluaisíní
+MSG_KIND_WATCH
+uaireadóir
+MSG_KIND_CLOCK
+clog
+MSG_KIND_TAG
+clib
+MSG_KIND_KEYRING
+fáinne eochrach
+MSG_KIND_MEDIA_PLAYER
+seinnteoir meán
+MSG_KIND_THERMOMETER
+teirmiméadar
+MSG_KIND_HEART_RATE
+braiteoir ráta croí
+MSG_KIND_SENSOR
+braiteoir
+MSG_KIND_LIGHT
+solas
+MSG_KIND_AUDIO_SOURCE
+foinse fuaime
+MSG_KIND_HEARING_AID
+áis éisteachta
+MSG_PAIRING_TITLE
+Péireáil
+MSG_ASK_COMPARE
+An dtaispeánann %s an uimhir seo?
+MSG_ASK_CONSENT
+Tá %s ag iarraidh péireáil leis an ríomhaire seo.
+MSG_ASK_PASSKEY
+Clóscríobh an uimhir a thaispeánann %s:
+MSG_ASK_SHOW
+Clóscríobh an uimhir seo ar %s, agus ansin brúigh a eochair Enter:
+MSG_ASK_PIN
+Clóscríobh an PIN do %s - 0000 don chuid is mó de ghléasanna gan eochracha:
+MSG_YES
+_Tá
+MSG_NO
+_Níl
+MSG_CANCEL
+_Cealaigh
+MSG_FORGET_ASK
+%s a ligean i ndearmad?\nScriostar an eochair atá roinnte acu: chun iad\na úsáid arís, caithfear iad a athphéireáil.
+MSG_FORGET_BUTTONS
+Lig i nDearmad|Cealaigh
+MSG_NO_LIBRARY
+%s: ní féidir %s a oscailt\n
+MSG_NO_MEMORY
+%s: níl dóthain cuimhne ann\n
+MSG_NO_WINDOW
+%s: ní féidir a fhuinneog a oscailt\n

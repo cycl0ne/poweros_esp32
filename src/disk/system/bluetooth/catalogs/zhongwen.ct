@@ -1,0 +1,279 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language zhongwen
+## codeset 106
+; Bluetooth's strings in Chinese, simplified. A draft: it waits for a
+; reader of Chinese to go through it.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+控制器(_C)
+MSG_ON
+开启(_O)
+MSG_NAME
+名称(_N)
+MSG_VISIBLE
+对其他设备可见(_V)
+MSG_DEVICES
+设备
+MSG_SEARCH
+搜索(_S)
+MSG_PAIR
+配对(_P)
+MSG_CONNECT
+连接(_E)
+MSG_DISCONNECT
+断开(_D)
+MSG_FORGET
+取消配对(_F)...
+MSG_COLUMN_NAME
+名称
+MSG_COLUMN_KIND
+类型
+MSG_COLUMN_SIGNAL
+信号
+MSG_COLUMN_STATE
+状态
+MSG_COLUMN_ADDRESS
+地址
+MSG_CONTROLLER_LABEL
+%u: %s - %s 单元 %u
+MSG_NO_CONTROLLER_LABEL
+没有控制器
+MSG_NO_CONTROLLER
+没有 Bluetooth 控制器：其设备一提供控制器，就会显示在这里
+MSG_STARTING
+正在设置控制器...
+MSG_FAILED
+控制器出错：%s
+MSG_OFF
+已关闭 - 勾选“开启”以使用控制器
+MSG_HIDDEN
+已开启 - 正在搜索的设备找不到本机
+MSG_SHOWN
+已开启 - 正在搜索的设备可以找到本机
+MSG_SHOWN_FOR
+已开启 - 正在搜索的设备在接下来 %u 秒内可以找到本机
+MSG_SEARCHING
+正在搜索设备...
+MSG_FOUND
+搜索到 %u 个设备
+MSG_FOUND_ONE
+搜索到 1 个设备
+MSG_FOUND_NONE
+没有搜索到设备
+MSG_NOT_SET
+未更改：%s
+MSG_NOT_SEARCHING
+无法搜索：%s
+MSG_PAIRING
+正在与 %s 配对...
+MSG_PAIRED
+已与 %s 配对
+MSG_NOT_PAIRED
+未能与 %s 配对：%s
+MSG_CONNECTING
+正在连接 %s...
+MSG_CONNECTED
+已连接 %s
+MSG_NOT_CONNECTED
+未能连接 %s：%s
+MSG_DISCONNECTING
+正在断开与 %s 的连接...
+MSG_DISCONNECTED
+已断开与 %s 的连接
+MSG_NOT_DISCONNECTED
+未能断开与 %s 的连接：%s
+MSG_FORGETTING
+正在取消与 %s 的配对...
+MSG_FORGOTTEN
+已取消与 %s 的配对
+MSG_NOT_FORGOTTEN
+未能取消与 %s 的配对：%s
+MSG_WHY_NOMEM
+内存不足
+MSG_WHY_OPENFAIL
+无法打开其设备
+MSG_WHY_TIMEOUT
+未及时得到应答
+MSG_WHY_DETACHED
+控制器已移除
+MSG_WHY_PROTOCOL
+其设备出错
+MSG_WHY_NOCONTROLLER
+没有这个控制器
+MSG_WHY_NOTUP
+控制器尚未就绪
+MSG_WHY_OFF
+控制器已关闭
+MSG_WHY_UNSUPPORTED
+控制器不支持此操作
+MSG_WHY_BUSY
+控制器正忙于其他操作
+MSG_WHY_UNKNOWN_COMMAND
+它不接受所需的命令
+MSG_WHY_HARDWARE
+硬件故障
+MSG_WHY_REFUSED
+控制器拒绝了请求
+MSG_WHY_NO_ROOM
+控制器已无空间容纳更多设备，或内存不足
+MSG_WHY_BONDED
+本机已与其配对
+MSG_WHY_NOT_BONDED
+本机未与其配对
+MSG_WHY_NOT_LINKED
+未与其建立连接
+MSG_WHY_ANSWER_REFUSED
+被拒绝，或未及时应答
+MSG_WHY_NO_ANSWER
+设备没有应答
+MSG_WHY_LOST
+连接已中断
+MSG_WHY_DEVICE_ENDED
+设备断开了连接
+MSG_WHY_ENDED_HERE
+本机断开了连接
+MSG_WHY_DEVICE_REFUSED
+设备拒绝了请求
+MSG_WHY_NUMBERS
+设备拒绝了请求，或数字不一致
+MSG_WHY_KEY_MISSING
+没有 PIN，或设备已没有密钥：请取消配对后重新配对
+MSG_WHY_NOT_PAIRING
+设备现在不接受配对
+MSG_WHY_REPEATED
+设备要求稍候再试
+MSG_WHY_SHORT_KEY
+密钥太短
+MSG_NO_NAME
+（无名称）
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+极佳
+MSG_SIGNAL_GOOD
+良好
+MSG_SIGNAL_FAIR
+一般
+MSG_SIGNAL_WEAK
+弱
+MSG_STATE_PAIRED
+已配对
+MSG_STATE_CONNECTED
+已连接
+MSG_STATE_ENCRYPTED
+已加密
+MSG_STATE_PAIRING
+正在配对
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, 随机)
+MSG_KIND_COMPUTER
+计算机
+MSG_KIND_LAPTOP
+笔记本电脑
+MSG_KIND_HANDHELD
+掌上电脑
+MSG_KIND_PHONE
+电话
+MSG_KIND_ACCESS_POINT
+网络接入点
+MSG_KIND_HEADSET
+耳麦
+MSG_KIND_HANDS_FREE
+免提设备
+MSG_KIND_MICROPHONE
+麦克风
+MSG_KIND_LOUDSPEAKER
+扬声器
+MSG_KIND_HEADPHONES
+头戴式耳机
+MSG_KIND_PORTABLE_AUDIO
+便携音频
+MSG_KIND_CAR_AUDIO
+车载音频
+MSG_KIND_HIFI
+高保真音响
+MSG_KIND_DISPLAY
+显示器
+MSG_KIND_GAME_CONSOLE
+游戏机
+MSG_KIND_AUDIO_VIDEO
+音视频
+MSG_KIND_KEYBOARD
+键盘
+MSG_KIND_MOUSE
+鼠标
+MSG_KIND_KEYBOARD_MOUSE
+键盘和鼠标
+MSG_KIND_JOYSTICK
+操纵杆
+MSG_KIND_GAMEPAD
+游戏手柄
+MSG_KIND_REMOTE
+遥控器
+MSG_KIND_TABLET
+数位板
+MSG_KIND_PERIPHERAL
+输入设备
+MSG_KIND_IMAGING
+打印机或相机
+MSG_KIND_WEARABLE
+可穿戴设备
+MSG_KIND_TOY
+玩具
+MSG_KIND_HEALTH
+健康设备
+MSG_KIND_EARBUDS
+入耳式耳机
+MSG_KIND_WATCH
+手表
+MSG_KIND_CLOCK
+时钟
+MSG_KIND_TAG
+标签
+MSG_KIND_KEYRING
+钥匙扣
+MSG_KIND_MEDIA_PLAYER
+媒体播放器
+MSG_KIND_THERMOMETER
+温度计
+MSG_KIND_HEART_RATE
+心率传感器
+MSG_KIND_SENSOR
+传感器
+MSG_KIND_LIGHT
+灯具
+MSG_KIND_AUDIO_SOURCE
+音频源
+MSG_KIND_HEARING_AID
+助听器
+MSG_PAIRING_TITLE
+配对
+MSG_ASK_COMPARE
+%s 是否显示此数字？
+MSG_ASK_CONSENT
+%s 请求与本机配对。
+MSG_ASK_PASSKEY
+输入 %s 显示的数字：
+MSG_ASK_SHOW
+在 %s 上输入此数字，然后按其回车键：
+MSG_ASK_PIN
+输入 %s 的 PIN - 大多数无按键设备为 0000：
+MSG_YES
+是(_Y)
+MSG_NO
+否(_N)
+MSG_CANCEL
+取消(_C)
+MSG_FORGET_ASK
+要取消与 %s 的配对吗？\n两者共享的密钥将被删除，\n若要再次使用，须重新配对。
+MSG_FORGET_BUTTONS
+取消配对|取消
+MSG_NO_LIBRARY
+%s: 无法打开 %s\n
+MSG_NO_MEMORY
+%s: 内存不足\n
+MSG_NO_WINDOW
+%s: 无法打开窗口\n

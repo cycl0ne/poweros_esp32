@@ -156,6 +156,7 @@ pub const translated_strings = [_]Translated{
     .{ .descriptor = "programs/paint/paint.cd", .translations = "programs/paint/catalogs", .name = "programs/Paint.catalog" },
     .{ .descriptor = "programs/weather/weather.cd", .translations = "programs/weather/catalogs", .name = "programs/Weather.catalog" },
     .{ .descriptor = "system/clock/clock.cd", .translations = "system/clock/catalogs", .name = "System/Clock.catalog" },
+    .{ .descriptor = "system/bluetooth/bluetooth.cd", .translations = "system/bluetooth/catalogs", .name = "System/Bluetooth.catalog" },
     .{ .descriptor = "commodities/emoji/emoji.cd", .translations = "commodities/emoji/catalogs", .name = "Commodities/Emoji.catalog", .except = &not_emoji },
     .{ .descriptor = "libs/anvil/anvil.cd", .translations = "libs/anvil/catalogs", .name = "sys/anvil.catalog" },
     .{ .descriptor = "libs/http/http.cd", .translations = "libs/http/catalogs", .name = "sys/http.catalog" },

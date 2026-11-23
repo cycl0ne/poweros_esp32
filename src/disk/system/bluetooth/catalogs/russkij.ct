@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language russkij
+## codeset 106
+; Bluetooth's strings in Russian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Контроллер
+MSG_ON
+_Включён
+MSG_NAME
+_Имя
+MSG_VISIBLE
+Видимый для _других
+MSG_DEVICES
+Устройства
+MSG_SEARCH
+_Найти
+MSG_PAIR
+_Сопрячь
+MSG_CONNECT
+_Подключить
+MSG_DISCONNECT
+_Отключить
+MSG_FORGET
+_Забыть...
+MSG_COLUMN_NAME
+Имя
+MSG_COLUMN_KIND
+Тип
+MSG_COLUMN_SIGNAL
+Сигнал
+MSG_COLUMN_STATE
+Состояние
+MSG_COLUMN_ADDRESS
+Адрес
+MSG_CONTROLLER_LABEL
+%u: %s - %s, модуль %u
+MSG_NO_CONTROLLER_LABEL
+Нет контроллера
+MSG_NO_CONTROLLER
+Нет контроллера Bluetooth: он появится здесь, как только его предложит устройство
+MSG_STARTING
+Контроллер настраивается...
+MSG_FAILED
+Сбой контроллера: %s
+MSG_OFF
+Выключен - отметьте «Включён», чтобы использовать контроллер
+MSG_HIDDEN
+Включён - ищущие устройства не находят этот компьютер
+MSG_SHOWN
+Включён - ищущие устройства находят этот компьютер
+MSG_SHOWN_FOR
+Включён - ищущие устройства находят этот компьютер ещё %u сек.
+MSG_SEARCHING
+Поиск устройств...
+MSG_FOUND
+Найдено устройств: %u
+MSG_FOUND_ONE
+Найдено одно устройство
+MSG_FOUND_NONE
+Устройства не найдены
+MSG_NOT_SET
+Не изменено: %s
+MSG_NOT_SEARCHING
+Поиск не запущен: %s
+MSG_PAIRING
+Сопряжение с %s...
+MSG_PAIRED
+Сопряжено с %s
+MSG_NOT_PAIRED
+Не сопряжено с %s: %s
+MSG_CONNECTING
+Подключение к %s...
+MSG_CONNECTED
+Подключено к %s
+MSG_NOT_CONNECTED
+Не подключено к %s: %s
+MSG_DISCONNECTING
+Отключение от %s...
+MSG_DISCONNECTED
+Отключено от %s
+MSG_NOT_DISCONNECTED
+Не отключено от %s: %s
+MSG_FORGETTING
+Удаление сопряжения с %s...
+MSG_FORGOTTEN
+Устройство %s забыто
+MSG_NOT_FORGOTTEN
+Устройство %s не забыто: %s
+MSG_WHY_NOMEM
+недостаточно памяти
+MSG_WHY_OPENFAIL
+не открылось его устройство
+MSG_WHY_TIMEOUT
+ответ не получен вовремя
+MSG_WHY_DETACHED
+контроллер исчез
+MSG_WHY_PROTOCOL
+сбой его устройства
+MSG_WHY_NOCONTROLLER
+такого контроллера нет
+MSG_WHY_NOTUP
+контроллер не готов
+MSG_WHY_OFF
+контроллер выключен
+MSG_WHY_UNSUPPORTED
+контроллер этого не поддерживает
+MSG_WHY_BUSY
+контроллер занят другой операцией
+MSG_WHY_UNKNOWN_COMMAND
+он не принимает нужную команду
+MSG_WHY_HARDWARE
+аппаратный сбой
+MSG_WHY_REFUSED
+контроллер отклонил запрос
+MSG_WHY_NO_ROOM
+у контроллера нет места для ещё одного, или недостаточно памяти
+MSG_WHY_BONDED
+этот компьютер уже сопряжён с ним
+MSG_WHY_NOT_BONDED
+этот компьютер не сопряжён с ним
+MSG_WHY_NOT_LINKED
+нет подключения к нему
+MSG_WHY_ANSWER_REFUSED
+отклонено, или ответ не получен вовремя
+MSG_WHY_NO_ANSWER
+устройство не ответило
+MSG_WHY_LOST
+соединение потеряно
+MSG_WHY_DEVICE_ENDED
+устройство разорвало соединение
+MSG_WHY_ENDED_HERE
+соединение разорвано с этой стороны
+MSG_WHY_DEVICE_REFUSED
+устройство отклонило запрос
+MSG_WHY_NUMBERS
+устройство отклонило запрос, или числа не совпали
+MSG_WHY_KEY_MISSING
+нет PIN-кода, или у устройства нет ключа: забудьте его и повторите сопряжение
+MSG_WHY_NOT_PAIRING
+устройство сейчас не принимает сопряжение
+MSG_WHY_REPEATED
+устройство просит паузу перед следующей попыткой
+MSG_WHY_SHORT_KEY
+ключ слишком короткий
+MSG_NO_NAME
+(без имени)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+отличный
+MSG_SIGNAL_GOOD
+хороший
+MSG_SIGNAL_FAIR
+средний
+MSG_SIGNAL_WEAK
+слабый
+MSG_STATE_PAIRED
+сопряжено
+MSG_STATE_CONNECTED
+подключено
+MSG_STATE_ENCRYPTED
+зашифровано
+MSG_STATE_PAIRING
+идёт сопряжение
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, случайный)
+MSG_KIND_COMPUTER
+компьютер
+MSG_KIND_LAPTOP
+ноутбук
+MSG_KIND_HANDHELD
+карманный компьютер
+MSG_KIND_PHONE
+телефон
+MSG_KIND_ACCESS_POINT
+точка доступа к сети
+MSG_KIND_HEADSET
+гарнитура
+MSG_KIND_HANDS_FREE
+громкая связь
+MSG_KIND_MICROPHONE
+микрофон
+MSG_KIND_LOUDSPEAKER
+громкоговоритель
+MSG_KIND_HEADPHONES
+наушники
+MSG_KIND_PORTABLE_AUDIO
+портативное аудио
+MSG_KIND_CAR_AUDIO
+автомобильное аудио
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+дисплей
+MSG_KIND_GAME_CONSOLE
+игровая приставка
+MSG_KIND_AUDIO_VIDEO
+аудио и видео
+MSG_KIND_KEYBOARD
+клавиатура
+MSG_KIND_MOUSE
+мышь
+MSG_KIND_KEYBOARD_MOUSE
+клавиатура и мышь
+MSG_KIND_JOYSTICK
+джойстик
+MSG_KIND_GAMEPAD
+геймпад
+MSG_KIND_REMOTE
+пульт ДУ
+MSG_KIND_TABLET
+графический планшет
+MSG_KIND_PERIPHERAL
+устройство ввода
+MSG_KIND_IMAGING
+принтер или камера
+MSG_KIND_WEARABLE
+носимое устройство
+MSG_KIND_TOY
+игрушка
+MSG_KIND_HEALTH
+медицинское устройство
+MSG_KIND_EARBUDS
+наушники-вкладыши
+MSG_KIND_WATCH
+наручные часы
+MSG_KIND_CLOCK
+часы
+MSG_KIND_TAG
+метка
+MSG_KIND_KEYRING
+брелок
+MSG_KIND_MEDIA_PLAYER
+медиаплеер
+MSG_KIND_THERMOMETER
+термометр
+MSG_KIND_HEART_RATE
+датчик пульса
+MSG_KIND_SENSOR
+датчик
+MSG_KIND_LIGHT
+светильник
+MSG_KIND_AUDIO_SOURCE
+источник звука
+MSG_KIND_HEARING_AID
+слуховой аппарат
+MSG_PAIRING_TITLE
+Сопряжение
+MSG_ASK_COMPARE
+Показывает ли %s это число?
+MSG_ASK_CONSENT
+%s запрашивает сопряжение с этим компьютером.
+MSG_ASK_PASSKEY
+Введите число, которое показывает %s:
+MSG_ASK_SHOW
+Введите это число на %s, затем нажмите на нём Enter:
+MSG_ASK_PIN
+Введите PIN-код %s - у большинства устройств без клавиш это 0000:
+MSG_YES
+_Да
+MSG_NO
+_Нет
+MSG_CANCEL
+_Отмена
+MSG_FORGET_ASK
+Забыть %s?\nОбщий ключ обоих устройств удаляется: чтобы\nснова их использовать, нужно новое сопряжение.
+MSG_FORGET_BUTTONS
+Забыть|Отмена
+MSG_NO_LIBRARY
+%s: не удаётся открыть %s\n
+MSG_NO_MEMORY
+%s: недостаточно памяти\n
+MSG_NO_WINDOW
+%s: не удаётся открыть окно\n

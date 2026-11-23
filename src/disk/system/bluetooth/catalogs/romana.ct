@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language romana
+## codeset 106
+; Bluetooth's strings in Romanian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+C_ontroler
+MSG_ON
+_Activat
+MSG_NAME
+_Nume
+MSG_VISIBLE
+_Vizibil pentru alte dispozitive
+MSG_DEVICES
+Dispozitive
+MSG_SEARCH
+_Căutare
+MSG_PAIR
+A_sociere
+MSG_CONNECT
+Con_ectare
+MSG_DISCONNECT
+_Deconectare
+MSG_FORGET
+_Uitare...
+MSG_COLUMN_NAME
+Nume
+MSG_COLUMN_KIND
+Tip
+MSG_COLUMN_SIGNAL
+Semnal
+MSG_COLUMN_STATE
+Stare
+MSG_COLUMN_ADDRESS
+Adresă
+MSG_CONTROLLER_LABEL
+%u: %s - %s unitatea %u
+MSG_NO_CONTROLLER_LABEL
+Niciun controler
+MSG_NO_CONTROLLER
+Niciun controler Bluetooth: va apărea aici de îndată ce dispozitivul său îl oferă
+MSG_STARTING
+Se pregătește controlerul...
+MSG_FAILED
+Controlerul a eșuat: %s
+MSG_OFF
+Dezactivat - bifați Activat pentru a folosi controlerul
+MSG_HIDDEN
+Activat - dispozitivele care caută nu îl găsesc
+MSG_SHOWN
+Activat - dispozitivele care caută îl găsesc
+MSG_SHOWN_FOR
+Activat - dispozitivele care caută îl găsesc; secunde rămase: %u
+MSG_SEARCHING
+Se caută dispozitive...
+MSG_FOUND
+Dispozitive găsite de căutare: %u
+MSG_FOUND_ONE
+Căutarea a găsit un dispozitiv
+MSG_FOUND_NONE
+Căutarea nu a găsit niciun dispozitiv
+MSG_NOT_SET
+Nemodificat: %s
+MSG_NOT_SEARCHING
+Nu s-a putut căuta: %s
+MSG_PAIRING
+Se asociază cu %s...
+MSG_PAIRED
+Asociat cu %s
+MSG_NOT_PAIRED
+Nu s-a asociat cu %s: %s
+MSG_CONNECTING
+Se conectează la %s...
+MSG_CONNECTED
+Conectat la %s
+MSG_NOT_CONNECTED
+Nu s-a conectat la %s: %s
+MSG_DISCONNECTING
+Se deconectează de la %s...
+MSG_DISCONNECTED
+Deconectat de la %s
+MSG_NOT_DISCONNECTED
+Nu s-a deconectat de la %s: %s
+MSG_FORGETTING
+Uitarea dispozitivului %s...
+MSG_FORGOTTEN
+Dispozitivul %s a fost uitat
+MSG_NOT_FORGOTTEN
+Dispozitivul %s nu a fost uitat: %s
+MSG_WHY_NOMEM
+memorie insuficientă
+MSG_WHY_OPENFAIL
+dispozitivul său nu a putut fi deschis
+MSG_WHY_TIMEOUT
+nu s-a primit răspuns la timp
+MSG_WHY_DETACHED
+controlerul a dispărut
+MSG_WHY_PROTOCOL
+dispozitivul său a eșuat
+MSG_WHY_NOCONTROLLER
+nu există un astfel de controler
+MSG_WHY_NOTUP
+controlerul nu este pregătit
+MSG_WHY_OFF
+controlerul este dezactivat
+MSG_WHY_UNSUPPORTED
+controlerul nu poate face asta
+MSG_WHY_BUSY
+controlerul este ocupat cu altceva
+MSG_WHY_UNKNOWN_COMMAND
+nu acceptă o comandă de care are nevoie
+MSG_WHY_HARDWARE
+o defecțiune hardware
+MSG_WHY_REFUSED
+controlerul a refuzat
+MSG_WHY_NO_ROOM
+controlerul nu mai are loc pentru altul sau memoria este insuficientă
+MSG_WHY_BONDED
+acest computer este deja asociat cu el
+MSG_WHY_NOT_BONDED
+acest computer nu este asociat cu el
+MSG_WHY_NOT_LINKED
+nu este conectat
+MSG_WHY_ANSWER_REFUSED
+refuzat sau fără răspuns la timp
+MSG_WHY_NO_ANSWER
+dispozitivul nu a răspuns
+MSG_WHY_LOST
+conexiunea s-a pierdut
+MSG_WHY_DEVICE_ENDED
+dispozitivul a încheiat conexiunea
+MSG_WHY_ENDED_HERE
+conexiunea a fost încheiată de aici
+MSG_WHY_DEVICE_REFUSED
+dispozitivul a refuzat
+MSG_WHY_NUMBERS
+dispozitivul a refuzat sau codurile nu s-au potrivit
+MSG_WHY_KEY_MISSING
+niciun PIN sau dispozitivul nu mai are cheia: uitați-l și asociați-l din nou
+MSG_WHY_NOT_PAIRING
+dispozitivul nu acceptă asocierea acum
+MSG_WHY_REPEATED
+dispozitivul cere o pauză înaintea următoarei încercări
+MSG_WHY_SHORT_KEY
+cheia este prea scurtă
+MSG_NO_NAME
+(fără nume)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+excelent
+MSG_SIGNAL_GOOD
+bun
+MSG_SIGNAL_FAIR
+acceptabil
+MSG_SIGNAL_WEAK
+slab
+MSG_STATE_PAIRED
+asociat
+MSG_STATE_CONNECTED
+conectat
+MSG_STATE_ENCRYPTED
+criptat
+MSG_STATE_PAIRING
+în asociere
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, aleatorie)
+MSG_KIND_COMPUTER
+computer
+MSG_KIND_LAPTOP
+laptop
+MSG_KIND_HANDHELD
+computer de buzunar
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+punct de acces la rețea
+MSG_KIND_HEADSET
+căști cu microfon
+MSG_KIND_HANDS_FREE
+mâini libere
+MSG_KIND_MICROPHONE
+microfon
+MSG_KIND_LOUDSPEAKER
+difuzor
+MSG_KIND_HEADPHONES
+căști
+MSG_KIND_PORTABLE_AUDIO
+audio portabil
+MSG_KIND_CAR_AUDIO
+audio auto
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+ecran
+MSG_KIND_GAME_CONSOLE
+consolă de jocuri
+MSG_KIND_AUDIO_VIDEO
+audio și video
+MSG_KIND_KEYBOARD
+tastatură
+MSG_KIND_MOUSE
+mouse
+MSG_KIND_KEYBOARD_MOUSE
+tastatură și mouse
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+gamepad
+MSG_KIND_REMOTE
+telecomandă
+MSG_KIND_TABLET
+tabletă
+MSG_KIND_PERIPHERAL
+dispozitiv de intrare
+MSG_KIND_IMAGING
+imprimantă sau cameră
+MSG_KIND_WEARABLE
+dispozitiv purtabil
+MSG_KIND_TOY
+jucărie
+MSG_KIND_HEALTH
+dispozitiv de sănătate
+MSG_KIND_EARBUDS
+căști intraauriculare
+MSG_KIND_WATCH
+ceas de mână
+MSG_KIND_CLOCK
+ceas
+MSG_KIND_TAG
+localizator
+MSG_KIND_KEYRING
+breloc
+MSG_KIND_MEDIA_PLAYER
+player multimedia
+MSG_KIND_THERMOMETER
+termometru
+MSG_KIND_HEART_RATE
+senzor de puls
+MSG_KIND_SENSOR
+senzor
+MSG_KIND_LIGHT
+lumină
+MSG_KIND_AUDIO_SOURCE
+sursă audio
+MSG_KIND_HEARING_AID
+aparat auditiv
+MSG_PAIRING_TITLE
+Asociere
+MSG_ASK_COMPARE
+%s afișează acest cod?
+MSG_ASK_CONSENT
+%s cere să se asocieze cu acest computer.
+MSG_ASK_PASSKEY
+Introduceți codul afișat de %s:
+MSG_ASK_SHOW
+Introduceți acest cod pe %s, apoi apăsați tasta Enter a acestuia:
+MSG_ASK_PIN
+Introduceți PIN-ul dispozitivului %s - 0000 pentru majoritatea dispozitivelor fără taste:
+MSG_YES
+_Da
+MSG_NO
+_Nu
+MSG_CANCEL
+_Anulare
+MSG_FORGET_ASK
+Uitați %s?\nCheia pe care o au în comun se șterge: pentru\na fi folosite din nou, trebuie reasociate.
+MSG_FORGET_BUTTONS
+Uitare|Anulare
+MSG_NO_LIBRARY
+%s: nu se poate deschide %s\n
+MSG_NO_MEMORY
+%s: memorie insuficientă\n
+MSG_NO_WINDOW
+%s: nu își poate deschide fereastra\n

@@ -439,7 +439,7 @@ sets in `src/boards/<board>/disk.zig`:
 | `gui` | the desktop: anvil.library, the gadget and image classes, the datatypes of pictures and text, the programs with windows |
 | `net` | bsdsocket.library and what speaks over it, the network drivers, `C:net` |
 | `wifi` | the radios' drivers and what joins a network with them |
-| `bluetooth` | bluetooth.library, the controllers' drivers and their firmware, the profile drivers (`bthid.device`), `C:Bluetooth` |
+| `bluetooth` | bluetooth.library, the controllers' drivers and their firmware, the profile drivers (`bthid.device`), `SYS:System/Bluetooth` and `C:Bluetooth` |
 | `media` | sound and film: the codecs, Player, Movie |
 | `storage` | cards, sticks and SSDs: the partition table, the file systems beside the flash's own, HDToolBox, the install |
 | `usb` | usb.library, the host controllers and the class drivers, and hid.library, which a keyboard's and a mouse's drivers share |

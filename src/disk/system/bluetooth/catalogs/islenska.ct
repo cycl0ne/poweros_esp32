@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language islenska
+## codeset 106
+; Bluetooth's strings in Icelandic.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Stýring
+MSG_ON
+_Kveikt
+MSG_NAME
+_Heiti
+MSG_VISIBLE
+Sý_nilegt öðrum
+MSG_DEVICES
+Tæki
+MSG_SEARCH
+_Leita
+MSG_PAIR
+_Para
+MSG_CONNECT
+_Tengja
+MSG_DISCONNECT
+_Aftengja
+MSG_FORGET
+_Gleyma...
+MSG_COLUMN_NAME
+Heiti
+MSG_COLUMN_KIND
+Tegund
+MSG_COLUMN_SIGNAL
+Merki
+MSG_COLUMN_STATE
+Staða
+MSG_COLUMN_ADDRESS
+Vistfang
+MSG_CONTROLLER_LABEL
+%u: %s - %s, eining %u
+MSG_NO_CONTROLLER_LABEL
+Engin stýring
+MSG_NO_CONTROLLER
+Engin Bluetooth-stýring: hún birtist hér um leið og tæki hennar býður hana fram
+MSG_STARTING
+Verið er að setja upp stýringuna...
+MSG_FAILED
+Stýringin virkar ekki: %s
+MSG_OFF
+Slökkt - hakaðu við „Kveikt“ til að nota stýringuna
+MSG_HIDDEN
+Kveikt - tæki sem leita finna ekki þessa tölvu
+MSG_SHOWN
+Kveikt - tæki sem leita finna þessa tölvu
+MSG_SHOWN_FOR
+Kveikt - tæki sem leita finna þessa tölvu í %u sekúndur í viðbót
+MSG_SEARCHING
+Leitar að tækjum...
+MSG_FOUND
+Leitin fann %u tæki
+MSG_FOUND_ONE
+Leitin fann eitt tæki
+MSG_FOUND_NONE
+Leitin fann engin tæki
+MSG_NOT_SET
+Ekki breytt: %s
+MSG_NOT_SEARCHING
+Engin leit: %s
+MSG_PAIRING
+Parar við %s...
+MSG_PAIRED
+Parað við %s
+MSG_NOT_PAIRED
+Ekki parað við %s: %s
+MSG_CONNECTING
+Tengir við %s...
+MSG_CONNECTED
+Tengt við %s
+MSG_NOT_CONNECTED
+Ekki tengt við %s: %s
+MSG_DISCONNECTING
+Aftengir %s...
+MSG_DISCONNECTED
+%s aftengt
+MSG_NOT_DISCONNECTED
+%s ekki aftengt: %s
+MSG_FORGETTING
+Gleymir %s...
+MSG_FORGOTTEN
+%s er gleymt
+MSG_NOT_FORGOTTEN
+%s er ekki gleymt: %s
+MSG_WHY_NOMEM
+ekki nóg minni
+MSG_WHY_OPENFAIL
+ekki tókst að opna tæki hennar
+MSG_WHY_TIMEOUT
+ekkert svar barst í tæka tíð
+MSG_WHY_DETACHED
+stýringin er horfin
+MSG_WHY_PROTOCOL
+tæki hennar bilaði
+MSG_WHY_NOCONTROLLER
+engin slík stýring er til
+MSG_WHY_NOTUP
+stýringin er ekki tilbúin
+MSG_WHY_OFF
+slökkt er á stýringunni
+MSG_WHY_UNSUPPORTED
+stýringin getur það ekki
+MSG_WHY_BUSY
+stýringin er upptekin við annað
+MSG_WHY_UNKNOWN_COMMAND
+hún þekkir ekki skipun sem þarf
+MSG_WHY_HARDWARE
+vélbúnaðarbilun
+MSG_WHY_REFUSED
+stýringin hafnaði
+MSG_WHY_NO_ROOM
+stýringin hefur ekki pláss fyrir fleiri, eða það er ekki nóg minni
+MSG_WHY_BONDED
+þessi tölva er þegar pöruð við það
+MSG_WHY_NOT_BONDED
+þessi tölva er ekki pöruð við það
+MSG_WHY_NOT_LINKED
+engin tenging er við það
+MSG_WHY_ANSWER_REFUSED
+hafnað, eða ekki svarað í tæka tíð
+MSG_WHY_NO_ANSWER
+tækið svaraði ekki
+MSG_WHY_LOST
+tengingin rofnaði
+MSG_WHY_DEVICE_ENDED
+tækið sleit tengingunni
+MSG_WHY_ENDED_HERE
+tengingunni var slitið hér
+MSG_WHY_DEVICE_REFUSED
+tækið hafnaði
+MSG_WHY_NUMBERS
+tækið hafnaði, eða tölurnar pössuðu ekki saman
+MSG_WHY_KEY_MISSING
+ekkert PIN, eða tækið hefur ekki lengur lykilinn: gleymdu því og paraðu aftur
+MSG_WHY_NOT_PAIRING
+tækið parast ekki núna
+MSG_WHY_REPEATED
+tækið vill hlé fyrir næstu tilraun
+MSG_WHY_SHORT_KEY
+lykillinn er of stuttur
+MSG_NO_NAME
+(ekkert heiti)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+frábært
+MSG_SIGNAL_GOOD
+gott
+MSG_SIGNAL_FAIR
+sæmilegt
+MSG_SIGNAL_WEAK
+veikt
+MSG_STATE_PAIRED
+parað
+MSG_STATE_CONNECTED
+tengt
+MSG_STATE_ENCRYPTED
+dulkóðað
+MSG_STATE_PAIRING
+í pörun
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, slembið)
+MSG_KIND_COMPUTER
+tölva
+MSG_KIND_LAPTOP
+fartölva
+MSG_KIND_HANDHELD
+lófatölva
+MSG_KIND_PHONE
+sími
+MSG_KIND_ACCESS_POINT
+netaðgangspunktur
+MSG_KIND_HEADSET
+höfuðtól
+MSG_KIND_HANDS_FREE
+handfrjáls búnaður
+MSG_KIND_MICROPHONE
+hljóðnemi
+MSG_KIND_LOUDSPEAKER
+hátalari
+MSG_KIND_HEADPHONES
+heyrnartól
+MSG_KIND_PORTABLE_AUDIO
+færanlegt hljóðtæki
+MSG_KIND_CAR_AUDIO
+bíltæki
+MSG_KIND_HIFI
+hljómtæki
+MSG_KIND_DISPLAY
+skjár
+MSG_KIND_GAME_CONSOLE
+leikjatölva
+MSG_KIND_AUDIO_VIDEO
+hljóð og mynd
+MSG_KIND_KEYBOARD
+lyklaborð
+MSG_KIND_MOUSE
+mús
+MSG_KIND_KEYBOARD_MOUSE
+lyklaborð og mús
+MSG_KIND_JOYSTICK
+stýripinni
+MSG_KIND_GAMEPAD
+leikjastýring
+MSG_KIND_REMOTE
+fjarstýring
+MSG_KIND_TABLET
+teikniborð
+MSG_KIND_PERIPHERAL
+inntakstæki
+MSG_KIND_IMAGING
+prentari eða myndavél
+MSG_KIND_WEARABLE
+klæðanlegt tæki
+MSG_KIND_TOY
+leikfang
+MSG_KIND_HEALTH
+heilsutæki
+MSG_KIND_EARBUDS
+eyrnatól
+MSG_KIND_WATCH
+armbandsúr
+MSG_KIND_CLOCK
+klukka
+MSG_KIND_TAG
+rekjari
+MSG_KIND_KEYRING
+lyklakippa
+MSG_KIND_MEDIA_PLAYER
+margmiðlunarspilari
+MSG_KIND_THERMOMETER
+hitamælir
+MSG_KIND_HEART_RATE
+púlsnemi
+MSG_KIND_SENSOR
+nemi
+MSG_KIND_LIGHT
+ljós
+MSG_KIND_AUDIO_SOURCE
+hljóðgjafi
+MSG_KIND_HEARING_AID
+heyrnartæki
+MSG_PAIRING_TITLE
+Pörun
+MSG_ASK_COMPARE
+Sýnir %s þessa tölu?
+MSG_ASK_CONSENT
+%s biður um að parast við þessa tölvu.
+MSG_ASK_PASSKEY
+Sláðu inn töluna sem %s sýnir:
+MSG_ASK_SHOW
+Sláðu þessa tölu inn á %s og ýttu svo á Enter:
+MSG_ASK_PIN
+Sláðu inn PIN fyrir %s - 0000 fyrir flest tæki án takka:
+MSG_YES
+_Já
+MSG_NO
+_Nei
+MSG_CANCEL
+_Hætta við
+MSG_FORGET_ASK
+Gleyma %s?\nSameiginlegum lykli þeirra er eytt: til\nað nota þau aftur þarf að para þau á ný.
+MSG_FORGET_BUTTONS
+Gleyma|Hætta við
+MSG_NO_LIBRARY
+%s: get ekki opnað %s\n
+MSG_NO_MEMORY
+%s: ekki nóg minni\n
+MSG_NO_WINDOW
+%s: ekki tókst að opna glugga\n

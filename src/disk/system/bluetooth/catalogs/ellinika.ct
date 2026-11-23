@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language ellinika
+## codeset 106
+; Bluetooth's strings in Greek.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+Ελεγ_κτής
+MSG_ON
+_Ενεργός
+MSG_NAME
+Ό_νομα
+MSG_VISIBLE
+_Ορατός σε άλλους
+MSG_DEVICES
+Συσκευές
+MSG_SEARCH
+_Αναζήτηση
+MSG_PAIR
+Σύ_ζευξη
+MSG_CONNECT
+_Σύνδεση
+MSG_DISCONNECT
+Α_ποσύνδεση
+MSG_FORGET
+_Διαγραφή...
+MSG_COLUMN_NAME
+Όνομα
+MSG_COLUMN_KIND
+Είδος
+MSG_COLUMN_SIGNAL
+Σήμα
+MSG_COLUMN_STATE
+Κατάσταση
+MSG_COLUMN_ADDRESS
+Διεύθυνση
+MSG_CONTROLLER_LABEL
+%u: %s - %s, μονάδα %u
+MSG_NO_CONTROLLER_LABEL
+Κανένας ελεγκτής
+MSG_NO_CONTROLLER
+Δεν υπάρχει ελεγκτής Bluetooth: θα εμφανιστεί εδώ μόλις τον προσφέρει η συσκευή του
+MSG_STARTING
+Ο ελεγκτής προετοιμάζεται...
+MSG_FAILED
+Ο ελεγκτής απέτυχε: %s
+MSG_OFF
+Ανενεργός - επιλέξτε «Ενεργός» για να χρησιμοποιήσετε τον ελεγκτή
+MSG_HIDDEN
+Ενεργός - οι συσκευές που κάνουν αναζήτηση δεν βρίσκουν αυτόν τον υπολογιστή
+MSG_SHOWN
+Ενεργός - οι συσκευές που κάνουν αναζήτηση βρίσκουν αυτόν τον υπολογιστή
+MSG_SHOWN_FOR
+Ενεργός - οι συσκευές που κάνουν αναζήτηση βρίσκουν αυτόν τον υπολογιστή για %u δευτ. ακόμη
+MSG_SEARCHING
+Αναζήτηση συσκευών...
+MSG_FOUND
+Η αναζήτηση βρήκε %u συσκευές
+MSG_FOUND_ONE
+Η αναζήτηση βρήκε μία συσκευή
+MSG_FOUND_NONE
+Η αναζήτηση δεν βρήκε συσκευές
+MSG_NOT_SET
+Δεν έγινε αλλαγή: %s
+MSG_NOT_SEARCHING
+Δεν έγινε αναζήτηση: %s
+MSG_PAIRING
+Σύζευξη με %s...
+MSG_PAIRED
+Έγινε σύζευξη με %s
+MSG_NOT_PAIRED
+Δεν έγινε σύζευξη με %s: %s
+MSG_CONNECTING
+Σύνδεση με %s...
+MSG_CONNECTED
+Έγινε σύνδεση με %s
+MSG_NOT_CONNECTED
+Δεν έγινε σύνδεση με %s: %s
+MSG_DISCONNECTING
+Αποσύνδεση από %s...
+MSG_DISCONNECTED
+Έγινε αποσύνδεση από %s
+MSG_NOT_DISCONNECTED
+Δεν έγινε αποσύνδεση από %s: %s
+MSG_FORGETTING
+Διαγραφή της συσκευής %s...
+MSG_FORGOTTEN
+Η συσκευή %s διαγράφηκε
+MSG_NOT_FORGOTTEN
+Η συσκευή %s δεν διαγράφηκε: %s
+MSG_WHY_NOMEM
+δεν υπάρχει αρκετή μνήμη
+MSG_WHY_OPENFAIL
+η συσκευή του δεν άνοιξε
+MSG_WHY_TIMEOUT
+δεν δόθηκε απάντηση εγκαίρως
+MSG_WHY_DETACHED
+ο ελεγκτής αφαιρέθηκε
+MSG_WHY_PROTOCOL
+η συσκευή του απέτυχε
+MSG_WHY_NOCONTROLLER
+δεν υπάρχει τέτοιος ελεγκτής
+MSG_WHY_NOTUP
+ο ελεγκτής δεν είναι έτοιμος
+MSG_WHY_OFF
+ο ελεγκτής είναι ανενεργός
+MSG_WHY_UNSUPPORTED
+ο ελεγκτής δεν μπορεί να το κάνει αυτό
+MSG_WHY_BUSY
+ο ελεγκτής είναι απασχολημένος με κάτι άλλο
+MSG_WHY_UNKNOWN_COMMAND
+δεν δέχεται μια εντολή που χρειάζεται
+MSG_WHY_HARDWARE
+σφάλμα υλικού
+MSG_WHY_REFUSED
+ο ελεγκτής αρνήθηκε
+MSG_WHY_NO_ROOM
+ο ελεγκτής δεν έχει θέση για άλλη συσκευή ή λείπει μνήμη
+MSG_WHY_BONDED
+αυτός ο υπολογιστής έχει ήδη σύζευξη με τη συσκευή
+MSG_WHY_NOT_BONDED
+αυτός ο υπολογιστής δεν έχει σύζευξη με τη συσκευή
+MSG_WHY_NOT_LINKED
+δεν υπάρχει σύνδεση με τη συσκευή
+MSG_WHY_ANSWER_REFUSED
+απορρίφθηκε ή δεν απαντήθηκε εγκαίρως
+MSG_WHY_NO_ANSWER
+η συσκευή δεν απάντησε
+MSG_WHY_LOST
+η σύνδεση χάθηκε
+MSG_WHY_DEVICE_ENDED
+η συσκευή τερμάτισε τη σύνδεση
+MSG_WHY_ENDED_HERE
+η σύνδεση τερματίστηκε από εδώ
+MSG_WHY_DEVICE_REFUSED
+η συσκευή αρνήθηκε
+MSG_WHY_NUMBERS
+η συσκευή αρνήθηκε ή οι αριθμοί δεν ταίριαξαν
+MSG_WHY_KEY_MISSING
+χωρίς PIN, ή η συσκευή έχασε το κλειδί: διαγραφή και νέα σύζευξη
+MSG_WHY_NOT_PAIRING
+η συσκευή δεν δέχεται σύζευξη τώρα
+MSG_WHY_REPEATED
+η συσκευή θέλει μια παύση πριν από την επόμενη προσπάθεια
+MSG_WHY_SHORT_KEY
+το κλειδί είναι πολύ μικρό
+MSG_NO_NAME
+(χωρίς όνομα)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+εξαιρετικό
+MSG_SIGNAL_GOOD
+καλό
+MSG_SIGNAL_FAIR
+μέτριο
+MSG_SIGNAL_WEAK
+ασθενές
+MSG_STATE_PAIRED
+συζευγμένη
+MSG_STATE_CONNECTED
+συνδεδεμένη
+MSG_STATE_ENCRYPTED
+κρυπτογραφημένη
+MSG_STATE_PAIRING
+σε σύζευξη
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, τυχαία)
+MSG_KIND_COMPUTER
+υπολογιστής
+MSG_KIND_LAPTOP
+φορητός υπολογιστής
+MSG_KIND_HANDHELD
+υπολογιστής χειρός
+MSG_KIND_PHONE
+τηλέφωνο
+MSG_KIND_ACCESS_POINT
+σημείο πρόσβασης δικτύου
+MSG_KIND_HEADSET
+ακουστικά με μικρόφωνο
+MSG_KIND_HANDS_FREE
+ανοιχτή ακρόαση
+MSG_KIND_MICROPHONE
+μικρόφωνο
+MSG_KIND_LOUDSPEAKER
+ηχείο
+MSG_KIND_HEADPHONES
+ακουστικά
+MSG_KIND_PORTABLE_AUDIO
+φορητή συσκευή ήχου
+MSG_KIND_CAR_AUDIO
+ηχοσύστημα αυτοκινήτου
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+οθόνη
+MSG_KIND_GAME_CONSOLE
+κονσόλα παιχνιδιών
+MSG_KIND_AUDIO_VIDEO
+ήχος και εικόνα
+MSG_KIND_KEYBOARD
+πληκτρολόγιο
+MSG_KIND_MOUSE
+ποντίκι
+MSG_KIND_KEYBOARD_MOUSE
+πληκτρολόγιο και ποντίκι
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+χειριστήριο παιχνιδιών
+MSG_KIND_REMOTE
+τηλεχειριστήριο
+MSG_KIND_TABLET
+ταμπλέτα γραφικών
+MSG_KIND_PERIPHERAL
+συσκευή εισόδου
+MSG_KIND_IMAGING
+εκτυπωτής ή κάμερα
+MSG_KIND_WEARABLE
+φορετή συσκευή
+MSG_KIND_TOY
+παιχνίδι
+MSG_KIND_HEALTH
+συσκευή υγείας
+MSG_KIND_EARBUDS
+ενδώτια ακουστικά
+MSG_KIND_WATCH
+ρολόι χειρός
+MSG_KIND_CLOCK
+ρολόι
+MSG_KIND_TAG
+ετικέτα
+MSG_KIND_KEYRING
+μπρελόκ
+MSG_KIND_MEDIA_PLAYER
+συσκευή αναπαραγωγής
+MSG_KIND_THERMOMETER
+θερμόμετρο
+MSG_KIND_HEART_RATE
+αισθητήρας καρδιακών παλμών
+MSG_KIND_SENSOR
+αισθητήρας
+MSG_KIND_LIGHT
+φωτιστικό
+MSG_KIND_AUDIO_SOURCE
+πηγή ήχου
+MSG_KIND_HEARING_AID
+ακουστικό βαρηκοΐας
+MSG_PAIRING_TITLE
+Σύζευξη
+MSG_ASK_COMPARE
+Εμφανίζει η συσκευή %s αυτόν τον αριθμό;
+MSG_ASK_CONSENT
+Η συσκευή %s ζητά σύζευξη με αυτόν τον υπολογιστή.
+MSG_ASK_PASSKEY
+Πληκτρολογήστε τον αριθμό που εμφανίζει η συσκευή %s:
+MSG_ASK_SHOW
+Πληκτρολογήστε αυτόν τον αριθμό στη συσκευή %s και μετά πατήστε το Enter της:
+MSG_ASK_PIN
+Πληκτρολογήστε το PIN της συσκευής %s - 0000 για τις περισσότερες συσκευές χωρίς πλήκτρα:
+MSG_YES
+_Ναι
+MSG_NO
+Ό_χι
+MSG_CANCEL
+Ά_κυρο
+MSG_FORGET_ASK
+Διαγραφή της συσκευής %s;\nΤο κοινό κλειδί των δύο διαγράφεται: για να\nχρησιμοποιηθούν ξανά, χρειάζεται νέα σύζευξη.
+MSG_FORGET_BUTTONS
+Διαγραφή|Άκυρο
+MSG_NO_LIBRARY
+%s: δεν ανοίγει το %s\n
+MSG_NO_MEMORY
+%s: δεν υπάρχει αρκετή μνήμη\n
+MSG_NO_WINDOW
+%s: δεν ανοίγει το παράθυρό του\n

@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language suomi
+## codeset 106
+; Bluetooth's strings in Finnish.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Ohjain
+MSG_ON
+_Päällä
+MSG_NAME
+_Nimi
+MSG_VISIBLE
+Näky_vissä muille
+MSG_DEVICES
+Laitteet
+MSG_SEARCH
+_Hae
+MSG_PAIR
+_Muodosta pari
+MSG_CONNECT
+_Yhdistä
+MSG_DISCONNECT
+_Katkaise yhteys
+MSG_FORGET
+_Unohda...
+MSG_COLUMN_NAME
+Nimi
+MSG_COLUMN_KIND
+Tyyppi
+MSG_COLUMN_SIGNAL
+Signaali
+MSG_COLUMN_STATE
+Tila
+MSG_COLUMN_ADDRESS
+Osoite
+MSG_CONTROLLER_LABEL
+%u: %s - %s, yksikkö %u
+MSG_NO_CONTROLLER_LABEL
+Ei ohjainta
+MSG_NO_CONTROLLER
+Ei Bluetooth-ohjainta: ohjain näkyy tässä heti, kun sen laite tarjoaa sen
+MSG_STARTING
+Ohjainta otetaan käyttöön...
+MSG_FAILED
+Ohjain ei toimi: %s
+MSG_OFF
+Pois päältä - valitse ”Päällä”, niin voit käyttää ohjainta
+MSG_HIDDEN
+Päällä - hakevat laitteet eivät löydä tätä tietokonetta
+MSG_SHOWN
+Päällä - hakevat laitteet löytävät tämän tietokoneen
+MSG_SHOWN_FOR
+Päällä - hakevat laitteet löytävät tämän tietokoneen vielä %u sekunnin ajan
+MSG_SEARCHING
+Haetaan laitteita...
+MSG_FOUND
+Haku löysi %u laitetta
+MSG_FOUND_ONE
+Haku löysi yhden laitteen
+MSG_FOUND_NONE
+Haku ei löytänyt laitteita
+MSG_NOT_SET
+Ei muutettu: %s
+MSG_NOT_SEARCHING
+Ei hakua: %s
+MSG_PAIRING
+Muodostetaan pari laitteen %s kanssa...
+MSG_PAIRED
+Pari muodostettu laitteen %s kanssa
+MSG_NOT_PAIRED
+Paria ei muodostettu laitteen %s kanssa: %s
+MSG_CONNECTING
+Yhdistetään laitteeseen %s...
+MSG_CONNECTED
+Yhdistetty laitteeseen %s
+MSG_NOT_CONNECTED
+Ei yhdistetty laitteeseen %s: %s
+MSG_DISCONNECTING
+Katkaistaan yhteys laitteeseen %s...
+MSG_DISCONNECTED
+Yhteys laitteeseen %s katkaistu
+MSG_NOT_DISCONNECTED
+Yhteyttä laitteeseen %s ei katkaistu: %s
+MSG_FORGETTING
+Unohdetaan laite %s...
+MSG_FORGOTTEN
+Laite %s unohdettu
+MSG_NOT_FORGOTTEN
+Laitetta %s ei unohdettu: %s
+MSG_WHY_NOMEM
+muisti ei riitä
+MSG_WHY_OPENFAIL
+sen laitetta ei voitu avata
+MSG_WHY_TIMEOUT
+vastausta ei tullut ajoissa
+MSG_WHY_DETACHED
+ohjain on poistunut
+MSG_WHY_PROTOCOL
+sen laitteessa tapahtui virhe
+MSG_WHY_NOCONTROLLER
+tällaista ohjainta ei ole
+MSG_WHY_NOTUP
+ohjain ei ole valmis
+MSG_WHY_OFF
+ohjain on pois päältä
+MSG_WHY_UNSUPPORTED
+ohjain ei osaa sitä
+MSG_WHY_BUSY
+ohjain on varattu muuhun
+MSG_WHY_UNKNOWN_COMMAND
+se ei tunne tarvittavaa komentoa
+MSG_WHY_HARDWARE
+laitteistovika
+MSG_WHY_REFUSED
+ohjain kieltäytyi
+MSG_WHY_NO_ROOM
+ohjaimessa ei ole tilaa useammalle tai muisti ei riitä
+MSG_WHY_BONDED
+tämä tietokone on jo muodostanut parin sen kanssa
+MSG_WHY_NOT_BONDED
+tämä tietokone ei ole muodostanut paria sen kanssa
+MSG_WHY_NOT_LINKED
+siihen ei ole yhteyttä
+MSG_WHY_ANSWER_REFUSED
+hylätty tai ei vastattu ajoissa
+MSG_WHY_NO_ANSWER
+laite ei vastannut
+MSG_WHY_LOST
+yhteys katkesi
+MSG_WHY_DEVICE_ENDED
+laite katkaisi yhteyden
+MSG_WHY_ENDED_HERE
+yhteys katkaistiin täältä
+MSG_WHY_DEVICE_REFUSED
+laite kieltäytyi
+MSG_WHY_NUMBERS
+laite kieltäytyi tai numerot eivät täsmänneet
+MSG_WHY_KEY_MISSING
+ei PIN-koodia tai laitteella ei ole enää avainta: unohda se ja muodosta pari uudelleen
+MSG_WHY_NOT_PAIRING
+laite ei muodosta paria nyt
+MSG_WHY_REPEATED
+laite haluaa tauon ennen seuraavaa yritystä
+MSG_WHY_SHORT_KEY
+avain on liian lyhyt
+MSG_NO_NAME
+(ei nimeä)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+erinomainen
+MSG_SIGNAL_GOOD
+hyvä
+MSG_SIGNAL_FAIR
+kohtalainen
+MSG_SIGNAL_WEAK
+heikko
+MSG_STATE_PAIRED
+pariliitetty
+MSG_STATE_CONNECTED
+yhdistetty
+MSG_STATE_ENCRYPTED
+salattu
+MSG_STATE_PAIRING
+pariliitetään
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, satunnainen)
+MSG_KIND_COMPUTER
+tietokone
+MSG_KIND_LAPTOP
+kannettava tietokone
+MSG_KIND_HANDHELD
+kämmentietokone
+MSG_KIND_PHONE
+puhelin
+MSG_KIND_ACCESS_POINT
+verkon tukiasema
+MSG_KIND_HEADSET
+kuulokemikrofoni
+MSG_KIND_HANDS_FREE
+handsfree-laite
+MSG_KIND_MICROPHONE
+mikrofoni
+MSG_KIND_LOUDSPEAKER
+kaiutin
+MSG_KIND_HEADPHONES
+kuulokkeet
+MSG_KIND_PORTABLE_AUDIO
+kannettava äänilaite
+MSG_KIND_CAR_AUDIO
+autostereot
+MSG_KIND_HIFI
+hifi-laitteisto
+MSG_KIND_DISPLAY
+näyttö
+MSG_KIND_GAME_CONSOLE
+pelikonsoli
+MSG_KIND_AUDIO_VIDEO
+ääni ja video
+MSG_KIND_KEYBOARD
+näppäimistö
+MSG_KIND_MOUSE
+hiiri
+MSG_KIND_KEYBOARD_MOUSE
+näppäimistö ja hiiri
+MSG_KIND_JOYSTICK
+ohjainsauva
+MSG_KIND_GAMEPAD
+peliohjain
+MSG_KIND_REMOTE
+kaukosäädin
+MSG_KIND_TABLET
+piirtopöytä
+MSG_KIND_PERIPHERAL
+syöttölaite
+MSG_KIND_IMAGING
+tulostin tai kamera
+MSG_KIND_WEARABLE
+puettava laite
+MSG_KIND_TOY
+lelu
+MSG_KIND_HEALTH
+terveyslaite
+MSG_KIND_EARBUDS
+nappikuulokkeet
+MSG_KIND_WATCH
+rannekello
+MSG_KIND_CLOCK
+kello
+MSG_KIND_TAG
+tunniste
+MSG_KIND_KEYRING
+avaimenperä
+MSG_KIND_MEDIA_PLAYER
+mediasoitin
+MSG_KIND_THERMOMETER
+lämpömittari
+MSG_KIND_HEART_RATE
+sykeanturi
+MSG_KIND_SENSOR
+anturi
+MSG_KIND_LIGHT
+valaisin
+MSG_KIND_AUDIO_SOURCE
+äänilähde
+MSG_KIND_HEARING_AID
+kuulokoje
+MSG_PAIRING_TITLE
+Pariliitos
+MSG_ASK_COMPARE
+Näyttääkö laite %s tämän numeron?
+MSG_ASK_CONSENT
+Laite %s pyytää muodostamaan parin tämän tietokoneen kanssa.
+MSG_ASK_PASSKEY
+Kirjoita numero, jonka laite %s näyttää:
+MSG_ASK_SHOW
+Kirjoita tämä numero laitteella %s ja paina sitten Enter:
+MSG_ASK_PIN
+Kirjoita laitteen %s PIN-koodi - useimmissa näppäimettömissä laitteissa 0000:
+MSG_YES
+_Kyllä
+MSG_NO
+_Ei
+MSG_CANCEL
+_Peruuta
+MSG_FORGET_ASK
+Unohdetaanko laite %s?\nYhteinen avain poistetaan: jotta niitä voi\nkäyttää taas, niistä muodostetaan uusi pari.
+MSG_FORGET_BUTTONS
+Unohda|Peruuta
+MSG_NO_LIBRARY
+%s: kirjastoa %s ei voi avata\n
+MSG_NO_MEMORY
+%s: muisti ei riitä\n
+MSG_NO_WINDOW
+%s: ikkunaa ei voitu avata\n

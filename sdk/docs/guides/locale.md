@@ -344,11 +344,13 @@ order, so a translation of one keeps them so. Another process of the
 program's may be handed the strings and read them while the program
 keeps them open.
 
-Notepad, Sheet, Paint, the Player and Movie have their texts in catalogs,
-German on the disk (`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`),
-and so have the Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`),
-the Emoji commodity, the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`),
-http.library and, on the 64-bit machines' disks, the Installer
+Notepad, Sheet, Paint, the Player, Movie and Weather have their texts in
+catalogs, German on the disk
+(`LOCALE:Catalogs/deutsch/programs/<Program>.catalog`), and so have the
+Clock (`LOCALE:Catalogs/deutsch/System/Clock.catalog`), the Emoji
+commodity, the desktop (`LOCALE:Catalogs/deutsch/sys/anvil.catalog`),
+http.library and, on the 64-bit machines' disks, Bluetooth's window
+(`LOCALE:Catalogs/deutsch/System/Bluetooth.catalog`) and the Installer
 (`LOCALE:Catalogs/<language>/Installer.catalog`); their descriptors and
 translations are beside their sources. The same catalogs are there in every other language of
 `LOCALE:Languages` but zhongwen-fanti: the languages of Europe on every

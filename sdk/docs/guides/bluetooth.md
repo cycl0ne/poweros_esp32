@@ -137,9 +137,12 @@ list as `BTCS_OPENING`; the device then offers it with `AddBTController`,
 and the library opens it and brings it up. A controller its device could
 not set up is offered all the same, its open answering `IOERR_OPENFAIL`:
 it stays on the list as `BTCS_FAILED`, with `BTERR_OPENFAIL`, and the log
-says what of the setup failed. Nothing opens the library at the start, so
-a board's controller comes up with the first program that does -
-`C:Bluetooth`, for one.
+says what of the setup failed. The boot opens the library:
+`S:Startup-Sequence` runs `C:Bluetooth` in a shell of its own on a disk
+with Bluetooth, so that a board's controller comes up with the machine -
+and a bonded keyboard or mouse comes back by itself - the library's task
+holding the library open from then on. Without that line it comes up
+with the first program that opens the library.
 
 ## Bringing a controller up
 

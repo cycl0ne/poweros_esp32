@@ -1,0 +1,279 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language nihongo
+## codeset 106
+; Bluetooth's strings in Japanese. A draft: it waits for a reader of
+; Japanese to go through it.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+コントローラー(_C)
+MSG_ON
+オン(_O)
+MSG_NAME
+名前(_N)
+MSG_VISIBLE
+検出可能(_V)
+MSG_DEVICES
+デバイス
+MSG_SEARCH
+検索(_S)
+MSG_PAIR
+ペアリング(_P)
+MSG_CONNECT
+接続(_E)
+MSG_DISCONNECT
+切断(_D)
+MSG_FORGET
+登録解除(_F)...
+MSG_COLUMN_NAME
+名前
+MSG_COLUMN_KIND
+種類
+MSG_COLUMN_SIGNAL
+信号
+MSG_COLUMN_STATE
+状態
+MSG_COLUMN_ADDRESS
+アドレス
+MSG_CONTROLLER_LABEL
+%u: %s - %s ユニット %u
+MSG_NO_CONTROLLER_LABEL
+コントローラーなし
+MSG_NO_CONTROLLER
+Bluetooth コントローラーがありません: デバイスが提供するとすぐにここに表示されます
+MSG_STARTING
+コントローラーを準備しています...
+MSG_FAILED
+コントローラーに障害が発生しました: %s
+MSG_OFF
+オフ - コントローラーを使うには「オン」をチェックしてください
+MSG_HIDDEN
+オン - 検索するデバイスはこのマシンを見つけられません
+MSG_SHOWN
+オン - 検索するデバイスはこのマシンを見つけられます
+MSG_SHOWN_FOR
+オン - 検索するデバイスはあと %u 秒間このマシンを見つけられます
+MSG_SEARCHING
+デバイスを検索中...
+MSG_FOUND
+検索で %u 台のデバイスが見つかりました
+MSG_FOUND_ONE
+検索で 1 台のデバイスが見つかりました
+MSG_FOUND_NONE
+検索でデバイスは見つかりませんでした
+MSG_NOT_SET
+変更されませんでした: %s
+MSG_NOT_SEARCHING
+検索できません: %s
+MSG_PAIRING
+%s とペアリング中...
+MSG_PAIRED
+%s とペアリングしました
+MSG_NOT_PAIRED
+%s とペアリングできませんでした: %s
+MSG_CONNECTING
+%s に接続中...
+MSG_CONNECTED
+%s に接続しました
+MSG_NOT_CONNECTED
+%s に接続できませんでした: %s
+MSG_DISCONNECTING
+%s を切断中...
+MSG_DISCONNECTED
+%s を切断しました
+MSG_NOT_DISCONNECTED
+%s を切断できませんでした: %s
+MSG_FORGETTING
+%s の登録を解除中...
+MSG_FORGOTTEN
+%s の登録を解除しました
+MSG_NOT_FORGOTTEN
+%s の登録を解除できませんでした: %s
+MSG_WHY_NOMEM
+メモリが足りません
+MSG_WHY_OPENFAIL
+そのデバイスを開けませんでした
+MSG_WHY_TIMEOUT
+時間内に応答がありませんでした
+MSG_WHY_DETACHED
+コントローラーがなくなりました
+MSG_WHY_PROTOCOL
+そのデバイスで障害が発生しました
+MSG_WHY_NOCONTROLLER
+そのようなコントローラーはありません
+MSG_WHY_NOTUP
+コントローラーの準備ができていません
+MSG_WHY_OFF
+コントローラーがオフです
+MSG_WHY_UNSUPPORTED
+コントローラーはそれに対応していません
+MSG_WHY_BUSY
+コントローラーは別の処理中です
+MSG_WHY_UNKNOWN_COMMAND
+必要なコマンドを受け付けません
+MSG_WHY_HARDWARE
+ハードウェアの障害
+MSG_WHY_REFUSED
+コントローラーが拒否しました
+MSG_WHY_NO_ROOM
+コントローラーにこれ以上の空きがないか、メモリが足りません
+MSG_WHY_BONDED
+このマシンとは既にペアリングされています
+MSG_WHY_NOT_BONDED
+このマシンとはペアリングされていません
+MSG_WHY_NOT_LINKED
+接続されていません
+MSG_WHY_ANSWER_REFUSED
+拒否されたか、時間内に応答がありませんでした
+MSG_WHY_NO_ANSWER
+デバイスが応答しませんでした
+MSG_WHY_LOST
+接続が失われました
+MSG_WHY_DEVICE_ENDED
+デバイスが接続を終了しました
+MSG_WHY_ENDED_HERE
+こちらから接続を終了しました
+MSG_WHY_DEVICE_REFUSED
+デバイスが拒否しました
+MSG_WHY_NUMBERS
+デバイスが拒否したか、番号が一致しませんでした
+MSG_WHY_KEY_MISSING
+PIN がないか、デバイスにキーがありません: 登録を解除してペアリングし直してください
+MSG_WHY_NOT_PAIRING
+デバイスは現在ペアリングを受け付けていません
+MSG_WHY_REPEATED
+デバイスは次の試行まで間を置くよう求めています
+MSG_WHY_SHORT_KEY
+キーが短すぎます
+MSG_NO_NAME
+(名前なし)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+非常に良好
+MSG_SIGNAL_GOOD
+良好
+MSG_SIGNAL_FAIR
+普通
+MSG_SIGNAL_WEAK
+弱い
+MSG_STATE_PAIRED
+ペアリング済み
+MSG_STATE_CONNECTED
+接続済み
+MSG_STATE_ENCRYPTED
+暗号化済み
+MSG_STATE_PAIRING
+ペアリング中
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, ランダム)
+MSG_KIND_COMPUTER
+コンピューター
+MSG_KIND_LAPTOP
+ノートパソコン
+MSG_KIND_HANDHELD
+ハンドヘルド
+MSG_KIND_PHONE
+電話
+MSG_KIND_ACCESS_POINT
+ネットワークアクセスポイント
+MSG_KIND_HEADSET
+ヘッドセット
+MSG_KIND_HANDS_FREE
+ハンズフリー
+MSG_KIND_MICROPHONE
+マイク
+MSG_KIND_LOUDSPEAKER
+スピーカー
+MSG_KIND_HEADPHONES
+ヘッドホン
+MSG_KIND_PORTABLE_AUDIO
+ポータブルオーディオ
+MSG_KIND_CAR_AUDIO
+カーオーディオ
+MSG_KIND_HIFI
+ハイファイ
+MSG_KIND_DISPLAY
+ディスプレイ
+MSG_KIND_GAME_CONSOLE
+ゲーム機
+MSG_KIND_AUDIO_VIDEO
+オーディオとビデオ
+MSG_KIND_KEYBOARD
+キーボード
+MSG_KIND_MOUSE
+マウス
+MSG_KIND_KEYBOARD_MOUSE
+キーボードとマウス
+MSG_KIND_JOYSTICK
+ジョイスティック
+MSG_KIND_GAMEPAD
+ゲームパッド
+MSG_KIND_REMOTE
+リモコン
+MSG_KIND_TABLET
+ペンタブレット
+MSG_KIND_PERIPHERAL
+入力デバイス
+MSG_KIND_IMAGING
+プリンターまたはカメラ
+MSG_KIND_WEARABLE
+ウェアラブル
+MSG_KIND_TOY
+おもちゃ
+MSG_KIND_HEALTH
+ヘルスケア機器
+MSG_KIND_EARBUDS
+イヤホン
+MSG_KIND_WATCH
+腕時計
+MSG_KIND_CLOCK
+時計
+MSG_KIND_TAG
+タグ
+MSG_KIND_KEYRING
+キーホルダー
+MSG_KIND_MEDIA_PLAYER
+メディアプレーヤー
+MSG_KIND_THERMOMETER
+温度計
+MSG_KIND_HEART_RATE
+心拍センサー
+MSG_KIND_SENSOR
+センサー
+MSG_KIND_LIGHT
+照明
+MSG_KIND_AUDIO_SOURCE
+オーディオソース
+MSG_KIND_HEARING_AID
+補聴器
+MSG_PAIRING_TITLE
+ペアリング
+MSG_ASK_COMPARE
+%s にこの番号が表示されていますか？
+MSG_ASK_CONSENT
+%s がこのマシンとのペアリングを求めています。
+MSG_ASK_PASSKEY
+%s に表示されている番号を入力してください:
+MSG_ASK_SHOW
+%s でこの番号を入力し、Enter キーを押してください:
+MSG_ASK_PIN
+%s の PIN を入力してください - 数字キーのないデバイスの多くは 0000 です:
+MSG_YES
+はい(_Y)
+MSG_NO
+いいえ(_N)
+MSG_CANCEL
+キャンセル(_C)
+MSG_FORGET_ASK
+%s の登録を解除しますか？\n両者が共有するキーは削除されます。\n再び使うには、もう一度ペアリングします。
+MSG_FORGET_BUTTONS
+登録解除|キャンセル
+MSG_NO_LIBRARY
+%s: %s を開けません\n
+MSG_NO_MEMORY
+%s: メモリが足りません\n
+MSG_NO_WINDOW
+%s: ウィンドウを開けません\n

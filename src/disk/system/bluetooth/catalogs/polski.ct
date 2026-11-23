@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language polski
+## codeset 106
+; Bluetooth's strings in Polish.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Kontroler
+MSG_ON
+_Włączony
+MSG_NAME
+_Nazwa
+MSG_VISIBLE
+Wi_doczny dla innych
+MSG_DEVICES
+Urządzenia
+MSG_SEARCH
+_Szukaj
+MSG_PAIR
+_Paruj
+MSG_CONNECT
+P_ołącz
+MSG_DISCONNECT
+_Rozłącz
+MSG_FORGET
+_Zapomnij...
+MSG_COLUMN_NAME
+Nazwa
+MSG_COLUMN_KIND
+Typ
+MSG_COLUMN_SIGNAL
+Sygnał
+MSG_COLUMN_STATE
+Stan
+MSG_COLUMN_ADDRESS
+Adres
+MSG_CONTROLLER_LABEL
+%u: %s - %s, jednostka %u
+MSG_NO_CONTROLLER_LABEL
+Brak kontrolera
+MSG_NO_CONTROLLER
+Brak kontrolera Bluetooth: pojawi się tutaj, gdy tylko jego urządzenie go udostępni
+MSG_STARTING
+Trwa przygotowywanie kontrolera...
+MSG_FAILED
+Błąd kontrolera: %s
+MSG_OFF
+Wyłączony - zaznacz Włączony, aby używać kontrolera
+MSG_HIDDEN
+Włączony - wyszukujące urządzenia nie znajdują tego komputera
+MSG_SHOWN
+Włączony - wyszukujące urządzenia znajdują ten komputer
+MSG_SHOWN_FOR
+Włączony - wyszukujące urządzenia znajdują ten komputer jeszcze przez %u s
+MSG_SEARCHING
+Wyszukiwanie urządzeń...
+MSG_FOUND
+Znalezione urządzenia: %u
+MSG_FOUND_ONE
+Znaleziono jedno urządzenie
+MSG_FOUND_NONE
+Nie znaleziono żadnych urządzeń
+MSG_NOT_SET
+Nie zmieniono: %s
+MSG_NOT_SEARCHING
+Nie rozpoczęto wyszukiwania: %s
+MSG_PAIRING
+Parowanie z urządzeniem %s...
+MSG_PAIRED
+Sparowano z urządzeniem %s
+MSG_NOT_PAIRED
+Nie sparowano z urządzeniem %s: %s
+MSG_CONNECTING
+Łączenie z urządzeniem %s...
+MSG_CONNECTED
+Połączono z urządzeniem %s
+MSG_NOT_CONNECTED
+Nie połączono z urządzeniem %s: %s
+MSG_DISCONNECTING
+Rozłączanie urządzenia %s...
+MSG_DISCONNECTED
+Rozłączono urządzenie %s
+MSG_NOT_DISCONNECTED
+Nie rozłączono urządzenia %s: %s
+MSG_FORGETTING
+Zapominanie urządzenia %s...
+MSG_FORGOTTEN
+Zapomniano urządzenie %s
+MSG_NOT_FORGOTTEN
+Nie zapomniano urządzenia %s: %s
+MSG_WHY_NOMEM
+za mało pamięci
+MSG_WHY_OPENFAIL
+nie udało się otworzyć jego urządzenia
+MSG_WHY_TIMEOUT
+brak odpowiedzi na czas
+MSG_WHY_DETACHED
+kontroler zniknął
+MSG_WHY_PROTOCOL
+jego urządzenie zawiodło
+MSG_WHY_NOCONTROLLER
+nie ma takiego kontrolera
+MSG_WHY_NOTUP
+kontroler nie jest uruchomiony
+MSG_WHY_OFF
+kontroler jest wyłączony
+MSG_WHY_UNSUPPORTED
+kontroler tego nie potrafi
+MSG_WHY_BUSY
+kontroler jest zajęty czymś innym
+MSG_WHY_UNKNOWN_COMMAND
+nie przyjmuje potrzebnego polecenia
+MSG_WHY_HARDWARE
+awaria sprzętu
+MSG_WHY_REFUSED
+kontroler odmówił
+MSG_WHY_NO_ROOM
+kontroler nie ma miejsca na kolejne urządzenie lub brakuje pamięci
+MSG_WHY_BONDED
+ten komputer jest już z nim sparowany
+MSG_WHY_NOT_BONDED
+ten komputer nie jest z nim sparowany
+MSG_WHY_NOT_LINKED
+nie ma z nim połączenia
+MSG_WHY_ANSWER_REFUSED
+odrzucono lub brak odpowiedzi na czas
+MSG_WHY_NO_ANSWER
+urządzenie nie odpowiedziało
+MSG_WHY_LOST
+połączenie zostało utracone
+MSG_WHY_DEVICE_ENDED
+urządzenie zakończyło połączenie
+MSG_WHY_ENDED_HERE
+połączenie zakończono po tej stronie
+MSG_WHY_DEVICE_REFUSED
+urządzenie odmówiło
+MSG_WHY_NUMBERS
+urządzenie odmówiło lub liczby się nie zgadzały
+MSG_WHY_KEY_MISSING
+brak kodu PIN lub urządzenie nie ma już klucza: zapomnij je i sparuj ponownie
+MSG_WHY_NOT_PAIRING
+urządzenie nie przyjmuje teraz parowania
+MSG_WHY_REPEATED
+urządzenie wymaga przerwy przed kolejną próbą
+MSG_WHY_SHORT_KEY
+klucz jest za krótki
+MSG_NO_NAME
+(bez nazwy)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+doskonały
+MSG_SIGNAL_GOOD
+dobry
+MSG_SIGNAL_FAIR
+średni
+MSG_SIGNAL_WEAK
+słaby
+MSG_STATE_PAIRED
+sparowane
+MSG_STATE_CONNECTED
+połączone
+MSG_STATE_ENCRYPTED
+szyfrowane
+MSG_STATE_PAIRING
+parowanie
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, losowy)
+MSG_KIND_COMPUTER
+komputer
+MSG_KIND_LAPTOP
+laptop
+MSG_KIND_HANDHELD
+palmtop
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+punkt dostępu do sieci
+MSG_KIND_HEADSET
+zestaw słuchawkowy
+MSG_KIND_HANDS_FREE
+zestaw głośnomówiący
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+głośnik
+MSG_KIND_HEADPHONES
+słuchawki
+MSG_KIND_PORTABLE_AUDIO
+przenośny sprzęt audio
+MSG_KIND_CAR_AUDIO
+radio samochodowe
+MSG_KIND_HIFI
+sprzęt hi-fi
+MSG_KIND_DISPLAY
+wyświetlacz
+MSG_KIND_GAME_CONSOLE
+konsola do gier
+MSG_KIND_AUDIO_VIDEO
+audio i wideo
+MSG_KIND_KEYBOARD
+klawiatura
+MSG_KIND_MOUSE
+mysz
+MSG_KIND_KEYBOARD_MOUSE
+klawiatura i mysz
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+gamepad
+MSG_KIND_REMOTE
+pilot
+MSG_KIND_TABLET
+tablet graficzny
+MSG_KIND_PERIPHERAL
+urządzenie wejściowe
+MSG_KIND_IMAGING
+drukarka lub aparat
+MSG_KIND_WEARABLE
+urządzenie ubieralne
+MSG_KIND_TOY
+zabawka
+MSG_KIND_HEALTH
+urządzenie medyczne
+MSG_KIND_EARBUDS
+słuchawki douszne
+MSG_KIND_WATCH
+zegarek
+MSG_KIND_CLOCK
+zegar
+MSG_KIND_TAG
+znacznik
+MSG_KIND_KEYRING
+brelok
+MSG_KIND_MEDIA_PLAYER
+odtwarzacz multimediów
+MSG_KIND_THERMOMETER
+termometr
+MSG_KIND_HEART_RATE
+czujnik tętna
+MSG_KIND_SENSOR
+czujnik
+MSG_KIND_LIGHT
+oświetlenie
+MSG_KIND_AUDIO_SOURCE
+źródło dźwięku
+MSG_KIND_HEARING_AID
+aparat słuchowy
+MSG_PAIRING_TITLE
+Parowanie
+MSG_ASK_COMPARE
+Czy urządzenie %s wyświetla tę liczbę?
+MSG_ASK_CONSENT
+Urządzenie %s prosi o sparowanie z tym komputerem.
+MSG_ASK_PASSKEY
+Wpisz liczbę wyświetlaną na urządzeniu %s:
+MSG_ASK_SHOW
+Wpisz tę liczbę na urządzeniu %s, a potem naciśnij na nim Enter:
+MSG_ASK_PIN
+Wpisz kod PIN urządzenia %s - 0000 dla większości urządzeń bez klawiatury:
+MSG_YES
+_Tak
+MSG_NO
+_Nie
+MSG_CANCEL
+_Anuluj
+MSG_FORGET_ASK
+Zapomnieć urządzenie %s?\nWspólny klucz obu urządzeń zostanie usunięty:\naby znów ich używać, trzeba je ponownie sparować.
+MSG_FORGET_BUTTONS
+Zapomnij|Anuluj
+MSG_NO_LIBRARY
+%s: nie można otworzyć %s\n
+MSG_NO_MEMORY
+%s: za mało pamięci\n
+MSG_NO_WINDOW
+%s: nie można otworzyć okna\n

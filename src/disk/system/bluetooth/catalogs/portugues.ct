@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language portugues
+## codeset 106
+; Bluetooth's strings in Portuguese.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Controlador
+MSG_ON
+_Ativado
+MSG_NAME
+_Nome
+MSG_VISIBLE
+_Visível para outros
+MSG_DEVICES
+Dispositivos
+MSG_SEARCH
+_Procurar
+MSG_PAIR
+_Emparelhar
+MSG_CONNECT
+_Ligar
+MSG_DISCONNECT
+_Desligar
+MSG_FORGET
+E_squecer...
+MSG_COLUMN_NAME
+Nome
+MSG_COLUMN_KIND
+Tipo
+MSG_COLUMN_SIGNAL
+Sinal
+MSG_COLUMN_STATE
+Estado
+MSG_COLUMN_ADDRESS
+Endereço
+MSG_CONTROLLER_LABEL
+%u: %s - %s unidade %u
+MSG_NO_CONTROLLER_LABEL
+Nenhum controlador
+MSG_NO_CONTROLLER
+Nenhum controlador Bluetooth: aparece aqui assim que o seu dispositivo o oferecer
+MSG_STARTING
+A preparar o controlador...
+MSG_FAILED
+O controlador falhou: %s
+MSG_OFF
+Desativado - marque Ativado para usar o controlador
+MSG_HIDDEN
+Ativado - os dispositivos que procuram não o encontram
+MSG_SHOWN
+Ativado - os dispositivos que procuram encontram-no
+MSG_SHOWN_FOR
+Ativado - os dispositivos que procuram encontram-no durante mais %u segundos
+MSG_SEARCHING
+A procurar dispositivos...
+MSG_FOUND
+A pesquisa encontrou %u dispositivos
+MSG_FOUND_ONE
+A pesquisa encontrou um dispositivo
+MSG_FOUND_NONE
+A pesquisa não encontrou nenhum dispositivo
+MSG_NOT_SET
+Não alterado: %s
+MSG_NOT_SEARCHING
+Não foi possível procurar: %s
+MSG_PAIRING
+A emparelhar com %s...
+MSG_PAIRED
+Emparelhado com %s
+MSG_NOT_PAIRED
+Não emparelhado com %s: %s
+MSG_CONNECTING
+A ligar a %s...
+MSG_CONNECTED
+Ligado a %s
+MSG_NOT_CONNECTED
+Não ligado a %s: %s
+MSG_DISCONNECTING
+A desligar de %s...
+MSG_DISCONNECTED
+Desligado de %s
+MSG_NOT_DISCONNECTED
+Não desligado de %s: %s
+MSG_FORGETTING
+A esquecer %s...
+MSG_FORGOTTEN
+%s foi esquecido
+MSG_NOT_FORGOTTEN
+%s não foi esquecido: %s
+MSG_WHY_NOMEM
+memória insuficiente
+MSG_WHY_OPENFAIL
+não foi possível abrir o seu dispositivo
+MSG_WHY_TIMEOUT
+não houve resposta a tempo
+MSG_WHY_DETACHED
+o controlador desapareceu
+MSG_WHY_PROTOCOL
+o seu dispositivo falhou
+MSG_WHY_NOCONTROLLER
+esse controlador não existe
+MSG_WHY_NOTUP
+o controlador não está pronto
+MSG_WHY_OFF
+o controlador está desativado
+MSG_WHY_UNSUPPORTED
+o controlador não consegue fazer isso
+MSG_WHY_BUSY
+o controlador está ocupado com outra coisa
+MSG_WHY_UNKNOWN_COMMAND
+não aceita um comando de que precisa
+MSG_WHY_HARDWARE
+uma falha de hardware
+MSG_WHY_REFUSED
+o controlador recusou
+MSG_WHY_NO_ROOM
+o controlador não tem espaço para outro, ou memória insuficiente
+MSG_WHY_BONDED
+já está emparelhado com este computador
+MSG_WHY_NOT_BONDED
+não está emparelhado com este computador
+MSG_WHY_NOT_LINKED
+não há ligação com ele
+MSG_WHY_ANSWER_REFUSED
+recusado, ou sem resposta a tempo
+MSG_WHY_NO_ANSWER
+o dispositivo não respondeu
+MSG_WHY_LOST
+a ligação perdeu-se
+MSG_WHY_DEVICE_ENDED
+o dispositivo terminou a ligação
+MSG_WHY_ENDED_HERE
+a ligação foi terminada deste lado
+MSG_WHY_DEVICE_REFUSED
+o dispositivo recusou
+MSG_WHY_NUMBERS
+o dispositivo recusou, ou os códigos não coincidiam
+MSG_WHY_KEY_MISSING
+sem PIN, ou o dispositivo já não tem a chave: esqueça-o e emparelhe-o de novo
+MSG_WHY_NOT_PAIRING
+o dispositivo não aceita emparelhar agora
+MSG_WHY_REPEATED
+o dispositivo pede uma pausa antes da próxima tentativa
+MSG_WHY_SHORT_KEY
+a chave é demasiado curta
+MSG_NO_NAME
+(sem nome)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+excelente
+MSG_SIGNAL_GOOD
+bom
+MSG_SIGNAL_FAIR
+razoável
+MSG_SIGNAL_WEAK
+fraco
+MSG_STATE_PAIRED
+emparelhado
+MSG_STATE_CONNECTED
+ligado
+MSG_STATE_ENCRYPTED
+cifrado
+MSG_STATE_PAIRING
+a emparelhar
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, aleatório)
+MSG_KIND_COMPUTER
+computador
+MSG_KIND_LAPTOP
+portátil
+MSG_KIND_HANDHELD
+computador de bolso
+MSG_KIND_PHONE
+telefone
+MSG_KIND_ACCESS_POINT
+ponto de acesso à rede
+MSG_KIND_HEADSET
+auscultadores com microfone
+MSG_KIND_HANDS_FREE
+mãos-livres
+MSG_KIND_MICROPHONE
+microfone
+MSG_KIND_LOUDSPEAKER
+altifalante
+MSG_KIND_HEADPHONES
+auscultadores
+MSG_KIND_PORTABLE_AUDIO
+áudio portátil
+MSG_KIND_CAR_AUDIO
+autorrádio
+MSG_KIND_HIFI
+alta-fidelidade
+MSG_KIND_DISPLAY
+ecrã
+MSG_KIND_GAME_CONSOLE
+consola de jogos
+MSG_KIND_AUDIO_VIDEO
+áudio e vídeo
+MSG_KIND_KEYBOARD
+teclado
+MSG_KIND_MOUSE
+rato
+MSG_KIND_KEYBOARD_MOUSE
+teclado e rato
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+comando de jogo
+MSG_KIND_REMOTE
+comando à distância
+MSG_KIND_TABLET
+tablet
+MSG_KIND_PERIPHERAL
+dispositivo de entrada
+MSG_KIND_IMAGING
+impressora ou câmara
+MSG_KIND_WEARABLE
+dispositivo vestível
+MSG_KIND_TOY
+brinquedo
+MSG_KIND_HEALTH
+dispositivo de saúde
+MSG_KIND_EARBUDS
+auriculares
+MSG_KIND_WATCH
+relógio de pulso
+MSG_KIND_CLOCK
+relógio
+MSG_KIND_TAG
+localizador
+MSG_KIND_KEYRING
+porta-chaves
+MSG_KIND_MEDIA_PLAYER
+leitor multimédia
+MSG_KIND_THERMOMETER
+termómetro
+MSG_KIND_HEART_RATE
+sensor de ritmo cardíaco
+MSG_KIND_SENSOR
+sensor
+MSG_KIND_LIGHT
+luz
+MSG_KIND_AUDIO_SOURCE
+fonte de áudio
+MSG_KIND_HEARING_AID
+aparelho auditivo
+MSG_PAIRING_TITLE
+Emparelhamento
+MSG_ASK_COMPARE
+%s mostra este código?
+MSG_ASK_CONSENT
+%s pede para emparelhar com este computador.
+MSG_ASK_PASSKEY
+Escreva o código que %s mostra:
+MSG_ASK_SHOW
+Escreva este código em %s e prima a sua tecla Enter:
+MSG_ASK_PIN
+Escreva o PIN de %s - 0000 para a maioria dos dispositivos sem teclas:
+MSG_YES
+_Sim
+MSG_NO
+_Não
+MSG_CANCEL
+_Cancelar
+MSG_FORGET_ASK
+Esquecer %s?\nA chave partilhada pelos dois é eliminada: para\nvoltar a usá-los, é preciso emparelhá-los de novo.
+MSG_FORGET_BUTTONS
+Esquecer|Cancelar
+MSG_NO_LIBRARY
+%s: não é possível abrir %s\n
+MSG_NO_MEMORY
+%s: memória insuficiente\n
+MSG_NO_WINDOW
+%s: não é possível abrir a sua janela\n

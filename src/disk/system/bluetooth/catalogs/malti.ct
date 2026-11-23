@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language malti
+## codeset 106
+; Bluetooth's strings in Maltese.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Kontrollur
+MSG_ON
+_Mixgħul
+MSG_NAME
+_Isem
+MSG_VISIBLE
+_Viżibbli għall-oħrajn
+MSG_DEVICES
+Apparati
+MSG_SEARCH
+_Fittex
+MSG_PAIR
+_Qabbad
+MSG_CONNECT
+Ikk_onnettja
+MSG_DISCONNECT
+_Skonnettja
+MSG_FORGET
+I_nsa...
+MSG_COLUMN_NAME
+Isem
+MSG_COLUMN_KIND
+Tip
+MSG_COLUMN_SIGNAL
+Sinjal
+MSG_COLUMN_STATE
+Stat
+MSG_COLUMN_ADDRESS
+Indirizz
+MSG_CONTROLLER_LABEL
+%u: %s - %s unità %u
+MSG_NO_CONTROLLER_LABEL
+L-ebda kontrollur
+MSG_NO_CONTROLLER
+L-ebda kontrollur Bluetooth: jidher hawn malli l-apparat tiegħu joffrih
+MSG_STARTING
+Il-kontrollur qed jiġi ppreparat...
+MSG_FAILED
+Il-kontrollur falla: %s
+MSG_OFF
+Mitfi - agħżel Mixgħul biex tuża l-kontrollur
+MSG_HIDDEN
+Mixgħul - l-apparati li jfittxu ma jsibuhx
+MSG_SHOWN
+Mixgħul - l-apparati li jfittxu jsibuh
+MSG_SHOWN_FOR
+Mixgħul - l-apparati li jfittxu jsibuh; sekondi li fadal: %u
+MSG_SEARCHING
+Qed ifittex apparati...
+MSG_FOUND
+Apparati li sabet it-tfittxija: %u
+MSG_FOUND_ONE
+It-tfittxija sabet apparat wieħed
+MSG_FOUND_NONE
+It-tfittxija ma sabet l-ebda apparat
+MSG_NOT_SET
+Ma nbidilx: %s
+MSG_NOT_SEARCHING
+Ma setax ifittex: %s
+MSG_PAIRING
+Qed jitqabbad ma' %s...
+MSG_PAIRED
+Imqabbad ma' %s
+MSG_NOT_PAIRED
+Mhux imqabbad ma' %s: %s
+MSG_CONNECTING
+Qed jikkonnettja ma' %s...
+MSG_CONNECTED
+Konness ma' %s
+MSG_NOT_CONNECTED
+Mhux konness ma' %s: %s
+MSG_DISCONNECTING
+Qed jiskonnettja minn %s...
+MSG_DISCONNECTED
+Skonness minn %s
+MSG_NOT_DISCONNECTED
+Mhux skonness minn %s: %s
+MSG_FORGETTING
+Qed jinsa %s...
+MSG_FORGOTTEN
+%s intesa
+MSG_NOT_FORGOTTEN
+%s ma ntesiex: %s
+MSG_WHY_NOMEM
+m'hemmx biżżejjed memorja
+MSG_WHY_OPENFAIL
+l-apparat tiegħu ma setax jinfetaħ
+MSG_WHY_TIMEOUT
+ma ġietx tweġiba fil-ħin
+MSG_WHY_DETACHED
+il-kontrollur m'għadux hemm
+MSG_WHY_PROTOCOL
+l-apparat tiegħu falla
+MSG_WHY_NOCONTROLLER
+m'hemmx kontrollur bħal dan
+MSG_WHY_NOTUP
+il-kontrollur mhux lest
+MSG_WHY_OFF
+il-kontrollur mitfi
+MSG_WHY_UNSUPPORTED
+il-kontrollur ma jistax jagħmel dan
+MSG_WHY_BUSY
+il-kontrollur okkupat b'xi ħaġa oħra
+MSG_WHY_UNKNOWN_COMMAND
+ma jaċċettax kmand li għandu bżonn
+MSG_WHY_HARDWARE
+ħsara fil-hardware
+MSG_WHY_REFUSED
+il-kontrollur irrifjuta
+MSG_WHY_NO_ROOM
+il-kontrollur m'għandux post għal ieħor, jew m'hemmx biżżejjed memorja
+MSG_WHY_BONDED
+dan il-kompjuter diġà mqabbad miegħu
+MSG_WHY_NOT_BONDED
+dan il-kompjuter mhux imqabbad miegħu
+MSG_WHY_NOT_LINKED
+mhuwiex konness
+MSG_WHY_ANSWER_REFUSED
+irrifjutat, jew ma ġietx tweġiba fil-ħin
+MSG_WHY_NO_ANSWER
+l-apparat ma weġibx
+MSG_WHY_LOST
+il-konnessjoni ntilfet
+MSG_WHY_DEVICE_ENDED
+l-apparat temm il-konnessjoni
+MSG_WHY_ENDED_HERE
+il-konnessjoni ntemmet minn hawn
+MSG_WHY_DEVICE_REFUSED
+l-apparat irrifjuta
+MSG_WHY_NUMBERS
+l-apparat irrifjuta, jew in-numri ma qablux
+MSG_WHY_KEY_MISSING
+l-ebda PIN, jew l-apparat m'għadx għandu ċ-ċavetta: insieh u erġa' qabbdu
+MSG_WHY_NOT_PAIRING
+l-apparat ma jitqabbadx issa
+MSG_WHY_REPEATED
+l-apparat irid pawża qabel il-prova li jmiss
+MSG_WHY_SHORT_KEY
+iċ-ċavetta qasira wisq
+MSG_NO_NAME
+(bla isem)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+eċċellenti
+MSG_SIGNAL_GOOD
+tajjeb
+MSG_SIGNAL_FAIR
+medju
+MSG_SIGNAL_WEAK
+dgħajjef
+MSG_STATE_PAIRED
+imqabbad
+MSG_STATE_CONNECTED
+konness
+MSG_STATE_ENCRYPTED
+ikkriptjat
+MSG_STATE_PAIRING
+qed jitqabbad
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, każwali)
+MSG_KIND_COMPUTER
+kompjuter
+MSG_KIND_LAPTOP
+laptop
+MSG_KIND_HANDHELD
+kompjuter tal-but
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+punt ta' aċċess għan-netwerk
+MSG_KIND_HEADSET
+kuffji b'mikrofonu
+MSG_KIND_HANDS_FREE
+bla idejn
+MSG_KIND_MICROPHONE
+mikrofonu
+MSG_KIND_LOUDSPEAKER
+lawdspiker
+MSG_KIND_HEADPHONES
+kuffji
+MSG_KIND_PORTABLE_AUDIO
+awdjo portabbli
+MSG_KIND_CAR_AUDIO
+awdjo tal-karozza
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+skrin
+MSG_KIND_GAME_CONSOLE
+konsla tal-logħob
+MSG_KIND_AUDIO_VIDEO
+awdjo u vidjo
+MSG_KIND_KEYBOARD
+tastiera
+MSG_KIND_MOUSE
+maws
+MSG_KIND_KEYBOARD_MOUSE
+tastiera u maws
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+gamepad
+MSG_KIND_REMOTE
+kontroll mill-bogħod
+MSG_KIND_TABLET
+tablet
+MSG_KIND_PERIPHERAL
+apparat tal-input
+MSG_KIND_IMAGING
+printer jew kamera
+MSG_KIND_WEARABLE
+apparat li jintlibes
+MSG_KIND_TOY
+ġugarell
+MSG_KIND_HEALTH
+apparat tas-saħħa
+MSG_KIND_EARBUDS
+kuffji tal-widna
+MSG_KIND_WATCH
+arloġġ tal-id
+MSG_KIND_CLOCK
+arloġġ
+MSG_KIND_TAG
+tikketta
+MSG_KIND_KEYRING
+ċurkett taċ-ċwievet
+MSG_KIND_MEDIA_PLAYER
+plejer tal-midja
+MSG_KIND_THERMOMETER
+termometru
+MSG_KIND_HEART_RATE
+sensur tar-rata tal-qalb
+MSG_KIND_SENSOR
+sensur
+MSG_KIND_LIGHT
+dawl
+MSG_KIND_AUDIO_SOURCE
+sors tal-awdjo
+MSG_KIND_HEARING_AID
+apparat tas-smigħ
+MSG_PAIRING_TITLE
+Tqabbid
+MSG_ASK_COMPARE
+%s qed juri dan in-numru?
+MSG_ASK_CONSENT
+%s qed jitlob li jitqabbad ma' dan il-kompjuter.
+MSG_ASK_PASSKEY
+Ikteb in-numru li qed juri %s:
+MSG_ASK_SHOW
+Ikteb dan in-numru fuq %s, imbagħad agħfas l-Enter tiegħu:
+MSG_ASK_PIN
+Ikteb il-PIN ta' %s - 0000 għall-biċċa l-kbira tal-apparati bla tasti:
+MSG_YES
+_Iva
+MSG_NO
+_Le
+MSG_CANCEL
+_Ikkanċella
+MSG_FORGET_ASK
+Tinsa %s?\nIċ-ċavetta li jaqsmu t-tnejn titħassar: biex\njerġgħu jintużaw, iridu jerġgħu jitqabbdu.
+MSG_FORGET_BUTTONS
+Insa|Ikkanċella
+MSG_NO_LIBRARY
+%s: ma jistax jiftaħ %s\n
+MSG_NO_MEMORY
+%s: m'hemmx biżżejjed memorja\n
+MSG_NO_WINDOW
+%s: ma jistax jiftaħ it-tieqa tiegħu\n

@@ -11,6 +11,11 @@ Bluetooth CONTROLLER/K/N
 `C:Bluetooth` lists them); without it the window starts on the first one
 there is.
 
+Its words are in the language chosen on Prefs' Region page where there
+is a catalog for it - German is in
+`LOCALE:Catalogs/deutsch/System/Bluetooth.catalog`, and the system's
+other languages beside it - and in English otherwise.
+
 ## The window
 
 **Controller.** The controllers are bluetooth.library's: the board's own,

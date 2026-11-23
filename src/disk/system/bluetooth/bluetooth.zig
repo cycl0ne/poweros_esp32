@@ -90,7 +90,7 @@ const Text = locale.Strings(strings);
 const Id = strings.Id;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION = "1.1";
+const VERSION = "1.2";
 const VERSION_STRING = "\x00$VER: " ++ COMMAND_NAME ++ " " ++ VERSION ++ " (23.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 const SCREEN_TITLE = COMMAND_NAME ++ " " ++ VERSION;
@@ -294,8 +294,11 @@ fn when(present: bool, tag: sdk.utility.Tag, data: usize) TagItem {
 }
 
 /// A line of text a gadget points at: written over where it is, never
-/// moved, so that the gadget may keep it.
-const line_most = 200;
+/// moved, so that the gadget may keep it. Room for the longest message
+/// with the longest name in each catalog's language - a character of
+/// Cyrillic two bytes, of Devanagari three - a longer one cut before a
+/// whole character.
+const line_most = 320;
 const Line = struct {
     bytes: [line_most + 1]u8 = @splat(0),
     length: usize = 0,
@@ -314,7 +317,11 @@ const Line = struct {
     }
 
     fn put(line: *Line, text: []const u8) void {
-        const length = @min(text.len, line_most - line.length);
+        var length = @min(text.len, line_most - line.length);
+        // A UTF-8 continuation byte is never a character's first.
+        if (length < text.len) {
+            while (length > 0 and text[length] & 0xC0 == 0x80) length -= 1;
+        }
         @memcpy(line.bytes[line.length..][0..length], text[0..length]);
         line.length += length;
         line.bytes[line.length] = 0;

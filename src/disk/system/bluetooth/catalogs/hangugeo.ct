@@ -1,0 +1,279 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language hangugeo
+## codeset 106
+; Bluetooth's strings in Korean. A draft: it waits for a reader of Korean
+; to go through it.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+컨트롤러(_C)
+MSG_ON
+켜기(_O)
+MSG_NAME
+이름(_N)
+MSG_VISIBLE
+다른 장치에 표시(_V)
+MSG_DEVICES
+장치
+MSG_SEARCH
+검색(_S)
+MSG_PAIR
+페어링(_P)
+MSG_CONNECT
+연결(_E)
+MSG_DISCONNECT
+연결 해제(_D)
+MSG_FORGET
+등록 해제(_F)...
+MSG_COLUMN_NAME
+이름
+MSG_COLUMN_KIND
+종류
+MSG_COLUMN_SIGNAL
+신호
+MSG_COLUMN_STATE
+상태
+MSG_COLUMN_ADDRESS
+주소
+MSG_CONTROLLER_LABEL
+%u: %s - %s 유닛 %u
+MSG_NO_CONTROLLER_LABEL
+컨트롤러 없음
+MSG_NO_CONTROLLER
+Bluetooth 컨트롤러 없음: 장치가 제공하는 즉시 여기에 표시됩니다
+MSG_STARTING
+컨트롤러를 준비하는 중...
+MSG_FAILED
+컨트롤러 오류: %s
+MSG_OFF
+꺼짐 - 컨트롤러를 사용하려면 "켜기"를 선택하십시오
+MSG_HIDDEN
+켜짐 - 검색하는 장치가 이 컴퓨터를 찾을 수 없습니다
+MSG_SHOWN
+켜짐 - 검색하는 장치가 이 컴퓨터를 찾을 수 있습니다
+MSG_SHOWN_FOR
+켜짐 - 검색하는 장치가 앞으로 %u초 동안 이 컴퓨터를 찾을 수 있습니다
+MSG_SEARCHING
+장치 검색 중...
+MSG_FOUND
+검색에서 장치 %u개를 찾았습니다
+MSG_FOUND_ONE
+검색에서 장치 1개를 찾았습니다
+MSG_FOUND_NONE
+검색에서 장치를 찾지 못했습니다
+MSG_NOT_SET
+변경되지 않음: %s
+MSG_NOT_SEARCHING
+검색할 수 없음: %s
+MSG_PAIRING
+%s와(과) 페어링하는 중...
+MSG_PAIRED
+%s와(과) 페어링했습니다
+MSG_NOT_PAIRED
+%s와(과) 페어링하지 못함: %s
+MSG_CONNECTING
+%s에 연결하는 중...
+MSG_CONNECTED
+%s에 연결했습니다
+MSG_NOT_CONNECTED
+%s에 연결하지 못함: %s
+MSG_DISCONNECTING
+%s의 연결을 해제하는 중...
+MSG_DISCONNECTED
+%s의 연결을 해제했습니다
+MSG_NOT_DISCONNECTED
+%s의 연결을 해제하지 못함: %s
+MSG_FORGETTING
+%s의 등록을 해제하는 중...
+MSG_FORGOTTEN
+%s의 등록을 해제했습니다
+MSG_NOT_FORGOTTEN
+%s의 등록을 해제하지 못함: %s
+MSG_WHY_NOMEM
+메모리 부족
+MSG_WHY_OPENFAIL
+해당 장치를 열지 못함
+MSG_WHY_TIMEOUT
+제시간에 응답이 없음
+MSG_WHY_DETACHED
+컨트롤러가 제거됨
+MSG_WHY_PROTOCOL
+해당 장치에 오류가 발생함
+MSG_WHY_NOCONTROLLER
+그런 컨트롤러가 없음
+MSG_WHY_NOTUP
+컨트롤러가 준비되지 않음
+MSG_WHY_OFF
+컨트롤러가 꺼져 있음
+MSG_WHY_UNSUPPORTED
+컨트롤러가 지원하지 않는 작업
+MSG_WHY_BUSY
+컨트롤러가 다른 작업 중
+MSG_WHY_UNKNOWN_COMMAND
+필요한 명령을 받아들이지 않음
+MSG_WHY_HARDWARE
+하드웨어 오류
+MSG_WHY_REFUSED
+컨트롤러가 거부함
+MSG_WHY_NO_ROOM
+컨트롤러에 더 이상 자리가 없거나 메모리 부족
+MSG_WHY_BONDED
+이 컴퓨터와 이미 페어링되어 있음
+MSG_WHY_NOT_BONDED
+이 컴퓨터와 페어링되어 있지 않음
+MSG_WHY_NOT_LINKED
+연결되어 있지 않음
+MSG_WHY_ANSWER_REFUSED
+거부되었거나 제시간에 응답이 없음
+MSG_WHY_NO_ANSWER
+장치가 응답하지 않음
+MSG_WHY_LOST
+연결이 끊김
+MSG_WHY_DEVICE_ENDED
+장치가 연결을 끊음
+MSG_WHY_ENDED_HERE
+이쪽에서 연결을 끊음
+MSG_WHY_DEVICE_REFUSED
+장치가 거부함
+MSG_WHY_NUMBERS
+장치가 거부했거나 번호가 일치하지 않음
+MSG_WHY_KEY_MISSING
+PIN이 없거나 장치에 키가 없음: 등록을 해제한 후 다시 페어링하십시오
+MSG_WHY_NOT_PAIRING
+장치가 지금은 페어링을 받지 않음
+MSG_WHY_REPEATED
+장치가 다음 시도 전에 잠시 기다리기를 요청함
+MSG_WHY_SHORT_KEY
+키가 너무 짧음
+MSG_NO_NAME
+(이름 없음)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+매우 좋음
+MSG_SIGNAL_GOOD
+좋음
+MSG_SIGNAL_FAIR
+보통
+MSG_SIGNAL_WEAK
+약함
+MSG_STATE_PAIRED
+페어링됨
+MSG_STATE_CONNECTED
+연결됨
+MSG_STATE_ENCRYPTED
+암호화됨
+MSG_STATE_PAIRING
+페어링 중
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, 임의)
+MSG_KIND_COMPUTER
+컴퓨터
+MSG_KIND_LAPTOP
+노트북
+MSG_KIND_HANDHELD
+핸드헬드
+MSG_KIND_PHONE
+전화기
+MSG_KIND_ACCESS_POINT
+네트워크 액세스 포인트
+MSG_KIND_HEADSET
+헤드셋
+MSG_KIND_HANDS_FREE
+핸즈프리
+MSG_KIND_MICROPHONE
+마이크
+MSG_KIND_LOUDSPEAKER
+스피커
+MSG_KIND_HEADPHONES
+헤드폰
+MSG_KIND_PORTABLE_AUDIO
+휴대용 오디오
+MSG_KIND_CAR_AUDIO
+차량용 오디오
+MSG_KIND_HIFI
+하이파이
+MSG_KIND_DISPLAY
+디스플레이
+MSG_KIND_GAME_CONSOLE
+게임기
+MSG_KIND_AUDIO_VIDEO
+오디오 및 비디오
+MSG_KIND_KEYBOARD
+키보드
+MSG_KIND_MOUSE
+마우스
+MSG_KIND_KEYBOARD_MOUSE
+키보드 및 마우스
+MSG_KIND_JOYSTICK
+조이스틱
+MSG_KIND_GAMEPAD
+게임패드
+MSG_KIND_REMOTE
+리모컨
+MSG_KIND_TABLET
+그래픽 태블릿
+MSG_KIND_PERIPHERAL
+입력 장치
+MSG_KIND_IMAGING
+프린터 또는 카메라
+MSG_KIND_WEARABLE
+웨어러블
+MSG_KIND_TOY
+장난감
+MSG_KIND_HEALTH
+건강 관리 장치
+MSG_KIND_EARBUDS
+이어버드
+MSG_KIND_WATCH
+손목시계
+MSG_KIND_CLOCK
+시계
+MSG_KIND_TAG
+태그
+MSG_KIND_KEYRING
+열쇠고리
+MSG_KIND_MEDIA_PLAYER
+미디어 플레이어
+MSG_KIND_THERMOMETER
+온도계
+MSG_KIND_HEART_RATE
+심박 센서
+MSG_KIND_SENSOR
+센서
+MSG_KIND_LIGHT
+조명
+MSG_KIND_AUDIO_SOURCE
+오디오 소스
+MSG_KIND_HEARING_AID
+보청기
+MSG_PAIRING_TITLE
+페어링
+MSG_ASK_COMPARE
+%s에 이 번호가 표시됩니까?
+MSG_ASK_CONSENT
+%s에서 이 컴퓨터와 페어링하려고 합니다.
+MSG_ASK_PASSKEY
+%s에 표시된 번호를 입력하십시오:
+MSG_ASK_SHOW
+%s에서 이 번호를 입력한 다음 Enter 키를 누르십시오:
+MSG_ASK_PIN
+%s의 PIN을 입력하십시오 - 숫자 키가 없는 장치는 대부분 0000입니다:
+MSG_YES
+예(_Y)
+MSG_NO
+아니요(_N)
+MSG_CANCEL
+취소(_C)
+MSG_FORGET_ASK
+%s의 등록을 해제하시겠습니까?\n두 장치가 공유하는 키가 삭제됩니다.\n다시 사용하려면 다시 페어링해야 합니다.
+MSG_FORGET_BUTTONS
+등록 해제|취소
+MSG_NO_LIBRARY
+%s: %s을(를) 열 수 없음\n
+MSG_NO_MEMORY
+%s: 메모리 부족\n
+MSG_NO_WINDOW
+%s: 창을 열 수 없음\n

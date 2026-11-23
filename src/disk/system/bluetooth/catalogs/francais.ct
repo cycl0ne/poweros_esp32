@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language francais
+## codeset 106
+; Bluetooth's strings in French.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Contrôleur
+MSG_ON
+_Activé
+MSG_NAME
+_Nom
+MSG_VISIBLE
+_Visible par les autres
+MSG_DEVICES
+Périphériques
+MSG_SEARCH
+_Rechercher
+MSG_PAIR
+A_ssocier
+MSG_CONNECT
+Conn_ecter
+MSG_DISCONNECT
+_Déconnecter
+MSG_FORGET
+_Oublier...
+MSG_COLUMN_NAME
+Nom
+MSG_COLUMN_KIND
+Type
+MSG_COLUMN_SIGNAL
+Signal
+MSG_COLUMN_STATE
+État
+MSG_COLUMN_ADDRESS
+Adresse
+MSG_CONTROLLER_LABEL
+%u : %s - %s unité %u
+MSG_NO_CONTROLLER_LABEL
+Aucun contrôleur
+MSG_NO_CONTROLLER
+Aucun contrôleur Bluetooth : il apparaîtra ici dès que son périphérique le proposera
+MSG_STARTING
+Initialisation du contrôleur...
+MSG_FAILED
+Échec du contrôleur : %s
+MSG_OFF
+Désactivé - cochez Activé pour utiliser le contrôleur
+MSG_HIDDEN
+Activé - les périphériques qui cherchent ne le trouvent pas
+MSG_SHOWN
+Activé - les périphériques qui cherchent le trouvent
+MSG_SHOWN_FOR
+Activé - les périphériques qui cherchent le trouvent encore %u secondes
+MSG_SEARCHING
+Recherche de périphériques...
+MSG_FOUND
+La recherche a trouvé %u périphériques
+MSG_FOUND_ONE
+La recherche a trouvé un périphérique
+MSG_FOUND_NONE
+La recherche n'a trouvé aucun périphérique
+MSG_NOT_SET
+Non modifié : %s
+MSG_NOT_SEARCHING
+Recherche impossible : %s
+MSG_PAIRING
+Association avec %s...
+MSG_PAIRED
+Associé à %s
+MSG_NOT_PAIRED
+Non associé à %s : %s
+MSG_CONNECTING
+Connexion à %s...
+MSG_CONNECTED
+Connecté à %s
+MSG_NOT_CONNECTED
+Non connecté à %s : %s
+MSG_DISCONNECTING
+Déconnexion de %s...
+MSG_DISCONNECTED
+Déconnecté de %s
+MSG_NOT_DISCONNECTED
+Non déconnecté de %s : %s
+MSG_FORGETTING
+Oubli de %s...
+MSG_FORGOTTEN
+%s a été oublié
+MSG_NOT_FORGOTTEN
+%s n'a pas été oublié : %s
+MSG_WHY_NOMEM
+mémoire insuffisante
+MSG_WHY_OPENFAIL
+son périphérique n'a pas pu être ouvert
+MSG_WHY_TIMEOUT
+pas de réponse dans les délais
+MSG_WHY_DETACHED
+le contrôleur a disparu
+MSG_WHY_PROTOCOL
+son périphérique a échoué
+MSG_WHY_NOCONTROLLER
+ce contrôleur n'existe pas
+MSG_WHY_NOTUP
+le contrôleur n'est pas prêt
+MSG_WHY_OFF
+le contrôleur est désactivé
+MSG_WHY_UNSUPPORTED
+le contrôleur ne peut pas faire cela
+MSG_WHY_BUSY
+le contrôleur est occupé à autre chose
+MSG_WHY_UNKNOWN_COMMAND
+il ne prend pas en charge une commande nécessaire
+MSG_WHY_HARDWARE
+une panne matérielle
+MSG_WHY_REFUSED
+le contrôleur a refusé
+MSG_WHY_NO_ROOM
+le contrôleur n'a plus de place pour un autre, ou mémoire insuffisante
+MSG_WHY_BONDED
+cet ordinateur y est déjà associé
+MSG_WHY_NOT_BONDED
+cet ordinateur n'y est pas associé
+MSG_WHY_NOT_LINKED
+il n'est pas connecté
+MSG_WHY_ANSWER_REFUSED
+refusé, ou sans réponse dans les délais
+MSG_WHY_NO_ANSWER
+le périphérique n'a pas répondu
+MSG_WHY_LOST
+la connexion a été perdue
+MSG_WHY_DEVICE_ENDED
+le périphérique a mis fin à la connexion
+MSG_WHY_ENDED_HERE
+la connexion a été fermée de ce côté
+MSG_WHY_DEVICE_REFUSED
+le périphérique a refusé
+MSG_WHY_NUMBERS
+le périphérique a refusé, ou les codes ne correspondaient pas
+MSG_WHY_KEY_MISSING
+pas de code PIN, ou le périphérique n'a plus la clé : oubliez-le et associez-le à nouveau
+MSG_WHY_NOT_PAIRING
+le périphérique n'accepte pas d'association pour le moment
+MSG_WHY_REPEATED
+le périphérique demande une pause avant le prochain essai
+MSG_WHY_SHORT_KEY
+la clé est trop courte
+MSG_NO_NAME
+(sans nom)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+excellent
+MSG_SIGNAL_GOOD
+bon
+MSG_SIGNAL_FAIR
+moyen
+MSG_SIGNAL_WEAK
+faible
+MSG_STATE_PAIRED
+associé
+MSG_STATE_CONNECTED
+connecté
+MSG_STATE_ENCRYPTED
+chiffré
+MSG_STATE_PAIRING
+association
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, aléatoire)
+MSG_KIND_COMPUTER
+ordinateur
+MSG_KIND_LAPTOP
+ordinateur portable
+MSG_KIND_HANDHELD
+ordinateur de poche
+MSG_KIND_PHONE
+téléphone
+MSG_KIND_ACCESS_POINT
+point d'accès réseau
+MSG_KIND_HEADSET
+micro-casque
+MSG_KIND_HANDS_FREE
+mains libres
+MSG_KIND_MICROPHONE
+microphone
+MSG_KIND_LOUDSPEAKER
+haut-parleur
+MSG_KIND_HEADPHONES
+casque
+MSG_KIND_PORTABLE_AUDIO
+audio portable
+MSG_KIND_CAR_AUDIO
+autoradio
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+écran
+MSG_KIND_GAME_CONSOLE
+console de jeux
+MSG_KIND_AUDIO_VIDEO
+audio et vidéo
+MSG_KIND_KEYBOARD
+clavier
+MSG_KIND_MOUSE
+souris
+MSG_KIND_KEYBOARD_MOUSE
+clavier et souris
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+manette de jeu
+MSG_KIND_REMOTE
+télécommande
+MSG_KIND_TABLET
+tablette
+MSG_KIND_PERIPHERAL
+périphérique d'entrée
+MSG_KIND_IMAGING
+imprimante ou appareil photo
+MSG_KIND_WEARABLE
+accessoire connecté
+MSG_KIND_TOY
+jouet
+MSG_KIND_HEALTH
+appareil de santé
+MSG_KIND_EARBUDS
+écouteurs
+MSG_KIND_WATCH
+montre
+MSG_KIND_CLOCK
+horloge
+MSG_KIND_TAG
+balise
+MSG_KIND_KEYRING
+porte-clés
+MSG_KIND_MEDIA_PLAYER
+lecteur multimédia
+MSG_KIND_THERMOMETER
+thermomètre
+MSG_KIND_HEART_RATE
+capteur cardiaque
+MSG_KIND_SENSOR
+capteur
+MSG_KIND_LIGHT
+éclairage
+MSG_KIND_AUDIO_SOURCE
+source audio
+MSG_KIND_HEARING_AID
+aide auditive
+MSG_PAIRING_TITLE
+Association
+MSG_ASK_COMPARE
+Ce code s'affiche-t-il sur %s ?
+MSG_ASK_CONSENT
+%s demande à s'associer à cet ordinateur.
+MSG_ASK_PASSKEY
+Saisissez le code affiché par %s :
+MSG_ASK_SHOW
+Saisissez ce code sur %s, puis appuyez sur sa touche Entrée :
+MSG_ASK_PIN
+Saisissez le code PIN de %s - 0000 pour la plupart des périphériques sans touches :
+MSG_YES
+_Oui
+MSG_NO
+_Non
+MSG_CANCEL
+_Annuler
+MSG_FORGET_ASK
+Oublier %s ?\nLa clé partagée par les deux est supprimée : pour\nles réutiliser, il faut les associer à nouveau.
+MSG_FORGET_BUTTONS
+Oublier|Annuler
+MSG_NO_LIBRARY
+%s : impossible d'ouvrir %s\n
+MSG_NO_MEMORY
+%s : mémoire insuffisante\n
+MSG_NO_WINDOW
+%s : impossible d'ouvrir sa fenêtre\n

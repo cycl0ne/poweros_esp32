@@ -134,13 +134,13 @@ tags and constants, each with its doc comment.
   class driver, keyboards and mice as sources, sticks, serial and
   Ethernet adapters, writing a controller, and USB in QEMU.
 - [Bluetooth](guides/bluetooth.md) - bluetooth.library and its
-  controllers: what a controller device is (HCI packets, one a
-  request), how one is offered and brought up, listing them and being
-  told of changes, their settings and the files they are kept in,
-  finding the devices around them, links to them and what a link
-  carries, pairing over BR/EDR and LE - agents and bonds - L2CAP's
-  channels and listeners, SDP's server, records of one's own and a
-  device's services, GATT's client and server over LE - services,
+  controllers: what a controller device is (HCI packets, one a request),
+  how one is offered and brought up - a board's own at the boot -
+  listing them and being told of changes, their settings and the files
+  they are kept in, finding the devices around them, links to them and
+  what a link carries, pairing over BR/EDR and LE - agents and bonds -
+  L2CAP's channels and listeners, SDP's server, records of one's own and
+  a device's services, GATT's client and server over LE - services,
   characteristics, values read, written and watched, blocks that wait
   for their device - profile drivers and the services offered to them,
   keyboards and mice over BR/EDR and LE (`bthid.device`), the USB

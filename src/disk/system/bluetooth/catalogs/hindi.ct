@@ -1,0 +1,279 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language hindi
+## codeset 106
+; Bluetooth's strings in Hindi. A draft: it waits for a reader of Hindi
+; to go through it.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+कंट्रो_लर
+MSG_ON
+_चालू
+MSG_NAME
+_नाम
+MSG_VISIBLE
+_दूसरों को दिखे
+MSG_DEVICES
+डिवाइस
+MSG_SEARCH
+_ढूँढें
+MSG_PAIR
+_पेयर करें
+MSG_CONNECT
+_कनेक्ट करें
+MSG_DISCONNECT
+_डिसकनेक्ट करें
+MSG_FORGET
+_भूल जाएँ...
+MSG_COLUMN_NAME
+नाम
+MSG_COLUMN_KIND
+प्रकार
+MSG_COLUMN_SIGNAL
+सिग्नल
+MSG_COLUMN_STATE
+स्थिति
+MSG_COLUMN_ADDRESS
+पता
+MSG_CONTROLLER_LABEL
+%u: %s - %s यूनिट %u
+MSG_NO_CONTROLLER_LABEL
+कोई कंट्रोलर नहीं
+MSG_NO_CONTROLLER
+कोई Bluetooth कंट्रोलर नहीं: उसका डिवाइस उसे उपलब्ध कराते ही वह यहाँ दिखेगा
+MSG_STARTING
+कंट्रोलर तैयार हो रहा है...
+MSG_FAILED
+कंट्रोलर विफल रहा: %s
+MSG_OFF
+बंद - कंट्रोलर इस्तेमाल करने के लिए "चालू" चुनें
+MSG_HIDDEN
+चालू - खोजने वाले डिवाइस इस मशीन को नहीं ढूँढ पाते
+MSG_SHOWN
+चालू - खोजने वाले डिवाइस इस मशीन को ढूँढ सकते हैं
+MSG_SHOWN_FOR
+चालू - खोजने वाले डिवाइस इस मशीन को और %u सेकंड तक ढूँढ सकते हैं
+MSG_SEARCHING
+डिवाइस की खोज जारी है...
+MSG_FOUND
+खोज में %u डिवाइस मिले
+MSG_FOUND_ONE
+खोज में एक डिवाइस मिला
+MSG_FOUND_NONE
+खोज में कोई डिवाइस नहीं मिला
+MSG_NOT_SET
+नहीं बदला: %s
+MSG_NOT_SEARCHING
+खोज नहीं हुई: %s
+MSG_PAIRING
+%s से पेयर हो रहा है...
+MSG_PAIRED
+%s से पेयर हो गया
+MSG_NOT_PAIRED
+%s से पेयर नहीं हुआ: %s
+MSG_CONNECTING
+%s से कनेक्ट हो रहा है...
+MSG_CONNECTED
+%s से कनेक्ट हो गया
+MSG_NOT_CONNECTED
+%s से कनेक्ट नहीं हुआ: %s
+MSG_DISCONNECTING
+%s से डिसकनेक्ट हो रहा है...
+MSG_DISCONNECTED
+%s से डिसकनेक्ट हो गया
+MSG_NOT_DISCONNECTED
+%s से डिसकनेक्ट नहीं हुआ: %s
+MSG_FORGETTING
+%s को भुलाया जा रहा है...
+MSG_FORGOTTEN
+%s को भुला दिया गया
+MSG_NOT_FORGOTTEN
+%s को भुलाया नहीं जा सका: %s
+MSG_WHY_NOMEM
+पर्याप्त मेमोरी नहीं
+MSG_WHY_OPENFAIL
+उसका डिवाइस नहीं खुला
+MSG_WHY_TIMEOUT
+समय पर उत्तर नहीं मिला
+MSG_WHY_DETACHED
+कंट्रोलर हट गया है
+MSG_WHY_PROTOCOL
+उसका डिवाइस विफल रहा
+MSG_WHY_NOCONTROLLER
+ऐसा कोई कंट्रोलर नहीं है
+MSG_WHY_NOTUP
+कंट्रोलर तैयार नहीं है
+MSG_WHY_OFF
+कंट्रोलर बंद है
+MSG_WHY_UNSUPPORTED
+कंट्रोलर यह नहीं कर सकता
+MSG_WHY_BUSY
+कंट्रोलर किसी और काम में व्यस्त है
+MSG_WHY_UNKNOWN_COMMAND
+वह एक ज़रूरी आदेश स्वीकार नहीं करता
+MSG_WHY_HARDWARE
+हार्डवेयर विफलता
+MSG_WHY_REFUSED
+कंट्रोलर ने मना कर दिया
+MSG_WHY_NO_ROOM
+कंट्रोलर में और जगह नहीं, या मेमोरी कम है
+MSG_WHY_BONDED
+यह मशीन उससे पहले से पेयर है
+MSG_WHY_NOT_BONDED
+यह मशीन उससे पेयर नहीं है
+MSG_WHY_NOT_LINKED
+उससे कोई कनेक्शन नहीं है
+MSG_WHY_ANSWER_REFUSED
+मना किया गया, या समय पर उत्तर नहीं मिला
+MSG_WHY_NO_ANSWER
+डिवाइस ने उत्तर नहीं दिया
+MSG_WHY_LOST
+कनेक्शन टूट गया
+MSG_WHY_DEVICE_ENDED
+डिवाइस ने कनेक्शन समाप्त कर दिया
+MSG_WHY_ENDED_HERE
+कनेक्शन यहीं से समाप्त किया गया
+MSG_WHY_DEVICE_REFUSED
+डिवाइस ने मना कर दिया
+MSG_WHY_NUMBERS
+डिवाइस ने मना किया, या संख्याएँ मेल नहीं खाईं
+MSG_WHY_KEY_MISSING
+PIN या कुंजी नहीं: डिवाइस को भूलकर फिर पेयर करें
+MSG_WHY_NOT_PAIRING
+डिवाइस अभी पेयरिंग स्वीकार नहीं करता
+MSG_WHY_REPEATED
+डिवाइस अगले प्रयास से पहले विराम चाहता है
+MSG_WHY_SHORT_KEY
+कुंजी बहुत छोटी है
+MSG_NO_NAME
+(कोई नाम नहीं)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+उत्कृष्ट
+MSG_SIGNAL_GOOD
+अच्छा
+MSG_SIGNAL_FAIR
+सामान्य
+MSG_SIGNAL_WEAK
+कमज़ोर
+MSG_STATE_PAIRED
+पेयर है
+MSG_STATE_CONNECTED
+कनेक्ट है
+MSG_STATE_ENCRYPTED
+एन्क्रिप्टेड
+MSG_STATE_PAIRING
+पेयर हो रहा है
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, रैंडम)
+MSG_KIND_COMPUTER
+कंप्यूटर
+MSG_KIND_LAPTOP
+लैपटॉप
+MSG_KIND_HANDHELD
+हैंडहेल्ड कंप्यूटर
+MSG_KIND_PHONE
+फ़ोन
+MSG_KIND_ACCESS_POINT
+नेटवर्क एक्सेस पॉइंट
+MSG_KIND_HEADSET
+हेडसेट
+MSG_KIND_HANDS_FREE
+हैंड्स-फ़्री
+MSG_KIND_MICROPHONE
+माइक्रोफ़ोन
+MSG_KIND_LOUDSPEAKER
+लाउडस्पीकर
+MSG_KIND_HEADPHONES
+हेडफ़ोन
+MSG_KIND_PORTABLE_AUDIO
+पोर्टेबल ऑडियो
+MSG_KIND_CAR_AUDIO
+कार ऑडियो
+MSG_KIND_HIFI
+हाई-फ़ाई
+MSG_KIND_DISPLAY
+डिस्प्ले
+MSG_KIND_GAME_CONSOLE
+गेम कंसोल
+MSG_KIND_AUDIO_VIDEO
+ऑडियो और वीडियो
+MSG_KIND_KEYBOARD
+कीबोर्ड
+MSG_KIND_MOUSE
+माउस
+MSG_KIND_KEYBOARD_MOUSE
+कीबोर्ड और माउस
+MSG_KIND_JOYSTICK
+जॉयस्टिक
+MSG_KIND_GAMEPAD
+गेमपैड
+MSG_KIND_REMOTE
+रिमोट कंट्रोल
+MSG_KIND_TABLET
+ग्राफ़िक्स टैबलेट
+MSG_KIND_PERIPHERAL
+इनपुट डिवाइस
+MSG_KIND_IMAGING
+प्रिंटर या कैमरा
+MSG_KIND_WEARABLE
+पहनने योग्य डिवाइस
+MSG_KIND_TOY
+खिलौना
+MSG_KIND_HEALTH
+स्वास्थ्य डिवाइस
+MSG_KIND_EARBUDS
+ईयरबड्स
+MSG_KIND_WATCH
+कलाई घड़ी
+MSG_KIND_CLOCK
+घड़ी
+MSG_KIND_TAG
+टैग
+MSG_KIND_KEYRING
+चाबी का छल्ला
+MSG_KIND_MEDIA_PLAYER
+मीडिया प्लेयर
+MSG_KIND_THERMOMETER
+थर्मामीटर
+MSG_KIND_HEART_RATE
+हृदय गति सेंसर
+MSG_KIND_SENSOR
+सेंसर
+MSG_KIND_LIGHT
+लाइट
+MSG_KIND_AUDIO_SOURCE
+ऑडियो स्रोत
+MSG_KIND_HEARING_AID
+श्रवण यंत्र
+MSG_PAIRING_TITLE
+पेयरिंग
+MSG_ASK_COMPARE
+क्या %s यही संख्या दिखा रहा है?
+MSG_ASK_CONSENT
+%s इस मशीन से पेयर करना चाहता है।
+MSG_ASK_PASSKEY
+%s जो संख्या दिखा रहा है, उसे टाइप करें:
+MSG_ASK_SHOW
+%s पर यह संख्या टाइप करें, फिर उसका Enter दबाएँ:
+MSG_ASK_PIN
+%s का PIN टाइप करें - बिना कीपैड वाले ज़्यादातर डिवाइस के लिए 0000:
+MSG_YES
+_हाँ
+MSG_NO
+_नहीं
+MSG_CANCEL
+_रद्द करें
+MSG_FORGET_ASK
+%s को भूल जाएँ?\nदोनों की साझा कुंजी मिटा दी जाती है: फिर से\nइस्तेमाल के लिए उन्हें दोबारा पेयर करना होगा।
+MSG_FORGET_BUTTONS
+भूल जाएँ|रद्द करें
+MSG_NO_LIBRARY
+%s: %s नहीं खुल सका\n
+MSG_NO_MEMORY
+%s: पर्याप्त मेमोरी नहीं\n
+MSG_NO_WINDOW
+%s: अपनी विंडो नहीं खोल सका\n

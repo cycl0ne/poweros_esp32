@@ -148,6 +148,16 @@ EndIf
 ; device says nothing and loses no time.
 Run >NIL: Execute S:Network-Startup
 
+; Bluetooth: opening bluetooth.library brings the board's own
+; controllers up - the Raspberry Pi 4 Model B's, beside its Wi-Fi - and
+; the library's task keeps it open from then on, so that a bonded
+; keyboard or mouse comes back by itself; a controller on USB comes
+; with its bus. In a shell of its own, so that loading the library and
+; the controller's device does not hold up the boot.
+If EXISTS C:Bluetooth
+  Run >NIL: C:Bluetooth >NIL:
+EndIf
+
 If $Desktop EQ 0 VAL
   EndCLI >NIL:
 EndIf

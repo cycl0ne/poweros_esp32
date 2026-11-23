@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language bulgarski
+## codeset 106
+; Bluetooth's strings in Bulgarian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Контролер
+MSG_ON
+_Включен
+MSG_NAME
+_Име
+MSG_VISIBLE
+Видим за _другите
+MSG_DEVICES
+Устройства
+MSG_SEARCH
+_Търси
+MSG_PAIR
+_Сдвои
+MSG_CONNECT
+Свър_жи
+MSG_DISCONNECT
+_Прекъсни
+MSG_FORGET
+_Забрави...
+MSG_COLUMN_NAME
+Име
+MSG_COLUMN_KIND
+Вид
+MSG_COLUMN_SIGNAL
+Сигнал
+MSG_COLUMN_STATE
+Състояние
+MSG_COLUMN_ADDRESS
+Адрес
+MSG_CONTROLLER_LABEL
+%u: %s - %s, единица %u
+MSG_NO_CONTROLLER_LABEL
+Няма контролер
+MSG_NO_CONTROLLER
+Няма контролер за Bluetooth: ще се покаже тук, щом устройството му го предложи
+MSG_STARTING
+Контролерът се подготвя...
+MSG_FAILED
+Грешка в контролера: %s
+MSG_OFF
+Изключен - отметнете „Включен“, за да използвате контролера
+MSG_HIDDEN
+Включен - устройствата, които търсят, не намират този компютър
+MSG_SHOWN
+Включен - устройствата, които търсят, намират този компютър
+MSG_SHOWN_FOR
+Включен - устройствата, които търсят, намират този компютър още %u сек.
+MSG_SEARCHING
+Търсене на устройства...
+MSG_FOUND
+Търсенето намери %u устройства
+MSG_FOUND_ONE
+Търсенето намери едно устройство
+MSG_FOUND_NONE
+Търсенето не намери устройства
+MSG_NOT_SET
+Не е променено: %s
+MSG_NOT_SEARCHING
+Няма търсене: %s
+MSG_PAIRING
+Сдвояване с %s...
+MSG_PAIRED
+Сдвоено с %s
+MSG_NOT_PAIRED
+Неуспешно сдвояване с %s: %s
+MSG_CONNECTING
+Свързване с %s...
+MSG_CONNECTED
+Свързано с %s
+MSG_NOT_CONNECTED
+Неуспешно свързване с %s: %s
+MSG_DISCONNECTING
+Прекъсване на връзката с %s...
+MSG_DISCONNECTED
+Връзката с %s е прекъсната
+MSG_NOT_DISCONNECTED
+Връзката с %s не е прекъсната: %s
+MSG_FORGETTING
+Забравяне на %s...
+MSG_FORGOTTEN
+Устройството %s е забравено
+MSG_NOT_FORGOTTEN
+Устройството %s не е забравено: %s
+MSG_WHY_NOMEM
+няма достатъчно памет
+MSG_WHY_OPENFAIL
+устройството му не се отвори
+MSG_WHY_TIMEOUT
+няма отговор навреме
+MSG_WHY_DETACHED
+контролерът е премахнат
+MSG_WHY_PROTOCOL
+грешка в устройството му
+MSG_WHY_NOCONTROLLER
+няма такъв контролер
+MSG_WHY_NOTUP
+контролерът не е готов
+MSG_WHY_OFF
+контролерът е изключен
+MSG_WHY_UNSUPPORTED
+контролерът не може да направи това
+MSG_WHY_BUSY
+контролерът е зает с нещо друго
+MSG_WHY_UNKNOWN_COMMAND
+не приема команда, която му е нужна
+MSG_WHY_HARDWARE
+хардуерна грешка
+MSG_WHY_REFUSED
+контролерът отказа
+MSG_WHY_NO_ROOM
+контролерът няма място за още едно устройство или липсва памет
+MSG_WHY_BONDED
+този компютър вече е сдвоен с него
+MSG_WHY_NOT_BONDED
+този компютър не е сдвоен с него
+MSG_WHY_NOT_LINKED
+няма връзка с него
+MSG_WHY_ANSWER_REFUSED
+отказано или без отговор навреме
+MSG_WHY_NO_ANSWER
+устройството не отговори
+MSG_WHY_LOST
+връзката е загубена
+MSG_WHY_DEVICE_ENDED
+устройството прекъсна връзката
+MSG_WHY_ENDED_HERE
+връзката е прекъсната оттук
+MSG_WHY_DEVICE_REFUSED
+устройството отказа
+MSG_WHY_NUMBERS
+устройството отказа или числата не съвпаднаха
+MSG_WHY_KEY_MISSING
+няма PIN или устройството загуби ключа: забравете го и го сдвоете пак
+MSG_WHY_NOT_PAIRING
+устройството не приема сдвояване сега
+MSG_WHY_REPEATED
+устройството иска пауза преди следващия опит
+MSG_WHY_SHORT_KEY
+ключът е твърде къс
+MSG_NO_NAME
+(без име)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+отличен
+MSG_SIGNAL_GOOD
+добър
+MSG_SIGNAL_FAIR
+среден
+MSG_SIGNAL_WEAK
+слаб
+MSG_STATE_PAIRED
+сдвоено
+MSG_STATE_CONNECTED
+свързано
+MSG_STATE_ENCRYPTED
+шифровано
+MSG_STATE_PAIRING
+сдвоява се
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, случаен)
+MSG_KIND_COMPUTER
+компютър
+MSG_KIND_LAPTOP
+лаптоп
+MSG_KIND_HANDHELD
+джобен компютър
+MSG_KIND_PHONE
+телефон
+MSG_KIND_ACCESS_POINT
+точка за достъп до мрежа
+MSG_KIND_HEADSET
+слушалки с микрофон
+MSG_KIND_HANDS_FREE
+хендсфри
+MSG_KIND_MICROPHONE
+микрофон
+MSG_KIND_LOUDSPEAKER
+високоговорител
+MSG_KIND_HEADPHONES
+слушалки
+MSG_KIND_PORTABLE_AUDIO
+преносимо аудио
+MSG_KIND_CAR_AUDIO
+аудиосистема за кола
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+дисплей
+MSG_KIND_GAME_CONSOLE
+игрова конзола
+MSG_KIND_AUDIO_VIDEO
+аудио и видео
+MSG_KIND_KEYBOARD
+клавиатура
+MSG_KIND_MOUSE
+мишка
+MSG_KIND_KEYBOARD_MOUSE
+клавиатура и мишка
+MSG_KIND_JOYSTICK
+джойстик
+MSG_KIND_GAMEPAD
+геймпад
+MSG_KIND_REMOTE
+дистанционно
+MSG_KIND_TABLET
+графичен таблет
+MSG_KIND_PERIPHERAL
+входно устройство
+MSG_KIND_IMAGING
+принтер или камера
+MSG_KIND_WEARABLE
+носимо устройство
+MSG_KIND_TOY
+играчка
+MSG_KIND_HEALTH
+здравно устройство
+MSG_KIND_EARBUDS
+слушалки тапи
+MSG_KIND_WATCH
+ръчен часовник
+MSG_KIND_CLOCK
+часовник
+MSG_KIND_TAG
+етикет
+MSG_KIND_KEYRING
+ключодържател
+MSG_KIND_MEDIA_PLAYER
+медиен плейър
+MSG_KIND_THERMOMETER
+термометър
+MSG_KIND_HEART_RATE
+сензор за пулс
+MSG_KIND_SENSOR
+сензор
+MSG_KIND_LIGHT
+лампа
+MSG_KIND_AUDIO_SOURCE
+източник на звук
+MSG_KIND_HEARING_AID
+слухов апарат
+MSG_PAIRING_TITLE
+Сдвояване
+MSG_ASK_COMPARE
+Показва ли %s това число?
+MSG_ASK_CONSENT
+%s иска да се сдвои с този компютър.
+MSG_ASK_PASSKEY
+Въведете числото, което показва %s:
+MSG_ASK_SHOW
+Въведете това число на %s и натиснете Enter на него:
+MSG_ASK_PIN
+Въведете PIN кода на %s - 0000 за повечето устройства без клавиши:
+MSG_YES
+_Да
+MSG_NO
+_Не
+MSG_CANCEL
+_Отказ
+MSG_FORGET_ASK
+Да се забрави ли %s?\nОбщият ключ на двете се изтрива: за да се\nизползват отново, трябва да се сдвоят пак.
+MSG_FORGET_BUTTONS
+Забрави|Отказ
+MSG_NO_LIBRARY
+%s: %s не може да бъде отворена\n
+MSG_NO_MEMORY
+%s: няма достатъчно памет\n
+MSG_NO_WINDOW
+%s: прозорецът не може да бъде отворен\n

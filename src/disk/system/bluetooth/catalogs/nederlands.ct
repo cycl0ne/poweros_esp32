@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language nederlands
+## codeset 106
+; Bluetooth's strings in Dutch.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Controller
+MSG_ON
+_Aan
+MSG_NAME
+_Naam
+MSG_VISIBLE
+Z_ichtbaar voor anderen
+MSG_DEVICES
+Apparaten
+MSG_SEARCH
+_Zoeken
+MSG_PAIR
+_Koppelen
+MSG_CONNECT
+_Verbinden
+MSG_DISCONNECT
+Ver_breken
+MSG_FORGET
+Ver_geten...
+MSG_COLUMN_NAME
+Naam
+MSG_COLUMN_KIND
+Soort
+MSG_COLUMN_SIGNAL
+Signaal
+MSG_COLUMN_STATE
+Status
+MSG_COLUMN_ADDRESS
+Adres
+MSG_CONTROLLER_LABEL
+%u: %s - %s eenheid %u
+MSG_NO_CONTROLLER_LABEL
+Geen controller
+MSG_NO_CONTROLLER
+Geen Bluetooth-controller: er verschijnt hier een zodra zijn apparaat hem aanbiedt
+MSG_STARTING
+De controller wordt ingesteld...
+MSG_FAILED
+De controller is uitgevallen: %s
+MSG_OFF
+Uit - vink "Aan" aan om de controller te gebruiken
+MSG_HIDDEN
+Aan - zoekende apparaten vinden deze computer niet
+MSG_SHOWN
+Aan - zoekende apparaten vinden deze computer
+MSG_SHOWN_FOR
+Aan - zoekende apparaten vinden deze computer nog %u seconden lang
+MSG_SEARCHING
+Zoeken naar apparaten...
+MSG_FOUND
+De zoekopdracht vond %u apparaten
+MSG_FOUND_ONE
+De zoekopdracht vond één apparaat
+MSG_FOUND_NONE
+De zoekopdracht vond geen apparaten
+MSG_NOT_SET
+Niet gewijzigd: %s
+MSG_NOT_SEARCHING
+Geen zoekopdracht: %s
+MSG_PAIRING
+Koppelen met %s...
+MSG_PAIRED
+Gekoppeld met %s
+MSG_NOT_PAIRED
+Niet gekoppeld met %s: %s
+MSG_CONNECTING
+Verbinden met %s...
+MSG_CONNECTED
+Verbonden met %s
+MSG_NOT_CONNECTED
+Niet verbonden met %s: %s
+MSG_DISCONNECTING
+Verbinding met %s verbreken...
+MSG_DISCONNECTED
+Verbinding met %s verbroken
+MSG_NOT_DISCONNECTED
+Verbinding met %s niet verbroken: %s
+MSG_FORGETTING
+%s wordt vergeten...
+MSG_FORGOTTEN
+%s is vergeten
+MSG_NOT_FORGOTTEN
+%s is niet vergeten: %s
+MSG_WHY_NOMEM
+niet genoeg geheugen
+MSG_WHY_OPENFAIL
+zijn apparaat kon niet geopend worden
+MSG_WHY_TIMEOUT
+er kwam niet op tijd antwoord
+MSG_WHY_DETACHED
+de controller is weg
+MSG_WHY_PROTOCOL
+zijn apparaat faalde
+MSG_WHY_NOCONTROLLER
+zo'n controller bestaat niet
+MSG_WHY_NOTUP
+de controller is niet gereed
+MSG_WHY_OFF
+de controller staat uit
+MSG_WHY_UNSUPPORTED
+dat kan de controller niet
+MSG_WHY_BUSY
+de controller is met iets anders bezig
+MSG_WHY_UNKNOWN_COMMAND
+hij kent een benodigde opdracht niet
+MSG_WHY_HARDWARE
+een hardwarefout
+MSG_WHY_REFUSED
+de controller weigerde
+MSG_WHY_NO_ROOM
+de controller heeft geen ruimte meer, of er is niet genoeg geheugen
+MSG_WHY_BONDED
+deze computer is er al mee gekoppeld
+MSG_WHY_NOT_BONDED
+deze computer is er niet mee gekoppeld
+MSG_WHY_NOT_LINKED
+er is geen verbinding met het apparaat
+MSG_WHY_ANSWER_REFUSED
+geweigerd, of niet op tijd beantwoord
+MSG_WHY_NO_ANSWER
+het apparaat antwoordde niet
+MSG_WHY_LOST
+de verbinding ging verloren
+MSG_WHY_DEVICE_ENDED
+het apparaat heeft de verbinding beëindigd
+MSG_WHY_ENDED_HERE
+de verbinding is hier beëindigd
+MSG_WHY_DEVICE_REFUSED
+het apparaat weigerde
+MSG_WHY_NUMBERS
+het apparaat weigerde, of de getallen kwamen niet overeen
+MSG_WHY_KEY_MISSING
+geen PIN, of het apparaat heeft de sleutel niet meer: vergeet het en koppel opnieuw
+MSG_WHY_NOT_PAIRING
+het apparaat koppelt nu niet
+MSG_WHY_REPEATED
+het apparaat wil een pauze voor de volgende poging
+MSG_WHY_SHORT_KEY
+de sleutel is te kort
+MSG_NO_NAME
+(geen naam)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+uitstekend
+MSG_SIGNAL_GOOD
+goed
+MSG_SIGNAL_FAIR
+matig
+MSG_SIGNAL_WEAK
+zwak
+MSG_STATE_PAIRED
+gekoppeld
+MSG_STATE_CONNECTED
+verbonden
+MSG_STATE_ENCRYPTED
+versleuteld
+MSG_STATE_PAIRING
+koppelen
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, willekeurig)
+MSG_KIND_COMPUTER
+computer
+MSG_KIND_LAPTOP
+laptop
+MSG_KIND_HANDHELD
+handcomputer
+MSG_KIND_PHONE
+telefoon
+MSG_KIND_ACCESS_POINT
+netwerktoegangspunt
+MSG_KIND_HEADSET
+headset
+MSG_KIND_HANDS_FREE
+handsfree
+MSG_KIND_MICROPHONE
+microfoon
+MSG_KIND_LOUDSPEAKER
+luidspreker
+MSG_KIND_HEADPHONES
+koptelefoon
+MSG_KIND_PORTABLE_AUDIO
+draagbare audio
+MSG_KIND_CAR_AUDIO
+autoradio
+MSG_KIND_HIFI
+hifi-installatie
+MSG_KIND_DISPLAY
+beeldscherm
+MSG_KIND_GAME_CONSOLE
+spelconsole
+MSG_KIND_AUDIO_VIDEO
+audio en video
+MSG_KIND_KEYBOARD
+toetsenbord
+MSG_KIND_MOUSE
+muis
+MSG_KIND_KEYBOARD_MOUSE
+toetsenbord en muis
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+gamepad
+MSG_KIND_REMOTE
+afstandsbediening
+MSG_KIND_TABLET
+tekentablet
+MSG_KIND_PERIPHERAL
+invoerapparaat
+MSG_KIND_IMAGING
+printer of camera
+MSG_KIND_WEARABLE
+wearable
+MSG_KIND_TOY
+speelgoed
+MSG_KIND_HEALTH
+gezondheidsapparaat
+MSG_KIND_EARBUDS
+oordopjes
+MSG_KIND_WATCH
+horloge
+MSG_KIND_CLOCK
+klok
+MSG_KIND_TAG
+tag
+MSG_KIND_KEYRING
+sleutelhanger
+MSG_KIND_MEDIA_PLAYER
+mediaspeler
+MSG_KIND_THERMOMETER
+thermometer
+MSG_KIND_HEART_RATE
+hartslagsensor
+MSG_KIND_SENSOR
+sensor
+MSG_KIND_LIGHT
+lamp
+MSG_KIND_AUDIO_SOURCE
+audiobron
+MSG_KIND_HEARING_AID
+hoortoestel
+MSG_PAIRING_TITLE
+Koppelen
+MSG_ASK_COMPARE
+Toont %s dit getal?
+MSG_ASK_CONSENT
+%s vraagt om te koppelen met deze computer.
+MSG_ASK_PASSKEY
+Typ het getal dat %s toont:
+MSG_ASK_SHOW
+Typ dit getal op %s en druk daar op Enter:
+MSG_ASK_PIN
+Typ de PIN van %s - 0000 voor de meeste apparaten zonder toetsen:
+MSG_YES
+_Ja
+MSG_NO
+_Nee
+MSG_CANCEL
+_Annuleren
+MSG_FORGET_ASK
+%s vergeten?\nDe gedeelde sleutel wordt verwijderd: om ze\nweer te gebruiken, worden ze opnieuw gekoppeld.
+MSG_FORGET_BUTTONS
+Vergeten|Annuleren
+MSG_NO_LIBRARY
+%s: kan %s niet openen\n
+MSG_NO_MEMORY
+%s: niet genoeg geheugen\n
+MSG_NO_WINDOW
+%s: er kon geen venster geopend worden\n

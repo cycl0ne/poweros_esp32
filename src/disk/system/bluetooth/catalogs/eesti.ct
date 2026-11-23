@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language eesti
+## codeset 106
+; Bluetooth's strings in Estonian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Kontroller
+MSG_ON
+S_ees
+MSG_NAME
+_Nimi
+MSG_VISIBLE
+_Teistele nähtav
+MSG_DEVICES
+Seadmed
+MSG_SEARCH
+_Otsi
+MSG_PAIR
+_Seo
+MSG_CONNECT
+_Ühenda
+MSG_DISCONNECT
+K_atkesta ühendus
+MSG_FORGET
+_Unusta...
+MSG_COLUMN_NAME
+Nimi
+MSG_COLUMN_KIND
+Tüüp
+MSG_COLUMN_SIGNAL
+Signaal
+MSG_COLUMN_STATE
+Olek
+MSG_COLUMN_ADDRESS
+Aadress
+MSG_CONTROLLER_LABEL
+%u: %s - %s, üksus %u
+MSG_NO_CONTROLLER_LABEL
+Kontrollerit pole
+MSG_NO_CONTROLLER
+Bluetooth-kontrollerit pole: see ilmub siia niipea, kui selle seade seda pakub
+MSG_STARTING
+Kontrollerit seadistatakse...
+MSG_FAILED
+Kontroller ei tööta: %s
+MSG_OFF
+Väljas - märgi „Sees“, et kontrollerit kasutada
+MSG_HIDDEN
+Sees - otsivad seadmed ei leia seda arvutit
+MSG_SHOWN
+Sees - otsivad seadmed leiavad selle arvuti
+MSG_SHOWN_FOR
+Sees - otsivad seadmed leiavad selle arvuti veel %u sekundi jooksul
+MSG_SEARCHING
+Seadmete otsimine...
+MSG_FOUND
+Otsing leidis %u seadet
+MSG_FOUND_ONE
+Otsing leidis ühe seadme
+MSG_FOUND_NONE
+Otsing ei leidnud ühtki seadet
+MSG_NOT_SET
+Ei muudetud: %s
+MSG_NOT_SEARCHING
+Otsingut pole: %s
+MSG_PAIRING
+Sidumine seadmega %s...
+MSG_PAIRED
+Seotud seadmega %s
+MSG_NOT_PAIRED
+Pole seotud seadmega %s: %s
+MSG_CONNECTING
+Ühendamine seadmega %s...
+MSG_CONNECTED
+Ühendatud seadmega %s
+MSG_NOT_CONNECTED
+Pole ühendatud seadmega %s: %s
+MSG_DISCONNECTING
+Ühenduse katkestamine seadmega %s...
+MSG_DISCONNECTED
+Ühendus seadmega %s katkestatud
+MSG_NOT_DISCONNECTED
+Ühendust seadmega %s ei katkestatud: %s
+MSG_FORGETTING
+Seadme %s unustamine...
+MSG_FORGOTTEN
+Seade %s on unustatud
+MSG_NOT_FORGOTTEN
+Seadet %s ei unustatud: %s
+MSG_WHY_NOMEM
+mälu ei jätku
+MSG_WHY_OPENFAIL
+selle seadet ei saanud avada
+MSG_WHY_TIMEOUT
+vastust ei tulnud õigel ajal
+MSG_WHY_DETACHED
+kontroller on kadunud
+MSG_WHY_PROTOCOL
+selle seadmes tekkis tõrge
+MSG_WHY_NOCONTROLLER
+sellist kontrollerit pole
+MSG_WHY_NOTUP
+kontroller pole valmis
+MSG_WHY_OFF
+kontroller on väljas
+MSG_WHY_UNSUPPORTED
+kontroller ei oska seda
+MSG_WHY_BUSY
+kontroller on muuga hõivatud
+MSG_WHY_UNKNOWN_COMMAND
+see ei tunne vajalikku käsku
+MSG_WHY_HARDWARE
+riistvaratõrge
+MSG_WHY_REFUSED
+kontroller keeldus
+MSG_WHY_NO_ROOM
+kontrolleril pole ruumi veel ühe jaoks või mälu ei jätku
+MSG_WHY_BONDED
+see arvuti on sellega juba seotud
+MSG_WHY_NOT_BONDED
+see arvuti pole sellega seotud
+MSG_WHY_NOT_LINKED
+sellega pole ühendust
+MSG_WHY_ANSWER_REFUSED
+keelduti või ei vastatud õigel ajal
+MSG_WHY_NO_ANSWER
+seade ei vastanud
+MSG_WHY_LOST
+ühendus katkes
+MSG_WHY_DEVICE_ENDED
+seade katkestas ühenduse
+MSG_WHY_ENDED_HERE
+ühendus katkestati siit
+MSG_WHY_DEVICE_REFUSED
+seade keeldus
+MSG_WHY_NUMBERS
+seade keeldus või numbrid ei klappinud
+MSG_WHY_KEY_MISSING
+PIN puudub või seadmel pole enam võtit: unusta see ja seo uuesti
+MSG_WHY_NOT_PAIRING
+seade ei luba praegu siduda
+MSG_WHY_REPEATED
+seade soovib enne järgmist katset pausi
+MSG_WHY_SHORT_KEY
+võti on liiga lühike
+MSG_NO_NAME
+(nimeta)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+suurepärane
+MSG_SIGNAL_GOOD
+hea
+MSG_SIGNAL_FAIR
+keskmine
+MSG_SIGNAL_WEAK
+nõrk
+MSG_STATE_PAIRED
+seotud
+MSG_STATE_CONNECTED
+ühendatud
+MSG_STATE_ENCRYPTED
+krüptitud
+MSG_STATE_PAIRING
+sidumisel
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, juhuslik)
+MSG_KIND_COMPUTER
+arvuti
+MSG_KIND_LAPTOP
+sülearvuti
+MSG_KIND_HANDHELD
+pihuarvuti
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+võrgu pöörduspunkt
+MSG_KIND_HEADSET
+peakomplekt
+MSG_KIND_HANDS_FREE
+vabakäeseade
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+kõlar
+MSG_KIND_HEADPHONES
+kõrvaklapid
+MSG_KIND_PORTABLE_AUDIO
+kaasaskantav heli
+MSG_KIND_CAR_AUDIO
+autoraadio
+MSG_KIND_HIFI
+hifi-süsteem
+MSG_KIND_DISPLAY
+ekraan
+MSG_KIND_GAME_CONSOLE
+mängukonsool
+MSG_KIND_AUDIO_VIDEO
+heli ja video
+MSG_KIND_KEYBOARD
+klaviatuur
+MSG_KIND_MOUSE
+hiir
+MSG_KIND_KEYBOARD_MOUSE
+klaviatuur ja hiir
+MSG_KIND_JOYSTICK
+juhtkang
+MSG_KIND_GAMEPAD
+mängupult
+MSG_KIND_REMOTE
+kaugjuhtimispult
+MSG_KIND_TABLET
+graafikalaud
+MSG_KIND_PERIPHERAL
+sisendseade
+MSG_KIND_IMAGING
+printer või kaamera
+MSG_KIND_WEARABLE
+kantav seade
+MSG_KIND_TOY
+mänguasi
+MSG_KIND_HEALTH
+terviseseade
+MSG_KIND_EARBUDS
+nööpkõrvaklapid
+MSG_KIND_WATCH
+käekell
+MSG_KIND_CLOCK
+kell
+MSG_KIND_TAG
+silt
+MSG_KIND_KEYRING
+võtmehoidja
+MSG_KIND_MEDIA_PLAYER
+meediamängija
+MSG_KIND_THERMOMETER
+termomeeter
+MSG_KIND_HEART_RATE
+pulsiandur
+MSG_KIND_SENSOR
+andur
+MSG_KIND_LIGHT
+valgusti
+MSG_KIND_AUDIO_SOURCE
+heliallikas
+MSG_KIND_HEARING_AID
+kuuldeaparaat
+MSG_PAIRING_TITLE
+Sidumine
+MSG_ASK_COMPARE
+Kas seade %s näitab seda numbrit?
+MSG_ASK_CONSENT
+Seade %s palub end selle arvutiga siduda.
+MSG_ASK_PASSKEY
+Sisesta number, mida seade %s näitab:
+MSG_ASK_SHOW
+Sisesta see number seadmes %s ja vajuta seejärel Enter:
+MSG_ASK_PIN
+Sisesta seadme %s PIN - klahvideta seadmetel enamasti 0000:
+MSG_YES
+_Jah
+MSG_NO
+_Ei
+MSG_CANCEL
+_Loobu
+MSG_FORGET_ASK
+Kas unustada seade %s?\nNende ühine võti kustutatakse: et neid\ntaas kasutada, tuleb need uuesti siduda.
+MSG_FORGET_BUTTONS
+Unusta|Loobu
+MSG_NO_LIBRARY
+%s: ei saa avada teeki %s\n
+MSG_NO_MEMORY
+%s: mälu ei jätku\n
+MSG_NO_WINDOW
+%s: ühtki akent ei saanud avada\n

@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language norsk
+## codeset 106
+; Bluetooth's strings in Norwegian (Bokmål).
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Kontroller
+MSG_ON
+_På
+MSG_NAME
+_Navn
+MSG_VISIBLE
+Synlig for _andre
+MSG_DEVICES
+Enheter
+MSG_SEARCH
+_Søk
+MSG_PAIR
+Sa_mmenkoble
+MSG_CONNECT
+Koble _til
+MSG_DISCONNECT
+Koble _fra
+MSG_FORGET
+_Glem...
+MSG_COLUMN_NAME
+Navn
+MSG_COLUMN_KIND
+Type
+MSG_COLUMN_SIGNAL
+Signal
+MSG_COLUMN_STATE
+Tilstand
+MSG_COLUMN_ADDRESS
+Adresse
+MSG_CONTROLLER_LABEL
+%u: %s - %s nr. %u
+MSG_NO_CONTROLLER_LABEL
+Ingen kontroller
+MSG_NO_CONTROLLER
+Ingen Bluetooth-kontroller: en vises her så snart enheten dens tilbyr den
+MSG_STARTING
+Kontrolleren settes opp...
+MSG_FAILED
+Kontrolleren sviktet: %s
+MSG_OFF
+Av - kryss av for «På» for å bruke kontrolleren
+MSG_HIDDEN
+På - enheter som søker, finner ikke denne datamaskinen
+MSG_SHOWN
+På - enheter som søker, finner denne datamaskinen
+MSG_SHOWN_FOR
+På - enheter som søker, finner denne datamaskinen i %u sekunder til
+MSG_SEARCHING
+Søker etter enheter...
+MSG_FOUND
+Søket fant %u enheter
+MSG_FOUND_ONE
+Søket fant én enhet
+MSG_FOUND_NONE
+Søket fant ingen enheter
+MSG_NOT_SET
+Ikke endret: %s
+MSG_NOT_SEARCHING
+Ikke noe søk: %s
+MSG_PAIRING
+Sammenkobler med %s...
+MSG_PAIRED
+Sammenkoblet med %s
+MSG_NOT_PAIRED
+Ikke sammenkoblet med %s: %s
+MSG_CONNECTING
+Kobler til %s...
+MSG_CONNECTED
+Koblet til %s
+MSG_NOT_CONNECTED
+Ikke koblet til %s: %s
+MSG_DISCONNECTING
+Kobler fra %s...
+MSG_DISCONNECTED
+Koblet fra %s
+MSG_NOT_DISCONNECTED
+Ikke koblet fra %s: %s
+MSG_FORGETTING
+Glemmer %s...
+MSG_FORGOTTEN
+%s er glemt
+MSG_NOT_FORGOTTEN
+%s er ikke glemt: %s
+MSG_WHY_NOMEM
+ikke nok minne
+MSG_WHY_OPENFAIL
+enheten dens kunne ikke åpnes
+MSG_WHY_TIMEOUT
+det kom ikke svar i tide
+MSG_WHY_DETACHED
+kontrolleren er borte
+MSG_WHY_PROTOCOL
+enheten dens fikk en feil
+MSG_WHY_NOCONTROLLER
+det finnes ingen slik kontroller
+MSG_WHY_NOTUP
+kontrolleren er ikke klar
+MSG_WHY_OFF
+kontrolleren er slått av
+MSG_WHY_UNSUPPORTED
+det kan ikke kontrolleren
+MSG_WHY_BUSY
+kontrolleren er opptatt med noe annet
+MSG_WHY_UNKNOWN_COMMAND
+den kjenner ikke en nødvendig kommando
+MSG_WHY_HARDWARE
+en maskinvarefeil
+MSG_WHY_REFUSED
+kontrolleren avviste
+MSG_WHY_NO_ROOM
+kontrolleren har ikke plass til flere, eller det er ikke nok minne
+MSG_WHY_BONDED
+denne datamaskinen er allerede sammenkoblet med den
+MSG_WHY_NOT_BONDED
+denne datamaskinen er ikke sammenkoblet med den
+MSG_WHY_NOT_LINKED
+det er ingen tilkobling til den
+MSG_WHY_ANSWER_REFUSED
+avvist, eller ikke besvart i tide
+MSG_WHY_NO_ANSWER
+enheten svarte ikke
+MSG_WHY_LOST
+tilkoblingen gikk tapt
+MSG_WHY_DEVICE_ENDED
+enheten avsluttet tilkoblingen
+MSG_WHY_ENDED_HERE
+tilkoblingen ble avsluttet her
+MSG_WHY_DEVICE_REFUSED
+enheten avviste
+MSG_WHY_NUMBERS
+enheten avviste, eller tallene stemte ikke overens
+MSG_WHY_KEY_MISSING
+ingen PIN, eller enheten har ikke lenger nøkkelen: glem den og sammenkoble på nytt
+MSG_WHY_NOT_PAIRING
+enheten kan ikke sammenkobles nå
+MSG_WHY_REPEATED
+enheten vil ha en pause før neste forsøk
+MSG_WHY_SHORT_KEY
+nøkkelen er for kort
+MSG_NO_NAME
+(uten navn)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+utmerket
+MSG_SIGNAL_GOOD
+god
+MSG_SIGNAL_FAIR
+middels
+MSG_SIGNAL_WEAK
+svak
+MSG_STATE_PAIRED
+sammenkoblet
+MSG_STATE_CONNECTED
+tilkoblet
+MSG_STATE_ENCRYPTED
+kryptert
+MSG_STATE_PAIRING
+sammenkobler
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, tilfeldig)
+MSG_KIND_COMPUTER
+datamaskin
+MSG_KIND_LAPTOP
+bærbar PC
+MSG_KIND_HANDHELD
+håndholdt PC
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+tilgangspunkt
+MSG_KIND_HEADSET
+hodesett
+MSG_KIND_HANDS_FREE
+håndfri
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+høyttaler
+MSG_KIND_HEADPHONES
+hodetelefoner
+MSG_KIND_PORTABLE_AUDIO
+bærbar lydenhet
+MSG_KIND_CAR_AUDIO
+bilstereo
+MSG_KIND_HIFI
+hi-fi-anlegg
+MSG_KIND_DISPLAY
+skjerm
+MSG_KIND_GAME_CONSOLE
+spillkonsoll
+MSG_KIND_AUDIO_VIDEO
+lyd og video
+MSG_KIND_KEYBOARD
+tastatur
+MSG_KIND_MOUSE
+mus
+MSG_KIND_KEYBOARD_MOUSE
+tastatur og mus
+MSG_KIND_JOYSTICK
+styrespak
+MSG_KIND_GAMEPAD
+spillkontroller
+MSG_KIND_REMOTE
+fjernkontroll
+MSG_KIND_TABLET
+tegnebrett
+MSG_KIND_PERIPHERAL
+inndataenhet
+MSG_KIND_IMAGING
+skriver eller kamera
+MSG_KIND_WEARABLE
+wearable
+MSG_KIND_TOY
+leketøy
+MSG_KIND_HEALTH
+helseenhet
+MSG_KIND_EARBUDS
+øreplugger
+MSG_KIND_WATCH
+armbåndsur
+MSG_KIND_CLOCK
+klokke
+MSG_KIND_TAG
+brikke
+MSG_KIND_KEYRING
+nøkkelring
+MSG_KIND_MEDIA_PLAYER
+mediespiller
+MSG_KIND_THERMOMETER
+termometer
+MSG_KIND_HEART_RATE
+pulssensor
+MSG_KIND_SENSOR
+sensor
+MSG_KIND_LIGHT
+lampe
+MSG_KIND_AUDIO_SOURCE
+lydkilde
+MSG_KIND_HEARING_AID
+høreapparat
+MSG_PAIRING_TITLE
+Sammenkobling
+MSG_ASK_COMPARE
+Viser %s dette tallet?
+MSG_ASK_CONSENT
+%s ber om å bli sammenkoblet med denne datamaskinen.
+MSG_ASK_PASSKEY
+Skriv inn tallet som %s viser:
+MSG_ASK_SHOW
+Skriv inn dette tallet på %s, og trykk deretter Enter:
+MSG_ASK_PIN
+Skriv inn PIN-koden til %s - 0000 for de fleste enheter uten taster:
+MSG_YES
+_Ja
+MSG_NO
+_Nei
+MSG_CANCEL
+_Avbryt
+MSG_FORGET_ASK
+Glemme %s?\nNøkkelen de deler, slettes: For å bruke\ndem igjen må de sammenkobles på nytt.
+MSG_FORGET_BUTTONS
+Glem|Avbryt
+MSG_NO_LIBRARY
+%s: kan ikke åpne %s\n
+MSG_NO_MEMORY
+%s: ikke nok minne\n
+MSG_NO_WINDOW
+%s: kunne ikke åpne noe vindu\n

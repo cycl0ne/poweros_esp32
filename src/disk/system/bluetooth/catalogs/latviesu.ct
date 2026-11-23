@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language latviesu
+## codeset 106
+; Bluetooth's strings in Latvian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Kontrolleris
+MSG_ON
+_Ieslēgts
+MSG_NAME
+_Nosaukums
+MSG_VISIBLE
+_Redzams citiem
+MSG_DEVICES
+Ierīces
+MSG_SEARCH
+_Meklēt
+MSG_PAIR
+Savienot _pārī
+MSG_CONNECT
+_Savienot
+MSG_DISCONNECT
+_Atvienot
+MSG_FORGET
+Ai_zmirst...
+MSG_COLUMN_NAME
+Nosaukums
+MSG_COLUMN_KIND
+Veids
+MSG_COLUMN_SIGNAL
+Signāls
+MSG_COLUMN_STATE
+Stāvoklis
+MSG_COLUMN_ADDRESS
+Adrese
+MSG_CONTROLLER_LABEL
+%u: %s - %s, vienība %u
+MSG_NO_CONTROLLER_LABEL
+Nav kontrollera
+MSG_NO_CONTROLLER
+Nav Bluetooth kontrollera: tas parādīsies šeit, tiklīdz to piedāvās tā ierīce
+MSG_STARTING
+Kontrolleris tiek sagatavots...
+MSG_FAILED
+Kontrollera kļūme: %s
+MSG_OFF
+Izslēgts - atzīmējiet Ieslēgts, lai lietotu kontrolleri
+MSG_HIDDEN
+Ieslēgts - ierīces, kas meklē, šo datoru neatrod
+MSG_SHOWN
+Ieslēgts - ierīces, kas meklē, šo datoru atrod
+MSG_SHOWN_FOR
+Ieslēgts - ierīces, kas meklē, šo datoru atrod vēl %u s
+MSG_SEARCHING
+Meklē ierīces...
+MSG_FOUND
+Atrastas ierīces: %u
+MSG_FOUND_ONE
+Atrasta viena ierīce
+MSG_FOUND_NONE
+Neviena ierīce nav atrasta
+MSG_NOT_SET
+Nav mainīts: %s
+MSG_NOT_SEARCHING
+Meklēšana netika sākta: %s
+MSG_PAIRING
+Savienošana pārī ar ierīci %s...
+MSG_PAIRED
+Savienots pārī ar ierīci %s
+MSG_NOT_PAIRED
+Nav savienots pārī ar ierīci %s: %s
+MSG_CONNECTING
+Savienošana ar ierīci %s...
+MSG_CONNECTED
+Savienots ar ierīci %s
+MSG_NOT_CONNECTED
+Nav savienots ar ierīci %s: %s
+MSG_DISCONNECTING
+Atvienošana no ierīces %s...
+MSG_DISCONNECTED
+Atvienots no ierīces %s
+MSG_NOT_DISCONNECTED
+Nav atvienots no ierīces %s: %s
+MSG_FORGETTING
+Ierīce %s tiek aizmirsta...
+MSG_FORGOTTEN
+Ierīce %s ir aizmirsta
+MSG_NOT_FORGOTTEN
+Ierīce %s nav aizmirsta: %s
+MSG_WHY_NOMEM
+nepietiek atmiņas
+MSG_WHY_OPENFAIL
+kontrollera ierīce neatvērās
+MSG_WHY_TIMEOUT
+atbilde nepienāca laikā
+MSG_WHY_DETACHED
+kontrolleris ir pazudis
+MSG_WHY_PROTOCOL
+kontrollera ierīcei radās kļūme
+MSG_WHY_NOCONTROLLER
+tāda kontrollera nav
+MSG_WHY_NOTUP
+kontrolleris nav palaists
+MSG_WHY_OFF
+kontrolleris ir izslēgts
+MSG_WHY_UNSUPPORTED
+kontrolleris to nespēj
+MSG_WHY_BUSY
+kontrolleris ir aizņemts ar ko citu
+MSG_WHY_UNKNOWN_COMMAND
+tas nepieņem vajadzīgu komandu
+MSG_WHY_HARDWARE
+aparatūras kļūme
+MSG_WHY_REFUSED
+kontrolleris atteica
+MSG_WHY_NO_ROOM
+kontrollerim nav vietas vēl vienai ierīcei vai nepietiek atmiņas
+MSG_WHY_BONDED
+šis dators jau ir savienots pārī ar to
+MSG_WHY_NOT_BONDED
+šis dators nav savienots pārī ar to
+MSG_WHY_NOT_LINKED
+ar to nav savienojuma
+MSG_WHY_ANSWER_REFUSED
+noraidīts vai nav atbildēts laikā
+MSG_WHY_NO_ANSWER
+ierīce neatbildēja
+MSG_WHY_LOST
+savienojums tika zaudēts
+MSG_WHY_DEVICE_ENDED
+ierīce pārtrauca savienojumu
+MSG_WHY_ENDED_HERE
+savienojums tika pārtraukts šajā pusē
+MSG_WHY_DEVICE_REFUSED
+ierīce atteica
+MSG_WHY_NUMBERS
+ierīce atteica vai skaitļi nesakrita
+MSG_WHY_KEY_MISSING
+nav PIN vai ierīcei vairs nav atslēgas: aizmirstiet to un savienojiet pārī vēlreiz
+MSG_WHY_NOT_PAIRING
+ierīce pašlaik nesavienojas pārī
+MSG_WHY_REPEATED
+ierīce vēlas pauzi pirms nākamā mēģinājuma
+MSG_WHY_SHORT_KEY
+atslēga ir par īsu
+MSG_NO_NAME
+(bez nosaukuma)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+izcils
+MSG_SIGNAL_GOOD
+labs
+MSG_SIGNAL_FAIR
+vidējs
+MSG_SIGNAL_WEAK
+vājš
+MSG_STATE_PAIRED
+savienots pārī
+MSG_STATE_CONNECTED
+savienots
+MSG_STATE_ENCRYPTED
+šifrēts
+MSG_STATE_PAIRING
+savienošana pārī
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, nejauša)
+MSG_KIND_COMPUTER
+dators
+MSG_KIND_LAPTOP
+klēpjdators
+MSG_KIND_HANDHELD
+plaukstdators
+MSG_KIND_PHONE
+tālrunis
+MSG_KIND_ACCESS_POINT
+tīkla piekļuves punkts
+MSG_KIND_HEADSET
+austiņas ar mikrofonu
+MSG_KIND_HANDS_FREE
+brīvroku ierīce
+MSG_KIND_MICROPHONE
+mikrofons
+MSG_KIND_LOUDSPEAKER
+skaļrunis
+MSG_KIND_HEADPHONES
+austiņas
+MSG_KIND_PORTABLE_AUDIO
+portatīva audioierīce
+MSG_KIND_CAR_AUDIO
+automagnetola
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+displejs
+MSG_KIND_GAME_CONSOLE
+spēļu konsole
+MSG_KIND_AUDIO_VIDEO
+audio un video
+MSG_KIND_KEYBOARD
+tastatūra
+MSG_KIND_MOUSE
+pele
+MSG_KIND_KEYBOARD_MOUSE
+tastatūra un pele
+MSG_KIND_JOYSTICK
+kursorsvira
+MSG_KIND_GAMEPAD
+spēļu pults
+MSG_KIND_REMOTE
+tālvadības pults
+MSG_KIND_TABLET
+grafiskā planšete
+MSG_KIND_PERIPHERAL
+ievadierīce
+MSG_KIND_IMAGING
+printeris vai fotokamera
+MSG_KIND_WEARABLE
+valkājama ierīce
+MSG_KIND_TOY
+rotaļlieta
+MSG_KIND_HEALTH
+veselības ierīce
+MSG_KIND_EARBUDS
+ieliekamās austiņas
+MSG_KIND_WATCH
+rokas pulkstenis
+MSG_KIND_CLOCK
+pulkstenis
+MSG_KIND_TAG
+birka
+MSG_KIND_KEYRING
+atslēgu piekariņš
+MSG_KIND_MEDIA_PLAYER
+multivides atskaņotājs
+MSG_KIND_THERMOMETER
+termometrs
+MSG_KIND_HEART_RATE
+sirdsdarbības sensors
+MSG_KIND_SENSOR
+sensors
+MSG_KIND_LIGHT
+gaismeklis
+MSG_KIND_AUDIO_SOURCE
+skaņas avots
+MSG_KIND_HEARING_AID
+dzirdes aparāts
+MSG_PAIRING_TITLE
+Savienošana pārī
+MSG_ASK_COMPARE
+Vai ierīce %s rāda šo skaitli?
+MSG_ASK_CONSENT
+Ierīce %s vēlas savienoties pārī ar šo datoru.
+MSG_ASK_PASSKEY
+Ievadiet skaitli, ko rāda ierīce %s:
+MSG_ASK_SHOW
+Ievadiet šo skaitli ierīcē %s un pēc tam nospiediet tās taustiņu Enter:
+MSG_ASK_PIN
+Ievadiet ierīces %s PIN - 0000 lielākajai daļai ierīču bez taustiņiem:
+MSG_YES
+_Jā
+MSG_NO
+_Nē
+MSG_CANCEL
+_Atcelt
+MSG_FORGET_ASK
+Aizmirst ierīci %s?\nAbu kopīgā atslēga tiks izdzēsta: lai tos\natkal lietotu, tie jāsavieno pārī no jauna.
+MSG_FORGET_BUTTONS
+Aizmirst|Atcelt
+MSG_NO_LIBRARY
+%s: nevar atvērt %s\n
+MSG_NO_MEMORY
+%s: nepietiek atmiņas\n
+MSG_NO_WINDOW
+%s: nevar atvērt savu logu\n

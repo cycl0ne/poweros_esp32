@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language ukrainska
+## codeset 106
+; Bluetooth's strings in Ukrainian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Контролер
+MSG_ON
+_Увімкнено
+MSG_NAME
+_Назва
+MSG_VISIBLE
+Видимий для _інших
+MSG_DEVICES
+Пристрої
+MSG_SEARCH
+_Шукати
+MSG_PAIR
+Створити _пару
+MSG_CONNECT
+Підклю_чити
+MSG_DISCONNECT
+_Від'єднати
+MSG_FORGET
+_Забути...
+MSG_COLUMN_NAME
+Назва
+MSG_COLUMN_KIND
+Тип
+MSG_COLUMN_SIGNAL
+Сигнал
+MSG_COLUMN_STATE
+Стан
+MSG_COLUMN_ADDRESS
+Адреса
+MSG_CONTROLLER_LABEL
+%u: %s - %s, модуль %u
+MSG_NO_CONTROLLER_LABEL
+Немає контролера
+MSG_NO_CONTROLLER
+Немає контролера Bluetooth: він з'явиться тут, щойно його запропонує пристрій
+MSG_STARTING
+Контролер налаштовується...
+MSG_FAILED
+Збій контролера: %s
+MSG_OFF
+Вимкнено - позначте «Увімкнено», щоб користуватися контролером
+MSG_HIDDEN
+Увімкнено - пристрої, що шукають, не знаходять цей комп'ютер
+MSG_SHOWN
+Увімкнено - пристрої, що шукають, знаходять цей комп'ютер
+MSG_SHOWN_FOR
+Увімкнено - пристрої, що шукають, знаходять цей комп'ютер ще %u с
+MSG_SEARCHING
+Пошук пристроїв...
+MSG_FOUND
+Знайдено пристроїв: %u
+MSG_FOUND_ONE
+Знайдено один пристрій
+MSG_FOUND_NONE
+Пристроїв не знайдено
+MSG_NOT_SET
+Не змінено: %s
+MSG_NOT_SEARCHING
+Пошук не запущено: %s
+MSG_PAIRING
+Створення пари з %s...
+MSG_PAIRED
+Створено пару з %s
+MSG_NOT_PAIRED
+Пару з %s не створено: %s
+MSG_CONNECTING
+Підключення до %s...
+MSG_CONNECTED
+Підключено до %s
+MSG_NOT_CONNECTED
+Не підключено до %s: %s
+MSG_DISCONNECTING
+Від'єднання від %s...
+MSG_DISCONNECTED
+Від'єднано від %s
+MSG_NOT_DISCONNECTED
+Не від'єднано від %s: %s
+MSG_FORGETTING
+Видалення пари з %s...
+MSG_FORGOTTEN
+Пристрій %s забуто
+MSG_NOT_FORGOTTEN
+Пристрій %s не забуто: %s
+MSG_WHY_NOMEM
+недостатньо пам'яті
+MSG_WHY_OPENFAIL
+не відкрився його пристрій
+MSG_WHY_TIMEOUT
+відповідь не надійшла вчасно
+MSG_WHY_DETACHED
+контролер зник
+MSG_WHY_PROTOCOL
+збій його пристрою
+MSG_WHY_NOCONTROLLER
+такого контролера немає
+MSG_WHY_NOTUP
+контролер не готовий
+MSG_WHY_OFF
+контролер вимкнено
+MSG_WHY_UNSUPPORTED
+контролер цього не підтримує
+MSG_WHY_BUSY
+контролер зайнятий іншою операцією
+MSG_WHY_UNKNOWN_COMMAND
+він не приймає потрібну команду
+MSG_WHY_HARDWARE
+апаратний збій
+MSG_WHY_REFUSED
+контролер відхилив запит
+MSG_WHY_NO_ROOM
+у контролера немає місця для ще одного, або недостатньо пам'яті
+MSG_WHY_BONDED
+цей комп'ютер уже в парі з ним
+MSG_WHY_NOT_BONDED
+цей комп'ютер не в парі з ним
+MSG_WHY_NOT_LINKED
+немає з'єднання з ним
+MSG_WHY_ANSWER_REFUSED
+відхилено, або відповідь не надійшла вчасно
+MSG_WHY_NO_ANSWER
+пристрій не відповів
+MSG_WHY_LOST
+з'єднання втрачено
+MSG_WHY_DEVICE_ENDED
+пристрій розірвав з'єднання
+MSG_WHY_ENDED_HERE
+з'єднання розірвано з цього боку
+MSG_WHY_DEVICE_REFUSED
+пристрій відхилив запит
+MSG_WHY_NUMBERS
+пристрій відхилив запит, або числа не збіглися
+MSG_WHY_KEY_MISSING
+немає PIN-коду, або в пристрої немає ключа: забудьте його й створіть пару знову
+MSG_WHY_NOT_PAIRING
+пристрій зараз не створює пару
+MSG_WHY_REPEATED
+пристрій просить паузу перед наступною спробою
+MSG_WHY_SHORT_KEY
+ключ закороткий
+MSG_NO_NAME
+(без назви)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+відмінний
+MSG_SIGNAL_GOOD
+добрий
+MSG_SIGNAL_FAIR
+середній
+MSG_SIGNAL_WEAK
+слабкий
+MSG_STATE_PAIRED
+у парі
+MSG_STATE_CONNECTED
+підключено
+MSG_STATE_ENCRYPTED
+зашифровано
+MSG_STATE_PAIRING
+створення пари
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, випадкова)
+MSG_KIND_COMPUTER
+комп'ютер
+MSG_KIND_LAPTOP
+ноутбук
+MSG_KIND_HANDHELD
+кишеньковий комп'ютер
+MSG_KIND_PHONE
+телефон
+MSG_KIND_ACCESS_POINT
+точка доступу до мережі
+MSG_KIND_HEADSET
+гарнітура
+MSG_KIND_HANDS_FREE
+гучний зв'язок
+MSG_KIND_MICROPHONE
+мікрофон
+MSG_KIND_LOUDSPEAKER
+гучномовець
+MSG_KIND_HEADPHONES
+навушники
+MSG_KIND_PORTABLE_AUDIO
+портативне аудіо
+MSG_KIND_CAR_AUDIO
+автомобільне аудіо
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+дисплей
+MSG_KIND_GAME_CONSOLE
+ігрова консоль
+MSG_KIND_AUDIO_VIDEO
+аудіо та відео
+MSG_KIND_KEYBOARD
+клавіатура
+MSG_KIND_MOUSE
+миша
+MSG_KIND_KEYBOARD_MOUSE
+клавіатура й миша
+MSG_KIND_JOYSTICK
+джойстик
+MSG_KIND_GAMEPAD
+геймпад
+MSG_KIND_REMOTE
+пульт ДК
+MSG_KIND_TABLET
+графічний планшет
+MSG_KIND_PERIPHERAL
+пристрій введення
+MSG_KIND_IMAGING
+принтер або камера
+MSG_KIND_WEARABLE
+носимий пристрій
+MSG_KIND_TOY
+іграшка
+MSG_KIND_HEALTH
+медичний пристрій
+MSG_KIND_EARBUDS
+навушники-вкладиші
+MSG_KIND_WATCH
+наручний годинник
+MSG_KIND_CLOCK
+годинник
+MSG_KIND_TAG
+мітка
+MSG_KIND_KEYRING
+брелок
+MSG_KIND_MEDIA_PLAYER
+медіаплеєр
+MSG_KIND_THERMOMETER
+термометр
+MSG_KIND_HEART_RATE
+датчик пульсу
+MSG_KIND_SENSOR
+датчик
+MSG_KIND_LIGHT
+світильник
+MSG_KIND_AUDIO_SOURCE
+джерело звуку
+MSG_KIND_HEARING_AID
+слуховий апарат
+MSG_PAIRING_TITLE
+Створення пари
+MSG_ASK_COMPARE
+Чи показує %s це число?
+MSG_ASK_CONSENT
+%s просить створити пару з цим комп'ютером.
+MSG_ASK_PASSKEY
+Введіть число, яке показує %s:
+MSG_ASK_SHOW
+Введіть це число на %s, потім натисніть на ньому Enter:
+MSG_ASK_PIN
+Введіть PIN-код %s - у більшості пристроїв без клавіш це 0000:
+MSG_YES
+_Так
+MSG_NO
+_Ні
+MSG_CANCEL
+_Скасувати
+MSG_FORGET_ASK
+Забути %s?\nСпільний ключ обох пристроїв видаляється: щоб\nзнову їх використовувати, треба створити пару.
+MSG_FORGET_BUTTONS
+Забути|Скасувати
+MSG_NO_LIBRARY
+%s: не вдається відкрити %s\n
+MSG_NO_MEMORY
+%s: недостатньо пам'яті\n
+MSG_NO_WINDOW
+%s: не вдається відкрити вікно\n

@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language hrvatski
+## codeset 106
+; Bluetooth's strings in Croatian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Kontroler
+MSG_ON
+Uk_ljučeno
+MSG_NAME
+_Naziv
+MSG_VISIBLE
+_Vidljivo drugima
+MSG_DEVICES
+Uređaji
+MSG_SEARCH
+_Traži
+MSG_PAIR
+_Upari
+MSG_CONNECT
+_Poveži
+MSG_DISCONNECT
+P_rekini vezu
+MSG_FORGET
+_Zaboravi...
+MSG_COLUMN_NAME
+Naziv
+MSG_COLUMN_KIND
+Vrsta
+MSG_COLUMN_SIGNAL
+Signal
+MSG_COLUMN_STATE
+Stanje
+MSG_COLUMN_ADDRESS
+Adresa
+MSG_CONTROLLER_LABEL
+%u: %s - %s, jedinica %u
+MSG_NO_CONTROLLER_LABEL
+Nema kontrolera
+MSG_NO_CONTROLLER
+Nema Bluetooth kontrolera: prikazat će se ovdje čim ga ponudi njegov uređaj
+MSG_STARTING
+Kontroler se priprema...
+MSG_FAILED
+Kontroler je zakazao: %s
+MSG_OFF
+Isključeno - za korištenje kontrolera označite Uključeno
+MSG_HIDDEN
+Uključeno - uređaji koji traže ne pronalaze ovo računalo
+MSG_SHOWN
+Uključeno - uređaji koji traže pronalaze ovo računalo
+MSG_SHOWN_FOR
+Uključeno - uređaji koji traže pronalaze ovo računalo još %u s
+MSG_SEARCHING
+Pretraživanje uređaja...
+MSG_FOUND
+Pronađeni uređaji: %u
+MSG_FOUND_ONE
+Pronađen je jedan uređaj
+MSG_FOUND_NONE
+Nije pronađen nijedan uređaj
+MSG_NOT_SET
+Nije promijenjeno: %s
+MSG_NOT_SEARCHING
+Pretraživanje nije pokrenuto: %s
+MSG_PAIRING
+Uparivanje s uređajem %s...
+MSG_PAIRED
+Upareno s uređajem %s
+MSG_NOT_PAIRED
+Nije upareno s uređajem %s: %s
+MSG_CONNECTING
+Povezivanje s uređajem %s...
+MSG_CONNECTED
+Povezano s uređajem %s
+MSG_NOT_CONNECTED
+Nije povezano s uređajem %s: %s
+MSG_DISCONNECTING
+Prekidanje veze s uređajem %s...
+MSG_DISCONNECTED
+Veza s uređajem %s je prekinuta
+MSG_NOT_DISCONNECTED
+Veza s uređajem %s nije prekinuta: %s
+MSG_FORGETTING
+Zaboravljanje uređaja %s...
+MSG_FORGOTTEN
+Uređaj %s je zaboravljen
+MSG_NOT_FORGOTTEN
+Uređaj %s nije zaboravljen: %s
+MSG_WHY_NOMEM
+nema dovoljno memorije
+MSG_WHY_OPENFAIL
+nije moguće otvoriti njegov uređaj
+MSG_WHY_TIMEOUT
+odgovor nije stigao na vrijeme
+MSG_WHY_DETACHED
+kontroler je nestao
+MSG_WHY_PROTOCOL
+njegov uređaj je zakazao
+MSG_WHY_NOCONTROLLER
+nema takvog kontrolera
+MSG_WHY_NOTUP
+kontroler nije pokrenut
+MSG_WHY_OFF
+kontroler je isključen
+MSG_WHY_UNSUPPORTED
+kontroler to ne može
+MSG_WHY_BUSY
+kontroler je zauzet nečim drugim
+MSG_WHY_UNKNOWN_COMMAND
+ne prihvaća potrebnu naredbu
+MSG_WHY_HARDWARE
+kvar hardvera
+MSG_WHY_REFUSED
+kontroler je odbio
+MSG_WHY_NO_ROOM
+kontroler nema mjesta za još jedan uređaj ili nema dovoljno memorije
+MSG_WHY_BONDED
+ovo računalo već je upareno s njim
+MSG_WHY_NOT_BONDED
+ovo računalo nije upareno s njim
+MSG_WHY_NOT_LINKED
+nema veze s njim
+MSG_WHY_ANSWER_REFUSED
+odbijeno ili nije odgovoreno na vrijeme
+MSG_WHY_NO_ANSWER
+uređaj nije odgovorio
+MSG_WHY_LOST
+veza je izgubljena
+MSG_WHY_DEVICE_ENDED
+uređaj je prekinuo vezu
+MSG_WHY_ENDED_HERE
+veza je prekinuta s ove strane
+MSG_WHY_DEVICE_REFUSED
+uređaj je odbio
+MSG_WHY_NUMBERS
+uređaj je odbio ili se brojevi nisu podudarali
+MSG_WHY_KEY_MISSING
+nema PIN koda ili uređaj više nema ključ: zaboravite ga i ponovno ga uparite
+MSG_WHY_NOT_PAIRING
+uređaj sada ne prihvaća uparivanje
+MSG_WHY_REPEATED
+uređaj traži stanku prije sljedećeg pokušaja
+MSG_WHY_SHORT_KEY
+ključ je prekratak
+MSG_NO_NAME
+(bez naziva)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+izvrstan
+MSG_SIGNAL_GOOD
+dobar
+MSG_SIGNAL_FAIR
+osrednji
+MSG_SIGNAL_WEAK
+slab
+MSG_STATE_PAIRED
+upareno
+MSG_STATE_CONNECTED
+povezano
+MSG_STATE_ENCRYPTED
+šifrirano
+MSG_STATE_PAIRING
+uparivanje
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, nasumična)
+MSG_KIND_COMPUTER
+računalo
+MSG_KIND_LAPTOP
+prijenosno računalo
+MSG_KIND_HANDHELD
+džepno računalo
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+pristupna točka mreže
+MSG_KIND_HEADSET
+slušalice s mikrofonom
+MSG_KIND_HANDS_FREE
+hands-free
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+zvučnik
+MSG_KIND_HEADPHONES
+slušalice
+MSG_KIND_PORTABLE_AUDIO
+prijenosni audiouređaj
+MSG_KIND_CAR_AUDIO
+autoradio
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+zaslon
+MSG_KIND_GAME_CONSOLE
+igraća konzola
+MSG_KIND_AUDIO_VIDEO
+audio i video
+MSG_KIND_KEYBOARD
+tipkovnica
+MSG_KIND_MOUSE
+miš
+MSG_KIND_KEYBOARD_MOUSE
+tipkovnica i miš
+MSG_KIND_JOYSTICK
+igraća palica
+MSG_KIND_GAMEPAD
+upravljač za igre
+MSG_KIND_REMOTE
+daljinski upravljač
+MSG_KIND_TABLET
+grafički tablet
+MSG_KIND_PERIPHERAL
+ulazni uređaj
+MSG_KIND_IMAGING
+pisač ili fotoaparat
+MSG_KIND_WEARABLE
+nosivi uređaj
+MSG_KIND_TOY
+igračka
+MSG_KIND_HEALTH
+zdravstveni uređaj
+MSG_KIND_EARBUDS
+ušne slušalice
+MSG_KIND_WATCH
+ručni sat
+MSG_KIND_CLOCK
+sat
+MSG_KIND_TAG
+oznaka
+MSG_KIND_KEYRING
+privjesak za ključeve
+MSG_KIND_MEDIA_PLAYER
+medijski reproduktor
+MSG_KIND_THERMOMETER
+toplomjer
+MSG_KIND_HEART_RATE
+senzor otkucaja srca
+MSG_KIND_SENSOR
+senzor
+MSG_KIND_LIGHT
+svjetlo
+MSG_KIND_AUDIO_SOURCE
+izvor zvuka
+MSG_KIND_HEARING_AID
+slušni aparat
+MSG_PAIRING_TITLE
+Uparivanje
+MSG_ASK_COMPARE
+Prikazuje li uređaj %s ovaj broj?
+MSG_ASK_CONSENT
+Uređaj %s traži uparivanje s ovim računalom.
+MSG_ASK_PASSKEY
+Upišite broj koji prikazuje uređaj %s:
+MSG_ASK_SHOW
+Upišite ovaj broj na uređaju %s, a zatim pritisnite njegovu tipku Enter:
+MSG_ASK_PIN
+Upišite PIN uređaja %s - 0000 za većinu uređaja bez tipki:
+MSG_YES
+_Da
+MSG_NO
+_Ne
+MSG_CANCEL
+_Odustani
+MSG_FORGET_ASK
+Zaboraviti uređaj %s?\nKljuč koji ta dva uređaja dijele bit će izbrisan:\nza ponovnu uporabu treba ih ponovno upariti.
+MSG_FORGET_BUTTONS
+Zaboravi|Odustani
+MSG_NO_LIBRARY
+%s: nije moguće otvoriti %s\n
+MSG_NO_MEMORY
+%s: nema dovoljno memorije\n
+MSG_NO_WINDOW
+%s: nije moguće otvoriti prozor\n

@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language lietuviu
+## codeset 106
+; Bluetooth's strings in Lithuanian.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Valdiklis
+MSG_ON
+Į_jungta
+MSG_NAME
+_Pavadinimas
+MSG_VISIBLE
+_Matomas kitiems
+MSG_DEVICES
+Įrenginiai
+MSG_SEARCH
+_Ieškoti
+MSG_PAIR
+_Susieti
+MSG_CONNECT
+P_rijungti
+MSG_DISCONNECT
+_Atjungti
+MSG_FORGET
+Pamirš_ti...
+MSG_COLUMN_NAME
+Pavadinimas
+MSG_COLUMN_KIND
+Tipas
+MSG_COLUMN_SIGNAL
+Signalas
+MSG_COLUMN_STATE
+Būsena
+MSG_COLUMN_ADDRESS
+Adresas
+MSG_CONTROLLER_LABEL
+%u: %s - %s, įtaisas %u
+MSG_NO_CONTROLLER_LABEL
+Nėra valdiklio
+MSG_NO_CONTROLLER
+Nėra Bluetooth valdiklio: jis bus parodytas čia, kai tik jį pasiūlys jo įrenginys
+MSG_STARTING
+Valdiklis parengiamas...
+MSG_FAILED
+Valdiklio klaida: %s
+MSG_OFF
+Išjungta - pažymėkite Įjungta, kad galėtumėte naudoti valdiklį
+MSG_HIDDEN
+Įjungta - ieškantys įrenginiai šio kompiuterio neranda
+MSG_SHOWN
+Įjungta - ieškantys įrenginiai šį kompiuterį randa
+MSG_SHOWN_FOR
+Įjungta - ieškantys įrenginiai šį kompiuterį randa dar %u s
+MSG_SEARCHING
+Ieškoma įrenginių...
+MSG_FOUND
+Rasta įrenginių: %u
+MSG_FOUND_ONE
+Rastas vienas įrenginys
+MSG_FOUND_NONE
+Įrenginių nerasta
+MSG_NOT_SET
+Nepakeista: %s
+MSG_NOT_SEARCHING
+Paieška nepradėta: %s
+MSG_PAIRING
+Susiejama su įrenginiu %s...
+MSG_PAIRED
+Susieta su įrenginiu %s
+MSG_NOT_PAIRED
+Nesusieta su įrenginiu %s: %s
+MSG_CONNECTING
+Jungiamasi prie įrenginio %s...
+MSG_CONNECTED
+Prisijungta prie įrenginio %s
+MSG_NOT_CONNECTED
+Neprisijungta prie įrenginio %s: %s
+MSG_DISCONNECTING
+Atsijungiama nuo įrenginio %s...
+MSG_DISCONNECTED
+Atsijungta nuo įrenginio %s
+MSG_NOT_DISCONNECTED
+Neatsijungta nuo įrenginio %s: %s
+MSG_FORGETTING
+Pamirštamas įrenginys %s...
+MSG_FORGOTTEN
+Įrenginys %s pamirštas
+MSG_NOT_FORGOTTEN
+Įrenginys %s nepamirštas: %s
+MSG_WHY_NOMEM
+nepakanka atminties
+MSG_WHY_OPENFAIL
+jo įrenginys neatsidarė
+MSG_WHY_TIMEOUT
+atsakymas negautas laiku
+MSG_WHY_DETACHED
+valdiklis dingo
+MSG_WHY_PROTOCOL
+jo įrenginys sutriko
+MSG_WHY_NOCONTROLLER
+tokio valdiklio nėra
+MSG_WHY_NOTUP
+valdiklis nepaleistas
+MSG_WHY_OFF
+valdiklis išjungtas
+MSG_WHY_UNSUPPORTED
+valdiklis to negali
+MSG_WHY_BUSY
+valdiklis užimtas kuo nors kitu
+MSG_WHY_UNKNOWN_COMMAND
+jis nepriima reikiamos komandos
+MSG_WHY_HARDWARE
+aparatinės įrangos gedimas
+MSG_WHY_REFUSED
+valdiklis atsisakė
+MSG_WHY_NO_ROOM
+valdiklis neturi vietos dar vienam įrenginiui arba nepakanka atminties
+MSG_WHY_BONDED
+šis kompiuteris jau susietas su juo
+MSG_WHY_NOT_BONDED
+šis kompiuteris nesusietas su juo
+MSG_WHY_NOT_LINKED
+nėra ryšio su juo
+MSG_WHY_ANSWER_REFUSED
+atmesta arba neatsakyta laiku
+MSG_WHY_NO_ANSWER
+įrenginys neatsakė
+MSG_WHY_LOST
+ryšys nutrūko
+MSG_WHY_DEVICE_ENDED
+įrenginys nutraukė ryšį
+MSG_WHY_ENDED_HERE
+ryšys nutrauktas šioje pusėje
+MSG_WHY_DEVICE_REFUSED
+įrenginys atsisakė
+MSG_WHY_NUMBERS
+įrenginys atsisakė arba skaičiai nesutapo
+MSG_WHY_KEY_MISSING
+nėra PIN arba įrenginys nebeturi rakto: pamirškite jį ir susiekite iš naujo
+MSG_WHY_NOT_PAIRING
+įrenginys dabar nepriima susiejimo
+MSG_WHY_REPEATED
+įrenginys nori pertraukos prieš kitą bandymą
+MSG_WHY_SHORT_KEY
+raktas per trumpas
+MSG_NO_NAME
+(be pavadinimo)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+puikus
+MSG_SIGNAL_GOOD
+geras
+MSG_SIGNAL_FAIR
+vidutinis
+MSG_SIGNAL_WEAK
+silpnas
+MSG_STATE_PAIRED
+susieta
+MSG_STATE_CONNECTED
+prijungta
+MSG_STATE_ENCRYPTED
+šifruota
+MSG_STATE_PAIRING
+susiejama
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, atsitiktinis)
+MSG_KIND_COMPUTER
+kompiuteris
+MSG_KIND_LAPTOP
+nešiojamasis kompiuteris
+MSG_KIND_HANDHELD
+delninis kompiuteris
+MSG_KIND_PHONE
+telefonas
+MSG_KIND_ACCESS_POINT
+tinklo prieigos taškas
+MSG_KIND_HEADSET
+ausinės su mikrofonu
+MSG_KIND_HANDS_FREE
+laisvų rankų įranga
+MSG_KIND_MICROPHONE
+mikrofonas
+MSG_KIND_LOUDSPEAKER
+garsiakalbis
+MSG_KIND_HEADPHONES
+ausinės
+MSG_KIND_PORTABLE_AUDIO
+nešiojamasis garso įrenginys
+MSG_KIND_CAR_AUDIO
+automobilio garso sistema
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+vaizduoklis
+MSG_KIND_GAME_CONSOLE
+žaidimų konsolė
+MSG_KIND_AUDIO_VIDEO
+garsas ir vaizdas
+MSG_KIND_KEYBOARD
+klaviatūra
+MSG_KIND_MOUSE
+pelė
+MSG_KIND_KEYBOARD_MOUSE
+klaviatūra ir pelė
+MSG_KIND_JOYSTICK
+vairalazdė
+MSG_KIND_GAMEPAD
+žaidimų pultas
+MSG_KIND_REMOTE
+nuotolinio valdymo pultas
+MSG_KIND_TABLET
+grafinė planšetė
+MSG_KIND_PERIPHERAL
+įvesties įrenginys
+MSG_KIND_IMAGING
+spausdintuvas arba fotoaparatas
+MSG_KIND_WEARABLE
+dėvimasis įrenginys
+MSG_KIND_TOY
+žaislas
+MSG_KIND_HEALTH
+sveikatos prietaisas
+MSG_KIND_EARBUDS
+įkišamosios ausinės
+MSG_KIND_WATCH
+rankinis laikrodis
+MSG_KIND_CLOCK
+laikrodis
+MSG_KIND_TAG
+žymė
+MSG_KIND_KEYRING
+raktų pakabukas
+MSG_KIND_MEDIA_PLAYER
+medijos leistuvas
+MSG_KIND_THERMOMETER
+termometras
+MSG_KIND_HEART_RATE
+pulso jutiklis
+MSG_KIND_SENSOR
+jutiklis
+MSG_KIND_LIGHT
+šviestuvas
+MSG_KIND_AUDIO_SOURCE
+garso šaltinis
+MSG_KIND_HEARING_AID
+klausos aparatas
+MSG_PAIRING_TITLE
+Susiejimas
+MSG_ASK_COMPARE
+Ar įrenginys %s rodo šį skaičių?
+MSG_ASK_CONSENT
+Įrenginys %s prašo susieti jį su šiuo kompiuteriu.
+MSG_ASK_PASSKEY
+Įveskite skaičių, kurį rodo įrenginys %s:
+MSG_ASK_SHOW
+Įveskite šį skaičių įrenginyje %s, tada paspauskite jo klavišą Enter:
+MSG_ASK_PIN
+Įveskite įrenginio %s PIN - 0000 daugumai įrenginių be klavišų:
+MSG_YES
+_Taip
+MSG_NO
+_Ne
+MSG_CANCEL
+_Atšaukti
+MSG_FORGET_ASK
+Pamiršti įrenginį %s?\nAbiejų bendras raktas bus ištrintas: norint\nvėl naudoti, juos reikia susieti iš naujo.
+MSG_FORGET_BUTTONS
+Pamiršti|Atšaukti
+MSG_NO_LIBRARY
+%s: nepavyksta atidaryti %s\n
+MSG_NO_MEMORY
+%s: nepakanka atminties\n
+MSG_NO_WINDOW
+%s: nepavyksta atidaryti lango\n

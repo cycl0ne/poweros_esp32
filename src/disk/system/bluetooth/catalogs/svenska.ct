@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language svenska
+## codeset 106
+; Bluetooth's strings in Swedish.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+S_tyrenhet
+MSG_ON
+_På
+MSG_NAME
+_Namn
+MSG_VISIBLE
+S_ynlig för andra
+MSG_DEVICES
+Enheter
+MSG_SEARCH
+_Sök
+MSG_PAIR
+Pa_rkoppla
+MSG_CONNECT
+_Anslut
+MSG_DISCONNECT
+_Koppla från
+MSG_FORGET
+_Glöm...
+MSG_COLUMN_NAME
+Namn
+MSG_COLUMN_KIND
+Typ
+MSG_COLUMN_SIGNAL
+Signal
+MSG_COLUMN_STATE
+Tillstånd
+MSG_COLUMN_ADDRESS
+Adress
+MSG_CONTROLLER_LABEL
+%u: %s - %s nr %u
+MSG_NO_CONTROLLER_LABEL
+Ingen styrenhet
+MSG_NO_CONTROLLER
+Ingen Bluetooth-styrenhet: en visas här så snart dess enhet erbjuder den
+MSG_STARTING
+Styrenheten ställs in...
+MSG_FAILED
+Styrenheten fungerar inte: %s
+MSG_OFF
+Av - kryssa i "På" för att använda styrenheten
+MSG_HIDDEN
+På - enheter som söker hittar inte den här datorn
+MSG_SHOWN
+På - enheter som söker hittar den här datorn
+MSG_SHOWN_FOR
+På - enheter som söker hittar den här datorn i %u sekunder till
+MSG_SEARCHING
+Söker efter enheter...
+MSG_FOUND
+Sökningen hittade %u enheter
+MSG_FOUND_ONE
+Sökningen hittade en enhet
+MSG_FOUND_NONE
+Sökningen hittade inga enheter
+MSG_NOT_SET
+Inte ändrat: %s
+MSG_NOT_SEARCHING
+Ingen sökning: %s
+MSG_PAIRING
+Parkopplar med %s...
+MSG_PAIRED
+Parkopplad med %s
+MSG_NOT_PAIRED
+Inte parkopplad med %s: %s
+MSG_CONNECTING
+Ansluter till %s...
+MSG_CONNECTED
+Ansluten till %s
+MSG_NOT_CONNECTED
+Inte ansluten till %s: %s
+MSG_DISCONNECTING
+Kopplar från %s...
+MSG_DISCONNECTED
+%s är frånkopplad
+MSG_NOT_DISCONNECTED
+%s är inte frånkopplad: %s
+MSG_FORGETTING
+Glömmer %s...
+MSG_FORGOTTEN
+%s är glömd
+MSG_NOT_FORGOTTEN
+%s är inte glömd: %s
+MSG_WHY_NOMEM
+inte tillräckligt med minne
+MSG_WHY_OPENFAIL
+dess enhet kunde inte öppnas
+MSG_WHY_TIMEOUT
+inget svar kom i tid
+MSG_WHY_DETACHED
+styrenheten är borta
+MSG_WHY_PROTOCOL
+dess enhet fick ett fel
+MSG_WHY_NOCONTROLLER
+det finns ingen sådan styrenhet
+MSG_WHY_NOTUP
+styrenheten är inte redo
+MSG_WHY_OFF
+styrenheten är avstängd
+MSG_WHY_UNSUPPORTED
+det kan styrenheten inte
+MSG_WHY_BUSY
+styrenheten är upptagen med något annat
+MSG_WHY_UNKNOWN_COMMAND
+den känner inte till ett kommando som behövs
+MSG_WHY_HARDWARE
+ett maskinvarufel
+MSG_WHY_REFUSED
+styrenheten vägrade
+MSG_WHY_NO_ROOM
+styrenheten har inte plats för fler, eller så räcker inte minnet
+MSG_WHY_BONDED
+den här datorn är redan parkopplad med den
+MSG_WHY_NOT_BONDED
+den här datorn är inte parkopplad med den
+MSG_WHY_NOT_LINKED
+det finns ingen anslutning till den
+MSG_WHY_ANSWER_REFUSED
+nekad eller inte besvarad i tid
+MSG_WHY_NO_ANSWER
+enheten svarade inte
+MSG_WHY_LOST
+anslutningen gick förlorad
+MSG_WHY_DEVICE_ENDED
+enheten avslutade anslutningen
+MSG_WHY_ENDED_HERE
+anslutningen avslutades här
+MSG_WHY_DEVICE_REFUSED
+enheten vägrade
+MSG_WHY_NUMBERS
+enheten vägrade, eller så stämde inte siffrorna
+MSG_WHY_KEY_MISSING
+ingen PIN, eller så har enheten inte nyckeln längre: glöm den och parkoppla igen
+MSG_WHY_NOT_PAIRING
+enheten parkopplas inte nu
+MSG_WHY_REPEATED
+enheten vill ha en paus före nästa försök
+MSG_WHY_SHORT_KEY
+nyckeln är för kort
+MSG_NO_NAME
+(inget namn)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+utmärkt
+MSG_SIGNAL_GOOD
+bra
+MSG_SIGNAL_FAIR
+måttlig
+MSG_SIGNAL_WEAK
+svag
+MSG_STATE_PAIRED
+parkopplad
+MSG_STATE_CONNECTED
+ansluten
+MSG_STATE_ENCRYPTED
+krypterad
+MSG_STATE_PAIRING
+parkopplar
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, slumpmässig)
+MSG_KIND_COMPUTER
+dator
+MSG_KIND_LAPTOP
+bärbar dator
+MSG_KIND_HANDHELD
+handdator
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+nätverksåtkomstpunkt
+MSG_KIND_HEADSET
+headset
+MSG_KIND_HANDS_FREE
+handsfree
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+högtalare
+MSG_KIND_HEADPHONES
+hörlurar
+MSG_KIND_PORTABLE_AUDIO
+bärbar ljudenhet
+MSG_KIND_CAR_AUDIO
+bilstereo
+MSG_KIND_HIFI
+hifi-anläggning
+MSG_KIND_DISPLAY
+skärm
+MSG_KIND_GAME_CONSOLE
+spelkonsol
+MSG_KIND_AUDIO_VIDEO
+ljud och video
+MSG_KIND_KEYBOARD
+tangentbord
+MSG_KIND_MOUSE
+mus
+MSG_KIND_KEYBOARD_MOUSE
+tangentbord och mus
+MSG_KIND_JOYSTICK
+styrspak
+MSG_KIND_GAMEPAD
+handkontroll
+MSG_KIND_REMOTE
+fjärrkontroll
+MSG_KIND_TABLET
+ritplatta
+MSG_KIND_PERIPHERAL
+inmatningsenhet
+MSG_KIND_IMAGING
+skrivare eller kamera
+MSG_KIND_WEARABLE
+wearable
+MSG_KIND_TOY
+leksak
+MSG_KIND_HEALTH
+hälsoenhet
+MSG_KIND_EARBUDS
+öronsnäckor
+MSG_KIND_WATCH
+armbandsur
+MSG_KIND_CLOCK
+klocka
+MSG_KIND_TAG
+tagg
+MSG_KIND_KEYRING
+nyckelring
+MSG_KIND_MEDIA_PLAYER
+mediaspelare
+MSG_KIND_THERMOMETER
+termometer
+MSG_KIND_HEART_RATE
+pulssensor
+MSG_KIND_SENSOR
+sensor
+MSG_KIND_LIGHT
+lampa
+MSG_KIND_AUDIO_SOURCE
+ljudkälla
+MSG_KIND_HEARING_AID
+hörapparat
+MSG_PAIRING_TITLE
+Parkoppling
+MSG_ASK_COMPARE
+Visar %s det här numret?
+MSG_ASK_CONSENT
+%s ber om att parkopplas med den här datorn.
+MSG_ASK_PASSKEY
+Skriv numret som %s visar:
+MSG_ASK_SHOW
+Skriv det här numret på %s och tryck sedan på Enter:
+MSG_ASK_PIN
+Skriv PIN-koden för %s - 0000 för de flesta enheter utan knappar:
+MSG_YES
+_Ja
+MSG_NO
+_Nej
+MSG_CANCEL
+_Avbryt
+MSG_FORGET_ASK
+Glöm %s?\nNyckeln som de delar tas bort: För att\nanvändas igen parkopplas de på nytt.
+MSG_FORGET_BUTTONS
+Glöm|Avbryt
+MSG_NO_LIBRARY
+%s: kan inte öppna %s\n
+MSG_NO_MEMORY
+%s: inte tillräckligt med minne\n
+MSG_NO_WINDOW
+%s: inget fönster kunde öppnas\n

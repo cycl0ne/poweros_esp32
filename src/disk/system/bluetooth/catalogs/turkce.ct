@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language turkce
+## codeset 106
+; Bluetooth's strings in Turkish.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+De_netleyici
+MSG_ON
+_Açık
+MSG_NAME
+A_d
+MSG_VISIBLE
+Başkalarına _görünür
+MSG_DEVICES
+Aygıtlar
+MSG_SEARCH
+A_ra
+MSG_PAIR
+_Eşleştir
+MSG_CONNECT
+_Bağlan
+MSG_DISCONNECT
+Bağlantıyı _kes
+MSG_FORGET
+_Unut...
+MSG_COLUMN_NAME
+Ad
+MSG_COLUMN_KIND
+Tür
+MSG_COLUMN_SIGNAL
+Sinyal
+MSG_COLUMN_STATE
+Durum
+MSG_COLUMN_ADDRESS
+Adres
+MSG_CONTROLLER_LABEL
+%u: %s - %s, birim %u
+MSG_NO_CONTROLLER_LABEL
+Denetleyici yok
+MSG_NO_CONTROLLER
+Bluetooth denetleyicisi yok: aygıtı sunduğu anda burada gösterilir
+MSG_STARTING
+Denetleyici hazırlanıyor...
+MSG_FAILED
+Denetleyici başarısız oldu: %s
+MSG_OFF
+Kapalı - denetleyiciyi kullanmak için Açık'ı işaretleyin
+MSG_HIDDEN
+Açık - arama yapan aygıtlar bu bilgisayarı bulamaz
+MSG_SHOWN
+Açık - arama yapan aygıtlar bu bilgisayarı bulabilir
+MSG_SHOWN_FOR
+Açık - arama yapan aygıtlar bu bilgisayarı %u saniye daha bulabilir
+MSG_SEARCHING
+Aygıtlar aranıyor...
+MSG_FOUND
+Arama %u aygıt buldu
+MSG_FOUND_ONE
+Arama bir aygıt buldu
+MSG_FOUND_NONE
+Arama hiç aygıt bulamadı
+MSG_NOT_SET
+Değiştirilmedi: %s
+MSG_NOT_SEARCHING
+Arama yapılamadı: %s
+MSG_PAIRING
+%s ile eşleştiriliyor...
+MSG_PAIRED
+%s ile eşleştirildi
+MSG_NOT_PAIRED
+%s ile eşleştirilemedi: %s
+MSG_CONNECTING
+%s ile bağlantı kuruluyor...
+MSG_CONNECTED
+%s ile bağlantı kuruldu
+MSG_NOT_CONNECTED
+%s ile bağlantı kurulamadı: %s
+MSG_DISCONNECTING
+%s ile bağlantı kesiliyor...
+MSG_DISCONNECTED
+%s ile bağlantı kesildi
+MSG_NOT_DISCONNECTED
+%s ile bağlantı kesilemedi: %s
+MSG_FORGETTING
+%s unutuluyor...
+MSG_FORGOTTEN
+%s unutuldu
+MSG_NOT_FORGOTTEN
+%s unutulamadı: %s
+MSG_WHY_NOMEM
+yeterli bellek yok
+MSG_WHY_OPENFAIL
+aygıtı açılamadı
+MSG_WHY_TIMEOUT
+zamanında yanıt alınamadı
+MSG_WHY_DETACHED
+denetleyici artık yok
+MSG_WHY_PROTOCOL
+aygıtı hata verdi
+MSG_WHY_NOCONTROLLER
+böyle bir denetleyici yok
+MSG_WHY_NOTUP
+denetleyici hazır değil
+MSG_WHY_OFF
+denetleyici kapalı
+MSG_WHY_UNSUPPORTED
+denetleyici bunu yapamıyor
+MSG_WHY_BUSY
+denetleyici başka bir işle meşgul
+MSG_WHY_UNKNOWN_COMMAND
+gereken bir komutu kabul etmiyor
+MSG_WHY_HARDWARE
+donanım arızası
+MSG_WHY_REFUSED
+denetleyici reddetti
+MSG_WHY_NO_ROOM
+denetleyicide bir tane daha için yer yok ya da yeterli bellek yok
+MSG_WHY_BONDED
+bu bilgisayarla zaten eşleştirilmiş
+MSG_WHY_NOT_BONDED
+bu bilgisayarla eşleştirilmemiş
+MSG_WHY_NOT_LINKED
+onunla bağlantı yok
+MSG_WHY_ANSWER_REFUSED
+reddedildi ya da zamanında yanıtlanmadı
+MSG_WHY_NO_ANSWER
+aygıt yanıt vermedi
+MSG_WHY_LOST
+bağlantı koptu
+MSG_WHY_DEVICE_ENDED
+aygıt bağlantıyı sonlandırdı
+MSG_WHY_ENDED_HERE
+bağlantı bu taraftan sonlandırıldı
+MSG_WHY_DEVICE_REFUSED
+aygıt reddetti
+MSG_WHY_NUMBERS
+aygıt reddetti ya da sayılar eşleşmedi
+MSG_WHY_KEY_MISSING
+PIN yok ya da aygıtta artık anahtar yok: aygıtı unutup yeniden eşleştirin
+MSG_WHY_NOT_PAIRING
+aygıt şu anda eşleşmeye açık değil
+MSG_WHY_REPEATED
+aygıt bir sonraki denemeden önce ara vermek istiyor
+MSG_WHY_SHORT_KEY
+anahtar çok kısa
+MSG_NO_NAME
+(adsız)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+mükemmel
+MSG_SIGNAL_GOOD
+iyi
+MSG_SIGNAL_FAIR
+orta
+MSG_SIGNAL_WEAK
+zayıf
+MSG_STATE_PAIRED
+eşleştirilmiş
+MSG_STATE_CONNECTED
+bağlı
+MSG_STATE_ENCRYPTED
+şifreli
+MSG_STATE_PAIRING
+eşleştiriliyor
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, rastgele)
+MSG_KIND_COMPUTER
+bilgisayar
+MSG_KIND_LAPTOP
+dizüstü bilgisayar
+MSG_KIND_HANDHELD
+el bilgisayarı
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+ağ erişim noktası
+MSG_KIND_HEADSET
+mikrofonlu kulaklık
+MSG_KIND_HANDS_FREE
+eller serbest
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+hoparlör
+MSG_KIND_HEADPHONES
+kulaklık
+MSG_KIND_PORTABLE_AUDIO
+taşınabilir ses
+MSG_KIND_CAR_AUDIO
+araç ses sistemi
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+ekran
+MSG_KIND_GAME_CONSOLE
+oyun konsolu
+MSG_KIND_AUDIO_VIDEO
+ses ve görüntü
+MSG_KIND_KEYBOARD
+klavye
+MSG_KIND_MOUSE
+fare
+MSG_KIND_KEYBOARD_MOUSE
+klavye ve fare
+MSG_KIND_JOYSTICK
+oyun çubuğu
+MSG_KIND_GAMEPAD
+oyun kumandası
+MSG_KIND_REMOTE
+uzaktan kumanda
+MSG_KIND_TABLET
+tablet
+MSG_KIND_PERIPHERAL
+giriş aygıtı
+MSG_KIND_IMAGING
+yazıcı ya da kamera
+MSG_KIND_WEARABLE
+giyilebilir aygıt
+MSG_KIND_TOY
+oyuncak
+MSG_KIND_HEALTH
+sağlık aygıtı
+MSG_KIND_EARBUDS
+kulak içi kulaklık
+MSG_KIND_WATCH
+kol saati
+MSG_KIND_CLOCK
+saat
+MSG_KIND_TAG
+etiket
+MSG_KIND_KEYRING
+anahtarlık
+MSG_KIND_MEDIA_PLAYER
+medya oynatıcı
+MSG_KIND_THERMOMETER
+termometre
+MSG_KIND_HEART_RATE
+nabız sensörü
+MSG_KIND_SENSOR
+sensör
+MSG_KIND_LIGHT
+ışık
+MSG_KIND_AUDIO_SOURCE
+ses kaynağı
+MSG_KIND_HEARING_AID
+işitme cihazı
+MSG_PAIRING_TITLE
+Eşleştirme
+MSG_ASK_COMPARE
+%s bu sayıyı gösteriyor mu?
+MSG_ASK_CONSENT
+%s bu bilgisayarla eşleşmek istiyor.
+MSG_ASK_PASSKEY
+%s üzerinde gösterilen sayıyı yazın:
+MSG_ASK_SHOW
+Bu sayıyı %s üzerinde yazın, ardından Enter tuşuna basın:
+MSG_ASK_PIN
+%s için PIN'i yazın - tuşu olmayan çoğu aygıt için 0000:
+MSG_YES
+_Evet
+MSG_NO
+_Hayır
+MSG_CANCEL
+İ_ptal
+MSG_FORGET_ASK
+%s unutulsun mu?\nİkisinin paylaştığı anahtar silinir: yeniden\nkullanmak için tekrar eşleştirilmeleri gerekir.
+MSG_FORGET_BUTTONS
+Unut|İptal
+MSG_NO_LIBRARY
+%s: %s açılamıyor\n
+MSG_NO_MEMORY
+%s: yeterli bellek yok\n
+MSG_NO_WINDOW
+%s: penceresi açılamıyor\n

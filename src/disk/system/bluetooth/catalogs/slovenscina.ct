@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language slovenscina
+## codeset 106
+; Bluetooth's strings in Slovene.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+_Krmilnik
+MSG_ON
+_Vklopljeno
+MSG_NAME
+I_me
+MSG_VISIBLE
+Vi_dno drugim
+MSG_DEVICES
+Naprave
+MSG_SEARCH
+_Iskanje
+MSG_PAIR
+_Seznani
+MSG_CONNECT
+_Poveži
+MSG_DISCONNECT
+P_rekini povezavo
+MSG_FORGET
+Po_zabi...
+MSG_COLUMN_NAME
+Ime
+MSG_COLUMN_KIND
+Vrsta
+MSG_COLUMN_SIGNAL
+Signal
+MSG_COLUMN_STATE
+Stanje
+MSG_COLUMN_ADDRESS
+Naslov
+MSG_CONTROLLER_LABEL
+%u: %s - %s, enota %u
+MSG_NO_CONTROLLER_LABEL
+Ni krmilnika
+MSG_NO_CONTROLLER
+Ni krmilnika Bluetooth: tu se prikaže, takoj ko ga ponudi njegova naprava
+MSG_STARTING
+Krmilnik se pripravlja...
+MSG_FAILED
+Krmilnik je odpovedal: %s
+MSG_OFF
+Izklopljeno - za uporabo krmilnika označite Vklopljeno
+MSG_HIDDEN
+Vklopljeno - naprave, ki iščejo, tega računalnika ne najdejo
+MSG_SHOWN
+Vklopljeno - naprave, ki iščejo, ta računalnik najdejo
+MSG_SHOWN_FOR
+Vklopljeno - naprave, ki iščejo, ta računalnik najdejo še %u s
+MSG_SEARCHING
+Iskanje naprav...
+MSG_FOUND
+Najdene naprave: %u
+MSG_FOUND_ONE
+Najdena je ena naprava
+MSG_FOUND_NONE
+Ni najdenih naprav
+MSG_NOT_SET
+Ni spremenjeno: %s
+MSG_NOT_SEARCHING
+Iskanje se ni začelo: %s
+MSG_PAIRING
+Seznanjanje z napravo %s...
+MSG_PAIRED
+Seznanjeno z napravo %s
+MSG_NOT_PAIRED
+Ni seznanjeno z napravo %s: %s
+MSG_CONNECTING
+Povezovanje z napravo %s...
+MSG_CONNECTED
+Povezano z napravo %s
+MSG_NOT_CONNECTED
+Ni povezano z napravo %s: %s
+MSG_DISCONNECTING
+Prekinjanje povezave z napravo %s...
+MSG_DISCONNECTED
+Povezava z napravo %s je prekinjena
+MSG_NOT_DISCONNECTED
+Povezava z napravo %s ni prekinjena: %s
+MSG_FORGETTING
+Pozabljanje naprave %s...
+MSG_FORGOTTEN
+Naprava %s je pozabljena
+MSG_NOT_FORGOTTEN
+Naprava %s ni pozabljena: %s
+MSG_WHY_NOMEM
+premalo pomnilnika
+MSG_WHY_OPENFAIL
+njegove naprave ni bilo mogoče odpreti
+MSG_WHY_TIMEOUT
+odgovor ni prišel pravočasno
+MSG_WHY_DETACHED
+krmilnika ni več
+MSG_WHY_PROTOCOL
+njegova naprava je odpovedala
+MSG_WHY_NOCONTROLLER
+takega krmilnika ni
+MSG_WHY_NOTUP
+krmilnik ni zagnan
+MSG_WHY_OFF
+krmilnik je izklopljen
+MSG_WHY_UNSUPPORTED
+krmilnik tega ne zmore
+MSG_WHY_BUSY
+krmilnik je zaposlen z nečim drugim
+MSG_WHY_UNKNOWN_COMMAND
+ne sprejema potrebnega ukaza
+MSG_WHY_HARDWARE
+okvara strojne opreme
+MSG_WHY_REFUSED
+krmilnik je zavrnil
+MSG_WHY_NO_ROOM
+krmilnik nima prostora za še eno napravo ali pa je premalo pomnilnika
+MSG_WHY_BONDED
+ta računalnik je z njo že seznanjen
+MSG_WHY_NOT_BONDED
+ta računalnik z njo ni seznanjen
+MSG_WHY_NOT_LINKED
+povezave z njo ni
+MSG_WHY_ANSWER_REFUSED
+zavrnjeno ali ni odgovorjeno pravočasno
+MSG_WHY_NO_ANSWER
+naprava ni odgovorila
+MSG_WHY_LOST
+povezava je bila izgubljena
+MSG_WHY_DEVICE_ENDED
+naprava je končala povezavo
+MSG_WHY_ENDED_HERE
+povezava je bila končana na tej strani
+MSG_WHY_DEVICE_REFUSED
+naprava je zavrnila
+MSG_WHY_NUMBERS
+naprava je zavrnila ali pa se številki nista ujemali
+MSG_WHY_KEY_MISSING
+ni kode PIN ali naprava nima več ključa: pozabite jo in jo znova seznanite
+MSG_WHY_NOT_PAIRING
+naprava se zdaj ne seznanja
+MSG_WHY_REPEATED
+naprava želi premor pred naslednjim poskusom
+MSG_WHY_SHORT_KEY
+ključ je prekratek
+MSG_NO_NAME
+(brez imena)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+odličen
+MSG_SIGNAL_GOOD
+dober
+MSG_SIGNAL_FAIR
+srednji
+MSG_SIGNAL_WEAK
+šibek
+MSG_STATE_PAIRED
+seznanjeno
+MSG_STATE_CONNECTED
+povezano
+MSG_STATE_ENCRYPTED
+šifrirano
+MSG_STATE_PAIRING
+seznanjanje
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, naključni)
+MSG_KIND_COMPUTER
+računalnik
+MSG_KIND_LAPTOP
+prenosnik
+MSG_KIND_HANDHELD
+dlančnik
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+dostopna točka omrežja
+MSG_KIND_HEADSET
+slušalke z mikrofonom
+MSG_KIND_HANDS_FREE
+prostoročni komplet
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+zvočnik
+MSG_KIND_HEADPHONES
+slušalke
+MSG_KIND_PORTABLE_AUDIO
+prenosna zvočna naprava
+MSG_KIND_CAR_AUDIO
+avtoradio
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+zaslon
+MSG_KIND_GAME_CONSOLE
+igralna konzola
+MSG_KIND_AUDIO_VIDEO
+avdio in video
+MSG_KIND_KEYBOARD
+tipkovnica
+MSG_KIND_MOUSE
+miška
+MSG_KIND_KEYBOARD_MOUSE
+tipkovnica in miška
+MSG_KIND_JOYSTICK
+igralna palica
+MSG_KIND_GAMEPAD
+igralni plošček
+MSG_KIND_REMOTE
+daljinski upravljalnik
+MSG_KIND_TABLET
+grafična tablica
+MSG_KIND_PERIPHERAL
+vhodna naprava
+MSG_KIND_IMAGING
+tiskalnik ali fotoaparat
+MSG_KIND_WEARABLE
+nosljiva naprava
+MSG_KIND_TOY
+igrača
+MSG_KIND_HEALTH
+zdravstvena naprava
+MSG_KIND_EARBUDS
+ušesne slušalke
+MSG_KIND_WATCH
+zapestna ura
+MSG_KIND_CLOCK
+ura
+MSG_KIND_TAG
+oznaka
+MSG_KIND_KEYRING
+obesek za ključe
+MSG_KIND_MEDIA_PLAYER
+predvajalnik predstavnosti
+MSG_KIND_THERMOMETER
+termometer
+MSG_KIND_HEART_RATE
+senzor srčnega utripa
+MSG_KIND_SENSOR
+senzor
+MSG_KIND_LIGHT
+luč
+MSG_KIND_AUDIO_SOURCE
+vir zvoka
+MSG_KIND_HEARING_AID
+slušni aparat
+MSG_PAIRING_TITLE
+Seznanjanje
+MSG_ASK_COMPARE
+Ali naprava %s prikazuje to številko?
+MSG_ASK_CONSENT
+Naprava %s se želi seznaniti s tem računalnikom.
+MSG_ASK_PASSKEY
+Vnesite številko, ki jo prikazuje naprava %s:
+MSG_ASK_SHOW
+To številko vnesite na napravi %s in nato pritisnite njeno tipko Enter:
+MSG_ASK_PIN
+Vnesite PIN naprave %s - 0000 za večino naprav brez tipk:
+MSG_YES
+_Da
+MSG_NO
+_Ne
+MSG_CANCEL
+_Prekliči
+MSG_FORGET_ASK
+Želite pozabiti napravo %s?\nKljuč, ki si ga obe strani delita, bo izbrisan:\nza ponovno uporabo ju je treba znova seznaniti.
+MSG_FORGET_BUTTONS
+Pozabi|Prekliči
+MSG_NO_LIBRARY
+%s: ni mogoče odpreti %s\n
+MSG_NO_MEMORY
+%s: premalo pomnilnika\n
+MSG_NO_WINDOW
+%s: ni mogoče odpreti okna\n

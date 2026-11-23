@@ -1,0 +1,278 @@
+## version $VER: System/Bluetooth.catalog 1.0 (23.11.2026)
+## language cestina
+## codeset 106
+; Bluetooth's strings in Czech.
+MSG_WINDOW_TITLE
+Bluetooth
+MSG_CONTROLLER
+Ř_adič
+MSG_ON
+_Zapnuto
+MSG_NAME
+_Název
+MSG_VISIBLE
+_Viditelný pro ostatní
+MSG_DEVICES
+Zařízení
+MSG_SEARCH
+_Hledat
+MSG_PAIR
+_Spárovat
+MSG_CONNECT
+_Připojit
+MSG_DISCONNECT
+_Odpojit
+MSG_FORGET
+Zapo_menout...
+MSG_COLUMN_NAME
+Název
+MSG_COLUMN_KIND
+Typ
+MSG_COLUMN_SIGNAL
+Signál
+MSG_COLUMN_STATE
+Stav
+MSG_COLUMN_ADDRESS
+Adresa
+MSG_CONTROLLER_LABEL
+%u: %s - %s, jednotka %u
+MSG_NO_CONTROLLER_LABEL
+Žádný řadič
+MSG_NO_CONTROLLER
+Žádný řadič Bluetooth: objeví se zde, jakmile ho jeho zařízení nabídne
+MSG_STARTING
+Řadič se připravuje...
+MSG_FAILED
+Řadič selhal: %s
+MSG_OFF
+Vypnuto - pro použití řadiče zaškrtněte Zapnuto
+MSG_HIDDEN
+Zapnuto - hledající zařízení tento počítač nenajdou
+MSG_SHOWN
+Zapnuto - hledající zařízení tento počítač najdou
+MSG_SHOWN_FOR
+Zapnuto - hledající zařízení tento počítač najdou ještě %u s
+MSG_SEARCHING
+Hledání zařízení...
+MSG_FOUND
+Nalezená zařízení: %u
+MSG_FOUND_ONE
+Nalezeno jedno zařízení
+MSG_FOUND_NONE
+Nenalezeno žádné zařízení
+MSG_NOT_SET
+Nezměněno: %s
+MSG_NOT_SEARCHING
+Hledání neproběhlo: %s
+MSG_PAIRING
+Párování se zařízením %s...
+MSG_PAIRED
+Spárováno se zařízením %s
+MSG_NOT_PAIRED
+Nespárováno se zařízením %s: %s
+MSG_CONNECTING
+Připojování k zařízení %s...
+MSG_CONNECTED
+Připojeno k zařízení %s
+MSG_NOT_CONNECTED
+Nepřipojeno k zařízení %s: %s
+MSG_DISCONNECTING
+Odpojování od zařízení %s...
+MSG_DISCONNECTED
+Odpojeno od zařízení %s
+MSG_NOT_DISCONNECTED
+Neodpojeno od zařízení %s: %s
+MSG_FORGETTING
+Zapomínání zařízení %s...
+MSG_FORGOTTEN
+Zařízení %s je zapomenuto
+MSG_NOT_FORGOTTEN
+Zařízení %s není zapomenuto: %s
+MSG_WHY_NOMEM
+nedostatek paměti
+MSG_WHY_OPENFAIL
+jeho zařízení nelze otevřít
+MSG_WHY_TIMEOUT
+odpověď nepřišla včas
+MSG_WHY_DETACHED
+řadič zmizel
+MSG_WHY_PROTOCOL
+jeho zařízení selhalo
+MSG_WHY_NOCONTROLLER
+takový řadič neexistuje
+MSG_WHY_NOTUP
+řadič není spuštěn
+MSG_WHY_OFF
+řadič je vypnutý
+MSG_WHY_UNSUPPORTED
+řadič to neumí
+MSG_WHY_BUSY
+řadič je zaneprázdněn něčím jiným
+MSG_WHY_UNKNOWN_COMMAND
+nepřijímá potřebný příkaz
+MSG_WHY_HARDWARE
+chyba hardwaru
+MSG_WHY_REFUSED
+řadič odmítl
+MSG_WHY_NO_ROOM
+řadič nemá místo pro další zařízení nebo je nedostatek paměti
+MSG_WHY_BONDED
+tento počítač je s ním už spárován
+MSG_WHY_NOT_BONDED
+tento počítač s ním není spárován
+MSG_WHY_NOT_LINKED
+není s ním spojení
+MSG_WHY_ANSWER_REFUSED
+odmítnuto nebo nezodpovězeno včas
+MSG_WHY_NO_ANSWER
+zařízení neodpovědělo
+MSG_WHY_LOST
+spojení bylo ztraceno
+MSG_WHY_DEVICE_ENDED
+zařízení ukončilo spojení
+MSG_WHY_ENDED_HERE
+spojení bylo ukončeno na této straně
+MSG_WHY_DEVICE_REFUSED
+zařízení odmítlo
+MSG_WHY_NUMBERS
+zařízení odmítlo nebo se čísla neshodovala
+MSG_WHY_KEY_MISSING
+chybí PIN nebo zařízení už nemá klíč: zapomeňte ho a spárujte znovu
+MSG_WHY_NOT_PAIRING
+zařízení teď párování nepřijímá
+MSG_WHY_REPEATED
+zařízení chce před dalším pokusem pauzu
+MSG_WHY_SHORT_KEY
+klíč je příliš krátký
+MSG_NO_NAME
+(bez názvu)
+MSG_SIGNAL
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT
+vynikající
+MSG_SIGNAL_GOOD
+dobrý
+MSG_SIGNAL_FAIR
+průměrný
+MSG_SIGNAL_WEAK
+slabý
+MSG_STATE_PAIRED
+spárováno
+MSG_STATE_CONNECTED
+připojeno
+MSG_STATE_ENCRYPTED
+šifrováno
+MSG_STATE_PAIRING
+párování
+MSG_ADDRESS_LE
+%s (LE)
+MSG_ADDRESS_RANDOM
+%s (LE, náhodná)
+MSG_KIND_COMPUTER
+počítač
+MSG_KIND_LAPTOP
+notebook
+MSG_KIND_HANDHELD
+kapesní počítač
+MSG_KIND_PHONE
+telefon
+MSG_KIND_ACCESS_POINT
+přístupový bod sítě
+MSG_KIND_HEADSET
+náhlavní souprava
+MSG_KIND_HANDS_FREE
+hands-free
+MSG_KIND_MICROPHONE
+mikrofon
+MSG_KIND_LOUDSPEAKER
+reproduktor
+MSG_KIND_HEADPHONES
+sluchátka
+MSG_KIND_PORTABLE_AUDIO
+přenosné audio
+MSG_KIND_CAR_AUDIO
+autorádio
+MSG_KIND_HIFI
+hi-fi
+MSG_KIND_DISPLAY
+displej
+MSG_KIND_GAME_CONSOLE
+herní konzole
+MSG_KIND_AUDIO_VIDEO
+audio a video
+MSG_KIND_KEYBOARD
+klávesnice
+MSG_KIND_MOUSE
+myš
+MSG_KIND_KEYBOARD_MOUSE
+klávesnice a myš
+MSG_KIND_JOYSTICK
+joystick
+MSG_KIND_GAMEPAD
+gamepad
+MSG_KIND_REMOTE
+dálkový ovladač
+MSG_KIND_TABLET
+grafický tablet
+MSG_KIND_PERIPHERAL
+vstupní zařízení
+MSG_KIND_IMAGING
+tiskárna nebo fotoaparát
+MSG_KIND_WEARABLE
+nositelné zařízení
+MSG_KIND_TOY
+hračka
+MSG_KIND_HEALTH
+zdravotnické zařízení
+MSG_KIND_EARBUDS
+sluchátka do uší
+MSG_KIND_WATCH
+hodinky
+MSG_KIND_CLOCK
+hodiny
+MSG_KIND_TAG
+štítek
+MSG_KIND_KEYRING
+klíčenka
+MSG_KIND_MEDIA_PLAYER
+přehrávač médií
+MSG_KIND_THERMOMETER
+teploměr
+MSG_KIND_HEART_RATE
+snímač tepu
+MSG_KIND_SENSOR
+snímač
+MSG_KIND_LIGHT
+světlo
+MSG_KIND_AUDIO_SOURCE
+zdroj zvuku
+MSG_KIND_HEARING_AID
+naslouchátko
+MSG_PAIRING_TITLE
+Párování
+MSG_ASK_COMPARE
+Zobrazuje zařízení %s toto číslo?
+MSG_ASK_CONSENT
+Zařízení %s žádá o spárování s tímto počítačem.
+MSG_ASK_PASSKEY
+Zadejte číslo, které zobrazuje zařízení %s:
+MSG_ASK_SHOW
+Zadejte toto číslo na zařízení %s a pak stiskněte jeho klávesu Enter:
+MSG_ASK_PIN
+Zadejte PIN zařízení %s - 0000 u většiny zařízení bez kláves:
+MSG_YES
+_Ano
+MSG_NO
+_Ne
+MSG_CANCEL
+_Zrušit
+MSG_FORGET_ASK
+Zapomenout zařízení %s?\nKlíč sdílený oběma zařízeními bude smazán:\nk opětovnému použití se musí znovu spárovat.
+MSG_FORGET_BUTTONS
+Zapomenout|Zrušit
+MSG_NO_LIBRARY
+%s: nelze otevřít %s\n
+MSG_NO_MEMORY
+%s: nedostatek paměti\n
+MSG_NO_WINDOW
+%s: nelze otevřít okno\n
