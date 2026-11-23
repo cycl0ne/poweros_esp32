@@ -924,9 +924,10 @@ Paired with Keyboard
 A HID device is reached over two L2CAP channels, control (PSM 17) and
 interrupt (PSM 19), each frame beginning with a byte that says what it
 is (`sdk/libs/bluetooth/hidp.zig`). The driver opens them, control
-first, right after the pairing that bonded the device; after that the
-device opens them itself when it has something to send, as a keyboard
-does when a key is pressed. So while it drives a device the driver
+first, right after the pairing that bonded the device, and waits for
+neither (`StartBTChannel`): a device slow to answer holds up no other
+device's keys. After that the device opens them itself when it has
+something to send, as a keyboard does when a key is pressed. So while it drives a device the driver
 serves both PSMs - with `BTLSF_SECURE`, so that keys come only from a
 device paired with - and closes again a channel of a device it does not
 drive. A device that waits for its host to open the channels - one that

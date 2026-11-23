@@ -13,9 +13,12 @@
 //! control (PSM 17) and interrupt (PSM 19), each frame beginning with a
 //! byte that says what it is (sdk/libs/bluetooth/hidp.zig). The driver
 //! opens them, control first, when it is offered a device that has a
-//! link - the pairing that bonded it has just ended; after that the
-//! device opens them itself whenever it has something to send, as a
-//! keyboard does once a key is pressed. So the driver serves both PSMs
+//! link - the pairing that bonded it has just ended. Each is begun
+//! (StartBTChannel) and taken once its port says it is open, so that a
+//! device slow to answer holds up no other device's reports; one the
+//! device opens meanwhile is taken instead. After that the device opens
+//! them itself whenever it has something to send, as a keyboard does
+//! once a key is pressed. So the driver serves both PSMs
 //! while it drives a device - only over a bonded device's link encrypted
 //! with its bond's key (BTLSF_SECURE) - and closes again a channel of a
 //! device it does not drive.
@@ -31,8 +34,8 @@
 //!
 //! **One task for every device.** The channels' messages, the listeners'
 //! and the commands come to one task, which opens, reads and closes every
-//! channel - so no channel is closed under a message being read about it.
-//! Binding runs on bluetooth.library's binder: the record's descriptor
+//! channel - so no channel is closed under a message being read about it -
+//! and waits for none to open. Binding runs on bluetooth.library's binder: the record's descriptor
 //! copied and read into a function, and the task told of the device - it
 //! adds the listeners with the first device, and opens the channels where
 //! the device has a link. Unbinding is a command to the task, waited for:
@@ -79,7 +82,7 @@ const HIDBase = sdk.interface.hid.HIDBase;
 
 pub const DEVICE_NAME = "bthid.device";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "23.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -128,6 +131,10 @@ const Hid = struct {
     /// Its channels while they are open.
     control: ?*bluetooth.BTChannel = null,
     interrupt: ?*bluetooth.BTChannel = null,
+    /// The channels opened from here while they open, each its
+    /// counterpart once its port says it is open.
+    control_opening: ?*bluetooth.BTChannel = null,
+    interrupt_opening: ?*bluetooth.BTChannel = null,
     /// What hid.library reads its reports by - from the binding until the
     /// interrupt channel first closes, then while it is open - and the
     /// hook its output reports come back through.
@@ -265,15 +272,34 @@ fn findByChannel(hb: *BtHidBase, channel: *bluetooth.BTChannel) ?*Hid {
     return null;
 }
 
-/// A message about a channel: a device's channel to a listener, a frame,
-/// a channel's end. Replied - a frame once it is read, since its bytes are
-/// the library's until then - before anything closes the channel.
+/// Which of a device's channels one opening from here is.
+const Opening = enum { control, interrupt };
+
+/// The device a channel opening from here is of, and which it is; null
+/// for none.
+fn findOpening(hb: *BtHidBase, channel: *bluetooth.BTChannel) ?struct { *Hid, Opening } {
+    const sys = hb.sys_base;
+    sys.ObtainSemaphoreShared(&hb.lock);
+    defer sys.ReleaseSemaphore(&hb.lock);
+    for (hb.devices) |slot| {
+        const device = hidOf(slot) orelse continue;
+        if (device.control_opening == channel) return .{ device, .control };
+        if (device.interrupt_opening == channel) return .{ device, .interrupt };
+    }
+    return null;
+}
+
+/// A message about a channel: a device's channel to a listener, one
+/// opened from here open or not, a frame, a channel's end. Replied - a
+/// frame once it is read, since its bytes are the library's until then -
+/// before anything closes the channel.
 fn heard(hb: *BtHidBase, told: *bluetooth.BTChannelMessage) void {
     const sys = hb.sys_base;
     const channel = told.channel orelse return sys.ReplyMsg(&told.message);
     switch (told.kind) {
         bluetooth.BTCM_OPENED => {
             sys.ReplyMsg(&told.message);
+            if (findOpening(hb, channel)) |found| return openedHere(hb, found[0], found[1], channel);
             opened(hb, channel);
         },
         bluetooth.BTCM_DATA => {
@@ -286,7 +312,9 @@ fn heard(hb: *BtHidBase, told: *bluetooth.BTChannelMessage) void {
             if (unplugged) unplug(hb, device.?);
         },
         bluetooth.BTCM_CLOSED => {
+            const result = told.result;
             sys.ReplyMsg(&told.message);
+            if (findOpening(hb, channel)) |found| return notOpened(hb, found[0], found[1], channel, result);
             closed(hb, channel);
         },
         else => sys.ReplyMsg(&told.message),
@@ -294,8 +322,8 @@ fn heard(hb: *BtHidBase, told: *bluetooth.BTChannelMessage) void {
 }
 
 /// A device's channel to one of the listeners: kept where it is a device
-/// driven - in place of one it had, whose function goes with it - and
-/// closed again where it is not.
+/// driven - in place of one it had, whose function goes with it, or of
+/// one opening from here - and closed again where it is not.
 fn opened(hb: *BtHidBase, channel: *bluetooth.BTChannel) void {
     const bt = hb.bt_base.?;
     const device = findByAddress(hb, channel.controller, channel.address) orelse {
@@ -306,6 +334,7 @@ fn opened(hb: *BtHidBase, channel: *bluetooth.BTChannel) void {
         l2cap.PSM_HID_CONTROL => {
             if (device.control) |old| bt.CloseBTChannel(old);
             device.control = channel;
+            giveUp(hb, &device.control_opening);
         },
         l2cap.PSM_HID_INTERRUPT => {
             if (device.interrupt) |old| {
@@ -313,6 +342,7 @@ fn opened(hb: *BtHidBase, channel: *bluetooth.BTChannel) void {
                 endFunction(hb, device);
             }
             device.interrupt = channel;
+            giveUp(hb, &device.interrupt_opening);
             startFunction(hb, device);
             say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x connected\n", device.address, .{});
         },
@@ -367,32 +397,86 @@ fn drive(hb: *BtHidBase, device: *Hid) void {
     if (linked(hb.bt_base.?, device)) connect(hb, device);
 }
 
-/// The device's channels opened from this side, control, then interrupt.
+/// The device's channels opened from this side, control, then interrupt:
+/// each begun (StartBTChannel) and gone on with once its port says it is
+/// open (`openedHere`).
 fn connect(hb: *BtHidBase, device: *Hid) void {
     const bt = hb.bt_base.?;
     const port = hb.port.?;
     if (device.control == null) {
+        if (device.control_opening != null) return;
         var channel: ?*bluetooth.BTChannel = null;
-        const result = bt.OpenBTChannel(device.controller, &device.address, l2cap.PSM_HID_CONTROL, port, &channel);
+        const result = bt.StartBTChannel(device.controller, &device.address, l2cap.PSM_HID_CONTROL, port, &channel);
         if (result != 0) return say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its control channel not opened (%ld)\n", device.address, .{@as(i64, result)});
-        device.control = channel;
+        device.control_opening = channel;
+        return;
     }
-    if (device.interrupt == null) {
-        var channel: ?*bluetooth.BTChannel = null;
-        const result = bt.OpenBTChannel(device.controller, &device.address, l2cap.PSM_HID_INTERRUPT, port, &channel);
-        if (result != 0) {
-            say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its interrupt channel not opened (%ld)\n", device.address, .{@as(i64, result)});
-            return closeChannels(hb, device);
-        }
-        device.interrupt = channel;
-        startFunction(hb, device);
-        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x connected\n", device.address, .{});
+    if (device.interrupt != null or device.interrupt_opening != null) return;
+    var channel: ?*bluetooth.BTChannel = null;
+    const result = bt.StartBTChannel(device.controller, &device.address, l2cap.PSM_HID_INTERRUPT, port, &channel);
+    if (result != 0) {
+        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its interrupt channel not opened (%ld)\n", device.address, .{@as(i64, result)});
+        return closeChannels(hb, device);
+    }
+    device.interrupt_opening = channel;
+}
+
+/// A channel opened from here open: the control channel kept and the
+/// interrupt channel begun, the interrupt channel kept and the device's
+/// function opened - closed instead where the device's own came first.
+fn openedHere(hb: *BtHidBase, device: *Hid, which: Opening, channel: *bluetooth.BTChannel) void {
+    const bt = hb.bt_base.?;
+    switch (which) {
+        .control => {
+            device.control_opening = null;
+            if (device.control != null) return bt.CloseBTChannel(channel);
+            device.control = channel;
+            connect(hb, device);
+        },
+        .interrupt => {
+            device.interrupt_opening = null;
+            if (device.interrupt != null) return bt.CloseBTChannel(channel);
+            device.interrupt = channel;
+            startFunction(hb, device);
+            say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x connected\n", device.address, .{});
+        },
     }
 }
 
-/// Both channels closed, the interrupt one first, and its function.
+/// A channel opened from here that ended before it was open, for
+/// `result`: given back and said - the control channel closed after an
+/// interrupt channel not opened - unless the device's own is open by now.
+fn notOpened(hb: *BtHidBase, device: *Hid, which: Opening, channel: *bluetooth.BTChannel, result: i32) void {
+    switch (which) {
+        .control => device.control_opening = null,
+        .interrupt => device.interrupt_opening = null,
+    }
+    hb.bt_base.?.CloseBTChannel(channel);
+    switch (which) {
+        .control => if (device.control == null) {
+            say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its control channel not opened (%ld)\n", device.address, .{@as(i64, result)});
+        },
+        .interrupt => if (device.interrupt == null) {
+            say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its interrupt channel not opened (%ld)\n", device.address, .{@as(i64, result)});
+            closeChannels(hb, device);
+        },
+    }
+}
+
+/// A channel opening from here given up, where there is one: it says
+/// nothing more.
+fn giveUp(hb: *BtHidBase, opening: *?*bluetooth.BTChannel) void {
+    const channel = opening.* orelse return;
+    opening.* = null;
+    hb.bt_base.?.CloseBTChannel(channel);
+}
+
+/// Both channels closed, the interrupt one first, and its function; those
+/// opening from here given up.
 fn closeChannels(hb: *BtHidBase, device: *Hid) void {
     const bt = hb.bt_base.?;
+    giveUp(hb, &device.interrupt_opening);
+    giveUp(hb, &device.control_opening);
     if (device.interrupt) |channel| {
         device.interrupt = null;
         bt.CloseBTChannel(channel);
