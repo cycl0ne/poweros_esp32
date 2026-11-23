@@ -20,7 +20,8 @@
 //! channel - one opening its own to this machine meanwhile - is asked
 //! again two seconds later, four times in all. The source's record
 //! (an Audio Source, a player) is served while the driver drives a device,
-//! so that a device looking for one finds it.
+//! so that a device looking for one finds it, and the controller's (a
+//! remote control's controller, for an amplifier) with it.
 //!
 //! **The sink** is there while the stream is open: made once its media
 //! channel is, named as the device's bond names it, and deleted once the
@@ -46,14 +47,29 @@
 //! new sound begins after a second of silence. A buffer that finds the
 //! ring full is let go of.
 //!
-//! **One task for every device.** The channels' messages, the listener's,
+//! **The volume** is set on a device that takes an absolute volume -
+//! AVRCP 1.4 and later, on AVCTP's channel (PSM 23), which the device
+//! opens, or this side a second after the stream opened: the sink answers
+//! audio.device's volume (AUDIOCTRL_VOLUME) for it, so that the sound
+//! leaves at full scale, and the task sends it to the device as the same
+//! share of its loudest as the volume's percent is of a hundred - a2dp's
+//! avrcp.zig, this machine the controller; a volume past as played sets
+//! the device's loudest and the sound carries the rest. A volume the
+//! device changes itself - its buttons - is made the output's volume in
+//! audio.device, which hands it back. A device without one, or without
+//! the channel, has the volume in the sound, as an output without a
+//! volume of its own has; one whose channel closes has it there from then
+//! on. Its commands as a controller - of a player - are answered as not
+//! implemented.
+//!
+//! **One task for every device.** The channels' messages, the listeners',
 //! the commands, the sinks' signal and the controllers' changes come to
 //! one task, which opens, reads and closes every channel, and makes and
 //! deletes every sink. Binding runs on bluetooth.library's binder: the
 //! device's memory taken, the task told. Unbinding is a command to the
 //! task, waited for: the sink deleted - waited for, as audio.device stops
 //! it first where it plays through it - the channels closed, the memory
-//! freed; the listener and the record go with the last device. The task
+//! freed; the listeners and the records go with the last device. The task
 //! waits while it opens a channel - OpenBTChannel - and every device's
 //! stream waits with it.
 //!
@@ -68,8 +84,10 @@ const bluetooth = sdk.bluetooth;
 const avdtp = bluetooth.avdtp;
 const sdp = bluetooth.sdp;
 const l2cap = bluetooth.l2cap;
+const avrcp = bluetooth.avrcp;
 const btprofile = sdk.devices.btprofile;
 const timer = sdk.devices.timer;
+const audiocontrol = sdk.devices.audiocontrol;
 const rta = sdk.rta;
 const utility = sdk.utility;
 const TagItem = utility.TagItem;
@@ -82,11 +100,12 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const err = rta.errors;
 const signalling = a2dp.signalling;
 const sbc = a2dp.sbc;
+const remote_control = a2dp.avrcp;
 
 pub const DEVICE_NAME = "btaudio.device";
 const DRIVER_NAME = "btaudio";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "23.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -133,6 +152,12 @@ const open_pause_ms = 2000;
 /// channel for the device after its OPEN.
 const answer_ms = 4000;
 const media_wait_ms = 4000;
+/// How long a device whose stream opened is given to open the control
+/// channel itself - and the pause before the next try from here - the
+/// tries in all, and how long a command on it waits for its answer.
+const control_wait_ms = 1000;
+const control_tries = 2;
+const control_answer_ms = 2000;
 /// Without sound this long a stream is suspended; with silence this long
 /// a device's own suspension is over.
 const idle_ms = 5000;
@@ -214,6 +239,23 @@ const Headphone = struct {
     /// The delay the device reported last that the log has, in tenths of
     /// a millisecond.
     delay_said: u16,
+    /// AVCTP's channel while it is open, and the device's volume as this
+    /// side sets and follows it there; when the channel is opened from
+    /// here, 0 for not, and the tries since the stream opened; when a
+    /// command on it is given up on, 0 for none.
+    control_channel: ?*bluetooth.BTChannel,
+    remote: remote_control.Controller,
+    control_at: u64,
+    control_tries: u32,
+    control_by: u64,
+    /// The device's absolute volume as it said it last, where it has.
+    device_volume: u8,
+    volume_known: bool,
+    /// The sink's number, kept from its making: the output audio.device
+    /// keeps a volume for.
+    sink_id: u32,
+    /// `gain_count` as the task last sent the device its volume.
+    gain_acted: u32,
 
     // The sink's: made and deleted by the task, used by audio.device's.
     sink: ?*rta.AudioSink,
@@ -223,6 +265,12 @@ const Headphone = struct {
     alive: u8,
     playing: u8,
     leaving: u8,
+    /// Set while the device takes an absolute volume: the sink's answer
+    /// to a volume. The volume audio.device handed over last, and the
+    /// times it has.
+    absolute: u8,
+    gain: u32,
+    gain_count: u32,
     /// Buffers that found the ring full.
     overflows: u32,
     clock: Clock,
@@ -261,10 +309,12 @@ const BtAudioBase = extern struct {
     timer_at: u64 = 0,
     eclock_hz: u64 = 0,
     /// The task's: the controllers' changes told; while it drives a
-    /// device, the listener on PSM 25 and the record served.
+    /// device, the listeners on PSM 25 and 23 and the two records served.
     notify: ?*bluetooth.BTNotify = null,
     listener: ?*bluetooth.BTListener = null,
     record: ?*bluetooth.BTRecord = null,
+    control_listener: ?*bluetooth.BTListener = null,
+    control_record: ?*bluetooth.BTRecord = null,
     /// The devices driven, a slot each: added by the binder (a bind),
     /// taken by the task (an unbind), under the lock.
     devices: [max_devices]?*anyopaque = @splat(null),
@@ -317,6 +367,17 @@ const record = sequence(&(attribute(sdp.ATTR_SERVICE_CLASS_ID_LIST, &sequence(&u
     attribute(sdp.ATTR_PROFILE_DESCRIPTOR_LIST, &sequence(&sequence(&(uuid16(avdtp.UUID_ADVANCED_AUDIO) ++ uint16(avdtp.A2DP_VERSION))))) ++
     attribute(sdp.ATTR_SERVICE_NAME, &text("Audio Source")) ++
     attribute(avdtp.ATTR_SUPPORTED_FEATURES, &uint16(avdtp.A2DP_SOURCE_PLAYER))));
+
+/// The controller's record: a remote control's controller reached over
+/// AVCTP on PSM 23, the profile at 1.4 - absolute volume - and the
+/// protocol at 1.3, for an amplifier: a device's volume.
+const control_record = sequence(&(attribute(sdp.ATTR_SERVICE_CLASS_ID_LIST, &sequence(&(uuid16(avrcp.UUID_REMOTE_CONTROL) ++ uuid16(avrcp.UUID_REMOTE_CONTROL_CONTROLLER)))) ++
+    attribute(sdp.ATTR_PROTOCOL_DESCRIPTOR_LIST, &sequence(&(sequence(&(uuid16(sdp.UUID_L2CAP) ++ uint16(l2cap.PSM_AVCTP))) ++ sequence(&(uuid16(avrcp.UUID_AVCTP) ++ uint16(avrcp.AVCTP_VERSION)))))) ++
+    attribute(sdp.ATTR_BROWSE_GROUP_LIST, &sequence(&uuid16(sdp.UUID_PUBLIC_BROWSE_ROOT))) ++
+    attribute(sdp.ATTR_LANGUAGE_BASE_LIST, &sequence(&(uint16(0x656E) ++ uint16(0x006A) ++ uint16(0x0100)))) ++
+    attribute(sdp.ATTR_PROFILE_DESCRIPTOR_LIST, &sequence(&sequence(&(uuid16(avrcp.UUID_REMOTE_CONTROL) ++ uint16(avrcp.AVRCP_VERSION))))) ++
+    attribute(sdp.ATTR_SERVICE_NAME, &text("Remote Control")) ++
+    attribute(avdtp.ATTR_SUPPORTED_FEATURES, &uint16(avrcp.AVRCP_CATEGORY_AMPLIFIER))));
 
 // --- the task ---------------------------------------------------------------------
 
@@ -416,7 +477,7 @@ fn findByChannel(base: *Base, channel: *bluetooth.BTChannel) ?*Headphone {
     snapshot(base, &driven);
     for (driven) |slot| {
         const device = slot orelse continue;
-        if (device.signalling_channel == channel or device.media_channel == channel) return device;
+        if (device.signalling_channel == channel or device.media_channel == channel or device.control_channel == channel) return device;
     }
     return null;
 }
@@ -476,11 +537,13 @@ fn nextWake(base: *Base) ?u64 {
     for (driven) |slot| {
         const device = slot orelse continue;
         const source = &device.source;
-        var times: [4]u64 = @splat(0);
+        var times: [6]u64 = @splat(0);
         if (device.signalling_channel == null) times[0] = device.open_at;
         if (source.waiting()) times[1] = device.answer_by;
         times[2] = device.media_by;
         if (source.phase == .streaming and !source.waiting()) times[3] = device.last_sound +% ticksOf(base, idle_ms);
+        if (device.control_channel == null) times[4] = device.control_at;
+        if (device.remote.waiting()) times[5] = device.control_by;
         for (times) |ticks| {
             if (ticks == 0) continue;
             earliest = if (earliest) |other| @min(other, ticks) else ticks;
@@ -506,6 +569,12 @@ fn heard(base: *Base, told: *bluetooth.BTChannelMessage) void {
         bluetooth.BTCM_DATA => {
             const device = findByChannel(base, channel) orelse return sys.ReplyMsg(&told.message);
             const data = told.data orelse return sys.ReplyMsg(&told.message);
+            if (channel == device.control_channel) {
+                const step = device.remote.heard(data[0..told.length]);
+                sys.ReplyMsg(&told.message);
+                sendControl(base, device, step.send);
+                return controlOutcome(base, device, step.outcome);
+            }
             if (channel != device.signalling_channel) return sys.ReplyMsg(&told.message);
             const step = device.source.heard(data[0..told.length]);
             sys.ReplyMsg(&told.message);
@@ -520,16 +589,18 @@ fn heard(base: *Base, told: *bluetooth.BTChannelMessage) void {
     }
 }
 
-/// A device's channel to the listener: its signalling channel where it
-/// has none - the device makes the stream, or leaves it to this side -
-/// its media channel where its stream waits for one; closed again where
-/// it is neither, or the device is not one driven.
+/// A device's channel to a listener: on PSM 23 its control channel; on
+/// PSM 25 its signalling channel where it has none - the device makes the
+/// stream, or leaves it to this side - its media channel where its stream
+/// waits for one; closed again where it is neither, or the device is not
+/// one driven.
 fn opened(base: *Base, channel: *bluetooth.BTChannel) void {
     const bt = base.bt_base.?;
     const device = findByAddress(base, channel.controller, channel.address) orelse {
         say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x is no device it drives: its channel closed\n", channel.address, .{});
         return bt.CloseBTChannel(channel);
     };
+    if (channel.psm == l2cap.PSM_AVCTP) return controlOpened(base, device, channel);
     if (device.signalling_channel == null) {
         device.signalling_channel = channel;
         device.open_at = 0;
@@ -547,7 +618,9 @@ fn opened(base: *Base, channel: *bluetooth.BTChannel) void {
 }
 
 /// A channel the device or its link ended: the signalling channel ends
-/// the stream with it; the media channel the stream, which is closed.
+/// the stream with it; the media channel the stream, which is closed; the
+/// control channel the device's volume, which the sound carries from then
+/// on.
 fn closed(base: *Base, channel: *bluetooth.BTChannel) void {
     if (findByChannel(base, channel)) |device| {
         if (channel == device.signalling_channel) {
@@ -558,6 +631,9 @@ fn closed(base: *Base, channel: *bluetooth.BTChannel) void {
         } else if (channel == device.media_channel) {
             device.media_channel = null;
             closeStream(base, device);
+        } else if (channel == device.control_channel) {
+            device.control_channel = null;
+            controlEnded(base, device);
         }
     }
     base.bt_base.?.CloseBTChannel(channel);
@@ -604,6 +680,146 @@ fn openMedia(base: *Base, device: *Headphone) void {
     }
     device.media_channel = channel;
     streamOpen(base, device);
+}
+
+// --- the volume ---------------------------------------------------------------------
+
+/// The control channel opened from here, where the device opened none in
+/// `control_wait_ms` after its stream did; asked again where the device
+/// refuses it or the controller is busy - its own may be on the port -
+/// `control_tries` times in all. Without it the volume is in the sound.
+fn openControl(base: *Base, device: *Headphone) void {
+    device.control_at = 0;
+    device.control_tries += 1;
+    var channel: ?*bluetooth.BTChannel = null;
+    const result = base.bt_base.?.OpenBTChannel(device.controller, &device.address, l2cap.PSM_AVCTP, base.port.?, &channel);
+    if (result == 0) return controlOpened(base, device, channel.?);
+    if ((result == bluetooth.BTERR_REFUSED or result == bluetooth.BTERR_BUSY) and device.control_tries < control_tries) {
+        device.control_at = now(base) +% ticksOf(base, control_wait_ms);
+        return;
+    }
+    say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: no control channel (%ld): the volume in the sound\n", device.address, .{@as(i64, result)});
+}
+
+/// The control channel, the device's or this side's: the device asked
+/// what it has; a second one closed.
+fn controlOpened(base: *Base, device: *Headphone, channel: *bluetooth.BTChannel) void {
+    if (device.control_channel != null) return base.bt_base.?.CloseBTChannel(channel);
+    device.control_channel = channel;
+    device.control_at = 0;
+    device.volume_known = false;
+    sendControl(base, device, device.remote.begin());
+}
+
+/// The control channel gone: the volume in the sound from then on.
+fn controlEnded(base: *Base, device: *Headphone) void {
+    device.remote = .{};
+    device.control_by = 0;
+    device.volume_known = false;
+    if (@atomicRmw(u8, &device.absolute, .Xchg, 0, .acq_rel) != 0) handBack(base, device);
+}
+
+/// A frame sent on the control channel; an answer waited for from now on
+/// where it is a command.
+fn sendControl(base: *Base, device: *Headphone, bytes: []const u8) void {
+    if (bytes.len == 0) return;
+    const channel = device.control_channel orelse return;
+    if (bytes[0] & avrcp.AVCTP_RESPONSE == 0) device.control_by = now(base) +% ticksOf(base, control_answer_ms);
+    _ = base.bt_base.?.SendBTChannel(channel, bytes.ptr, @intCast(bytes.len));
+}
+
+/// What a frame of the control channel, or a command given up on, meant:
+/// the volume set on the device from now on, or kept in the sound; the
+/// device's volume as it says it; its own change of it.
+fn controlOutcome(base: *Base, device: *Headphone, what: remote_control.Outcome) void {
+    switch (what) {
+        .none => {},
+        .supported => {
+            @atomicStore(u8, &device.absolute, 1, .release);
+            say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: the volume set on the device\n", device.address, .{});
+            handBack(base, device);
+        },
+        .unsupported => {
+            say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x takes no absolute volume: the volume in the sound\n", device.address, .{});
+            if (@atomicRmw(u8, &device.absolute, .Xchg, 0, .acq_rel) != 0) handBack(base, device);
+        },
+        .volume => |value| {
+            device.device_volume = value;
+            device.volume_known = true;
+        },
+        .changed => |value| {
+            device.device_volume = value;
+            device.volume_known = true;
+            changedThere(base, device, value);
+        },
+    }
+}
+
+/// The device changed its volume itself - its buttons: the output's
+/// volume in audio.device made the same, which hands it back to the sink.
+/// Not where it is the volume handed over already: a volume this side
+/// set, which a device may tell as a change too.
+fn changedThere(base: *Base, device: *Headphone, value: u8) void {
+    const percent = remote_control.percentOfVolume(value);
+    if (@atomicLoad(u32, &device.gain_count, .acquire) != 0 and @min(percentOfGain(@atomicLoad(u32, &device.gain, .acquire)), 100) == percent) return;
+    if (device.sink_id == 0) return;
+    sayAt(base, exec.LOG_DEBUG, "%s: %02x:%02x:%02x:%02x:%02x:%02x: volume %ld%% on the device\n", device.address, .{@as(i64, percent)});
+    setOutputVolume(base, device.sink_id, percent);
+}
+
+/// The volume audio.device handed over last handed to it again, where it
+/// has handed one over, so that it goes where it belongs now: to the
+/// device, the sound at full scale, or into the sound.
+fn handBack(base: *Base, device: *Headphone) void {
+    if (device.sink_id == 0 or @atomicLoad(u32, &device.gain_count, .acquire) == 0) return;
+    setOutputVolume(base, device.sink_id, percentOfGain(@atomicLoad(u32, &device.gain, .acquire)));
+}
+
+/// The volume of the output of that number set in audio.device: in force
+/// at once where it plays through it, kept for it otherwise.
+fn setOutputVolume(base: *Base, id: u32, percent: u32) void {
+    var control = audiocontrol.Control.open(base.sys_base) orelse return;
+    defer control.close();
+    control.setVolume(id, percent);
+}
+
+/// A volume audio.device handed over since the last look sent to the
+/// device, where its volume is not that already: up to as played, the
+/// device's loudest, the sound carrying what is past it.
+fn sendVolume(base: *Base, device: *Headphone) void {
+    if (device.remote.phase != .ready) return;
+    const count = @atomicLoad(u32, &device.gain_count, .acquire);
+    if (count == device.gain_acted) return;
+    device.gain_acted = count;
+    const percent = @min(percentOfGain(@atomicLoad(u32, &device.gain, .acquire)), 100);
+    if (device.volume_known and remote_control.percentOfVolume(device.device_volume) == percent) return;
+    sayAt(base, exec.LOG_DEBUG, "%s: %02x:%02x:%02x:%02x:%02x:%02x: volume %ld%% set on the device\n", device.address, .{@as(i64, percent)});
+    sendControl(base, device, device.remote.set(remote_control.volumeOfPercent(percent)));
+}
+
+/// A gain in percent: as audiocontrol has it up to as played, in
+/// proportion past it.
+fn percentOfGain(gain: u32) u32 {
+    const unity = rta.sinks.AUDIOGAIN_UNITY;
+    if (gain <= unity) return audiocontrol.percentOf(gain);
+    return @intCast((@as(u64, gain) * 100 + unity / 2) / unity);
+}
+
+/// The control channel opened from here once its time has come; a
+/// command on it given up on; a volume audio.device handed over sent.
+fn tendControl(base: *Base, device: *Headphone) void {
+    if (device.control_channel == null) {
+        if (device.control_at != 0 and now(base) >= device.control_at) openControl(base, device);
+        return;
+    }
+    if (!device.remote.waiting()) device.control_by = 0;
+    if (device.control_by != 0 and now(base) >= device.control_by) {
+        device.control_by = 0;
+        const step = device.remote.timedOut();
+        sendControl(base, device, step.send);
+        controlOutcome(base, device, step.outcome);
+    }
+    sendVolume(base, device);
 }
 
 // --- the stream ---------------------------------------------------------------------
@@ -689,6 +905,12 @@ fn streamOpen(base: *Base, device: *Headphone) void {
     });
     device.held = false;
     makeSink(base, device);
+    // The device's volume next, where it has not opened the control
+    // channel itself by then.
+    if (device.control_channel == null and device.control_at == 0) {
+        device.control_at = now(base) +% ticksOf(base, control_wait_ms);
+        device.control_tries = 0;
+    }
 }
 
 /// The stream ended from here - CLOSE, ABORT, or nothing where the
@@ -705,6 +927,7 @@ fn streamEnded(base: *Base, device: *Headphone) void {
     tally(base, device);
     dropSink(base, device);
     device.media_by = 0;
+    device.control_at = 0;
     if (device.media_channel) |channel| {
         device.media_channel = null;
         base.bt_base.?.CloseBTChannel(channel);
@@ -712,7 +935,7 @@ fn streamEnded(base: *Base, device: *Headphone) void {
 }
 
 /// Each device looked at: a channel to open from here, a command or the
-/// device's media channel waited for too long, the sound.
+/// device's media channel waited for too long, the volume, the sound.
 fn tend(base: *Base, device: *Headphone) void {
     if (device.signalling_channel == null) {
         if (device.open_at != 0 and now(base) >= device.open_at) openFromHere(base, device);
@@ -727,6 +950,7 @@ fn tend(base: *Base, device: *Headphone) void {
             closeStream(base, device);
         }
     }
+    tendControl(base, device);
     pump(base, device);
 }
 
@@ -834,7 +1058,10 @@ fn links(base: *Base) void {
             device.open_at = now(base) +% ticksOf(base, open_wait_ms);
             device.tries = 0;
         }
-        if (!up) device.open_at = 0;
+        if (!up) {
+            device.open_at = 0;
+            device.control_at = 0;
+        }
         device.linked = up;
     }
 }
@@ -887,8 +1114,10 @@ fn drive(base: *Base, device: *Headphone) void {
     nameOf(base, device);
     device.source = .{};
     device.source.serve(signalling.served_element);
+    device.remote = .{};
     device.driven = true;
     if (!serve(base)) say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: PSM 25 is served already - its own channels are refused\n", device.address, .{});
+    if (base.control_listener == null) say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: PSM 23 is served already - its control channel is opened from here alone\n", device.address, .{});
     device.linked = isLinked(base, device);
     if (device.linked) {
         device.open_at = now(base) +% ticksOf(base, open_wait_ms);
@@ -925,19 +1154,22 @@ fn nameOf(base: *Base, device: *Headphone) void {
     }
 }
 
-/// The listener on PSM 25 and the source's record, added where they are
-/// not: false where the PSM is served by someone else.
+/// The listeners on PSM 25 and 23 and the source's and the controller's
+/// records, added where they are not: false where PSM 25 is served by
+/// someone else.
 fn serve(base: *Base) bool {
     const bt = base.bt_base.?;
     if (base.record == null) base.record = bt.AddBTService(&record, record.len);
+    if (base.control_record == null) base.control_record = bt.AddBTService(&control_record, control_record.len);
     if (base.listener == null) base.listener = bt.AddBTListener(l2cap.PSM_AVDTP, base.port.?, bluetooth.BTLSF_SECURE);
+    if (base.control_listener == null) base.control_listener = bt.AddBTListener(l2cap.PSM_AVCTP, base.port.?, bluetooth.BTLSF_SECURE);
     return base.listener != null;
 }
 
 /// A device let go of, on the task: its sink deleted, its channels
-/// closed, the media's first, its slot freed - and the listener and the
-/// record taken away with the last device. What the listener leaves on
-/// the port is read as a device's channel it does not drive: closed.
+/// closed, the media's first, its slot freed - and the listeners and the
+/// records taken away with the last device. What a listener leaves on the
+/// port is read as a device's channel it does not drive: closed.
 fn letGo(base: *Base, device: *Headphone, flags: u32) void {
     _ = flags;
     const sys = base.sys_base;
@@ -945,6 +1177,10 @@ fn letGo(base: *Base, device: *Headphone, flags: u32) void {
     streamEnded(base, device);
     if (device.signalling_channel) |channel| {
         device.signalling_channel = null;
+        bt.CloseBTChannel(channel);
+    }
+    if (device.control_channel) |channel| {
+        device.control_channel = null;
         bt.CloseBTChannel(channel);
     }
     sys.ObtainSemaphore(&base.lock);
@@ -958,9 +1194,13 @@ fn letGo(base: *Base, device: *Headphone, flags: u32) void {
     sys.FreeMem(device, @sizeOf(Headphone));
     if (left == 0) {
         bt.RemBTListener(base.listener);
+        bt.RemBTListener(base.control_listener);
         bt.RemBTService(base.record);
+        bt.RemBTService(base.control_record);
         base.listener = null;
+        base.control_listener = null;
         base.record = null;
+        base.control_record = null;
     }
 }
 
@@ -981,6 +1221,7 @@ fn makeSink(base: *Base, device: *Headphone) void {
         .{},
     };
     device.sink = rb.CreateSinkTagList(DRIVER_NAME, &tags);
+    if (device.sink) |sink| device.sink_id = sink.id;
     if (device.sink == null) {
         @atomicStore(u8, &device.alive, 0, .release);
         say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: no sink: %s\n", device.address, .{rb.RtaErrorText(rb.RtaLastError())});
@@ -1086,12 +1327,30 @@ fn playSink(sink: *rta.AudioSink, frames: [*]i16) callconv(.c) i32 {
     return err.RTAERR_OK;
 }
 
+/// AUDIOCTRL_VOLUME: the volume kept and the task told, which sends it
+/// to the device where it takes an absolute volume. The answer is what
+/// the sound is still to be given - nothing up to as played, the device's
+/// loudest, and past it the rest - or, where the device takes none, that
+/// the sound carries it all.
+fn controlSink(sink: *rta.AudioSink, what: u32, value: isize) callconv(.c) isize {
+    if (what != rta.sinks.AUDIOCTRL_VOLUME) return err.RTAERR_NOT_SUPPORTED;
+    if (value < 0) return err.RTAERR_BAD_ARG;
+    const device = sinkHeadphone(sink);
+    const gain: u32 = @intCast(@min(value, @as(isize, 4 * rta.sinks.AUDIOGAIN_UNITY)));
+    @atomicStore(u32, &device.gain, gain, .release);
+    _ = @atomicRmw(u32, &device.gain_count, .Add, 1, .acq_rel);
+    wakeTask(device);
+    if (@atomicLoad(u8, &device.absolute, .acquire) == 0) return err.RTAERR_NOT_SUPPORTED;
+    return @max(gain, rta.sinks.AUDIOGAIN_UNITY);
+}
+
 const ops = rta.AudioSinkOps{
     .destroy = &destroySink,
     .start = &startSink,
     .stop = &stopSink,
     .buffer = &bufferSink,
     .play = &playSink,
+    .control = &controlSink,
 };
 
 const driver_ops = rta.RtaDriverOps{ .create_sink = &createSink };

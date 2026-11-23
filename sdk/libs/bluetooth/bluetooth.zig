@@ -7,8 +7,8 @@
 //! The calls are in `sdk.interface.bluetooth`; the HCI's commands, events
 //! and the fields they carry are `hci.zig`, L2CAP's `l2cap.zig`, SDP's
 //! `sdp.zig`, the attribute protocol's and GATT's `att.zig`, HID over
-//! BR/EDR's `hidp.zig`, sound's - A2DP's and AVDTP's - `avdtp.zig`, here
-//! as well.
+//! BR/EDR's `hidp.zig`, sound's - A2DP's and AVDTP's - `avdtp.zig`, and
+//! a device's controls - AVRCP's and AVCTP's - `avrcp.zig`, here as well.
 //!
 //! **A controller** is a unit of a device that speaks DEVIF_HCI
 //! (sdk/devices/hci.zig): a USB dongle, a board's chip on a UART. Its
@@ -83,6 +83,7 @@ pub const sdp = @import("sdp.zig");
 pub const att = @import("att.zig");
 pub const hidp = @import("hidp.zig");
 pub const avdtp = @import("avdtp.zig");
+pub const avrcp = @import("avrcp.zig");
 
 /// The library's name, for OpenLibrary.
 pub const BLUETOOTHNAME = "bluetooth.library";

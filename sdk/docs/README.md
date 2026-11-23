@@ -145,9 +145,9 @@ tags and constants, each with its doc comment.
   for their device - profile drivers and the services offered to them,
   keyboards and mice over BR/EDR and LE (`bthid.device`), sound to a
   headphone - SBC over AVDTP, its signalling and its media packets -
-  headphones and speakers as outputs (`btaudio.device`), the USB
-  controllers and the MT7922's firmware, the Raspberry Pi 4 Model B's
-  controller on its mini UART, what a device is (`BTDeviceKind`),
+  headphones and speakers as outputs and their volume (`btaudio.device`),
+  the USB controllers and the MT7922's firmware, the Raspberry Pi 4
+  Model B's controller on its mini UART, what a device is (`BTDeviceKind`),
   `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
   `C:test/BTGatt`, `C:test/BTHidDevice` and `C:test/BTAudio`.
 - [Displays](guides/rtg.md) - rtg.library, in three parts. What a
@@ -257,7 +257,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | usb/bluetooth.device | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller, offered to bluetooth.library; a MediaTek MT79xx given its firmware; a class driver | [`hci.zig`](../devices/hci.zig), [guide](guides/bluetooth.md) |
 | bluetooth/cyw43455bt.device | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's Bluetooth controller - its CYW43455's, on the BCM2711's mini UART - as an HCI unit: set up, given its patch and offered to bluetooth.library (the BCM2711 boards' disk) | [`hci.zig`](../devices/hci.zig), [guide](guides/bluetooth.md) |
 | bluetooth/bthid.device | `DEVS:bluetooth/` | Bluetooth keyboards and mice over BR/EDR and over LE, into keyboard.device and mouse.device through hid.library; a profile driver | [md](autodocs/btprofile.md) · [doc](autodocs/btprofile.doc), [`btprofile.zig`](../devices/btprofile.zig), [guide](guides/bluetooth.md) |
-| bluetooth/btaudio.device | `DEVS:bluetooth/` | Bluetooth headphones and speakers over BR/EDR as sound outputs: a sink of rta.library for each while its stream is open, which audio.device plays through; a profile driver | [md](autodocs/btprofile.md) · [doc](autodocs/btprofile.doc), [`btprofile.zig`](../devices/btprofile.zig), [guide](guides/bluetooth.md) |
+| bluetooth/btaudio.device | `DEVS:bluetooth/` | Bluetooth headphones and speakers over BR/EDR as sound outputs: a sink of rta.library for each while its stream is open, which audio.device plays through, its volume set on the device where it takes one; a profile driver | [md](autodocs/btprofile.md) · [doc](autodocs/btprofile.doc), [`btprofile.zig`](../devices/btprofile.zig), [guide](guides/bluetooth.md) |
 
 ## Resources
 

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 //! Sound sent to a Bluetooth headphone or speaker: SBC (sbc.zig), AVDTP's
 //! messages (signalling.zig), the stream's signalling as this machine,
-//! the source, drives it (source.zig), and the media channel's packets
-//! (`Media`). Built by name into the programs that import it - a2dp -
-//! C:test/BTAudio and btaudio.device; the owner opens the channels and
-//! sends what these make.
+//! the source, drives it (source.zig), the media channel's packets
+//! (`Media`), and the device's volume as this machine, AVRCP's
+//! controller, sets and follows it (avrcp.zig). Built by name into the
+//! programs that import it - a2dp - C:test/BTAudio and btaudio.device;
+//! the owner opens the channels and sends what these make.
 //!
 //! **A media packet** is RTP's header - its sequence number counting the
 //! packets sent, its timestamp the samples sent before its first - the
@@ -25,6 +26,7 @@ pub const sbc = @import("sbc.zig");
 pub const signalling = @import("signalling.zig");
 pub const source = @import("source.zig");
 pub const Source = source.Source;
+pub const avrcp = @import("avrcp.zig");
 
 /// The longest packet made, whatever the channel takes.
 pub const packet_most = 2048;
@@ -198,6 +200,7 @@ test {
     _ = sbc;
     _ = signalling;
     _ = source;
+    _ = avrcp;
 }
 
 test "media packets: as many frames as the channel takes, counted in the header, a skipped one in the timestamp" {

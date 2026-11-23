@@ -1033,16 +1033,36 @@ after five seconds of nothing but silence, so that the device can rest
 its radio. A device that suspends the stream itself stays suspended
 until a new sound begins after a second of silence.
 
+**The volume** is set on a device that takes an absolute volume (AVRCP
+1.4 and later). The driver serves PSM 23 - a listener for the control
+channels of bonded devices, and a record of this machine as a remote
+control's controller (0x110E, for an amplifier) - takes the channel the
+device opens, or opens it a second after the stream opened, and asks
+what the device has. A device with the volume's event has the output's
+volume - `Audio VOLUME`, Prefs - set on it as the same share of its
+loudest as the volume's percent is of a hundred, and the sound leaves at
+full scale; past 100% the device is at its loudest and the sound
+carries the rest. A volume changed on the device - its buttons - becomes
+the output's volume, as `Audio LIST` shows it. A device without it, or
+without the channel, has the volume in the sound, on top of its own.
+Its commands as a controller - of a player - are answered as not
+implemented. The log says which it is - `the volume set on the device`,
+or `takes no absolute volume: the volume in the sound` - and, at
+`C:Log LEVEL debug`, each volume set on the device and each changed
+there.
+
 **A bond made before the driver** keeps no service for it: the binder
 offers a device's services as it bonds, so a device bonded while
 `btaudio.device` was not on the disk is driven once it is paired again
-(`Bluetooth UNPAIR`, then `PAIR`). The log says each stream's
-configuration -
-`SBC at 48000 Hz, joint stereo, bitpool 53, 8 frames a packet, 357 kbit/s`
-- and, at `C:Log LEVEL debug`, each delay the device reports, the
-buffers waiting as the stream starts, and at each pause the packets
-sent and not, how far apart two were at the most, and the buffers
-missed.
+(`Bluetooth UNPAIR`, then `PAIR`). The same goes the other way: a device
+that keeps the records it read as it paired - a computer, say - knows
+the controller's record, and offers its volume, once it pairs again.
+
+The log says each stream's configuration -
+`SBC at 48000 Hz, joint stereo, bitpool 53, 8 frames a packet, 357 kbit/s` -
+and, at `C:Log LEVEL debug`, each delay the device reports, the buffers
+waiting as the stream starts, and at each pause the packets sent and
+not, how far apart two were at the most, and the buffers missed.
 
 ```
 1> Bluetooth PAIR 00:00:5E:EF:10:52

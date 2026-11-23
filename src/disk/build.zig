@@ -208,8 +208,9 @@ pub const catalogs = catalogsOf(&translated_strings);
 /// where the
 /// settings and the broker loop of every commodity in SYS:Commodities are
 /// written once. The sound sent to a Bluetooth headphone - SBC, AVDTP's
-/// signalling and the media packets - is btaudio.device's, and
-/// C:test/BTAudio's, which plays to a device without audio.device.
+/// signalling and the media packets - and its volume over AVRCP are
+/// btaudio.device's, and the sound C:test/BTAudio's, which plays to a
+/// device without audio.device.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "install", .source = "c/install/parts.zig" },
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },

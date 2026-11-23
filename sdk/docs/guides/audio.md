@@ -250,7 +250,8 @@ volume in force when it takes over. The device keeps
 past that.
 
 Since 2.10 an output with a **volume of its own** - a USB speaker's
-feature unit - is set there: the device hands the master in force to
+feature unit, a Bluetooth headphone's absolute volume - is set there:
+the device hands the master in force to
 the sink (`SinkControl` with `AUDIOCTRL_VOLUME`) whenever it changes and
 whenever the output starts, and the mix gives that output only what the
 part's range leaves over, so its sound leaves at full scale and its
@@ -922,7 +923,9 @@ the most, so that the sound stays whole, and only older ones count in
 `underruns`. The driver sends the sound as SBC, starting the stream
 once something other than silence plays and suspending it after five
 seconds of silence (the [Bluetooth guide](bluetooth.md#headphones-and-speakers-as-outputs)).
-It has no volume of its own: the mix carries it.
+A device that takes an absolute volume has the volume set on it, the
+sound leaving at full scale, and a volume changed on the device becomes
+the output's volume; any other has the volume in the mix.
 
 A **source** is a way in, on a list of its own: a driver of the source
 kind makes them with `CreateSourceTagList`, `NextSource` walks them,
