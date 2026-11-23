@@ -373,7 +373,7 @@ test "a frame put together from its packets; BR/EDR's signalling answered" {
     // there to end.
     frameIn(&layer, 0x0042, cid, &.{ l2cap.ECHO_REQUEST, 6, 3, 0, 'a', 'b', 'c' });
     try expectFrame(&recorder, 0x0042, cid, &.{ l2cap.ECHO_RESPONSE, 6, 3, 0, 'a', 'b', 'c' });
-    frameIn(&layer, 0x0042, cid, &.{ l2cap.CONNECTION_REQUEST, 7, 4, 0, 0x01, 0x00, 0x40, 0x00 });
+    frameIn(&layer, 0x0042, cid, &.{ l2cap.CONNECTION_REQUEST, 7, 4, 0, 0x03, 0x00, 0x40, 0x00 });
     try expectFrame(&recorder, 0x0042, cid, &.{ l2cap.CONNECTION_RESPONSE, 7, 8, 0, 0x00, 0x00, 0x40, 0x00, 0x02, 0x00, 0x00, 0x00 });
     frameIn(&layer, 0x0042, cid, &.{ l2cap.DISCONNECTION_REQUEST, 8, 4, 0, 0x41, 0x00, 0x40, 0x00 });
     try expectFrame(&recorder, 0x0042, cid, &.{ l2cap.COMMAND_REJECT, 8, 6, 0, 0x02, 0x00, 0x41, 0x00, 0x40, 0x00 });

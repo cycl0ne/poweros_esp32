@@ -38,6 +38,13 @@
 //! meanwhile. The task does not end while a message of its is out. A
 //! controller's bonds are read with its settings and written as they
 //! change (bondfiles.zig).
+//!
+//! **Channels.** OpenBTChannel, CloseBTChannel and ObtainBTServices are
+//! parked as the links' calls are; SendBTChannel waits on a list of its
+//! own while its controller's queue is full, tried again in its order as
+//! the queue empties. What the layer tells of a channel goes to the
+//! channel's port as messages of the task's, which come back on a port of
+//! their own (channels.zig); the task does not end while one is out.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -61,7 +68,9 @@ const bonds = @import("../hci/bonds.zig");
 const hci_pairing = @import("../hci/pairing.zig");
 const _notify = @import("../notify/_notify.zig");
 const _pairing = @import("../pairing/_pairing.zig");
+const l2cap_channels = @import("../l2cap/channels.zig");
 const bondfiles = @import("bondfiles.zig");
+const taskchannels = @import("channels.zig");
 const cryptoport = @import("crypto.zig");
 const device = @import("device.zig");
 const settings = @import("settings.zig");
@@ -91,15 +100,17 @@ pub const Command = extern struct {
     /// add, remove: the device's unit.
     unit: u32 = 0,
     device_name: [*:0]const u8 = "",
-    /// set, discover, stop, connect, disconnect, pair, unpair: the
-    /// controller (BTController.id), or BT_ALL_CONTROLLERS.
+    /// set, discover, stop, connect, disconnect, pair, unpair,
+    /// open_channel, services: the controller (BTController.id), or
+    /// BT_ALL_CONTROLLERS; close_channel, send_channel: the channel's.
     controller: u32 = 0,
     /// discover: for how long, in milliseconds (0: the default).
     time_ms: u32 = 0,
     /// set: what is wanted.
     wanted: Wanted = .{},
-    /// connect, disconnect, pair, unpair: the device's address; while
-    /// parked, the controller waited on and its wait.
+    /// connect, disconnect, pair, unpair, open_channel, services: the
+    /// device's address; while parked, the controller waited on and its
+    /// wait.
     address: bluetooth.BTAddress = .{},
     waiting_on: ?*anyopaque = null,
     wait: u32 = 0,
@@ -107,10 +118,20 @@ pub const Command = extern struct {
     /// can do; agents: the one given back, 0 for one added.
     agent: u32 = 0,
     capability: u32 = 0,
+    /// open_channel: the protocol, by its PSM; open_channel,
+    /// close_channel, send_channel: the caller's block (BTChannel).
+    psm: u32 = 0,
+    channel: ?*anyopaque = null,
+    /// send_channel: the frame; services: the caller's room for the
+    /// records, and how much of it they fill.
+    data: ?[*]const u8 = null,
+    room: ?[*]u8 = null,
+    length: u32 = 0,
+    have: u32 = 0,
     /// What the call answers.
     result: i32 = 0,
 
-    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents };
+    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents, open_channel, close_channel, send_channel, services };
 };
 
 /// What SetBTControllerAttrs wants of a controller: `which` says which of
@@ -125,13 +146,17 @@ pub const WANT_POWERED: u32 = 1 << 0;
 pub const WANT_NAME: u32 = 1 << 1;
 pub const WANT_VISIBLE: u32 = 1 << 2;
 
-/// The task's own: its ports, its timer, the calls parked on a wait, and
-/// its room for a controller's settings and a name.
+/// The task's own: its ports, its timer, the calls parked on a wait and
+/// the sends waiting for room, and its room for a controller's settings
+/// and a name.
 const Work = struct {
     base: *BluetoothBase,
     commands: *exec.MsgPort,
     replies: *exec.MsgPort,
     parked: exec.List = .{},
+    sending: exec.List = .{},
+    /// Where the messages to channels' ports come back.
+    channel_replies: *exec.MsgPort,
     timer_io: timer.TimeRequest = .{},
     timer_open: bool = false,
     timer_out: bool = false,
@@ -269,9 +294,10 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
     };
     base.task = me;
     base.port = work.commands;
+    base.channel_replies = work.channel_replies;
     started(base);
     const mask = (@as(u32, 1) << @intCast(work.commands.sig_bit)) | (@as(u32, 1) << @intCast(work.replies.sig_bit)) |
-        (@as(u32, 1) << @intCast(work.agent_replies.sig_bit));
+        (@as(u32, 1) << @intCast(work.agent_replies.sig_bit)) | (@as(u32, 1) << @intCast(work.channel_replies.sig_bit));
     while (true) {
         var worked = true;
         while (worked) {
@@ -295,6 +321,14 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                         keepBonds(work);
                     },
                     .agents => agentsChanged(work, command.agent),
+                    .open_channel, .close_channel, .services => if (channelCommand(work, command)) {
+                        worked = true;
+                        continue;
+                    },
+                    .send_channel => if (sendChannel(work, command)) {
+                        worked = true;
+                        continue;
+                    },
                 }
                 sys.ReplyMsg(message);
                 worked = true;
@@ -307,7 +341,12 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                 agentReplied(work, message);
                 worked = true;
             }
+            while (sys.GetMsg(work.channel_replies)) |message| {
+                taskchannels.replied(base, message);
+                worked = true;
+            }
         }
+        retrySends(work);
         answerWaits(work);
         settle(work);
         keepBonds(work);
@@ -339,11 +378,20 @@ fn makeWork(base: *BluetoothBase) ?*Work {
         sys.FreeVec(memory);
         return null;
     };
-    work.* = .{ .base = base, .commands = commands, .replies = replies, .agent_replies = agent_replies };
+    const channel_replies = sys.CreateMsgPort() orelse {
+        sys.DeleteMsgPort(agent_replies);
+        sys.DeleteMsgPort(replies);
+        sys.DeleteMsgPort(commands);
+        sys.FreeVec(memory);
+        return null;
+    };
+    work.* = .{ .base = base, .commands = commands, .replies = replies, .agent_replies = agent_replies, .channel_replies = channel_replies };
     work.parked.init(.message);
+    work.sending.init(.message);
     work.timer_io.node.message.reply_port = replies;
     work.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &work.timer_io.node, 0) != 0) {
+        sys.DeleteMsgPort(channel_replies);
         sys.DeleteMsgPort(agent_replies);
         sys.DeleteMsgPort(replies);
         sys.DeleteMsgPort(commands);
@@ -361,6 +409,7 @@ fn unmakeWork(work: *Work) void {
         _ = sys.WaitIO(&work.timer_io.node);
     }
     if (work.timer_open) sys.CloseDevice(&work.timer_io.node);
+    sys.DeleteMsgPort(work.channel_replies);
     sys.DeleteMsgPort(work.agent_replies);
     sys.DeleteMsgPort(work.replies);
     sys.DeleteMsgPort(work.commands);
@@ -368,18 +417,19 @@ fn unmakeWork(work: *Work) void {
 }
 
 /// Whether the task ends now: no controller left, no command waiting and
-/// no message out to an agent, looked at under `start_lock`, which a
-/// caller holds to put one on the port. Its port is no one's from then
-/// on.
+/// no message out to an agent or a channel's port, looked at under
+/// `start_lock`, which a caller holds to put one on the port. Its port is
+/// no one's from then on.
 fn ending(work: *Work) bool {
     const base = work.base;
     const sys = base.sys_base;
     sys.ObtainSemaphore(&base.start_lock);
     defer sys.ReleaseSemaphore(&base.start_lock);
-    if (!base.controllers.isEmpty() or !work.commands.msg_list.isEmpty() or !work.parked.isEmpty()) return false;
-    if (work.agent_out != 0) return false;
+    if (!base.controllers.isEmpty() or !work.commands.msg_list.isEmpty() or !work.parked.isEmpty() or !work.sending.isEmpty()) return false;
+    if (work.agent_out != 0 or base.channel_out != 0) return false;
     base.port = null;
     base.task = null;
+    base.channel_replies = null;
     return true;
 }
 
@@ -412,6 +462,8 @@ fn add(work: *Work, device_name: [*:0]const u8, unit: u32) i32 {
     const memory = sys.AllocVec(@sizeOf(Controller), exec.MEMF_CLEAR) orelse return bluetooth.BTERR_NOMEM;
     const controller: *Controller = @ptrCast(@alignCast(memory));
     controller.* = .{ .base = base, .unit = unit, .layer = .{ .port = device.port(controller), .crypto = cryptoport.port(base) } };
+    controller.layer.port.channel = taskchannels.event;
+    controller.layer.port.listener = taskchannels.listener;
     _controller.copyString(&controller.device_name, device_name);
     const opened = device.open(controller, work.replies);
     if (opened != 0 and opened != hcidev.HCIERR_NOTREADY) {
@@ -460,6 +512,8 @@ fn remove(work: *Work, device_name: [*:0]const u8, unit: u32) void {
     // Its pairings' agents told that it went.
     sys.ObtainSemaphore(&base.lock);
     for (&controller.layer.connections) |*connection| hci_pairing.linkGone(&controller.layer, connection, bluetooth.BTERR_DETACHED);
+    // Its channels' holders told so.
+    l2cap_channels.reset(&controller.layer, bluetooth.BTERR_DETACHED);
     sys.ReleaseSemaphore(&base.lock);
     askAgents(work);
     answerGone(work, controller);
@@ -623,6 +677,12 @@ fn link(work: *Work, command: *Command) bool {
         .connect => connections.connect(layer, command.address),
         else => connections.disconnect(layer, command.address),
     };
+    return park(work, command, controller, begun);
+}
+
+/// A command whose call waits for its controller parked with the wait -
+/// true - or, done at once, its result set.
+fn park(work: *Work, command: *Command, controller: *Controller, begun: connections.Begun) bool {
     switch (begun) {
         .done => |result| {
             command.result = result;
@@ -631,9 +691,91 @@ fn link(work: *Work, command: *Command) bool {
         .waiting => |index| {
             command.wait = index;
             command.waiting_on = controller;
-            sys.AddTail(&work.parked, &command.message.node);
+            work.base.sys_base.AddTail(&work.parked, &command.message.node);
             return true;
         },
+    }
+}
+
+// --- channels ---------------------------------------------------------------------
+
+/// OpenBTChannel, ObtainBTServices - asked of the controller a link is,
+/// or would be, made by - and CloseBTChannel: the command parked until
+/// the controller has done it - true - or answered at once.
+fn channelCommand(work: *Work, command: *Command) bool {
+    const base = work.base;
+    const sys = base.sys_base;
+    if (command.kind == .close_channel) return closeChannel(work, command);
+    const controller = linkController(work, command) orelse return false;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    controller.layer.now = now(work);
+    const begun = switch (command.kind) {
+        .open_channel => taskchannels.open(controller, command),
+        else => taskchannels.services(controller, command),
+    };
+    return park(work, command, controller, begun);
+}
+
+/// CloseBTChannel: the block's channel closed by its controller - parked
+/// for the device's answer, true, where it is open - and its messages
+/// still on its port taken back. A channel whose controller is gone is
+/// closed already.
+fn closeChannel(work: *Work, command: *Command) bool {
+    const base = work.base;
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    const controller = taskchannels.byId(base, command.controller) orelse {
+        taskchannels.takeBack(base, command.channel.?);
+        command.result = 0;
+        return false;
+    };
+    controller.layer.now = now(work);
+    const begun = taskchannels.close(controller, command);
+    taskchannels.takeBack(base, command.channel.?);
+    return park(work, command, controller, begun);
+}
+
+/// SendBTChannel: the frame queued - answered - or the command put on the
+/// list of sends waiting for room, behind those there already, so that a
+/// channel's frames go in their order: true.
+fn sendChannel(work: *Work, command: *Command) bool {
+    const base = work.base;
+    const sys = base.sys_base;
+    const controller = taskchannels.byId(base, command.controller) orelse {
+        command.result = bluetooth.BTERR_NOTCONNECTED;
+        return false;
+    };
+    command.waiting_on = controller;
+    if (work.sending.isEmpty()) {
+        sys.ObtainSemaphore(&base.lock);
+        controller.layer.now = now(work);
+        command.result = taskchannels.send(controller, command);
+        sys.ReleaseSemaphore(&base.lock);
+        if (command.result != bluetooth.BTERR_BUSY) return false;
+    }
+    sys.AddTail(&work.sending, &command.message.node);
+    return true;
+}
+
+/// The sends waiting for room tried again in their order, until one finds
+/// none still.
+fn retrySends(work: *Work) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    while (work.sending.first()) |node| {
+        const message: *exec.Message = @fieldParentPtr("node", node);
+        const command: *Command = @fieldParentPtr("message", message);
+        const controller: *Controller = @ptrCast(@alignCast(command.waiting_on.?));
+        sys.ObtainSemaphore(&base.lock);
+        controller.layer.now = now(work);
+        const result = taskchannels.send(controller, command);
+        sys.ReleaseSemaphore(&base.lock);
+        if (result == bluetooth.BTERR_BUSY) return;
+        command.result = result;
+        sys.Remove(node);
+        sys.ReplyMsg(message);
     }
 }
 
@@ -690,22 +832,26 @@ fn answerWaits(work: *Work) void {
         if (!wait.done) continue;
         command.result = wait.result;
         connections.release(&controller.layer, index);
+        if (command.kind == .services) taskchannels.servicesAnswered(controller, command);
         sys.Remove(node);
         sys.ReplyMsg(message);
     }
 }
 
-/// The calls parked on a controller that goes answered: it is gone.
+/// The calls parked on a controller that goes, and the sends waiting for
+/// its room, answered: it is gone.
 fn answerGone(work: *Work, controller: *Controller) void {
     const sys = work.base.sys_base;
-    var it = work.parked.iterator();
-    while (it.next()) |node| {
-        const message: *exec.Message = @fieldParentPtr("node", node);
-        const command: *Command = @fieldParentPtr("message", message);
-        if (command.waiting_on != @as(?*anyopaque, controller)) continue;
-        command.result = bluetooth.BTERR_DETACHED;
-        sys.Remove(node);
-        sys.ReplyMsg(message);
+    for ([_]*exec.List{ &work.parked, &work.sending }) |list| {
+        var it = list.iterator();
+        while (it.next()) |node| {
+            const message: *exec.Message = @fieldParentPtr("node", node);
+            const command: *Command = @fieldParentPtr("message", message);
+            if (command.waiting_on != @as(?*anyopaque, controller)) continue;
+            command.result = bluetooth.BTERR_DETACHED;
+            sys.Remove(node);
+            sys.ReplyMsg(message);
+        }
     }
 }
 

@@ -43,8 +43,9 @@ pub const FRAME_ROOM: usize = l2cap.L2CAP_HDR + FRAME_MOST;
 /// The most data an ACL packet the layer sends carries - less where the
 /// controller takes less. The task's writes have room for it.
 pub const PACKET_MOST: usize = 1024;
-/// How many frames wait to be sent.
-pub const OUT = 4;
+/// How many frames wait to be sent: every link's signalling and the
+/// channels' frames share them.
+pub const OUT = 8;
 
 /// A frame's handle once its link is gone: never a link's.
 const GONE: u16 = 0xFFFF;

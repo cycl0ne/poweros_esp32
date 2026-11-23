@@ -27,6 +27,23 @@ pub const CID_SMP_BREDR: u16 = 0x0007;
 /// The first a dynamic channel may have.
 pub const CID_DYNAMIC_FIRST: u16 = 0x0040;
 
+/// The protocols a dynamic channel reaches, by their PSM: odd, the low
+/// bit of its upper byte clear. From PSM_DYNAMIC_FIRST on they are no
+/// protocol's own, for a program to serve.
+pub const PSM_SDP: u16 = 0x0001;
+pub const PSM_RFCOMM: u16 = 0x0003;
+pub const PSM_HID_CONTROL: u16 = 0x0011;
+pub const PSM_HID_INTERRUPT: u16 = 0x0013;
+pub const PSM_AVCTP: u16 = 0x0017;
+pub const PSM_AVDTP: u16 = 0x0019;
+pub const PSM_ATT: u16 = 0x001F;
+pub const PSM_DYNAMIC_FIRST: u16 = 0x1001;
+
+/// The MTU a channel has where its configuration says none, and the
+/// least a BR/EDR channel may say.
+pub const MTU_DEFAULT: u16 = 672;
+pub const MTU_LEAST_BREDR: u16 = 48;
+
 /// The smallest MTU a signalling channel takes: what a device can always
 /// be sent, over BR/EDR and over LE.
 pub const MTU_SIGNALING_BREDR: u16 = 48;
@@ -61,8 +78,37 @@ pub const CONNECTION_PENDING: u16 = 0x0001;
 pub const CONNECTION_PSM_NOT_SUPPORTED: u16 = 0x0002;
 pub const CONNECTION_SECURITY_BLOCK: u16 = 0x0003;
 pub const CONNECTION_NO_RESOURCES: u16 = 0x0004;
+pub const CONNECTION_INVALID_SOURCE_CID: u16 = 0x0006;
+pub const CONNECTION_SOURCE_CID_TAKEN: u16 = 0x0007;
 /// LE Credit Based Connection Response's for a PSM there is not.
 pub const LE_CONNECTION_PSM_NOT_SUPPORTED: u16 = 0x0002;
+/// Connection Response's status, with CONNECTION_PENDING.
+pub const STATUS_NONE: u16 = 0x0000;
+pub const STATUS_AUTHENTICATION_PENDING: u16 = 0x0001;
+pub const STATUS_AUTHORIZATION_PENDING: u16 = 0x0002;
+
+/// A Configure Request's or Response's flags: more of it follows.
+pub const CONFIGURE_CONTINUATION: u16 = 0x0001;
+/// Configure Response's results.
+pub const CONFIGURE_SUCCESS: u16 = 0x0000;
+pub const CONFIGURE_UNACCEPTABLE: u16 = 0x0001;
+pub const CONFIGURE_REJECTED: u16 = 0x0002;
+pub const CONFIGURE_UNKNOWN_OPTIONS: u16 = 0x0003;
+pub const CONFIGURE_PENDING: u16 = 0x0004;
+/// A configuration option: its type (1 byte), its length (1 byte) and
+/// its value. A type with OPTION_HINT set may be passed over by a side
+/// that does not know it.
+pub const OPTION_MTU: u8 = 0x01;
+pub const OPTION_FLUSH_TIMEOUT: u8 = 0x02;
+pub const OPTION_QOS: u8 = 0x03;
+pub const OPTION_RETRANSMISSION: u8 = 0x04;
+pub const OPTION_FCS: u8 = 0x05;
+pub const OPTION_FLOW_SPEC: u8 = 0x06;
+pub const OPTION_WINDOW: u8 = 0x07;
+pub const OPTION_HINT: u8 = 0x80;
+/// OPTION_RETRANSMISSION's length, and its mode: basic, a frame as it is.
+pub const OPTION_RETRANSMISSION_LENGTH: u8 = 9;
+pub const MODE_BASIC: u8 = 0x00;
 
 /// Connection Parameter Update Response's results.
 pub const PARAMETERS_ACCEPTED: u16 = 0x0000;

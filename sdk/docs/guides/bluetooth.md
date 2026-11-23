@@ -9,17 +9,19 @@ the programs that asked when a controller comes, goes or changes.
 
 The library brings controllers up, lists them, sets them - on or off,
 their name, whether others find them - finds the devices around them,
-makes links to them and takes the links they make, and pairs with them
-over BR/EDR and LE, keeping the bonds. A link carries nothing but what
-the link itself needs and its pairing: the protocols over a link are
-the stack's next part.
+makes links to them and takes the links they make, pairs with them over
+BR/EDR and LE, keeping the bonds, and opens L2CAP channels over BR/EDR's
+links to the protocols programs speak, taking those the devices open; it
+says what this machine offers, and asks a device what it offers (SDP).
+The profiles over the channels, and LE's channels and attributes, are
+the stack's next parts.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
 controller's settings, finding devices, links to devices and what a
-link carries, pairing and bonds, the USB controllers and the MediaTek
-MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
-`C:Bluetooth`.
+link carries, pairing and bonds, channels and services, the USB
+controllers and the MediaTek MT7922's firmware, the Raspberry Pi 4 Model
+B's controller, `C:Bluetooth`, and `C:test/BTEcho`.
 
 ## The pieces
 
@@ -29,11 +31,12 @@ MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
            ObtainBTControllers, SetBTControllerAttrs, AddBTNotify,
            StartBTDiscovery, ObtainBTDevices, ConnectBTDevice,
            DisconnectBTDevice, ObtainBTConnections, AddBTAgent,
-           PairBTDevice, UnpairBTDevice, ObtainBTBonds
+           PairBTDevice, UnpairBTDevice, ObtainBTBonds, OpenBTChannel,
+           SendBTChannel, CloseBTChannel, AddBTListener, ObtainBTServices
  the stack          bluetooth.library: its own task, every controller's
                     HCI traffic, the bring-up, the settings, the
                     discoveries, the links and their data, the pairings
-                    and the bonds
+                    and the bonds, the channels, SDP's server and client
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
                           |  AddBTController, RemBTController
  the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
@@ -45,13 +48,14 @@ MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
 
 | Piece | Where | What it is |
 |---|---|---|
-| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, the links to them and the bonds with them, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
+| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, the links to them and the bonds with them, the channels over the links and the services the devices offer, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
 | `ENVARC:Sys/bluetooth/` | | each controller's settings and bonds, kept by its address |
 | `usb/bluetooth.device` | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller; a class driver |
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
-| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), and the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`) |
+| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`) |
+| `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
 
 The library, the devices, their firmware and the command are the disk's
 `bluetooth` set.
@@ -373,8 +377,9 @@ buffers - a packet holds one until the controller says it is sent - and
 put together again from the packets it hands up. On the signalling
 channel the library answers what a device asks of any link: what it
 supports - its fixed channels, the signalling one alone - and an echo.
-A channel to a protocol is refused, there being none yet, and so is
-LE's credit-based one. Over LE, a peripheral's wish for other
+Over BR/EDR it opens and takes the channels to protocols (Channels and
+services, below); LE's credit-based ones are refused. Over LE, a
+peripheral's wish for other
 parameters is taken while they are within the specification's bounds
 and the controller is the link's central; a request of the attribute
 protocol is answered as not supported; the security manager's channel
@@ -486,6 +491,122 @@ this side gives a device none of its own keys - it uses its public
 address and signs nothing - and a device that advertises only private
 addresses is reached by the address a discovery heard, not by its
 identity.
+
+## Channels and services
+
+A channel is L2CAP's way to a protocol over a BR/EDR link. Each end
+knows it by an identifier of its own (its CID), and the protocol it
+reaches is named by a PSM: one of the specification's (`l2cap.PSM_SDP`,
+`PSM_RFCOMM`, `PSM_HID_CONTROL`, ...), or a dynamic one, from
+`l2cap.PSM_DYNAMIC_FIRST` (0x1001), that a program serves. A PSM is odd,
+and the lowest bit of its upper byte is clear.
+
+**OpenBTChannel** opens one to a device's PSM and waits until it is
+open:
+
+```zig
+const port = sys.CreateMsgPort() orelse return;
+var channel: ?*bluetooth.BTChannel = null;
+if (bt.OpenBTChannel(bluetooth.BT_ALL_CONTROLLERS, &device, 0x2001, port, &channel) != 0) return;
+defer bt.CloseBTChannel(channel);
+_ = bt.SendBTChannel(channel.?, "hello", 5);
+```
+
+- **The link** is made where there is none - it ends two seconds after
+  its last channel closes, unless `ConnectBTDevice` asks for it
+  meanwhile - and a link to a device with a bond is authenticated and
+  encrypted before the channel is asked for.
+- **The device answers** at once, or says the channel is pending - while
+  it makes the link secure, or while its user is asked whether to allow
+  it - and is then waited for up to a minute. One without such a
+  protocol answers `BTERR_UNSUPPORTED`, one without room `BTERR_BUSY`,
+  one that refuses `BTERR_REFUSED`, one that does not answer within ten
+  seconds `BTERR_TIMEOUT`.
+- **The two then agree** on the channel: frames of up to 1024 bytes to
+  this machine (`mtu_in`), and to the device what it takes (`mtu_out`) -
+  672 bytes unless it says otherwise, never fewer than 48. A device that
+  asks for a mode with retransmission is told the basic mode instead.
+
+Most systems want the link encrypted before they take a channel to
+anything but their SDP server - a Linux machine does - and an encrypted
+link needs a bond: pair with the device first (`PairBTDevice`). Without
+one, the pairing the device begins goes to the agent added last, and
+with none it is refused and the channel with it.
+
+What comes over a channel goes to its port as `BTChannelMessage`s, the
+library's, each replied once it is read:
+
+| `kind` | What it says |
+|---|---|
+| `BTCM_DATA` | a frame of the device's: `data`, `length` bytes, there until the message is replied |
+| `BTCM_CLOSED` | the channel closed - by the device, with its link or its controller - and why: `result` 0, `BTERR_*`, or the link's reason |
+| `BTCM_OPENED` | a channel a device opened to a listener, `channel` its block (below) |
+
+A channel has at most 32 of its frames out unreplied: those past them
+are let go and counted in its block (`dropped`). `SendBTChannel` sends
+a frame of at most `mtu_out` bytes - `BTERR_TOOLONG` past it - waiting
+while the controller's queue is full, and answers `BTERR_NOTCONNECTED`
+once the channel is closed. `CloseBTChannel` closes the channel - five
+seconds at the most for the device's answer - and gives its block back;
+what was on the port about it and not taken is taken back, so that a
+port several channels share holds nothing of one that is closed.
+
+**A listener** takes the channels devices open to a PSM:
+
+```zig
+const listener = bt.AddBTListener(0x2001, port) orelse return; // served already
+defer bt.RemBTListener(listener);
+// BTCM_OPENED: told.channel - BTCHF_INCOMING in its flags - is this
+// task's, until CloseBTChannel.
+```
+
+Once its configuration is agreed, each channel comes to the port as
+`BTCM_OPENED`, and its frames and its end follow as an opened channel's
+do. A device that opens one to a PSM nobody serves is told there is no
+such protocol. `RemBTListener` takes no more; the channels that came
+stay open, and a `BTCM_OPENED` still on the port brings one to close.
+The link a device opened a channel over is the device's, and stays when
+the channel closes.
+
+**Which PSM.** A Linux machine hands the dynamic PSMs from 0x1001 to
+0x10FF to its own services as they start - its object and file
+exchange, for one - and holds a channel to one of those pending while
+its user is asked. A protocol of one's own does better past 0x10FF.
+
+**The SDP server.** Over PSM 1 the library says what this machine
+offers: searches for services by their UUIDs, a record's attributes, and
+both at once, each answer in as many parts as the device's MTU and the
+size it asked for allow. Its one record is the server's own (handle 0,
+class 0x1000).
+
+**ObtainBTServices** asks a device what it offers - its SDP server, over
+BR/EDR - and lists what it answers:
+
+```zig
+var services: ?*exec.List = null;
+if (bt.ObtainBTServices(bluetooth.BT_ALL_CONTROLLERS, &device, &services) != 0) return;
+defer bt.ReleaseBTServices(services);
+var it = services.?.iterator();
+while (it.next()) |node| {
+    const service: *const bluetooth.BTService = @fieldParentPtr("node", node);
+    // service.node.name, .class16, .psm, .rfcomm_channel, .profile16, ...
+}
+```
+
+Every record that names L2CAP is asked for, with all its attributes, in
+as many parts as the device sends them; the link is made and ended as
+`OpenBTChannel`'s is. A controller asks one device at a time
+(`BTERR_BUSY`); a device that does not answer within ten seconds is
+`BTERR_TIMEOUT`.
+
+| Field | What it is |
+|---|---|
+| `node.name` | the service's name, in the language its record names first; empty where it has none |
+| `class`, `class16` | what it is: the first class its record names, as a UUID and as its 16 bits where it has them, else 0 |
+| `psm`, `rfcomm_channel` | where it is reached: L2CAP's PSM, and for a service over RFCOMM its channel (`psm` then `l2cap.PSM_RFCOMM`) |
+| `profile16`, `profile_version` | the first profile its record names, and its version, the major one in the upper byte |
+| `handle` | its record's handle on the device |
+| `record`, `record_length` | the record as the device sent it, for a profile that reads more of it (`sdk/libs/bluetooth/sdp.zig`) |
 
 ## Controllers on USB
 
@@ -769,7 +890,58 @@ size, whether it was made with Secure Connections, and whether the
 device gave its identity. `UNPAIR` ends a bond, by the device's address
 or name (`UnpairBTDevice`).
 
+What a device offers:
+
+```
+1> Bluetooth SERVICES 00:00:5E:EF:10:47 INFO
+Asking 00:00:5E:EF:10:47 for its services
+  generic access                PSM 31       Generic Access Profile
+      no profile, record 00010001, 165 bytes
+  remote control target         PSM 23       AVRCP TG
+      remote control 1.6, record 00010005, 102 bytes
+  hands-free audio gateway      RFCOMM 13    Hands-Free Voice gateway
+      hands-free 1.9, record 00010006, 99 bytes
+  audio source                  PSM 25       Audio Source
+      advanced audio 1.4, record 00010008, 83 bytes
+  object push                   RFCOMM 9     Object Push
+      object push 1.2, record 00010012, 102 bytes
+```
+
+`SERVICES` asks a device what it offers (`ObtainBTServices`), by its
+address or a name a `SCAN` heard, over BR/EDR: each service on a line -
+what it is, named where it is well known, else its UUID - where it is
+reached, a PSM or an RFCOMM channel, and its own name; with `INFO`, its
+profile and the profile's version, and its record's handle and size. A
+device heard over LE alone is said to be one, its services over LE not
+asked for yet.
+
 `CONTROLLER` makes any of these for one controller, by its number;
-without it, they are for every one - for `CONNECT` and `PAIR`, the one
-with a link to the device, else the one whose scan found it, else the
-first that is on.
+without it, they are for every one - for `CONNECT`, `PAIR` and
+`SERVICES`, the one with a link to the device, else the one whose scan
+found it, else the first that is on.
+
+## C:test/BTEcho
+
+```
+1> C:test/BTEcho
+Serving PSM 8193; CTRL-C stops
+00:00:5E:EF:10:47 opened a channel, frames of 672 bytes each way at most
+00:00:5E:EF:10:47 closed its channel
+***Break
+1> C:test/BTEcho TO 00:00:5E:EF:10:47
+Opening a channel to PSM 8193 of 00:00:5E:EF:10:47
+Open, frames of 672 bytes each way at most; each line typed is sent, CTRL-C stops
+hello
+< hello
+***Break
+```
+
+`BTEcho` serves a PSM (`AddBTListener`) - 8193 (0x2001) without `PSM` -
+and sends each frame of each channel a device opens to it back as it
+came, eight channels at once, until CTRL-C. With `TO` it opens a channel
+to a device's PSM (`OpenBTChannel`), by its address: each line typed
+goes as a frame, without its end of line, and each frame that comes is
+shown after `<`, until CTRL-C or the device closes it. `CONTROLLER`
+names the controller, as `Bluetooth`'s does. A device that wants its
+links encrypted takes a channel from a machine it has a bond with
+(`Bluetooth PAIR`).

@@ -3,11 +3,11 @@
 //! together (hci/acl.zig) handed to its channel, and frames sent on a
 //! channel.
 //!
-//! **The channels** are the fixed ones: the signalling channels, BR/EDR's
+//! **The channels** are the fixed ones - the signalling channels, BR/EDR's
 //! and LE's (signalling.zig), and over LE the attribute protocol's and
-//! the security manager's (hci/smp.zig). A device that asks for a channel
-//! to a protocol (a PSM) is told there is none. A request of the
-//! attribute protocol is answered that it is not supported, and an
+//! the security manager's (hci/smp.zig) - and over BR/EDR the dynamic
+//! ones, each to a protocol of the device (channels.zig). A request of
+//! the attribute protocol is answered that it is not supported, and an
 //! indication confirmed; a pairing BR/EDR's security manager channel is
 //! asked for is refused as not supported. Frames on any other channel are
 //! let go.
@@ -23,6 +23,7 @@ const connections = @import("../hci/connections.zig");
 const Connection = connections.Connection;
 const smp = @import("../hci/smp.zig");
 const signalling = @import("signalling.zig");
+const channels = @import("channels.zig");
 
 /// The attribute protocol's Error Response, the indication and its
 /// confirmation, and the error a request is answered with.
@@ -48,7 +49,7 @@ pub fn received(layer: *Hci, connection: *Connection, frame: []const u8) void {
         switch (cid) {
             l2cap.CID_SIGNALING => signalling.bredr(layer, connection, payload),
             l2cap.CID_SMP_BREDR => refusePairing(layer, connection, payload),
-            else => {},
+            else => if (cid >= l2cap.CID_DYNAMIC_FIRST) channels.received(layer, connection, cid, payload),
         }
     }
 }

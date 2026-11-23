@@ -19,6 +19,7 @@ const Hci = _hci.Hci;
 const acl = @import("../hci/acl.zig");
 const bonds = @import("../hci/bonds.zig");
 const connections = @import("../hci/connections.zig");
+const channels = @import("../l2cap/channels.zig");
 const pairing = @import("../hci/pairing.zig");
 const bondfiles = @import("../task/bondfiles.zig");
 
@@ -364,6 +365,29 @@ fn disconnect(layer: *Hci, recorder: *Recorder, handle: u16) void {
     done(layer, recorder);
     event(layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, @truncate(handle), @truncate(handle >> 8), hci.HCI_ERR_LOCAL_HOST_TERMINATED });
     for (&layer.waits) |*wait| wait.* = .{};
+}
+
+test "a channel to a bonded device asked for once its link is made secure" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    _ = bonds.keep(&layer, peer, &key, hci.LINK_KEY_AUTHENTICATED_P192, false, 0, "Phone").?;
+    const begun = channels.open(&layer, peer, 0x1001);
+    try testing.expect(begun == .waiting);
+    const record = channels.bySerial(&layer, layer.waits[begun.waiting].serial).?;
+    done(&layer, &recorder);
+    connectionComplete(&layer, 0x10, peer.bytes);
+    try authenticating(&layer, &recorder, 0x10);
+    // Not asked for while the link is authenticated and encrypted.
+    try testing.expectEqual(channels.State.linking, record.state);
+    addressed(&layer, hci.HCI_EV_LINK_KEY_REQUEST, peer, &.{});
+    var reply: [22]u8 = undefined;
+    reply[0..6].* = peer.bytes;
+    reply[6..22].* = key;
+    try expectSent(&layer, &recorder, hci.HCI_OP_LINK_KEY_REPLY, &reply);
+    try testing.expectEqual(channels.State.linking, record.state);
+    try secured(&layer, &recorder, 0x10, 16);
+    try testing.expectEqual(channels.State.connecting, record.state);
+    try testing.expectEqual(@as(u16, 0x10), record.handle);
 }
 
 test "too short an encryption key: the link ended, the pairing failed" {

@@ -75,8 +75,10 @@ const _task = @import("../task/_task.zig");
 /// Nothing.
 ///
 /// NOTES:
-/// A link carries no protocol of the library's yet: a device may end one
-/// it has no use for.
+/// A device may end a link that carries nothing it has a use for - some
+/// do, seconds after its last channel. The links OpenBTChannel and
+/// ObtainBTServices make end two seconds after their last channel; one
+/// this call asks for meanwhile stays.
 ///
 /// BUGS:
 /// None known.

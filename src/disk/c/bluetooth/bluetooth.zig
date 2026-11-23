@@ -6,7 +6,7 @@
 //!   Bluetooth [INFO/S] [SCAN/S] [TIME/K/N] [POWER/K] [NAME/K]
 //!             [VISIBLE/K] [CONNECT/K] [DISCONNECT/K] [LIST/S] [LE/S]
 //!             [RANDOM/S] [CONTROLLER/K/N] [PAIR/K] [PIN/K] [UNPAIR/K]
-//!             [BONDS/S] [AGENT/S]
+//!             [BONDS/S] [AGENT/S] [SERVICES/K]
 //!
 //!   Bluetooth          each controller on a line: its number, its
 //!                      address, whether it is up - and then on or off,
@@ -54,6 +54,12 @@
 //!                      whether the device gave its identity
 //!   AGENT              the pairings the devices begin answered here, as
 //!                      PAIR's are, until CTRL-C
+//!   SERVICES <device>  the services the device offers, asked of it over
+//!                      BR/EDR - its address, or the name a scan heard -
+//!                      each on a line: what it is, the PSM or RFCOMM
+//!                      channel it is reached on, its name; with INFO, its
+//!                      profile and the profile's version, and its
+//!                      record's handle
 //!   CONTROLLER <n>     the one controller these are for; without it,
 //!                      every one - for CONNECT, the one with a link to
 //!                      the device, else the one that found it, else the
@@ -64,7 +70,8 @@
 //! (ObtainBTControllers), the devices its discovery's (StartBTDiscovery,
 //! ObtainBTDevices), the links and bonds its too (ConnectBTDevice,
 //! DisconnectBTDevice, ObtainBTConnections, PairBTDevice, UnpairBTDevice,
-//! ObtainBTBonds), and PAIR and AGENT its agents (AddBTAgent).
+//! ObtainBTBonds), PAIR and AGENT its agents (AddBTAgent), and the
+//! services its SDP client's (ObtainBTServices).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -79,10 +86,10 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.6 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.7 (23.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,CONTROLLER/K/N," ++
-    "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S";
+    "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
 const arg_info = 0;
 const arg_scan = 1;
 const arg_time = 2;
@@ -100,7 +107,8 @@ const arg_pin = 13;
 const arg_unpair = 14;
 const arg_bonds = 15;
 const arg_agent = 16;
-const arg_count = 17;
+const arg_services = 17;
+const arg_count = 18;
 
 /// How many devices a scan follows: four controllers' worth.
 const followed_most = 256;
@@ -146,6 +154,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_unpair] != 0) return unpair(dl, bt, controller, @ptrFromInt(argv[arg_unpair]));
     if (argv[arg_bonds] != 0) return showBonds(dl, bt, controller, argv[arg_info] != 0);
     if (argv[arg_agent] != 0) return agent(sys, dl, bt, pin);
+    if (argv[arg_services] != 0) return services(dl, bt, controller, @ptrFromInt(argv[arg_services]), &argv);
     if (argv[arg_scan] != 0) {
         const seconds: u32 = if (argv[arg_time] != 0) @bitCast(@as(*const i32, @ptrFromInt(argv[arg_time])).*) else 10;
         return scan(sys, dl, bt, controller, seconds, argv[arg_info] != 0);
@@ -890,6 +899,109 @@ fn showBonds(dl: *DosBase, bt: *BluetoothBase, controller: u32, with_info: bool)
     return dos.RETURN_OK;
 }
 
+// --- the services -----------------------------------------------------------------
+
+/// The device SERVICES names, over BR/EDR: its address, or the name a
+/// scan heard - one heard over LE alone as it was heard; null for
+/// neither.
+fn brEdrDevice(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
+    if (parseAddress(text)) |bytes| {
+        if (argv[arg_le] == 0 and argv[arg_random] == 0) return .{ .bytes = bytes };
+    }
+    const devices = bt.ObtainBTDevices(controller) orelse return null;
+    defer bt.ReleaseBTDevices(devices);
+    var it = devices.iterator();
+    while (it.next()) |node| {
+        const found: *bluetooth.BTDevice = @fieldParentPtr("node", node);
+        const name = found.node.name orelse continue;
+        if (!sameName(name, text)) continue;
+        if (found.flags & bluetooth.BTDF_BREDR != 0) return .{ .bytes = found.address.bytes };
+        return found.address;
+    }
+    return deviceNamed(bt, controller, text, argv);
+}
+
+/// SERVICES: what the device offers, a service on a line.
+fn services(dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) i32 {
+    const address = brEdrDevice(bt, controller, text, argv) orelse {
+        _ = Printf(dl, "%s: no device %s (an address, or a name a SCAN heard)\n", .{ @as([*:0]const u8, COMMAND_NAME), text });
+        return dos.RETURN_ERROR;
+    };
+    if (address.kind != bluetooth.BTADDR_BREDR) {
+        _ = Printf(dl, "%s: that device was heard over LE alone, whose services are not asked for yet\n", .{@as([*:0]const u8, COMMAND_NAME)});
+        return dos.RETURN_ERROR;
+    }
+    var shown: [18]u8 = undefined;
+    _ = Printf(dl, "Asking %s for its services\n", .{addressText(&address.bytes, &shown)});
+    var found: ?*exec.List = null;
+    const result = bt.ObtainBTServices(controller, &address, &found);
+    if (result != 0) {
+        const reason: ?[*:0]const u8 = switch (result) {
+            bluetooth.BTERR_BUSY => "the controller is asking another device",
+            bluetooth.BTERR_PROTOCOL => "the device's answer was an error, or made no sense",
+            bluetooth.BTERR_NOMEM => "no memory, or more services than 32 KiB hold",
+            bluetooth.BTERR_UNSUPPORTED => "the device does not say what it offers",
+            bluetooth.BTERR_REFUSED => "the device refused the question",
+            else => null,
+        };
+        if (reason) |why| {
+            _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), why });
+        } else linkFailure(dl, result, controller);
+        return dos.RETURN_ERROR;
+    }
+    defer bt.ReleaseBTServices(found);
+    const with_info = argv[arg_info] != 0;
+    var any = false;
+    var it = found.?.iterator();
+    while (it.next()) |node| {
+        const service: *bluetooth.BTService = @fieldParentPtr("node", node);
+        any = true;
+        serviceLine(dl, service);
+        if (with_info) serviceInfo(dl, service);
+    }
+    if (!any) _ = dl.PutStr("no service\n");
+    return dos.RETURN_OK;
+}
+
+/// One service on a line: what it is - its name, else its UUID, as
+/// `SCAN INFO` writes one - where it is reached, its own name.
+fn serviceLine(dl: *DosBase, service: *const bluetooth.BTService) void {
+    if (serviceName(service.class16)) |what| {
+        _ = Printf(dl, "  %-28s", .{what});
+    } else if (service.class16 != 0) {
+        _ = Printf(dl, "  service %04lx%-16s", .{ @as(u64, service.class16), @as([*:0]const u8, "") });
+    } else {
+        var uuid_text: [37]u8 = undefined;
+        var sent_order: [16]u8 = undefined;
+        for (service.class.bytes, 0..) |byte, index| sent_order[15 - index] = byte;
+        _ = Printf(dl, "  %-28s", .{uuidText(&sent_order, &uuid_text)});
+    }
+    if (service.rfcomm_channel != 0) {
+        _ = Printf(dl, "  RFCOMM %-4u", .{@as(u32, service.rfcomm_channel)});
+    } else if (service.psm != 0) {
+        _ = Printf(dl, "  PSM %-7u", .{@as(u32, service.psm)});
+    } else {
+        _ = dl.PutStr("             ");
+    }
+    const name: [*:0]const u8 = service.node.name orelse "";
+    if (name[0] != 0) _ = Printf(dl, "  %s", .{name});
+    _ = dl.PutStr("\n");
+}
+
+/// With INFO: its profile and the profile's version, and its record.
+fn serviceInfo(dl: *DosBase, service: *const bluetooth.BTService) void {
+    const major: u32 = service.profile_version >> 8;
+    const minor: u32 = service.profile_version & 0xFF;
+    if (serviceName(service.profile16)) |profile| {
+        _ = Printf(dl, "      %s %u.%u,", .{ profile, major, minor });
+    } else if (service.profile16 != 0) {
+        _ = Printf(dl, "      profile %04lx %u.%u,", .{ @as(u64, service.profile16), major, minor });
+    } else {
+        _ = dl.PutStr("      no profile,");
+    }
+    _ = Printf(dl, " record %08lx, %u bytes\n", .{ @as(u64, service.handle), service.record_length });
+}
+
 // --- the scan ---------------------------------------------------------------------
 
 /// What a device's line showed of its name.
@@ -1182,26 +1294,42 @@ fn uuidText(uuid: *const [16]u8, into: *[37]u8) [*:0]const u8 {
     return @ptrCast(into);
 }
 
-/// What the services most often offered are, by their 16-bit UUID.
+/// What the services most often offered are, by their 16-bit UUID - the
+/// classes and profiles an SDP server lists, and LE's services.
 fn serviceName(uuid: u16) ?[*:0]const u8 {
     return switch (uuid) {
+        0x1000 => "service discovery",
         0x1101 => "serial port",
+        0x1103 => "dial-up networking",
+        0x1104 => "synchronization",
         0x1105 => "object push",
         0x1106 => "file transfer",
         0x1108 => "headset",
         0x110A => "audio source",
         0x110B => "audio sink",
         0x110C => "remote control target",
+        0x110D => "advanced audio",
         0x110E => "remote control",
+        0x110F => "remote control controller",
         0x1112 => "headset audio gateway",
         0x1115 => "network user",
         0x1116 => "network access point",
+        0x1117 => "group network",
         0x111E => "hands-free",
         0x111F => "hands-free audio gateway",
         0x1124 => "keyboard, mouse or game controller",
+        0x112D => "SIM access",
+        0x112E => "phone book client",
         0x112F => "phone book",
+        0x1130 => "phone book access",
+        0x1131 => "headset",
         0x1132 => "messages",
+        0x1133 => "message notifications",
+        0x1134 => "message access",
         0x1200 => "device identification",
+        0x1203 => "generic audio",
+        0x1800 => "generic access",
+        0x1801 => "generic attribute",
         0x180A => "device information",
         0x180D => "heart rate",
         0x180F => "battery",

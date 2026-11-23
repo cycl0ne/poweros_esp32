@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! bluetooth.library's functions: the Bluetooth controllers, brought up
 //! and run by the library's task, the devices they find, their links to
-//! them and their bonds with them, and who is told when they change.
+//! them and their bonds with them, the channels to the devices' protocols
+//! and the services they offer, and who is told when they change.
 //! Open it with OpenLibrary("bluetooth.library", 1); the structures are
 //! in sdk.bluetooth.
 ##include libs/exec/exec as exec
@@ -47,7 +48,7 @@ i32 DisconnectBTDevice(u32 controller, *const bluetooth.BTAddress address)
 /// A list from ObtainBTConnections given back. Null does nothing.
 void ReleaseBTConnections(?*exec.List list)
 // Pairing
-/// A pairing with a device begun over BR/EDR, its link made first where there is none: 0 once it has begun, BTERR_*, or the controller's status. What it needs to know and its end go to `agent`.
+/// A pairing with a device begun, over BR/EDR or LE, its link made first where there is none: 0 once it has begun, BTERR_*, or the controller's status. What it needs to know and its end go to `agent`.
 i32 PairBTDevice(u32 controller, *const bluetooth.BTAddress address, ?*bluetooth.BTAgent agent)
 /// A bond ended: its key forgotten, its file deleted, a link to the device ended. 0, or BTERR_*.
 i32 UnpairBTDevice(u32 controller, *const bluetooth.BTAddress address)
@@ -59,4 +60,20 @@ void RemBTAgent(?*bluetooth.BTAgent agent)
 ?*exec.List ObtainBTBonds(u32 controller)
 /// A list from ObtainBTBonds given back. Null does nothing.
 void ReleaseBTBonds(?*exec.List list)
+// Channels
+/// A channel opened to a protocol of a device, by its PSM, over BR/EDR, its link made first where there is none: 0 once it is open and `channel` set, BTERR_*, or the controller's status. Its frames come to `port`.
+i32 OpenBTChannel(u32 controller, *const bluetooth.BTAddress address, u32 psm, *exec.MsgPort port, *?*bluetooth.BTChannel channel)
+/// A channel closed and given back; the messages about it still on its port taken back. Null does nothing.
+void CloseBTChannel(?*bluetooth.BTChannel channel)
+/// A frame sent on a channel, waiting while the controller's queue is full: 0 once it is queued, or BTERR_*.
+i32 SendBTChannel(*bluetooth.BTChannel channel, [*]const u8 data, u32 length)
+/// A PSM served: the channels devices open to it come to `port` as BTCM_OPENED; null for no memory, or a PSM taken or one no channel can name.
+?*bluetooth.BTListener AddBTListener(u32 psm, *exec.MsgPort port)
+/// A listener given back: devices' channels to its PSM refused again; what is still on its port is the caller's. Null does nothing.
+void RemBTListener(?*bluetooth.BTListener listener)
+// Services
+/// The services a device offers, asked of its SDP server: 0 and `list` set to a list of BTService, the caller's until ReleaseBTServices, BTERR_*, or the controller's status.
+i32 ObtainBTServices(u32 controller, *const bluetooth.BTAddress address, *?*exec.List list)
+/// A list from ObtainBTServices given back. Null does nothing.
+void ReleaseBTServices(?*exec.List list)
 ##end

@@ -8,16 +8,18 @@
 //!   connectionless MTU as not supported;
 //!   Echo Request: echoed, its data as far as the smallest signalling
 //!   MTU holds;
-//!   Connection Request, LE Credit Based Connection Request: there is no
-//!   such protocol;
-//!   Configure Request, Disconnection Request: there is no such channel;
+//!   Connection, Configure and Disconnection Requests over BR/EDR: the
+//!   dynamic channels' (channels.zig);
+//!   LE Credit Based Connection Request: there is no such protocol, and
+//!   an LE Disconnection Request no such channel;
 //!   Connection Parameter Update Request, LE's peripheral's to its
 //!   central: parameters within the specification's bounds taken - the
 //!   controller told (LE Connection Update) - others refused;
 //!
-//! - and any other request rejected as not understood. Answers that
-//! come, and rejections, are let go: the library asks nothing yet. A
-//! command identified as 0 identifies nothing, and is let go too.
+//! - and any other request rejected as not understood. The answers to
+//! the dynamic channels' requests, and a rejection of one, go to them;
+//! other answers are let go. A command identified as 0 identifies
+//! nothing, and is let go too.
 //!
 //! Pure, as the rest of the layer.
 
@@ -28,6 +30,7 @@ const Hci = _hci.Hci;
 const connections = @import("../hci/connections.zig");
 const Connection = connections.Connection;
 const _l2cap = @import("_l2cap.zig");
+const channels = @import("channels.zig");
 
 /// The most data an answer carries: what the smallest BR/EDR signalling
 /// MTU holds after the command's header.
@@ -56,9 +59,13 @@ pub fn bredr(layer: *Hci, connection: *Connection, payload: []const u8) void {
         switch (code) {
             l2cap.INFORMATION_REQUEST => information(layer, connection, ident, data),
             l2cap.ECHO_REQUEST => respond(layer, connection, cid, l2cap.ECHO_RESPONSE, ident, data[0..@min(data.len, ANSWER_MOST)]),
-            l2cap.CONNECTION_REQUEST => noProtocol(layer, connection, ident, data),
-            l2cap.CONFIGURE_REQUEST => noChannel(layer, connection, cid, ident, data, 2),
-            l2cap.DISCONNECTION_REQUEST => noChannel(layer, connection, cid, ident, data, 4),
+            l2cap.CONNECTION_REQUEST => channels.connectionRequest(layer, connection, ident, data),
+            l2cap.CONNECTION_RESPONSE => channels.connectionResponse(layer, connection, ident, data),
+            l2cap.CONFIGURE_REQUEST => channels.configureRequest(layer, connection, ident, data),
+            l2cap.CONFIGURE_RESPONSE => channels.configureResponse(layer, connection, ident, data),
+            l2cap.DISCONNECTION_REQUEST => channels.disconnectionRequest(layer, connection, ident, data),
+            l2cap.DISCONNECTION_RESPONSE => channels.disconnectionResponse(layer, connection, ident, data),
+            l2cap.COMMAND_REJECT => channels.rejected(layer, connection, ident),
             else => notUnderstood(layer, connection, cid, code, ident),
         }
     }
@@ -114,18 +121,6 @@ fn information(layer: *Hci, connection: *Connection, ident: u8, data: []const u8
     respond(layer, connection, cid, l2cap.INFORMATION_RESPONSE, ident, answer[0..length]);
 }
 
-/// Connection Request: no channel to its protocol - none, its own
-/// channel named back.
-fn noProtocol(layer: *Hci, connection: *Connection, ident: u8, data: []const u8) void {
-    const cid = l2cap.CID_SIGNALING;
-    if (data.len < 4) return reject(layer, connection, cid, ident, l2cap.REJECT_NOT_UNDERSTOOD, &.{});
-    var answer: [8]u8 = @splat(0);
-    answer[2] = data[2];
-    answer[3] = data[3];
-    put16(answer[4..6], l2cap.CONNECTION_PSM_NOT_SUPPORTED);
-    respond(layer, connection, cid, l2cap.CONNECTION_RESPONSE, ident, &answer);
-}
-
 /// LE Credit Based Connection Request: no channel to its protocol.
 fn noLeProtocol(layer: *Hci, connection: *Connection, ident: u8, data: []const u8) void {
     const cid = l2cap.CID_LE_SIGNALING;
@@ -137,16 +132,16 @@ fn noLeProtocol(layer: *Hci, connection: *Connection, ident: u8, data: []const u
 
 /// A request for a channel there is not: rejected as such, with the
 /// channel it names and - where it has one, `ids` 4 - its own.
-fn noChannel(layer: *Hci, connection: *Connection, cid: u16, ident: u8, data: []const u8, ids: usize) void {
+pub fn noChannel(layer: *Hci, connection: *const Connection, cid: u16, ident: u8, data: []const u8, ids: usize) void {
     if (data.len < ids) return reject(layer, connection, cid, ident, l2cap.REJECT_NOT_UNDERSTOOD, &.{});
-    var channels: [4]u8 = @splat(0);
-    channels[0] = data[0];
-    channels[1] = data[1];
+    var named: [4]u8 = @splat(0);
+    named[0] = data[0];
+    named[1] = data[1];
     if (ids == 4) {
-        channels[2] = data[2];
-        channels[3] = data[3];
+        named[2] = data[2];
+        named[3] = data[3];
     }
-    reject(layer, connection, cid, ident, l2cap.REJECT_INVALID_CID, &channels);
+    reject(layer, connection, cid, ident, l2cap.REJECT_INVALID_CID, &named);
 }
 
 /// Connection Parameter Update Request: a peripheral asks its central for
@@ -168,18 +163,24 @@ fn parameterUpdate(layer: *Hci, connection: *Connection, ident: u8, data: []cons
 
 /// A command sent on the signalling channel `cid`: its code, the
 /// identifier it answers, and its data.
-fn respond(layer: *Hci, connection: *Connection, cid: u16, code: u8, ident: u8, data: []const u8) void {
+pub fn respond(layer: *Hci, connection: *const Connection, cid: u16, code: u8, ident: u8, data: []const u8) void {
+    _ = signal(layer, connection, cid, code, ident, data);
+}
+
+/// A command sent on the signalling channel `cid` - its code, its
+/// identifier, its data: false where it cannot be queued.
+pub fn signal(layer: *Hci, connection: *const Connection, cid: u16, code: u8, ident: u8, data: []const u8) bool {
     var command: [l2cap.L2CAP_COMMAND_HDR + ANSWER_MOST]u8 = undefined;
     const length = @min(data.len, ANSWER_MOST);
     command[0] = code;
     command[1] = ident;
     put16(command[2..4], @intCast(length));
     @memcpy(command[l2cap.L2CAP_COMMAND_HDR..][0..length], data[0..length]);
-    _ = _l2cap.send(layer, connection, cid, command[0 .. l2cap.L2CAP_COMMAND_HDR + length]);
+    return _l2cap.send(layer, connection, cid, command[0 .. l2cap.L2CAP_COMMAND_HDR + length]);
 }
 
 /// Command Reject: the reason, and what goes with it.
-fn reject(layer: *Hci, connection: *Connection, cid: u16, ident: u8, reason: u16, with: []const u8) void {
+pub fn reject(layer: *Hci, connection: *const Connection, cid: u16, ident: u8, reason: u16, with: []const u8) void {
     var data: [6]u8 = @splat(0);
     put16(data[0..2], reason);
     const length = @min(with.len, 4);

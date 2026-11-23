@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! bluetooth.library's functions: the Bluetooth controllers, brought up
 //! and run by the library's task, the devices they find, their links to
-//! them and their bonds with them, and who is told when they change.
+//! them and their bonds with them, the channels to the devices' protocols
+//! and the services they offer, and who is told when they change.
 //! Open it with OpenLibrary("bluetooth.library", 1); the structures are
 //! in sdk.bluetooth.
 //!
@@ -39,6 +40,13 @@ pub const LVO = struct {
     pub const RemBTAgent = libraries.lvo(22);
     pub const ObtainBTBonds = libraries.lvo(23);
     pub const ReleaseBTBonds = libraries.lvo(24);
+    pub const OpenBTChannel = libraries.lvo(25);
+    pub const CloseBTChannel = libraries.lvo(26);
+    pub const SendBTChannel = libraries.lvo(27);
+    pub const AddBTListener = libraries.lvo(28);
+    pub const RemBTListener = libraries.lvo(29);
+    pub const ObtainBTServices = libraries.lvo(30);
+    pub const ReleaseBTServices = libraries.lvo(31);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -65,6 +73,13 @@ pub const Fn = struct {
     pub const RemBTAgent = *const fn (*BluetoothBase, ?*bluetooth.BTAgent) callconv(.c) void;
     pub const ObtainBTBonds = *const fn (*BluetoothBase, u32) callconv(.c) ?*exec.List;
     pub const ReleaseBTBonds = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
+    pub const OpenBTChannel = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, u32, *exec.MsgPort, *?*bluetooth.BTChannel) callconv(.c) i32;
+    pub const CloseBTChannel = *const fn (*BluetoothBase, ?*bluetooth.BTChannel) callconv(.c) void;
+    pub const SendBTChannel = *const fn (*BluetoothBase, *bluetooth.BTChannel, [*]const u8, u32) callconv(.c) i32;
+    pub const AddBTListener = *const fn (*BluetoothBase, u32, *exec.MsgPort) callconv(.c) ?*bluetooth.BTListener;
+    pub const RemBTListener = *const fn (*BluetoothBase, ?*bluetooth.BTListener) callconv(.c) void;
+    pub const ObtainBTServices = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, *?*exec.List) callconv(.c) i32;
+    pub const ReleaseBTServices = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -150,7 +165,7 @@ pub const BluetoothBase = opaque {
         return libraries.call(self, LVO.ReleaseBTConnections, Fn.ReleaseBTConnections, .{list});
     }
 
-    /// A pairing with a device begun over BR/EDR, its link made first where there is none: 0 once it has begun, BTERR_*, or the controller's status. What it needs to know and its end go to `agent`.
+    /// A pairing with a device begun, over BR/EDR or LE, its link made first where there is none: 0 once it has begun, BTERR_*, or the controller's status. What it needs to know and its end go to `agent`.
     pub fn PairBTDevice(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, agent: ?*bluetooth.BTAgent) i32 {
         return libraries.call(self, LVO.PairBTDevice, Fn.PairBTDevice, .{ controller, address, agent });
     }
@@ -178,5 +193,40 @@ pub const BluetoothBase = opaque {
     /// A list from ObtainBTBonds given back. Null does nothing.
     pub fn ReleaseBTBonds(self: *BluetoothBase, list: ?*exec.List) void {
         return libraries.call(self, LVO.ReleaseBTBonds, Fn.ReleaseBTBonds, .{list});
+    }
+
+    /// A channel opened to a protocol of a device, by its PSM, over BR/EDR, its link made first where there is none: 0 once it is open and `channel` set, BTERR_*, or the controller's status. Its frames come to `port`.
+    pub fn OpenBTChannel(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, psm: u32, port: *exec.MsgPort, channel: *?*bluetooth.BTChannel) i32 {
+        return libraries.call(self, LVO.OpenBTChannel, Fn.OpenBTChannel, .{ controller, address, psm, port, channel });
+    }
+
+    /// A channel closed and given back; the messages about it still on its port taken back. Null does nothing.
+    pub fn CloseBTChannel(self: *BluetoothBase, channel: ?*bluetooth.BTChannel) void {
+        return libraries.call(self, LVO.CloseBTChannel, Fn.CloseBTChannel, .{channel});
+    }
+
+    /// A frame sent on a channel, waiting while the controller's queue is full: 0 once it is queued, or BTERR_*.
+    pub fn SendBTChannel(self: *BluetoothBase, channel: *bluetooth.BTChannel, data: [*]const u8, length: u32) i32 {
+        return libraries.call(self, LVO.SendBTChannel, Fn.SendBTChannel, .{ channel, data, length });
+    }
+
+    /// A PSM served: the channels devices open to it come to `port` as BTCM_OPENED; null for no memory, or a PSM taken or one no channel can name.
+    pub fn AddBTListener(self: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*bluetooth.BTListener {
+        return libraries.call(self, LVO.AddBTListener, Fn.AddBTListener, .{ psm, port });
+    }
+
+    /// A listener given back: devices' channels to its PSM refused again; what is still on its port is the caller's. Null does nothing.
+    pub fn RemBTListener(self: *BluetoothBase, listener: ?*bluetooth.BTListener) void {
+        return libraries.call(self, LVO.RemBTListener, Fn.RemBTListener, .{listener});
+    }
+
+    /// The services a device offers, asked of its SDP server: 0 and `list` set to a list of BTService, the caller's until ReleaseBTServices, BTERR_*, or the controller's status.
+    pub fn ObtainBTServices(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, list: *?*exec.List) i32 {
+        return libraries.call(self, LVO.ObtainBTServices, Fn.ObtainBTServices, .{ controller, address, list });
+    }
+
+    /// A list from ObtainBTServices given back. Null does nothing.
+    pub fn ReleaseBTServices(self: *BluetoothBase, list: ?*exec.List) void {
+        return libraries.call(self, LVO.ReleaseBTServices, Fn.ReleaseBTServices, .{list});
     }
 };

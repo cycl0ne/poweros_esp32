@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! bluetooth.library's base: exec's Library header, utility.library for
 //! the calls' tags, the controllers and their lock, the library's task and
-//! how it is started and ended, who wants to be told of a change, and the
-//! agents that answer pairings. One base, shared by every opener.
+//! how it is started and ended, who wants to be told of a change, the
+//! agents that answer pairings, and the listeners that take devices'
+//! channels. One base, shared by every opener.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -57,6 +58,18 @@ pub const BluetoothBase = extern struct {
     agents: exec.List = .{},
     agents_lock: exec.SignalSemaphore = .{},
     agent_number: u32 = 0,
+    /// AddBTListener's records (channel/_channel.zig), their lock, and the
+    /// number the last one was given.
+    listeners: exec.List = .{},
+    listeners_lock: exec.SignalSemaphore = .{},
+    listener_number: u32 = 0,
+    /// The task's while it runs: where the messages it sends to channels'
+    /// ports come back, how many of them are out, and the messages
+    /// themselves (channel/_channel.zig's, by their `link`) - all three
+    /// changed by the task alone, the list under `lock`.
+    channel_replies: ?*exec.MsgPort = null,
+    channel_out: u32 = 0,
+    channel_messages: exec.List = .{},
 };
 
 pub fn bluetoothBase(lib: *exec.Library) *BluetoothBase {

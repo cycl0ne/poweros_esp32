@@ -38,6 +38,11 @@
 //! controller that refuses the command, or a device that does not answer
 //! it within FEATURES_WAIT_MS, has the link taken as made.
 //!
+//! **A link made for channels** - by a channel this machine opens, or a
+//! service query (l2cap/channels.zig, sdp/client.zig) - ends IDLE_MS
+//! after its last channel has closed, unless ConnectBTDevice asked for it
+//! meanwhile; a link ConnectBTDevice made, or the device, stays.
+//!
 //! **The device's name**, where the discovery did not hear it, is asked
 //! for once a BR/EDR link is up (Remote Name Request): over the link it
 //! comes at once.
@@ -67,12 +72,13 @@ const acl = @import("acl.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const pairing = @import("pairing.zig");
+const channels = @import("../l2cap/channels.zig");
 const smp = @import("smp.zig");
 
 /// How many links a controller keeps, and how many calls may wait on
 /// them at once.
 pub const CONNECTIONS = 8;
-pub const WAITS = 8;
+pub const WAITS = 16;
 
 /// LE's initiating given up on after this long: a device that does not
 /// advertise is never reached.
@@ -87,6 +93,8 @@ const CANCEL_WAIT_MS: u32 = 3_000;
 /// How long an LE link that is up waits for the device's features before
 /// it is taken as made without them.
 pub const FEATURES_WAIT_MS: u32 = 5_000;
+/// How long a link made for channels stays once its last has closed.
+pub const IDLE_MS: u32 = 2_000;
 /// How old what the discovery heard of a device may be for a page to go
 /// by it: a device's clock drifts from the offset heard.
 const HEARD_FRESH_MS: u64 = 60_000;
@@ -106,6 +114,10 @@ pub const Connection = struct {
     /// LE: the device's link layer features, as it gave them; zeros
     /// while they are not known.
     le_features: [8]u8 = @splat(0),
+    /// Made for channels, not asked for by ConnectBTDevice: ended at
+    /// `idle_until`, once its last channel has closed.
+    for_channels: bool = false,
+    idle_until: ?u64 = null,
     incoming: bool = false,
     central: bool = false,
     encrypted: bool = false,
@@ -142,13 +154,16 @@ pub const Connection = struct {
     name_asked: bool = false,
 };
 
-pub const WaitKind = enum(u8) { connect, disconnect };
+pub const WaitKind = enum(u8) { connect, disconnect, open, close, services };
 
-/// A call waiting for a link to `address` to be up, or down.
+/// A call waiting for a link to `address` to be up, or down - or for the
+/// channel the task knows as `serial` to be open or closed, or for the
+/// services of the device at `address`.
 pub const Wait = struct {
     used: bool = false,
     kind: WaitKind = .connect,
     address: bluetooth.BTAddress = .{},
+    serial: u32 = 0,
     done: bool = false,
     /// Once done: 0, BTERR_*, or the controller's status.
     result: i32 = 0,
@@ -253,9 +268,16 @@ pub fn connect(layer: *Hci, address: bluetooth.BTAddress) Begun {
     if (!layer.powered) return .{ .done = bluetooth.BTERR_OFF };
     if (find(layer, address)) |known| switch (known.state) {
         // Up, unless the device has not answered on it yet or it is
-        // being made secure.
-        .up => return if (!known.heard or securing(known)) waitFor(layer, .connect, address) else .{ .done = 0 },
-        .connecting => if (!known.unwanted) return waitFor(layer, .connect, address),
+        // being made secure - and asked for, so kept.
+        .up => {
+            known.for_channels = false;
+            known.idle_until = null;
+            return if (!known.heard or securing(known)) waitFor(layer, .connect, address) else .{ .done = 0 };
+        },
+        .connecting => if (!known.unwanted) {
+            known.for_channels = false;
+            return waitFor(layer, .connect, address);
+        },
         else => {},
     };
     if (find(layer, address) != null) return .{ .done = bluetooth.BTERR_BUSY };
@@ -296,7 +318,8 @@ pub fn make(layer: *Hci, address: bluetooth.BTAddress) i32 {
 
 /// Whether a link that is up is being made secure, which ConnectBTDevice
 /// waits for.
-fn securing(connection: *const Connection) bool {
+/// Whether the link is being made secure with its bond.
+pub fn securing(connection: *const Connection) bool {
     return connection.pairing.stage != .idle and connection.pairing.purpose == .secure;
 }
 
@@ -344,6 +367,7 @@ fn drop(layer: *Hci, connection: *Connection) void {
 /// Every link forgotten - the controller is brought up again from its
 /// reset, or given up on - and every call waiting answered `result`.
 pub fn reset(layer: *Hci, result: i32) void {
+    channels.reset(layer, result);
     for (&layer.connections) |*connection| {
         pairing.linkGone(layer, connection, result);
         connection.* = .{};
@@ -369,9 +393,47 @@ fn waitOn(layer: *Hci, wait: *Wait, kind: WaitKind, address: bluetooth.BTAddress
     return .{ .waiting = @intCast(index) };
 }
 
-fn waitFor(layer: *Hci, kind: WaitKind, address: bluetooth.BTAddress) Begun {
+pub fn waitFor(layer: *Hci, kind: WaitKind, address: bluetooth.BTAddress) Begun {
     const wait = freeWait(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
     return waitOn(layer, wait, kind, address);
+}
+
+/// Whether a call can wait: a wait is free.
+pub fn canWait(layer: *Hci) bool {
+    return freeWait(layer) != null;
+}
+
+/// A call waiting for the channel the task knows as `serial`.
+pub fn waitForSerial(layer: *Hci, kind: WaitKind, serial: u32) Begun {
+    const wait = freeWait(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
+    wait.* = .{ .used = true, .kind = kind, .serial = serial };
+    const index = (@intFromPtr(wait) - @intFromPtr(&layer.waits)) / @sizeOf(Wait);
+    return .{ .waiting = @intCast(index) };
+}
+
+/// Every call waiting for the channel the task knows as `serial` - to be
+/// open, or closed - done, with `result`.
+pub fn answerSerial(layer: *Hci, kind: WaitKind, serial: u32, result: i32) void {
+    if (serial == 0) return;
+    for (&layer.waits) |*wait| {
+        if (!wait.used or wait.done or wait.kind != kind or wait.serial != serial) continue;
+        wait.done = true;
+        wait.result = result;
+    }
+}
+
+/// Every call waiting for the services of the device at `address` done,
+/// with `result`.
+pub fn answerServices(layer: *Hci, address: bluetooth.BTAddress, result: i32) void {
+    answer(layer, .services, address, result);
+}
+
+/// The link to `address` has no channel left: one made for channels ends
+/// IDLE_MS from now.
+pub fn idle(layer: *Hci, address: bluetooth.BTAddress) void {
+    const connection = find(layer, address) orelse return;
+    if (connection.state != .up or !connection.for_channels) return;
+    connection.idle_until = layer.now + IDLE_MS;
 }
 
 /// Every call waiting for the link to `address` to be up - or down -
@@ -694,6 +756,7 @@ pub fn established(layer: *Hci, connection: *Connection) void {
     layer.changed = true;
     note(layer, connection, .up, 0);
     if (!pairing.linkUp(layer, connection)) answer(layer, .connect, connection.address, 0);
+    channels.linkUp(layer, connection);
 }
 
 /// LE Read Remote Features Complete, past its subevent: the device has
@@ -730,6 +793,7 @@ pub fn note(layer: *Hci, connection: *const Connection, kind: NoteKind, reason: 
 /// answered - those for its end that it is down.
 fn failed(layer: *Hci, connection: *Connection, result: i32) void {
     note(layer, connection, .not_made, result);
+    channels.linkGone(layer, connection, result);
     pairing.linkGone(layer, connection, result);
     const address = connection.address;
     connection.* = .{};
@@ -746,6 +810,7 @@ fn down(layer: *Hci, connection: *Connection, result: i32, reason: i32) void {
     const made = connection.heard;
     const why = if (made) reason else failure(connection, reason);
     note(layer, connection, if (made) .down else .not_made, why);
+    channels.linkGone(layer, connection, why);
     pairing.linkGone(layer, connection, why);
     acl.released(layer, connection);
     const address = connection.address;
@@ -846,9 +911,18 @@ pub fn nameComplete(layer: *Hci, params: []const u8) void {
 
 /// Whatever is due at `layer.now`: a link being made taken back, or
 /// given up on once that was not answered; a link being ended taken to
-/// be down.
+/// be down; a link made for channels ended once none is left on it.
 pub fn tick(layer: *Hci) void {
     for (&layer.connections) |*connection| {
+        if (connection.idle_until) |idle_due| {
+            // Made for channels, none of them left on it: ended.
+            if (layer.now >= idle_due) {
+                connection.idle_until = null;
+                if (connection.state == .up and connection.for_channels and !channels.uses(layer, connection.address)) {
+                    _ = end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED);
+                }
+            }
+        }
         const due = connection.deadline orelse continue;
         if (layer.now < due) continue;
         connection.deadline = null;
@@ -870,8 +944,10 @@ pub fn tick(layer: *Hci) void {
 pub fn deadline(layer: *const Hci) ?u64 {
     var earliest: ?u64 = null;
     for (&layer.connections) |*connection| {
-        const due = connection.deadline orelse continue;
-        if (earliest == null or due < earliest.?) earliest = due;
+        for ([_]?u64{ connection.deadline, connection.idle_until }) |due_or_none| {
+            const due = due_or_none orelse continue;
+            if (earliest == null or due < earliest.?) earliest = due;
+        }
     }
     return earliest;
 }

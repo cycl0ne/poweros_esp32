@@ -2,9 +2,10 @@
 //! bluetooth.library's structures and constants: a device's address, a
 //! controller as the library lists it and the tags that set it, a device
 //! a controller found, a connection, an agent and what it is asked, a
-//! bond, and the notification. The calls are
-//! in `sdk.interface.bluetooth`; the HCI's commands, events and the
-//! fields they carry are `hci.zig`, L2CAP's `l2cap.zig`, here as well.
+//! bond, a channel and what its owner is told, a service, and the
+//! notification. The calls are in `sdk.interface.bluetooth`; the HCI's
+//! commands, events and the fields they carry are `hci.zig`, L2CAP's
+//! `l2cap.zig`, SDP's `sdp.zig`, here as well.
 //!
 //! **A controller** is a unit of a device that speaks DEVIF_HCI
 //! (sdk/devices/hci.zig): a USB dongle, a board's chip on a UART. Its
@@ -31,8 +32,8 @@
 //! DisconnectBTDevice; a device that pages a controller is taken on as
 //! well. ObtainBTConnections lists them.
 //!
-//! **Pairing** makes a bond with a device over BR/EDR: a link key the two
-//! keep, which authenticates and encrypts their links from then on.
+//! **Pairing** makes a bond with a device, over BR/EDR or LE: keys the
+//! two keep, which authenticate and encrypt their links from then on.
 //! PairBTDevice begins one and returns; what the pairing needs to know -
 //! whether a number matches, a passkey, a PIN - and its end are messages
 //! to the agent it names (AddBTAgent: a port, and what its user can do).
@@ -40,6 +41,15 @@
 //! bonds are kept by the controller's address and the device's
 //! (`ENVARC:Sys/bluetooth/<controller>/<device>`); ObtainBTBonds lists
 //! them, UnpairBTDevice ends one.
+//!
+//! **A channel** reaches one protocol of a device over a BR/EDR link, by
+//! its PSM: OpenBTChannel opens one, and a device opens one to a
+//! listener's PSM (AddBTListener). Its frames come as messages to its
+//! port; SendBTChannel sends them; CloseBTChannel ends it.
+//!
+//! **A device's services** are listed by ObtainBTServices: its SDP
+//! records, read over a channel to its PSM 1. The library answers SDP
+//! itself, with a record of its own.
 //!
 //! **A change** - a controller added, up, failed or gone, a setting, a
 //! device found or named, a discovery ended, a connection made or
@@ -52,6 +62,7 @@ const exec = @import("../exec/exec.zig");
 const utility = @import("../utility/utility.zig");
 pub const hci = @import("hci.zig");
 pub const l2cap = @import("l2cap.zig");
+pub const sdp = @import("sdp.zig");
 
 /// The library's name, for OpenLibrary.
 pub const BLUETOOTHNAME = "bluetooth.library";
@@ -414,5 +425,130 @@ pub const BTERR_BUSY: i32 = -11;
 pub const BTERR_BONDED: i32 = -12;
 /// The controller has no bond with the device.
 pub const BTERR_NOTBONDED: i32 = -13;
-/// The agent said no, or no agent answered in time.
+/// The agent said no, or no agent answered in time; or the device
+/// refused a channel.
 pub const BTERR_REFUSED: i32 = -14;
+/// A frame longer than the channel's other end takes.
+pub const BTERR_TOOLONG: i32 = -15;
+
+// --- channels ----------------------------------------------------------------
+
+/// BTChannel.flags.
+/// A device opened it, to a listener's PSM; otherwise OpenBTChannel did.
+pub const BTCHF_INCOMING: u32 = 1 << 0;
+/// It is closed - by the device, or with its link: frames neither come
+/// nor go, and CloseBTChannel gives it back.
+pub const BTCHF_CLOSED: u32 = 1 << 1;
+
+/// A channel to one protocol of a device - L2CAP's, over a BR/EDR link -
+/// as OpenBTChannel or a listener's BTCM_OPENED hands it over: its
+/// owner's until CloseBTChannel, which frees it. The library keeps its
+/// fields up to date; the owner reads them.
+pub const BTChannel = extern struct {
+    /// The controller (BTController.id) and the device.
+    controller: u32 = 0,
+    address: BTAddress = .{},
+    /// The protocol it reaches, by its PSM (l2cap.PSM_*).
+    psm: u16 = 0,
+    /// The identifiers of its two ends: this machine's and the device's.
+    local_cid: u16 = 0,
+    remote_cid: u16 = 0,
+    /// The longest frame each end takes: the device's - the most
+    /// SendBTChannel sends - and this machine's.
+    mtu_out: u16 = 0,
+    mtu_in: u16 = 0,
+    pad: u16 = 0,
+    /// BTCHF_*.
+    flags: u32 = 0,
+    /// Frames let go because 32 of the channel's messages were out
+    /// unreplied.
+    dropped: u32 = 0,
+    /// Where its messages go.
+    port: ?*exec.MsgPort = null,
+};
+
+/// BTChannelMessage.kind: what the owner, or a listener, is told.
+/// A frame of the channel: `data`, `length` bytes, the library's until
+/// the message is replied.
+pub const BTCM_DATA: u32 = 1;
+/// A device opened `channel` to the listener's PSM: the receiver's from
+/// now on, to close with CloseBTChannel. Its frames come to the same
+/// port.
+pub const BTCM_OPENED: u32 = 2;
+/// `channel` is closed - by the device, `result` 0, or with its link or
+/// its controller, `result` the link's reason or BTERR_DETACHED - and
+/// carries nothing more.
+pub const BTCM_CLOSED: u32 = 3;
+
+/// What the library tells a channel's owner, or a listener: sent to the
+/// port, and replied by the receiver once read. The library makes it and
+/// frees it once it is back.
+pub const BTChannelMessage = extern struct {
+    message: exec.Message = .{},
+    /// BTCM_*.
+    kind: u32 = 0,
+    /// BTCM_CLOSED: why - 0, BTERR_*, or the link's reason
+    /// (hci.HCI_ERR_*).
+    result: i32 = 0,
+    /// The channel it is about. CloseBTChannel takes back the messages
+    /// about the channel still on the port; one taken before it is
+    /// replied without reading this.
+    channel: ?*BTChannel = null,
+    /// BTCM_DATA: the frame.
+    data: ?[*]const u8 = null,
+    length: u32 = 0,
+};
+
+/// A listener added with AddBTListener: the library's, given back with
+/// RemBTListener.
+pub const BTListener = opaque {};
+
+// --- services ----------------------------------------------------------------
+
+/// A UUID, big-endian, as it is written: 0000110A-0000-1000-8000-
+/// 00805F9B34FB is `.{ 0x00, 0x00, 0x11, 0x0A, 0x00, 0x00, 0x10, ... }`.
+/// One of 16 or 32 bits stands for the base UUID (sdp.BASE_UUID) with
+/// its value in the first four bytes.
+pub const BTUUID = extern struct {
+    bytes: [16]u8 = @splat(0),
+};
+
+/// BTService.flags: how it was found.
+/// Its SDP record, read over BR/EDR.
+pub const BTSF_SDP: u32 = 1 << 0;
+
+/// A service of a device, as ObtainBTServices lists it.
+pub const BTService = extern struct {
+    /// On the list ObtainBTServices answers. ln_Name is the service's
+    /// name as its record gives it, UTF-8; empty where it gives none.
+    node: exec.Node = .{},
+    /// The controller it was read over (BTController.id), and the
+    /// device.
+    controller: u32 = 0,
+    address: BTAddress = .{},
+    /// BTSF_*.
+    flags: u32 = 0,
+    /// What it is: the first class its record names
+    /// (ATTR_SERVICE_CLASS_ID_LIST) - and as 16 bits where it is one of
+    /// those, 0 where not.
+    class: BTUUID = .{},
+    class16: u16 = 0,
+    /// The L2CAP PSM it is reached on, 0 where its record names none.
+    psm: u16 = 0,
+    /// The RFCOMM channel it is over that PSM, 0 for none.
+    rfcomm_channel: u8 = 0,
+    pad: u8 = 0,
+    /// The profile it is (its record's first in
+    /// ATTR_PROFILE_DESCRIPTOR_LIST): its UUID of 16 bits - 0 where it
+    /// names none - and its version, the major one in the upper byte.
+    profile16: u16 = 0,
+    profile_version: u16 = 0,
+    pad2: u16 = 0,
+    /// Its record's handle on the device.
+    handle: u32 = 0,
+    /// Its record as the device sent it: the data element sequence of its
+    /// attribute ids and their values (sdp.zig), where a profile reads
+    /// attributes of its own. The list's, freed with it.
+    record: ?[*]const u8 = null,
+    record_length: u32 = 0,
+};

@@ -34,6 +34,13 @@ const AddBTAgent = @import("pairing/addbtagent.zig").AddBTAgent;
 const RemBTAgent = @import("pairing/rembtagent.zig").RemBTAgent;
 const ObtainBTBonds = @import("pairing/obtainbtbonds.zig").ObtainBTBonds;
 const ReleaseBTBonds = @import("pairing/releasebtbonds.zig").ReleaseBTBonds;
+const OpenBTChannel = @import("channel/openbtchannel.zig").OpenBTChannel;
+const CloseBTChannel = @import("channel/closebtchannel.zig").CloseBTChannel;
+const SendBTChannel = @import("channel/sendbtchannel.zig").SendBTChannel;
+const AddBTListener = @import("channel/addbtlistener.zig").AddBTListener;
+const RemBTListener = @import("channel/rembtlistener.zig").RemBTListener;
+const ObtainBTServices = @import("service/obtainbtservices.zig").ObtainBTServices;
+const ReleaseBTServices = @import("service/releasebtservices.zig").ReleaseBTServices;
 
 /// bluetooth.library's interface, as the SDK generates it from
 /// sdk/fd/bluetooth_lib.fd.
@@ -79,6 +86,13 @@ const contract_files = [_][]const u8{
     @embedFile("pairing/rembtagent.zig"),
     @embedFile("pairing/obtainbtbonds.zig"),
     @embedFile("pairing/releasebtbonds.zig"),
+    @embedFile("channel/openbtchannel.zig"),
+    @embedFile("channel/closebtchannel.zig"),
+    @embedFile("channel/sendbtchannel.zig"),
+    @embedFile("channel/addbtlistener.zig"),
+    @embedFile("channel/rembtlistener.zig"),
+    @embedFile("service/obtainbtservices.zig"),
+    @embedFile("service/releasebtservices.zig"),
 };
 
 // --- controllers ----------------------------------------------------------------
@@ -170,6 +184,38 @@ fn lvoReleaseBTBonds(base: *BluetoothBase, list: ?*exec.List) callconv(.c) void 
     return ReleaseBTBonds(base, list);
 }
 
+// --- channels -------------------------------------------------------------------
+
+fn lvoOpenBTChannel(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, psm: u32, port: *exec.MsgPort, channel: *?*bluetooth.BTChannel) callconv(.c) i32 {
+    return OpenBTChannel(base, controller, address, psm, port, channel);
+}
+
+fn lvoCloseBTChannel(base: *BluetoothBase, channel: ?*bluetooth.BTChannel) callconv(.c) void {
+    return CloseBTChannel(base, channel);
+}
+
+fn lvoSendBTChannel(base: *BluetoothBase, channel: *bluetooth.BTChannel, data: [*]const u8, length: u32) callconv(.c) i32 {
+    return SendBTChannel(base, channel, data, length);
+}
+
+fn lvoAddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) callconv(.c) ?*bluetooth.BTListener {
+    return AddBTListener(base, psm, port);
+}
+
+fn lvoRemBTListener(base: *BluetoothBase, listener: ?*bluetooth.BTListener) callconv(.c) void {
+    return RemBTListener(base, listener);
+}
+
+// --- services -------------------------------------------------------------------
+
+fn lvoObtainBTServices(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, list: *?*exec.List) callconv(.c) i32 {
+    return ObtainBTServices(base, controller, address, list);
+}
+
+fn lvoReleaseBTServices(base: *BluetoothBase, list: ?*exec.List) callconv(.c) void {
+    return ReleaseBTServices(base, list);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -198,6 +244,13 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemBTAgent),
     vec(lvoObtainBTBonds),
     vec(lvoReleaseBTBonds),
+    vec(lvoOpenBTChannel),
+    vec(lvoCloseBTChannel),
+    vec(lvoSendBTChannel),
+    vec(lvoAddBTListener),
+    vec(lvoRemBTListener),
+    vec(lvoObtainBTServices),
+    vec(lvoReleaseBTServices),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

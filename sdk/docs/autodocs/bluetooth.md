@@ -2,7 +2,8 @@
 
 bluetooth.library's functions: the Bluetooth controllers, brought up
 and run by the library's task, the devices they find, their links to
-them and their bonds with them, and who is told when they change.
+them and their bonds with them, the channels to the devices' protocols
+and the services they offer, and who is told when they change.
 Open it with OpenLibrary("bluetooth.library", 1); the structures are
 in sdk.bluetooth.
 
@@ -12,21 +13,28 @@ Generated from the source by `./zig build autodoc`.
 
 - [AddBTAgent](#addbtagent) - Adds an agent: a port the library sends what a pairing needs to know, and what its user can do.
 - [AddBTController](#addbtcontroller) - Offers a controller to the stack: the library's task opens the unit and brings the controller up.
+- [AddBTListener](#addbtlistener) - Serves a PSM: the channels devices open to it are taken, and come to a port.
 - [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
+- [CloseBTChannel](#closebtchannel) - Closes a channel - one OpenBTChannel opened, or one a device opened to a listener - and gives it back.
 - [ConnectBTDevice](#connectbtdevice) - Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
 - [DisconnectBTDevice](#disconnectbtdevice) - Ends a link to a device, and waits until it is down.
 - [ObtainBTBonds](#obtainbtbonds) - Lists the bonds of a controller, or of every controller.
 - [ObtainBTConnections](#obtainbtconnections) - Lists a controller's links to devices: a copy of each as it is at the moment of the call.
 - [ObtainBTControllers](#obtainbtcontrollers) - Lists the controllers: a copy of each as it is at the moment of the call.
 - [ObtainBTDevices](#obtainbtdevices) - Lists the devices a controller found: a copy of each as it is at the moment of the call.
+- [ObtainBTServices](#obtainbtservices) - Asks a device which services it offers - its SDP server, over BR/EDR - and lists them.
+- [OpenBTChannel](#openbtchannel) - Opens an L2CAP channel to a protocol of a device, named by its PSM, and waits until it is open.
 - [PairBTDevice](#pairbtdevice) - Begins a pairing with a device, over BR/EDR or LE: a bond the two keep, which authenticates and encrypts their links from then on.
 - [ReleaseBTBonds](#releasebtbonds) - Gives back a list from ObtainBTBonds.
 - [ReleaseBTConnections](#releasebtconnections) - Gives back what ObtainBTConnections answered.
 - [ReleaseBTControllers](#releasebtcontrollers) - Gives back what ObtainBTControllers answered.
 - [ReleaseBTDevices](#releasebtdevices) - Gives back what ObtainBTDevices answered.
+- [ReleaseBTServices](#releasebtservices) - Gives back a list from ObtainBTServices.
 - [RemBTAgent](#rembtagent) - Ends what AddBTAgent began: the agent is asked nothing more.
 - [RemBTController](#rembtcontroller) - Takes a controller from the stack: everything the library had out on the unit is taken back, the unit closed, and the controller gone from the list.
+- [RemBTListener](#rembtlistener) - Ends what AddBTListener began: devices' channels to its PSM are refused again.
 - [RemBTNotify](#rembtnotify) - Ends what AddBTNotify asked for.
+- [SendBTChannel](#sendbtchannel) - Sends a frame on a channel to the device's protocol.
 - [SetBTControllerAttrs](#setbtcontrollerattrs) - Changes what a controller does: whether it is on, the name it shows others, whether they find it.
 - [StartBTDiscovery](#startbtdiscovery) - Makes a controller look for the devices around it: LE's advertisers, then the BR/EDR devices that answer an inquiry, then the names not yet heard.
 - [StopBTDiscovery](#stopbtdiscovery) - Ends a controller's discovery now.
@@ -191,6 +199,75 @@ const id = bt.AddBTController("usb/bluetooth.device", 0);
 if (id < 0) return; // not taken
 ```
 
+## AddBTListener
+
+Serves a PSM: the channels devices open to it are taken, and come to a port.
+
+**SYNOPSIS**
+
+```zig
+fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*bluetooth.BTListener
+```
+
+**SINCE**
+
+1.7. LVO -116.
+
+**INPUTS**
+
+- `psm` - the protocol's: odd, the low bit of its upper byte clear;
+  one of l2cap.PSM_DYNAMIC_FIRST's and above for one of the program's
+  own. Not l2cap.PSM_SDP, which the library serves.
+- `port` - where the channels come, and their messages.
+
+**RESULT**
+
+A handle for RemBTListener; null without memory, for a PSM another
+listener serves, PSM_SDP, or one no channel can name.
+
+**BEHAVIOR**
+
+A device that opens a channel to the PSM, over a BR/EDR link of any
+controller, has it taken. Once its configuration is agreed - as
+OpenBTChannel's is - the channel comes to `port` as a BTCM_OPENED
+message, `channel` its block, BTCHF_INCOMING in its flags; its frames
+and its end come to the same port as an opened channel's do. A device
+that opens one to a PSM nobody serves is told there is no such
+protocol.
+
+**CONTEXT**
+
+- Waits: yes, for the listeners' list.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The handle is the caller's until RemBTListener; the port must be
+there until then. A channel that comes is the port's task's - given to
+it - until CloseBTChannel, whether the listener is still there or not.
+
+**NOTES**
+
+The link a device opens a channel over is the device's: it stays when
+the channel closes.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`RemBTListener`, `OpenBTChannel`, `CloseBTChannel`
+
+**EXAMPLES**
+
+```zig
+const listener = bt.AddBTListener(0x1001, port) orelse return;
+defer bt.RemBTListener(listener);
+```
+
 ## AddBTNotify
 
 Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
@@ -249,6 +326,66 @@ None known.
 const signal = sys.AllocSignal(-1);
 const handle = bt.AddBTNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(signal)) orelse return;
 defer bt.RemBTNotify(handle);
+```
+
+## CloseBTChannel
+
+Closes a channel - one OpenBTChannel opened, or one a device opened to a listener - and gives it back.
+
+**SYNOPSIS**
+
+```zig
+fn CloseBTChannel(base: *BluetoothBase, channel: ?*bluetooth.BTChannel) void
+```
+
+**SINCE**
+
+1.7. LVO -108.
+
+**INPUTS**
+
+- `channel` - from OpenBTChannel or a BTCM_OPENED message, closed
+  already or not; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+A channel that is open is closed, and the device's answer waited for
+- five seconds at the most. A channel closed already - by the device,
+with its link or its controller - is only given back. Either way
+nothing about it is on its port once the call returns: the messages
+about it the caller has not taken (GetMsg) are taken back, and no more
+come.
+
+**CONTEXT**
+
+- Waits: yes, for the device's answer.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The channel is gone, and the messages about it that were taken back.
+One the caller took before the call is still replied, without reading
+its `channel`, whose block is gone with the channel.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenBTChannel`, `AddBTListener`
+
+**EXAMPLES**
+
+```zig
+sys.ReplyMsg(&told.message); // a BTCM_CLOSED, read first
+bt.CloseBTChannel(channel);
 ```
 
 ## ConnectBTDevice
@@ -330,8 +467,10 @@ Nothing.
 
 **NOTES**
 
-A link carries no protocol of the library's yet: a device may end one
-it has no use for.
+A device may end a link that carries nothing it has a use for - some
+do, seconds after its last channel. The links OpenBTChannel and
+ObtainBTServices make end two seconds after their last channel; one
+this call asks for meanwhile stays.
 
 **BUGS**
 
@@ -700,6 +839,183 @@ while (it.next()) |node| {
 }
 ```
 
+## ObtainBTServices
+
+Asks a device which services it offers - its SDP server, over BR/EDR - and lists them.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainBTServices(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress,
+    list: *?*exec.List) i32
+```
+
+**SINCE**
+
+1.7. LVO -124.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for the one with a link to the device, else the one whose discovery
+  found it, else the first that is up and on.
+- `address` - the device's, a BTADDR_BREDR address.
+- `list` - set to the list of BTService once the device has answered;
+  null otherwise.
+
+**RESULT**
+
+0 once the device has answered - its list empty where it offers
+nothing. Otherwise why not: BTERR_BUSY while the controller asks
+another device, BTERR_PROTOCOL for an answer that is not well made or
+the device's error, BTERR_NOMEM for one past 32 KiB or without memory,
+BTERR_TIMEOUT for a device that does not answer within 10 seconds,
+BTERR_UNSUPPORTED for an LE address; what OpenBTChannel answers for a
+channel to its SDP server that could not be opened.
+
+**BEHAVIOR**
+
+A channel is opened to the device's SDP server (l2cap.PSM_SDP) - its
+link made where there is none, which ends two seconds after the
+channel unless ConnectBTDevice asks for it meanwhile - and every
+service record that names L2CAP asked for with all its attributes, in
+as many parts as the device sends; the channel is closed once the
+answer is whole. Each record is a BTService: what it is - its class,
+and its profile with the profile's version - the PSM and RFCOMM
+channel it is reached on, its name and its handle, and the record
+itself, from which a profile reads attributes of its own (sdp.zig).
+
+**CONTEXT**
+
+- Waits: yes, until the device has answered or not.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is the caller's - made in its context - until
+ReleaseBTServices, the records and names with it.
+
+**NOTES**
+
+GATT's services, over LE, are not asked for yet.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseBTServices`, `OpenBTChannel`
+
+**EXAMPLES**
+
+```zig
+var services: ?*exec.List = null;
+if (bt.ObtainBTServices(bluetooth.BT_ALL_CONTROLLERS, &device, &services) != 0) return;
+defer bt.ReleaseBTServices(services);
+var it = services.?.iterator();
+while (it.next()) |node| {
+    const service: *bluetooth.BTService = @fieldParentPtr("node", node);
+    _ = service.psm;
+}
+```
+
+## OpenBTChannel
+
+Opens an L2CAP channel to a protocol of a device, named by its PSM, and waits until it is open.
+
+**SYNOPSIS**
+
+```zig
+fn OpenBTChannel(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress,
+    psm: u32, port: *exec.MsgPort, channel: *?*bluetooth.BTChannel) i32
+```
+
+**SINCE**
+
+1.7. LVO -104.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for the one with a link to the device, else the one whose discovery
+  found it, else the first that is up and on.
+- `address` - the device's, a BTADDR_BREDR address.
+- `psm` - the protocol's (l2cap.PSM_*, or one the device's services
+  name: BTService.psm): odd, the low bit of its upper byte clear.
+- `port` - where the channel's messages go (BTChannelMessage).
+- `channel` - set to the channel once it is open; null otherwise.
+
+**RESULT**
+
+0 once the channel is open. Otherwise why not: BTERR_REFUSED for a
+device that refused it - for want of security, say - or closed it
+while it was configured, BTERR_BUSY for one without the resources for
+it, BTERR_UNSUPPORTED for a PSM the device does not have, an LE
+address or a PSM no channel can name, BTERR_NOMEM for a controller
+with no room for another, BTERR_TIMEOUT for a device that did not
+answer within 10
+seconds (60 where it said it would answer later), BTERR_PROTOCOL for
+an answer that made no sense; for a link that could not be made, what
+ConnectBTDevice answers.
+
+**BEHAVIOR**
+
+The channel is asked for over the link to the device; a link that is
+not there is made first - and ends two seconds after its last channel
+has closed, unless ConnectBTDevice asks for it meanwhile. A link that
+is being made secure with its bond is waited for. Once the device has
+taken the channel, its configuration is agreed both ways: this
+machine takes frames of up to 1024 bytes (BTChannel.mtu_in), the
+device what it says - 672 where it says nothing, 48 at least
+(BTChannel.mtu_out) - in basic mode, a frame as it is.
+
+What comes on the open channel comes to `port`: each frame as a
+BTCM_DATA message, the frame in `data` and `length`; at most 32 of
+them out unreplied, those past them let go and counted in
+BTChannel.dropped. Its end - the device's close (`result` 0), its
+link's (the link's reason), its controller's (BTERR_DETACHED) - comes
+as BTCM_CLOSED, and BTCHF_CLOSED set in the channel's flags. A
+controller keeps 16 channels.
+
+**CONTEXT**
+
+- Waits: yes, until the channel is open or not.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The channel is the caller's - made in its context - until
+CloseBTChannel, closed or not. The port must be there until then;
+each message that comes to it is the library's, to be replied
+(ReplyMsg) once read, which frees it.
+
+**NOTES**
+
+Channels go over BR/EDR alone: none over LE, whose credit-based
+channels the profiles here do not use.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CloseBTChannel`, `SendBTChannel`, `AddBTListener`, `ObtainBTServices`
+
+**EXAMPLES**
+
+```zig
+var channel: ?*bluetooth.BTChannel = null;
+if (bt.OpenBTChannel(bluetooth.BT_ALL_CONTROLLERS, &device, 0x1001, port, &channel) != 0) return;
+_ = bt.SendBTChannel(channel.?, "hello", 5);
+bt.CloseBTChannel(channel);
+```
+
 ## PairBTDevice
 
 Begins a pairing with a device, over BR/EDR or LE: a bond the two keep, which authenticates and encrypts their links from then on.
@@ -1020,6 +1336,57 @@ None known.
 bt.ReleaseBTDevices(list);
 ```
 
+## ReleaseBTServices
+
+Gives back a list from ObtainBTServices.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseBTServices(base: *BluetoothBase, list: ?*exec.List) void
+```
+
+**SINCE**
+
+1.7. LVO -128.
+
+**INPUTS**
+
+- `list` - from ObtainBTServices; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The list, its nodes, their names and records are freed.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is gone.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainBTServices`
+
+**EXAMPLES**
+
+```zig
+bt.ReleaseBTServices(services);
+```
+
 ## RemBTAgent
 
 Ends what AddBTAgent began: the agent is asked nothing more.
@@ -1140,6 +1507,60 @@ None known.
 bt.RemBTController("usb/bluetooth.device", 0);
 ```
 
+## RemBTListener
+
+Ends what AddBTListener began: devices' channels to its PSM are refused again.
+
+**SYNOPSIS**
+
+```zig
+fn RemBTListener(base: *BluetoothBase, listener: ?*bluetooth.BTListener) void
+```
+
+**SINCE**
+
+1.7. LVO -120.
+
+**INPUTS**
+
+- `listener` - from AddBTListener; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+No channel comes to its port once the call returns; one a device is
+still opening to it is closed. The channels that came stay open.
+
+**CONTEXT**
+
+- Waits: yes, for the listeners' list.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The handle is gone. The channels that came are the caller's still, to
+close with CloseBTChannel; a BTCM_OPENED message still on the port
+brings one of them.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`AddBTListener`, `CloseBTChannel`
+
+**EXAMPLES**
+
+```zig
+bt.RemBTListener(listener);
+```
+
 ## RemBTNotify
 
 Ends what AddBTNotify asked for.
@@ -1189,6 +1610,72 @@ None known.
 
 ```zig
 bt.RemBTNotify(handle);
+```
+
+## SendBTChannel
+
+Sends a frame on a channel to the device's protocol.
+
+**SYNOPSIS**
+
+```zig
+fn SendBTChannel(base: *BluetoothBase, channel: *bluetooth.BTChannel, data: [*]const u8, length: u32) i32
+```
+
+**SINCE**
+
+1.7. LVO -112.
+
+**INPUTS**
+
+- `channel` - an open one, from OpenBTChannel or a BTCM_OPENED
+  message.
+- `data`, `length` - the frame: as long as the device takes at the
+  most (BTChannel.mtu_out), an empty one too.
+
+**RESULT**
+
+0 once the frame is in the controller's queue. Otherwise
+BTERR_TOOLONG for a frame longer than the device takes, or
+BTERR_NOTCONNECTED for a channel that is closed.
+
+**BEHAVIOR**
+
+The frame is copied, and the call waits while the controller's queue
+is full - until the controller has sent what is before it, or the
+channel has closed. Frames go in the order they are sent, the channel's
+and every other channel's on the controller.
+
+**CONTEXT**
+
+- Waits: yes, for room in the controller's queue.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The data is the caller's again once the call returns.
+
+**NOTES**
+
+In the queue is not at the device: a frame queued when the link goes
+down is lost, and nothing says it was. A protocol that must know
+answers frames of its own.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenBTChannel`, `CloseBTChannel`
+
+**EXAMPLES**
+
+```zig
+const line = "hello";
+if (bt.SendBTChannel(channel, line, line.len) != 0) return;
 ```
 
 ## SetBTControllerAttrs

@@ -6,14 +6,16 @@
 //! shows others and whether it is on (local.zig); the devices it found
 //! (discovery.zig, devices.zig); its links to devices (connections.zig)
 //! and the data on them (acl.zig), which L2CAP's channels carry
-//! (l2cap/); its pairings (pairing.zig; over LE the security manager,
-//! smp.zig) and the bonds they leave (bonds.zig).
+//! (l2cap/) - SDP's among them, its server and its client (sdp/); its
+//! pairings (pairing.zig; over LE the security manager, smp.zig) and the
+//! bonds they leave (bonds.zig).
 //!
 //! **Pure.** Nothing here calls exec or waits: the task hands in each
 //! packet that came (`received`), the time (`now`) and the time-outs
-//! (`tick`), and the layer sends through its `Port`, a packet at a time;
-//! the security manager's cipher, random bytes and curve come through
-//! its `crypto` port (smpcrypto.zig).
+//! (`tick`), and the layer sends through its `Port`, a packet at a time,
+//! and tells the task of its channels through it; the security manager's
+//! cipher, random bytes and curve come through its `crypto` port
+//! (smpcrypto.zig).
 //! So the host tests run it against a script, and the task runs it on
 //! the controller's requests.
 //!
@@ -46,6 +48,9 @@ const discovery = @import("discovery.zig");
 const local = @import("local.zig");
 const pairing = @import("pairing.zig");
 const smpcrypto = @import("smpcrypto.zig");
+const channels = @import("../l2cap/channels.zig");
+const sdp_client = @import("../sdp/client.zig");
+const sdp_server = @import("../sdp/server.zig");
 
 /// How many commands wait for their turn - room for every link's end
 /// when the power goes off - and how many may be out at once.
@@ -61,6 +66,13 @@ pub const Port = struct {
     /// A packet sent, from its header on: false if the transport cannot
     /// take one now - the layer tries again after `sent`.
     send: *const fn (context: *anyopaque, packet_type: u8, bytes: []const u8) bool,
+    /// What happens to the task's channels (l2cap/channels.zig): one a
+    /// device opened to a listener - true where it is taken - a frame, one
+    /// closed. Null where nobody is told.
+    channel: ?*const fn (context: *anyopaque, event: *const channels.Event) bool = null,
+    /// The listener that serves `psm`, by its number; 0 for none. Null
+    /// where there are none.
+    listener: ?*const fn (context: *anyopaque, psm: u16) u32 = null,
 };
 
 /// A command waiting for its turn: its opcode, parameters and time.
@@ -167,6 +179,18 @@ pub const Hci = struct {
     /// Its bonds (bonds.zig), and whether one is to be written.
     bonds: [bonds.BONDS]bonds.Bond = @splat(.{}),
     bonds_changed: bool = false,
+    /// Its dynamic channels (l2cap/channels.zig), and the next one's
+    /// serial, CID and signalling identifier.
+    channels: [channels.CHANNELS]channels.Channel = @splat(.{}),
+    channel_serial: u32 = 0,
+    next_cid: u16 = bluetooth.l2cap.CID_DYNAMIC_FIRST,
+    signal_ident: u8 = 0,
+    /// The SDP client's query (sdp/client.zig); the room the SDP server
+    /// builds an answer's attributes in, and the PDU it and the client
+    /// send (sdp/server.zig).
+    sdp_query: sdp_client.Query = .{},
+    sdp_room: [sdp_server.ROOM]u8 = undefined,
+    sdp_pdu: [acl.FRAME_MOST]u8 = undefined,
 };
 
 /// Whether feature `n` of page `page` is set.
@@ -296,7 +320,7 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
         if (earliest == null or pending.deadline < earliest.?) earliest = pending.deadline;
     }
     if (layer.state != bluetooth.BTCS_UP) return earliest;
-    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer) }) |due| {
+    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer), channels.deadline(layer), sdp_client.deadline(layer) }) |due| {
         const time = due orelse continue;
         if (earliest == null or time < earliest.?) earliest = time;
     }
@@ -320,6 +344,8 @@ pub fn tick(layer: *Hci) void {
         local.tick(layer);
         connections.tick(layer);
         pairing.tick(layer);
+        channels.tick(layer);
+        sdp_client.tick(layer);
     }
     pump(layer);
 }

@@ -1,0 +1,201 @@
+// SPDX-License-Identifier: MIT
+//! The service calls' shared parts: the records an SDP query brings back
+//! (sdp/client.zig) made into ObtainBTServices's list - each record a
+//! BTService, what a program looks for read from its attributes, the
+//! record itself copied after it with its name.
+//!
+//! **What is read** of a record: its handle; the first class its class
+//! list names; the PSM and RFCOMM channel its protocol descriptor list
+//! names - the first of its alternatives, where it has them - an L2CAP
+//! without a PSM followed by RFCOMM being RFCOMM's PSM; the first profile
+//! of its profile list, with its version; its name, in the language its
+//! language base list names first - or at 0x0100, where it has none - up
+//! to a NUL. What a record does not hold is 0, or empty.
+
+const sdk = @import("sdk");
+const exec = sdk.exec;
+const bluetooth = sdk.bluetooth;
+const l2cap = bluetooth.l2cap;
+const sdp = bluetooth.sdp;
+const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
+const _sdp = @import("../sdp/_sdp.zig");
+
+/// The room the records are gathered in: more than a device sends.
+pub const ROOM = 32 * 1024;
+
+/// What is read of one record.
+pub const Read = struct {
+    service: bluetooth.BTService = .{},
+    name: []const u8 = &.{},
+};
+
+/// The records of `records` - an SDP answer's attribute lists, a sequence
+/// of one sequence a record - read; false for bytes that are not that.
+/// `each` is given every record whole and what was read of it.
+pub fn walk(records: []const u8, context: anytype, comptime each: fn (@TypeOf(context), []const u8, *const Read) void) bool {
+    if (records.len == 0) return true;
+    const lists = _sdp.element(records) orelse return false;
+    if (lists.kind != sdp.DE_SEQUENCE or lists.whole != records.len) return false;
+    var at: usize = 0;
+    while (at < lists.data.len) {
+        const record = _sdp.element(lists.data[at..]) orelse return false;
+        if (record.kind != sdp.DE_SEQUENCE) return false;
+        const bytes = lists.data[at..][0..record.whole];
+        at += record.whole;
+        var found: Read = .{};
+        read(record, &found);
+        each(context, bytes, &found);
+    }
+    return true;
+}
+
+/// What a record says of itself.
+pub fn read(record: _sdp.Element, into: *Read) void {
+    var name_base: u32 = sdp.ATTR_SERVICE_NAME;
+    var pairs = Pairs{ .rest = record.data };
+    while (pairs.next()) |pair| {
+        switch (pair.id) {
+            sdp.ATTR_SERVICE_RECORD_HANDLE => into.service.handle = _sdp.unsigned(pair.value) orelse 0,
+            sdp.ATTR_SERVICE_CLASS_ID_LIST => {
+                var classes = _sdp.itemsOf(pair.value);
+                if (classes.next()) |first| {
+                    if (_sdp.uuid(first)) |class| {
+                        into.service.class = .{ .bytes = class };
+                        into.service.class16 = _sdp.short(class);
+                    }
+                }
+            },
+            sdp.ATTR_PROTOCOL_DESCRIPTOR_LIST => protocols(pair.value, &into.service),
+            sdp.ATTR_LANGUAGE_BASE_LIST => {
+                // Triplets: the language, its encoding, its base.
+                var items = _sdp.itemsOf(pair.value);
+                _ = items.next();
+                _ = items.next();
+                if (items.next()) |base_item| name_base = _sdp.unsigned(base_item) orelse name_base;
+            },
+            sdp.ATTR_PROFILE_DESCRIPTOR_LIST => {
+                var profiles = _sdp.itemsOf(pair.value);
+                const first = profiles.next() orelse continue;
+                var parts = _sdp.itemsOf(first);
+                const profile = parts.next() orelse continue;
+                into.service.profile16 = if (_sdp.uuid(profile)) |uuid| _sdp.short(uuid) else 0;
+                if (parts.next()) |version| into.service.profile_version = @truncate(_sdp.unsigned(version) orelse 0);
+            },
+            else => {},
+        }
+    }
+    // The name, now that its language's base is known.
+    pairs = .{ .rest = record.data };
+    while (pairs.next()) |pair| {
+        if (pair.id != name_base or pair.value.kind != sdp.DE_TEXT) continue;
+        const text = pair.value.data;
+        var length: usize = 0;
+        while (length < text.len and text[length] != 0) length += 1;
+        into.name = text[0..length];
+    }
+}
+
+/// A record's attributes, an id and its value at a time.
+const Pairs = struct {
+    rest: []const u8,
+
+    const Pair = struct { id: u32, value: _sdp.Element };
+
+    fn next(pairs: *Pairs) ?Pair {
+        while (true) {
+            const id_item = _sdp.element(pairs.rest) orelse return null;
+            const value = _sdp.element(pairs.rest[id_item.whole..]) orelse return null;
+            pairs.rest = pairs.rest[id_item.whole + value.whole ..];
+            const id = _sdp.unsigned(id_item) orelse continue;
+            return .{ .id = id, .value = value };
+        }
+    }
+};
+
+/// The PSM and RFCOMM channel a protocol descriptor list names.
+fn protocols(list: _sdp.Element, into: *bluetooth.BTService) void {
+    var stack = list;
+    // Alternatives: the first of them.
+    if (stack.kind == sdp.DE_ALTERNATIVE) {
+        var alternatives = _sdp.itemsOf(stack);
+        stack = alternatives.next() orelse return;
+    }
+    var l2cap_seen = false;
+    var descriptors = _sdp.itemsOf(stack);
+    while (descriptors.next()) |descriptor| {
+        var parts = _sdp.itemsOf(descriptor);
+        const protocol = parts.next() orelse continue;
+        const uuid = _sdp.uuid(protocol) orelse continue;
+        switch (_sdp.short(uuid)) {
+            sdp.UUID_L2CAP => {
+                l2cap_seen = true;
+                if (parts.next()) |psm| into.psm = @truncate(_sdp.unsigned(psm) orelse 0);
+            },
+            sdp.UUID_RFCOMM => {
+                if (parts.next()) |channel| into.rfcomm_channel = @truncate(_sdp.unsigned(channel) orelse 0);
+                if (l2cap_seen and into.psm == 0) into.psm = l2cap.PSM_RFCOMM;
+            },
+            else => {},
+        }
+    }
+}
+
+/// One BTService in the list's block: its node's name and its record
+/// follow it.
+const ENTRY_ALIGN = @alignOf(bluetooth.BTService);
+
+fn entrySize(record_length: usize, name_length: usize) usize {
+    const size = @sizeOf(bluetooth.BTService) + record_length + name_length + 1;
+    return (size + ENTRY_ALIGN - 1) / ENTRY_ALIGN * ENTRY_ALIGN;
+}
+
+const Count = struct {
+    size: usize = 0,
+
+    fn add(count: *Count, record: []const u8, found: *const Read) void {
+        count.size += entrySize(record.len, found.name.len);
+    }
+};
+
+const Fill = struct {
+    list: *exec.List,
+    sys: *sdk.interface.exec.ExecBase,
+    at: usize,
+    controller: u32,
+    address: bluetooth.BTAddress,
+
+    fn add(fill: *Fill, record: []const u8, found: *const Read) void {
+        const service: *bluetooth.BTService = @ptrFromInt(fill.at);
+        service.* = found.service;
+        service.controller = fill.controller;
+        service.address = fill.address;
+        service.flags = bluetooth.BTSF_SDP;
+        const copy: [*]u8 = @ptrFromInt(fill.at + @sizeOf(bluetooth.BTService));
+        @memcpy(copy[0..record.len], record);
+        service.record = copy;
+        service.record_length = @intCast(record.len);
+        const name = copy + record.len;
+        @memcpy(name[0..found.name.len], found.name);
+        name[found.name.len] = 0;
+        service.node.name = @ptrCast(name);
+        fill.sys.AddTail(fill.list, &service.node);
+        fill.at += entrySize(record.len, found.name.len);
+    }
+};
+
+/// ObtainBTServices's list made from the records, in one block that
+/// ReleaseBTServices frees: 0, BTERR_PROTOCOL for records that are not
+/// well made, BTERR_NOMEM.
+pub fn make(base: *BluetoothBase, controller: u32, address: bluetooth.BTAddress, records: []const u8, into: *?*exec.List) i32 {
+    const sys = base.sys_base;
+    var count: Count = .{};
+    if (!walk(records, &count, Count.add)) return bluetooth.BTERR_PROTOCOL;
+    const head = (@sizeOf(exec.List) + ENTRY_ALIGN - 1) / ENTRY_ALIGN * ENTRY_ALIGN;
+    const memory = sys.AllocVec(head + count.size, exec.MEMF_CLEAR) orelse return bluetooth.BTERR_NOMEM;
+    const list: *exec.List = @ptrCast(@alignCast(memory));
+    list.init(.unknown);
+    var fill: Fill = .{ .list = list, .sys = sys, .at = @intFromPtr(memory) + head, .controller = controller, .address = address };
+    _ = walk(records, &fill, Fill.add);
+    into.* = list;
+    return 0;
+}
