@@ -42,10 +42,24 @@ pub const HCI_OP_INQUIRY: u16 = 0x0401;
 pub const HCI_OP_INQUIRY_CANCEL: u16 = 0x0402;
 pub const HCI_OP_CREATE_CONNECTION: u16 = 0x0405;
 pub const HCI_OP_DISCONNECT: u16 = 0x0406;
+pub const HCI_OP_CREATE_CONNECTION_CANCEL: u16 = 0x0408;
 pub const HCI_OP_ACCEPT_CONNECTION: u16 = 0x0409;
 pub const HCI_OP_REJECT_CONNECTION: u16 = 0x040A;
+pub const HCI_OP_LINK_KEY_REPLY: u16 = 0x040B;
+pub const HCI_OP_LINK_KEY_NEGATIVE_REPLY: u16 = 0x040C;
+pub const HCI_OP_PIN_CODE_REPLY: u16 = 0x040D;
+pub const HCI_OP_PIN_CODE_NEGATIVE_REPLY: u16 = 0x040E;
+pub const HCI_OP_AUTHENTICATION_REQUESTED: u16 = 0x0411;
+pub const HCI_OP_SET_CONNECTION_ENCRYPTION: u16 = 0x0413;
 pub const HCI_OP_REMOTE_NAME_REQUEST: u16 = 0x0419;
 pub const HCI_OP_REMOTE_NAME_REQUEST_CANCEL: u16 = 0x041A;
+pub const HCI_OP_READ_REMOTE_FEATURES: u16 = 0x041B;
+pub const HCI_OP_IO_CAPABILITY_REPLY: u16 = 0x042B;
+pub const HCI_OP_USER_CONFIRMATION_REPLY: u16 = 0x042C;
+pub const HCI_OP_USER_CONFIRMATION_NEGATIVE_REPLY: u16 = 0x042D;
+pub const HCI_OP_USER_PASSKEY_REPLY: u16 = 0x042E;
+pub const HCI_OP_USER_PASSKEY_NEGATIVE_REPLY: u16 = 0x042F;
+pub const HCI_OP_IO_CAPABILITY_NEGATIVE_REPLY: u16 = 0x0434;
 // Controller and baseband.
 pub const HCI_OP_SET_EVENT_MASK: u16 = 0x0C01;
 pub const HCI_OP_RESET: u16 = 0x0C03;
@@ -75,6 +89,11 @@ pub const HCI_OP_LE_READ_LOCAL_FEATURES: u16 = 0x2003;
 pub const HCI_OP_LE_SET_SCAN_PARAMETERS: u16 = 0x200B;
 pub const HCI_OP_LE_SET_SCAN_ENABLE: u16 = 0x200C;
 pub const HCI_OP_LE_CREATE_CONNECTION: u16 = 0x200D;
+pub const HCI_OP_LE_CREATE_CONNECTION_CANCEL: u16 = 0x200E;
+pub const HCI_OP_LE_CONNECTION_UPDATE: u16 = 0x2013;
+pub const HCI_OP_LE_ENABLE_ENCRYPTION: u16 = 0x2019;
+pub const HCI_OP_LE_REMOTE_PARAMETERS_REPLY: u16 = 0x2020;
+pub const HCI_OP_LE_REMOTE_PARAMETERS_NEGATIVE_REPLY: u16 = 0x2021;
 
 // --- the events' codes -------------------------------------------------------
 
@@ -86,16 +105,34 @@ pub const HCI_EV_DISCONNECTION_COMPLETE: u8 = 0x05;
 pub const HCI_EV_AUTHENTICATION_COMPLETE: u8 = 0x06;
 pub const HCI_EV_REMOTE_NAME_REQUEST_COMPLETE: u8 = 0x07;
 pub const HCI_EV_ENCRYPTION_CHANGE: u8 = 0x08;
+pub const HCI_EV_READ_REMOTE_FEATURES_COMPLETE: u8 = 0x0B;
 pub const HCI_EV_COMMAND_COMPLETE: u8 = 0x0E;
 pub const HCI_EV_COMMAND_STATUS: u8 = 0x0F;
 pub const HCI_EV_HARDWARE_ERROR: u8 = 0x10;
+pub const HCI_EV_ROLE_CHANGE: u8 = 0x12;
 pub const HCI_EV_NUMBER_OF_COMPLETED_PACKETS: u8 = 0x13;
+pub const HCI_EV_PIN_CODE_REQUEST: u8 = 0x16;
+pub const HCI_EV_LINK_KEY_REQUEST: u8 = 0x17;
+pub const HCI_EV_LINK_KEY_NOTIFICATION: u8 = 0x18;
 pub const HCI_EV_DATA_BUFFER_OVERFLOW: u8 = 0x1A;
 pub const HCI_EV_INQUIRY_RESULT_WITH_RSSI: u8 = 0x22;
 pub const HCI_EV_EXTENDED_INQUIRY_RESULT: u8 = 0x2F;
+pub const HCI_EV_ENCRYPTION_KEY_REFRESH_COMPLETE: u8 = 0x30;
+pub const HCI_EV_IO_CAPABILITY_REQUEST: u8 = 0x31;
+pub const HCI_EV_IO_CAPABILITY_RESPONSE: u8 = 0x32;
+pub const HCI_EV_USER_CONFIRMATION_REQUEST: u8 = 0x33;
+pub const HCI_EV_USER_PASSKEY_REQUEST: u8 = 0x34;
+pub const HCI_EV_SIMPLE_PAIRING_COMPLETE: u8 = 0x36;
+pub const HCI_EV_USER_PASSKEY_NOTIFICATION: u8 = 0x3B;
+pub const HCI_EV_REMOTE_HOST_FEATURES: u8 = 0x3D;
 pub const HCI_EV_LE_META: u8 = 0x3E;
 /// LE Meta's subevents: the first parameter.
+pub const HCI_LE_EV_CONNECTION_COMPLETE: u8 = 0x01;
 pub const HCI_LE_EV_ADVERTISING_REPORT: u8 = 0x02;
+pub const HCI_LE_EV_CONNECTION_UPDATE_COMPLETE: u8 = 0x03;
+pub const HCI_LE_EV_READ_REMOTE_FEATURES_COMPLETE: u8 = 0x04;
+pub const HCI_LE_EV_LONG_TERM_KEY_REQUEST: u8 = 0x05;
+pub const HCI_LE_EV_REMOTE_PARAMETERS_REQUEST: u8 = 0x06;
 /// A chip maker's own events.
 pub const HCI_EV_VENDOR: u8 = 0xFF;
 
@@ -110,15 +147,66 @@ pub const HCI_ERR_AUTHENTICATION_FAILURE: u8 = 0x05;
 pub const HCI_ERR_PIN_OR_KEY_MISSING: u8 = 0x06;
 pub const HCI_ERR_MEMORY_EXCEEDED: u8 = 0x07;
 pub const HCI_ERR_CONNECTION_TIMEOUT: u8 = 0x08;
+pub const HCI_ERR_CONNECTION_EXISTS: u8 = 0x0B;
 pub const HCI_ERR_COMMAND_DISALLOWED: u8 = 0x0C;
 pub const HCI_ERR_REJECTED_LIMITED_RESOURCES: u8 = 0x0D;
 pub const HCI_ERR_REJECTED_SECURITY: u8 = 0x0E;
+pub const HCI_ERR_REJECTED_ADDRESS: u8 = 0x0F;
 pub const HCI_ERR_UNSUPPORTED_FEATURE: u8 = 0x11;
 pub const HCI_ERR_INVALID_PARAMETERS: u8 = 0x12;
 pub const HCI_ERR_REMOTE_USER_TERMINATED: u8 = 0x13;
+pub const HCI_ERR_REMOTE_LOW_RESOURCES: u8 = 0x14;
+pub const HCI_ERR_REMOTE_POWER_OFF: u8 = 0x15;
 pub const HCI_ERR_LOCAL_HOST_TERMINATED: u8 = 0x16;
 pub const HCI_ERR_PAIRING_NOT_ALLOWED: u8 = 0x18;
 pub const HCI_ERR_UNSPECIFIED: u8 = 0x1F;
+pub const HCI_ERR_INSTANT_PASSED: u8 = 0x28;
+pub const HCI_ERR_UNACCEPTABLE_PARAMETERS: u8 = 0x3B;
+pub const HCI_ERR_FAILED_TO_ESTABLISH: u8 = 0x3E;
+
+// --- connections -------------------------------------------------------------
+
+/// Link Type, in Connection Request and Connection Complete.
+pub const LINK_SCO: u8 = 0x00;
+pub const LINK_ACL: u8 = 0x01;
+pub const LINK_ESCO: u8 = 0x02;
+/// A connection's role: the central's, which pages or initiates, and the
+/// peripheral's. Accept Connection Request's role: 0 to take the
+/// central's, 1 to stay the peripheral.
+pub const ROLE_CENTRAL: u8 = 0x00;
+pub const ROLE_PERIPHERAL: u8 = 0x01;
+/// Create Connection's packet types: every ACL packet of one, three and
+/// five slots, with and without FEC.
+pub const ACL_PACKET_TYPES: u16 = 0xCC18;
+/// Create Connection's role switch: allowed.
+pub const ALLOW_ROLE_SWITCH: u8 = 0x01;
+/// A page scan repetition mode: how often a device listens for pages -
+/// all the time, every 1.28 s, every 2.56 s.
+pub const PAGE_SCAN_R0: u8 = 0x00;
+pub const PAGE_SCAN_R1: u8 = 0x01;
+pub const PAGE_SCAN_R2: u8 = 0x02;
+
+/// An ACL packet's first two bytes: its connection handle in the low 12
+/// bits, the packet boundary flag in the two above.
+pub const ACL_HANDLE_MASK: u16 = 0x0FFF;
+pub const ACL_BOUNDARY_SHIFT: u4 = 12;
+/// The packet boundary flag: the first fragment of an L2CAP frame the
+/// controller may not flush (what the host sends on LE), a fragment that
+/// goes on one, the first fragment of one it may flush (what the host
+/// sends on BR/EDR, and what a controller hands up first).
+pub const ACL_START_NO_FLUSH: u16 = 0x00;
+pub const ACL_CONTINUING: u16 = 0x01;
+pub const ACL_START: u16 = 0x02;
+
+/// LE Create Connection's: the scan's interval and window, the
+/// connection's interval, latency and supervision time-out, the times a
+/// connection event takes - in 0.625 ms, 1.25 ms and 10 ms units.
+pub const LE_CONNECT_SCAN_INTERVAL: u16 = 0x0060;
+pub const LE_CONNECT_SCAN_WINDOW: u16 = 0x0060;
+pub const LE_CONNECT_INTERVAL_MIN: u16 = 0x0018;
+pub const LE_CONNECT_INTERVAL_MAX: u16 = 0x0028;
+pub const LE_CONNECT_LATENCY: u16 = 0x0000;
+pub const LE_CONNECT_SUPERVISION: u16 = 0x002A;
 
 // --- versions ----------------------------------------------------------------
 
@@ -190,9 +278,20 @@ pub const LE_FEATURE_PERIODIC_ADVERTISING: u8 = 13;
 
 pub const CMDBIT_INQUIRY: u16 = 0;
 pub const CMDBIT_INQUIRY_CANCEL: u16 = 1;
+pub const CMDBIT_CREATE_CONNECTION: u16 = 4;
 pub const CMDBIT_DISCONNECT: u16 = 5;
+pub const CMDBIT_CREATE_CONNECTION_CANCEL: u16 = 7;
+pub const CMDBIT_ACCEPT_CONNECTION: u16 = 8;
+pub const CMDBIT_REJECT_CONNECTION: u16 = 9;
+pub const CMDBIT_LINK_KEY_REPLY: u16 = 10;
+pub const CMDBIT_LINK_KEY_NEGATIVE_REPLY: u16 = 11;
+pub const CMDBIT_PIN_CODE_REPLY: u16 = 12;
+pub const CMDBIT_PIN_CODE_NEGATIVE_REPLY: u16 = 13;
+pub const CMDBIT_AUTHENTICATION_REQUESTED: u16 = 15;
+pub const CMDBIT_SET_CONNECTION_ENCRYPTION: u16 = 16;
 pub const CMDBIT_REMOTE_NAME_REQUEST: u16 = 19;
 pub const CMDBIT_REMOTE_NAME_REQUEST_CANCEL: u16 = 20;
+pub const CMDBIT_READ_REMOTE_FEATURES: u16 = 21;
 pub const CMDBIT_SET_EVENT_MASK: u16 = 46;
 pub const CMDBIT_RESET: u16 = 47;
 pub const CMDBIT_WRITE_LOCAL_NAME: u16 = 56;
@@ -209,6 +308,12 @@ pub const CMDBIT_READ_BUFFER_SIZE: u16 = 119;
 pub const CMDBIT_READ_BD_ADDR: u16 = 121;
 pub const CMDBIT_WRITE_EXTENDED_INQUIRY_RESPONSE: u16 = 137;
 pub const CMDBIT_WRITE_SIMPLE_PAIRING_MODE: u16 = 142;
+pub const CMDBIT_IO_CAPABILITY_REPLY: u16 = 151;
+pub const CMDBIT_USER_CONFIRMATION_REPLY: u16 = 152;
+pub const CMDBIT_USER_CONFIRMATION_NEGATIVE_REPLY: u16 = 153;
+pub const CMDBIT_USER_PASSKEY_REPLY: u16 = 154;
+pub const CMDBIT_USER_PASSKEY_NEGATIVE_REPLY: u16 = 155;
+pub const CMDBIT_IO_CAPABILITY_NEGATIVE_REPLY: u16 = 163;
 pub const CMDBIT_SET_EVENT_MASK_PAGE_2: u16 = 178;
 pub const CMDBIT_WRITE_LE_HOST_SUPPORTED: u16 = 198;
 pub const CMDBIT_LE_SET_EVENT_MASK: u16 = 200;
@@ -217,6 +322,11 @@ pub const CMDBIT_LE_READ_LOCAL_FEATURES: u16 = 202;
 pub const CMDBIT_LE_SET_SCAN_PARAMETERS: u16 = 210;
 pub const CMDBIT_LE_SET_SCAN_ENABLE: u16 = 211;
 pub const CMDBIT_LE_CREATE_CONNECTION: u16 = 212;
+pub const CMDBIT_LE_CREATE_CONNECTION_CANCEL: u16 = 213;
+pub const CMDBIT_LE_CONNECTION_UPDATE: u16 = 218;
+pub const CMDBIT_LE_ENABLE_ENCRYPTION: u16 = 224;
+pub const CMDBIT_LE_REMOTE_PARAMETERS_REPLY: u16 = 268;
+pub const CMDBIT_LE_REMOTE_PARAMETERS_NEGATIVE_REPLY: u16 = 269;
 pub const CMDBIT_WRITE_SECURE_CONNECTIONS_HOST_SUPPORT: u16 = 259;
 
 // --- finding devices ---------------------------------------------------------

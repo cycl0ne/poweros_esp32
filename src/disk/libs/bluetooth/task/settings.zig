@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 //! A controller's settings as they are kept from one start to the next,
 //! in `ENVARC:Sys/bluetooth/<address>/` - the address its twelve hex
-//! digits, the most significant first (`98FE54CF6748`):
+//! digits, the most significant first (`00005EEF1042`):
 //!
 //!   settings   a keyword file: `Powered = YES` or `NO`, and `Visible =
 //!              YES` - found by others until told otherwise - or `NO`;

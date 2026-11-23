@@ -137,9 +137,9 @@ tags and constants, each with its doc comment.
   controllers: what a controller device is (HCI packets, one a
   request), how one is offered and brought up, listing them and being
   told of changes, their settings and the files they are kept in,
-  finding the devices around them, the USB controllers and the MT7922's
-  firmware, the Raspberry Pi 4 Model B's controller on its mini UART,
-  and `C:Bluetooth`.
+  finding the devices around them, links to them and what a link
+  carries, the USB controllers and the MT7922's firmware, the Raspberry
+  Pi 4 Model B's controller on its mini UART, and `C:Bluetooth`.
 - [Displays](guides/rtg.md) - rtg.library, in three parts. What a
   program does with a board: the machine's display, modes, the monitor,
   buffers, handing on what was drawn, showing, bands, power and the
@@ -176,7 +176,7 @@ first time something opens it.
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | audiocodec.library | `LIBS:` | sound files into 16-bit samples as they play: WAV, MP3, FLAC, Ogg Vorbis, AAC; their tags, covers and chapters | [md](autodocs/audiocodec.md) · [doc](autodocs/audiocodec.doc), [`audiocodec.zig`](../libs/audiocodec/audiocodec.zig), [guide](guides/audio.md#decoding-audiocodeclibrary) |
-| bluetooth.library | `LIBS:` | the Bluetooth stack: the controllers it is given, brought up, listed and set - on or off, their name, visible - the devices they find, and the programs told when they change | [md](autodocs/bluetooth.md) · [doc](autodocs/bluetooth.doc), [`bluetooth.zig`](../libs/bluetooth/bluetooth.zig), [guide](guides/bluetooth.md) |
+| bluetooth.library | `LIBS:` | the Bluetooth stack: the controllers it is given, brought up, listed and set - on or off, their name, visible - the devices they find and the links to them, and the programs told when they change | [md](autodocs/bluetooth.md) · [doc](autodocs/bluetooth.doc), [`bluetooth.zig`](../libs/bluetooth/bluetooth.zig), [guide](guides/bluetooth.md) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
 | commodities.library | `LIBS:` | the input stream through a network of the programs' objects before the windows: hotkeys, filters, events swapped and added | [md](autodocs/commodities.md) · [doc](autodocs/commodities.doc), [`commodities.zig`](../libs/commodities/commodities.zig), [guide](guides/commodities.md) |
 | compression.library | `LIBS:` | DEFLATE packed and unpacked, bare or in a zlib or gzip wrapping, a buffer at a time or in one go; CRC-32 and Adler-32 | [md](autodocs/compression.md) · [doc](autodocs/compression.doc), [`compression.zig`](../libs/compression/compression.zig), [guide](guides/compression.md) |

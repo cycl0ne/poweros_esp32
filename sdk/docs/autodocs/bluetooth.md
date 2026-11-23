@@ -1,8 +1,9 @@
 # bluetooth.library
 
 bluetooth.library's functions: the Bluetooth controllers, brought up
-and run by the library's task, and who is told when they change. Open
-it with OpenLibrary("bluetooth.library", 1); the structures are in
+and run by the library's task, the devices they find and their links
+to them, and who is told when they change. Open it with
+OpenLibrary("bluetooth.library", 1); the structures are in
 sdk.bluetooth.
 
 Generated from the source by `./zig build autodoc`.
@@ -11,8 +12,12 @@ Generated from the source by `./zig build autodoc`.
 
 - [AddBTController](#addbtcontroller) - Offers a controller to the stack: the library's task opens the unit and brings the controller up.
 - [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
+- [ConnectBTDevice](#connectbtdevice) - Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
+- [DisconnectBTDevice](#disconnectbtdevice) - Ends a link to a device, and waits until it is down.
+- [ObtainBTConnections](#obtainbtconnections) - Lists a controller's links to devices: a copy of each as it is at the moment of the call.
 - [ObtainBTControllers](#obtainbtcontrollers) - Lists the controllers: a copy of each as it is at the moment of the call.
 - [ObtainBTDevices](#obtainbtdevices) - Lists the devices a controller found: a copy of each as it is at the moment of the call.
+- [ReleaseBTConnections](#releasebtconnections) - Gives back what ObtainBTConnections answered.
 - [ReleaseBTControllers](#releasebtcontrollers) - Gives back what ObtainBTControllers answered.
 - [ReleaseBTDevices](#releasebtdevices) - Gives back what ObtainBTDevices answered.
 - [RemBTController](#rembtcontroller) - Takes a controller from the stack: everything the library had out on the unit is taken back, the unit closed, and the controller gone from the list.
@@ -166,6 +171,229 @@ const handle = bt.AddBTNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(sign
 defer bt.RemBTNotify(handle);
 ```
 
+## ConnectBTDevice
+
+Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
+
+**SYNOPSIS**
+
+```zig
+fn ConnectBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress) i32
+```
+
+**SINCE**
+
+1.3. LVO -64.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for the one that has a link to the device already, else the one
+  whose discovery found it, else the first that is up and on.
+- `address` - the device's: a BTADDR_BREDR address for a link over
+  BR/EDR, an LE address (BTADDR_LE_PUBLIC, BTADDR_LE_RANDOM) for one
+  over LE.
+
+**RESULT**
+
+0 once the link is up - at once for one that is up already.
+Otherwise why it is not: the controller's status (hci.HCI_ERR_*,
+positive) - HCI_ERR_PAGE_TIMEOUT for a device that did not answer its
+page; HCI_ERR_LOCAL_HOST_TERMINATED when DisconnectBTDevice, or the
+controller's power going off, took it back while it was being made -
+or BTERR_TIMEOUT for an LE device that did not advertise within 20
+seconds, BTERR_BUSY while the controller makes another link of the
+kind or ends this one, BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_OFF,
+BTERR_UNSUPPORTED for a controller without the kind of link, and
+BTERR_NOMEM when it has no room for another (it keeps 8).
+
+**BEHAVIOR**
+
+A discovery the controller runs is stopped first. Over BR/EDR the
+controller pages the device - by what its discovery heard of it in
+the last minute, how often it listens for pages and its clock - and is
+the link's central unless the device takes the role over; it gives up
+after its page timeout, about five seconds. Over LE it listens for the
+device's advertising and connects as its central. Calls that wait for
+a link being made have it as it comes. A device that pages the
+controller is taken on by itself: its link is listed as well.
+
+The device's name, where the discovery did not hear it, is asked for
+over a BR/EDR link once it is up. AddBTNotify's signal comes when the
+link is up, and again when it is down.
+
+**CONTEXT**
+
+- Waits: yes, until the link is up or not made.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**NOTES**
+
+A link carries no protocol of the library's yet: a device may end one
+it has no use for.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`DisconnectBTDevice`, `ObtainBTConnections`, `StartBTDiscovery`
+
+**EXAMPLES**
+
+```zig
+// 00:00:5E:EF:10:01, over BR/EDR.
+const device = bluetooth.BTAddress{ .bytes = .{ 0x01, 0x10, 0xEF, 0x5E, 0x00, 0x00 } };
+if (bt.ConnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device) != 0) return;
+```
+
+## DisconnectBTDevice
+
+Ends a link to a device, and waits until it is down.
+
+**SYNOPSIS**
+
+```zig
+fn DisconnectBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress) i32
+```
+
+**SINCE**
+
+1.3. LVO -68.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for the one that has the link.
+- `address` - the device's, as the link has it (BTConnection.address):
+  BTADDR_BREDR for a link over BR/EDR, its LE address for one over LE.
+
+**RESULT**
+
+0 once the link is down; BTERR_NOTCONNECTED for no link to the
+device, BTERR_TIMEOUT when the controller did not say it ended within
+ten seconds - the library takes it to be down all the same - the
+controller's status (hci.HCI_ERR_*, positive) when it refused, and
+BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_NOMEM.
+
+**BEHAVIOR**
+
+A link that is up is ended, the device told that the user ended it.
+One being made is taken back, or ended as soon as it is up, and
+ConnectBTDevice's call for it answered HCI_ERR_LOCAL_HOST_TERMINATED.
+The data the link was sending goes with it. AddBTNotify's signal comes
+once it is down.
+
+**CONTEXT**
+
+- Waits: yes, until the link is down.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing.
+
+**NOTES**
+
+A device ends a link as it likes; the list shows it gone then.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ConnectBTDevice`, `ObtainBTConnections`
+
+**EXAMPLES**
+
+```zig
+_ = bt.DisconnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &link.address);
+```
+
+## ObtainBTConnections
+
+Lists a controller's links to devices: a copy of each as it is at the moment of the call.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainBTConnections(base: *BluetoothBase, controller: u32) ?*exec.List
+```
+
+**SINCE**
+
+1.3. LVO -72.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for every controller's, one controller's after the other's.
+
+**RESULT**
+
+A list of `bluetooth.BTConnection` nodes - empty for no link or no
+such controller - or null without memory.
+
+**BEHAVIOR**
+
+The links are those that are up - made by ConnectBTDevice, or by a
+device that paged the controller - and those being ended: each with
+the device's address, what sort of link it is (BTLF_*), the
+controller's handle for it, LE's parameters, how long it has been up,
+and the device's name and class where they are known. A link being
+made is not listed until it is up.
+
+Each node is a copy, its name with it: nothing the library does later
+reaches it.
+
+**CONTEXT**
+
+- Waits: yes, for the controllers' lock, which the task holds while it
+  takes a packet.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list and its nodes are the caller's, given back whole with
+ReleaseBTConnections.
+
+**NOTES**
+
+A controller keeps up to 8 links.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseBTConnections`, `ConnectBTDevice`, `DisconnectBTDevice`,
+`AddBTNotify`
+
+**EXAMPLES**
+
+```zig
+const list = bt.ObtainBTConnections(bluetooth.BT_ALL_CONTROLLERS) orelse return;
+defer bt.ReleaseBTConnections(list);
+var it = list.iterator();
+while (it.next()) |node| {
+    const link: *bluetooth.BTConnection = @fieldParentPtr("node", node);
+    _ = link.flags & bluetooth.BTLF_LE;
+}
+```
+
 ## ObtainBTControllers
 
 Lists the controllers: a copy of each as it is at the moment of the call.
@@ -303,6 +531,57 @@ while (it.next()) |node| {
     const found: *bluetooth.BTDevice = @fieldParentPtr("node", node);
     _ = found.rssi;
 }
+```
+
+## ReleaseBTConnections
+
+Gives back what ObtainBTConnections answered.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseBTConnections(base: *BluetoothBase, list: ?*exec.List) void
+```
+
+**SINCE**
+
+1.3. LVO -76.
+
+**INPUTS**
+
+- `list` - from ObtainBTConnections; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The list and every node on it are freed in one.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is gone, and so is every node and name it held.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainBTConnections`
+
+**EXAMPLES**
+
+```zig
+bt.ReleaseBTConnections(list);
 ```
 
 ## ReleaseBTControllers

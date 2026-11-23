@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 //! bluetooth.library's structures and constants: a device's address, a
 //! controller as the library lists it and the tags that set it, a device
-//! a controller found, and the notification. The calls are in
-//! `sdk.interface.bluetooth`; the HCI's commands, events and the fields
-//! they carry are `hci.zig`, here as well.
+//! a controller found, a connection, and the notification. The calls are
+//! in `sdk.interface.bluetooth`; the HCI's commands, events and the
+//! fields they carry are `hci.zig`, L2CAP's `l2cap.zig`, here as well.
 //!
 //! **A controller** is a unit of a device that speaks DEVIF_HCI
 //! (sdk/devices/hci.zig): a USB dongle, a board's chip on a UART. Its
@@ -25,8 +25,14 @@
 //! asked for - and listed by ObtainBTDevices: a copy, as the controllers'
 //! list is.
 //!
+//! **A connection** to a device is made with ConnectBTDevice - a page
+//! over BR/EDR, LE's initiating to an advertiser - and ended with
+//! DisconnectBTDevice; a device that pages a controller is taken on as
+//! well. ObtainBTConnections lists them.
+//!
 //! **A change** - a controller added, up, failed or gone, a setting, a
-//! device found or named, a discovery ended - signals every task that
+//! device found or named, a discovery ended, a connection made or
+//! ended - signals every task that
 //! asked with AddBTNotify, which then lists again. The signal says that
 //! something changed, not what: two changes before the task looks are
 //! one.
@@ -34,6 +40,7 @@
 const exec = @import("../exec/exec.zig");
 const utility = @import("../utility/utility.zig");
 pub const hci = @import("hci.zig");
+pub const l2cap = @import("l2cap.zig");
 
 /// The library's name, for OpenLibrary.
 pub const BLUETOOTHNAME = "bluetooth.library";
@@ -213,6 +220,44 @@ pub const BTDevice = extern struct {
     uuid128: [2][16]u8 = @splat(@splat(0)),
 };
 
+/// BTConnection.flags: what sort of link it is.
+/// Over LE; otherwise over BR/EDR.
+pub const BTLF_LE: u32 = 1 << 0;
+/// The device made it: it paged the controller, or initiated to it.
+pub const BTLF_INCOMING: u32 = 1 << 1;
+/// The controller is the link's central - it paged or initiated, or took
+/// the role over; otherwise its peripheral.
+pub const BTLF_CENTRAL: u32 = 1 << 2;
+/// Encrypted.
+pub const BTLF_ENCRYPTED: u32 = 1 << 3;
+
+/// A connection, as ObtainBTConnections lists it.
+pub const BTConnection = extern struct {
+    /// On the list ObtainBTConnections answers. ln_Name is the device's
+    /// name, UTF-8, empty while it is not known.
+    node: exec.Node = .{},
+    /// The controller it is a link of (BTController.id).
+    controller: u32 = 0,
+    /// BTLF_*.
+    flags: u32 = 0,
+    /// The device's address: BTADDR_BREDR over BR/EDR, its LE address -
+    /// public or random - over LE.
+    address: BTAddress = .{},
+    /// The controller's number for the link.
+    handle: u16 = 0,
+    /// LE: the link's interval (units of 1.25 ms), how many of its events
+    /// the peripheral may let pass (its latency), and how long the link
+    /// lasts unheard (units of 10 ms); 0 over BR/EDR.
+    interval: u16 = 0,
+    latency: u16 = 0,
+    supervision: u16 = 0,
+    /// How long it has been up, in milliseconds.
+    age: u32 = 0,
+    /// The device's class of device (hci.COD_*), as its page or the
+    /// discovery gave it; 0 where none is known.
+    class_of_device: u32 = 0,
+};
+
 /// A task told when the controllers change (AddBTNotify): the library's,
 /// given back with RemBTNotify.
 pub const BTNotify = opaque {};
@@ -238,3 +283,8 @@ pub const BTERR_OFF: i32 = -8;
 /// The controller cannot do it: it has neither BR/EDR nor LE's
 /// scanning, or does not take the commands it needs.
 pub const BTERR_UNSUPPORTED: i32 = -9;
+/// There is no connection to the device.
+pub const BTERR_NOTCONNECTED: i32 = -10;
+/// The controller is making a connection of that kind already - it pages
+/// one device at a time and initiates to one - or is ending this one.
+pub const BTERR_BUSY: i32 = -11;

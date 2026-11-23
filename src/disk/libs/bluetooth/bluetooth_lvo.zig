@@ -24,6 +24,10 @@ const StartBTDiscovery = @import("discovery/startbtdiscovery.zig").StartBTDiscov
 const StopBTDiscovery = @import("discovery/stopbtdiscovery.zig").StopBTDiscovery;
 const ObtainBTDevices = @import("discovery/obtainbtdevices.zig").ObtainBTDevices;
 const ReleaseBTDevices = @import("discovery/releasebtdevices.zig").ReleaseBTDevices;
+const ConnectBTDevice = @import("connection/connectbtdevice.zig").ConnectBTDevice;
+const DisconnectBTDevice = @import("connection/disconnectbtdevice.zig").DisconnectBTDevice;
+const ObtainBTConnections = @import("connection/obtainbtconnections.zig").ObtainBTConnections;
+const ReleaseBTConnections = @import("connection/releasebtconnections.zig").ReleaseBTConnections;
 
 /// bluetooth.library's interface, as the SDK generates it from
 /// sdk/fd/bluetooth_lib.fd.
@@ -59,6 +63,10 @@ const contract_files = [_][]const u8{
     @embedFile("discovery/stopbtdiscovery.zig"),
     @embedFile("discovery/obtainbtdevices.zig"),
     @embedFile("discovery/releasebtdevices.zig"),
+    @embedFile("connection/connectbtdevice.zig"),
+    @embedFile("connection/disconnectbtdevice.zig"),
+    @embedFile("connection/obtainbtconnections.zig"),
+    @embedFile("connection/releasebtconnections.zig"),
 };
 
 // --- controllers ----------------------------------------------------------------
@@ -106,6 +114,24 @@ fn lvoReleaseBTDevices(base: *BluetoothBase, list: ?*exec.List) callconv(.c) voi
     return ReleaseBTDevices(base, list);
 }
 
+// --- connections ----------------------------------------------------------------
+
+fn lvoConnectBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress) callconv(.c) i32 {
+    return ConnectBTDevice(base, controller, address);
+}
+
+fn lvoDisconnectBTDevice(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress) callconv(.c) i32 {
+    return DisconnectBTDevice(base, controller, address);
+}
+
+fn lvoObtainBTConnections(base: *BluetoothBase, controller: u32) callconv(.c) ?*exec.List {
+    return ObtainBTConnections(base, controller);
+}
+
+fn lvoReleaseBTConnections(base: *BluetoothBase, list: ?*exec.List) callconv(.c) void {
+    return ReleaseBTConnections(base, list);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -124,6 +150,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoStopBTDiscovery),
     vec(lvoObtainBTDevices),
     vec(lvoReleaseBTDevices),
+    vec(lvoConnectBTDevice),
+    vec(lvoDisconnectBTDevice),
+    vec(lvoObtainBTConnections),
+    vec(lvoReleaseBTConnections),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

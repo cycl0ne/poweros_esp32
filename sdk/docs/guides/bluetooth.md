@@ -8,15 +8,16 @@ device that drives it, brings it up and keeps what it learned, and tells
 the programs that asked when a controller comes, goes or changes.
 
 The library brings controllers up, lists them, sets them - on or off,
-their name, whether others find them - and finds the devices around
-them. It does not yet pair with devices or connect to them: those are
-the stack's next parts.
+their name, whether others find them - finds the devices around them,
+and makes links to them and takes the links they make. It does not yet
+pair with devices, and a link carries nothing but what the link itself
+needs: pairing and the protocols over a link are the stack's next parts.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
-controller's settings, finding devices, the USB controllers and the
-MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
-`C:Bluetooth`.
+controller's settings, finding devices, links to devices and what a
+link carries, the USB controllers and the MediaTek MT7922's firmware,
+the Raspberry Pi 4 Model B's controller, and `C:Bluetooth`.
 
 ## The pieces
 
@@ -24,10 +25,11 @@ MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
  programs          C:Bluetooth                    a program
                           \                          /
            ObtainBTControllers, SetBTControllerAttrs, AddBTNotify,
-           StartBTDiscovery, ObtainBTDevices
+           StartBTDiscovery, ObtainBTDevices, ConnectBTDevice,
+           DisconnectBTDevice, ObtainBTConnections
  the stack          bluetooth.library: its own task, every controller's
                     HCI traffic, the bring-up, the settings, the
-                    discoveries
+                    discoveries, the links and their data
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
                           |  AddBTController, RemBTController
  the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
@@ -39,13 +41,13 @@ MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller, and
 
 | Piece | Where | What it is |
 |---|---|---|
-| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
+| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find and the links to them, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
 | `ENVARC:Sys/bluetooth/` | | each controller's settings, kept by its address |
 | `usb/bluetooth.device` | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller; a class driver |
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
-| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - and the devices around them (`SCAN`) |
+| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), and the links to them (`CONNECT`, `DISCONNECT`, `LIST`) |
 
 The library, the devices, their firmware and the command are the disk's
 `bluetooth` set.
@@ -123,8 +125,8 @@ A controller is brought up command by command:
 
 1. **Reset**, and what it is: its local version, the commands it takes,
    its features (pages 1 and 2 where it has them), its buffers for ACL
-   and SCO data, its address; for LE, its LE buffers (none of its own:
-   it shares the BR/EDR ones) and its LE features. Once its address is
+   and SCO data, its address; for LE, its LE buffers - or none of its
+   own, when LE's links share BR/EDR's - and its LE features. Once its address is
    known, the settings kept for it are read, and the rest waits for
    them.
 2. **What it is to tell**: the events the stack takes, BR/EDR's and LE's,
@@ -187,7 +189,7 @@ bt.RemBTNotify(notify);
 
 The signal comes for every change of any controller: one added, up,
 failed or gone; set otherwise; a discovery begun or over, a device it
-found, a name it heard. It says that something changed, not what, and
+found, a name it heard; a link up or down. It says that something changed, not what, and
 changes close together may come as one.
 
 ## A controller's settings
@@ -289,6 +291,85 @@ scan response:
 
 A controller keeps up to 64 devices; when more are heard, it keeps those
 heard strongest. The list stays until its next discovery.
+
+## Links to devices
+
+`ConnectBTDevice` makes a link to a device and waits until it is up -
+over BR/EDR for a `BTADDR_BREDR` address, over LE for an LE one:
+
+```zig
+// 00:00:5E:EF:10:01, over BR/EDR.
+const device = bluetooth.BTAddress{ .bytes = .{ 0x01, 0x10, 0xEF, 0x5E, 0x00, 0x00 } };
+const result = bt.ConnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device);
+// 0 once it is up; else the controller's status - HCI_ERR_PAGE_TIMEOUT
+// for a device that did not answer - or BTERR_TIMEOUT, BTERR_BUSY, ...
+```
+
+- **Over BR/EDR** the controller pages the device, by what its discovery
+  heard of it in the last minute - how often the device listens for
+  pages, and its clock - or, without that, as a device that listens at
+  its slowest. The controller is the link's central unless the device
+  takes the role over; a device that does not answer is given up on
+  after the controller's page timeout, about five seconds.
+- **Over LE** the controller listens for the device's advertising and
+  connects as its central, asking for an interval of 30 to 50 ms, no
+  latency, and the link lost after 420 ms unheard. A device that does not
+  advertise within 20 seconds is given up on (`BTERR_TIMEOUT`).
+
+A controller pages one device at a time and initiates to one: another
+link of the same kind asked for meanwhile is `BTERR_BUSY`. A discovery
+it runs is stopped first. With `BT_ALL_CONTROLLERS` the link is made by
+the controller with a link to the device already, else by the one whose
+discovery found it, else by the first that is up and on.
+
+**A link the device makes** - a page the controller hears - is taken on
+by itself while the controller is on, the controller staying the link's
+peripheral; a link for sound is refused. A controller keeps eight
+links.
+
+`DisconnectBTDevice` ends a link and waits until it is down; a link
+being made is taken back, and the call that makes it answered
+`HCI_ERR_LOCAL_HOST_TERMINATED`. A controller switched off ends its
+links, telling each device why. The log says each link up, not made or
+down, with the controller's reason (`C:Log`).
+
+`ObtainBTConnections` lists them, a copy for the caller as
+`ObtainBTDevices`' is:
+
+```zig
+const list = bt.ObtainBTConnections(bluetooth.BT_ALL_CONTROLLERS) orelse return;
+defer bt.ReleaseBTConnections(list);
+var it = list.iterator();
+while (it.next()) |node| {
+    const link: *const bluetooth.BTConnection = @fieldParentPtr("node", node);
+    // link.node.name, .controller, .address, .flags (BTLF_*), .handle,
+    // .age, .class_of_device, .interval, .latency, .supervision
+}
+```
+
+| Field | What it is |
+|---|---|
+| `node.name` | the device's name: what the discovery heard, or - over BR/EDR - what the device answers over the link once it is up |
+| `flags` | `BTLF_LE` for a link over LE, `BTLF_INCOMING` for one the device made, `BTLF_CENTRAL` while the controller is its central, `BTLF_ENCRYPTED` while it is encrypted |
+| `handle` | the controller's number for the link |
+| `age` | how many milliseconds it has been up |
+| `class_of_device` | the device's class, as its page said or the discovery heard |
+| `interval`, `latency`, `supervision` | LE's: how often the two speak, in units of 1.25 ms; how many of those times the peripheral may let pass; how long the link lasts unheard, in units of 10 ms |
+
+A link being ended is listed until it is down.
+
+**What a link carries.** Its data goes as L2CAP frames of up to 1024
+bytes, cut into the packets the controller takes, sent within its
+buffers - a packet holds one until the controller says it is sent - and
+put together again from the packets it hands up. On the signalling
+channel the library answers what a device asks of any link: what it
+supports - its fixed channels, the signalling one alone - and an echo.
+A channel to a protocol is refused, there being none yet, and so is
+LE's credit-based one. Over LE, a peripheral's wish for other
+parameters is taken while they are within the specification's bounds
+and the controller is the link's central; a request of the attribute
+protocol is answered as not supported, and pairing is refused. A
+device may end a link it has no use for.
 
 ## Controllers on USB
 
@@ -415,7 +496,7 @@ still setting the controller up - and a moment later:
 1> Bluetooth
 0: --:--:--:--:--:--  opening  bluetooth/cyw43455bt.device unit 0
 1> Bluetooth INFO
-0: 98:FE:54:CF:67:48  up, on  bluetooth/cyw43455bt.device unit 0
+0: 00:00:5E:EF:10:46  up, on  bluetooth/cyw43455bt.device unit 0
   chip        Infineon CYW43455 (BCM4345C0)
   firmware    BCM4345C0.hcd (build 0382)
   bus         UART, 919117 bit/s
@@ -470,5 +551,52 @@ controller that heard it and how long ago, its class and appearance,
 the power it sends at, whether it takes connections, its maker, and its
 services, named where they are well known.
 
+Linked:
+
+```
+1> Bluetooth CONNECT 00:00:5E:EF:10:43
+Connecting to 00:00:5E:EF:10:43 over BR/EDR
+  00:00:5E:EF:10:43  BR/EDR     central          0 s
+1> Bluetooth LIST INFO
+  00:00:5E:EF:10:43  BR/EDR     central         19 s  poweros
+      made by this machine, not encrypted; controller 0, handle 51
+1> Bluetooth DISCONNECT poweros
+Disconnected from 00:00:5E:EF:10:43
+1> Bluetooth CONNECT 00:00:5E:EF:10:44 LE
+Connecting to 00:00:5E:EF:10:44 over LE
+  00:00:5E:EF:10:44  LE         central          0 s
+1> Bluetooth LIST INFO
+  00:00:5E:EF:10:44  LE         central          6 s
+      made by this machine, not encrypted; controller 0, handle 512
+      every 48.75 ms, latency 0, lost after 420 ms unheard
+```
+
+and the other end of the first link, the machine that was paged:
+
+```
+1> Bluetooth LIST INFO
+  00:00:5E:EF:10:42  BR/EDR     peripheral      19 s  poweros
+      made by the device, not encrypted; controller 0, handle 11, class 000104
+```
+
+`CONNECT` makes a link to a device (`ConnectBTDevice`) and shows it once
+it is up: the device by its address, written as `Bluetooth` shows one,
+or by a name a `SCAN` heard. The link is over LE for a device the scan
+heard over LE, and for an address given with `LE` - its public address
+- or `RANDOM` - its random one; over BR/EDR otherwise. A link not made
+says why: the device did not answer, did not answer in time - an LE
+device that does not advertise - or refused, the controller is making
+another such link, or what the controller answered. `DISCONNECT` ends
+the link to a device, by its address or its name (`DisconnectBTDevice`).
+
+`LIST` shows the links (`ObtainBTConnections`): the device's address,
+the kind of link - `BR/EDR`, `LE`, `LE random` - which side the
+controller is, how long the link has been up, and the device's name;
+with `INFO`, who made it, whether it is encrypted, its controller and
+handle, the device's class, and an LE link's interval, latency and how
+long it lasts unheard.
+
 `CONTROLLER` makes any of these for one controller, by its number;
-without it, they are for every one.
+without it, they are for every one - for `CONNECT`, the one with a link
+to the device, else the one whose scan found it, else the first that is
+on.

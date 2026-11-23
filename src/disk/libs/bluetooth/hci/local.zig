@@ -8,7 +8,7 @@
 //! **What it answers** is Write Scan Enable's: pages while it is on - it
 //! can be connected to - and inquiries too while it is visible - it is
 //! found. Off, it answers nothing and looks for nothing: its discovery is
-//! stopped. Visible for a time ends at that time (`tick`); visible until
+//! stopped and its links are ended. Visible for a time ends at that time (`tick`); visible until
 //! told otherwise has no end; visible while off counts down all the
 //! same, and shows again once it is on. LE's side is not seen: the
 //! controller does not advertise.
@@ -29,6 +29,7 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
+const connections = @import("connections.zig");
 const discovery = @import("discovery.zig");
 const eir = @import("eir.zig");
 
@@ -89,7 +90,10 @@ pub fn setPowered(layer: *Hci, on: bool) i32 {
     if (layer.powered == on) return 0;
     layer.powered = on;
     layer.changed = true;
-    if (!on) discovery.stop(layer);
+    if (!on) {
+        discovery.stop(layer);
+        connections.dropAll(layer);
+    }
     return writeScan(layer);
 }
 

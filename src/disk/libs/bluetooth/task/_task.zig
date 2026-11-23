@@ -24,6 +24,12 @@
 //! until the task has read the settings kept for it (settings.zig) and
 //! put them into its layer; SetBTControllerAttrs's changes are written
 //! back there.
+//!
+//! **Calls that wait for the controller** - ConnectBTDevice,
+//! DisconnectBTDevice - are not answered at once: their command is
+//! parked on the task's list with the wait its layer made
+//! (hci/connections.zig), and answered once that is done - or once its
+//! controller has gone.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -39,6 +45,8 @@ const _controller = @import("../controller/_controller.zig");
 const Controller = _controller.Controller;
 const _hci = @import("../hci/_hci.zig");
 const bringup = @import("../hci/bringup.zig");
+const connections = @import("../hci/connections.zig");
+const devices = @import("../hci/devices.zig");
 const discovery = @import("../hci/discovery.zig");
 const local = @import("../hci/local.zig");
 const _notify = @import("../notify/_notify.zig");
@@ -65,17 +73,22 @@ pub const Command = extern struct {
     /// add, remove: the device's unit.
     unit: u32 = 0,
     device_name: [*:0]const u8 = "",
-    /// set, discover, stop: the controller (BTController.id), or
-    /// BT_ALL_CONTROLLERS.
+    /// set, discover, stop, connect, disconnect: the controller
+    /// (BTController.id), or BT_ALL_CONTROLLERS.
     controller: u32 = 0,
     /// discover: for how long, in milliseconds (0: the default).
     time_ms: u32 = 0,
     /// set: what is wanted.
     wanted: Wanted = .{},
+    /// connect, disconnect: the device's address; while parked, the
+    /// controller waited on and its wait.
+    address: bluetooth.BTAddress = .{},
+    waiting_on: ?*anyopaque = null,
+    wait: u32 = 0,
     /// What the call answers.
     result: i32 = 0,
 
-    pub const Kind = enum(u32) { add, remove, set, discover, stop };
+    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect };
 };
 
 /// What SetBTControllerAttrs wants of a controller: `which` says which of
@@ -90,12 +103,13 @@ pub const WANT_POWERED: u32 = 1 << 0;
 pub const WANT_NAME: u32 = 1 << 1;
 pub const WANT_VISIBLE: u32 = 1 << 2;
 
-/// The task's own: its ports, its timer, and its room for a controller's
-/// settings and a name.
+/// The task's own: its ports, its timer, the calls parked on a wait, and
+/// its room for a controller's settings and a name.
 const Work = struct {
     base: *BluetoothBase,
     commands: *exec.MsgPort,
     replies: *exec.MsgPort,
+    parked: exec.List = .{},
     timer_io: timer.TimeRequest = .{},
     timer_open: bool = false,
     timer_out: bool = false,
@@ -239,6 +253,10 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                     .set => command.result = setAttrs(work, command.controller, &command.wanted),
                     .discover => command.result = discover(work, command.controller, command.time_ms),
                     .stop => stopDiscovery(work, command.controller),
+                    .connect, .disconnect => if (link(work, command)) {
+                        worked = true;
+                        continue;
+                    },
                 }
                 sys.ReplyMsg(message);
                 worked = true;
@@ -248,6 +266,7 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                 worked = true;
             }
         }
+        answerWaits(work);
         settle(work);
         report(work);
         armTimer(work);
@@ -271,6 +290,7 @@ fn makeWork(base: *BluetoothBase) ?*Work {
         return null;
     };
     work.* = .{ .base = base, .commands = commands, .replies = replies };
+    work.parked.init(.message);
     work.timer_io.node.message.reply_port = replies;
     work.timer_io.node.message.length = @sizeOf(timer.TimeRequest);
     if (sys.OpenDevice(sdk.interface.timer.NAME, timer.UNIT_MICROHZ, &work.timer_io.node, 0) != 0) {
@@ -303,7 +323,7 @@ fn ending(work: *Work) bool {
     const sys = base.sys_base;
     sys.ObtainSemaphore(&base.start_lock);
     defer sys.ReleaseSemaphore(&base.start_lock);
-    if (!base.controllers.isEmpty() or !work.commands.msg_list.isEmpty()) return false;
+    if (!base.controllers.isEmpty() or !work.commands.msg_list.isEmpty() or !work.parked.isEmpty()) return false;
     base.port = null;
     base.task = null;
     return true;
@@ -380,6 +400,7 @@ fn remove(work: *Work, device_name: [*:0]const u8, unit: u32) void {
     const base = work.base;
     const sys = base.sys_base;
     const controller = _controller.find(base, device_name, unit) orelse return;
+    answerGone(work, controller);
     device.close(controller);
     sys.ObtainSemaphore(&base.lock);
     sys.Remove(&controller.node);
@@ -520,6 +541,109 @@ fn stopDiscovery(work: *Work, id: u32) void {
     }
 }
 
+// --- links ------------------------------------------------------------------------
+
+/// ConnectBTDevice, DisconnectBTDevice: the link asked of its controller,
+/// and the command parked until the controller has done it - true - or
+/// answered at once.
+fn link(work: *Work, command: *Command) bool {
+    const base = work.base;
+    const sys = base.sys_base;
+    const controller = linkController(work, command) orelse return false;
+    const layer = &controller.layer;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    layer.now = now(work);
+    const begun = switch (command.kind) {
+        .connect => connections.connect(layer, command.address),
+        else => connections.disconnect(layer, command.address),
+    };
+    switch (begun) {
+        .done => |result| {
+            command.result = result;
+            return false;
+        },
+        .waiting => |index| {
+            command.wait = index;
+            command.waiting_on = controller;
+            sys.AddTail(&work.parked, &command.message.node);
+            return true;
+        },
+    }
+}
+
+/// The controller a link is asked of: the one named, or - for
+/// BT_ALL_CONTROLLERS - the one with a link to the device, else (to make
+/// one) the one whose discovery found it, else the first that is up and
+/// on. Null, the command's result set, for none. The task changes the
+/// layers, so it reads them without the lock.
+fn linkController(work: *Work, command: *Command) ?*Controller {
+    var found: ?*Controller = null;
+    var first_on: ?*Controller = null;
+    var any = false;
+    var any_up = false;
+    var it = work.base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        if (command.controller != bluetooth.BT_ALL_CONTROLLERS) {
+            if (controller.id == command.controller) return controller;
+            continue;
+        }
+        any = true;
+        const layer = &controller.layer;
+        if (layer.state != bluetooth.BTCS_UP) continue;
+        any_up = true;
+        if (connections.find(layer, command.address) != null) return controller;
+        if (found == null and devices.find(layer, command.address.bytes, command.address.kind) != null) found = controller;
+        if (first_on == null and layer.powered) first_on = controller;
+    }
+    command.result = bluetooth.BTERR_NOCONTROLLER;
+    if (!any) return null;
+    if (command.kind == .disconnect) {
+        command.result = bluetooth.BTERR_NOTCONNECTED;
+        return null;
+    }
+    if (found orelse first_on) |chosen| return chosen;
+    command.result = if (any_up) bluetooth.BTERR_OFF else bluetooth.BTERR_NOTUP;
+    return null;
+}
+
+/// Every parked call whose wait is done answered with its result.
+fn answerWaits(work: *Work) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    if (work.parked.isEmpty()) return;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    var it = work.parked.iterator();
+    while (it.next()) |node| {
+        const message: *exec.Message = @fieldParentPtr("node", node);
+        const command: *Command = @fieldParentPtr("message", message);
+        const controller: *Controller = @ptrCast(@alignCast(command.waiting_on.?));
+        const index: u8 = @intCast(command.wait);
+        const wait = &controller.layer.waits[index];
+        if (!wait.done) continue;
+        command.result = wait.result;
+        connections.release(&controller.layer, index);
+        sys.Remove(node);
+        sys.ReplyMsg(message);
+    }
+}
+
+/// The calls parked on a controller that goes answered: it is gone.
+fn answerGone(work: *Work, controller: *Controller) void {
+    const sys = work.base.sys_base;
+    var it = work.parked.iterator();
+    while (it.next()) |node| {
+        const message: *exec.Message = @fieldParentPtr("node", node);
+        const command: *Command = @fieldParentPtr("message", message);
+        if (command.waiting_on != @as(?*anyopaque, controller)) continue;
+        command.result = bluetooth.BTERR_DETACHED;
+        sys.Remove(node);
+        sys.ReplyMsg(message);
+    }
+}
+
 /// The machine's name on the network - the hostname file's first line
 /// that is neither blank nor a comment - into `into`, cut as the
 /// controller's name is; the system's own name where it has none.
@@ -594,16 +718,19 @@ fn armTimer(work: *Work) void {
     sys.SendIO(&work.timer_io.node);
 }
 
-/// What changed said in the log, and whoever asked told.
+/// What changed said in the log - a controller's state, its links - and
+/// whoever asked told.
 fn report(work: *Work) void {
     const base = work.base;
     const sys = base.sys_base;
     var any = false;
-    sys.ObtainSemaphoreShared(&base.lock);
+    sys.ObtainSemaphore(&base.lock);
     var it = base.controllers.iterator();
     while (it.next()) |node| {
         const controller = _controller.fromNode(node);
         const layer = &controller.layer;
+        for (layer.notes[0..layer.note_count]) |*note| sayLink(sys, controller.id, note);
+        layer.note_count = 0;
         if (!layer.changed) continue;
         layer.changed = false;
         any = true;
@@ -613,6 +740,31 @@ fn report(work: *Work) void {
     }
     sys.ReleaseSemaphore(&base.lock);
     if (any) _notify.changed(base);
+}
+
+/// A link up, not made or down, in the log: the device, how, and why.
+fn sayLink(sys: *ExecBase, id: u32, note: *const connections.Note) void {
+    const bytes = note.address.bytes;
+    const over: [*:0]const u8 = if (!note.le) "BR/EDR" else if (note.address.kind == bluetooth.BTADDR_LE_RANDOM) "LE random" else "LE";
+    const line = "%s: controller %u, %02x:%02x:%02x:%02x:%02x:%02x over %s ";
+    const name: [*:0]const u8 = task_name;
+    const head = .{ name, id, @as(u32, bytes[5]), @as(u32, bytes[4]), @as(u32, bytes[3]), @as(u32, bytes[2]), @as(u32, bytes[1]), @as(u32, bytes[0]), over };
+    switch (note.kind) {
+        .up => {
+            const made: [*:0]const u8 = if (note.incoming) "the device" else "this machine";
+            exec.kprintf(sys, line ++ "up, handle %u, made by %s\n", head ++ .{ @as(u32, note.handle), made });
+        },
+        .not_made => if (note.reason >= 0) {
+            exec.kprintf(sys, line ++ "not made: 0x%02lx\n", head ++ .{@as(u64, @intCast(note.reason))});
+        } else {
+            exec.kprintf(sys, line ++ "not made: %ld\n", head ++ .{@as(i64, note.reason)});
+        },
+        .down => if (note.reason >= 0) {
+            exec.kprintf(sys, line ++ "down: 0x%02lx\n", head ++ .{@as(u64, @intCast(note.reason))});
+        } else {
+            exec.kprintf(sys, line ++ "down: %ld\n", head ++ .{@as(i64, note.reason)});
+        },
+    }
 }
 
 fn say(sys: *ExecBase, controller: *Controller) void {

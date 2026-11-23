@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 //! bluetooth.library's functions: the Bluetooth controllers, brought up
-//! and run by the library's task, and who is told when they change. Open
-//! it with OpenLibrary("bluetooth.library", 1); the structures are in
+//! and run by the library's task, the devices they find and their links
+//! to them, and who is told when they change. Open it with
+//! OpenLibrary("bluetooth.library", 1); the structures are in
 //! sdk.bluetooth.
 ##include libs/exec/exec as exec
 ##include libs/utility/utility as utility
@@ -36,4 +37,13 @@ void StopBTDiscovery(u32 controller)
 ?*exec.List ObtainBTDevices(u32 controller)
 /// A list from ObtainBTDevices given back. Null does nothing.
 void ReleaseBTDevices(?*exec.List list)
+// Connections
+/// A link made to a device - paged over BR/EDR, initiated to over LE - and waited for. 0 once it is up, BTERR_*, or the controller's status.
+i32 ConnectBTDevice(u32 controller, *const bluetooth.BTAddress address)
+/// A link to a device ended, and waited for. 0 once it is down, BTERR_*, or the controller's status.
+i32 DisconnectBTDevice(u32 controller, *const bluetooth.BTAddress address)
+/// The links as they are now - or every controller's, BT_ALL_CONTROLLERS: a list of BTConnection, the caller's until ReleaseBTConnections; null for no memory.
+?*exec.List ObtainBTConnections(u32 controller)
+/// A list from ObtainBTConnections given back. Null does nothing.
+void ReleaseBTConnections(?*exec.List list)
 ##end

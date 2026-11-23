@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
-//! Bluetooth: the system's Bluetooth controllers - listed, set, and made
-//! to look for the devices around. Built against the SDK only.
+//! Bluetooth: the system's Bluetooth controllers - listed, set, made to
+//! look for the devices around, and linked to them. Built against the SDK
+//! only.
 //!
 //!   Bluetooth [INFO/S] [SCAN/S] [TIME/K/N] [POWER/K] [NAME/K]
-//!             [VISIBLE/K] [CONTROLLER/K/N]
+//!             [VISIBLE/K] [CONNECT/K] [DISCONNECT/K] [LIST/S] [LE/S]
+//!             [RANDOM/S] [CONTROLLER/K/N]
 //!
 //!   Bluetooth          each controller on a line: its number, its
 //!                      address, whether it is up - and then on or off,
@@ -23,12 +25,27 @@
 //!                      name comes; for about TIME seconds (10), then the
 //!                      names not yet heard are asked for. CTRL-C stops.
 //!                      With INFO, what each said of itself after.
+//!   CONNECT <device>   a link made to the device - its address, or the
+//!                      name a scan heard - and shown once it is up: over
+//!                      LE for a device a scan heard over LE, or with LE
+//!                      (its public address) or RANDOM (its random one)
+//!   DISCONNECT <device>
+//!                      the link to the device ended
+//!   LIST               the links, each on a line: the device's address,
+//!                      the kind of link, which side is its central, how
+//!                      long it has been up, the device's name; with INFO,
+//!                      who made it, whether it is encrypted, its handle
+//!                      and its class, LE's parameters
 //!   CONTROLLER <n>     the one controller these are for; without it,
-//!                      every one
+//!                      every one - for CONNECT, the one with a link to
+//!                      the device, else the one that found it, else the
+//!                      first that is on
 //!
 //! POWER and NAME, and VISIBLE ON, are kept for the controller's next
 //! start. The controllers are bluetooth.library's (ObtainBTControllers),
-//! the devices its discovery's (StartBTDiscovery, ObtainBTDevices).
+//! the devices its discovery's (StartBTDiscovery, ObtainBTDevices), the
+//! links its too (ConnectBTDevice, DisconnectBTDevice,
+//! ObtainBTConnections).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -43,17 +60,22 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.2 (22.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.3 (23.11.2026)\r\n";
 
-const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONTROLLER/K/N";
+const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,CONTROLLER/K/N";
 const arg_info = 0;
 const arg_scan = 1;
 const arg_time = 2;
 const arg_power = 3;
 const arg_name = 4;
 const arg_visible = 5;
-const arg_controller = 6;
-const arg_count = 7;
+const arg_connect = 6;
+const arg_disconnect = 7;
+const arg_list = 8;
+const arg_le = 9;
+const arg_random = 10;
+const arg_controller = 11;
+const arg_count = 12;
 
 /// How many devices a scan follows: four controllers' worth.
 const followed_most = 256;
@@ -91,6 +113,9 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
         const done = set(dl, bt, controller, &argv);
         if (done != dos.RETURN_OK) return done;
     }
+    if (argv[arg_connect] != 0) return connect(dl, bt, controller, @ptrFromInt(argv[arg_connect]), &argv);
+    if (argv[arg_disconnect] != 0) return disconnect(dl, bt, controller, @ptrFromInt(argv[arg_disconnect]), &argv);
+    if (argv[arg_list] != 0) return links(dl, bt, controller, argv[arg_info] != 0);
     if (argv[arg_scan] != 0) {
         const seconds: u32 = if (argv[arg_time] != 0) @bitCast(@as(*const i32, @ptrFromInt(argv[arg_time])).*) else 10;
         return scan(sys, dl, bt, controller, seconds, argv[arg_info] != 0);
@@ -194,6 +219,27 @@ fn callFailure(result: i32, controller: u32) [*:0]const u8 {
         bluetooth.BTERR_UNSUPPORTED => "the controller cannot do that",
         else => "it failed",
     };
+}
+
+/// Why a link was not made or ended.
+fn linkFailure(dl: *DosBase, result: i32, controller: u32) void {
+    const reason: ?[*:0]const u8 = switch (result) {
+        bluetooth.BTERR_TIMEOUT => "the device did not answer in time",
+        bluetooth.BTERR_BUSY => "the controller is making another such link, or ending this one",
+        bluetooth.BTERR_NOTCONNECTED => "no link to that device",
+        bluetooth.BTERR_UNSUPPORTED => "the controller cannot make that kind of link",
+        hci.HCI_ERR_PAGE_TIMEOUT => "the device did not answer",
+        hci.HCI_ERR_CONNECTION_TIMEOUT => "the link was lost",
+        hci.HCI_ERR_LOCAL_HOST_TERMINATED => "taken back",
+        hci.HCI_ERR_REJECTED_LIMITED_RESOURCES, hci.HCI_ERR_REJECTED_SECURITY, hci.HCI_ERR_REJECTED_ADDRESS => "the device refused",
+        hci.HCI_ERR_CONNECTION_EXISTS => "there is a link to that device already",
+        else => if (result > 0) null else callFailure(result, controller),
+    };
+    if (reason) |text| {
+        _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), text });
+    } else {
+        _ = Printf(dl, "%s: the controller answered %02lx\n", .{ @as([*:0]const u8, COMMAND_NAME), @as(u64, @intCast(result)) });
+    }
 }
 
 /// What a version number is called.
@@ -345,6 +391,190 @@ fn set(dl: *DosBase, bt: *BluetoothBase, controller: u32, argv: *const [arg_coun
         return dos.RETURN_ERROR;
     }
     return dos.RETURN_OK;
+}
+
+// --- the links --------------------------------------------------------------------
+
+fn hexDigit(char: u8) ?u8 {
+    return switch (char) {
+        '0'...'9' => char - '0',
+        'a'...'f' => char - 'a' + 10,
+        'A'...'F' => char - 'A' + 10,
+        else => null,
+    };
+}
+
+/// An address written "AA:BB:CC:DD:EE:FF", the most significant byte
+/// first, into the order it is sent in; null for anything else.
+fn parseAddress(text: [*:0]const u8) ?[6]u8 {
+    var bytes: [6]u8 = undefined;
+    var at: usize = 0;
+    for (0..6) |index| {
+        const high = hexDigit(text[at]) orelse return null;
+        const low = hexDigit(text[at + 1]) orelse return null;
+        bytes[5 - index] = high << 4 | low;
+        at += 2;
+        if (index == 5) break;
+        if (text[at] != ':' and text[at] != '-') return null;
+        at += 1;
+    }
+    if (text[at] != 0) return null;
+    return bytes;
+}
+
+/// Whether two names are the same, in any case.
+fn sameName(one: [*:0]const u8, other: [*:0]const u8) bool {
+    var index: usize = 0;
+    while (true) : (index += 1) {
+        const mine = one[index];
+        const theirs = other[index];
+        const lowered = if (mine >= 'A' and mine <= 'Z') mine + 32 else mine;
+        const theirs_lowered = if (theirs >= 'A' and theirs <= 'Z') theirs + 32 else theirs;
+        if (lowered != theirs_lowered) return false;
+        if (mine == 0) return true;
+    }
+}
+
+fn sameBytes(one: *const [6]u8, other: *const [6]u8) bool {
+    for (one, other) |mine, theirs| {
+        if (mine != theirs) return false;
+    }
+    return true;
+}
+
+/// The device CONNECT names: its address - of the kind LE or RANDOM says,
+/// else of the kind a scan heard it as, else BR/EDR's - or a name a scan
+/// heard; null for neither.
+fn deviceNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
+    const bytes = parseAddress(text);
+    if (bytes != null and (argv[arg_le] != 0 or argv[arg_random] != 0)) {
+        return .{ .bytes = bytes.?, .kind = if (argv[arg_random] != 0) bluetooth.BTADDR_LE_RANDOM else bluetooth.BTADDR_LE_PUBLIC };
+    }
+    const devices = bt.ObtainBTDevices(controller) orelse return null;
+    defer bt.ReleaseBTDevices(devices);
+    var it = devices.iterator();
+    while (it.next()) |node| {
+        const found: *bluetooth.BTDevice = @fieldParentPtr("node", node);
+        if (bytes) |wanted| {
+            if (sameBytes(&found.address.bytes, &wanted)) return found.address;
+        } else if (found.node.name) |name| {
+            if (sameName(name, text)) return found.address;
+        }
+    }
+    if (bytes) |wanted| return .{ .bytes = wanted };
+    return null;
+}
+
+/// The link DISCONNECT names: by the device's address - of the kind LE or
+/// RANDOM says, where one does - or its name; null for none.
+fn linkNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
+    const bytes = parseAddress(text);
+    const list_of_links = bt.ObtainBTConnections(controller) orelse return null;
+    defer bt.ReleaseBTConnections(list_of_links);
+    var it = list_of_links.iterator();
+    while (it.next()) |node| {
+        const link: *bluetooth.BTConnection = @fieldParentPtr("node", node);
+        if (bytes) |wanted| {
+            if (!sameBytes(&link.address.bytes, &wanted)) continue;
+            if (argv[arg_random] != 0 and link.address.kind != bluetooth.BTADDR_LE_RANDOM) continue;
+            if (argv[arg_le] != 0 and link.address.kind != bluetooth.BTADDR_LE_PUBLIC) continue;
+            return link.address;
+        } else if (link.node.name) |name| {
+            if (sameName(name, text)) return link.address;
+        }
+    }
+    return null;
+}
+
+/// CONNECT: the link made, and shown once it is up.
+fn connect(dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) i32 {
+    const address = deviceNamed(bt, controller, text, argv) orelse {
+        _ = Printf(dl, "%s: no device %s (an address, or a name a SCAN heard)\n", .{ @as([*:0]const u8, COMMAND_NAME), text });
+        return dos.RETURN_ERROR;
+    };
+    var shown: [18]u8 = undefined;
+    _ = Printf(dl, "Connecting to %s over %s\n", .{ addressText(&address.bytes, &shown), @as([*:0]const u8, if (address.kind == bluetooth.BTADDR_BREDR) "BR/EDR" else "LE") });
+    const result = bt.ConnectBTDevice(controller, &address);
+    if (result != 0) {
+        linkFailure(dl, result, controller);
+        return dos.RETURN_ERROR;
+    }
+    return showLinks(dl, bt, controller, &address, false);
+}
+
+/// DISCONNECT: the link ended.
+fn disconnect(dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) i32 {
+    const address = linkNamed(bt, controller, text, argv) orelse {
+        _ = Printf(dl, "%s: no link to %s\n", .{ @as([*:0]const u8, COMMAND_NAME), text });
+        return dos.RETURN_WARN;
+    };
+    const result = bt.DisconnectBTDevice(controller, &address);
+    if (result != 0) {
+        linkFailure(dl, result, controller);
+        return dos.RETURN_ERROR;
+    }
+    var shown: [18]u8 = undefined;
+    _ = Printf(dl, "Disconnected from %s\n", .{addressText(&address.bytes, &shown)});
+    return dos.RETURN_OK;
+}
+
+/// LIST: every link of the controller - or of every one.
+fn links(dl: *DosBase, bt: *BluetoothBase, controller: u32, with_info: bool) i32 {
+    return showLinks(dl, bt, controller, null, with_info);
+}
+
+/// The links, or the one to `only`.
+fn showLinks(dl: *DosBase, bt: *BluetoothBase, controller: u32, only: ?*const bluetooth.BTAddress, with_info: bool) i32 {
+    const list_of_links = bt.ObtainBTConnections(controller) orelse {
+        _ = dl.PutStr("no memory\n");
+        return dos.RETURN_FAIL;
+    };
+    defer bt.ReleaseBTConnections(list_of_links);
+    var any = false;
+    var it = list_of_links.iterator();
+    while (it.next()) |node| {
+        const link: *bluetooth.BTConnection = @fieldParentPtr("node", node);
+        if (only) |wanted| {
+            if (link.address.kind != wanted.kind or !sameBytes(&link.address.bytes, &wanted.bytes)) continue;
+        }
+        any = true;
+        linkLine(dl, link);
+        if (with_info) linkInfo(dl, link);
+    }
+    if (!any and only == null) _ = dl.PutStr("no link\n");
+    return dos.RETURN_OK;
+}
+
+/// One link on a line: the device's address, the kind of link, which side
+/// is its central, how long it has been up, the device's name.
+fn linkLine(dl: *DosBase, link: *const bluetooth.BTConnection) void {
+    var text: [18]u8 = undefined;
+    const kind: [*:0]const u8 = if (link.flags & bluetooth.BTLF_LE == 0) "BR/EDR" else if (link.address.kind == bluetooth.BTADDR_LE_RANDOM) "LE random" else "LE";
+    const role: [*:0]const u8 = if (link.flags & bluetooth.BTLF_CENTRAL != 0) "central" else "peripheral";
+    _ = Printf(dl, "  %s  %-9s  %-10s  %6u s", .{ addressText(&link.address.bytes, &text), kind, role, link.age / 1000 });
+    const name: [*:0]const u8 = link.node.name orelse "";
+    if (name[0] != 0) _ = Printf(dl, "  %s", .{name});
+    _ = dl.PutStr("\n");
+}
+
+/// Who made the link, whether it is encrypted, its controller and
+/// handle, the device's class, LE's parameters.
+fn linkInfo(dl: *DosBase, link: *const bluetooth.BTConnection) void {
+    const made: [*:0]const u8 = if (link.flags & bluetooth.BTLF_INCOMING != 0) "the device" else "this machine";
+    const encrypted: [*:0]const u8 = if (link.flags & bluetooth.BTLF_ENCRYPTED != 0) ", encrypted" else ", not encrypted";
+    _ = Printf(dl, "      made by %s%s; controller %u, handle %u", .{ made, encrypted, link.controller, @as(u32, link.handle) });
+    if (link.class_of_device != 0) _ = Printf(dl, ", class %06lx", .{@as(u64, link.class_of_device)});
+    _ = dl.PutStr("\n");
+    if (link.flags & bluetooth.BTLF_LE != 0) {
+        // In units of 1.25 ms, and of 10 ms.
+        const hundredths = @as(u32, link.interval) * 125;
+        _ = Printf(dl, "      every %u.%02u ms, latency %u, lost after %u ms unheard\n", .{
+            hundredths / 100,
+            hundredths % 100,
+            @as(u32, link.latency),
+            @as(u32, link.supervision) * 10,
+        });
+    }
 }
 
 // --- the scan ---------------------------------------------------------------------

@@ -3,8 +3,10 @@
 //! sends, within the controller's credits; the events it takes, each
 //! answer matched to the command it answers; a time-out for each command;
 //! what the controller said it is, which bringup.zig asks for; what it
-//! shows others and whether it is on (local.zig); and the devices it
-//! found (discovery.zig, devices.zig).
+//! shows others and whether it is on (local.zig); the devices it found
+//! (discovery.zig, devices.zig); its links to devices (connections.zig)
+//! and the data on them (acl.zig), which L2CAP's channels carry
+//! (l2cap/).
 //!
 //! **Pure.** Nothing here calls exec or waits: the task hands in each
 //! packet that came (`received`), the time (`now`) and the time-outs
@@ -23,20 +25,24 @@
 //! a lister sees a controller between two packets, never inside one.
 //!
 //! **Its own times** - a discovery's phase, the end of being visible for
-//! a time - are deadlines like a command's: `nextDeadline` answers the
-//! earliest of them all, and `tick` runs whichever has passed.
+//! a time, a link being made or ended - are deadlines like a command's:
+//! `nextDeadline` answers the earliest of them all, and `tick` runs
+//! whichever has passed.
 
 const sdk = @import("sdk");
 const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
+const acl = @import("acl.zig");
 const bringup = @import("bringup.zig");
+const connections = @import("connections.zig");
 const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const local = @import("local.zig");
 
-/// How many commands wait for their turn, and how many may be out at once.
-pub const QUEUE = 8;
+/// How many commands wait for their turn - room for every link's end
+/// when the power goes off - and how many may be out at once.
+pub const QUEUE = 16;
 pub const PENDING = 4;
 
 /// The longest a command is waited for, unless it says otherwise.
@@ -124,6 +130,23 @@ pub const Hci = struct {
     /// Its discovery, and what it found.
     discovery: discovery.Discovery = .{},
     devices: [devices.DEVICES]devices.Device = @splat(.{}),
+
+    /// Its links (connections.zig) and the calls waiting on them; the
+    /// ACL data's (acl.zig): the frames waiting to be sent, the buffers
+    /// the controller has free - BR/EDR's, and LE's where it has its own
+    /// - and the room a packet is put together in.
+    connections: [connections.CONNECTIONS]connections.Connection = @splat(.{}),
+    waits: [connections.WAITS]connections.Wait = @splat(.{}),
+    out: [acl.OUT]acl.Out = @splat(.{}),
+    out_head: u8 = 0,
+    out_count: u8 = 0,
+    acl_credits: u16 = 0,
+    le_credits: u16 = 0,
+    le_own: bool = false,
+    acl_packet: [hci.HCI_ACL_HDR + acl.PACKET_MOST]u8 = undefined,
+    /// What happened to its links since the task last said it in the log.
+    notes: [connections.NOTES]connections.Note = @splat(.{}),
+    note_count: u8 = 0,
 };
 
 /// Whether feature `n` of page `page` is set.
@@ -152,8 +175,9 @@ pub fn le(layer: *const Hci) bool {
     return feature(layer, 0, hci.LMP_LE);
 }
 
-/// The bring-up started from the beginning: the queue and what was out
-/// forgotten, the controller reset.
+/// The bring-up started from the beginning: the queue, what was out and
+/// the links forgotten - a call waiting on one answered that the
+/// hardware failed - the controller reset.
 pub fn start(layer: *Hci) void {
     layer.state = bluetooth.BTCS_STARTING;
     layer.failure = 0;
@@ -165,11 +189,12 @@ pub fn start(layer: *Hci) void {
     layer.step = 0;
     layer.wants_settings = false;
     discovery.reset(layer);
+    connections.reset(layer, hci.HCI_ERR_HARDWARE_FAILURE);
     bringup.next(layer);
 }
 
 /// The controller given up on: BTCS_FAILED with `failure`, nothing more
-/// sent.
+/// sent, a call waiting on a link answered `failure`.
 pub fn fail(layer: *Hci, failure: i32) void {
     layer.state = bluetooth.BTCS_FAILED;
     layer.failure = failure;
@@ -178,6 +203,7 @@ pub fn fail(layer: *Hci, failure: i32) void {
     for (&layer.pending) |*pending| pending.used = false;
     layer.wants_settings = false;
     discovery.reset(layer);
+    connections.reset(layer, failure);
 }
 
 /// A command queued, and sent if the controller takes it now: false when
@@ -196,9 +222,14 @@ pub fn command(layer: *Hci, opcode: u16, params: []const u8, timeout_ms: u32) bo
 }
 
 /// The queue's commands sent while the controller has credits and a
-/// pending slot is free: on a new command, an answer, and once the
-/// transport takes packets again.
+/// pending slot is free - on a new command, an answer, and once the
+/// transport takes packets again - and then the ACL data waiting.
 pub fn pump(layer: *Hci) void {
+    sendCommands(layer);
+    if (layer.state == bluetooth.BTCS_UP) acl.pump(layer);
+}
+
+fn sendCommands(layer: *Hci) void {
     while (layer.queue_count > 0 and layer.credits > 0) {
         const pending = freePending(layer) orelse return;
         const slot = &layer.queue[layer.queue_head];
@@ -236,7 +267,8 @@ fn takePending(layer: *Hci, opcode: u16) bool {
 }
 
 /// The earliest time something is due: a command out to be answered, a
-/// discovery's phase to end, being visible to end; null for none.
+/// discovery's phase to end, being visible to end, a link being made or
+/// ended; null for none.
 pub fn nextDeadline(layer: *const Hci) ?u64 {
     var earliest: ?u64 = null;
     for (&layer.pending) |*pending| {
@@ -244,7 +276,7 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
         if (earliest == null or pending.deadline < earliest.?) earliest = pending.deadline;
     }
     if (layer.state != bluetooth.BTCS_UP) return earliest;
-    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer) }) |due| {
+    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer), connections.deadline(layer) }) |due| {
         const time = due orelse continue;
         if (earliest == null or time < earliest.?) earliest = time;
     }
@@ -252,7 +284,8 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
 }
 
 /// Whatever is due at `layer.now` done: the commands whose time has
-/// passed given up on, a discovery's phase ended, being visible ended.
+/// passed given up on, a discovery's phase ended, being visible ended, a
+/// link's making taken back or given up on.
 pub fn tick(layer: *Hci) void {
     for (&layer.pending) |*pending| {
         if (!pending.used or pending.deadline > layer.now) continue;
@@ -265,6 +298,7 @@ pub fn tick(layer: *Hci) void {
     if (layer.state == bluetooth.BTCS_UP) {
         discovery.tick(layer);
         local.tick(layer);
+        connections.tick(layer);
     }
     pump(layer);
 }
@@ -272,17 +306,26 @@ pub fn tick(layer: *Hci) void {
 fn timedOut(layer: *Hci, opcode: u16) void {
     switch (layer.state) {
         bluetooth.BTCS_STARTING => bringup.timedOut(layer, opcode),
-        bluetooth.BTCS_UP => discovery.timedOut(layer, opcode),
+        bluetooth.BTCS_UP => {
+            discovery.timedOut(layer, opcode);
+            connections.answered(layer, opcode, &.{});
+        },
         else => {},
     }
 }
 
-/// A packet the controller sent, from its header on.
+/// A packet the controller sent, from its header on: an event, or a
+/// link's data.
 pub fn received(layer: *Hci, packet_type: u8, bytes: []const u8) void {
-    if (packet_type != hcidev.HCI_EVENT_PKT) return;
-    if (bytes.len < hci.HCI_EVENT_HDR) return;
-    const length = @min(bytes[1], bytes.len - hci.HCI_EVENT_HDR);
-    event(layer, bytes[0], bytes[hci.HCI_EVENT_HDR..][0..length]);
+    switch (packet_type) {
+        hcidev.HCI_EVENT_PKT => {
+            if (bytes.len < hci.HCI_EVENT_HDR) return;
+            const length = @min(bytes[1], bytes.len - hci.HCI_EVENT_HDR);
+            event(layer, bytes[0], bytes[hci.HCI_EVENT_HDR..][0..length]);
+        },
+        hcidev.HCI_ACLDATA_PKT => if (layer.state == bluetooth.BTCS_UP) acl.received(layer, bytes),
+        else => {},
+    }
 }
 
 fn event(layer: *Hci, code: u8, params: []const u8) void {
@@ -309,21 +352,42 @@ fn event(layer: *Hci, code: u8, params: []const u8) void {
             pump(layer);
         },
         hci.HCI_EV_HARDWARE_ERROR => hardwareError(layer),
-        else => if (layer.state == bluetooth.BTCS_UP) discovered(layer, code, params),
+        else => if (layer.state == bluetooth.BTCS_UP) upEvent(layer, code, params),
     }
 }
 
-/// The events of a controller that is up: what its discovery hears.
-fn discovered(layer: *Hci, code: u8, params: []const u8) void {
+/// The events of a controller that is up: what its discovery hears, and
+/// its links.
+fn upEvent(layer: *Hci, code: u8, params: []const u8) void {
     switch (code) {
         hci.HCI_EV_INQUIRY_COMPLETE => discovery.inquiryComplete(layer),
         hci.HCI_EV_INQUIRY_RESULT => discovery.inquiryResult(layer, params, .plain),
         hci.HCI_EV_INQUIRY_RESULT_WITH_RSSI => discovery.inquiryResult(layer, params, .rssi),
         hci.HCI_EV_EXTENDED_INQUIRY_RESULT => discovery.inquiryResult(layer, params, .extended),
-        hci.HCI_EV_REMOTE_NAME_REQUEST_COMPLETE => discovery.nameComplete(layer, params),
-        hci.HCI_EV_LE_META => {
-            if (params.len >= 1 and params[0] == hci.HCI_LE_EV_ADVERTISING_REPORT) discovery.advertisingReport(layer, params[1..]);
+        hci.HCI_EV_REMOTE_NAME_REQUEST_COMPLETE => {
+            discovery.nameComplete(layer, params);
+            connections.nameComplete(layer, params);
         },
+        hci.HCI_EV_CONNECTION_REQUEST => connections.request(layer, params),
+        hci.HCI_EV_CONNECTION_COMPLETE => connections.complete(layer, params),
+        hci.HCI_EV_DISCONNECTION_COMPLETE => connections.disconnectionComplete(layer, params),
+        hci.HCI_EV_ROLE_CHANGE => connections.roleChange(layer, params),
+        hci.HCI_EV_ENCRYPTION_CHANGE => connections.encryptionChange(layer, params),
+        hci.HCI_EV_NUMBER_OF_COMPLETED_PACKETS => acl.completedPackets(layer, params),
+        hci.HCI_EV_LE_META => leEvent(layer, params),
+        else => {},
+    }
+}
+
+/// LE Meta's subevents, each past its code.
+fn leEvent(layer: *Hci, params: []const u8) void {
+    if (params.len < 1) return;
+    const rest = params[1..];
+    switch (params[0]) {
+        hci.HCI_LE_EV_ADVERTISING_REPORT => discovery.advertisingReport(layer, rest),
+        hci.HCI_LE_EV_CONNECTION_COMPLETE => connections.leComplete(layer, rest),
+        hci.HCI_LE_EV_CONNECTION_UPDATE_COMPLETE => connections.leUpdateComplete(layer, rest),
+        hci.HCI_LE_EV_REMOTE_PARAMETERS_REQUEST => connections.leParametersRequest(layer, rest),
         else => {},
     }
 }
@@ -332,7 +396,10 @@ fn discovered(layer: *Hci, code: u8, params: []const u8) void {
 fn completed(layer: *Hci, opcode: u16, returned: []const u8) void {
     switch (layer.state) {
         bluetooth.BTCS_STARTING => bringup.answered(layer, opcode, returned),
-        bluetooth.BTCS_UP => discovery.answered(layer, opcode, returned),
+        bluetooth.BTCS_UP => {
+            discovery.answered(layer, opcode, returned);
+            connections.answered(layer, opcode, returned);
+        },
         else => {},
     }
 }

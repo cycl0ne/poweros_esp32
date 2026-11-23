@@ -39,6 +39,7 @@ const bluetooth = sdk.bluetooth;
 const hci = bluetooth.hci;
 const _hci = @import("_hci.zig");
 const Hci = _hci.Hci;
+const acl = @import("acl.zig");
 const local = @import("local.zig");
 
 /// The reset can take a controller longer than another command.
@@ -321,6 +322,7 @@ fn tookBufferSize(layer: *Hci, returned: []const u8) bool {
     layer.sco_mtu = returned[3];
     layer.acl_packets = _hci.le16(returned[4..6]);
     layer.sco_packets = _hci.le16(returned[6..8]);
+    acl.buffersRead(layer);
     return true;
 }
 
@@ -334,13 +336,15 @@ fn tookAddress(layer: *Hci, returned: []const u8) bool {
 fn tookLeBufferSize(layer: *Hci, returned: []const u8) bool {
     if (returned.len < 4) return false;
     const mtu = _hci.le16(returned[1..3]);
-    if (mtu == 0) {
-        layer.le_mtu = layer.acl_mtu;
-        layer.le_packets = layer.acl_packets;
-    } else {
+    layer.le_own = mtu != 0 and returned[3] != 0;
+    if (layer.le_own) {
         layer.le_mtu = mtu;
         layer.le_packets = returned[3];
+    } else {
+        layer.le_mtu = layer.acl_mtu;
+        layer.le_packets = layer.acl_packets;
     }
+    acl.buffersRead(layer);
     return true;
 }
 

@@ -15,6 +15,7 @@ const hci = bluetooth.hci;
 const hcidev = sdk.devices.hci;
 const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _hci = @import("../hci/_hci.zig");
+const acl = @import("../hci/acl.zig");
 const discovery = @import("../hci/discovery.zig");
 const local = @import("../hci/local.zig");
 
@@ -26,8 +27,9 @@ pub const WRITES = 2;
 /// bytes of data - more than the longest event. A longer packet gets a
 /// room of its own (`Read.bigger`).
 pub const READ_SIZE = hci.HCI_ACL_HDR + 1024;
-/// A write's: the longest command.
-pub const WRITE_SIZE = hci.HCI_COMMAND_HDR + hci.HCI_MAX_PARAMS;
+/// A write's: the longest ACL packet the HCI layer sends - longer than
+/// the longest command.
+pub const WRITE_SIZE = @max(hci.HCI_COMMAND_HDR + hci.HCI_MAX_PARAMS, hci.HCI_ACL_HDR + acl.PACKET_MOST);
 /// The longest device name kept, and the room for what the device says
 /// of its chip and firmware.
 pub const DEVICE_NAME_SIZE = 64;
