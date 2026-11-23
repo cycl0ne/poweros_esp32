@@ -143,11 +143,12 @@ tags and constants, each with its doc comment.
   a device's services, GATT's client and server over LE - services,
   characteristics, values read, written and watched, blocks that wait
   for their device - profile drivers and the services offered to them,
-  keyboards and mice over BR/EDR and LE (`bthid.device`), the USB
-  controllers and the MT7922's firmware, the Raspberry Pi 4 Model B's
+  keyboards and mice over BR/EDR and LE (`bthid.device`), sound to a
+  headphone - SBC over AVDTP, its signalling and its media packets - the
+  USB controllers and the MT7922's firmware, the Raspberry Pi 4 Model B's
   controller on its mini UART, what a device is (`BTDeviceKind`),
   `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
-  `C:test/BTGatt` and `C:test/BTHidDevice`.
+  `C:test/BTGatt`, `C:test/BTHidDevice` and `C:test/BTAudio`.
 - [Displays](guides/rtg.md) - rtg.library, in three parts. What a
   program does with a board: the machine's display, modes, the monitor,
   buffers, handing on what was drawn, showing, bands, power and the

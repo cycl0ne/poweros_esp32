@@ -207,7 +207,9 @@ pub const catalogs = catalogsOf(&translated_strings);
 /// and chip.vcodec's for the colours a stream says. The commodity frame is
 /// where the
 /// settings and the broker loop of every commodity in SYS:Commodities are
-/// written once.
+/// written once. The sound sent to a Bluetooth headphone - SBC, AVDTP's
+/// signalling and the media packets - is btaudio.device's, and
+/// C:test/BTAudio's, which plays to a device without audio.device.
 const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "install", .source = "c/install/parts.zig" },
     .{ .name = "raster", .source = "libs/facet/driver/cpu/raster/raster.zig" },
@@ -227,6 +229,7 @@ const inner_modules = [_]struct { name: []const u8, source: []const u8 }{
     .{ .name = "smbclient", .source = "libs/smb/smbclient.zig" },
     .{ .name = "netinterface", .source = "libs/netinterface/netinterface.zig" },
     .{ .name = "commodity", .source = "commodities/_frame/frame.zig" },
+    .{ .name = "a2dp", .source = "devs/bluetooth/btaudio/a2dp.zig" },
 };
 
 /// Something copied onto the disk as it is.
@@ -340,6 +343,7 @@ const inner_tests = [_]Program{
     .{ .disk = "c/test/facetprobe", .source = "c/test/raster/facetprobe.zig", .name = "facetprobe", .set = .@"3d" },
     .{ .disk = "c/test/v3dtest", .source = "c/test/v3d/v3dtest.zig", .name = "v3dtest", .set = .@"3d", .imports = &.{"v3d"} },
     .{ .disk = "c/test/locale", .source = "c/test/locale/locale.zig", .name = "locale", .set = .tests, .strings = "c/test/locale/locale.cd" },
+    .{ .disk = "c/test/btaudio", .source = "c/test/btaudio/btaudio.zig", .name = "btaudio", .set = .tests, .imports = &.{"a2dp"} },
 };
 
 /// Modules on the disk: built exactly as a command is. What makes one a

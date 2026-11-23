@@ -20,16 +20,17 @@ whenever the device comes back, where asked to - and answers the
 device's questions with a server of its own. Each service of a device
 it bonds with is offered to the profile drivers in `DEVS:bluetooth/`:
 `bthid.device` drives keyboards and mice, over BR/EDR and over LE.
-Sound and LE's channels are the stack's next parts.
+Sound goes to a headphone or a speaker as a stream of SBC over AVDTP,
+which `C:test/BTAudio` plays; LE's channels are the stack's next part.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
 controller's settings, finding devices, links to devices and what a
 link carries, pairing and bonds, channels and services, attributes over
-LE, profile drivers, keyboards and mice, the USB controllers and the
-MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
-`SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
-`C:test/BTGatt` and `C:test/BTHidDevice`.
+LE, profile drivers, keyboards and mice, sound to a headphone, the USB
+controllers and the MediaTek MT7922's firmware, the Raspberry Pi 4 Model
+B's controller, `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
+`C:test/BTGatt`, `C:test/BTHidDevice` and `C:test/BTAudio`.
 
 ## The pieces
 
@@ -76,6 +77,7 @@ MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
 | `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change, with `WAIT` across the link's ends; in the disk's `tests` set |
 | `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards and mice over BR/EDR and over LE: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
 | `C:test/BTHidDevice` | | this machine as a keyboard and a mouse over BR/EDR, for a host to be tried with; in the disk's `tests` set |
+| `C:test/BTAudio` | | a sound file or a tone played to a headphone or a speaker over BR/EDR, the stream's configuration and its packets said; in the disk's `tests` set |
 
 The library, the devices - the controllers' and the profile drivers' -
 their firmware, the window and the command are the disk's `bluetooth`
@@ -942,6 +944,44 @@ Paired with 00:00:5E:EF:10:47
       driven by bthid.device
 ```
 
+## Sound to a headphone
+
+A headphone or a speaker takes its sound over A2DP: this machine is the
+source, the device the sink, and the sound goes as SBC frames over two
+L2CAP channels to the device's PSM 25 (AVDTP) - the signalling first,
+the media after it (`sdk/libs/bluetooth/avdtp.zig`). Both are opened to
+a device bonded over BR/EDR, so the link is encrypted with the bond's
+key.
+
+**The signalling** finds the device's stream end points (DISCOVER) - a
+headphone has one for each codec it takes - and asks each audio sink
+not in use what it takes (GET_ALL_CAPABILITIES, or GET_CAPABILITIES of
+a device that does not answer that). Of the first that takes SBC it
+asks for a configuration (SET_CONFIGURATION): the sound's own rate - or
+48 kHz, then 44.1 - in joint stereo, then stereo, dual channel and mono,
+with the most blocks and subbands the device takes, loudness before
+SNR, and a bitpool of 53 - 31 for mono and dual channel - within the
+device's least and most. A configuration refused, the next is asked,
+and the next end point after the last; a rate refused is passed over
+whole. OPEN opens the stream and the media channel is opened after it,
+START starts it, SUSPEND pauses it, CLOSE ends it - ABORT where the
+device refuses to close it. Delay reporting is asked for where the
+device offers it, and the device then says, in DELAYREPORT, how long
+its sound takes from the radio to the ear. The device's own commands
+are answered: its questions about this machine's end point - a source
+of SBC at 44.1 and 48 kHz - the stream started, suspended, closed or
+aborted by the device, its delay kept.
+
+**The media** goes in RTP packets: a header of 12 bytes - its sequence
+number counting the packets, its timestamp the samples sent before its
+first - a byte counting its frames, and as many SBC frames as the media
+channel's MTU takes, 15 at the most. At 48 kHz in joint stereo, with 16
+blocks, 8 subbands and a bitpool of 53, a frame is 119 bytes for 128
+samples of each channel - 357 kbit/s - and a channel taking 1021 bytes
+carries 8 of them a packet, 21.3 ms of sound. A packet not sent before
+its time has gone is let go of and counted in the timestamp alone: the
+device hears the gap, and the sound after it stays in time.
+
 ## Controllers on USB
 
 `usb/bluetooth.device` drives the interface of USB's Bluetooth class
@@ -1425,3 +1465,48 @@ channels. The host pairs with this machine first - `Bluetooth AGENT`
 here answers it - and bthid.device here drives no keyboard (Keyboards
 and mice, above). `CONTROLLER` names the controller, as `Bluetooth`'s
 does.
+
+## C:test/BTAudio
+
+```
+1> C:test/BTAudio 00:00:5E:EF:10:52 TONE 1000 SECONDS 30
+Opening the stream to 00:00:5E:EF:10:52
+The device's delay: 0.0 ms
+Sink end point 10: SBC at 48000 Hz, joint stereo, 16 blocks, 8 subbands, loudness, bitpool 53
+Frames of 119 bytes, 8 to a packet (the media channel takes 1021 bytes), 357 kbit/s
+Playing; CTRL-C stops
+The device's delay: 56.0 ms
+The device's delay: 50.6 ms
+1407 packets sent, 0 dropped; the latest left 0.4 ms after its time
+1> C:test/BTAudio 00:00:5E:EF:10:52 FILE Work:lr44.wav
+Work:lr44.wav: 44100 Hz, stereo
+Opening the stream to 00:00:5E:EF:10:52
+The device refused the channel; trying again
+Sink end point 10: SBC at 44100 Hz, joint stereo, 16 blocks, 8 subbands, loudness, bitpool 53
+Frames of 119 bytes, 8 to a packet (the media channel takes 1021 bytes), 327 kbit/s
+Playing; CTRL-C stops
+The device's delay: 57.4 ms
+345 packets sent, 0 dropped; the latest left 0.4 ms after its time
+```
+
+`BTAudio` plays a sound to a headphone or a speaker bonded with this
+machine over BR/EDR, by its address, without audio.device: a file
+audiocodec.library reads, at its own rate - 16, 32, 44.1 or 48 kHz -
+a mono one on both sides, or with `TONE` a sine of that frequency at
+-20 dBFS on both sides, 1000 Hz where neither is given. `SECONDS` says
+how long: a tone 10 seconds where it is not given, a file to its end.
+It opens the stream (Sound to a headphone, above), says the end point
+and the configuration taken - the rate, the channel mode, blocks,
+subbands, the allocation and the bitpool - the frame's length, the
+frames to a packet, the bytes the media channel takes and the bit rate,
+and each delay the device reports, and follows a device that suspends
+the stream and starts it again. The packets go as the sound's time
+passes, on timer.device's E-clock, two ahead of it; the stream is
+closed once the last has played - after the delay the device reported,
+or 150 ms - and the packets sent and dropped are said, and how late the
+latest was handed on. A device that refuses the signalling channel is
+asked again, two seconds later, four times in all: one opening its own
+channel to this machine meanwhile - as a computer does to a source it
+knows, as the link comes up - refuses this one. CTRL-C stops;
+`CONTROLLER` names the controller, as `Bluetooth`'s does. The device is
+paired with first (`Bluetooth PAIR`).
