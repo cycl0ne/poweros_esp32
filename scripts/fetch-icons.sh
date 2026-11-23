@@ -8,7 +8,9 @@
 # taken from the release's 32-pixel pictures. Nothing of it is committed:
 # it lands in toolchain/icons/<size>, which the build looks for; without
 # it the disk has no icons of its own and icon.library's built-in ones
-# stand in.
+# stand in. A picture Tango has none for is drawn here in its style
+# (scripts/icons/<name>.svg) and lands beside them, drawn with
+# rsvg-convert - without it, left out.
 set -eu
 
 tango=0.8.90
@@ -80,7 +82,15 @@ for size in $sizes; do
         fi
     done
 done
+for svg in "$root"/scripts/icons/*.svg; do
+    name=$(basename "$svg" .svg)
+    for size in $sizes; do
+        if command -v rsvg-convert >/dev/null 2>&1; then
+            rsvg-convert -w "$size" -h "$size" -o "$out/$size/$name.png" "$svg"
+        fi
+    done
+done
 if ! command -v rsvg-convert >/dev/null 2>&1; then
-    echo "no rsvg-convert: the icons are the release's 32-pixel pictures"
+    echo "no rsvg-convert: the icons are the release's 32-pixel pictures, and those of scripts/icons are left out"
 fi
 echo "icons in $out"

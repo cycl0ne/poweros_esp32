@@ -1,0 +1,27 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SYS:System/Bluetooth's picture, drawn in the style of the Tango icons
+     the disk's other pictures come from: the rune in white on a blue
+     capsule, outlined a shade darker, lit from above, over a soft shadow. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <defs>
+    <radialGradient id="shadow" cx="24" cy="42.5" r="15" gradientTransform="matrix(1 0 0 0.25 0 31.875)" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000000" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="body" x1="0" y1="4.5" x2="0" y2="41.5" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#729fcf"/>
+      <stop offset="0.5" stop-color="#3465a4"/>
+      <stop offset="1" stop-color="#204a87"/>
+    </linearGradient>
+    <linearGradient id="gloss" x1="0" y1="5" x2="0" y2="24" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <ellipse cx="24" cy="42.5" rx="15" ry="3.75" fill="url(#shadow)"/>
+  <rect x="11.5" y="4.5" width="25" height="37" rx="12.5" ry="12.5" fill="url(#body)" stroke="#204a87" stroke-width="1"/>
+  <rect x="12.5" y="5.5" width="23" height="35" rx="11.5" ry="11.5" fill="none" stroke="#ffffff" stroke-opacity="0.35" stroke-width="1"/>
+  <path d="M 13 23 C 13 12 17 6 24 6 C 31 6 35 12 35 21 C 29 24 19 24 13 23 Z" fill="url(#gloss)"/>
+  <path d="M 17.5 17.5 L 30 28.5 L 24 34.5 L 24 11.5 L 30 17.5 L 17.5 28.5" fill="none" stroke="#204a87" stroke-opacity="0.5" stroke-width="4.5" stroke-linejoin="miter" stroke-linecap="round" transform="translate(0 0.75)"/>
+  <path d="M 17.5 17.5 L 30 28.5 L 24 34.5 L 24 11.5 L 30 17.5 L 17.5 28.5" fill="none" stroke="#ffffff" stroke-width="2.75" stroke-linejoin="miter" stroke-linecap="round"/>
+</svg>

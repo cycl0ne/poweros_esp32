@@ -353,6 +353,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/WiFi.info", .picture = "network-wireless", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Network.info", .picture = "network-wired", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Update.info", .picture = "system-software-update", .fields = &.{ "KIND=TOOL", icon_stack }, .pointer_bytes = 8 },
+    .{ .path = "System/Bluetooth.info", .picture = "bluetooth", .fields = &.{ "KIND=TOOL", icon_stack } },
     .{ .path = "System/Docs.info", .picture = "folder", .fields = &.{"KIND=DRAWER"} },
     .{ .path = "System/Docs/CPULoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/NetLoad.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
@@ -363,6 +364,7 @@ const disk_icons = [_]DiskIcon{
     .{ .path = "System/Docs/WiFi.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Network.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     .{ .path = "System/Docs/Update.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack }, .pointer_bytes = 8 },
+    .{ .path = "System/Docs/Bluetooth.md.info", .picture = "x-office-document", .fields = &.{ "KIND=PROJECT", "TOOL=SYS:Programs/MultiView", icon_stack } },
     // The commodities, each icon with the tool types it reads, and what
     // each is in SYS:Commodities/Docs. The pictures are the ones the
     // fetch drew, so the ones that work on the same thing share a
