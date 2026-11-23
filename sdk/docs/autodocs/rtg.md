@@ -2400,8 +2400,8 @@ buffer. The rectangle is cut to the buffer first.
 
 Where the display reads the buffer itself, its driver is told
 (`refresh`), for a buffer shown or not. Where the display reads past
-a cache the CPU writes into, the rectangle's pixels are written back
-- by the library where the board's region says so
+a cache the CPU writes into, the rectangle's pixels are written back -
+by the library where the board's region says so
 (`RTGRF_WRITE_BACK`), else by the driver - so a buffer drawn ahead is
 whole when it is shown. Where the
 display shows a picture the library composes, the rectangle is also
@@ -3742,8 +3742,8 @@ on as into any other, and reaches the glass scaled.
 **BUGS**
 
 The DSI boards' driver keeps the bands it was handed when it answers
-an error - no memory for the stream's chain, a flip that did not land
-- and reads them when the pointer next moves or is first laid.
+an error - no memory for the stream's chain, a flip that did not land -
+and reads them when the pointer next moves or is first laid.
 
 **SEE ALSO**
 

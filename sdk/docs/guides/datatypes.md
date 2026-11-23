@@ -701,8 +701,8 @@ channels, and a bar of how far it has played.
 WAV, MP3, FLAC and Ogg Vorbis - with the names their tags give (`DTA_ObjName`,
 `DTA_ObjAuthor`, `DTA_ObjAnnotation`); a kind the library learns needs
 only a descriptor naming `BASE=audiocodec`. `8svx.datatype` reads an
-IFF 8SVX sound whole - Fibonacci-delta coded or not, one channel or two
-- with its NAME, AUTH and ANNO.
+IFF 8SVX sound whole - Fibonacci-delta coded or not, one channel or two -
+with its NAME, AUTH and ANNO.
 
 ## Films
 
@@ -734,8 +734,8 @@ as large as fits with its shape kept, in the middle, black where it does
 not reach, and there is nothing outside the room to scroll to. The
 film's own size is what the object asks for, so a window opened for it
 opens at that size. The picture goes down through graphics.library -
-`WriteYUVPixelArray` at its own size, `ScaleYUVPixelArray` at any other
-- and not through a display's video layer: a layer lies under the whole
+`WriteYUVPixelArray` at its own size, `ScaleYUVPixelArray` at any other -
+and not through a display's video layer: a layer lies under the whole
 screen's picture, and a window's object cannot have one without covering
 the windows in front of it. `SYS:Programs/Movie`, which owns its window,
 uses one, and plays a film with less of the machine than MultiView does.

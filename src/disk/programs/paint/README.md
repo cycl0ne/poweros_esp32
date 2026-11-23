@@ -398,8 +398,8 @@ Fit, or the zoom bar's last button, shows the whole picture at the
 largest zoom it fits at.
 
 View → Rulers puts a ruler along the top of the view and down its left,
-numbered in the picture's pixels, with a red mark where the pointer is
-- or where the brush paints, while a button is down.
+numbered in the picture's pixels, with a red mark where the pointer is -
+or where the brush paints, while a button is down.
 
 View → Split Screen shows the picture twice, side by side: the view as
 it was on the left, and on the right one four times as close on its

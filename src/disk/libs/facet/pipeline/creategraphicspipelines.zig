@@ -73,8 +73,8 @@ const _instance = @import("../instance/_instance.zig");
 /// fixed form (`shader.fixedFragment`), or the pipeline is refused with
 /// `error_feature_not_present`.
 ///
-/// A pipeline of no fragment stage, as Vulkan 1.0 allows - a shadow map's
-/// - is drawn with a fragment function of the library's own that does
+/// A pipeline of no fragment stage, as Vulkan 1.0 allows - a shadow map's -
+/// is drawn with a fragment function of the library's own that does
 /// nothing, as lavapipe binds `noop_fs` where a pipeline has none
 /// (lvp_device.c:2048-2052, lvp_execute.c:552-554; since 1.115). Vulkan
 /// leaves what it writes into a colour attachment undefined, and here every

@@ -437,8 +437,8 @@ them; and Mongolian's variation selectors (U+180B to U+180D, U+180F)
 and the tag characters (U+E0020 to U+E007F) end both.
 
 A stretch of a script whose letters join - Arabic, Syriac, N'Ko,
-Mongolian and the others whose letters Unicode gives a joining type
-- is shaped with their joined forms (since 1.11). Each letter takes
+Mongolian and the others whose letters Unicode gives a joining type -
+is shaped with their joined forms (since 1.11). Each letter takes
 the form for where it stands in its join, by its own joining type
 and its neighbours', the marks between them passed over: `isol`
 alone, `init` at the start, `medi` in the middle, `fina` at the end;
@@ -471,8 +471,8 @@ sign.
 A stretch of Devanagari is shaped by its syllables. A syllable is
 a consonant or a vowel letter with what is written on it: the
 consonants a halant (U+094D) joins to it, a nukta, vowel signs, the
-signs from U+0900 to U+0903, the accents. In each the base is found
-- the last consonant the font has no form of below or behind
+signs from U+0900 to U+0903, the accents. In each the base is found -
+the last consonant the font has no form of below or behind
 another - and the glyphs are put in the order the font's rules are
 written for. Then the forms are asked for, a go through `GSUB`
 each, in this order: `nukt`, `akhn`, `rphf`, `rkrf`, `pref`, `blwf`,

@@ -55,8 +55,8 @@ const _client = @import("../client/_client.zig");
 /// The bytes stay the caller's; they are sent before the call returns.
 ///
 /// NOTES:
-/// A server may answer before it has the whole body - to refuse it, say
-/// - and close; the next WriteRequest then fails with HTTPERR_IO.
+/// A server may answer before it has the whole body - to refuse it, say -
+/// and close; the next WriteRequest then fails with HTTPERR_IO.
 ///
 /// BUGS:
 /// None known.

@@ -43,8 +43,8 @@ something is due; while nothing moves it sleeps and costs nothing. Steps
 of several animations due together run on one wake.
 
 **A step is worked out from the time, not counted.** An animation's value
-is where it should be at the moment the step runs: a step that comes late
-- a busy system - lands further along, and the animation still ends when
+is where it should be at the moment the step runs: a step that comes late -
+a busy system - lands further along, and the animation still ends when
 it should. A step that would not change the value tells nobody - but
 the first one after a start always tells.
 

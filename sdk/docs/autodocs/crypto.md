@@ -272,8 +272,8 @@ InitGmac did not set up, and nothing is written.
 
 **BEHAVIOR**
 
-The bytes short of a block are padded with zeroes, the lengths block
-- the data's length as a header's, and no ciphertext - goes through
+The bytes short of a block are padded with zeroes, the lengths block -
+the data's length as a header's, and no ciphertext - goes through
 GHASH, and the result is masked with E(K, J0). The context is wiped,
 the key with it, its `size` kept: InitGmac starts it again.
 
@@ -865,8 +865,8 @@ caller's to clear.
 
 **NOTES**
 
-What this is for: a message whose MAC is to be checked as it arrives
-- SMB's signature over a READ's answer of up to 1 MiB, hashed as the
+What this is for: a message whose MAC is to be checked as it arrives -
+SMB's signature over a READ's answer of up to 1 MiB, hashed as the
 network delivers it, so that receiving and hashing go on together. A
 message that is all at hand takes one SealGcm, with it as the header.
 

@@ -66,8 +66,8 @@ A frame is the decoder's own memory, lent: nothing is copied, and the
 planes stay as they are until `ReleaseVideoFrame` gives them back. Up to
 `VIDEO_HELD_FRAMES` (three) may be held at once - one shown, one waiting
 its turn - and a fourth `DecodeVideoFrame` is `VCERR_BUSY`. `picture` is
-an `rtg.RtgYuv` with its layout and colours set, as the stream says them
-- NV12 for a chip's frame, I420 for a software decoder's, in JFIF's full
+an `rtg.RtgYuv` with its layout and colours set, as the stream says them -
+NV12 for a chip's frame, I420 for a software decoder's, in JFIF's full
 range for Motion JPEG - so graphics takes it as it is. Its `matrix`,
 `transfer`, `primaries`, `range`, `depth` and `peak` are the stream's
 own: a film of high dynamic range comes out in PQ or HLG, in BT.2020's
@@ -298,8 +298,8 @@ without loading it, and again only when the file changed - and tries the
 modules that name the track's codec: a chip's (`VCMOD_CHIP`) before
 software, the higher `priority` first. The file's name is the tag's,
 which ramlib loads it by. The first whose `OpenVCodec` gives a decoder
-decodes the track; `VCERR_NOCODEC` - the board has not the module's chip
-- or another error passes it to the next. A decoder that reads in the
+decodes the track; `VCERR_NOCODEC` - the board has not the module's chip -
+or another error passes it to the next. A decoder that reads in the
 stream that it cannot decode it answers `ReceiveVCodecFrame` with
 `VCERR_UNSUPPORTED` before its first frame, and the next module starts
 again at the key packet.

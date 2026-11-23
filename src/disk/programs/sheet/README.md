@@ -280,8 +280,8 @@ line. Find Next (G) goes on with what was last looked for.
 
 ## Files
 
-A sheet is saved as CSV: a line per row, each cell's text as it was typed
-- a formula with its `=` - split by commas. A field that holds a comma, a
+A sheet is saved as CSV: a line per row, each cell's text as it was typed -
+a formula with its `=` - split by commas. A field that holds a comma, a
 quote or a line break is put in quotes, a quote in it written twice.
 Values are not saved; they are worked out again when the file is read.
 

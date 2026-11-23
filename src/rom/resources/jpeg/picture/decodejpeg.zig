@@ -101,8 +101,8 @@ const WatchdogBase = sdk.interface.watchdog.WatchdogBase;
 /// `file` is only read, and only during the call.
 ///
 /// NOTES:
-/// The codec brings the colour's halved samples to full size its own way
-/// - the 2D-DMA, the JH7110's format converter, the CPU from an AMD
+/// The codec brings the colour's halved samples to full size its own way -
+/// the 2D-DMA, the JH7110's format converter, the CPU from an AMD
 /// device's and the VideoCore firmware's planes, each sample standing for
 /// the pixels it covers: the picture is close to a software decoder's,
 /// which may blend them, not equal.

@@ -70,8 +70,8 @@ const _render = @import("_render.zig");
 /// A glyph of a font whose glyphs are pictures is its picture scaled to
 /// the line, as `RenderGlyph` says: at a strike's own size, pixel for
 /// pixel.
-/// The advances are rounded to whole pixels. The font is `FPF_DESIGNED`
-/// - drawn at its size from the font's file, not scaled from another
+/// The advances are rounded to whole pixels. The font is `FPF_DESIGNED` -
+/// drawn at its size from the font's file, not scaled from another
 /// image - and `FPF_PROPORTIONAL` when its advances differ. Its styles are the ones the font says it is drawn
 /// in (`FontMetrics`): a bold face renders as `FSF_BOLD`, so graphics
 /// draws no bold over it.

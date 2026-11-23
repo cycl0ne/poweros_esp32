@@ -406,8 +406,8 @@ None; `info` is filled in.
 The pictures' codec and size and the number of them come from the
 film's index; their rate from it too - the frames a second on average,
 to a thousandth - or else from the stream, once the decoder has read
-it. Where the decoder has read the stream, its size as shown - cropped
-- is the one given. The length is the picture track's,
+it. Where the decoder has read the stream, its size as shown - cropped -
+is the one given. The length is the picture track's,
 or the film's. The sound is audiocodec's stream on the film's sound
 track: its codec, rate and channels, as DecodeVideoSound hands it out.
 
@@ -475,8 +475,8 @@ read - just after a seek, on a slow disk - is not shown; after a seek
 they are read from five seconds before, for the lines still showing.
 Text is
 UTF-8, its lines apart by `\n`: SubRip's tags and SubStation Alpha's
-codes are taken out, and of SubStation Alpha only the dialogue is kept
-- signs placed on the picture and drawings are left out. Lines that
+codes are taken out, and of SubStation Alpha only the dialogue is kept -
+signs placed on the picture and drawings are left out. Lines that
 show at once come one under another, in the order they began;
 VSUB_ITALIC says that all of it is in italics. A Blu-ray's picture
 (PGS) comes as `pixels`, fitted to the film's size where the disc's
@@ -555,8 +555,8 @@ VCERR_END past the last track.
 
 `track` is filled in as GetMediaTrack fills it: its kind, codec,
 language and name. Of the pictures only the track being decoded is
-VTRK_DECODED. A sound track is when the stream has audiocodec.library
-- it was opened with sound, from a file - and the library's version
+VTRK_DECODED. A sound track is when the stream has audiocodec.library -
+it was opened with sound, from a file - and the library's version
 decodes its codec: since audiocodec.library 1.12 that is what the
 library itself says of this disk (its `ACA_Codecs`, asked as the film
 was opened), so a kind whose module is not on this board's disk is

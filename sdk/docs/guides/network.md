@@ -1465,8 +1465,8 @@ lists the verbs, `Git <verb> ?` shows one's template.
 **A remote** is `https://host/path` or `http://...`, spoken to over
 http.library in git's protocol version 2 where the server speaks it and
 version 0 where it does not; or `ssh://[user@]host[:port]/path` or
-`user@host:path`, over ssh.device. REMOTE is a remote of `.git/config`
-- `origin` for a clone, any that `Git remote add` names - or, for
+`user@host:path`, over ssh.device. REMOTE is a remote of `.git/config` -
+`origin` for a clone, any that `Git remote add` names - or, for
 `push`, such a URL. Without REMOTE, `fetch`, `pull` and `push` take the
 current branch's remote, else `origin`.
 

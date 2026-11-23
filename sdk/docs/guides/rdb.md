@@ -490,8 +490,8 @@ with the format `rdb.mountFormat` puts in the flags as its last byte -
 `rb.MountGPTPartition(handle, part, "BOOT", &name, rdb.RDBMF_START |
 rdb.RDBMF_FAT | rdb.mountFormat(fat.FORMAT_FAT32))` - so `C:Format`
 can give it a volume. Whoever made the partition clears its first
-block for that; what another system put there - an NTFS volume, FAT16
-- is not all zeroes, and stays unmounted. A partition that holds a
+block for that; what another system put there - an NTFS volume, FAT16 -
+is not all zeroes, and stays unmounted. A partition that holds a
 volume is mounted as it holds, the flag aside.
 
 ### Letting a drive go again
@@ -696,8 +696,8 @@ starts it from the card. A card with a GPT has the partitions of its
 container's table read the same way - only the GPT's copy in block 1,
 which needs the card's size for nothing - and its other GPT partitions
 get no node. A card with neither gets none at cold start. Once dos is
-up, the device's first opener - `C:BindDrivers` in the startup-sequence
-- starts its DOS process. That process takes the nodes as the card's
+up, the device's first opener - `C:BindDrivers` in the startup-sequence -
+starts its DOS process. That process takes the nodes as the card's
 drives, makes those of a card that got none - `SD0:` for one without a
 table - and mounts the first card put into a slot that was empty.
 

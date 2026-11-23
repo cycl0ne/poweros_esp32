@@ -407,9 +407,9 @@ give up does the write fail. Snapshots are never deleted to make room.
 A checkpoint must write the bitmap blocks and space tree nodes that
 changed, and their new homes change the bitmap again. The circle is cut
 by counting first (`space.writeSpace`): every dirty group's item is
-touched so the space tree nodes that change are known; the homes needed
-- one per dirty group with its own block, one per dirty space tree node
-- are taken from groups that are being written anyway; when those have
+touched so the space tree nodes that change are known; the homes needed -
+one per dirty group with its own block, one per dirty space tree node -
+are taken from groups that are being written anyway; when those have
 too few free blocks, one more group is made dirty and the count is
 taken again. The space metadata a checkpoint replaces is freed only once
 the checkpoint is durable, as the next interval's frees. A mount works

@@ -118,8 +118,8 @@ port 0: usbotg.device
 ```
 
 On the ESP32-P4 each controller has a port of its own - USB-Serial-JTAG
-port 0, the full-speed OTG controller port 1, the high-speed one port 2
-- and nothing is switched; the resource only keeps who holds which.
+port 0, the full-speed OTG controller port 1, the high-speed one port 2 -
+and nothing is switched; the resource only keeps who holds which.
 
 A controller on PCI has no port to share. xhci.device bids for none: its
 root ports are its own, and its bus is one of the xHCI functions
@@ -432,8 +432,8 @@ what they report from **sources**: an open with `KBDF_SOURCE` or
 that goes lets go of what it held. Repeat, the qualifiers and dead keys
 stay keyboard.device's and input.device's, whichever keyboard the keys
 came from. A USB mouse says how far it went; intuition adds that up into
-where the pointer is. A tablet says where it is on a surface of its own
-- QEMU's `usb-tablet`, which follows the host's pointer over the
+where the pointer is. A tablet says where it is on a surface of its own -
+QEMU's `usb-tablet`, which follows the host's pointer over the
 emulator's window: hid.library hands mouse.device that place as a
 fraction of the surface (`IESUBCLASS_TABLET`, 0 to `IETABLET_MAX`), and
 intuition puts the pointer as far across the front screen. hid.device
@@ -727,8 +727,8 @@ and xhci.device follows the bus:
 A controller built into a chip is found by its board part:
 `PARTKIND_USB`, its chip - `StartUSB` opens usbotg.device for `CHIP_DWC2`
 and xhci.device for `CHIP_XHCI` - which of the chip's controllers
-(`PART_BusUnit`), and how the socket is wired
-- its roles (`PART_UsbRoles`), its speed (`PART_UsbSpeed`), where its
+(`PART_BusUnit`), and how the socket is wired -
+its roles (`PART_UsbRoles`), its speed (`PART_UsbSpeed`), where its
 5 V comes from (`PART_UsbVbus`), a hub's reset line (`PART_PinReset`),
 a switch that gives it its pads (`PART_PinSwitch`).
 

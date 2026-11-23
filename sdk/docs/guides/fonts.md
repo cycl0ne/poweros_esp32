@@ -343,8 +343,8 @@ FONTS:source/SourceSans3VF-Upright.ttf
 
 The 64-bit machines' disks also carry the Liberation families - `sans`,
 `serif` and `mono`, drawn to the widths of Arial, Times New Roman and
-Courier New, under the SIL Open Font License (`FONTS:liberation.licence`)
-- for the text of SVG pictures, which names those fonts more than any.
+Courier New, under the SIL Open Font License (`FONTS:liberation.licence`) -
+for the text of SVG pictures, which names those fonts more than any.
 They carry Noto Sans Devanagari too, as the families `devanagari` and
 `devanagari-bold`, under the same licence (`FONTS:devanagari.licence`):
 the letters and signs of Hindi, Marathi and Nepali with their conjuncts
@@ -737,8 +737,8 @@ advance. `GlyphMetrics` gives such a glyph the box of its largest
 picture, in the font's units; the advance is the `hmtx` table's, as
 any glyph's. `GlyphSegments` gives no verbs.
 
-`OpenOutline` opens `compression.library` for a font of colour pictures
-- it unpacks the PNG files - and holds it until `CloseOutline`; without
+`OpenOutline` opens `compression.library` for a font of colour pictures -
+it unpacks the PNG files - and holds it until `CloseOutline`; without
 the library such a font does not open. Not rendered: pictures in
 `sbix` (`GlyphPicture` hands them out, below), in `bloc` and `bdat`,
 the formats 3 and 4 of a picture, and strikes of other bits a pixel

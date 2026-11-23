@@ -27,8 +27,8 @@ const _ports = @import("_ports.zig");
 /// of that name is on the list, and the message is still the caller's.
 ///
 /// BEHAVIOR:
-/// The port is looked for and the message put on it as `PutMsg` puts one
-/// - the port's action done - without exec's port lock being let go in
+/// The port is looked for and the message put on it as `PutMsg` puts one -
+/// the port's action done - without exec's port lock being let go in
 /// between. `RemPort` takes the same lock, so a port found here is still
 /// on the list when the message reaches it: its owner, who takes it off
 /// and then answers what is on it before it deletes the port, answers

@@ -1001,8 +1001,8 @@ nothing to take out.
 **BEHAVIOR**
 
 The object is told first (`DTM_REMOVEDTOBJECT`), which is where a
-class stops whatever it had running - a sound playing, an animation
-- and then it is taken off the window's gadget list. It is not
+class stops whatever it had running - a sound playing, an animation -
+and then it is taken off the window's gadget list. It is not
 disposed of: it can be put into another window.
 
 **CONTEXT**

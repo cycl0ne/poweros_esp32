@@ -1082,8 +1082,8 @@ a `2d_array` view with `baseArrayLayer = 3` draws into layer 0 and
 overwrites whatever is there. None of this item's natural tests touch it:
 "create a 256-layer framebuffer" passes, "clear it and read back layer
 200" passes because the layered clear is a memset computed from `rowsAt`
-and never goes through `surfaceOf`, "report 256" passes, and the pin drops
-- so the audit trail says the item closed. The only test that catches it is
+and never goes through `surfaceOf`, "report 256" passes, and the pin drops -
+so the audit trail says the item closed. The only test that catches it is
 a *draw* through a non-zero base layer with read-back from both that layer
 and layer 0, and the item's own framing argues nobody needs to write it,
 because layered rendering is unobservable. It mostly is. This is the one

@@ -33,8 +33,8 @@ const _stream = @import("_stream.zig");
 /// BEHAVIOR:
 /// `track` is filled in as GetMediaTrack fills it: its kind, codec,
 /// language and name. Of the pictures only the track being decoded is
-/// VTRK_DECODED. A sound track is when the stream has audiocodec.library
-/// - it was opened with sound, from a file - and the library's version
+/// VTRK_DECODED. A sound track is when the stream has audiocodec.library -
+/// it was opened with sound, from a file - and the library's version
 /// decodes its codec: since audiocodec.library 1.12 that is what the
 /// library itself says of this disk (its `ACA_Codecs`, asked as the film
 /// was opened), so a kind whose module is not on this board's disk is

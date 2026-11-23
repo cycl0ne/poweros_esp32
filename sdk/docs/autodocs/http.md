@@ -244,8 +244,8 @@ for HTTPERR_OK or a `length` of 0.
 The words are a clause without its full stop, in lower case:
 `the host has no address`, or `HttpGet: the host has no address`
 with a header. When `code` is the client's last failure - the last
-OpenRequest, ReadRequest or WriteRequest of the client's that failed
-- they say what the client kept of it:
+OpenRequest, ReadRequest or WriteRequest of the client's that failed -
+they say what the client kept of it:
 
 - HTTPERR_IO: bsdsocket's words for its Errno (`the connection
   failed: Connection refused`); `stopped` when Ctrl-C ended the wait,
@@ -709,8 +709,8 @@ The bytes stay the caller's; they are sent before the call returns.
 
 **NOTES**
 
-A server may answer before it has the whole body - to refuse it, say
-- and close; the next WriteRequest then fails with HTTPERR_IO.
+A server may answer before it has the whole body - to refuse it, say -
+and close; the next WriteRequest then fails with HTTPERR_IO.
 
 **BUGS**
 

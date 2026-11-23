@@ -13,8 +13,8 @@ FKey CX_PRIORITY/K/N,CX_POPKEY/K,CX_POPUP/K
 ```
 
 - `CX_POPKEY` is the hotkey that brings the window up (`ctrl alt k`), in
-  the form of commodities.library's descriptions: qualifiers, then a key
-  - `lcommand f10`, `shift alt e`.
+  the form of commodities.library's descriptions: qualifiers, then a key -
+  `lcommand f10`, `shift alt e`.
 - `CX_POPUP=NO` starts it without the window: it runs on, and its hotkey
   shows it.
 - `CX_PRIORITY` is its place among the commodities (0).

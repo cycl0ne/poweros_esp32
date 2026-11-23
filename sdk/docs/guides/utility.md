@@ -521,8 +521,8 @@ character (CJK, kana, an emoji), none for a mark written on the
 character before it (`unicode.width`). `%-20s` lines a column of names
 up whatever they are written in; a `.limit` never ends inside a
 character, keeps a character's marks with it, and leaves out a wide
-character that only half fits. `%c` takes a code point and writes it in UTF-8
-- `Printf(dl, "%c", .{@as(u32, 0x20AC)})` writes `€`, three bytes.
+character that only half fits. `%c` takes a code point and writes it in UTF-8 -
+`Printf(dl, "%c", .{@as(u32, 0x20AC)})` writes `€`, three bytes.
 
 | Call | |
 |---|---|

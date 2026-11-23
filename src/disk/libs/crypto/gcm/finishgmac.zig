@@ -25,8 +25,8 @@ const _gcm = @import("_gcm.zig");
 /// InitGmac did not set up, and nothing is written.
 ///
 /// BEHAVIOR:
-/// The bytes short of a block are padded with zeroes, the lengths block
-/// - the data's length as a header's, and no ciphertext - goes through
+/// The bytes short of a block are padded with zeroes, the lengths block -
+/// the data's length as a header's, and no ciphertext - goes through
 /// GHASH, and the result is masked with E(K, J0). The context is wiped,
 /// the key with it, its `size` kept: InitGmac starts it again.
 ///

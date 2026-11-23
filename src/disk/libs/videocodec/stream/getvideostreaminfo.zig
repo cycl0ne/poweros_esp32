@@ -29,8 +29,8 @@ const _ahead = @import("../ahead/_ahead.zig");
 /// The pictures' codec and size and the number of them come from the
 /// film's index; their rate from it too - the frames a second on average,
 /// to a thousandth - or else from the stream, once the decoder has read
-/// it. Where the decoder has read the stream, its size as shown - cropped
-/// - is the one given. The length is the picture track's,
+/// it. Where the decoder has read the stream, its size as shown - cropped -
+/// is the one given. The length is the picture track's,
 /// or the film's. The sound is audiocodec's stream on the film's sound
 /// track: its codec, rate and channels, as DecodeVideoSound hands it out.
 ///

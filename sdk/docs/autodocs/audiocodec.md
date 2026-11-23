@@ -434,8 +434,8 @@ A RIFF header naming WAVE is a WAV. "fLaC" is a FLAC, alone or behind
 an ID3v2 tag that ends among the bytes given. An Ogg page whose first
 packet is Vorbis's header is ACODEC_VORBIS, Opus's ACODEC_OPUS (SINCE
 1.9; unknown before), FLAC's is ACODEC_FLAC (and refused when it is
-opened); another is unknown. An MP4
-- its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
+opened); another is unknown. An MP4 -
+its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
 next one agrees with, alone or behind an ID3v2 tag; an MP4 whose sound
 is not AAC is refused when it is opened - since 1.7 it is decoded when
 it is MP3, FLAC or Vorbis. A Matroska file's first bytes say nothing
@@ -509,8 +509,8 @@ fn OpenAudioStream(base: *AudioCodecBase, tags: ?[*]const utility.TagItem, err: 
 - `tags`: where the bytes come from - one of `ACA_Name` (a file to
   open), `ACA_FileHandle` (a file the program has open, read from where
   it is), `ACA_ReadFunc` with `ACA_ReadData` (the program's own
-  function) or `ACA_Media` (a file media.library has open, SINCE 1.6)
-  - and `ACA_Codec`, the kind, when the program knows it;
+  function) or `ACA_Media` (a file media.library has open, SINCE 1.6) -
+  and `ACA_Codec`, the kind, when the program knows it;
   `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1);
   `ACA_MediaTrack` picks a container's track (SINCE 1.6).
 - `err`: where to say why it failed (ACERR_*), or null.

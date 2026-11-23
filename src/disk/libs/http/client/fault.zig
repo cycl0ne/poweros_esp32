@@ -46,8 +46,8 @@ const Id = strings.Id;
 /// The words are a clause without its full stop, in lower case:
 /// `the host has no address`, or `HttpGet: the host has no address`
 /// with a header. When `code` is the client's last failure - the last
-/// OpenRequest, ReadRequest or WriteRequest of the client's that failed
-/// - they say what the client kept of it:
+/// OpenRequest, ReadRequest or WriteRequest of the client's that failed -
+/// they say what the client kept of it:
 ///
 /// - HTTPERR_IO: bsdsocket's words for its Errno (`the connection
 ///   failed: Connection refused`); `stopped` when Ctrl-C ended the wait,

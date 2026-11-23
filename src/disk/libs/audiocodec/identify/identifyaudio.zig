@@ -29,8 +29,8 @@ const _identify = @import("_identify.zig");
 /// an ID3v2 tag that ends among the bytes given. An Ogg page whose first
 /// packet is Vorbis's header is ACODEC_VORBIS, Opus's ACODEC_OPUS (SINCE
 /// 1.9; unknown before), FLAC's is ACODEC_FLAC (and refused when it is
-/// opened); another is unknown. An MP4
-/// - its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
+/// opened); another is unknown. An MP4 -
+/// its first box an `ftyp` - is ACODEC_AAC, as is an ADTS header the
 /// next one agrees with, alone or behind an ID3v2 tag; an MP4 whose sound
 /// is not AAC is refused when it is opened - since 1.7 it is decoded when
 /// it is MP3, FLAC or Vorbis. A Matroska file's first bytes say nothing

@@ -67,8 +67,8 @@ const FileHandle = dos.FileHandle;
 ///   closes the handle, or sets another mode before handing it on.
 ///
 /// OWNERSHIP:
-/// A buffer the caller gives stays the caller's and must outlive the handle
-/// - until `Close`, or a later `SetVBuf`. One allocated here is freed by
+/// A buffer the caller gives stays the caller's and must outlive the handle -
+/// until `Close`, or a later `SetVBuf`. One allocated here is freed by
 /// `Close`, and so is `BUF_ASYNC`'s request.
 ///
 /// BUGS:

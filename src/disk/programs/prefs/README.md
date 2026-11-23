@@ -53,8 +53,8 @@ The settings are on ten pages, under tabs:
 - **Region:** the country, whose dates, numbers and money the system
   writes; the languages wanted, the preferred first - a click on one
   in the list of those there are puts it on the preferred list after the
-  ones there, Clear empties it, and with none the country's own is used
-  - texts are shown in the first of them a program has them in; and the
+  ones there, Clear empties it, and with none the country's own is used -
+  texts are shown in the first of them a program has them in; and the
   time zone, picked by the places that keep it or typed as a POSIX TZ
   rule (`CET-1CEST,M3.5.0,M10.5.0/3`), a rule that is none refused;
   and the keymap the keyboard types by, from the ones keymap.library

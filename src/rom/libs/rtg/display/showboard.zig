@@ -119,8 +119,8 @@ const modes = @import("../mode/_mode.zig");
 ///
 /// BUGS:
 /// The DSI boards' driver keeps the bands it was handed when it answers
-/// an error - no memory for the stream's chain, a flip that did not land
-/// - and reads them when the pointer next moves or is first laid.
+/// an error - no memory for the stream's chain, a flip that did not land -
+/// and reads them when the pointer next moves or is first laid.
 ///
 /// SEE ALSO:
 /// `ShowBitMap`, `BoardDisplayBitMap`, `BestBoardMode`, `RefreshRect`

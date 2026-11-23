@@ -38,8 +38,8 @@ machine came up, the clock a driver times a wait by, and
 spinlock held, in an interrupt, for a part's few microseconds between
 two writes. A module that reads the machine's counter itself
 (`sdk.hardware.systimer.read()`) asks `sys.GetTimeBase()` how fast it
-counts. The kernel knows the rate - on a PC it measures it as it starts
-- and a module is built on its own, whether it is in the ROM or loaded
+counts. The kernel knows the rate - on a PC it measures it as it starts -
+and a module is built on its own, whether it is in the ROM or loaded
 from the disk: nothing under `sdk.hardware` holds it.
 
 ## Hello, world - in the shell
@@ -338,8 +338,8 @@ them: `checkbox`, `cycle`, `radiobutton`, `string`, `text`, `slider`,
 `meter` (a dial with a scale and a needle), `arc` (a ring filled to a
 level, or turned by its knob), `roller` (a wheel of choices turned by
 dragging), `calendar` (a month to pick a day from), `canvas` (a picture
-the program draws into and the gadget shows, pressed with either button
-- `SYS:Programs/Sheet`'s cells), `qrcode` and `barcode` (a text as a QR code, a Code 128 or an
+the program draws into and the gadget shows, pressed with either button -
+`SYS:Programs/Sheet`'s cells), `qrcode` and `barcode` (a text as a QR code, a Code 128 or an
 EAN-13), `chart` (values over time
 as lines or bars, kept by the gadget), `keyboard` (keys on the screen,
 written to input.device as a keyboard's are),
@@ -623,8 +623,8 @@ more of it than its size suggests: a layout in a group in a page, and
 every message passing through several calls, each with a frame on a
 register-window stack.
 
-The bottom words of every stack - a task's, and the one a command runs on
-- hold a guard. exec looks at it each time it switches away from the task,
+The bottom words of every stack - a task's, and the one a command runs on -
+hold a guard. exec looks at it each time it switches away from the task,
 and once more when the command ends; a stack that ran past its end has
 written over it, and that is a Guru at that moment rather than wherever
 the overflow landed. Found when the command ends, its task is held and

@@ -1003,8 +1003,8 @@ on how it asked.
   half drawn, and several changes that come before it gets there are
   drawn once, in the newest state. A gadget in the border is drawn over
   the border painted afresh under it, so what it no longer draws - an
-  arrow let go - goes, in a window of any size. The new value is the gadget's at once
-  - `GetAttr` reads it - and the display follows a moment later.
+  arrow let go - goes, in a window of any size. The new value is the gadget's at once -
+  `GetAttr` reads it - and the display follows a moment later.
 - `SetAttrsTagList` stores the value and draws nothing;
   `QueueGadgetRefresh` then has intuition draw the gadget as above.
   It never waits, so it is the call for a task that must not wait for a

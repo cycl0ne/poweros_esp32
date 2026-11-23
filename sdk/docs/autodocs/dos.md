@@ -3679,8 +3679,8 @@ it at once.
 **NOTES**
 
 Inhibit the drive first: a drive whose volume is in use refuses. The
-medium is taken as it is - nothing is erased or checked block by block
-- so a format of a large card is quick.
+medium is taken as it is - nothing is erased or checked block by block -
+so a format of a large card is quick.
 
 **BUGS**
 
@@ -3767,8 +3767,8 @@ it at once.
 **NOTES**
 
 Inhibit the drive first: a drive whose volume is in use refuses. The
-medium is taken as it is - nothing is erased or checked block by block
-- so a format of a large card is quick.
+medium is taken as it is - nothing is erased or checked block by block -
+so a format of a large card is quick.
 
 **BUGS**
 
@@ -8683,8 +8683,8 @@ there would wait for a line nobody typed.
 
 **OWNERSHIP**
 
-A buffer the caller gives stays the caller's and must outlive the handle
-- until `Close`, or a later `SetVBuf`. One allocated here is freed by
+A buffer the caller gives stays the caller's and must outlive the handle -
+until `Close`, or a later `SetVBuf`. One allocated here is freed by
 `Close`, and so is `BUF_ASYNC`'s request.
 
 **BUGS**

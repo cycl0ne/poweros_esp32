@@ -860,8 +860,8 @@ while (true) {
   follows the object it found until that is deleted or renamed, and then
   waits for the name again.
 - **Where**: dos writes the handler's own path into `full_name` - an
-  assign's directory written out, so `ENV:Sys/x` is `Ram Disk:ENV/Sys/x`
-  - and the handler keeps the request. RAM:, the flash file system and
+  assign's directory written out, so `ENV:Sys/x` is `Ram Disk:ENV/Sys/x` -
+  and the handler keeps the request. RAM:, the flash file system and
   fat-handler watch, so `ENV:`, `ENVARC:` and the cards in `SD0:` can be
   watched; `StartNotify` fails with `ERROR_ACTION_NOT_KNOWN` on a handler
   that does not. Of a multi-directory assign, the first directory is
@@ -1137,8 +1137,8 @@ itself: a partition is a drive because its node says so, and a medium
 that does not hold what the DosType says is not a DOS disk. A FAT
 drive's DosType says it in its first three bytes: `MSD` for a drive
 that is the volume itself, from its first block, and `MSH` for one that
-begins with a partition table, whose first FAT partition is the volume
-- a card or a stick as it is sold. Its last byte is the format a format
+begins with a partition table, whose first FAT partition is the volume -
+a card or a stick as it is sold. Its last byte is the format a format
 writes (`sdk.dos.fat`): 0 FAT32 up to 32 GiB and exFAT past that, 1
 FAT32, 2 exFAT. A posfs drive's is `POS\0` for a drive that is the
 volume, and `POS\1` for one that begins with a partition table, whose
@@ -1163,8 +1163,8 @@ a file on the drive is open for writing. `Format(drive, name,
 dos_type)` then has the handler write a fresh volume over the drive's
 area, named `name` (null for none on FAT, `Empty` on the flash disk), in
 the format `dos_type` names - 0 for the drive's own. A handler refuses a
-format while the drive's volume is in use, and everything it can refuse
-- a name its format cannot hold, a format the area is too small for - it
+format while the drive's volume is in use, and everything it can refuse -
+a name its format cannot hold, a format the area is too small for - it
 refuses before it writes. `FormatTags(drive, name, dos_type, tags)` is
 the same with a tag list (`dos.dostags`); its `FORMAT_BlockSize` asks
 for the unit the volume gives out space in, in bytes, where the handler
@@ -1205,8 +1205,8 @@ cluster is cleared before it is linked on. What a change gives back
 goes the other way: the entry first, then its clusters. A cut leaves at
 worst clusters taken that no entry names, which a check gives back, a
 file at its size before the write, or a renamed object under both
-names. The volume is marked dirty on the medium before the first change
-- a FAT32 card's table entry 1 in every copy, an exFAT card's volume
+names. The volume is marked dirty on the medium before the first change -
+a FAT32 card's table entry 1 in every copy, an exFAT card's volume
 flags - and clean again once no file that was written to is open, so a
 checker (`fsck.fat`, `fsck.exfat`, chkdsk) knows to look; a volume that
 was dirty when it was mounted stays dirty. A file closed,

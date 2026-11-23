@@ -4562,8 +4562,8 @@ device with a processor of its own the fragment function has to be of a
 fixed form (`shader.fixedFragment`), or the pipeline is refused with
 `error_feature_not_present`.
 
-A pipeline of no fragment stage, as Vulkan 1.0 allows - a shadow map's
-- is drawn with a fragment function of the library's own that does
+A pipeline of no fragment stage, as Vulkan 1.0 allows - a shadow map's -
+is drawn with a fragment function of the library's own that does
 nothing, as lavapipe binds `noop_fs` where a pipeline has none
 (lvp_device.c:2048-2052, lvp_execute.c:552-554; since 1.115). Vulkan
 leaves what it writes into a colour attachment undefined, and here every
@@ -5696,8 +5696,8 @@ each pair only for a plane the format has (vk_render_pass.c:1561-1567,
 v3dv_cmd_buffer.c:1533-1544). Until 1.106 such an op was
 `error_feature_not_present`.
 
-Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
-- wants `stored_both` as well (since 1.47): the cores write a pixel's
+Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint` -
+wants `stored_both` as well (since 1.47): the cores write a pixel's
 planes where they lie in its four bytes, while a device that stores the
 whole of a tile buffer, the V3D, writes one plane's pixels one after
 another and so keeps only a format of that plane alone. There such an
@@ -6285,8 +6285,8 @@ as the render pass ends.
 
 `image_usage` may be COLOR_ATTACHMENT, TRANSFER_SRC and TRANSFER_DST,
 in any mix (since 1.43): an image is drawn into through a render pass,
-copied out of - a picture of the frame, taken with CmdCopyImageToBuffer
-- and copied into. SAMPLED is not among them: a texture is kept in
+copied out of - a picture of the frame, taken with CmdCopyImageToBuffer -
+and copied into. SAMPLED is not among them: a texture is kept in
 blocks of texels, which a display's buffer is not. `present_mode` has
 to be `fifo`: a buffer is shown from the display's next frame on, and
 there is no way to ask a display for anything else.

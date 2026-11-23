@@ -20,8 +20,8 @@ machine was given, and the field at the top shows the package that was
 read. The button beside the field asks for the drawer the package is
 in, and checks it once one is picked; an address a server answers is
 typed in, and Return checks it. Every path something would happen to
-is a row - a drawer to be made only counted, in the lines over the list
-- with what would happen to it, the path, and how much would be written
+is a row - a drawer to be made only counted, in the lines over the list -
+with what would happen to it, the path, and how much would be written
 for it:
 
 - `new` a file the build has begun to ship, `newer` one it changed,

@@ -164,8 +164,8 @@ const _surface = @import("../surface/_surface.zig");
 /// v3dv_cmd_buffer.c:1533-1544). Until 1.106 such an op was
 /// `error_feature_not_present`.
 ///
-/// Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint`
-/// - wants `stored_both` as well (since 1.47): the cores write a pixel's
+/// Keeping either plane of a format that holds **both** - `d16_unorm_s8_uint` -
+/// wants `stored_both` as well (since 1.47): the cores write a pixel's
 /// planes where they lie in its four bytes, while a device that stores the
 /// whole of a tile buffer, the V3D, writes one plane's pixels one after
 /// another and so keeps only a format of that plane alone. There such an

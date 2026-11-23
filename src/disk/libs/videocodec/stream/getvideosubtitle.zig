@@ -33,8 +33,8 @@ const _subtitle = @import("../subtitle/_subtitle.zig");
 /// they are read from five seconds before, for the lines still showing.
 /// Text is
 /// UTF-8, its lines apart by `\n`: SubRip's tags and SubStation Alpha's
-/// codes are taken out, and of SubStation Alpha only the dialogue is kept
-/// - signs placed on the picture and drawings are left out. Lines that
+/// codes are taken out, and of SubStation Alpha only the dialogue is kept -
+/// signs placed on the picture and drawings are left out. Lines that
 /// show at once come one under another, in the order they began;
 /// VSUB_ITALIC says that all of it is in italics. A Blu-ray's picture
 /// (PGS) comes as `pixels`, fitted to the film's size where the disc's

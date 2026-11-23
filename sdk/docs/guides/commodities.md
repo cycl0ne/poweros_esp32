@@ -3,8 +3,8 @@
 A commodity is a program that watches the input stream and acts on it:
 a hotkey that brings a program up, a blanker that waits for the keys to
 go quiet, a key turned into a string of others. `commodities.library`,
-in `LIBS:`, puts itself on input.device's handler chain, at priority 53
-- before the windowing system (50) and the console (45) - and sends
+in `LIBS:`, puts itself on input.device's handler chain, at priority 53 -
+before the windowing system (50) and the console (45) - and sends
 every event through a network of objects the commodities have built
 before any window sees it.
 

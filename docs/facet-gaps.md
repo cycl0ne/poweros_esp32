@@ -243,8 +243,8 @@ pass's depth. What is left out:
   (`texture.Texture.linearBy`). Since 1.63 it may have **levels** as well,
   as many as halving its longer side gives: a layer holds the whole
   pyramid, a level's rows after the level before it and each as wide as
-  that level is, a pass draws into the level its framebuffer's view names
-  - that level's size being what the framebuffer has to fit - and a sample
+  that level is, a pass draws into the level its framebuffer's view names -
+  that level's size being what the framebuffer has to fit - and a sample
   reads the level it falls on or the one its sampler holds it to. So a
   shadow map and its smaller copies are the levels of one image.
   What is left out: it is never of type `3d`, a slice being nothing a pass
@@ -603,8 +603,8 @@ attachment holds - 65535ths of the range for `d16_unorm` - and the slope
 is of the triangle's steepest, in depth over a pixel. What is left out:
 
 - **Every device moves it since 1.47** (`PhysicalDeviceFeatures.depth_bias`):
-  the V3D's own depth offset packet takes Vulkan's three numbers unscaled
-  - the units in the depth buffer's smallest differences, the factor of
+  the V3D's own depth offset packet takes Vulkan's three numbers unscaled -
+  the units in the depth buffer's smallest differences, the factor of
   the triangle's slope, the clamp as its limit.
 - **Only triangles are moved**, as in Vulkan: points and lines, and
   triangles drawn as their edges or corners, are drawn where they are.

@@ -32,8 +32,8 @@ const _media = @import("_media.zig");
 /// - `tags`: where the bytes come from - one of `ACA_Name` (a file to
 ///   open), `ACA_FileHandle` (a file the program has open, read from where
 ///   it is), `ACA_ReadFunc` with `ACA_ReadData` (the program's own
-///   function) or `ACA_Media` (a file media.library has open, SINCE 1.6)
-///   - and `ACA_Codec`, the kind, when the program knows it;
+///   function) or `ACA_Media` (a file media.library has open, SINCE 1.6) -
+///   and `ACA_Codec`, the kind, when the program knows it;
 ///   `ACA_KeepPicture` keeps the picture the tags hold (SINCE 1.1);
 ///   `ACA_MediaTrack` picks a container's track (SINCE 1.6).
 /// - `err`: where to say why it failed (ACERR_*), or null.

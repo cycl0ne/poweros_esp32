@@ -731,8 +731,8 @@ upd.GetUpdateInfo(run, &info); // what it came to, `tried` among it
 - **What a run says** goes to the program's output, or with `UPD_Hook`
   to a hook: an `UpdateMessage` for each line, for each path with what
   happens to it, the bytes written for it and the two versions
-  (`old_version`, `new_version`), and for each file once it is in place
-  - enough for a list and a gauge.
+  (`old_version`, `new_version`), and for each file once it is in place -
+  enough for a list and a gauge.
 - **A run belongs to the task that made it**, which it checks for Ctrl-C
   between files, and whose wait on the network Ctrl-C breaks: a program
   that runs it on a process of its own stops it with

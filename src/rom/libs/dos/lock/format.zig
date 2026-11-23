@@ -55,8 +55,8 @@ const DosBase = @import("../dos_base.zig").DosBase;
 ///
 /// NOTES:
 /// Inhibit the drive first: a drive whose volume is in use refuses. The
-/// medium is taken as it is - nothing is erased or checked block by block
-/// - so a format of a large card is quick.
+/// medium is taken as it is - nothing is erased or checked block by block -
+/// so a format of a large card is quick.
 ///
 /// BUGS:
 /// None known.

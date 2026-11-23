@@ -427,8 +427,8 @@ sys.SendIO(&io.std.req); // replied when it has played
 Triggers play on `AUDIO_MAX_TRIGGERS` (8) voices of their own, beside
 the streams, so a trigger never takes a stream's place and a stream is
 never cut for one. When all eight play, a new trigger takes the voice
-of the one of lowest priority - the `pri` of the request's message node
-- and of those the one that has played longest, so long as that is not
+of the one of lowest priority - the `pri` of the request's message node -
+and of those the one that has played longest, so long as that is not
 above its own; the one that gives way comes back `IOERR_ABORTED`, and a
 trigger no voice gives way to `AUDIOERR_NOVOICE`. The system's beep
 plays at 85, above a program's sounds at 0. `AbortIO` takes a trigger
@@ -622,8 +622,8 @@ disks alone.
 
 ### Opus
 
-**Opus** is a station's, a call's and a WebM film's sound: in Ogg pages
-- an `.opus` file, read like Ogg Vorbis - or a track of a Matroska file,
+**Opus** is a station's, a call's and a WebM film's sound: in Ogg pages -
+an `.opus` file, read like Ogg Vorbis - or a track of a Matroska file,
 a WebM or an MP4. Its packets are SILK (speech), CELT (music) or both,
 changing as the sound does, and always decode at 48 kHz whatever rate
 the head says the sound was recorded at. The samples an encoder's start
@@ -894,8 +894,8 @@ interface is put in its setting and its rate set where the endpoint has
 the control; then three buffers of ten milliseconds go round as
 isochronous transfers. A buffer with a packet the controller could not
 send, or with frames before it that went without - the ring ran dry -
-counts in `underruns`. It needs a controller with isochronous transfers
-- xhci.device - and declines a device on any other.
+counts in `underruns`. It needs a controller with isochronous transfers -
+xhci.device - and declines a device on any other.
 
 Its volume is the feature unit's: `AUDIOCTRL_VOLUME` sets every channel
 with a volume, in 1/256 dB within the range the unit gives, mutes it for

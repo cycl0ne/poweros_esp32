@@ -31,8 +31,8 @@ const _font = @import("_font.zig");
 /// The list is read from ENV:Sys/font.prefs again when `index` is 0, so
 /// a program that walks it from the start has it as the prefs are now,
 /// and then kept: the same list the fonts `OpenDiskFont` makes fall back
-/// to, in the same order. A program that draws a family's outline itself
-/// - `OpenOutlineFont` - looks for a character the family lacks in
+/// to, in the same order. A program that draws a family's outline itself -
+/// `OpenOutlineFont` - looks for a character the family lacks in
 /// these, one after another.
 ///
 /// CONTEXT:
