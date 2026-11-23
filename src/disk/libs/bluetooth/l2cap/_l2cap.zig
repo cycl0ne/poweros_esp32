@@ -4,13 +4,11 @@
 //! channel.
 //!
 //! **The channels** are the fixed ones - the signalling channels, BR/EDR's
-//! and LE's (signalling.zig), and over LE the attribute protocol's and
-//! the security manager's (hci/smp.zig) - and over BR/EDR the dynamic
-//! ones, each to a protocol of the device (channels.zig). A request of
-//! the attribute protocol is answered that it is not supported, and an
-//! indication confirmed; a pairing BR/EDR's security manager channel is
-//! asked for is refused as not supported. Frames on any other channel are
-//! let go.
+//! and LE's (signalling.zig), and over LE the attribute protocol's
+//! (att/) and the security manager's (hci/smp.zig) - and over BR/EDR the
+//! dynamic ones, each to a protocol of the device (channels.zig). A
+//! pairing BR/EDR's security manager channel is asked for is refused as
+//! not supported. Frames on any other channel are let go.
 //!
 //! Pure, as the rest of the layer.
 
@@ -24,13 +22,7 @@ const Connection = connections.Connection;
 const smp = @import("../hci/smp.zig");
 const signalling = @import("signalling.zig");
 const channels = @import("channels.zig");
-
-/// The attribute protocol's Error Response, the indication and its
-/// confirmation, and the error a request is answered with.
-const ATT_ERROR_RESPONSE: u8 = 0x01;
-const ATT_HANDLE_VALUE_INDICATION: u8 = 0x1D;
-const ATT_HANDLE_VALUE_CONFIRMATION: u8 = 0x1E;
-const ATT_REQUEST_NOT_SUPPORTED: u8 = 0x06;
+const _att = @import("../att/_att.zig");
 
 /// A whole frame of the link, from its L2CAP header on, handed to its
 /// channel.
@@ -41,7 +33,7 @@ pub fn received(layer: *Hci, connection: *Connection, frame: []const u8) void {
     if (connection.le) {
         switch (cid) {
             l2cap.CID_LE_SIGNALING => signalling.le(layer, connection, payload),
-            l2cap.CID_ATT => attribute(layer, connection, payload),
+            l2cap.CID_ATT => _att.received(layer, connection, payload),
             l2cap.CID_SMP => smp.received(layer, connection, payload),
             else => {},
         }
@@ -58,27 +50,6 @@ pub fn received(layer: *Hci, connection: *Connection, frame: []const u8) void {
 /// queued.
 pub fn send(layer: *Hci, connection: *const Connection, cid: u16, payload: []const u8) bool {
     return acl.send(layer, connection, cid, payload);
-}
-
-fn attribute(layer: *Hci, connection: *Connection, payload: []const u8) void {
-    if (payload.len == 0) return;
-    const opcode = payload[0];
-    if (opcode == ATT_HANDLE_VALUE_INDICATION) {
-        _ = send(layer, connection, l2cap.CID_ATT, &.{ATT_HANDLE_VALUE_CONFIRMATION});
-        return;
-    }
-    if (!isAttRequest(opcode)) return;
-    // The request, no handle in it, and why.
-    _ = send(layer, connection, l2cap.CID_ATT, &.{ ATT_ERROR_RESPONSE, opcode, 0, 0, ATT_REQUEST_NOT_SUPPORTED });
-}
-
-/// The attribute protocol's requests: those a server answers - its
-/// commands, notifications and answers want none.
-fn isAttRequest(opcode: u8) bool {
-    return switch (opcode) {
-        0x02, 0x04, 0x06, 0x08, 0x0A, 0x0C, 0x0E, 0x10, 0x12, 0x16, 0x18, 0x20 => true,
-        else => false,
-    };
 }
 
 /// A pairing over BR/EDR's security manager channel - LE's keys made from

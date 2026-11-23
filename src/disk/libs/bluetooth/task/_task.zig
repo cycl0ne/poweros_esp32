@@ -45,6 +45,12 @@
 //! the queue empties. What the layer tells of a channel goes to the
 //! channel's port as messages of the task's, which come back on a port of
 //! their own (channels.zig); the task does not end while one is out.
+//!
+//! **GATT.** OpenBTGatt and the calls on a block - its characteristics, a
+//! value read or written, a subscription - are parked as the links' calls
+//! are, each on the wait of its procedure (att/client.zig); CloseBTGatt is
+//! answered at once. What the layer tells of a block goes to its port as
+//! the channels' messages do (gatt.zig).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -71,6 +77,8 @@ const _pairing = @import("../pairing/_pairing.zig");
 const l2cap_channels = @import("../l2cap/channels.zig");
 const bondfiles = @import("bondfiles.zig");
 const taskchannels = @import("channels.zig");
+const taskgatt = @import("gatt.zig");
+const att_client = @import("../att/client.zig");
 const cryptoport = @import("crypto.zig");
 const device = @import("device.zig");
 const settings = @import("settings.zig");
@@ -101,16 +109,17 @@ pub const Command = extern struct {
     unit: u32 = 0,
     device_name: [*:0]const u8 = "",
     /// set, discover, stop, connect, disconnect, pair, unpair,
-    /// open_channel, services: the controller (BTController.id), or
-    /// BT_ALL_CONTROLLERS; close_channel, send_channel: the channel's.
+    /// open_channel, services, open_gatt: the controller
+    /// (BTController.id), or BT_ALL_CONTROLLERS; the other calls on a
+    /// channel or a GATT block: the block's.
     controller: u32 = 0,
     /// discover: for how long, in milliseconds (0: the default).
     time_ms: u32 = 0,
     /// set: what is wanted.
     wanted: Wanted = .{},
-    /// connect, disconnect, pair, unpair, open_channel, services: the
-    /// device's address; while parked, the controller waited on and its
-    /// wait.
+    /// connect, disconnect, pair, unpair, open_channel, services,
+    /// open_gatt: the device's address; while parked, the controller
+    /// waited on and its wait.
     address: bluetooth.BTAddress = .{},
     waiting_on: ?*anyopaque = null,
     wait: u32 = 0,
@@ -118,12 +127,21 @@ pub const Command = extern struct {
     /// can do; agents: the one given back, 0 for one added.
     agent: u32 = 0,
     capability: u32 = 0,
-    /// open_channel: the protocol, by its PSM; open_channel,
-    /// close_channel, send_channel: the caller's block (BTChannel).
+    /// open_channel: the protocol, by its PSM. The calls on a channel or
+    /// a GATT block: the caller's block (BTChannel, BTGatt).
     psm: u32 = 0,
-    channel: ?*anyopaque = null,
-    /// send_channel: the frame; services: the caller's room for the
-    /// records, and how much of it they fill.
+    block: ?*anyopaque = null,
+    /// characteristics: the service's first and last handle;
+    /// read_attribute, write_attribute: the attribute's; subscribe,
+    /// unsubscribe: the value's, and (subscribe) its configuration's.
+    handle: u32 = 0,
+    end_handle: u32 = 0,
+    configuration: u32 = 0,
+    /// write_attribute: BTGW_*; subscribe: BTGS_*.
+    flags: u32 = 0,
+    /// send_channel, write_attribute: the frame or the value; services,
+    /// characteristics, read_attribute: the caller's room, and how much
+    /// of it is filled.
     data: ?[*]const u8 = null,
     room: ?[*]u8 = null,
     length: u32 = 0,
@@ -131,7 +149,7 @@ pub const Command = extern struct {
     /// What the call answers.
     result: i32 = 0,
 
-    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents, open_channel, close_channel, send_channel, services };
+    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents, open_channel, close_channel, send_channel, services, open_gatt, close_gatt, characteristics, read_attribute, write_attribute, subscribe, unsubscribe };
 };
 
 /// What SetBTControllerAttrs wants of a controller: `which` says which of
@@ -329,6 +347,11 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                         worked = true;
                         continue;
                     },
+                    .close_gatt => closeGatt(work, command),
+                    .open_gatt, .characteristics, .read_attribute, .write_attribute, .subscribe, .unsubscribe => if (gattCommand(work, command)) {
+                        worked = true;
+                        continue;
+                    },
                 }
                 sys.ReplyMsg(message);
                 worked = true;
@@ -464,6 +487,7 @@ fn add(work: *Work, device_name: [*:0]const u8, unit: u32) i32 {
     controller.* = .{ .base = base, .unit = unit, .layer = .{ .port = device.port(controller), .crypto = cryptoport.port(base) } };
     controller.layer.port.channel = taskchannels.event;
     controller.layer.port.listener = taskchannels.listener;
+    controller.layer.port.gatt = taskgatt.event;
     _controller.copyString(&controller.device_name, device_name);
     const opened = device.open(controller, work.replies);
     if (opened != 0 and opened != hcidev.HCIERR_NOTREADY) {
@@ -512,8 +536,9 @@ fn remove(work: *Work, device_name: [*:0]const u8, unit: u32) void {
     // Its pairings' agents told that it went.
     sys.ObtainSemaphore(&base.lock);
     for (&controller.layer.connections) |*connection| hci_pairing.linkGone(&controller.layer, connection, bluetooth.BTERR_DETACHED);
-    // Its channels' holders told so.
+    // Its channels' and GATT blocks' holders told so.
     l2cap_channels.reset(&controller.layer, bluetooth.BTERR_DETACHED);
+    att_client.reset(&controller.layer, bluetooth.BTERR_DETACHED);
     sys.ReleaseSemaphore(&base.lock);
     askAgents(work);
     answerGone(work, controller);
@@ -727,13 +752,13 @@ fn closeChannel(work: *Work, command: *Command) bool {
     sys.ObtainSemaphore(&base.lock);
     defer sys.ReleaseSemaphore(&base.lock);
     const controller = taskchannels.byId(base, command.controller) orelse {
-        taskchannels.takeBack(base, command.channel.?);
+        taskchannels.takeBack(base, command.block.?);
         command.result = 0;
         return false;
     };
     controller.layer.now = now(work);
     const begun = taskchannels.close(controller, command);
-    taskchannels.takeBack(base, command.channel.?);
+    taskchannels.takeBack(base, command.block.?);
     return park(work, command, controller, begun);
 }
 
@@ -757,6 +782,54 @@ fn sendChannel(work: *Work, command: *Command) bool {
     }
     sys.AddTail(&work.sending, &command.message.node);
     return true;
+}
+
+// --- GATT -------------------------------------------------------------------------
+
+/// OpenBTGatt - asked of the controller a link is, or would be, made by -
+/// and the calls on a block, asked of the block's: the command parked
+/// until its procedure is over - true - or answered at once.
+fn gattCommand(work: *Work, command: *Command) bool {
+    const base = work.base;
+    const sys = base.sys_base;
+    const controller = (if (command.kind == .open_gatt) linkController(work, command) else gattController(work, command)) orelse return false;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    controller.layer.now = now(work);
+    const begun = switch (command.kind) {
+        .open_gatt => taskgatt.open(controller, command),
+        .characteristics => taskgatt.characteristics(controller, command),
+        .read_attribute => taskgatt.read(controller, command),
+        .write_attribute => taskgatt.write(controller, command),
+        .subscribe => taskgatt.subscribe(controller, command),
+        else => taskgatt.unsubscribe(controller, command),
+    };
+    return park(work, command, controller, begun);
+}
+
+/// A block's controller; null - the command's result set - where it is
+/// gone.
+fn gattController(work: *Work, command: *Command) ?*Controller {
+    return taskchannels.byId(work.base, command.controller) orelse {
+        command.result = bluetooth.BTERR_NOTCONNECTED;
+        return null;
+    };
+}
+
+/// CloseBTGatt: the block's record given back by its controller, and its
+/// messages still on its port taken back. One whose controller is gone is
+/// closed already.
+fn closeGatt(work: *Work, command: *Command) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    sys.ObtainSemaphore(&base.lock);
+    defer sys.ReleaseSemaphore(&base.lock);
+    if (taskchannels.byId(base, command.controller)) |controller| {
+        controller.layer.now = now(work);
+        taskgatt.close(controller, command);
+    }
+    taskchannels.takeBack(base, command.block.?);
+    command.result = 0;
 }
 
 /// The sends waiting for room tried again in their order, until one finds
@@ -831,8 +904,13 @@ fn answerWaits(work: *Work) void {
         const wait = &controller.layer.waits[index];
         if (!wait.done) continue;
         command.result = wait.result;
+        const serial = wait.serial;
         connections.release(&controller.layer, index);
-        if (command.kind == .services) taskchannels.servicesAnswered(controller, command);
+        switch (command.kind) {
+            .services => taskchannels.servicesAnswered(controller, command, serial),
+            .open_gatt, .characteristics, .read_attribute, .write_attribute, .subscribe, .unsubscribe => taskgatt.answered(controller, command, serial),
+            else => {},
+        }
         sys.Remove(node);
         sys.ReplyMsg(message);
     }

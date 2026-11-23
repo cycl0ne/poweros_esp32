@@ -54,12 +54,16 @@
 //!                      whether the device gave its identity
 //!   AGENT              the pairings the devices begin answered here, as
 //!                      PAIR's are, until CTRL-C
-//!   SERVICES <device>  the services the device offers, asked of it over
-//!                      BR/EDR - its address, or the name a scan heard -
+//!   SERVICES <device>  the services the device offers - its address, or
+//!                      the name a scan heard - asked of its SDP server
+//!                      over BR/EDR, of its GATT server over LE (a device
+//!                      a scan heard over LE alone, or with LE or RANDOM),
 //!                      each on a line: what it is, the PSM or RFCOMM
-//!                      channel it is reached on, its name; with INFO, its
-//!                      profile and the profile's version, and its
-//!                      record's handle
+//!                      channel it is reached on - over LE, its handles -
+//!                      its name; with INFO, its profile and the
+//!                      profile's version, and its record's handle - over
+//!                      LE, its characteristics: what each is, its
+//!                      value's handle, what may be done with it
 //!   CONTROLLER <n>     the one controller these are for; without it,
 //!                      every one - for CONNECT, the one with a link to
 //!                      the device, else the one that found it, else the
@@ -71,7 +75,8 @@
 //! ObtainBTDevices), the links and bonds its too (ConnectBTDevice,
 //! DisconnectBTDevice, ObtainBTConnections, PairBTDevice, UnpairBTDevice,
 //! ObtainBTBonds), PAIR and AGENT its agents (AddBTAgent), and the
-//! services its SDP client's (ObtainBTServices).
+//! services its SDP and GATT clients' (ObtainBTServices, OpenBTGatt,
+//! ObtainBTCharacteristics).
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -86,7 +91,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.7 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.8 (23.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
@@ -154,7 +159,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_unpair] != 0) return unpair(dl, bt, controller, @ptrFromInt(argv[arg_unpair]));
     if (argv[arg_bonds] != 0) return showBonds(dl, bt, controller, argv[arg_info] != 0);
     if (argv[arg_agent] != 0) return agent(sys, dl, bt, pin);
-    if (argv[arg_services] != 0) return services(dl, bt, controller, @ptrFromInt(argv[arg_services]), &argv);
+    if (argv[arg_services] != 0) return services(sys, dl, bt, controller, @ptrFromInt(argv[arg_services]), &argv);
     if (argv[arg_scan] != 0) {
         const seconds: u32 = if (argv[arg_time] != 0) @bitCast(@as(*const i32, @ptrFromInt(argv[arg_time])).*) else 10;
         return scan(sys, dl, bt, controller, seconds, argv[arg_info] != 0);
@@ -901,10 +906,16 @@ fn showBonds(dl: *DosBase, bt: *BluetoothBase, controller: u32, with_info: bool)
 
 // --- the services -----------------------------------------------------------------
 
-/// The device SERVICES names, over BR/EDR: its address, or the name a
-/// scan heard - one heard over LE alone as it was heard; null for
-/// neither.
-fn brEdrDevice(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
+/// The device SERVICES names: its address - over BR/EDR, or with LE or
+/// RANDOM over LE - or the name a scan heard, over BR/EDR where it was
+/// heard so, else over LE; null for neither.
+fn serviceDevice(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
+    if (argv[arg_le] != 0 or argv[arg_random] != 0) {
+        const found = deviceNamed(bt, controller, text, argv) orelse return null;
+        // Heard over BR/EDR too: its LE address is the same one.
+        if (found.kind == bluetooth.BTADDR_BREDR) return .{ .bytes = found.bytes, .kind = if (argv[arg_random] != 0) bluetooth.BTADDR_LE_RANDOM else bluetooth.BTADDR_LE_PUBLIC };
+        return found;
+    }
     if (parseAddress(text)) |bytes| {
         if (argv[arg_le] == 0 and argv[arg_random] == 0) return .{ .bytes = bytes };
     }
@@ -922,16 +933,16 @@ fn brEdrDevice(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *
 }
 
 /// SERVICES: what the device offers, a service on a line.
-fn services(dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) i32 {
-    const address = brEdrDevice(bt, controller, text, argv) orelse {
+fn services(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) i32 {
+    const address = serviceDevice(bt, controller, text, argv) orelse {
         _ = Printf(dl, "%s: no device %s (an address, or a name a SCAN heard)\n", .{ @as([*:0]const u8, COMMAND_NAME), text });
         return dos.RETURN_ERROR;
     };
-    if (address.kind != bluetooth.BTADDR_BREDR) {
-        _ = Printf(dl, "%s: that device was heard over LE alone, whose services are not asked for yet\n", .{@as([*:0]const u8, COMMAND_NAME)});
-        return dos.RETURN_ERROR;
-    }
     var shown: [18]u8 = undefined;
+    if (address.kind != bluetooth.BTADDR_BREDR) {
+        _ = Printf(dl, "Asking %s for its services over LE\n", .{addressText(&address.bytes, &shown)});
+        return gattServices(sys, dl, bt, controller, address, argv[arg_info] != 0);
+    }
     _ = Printf(dl, "Asking %s for its services\n", .{addressText(&address.bytes, &shown)});
     var found: ?*exec.List = null;
     const result = bt.ObtainBTServices(controller, &address, &found);
@@ -976,7 +987,9 @@ fn serviceLine(dl: *DosBase, service: *const bluetooth.BTService) void {
         for (service.class.bytes, 0..) |byte, index| sent_order[15 - index] = byte;
         _ = Printf(dl, "  %-28s", .{uuidText(&sent_order, &uuid_text)});
     }
-    if (service.rfcomm_channel != 0) {
+    if (service.flags & bluetooth.BTSF_GATT != 0) {
+        _ = Printf(dl, "  handles %04lx-%04lx", .{ @as(u64, service.handle), @as(u64, service.end_handle) });
+    } else if (service.rfcomm_channel != 0) {
         _ = Printf(dl, "  RFCOMM %-4u", .{@as(u32, service.rfcomm_channel)});
     } else if (service.psm != 0) {
         _ = Printf(dl, "  PSM %-7u", .{@as(u32, service.psm)});
@@ -986,6 +999,132 @@ fn serviceLine(dl: *DosBase, service: *const bluetooth.BTService) void {
     const name: [*:0]const u8 = service.node.name orelse "";
     if (name[0] != 0) _ = Printf(dl, "  %s", .{name});
     _ = dl.PutStr("\n");
+}
+
+/// SERVICES over LE: the device's GATT services, each on a line, with
+/// INFO each one's characteristics - all over one block, so that one link
+/// serves them all.
+fn gattServices(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, controller: u32, address: bluetooth.BTAddress, with_info: bool) i32 {
+    const port = sys.CreateMsgPort() orelse {
+        _ = dl.PutStr("no memory\n");
+        return dos.RETURN_FAIL;
+    };
+    defer sys.DeleteMsgPort(port);
+    var gatt: ?*bluetooth.BTGatt = null;
+    const opened = bt.OpenBTGatt(controller, &address, port, &gatt);
+    if (opened != 0) {
+        gattFailure(dl, opened, controller);
+        return dos.RETURN_ERROR;
+    }
+    // Closed before its port goes.
+    defer bt.CloseBTGatt(gatt);
+    const block = gatt.?;
+    var found: ?*exec.List = null;
+    const result = bt.ObtainBTServices(block.controller, &address, &found);
+    if (result != 0) {
+        gattFailure(dl, result, controller);
+        return dos.RETURN_ERROR;
+    }
+    defer bt.ReleaseBTServices(found);
+    if (with_info) _ = Printf(dl, "  PDUs of up to %u bytes\n", .{@as(u32, block.mtu)});
+    var any = false;
+    var it = found.?.iterator();
+    while (it.next()) |node| {
+        const service: *bluetooth.BTService = @fieldParentPtr("node", node);
+        any = true;
+        serviceLine(dl, service);
+        if (with_info) {
+            const listed = characteristicLines(dl, bt, block, service);
+            if (listed != 0) {
+                gattFailure(dl, listed, controller);
+                return dos.RETURN_ERROR;
+            }
+        }
+    }
+    if (!any) _ = dl.PutStr("no service\n");
+    return dos.RETURN_OK;
+}
+
+/// With INFO, over LE: the service's characteristics, each on a line -
+/// what it is, its value's handle, what may be done with it, how many
+/// descriptors it has; 0, or why they could not be asked for.
+fn characteristicLines(dl: *DosBase, bt: *BluetoothBase, block: *bluetooth.BTGatt, service: *const bluetooth.BTService) i32 {
+    var found: ?*exec.List = null;
+    const result = bt.ObtainBTCharacteristics(block, service, &found);
+    if (result != 0) return result;
+    defer bt.ReleaseBTCharacteristics(found);
+    var it = found.?.iterator();
+    while (it.next()) |node| {
+        const characteristic: *bluetooth.BTCharacteristic = @fieldParentPtr("node", node);
+        if (characteristicName(characteristic.uuid16)) |what| {
+            _ = Printf(dl, "      %-30s", .{what});
+        } else if (characteristic.uuid16 != 0) {
+            _ = Printf(dl, "      characteristic %04lx%-11s", .{ @as(u64, characteristic.uuid16), @as([*:0]const u8, "") });
+        } else {
+            var uuid_text: [37]u8 = undefined;
+            var sent_order: [16]u8 = undefined;
+            for (characteristic.uuid.bytes, 0..) |byte, index| sent_order[15 - index] = byte;
+            _ = Printf(dl, "      %-30s", .{uuidText(&sent_order, &uuid_text)});
+        }
+        var properties: [80]u8 = undefined;
+        _ = Printf(dl, "  %04lx  %s", .{ @as(u64, characteristic.value_handle), propertiesText(characteristic.properties, &properties) });
+        if (characteristic.descriptor_count == 1) {
+            _ = dl.PutStr(", a descriptor");
+        } else if (characteristic.descriptor_count > 1) {
+            _ = Printf(dl, ", %u descriptors", .{characteristic.descriptor_count});
+        }
+        _ = dl.PutStr("\n");
+    }
+    return 0;
+}
+
+/// What may be done with a characteristic's value, its properties named.
+fn propertiesText(properties: u16, into: *[80]u8) [*:0]const u8 {
+    const att = bluetooth.att;
+    const named = [_]struct { u16, []const u8 }{
+        .{ att.GATT_PROP_READ, "read" },
+        .{ att.GATT_PROP_WRITE, "write" },
+        .{ att.GATT_PROP_WRITE_NO_RESPONSE, "write without answer" },
+        .{ att.GATT_PROP_SIGNED_WRITE, "signed write" },
+        .{ att.GATT_PROP_NOTIFY, "notify" },
+        .{ att.GATT_PROP_INDICATE, "indicate" },
+        .{ att.GATT_PROP_BROADCAST, "broadcast" },
+    };
+    var at: usize = 0;
+    for (named) |one| {
+        if (properties & one[0] == 0) continue;
+        if (at != 0) {
+            @memcpy(into[at..][0..2], ", ");
+            at += 2;
+        }
+        @memcpy(into[at..][0..one[1].len], one[1]);
+        at += one[1].len;
+    }
+    if (at == 0) {
+        @memcpy(into[0..7], "nothing");
+        at = 7;
+    }
+    into[at] = 0;
+    return @ptrCast(into);
+}
+
+/// A GATT call's failure: the device's refusal, its answer, the rest as
+/// a link's.
+fn gattFailure(dl: *DosBase, result: i32, controller: u32) void {
+    if (result <= bluetooth.BTERR_ATT and result > bluetooth.BTERR_ATT - 0x100) {
+        _ = Printf(dl, "%s: the device refused the question (ATT error %02lx)\n", .{ @as([*:0]const u8, COMMAND_NAME), @as(u64, @intCast(bluetooth.BTERR_ATT - result)) });
+        return;
+    }
+    const reason: ?[*:0]const u8 = switch (result) {
+        bluetooth.BTERR_PROTOCOL => "the device's answer made no sense",
+        bluetooth.BTERR_NOMEM => "no memory, or no room for another block or call",
+        bluetooth.BTERR_UNSUPPORTED => "the controller cannot link over LE",
+        bluetooth.BTERR_TIMEOUT => "the device did not answer in time",
+        else => null,
+    };
+    if (reason) |why| {
+        _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), why });
+    } else linkFailure(dl, result, controller);
 }
 
 /// With INFO: its profile and the profile's version, and its record.
@@ -1330,10 +1469,60 @@ fn serviceName(uuid: u16) ?[*:0]const u8 {
         0x1203 => "generic audio",
         0x1800 => "generic access",
         0x1801 => "generic attribute",
+        0x1802 => "immediate alert",
+        0x1803 => "link loss",
+        0x1804 => "transmit power",
+        0x1805 => "current time",
+        0x1809 => "health thermometer",
         0x180A => "device information",
         0x180D => "heart rate",
         0x180F => "battery",
+        0x1810 => "blood pressure",
         0x1812 => "keyboard, mouse or game controller over LE",
+        0x1813 => "scan parameters",
+        0x1814 => "running speed and cadence",
+        0x1816 => "cycling speed and cadence",
+        0x1818 => "cycling power",
+        0x181A => "environmental sensing",
+        0x181D => "weight scale",
+        0x1826 => "fitness machine",
+        else => null,
+    };
+}
+
+/// What the characteristics most often met are, by their 16-bit UUID.
+fn characteristicName(uuid: u16) ?[*:0]const u8 {
+    return switch (uuid) {
+        0x2A00 => "device name",
+        0x2A01 => "appearance",
+        0x2A02 => "peripheral privacy",
+        0x2A03 => "reconnection address",
+        0x2A04 => "preferred link parameters",
+        0x2A05 => "service changed",
+        0x2A19 => "battery level",
+        0x2A22 => "boot keyboard input",
+        0x2A23 => "system ID",
+        0x2A24 => "model number",
+        0x2A25 => "serial number",
+        0x2A26 => "firmware revision",
+        0x2A27 => "hardware revision",
+        0x2A28 => "software revision",
+        0x2A29 => "manufacturer name",
+        0x2A32 => "boot keyboard output",
+        0x2A33 => "boot mouse input",
+        0x2A37 => "heart rate measurement",
+        0x2A38 => "body sensor location",
+        0x2A4A => "HID information",
+        0x2A4B => "report map",
+        0x2A4C => "HID control point",
+        0x2A4D => "report",
+        0x2A4E => "protocol mode",
+        0x2A50 => "PnP ID",
+        0x2AA6 => "central address resolution",
+        0x2AC9 => "private addresses only",
+        0x2B29 => "client supported features",
+        0x2B2A => "database hash",
+        0x2B3A => "server supported features",
         else => null,
     };
 }

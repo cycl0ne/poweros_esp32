@@ -8,8 +8,8 @@ const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _task = @import("../task/_task.zig");
 const _service = @import("_service.zig");
 
-/// Asks a device which services it offers - its SDP server, over BR/EDR -
-/// and lists them.
+/// Asks a device which services it offers - its SDP server over BR/EDR,
+/// its GATT server over LE - and lists them.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -23,18 +23,21 @@ const _service = @import("_service.zig");
 /// - `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
 ///   for the one with a link to the device, else the one whose discovery
 ///   found it, else the first that is up and on.
-/// - `address` - the device's, a BTADDR_BREDR address.
+/// - `address` - the device's: a BTADDR_BREDR address for its SDP
+///   records, an LE one for its GATT services.
 /// - `list` - set to the list of BTService once the device has answered;
 ///   null otherwise.
 ///
 /// RESULT:
 /// 0 once the device has answered - its list empty where it offers
 /// nothing. Otherwise why not: BTERR_BUSY while the controller asks
-/// another device, BTERR_PROTOCOL for an answer that is not well made or
-/// the device's error, BTERR_NOMEM for one past 32 KiB or without memory,
-/// BTERR_TIMEOUT for a device that does not answer within 10 seconds,
-/// BTERR_UNSUPPORTED for an LE address; what OpenBTChannel answers for a
-/// channel to its SDP server that could not be opened.
+/// another device over BR/EDR, BTERR_PROTOCOL for an answer that is not
+/// well made or the device's error, BTERR_NOMEM for one past 32 KiB or
+/// without memory, BTERR_TIMEOUT for a device that does not answer within
+/// 10 seconds - 30 over LE - BTERR_ATT less the device's reason for a
+/// request of GATT's it refused; what OpenBTChannel answers for a channel
+/// to its SDP server that could not be opened, what OpenBTGatt answers for
+/// an LE link that could not be made.
 ///
 /// BEHAVIOR:
 /// A channel is opened to the device's SDP server (l2cap.PSM_SDP) - its
@@ -47,6 +50,16 @@ const _service = @import("_service.zig");
 /// channel it is reached on, its name and its handle, and the record
 /// itself, from which a profile reads attributes of its own (sdp.zig).
 ///
+/// Over LE the device's GATT server is asked for its primary services
+/// (Read By Group Type), from the first handle to the last in as many
+/// requests as that takes, over the link to the device - made where there
+/// is none, as for OpenBTGatt, and ended two seconds after - in their turn
+/// among the requests of the link's blocks. Each service is a BTService
+/// with BTSF_GATT: its UUID as its class, the handles of its first
+/// attribute and its last (`handle`, `end_handle`), whose
+/// characteristics ObtainBTCharacteristics lists; no name, PSM or
+/// record.
+///
 /// CONTEXT:
 /// - Waits: yes, until the device has answered or not.
 /// - Interrupts: no.
@@ -58,7 +71,8 @@ const _service = @import("_service.zig");
 /// ReleaseBTServices, the records and names with it.
 ///
 /// NOTES:
-/// GATT's services, over LE, are not asked for yet.
+/// Over LE the primary services are listed; a service another includes,
+/// a secondary one, is not.
 ///
 /// BUGS:
 /// None known.
@@ -86,5 +100,6 @@ pub fn ObtainBTServices(base: *BluetoothBase, controller: u32, address: *const b
     if (!_task.tell(base, &command)) return bluetooth.BTERR_NOCONTROLLER;
     if (command.result != 0) return command.result;
     const records: [*]const u8 = @ptrCast(room);
+    if (address.kind != bluetooth.BTADDR_BREDR) return _service.makeGatt(base, command.controller, address.*, records[0..command.have], list);
     return _service.make(base, command.controller, address.*, records[0..command.have], list);
 }

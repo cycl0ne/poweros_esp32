@@ -19,6 +19,7 @@ const l2cap = bluetooth.l2cap;
 const sdp = bluetooth.sdp;
 const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _sdp = @import("../sdp/_sdp.zig");
+const att_client = @import("../att/client.zig");
 
 /// The room the records are gathered in: more than a device sends.
 pub const ROOM = 32 * 1024;
@@ -196,6 +197,41 @@ pub fn make(base: *BluetoothBase, controller: u32, address: bluetooth.BTAddress,
     list.init(.unknown);
     var fill: Fill = .{ .list = list, .sys = sys, .at = @intFromPtr(memory) + head, .controller = controller, .address = address };
     _ = walk(records, &fill, Fill.add);
+    into.* = list;
+    return 0;
+}
+
+/// ObtainBTServices's list over LE, made from the GATT services in
+/// `records` - the services procedure's, a ServiceRecord each
+/// (att/client.zig) - in one block that ReleaseBTServices frees: 0,
+/// BTERR_PROTOCOL for records that are not that, BTERR_NOMEM.
+pub fn makeGatt(base: *BluetoothBase, controller: u32, address: bluetooth.BTAddress, records: []const u8, into: *?*exec.List) i32 {
+    const sys = base.sys_base;
+    const each = @sizeOf(att_client.ServiceRecord);
+    if (records.len % each != 0) return bluetooth.BTERR_PROTOCOL;
+    const count = records.len / each;
+    const head = (@sizeOf(exec.List) + ENTRY_ALIGN - 1) / ENTRY_ALIGN * ENTRY_ALIGN;
+    // No record, an empty name.
+    const entry = entrySize(0, 0);
+    const memory = sys.AllocVec(head + count * entry, exec.MEMF_CLEAR) orelse return bluetooth.BTERR_NOMEM;
+    const list: *exec.List = @ptrCast(@alignCast(memory));
+    list.init(.unknown);
+    for (0..count) |index| {
+        const record: *align(1) const att_client.ServiceRecord = @ptrCast(records[index * each ..].ptr);
+        const at = @intFromPtr(memory) + head + index * entry;
+        const service: *bluetooth.BTService = @ptrFromInt(at);
+        service.* = .{
+            .controller = controller,
+            .address = address,
+            .flags = bluetooth.BTSF_GATT,
+            .class = .{ .bytes = record.uuid },
+            .class16 = _sdp.short(record.uuid),
+            .handle = record.start,
+            .end_handle = record.end,
+        };
+        service.node.name = @ptrFromInt(at + @sizeOf(bluetooth.BTService));
+        sys.AddTail(list, &service.node);
+    }
     into.* = list;
     return 0;
 }

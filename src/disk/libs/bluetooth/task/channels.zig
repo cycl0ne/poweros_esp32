@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT
 //! The task's side of the channels (l2cap/channels.zig) and the service
-//! queries (sdp/client.zig): the commands of OpenBTChannel,
-//! CloseBTChannel, SendBTChannel and ObtainBTServices handed to the
-//! layer, what the layer tells of the channels sent to their ports as
-//! BTChannelMessages, and those messages freed as they come back.
+//! queries (sdp/client.zig; att/client.zig over LE): the commands of
+//! OpenBTChannel, CloseBTChannel, SendBTChannel and ObtainBTServices
+//! handed to the layer, what the layer tells of the channels sent to
+//! their ports as BTChannelMessages, and those messages - and GATT's
+//! (gatt.zig) - freed as they come back.
 //!
 //! **A channel's block** is the BTChannel its holder has: OpenBTChannel's
 //! made in its caller's context, one a device opened to a listener made
@@ -13,14 +14,15 @@
 //! channel closed, its controller gone - touches nothing.
 //!
 //! **The messages** are the task's: made here, put on the channel's port
-//! and kept on the base's list until they come back, freed then. Those
-//! about a channel CloseBTChannel closes that are still on its port are
-//! taken back off it (exec's RemoveMsg) and freed, so that nothing about
-//! the channel is there once the call returns - one its receiver has
-//! taken already comes back as ever. Of a channel's frames at most
-//! l2cap_channels.OUT_MOST are out at once - those past them let go and
-//! counted in its block (BTChannel.dropped) - and the task does not end
-//! while any message is out.
+//! - or the GATT block's - and kept on the base's list until they come
+//! back, freed then. Those about a channel CloseBTChannel closes, or a
+//! block CloseBTGatt does, that are still on its port are taken back off
+//! it (exec's RemoveMsg) and freed, so that nothing about it is there
+//! once the call returns - one its receiver has taken already comes back
+//! as ever. Of a channel's frames at most l2cap_channels.OUT_MOST are out
+//! at once - those past them let go and counted in its block
+//! (BTChannel.dropped), as a GATT block's values are - and the task does
+//! not end while any message is out.
 //!
 //! Every function here runs in the task, the layers under the base's lock
 //! - the upcalls (`event`, `listener`) called by the layer under it.
@@ -36,6 +38,7 @@ const _channel = @import("../channel/_channel.zig");
 const connections = @import("../hci/connections.zig");
 const l2cap_channels = @import("../l2cap/channels.zig");
 const sdp_client = @import("../sdp/client.zig");
+const att_client = @import("../att/client.zig");
 const Command = @import("_task.zig").Command;
 
 /// The port's upcall for the task's channels: one open, a frame, one
@@ -91,7 +94,7 @@ fn taken(controller: *Controller, record: *l2cap_channels.Channel) bool {
     const serving = _channel.find(base, record.listener) orelse return false;
     const memory = sys.AllocVec(@sizeOf(bluetooth.BTChannel), exec.MEMF_CLEAR) orelse return false;
     const block: *bluetooth.BTChannel = @ptrCast(@alignCast(memory));
-    const message = newMessage(controller, block, bluetooth.BTCM_OPENED, 0, 0) orelse {
+    const message = newMessage(controller, block, false, bluetooth.BTCM_OPENED, 0, 0) orelse {
         sys.FreeVec(memory);
         return false;
     };
@@ -112,14 +115,14 @@ fn frame(controller: *Controller, record: *l2cap_channels.Channel, data: []const
         block.dropped +%= 1;
         return;
     }
-    const message = newMessage(controller, block, bluetooth.BTCM_DATA, 0, data.len) orelse {
+    const message = newMessage(controller, block, false, bluetooth.BTCM_DATA, 0, data.len) orelse {
         block.dropped +%= 1;
         return;
     };
-    const room: [*]u8 = @ptrFromInt(@intFromPtr(message) + @sizeOf(_channel.Message));
+    const room = extraOf(message);
     @memcpy(room[0..data.len], data);
-    message.public.data = room;
-    message.public.length = @intCast(data.len);
+    message.public.channel.data = room;
+    message.public.channel.length = @intCast(data.len);
     record.out += 1;
     put(controller.base, port, message);
 }
@@ -130,26 +133,34 @@ fn closed(controller: *Controller, record: *l2cap_channels.Channel, result: i32)
     const block: *bluetooth.BTChannel = @ptrCast(@alignCast(record.owner orelse return));
     block.flags |= bluetooth.BTCHF_CLOSED;
     const port = block.port orelse return;
-    const message = newMessage(controller, block, bluetooth.BTCM_CLOSED, result, 0) orelse return;
+    const message = newMessage(controller, block, false, bluetooth.BTCM_CLOSED, result, 0) orelse return;
     put(controller.base, port, message);
 }
 
-/// A message about the channel `block`, with `extra` bytes after it for a
-/// frame; null without memory.
-pub fn newMessage(controller: *const Controller, block: *bluetooth.BTChannel, kind: u32, result: i32, extra: usize) ?*_channel.Message {
+/// A message about the block `owner` - a channel's, or with `gatt` a GATT
+/// block's - with `extra` bytes after it for a frame or a value; null
+/// without memory.
+pub fn newMessage(controller: *const Controller, owner: *anyopaque, gatt: bool, kind: u32, result: i32, extra: usize) ?*_channel.Message {
     const base = controller.base;
     const replies = base.channel_replies orelse return null;
     const memory = base.sys_base.AllocVec(@sizeOf(_channel.Message) + extra, exec.MEMF_CLEAR) orelse return null;
     const message: *_channel.Message = @ptrCast(@alignCast(memory));
-    message.* = .{
-        .public = .{ .kind = kind, .result = result, .channel = block },
-        .controller = controller.id,
-        .owner = block,
-    };
-    message.public.message.reply_port = replies;
-    message.public.message.length = @sizeOf(bluetooth.BTChannelMessage);
-    message.public.message.node.type = .message;
+    message.* = .{ .gatt = gatt, .controller = controller.id, .owner = owner };
+    if (gatt) {
+        message.public = .{ .gatt = .{ .kind = kind, .result = result, .gatt = @ptrCast(@alignCast(owner)) } };
+    } else {
+        message.public = .{ .channel = .{ .kind = kind, .result = result, .channel = @ptrCast(@alignCast(owner)) } };
+    }
+    const header = _channel.messageOf(message);
+    header.reply_port = replies;
+    header.length = if (gatt) @sizeOf(bluetooth.BTGattMessage) else @sizeOf(bluetooth.BTChannelMessage);
+    header.node.type = .message;
     return message;
+}
+
+/// The room after a message made with extra bytes.
+pub fn extraOf(message: *_channel.Message) [*]u8 {
+    return @ptrFromInt(@intFromPtr(message) + @sizeOf(_channel.Message));
 }
 
 /// The message put on `port`, and kept on the base's list of those out.
@@ -158,21 +169,25 @@ pub fn put(base: *BluetoothBase, port: *exec.MsgPort, message: *_channel.Message
     message.port = port;
     sys.AddTail(&base.channel_messages, &message.link);
     base.channel_out += 1;
-    sys.PutMsg(port, &message.public.message);
+    sys.PutMsg(port, _channel.messageOf(message));
 }
 
-/// A message back: taken off the list and freed, and - a frame's - its
-/// channel's count of frames out given back, where the channel is still
-/// there.
+/// A message back: taken off the list and freed, and - a frame's or a
+/// value's - its channel's or block's count of those out given back,
+/// where it is still there.
 pub fn replied(base: *BluetoothBase, message: *exec.Message) void {
     const sys = base.sys_base;
-    const public: *bluetooth.BTChannelMessage = @fieldParentPtr("message", message);
-    const sent: *_channel.Message = @fieldParentPtr("public", public);
+    const sent = _channel.fromMessage(message);
     sys.ObtainSemaphore(&base.lock);
     sys.Remove(&sent.link);
-    if (sent.public.kind == bluetooth.BTCM_DATA) {
+    const counted = if (sent.gatt) sent.public.gatt.kind == bluetooth.BTGM_VALUE else sent.public.channel.kind == bluetooth.BTCM_DATA;
+    if (counted) {
         if (byId(base, sent.controller)) |controller| {
-            if (l2cap_channels.byOwner(&controller.layer, sent.owner.?)) |record| {
+            if (sent.gatt) {
+                if (att_client.byOwner(&controller.layer, sent.owner.?)) |record| {
+                    if (record.out > 0) record.out -= 1;
+                }
+            } else if (l2cap_channels.byOwner(&controller.layer, sent.owner.?)) |record| {
                 if (record.out > 0) record.out -= 1;
             }
         }
@@ -182,16 +197,16 @@ pub fn replied(base: *BluetoothBase, message: *exec.Message) void {
     sys.FreeVec(sent);
 }
 
-/// CloseBTChannel's, once nothing more is put about the channel `block`:
-/// its messages still on its port taken back off it and freed. One its
-/// receiver has taken already is left to come back.
+/// CloseBTChannel's and CloseBTGatt's, once nothing more is put about
+/// `block`: its messages still on its port taken back off it and freed.
+/// One its receiver has taken already is left to come back.
 pub fn takeBack(base: *BluetoothBase, block: *const anyopaque) void {
     const sys = base.sys_base;
     var it = base.channel_messages.iterator();
     while (it.next()) |node| {
         const sent = _channel.fromLink(node);
         if (@intFromPtr(sent.owner) != @intFromPtr(block)) continue;
-        if (!sys.RemoveMsg(sent.port.?, &sent.public.message)) continue;
+        if (!sys.RemoveMsg(sent.port.?, _channel.messageOf(sent))) continue;
         sys.Remove(&sent.link);
         base.channel_out -= 1;
         sys.FreeVec(sent);
@@ -219,8 +234,8 @@ pub fn open(controller: *Controller, command: *Command) connections.Begun {
     switch (begun) {
         .waiting => |index| {
             const record = l2cap_channels.bySerial(layer, layer.waits[index].serial).?;
-            record.owner = command.channel;
-            const block: *bluetooth.BTChannel = @ptrCast(@alignCast(command.channel.?));
+            record.owner = command.block;
+            const block: *bluetooth.BTChannel = @ptrCast(@alignCast(command.block.?));
             block.controller = controller.id;
         },
         .done => {},
@@ -233,7 +248,7 @@ pub fn open(controller: *Controller, command: *Command) connections.Begun {
 /// put about it either way: its record no longer names the block.
 pub fn close(controller: *Controller, command: *Command) connections.Begun {
     const layer = &controller.layer;
-    const record = l2cap_channels.byOwner(layer, command.channel.?) orelse return .{ .done = 0 };
+    const record = l2cap_channels.byOwner(layer, command.block.?) orelse return .{ .done = 0 };
     return l2cap_channels.closeFor(layer, record);
 }
 
@@ -241,22 +256,30 @@ pub fn close(controller: *Controller, command: *Command) connections.Begun {
 /// while the controller's queue is full, or why not.
 pub fn send(controller: *Controller, command: *Command) i32 {
     const layer = &controller.layer;
-    const record = l2cap_channels.byOwner(layer, command.channel.?) orelse return bluetooth.BTERR_NOTCONNECTED;
+    const record = l2cap_channels.byOwner(layer, command.block.?) orelse return bluetooth.BTERR_NOTCONNECTED;
     return l2cap_channels.send(layer, record, command.data.?[0..command.length]);
 }
 
-/// ObtainBTServices: the device's records asked for, into the caller's
-/// room - the call's wait - or why not.
+/// ObtainBTServices: the device's records asked for - over LE its GATT
+/// services - into the caller's room: the call's wait, or why not.
 pub fn services(controller: *Controller, command: *Command) connections.Begun {
     // The call's list names the controller that asked.
     command.controller = controller.id;
-    return sdp_client.query(&controller.layer, command.address, command.room.?[0..command.length]);
+    const room = command.room.?[0..command.length];
+    if (command.address.kind != bluetooth.BTADDR_BREDR) return att_client.services(&controller.layer, command.address, room);
+    return sdp_client.query(&controller.layer, command.address, room);
 }
 
-/// ObtainBTServices's wait done: how much of the room the records fill
-/// read, and the controller free to query again.
-pub fn servicesAnswered(controller: *Controller, command: *Command) void {
+/// ObtainBTServices's wait done, the wait's `serial` read before it was
+/// given back: how much of the room the records fill read, and the
+/// query's record freed - an SDP query's controller free to query again.
+pub fn servicesAnswered(controller: *Controller, command: *Command, serial: u32) void {
     const layer = &controller.layer;
+    if (command.address.kind != bluetooth.BTADDR_BREDR) {
+        if (att_client.procedureOf(layer, serial)) |procedure| command.have = @intCast(procedure.have);
+        att_client.release(layer, serial);
+        return;
+    }
     command.have = @intCast(layer.sdp_query.have);
     sdp_client.release(layer);
 }

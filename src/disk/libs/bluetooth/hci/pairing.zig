@@ -60,6 +60,7 @@ const Hci = _hci.Hci;
 const bonds = @import("bonds.zig");
 const connections = @import("connections.zig");
 const channels = @import("../l2cap/channels.zig");
+const att_client = @import("../att/client.zig");
 const Connection = connections.Connection;
 const smp = @import("smp.zig");
 
@@ -310,8 +311,10 @@ pub fn finish(layer: *Hci, connection: *Connection, result: i32) void {
         .secure => {
             if (outcome != 0) connections.note(layer, connection, .not_secured, outcome);
             connections.answerConnect(layer, connection.address, outcome);
-            // The channels that waited for it, secure or not.
+            // The channels and GATT's procedures that waited for it,
+            // secure or not.
             channels.linkUp(layer, connection);
+            att_client.linkUp(layer, connection);
         },
         .pair => {
             connections.note(layer, connection, if (outcome == 0) .paired else .not_paired, outcome);

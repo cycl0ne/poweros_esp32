@@ -266,7 +266,7 @@ const tests = [_][]const u8{
     "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
     "film",        "commodities", "filmdt",      "watchdog",  "gpu",
     "dttime",      "names",       "axes",        "bands",     "vchiq",
-    "expunge",     "dtwrite",     "btecho",
+    "expunge",     "dtwrite",     "btecho",      "btgatt",
 };
 /// C:dbg: the tools that look into the running system - its tasks, where
 /// one stands, and the end of one that is stuck.

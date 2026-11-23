@@ -55,7 +55,7 @@ const _task = @import("../task/_task.zig");
 /// ```
 pub fn CloseBTChannel(base: *BluetoothBase, channel: ?*bluetooth.BTChannel) void {
     const block = channel orelse return;
-    var command = _task.Command{ .kind = .close_channel, .controller = block.controller, .channel = block };
+    var command = _task.Command{ .kind = .close_channel, .controller = block.controller, .block = block };
     // A task that does not run has no channel open.
     _ = _task.tell(base, &command);
     base.sys_base.FreeVec(block);

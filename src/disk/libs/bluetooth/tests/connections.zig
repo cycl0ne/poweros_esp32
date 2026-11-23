@@ -437,7 +437,7 @@ test "a frame cut into packets as long as the controller takes, sent within its 
     try testing.expectEqual(@as(u16, 6), layer.acl_credits);
 }
 
-test "LE: the peripheral's parameters taken within the bounds; the attribute protocol and pairing refused" {
+test "LE: the peripheral's parameters taken within the bounds; a request the attribute server does not take and pairing refused" {
     var recorder = Recorder{};
     var layer = upLayer(&recorder);
     try leLinked(&layer, sensor, 0x0040);
@@ -476,12 +476,12 @@ test "LE: the peripheral's parameters taken within the bounds; the attribute pro
     try testing.expectEqual(hci.HCI_OP_LE_REMOTE_PARAMETERS_NEGATIVE_REPLY, recorder.last().opcode);
     try testing.expectEqualSlices(u8, &.{ 0x40, 0x00, hci.HCI_ERR_UNACCEPTABLE_PARAMETERS }, recorder.last().bytes());
 
-    // A request of the attribute protocol: not supported; an indication
-    // confirmed; a notification let go. A Pairing Request - the central's
-    // to send - not supported, and a Security Request refused, there being
-    // no agent.
-    frameIn(&layer, 0x0040, l2cap.CID_ATT, &.{ 0x0A, 0x03, 0x00 });
-    try expectFrame(&recorder, 0x0040, l2cap.CID_ATT, &.{ 0x01, 0x0A, 0x00, 0x00, 0x06 });
+    // A request the attribute server does not take: not supported; an
+    // indication confirmed; a notification let go. A Pairing Request - the
+    // central's to send - not supported, and a Security Request refused,
+    // there being no agent.
+    frameIn(&layer, 0x0040, l2cap.CID_ATT, &.{ 0x16, 0x03, 0x00, 0x00, 0x00, 0x01 });
+    try expectFrame(&recorder, 0x0040, l2cap.CID_ATT, &.{ 0x01, 0x16, 0x00, 0x00, 0x06 });
     frameIn(&layer, 0x0040, l2cap.CID_ATT, &.{ 0x1D, 0x03, 0x00, 0x01 });
     try expectFrame(&recorder, 0x0040, l2cap.CID_ATT, &.{0x1E});
     const packets = recorder.packet_count;

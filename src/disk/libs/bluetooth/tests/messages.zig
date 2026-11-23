@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
-//! Host tests of the task's messages to channels' ports, on the ROM's
-//! exec: each kept on the base's list while it is out; those about a
-//! channel CloseBTChannel closes that are still on its port taken back
-//! and freed, while one its receiver has taken already and another
+//! Host tests of the task's messages to channels' and GATT blocks' ports,
+//! on the ROM's exec: each kept on the base's list while it is out; those
+//! about a channel CloseBTChannel closes that are still on its port taken
+//! back and freed, while one its receiver has taken already and another
 //! channel's are left to come back; each coming back freed, a frame's
-//! count of frames out given back to its channel.
+//! count of frames out given back to its channel; a block's values with
+//! their attribute, 32 of them out at most and those past them counted,
+//! its close told, and what is on its port taken back as CloseBTGatt
+//! does.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -16,6 +19,8 @@ const bluetooth_init = @import("../bluetooth_init.zig");
 const _base = @import("../bluetooth_base.zig");
 const _controller = @import("../controller/_controller.zig");
 const taskchannels = @import("../task/channels.zig");
+const taskgatt = @import("../task/gatt.zig");
+const att_client = @import("../att/client.zig");
 
 const testing = std.testing;
 
@@ -80,6 +85,77 @@ test "a closed channel's messages still on its port taken back; one taken, and a
     while (sys.GetMsg(replies)) |message| taskchannels.replied(base, message);
     try testing.expectEqual(@as(u32, 0), base.channel_out);
     try testing.expectEqual(@as(u8, 0), second.out);
+    try testing.expect(base.channel_messages.isEmpty());
+
+    sys.Remove(&controller.node);
+    sys.DeleteMsgPort(port);
+    sys.DeleteMsgPort(replies);
+    base.channel_replies = null;
+    _ = sys.RemLibrary(lib);
+    try utility_library.tearDown(kub);
+    kexec.deinit();
+}
+
+test "a GATT block's values to its port with their attribute, 32 out at most, its close told, what is on its port taken back" {
+    const kub = try utility_library.setUp();
+    const made = kexec.InitResident(kexec.SysBase, &bluetooth_init.bluetooth_library_tag, null) orelse return error.NoLibrary;
+    const lib: *exec.Library = @ptrCast(@alignCast(made));
+    const base = _base.bluetoothBase(lib);
+    const sys = base.sys_base;
+    const replies = sys.CreateMsgPort() orelse return error.NoPort;
+    base.channel_replies = replies;
+    const port = sys.CreateMsgPort() orelse return error.NoPort;
+    var controller = _controller.Controller{ .base = base, .id = 3, .layer = .{ .port = .{ .context = undefined, .send = sendNothing } } };
+    sys.AddTail(&base.controllers, &controller.node);
+    var block: bluetooth.BTGatt = .{ .controller = 3, .port = port };
+    const record = &controller.layer.att_clients[0];
+    record.* = .{ .state = .open, .serial = 1, .owner = &block };
+
+    // A value: on the port with its attribute, counted until it is replied.
+    sys.ObtainSemaphore(&base.lock);
+    taskgatt.event(&controller, &.{ .kind = .value, .client = record, .handle = 0x002A, .data = "level" });
+    sys.ReleaseSemaphore(&base.lock);
+    try testing.expectEqual(@as(u8, 1), record.out);
+    const taken = sys.GetMsg(port) orelse return error.NoMessage;
+    const told: *bluetooth.BTGattMessage = @fieldParentPtr("message", taken);
+    try testing.expectEqual(bluetooth.BTGM_VALUE, told.kind);
+    try testing.expectEqual(@as(?*bluetooth.BTGatt, &block), told.gatt);
+    try testing.expectEqual(@as(u32, 0x002A), told.handle);
+    try testing.expectEqualStrings("level", told.data.?[0..told.length]);
+    sys.ReplyMsg(taken);
+    while (sys.GetMsg(replies)) |message| taskchannels.replied(base, message);
+    try testing.expectEqual(@as(u8, 0), record.out);
+    try testing.expectEqual(@as(u32, 0), base.channel_out);
+
+    // 33 values: the last let go, and counted.
+    sys.ObtainSemaphore(&base.lock);
+    for (0..att_client.OUT_MOST + 1) |_| taskgatt.event(&controller, &.{ .kind = .value, .client = record, .handle = 0x002A, .data = "x" });
+    sys.ReleaseSemaphore(&base.lock);
+    try testing.expectEqual(@as(u8, att_client.OUT_MOST), record.out);
+    try testing.expectEqual(@as(u32, 1), block.dropped);
+    try testing.expectEqual(@as(u32, att_client.OUT_MOST), base.channel_out);
+
+    // Closed: said in its flags, and on the port after the values.
+    sys.ObtainSemaphore(&base.lock);
+    taskgatt.event(&controller, &.{ .kind = .closed, .client = record, .result = bluetooth.BTERR_TIMEOUT });
+    sys.ReleaseSemaphore(&base.lock);
+    try testing.expect(block.flags & bluetooth.BTGF_CLOSED != 0);
+    try testing.expectEqual(@as(u32, att_client.OUT_MOST + 1), base.channel_out);
+    const first = sys.GetMsg(port) orelse return error.NoMessage;
+    const first_told: *bluetooth.BTGattMessage = @fieldParentPtr("message", first);
+    try testing.expectEqual(bluetooth.BTGM_VALUE, first_told.kind);
+
+    // CloseBTGatt: the record given back, what is still on the port taken
+    // back and freed; the one taken comes back as before.
+    record.* = .{};
+    sys.ObtainSemaphore(&base.lock);
+    taskchannels.takeBack(base, &block);
+    sys.ReleaseSemaphore(&base.lock);
+    try testing.expect(sys.GetMsg(port) == null);
+    try testing.expectEqual(@as(u32, 1), base.channel_out);
+    sys.ReplyMsg(first);
+    while (sys.GetMsg(replies)) |message| taskchannels.replied(base, message);
+    try testing.expectEqual(@as(u32, 0), base.channel_out);
     try testing.expect(base.channel_messages.isEmpty());
 
     sys.Remove(&controller.node);

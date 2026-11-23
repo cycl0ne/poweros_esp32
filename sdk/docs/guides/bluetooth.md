@@ -13,15 +13,19 @@ makes links to them and takes the links they make, pairs with them over
 BR/EDR and LE, keeping the bonds, and opens L2CAP channels over BR/EDR's
 links to the protocols programs speak, taking those the devices open; it
 says what this machine offers, and asks a device what it offers (SDP).
-The profiles over the channels, and LE's channels and attributes, are
-the stack's next parts.
+Over LE it asks a device's GATT server for its services and
+characteristics, reads and writes their values and has them sent as
+they change, and answers the device's questions with a server of its
+own. The profiles over the channels and the attributes, and LE's
+channels, are the stack's next parts.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
 controller's settings, finding devices, links to devices and what a
-link carries, pairing and bonds, channels and services, the USB
-controllers and the MediaTek MT7922's firmware, the Raspberry Pi 4 Model
-B's controller, `C:Bluetooth`, and `C:test/BTEcho`.
+link carries, pairing and bonds, channels and services, attributes over
+LE, the USB controllers and the MediaTek MT7922's firmware, the
+Raspberry Pi 4 Model B's controller, `C:Bluetooth`, `C:test/BTEcho` and
+`C:test/BTGatt`.
 
 ## The pieces
 
@@ -32,11 +36,14 @@ B's controller, `C:Bluetooth`, and `C:test/BTEcho`.
            StartBTDiscovery, ObtainBTDevices, ConnectBTDevice,
            DisconnectBTDevice, ObtainBTConnections, AddBTAgent,
            PairBTDevice, UnpairBTDevice, ObtainBTBonds, OpenBTChannel,
-           SendBTChannel, CloseBTChannel, AddBTListener, ObtainBTServices
+           SendBTChannel, CloseBTChannel, AddBTListener, ObtainBTServices,
+           OpenBTGatt, ObtainBTCharacteristics, ReadBTAttribute,
+           WriteBTAttribute, SubscribeBTAttribute
  the stack          bluetooth.library: its own task, every controller's
                     HCI traffic, the bring-up, the settings, the
                     discoveries, the links and their data, the pairings
-                    and the bonds, the channels, SDP's server and client
+                    and the bonds, the channels, SDP's server and client,
+                    GATT's server and client
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
                           |  AddBTController, RemBTController
  the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
@@ -48,14 +55,15 @@ B's controller, `C:Bluetooth`, and `C:test/BTEcho`.
 
 | Piece | Where | What it is |
 |---|---|---|
-| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, the links to them and the bonds with them, the channels over the links and the services the devices offer, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
+| `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, the links to them and the bonds with them, the channels over the links, the services the devices offer and the attributes of LE's, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
 | `ENVARC:Sys/bluetooth/` | | each controller's settings and bonds, kept by its address |
 | `usb/bluetooth.device` | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller; a class driver |
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
-| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`) |
+| `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`), over LE with its characteristics |
 | `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
+| `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change; in the disk's `tests` set |
 
 The library, the devices, their firmware and the command are the disk's
 `bluetooth` set.
@@ -379,11 +387,11 @@ channel the library answers what a device asks of any link: what it
 supports - its fixed channels, the signalling one alone - and an echo.
 Over BR/EDR it opens and takes the channels to protocols (Channels and
 services, below); LE's credit-based ones are refused. Over LE, a
-peripheral's wish for other
-parameters is taken while they are within the specification's bounds
-and the controller is the link's central; a request of the attribute
-protocol is answered as not supported; the security manager's channel
-is the pairing's (below). A device may end a link it has no use for.
+peripheral's wish for other parameters is taken while they are within
+the specification's bounds and the controller is the link's central;
+the attribute protocol's channel carries GATT both ways (Attributes
+over LE, below); the security manager's channel is the pairing's
+(below). A device may end a link it has no use for.
 
 ## Pairing and bonds
 
@@ -580,7 +588,8 @@ size it asked for allow. Its one record is the server's own (handle 0,
 class 0x1000).
 
 **ObtainBTServices** asks a device what it offers - its SDP server, over
-BR/EDR - and lists what it answers:
+BR/EDR; over LE its GATT server (Attributes over LE, below) - and lists
+what it answers:
 
 ```zig
 var services: ?*exec.List = null;
@@ -607,6 +616,103 @@ as many parts as the device sends them; the link is made and ended as
 | `profile16`, `profile_version` | the first profile its record names, and its version, the major one in the upper byte |
 | `handle` | its record's handle on the device |
 | `record`, `record_length` | the record as the device sent it, for a profile that reads more of it (`sdk/libs/bluetooth/sdp.zig`) |
+
+## Attributes over LE
+
+An LE device says what it offers through GATT: its server holds
+attributes, each with a handle - 1 to 0xFFFF - and a type, a UUID. A
+service is a run of them, from its declaration to its last handle; a
+characteristic in it is a value and what may be done with it - read,
+written, written without an answer, notified or indicated as it
+changes - followed by its descriptors, among them the Client
+Characteristic Configuration (0x2902) a client writes to have the value
+sent to it. The protocol's constants are `sdk/libs/bluetooth/att.zig`'s.
+
+**OpenBTGatt** opens a block to a device's server and waits until it is
+open:
+
+```zig
+const port = sys.CreateMsgPort() orelse return;
+var gatt: ?*bluetooth.BTGatt = null;
+if (bt.OpenBTGatt(bluetooth.BT_ALL_CONTROLLERS, &device, port, &gatt) != 0) return;
+defer bt.CloseBTGatt(gatt);
+```
+
+- **The link** is made where there is none - the device advertising -
+  and ends two seconds after its last block has closed and its last
+  request has been answered, unless `ConnectBTDevice` asks for it
+  meanwhile. A link to a device with a bond is encrypted with the
+  bond's key first.
+- **The MTU.** Before this machine's first request on a link the two
+  say how long a PDU each takes - this machine 517 bytes - and the
+  smaller is the link's, in the block's `mtu`.
+- **The requests** of all the blocks on a link go one at a time, in the
+  order they were asked for. A device that does not answer one within
+  30 seconds is asked nothing more over that link: each block on it is
+  closed, `BTERR_TIMEOUT`, and a new block needs the link made again.
+- **A refusal** is `BTERR_ATT` less the device's reason, an
+  `att.ATT_ERR_*` - `BTERR_ATT - att.ATT_ERR_READ_NOT_PERMITTED` for a
+  value that may not be read. A value that wants the link encrypted
+  (`ATT_ERR_INSUFFICIENT_ENCRYPTION`, `ATT_ERR_INSUFFICIENT_AUTHENTICATION`)
+  needs a bond: pair with the device first (`PairBTDevice`).
+
+**ObtainBTServices**, given an LE address, asks the device's server for
+its primary services, each a `BTService` with `BTSF_GATT`: its UUID in
+`class` and `class16`, its first and last handles in `handle` and
+`end_handle`; it needs no block. **ObtainBTCharacteristics** lists a
+service's characteristics, each a `BTCharacteristic`, in handle order:
+
+```zig
+var characteristics: ?*exec.List = null;
+if (bt.ObtainBTCharacteristics(gatt.?, service, &characteristics) != 0) return;
+defer bt.ReleaseBTCharacteristics(characteristics);
+```
+
+| Field | What it is |
+|---|---|
+| `uuid`, `uuid16` | what it is, as a UUID and as its 16 bits where it has them, else 0 |
+| `properties` | what may be done with its value: `att.GATT_PROP_READ`, `GATT_PROP_WRITE`, `GATT_PROP_WRITE_NO_RESPONSE`, `GATT_PROP_NOTIFY`, `GATT_PROP_INDICATE`, ... |
+| `handle`, `value_handle`, `end_handle` | its declaration's handle, its value's, and its last |
+| `descriptors`, `descriptor_count` | its descriptors, each a `BTDescriptor`: its UUID and handle |
+| `configuration_handle` | its Client Characteristic Configuration's handle; 0 for none |
+
+**ReadBTAttribute** reads a value by its handle - a characteristic's
+`value_handle`, a descriptor's - in as many requests as it takes: an
+answer that fills its PDU is read on from where it ended, until the
+device says there is no more or the buffer is full. A value is 512
+bytes at the most. **WriteBTAttribute** writes one in a single request,
+the link's MTU less 3 bytes at the most (`BTERR_TOOLONG` past it), and
+waits for the device's answer; with `BTGW_NORESPONSE` it goes as a Write
+Command, which the device does not answer, and the call returns once it
+is sent.
+
+**SubscribeBTAttribute** has the device send a characteristic's value as
+it changes, notified or - with `BTGS_INDICATE` - indicated, each
+indication confirmed as it comes. What is written into its configuration
+is what the open blocks on the link want of the value together, so that
+the blocks of several programs share it; `UnsubscribeBTAttribute` and
+`CloseBTGatt` write it again with what the others still want, nothing
+where none does. A subscription the device refuses is taken back.
+
+What comes for a block goes to its port as `BTGattMessage`s, the
+library's, each replied once it is read:
+
+| `kind` | What it says |
+|---|---|
+| `BTGM_VALUE` | a value the block subscribed to: the attribute in `handle`, the value in `data` and `length`, there until the message is replied |
+| `BTGM_CLOSED` | the block closed - with its link, its controller, or a request not answered - and why, in `result`; `BTGF_CLOSED` is set in its `flags` |
+
+A block has at most 32 values out unreplied: those past them are let go
+and counted in its `dropped`. `CloseBTGatt` takes back what is still on
+the port about the block, as `CloseBTChannel` does.
+
+**The GATT server.** Over each LE link the library answers the device's
+client too: the machine's name (Device Name), that it is a computer
+(Appearance), and Service Changed, whose configuration each link keeps -
+the attributes never change, so it is never indicated. Its values are
+read, and the configuration alone is written; a request it does not
+take is answered as not supported. A device reaches it over the links
+this machine makes: the library does not advertise.
 
 ## Controllers on USB
 
@@ -907,13 +1013,39 @@ Asking 00:00:5E:EF:10:47 for its services
       object push 1.2, record 00010012, 102 bytes
 ```
 
+Over LE:
+
+```
+1> Bluetooth SERVICES 00:00:5E:EF:10:51 LE INFO
+Asking 00:00:5E:EF:10:51 for its services over LE
+  PDUs of up to 517 bytes
+  generic access                handles 0001-0005
+      device name                     0003  read
+      appearance                      0005  read
+  generic attribute             handles 0006-000F
+      service changed                 0008  indicate, a descriptor
+      client supported features       000B  read, write
+      database hash                   000D  read
+  device information            handles 0010-0012
+      PnP ID                          0012  read
+  5F1E0000-7A3C-4B8E-9D21-6C0E5A4B3F10  handles 001D-0024
+      5F1E0001-7A3C-4B8E-9D21-6C0E5A4B3F10  001F  read
+      5F1E0002-7A3C-4B8E-9D21-6C0E5A4B3F10  0021  read, write, write without answer
+      5F1E0003-7A3C-4B8E-9D21-6C0E5A4B3F10  0023  read, notify, indicate, a descriptor
+```
+
 `SERVICES` asks a device what it offers (`ObtainBTServices`), by its
-address or a name a `SCAN` heard, over BR/EDR: each service on a line -
-what it is, named where it is well known, else its UUID - where it is
-reached, a PSM or an RFCOMM channel, and its own name; with `INFO`, its
-profile and the profile's version, and its record's handle and size. A
-device heard over LE alone is said to be one, its services over LE not
-asked for yet.
+address or a name a `SCAN` heard: each service on a line - what it is,
+named where it is well known, else its UUID - where it is reached, and
+its own name. Over BR/EDR it asks the device's SDP server, a service
+reached by a PSM or an RFCOMM channel, and with `INFO` says its profile
+and the profile's version, and its record's handle and size. Over LE -
+for a device a scan heard over LE alone, or with `LE` or `RANDOM` - it
+asks the device's GATT server over one block (`OpenBTGatt`), a service
+being a run of handles; with `INFO` it says the link's MTU and each
+service's characteristics (`ObtainBTCharacteristics`): what each is,
+its value's handle - the one `C:test/BTGatt` takes - what may be done
+with it, and how many descriptors it has.
 
 `CONTROLLER` makes any of these for one controller, by its number;
 without it, they are for every one - for `CONNECT`, `PAIR` and
@@ -945,3 +1077,40 @@ shown after `<`, until CTRL-C or the device closes it. `CONTROLLER`
 names the controller, as `Bluetooth`'s does. A device that wants its
 links encrypted takes a channel from a machine it has a bond with
 (`Bluetooth PAIR`).
+
+## C:test/BTGatt
+
+```
+1> C:test/BTGatt 00:00:5E:EF:10:51 READ 001F
+Opening GATT to 00:00:5E:EF:10:51
+Open, PDUs of up to 517 bytes
+001F: 300 bytes
+  0000  76 61 6C 75 65 20 30 30 30 20 76 61 6C 75 65 20  value 000 value
+  0010  30 30 31 20 76 61 6C 75 65 20 30 30 32 20 76 61  001 value 002 va
+...
+1> C:test/BTGatt 00:00:5E:EF:10:51 WRITE 0021 TEXT hello
+Opening GATT to 00:00:5E:EF:10:51
+Open, PDUs of up to 517 bytes
+0021: 5 bytes written
+1> C:test/BTGatt 00:00:5E:EF:10:51 WATCH 0023 INDICATE
+Opening GATT to 00:00:5E:EF:10:51
+Open, PDUs of up to 517 bytes
+Watching 0023, indicated; CTRL-C stops
+0023: 01  .
+0023: 02  .
+***Break
+```
+
+`BTGatt` opens a block to an LE device (`OpenBTGatt`) - by its address,
+public or with `RANDOM` random, or a name a `SCAN` heard - and does one
+thing with an attribute, its handle written in hexadecimal as
+`Bluetooth SERVICES <device> INFO` shows it. `READ` reads the value
+(`ReadBTAttribute`) and shows it in rows of 16 bytes, in hexadecimal and
+as text. `WRITE` writes the bytes `DATA` gives in hexadecimal - `0100`,
+or `01:00` - or `TEXT`'s characters (`WriteBTAttribute`), with
+`NORESPONSE` as a Write Command. `WATCH` finds the characteristic whose
+value has that handle, subscribes to it (`SubscribeBTAttribute`) -
+notified, or with `INDICATE` indicated - and shows each value as it
+comes, until CTRL-C or the link ends. `CONTROLLER` names the controller,
+as `Bluetooth`'s does. A value that wants the link encrypted is read
+once the two have a bond (`Bluetooth PAIR`).

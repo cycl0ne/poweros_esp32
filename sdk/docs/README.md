@@ -139,9 +139,11 @@ tags and constants, each with its doc comment.
   told of changes, their settings and the files they are kept in,
   finding the devices around them, links to them and what a link
   carries, pairing over BR/EDR and LE - agents and bonds - L2CAP's
-  channels and listeners, SDP's server and a device's services, the USB
-  controllers and the MT7922's firmware, the Raspberry Pi 4 Model B's
-  controller on its mini UART, `C:Bluetooth` and `C:test/BTEcho`.
+  channels and listeners, SDP's server and a device's services, GATT's
+  client and server over LE - services, characteristics, values read,
+  written and watched - the USB controllers and the MT7922's firmware,
+  the Raspberry Pi 4 Model B's controller on its mini UART,
+  `C:Bluetooth`, `C:test/BTEcho` and `C:test/BTGatt`.
 - [Displays](guides/rtg.md) - rtg.library, in three parts. What a
   program does with a board: the machine's display, modes, the monitor,
   buffers, handing on what was drawn, showing, bands, power and the

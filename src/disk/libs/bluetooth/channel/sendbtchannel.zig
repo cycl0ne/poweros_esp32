@@ -60,7 +60,7 @@ const _task = @import("../task/_task.zig");
 pub fn SendBTChannel(base: *BluetoothBase, channel: *bluetooth.BTChannel, data: [*]const u8, length: u32) i32 {
     if (channel.flags & bluetooth.BTCHF_CLOSED != 0) return bluetooth.BTERR_NOTCONNECTED;
     if (length > channel.mtu_out) return bluetooth.BTERR_TOOLONG;
-    var command = _task.Command{ .kind = .send_channel, .controller = channel.controller, .channel = channel, .data = data, .length = length };
+    var command = _task.Command{ .kind = .send_channel, .controller = channel.controller, .block = channel, .data = data, .length = length };
     if (!_task.tell(base, &command)) return bluetooth.BTERR_NOTCONNECTED;
     return command.result;
 }

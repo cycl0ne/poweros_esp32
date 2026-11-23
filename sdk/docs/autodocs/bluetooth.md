@@ -16,16 +16,21 @@ Generated from the source by `./zig build autodoc`.
 - [AddBTListener](#addbtlistener) - Serves a PSM: the channels devices open to it are taken, and come to a port.
 - [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
 - [CloseBTChannel](#closebtchannel) - Closes a channel - one OpenBTChannel opened, or one a device opened to a listener - and gives it back.
+- [CloseBTGatt](#closebtgatt) - Closes a block OpenBTGatt opened, and gives it back.
 - [ConnectBTDevice](#connectbtdevice) - Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
 - [DisconnectBTDevice](#disconnectbtdevice) - Ends a link to a device, and waits until it is down.
 - [ObtainBTBonds](#obtainbtbonds) - Lists the bonds of a controller, or of every controller.
+- [ObtainBTCharacteristics](#obtainbtcharacteristics) - Asks a device which characteristics a service of its GATT server has, with their descriptors, and lists them.
 - [ObtainBTConnections](#obtainbtconnections) - Lists a controller's links to devices: a copy of each as it is at the moment of the call.
 - [ObtainBTControllers](#obtainbtcontrollers) - Lists the controllers: a copy of each as it is at the moment of the call.
 - [ObtainBTDevices](#obtainbtdevices) - Lists the devices a controller found: a copy of each as it is at the moment of the call.
-- [ObtainBTServices](#obtainbtservices) - Asks a device which services it offers - its SDP server, over BR/EDR - and lists them.
+- [ObtainBTServices](#obtainbtservices) - Asks a device which services it offers - its SDP server over BR/EDR, its GATT server over LE - and lists them.
 - [OpenBTChannel](#openbtchannel) - Opens an L2CAP channel to a protocol of a device, named by its PSM, and waits until it is open.
+- [OpenBTGatt](#openbtgatt) - Opens the attribute protocol to an LE device, as GATT's client, and waits until it is open.
 - [PairBTDevice](#pairbtdevice) - Begins a pairing with a device, over BR/EDR or LE: a bond the two keep, which authenticates and encrypts their links from then on.
+- [ReadBTAttribute](#readbtattribute) - Reads the value of an attribute of a device's GATT server - a characteristic's (BTCharacteristic.value_handle), a descriptor's.
 - [ReleaseBTBonds](#releasebtbonds) - Gives back a list from ObtainBTBonds.
+- [ReleaseBTCharacteristics](#releasebtcharacteristics) - Gives back a list from ObtainBTCharacteristics.
 - [ReleaseBTConnections](#releasebtconnections) - Gives back what ObtainBTConnections answered.
 - [ReleaseBTControllers](#releasebtcontrollers) - Gives back what ObtainBTControllers answered.
 - [ReleaseBTDevices](#releasebtdevices) - Gives back what ObtainBTDevices answered.
@@ -38,7 +43,10 @@ Generated from the source by `./zig build autodoc`.
 - [SetBTControllerAttrs](#setbtcontrollerattrs) - Changes what a controller does: whether it is on, the name it shows others, whether they find it.
 - [StartBTDiscovery](#startbtdiscovery) - Makes a controller look for the devices around it: LE's advertisers, then the BR/EDR devices that answer an inquiry, then the names not yet heard.
 - [StopBTDiscovery](#stopbtdiscovery) - Ends a controller's discovery now.
+- [SubscribeBTAttribute](#subscribebtattribute) - Has a device send a characteristic's value to the block as it changes.
 - [UnpairBTDevice](#unpairbtdevice) - Ends a bond: the controller forgets the device's key.
+- [UnsubscribeBTAttribute](#unsubscribebtattribute) - Ends a block's subscription to a characteristic's value.
+- [WriteBTAttribute](#writebtattribute) - Writes the value of an attribute of a device's GATT server.
 
 ## AddBTAgent
 
@@ -388,6 +396,65 @@ sys.ReplyMsg(&told.message); // a BTCM_CLOSED, read first
 bt.CloseBTChannel(channel);
 ```
 
+## CloseBTGatt
+
+Closes a block OpenBTGatt opened, and gives it back.
+
+**SYNOPSIS**
+
+```zig
+fn CloseBTGatt(base: *BluetoothBase, gatt: ?*bluetooth.BTGatt) void
+```
+
+**SINCE**
+
+1.8. LVO -136.
+
+**INPUTS**
+
+- `gatt` - from OpenBTGatt, closed already or not; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The block's subscriptions end: the device is told to send no more of
+each value that no other block on the link wants, its answer not
+waited for. A link made for GATT ends two seconds after nothing is
+left on it. Either way nothing about the block is on its port once
+the call returns: the messages about it the caller has not taken
+(GetMsg) are taken back, and no more come.
+
+**CONTEXT**
+
+- Waits: for the library's task, not for the device.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block is gone, and the messages about it that were taken back.
+One the caller took before the call is still replied, without reading
+its `gatt`, whose block is gone.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`OpenBTGatt`, `UnsubscribeBTAttribute`
+
+**EXAMPLES**
+
+```zig
+sys.ReplyMsg(&told.message); // a BTGM_CLOSED, read first
+bt.CloseBTGatt(gatt);
+```
+
 ## ConnectBTDevice
 
 Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
@@ -468,9 +535,9 @@ Nothing.
 **NOTES**
 
 A device may end a link that carries nothing it has a use for - some
-do, seconds after its last channel. The links OpenBTChannel and
-ObtainBTServices make end two seconds after their last channel; one
-this call asks for meanwhile stays.
+do, seconds after its last channel. The links OpenBTChannel,
+ObtainBTServices and OpenBTGatt make end two seconds after their last
+channel, block and request; one this call asks for meanwhile stays.
 
 **BUGS**
 
@@ -621,6 +688,86 @@ var it = list.iterator();
 while (it.next()) |node| {
     const bond: *bluetooth.BTBond = @fieldParentPtr("node", node);
     _ = bond.address;
+}
+```
+
+## ObtainBTCharacteristics
+
+Asks a device which characteristics a service of its GATT server has, with their descriptors, and lists them.
+
+**SYNOPSIS**
+
+```zig
+fn ObtainBTCharacteristics(base: *BluetoothBase, gatt: *bluetooth.BTGatt,
+    service: *const bluetooth.BTService, list: *?*exec.List) i32
+```
+
+**SINCE**
+
+1.8. LVO -140.
+
+**INPUTS**
+
+- `gatt` - an open block to the device.
+- `service` - one of the device's GATT services, as ObtainBTServices
+  lists them (BTSF_GATT).
+- `list` - set to the list of BTCharacteristic once the device has
+  answered; null otherwise.
+
+**RESULT**
+
+0 once the device has answered - the list empty for a service without
+characteristics. Otherwise why not: BTERR_UNSUPPORTED for a service
+that is not a GATT service of the block's device, BTERR_NOTCONNECTED
+for a block that is closed, BTERR_PROTOCOL for an answer that is not
+well made, BTERR_NOMEM for more than 16 KiB of them or without memory,
+BTERR_TIMEOUT for a device that did not answer within 30 seconds,
+BTERR_ATT less the device's reason for a request it refused; for a
+link down meanwhile, its reason.
+
+**BEHAVIOR**
+
+The characteristics' declarations within the service are read (Read
+By Type), then the handles between each one's value and the next
+declaration (Find Information): its descriptors. Each characteristic
+is a BTCharacteristic: its UUID, its properties - what may be done
+with its value - the handles of its declaration, its value and its
+last, its descriptors in handle order, and among them its Client
+Characteristic Configuration's handle, which SubscribeBTAttribute
+writes. The list is in handle order.
+
+**CONTEXT**
+
+- Waits: yes, until the device has answered or not.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is the caller's - made in its context - until
+ReleaseBTCharacteristics, the descriptors with it.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReleaseBTCharacteristics`, `ObtainBTServices`, `ReadBTAttribute`,
+`SubscribeBTAttribute`
+
+**EXAMPLES**
+
+```zig
+var characteristics: ?*exec.List = null;
+if (bt.ObtainBTCharacteristics(gatt, service, &characteristics) != 0) return;
+defer bt.ReleaseBTCharacteristics(characteristics);
+var it = characteristics.?.iterator();
+while (it.next()) |node| {
+    const characteristic: *bluetooth.BTCharacteristic = @fieldParentPtr("node", node);
+    // The battery's level, sent as it changes.
+    if (characteristic.uuid16 == 0x2A19) _ = bt.SubscribeBTAttribute(gatt, characteristic, 0);
 }
 ```
 
@@ -841,7 +988,7 @@ while (it.next()) |node| {
 
 ## ObtainBTServices
 
-Asks a device which services it offers - its SDP server, over BR/EDR - and lists them.
+Asks a device which services it offers - its SDP server over BR/EDR, its GATT server over LE - and lists them.
 
 **SYNOPSIS**
 
@@ -859,7 +1006,8 @@ fn ObtainBTServices(base: *BluetoothBase, controller: u32, address: *const bluet
 - `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
   for the one with a link to the device, else the one whose discovery
   found it, else the first that is up and on.
-- `address` - the device's, a BTADDR_BREDR address.
+- `address` - the device's: a BTADDR_BREDR address for its SDP
+  records, an LE one for its GATT services.
 - `list` - set to the list of BTService once the device has answered;
   null otherwise.
 
@@ -867,11 +1015,13 @@ fn ObtainBTServices(base: *BluetoothBase, controller: u32, address: *const bluet
 
 0 once the device has answered - its list empty where it offers
 nothing. Otherwise why not: BTERR_BUSY while the controller asks
-another device, BTERR_PROTOCOL for an answer that is not well made or
-the device's error, BTERR_NOMEM for one past 32 KiB or without memory,
-BTERR_TIMEOUT for a device that does not answer within 10 seconds,
-BTERR_UNSUPPORTED for an LE address; what OpenBTChannel answers for a
-channel to its SDP server that could not be opened.
+another device over BR/EDR, BTERR_PROTOCOL for an answer that is not
+well made or the device's error, BTERR_NOMEM for one past 32 KiB or
+without memory, BTERR_TIMEOUT for a device that does not answer within
+10 seconds - 30 over LE - BTERR_ATT less the device's reason for a
+request of GATT's it refused; what OpenBTChannel answers for a channel
+to its SDP server that could not be opened, what OpenBTGatt answers for
+an LE link that could not be made.
 
 **BEHAVIOR**
 
@@ -884,6 +1034,16 @@ answer is whole. Each record is a BTService: what it is - its class,
 and its profile with the profile's version - the PSM and RFCOMM
 channel it is reached on, its name and its handle, and the record
 itself, from which a profile reads attributes of its own (sdp.zig).
+
+Over LE the device's GATT server is asked for its primary services
+(Read By Group Type), from the first handle to the last in as many
+requests as that takes, over the link to the device - made where there
+is none, as for OpenBTGatt, and ended two seconds after - in their turn
+among the requests of the link's blocks. Each service is a BTService
+with BTSF_GATT: its UUID as its class, the handles of its first
+attribute and its last (`handle`, `end_handle`), whose
+characteristics ObtainBTCharacteristics lists; no name, PSM or
+record.
 
 **CONTEXT**
 
@@ -899,7 +1059,8 @@ ReleaseBTServices, the records and names with it.
 
 **NOTES**
 
-GATT's services, over LE, are not asked for yet.
+Over LE the primary services are listed; a service another includes,
+a secondary one, is not.
 
 **BUGS**
 
@@ -1014,6 +1175,107 @@ var channel: ?*bluetooth.BTChannel = null;
 if (bt.OpenBTChannel(bluetooth.BT_ALL_CONTROLLERS, &device, 0x1001, port, &channel) != 0) return;
 _ = bt.SendBTChannel(channel.?, "hello", 5);
 bt.CloseBTChannel(channel);
+```
+
+## OpenBTGatt
+
+Opens the attribute protocol to an LE device, as GATT's client, and waits until it is open.
+
+**SYNOPSIS**
+
+```zig
+fn OpenBTGatt(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress,
+    port: *exec.MsgPort, gatt: *?*bluetooth.BTGatt) i32
+```
+
+**SINCE**
+
+1.8. LVO -132.
+
+**INPUTS**
+
+- `controller` - its number (BTController.id), or BT_ALL_CONTROLLERS
+  for the one with a link to the device, else the one whose discovery
+  found it, else the first that is up and on.
+- `address` - the device's, an LE address (BTADDR_LE_PUBLIC,
+  BTADDR_LE_RANDOM).
+- `port` - where the block's messages go (BTGattMessage).
+- `gatt` - set to the block once it is open; null otherwise.
+
+**RESULT**
+
+0 once it is open. Otherwise why not: BTERR_UNSUPPORTED for a
+BR/EDR address or a controller that cannot initiate over LE,
+BTERR_NOMEM for a controller with no room for another block or call,
+BTERR_TIMEOUT for a link over which the device stopped answering
+already; for a link that could not be made, what ConnectBTDevice
+answers.
+
+**BEHAVIOR**
+
+The link to the device is made where there is none - the device
+advertising - and then ends two seconds after its last block has
+closed and its last request has been answered, unless ConnectBTDevice
+asks for it meanwhile. A link to a device with a bond is encrypted
+with the bond's key first. Before this machine's first request on a
+link the two exchange their MTUs: this machine takes PDUs of up to 517
+bytes, and the smaller of the two is the link's (BTGatt.mtu).
+
+The block asks the device's GATT server: ObtainBTServices lists its
+services, ObtainBTCharacteristics a service's characteristics,
+ReadBTAttribute and WriteBTAttribute read and write a value,
+SubscribeBTAttribute has a value sent as it changes. The requests of
+all the blocks on a link go one at a time, in the order they were
+asked for. A device that does not answer one within 30 seconds is
+asked nothing more over the link: every block on it is closed,
+BTERR_TIMEOUT, and a new block needs the link made again.
+
+What comes for the block comes to `port`: a value it subscribed to as
+BTGM_VALUE, the attribute in `handle`, the value in `data` and
+`length` - at most 32 of them out unreplied, those past them let go
+and counted in BTGatt.dropped. Its end - its link's (the link's
+reason), its controller's (BTERR_DETACHED), a request not answered
+(BTERR_TIMEOUT) - comes as BTGM_CLOSED, and BTGF_CLOSED set in its
+flags. A controller keeps 16 blocks.
+
+**CONTEXT**
+
+- Waits: yes, until the block is open or not.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The block is the caller's - made in its context - until CloseBTGatt,
+closed or not. The port must be there until then; each message that
+comes to it is the library's, to be replied (ReplyMsg) once read,
+which frees it.
+
+**NOTES**
+
+GATT goes over LE alone. The library serves GATT itself, to the
+device's client on the same link: the machine's name and appearance,
+and Service Changed.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`CloseBTGatt`, `ObtainBTServices`, `ObtainBTCharacteristics`,
+`ReadBTAttribute`, `WriteBTAttribute`, `SubscribeBTAttribute`
+
+**EXAMPLES**
+
+```zig
+var gatt: ?*bluetooth.BTGatt = null;
+if (bt.OpenBTGatt(bluetooth.BT_ALL_CONTROLLERS, &device, port, &gatt) != 0) return;
+defer bt.CloseBTGatt(gatt);
+var services: ?*exec.List = null;
+if (bt.ObtainBTServices(gatt.?.controller, &device, &services) != 0) return;
+defer bt.ReleaseBTServices(services);
 ```
 
 ## PairBTDevice
@@ -1132,6 +1394,80 @@ if (bt.PairBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device, agent) != 0) return;
 // What comes to `port` answered and replied, until BTAK_DONE.
 ```
 
+## ReadBTAttribute
+
+Reads the value of an attribute of a device's GATT server - a characteristic's (BTCharacteristic.value_handle), a descriptor's.
+
+**SYNOPSIS**
+
+```zig
+fn ReadBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, handle: u32,
+    buffer: [*]u8, length: u32, actual: *u32) i32
+```
+
+**SINCE**
+
+1.8. LVO -148.
+
+**INPUTS**
+
+- `gatt` - an open block to the device.
+- `handle` - the attribute's, 1 to 0xFFFF.
+- `buffer`, `length` - where the value goes, and how much of it.
+- `actual` - set to how much of the buffer the value fills; 0 where
+  it is not read.
+
+**RESULT**
+
+0 once it is read. Otherwise why not: BTERR_ATT less the device's
+reason for a value it does not give - BTERR_ATT -
+att.ATT_ERR_READ_NOT_PERMITTED for one that may not be read, BTERR_ATT
+- att.ATT_ERR_INSUFFICIENT_ENCRYPTION or
+att.ATT_ERR_INSUFFICIENT_AUTHENTICATION for one that needs the link
+encrypted by a bond (PairBTDevice), BTERR_ATT -
+att.ATT_ERR_INVALID_HANDLE for a handle the device does not have;
+BTERR_NOTCONNECTED for a block that is closed, BTERR_TIMEOUT for a
+device that did not answer within 30 seconds, BTERR_NOMEM; for a link
+down meanwhile, its reason.
+
+**BEHAVIOR**
+
+The value is asked for (Read Request) and, where the answer fills its
+PDU - so that the value may go on - the rest from where it ended (Read
+Blob), until the device says there is no more or the buffer is full. A
+value longer than the buffer is cut at its end; values are 512 bytes
+at the most (att.ATT_VALUE_MOST).
+
+**CONTEXT**
+
+- Waits: yes, until the device has answered or not.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The buffer stays the caller's: the library writes it while the call
+waits.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`WriteBTAttribute`, `ObtainBTCharacteristics`, `SubscribeBTAttribute`
+
+**EXAMPLES**
+
+```zig
+var value: [att.ATT_VALUE_MOST]u8 = undefined;
+var length: u32 = 0;
+if (bt.ReadBTAttribute(gatt, characteristic.value_handle, &value, value.len, &length) == 0) {
+    _ = value[0..length];
+}
+```
+
 ## ReleaseBTBonds
 
 Gives back a list from ObtainBTBonds.
@@ -1181,6 +1517,58 @@ None known.
 
 ```zig
 bt.ReleaseBTBonds(list);
+```
+
+## ReleaseBTCharacteristics
+
+Gives back a list from ObtainBTCharacteristics.
+
+**SYNOPSIS**
+
+```zig
+fn ReleaseBTCharacteristics(base: *BluetoothBase, list: ?*exec.List) void
+```
+
+**SINCE**
+
+1.8. LVO -144.
+
+**INPUTS**
+
+- `list` - from ObtainBTCharacteristics; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The list, its nodes and their descriptors are freed.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The list is gone. A subscription to one of its characteristics is
+not: it lasts until UnsubscribeBTAttribute or CloseBTGatt.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainBTCharacteristics`
+
+**EXAMPLES**
+
+```zig
+bt.ReleaseBTCharacteristics(characteristics);
 ```
 
 ## ReleaseBTConnections
@@ -1905,6 +2293,88 @@ None known.
 bt.StopBTDiscovery(bluetooth.BT_ALL_CONTROLLERS);
 ```
 
+## SubscribeBTAttribute
+
+Has a device send a characteristic's value to the block as it changes.
+
+**SYNOPSIS**
+
+```zig
+fn SubscribeBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt,
+    which: *const bluetooth.BTCharacteristic, flags: u32) i32
+```
+
+**SINCE**
+
+1.8. LVO -156.
+
+**INPUTS**
+
+- `gatt` - an open block to the device.
+- `which` - the characteristic, from ObtainBTCharacteristics on the
+  block's device.
+- `flags` - BTGS_INDICATE for its value indicated, each confirmed to
+  the device as it comes - for a characteristic with
+  att.GATT_PROP_INDICATE; 0 for it notified (att.GATT_PROP_NOTIFY).
+
+**RESULT**
+
+0 once the device has taken the subscription. Otherwise why not:
+BTERR_UNSUPPORTED for a characteristic without the property asked for
+or without a Client Characteristic Configuration, BTERR_NOMEM for a
+block with 16 subscriptions or without memory, BTERR_ATT less the
+device's reason for one it refused - a device that wants the link
+encrypted by a bond first, say - BTERR_NOTCONNECTED for a block that
+is closed, BTERR_TIMEOUT for a device that did not answer within 30
+seconds; for a link down meanwhile, its reason.
+
+**BEHAVIOR**
+
+The characteristic's Client Characteristic Configuration is written
+with what the open blocks on the link want of it together - one
+block's notifications and another's indications both - and each value
+the device then sends of it comes to the port of every block
+subscribed to it, as BTGM_VALUE. A block subscribed already is
+subscribed again, notified or indicated as it asks now. A
+subscription the device refuses is taken back.
+
+**CONTEXT**
+
+- Waits: yes, until the device has answered or not.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Each message that comes is the library's, to be replied once read.
+
+**NOTES**
+
+A device with a bond may keep its configuration over its links, and
+send a value before a block has subscribed again: a value no block
+wants is let go.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`UnsubscribeBTAttribute`, `ObtainBTCharacteristics`, `OpenBTGatt`
+
+**EXAMPLES**
+
+```zig
+if (bt.SubscribeBTAttribute(gatt, characteristic, 0) != 0) return;
+_ = sys.WaitPort(port);
+while (sys.GetMsg(port)) |message| {
+    const told: *bluetooth.BTGattMessage = @fieldParentPtr("message", message);
+    if (told.kind == bluetooth.BTGM_VALUE) _ = told.data.?[0..told.length];
+    sys.ReplyMsg(message);
+}
+```
+
 ## UnpairBTDevice
 
 Ends a bond: the controller forgets the device's key.
@@ -1964,4 +2434,141 @@ None known.
 
 ```zig
 _ = bt.UnpairBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device);
+```
+
+## UnsubscribeBTAttribute
+
+Ends a block's subscription to a characteristic's value.
+
+**SYNOPSIS**
+
+```zig
+fn UnsubscribeBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt,
+    which: *const bluetooth.BTCharacteristic) i32
+```
+
+**SINCE**
+
+1.8. LVO -160.
+
+**INPUTS**
+
+- `gatt` - an open block to the device.
+- `which` - the characteristic SubscribeBTAttribute was given.
+
+**RESULT**
+
+0 once the device has taken the change, or for a value the block is
+not subscribed to. Otherwise why not: BTERR_ATT less the device's
+reason, BTERR_NOTCONNECTED for a block that is closed, BTERR_TIMEOUT
+for a device that did not answer within 30 seconds, BTERR_NOMEM; for a
+link down meanwhile, its reason. The subscription is ended either
+way.
+
+**BEHAVIOR**
+
+The block is sent the value no more, and the characteristic's Client
+Characteristic Configuration is written with what the other open
+blocks on the link want of it - nothing, where none does, and the
+device sends it no more. A message of the value already on the port
+stays there.
+
+**CONTEXT**
+
+- Waits: yes, until the device has answered or not.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing changes hands.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`SubscribeBTAttribute`, `CloseBTGatt`
+
+**EXAMPLES**
+
+```zig
+_ = bt.UnsubscribeBTAttribute(gatt, characteristic);
+```
+
+## WriteBTAttribute
+
+Writes the value of an attribute of a device's GATT server.
+
+**SYNOPSIS**
+
+```zig
+fn WriteBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, handle: u32,
+    data: [*]const u8, length: u32, flags: u32) i32
+```
+
+**SINCE**
+
+1.8. LVO -152.
+
+**INPUTS**
+
+- `gatt` - an open block to the device.
+- `handle` - the attribute's, 1 to 0xFFFF: a characteristic's value
+  (BTCharacteristic.value_handle), a descriptor.
+- `data`, `length` - the value, BTGatt.mtu - 3 bytes at the most.
+- `flags` - BTGW_NORESPONSE for a Write Command: the value sent, the
+  device not asked to answer - for a characteristic with
+  att.GATT_PROP_WRITE_NO_RESPONSE; 0 for a Write Request, whose
+  answer is waited for.
+
+**RESULT**
+
+0 once the device has taken the value - with BTGW_NORESPONSE, once it
+is sent. Otherwise why not: BTERR_TOOLONG for a value longer than the
+link's MTU less 3, BTERR_ATT less the device's reason for one it does
+not take - BTERR_ATT - att.ATT_ERR_WRITE_NOT_PERMITTED for an
+attribute that may not be written, BTERR_ATT -
+att.ATT_ERR_INSUFFICIENT_ENCRYPTION for one that needs the link
+encrypted by a bond - BTERR_NOTCONNECTED for a block that is closed,
+BTERR_TIMEOUT for a device that did not answer within 30 seconds,
+BTERR_NOMEM; for a link down meanwhile, its reason.
+
+**BEHAVIOR**
+
+The value goes in its turn among the requests of the link's blocks. A
+Write Command is not answered: a device may let one go.
+
+**CONTEXT**
+
+- Waits: yes, until the device has answered - or the value is sent.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The value stays the caller's: the library reads it while the call
+waits.
+
+**NOTES**
+
+A value is written in one request: one longer than the MTU carries is
+not cut into parts.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ReadBTAttribute`, `SubscribeBTAttribute`
+
+**EXAMPLES**
+
+```zig
+const on = [_]u8{1};
+_ = bt.WriteBTAttribute(gatt, characteristic.value_handle, &on, on.len, 0);
 ```

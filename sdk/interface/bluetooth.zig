@@ -47,6 +47,14 @@ pub const LVO = struct {
     pub const RemBTListener = libraries.lvo(29);
     pub const ObtainBTServices = libraries.lvo(30);
     pub const ReleaseBTServices = libraries.lvo(31);
+    pub const OpenBTGatt = libraries.lvo(32);
+    pub const CloseBTGatt = libraries.lvo(33);
+    pub const ObtainBTCharacteristics = libraries.lvo(34);
+    pub const ReleaseBTCharacteristics = libraries.lvo(35);
+    pub const ReadBTAttribute = libraries.lvo(36);
+    pub const WriteBTAttribute = libraries.lvo(37);
+    pub const SubscribeBTAttribute = libraries.lvo(38);
+    pub const UnsubscribeBTAttribute = libraries.lvo(39);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -80,6 +88,14 @@ pub const Fn = struct {
     pub const RemBTListener = *const fn (*BluetoothBase, ?*bluetooth.BTListener) callconv(.c) void;
     pub const ObtainBTServices = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, *?*exec.List) callconv(.c) i32;
     pub const ReleaseBTServices = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
+    pub const OpenBTGatt = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, *exec.MsgPort, *?*bluetooth.BTGatt) callconv(.c) i32;
+    pub const CloseBTGatt = *const fn (*BluetoothBase, ?*bluetooth.BTGatt) callconv(.c) void;
+    pub const ObtainBTCharacteristics = *const fn (*BluetoothBase, *bluetooth.BTGatt, *const bluetooth.BTService, *?*exec.List) callconv(.c) i32;
+    pub const ReleaseBTCharacteristics = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
+    pub const ReadBTAttribute = *const fn (*BluetoothBase, *bluetooth.BTGatt, u32, [*]u8, u32, *u32) callconv(.c) i32;
+    pub const WriteBTAttribute = *const fn (*BluetoothBase, *bluetooth.BTGatt, u32, [*]const u8, u32, u32) callconv(.c) i32;
+    pub const SubscribeBTAttribute = *const fn (*BluetoothBase, *bluetooth.BTGatt, *const bluetooth.BTCharacteristic, u32) callconv(.c) i32;
+    pub const UnsubscribeBTAttribute = *const fn (*BluetoothBase, *bluetooth.BTGatt, *const bluetooth.BTCharacteristic) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -220,7 +236,7 @@ pub const BluetoothBase = opaque {
         return libraries.call(self, LVO.RemBTListener, Fn.RemBTListener, .{listener});
     }
 
-    /// The services a device offers, asked of its SDP server: 0 and `list` set to a list of BTService, the caller's until ReleaseBTServices, BTERR_*, or the controller's status.
+    /// The services a device offers, asked of its SDP server over BR/EDR, of its GATT server over LE: 0 and `list` set to a list of BTService, the caller's until ReleaseBTServices, BTERR_*, or the controller's status.
     pub fn ObtainBTServices(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, list: *?*exec.List) i32 {
         return libraries.call(self, LVO.ObtainBTServices, Fn.ObtainBTServices, .{ controller, address, list });
     }
@@ -228,5 +244,45 @@ pub const BluetoothBase = opaque {
     /// A list from ObtainBTServices given back. Null does nothing.
     pub fn ReleaseBTServices(self: *BluetoothBase, list: ?*exec.List) void {
         return libraries.call(self, LVO.ReleaseBTServices, Fn.ReleaseBTServices, .{list});
+    }
+
+    /// The attribute protocol opened to an LE device, as GATT's client - its link made first where there is none, made secure where there is a bond: 0 once it is open and `gatt` set, BTERR_*, or the controller's status. The values it subscribes to come to `port`.
+    pub fn OpenBTGatt(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, port: *exec.MsgPort, gatt: *?*bluetooth.BTGatt) i32 {
+        return libraries.call(self, LVO.OpenBTGatt, Fn.OpenBTGatt, .{ controller, address, port, gatt });
+    }
+
+    /// A block closed and given back: its subscriptions ended, the messages about it still on its port taken back. Null does nothing.
+    pub fn CloseBTGatt(self: *BluetoothBase, gatt: ?*bluetooth.BTGatt) void {
+        return libraries.call(self, LVO.CloseBTGatt, Fn.CloseBTGatt, .{gatt});
+    }
+
+    /// The characteristics of a GATT service ObtainBTServices listed, with their descriptors, asked of the device: 0 and `list` set to a list of BTCharacteristic, the caller's until ReleaseBTCharacteristics, or BTERR_*.
+    pub fn ObtainBTCharacteristics(self: *BluetoothBase, gatt: *bluetooth.BTGatt, service: *const bluetooth.BTService, list: *?*exec.List) i32 {
+        return libraries.call(self, LVO.ObtainBTCharacteristics, Fn.ObtainBTCharacteristics, .{ gatt, service, list });
+    }
+
+    /// A list from ObtainBTCharacteristics given back. Null does nothing.
+    pub fn ReleaseBTCharacteristics(self: *BluetoothBase, list: ?*exec.List) void {
+        return libraries.call(self, LVO.ReleaseBTCharacteristics, Fn.ReleaseBTCharacteristics, .{list});
+    }
+
+    /// An attribute's value read, as much of it as `length` holds: 0 and `actual` set, BTERR_ATT less the device's reason, or BTERR_*.
+    pub fn ReadBTAttribute(self: *BluetoothBase, gatt: *bluetooth.BTGatt, handle: u32, buffer: [*]u8, length: u32, actual: *u32) i32 {
+        return libraries.call(self, LVO.ReadBTAttribute, Fn.ReadBTAttribute, .{ gatt, handle, buffer, length, actual });
+    }
+
+    /// An attribute's value written, the device's answer waited for - or with BTGW_NORESPONSE only sent: 0, BTERR_ATT less the device's reason, or BTERR_*.
+    pub fn WriteBTAttribute(self: *BluetoothBase, gatt: *bluetooth.BTGatt, handle: u32, data: [*]const u8, length: u32, flags: u32) i32 {
+        return libraries.call(self, LVO.WriteBTAttribute, Fn.WriteBTAttribute, .{ gatt, handle, data, length, flags });
+    }
+
+    /// A characteristic's value sent by the device as it changes - notified, or with BTGS_INDICATE indicated - each as a BTGM_VALUE to the block's port: 0, BTERR_ATT less the device's reason, or BTERR_*.
+    pub fn SubscribeBTAttribute(self: *BluetoothBase, gatt: *bluetooth.BTGatt, which: *const bluetooth.BTCharacteristic, flags: u32) i32 {
+        return libraries.call(self, LVO.SubscribeBTAttribute, Fn.SubscribeBTAttribute, .{ gatt, which, flags });
+    }
+
+    /// A subscription ended, the device told to send the value no more unless another block wants it: 0, BTERR_ATT less the device's reason, or BTERR_*.
+    pub fn UnsubscribeBTAttribute(self: *BluetoothBase, gatt: *bluetooth.BTGatt, which: *const bluetooth.BTCharacteristic) i32 {
+        return libraries.call(self, LVO.UnsubscribeBTAttribute, Fn.UnsubscribeBTAttribute, .{ gatt, which });
     }
 };

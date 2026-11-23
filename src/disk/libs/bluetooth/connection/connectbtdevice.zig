@@ -76,9 +76,9 @@ const _task = @import("../task/_task.zig");
 ///
 /// NOTES:
 /// A device may end a link that carries nothing it has a use for - some
-/// do, seconds after its last channel. The links OpenBTChannel and
-/// ObtainBTServices make end two seconds after their last channel; one
-/// this call asks for meanwhile stays.
+/// do, seconds after its last channel. The links OpenBTChannel,
+/// ObtainBTServices and OpenBTGatt make end two seconds after their last
+/// channel, block and request; one this call asks for meanwhile stays.
 ///
 /// BUGS:
 /// None known.

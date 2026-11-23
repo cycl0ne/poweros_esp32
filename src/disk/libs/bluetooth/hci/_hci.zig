@@ -6,14 +6,15 @@
 //! shows others and whether it is on (local.zig); the devices it found
 //! (discovery.zig, devices.zig); its links to devices (connections.zig)
 //! and the data on them (acl.zig), which L2CAP's channels carry
-//! (l2cap/) - SDP's among them, its server and its client (sdp/); its
+//! (l2cap/) - SDP's among them, its server and its client (sdp/), and
+//! over LE the attribute protocol, GATT's server and client (att/); its
 //! pairings (pairing.zig; over LE the security manager, smp.zig) and the
 //! bonds they leave (bonds.zig).
 //!
 //! **Pure.** Nothing here calls exec or waits: the task hands in each
 //! packet that came (`received`), the time (`now`) and the time-outs
 //! (`tick`), and the layer sends through its `Port`, a packet at a time,
-//! and tells the task of its channels through it; the security manager's
+//! and tells the task of its channels and GATT blocks through it; the security manager's
 //! cipher, random bytes and curve come through its `crypto` port
 //! (smpcrypto.zig).
 //! So the host tests run it against a script, and the task runs it on
@@ -30,8 +31,9 @@
 //! a lister sees a controller between two packets, never inside one.
 //!
 //! **Its own times** - a discovery's phase, the end of being visible for
-//! a time, a link being made or ended, a pairing and its agent's answer -
-//! are deadlines like a command's:
+//! a time, a link being made or ended, a pairing and its agent's answer,
+//! a channel's or a GATT request's answer - are deadlines like a
+//! command's:
 //! `nextDeadline` answers the earliest of them all, and `tick` runs
 //! whichever has passed.
 
@@ -51,6 +53,8 @@ const smpcrypto = @import("smpcrypto.zig");
 const channels = @import("../l2cap/channels.zig");
 const sdp_client = @import("../sdp/client.zig");
 const sdp_server = @import("../sdp/server.zig");
+const _att = @import("../att/_att.zig");
+const att_client = @import("../att/client.zig");
 
 /// How many commands wait for their turn - room for every link's end
 /// when the power goes off - and how many may be out at once.
@@ -73,6 +77,9 @@ pub const Port = struct {
     /// The listener that serves `psm`, by its number; 0 for none. Null
     /// where there are none.
     listener: ?*const fn (context: *anyopaque, psm: u16) u32 = null,
+    /// What happens to the task's GATT blocks (att/client.zig): a value
+    /// the device sent, a block closed. Null where nobody is told.
+    gatt: ?*const fn (context: *anyopaque, event: *const att_client.Event) void = null,
 };
 
 /// A command waiting for its turn: its opcode, parameters and time.
@@ -191,6 +198,14 @@ pub const Hci = struct {
     sdp_query: sdp_client.Query = .{},
     sdp_room: [sdp_server.ROOM]u8 = undefined,
     sdp_pdu: [acl.FRAME_MOST]u8 = undefined,
+    /// GATT's client (att/client.zig): its blocks and its procedures, the
+    /// last serial either was given, the order of the last procedure; and
+    /// the PDU the attribute protocol's two sides build (att/).
+    att_clients: [att_client.CLIENTS]att_client.Client = @splat(.{}),
+    att_procedures: [att_client.PROCEDURES]att_client.Procedure = @splat(.{}),
+    att_serial: u32 = 0,
+    att_order: u64 = 0,
+    att_pdu: [_att.MTU_OURS]u8 = undefined,
 };
 
 /// Whether feature `n` of page `page` is set.
@@ -320,7 +335,7 @@ pub fn nextDeadline(layer: *const Hci) ?u64 {
         if (earliest == null or pending.deadline < earliest.?) earliest = pending.deadline;
     }
     if (layer.state != bluetooth.BTCS_UP) return earliest;
-    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer), channels.deadline(layer), sdp_client.deadline(layer) }) |due| {
+    for ([_]?u64{ discovery.deadline(layer), local.deadline(layer), connections.deadline(layer), pairing.deadline(layer), channels.deadline(layer), sdp_client.deadline(layer), att_client.deadline(layer) }) |due| {
         const time = due orelse continue;
         if (earliest == null or time < earliest.?) earliest = time;
     }
@@ -346,6 +361,7 @@ pub fn tick(layer: *Hci) void {
         pairing.tick(layer);
         channels.tick(layer);
         sdp_client.tick(layer);
+        att_client.tick(layer);
     }
     pump(layer);
 }

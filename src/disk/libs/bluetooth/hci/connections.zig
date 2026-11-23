@@ -38,9 +38,10 @@
 //! controller that refuses the command, or a device that does not answer
 //! it within FEATURES_WAIT_MS, has the link taken as made.
 //!
-//! **A link made for channels** - by a channel this machine opens, or a
-//! service query (l2cap/channels.zig, sdp/client.zig) - ends IDLE_MS
-//! after its last channel has closed, unless ConnectBTDevice asked for it
+//! **A link made for channels** - by a channel this machine opens, a
+//! service query, or GATT's client (l2cap/channels.zig, sdp/client.zig,
+//! att/client.zig) - ends IDLE_MS after the last of its channels, GATT
+//! blocks and procedures has ended, unless ConnectBTDevice asked for it
 //! meanwhile; a link ConnectBTDevice made, or the device, stays.
 //!
 //! **The device's name**, where the discovery did not hear it, is asked
@@ -73,6 +74,8 @@ const devices = @import("devices.zig");
 const discovery = @import("discovery.zig");
 const pairing = @import("pairing.zig");
 const channels = @import("../l2cap/channels.zig");
+const _att = @import("../att/_att.zig");
+const att_client = @import("../att/client.zig");
 const smp = @import("smp.zig");
 
 /// How many links a controller keeps, and how many calls may wait on
@@ -114,8 +117,9 @@ pub const Connection = struct {
     /// LE: the device's link layer features, as it gave them; zeros
     /// while they are not known.
     le_features: [8]u8 = @splat(0),
-    /// Made for channels, not asked for by ConnectBTDevice: ended at
-    /// `idle_until`, once its last channel has closed.
+    /// Made for channels or GATT, not asked for by ConnectBTDevice:
+    /// ended at `idle_until`, once its last channel and block have closed
+    /// and its last request has been answered.
     for_channels: bool = false,
     idle_until: ?u64 = null,
     incoming: bool = false,
@@ -126,8 +130,10 @@ pub const Connection = struct {
     authenticated: bool = false,
     /// Its pairing, or its being made secure (pairing.zig).
     pairing: pairing.Pairing = .{},
-    /// Over LE, the security manager's part of its pairing (smp.zig).
+    /// Over LE, the security manager's part of its pairing (smp.zig),
+    /// and its attribute protocol's bearer (att/).
     smp: smp.Smp = .{},
+    att: _att.Bearer = .{},
     /// Its making taken back at its time: it failed by BTERR_TIMEOUT.
     cancelled: bool = false,
     /// Ended as soon as it is up: DisconnectBTDevice, or the power going
@@ -154,11 +160,12 @@ pub const Connection = struct {
     name_asked: bool = false,
 };
 
-pub const WaitKind = enum(u8) { connect, disconnect, open, close, services };
+pub const WaitKind = enum(u8) { connect, disconnect, open, close, services, gatt };
 
 /// A call waiting for a link to `address` to be up, or down - or for the
-/// channel the task knows as `serial` to be open or closed, or for the
-/// services of the device at `address`.
+/// channel the task knows as `serial` to be open or closed, for the
+/// services of the device at `address`, or for the GATT procedure
+/// numbered `serial` (att/client.zig).
 pub const Wait = struct {
     used: bool = false,
     kind: WaitKind = .connect,
@@ -368,6 +375,7 @@ fn drop(layer: *Hci, connection: *Connection) void {
 /// reset, or given up on - and every call waiting answered `result`.
 pub fn reset(layer: *Hci, result: i32) void {
     channels.reset(layer, result);
+    att_client.reset(layer, result);
     for (&layer.connections) |*connection| {
         pairing.linkGone(layer, connection, result);
         connection.* = .{};
@@ -757,6 +765,7 @@ pub fn established(layer: *Hci, connection: *Connection) void {
     note(layer, connection, .up, 0);
     if (!pairing.linkUp(layer, connection)) answer(layer, .connect, connection.address, 0);
     channels.linkUp(layer, connection);
+    att_client.linkUp(layer, connection);
 }
 
 /// LE Read Remote Features Complete, past its subevent: the device has
@@ -794,6 +803,7 @@ pub fn note(layer: *Hci, connection: *const Connection, kind: NoteKind, reason: 
 fn failed(layer: *Hci, connection: *Connection, result: i32) void {
     note(layer, connection, .not_made, result);
     channels.linkGone(layer, connection, result);
+    att_client.linkGone(layer, connection, result);
     pairing.linkGone(layer, connection, result);
     const address = connection.address;
     connection.* = .{};
@@ -811,6 +821,7 @@ fn down(layer: *Hci, connection: *Connection, result: i32, reason: i32) void {
     const why = if (made) reason else failure(connection, reason);
     note(layer, connection, if (made) .down else .not_made, why);
     channels.linkGone(layer, connection, why);
+    att_client.linkGone(layer, connection, why);
     pairing.linkGone(layer, connection, why);
     acl.released(layer, connection);
     const address = connection.address;
@@ -911,14 +922,14 @@ pub fn nameComplete(layer: *Hci, params: []const u8) void {
 
 /// Whatever is due at `layer.now`: a link being made taken back, or
 /// given up on once that was not answered; a link being ended taken to
-/// be down; a link made for channels ended once none is left on it.
+/// be down; a link made for channels ended once nothing is left on it.
 pub fn tick(layer: *Hci) void {
     for (&layer.connections) |*connection| {
         if (connection.idle_until) |idle_due| {
-            // Made for channels, none of them left on it: ended.
+            // Made for channels, nothing left on it: ended.
             if (layer.now >= idle_due) {
                 connection.idle_until = null;
-                if (connection.state == .up and connection.for_channels and !channels.uses(layer, connection.address)) {
+                if (connection.state == .up and connection.for_channels and !channels.uses(layer, connection.address) and !att_client.uses(layer, connection.address)) {
                     _ = end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED);
                 }
             }

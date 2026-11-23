@@ -41,6 +41,14 @@ const AddBTListener = @import("channel/addbtlistener.zig").AddBTListener;
 const RemBTListener = @import("channel/rembtlistener.zig").RemBTListener;
 const ObtainBTServices = @import("service/obtainbtservices.zig").ObtainBTServices;
 const ReleaseBTServices = @import("service/releasebtservices.zig").ReleaseBTServices;
+const OpenBTGatt = @import("gatt/openbtgatt.zig").OpenBTGatt;
+const CloseBTGatt = @import("gatt/closebtgatt.zig").CloseBTGatt;
+const ObtainBTCharacteristics = @import("gatt/obtainbtcharacteristics.zig").ObtainBTCharacteristics;
+const ReleaseBTCharacteristics = @import("gatt/releasebtcharacteristics.zig").ReleaseBTCharacteristics;
+const ReadBTAttribute = @import("gatt/readbtattribute.zig").ReadBTAttribute;
+const WriteBTAttribute = @import("gatt/writebtattribute.zig").WriteBTAttribute;
+const SubscribeBTAttribute = @import("gatt/subscribebtattribute.zig").SubscribeBTAttribute;
+const UnsubscribeBTAttribute = @import("gatt/unsubscribebtattribute.zig").UnsubscribeBTAttribute;
 
 /// bluetooth.library's interface, as the SDK generates it from
 /// sdk/fd/bluetooth_lib.fd.
@@ -93,6 +101,14 @@ const contract_files = [_][]const u8{
     @embedFile("channel/rembtlistener.zig"),
     @embedFile("service/obtainbtservices.zig"),
     @embedFile("service/releasebtservices.zig"),
+    @embedFile("gatt/openbtgatt.zig"),
+    @embedFile("gatt/closebtgatt.zig"),
+    @embedFile("gatt/obtainbtcharacteristics.zig"),
+    @embedFile("gatt/releasebtcharacteristics.zig"),
+    @embedFile("gatt/readbtattribute.zig"),
+    @embedFile("gatt/writebtattribute.zig"),
+    @embedFile("gatt/subscribebtattribute.zig"),
+    @embedFile("gatt/unsubscribebtattribute.zig"),
 };
 
 // --- controllers ----------------------------------------------------------------
@@ -216,6 +232,40 @@ fn lvoReleaseBTServices(base: *BluetoothBase, list: ?*exec.List) callconv(.c) vo
     return ReleaseBTServices(base, list);
 }
 
+// --- GATT -----------------------------------------------------------------------
+
+fn lvoOpenBTGatt(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, port: *exec.MsgPort, gatt: *?*bluetooth.BTGatt) callconv(.c) i32 {
+    return OpenBTGatt(base, controller, address, port, gatt);
+}
+
+fn lvoCloseBTGatt(base: *BluetoothBase, gatt: ?*bluetooth.BTGatt) callconv(.c) void {
+    return CloseBTGatt(base, gatt);
+}
+
+fn lvoObtainBTCharacteristics(base: *BluetoothBase, gatt: *bluetooth.BTGatt, service: *const bluetooth.BTService, list: *?*exec.List) callconv(.c) i32 {
+    return ObtainBTCharacteristics(base, gatt, service, list);
+}
+
+fn lvoReleaseBTCharacteristics(base: *BluetoothBase, list: ?*exec.List) callconv(.c) void {
+    return ReleaseBTCharacteristics(base, list);
+}
+
+fn lvoReadBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, handle: u32, buffer: [*]u8, length: u32, actual: *u32) callconv(.c) i32 {
+    return ReadBTAttribute(base, gatt, handle, buffer, length, actual);
+}
+
+fn lvoWriteBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, handle: u32, data: [*]const u8, length: u32, flags: u32) callconv(.c) i32 {
+    return WriteBTAttribute(base, gatt, handle, data, length, flags);
+}
+
+fn lvoSubscribeBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, which: *const bluetooth.BTCharacteristic, flags: u32) callconv(.c) i32 {
+    return SubscribeBTAttribute(base, gatt, which, flags);
+}
+
+fn lvoUnsubscribeBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, which: *const bluetooth.BTCharacteristic) callconv(.c) i32 {
+    return UnsubscribeBTAttribute(base, gatt, which);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -251,6 +301,14 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoRemBTListener),
     vec(lvoObtainBTServices),
     vec(lvoReleaseBTServices),
+    vec(lvoOpenBTGatt),
+    vec(lvoCloseBTGatt),
+    vec(lvoObtainBTCharacteristics),
+    vec(lvoReleaseBTCharacteristics),
+    vec(lvoReadBTAttribute),
+    vec(lvoWriteBTAttribute),
+    vec(lvoSubscribeBTAttribute),
+    vec(lvoUnsubscribeBTAttribute),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

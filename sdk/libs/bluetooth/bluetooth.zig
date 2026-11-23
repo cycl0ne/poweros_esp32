@@ -2,10 +2,12 @@
 //! bluetooth.library's structures and constants: a device's address, a
 //! controller as the library lists it and the tags that set it, a device
 //! a controller found, a connection, an agent and what it is asked, a
-//! bond, a channel and what its owner is told, a service, and the
-//! notification. The calls are in `sdk.interface.bluetooth`; the HCI's
-//! commands, events and the fields they carry are `hci.zig`, L2CAP's
-//! `l2cap.zig`, SDP's `sdp.zig`, here as well.
+//! bond, a channel and what its owner is told, a service, the attribute
+//! protocol to a device and its characteristics, and the notification.
+//! The calls are in `sdk.interface.bluetooth`; the HCI's commands, events
+//! and the fields they carry are `hci.zig`, L2CAP's `l2cap.zig`, SDP's
+//! `sdp.zig`, the attribute protocol's and GATT's `att.zig`, here as
+//! well.
 //!
 //! **A controller** is a unit of a device that speaks DEVIF_HCI
 //! (sdk/devices/hci.zig): a USB dongle, a board's chip on a UART. Its
@@ -47,9 +49,19 @@
 //! listener's PSM (AddBTListener). Its frames come as messages to its
 //! port; SendBTChannel sends them; CloseBTChannel ends it.
 //!
-//! **A device's services** are listed by ObtainBTServices: its SDP
-//! records, read over a channel to its PSM 1. The library answers SDP
-//! itself, with a record of its own.
+//! **A device's services** are listed by ObtainBTServices: over BR/EDR
+//! its SDP records, read over a channel to its PSM 1; over LE its GATT
+//! server's services. The library answers SDP itself, with a record of
+//! its own.
+//!
+//! **GATT** is how an LE device offers its data: its attributes, grouped
+//! into services, each a set of characteristics - a value, what may be
+//! done with it, its descriptors. OpenBTGatt opens the attribute protocol
+//! to a device; ObtainBTCharacteristics lists a service's
+//! characteristics; ReadBTAttribute and WriteBTAttribute read and write
+//! a value; SubscribeBTAttribute has the device send a value as it
+//! changes, as messages to the block's port. The library serves GATT
+//! itself, with the machine's name.
 //!
 //! **A change** - a controller added, up, failed or gone, a setting, a
 //! device found or named, a discovery ended, a connection made or
@@ -63,6 +75,7 @@ const utility = @import("../utility/utility.zig");
 pub const hci = @import("hci.zig");
 pub const l2cap = @import("l2cap.zig");
 pub const sdp = @import("sdp.zig");
+pub const att = @import("att.zig");
 
 /// The library's name, for OpenLibrary.
 pub const BLUETOOTHNAME = "bluetooth.library";
@@ -428,8 +441,13 @@ pub const BTERR_NOTBONDED: i32 = -13;
 /// The agent said no, or no agent answered in time; or the device
 /// refused a channel.
 pub const BTERR_REFUSED: i32 = -14;
-/// A frame longer than the channel's other end takes.
+/// A frame longer than the channel's other end takes; a value longer
+/// than the attribute protocol carries.
 pub const BTERR_TOOLONG: i32 = -15;
+/// The device refused a request of the attribute protocol: its reason
+/// (att.ATT_ERR_*) is BTERR_ATT - result - BTERR_ATT - 0x02 a value that
+/// may not be read, BTERR_ATT - 0x0F one that needs the link encrypted.
+pub const BTERR_ATT: i32 = -256;
 
 // --- channels ----------------------------------------------------------------
 
@@ -516,11 +534,15 @@ pub const BTUUID = extern struct {
 /// BTService.flags: how it was found.
 /// Its SDP record, read over BR/EDR.
 pub const BTSF_SDP: u32 = 1 << 0;
+/// A service of the device's GATT server, over LE: its attributes from
+/// `handle` to `end_handle`.
+pub const BTSF_GATT: u32 = 1 << 1;
 
 /// A service of a device, as ObtainBTServices lists it.
 pub const BTService = extern struct {
     /// On the list ObtainBTServices answers. ln_Name is the service's
-    /// name as its record gives it, UTF-8; empty where it gives none.
+    /// name as its record gives it, UTF-8; empty where it gives none, as
+    /// for every GATT service.
     node: exec.Node = .{},
     /// The controller it was read over (BTController.id), and the
     /// device.
@@ -529,11 +551,12 @@ pub const BTService = extern struct {
     /// BTSF_*.
     flags: u32 = 0,
     /// What it is: the first class its record names
-    /// (ATTR_SERVICE_CLASS_ID_LIST) - and as 16 bits where it is one of
-    /// those, 0 where not.
+    /// (ATTR_SERVICE_CLASS_ID_LIST), or the GATT service's UUID - and as
+    /// 16 bits where it is one of those, 0 where not.
     class: BTUUID = .{},
     class16: u16 = 0,
-    /// The L2CAP PSM it is reached on, 0 where its record names none.
+    /// The L2CAP PSM it is reached on, 0 where its record names none - and
+    /// for a GATT service, reached over the attribute protocol's channel.
     psm: u16 = 0,
     /// The RFCOMM channel it is over that PSM, 0 for none.
     rfcomm_channel: u8 = 0,
@@ -544,11 +567,113 @@ pub const BTService = extern struct {
     profile16: u16 = 0,
     profile_version: u16 = 0,
     pad2: u16 = 0,
-    /// Its record's handle on the device.
+    /// Its record's handle on the device; for a GATT service the handle
+    /// of its declaration, the first of its attributes, and of its last.
     handle: u32 = 0,
+    end_handle: u32 = 0,
     /// Its record as the device sent it: the data element sequence of its
     /// attribute ids and their values (sdp.zig), where a profile reads
     /// attributes of its own. The list's, freed with it.
     record: ?[*]const u8 = null,
     record_length: u32 = 0,
+};
+
+// --- GATT --------------------------------------------------------------------
+
+/// BTGatt.flags.
+/// Its link is down, or the device stopped answering: nothing more is
+/// asked or comes, and CloseBTGatt gives it back.
+pub const BTGF_CLOSED: u32 = 1 << 0;
+
+/// The attribute protocol to an LE device - GATT's client - as OpenBTGatt
+/// hands it over: its owner's until CloseBTGatt, which frees it. The
+/// library keeps its fields up to date; the owner reads them.
+pub const BTGatt = extern struct {
+    /// The controller (BTController.id) and the device.
+    controller: u32 = 0,
+    address: BTAddress = .{},
+    /// The most a PDU carries over the link, as the two sides agreed when
+    /// the block was opened (att.ATT_MTU_DEFAULT where they did not): a
+    /// value written goes up to mtu - 3 bytes.
+    mtu: u16 = 0,
+    pad: u16 = 0,
+    /// BTGF_*.
+    flags: u32 = 0,
+    /// Values let go because 32 of its messages were out unreplied.
+    dropped: u32 = 0,
+    /// Where its messages go.
+    port: ?*exec.MsgPort = null,
+};
+
+/// A characteristic's descriptor: what it is, and where.
+pub const BTDescriptor = extern struct {
+    /// Its type, and as 16 bits where it is one of those (att.GATT_*), 0
+    /// where not.
+    uuid: BTUUID = .{},
+    uuid16: u16 = 0,
+    handle: u16 = 0,
+};
+
+/// A characteristic of a GATT service, as ObtainBTCharacteristics lists
+/// it.
+pub const BTCharacteristic = extern struct {
+    /// On the list ObtainBTCharacteristics answers; ln_Name empty.
+    node: exec.Node = .{},
+    /// What it is, and as 16 bits where it is one of those, 0 where not.
+    uuid: BTUUID = .{},
+    uuid16: u16 = 0,
+    /// What a client may do with its value: att.GATT_PROP_*.
+    properties: u16 = 0,
+    /// Its declaration's handle; its value's, which ReadBTAttribute and
+    /// WriteBTAttribute take; its last, its descriptors between the two.
+    handle: u16 = 0,
+    value_handle: u16 = 0,
+    end_handle: u16 = 0,
+    /// Its Client Characteristic Configuration's handle, which
+    /// SubscribeBTAttribute writes; 0 where it has none.
+    configuration_handle: u16 = 0,
+    /// Its descriptors, `descriptor_count` of them, in handle order: the
+    /// list's, freed with it.
+    descriptors: ?[*]const BTDescriptor = null,
+    descriptor_count: u32 = 0,
+    pad: u32 = 0,
+};
+
+/// WriteBTAttribute's flags.
+/// A Write Command: the value sent, the device not asked to answer.
+pub const BTGW_NORESPONSE: u32 = 1 << 0;
+
+/// SubscribeBTAttribute's flags.
+/// The value indicated - each confirmed to the device - rather than
+/// notified.
+pub const BTGS_INDICATE: u32 = 1 << 0;
+
+/// BTGattMessage.kind: what a block's owner is told.
+/// A value the device sent of the attribute `handle` - notified or
+/// indicated, as subscribed: `data`, `length` bytes, the library's until
+/// the message is replied.
+pub const BTGM_VALUE: u32 = 1;
+/// The block is closed - its link down, `result` the link's reason;
+/// BTERR_DETACHED with its controller; BTERR_TIMEOUT for a device that
+/// stopped answering - and carries nothing more.
+pub const BTGM_CLOSED: u32 = 2;
+
+/// What the library tells a block's owner: sent to the block's port, and
+/// replied by the receiver once read. The library makes it and frees it
+/// once it is back.
+pub const BTGattMessage = extern struct {
+    message: exec.Message = .{},
+    /// BTGM_*.
+    kind: u32 = 0,
+    /// BTGM_CLOSED: why - BTERR_*, or the link's reason (hci.HCI_ERR_*).
+    result: i32 = 0,
+    /// The block it is about. CloseBTGatt takes back the messages about
+    /// the block still on the port; one taken before it is replied
+    /// without reading this.
+    gatt: ?*BTGatt = null,
+    /// BTGM_VALUE: the attribute - a characteristic's value_handle - and
+    /// its value.
+    handle: u32 = 0,
+    length: u32 = 0,
+    data: ?[*]const u8 = null,
 };

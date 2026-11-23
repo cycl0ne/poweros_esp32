@@ -93,7 +93,7 @@ pub fn OpenBTChannel(base: *BluetoothBase, controller: u32, address: *const blue
     const memory = sys.AllocVec(@sizeOf(bluetooth.BTChannel), exec.MEMF_CLEAR) orelse return bluetooth.BTERR_NOMEM;
     const block: *bluetooth.BTChannel = @ptrCast(@alignCast(memory));
     block.* = .{ .address = address.*, .psm = @truncate(psm), .port = port };
-    var command = _task.Command{ .kind = .open_channel, .controller = controller, .address = address.*, .psm = psm, .channel = block };
+    var command = _task.Command{ .kind = .open_channel, .controller = controller, .address = address.*, .psm = psm, .block = block };
     const told = _task.tell(base, &command);
     if (!told or command.result != 0) {
         sys.FreeVec(memory);
