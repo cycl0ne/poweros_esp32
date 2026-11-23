@@ -5,8 +5,8 @@
 //!
 //!   Bluetooth [INFO/S] [SCAN/S] [TIME/K/N] [POWER/K] [NAME/K]
 //!             [VISIBLE/K] [CONNECT/K] [DISCONNECT/K] [LIST/S] [LE/S]
-//!             [RANDOM/S] [CONTROLLER/K/N] [PAIR/K] [PIN/K] [UNPAIR/K]
-//!             [BONDS/S] [AGENT/S] [SERVICES/K]
+//!             [RANDOM/S] [BREDR/S] [CONTROLLER/K/N] [PAIR/K] [PIN/K]
+//!             [UNPAIR/K] [BONDS/S] [AGENT/S] [SERVICES/K]
 //!
 //!   Bluetooth          each controller on a line: its number, its
 //!                      address, whether it is up - and then on or off,
@@ -29,9 +29,13 @@
 //!   CONNECT <device>   a link made to the device - its address, or the
 //!                      name a scan heard - and shown once it is up: over
 //!                      LE for a device a scan heard over LE, or with LE
-//!                      (its public address) or RANDOM (its random one)
+//!                      (its public address) or RANDOM (its random one);
+//!                      over BR/EDR otherwise, and with BREDR for a device
+//!                      a scan heard over LE too - a headphone that
+//!                      advertises as well
 //!   DISCONNECT <device>
-//!                      the link to the device ended
+//!                      the link to the device ended - with LE, RANDOM or
+//!                      BREDR, its link of that kind
 //!   LIST               the links, each on a line: the device's address,
 //!                      the kind of link, which side is its central, how
 //!                      long it has been up, the device's name; with INFO,
@@ -46,8 +50,10 @@
 //!                      type on the device. CTRL-C stops.
 //!   PIN <pin>          the PIN given to a device that asks for one
 //!   UNPAIR <device>    the bond ended - by its address, or the device's
-//!                      name - and a link to the device; a driver that
-//!                      drives the device tells it first
+//!                      name; with LE, RANDOM or BREDR the bond of that
+//!                      kind, where the device has two - and a link to
+//!                      the device; a driver that drives the device tells
+//!                      it first
 //!   BONDS              the bonds, each on a line: the device's address,
 //!                      the kind of link it is for, how its pairing was
 //!                      confirmed, the device's name; with INFO, its
@@ -59,13 +65,18 @@
 //!   SERVICES <device>  the services the device offers - its address, or
 //!                      the name a scan heard - asked of its SDP server
 //!                      over BR/EDR, of its GATT server over LE (a device
-//!                      a scan heard over LE alone, or with LE or RANDOM),
+//!                      a scan heard over LE alone - not with BREDR - or
+//!                      with LE or RANDOM),
 //!                      each on a line: what it is, the PSM or RFCOMM
 //!                      channel it is reached on - over LE, its handles -
 //!                      its name; with INFO, its profile and the
 //!                      profile's version, and its record's handle - over
 //!                      LE, its characteristics: what each is, its
 //!                      value's handle, what may be done with it
+//!   LE, RANDOM, BREDR  which kind of link CONNECT, DISCONNECT, PAIR,
+//!                      UNPAIR and SERVICES mean: LE to the device's
+//!                      public address, LE to its random one, BR/EDR; one
+//!                      of them at a time
 //!   CONTROLLER <n>     the one controller these are for; without it,
 //!                      every one - for CONNECT, the one with a link to
 //!                      the device, else the one that found it, else the
@@ -93,9 +104,9 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.10 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.11 (23.11.2026)\r\n";
 
-const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,CONTROLLER/K/N," ++
+const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,BREDR/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
 const arg_info = 0;
 const arg_scan = 1;
@@ -108,14 +119,15 @@ const arg_disconnect = 7;
 const arg_list = 8;
 const arg_le = 9;
 const arg_random = 10;
-const arg_controller = 11;
-const arg_pair = 12;
-const arg_pin = 13;
-const arg_unpair = 14;
-const arg_bonds = 15;
-const arg_agent = 16;
-const arg_services = 17;
-const arg_count = 18;
+const arg_bredr = 11;
+const arg_controller = 12;
+const arg_pair = 13;
+const arg_pin = 14;
+const arg_unpair = 15;
+const arg_bonds = 16;
+const arg_agent = 17;
+const arg_services = 18;
+const arg_count = 19;
 
 /// How many devices a scan follows: four controllers' worth.
 const followed_most = 256;
@@ -148,6 +160,10 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     const bt: *BluetoothBase = @ptrCast(bt_lib);
 
     const controller: u32 = if (argv[arg_controller] != 0) @bitCast(@as(*const i32, @ptrFromInt(argv[arg_controller])).*) else bluetooth.BT_ALL_CONTROLLERS;
+    if (argv[arg_bredr] != 0 and (argv[arg_le] != 0 or argv[arg_random] != 0)) {
+        _ = Printf(dl, "%s: BREDR goes with neither LE nor RANDOM\n", .{@as([*:0]const u8, COMMAND_NAME)});
+        return dos.RETURN_ERROR;
+    }
 
     if (argv[arg_power] != 0 or argv[arg_name] != 0 or argv[arg_visible] != 0) {
         const done = set(dl, bt, controller, &argv);
@@ -158,7 +174,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     if (argv[arg_list] != 0) return links(dl, bt, controller, argv[arg_info] != 0);
     const pin: ?[*:0]const u8 = if (argv[arg_pin] != 0) @ptrFromInt(argv[arg_pin]) else null;
     if (argv[arg_pair] != 0) return pairWith(sys, dl, bt, controller, @ptrFromInt(argv[arg_pair]), pin, &argv);
-    if (argv[arg_unpair] != 0) return unpair(dl, bt, controller, @ptrFromInt(argv[arg_unpair]));
+    if (argv[arg_unpair] != 0) return unpair(dl, bt, controller, @ptrFromInt(argv[arg_unpair]), &argv);
     if (argv[arg_bonds] != 0) return showBonds(dl, bt, controller, argv[arg_info] != 0);
     if (argv[arg_agent] != 0) return agent(sys, dl, bt, pin);
     if (argv[arg_services] != 0) return services(sys, dl, bt, controller, @ptrFromInt(argv[arg_services]), &argv);
@@ -494,11 +510,13 @@ fn sameBytes(one: *const [6]u8, other: *const [6]u8) bool {
     return true;
 }
 
-/// The device CONNECT or PAIR names: its address - of the kind LE or
-/// RANDOM says, else of the kind a scan heard it as, else BR/EDR's - or a
-/// name a scan heard; null for neither.
+/// The device CONNECT or PAIR names: its address - BR/EDR's with BREDR,
+/// of the kind LE or RANDOM says, else of the kind a scan heard it as,
+/// else BR/EDR's - or a name a scan heard, with BREDR one heard at its
+/// public address; null for neither.
 fn deviceNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
     const bytes = parseAddress(text);
+    if (bytes != null and argv[arg_bredr] != 0) return .{ .bytes = bytes.? };
     if (bytes != null and (argv[arg_le] != 0 or argv[arg_random] != 0)) {
         return .{ .bytes = bytes.?, .kind = if (argv[arg_random] != 0) bluetooth.BTADDR_LE_RANDOM else bluetooth.BTADDR_LE_PUBLIC };
     }
@@ -510,15 +528,19 @@ fn deviceNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *
         if (bytes) |wanted| {
             if (sameBytes(&found.address.bytes, &wanted)) return found.address;
         } else if (found.node.name) |name| {
-            if (sameName(name, text)) return found.address;
+            if (!sameName(name, text)) continue;
+            if (argv[arg_bredr] == 0) return found.address;
+            // Over BR/EDR by its public address: one heard at a random
+            // address alone has none known here.
+            if (found.address.kind != bluetooth.BTADDR_LE_RANDOM) return .{ .bytes = found.address.bytes };
         }
     }
     if (bytes) |wanted| return .{ .bytes = wanted };
     return null;
 }
 
-/// The link DISCONNECT names: by the device's address - of the kind LE or
-/// RANDOM says, where one does - or its name; null for none.
+/// The link DISCONNECT names: by the device's address or its name - of
+/// the kind LE, RANDOM or BREDR says, where one does; null for none.
 fn linkNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
     const bytes = parseAddress(text);
     const list_of_links = bt.ObtainBTConnections(controller) orelse return null;
@@ -526,11 +548,11 @@ fn linkNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *co
     var it = list_of_links.iterator();
     while (it.next()) |node| {
         const link: *bluetooth.BTConnection = @fieldParentPtr("node", node);
+        if (argv[arg_random] != 0 and link.address.kind != bluetooth.BTADDR_LE_RANDOM) continue;
+        if (argv[arg_le] != 0 and link.address.kind != bluetooth.BTADDR_LE_PUBLIC) continue;
+        if (argv[arg_bredr] != 0 and link.address.kind != bluetooth.BTADDR_BREDR) continue;
         if (bytes) |wanted| {
-            if (!sameBytes(&link.address.bytes, &wanted)) continue;
-            if (argv[arg_random] != 0 and link.address.kind != bluetooth.BTADDR_LE_RANDOM) continue;
-            if (argv[arg_le] != 0 and link.address.kind != bluetooth.BTADDR_LE_PUBLIC) continue;
-            return link.address;
+            if (sameBytes(&link.address.bytes, &wanted)) return link.address;
         } else if (link.node.name) |name| {
             if (sameName(name, text)) return link.address;
         }
@@ -835,15 +857,18 @@ fn numberTyped(dl: *DosBase) ?u32 {
     return value;
 }
 
-/// The bond UNPAIR names: by the device's address, or its name; null for
-/// none.
-fn bondNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8) ?bluetooth.BTAddress {
+/// The bond UNPAIR names: by the device's address or its name - of the
+/// kind LE, RANDOM or BREDR says, where one does; null for none.
+fn bondNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
     const bytes = parseAddress(text);
     const list_of_bonds = bt.ObtainBTBonds(controller) orelse return null;
     defer bt.ReleaseBTBonds(list_of_bonds);
     var it = list_of_bonds.iterator();
     while (it.next()) |node| {
         const bond: *bluetooth.BTBond = @fieldParentPtr("node", node);
+        if (argv[arg_random] != 0 and bond.address.kind != bluetooth.BTADDR_LE_RANDOM) continue;
+        if (argv[arg_le] != 0 and bond.address.kind != bluetooth.BTADDR_LE_PUBLIC) continue;
+        if (argv[arg_bredr] != 0 and bond.address.kind != bluetooth.BTADDR_BREDR) continue;
         if (bytes) |wanted| {
             if (sameBytes(&bond.address.bytes, &wanted)) return bond.address;
         } else if (bond.node.name) |name| {
@@ -854,8 +879,8 @@ fn bondNamed(bt: *BluetoothBase, controller: u32, text: [*:0]const u8) ?bluetoot
 }
 
 /// UNPAIR: the bond ended.
-fn unpair(dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8) i32 {
-    const address = bondNamed(bt, controller, text) orelse {
+fn unpair(dl: *DosBase, bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) i32 {
+    const address = bondNamed(bt, controller, text, argv) orelse {
         _ = Printf(dl, "%s: no bond with %s\n", .{ @as([*:0]const u8, COMMAND_NAME), text });
         return dos.RETURN_WARN;
     };
@@ -912,8 +937,9 @@ fn showBonds(dl: *DosBase, bt: *BluetoothBase, controller: u32, with_info: bool)
 
 /// The device SERVICES names: its address - over BR/EDR, or with LE or
 /// RANDOM over LE - or the name a scan heard, over BR/EDR where it was
-/// heard so, else over LE; null for neither.
+/// heard so or with BREDR, else over LE; null for neither.
 fn serviceDevice(bt: *BluetoothBase, controller: u32, text: [*:0]const u8, argv: *const [arg_count]usize) ?bluetooth.BTAddress {
+    if (argv[arg_bredr] != 0) return deviceNamed(bt, controller, text, argv);
     if (argv[arg_le] != 0 or argv[arg_random] != 0) {
         const found = deviceNamed(bt, controller, text, argv) orelse return null;
         // Heard over BR/EDR too: its LE address is the same one.

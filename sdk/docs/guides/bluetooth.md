@@ -1072,6 +1072,10 @@ or `takes no absolute volume: the volume in the sound` - and, at
 `C:Log LEVEL debug`, each volume set on the device and each changed
 there.
 
+**Pairing one** makes its bond over BR/EDR, where its sound goes: a
+headphone that advertises over LE as well - a scan hears it so - is
+paired with `Bluetooth PAIR <device> BREDR`.
+
 **A bond made before the driver** keeps no service for it: the binder
 offers a device's services as it bonds, so a device bonded while
 `btaudio.device` was not on the disk is driven once it is paired again
@@ -1354,14 +1358,17 @@ and the other end of the first link, the machine that was paged:
 it is up: the device by its address, written as `Bluetooth` shows one,
 or by a name a `SCAN` heard. The link is over LE for a device the scan
 heard over LE, and for an address given with `LE` - its public address -
-or `RANDOM` - its random one; over BR/EDR otherwise. A link not made
+or `RANDOM` - its random one; over BR/EDR otherwise, and with `BREDR`
+for a device the scan heard over LE too, as a headphone that advertises
+as well is heard. A link not made
 says why: the device did not answer, did not answer in time - an LE
 device that does not advertise - or refused, the controller is making
 another such link, or what the controller answered. A link to a device
 with a bond that could not be made secure is up still, and says so and
 why: the device has no key for this machine any more, or did not take
 it. `DISCONNECT` ends
-the link to a device, by its address or its name (`DisconnectBTDevice`).
+the link to a device, by its address or its name (`DisconnectBTDevice`),
+with `LE`, `RANDOM` or `BREDR` its link of that kind.
 
 `LIST` shows the links (`ObtainBTConnections`): the device's address,
 the kind of link - `BR/EDR`, `LE`, `LE random` - which side the
@@ -1400,8 +1407,8 @@ Paired with 00:00:5E:EF:10:44
 
 `PAIR` makes a bond with a device (`PairBTDevice`), by its address or a
 name a `SCAN` heard - over LE where `CONNECT` would link over LE, a
-device a scan heard over LE or an address with `LE` or `RANDOM` - and
-asks here what the pairing needs:
+device a scan heard over LE without `BREDR` or an address with `LE` or
+`RANDOM` - and asks here what the pairing needs:
 whether the device shows the same number - `y` or `n` - the number it
 shows, its PIN - `PIN` gives that beforehand - or it shows a number to
 type on the device. It ends when the pairing is over, saying why one
@@ -1413,8 +1420,9 @@ confirmed - `confirmed`, `unconfirmed`, or `PIN` - and its name; with
 a link the device made says it - the kind of its key, or an LE key's
 size, whether it was made with Secure Connections, whether the device
 gave its identity, and the profile drivers that drive it. `UNPAIR` ends
-a bond, by the device's address or name (`UnpairBTDevice`), a driver
-that drives the device telling it first.
+a bond, by the device's address or name (`UnpairBTDevice`) - with `LE`,
+`RANDOM` or `BREDR` the bond of that kind, for a device with two - a
+driver that drives the device telling it first.
 
 What a device offers:
 
@@ -1460,12 +1468,13 @@ named where it is well known, else its UUID - where it is reached, and
 its own name. Over BR/EDR it asks the device's SDP server, a service
 reached by a PSM or an RFCOMM channel, and with `INFO` says its profile
 and the profile's version, and its record's handle and size. Over LE -
-for a device a scan heard over LE alone, or with `LE` or `RANDOM` - it
-asks the device's GATT server over one block (`OpenBTGatt`), a service
-being a run of handles; with `INFO` it says the link's MTU and each
-service's characteristics (`ObtainBTCharacteristics`): what each is,
-its value's handle - the one `C:test/BTGatt` takes - what may be done
-with it, and how many descriptors it has.
+for a device a scan heard over LE alone, without `BREDR`, or with `LE`
+or `RANDOM` - it asks the device's GATT server over one block
+(`OpenBTGatt`), a service being a run of handles; with `INFO` it says
+the link's MTU and each service's characteristics
+(`ObtainBTCharacteristics`): what each is, its value's handle - the one
+`C:test/BTGatt` takes - what may be done with it, and how many
+descriptors it has.
 
 `CONTROLLER` makes any of these for one controller, by its number;
 without it, they are for every one - for `CONNECT`, `PAIR` and
