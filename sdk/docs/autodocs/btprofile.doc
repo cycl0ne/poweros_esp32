@@ -1,0 +1,26 @@
+TABLE OF CONTENTS
+
+btprofile/BTProfileBind
+btprofile/BTProfileUnbind
+btprofile/BTProfileBind                                btprofile/BTProfileBind
+
+   NAME
+	BTProfileBind -- A service offered: true if the driver takes it - it has filled a unit, `binding.unit` saying which, and keeps `binding` until BTProfileUnbind - false if it declines and the next driver is asked.
+
+   SYNOPSIS
+	    bool BTProfileBind(*bluetooth.BTBinding binding)
+
+   BEHAVIOR
+	Called on the library's binder process, which serves nothing else
+	meanwhile: the driver may call the library - read the service's record,
+	add listeners, open channels - and wait for it.
+btprofile/BTProfileUnbind                            btprofile/BTProfileUnbind
+
+   NAME
+	BTProfileUnbind -- The service is taken back - its controller gone, or its bond ended (BTPU_FORGET in `flags`, for the driver to tell the device first, while the link is there): its channels closed, its unit left without it, `binding` no longer the driver's.
+
+   SYNOPSIS
+	    void BTProfileUnbind(*bluetooth.BTBinding binding, u32 flags)
+
+   BEHAVIOR
+	Called on the binder process.

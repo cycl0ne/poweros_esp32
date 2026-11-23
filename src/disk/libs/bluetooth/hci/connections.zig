@@ -128,6 +128,10 @@ pub const Connection = struct {
     /// The two have shown each other a link key: an authentication, or
     /// the encryption that follows one.
     authenticated: bool = false,
+    /// BR/EDR: its encryption key's size checked since it was last
+    /// encrypted - read and long enough, or the controller cannot say -
+    /// by its pairing, or its being made secure.
+    key_checked: bool = false,
     /// Its pairing, or its being made secure (pairing.zig).
     pairing: pairing.Pairing = .{},
     /// Over LE, the security manager's part of its pairing (smp.zig),
@@ -323,9 +327,8 @@ pub fn make(layer: *Hci, address: bluetooth.BTAddress) i32 {
     return 0;
 }
 
-/// Whether a link that is up is being made secure, which ConnectBTDevice
-/// waits for.
-/// Whether the link is being made secure with its bond.
+/// Whether a link that is up is being made secure with its bond, which
+/// ConnectBTDevice waits for.
 pub fn securing(connection: *const Connection) bool {
     return connection.pairing.stage != .idle and connection.pairing.purpose == .secure;
 }
@@ -866,9 +869,13 @@ pub fn encryptionChange(layer: *Hci, params: []const u8) void {
     if (params[0] == hci.HCI_SUCCESS) {
         connection.encrypted = params[3] != 0;
         if (connection.encrypted) connection.authenticated = true;
+        // A key not read yet.
+        connection.key_checked = false;
         layer.changed = true;
     }
     pairing.encryptionChanged(layer, connection, params[0]);
+    // The device's own encryption: what waited for the link's security.
+    channels.secured(layer, connection);
 }
 
 /// LE Connection Update Complete, past its subevent: the link's new

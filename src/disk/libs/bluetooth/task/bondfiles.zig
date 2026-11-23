@@ -49,7 +49,7 @@ const random_suffix = ".random";
 
 /// A path: the directory, the controller's address, and the device's with
 /// the longest suffix, ended by a NUL.
-const Path = [directory.len + 12 + 1 + 12 + random_suffix.len + 1]u8;
+pub const Path = [directory.len + 12 + 1 + 12 + random_suffix.len + 1]u8;
 
 /// An address's twelve hex digits, the most significant first.
 fn putAddress(into: *[12]u8, address: *const [6]u8) void {
@@ -74,7 +74,7 @@ fn suffixOf(kind: u8) []const u8 {
 
 /// The controller's directory, or - with `device` - the device's file in
 /// it.
-fn pathOf(controller: *const [6]u8, device: ?*const bluetooth.BTAddress) Path {
+pub fn pathOf(controller: *const [6]u8, device: ?*const bluetooth.BTAddress) Path {
     var path: Path = @splat(0);
     @memcpy(path[0..directory.len], directory);
     putAddress(path[directory.len..][0..12], controller);

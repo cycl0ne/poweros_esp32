@@ -18,6 +18,9 @@ pub const Listener = struct {
     /// Its number: never 0, never one another listener had.
     id: u32,
     psm: u16,
+    /// BTLSF_SECURE: its channels only over a link made secure with a
+    /// bond.
+    secure: bool = false,
     port: *exec.MsgPort,
 };
 

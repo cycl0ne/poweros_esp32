@@ -6,8 +6,8 @@
 //! protocol to a device and its characteristics, and the notification.
 //! The calls are in `sdk.interface.bluetooth`; the HCI's commands, events
 //! and the fields they carry are `hci.zig`, L2CAP's `l2cap.zig`, SDP's
-//! `sdp.zig`, the attribute protocol's and GATT's `att.zig`, here as
-//! well.
+//! `sdp.zig`, the attribute protocol's and GATT's `att.zig`, HID over
+//! BR/EDR's `hidp.zig`, here as well.
 //!
 //! **A controller** is a unit of a device that speaks DEVIF_HCI
 //! (sdk/devices/hci.zig): a USB dongle, a board's chip on a UART. Its
@@ -51,8 +51,9 @@
 //!
 //! **A device's services** are listed by ObtainBTServices: over BR/EDR
 //! its SDP records, read over a channel to its PSM 1; over LE its GATT
-//! server's services. The library answers SDP itself, with a record of
-//! its own.
+//! server's services. NextBTDataElement and FindBTServiceAttribute read
+//! what a record holds. The library answers SDP itself, with a record of
+//! its own and those its programs add (AddBTService).
 //!
 //! **GATT** is how an LE device offers its data: its attributes, grouped
 //! into services, each a set of characteristics - a value, what may be
@@ -76,6 +77,7 @@ pub const hci = @import("hci.zig");
 pub const l2cap = @import("l2cap.zig");
 pub const sdp = @import("sdp.zig");
 pub const att = @import("att.zig");
+pub const hidp = @import("hidp.zig");
 
 /// The library's name, for OpenLibrary.
 pub const BLUETOOTHNAME = "bluetooth.library";
@@ -343,6 +345,8 @@ pub const BT_PIN_MOST = 16;
 /// The most of a device's name a message or a bond carries, its NUL
 /// besides.
 pub const BT_BOND_NAME_MOST = 127;
+/// The most of BTBond.drivers, its NUL besides.
+pub const BT_BOND_DRIVERS_MOST = 95;
 
 /// What the library asks an agent, or tells it: sent to the agent's port,
 /// and replied by the agent once it has answered. The library makes it
@@ -404,6 +408,10 @@ pub const BTBond = extern struct {
     /// The size of its key in bytes: 16 for a link key, an LE key's as
     /// its pairing agreed, from 7 to 16.
     key_size: u32 = 0,
+    /// The profile drivers its device's services are bound to, by their
+    /// files' names, a comma and a space between two ("bthid.device");
+    /// empty for none. Since bluetooth.library 1.9.
+    drivers: ?[*:0]const u8 = null,
 };
 
 // What the calls answer, and BTController.failure: 0, or one of these.
@@ -521,6 +529,12 @@ pub const BTChannelMessage = extern struct {
 /// RemBTListener.
 pub const BTListener = opaque {};
 
+/// AddBTListener's flags.
+/// A channel taken only over a link encrypted after the two have shown
+/// each other the key of their bond: a device without a bond is refused,
+/// and one whose link is not so yet waits while it is made so.
+pub const BTLSF_SECURE: u32 = 1 << 0;
+
 // --- services ----------------------------------------------------------------
 
 /// A UUID, big-endian, as it is written: 0000110A-0000-1000-8000-
@@ -577,6 +591,58 @@ pub const BTService = extern struct {
     record: ?[*]const u8 = null,
     record_length: u32 = 0,
 };
+
+/// A data element of a record (sdp.zig), as NextBTDataElement and
+/// FindBTServiceAttribute read it.
+pub const BTDataElement = extern struct {
+    /// Its type: sdp.DE_*.
+    kind: u32 = 0,
+    /// How many bytes it takes where it was read, its descriptor and its
+    /// length on: how far on the next element begins.
+    whole: u32 = 0,
+    /// Its data, past its descriptor and its length: an integer's bytes,
+    /// big-endian; a text's or a URL's, with no end of its own; a
+    /// sequence's or an alternative's elements, for NextBTDataElement to
+    /// read in turn. Within the bytes it was read from.
+    data: ?[*]const u8 = null,
+    length: u32 = 0,
+    pad: u32 = 0,
+    /// An unsigned integer's or a boolean's value, a signed integer's with
+    /// its sign kept (`@bitCast` to `i64`), for one of up to 8 bytes; 0
+    /// for another element.
+    value: u64 align(4) = 0,
+    /// A UUID's value as 128 bits, one of 16 or 32 on the base UUID;
+    /// zeros for another element.
+    uuid: BTUUID = .{},
+};
+
+/// A record of a program's own, which the library's SDP server answers
+/// with (AddBTService): the library's, given back with RemBTService.
+pub const BTRecord = opaque {};
+
+// --- profiles ----------------------------------------------------------------
+
+/// A service of a device offered to a profile driver
+/// (sdk/devices/btprofile.zig), and kept by the driver that takes it: the
+/// library makes it, the driver fills in its part.
+pub const BTBinding = extern struct {
+    /// The controller (BTController.id) and the device.
+    controller: u32 = 0,
+    address: BTAddress = .{},
+    /// The service, as ObtainBTServices lists it - a BR/EDR one with its
+    /// record: the library's, for as long as the binding lasts.
+    service: ?*const BTService = null,
+    /// The driver's: which of its units drives the service, and what it
+    /// keeps of it.
+    unit: u32 = 0,
+    pad: u32 = 0,
+    driver_data: ?*anyopaque = null,
+};
+
+/// BTProfileUnbind's flags.
+/// The bond with the device is ending (UnpairBTDevice): the driver tells
+/// the device to forget it too, where its profile has a way.
+pub const BTPU_FORGET: u32 = 1 << 0;
 
 // --- GATT --------------------------------------------------------------------
 

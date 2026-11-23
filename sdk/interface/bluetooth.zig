@@ -55,6 +55,10 @@ pub const LVO = struct {
     pub const WriteBTAttribute = libraries.lvo(37);
     pub const SubscribeBTAttribute = libraries.lvo(38);
     pub const UnsubscribeBTAttribute = libraries.lvo(39);
+    pub const NextBTDataElement = libraries.lvo(40);
+    pub const FindBTServiceAttribute = libraries.lvo(41);
+    pub const AddBTService = libraries.lvo(42);
+    pub const RemBTService = libraries.lvo(43);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -84,7 +88,7 @@ pub const Fn = struct {
     pub const OpenBTChannel = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, u32, *exec.MsgPort, *?*bluetooth.BTChannel) callconv(.c) i32;
     pub const CloseBTChannel = *const fn (*BluetoothBase, ?*bluetooth.BTChannel) callconv(.c) void;
     pub const SendBTChannel = *const fn (*BluetoothBase, *bluetooth.BTChannel, [*]const u8, u32) callconv(.c) i32;
-    pub const AddBTListener = *const fn (*BluetoothBase, u32, *exec.MsgPort) callconv(.c) ?*bluetooth.BTListener;
+    pub const AddBTListener = *const fn (*BluetoothBase, u32, *exec.MsgPort, u32) callconv(.c) ?*bluetooth.BTListener;
     pub const RemBTListener = *const fn (*BluetoothBase, ?*bluetooth.BTListener) callconv(.c) void;
     pub const ObtainBTServices = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, *?*exec.List) callconv(.c) i32;
     pub const ReleaseBTServices = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
@@ -96,6 +100,10 @@ pub const Fn = struct {
     pub const WriteBTAttribute = *const fn (*BluetoothBase, *bluetooth.BTGatt, u32, [*]const u8, u32, u32) callconv(.c) i32;
     pub const SubscribeBTAttribute = *const fn (*BluetoothBase, *bluetooth.BTGatt, *const bluetooth.BTCharacteristic, u32) callconv(.c) i32;
     pub const UnsubscribeBTAttribute = *const fn (*BluetoothBase, *bluetooth.BTGatt, *const bluetooth.BTCharacteristic) callconv(.c) i32;
+    pub const NextBTDataElement = *const fn (*BluetoothBase, [*]const u8, u32, *bluetooth.BTDataElement) callconv(.c) bool;
+    pub const FindBTServiceAttribute = *const fn (*BluetoothBase, [*]const u8, u32, u32, *bluetooth.BTDataElement) callconv(.c) bool;
+    pub const AddBTService = *const fn (*BluetoothBase, [*]const u8, u32) callconv(.c) ?*bluetooth.BTRecord;
+    pub const RemBTService = *const fn (*BluetoothBase, ?*bluetooth.BTRecord) callconv(.c) void;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -226,9 +234,9 @@ pub const BluetoothBase = opaque {
         return libraries.call(self, LVO.SendBTChannel, Fn.SendBTChannel, .{ channel, data, length });
     }
 
-    /// A PSM served: the channels devices open to it come to `port` as BTCM_OPENED; null for no memory, or a PSM taken or one no channel can name.
-    pub fn AddBTListener(self: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*bluetooth.BTListener {
-        return libraries.call(self, LVO.AddBTListener, Fn.AddBTListener, .{ psm, port });
+    /// A PSM served: the channels devices open to it come to `port` as BTCM_OPENED - with BTLSF_SECURE only over a link encrypted with a bond's key; null for no memory, or a PSM taken or one no channel can name.
+    pub fn AddBTListener(self: *BluetoothBase, psm: u32, port: *exec.MsgPort, flags: u32) ?*bluetooth.BTListener {
+        return libraries.call(self, LVO.AddBTListener, Fn.AddBTListener, .{ psm, port, flags });
     }
 
     /// A listener given back: devices' channels to its PSM refused again; what is still on its port is the caller's. Null does nothing.
@@ -284,5 +292,25 @@ pub const BluetoothBase = opaque {
     /// A subscription ended, the device told to send the value no more unless another block wants it: 0, BTERR_ATT less the device's reason, or BTERR_*.
     pub fn UnsubscribeBTAttribute(self: *BluetoothBase, gatt: *bluetooth.BTGatt, which: *const bluetooth.BTCharacteristic) i32 {
         return libraries.call(self, LVO.UnsubscribeBTAttribute, Fn.UnsubscribeBTAttribute, .{ gatt, which });
+    }
+
+    /// The data element `data` begins with read into `element`: false where the bytes do not hold one whole.
+    pub fn NextBTDataElement(self: *BluetoothBase, data: [*]const u8, length: u32, element: *bluetooth.BTDataElement) bool {
+        return libraries.call(self, LVO.NextBTDataElement, Fn.NextBTDataElement, .{ data, length, element });
+    }
+
+    /// The value of a record's attribute `id` read into `element`: false where the record has none, or is not a record.
+    pub fn FindBTServiceAttribute(self: *BluetoothBase, record: [*]const u8, length: u32, id: u32, element: *bluetooth.BTDataElement) bool {
+        return libraries.call(self, LVO.FindBTServiceAttribute, Fn.FindBTServiceAttribute, .{ record, length, id, element });
+    }
+
+    /// A record of the program's own served beside the library's, given a handle: null for no memory, or bytes that are not a record's attributes.
+    pub fn AddBTService(self: *BluetoothBase, record: [*]const u8, length: u32) ?*bluetooth.BTRecord {
+        return libraries.call(self, LVO.AddBTService, Fn.AddBTService, .{ record, length });
+    }
+
+    /// A record given back: served no more. Null does nothing.
+    pub fn RemBTService(self: *BluetoothBase, record: ?*bluetooth.BTRecord) void {
+        return libraries.call(self, LVO.RemBTService, Fn.RemBTService, .{record});
     }
 };

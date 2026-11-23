@@ -35,6 +35,7 @@ const BluetoothBase = _base.BluetoothBase;
 const _controller = @import("../controller/_controller.zig");
 const Controller = _controller.Controller;
 const _channel = @import("../channel/_channel.zig");
+const _hci = @import("../hci/_hci.zig");
 const connections = @import("../hci/connections.zig");
 const l2cap_channels = @import("../l2cap/channels.zig");
 const sdp_client = @import("../sdp/client.zig");
@@ -59,16 +60,16 @@ pub fn event(context: *anyopaque, happened: *const l2cap_channels.Event) bool {
     return true;
 }
 
-/// The port's upcall for a device's Connection Request: the number of the
-/// listener that serves `psm`, 0 for none.
-pub fn listener(context: *anyopaque, psm: u16) u32 {
+/// The port's upcall for a device's Connection Request: the listener that
+/// serves `psm` - its number, 0 for none - and whether it is secure.
+pub fn listener(context: *anyopaque, psm: u16) _hci.Listening {
     const controller: *Controller = @ptrCast(@alignCast(context));
     const base = controller.base;
     const sys = base.sys_base;
     sys.ObtainSemaphoreShared(&base.listeners_lock);
     defer sys.ReleaseSemaphore(&base.listeners_lock);
-    const serving = _channel.findPsm(base, psm) orelse return 0;
-    return serving.id;
+    const serving = _channel.findPsm(base, psm) orelse return .{};
+    return .{ .id = serving.id, .secure = serving.secure };
 }
 
 /// What a channel's block says of it, from its record.

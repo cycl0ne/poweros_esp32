@@ -2,9 +2,11 @@
 //! The SDP server: what a device asks on a channel to PSM 1 answered from
 //! the machine's records.
 //!
-//! **The records**: one, the server's own - handle 0, the class Service
+//! **The records**: the server's own - handle 0, the class Service
 //! Discovery Server, reached over L2CAP's PSM 1, in the public browse
-//! group, speaking version 1.1, its database's state.
+//! group, speaking version 1.1, its database's state - and after it the
+//! programs' (AddBTService), each copied from the library's list into the
+//! layer's room for one as it is read (the port's `record`).
 //!
 //! **The requests**: ServiceSearch, the handles of the records that hold
 //! every UUID of its pattern; ServiceAttribute, a record's attributes in
@@ -17,7 +19,8 @@
 //! takes, or than the most the device asked for, go in parts: each ends
 //! with a continuation state - where the next part begins, 2 bytes - which
 //! the device's next request repeats, and the answer is built again from
-//! the records for each part. A search's handles always fit one answer.
+//! the records for each part. A search answers with as many handles as
+//! one answer holds.
 //!
 //! Pure, as the rest of the layer.
 
@@ -31,14 +34,15 @@ const Channel = channels.Channel;
 const _sdp = @import("_sdp.zig");
 
 /// The room an answer's attributes are built in before they go in parts.
-pub const ROOM = 1024;
+pub const ROOM = 4096;
+
+/// The most bytes a program's record takes as it is served: one alone
+/// fits an answer's room.
+pub const RECORD_MOST = 2048;
 
 /// A record the server holds: its handle, and its attributes as one
 /// sequence of ids and values, the ids rising.
-const Record = struct {
-    handle: u32,
-    bytes: []const u8,
-};
+const Record = _hci.Served;
 
 const server_record = _sdp.sequence(&(_sdp.uint16(sdp.ATTR_SERVICE_RECORD_HANDLE) ++ _sdp.uint32(sdp.SDP_SERVER_HANDLE) ++
     _sdp.uint16(sdp.ATTR_SERVICE_CLASS_ID_LIST) ++ _sdp.sequence(&_sdp.uuid16(sdp.UUID_SERVICE_DISCOVERY_SERVER)) ++
@@ -48,7 +52,14 @@ const server_record = _sdp.sequence(&(_sdp.uint16(sdp.ATTR_SERVICE_RECORD_HANDLE
     _sdp.uint16(sdp.ATTR_VERSION_NUMBER_LIST) ++ _sdp.sequence(&_sdp.uint16(sdp.SDP_VERSION)) ++
     _sdp.uint16(sdp.ATTR_SERVICE_DATABASE_STATE) ++ _sdp.uint32(1)));
 
-const records = [_]Record{.{ .handle = sdp.SDP_SERVER_HANDLE, .bytes = &server_record }};
+/// The records in turn: the server's own, then the programs', each
+/// copied into the layer's room for one as it is read - which the one
+/// read before it was in. Null past the last.
+fn recordAt(layer: *Hci, index: usize) ?Record {
+    if (index == 0) return .{ .handle = sdp.SDP_SERVER_HANDLE, .bytes = &server_record };
+    const find = layer.port.record orelse return null;
+    return find(layer.port.context, index - 1, &layer.sdp_record);
+}
 
 /// A request on a channel to the server: answered.
 pub fn received(layer: *Hci, channel: *const Channel, pdu: []const u8) void {
@@ -113,8 +124,12 @@ fn search(layer: *Hci, channel: *const Channel, transaction: u16, params: []cons
     const pdu = &layer.sdp_pdu;
     var count: u16 = 0;
     var at: usize = sdp.SDP_HDR + 4;
-    for (records) |record| {
-        if (count == most or !pattern.matches(record)) continue;
+    var index: usize = 0;
+    while (recordAt(layer, index)) |record| : (index += 1) {
+        // As many handles as fit one answer, past its header and a
+        // continuation state's length.
+        if (count == most or at + 4 + 1 > @min(@as(usize, channel.mtu_out), pdu.len)) break;
+        if (!pattern.matches(record)) continue;
         _sdp.put32(pdu[at..][0..4], record.handle);
         at += 4;
         count += 1;
@@ -138,7 +153,8 @@ fn attributes(layer: *Hci, channel: *const Channel, transaction: u16, params: []
     const ids = _sdp.element(params[6..]) orelse return sdp.SDP_ERR_INVALID_SYNTAX;
     if (!validIds(ids)) return sdp.SDP_ERR_INVALID_SYNTAX;
     const continuation = continuationOf(params[6 + ids.whole ..]) orelse return sdp.SDP_ERR_INVALID_SYNTAX;
-    const record = for (records) |one| {
+    var index: usize = 0;
+    const record = while (recordAt(layer, index)) |one| : (index += 1) {
         if (one.handle == handle) break one;
     } else return sdp.SDP_ERR_INVALID_HANDLE;
     const room = &layer.sdp_room;
@@ -161,7 +177,8 @@ fn searchAttributes(layer: *Hci, channel: *const Channel, transaction: u16, para
     const continuation = continuationOf(rest[2 + ids.whole ..]) orelse return sdp.SDP_ERR_INVALID_SYNTAX;
     const room = &layer.sdp_room;
     var length: usize = 3;
-    for (records) |record| {
+    var index: usize = 0;
+    while (recordAt(layer, index)) |record| : (index += 1) {
         if (!pattern.matches(record)) continue;
         length += filtered(record, ids, room[length..]) orelse return sdp.SDP_ERR_INSUFFICIENT_RESOURCES;
     }

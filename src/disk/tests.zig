@@ -103,6 +103,8 @@ test {
     _ = @import("libs/bluetooth/tests/channels.zig");
     _ = @import("libs/bluetooth/tests/messages.zig");
     _ = @import("libs/bluetooth/tests/gatt.zig");
+    _ = @import("libs/bluetooth/tests/records.zig");
+    _ = @import("libs/bluetooth/tests/profiles.zig");
     _ = @import("libs/bluetooth/bluetooth_lvo.zig");
     _ = @import("devs/xhci/tests/xhci.zig");
     _ = @import("devs/nvme/prp.zig");

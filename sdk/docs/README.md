@@ -139,11 +139,13 @@ tags and constants, each with its doc comment.
   told of changes, their settings and the files they are kept in,
   finding the devices around them, links to them and what a link
   carries, pairing over BR/EDR and LE - agents and bonds - L2CAP's
-  channels and listeners, SDP's server and a device's services, GATT's
-  client and server over LE - services, characteristics, values read,
-  written and watched - the USB controllers and the MT7922's firmware,
-  the Raspberry Pi 4 Model B's controller on its mini UART,
-  `C:Bluetooth`, `C:test/BTEcho` and `C:test/BTGatt`.
+  channels and listeners, SDP's server, records of one's own and a
+  device's services, GATT's client and server over LE - services,
+  characteristics, values read, written and watched - profile drivers
+  and the services offered to them, keyboards and mice
+  (`bthid.device`), the USB controllers and the MT7922's firmware, the
+  Raspberry Pi 4 Model B's controller on its mini UART, `C:Bluetooth`,
+  `C:test/BTEcho`, `C:test/BTGatt` and `C:test/BTHidDevice`.
 - [Displays](guides/rtg.md) - rtg.library, in three parts. What a
   program does with a board: the machine's display, modes, the monitor,
   buffers, handing on what was drawn, showing, bands, power and the
@@ -180,7 +182,7 @@ first time something opens it.
 | motion.library | ROM | one clock for animations, timers and timelines | [md](autodocs/motion.md) · [doc](autodocs/motion.doc) |
 | asl.library | `LIBS:` | the file, font and device requesters | [md](autodocs/asl.md) · [doc](autodocs/asl.doc) |
 | audiocodec.library | `LIBS:` | sound files into 16-bit samples as they play: WAV, MP3, FLAC, Ogg Vorbis, AAC; their tags, covers and chapters | [md](autodocs/audiocodec.md) · [doc](autodocs/audiocodec.doc), [`audiocodec.zig`](../libs/audiocodec/audiocodec.zig), [guide](guides/audio.md#decoding-audiocodeclibrary) |
-| bluetooth.library | `LIBS:` | the Bluetooth stack: the controllers it is given, brought up, listed and set - on or off, their name, visible - the devices they find, the links to them and the bonds with them, the channels to the devices' protocols and the services they offer, and the programs told when they change | [md](autodocs/bluetooth.md) · [doc](autodocs/bluetooth.doc), [`bluetooth.zig`](../libs/bluetooth/bluetooth.zig), [guide](guides/bluetooth.md) |
+| bluetooth.library | `LIBS:` | the Bluetooth stack: the controllers it is given, brought up, listed and set - on or off, their name, visible - the devices they find, the links to them and the bonds with them, the channels to the devices' protocols and the services they offer, the records this machine offers, the bonded devices' services offered to the profile drivers, and the programs told when they change | [md](autodocs/bluetooth.md) · [doc](autodocs/bluetooth.doc), [`bluetooth.zig`](../libs/bluetooth/bluetooth.zig), [guide](guides/bluetooth.md) |
 | bsdsocket.library | `LIBS:` | TCP/IP: sockets, names, interfaces, packet hooks | [md](autodocs/bsdsocket.md) · [doc](autodocs/bsdsocket.doc) |
 | commodities.library | `LIBS:` | the input stream through a network of the programs' objects before the windows: hotkeys, filters, events swapped and added | [md](autodocs/commodities.md) · [doc](autodocs/commodities.doc), [`commodities.zig`](../libs/commodities/commodities.zig), [guide](guides/commodities.md) |
 | compression.library | `LIBS:` | DEFLATE packed and unpacked, bare or in a zlib or gzip wrapping, a buffer at a time or in one go; CRC-32 and Adler-32 | [md](autodocs/compression.md) · [doc](autodocs/compression.doc), [`compression.zig`](../libs/compression/compression.zig), [guide](guides/compression.md) |
@@ -250,6 +252,7 @@ the disk is loaded from `DEVS:` the first time something opens it.
 | usb/aic8800.device | `DEVS:usb/` | AIC8800 USB Wi-Fi sticks, WPA2, their firmware loaded; a class driver | [`network.zig`](../devices/network.zig), [`wireless.zig`](../devices/wireless.zig) |
 | usb/bluetooth.device | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller, offered to bluetooth.library; a MediaTek MT79xx given its firmware; a class driver | [`hci.zig`](../devices/hci.zig), [guide](guides/bluetooth.md) |
 | bluetooth/cyw43455bt.device | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's Bluetooth controller - its CYW43455's, on the BCM2711's mini UART - as an HCI unit: set up, given its patch and offered to bluetooth.library (the BCM2711 boards' disk) | [`hci.zig`](../devices/hci.zig), [guide](guides/bluetooth.md) |
+| bluetooth/bthid.device | `DEVS:bluetooth/` | Bluetooth keyboards and mice over BR/EDR, into keyboard.device and mouse.device through hid.library; a profile driver | [md](autodocs/btprofile.md) · [doc](autodocs/btprofile.doc), [`btprofile.zig`](../devices/btprofile.zig), [guide](guides/bluetooth.md) |
 
 ## Resources
 

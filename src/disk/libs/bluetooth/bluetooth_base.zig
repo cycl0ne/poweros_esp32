@@ -2,8 +2,10 @@
 //! bluetooth.library's base: exec's Library header, utility.library for
 //! the calls' tags, the controllers and their lock, the library's task and
 //! how it is started and ended, who wants to be told of a change, the
-//! agents that answer pairings, and the listeners that take devices'
-//! channels. One base, shared by every opener.
+//! agents that answer pairings, the listeners that take devices'
+//! channels, the programs' records the SDP server answers with, and the
+//! binder that offers bonded devices' services to profile drivers. One
+//! base, shared by every opener.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -11,6 +13,7 @@ const ExecBase = sdk.interface.exec.ExecBase;
 const DosBase = sdk.interface.dos.DosBase;
 const CryptoBase = sdk.interface.crypto.CryptoBase;
 const UtilityBase = sdk.interface.utility.UtilityBase;
+const BluetoothInterface = sdk.interface.bluetooth.BluetoothBase;
 
 /// The task's priority: above the programs, so that a keyboard's events
 /// are not kept waiting behind them.
@@ -63,6 +66,24 @@ pub const BluetoothBase = extern struct {
     listeners: exec.List = .{},
     listeners_lock: exec.SignalSemaphore = .{},
     listener_number: u32 = 0,
+    /// AddBTService's records (service/_service.zig), their lock, and how
+    /// many have been added, by which the next one's handle is made.
+    records: exec.List = .{},
+    records_lock: exec.SignalSemaphore = .{},
+    record_number: u32 = 0,
+    /// The binder (profile/_profile.zig): its process and its port while
+    /// it runs, whether the task is to start it, the messages for it
+    /// until it has its port, and the services it has bound to profile
+    /// drivers - all under `binder_lock`; and the table of the drivers in
+    /// DEVS:bluetooth/ (profile/drivers.zig), the binder's, read once and
+    /// kept until the expunge.
+    binder: ?*exec.Task = null,
+    binder_port: ?*exec.MsgPort = null,
+    binder_wanted: bool = false,
+    binder_queue: exec.List = .{},
+    bindings: exec.List = .{},
+    binder_lock: exec.SignalSemaphore = .{},
+    profile_drivers: ?*anyopaque = null,
     /// The task's while it runs: where the messages it sends to channels'
     /// ports come back, how many of them are out, and the messages
     /// themselves (channel/_channel.zig's, by their `link`) - all three
@@ -74,4 +95,9 @@ pub const BluetoothBase = extern struct {
 
 pub fn bluetoothBase(lib: *exec.Library) *BluetoothBase {
     return @fieldParentPtr("lib", lib);
+}
+
+/// The base as its jump table's: how the library calls its own functions.
+pub fn interface(base: *BluetoothBase) *BluetoothInterface {
+    return @ptrCast(base);
 }

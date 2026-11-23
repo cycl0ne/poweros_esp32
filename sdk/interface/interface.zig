@@ -71,3 +71,4 @@ pub const paintfx = @import("paintfx.zig");
 pub const json = @import("json.zig");
 pub const bluetooth = @import("bluetooth.zig");
 pub const hid = @import("hid.zig");
+pub const btprofile = @import("btprofile.zig");

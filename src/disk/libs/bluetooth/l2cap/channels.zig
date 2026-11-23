@@ -12,6 +12,16 @@
 //! PSM, or to a PSM a listener has (the port's `listener`), is taken on;
 //! any other is answered that there is no such protocol.
 //!
+//! **A secure listener's** (BTLSF_SECURE) is taken only over a link
+//! encrypted after the two have authenticated with their bond's key, the
+//! key's size checked (`secure`). A device with a bond whose link is not
+//! so yet is answered pending - authentication pending - while the link
+//! is made secure with the bond (pairing.zig), or the device encrypts it
+//! and its key's size is read, and answered success once it is
+//! (`secured`); a device without a bond, a link that could not be made
+//! secure, and one not so within PENDING_WAIT_MS are answered with the
+//! security block.
+//!
 //! **Configured** by each side's Configure Request, each answered. Ours
 //! says this machine's MTU, MTU_IN. The device's is taken: its MTU as the
 //! most a frame to it carries - at least 48, 672 where it says none -
@@ -41,6 +51,8 @@ const acl = @import("../hci/acl.zig");
 const connections = @import("../hci/connections.zig");
 const Connection = connections.Connection;
 const signalling = @import("signalling.zig");
+const bonds = @import("../hci/bonds.zig");
+const pairing = @import("../hci/pairing.zig");
 const sdp_server = @import("../sdp/server.zig");
 const sdp_client = @import("../sdp/client.zig");
 
@@ -57,7 +69,7 @@ pub const PENDING_WAIT_MS: u32 = 60_000;
 /// How long a channel's close is waited for.
 pub const CLOSE_WAIT_MS: u32 = 5_000;
 
-pub const State = enum(u8) { free, linking, connecting, configuring, open, disconnecting };
+pub const State = enum(u8) { free, linking, securing, connecting, configuring, open, disconnecting };
 
 /// Whose a channel is.
 pub const User = enum(u8) { task, sdp_server, sdp_client };
@@ -76,6 +88,10 @@ pub const Channel = struct {
     /// device's answered success here.
     ours_done: bool = false,
     theirs_done: bool = false,
+    /// Securing: its link has been asked to be made secure for it, and
+    /// to have its key's size checked.
+    secure_asked: bool = false,
+    size_asked: bool = false,
     /// The device, and the handle of its link once there is one.
     address: bluetooth.BTAddress = .{},
     handle: u16 = 0,
@@ -85,7 +101,7 @@ pub const Channel = struct {
     /// The most a frame to the device carries: its MTU.
     mtu_out: u16 = l2cap.MTU_DEFAULT,
     /// The request of ours it waits for, by its identifier, and until
-    /// when.
+    /// when - for one securing, the device's request it answers.
     ident: u8 = 0,
     deadline: ?u64 = null,
     /// What its user is told once it is closed, while it is closed by a
@@ -308,16 +324,24 @@ pub fn connectionRequest(layer: *Hci, connection: *const Connection, ident: u8, 
     var answer: [8]u8 = @splat(0);
     put16(answer[2..4], their_cid);
     var user: User = .task;
-    var listener: u32 = 0;
+    var listening: _hci.Listening = .{};
     if (psm == l2cap.PSM_SDP) {
         user = .sdp_server;
     } else {
-        listener = if (layer.port.listener) |find| find(layer.port.context, psm) else 0;
-        if (listener == 0) {
+        listening = if (layer.port.listener) |find| find(layer.port.context, psm) else .{};
+        if (listening.id == 0) {
             put16(answer[4..6], l2cap.CONNECTION_PSM_NOT_SUPPORTED);
             return signalling.respond(layer, connection, cid, l2cap.CONNECTION_RESPONSE, ident, &answer);
         }
     }
+    const waits = listening.secure and switch (secure(layer, connection)) {
+        .secure => false,
+        .unchecked, .bonded => true,
+        .none => {
+            put16(answer[4..6], l2cap.CONNECTION_SECURITY_BLOCK);
+            return signalling.respond(layer, connection, cid, l2cap.CONNECTION_RESPONSE, ident, &answer);
+        },
+    };
     const refused: ?u16 = if (their_cid < l2cap.CID_DYNAMIC_FIRST)
         l2cap.CONNECTION_INVALID_SOURCE_CID
     else if (byRemote(layer, connection, their_cid) != null)
@@ -339,12 +363,102 @@ pub fn connectionRequest(layer: *Hci, connection: *const Connection, ident: u8, 
         .local_cid = newCid(layer),
         .remote_cid = their_cid,
         .serial = if (user == .task) newSerial(layer) else 0,
-        .listener = listener,
+        .listener = listening.id,
     };
     put16(answer[0..2], channel.?.local_cid);
+    if (waits) {
+        const waiting = channel.?;
+        waiting.state = .securing;
+        waiting.ident = ident;
+        waiting.deadline = layer.now + PENDING_WAIT_MS;
+        put16(answer[4..6], l2cap.CONNECTION_PENDING);
+        put16(answer[6..8], l2cap.STATUS_AUTHENTICATION_PENDING);
+        signalling.respond(layer, connection, cid, l2cap.CONNECTION_RESPONSE, ident, &answer);
+        // Made secure now, unless a pairing on the link is to end first.
+        if (connection.pairing.stage == .idle) secured(layer, connection);
+        return;
+    }
     put16(answer[4..6], l2cap.CONNECTION_SUCCESS);
     signalling.respond(layer, connection, cid, l2cap.CONNECTION_RESPONSE, ident, &answer);
     if (!configure(layer, channel.?, connection)) close(layer, channel.?, bluetooth.BTERR_NOMEM);
+}
+
+/// How secure a BR/EDR link is for a secure listener.
+pub const Security = enum {
+    /// Encrypted, after an authentication with the key of the bond the
+    /// two have, the key's size checked.
+    secure,
+    /// So, but the size of the key the device encrypted it with not read
+    /// yet.
+    unchecked,
+    /// To a device with a bond, not encrypted yet.
+    bonded,
+    /// To a device without a bond, or a link going down.
+    none,
+};
+
+pub fn secure(layer: *Hci, connection: *const Connection) Security {
+    if (connection.state != .up or bonds.find(layer, connection.address) == null) return .none;
+    if (!connection.encrypted or !connection.authenticated) return .bonded;
+    return if (connection.key_checked) .secure else .unchecked;
+}
+
+/// The link's security changed - made secure with its bond, encrypted by
+/// the device, a pairing over, or not made so - or a channel began to
+/// wait for it: the channels waiting for it answered. While a pairing
+/// runs on it, they wait on; then they are taken where it is secure.
+/// Otherwise its being made secure is asked for, once - or, where the
+/// device encrypted it, its key's size checked, once - and they are
+/// refused with the security block where that was asked for already,
+/// could not be, or the device has no bond.
+pub fn secured(layer: *Hci, connection: *const Connection) void {
+    if (connection.le) return;
+    for (&layer.channels) |*channel| {
+        if (channel.state != .securing or channel.handle != connection.handle) continue;
+        const security = secure(layer, connection);
+        if (security == .none) {
+            refuse(layer, channel, connection);
+            continue;
+        }
+        // A pairing, or its being made secure, ends first.
+        if (connection.pairing.stage != .idle) continue;
+        const asked = switch (security) {
+            .secure => {
+                accept(layer, channel, connection);
+                continue;
+            },
+            .unchecked => &channel.size_asked,
+            .bonded, .none => &channel.secure_asked,
+        };
+        if (!asked.*) {
+            asked.* = true;
+            const link = connections.byHandle(layer, connection.handle) orelse return refuse(layer, channel, connection);
+            if (pairing.secureLink(layer, link)) continue;
+        }
+        refuse(layer, channel, connection);
+    }
+}
+
+/// A channel that waited for its link to be secure answered success, and
+/// configured.
+fn accept(layer: *Hci, channel: *Channel, connection: *const Connection) void {
+    var answer: [8]u8 = @splat(0);
+    put16(answer[0..2], channel.local_cid);
+    put16(answer[2..4], channel.remote_cid);
+    put16(answer[4..6], l2cap.CONNECTION_SUCCESS);
+    signalling.respond(layer, connection, l2cap.CID_SIGNALING, l2cap.CONNECTION_RESPONSE, channel.ident, &answer);
+    channel.deadline = null;
+    if (!configure(layer, channel, connection)) close(layer, channel, bluetooth.BTERR_NOMEM);
+}
+
+/// A channel that waited for its link to be secure refused with the
+/// security block, and let go.
+fn refuse(layer: *Hci, channel: *Channel, connection: *const Connection) void {
+    var answer: [8]u8 = @splat(0);
+    put16(answer[2..4], channel.remote_cid);
+    put16(answer[4..6], l2cap.CONNECTION_SECURITY_BLOCK);
+    signalling.respond(layer, connection, l2cap.CID_SIGNALING, l2cap.CONNECTION_RESPONSE, channel.ident, &answer);
+    gone(layer, channel, bluetooth.BTERR_REFUSED);
 }
 
 /// The channel of the link in `state` whose request of ours was `ident`.
@@ -543,7 +657,7 @@ pub fn closeFor(layer: *Hci, channel: *Channel) connections.Begun {
             channel.unwanted = true;
             return .{ .done = 0 };
         },
-        .linking => {
+        .linking, .securing => {
             gone(layer, channel, 0);
             return .{ .done = 0 };
         },
@@ -602,7 +716,7 @@ pub fn rejected(layer: *Hci, connection: *const Connection, ident: u8) void {
             .connecting => gone(layer, channel, bluetooth.BTERR_REFUSED),
             .configuring => close(layer, channel, bluetooth.BTERR_REFUSED),
             .disconnecting => gone(layer, channel, channel.result),
-            .open, .linking, .free => {},
+            .open, .linking, .securing, .free => {},
         }
     }
 }
@@ -658,6 +772,7 @@ pub fn tick(layer: *Hci) void {
             .connecting => gone(layer, channel, bluetooth.BTERR_TIMEOUT),
             .configuring => close(layer, channel, bluetooth.BTERR_TIMEOUT),
             .disconnecting => gone(layer, channel, channel.result),
+            .securing => if (connections.byHandle(layer, channel.handle)) |connection| refuse(layer, channel, connection) else gone(layer, channel, bluetooth.BTERR_TIMEOUT),
             .open, .linking, .free => {},
         }
     }

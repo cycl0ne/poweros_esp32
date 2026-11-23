@@ -267,7 +267,7 @@ const tests = [_][]const u8{
     "glyphs",      "ribbon",      "taskbench",   "videodec",  "audiodec",
     "film",        "commodities", "filmdt",      "watchdog",  "gpu",
     "dttime",      "names",       "axes",        "bands",     "vchiq",
-    "expunge",     "dtwrite",     "btecho",      "btgatt",
+    "expunge",     "dtwrite",     "btecho",      "btgatt",    "bthiddevice",
 };
 /// C:dbg: the tools that look into the running system - its tasks, where
 /// one stands, and the end of one that is stuck.
@@ -491,6 +491,7 @@ const modules = [_]Program{
     .{ .disk = "devs/usb/aic8800.device", .source = "devs/usb/aic8800/aic8800.zig", .name = "aic8800.device", .set = .wifi },
     .{ .disk = "devs/usb/bluetooth.device", .source = "devs/usb/bluetooth/bluetooth.zig", .name = "bluetooth.device", .set = .bluetooth },
     .{ .disk = "devs/bluetooth/cyw43455bt.device", .source = "devs/bluetooth/cyw43455bt/cyw43455bt.zig", .name = "cyw43455bt.device", .set = .bluetooth },
+    .{ .disk = "devs/bluetooth/bthid.device", .source = "devs/bluetooth/bthid/bthid.zig", .name = "bthid.device", .set = .bluetooth },
     .{ .disk = "devs/handlers/fat-handler", .source = "devs/handlers/fat/fat.zig", .name = "fat-handler", .set = .storage },
     .{ .disk = "devs/handlers/posfs-handler", .source = "devs/handlers/posfs/posfs.zig", .name = "posfs-handler", .set = .storage },
     .{ .disk = "devs/handlers/smb-handler", .source = "devs/handlers/smb/smb.zig", .name = "smb-handler", .set = .net, .imports = &.{"smbclient"} },

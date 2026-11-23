@@ -15,10 +15,13 @@ Generated from the source by `./zig build autodoc`.
 - [AddBTController](#addbtcontroller) - Offers a controller to the stack: the library's task opens the unit and brings the controller up.
 - [AddBTListener](#addbtlistener) - Serves a PSM: the channels devices open to it are taken, and come to a port.
 - [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
+- [AddBTService](#addbtservice) - Serves a record of the program's own: the SDP server answers devices with it beside its own.
 - [CloseBTChannel](#closebtchannel) - Closes a channel - one OpenBTChannel opened, or one a device opened to a listener - and gives it back.
 - [CloseBTGatt](#closebtgatt) - Closes a block OpenBTGatt opened, and gives it back.
 - [ConnectBTDevice](#connectbtdevice) - Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
 - [DisconnectBTDevice](#disconnectbtdevice) - Ends a link to a device, and waits until it is down.
+- [FindBTServiceAttribute](#findbtserviceattribute) - Reads the value of one of a record's attributes.
+- [NextBTDataElement](#nextbtdataelement) - Reads the data element some bytes begin with.
 - [ObtainBTBonds](#obtainbtbonds) - Lists the bonds of a controller, or of every controller.
 - [ObtainBTCharacteristics](#obtainbtcharacteristics) - Asks a device which characteristics a service of its GATT server has, with their descriptors, and lists them.
 - [ObtainBTConnections](#obtainbtconnections) - Lists a controller's links to devices: a copy of each as it is at the moment of the call.
@@ -39,6 +42,7 @@ Generated from the source by `./zig build autodoc`.
 - [RemBTController](#rembtcontroller) - Takes a controller from the stack: everything the library had out on the unit is taken back, the unit closed, and the controller gone from the list.
 - [RemBTListener](#rembtlistener) - Ends what AddBTListener began: devices' channels to its PSM are refused again.
 - [RemBTNotify](#rembtnotify) - Ends what AddBTNotify asked for.
+- [RemBTService](#rembtservice) - Gives back a record AddBTService served.
 - [SendBTChannel](#sendbtchannel) - Sends a frame on a channel to the device's protocol.
 - [SetBTControllerAttrs](#setbtcontrollerattrs) - Changes what a controller does: whether it is on, the name it shows others, whether they find it.
 - [StartBTDiscovery](#startbtdiscovery) - Makes a controller look for the devices around it: LE's advertisers, then the BR/EDR devices that answer an inquiry, then the names not yet heard.
@@ -214,7 +218,8 @@ Serves a PSM: the channels devices open to it are taken, and come to a port.
 **SYNOPSIS**
 
 ```zig
-fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*bluetooth.BTListener
+fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort,
+    flags: u32) ?*bluetooth.BTListener
 ```
 
 **SINCE**
@@ -227,6 +232,8 @@ fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*bluetoot
   one of l2cap.PSM_DYNAMIC_FIRST's and above for one of the program's
   own. Not l2cap.PSM_SDP, which the library serves.
 - `port` - where the channels come, and their messages.
+- `flags` - BTLSF_SECURE: a channel only over a link made secure with
+  a bond; 0 for any link.
 
 **RESULT**
 
@@ -242,6 +249,15 @@ message, `channel` its block, BTCHF_INCOMING in its flags; its frames
 and its end come to the same port as an opened channel's do. A device
 that opens one to a PSM nobody serves is told there is no such
 protocol.
+
+With BTLSF_SECURE a channel is taken only over a link that is
+encrypted after an authentication with the key of the bond the two
+have. A device with a bond whose link is not so yet is told to wait
+while the library makes it so - or the device does - and its channel
+is taken once it is; a device without a bond, a link that cannot be
+made secure, and one that is not so within a minute are refused for
+their security. A device's keys and moves, say, then come only from
+a device paired with.
 
 **CONTEXT**
 
@@ -259,7 +275,7 @@ it - until CloseBTChannel, whether the listener is still there or not.
 **NOTES**
 
 The link a device opens a channel over is the device's: it stays when
-the channel closes.
+the channel closes. `flags` since 1.9.
 
 **BUGS**
 
@@ -272,7 +288,7 @@ None known.
 **EXAMPLES**
 
 ```zig
-const listener = bt.AddBTListener(0x1001, port) orelse return;
+const listener = bt.AddBTListener(0x1001, port, 0) orelse return;
 defer bt.RemBTListener(listener);
 ```
 
@@ -334,6 +350,86 @@ None known.
 const signal = sys.AllocSignal(-1);
 const handle = bt.AddBTNotify(sys.FindTask(null).?, @as(u32, 1) << @intCast(signal)) orelse return;
 defer bt.RemBTNotify(handle);
+```
+
+## AddBTService
+
+Serves a record of the program's own: the SDP server answers devices with it beside its own.
+
+**SYNOPSIS**
+
+```zig
+fn AddBTService(base: *BluetoothBase, record: [*]const u8, length: u32) ?*bluetooth.BTRecord
+```
+
+**SINCE**
+
+1.9. LVO -172.
+
+**INPUTS**
+
+- `record`, `length` - the record: a sequence of attribute ids, each
+  a 16-bit unsigned integer followed by its value, the ids rising
+  (sdk.bluetooth.sdp) - the service's classes, its protocols, its
+  profile and what the profile adds.
+
+**RESULT**
+
+The record, for RemBTService; null for no memory, for bytes that are
+not a record whole, and for a record of more than 2048 bytes as it is
+served.
+
+**BEHAVIOR**
+
+The record is copied and given a handle of its own - from
+sdp.SDP_HANDLE_FIRST on, never one another record has - as its
+attribute 0x0000, in place of any the bytes name. Until RemBTService
+the SDP server answers every controller's devices with it, after its
+own record and those added before it: a device's search finds it by
+the UUIDs it holds, and its attributes are read in the parts the
+device asks for.
+
+**CONTEXT**
+
+- Waits: yes, for the records' list.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The bytes stay the caller's: the record served is a copy, the
+library's. The handle is the caller's until RemBTService, which gives
+it back before the library is closed.
+
+**NOTES**
+
+A record says what a service is and where it is reached; its PSMs are
+served with AddBTListener. Answers hold 4 KiB of records' attributes
+at most: a device's search that asks for more is told the server has
+no room.
+
+**BUGS**
+
+The server's record says its database's state is 1, always: a device
+that keeps what it read by that state does not see records added or
+given back.
+
+**SEE ALSO**
+
+`RemBTService`, `AddBTListener`, `ObtainBTServices`
+
+**EXAMPLES**
+
+```zig
+// A service of the class 0x1101, reached over L2CAP's PSM 0x1001.
+const record = [_]u8{
+    0x35, 0x15,
+    0x09, 0x00, 0x01, 0x35, 0x03, 0x19, 0x11, 0x01,
+    0x09, 0x00, 0x04, 0x35, 0x08, 0x35, 0x06, 0x19, 0x01, 0x00, 0x09, 0x10, 0x01,
+};
+const served = bt.AddBTService(&record, record.len) orelse return;
+defer bt.RemBTService(served);
 ```
 
 ## CloseBTChannel
@@ -622,6 +718,144 @@ None known.
 _ = bt.DisconnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &link.address);
 ```
 
+## FindBTServiceAttribute
+
+Reads the value of one of a record's attributes.
+
+**SYNOPSIS**
+
+```zig
+fn FindBTServiceAttribute(base: *BluetoothBase, record: [*]const u8,
+    length: u32, id: u32, element: *bluetooth.BTDataElement) bool
+```
+
+**SINCE**
+
+1.9. LVO -168.
+
+**INPUTS**
+
+- `record`, `length` - a record: a sequence of attribute ids each
+  followed by its value (BTService.record and record_length).
+- `id` - the attribute (sdp.ATTR_*, or a profile's own).
+- `element` - filled in with its value.
+
+**RESULT**
+
+True with `element` filled in; false where the record has no such
+attribute, or the bytes are not a record - `element` then left as it
+was.
+
+**BEHAVIOR**
+
+The record's attributes are read in turn until the one with the id;
+its value is described in `element` as NextBTDataElement describes an
+element. Nothing is read past `length`.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`element.data` points into the record; nothing is allocated.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`NextBTDataElement`, `ObtainBTServices`
+
+**EXAMPLES**
+
+```zig
+var name: bluetooth.BTDataElement = .{};
+if (bt.FindBTServiceAttribute(service.record.?, service.record_length, sdp.ATTR_SERVICE_NAME, &name) and name.kind == sdp.DE_TEXT) {
+    _ = dos.Write(output, name.data.?, name.length);
+}
+```
+
+## NextBTDataElement
+
+Reads the data element some bytes begin with.
+
+**SYNOPSIS**
+
+```zig
+fn NextBTDataElement(base: *BluetoothBase, data: [*]const u8, length: u32,
+    element: *bluetooth.BTDataElement) bool
+```
+
+**SINCE**
+
+1.9. LVO -164.
+
+**INPUTS**
+
+- `data`, `length` - the bytes: a record (BTService.record), an
+  attribute's value, a sequence's data, or what is left of it.
+- `element` - filled in.
+
+**RESULT**
+
+True with `element` filled in; false where the bytes do not begin with
+a data element whole - nothing read past `length` - `element` then
+left as it was.
+
+**BEHAVIOR**
+
+`kind` is the element's type (sdp.DE_*); `data` and `length` its data
+past its descriptor and its length, within the bytes given; `whole`
+the bytes it takes in all, so that the next element begins `whole` on.
+An unsigned integer's or a boolean's value of up to 8 bytes is in
+`value`, a signed integer's with its sign kept (`@bitCast` to `i64`);
+a UUID of 16, 32 or 128 bits is in `uuid` as 128 bits, the shorter
+ones on the base UUID. A sequence's or an alternative's elements are
+read by calling again on its `data`, from one element to the next.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: no.
+- Locks: none.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+`element.data` points into the bytes given; nothing is allocated.
+
+**NOTES**
+
+What a profile reads of a device's record that ObtainBTServices does
+not: a HID device's descriptor (sdk.bluetooth.sdp), an audio sink's
+features.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`FindBTServiceAttribute`, `ObtainBTServices`
+
+**EXAMPLES**
+
+```zig
+// The elements of a sequence, one after the other.
+var list: bluetooth.BTDataElement = .{};
+if (!bt.FindBTServiceAttribute(service.record.?, service.record_length, sdp.ATTR_PROFILE_DESCRIPTOR_LIST, &list)) return;
+var at: u32 = 0;
+var item: bluetooth.BTDataElement = .{};
+while (at < list.length and bt.NextBTDataElement(list.data.? + at, list.length - at, &item)) : (at += item.whole) {
+    // item.kind, item.value, item.uuid
+}
+```
+
 ## ObtainBTBonds
 
 Lists the bonds of a controller, or of every controller.
@@ -652,8 +886,9 @@ pairing was confirmed (BTBF_AUTHENTICATED), made with Secure
 Connections (BTBF_SECURE) or with a PIN (BTBF_LEGACY). An LE bond's
 address is an LE one - the device's identity where it gave it, with
 the key that resolves its private addresses (BTBF_IDENTITY) - its key
-kind 0. A controller's bonds are there once it has read them, as it
-comes up.
+kind 0. Since 1.9 each names the profile drivers its device's services
+are bound to (BTBond.drivers). A controller's bonds are there once it
+has read them, as it comes up.
 
 **CONTEXT**
 
@@ -2000,6 +2235,60 @@ None known.
 bt.RemBTNotify(handle);
 ```
 
+## RemBTService
+
+Gives back a record AddBTService served.
+
+**SYNOPSIS**
+
+```zig
+fn RemBTService(base: *BluetoothBase, record: ?*bluetooth.BTRecord) void
+```
+
+**SINCE**
+
+1.9. LVO -176.
+
+**INPUTS**
+
+- `record` - from AddBTService; null does nothing.
+
+**RESULT**
+
+Nothing.
+
+**BEHAVIOR**
+
+The SDP server answers with the record no more - a device's search
+does not find it, its handle is not known - and its copy is freed.
+
+**CONTEXT**
+
+- Waits: yes, for the records' list.
+- Interrupts: no.
+- Locks: none may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+The handle is gone.
+
+**BUGS**
+
+An answer in parts is made again from the records for each part: a
+device that reads one while a record is added or given back reads the
+parts after that from the records as they are then.
+
+**SEE ALSO**
+
+`AddBTService`
+
+**EXAMPLES**
+
+```zig
+bt.RemBTService(served);
+```
+
 ## SendBTChannel
 
 Sends a frame on a channel to the device's protocol.
@@ -2402,12 +2691,16 @@ BT_ALL_CONTROLLERS, every controller - without one, BTERR_NOCONTROLLER.
 
 **BEHAVIOR**
 
-The key is forgotten and its file deleted before the call returns,
-and a link to the device is ended. AddBTNotify's signal comes.
+The profile drivers bound to the device's services let go of it
+first, told that it is forgotten (BTPU_FORGET), while its link is
+still there to tell the device so. Then the key is forgotten, its file
+and the services kept with it deleted before the call returns, and a
+link to the device ended. AddBTNotify's signal comes.
 
 **CONTEXT**
 
-- Waits: yes, for the library's task and the file's deletion.
+- Waits: yes, for the profile drivers, the library's task and the
+  files' deletion.
 - Interrupts: no.
 - Locks: none may be held.
 - Process: a Task will do.
@@ -2428,7 +2721,7 @@ None known.
 
 **SEE ALSO**
 
-`PairBTDevice`, `ObtainBTBonds`
+`PairBTDevice`, `ObtainBTBonds`, `BTProfileUnbind`
 
 **EXAMPLES**
 

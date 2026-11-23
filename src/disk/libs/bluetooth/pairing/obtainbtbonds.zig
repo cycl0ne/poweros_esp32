@@ -7,6 +7,7 @@ const bluetooth = sdk.bluetooth;
 const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _controller = @import("../controller/_controller.zig");
 const _pairing = @import("_pairing.zig");
+const _profile = @import("../profile/_profile.zig");
 
 /// Lists the bonds of a controller, or of every controller.
 ///
@@ -30,8 +31,9 @@ const _pairing = @import("_pairing.zig");
 /// Connections (BTBF_SECURE) or with a PIN (BTBF_LEGACY). An LE bond's
 /// address is an LE one - the device's identity where it gave it, with
 /// the key that resolves its private addresses (BTBF_IDENTITY) - its key
-/// kind 0. A controller's bonds are there once it has read them, as it
-/// comes up.
+/// kind 0. Since 1.9 each names the profile drivers its device's services
+/// are bound to (BTBond.drivers). A controller's bonds are there once it
+/// has read them, as it comes up.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the controllers' lock.
@@ -91,6 +93,7 @@ pub fn ObtainBTBonds(base: *BluetoothBase, controller: u32) ?*exec.List {
             index += 1;
             entry.* = .{};
             _pairing.describe(kept.id, bond, entry);
+            _profile.driversOf(base, kept.id, bond.address, &entry.drivers);
             sys.AddTail(list, &entry.public.node);
         }
     }

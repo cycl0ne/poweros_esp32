@@ -8,9 +8,13 @@
 //! listener, to a PSM nobody serves, with a CID it uses already, and one
 //! the task does not take; what a configuration does not take answered
 //! with what would do, and one in parts; a link down closing its
-//! channels; the SDP server's searches, its attributes in parts and its
-//! errors; the SDP client's query in parts, its failures, and the records
-//! read; the data elements read whole or not at all.
+//! channels; a secure listener's channels - refused without a bond,
+//! waiting while the link is made secure with one, or while the size of
+//! the key the device encrypted it with is read, refused where it is not
+//! made secure or not in time; the SDP server's searches, its attributes
+//! in parts and its errors, and the programs' records after its own; the
+//! SDP client's query in parts, its failures, and the records read; the
+//! data elements read whole or not at all.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -23,6 +27,7 @@ const _hci = @import("../hci/_hci.zig");
 const Hci = _hci.Hci;
 const acl = @import("../hci/acl.zig");
 const connections = @import("../hci/connections.zig");
+const bonds = @import("../hci/bonds.zig");
 const channels = @import("../l2cap/channels.zig");
 const sdp_client = @import("../sdp/client.zig");
 const _sdp = @import("../sdp/_sdp.zig");
@@ -44,6 +49,11 @@ const Recorder = struct {
     /// channels it is told of.
     listening: u16 = 0,
     take: bool = true,
+    /// The PSM a secure listener serves (BTLSF_SECURE).
+    listening_secure: u16 = 0,
+    /// The programs' records the SDP server answers with after its own,
+    /// their handles from 0x00010000.
+    records: []const []const u8 = &.{},
 
     const Frame = struct {
         handle: u16,
@@ -103,9 +113,19 @@ const Recorder = struct {
         return recorder.take;
     }
 
-    fn listener(context: *anyopaque, psm: u16) u32 {
+    fn listener(context: *anyopaque, psm: u16) _hci.Listening {
         const recorder: *Recorder = @ptrCast(@alignCast(context));
-        return if (psm == recorder.listening) 7 else 0;
+        if (psm == recorder.listening) return .{ .id = 7 };
+        if (psm == recorder.listening_secure) return .{ .id = 8, .secure = true };
+        return .{};
+    }
+
+    fn record(context: *anyopaque, index: usize, into: []u8) ?_hci.Served {
+        const recorder: *Recorder = @ptrCast(@alignCast(context));
+        if (index >= recorder.records.len) return null;
+        const bytes = recorder.records[index];
+        @memcpy(into[0..bytes.len], bytes);
+        return .{ .handle = sdp.SDP_HANDLE_FIRST + @as(u32, @intCast(index)), .bytes = into[0..bytes.len] };
     }
 
     fn lastCommand(recorder: *const Recorder) u16 {
@@ -143,7 +163,7 @@ fn sent(recorder: *const Recorder, code: u8) !Signal {
 /// A layer up and on, its port the recorder's, with buffers for every
 /// frame the tests send.
 fn upLayer(recorder: *Recorder) Hci {
-    var layer = Hci{ .port = .{ .context = recorder, .send = Recorder.send, .channel = Recorder.told, .listener = Recorder.listener } };
+    var layer = Hci{ .port = .{ .context = recorder, .send = Recorder.send, .channel = Recorder.told, .listener = Recorder.listener, .record = Recorder.record } };
     layer.state = bluetooth.BTCS_UP;
     layer.features[0] = .{ 0xBF, 0xFE, 0xCF, 0xFE, 0xDB, 0xFF, 0x7B, 0x87 };
     layer.credits = 4;
@@ -529,6 +549,153 @@ test "a link down closes its channels, each told why, and answers the calls open
     try testing.expectEqual(@as(usize, 0), channels.count(&layer));
 }
 
+// --- a secure listener --------------------------------------------------------------
+
+const keyboard = bluetooth.BTAddress{ .bytes = .{ 0x02, 0x10, 0xEF, 0x5E, 0x00, 0x00 } };
+const mouse = bluetooth.BTAddress{ .bytes = .{ 0x03, 0x10, 0xEF, 0x5E, 0x00, 0x00 } };
+const bond_key = [hci.LINK_KEY_SIZE]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF };
+
+/// A BR/EDR link the device at `address` made, up as `handle`: its page
+/// taken on, its name asked for and answered.
+fn deviceLink(layer: *Hci, recorder: *Recorder, address: bluetooth.BTAddress, handle: u16) !void {
+    event(layer, hci.HCI_EV_CONNECTION_REQUEST, &(address.bytes ++ [_]u8{ 0x40, 0x25, 0x00, hci.LINK_ACL }));
+    try testing.expectEqual(hci.HCI_OP_ACCEPT_CONNECTION, recorder.lastCommand());
+    status(layer, hci.HCI_OP_ACCEPT_CONNECTION, 0);
+    var params: [11]u8 = undefined;
+    params[0] = 0;
+    put16(params[1..3], handle);
+    params[3..9].* = address.bytes;
+    params[9] = hci.LINK_ACL;
+    params[10] = 0;
+    event(layer, hci.HCI_EV_CONNECTION_COMPLETE, &params);
+    try testing.expect(connections.find(layer, address).?.incoming);
+    if (recorder.lastCommand() == hci.HCI_OP_REMOTE_NAME_REQUEST) {
+        status(layer, hci.HCI_OP_REMOTE_NAME_REQUEST, 0);
+        var name: [255]u8 = @splat(0);
+        @memcpy(name[1..7], &address.bytes);
+        @memcpy(name[7..13], "device");
+        event(layer, hci.HCI_EV_REMOTE_NAME_REQUEST_COMPLETE, &name);
+    }
+}
+
+fn complete(layer: *Hci, opcode: u16, returned: []const u8) void {
+    var params: [hci.HCI_MAX_PARAMS]u8 = undefined;
+    params[0] = 4;
+    params[1] = @truncate(opcode);
+    params[2] = @truncate(opcode >> 8);
+    @memcpy(params[3..][0..returned.len], returned);
+    event(layer, hci.HCI_EV_COMMAND_COMPLETE, params[0 .. 3 + returned.len]);
+}
+
+/// An event about the link `handle`: its status, its handle, the rest.
+fn handled(layer: *Hci, code: u8, code_status: u8, handle: u16, rest: []const u8) void {
+    var params: [8]u8 = undefined;
+    params[0] = code_status;
+    put16(params[1..3], handle);
+    @memcpy(params[3..][0..rest.len], rest);
+    event(layer, code, params[0 .. 3 + rest.len]);
+}
+
+/// The controller asks for the bond's key, the device having asked for an
+/// authentication: the layer's reply checked and answered.
+fn keyAsked(layer: *Hci, recorder: *const Recorder, address: bluetooth.BTAddress) !void {
+    event(layer, hci.HCI_EV_LINK_KEY_REQUEST, &address.bytes);
+    try testing.expectEqual(hci.HCI_OP_LINK_KEY_REPLY, recorder.lastCommand());
+    complete(layer, hci.HCI_OP_LINK_KEY_REPLY, &([_]u8{0} ++ address.bytes));
+}
+
+/// The device's Connection Request to `psm` from its CID `remote_cid`:
+/// the layer's answer.
+fn requested(layer: *Hci, recorder: *const Recorder, handle: u16, ident: u8, psm: u16, remote_cid: u16) !Signal {
+    var request: [4]u8 = undefined;
+    put16(request[0..2], psm);
+    put16(request[2..4], remote_cid);
+    signalIn(layer, handle, l2cap.CONNECTION_REQUEST, ident, &request);
+    const answer = try sent(recorder, l2cap.CONNECTION_RESPONSE);
+    try testing.expectEqual(ident, answer.ident);
+    return answer;
+}
+
+fn expectPending(answer: Signal) !void {
+    try testing.expectEqual(l2cap.CONNECTION_PENDING, _hci.le16(answer.data[4..6]));
+    try testing.expectEqual(l2cap.STATUS_AUTHENTICATION_PENDING, _hci.le16(answer.data[6..8]));
+}
+
+test "a secure listener: a device without a bond refused; a bonded device's channel waits while its link is made secure with the bond" {
+    var recorder = Recorder{ .listening_secure = l2cap.PSM_HID_CONTROL };
+    var layer = upLayer(&recorder);
+    try deviceLink(&layer, &recorder, keyboard, 0x0042);
+    // No bond: refused for its security, no channel made.
+    const refused = try requested(&layer, &recorder, 0x0042, 5, l2cap.PSM_HID_CONTROL, 0x0060);
+    try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0x60, 0x00, 0x03, 0x00, 0x00, 0x00 }, refused.data);
+    try testing.expectEqual(@as(usize, 0), channels.count(&layer));
+
+    // A bond: pending while the link is authenticated with its key and
+    // encrypted, the key's size read.
+    _ = bonds.keep(&layer, keyboard, &bond_key, hci.LINK_KEY_AUTHENTICATED_P192, false, 0x002540, "Keyboard").?;
+    const waiting = try requested(&layer, &recorder, 0x0042, 6, l2cap.PSM_HID_CONTROL, 0x0061);
+    try testing.expectEqualSlices(u8, &.{ 0x40, 0x00, 0x61, 0x00, 0x01, 0x00, 0x01, 0x00 }, waiting.data);
+    try testing.expectEqual(hci.HCI_OP_AUTHENTICATION_REQUESTED, recorder.lastCommand());
+    status(&layer, hci.HCI_OP_AUTHENTICATION_REQUESTED, 0);
+    try keyAsked(&layer, &recorder, keyboard);
+    handled(&layer, hci.HCI_EV_AUTHENTICATION_COMPLETE, 0, 0x0042, &.{});
+    try testing.expectEqual(hci.HCI_OP_SET_CONNECTION_ENCRYPTION, recorder.lastCommand());
+    status(&layer, hci.HCI_OP_SET_CONNECTION_ENCRYPTION, 0);
+    handled(&layer, hci.HCI_EV_ENCRYPTION_CHANGE, 0, 0x0042, &.{1});
+    try testing.expectEqual(hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE, recorder.lastCommand());
+    try testing.expectEqual(channels.State.securing, byLocalCid(&layer, 0x0040).?.state);
+    complete(&layer, hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE, &.{ 0, 0x42, 0x00, 16 });
+    // Taken, by the same identifier, and configured.
+    const taken = try sent(&recorder, l2cap.CONNECTION_RESPONSE);
+    try testing.expectEqual(@as(u8, 6), taken.ident);
+    try testing.expectEqualSlices(u8, &.{ 0x40, 0x00, 0x61, 0x00, 0x00, 0x00, 0x00, 0x00 }, taken.data);
+    try configured(&layer, &recorder, 0x0042, 0x0040, 0x0061, 672);
+    try testing.expectEqual(channels.EventKind.opened, recorder.lastTold().kind);
+    try testing.expectEqual(@as(u32, 8), recorder.lastTold().listener);
+
+    // Another over the link now secure: taken at once.
+    const at_once = try requested(&layer, &recorder, 0x0042, 7, l2cap.PSM_HID_CONTROL, 0x0062);
+    try testing.expectEqualSlices(u8, &.{ 0x41, 0x00, 0x62, 0x00, 0x00, 0x00, 0x00, 0x00 }, at_once.data);
+}
+
+test "a secure listener: over a link the device encrypted, its key's size read first; refused where the link is not made secure, or not in time" {
+    var recorder = Recorder{ .listening_secure = l2cap.PSM_HID_CONTROL };
+    var layer = upLayer(&recorder);
+    _ = bonds.keep(&layer, keyboard, &bond_key, hci.LINK_KEY_AUTHENTICATED_P192, false, 0x002540, "Keyboard").?;
+    _ = bonds.keep(&layer, mouse, &bond_key, hci.LINK_KEY_AUTHENTICATED_P192, false, 0x002580, "Mouse").?;
+
+    // The keyboard authenticates and encrypts its link itself.
+    try deviceLink(&layer, &recorder, keyboard, 0x0042);
+    try keyAsked(&layer, &recorder, keyboard);
+    handled(&layer, hci.HCI_EV_ENCRYPTION_CHANGE, 0, 0x0042, &.{1});
+    try expectPending(try requested(&layer, &recorder, 0x0042, 5, l2cap.PSM_HID_CONTROL, 0x0060));
+    try testing.expectEqual(hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE, recorder.lastCommand());
+    complete(&layer, hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE, &.{ 0, 0x42, 0x00, 16 });
+    const taken = try sent(&recorder, l2cap.CONNECTION_RESPONSE);
+    try testing.expectEqual(@as(u8, 5), taken.ident);
+    try testing.expectEqual(l2cap.CONNECTION_SUCCESS, _hci.le16(taken.data[4..6]));
+
+    // The mouse's link cannot be: the device has lost the bond.
+    try deviceLink(&layer, &recorder, mouse, 0x0043);
+    try expectPending(try requested(&layer, &recorder, 0x0043, 8, l2cap.PSM_HID_CONTROL, 0x0070));
+    try testing.expectEqual(hci.HCI_OP_AUTHENTICATION_REQUESTED, recorder.lastCommand());
+    status(&layer, hci.HCI_OP_AUTHENTICATION_REQUESTED, 0);
+    handled(&layer, hci.HCI_EV_AUTHENTICATION_COMPLETE, hci.HCI_ERR_PIN_OR_KEY_MISSING, 0x0043, &.{});
+    const lost = try sent(&recorder, l2cap.CONNECTION_RESPONSE);
+    try testing.expectEqual(@as(u8, 8), lost.ident);
+    try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0x70, 0x00, 0x03, 0x00, 0x00, 0x00 }, lost.data);
+    // Again, and never answered: refused once its time is up.
+    try expectPending(try requested(&layer, &recorder, 0x0043, 9, l2cap.PSM_HID_CONTROL, 0x0071));
+    status(&layer, hci.HCI_OP_AUTHENTICATION_REQUESTED, 0);
+    layer.now += channels.PENDING_WAIT_MS;
+    _hci.tick(&layer);
+    const late = try sent(&recorder, l2cap.CONNECTION_RESPONSE);
+    try testing.expectEqual(@as(u8, 9), late.ident);
+    try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0x71, 0x00, 0x03, 0x00, 0x00, 0x00 }, late.data);
+    // The keyboard's channel alone is left.
+    try testing.expectEqual(@as(usize, 1), channels.count(&layer));
+}
+
 // --- SDP ----------------------------------------------------------------------------
 
 /// A channel the device opens to the SDP server, as `remote_cid`, its
@@ -636,6 +803,57 @@ test "the SDP server: searches, its record's attributes whole and in parts, its 
     try testing.expectEqualSlices(u8, &.{ 0, sdp.SDP_ERR_INVALID_SYNTAX }, try sdpOut(&recorder, sdp.SDP_ERROR_RESPONSE, 32));
     frameIn(&layer, 0x0042, cid, &.{ sdp.SDP_SERVICE_SEARCH_REQUEST, 0, 33, 0, 9, 0x35, 0x03 });
     try testing.expectEqualSlices(u8, &.{ 0, sdp.SDP_ERR_INVALID_PDU_SIZE }, try sdpOut(&recorder, sdp.SDP_ERROR_RESPONSE, 33));
+}
+
+/// Two programs' records: a HID device's over L2CAP, and an echo's.
+const hid_record = _sdp.sequence(&(_sdp.uint16(sdp.ATTR_SERVICE_RECORD_HANDLE) ++ _sdp.uint32(sdp.SDP_HANDLE_FIRST) ++
+    _sdp.uint16(sdp.ATTR_SERVICE_CLASS_ID_LIST) ++ _sdp.sequence(&_sdp.uuid16(0x1124)) ++
+    _sdp.uint16(sdp.ATTR_PROTOCOL_DESCRIPTOR_LIST) ++ _sdp.sequence(&(_sdp.sequence(&(_sdp.uuid16(sdp.UUID_L2CAP) ++ _sdp.uint16(l2cap.PSM_HID_CONTROL))) ++
+    _sdp.sequence(&_sdp.uuid16(0x0011))))));
+const echo_record = _sdp.sequence(&(_sdp.uint16(sdp.ATTR_SERVICE_RECORD_HANDLE) ++ _sdp.uint32(sdp.SDP_HANDLE_FIRST + 1) ++
+    _sdp.uint16(sdp.ATTR_SERVICE_CLASS_ID_LIST) ++ _sdp.sequence(&_sdp.uuid16(0x1101)) ++
+    _sdp.uint16(sdp.ATTR_PROTOCOL_DESCRIPTOR_LIST) ++ _sdp.sequence(&_sdp.sequence(&(_sdp.uuid16(sdp.UUID_L2CAP) ++ _sdp.uint16(0x1001))))));
+
+test "the SDP server: the programs' records after its own - found by their UUIDs, read by their handles, all at once" {
+    var recorder = Recorder{ .records = &.{ &hid_record, &echo_record } };
+    var layer = upLayer(&recorder);
+    linkUp(&layer, &recorder, peer, 0x0042);
+    const cid = try sdpChannel(&layer, &recorder, 0x0070, 672);
+    // L2CAP: all three; HID's class: its record alone.
+    sdpIn(&layer, cid, sdp.SDP_SERVICE_SEARCH_REQUEST, 1, &.{ 0x35, 0x03, 0x19, 0x01, 0x00, 0x00, 0x0A, 0x00 });
+    try testing.expectEqualSlices(u8, &.{ 0, 3, 0, 3, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0 }, try sdpOut(&recorder, sdp.SDP_SERVICE_SEARCH_RESPONSE, 1));
+    sdpIn(&layer, cid, sdp.SDP_SERVICE_SEARCH_REQUEST, 2, &.{ 0x35, 0x03, 0x19, 0x11, 0x24, 0x00, 0x0A, 0x00 });
+    try testing.expectEqualSlices(u8, &.{ 0, 1, 0, 1, 0, 1, 0, 0, 0 }, try sdpOut(&recorder, sdp.SDP_SERVICE_SEARCH_RESPONSE, 2));
+    // As many handles as asked for.
+    sdpIn(&layer, cid, sdp.SDP_SERVICE_SEARCH_REQUEST, 3, &.{ 0x35, 0x03, 0x19, 0x01, 0x00, 0x00, 0x02, 0x00 });
+    try testing.expectEqualSlices(u8, &.{ 0, 2, 0, 2, 0, 0, 0, 0, 0, 1, 0, 0, 0 }, try sdpOut(&recorder, sdp.SDP_SERVICE_SEARCH_RESPONSE, 3));
+
+    // The echo's attributes by its handle: its record.
+    const all_ids = [_]u8{ 0x35, 0x05, 0x0A, 0x00, 0x00, 0xFF, 0xFF };
+    sdpIn(&layer, cid, sdp.SDP_SERVICE_ATTRIBUTE_REQUEST, 4, &([_]u8{ 0, 1, 0, 1, 0xFF, 0xFF } ++ all_ids ++ [_]u8{0}));
+    const answer = try sdpOut(&recorder, sdp.SDP_SERVICE_ATTRIBUTE_RESPONSE, 4);
+    try testing.expectEqual(@as(u16, echo_record.len + 1), _sdp.be16(answer[0..2]));
+    try testing.expectEqualSlices(u8, echo_record[2..], answer[5..][0 .. echo_record.len - 2]);
+    // Search and attributes at once: one list a record, the server's
+    // first.
+    sdpIn(&layer, cid, sdp.SDP_SERVICE_SEARCH_ATTRIBUTE_REQUEST, 5, &([_]u8{ 0x35, 0x03, 0x19, 0x01, 0x00, 0xFF, 0xFF } ++ all_ids ++ [_]u8{0}));
+    const both = try sdpOut(&recorder, sdp.SDP_SERVICE_SEARCH_ATTRIBUTE_RESPONSE, 5);
+    const lists = _sdp.element(both[2..][0.._sdp.be16(both[0..2])]).?;
+    var items = _sdp.itemsOf(lists);
+    var handles: [3]u32 = undefined;
+    var count: usize = 0;
+    while (items.next()) |item| : (count += 1) {
+        var found: _service.Read = .{};
+        _service.read(item, &found);
+        handles[count] = found.service.handle;
+    }
+    try testing.expectEqual(@as(usize, 3), count);
+    try testing.expectEqualSlices(u32, &.{ 0, sdp.SDP_HANDLE_FIRST, sdp.SDP_HANDLE_FIRST + 1 }, &handles);
+
+    // The echo's given back: its handle no longer known.
+    recorder.records = &.{&hid_record};
+    sdpIn(&layer, cid, sdp.SDP_SERVICE_ATTRIBUTE_REQUEST, 6, &([_]u8{ 0, 1, 0, 1, 0xFF, 0xFF } ++ all_ids ++ [_]u8{0}));
+    try testing.expectEqualSlices(u8, &.{ 0, sdp.SDP_ERR_INVALID_HANDLE }, try sdpOut(&recorder, sdp.SDP_ERROR_RESPONSE, 6));
 }
 
 /// A device's record, the one its answers carry: a serial port on RFCOMM

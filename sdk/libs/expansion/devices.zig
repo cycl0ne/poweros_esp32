@@ -48,6 +48,10 @@ pub const DEVIF_WIRELESS: u32 = 14;
 /// out, events and data in (sdk/devices/hci.zig). bluetooth.library runs
 /// the stack on its units.
 pub const DEVIF_HCI: u32 = 15;
+/// A Bluetooth profile driver: the two calls bluetooth.library offers it
+/// a bonded device's service with, and takes it back with
+/// (sdk/devices/btprofile.zig).
+pub const DEVIF_BTPROFILE: u32 = 16;
 
 /// Each command set's name, for a program that lists or asks for them:
 /// "serial" for DEVIF_SERIAL; null past the last.
@@ -68,6 +72,7 @@ pub fn devifName(set: u32) ?[*:0]const u8 {
         DEVIF_USBCLASS => "usbclass",
         DEVIF_WIRELESS => "wireless",
         DEVIF_HCI => "hci",
+        DEVIF_BTPROFILE => "btprofile",
         else => null,
     };
 }

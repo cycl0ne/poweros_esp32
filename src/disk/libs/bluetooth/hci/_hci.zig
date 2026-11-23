@@ -74,12 +74,30 @@ pub const Port = struct {
     /// device opened to a listener - true where it is taken - a frame, one
     /// closed. Null where nobody is told.
     channel: ?*const fn (context: *anyopaque, event: *const channels.Event) bool = null,
-    /// The listener that serves `psm`, by its number; 0 for none. Null
-    /// where there are none.
-    listener: ?*const fn (context: *anyopaque, psm: u16) u32 = null,
+    /// The listener that serves `psm`: its number - 0 for none - and
+    /// whether it is secure (BTLSF_SECURE). Null where there are none.
+    listener: ?*const fn (context: *anyopaque, psm: u16) Listening = null,
+    /// The programs' records the SDP server answers with beside its own
+    /// (AddBTService), by their index from 0, each copied into `into` -
+    /// sdp_server.RECORD_MOST bytes - so that one given back meanwhile is
+    /// never read: null past the last. Null where there are none.
+    record: ?*const fn (context: *anyopaque, index: usize, into: []u8) ?Served = null,
     /// What happens to the task's GATT blocks (att/client.zig): a value
     /// the device sent, a block closed. Null where nobody is told.
     gatt: ?*const fn (context: *anyopaque, event: *const att_client.Event) void = null,
+};
+
+/// A PSM's listener, as the port finds it.
+pub const Listening = struct {
+    id: u32 = 0,
+    secure: bool = false,
+};
+
+/// A record the SDP server answers with: its handle, and its attributes as
+/// one sequence of ids and values, the ids rising.
+pub const Served = struct {
+    handle: u32,
+    bytes: []const u8,
 };
 
 /// A command waiting for its turn: its opcode, parameters and time.
@@ -186,6 +204,8 @@ pub const Hci = struct {
     /// Its bonds (bonds.zig), and whether one is to be written.
     bonds: [bonds.BONDS]bonds.Bond = @splat(.{}),
     bonds_changed: bool = false,
+    /// A bond a pairing made is to be told the binder (Bond.fresh).
+    bonds_fresh: bool = false,
     /// Its dynamic channels (l2cap/channels.zig), and the next one's
     /// serial, CID and signalling identifier.
     channels: [channels.CHANNELS]channels.Channel = @splat(.{}),
@@ -193,10 +213,12 @@ pub const Hci = struct {
     next_cid: u16 = bluetooth.l2cap.CID_DYNAMIC_FIRST,
     signal_ident: u8 = 0,
     /// The SDP client's query (sdp/client.zig); the room the SDP server
-    /// builds an answer's attributes in, and the PDU it and the client
-    /// send (sdp/server.zig).
+    /// builds an answer's attributes in, the room a program's record is
+    /// copied to as it reads it, and the PDU it and the client send
+    /// (sdp/server.zig).
     sdp_query: sdp_client.Query = .{},
     sdp_room: [sdp_server.ROOM]u8 = undefined,
+    sdp_record: [sdp_server.RECORD_MOST]u8 = undefined,
     sdp_pdu: [acl.FRAME_MOST]u8 = undefined,
     /// GATT's client (att/client.zig): its blocks and its procedures, the
     /// last serial either was given, the order of the last procedure; and

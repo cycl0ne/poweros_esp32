@@ -67,8 +67,8 @@ i32 OpenBTChannel(u32 controller, *const bluetooth.BTAddress address, u32 psm, *
 void CloseBTChannel(?*bluetooth.BTChannel channel)
 /// A frame sent on a channel, waiting while the controller's queue is full: 0 once it is queued, or BTERR_*.
 i32 SendBTChannel(*bluetooth.BTChannel channel, [*]const u8 data, u32 length)
-/// A PSM served: the channels devices open to it come to `port` as BTCM_OPENED; null for no memory, or a PSM taken or one no channel can name.
-?*bluetooth.BTListener AddBTListener(u32 psm, *exec.MsgPort port)
+/// A PSM served: the channels devices open to it come to `port` as BTCM_OPENED - with BTLSF_SECURE only over a link encrypted with a bond's key; null for no memory, or a PSM taken or one no channel can name.
+?*bluetooth.BTListener AddBTListener(u32 psm, *exec.MsgPort port, u32 flags)
 /// A listener given back: devices' channels to its PSM refused again; what is still on its port is the caller's. Null does nothing.
 void RemBTListener(?*bluetooth.BTListener listener)
 // Services
@@ -93,4 +93,13 @@ i32 WriteBTAttribute(*bluetooth.BTGatt gatt, u32 handle, [*]const u8 data, u32 l
 i32 SubscribeBTAttribute(*bluetooth.BTGatt gatt, *const bluetooth.BTCharacteristic which, u32 flags)
 /// A subscription ended, the device told to send the value no more unless another block wants it: 0, BTERR_ATT less the device's reason, or BTERR_*.
 i32 UnsubscribeBTAttribute(*bluetooth.BTGatt gatt, *const bluetooth.BTCharacteristic which)
+// Records
+/// The data element `data` begins with read into `element`: false where the bytes do not hold one whole.
+bool NextBTDataElement([*]const u8 data, u32 length, *bluetooth.BTDataElement element)
+/// The value of a record's attribute `id` read into `element`: false where the record has none, or is not a record.
+bool FindBTServiceAttribute([*]const u8 record, u32 length, u32 id, *bluetooth.BTDataElement element)
+/// A record of the program's own served beside the library's, given a handle: null for no memory, or bytes that are not a record's attributes.
+?*bluetooth.BTRecord AddBTService([*]const u8 record, u32 length)
+/// A record given back: served no more. Null does nothing.
+void RemBTService(?*bluetooth.BTRecord record)
 ##end

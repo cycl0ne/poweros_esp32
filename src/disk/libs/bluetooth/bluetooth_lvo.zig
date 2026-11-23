@@ -49,6 +49,10 @@ const ReadBTAttribute = @import("gatt/readbtattribute.zig").ReadBTAttribute;
 const WriteBTAttribute = @import("gatt/writebtattribute.zig").WriteBTAttribute;
 const SubscribeBTAttribute = @import("gatt/subscribebtattribute.zig").SubscribeBTAttribute;
 const UnsubscribeBTAttribute = @import("gatt/unsubscribebtattribute.zig").UnsubscribeBTAttribute;
+const NextBTDataElement = @import("service/nextbtdataelement.zig").NextBTDataElement;
+const FindBTServiceAttribute = @import("service/findbtserviceattribute.zig").FindBTServiceAttribute;
+const AddBTService = @import("service/addbtservice.zig").AddBTService;
+const RemBTService = @import("service/rembtservice.zig").RemBTService;
 
 /// bluetooth.library's interface, as the SDK generates it from
 /// sdk/fd/bluetooth_lib.fd.
@@ -109,6 +113,10 @@ const contract_files = [_][]const u8{
     @embedFile("gatt/writebtattribute.zig"),
     @embedFile("gatt/subscribebtattribute.zig"),
     @embedFile("gatt/unsubscribebtattribute.zig"),
+    @embedFile("service/nextbtdataelement.zig"),
+    @embedFile("service/findbtserviceattribute.zig"),
+    @embedFile("service/addbtservice.zig"),
+    @embedFile("service/rembtservice.zig"),
 };
 
 // --- controllers ----------------------------------------------------------------
@@ -214,8 +222,8 @@ fn lvoSendBTChannel(base: *BluetoothBase, channel: *bluetooth.BTChannel, data: [
     return SendBTChannel(base, channel, data, length);
 }
 
-fn lvoAddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) callconv(.c) ?*bluetooth.BTListener {
-    return AddBTListener(base, psm, port);
+fn lvoAddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort, flags: u32) callconv(.c) ?*bluetooth.BTListener {
+    return AddBTListener(base, psm, port, flags);
 }
 
 fn lvoRemBTListener(base: *BluetoothBase, listener: ?*bluetooth.BTListener) callconv(.c) void {
@@ -266,6 +274,24 @@ fn lvoUnsubscribeBTAttribute(base: *BluetoothBase, gatt: *bluetooth.BTGatt, whic
     return UnsubscribeBTAttribute(base, gatt, which);
 }
 
+// --- records ----------------------------------------------------------------------
+
+fn lvoNextBTDataElement(base: *BluetoothBase, data: [*]const u8, length: u32, element: *bluetooth.BTDataElement) callconv(.c) bool {
+    return NextBTDataElement(base, data, length, element);
+}
+
+fn lvoFindBTServiceAttribute(base: *BluetoothBase, record: [*]const u8, length: u32, id: u32, element: *bluetooth.BTDataElement) callconv(.c) bool {
+    return FindBTServiceAttribute(base, record, length, id, element);
+}
+
+fn lvoAddBTService(base: *BluetoothBase, record: [*]const u8, length: u32) callconv(.c) ?*bluetooth.BTRecord {
+    return AddBTService(base, record, length);
+}
+
+fn lvoRemBTService(base: *BluetoothBase, record: ?*bluetooth.BTRecord) callconv(.c) void {
+    return RemBTService(base, record);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -309,6 +335,10 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoWriteBTAttribute),
     vec(lvoSubscribeBTAttribute),
     vec(lvoUnsubscribeBTAttribute),
+    vec(lvoNextBTDataElement),
+    vec(lvoFindBTServiceAttribute),
+    vec(lvoAddBTService),
+    vec(lvoRemBTService),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

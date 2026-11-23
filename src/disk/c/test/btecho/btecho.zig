@@ -82,7 +82,7 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
 
 /// The channels devices open to `psm` taken, and their frames sent back.
 fn serve(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, psm: u32, port: *exec.MsgPort) i32 {
-    const listener = bt.AddBTListener(psm, port) orelse {
+    const listener = bt.AddBTListener(psm, port, 0) orelse {
         _ = Printf(dl, "%s: PSM %lu is served already, or is not one a channel can name\n", .{ @as([*:0]const u8, COMMAND_NAME), @as(u64, psm) });
         return dos.RETURN_ERROR;
     };

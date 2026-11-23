@@ -14,7 +14,8 @@ const l2cap_channels = @import("../l2cap/channels.zig");
 ///
 /// SYNOPSIS:
 /// ```zig
-/// fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*bluetooth.BTListener
+/// fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort,
+///     flags: u32) ?*bluetooth.BTListener
 /// ```
 ///
 /// SINCE: 1.7. LVO -116.
@@ -24,6 +25,8 @@ const l2cap_channels = @import("../l2cap/channels.zig");
 ///   one of l2cap.PSM_DYNAMIC_FIRST's and above for one of the program's
 ///   own. Not l2cap.PSM_SDP, which the library serves.
 /// - `port` - where the channels come, and their messages.
+/// - `flags` - BTLSF_SECURE: a channel only over a link made secure with
+///   a bond; 0 for any link.
 ///
 /// RESULT:
 /// A handle for RemBTListener; null without memory, for a PSM another
@@ -38,6 +41,15 @@ const l2cap_channels = @import("../l2cap/channels.zig");
 /// that opens one to a PSM nobody serves is told there is no such
 /// protocol.
 ///
+/// With BTLSF_SECURE a channel is taken only over a link that is
+/// encrypted after an authentication with the key of the bond the two
+/// have. A device with a bond whose link is not so yet is told to wait
+/// while the library makes it so - or the device does - and its channel
+/// is taken once it is; a device without a bond, a link that cannot be
+/// made secure, and one that is not so within a minute are refused for
+/// their security. A device's keys and moves, say, then come only from
+/// a device paired with.
+///
 /// CONTEXT:
 /// - Waits: yes, for the listeners' list.
 /// - Interrupts: no.
@@ -51,7 +63,7 @@ const l2cap_channels = @import("../l2cap/channels.zig");
 ///
 /// NOTES:
 /// The link a device opens a channel over is the device's: it stays when
-/// the channel closes.
+/// the channel closes. `flags` since 1.9.
 ///
 /// BUGS:
 /// None known.
@@ -61,10 +73,10 @@ const l2cap_channels = @import("../l2cap/channels.zig");
 ///
 /// EXAMPLES:
 /// ```zig
-/// const listener = bt.AddBTListener(0x1001, port) orelse return;
+/// const listener = bt.AddBTListener(0x1001, port, 0) orelse return;
 /// defer bt.RemBTListener(listener);
 /// ```
-pub fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*bluetooth.BTListener {
+pub fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort, flags: u32) ?*bluetooth.BTListener {
     if (!l2cap_channels.validPsm(psm) or psm == l2cap.PSM_SDP) return null;
     const sys = base.sys_base;
     const memory = sys.AllocMem(@sizeOf(_channel.Listener), exec.MEMF_CLEAR) orelse return null;
@@ -76,7 +88,7 @@ pub fn AddBTListener(base: *BluetoothBase, psm: u32, port: *exec.MsgPort) ?*blue
         return null;
     }
     base.listener_number += 1;
-    listener.* = .{ .id = base.listener_number, .psm = @intCast(psm), .port = port };
+    listener.* = .{ .id = base.listener_number, .psm = @intCast(psm), .secure = flags & bluetooth.BTLSF_SECURE != 0, .port = port };
     sys.AddTail(&base.listeners, &listener.node);
     return @ptrCast(listener);
 }

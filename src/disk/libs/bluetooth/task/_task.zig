@@ -51,6 +51,11 @@
 //! are, each on the wait of its procedure (att/client.zig); CloseBTGatt is
 //! answered at once. What the layer tells of a block goes to its port as
 //! the channels' messages do (gatt.zig).
+//!
+//! **Profiles.** A controller come up, a bond a pairing made, and a
+//! controller removed are told the binder (profile/_profile.zig), which
+//! the task starts where it does not run; the services kept with a bond
+//! are deleted with it.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -77,11 +82,14 @@ const _pairing = @import("../pairing/_pairing.zig");
 const l2cap_channels = @import("../l2cap/channels.zig");
 const bondfiles = @import("bondfiles.zig");
 const taskchannels = @import("channels.zig");
+const taskrecords = @import("records.zig");
 const taskgatt = @import("gatt.zig");
 const att_client = @import("../att/client.zig");
 const cryptoport = @import("crypto.zig");
 const device = @import("device.zig");
 const settings = @import("settings.zig");
+const _profile = @import("../profile/_profile.zig");
+const kept_services = @import("../profile/kept.zig");
 const DosBase = sdk.interface.dos.DosBase;
 
 const task_name = "bluetooth.library";
@@ -100,6 +108,9 @@ const hostname_file = sdk.bsdsocket.HOSTNAME_FILE;
 /// name.
 const hostname_most = 1024;
 const default_name = "PowerOS";
+/// How soon the binder's start is tried again while the library's lock is
+/// taken.
+const BINDER_RETRY_MS = 20;
 
 /// A call's command to the task.
 pub const Command = extern struct {
@@ -375,6 +386,7 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
         keepBonds(work);
         askAgents(work);
         report(work);
+        toBinder(work);
         armTimer(work);
         if (ending(work)) break;
         _ = sys.Wait(mask);
@@ -450,6 +462,7 @@ fn ending(work: *Work) bool {
     defer sys.ReleaseSemaphore(&base.start_lock);
     if (!base.controllers.isEmpty() or !work.commands.msg_list.isEmpty() or !work.parked.isEmpty() or !work.sending.isEmpty()) return false;
     if (work.agent_out != 0 or base.channel_out != 0) return false;
+    if (_profile.startPending(base)) return false;
     base.port = null;
     base.task = null;
     base.channel_replies = null;
@@ -487,6 +500,7 @@ fn add(work: *Work, device_name: [*:0]const u8, unit: u32) i32 {
     controller.* = .{ .base = base, .unit = unit, .layer = .{ .port = device.port(controller), .crypto = cryptoport.port(base) } };
     controller.layer.port.channel = taskchannels.event;
     controller.layer.port.listener = taskchannels.listener;
+    controller.layer.port.record = taskrecords.record;
     controller.layer.port.gatt = taskgatt.event;
     _controller.copyString(&controller.device_name, device_name);
     const opened = device.open(controller, work.replies);
@@ -546,6 +560,9 @@ fn remove(work: *Work, device_name: [*:0]const u8, unit: u32) void {
     sys.ObtainSemaphore(&base.lock);
     sys.Remove(&controller.node);
     sys.ReleaseSemaphore(&base.lock);
+    // Its services' bindings ended, where the binder runs: one that does
+    // not binds nothing.
+    _ = _profile.tell(base, .gone, controller.id, controller.layer.address, .{}, false);
     exec.kprintf(sys, "%s: controller %u gone\n", .{ @as([*:0]const u8, task_name), controller.id });
     sys.FreeVec(controller);
     _notify.changed(base);
@@ -1038,20 +1055,57 @@ fn keepBonds(work: *Work) void {
         const controller = _controller.fromNode(node);
         const layer = &controller.layer;
         if (!layer.bonds_changed) continue;
-        var kept = true;
+        var written = true;
         while (true) {
             sys.ObtainSemaphore(&base.lock);
             const next = bonds.nextDirty(layer);
             sys.ReleaseSemaphore(&base.lock);
             const bond = next orelse break;
-            const done = if (bond.gone) bondfiles.delete(dl, &layer.address, &bond.address) else bondfiles.write(dl, &layer.address, bond, &work.bond_text);
-            if (!done) kept = false;
+            const done = if (bond.gone) bondfiles.delete(dl, &layer.address, &bond.address) and kept_services.delete(dl, &layer.address, &bond.address) else bondfiles.write(dl, &layer.address, bond, &work.bond_text);
+            if (!done) written = false;
             sys.ObtainSemaphore(&base.lock);
             bonds.written(bond);
             sys.ReleaseSemaphore(&base.lock);
         }
-        if (!kept) exec.kprintf(sys, "%s: the bonds of controller %u could not all be kept\n", .{ @as([*:0]const u8, task_name), controller.id });
+        if (!written) exec.kprintf(sys, "%s: the bonds of controller %u could not all be kept\n", .{ @as([*:0]const u8, task_name), controller.id });
     }
+}
+
+/// What the binder is to know (profile/binder.zig): each controller that
+/// came up - the services kept with its bonds offered again - and each
+/// bond a pairing made - its device's services offered; and the binder
+/// started where that wants it. Sent outside the lock: the task alone
+/// changes the tables, so it reads a bond without it and marks it told
+/// under it.
+fn toBinder(work: *Work) void {
+    const base = work.base;
+    const sys = base.sys_base;
+    var it = base.controllers.iterator();
+    while (it.next()) |node| {
+        const controller = _controller.fromNode(node);
+        const layer = &controller.layer;
+        if (controller.offer_kept) {
+            controller.offer_kept = false;
+            if (!_profile.tell(base, .up, controller.id, layer.address, .{}, true)) unoffered(sys);
+        }
+        if (!layer.bonds_fresh) continue;
+        sys.ObtainSemaphore(&base.lock);
+        layer.bonds_fresh = false;
+        sys.ReleaseSemaphore(&base.lock);
+        for (&layer.bonds) |*bond| {
+            if (!bond.fresh) continue;
+            sys.ObtainSemaphore(&base.lock);
+            bond.fresh = false;
+            sys.ReleaseSemaphore(&base.lock);
+            if (!bond.used or bond.gone) continue;
+            if (!_profile.tell(base, .bonded, controller.id, layer.address, bond.address, true)) unoffered(sys);
+        }
+    }
+    if (!_profile.startWanted(base)) unoffered(sys);
+}
+
+fn unoffered(sys: *ExecBase) void {
+    exec.kprintf(sys, "%s: services not offered to the profile drivers\n", .{@as([*:0]const u8, task_name)});
 }
 
 /// What the pairings ask of their agents, and tell them, sent: each in a
@@ -1205,6 +1259,11 @@ fn armTimer(work: *Work) void {
         const due = _hci.nextDeadline(&_controller.fromNode(node).layer) orelse continue;
         if (earliest == null or due < earliest.?) earliest = due;
     }
+    // The binder still to be started: tried again soon (toBinder).
+    if (_profile.startPending(base)) {
+        const retry = now(work) + BINDER_RETRY_MS;
+        if (earliest == null or retry < earliest.?) earliest = retry;
+    }
     const due = earliest orelse return;
     if (work.timer_out) {
         if (work.timer_due <= due) return;
@@ -1239,6 +1298,7 @@ fn report(work: *Work) void {
         any = true;
         if (layer.state == controller.reported) continue;
         controller.reported = layer.state;
+        if (layer.state == bluetooth.BTCS_UP) controller.offer_kept = true;
         say(sys, controller);
     }
     sys.ReleaseSemaphore(&base.lock);

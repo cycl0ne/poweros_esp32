@@ -76,6 +76,9 @@ pub const Controller = struct {
     leaving: bool = false,
     /// The state last said in the log.
     reported: u32 = bluetooth.BTCS_OPENING,
+    /// Up since the binder was last told: its kept services to be offered
+    /// again (profile/binder.zig).
+    offer_kept: bool = false,
     /// Whether its name is one it was given (BTCA_Name), kept in its
     /// settings, rather than the machine's.
     own_name: bool = false,

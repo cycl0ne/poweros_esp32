@@ -56,6 +56,7 @@ pub fn find(base: *BluetoothBase, id: u32) ?*Agent {
 pub const Entry = extern struct {
     public: bluetooth.BTBond = .{},
     name: [bluetooth.BT_BOND_NAME_MOST + 1]u8 = @splat(0),
+    drivers: [bluetooth.BT_BOND_DRIVERS_MOST + 1]u8 = @splat(0),
 };
 
 /// A bond of controller `id` copied into an entry.
@@ -76,6 +77,7 @@ pub fn describe(id: u32, bond: *const bonds.Bond, entry: *Entry) void {
         .key_size = bond.key_size,
     };
     entry.public.node.name = @ptrCast(&entry.name);
+    entry.public.drivers = @ptrCast(&entry.drivers);
 }
 
 /// Whether a bond is listed: one kept, not one ended whose file is still

@@ -45,7 +45,9 @@
 //! **A bonded device's link** the library made is authenticated with the
 //! bond's key and encrypted before ConnectBTDevice's wait is answered: 0,
 //! or why not - the device's PIN or Key Missing when it has lost the
-//! bond, the link staying up.
+//! bond, the link staying up. So is a link a bonded device opens a
+//! channel over to a secure listener (`secureLink`), the channel waiting
+//! for it (l2cap/channels.zig).
 //!
 //! **Noted.** A pairing over, and a link not made secure, leave a note
 //! for the log (connections.zig).
@@ -256,8 +258,22 @@ pub fn linkUp(layer: *Hci, connection: *Connection) bool {
         connection.pairing = .{};
         return false;
     }
-    if (!_hci.supports(layer, hci.CMDBIT_AUTHENTICATION_REQUESTED)) return false;
+    return secureLink(layer, connection);
+}
+
+/// A BR/EDR link to a device with a bond made secure with the bond's key:
+/// authenticated, then encrypted, its key's size checked - only checked,
+/// where the device has encrypted it already. False where that cannot be
+/// begun - no bond, a pairing running on it, a controller that cannot.
+pub fn secureLink(layer: *Hci, connection: *Connection) bool {
+    if (connection.le or connection.pairing.stage != .idle) return false;
     if (bonds.find(layer, connection.address) == null) return false;
+    if (connection.encrypted and connection.authenticated) {
+        begin(layer, connection, .secure, true, 0, null);
+        checkSize(layer, connection);
+        return true;
+    }
+    if (!_hci.supports(layer, hci.CMDBIT_AUTHENTICATION_REQUESTED)) return false;
     begin(layer, connection, .secure, true, 0, null);
     if (authenticate(layer, connection)) return true;
     connection.pairing = .{};
@@ -319,8 +335,19 @@ pub fn finish(layer: *Hci, connection: *Connection, result: i32) void {
         .pair => {
             connections.note(layer, connection, if (outcome == 0) .paired else .not_paired, outcome);
             notice(layer, .{ .kind = .done, .agent = was.agent, .address = connection.address, .ours = was.ours, .result = outcome });
+            // The bond it made: its device's services for the profile
+            // drivers (the task's toBinder).
+            if (outcome == 0) {
+                const made = if (connection.le) smp.bondOf(layer, connection) else bonds.find(layer, connection.address);
+                if (made) |bond| {
+                    bond.fresh = true;
+                    layer.bonds_fresh = true;
+                }
+            }
         },
     }
+    // The channels a device opened to a secure listener, which waited.
+    channels.secured(layer, connection);
 }
 
 pub fn notice(layer: *Hci, item: Notice) void {
@@ -360,12 +387,18 @@ fn encrypt(layer: *Hci, connection: *Connection) bool {
 /// The encryption key's size read, where the controller can: the pairing
 /// is over when it says the key is long enough.
 fn checkSize(layer: *Hci, connection: *Connection) void {
-    if (!_hci.supports(layer, hci.CMDBIT_READ_ENCRYPTION_KEY_SIZE)) return finish(layer, connection, 0);
+    if (!_hci.supports(layer, hci.CMDBIT_READ_ENCRYPTION_KEY_SIZE)) return sized(layer, connection);
     var params: [2]u8 = undefined;
     put16(&params, connection.handle);
-    if (!_hci.command(layer, hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE, &params, _hci.COMMAND_TIMEOUT_MS)) return finish(layer, connection, 0);
+    if (!_hci.command(layer, hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE, &params, _hci.COMMAND_TIMEOUT_MS)) return sized(layer, connection);
     connection.pairing.stage = .sizing;
     connection.pairing.command = hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE;
+}
+
+/// The key's size long enough, or not to be read: the pairing over.
+fn sized(layer: *Hci, connection: *Connection) void {
+    connection.key_checked = true;
+    finish(layer, connection, 0);
 }
 
 /// The controller told the agent's answer to the link's question.
@@ -615,12 +648,12 @@ pub fn answered(layer: *Hci, opcode: u16, returned: []const u8) void {
     switch (opcode) {
         hci.HCI_OP_READ_ENCRYPTION_KEY_SIZE => {
             const connection = sentBy(layer, opcode) orelse return;
-            if (returned.len < 4 or returned[0] != hci.HCI_SUCCESS) return finish(layer, connection, 0);
+            if (returned.len < 4 or returned[0] != hci.HCI_SUCCESS) return sized(layer, connection);
             if (returned[3] < hci.MIN_ENCRYPTION_KEY_SIZE) {
                 connections.close(layer, connection, hci.HCI_ERR_AUTHENTICATION_FAILURE);
                 return finish(layer, connection, hci.HCI_ERR_INSUFFICIENT_SECURITY);
             }
-            finish(layer, connection, 0);
+            sized(layer, connection);
         },
         hci.HCI_OP_AUTHENTICATION_REQUESTED, hci.HCI_OP_SET_CONNECTION_ENCRYPTION, hci.HCI_OP_LE_ENABLE_ENCRYPTION => {
             const status: i32 = if (returned.len == 0) bluetooth.BTERR_TIMEOUT else returned[0];

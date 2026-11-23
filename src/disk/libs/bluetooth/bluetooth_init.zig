@@ -14,10 +14,11 @@ const _base = @import("bluetooth_base.zig");
 const BluetoothBase = _base.BluetoothBase;
 const bluetooth_lvo = @import("bluetooth_lvo.zig");
 const board = @import("controller/board.zig");
+const profile_drivers = @import("profile/drivers.zig");
 
 pub const LIBRARY_NAME = bluetooth.BLUETOOTHNAME;
 pub const LIBRARY_VERSION = 1;
-pub const LIBRARY_REVISION = 8;
+pub const LIBRARY_REVISION = 9;
 pub const BUILD_DATE = "23.11.2026";
 pub const LIBRARY_VERSION_STRING =
     "\x00$VER: " ++ LIBRARY_NAME ++ " " ++
@@ -37,12 +38,17 @@ fn init(lib: *exec.Library, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv
     base.notify.init(.unknown);
     base.agents.init(.unknown);
     base.listeners.init(.unknown);
+    base.records.init(.unknown);
+    base.binder_queue.init(.message);
+    base.bindings.init(.unknown);
     base.channel_messages.init(.unknown);
     sys_base.InitSemaphore(&base.lock);
     sys_base.InitSemaphore(&base.start_lock);
     sys_base.InitSemaphore(&base.notify_lock);
     sys_base.InitSemaphore(&base.agents_lock);
     sys_base.InitSemaphore(&base.listeners_lock);
+    sys_base.InitSemaphore(&base.records_lock);
+    sys_base.InitSemaphore(&base.binder_lock);
     return lib;
 }
 
@@ -58,10 +64,10 @@ fn open(lib: *exec.Library, version: u32) callconv(.c) ?*exec.Library {
 
 pub const openVector = open;
 
-/// The library goes when nobody has it open - the task, which holds it
-/// open, has ended by then: dos.library, crypto.library and
-/// utility.library closed, the base freed, and the file it was loaded
-/// from handed back.
+/// The library goes when nobody has it open - the task and the binder,
+/// which hold it open, have ended by then: the profile drivers' table
+/// freed, dos.library, crypto.library and utility.library closed, the
+/// base freed, and the file it was loaded from handed back.
 fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     if (lib.open_cnt != 0) {
         lib.flags |= exec.LIBF_DELEXP;
@@ -70,6 +76,8 @@ fn expunge(lib: *exec.Library) callconv(.c) ?*anyopaque {
     const base = _base.bluetoothBase(lib);
     const sys = base.sys_base;
     const seg_list = base.seg_list;
+    // The binder has ended: it holds the library open while it runs.
+    profile_drivers.release(base);
     if (base.dos) |library| sys.CloseLibrary(@ptrCast(@alignCast(library)));
     if (base.crypto) |library| sys.CloseLibrary(@ptrCast(@alignCast(library)));
     sys.CloseLibrary(@ptrCast(@alignCast(base.utility_base)));

@@ -68,6 +68,9 @@ pub const ATTR_PROTOCOL_DESCRIPTOR_LIST: u16 = 0x0004;
 pub const ATTR_BROWSE_GROUP_LIST: u16 = 0x0005;
 pub const ATTR_LANGUAGE_BASE_LIST: u16 = 0x0006;
 pub const ATTR_PROFILE_DESCRIPTOR_LIST: u16 = 0x0009;
+/// A sequence of protocol descriptor lists: the other channels a service
+/// is reached over.
+pub const ATTR_ADDITIONAL_PROTOCOL_DESCRIPTOR_LISTS: u16 = 0x000D;
 /// The primary language's name of the service, at the language base
 /// 0x0100.
 pub const ATTR_SERVICE_NAME: u16 = 0x0100;
@@ -76,8 +79,10 @@ pub const ATTR_SERVICE_NAME: u16 = 0x0100;
 pub const ATTR_VERSION_NUMBER_LIST: u16 = 0x0200;
 pub const ATTR_SERVICE_DATABASE_STATE: u16 = 0x0201;
 
-/// The SDP server's own record's handle.
+/// The SDP server's own record's handle, and the first a program's
+/// record is given (AddBTService): those between are reserved.
 pub const SDP_SERVER_HANDLE: u32 = 0x0000_0000;
+pub const SDP_HANDLE_FIRST: u32 = 0x0001_0000;
 /// The version of the protocol: 1.1.
 pub const SDP_VERSION: u16 = 0x0100;
 

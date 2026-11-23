@@ -55,6 +55,9 @@ pub const Bond = struct {
     /// To be written, and to be deleted.
     dirty: bool = false,
     gone: bool = false,
+    /// Made by a pairing that is over: its device's services to be offered
+    /// to the profile drivers (profile/binder.zig).
+    fresh: bool = false,
 };
 
 /// The bond with the device at `address`; null for none.

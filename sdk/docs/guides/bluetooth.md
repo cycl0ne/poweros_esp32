@@ -12,20 +12,23 @@ their name, whether others find them - finds the devices around them,
 makes links to them and takes the links they make, pairs with them over
 BR/EDR and LE, keeping the bonds, and opens L2CAP channels over BR/EDR's
 links to the protocols programs speak, taking those the devices open; it
-says what this machine offers, and asks a device what it offers (SDP).
-Over LE it asks a device's GATT server for its services and
-characteristics, reads and writes their values and has them sent as
-they change, and answers the device's questions with a server of its
-own. The profiles over the channels and the attributes, and LE's
-channels, are the stack's next parts.
+says what this machine offers - its own record and those programs add -
+and asks a device what it offers (SDP). Over LE it asks a device's GATT
+server for its services and characteristics, reads and writes their
+values and has them sent as they change, and answers the device's
+questions with a server of its own. Each service of a device it bonds
+with is offered to the profile drivers in `DEVS:bluetooth/`:
+`bthid.device` drives keyboards and mice over BR/EDR. Keyboards and mice
+over LE, sound, and LE's channels are the stack's next parts.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
 controller's settings, finding devices, links to devices and what a
 link carries, pairing and bonds, channels and services, attributes over
-LE, the USB controllers and the MediaTek MT7922's firmware, the
-Raspberry Pi 4 Model B's controller, `C:Bluetooth`, `C:test/BTEcho` and
-`C:test/BTGatt`.
+LE, profile drivers, keyboards and mice, the USB controllers and the
+MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
+`C:Bluetooth`, `C:test/BTEcho`, `C:test/BTGatt` and
+`C:test/BTHidDevice`.
 
 ## The pieces
 
@@ -37,13 +40,18 @@ Raspberry Pi 4 Model B's controller, `C:Bluetooth`, `C:test/BTEcho` and
            DisconnectBTDevice, ObtainBTConnections, AddBTAgent,
            PairBTDevice, UnpairBTDevice, ObtainBTBonds, OpenBTChannel,
            SendBTChannel, CloseBTChannel, AddBTListener, ObtainBTServices,
-           OpenBTGatt, ObtainBTCharacteristics, ReadBTAttribute,
-           WriteBTAttribute, SubscribeBTAttribute
+           AddBTService, OpenBTGatt, ObtainBTCharacteristics,
+           ReadBTAttribute, WriteBTAttribute, SubscribeBTAttribute
  the stack          bluetooth.library: its own task, every controller's
                     HCI traffic, the bring-up, the settings, the
                     discoveries, the links and their data, the pairings
                     and the bonds, the channels, SDP's server and client,
-                    GATT's server and client
+                    GATT's server and client; its binder, which offers
+                    the bonded devices' services to the profile drivers
+                          |  BTProfileBind, BTProfileUnbind (DEVIF_BTPROFILE)
+ the profiles       bluetooth/bthid.device: keyboards and mice, their
+                    reports to hid.library, from there to keyboard.device
+                    and mouse.device
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
                           |  AddBTController, RemBTController
  the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
@@ -56,7 +64,7 @@ Raspberry Pi 4 Model B's controller, `C:Bluetooth`, `C:test/BTEcho` and
 | Piece | Where | What it is |
 |---|---|---|
 | `bluetooth.library` | `LIBS:` | the stack: the controllers it is given, brought up, listed and set, the devices they find, the links to them and the bonds with them, the channels over the links, the services the devices offer and the attributes of LE's, and the programs told when they change ([bluetooth](../autodocs/bluetooth.md)) |
-| `ENVARC:Sys/bluetooth/` | | each controller's settings and bonds, kept by its address |
+| `ENVARC:Sys/bluetooth/` | | each controller's settings and bonds, and the services of the bonded devices the profile drivers took, kept by its address |
 | `usb/bluetooth.device` | `DEVS:usb/` | Bluetooth controllers on USB as HCI units, a unit a controller; a class driver |
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
@@ -64,9 +72,11 @@ Raspberry Pi 4 Model B's controller, `C:Bluetooth`, `C:test/BTEcho` and
 | `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`), over LE with its characteristics |
 | `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
 | `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change; in the disk's `tests` set |
+| `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards and mice over BR/EDR: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
+| `C:test/BTHidDevice` | | this machine as a keyboard and a mouse over BR/EDR, for a host to be tried with; in the disk's `tests` set |
 
-The library, the devices, their firmware and the command are the disk's
-`bluetooth` set.
+The library, the devices - the controllers' and the profile drivers' -
+their firmware and the command are the disk's `bluetooth` set.
 
 ## A controller device
 
@@ -458,9 +468,10 @@ each address its twelve hex digits: a keyword file a bond - the device's
 name and class at the pairing, the link key and its kind, whether a PIN
 made it - read again as the controller comes up. A controller keeps 32.
 `ObtainBTBonds` lists them - the keys stay the library's - and
-`UnpairBTDevice` ends one: the key forgotten, its file deleted, a link
-to the device ended. The device keeps its side until it is told
-otherwise.
+`UnpairBTDevice` ends one: the profile drivers that drive the device let
+go of it - told to have it forget this machine too - the key forgotten,
+its files deleted, a link to the device ended. The device keeps its side
+until it is told otherwise.
 
 **A link to a device with a bond** that `ConnectBTDevice` makes is
 authenticated with the bond's key and encrypted before the call
@@ -562,7 +573,7 @@ port several channels share holds nothing of one that is closed.
 **A listener** takes the channels devices open to a PSM:
 
 ```zig
-const listener = bt.AddBTListener(0x2001, port) orelse return; // served already
+const listener = bt.AddBTListener(0x2001, port, 0) orelse return; // served already
 defer bt.RemBTListener(listener);
 // BTCM_OPENED: told.channel - BTCHF_INCOMING in its flags - is this
 // task's, until CloseBTChannel.
@@ -576,6 +587,13 @@ stay open, and a `BTCM_OPENED` still on the port brings one to close.
 The link a device opened a channel over is the device's, and stays when
 the channel closes.
 
+With `BTLSF_SECURE` a channel is taken only over a link encrypted after
+the two have authenticated with the key of their bond: a device without
+a bond is refused for its security, and one whose link is not so yet is
+told to wait while it is made so - refused if it is not within a minute.
+A protocol whose frames must come from a device paired with - a
+keyboard's keys - is served so.
+
 **Which PSM.** A Linux machine hands the dynamic PSMs from 0x1001 to
 0x10FF to its own services as they start - its object and file
 exchange, for one - and holds a channel to one of those pending while
@@ -584,8 +602,29 @@ its user is asked. A protocol of one's own does better past 0x10FF.
 **The SDP server.** Over PSM 1 the library says what this machine
 offers: searches for services by their UUIDs, a record's attributes, and
 both at once, each answer in as many parts as the device's MTU and the
-size it asked for allow. Its one record is the server's own (handle 0,
-class 0x1000).
+size it asked for allow. Its records are the server's own (handle 0,
+class 0x1000) and those programs add.
+
+**A record of one's own.** `AddBTService` has the server answer with a
+record a program makes - its attributes, each an ID and a value, in one
+sequence as SDP lays them out (`sdk/libs/bluetooth/sdp.zig`) - until
+`RemBTService`. The record is copied and given a handle of its own, from
+`sdp.SDP_HANDLE_FIRST` on, as its attribute 0, and answered with after
+the server's and those added before it. `FindBTServiceAttribute` reads
+an attribute's value from a record - one `ObtainBTServices` listed, or
+one's own - and `NextBTDataElement` reads one data element, and a
+sequence's elements one by one when it is called on the sequence's
+data:
+
+```zig
+var list: bluetooth.BTDataElement = .{};
+if (!bt.FindBTServiceAttribute(service.record.?, service.record_length, sdp.ATTR_PROTOCOL_DESCRIPTOR_LIST, &list)) return;
+var at: u32 = 0;
+var element: bluetooth.BTDataElement = .{};
+while (at < list.length and bt.NextBTDataElement(list.data.? + at, list.length - at, &element)) : (at += element.whole) {
+    // element.kind (sdp.DE_*), .data and .length, .value, .uuid
+}
+```
 
 **ObtainBTServices** asks a device what it offers - its SDP server, over
 BR/EDR; over LE its GATT server (Attributes over LE, below) - and lists
@@ -713,6 +752,111 @@ the attributes never change, so it is never indicated. Its values are
 read, and the configuration alone is written; a request it does not
 take is answered as not supported. A device reaches it over the links
 this machine makes: the library does not advertise.
+
+## Profile drivers
+
+A profile is what a kind of device does over the channels or the
+attributes - a keyboard's keys, a speaker's sound. A profile driver
+drives one for the rest of the system: a device in `DEVS:bluetooth/`
+(`sdk/devices/btprofile.zig`) with two calls after BeginIO and AbortIO,
+`BTProfileBind` and `BTProfileUnbind`
+([btprofile](../autodocs/btprofile.md)), and a ROM tag that says what it
+drives. The library reads the tag from the file without loading it; a
+driver is loaded when it is first offered a service.
+
+**Which services are offered.** A pairing that makes a bond has the
+device's services listed, as `ObtainBTServices` lists them, and each is
+offered to every driver whose table has an entry it matches - the kind
+of link it is reached over, `BTMATCH_BREDR` for a service of an SDP
+record and `BTMATCH_LE` for a GATT one, and its class, in 16 bits or as
+a UUID - the entry with the higher `priority` first, until one takes
+it:
+
+```zig
+const speaks = [_]u32{ devices.DEVIF_BTPROFILE, 0 };
+const matches = [_]btprofile.BTMatch{
+    .{ .over = btprofile.BTMATCH_BREDR, .class16 = hidp.UUID_HID },
+    .{},
+};
+export const driver_tag: btprofile.ResidentBTProfile linksection(".resident") = .{
+    .device = .{
+        .resident = .{ .flags = exec.RTF_AUTOINIT | exec.RTF_DEVICEINFO, ... },
+        .speaks = &speaks,
+        .units = 0,
+    },
+    .matches = &matches,
+};
+```
+
+The records of the services taken are kept beside the bond, in
+`ENVARC:Sys/bluetooth/<controller>/<device>.services` - for an LE bond
+`<device>.le.services` or `<device>.random.services` - a `Record` line
+of hexadecimal digits each; whenever the controller comes up they are
+offered again from the file, the device not asked. A device bonded
+while no driver on the disk drove any of its services keeps no such
+file, and is offered once it is paired again.
+
+**The calls.** The library opens the driver on `BTPROFILE_UNIT_BIND` and
+calls `BTProfileBind` with a `BTBinding`: the controller, the device's
+address and the service - one of BR/EDR with its record, for
+`FindBTServiceAttribute` to read. The driver takes it - true, with
+`unit` and `driver_data` its own - or declines it, and the next driver
+is asked. The binding is the driver's until `BTProfileUnbind`: when the
+controller goes, or when the bond ends (`UnpairBTDevice`) - then with
+`BTPU_FORGET`, for the driver to tell the device to forget this machine
+too while the link is still up. A driver that drives nothing more is
+closed.
+
+Both calls are made on the library's binder, a process of its own that
+starts when there is something to offer and ends once nothing is bound.
+It serves nothing else meanwhile, so a driver may call the library -
+read the record, add listeners, open channels - and wait for it.
+`ObtainBTBonds` names the drivers that drive each bond's device
+(`BTBond.drivers`, the names joined by ", "), and the log says each
+service bound (`C:Log`).
+
+## Keyboards and mice
+
+`bluetooth/bthid.device` drives keyboards and mice over BR/EDR, a
+profile driver of the HID service (0x1124). It takes a device whose
+record's report descriptor (`hidp.ATTR_HID_DESCRIPTOR_LIST`) describes a
+keyboard or a mouse, or both, and hands each report the device sends to
+hid.library, which makes it into key-downs and key-ups for
+keyboard.device and into moves, buttons and the wheel for mouse.device:
+a Bluetooth keyboard is the machine's keyboard as a USB one is.
+
+```
+1> Bluetooth PAIR 00:00:5E:EF:10:46
+Pairing with 00:00:5E:EF:10:46 over BR/EDR; CTRL-C stops
+Type 058213 on 00:00:5E:EF:10:46
+Paired with Keyboard
+1> Bluetooth BONDS INFO
+  00:00:5E:EF:10:46  BR/EDR     confirmed    Keyboard
+      controller 0, key type 8, Secure Connections
+      driven by bthid.device
+```
+
+A HID device is reached over two L2CAP channels, control (PSM 17) and
+interrupt (PSM 19), each frame beginning with a byte that says what it
+is (`sdk/libs/bluetooth/hidp.zig`). The driver opens them, control
+first, right after the pairing that bonded the device; after that the
+device opens them itself when it has something to send, as a keyboard
+does when a key is pressed. So while it drives a device the driver
+serves both PSMs - with `BTLSF_SECURE`, so that keys come only from a
+device paired with - and closes again a channel of a device it does not
+drive. A device that waits for its host to open the channels - one that
+never opens them itself - is reached only right after its pairing.
+
+The input reports come on the interrupt channel, and a keyboard's LEDs -
+Caps Lock's light as it changes - go back on it as an output report.
+The interrupt channel closing lets go of whatever keys or buttons the
+device still held. A device that unplugs itself (`VIRTUAL_CABLE_UNPLUG`
+on the control channel) has both channels closed, its bond kept for the
+user to end; `Bluetooth UNPAIR` has the device unplug before the bond
+ends. The log says each device driven, connected and disconnected.
+
+A machine is a HID host or a HID device on these PSMs, not both: while
+bthid.device drives a device, `C:test/BTHidDevice` finds them served.
 
 ## Controllers on USB
 
@@ -992,9 +1136,10 @@ device's address, the kind of link the bond is for, how its pairing was
 confirmed - `confirmed`, `unconfirmed`, or `PIN` - and its name; with
 `INFO`, the controller, the device's class where the pairing learned it
 - a link the device made says it - the kind of its key, or an LE key's
-size, whether it was made with Secure Connections, and whether the
-device gave its identity. `UNPAIR` ends a bond, by the device's address
-or name (`UnpairBTDevice`).
+size, whether it was made with Secure Connections, whether the device
+gave its identity, and the profile drivers that drive it. `UNPAIR` ends
+a bond, by the device's address or name (`UnpairBTDevice`), a driver
+that drives the device telling it first.
 
 What a device offers:
 
@@ -1114,3 +1259,37 @@ notified, or with `INDICATE` indicated - and shows each value as it
 comes, until CTRL-C or the link ends. `CONTROLLER` names the controller,
 as `Bluetooth`'s does. A value that wants the link encrypted is read
 once the two have a bond (`Bluetooth PAIR`).
+
+## C:test/BTHidDevice
+
+```
+1> C:test/BTHidDevice
+A keyboard and a mouse, waiting for a bonded host's channels; CTRL-C stops
+00:00:5E:EF:10:43 connected; each line typed is sent
+hello
+CAPS
+LEDs: Num Lock off, Caps Lock on, Scroll Lock off
+MOVE 20 -10
+The host unplugged: its channels closed
+***Break
+1> C:test/BTHidDevice TO 00:00:5E:EF:10:43
+Opening the channels to 00:00:5E:EF:10:43
+Connected; each line typed is sent, CTRL-C stops
+```
+
+`BTHidDevice` makes this machine a keyboard and a mouse over BR/EDR, for
+a host to be tried with. It adds a HID record of its own
+(`AddBTService`), its report descriptor a keyboard's and a mouse's, and
+takes a bonded host's channels to PSMs 17 and 19 (`AddBTListener` with
+`BTLSF_SECURE`), until CTRL-C. With `TO` it opens the channels to the
+host itself, control first, as a keyboard reconnects, until CTRL-C or
+the host closes them. Each line typed goes as key presses, a key down
+and up for each character - letters, digits, the space and `-=;,./`, as
+a US keyboard has them - without its end of line; `MOVE <x> <y>` moves
+the pointer by -127 to 127 each way, `CLICK` presses and lets go of the
+first button, `CAPS` presses Caps Lock. The LEDs the host sends back are
+shown, and so is the host's `VIRTUAL_CABLE_UNPLUG`, which closes the
+channels. The host pairs with this machine first - `Bluetooth AGENT`
+here answers it - and bthid.device here drives no keyboard (Keyboards
+and mice, above). `CONTROLLER` names the controller, as `Bluetooth`'s
+does.
