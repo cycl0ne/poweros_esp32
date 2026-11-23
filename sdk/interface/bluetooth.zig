@@ -92,7 +92,7 @@ pub const Fn = struct {
     pub const RemBTListener = *const fn (*BluetoothBase, ?*bluetooth.BTListener) callconv(.c) void;
     pub const ObtainBTServices = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, *?*exec.List) callconv(.c) i32;
     pub const ReleaseBTServices = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
-    pub const OpenBTGatt = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, *exec.MsgPort, *?*bluetooth.BTGatt) callconv(.c) i32;
+    pub const OpenBTGatt = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, *exec.MsgPort, *?*bluetooth.BTGatt, u32) callconv(.c) i32;
     pub const CloseBTGatt = *const fn (*BluetoothBase, ?*bluetooth.BTGatt) callconv(.c) void;
     pub const ObtainBTCharacteristics = *const fn (*BluetoothBase, *bluetooth.BTGatt, *const bluetooth.BTService, *?*exec.List) callconv(.c) i32;
     pub const ReleaseBTCharacteristics = *const fn (*BluetoothBase, ?*exec.List) callconv(.c) void;
@@ -254,9 +254,9 @@ pub const BluetoothBase = opaque {
         return libraries.call(self, LVO.ReleaseBTServices, Fn.ReleaseBTServices, .{list});
     }
 
-    /// The attribute protocol opened to an LE device, as GATT's client - its link made first where there is none, made secure where there is a bond: 0 once it is open and `gatt` set, BTERR_*, or the controller's status. The values it subscribes to come to `port`.
-    pub fn OpenBTGatt(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, port: *exec.MsgPort, gatt: *?*bluetooth.BTGatt) i32 {
-        return libraries.call(self, LVO.OpenBTGatt, Fn.OpenBTGatt, .{ controller, address, port, gatt });
+    /// The attribute protocol opened to an LE device, as GATT's client - its link made first where there is none, made secure where there is a bond: 0 once it is open and `gatt` set, BTERR_*, or the controller's status - or with BTGO_WAIT a block that waits for the device, opened each time it is reached. The values it subscribes to come to `port`.
+    pub fn OpenBTGatt(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, port: *exec.MsgPort, gatt: *?*bluetooth.BTGatt, flags: u32) i32 {
+        return libraries.call(self, LVO.OpenBTGatt, Fn.OpenBTGatt, .{ controller, address, port, gatt, flags });
     }
 
     /// A block closed and given back: its subscriptions ended, the messages about it still on its port taken back. Null does nothing.

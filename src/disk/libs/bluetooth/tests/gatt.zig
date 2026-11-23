@@ -10,7 +10,14 @@
 //! taken back, a close leaving the device told; procedures in their
 //! order; a link down closing its blocks and answering its procedures; a
 //! request not answered leaving the bearer dead; a link made for a block
-//! ended two seconds after it closed.
+//! ended two seconds after it closed. Blocks that wait: the background
+//! scan on for them and off while a link is made or a discovery runs; a
+//! device linked to when it advertises, at its address or at a private
+//! one its bond's key made, the link made secure and found by the bond's
+//! address; the block opened over the link and told so, a value before
+//! its open its, waiting again when the link ends, what it subscribed to
+//! written again at its next open; a link up taken at once; a controller
+//! brought up again leaving it waiting, one gone closing it.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -23,8 +30,11 @@ const _hci = @import("../hci/_hci.zig");
 const Hci = _hci.Hci;
 const acl = @import("../hci/acl.zig");
 const connections = @import("../hci/connections.zig");
+const bonds = @import("../hci/bonds.zig");
+const discovery = @import("../hci/discovery.zig");
 const _att = @import("../att/_att.zig");
 const att_client = @import("../att/client.zig");
+const Port = @import("_port.zig").Port;
 
 const testing = std.testing;
 
@@ -33,6 +43,8 @@ const testing = std.testing;
 /// told of its GATT blocks.
 const Recorder = struct {
     opcodes: [32]u16 = undefined,
+    /// Each command's first two parameters, where it has them.
+    firsts: [32][2]u8 = undefined,
     command_count: usize = 0,
     frames: [16]Frame = undefined,
     frame_count: usize = 0,
@@ -63,7 +75,9 @@ const Recorder = struct {
         const recorder: *Recorder = @ptrCast(@alignCast(context));
         switch (packet_type) {
             hcidev.HCI_COMMAND_PKT => {
-                recorder.opcodes[recorder.command_count % recorder.opcodes.len] = _hci.le16(bytes[0..2]);
+                const place = recorder.command_count % recorder.opcodes.len;
+                recorder.opcodes[place] = _hci.le16(bytes[0..2]);
+                recorder.firsts[place] = .{ if (bytes.len > 3) bytes[3] else 0, if (bytes.len > 4) bytes[4] else 0 };
                 recorder.command_count += 1;
             },
             hcidev.HCI_ACLDATA_PKT => {
@@ -98,6 +112,14 @@ const Recorder = struct {
 
     fn lastCommand(recorder: *const Recorder) u16 {
         return recorder.opcodes[(recorder.command_count - 1) % recorder.opcodes.len];
+    }
+
+    const Sent = struct { opcode: u16, first: [2]u8 };
+
+    /// The command sent `back` before the last.
+    fn commandBack(recorder: *const Recorder, back: usize) Sent {
+        const place = (recorder.command_count - 1 - back) % recorder.opcodes.len;
+        return .{ .opcode = recorder.opcodes[place], .first = recorder.firsts[place] };
     }
 
     fn lastFrame(recorder: *const Recorder) *const Frame {
@@ -136,6 +158,45 @@ fn event(layer: *Hci, code: u8, params: []const u8) void {
 
 fn status(layer: *Hci, opcode: u16, code: u8) void {
     event(layer, hci.HCI_EV_COMMAND_STATUS, &.{ code, 4, @truncate(opcode), @truncate(opcode >> 8) });
+}
+
+/// A command's Command Complete, its status alone.
+fn complete(layer: *Hci, opcode: u16, code: u8) void {
+    event(layer, hci.HCI_EV_COMMAND_COMPLETE, &.{ 4, @truncate(opcode), @truncate(opcode >> 8), code });
+}
+
+/// The device at `address` heard advertising, as `event_type`.
+fn advertised(layer: *Hci, address: bluetooth.BTAddress, event_type: u8) void {
+    var params: [12]u8 = undefined;
+    params[0] = hci.HCI_LE_EV_ADVERTISING_REPORT;
+    params[1] = 1;
+    params[2] = event_type;
+    params[3] = if (address.kind == bluetooth.BTADDR_LE_RANDOM) hci.LE_ADDR_RANDOM else hci.LE_ADDR_PUBLIC;
+    params[4..10].* = address.bytes;
+    params[10] = 0;
+    params[11] = 0xC8;
+    event(layer, hci.HCI_EV_LE_META, &params);
+}
+
+/// The background scan just asked for - passive, each advertiser
+/// reported once - and the controller's answers.
+fn expectScan(layer: *Hci, recorder: *const Recorder) !void {
+    const parameters = recorder.commandBack(1);
+    try testing.expectEqual(hci.HCI_OP_LE_SET_SCAN_PARAMETERS, parameters.opcode);
+    try testing.expectEqual(hci.LE_SCAN_PASSIVE, parameters.first[0]);
+    const enable = recorder.commandBack(0);
+    try testing.expectEqual(hci.HCI_OP_LE_SET_SCAN_ENABLE, enable.opcode);
+    try testing.expectEqualSlices(u8, &.{ 1, 1 }, &enable.first);
+    complete(layer, hci.HCI_OP_LE_SET_SCAN_PARAMETERS, 0);
+    complete(layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, 0);
+    try testing.expect(layer.scan.on);
+}
+
+/// The scan turned off: the command `back` before the last.
+fn expectScanOff(recorder: *const Recorder, back: usize) !void {
+    const off = recorder.commandBack(back);
+    try testing.expectEqual(hci.HCI_OP_LE_SET_SCAN_ENABLE, off.opcode);
+    try testing.expectEqual(@as(u8, 0), off.first[0]);
 }
 
 /// The LE link to `address` up as `handle` - initiated by the library,
@@ -215,7 +276,7 @@ fn answered(layer: *Hci, begun: connections.Begun) usize {
 /// A block opened over the link that is up, its MTU exchanged as `mtu`
 /// where it is not yet.
 fn opened(layer: *Hci, recorder: *const Recorder, mtu: ?u16) !*att_client.Client {
-    const begun = att_client.open(layer, sensor);
+    const begun = att_client.open(layer, sensor, &block_owner, false);
     try testing.expect(begun == .waiting);
     if (mtu) |theirs| {
         try expectAtt(recorder, &.{ 0x02, 0x05, 0x02 });
@@ -229,9 +290,14 @@ fn opened(layer: *Hci, recorder: *const Recorder, mtu: ?u16) !*att_client.Client
     return block;
 }
 
+/// What the blocks' records name as their owner: the task's BTGatt.
+var block_owner: u8 = 0;
+var other_owner: u8 = 0;
+
 /// The link's handle in every test.
 const handle_used: u16 = 0x0040;
 const sensor = bluetooth.BTAddress{ .bytes = .{ 0x03, 0x10, 0xEF, 0x5E, 0x00, 0xC0 }, .kind = bluetooth.BTADDR_LE_RANDOM };
+const other_device = bluetooth.BTAddress{ .bytes = .{ 0x05, 0x10, 0xEF, 0x5E, 0x00, 0xC0 }, .kind = bluetooth.BTADDR_LE_RANDOM };
 const name = "A machine with a long name";
 
 test "the server: its services, characteristics and name, each answer cut to the MTU" {
@@ -301,7 +367,7 @@ test "the server: its services, characteristics and name, each answer cut to the
 test "a block over a link made for it: the MTU exchanged first, the services and a service's characteristics read in parts" {
     var recorder = Recorder{};
     var layer = upLayer(&recorder);
-    const opening = att_client.open(&layer, sensor);
+    const opening = att_client.open(&layer, sensor, &block_owner, false);
     try testing.expect(opening == .waiting);
     try testing.expectEqual(hci.HCI_OP_LE_CREATE_CONNECTION, recorder.lastCommand());
     try testing.expect(connections.find(&layer, sensor).?.for_channels);
@@ -382,7 +448,7 @@ test "a value read in parts, and cut at the room's end; a device that ends it by
     var layer = upLayer(&recorder);
     try linked(&layer, sensor, handle_used);
     // The device does not exchange MTUs: 23 it is.
-    const opening = att_client.open(&layer, sensor);
+    const opening = att_client.open(&layer, sensor, &block_owner, false);
     try expectAtt(&recorder, &.{ 0x02, 0x05, 0x02 });
     attIn(&layer, &.{ 0x01, 0x02, 0x00, 0x00, 0x06 });
     try expectDone(&layer, opening, 0);
@@ -510,7 +576,7 @@ test "subscriptions two blocks share: each value to both, an indication confirme
     att_client.close(&layer, second);
     try expectAtt(&recorder, &.{ 0x12, 0x0B, 0x00, 0x00, 0x00 });
     attIn(&layer, &.{0x13});
-    try testing.expect(!att_client.uses(&layer, sensor) or first.state == .open);
+    try testing.expect(!att_client.uses(&layer, connections.find(&layer, sensor).?) or first.state == .open);
     for (&layer.att_procedures) |*procedure| try testing.expectEqual(att_client.Stage.free, procedure.stage);
 }
 
@@ -543,10 +609,10 @@ test "procedures in their order; a link down closing its blocks and answering wh
     // A closed block asks nothing; freed, it is gone.
     try testing.expectEqual(connections.Begun{ .done = bluetooth.BTERR_NOTCONNECTED }, att_client.read(&layer, block, 0x0003, &room));
     att_client.close(&layer, block);
-    try testing.expect(!att_client.uses(&layer, sensor));
+    for (&layer.att_clients) |*one| try testing.expectEqual(att_client.ClientState.free, one.state);
     // Not over BR/EDR.
     const bredr = bluetooth.BTAddress{ .bytes = .{ 0x01, 0x10, 0xEF, 0x5E, 0x00, 0x00 } };
-    try testing.expectEqual(connections.Begun{ .done = bluetooth.BTERR_UNSUPPORTED }, att_client.open(&layer, bredr));
+    try testing.expectEqual(connections.Begun{ .done = bluetooth.BTERR_UNSUPPORTED }, att_client.open(&layer, bredr, &block_owner, false));
 }
 
 test "a request not answered in its time: the bearer dead, its blocks closed, nothing more taken" {
@@ -570,14 +636,14 @@ test "a request not answered in its time: the bearer dead, its blocks closed, no
     const frames = recorder.frame_count;
     attIn(&layer, &.{ 0x0A, 0x03, 0x00 });
     try testing.expectEqual(frames, recorder.frame_count);
-    try testing.expectEqual(connections.Begun{ .done = bluetooth.BTERR_TIMEOUT }, att_client.open(&layer, sensor));
+    try testing.expectEqual(connections.Begun{ .done = bluetooth.BTERR_TIMEOUT }, att_client.open(&layer, sensor, &block_owner, false));
     att_client.close(&layer, block);
 }
 
 test "a link made for a block ended two seconds after the block closed" {
     var recorder = Recorder{};
     var layer = upLayer(&recorder);
-    const opening = att_client.open(&layer, sensor);
+    const opening = att_client.open(&layer, sensor, &block_owner, false);
     leUp(&layer, sensor, handle_used);
     attIn(&layer, &.{ 0x03, 0x17, 0x00 });
     try expectDone(&layer, opening, 0);
@@ -591,6 +657,147 @@ test "a link made for a block ended two seconds after the block closed" {
     _hci.tick(&layer);
     try testing.expect(recorder.command_count > commands);
     try testing.expectEqual(hci.HCI_OP_DISCONNECT, recorder.lastCommand());
+}
+
+test "a block that waits: the scan on for it, its device linked to when it advertises so, the block opened and told so; the link down, waiting again, the scan on again; a value before the next open its, what it subscribed to written again; closed, the link ended in a while" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    // Answered at once, waiting; the scan on - passive, each advertiser
+    // once.
+    try testing.expectEqual(connections.Begun{ .done = 0 }, att_client.open(&layer, sensor, &block_owner, true));
+    const block = att_client.byOwner(&layer, &block_owner).?;
+    try testing.expectEqual(att_client.ClientState.waiting, block.state);
+    try expectScan(&layer, &recorder);
+    // Another device, and the sensor advertising so that it may not be
+    // connected: nothing.
+    const commands = recorder.command_count;
+    advertised(&layer, other_device, hci.LE_ADV_IND);
+    advertised(&layer, sensor, hci.LE_ADV_NONCONN_IND);
+    try testing.expectEqual(commands, recorder.command_count);
+    // The sensor connectable: the scan off, then the link initiated.
+    advertised(&layer, sensor, hci.LE_ADV_IND);
+    try testing.expectEqual(hci.HCI_OP_LE_CREATE_CONNECTION, recorder.lastCommand());
+    try expectScanOff(&recorder, 1);
+    try testing.expect(!layer.scan.on);
+    complete(&layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, 0);
+    leUp(&layer, sensor, handle_used);
+    // Taken by the link: opening, the MTU exchanged first.
+    try testing.expectEqual(att_client.ClientState.opening, block.state);
+    try expectAtt(&recorder, &.{ 0x02, 0x05, 0x02 });
+    attIn(&layer, &.{ 0x03, 0x17, 0x00 });
+    try testing.expectEqual(att_client.ClientState.open, block.state);
+    try testing.expectEqual(att_client.EventKind.opened, recorder.lastTold(0).kind);
+    try testing.expect(!layer.scan.on);
+    // A value subscribed to.
+    const subscribing = att_client.subscribe(&layer, block, 0x0C, 0x0D, false);
+    try expectAtt(&recorder, &.{ 0x12, 0x0D, 0x00, 0x01, 0x00 });
+    attIn(&layer, &.{0x13});
+    try expectDone(&layer, subscribing, 0);
+    _ = answered(&layer, subscribing);
+
+    // Down: waiting again, told why; the scan on again; its calls answer
+    // that it is not connected.
+    event(&layer, hci.HCI_EV_DISCONNECTION_COMPLETE, &.{ 0, @truncate(handle_used), @truncate(handle_used >> 8), hci.HCI_ERR_CONNECTION_TIMEOUT });
+    try testing.expectEqual(att_client.ClientState.waiting, block.state);
+    try testing.expectEqual(att_client.EventKind.waiting, recorder.lastTold(0).kind);
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_CONNECTION_TIMEOUT), recorder.lastTold(0).result);
+    try expectScan(&layer, &recorder);
+    var room: [8]u8 = undefined;
+    try testing.expectEqual(connections.Begun{ .done = bluetooth.BTERR_NOTCONNECTED }, att_client.read(&layer, block, 0x0C, &room));
+
+    // Back, advertising to this machine: its value notified while it is
+    // opened is its; once open, its configuration written again before
+    // the task is told.
+    advertised(&layer, sensor, hci.LE_ADV_DIRECT_IND);
+    try testing.expectEqual(hci.HCI_OP_LE_CREATE_CONNECTION, recorder.lastCommand());
+    complete(&layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, 0);
+    leUp(&layer, sensor, handle_used);
+    try expectAtt(&recorder, &.{ 0x02, 0x05, 0x02 });
+    attIn(&layer, &.{ 0x1B, 0x0C, 0x00, 0x2A });
+    try testing.expectEqual(att_client.EventKind.value, recorder.lastTold(0).kind);
+    try testing.expectEqual(@as(u8, 0x2A), recorder.lastTold(0).data[0]);
+    attIn(&layer, &.{ 0x03, 0x17, 0x00 });
+    try expectAtt(&recorder, &.{ 0x12, 0x0D, 0x00, 0x01, 0x00 });
+    try testing.expectEqual(att_client.EventKind.opened, recorder.lastTold(0).kind);
+    attIn(&layer, &.{0x13});
+
+    // Closed: the device told, and the link - made for it - ended in a
+    // while; the scan stays off.
+    att_client.close(&layer, block);
+    try expectAtt(&recorder, &.{ 0x12, 0x0D, 0x00, 0x00, 0x00 });
+    attIn(&layer, &.{0x13});
+    try testing.expectEqual(layer.now + connections.IDLE_MS, connections.find(&layer, sensor).?.idle_until.?);
+    try testing.expect(!layer.scan.on);
+    for (&layer.att_procedures) |*procedure| try testing.expectEqual(att_client.Stage.free, procedure.stage);
+}
+
+test "a block that waits for a bonded device: a discovery turns the scan off and on again; its private address resolved by the bond's key, the link made secure and found by the bond's address; a link up taken at once; the controller brought up again leaving it waiting, gone closing it" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    var ours = Port{};
+    layer.crypto = ours.of().*;
+    // A bond with an identity resolving key, and an address it made: the
+    // hash of the random part 0x708194 (its top bits 01), then that part.
+    const irk = [16]u8{ 0x9B, 0x7D, 0x39, 0x0A, 0xA6, 0x10, 0x10, 0x34, 0x05, 0xAD, 0xC8, 0x57, 0xA3, 0x34, 0x02, 0xEC };
+    const identity = bluetooth.BTAddress{ .bytes = .{ 0x44, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
+    const private = bluetooth.BTAddress{ .bytes = .{ 0xAA, 0xFB, 0x0D, 0x94, 0x81, 0x70 }, .kind = bluetooth.BTADDR_LE_RANDOM };
+    const ltk = [16]u8{ 0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF };
+    _ = bonds.keepLe(&layer, identity, &.{ .ltk = ltk, .key_size = 16, .authenticated = true, .secure = true, .irk = irk }, "Keyboard").?;
+    try testing.expectEqual(connections.Begun{ .done = 0 }, att_client.open(&layer, identity, &block_owner, true));
+    const block = att_client.byOwner(&layer, &block_owner).?;
+    try expectScan(&layer, &recorder);
+
+    // A discovery: the scan off before the discovery's own; on again
+    // once the discovery is over.
+    try testing.expectEqual(@as(i32, 0), discovery.start(&layer, 0));
+    try expectScanOff(&recorder, 2);
+    try testing.expectEqual(hci.LE_SCAN_ACTIVE, recorder.commandBack(1).first[0]);
+    complete(&layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, 0);
+    complete(&layer, hci.HCI_OP_LE_SET_SCAN_PARAMETERS, 0);
+    complete(&layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, 0);
+    try testing.expect(!layer.scan.on);
+    discovery.stop(&layer);
+    complete(&layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, 0);
+    try expectScan(&layer, &recorder);
+
+    // Heard at a private address the bond's key made: the link initiated
+    // to it, and found by the bond's address too.
+    advertised(&layer, private, hci.LE_ADV_IND);
+    try testing.expectEqual(hci.HCI_OP_LE_CREATE_CONNECTION, recorder.lastCommand());
+    complete(&layer, hci.HCI_OP_LE_SET_SCAN_ENABLE, 0);
+    const link = connections.find(&layer, identity).?;
+    try testing.expectEqualSlices(u8, &private.bytes, &link.address.bytes);
+    try testing.expectEqualSlices(u8, &identity.bytes, &link.identity.?.bytes);
+    // Up, and encrypted with the bond's key before the block is opened.
+    leUp(&layer, private, handle_used);
+    try testing.expectEqual(hci.HCI_OP_LE_ENABLE_ENCRYPTION, recorder.lastCommand());
+    try testing.expectEqual(att_client.ClientState.waiting, block.state);
+    try testing.expect(!layer.scan.on);
+    status(&layer, hci.HCI_OP_LE_ENABLE_ENCRYPTION, 0);
+    event(&layer, hci.HCI_EV_ENCRYPTION_CHANGE, &.{ 0, @truncate(handle_used), @truncate(handle_used >> 8), 1 });
+    try testing.expectEqual(att_client.ClientState.opening, block.state);
+    try expectAtt(&recorder, &.{ 0x02, 0x05, 0x02 });
+    attIn(&layer, &.{ 0x03, 0x17, 0x00 });
+    try testing.expectEqual(att_client.ClientState.open, block.state);
+    try testing.expectEqual(att_client.EventKind.opened, recorder.lastTold(0).kind);
+
+    // A second block that waits, the link up: open before the call
+    // returns.
+    try testing.expectEqual(connections.Begun{ .done = 0 }, att_client.open(&layer, identity, &other_owner, true));
+    const second = att_client.byOwner(&layer, &other_owner).?;
+    try testing.expectEqual(att_client.ClientState.open, second.state);
+    try testing.expectEqual(second.serial, recorder.lastTold(0).client);
+    att_client.close(&layer, second);
+
+    // The controller brought up again: waiting, told so. Gone: closed.
+    connections.reset(&layer, hci.HCI_ERR_HARDWARE_FAILURE);
+    try testing.expectEqual(att_client.ClientState.waiting, block.state);
+    try testing.expectEqual(att_client.EventKind.waiting, recorder.lastTold(0).kind);
+    att_client.reset(&layer, bluetooth.BTERR_DETACHED);
+    try testing.expectEqual(att_client.ClientState.closed, block.state);
+    try testing.expectEqual(att_client.EventKind.closed, recorder.lastTold(0).kind);
+    try testing.expectEqual(bluetooth.BTERR_DETACHED, recorder.lastTold(0).result);
+    att_client.close(&layer, block);
 }
 
 /// A UUID of 128 bits, as written and as a PDU carries it.

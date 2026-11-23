@@ -242,8 +242,8 @@ fn lvoReleaseBTServices(base: *BluetoothBase, list: ?*exec.List) callconv(.c) vo
 
 // --- GATT -----------------------------------------------------------------------
 
-fn lvoOpenBTGatt(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, port: *exec.MsgPort, gatt: *?*bluetooth.BTGatt) callconv(.c) i32 {
-    return OpenBTGatt(base, controller, address, port, gatt);
+fn lvoOpenBTGatt(base: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, port: *exec.MsgPort, gatt: *?*bluetooth.BTGatt, flags: u32) callconv(.c) i32 {
+    return OpenBTGatt(base, controller, address, port, gatt, flags);
 }
 
 fn lvoCloseBTGatt(base: *BluetoothBase, gatt: ?*bluetooth.BTGatt) callconv(.c) void {

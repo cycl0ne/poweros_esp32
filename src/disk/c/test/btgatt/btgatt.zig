@@ -4,7 +4,7 @@
 //! them. Built against the SDK only.
 //!
 //!   BTGatt DEVICE/A [READ/K] [WRITE/K] [DATA/K] [TEXT/K] [NORESPONSE/S]
-//!          [WATCH/K] [INDICATE/S] [RANDOM/S] [CONTROLLER/K/N]
+//!          [WATCH/K] [INDICATE/S] [WAIT/S] [RANDOM/S] [CONTROLLER/K/N]
 //!
 //!   DEVICE             the device: its address - public, or with RANDOM
 //!                      its random one - or the name a scan heard
@@ -20,6 +20,11 @@
 //!                      subscribed to, notified - or with INDICATE
 //!                      indicated - and each value shown as it comes,
 //!                      until CTRL-C, or the link ends
+//!   WAIT               the block waits for the device (BTGO_WAIT): the
+//!                      library makes the link once the device
+//!                      advertises, and READ and WRITE are done once it is
+//!                      open; WATCH goes on across the link's ends, each
+//!                      end and each new open shown
 //!   CONTROLLER <n>     the controller to link over; without it, the one
 //!                      with a link to the device, else the one that
 //!                      found it, else the first that is on
@@ -44,10 +49,10 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "BTGatt";
-const VERSION_STRING = "\x00$VER: BTGatt 1.0 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: BTGatt 1.1 (23.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
-const template = "DEVICE/A,READ/K,WRITE/K,DATA/K,TEXT/K,NORESPONSE/S,WATCH/K,INDICATE/S,RANDOM/S,CONTROLLER/K/N";
+const template = "DEVICE/A,READ/K,WRITE/K,DATA/K,TEXT/K,NORESPONSE/S,WATCH/K,INDICATE/S,WAIT/S,RANDOM/S,CONTROLLER/K/N";
 const arg_device = 0;
 const arg_read = 1;
 const arg_write = 2;
@@ -56,9 +61,10 @@ const arg_text = 4;
 const arg_noresponse = 5;
 const arg_watch = 6;
 const arg_indicate = 7;
-const arg_random = 8;
-const arg_controller = 9;
-const arg_count = 10;
+const arg_wait = 8;
+const arg_random = 9;
+const arg_controller = 10;
+const arg_count = 11;
 
 /// What the program keeps: a value read or written at its longest.
 const State = struct {
@@ -114,9 +120,14 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     defer sys.DeleteMsgPort(port);
 
     var shown: [18]u8 = undefined;
-    _ = Printf(dl, "Opening GATT to %s\n", .{addressText(&address.bytes, &shown)});
+    const waits = argv[arg_wait] != 0;
+    if (waits) {
+        _ = Printf(dl, "Waiting for %s; CTRL-C stops\n", .{addressText(&address.bytes, &shown)});
+    } else {
+        _ = Printf(dl, "Opening GATT to %s\n", .{addressText(&address.bytes, &shown)});
+    }
     var gatt: ?*bluetooth.BTGatt = null;
-    const opened = bt.OpenBTGatt(controller, &address, port, &gatt);
+    const opened = bt.OpenBTGatt(controller, &address, port, &gatt, if (waits) bluetooth.BTGO_WAIT else 0);
     if (opened != 0) {
         _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), failure(opened) });
         return dos.RETURN_ERROR;
@@ -124,10 +135,81 @@ export fn _program_entry(sys: *ExecBase, args: [*]const u8, len: usize) callconv
     // Closed before its port goes.
     defer bt.CloseBTGatt(gatt);
     const block = gatt.?;
+    if (waits) {
+        if (argv[arg_watch] != 0) return watchWaiting(sys, dl, bt, block, handle, argv[arg_indicate] != 0, port);
+        if (!waitOpen(sys, dl, port)) return dos.RETURN_WARN;
+    }
     _ = Printf(dl, "Open, PDUs of up to %u bytes\n", .{@as(u32, block.mtu)});
     if (argv[arg_read] != 0) return read(dl, bt, block, handle, state);
     if (argv[arg_write] != 0) return write(dl, bt, block, handle, state, &argv);
     return watch(sys, dl, bt, block, handle, argv[arg_indicate] != 0, port);
+}
+
+/// WAIT for READ and WRITE: the messages read until the block is open -
+/// true - or CTRL-C - false.
+fn waitOpen(sys: *ExecBase, dl: *DosBase, port: *exec.MsgPort) bool {
+    const mask = (@as(u32, 1) << @intCast(port.sig_bit)) | exec.SIGBREAKF_CTRL_C;
+    while (true) {
+        const got = sys.Wait(mask);
+        while (sys.GetMsg(port)) |message| {
+            const told: *bluetooth.BTGattMessage = @fieldParentPtr("message", message);
+            const kind = told.kind;
+            sys.ReplyMsg(message);
+            if (kind == bluetooth.BTGM_OPENED) return true;
+            if (kind == bluetooth.BTGM_CLOSED) {
+                _ = dl.PutStr("The block closed: its controller went\n");
+                return false;
+            }
+        }
+        if (got & exec.SIGBREAKF_CTRL_C != 0) {
+            _ = dl.PutStr("***Break\n");
+            return false;
+        }
+    }
+}
+
+/// WATCH with WAIT: the characteristic found and subscribed to at the
+/// block's first open - the subscription stays across its link's ends -
+/// and each value, each end and each open shown, until CTRL-C.
+fn watchWaiting(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, block: *bluetooth.BTGatt, handle: u16, indicate: bool, port: *exec.MsgPort) i32 {
+    var which: bluetooth.BTCharacteristic = .{};
+    var subscribed = false;
+    const mask = (@as(u32, 1) << @intCast(port.sig_bit)) | exec.SIGBREAKF_CTRL_C;
+    while (true) {
+        const got = sys.Wait(mask);
+        while (sys.GetMsg(port)) |message| {
+            const told: *bluetooth.BTGattMessage = @fieldParentPtr("message", message);
+            const kind = told.kind;
+            const result = told.result;
+            if (kind == bluetooth.BTGM_VALUE) {
+                _ = Printf(dl, "%04lx:", .{@as(u64, told.handle)});
+                line(dl, if (told.data) |data| data[0..told.length] else &.{});
+            }
+            sys.ReplyMsg(message);
+            switch (kind) {
+                bluetooth.BTGM_OPENED => {
+                    _ = Printf(dl, "Open, PDUs of up to %u bytes\n", .{@as(u32, block.mtu)});
+                    if (!subscribed) {
+                        const status = subscribeTo(dl, bt, block, handle, indicate, &which);
+                        if (status != dos.RETURN_OK) return status;
+                        subscribed = true;
+                    }
+                },
+                bluetooth.BTGM_WAITING => _ = Printf(dl, "The link ended (%s): waiting\n", .{failure(result)}),
+                bluetooth.BTGM_CLOSED => {
+                    _ = dl.PutStr("The block closed: its controller went\n");
+                    return dos.RETURN_OK;
+                },
+                else => {},
+            }
+        }
+        if (got & exec.SIGBREAKF_CTRL_C != 0) {
+            if (subscribed and block.flags & bluetooth.BTGF_WAITING == 0) _ = bt.UnsubscribeBTAttribute(block, &which);
+            if (block.dropped != 0) _ = Printf(dl, "%u values let go, more coming than were shown\n", .{block.dropped});
+            _ = dl.PutStr("***Break\n");
+            return dos.RETURN_WARN;
+        }
+    }
 }
 
 /// READ: the value read and shown.
@@ -181,27 +263,8 @@ fn write(dl: *DosBase, bt: *BluetoothBase, block: *bluetooth.BTGatt, handle: u16
 /// device's, subscribed to, and each value shown as it comes.
 fn watch(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, block: *bluetooth.BTGatt, handle: u16, indicate: bool, port: *exec.MsgPort) i32 {
     var which: bluetooth.BTCharacteristic = .{};
-    const found = characteristicOf(bt, block, handle, &which);
-    if (found != 0) {
-        _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), failure(found) });
-        return dos.RETURN_ERROR;
-    }
-    if (which.value_handle == 0) {
-        _ = Printf(dl, "%s: no characteristic's value has the handle %04lx\n", .{ @as([*:0]const u8, COMMAND_NAME), @as(u64, handle) });
-        return dos.RETURN_ERROR;
-    }
-    const subscribed = bt.SubscribeBTAttribute(block, &which, if (indicate) bluetooth.BTGS_INDICATE else 0);
-    if (subscribed != 0) {
-        if (subscribed == bluetooth.BTERR_UNSUPPORTED) {
-            const how: [*:0]const u8 = if (indicate) "indicated" else "notified";
-            _ = Printf(dl, "%s: that value is not %s\n", .{ @as([*:0]const u8, COMMAND_NAME), how });
-        } else {
-            _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), failure(subscribed) });
-        }
-        return dos.RETURN_ERROR;
-    }
-    const how: [*:0]const u8 = if (indicate) "indicated" else "notified";
-    _ = Printf(dl, "Watching %04lx, %s; CTRL-C stops\n", .{ @as(u64, handle), how });
+    const status = subscribeTo(dl, bt, block, handle, indicate, &which);
+    if (status != dos.RETURN_OK) return status;
     const mask = (@as(u32, 1) << @intCast(port.sig_bit)) | exec.SIGBREAKF_CTRL_C;
     while (true) {
         const got = sys.Wait(mask);
@@ -226,6 +289,33 @@ fn watch(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, block: *bluetooth.BTG
             return dos.RETURN_WARN;
         }
     }
+}
+
+/// The characteristic whose value is `handle` found among the device's,
+/// copied to `which`, and subscribed to: RETURN_OK, or what the program
+/// ends with, said why.
+fn subscribeTo(dl: *DosBase, bt: *BluetoothBase, block: *bluetooth.BTGatt, handle: u16, indicate: bool, which: *bluetooth.BTCharacteristic) i32 {
+    const found = characteristicOf(bt, block, handle, which);
+    if (found != 0) {
+        _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), failure(found) });
+        return dos.RETURN_ERROR;
+    }
+    if (which.value_handle == 0) {
+        _ = Printf(dl, "%s: no characteristic's value has the handle %04lx\n", .{ @as([*:0]const u8, COMMAND_NAME), @as(u64, handle) });
+        return dos.RETURN_ERROR;
+    }
+    const subscribed = bt.SubscribeBTAttribute(block, which, if (indicate) bluetooth.BTGS_INDICATE else 0);
+    const how: [*:0]const u8 = if (indicate) "indicated" else "notified";
+    if (subscribed != 0) {
+        if (subscribed == bluetooth.BTERR_UNSUPPORTED) {
+            _ = Printf(dl, "%s: that value is not %s\n", .{ @as([*:0]const u8, COMMAND_NAME), how });
+        } else {
+            _ = Printf(dl, "%s: %s\n", .{ @as([*:0]const u8, COMMAND_NAME), failure(subscribed) });
+        }
+        return dos.RETURN_ERROR;
+    }
+    _ = Printf(dl, "Watching %04lx, %s; CTRL-C stops\n", .{ @as(u64, handle), how });
+    return dos.RETURN_OK;
 }
 
 /// The characteristic whose value is `handle`, copied to `which` - its

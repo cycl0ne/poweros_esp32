@@ -40,9 +40,17 @@
 //!
 //! **A link made for channels** - by a channel this machine opens, a
 //! service query, or GATT's client (l2cap/channels.zig, sdp/client.zig,
-//! att/client.zig) - ends IDLE_MS after the last of its channels, GATT
+//! att/client.zig), or by the scan for a device a GATT block waits for
+//! (scan.zig) - ends IDLE_MS after the last of its channels, GATT
 //! blocks and procedures has ended, unless ConnectBTDevice asked for it
-//! meanwhile; a link ConnectBTDevice made, or the device, stays.
+//! meanwhile; a link ConnectBTDevice made, or the device, stays. The
+//! background scan is turned off before an LE link is initiated.
+//!
+//! **A device's identity.** An LE link to a resolvable private address
+//! that a bond's identity resolving key made keeps the bond's address as
+//! its `identity` - found by the scan, when the link is up, or given by
+//! the pairing that made the bond - and `find` takes the link for the
+//! device at either address.
 //!
 //! **The device's name**, where the discovery did not hear it, is asked
 //! for once a BR/EDR link is up (Remote Name Request): over the link it
@@ -76,6 +84,7 @@ const pairing = @import("pairing.zig");
 const channels = @import("../l2cap/channels.zig");
 const _att = @import("../att/_att.zig");
 const att_client = @import("../att/client.zig");
+const scan = @import("scan.zig");
 const smp = @import("smp.zig");
 
 /// How many links a controller keeps, and how many calls may wait on
@@ -117,6 +126,10 @@ pub const Connection = struct {
     /// LE: the device's link layer features, as it gave them; zeros
     /// while they are not known.
     le_features: [8]u8 = @splat(0),
+    /// LE: the address of the device's bond, where `address` is a
+    /// private one its identity resolving key made; null where the two
+    /// are the same, or it is not known.
+    identity: ?bluetooth.BTAddress = null,
     /// Made for channels or GATT, not asked for by ConnectBTDevice:
     /// ended at `idle_until`, once its last channel and block have closed
     /// and its last request has been answered.
@@ -214,12 +227,21 @@ pub fn canInitiate(layer: *const Hci) bool {
     return _hci.le(layer) and _hci.supports(layer, hci.CMDBIT_LE_CREATE_CONNECTION) and layer.le_packets != 0;
 }
 
-/// The link to `address`, whatever its state; null for none.
+/// The link to `address` - its own, or its identity - whatever its
+/// state; null for none.
 pub fn find(layer: *Hci, address: bluetooth.BTAddress) ?*Connection {
     for (&layer.connections) |*connection| {
-        if (connection.state != .free and sameAddress(connection.address, address)) return connection;
+        if (connection.state != .free and reaches(connection, address)) return connection;
     }
     return null;
+}
+
+/// Whether the link is to the device at `address`: its own address, or
+/// the identity its private one resolved to.
+pub fn reaches(connection: *const Connection, address: bluetooth.BTAddress) bool {
+    if (sameAddress(connection.address, address)) return true;
+    const identity = connection.identity orelse return false;
+    return sameAddress(identity, address);
 }
 
 /// The link with this handle, up or being ended; null for none.
@@ -236,6 +258,12 @@ fn freeConnection(layer: *Hci) ?*Connection {
         if (connection.state == .free) return connection;
     }
     return null;
+}
+
+/// Whether the library is making an LE link: initiating, which the
+/// background scan waits for.
+pub fn makingLe(layer: *Hci) bool {
+    return making(layer, true) != null;
 }
 
 /// The link the library is making over LE, or over BR/EDR.
@@ -280,14 +308,15 @@ pub fn connect(layer: *Hci, address: bluetooth.BTAddress) Begun {
     if (find(layer, address)) |known| switch (known.state) {
         // Up, unless the device has not answered on it yet or it is
         // being made secure - and asked for, so kept.
+        // Waited for at the link's own address, which its end answers.
         .up => {
             known.for_channels = false;
             known.idle_until = null;
-            return if (!known.heard or securing(known)) waitFor(layer, .connect, address) else .{ .done = 0 };
+            return if (!known.heard or securing(known)) waitFor(layer, .connect, known.address) else .{ .done = 0 };
         },
         .connecting => if (!known.unwanted) {
             known.for_channels = false;
-            return waitFor(layer, .connect, address);
+            return waitFor(layer, .connect, known.address);
         },
         else => {},
     };
@@ -306,9 +335,11 @@ pub fn make(layer: *Hci, address: bluetooth.BTAddress) i32 {
     if (if (le_link) !canInitiate(layer) else !canPage(layer)) return bluetooth.BTERR_UNSUPPORTED;
     if (making(layer, le_link) != null) return bluetooth.BTERR_BUSY;
     const connection = freeConnection(layer) orelse return bluetooth.BTERR_NOMEM;
-    // Room for the discovery's end and the link's command.
-    if (_hci.QUEUE - layer.queue_count < 3) return bluetooth.BTERR_NOMEM;
+    // Room for the discovery's end, the background scan's and the link's
+    // command.
+    if (_hci.QUEUE - layer.queue_count < 4) return bluetooth.BTERR_NOMEM;
     discovery.stop(layer);
+    if (le_link) scan.stop(layer);
     const heard = devices.find(layer, address.bytes, address.kind);
     const sent = if (le_link) initiate(layer, address) else page(layer, address, heard);
     if (!sent) return bluetooth.BTERR_NOMEM;
@@ -339,6 +370,8 @@ pub fn disconnect(layer: *Hci, address: bluetooth.BTAddress) Begun {
     if (layer.state != bluetooth.BTCS_UP) return .{ .done = bluetooth.BTERR_NOTUP };
     const connection = find(layer, address) orelse return .{ .done = bluetooth.BTERR_NOTCONNECTED };
     const wait = freeWait(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
+    // Waited for at the link's own address, which its end answers.
+    const own = connection.address;
     switch (connection.state) {
         .connecting => drop(layer, connection),
         .up => {
@@ -348,7 +381,7 @@ pub fn disconnect(layer: *Hci, address: bluetooth.BTAddress) Begun {
         },
         .disconnecting, .free => {},
     }
-    return waitOn(layer, wait, .disconnect, address);
+    return waitOn(layer, wait, .disconnect, own);
 }
 
 /// Every link ended - the controller's power goes off - those being made
@@ -765,6 +798,11 @@ pub fn established(layer: *Hci, connection: *Connection) void {
     connection.heard = true;
     connection.deadline = null;
     layer.changed = true;
+    if (connection.le and connection.identity == null) {
+        if (smp.bondOf(layer, connection)) |bond| {
+            if (!sameAddress(bond.address, connection.address)) connection.identity = bond.address;
+        }
+    }
     note(layer, connection, .up, 0);
     if (!pairing.linkUp(layer, connection)) answer(layer, .connect, connection.address, 0);
     channels.linkUp(layer, connection);
@@ -936,7 +974,7 @@ pub fn tick(layer: *Hci) void {
             // Made for channels, nothing left on it: ended.
             if (layer.now >= idle_due) {
                 connection.idle_until = null;
-                if (connection.state == .up and connection.for_channels and !channels.uses(layer, connection.address) and !att_client.uses(layer, connection.address)) {
+                if (connection.state == .up and connection.for_channels and !channels.uses(layer, connection.address) and !att_client.uses(layer, connection)) {
                     _ = end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED);
                 }
             }

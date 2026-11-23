@@ -15,11 +15,12 @@ links to the protocols programs speak, taking those the devices open; it
 says what this machine offers - its own record and those programs add -
 and asks a device what it offers (SDP). Over LE it asks a device's GATT
 server for its services and characteristics, reads and writes their
-values and has them sent as they change, and answers the device's
-questions with a server of its own. Each service of a device it bonds
-with is offered to the profile drivers in `DEVS:bluetooth/`:
-`bthid.device` drives keyboards and mice over BR/EDR. Keyboards and mice
-over LE, sound, and LE's channels are the stack's next parts.
+values and has them sent as they change - over a link it makes again
+whenever the device comes back, where asked to - and answers the
+device's questions with a server of its own. Each service of a device
+it bonds with is offered to the profile drivers in `DEVS:bluetooth/`:
+`bthid.device` drives keyboards and mice, over BR/EDR and over LE.
+Sound and LE's channels are the stack's next parts.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
@@ -71,8 +72,8 @@ MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
 | `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`), over LE with its characteristics |
 | `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
-| `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change; in the disk's `tests` set |
-| `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards and mice over BR/EDR: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
+| `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change, with `WAIT` across the link's ends; in the disk's `tests` set |
+| `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards and mice over BR/EDR and over LE: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
 | `C:test/BTHidDevice` | | this machine as a keyboard and a mouse over BR/EDR, for a host to be tried with; in the disk's `tests` set |
 
 The library, the devices - the controllers' and the profile drivers' -
@@ -673,7 +674,7 @@ open:
 ```zig
 const port = sys.CreateMsgPort() orelse return;
 var gatt: ?*bluetooth.BTGatt = null;
-if (bt.OpenBTGatt(bluetooth.BT_ALL_CONTROLLERS, &device, port, &gatt) != 0) return;
+if (bt.OpenBTGatt(bluetooth.BT_ALL_CONTROLLERS, &device, port, &gatt, 0) != 0) return;
 defer bt.CloseBTGatt(gatt);
 ```
 
@@ -694,6 +695,33 @@ defer bt.CloseBTGatt(gatt);
   value that may not be read. A value that wants the link encrypted
   (`ATT_ERR_INSUFFICIENT_ENCRYPTION`, `ATT_ERR_INSUFFICIENT_AUTHENTICATION`)
   needs a bond: pair with the device first (`PairBTDevice`).
+
+**A block that waits.** With `BTGO_WAIT` the call returns at once, with
+a block that waits for its device - `BTGF_WAITING` in its `flags` - and
+opens each time the device is reached, for as long as the block lasts:
+
+```zig
+if (bt.OpenBTGatt(controller, &keyboard, port, &gatt, bluetooth.BTGO_WAIT) != 0) return;
+```
+
+- **The link.** While a block waits, the library listens to LE's
+  advertising in the background - passively, half the radio's time -
+  and makes a link to the device as soon as it advertises so that it
+  may be connected: at the block's address, or at a private address
+  the identity resolving key of the device's bond made, so that a
+  device that changes its address is found by its bond. A link to a
+  device with a bond is encrypted with the bond's key before the block
+  opens. The scan pauses while a discovery runs and while the library
+  makes another LE link, and stops with the last block that waits.
+- **Open:** `BTGM_OPENED` comes, the link's MTU in the block's `mtu`;
+  what the block subscribed to is written again first, so that its
+  values come from the start. **The link's end:** `BTGM_WAITING`, the
+  block waiting again - its requests answered `BTERR_NOTCONNECTED`
+  meanwhile - until the device comes back or `CloseBTGatt`. A value the
+  device sends while the block is opened is the block's too.
+- A link already up is taken at once: the block may open before the
+  call returns. A block without `BTGO_WAIT` reaches a device that
+  advertises at private addresses only over a link that is up.
 
 **ObtainBTServices**, given an LE address, asks the device's server for
 its primary services, each a `BTService` with `BTSF_GATT`: its UUID in
@@ -739,7 +767,9 @@ library's, each replied once it is read:
 | `kind` | What it says |
 |---|---|
 | `BTGM_VALUE` | a value the block subscribed to: the attribute in `handle`, the value in `data` and `length`, there until the message is replied |
-| `BTGM_CLOSED` | the block closed - with its link, its controller, or a request not answered - and why, in `result`; `BTGF_CLOSED` is set in its `flags` |
+| `BTGM_OPENED` | a block that waits open, its device reached |
+| `BTGM_WAITING` | a block that waits waiting again: its link ended, and why, in `result` |
+| `BTGM_CLOSED` | the block closed - with its link, its controller, or a request not answered; a block that waits only with its controller - and why, in `result`; `BTGF_CLOSED` is set in its `flags` |
 
 A block has at most 32 values out unreplied: those past them are let go
 and counted in its `dropped`. `CloseBTGatt` takes back what is still on
@@ -788,18 +818,22 @@ export const driver_tag: btprofile.ResidentBTProfile linksection(".resident") = 
 };
 ```
 
-The records of the services taken are kept beside the bond, in
+The services taken are kept beside the bond, in
 `ENVARC:Sys/bluetooth/<controller>/<device>.services` - for an LE bond
-`<device>.le.services` or `<device>.random.services` - a `Record` line
-of hexadecimal digits each; whenever the controller comes up they are
-offered again from the file, the device not asked. A device bonded
+`<device>.le.services` or `<device>.random.services` - a line each: an
+SDP record as a `Record` line of hexadecimal digits, a GATT service as
+a `Gatt` line of its first and last handles and its UUID
+(`Gatt 0010 002F 0000181200001000800000805F9B34FB`); whenever the
+controller comes up they are offered again from the file, the device
+not asked. A device bonded
 while no driver on the disk drove any of its services keeps no such
 file, and is offered once it is paired again.
 
 **The calls.** The library opens the driver on `BTPROFILE_UNIT_BIND` and
 calls `BTProfileBind` with a `BTBinding`: the controller, the device's
 address and the service - one of BR/EDR with its record, for
-`FindBTServiceAttribute` to read. The driver takes it - true, with
+`FindBTServiceAttribute` to read, or a GATT one with its handles, for
+`ObtainBTCharacteristics` over a block of the driver's. The driver takes it - true, with
 `unit` and `driver_data` its own - or declines it, and the next driver
 is asked. The binding is the driver's until `BTProfileUnbind`: when the
 controller goes, or when the bond ends (`UnpairBTDevice`) - then with
@@ -857,6 +891,32 @@ ends. The log says each device driven, connected and disconnected.
 
 A machine is a HID host or a HID device on these PSMs, not both: while
 bthid.device drives a device, `C:test/BTHidDevice` finds them served.
+
+**Over LE** the driver takes every HID service (0x1812) a bonded
+device's GATT server has, and reaches the device through a block that
+waits for it (`BTGO_WAIT`): the library makes the link whenever the
+device advertises - a keyboard does when a key is pressed - encrypted
+with the bond's key. At the block's first open the driver reads the
+service (`sdk/libs/bluetooth/hidp.zig`): its Report Map is the report
+descriptor, each Report's Report Reference says the report's ID and
+kind, and the input reports are subscribed to. At each open Protocol
+Mode is written the report protocol. A report the device notifies goes
+to hid.library behind its ID; the LEDs go back to the Report of their
+ID and kind, as a Write Command where the device takes one. The link's end lets go of whatever the device
+held, and the block waits for the device again. A device whose report
+map describes no keyboard and no mouse is let be, its block closed;
+the log says so, and each device driven, connected and disconnected.
+
+```
+1> Bluetooth PAIR 00:00:5E:EF:10:47 LE
+Pairing with 00:00:5E:EF:10:47 over LE; CTRL-C stops
+Does 00:00:5E:EF:10:47 show 095452? (y/n) y
+Paired with 00:00:5E:EF:10:47
+1> Bluetooth BONDS INFO
+  00:00:5E:EF:10:47  LE         confirmed
+      controller 0, a key of 16 bytes, Secure Connections
+      driven by bthid.device
+```
 
 ## Controllers on USB
 
@@ -1244,6 +1304,16 @@ Watching 0023, indicated; CTRL-C stops
 0023: 01  .
 0023: 02  .
 ***Break
+1> C:test/BTGatt 00:00:5E:EF:10:51 WATCH 0023 WAIT
+Waiting for 00:00:5E:EF:10:51; CTRL-C stops
+Open, PDUs of up to 517 bytes
+Watching 0023, notified; CTRL-C stops
+0023: 01  .
+0023: 02  .
+The link ended (the device ended the link): waiting
+Open, PDUs of up to 517 bytes
+0023: 03  .
+***Break
 ```
 
 `BTGatt` opens a block to an LE device (`OpenBTGatt`) - by its address,
@@ -1256,9 +1326,12 @@ or `01:00` - or `TEXT`'s characters (`WriteBTAttribute`), with
 `NORESPONSE` as a Write Command. `WATCH` finds the characteristic whose
 value has that handle, subscribes to it (`SubscribeBTAttribute`) -
 notified, or with `INDICATE` indicated - and shows each value as it
-comes, until CTRL-C or the link ends. `CONTROLLER` names the controller,
-as `Bluetooth`'s does. A value that wants the link encrypted is read
-once the two have a bond (`Bluetooth PAIR`).
+comes, until CTRL-C or the link ends. With `WAIT` the block waits for
+the device (`BTGO_WAIT`): `READ` and `WRITE` are done once the device is
+reached, and `WATCH` goes on across the link's ends, each end and each
+open shown, the subscription written again at each. `CONTROLLER` names
+the controller, as `Bluetooth`'s does. A value that wants the link
+encrypted is read once the two have a bond (`Bluetooth PAIR`).
 
 ## C:test/BTHidDevice
 

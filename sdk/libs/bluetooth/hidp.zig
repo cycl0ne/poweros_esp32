@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-//! HID over BR/EDR: the Human Interface Device profile's numbers - its
-//! service's class, the attributes its record has, and the transactions
-//! on its two channels, control and interrupt (l2cap.PSM_HID_CONTROL,
-//! l2cap.PSM_HID_INTERRUPT). The reports themselves are laid out as a
+//! HID over BR/EDR, and over GATT: the Human Interface Device profile's
+//! numbers - its service's class, the attributes its record has, and the
+//! transactions on its two channels, control and interrupt
+//! (l2cap.PSM_HID_CONTROL, l2cap.PSM_HID_INTERRUPT); over LE the GATT
+//! service's characteristics. The reports themselves are laid out as a
 //! device's report descriptor says, as over USB (sdk.hid).
 //!
 //! **A frame** on either channel begins with a byte: the transaction's
@@ -18,6 +19,15 @@
 //! descriptor list and the interrupt channel's in its additional ones,
 //! each after L2CAP with HIDP; its descriptor list holds the report
 //! descriptor.
+//!
+//! **Over GATT** the service (UUID_HID_SERVICE) holds the report
+//! descriptor as its Report Map, read in parts, and each report as a
+//! Report characteristic, whose Report Reference descriptor
+//! (att.GATT_REPORT_REFERENCE) says which: its ID, then its kind
+//! (HIDP_REPORT_*). An input report is notified, an output report
+//! written - neither with its ID. Each link begins in the report
+//! protocol, and the Protocol Mode characteristic says which is used
+//! (HIDP_PROTOCOL_*, written as a Write Command).
 
 /// The service's class (BTService.class16), and the protocol its record
 /// names after L2CAP.
@@ -88,6 +98,23 @@ pub const HIDP_REPORT_INPUT: u8 = 0x1;
 pub const HIDP_REPORT_OUTPUT: u8 = 0x2;
 pub const HIDP_REPORT_FEATURE: u8 = 0x3;
 
-/// SET_PROTOCOL's parameter, and GET_PROTOCOL's answer.
+/// SET_PROTOCOL's parameter, and GET_PROTOCOL's answer; over GATT,
+/// Protocol Mode's value.
 pub const HIDP_PROTOCOL_BOOT: u8 = 0x0;
 pub const HIDP_PROTOCOL_REPORT: u8 = 0x1;
+
+// --- over GATT --------------------------------------------------------------------
+
+/// The GATT service (BTService.class16), and its characteristics: what
+/// the device is (bcdHID, country, flags), its report descriptor, suspend
+/// and exit suspend (HIDP_CTRL_*'s values), a report, the protocol in
+/// use, and the boot protocol's own reports.
+pub const UUID_HID_SERVICE: u16 = 0x1812;
+pub const GATT_HID_INFORMATION: u16 = 0x2A4A;
+pub const GATT_REPORT_MAP: u16 = 0x2A4B;
+pub const GATT_HID_CONTROL_POINT: u16 = 0x2A4C;
+pub const GATT_REPORT: u16 = 0x2A4D;
+pub const GATT_PROTOCOL_MODE: u16 = 0x2A4E;
+pub const GATT_BOOT_KEYBOARD_INPUT: u16 = 0x2A22;
+pub const GATT_BOOT_KEYBOARD_OUTPUT: u16 = 0x2A32;
+pub const GATT_BOOT_MOUSE_INPUT: u16 = 0x2A33;

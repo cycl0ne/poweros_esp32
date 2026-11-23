@@ -77,8 +77,8 @@ i32 ObtainBTServices(u32 controller, *const bluetooth.BTAddress address, *?*exec
 /// A list from ObtainBTServices given back. Null does nothing.
 void ReleaseBTServices(?*exec.List list)
 // GATT
-/// The attribute protocol opened to an LE device, as GATT's client - its link made first where there is none, made secure where there is a bond: 0 once it is open and `gatt` set, BTERR_*, or the controller's status. The values it subscribes to come to `port`.
-i32 OpenBTGatt(u32 controller, *const bluetooth.BTAddress address, *exec.MsgPort port, *?*bluetooth.BTGatt gatt)
+/// The attribute protocol opened to an LE device, as GATT's client - its link made first where there is none, made secure where there is a bond: 0 once it is open and `gatt` set, BTERR_*, or the controller's status - or with BTGO_WAIT a block that waits for the device, opened each time it is reached. The values it subscribes to come to `port`.
+i32 OpenBTGatt(u32 controller, *const bluetooth.BTAddress address, *exec.MsgPort port, *?*bluetooth.BTGatt gatt, u32 flags)
 /// A block closed and given back: its subscriptions ended, the messages about it still on its port taken back. Null does nothing.
 void CloseBTGatt(?*bluetooth.BTGatt gatt)
 /// The characteristics of a GATT service ObtainBTServices listed, with their descriptors, asked of the device: 0 and `list` set to a list of BTCharacteristic, the caller's until ReleaseBTCharacteristics, or BTERR_*.

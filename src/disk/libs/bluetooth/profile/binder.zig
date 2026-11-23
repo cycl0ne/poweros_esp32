@@ -5,12 +5,13 @@
 //!
 //! **up**: each service kept with one of the controller's bonds
 //! (kept.zig) that is not bound already offered to the drivers again,
-//! read from its record as ObtainBTServices lists a device's.
+//! made from its record - or a GATT service from its handles and UUID -
+//! as ObtainBTServices lists a device's.
 //!
 //! **bonded**: unless a service of the device is bound already, the
 //! device's services listed (ObtainBTServices) - where some driver takes
-//! a service over its kind of link - and each offered; the records of the
-//! services taken kept with its bond.
+//! a service over its kind of link - and each offered; the services
+//! taken kept with its bond.
 //!
 //! **gone** and **forget**: the controller's bindings, or the device's,
 //! ended - with BTPU_FORGET for forget - each driver told and closed once
@@ -33,6 +34,7 @@ const Message = _profile.Message;
 const Bound = _profile.Bound;
 const drivers = @import("drivers.zig");
 const kept = @import("kept.zig");
+const att_client = @import("../att/client.zig");
 
 const binder_name = "bluetooth.library profiles";
 /// The drivers' BTProfileBind and BTProfileUnbind run on it, with the
@@ -152,10 +154,14 @@ const Offering = struct {
     controller: u32,
     address: bluetooth.BTAddress,
 
-    fn each(offering: *Offering, record: []const u8) void {
+    fn each(offering: *Offering, service_kept: kept.Kept) void {
         const base = offering.base;
         var made: ?*exec.List = null;
-        if (_service.makeOne(base, offering.controller, offering.address, record, &made) != 0) return;
+        const result = switch (service_kept) {
+            .record => |record| _service.makeOne(base, offering.controller, offering.address, record, &made),
+            .gatt => |gatt| _service.makeGatt(base, offering.controller, offering.address, @as([*]const u8, @ptrCast(&gatt))[0..@sizeOf(att_client.ServiceRecord)], &made),
+        };
+        if (result != 0) return;
         const services = made.?;
         const service: *const bluetooth.BTService = @ptrCast(@alignCast(services.first().?));
         if (_profile.isBound(base, offering.controller, offering.address, service.handle)) {
@@ -193,7 +199,7 @@ fn bonded(base: *BluetoothBase, message: *const Message) void {
         const service: *const bluetooth.BTService = @ptrCast(@alignCast(node));
         const copy = _service.copy(base, service) orelse continue;
         if (!bind(base, controller, address, copy)) continue;
-        if (service.record != null and count < taken.len) {
+        if ((service.record != null or service.flags & bluetooth.BTSF_GATT != 0) and count < taken.len) {
             taken[count] = service;
             count += 1;
         }

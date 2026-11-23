@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
-//! bluetooth/bthid.device: Bluetooth keyboards and mice over BR/EDR. A
-//! profile driver (sdk/devices/btprofile.zig): bluetooth.library offers it
-//! the HID service of each device this machine is bonded with, and it
-//! takes those whose report descriptor - in the service's record -
-//! describes a keyboard or a mouse; every report the device sends goes to
-//! hid.library, which makes it into key-downs and key-ups for
-//! keyboard.device and moves, buttons and the wheel for mouse.device - so
-//! a Bluetooth keyboard is the system's keyboard with nothing else
-//! knowing.
+//! bluetooth/bthid.device: Bluetooth keyboards and mice, over BR/EDR and
+//! over LE. A profile driver (sdk/devices/btprofile.zig): bluetooth.library
+//! offers it the HID service of each device this machine is bonded with -
+//! over BR/EDR the service's record, over LE its GATT service - and it
+//! takes those whose report descriptor describes a keyboard or a mouse;
+//! every report the device sends goes to hid.library, which makes it into
+//! key-downs and key-ups for keyboard.device and moves, buttons and the
+//! wheel for mouse.device - so a Bluetooth keyboard is the system's
+//! keyboard with nothing else knowing.
 //!
 //! **Its channels.** A HID device is reached over two L2CAP channels,
 //! control (PSM 17) and interrupt (PSM 19), each frame beginning with a
@@ -42,6 +42,22 @@
 //! listeners are the task's alone, and nothing is called holding the
 //! lock.
 //!
+//! **Over LE** (HID over GATT, sdk/libs/bluetooth/hidp.zig) a device is
+//! reached through a GATT block that waits for it (BTGO_WAIT), which the
+//! task opens when it is told of the device: bluetooth.library makes the
+//! link whenever the device advertises, encrypted with the bond's key,
+//! and the block opens. At its first open the service's characteristics
+//! are read - its Report Map is the report descriptor, each Report's
+//! Report Reference says its ID and kind - and the input reports
+//! subscribed to, which stays across the links; at every open Protocol
+//! Mode is written the report protocol, where the device has it, and a
+//! function opened. A notified report goes to HIDInput behind its ID
+//! where it has one; an output report - the LEDs - is written to the
+//! Report of its ID and kind. The link's end - BTGM_WAITING - closes
+//! the function, letting go of what the device held, and the block waits
+//! again. A device whose report map describes no keyboard and no mouse is
+//! let be: its block closed.
+//!
 //! The device's own units are none: bluetooth.library opens it on
 //! `BTPROFILE_UNIT_BIND` for its two calls. It stays once loaded.
 
@@ -50,6 +66,7 @@ const sdk = @import("sdk");
 const exec = sdk.exec;
 const bluetooth = sdk.bluetooth;
 const hidp = bluetooth.hidp;
+const att = bluetooth.att;
 const sdp = bluetooth.sdp;
 const l2cap = bluetooth.l2cap;
 const btprofile = sdk.devices.btprofile;
@@ -62,7 +79,7 @@ const HIDBase = sdk.interface.hid.HIDBase;
 
 pub const DEVICE_NAME = "bthid.device";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 0;
+const DEVICE_REVISION = 1;
 const BUILD_DATE = "23.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -82,6 +99,20 @@ const max_descriptor = 1024;
 const task_pri = 10;
 /// The longest output report sent, its header and ID included.
 const output_most = 18;
+/// The most reports a device's GATT service has that are kept, and the
+/// longest input report taken over LE, its ID in front.
+const max_reports = 16;
+const input_most = 65;
+
+/// A report of a device's GATT service: its value's handle, its ID and
+/// its kind (hidp.HIDP_REPORT_*), and whether it is written as a Write
+/// Command.
+const Report = struct {
+    handle: u16 = 0,
+    id: u8 = 0,
+    kind: u8 = 0,
+    command: bool = false,
+};
 
 /// A device driven: one HID service of a bonded device. Its fields past
 /// the binding are the task's alone.
@@ -106,6 +137,17 @@ const Hid = struct {
     /// one that lets go of it where its unbinding cannot wait for it.
     bound: Command = .{ .kind = .bound },
     unbind: Command = .{ .kind = .unbind },
+    /// Over LE: the service's handles, the block that waits for the
+    /// device, and - read at its first open - its reports and its
+    /// Protocol Mode's handle, 0 where it has none.
+    le: bool = false,
+    service_start: u16 = 0,
+    service_end: u16 = 0,
+    gatt: ?*bluetooth.BTGatt = null,
+    ready: bool = false,
+    reports: [max_reports]Report = @splat(.{}),
+    report_count: u8 = 0,
+    protocol_mode: u16 = 0,
 };
 
 const Kind = enum(u32) { bound, unbind };
@@ -128,10 +170,12 @@ const BtHidBase = extern struct {
     task: exec.Task = .{},
     stack: ?*anyopaque = null,
     /// The task's ports: the channels' and the listeners' messages, the
-    /// commands, and the replies of hid.library's requests.
+    /// commands, the replies of hid.library's requests, and the GATT
+    /// blocks' messages.
     port: ?*exec.MsgPort = null,
     command_port: ?*exec.MsgPort = null,
     hid_port: ?*exec.MsgPort = null,
+    gatt_port: ?*exec.MsgPort = null,
     starter: ?*exec.Task = null,
     start_signal: i8 = -1,
     pad: [3]u8 = .{ 0, 0, 0 },
@@ -160,12 +204,14 @@ fn btHidTask(sys: *ExecBase) callconv(.c) void {
     hb.port = sys.CreateMsgPort();
     hb.command_port = sys.CreateMsgPort();
     hb.hid_port = sys.CreateMsgPort();
+    hb.gatt_port = sys.CreateMsgPort();
     started(hb);
     const port = hb.port orelse return;
     const commands = hb.command_port orelse return;
+    const gatt_port = hb.gatt_port orelse return;
     if (hb.hid_port == null) return;
     while (true) {
-        _ = sys.Wait(port.sigMask() | commands.sigMask());
+        _ = sys.Wait(port.sigMask() | commands.sigMask() | gatt_port.sigMask());
         while (sys.GetMsg(commands)) |message| {
             // Read first: a one-way unbind is in the memory it frees.
             const command: *Command = @fieldParentPtr("message", message);
@@ -181,6 +227,10 @@ fn btHidTask(sys: *ExecBase) callconv(.c) void {
         while (sys.GetMsg(port)) |message| {
             const told: *bluetooth.BTChannelMessage = @fieldParentPtr("message", message);
             heard(hb, told);
+        }
+        while (sys.GetMsg(gatt_port)) |message| {
+            const told: *bluetooth.BTGattMessage = @fieldParentPtr("message", message);
+            heardOverLe(hb, told);
         }
     }
 }
@@ -308,9 +358,11 @@ fn unplug(hb: *BtHidBase, device: *Hid) void {
     say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x unplugged itself; its bond is kept\n", device.address, .{});
 }
 
-/// A device just bound: the listeners added with the first, and its
-/// channels opened where it has a link - its pairing has just ended.
+/// A device just bound: over LE its block that waits opened; over BR/EDR
+/// the listeners added with the first, and its channels opened where it
+/// has a link - its pairing has just ended.
 fn drive(hb: *BtHidBase, device: *Hid) void {
+    if (device.le) return waitFor(hb, device);
     if (!listen(hb)) say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: PSMs 17 and 19 are served already - its own channels are refused\n", device.address, .{});
     if (linked(hb.bt_base.?, device)) connect(hb, device);
 }
@@ -353,8 +405,9 @@ fn closeChannels(hb: *BtHidBase, device: *Hid) void {
 }
 
 /// A device let go of, on the task: told VIRTUAL_CABLE_UNPLUG where its
-/// bond is ending (BTPU_FORGET), its channels and function closed, its
-/// slot freed - and the listeners taken away with the last one.
+/// bond is ending (BTPU_FORGET), its channels - or its block - and
+/// function closed, its slot freed - and the listeners taken away with
+/// the last device over BR/EDR.
 fn letGo(hb: *BtHidBase, device: *Hid, flags: u32) void {
     const sys = hb.sys_base;
     const bt = hb.bt_base.?;
@@ -365,11 +418,17 @@ fn letGo(hb: *BtHidBase, device: *Hid, flags: u32) void {
         }
     }
     closeChannels(hb, device);
+    if (device.gatt) |gatt| {
+        device.gatt = null;
+        bt.CloseBTGatt(gatt);
+    }
     sys.ObtainSemaphore(&hb.lock);
     var left: usize = 0;
     for (&hb.devices) |*slot| {
         if (hidOf(slot.*) == device) slot.* = null;
-        if (slot.* != null) left += 1;
+        if (hidOf(slot.*)) |other| {
+            if (!other.le) left += 1;
+        }
     }
     sys.ReleaseSemaphore(&hb.lock);
     say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x let go of\n", device.address, .{});
@@ -417,6 +476,7 @@ fn sendOutput(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) ca
     _ = object;
     const device: *Hid = @ptrCast(@alignCast(hook.data.?));
     const output: *const hid.HIDOutputMessage = @ptrCast(@alignCast(message.?));
+    if (device.le) return writeOutput(device, output);
     const report_kind: u8 = @intCast(output.kind & hidp.HIDP_PARAM_MASK);
     const on_interrupt = report_kind == hidp.HIDP_REPORT_OUTPUT;
     const channel = (if (on_interrupt) device.interrupt else device.control) orelse return 0;
@@ -431,6 +491,20 @@ fn sendOutput(hook: *utility.Hook, object: ?*anyopaque, message: ?*anyopaque) ca
     @memcpy(bytes[length..][0..count], output.data[0..count]);
     length += count;
     _ = device.hb.bt_base.?.SendBTChannel(channel, &bytes, @intCast(@min(length, channel.mtu_out)));
+    return 0;
+}
+
+/// An output report over LE: written to the device's report of its ID and
+/// kind - as a Write Command where it takes one - without its ID.
+fn writeOutput(device: *Hid, output: *const hid.HIDOutputMessage) usize {
+    const gatt = device.gatt orelse return 0;
+    const kind: u8 = @intCast(output.kind & hidp.HIDP_PARAM_MASK);
+    for (device.reports[0..device.report_count]) |*report| {
+        if (report.kind != kind or report.id != output.id) continue;
+        const flags: u32 = if (report.command) bluetooth.BTGW_NORESPONSE else 0;
+        _ = device.hb.bt_base.?.WriteBTAttribute(gatt, report.handle, output.data, output.length, flags);
+        return 0;
+    }
     return 0;
 }
 
@@ -450,11 +524,208 @@ fn say(hb: *BtHidBase, comptime format: [:0]const u8, address: bluetooth.BTAddre
     exec.kprintf(hb.sys_base, format, .{ name, @as(u32, bytes[5]), @as(u32, bytes[4]), @as(u32, bytes[3]), @as(u32, bytes[2]), @as(u32, bytes[1]), @as(u32, bytes[0]) } ++ rest);
 }
 
+// --- over LE ------------------------------------------------------------------------
+
+/// The device whose block this is.
+fn findByGatt(hb: *BtHidBase, gatt: *const bluetooth.BTGatt) ?*Hid {
+    const sys = hb.sys_base;
+    sys.ObtainSemaphoreShared(&hb.lock);
+    defer sys.ReleaseSemaphore(&hb.lock);
+    for (hb.devices) |slot| {
+        const device = hidOf(slot) orelse continue;
+        if (device.gatt == gatt) return device;
+    }
+    return null;
+}
+
+/// The device's block that waits for it opened: it opens - BTGM_OPENED -
+/// each time the device is reached.
+fn waitFor(hb: *BtHidBase, device: *Hid) void {
+    var gatt: ?*bluetooth.BTGatt = null;
+    const result = hb.bt_base.?.OpenBTGatt(device.controller, &device.address, hb.gatt_port.?, &gatt, bluetooth.BTGO_WAIT);
+    if (result != 0) return say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: no block to wait for it with (%ld)\n", device.address, .{@as(i64, result)});
+    device.gatt = gatt;
+}
+
+/// A message about a device's block: a report - replied once it is read,
+/// its bytes being the library's until then - the block open, its link
+/// ended, the block closed.
+fn heardOverLe(hb: *BtHidBase, told: *bluetooth.BTGattMessage) void {
+    const sys = hb.sys_base;
+    const device = findByGatt(hb, told.gatt orelse return sys.ReplyMsg(&told.message)) orelse return sys.ReplyMsg(&told.message);
+    const kind = told.kind;
+    if (kind == bluetooth.BTGM_VALUE) {
+        if (told.data) |data| reported(hb, device, @intCast(told.handle), data[0..told.length]);
+    }
+    sys.ReplyMsg(&told.message);
+    switch (kind) {
+        bluetooth.BTGM_OPENED => reached(hb, device),
+        bluetooth.BTGM_WAITING => {
+            endFunction(hb, device);
+            say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x disconnected\n", device.address, .{});
+        },
+        bluetooth.BTGM_CLOSED => endFunction(hb, device),
+        else => {},
+    }
+}
+
+/// An input report the device notified: to HIDInput, behind its ID
+/// where it has one - opening the function first where the link's open
+/// has not yet.
+fn reported(hb: *BtHidBase, device: *Hid, handle: u16, data: []const u8) void {
+    if (!device.ready) return;
+    for (device.reports[0..device.report_count]) |*report| {
+        if (report.handle != handle or report.kind != hidp.HIDP_REPORT_INPUT) continue;
+        startFunction(hb, device);
+        const function = device.function orelse return;
+        var bytes: [input_most]u8 = undefined;
+        var length: usize = 0;
+        if (report.id != 0) {
+            bytes[0] = report.id;
+            length = 1;
+        }
+        const count = @min(data.len, input_most - length);
+        @memcpy(bytes[length..][0..count], data[0..count]);
+        length += count;
+        hb.hid_base.?.HIDInput(function, &bytes, @intCast(length));
+        return;
+    }
+}
+
+/// The device reached, its block open: at its first open its service
+/// read; then the report protocol written where it has Protocol Mode, and
+/// a function opened.
+fn reached(hb: *BtHidBase, device: *Hid) void {
+    const bt = hb.bt_base.?;
+    const gatt = device.gatt orelse return;
+    if (!device.ready) {
+        setUp(hb, device, gatt);
+        if (!device.ready) return;
+    }
+    if (device.protocol_mode != 0) {
+        const report_protocol = [_]u8{hidp.HIDP_PROTOCOL_REPORT};
+        _ = bt.WriteBTAttribute(gatt, device.protocol_mode, &report_protocol, report_protocol.len, bluetooth.BTGW_NORESPONSE);
+    }
+    startFunction(hb, device);
+    say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x connected\n", device.address, .{});
+}
+
+/// The device's HID service read, at its block's first open - or at a
+/// later one, where its link ended while it was read: ready once it is.
+/// One that describes no keyboard and no mouse, or whose service cannot
+/// be read, is let be: its block closed.
+fn setUp(hb: *BtHidBase, device: *Hid, gatt: *bluetooth.BTGatt) void {
+    const result = readService(hb, device, gatt);
+    if (result == 0) {
+        device.ready = true;
+        return say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x driven: %s\n", device.address, .{whatOf(device.function.?)});
+    }
+    endFunction(hb, device);
+    device.report_count = 0;
+    device.protocol_mode = 0;
+    if (result == bluetooth.BTERR_NOTCONNECTED or result == bluetooth.BTERR_TIMEOUT) return;
+    say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x let be\n", device.address, .{});
+    device.gatt = null;
+    hb.bt_base.?.CloseBTGatt(gatt);
+}
+
+/// Its characteristics; its Report Map into the descriptor and a function
+/// opened on it; each Report's ID and kind from its Report Reference, the
+/// input reports subscribed to. 0, or why not - each said in the log.
+fn readService(hb: *BtHidBase, device: *Hid, gatt: *bluetooth.BTGatt) i32 {
+    const bt = hb.bt_base.?;
+    const service = bluetooth.BTService{ .controller = device.controller, .address = device.address, .flags = bluetooth.BTSF_GATT, .handle = device.service_start, .end_handle = device.service_end };
+    var listed: ?*exec.List = null;
+    const result = bt.ObtainBTCharacteristics(gatt, &service, &listed);
+    if (result != 0) {
+        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its service not read (%ld)\n", device.address, .{@as(i64, result)});
+        return result;
+    }
+    defer bt.ReleaseBTCharacteristics(listed);
+    const characteristics = listed.?;
+
+    // The report map first: the reports mean nothing before it.
+    var map: u16 = 0;
+    var it = characteristics.iterator();
+    while (it.next()) |node| {
+        const characteristic: *const bluetooth.BTCharacteristic = @fieldParentPtr("node", node);
+        switch (characteristic.uuid16) {
+            hidp.GATT_REPORT_MAP => map = characteristic.value_handle,
+            hidp.GATT_PROTOCOL_MODE => device.protocol_mode = characteristic.value_handle,
+            else => {},
+        }
+    }
+    if (map == 0) {
+        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its service has no report map\n", device.address, .{});
+        return bluetooth.BTERR_UNSUPPORTED;
+    }
+    var length: u32 = 0;
+    const read_map = bt.ReadBTAttribute(gatt, map, &device.descriptor, max_descriptor, &length);
+    if (read_map != 0) {
+        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its report map not read (%ld)\n", device.address, .{@as(i64, read_map)});
+        return read_map;
+    }
+    device.descriptor_length = length;
+    device.function = openFunction(hb, device) orelse {
+        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x describes no keyboard and no mouse\n", device.address, .{});
+        return bluetooth.BTERR_UNSUPPORTED;
+    };
+
+    // Each report's ID and kind; the inputs subscribed to.
+    it = characteristics.iterator();
+    while (it.next()) |node| {
+        const characteristic: *const bluetooth.BTCharacteristic = @fieldParentPtr("node", node);
+        if (characteristic.uuid16 != hidp.GATT_REPORT or device.report_count == max_reports) continue;
+        const reference = descriptorHandle(characteristic, att.GATT_REPORT_REFERENCE) orelse continue;
+        var bytes: [2]u8 = undefined;
+        var got: u32 = 0;
+        const read_reference = bt.ReadBTAttribute(gatt, reference, &bytes, bytes.len, &got);
+        if (read_reference != 0) {
+            say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: a report's reference not read (%ld)\n", device.address, .{@as(i64, read_reference)});
+            return read_reference;
+        }
+        if (got != bytes.len) continue;
+        device.reports[device.report_count] = .{
+            .handle = characteristic.value_handle,
+            .id = bytes[0],
+            .kind = bytes[1],
+            .command = characteristic.properties & att.GATT_PROP_WRITE_NO_RESPONSE != 0,
+        };
+        device.report_count += 1;
+        if (bytes[1] != hidp.HIDP_REPORT_INPUT or characteristic.configuration_handle == 0) continue;
+        const subscribed = bt.SubscribeBTAttribute(gatt, characteristic, 0);
+        if (subscribed != 0) {
+            say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x: report %ld not subscribed to (%ld)\n", device.address, .{ @as(i64, bytes[0]), @as(i64, subscribed) });
+            return subscribed;
+        }
+    }
+    return 0;
+}
+
+/// The handle of a characteristic's descriptor of the type `uuid16`.
+fn descriptorHandle(characteristic: *const bluetooth.BTCharacteristic, uuid16: u16) ?u16 {
+    const descriptors = characteristic.descriptors orelse return null;
+    for (descriptors[0..characteristic.descriptor_count]) |descriptor| {
+        if (descriptor.uuid16 == uuid16) return descriptor.handle;
+    }
+    return null;
+}
+
+/// What a function drives, for the log.
+fn whatOf(function: *const hid.HIDFunction) [*:0]const u8 {
+    const keyboard = function.flags & hid.HIDF_KEYBOARD != 0;
+    const pointer = function.flags & (hid.HIDF_MOUSE | hid.HIDF_TABLET) != 0;
+    if (keyboard and pointer) return "a keyboard and a mouse";
+    if (keyboard) return "a keyboard";
+    return if (function.flags & hid.HIDF_TABLET != 0) "a tablet" else "a mouse";
+}
+
 // --- the profile driver's calls -----------------------------------------------------
 
 /// A HID service taken: one over BR/EDR whose record's report descriptor
-/// describes a keyboard or a mouse, or both; the rest declined. The
-/// contract is btprofile's (sdk/fd/btprofile_lib.fd).
+/// describes a keyboard or a mouse, or both - and every one over LE,
+/// whose report map is read once the device is reached; the rest
+/// declined. The contract is btprofile's (sdk/fd/btprofile_lib.fd).
 ///
 /// INPUTS:
 /// - `hb` - the driver's base.
@@ -463,6 +734,7 @@ pub fn BTProfileBind(hb: *BtHidBase, binding: *bluetooth.BTBinding) bool {
     const sys = hb.sys_base;
     const bt = hb.bt_base orelse return false;
     const service = binding.service orelse return false;
+    if (service.flags & bluetooth.BTSF_GATT != 0) return bindOverLe(hb, binding, service);
     if (service.flags & bluetooth.BTSF_SDP == 0 or service.class16 != hidp.UUID_HID) return false;
     const descriptor = descriptorOf(bt, service) orelse return false;
     if (descriptor.len > max_descriptor) return false;
@@ -496,10 +768,44 @@ pub fn BTProfileBind(hb: *BtHidBase, binding: *bluetooth.BTBinding) bool {
     };
     binding.driver_data = device;
     binding.unit = @intCast(free_slot);
-    const what: [*:0]const u8 = if (function.flags & hid.HIDF_KEYBOARD != 0 and function.flags & (hid.HIDF_MOUSE | hid.HIDF_TABLET) != 0)
-        "a keyboard and a mouse"
-    else if (function.flags & hid.HIDF_KEYBOARD != 0) "a keyboard" else if (function.flags & hid.HIDF_TABLET != 0) "a tablet" else "a mouse";
-    say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x driven: %s\n", device.address, .{what});
+    say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x driven: %s\n", device.address, .{whatOf(function)});
+    sys.PutMsg(hb.command_port.?, &device.bound.message);
+    return true;
+}
+
+/// HID over GATT taken: the device kept with its service's handles and
+/// the task told, which opens its block; what it is is read once it is
+/// reached.
+fn bindOverLe(hb: *BtHidBase, binding: *bluetooth.BTBinding, service: *const bluetooth.BTService) bool {
+    const sys = hb.sys_base;
+    if (service.class16 != hidp.UUID_HID_SERVICE or service.handle == 0 or service.handle > service.end_handle or service.end_handle > 0xFFFF) return false;
+    const memory = sys.AllocMem(@sizeOf(Hid), exec.MEMF_CLEAR) orelse return false;
+    const device: *Hid = @ptrCast(@alignCast(memory));
+    device.* = .{
+        .hb = hb,
+        .controller = binding.controller,
+        .address = binding.address,
+        .le = true,
+        .service_start = @intCast(service.handle),
+        .service_end = @intCast(service.end_handle),
+    };
+    device.output_hook = .{ .entry = &sendOutput, .data = device };
+    device.bound.device = device;
+    device.bound.message.length = @sizeOf(Command);
+    sys.ObtainSemaphore(&hb.lock);
+    var slot_index: ?usize = null;
+    for (hb.devices, 0..) |slot, index| {
+        if (slot == null) slot_index = index;
+    }
+    if (slot_index) |index| hb.devices[index] = device;
+    sys.ReleaseSemaphore(&hb.lock);
+    const free_slot = slot_index orelse {
+        say(hb, "%s: %02x:%02x:%02x:%02x:%02x:%02x not driven: %ld devices are already\n", device.address, .{@as(i64, max_devices)});
+        sys.FreeMem(memory, @sizeOf(Hid));
+        return false;
+    };
+    binding.driver_data = device;
+    binding.unit = @intCast(free_slot);
     sys.PutMsg(hb.command_port.?, &device.bound.message);
     return true;
 }
@@ -663,7 +969,7 @@ fn init(dev: *exec.Device, seg_list: ?*anyopaque, sys_base: *ExecBase) callconv(
     _ = sys_base.AddTask(&hb.task, &btHidTask, null);
     _ = sys_base.Wait(@as(u32, 1) << @intCast(signal));
     sys_base.FreeSignal(signal);
-    if (hb.port == null or hb.command_port == null or hb.hid_port == null) return null;
+    if (hb.port == null or hb.command_port == null or hb.hid_port == null or hb.gatt_port == null) return null;
     return dev;
 }
 
@@ -698,9 +1004,10 @@ const init_table = exec.InitTable{
 
 const speaks = [_]u32{ devices.DEVIF_BTPROFILE, 0 };
 
-/// What it drives: the HID service over BR/EDR.
+/// What it drives: the HID service over BR/EDR, and over GATT.
 const matches = [_]btprofile.BTMatch{
     .{ .over = btprofile.BTMATCH_BREDR, .class16 = hidp.UUID_HID },
+    .{ .over = btprofile.BTMATCH_LE, .class16 = hidp.UUID_HID_SERVICE },
     .{},
 };
 

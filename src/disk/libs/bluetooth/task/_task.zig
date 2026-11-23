@@ -148,7 +148,7 @@ pub const Command = extern struct {
     handle: u32 = 0,
     end_handle: u32 = 0,
     configuration: u32 = 0,
-    /// write_attribute: BTGW_*; subscribe: BTGS_*.
+    /// open_gatt: BTGO_*; write_attribute: BTGW_*; subscribe: BTGS_*.
     flags: u32 = 0,
     /// send_channel, write_attribute: the frame or the value; services,
     /// characteristics, read_attribute: the caller's room, and how much

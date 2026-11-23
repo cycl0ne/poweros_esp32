@@ -1015,7 +1015,7 @@ fn gattServices(sys: *ExecBase, dl: *DosBase, bt: *BluetoothBase, controller: u3
     };
     defer sys.DeleteMsgPort(port);
     var gatt: ?*bluetooth.BTGatt = null;
-    const opened = bt.OpenBTGatt(controller, &address, port, &gatt);
+    const opened = bt.OpenBTGatt(controller, &address, port, &gatt, 0);
     if (opened != 0) {
         gattFailure(dl, opened, controller);
         return dos.RETURN_ERROR;

@@ -25,6 +25,7 @@ const _profile = @import("../profile/_profile.zig");
 const binder = @import("../profile/binder.zig");
 const drivers = @import("../profile/drivers.zig");
 const kept = @import("../profile/kept.zig");
+const att_client = @import("../att/client.zig");
 const standin = @import("profile_driver.zig");
 
 const testing = std.testing;
@@ -193,16 +194,23 @@ test "the matches: a service by the kind of link it is reached over, and by its 
     try testing.expectEqualStrings("hid.device", drivers.nameOf(&table.list[0]));
 }
 
-/// The records `kept.parse` hands over, copied.
+/// The services `kept.parse` hands over, copied: a record's bytes, or a
+/// GATT service.
 const Collected = struct {
     count: usize = 0,
     records: [4][64]u8 = undefined,
     lengths: [4]usize = @splat(0),
+    gatt: [4]?att_client.ServiceRecord = @splat(null),
 
-    fn each(collected: *Collected, record: []const u8) void {
+    fn each(collected: *Collected, service: kept.Kept) void {
         if (collected.count == collected.records.len) return;
-        @memcpy(collected.records[collected.count][0..record.len], record);
-        collected.lengths[collected.count] = record.len;
+        switch (service) {
+            .record => |record| {
+                @memcpy(collected.records[collected.count][0..record.len], record);
+                collected.lengths[collected.count] = record.len;
+            },
+            .gatt => |gatt| collected.gatt[collected.count] = gatt,
+        }
         collected.count += 1;
     }
 
@@ -211,7 +219,7 @@ const Collected = struct {
     }
 };
 
-test "the services kept with a bond: beside its file, a line a record, read again in their order, a line that is no record's passed over; a service made from one, and copied" {
+test "the services kept with a bond: beside its file, a line a record or a GATT service, read again in their order, a line that is neither passed over; a service made from one, and copied" {
     const kub = try utility_library.setUp();
     const made = kexec.InitResident(kexec.SysBase, &bluetooth_init.bluetooth_library_tag, null) orelse return error.NoLibrary;
     const lib: *exec.Library = @ptrCast(@alignCast(made));
@@ -250,6 +258,40 @@ test "the services kept with a bond: beside its file, a line a record, read agai
     try testing.expectEqual(@as(usize, 2), collected.count);
     try testing.expectEqualSlices(u8, &.{0x35}, collected.at(0));
     try testing.expectEqualSlices(u8, &.{ 0x3A, 0x00 }, collected.at(1));
+
+    // A GATT service beside a record: its handles and UUID on a line of
+    // its own, read back; one a handle short, or with a bad digit or a
+    // space in its UUID, passed over.
+    const hid_uuid = [16]u8{ 0x00, 0x00, 0x18, 0x12, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0x80, 0x5F, 0x9B, 0x34, 0xFB };
+    const over_le = bluetooth.BTService{ .flags = bluetooth.BTSF_GATT, .class = .{ .bytes = hid_uuid }, .class16 = 0x1812, .handle = 0x0010, .end_handle = 0x002F };
+    const both = [_]*const bluetooth.BTService{ &over_le, &one };
+    const both_size = kept.textSize(&both);
+    const both_length = kept.format(&both, text[0..both_size]);
+    try testing.expectEqual(both_size, both_length);
+    try testing.expect(std.mem.indexOf(u8, text[0..both_length], "\nGatt 0010 002F 0000181200001000800000805F9B34FB\nRecord 3522") != null);
+    collected = .{};
+    kept.parse(text[0..both_length], &collected, Collected.each);
+    try testing.expectEqual(@as(usize, 2), collected.count);
+    const read_back = collected.gatt[0].?;
+    try testing.expectEqual(@as(u16, 0x0010), read_back.start);
+    try testing.expectEqual(@as(u16, 0x002F), read_back.end);
+    try testing.expectEqualSlices(u8, &hid_uuid, &read_back.uuid);
+    try testing.expectEqualSlices(u8, &first, collected.at(1));
+    var broken = "Gatt 0010 0000181200001000800000805F9B34FB\nGatt 0010 002F 0000181200001000800000805F9B34FG\nGatt 0001 0005 00001800000010008000 00805F9B34F\n".*;
+    collected = .{};
+    kept.parse(&broken, &collected, Collected.each);
+    try testing.expectEqual(@as(usize, 0), collected.count);
+
+    // A GATT service made from its line, as ObtainBTServices lists a
+    // device's over LE.
+    var gatt_list: ?*exec.List = null;
+    try testing.expectEqual(@as(i32, 0), _service.makeGatt(base, 3, le_device, @as([*]const u8, @ptrCast(&read_back))[0..@sizeOf(att_client.ServiceRecord)], &gatt_list));
+    const made_gatt: *const bluetooth.BTService = @ptrCast(@alignCast(gatt_list.?.first().?));
+    try testing.expectEqual(bluetooth.BTSF_GATT, made_gatt.flags);
+    try testing.expectEqual(@as(u16, 0x1812), made_gatt.class16);
+    try testing.expectEqual(@as(u32, 0x0010), made_gatt.handle);
+    try testing.expectEqual(@as(u32, 0x002F), made_gatt.end_handle);
+    _base.interface(base).ReleaseBTServices(gatt_list);
 
     // A record made a service, as ObtainBTServices lists a device's; bytes
     // that are no whole record refused.

@@ -24,14 +24,17 @@ const att_client = @import("../att/client.zig");
 const taskchannels = @import("channels.zig");
 const Command = @import("_task.zig").Command;
 
-/// The port's upcall for the task's GATT blocks: a value, a block closed
-/// - each to the block's port.
+/// The port's upcall for the task's GATT blocks: a value, a block that
+/// waits open or waiting again, a block closed - each to the block's
+/// port.
 pub fn event(context: *anyopaque, happened: *const att_client.Event) void {
     const controller: *Controller = @ptrCast(@alignCast(context));
     const record = happened.client;
     const block: *bluetooth.BTGatt = @ptrCast(@alignCast(record.owner orelse return));
     switch (happened.kind) {
         .value => valueCame(controller, record, block, happened.handle, happened.data),
+        .opened => opened(controller, record, block),
+        .waiting => waiting(controller, block, happened.result),
         .closed => closed(controller, block, happened.result),
     }
 }
@@ -57,31 +60,44 @@ fn valueCame(controller: *Controller, record: *att_client.Client, block: *blueto
     taskchannels.put(controller.base, port, message);
 }
 
+/// A block that waits open: its link's MTU in it, BTGF_WAITING cleared,
+/// and BTGM_OPENED to its port.
+fn opened(controller: *Controller, record: *const att_client.Client, block: *bluetooth.BTGatt) void {
+    block.mtu = if (connections.find(&controller.layer, record.address)) |connection| connection.att.mtu else att.ATT_MTU_DEFAULT;
+    block.flags &= ~bluetooth.BTGF_WAITING;
+    tellState(controller, block, bluetooth.BTGM_OPENED, 0);
+}
+
+/// A block that waits waiting again, its link ended for `result`:
+/// BTGF_WAITING set, and BTGM_WAITING to its port.
+fn waiting(controller: *Controller, block: *bluetooth.BTGatt, result: i32) void {
+    block.flags |= bluetooth.BTGF_WAITING;
+    tellState(controller, block, bluetooth.BTGM_WAITING, result);
+}
+
+fn tellState(controller: *Controller, block: *bluetooth.BTGatt, kind: u32, result: i32) void {
+    const port = block.port orelse return;
+    const message = taskchannels.newMessage(controller, block, true, kind, result, 0) orelse return;
+    taskchannels.put(controller.base, port, message);
+}
+
 /// The block closed, for `result`: it says so, and BTGM_CLOSED goes to
 /// its port.
 fn closed(controller: *Controller, block: *bluetooth.BTGatt, result: i32) void {
     block.flags |= bluetooth.BTGF_CLOSED;
-    const port = block.port orelse return;
-    const message = taskchannels.newMessage(controller, block, true, bluetooth.BTGM_CLOSED, result, 0) orelse return;
-    taskchannels.put(controller.base, port, message);
+    tellState(controller, block, bluetooth.BTGM_CLOSED, result);
 }
 
 // --- the commands ---------------------------------------------------------------
 
 /// OpenBTGatt: the block begun - the call's wait, the layer's record
-/// naming the caller's block - or why not.
+/// naming the caller's block - or why not; one that waits answered at
+/// once. The block names its controller first: one that waits may open
+/// before the call returns.
 pub fn open(controller: *Controller, command: *Command) connections.Begun {
-    const layer = &controller.layer;
-    const begun = att_client.open(layer, command.address);
-    switch (begun) {
-        .waiting => |index| {
-            if (att_client.bySerial(layer, layer.waits[index].serial)) |record| record.owner = command.block;
-            const block: *bluetooth.BTGatt = @ptrCast(@alignCast(command.block.?));
-            block.controller = controller.id;
-        },
-        .done => {},
-    }
-    return begun;
+    const block: *bluetooth.BTGatt = @ptrCast(@alignCast(command.block.?));
+    block.controller = controller.id;
+    return att_client.open(&controller.layer, command.address, block, command.flags & bluetooth.BTGO_WAIT != 0);
 }
 
 /// CloseBTGatt: the block's record given back, the device told of the

@@ -42,16 +42,32 @@
 //! to every block on the link subscribed to it; the task lets go of a
 //! block's past OUT_MOST unreplied.
 //!
+//! **A block that waits** (BTGO_WAIT) is `waiting` while its device has
+//! no link that is up: the background scan looks for the device
+//! (hci/scan.zig), and a link up to it from anywhere - the scan's, the
+//! device's own, ConnectBTDevice's, a pairing's - is taken by an open
+//! procedure without a call, which tells the task the block is open.
+//! What it subscribed to stays across its link's ends, written to the
+//! device again each time it opens; a value notified while it is being
+//! opened is its already. Its link's end tells the task it waits again;
+//! it is closed only when its controller goes, or by `close`. A link
+//! whose device stops answering is ended, so that it can be made again.
+//!
+//! A link is matched to the blocks and procedures on it by the address
+//! each names - the link's own, or its identity (hci/connections.zig).
+//!
 //! Pure, as the rest of the layer.
 
 const sdk = @import("sdk");
 const bluetooth = sdk.bluetooth;
+const hci = bluetooth.hci;
 const att = bluetooth.att;
 const _hci = @import("../hci/_hci.zig");
 const Hci = _hci.Hci;
 const connections = @import("../hci/connections.zig");
 const Connection = connections.Connection;
-const sameAddress = connections.sameAddress;
+const scan = @import("../hci/scan.zig");
+const discovery = @import("../hci/discovery.zig");
 const _att = @import("_att.zig");
 const le16 = _att.le16;
 const put16 = _att.put16;
@@ -91,7 +107,7 @@ pub const Procedure = struct {
     descriptors: u16 = 0,
     /// configure: the configuration's handle, and the block whose
     /// subscription it writes - taken back where the device refuses it;
-    /// 0 for none.
+    /// 0 for none. open, without a call: the block that waits, opened.
     configuration: u16 = 0,
     client: u32 = 0,
     /// write, write_command: the caller's value.
@@ -142,10 +158,13 @@ pub const Subscription = struct {
     bits: u16 = 0,
 };
 
-pub const ClientState = enum(u8) { free, opening, open, closed };
+pub const ClientState = enum(u8) { free, waiting, opening, open, closed };
 
 pub const Client = struct {
     state: ClientState = .free,
+    /// Opened with BTGO_WAIT: `waiting` again whenever its link ends,
+    /// until it is closed.
+    waits: bool = false,
     address: bluetooth.BTAddress = .{},
     /// Its number, never 0; its open procedure's too.
     serial: u32 = 0,
@@ -155,8 +174,9 @@ pub const Client = struct {
     subscriptions: [SUBSCRIPTIONS]Subscription = @splat(.{}),
 };
 
-/// What the task is told of a block: a value, its close.
-pub const EventKind = enum(u8) { value, closed };
+/// What the task is told of a block: a value; a block that waits open,
+/// or waiting again; a block closed.
+pub const EventKind = enum(u8) { value, opened, waiting, closed };
 
 pub const Event = struct {
     kind: EventKind,
@@ -164,7 +184,7 @@ pub const Event = struct {
     /// value: the attribute, and its value.
     handle: u16 = 0,
     data: []const u8 = &.{},
-    /// closed: why - BTERR_* or the link's reason.
+    /// waiting, closed: why - BTERR_* or the link's reason.
     result: i32 = 0,
 };
 
@@ -200,16 +220,22 @@ pub fn release(layer: *Hci, serial: u32) void {
     if (one.stage == .done) one.* = .{};
 }
 
-/// Whether a block, or a procedure, is on or waits for the link to
-/// `address`.
-pub fn uses(layer: *const Hci, address: bluetooth.BTAddress) bool {
+/// Whether a block, or a procedure, is on or waits for the link.
+pub fn uses(layer: *const Hci, connection: *const Connection) bool {
     for (&layer.att_clients) |*one| {
-        if ((one.state == .opening or one.state == .open) and sameAddress(one.address, address)) return true;
+        if ((one.state == .opening or one.state == .open) and connections.reaches(connection, one.address)) return true;
     }
     for (&layer.att_procedures) |*one| {
-        if ((one.stage == .queued or one.stage == .running) and sameAddress(one.address, address)) return true;
+        if ((one.stage == .queued or one.stage == .running) and connections.reaches(connection, one.address)) return true;
     }
     return false;
+}
+
+/// The link to `address` ended IDLE_MS from now where it was made for
+/// procedures and nothing is on it.
+fn idleUnused(layer: *Hci, address: bluetooth.BTAddress) void {
+    const connection = connections.find(layer, address) orelse return;
+    if (!uses(layer, connection)) connections.idle(layer, address);
 }
 
 fn freeProcedure(layer: *Hci) ?*Procedure {
@@ -244,17 +270,31 @@ fn canQueue(layer: *Hci) bool {
 
 // --- the calls ----------------------------------------------------------------------
 
-/// OpenBTGatt: a block begun for the device at `address`, an LE address -
-/// the call's wait, or why not at once.
-pub fn open(layer: *Hci, address: bluetooth.BTAddress) connections.Begun {
+/// OpenBTGatt: a block begun for the device at `address`, an LE address,
+/// as `owner`'s - the call's wait, or why not at once. One that `waits`
+/// is answered at once.
+pub fn open(layer: *Hci, address: bluetooth.BTAddress, owner: *anyopaque, waits: bool) connections.Begun {
     if (address.kind == bluetooth.BTADDR_BREDR) return .{ .done = bluetooth.BTERR_UNSUPPORTED };
+    if (waits) return openWaiting(layer, address, owner);
     if (!canQueue(layer)) return .{ .done = bluetooth.BTERR_NOMEM };
     const slot = freeClient(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
     const linked = linkFor(layer, address);
     if (linked != 0) return .{ .done = linked };
     const serial = newSerial(layer);
-    slot.* = .{ .state = .opening, .address = address, .serial = serial };
+    slot.* = .{ .state = .opening, .address = address, .serial = serial, .owner = owner };
     return queue(layer, .{ .kind = .open, .address = address, .serial = serial });
+}
+
+/// A block that waits for its device: taken by its link where one is up,
+/// otherwise looked for by the background scan - which a controller that
+/// is up must be able to run - 0 either way.
+fn openWaiting(layer: *Hci, address: bluetooth.BTAddress, owner: *anyopaque) connections.Begun {
+    if (layer.state == bluetooth.BTCS_UP and (!discovery.canScan(layer) or !connections.canInitiate(layer))) return .{ .done = bluetooth.BTERR_UNSUPPORTED };
+    const slot = freeClient(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
+    slot.* = .{ .state = .waiting, .waits = true, .address = address, .serial = newSerial(layer), .owner = owner };
+    if (connections.find(layer, address)) |connection| pump(layer, connection);
+    scan.update(layer);
+    return .{ .done = 0 };
 }
 
 /// ObtainBTServices over LE: the primary services of the device at
@@ -316,20 +356,25 @@ pub fn unsubscribe(layer: *Hci, one: *Client, value: u16) connections.Begun {
 
 /// CloseBTGatt: the block freed, the device told of each value only this
 /// block wanted - written without a call, while the link is up - and the
-/// link, where it was made for it, ended once nothing else is on it.
+/// link, where it was made for it, ended once nothing else is on it. The
+/// background scan stops with the last block that waits.
 pub fn close(layer: *Hci, one: *Client) void {
     const address = one.address;
     const was_open = one.state == .open;
     const kept = one.subscriptions;
+    const waited = one.waits;
     one.* = .{};
     if (was_open) {
-        for (kept) |subscription| {
-            if (subscription.value == 0) continue;
-            if (subscription.bits & ~wanted(layer, address, subscription.value) == 0) continue;
-            _ = queue(layer, .{ .kind = .configure, .address = address, .start = subscription.value, .configuration = subscription.configuration });
+        if (connections.find(layer, address)) |connection| {
+            for (kept) |subscription| {
+                if (subscription.value == 0) continue;
+                if (subscription.bits & ~wanted(layer, connection, subscription.value) == 0) continue;
+                _ = queue(layer, .{ .kind = .configure, .address = address, .start = subscription.value, .configuration = subscription.configuration });
+            }
         }
     }
-    if (!uses(layer, address)) connections.idle(layer, address);
+    idleUnused(layer, address);
+    if (waited) scan.update(layer);
 }
 
 fn subscriptionOf(one: *Client, value: u16) ?*Subscription {
@@ -339,12 +384,12 @@ fn subscriptionOf(one: *Client, value: u16) ?*Subscription {
     return null;
 }
 
-/// What the open blocks on the link to `address` want of the value at
-/// `value`: their att.GATT_CCC_* together.
-fn wanted(layer: *const Hci, address: bluetooth.BTAddress, value: u16) u16 {
+/// What the open blocks on the link want of the value at `value`: their
+/// att.GATT_CCC_* together.
+fn wanted(layer: *const Hci, connection: *const Connection, value: u16) u16 {
     var bits: u16 = 0;
     for (&layer.att_clients) |*one| {
-        if (one.state != .open or !sameAddress(one.address, address)) continue;
+        if (one.state != .open or !connections.reaches(connection, one.address)) continue;
         for (&one.subscriptions) |*subscription| {
             if (subscription.value == value) bits |= subscription.bits;
         }
@@ -389,18 +434,22 @@ fn queue(layer: *Hci, made: Procedure) connections.Begun {
 // --- running them ---------------------------------------------------------------------
 
 /// A link up and heard, or made secure with its bond - or not: its
-/// procedures run.
+/// procedures run, the blocks that wait for its device taken - and one
+/// made for them that nothing is on ended in a while.
 pub fn linkUp(layer: *Hci, connection: *Connection) void {
     pump(layer, connection);
+    if (connection.state == .up and !uses(layer, connection)) connections.idle(layer, connection.address);
 }
 
 /// The link's next procedure run - its MTU exchanged first - while it is
-/// ready and nothing is asked on it.
+/// ready and nothing is asked on it; the blocks that wait for its device
+/// taken first.
 pub fn pump(layer: *Hci, connection: *Connection) void {
     if (!connection.le or connection.state != .up or !connection.heard or connections.securing(connection)) return;
     const bearer = &connection.att;
+    if (!bearer.dead) take(layer, connection);
     while (!bearer.dead and bearer.asked == 0 and bearer.running == null) {
-        const procedure = nextQueued(layer, connection.address) orelse return;
+        const procedure = nextQueued(layer, connection) orelse return;
         if (!bearer.exchanged) return exchange(layer, connection);
         procedure.stage = .running;
         bearer.running = placeOf(layer, procedure);
@@ -408,11 +457,22 @@ pub fn pump(layer: *Hci, connection: *Connection) void {
     }
 }
 
+/// The blocks that wait for the link's device opened over it: an open
+/// procedure each, without a call - while there is room for one.
+fn take(layer: *Hci, connection: *const Connection) void {
+    for (&layer.att_clients) |*one| {
+        if (one.state != .waiting or !connections.reaches(connection, one.address)) continue;
+        if (freeProcedure(layer) == null) return;
+        one.state = .opening;
+        _ = queue(layer, .{ .kind = .open, .address = one.address, .client = one.serial });
+    }
+}
+
 /// The link's procedure asked for first that waits.
-fn nextQueued(layer: *Hci, address: bluetooth.BTAddress) ?*Procedure {
+fn nextQueued(layer: *Hci, connection: *const Connection) ?*Procedure {
     var first: ?*Procedure = null;
     for (&layer.att_procedures) |*one| {
-        if (one.stage != .queued or !sameAddress(one.address, address)) continue;
+        if (one.stage != .queued or !connections.reaches(connection, one.address)) continue;
         if (first == null or one.order < first.?.order) first = one;
     }
     return first;
@@ -455,7 +515,7 @@ fn begin(layer: *Hci, connection: *Connection, procedure: *Procedure) void {
         .configure => {
             var request: [5]u8 = .{ att.ATT_WRITE_REQ, 0, 0, 0, 0 };
             put16(request[1..3], procedure.configuration);
-            put16(request[3..5], wanted(layer, procedure.address, procedure.start));
+            put16(request[3..5], wanted(layer, connection, procedure.start));
             ask(layer, connection, procedure, &request);
         },
     }
@@ -701,17 +761,23 @@ fn partAnswered(layer: *Hci, connection: *Connection, procedure: *Procedure, pdu
 
 /// The procedure over with `result`: its link free for the next; its
 /// call answered and its end kept for the task - or, without a call, its
-/// record freed; an open's block open, or gone; a refused subscription
-/// taken back; the link, made for procedures, ended once nothing is on
-/// it.
+/// record freed; an open's block open, or gone - or, one that waits,
+/// waiting again; a refused subscription taken back; the link, made for
+/// procedures, ended once nothing is on it.
 fn finish(layer: *Hci, procedure: *Procedure, result: i32) void {
     const place = placeOf(layer, procedure);
     if (connections.find(layer, procedure.address)) |connection| {
         if (connection.att.running == place) connection.att.running = null;
     }
     switch (procedure.kind) {
-        .open => if (bySerial(layer, procedure.serial)) |opening| {
-            if (result == 0) opening.state = .open else opening.* = .{};
+        .open => if (bySerial(layer, if (procedure.serial != 0) procedure.serial else procedure.client)) |opening| {
+            if (opening.state == .opening) {
+                if (result == 0) {
+                    opened(layer, opening);
+                } else if (opening.waits) {
+                    opening.state = .waiting;
+                } else opening.* = .{};
+            }
         },
         .configure => if (result != 0 and procedure.client != 0) {
             if (bySerial(layer, procedure.client)) |asking| {
@@ -728,51 +794,84 @@ fn finish(layer: *Hci, procedure: *Procedure, result: i32) void {
         procedure.result = result;
         connections.answerSerial(layer, .gatt, procedure.serial, result);
     }
-    if (!uses(layer, address)) connections.idle(layer, address);
+    idleUnused(layer, address);
+}
+
+/// A block open. One that waits has what it subscribed to written again -
+/// a configuration each, without a call, a refused one taken back - and
+/// the task told.
+fn opened(layer: *Hci, one: *Client) void {
+    one.state = .open;
+    if (!one.waits) return;
+    for (one.subscriptions) |subscription| {
+        if (subscription.value == 0) continue;
+        _ = queue(layer, .{ .kind = .configure, .address = one.address, .start = subscription.value, .configuration = subscription.configuration, .client = one.serial });
+    }
+    if (layer.port.gatt) |tell| tell(layer.port.context, &.{ .kind = .opened, .client = one });
 }
 
 // --- what comes, and the ends -----------------------------------------------------------
 
 /// A notification or an indication of the device's: its value to every
-/// open block on the link subscribed to it.
+/// open block on the link subscribed to it - and to every one that waits
+/// for the device, which has it before it is open.
 pub fn notified(layer: *Hci, connection: *const Connection, pdu: []const u8) void {
     if (pdu.len < 3) return;
     const handle = le16(pdu[1..3]);
     const tell = layer.port.gatt orelse return;
     for (&layer.att_clients) |*one| {
-        if (one.state != .open or !sameAddress(one.address, connection.address)) continue;
+        const taking = one.state == .open or (one.waits and (one.state == .waiting or one.state == .opening));
+        if (!taking or !connections.reaches(connection, one.address)) continue;
         if (subscriptionOf(one, handle) == null) continue;
         tell(layer.port.context, &.{ .kind = .value, .client = one, .handle = handle, .data = pdu[3..] });
     }
 }
 
-/// A link not made, or down: its procedures over, its blocks closed,
-/// `reason` why.
+/// A link not made, or down: its procedures over, its blocks closed -
+/// those that wait waiting again - `reason` why.
 pub fn linkGone(layer: *Hci, connection: *const Connection, reason: i32) void {
     if (!connection.le) return;
-    endOn(layer, connection.address, if (reason == 0) bluetooth.BTERR_NOTCONNECTED else reason);
+    _ = endOn(layer, connection, if (reason == 0) bluetooth.BTERR_NOTCONNECTED else reason);
 }
 
 /// Every link forgotten - the controller brought up again, or gone: every
-/// procedure over and every block closed, `result` why.
+/// procedure over and every block closed, `result` why - except, while
+/// the controller is there still, those that wait, which wait again.
 pub fn reset(layer: *Hci, result: i32) void {
     for (&layer.att_procedures) |*one| {
         if (one.stage == .queued or one.stage == .running) finish(layer, one, result);
     }
+    const gone = result == bluetooth.BTERR_DETACHED;
     for (&layer.att_clients) |*one| {
-        if (one.state == .open) closeClient(layer, one, result);
+        switch (one.state) {
+            .open => if (gone) closeClient(layer, one, result) else lost(layer, one, result),
+            .waiting, .opening => if (gone) closeClient(layer, one, result),
+            .free, .closed => {},
+        }
     }
 }
 
-/// The procedures on the link to `address` over, and its blocks closed,
-/// for `result`.
-fn endOn(layer: *Hci, address: bluetooth.BTAddress, result: i32) void {
+/// The procedures on the link over, and its blocks closed - those that
+/// wait waiting again - for `result`: whether one that waits was on it.
+fn endOn(layer: *Hci, connection: *const Connection, result: i32) bool {
     for (&layer.att_procedures) |*one| {
-        if ((one.stage == .queued or one.stage == .running) and sameAddress(one.address, address)) finish(layer, one, result);
+        if ((one.stage == .queued or one.stage == .running) and connections.reaches(connection, one.address)) finish(layer, one, result);
     }
+    var waited = false;
     for (&layer.att_clients) |*one| {
-        if (one.state == .open and sameAddress(one.address, address)) closeClient(layer, one, result);
+        if (one.state != .open or !connections.reaches(connection, one.address)) continue;
+        if (one.waits) waited = true;
+        lost(layer, one, result);
     }
+    return waited;
+}
+
+/// A block's link lost, for `result`: one that waits waiting again, the
+/// rest closed - the task told either way.
+fn lost(layer: *Hci, one: *Client, result: i32) void {
+    if (!one.waits) return closeClient(layer, one, result);
+    one.state = .waiting;
+    if (layer.port.gatt) |tell| tell(layer.port.context, &.{ .kind = .waiting, .client = one, .result = result });
 }
 
 /// A block closed, and the task told why.
@@ -783,7 +882,8 @@ fn closeClient(layer: *Hci, one: *Client, result: i32) void {
 
 /// A request not answered in its time: its bearer dead - nothing more
 /// sent on it or taken from it - its procedures over and its blocks
-/// closed, BTERR_TIMEOUT.
+/// closed, BTERR_TIMEOUT; a link that blocks wait on ended, for them to
+/// have it made again.
 pub fn tick(layer: *Hci) void {
     for (&layer.connections) |*connection| {
         const due = connection.att.deadline orelse continue;
@@ -791,7 +891,7 @@ pub fn tick(layer: *Hci) void {
         connection.att.deadline = null;
         connection.att.asked = 0;
         connection.att.dead = true;
-        endOn(layer, connection.address, bluetooth.BTERR_TIMEOUT);
+        if (endOn(layer, connection, bluetooth.BTERR_TIMEOUT)) connections.close(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED);
     }
 }
 

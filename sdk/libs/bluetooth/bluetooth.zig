@@ -61,8 +61,11 @@
 //! to a device; ObtainBTCharacteristics lists a service's
 //! characteristics; ReadBTAttribute and WriteBTAttribute read and write
 //! a value; SubscribeBTAttribute has the device send a value as it
-//! changes, as messages to the block's port. The library serves GATT
-//! itself, with the machine's name.
+//! changes, as messages to the block's port. A block opened with
+//! BTGO_WAIT waits for its device instead: the library listens for its
+//! advertising and makes the link whenever it is heard, and the block
+//! opens each time the link is up. The library serves GATT itself, with
+//! the machine's name.
 //!
 //! **A change** - a controller added, up, failed or gone, a setting, a
 //! device found or named, a discovery ended, a connection made or
@@ -646,10 +649,20 @@ pub const BTPU_FORGET: u32 = 1 << 0;
 
 // --- GATT --------------------------------------------------------------------
 
+/// OpenBTGatt's flags.
+/// The block waits for its device rather than for its link: OpenBTGatt
+/// answers at once, and the block opens whenever the device is reached -
+/// a link made each time it advertises, while the block waits - and
+/// waits again once the link ends, until CloseBTGatt.
+pub const BTGO_WAIT: u32 = 1 << 0;
+
 /// BTGatt.flags.
 /// Its link is down, or the device stopped answering: nothing more is
 /// asked or comes, and CloseBTGatt gives it back.
 pub const BTGF_CLOSED: u32 = 1 << 0;
+/// A block opened with BTGO_WAIT that waits for its device now: its calls
+/// answer BTERR_NOTCONNECTED until it opens again (BTGM_OPENED).
+pub const BTGF_WAITING: u32 = 1 << 1;
 
 /// The attribute protocol to an LE device - GATT's client - as OpenBTGatt
 /// hands it over: its owner's until CloseBTGatt, which frees it. The
@@ -660,7 +673,8 @@ pub const BTGatt = extern struct {
     address: BTAddress = .{},
     /// The most a PDU carries over the link, as the two sides agreed when
     /// the block was opened (att.ATT_MTU_DEFAULT where they did not): a
-    /// value written goes up to mtu - 3 bytes.
+    /// value written goes up to mtu - 3 bytes. A waiting block's is its
+    /// last link's, 0 before its first.
     mtu: u16 = 0,
     pad: u16 = 0,
     /// BTGF_*.
@@ -723,6 +737,12 @@ pub const BTGM_VALUE: u32 = 1;
 /// BTERR_DETACHED with its controller; BTERR_TIMEOUT for a device that
 /// stopped answering - and carries nothing more.
 pub const BTGM_CLOSED: u32 = 2;
+/// A waiting block (BTGO_WAIT) is open: its link is up - made secure with
+/// the bond's key where there is one - and its calls go to the device.
+pub const BTGM_OPENED: u32 = 3;
+/// A waiting block's link ended - `result` why, as BTGM_CLOSED's - and the
+/// block waits for its device again; what it subscribed to stays.
+pub const BTGM_WAITING: u32 = 4;
 
 /// What the library tells a block's owner: sent to the block's port, and
 /// replied by the receiver once read. The library makes it and frees it

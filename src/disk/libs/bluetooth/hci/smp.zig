@@ -705,6 +705,8 @@ fn complete(layer: *Hci, connection: *Connection) void {
         };
         const address = if (smp.has_identity) smp.identity else connection.address;
         if (bonds.keepLe(layer, address, &keys, &connection.name) == null) connection.pairing.full = true;
+        // The link found by the bond's address too.
+        if (smp.has_identity and !connections.sameAddress(address, connection.address)) connection.identity = address;
     }
     pairing.finish(layer, connection, 0);
 }
