@@ -6,8 +6,8 @@ const bluetooth = sdk.bluetooth;
 const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _task = @import("../task/_task.zig");
 
-/// Closes a channel - one OpenBTChannel opened, or one a device opened
-/// to a listener - and gives it back.
+/// Closes a channel - one OpenBTChannel opened or StartBTChannel began,
+/// or one a device opened to a listener - and gives it back.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -17,19 +17,20 @@ const _task = @import("../task/_task.zig");
 /// SINCE: 1.7. LVO -108.
 ///
 /// INPUTS:
-/// - `channel` - from OpenBTChannel or a BTCM_OPENED message, closed
-///   already or not; null does nothing.
+/// - `channel` - from OpenBTChannel, StartBTChannel or a BTCM_OPENED
+///   message, closed already or not; null does nothing.
 ///
 /// RESULT:
 /// Nothing.
 ///
 /// BEHAVIOR:
-/// A channel that is open is closed, and the device's answer waited for
-/// - five seconds at the most. A channel closed already - by the device,
-/// with its link or its controller - is only given back. Either way
-/// nothing about it is on its port once the call returns: the messages
-/// about it the caller has not taken (GetMsg) are taken back, and no more
-/// come.
+/// A channel that is open is closed, and the device's answer waited for -
+/// five seconds at the most. A channel closed already - by the device,
+/// with its link or its controller - is only given back. One that
+/// StartBTChannel began and is not open yet is given up: a device that
+/// takes it after is told it is closed. Either way nothing about it is on
+/// its port once the call returns: the messages about it the caller has
+/// not taken (GetMsg) are taken back, and no more come.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the device's answer.
@@ -46,7 +47,7 @@ const _task = @import("../task/_task.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `OpenBTChannel`, `AddBTListener`
+/// `OpenBTChannel`, `StartBTChannel`, `AddBTListener`
 ///
 /// EXAMPLES:
 /// ```zig

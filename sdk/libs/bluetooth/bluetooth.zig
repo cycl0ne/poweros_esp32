@@ -515,15 +515,16 @@ pub const BTERR_ATT: i32 = -256;
 // --- channels ----------------------------------------------------------------
 
 /// BTChannel.flags.
-/// A device opened it, to a listener's PSM; otherwise OpenBTChannel did.
+/// A device opened it, to a listener's PSM; otherwise OpenBTChannel or
+/// StartBTChannel did.
 pub const BTCHF_INCOMING: u32 = 1 << 0;
 /// It is closed - by the device, or with its link: frames neither come
 /// nor go, and CloseBTChannel gives it back.
 pub const BTCHF_CLOSED: u32 = 1 << 1;
 
 /// A channel to one protocol of a device - L2CAP's, over a BR/EDR link -
-/// as OpenBTChannel or a listener's BTCM_OPENED hands it over: its
-/// owner's until CloseBTChannel, which frees it. The library keeps its
+/// as OpenBTChannel, StartBTChannel or a listener's BTCM_OPENED hands it
+/// over: its owner's until CloseBTChannel, which frees it. The library keeps its
 /// fields up to date; the owner reads them.
 pub const BTChannel = extern struct {
     /// The controller (BTController.id) and the device.
@@ -554,11 +555,13 @@ pub const BTChannel = extern struct {
 pub const BTCM_DATA: u32 = 1;
 /// A device opened `channel` to the listener's PSM: the receiver's from
 /// now on, to close with CloseBTChannel. Its frames come to the same
-/// port.
+/// port. Or the channel StartBTChannel began is open: its frames come
+/// from now on.
 pub const BTCM_OPENED: u32 = 2;
 /// `channel` is closed - by the device, `result` 0, or with its link or
 /// its controller, `result` the link's reason or BTERR_DETACHED - and
-/// carries nothing more.
+/// carries nothing more. One StartBTChannel began that ended before it
+/// was open says why, never 0: what OpenBTChannel would have answered.
 pub const BTCM_CLOSED: u32 = 3;
 
 /// What the library tells a channel's owner, or a listener: sent to the

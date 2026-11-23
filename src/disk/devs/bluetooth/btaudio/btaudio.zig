@@ -69,9 +69,10 @@
 //! device's memory taken, the task told. Unbinding is a command to the
 //! task, waited for: the sink deleted - waited for, as audio.device stops
 //! it first where it plays through it - the channels closed, the memory
-//! freed; the listeners and the records go with the last device. The task
-//! waits while it opens a channel - OpenBTChannel - and every device's
-//! stream waits with it.
+//! freed; the listeners and the records go with the last device. A
+//! channel opened from here is begun (StartBTChannel) and taken once its
+//! port says it is open, so that a device slow to answer - one that holds
+//! a channel pending for a minute - holds up no other device's sound.
 //!
 //! The device's own units are none: bluetooth.library opens it on
 //! `BTPROFILE_UNIT_BIND` for its two calls. It stays once loaded.
@@ -105,7 +106,7 @@ const remote_control = a2dp.avrcp;
 pub const DEVICE_NAME = "btaudio.device";
 const DRIVER_NAME = "btaudio";
 const DEVICE_VERSION = 1;
-const DEVICE_REVISION = 1;
+const DEVICE_REVISION = 2;
 const BUILD_DATE = "23.11.2026";
 const DEVICE_VERSION_STRING =
     "\x00$VER: " ++ DEVICE_NAME ++ " " ++
@@ -209,6 +210,12 @@ const Headphone = struct {
     /// AVDTP's channels while they are open.
     signalling_channel: ?*bluetooth.BTChannel,
     media_channel: ?*bluetooth.BTChannel,
+    /// The channels opened from here while they open - AVDTP's signalling
+    /// and media channels, AVCTP's control channel - each its counterpart
+    /// once its port says it is open.
+    signalling_opening: ?*bluetooth.BTChannel,
+    media_opening: ?*bluetooth.BTChannel,
+    control_opening: ?*bluetooth.BTChannel,
     /// The stream's signalling, and its media packets.
     source: a2dp.Source,
     media: a2dp.Media,
@@ -482,6 +489,23 @@ fn findByChannel(base: *Base, channel: *bluetooth.BTChannel) ?*Headphone {
     return null;
 }
 
+/// Which of a device's channels one opening from here is.
+const Opening = enum { signalling, media, control };
+
+/// The device a channel opening from here is of, and which it is; null
+/// for none.
+fn findOpening(base: *Base, channel: *bluetooth.BTChannel) ?struct { *Headphone, Opening } {
+    var driven: [max_devices]?*Headphone = undefined;
+    snapshot(base, &driven);
+    for (driven) |slot| {
+        const device = slot orelse continue;
+        if (device.signalling_opening == channel) return .{ device, .signalling };
+        if (device.media_opening == channel) return .{ device, .media };
+        if (device.control_opening == channel) return .{ device, .control };
+    }
+    return null;
+}
+
 // --- the time -----------------------------------------------------------------------
 
 /// The E-clock now.
@@ -554,16 +578,17 @@ fn nextWake(base: *Base) ?u64 {
 
 // --- the channels -------------------------------------------------------------------
 
-/// A message about a channel: a device's channel to the listener, a
-/// frame, a channel's end. Replied - a frame once it is read, since its
-/// bytes are the library's until then - before anything closes the
-/// channel.
+/// A message about a channel: a device's channel to the listener, one
+/// opened from here open or not, a frame, a channel's end. Replied - a
+/// frame once it is read, since its bytes are the library's until then -
+/// before anything closes the channel.
 fn heard(base: *Base, told: *bluetooth.BTChannelMessage) void {
     const sys = base.sys_base;
     const channel = told.channel orelse return sys.ReplyMsg(&told.message);
     switch (told.kind) {
         bluetooth.BTCM_OPENED => {
             sys.ReplyMsg(&told.message);
+            if (findOpening(base, channel)) |found| return openedHere(base, found[0], found[1], channel);
             opened(base, channel);
         },
         bluetooth.BTCM_DATA => {
@@ -582,7 +607,9 @@ fn heard(base: *Base, told: *bluetooth.BTChannelMessage) void {
             outcome(base, device, step.outcome, step.device);
         },
         bluetooth.BTCM_CLOSED => {
+            const result = told.result;
             sys.ReplyMsg(&told.message);
+            if (findOpening(base, channel)) |found| return notOpened(base, found[0], found[1], channel, result);
             closed(base, channel);
         },
         else => sys.ReplyMsg(&told.message),
@@ -591,9 +618,9 @@ fn heard(base: *Base, told: *bluetooth.BTChannelMessage) void {
 
 /// A device's channel to a listener: on PSM 23 its control channel; on
 /// PSM 25 its signalling channel where it has none - the device makes the
-/// stream, or leaves it to this side - its media channel where its stream
-/// waits for one; closed again where it is neither, or the device is not
-/// one driven.
+/// stream, or leaves it to this side, one opening from here given up -
+/// its media channel where its stream waits for one; closed again where
+/// it is neither, or the device is not one driven.
 fn opened(base: *Base, channel: *bluetooth.BTChannel) void {
     const bt = base.bt_base.?;
     const device = findByAddress(base, channel.controller, channel.address) orelse {
@@ -605,7 +632,7 @@ fn opened(base: *Base, channel: *bluetooth.BTChannel) void {
         device.signalling_channel = channel;
         device.open_at = 0;
         device.source.reset();
-        return;
+        return giveUp(base, &device.signalling_opening);
     }
     if (device.media_by != 0 and device.media_channel == null) {
         device.media_by = 0;
@@ -639,6 +666,60 @@ fn closed(base: *Base, channel: *bluetooth.BTChannel) void {
     base.bt_base.?.CloseBTChannel(channel);
 }
 
+/// A channel opened from here open: the stream set up on the signalling
+/// channel, gone on with on the media channel, the device asked what it
+/// has on the control channel - closed instead where the device's own
+/// came first.
+fn openedHere(base: *Base, device: *Headphone, which: Opening, channel: *bluetooth.BTChannel) void {
+    const bt = base.bt_base.?;
+    switch (which) {
+        .signalling => {
+            device.signalling_opening = null;
+            if (device.signalling_channel != null) return bt.CloseBTChannel(channel);
+            device.signalling_channel = channel;
+            device.source.reset();
+            send(base, device, device.source.begin(rate));
+        },
+        .media => {
+            device.media_opening = null;
+            if (device.media_channel != null) return bt.CloseBTChannel(channel);
+            device.media_channel = channel;
+            streamOpen(base, device);
+        },
+        .control => {
+            device.control_opening = null;
+            controlOpened(base, device, channel);
+        },
+    }
+}
+
+/// A channel opened from here that ended before it was open, for
+/// `result`: given back, and asked for again or done without.
+fn notOpened(base: *Base, device: *Headphone, which: Opening, channel: *bluetooth.BTChannel, result: i32) void {
+    switch (which) {
+        .signalling => device.signalling_opening = null,
+        .media => device.media_opening = null,
+        .control => device.control_opening = null,
+    }
+    base.bt_base.?.CloseBTChannel(channel);
+    switch (which) {
+        .signalling => signallingRefused(base, device, result),
+        .media => {
+            say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its media channel not opened (%ld)\n", device.address, .{@as(i64, result)});
+            closeStream(base, device);
+        },
+        .control => controlRefused(base, device, result),
+    }
+}
+
+/// A channel opening from here given up, where there is one: it says
+/// nothing more.
+fn giveUp(base: *Base, opening: *?*bluetooth.BTChannel) void {
+    const channel = opening.* orelse return;
+    opening.* = null;
+    base.bt_base.?.CloseBTChannel(channel);
+}
+
 /// A frame sent on the signalling channel; a command's answer waited for
 /// from now on. One the channel does not take is let go of: the channel
 /// is closing, and says so.
@@ -649,20 +730,25 @@ fn send(base: *Base, device: *Headphone, bytes: []const u8) void {
     _ = base.bt_base.?.SendBTChannel(channel, bytes.ptr, @intCast(bytes.len));
 }
 
-/// The signalling channel opened from here, the stream set up on it at
-/// 48 kHz; asked again two seconds later where the device refuses it
-/// or the controller is busy, `open_tries` times in all.
+/// The signalling channel's opening begun from here - the stream set up
+/// on it at 48 kHz once it is open (`openedHere`).
 fn openFromHere(base: *Base, device: *Headphone) void {
     device.open_at = 0;
+    if (device.signalling_opening != null) return;
     device.tries += 1;
     var channel: ?*bluetooth.BTChannel = null;
-    const result = base.bt_base.?.OpenBTChannel(device.controller, &device.address, l2cap.PSM_AVDTP, base.port.?, &channel);
-    if (result == 0) {
-        device.signalling_channel = channel;
-        device.source.reset();
-        return send(base, device, device.source.begin(rate));
-    }
-    // The device's own channel may be on the port: it is taken there.
+    const result = base.bt_base.?.StartBTChannel(device.controller, &device.address, l2cap.PSM_AVDTP, base.port.?, &channel);
+    if (result != 0) return signallingRefused(base, device, result);
+    device.signalling_opening = channel;
+}
+
+/// The signalling channel not opened from here, for `result`: asked again
+/// two seconds later where the device refused it or the controller was
+/// busy, `open_tries` times in all - the device's own channel may be on
+/// the port, and is taken there - and nothing more where the device's is
+/// open by now.
+fn signallingRefused(base: *Base, device: *Headphone, result: i32) void {
+    if (device.signalling_channel != null) return;
     if ((result == bluetooth.BTERR_REFUSED or result == bluetooth.BTERR_BUSY) and device.tries < open_tries) {
         device.open_at = now(base) +% ticksOf(base, open_pause_ms);
         return;
@@ -670,30 +756,41 @@ fn openFromHere(base: *Base, device: *Headphone) void {
     say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: no stream: its channel not opened (%ld)\n", device.address, .{@as(i64, result)});
 }
 
-/// The media channel opened from here, after the stream's OPEN.
+/// The media channel's opening begun from here, after the stream's OPEN:
+/// the stream goes on once it is open (`openedHere`), and is closed where
+/// it is not.
 fn openMedia(base: *Base, device: *Headphone) void {
+    if (device.media_opening != null) return;
     var channel: ?*bluetooth.BTChannel = null;
-    const result = base.bt_base.?.OpenBTChannel(device.controller, &device.address, l2cap.PSM_AVDTP, base.port.?, &channel);
+    const result = base.bt_base.?.StartBTChannel(device.controller, &device.address, l2cap.PSM_AVDTP, base.port.?, &channel);
     if (result != 0) {
         say(base, "%s: %02x:%02x:%02x:%02x:%02x:%02x: its media channel not opened (%ld)\n", device.address, .{@as(i64, result)});
         return closeStream(base, device);
     }
-    device.media_channel = channel;
-    streamOpen(base, device);
+    device.media_opening = channel;
 }
 
 // --- the volume ---------------------------------------------------------------------
 
-/// The control channel opened from here, where the device opened none in
-/// `control_wait_ms` after its stream did; asked again where the device
-/// refuses it or the controller is busy - its own may be on the port -
-/// `control_tries` times in all. Without it the volume is in the sound.
+/// The control channel's opening begun from here, where the device opened
+/// none in `control_wait_ms` after its stream did: taken once it is open
+/// (`openedHere`).
 fn openControl(base: *Base, device: *Headphone) void {
     device.control_at = 0;
+    if (device.control_opening != null) return;
     device.control_tries += 1;
     var channel: ?*bluetooth.BTChannel = null;
-    const result = base.bt_base.?.OpenBTChannel(device.controller, &device.address, l2cap.PSM_AVCTP, base.port.?, &channel);
-    if (result == 0) return controlOpened(base, device, channel.?);
+    const result = base.bt_base.?.StartBTChannel(device.controller, &device.address, l2cap.PSM_AVCTP, base.port.?, &channel);
+    if (result != 0) return controlRefused(base, device, result);
+    device.control_opening = channel;
+}
+
+/// The control channel not opened from here, for `result`: asked again
+/// where the device refused it or the controller was busy - its own may
+/// be on the port - `control_tries` times in all, and nothing more where
+/// the device's is open by now. Without it the volume is in the sound.
+fn controlRefused(base: *Base, device: *Headphone, result: i32) void {
+    if (device.control_channel != null) return;
     if ((result == bluetooth.BTERR_REFUSED or result == bluetooth.BTERR_BUSY) and device.control_tries < control_tries) {
         device.control_at = now(base) +% ticksOf(base, control_wait_ms);
         return;
@@ -702,9 +799,10 @@ fn openControl(base: *Base, device: *Headphone) void {
 }
 
 /// The control channel, the device's or this side's: the device asked
-/// what it has; a second one closed.
+/// what it has; a second one closed, and one opening from here given up.
 fn controlOpened(base: *Base, device: *Headphone, channel: *bluetooth.BTChannel) void {
     if (device.control_channel != null) return base.bt_base.?.CloseBTChannel(channel);
+    giveUp(base, &device.control_opening);
     device.control_channel = channel;
     device.control_at = 0;
     device.volume_known = false;
@@ -922,10 +1020,12 @@ fn closeStream(base: *Base, device: *Headphone) void {
     streamEnded(base, device);
 }
 
-/// The stream gone: its sink deleted, its media channel closed.
+/// The stream gone: its sink deleted, its media channel closed or its
+/// opening given up.
 fn streamEnded(base: *Base, device: *Headphone) void {
     tally(base, device);
     dropSink(base, device);
+    giveUp(base, &device.media_opening);
     device.media_by = 0;
     device.control_at = 0;
     if (device.media_channel) |channel| {
@@ -1167,7 +1267,7 @@ fn serve(base: *Base) bool {
 }
 
 /// A device let go of, on the task: its sink deleted, its channels
-/// closed, the media's first, its slot freed - and the listeners and the
+/// closed, the media's first, those opening given up, its slot freed - and the listeners and the
 /// records taken away with the last device. What a listener leaves on the
 /// port is read as a device's channel it does not drive: closed.
 fn letGo(base: *Base, device: *Headphone, flags: u32) void {
@@ -1175,6 +1275,8 @@ fn letGo(base: *Base, device: *Headphone, flags: u32) void {
     const sys = base.sys_base;
     const bt = base.bt_base.?;
     streamEnded(base, device);
+    giveUp(base, &device.signalling_opening);
+    giveUp(base, &device.control_opening);
     if (device.signalling_channel) |channel| {
         device.signalling_channel = null;
         bt.CloseBTChannel(channel);

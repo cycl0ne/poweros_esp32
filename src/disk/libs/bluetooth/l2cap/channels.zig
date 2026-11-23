@@ -8,6 +8,8 @@
 //! link to the device - made first where there is none, which then ends
 //! once its channels have (connections.zig). A device that answers
 //! pending is waited for longer; one that refuses is answered as it says.
+//! `start` begins one that no call waits for: its user is told once it is
+//! open, and why where it ends before.
 //! **Opened by the device**: a Connection Request to the SDP server's
 //! PSM, or to a PSM a listener has (the port's `listener`), is taken on;
 //! any other is answered that there is no such protocol.
@@ -79,6 +81,10 @@ pub const Channel = struct {
     user: User = .task,
     /// Opened by the device.
     incoming: bool = false,
+    /// Opened by this machine with no call waiting for it
+    /// (StartBTChannel): its user told once it is open, or why it ended
+    /// before.
+    started: bool = false,
     /// The task was told it is open - its call answered, or its listener
     /// told - and is told when it ends.
     told: bool = false,
@@ -227,6 +233,18 @@ pub fn open(layer: *Hci, address: bluetooth.BTAddress, psm: u16) connections.Beg
         .failed => |result| return .{ .done = result },
     };
     return connections.waitForSerial(layer, .open, channel.serial);
+}
+
+/// StartBTChannel: a channel to `psm` of the device at `address` begun
+/// for the task with no call waiting for it - its user told once it is
+/// open, or why it ended before: the channel, or why not at once.
+pub fn start(layer: *Hci, address: bluetooth.BTAddress, psm: u16) Began {
+    const began = begin(layer, address, psm, .task);
+    switch (began) {
+        .channel => |channel| channel.started = true,
+        .failed => {},
+    }
+    return began;
 }
 
 /// A channel to `psm` of the device at `address` begun for `user`: asked
@@ -650,6 +668,7 @@ pub fn frame(layer: *Hci, channel: *const Channel, data: []const u8) bool {
 pub fn closeFor(layer: *Hci, channel: *Channel) connections.Begun {
     const serial = channel.serial;
     channel.told = false;
+    channel.started = false;
     channel.owner = null;
     switch (channel.state) {
         .open, .configuring => close(layer, channel, 0),
@@ -738,18 +757,19 @@ pub fn reset(layer: *Hci, result: i32) void {
 }
 
 /// The channel ended for `result`: its user told once - a call opening it
-/// answered, the task told of one it knew, the SDP client - its record
-/// freed, and its link ended later where it was made for channels and
-/// none is left on it.
+/// answered, the task told of one it knew or started, the SDP client -
+/// its record freed, and its link ended later where it was made for
+/// channels and none is left on it.
 fn gone(layer: *Hci, channel: *Channel, result: i32) void {
     const address = channel.address;
     switch (channel.user) {
         .task => {
-            if (channel.told) {
-                if (layer.port.channel) |tell| _ = tell(layer.port.context, &.{ .kind = .closed, .channel = channel, .result = result });
+            // Ended before it was open: never success.
+            const unopened = if (result == 0) bluetooth.BTERR_REFUSED else result;
+            if (channel.told or channel.started) {
+                if (layer.port.channel) |tell| _ = tell(layer.port.context, &.{ .kind = .closed, .channel = channel, .result = if (channel.told) result else unopened });
             } else if (!channel.incoming) {
-                // Ended before it was open: never success.
-                connections.answerSerial(layer, .open, channel.serial, if (result == 0) bluetooth.BTERR_REFUSED else result);
+                connections.answerSerial(layer, .open, channel.serial, unopened);
             }
             connections.answerSerial(layer, .close, channel.serial, 0);
         },

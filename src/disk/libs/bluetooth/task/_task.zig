@@ -40,8 +40,10 @@
 //! change (bondfiles.zig).
 //!
 //! **Channels.** OpenBTChannel, CloseBTChannel and ObtainBTServices are
-//! parked as the links' calls are; SendBTChannel waits on a list of its
-//! own while its controller's queue is full, tried again in its order as
+//! parked as the links' calls are; StartBTChannel is answered once the
+//! opening has begun, which its channel's port hears the end of;
+//! SendBTChannel waits on a list of its own while its controller's queue
+//! is full, tried again in its order as
 //! the queue empties. What the layer tells of a channel goes to the
 //! channel's port as messages of the task's, which come back on a port of
 //! their own (channels.zig); the task does not end while one is out.
@@ -120,7 +122,7 @@ pub const Command = extern struct {
     unit: u32 = 0,
     device_name: [*:0]const u8 = "",
     /// set, discover, stop, connect, disconnect, pair, unpair,
-    /// open_channel, services, open_gatt: the controller
+    /// open_channel, start_channel, services, open_gatt: the controller
     /// (BTController.id), or BT_ALL_CONTROLLERS; the other calls on a
     /// channel or a GATT block: the block's.
     controller: u32 = 0,
@@ -128,8 +130,8 @@ pub const Command = extern struct {
     time_ms: u32 = 0,
     /// set: what is wanted.
     wanted: Wanted = .{},
-    /// connect, disconnect, pair, unpair, open_channel, services,
-    /// open_gatt: the device's address; while parked, the controller
+    /// connect, disconnect, pair, unpair, open_channel, start_channel,
+    /// services, open_gatt: the device's address; while parked, the controller
     /// waited on and its wait.
     address: bluetooth.BTAddress = .{},
     waiting_on: ?*anyopaque = null,
@@ -138,8 +140,8 @@ pub const Command = extern struct {
     /// can do; agents: the one given back, 0 for one added.
     agent: u32 = 0,
     capability: u32 = 0,
-    /// open_channel: the protocol, by its PSM. The calls on a channel or
-    /// a GATT block: the caller's block (BTChannel, BTGatt).
+    /// open_channel, start_channel: the protocol, by its PSM. The calls on
+    /// a channel or a GATT block: the caller's block (BTChannel, BTGatt).
     psm: u32 = 0,
     block: ?*anyopaque = null,
     /// characteristics: the service's first and last handle;
@@ -160,7 +162,7 @@ pub const Command = extern struct {
     /// What the call answers.
     result: i32 = 0,
 
-    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents, open_channel, close_channel, send_channel, services, open_gatt, close_gatt, characteristics, read_attribute, write_attribute, subscribe, unsubscribe };
+    pub const Kind = enum(u32) { add, remove, set, discover, stop, connect, disconnect, pair, unpair, agents, open_channel, start_channel, close_channel, send_channel, services, open_gatt, close_gatt, characteristics, read_attribute, write_attribute, subscribe, unsubscribe };
 };
 
 /// What SetBTControllerAttrs wants of a controller: `which` says which of
@@ -350,7 +352,7 @@ fn taskMain(sys: *ExecBase) callconv(.c) void {
                         keepBonds(work);
                     },
                     .agents => agentsChanged(work, command.agent),
-                    .open_channel, .close_channel, .services => if (channelCommand(work, command)) {
+                    .open_channel, .start_channel, .close_channel, .services => if (channelCommand(work, command)) {
                         worked = true;
                         continue;
                     },
@@ -744,6 +746,7 @@ fn park(work: *Work, command: *Command, controller: *Controller, begun: connecti
 /// OpenBTChannel, ObtainBTServices - asked of the controller a link is,
 /// or would be, made by - and CloseBTChannel: the command parked until
 /// the controller has done it - true - or answered at once.
+/// StartBTChannel, asked of the same controller, is answered at once.
 fn channelCommand(work: *Work, command: *Command) bool {
     const base = work.base;
     const sys = base.sys_base;
@@ -752,8 +755,9 @@ fn channelCommand(work: *Work, command: *Command) bool {
     sys.ObtainSemaphore(&base.lock);
     defer sys.ReleaseSemaphore(&base.lock);
     controller.layer.now = now(work);
-    const begun = switch (command.kind) {
+    const begun: connections.Begun = switch (command.kind) {
         .open_channel => taskchannels.open(controller, command),
+        .start_channel => .{ .done = taskchannels.start(controller, command) },
         else => taskchannels.services(controller, command),
     };
     return park(work, command, controller, begun);

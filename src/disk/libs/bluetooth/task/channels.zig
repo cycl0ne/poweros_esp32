@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: MIT
 //! The task's side of the channels (l2cap/channels.zig) and the service
 //! queries (sdp/client.zig; att/client.zig over LE): the commands of
-//! OpenBTChannel, CloseBTChannel, SendBTChannel and ObtainBTServices
-//! handed to the layer, what the layer tells of the channels sent to
+//! OpenBTChannel, StartBTChannel, CloseBTChannel, SendBTChannel and
+//! ObtainBTServices handed to the layer, what the layer tells of the channels sent to
 //! their ports as BTChannelMessages, and those messages - and GATT's
 //! (gatt.zig) - freed as they come back.
 //!
 //! **A channel's block** is the BTChannel its holder has: OpenBTChannel's
-//! made in its caller's context, one a device opened to a listener made
-//! here and given to the listener's task. The layer's record of the
+//! and StartBTChannel's made in their caller's context, one a device
+//! opened to a listener made here and given to the listener's task. A
+//! started channel's opening is told to its block's port as a device's
+//! is - BTCM_OPENED - and an end before it as BTCM_CLOSED. The layer's record of the
 //! channel names the block as its `owner`; a command that names a block
 //! acts on the record that names it, so a block whose record is gone - its
 //! channel closed, its controller gone - touches nothing.
@@ -51,8 +53,12 @@ pub fn event(context: *anyopaque, happened: *const l2cap_channels.Event) bool {
     switch (happened.kind) {
         .opened => {
             if (record.incoming) return taken(controller, record);
-            // OpenBTChannel's: its block told what the channel is.
-            if (record.owner) |owner| describe(@ptrCast(@alignCast(owner)), controller, record);
+            // OpenBTChannel's and StartBTChannel's: the block told what the
+            // channel is - a started one's port told that it is open.
+            const owner = record.owner orelse return true;
+            const block: *bluetooth.BTChannel = @ptrCast(@alignCast(owner));
+            describe(block, controller, record);
+            if (record.started) return started(controller, block);
         },
         .data => frame(controller, record, happened.data),
         .closed => closed(controller, record, happened.result),
@@ -104,6 +110,15 @@ fn taken(controller: *Controller, record: *l2cap_channels.Channel) bool {
     record.owner = block;
     if (serving.port.sig_task) |task| _ = sys.SetMemOwner(block, @ptrCast(@alignCast(task)));
     put(base, serving.port, message);
+    return true;
+}
+
+/// A channel StartBTChannel began, open: BTCM_OPENED to its block's port.
+/// False without memory, and the layer closes it again.
+fn started(controller: *Controller, block: *bluetooth.BTChannel) bool {
+    const port = block.port orelse return false;
+    const message = newMessage(controller, block, false, bluetooth.BTCM_OPENED, 0, 0) orelse return false;
+    put(controller.base, port, message);
     return true;
 }
 
@@ -242,6 +257,22 @@ pub fn open(controller: *Controller, command: *Command) connections.Begun {
         .done => {},
     }
     return begun;
+}
+
+/// StartBTChannel: the channel begun, its record naming the caller's
+/// block - 0 - or why not. Its opening, or its end before it, is told to
+/// the block's port.
+pub fn start(controller: *Controller, command: *Command) i32 {
+    if (!l2cap_channels.validPsm(command.psm)) return bluetooth.BTERR_UNSUPPORTED;
+    switch (l2cap_channels.start(&controller.layer, command.address, @intCast(command.psm))) {
+        .channel => |record| {
+            record.owner = command.block;
+            const block: *bluetooth.BTChannel = @ptrCast(@alignCast(command.block.?));
+            block.controller = controller.id;
+            return 0;
+        },
+        .failed => |result| return result,
+    }
 }
 
 /// CloseBTChannel: the block's channel closed - the call's wait for the

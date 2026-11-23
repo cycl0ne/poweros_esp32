@@ -59,7 +59,8 @@ const _task = @import("../task/_task.zig");
 /// controller keeps 16 channels.
 ///
 /// CONTEXT:
-/// - Waits: yes, until the channel is open or not.
+/// - Waits: yes, until the channel is open or not - StartBTChannel does
+///   not.
 /// - Interrupts: no.
 /// - Locks: none may be held.
 /// - Process: a Task will do.
@@ -78,7 +79,8 @@ const _task = @import("../task/_task.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `CloseBTChannel`, `SendBTChannel`, `AddBTListener`, `ObtainBTServices`
+/// `StartBTChannel`, `CloseBTChannel`, `SendBTChannel`, `AddBTListener`,
+/// `ObtainBTServices`
 ///
 /// EXAMPLES:
 /// ```zig

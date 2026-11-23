@@ -60,6 +60,7 @@ pub const LVO = struct {
     pub const AddBTService = libraries.lvo(42);
     pub const RemBTService = libraries.lvo(43);
     pub const BTDeviceKind = libraries.lvo(44);
+    pub const StartBTChannel = libraries.lvo(45);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -106,6 +107,7 @@ pub const Fn = struct {
     pub const AddBTService = *const fn (*BluetoothBase, [*]const u8, u32) callconv(.c) ?*bluetooth.BTRecord;
     pub const RemBTService = *const fn (*BluetoothBase, ?*bluetooth.BTRecord) callconv(.c) void;
     pub const BTDeviceKind = *const fn (*BluetoothBase, u32, u32) callconv(.c) u32;
+    pub const StartBTChannel = *const fn (*BluetoothBase, u32, *const bluetooth.BTAddress, u32, *exec.MsgPort, *?*bluetooth.BTChannel) callconv(.c) i32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -319,5 +321,10 @@ pub const BluetoothBase = opaque {
     /// What a device is, from its class of device or its LE appearance: BTDK_*, BTDK_NONE where it says neither.
     pub fn BTDeviceKind(self: *BluetoothBase, class_of_device: u32, appearance: u32) u32 {
         return libraries.call(self, LVO.BTDeviceKind, Fn.BTDeviceKind, .{ class_of_device, appearance });
+    }
+
+    /// A channel's opening begun as OpenBTChannel's, and not waited for: 0 and `channel` set once it has begun - BTCM_OPENED comes to `port` once it is open, BTCM_CLOSED with why where it is not - or BTERR_*.
+    pub fn StartBTChannel(self: *BluetoothBase, controller: u32, address: *const bluetooth.BTAddress, psm: u32, port: *exec.MsgPort, channel: *?*bluetooth.BTChannel) i32 {
+        return libraries.call(self, LVO.StartBTChannel, Fn.StartBTChannel, .{ controller, address, psm, port, channel });
     }
 };

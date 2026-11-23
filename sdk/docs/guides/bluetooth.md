@@ -580,6 +580,24 @@ _ = bt.SendBTChannel(channel.?, "hello", 5);
   672 bytes unless it says otherwise, never fewer than 48. A device that
   asks for a mode with retransmission is told the basic mode instead.
 
+**StartBTChannel** takes the same inputs and begins the same opening
+without waiting for it: for a program that serves several devices from
+one task, so that a device slow to answer - one that holds a channel
+pending for its minute - holds up none of the others. It answers at
+once, 0 and `channel` set once the opening has begun, and the port is
+told the rest: `BTCM_OPENED` once the channel is open, its block filled
+in and its frames after it, or `BTCM_CLOSED` where it ends before,
+`result` what `OpenBTChannel` would have answered - never 0.
+`CloseBTChannel` gives up one that is still opening, and nothing more
+comes about it.
+
+```zig
+var opening: ?*bluetooth.BTChannel = null;
+if (bt.StartBTChannel(bluetooth.BT_ALL_CONTROLLERS, &device, 0x2001, port, &opening) != 0) return;
+// On the port: BTCM_OPENED with told.channel == opening - open, its
+// frames follow - or BTCM_CLOSED for it, told.result why it did not.
+```
+
 Most systems want the link encrypted before they take a channel to
 anything but their SDP server - a Linux machine does - and an encrypted
 link needs a bond: pair with the device first (`PairBTDevice`). Without
@@ -592,8 +610,8 @@ library's, each replied once it is read:
 | `kind` | What it says |
 |---|---|
 | `BTCM_DATA` | a frame of the device's: `data`, `length` bytes, there until the message is replied |
-| `BTCM_CLOSED` | the channel closed - by the device, with its link or its controller - and why: `result` 0, `BTERR_*`, or the link's reason |
-| `BTCM_OPENED` | a channel a device opened to a listener, `channel` its block (below) |
+| `BTCM_CLOSED` | the channel closed - by the device, with its link or its controller - and why: `result` 0, `BTERR_*`, or the link's reason; for one `StartBTChannel` began that never opened, why not, never 0 |
+| `BTCM_OPENED` | a channel a device opened to a listener, `channel` its block (below); or the one `StartBTChannel` began, now open |
 
 A channel has at most 32 of its frames out unreplied: those past them
 are let go and counted in its block (`dropped`). `SendBTChannel` sends
@@ -996,7 +1014,10 @@ BR/EDR - a device whose SDP record is an audio sink (0x110B) - as sound
 outputs: while a device's stream is open it is a sink of rta.library,
 which audio.device plays through as it does any other (the [sound
 guide](audio.md#bluetooth-headphones-and-speakers)). It drives four
-devices at most, a stream each, on a task of its own.
+devices at most, a stream each, on a task of its own, which waits for
+no channel it opens (`StartBTChannel`): a device slow to answer - one
+that holds a channel pending while its user is asked - stops no other
+device's sound.
 
 **The stream** is set up by whichever side comes first. The driver
 serves PSM 25 - a listener for the channels of bonded devices, and a

@@ -8,7 +8,9 @@
 //! listener, to a PSM nobody serves, with a CID it uses already, and one
 //! the task does not take; what a configuration does not take answered
 //! with what would do, and one in parts; a link down closing its
-//! channels; a secure listener's channels - refused without a bond,
+//! channels; channels started with no call waiting - the task told of
+//! their opening, and why where they end before it, never success - and
+//! one given up before the device answered; a secure listener's channels - refused without a bond,
 //! waiting while the link is made secure with one, or while the size of
 //! the key the device encrypted it with is read, refused where it is not
 //! made secure or not in time; the SDP server's searches, its attributes
@@ -546,6 +548,130 @@ test "a link down closes its channels, each told why, and answers the calls open
     try testing.expectEqual(channels.EventKind.closed, recorder.lastTold().kind);
     try testing.expectEqual(@as(i32, hci.HCI_ERR_CONNECTION_TIMEOUT), recorder.lastTold().result);
     try testing.expectEqual(@as(i32, hci.HCI_ERR_CONNECTION_TIMEOUT), layer.waits[begun.waiting].result);
+    try testing.expectEqual(@as(usize, 0), channels.count(&layer));
+}
+
+// --- started, no call waiting -------------------------------------------------------
+
+/// How many of the layer's waits are in use.
+fn waitsUsed(layer: *const Hci) usize {
+    var used: usize = 0;
+    for (&layer.waits) |*wait| {
+        if (wait.used) used += 1;
+    }
+    return used;
+}
+
+/// A channel this machine starts to `psm` of the device at `address`: its
+/// record, which no call's wait names.
+fn startedRecord(layer: *Hci, address: bluetooth.BTAddress, psm: u16) !*channels.Channel {
+    const before = waitsUsed(layer);
+    const record = switch (channels.start(layer, address, psm)) {
+        .channel => |made| made,
+        .failed => return error.NotStarted,
+    };
+    try testing.expect(record.started);
+    try testing.expectEqual(before, waitsUsed(layer));
+    return record;
+}
+
+test "a channel started: the task told once it is open, its frames after; one given up before the device answered, nothing told" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    linkUp(&layer, &recorder, peer, 0x0042);
+    const record = try startedRecord(&layer, peer, 0x1001);
+    const asked = try sent(&recorder, l2cap.CONNECTION_REQUEST);
+    // Pending: nothing told yet. Then taken and configured: told open.
+    var pending: [8]u8 = .{ 0, 0, 0, 0, 0x01, 0x00, 0x01, 0x00 };
+    put16(pending[2..4], record.local_cid);
+    signalIn(&layer, 0x0042, l2cap.CONNECTION_RESPONSE, asked.ident, &pending);
+    try testing.expectEqual(@as(usize, 0), recorder.event_count);
+    var taken: [8]u8 = @splat(0);
+    put16(taken[0..2], 0x0050);
+    put16(taken[2..4], record.local_cid);
+    signalIn(&layer, 0x0042, l2cap.CONNECTION_RESPONSE, asked.ident, &taken);
+    try configured(&layer, &recorder, 0x0042, record.local_cid, 0x0050, 672);
+    try testing.expectEqual(@as(usize, 1), recorder.event_count);
+    try testing.expectEqual(channels.EventKind.opened, recorder.lastTold().kind);
+    try testing.expect(!recorder.lastTold().incoming);
+    frameIn(&layer, 0x0042, record.local_cid, "ping");
+    try testing.expectEqual(channels.EventKind.data, recorder.lastTold().kind);
+    try testing.expectEqualStrings("ping", recorder.lastTold().data[0..recorder.lastTold().length]);
+
+    // A second, given up while the device has not answered: done at once,
+    // nothing told; the device that takes it after is told it is closed.
+    const second = try startedRecord(&layer, peer, 0x1003);
+    const second_cid = second.local_cid;
+    const second_asked = try sent(&recorder, l2cap.CONNECTION_REQUEST);
+    const told = recorder.event_count;
+    try testing.expect(channels.closeFor(&layer, second) == .done);
+    var late: [8]u8 = @splat(0);
+    put16(late[0..2], 0x0051);
+    put16(late[2..4], second_cid);
+    signalIn(&layer, 0x0042, l2cap.CONNECTION_RESPONSE, second_asked.ident, &late);
+    const ending = try sent(&recorder, l2cap.DISCONNECTION_REQUEST);
+    var ends: [4]u8 = undefined;
+    put16(ends[0..2], 0x0051);
+    put16(ends[2..4], second_cid);
+    try testing.expectEqualSlices(u8, &ends, ending.data);
+    signalIn(&layer, 0x0042, l2cap.DISCONNECTION_RESPONSE, ending.ident, &ends);
+    try testing.expectEqual(told, recorder.event_count);
+    try testing.expectEqual(@as(usize, 1), channels.count(&layer));
+
+    // The first closed by the device: told, 0 - it was open.
+    var closing: [4]u8 = undefined;
+    put16(closing[0..2], record.local_cid);
+    put16(closing[2..4], 0x0050);
+    signalIn(&layer, 0x0042, l2cap.DISCONNECTION_REQUEST, 3, &closing);
+    try testing.expectEqual(channels.EventKind.closed, recorder.lastTold().kind);
+    try testing.expectEqual(@as(i32, 0), recorder.lastTold().result);
+    try testing.expectEqual(@as(usize, 0), channels.count(&layer));
+}
+
+test "a channel started and refused, not answered, closed while it is configured, or over a link not made: told closed, never success" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    linkUp(&layer, &recorder, peer, 0x0042);
+    // Refused: the device has no such protocol.
+    const refused = try startedRecord(&layer, peer, 0x1001);
+    const asked = try sent(&recorder, l2cap.CONNECTION_REQUEST);
+    var no: [8]u8 = .{ 0, 0, 0, 0, 0x02, 0x00, 0x00, 0x00 };
+    put16(no[2..4], refused.local_cid);
+    signalIn(&layer, 0x0042, l2cap.CONNECTION_RESPONSE, asked.ident, &no);
+    try testing.expectEqual(channels.EventKind.closed, recorder.lastTold().kind);
+    try testing.expectEqual(bluetooth.BTERR_UNSUPPORTED, recorder.lastTold().result);
+    // Not answered in its time.
+    _ = try startedRecord(&layer, peer, 0x1003);
+    layer.now += channels.REQUEST_WAIT_MS;
+    _hci.tick(&layer);
+    try testing.expectEqual(channels.EventKind.closed, recorder.lastTold().kind);
+    try testing.expectEqual(bluetooth.BTERR_TIMEOUT, recorder.lastTold().result);
+    // Taken, then closed by the device while it is configured.
+    const closed = try startedRecord(&layer, peer, 0x1005);
+    const closed_asked = try sent(&recorder, l2cap.CONNECTION_REQUEST);
+    var taken: [8]u8 = @splat(0);
+    put16(taken[0..2], 0x0052);
+    put16(taken[2..4], closed.local_cid);
+    signalIn(&layer, 0x0042, l2cap.CONNECTION_RESPONSE, closed_asked.ident, &taken);
+    var request: [4]u8 = undefined;
+    put16(request[0..2], closed.local_cid);
+    put16(request[2..4], 0x0052);
+    signalIn(&layer, 0x0042, l2cap.DISCONNECTION_REQUEST, 5, &request);
+    try testing.expectEqual(channels.EventKind.closed, recorder.lastTold().kind);
+    try testing.expectEqual(bluetooth.BTERR_REFUSED, recorder.lastTold().result);
+    try testing.expectEqual(@as(usize, 0), channels.count(&layer));
+    // Over a link made for it that is not: the page's status.
+    const far = bluetooth.BTAddress{ .bytes = .{ 0x04, 0x10, 0xEF, 0x5E, 0x00, 0x00 } };
+    _ = try startedRecord(&layer, far, 0x1001);
+    try testing.expectEqual(hci.HCI_OP_CREATE_CONNECTION, recorder.lastCommand());
+    status(&layer, hci.HCI_OP_CREATE_CONNECTION, 0);
+    var params: [11]u8 = @splat(0);
+    params[0] = hci.HCI_ERR_PAGE_TIMEOUT;
+    params[3..9].* = far.bytes;
+    params[9] = hci.LINK_ACL;
+    event(&layer, hci.HCI_EV_CONNECTION_COMPLETE, &params);
+    try testing.expectEqual(channels.EventKind.closed, recorder.lastTold().kind);
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_PAGE_TIMEOUT), recorder.lastTold().result);
     try testing.expectEqual(@as(usize, 0), channels.count(&layer));
 }
 
