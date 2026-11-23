@@ -24,8 +24,17 @@
 //! the reason in `why`, `why_signal` and `why_code`.
 //!
 //! **The device's commands** are answered as signalling.answer answers
-//! them, and what they mean comes back in the same way: a device that
-//! starts, suspends or closes the stream itself, a delay it reports.
+//! them, and what they mean comes back in the same way - marked as the
+//! device's (`Step.device`): a device that starts, suspends or closes the
+//! stream itself, a delay it reports.
+//!
+//! **A stream the device makes.** Where the owner takes the device's
+//! channels (`serve`), the device may configure the end point and open
+//! the stream itself, as a headphone does as it is switched on:
+//! `.configured`, then `.device_opened` - the device opens the media
+//! channel - and from there `start`, `pause` and `close` go as they do on
+//! a stream made from here. The device's configuration is refused while
+//! a setup from here is under way.
 
 const sdk = @import("sdk");
 const avdtp = sdk.bluetooth.avdtp;
@@ -47,6 +56,8 @@ pub const Phase = enum {
     configuring,
     /// OPEN asked.
     opening,
+    /// The device configured the end point; its OPEN to come.
+    configured,
     /// Open: the media channel is the owner's to open; not started.
     open,
     starting,
@@ -74,6 +85,10 @@ pub const Outcome = enum {
     failed,
     /// The device reported its delay (signalling.Local.delay).
     delay,
+    /// The device configured the end point (`config`).
+    configured,
+    /// The device opened the stream: its media channel comes next.
+    device_opened,
 };
 
 /// Why the stream failed.
@@ -94,9 +109,9 @@ pub const Why = enum {
     no_configuration,
 };
 
-/// A frame to send on the signalling channel - empty for none - and what
-/// came of the one heard.
-pub const Step = struct { send: []const u8 = &.{}, outcome: Outcome = .none };
+/// A frame to send on the signalling channel - empty for none - what came
+/// of the one heard, and whether that was a command of the device's.
+pub const Step = struct { send: []const u8 = &.{}, outcome: Outcome = .none, device: bool = false };
 
 /// A command waiting for its answer.
 const Awaiting = struct { label: u4, signal: u8 };
@@ -134,9 +149,40 @@ pub const Source = struct {
     /// The setup begun at `rate` (0 for the best the device takes): the
     /// frame that asks for the device's end points.
     pub fn begin(source: *Source, rate: u32) []const u8 {
-        source.* = .{ .rate = rate, .local = .{ .delay = source.local.delay } };
+        source.reset();
+        source.rate = rate;
         source.phase = .discovering;
         return source.command(avdtp.AVDTP_DISCOVER, &.{});
+    }
+
+    /// The end point offered to the device - `offered` what it takes - so
+    /// that the device may configure it and open the stream itself.
+    pub fn serve(source: *Source, offered: [4]u8) void {
+        source.local.acceptor = true;
+        source.local.offered = offered;
+        source.local.release();
+    }
+
+    /// Back to no stream, as on a new signalling channel: what the end
+    /// point takes, whether the device may configure it and the last delay
+    /// reported kept.
+    pub fn reset(source: *Source) void {
+        var local = source.local;
+        local.release();
+        source.* = .{ .local = local };
+    }
+
+    /// Whether a command of the source's waits for its answer.
+    pub fn waiting(source: *const Source) bool {
+        return source.awaiting != null;
+    }
+
+    /// Whether a setup from here is under way.
+    fn settingUp(source: *const Source) bool {
+        return switch (source.phase) {
+            .discovering, .asking, .configuring, .opening => true,
+            else => false,
+        };
     }
 
     /// A frame of the signalling channel: what to send back, and what it
@@ -211,6 +257,9 @@ pub const Source = struct {
 
     /// A command of the device's answered.
     fn theirs(source: *Source, message: signalling.Message) Step {
+        if (message.signal == avdtp.AVDTP_SET_CONFIGURATION and source.settingUp()) {
+            return .{ .send = signalling.refusal(&source.out, message, &.{ 0, avdtp.AVDTP_SEP_IN_USE }), .device = true };
+        }
         const told = signalling.answer(&source.local, message, &source.out);
         const outcome: Outcome = switch (told.event) {
             .none => .none,
@@ -227,8 +276,19 @@ pub const Source = struct {
                 source.closed();
                 break :ended .closed;
             },
+            .configured => configured: {
+                source.phase = .configured;
+                source.awaiting = null;
+                source.remote_seid = source.local.remote_seid;
+                source.config = source.local.config;
+                break :configured .configured;
+            },
+            .opened => opened: {
+                source.phase = .open;
+                break :opened .device_opened;
+            },
         };
-        return .{ .send = told.reply, .outcome = outcome };
+        return .{ .send = told.reply, .outcome = outcome, .device = true };
     }
 
     /// The answer to a command of the source's.
@@ -280,13 +340,10 @@ pub const Source = struct {
                     }
                     return source.configure();
                 }
-                source.local = .{
-                    .in_use = true,
-                    .state = .configured,
-                    .element = signalling.elementOf(source.config, leastBitpool(source.offer.element.?)),
-                    .delay_reporting = source.offer.delay_reporting,
-                    .delay = source.local.delay,
-                };
+                source.local.in_use = true;
+                source.local.state = .configured;
+                source.local.element = signalling.elementOf(source.config, leastBitpool(source.offer.element.?));
+                source.local.delay_reporting = source.offer.delay_reporting;
                 source.phase = .opening;
                 return .{ .send = source.command(avdtp.AVDTP_OPEN, &.{signalling.seidByte(source.remote_seid)}) };
             },
@@ -609,4 +666,67 @@ test "a capabilities answer in packets" {
     step = source.heard(&.{ label | 0x0C | avdtp.AVDTP_ACCEPT, 0x00, 0x00, 0x3F, 0xFF, 0x02, 0x35 });
     try testing.expectEqual(avdtp.AVDTP_SET_CONFIGURATION, step.send[1]);
     try testing.expectEqual(Phase.configuring, source.phase);
+}
+
+test "a stream the device makes: configured and opened by it, started from here, suspended and closed by it" {
+    var source = Source{};
+    source.serve(signalling.served_element);
+    var theirs: [32]u8 = undefined;
+    var frame: [64]u8 = undefined;
+    // Its discovery and questions answered; its configuration taken.
+    var step = source.heard(theirCommand(&theirs, 0, avdtp.AVDTP_DISCOVER, &.{}));
+    try testing.expectEqualSlices(u8, &.{ 0x02, avdtp.AVDTP_DISCOVER, 0x04, 0x00 }, step.send);
+    try testing.expect(step.device);
+    const configuration = [_]u8{ 0x04, 0x08, avdtp.AVDTP_CAT_MEDIA_TRANSPORT, 0, avdtp.AVDTP_CAT_MEDIA_CODEC, 6, 0x00, 0x00, 0x11, 0x15, 2, 53, avdtp.AVDTP_CAT_DELAY_REPORTING, 0 };
+    step = source.heard(theirCommand(&theirs, 1, avdtp.AVDTP_SET_CONFIGURATION, &configuration));
+    try testing.expectEqual(Outcome.configured, step.outcome);
+    try testing.expectEqual(Phase.configured, source.phase);
+    try testing.expectEqual(@as(u8, 2), source.remote_seid);
+    try testing.expectEqual(@as(u8, 53), source.config.bitpool);
+    step = source.heard(theirCommand(&theirs, 2, avdtp.AVDTP_OPEN, &.{0x04}));
+    try testing.expectEqual(Outcome.device_opened, step.outcome);
+    try testing.expectEqual(Phase.open, source.phase);
+    // Started from here, its START addressed to the device's end point.
+    var sent = source.start();
+    try testing.expectEqualSlices(u8, &.{ 0x00, avdtp.AVDTP_START, 0x08 }, sent);
+    step = source.heard(reply(&frame, sent, avdtp.AVDTP_ACCEPT, &.{}));
+    try testing.expectEqual(Outcome.started, step.outcome);
+    try testing.expect(!step.device);
+    // Suspended by the device: its own step.
+    step = source.heard(theirCommand(&theirs, 3, avdtp.AVDTP_SUSPEND, &.{0x04}));
+    try testing.expectEqual(Outcome.suspended, step.outcome);
+    try testing.expect(step.device);
+    // Closed by it; a new stream from it after that.
+    step = source.heard(theirCommand(&theirs, 4, avdtp.AVDTP_CLOSE, &.{0x04}));
+    try testing.expectEqual(Outcome.closed, step.outcome);
+    try testing.expect(source.local.acceptor);
+    step = source.heard(theirCommand(&theirs, 5, avdtp.AVDTP_SET_CONFIGURATION, &configuration));
+    try testing.expectEqual(Outcome.configured, step.outcome);
+    // A setup from here refuses its configuration meanwhile, and is not
+    // disturbed by it.
+    source.reset();
+    sent = source.begin(48000);
+    // What a step sends is in the source's own buffer until the next.
+    const discover = [2]u8{ sent[0], sent[1] };
+    step = source.heard(theirCommand(&theirs, 6, avdtp.AVDTP_SET_CONFIGURATION, &configuration));
+    try testing.expectEqualSlices(u8, &.{ 0x63, avdtp.AVDTP_SET_CONFIGURATION, 0x00, avdtp.AVDTP_SEP_IN_USE }, step.send);
+    try testing.expectEqual(Phase.discovering, source.phase);
+    step = source.heard(reply(&frame, &discover, avdtp.AVDTP_ACCEPT, &.{ 0x04, 0x08 }));
+    try testing.expectEqual(avdtp.AVDTP_GET_ALL_CAPABILITIES, step.send[1]);
+    try testing.expect(source.waiting());
+    // Configured from here and closed: the device may configure it again.
+    sent = step.send;
+    step = source.heard(reply(&frame, sent, avdtp.AVDTP_ACCEPT, &.{ 0x01, 0x00, 0x07, 0x06, 0x00, 0x00, 0x3F, 0xFF, 0x02, 0x35 }));
+    sent = step.send;
+    step = source.heard(reply(&frame, sent, avdtp.AVDTP_ACCEPT, &.{}));
+    try testing.expectEqual(avdtp.AVDTP_OPEN, step.send[1]);
+    try testing.expect(source.local.acceptor and source.local.in_use and !source.local.by_device);
+    step = source.close();
+    sent = step.send;
+    step = source.heard(reply(&frame, sent, avdtp.AVDTP_ACCEPT, &.{}));
+    try testing.expectEqual(Outcome.closed, step.outcome);
+    try testing.expect(source.local.acceptor and !source.local.in_use);
+    try testing.expectEqualSlices(u8, &signalling.served_element, &source.local.offered);
+    step = source.heard(theirCommand(&theirs, 7, avdtp.AVDTP_SET_CONFIGURATION, &configuration));
+    try testing.expectEqual(Outcome.configured, step.outcome);
 }

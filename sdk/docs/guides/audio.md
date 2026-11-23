@@ -813,6 +813,7 @@ its ring of buffers. No name of a part or a chip is in the device.
 | `null` | sink, source | a stream into nothing, kept in time by timer.device's E-clock: the emulators' output, at the bottom of the list; and a source that hears what it played, two buffers late |
 | `file` | sink | a WAV file, written in time as a speaker would play it; none until a program makes one (below) |
 | `uac` | sink | a USB speaker, headset or sound adapter of the audio class, made as it is plugged in and deleted as it goes (`DEVS:usb/uac.device`) |
+| `btaudio` | sink | a Bluetooth headphone or speaker, made as its stream opens and deleted as it closes (`DEVS:bluetooth/btaudio.device`) |
 
 A sink for a part on I2S is made over a line (`RTAA_Transport`): the
 sink's driver brings its part up and starts the line, and the line runs
@@ -904,6 +905,24 @@ A device on its own clock - an asynchronous endpoint with a feedback
 endpoint - has the rate it tells measured while it plays: at the stop
 the debug output has its average and how far it is from 48 kHz, in
 parts a million. The stream is not paced by it.
+
+### Bluetooth headphones and speakers
+
+`DEVS:bluetooth/btaudio.device` makes a headphone or a speaker bonded
+over BR/EDR a sink while its stream is open: from a moment after the
+device connects until it goes, is switched off or is out of reach. The
+sink is named as the bond names the device and comes at priority -20,
+after the board's own outputs and the USB ones, above `null`: the sound
+goes to it once it is picked (`Audio OUTPUT`) or preferred (`Audio
+PREFER`), and a preferred one takes the sound over each time the device
+comes back. Its one mode is 48000 Hz stereo, its buffers 512 frames.
+They come due on timer.device's E-clock; a buffer the task playing
+through it was late for is handed out as soon as it is asked for, 16 at
+the most, so that the sound stays whole, and only older ones count in
+`underruns`. The driver sends the sound as SBC, starting the stream
+once something other than silence plays and suspending it after five
+seconds of silence (the [Bluetooth guide](bluetooth.md#headphones-and-speakers-as-outputs)).
+It has no volume of its own: the mix carries it.
 
 A **source** is a way in, on a list of its own: a driver of the source
 kind makes them with `CreateSourceTagList`, `NextSource` walks them,

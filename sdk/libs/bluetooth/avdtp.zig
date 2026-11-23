@@ -47,12 +47,22 @@ pub const UUID_AUDIO_SINK: u16 = 0x110B;
 pub const UUID_ADVANCED_AUDIO: u16 = 0x110D;
 pub const UUID_AVDTP: u16 = 0x0019;
 
-/// An audio sink record's supported features: what it is.
+/// The versions a record names: AVDTP's after its UUID, the profile's
+/// after UUID_ADVANCED_AUDIO - 1.3 each, which has delay reports.
+pub const AVDTP_VERSION: u16 = 0x0103;
+pub const A2DP_VERSION: u16 = 0x0103;
+
+/// An audio record's supported features: what the device is - a sink's
+/// A2DP_SINK_*, a source's A2DP_SOURCE_*.
 pub const ATTR_SUPPORTED_FEATURES: u16 = 0x0311;
 pub const A2DP_SINK_HEADPHONE: u16 = 1 << 0;
 pub const A2DP_SINK_SPEAKER: u16 = 1 << 1;
 pub const A2DP_SINK_RECORDER: u16 = 1 << 2;
 pub const A2DP_SINK_AMPLIFIER: u16 = 1 << 3;
+pub const A2DP_SOURCE_PLAYER: u16 = 1 << 0;
+pub const A2DP_SOURCE_MICROPHONE: u16 = 1 << 1;
+pub const A2DP_SOURCE_TUNER: u16 = 1 << 2;
+pub const A2DP_SOURCE_MIXER: u16 = 1 << 3;
 
 /// A message's packet type: bits 3 and 2 of its first byte.
 pub const AVDTP_PACKET_SINGLE: u8 = 0;

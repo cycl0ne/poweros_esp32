@@ -52,7 +52,7 @@ const TimerBase = sdk.interface.timer.TimerBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "BTAudio";
-const VERSION_STRING = "\x00$VER: BTAudio 1.0 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: BTAudio 1.1 (23.11.2026)\r\n";
 export const version_tag: [VERSION_STRING.len:0]u8 linksection(".version") = VERSION_STRING.*;
 
 const template = "DEVICE/A,FILE/K,TONE/K/N,SECONDS/K/N,CONTROLLER/K/N";
@@ -352,7 +352,9 @@ const Player = struct {
     /// What came of a frame, or of a command given up on.
     fn outcome(player: *Player, what: a2dp.source.Outcome) void {
         switch (what) {
-            .none => {},
+            // The device configures nothing here: the end point is not
+            // served to it.
+            .none, .configured, .device_opened => {},
             .delay => player.sayDelay(),
             .opened => player.opened(),
             .started => player.started(),

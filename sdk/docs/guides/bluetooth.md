@@ -19,16 +19,19 @@ values and has them sent as they change - over a link it makes again
 whenever the device comes back, where asked to - and answers the
 device's questions with a server of its own. Each service of a device
 it bonds with is offered to the profile drivers in `DEVS:bluetooth/`:
-`bthid.device` drives keyboards and mice, over BR/EDR and over LE.
-Sound goes to a headphone or a speaker as a stream of SBC over AVDTP,
-which `C:test/BTAudio` plays; LE's channels are the stack's next part.
+`bthid.device` drives keyboards and mice, over BR/EDR and over LE, and
+`btaudio.device` headphones and speakers, as outputs audio.device plays
+through: the sound goes as a stream of SBC over AVDTP, which
+`C:test/BTAudio` plays on its own too. LE's channels are the stack's
+next part.
 
 This guide is the pieces first, then what a controller device is, how a
 controller is brought up, listing the controllers from a program, a
 controller's settings, finding devices, links to devices and what a
 link carries, pairing and bonds, channels and services, attributes over
-LE, profile drivers, keyboards and mice, sound to a headphone, the USB
-controllers and the MediaTek MT7922's firmware, the Raspberry Pi 4 Model
+LE, profile drivers, keyboards and mice, sound to a headphone,
+headphones and speakers as outputs, the USB controllers and the
+MediaTek MT7922's firmware, the Raspberry Pi 4 Model
 B's controller, `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
 `C:test/BTGatt`, `C:test/BTHidDevice` and `C:test/BTAudio`.
 
@@ -53,7 +56,10 @@ B's controller, `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
                           |  BTProfileBind, BTProfileUnbind (DEVIF_BTPROFILE)
  the profiles       bluetooth/bthid.device: keyboards and mice, their
                     reports to hid.library, from there to keyboard.device
-                    and mouse.device
+                    and mouse.device; bluetooth/btaudio.device:
+                    headphones and speakers, each a sink of rta.library
+                    while its stream is open, played through by
+                    audio.device
                           |  CMD_READ, CMD_WRITE, HCICMD_QUERY (DEVIF_HCI)
                           |  AddBTController, RemBTController
  the controllers    usb/bluetooth.device:           bluetooth/cyw43455bt.device:
@@ -76,6 +82,7 @@ B's controller, `SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
 | `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
 | `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change, with `WAIT` across the link's ends; in the disk's `tests` set |
 | `bluetooth/bthid.device` | `DEVS:bluetooth/` | keyboards and mice over BR/EDR and over LE: a profile driver, their reports read by hid.library ([btprofile](../autodocs/btprofile.md)) |
+| `bluetooth/btaudio.device` | `DEVS:bluetooth/` | headphones and speakers over BR/EDR as sound outputs: a profile driver, a sink of rta.library for each device while its stream is open ([btprofile](../autodocs/btprofile.md)) |
 | `C:test/BTHidDevice` | | this machine as a keyboard and a mouse over BR/EDR, for a host to be tried with; in the disk's `tests` set |
 | `C:test/BTAudio` | | a sound file or a tone played to a headphone or a speaker over BR/EDR, the stream's configuration and its packets said; in the disk's `tests` set |
 
@@ -982,6 +989,74 @@ carries 8 of them a packet, 21.3 ms of sound. A packet not sent before
 its time has gone is let go of and counted in the timestamp alone: the
 device hears the gap, and the sound after it stays in time.
 
+## Headphones and speakers as outputs
+
+`bluetooth/btaudio.device` drives headphones and speakers bonded over
+BR/EDR - a device whose SDP record is an audio sink (0x110B) - as sound
+outputs: while a device's stream is open it is a sink of rta.library,
+which audio.device plays through as it does any other (the [sound
+guide](audio.md#bluetooth-headphones-and-speakers)). It drives four
+devices at most, a stream each, on a task of its own.
+
+**The stream** is set up by whichever side comes first. The driver
+serves PSM 25 - a listener for the channels of bonded devices, and a
+record of this machine as an audio source (0x110A) in its SDP server -
+and offers each device it drives an end point of its own to configure:
+a source of SBC at 48 kHz, in any of SBC's channel modes, blocks,
+subbands and allocations, at a bitpool of 2 to 53. A device that opens
+the signalling channel itself - a headphone as it connects, a computer
+to a source it knows - configures that end point and opens the stream,
+and its media channel is waited for four seconds. Where the device has
+opened none two seconds after its link came up, the stream is set up
+from here (Sound to a headphone, above), the channel asked for again
+two seconds after a refusal, four times in all. The link is the
+device's to make - a headphone switched on pages the machine it was
+last with - or `Bluetooth CONNECT`'s.
+
+**The sink** is made as the stream opens, named as the bond names the
+device - cut before a whole character at 31 bytes, `Bluetooth audio`
+where it has no name - at priority -20, after the board's own outputs:
+the sound goes to the device once it is picked (`Audio OUTPUT`) or
+preferred (`Audio PREFER`), and a preferred device takes the sound over
+each time its stream opens. Its one mode is 48000 Hz stereo. Its
+buffers of 512 frames come due on timer.device's E-clock - one
+audio.device was late for is handed out at once, 16 at the most, so
+that the sound stays whole - and go to the driver's task through a ring
+of 32, 341 ms, to be gathered into packets, each sent as it is full.
+The stream ends as the device goes - switched off, out of reach, its
+channels closed - and its sink with it: audio.device goes on through
+the next output, every sound where it was.
+
+**Playing and pausing.** The stream is started once something other
+than silence plays - the silence before it let go of - and suspended
+after five seconds of nothing but silence, so that the device can rest
+its radio. A device that suspends the stream itself stays suspended
+until a new sound begins after a second of silence.
+
+**A bond made before the driver** keeps no service for it: the binder
+offers a device's services as it bonds, so a device bonded while
+`btaudio.device` was not on the disk is driven once it is paired again
+(`Bluetooth UNPAIR`, then `PAIR`). The log says each stream's
+configuration -
+`SBC at 48000 Hz, joint stereo, bitpool 53, 8 frames a packet, 357 kbit/s`
+- and, at `C:Log LEVEL debug`, each delay the device reports, the
+buffers waiting as the stream starts, and at each pause the packets
+sent and not, how far apart two were at the most, and the buffers
+missed.
+
+```
+1> Bluetooth PAIR 00:00:5E:EF:10:52
+Pairing with 00:00:5E:EF:10:52 over BR/EDR; CTRL-C stops
+Does Speaker show 391197? (y/n) y
+Paired with Speaker
+1> Audio LIST
+HDMI                 8AD3078F  two sides, 44100 48000 Hz, volume 71%, playing
+Speaker              BD79EC89  two sides, 48000 Hz, volume 71%
+null                 24B61A00  two sides, 44100 48000 Hz, volume 26%
+1> Audio PREFER Speaker
+1> Play Work:lr44.wav
+```
+
 ## Controllers on USB
 
 `usb/bluetooth.device` drives the interface of USB's Bluetooth class
@@ -1509,4 +1584,6 @@ asked again, two seconds later, four times in all: one opening its own
 channel to this machine meanwhile - as a computer does to a source it
 knows, as the link comes up - refuses this one. CTRL-C stops;
 `CONTROLLER` names the controller, as `Bluetooth`'s does. The device is
-paired with first (`Bluetooth PAIR`).
+paired with first (`Bluetooth PAIR`). A device `btaudio.device` drives
+has a stream of the driver's open, so `BTAudio` is for one it does not
+drive.

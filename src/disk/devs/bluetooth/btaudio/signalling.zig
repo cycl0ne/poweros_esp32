@@ -11,10 +11,12 @@
 //! a buffer of its own; one that came whole points into the frame it came
 //! in.
 //!
-//! **The source's end point** is one: `LOCAL_SEID`, audio, SBC at 44.1
-//! and 48 kHz in every channel mode, block length and allocation, a
-//! bitpool of 2 to 53. `Local` says what a stream is doing with it, for
-//! the answers.
+//! **The source's end point** is one: `LOCAL_SEID`, audio, SBC in every
+//! channel mode, block length and allocation, a bitpool of 2 to 53 - at
+//! 44.1 and 48 kHz (`local_element`), or at 48 kHz alone for an owner that
+//! lets the device configure it (`served_element`), so that the device
+//! takes the rate the owner's output runs at. `Local` says what a stream
+//! is doing with it, for the answers.
 //!
 //! **A configuration** is offered from a sink's element: `candidate`
 //! lists those it takes, best first - the rate the sound is at, or 48
@@ -27,8 +29,14 @@
 //! **A device's commands** are answered by `answer` - its delay reports
 //! kept, a stream it starts, suspends, closes or aborts itself followed -
 //! and what they mean for the stream is said as an `Event`. Its own
-//! configuration of the end point is refused: the source's stream is
-//! made from here.
+//! configuration of the end point and its OPEN are taken where the owner
+//! serves the device's channels (`Local.acceptor`): the configuration
+//! read against what the end point takes (`configurationOf`) - one rate,
+//! channel mode, block length, subband count and allocation of those, the
+//! media transport, delay reports, no other category - and the bitpool
+//! the source sends at picked within the device's least and most as a
+//! configuration from here picks it. Elsewhere both are refused: the
+//! stream is made from here.
 //!
 //! **A media packet** begins with `mediaHeader`: RTP's twelve bytes and
 //! the byte that counts the frames; `framesPerPacket` says how many whole
@@ -56,6 +64,23 @@ pub const local_element = [4]u8{
     avdtp.A2DP_SBC_BITPOOL_LEAST,
     bitpool_two,
 };
+
+/// What the end point takes where the device may configure it: 48 kHz
+/// alone, the rate every sink takes.
+pub const served_element = [4]u8{
+    avdtp.A2DP_SBC_48000 | (local_element[0] & mode_bits),
+    local_element[1],
+    local_element[2],
+    local_element[3],
+};
+
+/// The fields of SBC's element: the rates and the channel modes in its
+/// first byte, the blocks, the subbands and the allocation in its second.
+const rate_bits: u8 = 0xF0;
+const mode_bits: u8 = 0x0F;
+const blocks_bits: u8 = 0xF0;
+const subbands_bits: u8 = 0x0C;
+const allocation_bits: u8 = 0x03;
 
 /// A message read: what it is and what follows its signal.
 pub const Message = struct {
@@ -317,6 +342,130 @@ fn best(element: [4]u8, rate: u32, mode: sbc.Mode) ?sbc.Config {
     return if (sbc.valid(config)) config else null;
 }
 
+/// A device's configuration of the end point read: the settings and the
+/// bitpool to send at, whether delay reports were configured - or, where
+/// it is refused, the category that failed and why (`code` not 0).
+pub const Configured = struct {
+    config: sbc.Config = .{},
+    element: [4]u8 = @splat(0),
+    delay_reporting: bool = false,
+    category: u8 = 0,
+    code: u8 = 0,
+};
+
+/// A configuration's service capabilities - SET_CONFIGURATION's after
+/// the two SEIDs - read against `offered`, what the end point takes.
+pub fn configurationOf(offered: [4]u8, capabilities: []const u8) Configured {
+    var configured: Configured = .{};
+    var codec = false;
+    var list = Capabilities{ .bytes = capabilities };
+    while (list.next()) |capability| {
+        switch (capability.category) {
+            avdtp.AVDTP_CAT_MEDIA_TRANSPORT => if (capability.info.len != 0)
+                return refusedFor(avdtp.AVDTP_CAT_MEDIA_TRANSPORT, avdtp.AVDTP_BAD_MEDIA_TRANSPORT_FORMAT),
+            avdtp.AVDTP_CAT_DELAY_REPORTING => configured.delay_reporting = true,
+            avdtp.AVDTP_CAT_MEDIA_CODEC => {
+                const info = capability.info;
+                if (info.len < 2) return refusedFor(avdtp.AVDTP_CAT_MEDIA_CODEC, avdtp.A2DP_INVALID_CODEC_TYPE);
+                if (info[0] >> avdtp.AVDTP_MEDIA_SHIFT != avdtp.AVDTP_MEDIA_AUDIO or info[1] != avdtp.A2DP_CODEC_SBC)
+                    return refusedFor(avdtp.AVDTP_CAT_MEDIA_CODEC, avdtp.A2DP_NOT_SUPPORTED_CODEC_TYPE);
+                if (info.len != 6) return refusedFor(avdtp.AVDTP_CAT_MEDIA_CODEC, avdtp.A2DP_INVALID_CODEC_PARAMETER);
+                const element = info[2..6].*;
+                const why = elementRefusal(offered, element);
+                if (why != 0) return refusedFor(avdtp.AVDTP_CAT_MEDIA_CODEC, why);
+                configured.config = configOfElement(element, offered[3]) orelse
+                    return refusedFor(avdtp.AVDTP_CAT_MEDIA_CODEC, avdtp.A2DP_NOT_SUPPORTED_MINIMUM_BITPOOL_VALUE);
+                configured.element = element;
+                codec = true;
+            },
+            avdtp.AVDTP_CAT_REPORTING,
+            avdtp.AVDTP_CAT_RECOVERY,
+            avdtp.AVDTP_CAT_CONTENT_PROTECTION,
+            avdtp.AVDTP_CAT_HEADER_COMPRESSION,
+            avdtp.AVDTP_CAT_MULTIPLEXING,
+            => return refusedFor(capability.category, avdtp.AVDTP_UNSUPPORTED_CONFIGURATION),
+            else => return refusedFor(capability.category, avdtp.AVDTP_BAD_SERV_CATEGORY),
+        }
+    }
+    if (list.broken) return refusedFor(0, avdtp.AVDTP_BAD_PAYLOAD_FORMAT);
+    if (!codec) return refusedFor(avdtp.AVDTP_CAT_MEDIA_CODEC, avdtp.AVDTP_INVALID_CAPABILITIES);
+    return configured;
+}
+
+fn refusedFor(category: u8, code: u8) Configured {
+    return .{ .category = category, .code = code };
+}
+
+/// Whether one bit of a field is set.
+fn oneBit(bits: u8) bool {
+    return bits != 0 and bits & (bits - 1) == 0;
+}
+
+/// Why a configured element is refused - one setting a field, within what
+/// the end point takes - or 0.
+fn elementRefusal(offered: [4]u8, element: [4]u8) u8 {
+    const fields = [_]struct { byte: u1, mask: u8, invalid: u8, unsupported: u8 }{
+        .{ .byte = 0, .mask = rate_bits, .invalid = avdtp.A2DP_INVALID_SAMPLING_FREQUENCY, .unsupported = avdtp.A2DP_NOT_SUPPORTED_SAMPLING_FREQUENCY },
+        .{ .byte = 0, .mask = mode_bits, .invalid = avdtp.A2DP_INVALID_CHANNEL_MODE, .unsupported = avdtp.A2DP_NOT_SUPPORTED_CHANNEL_MODE },
+        .{ .byte = 1, .mask = blocks_bits, .invalid = avdtp.A2DP_INVALID_BLOCK_LENGTH, .unsupported = avdtp.A2DP_INVALID_BLOCK_LENGTH },
+        .{ .byte = 1, .mask = subbands_bits, .invalid = avdtp.A2DP_INVALID_SUBBANDS, .unsupported = avdtp.A2DP_NOT_SUPPORTED_SUBBANDS },
+        .{ .byte = 1, .mask = allocation_bits, .invalid = avdtp.A2DP_INVALID_ALLOCATION_METHOD, .unsupported = avdtp.A2DP_NOT_SUPPORTED_ALLOCATION_METHOD },
+    };
+    for (fields) |field| {
+        const set = element[field.byte] & field.mask;
+        if (!oneBit(set)) return field.invalid;
+        if (set & offered[field.byte] == 0) return field.unsupported;
+    }
+    const least = element[2];
+    const most = element[3];
+    if (least < avdtp.A2DP_SBC_BITPOOL_LEAST) return avdtp.A2DP_INVALID_MINIMUM_BITPOOL_VALUE;
+    if (most < least or most > avdtp.A2DP_SBC_BITPOOL_MOST) return avdtp.A2DP_INVALID_MAXIMUM_BITPOOL_VALUE;
+    if (least > offered[3]) return avdtp.A2DP_NOT_SUPPORTED_MINIMUM_BITPOOL_VALUE;
+    return 0;
+}
+
+/// The settings of a configured element - one of each field - with the
+/// bitpool to send at: the one a configuration from here offers, within
+/// the element's least and most and no higher than `most_offered`, as
+/// high as the encoder takes for the mode. Null where that leaves none.
+fn configOfElement(element: [4]u8, most_offered: u8) ?sbc.Config {
+    const rate: u32 = switch (element[0] & rate_bits) {
+        avdtp.A2DP_SBC_16000 => 16000,
+        avdtp.A2DP_SBC_32000 => 32000,
+        avdtp.A2DP_SBC_44100 => 44100,
+        else => 48000,
+    };
+    const mode: sbc.Mode = switch (element[0] & mode_bits) {
+        avdtp.A2DP_SBC_MONO => .mono,
+        avdtp.A2DP_SBC_DUAL_CHANNEL => .dual_channel,
+        avdtp.A2DP_SBC_STEREO => .stereo,
+        else => .joint_stereo,
+    };
+    const blocks: u8 = switch (element[1] & blocks_bits) {
+        avdtp.A2DP_SBC_BLOCKS_4 => 4,
+        avdtp.A2DP_SBC_BLOCKS_8 => 8,
+        avdtp.A2DP_SBC_BLOCKS_12 => 12,
+        else => 16,
+    };
+    const subbands: u8 = if (element[1] & avdtp.A2DP_SBC_SUBBANDS_4 != 0) 4 else 8;
+    const allocation: sbc.Allocation = if (element[1] & avdtp.A2DP_SBC_SNR != 0) .snr else .loudness;
+    const one_channel = mode == .mono or mode == .dual_channel;
+    const wanted: u8 = if (one_channel) bitpool_one else bitpool_two;
+    // The encoder's most: 16 a subband for one channel, 32 for two.
+    const limit: u16 = @as(u16, subbands) * @as(u16, if (one_channel) 16 else 32);
+    const most = @min(element[3], most_offered, limit);
+    if (element[2] > most) return null;
+    const config = sbc.Config{
+        .rate = rate,
+        .subbands = subbands,
+        .blocks = blocks,
+        .mode = mode,
+        .allocation = allocation,
+        .bitpool = @min(@max(wanted, element[2]), most),
+    };
+    return if (sbc.valid(config)) config else null;
+}
+
 /// A configuration as SBC's element: one bit a field, `least_bitpool` as
 /// the least and the configuration's as the most.
 pub fn elementOf(config: sbc.Config, least_bitpool: u8) [4]u8 {
@@ -354,16 +503,27 @@ pub const Local = struct {
     delay_reporting: bool = false,
     /// The device's last delay report, in tenths of a millisecond.
     delay: ?u16 = null,
+    /// The device may configure the end point and open the stream itself
+    /// - its owner takes the device's channels - and what the end point
+    /// takes, as its capabilities say.
+    acceptor: bool = false,
+    offered: [4]u8 = local_element,
+    /// Configured by the device: its end point and the settings sent at.
+    by_device: bool = false,
+    remote_seid: u8 = 0,
+    config: sbc.Config = .{},
 
     /// The stream ended: the end point free again, its configuration
-    /// gone; the last delay reported kept.
+    /// gone; the last delay reported, and what it takes, kept.
     pub fn release(local: *Local) void {
-        local.* = .{ .delay = local.delay };
+        local.* = .{ .delay = local.delay, .acceptor = local.acceptor, .offered = local.offered };
     }
 };
 
-/// What a device's command meant for the stream.
-pub const Event = enum { none, started, suspended, closed, aborted, delay };
+/// What a device's command meant for the stream: started, suspended,
+/// closed or aborted by the device, its delay reported - and, where the
+/// device may make the stream, configured and opened by it.
+pub const Event = enum { none, started, suspended, closed, aborted, delay, configured, opened };
 
 /// The answer to a device's command - empty where none is sent - and what
 /// it meant.
@@ -384,8 +544,11 @@ pub fn answer(local: *Local, request: Message, out: []u8) Answer {
         avdtp.AVDTP_GET_CAPABILITIES, avdtp.AVDTP_GET_ALL_CAPABILITIES => {
             if (parameters.len < 1) return refuse(out, label, signal, &.{avdtp.AVDTP_BAD_LENGTH});
             if (!ours) return refuse(out, label, signal, &.{avdtp.AVDTP_BAD_ACP_SEID});
+            // Delay reports are offered to a device that may configure
+            // them, and only among all the capabilities.
+            const delay_reports = local.acceptor and signal == avdtp.AVDTP_GET_ALL_CAPABILITIES;
             var capabilities: [12]u8 = undefined;
-            return accept(out, label, signal, capabilitiesInto(&capabilities, local_element, false));
+            return accept(out, label, signal, capabilitiesInto(&capabilities, local.offered, delay_reports));
         },
         avdtp.AVDTP_GET_CONFIGURATION => {
             if (parameters.len < 1) return refuse(out, label, signal, &.{avdtp.AVDTP_BAD_LENGTH});
@@ -395,14 +558,31 @@ pub fn answer(local: *Local, request: Message, out: []u8) Answer {
             return accept(out, label, signal, capabilitiesInto(&capabilities, local.element, local.delay_reporting));
         },
         avdtp.AVDTP_SET_CONFIGURATION => {
-            const why = if (local.in_use) avdtp.AVDTP_SEP_IN_USE else avdtp.AVDTP_BAD_STATE;
-            return refuse(out, label, signal, &.{ 0, why });
+            if (!local.acceptor) {
+                const why = if (local.in_use) avdtp.AVDTP_SEP_IN_USE else avdtp.AVDTP_BAD_STATE;
+                return refuse(out, label, signal, &.{ 0, why });
+            }
+            if (parameters.len < 2) return refuse(out, label, signal, &.{ 0, avdtp.AVDTP_BAD_LENGTH });
+            if (!ours) return refuse(out, label, signal, &.{ 0, avdtp.AVDTP_BAD_ACP_SEID });
+            if (local.in_use) return refuse(out, label, signal, &.{ 0, avdtp.AVDTP_SEP_IN_USE });
+            const configured = configurationOf(local.offered, parameters[2..]);
+            if (configured.code != 0) return refuse(out, label, signal, &.{ configured.category, configured.code });
+            local.in_use = true;
+            local.state = .configured;
+            local.element = configured.element;
+            local.delay_reporting = configured.delay_reporting;
+            local.by_device = true;
+            local.remote_seid = seidOf(parameters[1]);
+            local.config = configured.config;
+            return .{ .reply = message(out, label, avdtp.AVDTP_ACCEPT, signal, &.{}), .event = .configured };
         },
         avdtp.AVDTP_RECONFIGURE => return refuse(out, label, signal, &.{ 0, avdtp.AVDTP_NOT_SUPPORTED_COMMAND }),
         avdtp.AVDTP_OPEN => {
             if (parameters.len < 1) return refuse(out, label, signal, &.{avdtp.AVDTP_BAD_LENGTH});
             if (!ours) return refuse(out, label, signal, &.{avdtp.AVDTP_BAD_ACP_SEID});
-            return refuse(out, label, signal, &.{avdtp.AVDTP_BAD_STATE});
+            if (!local.by_device or local.state != .configured) return refuse(out, label, signal, &.{avdtp.AVDTP_BAD_STATE});
+            local.state = .open;
+            return .{ .reply = message(out, label, avdtp.AVDTP_ACCEPT, signal, &.{}), .event = .opened };
         },
         avdtp.AVDTP_START => {
             if (parameters.len < 1) return refuse(out, label, signal, &.{ 0, avdtp.AVDTP_BAD_LENGTH });
@@ -442,6 +622,12 @@ pub fn answer(local: *Local, request: Message, out: []u8) Answer {
     }
 }
 
+/// A command refused with `parameters`, as an owner that answers it
+/// itself refuses it.
+pub fn refusal(out: []u8, request: Message, parameters: []const u8) []const u8 {
+    return message(out, request.label, avdtp.AVDTP_REJECT, request.signal, parameters);
+}
+
 fn accept(out: []u8, label: u4, signal: u8, parameters: []const u8) Answer {
     return .{ .reply = message(out, label, avdtp.AVDTP_ACCEPT, signal, parameters) };
 }
@@ -450,8 +636,9 @@ fn refuse(out: []u8, label: u4, signal: u8, parameters: []const u8) Answer {
     return .{ .reply = message(out, label, avdtp.AVDTP_REJECT, signal, parameters) };
 }
 
-/// Service capabilities for SBC's element, into `out` (12 bytes): the
-/// media transport, the codec and, with `delay_reporting`, delay reports.
+/// Service capabilities for SBC's element, into `out` (12 bytes hold them
+/// with delay reports): the media transport, the codec and, with
+/// `delay_reporting`, delay reports.
 fn capabilitiesInto(out: []u8, element: [4]u8, delay_reporting: bool) []const u8 {
     const fixed = [_]u8{
         avdtp.AVDTP_CAT_MEDIA_TRANSPORT,                    0,
@@ -697,4 +884,81 @@ test "a media packet's header, and the frames a packet holds" {
     try testing.expectEqual(@as(usize, 5), framesPerPacket(672, 119));
     try testing.expectEqual(@as(usize, 15), framesPerPacket(2048, 119));
     try testing.expectEqual(@as(usize, 0), framesPerPacket(100, 119));
+}
+
+test "a device's configuration read against what the end point takes" {
+    const transport = [_]u8{ avdtp.AVDTP_CAT_MEDIA_TRANSPORT, 0 };
+    const codec_head = [_]u8{ avdtp.AVDTP_CAT_MEDIA_CODEC, 6, 0x00, avdtp.A2DP_CODEC_SBC };
+    // 48 kHz joint stereo, 16 blocks, 8 subbands, loudness, 2 to 53, with
+    // delay reports: taken, sent at 53.
+    var taken = configurationOf(served_element, &(transport ++ codec_head ++ [_]u8{ 0x11, 0x15, 2, 53 } ++ [_]u8{ avdtp.AVDTP_CAT_DELAY_REPORTING, 0 }));
+    try testing.expectEqual(@as(u8, 0), taken.code);
+    try testing.expectEqual(@as(u32, 48000), taken.config.rate);
+    try testing.expectEqual(sbc.Mode.joint_stereo, taken.config.mode);
+    try testing.expectEqual(@as(u8, 53), taken.config.bitpool);
+    try testing.expect(taken.delay_reporting);
+    try testing.expectEqualSlices(u8, &.{ 0x11, 0x15, 2, 53 }, &taken.element);
+    // Dual channel up to 53: sent at 31; mono from 40 to 64: at 40.
+    taken = configurationOf(served_element, &(codec_head ++ [_]u8{ 0x14, 0x15, 2, 53 }));
+    try testing.expectEqual(@as(u8, 31), taken.config.bitpool);
+    taken = configurationOf(served_element, &(codec_head ++ [_]u8{ 0x18, 0x15, 40, 64 }));
+    try testing.expectEqual(@as(u8, 0), taken.code);
+    try testing.expectEqual(@as(u8, 40), taken.config.bitpool);
+    // A least past what the end point takes, two rates, a rate it does not
+    // take, no channel mode, two allocations.
+    try testing.expectEqual(avdtp.A2DP_NOT_SUPPORTED_MINIMUM_BITPOOL_VALUE, configurationOf(served_element, &(codec_head ++ [_]u8{ 0x11, 0x15, 60, 64 })).code);
+    try testing.expectEqual(avdtp.A2DP_INVALID_SAMPLING_FREQUENCY, configurationOf(served_element, &(codec_head ++ [_]u8{ 0x31, 0x15, 2, 53 })).code);
+    const at44 = configurationOf(served_element, &(codec_head ++ [_]u8{ 0x21, 0x15, 2, 53 }));
+    try testing.expectEqual(avdtp.A2DP_NOT_SUPPORTED_SAMPLING_FREQUENCY, at44.code);
+    try testing.expectEqual(avdtp.AVDTP_CAT_MEDIA_CODEC, at44.category);
+    try testing.expectEqual(@as(u8, 0), configurationOf(local_element, &(codec_head ++ [_]u8{ 0x21, 0x15, 2, 53 })).code);
+    try testing.expectEqual(avdtp.A2DP_INVALID_CHANNEL_MODE, configurationOf(served_element, &(codec_head ++ [_]u8{ 0x10, 0x15, 2, 53 })).code);
+    try testing.expectEqual(avdtp.A2DP_INVALID_ALLOCATION_METHOD, configurationOf(served_element, &(codec_head ++ [_]u8{ 0x11, 0x17, 2, 53 })).code);
+    // Another codec, content protection, a category made up, no codec.
+    const aac = configurationOf(served_element, &[_]u8{ avdtp.AVDTP_CAT_MEDIA_CODEC, 6, 0x00, avdtp.A2DP_CODEC_AAC, 0x80, 0x01, 0x8C, 0x00 });
+    try testing.expectEqual(avdtp.A2DP_NOT_SUPPORTED_CODEC_TYPE, aac.code);
+    const protected = configurationOf(served_element, &(codec_head ++ [_]u8{ 0x11, 0x15, 2, 53 } ++ [_]u8{ avdtp.AVDTP_CAT_CONTENT_PROTECTION, 2, 0x02, 0x00 }));
+    try testing.expectEqual(avdtp.AVDTP_CAT_CONTENT_PROTECTION, protected.category);
+    try testing.expectEqual(avdtp.AVDTP_UNSUPPORTED_CONFIGURATION, protected.code);
+    try testing.expectEqual(avdtp.AVDTP_BAD_SERV_CATEGORY, configurationOf(served_element, &(transport ++ [_]u8{ 0x2A, 0 })).code);
+    try testing.expectEqual(avdtp.AVDTP_INVALID_CAPABILITIES, configurationOf(served_element, &transport).code);
+}
+
+test "a device that configures the end point and opens the stream itself, where the owner lets it" {
+    var out: [32]u8 = undefined;
+    var local = Local{ .acceptor = true, .offered = served_element };
+    // What it takes, delay reports among all of it and not among the
+    // basic capabilities.
+    var told = answer(&local, .{ .label = 1, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_GET_ALL_CAPABILITIES, .payload = &.{0x04} }, &out);
+    try testing.expectEqualSlices(u8, &.{ 0x12, avdtp.AVDTP_GET_ALL_CAPABILITIES, 0x01, 0x00, 0x07, 0x06, 0x00, 0x00, 0x1F, 0xFF, 0x02, 0x35, 0x08, 0x00 }, told.reply);
+    told = answer(&local, .{ .label = 2, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_GET_CAPABILITIES, .payload = &.{0x04} }, &out);
+    try testing.expectEqual(@as(usize, 12), told.reply.len);
+    // OPEN before a configuration refused; the configuration taken; a
+    // second refused while the first has the end point.
+    told = answer(&local, .{ .label = 3, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_OPEN, .payload = &.{0x04} }, &out);
+    try testing.expectEqualSlices(u8, &.{ 0x33, avdtp.AVDTP_OPEN, avdtp.AVDTP_BAD_STATE }, told.reply);
+    const configuration = [_]u8{ 0x04, 0x0C, avdtp.AVDTP_CAT_MEDIA_TRANSPORT, 0, avdtp.AVDTP_CAT_MEDIA_CODEC, 6, 0x00, 0x00, 0x11, 0x15, 2, 53 };
+    told = answer(&local, .{ .label = 4, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_SET_CONFIGURATION, .payload = &configuration }, &out);
+    try testing.expectEqualSlices(u8, &.{ 0x42, avdtp.AVDTP_SET_CONFIGURATION }, told.reply);
+    try testing.expectEqual(Event.configured, told.event);
+    try testing.expect(local.in_use and local.by_device);
+    try testing.expectEqual(@as(u8, 3), local.remote_seid);
+    try testing.expectEqual(@as(u32, 48000), local.config.rate);
+    told = answer(&local, .{ .label = 5, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_SET_CONFIGURATION, .payload = &configuration }, &out);
+    try testing.expectEqualSlices(u8, &.{ 0x53, avdtp.AVDTP_SET_CONFIGURATION, 0x00, avdtp.AVDTP_SEP_IN_USE }, told.reply);
+    told = answer(&local, .{ .label = 6, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_OPEN, .payload = &.{0x04} }, &out);
+    try testing.expectEqual(Event.opened, told.event);
+    try testing.expectEqual(State.open, local.state);
+    // Closed: free again, still letting the device configure it.
+    told = answer(&local, .{ .label = 7, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_CLOSE, .payload = &.{0x04} }, &out);
+    try testing.expectEqual(Event.closed, told.event);
+    try testing.expect(!local.in_use and local.acceptor and !local.by_device);
+    // A configuration refused for its rate, naming the codec's category.
+    const at44 = [_]u8{ 0x04, 0x0C, avdtp.AVDTP_CAT_MEDIA_CODEC, 6, 0x00, 0x00, 0x21, 0x15, 2, 53 };
+    told = answer(&local, .{ .label = 8, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_SET_CONFIGURATION, .payload = &at44 }, &out);
+    try testing.expectEqualSlices(u8, &.{ 0x83, avdtp.AVDTP_SET_CONFIGURATION, avdtp.AVDTP_CAT_MEDIA_CODEC, avdtp.A2DP_NOT_SUPPORTED_SAMPLING_FREQUENCY }, told.reply);
+    // An owner that does not let it: refused as before.
+    var plain = Local{};
+    told = answer(&plain, .{ .label = 9, .kind = avdtp.AVDTP_COMMAND, .signal = avdtp.AVDTP_SET_CONFIGURATION, .payload = &configuration }, &out);
+    try testing.expectEqualSlices(u8, &.{ 0x93, avdtp.AVDTP_SET_CONFIGURATION, 0x00, avdtp.AVDTP_BAD_STATE }, told.reply);
 }
