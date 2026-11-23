@@ -102,4 +102,7 @@ bool FindBTServiceAttribute([*]const u8 record, u32 length, u32 id, *bluetooth.B
 ?*bluetooth.BTRecord AddBTService([*]const u8 record, u32 length)
 /// A record given back: served no more. Null does nothing.
 void RemBTService(?*bluetooth.BTRecord record)
+// Devices
+/// What a device is, from its class of device or its LE appearance: BTDK_*, BTDK_NONE where it says neither.
+u32 BTDeviceKind(u32 class_of_device, u32 appearance)
 ##end

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
-//! AddBTNotify: a task told when the controllers, or what they found,
-//! change.
+//! AddBTNotify: a task told when the controllers, what they found, their
+//! links or their bonds change.
 
 const sdk = @import("sdk");
 const exec = sdk.exec;
@@ -9,7 +9,8 @@ const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 const _notify = @import("_notify.zig");
 
 /// Asks for signals whenever a controller is added, comes up, fails or
-/// goes, is set otherwise, or finds a device.
+/// goes, is set otherwise, finds a device, or a link, a pairing or a
+/// bond begins or ends.
 ///
 /// SYNOPSIS:
 /// ```zig
@@ -28,10 +29,11 @@ const _notify = @import("_notify.zig");
 /// BEHAVIOR:
 /// On every change of any controller the signals are sent: one added,
 /// up, failed or gone; on or off, visible or not, its name; its discovery
-/// begun or over, a device it found, a name it heard. They say that
-/// something changed, not what; the task lists again, with
-/// ObtainBTControllers and ObtainBTDevices. Changes close together may
-/// come as one signal.
+/// begun or over, a device it found, a name it heard; a link being made,
+/// up, failed or ended; a pairing begun or over - with a bond made or
+/// not - and a bond forgotten. They say that something changed, not what; the task lists
+/// again, with ObtainBTControllers, ObtainBTDevices, ObtainBTConnections
+/// and ObtainBTBonds. Changes close together may come as one signal.
 ///
 /// CONTEXT:
 /// - Waits: yes, for the notification list.
@@ -47,7 +49,8 @@ const _notify = @import("_notify.zig");
 /// None known.
 ///
 /// SEE ALSO:
-/// `RemBTNotify`, `ObtainBTControllers`, `ObtainBTDevices`
+/// `RemBTNotify`, `ObtainBTControllers`, `ObtainBTDevices`,
+/// `ObtainBTConnections`, `ObtainBTBonds`
 ///
 /// EXAMPLES:
 /// ```zig

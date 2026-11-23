@@ -28,14 +28,14 @@ controller's settings, finding devices, links to devices and what a
 link carries, pairing and bonds, channels and services, attributes over
 LE, profile drivers, keyboards and mice, the USB controllers and the
 MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
-`C:Bluetooth`, `C:test/BTEcho`, `C:test/BTGatt` and
-`C:test/BTHidDevice`.
+`SYS:System/Bluetooth`, `C:Bluetooth`, `C:test/BTEcho`,
+`C:test/BTGatt` and `C:test/BTHidDevice`.
 
 ## The pieces
 
 ```
- programs          C:Bluetooth                    a program
-                          \                          /
+ programs     SYS:System/Bluetooth   C:Bluetooth      a program
+                          \            |             /
            ObtainBTControllers, SetBTControllerAttrs, AddBTNotify,
            StartBTDiscovery, ObtainBTDevices, ConnectBTDevice,
            DisconnectBTDevice, ObtainBTConnections, AddBTAgent,
@@ -70,6 +70,7 @@ MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
 | `DEVS:usb/firmware/mediatek/` | | the MediaTek MT7922's Bluetooth firmware and MediaTek's licence for it, from `scripts/fetch-mt7922.sh` (the 64-bit machines' disks) |
 | `bluetooth/cyw43455bt.device` | `DEVS:bluetooth/` | the Raspberry Pi 4 Model B's controller - the Bluetooth of its CYW43455, on the BCM2711's mini UART - as an HCI unit (the BCM2711 boards' disk) |
 | `DEVS:bluetooth/firmware/broadcom/` | | the CYW43455's Bluetooth patch, `BCM4345C0.hcd`, and the licence for passing it on, from `scripts/fetch-cyw43455.sh` (the BCM2711 boards' disk) |
+| `SYS:System/Bluetooth` | | the controllers set - on or off, their name, visible - and the devices around found, in a window |
 | `C:Bluetooth` | | the controllers - listed, with `INFO` what each is, and set - the devices around them (`SCAN`), the links to them (`CONNECT`, `DISCONNECT`, `LIST`), the bonds (`PAIR`, `UNPAIR`, `BONDS`, `AGENT`), and what a device offers (`SERVICES`), over LE with its characteristics |
 | `C:test/BTEcho` | | channels to and from the devices around: a PSM served, each frame sent back, or a channel opened to a device's PSM, each line typed sent; in the disk's `tests` set |
 | `C:test/BTGatt` | | the attributes of an LE device's GATT server read, written and watched as they change, with `WAIT` across the link's ends; in the disk's `tests` set |
@@ -77,7 +78,8 @@ MediaTek MT7922's firmware, the Raspberry Pi 4 Model B's controller,
 | `C:test/BTHidDevice` | | this machine as a keyboard and a mouse over BR/EDR, for a host to be tried with; in the disk's `tests` set |
 
 The library, the devices - the controllers' and the profile drivers' -
-their firmware and the command are the disk's `bluetooth` set.
+their firmware, the window and the command are the disk's `bluetooth`
+set.
 
 ## A controller device
 
@@ -216,8 +218,11 @@ bt.RemBTNotify(notify);
 
 The signal comes for every change of any controller: one added, up,
 failed or gone; set otherwise; a discovery begun or over, a device it
-found, a name it heard; a link up or down. It says that something changed, not what, and
-changes close together may come as one.
+found, a name it heard; a link being made, up, failed or ended; a
+pairing begun or over, a bond made or forgotten. It says that something
+changed, not what - the program lists again what it shows, with
+`ObtainBTControllers`, `ObtainBTDevices`, `ObtainBTConnections` and
+`ObtainBTBonds` - and changes close together may come as one.
 
 ## A controller's settings
 
@@ -315,6 +320,20 @@ scan response:
 | `uuid16`, `uuid128` | the services it named, eight 16-bit and two 128-bit at most; 32-bit ones are kept as 128-bit |
 | `ad_flags` | LE's flags: found for a time or in general, and without BR/EDR |
 | `age` | how many milliseconds ago it was last heard |
+
+What a device is - a keyboard, headphones, a phone - comes from two
+places: BR/EDR's class of device and LE's appearance. `BTDeviceKind`
+reads them both into one of the kinds `BTDK_*`, for a program to name in
+its own words and language: the class first - its major class, and its
+minor class where that tells kinds apart (a laptop from a computer,
+headphones from a headset, a keyboard from a mouse) - and the appearance
+where the class names none; `BTDK_NONE` where neither says. A bond's and
+a link's `class_of_device` are read the same way.
+
+```zig
+const kind = bt.BTDeviceKind(found.class_of_device, found.appearance);
+if (kind == bluetooth.BTDK_KEYBOARD or kind == bluetooth.BTDK_KEYBOARD_MOUSE) { ... }
+```
 
 A controller keeps up to 64 devices; when more are heard, it keeps those
 heard strongest. The list stays until its next discovery.
@@ -1010,6 +1029,26 @@ at a pinned commit of Raspberry Pi's bluez-firmware package, checked
 against its sha256, with the licence that package names for it
 (`LICENCE.cypress`, from linux-firmware); the BCM2711 boards' disk has
 them.
+
+## SYS:System/Bluetooth
+
+`SYS:System/Bluetooth` sets the controllers and finds the devices
+around in a window (`SYS:System/Docs/Bluetooth.md`). A chooser picks the
+controller, and the line under it says where it is: being set up,
+failed and why, off, or on - and whether devices that search find this
+one, counted down where `Bluetooth VISIBLE <seconds>` made it visible
+for a while. **On**, **Name** and **Visible to others** set it as
+`BTCA_Powered`, `BTCA_Name` and `BTCA_Visible` do; the library keeps
+them for the next start. The list holds the controller's bonds, its
+links and what its last **Search** found - ten seconds of
+`StartBTDiscovery` - one line a device: its name, what it is
+(`BTDeviceKind`), the signal it was heard with, its state - paired,
+connected, encrypted, the drivers that drive it - and its address. A
+device reached over BR/EDR and over LE at one address is one line.
+
+The window follows the library through `AddBTNotify`: whatever changes,
+it lists again - twice a second at the most - and hands the list gadget
+new rows only where one differs from what it shows.
 
 ## C:Bluetooth
 

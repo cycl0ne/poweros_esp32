@@ -53,6 +53,7 @@ const NextBTDataElement = @import("service/nextbtdataelement.zig").NextBTDataEle
 const FindBTServiceAttribute = @import("service/findbtserviceattribute.zig").FindBTServiceAttribute;
 const AddBTService = @import("service/addbtservice.zig").AddBTService;
 const RemBTService = @import("service/rembtservice.zig").RemBTService;
+const BTDeviceKind = @import("discovery/btdevicekind.zig").BTDeviceKind;
 
 /// bluetooth.library's interface, as the SDK generates it from
 /// sdk/fd/bluetooth_lib.fd.
@@ -117,6 +118,7 @@ const contract_files = [_][]const u8{
     @embedFile("service/findbtserviceattribute.zig"),
     @embedFile("service/addbtservice.zig"),
     @embedFile("service/rembtservice.zig"),
+    @embedFile("discovery/btdevicekind.zig"),
 };
 
 // --- controllers ----------------------------------------------------------------
@@ -292,6 +294,10 @@ fn lvoRemBTService(base: *BluetoothBase, record: ?*bluetooth.BTRecord) callconv(
     return RemBTService(base, record);
 }
 
+fn lvoBTDeviceKind(base: *BluetoothBase, class_of_device: u32, appearance: u32) callconv(.c) u32 {
+    return BTDeviceKind(base, class_of_device, appearance);
+}
+
 /// The jump table, in slot order: the standard vectors, then one
 /// `lvo<Name>` per `.fd` line.
 pub const vectors = [_]*const anyopaque{
@@ -339,6 +345,7 @@ pub const vectors = [_]*const anyopaque{
     vec(lvoFindBTServiceAttribute),
     vec(lvoAddBTService),
     vec(lvoRemBTService),
+    vec(lvoBTDeviceKind),
 };
 
 // --- tests (host: ./zig build test) -----------------------------------------

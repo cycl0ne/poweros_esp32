@@ -59,6 +59,7 @@ pub const LVO = struct {
     pub const FindBTServiceAttribute = libraries.lvo(41);
     pub const AddBTService = libraries.lvo(42);
     pub const RemBTService = libraries.lvo(43);
+    pub const BTDeviceKind = libraries.lvo(44);
 };
 
 /// Each function's type, by its name in LVO. The first argument is the
@@ -104,6 +105,7 @@ pub const Fn = struct {
     pub const FindBTServiceAttribute = *const fn (*BluetoothBase, [*]const u8, u32, u32, *bluetooth.BTDataElement) callconv(.c) bool;
     pub const AddBTService = *const fn (*BluetoothBase, [*]const u8, u32) callconv(.c) ?*bluetooth.BTRecord;
     pub const RemBTService = *const fn (*BluetoothBase, ?*bluetooth.BTRecord) callconv(.c) void;
+    pub const BTDeviceKind = *const fn (*BluetoothBase, u32, u32) callconv(.c) u32;
 };
 
 /// The library's base. Its methods are the library's functions, and
@@ -312,5 +314,10 @@ pub const BluetoothBase = opaque {
     /// A record given back: served no more. Null does nothing.
     pub fn RemBTService(self: *BluetoothBase, record: ?*bluetooth.BTRecord) void {
         return libraries.call(self, LVO.RemBTService, Fn.RemBTService, .{record});
+    }
+
+    /// What a device is, from its class of device or its LE appearance: BTDK_*, BTDK_NONE where it says neither.
+    pub fn BTDeviceKind(self: *BluetoothBase, class_of_device: u32, appearance: u32) u32 {
+        return libraries.call(self, LVO.BTDeviceKind, Fn.BTDeviceKind, .{ class_of_device, appearance });
     }
 };

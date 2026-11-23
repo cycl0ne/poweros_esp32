@@ -221,6 +221,55 @@ pub const BT_RSSI_NONE: i8 = 127;
 pub const BT_TX_POWER_NONE: i8 = 127;
 pub const BT_COMPANY_NONE: u16 = 0xFFFF;
 
+/// BTDeviceKind's answer: what a device is, by its class of device or
+/// its LE appearance, for a program to name in its own words; BTDK_LAST
+/// is the highest there is.
+pub const BTDK_NONE: u32 = 0;
+pub const BTDK_COMPUTER: u32 = 1;
+pub const BTDK_LAPTOP: u32 = 2;
+pub const BTDK_HANDHELD: u32 = 3;
+pub const BTDK_PHONE: u32 = 4;
+pub const BTDK_ACCESS_POINT: u32 = 5;
+pub const BTDK_HEADSET: u32 = 6;
+pub const BTDK_HANDS_FREE: u32 = 7;
+pub const BTDK_MICROPHONE: u32 = 8;
+pub const BTDK_LOUDSPEAKER: u32 = 9;
+pub const BTDK_HEADPHONES: u32 = 10;
+pub const BTDK_PORTABLE_AUDIO: u32 = 11;
+pub const BTDK_CAR_AUDIO: u32 = 12;
+pub const BTDK_HIFI: u32 = 13;
+pub const BTDK_DISPLAY: u32 = 14;
+pub const BTDK_GAME_CONSOLE: u32 = 15;
+/// Audio or video that says no more.
+pub const BTDK_AUDIO_VIDEO: u32 = 16;
+pub const BTDK_KEYBOARD: u32 = 17;
+pub const BTDK_MOUSE: u32 = 18;
+pub const BTDK_KEYBOARD_MOUSE: u32 = 19;
+pub const BTDK_JOYSTICK: u32 = 20;
+pub const BTDK_GAMEPAD: u32 = 21;
+pub const BTDK_REMOTE: u32 = 22;
+pub const BTDK_TABLET: u32 = 23;
+/// An input device that says no more.
+pub const BTDK_PERIPHERAL: u32 = 24;
+/// A printer, a scanner or a camera.
+pub const BTDK_IMAGING: u32 = 25;
+pub const BTDK_WEARABLE: u32 = 26;
+pub const BTDK_TOY: u32 = 27;
+pub const BTDK_HEALTH: u32 = 28;
+pub const BTDK_EARBUDS: u32 = 29;
+pub const BTDK_WATCH: u32 = 30;
+pub const BTDK_CLOCK: u32 = 31;
+pub const BTDK_TAG: u32 = 32;
+pub const BTDK_KEYRING: u32 = 33;
+pub const BTDK_MEDIA_PLAYER: u32 = 34;
+pub const BTDK_THERMOMETER: u32 = 35;
+pub const BTDK_HEART_RATE: u32 = 36;
+pub const BTDK_SENSOR: u32 = 37;
+pub const BTDK_LIGHT: u32 = 38;
+pub const BTDK_AUDIO_SOURCE: u32 = 39;
+pub const BTDK_HEARING_AID: u32 = 40;
+pub const BTDK_LAST: u32 = BTDK_HEARING_AID;
+
 /// A device a controller found, as ObtainBTDevices lists it.
 pub const BTDevice = extern struct {
     /// On the list ObtainBTDevices answers. ln_Name is the device's name,

@@ -1,0 +1,210 @@
+; Bluetooth's strings, in English: the program is built with these, and
+; a translation in LOCALE:Catalogs/<language>/System/Bluetooth.catalog
+; stands in for them. A text with values is written by RawDoFmt, which
+; takes them in order: a translation keeps them so.
+#version 1
+;
+; The window.
+MSG_WINDOW_TITLE (1//)
+Bluetooth
+MSG_CONTROLLER (//)
+_Controller
+MSG_ON (//)
+_On
+MSG_NAME (//)
+_Name
+MSG_VISIBLE (//)
+_Visible to others
+MSG_DEVICES (//)
+Devices
+MSG_SEARCH (//)
+_Search
+;
+; The list's columns.
+MSG_COLUMN_NAME (//)
+Name
+MSG_COLUMN_KIND (//)
+Kind
+MSG_COLUMN_SIGNAL (//)
+Signal
+MSG_COLUMN_STATE (//)
+State
+MSG_COLUMN_ADDRESS (//)
+Address
+;
+; The chooser: a controller's number, its address, its device and unit.
+MSG_CONTROLLER_LABEL (//)
+%u: %s - %s unit %u
+MSG_NO_CONTROLLER_LABEL (//)
+No controller
+;
+; The line under the chooser: where the controller is.
+MSG_NO_CONTROLLER (//)
+No Bluetooth controller: one is shown here as soon as its device offers it
+MSG_STARTING (//)
+The controller is being set up...
+MSG_FAILED (//)
+The controller failed: %s
+MSG_OFF (//)
+Off - check On to use the controller
+MSG_HIDDEN (//)
+On - devices that search do not find this one
+MSG_SHOWN (//)
+On - devices that search find this one
+MSG_SHOWN_FOR (//)
+On - devices that search find this one for %u seconds more
+MSG_SEARCHING (//)
+Searching for devices...
+MSG_FOUND (//)
+The search found %u devices
+;
+; What a call that did not work says, after what it was.
+MSG_NOT_SET (//)
+Not changed: %s
+MSG_NOT_SEARCHING (//)
+No search: %s
+;
+; Why: what went wrong.
+MSG_WHY_NOMEM (//)
+there is not the memory
+MSG_WHY_OPENFAIL (//)
+its device did not open
+MSG_WHY_TIMEOUT (//)
+it was not answered in time
+MSG_WHY_DETACHED (//)
+the controller has gone
+MSG_WHY_PROTOCOL (//)
+its device failed
+MSG_WHY_NOCONTROLLER (//)
+there is no such controller
+MSG_WHY_NOTUP (//)
+the controller is not up
+MSG_WHY_OFF (//)
+the controller is off
+MSG_WHY_UNSUPPORTED (//)
+the controller cannot do that
+MSG_WHY_BUSY (//)
+the controller is busy with something else
+MSG_WHY_UNKNOWN_COMMAND (//)
+it does not take a command it needs
+MSG_WHY_HARDWARE (//)
+a hardware failure
+MSG_WHY_REFUSED (//)
+the controller refused
+;
+; A device's row: its name where it has none, its signal, its state and
+; its address.
+MSG_NO_NAME (//)
+(no name)
+MSG_SIGNAL (//)
+%d dBm, %s
+MSG_SIGNAL_EXCELLENT (//)
+excellent
+MSG_SIGNAL_GOOD (//)
+good
+MSG_SIGNAL_FAIR (//)
+fair
+MSG_SIGNAL_WEAK (//)
+weak
+MSG_STATE_PAIRED (//)
+paired
+MSG_STATE_CONNECTED (//)
+connected
+MSG_STATE_ENCRYPTED (//)
+encrypted
+MSG_STATE_PAIRING (//)
+pairing
+MSG_ADDRESS_LE (//)
+%s (LE)
+MSG_ADDRESS_RANDOM (//)
+%s (LE, random)
+;
+; What a device is.
+MSG_KIND_COMPUTER (//)
+computer
+MSG_KIND_LAPTOP (//)
+laptop
+MSG_KIND_HANDHELD (//)
+handheld
+MSG_KIND_PHONE (//)
+phone
+MSG_KIND_ACCESS_POINT (//)
+network access point
+MSG_KIND_HEADSET (//)
+headset
+MSG_KIND_HANDS_FREE (//)
+hands-free
+MSG_KIND_MICROPHONE (//)
+microphone
+MSG_KIND_LOUDSPEAKER (//)
+loudspeaker
+MSG_KIND_HEADPHONES (//)
+headphones
+MSG_KIND_PORTABLE_AUDIO (//)
+portable audio
+MSG_KIND_CAR_AUDIO (//)
+car audio
+MSG_KIND_HIFI (//)
+hi-fi
+MSG_KIND_DISPLAY (//)
+display
+MSG_KIND_GAME_CONSOLE (//)
+game console
+MSG_KIND_AUDIO_VIDEO (//)
+audio and video
+MSG_KIND_KEYBOARD (//)
+keyboard
+MSG_KIND_MOUSE (//)
+mouse
+MSG_KIND_KEYBOARD_MOUSE (//)
+keyboard and mouse
+MSG_KIND_JOYSTICK (//)
+joystick
+MSG_KIND_GAMEPAD (//)
+gamepad
+MSG_KIND_REMOTE (//)
+remote control
+MSG_KIND_TABLET (//)
+tablet
+MSG_KIND_PERIPHERAL (//)
+input device
+MSG_KIND_IMAGING (//)
+printer or camera
+MSG_KIND_WEARABLE (//)
+wearable
+MSG_KIND_TOY (//)
+toy
+MSG_KIND_HEALTH (//)
+health device
+MSG_KIND_EARBUDS (//)
+earbuds
+MSG_KIND_WATCH (//)
+watch
+MSG_KIND_CLOCK (//)
+clock
+MSG_KIND_TAG (//)
+tag
+MSG_KIND_KEYRING (//)
+keyring
+MSG_KIND_MEDIA_PLAYER (//)
+media player
+MSG_KIND_THERMOMETER (//)
+thermometer
+MSG_KIND_HEART_RATE (//)
+heart rate sensor
+MSG_KIND_SENSOR (//)
+sensor
+MSG_KIND_LIGHT (//)
+light
+MSG_KIND_AUDIO_SOURCE (//)
+audio source
+MSG_KIND_HEARING_AID (//)
+hearing aid
+;
+; Said in the shell it was started from.
+MSG_NO_LIBRARY (//)
+%s: %s cannot be opened\n
+MSG_NO_MEMORY (//)
+%s: there is not the memory\n
+MSG_NO_WINDOW (//)
+%s: no window could be opened\n

@@ -6,7 +6,8 @@
 //! inquiry's results in their three forms, the names asked for, a name
 //! that does not come, a refusal, a stop; a device heard both ways, a
 //! full table; on, off and visible for a time; the settings file's
-//! keywords, and the name file's line.
+//! keywords, and the name file's line; what a device is, by its class
+//! or its appearance.
 
 const std = @import("std");
 const sdk = @import("sdk");
@@ -21,6 +22,8 @@ const eir = @import("../hci/eir.zig");
 const local = @import("../hci/local.zig");
 const _controller = @import("../controller/_controller.zig");
 const settings = @import("../task/settings.zig");
+const BTDeviceKind = @import("../discovery/btdevicekind.zig").BTDeviceKind;
+const BluetoothBase = @import("../bluetooth_base.zig").BluetoothBase;
 
 const testing = std.testing;
 
@@ -486,4 +489,38 @@ test "the controller's name: 247 bytes at most, cut at a whole character, a name
     var params: [hci.HCI_MAX_PARAMS]u8 = undefined;
     try testing.expectEqual(hci.HCI_MAX_NAME, local.nameParams(&layer, &params));
     try testing.expectEqual(@as(u8, 0), params[hci.HCI_MAX_NAME - 1]);
+}
+
+test "what a device is: its class's major and minor class, else its appearance" {
+    // Nothing is read from the base.
+    var base: BluetoothBase = undefined;
+    try testing.expectEqual(bluetooth.BTDK_NONE, BTDeviceKind(&base, 0, 0));
+    // A laptop (major 1, minor 3) with its service bits, a desktop.
+    try testing.expectEqual(bluetooth.BTDK_LAPTOP, BTDeviceKind(&base, 0x7A010C, 0));
+    try testing.expectEqual(bluetooth.BTDK_COMPUTER, BTDeviceKind(&base, 0x000104, 0));
+    try testing.expectEqual(bluetooth.BTDK_PHONE, BTDeviceKind(&base, 0x5A020C, 0));
+    // Headphones (audio/video, minor 6), a headset (1), and a set-top box
+    // (9), which is audio/video that names no kind here.
+    try testing.expectEqual(bluetooth.BTDK_HEADPHONES, BTDeviceKind(&base, 0x240418, 0));
+    try testing.expectEqual(bluetooth.BTDK_HEADSET, BTDeviceKind(&base, 0x200404, 0));
+    try testing.expectEqual(bluetooth.BTDK_AUDIO_VIDEO, BTDeviceKind(&base, 0x000424, 0));
+    // Peripherals: the minor class's top bits, then its low four.
+    try testing.expectEqual(bluetooth.BTDK_KEYBOARD, BTDeviceKind(&base, 0x002540, 0));
+    try testing.expectEqual(bluetooth.BTDK_MOUSE, BTDeviceKind(&base, 0x002580, 0));
+    try testing.expectEqual(bluetooth.BTDK_KEYBOARD_MOUSE, BTDeviceKind(&base, 0x0025C0, 0));
+    try testing.expectEqual(bluetooth.BTDK_GAMEPAD, BTDeviceKind(&base, 0x002508, 0));
+    try testing.expectEqual(bluetooth.BTDK_PERIPHERAL, BTDeviceKind(&base, 0x002500, 0));
+    // A class that names no kind leaves it to the appearance, and the
+    // class wins over an appearance.
+    try testing.expectEqual(bluetooth.BTDK_KEYBOARD, BTDeviceKind(&base, 0x001F00, 0x03C1));
+    try testing.expectEqual(bluetooth.BTDK_PHONE, BTDeviceKind(&base, 0x5A020C, 0x03C2));
+    // Appearances: a subcategory that names a kind, else the category;
+    // one not known.
+    try testing.expectEqual(bluetooth.BTDK_MOUSE, BTDeviceKind(&base, 0, 0x03C2));
+    try testing.expectEqual(bluetooth.BTDK_EARBUDS, BTDeviceKind(&base, 0, 0x0941));
+    try testing.expectEqual(bluetooth.BTDK_LAPTOP, BTDeviceKind(&base, 0, 0x0083));
+    try testing.expectEqual(bluetooth.BTDK_COMPUTER, BTDeviceKind(&base, 0, 0x0080));
+    try testing.expectEqual(bluetooth.BTDK_WATCH, BTDeviceKind(&base, 0, 0x00C1));
+    try testing.expectEqual(bluetooth.BTDK_PERIPHERAL, BTDeviceKind(&base, 0, 0x03C0));
+    try testing.expectEqual(bluetooth.BTDK_NONE, BTDeviceKind(&base, 0, 0x0FC0));
 }

@@ -14,8 +14,9 @@ Generated from the source by `./zig build autodoc`.
 - [AddBTAgent](#addbtagent) - Adds an agent: a port the library sends what a pairing needs to know, and what its user can do.
 - [AddBTController](#addbtcontroller) - Offers a controller to the stack: the library's task opens the unit and brings the controller up.
 - [AddBTListener](#addbtlistener) - Serves a PSM: the channels devices open to it are taken, and come to a port.
-- [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
+- [AddBTNotify](#addbtnotify) - Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, finds a device, or a link, a pairing or a bond begins or ends.
 - [AddBTService](#addbtservice) - Serves a record of the program's own: the SDP server answers devices with it beside its own.
+- [BTDeviceKind](#btdevicekind) - Says what a device is, as one of the kinds programs name.
 - [CloseBTChannel](#closebtchannel) - Closes a channel - one OpenBTChannel opened, or one a device opened to a listener - and gives it back.
 - [CloseBTGatt](#closebtgatt) - Closes a block OpenBTGatt opened, and gives it back.
 - [ConnectBTDevice](#connectbtdevice) - Makes a link to a device - a page over BR/EDR, LE's initiating over LE - and waits until it is up.
@@ -294,7 +295,7 @@ defer bt.RemBTListener(listener);
 
 ## AddBTNotify
 
-Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, or finds a device.
+Asks for signals whenever a controller is added, comes up, fails or goes, is set otherwise, finds a device, or a link, a pairing or a bond begins or ends.
 
 **SYNOPSIS**
 
@@ -319,10 +320,11 @@ A handle for RemBTNotify, or null without memory.
 
 On every change of any controller the signals are sent: one added,
 up, failed or gone; on or off, visible or not, its name; its discovery
-begun or over, a device it found, a name it heard. They say that
-something changed, not what; the task lists again, with
-ObtainBTControllers and ObtainBTDevices. Changes close together may
-come as one signal.
+begun or over, a device it found, a name it heard; a link being made,
+up, failed or ended; a pairing begun or over - with a bond made or
+not - and a bond forgotten. They say that something changed, not what; the task lists
+again, with ObtainBTControllers, ObtainBTDevices, ObtainBTConnections
+and ObtainBTBonds. Changes close together may come as one signal.
 
 **CONTEXT**
 
@@ -342,7 +344,8 @@ None known.
 
 **SEE ALSO**
 
-`RemBTNotify`, `ObtainBTControllers`, `ObtainBTDevices`
+`RemBTNotify`, `ObtainBTControllers`, `ObtainBTDevices`,
+`ObtainBTConnections`, `ObtainBTBonds`
 
 **EXAMPLES**
 
@@ -430,6 +433,75 @@ const record = [_]u8{
 };
 const served = bt.AddBTService(&record, record.len) orelse return;
 defer bt.RemBTService(served);
+```
+
+## BTDeviceKind
+
+Says what a device is, as one of the kinds programs name.
+
+**SYNOPSIS**
+
+```zig
+fn BTDeviceKind(base: *BluetoothBase, class_of_device: u32, appearance: u32) u32
+```
+
+**SINCE**
+
+1.11. LVO -180.
+
+**INPUTS**
+
+- `class_of_device` - BTDevice.class_of_device, BTBond's or
+  BTConnection's: the major and minor class in its low 13 bits; 0 for
+  none.
+- `appearance` - BTDevice.appearance: an LE device's category in its
+  bits 6 to 15, the subcategory below; 0 for none.
+
+**RESULT**
+
+BTDK_*: what the device is; BTDK_NONE where it says neither.
+
+**BEHAVIOR**
+
+The class of device is read first: its major class, and where that
+tells kinds apart, its minor class - a laptop from a computer,
+headphones from a headset, a keyboard from a mouse or both in one, a
+gamepad from a joystick. A class that names no kind (miscellaneous,
+uncategorized) leaves the appearance to say it: its subcategory where
+it names a kind (a keyboard, a mouse, earbuds), else its category. A
+class or a category this library does not know is BTDK_NONE, and so
+are both 0.
+
+**CONTEXT**
+
+- Waits: no.
+- Interrupts: yes - it reads nothing but its inputs.
+- Locks: any may be held.
+- Process: a Task will do.
+
+**OWNERSHIP**
+
+Nothing is handed over.
+
+**NOTES**
+
+A kind is a number, for the program to name in its own words and
+language. A kind past the ones a program names is shown as it shows
+BTDK_NONE; BTDK_LAST is the highest there is.
+
+**BUGS**
+
+None known.
+
+**SEE ALSO**
+
+`ObtainBTDevices`, `ObtainBTBonds`, `ObtainBTConnections`
+
+**EXAMPLES**
+
+```zig
+const kind = bt.BTDeviceKind(found.class_of_device, found.appearance);
+if (kind == bluetooth.BTDK_KEYBOARD) ... ;
 ```
 
 ## CloseBTChannel

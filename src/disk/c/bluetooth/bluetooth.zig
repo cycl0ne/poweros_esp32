@@ -93,7 +93,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.9 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.10 (23.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S,SERVICES/K";
@@ -1252,13 +1252,13 @@ fn showNew(dl: *DosBase, bt: *BluetoothBase, controller: u32, follow: *Follow) v
             follow.devices[follow.count] = .{ .address = found.address.bytes, .kind = found.address.kind, .shown = shown };
             follow.count += 1;
         }
-        device(dl, found);
+        device(dl, bt, found);
     }
 }
 
 /// One device on a line: address, how it was heard, signal, name, what it
 /// is.
-fn device(dl: *DosBase, found: *const bluetooth.BTDevice) void {
+fn device(dl: *DosBase, bt: *BluetoothBase, found: *const bluetooth.BTDevice) void {
     var text: [18]u8 = undefined;
     const how: [*:0]const u8 = if (found.flags & bluetooth.BTDF_BREDR != 0)
         (if (found.flags & bluetooth.BTDF_LE != 0) "BR/EDR+LE" else "BR/EDR")
@@ -1270,7 +1270,7 @@ fn device(dl: *DosBase, found: *const bluetooth.BTDevice) void {
     } else {
         _ = Printf(dl, "  %4ld dBm", .{@as(i64, found.rssi)});
     }
-    const what = whatItIs(found);
+    const what = whatItIs(bt, found);
     if (what[0] == 0) {
         _ = Printf(dl, "  %.24s\n", .{name});
     } else {
@@ -1282,85 +1282,27 @@ fn unnamed(found: *const bluetooth.BTDevice) [*:0]const u8 {
     return if (found.flags & bluetooth.BTDF_NO_NAME != 0) "(no name)" else "-";
 }
 
-/// What a device is: its class of device's major and minor class, or LE's
-/// appearance; empty where it said neither.
-fn whatItIs(found: *const bluetooth.BTDevice) [*:0]const u8 {
-    if (found.class_of_device != 0) {
-        const major = (found.class_of_device >> 8) & 0x1F;
-        const minor = (found.class_of_device >> 2) & 0x3F;
-        return switch (major) {
-            hci.COD_MAJOR_COMPUTER => switch (minor) {
-                hci.COD_COMPUTER_LAPTOP => "laptop",
-                hci.COD_COMPUTER_HANDHELD => "handheld",
-                else => "computer",
-            },
-            hci.COD_MAJOR_PHONE => "phone",
-            hci.COD_MAJOR_NETWORK => "network access point",
-            hci.COD_MAJOR_AUDIO_VIDEO => switch (minor) {
-                1 => "headset",
-                2 => "hands-free",
-                4 => "microphone",
-                5 => "loudspeaker",
-                6 => "headphones",
-                7 => "portable audio",
-                8 => "car audio",
-                10 => "hi-fi",
-                14, 15 => "display",
-                18 => "game console",
-                else => "audio/video",
-            },
-            hci.COD_MAJOR_PERIPHERAL => switch (minor >> 4) {
-                1 => "keyboard",
-                2 => "mouse",
-                3 => "keyboard and mouse",
-                else => switch (minor & 0xF) {
-                    1 => "joystick",
-                    2 => "gamepad",
-                    3 => "remote control",
-                    5 => "tablet",
-                    else => "peripheral",
-                },
-            },
-            hci.COD_MAJOR_IMAGING => "printer or camera",
-            hci.COD_MAJOR_WEARABLE => "wearable",
-            hci.COD_MAJOR_TOY => "toy",
-            hci.COD_MAJOR_HEALTH => "health device",
-            else => "",
-        };
-    }
-    return switch (found.appearance) {
-        0 => "",
-        0x03C1 => "keyboard",
-        0x03C2 => "mouse",
-        0x03C3 => "joystick",
-        0x03C4 => "gamepad",
-        0x03C5 => "tablet",
-        0x0941 => "earbuds",
-        0x0942 => "headset",
-        0x0943 => "headphones",
-        else => switch (found.appearance >> 6) {
-            1 => "phone",
-            2 => "computer",
-            3 => "watch",
-            4 => "clock",
-            5 => "display",
-            6 => "remote control",
-            8 => "tag",
-            9 => "keyring",
-            10 => "media player",
-            12 => "thermometer",
-            13 => "heart rate sensor",
-            15 => "input device",
-            21 => "sensor",
-            22, 31 => "light",
-            33 => "speaker",
-            34 => "audio source",
-            37 => "headphones",
-            41 => "hearing aid",
-            42 => "game controller",
-            else => "",
-        },
+/// What a device is, as the library reads it from its class of device
+/// or its appearance; empty where it said neither.
+fn whatItIs(bt: *BluetoothBase, found: *const bluetooth.BTDevice) [*:0]const u8 {
+    return kindName(bt.BTDeviceKind(found.class_of_device, found.appearance));
+}
+
+/// A kind's name (BTDK_*); empty for none, or one past those named.
+fn kindName(kind: u32) [*:0]const u8 {
+    const names = [_][*:0]const u8{
+        "",                     "computer",          "laptop",         "handheld",      "phone",
+        "network access point", "headset",           "hands-free",     "microphone",    "loudspeaker",
+        "headphones",           "portable audio",    "car audio",      "hi-fi",         "display",
+        "game console",         "audio/video",       "keyboard",       "mouse",         "keyboard and mouse",
+        "joystick",             "gamepad",           "remote control", "tablet",        "peripheral",
+        "printer or camera",    "wearable",          "toy",            "health device", "earbuds",
+        "watch",                "clock",             "tag",            "keyring",       "media player",
+        "thermometer",          "heart rate sensor", "sensor",         "light",         "audio source",
+        "hearing aid",
     };
+    comptime if (names.len != bluetooth.BTDK_LAST + 1) @compileError("a kind without a name");
+    return if (kind < names.len) names[kind] else "";
 }
 
 /// What each device found said of itself.
@@ -1371,7 +1313,7 @@ fn details(dl: *DosBase, bt: *BluetoothBase, controller: u32) void {
     while (it.next()) |node| {
         const found: *bluetooth.BTDevice = @fieldParentPtr("node", node);
         _ = dl.PutStr("\n");
-        device(dl, found);
+        device(dl, bt, found);
         if (found.node.name) |name| {
             if (characters(name) > name_column) {
                 _ = Printf(dl, "      name %s%s\n", .{ name, @as([*:0]const u8, if (found.flags & bluetooth.BTDF_SHORT_NAME != 0) " (shortened)" else "") });

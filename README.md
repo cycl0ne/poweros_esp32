@@ -166,7 +166,8 @@ The programs on the disk:
 - **`SYS:System`** - Shell, HDToolBox, Shares, WiFi - the networks in
   range, joined and left, and the one joined at start - Network - an
   interface's addresses, DHCP or fixed, its name servers and IPv6 -
-  Update, CPULoad, NetLoad, MemMap, Clock, and SystemScan on the 64-bit
+  Bluetooth - the controllers set, the devices around found - Update,
+  CPULoad, NetLoad, MemMap, Clock, and SystemScan on the 64-bit
   machines
 - **`SYS:Commodities`** - Exchange, Blanker, FKey, Emoji, AutoPoint,
   ClickToFront, MouseBlanker, NoCapsLock and NumericPad
