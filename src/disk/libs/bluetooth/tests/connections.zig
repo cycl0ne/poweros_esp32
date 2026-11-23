@@ -202,12 +202,26 @@ fn linked(layer: *Hci, recorder: *Recorder, address: bluetooth.BTAddress, handle
     if (recorder.last().opcode == hci.HCI_OP_REMOTE_NAME_REQUEST) status(layer, hci.HCI_OP_REMOTE_NAME_REQUEST, 0);
 }
 
-/// An LE link to `address` made by the library and up as `handle`.
+/// LE Read Remote Features Complete for `handle`, with `code`.
+fn leFeaturesComplete(layer: *Hci, code: u8, handle: u16) void {
+    var params: [12]u8 = @splat(0);
+    params[0] = hci.HCI_LE_EV_READ_REMOTE_FEATURES_COMPLETE;
+    params[1] = code;
+    params[2] = @truncate(handle);
+    params[3] = @truncate(handle >> 8);
+    params[4] = 0x21; // encryption, extended reject indication
+    event(layer, hci.HCI_EV_LE_META, &params);
+}
+
+/// An LE link to `address` made by the library and up as `handle`, the
+/// device's features read over it.
 fn leLinked(layer: *Hci, address: bluetooth.BTAddress, handle: u16) !void {
     const begun = connections.connect(layer, address);
     try testing.expect(begun == .waiting);
     status(layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
     leConnectionComplete(layer, 0, handle, hci.ROLE_CENTRAL, address);
+    status(layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, 0);
+    leFeaturesComplete(layer, 0, handle);
     try testing.expectEqual(@as(i32, 0), layer.waits[begun.waiting].result);
     connections.release(layer, begun.waiting);
 }
@@ -480,6 +494,117 @@ test "LE: the peripheral's parameters taken within the bounds; the attribute pro
     // LE's packets take LE's buffers.
     try testing.expectEqual(@as(u16, 6), layer.acl_credits);
     try testing.expectEqual(@as(u16, 8 - 7), layer.le_credits);
+}
+
+test "an LE link made once the device has answered on it; one it never answers on not made" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    const begun = connections.connect(&layer, sensor);
+    status(&layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
+    leConnectionComplete(&layer, 0, 0x0040, hci.ROLE_CENTRAL, sensor);
+    // The controller has sent its request: the device asked for its
+    // features, the call still waiting - and a second one with it.
+    const asked = recorder.last();
+    try testing.expectEqual(hci.HCI_OP_LE_READ_REMOTE_FEATURES, asked.opcode);
+    try testing.expectEqualSlices(u8, &.{ 0x40, 0x00 }, asked.bytes());
+    try testing.expect(!layer.waits[begun.waiting].done);
+    const again = connections.connect(&layer, sensor);
+    try testing.expect(again == .waiting);
+    const link = connections.find(&layer, sensor).?;
+    try testing.expect(!link.heard);
+    try testing.expectEqual(@as(u8, 0), layer.note_count);
+    status(&layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, 0);
+    leFeaturesComplete(&layer, 0, 0x0040);
+    try testing.expect(layer.waits[begun.waiting].done and layer.waits[again.waiting].done);
+    try testing.expectEqual(@as(i32, 0), layer.waits[begun.waiting].result);
+    try testing.expect(link.heard);
+    try testing.expectEqual(@as(u8, 0x21), link.le_features[0]);
+    try testing.expectEqual(connections.NoteKind.up, layer.notes[0].kind);
+    connections.release(&layer, begun.waiting);
+    connections.release(&layer, again.waiting);
+    // Made: answered at once.
+    try testing.expectEqual(connections.Begun{ .done = 0 }, connections.connect(&layer, sensor));
+
+    // Never answered on: given up after six connection events, the call
+    // answered with why, the link not made.
+    const beacon = bluetooth.BTAddress{ .bytes = .{ 0x04, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
+    const lost = connections.connect(&layer, beacon);
+    status(&layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
+    leConnectionComplete(&layer, 0, 0x0041, hci.ROLE_CENTRAL, beacon);
+    status(&layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, 0);
+    // The procedure's own failure waits for the link's end.
+    leFeaturesComplete(&layer, hci.HCI_ERR_FAILED_TO_ESTABLISH, 0x0041);
+    try testing.expect(!layer.waits[lost.waiting].done);
+    disconnectionComplete(&layer, 0x0041, hci.HCI_ERR_FAILED_TO_ESTABLISH);
+    try testing.expect(layer.waits[lost.waiting].done);
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_FAILED_TO_ESTABLISH), layer.waits[lost.waiting].result);
+    try testing.expect(connections.find(&layer, beacon) == null);
+    const noted = layer.notes[layer.note_count - 1];
+    try testing.expectEqual(connections.NoteKind.not_made, noted.kind);
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_FAILED_TO_ESTABLISH), noted.reason);
+    connections.release(&layer, lost.waiting);
+
+    // Ended before the device answered: its making taken back.
+    const ended = connections.connect(&layer, beacon);
+    status(&layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
+    leConnectionComplete(&layer, 0, 0x0042, hci.ROLE_CENTRAL, beacon);
+    const gone = connections.disconnect(&layer, beacon);
+    try testing.expectEqual(hci.HCI_OP_DISCONNECT, recorder.last().opcode);
+    status(&layer, hci.HCI_OP_DISCONNECT, 0);
+    // The device heard while the link is ended makes nothing of it.
+    const notes = layer.note_count;
+    status(&layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, 0);
+    frameIn(&layer, 0x0042, l2cap.CID_ATT, &.{ 0x1B, 0x03, 0x00, 0x01 });
+    leFeaturesComplete(&layer, 0, 0x0042);
+    try testing.expect(!layer.waits[ended.waiting].done);
+    try testing.expectEqual(notes, layer.note_count);
+    try testing.expectEqual(@as(?u64, layer.now + 10_000), connections.find(&layer, beacon).?.deadline);
+    disconnectionComplete(&layer, 0x0042, hci.HCI_ERR_LOCAL_HOST_TERMINATED);
+    try testing.expectEqual(@as(i32, hci.HCI_ERR_LOCAL_HOST_TERMINATED), layer.waits[ended.waiting].result);
+    try testing.expectEqual(@as(i32, 0), layer.waits[gone.waiting].result);
+    try testing.expect(connections.find(&layer, beacon) == null);
+}
+
+test "an LE link made by a frame of the device's, a controller that refuses the question, and a device that does not answer it" {
+    var recorder = Recorder{};
+    var layer = upLayer(&recorder);
+    // A frame of the device's before its features: it has answered.
+    const framed = connections.connect(&layer, sensor);
+    status(&layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
+    leConnectionComplete(&layer, 0, 0x0040, hci.ROLE_CENTRAL, sensor);
+    status(&layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, 0);
+    frameIn(&layer, 0x0040, l2cap.CID_LE_SIGNALING, &.{ l2cap.CONNECTION_PARAMETER_UPDATE_REQUEST, 9, 8, 0, 24, 0, 40, 0, 0, 0, 42, 0 });
+    status(&layer, hci.HCI_OP_LE_CONNECTION_UPDATE, 0);
+    try testing.expectEqual(@as(i32, 0), layer.waits[framed.waiting].result);
+    try testing.expect(layer.waits[framed.waiting].done);
+    connections.release(&layer, framed.waiting);
+    // The features after it change nothing.
+    leFeaturesComplete(&layer, 0, 0x0040);
+    try testing.expectEqual(@as(u8, 1), layer.note_count);
+
+    // The controller refuses LE Read Remote Features: made without them.
+    const beacon = bluetooth.BTAddress{ .bytes = .{ 0x04, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
+    const refused = connections.connect(&layer, beacon);
+    status(&layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
+    leConnectionComplete(&layer, 0, 0x0041, hci.ROLE_CENTRAL, beacon);
+    status(&layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, hci.HCI_ERR_COMMAND_DISALLOWED);
+    try testing.expect(layer.waits[refused.waiting].done);
+    try testing.expectEqual(@as(i32, 0), layer.waits[refused.waiting].result);
+    connections.release(&layer, refused.waiting);
+
+    // A device that does not answer the question in its time: made
+    // without its features.
+    const watch = bluetooth.BTAddress{ .bytes = .{ 0x05, 0x10, 0xEF, 0x5E, 0x00, 0x00 }, .kind = bluetooth.BTADDR_LE_PUBLIC };
+    const quiet = connections.connect(&layer, watch);
+    status(&layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
+    leConnectionComplete(&layer, 0, 0x0042, hci.ROLE_CENTRAL, watch);
+    status(&layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, 0);
+    try testing.expectEqual(@as(?u64, layer.now + connections.FEATURES_WAIT_MS), _hci.nextDeadline(&layer));
+    layer.now += connections.FEATURES_WAIT_MS;
+    _hci.tick(&layer);
+    try testing.expect(layer.waits[quiet.waiting].done);
+    try testing.expectEqual(@as(i32, 0), layer.waits[quiet.waiting].result);
+    try testing.expect(connections.find(&layer, watch).?.heard);
 }
 
 test "the specification's bounds for an LE link's parameters" {

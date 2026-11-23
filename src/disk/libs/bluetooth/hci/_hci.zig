@@ -419,6 +419,7 @@ fn leEvent(layer: *Hci, params: []const u8) void {
         hci.HCI_LE_EV_ADVERTISING_REPORT => discovery.advertisingReport(layer, rest),
         hci.HCI_LE_EV_CONNECTION_COMPLETE => connections.leComplete(layer, rest),
         hci.HCI_LE_EV_CONNECTION_UPDATE_COMPLETE => connections.leUpdateComplete(layer, rest),
+        hci.HCI_LE_EV_READ_REMOTE_FEATURES_COMPLETE => connections.leFeatures(layer, rest),
         hci.HCI_LE_EV_REMOTE_PARAMETERS_REQUEST => connections.leParametersRequest(layer, rest),
         else => {},
     }

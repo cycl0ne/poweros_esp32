@@ -15,9 +15,10 @@ pub const Entry = extern struct {
     name: [hci.HCI_MAX_NAME + 1]u8 = @splat(0),
 };
 
-/// Whether a link is listed: one that is up, or being ended.
+/// Whether a link is listed: one that is made - up, the device having
+/// answered on it - or being ended.
 pub fn listed(connection: *const connections.Connection) bool {
-    return connection.state == .up or connection.state == .disconnecting;
+    return (connection.state == .up or connection.state == .disconnecting) and connection.heard;
 }
 
 /// A link of controller `id`, whose layer is `layer`, copied into an

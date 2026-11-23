@@ -79,7 +79,7 @@ const BluetoothBase = sdk.interface.bluetooth.BluetoothBase;
 const Printf = dos.stdio.Printf;
 
 pub const COMMAND_NAME = "Bluetooth";
-const VERSION_STRING = "\x00$VER: Bluetooth 1.5 (23.11.2026)\r\n";
+const VERSION_STRING = "\x00$VER: Bluetooth 1.6 (23.11.2026)\r\n";
 
 const template = "INFO/S,SCAN/S,TIME/K/N,POWER/K,NAME/K,VISIBLE/K,CONNECT/K,DISCONNECT/K,LIST/S,LE/S,RANDOM/S,CONTROLLER/K/N," ++
     "PAIR/K,PIN/K,UNPAIR/K,BONDS/S,AGENT/S";
@@ -260,7 +260,7 @@ fn linkFailure(dl: *DosBase, result: i32, controller: u32) void {
         bluetooth.BTERR_UNSUPPORTED => "the controller cannot make that kind of link",
         hci.HCI_ERR_PAGE_TIMEOUT => "the device did not answer",
         hci.HCI_ERR_CONNECTION_TIMEOUT => "the link was lost",
-        hci.HCI_ERR_FAILED_TO_ESTABLISH => "the link was made but the device was not heard on it",
+        hci.HCI_ERR_FAILED_TO_ESTABLISH => "the device did not answer on the new link",
         hci.HCI_ERR_LOCAL_HOST_TERMINATED => "taken back",
         hci.HCI_ERR_REJECTED_LIMITED_RESOURCES, hci.HCI_ERR_REJECTED_SECURITY, hci.HCI_ERR_REJECTED_ADDRESS => "the device refused",
         hci.HCI_ERR_CONNECTION_EXISTS => "there is a link to that device already",

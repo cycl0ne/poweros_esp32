@@ -34,7 +34,8 @@ const _connection = @import("_connection.zig");
 /// whether it is authenticated, to a device with a bond, being paired),
 /// the controller's handle for it, LE's parameters, how long it has been
 /// up, and the device's name and class where they are known. A link
-/// being made is not listed until it is up.
+/// being made is not listed until it is up - over LE, since 1.6, until
+/// the device has answered on it.
 ///
 /// Each node is a copy, its name with it: nothing the library does later
 /// reaches it.

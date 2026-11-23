@@ -135,11 +135,20 @@ fn leConnectionComplete(layer: *Hci, address: bluetooth.BTAddress) void {
     event(layer, hci.HCI_EV_LE_META, &params);
 }
 
-/// The LE link the library is making to `address` up.
+/// The LE link the library is making to `address` up, and the device's
+/// features read over it.
 fn linkedUp(layer: *Hci, recorder: *const Recorder, address: bluetooth.BTAddress) !void {
     try testing.expectEqual(hci.HCI_OP_LE_CREATE_CONNECTION, recorder.last().opcode);
     status(layer, hci.HCI_OP_LE_CREATE_CONNECTION, 0);
     leConnectionComplete(layer, address);
+    try testing.expectEqual(hci.HCI_OP_LE_READ_REMOTE_FEATURES, recorder.last().opcode);
+    status(layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, 0);
+    var features: [12]u8 = @splat(0);
+    features[0] = hci.HCI_LE_EV_READ_REMOTE_FEATURES_COMPLETE;
+    features[2] = @truncate(handle);
+    features[3] = @truncate(handle >> 8);
+    features[4] = 0x01; // encryption
+    event(layer, hci.HCI_EV_LE_META, &features);
 }
 
 /// A frame of the security manager's from the device: its code, then

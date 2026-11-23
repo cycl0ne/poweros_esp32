@@ -159,7 +159,13 @@ pub fn pair(layer: *Hci, address: bluetooth.BTAddress, agent: u32, capability: ?
     if (connections.find(layer, address)) |connection| {
         if (connection.pairing.stage != .idle) return bluetooth.BTERR_BUSY;
         switch (connection.state) {
-            .up => {
+            // Up, but the device has not answered on it yet: begun once
+            // it has.
+            .up => if (!connection.heard) {
+                begin(layer, connection, .pair, true, agent, capability);
+                connection.pairing.stage = .linking;
+                return 0;
+            } else {
                 begin(layer, connection, .pair, true, agent, capability);
                 if (!startOn(layer, connection)) {
                     connection.pairing = .{};

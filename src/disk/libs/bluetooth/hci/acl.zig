@@ -188,6 +188,8 @@ pub fn received(layer: *Hci, bytes: []const u8) void {
     const length = @min(_hci.le16(bytes[2..4]), bytes.len - hci.HCI_ACL_HDR);
     const data = bytes[hci.HCI_ACL_HDR..][0..length];
     const connection = connections.byHandle(layer, handle) orelse return;
+    // Data from the device: it has answered on the link.
+    if (!connection.heard) connections.established(layer, connection);
     if (boundary == hci.ACL_CONTINUING) {
         if (connection.frame_dropping or connection.frame_have == 0) return;
     } else {

@@ -28,13 +28,15 @@ const _task = @import("../task/_task.zig");
 /// 0 once the link is up - at once for one that is up already.
 /// Otherwise why it is not: the controller's status (hci.HCI_ERR_*,
 /// positive) - HCI_ERR_PAGE_TIMEOUT for a device that did not answer its
-/// page; HCI_ERR_LOCAL_HOST_TERMINATED when DisconnectBTDevice, or the
-/// controller's power going off, took it back while it was being made -
-/// or BTERR_TIMEOUT for an LE device that did not advertise within 20
-/// seconds, BTERR_BUSY while the controller makes another link of the
-/// kind or ends this one, BTERR_NOCONTROLLER, BTERR_NOTUP, BTERR_OFF,
-/// BTERR_UNSUPPORTED for a controller without the kind of link, and
-/// BTERR_NOMEM when it has no room for another (it keeps 8). For a device
+/// page, HCI_ERR_FAILED_TO_ESTABLISH for an LE device that never
+/// answered on the link; HCI_ERR_LOCAL_HOST_TERMINATED when
+/// DisconnectBTDevice, or the controller's power going off, took it back
+/// while it was being made - or BTERR_TIMEOUT for an LE device that did
+/// not advertise within 20 seconds, BTERR_BUSY while the controller
+/// makes another link of the kind or ends this one, BTERR_NOCONTROLLER,
+/// BTERR_NOTUP, BTERR_OFF, BTERR_UNSUPPORTED for a controller without
+/// the kind of link, and BTERR_NOMEM when it has no room for another (it
+/// keeps 8). For a device
 /// with a bond, a link that is up but could not be made secure: the
 /// controller's status - HCI_ERR_PIN_OR_KEY_MISSING when the device no
 /// longer has the bond.
@@ -45,9 +47,12 @@ const _task = @import("../task/_task.zig");
 /// the last minute, how often it listens for pages and its clock - and is
 /// the link's central unless the device takes the role over; it gives up
 /// after its page timeout, about five seconds. Over LE it listens for the
-/// device's advertising and connects as its central. Calls that wait for
-/// a link being made have it as it comes. A device that pages the
-/// controller is taken on by itself: its link is listed as well.
+/// device's advertising and connects as its central; since 1.6 the link
+/// is up once the device has answered on it - its features read - and
+/// one the device never answers on is given up after six connection
+/// events. Calls that wait for a link being made have it as it comes. A
+/// device that pages the controller is taken on by itself: its link is
+/// listed as well.
 ///
 /// The device's name, where the discovery did not hear it, is asked for
 /// over a BR/EDR link once it is up. AddBTNotify's signal comes when the

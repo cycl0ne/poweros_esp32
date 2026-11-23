@@ -28,6 +28,16 @@
 //! LE_CONNECT_TIMEOUT_MS (LE Create Connection Cancel), and a controller
 //! that answers nothing by then has the link given up on (BTERR_TIMEOUT).
 //!
+//! **Made once the device has answered on it.** Over BR/EDR that is
+//! Connection Complete. LE Connection Complete says only that the
+//! controller has sent its request, so an LE link is up once the device
+//! has answered on it: its features read (LE Read Remote Features), or
+//! a frame of its come. One that goes down before then was not made, its
+//! calls answered with the controller's reason -
+//! HCI_ERR_FAILED_TO_ESTABLISH for a device never heard on it; a
+//! controller that refuses the command, or a device that does not answer
+//! it within FEATURES_WAIT_MS, has the link taken as made.
+//!
 //! **The device's name**, where the discovery did not hear it, is asked
 //! for once a BR/EDR link is up (Remote Name Request): over the link it
 //! comes at once.
@@ -74,6 +84,9 @@ const PAGE_WAIT_MS: u32 = 15_000;
 const ACCEPT_WAIT_MS: u32 = 10_000;
 const DISCONNECT_WAIT_MS: u32 = 10_000;
 const CANCEL_WAIT_MS: u32 = 3_000;
+/// How long an LE link that is up waits for the device's features before
+/// it is taken as made without them.
+pub const FEATURES_WAIT_MS: u32 = 5_000;
 /// How old what the discovery heard of a device may be for a page to go
 /// by it: a device's clock drifts from the offset heard.
 const HEARD_FRESH_MS: u64 = 60_000;
@@ -86,6 +99,13 @@ pub const Connection = struct {
     address: bluetooth.BTAddress = .{},
     /// Over LE; made by the device; the controller its central.
     le: bool = false,
+    /// The device has answered on it - at once over BR/EDR, over LE once
+    /// its features are read or a frame of its has come. Until then a
+    /// link that is up is still being made.
+    heard: bool = false,
+    /// LE: the device's link layer features, as it gave them; zeros
+    /// while they are not known.
+    le_features: [8]u8 = @splat(0),
     incoming: bool = false,
     central: bool = false,
     encrypted: bool = false,
@@ -232,8 +252,9 @@ pub fn connect(layer: *Hci, address: bluetooth.BTAddress) Begun {
     if (layer.state != bluetooth.BTCS_UP) return .{ .done = bluetooth.BTERR_NOTUP };
     if (!layer.powered) return .{ .done = bluetooth.BTERR_OFF };
     if (find(layer, address)) |known| switch (known.state) {
-        // Up, unless it is being made secure.
-        .up => return if (securing(known)) waitFor(layer, .connect, address) else .{ .done = 0 },
+        // Up, unless the device has not answered on it yet or it is
+        // being made secure.
+        .up => return if (!known.heard or securing(known)) waitFor(layer, .connect, address) else .{ .done = 0 },
         .connecting => if (!known.unwanted) return waitFor(layer, .connect, address),
         else => {},
     };
@@ -287,7 +308,11 @@ pub fn disconnect(layer: *Hci, address: bluetooth.BTAddress) Begun {
     const wait = freeWait(layer) orelse return .{ .done = bluetooth.BTERR_NOMEM };
     switch (connection.state) {
         .connecting => drop(layer, connection),
-        .up => if (!end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED)) return .{ .done = bluetooth.BTERR_NOMEM },
+        .up => {
+            if (!end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED)) return .{ .done = bluetooth.BTERR_NOMEM };
+            // Its making taken back, if the device has not answered yet.
+            if (!connection.heard) connection.unwanted = true;
+        },
         .disconnecting, .free => {},
     }
     return waitOn(layer, wait, .disconnect, address);
@@ -503,6 +528,11 @@ pub fn answered(layer: *Hci, opcode: u16, returned: []const u8) void {
         hci.HCI_OP_CREATE_CONNECTION => if (making(layer, false)) |connection| failed(layer, connection, status),
         hci.HCI_OP_LE_CREATE_CONNECTION => if (making(layer, true)) |connection| failed(layer, connection, status),
         hci.HCI_OP_ACCEPT_CONNECTION => if (accepting(layer)) |connection| failed(layer, connection, status),
+        // Refused: the LE links waiting for the device's features taken
+        // as made without them.
+        hci.HCI_OP_LE_READ_REMOTE_FEATURES => for (&layer.connections) |*connection| {
+            if (connection.le and connection.state == .up and !connection.heard) established(layer, connection);
+        },
         hci.HCI_OP_DISCONNECT => if (ending(layer)) |connection| {
             if (status == hci.HCI_ERR_UNKNOWN_CONNECTION) return down(layer, connection, 0, status);
             stays(layer, connection, status);
@@ -604,7 +634,7 @@ pub fn leComplete(layer: *Hci, params: []const u8) void {
 /// What a call waiting for a link that was not made is answered: the
 /// controller's status - or BTERR_TIMEOUT for one taken back at its
 /// time, HCI_ERR_LOCAL_HOST_TERMINATED for one that was no longer wanted.
-fn failure(connection: *const Connection, status: u8) i32 {
+fn failure(connection: *const Connection, status: i32) i32 {
     if (connection.unwanted) return hci.HCI_ERR_LOCAL_HOST_TERMINATED;
     if (connection.cancelled) return bluetooth.BTERR_TIMEOUT;
     return status;
@@ -616,6 +646,8 @@ fn refuseLink(layer: *Hci, handle: u16) void {
     _ = _hci.command(layer, hci.HCI_OP_DISCONNECT, &params, _hci.COMMAND_TIMEOUT_MS);
 }
 
+/// The controller's link up: over LE the device asked for its features
+/// first, the link made once it answers.
 fn up(layer: *Hci, connection: *Connection, handle: u16) void {
     connection.state = .up;
     connection.handle = handle;
@@ -625,8 +657,9 @@ fn up(layer: *Hci, connection: *Connection, handle: u16) void {
     connection.frame_dropping = false;
     connection.outstanding = 0;
     layer.changed = true;
-    note(layer, connection, .up, 0);
     if (connection.unwanted) {
+        connection.heard = true;
+        note(layer, connection, .up, 0);
         answer(layer, .connect, connection.address, 0);
         if (!end(layer, connection, hci.HCI_ERR_REMOTE_USER_TERMINATED)) {
             connection.unwanted = false;
@@ -634,9 +667,49 @@ fn up(layer: *Hci, connection: *Connection, handle: u16) void {
         }
         return;
     }
-    // A pairing that waited for it begun; a bonded device's link made
-    // secure before its callers are answered.
+    if (connection.le and askFeatures(layer, connection)) {
+        connection.deadline = layer.now + FEATURES_WAIT_MS;
+        return;
+    }
+    established(layer, connection);
+}
+
+/// LE Read Remote Features on a link that is up - the device's answer the
+/// first word heard on it. False where the controller does not take it.
+fn askFeatures(layer: *Hci, connection: *const Connection) bool {
+    if (!_hci.supports(layer, hci.CMDBIT_LE_READ_REMOTE_FEATURES)) return false;
+    var params: [2]u8 = undefined;
+    put16(&params, connection.handle);
+    return _hci.command(layer, hci.HCI_OP_LE_READ_REMOTE_FEATURES, &params, _hci.COMMAND_TIMEOUT_MS);
+}
+
+/// The device has answered on a link that is up: the link made - a
+/// pairing that waited for it begun, a bonded device's link made secure
+/// before its callers are answered. Nothing for one being ended, whose
+/// callers its end answers.
+pub fn established(layer: *Hci, connection: *Connection) void {
+    if (connection.heard or connection.state != .up) return;
+    connection.heard = true;
+    connection.deadline = null;
+    layer.changed = true;
+    note(layer, connection, .up, 0);
     if (!pairing.linkUp(layer, connection)) answer(layer, .connect, connection.address, 0);
+}
+
+/// LE Read Remote Features Complete, past its subevent: the device has
+/// answered on the link, its features kept - unless the link failed,
+/// whose end follows with the reason.
+pub fn leFeatures(layer: *Hci, params: []const u8) void {
+    if (params.len < 3) return;
+    const connection = byHandle(layer, _hci.le16(params[1..3]) & hci.ACL_HANDLE_MASK) orelse return;
+    switch (params[0]) {
+        hci.HCI_SUCCESS => {
+            if (params.len >= 11) connection.le_features = params[3..11].*;
+        },
+        hci.HCI_ERR_CONNECTION_TIMEOUT, hci.HCI_ERR_LMP_RESPONSE_TIMEOUT, hci.HCI_ERR_FAILED_TO_ESTABLISH => return,
+        else => {},
+    }
+    established(layer, connection);
 }
 
 /// What happened to a link kept for the log, while there is room.
@@ -666,22 +739,28 @@ fn failed(layer: *Hci, connection: *Connection, result: i32) void {
 }
 
 /// A link that was up and is down, for `reason`: its buffers given back,
-/// its record freed, the calls waiting for its end answered `result`.
+/// its record freed, the calls waiting for its end answered `result` -
+/// and, where the device never answered on it, which was then not made,
+/// those waiting for it to be up answered why.
 fn down(layer: *Hci, connection: *Connection, result: i32, reason: i32) void {
-    note(layer, connection, .down, reason);
-    pairing.linkGone(layer, connection, reason);
+    const made = connection.heard;
+    const why = if (made) reason else failure(connection, reason);
+    note(layer, connection, if (made) .down else .not_made, why);
+    pairing.linkGone(layer, connection, why);
     acl.released(layer, connection);
     const address = connection.address;
     connection.* = .{};
     layer.changed = true;
+    if (!made) answer(layer, .connect, address, why);
     answer(layer, .disconnect, address, result);
 }
 
 /// A link whose end the controller refused: up as it was, the calls
-/// waiting for its end answered with why.
+/// waiting for its end answered with why - one the device has not
+/// answered on yet waiting for it again.
 fn stays(layer: *Hci, connection: *Connection, status: i32) void {
     connection.state = .up;
-    connection.deadline = null;
+    connection.deadline = if (connection.heard) null else layer.now + FEATURES_WAIT_MS;
     connection.unwanted = false;
     layer.changed = true;
     answer(layer, .disconnect, connection.address, status);
@@ -780,7 +859,9 @@ pub fn tick(layer: *Hci) void {
                 } else cancel(layer, connection);
             },
             .disconnecting => down(layer, connection, bluetooth.BTERR_TIMEOUT, bluetooth.BTERR_TIMEOUT),
-            .up, .free => {},
+            // The device's features not given in time: made without them.
+            .up => established(layer, connection),
+            .free => {},
         }
     }
 }

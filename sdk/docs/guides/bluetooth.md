@@ -318,7 +318,12 @@ const result = bt.ConnectBTDevice(bluetooth.BT_ALL_CONTROLLERS, &device);
 - **Over LE** the controller listens for the device's advertising and
   connects as its central, asking for an interval of 30 to 50 ms, no
   latency, and the link lost after 420 ms unheard. A device that does not
-  advertise within 20 seconds is given up on (`BTERR_TIMEOUT`).
+  advertise within 20 seconds is given up on (`BTERR_TIMEOUT`). The
+  controller has a link as soon as it has sent its request, so the link
+  is up once the device has answered on it: its features read (LE Read
+  Remote Features), or a frame of its come. One the device never answers
+  on is given up after six connection events and was not made
+  (`HCI_ERR_FAILED_TO_ESTABLISH`).
 
 A controller pages one device at a time and initiates to one: another
 link of the same kind asked for meanwhile is `BTERR_BUSY`. A discovery
